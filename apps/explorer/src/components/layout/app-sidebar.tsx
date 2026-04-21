@@ -214,7 +214,7 @@ export function AppSidebar() {
 							}
 						>
 							<Github className="size-4" />
-							<span>GitHub</span>
+							<span>GitHub Repos</span>
 							<ExternalLink className="size-3 ml-auto opacity-50" />
 						</SidebarMenuButton>
 					</SidebarMenuItem>
