@@ -1,0 +1,64 @@
+{
+	"name": "@oidfed/monorepo",
+	"description": "The complete OpenID Federation 1.0 implementation for JavaScript — runtime-agnostic, spec-compliant, built on Web API standards.",
+	"private": true,
+	"type": "module",
+	"packageManager": "pnpm@10.33.0",
+	"scripts": {
+		"build": "turbo run build",
+		"test": "vitest run",
+		"test:watch": "vitest",
+		"typecheck": "turbo run typecheck",
+		"lint": "biome check .",
+		"lint:fix": "biome check --write .",
+		"clean": "turbo run clean",
+		"setup:e2e": "bash scripts/setup-e2e.sh",
+		"test:e2e": "NODE_EXTRA_CA_CERTS=$(cat .certs/ca-path.txt)/rootCA.pem vitest run --config tests/e2e/vitest.config.ts",
+		"dev:federation": "NODE_EXTRA_CA_CERTS=$(cat .certs/ca-path.txt)/rootCA.pem npx tsx --tsconfig tests/e2e/tsconfig.json scripts/dev-federation.ts",
+		"cli": "NODE_TLS_REJECT_UNAUTHORIZED=0 node --no-warnings tools/cli/dist/bin.js",
+		"oidfed": "pnpm -s cli",
+		"prepublish:check": "pnpm typecheck && pnpm test && pnpm lint && pnpm build",
+		"publish:npm": "pnpm prepublish:check && pnpm -r --filter '@oidfed/core' --filter '@oidfed/authority' --filter '@oidfed/leaf' --filter '@oidfed/oidc' --filter '@oidfed/cli' publish --tag next --no-git-checks",
+		"publish:npm:latest": "pnpm prepublish:check && pnpm -r --filter '@oidfed/core' --filter '@oidfed/authority' --filter '@oidfed/leaf' --filter '@oidfed/oidc' --filter '@oidfed/cli' publish --no-git-checks",
+		"release:github": "gh release create v0.1.0 --prerelease --title 'v0.1.0' --generate-notes"
+	},
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/Dahkenangnon/oidfed.git"
+	},
+	"author": {
+		"name": "Justin Dah-kenangnon",
+		"email": "dah.kenangnon@gmail.com"
+	},
+	"homepage": "https://oidfed.com",
+	"bugs": {
+		"url": "https://github.com/Dahkenangnon/oidfed/issues"
+	},
+	"keywords": [
+		"openid",
+		"federation",
+		"oidc",
+		"oauth2",
+		"trust-chain",
+		"entity-configuration",
+		"trust-mark"
+	],
+	"devDependencies": {
+		"@biomejs/biome": "^2.4.0",
+		"@oidfed/authority": "workspace:*",
+		"@oidfed/core": "workspace:*",
+		"@oidfed/leaf": "workspace:*",
+		"@oidfed/oidc": "workspace:*",
+		"@types/express": "^5.0.6",
+		"@types/node": "^22.0.0",
+		"@types/oidc-provider": "^9.5.0",
+		"express": "^5.2.1",
+		"oidc-provider": "^9.8.0",
+		"tsup": "^8.0.0",
+		"turbo": "^2.9.0",
+		"typescript": "^5.8.0",
+		"undici": "^8.0.2",
+		"vitest": "^3.2.0"
+	}
+}

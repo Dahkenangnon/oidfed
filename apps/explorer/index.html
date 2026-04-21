@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>OidFed Explorer</title>
+		<meta name="description" content="A visual tool for exploring live OpenID Federation deployments — inspect entity configurations, trace trust chains, browse metadata, and validate federation topology in real time." />
+		<meta property="og:title" content="OidFed Explorer" />
+		<meta property="og:description" content="A visual tool for exploring live OpenID Federation deployments — inspect entity configurations, trace trust chains, browse metadata, and validate federation topology in real time." />
+		<meta property="og:type" content="website" />
+		<meta name="twitter:card" content="summary" />
+		<meta name="twitter:title" content="OidFed Explorer" />
+		<meta name="twitter:description" content="A visual tool for exploring live OpenID Federation deployments — inspect entity configurations, trace trust chains, browse metadata, and validate federation topology in real time." />
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+		<link
+			href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap"
+			rel="stylesheet"
+		/>
+	</head>
+	<body class="bg-white text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
+		<script>
+			// Apply theme before React renders to prevent flash of wrong theme
+			(function () {
+				var m = document.cookie.match(/(?:^|; )oidfed_theme=([^;]*)/);
+				var t = m ? decodeURIComponent(m[1]) : "system";
+				var dark =
+					t === "dark" || (t === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
+				if (dark) document.documentElement.classList.add("dark");
+			})();
+		</script>
+		<div id="root"></div>
+		<script type="module" src="/src/main.tsx"></script>
+	</body>
+</html>

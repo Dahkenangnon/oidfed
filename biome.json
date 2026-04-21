@@ -1,0 +1,36 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.4.10/schema.json",
+	"formatter": {
+		"indentStyle": "tab",
+		"indentWidth": 2,
+		"lineWidth": 100
+	},
+	"linter": {
+		"enabled": true,
+		"rules": { "recommended": true }
+	},
+	"files": {
+		"includes": [
+			"packages/**/src/**/*.ts",
+			"packages/**/src/**/*.tsx",
+			"packages/**/src/**/*.jsx",
+			"packages/**/test/**/*.ts",
+			"packages/**/test/**/*.tsx",
+			"apps/**/src/**/*.ts",
+			"apps/**/src/**/*.tsx",
+			"apps/**/app/**/*.ts",
+			"apps/**/app/**/*.tsx",
+			"tools/**/src/**/*.ts",
+			"tools/**/src/**/*.tsx",
+			"tools/**/test/**/*.ts",
+			"tools/**/test/**/*.tsx",
+			"internal/**/src/**/*.ts",
+			"internal/**/src/**/*.tsx",
+			"internal/**/test/**/*.ts",
+			"internal/**/test/**/*.tsx",
+			"tests/**/*.ts",
+			"scripts/**/*.sh"
+		],
+		"ignoreUnknown": true
+	}
+}

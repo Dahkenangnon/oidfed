@@ -1,0 +1,49 @@
+{
+	"name": "@oidfed/home",
+	"description": "The official home of @oidfed — the complete OpenID Federation 1.0 implementation for JavaScript, runtime-agnostic, spec-compliant, built on Web API standards.",
+	"version": "0.1.0",
+	"private": true,
+	"license": "MIT",
+	"author": "Justin Dah-kenangnon <dah.kenangnon@gmail.com>",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/Dahkenangnon/oidfed.git",
+		"directory": "apps/home"
+	},
+	"homepage": "https://oidfed.com",
+	"bugs": {
+		"url": "https://github.com/Dahkenangnon/oidfed/issues"
+	},
+	"keywords": [
+		"openid",
+		"federation",
+		"oidfed",
+		"homepage"
+	],
+	"type": "module",
+	"scripts": {
+		"dev": "react-router dev",
+		"build": "react-router build",
+		"typecheck": "react-router typegen && tsc",
+		"clean": "rm -rf build .react-router"
+	},
+	"dependencies": {
+		"@fontsource-variable/inter": "^5.1.0",
+		"@oidfed/ui": "workspace:*",
+		"@react-router/node": "^7.14.0",
+		"lucide-react": "^0.500.0",
+		"react": "^19.1.0",
+		"react-dom": "^19.1.0",
+		"react-router": "^7.14.0",
+		"isbot": "^5"
+	},
+	"devDependencies": {
+		"@react-router/dev": "^7.14.0",
+		"@tailwindcss/vite": "^4.1.0",
+		"@types/react": "^19.1.0",
+		"@types/react-dom": "^19.1.0",
+		"tailwindcss": "^4.1.0",
+		"typescript": "^5.8.0",
+		"vite": "^7.3.2"
+	}
+}

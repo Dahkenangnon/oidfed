@@ -1,0 +1,53 @@
+{
+	"name": "@oidfed/core",
+	"version": "0.1.0",
+	"description": "Federation primitives for JavaScript — entity statements, trust chain resolution, metadata policy, and cryptographic verification. The foundational layer of the complete OpenID Federation 1.0 implementation.",
+	"license": "MIT",
+	"author": "Justin Dah-kenangnon <dah.kenangnon@gmail.com>",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/Dahkenangnon/oidfed.git",
+		"directory": "packages/core"
+	},
+	"homepage": "https://github.com/Dahkenangnon/oidfed/tree/main/packages/core#readme",
+	"bugs": {
+		"url": "https://github.com/Dahkenangnon/oidfed/issues"
+	},
+	"keywords": [
+		"openid",
+		"federation",
+		"oidc",
+		"trust-chain",
+		"entity-statement",
+		"metadata-policy",
+		"trust-marks",
+		"jwk",
+		"jose"
+	],
+	"type": "module",
+	"main": "./dist/index.cjs",
+	"module": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js",
+			"require": "./dist/index.cjs"
+		}
+	},
+	"files": ["dist"],
+	"sideEffects": false,
+	"publishConfig": {
+		"access": "public"
+	},
+	"scripts": {
+		"build": "tsup",
+		"typecheck": "tsc --noEmit",
+		"test": "vitest run",
+		"clean": "rm -rf dist"
+	},
+	"dependencies": {
+		"jose": "^6.0.0",
+		"zod": "^4.0.0"
+	}
+}

@@ -1,0 +1,13 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.4.10/schema.json",
+	"extends": "//",
+	"files": {
+		"includes": ["src/**/*.ts", "src/**/*.tsx", "test/**/*.ts", "test/**/*.tsx"]
+	},
+	"linter": {
+		"rules": {
+			"a11y": { "recommended": false },
+			"complexity": { "recommended": false }
+		}
+	}
+}

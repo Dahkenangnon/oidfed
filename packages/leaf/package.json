@@ -1,0 +1,49 @@
+{
+	"name": "@oidfed/leaf",
+	"version": "0.1.0",
+	"description": "Leaf Entity toolkit — Entity Configuration serving, authority discovery, and trust chain participation for any entity at the edge of an OpenID Federation.",
+	"license": "MIT",
+	"author": "Justin Dah-kenangnon <dah.kenangnon@gmail.com>",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/Dahkenangnon/oidfed.git",
+		"directory": "packages/leaf"
+	},
+	"homepage": "https://github.com/Dahkenangnon/oidfed/tree/main/packages/leaf#readme",
+	"bugs": {
+		"url": "https://github.com/Dahkenangnon/oidfed/issues"
+	},
+	"keywords": [
+		"openid",
+		"federation",
+		"leaf-entity",
+		"entity-configuration",
+		"trust-chain",
+		"discovery"
+	],
+	"type": "module",
+	"main": "./dist/index.cjs",
+	"module": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js",
+			"require": "./dist/index.cjs"
+		}
+	},
+	"files": ["dist"],
+	"sideEffects": false,
+	"publishConfig": {
+		"access": "public"
+	},
+	"scripts": {
+		"build": "tsup",
+		"typecheck": "tsc --noEmit",
+		"test": "vitest run --passWithNoTests",
+		"clean": "rm -rf dist"
+	},
+	"dependencies": {
+		"@oidfed/core": "workspace:*"
+	}
+}

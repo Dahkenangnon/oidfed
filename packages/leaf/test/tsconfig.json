@@ -1,0 +1,12 @@
+{
+	"extends": "../../../tsconfig.base.json",
+	"compilerOptions": {
+		"paths": {
+			"@oidfed/core": ["../../core/src/index.ts"],
+			"@oidfed/leaf": ["../../leaf/src/index.ts"]
+		},
+		"rootDir": "../../..",
+		"noEmit": true
+	},
+	"include": ["./**/*.ts"]
+}

@@ -1,0 +1,60 @@
+{
+	"name": "@oidfed/cli",
+	"version": "0.1.0",
+	"description": "Command-line interface for inspecting, validating, and debugging OpenID Federation deployments — resolve trust chains, decode entity statements, verify signatures, and more.",
+	"license": "MIT",
+	"author": "Justin Dah-kenangnon <dah.kenangnon@gmail.com>",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/Dahkenangnon/oidfed.git",
+		"directory": "tools/cli"
+	},
+	"homepage": "https://github.com/Dahkenangnon/oidfed/tree/main/tools/cli#readme",
+	"bugs": {
+		"url": "https://github.com/Dahkenangnon/oidfed/issues"
+	},
+	"keywords": [
+		"openid",
+		"federation",
+		"oidc",
+		"cli",
+		"trust-chain",
+		"entity-statement"
+	],
+	"type": "module",
+	"main": "./dist/index.cjs",
+	"module": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"bin": {
+		"oidfed": "./dist/bin.js",
+		"openidfed": "./dist/bin.js"
+	},
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js",
+			"require": "./dist/index.cjs"
+		}
+	},
+	"files": ["dist"],
+	"sideEffects": false,
+	"engines": {
+		"node": ">=20"
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"scripts": {
+		"build": "tsup",
+		"typecheck": "tsc --noEmit",
+		"test": "vitest run",
+		"clean": "rm -rf dist"
+	},
+	"dependencies": {
+		"@oidfed/core": "workspace:*",
+		"commander": "^13.0.0",
+		"yaml": "^2.7.0",
+		"chalk": "^5.4.0",
+		"zod": "^4.0.0"
+	}
+}
