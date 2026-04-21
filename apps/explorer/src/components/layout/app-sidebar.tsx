@@ -182,7 +182,7 @@ export function AppSidebar() {
 							}
 						>
 							<Globe className="size-4" />
-							<span>oidfed.com</span>
+							<span>Home Page</span>
 							<ExternalLink className="size-3 ml-auto opacity-50" />
 						</SidebarMenuButton>
 					</SidebarMenuItem>
