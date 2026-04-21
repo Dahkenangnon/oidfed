@@ -109,12 +109,9 @@ export default function Home() {
 			<section className="relative overflow-hidden py-20 sm:py-28">
 				<HeroBackground />
 				<div className="relative mx-auto max-w-5xl px-6 text-center">
-					<Badge variant="secondary" className="mb-4">
-						OpenID Federation 1.0
-					</Badge>
 					<h1 className="font-heading text-4xl font-bold tracking-tight sm:text-5xl lg:text-6xl">
 						<span className="bg-gradient-to-r from-brand-600 to-brand-400 bg-clip-text text-transparent dark:from-brand-300 dark:to-brand-500">
-							OpenID Federation
+							OpenID Federation 1.0 for JavaScript.
 						</span>
 					</h1>
 					<p className="mx-auto mt-6 max-w-2xl text-lg text-muted-foreground">
