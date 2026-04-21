@@ -348,13 +348,13 @@ export default function Home() {
 					</p>
 					<div className="mt-4">
 						<a
-							href="https://learn.oidfed.com/lesson-14"
+							href="https://learn.oidfed.com/lessons/real-use-cases"
 							target="_blank"
 							rel="noopener noreferrer"
 							className={buttonVariants({ variant: "outline", size: "sm" })}
 						>
 							<Lock className="mr-1 size-3" />
-							Learn more: Federation & AI identity
+							Learn more: Real Use Cases of OpenID Federation 
 						</a>
 					</div>
 				</div>
