@@ -29,7 +29,8 @@
 			"internal/**/test/**/*.ts",
 			"internal/**/test/**/*.tsx",
 			"tests/**/*.ts",
-			"scripts/**/*.sh"
+			"scripts/**/*.sh",
+			"!apps/**/.react-router"
 		],
 		"ignoreUnknown": true
 	}

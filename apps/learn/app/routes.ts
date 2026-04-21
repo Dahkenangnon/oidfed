@@ -23,4 +23,5 @@ export default [
 			route("hands-on-objects", "routes/lessons/lesson-15.tsx"),
 		]),
 	]),
+	route("*", "routes/not-found.tsx"),
 ] satisfies RouteConfig;

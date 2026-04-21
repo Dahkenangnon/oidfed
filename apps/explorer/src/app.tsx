@@ -5,6 +5,7 @@ import { EntityInspectorPage } from "./features/entity-inspector/page";
 import { ExpirationDashboardPage } from "./features/expiry/page";
 import { HealthCheckPage } from "./features/health/page";
 import { HomePage } from "./features/home/page";
+import { NotFoundPage } from "./features/not-found/page";
 import { PolicySimulatorPage } from "./features/policy/page";
 import { ResolveProxyPage } from "./features/resolve/page";
 import { SettingsPage } from "./features/settings/page";
@@ -32,6 +33,7 @@ export function App() {
 					<Route path="/resolve" element={<ResolveProxyPage />} />
 					<Route path="/diff" element={<MetadataDiffPage />} />
 					<Route path="/settings" element={<SettingsPage />} />
+					<Route path="*" element={<NotFoundPage />} />
 				</Route>
 			</Routes>
 		</HashRouter>

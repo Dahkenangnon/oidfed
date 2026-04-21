@@ -17,7 +17,8 @@
 		"dev:federation": "NODE_EXTRA_CA_CERTS=$(cat .certs/ca-path.txt)/rootCA.pem npx tsx --tsconfig tests/e2e/tsconfig.json scripts/dev-federation.ts",
 		"cli": "NODE_TLS_REJECT_UNAUTHORIZED=0 node --no-warnings tools/cli/dist/bin.js",
 		"oidfed": "pnpm -s cli",
-		"prepublish:check": "pnpm typecheck && pnpm test && pnpm lint && pnpm build",
+		"build:publish": "turbo run build --filter='@oidfed/core' --filter='@oidfed/authority' --filter='@oidfed/leaf' --filter='@oidfed/oidc' --filter='@oidfed/cli'",
+		"prepublish:check": "pnpm typecheck && pnpm test && pnpm lint && pnpm build:publish",
 		"publish:npm": "pnpm prepublish:check && pnpm -r --filter '@oidfed/core' --filter '@oidfed/authority' --filter '@oidfed/leaf' --filter '@oidfed/oidc' --filter '@oidfed/cli' publish --tag next --no-git-checks",
 		"publish:npm:latest": "pnpm prepublish:check && pnpm -r --filter '@oidfed/core' --filter '@oidfed/authority' --filter '@oidfed/leaf' --filter '@oidfed/oidc' --filter '@oidfed/cli' publish --no-git-checks",
 		"release:github": "gh release create v0.1.0 --prerelease --title 'v0.1.0' --generate-notes"

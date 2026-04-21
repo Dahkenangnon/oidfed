@@ -5,5 +5,6 @@ export default [
 		index("routes/home.tsx"),
 		route("ecosystem", "routes/ecosystem.tsx"),
 		route("about", "routes/about.tsx"),
+		route("*", "routes/not-found.tsx"),
 	]),
 ] satisfies RouteConfig;

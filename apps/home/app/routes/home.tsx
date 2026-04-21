@@ -12,7 +12,7 @@ import {
 import { FederationGraph, HeroBackground, SectionDivider } from "../components/illustrations";
 import type { Route } from "./+types/home";
 
-export const handle = { lastUpdated: "2026-04-20" };
+export const handle = { lastUpdated: "2026-04-21" };
 
 export function meta(_args: Route.MetaArgs) {
 	return [
@@ -354,7 +354,7 @@ export default function Home() {
 							className={buttonVariants({ variant: "outline", size: "sm" })}
 						>
 							<Lock className="mr-1 size-3" />
-							Learn more: Real Use Cases of OpenID Federation 
+							Learn more: Real Use Cases of OpenID Federation
 						</a>
 					</div>
 				</div>
