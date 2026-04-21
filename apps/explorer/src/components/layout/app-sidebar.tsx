@@ -198,7 +198,7 @@ export function AppSidebar() {
 							}
 						>
 							<BookOpen className="size-4" />
-							<span>Learn</span>
+							<span>Learn OpenID Federation</span>
 							<ExternalLink className="size-3 ml-auto opacity-50" />
 						</SidebarMenuButton>
 					</SidebarMenuItem>
