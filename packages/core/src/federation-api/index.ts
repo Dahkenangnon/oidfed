@@ -6,6 +6,8 @@ import {
 	HistoricalKeysPayloadSchema,
 	type ResolveResponsePayload,
 	ResolveResponsePayloadSchema,
+	type SignedJwkSetPayload,
+	SignedJwkSetPayloadSchema,
 	type TrustMarkStatusResponsePayload,
 	TrustMarkStatusResponsePayloadSchema,
 } from "../schemas/entity-statement.js";
@@ -90,6 +92,29 @@ export async function verifyHistoricalKeysResponse(
 	const parsed = HistoricalKeysPayloadSchema.safeParse(result.value.payload);
 	if (!parsed.success) {
 		return err(apiError(`Invalid historical keys response payload: ${parsed.error.message}`));
+	}
+	return { ok: true, value: parsed.data };
+}
+
+/**
+ * Verify and validate a Signed JWK Set JWT (returned by signed_jwks_uri).
+ * Checks typ=jwk-set+jwt, signature, and required payload claims (iss, sub, keys).
+ */
+export async function verifySignedJwkSet(
+	jwt: string,
+	signerJwks: JWKSet,
+	options?: VerifyOptions,
+): Promise<Result<SignedJwkSetPayload, FederationError>> {
+	const result = await verifyEntityStatement(
+		jwt,
+		signerJwks,
+		buildVerifyOpts(JwtTyp.JwkSet, options),
+	);
+	if (!result.ok) return result;
+
+	const parsed = SignedJwkSetPayloadSchema.safeParse(result.value.payload);
+	if (!parsed.success) {
+		return err(apiError(`Invalid signed JWK Set payload: ${parsed.error.message}`));
 	}
 	return { ok: true, value: parsed.data };
 }

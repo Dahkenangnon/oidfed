@@ -72,6 +72,7 @@ function checkValueCombination(otherOp: string, valueVal: unknown, otherVal: unk
 			return addArr.length === 1 && deepEqual(addArr[0], valueVal);
 		}
 		case PolicyOperator.Default:
+			if (valueVal === null) return false;
 			return deepEqual(valueVal, otherVal);
 		case PolicyOperator.OneOf:
 			return containsElement(otherVal as unknown[], valueVal);

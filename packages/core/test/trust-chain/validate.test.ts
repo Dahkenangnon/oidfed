@@ -547,6 +547,73 @@ describe("validateTrustChain", () => {
 		expect(result.errors.some((e) => e.message.includes("trust_marks"))).toBe(true);
 	});
 
+	it("rejects EC-only claim trust_mark_issuers in subordinate statement", async () => {
+		const taKeys = await generateSigningKey("ES256");
+		const leafKeys = await generateSigningKey("ES256");
+
+		const leafEc = await signEC(
+			"https://leaf.example.com",
+			leafKeys.privateKey,
+			leafKeys.publicKey,
+			{
+				authority_hints: ["https://ta.example.com"],
+			},
+		);
+		const ss = await signSS(
+			"https://ta.example.com",
+			"https://leaf.example.com",
+			taKeys.privateKey,
+			leafKeys.publicKey,
+			{ trust_mark_issuers: { "https://example.com/tm": ["https://issuer.example.com"] } },
+		);
+		const taEc = await signEC("https://ta.example.com", taKeys.privateKey, taKeys.publicKey);
+
+		const taSet: TrustAnchorSet = new Map([
+			["https://ta.example.com" as EntityId, { jwks: { keys: [taKeys.publicKey] } }],
+		]);
+
+		const result = await validateTrustChain([leafEc, ss, taEc], taSet, { verboseErrors: true });
+		expect(result.valid).toBe(false);
+		expect(result.errors.some((e) => e.message.includes("trust_mark_issuers"))).toBe(true);
+	});
+
+	it("rejects EC-only claim trust_mark_owners in subordinate statement", async () => {
+		const taKeys = await generateSigningKey("ES256");
+		const leafKeys = await generateSigningKey("ES256");
+
+		const leafEc = await signEC(
+			"https://leaf.example.com",
+			leafKeys.privateKey,
+			leafKeys.publicKey,
+			{
+				authority_hints: ["https://ta.example.com"],
+			},
+		);
+		const ss = await signSS(
+			"https://ta.example.com",
+			"https://leaf.example.com",
+			taKeys.privateKey,
+			leafKeys.publicKey,
+			{
+				trust_mark_owners: {
+					"https://example.com/tm": {
+						sub: "https://owner.example.com",
+						jwks: { keys: [] },
+					},
+				},
+			},
+		);
+		const taEc = await signEC("https://ta.example.com", taKeys.privateKey, taKeys.publicKey);
+
+		const taSet: TrustAnchorSet = new Map([
+			["https://ta.example.com" as EntityId, { jwks: { keys: [taKeys.publicKey] } }],
+		]);
+
+		const result = await validateTrustChain([leafEc, ss, taEc], taSet, { verboseErrors: true });
+		expect(result.valid).toBe(false);
+		expect(result.errors.some((e) => e.message.includes("trust_mark_owners"))).toBe(true);
+	});
+
 	it("rejects empty authority_hints array", async () => {
 		const taKeys = await generateSigningKey("ES256");
 		const leafKeys = await generateSigningKey("ES256");
@@ -616,6 +683,41 @@ describe("validateTrustChain", () => {
 		).toBe(true);
 	});
 
+	it("rejects TA EC with trust_anchor_hints", async () => {
+		const taKeys = await generateSigningKey("ES256");
+		const leafKeys = await generateSigningKey("ES256");
+
+		const leafEc = await signEC(
+			"https://leaf.example.com",
+			leafKeys.privateKey,
+			leafKeys.publicKey,
+			{
+				authority_hints: ["https://ta.example.com"],
+			},
+		);
+		const ss = await signSS(
+			"https://ta.example.com",
+			"https://leaf.example.com",
+			taKeys.privateKey,
+			leafKeys.publicKey,
+		);
+		const taEc = await signEC("https://ta.example.com", taKeys.privateKey, taKeys.publicKey, {
+			trust_anchor_hints: ["https://other.example.com"],
+		});
+
+		const taSet: TrustAnchorSet = new Map([
+			["https://ta.example.com" as EntityId, { jwks: { keys: [taKeys.publicKey] } }],
+		]);
+
+		const result = await validateTrustChain([leafEc, ss, taEc], taSet, { verboseErrors: true });
+		expect(result.valid).toBe(false);
+		expect(
+			result.errors.some(
+				(e) => e.message.includes("Trust Anchor") && e.message.includes("trust_anchor_hints"),
+			),
+		).toBe(true);
+	});
+
 	it("rejects SS issuer not in subject's authority_hints", async () => {
 		const taKeys = await generateSigningKey("ES256");
 		const leafKeys = await generateSigningKey("ES256");
@@ -675,6 +777,66 @@ describe("validateTrustChain", () => {
 		const result = await validateTrustChain([leafEc, ss, taEc], taSet, { verboseErrors: true });
 		expect(result.valid).toBe(false);
 		expect(result.errors.some((e) => e.message.includes("source_endpoint"))).toBe(true);
+	});
+
+	it("rejects SS-only claim metadata_policy in entity configuration", async () => {
+		const taKeys = await generateSigningKey("ES256");
+		const leafKeys = await generateSigningKey("ES256");
+
+		const leafEc = await signEC(
+			"https://leaf.example.com",
+			leafKeys.privateKey,
+			leafKeys.publicKey,
+			{
+				authority_hints: ["https://ta.example.com"],
+				metadata_policy: { openid_relying_party: { contacts: { add: ["admin@example.com"] } } },
+			},
+		);
+		const ss = await signSS(
+			"https://ta.example.com",
+			"https://leaf.example.com",
+			taKeys.privateKey,
+			leafKeys.publicKey,
+		);
+		const taEc = await signEC("https://ta.example.com", taKeys.privateKey, taKeys.publicKey);
+
+		const taSet: TrustAnchorSet = new Map([
+			["https://ta.example.com" as EntityId, { jwks: { keys: [taKeys.publicKey] } }],
+		]);
+
+		const result = await validateTrustChain([leafEc, ss, taEc], taSet, { verboseErrors: true });
+		expect(result.valid).toBe(false);
+		expect(result.errors.some((e) => e.message.includes("metadata_policy"))).toBe(true);
+	});
+
+	it("rejects SS-only claim constraints in entity configuration", async () => {
+		const taKeys = await generateSigningKey("ES256");
+		const leafKeys = await generateSigningKey("ES256");
+
+		const leafEc = await signEC(
+			"https://leaf.example.com",
+			leafKeys.privateKey,
+			leafKeys.publicKey,
+			{
+				authority_hints: ["https://ta.example.com"],
+				constraints: { max_path_length: 0 },
+			},
+		);
+		const ss = await signSS(
+			"https://ta.example.com",
+			"https://leaf.example.com",
+			taKeys.privateKey,
+			leafKeys.publicKey,
+		);
+		const taEc = await signEC("https://ta.example.com", taKeys.privateKey, taKeys.publicKey);
+
+		const taSet: TrustAnchorSet = new Map([
+			["https://ta.example.com" as EntityId, { jwks: { keys: [taKeys.publicKey] } }],
+		]);
+
+		const result = await validateTrustChain([leafEc, ss, taEc], taSet, { verboseErrors: true });
+		expect(result.valid).toBe(false);
+		expect(result.errors.some((e) => e.message.includes("constraints"))).toBe(true);
 	});
 
 	it("rejects metadata containing null values", async () => {
@@ -835,6 +997,101 @@ describe("validateTrustChain", () => {
 		}
 	});
 
+	it("ignores trust mark when outer trust_mark_type does not match inner JWT trust_mark_type", async () => {
+		const taKeys = await generateSigningKey("ES256");
+		const leafKeys = await generateSigningKey("ES256");
+		const issuerKeys = await generateSigningKey("ES256");
+
+		// Trust mark JWT has trust_mark_type "tm-b" but the outer ref claims "tm-a"
+		const tmJwt = await signEntityStatement(
+			{
+				iss: "https://issuer.example.com",
+				sub: "https://leaf.example.com",
+				trust_mark_type: "https://tm-b.example.com",
+				iat: now,
+			},
+			issuerKeys.privateKey,
+			{ typ: JwtTyp.TrustMark },
+		);
+
+		const _issuerEc = await signEC(
+			"https://issuer.example.com",
+			issuerKeys.privateKey,
+			issuerKeys.publicKey,
+			{ authority_hints: ["https://ta.example.com"] },
+		);
+		const leafEc = await signEC(
+			"https://leaf.example.com",
+			leafKeys.privateKey,
+			leafKeys.publicKey,
+			{
+				authority_hints: ["https://ta.example.com"],
+				// outer trust_mark_type says "tm-a" but JWT says "tm-b" — mismatch
+				trust_marks: [{ trust_mark_type: "https://tm-a.example.com", trust_mark: tmJwt }],
+			},
+		);
+		const ss = await signSS(
+			"https://ta.example.com",
+			"https://leaf.example.com",
+			taKeys.privateKey,
+			leafKeys.publicKey,
+		);
+		const taEc = await signEC("https://ta.example.com", taKeys.privateKey, taKeys.publicKey, {
+			trust_mark_issuers: {
+				"https://tm-a.example.com": ["https://issuer.example.com"],
+				"https://tm-b.example.com": ["https://issuer.example.com"],
+			},
+		});
+
+		const taSet: TrustAnchorSet = new Map([
+			["https://ta.example.com" as EntityId, { jwks: { keys: [taKeys.publicKey] } }],
+		]);
+
+		const result = await validateTrustChain([leafEc, ss, taEc], taSet);
+		expect(result.valid).toBe(true);
+		if (result.valid) {
+			// Mismatched trust_mark_type means the trust mark is skipped
+			expect(result.chain.trustMarks).toHaveLength(0);
+		}
+	});
+
+	it("rejects entity statement with missing kid header", async () => {
+		const taKeys = await generateSigningKey("ES256");
+		const leafKeys = await generateSigningKey("ES256");
+
+		// Sign without kid using jose directly to bypass signEntityStatement's default
+		const leafCryptoKey = await jose.importJWK(leafKeys.privateKey as unknown as jose.JWK, "ES256");
+		const leafEc = await new jose.SignJWT({
+			iss: "https://leaf.example.com",
+			sub: "https://leaf.example.com",
+			iat: now,
+			exp: now + 3600,
+			jwks: { keys: [leafKeys.publicKey] },
+			authority_hints: ["https://ta.example.com"],
+		} as unknown as jose.JWTPayload)
+			.setProtectedHeader({
+				alg: "ES256",
+				typ: JwtTyp.EntityStatement,
+				// no kid
+			} as jose.JWTHeaderParameters)
+			.sign(leafCryptoKey as Parameters<jose.SignJWT["sign"]>[0]);
+		const ss = await signSS(
+			"https://ta.example.com",
+			"https://leaf.example.com",
+			taKeys.privateKey,
+			leafKeys.publicKey,
+		);
+		const taEc = await signEC("https://ta.example.com", taKeys.privateKey, taKeys.publicKey);
+
+		const taSet: TrustAnchorSet = new Map([
+			["https://ta.example.com" as EntityId, { jwks: { keys: [taKeys.publicKey] } }],
+		]);
+
+		const result = await validateTrustChain([leafEc, ss, taEc], taSet, { verboseErrors: true });
+		expect(result.valid).toBe(false);
+		expect(result.errors.some((e) => e.field === "kid")).toBe(true);
+	});
+
 	it("rejects EC containing trust_chain header", async () => {
 		const taKeys = await generateSigningKey("ES256");
 		const leafKeys = await generateSigningKey("ES256");
@@ -862,6 +1119,43 @@ describe("validateTrustChain", () => {
 			taKeys.privateKey,
 			leafKeys.publicKey,
 		);
+		const taEc = await signEC("https://ta.example.com", taKeys.privateKey, taKeys.publicKey);
+
+		const taSet: TrustAnchorSet = new Map([
+			["https://ta.example.com" as EntityId, { jwks: { keys: [taKeys.publicKey] } }],
+		]);
+
+		const result = await validateTrustChain([leafEc, ss, taEc], taSet, { verboseErrors: true });
+		expect(result.valid).toBe(false);
+		expect(result.errors.some((e) => e.message.includes("trust_chain"))).toBe(true);
+	});
+
+	it("rejects SS containing trust_chain header", async () => {
+		const taKeys = await generateSigningKey("ES256");
+		const leafKeys = await generateSigningKey("ES256");
+
+		const leafEc = await signEC(
+			"https://leaf.example.com",
+			leafKeys.privateKey,
+			leafKeys.publicKey,
+			{ authority_hints: ["https://ta.example.com"] },
+		);
+		// SS with trust_chain in header — forbidden (use jose directly to bypass sign guard)
+		const taCryptoKey = await jose.importJWK(taKeys.privateKey as unknown as jose.JWK, "ES256");
+		const ss = await new jose.SignJWT({
+			iss: "https://ta.example.com",
+			sub: "https://leaf.example.com",
+			iat: now,
+			exp: now + 3600,
+			jwks: { keys: [leafKeys.publicKey] },
+		} as unknown as jose.JWTPayload)
+			.setProtectedHeader({
+				alg: "ES256",
+				typ: JwtTyp.EntityStatement,
+				kid: taKeys.publicKey.kid as string,
+				trust_chain: ["some.jwt"],
+			} as jose.JWTHeaderParameters)
+			.sign(taCryptoKey as Parameters<jose.SignJWT["sign"]>[0]);
 		const taEc = await signEC("https://ta.example.com", taKeys.privateKey, taKeys.publicKey);
 
 		const taSet: TrustAnchorSet = new Map([
@@ -901,6 +1195,44 @@ describe("validateTrustChain", () => {
 				peer_trust_chain: ["some.jwt"],
 			} as jose.JWTHeaderParameters)
 			.sign(taCryptoKey as Parameters<jose.SignJWT["sign"]>[0]);
+		const taEc = await signEC("https://ta.example.com", taKeys.privateKey, taKeys.publicKey);
+
+		const taSet: TrustAnchorSet = new Map([
+			["https://ta.example.com" as EntityId, { jwks: { keys: [taKeys.publicKey] } }],
+		]);
+
+		const result = await validateTrustChain([leafEc, ss, taEc], taSet, { verboseErrors: true });
+		expect(result.valid).toBe(false);
+		expect(result.errors.some((e) => e.message.includes("peer_trust_chain"))).toBe(true);
+	});
+
+	it("rejects EC containing peer_trust_chain header", async () => {
+		const taKeys = await generateSigningKey("ES256");
+		const leafKeys = await generateSigningKey("ES256");
+
+		// Leaf EC with peer_trust_chain in header — forbidden (use jose directly to bypass sign guard)
+		const leafCryptoKey = await jose.importJWK(leafKeys.privateKey as unknown as jose.JWK, "ES256");
+		const leafEc = await new jose.SignJWT({
+			iss: "https://leaf.example.com",
+			sub: "https://leaf.example.com",
+			iat: now,
+			exp: now + 3600,
+			jwks: { keys: [leafKeys.publicKey] },
+			authority_hints: ["https://ta.example.com"],
+		} as unknown as jose.JWTPayload)
+			.setProtectedHeader({
+				alg: "ES256",
+				typ: JwtTyp.EntityStatement,
+				kid: leafKeys.publicKey.kid as string,
+				peer_trust_chain: ["some.jwt"],
+			} as jose.JWTHeaderParameters)
+			.sign(leafCryptoKey as Parameters<jose.SignJWT["sign"]>[0]);
+		const ss = await signSS(
+			"https://ta.example.com",
+			"https://leaf.example.com",
+			taKeys.privateKey,
+			leafKeys.publicKey,
+		);
 		const taEc = await signEC("https://ta.example.com", taKeys.privateKey, taKeys.publicKey);
 
 		const taSet: TrustAnchorSet = new Map([
@@ -1274,6 +1606,47 @@ describe("validateTrustChain", () => {
 		const result = await validateTrustChain([leafEc, ss, taEc], taSet, { verboseErrors: true });
 		// SS at position 1, intermediates = 1-1 = 0, max=0 → pass
 		expect(result.valid).toBe(true);
+	});
+
+	it("applies allowed_entity_types filter after merging Immediate Superior SS metadata", async () => {
+		// Scenario: TA SS carries metadata.oauth_client for leaf (superior metadata override)
+		// AND has allowed_entity_types: ["openid_relying_party"] — so oauth_client should be filtered out.
+		// The filter must see the merged metadata, meaning oauth_client (added by superior) is then removed.
+		const taKeys = await generateSigningKey("ES256");
+		const leafKeys = await generateSigningKey("ES256");
+
+		const leafEc = await signEC(
+			"https://leaf.example.com",
+			leafKeys.privateKey,
+			leafKeys.publicKey,
+			{
+				authority_hints: ["https://ta.example.com"],
+				metadata: { openid_relying_party: { client_name: "RP" } },
+			},
+		);
+		const ss = await signSS(
+			"https://ta.example.com",
+			"https://leaf.example.com",
+			taKeys.privateKey,
+			leafKeys.publicKey,
+			{
+				metadata: { oauth_client: { client_id: "c1" } },
+				constraints: { allowed_entity_types: ["openid_relying_party"] },
+			},
+		);
+		const taEc = await signEC("https://ta.example.com", taKeys.privateKey, taKeys.publicKey);
+
+		const taSet: TrustAnchorSet = new Map([
+			["https://ta.example.com" as EntityId, { jwks: { keys: [taKeys.publicKey] } }],
+		]);
+
+		const result = await validateTrustChain([leafEc, ss, taEc], taSet, { verboseErrors: true });
+		expect(result.valid).toBe(true);
+		if (!result.valid) return;
+		// oauth_client was added by superior SS metadata but must be filtered by the allowed_entity_types constraint
+		expect(result.chain.resolvedMetadata).not.toHaveProperty("oauth_client");
+		// openid_relying_party is in the allowed list and should remain
+		expect(result.chain.resolvedMetadata).toHaveProperty("openid_relying_party");
 	});
 });
 

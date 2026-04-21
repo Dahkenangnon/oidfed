@@ -12,6 +12,11 @@ describe("EntityIdSchema", () => {
 		expect(result.success).toBe(true);
 	});
 
+	it("accepts HTTPS entity ID with port", () => {
+		const result = EntityIdSchema.safeParse("https://example.com:8443");
+		expect(result.success).toBe(true);
+	});
+
 	it("rejects HTTP URLs", () => {
 		const result = EntityIdSchema.safeParse("http://example.com");
 		expect(result.success).toBe(false);

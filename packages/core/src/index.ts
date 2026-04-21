@@ -67,6 +67,7 @@ export {
 export {
 	verifyHistoricalKeysResponse,
 	verifyResolveResponse,
+	verifySignedJwkSet,
 	verifyTrustMarkStatusResponse,
 } from "./federation-api/index.js";
 // HTTP helpers

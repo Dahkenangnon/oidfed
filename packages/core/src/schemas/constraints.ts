@@ -13,13 +13,12 @@ export const NamingConstraintsSchema = z.object({
 	excluded: z.array(domainPattern).optional(),
 });
 
-export const TrustChainConstraintsSchema = z.strictObject({
+export const TrustChainConstraintsSchema = z.looseObject({
 	max_path_length: z.number().int().nonnegative().max(100).optional(),
 	naming_constraints: NamingConstraintsSchema.optional(),
 	allowed_entity_types: z
 		.array(
 			z.enum([
-				"federation_entity",
 				"openid_relying_party",
 				"openid_provider",
 				"oauth_authorization_server",

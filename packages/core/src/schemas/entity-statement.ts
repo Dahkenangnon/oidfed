@@ -2,7 +2,7 @@
 import { z } from "zod";
 import { TrustChainConstraintsSchema } from "./constraints.js";
 import { EntityIdSchema } from "./entity-id.js";
-import { JWKSetSchema } from "./jwk.js";
+import { JWKSchema, JWKSetSchema } from "./jwk.js";
 import { FederationMetadataSchema } from "./metadata.js";
 import { TrustMarkOwnerSchema, TrustMarkRefSchema } from "./trust-mark.js";
 
@@ -152,6 +152,16 @@ export const HistoricalKeysPayloadSchema = z.object({
 	iat: z.number().int().positive(),
 	keys: z.array(HistoricalKeyEntrySchema),
 });
+
+/** Signed JWK Set payload — returned by signed_jwks_uri. typ must be jwk-set+jwt. */
+export const SignedJwkSetPayloadSchema = z.looseObject({
+	iss: EntityIdSchema,
+	sub: EntityIdSchema,
+	keys: z.array(JWKSchema).min(1),
+	iat: z.number().int().positive().optional(),
+	exp: z.number().int().positive().optional(),
+});
+export type SignedJwkSetPayload = z.infer<typeof SignedJwkSetPayloadSchema>;
 
 /** Resolve Response payload for the federation_resolve endpoint. */
 export const ResolveResponsePayloadSchema = z.looseObject({

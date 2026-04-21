@@ -549,8 +549,22 @@ describe("validateTrustMark", () => {
 		}
 	});
 
-	// Delegation must check alg explicitly
-	it.todo("rejects delegation with alg=none");
+	it("rejects delegation with alg=none (signEntityStatement blocks it)", async () => {
+		const ownerKeys = await generateSigningKey("ES256");
+		await expect(
+			signEntityStatement(
+				{
+					iss: "https://owner.example.com",
+					sub: "https://issuer.example.com",
+					trust_mark_type: "https://example.com/tm",
+					iat: now,
+					exp: now + 86400,
+				},
+				ownerKeys.privateKey,
+				{ typ: JwtTyp.TrustMarkDelegation, alg: "none" },
+			),
+		).rejects.toThrow(/Unsupported signing algorithm/);
+	});
 });
 
 describe("signTrustMarkDelegation", () => {

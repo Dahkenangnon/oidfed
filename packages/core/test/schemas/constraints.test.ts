@@ -38,7 +38,7 @@ describe("TrustChainConstraintsSchema", () => {
 		const result = TrustChainConstraintsSchema.safeParse({
 			max_path_length: 2,
 			naming_constraints: { permitted: [".example.com"] },
-			allowed_entity_types: ["federation_entity", "openid_relying_party"],
+			allowed_entity_types: ["openid_relying_party"],
 		});
 		expect(result.success).toBe(true);
 	});
@@ -64,17 +64,24 @@ describe("TrustChainConstraintsSchema", () => {
 		expect(result.success).toBe(true);
 	});
 
-	it("rejects unknown properties (strictObject)", () => {
+	it("ignores additional constraint parameters not defined by this spec", () => {
 		const result = TrustChainConstraintsSchema.safeParse({
 			max_path_length: 1,
-			unknown_field: true,
+			custom_constraint: "some_value",
 		});
-		expect(result.success).toBe(false);
+		expect(result.success).toBe(true);
 	});
 
 	it("rejects invalid entity types", () => {
 		const result = TrustChainConstraintsSchema.safeParse({
 			allowed_entity_types: ["invalid_type"],
+		});
+		expect(result.success).toBe(false);
+	});
+
+	it("rejects federation_entity in allowed_entity_types constraint", () => {
+		const result = TrustChainConstraintsSchema.safeParse({
+			allowed_entity_types: ["federation_entity"],
 		});
 		expect(result.success).toBe(false);
 	});

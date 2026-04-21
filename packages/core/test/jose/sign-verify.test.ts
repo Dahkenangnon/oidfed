@@ -100,6 +100,26 @@ describe("sign and verify round-trip", () => {
 		}
 	});
 
+	it("fails verification when kid header is missing", async () => {
+		const { publicKey, privateKey } = await generateSigningKey("ES256");
+		const jwt = await signEntityStatement(
+			{
+				iss: "https://example.com",
+				sub: "https://example.com",
+				iat: now,
+				exp: now + 3600,
+			},
+			{ ...privateKey, kid: undefined },
+			{ kid: undefined },
+		);
+
+		const result = await verifyEntityStatement(jwt, { keys: [publicKey] });
+		expect(isErr(result)).toBe(true);
+		if (isErr(result)) {
+			expect(result.error.description).toContain("kid");
+		}
+	});
+
 	it("fails verification when kid doesn't match even if algorithm does", async () => {
 		const keys1 = await generateSigningKey("ES256");
 		const keys2 = await generateSigningKey("ES256");
@@ -166,6 +186,20 @@ describe("assertTypHeader", () => {
 
 	it("throws for missing typ", () => {
 		expect(() => assertTypHeader({}, "entity-statement+jwt")).toThrow();
+	});
+});
+
+describe("JWS serialization format", () => {
+	it("rejects JWS JSON Serialization input", async () => {
+		const { publicKey } = await generateSigningKey("ES256");
+		const jsonSerialized = JSON.stringify({
+			payload: "eyJpc3MiOiJodHRwczovL2V4YW1wbGUuY29tIn0",
+			signatures: [{ protected: "eyJhbGciOiJFUzI1NiJ9", signature: "abc" }],
+		});
+		const result = await verifyEntityStatement(jsonSerialized, {
+			keys: [publicKey],
+		});
+		expect(isErr(result)).toBe(true);
 	});
 });
 

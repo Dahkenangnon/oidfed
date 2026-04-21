@@ -74,9 +74,9 @@ describe("checkNamingConstraints", () => {
 		expect(checkNamingConstraints(constraints, "https://sub.example.com" as EntityId)).toBe(true);
 	});
 
-	it("dot-prefix also matches the domain itself", () => {
+	it("dot-prefix does not match the domain itself (only subdomains)", () => {
 		const constraints = { permitted: [".example.com"] };
-		expect(checkNamingConstraints(constraints, "https://example.com" as EntityId)).toBe(true);
+		expect(checkNamingConstraints(constraints, "https://example.com" as EntityId)).toBe(false);
 	});
 
 	it("excluded overrides permitted", () => {

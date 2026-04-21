@@ -31,6 +31,13 @@ export async function verifyEntityStatement(
 		});
 	}
 
+	if (!header.kid || typeof header.kid !== "string") {
+		return err({
+			code: "ERR_SIGNATURE_INVALID",
+			description: "Missing or invalid kid header",
+		});
+	}
+
 	const key = selectVerificationKey(header as { kid?: string; alg?: string }, jwks);
 	if (!key) {
 		return err({

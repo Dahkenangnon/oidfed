@@ -561,7 +561,23 @@ export async function validateTrustChain(
 		};
 	}
 
+	const subordinateStatements = parsed.slice(1, -1);
+
 	let metadata = (leafPayload.metadata ?? {}) as Record<string, Record<string, unknown>>;
+
+	// Merge Immediate Superior's SS metadata before applying allowed_entity_types constraints,
+	// so the filter sees the fully merged metadata as required by the spec.
+	if (subordinateStatements.length > 0) {
+		const immSupMeta = (subordinateStatements[0]?.payload as Record<string, unknown>).metadata as
+			| Record<string, Record<string, unknown>>
+			| undefined;
+		if (immSupMeta) {
+			for (const [entityType, params] of Object.entries(immSupMeta)) {
+				if (!metadata[entityType]) metadata[entityType] = {};
+				Object.assign(metadata[entityType], params as Record<string, unknown>);
+			}
+		}
+	}
 
 	for (let j = 1; j < parsed.length; j++) {
 		const stmt = parsed[j] as ParsedEntityStatement;
@@ -593,8 +609,6 @@ export async function validateTrustChain(
 		}
 	}
 
-	const subordinateStatements = parsed.slice(1, -1);
-
 	let resolvedMetadata: Record<string, Record<string, unknown>> = metadata;
 
 	if (subordinateStatements.length > 0) {
@@ -604,18 +618,8 @@ export async function validateTrustChain(
 				checkNumber: 19,
 			});
 		} else if (Object.keys(policyResult.value).length > 0) {
-			const superiorMetadata =
-				subordinateStatements.length > 0
-					? ((subordinateStatements[0]?.payload as Record<string, unknown>).metadata as
-							| FederationMetadata
-							| undefined)
-					: undefined;
-
-			const applyResult = applyMetadataPolicy(
-				metadata as FederationMetadata,
-				policyResult.value,
-				superiorMetadata,
-			);
+			// Superior metadata already merged above; pass only leaf metadata + policy here.
+			const applyResult = applyMetadataPolicy(metadata as FederationMetadata, policyResult.value);
 			if (!applyResult.ok) {
 				addError(errors, InternalErrorCode.MetadataPolicyViolation, applyResult.error.description, {
 					checkNumber: 24,
@@ -659,7 +663,12 @@ export async function validateTrustChain(
 			const tmDecoded = decodeEntityStatement(tmRef.trust_mark);
 			if (!tmDecoded.ok) continue;
 
-			const tmIss = (tmDecoded.value.payload as Record<string, unknown>).iss as string | undefined;
+			const tmPayload = tmDecoded.value.payload as Record<string, unknown>;
+
+			// Outer trust_mark_type MUST match inner JWT trust_mark_type
+			if (tmRef.trust_mark_type !== tmPayload.trust_mark_type) continue;
+
+			const tmIss = tmPayload.iss as string | undefined;
 			const jwksForIssuer = tmIss ? entityJwks[tmIss] : undefined;
 			if (!jwksForIssuer) continue;
 

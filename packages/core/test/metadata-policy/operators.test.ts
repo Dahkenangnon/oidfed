@@ -388,12 +388,15 @@ describe("canCombineWith — full 7×7 matrix", () => {
 			expect(operators.add?.canCombineWith("value", ["a"], ["a", "b"])).toBe(true);
 		});
 
-		// value + default: compatible when default equals value
+		// value + default: compatible when default equals value, but never when value is null
 		it("value + default: allowed when equal", () => {
 			expect(operators.value?.canCombineWith("default", "x", "x")).toBe(true);
 		});
 		it("value + default: rejected when different", () => {
 			expect(operators.value?.canCombineWith("default", "x", "y")).toBe(false);
+		});
+		it("value + default: rejected when value is null (regardless of default value)", () => {
+			expect(operators.value?.canCombineWith("default", null, null)).toBe(false);
 		});
 
 		// value + one_of: compatible when value is member of one_of

@@ -17,7 +17,7 @@ export function checkMaxPathLength(
 
 function matchesDomainPattern(hostname: string, pattern: string): boolean {
 	if (pattern.startsWith(".")) {
-		return hostname.endsWith(pattern) || hostname === pattern.slice(1);
+		return hostname.endsWith(pattern);
 	}
 	return hostname === pattern;
 }
