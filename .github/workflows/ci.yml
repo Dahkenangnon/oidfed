@@ -65,6 +65,10 @@ jobs:
         with:
           node-version-file: .node-version
           cache: pnpm
+      - name: Install mkcert
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq mkcert libnss3-tools
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm setup:e2e

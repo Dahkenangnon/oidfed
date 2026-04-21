@@ -2,12 +2,16 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { JwkTable } from "@/components/shared/jwk-table";
 
-// Mock jose — factory must not reference top-level vars
-vi.mock("jose", () => ({
-	calculateJwkThumbprint: vi.fn().mockImplementation(async (jwk: { kid?: string }) => {
-		return `thumb_abcdefghij123456_${jwk.kid ?? "unknown"}`;
-	}),
-}));
+// Mock jwkThumbprint from @oidfed/core (component imports from there, not jose)
+vi.mock("@oidfed/core", async () => {
+	const actual = await vi.importActual("@oidfed/core");
+	return {
+		...actual,
+		jwkThumbprint: vi.fn().mockImplementation(async (jwk: { kid?: string }) => {
+			return `thumb_abcdefghij123456_${jwk.kid ?? "unknown"}`;
+		}),
+	};
+});
 
 // Mock CopyButton
 vi.mock("@/components/shared/copy-button", () => ({
