@@ -264,31 +264,6 @@ export function HomePage() {
 					))}
 				</div>
 			</section>
-
-			{/* Useful links */}
-			<section className="space-y-4">
-				<h2 className="text-2xl font-semibold tracking-tight">Links</h2>
-				<div className="flex flex-wrap gap-4">
-					<a
-						href="https://oidfed.com"
-						target="_blank"
-						rel="noopener noreferrer"
-						className="flex items-center gap-1 text-sm underline underline-offset-2 hover:text-foreground text-muted-foreground"
-					>
-						<ExternalLink className="size-3" />
-						oidfed.com — Project home
-					</a>
-					<a
-						href="https://github.com/Dahkenangnon/oidfed"
-						target="_blank"
-						rel="noopener noreferrer"
-						className="flex items-center gap-1 text-sm underline underline-offset-2 hover:text-foreground text-muted-foreground"
-					>
-						<ExternalLink className="size-3" />
-						GitHub: Dahkenangnon/oidfed — Monorepo
-					</a>
-				</div>
-			</section>
 		</div>
 	);
 }
