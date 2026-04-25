@@ -40,7 +40,6 @@
 	"scripts": {
 		"build": "tsup",
 		"typecheck": "tsc --noEmit",
-		"test": "vitest run --passWithNoTests",
 		"clean": "rm -rf dist"
 	},
 	"dependencies": {
