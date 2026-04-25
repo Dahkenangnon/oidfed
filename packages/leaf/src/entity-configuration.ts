@@ -1,5 +1,6 @@
 /** Leaf entity factory: Entity Configuration serving with caching and trust chain discovery. */
 import {
+	type Clock,
 	DEFAULT_ENTITY_STATEMENT_TTL_SECONDS,
 	type EntityId,
 	type FederationMetadata,
@@ -22,6 +23,10 @@ export interface LeafConfig {
 	trustMarks?: TrustMarkRef[];
 	entityConfigurationTtlSeconds?: number;
 	options?: FederationOptions;
+	/** Injectable clock for deterministic testing. */
+	clock?: Clock;
+	/** Injectable signing function for testing (e.g. call counting, forced failures). */
+	_signFn?: typeof signEntityStatement;
 }
 
 export interface LeafEntity {
@@ -100,7 +105,8 @@ export function createLeafEntity(config: LeafConfig): LeafEntity {
 	let inflight: Promise<string> | null = null;
 
 	async function buildEntityConfiguration(): Promise<string> {
-		const now = nowSeconds();
+		const sign = config._signFn ?? signEntityStatement;
+		const now = nowSeconds(config.clock);
 		const exp = now + ttlSeconds;
 
 		const payload: Record<string, unknown> = {
@@ -117,7 +123,7 @@ export function createLeafEntity(config: LeafConfig): LeafEntity {
 			payload.trust_marks = config.trustMarks;
 		}
 
-		const jwt = await signEntityStatement(payload, signingKey, {
+		const jwt = await sign(payload, signingKey, {
 			kid: signingKey.kid as string,
 			typ: JwtTyp.EntityStatement,
 		});
@@ -142,7 +148,7 @@ export function createLeafEntity(config: LeafConfig): LeafEntity {
 
 		isEntityConfigurationExpired(): boolean {
 			if (cachedExp === null) return true;
-			const now = nowSeconds();
+			const now = nowSeconds(config.clock);
 			return now >= cachedExp;
 		},
 

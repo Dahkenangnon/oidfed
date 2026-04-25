@@ -1,5 +1,5 @@
 import { CachePrefix } from "../constants.js";
-import type { CacheProvider, EntityId } from "../types.js";
+import type { CacheProvider, Clock, EntityId } from "../types.js";
 
 interface CacheEntry<T> {
 	value: T;
@@ -16,16 +16,18 @@ interface CacheEntry<T> {
 export class MemoryCache implements CacheProvider {
 	private readonly store = new Map<string, CacheEntry<unknown>>();
 	private readonly maxEntries: number;
+	private readonly clock: Clock;
 
-	constructor(options?: { maxEntries?: number }) {
+	constructor(options?: { maxEntries?: number; clock?: Clock }) {
 		this.maxEntries = options?.maxEntries ?? 1000;
+		this.clock = options?.clock ?? { now: () => Date.now() };
 	}
 
 	async get<T>(key: string): Promise<T | undefined> {
 		const entry = this.store.get(key);
 		if (!entry) return undefined;
 
-		if (Date.now() >= entry.expiresAt) {
+		if (this.clock.now() >= entry.expiresAt) {
 			this.store.delete(key);
 			return undefined;
 		}
@@ -47,7 +49,7 @@ export class MemoryCache implements CacheProvider {
 
 		this.store.set(key, {
 			value,
-			expiresAt: Date.now() + ttlSeconds * 1000,
+			expiresAt: this.clock.now() + ttlSeconds * 1000,
 		});
 	}
 
