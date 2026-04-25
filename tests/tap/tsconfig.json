@@ -1,0 +1,17 @@
+{
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		"types": ["node", "qunit"],
+		"exactOptionalPropertyTypes": false,
+		"paths": {
+			"@oidfed/core": ["../../packages/core/src/index.ts"],
+			"@oidfed/authority": ["../../packages/authority/src/index.ts"],
+			"@oidfed/leaf": ["../../packages/leaf/src/index.ts"],
+			"@oidfed/oidc": ["../../packages/oidc/src/index.ts"]
+		},
+		"rootDir": "../..",
+		"noEmit": true
+	},
+	"include": ["./**/*.ts"],
+	"exclude": [".build"]
+}

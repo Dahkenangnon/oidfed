@@ -11,7 +11,7 @@ export function createAuthorityApp(authority: AuthorityServer, entityId: string)
 	app.all("/*splat", async (req, res) => {
 		const url = new URL(req.originalUrl, entityId);
 		const hasBody = req.method !== "GET" && req.method !== "HEAD";
-		let body: BodyInit | undefined;
+		let body: Buffer | string | undefined;
 		if (hasBody) {
 			if (Buffer.isBuffer(req.body)) {
 				body = req.body;
