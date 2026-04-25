@@ -1775,10 +1775,7 @@ export default (QUnit: QUnit) => {
 			// All chain statements were signed with exp = iat + 86400. The resolver MUST
 			// not extend exp beyond the chain bound — assert exp does not exceed
 			// (statement-level iat + 86400) plus a tolerance for sub-second drift.
-			t.true(
-				exp <= iat + 86400 + 5,
-				`response exp ${exp} exceeds chain bound ${iat + 86400}`,
-			);
+			t.true(exp <= iat + 86400 + 5, `response exp ${exp} exceeds chain bound ${iat + 86400}`);
 		});
 
 		test("filters metadata by entity_type when matching", async (t) => {

@@ -32,10 +32,7 @@ export function HomePage() {
 				<div className="relative mx-auto max-w-3xl text-center fade-rise">
 					{/* Signal badge */}
 					<div className="inline-flex items-center gap-2.5 rounded-full bg-primary px-3.5 py-1.5 font-mono text-[10.5px] uppercase tracking-[0.2em] text-primary-foreground shadow-sm ring-1 ring-primary/20">
-						<span
-							className="relative inline-flex size-1.5 items-center justify-center"
-							aria-hidden
-						>
+						<span className="relative inline-flex size-1.5 items-center justify-center" aria-hidden>
 							<span className="absolute inline-flex size-full animate-ping rounded-full bg-primary-foreground opacity-70" />
 							<span className="relative inline-flex size-1.5 rounded-full bg-primary-foreground" />
 						</span>
