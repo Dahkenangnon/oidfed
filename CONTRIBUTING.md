@@ -4,7 +4,7 @@ Thank you for your interest in contributing to the OpenID Federation TypeScript 
 
 ## Prerequisites
 
-- Node.js >= 20
+- Node.js >= 22
 - pnpm >= 10
 
 ## Setup
@@ -59,40 +59,31 @@ Scope should be the package name without the `@oidfed/` prefix: `core`, `authori
 
 ## Code Style
 
-- Formatting and linting are handled by [Biome](https://biomejs.dev/)
-- Run `pnpm lint:fix` to auto-fix issues
-- TypeScript strict mode is enabled across all packages
-- Use explicit types; avoid `any`
-
-## Monorepo Structure
-
-```
-packages/             — npm-publishable spec libraries
-  @oidfed/core        — federation primitives
-  @oidfed/authority   — trust anchor / intermediate authority
-  @oidfed/leaf        — leaf entity
-  @oidfed/oidc        — OpenID Connect / OAuth 2.0 layer
-
-tools/                — npm-publishable tooling
-  @oidfed/cli         — command-line tool
-
-apps/                 — deployed sites (private, not published)
-  @oidfed/explorer    — federation topology explorer (explore.oidfed.com)
-  @oidfed/home        — project homepage (oidfed.com)
-  @oidfed/learn       — interactive course (learn.oidfed.com)
-
-internal/             — private shared packages (not published)
-  @oidfed/ui          — shared UI component library
-```
-
-Dependencies flow inward: `authority`, `leaf`, `oidc`, and `cli` depend on `core`. No cross-dependencies between sibling packages. Apps depend on `core` and `ui`.
+Formatting and linting are handled by [Biome](https://biomejs.dev/). Run `pnpm lint:fix` to auto-fix issues.
 
 ## Testing
 
-- Framework: Vitest
-- Write unit tests alongside implementation in each package
-- E2E tests live in `tests/e2e/` (requires `pnpm setup:e2e` first)
-- Aim for coverage parity with existing packages
+The test setup is split by purpose:
+
+| Scope | Framework | Location |
+|---|---|---|
+| Unit (`core`, `authority`, `leaf`, `oidc`) | QUnit via TAP | `tests/tap/` |
+| CLI (`tools/cli`) | Vitest | `tools/cli/test/` |
+| Explorer (`apps/explorer`) | Vitest | `apps/explorer/test/` |
+| E2E | Vitest | `tests/e2e/` (requires `pnpm setup:e2e` first) |
+
+The 4 spec packages are framework-agnostic and run identically on Node, Bun, Deno, workerd, Electron, and browsers — the TAP suite is the sole unit-test gate.
+
+Commands:
+
+```bash
+pnpm test                    # full cross-runtime: 6 TAP runtimes + cli + explorer
+pnpm quick:test              # fast local: Node TAP + cli + explorer
+pnpm test:tap                # all 6 TAP runtimes
+pnpm test:tap:bun            # one runtime (debug aid) — same for deno/workerd/electron/browser
+pnpm test:coverage           # c8 coverage with per-package thresholds
+pnpm test:e2e                # e2e suite (Node only)
+```
 
 ## Questions?
 

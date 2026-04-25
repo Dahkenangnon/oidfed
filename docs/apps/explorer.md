@@ -6,12 +6,6 @@ A visual tool for exploring live OpenID Federation deployments — inspect entit
 
 Client-side SPA that connects directly from the browser to any federation endpoint — no backend required.
 
-## Architecture
-
-- **Framework**: React 19 + React Router (hash router for static deploy)
-- **Build**: Vite → `dist/` (fully static, no SSR)
-- **Runtime dependency**: `@oidfed/core` only
-
 ## Running Locally
 
 ```bash

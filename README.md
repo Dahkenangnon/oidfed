@@ -1,5 +1,9 @@
 <div align="center">
 
+<a href="https://oidfed.com">
+	<img src="internal/assets/banner.png" alt="@oidfed — OpenID Federation 1.0 for JavaScript · runtime-agnostic · spec-compliant · built on Web APIs" width="100%" />
+</a>
+
 # @oidfed/* — OpenID Federation 1.0
 
 The complete [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) implementation for JavaScript — runtime-agnostic, spec-compliant, built on Web API standards. Trust chain resolution and validation, metadata policy enforcement, trust marks, constraint checking, and automatic and explicit client registration — split across four focused packages built on Web API primitives (`Request → Response`), running anywhere JavaScript runs: Node.js, Deno, Bun, and beyond. All persistent state is behind pluggable storage interfaces, keeping database and HSM integrations entirely outside the core packages. The only runtime dependencies are [`jose`](https://github.com/panva/jose) and [`zod`](https://github.com/colinhacks/zod). Two operational utilities — a CLI and a browser-based explorer — complete the toolchain.
@@ -40,27 +44,9 @@ The complete [OpenID Federation 1.0](https://openid.net/specs/openid-federation-
 | `@oidfed/leaf` | Leaf Entity toolkit — Entity Configuration serving, authority discovery, and trust chain participation for any entity at the edge of an OpenID Federation | Relying Party | [docs/packages/leaf.md](docs/packages/leaf.md) |
 | `@oidfed/oidc` | OpenID Connect and OAuth 2.0 federation flows — automatic and explicit client registration, Request Object validation, and RP/OP metadata processing as defined in OpenID Federation 1.0 | OP or RP | [docs/packages/oidc.md](docs/packages/oidc.md) |
 
-## Tools
-
-| Tool | Role | Install | Docs |
-|------|------|---------|------|
-| `@oidfed/cli` | Command-line interface for inspecting, validating, and debugging OpenID Federation deployments — resolve trust chains, decode entity statements, verify signatures, and more | `npm i -g @oidfed/cli` | [docs/tools/cli.md](docs/tools/cli.md) |
-
-## Apps
-
-| App | Role | Docs |
-|-----|------|------|
-| `@oidfed/explorer` | A visual tool for exploring live OpenID Federation deployments — inspect entity configurations, trace trust chains, browse metadata, and validate federation topology in real time | [docs/apps/explorer.md](docs/apps/explorer.md) · [live](https://explore.oidfed.com) |
-| `@oidfed/home` | The official home of @oidfed — the complete OpenID Federation 1.0 implementation for JavaScript, runtime-agnostic, spec-compliant, built on Web API standards | [docs/apps/home.md](docs/apps/home.md) · [live](https://oidfed.com) |
-| `@oidfed/learn` | An interactive course on OpenID Federation 1.0 — 15 lessons from first principles to federation topology design, with hands-on exercises and spec-accurate references | [docs/apps/learn.md](docs/apps/learn.md) · [live](https://learn.oidfed.com) |
-
-## Internal Packages
-
-| Package | Role | Docs |
-|---------|------|------|
-| `@oidfed/ui` | Shared UI component library (Coss UI + Base UI + Tailwind) | [docs/internal/ui.md](docs/internal/ui.md) |
-
 For integration examples, see the [Wiring Guide](docs/guide/wiring-guide.md). For production storage backends (PostgreSQL, MongoDB, Redis) and HSM key stores, see the [Storage Guide](docs/guide/storage-guide.md). To run a full multi-topology federation locally with wildcard DNS and TLS, see the [Dev Guide](docs/guide/dev.md) and [E2E Test infrastructure](docs/test/e2e.md).
+
+The repository also ships a CLI ([`@oidfed/cli`](docs/tools/cli.md)), a live federation explorer at [explore.oidfed.com](https://explore.oidfed.com), an interactive course at [learn.oidfed.com](https://learn.oidfed.com), and a few internal packages that support the workspace — browse the source or the [docs/](docs/) directory to learn more.
 
 ## Related Specifications
 

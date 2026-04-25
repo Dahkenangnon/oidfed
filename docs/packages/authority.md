@@ -232,7 +232,3 @@ Individual handlers are available for custom routing. Response helpers: `jwtResp
 | `trustMarkTtlSeconds` | `number` | — | Issued trust mark lifetime |
 | `options` | `FederationOptions` | — | Core federation options (HTTP, cache, etc.) |
 | `registrationConfig` | `object` | — | `generateClientSecret` hook for explicit registration |
-
-## Dependencies
-
-- `@oidfed/core` — federation primitives

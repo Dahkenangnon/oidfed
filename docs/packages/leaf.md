@@ -100,7 +100,3 @@ console.log(discovery.resolvedMetadata);
 console.log(discovery.trustChain);
 console.log(discovery.trustMarks);
 ```
-
-## Dependencies
-
-- `@oidfed/core` — federation primitives

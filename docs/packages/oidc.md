@@ -178,8 +178,3 @@ const assertion = await createClientAssertion(
   { expiresInSeconds: 60 },
 );
 ```
-
-## Dependencies
-
-- `@oidfed/core` — federation primitives
-- `zod` — schema validation

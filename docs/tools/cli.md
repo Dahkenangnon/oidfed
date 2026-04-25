@@ -119,11 +119,6 @@ oidfed health https://ta.example.org
 oidfed expiry https://rp.example.com --trust-anchor https://ta.example.org
 ```
 
-## Dependencies
-
-- `@oidfed/core` — federation primitives
-- `commander` — CLI framework
-- `yaml` — config parsing
-- `chalk` — terminal colors
+## Command pattern
 
 Each command exports `handler(args, deps) → Result<string>` and `register(program, deps)` — dependencies injected, commands independently testable.

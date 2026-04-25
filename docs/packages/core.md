@@ -226,8 +226,3 @@ import type { JtiStore, RegistrationProtocolAdapter } from "@oidfed/core";
 | `allowedHosts` | `string[]` | — | Host allowlist |
 | `authorityHintFilter` | `(hint, subject) => boolean` | — | Filter authority hints during resolution |
 | `understoodCriticalClaims` | `ReadonlySet<string>` | — | Critical claims this implementation understands |
-
-## Dependencies
-
-- `jose` — JWT/JWK operations
-- `zod` — schema validation
