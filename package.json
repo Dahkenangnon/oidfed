@@ -78,5 +78,11 @@
 		"typescript": "^5.8.0",
 		"undici": "^8.0.2",
 		"vitest": "^3.2.0"
+	},
+	"pnpm": {
+		"onlyBuiltDependencies": [
+			"electron",
+			"esbuild"
+		]
 	}
 }
