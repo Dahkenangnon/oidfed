@@ -1,0 +1,41 @@
+# Learn OpenID Federation
+
+> Interactive OpenID Federation 1.0 course — 15 lessons from first principles to federation topology design, with hands-on exercises and spec-accurate references.
+
+## About
+
+This is the canonical educational resource for @oidfed. It is not the @oidfed project home and it is not the @oidfed explorer.
+
+- @oidfed project home: https://oidfed.com
+- @oidfed federation explorer (tool): https://explore.oidfed.com
+- Source code: https://github.com/Dahkenangnon/oidfed
+
+## Lessons
+
+- [Lesson 1 — What is OpenID Federation?](https://learn.oidfed.com/lessons/what-is-federation): Why OpenID Federation exists, what problem it solves, and how it turns an N-squared bilateral trust problem into a scalable hierarchy.
+- [Lesson 2 — Entities & Roles](https://learn.oidfed.com/lessons/entities-and-roles): The players in an OpenID Federation hierarchy — Trust Anchors, Intermediate Authorities, and Leaf Entities (RPs, OPs, Resource Servers).
+- [Lesson 3 — Entity Statements](https://learn.oidfed.com/lessons/entity-statements): Signed JWT documents that establish trust — Entity Configurations (self-signed) and Subordinate Statements (superior-signed).
+- [Lesson 4 — Trust Chains](https://learn.oidfed.com/lessons/trust-chains): The linked sequence of signed statements from a Leaf Entity up to a Trust Anchor — the cryptographic proof of federation membership.
+- [Lesson 5 — Trust Chain Resolution](https://learn.oidfed.com/lessons/trust-chain-resolution): The bottom-up algorithm that automatically assembles and verifies a complete trust chain via `authority_hints` and `federation_fetch_endpoint`.
+- [Lesson 6 — Metadata & Policy](https://learn.oidfed.com/lessons/metadata-and-policy): How entities declare capabilities and how superior authorities enforce constraints through cascading metadata policies.
+- [Lesson 7 — Trust Marks](https://learn.oidfed.com/lessons/trust-marks): Certified badges that prove an entity meets specific compliance or security requirements — issuance, verification, and status checks.
+- [Lesson 8 — Federation Endpoints](https://learn.oidfed.com/lessons/federation-endpoints): The 9 HTTP APIs that federation entities expose for discovery, fetch, resolution, listing, trust-mark issuance and status, and historical keys.
+- [Lesson 9 — Client Registration](https://learn.oidfed.com/lessons/client-registration): Two paths to client registration: Automatic (on-the-fly via resolved metadata and a signed Request Object) and Explicit (pre-registered).
+- [Lesson 10 — Putting It All Together](https://learn.oidfed.com/lessons/putting-it-together): A complete real-world scenario — 14 steps from Trust Anchor setup through user authentication — using every OpenID Federation concept.
+- [Lesson 11 — Topology Design](https://learn.oidfed.com/lessons/topology-design): Choosing the right federation structure: single vs. multi-level hierarchies, hub-and-spoke vs. tree models, and governance considerations.
+- [Lesson 12 — FAQ](https://learn.oidfed.com/lessons/faq): Common questions from fundamentals to operations — entity multi-role, migrations, key rotation, revocation, and topology choice.
+- [Lesson 13 — Glossary](https://learn.oidfed.com/lessons/glossary): Every key OpenID Federation term defined, linked, and cross-referenced — from Authority Hints to Subordinate Statement.
+- [Lesson 14 — Real-World Use Cases](https://learn.oidfed.com/lessons/real-use-cases): How universities (eduGAIN), government (EU DIW, SPID), enterprise, and healthcare use federation to solve trust and identity at scale.
+- [Lesson 15 — Hands-On: Build Federation Objects](https://learn.oidfed.com/lessons/hands-on-objects): Interactive exercises — construct Entity Configurations, Subordinate Statements, trust chains, and metadata policies by hand.
+
+## Related
+
+- [OpenID Federation 1.0 specification](https://openid.net/specs/openid-federation-1_0.html) — the authoritative protocol definition this course teaches.
+- [OpenID Federation 1.1 (draft)](https://openid.net/specs/openid-federation-1_1.html) — protocol-independent successor layer.
+- [OpenID Federation for OpenID Connect 1.1 (draft)](https://openid.net/specs/openid-federation-connect-1_1.html) — protocol-specific successor layer.
+
+## Project Metadata
+
+- Author: Justin Dah-kenangnon (https://github.com/Dahkenangnon)
+- License: MIT
+- Machine-readable project overview: https://oidfed.com/llms.txt

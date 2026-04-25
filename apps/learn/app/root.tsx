@@ -11,7 +11,10 @@ import type { Route } from "./+types/root";
 import "./app.css";
 
 export const links: Route.LinksFunction = () => [
-	{ rel: "author", href: "https://dahkenangnon.com" },
+	{ rel: "author", href: "https://github.com/Dahkenangnon" },
+	{ rel: "icon", href: "/favicon.svg", type: "image/svg+xml" },
+	{ rel: "apple-touch-icon", href: "/favicon.svg" },
+	{ rel: "manifest", href: "/site.webmanifest" },
 ];
 
 export function Layout({ children }: { children: React.ReactNode }) {
@@ -20,6 +23,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 			<head>
 				<meta charSet="utf-8" />
 				<meta name="viewport" content="width=device-width, initial-scale=1" />
+				<meta name="theme-color" content="#007acc" />
 				<Meta />
 				<Links />
 			</head>

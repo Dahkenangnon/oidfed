@@ -1,30 +1,16 @@
 import { Badge } from "@oidfed/ui";
 import { AnalogyBox } from "~/components/analogy-box";
-import { Ref, SourcesSection } from "~/components/footnote";
+import { Callout } from "~/components/callout";
 import { LessonPage } from "~/components/lesson-page";
+import { SpecRef } from "~/components/spec-ref";
 import { StepThrough } from "~/components/step-through";
 import { getLesson } from "~/data/lessons";
 
-export const handle = { lastUpdated: "2026-04-20" };
+import { lessonMetaForSlug } from "~/lib/seo";
+export const handle = { lastUpdated: "2026-04-25" };
 
 export function meta() {
-	return [
-		{ title: "Trust Chains — Learn OpenID Federation" },
-		{
-			name: "description",
-			content:
-				"How linked, signed Entity Statements form an unbreakable chain of trust from leaf to anchor.",
-		},
-		{ name: "author", content: "Justin Dah-kenangnon" },
-		{ property: "og:title", content: "Trust Chains" },
-		{
-			property: "og:description",
-			content: "Build a trust chain step by step and understand cryptographic verification.",
-		},
-		{ property: "og:type", content: "article" },
-		{ property: "article:author", content: "https://dahkenangnon.com" },
-		{ property: "article:section", content: "Core Mechanics" },
-	];
+	return lessonMetaForSlug("trust-chains");
 }
 
 function ChainLink({
@@ -334,23 +320,46 @@ const verificationSteps = [
 
 export default function Lesson04() {
 	return (
-		<LessonPage lesson={getLesson(4)}>
-			<h2>Build a Trust Chain — Step by Step</h2>
+		<LessonPage
+			lesson={getLesson(4)}
+			minutes={8}
+			lastReviewed={handle.lastUpdated}
+			furtherReading={{
+				specSections: [
+					{ sec: "4", title: "Trust Chain" },
+					{ sec: "4.1", title: "Beginning and Ending Trust Chains" },
+					{ sec: "4.2", title: "Trust Chain Example" },
+					{ sec: "10.2", title: "Validating a Trust Chain" },
+					{ sec: "3.2", title: "Entity Statement Validation" },
+				],
+				rfcs: [{ num: 7515, title: "JSON Web Signature (JWS)" }],
+			}}
+		>
+			<h2 id="build-a-trust-chain">Build a Trust Chain — Step by Step</h2>
 			<p>
 				A Trust Chain is an ordered sequence of Entity Statements, starting with the subject's
-				Entity Configuration and ending at a Trust Anchor's Entity Configuration.
-				<Ref id="1" /> Each intermediate link is a Subordinate Statement that cryptographically
-				vouches for the entity below it.
+				Entity Configuration and ending at a Trust Anchor's Entity Configuration (
+				<SpecRef sec="4.1" title="Beginning and Ending Trust Chains" />
+				). Each intermediate link is a Subordinate Statement that cryptographically vouches for the
+				entity below it.
 			</p>
 			<StepThrough steps={buildSteps} />
 
-			<h2>How Verification Works</h2>
+			<h2 id="how-verification-works">How Verification Works</h2>
 			<p>
 				Verification proceeds <strong>top-down</strong> — start from the Trust Anchor whose key you
-				already trust, and work your way down to the leaf.
-				<Ref id="2" />
+				already trust, and work your way down to the leaf (
+				<SpecRef sec="10.2" title="Validating a Trust Chain" />
+				).
 			</p>
 			<StepThrough steps={verificationSteps} />
+
+			<Callout variant="security" sec="3.2" secTitle="Entity Statement Validation">
+				Every Entity Statement MUST use the <code>typ</code> JWS header parameter with the value{" "}
+				<code>entity-statement+jwt</code>. Statements with a missing or unrecognized <code>typ</code>{" "}
+				MUST be rejected — this prevents cross-JWT confusion attacks per{" "}
+				<SpecRef sec="3.2" /> and RFC&nbsp;8725 §3.11.
+			</Callout>
 
 			<AnalogyBox>
 				Imagine applying for a job abroad. Your resume (Entity Config) is backed by your professor's
@@ -359,21 +368,6 @@ export default function Lesson04() {
 				identity document (TA Config). Each letter is signed by a different person, and the employer
 				verifies them in order from the top.
 			</AnalogyBox>
-
-			<SourcesSection
-				sources={[
-					{
-						id: "1",
-						text: "OpenID Federation 1.0, Section 4 — Trust Chain",
-						url: "https://openid.net/specs/openid-federation-1_0.html#section-4",
-					},
-					{
-						id: "2",
-						text: "OpenID Federation 1.0, Section 10.2 — Validating a Trust Chain",
-						url: "https://openid.net/specs/openid-federation-1_0.html#section-10.2",
-					},
-				]}
-			/>
 		</LessonPage>
 	);
 }

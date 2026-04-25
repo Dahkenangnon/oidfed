@@ -1,7 +1,4 @@
 import {
-	Alert,
-	AlertDescription,
-	AlertTitle,
 	Badge,
 	Card,
 	CardDescription,
@@ -13,31 +10,16 @@ import {
 	TabsPanel,
 	TabsTab,
 } from "@oidfed/ui";
-import { Info } from "lucide-react";
-import { SourcesSection } from "~/components/footnote";
+import { Callout } from "~/components/callout";
+import { CodeBlock } from "~/components/code-block";
 import { LessonPage } from "~/components/lesson-page";
 import { getLesson } from "~/data/lessons";
 
-export const handle = { lastUpdated: "2026-04-20" };
+import { lessonMetaForSlug } from "~/lib/seo";
+export const handle = { lastUpdated: "2026-04-25" };
 
 export function meta() {
-	return [
-		{ title: "Real-World Use Cases — Learn OpenID Federation" },
-		{
-			name: "description",
-			content:
-				"How diverse industries use OpenID Federation to solve real trust problems — healthcare, banking, government, research, IoT, telecom, AI agents, and digital wallets.",
-		},
-		{ name: "author", content: "Justin Dah-kenangnon" },
-		{ property: "og:title", content: "Real-World Use Cases" },
-		{
-			property: "og:description",
-			content: "Eight industry scenarios showing federation in action.",
-		},
-		{ property: "og:type", content: "article" },
-		{ property: "article:author", content: "https://dahkenangnon.com" },
-		{ property: "article:section", content: "Going Deeper" },
-	];
+	return lessonMetaForSlug("real-use-cases");
 }
 
 const useCases = [
@@ -157,7 +139,54 @@ const useCases = [
 
 export default function Lesson14() {
 	return (
-		<LessonPage lesson={getLesson(14)}>
+		<LessonPage
+			lesson={getLesson(14)}
+			minutes={16}
+			lastReviewed={handle.lastUpdated}
+			furtherReading={{
+				specSections: [
+					{ sec: "5", title: "Metadata" },
+					{ sec: "17", title: "Implementation Considerations" },
+				],
+				external: [
+					{
+						title: "A Trusted Foundation for the EUDI Wallet in Research and Education",
+						source: "Paul den Hertog, Niels van Dijk, Klaas Wierenga · GÉANT CONNECT",
+						date: "Jul 2025",
+						href: "https://connect.geant.org/2025/07/24/a-trusted-foundation-for-the-eudi-wallet-in-research-and-education-why-edugain-and-openid-federation-matter",
+					},
+					{
+						title: "DC4EU final report — Pluralistic trust model for the EUDI Wallet",
+						source: "GÉANT CONNECT",
+						date: "Feb 2026",
+						href: "https://connect.geant.org/2026/02/03/dc4eu-final-report-proposes-pluralistic-trust-model-to-realise-eudi-wallet-vision",
+					},
+					{
+						title: "Selecting OpenID Federation for the DCC & Credential Engine Issuer Registry",
+						source: "R.X. Schwartz · Digital Credentials Consortium",
+						date: "Jan 2025",
+						href: "https://blog.dcconsortium.org/selecting-the-openid-federation-specification-for-the-dcc-and-credential-engine-issuer-registry-f9079f620472",
+					},
+					{
+						title: "The Journey to OpenID Federation 1.0 is Complete",
+						source: "Mike Jones · self-issued.info",
+						date: "Feb 2026",
+						href: "https://self-issued.info/?p=2813",
+					},
+					{
+						title: "Nine countries prove OpenID Federation interoperability",
+						source: "OpenID Foundation",
+						date: "Feb 2026",
+						href: "https://openid.net/nine-countries-prove-openid-federation-interoperability/",
+					},
+					{
+						title: "OpenID Federation Wallet Architectures 1.0 (draft)",
+						source: "OpenID Foundation",
+						href: "https://openid.net/specs/openid-federation-wallet-1_0.html",
+					},
+				],
+			}}
+		>
 			<p>
 				Federation isn't just for login — it's not even just for OpenID Connect. Diverse industries
 				use OpenID Federation's protocol-independent trust framework to solve real problems, from
@@ -168,18 +197,23 @@ export default function Lesson14() {
 				<CardPanel className="space-y-3">
 					<h3 className="text-base font-semibold">Beyond OpenID Connect</h3>
 					<p className="text-sm text-muted-foreground">
-						The specification was originally called "OpenID Connect Federation 1.0" but was renamed
-						to "OpenID Federation 1.0" once its authors realized the trust framework is
-						protocol-independent. As Michael B. Jones explained:
+						The specification was originally drafted as <em>OpenID Connect Federation 1.0</em>{" "}
+						and renamed to <em>OpenID Federation 1.0</em> once it was clear the underlying trust
+						framework — Entity Statements, Trust Chains, Trust Marks, Metadata Policies — is
+						independent of OpenID Connect and applies to any protocol. Michael&nbsp;B.&nbsp;Jones,
+						a spec co-author, recounts the project's arc in his retrospective{" "}
+						<a
+							href="https://self-issued.info/?p=2813"
+							target="_blank"
+							rel="noopener noreferrer"
+							className="underline underline-offset-2 hover:text-foreground"
+						>
+							"The Journey to OpenID Federation 1.0 is Complete"
+						</a>
+						.
 					</p>
-					<blockquote className="border-l-4 border-brand-300 dark:border-brand-700 pl-4 text-sm italic text-muted-foreground">
-						"We renamed it because we realized that while we'd built it for OpenID Connect, the
-						federation mechanisms — Entity Statements, Trust Chains, Trust Marks, Metadata Policies
-						— are all protocol-independent. They can establish trust for any kind of entity on the
-						internet."
-					</blockquote>
 					<p className="text-sm text-muted-foreground">
-						This insight led to the upcoming 1.1 split into two specifications:{" "}
+						This insight motivates the planned 1.1 split into two drafts:{" "}
 						<strong>OpenID Federation 1.1</strong> (the protocol-independent trust layer) and{" "}
 						<strong>OpenID Federation for OpenID Connect 1.1</strong> (OIDC/OAuth-specific
 						bindings). Federation can be applied anywhere trust establishment via hierarchy is
@@ -188,16 +222,14 @@ export default function Lesson14() {
 				</CardPanel>
 			</Card>
 
-			<Alert variant="info" className="my-6">
-				<Info />
-				<AlertTitle>These examples are illustrative</AlertTitle>
-				<AlertDescription>
-					The use cases below are illustrative abstractions showing how OpenID Federation's
-					mechanisms could be applied in various industries. The metadata fields, policy operators,
-					and trust mark names shown are not defined by the official specification — they
-					demonstrate how the spec's extensible framework works in practice.
-				</AlertDescription>
-			</Alert>
+			<Callout variant="note" title="These examples are illustrative">
+				The use cases below are <strong>illustrative abstractions</strong> showing how OpenID
+				Federation's mechanisms could be applied in various industries. The metadata fields, policy
+				operators, and trust-mark names shown are <strong>not defined by the official
+				specification</strong> — they demonstrate how the spec's extensible framework can be
+				profiled to a sector. Do not assume any of the field names are wire-compatible across
+				deployments without checking the relevant sector profile.
+			</Callout>
 
 			<Tabs defaultValue="healthcare">
 				<TabsList className="flex-wrap">
@@ -232,10 +264,10 @@ export default function Lesson14() {
 									</div>
 								</div>
 								<div>
-									<h4 className="text-sm font-semibold mb-1">Policy Example</h4>
-									<pre className="rounded bg-muted p-3 text-xs overflow-x-auto">
+									<h4 className="text-sm font-semibold mb-1">Illustrative Policy Example</h4>
+									<CodeBlock lang="json" filename={`${uc.id}-policy.json (illustrative)`}>
 										{uc.policyExample}
-									</pre>
+									</CodeBlock>
 								</div>
 								<div className="rounded bg-brand-50 dark:bg-brand-950/20 p-3 text-sm">
 									<strong>Key Takeaway:</strong> {uc.takeaway}
@@ -246,45 +278,6 @@ export default function Lesson14() {
 				))}
 			</Tabs>
 
-			<SourcesSection
-				sources={[
-					{
-						id: "1",
-						text: "OpenID Federation 1.0 — Full Specification",
-						url: "https://openid.net/specs/openid-federation-1_0.html",
-					},
-					{
-						id: "2",
-						text: "eIDAS Regulation (EU) — Electronic Identification",
-						url: "https://digital-strategy.ec.europa.eu/en/policies/eidas-regulation",
-					},
-					{
-						id: "3",
-						text: "PSD2 Directive — Payment Services",
-						url: "https://ec.europa.eu/info/law/payment-services-psd-2-directive-eu-2015-2366_en",
-					},
-					{
-						id: "4",
-						text: "Michael B. Jones — Renaming OpenID Connect Federation",
-						url: "https://self-issued.info/?p=2813",
-					},
-					{
-						id: "5",
-						text: "OpenID Federation 1.1 (Draft)",
-						url: "https://openid.net/specs/openid-federation-1_1.html",
-					},
-					{
-						id: "6",
-						text: "OpenID Federation for OpenID Connect 1.1 (Draft)",
-						url: "https://openid.net/specs/openid-federation-connect-1_1.html",
-					},
-					{
-						id: "7",
-						text: "OpenID Federation Wallet Architectures 1.0",
-						url: "https://openid.net/specs/openid-federation-wallet-1_0.html",
-					},
-				]}
-			/>
 		</LessonPage>
 	);
 }

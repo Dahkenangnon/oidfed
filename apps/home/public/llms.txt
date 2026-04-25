@@ -1,0 +1,58 @@
+# @oidfed
+
+> The complete OpenID Federation 1.0 implementation for JavaScript — runtime-agnostic, spec-compliant, built on Web API standards. Trust chain resolution and validation, metadata policy enforcement, trust marks, constraint checking, and automatic + explicit client registration, split across four focused packages. Runs on Node.js, Deno, Bun, workerd, Electron, and browsers with identical behaviour. Only runtime dependencies are `jose` and `zod`.
+
+@oidfed is a protocol-complete, production-oriented implementation of the [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) specification. It is framework-agnostic and transport-agnostic: all endpoints are exposed as standard `(Request) => Promise<Response>` handlers you wire into any HTTP framework (Express, Hono, Fastify, Cloudflare Workers, Deno Deploy, etc.). All persistent state is behind pluggable storage interfaces — database and HSM integrations live entirely outside the core packages.
+
+## Packages
+
+- [@oidfed/core](https://github.com/Dahkenangnon/oidfed/blob/main/packages/core/README.md): Federation primitives — entity statements, trust chain resolution and validation, metadata policy, JOSE operations, typed schemas, caching, and trust marks. Foundation for every other package.
+- [@oidfed/authority](https://github.com/Dahkenangnon/oidfed/blob/main/packages/authority/README.md): Trust Anchor and Intermediate Authority operations — subordinate management, statement issuance, spec-defined federation endpoint handlers (fetch, list, resolve, registration, trust-mark-status, historical-keys), and policy enforcement.
+- [@oidfed/leaf](https://github.com/Dahkenangnon/oidfed/blob/main/packages/leaf/README.md): Leaf Entity toolkit — Entity Configuration serving, authority discovery, and trust chain participation for any entity at the edge of a federation (typically RPs or OPs that don't issue subordinate statements).
+- [@oidfed/oidc](https://github.com/Dahkenangnon/oidfed/blob/main/packages/oidc/README.md): OpenID Connect and OAuth 2.0 federation flows — automatic and explicit client registration, Request Object validation, and typed RP/OP metadata processing as defined in OpenID Federation 1.0 §12.
+
+## Tools
+
+- [@oidfed/cli](https://github.com/Dahkenangnon/oidfed/blob/main/docs/tools/cli.md): Command-line interface for inspecting, validating, and debugging OpenID Federation deployments — resolve trust chains, decode entity statements, verify signatures, check trust mark status, keygen, sign, health checks, expiry monitoring. 14 commands. Install with `npm i -g @oidfed/cli`.
+
+## Apps
+
+- [@oidfed/home](https://oidfed.com): The authoritative @oidfed site — project intent, ecosystem, about. Machine-readable overview: <https://oidfed.com/llms.txt>.
+- [@oidfed/explorer](https://explore.oidfed.com): Visual federation-exploration tool — inspect entity configurations, trace trust chains, browse metadata, validate topology. Browser-based, no backend. Machine-readable overview: <https://explore.oidfed.com/llms.txt>.
+- [@oidfed/learn](https://learn.oidfed.com): Interactive OpenID Federation 1.0 course — 15 lessons from first principles to federation topology design. Machine-readable overview: <https://learn.oidfed.com/llms.txt>.
+
+## Documentation
+
+- [Wiring Guide](https://github.com/Dahkenangnon/oidfed/blob/main/docs/guide/wiring-guide.md): End-to-end integration with Express.js and `panva/node-oidc-provider`. Worked eduGAIN-topology example covering Trust Anchor, Intermediate, OP, and RP.
+- [Storage Guide](https://github.com/Dahkenangnon/oidfed/blob/main/docs/guide/storage-guide.md): Production backends for `SubordinateStore`, `KeyStore`, `TrustMarkStore`, `JtiStore`, `CacheProvider`. Contract semantics, minimal PostgreSQL / MongoDB / Redis schema hints, HSM integration pattern.
+- [Dev Guide](https://github.com/Dahkenangnon/oidfed/blob/main/docs/guide/dev.md): Running the full multi-topology federation locally with wildcard DNS and TLS.
+- [E2E Test Infrastructure](https://github.com/Dahkenangnon/oidfed/blob/main/docs/test/e2e.md): Integration harness — real HTTPS over undici + Express + `oidc-provider`.
+- [Testing Guide](https://github.com/Dahkenangnon/oidfed/blob/main/docs/test/testing.md): Test framework split — QUnit-via-TAP across six runtimes for spec packages, vitest for cli/explorer/e2e.
+- [ADR-001](https://github.com/Dahkenangnon/oidfed/blob/main/docs/adr/ADR-001-tap-as-canonical-test-framework.md): Canonical test framework decision.
+- [CONTRIBUTING](https://github.com/Dahkenangnon/oidfed/blob/main/CONTRIBUTING.md): Setup, commit conventions, PR process.
+- [SECURITY](https://github.com/Dahkenangnon/oidfed/blob/main/SECURITY.md): Vulnerability disclosure policy.
+
+## Related Specifications
+
+- [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) — this library's target spec.
+- [OpenID Federation 1.1](https://openid.net/specs/openid-federation-1_1.html) *(draft)* — protocol-independent successor layer (Entity Statements, Trust Chains, Metadata, Policies, Trust Marks, Federation Endpoints).
+- [OpenID Federation for OpenID Connect 1.1](https://openid.net/specs/openid-federation-connect-1_1.html) *(draft)* — protocol-specific layer (OAuth 2.0 / OIDC entity types, client registration).
+- [OpenID Federation Wallet Architectures 1.0](https://openid.net/specs/openid-federation-wallet-1_0.html) *(draft)* — trust establishment for Wallet ecosystems.
+- [OpenID Federation Extended Listing 1.0](https://openid.net/specs/openid-federation-extended-listing-1_0.html) *(draft)* — Subordinate Listings Specification for large-scale federations.
+
+## Federation Operator Notes
+
+Running a federation involves responsibilities beyond what this library enforces. Operators must read and address OpenID Federation 1.0 §17 (Implementation Considerations — multi-path ambiguity, Trust Mark policy design, resolver/TA co-location), §18 (Security Considerations — DoS prevention, `authority_hints` depth limits, Trust Mark filtering, reverse-proxy end-to-end signing), and §19 (Privacy Considerations — minimising personal data, short-lived Trust Mark Status tokens). This library provides the protocol mechanisms; policy, rate limiting, key management, HSM integration, and operational hardening are the operator's responsibility.
+
+## Security
+
+Report vulnerabilities to <dah.kenangnon@gmail.com> — see [SECURITY.md](https://github.com/Dahkenangnon/oidfed/blob/main/SECURITY.md) for the full disclosure policy. Do not open public GitHub issues for security reports.
+
+## Project Metadata
+
+- **Repository:** <https://github.com/Dahkenangnon/oidfed>
+- **npm organization:** <https://www.npmjs.com/org/oidfed>
+- **Author:** Justin Dah-kenangnon (<https://github.com/Dahkenangnon>)
+- **License:** MIT
+- **Status:** `v0.1.0` pre-release — API may change before the first stable `1.0` release.
+- **Runtime dependencies:** [`jose`](https://github.com/panva/jose), [`zod`](https://github.com/colinhacks/zod).

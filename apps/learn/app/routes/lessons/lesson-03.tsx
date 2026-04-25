@@ -11,31 +11,17 @@ import {
 } from "@oidfed/ui";
 import { useState } from "react";
 import { AnalogyBox } from "~/components/analogy-box";
-import { Ref, SourcesSection } from "~/components/footnote";
+import { Callout } from "~/components/callout";
 import { JsonExplorer } from "~/components/json-explorer";
 import { LessonPage } from "~/components/lesson-page";
+import { SpecRef } from "~/components/spec-ref";
 import { getLesson } from "~/data/lessons";
 
-export const handle = { lastUpdated: "2026-04-20" };
+import { lessonMetaForSlug } from "~/lib/seo";
+export const handle = { lastUpdated: "2026-04-25" };
 
 export function meta() {
-	return [
-		{ title: "Entity Statements — Learn OpenID Federation" },
-		{
-			name: "description",
-			content:
-				"Crack open a JWT and see what's inside an Entity Configuration and Subordinate Statement.",
-		},
-		{ name: "author", content: "Justin Dah-kenangnon" },
-		{ property: "og:title", content: "Entity Statements" },
-		{
-			property: "og:description",
-			content: "The signed documents that carry trust in OpenID Federation.",
-		},
-		{ property: "og:type", content: "article" },
-		{ property: "article:author", content: "https://dahkenangnon.com" },
-		{ property: "article:section", content: "Foundation" },
-	];
+	return lessonMetaForSlug("entity-statements");
 }
 
 const entityConfigPayload = {
@@ -214,11 +200,33 @@ export default function Lesson03() {
 	const [selectedClaim, setSelectedClaim] = useState<number | null>(null);
 
 	return (
-		<LessonPage lesson={getLesson(3)}>
-			<h2>What's a JWT? (30-second version)</h2>
+		<LessonPage
+			lesson={getLesson(3)}
+			minutes={10}
+			lastReviewed={handle.lastUpdated}
+			furtherReading={{
+				specSections: [
+					{ sec: "3", title: "Entity Statement" },
+					{ sec: "3.1.1", title: "Claims in both ECs and Subordinate Statements" },
+					{ sec: "3.1.2", title: "Claims in Entity Configurations only" },
+					{ sec: "3.1.3", title: "Claims in Subordinate Statements only" },
+					{ sec: "3.2", title: "Entity Statement Validation" },
+					{ sec: "16", title: "String Operations" },
+				],
+				rfcs: [
+					{ num: 7515, title: "JSON Web Signature (JWS)" },
+					{ num: 7517, title: "JSON Web Key (JWK)" },
+					{ num: 7519, title: "JSON Web Token (JWT)" },
+					{ num: 7638, title: "JWK Thumbprint (recommended for kid)" },
+				],
+			}}
+		>
+			<h2 id="whats-a-jwt">What's a JWT? (30-second version)</h2>
 			<p>
-				An Entity Statement is a JSON Web Token (JWT)
-				<Ref id="1" /> — a compact, signed JSON document with three parts separated by dots:
+				An Entity Statement is a JSON Web Token — a compact, signed JSON document with three parts
+				separated by dots. JWTs are defined by <SpecRef sec="3" title="Entity Statement" /> and
+				grounded in the JOSE RFCs (JWS for signing, JWK for key representation, JWT for token
+				structure):
 			</p>
 			<div className="my-4 rounded-lg bg-muted p-4 font-mono text-sm break-all">
 				<span className="text-red-500">
@@ -235,7 +243,7 @@ export default function Lesson03() {
 				<span className="text-emerald-500 font-semibold">Signature</span> (cryptographic proof)
 			</p>
 
-			<h2>Two Types of Entity Statements</h2>
+			<h2 id="two-types">Two Types of Entity Statements</h2>
 			<Tabs defaultValue="ec">
 				<TabsList>
 					<TabsTab value="ec">Entity Configuration (Self-Signed)</TabsTab>
@@ -246,9 +254,11 @@ export default function Lesson03() {
 						<CardHeader>
 							<CardTitle className="text-base">Entity Configuration</CardTitle>
 							<p className="text-sm text-muted-foreground">
-								Published at <code>.well-known/openid-federation</code>
-								<Ref id="2" />. <code>iss</code> equals <code>sub</code> — the entity describes
-								itself. Signed with the entity's own private key.
+								Published at <code>.well-known/openid-federation</code> (
+								<SpecRef sec="9" title="Obtaining Federation Entity Configuration Information" />
+								). <code>iss</code> equals <code>sub</code> — the entity describes itself. Signed
+								with the entity's own private key. Claim schema:{" "}
+								<SpecRef sec="3.1.2" title="Claims in ECs only" />.
 							</p>
 						</CardHeader>
 						<CardPanel>
@@ -261,10 +271,11 @@ export default function Lesson03() {
 						<CardHeader>
 							<CardTitle className="text-base">Subordinate Statement</CardTitle>
 							<p className="text-sm text-muted-foreground">
-								Fetched from the superior's Fetch endpoint
-								<Ref id="3" />. <code>iss</code> is the superior, <code>sub</code> is the
-								subordinate. May override metadata and add policies. Signed with the superior's
-								private key.
+								Fetched from the superior's Fetch endpoint (
+								<SpecRef sec="8.1" title="Fetch Endpoint" />
+								). <code>iss</code> is the superior, <code>sub</code> is the subordinate. May
+								override metadata and add policies. Signed with the superior's private key. Claim
+								schema: <SpecRef sec="3.1.3" title="Claims in Subordinate Statements only" />.
 							</p>
 						</CardHeader>
 						<CardPanel>
@@ -274,9 +285,23 @@ export default function Lesson03() {
 				</TabsPanel>
 			</Tabs>
 
-			<h2>Explore Every Claim</h2>
+			<Callout variant="note">
+				The JSON payloads above are <strong>illustrative</strong> — key material is truncated and
+				URLs are fictitious (<code>login.uni.edu</code>, <code>uni.edu</code>,{" "}
+				<code>edufed.gov</code>). All claim names and field shapes match the spec.
+			</Callout>
+
+			<Callout variant="security" sec="16" secTitle="String Operations">
+				Entity Identifier comparisons MUST NOT apply Unicode Normalization (NFC / NFD). Compare
+				strings by direct code-point equality after JSON unescaping only. This prevents
+				canonicalization attacks where visually identical IDs are treated as distinct entities.
+			</Callout>
+
+			<h2 id="every-claim">Explore Every Claim</h2>
 			<p className="text-sm text-muted-foreground mb-4">
-				Click any claim to see its full definition from Section 3.1.1–3.1.3 of the spec.
+				Click any claim to see its full definition from{" "}
+				<SpecRef sec="3.1.1" title="Claims in both ECs and Subordinate Statements" /> through{" "}
+				<SpecRef sec="3.1.3" title="Subordinate Statement-only claims" /> of the spec.
 			</p>
 			<div className="flex flex-wrap gap-2 mb-4">
 				{claims.map((c, i) => (
@@ -322,26 +347,6 @@ export default function Lesson03() {
 				sign it yourself. <strong>Subordinate Statement</strong> = a notary's certification —
 				someone higher up vouches for you, signed with the notary's own signature.
 			</AnalogyBox>
-
-			<SourcesSection
-				sources={[
-					{
-						id: "1",
-						text: "RFC 7519 — JSON Web Token (JWT)",
-						url: "https://www.rfc-editor.org/rfc/rfc7519",
-					},
-					{
-						id: "2",
-						text: "OpenID Federation 1.0, Section 3.1.1 — Claims that MUST or MAY Appear in both Entity Configurations and Subordinate Statements",
-						url: "https://openid.net/specs/openid-federation-1_0.html#section-3.1.1",
-					},
-					{
-						id: "3",
-						text: "OpenID Federation 1.0, Section 3.1.3 — Claims that MUST or MAY Appear in Subordinate Statements but Not in Entity Configurations",
-						url: "https://openid.net/specs/openid-federation-1_0.html#section-3.1.3",
-					},
-				]}
-			/>
 		</LessonPage>
 	);
 }

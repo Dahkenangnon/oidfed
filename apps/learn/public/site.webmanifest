@@ -1,0 +1,17 @@
+{
+	"name": "Learn OpenID Federation — Interactive Course",
+	"short_name": "Learn OidFed",
+	"description": "Interactive OpenID Federation 1.0 course — 15 lessons from first principles to federation topology design.",
+	"start_url": "/",
+	"display": "standalone",
+	"background_color": "#0b1220",
+	"theme_color": "#007acc",
+	"icons": [
+		{
+			"src": "/favicon.svg",
+			"sizes": "any",
+			"type": "image/svg+xml",
+			"purpose": "any maskable"
+		}
+	]
+}

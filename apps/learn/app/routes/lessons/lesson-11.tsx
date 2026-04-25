@@ -2,31 +2,16 @@ import { Alert, AlertDescription, AlertTitle, Card, CardPanel, CardTitle } from 
 import { AlertTriangle } from "lucide-react";
 import { useState } from "react";
 import { AnalogyBox } from "~/components/analogy-box";
-import { Ref, SourcesSection } from "~/components/footnote";
 import { LessonPage } from "~/components/lesson-page";
+import { SpecRef } from "~/components/spec-ref";
 import { StepThrough } from "~/components/step-through";
 import { getLesson } from "~/data/lessons";
 
-export const handle = { lastUpdated: "2026-04-20" };
+import { lessonMetaForSlug } from "~/lib/seo";
+export const handle = { lastUpdated: "2026-04-25" };
 
 export function meta() {
-	return [
-		{ title: "Federation Topology Design — Learn OpenID Federation" },
-		{
-			name: "description",
-			content:
-				"How to design and construct a federation — choosing the right shape, placing trust anchors, and avoiding common pitfalls.",
-		},
-		{ name: "author", content: "Justin Dah-kenangnon" },
-		{ property: "og:title", content: "Federation Topology Design" },
-		{
-			property: "og:description",
-			content: "Compare topology patterns and learn the 7-step design process.",
-		},
-		{ property: "og:type", content: "article" },
-		{ property: "article:author", content: "https://dahkenangnon.com" },
-		{ property: "article:section", content: "Going Deeper" },
-	];
+	return lessonMetaForSlug("topology-design");
 }
 
 const topologies = [
@@ -306,7 +291,32 @@ export default function Lesson11() {
 	const [selected, setSelected] = useState(0);
 
 	return (
-		<LessonPage lesson={getLesson(11)}>
+		<LessonPage
+			lesson={getLesson(11)}
+			minutes={14}
+			lastReviewed={handle.lastUpdated}
+			furtherReading={{
+				specSections: [
+					{ sec: "4", title: "Trust Chain" },
+					{ sec: "6", title: "Federation Policy" },
+					{ sec: "6.2", title: "Constraints" },
+					{ sec: "6.2.1", title: "Max Path Length" },
+					{ sec: "6.2.2", title: "Naming Constraints" },
+					{ sec: "10", title: "Resolving the Trust Chain and Metadata" },
+					{ sec: "17.1", title: "Federation Topologies" },
+					{ sec: "17.2", title: "Federation Discovery and Trust Chain Resolution Patterns" },
+					{ sec: "17.3", title: "Trust Anchors and Resolvers Go Together" },
+				],
+				external: [
+					{
+						title: "Nine countries prove OpenID Federation interoperability",
+						source: "OpenID Foundation",
+						date: "Feb 2026",
+						href: "https://openid.net/nine-countries-prove-openid-federation-interoperability/",
+					},
+				],
+			}}
+		>
 			<h2>What Is a Federation Topology?</h2>
 			<p>
 				A federation topology describes the <strong>shape of trust relationships</strong> — how
@@ -397,8 +407,7 @@ export default function Lesson11() {
 						content: (
 							<p className="text-sm">
 								Map the Subordinate Statement relationships. Each arrow is a signed vouching
-								relationship.
-								<Ref id="1" />
+								relationship (<SpecRef sec="3" />).
 							</p>
 						),
 					},
@@ -406,9 +415,9 @@ export default function Lesson11() {
 						title: "5. Define Policies & Constraints",
 						content: (
 							<p className="text-sm">
-								Set <code>max_path_length</code>, <code>naming_constraints</code>, and metadata
-								policies at each level.
-								<Ref id="2" />
+								Set <code>max_path_length</code> (<SpecRef sec="6.2.1" />),{" "}
+								<code>naming_constraints</code> (<SpecRef sec="6.2.2" />), and metadata policies at
+								each level (<SpecRef sec="6.1" />).
 							</p>
 						),
 					},
@@ -425,9 +434,8 @@ export default function Lesson11() {
 						title: "7. Validate & Iterate",
 						content: (
 							<p className="text-sm">
-								Test trust chain resolution from every leaf. Verify policies cascade correctly. Run
-								security review.
-								<Ref id="3" />
+								Test trust chain resolution from every leaf (<SpecRef sec="10" />). Verify policies
+								cascade correctly. Run security review.
 							</p>
 						),
 					},
@@ -451,25 +459,6 @@ export default function Lesson11() {
 				international networks through a bridge? Same trade-offs: speed, resilience, and cost.
 			</AnalogyBox>
 
-			<SourcesSection
-				sources={[
-					{
-						id: "1",
-						text: "OpenID Federation 1.0, Section 3 — Entity Statement",
-						url: "https://openid.net/specs/openid-federation-1_0.html#section-3",
-					},
-					{
-						id: "2",
-						text: "OpenID Federation 1.0, Section 6 — Federation Policy",
-						url: "https://openid.net/specs/openid-federation-1_0.html#section-6",
-					},
-					{
-						id: "3",
-						text: "OpenID Federation 1.0, Section 10 — Resolving the Trust Chain and Metadata",
-						url: "https://openid.net/specs/openid-federation-1_0.html#section-10",
-					},
-				]}
-			/>
 		</LessonPage>
 	);
 }

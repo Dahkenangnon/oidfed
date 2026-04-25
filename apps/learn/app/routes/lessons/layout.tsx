@@ -19,7 +19,15 @@ import {
 	TooltipTrigger,
 	useSidebar,
 } from "@oidfed/ui";
-import { BookOpen, ExternalLink, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import {
+	BookOpen,
+	ExternalLink,
+	Github,
+	Globe,
+	PanelLeftClose,
+	PanelLeftOpen,
+	Telescope,
+} from "lucide-react";
 import { Link, Outlet, useLocation } from "react-router";
 import { ThemeToggle } from "~/components/theme-toggle";
 import { getLessonsByPhase, lessons, phaseOrder, phases } from "~/data/lessons";
@@ -116,7 +124,12 @@ function SidebarLayout() {
 												render={<Link to={`/lessons/${lesson.slug}`} />}
 												size="sm"
 											>
-												<span className="mr-1.5">{lesson.emoji}</span>
+												<span
+													className="mr-0.5 shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground"
+													aria-hidden
+												>
+													{String(lesson.number).padStart(2, "0")}
+												</span>
 												<span className="truncate">{lesson.title}</span>
 											</SidebarMenuButton>
 										</SidebarMenuItem>
@@ -126,29 +139,57 @@ function SidebarLayout() {
 						);
 					})}
 				</SidebarContent>
-				<SidebarFooter className="p-2 space-y-1">
-					<div className="flex items-center gap-1 text-xs">
-						<a
-							href="https://oidfed.com"
-							target="_blank"
-							rel="noopener noreferrer"
-							className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1"
-						>
-							oidfed.com
-							<ExternalLink className="size-3" />
-						</a>
-						<span className="text-muted-foreground">·</span>
-						<a
-							href="https://explore.oidfed.com"
-							target="_blank"
-							rel="noopener noreferrer"
-							className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1"
-						>
-							Explorer
-							<ExternalLink className="size-3" />
-						</a>
-					</div>
-					<ThemeToggle />
+				<SidebarFooter>
+					<SidebarMenu>
+						<SidebarMenuItem>
+							<SidebarMenuButton
+								render={
+									<a
+										href="https://oidfed.com"
+										target="_blank"
+										rel="noopener noreferrer"
+										aria-label="oidfed.com — project home"
+									/>
+								}
+							>
+								<Globe className="size-4" />
+								<span>Project Home</span>
+								<ExternalLink className="size-3 ml-auto opacity-50" />
+							</SidebarMenuButton>
+						</SidebarMenuItem>
+						<SidebarMenuItem>
+							<SidebarMenuButton
+								render={
+									<a
+										href="https://explore.oidfed.com"
+										target="_blank"
+										rel="noopener noreferrer"
+										aria-label="OidFed Explorer"
+									/>
+								}
+							>
+								<Telescope className="size-4" />
+								<span>Explorer</span>
+								<ExternalLink className="size-3 ml-auto opacity-50" />
+							</SidebarMenuButton>
+						</SidebarMenuItem>
+						<SidebarMenuItem>
+							<SidebarMenuButton
+								render={
+									<a
+										href="https://github.com/Dahkenangnon/oidfed"
+										target="_blank"
+										rel="noopener noreferrer"
+										aria-label="OidFed on GitHub"
+									/>
+								}
+							>
+								<Github className="size-4" />
+								<span>GitHub</span>
+								<ExternalLink className="size-3 ml-auto opacity-50" />
+							</SidebarMenuButton>
+						</SidebarMenuItem>
+					</SidebarMenu>
 				</SidebarFooter>
 				<SidebarRail />
 			</Sidebar>
@@ -159,6 +200,9 @@ function SidebarLayout() {
 					<span className="text-sm text-muted-foreground">
 						{currentLesson ? `Lesson ${currentLesson.number} of ${lessons.length}` : "Lessons"}
 					</span>
+					<div className="ml-auto flex items-center">
+						<ThemeToggle />
+					</div>
 				</header>
 				<main className="flex-1 overflow-y-auto">
 					<Outlet />

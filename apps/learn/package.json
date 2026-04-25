@@ -25,7 +25,9 @@
 	"type": "module",
 	"scripts": {
 		"dev": "react-router dev",
+		"prebuild": "node scripts/generate-seo.mjs",
 		"build": "react-router build",
+		"generate:seo": "node scripts/generate-seo.mjs",
 		"typecheck": "react-router typegen && tsc",
 		"clean": "rm -rf build .react-router"
 	},
@@ -38,7 +40,8 @@
 		"react": "^19.1.0",
 		"react-dom": "^19.1.0",
 		"react-router": "^7.14.0",
-		"isbot": "^5"
+		"isbot": "^5",
+		"shiki": "^3.0.0"
 	},
 	"devDependencies": {
 		"@react-router/dev": "^7.14.0",

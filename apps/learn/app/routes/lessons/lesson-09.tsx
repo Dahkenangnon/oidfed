@@ -1,27 +1,16 @@
 import { Badge, Card, CardPanel, Tabs, TabsList, TabsPanel, TabsTab } from "@oidfed/ui";
 import { AnalogyBox } from "~/components/analogy-box";
-import { Ref, SourcesSection } from "~/components/footnote";
+import { Callout } from "~/components/callout";
 import { LessonPage } from "~/components/lesson-page";
+import { SpecRef } from "~/components/spec-ref";
 import { StepThrough } from "~/components/step-through";
 import { getLesson } from "~/data/lessons";
 
-export const handle = { lastUpdated: "2026-04-20" };
+import { lessonMetaForSlug } from "~/lib/seo";
+export const handle = { lastUpdated: "2026-04-25" };
 
 export function meta() {
-	return [
-		{ title: "Client Registration — Learn OpenID Federation" },
-		{
-			name: "description",
-			content:
-				"How a Relying Party introduces itself to an OpenID Provider in a federation — automatic vs explicit registration.",
-		},
-		{ name: "author", content: "Justin Dah-kenangnon" },
-		{ property: "og:title", content: "Client Registration" },
-		{ property: "og:description", content: "Automatic and explicit registration flows compared." },
-		{ property: "og:type", content: "article" },
-		{ property: "article:author", content: "https://dahkenangnon.com" },
-		{ property: "article:section", content: "Advanced" },
-	];
+	return lessonMetaForSlug("client-registration");
 }
 
 const autoSteps = [
@@ -30,8 +19,7 @@ const autoSteps = [
 		content: (
 			<p className="text-sm">
 				The RP discovers the OP and resolves its trust chain, confirming they share a common Trust
-				Anchor.
-				<Ref id="1" />
+				Anchor (<SpecRef sec="12.1" />).
 			</p>
 		),
 	},
@@ -40,9 +28,9 @@ const autoSteps = [
 		content: (
 			<div className="text-sm space-y-2">
 				<p>
-					The RP sends an Authorization Request using a Request Object (signed JWT per JAR)
-					<Ref id="2" /> or PAR. <code>client_id</code> is the RP's Entity Identifier URL. No{" "}
-					<code>client_secret</code> needed.
+					The RP sends an Authorization Request using a Request Object (signed JWT per JAR,{" "}
+					<SpecRef sec="12.1.1" />) or PAR. <code>client_id</code> is the RP's Entity Identifier
+					URL. No <code>client_secret</code> needed.
 				</p>
 			</div>
 		),
@@ -80,7 +68,7 @@ const explicitSteps = [
 				<p>
 					The RP POSTs its Entity Configuration JWT (<code>application/entity-statement+jwt</code>)
 					or full trust chain (<code>application/trust-chain+json</code>) to the OP's{" "}
-					<code>federation_registration_endpoint</code>.<Ref id="3" />
+					<code>federation_registration_endpoint</code> (<SpecRef sec="12.2" />).
 				</p>
 			</div>
 		),
@@ -139,12 +127,32 @@ const comparison = [
 
 export default function Lesson09() {
 	return (
-		<LessonPage lesson={getLesson(9)}>
+		<LessonPage
+			lesson={getLesson(9)}
+			minutes={10}
+			lastReviewed={handle.lastUpdated}
+			furtherReading={{
+				specSections: [
+					{ sec: "12", title: "OpenID Connect Client Registration" },
+					{ sec: "12.1", title: "Automatic Registration" },
+					{ sec: "12.1.1", title: "Authentication Request" },
+					{ sec: "12.2", title: "Explicit Registration" },
+					{ sec: "3.1.4", title: "Claims Used in Explicit Registration Requests" },
+					{ sec: "3.1.5", title: "Claims Used in Explicit Registration Responses" },
+				],
+				rfcs: [
+					{ num: 9101, title: "JWT-Secured Authorization Request (JAR)" },
+					{ num: 9126, title: "OAuth 2.0 Pushed Authorization Requests (PAR)" },
+					{ num: 7591, title: "OAuth 2.0 Dynamic Client Registration Protocol" },
+				],
+			}}
+		>
 			<p>
 				In a federation, a Relying Party doesn't need to manually register with every OpenID
-				Provider. There are two approaches
-				<Ref id="1" />: <strong>Automatic</strong> (no pre-registration, resolved at authorization
-				time) and <strong>Explicit</strong> (pre-registration via a dedicated endpoint).
+				Provider. There are two approaches (
+				<SpecRef sec="12" title="OpenID Connect Client Registration" />
+				): <strong>Automatic</strong> (no pre-registration, resolved at authorization time) and{" "}
+				<strong>Explicit</strong> (pre-registration via a dedicated endpoint).
 			</p>
 
 			<Tabs defaultValue="auto">
@@ -160,7 +168,14 @@ export default function Lesson09() {
 				</TabsPanel>
 			</Tabs>
 
-			<h2>Side-by-Side Comparison</h2>
+			<Callout variant="security" sec="12.1.1" secTitle="Authentication Request">
+				The Request Object used in Automatic Registration MUST include a unique <code>jti</code>{" "}
+				(JWT ID) claim. The OP MUST track recent <code>jti</code> values and reject any duplicate —
+				Request Objects are <strong>single-use by default</strong> to prevent replay attacks. Reuse
+				is only allowed under negotiated conditions outside this spec's scope.
+			</Callout>
+
+			<h2 id="comparison">Side-by-Side Comparison</h2>
 			<Card>
 				<CardPanel>
 					<div className="overflow-x-auto">
@@ -200,26 +215,6 @@ export default function Lesson09() {
 				private members' club, showing your credentials, filling out an application form, and
 				receiving a membership card for future visits.
 			</AnalogyBox>
-
-			<SourcesSection
-				sources={[
-					{
-						id: "1",
-						text: "OpenID Federation 1.0, Section 12 — OpenID Connect Client Registration",
-						url: "https://openid.net/specs/openid-federation-1_0.html#section-12",
-					},
-					{
-						id: "2",
-						text: "RFC 9101 — JWT-Secured Authorization Request (JAR)",
-						url: "https://www.rfc-editor.org/rfc/rfc9101",
-					},
-					{
-						id: "3",
-						text: "OpenID Federation 1.0, Section 12.2 — Explicit Registration",
-						url: "https://openid.net/specs/openid-federation-1_0.html#section-12.2",
-					},
-				]}
-			/>
 		</LessonPage>
 	);
 }

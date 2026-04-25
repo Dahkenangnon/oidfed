@@ -1,0 +1,17 @@
+{
+	"name": "@oidfed — OpenID Federation 1.0 for JavaScript",
+	"short_name": "@oidfed",
+	"description": "The complete OpenID Federation 1.0 implementation for JavaScript — runtime-agnostic, spec-compliant, built on Web API standards.",
+	"start_url": "/",
+	"display": "standalone",
+	"background_color": "#0b1220",
+	"theme_color": "#007acc",
+	"icons": [
+		{
+			"src": "/favicon.svg",
+			"sizes": "any",
+			"type": "image/svg+xml",
+			"purpose": "any maskable"
+		}
+	]
+}

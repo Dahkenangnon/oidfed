@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0b1220"/>
+      <stop offset="100%" stop-color="#1a3a5c"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <!-- Trust-chain diagram (simple) -->
+  <g stroke="#80bfff" stroke-width="3" fill="none" opacity="0.35">
+    <circle cx="600" cy="150" r="18" fill="#007acc"/>
+    <line x1="600" y1="168" x2="480" y2="240"/>
+    <line x1="600" y1="168" x2="720" y2="240"/>
+    <circle cx="480" cy="258" r="15"/>
+    <circle cx="720" cy="258" r="15"/>
+    <line x1="480" y1="273" x2="410" y2="330"/>
+    <line x1="720" y1="273" x2="790" y2="330"/>
+    <circle cx="410" cy="348" r="12"/>
+    <circle cx="790" cy="348" r="12"/>
+  </g>
+  <text x="600" y="420" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="96" font-weight="800" fill="#ffffff" text-anchor="middle">@oidfed</text>
+  <text x="600" y="490" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="36" font-weight="500" fill="#80bfff" text-anchor="middle">OpenID Federation 1.0 for JavaScript</text>
+  <text x="600" y="545" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="24" font-weight="400" fill="#b3d9ff" text-anchor="middle">runtime-agnostic · spec-compliant · built on Web APIs</text>
+</svg>

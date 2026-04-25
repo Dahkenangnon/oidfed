@@ -1,29 +1,14 @@
 import { Badge, Card, CardHeader, CardPanel, CardTitle } from "@oidfed/ui";
-import { Ref, SourcesSection } from "~/components/footnote";
 import { LessonPage } from "~/components/lesson-page";
+import { SpecRef } from "~/components/spec-ref";
 import { StepThrough } from "~/components/step-through";
 import { getLesson } from "~/data/lessons";
 
-export const handle = { lastUpdated: "2026-04-20" };
+import { lessonMetaForSlug } from "~/lib/seo";
+export const handle = { lastUpdated: "2026-04-25" };
 
 export function meta() {
-	return [
-		{ title: "Putting It All Together — Learn OpenID Federation" },
-		{
-			name: "description",
-			content:
-				"A complete real-world scenario using every OpenID Federation concept — from setup to authenticated login.",
-		},
-		{ name: "author", content: "Justin Dah-kenangnon" },
-		{ property: "og:title", content: "Putting It All Together" },
-		{
-			property: "og:description",
-			content: "Follow a student logging into a research portal through the full federation flow.",
-		},
-		{ property: "og:type", content: "article" },
-		{ property: "article:author", content: "https://dahkenangnon.com" },
-		{ property: "article:section", content: "Capstone" },
-	];
+	return lessonMetaForSlug("putting-it-together");
 }
 
 function PhaseTag({ phase }: { phase: string }) {
@@ -50,8 +35,8 @@ const timelineSteps = [
 				<PhaseTag phase="Setup" />
 				<p>
 					Trust Anchor <code>edu-federation.gov</code> publishes its Entity Configuration at{" "}
-					<code>.well-known/openid-federation</code>.<Ref id="1" /> It contains the TA's JWKS,
-					federation endpoints, and <code>trust_mark_issuers</code>.
+					<code>.well-known/openid-federation</code> (<SpecRef sec="9" />). It contains the TA's
+					JWKS, federation endpoints, and <code>trust_mark_issuers</code>.
 				</p>
 			</div>
 		),
@@ -63,9 +48,8 @@ const timelineSteps = [
 				<PhaseTag phase="Setup" />
 				<p>
 					The TA registers <code>uni-alliance.edu</code> as a subordinate, issuing a Subordinate
-					Statement
-					<Ref id="2" /> with <code>metadata_policy</code> that enforces scoping rules and{" "}
-					<code>max_path_length: 1</code>.
+					Statement (<SpecRef sec="3.1.3" />) with <code>metadata_policy</code> that enforces
+					scoping rules and <code>max_path_length: 1</code> (<SpecRef sec="6.2.1" />).
 				</p>
 			</div>
 		),
@@ -88,9 +72,8 @@ const timelineSteps = [
 			<div className="text-sm space-y-2">
 				<PhaseTag phase="Setup" />
 				<p>
-					The TA issues a GDPR compliance Trust Mark
-					<Ref id="3" /> to the University OP. The OP adds it to its <code>trust_marks</code> array
-					in its Entity Configuration.
+					The TA issues a GDPR compliance Trust Mark (<SpecRef sec="7" />) to the University OP. The
+					OP adds it to its <code>trust_marks</code> array in its Entity Configuration.
 				</p>
 			</div>
 		),
@@ -138,9 +121,9 @@ const timelineSteps = [
 			<div className="text-sm space-y-2">
 				<PhaseTag phase="Resolution" />
 				<p>
-					Following <code>authority_hints</code>, the RP resolves the full trust chain:
-					<Ref id="4" /> OP → uni-alliance.edu → edu-federation.gov. It fetches Subordinate
-					Statements from each superior's Fetch endpoint.
+					Following <code>authority_hints</code>, the RP resolves the full trust chain (
+					<SpecRef sec="10.1" />): OP → uni-alliance.edu → edu-federation.gov. It fetches
+					Subordinate Statements from each superior's Fetch endpoint.
 				</p>
 			</div>
 		),
@@ -151,10 +134,9 @@ const timelineSteps = [
 			<div className="text-sm space-y-2">
 				<PhaseTag phase="Resolution" />
 				<p>
-					The RP verifies signatures top-down
-					<Ref id="5" />, checks <code>exp</code>/<code>iat</code>, enforces{" "}
-					<code>max_path_length</code>, and cascades metadata policies to produce the OP's resolved
-					metadata.
+					The RP verifies signatures top-down (<SpecRef sec="10.2" />), checks <code>exp</code>/
+					<code>iat</code>, enforces <code>max_path_length</code>, and cascades metadata policies
+					to produce the OP's resolved metadata.
 				</p>
 			</div>
 		),
@@ -165,9 +147,9 @@ const timelineSteps = [
 			<div className="text-sm space-y-2">
 				<PhaseTag phase="Resolution" />
 				<p>
-					The RP verifies the GDPR Trust Mark on the OP's Entity Configuration:
-					<Ref id="3" /> signature check, issuer authorization, expiry, and optional status endpoint
-					call.
+					The RP verifies the GDPR Trust Mark on the OP's Entity Configuration (
+					<SpecRef sec="7.3" />): signature check, issuer authorization, expiry, and optional
+					status endpoint call.
 				</p>
 			</div>
 		),
@@ -178,9 +160,9 @@ const timelineSteps = [
 			<div className="text-sm space-y-2">
 				<PhaseTag phase="Auth" />
 				<p>
-					Using automatic registration,
-					<Ref id="6" /> the RP sends an Authorization Request via a signed Request Object (JAR).
-					The <code>client_id</code> is the RP's Entity Identifier URL.
+					Using automatic registration (<SpecRef sec="12.1" />), the RP sends an Authorization
+					Request via a signed Request Object (JAR). The <code>client_id</code> is the RP's Entity
+					Identifier URL.
 				</p>
 			</div>
 		),
@@ -261,8 +243,22 @@ const recapCards = [
 
 export default function Lesson10() {
 	return (
-		<LessonPage lesson={getLesson(10)}>
-			<h2>Scenario: A Student Logs In to a Research Portal</h2>
+		<LessonPage
+			lesson={getLesson(10)}
+			minutes={15}
+			lastReviewed={handle.lastUpdated}
+			furtherReading={{
+				specSections: [
+					{ sec: "9", title: "Federation Entity Configuration" },
+					{ sec: "3.1.3", title: "Subordinate Statement Claims" },
+					{ sec: "7", title: "Trust Marks" },
+					{ sec: "10.1", title: "Fetching Entity Statements" },
+					{ sec: "10.2", title: "Validating a Trust Chain" },
+					{ sec: "12.1", title: "Automatic Registration" },
+				],
+			}}
+		>
+			<h2 id="scenario">Scenario: A Student Logs In to a Research Portal</h2>
 			<p>
 				This capstone walkthrough follows a complete, real-world scenario that uses
 				<strong> every concept</strong> from the previous 9 lessons.
@@ -309,40 +305,6 @@ export default function Lesson10() {
 				</p>
 			</div>
 
-			<SourcesSection
-				sources={[
-					{
-						id: "1",
-						text: "OpenID Federation 1.0, Section 9 — Obtaining Federation Entity Configuration Information",
-						url: "https://openid.net/specs/openid-federation-1_0.html#section-9",
-					},
-					{
-						id: "2",
-						text: "OpenID Federation 1.0, Section 3.1.3 — Claims that MUST or MAY Appear in Subordinate Statements but Not in Entity Configurations",
-						url: "https://openid.net/specs/openid-federation-1_0.html#section-3.1.3",
-					},
-					{
-						id: "3",
-						text: "OpenID Federation 1.0, Section 7 — Trust Marks",
-						url: "https://openid.net/specs/openid-federation-1_0.html#section-7",
-					},
-					{
-						id: "4",
-						text: "OpenID Federation 1.0, Section 10.1 — Fetching Entity Statements to Establish a Trust Chain",
-						url: "https://openid.net/specs/openid-federation-1_0.html#section-10.1",
-					},
-					{
-						id: "5",
-						text: "OpenID Federation 1.0, Section 10.2 — Validating a Trust Chain",
-						url: "https://openid.net/specs/openid-federation-1_0.html#section-10.2",
-					},
-					{
-						id: "6",
-						text: "OpenID Federation 1.0, Section 12.1 — Automatic Registration",
-						url: "https://openid.net/specs/openid-federation-1_0.html#section-12.1",
-					},
-				]}
-			/>
 		</LessonPage>
 	);
 }

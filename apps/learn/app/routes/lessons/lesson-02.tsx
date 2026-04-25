@@ -1,30 +1,16 @@
 import { Badge, Card, CardDescription, CardHeader, CardPanel, CardTitle } from "@oidfed/ui";
 import { useState } from "react";
 import { AnalogyBox } from "~/components/analogy-box";
-import { Ref, SourcesSection } from "~/components/footnote";
+import { Figure } from "~/components/figure";
 import { LessonPage } from "~/components/lesson-page";
+import { SpecRef } from "~/components/spec-ref";
 import { getLesson } from "~/data/lessons";
 
-export const handle = { lastUpdated: "2026-04-20" };
+import { lessonMetaForSlug } from "~/lib/seo";
+export const handle = { lastUpdated: "2026-04-25" };
 
 export function meta() {
-	return [
-		{ title: "Entities & Roles — Learn OpenID Federation" },
-		{
-			name: "description",
-			content:
-				"Meet the players in an OpenID Federation hierarchy — Trust Anchors, Intermediates, and Leaf Entities.",
-		},
-		{ name: "author", content: "Justin Dah-kenangnon" },
-		{ property: "og:title", content: "Entities & Roles" },
-		{
-			property: "og:description",
-			content: "Every federation has a hierarchy. Learn who does what.",
-		},
-		{ property: "og:type", content: "article" },
-		{ property: "article:author", content: "https://dahkenangnon.com" },
-		{ property: "article:section", content: "Foundation" },
-	];
+	return lessonMetaForSlug("entities-and-roles");
 }
 
 const roles = [
@@ -176,25 +162,48 @@ export default function Lesson02() {
 	const [selected, setSelected] = useState<number | null>(null);
 
 	return (
-		<LessonPage lesson={getLesson(2)}>
-			<h2>The Hierarchy — Click Any Node</h2>
+		<LessonPage
+			lesson={getLesson(2)}
+			minutes={6}
+			lastReviewed={handle.lastUpdated}
+			furtherReading={{
+				specSections: [
+					{ sec: "1.2", title: "Terminology" },
+					{ sec: "2", title: "Overall Architecture" },
+					{ sec: "5.1", title: "Entity Type Identifiers" },
+					{ sec: "5.1.1", title: "Federation Entity" },
+					{ sec: "5.1.2", title: "OpenID Connect Relying Party" },
+					{ sec: "5.1.3", title: "OpenID Connect OpenID Provider" },
+					{ sec: "5.1.4", title: "OAuth Authorization Server" },
+					{ sec: "5.1.5", title: "OAuth Client" },
+					{ sec: "5.1.6", title: "OAuth Protected Resource" },
+				],
+				rfcs: [{ num: 6749, title: "OAuth 2.0 Authorization Framework" }],
+			}}
+		>
+			<h2 id="the-hierarchy">The Hierarchy — Click Any Node</h2>
 			<p>
-				Every federation is organized as a hierarchy.
-				<Ref id="1" /> At the top sits the
-				<strong> Trust Anchor</strong>, which may delegate authority to{" "}
+				Every federation is organized as a hierarchy (
+				<SpecRef sec="1.2" title="Terminology" />
+				). At the top sits the <strong>Trust Anchor</strong>, which may delegate authority to{" "}
 				<strong>Intermediate Entities</strong>, who in turn manage <strong>Leaf Entities</strong> —
 				the OpenID Providers, Relying Parties, and other services that participate in the
 				federation.
 			</p>
 
-			<HierarchySvg onSelect={setSelected} />
+			<Figure
+				number="Fig. 2"
+				caption="A minimal federation: one Trust Anchor, two Intermediates, and four Leaf Entities of different types. Click a node to inspect its role."
+			>
+				<HierarchySvg onSelect={setSelected} />
+			</Figure>
 
 			{selected !== null &&
 				(() => {
 					const role = roles[selected];
 					if (!role) return null;
 					return (
-						<Card className="my-4 border-primary/30">
+						<Card className="my-4 not-prose border-primary/30">
 							<CardHeader>
 								<div className="flex items-center gap-2">
 									<CardTitle className="text-base">{role.title}</CardTitle>
@@ -212,16 +221,17 @@ export default function Lesson02() {
 					);
 				})()}
 
-			<h2>Multi-Federation Membership</h2>
+			<h2 id="multi-federation">Multi-Federation Membership</h2>
 			<p>
-				An entity MAY have multiple Entity Types
-				<Ref id="2" /> and can be a member of multiple federations simultaneously. For example, a
-				university identity provider might participate in both a national education federation and a
-				research consortium federation, each with its own Trust Anchor.
+				An entity MAY have multiple Entity Types (
+				<SpecRef sec="5.1" title="Entity Type Identifiers" />
+				) and can be a member of multiple federations simultaneously. For example, a university
+				identity provider might participate in both a national education federation and a research
+				consortium federation, each with its own Trust Anchor.
 			</p>
 
-			<h2>Entity Types at a Glance</h2>
-			<div className="grid gap-3 sm:grid-cols-2">
+			<h2 id="entity-types">Entity Types at a Glance</h2>
+			<div className="grid gap-3 not-prose sm:grid-cols-2">
 				{roles.map((role) => (
 					<Card key={role.title}>
 						<CardHeader className="pb-2">
@@ -243,21 +253,6 @@ export default function Lesson02() {
 				businesses (Leaf Entities) operate under them. Each level can add its own requirements, but
 				never weaken the level above.
 			</AnalogyBox>
-
-			<SourcesSection
-				sources={[
-					{
-						id: "1",
-						text: "OpenID Federation 1.0, Section 1.2 — Terminology",
-						url: "https://openid.net/specs/openid-federation-1_0.html#section-1.2",
-					},
-					{
-						id: "2",
-						text: "OpenID Federation 1.0, Section 5 — Metadata",
-						url: "https://openid.net/specs/openid-federation-1_0.html#section-5",
-					},
-				]}
-			/>
 		</LessonPage>
 	);
 }

@@ -13,30 +13,14 @@ import {
 } from "@oidfed/ui";
 import { CheckCircle, Circle } from "lucide-react";
 import { useState } from "react";
-import { SourcesSection } from "~/components/footnote";
 import { LessonPage } from "~/components/lesson-page";
 import { getLesson } from "~/data/lessons";
 
-export const handle = { lastUpdated: "2026-04-20" };
+import { lessonMetaForSlug } from "~/lib/seo";
+export const handle = { lastUpdated: "2026-04-25" };
 
 export function meta() {
-	return [
-		{ title: "Hands-On Object Lab — Learn OpenID Federation" },
-		{
-			name: "description",
-			content:
-				"Build physical objects that map to every core federation concept — tangible metaphors you can hold and use to explain federation.",
-		},
-		{ name: "author", content: "Justin Dah-kenangnon" },
-		{ property: "og:title", content: "Hands-On Object Lab" },
-		{
-			property: "og:description",
-			content: "10 hands-on exercises mapping physical objects to federation concepts.",
-		},
-		{ property: "og:type", content: "article" },
-		{ property: "article:author", content: "https://dahkenangnon.com" },
-		{ property: "article:section", content: "Going Deeper" },
-	];
+	return lessonMetaForSlug("hands-on-objects");
 }
 
 const objects = [
@@ -228,7 +212,23 @@ export default function Lesson15() {
 	}
 
 	return (
-		<LessonPage lesson={getLesson(15)}>
+		<LessonPage
+			lesson={getLesson(15)}
+			minutes={20}
+			lastReviewed={handle.lastUpdated}
+			furtherReading={{
+				specSections: [
+					{ sec: "1.2", title: "Terminology" },
+					{ sec: "3", title: "Entity Statement" },
+					{ sec: "4", title: "Trust Chain" },
+					{ sec: "6", title: "Federation Policy" },
+					{ sec: "6.2", title: "Constraints" },
+					{ sec: "7", title: "Trust Marks" },
+					{ sec: "8", title: "Federation Endpoints" },
+					{ sec: "10", title: "Resolving the Trust Chain" },
+				],
+			}}
+		>
 			<p>
 				Build physical objects that map to every core federation concept. Each object is a tangible
 				metaphor you can hold, manipulate, and use to explain federation to anyone.
@@ -302,30 +302,6 @@ export default function Lesson15() {
 				))}
 			</Tabs>
 
-			<SourcesSection
-				sources={[
-					{
-						id: "1",
-						text: "OpenID Federation 1.0, Section 3 — Entity Statement",
-						url: "https://openid.net/specs/openid-federation-1_0.html#section-3",
-					},
-					{
-						id: "2",
-						text: "OpenID Federation 1.0, Section 4 — Trust Chain",
-						url: "https://openid.net/specs/openid-federation-1_0.html#section-4",
-					},
-					{
-						id: "3",
-						text: "OpenID Federation 1.0, Section 6.2 — Constraints",
-						url: "https://openid.net/specs/openid-federation-1_0.html#section-6.2",
-					},
-					{
-						id: "4",
-						text: "OpenID Federation 1.0, Section 7 — Trust Marks",
-						url: "https://openid.net/specs/openid-federation-1_0.html#section-7",
-					},
-				]}
-			/>
 		</LessonPage>
 	);
 }

@@ -74,6 +74,33 @@
 			opacity: 0;
 		}
 	}
+	@keyframes fade-rise {
+		from {
+			opacity: 0;
+			transform: translateY(12px);
+		}
+		to {
+			opacity: 1;
+			transform: translateY(0);
+		}
+	}
+}
+
+@layer utilities {
+	.fade-rise {
+		animation: fade-rise 0.8s cubic-bezier(0.22, 1, 0.36, 1) both;
+	}
+	.fade-rise-delay-1 {
+		animation-delay: 0.1s;
+	}
+	.fade-rise-delay-2 {
+		animation-delay: 0.2s;
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.fade-rise {
+			animation: none !important;
+		}
+	}
 }
 
 @theme {

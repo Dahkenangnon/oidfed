@@ -1,0 +1,37 @@
+# OidFed Explorer
+
+> Browser-based visualizer and debugger for OpenID Federation 1.0 deployments — resolve trust chains, inspect entity configurations, verify trust marks, browse subordinate listings, visualize federation topology. Runs entirely in the browser, no backend. Built on [@oidfed/core](https://www.npmjs.com/package/@oidfed/core).
+
+## About
+
+OidFed Explorer is a tool, not a library and not the @oidfed project home. It is a client-side SPA that fetches federation metadata directly from entity endpoints. For the @oidfed project itself, see <https://oidfed.com>. For the OpenID Federation 1.0 interactive course, see <https://learn.oidfed.com>.
+
+## Features
+
+- **Entity Inspector** (`/entity`) — decode and display Entity Configurations, including metadata, JWKS, trust marks, and historical keys.
+- **Trust Chain Explorer** (`/chain`) — resolve and validate trust chains bottom-up from any entity to configured Trust Anchors; shows every Subordinate Statement, policy cascade, and constraint evaluation.
+- **Resolve Endpoint Proxy** (`/resolve`) — query any authority's `federation_resolve_endpoint` and display the returned resolve response with its embedded chain.
+- **Topology Graph** (`/topology`) — render a federation's hierarchy as a directed graph from a Trust Anchor down through intermediates to leaves.
+- **Subordinate Listing** (`/subordinates`) — browse an authority's subordinates via `federation_list_endpoint`, filtered by entity type or intermediate status.
+- **Expiration Dashboard** (`/expiry`) — scan all subordinates under a TA for trust-chain expiration and upcoming key rotations.
+- **Trust Mark Viewer** (`/trust-marks`) — fetch and validate trust marks, check status via the issuer's status endpoint.
+- **Policy Simulator** (`/policy`) — apply OpenID Federation 1.0 §9.2 metadata policy operators (`subset_of`, `value`, `add`, etc.) against sample metadata and see the resolved output.
+- **Health Check** (`/health`) — probe every spec-defined federation endpoint for an entity and flag misconfigurations.
+- **Metadata Diff** (`/diff`) — compare an entity's self-declared metadata against the TA-resolved metadata (after policy cascade).
+
+## Settings
+
+Preferences persist in `localStorage` under `oidfed_settings` — configurable trust anchors, HTTP timeout, max chain depth, theme, output format, expiry thresholds. Exportable / importable as JSON.
+
+## Related
+
+- [@oidfed project home](https://oidfed.com) — the authoritative @oidfed site and machine-readable project overview at <https://oidfed.com/llms.txt>.
+- [Learn OpenID Federation](https://learn.oidfed.com) — 15-lesson interactive course.
+- [Source code](https://github.com/Dahkenangnon/oidfed) — monorepo (MIT).
+- [OpenID Federation 1.0 specification](https://openid.net/specs/openid-federation-1_0.html) — authoritative protocol definition.
+
+## Technical notes
+
+- Runtime dependency: `@oidfed/core` only.
+- Router: hash-based (`#/entity`, `#/chain`, etc.) for zero-config static deployment.
+- License: MIT.

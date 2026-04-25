@@ -1,29 +1,13 @@
 import { Accordion, AccordionItem, AccordionPanel, AccordionTrigger, Badge } from "@oidfed/ui";
-import { SourcesSection } from "~/components/footnote";
 import { LessonPage } from "~/components/lesson-page";
 import { SearchFilter } from "~/components/search-filter";
 import { getLesson } from "~/data/lessons";
 
-export const handle = { lastUpdated: "2026-04-20" };
+import { lessonMetaForSlug } from "~/lib/seo";
+export const handle = { lastUpdated: "2026-04-25" };
 
 export function meta() {
-	return [
-		{ title: "Glossary — Learn OpenID Federation" },
-		{
-			name: "description",
-			content:
-				"Every key term in OpenID Federation 1.0 — defined, linked to the spec, and cross-referenced to lessons.",
-		},
-		{ name: "author", content: "Justin Dah-kenangnon" },
-		{ property: "og:title", content: "Glossary" },
-		{
-			property: "og:description",
-			content: "All OpenID Federation terms defined and cross-referenced.",
-		},
-		{ property: "og:type", content: "article" },
-		{ property: "article:author", content: "https://dahkenangnon.com" },
-		{ property: "article:section", content: "Going Deeper" },
-	];
+	return lessonMetaForSlug("glossary");
 }
 
 interface GlossaryTerm {
@@ -288,11 +272,78 @@ const terms: GlossaryTerm[] = [
 		lesson: 8,
 		lessonTitle: "Federation Endpoints",
 	},
+	{
+		term: "jwks (general-purpose JWT claim)",
+		definition:
+			"A JSON Web Key Set claim usable across multiple JWT profiles (Entity Statements, Trust Marks, etc.). Contains the public keys for verifying the subject's signatures.",
+		section: "Section 13",
+		sectionUrl: "https://openid.net/specs/openid-federation-1_0.html#section-13",
+		lesson: 3,
+		lessonTitle: "Entity Statements",
+	},
+	{
+		term: "metadata (general-purpose JWT claim)",
+		definition:
+			"A JSON object indexed by Entity Type Identifier containing protocol-specific configuration. Defined as a general-purpose claim in Section 13 — applies to Entity Statements and any future profiles built on this framework.",
+		section: "Section 13",
+		sectionUrl: "https://openid.net/specs/openid-federation-1_0.html#section-13",
+		lesson: 6,
+		lessonTitle: "Metadata & Policy",
+	},
+	{
+		term: "crit (general-purpose JWT claim)",
+		definition:
+			"Array listing non-standard claims that the receiver MUST understand to safely process the statement. Spec-defined claims MUST NOT be listed in crit. Failure to understand any listed claim invalidates the entire statement.",
+		section: "Section 13",
+		sectionUrl: "https://openid.net/specs/openid-federation-1_0.html#section-13",
+		lesson: 3,
+		lessonTitle: "Entity Statements",
+	},
+	{
+		term: "BCP 47 language tagging",
+		definition:
+			"Human-readable claims (e.g., organization_name) MAY appear in multiple language/script variants by appending #lang-script — for example organization_name#ja-Kana-JP. The language-tagged variant is independent of the untagged claim.",
+		section: "Section 14",
+		sectionUrl: "https://openid.net/specs/openid-federation-1_0.html#section-14",
+		lesson: 6,
+		lessonTitle: "Metadata & Policy",
+	},
+	{
+		term: "Media Types (federation)",
+		definition:
+			"IANA-registered MIME types for federation responses: application/entity-statement+jwt, application/trust-mark+jwt, application/resolve-response+jwt, application/trust-chain+json, application/trust-mark-delegation+jwt, application/jwk-set+jwt, application/trust-mark-status-response+jwt, application/explicit-registration-response+jwt.",
+		section: "Section 15",
+		sectionUrl: "https://openid.net/specs/openid-federation-1_0.html#section-15",
+		lesson: 8,
+		lessonTitle: "Federation Endpoints",
+	},
+	{
+		term: "String Operations (Entity ID comparison)",
+		definition:
+			"Entity Identifier comparisons MUST NOT apply Unicode Normalization (NFC/NFD). Compare strings by direct code-point equality after JSON unescaping only. Prevents canonicalization attacks that exploit visually identical IDs.",
+		section: "Section 16",
+		sectionUrl: "https://openid.net/specs/openid-federation-1_0.html#section-16",
+		lesson: 3,
+		lessonTitle: "Entity Statements",
+	},
 ];
 
 export default function Lesson13() {
 	return (
-		<LessonPage lesson={getLesson(13)}>
+		<LessonPage
+			lesson={getLesson(13)}
+			minutes={8}
+			lastReviewed={handle.lastUpdated}
+			furtherReading={{
+				specSections: [
+					{ sec: "1.2", title: "Terminology" },
+					{ sec: "13", title: "General-Purpose JWT Claims" },
+					{ sec: "14", title: "Claims Languages and Scripts" },
+					{ sec: "15", title: "Media Types" },
+					{ sec: "16", title: "String Operations" },
+				],
+			}}
+		>
 			<SearchFilter
 				items={terms}
 				filterFn={(item, query) =>
@@ -334,20 +385,6 @@ export default function Lesson13() {
 				)}
 			</SearchFilter>
 
-			<SourcesSection
-				sources={[
-					{
-						id: "1",
-						text: "OpenID Federation 1.0 — Full Specification",
-						url: "https://openid.net/specs/openid-federation-1_0.html",
-					},
-					{
-						id: "2",
-						text: "OpenID Federation 1.0, Section 1.2 — Terminology",
-						url: "https://openid.net/specs/openid-federation-1_0.html#section-1.2",
-					},
-				]}
-			/>
 		</LessonPage>
 	);
 }

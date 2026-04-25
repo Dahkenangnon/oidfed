@@ -1,218 +1,232 @@
-import { Badge, buttonVariants, Card, CardHeader, CardTitle } from "@oidfed/ui";
-import { ExternalLink, Github, Globe, Package, Terminal } from "lucide-react";
-import { HeroBackground } from "../components/illustrations";
+import { Badge } from "@oidfed/ui";
+import { ArrowRight, Globe, Package, Terminal } from "lucide-react";
+import {
+	DotGrid,
+	RowHeader,
+	SectionIntro,
+	SectionTitle,
+	SignalLabel,
+	StatusDot,
+} from "../components/section-ui";
+import { buildMeta, DOMAIN } from "../lib/seo";
 
-export const handle = { lastUpdated: "2026-04-20" };
+export const handle = { lastUpdated: "2026-04-25" };
 
 export function meta() {
-	return [
-		{ title: "About — @oidfed" },
-		{
-			name: "description",
-			content:
-				"About the @oidfed project — the complete OpenID Federation 1.0 implementation for JavaScript.",
+	return buildMeta({
+		title: "About — @oidfed",
+		description:
+			"About the @oidfed project — 4 spec packages, 3 apps, 14 CLI commands, MIT licensed. The complete OpenID Federation 1.0 implementation for JavaScript.",
+		path: "/about",
+		jsonLd: {
+			"@context": "https://schema.org",
+			"@type": "AboutPage",
+			"@id": `${DOMAIN}/about#webpage`,
+			url: `${DOMAIN}/about`,
+			name: "About @oidfed",
+			isPartOf: { "@id": `${DOMAIN}/#website` },
+			mainEntity: { "@id": `${DOMAIN}/#organization` },
 		},
-		{ property: "og:title", content: "About — @oidfed" },
-		{
-			property: "og:description",
-			content:
-				"About the @oidfed project — the complete OpenID Federation 1.0 implementation for JavaScript.",
-		},
-		{ property: "og:type", content: "website" },
-	];
+	});
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Data
+// ─────────────────────────────────────────────────────────────────────────────
+
 const highlights = [
-	{ label: "Packages", value: "4" },
-	{ label: "Apps", value: "3" },
-	{ label: "CLI Commands", value: "14" },
-	{ label: "License", value: "MIT" },
+	{ value: "04", label: "Spec packages", sub: "core · authority · leaf · oidc" },
+	{ value: "03", label: "Apps", sub: "home · explorer · learn" },
+	{ value: "14", label: "CLI commands", sub: "resolve · chain · verify · …" },
+	{ value: "MIT", label: "License", sub: "Commercial-friendly" },
 ];
 
 const architecture = [
 	{
-		icon: Package,
-		title: "Spec Packages",
-		items: ["@oidfed/core", "@oidfed/authority", "@oidfed/leaf", "@oidfed/oidc"],
+		Icon: Package,
+		title: "Spec packages",
+		kind: "packages",
 		description:
-			"Full OpenID Federation 1.0 coverage — from primitives to OIDC registration flows.",
+			"Full OpenID Federation 1.0 coverage — from primitives to OIDC registration flows. Tree-shakable, framework-agnostic.",
+		items: [
+			{ name: "@oidfed/core", note: "primitives · chain · policy" },
+			{ name: "@oidfed/authority", note: "TA · intermediate" },
+			{ name: "@oidfed/leaf", note: "RP · OP (leaf)" },
+			{ name: "@oidfed/oidc", note: "auto · explicit registration" },
+		],
 	},
 	{
-		icon: Globe,
+		Icon: Globe,
 		title: "Apps",
-		items: ["@oidfed/home", "@oidfed/learn", "@oidfed/explorer"],
+		kind: "apps",
 		description:
-			"Homepage, interactive course (15 lessons), and visual federation topology explorer.",
+			"Home page, an interactive 15-lesson course, and a visual federation topology explorer.",
+		items: [
+			{ name: "@oidfed/home", note: "oidfed.com" },
+			{ name: "@oidfed/learn", note: "learn.oidfed.com" },
+			{ name: "@oidfed/explorer", note: "explore.oidfed.com" },
+		],
 	},
 	{
-		icon: Terminal,
+		Icon: Terminal,
 		title: "Tools",
-		items: ["@oidfed/cli"],
+		kind: "tools",
 		description:
-			"Inspect, validate, and debug federation deployments from the command line — 14 commands.",
+			"Inspect, validate, and debug federation deployments from the command line — 14 purpose-built commands.",
+		items: [{ name: "@oidfed/cli", note: "npm i -g @oidfed/cli" }],
 	},
 ];
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Page
+// ─────────────────────────────────────────────────────────────────────────────
+
 export default function About() {
 	return (
-		<article>
-			{/* Hero */}
-			<section className="relative overflow-hidden border-b border-border py-16 sm:py-20">
-				<HeroBackground />
-				<div className="relative mx-auto max-w-3xl px-6 text-center">
-					<Badge variant="secondary" className="mb-4">
-						About the project
-					</Badge>
-					<h1 className="font-heading text-3xl font-bold tracking-tight sm:text-4xl">
-						The complete{" "}
-						<span className="bg-gradient-to-r from-brand-600 to-brand-400 bg-clip-text text-transparent dark:from-brand-300 dark:to-brand-500">
-							OpenID Federation 1.0
-						</span>{" "}
-						implementation for JavaScript
-					</h1>
-					<p className="mx-auto mt-4 max-w-xl text-muted-foreground">
-						Runtime-agnostic, spec-compliant, built on Web API standards. Modular by design — use
-						only what you need.
-					</p>
-				</div>
-			</section>
-
-			{/* Stats */}
-			<section className="border-b border-border bg-muted/30 py-8">
-				<div className="mx-auto grid max-w-3xl grid-cols-2 gap-6 px-6 sm:grid-cols-4">
-					{highlights.map((stat) => (
-						<div key={stat.label} className="text-center">
-							<p className="font-heading text-2xl font-bold text-primary">{stat.value}</p>
-							<p className="mt-1 text-xs text-muted-foreground">{stat.label}</p>
-						</div>
-					))}
-				</div>
-			</section>
-
-			{/* Architecture */}
-			<section className="py-16">
-				<div className="mx-auto max-w-3xl px-6">
-					<h2 className="font-heading text-2xl font-bold tracking-tight">Architecture</h2>
-					<p className="mt-2 text-muted-foreground">
-						A monorepo structured into packages, apps, and tools — each independently versioned.
-					</p>
-					<div className="mt-8 grid gap-4">
-						{architecture.map((section) => (
-							<Card
-								key={section.title}
-								className="group transition-all hover:-translate-y-0.5 hover:shadow-md"
-							>
-								<CardHeader>
-									<section.icon className="size-5 text-primary" />
-									<CardTitle className="text-base">{section.title}</CardTitle>
-								</CardHeader>
-								<div className="px-6 pb-6">
-									<p className="text-sm text-muted-foreground">{section.description}</p>
-									<div className="mt-3 flex flex-wrap gap-2">
-										{section.items.map((item) => (
-											<Badge key={item} variant="secondary" className="font-mono text-xs">
-												{item}
-											</Badge>
-										))}
-									</div>
-								</div>
-							</Card>
-						))}
-					</div>
-				</div>
-			</section>
-
-			{/* Author & Contributing */}
-			<section className="border-t border-border py-16">
-				<div className="mx-auto max-w-3xl px-6">
-					<div className="grid gap-12 sm:grid-cols-2">
-						<div>
-							<h2 className="font-heading text-xl font-bold tracking-tight">Author</h2>
-							<p className="mt-3 text-sm text-muted-foreground">
-								Built by{" "}
-								<a
-									href="https://dahkenangnon.com"
-									target="_blank"
-									rel="noopener noreferrer"
-									className="text-foreground underline underline-offset-4 hover:no-underline"
-								>
-									Justin Dah-kenangnon
-								</a>
-								.
-							</p>
-						</div>
-						<div>
-							<h2 className="font-heading text-xl font-bold tracking-tight">Contributing</h2>
-							<p className="mt-3 text-sm text-muted-foreground">
-								Contributions are welcome. See the{" "}
-								<a
-									href="https://github.com/Dahkenangnon/oidfed/blob/main/CONTRIBUTING.md"
-									target="_blank"
-									rel="noopener noreferrer"
-									className="text-foreground underline underline-offset-4 hover:no-underline"
-								>
-									contributing guidelines
-								</a>{" "}
-								for details.
-							</p>
-						</div>
-					</div>
-
-					<div className="mt-12 rounded-lg border border-border bg-card p-6">
-						<p className="text-sm text-muted-foreground">
-							Released under the{" "}
-							<a
-								href="https://github.com/Dahkenangnon/oidfed/blob/main/LICENSE"
-								target="_blank"
-								rel="noopener noreferrer"
-								className="text-foreground underline underline-offset-4 hover:no-underline"
-							>
-								MIT License
-							</a>
-							. Free for commercial and open-source use.
-						</p>
-					</div>
-				</div>
-			</section>
-
-			{/* CTA Links */}
-			<section className="border-t border-border bg-muted/30 py-12">
-				<div className="mx-auto flex max-w-3xl flex-wrap justify-center gap-3 px-6">
-					<a
-						href="https://github.com/Dahkenangnon/oidfed"
-						target="_blank"
-						rel="noopener noreferrer"
-						className={buttonVariants({ variant: "default", size: "sm" })}
-					>
-						<Github className="mr-1.5 size-4" />
-						GitHub
-					</a>
-					<a
-						href="https://www.npmjs.com/org/oidfed"
-						target="_blank"
-						rel="noopener noreferrer"
-						className={buttonVariants({ variant: "outline", size: "sm" })}
-					>
-						npm <ExternalLink className="ml-1 size-3" />
-					</a>
-					<a
-						href="https://learn.oidfed.com"
-						target="_blank"
-						rel="noopener noreferrer"
-						className={buttonVariants({ variant: "outline", size: "sm" })}
-					>
-						Learn <ExternalLink className="ml-1 size-3" />
-					</a>
-					<a
-						href="https://explore.oidfed.com"
-						target="_blank"
-						rel="noopener noreferrer"
-						className={buttonVariants({ variant: "outline", size: "sm" })}
-					>
-						Explorer <ExternalLink className="ml-1 size-3" />
-					</a>
-				</div>
-			</section>
+		<article className="relative">
+			<Hero />
+			<Stats />
+			<Architecture />
 		</article>
+	);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §01 · Hero
+// ─────────────────────────────────────────────────────────────────────────────
+
+function Hero() {
+	return (
+		<section className="relative border-b border-border/60">
+			<DotGrid />
+			<div
+				aria-hidden
+				className="pointer-events-none absolute left-1/2 top-0 -z-10 h-[280px] w-[720px] -translate-x-1/2 rounded-full bg-brand-500/10 blur-3xl dark:bg-brand-500/15"
+			/>
+
+			<div className="relative mx-auto max-w-4xl px-6 py-20 lg:py-24">
+				<SignalLabel id="01" label="About the project" />
+
+				<h1 className="mt-6 font-heading text-4xl font-bold leading-[1.05] tracking-[-0.03em] text-balance sm:text-5xl lg:text-[60px]">
+					<span className="block text-muted-foreground/80">The complete</span>
+					<span className="block bg-gradient-to-r from-brand-600 via-brand-500 to-brand-300 bg-clip-text text-transparent dark:from-brand-300 dark:via-brand-400 dark:to-brand-500">
+						OpenID Federation 1.0
+					</span>
+					<span className="block">implementation for JavaScript.</span>
+				</h1>
+
+				<p className="mt-7 max-w-2xl text-lg leading-relaxed text-muted-foreground text-balance">
+					Runtime-agnostic, spec-compliant, built on Web API standards. Modular by design — use only
+					what you need, from core primitives to OIDC registration flows and visual exploration
+					tools.
+				</p>
+
+				<div className="mt-8 flex flex-wrap gap-x-6 gap-y-2">
+					<StatusDot tone="success">MIT licensed</StatusDot>
+					<StatusDot tone="brand">v0.1.0 pre-release</StatusDot>
+				</div>
+			</div>
+		</section>
+	);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §02 · Stats
+// ─────────────────────────────────────────────────────────────────────────────
+
+function Stats() {
+	return (
+		<section className="border-b border-border/60 bg-muted/30">
+			<div className="mx-auto max-w-6xl px-6 py-14">
+				<SignalLabel id="02" label="By the numbers" />
+				<ul className="mt-8 grid grid-cols-2 gap-0 rounded-2xl border border-border/60 bg-card/40 sm:grid-cols-4">
+					{highlights.map((s, i) => (
+						<li
+							key={s.label}
+							className={`relative p-6 ${
+								i > 0 ? "border-t border-border/60 sm:border-l sm:border-t-0" : ""
+							} ${i === 2 ? "border-t sm:border-t-0" : ""}`}
+						>
+							<div className="font-heading text-[44px] font-semibold tabular-nums leading-none tracking-[-0.03em] text-brand-500 sm:text-[52px]">
+								{s.value}
+							</div>
+							<div className="mt-3 font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+								{s.label}
+							</div>
+							<div className="mt-1.5 text-[12px] text-muted-foreground/70">{s.sub}</div>
+						</li>
+					))}
+				</ul>
+			</div>
+		</section>
+	);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §03 · Architecture
+// ─────────────────────────────────────────────────────────────────────────────
+
+function Architecture() {
+	return (
+		<section className="border-b border-border/60">
+			<div className="mx-auto max-w-6xl px-6 py-20 lg:py-24">
+				<div className="grid gap-10 lg:grid-cols-[1fr_1.6fr] lg:gap-16">
+					{/* Left intro */}
+					<div className="lg:sticky lg:top-24 lg:self-start">
+						<SignalLabel id="03" label="Architecture" />
+						<SectionTitle>A monorepo structured into packages, apps, and tools.</SectionTitle>
+						<SectionIntro>
+							Each workspace is independently versioned and published. Nothing is coupled across
+							siblings — a contract-driven design that keeps every layer swap-ready.
+						</SectionIntro>
+						<div className="mt-6 inline-flex items-center gap-3 font-mono text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+							<span className="tabular-nums text-foreground">packages</span>
+							<ArrowRight className="size-3" />
+							<span className="tabular-nums text-foreground">apps</span>
+							<ArrowRight className="size-3" />
+							<span className="tabular-nums text-foreground">tools</span>
+						</div>
+					</div>
+
+					{/* Right list */}
+					<div className="space-y-14">
+						{architecture.map((section) => {
+							const { Icon } = section;
+							const count = section.items.length;
+							return (
+								<div key={section.title}>
+									<RowHeader
+										icon={<Icon className="size-3.5" />}
+										label={section.title}
+										right={`${String(count).padStart(2, "0")} entr${count === 1 ? "y" : "ies"}`}
+									/>
+									<p className="mt-4 max-w-xl text-[15px] leading-relaxed text-muted-foreground">
+										{section.description}
+									</p>
+									<ul className="mt-5 divide-y divide-border/60 rounded-xl border border-border/60 bg-card/40">
+										{section.items.map((item) => (
+											<li
+												key={item.name}
+												className="grid grid-cols-[1fr_auto] items-center gap-4 p-4 text-[13.5px] sm:grid-cols-[minmax(200px,1fr)_2fr_auto] sm:gap-6"
+											>
+												<span className="font-mono font-semibold tracking-tight text-foreground">
+													{item.name}
+												</span>
+												<span className="hidden font-mono text-[12px] text-muted-foreground/80 sm:inline">
+													{item.note}
+												</span>
+												<Badge variant="secondary" className="ml-auto font-mono text-[10px]">
+													{section.kind}
+												</Badge>
+											</li>
+										))}
+									</ul>
+								</div>
+							);
+						})}
+					</div>
+				</div>
+			</div>
+		</section>
 	);
 }

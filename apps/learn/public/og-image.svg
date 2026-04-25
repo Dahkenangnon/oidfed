@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#006bb3"/>
+      <stop offset="100%" stop-color="#0b1220"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <!-- book/course icon -->
+  <g transform="translate(600 170)" opacity="0.7">
+    <path d="M-80 -30 L0 -50 L80 -30 L0 -10 Z" fill="#ffffff"/>
+    <path d="M-80 -30 L-80 55 L0 75 L80 55 L80 -30" stroke="#ffffff" stroke-width="3.5" fill="none" stroke-linejoin="round"/>
+    <path d="M0 -10 L0 75" stroke="#ffffff" stroke-width="3.5"/>
+  </g>
+  <text x="600" y="340" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="84" font-weight="800" fill="#ffffff" text-anchor="middle">Learn OpenID Federation</text>
+  <text x="600" y="400" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="36" font-weight="500" fill="#80bfff" text-anchor="middle">Interactive course · 15 lessons · first principles to topology design</text>
+  <text x="600" y="475" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="24" font-weight="400" fill="#b3d9ff" text-anchor="middle">Trust Anchors · Entity Configurations · Trust Chains · Metadata Policy · Trust Marks</text>
+  <text x="600" y="555" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="22" font-weight="400" fill="#80bfff" text-anchor="middle">by @oidfed · learn.oidfed.com</text>
+</svg>

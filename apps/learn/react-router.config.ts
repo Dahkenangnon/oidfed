@@ -4,7 +4,6 @@ export default {
 	ssr: false,
 	prerender: [
 		"/",
-		"/resources",
 		"/lessons",
 		"/lessons/what-is-federation",
 		"/lessons/entities-and-roles",

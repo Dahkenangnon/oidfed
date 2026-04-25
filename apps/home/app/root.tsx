@@ -10,7 +10,11 @@ import {
 import type { Route } from "./+types/root";
 import "./app.css";
 
-export const links: Route.LinksFunction = () => [];
+export const links: Route.LinksFunction = () => [
+	{ rel: "icon", href: "/favicon.svg", type: "image/svg+xml" },
+	{ rel: "apple-touch-icon", href: "/favicon.svg" },
+	{ rel: "manifest", href: "/site.webmanifest" },
+];
 
 export function Layout({ children }: { children: React.ReactNode }) {
 	return (
@@ -18,12 +22,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
 			<head>
 				<meta charSet="utf-8" />
 				<meta name="viewport" content="width=device-width, initial-scale=1" />
+				<meta name="theme-color" content="#007acc" />
+				<meta name="twitter:site" content="@oidfed" />
 				<Meta />
 				<Links />
 				<script
 					// biome-ignore lint/security/noDangerouslySetInnerHtml: inline theme script prevents FOUC
 					dangerouslySetInnerHTML={{
-						__html: `(function(){var t=localStorage.getItem("theme"),d=window.matchMedia("(prefers-color-scheme:dark)").matches;if(t==="dark"||(!t&&d))document.documentElement.classList.add("dark")})()`,
+						__html: `(function(){var t=localStorage.getItem("theme");if(t!=="light")document.documentElement.classList.add("dark")})()`,
 					}}
 				/>
 			</head>

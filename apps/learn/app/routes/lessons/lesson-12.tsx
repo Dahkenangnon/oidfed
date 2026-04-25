@@ -1,25 +1,13 @@
 import { Accordion, AccordionItem, AccordionPanel, AccordionTrigger, Badge } from "@oidfed/ui";
-import { SourcesSection } from "~/components/footnote";
+import { Callout } from "~/components/callout";
 import { LessonPage } from "~/components/lesson-page";
 import { getLesson } from "~/data/lessons";
 
-export const handle = { lastUpdated: "2026-04-20" };
+import { lessonMetaForSlug } from "~/lib/seo";
+export const handle = { lastUpdated: "2026-04-25" };
 
 export function meta() {
-	return [
-		{ title: "FAQ — Learn OpenID Federation" },
-		{
-			name: "description",
-			content:
-				"Frequently asked questions about OpenID Federation — from basics through security, implementation, and operations.",
-		},
-		{ name: "author", content: "Justin Dah-kenangnon" },
-		{ property: "og:title", content: "Frequently Asked Questions" },
-		{ property: "og:description", content: "Common questions about OpenID Federation answered." },
-		{ property: "og:type", content: "article" },
-		{ property: "article:author", content: "https://dahkenangnon.com" },
-		{ property: "article:section", content: "Going Deeper" },
-	];
+	return lessonMetaForSlug("faq");
 }
 
 const faqSections = [
@@ -111,15 +99,48 @@ const faqSections = [
 
 export default function Lesson12() {
 	return (
-		<LessonPage lesson={getLesson(12)}>
+		<LessonPage
+			lesson={getLesson(12)}
+			minutes={12}
+			lastReviewed={handle.lastUpdated}
+			furtherReading={{
+				specSections: [
+					{ sec: "6.2", title: "Constraints" },
+					{ sec: "11", title: "Updating Metadata, Key Rollover, and Revocation" },
+					{ sec: "11.1", title: "Federation Key Rollover" },
+					{ sec: "11.2", title: "Trust Anchor Rollover" },
+					{ sec: "11.3", title: "Revocation" },
+					{ sec: "17", title: "Implementation Considerations" },
+					{ sec: "18", title: "Security Considerations" },
+					{ sec: "19", title: "Privacy Considerations" },
+				],
+			}}
+		>
 			{faqSections.map((section) => (
 				<div key={section.category} className="mb-8">
-					<h2 className="flex items-center gap-2">
+					<h2 id={section.category.toLowerCase().replace(/\s+/g, "-")} className="flex items-center gap-2">
 						{section.category}
 						<Badge variant="secondary" size="sm">
 							{section.questions.length} questions
 						</Badge>
 					</h2>
+					{section.category === "Operations" && (
+						<Callout variant="implementation-note">
+							The answers below describe <strong>operational practice</strong> drawn from the
+							industry — recommended lifetimes, monitoring, caching, and key-rotation strategies.
+							The OpenID Federation 1.0 specification does not mandate specific durations or
+							procedures here; it requires only that <code>exp</code> be honored, that historical
+							keys be available during overlap, and that revocation be achievable. Tune the values
+							to your federation's risk profile.
+						</Callout>
+					)}
+					{section.category === "Implementation" && (
+						<Callout variant="implementation-note">
+							These are deployment recommendations from federation operators, not spec mandates.
+							The spec defines what each role <em>requires</em>; how you stage rollout, choose
+							algorithms, and stand up infrastructure is up to you.
+						</Callout>
+					)}
 					<Accordion>
 						{section.questions.map((faq) => (
 							<AccordionItem key={faq.q} value={faq.q}>
@@ -132,26 +153,6 @@ export default function Lesson12() {
 					</Accordion>
 				</div>
 			))}
-
-			<SourcesSection
-				sources={[
-					{
-						id: "1",
-						text: "OpenID Federation 1.0 — Full Specification",
-						url: "https://openid.net/specs/openid-federation-1_0.html",
-					},
-					{
-						id: "2",
-						text: "OpenID Federation 1.0, Section 11 — Updating Metadata, Key Rollover, and Revocation",
-						url: "https://openid.net/specs/openid-federation-1_0.html#section-11",
-					},
-					{
-						id: "3",
-						text: "OpenID Federation 1.0, Section 6.2 — Constraints",
-						url: "https://openid.net/specs/openid-federation-1_0.html#section-6.2",
-					},
-				]}
-			/>
 		</LessonPage>
 	);
 }

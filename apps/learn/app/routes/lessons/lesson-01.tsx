@@ -1,30 +1,16 @@
 import { AnalogyBox } from "~/components/analogy-box";
-import { Ref, SourcesSection } from "~/components/footnote";
+import { Figure } from "~/components/figure";
 import { LessonPage } from "~/components/lesson-page";
+import { SpecRef } from "~/components/spec-ref";
 import { TermCard } from "~/components/term-card";
 import { ToggleView } from "~/components/toggle-view";
 import { getLesson } from "~/data/lessons";
 
-export const handle = { lastUpdated: "2026-04-20" };
+import { lessonMetaForSlug } from "~/lib/seo";
+export const handle = { lastUpdated: "2026-04-25" };
 
 export function meta() {
-	return [
-		{ title: "What is OpenID Federation? — Learn OpenID Federation" },
-		{
-			name: "description",
-			content:
-				"Learn why OpenID Federation exists, what problem it solves, and how it turns an N-squared trust problem into a scalable hierarchy.",
-		},
-		{ name: "author", content: "Justin Dah-kenangnon" },
-		{ property: "og:title", content: "What is OpenID Federation?" },
-		{
-			property: "og:description",
-			content: "Understanding the problem federation solves and why it matters.",
-		},
-		{ property: "og:type", content: "article" },
-		{ property: "article:author", content: "https://dahkenangnon.com" },
-		{ property: "article:section", content: "Foundation" },
-	];
+	return lessonMetaForSlug("what-is-federation");
 }
 
 function ChaosSvg() {
@@ -224,36 +210,77 @@ function FederationSvg() {
 
 export default function Lesson01() {
 	return (
-		<LessonPage lesson={getLesson(1)}>
-			<h2>The Problem</h2>
+		<LessonPage
+			lesson={getLesson(1)}
+			minutes={4}
+			lastReviewed={handle.lastUpdated}
+			furtherReading={{
+				specSections: [
+					{ sec: "1", title: "Introduction" },
+					{ sec: "1.2", title: "Terminology" },
+					{ sec: "4", title: "Trust Chain" },
+				],
+				external: [
+					{
+						title: "The Journey to OpenID Federation 1.0 is Complete",
+						source: "Mike Jones · self-issued.info",
+						date: "Feb 2026",
+						href: "https://self-issued.info/?p=2813",
+					},
+					{
+						title: "2025: A year worth talking about for the OpenID Foundation",
+						source: "OpenID Foundation",
+						date: "Dec 2025",
+						href: "https://openid.net/2025-a-year-worth-talking-about-for-the-openid-foundation/",
+					},
+				],
+			}}
+		>
+			<h2 id="the-problem">The Problem</h2>
 			<p>
 				Imagine a world where every application that needs to verify a user's identity must
 				establish a direct, individual relationship with every identity provider. With 5 apps and 4
-				identity providers, that's 20 separate connections to configure, secure, and maintain.
-				<Ref id="1" /> As the ecosystem grows, the number of bilateral relationships explodes — it's
-				an <strong>N &times; N problem</strong>.
+				identity providers, that's 20 separate connections to configure, secure, and maintain. As
+				the ecosystem grows, the number of bilateral relationships explodes — it's an{" "}
+				<strong>N &times; N problem</strong>.
 			</p>
 			<p>
-				OpenID Federation solves this by introducing a <strong>trust hierarchy</strong>.
-				<Ref id="2" /> Instead of every entity connecting to every other, entities join a federation
-				where trust is mediated by a <strong>Trust Anchor</strong> — a trusted third party at the
-				top of the hierarchy. Intermediates can further delegate authority, creating a clean,
-				scalable tree.
+				OpenID Federation solves this by introducing a <strong>trust hierarchy</strong>. Instead of
+				every entity connecting to every other, entities join a federation where trust is mediated
+				by a <strong>Trust Anchor</strong> — a trusted third party at the top of the hierarchy (
+				<SpecRef sec="1.2" title="Terminology" />
+				). Intermediates can further delegate authority, creating a clean, scalable tree.
 			</p>
 
-			<h2>See the Difference</h2>
+			<h2 id="see-the-difference">See the Difference</h2>
 			<ToggleView
 				labelA="Without Federation"
 				labelB="With Federation"
-				contentA={<ChaosSvg />}
-				contentB={<FederationSvg />}
+				contentA={
+					<Figure
+						number="Fig. 1a"
+						caption="Without federation — every application authenticates directly against every identity provider. 5 × 4 = 20 bilateral relationships."
+					>
+						<ChaosSvg />
+					</Figure>
+				}
+				contentB={
+					<Figure
+						number="Fig. 1b"
+						caption="With federation — trust flows through a shared hierarchy rooted in a Trust Anchor. Apps trust the tree, not each peer."
+					>
+						<FederationSvg />
+					</Figure>
+				}
 			/>
 
-			<h2>Key Takeaway</h2>
+			<h2 id="key-takeaway">Key Takeaway</h2>
 			<p>
 				Without federation, trust relationships grow as <strong>N &times; M</strong> (every app
 				times every identity provider). With federation, entities only need to trust the hierarchy —
-				turning it into a <strong>linear problem</strong>.<Ref id="3" />
+				turning it into a <strong>linear problem</strong> (
+				<SpecRef sec="4" title="Trust Chain" />
+				).
 			</p>
 
 			<AnalogyBox>
@@ -263,8 +290,8 @@ export default function Lesson01() {
 				issuing authority rather than individually verifying every peer.
 			</AnalogyBox>
 
-			<h2>Key Terms Introduced</h2>
-			<div className="grid gap-3 sm:grid-cols-2">
+			<h2 id="key-terms">Key Terms Introduced</h2>
+			<div className="grid gap-3 not-prose sm:grid-cols-2">
 				<TermCard term="Multilateral Federation" section="Abstract">
 					Federation where bilateral agreements are impractical; trust is mediated by a trusted
 					third party.
@@ -273,12 +300,12 @@ export default function Lesson01() {
 					Something with separate and distinct existence that can be identified in a context.
 				</TermCard>
 				<TermCard term="Entity Identifier" section="Section 1.2">
-					A globally unique URL using the <code>https</code> scheme. MAY contain port or path, MUST
-					NOT contain query or fragment components.
+					A globally unique URL using the <code>https</code> scheme with a host component. MAY
+					contain port and path. MUST NOT contain query parameter or fragment components.
 				</TermCard>
 				<TermCard term="Trust Anchor" section="Section 1.2">
 					The top-level authority in a federation. Every Trust Chain ends at a Trust Anchor.
-					Represents a trusted third party.
+					Represents a trusted third party whose keys are distributed out-of-band.
 				</TermCard>
 				<TermCard term="Trust" section="Section 1.2">
 					Cryptographic assurance verified through signed statements up a chain of authority.
@@ -287,26 +314,6 @@ export default function Lesson01() {
 					Federation turns the N-squared bilateral problem into a linear, hierarchical one.
 				</TermCard>
 			</div>
-
-			<SourcesSection
-				sources={[
-					{
-						id: "1",
-						text: "OpenID Federation 1.0, Abstract — Multilateral Federation",
-						url: "https://openid.net/specs/openid-federation-1_0.html#abstract",
-					},
-					{
-						id: "2",
-						text: "OpenID Federation 1.0, Section 1.2 — Terminology",
-						url: "https://openid.net/specs/openid-federation-1_0.html#section-1.2",
-					},
-					{
-						id: "3",
-						text: "OpenID Federation 1.0, Section 4 — Trust Chain",
-						url: "https://openid.net/specs/openid-federation-1_0.html#section-4",
-					},
-				]}
-			/>
 		</LessonPage>
 	);
 }

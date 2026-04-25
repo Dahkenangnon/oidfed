@@ -1,30 +1,16 @@
 import { Badge, Card, CardDescription, CardHeader, CardPanel, CardTitle } from "@oidfed/ui";
 import { AnalogyBox } from "~/components/analogy-box";
-import { Ref, SourcesSection } from "~/components/footnote";
+import { Callout } from "~/components/callout";
 import { LessonPage } from "~/components/lesson-page";
+import { SpecRef } from "~/components/spec-ref";
 import { StepThrough } from "~/components/step-through";
 import { getLesson } from "~/data/lessons";
 
-export const handle = { lastUpdated: "2026-04-20" };
+import { lessonMetaForSlug } from "~/lib/seo";
+export const handle = { lastUpdated: "2026-04-25" };
 
 export function meta() {
-	return [
-		{ title: "Trust Chain Resolution — Learn OpenID Federation" },
-		{
-			name: "description",
-			content:
-				"The step-by-step algorithm that fetches, assembles, and verifies a trust chain in OpenID Federation.",
-		},
-		{ name: "author", content: "Justin Dah-kenangnon" },
-		{ property: "og:title", content: "Trust Chain Resolution" },
-		{
-			property: "og:description",
-			content: "Watch the resolution algorithm happen live, step by step.",
-		},
-		{ property: "og:type", content: "article" },
-		{ property: "article:author", content: "https://dahkenangnon.com" },
-		{ property: "article:section", content: "Core Mechanics" },
-	];
+	return lessonMetaForSlug("trust-chain-resolution");
 }
 
 function HttpArrow({
@@ -216,18 +202,50 @@ const approaches = [
 
 export default function Lesson05() {
 	return (
-		<LessonPage lesson={getLesson(5)}>
-			<h2>Watch the Algorithm</h2>
+		<LessonPage
+			lesson={getLesson(5)}
+			minutes={9}
+			lastReviewed={handle.lastUpdated}
+			furtherReading={{
+				specSections: [
+					{ sec: "10", title: "Resolving the Trust Chain and Metadata" },
+					{ sec: "10.1", title: "Fetching Entity Statements" },
+					{ sec: "10.2", title: "Validating a Trust Chain" },
+					{ sec: "10.3", title: "Choosing One of the Valid Trust Chains" },
+					{ sec: "17.2.1", title: "Bottom-Up Trust Chain Resolution" },
+					{ sec: "17.2.2", title: "Top-Down Discovery" },
+					{ sec: "17.2.3", title: "Single Point of Trust Resolution" },
+					{ sec: "8.3", title: "Resolve Entity Endpoint" },
+				],
+				external: [
+					{
+						title: "Building trust with OpenID Federation trust chain on Keycloak",
+						source: "Yutaka Obuchi (Hitachi) · CNCF blog",
+						date: "Apr 2025",
+						href: "https://www.cncf.io/blog/2025/04/25/building-trust-with-openid-federation-trust-chain-on-keycloak/",
+					},
+				],
+			}}
+		>
+			<h2 id="watch-the-algorithm">Watch the Algorithm</h2>
 			<p>
 				Trust Chain Resolution is the process of fetching and assembling all the Entity Statements
-				needed to build a complete chain from a leaf entity to a Trust Anchor.
-				<Ref id="1" /> The most common approach is <strong>bottom-up resolution</strong>, which
-				follows <code>authority_hints</code> upward.
+				needed to build a complete chain from a leaf entity to a Trust Anchor (
+				<SpecRef sec="10" title="Resolving the Trust Chain and Metadata" />
+				). The most common approach is <strong>bottom-up resolution</strong>, which follows{" "}
+				<code>authority_hints</code> upward.
 			</p>
 			<StepThrough steps={resolutionSteps} />
 
-			<h2>Three Ways to Resolve</h2>
-			<div className="grid gap-4 sm:grid-cols-3">
+			<Callout variant="security" sec="10.1" secTitle="Fetching Entity Statements">
+				Resolvers MUST NOT attempt to re-fetch an Entity Statement already obtained during the
+				resolution of a single Trust Chain. If a cycle is detected, that{" "}
+				<code>authority_hint</code> MUST be abandoned — following it further would cause unbounded
+				recursion and a denial of service against the resolver.
+			</Callout>
+
+			<h2 id="three-ways">Three Ways to Resolve</h2>
+			<div className="grid gap-4 not-prose sm:grid-cols-3">
 				{approaches.map((a) => (
 					<Card key={a.title}>
 						<CardHeader>
@@ -250,26 +268,6 @@ export default function Lesson05() {
 				Board. You call the Board, who confirms. Bottom-up: start with the person, climb up until
 				you reach an authority you already trust.
 			</AnalogyBox>
-
-			<SourcesSection
-				sources={[
-					{
-						id: "1",
-						text: "OpenID Federation 1.0, Section 10 — Resolving the Trust Chain and Metadata",
-						url: "https://openid.net/specs/openid-federation-1_0.html#section-10",
-					},
-					{
-						id: "2",
-						text: "OpenID Federation 1.0, Section 17.2.1 — Bottom-Up Trust Chain Resolution",
-						url: "https://openid.net/specs/openid-federation-1_0.html#section-17.2.1",
-					},
-					{
-						id: "3",
-						text: "OpenID Federation 1.0, Section 8.3 — Resolve Entity",
-						url: "https://openid.net/specs/openid-federation-1_0.html#section-8.3",
-					},
-				]}
-			/>
 		</LessonPage>
 	);
 }

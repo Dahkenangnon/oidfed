@@ -1,0 +1,17 @@
+{
+	"name": "OidFed Explorer — Visualize OpenID Federation deployments",
+	"short_name": "OidFed Explorer",
+	"description": "Browser-based explorer for OpenID Federation 1.0. Resolve trust chains, inspect entity configurations, verify trust marks, visualize federation topology.",
+	"start_url": "/",
+	"display": "standalone",
+	"background_color": "#0b1220",
+	"theme_color": "#0b1220",
+	"icons": [
+		{
+			"src": "/favicon.svg",
+			"sizes": "any",
+			"type": "image/svg+xml",
+			"purpose": "any maskable"
+		}
+	]
+}

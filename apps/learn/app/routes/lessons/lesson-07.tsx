@@ -1,32 +1,18 @@
 import { Badge, Card, CardHeader, CardPanel, CardTitle } from "@oidfed/ui";
 import { AnalogyBox } from "~/components/analogy-box";
-import { Ref, SourcesSection } from "~/components/footnote";
+import { Callout } from "~/components/callout";
 import { JsonExplorer } from "~/components/json-explorer";
 import { LessonPage } from "~/components/lesson-page";
+import { SpecRef } from "~/components/spec-ref";
 import { StepThrough } from "~/components/step-through";
 import { ToggleView } from "~/components/toggle-view";
 import { getLesson } from "~/data/lessons";
 
-export const handle = { lastUpdated: "2026-04-20" };
+import { lessonMetaForSlug } from "~/lib/seo";
+export const handle = { lastUpdated: "2026-04-25" };
 
 export function meta() {
-	return [
-		{ title: "Trust Marks — Learn OpenID Federation" },
-		{
-			name: "description",
-			content:
-				"Certified badges that prove an entity meets specific requirements in OpenID Federation.",
-		},
-		{ name: "author", content: "Justin Dah-kenangnon" },
-		{ property: "og:title", content: "Trust Marks" },
-		{
-			property: "og:description",
-			content: "Trust Mark issuance, delegation, and validation explained.",
-		},
-		{ property: "og:type", content: "article" },
-		{ property: "article:author", content: "https://dahkenangnon.com" },
-		{ property: "article:section", content: "Advanced" },
-	];
+	return lessonMetaForSlug("trust-marks");
 }
 
 const trustMarkJwt = {
@@ -51,7 +37,6 @@ const delegationSteps = [
 				<code>https://edufed.gov/trust-marks/gdpr</code>) and declares who may issue it via{" "}
 				<code>trust_mark_issuers</code> and/or <code>trust_mark_owners</code> in its Entity
 				Configuration.
-				<Ref id="1" />
 			</p>
 		),
 	},
@@ -61,7 +46,6 @@ const delegationSteps = [
 			<p className="text-sm">
 				The Trust Mark Owner creates a Delegation JWT granting an audit body permission to issue
 				this specific Trust Mark type on its behalf.
-				<Ref id="2" />
 			</p>
 		),
 	},
@@ -137,17 +121,38 @@ function ValidationResult({ scenario }: { scenario: "valid" | "expired" | "revok
 
 export default function Lesson07() {
 	return (
-		<LessonPage lesson={getLesson(7)}>
-			<h2>What's Inside a Trust Mark?</h2>
+		<LessonPage
+			lesson={getLesson(7)}
+			minutes={9}
+			lastReviewed={handle.lastUpdated}
+			furtherReading={{
+				specSections: [
+					{ sec: "7", title: "Trust Marks" },
+					{ sec: "7.1", title: "Trust Mark Claims" },
+					{ sec: "7.2", title: "Trust Mark Delegation" },
+					{ sec: "7.3", title: "Validating a Trust Mark" },
+					{ sec: "7.4", title: "Trust Mark Examples" },
+					{ sec: "7.5", title: "Trust Mark Delegation Example" },
+					{ sec: "8.4", title: "Trust Mark Status Endpoint" },
+				],
+			}}
+		>
+			<h2 id="whats-inside-a-trust-mark">What's Inside a Trust Mark?</h2>
 			<p>
-				A Trust Mark is a signed JWT
-				<Ref id="1" /> that certifies an entity meets specific requirements — like a health
-				inspection sticker for digital identity. It contains the issuer, subject, type, and optional
-				metadata like logos and reference URLs.
+				A Trust Mark is a signed JWT (
+				<SpecRef sec="7.1" title="Trust Mark Claims" />) that certifies an entity meets specific
+				requirements — like a health inspection sticker for digital identity. It contains the
+				issuer, subject, type, and optional metadata like logos and reference URLs.
 			</p>
 			<JsonExplorer data={trustMarkJwt} />
 
-			<h2>Who Can Issue Trust Marks?</h2>
+			<Callout variant="security" sec="7.1" secTitle="Trust Mark Claims">
+				Trust Mark JWTs MUST be explicitly typed using <code>typ=trust-mark+jwt</code> (per
+				RFC&nbsp;8725 §3.11). Trust Marks without a <code>typ</code> header parameter or with an
+				unrecognized value MUST be rejected — this prevents cross-JWT confusion attacks.
+			</Callout>
+
+			<h2 id="who-can-issue">Who Can Issue Trust Marks?</h2>
 			<div className="grid gap-3 sm:grid-cols-2 my-4">
 				{[
 					{
@@ -173,13 +178,19 @@ export default function Lesson07() {
 				))}
 			</div>
 
-			<h2>Delegation Flow</h2>
+			<h2 id="delegation-flow">Delegation Flow</h2>
+			<p>
+				When the original Trust Mark Owner is not the issuing party, a delegation chain is required
+				(<SpecRef sec="7.2" title="Trust Mark Delegation" />
+				).
+			</p>
 			<StepThrough steps={delegationSteps} />
 
-			<h2>Validating a Trust Mark</h2>
+			<h2 id="validating">Validating a Trust Mark</h2>
 			<p>
-				Validation involves 5 checks
-				<Ref id="3" /> — a failure at any step rejects the mark:
+				Validation involves 5 checks (
+				<SpecRef sec="7.3" title="Validating a Trust Mark" />) — a failure at any step rejects the
+				mark:
 			</p>
 			<ToggleView
 				labelA="Valid Mark"
@@ -193,26 +204,6 @@ export default function Lesson07() {
 				issues a signed certificate, the building owner displays it, and anyone can check with the
 				certification authority to confirm it's still valid.
 			</AnalogyBox>
-
-			<SourcesSection
-				sources={[
-					{
-						id: "1",
-						text: "OpenID Federation 1.0, Section 7.1 — Trust Mark Claims",
-						url: "https://openid.net/specs/openid-federation-1_0.html#section-7.1",
-					},
-					{
-						id: "2",
-						text: "OpenID Federation 1.0, Section 7.2 — Trust Mark Delegation",
-						url: "https://openid.net/specs/openid-federation-1_0.html#section-7.2",
-					},
-					{
-						id: "3",
-						text: "OpenID Federation 1.0, Section 7.3 — Validating a Trust Mark",
-						url: "https://openid.net/specs/openid-federation-1_0.html#section-7.3",
-					},
-				]}
-			/>
 		</LessonPage>
 	);
 }

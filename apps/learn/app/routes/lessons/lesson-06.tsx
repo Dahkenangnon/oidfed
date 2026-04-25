@@ -9,31 +9,18 @@ import {
 	TabsTab,
 } from "@oidfed/ui";
 import { AnalogyBox } from "~/components/analogy-box";
-import { Ref, SourcesSection } from "~/components/footnote";
+import { Callout, SpecQuote } from "~/components/callout";
+import { CodeBlock } from "~/components/code-block";
 import { LessonPage } from "~/components/lesson-page";
+import { SpecRef } from "~/components/spec-ref";
 import { StepThrough } from "~/components/step-through";
 import { getLesson } from "~/data/lessons";
 
-export const handle = { lastUpdated: "2026-04-20" };
+import { lessonMetaForSlug } from "~/lib/seo";
+export const handle = { lastUpdated: "2026-04-25" };
 
 export function meta() {
-	return [
-		{ title: "Metadata & Policy — Learn OpenID Federation" },
-		{
-			name: "description",
-			content:
-				"How entities describe their capabilities with metadata, and how superiors constrain them with metadata policies.",
-		},
-		{ name: "author", content: "Justin Dah-kenangnon" },
-		{ property: "og:title", content: "Metadata & Policy" },
-		{
-			property: "og:description",
-			content: "Understand metadata, policy operators, and the policy cascade.",
-		},
-		{ property: "og:type", content: "article" },
-		{ property: "article:author", content: "https://dahkenangnon.com" },
-		{ property: "article:section", content: "Core Mechanics" },
-	];
+	return lessonMetaForSlug("metadata-and-policy");
 }
 
 const operators = [
@@ -82,12 +69,12 @@ const pipelineSteps = [
 				<p className="text-sm">
 					The leaf entity declares its capabilities in its Entity Configuration:
 				</p>
-				<pre className="rounded bg-muted p-3 text-xs overflow-x-auto">{`{
+				<CodeBlock lang="json" filename="leaf metadata">{`{
   "scopes_supported": ["openid", "profile", "email", "phone", "address"],
   "grant_types": ["authorization_code", "implicit", "client_credentials"],
   "token_endpoint_auth_method": "client_secret_post",
   "contacts": ["admin@uni.edu"]
-}`}</pre>
+}`}</CodeBlock>
 			</div>
 		),
 	},
@@ -99,12 +86,12 @@ const pipelineSteps = [
 					The TA applies <code>subset_of</code> on scopes and grant_types, <code>add</code> on
 					contacts:
 				</p>
-				<pre className="rounded bg-muted p-3 text-xs overflow-x-auto">{`{
-  "scopes_supported": ["openid", "profile", "email"],        // phone, address removed
-  "grant_types": ["authorization_code"],                      // implicit, client_credentials removed
-  "token_endpoint_auth_method": "client_secret_post",         // unchanged
-  "contacts": ["admin@uni.edu", "sec@fed.gov"]                // sec@fed.gov added
-}`}</pre>
+				<CodeBlock lang="json" filename="after Trust Anchor policy">{`{
+  "scopes_supported": ["openid", "profile", "email"],
+  "grant_types": ["authorization_code"],
+  "token_endpoint_auth_method": "client_secret_post",
+  "contacts": ["admin@uni.edu", "sec@fed.gov"]
+}`}</CodeBlock>
 			</div>
 		),
 	},
@@ -116,12 +103,12 @@ const pipelineSteps = [
 					The intermediate applies <code>value</code> on auth method — forcing{" "}
 					<code>private_key_jwt</code>:
 				</p>
-				<pre className="rounded bg-muted p-3 text-xs overflow-x-auto">{`{
+				<CodeBlock lang="json" filename="after Intermediate policy">{`{
   "scopes_supported": ["openid", "profile", "email"],
   "grant_types": ["authorization_code"],
-  "token_endpoint_auth_method": "private_key_jwt",            // OVERRIDDEN by value operator
+  "token_endpoint_auth_method": "private_key_jwt",
   "contacts": ["admin@uni.edu", "sec@fed.gov"]
-}`}</pre>
+}`}</CodeBlock>
 			</div>
 		),
 	},
@@ -132,16 +119,12 @@ const pipelineSteps = [
 				<p className="text-sm font-semibold text-emerald-600">
 					This is the metadata used for the actual OIDC interaction:
 				</p>
-				<pre className="rounded bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800 p-3 text-xs overflow-x-auto">{`{
+				<CodeBlock lang="json" filename="resolved metadata">{`{
   "scopes_supported": ["openid", "profile", "email"],
   "grant_types": ["authorization_code"],
   "token_endpoint_auth_method": "private_key_jwt",
   "contacts": ["admin@uni.edu", "sec@fed.gov"]
-}`}</pre>
-				<p className="text-xs text-muted-foreground">
-					Policies can only make metadata more restrictive, never less. Each level in the hierarchy
-					can tighten but never loosen.
-				</p>
+}`}</CodeBlock>
 			</div>
 		),
 	},
@@ -149,16 +132,32 @@ const pipelineSteps = [
 
 export default function Lesson06() {
 	return (
-		<LessonPage lesson={getLesson(6)}>
-			<h2>What is Metadata?</h2>
+		<LessonPage
+			lesson={getLesson(6)}
+			minutes={11}
+			lastReviewed={handle.lastUpdated}
+			furtherReading={{
+				specSections: [
+					{ sec: "5", title: "Metadata" },
+					{ sec: "5.1", title: "Entity Type Identifiers" },
+					{ sec: "5.2", title: "Common Metadata Parameters" },
+					{ sec: "6.1", title: "Metadata Policy" },
+					{ sec: "6.1.1", title: "Principles" },
+					{ sec: "6.1.3.1", title: "Standard Operators" },
+					{ sec: "6.1.4", title: "Enforcement" },
+					{ sec: "14", title: "Claims Languages and Scripts" },
+				],
+			}}
+		>
+			<h2 id="what-is-metadata">What is Metadata?</h2>
 			<p>
-				Every entity in a federation describes its capabilities through <strong>metadata</strong>
-				<Ref id="1" /> — structured key-value pairs organized by Entity Type Identifier. The
-				metadata tells other entities what protocols are supported, which endpoints are available,
-				and how to interact.
+				Every entity in a federation describes its capabilities through <strong>metadata</strong> (
+				<SpecRef sec="5" title="Metadata" />) — structured key-value pairs organized by Entity Type
+				Identifier. The metadata tells other entities what protocols are supported, which endpoints
+				are available, and how to interact.
 			</p>
 
-			<h2>Metadata by Entity Type</h2>
+			<h2 id="metadata-by-type">Metadata by Entity Type</h2>
 			<Tabs defaultValue="op">
 				<TabsList>
 					<TabsTab value="op">OpenID Provider</TabsTab>
@@ -233,11 +232,11 @@ export default function Lesson06() {
 				</TabsPanel>
 			</Tabs>
 
-			<h2>Policy Operators</h2>
+			<h2 id="policy-operators">Policy Operators</h2>
 			<p>
-				Superiors constrain their subordinates' metadata using <strong>policy operators</strong>
-				<Ref id="2" /> in the <code>metadata_policy</code> claim of Subordinate Statements. There
-				are 7 operators:
+				Superiors constrain their subordinates' metadata using <strong>policy operators</strong> (
+				<SpecRef sec="6.1.3.1" title="Standard Operators" />) in the <code>metadata_policy</code>{" "}
+				claim of Subordinate Statements. There are 7 operators:
 			</p>
 			<div className="grid gap-3 sm:grid-cols-2">
 				{operators.map((op) => (
@@ -253,12 +252,26 @@ export default function Lesson06() {
 				))}
 			</div>
 
-			<h2>Policy Cascade — Watch It Work</h2>
+			<h2 id="policy-cascade">Policy Cascade — Watch It Work</h2>
 			<p>
 				Metadata policies are applied in order from the Trust Anchor down through each Intermediate
-				to produce the final <strong>resolved metadata</strong>.<Ref id="3" />
+				to produce the final <strong>resolved metadata</strong> (
+				<SpecRef sec="6.1.4" title="Enforcement" />
+				).
 			</p>
 			<StepThrough steps={pipelineSteps} />
+
+			<SpecQuote sec="6.1.1" secTitle="Principles">
+				Once applied to a metadata parameter, a metadata policy cannot be repealed or made more
+				permissive by Intermediate Entities that are subordinate in the Trust Chain.
+			</SpecQuote>
+
+			<Callout variant="note" sec="14" secTitle="Claims Languages and Scripts">
+				Human-readable metadata fields (such as <code>organization_name</code>) MAY appear in
+				multiple BCP&nbsp;47 language and script variants by appending <code>#lang-script</code> to
+				the field name — for example <code>organization_name#ja-Kana-JP</code>. The
+				language-tagged variant is independent of the untagged one.
+			</Callout>
 
 			<AnalogyBox>
 				Think of job requirements: an employee lists their skills (metadata), the department head
@@ -266,26 +279,6 @@ export default function Lesson06() {
 				"nothing outside business hours" (TA policy). The resolved result is what the employee
 				actually does — shaped by every level above.
 			</AnalogyBox>
-
-			<SourcesSection
-				sources={[
-					{
-						id: "1",
-						text: "OpenID Federation 1.0, Section 5 — Metadata",
-						url: "https://openid.net/specs/openid-federation-1_0.html#section-5",
-					},
-					{
-						id: "2",
-						text: "OpenID Federation 1.0, Section 6.1.3.1 — Standard Operators",
-						url: "https://openid.net/specs/openid-federation-1_0.html#section-6.1.3.1",
-					},
-					{
-						id: "3",
-						text: "OpenID Federation 1.0, Section 6.1.4 — Enforcement",
-						url: "https://openid.net/specs/openid-federation-1_0.html#section-6.1.4",
-					},
-				]}
-			/>
 		</LessonPage>
 	);
 }

@@ -3,14 +3,62 @@
 	<head>
 		<meta charset="UTF-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-		<title>OidFed Explorer</title>
-		<meta name="description" content="A visual tool for exploring live OpenID Federation deployments — inspect entity configurations, trace trust chains, browse metadata, and validate federation topology in real time." />
-		<meta property="og:title" content="OidFed Explorer" />
-		<meta property="og:description" content="A visual tool for exploring live OpenID Federation deployments — inspect entity configurations, trace trust chains, browse metadata, and validate federation topology in real time." />
+		<meta name="theme-color" content="#0b1220" />
+		<title>OidFed Explorer — Visualize OpenID Federation deployments</title>
+		<meta
+			name="description"
+			content="Browser-based explorer for OpenID Federation 1.0. Resolve trust chains, inspect entity configurations, verify trust marks, browse subordinate listings, and visualize federation topology — runs entirely in your browser, no backend. A tool by @oidfed."
+		/>
+		<link rel="canonical" href="https://explore.oidfed.com/" />
+		<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+		<link rel="apple-touch-icon" href="/favicon.svg" />
+		<link rel="manifest" href="/site.webmanifest" />
+
+		<meta property="og:site_name" content="@oidfed" />
 		<meta property="og:type" content="website" />
-		<meta name="twitter:card" content="summary" />
-		<meta name="twitter:title" content="OidFed Explorer" />
-		<meta name="twitter:description" content="A visual tool for exploring live OpenID Federation deployments — inspect entity configurations, trace trust chains, browse metadata, and validate federation topology in real time." />
+		<meta property="og:url" content="https://explore.oidfed.com/" />
+		<meta property="og:title" content="OidFed Explorer — Visualize OpenID Federation deployments" />
+		<meta
+			property="og:description"
+			content="Browser-based explorer for OpenID Federation 1.0. Resolve trust chains, inspect entity configurations, verify trust marks, visualize federation topology — no backend required."
+		/>
+		<meta property="og:image" content="https://explore.oidfed.com/og-image.svg" />
+		<meta property="og:image:width" content="1200" />
+		<meta property="og:image:height" content="630" />
+
+		<meta name="twitter:card" content="summary_large_image" />
+		<meta name="twitter:site" content="@oidfed" />
+		<meta name="twitter:title" content="OidFed Explorer — Visualize OpenID Federation deployments" />
+		<meta
+			name="twitter:description"
+			content="Browser-based explorer for OpenID Federation 1.0. Resolve trust chains, inspect entity configurations, verify trust marks, visualize federation topology."
+		/>
+		<meta name="twitter:image" content="https://explore.oidfed.com/og-image.svg" />
+
+		<script type="application/ld+json">
+			{
+				"@context": "https://schema.org",
+				"@type": "SoftwareApplication",
+				"@id": "https://explore.oidfed.com/#app",
+				"name": "OidFed Explorer",
+				"url": "https://explore.oidfed.com/",
+				"description": "Browser-based explorer for OpenID Federation 1.0 — resolve trust chains, inspect entity configurations, verify trust marks, visualize federation topology.",
+				"applicationCategory": "DeveloperApplication",
+				"applicationSubCategory": "Identity and Federation Tooling",
+				"operatingSystem": "Web",
+				"browserRequirements": "Requires a modern browser with ES2022 support",
+				"offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+				"author": {
+					"@type": "Organization",
+					"name": "@oidfed",
+					"url": "https://oidfed.com"
+				},
+				"isAccessibleForFree": true,
+				"license": "https://opensource.org/licenses/MIT",
+				"keywords": "OpenID Federation, Trust Anchor, Trust Chain, Entity Configuration, Subordinate Statement, Metadata Policy, Trust Mark, federation explorer, federation topology, OAuth 2.0"
+			}
+		</script>
+
 		<link rel="preconnect" href="https://fonts.googleapis.com" />
 		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 		<link
@@ -29,6 +77,21 @@
 				if (dark) document.documentElement.classList.add("dark");
 			})();
 		</script>
+		<noscript>
+			<div style="padding: 2rem; max-width: 48rem; margin: 4rem auto; font-family: system-ui, sans-serif; line-height: 1.6">
+				<h1>OidFed Explorer</h1>
+				<p>
+					OidFed Explorer is a browser-based visual tool for inspecting live OpenID Federation
+					1.0 deployments. It requires JavaScript to run.
+				</p>
+				<p>
+					For the @oidfed project home, see
+					<a href="https://oidfed.com">oidfed.com</a>. For the interactive course, see
+					<a href="https://learn.oidfed.com">learn.oidfed.com</a>. Source code:
+					<a href="https://github.com/Dahkenangnon/oidfed">github.com/Dahkenangnon/oidfed</a>.
+				</p>
+			</div>
+		</noscript>
 		<div id="root"></div>
 		<script type="module" src="/src/main.tsx"></script>
 	</body>

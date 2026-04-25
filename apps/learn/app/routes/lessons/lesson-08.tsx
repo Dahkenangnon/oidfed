@@ -1,29 +1,16 @@
 import { Accordion, AccordionItem, AccordionPanel, AccordionTrigger, Badge } from "@oidfed/ui";
 import { AnalogyBox } from "~/components/analogy-box";
-import { Ref, SourcesSection } from "~/components/footnote";
+import { Callout } from "~/components/callout";
+import { CodeBlock } from "~/components/code-block";
 import { LessonPage } from "~/components/lesson-page";
+import { SpecRef } from "~/components/spec-ref";
 import { getLesson } from "~/data/lessons";
 
-export const handle = { lastUpdated: "2026-04-20" };
+import { lessonMetaForSlug } from "~/lib/seo";
+export const handle = { lastUpdated: "2026-04-25" };
 
 export function meta() {
-	return [
-		{ title: "Federation Endpoints — Learn OpenID Federation" },
-		{
-			name: "description",
-			content:
-				"The HTTP APIs that federation entities expose — 1 well-known discovery URL, 7 federation endpoints, and 1 registration endpoint.",
-		},
-		{ name: "author", content: "Justin Dah-kenangnon" },
-		{ property: "og:title", content: "Federation Endpoints" },
-		{
-			property: "og:description",
-			content: "Every endpoint explained with request/response examples.",
-		},
-		{ property: "og:type", content: "article" },
-		{ property: "article:author", content: "https://dahkenangnon.com" },
-		{ property: "article:section", content: "Advanced" },
-	];
+	return lessonMetaForSlug("federation-endpoints");
 }
 
 const endpoints = [
@@ -141,14 +128,44 @@ const endpoints = [
 
 export default function Lesson08() {
 	return (
-		<LessonPage lesson={getLesson(8)}>
+		<LessonPage
+			lesson={getLesson(8)}
+			minutes={12}
+			lastReviewed={handle.lastUpdated}
+			furtherReading={{
+				specSections: [
+					{ sec: "8", title: "Federation Endpoints" },
+					{ sec: "8.1", title: "Fetching a Subordinate Statement" },
+					{ sec: "8.2", title: "Subordinate Listing" },
+					{ sec: "8.3", title: "Resolve Entity" },
+					{ sec: "8.4", title: "Trust Mark Status" },
+					{ sec: "8.5", title: "Trust Marked Entities Listing" },
+					{ sec: "8.6", title: "Federation Trust Mark Endpoint" },
+					{ sec: "8.7", title: "Historical Keys" },
+					{ sec: "9", title: "Obtaining Federation Entity Configuration Information" },
+					{ sec: "12.2", title: "Explicit Registration" },
+					{ sec: "15", title: "Media Types" },
+				],
+				rfcs: [{ num: 8414, title: "OAuth 2.0 Authorization Server Metadata" }],
+				external: [
+					{
+						title: "Building trust with OpenID Federation trust chain on Keycloak",
+						source: "Yutaka Obuchi (Hitachi) · CNCF blog",
+						date: "Apr 2025",
+						href: "https://www.cncf.io/blog/2025/04/25/building-trust-with-openid-federation-trust-chain-on-keycloak/",
+					},
+				],
+			}}
+		>
 			<p>
-				OpenID Federation defines 1 well-known discovery URL
-				<Ref id="1" />, 7 federation endpoints
-				<Ref id="2" />, and 1 registration endpoint
-				<Ref id="3" />. Not every entity implements all of them — leaf entities only need the
-				well-known URL, while Trust Anchors and Intermediates may implement up to eight. The
-				registration endpoint is available to OpenID Providers, not TAs.
+				OpenID Federation defines 1 well-known discovery URL (
+				<SpecRef sec="9" title="Obtaining Federation Entity Configuration Information" />
+				), 7 federation endpoints (
+				<SpecRef sec="8" title="Federation Endpoints" />), and 1 registration endpoint (
+				<SpecRef sec="12.2" title="Explicit Registration" />
+				). Not every entity implements all of them — leaf entities only need the well-known URL,
+				while Trust Anchors and Intermediates may implement up to eight. The registration endpoint
+				is exposed by OpenID Providers, not Trust Anchors.
 			</p>
 
 			<Accordion>
@@ -168,12 +185,12 @@ export default function Lesson08() {
 								<p>{ep.description}</p>
 								<p className="text-xs text-muted-foreground">{ep.section}</p>
 								<div>
-									<p className="text-xs font-semibold mb-1">Request:</p>
-									<pre className="rounded bg-muted p-2 text-xs overflow-x-auto">{ep.request}</pre>
+									<p className="text-xs font-semibold mb-1">Request</p>
+									<CodeBlock lang="http" filename="request" bare>{ep.request}</CodeBlock>
 								</div>
 								<div>
-									<p className="text-xs font-semibold mb-1">Response:</p>
-									<pre className="rounded bg-muted p-2 text-xs overflow-x-auto">{ep.response}</pre>
+									<p className="text-xs font-semibold mb-1">Response</p>
+									<CodeBlock lang="http" filename="response" bare>{ep.response}</CodeBlock>
 								</div>
 							</div>
 						</AccordionPanel>
@@ -181,31 +198,61 @@ export default function Lesson08() {
 				))}
 			</Accordion>
 
+			<h2 id="media-types">Media Types</h2>
+			<p>
+				The federation endpoints return JWT-encoded responses with specific IANA-registered media
+				types defined in <SpecRef sec="15" title="Media Types" />. Servers MUST use the correct{" "}
+				<code>Content-Type</code> header so clients can route the body to the right validator.
+			</p>
+			<div className="not-prose my-4 overflow-x-auto rounded-xl border border-border/60">
+				<table className="w-full text-sm">
+					<thead className="bg-muted/40">
+						<tr>
+							<th className="px-3 py-2 text-left font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
+								Media Type
+							</th>
+							<th className="px-3 py-2 text-left font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
+								Used By
+							</th>
+							<th className="px-3 py-2 text-left font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
+								Spec
+							</th>
+						</tr>
+					</thead>
+					<tbody>
+						{[
+							{ mt: "application/entity-statement+jwt", who: "Entity Configurations & Subordinate Statements", sec: "15.1" },
+							{ mt: "application/trust-mark+jwt", who: "Trust Marks", sec: "15.2" },
+							{ mt: "application/resolve-response+jwt", who: "Resolve endpoint responses", sec: "15.3" },
+							{ mt: "application/trust-chain+json", who: "Trust Chain header parameter", sec: "15.4" },
+							{ mt: "application/trust-mark-delegation+jwt", who: "Trust Mark delegations", sec: "15.5" },
+							{ mt: "application/jwk-set+jwt", who: "Historical Keys responses", sec: "15.6" },
+							{ mt: "application/trust-mark-status-response+jwt", who: "Trust Mark Status responses", sec: "15.7" },
+							{ mt: "application/explicit-registration-response+jwt", who: "Explicit Registration responses", sec: "15.8" },
+						].map((row) => (
+							<tr key={row.mt} className="border-t border-border/60">
+								<td className="px-3 py-2 font-mono text-[12.5px] text-foreground">{row.mt}</td>
+								<td className="px-3 py-2 text-muted-foreground">{row.who}</td>
+								<td className="px-3 py-2"><SpecRef sec={row.sec} /></td>
+							</tr>
+						))}
+					</tbody>
+				</table>
+			</div>
+
+			<Callout variant="privacy" sec="19" secTitle="Privacy Considerations">
+				The Fetch endpoint and the Trust Mark Status endpoint can leak entity relationships via
+				server access logs and DNS lookups: every query reveals "entity X is investigating entity
+				Y." Operators handling sensitive populations should mitigate this by serving short-lived
+				static Trust Chains (so resolvers don't need to call back), and by avoiding the{" "}
+				<code>sub</code> parameter on Trust Mark listing endpoints when possible.
+			</Callout>
+
 			<AnalogyBox>
 				Think of a government building with multiple service windows — each serves a specific
 				purpose. The "Entity Configuration" window is at the front door (everyone has it). The
 				"Fetch" and "List" windows are inside, only available to entities that manage subordinates.
 			</AnalogyBox>
-
-			<SourcesSection
-				sources={[
-					{
-						id: "1",
-						text: "OpenID Federation 1.0, Section 9 — Obtaining Federation Entity Configuration Information",
-						url: "https://openid.net/specs/openid-federation-1_0.html#section-9",
-					},
-					{
-						id: "2",
-						text: "OpenID Federation 1.0, Section 8 — Federation Endpoints",
-						url: "https://openid.net/specs/openid-federation-1_0.html#section-8",
-					},
-					{
-						id: "3",
-						text: "OpenID Federation 1.0, Section 12.2 — Explicit Registration",
-						url: "https://openid.net/specs/openid-federation-1_0.html#section-12.2",
-					},
-				]}
-			/>
 		</LessonPage>
 	);
 }
