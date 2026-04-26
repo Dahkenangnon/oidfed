@@ -43,4 +43,14 @@ describe("decode handler", () => {
 		const result = handler({ jwt: "not-a-jwt", headerOnly: false }, deps);
 		expect(result.ok).toBe(false);
 	});
+
+	it("returns error for empty string", () => {
+		const result = handler({ jwt: "", headerOnly: false }, deps);
+		expect(result.ok).toBe(false);
+	});
+
+	it("returns error for JWT with fewer than three segments", () => {
+		const result = handler({ jwt: "header.payload", headerOnly: false }, deps);
+		expect(result.ok).toBe(false);
+	});
 });

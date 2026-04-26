@@ -54,14 +54,19 @@ export async function run(argv: string[]): Promise<number> {
 
 	const opts = program.opts<ProgramOptions>();
 
-	const configResult = await loadConfig(opts.config);
-	const config = configResult.ok ? configResult.value : DEFAULT_CONFIG;
-
 	const formatter = createFormatter({ json: opts.json });
 	const logger = createLogger({
 		quiet: opts.quiet ?? false,
 		verbose: opts.verbose ?? false,
 	});
+
+	const configResult = await loadConfig(opts.config);
+	let config = DEFAULT_CONFIG;
+	if (configResult.ok) {
+		config = configResult.value;
+	} else {
+		logger.warn(`Config load failed (using defaults): ${configResult.error.description}`);
+	}
 	const httpClient = createHttpClient(config.http_timeout_ms);
 	const fileReader = (path: string) => readFile(path, "utf-8");
 

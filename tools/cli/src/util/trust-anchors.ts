@@ -7,6 +7,8 @@ import {
 	federationError,
 	fetchEntityConfiguration,
 	type HttpClient,
+	type JWKSet,
+	JWKSetSchema,
 	ok,
 	type Result,
 	resolveTrustChains,
@@ -17,18 +19,39 @@ import type { Config } from "../config.js";
 import { extractJwks } from "./entity-id.js";
 
 /**
- * Build a TrustAnchorSet by fetching each trust anchor's Entity Configuration
- * and extracting its JWKS. This is required for `validateTrustChain` to verify
- * the TA's self-signed EC signature.
+ * Build a TrustAnchorSet from a list of anchor entity IDs.
+ *
+ * If the operator has supplied a JWKS for an anchor in the config (the
+ * independent out-of-band retrieval mechanism), that JWKS is used directly
+ * after schema validation. Otherwise the anchor's Entity Configuration is
+ * fetched and its embedded `jwks` is extracted.
  */
 export async function buildTrustAnchors(
 	anchorIds: readonly string[],
 	httpClient: HttpClient,
+	config?: Config,
 ): Promise<Result<TrustAnchorSet>> {
-	const anchors = new Map<
-		EntityId,
-		Readonly<{ jwks: { keys: readonly Record<string, unknown>[] } }>
-	>();
+	const configIndex = new Map<string, JWKSet | undefined>();
+	if (config) {
+		for (const ta of config.trust_anchors) {
+			if (ta.jwks) {
+				const parsed = JWKSetSchema.safeParse(ta.jwks);
+				if (!parsed.success) {
+					return err(
+						federationError(
+							FederationErrorCode.InvalidRequest,
+							`Config-supplied JWKS for trust anchor ${ta.entity_id} is invalid: ${parsed.error.message}`,
+						),
+					);
+				}
+				configIndex.set(ta.entity_id, parsed.data);
+			} else {
+				configIndex.set(ta.entity_id, undefined);
+			}
+		}
+	}
+
+	const anchors = new Map<EntityId, Readonly<{ jwks: JWKSet }>>();
 	for (const anchor of anchorIds) {
 		let eid: EntityId;
 		try {
@@ -37,6 +60,12 @@ export async function buildTrustAnchors(
 			return err(
 				federationError(FederationErrorCode.InvalidRequest, `Invalid trust anchor ID: ${anchor}`),
 			);
+		}
+
+		const configuredJwks = configIndex.get(anchor);
+		if (configuredJwks) {
+			anchors.set(eid, { jwks: configuredJwks });
+			continue;
 		}
 
 		const ecResult = await fetchEntityConfiguration(eid, { httpClient });
@@ -109,8 +138,9 @@ export async function resolveOrError(
 	anchorIds: readonly string[],
 	httpClient: HttpClient,
 	maxChainDepth?: number,
+	config?: Config,
 ): Promise<Result<ResolvedTrustData>> {
-	const anchorsResult = await buildTrustAnchors(anchorIds, httpClient);
+	const anchorsResult = await buildTrustAnchors(anchorIds, httpClient, config);
 	if (!anchorsResult.ok) return anchorsResult;
 
 	const resolved = await resolveTrustChains(eid, anchorsResult.value, {

@@ -1,10 +1,16 @@
-import { FederationEndpoint, type HttpClient, ok, type Result } from "@oidfed/core";
+import {
+	type EntityType,
+	fetchListSubordinates,
+	type HttpClient,
+	type ListSubordinatesFilter,
+	ok,
+	type Result,
+} from "@oidfed/core";
 import type { Command } from "commander";
 import type { OutputFormatter } from "../output/index.js";
-import { normalizeEntityId, parseEntityIdOrError } from "../util/entity-id.js";
-import { fetchTextOrError } from "../util/http.js";
+import { discoverEndpoint } from "../util/discover-endpoint.js";
+import { parseEntityIdOrError } from "../util/entity-id.js";
 import type { Logger } from "../util/logger.js";
-import { parseJsonOrError } from "../util/parse.js";
 
 export interface ListDeps {
 	readonly httpClient: HttpClient;
@@ -16,43 +22,39 @@ export interface ListArgs {
 	readonly entityId: string;
 	readonly entityType?: string | undefined;
 	readonly trustMarked?: boolean | undefined;
-	readonly trustMarkId?: string | undefined;
+	readonly trustMarkType?: string | undefined;
 	readonly intermediate?: boolean | undefined;
+	readonly listEndpoint?: string | undefined;
 }
 
 export async function handler(args: ListArgs, deps: ListDeps): Promise<Result<string>> {
 	const eidResult = parseEntityIdOrError(args.entityId);
 	if (!eidResult.ok) return eidResult;
-	const base = normalizeEntityId(args.entityId);
 
-	let url = `${base}${FederationEndpoint.List}`;
-	const params = new URLSearchParams();
-	if (args.entityType) {
-		params.set("entity_type", args.entityType);
-	}
-	if (args.trustMarked) {
-		params.set("is_leaf", "false");
-	}
-	if (args.trustMarkId) {
-		params.set("trust_mark_id", args.trustMarkId);
-	}
-	if (args.intermediate) {
-		params.set("intermediate", "true");
-	}
-	const qs = params.toString();
-	if (qs) {
-		url += `?${qs}`;
+	let endpoint: string;
+	if (args.listEndpoint) {
+		endpoint = args.listEndpoint;
+	} else {
+		const epResult = await discoverEndpoint(
+			eidResult.value,
+			"federation_list_endpoint",
+			deps.httpClient,
+		);
+		if (!epResult.ok) return epResult;
+		endpoint = epResult.value;
 	}
 
-	deps.logger.info(`Fetching ${url}`);
+	const filter: ListSubordinatesFilter = {};
+	if (args.entityType) filter.entityType = args.entityType as EntityType;
+	if (args.trustMarked !== undefined) filter.trustMarked = args.trustMarked;
+	if (args.trustMarkType) filter.trustMarkType = args.trustMarkType;
+	if (args.intermediate !== undefined) filter.intermediate = args.intermediate;
 
-	const bodyResult = await fetchTextOrError(deps.httpClient, url, "List failed");
-	if (!bodyResult.ok) return bodyResult;
+	deps.logger.info(`Fetching subordinate list from ${endpoint}`);
+	const result = await fetchListSubordinates(endpoint, filter, { httpClient: deps.httpClient });
+	if (!result.ok) return result;
 
-	const parsed = parseJsonOrError(bodyResult.value);
-	if (!parsed.ok) return parsed;
-
-	return ok(deps.formatter.format(parsed.value));
+	return ok(deps.formatter.format(result.value));
 }
 
 export function register(program: Command, deps: ListDeps): void {
@@ -61,17 +63,19 @@ export function register(program: Command, deps: ListDeps): void {
 		.description("List subordinate entities of an authority")
 		.argument("<entity-id>", "Authority entity ID")
 		.option("--entity-type <type>", "Filter by entity type")
-		.option("--trust-marked", "Only list trust-marked entities (non-leaf)")
-		.option("--trust-mark-id <id>", "Filter by trust mark ID")
-		.option("--intermediate", "Include intermediate entities")
+		.option("--trust-marked", "Only list entities that have a recognised Trust Mark")
+		.option("--trust-mark-type <id>", "Filter by trust mark type identifier")
+		.option("--intermediate", "Only list intermediate authorities")
+		.option("--list-endpoint <url>", "Override the federation_list_endpoint discovery (advanced)")
 		.action(
 			async (
 				entityIdArg: string,
 				opts: {
 					entityType?: string;
 					trustMarked?: boolean;
-					trustMarkId?: string;
+					trustMarkType?: string;
 					intermediate?: boolean;
+					listEndpoint?: string;
 				},
 			) => {
 				const result = await handler(
@@ -79,8 +83,9 @@ export function register(program: Command, deps: ListDeps): void {
 						entityId: entityIdArg,
 						entityType: opts.entityType,
 						trustMarked: opts.trustMarked,
-						trustMarkId: opts.trustMarkId,
+						trustMarkType: opts.trustMarkType,
 						intermediate: opts.intermediate,
+						listEndpoint: opts.listEndpoint,
 					},
 					deps,
 				);

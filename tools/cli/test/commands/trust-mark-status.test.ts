@@ -6,92 +6,121 @@ import { createLogger } from "../../src/util/logger.js";
 
 const logger = createLogger({ quiet: true, verbose: false });
 
-function mockClient(body: string, ok = true): HttpClient {
-	return async (_url, init) => {
-		expect(init?.method).toBe("POST");
-		expect(init?.headers).toEqual(
-			expect.objectContaining({ "Content-Type": "application/x-www-form-urlencoded" }),
-		);
-		return new Response(body, { status: ok ? 200 : 404 });
-	};
+const ISSUER = "https://tmi.example.com";
+const STATUS_ENDPOINT = "https://tmi.example.com/federation/trust-mark-status";
+
+async function buildIssuerEcAndKey() {
+	const key = await generateSigningKey("ES256");
+	const issuerEc = await signEntityStatement(
+		{
+			iss: ISSUER,
+			sub: ISSUER,
+			iat: 1000,
+			exp: 9_999_999_999,
+			jwks: { keys: [key.publicKey] },
+			metadata: {
+				federation_entity: {
+					federation_trust_mark_status_endpoint: STATUS_ENDPOINT,
+				},
+			},
+		},
+		key.privateKey,
+	);
+	return { key, issuerEc };
 }
 
 describe("trust-mark-status handler", () => {
-	it("verifies response JWT when verify=true", async () => {
-		const key = await generateSigningKey("ES256");
+	it("verifies JWT-mode response via fetchTrustMarkStatus", async () => {
+		const { key, issuerEc } = await buildIssuerEcAndKey();
 		const statusJwt = await signEntityStatement(
 			{
-				iss: "https://ta.example.com",
-				sub: "https://ta.example.com",
+				iss: ISSUER,
+				sub: ISSUER,
 				iat: 1000,
-				exp: 9999999999,
-				trust_mark: "eyJ.test.jwt",
-				status: "valid",
+				exp: 9_999_999_999,
+				status: "active",
 			},
 			key.privateKey,
 			{ typ: "trust-mark-status-response+jwt" },
 		);
-		const ecJwt = await signEntityStatement(
-			{
-				iss: "https://ta.example.com",
-				sub: "https://ta.example.com",
-				iat: 1000,
-				exp: 9999999999,
-				jwks: { keys: [key.publicKey] },
-			},
-			key.privateKey,
-		);
-
-		const client: HttpClient = async (url, _init) => {
-			if (url.includes(".well-known")) {
-				return new Response(ecJwt, {
+		const captures: { statusUrl?: string; postBody?: string } = {};
+		const client: HttpClient = async (input, init) => {
+			const url = typeof input === "string" ? input : input.toString();
+			if (url.includes("/.well-known/openid-federation")) {
+				return new Response(issuerEc, {
 					status: 200,
 					headers: { "Content-Type": "application/entity-statement+jwt" },
 				});
 			}
-			return new Response(statusJwt, { status: 200 });
+			captures.statusUrl = url;
+			captures.postBody = init?.body as string;
+			expect(init?.method).toBe("POST");
+			return new Response(statusJwt, {
+				status: 200,
+				headers: { "Content-Type": "application/trust-mark-status-response+jwt" },
+			});
 		};
 
 		const result = await handler(
-			{ entityId: "https://ta.example.com", verify: true, trustMark: "eyJ.abc.def" },
+			{ entityId: ISSUER, verify: true, trustMark: "eyJ.test.jwt" },
 			{ httpClient: client, formatter: new JsonFormatter(), logger },
 		);
 		expect(result.ok).toBe(true);
+		expect(captures.statusUrl?.startsWith(STATUS_ENDPOINT)).toBe(true);
+		const params = new URLSearchParams(captures.postBody ?? "");
+		expect(params.get("trust_mark")).toBe("eyJ.test.jwt");
 	});
 
-	it("decodes a JWT response and returns payload", async () => {
-		const key = await generateSigningKey("ES256");
-		const jwt = await signEntityStatement(
+	it("returns parsed payload for non-verify JWT-mode response (raw POST path)", async () => {
+		const { key, issuerEc } = await buildIssuerEcAndKey();
+		const responseJwt = await signEntityStatement(
 			{
-				iss: "https://ta.example.com",
-				sub: "https://ta.example.com",
+				iss: ISSUER,
+				sub: ISSUER,
 				iat: 1000,
-				exp: 9999999999,
+				exp: 9_999_999_999,
 				active: true,
-				jwks: { keys: [key.publicKey] },
 			},
 			key.privateKey,
 		);
+		const client: HttpClient = async (input) => {
+			const url = typeof input === "string" ? input : input.toString();
+			if (url.includes("/.well-known/openid-federation")) {
+				return new Response(issuerEc, {
+					status: 200,
+					headers: { "Content-Type": "application/entity-statement+jwt" },
+				});
+			}
+			return new Response(responseJwt, { status: 200 });
+		};
+
 		const result = await handler(
-			{ entityId: "https://ta.example.com", verify: false, trustMark: "eyJ.abc.def" },
-			{ httpClient: mockClient(jwt), formatter: new JsonFormatter(), logger },
+			{ entityId: ISSUER, verify: false, trustMark: "eyJ.test.jwt" },
+			{ httpClient: client, formatter: new JsonFormatter(), logger },
 		);
 		expect(result.ok).toBe(true);
 		if (result.ok) {
 			const parsed = JSON.parse(result.value);
 			expect(parsed.active).toBe(true);
-			expect(parsed.iss).toBe("https://ta.example.com");
+			expect(parsed.iss).toBe(ISSUER);
 		}
 	});
 
 	it("falls back to JSON.parse for plain JSON responses", async () => {
+		const { issuerEc } = await buildIssuerEcAndKey();
+		const client: HttpClient = async (input) => {
+			const url = typeof input === "string" ? input : input.toString();
+			if (url.includes("/.well-known/openid-federation")) {
+				return new Response(issuerEc, {
+					status: 200,
+					headers: { "Content-Type": "application/entity-statement+jwt" },
+				});
+			}
+			return new Response(JSON.stringify({ active: true }), { status: 200 });
+		};
 		const result = await handler(
-			{ entityId: "https://ta.example.com", verify: false, trustMark: "eyJ.abc.def" },
-			{
-				httpClient: mockClient(JSON.stringify({ active: true })),
-				formatter: new JsonFormatter(),
-				logger,
-			},
+			{ entityId: ISSUER, verify: false, trustMark: "eyJ.test.jwt" },
+			{ httpClient: client, formatter: new JsonFormatter(), logger },
 		);
 		expect(result.ok).toBe(true);
 		if (result.ok) {
@@ -99,44 +128,121 @@ describe("trust-mark-status handler", () => {
 		}
 	});
 
-	it("sends trust_mark in form body", async () => {
-		const trustMarkJwt = "eyJ.payload.sig";
-		const result = await handler(
-			{ entityId: "https://ta.example.com", trustMark: trustMarkJwt, verify: false },
-			{
-				httpClient: async (_url, init) => {
-					const bodyStr = init?.body as string;
-					const params = new URLSearchParams(bodyStr);
-					expect(params.get("trust_mark")).toBe(trustMarkJwt);
-					return new Response(JSON.stringify({ active: true }), { status: 200 });
-				},
-				formatter: new JsonFormatter(),
-				logger,
-			},
+	it("sends trust_mark in form body for JWT mode (raw POST)", async () => {
+		const { issuerEc } = await buildIssuerEcAndKey();
+		const captures: { body?: string } = {};
+		const client: HttpClient = async (input, init) => {
+			const url = typeof input === "string" ? input : input.toString();
+			if (url.includes("/.well-known/openid-federation")) {
+				return new Response(issuerEc, {
+					status: 200,
+					headers: { "Content-Type": "application/entity-statement+jwt" },
+				});
+			}
+			captures.body = init?.body as string;
+			return new Response(JSON.stringify({ active: true }), { status: 200 });
+		};
+		await handler(
+			{ entityId: ISSUER, trustMark: "eyJ.payload.sig", verify: false },
+			{ httpClient: client, formatter: new JsonFormatter(), logger },
 		);
-		expect(result.ok).toBe(true);
+		const params = new URLSearchParams(captures.body ?? "");
+		expect(params.get("trust_mark")).toBe("eyJ.payload.sig");
+	});
+
+	it("sends sub and trust_mark_type (NOT id) in form body for sub+type mode", async () => {
+		const { issuerEc } = await buildIssuerEcAndKey();
+		const captures: { body?: string } = {};
+		const client: HttpClient = async (input, init) => {
+			const url = typeof input === "string" ? input : input.toString();
+			if (url.includes("/.well-known/openid-federation")) {
+				return new Response(issuerEc, {
+					status: 200,
+					headers: { "Content-Type": "application/entity-statement+jwt" },
+				});
+			}
+			captures.body = init?.body as string;
+			return new Response(JSON.stringify({ active: true }), { status: 200 });
+		};
+
+		await handler(
+			{
+				entityId: ISSUER,
+				subject: "https://rp.example.com",
+				trustMarkType: "https://trust.example/mark/1",
+				verify: false,
+			},
+			{ httpClient: client, formatter: new JsonFormatter(), logger },
+		);
+		const params = new URLSearchParams(captures.body ?? "");
+		expect(params.get("sub")).toBe("https://rp.example.com");
+		expect(params.get("trust_mark_type")).toBe("https://trust.example/mark/1");
+		expect(params.has("trust_mark")).toBe(false);
+		expect(params.has("id")).toBe(false);
+	});
+
+	it("uses --status-endpoint override and skips discovery", async () => {
+		const captures: { ecCalled: boolean; statusUrl?: string } = { ecCalled: false };
+		const override = "https://other.example.com/status";
+		const client: HttpClient = async (input) => {
+			const url = typeof input === "string" ? input : input.toString();
+			if (url.includes("/.well-known/openid-federation")) {
+				captures.ecCalled = true;
+				return new Response("", { status: 500 });
+			}
+			captures.statusUrl = url;
+			return new Response(JSON.stringify({ active: true }), { status: 200 });
+		};
+		await handler(
+			{ entityId: ISSUER, trustMark: "eyJ.test.jwt", verify: false, statusEndpoint: override },
+			{ httpClient: client, formatter: new JsonFormatter(), logger },
+		);
+		expect(captures.ecCalled).toBe(false);
+		expect(captures.statusUrl?.startsWith(override)).toBe(true);
 	});
 
 	it("returns error for invalid entity ID", async () => {
 		const result = await handler(
 			{ entityId: "bad", trustMark: "jwt", verify: false },
-			{ httpClient: mockClient(""), formatter: new JsonFormatter(), logger },
+			{ httpClient: async () => new Response(""), formatter: new JsonFormatter(), logger },
 		);
 		expect(result.ok).toBe(false);
 	});
 
-	it("returns error on HTTP failure", async () => {
+	it("returns error on HTTP failure of status endpoint", async () => {
+		const { issuerEc } = await buildIssuerEcAndKey();
+		const client: HttpClient = async (input) => {
+			const url = typeof input === "string" ? input : input.toString();
+			if (url.includes("/.well-known/openid-federation")) {
+				return new Response(issuerEc, {
+					status: 200,
+					headers: { "Content-Type": "application/entity-statement+jwt" },
+				});
+			}
+			return new Response("", { status: 500 });
+		};
 		const result = await handler(
-			{ entityId: "https://ta.example.com", verify: false, trustMark: "jwt" },
-			{ httpClient: mockClient("", false), formatter: new JsonFormatter(), logger },
+			{ entityId: ISSUER, verify: false, trustMark: "jwt" },
+			{ httpClient: client, formatter: new JsonFormatter(), logger },
 		);
 		expect(result.ok).toBe(false);
 	});
 
 	it("wraps non-JWT non-JSON response as raw", async () => {
+		const { issuerEc } = await buildIssuerEcAndKey();
+		const client: HttpClient = async (input) => {
+			const url = typeof input === "string" ? input : input.toString();
+			if (url.includes("/.well-known/openid-federation")) {
+				return new Response(issuerEc, {
+					status: 200,
+					headers: { "Content-Type": "application/entity-statement+jwt" },
+				});
+			}
+			return new Response("plain text response", { status: 200 });
+		};
 		const result = await handler(
-			{ entityId: "https://ta.example.com", verify: false, trustMark: "jwt" },
-			{ httpClient: mockClient("plain text response"), formatter: new JsonFormatter(), logger },
+			{ entityId: ISSUER, verify: false, trustMark: "jwt" },
+			{ httpClient: client, formatter: new JsonFormatter(), logger },
 		);
 		expect(result.ok).toBe(true);
 		if (result.ok) {
@@ -144,34 +250,10 @@ describe("trust-mark-status handler", () => {
 		}
 	});
 
-	it("sends sub and id in form body for subject+id mode", async () => {
+	it("returns error when neither trust-mark nor subject+type provided", async () => {
 		const result = await handler(
-			{
-				entityId: "https://ta.example.com",
-				subject: "https://rp.example.com",
-				trustMarkId: "https://trust.example/mark/1",
-				verify: false,
-			},
-			{
-				httpClient: async (_url, init) => {
-					const bodyStr = init?.body as string;
-					const params = new URLSearchParams(bodyStr);
-					expect(params.get("sub")).toBe("https://rp.example.com");
-					expect(params.get("id")).toBe("https://trust.example/mark/1");
-					expect(params.has("trust_mark")).toBe(false);
-					return new Response(JSON.stringify({ active: true }), { status: 200 });
-				},
-				formatter: new JsonFormatter(),
-				logger,
-			},
-		);
-		expect(result.ok).toBe(true);
-	});
-
-	it("returns error when neither trust-mark nor subject+id provided", async () => {
-		const result = await handler(
-			{ entityId: "https://ta.example.com", verify: false },
-			{ httpClient: mockClient(""), formatter: new JsonFormatter(), logger },
+			{ entityId: ISSUER, verify: false },
+			{ httpClient: async () => new Response(""), formatter: new JsonFormatter(), logger },
 		);
 		expect(result.ok).toBe(false);
 		if (!result.ok) {
@@ -179,16 +261,16 @@ describe("trust-mark-status handler", () => {
 		}
 	});
 
-	it("returns error when both trust-mark and subject+id provided", async () => {
+	it("returns error when both trust-mark and subject+type provided", async () => {
 		const result = await handler(
 			{
-				entityId: "https://ta.example.com",
+				entityId: ISSUER,
 				trustMark: "eyJ.test.jwt",
 				subject: "https://rp.example.com",
-				trustMarkId: "https://trust.example/mark/1",
+				trustMarkType: "https://trust.example/mark/1",
 				verify: false,
 			},
-			{ httpClient: mockClient(""), formatter: new JsonFormatter(), logger },
+			{ httpClient: async () => new Response(""), formatter: new JsonFormatter(), logger },
 		);
 		expect(result.ok).toBe(false);
 		if (!result.ok) {
@@ -196,10 +278,10 @@ describe("trust-mark-status handler", () => {
 		}
 	});
 
-	it("returns error when only subject provided without trust-mark-id", async () => {
+	it("returns error when only subject provided without trust-mark-type", async () => {
 		const result = await handler(
-			{ entityId: "https://ta.example.com", subject: "https://rp.example.com", verify: false },
-			{ httpClient: mockClient(""), formatter: new JsonFormatter(), logger },
+			{ entityId: ISSUER, subject: "https://rp.example.com", verify: false },
+			{ httpClient: async () => new Response(""), formatter: new JsonFormatter(), logger },
 		);
 		expect(result.ok).toBe(false);
 	});

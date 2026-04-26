@@ -86,11 +86,13 @@ describe("expiry handler — entity-id mode", () => {
 		}
 	});
 
-	it("auto-detects entity-id from http URL", async () => {
+	it("does not auto-detect http URLs as entity IDs (Entity IDs MUST use https)", async () => {
+		// http://… is not a valid Entity Identifier per the spec, so the handler
+		// falls back to JWT decoding, which fails with a JWT-shape error.
 		const result = await handler({ jwt: "http://leaf.example.com", trustAnchors: [] }, deps);
 		expect(result.ok).toBe(false);
 		if (!result.ok) {
-			expect(result.error.description).toContain("No trust anchors");
+			expect(result.error.description).not.toContain("No trust anchors");
 		}
 	});
 });

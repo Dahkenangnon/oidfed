@@ -7,6 +7,7 @@ import {
 	federationError,
 	type HttpClient,
 	isChainExpired,
+	isValidEntityId,
 	type JWKSet,
 	ok,
 	type Result,
@@ -16,7 +17,7 @@ import {
 import type { Command } from "commander";
 import type { Config } from "../config.js";
 import type { OutputFormatter } from "../output/index.js";
-import { extractJwks, isEntityId, parseEntityIdOrError } from "../util/entity-id.js";
+import { extractJwks, parseEntityIdOrError } from "../util/entity-id.js";
 import type { Logger } from "../util/logger.js";
 import { buildTrustAnchors, requireAnchorIds, resolveOrError } from "../util/trust-anchors.js";
 
@@ -51,6 +52,7 @@ async function handleEntityIdMode(
 		anchorIds,
 		deps.httpClient,
 		deps.config.max_chain_depth,
+		deps.config,
 	);
 	if (!resolveResult.ok) return resolveResult;
 	const { anchors, result: resolved } = resolveResult.value;
@@ -129,7 +131,7 @@ async function handleEntityIdMode(
 export async function handler(args: ValidateArgs, deps: ValidateDeps): Promise<Result<string>> {
 	// Auto-detect: if first arg starts with http, treat as entity-id mode
 	const firstArg = args.jwts[0];
-	if (args.jwts.length === 1 && firstArg && isEntityId(firstArg)) {
+	if (args.jwts.length === 1 && firstArg && isValidEntityId(firstArg)) {
 		return handleEntityIdMode(firstArg, args.trustAnchors, deps);
 	}
 
@@ -140,7 +142,7 @@ export async function handler(args: ValidateArgs, deps: ValidateDeps): Promise<R
 	const anchorResult = requireAnchorIds(args.trustAnchors, deps.config);
 	if (!anchorResult.ok) return anchorResult;
 
-	const anchorsResult = await buildTrustAnchors(anchorResult.value, deps.httpClient);
+	const anchorsResult = await buildTrustAnchors(anchorResult.value, deps.httpClient, deps.config);
 	if (!anchorsResult.ok) return anchorsResult;
 
 	const validationResult = await validateTrustChain([...args.jwts], anchorsResult.value);

@@ -90,8 +90,9 @@ describe("validate handler", () => {
 			},
 			key.privateKey,
 		);
-		const client: HttpClient = async (url) => {
-			if (url.includes("ta.example.com")) {
+		const client: HttpClient = async (input) => {
+			const parsed = new URL(typeof input === "string" ? input : input.toString());
+			if (parsed.hostname === "ta.example.com") {
 				return new Response(taJwt, {
 					status: 200,
 					headers: { "content-type": "application/entity-statement+jwt" },

@@ -31,18 +31,102 @@ function padCell(content: string, width: number): string {
 	return content + " ".repeat(Math.max(0, width - visible));
 }
 
+function isDigit(c: string): boolean {
+	return c >= "0" && c <= "9";
+}
+
+function isWordChar(c: string | undefined): boolean {
+	if (c === undefined) return false;
+	return (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || (c >= "0" && c <= "9") || c === "_";
+}
+
+/**
+ * Colorize a JSON document for terminal output.
+ *
+ * Implemented as a single left-to-right pass over the input so that each
+ * character is examined a constant number of times — no backtracking, no
+ * regex on the raw input. The complexity is therefore linear in the input
+ * length, which avoids the polynomial-time pitfalls of mixed-alternation
+ * regular expressions on JSON-shaped strings.
+ */
 function colorizeJson(json: string): string {
-	return json.replace(
-		/("(?:\\.|[^"\\])*")\s*(:?)|\b(true|false)\b|\bnull\b|\b(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\b/g,
-		(match, str?: string, colon?: string, bool?: string, num?: string) => {
-			if (str && colon) return `${colors.key(str)}${colon}`;
-			if (str) return colors.string(str);
-			if (bool) return colors.boolean(match);
-			if (num) return colors.number(match);
-			if (match === "null") return colors.null(match);
-			return match;
-		},
-	);
+	let out = "";
+	let i = 0;
+	const n = json.length;
+	while (i < n) {
+		const c = json[i] as string;
+		if (c === '"') {
+			let j = i + 1;
+			let terminated = false;
+			while (j < n) {
+				const cj = json[j];
+				if (cj === "\\") {
+					j += 2;
+					continue;
+				}
+				if (cj === '"') {
+					j++;
+					terminated = true;
+					break;
+				}
+				j++;
+			}
+			const tokenEnd = terminated ? j : n;
+			const literal = json.slice(i, tokenEnd);
+			let k = tokenEnd;
+			while (k < n && (json[k] === " " || json[k] === "\t")) k++;
+			if (terminated && json[k] === ":") {
+				out += colors.key(literal);
+			} else {
+				out += colors.string(literal);
+			}
+			i = tokenEnd;
+			continue;
+		}
+
+		const startsKeyword = (c === "t" || c === "f" || c === "n") && !isWordChar(json[i - 1]);
+		if (startsKeyword) {
+			if (c === "t" && json.slice(i, i + 4) === "true" && !isWordChar(json[i + 4])) {
+				out += colors.boolean("true");
+				i += 4;
+				continue;
+			}
+			if (c === "f" && json.slice(i, i + 5) === "false" && !isWordChar(json[i + 5])) {
+				out += colors.boolean("false");
+				i += 5;
+				continue;
+			}
+			if (c === "n" && json.slice(i, i + 4) === "null" && !isWordChar(json[i + 4])) {
+				out += colors.null("null");
+				i += 4;
+				continue;
+			}
+		}
+
+		const numberStart =
+			(c === "-" && isDigit(json[i + 1] ?? "")) || (isDigit(c) && !isWordChar(json[i - 1]));
+		if (numberStart) {
+			let j = i;
+			if (json[j] === "-") j++;
+			while (j < n && isDigit(json[j] as string)) j++;
+			if (json[j] === ".") {
+				j++;
+				while (j < n && isDigit(json[j] as string)) j++;
+			}
+			if (json[j] === "e" || json[j] === "E") {
+				j++;
+				if (json[j] === "+" || json[j] === "-") j++;
+				while (j < n && isDigit(json[j] as string)) j++;
+			}
+			out += colors.number(json.slice(i, j));
+			i = j;
+			continue;
+		}
+
+		out += c;
+		i++;
+	}
+	return out;
 }
 
 export class HumanFormatter implements OutputFormatter {

@@ -32,6 +32,7 @@ export async function handler(args: ResolveArgs, deps: ResolveDeps): Promise<Res
 		anchorResult.value,
 		deps.httpClient,
 		args.maxDepth ?? deps.config.max_chain_depth,
+		deps.config,
 	);
 	if (!resolveResult.ok) return resolveResult;
 	const result = resolveResult.value.result;

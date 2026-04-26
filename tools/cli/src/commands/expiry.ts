@@ -5,6 +5,7 @@ import {
 	FederationErrorCode,
 	federationError,
 	type HttpClient,
+	isValidEntityId,
 	nowSeconds,
 	ok,
 	type ParsedEntityStatement,
@@ -14,7 +15,7 @@ import {
 import type { Command } from "commander";
 import type { Config } from "../config.js";
 import type { OutputFormatter } from "../output/index.js";
-import { isEntityId, parseEntityIdOrError } from "../util/entity-id.js";
+import { parseEntityIdOrError } from "../util/entity-id.js";
 import type { Logger } from "../util/logger.js";
 import { requireAnchorIds, resolveOrError } from "../util/trust-anchors.js";
 
@@ -49,6 +50,7 @@ async function handleEntityIdMode(
 		anchorIds,
 		deps.httpClient,
 		deps.config.max_chain_depth,
+		deps.config,
 	);
 	if (!resolveResult.ok) return resolveResult;
 	const { anchors, result: resolved } = resolveResult.value;
@@ -126,7 +128,7 @@ export function handleJwt(jwt: string, deps: ExpiryDeps): Result<string> {
 }
 
 export async function handler(args: ExpiryArgs, deps: ExpiryDeps): Promise<Result<string>> {
-	if (isEntityId(args.jwt)) {
+	if (isValidEntityId(args.jwt)) {
 		return handleEntityIdMode(args.jwt, args.trustAnchors ?? [], deps);
 	}
 	return handleJwt(args.jwt, deps);

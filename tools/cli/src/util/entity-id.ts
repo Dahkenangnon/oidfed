@@ -22,14 +22,6 @@ export function parseEntityIdOrError(raw: string): Result<EntityId> {
 	}
 }
 
-export function normalizeEntityId(raw: string): string {
-	return raw.endsWith("/") ? raw.slice(0, -1) : raw;
-}
-
-export function isEntityId(value: string): boolean {
-	return value.startsWith("http://") || value.startsWith("https://");
-}
-
 /**
  * Extract JWKS from an Entity Configuration payload.
  * Entity Configurations MUST contain `jwks`.

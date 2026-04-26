@@ -100,6 +100,51 @@ describe("buildTrustAnchors", () => {
 			expect(result.error.description).toContain("missing required jwks");
 		}
 	});
+
+	it("uses config-supplied JWKS without fetching the EC", async () => {
+		const key = await generateSigningKey("ES256");
+		let fetched = false;
+		const client: HttpClient = async () => {
+			fetched = true;
+			return new Response("", { status: 500 });
+		};
+		const config = {
+			...DEFAULT_CONFIG,
+			trust_anchors: [{ entity_id: "https://ta.example.com", jwks: { keys: [key.publicKey] } }],
+		};
+		const result = await buildTrustAnchors(["https://ta.example.com"], client, config);
+		expect(result.ok).toBe(true);
+		expect(fetched).toBe(false);
+	});
+
+	it("falls back to EC fetch when config has no JWKS for anchor", async () => {
+		const key = await generateSigningKey("ES256");
+		const jwt = await signEntityStatement(
+			{
+				iss: "https://ta.example.com",
+				sub: "https://ta.example.com",
+				iat: 1000,
+				exp: 9999999999,
+				jwks: { keys: [key.publicKey] },
+			},
+			key.privateKey,
+		);
+		let fetched = false;
+		const client: HttpClient = async () => {
+			fetched = true;
+			return new Response(jwt, {
+				status: 200,
+				headers: { "Content-Type": "application/entity-statement+jwt" },
+			});
+		};
+		const config = {
+			...DEFAULT_CONFIG,
+			trust_anchors: [{ entity_id: "https://ta.example.com" }],
+		};
+		const result = await buildTrustAnchors(["https://ta.example.com"], client, config);
+		expect(result.ok).toBe(true);
+		expect(fetched).toBe(true);
+	});
 });
 
 describe("resolveOrError", () => {
@@ -116,9 +161,12 @@ describe("resolveOrError", () => {
 			key.privateKey,
 		);
 		// Return TA EC for anchor fetch, 404 for everything else
-		const client: HttpClient = async (url) => {
-			const urlStr = typeof url === "string" ? url : url.toString();
-			if (urlStr.includes("ta.example.com/.well-known/openid-federation")) {
+		const client: HttpClient = async (input) => {
+			const parsed = new URL(typeof input === "string" ? input : input.toString());
+			if (
+				parsed.hostname === "ta.example.com" &&
+				parsed.pathname === "/.well-known/openid-federation"
+			) {
 				return new Response(jwt, {
 					status: 200,
 					headers: { "Content-Type": "application/entity-statement+jwt" },

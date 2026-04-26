@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-	extractJwks,
-	isEntityId,
-	normalizeEntityId,
-	parseEntityIdOrError,
-} from "../../src/util/entity-id.js";
+import { extractJwks, parseEntityIdOrError } from "../../src/util/entity-id.js";
 
 describe("parseEntityIdOrError", () => {
 	it("returns ok for valid HTTPS entity ID", () => {
@@ -20,30 +15,6 @@ describe("parseEntityIdOrError", () => {
 	it("returns error for HTTP entity ID", () => {
 		const result = parseEntityIdOrError("http://example.com");
 		expect(result.ok).toBe(false);
-	});
-});
-
-describe("normalizeEntityId", () => {
-	it("strips trailing slash", () => {
-		expect(normalizeEntityId("https://example.com/")).toBe("https://example.com");
-	});
-
-	it("returns unchanged when no trailing slash", () => {
-		expect(normalizeEntityId("https://example.com")).toBe("https://example.com");
-	});
-});
-
-describe("isEntityId", () => {
-	it("recognizes https URLs", () => {
-		expect(isEntityId("https://example.com")).toBe(true);
-	});
-
-	it("recognizes http URLs", () => {
-		expect(isEntityId("http://example.com")).toBe(true);
-	});
-
-	it("rejects JWT-like strings", () => {
-		expect(isEntityId("eyJhbGciOiJFUzI1NiJ9.payload.sig")).toBe(false);
 	});
 });
 
