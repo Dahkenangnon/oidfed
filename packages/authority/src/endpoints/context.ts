@@ -1,6 +1,7 @@
 /** Shared handler context: signing keys, stores, and configuration for all endpoints. */
 import type {
 	EntityId,
+	EntityType,
 	FederationEntityMetadata,
 	FederationOptions,
 	JtiStore,
@@ -58,4 +59,22 @@ export interface HandlerContext {
 	readonly registrationProtocolAdapter?: RegistrationProtocolAdapter;
 	/** Store for JTI replay protection. */
 	readonly jtiStore?: JtiStore;
+	/**
+	 * Optional callback returning a previously signed Resolve Response JWT for the
+	 * given subject + trust anchors + entity types. When supplied and a JWT is
+	 * returned, the resolve handler serves it directly without invoking fresh
+	 * trust-chain resolution. Returning `undefined` indicates a cache miss.
+	 */
+	readonly cachedResolutionLookup?: (
+		sub: EntityId,
+		trustAnchors: readonly EntityId[],
+		entityTypes: readonly EntityType[],
+	) => Promise<string | undefined>;
+	/**
+	 * When true, unauthenticated callers (those whose request lacks a valid
+	 * `X-Authenticated-Entity` header) cannot trigger fresh trust-chain
+	 * resolution after a cache miss; the resolve handler returns a `not_found`
+	 * response instead. Authenticated callers are unaffected. Default: false.
+	 */
+	readonly requireAuthForFreshResolution?: boolean;
 }

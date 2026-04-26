@@ -1,5 +1,6 @@
 import {
 	type EntityId,
+	type EntityType,
 	FederationErrorCode,
 	isValidEntityId,
 	type JWKSet,
@@ -46,6 +47,7 @@ export function createResolveHandler(ctx: HandlerContext): (request: Request) =>
 		if (rawEntity && !isValidEntityId(rawEntity)) {
 			return errorResponse(400, "invalid_request", "Invalid X-Authenticated-Entity header value");
 		}
+		const isAuthenticated = Boolean(rawEntity);
 
 		if (!ctx.trustAnchors) {
 			return errorResponse(
@@ -59,6 +61,33 @@ export function createResolveHandler(ctx: HandlerContext): (request: Request) =>
 			if (!isValidEntityId(ta) || !ctx.trustAnchors.has(ta as EntityId)) {
 				return errorResponse(404, FederationErrorCode.InvalidTrustAnchor, "Unknown trust anchor");
 			}
+		}
+
+		// Cache-first short-circuit: if a previously vetted Resolve Response is
+		// available for this (sub, trustAnchors, entityTypes) tuple, serve it
+		// directly without invoking fresh trust-chain resolution.
+		if (ctx.cachedResolutionLookup) {
+			const cached = await ctx.cachedResolutionLookup(
+				sub as EntityId,
+				trustAnchorParam as EntityId[],
+				entityTypeParam as EntityType[],
+			);
+			if (cached !== undefined) {
+				return jwtResponse(cached, MediaType.ResolveResponse);
+			}
+			if (!isAuthenticated && ctx.requireAuthForFreshResolution) {
+				return errorResponse(
+					404,
+					FederationErrorCode.NotFound,
+					"No cached resolution available; fresh resolution requires authentication",
+				);
+			}
+		} else if (!isAuthenticated && ctx.requireAuthForFreshResolution) {
+			return errorResponse(
+				404,
+				FederationErrorCode.NotFound,
+				"Fresh resolution requires authentication",
+			);
 		}
 
 		try {

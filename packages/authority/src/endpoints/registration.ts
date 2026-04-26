@@ -51,7 +51,8 @@ export function createRegistrationHandler(
 		if (!body) return errorResponse(400, "invalid_request", "Missing request body");
 
 		let ecJwt: string;
-		if (contentType.includes("trust-chain+json")) {
+		const isTrustChainBody = contentType.includes("trust-chain+json");
+		if (isTrustChainBody) {
 			try {
 				const chain = JSON.parse(body) as string[];
 				if (!Array.isArray(chain) || chain.length === 0) {
@@ -131,6 +132,69 @@ export function createRegistrationHandler(
 			}
 		}
 
+		const peerTrustChainHeader = header.peer_trust_chain as string[] | undefined;
+
+		// §12.2.1 MUST NOT: peer_trust_chain MUST NOT appear when the request body is a
+		// Trust Chain (Content-Type application/trust-chain+json). Reject explicitly.
+		if (isTrustChainBody && peerTrustChainHeader !== undefined) {
+			return errorResponse(
+				400,
+				"invalid_request",
+				"peer_trust_chain MUST NOT be used when the request body is a Trust Chain",
+			);
+		}
+
+		if (peerTrustChainHeader && peerTrustChainHeader.length > 0) {
+			const peerFirstDecoded = decodeEntityStatement(peerTrustChainHeader[0] as string);
+			if (!peerFirstDecoded.ok) {
+				return errorResponse(
+					400,
+					FederationErrorCode.InvalidTrustChain,
+					"Failed to decode first entry of peer_trust_chain header",
+				);
+			}
+			const peerFirstPayload = peerFirstDecoded.value.payload as Record<string, unknown>;
+			if (peerFirstPayload.iss !== ctx.entityId || peerFirstPayload.sub !== ctx.entityId) {
+				return errorResponse(
+					400,
+					FederationErrorCode.InvalidTrustChain,
+					"First entry of peer_trust_chain header MUST be the OP's Entity Configuration",
+				);
+			}
+
+			// §12.2.1 MUST: when both headers are present, the Trust Anchors selected in
+			// both Trust Chains MUST be the same. The comparison is between the two
+			// RP-supplied chains — derive the RP-side TA directly from the trust_chain
+			// header (independent of any validation fallback below).
+			if (trustChainHeader && trustChainHeader.length > 0) {
+				const rpHeaderLastDecoded = decodeEntityStatement(
+					trustChainHeader[trustChainHeader.length - 1] as string,
+				);
+				const peerHeaderLastDecoded = decodeEntityStatement(
+					peerTrustChainHeader[peerTrustChainHeader.length - 1] as string,
+				);
+				if (!rpHeaderLastDecoded.ok || !peerHeaderLastDecoded.ok) {
+					return errorResponse(
+						400,
+						FederationErrorCode.InvalidTrustChain,
+						"Failed to decode last entry of trust_chain or peer_trust_chain header",
+					);
+				}
+				const rpHeaderTaId = (rpHeaderLastDecoded.value.payload as Record<string, unknown>).iss as
+					| string
+					| undefined;
+				const peerHeaderTaId = (peerHeaderLastDecoded.value.payload as Record<string, unknown>)
+					.iss as string | undefined;
+				if (rpHeaderTaId !== peerHeaderTaId) {
+					return errorResponse(
+						400,
+						FederationErrorCode.InvalidTrustChain,
+						`peer_trust_chain Trust Anchor ('${peerHeaderTaId}') does not match trust_chain Trust Anchor ('${rpHeaderTaId}')`,
+					);
+				}
+			}
+		}
+
 		const rpEntityId = entityId(reqPayload.sub);
 		let bestChain: ValidatedTrustChain | undefined;
 
@@ -175,15 +239,46 @@ export function createRegistrationHandler(
 			}
 		}
 
+		// peer_trust_chain — validate the chain (signature, freshness, §4 invariants) and
+		// extract OP's RP-chosen metadata. The same-TA invariant against the RP-supplied
+		// trust_chain header was already enforced above (§12.2.1).
+		// Note: peer-chain validation FAILURE hard-fails the registration; there is no
+		// fallback (asymmetric with trust_chain header validation, which can fall back to
+		// independent OP-side resolution).
+		let peerResolvedOpMetadata: Readonly<Record<string, unknown>> | undefined;
+		if (peerTrustChainHeader && peerTrustChainHeader.length > 0 && ctx.trustAnchors) {
+			const peerValidation = await validateTrustChain(
+				peerTrustChainHeader,
+				ctx.trustAnchors,
+				ctx.options,
+			);
+			if (!peerValidation.valid) {
+				return errorResponse(
+					400,
+					FederationErrorCode.InvalidTrustChain,
+					`peer_trust_chain validation failed: ${
+						peerValidation.errors[0]?.message ?? "unknown error"
+					}`,
+				);
+			}
+			peerResolvedOpMetadata = peerValidation.chain.resolvedMetadata.openid_provider ?? {};
+		}
+
 		// Always fire invalidation hook — even on first registration the OP may hold stale cached data
 		if (ctx.registrationConfig?.onRegistrationInvalidation) {
 			await ctx.registrationConfig.onRegistrationInvalidation(rpEntityId);
 		}
 
+		const adapterContext =
+			peerResolvedOpMetadata !== undefined ? { peerResolvedOpMetadata } : undefined;
+
 		let validatedMetadata: Record<string, unknown> | undefined;
 		if (ctx.registrationProtocolAdapter && reqPayload.metadata) {
 			const metadataRecord = reqPayload.metadata as Record<string, unknown>;
-			const adapterResult = ctx.registrationProtocolAdapter.validateClientMetadata(metadataRecord);
+			const adapterResult = ctx.registrationProtocolAdapter.validateClientMetadata(
+				metadataRecord,
+				adapterContext,
+			);
 			if (!adapterResult.ok) {
 				return errorResponse(400, adapterResult.error.code, adapterResult.error.description);
 			}
@@ -237,6 +332,7 @@ export function createRegistrationHandler(
 				enrichedMeta = ctx.registrationProtocolAdapter.enrichResponseMetadata(
 					metadataForResponse as Record<string, unknown>,
 					bestChain,
+					adapterContext,
 				);
 			} else {
 				enrichedMeta = metadataForResponse as Record<string, unknown>;
