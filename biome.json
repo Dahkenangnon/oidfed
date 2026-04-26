@@ -19,6 +19,18 @@
 					}
 				}
 			}
+		},
+		{
+			"includes": ["apps/**"],
+			"formatter": { "enabled": false },
+			"linter": { "enabled": false },
+			"assist": {
+				"actions": {
+					"source": {
+						"organizeImports": "off"
+					}
+				}
+			}
 		}
 	],
 	"files": {

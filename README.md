@@ -59,7 +59,9 @@ The repository also ships a CLI ([`@oidfed/cli`](docs/tools/cli.md)), a live fed
 | [**OpenID Federation Wallet Architectures 1.0**](https://openid.net/specs/openid-federation-wallet-1_0.html) *(draft)* | Trust establishment for Wallet ecosystems with OpenID Federation |
 | [**OpenID Federation Extended Listing 1.0**](https://openid.net/specs/openid-federation-extended-listing-1_0.html) *(draft)* | Subordinate Listings Specification for large-scale federations |
 
-The two 1.1 draft documents together are equivalent to OpenID Federation 1.0. The Wallet Architectures and Extended Listing specs are independent extensions. This library targets the OpenID Federation 1.0 final specification.
+
+> [!NOTE]
+The two 1.1 draft documents together are equivalent to OpenID Federation 1.0. The Wallet Architectures and Extended Listing specs are independent extensions. This library targets the OpenID Federation 1.0 final specification & may add support for any of the successor and profiles of the core spec including current successors and profiles such as the 1.1 drafts, the Wallet Architectures, and Extended Listing.
 
 For real-world integration examples see the [Wiring Guide](docs/guide/wiring-guide.md), the [dev federation server](docs/guide/dev.md), and the [E2E test infrastructure](docs/test/e2e.md).
 
