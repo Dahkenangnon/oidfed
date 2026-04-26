@@ -46,6 +46,10 @@ import {
 	unwrapOr,
 } from "../../../packages/core/src/errors.js";
 import {
+	fetchHistoricalKeys,
+	fetchListSubordinates,
+	fetchResolveResponse,
+	fetchTrustMarkList,
 	verifyHistoricalKeysResponse,
 	verifyResolveResponse,
 	verifySignedJwkSet,
@@ -84,11 +88,17 @@ import {
 	decodeEntityStatement,
 	verifyEntityStatement,
 } from "../../../packages/core/src/jose/verify.js";
+import { fetchJwkSet } from "../../../packages/core/src/jwks/jwks-uri.js";
+import { resolveEntityKeys } from "../../../packages/core/src/jwks/resolve.js";
+import { fetchSignedJwkSet } from "../../../packages/core/src/jwks/signed-jwks-uri.js";
+import { validateSignedJwkSetSpecHygiene } from "../../../packages/core/src/jwks/spec-hygiene.js";
+import { validateJwkSetUseRequirement } from "../../../packages/core/src/jwks/use-requirement.js";
 import {
 	applyMetadataPolicy,
 	denormalizeScope,
 	normalizeScope,
 } from "../../../packages/core/src/metadata-policy/apply.js";
+import { validateCustomOperators } from "../../../packages/core/src/metadata-policy/custom-operators.js";
 import { resolveMetadataPolicy } from "../../../packages/core/src/metadata-policy/merge.js";
 import { operators } from "../../../packages/core/src/metadata-policy/operators.js";
 import type { TrustChainConstraints } from "../../../packages/core/src/schemas/constraints.js";
@@ -137,6 +147,7 @@ import {
 	validateEntityId,
 	validateFetchUrl,
 } from "../../../packages/core/src/trust-chain/fetch.js";
+import { resolveTrustChainForAnchor } from "../../../packages/core/src/trust-chain/peer.js";
 import { refreshTrustChain } from "../../../packages/core/src/trust-chain/refresh.js";
 import {
 	createConcurrencyLimiter,
@@ -153,12 +164,16 @@ import {
 	validateTrustChain,
 } from "../../../packages/core/src/trust-chain/validate.js";
 import {
+	fetchTrustMark,
+	fetchTrustMarkStatus,
 	signTrustMarkDelegation,
 	validateTrustMark,
+	validateTrustMarkLogo,
 } from "../../../packages/core/src/trust-marks/index.js";
 import type {
 	Clock,
 	EntityId,
+	HttpClient,
 	ParsedEntityStatement,
 	PolicyOperatorDefinition,
 	TrustAnchorSet,
@@ -802,6 +817,11 @@ export default (QUnit: QUnit) => {
 		test("rejects empty string", (t) => {
 			t.false(EntityIdSchema.safeParse("").success);
 		});
+
+		test("rejects URL with no host component", (t) => {
+			t.false(EntityIdSchema.safeParse("https://").success);
+			t.false(EntityIdSchema.safeParse("https://:8080").success);
+		});
 	});
 
 	// ── schemas/jwk ───────────────────────────────────────────────────
@@ -1076,6 +1096,55 @@ export default (QUnit: QUnit) => {
 		});
 	});
 
+	// ── jwks/use-requirement ──────────────────────────────────────────
+	module("core / validateJwkSetUseRequirement", () => {
+		test("accepts a JWK Set of only signing-capable keys without 'use'", (t) => {
+			const result = validateJwkSetUseRequirement([
+				{ kty: "EC", kid: "k1", crv: "P-256", x: "x1", y: "y1", alg: "ES256" },
+				{ kty: "RSA", kid: "k2", n: "n1", e: "AQAB", alg: "RS256" },
+			]);
+			t.true(result.ok);
+		});
+
+		test("rejects a JWK Set mixing signing and encryption keys without 'use'", (t) => {
+			const result = validateJwkSetUseRequirement([
+				{ kty: "EC", kid: "sig1", crv: "P-256", x: "x1", y: "y1", alg: "ES256" },
+				{ kty: "RSA", kid: "enc1", n: "n1", e: "AQAB", alg: "RSA-OAEP-256" },
+			]);
+			t.false(result.ok);
+			if (result.ok) return;
+			t.equal(result.error.code, FederationErrorCode.InvalidMetadata);
+			t.ok(result.error.description.includes("'use'"));
+		});
+
+		test("accepts a mixed JWK Set when every key declares 'use'", (t) => {
+			const result = validateJwkSetUseRequirement([
+				{ kty: "EC", kid: "sig1", crv: "P-256", x: "x1", y: "y1", use: "sig" },
+				{ kty: "RSA", kid: "enc1", n: "n1", e: "AQAB", use: "enc" },
+			]);
+			t.true(result.ok);
+		});
+
+		test("rejects a mixed JWK Set when only some keys declare 'use'", (t) => {
+			const result = validateJwkSetUseRequirement([
+				{ kty: "EC", kid: "sig1", crv: "P-256", x: "x1", y: "y1", use: "sig" },
+				{ kty: "RSA", kid: "enc1", n: "n1", e: "AQAB", alg: "RSA-OAEP-256" },
+			]);
+			t.false(result.ok);
+			if (result.ok) return;
+			t.equal(result.error.code, FederationErrorCode.InvalidMetadata);
+			t.ok(result.error.description.includes("enc1"));
+		});
+
+		test("accepts a JWK Set of only encryption-capable keys without 'use'", (t) => {
+			const result = validateJwkSetUseRequirement([
+				{ kty: "RSA", kid: "enc1", n: "n1", e: "AQAB", alg: "RSA-OAEP-256" },
+				{ kty: "RSA", kid: "enc2", n: "n2", e: "AQAB", alg: "RSA1_5" },
+			]);
+			t.true(result.ok);
+		});
+	});
+
 	// ── schemas/trust-mark ────────────────────────────────────────────
 	module("core / schemas/trust-mark", () => {
 		test("TrustMarkRefSchema accepts valid trust mark ref", (t) => {
@@ -1141,6 +1210,27 @@ export default (QUnit: QUnit) => {
 			test("TrustMarkPayloadSchema rejects missing iat", (t) => {
 				const { iat: _, ...noIat } = validPayload;
 				t.false(TrustMarkPayloadSchema.safeParse(noIat).success);
+			});
+			test("TrustMarkPayloadSchema rejects logo_uri that is not a syntactically valid URL", (t) => {
+				t.false(
+					TrustMarkPayloadSchema.safeParse({ ...validPayload, logo_uri: "not-a-url" }).success,
+				);
+			});
+			test("TrustMarkPayloadSchema accepts http logo_uri (spec does not require https)", (t) => {
+				t.true(
+					TrustMarkPayloadSchema.safeParse({
+						...validPayload,
+						logo_uri: "http://example.com/logo.png",
+					}).success,
+				);
+			});
+			test("TrustMarkPayloadSchema accepts logo_uri with fragment (spec does not forbid)", (t) => {
+				t.true(
+					TrustMarkPayloadSchema.safeParse({
+						...validPayload,
+						logo_uri: "https://example.com/logo.svg#layer-1",
+					}).success,
+				);
 			});
 		}
 
@@ -1307,6 +1397,10 @@ export default (QUnit: QUnit) => {
 			});
 			test("returns true for valid HTTPS URL within 2048 characters", (t) => {
 				t.true(isValidEntityId("https://example.com"));
+			});
+			test("returns false for URL with no host component", (t) => {
+				t.false(isValidEntityId("https://"));
+				t.false(isValidEntityId("https://:8080"));
 			});
 		});
 
@@ -1725,6 +1819,14 @@ export default (QUnit: QUnit) => {
 					),
 				);
 			});
+			test("no-leading-period entry in permitted does NOT match a subdomain", (t) => {
+				t.false(
+					checkNamingConstraints(
+						{ permitted: ["example.com"] },
+						"https://sub.example.com" as EntityId,
+					),
+				);
+			});
 		});
 
 		module("core / applyAllowedEntityTypes", () => {
@@ -1763,6 +1865,19 @@ export default (QUnit: QUnit) => {
 				const original = { ...metadata };
 				applyAllowedEntityTypes(["openid_relying_party"], metadata);
 				t.deepEqual(metadata, original);
+			});
+			test("tolerates federation_entity when redundantly listed in constraint", (t) => {
+				// Spec: federation_entity is always allowed and MUST NOT be included.
+				// Library treats redundant inclusion as a no-op rather than rejecting,
+				// so an over-eager publisher does not break the chain.
+				const result = applyAllowedEntityTypes(["federation_entity", "openid_provider"], {
+					federation_entity: { organization_name: "Test" },
+					openid_provider: { issuer: "https://op.example.com" },
+					openid_relying_party: { client_name: "RP" },
+				});
+				t.ok((result as Record<string, unknown>).federation_entity);
+				t.ok((result as Record<string, unknown>).openid_provider);
+				t.equal((result as Record<string, unknown>).openid_relying_party, undefined);
 			});
 		});
 
@@ -2208,16 +2323,16 @@ export default (QUnit: QUnit) => {
 			});
 			test("fails verification when kid header is missing", async (t) => {
 				const { publicKey, privateKey } = await generateSigningKey("ES256");
-				const jwt = await signEntityStatement(
-					{
-						iss: "https://example.com",
-						sub: "https://example.com",
-						iat: sv_now,
-						exp: sv_now + 3600,
-					},
-					{ ...privateKey, kid: undefined },
-					{ kid: undefined },
-				);
+				const jose = await import("jose");
+				const cryptoKey = await jose.importJWK(privateKey as unknown as JoseJWK, "ES256");
+				const jwt = await new jose.SignJWT({
+					iss: "https://example.com",
+					sub: "https://example.com",
+					iat: sv_now,
+					exp: sv_now + 3600,
+				} as JWTPayload)
+					.setProtectedHeader({ alg: "ES256", typ: "entity-statement+jwt" })
+					.sign(cryptoKey as Parameters<SignJWT["sign"]>[0]);
 				const result = await verifyEntityStatement(jwt, { keys: [publicKey] });
 				t.true(isErr(result));
 				if (isErr(result)) {
@@ -2328,6 +2443,18 @@ export default (QUnit: QUnit) => {
 					t.ok(false, "should have thrown");
 				} catch (e: unknown) {
 					t.true((e as Error).message.includes("HS256"));
+				}
+			});
+			test("throws when no kid is available", async (t) => {
+				const { privateKey } = await generateSigningKey("ES256");
+				try {
+					await signEntityStatement({ iss: "https://example.com", sub: "https://example.com" }, {
+						...privateKey,
+						kid: undefined,
+					} as JWK);
+					t.ok(false, "should have thrown");
+				} catch (e: unknown) {
+					t.true((e as Error).message.toLowerCase().includes("kid"));
 				}
 			});
 		});
@@ -2712,6 +2839,195 @@ export default (QUnit: QUnit) => {
 				t.equal(result.value.federation_entity?.organization_name, "Org");
 			}
 		});
+		test("treats BCP47 language-tagged member name as a separate key from its base name", (t) => {
+			const metadata: FederationMetadata = {
+				federation_entity: {
+					organization_name: "Example Corp",
+					"organization_name#de": "Beispiel GmbH",
+					"organization_name#ja-Kana-JP": "エグザンプル",
+				},
+			};
+			const result = applyMetadataPolicy(metadata, {
+				federation_entity: { organization_name: { value: "Forced English" } },
+			});
+			t.true(isOk(result));
+			if (isOk(result)) {
+				const fe = result.value.federation_entity as Record<string, unknown>;
+				t.equal(fe.organization_name, "Forced English");
+				t.equal(fe["organization_name#de"], "Beispiel GmbH");
+				t.equal(fe["organization_name#ja-Kana-JP"], "エグザンプル");
+			}
+		});
+
+		test("custom operator: applies a check-action custom operator before essential", (t) => {
+			const calls: string[] = [];
+			const regexOp: PolicyOperatorDefinition = {
+				name: "regex",
+				order: 4,
+				action: "check",
+				apply: (parameterValue, operatorValue) => {
+					calls.push("regex");
+					if (parameterValue === undefined) return { ok: true, value: undefined };
+					const re = new RegExp(operatorValue as string);
+					return re.test(parameterValue as string)
+						? { ok: true, value: parameterValue }
+						: { ok: false, error: "regex mismatch" };
+				},
+				merge: (a, _b) => ({ ok: true, value: a }),
+				canCombineWith: () => true,
+			};
+			const trackingEssential: PolicyOperatorDefinition = {
+				...(operators.essential as PolicyOperatorDefinition),
+				apply: (parameterValue, operatorValue) => {
+					calls.push("essential");
+					return (operators.essential as PolicyOperatorDefinition).apply(
+						parameterValue,
+						operatorValue,
+					);
+				},
+			};
+			void trackingEssential;
+			const result = applyMetadataPolicy(
+				{
+					openid_relying_party: { sector_identifier_uri: "https://rp.example.com/sector" },
+				} as FederationMetadata,
+				{
+					openid_relying_party: {
+						sector_identifier_uri: { regex: "^https://", essential: true },
+					},
+				},
+				undefined,
+				{ customOperators: [regexOp] },
+			);
+			t.true(isOk(result));
+			t.equal(calls[0], "regex", "regex (custom check) ran first");
+		});
+
+		test("custom operator: applies a modify-action custom operator after value", (t) => {
+			const upperOp: PolicyOperatorDefinition = {
+				name: "uppercase",
+				order: 2,
+				action: "modify",
+				apply: (parameterValue, _o) => ({
+					ok: true,
+					value: typeof parameterValue === "string" ? parameterValue.toUpperCase() : parameterValue,
+				}),
+				merge: (a, _b) => ({ ok: true, value: a }),
+				canCombineWith: () => true,
+			};
+			const result = applyMetadataPolicy(
+				{ openid_relying_party: { client_name: "ignored" } } as FederationMetadata,
+				{
+					openid_relying_party: { client_name: { value: "rp", uppercase: true } },
+				},
+				undefined,
+				{ customOperators: [upperOp] },
+			);
+			t.true(isOk(result));
+			if (isOk(result)) {
+				t.equal(result.value.openid_relying_party?.client_name, "RP");
+			}
+		});
+
+		test("custom operator: violation surfaces as MetadataPolicyViolation", (t) => {
+			const regexOp: PolicyOperatorDefinition = {
+				name: "regex",
+				order: 4,
+				action: "check",
+				apply: (parameterValue, operatorValue) => {
+					if (parameterValue === undefined) return { ok: true, value: undefined };
+					const re = new RegExp(operatorValue as string);
+					return re.test(parameterValue as string)
+						? { ok: true, value: parameterValue }
+						: { ok: false, error: "regex mismatch" };
+				},
+				merge: (a, _b) => ({ ok: true, value: a }),
+				canCombineWith: () => true,
+			};
+			const result = applyMetadataPolicy(
+				{
+					openid_relying_party: { sector_identifier_uri: "http://rp.example.com" },
+				} as FederationMetadata,
+				{ openid_relying_party: { sector_identifier_uri: { regex: "^https://" } } },
+				undefined,
+				{ customOperators: [regexOp] },
+			);
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.equal(result.error.code, "ERR_METADATA_POLICY_VIOLATION");
+				t.ok(result.error.description.includes("regex mismatch"));
+			}
+		});
+
+		test("custom operator: surfaces validation error when supplied set is invalid", (t) => {
+			const collidingOp: PolicyOperatorDefinition = {
+				name: "value",
+				order: 4,
+				action: "modify",
+				apply: (_p, _o) => ({ ok: true, value: undefined }),
+				merge: (a, _b) => ({ ok: true, value: a }),
+				canCombineWith: () => true,
+			};
+			const result = applyMetadataPolicy(
+				{ openid_relying_party: {} } as FederationMetadata,
+				{ openid_relying_party: { client_name: { value: "ok" } } },
+				undefined,
+				{ customOperators: [collidingOp] },
+			);
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.ok(result.error.description.includes("conflicts with a standard"));
+			}
+		});
+
+		test("custom operator: ordering interleaves with standards by declared order", (t) => {
+			const order: string[] = [];
+			const trackedOps: Record<string, PolicyOperatorDefinition> = {
+				custom_after_value: {
+					name: "custom_after_value",
+					order: 2,
+					action: "modify",
+					apply: (parameterValue, operatorValue) => {
+						order.push(`custom_after_value(${parameterValue})`);
+						return { ok: true, value: `${parameterValue}+${operatorValue}` };
+					},
+					merge: (a, _b) => ({ ok: true, value: a }),
+					canCombineWith: () => true,
+				},
+				custom_before_essential: {
+					name: "custom_before_essential",
+					order: 6,
+					action: "check",
+					apply: (parameterValue, _o) => {
+						order.push(`custom_before_essential(${parameterValue})`);
+						return { ok: true, value: parameterValue };
+					},
+					merge: (a, _b) => ({ ok: true, value: a }),
+					canCombineWith: () => true,
+				},
+			};
+			const result = applyMetadataPolicy(
+				{ openid_relying_party: {} } as FederationMetadata,
+				{
+					openid_relying_party: {
+						client_name: {
+							value: "rp",
+							custom_after_value: "x",
+							custom_before_essential: true,
+						},
+					},
+				},
+				undefined,
+				{
+					customOperators: [
+						trackedOps.custom_after_value as PolicyOperatorDefinition,
+						trackedOps.custom_before_essential as PolicyOperatorDefinition,
+					],
+				},
+			);
+			t.true(isOk(result));
+			t.deepEqual(order, ["custom_after_value(rp)", "custom_before_essential(rp+x)"]);
+		});
 	});
 
 	// ── metadata-policy/merge ─────────────────────────────────────────
@@ -2824,6 +3140,58 @@ export default (QUnit: QUnit) => {
 					});
 				}
 			});
+
+			test("metadata_policy_crit: multiple critical names, all standard, resolves successfully", (t) => {
+				const stmt = makeMergeStmt({
+					metadata_policy_crit: ["value", "subset_of"],
+					metadata_policy: {
+						openid_relying_party: {
+							scope: { subset_of: ["openid", "profile"] },
+							client_name: { value: "Forced" },
+						},
+					},
+				});
+				const result = resolveMetadataPolicy([stmt]);
+				t.true(isOk(result));
+			});
+
+			test("metadata_policy_crit: tolerates a critical name that shadows a standard operator", (t) => {
+				// Standard operator names are always understood, so listing one in
+				// metadata_policy_crit is a no-op rather than an error.
+				const stmt = makeMergeStmt({
+					metadata_policy_crit: ["essential"],
+					metadata_policy: {
+						openid_relying_party: { client_name: { essential: true } },
+					},
+				});
+				const result = resolveMetadataPolicy([stmt]);
+				t.true(isOk(result));
+			});
+
+			test("metadata_policy_crit: critical operators aggregate across multiple subordinate statements", (t) => {
+				const stmt1 = makeMergeStmt({
+					metadata_policy_crit: ["regex"],
+					metadata_policy: {
+						openid_relying_party: { redirect_uris: { subset_of: ["https://rp/cb"] } },
+					},
+				});
+				const stmt2 = makeMergeStmt({
+					metadata_policy_crit: ["transform"],
+					metadata_policy: {
+						openid_relying_party: { client_name: { default: "RP" } },
+					},
+				});
+				// Neither custom operator is registered → both critical → policy error.
+				const result = resolveMetadataPolicy([stmt1, stmt2]);
+				t.true(isErr(result));
+				if (isErr(result)) {
+					t.ok(
+						result.error.description.includes("regex") ||
+							result.error.description.includes("transform"),
+					);
+				}
+			});
+
 			test("does not mutate input statements", (t) => {
 				const policy = { openid_relying_party: { scope: { subset_of: ["openid", "profile"] } } };
 				const stmt = makeMergeStmt({ metadata_policy: policy });
@@ -2941,6 +3309,141 @@ export default (QUnit: QUnit) => {
 					});
 				}
 			});
+
+			test("custom operator: rejects unknown operator if listed as critical when not registered", (t) => {
+				const stmt = makeMergeStmt({
+					metadata_policy_crit: ["regex"],
+					metadata_policy: {
+						openid_relying_party: { sector_identifier_uri: { regex: "^https://.*$" } },
+					},
+				});
+				const result = resolveMetadataPolicy([stmt]);
+				t.false(isOk(result));
+			});
+
+			test("custom operator: accepts critical custom operator when registered", (t) => {
+				const regexOp: PolicyOperatorDefinition = {
+					name: "regex",
+					order: 4,
+					action: "check",
+					apply: (_p, _o) => ({ ok: true, value: undefined }),
+					merge: (a, _b) => ({ ok: true, value: a }),
+					canCombineWith: () => true,
+				};
+				const stmt = makeMergeStmt({
+					metadata_policy_crit: ["regex"],
+					metadata_policy: {
+						openid_relying_party: { sector_identifier_uri: { regex: "^https://.*$" } },
+					},
+				});
+				const result = resolveMetadataPolicy([stmt], { customOperators: [regexOp] });
+				t.true(isOk(result));
+				if (isOk(result)) {
+					t.deepEqual(result.value.openid_relying_party?.sector_identifier_uri, {
+						regex: "^https://.*$",
+					});
+				}
+			});
+
+			test("custom operator: merges values from two policy statements via merge() function", (t) => {
+				const accumulateOp: PolicyOperatorDefinition = {
+					name: "accumulate",
+					order: 4,
+					action: "modify",
+					apply: (_p, _o) => ({ ok: true, value: undefined }),
+					merge: (a, b) => ({
+						ok: true,
+						value: [...(a as unknown[]), ...(b as unknown[])],
+					}),
+					canCombineWith: () => true,
+				};
+				const stmtTa = makeMergeStmt({
+					metadata_policy: {
+						openid_relying_party: { contacts: { accumulate: ["a@example.com"] } },
+					},
+				});
+				const stmtIm = makeMergeStmt({
+					metadata_policy: {
+						openid_relying_party: { contacts: { accumulate: ["b@example.com"] } },
+					},
+				});
+				const result = resolveMetadataPolicy([stmtIm, stmtTa], {
+					customOperators: [accumulateOp],
+				});
+				t.true(isOk(result));
+				if (isOk(result)) {
+					t.deepEqual(
+						(result.value.openid_relying_party?.contacts as Record<string, unknown>)?.accumulate,
+						["a@example.com", "b@example.com"],
+					);
+				}
+			});
+
+			test("custom operator: surfaces validation error for invalid custom set (collision with standard)", (t) => {
+				const badOp: PolicyOperatorDefinition = {
+					name: "value",
+					order: 4,
+					action: "modify",
+					apply: (_p, _o) => ({ ok: true, value: undefined }),
+					merge: (a, _b) => ({ ok: true, value: a }),
+					canCombineWith: () => true,
+				};
+				const result = resolveMetadataPolicy([makeMergeStmt()], { customOperators: [badOp] });
+				t.true(isErr(result));
+				if (isErr(result)) {
+					t.ok(result.error.description.includes("conflicts with a standard"));
+				}
+			});
+
+			test("custom operator: surfaces operator-merge failure as policy error", (t) => {
+				const incompatibleOp: PolicyOperatorDefinition = {
+					name: "incompatible",
+					order: 4,
+					action: "modify",
+					apply: (_p, _o) => ({ ok: true, value: undefined }),
+					merge: () => ({ ok: false, error: "values cannot be merged" }),
+					canCombineWith: () => true,
+				};
+				const stmt1 = makeMergeStmt({
+					metadata_policy: {
+						openid_relying_party: { contacts: { incompatible: "a" } },
+					},
+				});
+				const stmt2 = makeMergeStmt({
+					metadata_policy: {
+						openid_relying_party: { contacts: { incompatible: "b" } },
+					},
+				});
+				const result = resolveMetadataPolicy([stmt2, stmt1], {
+					customOperators: [incompatibleOp],
+				});
+				t.true(isErr(result));
+				if (isErr(result)) {
+					t.ok(result.error.description.includes("values cannot be merged"));
+				}
+			});
+
+			test("custom operator: canCombineWith failure triggers incompatibility error", (t) => {
+				const exclusiveOp: PolicyOperatorDefinition = {
+					name: "exclusive",
+					order: 4,
+					action: "modify",
+					apply: (_p, _o) => ({ ok: true, value: undefined }),
+					merge: (a, _b) => ({ ok: true, value: a }),
+					// rejects every standard operator
+					canCombineWith: () => false,
+				};
+				const stmt = makeMergeStmt({
+					metadata_policy: {
+						openid_relying_party: { contacts: { exclusive: "x", default: ["y"] } },
+					},
+				});
+				const result = resolveMetadataPolicy([stmt], { customOperators: [exclusiveOp] });
+				t.true(isErr(result));
+				if (isErr(result)) {
+					t.ok(result.error.description.includes("Incompatible"));
+				}
+			});
 		});
 	}
 
@@ -2967,6 +3470,74 @@ export default (QUnit: QUnit) => {
 				t.equal(operators[PolicyOperator.SubsetOf]?.order, 5);
 				t.equal(operators[PolicyOperator.SupersetOf]?.order, 6);
 				t.equal(operators[PolicyOperator.Essential]?.order, 7);
+			});
+		});
+
+		module("core / validateCustomOperators", () => {
+			function customOp(
+				name: string,
+				order: number,
+				action: "check" | "modify" | "both",
+			): PolicyOperatorDefinition {
+				return {
+					name,
+					order,
+					action,
+					apply: (_p, _o) => ({ ok: true, value: undefined }),
+					merge: (a, _b) => ({ ok: true, value: a }),
+					canCombineWith: () => true,
+				};
+			}
+
+			test("accepts a valid custom operator set", (t) => {
+				const result = validateCustomOperators([
+					customOp("regex", 4, "check"),
+					customOp("transform", 2, "modify"),
+				]);
+				t.true(result.ok);
+			});
+
+			test("accepts an empty set", (t) => {
+				const result = validateCustomOperators([]);
+				t.true(result.ok);
+			});
+
+			test("rejects a custom operator named after a standard operator", (t) => {
+				const result = validateCustomOperators([customOp("value", 4, "check")]);
+				t.false(result.ok);
+				if (result.ok) return;
+				t.ok(result.error.description.includes("conflicts with a standard operator"));
+			});
+
+			test("rejects a duplicate name within the supplied set", (t) => {
+				const result = validateCustomOperators([
+					customOp("regex", 4, "check"),
+					customOp("regex", 5, "check"),
+				]);
+				t.false(result.ok);
+				if (result.ok) return;
+				t.ok(result.error.description.includes("Duplicate"));
+			});
+
+			test("rejects modify-action operator with order <= 1", (t) => {
+				const result = validateCustomOperators([customOp("transform", 1, "modify")]);
+				t.false(result.ok);
+				if (result.ok) return;
+				t.ok(result.error.description.includes("order > 1"));
+			});
+
+			test("rejects check-action operator with order >= 7", (t) => {
+				const result = validateCustomOperators([customOp("regex", 7, "check")]);
+				t.false(result.ok);
+				if (result.ok) return;
+				t.ok(result.error.description.includes("order < 7"));
+			});
+
+			test("rejects 'both'-action operator with order outside (1,7)", (t) => {
+				const lo = validateCustomOperators([customOp("ranged", 1, "both")]);
+				const hi = validateCustomOperators([customOp("ranged", 7, "both")]);
+				t.false(lo.ok);
+				t.false(hi.ok);
 			});
 		});
 
@@ -3807,6 +4378,790 @@ export default (QUnit: QUnit) => {
 				);
 				t.false((await verifySignedJwkSet(jwt, wrongJwks)).ok);
 			});
+			test("rejects JWT without kid header", async (t) => {
+				const jose = await import("jose");
+				const { priv, pub, jwks } = await setupFAKeys();
+				const cryptoKey = await jose.importJWK(priv as unknown as JoseJWK, "ES256");
+				const jwt = await new jose.SignJWT({
+					iss: "https://entity.example.com",
+					sub: "https://entity.example.com",
+					iat: fa_now,
+					keys: [pub],
+				} as unknown as JWTPayload)
+					.setProtectedHeader({ alg: "ES256", typ: JwtTyp.JwkSet } as JWTHeaderParameters)
+					.sign(cryptoKey as Parameters<SignJWT["sign"]>[0]);
+				const result = await verifySignedJwkSet(jwt, jwks);
+				t.false(result.ok);
+			});
+		});
+
+		module("core / fetchSignedJwkSet", () => {
+			async function buildSignedJwkSetJwt() {
+				const { priv, pub, jwks, kid } = await setupFAKeys();
+				const jwt = await _signES(
+					{
+						iss: "https://entity.example.com",
+						sub: "https://entity.example.com",
+						iat: fa_now,
+						keys: [pub],
+					},
+					priv,
+					{ kid, typ: JwtTyp.JwkSet },
+				);
+				return { jwt, jwks };
+			}
+
+			test("happy path: 200 + correct Content-Type + valid JWT", async (t) => {
+				const { jwt, jwks } = await buildSignedJwkSetJwt();
+				const httpClient: HttpClient = async () =>
+					new Response(jwt, {
+						status: 200,
+						headers: { "Content-Type": "application/jwk-set+jwt" },
+					});
+				const result = await fetchSignedJwkSet("https://entity.example.com/jwks.jose", jwks, {
+					httpClient,
+				});
+				t.true(result.ok);
+				if (!result.ok) return;
+				t.equal(result.value.iss, "https://entity.example.com");
+				t.equal(result.value.keys.length, 1);
+			});
+
+			test("rejects http:// URL", async (t) => {
+				const { jwks } = await setupFAKeys();
+				const result = await fetchSignedJwkSet("http://entity.example.com/jwks.jose", jwks);
+				t.false(result.ok);
+				if (result.ok) return;
+				t.ok(result.error.description.includes("https"));
+			});
+
+			test("rejects URL with fragment", async (t) => {
+				const { jwks } = await setupFAKeys();
+				const result = await fetchSignedJwkSet("https://entity.example.com/jwks.jose#frag", jwks);
+				t.false(result.ok);
+				if (result.ok) return;
+				t.ok(result.error.description.includes("fragment"));
+			});
+
+			test("rejects HTTP 404", async (t) => {
+				const { jwks } = await setupFAKeys();
+				const httpClient: HttpClient = async () =>
+					new Response("not found", {
+						status: 404,
+						headers: { "Content-Type": "application/jwk-set+jwt" },
+					});
+				const result = await fetchSignedJwkSet("https://entity.example.com/jwks.jose", jwks, {
+					httpClient,
+				});
+				t.false(result.ok);
+			});
+
+			test("rejects 200 with wrong Content-Type", async (t) => {
+				const { jwt, jwks } = await buildSignedJwkSetJwt();
+				const httpClient: HttpClient = async () =>
+					new Response(jwt, {
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					});
+				const result = await fetchSignedJwkSet("https://entity.example.com/jwks.jose", jwks, {
+					httpClient,
+				});
+				t.false(result.ok);
+				if (result.ok) return;
+				t.ok(result.error.description.includes("Content-Type"));
+			});
+
+			test("accepts Content-Type with parameters (charset)", async (t) => {
+				const { jwt, jwks } = await buildSignedJwkSetJwt();
+				const httpClient: HttpClient = async () =>
+					new Response(jwt, {
+						status: 200,
+						headers: { "Content-Type": "application/jwk-set+jwt; charset=utf-8" },
+					});
+				const result = await fetchSignedJwkSet("https://entity.example.com/jwks.jose", jwks, {
+					httpClient,
+				});
+				t.true(result.ok);
+			});
+
+			test("propagates verifier failure (typ mismatch)", async (t) => {
+				const { priv, pub, jwks, kid } = await setupFAKeys();
+				const wrongTypJwt = await _signES(
+					{
+						iss: "https://entity.example.com",
+						sub: "https://entity.example.com",
+						iat: fa_now,
+						keys: [pub],
+					},
+					priv,
+					{ kid, typ: JwtTyp.EntityStatement },
+				);
+				const httpClient: HttpClient = async () =>
+					new Response(wrongTypJwt, {
+						status: 200,
+						headers: { "Content-Type": "application/jwk-set+jwt" },
+					});
+				const result = await fetchSignedJwkSet("https://entity.example.com/jwks.jose", jwks, {
+					httpClient,
+				});
+				t.false(result.ok);
+			});
+		});
+
+		module("core / fetchJwkSet", () => {
+			async function setupValidJwkSet() {
+				const { publicKey } = await _genKey("ES256");
+				const pub = { ...publicKey, kid: "test-key-1" };
+				return JSON.stringify({ keys: [pub] });
+			}
+
+			test("happy path: 200 + valid JWK Set JSON", async (t) => {
+				const body = await setupValidJwkSet();
+				const httpClient: HttpClient = async () =>
+					new Response(body, {
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					});
+				const result = await fetchJwkSet("https://entity.example.com/jwks.json", { httpClient });
+				t.true(result.ok);
+				if (!result.ok) return;
+				t.equal(result.value.keys.length, 1);
+			});
+
+			test("rejects http:// URL", async (t) => {
+				const result = await fetchJwkSet("http://entity.example.com/jwks.json");
+				t.false(result.ok);
+				if (result.ok) return;
+				t.ok(result.error.description.includes("https"));
+			});
+
+			test("rejects URL with fragment", async (t) => {
+				const result = await fetchJwkSet("https://entity.example.com/jwks.json#frag");
+				t.false(result.ok);
+				if (result.ok) return;
+				t.ok(result.error.description.includes("fragment"));
+			});
+
+			test("rejects HTTP 404", async (t) => {
+				const httpClient: HttpClient = async () =>
+					new Response("not found", {
+						status: 404,
+						headers: { "Content-Type": "application/json" },
+					});
+				const result = await fetchJwkSet("https://entity.example.com/jwks.json", { httpClient });
+				t.false(result.ok);
+			});
+
+			test("rejects 200 with non-JSON body", async (t) => {
+				const httpClient: HttpClient = async () =>
+					new Response("<html>nope</html>", {
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					});
+				const result = await fetchJwkSet("https://entity.example.com/jwks.json", { httpClient });
+				t.false(result.ok);
+				if (result.ok) return;
+				t.ok(result.error.description.includes("not valid JSON"));
+			});
+
+			test("rejects 200 with JSON missing 'keys' array", async (t) => {
+				const httpClient: HttpClient = async () =>
+					new Response(JSON.stringify({ foo: "bar" }), {
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					});
+				const result = await fetchJwkSet("https://entity.example.com/jwks.json", { httpClient });
+				t.false(result.ok);
+				if (result.ok) return;
+				t.ok(result.error.description.includes("not a valid JWK Set"));
+			});
+
+			test("rejects mixed signing+encryption JWK Set without 'use'", async (t) => {
+				const { publicKey: ecPub } = await _genKey("ES256");
+				const sig = { ...ecPub, kid: "sig-1", alg: "ES256" };
+				const enc = {
+					kty: "RSA",
+					kid: "enc-1",
+					n: "n1",
+					e: "AQAB",
+					alg: "RSA-OAEP-256",
+				};
+				const body = JSON.stringify({ keys: [sig, enc] });
+				const httpClient: HttpClient = async () =>
+					new Response(body, {
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					});
+				const result = await fetchJwkSet("https://entity.example.com/jwks.json", { httpClient });
+				t.false(result.ok);
+				if (result.ok) return;
+				t.ok(result.error.description.includes("'use'"));
+			});
+		});
+
+		module("core / resolveEntityKeys", () => {
+			async function buildSignedJwkSetJwt(opts?: { kidOverride?: string }) {
+				const { priv, pub, jwks, kid } = await setupFAKeys();
+				const jwt = await _signES(
+					{
+						iss: "https://entity.example.com",
+						sub: "https://entity.example.com",
+						iat: fa_now,
+						keys: [pub],
+					},
+					priv,
+					{ kid: opts?.kidOverride ?? kid, typ: JwtTyp.JwkSet },
+				);
+				return { jwt, jwks, pub };
+			}
+
+			function inlineKey() {
+				return { kty: "EC" as const, kid: "inline-1", crv: "P-256", x: "x1", y: "y1" };
+			}
+
+			test("uses signed_jwks_uri when all three representations are present", async (t) => {
+				const { jwt, jwks } = await buildSignedJwkSetJwt();
+				const httpClient: HttpClient = async (url) => {
+					if ((url as string).includes("signed")) {
+						return new Response(jwt, {
+							status: 200,
+							headers: { "Content-Type": "application/jwk-set+jwt" },
+						});
+					}
+					return new Response(JSON.stringify({ keys: [inlineKey()] }), {
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					});
+				};
+				const result = await resolveEntityKeys(
+					{
+						signed_jwks_uri: "https://entity.example.com/signed.jose",
+						jwks: { keys: [inlineKey()] },
+						jwks_uri: "https://entity.example.com/jwks.json",
+					},
+					jwks,
+					{ httpClient },
+				);
+				t.true(result.ok);
+				if (!result.ok) return;
+				t.equal(result.value.source, "signed_jwks_uri");
+			});
+
+			test("falls back to jwks (inline) when signed_jwks_uri absent", async (t) => {
+				const { jwks } = await setupFAKeys();
+				const result = await resolveEntityKeys(
+					{
+						jwks: { keys: [inlineKey()] },
+						jwks_uri: "https://entity.example.com/jwks.json",
+					},
+					jwks,
+				);
+				t.true(result.ok);
+				if (!result.ok) return;
+				t.equal(result.value.source, "jwks");
+				t.equal(result.value.keys.length, 1);
+			});
+
+			test("uses jwks_uri when only that representation is present", async (t) => {
+				const { jwks } = await setupFAKeys();
+				const httpClient: HttpClient = async () =>
+					new Response(JSON.stringify({ keys: [inlineKey()] }), {
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					});
+				const result = await resolveEntityKeys(
+					{ jwks_uri: "https://entity.example.com/jwks.json" },
+					jwks,
+					{ httpClient },
+				);
+				t.true(result.ok);
+				if (!result.ok) return;
+				t.equal(result.value.source, "jwks_uri");
+			});
+
+			test("returns InvalidMetadata when no representation is present", async (t) => {
+				const { jwks } = await setupFAKeys();
+				const result = await resolveEntityKeys({ issuer: "https://entity.example.com" }, jwks);
+				t.false(result.ok);
+				if (result.ok) return;
+				t.equal(result.error.code, FederationErrorCode.InvalidMetadata);
+				t.ok(result.error.description.includes("no JWK Set representation"));
+			});
+
+			test("strict default: signed_jwks_uri failure returns the error (no fallback)", async (t) => {
+				const { jwks } = await setupFAKeys();
+				const httpClient: HttpClient = async (url) => {
+					if ((url as string).includes("signed")) {
+						return new Response("not found", {
+							status: 404,
+							headers: { "Content-Type": "application/jwk-set+jwt" },
+						});
+					}
+					t.notOk(true, "fallback to jwks_uri should not be attempted in strict mode");
+					return new Response(JSON.stringify({ keys: [inlineKey()] }), {
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					});
+				};
+				const result = await resolveEntityKeys(
+					{
+						signed_jwks_uri: "https://entity.example.com/signed.jose",
+						jwks_uri: "https://entity.example.com/jwks.json",
+					},
+					jwks,
+					{ httpClient },
+				);
+				t.false(result.ok);
+			});
+
+			test("returns the use-rule error when chosen path violates it", async (t) => {
+				const { jwks } = await setupFAKeys();
+				const sig = { kty: "EC", kid: "sig-1", crv: "P-256", x: "x1", y: "y1", alg: "ES256" };
+				const enc = { kty: "RSA", kid: "enc-1", n: "n1", e: "AQAB", alg: "RSA-OAEP-256" };
+				const result = await resolveEntityKeys({ jwks: { keys: [sig, enc] } }, jwks);
+				t.false(result.ok);
+				if (result.ok) return;
+				t.ok(result.error.description.includes("'use'"));
+			});
+
+			test("allowFallback: signed fails but jwks present → falls through to jwks", async (t) => {
+				const { jwks } = await setupFAKeys();
+				const httpClient: HttpClient = async () =>
+					new Response("not found", {
+						status: 404,
+						headers: { "Content-Type": "application/jwk-set+jwt" },
+					});
+				const result = await resolveEntityKeys(
+					{
+						signed_jwks_uri: "https://entity.example.com/signed.jose",
+						jwks: { keys: [inlineKey()] },
+					},
+					jwks,
+					{ httpClient, allowFallback: true },
+				);
+				t.true(result.ok);
+				if (!result.ok) return;
+				t.equal(result.value.source, "jwks");
+			});
+
+			test("allowFallback: all branches failing returns aggregated error", async (t) => {
+				const { jwks } = await setupFAKeys();
+				const httpClient: HttpClient = async () =>
+					new Response("not found", {
+						status: 404,
+						headers: { "Content-Type": "application/jwk-set+jwt" },
+					});
+				const result = await resolveEntityKeys(
+					{
+						signed_jwks_uri: "https://entity.example.com/signed.jose",
+						jwks_uri: "https://entity.example.com/jwks.json",
+					},
+					jwks,
+					{ httpClient, allowFallback: true },
+				);
+				t.false(result.ok);
+				if (result.ok) return;
+				t.ok(result.error.description.includes("[signed_jwks_uri]"));
+				t.ok(result.error.description.includes("[jwks_uri]"));
+			});
+		});
+
+		module("core / validateSignedJwkSetSpecHygiene", () => {
+			const ENTITY = "https://entity.example.com";
+			type Payload = Parameters<typeof validateSignedJwkSetSpecHygiene>[0];
+			function basePayload(): Payload {
+				return {
+					iss: ENTITY,
+					sub: ENTITY,
+					keys: [{ kty: "EC", kid: "k1", crv: "P-256", x: "x1", y: "y1" }],
+				} as unknown as Payload;
+			}
+
+			test("accepts payload with sub === iss and no aud/nbf/jti", (t) => {
+				const result = validateSignedJwkSetSpecHygiene(basePayload());
+				t.true(result.ok);
+			});
+
+			test("rejects payload with sub !== iss", (t) => {
+				const result = validateSignedJwkSetSpecHygiene({
+					...basePayload(),
+					sub: "https://other.example.com",
+				} as unknown as Payload);
+				t.false(result.ok);
+				if (result.ok) return;
+				t.ok(result.error.description.includes("'sub'"));
+				t.ok(result.error.description.includes("'iss'"));
+			});
+
+			test("rejects payload containing aud", (t) => {
+				const result = validateSignedJwkSetSpecHygiene({
+					...basePayload(),
+					aud: "https://op.example.com",
+				} as unknown as Parameters<typeof validateSignedJwkSetSpecHygiene>[0]);
+				t.false(result.ok);
+				if (result.ok) return;
+				t.ok(result.error.description.includes("'aud'"));
+			});
+
+			test("rejects payload containing nbf", (t) => {
+				const result = validateSignedJwkSetSpecHygiene({
+					...basePayload(),
+					nbf: 1234567890,
+				} as unknown as Parameters<typeof validateSignedJwkSetSpecHygiene>[0]);
+				t.false(result.ok);
+				if (result.ok) return;
+				t.ok(result.error.description.includes("'nbf'"));
+			});
+
+			test("rejects payload containing jti", (t) => {
+				const result = validateSignedJwkSetSpecHygiene({
+					...basePayload(),
+					jti: "abc-123",
+				} as unknown as Parameters<typeof validateSignedJwkSetSpecHygiene>[0]);
+				t.false(result.ok);
+				if (result.ok) return;
+				t.ok(result.error.description.includes("'jti'"));
+			});
+
+			test("default verifySignedJwkSet accepts sub !== iss (regression: library does NOT over-enforce SHOULD)", async (t) => {
+				const { priv, pub, jwks, kid } = await setupFAKeys();
+				const jwt = await _signES(
+					{
+						iss: ENTITY,
+						sub: "https://other-owner.example.com",
+						iat: fa_now,
+						keys: [pub],
+					},
+					priv,
+					{ kid, typ: JwtTyp.JwkSet },
+				);
+				const result = await verifySignedJwkSet(jwt, jwks);
+				t.true(
+					result.ok,
+					"verifySignedJwkSet must accept sub !== iss; that constraint is opt-in via validateSignedJwkSetSpecHygiene",
+				);
+			});
+		});
+
+		module("core / fetchListSubordinates", () => {
+			test("parses JSON array of entity identifiers from list endpoint", async (t) => {
+				const httpClient: HttpClient = async () =>
+					new Response(JSON.stringify(["https://a.example.com", "https://b.example.com"]), {
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					});
+				const result = await fetchListSubordinates(
+					"https://ta.example.com/federation_list",
+					undefined,
+					{ httpClient },
+				);
+				t.true(result.ok);
+				if (result.ok) {
+					t.equal(result.value.length, 2);
+					t.equal(result.value[0], "https://a.example.com");
+					t.equal(result.value[1], "https://b.example.com");
+				}
+			});
+			test("repeats entity_type query for arrays and includes other filters", async (t) => {
+				let capturedUrl = "";
+				const httpClient: HttpClient = async (input) => {
+					capturedUrl = typeof input === "string" ? input : (input as URL).toString();
+					return new Response("[]", {
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					});
+				};
+				const result = await fetchListSubordinates(
+					"https://ta.example.com/federation_list",
+					{
+						entityType: [EntityType.OpenIDProvider, EntityType.OpenIDRelyingParty],
+						trustMarked: true,
+						intermediate: false,
+						trustMarkType: "https://ta.example.com/marks/audited",
+					},
+					{ httpClient },
+				);
+				t.true(result.ok);
+				const url = new URL(capturedUrl);
+				const types = url.searchParams.getAll("entity_type");
+				t.equal(types.length, 2);
+				t.equal(types[0], EntityType.OpenIDProvider);
+				t.equal(types[1], EntityType.OpenIDRelyingParty);
+				t.equal(url.searchParams.get("trust_marked"), "true");
+				t.equal(url.searchParams.get("intermediate"), "false");
+				t.equal(url.searchParams.get("trust_mark_type"), "https://ta.example.com/marks/audited");
+			});
+			test("rejects when list endpoint returns a non-array body", async (t) => {
+				const httpClient: HttpClient = async () =>
+					new Response(JSON.stringify({ foo: 1 }), {
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					});
+				const result = await fetchListSubordinates(
+					"https://ta.example.com/federation_list",
+					undefined,
+					{ httpClient },
+				);
+				t.false(result.ok);
+			});
+		});
+
+		module("core / fetchHistoricalKeys", () => {
+			test("happy path: 200 + jwk-set+jwt verifies and returns payload", async (t) => {
+				const { priv, jwks, kid } = await setupFAKeys();
+				const jwt = await _signES(
+					{
+						iss: "https://authority.example.com",
+						iat: fa_now,
+						keys: [{ kty: "EC", kid: "old-1", exp: fa_now - 3600 }],
+					},
+					priv,
+					{ kid, typ: JwtTyp.JwkSet },
+				);
+				const httpClient: HttpClient = async () =>
+					new Response(jwt, {
+						status: 200,
+						headers: { "Content-Type": "application/jwk-set+jwt" },
+					});
+				const result = await fetchHistoricalKeys(
+					"https://ta.example.com/federation_historical_keys",
+					jwks,
+					{ httpClient },
+				);
+				t.true(isOk(result));
+				if (isOk(result)) t.equal(result.value.keys.length, 1);
+			});
+
+			test("rejects http endpoint URL", async (t) => {
+				const { jwks } = await setupFAKeys();
+				const result = await fetchHistoricalKeys(
+					"http://ta.example.com/federation_historical_keys",
+					jwks,
+				);
+				t.true(isErr(result));
+				if (isErr(result)) t.true(result.error.description.toLowerCase().includes("https"));
+			});
+
+			test("rejects 404", async (t) => {
+				const { jwks } = await setupFAKeys();
+				const httpClient: HttpClient = async () =>
+					new Response("not found", {
+						status: 404,
+						headers: { "Content-Type": "application/jwk-set+jwt" },
+					});
+				const result = await fetchHistoricalKeys(
+					"https://ta.example.com/federation_historical_keys",
+					jwks,
+					{ httpClient },
+				);
+				t.true(isErr(result));
+			});
+
+			test("rejects wrong Content-Type", async (t) => {
+				const { priv, jwks, kid } = await setupFAKeys();
+				const jwt = await _signES(
+					{
+						iss: "https://authority.example.com",
+						iat: fa_now,
+						keys: [{ kty: "EC", kid: "k1", exp: fa_now }],
+					},
+					priv,
+					{ kid, typ: JwtTyp.JwkSet },
+				);
+				const httpClient: HttpClient = async () =>
+					new Response(jwt, {
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					});
+				const result = await fetchHistoricalKeys(
+					"https://ta.example.com/federation_historical_keys",
+					jwks,
+					{ httpClient },
+				);
+				t.true(isErr(result));
+				if (isErr(result)) t.true(result.error.description.toLowerCase().includes("content-type"));
+			});
+
+			test("propagates verifier failure (wrong typ)", async (t) => {
+				const { priv, jwks, kid } = await setupFAKeys();
+				const jwt = await _signES(
+					{
+						iss: "https://authority.example.com",
+						iat: fa_now,
+						keys: [{ kty: "EC", kid: "k1", exp: fa_now }],
+					},
+					priv,
+					{ kid, typ: JwtTyp.EntityStatement },
+				);
+				const httpClient: HttpClient = async () =>
+					new Response(jwt, {
+						status: 200,
+						headers: { "Content-Type": "application/jwk-set+jwt" },
+					});
+				const result = await fetchHistoricalKeys(
+					"https://ta.example.com/federation_historical_keys",
+					jwks,
+					{ httpClient },
+				);
+				t.true(isErr(result));
+			});
+		});
+
+		module("core / fetchTrustMarkList", () => {
+			test("happy path: returns array of Entity Identifiers", async (t) => {
+				const httpClient: HttpClient = async () =>
+					new Response(JSON.stringify(["https://a.example.com", "https://b.example.com"]), {
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					});
+				const result = await fetchTrustMarkList(
+					"https://issuer.example.com/federation_trust_mark_list",
+					{ trustMarkType: "https://example.com/tm" },
+					{ httpClient },
+				);
+				t.true(isOk(result));
+				if (isOk(result)) {
+					t.equal(result.value.length, 2);
+					t.equal(result.value[0], "https://a.example.com");
+				}
+			});
+
+			test("includes optional sub query parameter when provided", async (t) => {
+				let capturedUrl = "";
+				const httpClient: HttpClient = async (url) => {
+					capturedUrl = url as string;
+					return new Response(JSON.stringify(["https://leaf.example.com"]), {
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					});
+				};
+				const result = await fetchTrustMarkList(
+					"https://issuer.example.com/federation_trust_mark_list",
+					{
+						trustMarkType: "https://example.com/tm",
+						sub: "https://leaf.example.com" as EntityId,
+					},
+					{ httpClient },
+				);
+				t.true(isOk(result));
+				t.true(capturedUrl.includes("sub=https"));
+				t.true(capturedUrl.includes("trust_mark_type=https"));
+			});
+
+			test("rejects http endpoint URL", async (t) => {
+				const result = await fetchTrustMarkList(
+					"http://issuer.example.com/federation_trust_mark_list",
+					{ trustMarkType: "https://example.com/tm" },
+				);
+				t.true(isErr(result));
+				if (isErr(result)) t.true(result.error.description.toLowerCase().includes("https"));
+			});
+
+			test("rejects missing trust_mark_type", async (t) => {
+				const result = await fetchTrustMarkList(
+					"https://issuer.example.com/federation_trust_mark_list",
+					{ trustMarkType: "" },
+				);
+				t.true(isErr(result));
+				if (isErr(result)) t.true(result.error.description.includes("trust_mark_type"));
+			});
+
+			test("rejects non-array JSON response", async (t) => {
+				const httpClient: HttpClient = async () =>
+					new Response(JSON.stringify({ entities: [] }), {
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					});
+				const result = await fetchTrustMarkList(
+					"https://issuer.example.com/federation_trust_mark_list",
+					{ trustMarkType: "https://example.com/tm" },
+					{ httpClient },
+				);
+				t.true(isErr(result));
+				if (isErr(result)) t.true(result.error.description.includes("array"));
+			});
+		});
+
+		module("core / fetchResolveResponse", () => {
+			test("returns raw JWT bytes that pipe into verifyResolveResponse", async (t) => {
+				const { priv, jwks, kid } = await setupFAKeys();
+				const jwt = await _signES(
+					{
+						iss: "https://resolver.example.com",
+						sub: "https://leaf.example.com",
+						iat: fa_now,
+						exp: fa_now + 3600,
+						metadata: { federation_entity: { organization_name: "Resolved" } },
+						trust_chain: ["jwt1", "jwt2"],
+					},
+					priv,
+					{ kid, typ: JwtTyp.ResolveResponse },
+				);
+				const httpClient: HttpClient = async () =>
+					new Response(jwt, {
+						status: 200,
+						headers: { "Content-Type": MediaType.ResolveResponse },
+					});
+				const fetchResult = await fetchResolveResponse(
+					"https://resolver.example.com/federation_resolve",
+					{
+						sub: "https://leaf.example.com" as EntityId,
+						trustAnchor: "https://ta.example.com" as EntityId,
+					},
+					{ httpClient },
+				);
+				t.true(fetchResult.ok);
+				if (!fetchResult.ok) return;
+				const verifyResult = await verifyResolveResponse(fetchResult.value, jwks);
+				t.true(verifyResult.ok);
+				if (verifyResult.ok) {
+					t.equal(verifyResult.value.sub, "https://leaf.example.com");
+				}
+			});
+			test("repeats trust_anchor and entity_type queries for arrays alongside required sub", async (t) => {
+				let capturedUrl = "";
+				const httpClient: HttpClient = async (input) => {
+					capturedUrl = typeof input === "string" ? input : (input as URL).toString();
+					return new Response("body", {
+						status: 200,
+						headers: { "Content-Type": MediaType.ResolveResponse },
+					});
+				};
+				await fetchResolveResponse(
+					"https://resolver.example.com/federation_resolve",
+					{
+						sub: "https://leaf.example.com" as EntityId,
+						trustAnchor: [
+							"https://ta1.example.com" as EntityId,
+							"https://ta2.example.com" as EntityId,
+						],
+						entityType: [EntityType.OpenIDProvider, EntityType.FederationEntity],
+					},
+					{ httpClient },
+				);
+				const url = new URL(capturedUrl);
+				t.equal(url.searchParams.get("sub"), "https://leaf.example.com");
+				const tas = url.searchParams.getAll("trust_anchor");
+				t.equal(tas.length, 2);
+				t.equal(tas[0], "https://ta1.example.com");
+				t.equal(tas[1], "https://ta2.example.com");
+				const types = url.searchParams.getAll("entity_type");
+				t.equal(types.length, 2);
+				t.equal(types[0], EntityType.OpenIDProvider);
+				t.equal(types[1], EntityType.FederationEntity);
+			});
+			test("returns network error on HTTP non-2xx response", async (t) => {
+				const httpClient: HttpClient = async () => new Response("not found", { status: 404 });
+				const result = await fetchResolveResponse(
+					"https://resolver.example.com/federation_resolve",
+					{
+						sub: "https://leaf.example.com" as EntityId,
+						trustAnchor: "https://ta.example.com" as EntityId,
+					},
+					{ httpClient },
+				);
+				t.false(result.ok);
+			});
 		});
 	}
 
@@ -4328,16 +5683,19 @@ export default (QUnit: QUnit) => {
 			});
 			test("rejects trust mark without kid header", async (t) => {
 				const issuerKeys = await generateSigningKey("ES256");
-				const jwt = await signEntityStatement(
-					{
-						iss: "https://issuer.example.com",
-						sub: "https://subject.example.com",
-						trust_mark_type: "https://example.com/tm",
-						iat: tm_now,
-					},
-					{ ...issuerKeys.privateKey, kid: undefined } as JWK,
-					{ typ: JwtTyp.TrustMark, kid: undefined },
+				const jose = await import("jose");
+				const cryptoKey = await jose.importJWK(
+					issuerKeys.privateKey as unknown as JoseJWK,
+					"ES256",
 				);
+				const jwt = await new jose.SignJWT({
+					iss: "https://issuer.example.com",
+					sub: "https://subject.example.com",
+					trust_mark_type: "https://example.com/tm",
+					iat: tm_now,
+				} as JWTPayload)
+					.setProtectedHeader({ alg: "ES256", typ: JwtTyp.TrustMark } as JWTHeaderParameters)
+					.sign(cryptoKey as Parameters<SignJWT["sign"]>[0]);
 				const result = await validateTrustMark(
 					jwt,
 					{ "https://example.com/tm": ["https://issuer.example.com"] },
@@ -4417,17 +5775,23 @@ export default (QUnit: QUnit) => {
 			test("rejects delegation without kid header", async (t) => {
 				const ownerKeys = await generateSigningKey("ES256");
 				const issuerKeys = await generateSigningKey("ES256");
-				const delegationJwt = await signEntityStatement(
-					{
-						iss: "https://owner.example.com",
-						sub: "https://issuer.example.com",
-						trust_mark_type: "https://example.com/tm",
-						iat: tm_now,
-						exp: tm_now + 86400,
-					},
-					{ ...ownerKeys.privateKey, kid: undefined } as JWK,
-					{ typ: JwtTyp.TrustMarkDelegation, kid: undefined },
+				const jose = await import("jose");
+				const ownerCryptoKey = await jose.importJWK(
+					ownerKeys.privateKey as unknown as JoseJWK,
+					"ES256",
 				);
+				const delegationJwt = await new jose.SignJWT({
+					iss: "https://owner.example.com",
+					sub: "https://issuer.example.com",
+					trust_mark_type: "https://example.com/tm",
+					iat: tm_now,
+					exp: tm_now + 86400,
+				} as JWTPayload)
+					.setProtectedHeader({
+						alg: "ES256",
+						typ: JwtTyp.TrustMarkDelegation,
+					} as JWTHeaderParameters)
+					.sign(ownerCryptoKey as Parameters<SignJWT["sign"]>[0]);
 				const jwt = await tm_createJwt(
 					{
 						iss: "https://issuer.example.com",
@@ -4763,6 +6127,237 @@ export default (QUnit: QUnit) => {
 				if (!isOk(decoded)) return;
 				const payload = decoded.value.payload as Record<string, unknown>;
 				t.equal((payload.exp as number) - (payload.iat as number), 3600);
+			});
+		});
+
+		module("core / validateTrustMarkLogo", () => {
+			test("happy path: 200 + image/png Content-Type", async (t) => {
+				const httpClient: HttpClient = async () =>
+					new Response("\x89PNG\r\n", {
+						status: 200,
+						headers: { "Content-Type": "image/png" },
+					});
+				const result = await validateTrustMarkLogo("https://example.com/logo.png", {
+					httpClient,
+				});
+				t.true(isOk(result));
+				if (isOk(result)) t.equal(result.value.contentType, "image/png");
+			});
+
+			test("rejects http URL (helper https-only)", async (t) => {
+				const result = await validateTrustMarkLogo("http://example.com/logo.png");
+				t.true(isErr(result));
+				if (isErr(result)) {
+					t.true(result.error.description.toLowerCase().includes("https"));
+				}
+			});
+
+			test("rejects URL with fragment", async (t) => {
+				const result = await validateTrustMarkLogo("https://example.com/logo.png#layer-1");
+				t.true(isErr(result));
+				if (isErr(result)) t.true(result.error.description.includes("fragment"));
+			});
+
+			test("rejects non-image Content-Type", async (t) => {
+				const httpClient: HttpClient = async () =>
+					new Response("<html>not an image</html>", {
+						status: 200,
+						headers: { "Content-Type": "text/html" },
+					});
+				const result = await validateTrustMarkLogo("https://example.com/page", { httpClient });
+				t.true(isErr(result));
+				if (isErr(result)) t.true(result.error.description.includes("not an image"));
+			});
+
+			test("rejects HTTP 404", async (t) => {
+				const httpClient: HttpClient = async () =>
+					new Response("not found", {
+						status: 404,
+						headers: { "Content-Type": "text/plain" },
+					});
+				const result = await validateTrustMarkLogo("https://example.com/missing.png", {
+					httpClient,
+				});
+				t.true(isErr(result));
+				if (isErr(result)) t.true(result.error.description.includes("404"));
+			});
+		});
+
+		module("core / fetchTrustMark", () => {
+			test("happy path: GET returns trust mark JWT", async (t) => {
+				const httpClient: HttpClient = async () =>
+					new Response("eyJ.fake.jwt", {
+						status: 200,
+						headers: { "Content-Type": "application/trust-mark+jwt" },
+					});
+				const result = await fetchTrustMark(
+					"https://ta.example.com/federation_trust_mark",
+					{
+						trustMarkType: "https://example.com/tm",
+						sub: "https://leaf.example.com" as EntityId,
+					},
+					{ httpClient },
+				);
+				t.true(isOk(result));
+				if (isOk(result)) t.equal(result.value, "eyJ.fake.jwt");
+			});
+
+			test("rejects http endpoint URL", async (t) => {
+				const result = await fetchTrustMark("http://ta.example.com/federation_trust_mark", {
+					trustMarkType: "https://example.com/tm",
+					sub: "https://leaf.example.com" as EntityId,
+				});
+				t.true(isErr(result));
+				if (isErr(result)) t.true(result.error.description.includes("https"));
+			});
+
+			test("rejects 404", async (t) => {
+				const httpClient: HttpClient = async () =>
+					new Response("not found", {
+						status: 404,
+						headers: { "Content-Type": "application/trust-mark+jwt" },
+					});
+				const result = await fetchTrustMark(
+					"https://ta.example.com/federation_trust_mark",
+					{
+						trustMarkType: "https://example.com/tm",
+						sub: "https://leaf.example.com" as EntityId,
+					},
+					{ httpClient },
+				);
+				t.true(isErr(result));
+			});
+
+			test("rejects wrong Content-Type", async (t) => {
+				const httpClient: HttpClient = async () =>
+					new Response("eyJ.fake.jwt", {
+						status: 200,
+						headers: { "Content-Type": "application/jwt" },
+					});
+				const result = await fetchTrustMark(
+					"https://ta.example.com/federation_trust_mark",
+					{
+						trustMarkType: "https://example.com/tm",
+						sub: "https://leaf.example.com" as EntityId,
+					},
+					{ httpClient },
+				);
+				t.true(isErr(result));
+				if (isErr(result)) t.true(result.error.description.includes("Content-Type"));
+			});
+
+			test("rejects missing trust_mark_type", async (t) => {
+				const result = await fetchTrustMark("https://ta.example.com/federation_trust_mark", {
+					trustMarkType: "",
+					sub: "https://leaf.example.com" as EntityId,
+				});
+				t.true(isErr(result));
+				if (isErr(result)) t.true(result.error.description.includes("trust_mark_type"));
+			});
+		});
+
+		module("core / fetchTrustMarkStatus", () => {
+			async function buildStatusResponseJwt(
+				status: string,
+				signerKeys: { privateKey: JWK; publicKey: JWK },
+			): Promise<string> {
+				const now = Math.floor(Date.now() / 1000);
+				return _signES(
+					{
+						iss: "https://ta.example.com",
+						iat: now,
+						trust_mark: "eyJ.original.jwt",
+						status,
+					} as Parameters<typeof _signES>[0],
+					signerKeys.privateKey,
+					{ kid: signerKeys.privateKey.kid as string, typ: JwtTyp.TrustMarkStatusResponse },
+				);
+			}
+
+			test("happy path: POST returns status JWT (active)", async (t) => {
+				const signerKeys = await _genKey("ES256");
+				const responseJwt = await buildStatusResponseJwt("active", signerKeys);
+				const httpClient: HttpClient = async () =>
+					new Response(responseJwt, {
+						status: 200,
+						headers: { "Content-Type": "application/trust-mark-status-response+jwt" },
+					});
+				const result = await fetchTrustMarkStatus(
+					"https://ta.example.com/federation_trust_mark_status",
+					"eyJ.original.jwt",
+					{ keys: [signerKeys.publicKey] },
+					{ httpClient },
+				);
+				t.true(isOk(result));
+				if (isOk(result)) {
+					t.equal(result.value.status, "active");
+					t.equal(result.value.issuer, "https://ta.example.com");
+				}
+			});
+
+			test("returns expired status pass-through", async (t) => {
+				const signerKeys = await _genKey("ES256");
+				const responseJwt = await buildStatusResponseJwt("expired", signerKeys);
+				const httpClient: HttpClient = async () =>
+					new Response(responseJwt, {
+						status: 200,
+						headers: { "Content-Type": "application/trust-mark-status-response+jwt" },
+					});
+				const result = await fetchTrustMarkStatus(
+					"https://ta.example.com/federation_trust_mark_status",
+					"eyJ.original.jwt",
+					{ keys: [signerKeys.publicKey] },
+					{ httpClient },
+				);
+				t.true(isOk(result));
+				if (isOk(result)) t.equal(result.value.status, "expired");
+			});
+
+			test("rejects wrong Content-Type", async (t) => {
+				const signerKeys = await _genKey("ES256");
+				const responseJwt = await buildStatusResponseJwt("active", signerKeys);
+				const httpClient: HttpClient = async () =>
+					new Response(responseJwt, {
+						status: 200,
+						headers: { "Content-Type": "application/jwt" },
+					});
+				const result = await fetchTrustMarkStatus(
+					"https://ta.example.com/federation_trust_mark_status",
+					"eyJ.original.jwt",
+					{ keys: [signerKeys.publicKey] },
+					{ httpClient },
+				);
+				t.true(isErr(result));
+				if (isErr(result)) t.true(result.error.description.includes("Content-Type"));
+			});
+
+			test("rejects signature failure (wrong signer key)", async (t) => {
+				const signerKeys = await _genKey("ES256");
+				const wrongKeys = await _genKey("ES256");
+				const responseJwt = await buildStatusResponseJwt("active", signerKeys);
+				const httpClient: HttpClient = async () =>
+					new Response(responseJwt, {
+						status: 200,
+						headers: { "Content-Type": "application/trust-mark-status-response+jwt" },
+					});
+				const result = await fetchTrustMarkStatus(
+					"https://ta.example.com/federation_trust_mark_status",
+					"eyJ.original.jwt",
+					{ keys: [wrongKeys.publicKey] },
+					{ httpClient },
+				);
+				t.true(isErr(result));
+			});
+
+			test("rejects http endpoint URL", async (t) => {
+				const signerKeys = await _genKey("ES256");
+				const result = await fetchTrustMarkStatus(
+					"http://ta.example.com/federation_trust_mark_status",
+					"eyJ.original.jwt",
+					{ keys: [signerKeys.publicKey] },
+				);
+				t.true(isErr(result));
+				if (isErr(result)) t.true(result.error.description.includes("https"));
 			});
 		});
 	}
@@ -5271,6 +6866,68 @@ export default (QUnit: QUnit) => {
 				});
 				t.equal(result.chains.length, 0);
 			});
+			test("inspects no more authority_hints than maxAuthorityHints", async (t) => {
+				const taKeys = await generateSigningKey("ES256");
+				const leafKeys = await generateSigningKey("ES256");
+				const taEc = await rs_signEC("https://ta.example.com", taKeys.privateKey, {
+					jwks: { keys: [taKeys.publicKey] },
+					metadata: {
+						federation_entity: {
+							federation_fetch_endpoint: "https://ta.example.com/federation_fetch",
+						},
+					},
+				});
+				const leafEc = await rs_signEC("https://leaf.example.com", leafKeys.privateKey, {
+					jwks: { keys: [leafKeys.publicKey] },
+					authority_hints: [
+						"https://ta.example.com",
+						"https://hint2.example.com",
+						"https://hint3.example.com",
+						"https://hint4.example.com",
+						"https://hint5.example.com",
+					],
+				});
+				const ss = await rs_signSS(
+					"https://ta.example.com",
+					"https://leaf.example.com",
+					taKeys.privateKey,
+					{ jwks: { keys: [leafKeys.publicKey] } },
+				);
+				const responses: Record<string, string> = {
+					"https://leaf.example.com/.well-known/openid-federation": leafEc,
+					"https://ta.example.com/.well-known/openid-federation": taEc,
+					"https://ta.example.com/federation_fetch?sub=https%3A%2F%2Fleaf.example.com": ss,
+				};
+				const fetchedUrls: string[] = [];
+				const mockFetch = async (url: string | URL | Request) => {
+					const urlStr = url.toString();
+					fetchedUrls.push(urlStr);
+					const body = responses[urlStr];
+					return body
+						? new Response(body, {
+								status: 200,
+								headers: { "Content-Type": "application/entity-statement+jwt" },
+							})
+						: new Response("Not found", { status: 404 });
+				};
+				const taSet: TrustAnchorSet = new Map([
+					["https://ta.example.com" as EntityId, { jwks: { keys: [taKeys.publicKey] } }],
+				]);
+				await resolveTrustChains("https://leaf.example.com" as EntityId, taSet, {
+					httpClient: mockFetch,
+					maxAuthorityHints: 2,
+				});
+				// Only the first two hints should have produced an EC fetch:
+				// "https://ta.example.com" and "https://hint2.example.com".
+				const fetchedHintEcs = fetchedUrls.filter((u) =>
+					u.endsWith("/.well-known/openid-federation"),
+				);
+				t.true(fetchedHintEcs.includes("https://ta.example.com/.well-known/openid-federation"));
+				t.true(fetchedHintEcs.includes("https://hint2.example.com/.well-known/openid-federation"));
+				t.false(fetchedHintEcs.includes("https://hint3.example.com/.well-known/openid-federation"));
+				t.false(fetchedHintEcs.includes("https://hint4.example.com/.well-known/openid-federation"));
+				t.false(fetchedHintEcs.includes("https://hint5.example.com/.well-known/openid-federation"));
+			});
 			test("rejects leaf EC where iss/sub don't match entityId", async (t) => {
 				const taKeys = await generateSigningKey("ES256");
 				const leafKeys = await generateSigningKey("ES256");
@@ -5496,6 +7153,83 @@ export default (QUnit: QUnit) => {
 				});
 				t.equal(result.chains.length, 0);
 				t.true(result.errors.some((e) => e.description.includes("budget")));
+			});
+		});
+		module("core / resolveTrustChainForAnchor", () => {
+			async function setupSimpleFederation() {
+				const taKeys = await generateSigningKey("ES256");
+				const leafKeys = await generateSigningKey("ES256");
+				const taEc = await rs_signEC("https://ta.example.com", taKeys.privateKey, {
+					jwks: { keys: [taKeys.publicKey] },
+					metadata: {
+						federation_entity: {
+							federation_fetch_endpoint: "https://ta.example.com/federation_fetch",
+						},
+					},
+				});
+				const leafEc = await rs_signEC("https://leaf.example.com", leafKeys.privateKey, {
+					jwks: { keys: [leafKeys.publicKey] },
+					authority_hints: ["https://ta.example.com"],
+					metadata: { federation_entity: { organization_name: "Leaf" } },
+				});
+				const ss = await rs_signSS(
+					"https://ta.example.com",
+					"https://leaf.example.com",
+					taKeys.privateKey,
+					{ jwks: { keys: [leafKeys.publicKey] } },
+				);
+				const responses: Record<string, string> = {
+					"https://leaf.example.com/.well-known/openid-federation": leafEc,
+					"https://ta.example.com/.well-known/openid-federation": taEc,
+					"https://ta.example.com/federation_fetch?sub=https%3A%2F%2Fleaf.example.com": ss,
+				};
+				const mockFetch = async (url: string | URL | Request) => {
+					const body = responses[url.toString()];
+					return body
+						? new Response(body, {
+								status: 200,
+								headers: { "Content-Type": "application/entity-statement+jwt" },
+							})
+						: new Response("Not found", { status: 404 });
+				};
+				const taSet: TrustAnchorSet = new Map([
+					["https://ta.example.com" as EntityId, { jwks: { keys: [taKeys.publicKey] } }],
+				]);
+				return { taSet, mockFetch };
+			}
+			test("resolves chain ending at the requested Trust Anchor", async (t) => {
+				const { taSet, mockFetch } = await setupSimpleFederation();
+				const result = await resolveTrustChainForAnchor(
+					"https://leaf.example.com" as EntityId,
+					"https://ta.example.com" as EntityId,
+					taSet,
+					{ httpClient: mockFetch },
+				);
+				t.true(isOk(result));
+				if (isOk(result)) {
+					t.true(result.value.length >= 2);
+				}
+			});
+			test("errors when the requested TA is not in the pre-trusted set", async (t) => {
+				const { taSet, mockFetch } = await setupSimpleFederation();
+				const result = await resolveTrustChainForAnchor(
+					"https://leaf.example.com" as EntityId,
+					"https://other-ta.example.com" as EntityId,
+					taSet,
+					{ httpClient: mockFetch },
+				);
+				t.true(isErr(result));
+			});
+			test("errors when no chain to the requested TA can be built", async (t) => {
+				const { taSet } = await setupSimpleFederation();
+				const noopFetch = async () => new Response("Not found", { status: 404 });
+				const result = await resolveTrustChainForAnchor(
+					"https://leaf.example.com" as EntityId,
+					"https://ta.example.com" as EntityId,
+					taSet,
+					{ httpClient: noopFetch },
+				);
+				t.true(isErr(result));
 			});
 		});
 	}
@@ -6214,6 +7948,19 @@ export default (QUnit: QUnit) => {
 					t.equal(result.chain.statements.length, 3);
 				}
 			});
+			test("accepts chain that omits the Trust Anchor EC at the end", async (t) => {
+				const { chain, taSet } = await vt_buildSimple();
+				// Drop the trailing TA Entity Configuration. The remaining array is
+				// [leaf EC, TA-signed SS]; the TA's public keys come from `taSet`.
+				const chainWithoutTaEc = chain.slice(0, -1);
+				const result = await validateTrustChain(chainWithoutTaEc, taSet);
+				t.true(result.valid);
+				if (result.valid) {
+					t.equal(result.chain.entityId, "https://leaf.example.com");
+					t.equal(result.chain.trustAnchorId, "https://ta.example.com");
+					t.equal(result.chain.statements.length, 2);
+				}
+			});
 			test("rejects chain with unknown trust anchor", async (t) => {
 				const { chain } = await vt_buildSimple();
 				const result = await validateTrustChain(chain, new Map(), { verboseErrors: true });
@@ -6248,6 +7995,112 @@ export default (QUnit: QUnit) => {
 				const result = await validateTrustChain([leafEc, ss, taEc], taSet, { verboseErrors: true });
 				t.false(result.valid);
 				t.true(result.errors.some((e) => e.checkNumber === 5));
+			});
+
+			test("rejects statement with iat in the future", async (t) => {
+				const taKeys = await generateSigningKey("ES256");
+				const leafKeys = await generateSigningKey("ES256");
+				const leafEc = await vt_signEC(
+					"https://leaf.example.com",
+					leafKeys.privateKey,
+					leafKeys.publicKey,
+					{ iat: vt_now + 7200, exp: vt_now + 86400, authority_hints: ["https://ta.example.com"] },
+				);
+				const ss = await vt_signSS(
+					"https://ta.example.com",
+					"https://leaf.example.com",
+					taKeys.privateKey,
+					leafKeys.publicKey,
+					{ iat: vt_now - 60, exp: vt_now + 86400 },
+				);
+				const taEc = await vt_signEC(
+					"https://ta.example.com",
+					taKeys.privateKey,
+					taKeys.publicKey,
+					{ iat: vt_now - 60, exp: vt_now + 86400 },
+				);
+				const taSet: TrustAnchorSet = new Map([
+					["https://ta.example.com" as EntityId, { jwks: { keys: [taKeys.publicKey] } }],
+				]);
+				const result = await validateTrustChain([leafEc, ss, taEc], taSet, { verboseErrors: true });
+				t.false(result.valid);
+				t.true(
+					result.errors.some((e) => /iat.*future/i.test(e.message ?? "")),
+					"expected an iat-in-future rejection",
+				);
+			});
+
+			test("rejects leaf entity configuration where iss does not equal sub", async (t) => {
+				const taKeys = await generateSigningKey("ES256");
+				const leafKeys = await generateSigningKey("ES256");
+				const leafEc = await signEntityStatement(
+					{
+						iss: "https://leaf.example.com",
+						sub: "https://other.example.com",
+						iat: vt_now,
+						exp: vt_now + 86400,
+						jwks: { keys: [leafKeys.publicKey] },
+						authority_hints: ["https://ta.example.com"],
+					},
+					leafKeys.privateKey,
+					{ typ: JwtTyp.EntityStatement },
+				);
+				const ss = await vt_signSS(
+					"https://ta.example.com",
+					"https://leaf.example.com",
+					taKeys.privateKey,
+					leafKeys.publicKey,
+					{ iat: vt_now, exp: vt_now + 86400 },
+				);
+				const taEc = await vt_signEC(
+					"https://ta.example.com",
+					taKeys.privateKey,
+					taKeys.publicKey,
+					{ iat: vt_now, exp: vt_now + 86400 },
+				);
+				const taSet: TrustAnchorSet = new Map([
+					["https://ta.example.com" as EntityId, { jwks: { keys: [taKeys.publicKey] } }],
+				]);
+				const result = await validateTrustChain([leafEc, ss, taEc], taSet, { verboseErrors: true });
+				t.false(result.valid);
+				t.true(
+					result.errors.some((e) => /iss.*sub|Leaf EC iss/i.test(e.message ?? "")),
+					"expected leaf iss/sub mismatch rejection",
+				);
+			});
+
+			test("rejects trust anchor signed with a key not in the pre-trusted trustAnchors set", async (t) => {
+				const taSigningKeys = await generateSigningKey("ES256");
+				const taPreTrustedKeys = await generateSigningKey("ES256");
+				const leafKeys = await generateSigningKey("ES256");
+				const leafEc = await vt_signEC(
+					"https://leaf.example.com",
+					leafKeys.privateKey,
+					leafKeys.publicKey,
+					{ iat: vt_now, exp: vt_now + 86400, authority_hints: ["https://ta.example.com"] },
+				);
+				const ss = await vt_signSS(
+					"https://ta.example.com",
+					"https://leaf.example.com",
+					taSigningKeys.privateKey,
+					leafKeys.publicKey,
+					{ iat: vt_now, exp: vt_now + 86400 },
+				);
+				const taEc = await vt_signEC(
+					"https://ta.example.com",
+					taSigningKeys.privateKey,
+					taSigningKeys.publicKey,
+					{ iat: vt_now, exp: vt_now + 86400 },
+				);
+				const taSet: TrustAnchorSet = new Map([
+					["https://ta.example.com" as EntityId, { jwks: { keys: [taPreTrustedKeys.publicKey] } }],
+				]);
+				const result = await validateTrustChain([leafEc, ss, taEc], taSet, { verboseErrors: true });
+				t.false(result.valid);
+				t.true(
+					result.errors.some((e) => /TA signature/i.test(e.message ?? "")),
+					"expected TA signature verification failure",
+				);
 			});
 			test("rejects chain with invalid leaf self-signature", async (t) => {
 				const taKeys = await generateSigningKey("ES256");
@@ -7244,6 +9097,55 @@ export default (QUnit: QUnit) => {
 					),
 				);
 			});
+			test("rejects leaf EC whose openid_relying_party.jwks mixes signing and encryption keys without 'use'", async (t) => {
+				const { taSet, leafKeys, taKeys } = await vt_buildSimple();
+				const sigKey = {
+					kty: "EC",
+					kid: "sig-1",
+					crv: "P-256",
+					x: "x1",
+					y: "y1",
+					alg: "ES256",
+				};
+				const encKey = {
+					kty: "RSA",
+					kid: "enc-1",
+					n: "n1",
+					e: "AQAB",
+					alg: "RSA-OAEP-256",
+				};
+				const leafEc = await vt_signEC(
+					"https://leaf.example.com",
+					leafKeys.privateKey,
+					leafKeys.publicKey,
+					{
+						authority_hints: ["https://ta.example.com"],
+						metadata: {
+							openid_relying_party: {
+								redirect_uris: ["https://leaf.example.com/cb"],
+								jwks: { keys: [sigKey, encKey] },
+							},
+						},
+					},
+				);
+				const ss = await vt_signSS(
+					"https://ta.example.com",
+					"https://leaf.example.com",
+					taKeys.privateKey,
+					leafKeys.publicKey,
+				);
+				const taEc = await vt_signEC("https://ta.example.com", taKeys.privateKey, taKeys.publicKey);
+				const result = await validateTrustChain([leafEc, ss, taEc], taSet, {
+					verboseErrors: true,
+				});
+				t.false(result.valid);
+				t.true(
+					result.errors.some(
+						(e) => e.message.includes("signing and encryption") && e.message.includes("'use'"),
+					),
+				);
+			});
+
 			test("rejects oauth_authorization_server.issuer not matching entity identifier", async (t) => {
 				const taKeys = await generateSigningKey("ES256");
 				const leafKeys = await generateSigningKey("ES256");
@@ -7443,6 +9345,80 @@ export default (QUnit: QUnit) => {
 				t.false("oauth_client" in (result.chain.resolvedMetadata as Record<string, unknown>));
 				t.true(
 					"openid_relying_party" in (result.chain.resolvedMetadata as Record<string, unknown>),
+				);
+			});
+			test("rejects chain statement with missing exp", async (t) => {
+				const jose = await import("jose");
+				const taKeys = await generateSigningKey("ES256");
+				const leafKeys = await generateSigningKey("ES256");
+				const leafEc = await vt_signEC(
+					"https://leaf.example.com",
+					leafKeys.privateKey,
+					leafKeys.publicKey,
+					{ authority_hints: ["https://ta.example.com"] },
+				);
+				const taCryptoKey = await jose.importJWK(taKeys.privateKey as unknown as JoseJWK, "ES256");
+				// SS deliberately omits exp to exercise the required-claims path.
+				const ss = await new jose.SignJWT({
+					iss: "https://ta.example.com",
+					sub: "https://leaf.example.com",
+					iat: vt_now,
+					jwks: { keys: [leafKeys.publicKey] },
+				} as unknown as JWTPayload)
+					.setProtectedHeader({
+						alg: "ES256",
+						typ: JwtTyp.EntityStatement,
+						kid: taKeys.publicKey.kid as string,
+					} as JWTHeaderParameters)
+					.sign(taCryptoKey as Parameters<SignJWT["sign"]>[0]);
+				const taEc = await vt_signEC("https://ta.example.com", taKeys.privateKey, taKeys.publicKey);
+				const taSet: TrustAnchorSet = new Map([
+					["https://ta.example.com" as EntityId, { jwks: { keys: [taKeys.publicKey] } }],
+				]);
+				const result = await validateTrustChain([leafEc, ss, taEc], taSet, {
+					verboseErrors: true,
+				});
+				t.false(result.valid);
+				t.true(
+					result.errors.some((e) => e.checkNumber === 1 && e.field === "exp"),
+					"expected a missing-exp rejection (checkNumber 1, field exp)",
+				);
+			});
+			test("rejects chain statement with missing iat", async (t) => {
+				const jose = await import("jose");
+				const taKeys = await generateSigningKey("ES256");
+				const leafKeys = await generateSigningKey("ES256");
+				const leafEc = await vt_signEC(
+					"https://leaf.example.com",
+					leafKeys.privateKey,
+					leafKeys.publicKey,
+					{ authority_hints: ["https://ta.example.com"] },
+				);
+				const taCryptoKey = await jose.importJWK(taKeys.privateKey as unknown as JoseJWK, "ES256");
+				// SS deliberately omits iat to exercise the required-claims path.
+				const ss = await new jose.SignJWT({
+					iss: "https://ta.example.com",
+					sub: "https://leaf.example.com",
+					exp: vt_now + 3600,
+					jwks: { keys: [leafKeys.publicKey] },
+				} as unknown as JWTPayload)
+					.setProtectedHeader({
+						alg: "ES256",
+						typ: JwtTyp.EntityStatement,
+						kid: taKeys.publicKey.kid as string,
+					} as JWTHeaderParameters)
+					.sign(taCryptoKey as Parameters<SignJWT["sign"]>[0]);
+				const taEc = await vt_signEC("https://ta.example.com", taKeys.privateKey, taKeys.publicKey);
+				const taSet: TrustAnchorSet = new Map([
+					["https://ta.example.com" as EntityId, { jwks: { keys: [taKeys.publicKey] } }],
+				]);
+				const result = await validateTrustChain([leafEc, ss, taEc], taSet, {
+					verboseErrors: true,
+				});
+				t.false(result.valid);
+				t.true(
+					result.errors.some((e) => e.checkNumber === 1 && e.field === "iat"),
+					"expected a missing-iat rejection (checkNumber 1, field iat)",
 				);
 			});
 		});

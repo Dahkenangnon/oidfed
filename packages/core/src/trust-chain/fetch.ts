@@ -277,15 +277,29 @@ async function readResponseBodyWithLimit(
 	return ok(result.text);
 }
 
-async function performFetch(
+export interface PerformFetchOptions extends FederationOptions {
+	/** Accept header to send. Defaults to application/entity-statement+jwt. */
+	accept?: string;
+	/**
+	 * Content-Type the response is required to carry. Defaults to the value of `accept`.
+	 * Pass `null` to skip Content-Type validation entirely (e.g. when the verifier downstream
+	 * inspects the response body header itself).
+	 */
+	expectedContentType?: string | null;
+}
+
+export async function performFetch(
 	url: string,
-	options?: FederationOptions,
+	options?: PerformFetchOptions,
 ): Promise<Result<string, FederationError>> {
 	const urlValidation = validateFetchUrl(url, options);
 	if (!urlValidation.ok) return urlValidation;
 
 	const fetchFn = options?.httpClient ?? fetch;
 	const timeoutMs = options?.httpTimeoutMs ?? DEFAULT_HTTP_TIMEOUT_MS;
+	const accept = options?.accept ?? MediaType.EntityStatement;
+	const expectedContentType =
+		options?.expectedContentType !== undefined ? options.expectedContentType : accept;
 
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -310,7 +324,7 @@ async function performFetch(
 		const response = await fetchFn(url, {
 			signal: controller.signal,
 			headers: {
-				Accept: MediaType.EntityStatement,
+				Accept: accept,
 			},
 		});
 
@@ -324,10 +338,10 @@ async function performFetch(
 		}
 
 		const contentType = response.headers.get("content-type")?.split(";")[0]?.trim();
-		if (contentType && contentType !== MediaType.EntityStatement) {
+		if (expectedContentType !== null && contentType && contentType !== expectedContentType) {
 			return err({
 				code: InternalErrorCode.Network,
-				description: `Unexpected Content-Type '${contentType}' from ${url}, expected '${MediaType.EntityStatement}'`,
+				description: `Unexpected Content-Type '${contentType}' from ${url}, expected '${expectedContentType}'`,
 			});
 		}
 

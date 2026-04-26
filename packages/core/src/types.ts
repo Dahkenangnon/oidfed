@@ -83,6 +83,12 @@ export interface FederationOptions {
 	understoodCriticalClaims?: ReadonlySet<string>;
 	/** Maximum total HTTP fetches across entire trust chain resolution. Default: 50. */
 	maxTotalFetches?: number;
+	/**
+	 * Federation-defined policy operators in addition to the seven standard ones.
+	 * Forwarded to `resolveMetadataPolicy` and `applyMetadataPolicy` during
+	 * trust-chain validation.
+	 */
+	customPolicyOperators?: readonly PolicyOperatorDefinition[];
 }
 
 export type TrustAnchorSet = ReadonlyMap<EntityId, Readonly<{ jwks: JWKSet }>>;

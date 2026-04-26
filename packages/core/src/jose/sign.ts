@@ -20,14 +20,16 @@ export async function signEntityStatement(
 		);
 	}
 	const kid = options?.kid ?? privateKey.kid;
+	if (!kid) {
+		throw new Error(
+			"Signed federation JWT MUST include a kid header parameter; provide options.kid or set privateKey.kid",
+		);
+	}
 	const typ = options?.typ ?? JwtTyp.EntityStatement;
 
 	const cryptoKey = await jose.importJWK(privateKey as unknown as jose.JWK, alg);
 
-	const header: Record<string, unknown> = { alg, typ, ...options?.extraHeaders };
-	if (kid) {
-		header.kid = kid;
-	}
+	const header: Record<string, unknown> = { alg, typ, kid, ...options?.extraHeaders };
 
 	return new jose.SignJWT(payload as jose.JWTPayload)
 		.setProtectedHeader(header as jose.JWTHeaderParameters)

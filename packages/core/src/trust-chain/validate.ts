@@ -8,9 +8,10 @@ import {
 } from "../constants.js";
 import { applyAllowedEntityTypes, checkConstraints } from "../constraints/index.js";
 import { decodeEntityStatement, verifyEntityStatement } from "../jose/verify.js";
+import { validateJwkSetUseRequirement } from "../jwks/use-requirement.js";
 import { applyMetadataPolicy } from "../metadata-policy/apply.js";
 import { resolveMetadataPolicy } from "../metadata-policy/merge.js";
-import type { JWKSet } from "../schemas/jwk.js";
+import type { JWK, JWKSet } from "../schemas/jwk.js";
 import type { FederationMetadata } from "../schemas/metadata.js";
 import { validateTrustMark } from "../trust-marks/index.js";
 import {
@@ -253,6 +254,25 @@ export async function validateTrustChain(
 					`oauth_authorization_server.issuer '${String(oas.issuer)}' MUST match entity identifier '${subjectEntityId}' at statement ${j}`,
 					{ statementIndex: j, field: "metadata", checkNumber: 16 },
 				);
+			}
+
+			// Inline `jwks` per entity type: enforce the conditional `use` REQUIRED rule.
+			// Skips federation_entity (jwks already rejected there above).
+			for (const [entityType, metaObj] of Object.entries(meta)) {
+				if (entityType === "federation_entity") continue;
+				if (!metaObj || typeof metaObj !== "object") continue;
+				const jwks = (metaObj as { jwks?: unknown }).jwks;
+				if (!jwks || typeof jwks !== "object") continue;
+				const keys = (jwks as { keys?: unknown }).keys;
+				if (!Array.isArray(keys)) continue;
+				const useResult = validateJwkSetUseRequirement(keys as JWK[]);
+				if (!useResult.ok) {
+					addError(errors, InternalErrorCode.TrustChainInvalid, useResult.error.description, {
+						statementIndex: j,
+						field: "metadata",
+						checkNumber: 16,
+					});
+				}
 			}
 		}
 
@@ -612,14 +632,22 @@ export async function validateTrustChain(
 	let resolvedMetadata: Record<string, Record<string, unknown>> = metadata;
 
 	if (subordinateStatements.length > 0) {
-		const policyResult = resolveMetadataPolicy(subordinateStatements);
+		const policyOptions = options?.customPolicyOperators
+			? { customOperators: options.customPolicyOperators }
+			: undefined;
+		const policyResult = resolveMetadataPolicy(subordinateStatements, policyOptions);
 		if (!policyResult.ok) {
 			addError(errors, InternalErrorCode.MetadataPolicyError, policyResult.error.description, {
 				checkNumber: 19,
 			});
 		} else if (Object.keys(policyResult.value).length > 0) {
 			// Superior metadata already merged above; pass only leaf metadata + policy here.
-			const applyResult = applyMetadataPolicy(metadata as FederationMetadata, policyResult.value);
+			const applyResult = applyMetadataPolicy(
+				metadata as FederationMetadata,
+				policyResult.value,
+				undefined,
+				policyOptions,
+			);
 			if (!applyResult.ok) {
 				addError(errors, InternalErrorCode.MetadataPolicyViolation, applyResult.error.description, {
 					checkNumber: 24,

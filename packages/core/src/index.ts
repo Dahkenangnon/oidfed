@@ -2,7 +2,10 @@
 
 export { InMemoryJtiStore } from "./in-memory-jti-store.js";
 export type { JtiStore } from "./jti-store.js";
-export type { RegistrationProtocolAdapter } from "./registration-adapter.js";
+export type {
+	RegistrationProtocolAdapter,
+	RegistrationProtocolAdapterContext,
+} from "./registration-adapter.js";
 
 // Constants
 
@@ -63,8 +66,16 @@ export {
 	type Result,
 	unwrapOr,
 } from "./errors.js";
-// Federation API verification
+// Federation API verification + remote-endpoint clients
 export {
+	type FetchHistoricalKeysOptions,
+	type FetchTrustMarkListParams,
+	fetchHistoricalKeys,
+	fetchListSubordinates,
+	fetchResolveResponse,
+	fetchTrustMarkList,
+	type ListSubordinatesFilter,
+	type ResolveRequestParams,
 	verifyHistoricalKeysResponse,
 	verifyResolveResponse,
 	verifySignedJwkSet,
@@ -101,12 +112,25 @@ export {
 	verifyClientAssertion,
 	verifyEntityStatement,
 } from "./jose/index.js";
+// JWK Set helpers
+export { fetchJwkSet } from "./jwks/jwks-uri.js";
+export {
+	type EntityKeysSource,
+	type ResolvedEntityKeys,
+	type ResolveEntityKeysOptions,
+	resolveEntityKeys,
+} from "./jwks/resolve.js";
+export { type FetchSignedJwkSetOptions, fetchSignedJwkSet } from "./jwks/signed-jwks-uri.js";
+export { validateSignedJwkSetSpecHygiene } from "./jwks/spec-hygiene.js";
+export { validateJwkSetUseRequirement } from "./jwks/use-requirement.js";
 // Metadata Policy
 export {
 	applyMetadataPolicy,
 	denormalizeScope,
+	type MetadataPolicyOptions,
 	normalizeScope,
 	resolveMetadataPolicy,
+	validateCustomOperators,
 } from "./metadata-policy/index.js";
 export { operators } from "./metadata-policy/operators.js";
 // Schemas
@@ -122,6 +146,7 @@ export {
 	validateEntityId,
 	validateFetchUrl,
 } from "./trust-chain/fetch.js";
+export { resolveTrustChainForAnchor } from "./trust-chain/peer.js";
 export {
 	type RefreshOptions,
 	refreshTrustChain,
@@ -141,7 +166,17 @@ export {
 	validateTrustChain,
 } from "./trust-chain/validate.js";
 // Trust Marks
-export { signTrustMarkDelegation, validateTrustMark } from "./trust-marks/index.js";
+export {
+	type FetchTrustMarkParams,
+	type FetchTrustMarkStatusOptions,
+	fetchTrustMark,
+	fetchTrustMarkStatus,
+	signTrustMarkDelegation,
+	type TrustMarkStatusResult,
+	type ValidateTrustMarkLogoOptions,
+	validateTrustMark,
+	validateTrustMarkLogo,
+} from "./trust-marks/index.js";
 // Types
 export {
 	type CacheProvider,

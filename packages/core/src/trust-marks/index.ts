@@ -258,3 +258,12 @@ async function validateDelegation(
 	};
 	return ok(validatedDelegation);
 }
+
+export {
+	type FetchTrustMarkParams,
+	type FetchTrustMarkStatusOptions,
+	fetchTrustMark,
+	fetchTrustMarkStatus,
+	type TrustMarkStatusResult,
+} from "./fetch.js";
+export { type ValidateTrustMarkLogoOptions, validateTrustMarkLogo } from "./logo.js";

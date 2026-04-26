@@ -1,7 +1,15 @@
 import { InternalErrorCode } from "../constants.js";
 import { err, type FederationError, ok, type Result } from "../errors.js";
-import type { ParsedEntityStatement, ResolvedMetadataPolicy } from "../types.js";
-import { operators } from "./operators.js";
+import type {
+	ParsedEntityStatement,
+	PolicyOperatorDefinition,
+	ResolvedMetadataPolicy,
+} from "../types.js";
+import {
+	buildOperatorLookup,
+	type MetadataPolicyOptions,
+	validateCustomOperators,
+} from "./custom-operators.js";
 
 /**
  * Merge metadata policies from subordinate statements in TA-to-leaf order.
@@ -11,7 +19,16 @@ import { operators } from "./operators.js";
  */
 export function resolveMetadataPolicy(
 	subordinateStatements: ParsedEntityStatement[],
+	options?: MetadataPolicyOptions,
 ): Result<ResolvedMetadataPolicy, FederationError> {
+	if (options?.customOperators && options.customOperators.length > 0) {
+		const customCheck = validateCustomOperators(options.customOperators);
+		if (!customCheck.ok) return customCheck;
+	}
+	const lookup: Record<string, PolicyOperatorDefinition> = buildOperatorLookup(
+		options?.customOperators,
+	);
+
 	const criticalOps = new Set<string>();
 	for (const stmt of subordinateStatements) {
 		const crit = stmt.payload.metadata_policy_crit;
@@ -23,7 +40,7 @@ export function resolveMetadataPolicy(
 	}
 
 	for (const critOp of criticalOps) {
-		if (!operators[critOp]) {
+		if (!lookup[critOp]) {
 			return err({
 				code: InternalErrorCode.MetadataPolicyError,
 				description: `Unknown critical metadata policy operator: '${critOp}'`,
@@ -56,9 +73,9 @@ export function resolveMetadataPolicy(
 				const mergedParam = mergedEntityType[paramName] as Record<string, unknown>;
 
 				for (const [opName, opValue] of Object.entries(opEntries as Record<string, unknown>)) {
-					if (!operators[opName]) continue;
+					if (!lookup[opName]) continue;
 
-					const opDef = operators[opName] as (typeof operators)[string];
+					const opDef = lookup[opName] as PolicyOperatorDefinition;
 
 					if (mergedParam[opName] !== undefined) {
 						const mergeResult = opDef.merge(mergedParam[opName], opValue);
@@ -74,13 +91,13 @@ export function resolveMetadataPolicy(
 					}
 				}
 
-				const opNames = Object.keys(mergedParam).filter((k) => operators[k] !== undefined);
+				const opNames = Object.keys(mergedParam).filter((k) => lookup[k] !== undefined);
 				for (let a = 0; a < opNames.length; a++) {
 					for (let b = a + 1; b < opNames.length; b++) {
 						const opA = opNames[a] as string;
 						const opB = opNames[b] as string;
-						const defA = operators[opA] as (typeof operators)[string];
-						const defB = operators[opB] as (typeof operators)[string];
+						const defA = lookup[opA] as PolicyOperatorDefinition;
+						const defB = lookup[opB] as PolicyOperatorDefinition;
 						const valA = mergedParam[opA];
 						const valB = mergedParam[opB];
 

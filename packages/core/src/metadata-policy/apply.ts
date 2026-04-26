@@ -1,15 +1,30 @@
 import { InternalErrorCode } from "../constants.js";
 import { err, type FederationError, ok, type Result } from "../errors.js";
 import type { FederationMetadata } from "../schemas/metadata.js";
-import type { ResolvedMetadataPolicy } from "../types.js";
-import { operators } from "./operators.js";
+import type { PolicyOperatorDefinition, ResolvedMetadataPolicy } from "../types.js";
+import {
+	buildOperatorLookup,
+	type MetadataPolicyOptions,
+	validateCustomOperators,
+} from "./custom-operators.js";
+
+export type { MetadataPolicyOptions };
 
 /** Apply a resolved metadata policy to federation metadata, returning the transformed metadata. */
 export function applyMetadataPolicy(
 	metadata: FederationMetadata,
 	policy: ResolvedMetadataPolicy,
 	superiorMetadataOverride?: FederationMetadata,
+	options?: MetadataPolicyOptions,
 ): Result<FederationMetadata, FederationError> {
+	if (options?.customOperators && options.customOperators.length > 0) {
+		const customCheck = validateCustomOperators(options.customOperators);
+		if (!customCheck.ok) return customCheck;
+	}
+	const lookup: Record<string, PolicyOperatorDefinition> = buildOperatorLookup(
+		options?.customOperators,
+	);
+
 	const result = structuredClone(metadata) as Record<string, Record<string, unknown>>;
 
 	if (superiorMetadataOverride) {
@@ -32,8 +47,8 @@ export function applyMetadataPolicy(
 
 		for (const [paramName, opEntries] of Object.entries(paramPolicies)) {
 			const sortedOps = Object.entries(opEntries as Record<string, unknown>)
-				.filter(([opName]) => operators[opName] !== undefined)
-				.sort(([a], [b]) => (operators[a]?.order ?? 0) - (operators[b]?.order ?? 0));
+				.filter(([opName]) => lookup[opName] !== undefined)
+				.sort(([a], [b]) => (lookup[a]?.order ?? 0) - (lookup[b]?.order ?? 0));
 
 			// Scope is space-delimited in OIDC but operators expect arrays
 			const isScope = paramName === "scope";
@@ -44,7 +59,7 @@ export function applyMetadataPolicy(
 			}
 
 			for (const [opName, opValue] of sortedOps) {
-				const opDef = operators[opName] as (typeof operators)[string];
+				const opDef = lookup[opName] as PolicyOperatorDefinition;
 				const currentValue = entityMetadata[paramName];
 				const applyResult = opDef.apply(currentValue, opValue);
 
