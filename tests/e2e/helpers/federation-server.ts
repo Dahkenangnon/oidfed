@@ -45,7 +45,7 @@ export async function createAndStartFederationTestServer(
 
 		const host = (req.headers.host ?? "").replace(/:\d+$/, "");
 		const app = vhosts.get(host);
-		if (!app) {
+		if (typeof app !== "function") {
 			res.writeHead(404, { "Content-Type": "text/plain" });
 			res.end(`No vhost for ${host}`);
 			return;

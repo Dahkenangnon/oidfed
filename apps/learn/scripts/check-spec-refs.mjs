@@ -24,12 +24,18 @@ for (const f of sectionFiles) {
 
 const SPEC_REF_RE = /<SpecRef\s+sec="([^"]+)"/g;
 
+// Escape every regex metacharacter (backslash first, then the rest) so the
+// caller-supplied section identifier is treated as a literal string.
+function escapeRegex(s) {
+	return s.replace(/[\\.*+?^${}()|[\]]/g, "\\$&");
+}
+
 function checkSubsection(top, full) {
 	if (!sectionByNumber.has(top)) return false;
 	if (full === String(top)) return true;
 	const body = readFileSync(sectionByNumber.get(top), "utf8");
 	// Match "### 7.2." or "#### 5.1.1." etc., looking for exact level
-	const escaped = full.replace(/\./g, "\\.");
+	const escaped = escapeRegex(full);
 	const re = new RegExp(`^#+ ${escaped}\\.`, "m");
 	return re.test(body);
 }
