@@ -16,6 +16,8 @@ export interface ValidatedRequestObject {
 	readonly claims: Readonly<Record<string, unknown>>;
 	/** Trust chain from JWT header (if present) */
 	readonly trustChainHeader?: readonly string[];
+	/** Peer Trust Chain from JWT header (if present) — Trust Chain for the OP. */
+	readonly peerTrustChainHeader?: readonly string[];
 }
 
 /** Context for OP-side automatic registration processing */

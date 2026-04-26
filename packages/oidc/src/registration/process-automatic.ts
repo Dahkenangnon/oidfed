@@ -11,6 +11,7 @@ import {
 	type Result,
 	type TrustAnchorSet,
 	type ValidatedTrustChain,
+	validateTrustChain,
 	verifyEntityStatement,
 } from "@oidfed/core";
 import { RequestObjectTyp } from "../constants.js";
@@ -21,6 +22,14 @@ export interface ProcessedRegistration {
 	readonly rpEntityId: EntityId;
 	readonly resolvedRpMetadata: Readonly<Record<string, unknown>>;
 	readonly trustChain: ValidatedTrustChain;
+	/**
+	 * When the Request Object carried a `peer_trust_chain` JWS header, the
+	 * OP's resolved metadata as derived from the RP-supplied peer chain.
+	 * Integrators may use these RP-chosen values when creating the client
+	 * registration; the library validates structural integrity but does not
+	 * auto-apply the values.
+	 */
+	readonly peerResolvedOpMetadata?: Readonly<Record<string, unknown>>;
 }
 
 export interface ProcessAutomaticRegistrationOptions extends FederationOptions {
@@ -108,9 +117,27 @@ export async function processAutomaticRegistration(
 		}
 	}
 
+	let peerResolvedOpMetadata: Readonly<Record<string, unknown>> | undefined;
+	const peerHeader = validated.value.peerTrustChainHeader;
+	if (peerHeader && peerHeader.length > 0) {
+		const peerValidation = await validateTrustChain([...peerHeader], trustAnchors, options);
+		if (!peerValidation.valid) {
+			return err(
+				federationError(
+					InternalErrorCode.TrustChainInvalid,
+					`peer_trust_chain validation failed: ${
+						peerValidation.errors[0]?.message ?? "unknown error"
+					}`,
+				),
+			);
+		}
+		peerResolvedOpMetadata = peerValidation.chain.resolvedMetadata.openid_provider ?? {};
+	}
+
 	return ok({
 		rpEntityId,
 		resolvedRpMetadata,
 		trustChain: bestChain,
+		...(peerResolvedOpMetadata !== undefined ? { peerResolvedOpMetadata } : {}),
 	});
 }

@@ -10,6 +10,7 @@ import {
 	MediaType,
 	nowSeconds,
 	type ParsedEntityStatement,
+	resolveTrustChainForAnchor,
 	resolveTrustChains,
 	signEntityStatement,
 	stripPrivateFields,
@@ -25,6 +26,20 @@ export interface ExplicitRegistrationConfig {
 	readonly metadata: Record<string, Record<string, unknown>>;
 	readonly entityConfigurationTtlSeconds?: number;
 	readonly trustMarks?: ReadonlyArray<Record<string, unknown>>;
+	/**
+	 * When true, attach the peer_trust_chain JWS header — a Trust Chain for
+	 * the OP that ends at the same Trust Anchor as the RP chain. Disabled by
+	 * default; set to true only when the RP wants the OP to use the
+	 * metadata/policy values from the RP-built peer chain (Federation /
+	 * Metadata Integrity properties). The library throws if the peer chain
+	 * to the shared Trust Anchor cannot be built. The current emit path
+	 * always sends an Entity Configuration JWT body (never a Trust-Chain
+	 * JSON body), so the spec's mutual-exclusion rule between
+	 * peer_trust_chain and Trust-Chain-JSON request body is structurally
+	 * satisfied here; do NOT add a Trust-Chain-JSON body shape without also
+	 * refusing this option in that branch.
+	 */
+	readonly includePeerTrustChain?: boolean;
 }
 
 export interface ExplicitRegistrationResult {
@@ -87,15 +102,18 @@ export async function explicitRegistration(
 	// Include RP trust chain in header (recommended)
 	const rpChainResult = await resolveTrustChains(rpConfig.entityId, trustAnchors, options);
 	let rpChainStatements: string[] = [];
+	let selectedTrustAnchorId: EntityId | undefined;
 	if (rpChainResult.chains.length > 0) {
 		for (const chain of rpChainResult.chains) {
 			if (chain.trustAnchorId === opTrustAnchorId) {
 				rpChainStatements = chain.statements as string[];
+				selectedTrustAnchorId = chain.trustAnchorId as EntityId;
 				break;
 			}
 		}
 		if (rpChainStatements.length === 0) {
 			rpChainStatements = (rpChainResult.chains[0]?.statements ?? []) as string[];
+			selectedTrustAnchorId = rpChainResult.chains[0]?.trustAnchorId as EntityId | undefined;
 		}
 	}
 
@@ -117,6 +135,26 @@ export async function explicitRegistration(
 	const extraHeaders: Record<string, unknown> = {};
 	if (rpChainStatements.length > 0) {
 		extraHeaders.trust_chain = rpChainStatements;
+	}
+
+	if (rpConfig.includePeerTrustChain) {
+		if (!selectedTrustAnchorId) {
+			throw new Error(
+				"includePeerTrustChain requires a selected RP Trust Anchor; no valid RP chain was built",
+			);
+		}
+		const peerChainResult = await resolveTrustChainForAnchor(
+			discovery.entityId as EntityId,
+			selectedTrustAnchorId,
+			trustAnchors,
+			options,
+		);
+		if (!peerChainResult.ok) {
+			throw new Error(
+				`includePeerTrustChain: cannot build peer Trust Chain for ${discovery.entityId} ending at ${selectedTrustAnchorId}: ${peerChainResult.error.description}`,
+			);
+		}
+		extraHeaders.peer_trust_chain = peerChainResult.value;
 	}
 
 	const ecJwt = await signEntityStatement(

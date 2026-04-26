@@ -6,6 +6,7 @@ import {
 	type EntityId,
 	type FederationOptions,
 	nowSeconds,
+	resolveTrustChainForAnchor,
 	resolveTrustChains,
 	signEntityStatement,
 	type TrustAnchorSet,
@@ -34,6 +35,15 @@ export interface AutomaticRegistrationConfig {
 	readonly metadata: Record<string, Record<string, unknown>>;
 	/** TTL for the Request Object JWT in seconds (default: 300). */
 	readonly requestObjectTtlSeconds?: number;
+	/**
+	 * When true, attach the peer_trust_chain JWS header — a Trust Chain for
+	 * the OP that ends at the same Trust Anchor as the RP chain. Disabled by
+	 * default; set to true only when the RP wants the OP to use the
+	 * metadata/policy values from the RP-built peer chain (for the
+	 * Federation/Metadata Integrity properties). The library throws if the
+	 * peer chain to the shared Trust Anchor cannot be built.
+	 */
+	readonly includePeerTrustChain?: boolean;
 }
 
 export interface AutomaticRegistrationResult {
@@ -80,6 +90,7 @@ export async function automaticRegistration(
 	const rpChainResult = await resolveTrustChains(rpConfig.entityId, trustAnchors, options);
 
 	let selectedChain: string[] = [];
+	let selectedTrustAnchorId: EntityId | undefined;
 
 	for (const chain of rpChainResult.chains) {
 		const validationResult = await validateTrustChain(
@@ -91,11 +102,13 @@ export async function automaticRegistration(
 			if (chain.trustAnchorId === opTrustAnchorId) {
 				// Ideal: shared trust anchor — use immediately
 				selectedChain = chain.statements as string[];
+				selectedTrustAnchorId = chain.trustAnchorId as EntityId;
 				break;
 			}
 			if (selectedChain.length === 0) {
 				// Fallback: first valid chain as backup
 				selectedChain = chain.statements as string[];
+				selectedTrustAnchorId = chain.trustAnchorId as EntityId;
 			}
 		}
 	}
@@ -122,6 +135,26 @@ export async function automaticRegistration(
 	const extraHeaders: Record<string, unknown> = {};
 	if (selectedChain.length > 0) {
 		extraHeaders.trust_chain = selectedChain;
+	}
+
+	if (rpConfig.includePeerTrustChain) {
+		if (!selectedTrustAnchorId) {
+			throw new Error(
+				"includePeerTrustChain requires a selected RP Trust Anchor; no valid RP chain was built",
+			);
+		}
+		const peerChainResult = await resolveTrustChainForAnchor(
+			discovery.entityId as EntityId,
+			selectedTrustAnchorId,
+			trustAnchors,
+			options,
+		);
+		if (!peerChainResult.ok) {
+			throw new Error(
+				`includePeerTrustChain: cannot build peer Trust Chain for ${discovery.entityId} ending at ${selectedTrustAnchorId}: ${peerChainResult.error.description}`,
+			);
+		}
+		extraHeaders.peer_trust_chain = peerChainResult.value;
 	}
 
 	const requestObjectJwt = await signEntityStatement(

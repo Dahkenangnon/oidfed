@@ -47,19 +47,33 @@ export const OpenIDRelyingPartyMetadataSchema = z.looseObject({
  * Typed OpenID Provider metadata schema.
  * Provides OIDC-specific field-level validation beyond the federation layer's `z.record()`.
  */
-export const OpenIDProviderMetadataSchema = z.looseObject({
-	issuer: z.string().url(),
-	authorization_endpoint: z.string().url(),
-	token_endpoint: z.string().url(),
-	jwks_uri: httpsUrlNoFragment.optional(),
-	signed_jwks_uri: httpsUrlNoFragment.optional(),
-	jwks: JWKSetSchema.optional(),
-	response_types_supported: z.array(z.string()),
-	subject_types_supported: z.array(z.string()),
-	id_token_signing_alg_values_supported: z.array(z.string()),
-	client_registration_types_supported: z.array(z.string()).optional(),
-	federation_registration_endpoint: httpsUrlNoFragment.optional(),
-});
+export const OpenIDProviderMetadataSchema = z
+	.looseObject({
+		issuer: z.string().url(),
+		authorization_endpoint: z.string().url(),
+		token_endpoint: z.string().url(),
+		jwks_uri: httpsUrlNoFragment.optional(),
+		signed_jwks_uri: httpsUrlNoFragment.optional(),
+		jwks: JWKSetSchema.optional(),
+		response_types_supported: z.array(z.string()),
+		subject_types_supported: z.array(z.string()),
+		id_token_signing_alg_values_supported: z.array(z.string()),
+		client_registration_types_supported: z.array(z.string()).optional(),
+		federation_registration_endpoint: httpsUrlNoFragment.optional(),
+	})
+	.superRefine((meta, ctx) => {
+		if (
+			meta.client_registration_types_supported?.includes("explicit") &&
+			!meta.federation_registration_endpoint
+		) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message:
+					"federation_registration_endpoint is REQUIRED when client_registration_types_supported includes 'explicit'",
+				path: ["federation_registration_endpoint"],
+			});
+		}
+	});
 
 export type OpenIDRelyingPartyMetadata = z.infer<typeof OpenIDRelyingPartyMetadataSchema>;
 export type OpenIDProviderMetadata = z.infer<typeof OpenIDProviderMetadataSchema>;

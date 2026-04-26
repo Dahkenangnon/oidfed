@@ -296,6 +296,64 @@ export default (QUnit: QUnit) => {
 		});
 	});
 
+	module("oidc / OpenIDProviderMetadataSchema — explicit registration coherence", () => {
+		const validOP = {
+			issuer: "https://op.example.com",
+			authorization_endpoint: "https://op.example.com/auth",
+			token_endpoint: "https://op.example.com/token",
+			response_types_supported: ["code"],
+			subject_types_supported: ["public"],
+			id_token_signing_alg_values_supported: ["RS256"],
+		};
+
+		test("rejects OP advertising 'explicit' without federation_registration_endpoint", (t) => {
+			const result = OpenIDProviderMetadataSchema.safeParse({
+				...validOP,
+				client_registration_types_supported: ["explicit"],
+			});
+			t.false(result.success);
+			if (result.success) return;
+			t.ok(
+				result.error.issues.some((i) =>
+					i.message.includes("federation_registration_endpoint is REQUIRED"),
+				),
+			);
+		});
+
+		test("accepts OP advertising 'automatic' without federation_registration_endpoint", (t) => {
+			t.true(
+				OpenIDProviderMetadataSchema.safeParse({
+					...validOP,
+					client_registration_types_supported: ["automatic"],
+				}).success,
+			);
+		});
+
+		test("accepts OP advertising 'explicit' with valid federation_registration_endpoint", (t) => {
+			t.true(
+				OpenIDProviderMetadataSchema.safeParse({
+					...validOP,
+					client_registration_types_supported: ["explicit"],
+					federation_registration_endpoint: "https://op.example.com/register",
+				}).success,
+			);
+		});
+
+		test("rejects OP advertising both 'explicit' and 'automatic' without federation_registration_endpoint", (t) => {
+			const result = OpenIDProviderMetadataSchema.safeParse({
+				...validOP,
+				client_registration_types_supported: ["automatic", "explicit"],
+			});
+			t.false(result.success);
+			if (result.success) return;
+			t.ok(
+				result.error.issues.some((i) =>
+					i.message.includes("federation_registration_endpoint is REQUIRED"),
+				),
+			);
+		});
+	});
+
 	module("oidc / OpenIDRelyingPartyMetadataSchema — URL validation", () => {
 		test("rejects http:// signed_jwks_uri", (t) => {
 			t.false(
@@ -495,6 +553,75 @@ export default (QUnit: QUnit) => {
 			const h = decoded.value.header as Record<string, unknown>;
 			t.ok(Array.isArray(h.trust_chain));
 			t.ok((h.trust_chain as string[]).length > 0);
+		});
+
+		test("attaches peer_trust_chain when includePeerTrustChain is true", async (t) => {
+			const fed = await createMockFederation();
+			const discovery = await createMockDiscovery(OP_ID, fed);
+			const { config } = await createRpConfig({
+				signingKeys: [fed.leafSigningKey],
+				includePeerTrustChain: true,
+			});
+			const result = await automaticRegistration(
+				discovery,
+				config,
+				authzParams,
+				fed.trustAnchors,
+				fed.options,
+			);
+			const decoded = decodeEntityStatement(result.requestObjectJwt);
+			t.true(decoded.ok);
+			if (!decoded.ok) return;
+			const h = decoded.value.header as Record<string, unknown>;
+			t.ok(Array.isArray(h.peer_trust_chain), "peer_trust_chain should be present");
+			const peerChain = h.peer_trust_chain as string[];
+			t.ok(peerChain.length > 0);
+			// Same-TA invariant: peer chain ends at same TA as trust_chain.
+			const rpChain = h.trust_chain as string[];
+			const rpLast = decodeEntityStatement(rpChain[rpChain.length - 1] as string);
+			const peerLast = decodeEntityStatement(peerChain[peerChain.length - 1] as string);
+			t.true(rpLast.ok && peerLast.ok);
+			if (!rpLast.ok || !peerLast.ok) return;
+			t.equal(
+				(rpLast.value.payload as Record<string, unknown>).iss,
+				(peerLast.value.payload as Record<string, unknown>).iss,
+			);
+			// Peer chain begins at OP.
+			const peerFirst = decodeEntityStatement(peerChain[0] as string);
+			t.true(peerFirst.ok);
+			if (!peerFirst.ok) return;
+			const peerFirstPayload = peerFirst.value.payload as Record<string, unknown>;
+			t.equal(peerFirstPayload.iss, OP_ID);
+			t.equal(peerFirstPayload.sub, OP_ID);
+		});
+
+		test("throws when includePeerTrustChain is set but no peer chain to shared TA exists", async (t) => {
+			const fed = await createMockFederation();
+			const discovery = await createMockDiscovery(OP_ID, fed);
+			// Strip the OP discovery responses from the http client so the peer
+			// chain cannot be resolved, while keeping the leaf chain intact.
+			const blockingHttpClient = async (input: string | URL | Request) => {
+				const url = typeof input === "string" ? input : (input as Request).url;
+				if (url.includes(OP_ID.replace(/^https?:\/\//, ""))) {
+					return new Response("Not found", { status: 404 });
+				}
+				return fed.options.httpClient!(input);
+			};
+			const { config } = await createRpConfig({
+				signingKeys: [fed.leafSigningKey],
+				includePeerTrustChain: true,
+			});
+			let threw = false;
+			try {
+				await automaticRegistration(discovery, config, authzParams, fed.trustAnchors, {
+					...fed.options,
+					httpClient: blockingHttpClient,
+				});
+			} catch (e: unknown) {
+				threw = true;
+				t.ok((e as Error).message.toLowerCase().includes("peer"));
+			}
+			t.true(threw, "expected throw when peer chain cannot be built");
 		});
 
 		test("includes authzRequestParams in JWT payload", async (t) => {
@@ -747,6 +874,42 @@ export default (QUnit: QUnit) => {
 			t.ok(p.metadata);
 		});
 
+		test("attaches peer_trust_chain when includePeerTrustChain is true", async (t) => {
+			const mock = await createMockOpWithRegistration();
+			let capturedBody = "";
+			const trackingClient: HttpClient = async (input, init) => {
+				const url =
+					typeof input === "string"
+						? input
+						: input instanceof URL
+							? input.toString()
+							: (input as Request).url;
+				if (new URL(url).pathname === "/federation_registration" && input instanceof Request) {
+					capturedBody = await (input as Request).clone().text();
+				}
+				return mock.httpClient(input, init);
+			};
+			await explicitRegistration(
+				mock.discovery,
+				{ ...mock.config, includePeerTrustChain: true },
+				mock.trustAnchors,
+				{ httpClient: trackingClient },
+			);
+			const decoded = decodeEntityStatement(capturedBody);
+			t.true(decoded.ok);
+			if (!decoded.ok) return;
+			const h = decoded.value.header as Record<string, unknown>;
+			t.ok(Array.isArray(h.peer_trust_chain));
+			const peerChain = h.peer_trust_chain as string[];
+			t.ok(peerChain.length > 0);
+			const peerFirst = decodeEntityStatement(peerChain[0] as string);
+			t.true(peerFirst.ok);
+			if (!peerFirst.ok) return;
+			const peerFirstPayload = peerFirst.value.payload as Record<string, unknown>;
+			t.equal(peerFirstPayload.iss, OP_ID);
+			t.equal(peerFirstPayload.sub, OP_ID);
+		});
+
 		test("returns correct clientId and registeredMetadata", async (t) => {
 			const mock = await createMockOpWithRegistration();
 			const result = await explicitRegistration(
@@ -904,6 +1067,49 @@ export default (QUnit: QUnit) => {
 				t.ok(false, "should have thrown");
 			} catch (e) {
 				t.ok(/trust_anchor/i.test((e as Error).message), (e as Error).message);
+			}
+		});
+
+		test("throws if response metadata is missing a requested entity type", async (t) => {
+			const fed = await createMockFederation();
+			const { config } = await createRpConfig({ signingKeys: [fed.leafSigningKey] });
+			const discovery = await createMockDiscovery(OP_ID, fed);
+			const now = Math.floor(Date.now() / 1000);
+			// RP requested openid_relying_party (createRpConfig default); OP responds with
+			// metadata for a different entity type — must trigger the missing-entity-type guard.
+			const badEntityTypeJwt = await signEntityStatement(
+				{
+					iss: OP_ID,
+					sub: LEAF_ID,
+					aud: LEAF_ID,
+					iat: now,
+					exp: now + 86400,
+					authority_hints: [TA_ID],
+					trust_anchor: TA_ID,
+					metadata: { openid_provider: { issuer: OP_ID } },
+				},
+				fed.opSigningKey,
+				{ kid: fed.opSigningKey.kid, typ: JwtTyp.ExplicitRegistrationResponse },
+			);
+			const httpClient = async (input: string | URL | Request) => {
+				const url =
+					typeof input === "string"
+						? input
+						: input instanceof URL
+							? input.toString()
+							: (input as Request).url;
+				if (new URL(url).pathname === "/federation_registration")
+					return new Response(badEntityTypeJwt, {
+						status: 200,
+						headers: { "Content-Type": MediaType.ExplicitRegistrationResponse },
+					});
+				return fed.httpClient(input);
+			};
+			try {
+				await explicitRegistration(discovery, config, fed.trustAnchors, { httpClient });
+				t.ok(false, "should have thrown");
+			} catch (e) {
+				t.ok(/missing requested entity type/i.test((e as Error).message), (e as Error).message);
 			}
 		});
 
@@ -2025,6 +2231,109 @@ export default (QUnit: QUnit) => {
 			t.true(result.ok);
 			if (!result.ok) return;
 			t.equal(result.value.trustChainHeader?.length, 1);
+		});
+
+		const taId = entityId("https://ta.example.com");
+
+		async function buildPeerChainFixture() {
+			const { privateKey: rpKey, publicKey: rpPub } = await generateSigningKey("ES256");
+			const { privateKey: opKey, publicKey: opPub } = await generateSigningKey("ES256");
+			const { privateKey: taKey, publicKey: taPub } = await generateSigningKey("ES256");
+			const now = Math.floor(Date.now() / 1000);
+			const exp = now + 3600;
+			const rpEc = await signEntityStatement(
+				{ iss: rpId, sub: rpId, iat: now, exp, jwks: { keys: [rpPub] } },
+				rpKey,
+				{ typ: JwtTyp.EntityStatement },
+			);
+			const opEc = await signEntityStatement(
+				{ iss: opId, sub: opId, iat: now, exp, jwks: { keys: [opPub] } },
+				opKey,
+				{ typ: JwtTyp.EntityStatement },
+			);
+			const taEc = await signEntityStatement(
+				{ iss: taId, sub: taId, iat: now, exp, jwks: { keys: [taPub] } },
+				taKey,
+				{ typ: JwtTyp.EntityStatement },
+			);
+			return { rpKey, opKey, taKey, rpEc, opEc, taEc, rpPub, opPub, taPub };
+		}
+
+		test("accepts peer_trust_chain that begins at OP and shares TA with trust_chain", async (t) => {
+			const fx = await buildPeerChainFixture();
+			const result = validateAutomaticRegistrationRequest(
+				await buildRequestObject(fx.rpKey, {
+					extraHeaders: {
+						trust_chain: [fx.rpEc, fx.taEc],
+						peer_trust_chain: [fx.opEc, fx.taEc],
+					},
+				}),
+				ctx,
+			);
+			t.true(result.ok);
+			if (!result.ok) return;
+			t.equal(result.value.trustChainHeader?.length, 2);
+			t.equal(result.value.peerTrustChainHeader?.length, 2);
+		});
+
+		test("rejects peer_trust_chain that does not begin at OP", async (t) => {
+			const fx = await buildPeerChainFixture();
+			const { privateKey: strangerKey, publicKey: strangerPub } = await generateSigningKey("ES256");
+			const strangerId = "https://stranger.example.com";
+			const now = Math.floor(Date.now() / 1000);
+			const strangerEc = await signEntityStatement(
+				{
+					iss: strangerId,
+					sub: strangerId,
+					iat: now,
+					exp: now + 3600,
+					jwks: { keys: [strangerPub] },
+				},
+				strangerKey,
+				{ typ: JwtTyp.EntityStatement },
+			);
+			const result = validateAutomaticRegistrationRequest(
+				await buildRequestObject(fx.rpKey, {
+					extraHeaders: {
+						trust_chain: [fx.rpEc, fx.taEc],
+						peer_trust_chain: [strangerEc, fx.taEc],
+					},
+				}),
+				ctx,
+			);
+			t.false(result.ok);
+			if (result.ok) return;
+			t.ok(result.error.description.includes("OP's Entity Configuration"));
+		});
+
+		test("rejects peer_trust_chain whose TA differs from trust_chain TA", async (t) => {
+			const fx = await buildPeerChainFixture();
+			const { privateKey: otherTaKey, publicKey: otherTaPub } = await generateSigningKey("ES256");
+			const otherTaId = "https://other-ta.example.com";
+			const now = Math.floor(Date.now() / 1000);
+			const otherTaEc = await signEntityStatement(
+				{
+					iss: otherTaId,
+					sub: otherTaId,
+					iat: now,
+					exp: now + 3600,
+					jwks: { keys: [otherTaPub] },
+				},
+				otherTaKey,
+				{ typ: JwtTyp.EntityStatement },
+			);
+			const result = validateAutomaticRegistrationRequest(
+				await buildRequestObject(fx.rpKey, {
+					extraHeaders: {
+						trust_chain: [fx.rpEc, fx.taEc],
+						peer_trust_chain: [fx.opEc, otherTaEc],
+					},
+				}),
+				ctx,
+			);
+			t.false(result.ok);
+			if (result.ok) return;
+			t.ok(result.error.description.includes("Trust Anchor"));
 		});
 	});
 };

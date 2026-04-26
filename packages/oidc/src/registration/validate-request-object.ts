@@ -163,6 +163,58 @@ export function validateAutomaticRegistrationRequest(
 		}
 	}
 
+	const peerTrustChainHeader = header.peer_trust_chain as string[] | undefined;
+	if (peerTrustChainHeader && peerTrustChainHeader.length > 0) {
+		const peerFirstEntry = peerTrustChainHeader[0] as string;
+		const peerFirstDecoded = decodeEntityStatement(peerFirstEntry);
+		if (!peerFirstDecoded.ok) {
+			return err(
+				federationError(
+					FederationErrorCode.InvalidTrustChain,
+					"Failed to decode first entry of peer_trust_chain header",
+				),
+			);
+		}
+		const peerFirstPayload = peerFirstDecoded.value.payload as Record<string, unknown>;
+		if (
+			peerFirstPayload.iss !== context.opEntityId ||
+			peerFirstPayload.sub !== context.opEntityId
+		) {
+			return err(
+				federationError(
+					FederationErrorCode.InvalidTrustChain,
+					"First entry of peer_trust_chain header MUST be the OP's Entity Configuration",
+				),
+			);
+		}
+
+		// Same-Trust-Anchor invariant when both chains are present.
+		if (trustChainHeader && trustChainHeader.length > 0) {
+			const rpLastEntry = trustChainHeader[trustChainHeader.length - 1] as string;
+			const peerLastEntry = peerTrustChainHeader[peerTrustChainHeader.length - 1] as string;
+			const rpLastDecoded = decodeEntityStatement(rpLastEntry);
+			const peerLastDecoded = decodeEntityStatement(peerLastEntry);
+			if (!rpLastDecoded.ok || !peerLastDecoded.ok) {
+				return err(
+					federationError(
+						FederationErrorCode.InvalidTrustChain,
+						"Failed to decode last entry of trust_chain or peer_trust_chain header",
+					),
+				);
+			}
+			const rpTaId = trustChainTrailingAnchorId(rpLastDecoded.value.payload);
+			const peerTaId = trustChainTrailingAnchorId(peerLastDecoded.value.payload);
+			if (rpTaId !== peerTaId) {
+				return err(
+					federationError(
+						FederationErrorCode.InvalidTrustChain,
+						`peer_trust_chain Trust Anchor ('${peerTaId}') does not match trust_chain Trust Anchor ('${rpTaId}')`,
+					),
+				);
+			}
+		}
+	}
+
 	const validated: ValidatedRequestObject = {
 		rpEntityId: clientId as EntityId,
 		opEntityId: context.opEntityId as string,
@@ -171,7 +223,16 @@ export function validateAutomaticRegistrationRequest(
 		...(claims.iat !== undefined ? { iat: claims.iat as number } : {}),
 		claims,
 		...(trustChainHeader ? { trustChainHeader } : {}),
+		...(peerTrustChainHeader ? { peerTrustChainHeader } : {}),
 	};
 
 	return ok(validated);
+}
+
+/** Returns the Trust Anchor Entity Identifier from the trailing element of a Trust Chain. */
+function trustChainTrailingAnchorId(payload: Record<string, unknown>): string | undefined {
+	// Final element MAY be the TA's own EC (iss === sub) or a TA-signed Subordinate Statement
+	// (iss is the TA, sub is the immediate subordinate).
+	const iss = payload.iss as string | undefined;
+	return iss;
 }
