@@ -9,3 +9,4 @@ build/
 tests/tap/.build/
 test-results/
 .nyc_output/
+tests/tap/.workerd.capnp
