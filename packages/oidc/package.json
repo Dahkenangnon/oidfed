@@ -1,8 +1,8 @@
 {
 	"name": "@oidfed/oidc",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"description": "OpenID Connect and OAuth 2.0 federation flows — automatic and explicit client registration, Request Object validation, and RP/OP metadata processing as defined in OpenID Federation 1.0.",
-	"license": "MIT",
+	"license": "Apache-2.0",
 	"author": "Justin Dah-kenangnon <dah.kenangnon@gmail.com>",
 	"repository": {
 		"type": "git",
@@ -33,7 +33,7 @@
 			"require": "./dist/index.cjs"
 		}
 	},
-	"files": ["dist"],
+	"files": ["dist", "LICENSE", "NOTICE"],
 	"sideEffects": false,
 	"publishConfig": {
 		"access": "public"

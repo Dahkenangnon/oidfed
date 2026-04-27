@@ -1,8 +1,8 @@
 {
 	"name": "@oidfed/authority",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"description": "Trust Anchor and Intermediate Authority operations — subordinate management, statement issuance, federation endpoint serving, and policy enforcement for the complete OpenID Federation 1.0 implementation.",
-	"license": "MIT",
+	"license": "Apache-2.0",
 	"author": "Justin Dah-kenangnon <dah.kenangnon@gmail.com>",
 	"repository": {
 		"type": "git",
@@ -32,7 +32,7 @@
 			"require": "./dist/index.cjs"
 		}
 	},
-	"files": ["dist"],
+	"files": ["dist", "LICENSE", "NOTICE"],
 	"sideEffects": false,
 	"publishConfig": {
 		"access": "public"

@@ -21,7 +21,7 @@ import {
 } from "../components/section-ui";
 import { buildMeta, DOMAIN } from "../lib/seo";
 
-export const handle = { lastUpdated: "2026-04-25" };
+export const handle = { lastUpdated: "2026-04-28" };
 
 export function meta() {
 	return buildMeta({
@@ -671,8 +671,8 @@ function OurImplementation() {
 					<SectionTitle>A spec-complete JavaScript implementation.</SectionTitle>
 					<SectionIntro>
 						@oidfed is a spec-complete JavaScript implementation of OpenID Federation 1.0.
-						Runtime-agnostic, spec-compliant, built on Web API standards. MIT-licensed and free
-						to use.
+						Runtime-agnostic, spec-compliant, built on Web API standards. Apache 2.0 licensed
+						(with MIT-licensed apps) and free to use.
 					</SectionIntro>
 				</div>
 
@@ -690,7 +690,7 @@ function OurImplementation() {
 									Runtime-agnostic
 								</Badge>
 								<Badge variant="outline" className="font-mono text-[10px]">
-									MIT
+									Apache 2.0
 								</Badge>
 							</div>
 							<p className="text-[14px] leading-relaxed text-muted-foreground">

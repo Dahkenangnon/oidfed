@@ -17,7 +17,7 @@ The complete [OpenID Federation 1.0](https://openid.net/specs/openid-federation-
 > 
 > **Crypto:** All JOSE operations delegated to [`jose`](https://github.com/panva/jose) · 
 > 
-> **Status:** `v0.1.0` pre-release — API may change before the first stable `1.0` release.
+> **Status:** `v0.2.0` pre-release — API may change before the first stable `1.0` release.
 
 ---
 
@@ -81,4 +81,11 @@ To report a vulnerability, email **dah.kenangnon@gmail.com** — see [SECURITY.m
 
 ## License
 
-Provided freely by [Justin Dah-kenangnon](https://github.com/Dahkenangnon) under the [MIT](LICENSE) license.
+@oidfed is dual-licensed by component:
+
+- **Libraries** — `@oidfed/core`, `@oidfed/authority`, `@oidfed/leaf`, `@oidfed/oidc`, `@oidfed/cli` — released under [Apache License 2.0](LICENSE).
+- **Apps & internal UI** — `@oidfed/explorer`, `@oidfed/home`, `@oidfed/learn`, `@oidfed/ui` — released under MIT. See each component's own `LICENSE` (e.g. `apps/home/LICENSE`).
+
+The repository root is governed by the Apache 2.0 `LICENSE` file. Apps and internal packages override this with their own MIT `LICENSE` file. Refer to the `LICENSE` in the nearest parent directory of any file to determine its license.
+
+Copyright © 2026-Present [Justin Dah-kenangnon](https://github.com/Dahkenangnon).

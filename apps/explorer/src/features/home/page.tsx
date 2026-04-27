@@ -38,7 +38,7 @@ export function HomePage() {
 						</span>
 						<span className="tabular-nums">§00</span>
 						<span className="h-3 w-px bg-primary-foreground/40" aria-hidden />
-						<span>Explorer · v0.1.0 pre-release</span>
+						<span>Explorer · v0.2.0 pre-release</span>
 					</div>
 
 					{/* Headline */}

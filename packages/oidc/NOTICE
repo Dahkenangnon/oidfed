@@ -1,0 +1,10 @@
+@oidfed/oidc — OpenID Connect and OAuth 2.0 federation flows
+
+Copyright 2026-Present Justin Dah-kenangnon
+
+Licensed under the Apache License, Version 2.0.
+http://www.apache.org/licenses/LICENSE-2.0
+
+Third-party runtime dependencies (see package.json):
+- jose (MIT) — https://github.com/panva/jose
+- zod  (MIT) — https://github.com/colinhacks/zod

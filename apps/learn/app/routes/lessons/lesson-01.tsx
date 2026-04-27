@@ -7,7 +7,7 @@ import { ToggleView } from "~/components/toggle-view";
 import { getLesson } from "~/data/lessons";
 
 import { lessonMetaForSlug } from "~/lib/seo";
-export const handle = { lastUpdated: "2026-04-25" };
+export const handle = { lastUpdated: "2026-04-28" };
 
 export function meta() {
 	return lessonMetaForSlug("what-is-federation");

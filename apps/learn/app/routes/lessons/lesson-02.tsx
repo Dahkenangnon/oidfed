@@ -7,7 +7,7 @@ import { SpecRef } from "~/components/spec-ref";
 import { getLesson } from "~/data/lessons";
 
 import { lessonMetaForSlug } from "~/lib/seo";
-export const handle = { lastUpdated: "2026-04-25" };
+export const handle = { lastUpdated: "2026-04-28" };
 
 export function meta() {
 	return lessonMetaForSlug("entities-and-roles");

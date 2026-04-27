@@ -1,7 +1,7 @@
 {
 	"name": "@oidfed/learn",
 	"description": "An interactive course on OpenID Federation 1.0 — 15 lessons from first principles to federation topology design, with hands-on exercises and spec-accurate references.",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"private": true,
 	"license": "MIT",
 	"author": "Justin Dah-kenangnon <dah.kenangnon@gmail.com>",

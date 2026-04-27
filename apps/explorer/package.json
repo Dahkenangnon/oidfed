@@ -1,7 +1,7 @@
 {
 	"name": "@oidfed/explorer",
 	"description": "A visual tool for exploring live OpenID Federation deployments — inspect entity configurations, trace trust chains, browse metadata, and validate federation topology in real time.",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"private": true,
 	"license": "MIT",
 	"author": "Justin Dah-kenangnon <dah.kenangnon@gmail.com>",

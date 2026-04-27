@@ -2,7 +2,7 @@
 
 Trust Anchor and Intermediate Authority operations — subordinate management, statement issuance, federation endpoint serving, and policy enforcement for the complete [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) implementation.
 
-> **Status:** `v0.1.0` pre-release — API may change before the first stable `1.0` release.
+> **Status:** `v0.2.0` pre-release — API may change before the first stable `1.0` release.
 
 ## Install
 
@@ -63,4 +63,4 @@ Full API reference: [docs/packages/authority.md](https://github.com/Dahkenangnon
 
 ## License
 
-[MIT](./LICENSE)
+[Apache-2.0](./LICENSE) — see [`NOTICE`](./NOTICE) for attribution.

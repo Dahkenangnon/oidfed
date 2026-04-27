@@ -45,7 +45,7 @@ function SiteHeader() {
 						aria-hidden
 						className="ml-1 hidden font-mono text-[9.5px] font-semibold uppercase tracking-[0.22em] text-muted-foreground sm:inline"
 					>
-						v0.1.0
+						v0.2.0
 					</span>
 				</Link>
 

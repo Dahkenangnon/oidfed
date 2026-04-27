@@ -53,6 +53,6 @@ Report vulnerabilities to <dah.kenangnon@gmail.com> — see [SECURITY.md](https:
 - **Repository:** <https://github.com/Dahkenangnon/oidfed>
 - **npm organization:** <https://www.npmjs.com/org/oidfed>
 - **Author:** Justin Dah-kenangnon (<https://github.com/Dahkenangnon>)
-- **License:** MIT
-- **Status:** `v0.1.0` pre-release — API may change before the first stable `1.0` release.
+- **License:** Apache-2.0 (libraries · @oidfed/core·authority·leaf·oidc·cli) · MIT (apps · home·explorer·learn)
+- **Status:** `v0.2.0` pre-release — API may change before the first stable `1.0` release.
 - **Runtime dependencies:** [`jose`](https://github.com/panva/jose), [`zod`](https://github.com/colinhacks/zod).

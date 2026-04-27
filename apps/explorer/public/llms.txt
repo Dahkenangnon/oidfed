@@ -27,11 +27,11 @@ Preferences persist in `localStorage` under `oidfed_settings` — configurable t
 
 - [@oidfed project home](https://oidfed.com) — the authoritative @oidfed site and machine-readable project overview at <https://oidfed.com/llms.txt>.
 - [Learn OpenID Federation](https://learn.oidfed.com) — 15-lesson interactive course.
-- [Source code](https://github.com/Dahkenangnon/oidfed) — monorepo (MIT).
+- [Source code](https://github.com/Dahkenangnon/oidfed) — monorepo (Apache-2.0 libraries · MIT apps).
 - [OpenID Federation 1.0 specification](https://openid.net/specs/openid-federation-1_0.html) — authoritative protocol definition.
 
 ## Technical notes
 
 - Runtime dependency: `@oidfed/core` only.
 - Router: hash-based (`#/entity`, `#/chain`, etc.) for zero-config static deployment.
-- License: MIT.
+- License: MIT (this app). Library dependency: @oidfed/core (Apache-2.0).

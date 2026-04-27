@@ -2,7 +2,7 @@
 
 Command-line interface for inspecting, validating, and debugging [OpenID Federation](https://openid.net/specs/openid-federation-1_0.html) deployments — resolve trust chains, decode entity statements, verify signatures, and more.
 
-> **Status:** `v0.1.0` pre-release — API may change before the first stable `1.0` release.
+> **Status:** `v0.2.0` pre-release — API may change before the first stable `1.0` release.
 
 ## Install
 
@@ -88,4 +88,4 @@ Full reference: [docs/tools/cli.md](https://github.com/Dahkenangnon/oidfed/blob/
 
 ## License
 
-[MIT](./LICENSE)
+[Apache-2.0](./LICENSE) — see [`NOTICE`](./NOTICE) for attribution.

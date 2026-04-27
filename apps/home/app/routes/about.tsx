@@ -10,13 +10,13 @@ import {
 } from "../components/section-ui";
 import { buildMeta, DOMAIN } from "../lib/seo";
 
-export const handle = { lastUpdated: "2026-04-25" };
+export const handle = { lastUpdated: "2026-04-28" };
 
 export function meta() {
 	return buildMeta({
 		title: "About — @oidfed",
 		description:
-			"About the @oidfed project — 4 spec packages, 3 apps, 14 CLI commands, MIT licensed. The complete OpenID Federation 1.0 implementation for JavaScript.",
+			"About the @oidfed project — 4 spec packages, 3 apps, 14 CLI commands. Apache 2.0 (libraries) · MIT (apps). The complete OpenID Federation 1.0 implementation for JavaScript.",
 		path: "/about",
 		jsonLd: {
 			"@context": "https://schema.org",
@@ -38,7 +38,7 @@ const highlights = [
 	{ value: "04", label: "Spec packages", sub: "core · authority · leaf · oidc" },
 	{ value: "03", label: "Apps", sub: "home · explorer · learn" },
 	{ value: "14", label: "CLI commands", sub: "resolve · chain · verify · …" },
-	{ value: "MIT", label: "License", sub: "Commercial-friendly" },
+	{ value: "Apache 2.0 / MIT", label: "License", sub: "Libraries · Apps" },
 ];
 
 const architecture = [
@@ -122,8 +122,8 @@ function Hero() {
 				</p>
 
 				<div className="mt-8 flex flex-wrap gap-x-6 gap-y-2">
-					<StatusDot tone="success">MIT licensed</StatusDot>
-					<StatusDot tone="brand">v0.1.0 pre-release</StatusDot>
+					<StatusDot tone="success">Apache 2.0 · MIT</StatusDot>
+					<StatusDot tone="brand">v0.2.0 pre-release</StatusDot>
 				</div>
 			</div>
 		</section>

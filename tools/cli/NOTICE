@@ -1,0 +1,14 @@
+@oidfed/cli — Command-line interface for OpenID Federation
+
+Copyright 2026-Present Justin Dah-kenangnon
+
+Licensed under the Apache License, Version 2.0.
+http://www.apache.org/licenses/LICENSE-2.0
+
+Third-party runtime dependencies (see package.json):
+- @oidfed/core (Apache-2.0) — https://github.com/Dahkenangnon/oidfed
+- jose      (MIT) — https://github.com/panva/jose
+- zod       (MIT) — https://github.com/colinhacks/zod
+- commander (MIT) — https://github.com/tj/commander.js
+- yaml      (MIT) — https://github.com/eemeli/yaml
+- chalk     (MIT) — https://github.com/chalk/chalk

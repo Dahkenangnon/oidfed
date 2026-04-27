@@ -14,7 +14,7 @@ import { Link } from "react-router";
 import { buildMeta, organizationJsonLd, softwareSourceCodeJsonLd, websiteJsonLd } from "../lib/seo";
 import type { Route } from "./+types/home";
 
-export const handle = { lastUpdated: "2026-04-25" };
+export const handle = { lastUpdated: "2026-04-28" };
 
 export function meta(_args: Route.MetaArgs) {
 	return buildMeta({
@@ -532,7 +532,7 @@ function Hero() {
 						</span>
 						<span className="tabular-nums">§01</span>
 						<span className="h-3 w-px bg-primary-foreground/40" aria-hidden />
-						<span>Federation · v0.1.0 pre-release</span>
+						<span>Federation · v0.2.0 pre-release</span>
 					</div>
 
 					<h1 className="mt-6 font-heading text-[40px] font-bold leading-[1.02] tracking-[-0.03em] text-balance sm:text-[56px] lg:text-[68px] xl:text-[76px]">
@@ -602,7 +602,7 @@ function Hero() {
 					<div className="mt-10 flex flex-wrap items-center gap-x-6 gap-y-2 font-mono text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
 						<span className="flex items-center gap-1.5">
 							<span className="inline-block size-1.5 rounded-full bg-emerald-500" />
-							MIT licensed
+							Apache 2.0 · MIT
 						</span>
 						<span className="flex items-center gap-1.5">
 							<span className="inline-block size-1.5 rounded-full bg-brand-500" />6 runtimes

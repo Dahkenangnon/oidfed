@@ -2,7 +2,7 @@
 
 Federation primitives for JavaScript — entity statements, trust chain resolution, metadata policy, and cryptographic verification. The foundational layer of the complete [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) implementation.
 
-> **Status:** `v0.1.0` pre-release — API may change before the first stable `1.0` release.
+> **Status:** `v0.2.0` pre-release — API may change before the first stable `1.0` release.
 
 ## Install
 
@@ -65,4 +65,4 @@ Full API reference: [docs/packages/core.md](https://github.com/Dahkenangnon/oidf
 
 ## License
 
-[MIT](./LICENSE)
+[Apache-2.0](./LICENSE) — see [`NOTICE`](./NOTICE) for attribution.

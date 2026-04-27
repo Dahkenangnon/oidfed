@@ -77,7 +77,7 @@ export function AppSidebar() {
 								</div>
 								<div className="flex flex-col gap-0.5 leading-none">
 									<span className="font-semibold">OidFed Explorer</span>
-									<span className="text-xs text-muted-foreground">v0.1.0</span>
+									<span className="text-xs text-muted-foreground">v0.2.0</span>
 								</div>
 							</SidebarMenuButton>
 							{!isCollapsed && (

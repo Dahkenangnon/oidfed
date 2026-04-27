@@ -1,8 +1,8 @@
 {
 	"name": "@oidfed/core",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"description": "Federation primitives for JavaScript — entity statements, trust chain resolution, metadata policy, and cryptographic verification. The foundational layer of the complete OpenID Federation 1.0 implementation.",
-	"license": "MIT",
+	"license": "Apache-2.0",
 	"author": "Justin Dah-kenangnon <dah.kenangnon@gmail.com>",
 	"repository": {
 		"type": "git",
@@ -35,7 +35,7 @@
 			"require": "./dist/index.cjs"
 		}
 	},
-	"files": ["dist"],
+	"files": ["dist", "LICENSE", "NOTICE"],
 	"sideEffects": false,
 	"publishConfig": {
 		"access": "public"

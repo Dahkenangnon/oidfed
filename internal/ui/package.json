@@ -1,7 +1,7 @@
 {
 	"name": "@oidfed/ui",
 	"description": "Private shared UI component library built on Coss UI, Base UI, and Tailwind CSS v4.",
-	"version": "0.0.0",
+	"version": "0.2.0",
 	"private": true,
 	"license": "MIT",
 	"author": "Justin Dah-kenangnon <dah.kenangnon@gmail.com>",

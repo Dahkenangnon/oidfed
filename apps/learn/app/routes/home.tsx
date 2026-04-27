@@ -13,7 +13,7 @@ import { getLessonsByPhase, lessons, phaseOrder, phases } from "~/data/lessons";
 import { buildMeta, courseJsonLd, organizationJsonLd } from "~/lib/seo";
 import type { Route } from "./+types/home";
 
-export const handle = { lastUpdated: "2026-04-25" };
+export const handle = { lastUpdated: "2026-04-28" };
 
 export function meta(_args: Route.MetaArgs) {
 	return buildMeta({
@@ -197,7 +197,7 @@ function Hero() {
 						</span>
 						<span className="flex items-center gap-1.5">
 							<span className="inline-block size-1.5 rounded-full bg-emerald-500" />
-							Free · MIT licensed
+							Free · Apache 2.0 · MIT
 						</span>
 					</div>
 				</div>

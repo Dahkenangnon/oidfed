@@ -2,7 +2,7 @@
 
 Leaf Entity toolkit — Entity Configuration serving, authority discovery, and trust chain participation for any entity at the edge of an [OpenID Federation](https://openid.net/specs/openid-federation-1_0.html).
 
-> **Status:** `v0.1.0` pre-release — API may change before the first stable `1.0` release.
+> **Status:** `v0.2.0` pre-release — API may change before the first stable `1.0` release.
 
 ## Install
 
@@ -55,4 +55,4 @@ Full API reference: [docs/packages/leaf.md](https://github.com/Dahkenangnon/oidf
 
 ## License
 
-[MIT](./LICENSE)
+[Apache-2.0](./LICENSE) — see [`NOTICE`](./NOTICE) for attribution.

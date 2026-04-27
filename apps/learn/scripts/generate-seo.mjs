@@ -93,7 +93,7 @@ const llmsLines = [
 	`## Project Metadata`,
 	``,
 	`- Author: Justin Dah-kenangnon (https://github.com/Dahkenangnon)`,
-	`- License: MIT`,
+	`- License: MIT (this app). Libraries: @oidfed/* (Apache-2.0).`,
 	`- Machine-readable project overview: https://oidfed.com/llms.txt`,
 	``,
 ];

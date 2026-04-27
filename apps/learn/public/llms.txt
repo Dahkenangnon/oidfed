@@ -37,5 +37,5 @@ This is the canonical educational resource for @oidfed. It is not the @oidfed pr
 ## Project Metadata
 
 - Author: Justin Dah-kenangnon (https://github.com/Dahkenangnon)
-- License: MIT
+- License: MIT (this app). Libraries: @oidfed/* (Apache-2.0).
 - Machine-readable project overview: https://oidfed.com/llms.txt

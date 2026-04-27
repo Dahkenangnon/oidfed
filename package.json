@@ -1,5 +1,6 @@
 {
 	"name": "@oidfed/monorepo",
+	"version": "0.2.0",
 	"description": "The complete OpenID Federation 1.0 implementation for JavaScript — runtime-agnostic, spec-compliant, built on Web API standards.",
 	"private": true,
 	"type": "module",
@@ -31,7 +32,7 @@
 		"publish:npm:latest": "pnpm prepublish:check && pnpm -r --filter '@oidfed/core' --filter '@oidfed/authority' --filter '@oidfed/leaf' --filter '@oidfed/oidc' --filter '@oidfed/cli' publish --no-git-checks",
 	    "release:github": "pnpm prepublish:check && pnpm build:publish && gh release create $(node -p \"require('./packages/core/package.json').version\") --repo Dahkenangnon/oidfed --title \"Release v$(node -p \"require('./packages/core/package.json').version\")\" --notes \"Release v$(node -p \"require('./packages/core/package.json').version\")\" --target main --generate-notes"
 },
-	"license": "MIT",
+	"license": "Apache-2.0",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/Dahkenangnon/oidfed.git"

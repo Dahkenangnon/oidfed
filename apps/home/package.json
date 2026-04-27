@@ -1,7 +1,7 @@
 {
 	"name": "@oidfed/home",
 	"description": "The official home of @oidfed — the complete OpenID Federation 1.0 implementation for JavaScript, runtime-agnostic, spec-compliant, built on Web API standards.",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"private": true,
 	"license": "MIT",
 	"author": "Justin Dah-kenangnon <dah.kenangnon@gmail.com>",
