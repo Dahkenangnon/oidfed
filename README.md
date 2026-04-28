@@ -1,7 +1,7 @@
 <div align="center">
 
 <a href="https://oidfed.com">
-	<img src="internal/assets/banner.png" alt="@oidfed — OpenID Federation 1.0 for JavaScript · runtime-agnostic · spec-compliant · built on Web APIs" width="100%" />
+	<img src="internal/assets/banner2.png" alt="@oidfed — OpenID Federation 1.0 for JavaScript · runtime-agnostic · spec-compliant · built on Web APIs" width="100%" height="70%" />
 </a>
 
 # @oidfed/* — OpenID Federation 1.0
