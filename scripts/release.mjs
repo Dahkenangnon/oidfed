@@ -83,7 +83,7 @@ if (pkg === "all") {
 	].join(" ");
 
 	run(`git add ${files}`);
-	run(`git commit -m "chore: release all v${v}"`);
+	run(`git commit -m "chore: release all v${v} [skip ci]"`);
 	run(`git tag all/v${v}`);
 	run("git push");
 	run(`git push origin all/v${v}`);
@@ -96,7 +96,7 @@ if (pkg === "all") {
 	const changelogPath = `${dir}/CHANGELOG.md`;
 	stampChangelog(changelogPath, v);
 	run(`git add ${dir}/package.json ${changelogPath}`);
-	run(`git commit -m "chore(${scope}): release v${v}"`);
+	run(`git commit -m "chore(${scope}): release v${v} [skip ci]"`);
 	run(`git tag ${scope}/v${v}`);
 	run("git push");
 	run(`git push origin ${scope}/v${v}`);
