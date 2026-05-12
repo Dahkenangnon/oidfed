@@ -1,6 +1,6 @@
 {
 	"name": "@oidfed/cli",
-	"version": "0.2.0",
+	"version": "0.3.0",
 	"description": "Command-line interface for inspecting, validating, and debugging OpenID Federation deployments — resolve trust chains, decode entity statements, verify signatures, and more.",
 	"license": "Apache-2.0",
 	"author": "Justin Dah-kenangnon <dah.kenangnon@gmail.com>",
@@ -36,7 +36,11 @@
 			"require": "./dist/index.cjs"
 		}
 	},
-	"files": ["dist", "LICENSE", "NOTICE"],
+	"files": [
+		"dist",
+		"LICENSE",
+		"NOTICE"
+	],
 	"sideEffects": false,
 	"engines": {
 		"node": ">=22"

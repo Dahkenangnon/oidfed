@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-12
+
 ### Changed
 
 - **Spec status:** OpenID Federation 1.1 and OpenID Connect for OpenID Federation 1.1 are now **Final** (published 2026-05-11). The ecosystem page, `llms.txt` files, and learn content have been updated accordingly.
