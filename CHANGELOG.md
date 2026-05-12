@@ -1,8 +1,15 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+Repository-wide changes (tooling, licensing, docs, release automation, cross-cutting spec updates) are tracked here. Per-package changes are tracked in each package's own `CHANGELOG.md`.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Changed
+
+- **Spec status:** OpenID Federation 1.1 and OpenID Connect for OpenID Federation 1.1 are now **Final** (published 2026-05-11). The ecosystem page, `llms.txt` files, and learn content have been updated accordingly.
+- **Release automation:** replaced 18 manual `release:*:*` npm scripts with a single `pnpm release <package> <bump>` command backed by `scripts/release.mjs` and `.github/workflows/release.yml`. Tags follow the pattern `<scope>/v<X.Y.Z>` (e.g. `core/v0.2.1`, `all/v0.3.0`).
 
 ## [0.2.0] - 2026-04-28
 

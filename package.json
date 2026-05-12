@@ -27,11 +27,8 @@
 		"cli": "NODE_TLS_REJECT_UNAUTHORIZED=0 node --no-warnings tools/cli/dist/bin.js",
 		"oidfed": "pnpm -s cli",
 		"build:publish": "turbo run build --filter='@oidfed/core' --filter='@oidfed/authority' --filter='@oidfed/leaf' --filter='@oidfed/oidc' --filter='@oidfed/cli'",
-		"prepublish:check": "pnpm typecheck && pnpm test && pnpm lint && pnpm build:publish",
-		"publish:npm": "pnpm prepublish:check && pnpm -r --filter '@oidfed/core' --filter '@oidfed/authority' --filter '@oidfed/leaf' --filter '@oidfed/oidc' --filter '@oidfed/cli' publish --tag next --no-git-checks",
-		"publish:npm:latest": "pnpm prepublish:check && pnpm -r --filter '@oidfed/core' --filter '@oidfed/authority' --filter '@oidfed/leaf' --filter '@oidfed/oidc' --filter '@oidfed/cli' publish --no-git-checks",
-	    "release:github": "pnpm prepublish:check && pnpm build:publish && gh release create $(node -p \"require('./packages/core/package.json').version\") --repo Dahkenangnon/oidfed --title \"Release v$(node -p \"require('./packages/core/package.json').version\")\" --notes \"Release v$(node -p \"require('./packages/core/package.json').version\")\" --target main --generate-notes"
-},
+		"release": "node scripts/release.mjs"
+	},
 	"license": "Apache-2.0",
 	"repository": {
 		"type": "git",

@@ -213,11 +213,11 @@ export default function Lesson14() {
 						.
 					</p>
 					<p className="text-sm text-muted-foreground">
-						This insight motivates the planned 1.1 split into two drafts:{" "}
+						This insight led to the 1.1 split into two final specifications:{" "}
 						<strong>OpenID Federation 1.1</strong> (the protocol-independent trust layer) and{" "}
 						<strong>OpenID Federation for OpenID Connect 1.1</strong> (OIDC/OAuth-specific
-						bindings). Federation can be applied anywhere trust establishment via hierarchy is
-						needed on the internet.
+						bindings) — both published as final in May 2026. Federation can be applied anywhere
+						trust establishment via hierarchy is needed on the internet.
 					</p>
 				</CardPanel>
 			</Card>

@@ -50,18 +50,18 @@ The repository also ships a CLI ([`@oidfed/cli`](docs/tools/cli.md)), a live fed
 
 ## Related Specifications
 
-[OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) is protocol-agnostic by design, though it includes OAuth 2.0 and OpenID Connect entity types and registration flows. The specification authors are refactoring it into two successor draft documents (referenced in [§17.6](https://openid.net/specs/openid-federation-1_0.html#section-17.6)):
+[OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) has been factored into two final successor specifications that together cover exactly the same functionality — a protocol-independent layer and a protocol-specific layer. Because `@oidfed` is a complete OpenID Federation 1.0 implementation, it is simultaneously a complete implementation of both 1.1 final specifications:
 
-| Specification | Scope |
-|--------------|-------|
-| [**OpenID Federation 1.1**](https://openid.net/specs/openid-federation-1_1.html) *(draft)* | Protocol-independent layer — Entity Statements, Trust Chains, Metadata, Policies, Trust Marks, Federation Endpoints |
-| [**OpenID Federation for OpenID Connect 1.1**](https://openid.net/specs/openid-federation-connect-1_1.html) *(draft)* | Protocol-specific layer — OAuth 2.0 / OpenID Connect entity types, client registration flows |
-| [**OpenID Federation Wallet Architectures 1.0**](https://openid.net/specs/openid-federation-wallet-1_0.html) *(draft)* | Trust establishment for Wallet ecosystems with OpenID Federation |
-| [**OpenID Federation Extended Listing 1.0**](https://openid.net/specs/openid-federation-extended-listing-1_0.html) *(draft)* | Subordinate Listings Specification for large-scale federations |
+| Specification | Status | Scope |
+|--------------|--------|-------|
+| [**OpenID Federation 1.1**](https://openid.net/specs/openid-federation-1_1.html) | **Final** ✓ | Protocol-independent layer — Entity Statements, Trust Chains, Metadata, Policies, Trust Marks, Federation Endpoints |
+| [**OpenID Federation for OpenID Connect 1.1**](https://openid.net/specs/openid-federation-connect-1_1.html) | **Final** ✓ | Protocol-specific layer — OAuth 2.0 / OpenID Connect entity types, client registration flows |
+| [**OpenID Federation Wallet Architectures 1.0**](https://openid.net/specs/openid-federation-wallet-1_0.html) | *Draft* | Trust establishment for Wallet ecosystems with OpenID Federation |
+| [**OpenID Federation Extended Listing 1.0**](https://openid.net/specs/openid-federation-extended-listing-1_0.html) | *Draft* | Subordinate Listings Specification for large-scale federations |
 
 
 > [!NOTE]
-The two 1.1 draft documents together are equivalent to OpenID Federation 1.0. The Wallet Architectures and Extended Listing specs are independent extensions. This library targets the OpenID Federation 1.0 final specification & may add support for any of the successor and profiles of the core spec including current successors and profiles such as the 1.1 drafts, the Wallet Architectures, and Extended Listing.
+> OpenID Federation 1.1 + OpenID Federation for OpenID Connect 1.1 are a clean split of OpenID Federation 1.0 — no functionality was added or removed, only factored apart. A complete 1.0 implementation is therefore a complete 1.1 implementation by definition. The Wallet Architectures and Extended Listing specs are independent extensions (still in draft) for which support may be added in future releases.
 
 For real-world integration examples see the [Wiring Guide](docs/guide/wiring-guide.md), the [dev federation server](docs/guide/dev.md), and the [E2E test infrastructure](docs/test/e2e.md).
 

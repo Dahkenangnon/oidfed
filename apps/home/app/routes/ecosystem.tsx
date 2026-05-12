@@ -21,7 +21,7 @@ import {
 } from "../components/section-ui";
 import { buildMeta, DOMAIN } from "../lib/seo";
 
-export const handle = { lastUpdated: "2026-04-28" };
+export const handle = { lastUpdated: "2026-05-12" };
 
 export function meta() {
 	return buildMeta({
@@ -331,14 +331,14 @@ const specDocs = [
 	},
 	{
 		label: "OpenID Federation 1.1",
-		status: "Draft",
-		tone: "warn" as const,
+		status: "Final",
+		tone: "success" as const,
 		href: "https://openid.net/specs/openid-federation-1_1.html",
 	},
 	{
 		label: "OpenID Federation for OpenID Connect 1.1",
-		status: "Draft",
-		tone: "warn" as const,
+		status: "Final",
+		tone: "success" as const,
 		href: "https://openid.net/specs/openid-federation-connect-1_1.html",
 	},
 	{

@@ -85,6 +85,35 @@ pnpm test:coverage           # c8 coverage with per-package thresholds
 pnpm test:e2e                # e2e suite (Node only)
 ```
 
+## Releasing
+
+Releases are fully automated via GitHub Actions. Maintainers only need to run one command from `main`:
+
+```bash
+# Single package (patch | minor | major)
+pnpm release core patch
+pnpm release authority minor
+pnpm release oidc major
+
+# All five packages at once (same version bump applied to all)
+pnpm release all patch
+```
+
+Before running the release command, add your changes to the `## [Unreleased]` section in the relevant changelog:
+
+- **Single package release** → edit `<package-dir>/CHANGELOG.md` (e.g. `packages/core/CHANGELOG.md`)
+- **All-packages release** → edit the root `CHANGELOG.md` (repo-wide changes only)
+
+The script handles the rest automatically.
+
+The script (`scripts/release.mjs`):
+1. Bumps the package version(s) in `package.json`
+2. Renames `## [Unreleased]` → `## [<X.Y.Z>] - <today>` in `CHANGELOG.md` and inserts a fresh empty `## [Unreleased]` above it
+3. Creates a conventional commit (`chore(<scope>): release v<X.Y.Z>`) that includes `CHANGELOG.md`
+4. Pushes a scoped tag (`core/v0.2.1`, `all/v0.3.0`, …)
+
+The tag push triggers `.github/workflows/release.yml`, which validates, builds, creates a GitHub Release with auto-generated notes, and publishes to npm.
+
 ## Questions?
 
 Open a [discussion](https://github.com/Dahkenangnon/oidfed/discussions) or file an issue.

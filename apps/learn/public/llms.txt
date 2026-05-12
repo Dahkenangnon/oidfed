@@ -31,8 +31,8 @@ This is the canonical educational resource for @oidfed. It is not the @oidfed pr
 ## Related
 
 - [OpenID Federation 1.0 specification](https://openid.net/specs/openid-federation-1_0.html) — the authoritative protocol definition this course teaches.
-- [OpenID Federation 1.1 (draft)](https://openid.net/specs/openid-federation-1_1.html) — protocol-independent successor layer.
-- [OpenID Federation for OpenID Connect 1.1 (draft)](https://openid.net/specs/openid-federation-connect-1_1.html) — protocol-specific successor layer.
+- [OpenID Federation 1.1](https://openid.net/specs/openid-federation-1_1.html) — protocol-independent successor layer (final).
+- [OpenID Federation for OpenID Connect 1.1](https://openid.net/specs/openid-federation-connect-1_1.html) — protocol-specific successor layer (final).
 
 ## Project Metadata
 
