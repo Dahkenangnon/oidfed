@@ -18,6 +18,7 @@ const httpsUrlNoFragment = z.url().refine(
 export const FederationEntityMetadataSchema = z.looseObject({
 	federation_fetch_endpoint: httpsUrlNoFragment.optional(),
 	federation_list_endpoint: httpsUrlNoFragment.optional(),
+	federation_extended_list_endpoint: httpsUrlNoFragment.optional(),
 	federation_resolve_endpoint: httpsUrlNoFragment.optional(),
 	federation_trust_mark_status_endpoint: httpsUrlNoFragment.optional(),
 	federation_trust_mark_list_endpoint: httpsUrlNoFragment.optional(),
@@ -25,6 +26,7 @@ export const FederationEntityMetadataSchema = z.looseObject({
 	federation_historical_keys_endpoint: httpsUrlNoFragment.optional(),
 	federation_fetch_endpoint_auth_methods: z.array(z.string()).optional(),
 	federation_list_endpoint_auth_methods: z.array(z.string()).optional(),
+	federation_extended_list_endpoint_auth_methods: z.array(z.string()).optional(),
 	federation_resolve_endpoint_auth_methods: z.array(z.string()).optional(),
 	federation_trust_mark_status_endpoint_auth_methods: z.array(z.string()).optional(),
 	federation_trust_mark_list_endpoint_auth_methods: z.array(z.string()).optional(),

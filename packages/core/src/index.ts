@@ -70,6 +70,7 @@ export {
 export {
 	type FetchHistoricalKeysOptions,
 	type FetchTrustMarkListParams,
+	fetchExtendedSubordinatesList,
 	fetchHistoricalKeys,
 	fetchListSubordinates,
 	fetchResolveResponse,

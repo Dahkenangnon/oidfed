@@ -4,6 +4,7 @@ export const WELL_KNOWN_OPENID_FEDERATION = "/.well-known/openid-federation";
 export const FederationEndpoint = {
 	Fetch: "/federation_fetch",
 	List: "/federation_list",
+	ExtendedList: "/federation_extended_list",
 	Resolve: "/federation_resolve",
 	Registration: "/federation_registration",
 	TrustMarkStatus: "/federation_trust_mark_status",
@@ -79,6 +80,7 @@ export const FederationErrorCode = {
 	ServerError: "server_error",
 	TemporarilyUnavailable: "temporarily_unavailable",
 	UnsupportedParameter: "unsupported_parameter",
+	EntityIdNotFound: "entity_id_not_found",
 } as const;
 export type FederationErrorCode = (typeof FederationErrorCode)[keyof typeof FederationErrorCode];
 

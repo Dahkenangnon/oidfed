@@ -29,12 +29,22 @@ export {
 	TrustMarkStatusResponsePayloadSchema,
 } from "./entity-statement.js";
 export {
+	EXTENDED_LIST_SUPPORTED_CLAIMS,
+	ExtendedListClaim,
+	type ExtendedListEntity,
+	ExtendedListEntitySchema,
+	type ExtendedListQuery,
+	ExtendedListQuerySchema,
+	type ExtendedListRequestParams,
+	type ExtendedListResponse,
+	ExtendedListResponseSchema,
+} from "./extended-list.js";
+export {
 	type JWK,
 	JWKSchema,
 	type JWKSet,
 	JWKSetSchema,
 } from "./jwk.js";
-
 export {
 	type EntityTypeMetadataMap,
 	type FederationEntityMetadata,
