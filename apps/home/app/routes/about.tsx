@@ -123,7 +123,7 @@ function Hero() {
 
 				<div className="mt-8 flex flex-wrap gap-x-6 gap-y-2">
 					<StatusDot tone="success">Apache 2.0 · MIT</StatusDot>
-					<StatusDot tone="brand">v0.2.0 pre-release</StatusDot>
+					<StatusDot tone="brand">prerelease</StatusDot>
 				</div>
 			</div>
 		</section>

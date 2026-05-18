@@ -41,12 +41,6 @@ function SiteHeader() {
 						<span className="relative font-mono text-[13px] font-bold text-brand-500">@</span>
 					</span>
 					<span className="font-heading text-[15px] font-semibold tracking-tight">oidfed</span>
-					<span
-						aria-hidden
-						className="ml-1 hidden font-mono text-[9.5px] font-semibold uppercase tracking-[0.22em] text-muted-foreground sm:inline"
-					>
-						v0.2.0
-					</span>
 				</Link>
 
 				<span aria-hidden className="h-5 w-px bg-border/70" />

@@ -532,7 +532,7 @@ function Hero() {
 						</span>
 						<span className="tabular-nums">§01</span>
 						<span className="h-3 w-px bg-primary-foreground/40" aria-hidden />
-						<span>Federation · v0.2.0 pre-release</span>
+						<span>Federation · prerelease</span>
 					</div>
 
 					<h1 className="mt-6 font-heading text-[40px] font-bold leading-[1.02] tracking-[-0.03em] text-balance sm:text-[56px] lg:text-[68px] xl:text-[76px]">
