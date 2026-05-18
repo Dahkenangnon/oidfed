@@ -11,6 +11,7 @@ export const singleAnchorTopology: TopologyDefinition = {
 				federation_entity: {
 					federation_fetch_endpoint: "https://ta.ofed.test/federation_fetch",
 					federation_list_endpoint: "https://ta.ofed.test/federation_list",
+					federation_extended_list_endpoint: "https://ta.ofed.test/federation_extended_list",
 					federation_resolve_endpoint: "https://ta.ofed.test/federation_resolve",
 					federation_trust_mark_endpoint: "https://ta.ofed.test/federation_trust_mark",
 					federation_trust_mark_status_endpoint:

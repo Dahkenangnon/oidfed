@@ -2,6 +2,10 @@ import type QUnit from "qunit";
 import { createAuthenticatedHandler } from "../../../packages/authority/src/endpoints/client-auth.js";
 import type { HandlerContext } from "../../../packages/authority/src/endpoints/context.js";
 import { createEntityConfigurationHandler } from "../../../packages/authority/src/endpoints/entity-configuration.js";
+import {
+	createExtendedListHandler,
+	type ExtendedListingConfig,
+} from "../../../packages/authority/src/endpoints/extended-list.js";
 import { createFetchHandler } from "../../../packages/authority/src/endpoints/fetch.js";
 import {
 	errorResponse,
@@ -489,11 +493,12 @@ export default (QUnit: QUnit) => {
 			id: ReturnType<typeof entityId>,
 			overrides?: Partial<SubordinateRecord>,
 		): SubordinateRecord {
+			const now = Math.floor(Date.now() / 1000);
 			return {
 				entityId: id,
 				jwks: { keys: [{ kty: "EC", crv: "P-256", x: "abc", y: "def" }] },
-				createdAt: Date.now(),
-				updatedAt: Date.now(),
+				createdAt: now,
+				updatedAt: now,
 				...overrides,
 			};
 		}
@@ -529,40 +534,129 @@ export default (QUnit: QUnit) => {
 			});
 
 			module("list", () => {
-				test("returns all records with no filter", async (t) => {
+				test("returns ListPage with all records when no filter", async (t) => {
 					await store.add(makeSubRecord(SUB1));
 					await store.add(makeSubRecord(SUB2));
-					const results = await store.list();
-					t.equal(results.length, 2);
+					const page = await store.list();
+					t.equal(page.items.length, 2);
+					t.equal(page.nextCursor, undefined);
 				});
 
-				test("returns empty array for empty store", async (t) => {
-					const results = await store.list();
-					t.deepEqual(results, []);
+				test("returns empty ListPage for empty store", async (t) => {
+					const page = await store.list();
+					t.deepEqual(page.items, []);
+					t.equal(page.nextCursor, undefined);
 				});
 
 				test("filters by entityType", async (t) => {
 					await store.add(makeSubRecord(SUB1, { entityTypes: [EntityType.OpenIDProvider] }));
 					await store.add(makeSubRecord(SUB2, { entityTypes: [EntityType.OpenIDRelyingParty] }));
-					const results = await store.list({ entityTypes: [EntityType.OpenIDProvider] });
-					t.equal(results.length, 1);
-					t.equal(results[0]!.entityId, SUB1);
+					const page = await store.list({ entityTypes: [EntityType.OpenIDProvider] });
+					t.equal(page.items.length, 1);
+					t.equal(page.items[0]!.entityId, SUB1);
 				});
 
 				test("filters by intermediate", async (t) => {
 					await store.add(makeSubRecord(SUB1, { isIntermediate: true }));
 					await store.add(makeSubRecord(SUB2, { isIntermediate: false }));
 					await store.add(makeSubRecord(SUB3));
-					const results = await store.list({ intermediate: true });
-					t.equal(results.length, 1);
-					t.equal(results[0]!.entityId, SUB1);
+					const page = await store.list({ intermediate: true });
+					t.equal(page.items.length, 1);
+					t.equal(page.items[0]!.entityId, SUB1);
 				});
 
 				test("filters intermediate=false includes records without flag", async (t) => {
 					await store.add(makeSubRecord(SUB1, { isIntermediate: false }));
 					await store.add(makeSubRecord(SUB2));
-					const results = await store.list({ intermediate: false });
-					t.equal(results.length, 2);
+					const page = await store.list({ intermediate: false });
+					t.equal(page.items.length, 2);
+				});
+
+				test("orders results by entityId ascending (lex)", async (t) => {
+					await store.add(makeSubRecord(SUB3));
+					await store.add(makeSubRecord(SUB1));
+					await store.add(makeSubRecord(SUB2));
+					const page = await store.list();
+					const ids = page.items.map((r) => r.entityId);
+					const sorted = [...ids].sort();
+					t.deepEqual(ids, sorted);
+				});
+
+				test("pagination: limit slices the result set", async (t) => {
+					await store.add(makeSubRecord(SUB1));
+					await store.add(makeSubRecord(SUB2));
+					await store.add(makeSubRecord(SUB3));
+					const page = await store.list(undefined, { limit: 2 });
+					t.equal(page.items.length, 2);
+					t.ok(page.nextCursor, "nextCursor present when more records remain");
+				});
+
+				test("pagination: nextCursor is the next entityId past the page", async (t) => {
+					await store.add(makeSubRecord(SUB1));
+					await store.add(makeSubRecord(SUB2));
+					await store.add(makeSubRecord(SUB3));
+					const sorted = [SUB1, SUB2, SUB3].sort();
+					const page = await store.list(undefined, { limit: 2 });
+					t.equal(page.items[0]!.entityId, sorted[0]);
+					t.equal(page.items[1]!.entityId, sorted[1]);
+					t.equal(page.nextCursor, sorted[2]);
+				});
+
+				test("pagination: passing cursor resumes from that entityId (inclusive)", async (t) => {
+					await store.add(makeSubRecord(SUB1));
+					await store.add(makeSubRecord(SUB2));
+					await store.add(makeSubRecord(SUB3));
+					const sorted = [SUB1, SUB2, SUB3].sort();
+					const page = await store.list(undefined, { cursor: sorted[1], limit: 5 });
+					t.equal(page.items.length, 2);
+					t.equal(page.items[0]!.entityId, sorted[1]);
+					t.equal(page.items[1]!.entityId, sorted[2]);
+					t.equal(page.nextCursor, undefined);
+				});
+
+				test("pagination: nextCursor absent when results fit", async (t) => {
+					await store.add(makeSubRecord(SUB1));
+					const page = await store.list(undefined, { limit: 10 });
+					t.equal(page.items.length, 1);
+					t.equal(page.nextCursor, undefined);
+				});
+
+				test("updatedAfter filters out older records", async (t) => {
+					await store.add(makeSubRecord(SUB1, { updatedAt: 1_000 }));
+					await store.add(makeSubRecord(SUB2, { updatedAt: 2_000 }));
+					await store.add(makeSubRecord(SUB3, { updatedAt: 3_000 }));
+					const page = await store.list(undefined, { updatedAfter: 1_500 });
+					t.equal(page.items.length, 2);
+					t.true(page.items.every((r) => r.updatedAt >= 1_500));
+				});
+
+				test("updatedBefore filters out newer records", async (t) => {
+					await store.add(makeSubRecord(SUB1, { updatedAt: 1_000 }));
+					await store.add(makeSubRecord(SUB2, { updatedAt: 2_000 }));
+					await store.add(makeSubRecord(SUB3, { updatedAt: 3_000 }));
+					const page = await store.list(undefined, { updatedBefore: 2_500 });
+					t.equal(page.items.length, 2);
+					t.true(page.items.every((r) => r.updatedAt <= 2_500));
+				});
+
+				test("ordering is consistent across paginated calls (windowed concat)", async (t) => {
+					await store.add(makeSubRecord(SUB1));
+					await store.add(makeSubRecord(SUB2));
+					await store.add(makeSubRecord(SUB3));
+					const all = (await store.list()).items.map((r) => r.entityId);
+					const page1 = await store.list(undefined, { limit: 1 });
+					const page2 = await store.list(undefined, {
+						limit: 1,
+						cursor: page1.nextCursor,
+					});
+					const page3 = await store.list(undefined, {
+						limit: 1,
+						cursor: page2.nextCursor,
+					});
+					t.deepEqual(
+						[...page1.items, ...page2.items, ...page3.items].map((r) => r.entityId),
+						all,
+					);
 				});
 			});
 
@@ -582,9 +676,8 @@ export default (QUnit: QUnit) => {
 				});
 
 				test("updates updatedAt timestamp", async (t) => {
-					const original = makeSubRecord(SUB1);
+					const original = makeSubRecord(SUB1, { updatedAt: 1_000 });
 					await store.add(original);
-					await new Promise((r) => setTimeout(r, 5));
 					await store.update(SUB1, { isIntermediate: true });
 					const result = await store.get(SUB1);
 					t.true((result?.updatedAt ?? 0) > original.updatedAt);
@@ -614,6 +707,33 @@ export default (QUnit: QUnit) => {
 						t.ok(false, "should have thrown");
 					} catch (e) {
 						t.true((e as Error).message.includes("not found"));
+					}
+				});
+			});
+
+			module("update timestamps NumericDate", () => {
+				test("update() writes updatedAt as NumericDate (seconds) using injected clock", async (t) => {
+					const fixedClock = { now: () => 1_700_000_000 };
+					const store = new MemorySubordinateStore({ clock: fixedClock });
+					await store.add(makeSubRecord(SUB1));
+					await store.update(SUB1, { isIntermediate: true });
+					const updated = await store.get(SUB1);
+					t.equal(updated?.updatedAt, 1_700_000_000);
+				});
+
+				test("update() writes updatedAt within 1s of real now() (no clock injected)", async (t) => {
+					const store = new MemorySubordinateStore();
+					await store.add(makeSubRecord(SUB1));
+					const before = Math.floor(Date.now() / 1000);
+					await store.update(SUB1, { isIntermediate: true });
+					const after = Math.floor(Date.now() / 1000);
+					const updated = await store.get(SUB1);
+					t.ok(updated, "record present");
+					if (updated) {
+						t.ok(
+							updated.updatedAt >= before - 1 && updated.updatedAt <= after + 1,
+							`updatedAt=${updated.updatedAt} not in [${before - 1}, ${after + 1}]`,
+						);
 					}
 				});
 			});
@@ -1396,11 +1516,12 @@ export default (QUnit: QUnit) => {
 			id: ReturnType<typeof entityId>,
 			overrides?: Partial<SubordinateRecord>,
 		): SubordinateRecord {
+			const now = Math.floor(Date.now() / 1000);
 			return {
 				entityId: id,
 				jwks: { keys: [{ kty: "EC", crv: "P-256", x: "abc", y: "def" }] },
-				createdAt: Date.now(),
-				updatedAt: Date.now(),
+				createdAt: now,
+				updatedAt: now,
 				...overrides,
 			};
 		}
@@ -1601,6 +1722,971 @@ export default (QUnit: QUnit) => {
 					new Request("https://authority.example.com/federation_list", { method: "POST" }),
 				);
 				t.equal(res.status, 405);
+			});
+		});
+
+		// ── Extended Subordinate Listing handler ───────────────────────────
+		const XLIST_BASE_URL = "https://authority.example.com/federation_extended_list";
+		const XLIST_SUB_A = entityId("https://a.example.com");
+		const XLIST_SUB_B = entityId("https://b.example.com");
+		const XLIST_SUB_C = entityId("https://c.example.com");
+		const XLIST_SUB_D = entityId("https://d.example.com");
+		const XLIST_SUB_E = entityId("https://e.example.com");
+		const XLIST_SUB_F = entityId("https://f.example.com");
+
+		function makeXListRecord(
+			id: ReturnType<typeof entityId>,
+			overrides?: Partial<SubordinateRecord>,
+		): SubordinateRecord {
+			return {
+				entityId: id,
+				jwks: { keys: [{ kty: "EC", crv: "P-256", x: "abc", y: "def" }] },
+				createdAt: Math.floor(Date.now() / 1000),
+				updatedAt: Math.floor(Date.now() / 1000),
+				...overrides,
+			};
+		}
+
+		module("authority / createExtendedListHandler", () => {
+			test("returns 200 + application/json with immediate_subordinate_entities", async (t) => {
+				const { ctx, subordinateStore } = await createTestContext();
+				await subordinateStore.add(makeXListRecord(XLIST_SUB_A));
+				await subordinateStore.add(makeXListRecord(XLIST_SUB_B));
+				const handler = createExtendedListHandler(ctx);
+				const res = await handler(new Request(XLIST_BASE_URL));
+				t.equal(res.status, 200);
+				t.equal(res.headers.get("Content-Type"), "application/json");
+				const body = (await res.json()) as {
+					immediate_subordinate_entities: Array<{ id: string }>;
+				};
+				t.equal(body.immediate_subordinate_entities.length, 2);
+			});
+
+			test("bare request returns id-only entries when defaultClaims is explicitly empty", async (t) => {
+				const { ctx, subordinateStore } = await createTestContext();
+				await subordinateStore.add(makeXListRecord(XLIST_SUB_A));
+				const handler = createExtendedListHandler(ctx, { defaultClaims: [] });
+				const res = await handler(new Request(XLIST_BASE_URL));
+				const body = (await res.json()) as {
+					immediate_subordinate_entities: Array<Record<string, unknown>>;
+				};
+				const entry = body.immediate_subordinate_entities[0]!;
+				t.equal(entry.id, XLIST_SUB_A);
+				t.notOk(
+					"subordinate_statement" in entry,
+					"subordinate_statement absent when defaultClaims=[]",
+				);
+				t.notOk("registered" in entry, "registered absent when not requested");
+				t.notOk("updated" in entry, "updated absent when not requested");
+			});
+
+			test("bare request defaults to claims=[subordinate_statement] when defaultClaims unset", async (t) => {
+				const { ctx, subordinateStore, publicKey } = await createTestContext();
+				await subordinateStore.add(makeXListRecord(XLIST_SUB_A));
+				const handler = createExtendedListHandler(ctx);
+				const res = await handler(new Request(XLIST_BASE_URL));
+				const body = (await res.json()) as {
+					immediate_subordinate_entities: Array<{
+						id: string;
+						subordinate_statement?: string;
+					}>;
+				};
+				const entry = body.immediate_subordinate_entities[0]!;
+				t.ok(entry.subordinate_statement, "subordinate_statement included by default");
+				const verified = await verifyEntityStatement(
+					entry.subordinate_statement as string,
+					{ keys: [publicKey] },
+					{ expectedTyp: JwtTyp.EntityStatement },
+				);
+				t.true(isOk(verified));
+			});
+
+			test("present-but-empty claims= is treated as user-supplied (no default substitution)", async (t) => {
+				const { ctx, subordinateStore } = await createTestContext();
+				await subordinateStore.add(makeXListRecord(XLIST_SUB_A));
+				const handler = createExtendedListHandler(ctx);
+				const res = await handler(new Request(`${XLIST_BASE_URL}?claims=`));
+				const body = (await res.json()) as {
+					immediate_subordinate_entities: Array<Record<string, unknown>>;
+				};
+				const entry = body.immediate_subordinate_entities[0]!;
+				t.notOk(
+					"subordinate_statement" in entry,
+					"empty claims= prevents default substitution (MUST-NOT guard)",
+				);
+			});
+
+			test("custom defaultClaims is respected on bare requests", async (t) => {
+				const { ctx, subordinateStore } = await createTestContext();
+				await subordinateStore.add(
+					makeXListRecord(XLIST_SUB_A, {
+						metadata: { openid_relying_party: { client_id: "x" } },
+					}),
+				);
+				const handler = createExtendedListHandler(ctx, { defaultClaims: ["metadata"] });
+				const res = await handler(new Request(XLIST_BASE_URL));
+				const body = (await res.json()) as {
+					immediate_subordinate_entities: Array<{ id: string; metadata?: unknown }>;
+				};
+				const entry = body.immediate_subordinate_entities[0]!;
+				t.deepEqual(entry.metadata, { openid_relying_party: { client_id: "x" } });
+				t.notOk("subordinate_statement" in entry, "only configured defaultClaims are added");
+			});
+
+			test("includes signed subordinate_statement when claims=subordinate_statement", async (t) => {
+				const { ctx, subordinateStore, publicKey } = await createTestContext();
+				await subordinateStore.add(makeXListRecord(XLIST_SUB_A));
+				const handler = createExtendedListHandler(ctx);
+				const res = await handler(new Request(`${XLIST_BASE_URL}?claims=subordinate_statement`));
+				const body = (await res.json()) as {
+					immediate_subordinate_entities: Array<{ id: string; subordinate_statement?: string }>;
+				};
+				const entry = body.immediate_subordinate_entities[0]!;
+				t.ok(entry.subordinate_statement, "subordinate_statement present");
+				const verified = await verifyEntityStatement(
+					entry.subordinate_statement as string,
+					{ keys: [publicKey] },
+					{ expectedTyp: JwtTyp.EntityStatement },
+				);
+				t.true(isOk(verified), "subordinate_statement verifies against authority key");
+				if (isOk(verified)) {
+					t.equal(verified.value.payload.sub, XLIST_SUB_A);
+					t.equal(verified.value.payload.iss, ENTITY_ID);
+				}
+			});
+
+			test("MUST NOT include subordinate_statement when claims param omits it", async (t) => {
+				const { ctx, subordinateStore } = await createTestContext();
+				await subordinateStore.add(makeXListRecord(XLIST_SUB_A));
+				const handler = createExtendedListHandler(ctx);
+				const res = await handler(new Request(`${XLIST_BASE_URL}?claims=metadata`));
+				const body = (await res.json()) as {
+					immediate_subordinate_entities: Array<Record<string, unknown>>;
+				};
+				t.notOk("subordinate_statement" in body.immediate_subordinate_entities[0]!);
+			});
+
+			test("accepts comma-separated claims= as a single param", async (t) => {
+				const { ctx, subordinateStore, publicKey } = await createTestContext();
+				await subordinateStore.add(makeXListRecord(XLIST_SUB_A));
+				const handler = createExtendedListHandler(ctx);
+				const res = await handler(
+					new Request(`${XLIST_BASE_URL}?claims=subordinate_statement,metadata`),
+				);
+				t.equal(res.status, 200);
+				const body = (await res.json()) as {
+					immediate_subordinate_entities: Array<{
+						id: string;
+						subordinate_statement?: string;
+					}>;
+				};
+				const entry = body.immediate_subordinate_entities[0]!;
+				t.ok(entry.subordinate_statement, "subordinate_statement included via comma syntax");
+				const verified = await verifyEntityStatement(
+					entry.subordinate_statement as string,
+					{ keys: [publicKey] },
+					{ expectedTyp: JwtTyp.EntityStatement },
+				);
+				t.true(isOk(verified));
+			});
+
+			test("comma-separated and repeated claims= produce identical responses", async (t) => {
+				const { ctx, subordinateStore } = await createTestContext();
+				await subordinateStore.add(
+					makeXListRecord(XLIST_SUB_A, {
+						metadata: { openid_relying_party: { client_id: "x" } },
+					}),
+				);
+				const handler = createExtendedListHandler(ctx);
+
+				const commaRes = await handler(
+					new Request(`${XLIST_BASE_URL}?claims=metadata,constraints`),
+				);
+				const repeatedRes = await handler(
+					new Request(`${XLIST_BASE_URL}?claims=metadata&claims=constraints`),
+				);
+				const commaBody = (await commaRes.json()) as Record<string, unknown>;
+				const repeatedBody = (await repeatedRes.json()) as Record<string, unknown>;
+				t.deepEqual(commaBody, repeatedBody);
+			});
+
+			test("comma syntax tolerates empty tokens", async (t) => {
+				const { ctx, subordinateStore } = await createTestContext();
+				await subordinateStore.add(makeXListRecord(XLIST_SUB_A));
+				const handler = createExtendedListHandler(ctx);
+				const res = await handler(
+					new Request(`${XLIST_BASE_URL}?claims=,metadata,,subordinate_statement,`),
+				);
+				t.equal(res.status, 200);
+				const body = (await res.json()) as {
+					immediate_subordinate_entities: Array<Record<string, unknown>>;
+				};
+				const entry = body.immediate_subordinate_entities[0]!;
+				t.ok("subordinate_statement" in entry, "subordinate_statement present");
+			});
+
+			test("audit_timestamps=true returns registered + updated for every entity", async (t) => {
+				const { ctx, subordinateStore } = await createTestContext();
+				await subordinateStore.add(
+					makeXListRecord(XLIST_SUB_A, { createdAt: 100, updatedAt: 200 }),
+				);
+				await subordinateStore.add(
+					makeXListRecord(XLIST_SUB_B, { createdAt: 300, updatedAt: 400 }),
+				);
+				const handler = createExtendedListHandler(ctx);
+				const res = await handler(new Request(`${XLIST_BASE_URL}?audit_timestamps=true`));
+				const body = (await res.json()) as {
+					immediate_subordinate_entities: Array<{
+						id: string;
+						registered: number;
+						updated: number;
+					}>;
+				};
+				t.equal(body.immediate_subordinate_entities.length, 2);
+				for (const entry of body.immediate_subordinate_entities) {
+					t.ok(Number.isInteger(entry.registered));
+					t.ok(Number.isInteger(entry.updated));
+				}
+			});
+
+			test("emits registered/updated as exact NumericDate from record (no ms→s conversion)", async (t) => {
+				const { ctx, subordinateStore } = await createTestContext();
+				await subordinateStore.add(
+					makeXListRecord(XLIST_SUB_A, {
+						createdAt: 1_700_000_000,
+						updatedAt: 1_700_000_500,
+					}),
+				);
+				const handler = createExtendedListHandler(ctx);
+				const res = await handler(new Request(`${XLIST_BASE_URL}?audit_timestamps=true`));
+				const body = (await res.json()) as {
+					immediate_subordinate_entities: Array<{
+						id: string;
+						registered: number;
+						updated: number;
+					}>;
+				};
+				const entry = body.immediate_subordinate_entities[0]!;
+				t.equal(entry.registered, 1_700_000_000);
+				t.equal(entry.updated, 1_700_000_500);
+			});
+
+			test("audit_timestamps unsupported by config returns 400 unsupported_parameter", async (t) => {
+				const { ctx } = await createTestContext();
+				const cfg: ExtendedListingConfig = { supportAuditTimestamps: false };
+				const handler = createExtendedListHandler(ctx, cfg);
+				const res = await handler(new Request(`${XLIST_BASE_URL}?audit_timestamps=true`));
+				t.equal(res.status, 400);
+				const body = (await res.json()) as Record<string, string>;
+				t.equal(body.error, "unsupported_parameter");
+			});
+
+			test("updated_after / updated_before unsupported by config returns 400 unsupported_parameter", async (t) => {
+				const { ctx } = await createTestContext();
+				const cfg: ExtendedListingConfig = { supportTimeFilters: false };
+				const handler = createExtendedListHandler(ctx, cfg);
+				const r1 = await handler(new Request(`${XLIST_BASE_URL}?updated_after=1000`));
+				t.equal(r1.status, 400);
+				t.equal(((await r1.json()) as Record<string, string>).error, "unsupported_parameter");
+				const r2 = await handler(new Request(`${XLIST_BASE_URL}?updated_before=1000`));
+				t.equal(r2.status, 400);
+				t.equal(((await r2.json()) as Record<string, string>).error, "unsupported_parameter");
+			});
+
+			test("from_entity_id=unknown returns 400 entity_id_not_found", async (t) => {
+				const { ctx, subordinateStore } = await createTestContext();
+				await subordinateStore.add(makeXListRecord(XLIST_SUB_A));
+				const handler = createExtendedListHandler(ctx);
+				const res = await handler(
+					new Request(
+						`${XLIST_BASE_URL}?from_entity_id=${encodeURIComponent("https://nope.example.com")}`,
+					),
+				);
+				t.equal(res.status, 400);
+				t.equal(res.headers.get("Content-Type"), "application/json");
+				const body = (await res.json()) as Record<string, string>;
+				t.equal(body.error, "entity_id_not_found");
+			});
+
+			test("from_entity_id resumes from cursor (inclusive)", async (t) => {
+				const { ctx, subordinateStore } = await createTestContext();
+				await subordinateStore.add(makeXListRecord(XLIST_SUB_A));
+				await subordinateStore.add(makeXListRecord(XLIST_SUB_B));
+				await subordinateStore.add(makeXListRecord(XLIST_SUB_C));
+				const handler = createExtendedListHandler(ctx);
+				const res = await handler(
+					new Request(`${XLIST_BASE_URL}?from_entity_id=${encodeURIComponent(XLIST_SUB_B)}`),
+				);
+				const body = (await res.json()) as {
+					immediate_subordinate_entities: Array<{ id: string }>;
+				};
+				t.deepEqual(
+					body.immediate_subordinate_entities.map((e) => e.id),
+					[XLIST_SUB_B, XLIST_SUB_C],
+				);
+			});
+
+			test("limit caps the page size; next_entity_id present when more remain", async (t) => {
+				const { ctx, subordinateStore } = await createTestContext();
+				await subordinateStore.add(makeXListRecord(XLIST_SUB_A));
+				await subordinateStore.add(makeXListRecord(XLIST_SUB_B));
+				await subordinateStore.add(makeXListRecord(XLIST_SUB_C));
+				const handler = createExtendedListHandler(ctx);
+				const res = await handler(new Request(`${XLIST_BASE_URL}?limit=2`));
+				const body = (await res.json()) as {
+					immediate_subordinate_entities: Array<{ id: string }>;
+					next_entity_id?: string;
+				};
+				t.equal(body.immediate_subordinate_entities.length, 2);
+				t.equal(body.immediate_subordinate_entities[0]!.id, XLIST_SUB_A);
+				t.equal(body.immediate_subordinate_entities[1]!.id, XLIST_SUB_B);
+				t.equal(body.next_entity_id, XLIST_SUB_C);
+			});
+
+			test("next_entity_id absent when results fit in the page", async (t) => {
+				const { ctx, subordinateStore } = await createTestContext();
+				await subordinateStore.add(makeXListRecord(XLIST_SUB_A));
+				await subordinateStore.add(makeXListRecord(XLIST_SUB_B));
+				const handler = createExtendedListHandler(ctx);
+				const res = await handler(new Request(`${XLIST_BASE_URL}?limit=10`));
+				const body = (await res.json()) as Record<string, unknown>;
+				t.notOk("next_entity_id" in body, "next_entity_id MUST NOT be present");
+			});
+
+			test("updated_after filters older records", async (t) => {
+				const { ctx, subordinateStore } = await createTestContext();
+				await subordinateStore.add(makeXListRecord(XLIST_SUB_A, { updatedAt: 1000 }));
+				await subordinateStore.add(makeXListRecord(XLIST_SUB_B, { updatedAt: 2000 }));
+				await subordinateStore.add(makeXListRecord(XLIST_SUB_C, { updatedAt: 3000 }));
+				const handler = createExtendedListHandler(ctx);
+				const res = await handler(new Request(`${XLIST_BASE_URL}?updated_after=1500`));
+				const body = (await res.json()) as {
+					immediate_subordinate_entities: Array<{ id: string }>;
+				};
+				t.deepEqual(
+					body.immediate_subordinate_entities.map((e) => e.id),
+					[XLIST_SUB_B, XLIST_SUB_C],
+				);
+			});
+
+			test("updated_before filters newer records", async (t) => {
+				const { ctx, subordinateStore } = await createTestContext();
+				await subordinateStore.add(makeXListRecord(XLIST_SUB_A, { updatedAt: 1000 }));
+				await subordinateStore.add(makeXListRecord(XLIST_SUB_B, { updatedAt: 2000 }));
+				await subordinateStore.add(makeXListRecord(XLIST_SUB_C, { updatedAt: 3000 }));
+				const handler = createExtendedListHandler(ctx);
+				const res = await handler(new Request(`${XLIST_BASE_URL}?updated_before=2500`));
+				const body = (await res.json()) as {
+					immediate_subordinate_entities: Array<{ id: string }>;
+				};
+				t.deepEqual(
+					body.immediate_subordinate_entities.map((e) => e.id),
+					[XLIST_SUB_A, XLIST_SUB_B],
+				);
+			});
+
+			test("inherits entity_type filter from base endpoint", async (t) => {
+				const { ctx, subordinateStore } = await createTestContext();
+				await subordinateStore.add(
+					makeXListRecord(XLIST_SUB_A, { entityTypes: [EntityType.OpenIDProvider] }),
+				);
+				await subordinateStore.add(
+					makeXListRecord(XLIST_SUB_B, { entityTypes: [EntityType.OpenIDRelyingParty] }),
+				);
+				const handler = createExtendedListHandler(ctx);
+				const res = await handler(new Request(`${XLIST_BASE_URL}?entity_type=openid_provider`));
+				const body = (await res.json()) as {
+					immediate_subordinate_entities: Array<{ id: string }>;
+				};
+				t.deepEqual(
+					body.immediate_subordinate_entities.map((e) => e.id),
+					[XLIST_SUB_A],
+				);
+			});
+
+			test("inherits intermediate filter from base endpoint", async (t) => {
+				const { ctx, subordinateStore } = await createTestContext();
+				await subordinateStore.add(makeXListRecord(XLIST_SUB_A, { isIntermediate: true }));
+				await subordinateStore.add(makeXListRecord(XLIST_SUB_B, { isIntermediate: false }));
+				const handler = createExtendedListHandler(ctx);
+				const res = await handler(new Request(`${XLIST_BASE_URL}?intermediate=true`));
+				const body = (await res.json()) as {
+					immediate_subordinate_entities: Array<{ id: string }>;
+				};
+				t.deepEqual(
+					body.immediate_subordinate_entities.map((e) => e.id),
+					[XLIST_SUB_A],
+				);
+			});
+
+			test("inherits trust_marked filter from base endpoint", async (t) => {
+				const { ctx, subordinateStore, trustMarkStore } = await createTestContext();
+				await subordinateStore.add(makeXListRecord(XLIST_SUB_A));
+				await subordinateStore.add(makeXListRecord(XLIST_SUB_B));
+				await trustMarkStore.issue({
+					trustMarkType: "https://trust.example.com/mark",
+					subject: XLIST_SUB_A,
+					jwt: "test.jwt",
+					issuedAt: Math.floor(Date.now() / 1000),
+					active: true,
+				});
+				const handler = createExtendedListHandler(ctx);
+				const res = await handler(new Request(`${XLIST_BASE_URL}?trust_marked=true`));
+				const body = (await res.json()) as {
+					immediate_subordinate_entities: Array<{ id: string }>;
+				};
+				t.deepEqual(
+					body.immediate_subordinate_entities.map((e) => e.id),
+					[XLIST_SUB_A],
+				);
+			});
+
+			test("claims=trust_marks attaches active trust marks per entity", async (t) => {
+				const { ctx, subordinateStore, trustMarkStore } = await createTestContext();
+				await subordinateStore.add(makeXListRecord(XLIST_SUB_A));
+				await trustMarkStore.issue({
+					trustMarkType: "https://trust.example.com/mark",
+					subject: XLIST_SUB_A,
+					jwt: "test.tm.jwt",
+					issuedAt: Math.floor(Date.now() / 1000),
+					active: true,
+				});
+				const handler = createExtendedListHandler(ctx);
+				const res = await handler(new Request(`${XLIST_BASE_URL}?claims=trust_marks`));
+				const body = (await res.json()) as {
+					immediate_subordinate_entities: Array<{
+						id: string;
+						trust_marks?: Array<{ id: string; trust_mark: string }>;
+					}>;
+				};
+				const entry = body.immediate_subordinate_entities[0]!;
+				t.ok(Array.isArray(entry.trust_marks), "trust_marks array present");
+				t.equal(entry.trust_marks!.length, 1);
+				t.equal(entry.trust_marks![0]!.id, "https://trust.example.com/mark");
+				t.equal(entry.trust_marks![0]!.trust_mark, "test.tm.jwt");
+			});
+
+			test("claims=trust_marks returns empty array when subject has no active marks", async (t) => {
+				const { ctx, subordinateStore } = await createTestContext();
+				await subordinateStore.add(makeXListRecord(XLIST_SUB_A));
+				const handler = createExtendedListHandler(ctx);
+				const res = await handler(new Request(`${XLIST_BASE_URL}?claims=trust_marks`));
+				t.equal(res.status, 200);
+				const body = (await res.json()) as {
+					immediate_subordinate_entities: Array<{
+						id: string;
+						trust_marks?: Array<unknown>;
+					}>;
+				};
+				const entry = body.immediate_subordinate_entities[0]!;
+				t.deepEqual(entry.trust_marks, []);
+			});
+
+			test("claims=trust_marks returns 400 unsupported_parameter when listForSubject is missing", async (t) => {
+				const trustMarkStore = new MemoryTrustMarkStore();
+				const limitedStore = {
+					get: trustMarkStore.get.bind(trustMarkStore),
+					list: trustMarkStore.list.bind(trustMarkStore),
+					issue: trustMarkStore.issue.bind(trustMarkStore),
+					revoke: trustMarkStore.revoke.bind(trustMarkStore),
+					isActive: trustMarkStore.isActive.bind(trustMarkStore),
+					hasAnyActive: trustMarkStore.hasAnyActive.bind(trustMarkStore),
+				};
+				const { ctx, subordinateStore } = await createTestContext({
+					trustMarkStore: limitedStore,
+				});
+				await subordinateStore.add(makeXListRecord(XLIST_SUB_A));
+				const handler = createExtendedListHandler(ctx);
+				const res = await handler(new Request(`${XLIST_BASE_URL}?claims=trust_marks`));
+				t.equal(res.status, 400);
+				t.equal(res.headers.get("Content-Type"), "application/json");
+				const body = (await res.json()) as Record<string, string>;
+				t.equal(body.error, "unsupported_parameter");
+			});
+
+			test("claims=metadata attaches subordinate metadata", async (t) => {
+				const { ctx, subordinateStore } = await createTestContext();
+				await subordinateStore.add(
+					makeXListRecord(XLIST_SUB_A, {
+						metadata: { openid_relying_party: { client_id: "x" } },
+					}),
+				);
+				const handler = createExtendedListHandler(ctx);
+				const res = await handler(new Request(`${XLIST_BASE_URL}?claims=metadata`));
+				const body = (await res.json()) as {
+					immediate_subordinate_entities: Array<{ id: string; metadata?: unknown }>;
+				};
+				t.deepEqual(body.immediate_subordinate_entities[0]!.metadata, {
+					openid_relying_party: { client_id: "x" },
+				});
+			});
+
+			test("unknown claim names are silently ignored", async (t) => {
+				const { ctx, subordinateStore } = await createTestContext();
+				await subordinateStore.add(makeXListRecord(XLIST_SUB_A));
+				const handler = createExtendedListHandler(ctx);
+				const res = await handler(new Request(`${XLIST_BASE_URL}?claims=not_a_real_claim`));
+				t.equal(res.status, 200);
+				const body = (await res.json()) as {
+					immediate_subordinate_entities: Array<Record<string, unknown>>;
+				};
+				t.notOk("not_a_real_claim" in body.immediate_subordinate_entities[0]!);
+			});
+
+			test("claims=crit,metadata_policy_crit returns per-record critical extension lists", async (t) => {
+				const { ctx, subordinateStore } = await createTestContext();
+				await subordinateStore.add(
+					makeXListRecord(XLIST_SUB_A, {
+						crit: ["custom-ext"],
+						metadataPolicyCrit: ["custom-policy-op"],
+					}),
+				);
+				const handler = createExtendedListHandler(ctx);
+				const res = await handler(
+					new Request(`${XLIST_BASE_URL}?claims=crit,metadata_policy_crit`),
+				);
+				const body = (await res.json()) as {
+					immediate_subordinate_entities: Array<{
+						id: string;
+						crit?: string[];
+						metadata_policy_crit?: string[];
+					}>;
+				};
+				const entry = body.immediate_subordinate_entities[0]!;
+				t.deepEqual(entry.crit, ["custom-ext"]);
+				t.deepEqual(entry.metadata_policy_crit, ["custom-policy-op"]);
+			});
+
+			test("claims=iss,sub,iat,exp surfaces synthetic top-level claims per entity", async (t) => {
+				const { ctx, subordinateStore } = await createTestContext();
+				await subordinateStore.add(makeXListRecord(XLIST_SUB_A));
+				const handler = createExtendedListHandler(ctx);
+				const before = Math.floor(Date.now() / 1000);
+				const res = await handler(new Request(`${XLIST_BASE_URL}?claims=iss,sub,iat,exp`));
+				const after = Math.floor(Date.now() / 1000);
+				const body = (await res.json()) as {
+					immediate_subordinate_entities: Array<{
+						id: string;
+						iss: string;
+						sub: string;
+						iat: number;
+						exp: number;
+					}>;
+				};
+				const entry = body.immediate_subordinate_entities[0]!;
+				t.equal(entry.iss, ENTITY_ID);
+				t.equal(entry.sub, XLIST_SUB_A);
+				t.equal(entry.sub, entry.id, "sub matches id field");
+				t.ok(entry.iat >= before - 1 && entry.iat <= after + 1, "iat within real-time window");
+				t.true(entry.exp > entry.iat, "exp > iat");
+			});
+
+			test("claims=iat,exp,subordinate_statement aligns synthetic values with the JWT", async (t) => {
+				const { ctx, subordinateStore, publicKey } = await createTestContext();
+				await subordinateStore.add(makeXListRecord(XLIST_SUB_A));
+				const handler = createExtendedListHandler(ctx);
+				const res = await handler(
+					new Request(`${XLIST_BASE_URL}?claims=iat,exp,subordinate_statement`),
+				);
+				const body = (await res.json()) as {
+					immediate_subordinate_entities: Array<{
+						id: string;
+						iat: number;
+						exp: number;
+						subordinate_statement: string;
+					}>;
+				};
+				const entry = body.immediate_subordinate_entities[0]!;
+				const verified = await verifyEntityStatement(
+					entry.subordinate_statement,
+					{ keys: [publicKey] },
+					{ expectedTyp: JwtTyp.EntityStatement },
+				);
+				t.true(isOk(verified));
+				if (isOk(verified)) {
+					t.equal(verified.value.payload.iat, entry.iat, "top-level iat matches JWT iat");
+					t.equal(verified.value.payload.exp, entry.exp, "top-level exp matches JWT exp");
+				}
+			});
+
+			test("synthetic iat/exp are identical across all entries in a single response", async (t) => {
+				const { ctx, subordinateStore } = await createTestContext();
+				await subordinateStore.add(makeXListRecord(XLIST_SUB_A));
+				await subordinateStore.add(makeXListRecord(XLIST_SUB_B));
+				await subordinateStore.add(makeXListRecord(XLIST_SUB_C));
+				const handler = createExtendedListHandler(ctx);
+				const res = await handler(new Request(`${XLIST_BASE_URL}?claims=iat,exp`));
+				const body = (await res.json()) as {
+					immediate_subordinate_entities: Array<{ iat: number; exp: number }>;
+				};
+				const iats = new Set(body.immediate_subordinate_entities.map((e) => e.iat));
+				const exps = new Set(body.immediate_subordinate_entities.map((e) => e.exp));
+				t.equal(iats.size, 1, "iat snapshot stable across page");
+				t.equal(exps.size, 1, "exp snapshot stable across page");
+			});
+
+			test("out-of-scope top-level claims are silently dropped per entity (no 400)", async (t) => {
+				const { ctx, subordinateStore } = await createTestContext();
+				await subordinateStore.add(makeXListRecord(XLIST_SUB_A));
+				const handler = createExtendedListHandler(ctx);
+				const res = await handler(
+					new Request(
+						`${XLIST_BASE_URL}?claims=authority_hints,trust_mark_issuers,trust_mark_owners,aud,trust_anchor`,
+					),
+				);
+				t.equal(res.status, 200);
+				const body = (await res.json()) as {
+					immediate_subordinate_entities: Array<Record<string, unknown>>;
+				};
+				const entry = body.immediate_subordinate_entities[0]!;
+				for (const dropped of [
+					"authority_hints",
+					"trust_mark_issuers",
+					"trust_mark_owners",
+					"aud",
+					"trust_anchor",
+				]) {
+					t.notOk(dropped in entry, `${dropped} absent`);
+				}
+			});
+
+			test("updated_after alone auto-includes registered+updated per entity (RECOMMENDED)", async (t) => {
+				const { ctx, subordinateStore } = await createTestContext();
+				await subordinateStore.add(
+					makeXListRecord(XLIST_SUB_A, { createdAt: 1_000, updatedAt: 2_000 }),
+				);
+				await subordinateStore.add(
+					makeXListRecord(XLIST_SUB_B, { createdAt: 3_000, updatedAt: 4_000 }),
+				);
+				const handler = createExtendedListHandler(ctx, { defaultClaims: [] });
+				const res = await handler(new Request(`${XLIST_BASE_URL}?updated_after=500`));
+				const body = (await res.json()) as {
+					immediate_subordinate_entities: Array<{
+						id: string;
+						registered: number;
+						updated: number;
+					}>;
+				};
+				for (const entry of body.immediate_subordinate_entities) {
+					t.ok(Number.isInteger(entry.registered));
+					t.ok(Number.isInteger(entry.updated));
+				}
+			});
+
+			test("updated_before alone auto-includes registered+updated per entity (RECOMMENDED)", async (t) => {
+				const { ctx, subordinateStore } = await createTestContext();
+				await subordinateStore.add(
+					makeXListRecord(XLIST_SUB_A, { createdAt: 1_000, updatedAt: 2_000 }),
+				);
+				const handler = createExtendedListHandler(ctx, { defaultClaims: [] });
+				const res = await handler(new Request(`${XLIST_BASE_URL}?updated_before=10000`));
+				const body = (await res.json()) as {
+					immediate_subordinate_entities: Array<{
+						id: string;
+						registered?: number;
+						updated?: number;
+					}>;
+				};
+				const entry = body.immediate_subordinate_entities[0]!;
+				t.equal(entry.registered, 1_000);
+				t.equal(entry.updated, 2_000);
+			});
+
+			test("explicit audit_timestamps=false suppresses even when updated_after is present", async (t) => {
+				const { ctx, subordinateStore } = await createTestContext();
+				await subordinateStore.add(
+					makeXListRecord(XLIST_SUB_A, { createdAt: 1_000, updatedAt: 2_000 }),
+				);
+				const handler = createExtendedListHandler(ctx, { defaultClaims: [] });
+				const res = await handler(
+					new Request(`${XLIST_BASE_URL}?updated_after=500&audit_timestamps=false`),
+				);
+				const body = (await res.json()) as {
+					immediate_subordinate_entities: Array<Record<string, unknown>>;
+				};
+				const entry = body.immediate_subordinate_entities[0]!;
+				t.notOk("registered" in entry, "registered suppressed by explicit false");
+				t.notOk("updated" in entry, "updated suppressed by explicit false");
+			});
+
+			test("updated_after with supportTimeFilters=false returns 400 unsupported_parameter (application/json)", async (t) => {
+				const { ctx } = await createTestContext();
+				const handler = createExtendedListHandler(ctx, { supportTimeFilters: false });
+				const res = await handler(new Request(`${XLIST_BASE_URL}?updated_after=1000`));
+				t.equal(res.status, 400);
+				t.equal(res.headers.get("Content-Type"), "application/json");
+				const body = (await res.json()) as Record<string, string>;
+				t.equal(body.error, "unsupported_parameter");
+			});
+
+			test("updated_before with supportTimeFilters=false returns 400 unsupported_parameter (application/json)", async (t) => {
+				const { ctx } = await createTestContext();
+				const handler = createExtendedListHandler(ctx, { supportTimeFilters: false });
+				const res = await handler(new Request(`${XLIST_BASE_URL}?updated_before=1000`));
+				t.equal(res.status, 400);
+				t.equal(res.headers.get("Content-Type"), "application/json");
+				const body = (await res.json()) as Record<string, string>;
+				t.equal(body.error, "unsupported_parameter");
+			});
+
+			test("audit_timestamps=true with supportAuditTimestamps=false returns 400 (application/json)", async (t) => {
+				const { ctx } = await createTestContext();
+				const handler = createExtendedListHandler(ctx, { supportAuditTimestamps: false });
+				const res = await handler(new Request(`${XLIST_BASE_URL}?audit_timestamps=true`));
+				t.equal(res.status, 400);
+				t.equal(res.headers.get("Content-Type"), "application/json");
+				const body = (await res.json()) as Record<string, string>;
+				t.equal(body.error, "unsupported_parameter");
+			});
+
+			test("consistent ordering across paginated calls (concatenation equals full sorted list)", async (t) => {
+				const { ctx, subordinateStore } = await createTestContext();
+				await subordinateStore.add(makeXListRecord(XLIST_SUB_D));
+				await subordinateStore.add(makeXListRecord(XLIST_SUB_A));
+				await subordinateStore.add(makeXListRecord(XLIST_SUB_C));
+				await subordinateStore.add(makeXListRecord(XLIST_SUB_B));
+				const handler = createExtendedListHandler(ctx);
+				const pageOne = (await (
+					await handler(new Request(`${XLIST_BASE_URL}?limit=2`))
+				).json()) as {
+					immediate_subordinate_entities: Array<{ id: string }>;
+					next_entity_id?: string;
+				};
+				t.equal(pageOne.immediate_subordinate_entities.length, 2);
+				t.ok(pageOne.next_entity_id, "next_entity_id present");
+				const pageTwo = (await (
+					await handler(
+						new Request(
+							`${XLIST_BASE_URL}?limit=2&from_entity_id=${encodeURIComponent(
+								pageOne.next_entity_id as string,
+							)}`,
+						),
+					)
+				).json()) as {
+					immediate_subordinate_entities: Array<{ id: string }>;
+					next_entity_id?: string;
+				};
+				t.notOk(pageTwo.next_entity_id, "no more pages");
+				t.deepEqual(
+					[
+						...pageOne.immediate_subordinate_entities.map((e) => e.id),
+						...pageTwo.immediate_subordinate_entities.map((e) => e.id),
+					],
+					[XLIST_SUB_A, XLIST_SUB_B, XLIST_SUB_C, XLIST_SUB_D],
+				);
+			});
+
+			test("page-fill: trust-mark filter does not under-fill the page when more items exist", async (t) => {
+				const { ctx, subordinateStore, trustMarkStore } = await createTestContext();
+				for (const sub of [
+					XLIST_SUB_A,
+					XLIST_SUB_B,
+					XLIST_SUB_C,
+					XLIST_SUB_D,
+					XLIST_SUB_E,
+					XLIST_SUB_F,
+				]) {
+					await subordinateStore.add(makeXListRecord(sub));
+				}
+				for (const sub of [XLIST_SUB_A, XLIST_SUB_D, XLIST_SUB_E]) {
+					await trustMarkStore.issue({
+						trustMarkType: "https://trust.example.com/mark",
+						subject: sub,
+						jwt: "x.y.z",
+						issuedAt: 0,
+						active: true,
+					});
+				}
+				const handler = createExtendedListHandler(ctx);
+				const res = await handler(new Request(`${XLIST_BASE_URL}?limit=3&trust_marked=true`));
+				const body = (await res.json()) as {
+					immediate_subordinate_entities: Array<{ id: string }>;
+					next_entity_id?: string;
+				};
+				t.deepEqual(
+					body.immediate_subordinate_entities.map((e) => e.id),
+					[XLIST_SUB_A, XLIST_SUB_D, XLIST_SUB_E],
+				);
+				t.equal(body.next_entity_id, undefined);
+			});
+
+			test("page-fill: next_entity_id is the first un-emitted entityId past the page", async (t) => {
+				const { ctx, subordinateStore } = await createTestContext();
+				for (const sub of [XLIST_SUB_A, XLIST_SUB_B, XLIST_SUB_C, XLIST_SUB_D, XLIST_SUB_E]) {
+					await subordinateStore.add(makeXListRecord(sub));
+				}
+				const handler = createExtendedListHandler(ctx);
+				const res = await handler(new Request(`${XLIST_BASE_URL}?limit=3`));
+				const body = (await res.json()) as {
+					immediate_subordinate_entities: Array<{ id: string }>;
+					next_entity_id?: string;
+				};
+				t.deepEqual(
+					body.immediate_subordinate_entities.map((e) => e.id),
+					[XLIST_SUB_A, XLIST_SUB_B, XLIST_SUB_C],
+				);
+				t.equal(body.next_entity_id, XLIST_SUB_D);
+			});
+
+			test("page-fill: trust-mark filter consumes everything in last drained page, next_entity_id undefined", async (t) => {
+				const { ctx, subordinateStore, trustMarkStore } = await createTestContext();
+				for (const sub of [XLIST_SUB_A, XLIST_SUB_B, XLIST_SUB_C, XLIST_SUB_D, XLIST_SUB_E]) {
+					await subordinateStore.add(makeXListRecord(sub));
+				}
+				for (const sub of [XLIST_SUB_A, XLIST_SUB_E]) {
+					await trustMarkStore.issue({
+						trustMarkType: "https://trust.example.com/mark",
+						subject: sub,
+						jwt: "x.y.z",
+						issuedAt: 0,
+						active: true,
+					});
+				}
+				const handler = createExtendedListHandler(ctx);
+				const res = await handler(new Request(`${XLIST_BASE_URL}?limit=2&trust_marked=true`));
+				const body = (await res.json()) as {
+					immediate_subordinate_entities: Array<{ id: string }>;
+					next_entity_id?: string;
+				};
+				t.deepEqual(
+					body.immediate_subordinate_entities.map((e) => e.id),
+					[XLIST_SUB_A, XLIST_SUB_E],
+				);
+				t.equal(body.next_entity_id, undefined);
+			});
+
+			test("page-fill: cap fires before limit satisfied — next_entity_id non-empty for resume", async (t) => {
+				const { ctx, subordinateStore } = await createTestContext();
+				for (const sub of [
+					XLIST_SUB_A,
+					XLIST_SUB_B,
+					XLIST_SUB_C,
+					XLIST_SUB_D,
+					XLIST_SUB_E,
+					XLIST_SUB_F,
+				]) {
+					await subordinateStore.add(makeXListRecord(sub));
+				}
+				// no records trust-marked → every store page is filtered to empty
+				const handler = createExtendedListHandler(ctx, {
+					maxStorePagesPerRequest: 2,
+					storeBatchSize: 2,
+				});
+				const res = await handler(new Request(`${XLIST_BASE_URL}?limit=10&trust_marked=true`));
+				const body = (await res.json()) as {
+					immediate_subordinate_entities: Array<{ id: string }>;
+					next_entity_id?: string;
+				};
+				t.equal(body.immediate_subordinate_entities.length, 0);
+				t.ok(body.next_entity_id, "cap-exit cursor present so client can resume");
+			});
+
+			test("page-fill: cap-exit cursor resumes correctly (no skips, no duplicates)", async (t) => {
+				const { ctx, subordinateStore } = await createTestContext();
+				for (const sub of [XLIST_SUB_A, XLIST_SUB_B, XLIST_SUB_C, XLIST_SUB_D, XLIST_SUB_E]) {
+					await subordinateStore.add(makeXListRecord(sub));
+				}
+				const handler = createExtendedListHandler(ctx, {
+					maxStorePagesPerRequest: 1,
+					storeBatchSize: 2,
+				});
+				const first = (await (await handler(new Request(`${XLIST_BASE_URL}?limit=10`))).json()) as {
+					immediate_subordinate_entities: Array<{ id: string }>;
+					next_entity_id?: string;
+				};
+				t.equal(first.immediate_subordinate_entities.length, 2);
+				t.ok(first.next_entity_id, "cap-exit cursor present");
+				// Resume with the cap-exit cursor — must continue without losing or duplicating.
+				const handler2 = createExtendedListHandler(ctx);
+				const rest = (await (
+					await handler2(
+						new Request(
+							`${XLIST_BASE_URL}?from_entity_id=${encodeURIComponent(
+								first.next_entity_id as string,
+							)}&limit=10`,
+						),
+					)
+				).json()) as { immediate_subordinate_entities: Array<{ id: string }> };
+				const concatenated = [
+					...first.immediate_subordinate_entities.map((e) => e.id),
+					...rest.immediate_subordinate_entities.map((e) => e.id),
+				];
+				const sorted = [XLIST_SUB_A, XLIST_SUB_B, XLIST_SUB_C, XLIST_SUB_D, XLIST_SUB_E].sort();
+				t.deepEqual(concatenated, sorted);
+			});
+
+			test("defaultPageSize caps the response when client omits limit", async (t) => {
+				const { ctx, subordinateStore } = await createTestContext();
+				for (let i = 0; i < 6; i++) {
+					await subordinateStore.add(
+						makeXListRecord(entityId(`https://sub-${String(i).padStart(2, "0")}.example.com`)),
+					);
+				}
+				const handler = createExtendedListHandler(ctx, { defaultPageSize: 3 });
+				const res = await handler(new Request(XLIST_BASE_URL));
+				const body = (await res.json()) as {
+					immediate_subordinate_entities: Array<unknown>;
+					next_entity_id?: string;
+				};
+				t.equal(body.immediate_subordinate_entities.length, 3);
+				t.ok(body.next_entity_id, "next_entity_id present when more records remain");
+			});
+
+			test("client limit exceeding maxPageSize is clamped", async (t) => {
+				const { ctx, subordinateStore } = await createTestContext();
+				for (let i = 0; i < 6; i++) {
+					await subordinateStore.add(
+						makeXListRecord(entityId(`https://sub-${String(i).padStart(2, "0")}.example.com`)),
+					);
+				}
+				const handler = createExtendedListHandler(ctx, { maxPageSize: 2 });
+				const res = await handler(new Request(`${XLIST_BASE_URL}?limit=10000`));
+				const body = (await res.json()) as {
+					immediate_subordinate_entities: Array<unknown>;
+					next_entity_id?: string;
+				};
+				t.equal(body.immediate_subordinate_entities.length, 2, "clamped to maxPageSize");
+				t.ok(body.next_entity_id);
+			});
+
+			test("rejects POST with 405", async (t) => {
+				const { ctx } = await createTestContext();
+				const handler = createExtendedListHandler(ctx);
+				const res = await handler(new Request(XLIST_BASE_URL, { method: "POST" }));
+				t.equal(res.status, 405);
+			});
+
+			test("rejects negative limit with 400 invalid_request", async (t) => {
+				const { ctx } = await createTestContext();
+				const handler = createExtendedListHandler(ctx);
+				const res = await handler(new Request(`${XLIST_BASE_URL}?limit=-1`));
+				t.equal(res.status, 400);
+				const body = (await res.json()) as Record<string, string>;
+				t.equal(body.error, "invalid_request");
+			});
+
+			test("rejects non-numeric updated_after with 400 invalid_request", async (t) => {
+				const { ctx } = await createTestContext();
+				const handler = createExtendedListHandler(ctx);
+				const res = await handler(new Request(`${XLIST_BASE_URL}?updated_after=yesterday`));
+				t.equal(res.status, 400);
+				const body = (await res.json()) as Record<string, string>;
+				t.equal(body.error, "invalid_request");
+			});
+
+			test("includes standard security headers", async (t) => {
+				const { ctx } = await createTestContext();
+				const handler = createExtendedListHandler(ctx);
+				const res = await handler(new Request(XLIST_BASE_URL));
+				t.equal(res.headers.get("Cache-Control"), "no-store");
+				t.equal(res.headers.get("X-Content-Type-Options"), "nosniff");
+			});
+
+			test("returns 404 when extended listing is explicitly disabled", async (t) => {
+				const { ctx } = await createTestContext();
+				const handler = createExtendedListHandler(ctx, { enabled: false });
+				const res = await handler(new Request(XLIST_BASE_URL));
+				t.equal(res.status, 404);
 			});
 		});
 	}
@@ -4517,6 +5603,8 @@ export default (QUnit: QUnit) => {
 	{
 		const SERVER_AUTHORITY_ID = entityId("https://authority.example.com");
 		const SERVER_SUB1 = entityId("https://sub1.example.com");
+		const SERVER_SUB2 = entityId("https://sub2.example.com");
+		const SERVER_SUB3 = entityId("https://sub3.example.com");
 		const SERVER_MARK_TYPE = "https://trust.example.com/mark-a";
 
 		function makeServerRecord(
@@ -4602,6 +5690,57 @@ export default (QUnit: QUnit) => {
 					const server = createAuthorityServer(srvConfig);
 					const list = await server.listSubordinates();
 					t.deepEqual(list, [SERVER_SUB1]);
+				});
+
+				test("listSubordinatesExtended returns Result.ok with immediate_subordinate_entities + paging", async (t) => {
+					await srvSubordinateStore.add(makeServerRecord(SERVER_SUB1));
+					await srvSubordinateStore.add(makeServerRecord(SERVER_SUB2));
+					await srvSubordinateStore.add(makeServerRecord(SERVER_SUB3));
+					const server = createAuthorityServer(srvConfig);
+					const sorted = [SERVER_SUB1, SERVER_SUB2, SERVER_SUB3].sort();
+					const first = await server.listSubordinatesExtended({ limit: 2 });
+					t.true(first.ok);
+					if (!first.ok) return;
+					t.equal(first.value.immediate_subordinate_entities.length, 2);
+					t.equal(first.value.immediate_subordinate_entities[0]!.id, sorted[0]);
+					t.equal(first.value.immediate_subordinate_entities[1]!.id, sorted[1]);
+					t.equal(first.value.next_entity_id, sorted[2]);
+					const tail = await server.listSubordinatesExtended({
+						limit: 2,
+						fromEntityId: first.value.next_entity_id as EntityId,
+						auditTimestamps: true,
+					});
+					t.true(tail.ok);
+					if (!tail.ok) return;
+					t.equal(tail.value.immediate_subordinate_entities.length, 1);
+					t.equal(tail.value.next_entity_id, undefined);
+					t.ok(
+						Number.isInteger(tail.value.immediate_subordinate_entities[0]!.registered as number),
+						"audit_timestamps round-trip includes registered",
+					);
+				});
+
+				test("listSubordinatesExtended returns Result.err with entity_id_not_found on unknown cursor", async (t) => {
+					const server = createAuthorityServer(srvConfig);
+					const result = await server.listSubordinatesExtended({
+						fromEntityId: entityId("https://does-not-exist.example.com"),
+					});
+					t.false(result.ok);
+					if (!result.ok) {
+						t.equal(result.error.code, FederationErrorCode.EntityIdNotFound);
+					}
+				});
+
+				test("listSubordinatesExtended returns Result.err with unsupported_parameter on disabled audit_timestamps", async (t) => {
+					const server = createAuthorityServer({
+						...srvConfig,
+						extendedListing: { supportAuditTimestamps: false },
+					});
+					const result = await server.listSubordinatesExtended({ auditTimestamps: true });
+					t.false(result.ok);
+					if (!result.ok) {
+						t.equal(result.error.code, FederationErrorCode.UnsupportedParameter);
+					}
 				});
 
 				test("issueTrustMark returns signed JWT", async (t) => {

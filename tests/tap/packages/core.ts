@@ -46,6 +46,7 @@ import {
 	unwrapOr,
 } from "../../../packages/core/src/errors.js";
 import {
+	fetchExtendedSubordinatesList,
 	fetchHistoricalKeys,
 	fetchListSubordinates,
 	fetchResolveResponse,
@@ -117,6 +118,13 @@ import {
 	HistoricalKeyEntrySchema,
 	SubordinateStatementSchema,
 } from "../../../packages/core/src/schemas/entity-statement.js";
+import {
+	EXTENDED_LIST_SUPPORTED_CLAIMS,
+	ExtendedListClaim,
+	ExtendedListEntitySchema,
+	ExtendedListQuerySchema,
+	ExtendedListResponseSchema,
+} from "../../../packages/core/src/schemas/extended-list.js";
 import type { JWK, JWKSet } from "../../../packages/core/src/schemas/jwk.js";
 import { JWKSchema, JWKSetSchema } from "../../../packages/core/src/schemas/jwk.js";
 import type { FederationMetadata } from "../../../packages/core/src/schemas/metadata.js";
@@ -388,10 +396,11 @@ export default (QUnit: QUnit) => {
 			t.equal(WELL_KNOWN_OPENID_FEDERATION, "/.well-known/openid-federation");
 		});
 
-		test("FederationEndpoint has all 8 paths", (t) => {
-			t.equal(Object.keys(FederationEndpoint).length, 8);
+		test("FederationEndpoint has all 9 paths", (t) => {
+			t.equal(Object.keys(FederationEndpoint).length, 9);
 			t.equal(FederationEndpoint.Fetch, "/federation_fetch");
 			t.equal(FederationEndpoint.List, "/federation_list");
+			t.equal(FederationEndpoint.ExtendedList, "/federation_extended_list");
 			t.equal(FederationEndpoint.Resolve, "/federation_resolve");
 			t.equal(FederationEndpoint.Registration, "/federation_registration");
 			t.equal(FederationEndpoint.TrustMarkStatus, "/federation_trust_mark_status");
@@ -435,10 +444,11 @@ export default (QUnit: QUnit) => {
 			t.equal(PolicyOperator.Essential, "essential");
 		});
 
-		test("FederationErrorCode has 11 codes", (t) => {
-			t.equal(Object.keys(FederationErrorCode).length, 11);
+		test("FederationErrorCode has 12 codes", (t) => {
+			t.equal(Object.keys(FederationErrorCode).length, 12);
 			t.equal(FederationErrorCode.InvalidRequest, "invalid_request");
 			t.equal(FederationErrorCode.NotFound, "not_found");
+			t.equal(FederationErrorCode.EntityIdNotFound, "entity_id_not_found");
 		});
 
 		test("InternalErrorCode has 12 codes", (t) => {
@@ -9587,4 +9597,482 @@ export default (QUnit: QUnit) => {
 			});
 		}
 	}
+
+	// ── extended subordinate listing — schemas ─────────────────────────
+	module("core / ExtendedListClaim", () => {
+		test("exposes the documented supported claim set", (t) => {
+			t.true(EXTENDED_LIST_SUPPORTED_CLAIMS.has(ExtendedListClaim.SubordinateStatement));
+			t.true(EXTENDED_LIST_SUPPORTED_CLAIMS.has(ExtendedListClaim.Iss));
+			t.true(EXTENDED_LIST_SUPPORTED_CLAIMS.has(ExtendedListClaim.Sub));
+			t.true(EXTENDED_LIST_SUPPORTED_CLAIMS.has(ExtendedListClaim.Iat));
+			t.true(EXTENDED_LIST_SUPPORTED_CLAIMS.has(ExtendedListClaim.Exp));
+			t.true(EXTENDED_LIST_SUPPORTED_CLAIMS.has(ExtendedListClaim.Jwks));
+			t.true(EXTENDED_LIST_SUPPORTED_CLAIMS.has(ExtendedListClaim.Metadata));
+			t.true(EXTENDED_LIST_SUPPORTED_CLAIMS.has(ExtendedListClaim.MetadataPolicy));
+			t.true(EXTENDED_LIST_SUPPORTED_CLAIMS.has(ExtendedListClaim.Constraints));
+			t.true(EXTENDED_LIST_SUPPORTED_CLAIMS.has(ExtendedListClaim.Crit));
+			t.true(EXTENDED_LIST_SUPPORTED_CLAIMS.has(ExtendedListClaim.MetadataPolicyCrit));
+			t.true(EXTENDED_LIST_SUPPORTED_CLAIMS.has(ExtendedListClaim.TrustMarks));
+			t.true(EXTENDED_LIST_SUPPORTED_CLAIMS.has(ExtendedListClaim.SourceEndpoint));
+			t.equal(EXTENDED_LIST_SUPPORTED_CLAIMS.size, 13);
+		});
+	});
+
+	module("core / ExtendedListQuerySchema", () => {
+		test("accepts an empty query", (t) => {
+			const parsed = ExtendedListQuerySchema.safeParse({});
+			t.true(parsed.success);
+		});
+		test("coerces limit to positive integer", (t) => {
+			const parsed = ExtendedListQuerySchema.safeParse({ limit: "25" });
+			t.true(parsed.success);
+			if (parsed.success) t.equal(parsed.data.limit, 25);
+		});
+		test("rejects zero and negative limit", (t) => {
+			t.false(ExtendedListQuerySchema.safeParse({ limit: "0" }).success);
+			t.false(ExtendedListQuerySchema.safeParse({ limit: "-3" }).success);
+			t.false(ExtendedListQuerySchema.safeParse({ limit: "abc" }).success);
+		});
+		test("coerces audit_timestamps boolean from string", (t) => {
+			const yes = ExtendedListQuerySchema.safeParse({ audit_timestamps: "true" });
+			const no = ExtendedListQuerySchema.safeParse({ audit_timestamps: "false" });
+			t.true(yes.success);
+			t.true(no.success);
+			if (yes.success) t.true(yes.data.audit_timestamps);
+			if (no.success) t.false(no.data.audit_timestamps);
+		});
+		test("rejects non-NumericDate updated_after", (t) => {
+			t.false(ExtendedListQuerySchema.safeParse({ updated_after: "yesterday" }).success);
+		});
+		test("accepts a NumericDate updated_after", (t) => {
+			const parsed = ExtendedListQuerySchema.safeParse({ updated_after: "1700000000" });
+			t.true(parsed.success);
+			if (parsed.success) t.equal(parsed.data.updated_after, 1_700_000_000);
+		});
+		test("accepts repeated entity_type values as array", (t) => {
+			const parsed = ExtendedListQuerySchema.safeParse({
+				entity_type: ["openid_provider", "openid_relying_party"],
+			});
+			t.true(parsed.success);
+		});
+		test("accepts claims as array of strings", (t) => {
+			const parsed = ExtendedListQuerySchema.safeParse({
+				claims: ["subordinate_statement", "trust_marks"],
+			});
+			t.true(parsed.success);
+		});
+	});
+
+	module("core / ExtendedListEntitySchema", () => {
+		test("requires id", (t) => {
+			t.false(ExtendedListEntitySchema.safeParse({}).success);
+		});
+		test("accepts id-only entry (subordinate_statement is optional)", (t) => {
+			t.true(ExtendedListEntitySchema.safeParse({ id: "https://a.example.com" }).success);
+		});
+		test("accepts subordinate_statement string", (t) => {
+			t.true(
+				ExtendedListEntitySchema.safeParse({
+					id: "https://a.example.com",
+					subordinate_statement: "eyJ.payload.sig",
+				}).success,
+			);
+		});
+		test("accepts audit timestamps", (t) => {
+			t.true(
+				ExtendedListEntitySchema.safeParse({
+					id: "https://a.example.com",
+					registered: 1_700_000_000,
+					updated: 1_700_000_100,
+				}).success,
+			);
+		});
+		test("preserves unknown claims (loose object)", (t) => {
+			const parsed = ExtendedListEntitySchema.safeParse({
+				id: "https://a.example.com",
+				trust_marks: [{ id: "x", trust_mark: "y" }],
+			});
+			t.true(parsed.success);
+			if (parsed.success) {
+				t.deepEqual((parsed.data as Record<string, unknown>).trust_marks, [
+					{ id: "x", trust_mark: "y" },
+				]);
+			}
+		});
+	});
+
+	module("core / ExtendedListResponseSchema", () => {
+		test("requires immediate_subordinate_entities array", (t) => {
+			t.false(ExtendedListResponseSchema.safeParse({}).success);
+		});
+		test("accepts response without next_entity_id", (t) => {
+			t.true(ExtendedListResponseSchema.safeParse({ immediate_subordinate_entities: [] }).success);
+		});
+		test("accepts response with next_entity_id present", (t) => {
+			t.true(
+				ExtendedListResponseSchema.safeParse({
+					immediate_subordinate_entities: [{ id: "https://a.example.com" }],
+					next_entity_id: "https://b.example.com",
+				}).success,
+			);
+		});
+		test("rejects invalid next_entity_id", (t) => {
+			t.false(
+				ExtendedListResponseSchema.safeParse({
+					immediate_subordinate_entities: [],
+					next_entity_id: "not a url",
+				}).success,
+			);
+		});
+	});
+
+	// ── extended subordinate listing — client ──────────────────────────
+	module("core / fetchExtendedSubordinatesList", () => {
+		test("happy path: returns parsed response with entity ids", async (t) => {
+			const body = {
+				immediate_subordinate_entities: [
+					{ id: "https://a.example.com" },
+					{ id: "https://b.example.com" },
+				],
+			};
+			const httpClient: HttpClient = async () =>
+				new Response(JSON.stringify(body), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				});
+			const result = await fetchExtendedSubordinatesList(
+				"https://ta.example.com/federation_extended_list",
+				undefined,
+				{ httpClient },
+			);
+			t.true(result.ok);
+			if (result.ok) {
+				t.equal(result.value.immediate_subordinate_entities.length, 2);
+				t.equal(result.value.immediate_subordinate_entities[0]?.id, "https://a.example.com");
+				t.equal(result.value.next_entity_id, undefined);
+			}
+		});
+
+		test("passes all extended params on the URL", async (t) => {
+			let capturedUrl = "";
+			const httpClient: HttpClient = async (input) => {
+				capturedUrl = typeof input === "string" ? input : (input as URL).toString();
+				return new Response(JSON.stringify({ immediate_subordinate_entities: [] }), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				});
+			};
+			const result = await fetchExtendedSubordinatesList(
+				"https://ta.example.com/federation_extended_list",
+				{
+					fromEntityId: "https://x.example.com",
+					limit: 50,
+					updatedAfter: 1_700_000_000,
+					updatedBefore: 1_700_000_500,
+					auditTimestamps: true,
+					claims: [ExtendedListClaim.SubordinateStatement, ExtendedListClaim.TrustMarks],
+					entityType: ["openid_provider", "openid_relying_party"],
+					trustMarked: true,
+					trustMarkType: "https://ta.example.com/marks/audited",
+					intermediate: false,
+				},
+				{ httpClient },
+			);
+			t.true(result.ok);
+			const url = new URL(capturedUrl);
+			t.equal(url.searchParams.get("from_entity_id"), "https://x.example.com");
+			t.equal(url.searchParams.get("limit"), "50");
+			t.equal(url.searchParams.get("updated_after"), "1700000000");
+			t.equal(url.searchParams.get("updated_before"), "1700000500");
+			t.equal(url.searchParams.get("audit_timestamps"), "true");
+			t.deepEqual(url.searchParams.getAll("claims"), ["subordinate_statement,trust_marks"]);
+			t.equal(url.searchParams.get("claims"), "subordinate_statement,trust_marks");
+			t.deepEqual(url.searchParams.getAll("entity_type"), [
+				"openid_provider",
+				"openid_relying_party",
+			]);
+			t.equal(url.searchParams.get("trust_marked"), "true");
+			t.equal(url.searchParams.get("trust_mark_type"), "https://ta.example.com/marks/audited");
+			t.equal(url.searchParams.get("intermediate"), "false");
+		});
+
+		test("rejects non-positive limit before fetching", async (t) => {
+			let called = false;
+			const httpClient: HttpClient = async () => {
+				called = true;
+				return new Response("", { status: 200 });
+			};
+			const result = await fetchExtendedSubordinatesList(
+				"https://ta.example.com/federation_extended_list",
+				{ limit: 0 },
+				{ httpClient },
+			);
+			t.false(called, "did not call httpClient");
+			t.false(result.ok);
+		});
+
+		test("surfaces entity_id_not_found from 400 application/json body", async (t) => {
+			const httpClient: HttpClient = async () =>
+				new Response(
+					JSON.stringify({
+						error: "entity_id_not_found",
+						error_description: "no such entity",
+					}),
+					{ status: 400, headers: { "Content-Type": "application/json" } },
+				);
+			const result = await fetchExtendedSubordinatesList(
+				"https://ta.example.com/federation_extended_list",
+				{ fromEntityId: "https://missing.example.com" },
+				{ httpClient },
+			);
+			t.false(result.ok);
+			if (!result.ok) {
+				t.equal(result.error.code, "entity_id_not_found");
+				t.equal(result.error.description, "no such entity");
+			}
+		});
+
+		test("surfaces unsupported_parameter from 400 application/json body", async (t) => {
+			const httpClient: HttpClient = async () =>
+				new Response(JSON.stringify({ error: "unsupported_parameter" }), {
+					status: 400,
+					headers: { "Content-Type": "application/json" },
+				});
+			const result = await fetchExtendedSubordinatesList(
+				"https://ta.example.com/federation_extended_list",
+				{ auditTimestamps: true },
+				{ httpClient },
+			);
+			t.false(result.ok);
+			if (!result.ok) t.equal(result.error.code, "unsupported_parameter");
+		});
+
+		test("rejects http scheme endpoint", async (t) => {
+			const result = await fetchExtendedSubordinatesList(
+				"http://ta.example.com/federation_extended_list",
+			);
+			t.false(result.ok);
+			if (!result.ok) t.true(result.error.description.toLowerCase().includes("https"));
+		});
+
+		test("rejects unexpected Content-Type on 200", async (t) => {
+			const httpClient: HttpClient = async () =>
+				new Response("not json", {
+					status: 200,
+					headers: { "Content-Type": "text/plain" },
+				});
+			const result = await fetchExtendedSubordinatesList(
+				"https://ta.example.com/federation_extended_list",
+				undefined,
+				{ httpClient },
+			);
+			t.false(result.ok);
+			if (!result.ok) t.true(result.error.description.toLowerCase().includes("content-type"));
+		});
+
+		test("rejects 200 body that fails schema validation", async (t) => {
+			const httpClient: HttpClient = async () =>
+				new Response(JSON.stringify({ bogus: true }), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				});
+			const result = await fetchExtendedSubordinatesList(
+				"https://ta.example.com/federation_extended_list",
+				undefined,
+				{ httpClient },
+			);
+			t.false(result.ok);
+		});
+
+		test("returns next_entity_id when present", async (t) => {
+			const httpClient: HttpClient = async () =>
+				new Response(
+					JSON.stringify({
+						immediate_subordinate_entities: [{ id: "https://a.example.com" }],
+						next_entity_id: "https://b.example.com",
+					}),
+					{ status: 200, headers: { "Content-Type": "application/json" } },
+				);
+			const result = await fetchExtendedSubordinatesList(
+				"https://ta.example.com/federation_extended_list",
+				{ limit: 1 },
+				{ httpClient },
+			);
+			t.true(result.ok);
+			if (result.ok) t.equal(result.value.next_entity_id, "https://b.example.com");
+		});
+
+		test("rejects invalid URL string", async (t) => {
+			const result = await fetchExtendedSubordinatesList("not a url");
+			t.false(result.ok);
+			if (!result.ok) {
+				t.equal(result.error.code, FederationErrorCode.InvalidRequest);
+			}
+		});
+
+		test("rejects URL with fragment", async (t) => {
+			const result = await fetchExtendedSubordinatesList(
+				"https://ta.example.com/federation_extended_list#bad",
+			);
+			t.false(result.ok);
+			if (!result.ok) {
+				t.true(result.error.description.toLowerCase().includes("fragment"));
+			}
+		});
+
+		test("supports updated_after / updated_before / entityType array / trust mark params on URL", async (t) => {
+			let capturedUrl = "";
+			const httpClient: HttpClient = async (input) => {
+				capturedUrl = typeof input === "string" ? input : (input as URL).toString();
+				return new Response(JSON.stringify({ immediate_subordinate_entities: [] }), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				});
+			};
+			const result = await fetchExtendedSubordinatesList(
+				"https://ta.example.com/federation_extended_list",
+				{
+					updatedAfter: 1_700_000_000,
+					updatedBefore: 1_700_000_500,
+					entityType: ["openid_provider"],
+					trustMarked: false,
+					trustMarkType: "https://trust.example/mark",
+					intermediate: true,
+				},
+				{ httpClient },
+			);
+			t.true(result.ok);
+			const url = new URL(capturedUrl);
+			t.equal(url.searchParams.get("updated_after"), "1700000000");
+			t.equal(url.searchParams.get("updated_before"), "1700000500");
+			t.equal(url.searchParams.get("entity_type"), "openid_provider");
+			t.equal(url.searchParams.get("trust_marked"), "false");
+			t.equal(url.searchParams.get("trust_mark_type"), "https://trust.example/mark");
+			t.equal(url.searchParams.get("intermediate"), "true");
+		});
+
+		test("surfaces HTTP 500 as a network error", async (t) => {
+			const httpClient: HttpClient = async () =>
+				new Response("oops", {
+					status: 500,
+					headers: { "Content-Type": "text/plain" },
+				});
+			const result = await fetchExtendedSubordinatesList(
+				"https://ta.example.com/federation_extended_list",
+				undefined,
+				{ httpClient },
+			);
+			t.false(result.ok);
+			if (!result.ok) t.true(result.error.description.includes("500"));
+		});
+
+		test("400 with non-JSON content type falls back to generic invalid_request", async (t) => {
+			const httpClient: HttpClient = async () =>
+				new Response("not json", {
+					status: 400,
+					headers: { "Content-Type": "text/plain" },
+				});
+			const result = await fetchExtendedSubordinatesList(
+				"https://ta.example.com/federation_extended_list",
+				undefined,
+				{ httpClient },
+			);
+			t.false(result.ok);
+			if (!result.ok) {
+				t.equal(result.error.code, FederationErrorCode.InvalidRequest);
+			}
+		});
+
+		test("400 with unknown error code is normalised to invalid_request", async (t) => {
+			const httpClient: HttpClient = async () =>
+				new Response(JSON.stringify({ error: "some_other_code" }), {
+					status: 400,
+					headers: { "Content-Type": "application/json" },
+				});
+			const result = await fetchExtendedSubordinatesList(
+				"https://ta.example.com/federation_extended_list",
+				undefined,
+				{ httpClient },
+			);
+			t.false(result.ok);
+			if (!result.ok) {
+				t.equal(result.error.code, FederationErrorCode.InvalidRequest);
+			}
+		});
+
+		test("200 with non-JSON body is rejected as invalid JSON", async (t) => {
+			const httpClient: HttpClient = async () =>
+				new Response("<html>not json</html>", {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				});
+			const result = await fetchExtendedSubordinatesList(
+				"https://ta.example.com/federation_extended_list",
+				undefined,
+				{ httpClient },
+			);
+			t.false(result.ok);
+			if (!result.ok) {
+				t.true(result.error.description.toLowerCase().includes("valid json"));
+			}
+		});
+
+		test("respects an aborted AbortSignal", async (t) => {
+			const httpClient: HttpClient = async (_url, init) => {
+				if (init?.signal?.aborted) {
+					throw new DOMException("aborted", "AbortError");
+				}
+				return new Response(JSON.stringify({ immediate_subordinate_entities: [] }), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				});
+			};
+			const ctl = new AbortController();
+			ctl.abort();
+			const result = await fetchExtendedSubordinatesList(
+				"https://ta.example.com/federation_extended_list",
+				undefined,
+				{ httpClient, signal: ctl.signal },
+			);
+			t.false(result.ok);
+			if (!result.ok) {
+				t.equal(result.error.code, InternalErrorCode.Timeout);
+			}
+		});
+
+		test("propagates network-layer error", async (t) => {
+			const httpClient: HttpClient = async () => {
+				throw new TypeError("connection refused");
+			};
+			const result = await fetchExtendedSubordinatesList(
+				"https://ta.example.com/federation_extended_list",
+				undefined,
+				{ httpClient },
+			);
+			t.false(result.ok);
+			if (!result.ok) {
+				t.equal(result.error.code, InternalErrorCode.Network);
+				t.equal(result.error.description, "connection refused");
+			}
+		});
+
+		test("uses default page request (no params) without limit set", async (t) => {
+			let capturedUrl = "";
+			const httpClient: HttpClient = async (input) => {
+				capturedUrl = typeof input === "string" ? input : (input as URL).toString();
+				return new Response(JSON.stringify({ immediate_subordinate_entities: [] }), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				});
+			};
+			await fetchExtendedSubordinatesList(
+				"https://ta.example.com/federation_extended_list",
+				undefined,
+				{ httpClient },
+			);
+			const url = new URL(capturedUrl);
+			t.equal(url.searchParams.get("limit"), null);
+			t.equal(url.searchParams.get("from_entity_id"), null);
+		});
+	});
 };
