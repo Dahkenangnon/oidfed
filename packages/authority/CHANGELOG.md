@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-18
+
 ### Added
 
 - New `/federation_extended_list` endpoint implementing the OpenID Federation Extended Subordinate Listing 1.0 (draft-02) specification: cursor pagination (`from_entity_id` / `next_entity_id`), `limit` with `defaultPageSize` / `maxPageSize` clamps, time-window filtering (`updated_after`, `updated_before`), audit timestamps (`registered`, `updated`), and bulk per-entity claim retrieval. Inherits all base `/federation_list` filters.
