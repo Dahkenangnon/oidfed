@@ -8,6 +8,7 @@ import * as fetchCmd from "./commands/fetch.js";
 import * as healthCmd from "./commands/health.js";
 import * as keygenCmd from "./commands/keygen.js";
 import * as listCmd from "./commands/list.js";
+import * as listExtendedCmd from "./commands/list-extended.js";
 import * as resolveCmd from "./commands/resolve.js";
 import * as signCmd from "./commands/sign.js";
 import * as trustMarkListCmd from "./commands/trust-mark-list.js";
@@ -80,6 +81,7 @@ export async function run(argv: string[]): Promise<number> {
 	expiryCmd.register(program, { httpClient, formatter, logger, config });
 	fetchCmd.register(program, { httpClient, formatter, logger });
 	listCmd.register(program, { httpClient, formatter, logger });
+	listExtendedCmd.register(program, { httpClient, formatter, logger });
 	trustMarkStatusCmd.register(program, { httpClient, formatter, logger });
 	trustMarkListCmd.register(program, { httpClient, formatter, logger });
 	healthCmd.register(program, { httpClient, formatter, logger, readFile: fileReader });
