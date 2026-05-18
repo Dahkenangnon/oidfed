@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-18
+
 ### Added
 
 - New `list-extended <authority-id>` command targeting the Extended Subordinate Listing endpoint with auto-discovery of `federation_extended_list_endpoint`. Flags: `--from`, `--limit`, `--updated-after`, `--updated-before`, `--audit-timestamps`, `--claims` (repeatable), `--entity-type`, `--trust-marked`, `--trust-mark-type`, `--intermediate`, `--extended-list-endpoint` (discovery override). Numeric option values are validated.
