@@ -7,6 +7,8 @@ export type {
 	KeyState,
 	KeyStore,
 	ListFilter,
+	ListPage,
+	ListPageOptions,
 	ManagedKey,
 	SubordinateRecord,
 	SubordinateStore,

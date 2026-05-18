@@ -2,6 +2,15 @@ export type { RegistrationProtocolAdapter } from "@oidfed/core";
 export { createAuthenticatedHandler } from "./client-auth.js";
 export type { HandlerContext } from "./context.js";
 export { createEntityConfigurationHandler } from "./entity-configuration.js";
+export {
+	createExtendedListHandler,
+	type ExtendedListingConfig,
+} from "./extended-list.js";
+export {
+	type ClaimExtractor,
+	EXTENDED_LIST_CLAIM_EXTRACTORS,
+	extractClaims,
+} from "./extended-list-claims.js";
 export { createFetchHandler } from "./fetch.js";
 export {
 	errorResponse,

@@ -1,8 +1,11 @@
-import type { EntityId, JWK, JWKSet } from "@oidfed/core";
+import type { Clock, EntityId, JWK, JWKSet } from "@oidfed/core";
+import { nowSeconds } from "@oidfed/core";
 import { stripPrivateFields } from "../endpoints/helpers.js";
 import type {
 	KeyStore,
 	ListFilter,
+	ListPage,
+	ListPageOptions,
 	ManagedKey,
 	SubordinateRecord,
 	SubordinateStore,
@@ -17,14 +20,23 @@ import type {
  * For production, implement {@link SubordinateStore} with a persistent backend
  * (PostgreSQL, SQLite, etc.). See `docs/storage-guide.md` for guidance.
  */
+export interface MemorySubordinateStoreOptions {
+	readonly clock?: Clock;
+}
+
 export class MemorySubordinateStore implements SubordinateStore {
 	private readonly records = new Map<string, SubordinateRecord>();
+	private readonly clock: Clock | undefined;
+
+	constructor(options?: MemorySubordinateStoreOptions) {
+		this.clock = options?.clock;
+	}
 
 	async get(entityId: EntityId): Promise<SubordinateRecord | undefined> {
 		return this.records.get(entityId);
 	}
 
-	async list(filter?: ListFilter): Promise<SubordinateRecord[]> {
+	async list(filter?: ListFilter, options?: ListPageOptions): Promise<ListPage> {
 		let results = Array.from(this.records.values());
 
 		if (filter?.entityTypes && filter.entityTypes.length > 0) {
@@ -36,7 +48,31 @@ export class MemorySubordinateStore implements SubordinateStore {
 			results = results.filter((r) => (r.isIntermediate ?? false) === filter.intermediate);
 		}
 
-		return results;
+		if (options?.updatedAfter !== undefined) {
+			const after = options.updatedAfter;
+			results = results.filter((r) => r.updatedAt >= after);
+		}
+
+		if (options?.updatedBefore !== undefined) {
+			const before = options.updatedBefore;
+			results = results.filter((r) => r.updatedAt <= before);
+		}
+
+		results.sort((a, b) => (a.entityId < b.entityId ? -1 : a.entityId > b.entityId ? 1 : 0));
+
+		if (options?.cursor !== undefined) {
+			const cursor = options.cursor;
+			results = results.filter((r) => r.entityId >= cursor);
+		}
+
+		const limit = options?.limit;
+		if (limit !== undefined && results.length > limit) {
+			const items = results.slice(0, limit);
+			const next = results[limit];
+			return next !== undefined ? { items, nextCursor: next.entityId } : { items };
+		}
+
+		return { items: results };
 	}
 
 	async add(record: SubordinateRecord): Promise<void> {
@@ -55,7 +91,7 @@ export class MemorySubordinateStore implements SubordinateStore {
 			...existing,
 			...updates,
 			entityId: existing.entityId,
-			updatedAt: Date.now(),
+			updatedAt: nowSeconds(this.clock),
 		});
 	}
 
@@ -259,5 +295,13 @@ export class MemoryTrustMarkStore implements TrustMarkStore {
 			}
 		}
 		return false;
+	}
+
+	async listForSubject(subject: EntityId): Promise<TrustMarkRecord[]> {
+		const out: TrustMarkRecord[] = [];
+		for (const record of this.records.values()) {
+			if (record.subject === subject && record.active) out.push(record);
+		}
+		return out;
 	}
 }

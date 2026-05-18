@@ -52,19 +52,26 @@ export function createFetchHandler(ctx: HandlerContext): (request: Request) => P
 	};
 }
 
-/** Builds and signs a subordinate statement JWT for the given record. */
+/**
+ * Builds and signs a subordinate statement JWT for the given record. When
+ * `now` is supplied, it is used verbatim as the JWT `iat` (and `exp` is derived
+ * from it) — this lets callers (e.g. the extended-listing handler) snapshot a
+ * single timestamp for an entire page so synthetic `iat`/`exp` claims align
+ * with the JWT.
+ */
 export async function buildSubordinateStatement(
 	ctx: HandlerContext,
 	record: SubordinateRecord,
+	now?: number,
 ): Promise<string> {
 	const { key: signingKey, kid } = await ctx.getSigningKey();
-	const now = nowSeconds(ctx.options?.clock);
+	const iat = now ?? nowSeconds(ctx.options?.clock);
 
 	const payload: Record<string, unknown> = {
 		iss: ctx.entityId,
 		sub: record.entityId,
-		iat: now,
-		exp: now + (ctx.subordinateStatementTtlSeconds ?? DEFAULT_ENTITY_STATEMENT_TTL_SECONDS),
+		iat,
+		exp: iat + (ctx.subordinateStatementTtlSeconds ?? DEFAULT_ENTITY_STATEMENT_TTL_SECONDS),
 		jwks: record.jwks,
 	};
 
@@ -72,6 +79,10 @@ export async function buildSubordinateStatement(
 	if (record.metadataPolicy) payload.metadata_policy = record.metadataPolicy;
 	if (record.constraints) payload.constraints = record.constraints;
 	if (record.sourceEndpoint) payload.source_endpoint = record.sourceEndpoint;
+	if (record.crit && record.crit.length > 0) payload.crit = [...record.crit];
+	if (record.metadataPolicyCrit && record.metadataPolicyCrit.length > 0) {
+		payload.metadata_policy_crit = [...record.metadataPolicyCrit];
+	}
 
 	return signEntityStatement(payload, signingKey, {
 		kid,

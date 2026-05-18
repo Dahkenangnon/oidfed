@@ -36,7 +36,8 @@ export function createListHandler(ctx: HandlerContext): (request: Request) => Pr
 		if (intermediate !== null) filter.intermediate = intermediate === "true";
 
 		try {
-			let records = await ctx.subordinateStore.list(filter);
+			const page = await ctx.subordinateStore.list(filter);
+			let records = page.items;
 
 			if (trustMarked === "true" && ctx.trustMarkStore) {
 				const filtered = [];

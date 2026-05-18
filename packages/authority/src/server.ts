@@ -4,8 +4,10 @@ import type {
 	EntityType,
 	EntityTypeMetadataMap,
 	FederationEntityMetadata,
+	FederationError,
 	FederationOptions,
 	JWK,
+	Result,
 	TrustAnchorSet,
 	TrustMarkOwner,
 	TrustMarkRef,
@@ -13,9 +15,13 @@ import type {
 } from "@oidfed/core";
 import {
 	decodeEntityStatement,
+	err,
 	FederationEndpoint,
+	FederationErrorCode,
+	federationError,
 	isOk,
 	isValidEntityId,
+	ok,
 	signTrustMarkDelegation,
 	WELL_KNOWN_OPENID_FEDERATION,
 } from "@oidfed/core";
@@ -25,6 +31,10 @@ import {
 	buildEntityConfiguration,
 	createEntityConfigurationHandler,
 } from "./endpoints/entity-configuration.js";
+import {
+	createExtendedListHandler,
+	type ExtendedListingConfig,
+} from "./endpoints/extended-list.js";
 import { buildSubordinateStatement, createFetchHandler } from "./endpoints/fetch.js";
 import { SECURITY_HEADERS } from "./endpoints/helpers.js";
 import { buildHistoricalKeys, createHistoricalKeysHandler } from "./endpoints/historical-keys.js";
@@ -36,6 +46,26 @@ import { createTrustMarkListHandler } from "./endpoints/trust-mark-list.js";
 import { createTrustMarkStatusHandler } from "./endpoints/trust-mark-status.js";
 import { rotateKey } from "./keys/index.js";
 import type { KeyStore, ListFilter, SubordinateStore, TrustMarkStore } from "./storage/types.js";
+
+/** Parameters accepted by {@link AuthorityServer.listSubordinatesExtended}. */
+export interface ExtendedListInProcessParams {
+	fromEntityId?: EntityId;
+	limit?: number;
+	updatedAfter?: number;
+	updatedBefore?: number;
+	auditTimestamps?: boolean;
+	claims?: ReadonlyArray<string>;
+	entityType?: EntityType | ReadonlyArray<EntityType>;
+	trustMarked?: boolean;
+	trustMarkType?: string;
+	intermediate?: boolean;
+}
+
+/** Decoded body returned by {@link AuthorityServer.listSubordinatesExtended}. */
+export interface ExtendedListInProcessResult {
+	immediate_subordinate_entities: Array<Record<string, unknown> & { id: string }>;
+	next_entity_id?: string;
+}
 
 export interface AuthorityConfig {
 	/** The entity identifier (URL) for this authority. */
@@ -76,12 +106,28 @@ export interface AuthorityConfig {
 	registrationConfig?: {
 		generateClientSecret?: (sub: EntityId) => Promise<string | undefined>;
 	};
+	/**
+	 * Configuration for the Extended Subordinate Listing endpoint. Set
+	 * `enabled: false` to keep the endpoint disabled (router returns 404) and
+	 * omit `federation_extended_list_endpoint` from your metadata. Defaults
+	 * enable the endpoint with `maxPageSize=500`, `defaultPageSize=100`,
+	 * time-filters and audit timestamps supported.
+	 */
+	extendedListing?: ExtendedListingConfig;
 }
 
 export interface AuthorityServer {
 	getEntityConfiguration(): Promise<string>;
 	getSubordinateStatement(sub: EntityId): Promise<string>;
 	listSubordinates(filter?: ListFilter): Promise<EntityId[]>;
+	/**
+	 * Direct access to the Extended Subordinate Listing response (skipping HTTP).
+	 * Mirrors the wire-level handler — used for in-process pagination,
+	 * server-side rendering, and tests.
+	 */
+	listSubordinatesExtended(
+		params?: ExtendedListInProcessParams,
+	): Promise<Result<ExtendedListInProcessResult, FederationError>>;
 	resolveEntity(sub: EntityId, ta?: EntityId): Promise<string>;
 	getTrustMarkStatus(trustMark: string): Promise<TrustMarkStatusResponsePayload>;
 	listTrustMarkedEntities(trustMarkType: string): Promise<string[]>;
@@ -162,6 +208,7 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 	const ecHandler = createEntityConfigurationHandler(ctx);
 	const fetchHandler = createFetchHandler(ctx);
 	const listHandler = createListHandler(ctx);
+	const extendedListHandler = createExtendedListHandler(ctx, config.extendedListing);
 	const historicalKeysHandler = createHistoricalKeysHandler(ctx);
 	const trustMarkStatusHandler = createTrustMarkStatusHandler(ctx);
 	const trustMarkListHandler = createTrustMarkListHandler(ctx);
@@ -174,6 +221,10 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 		[WELL_KNOWN_OPENID_FEDERATION, ecHandler], // Entity Configuration — never authenticated
 		[FederationEndpoint.Fetch, withAuth(fetchHandler, meta.federation_fetch_endpoint_auth_methods)],
 		[FederationEndpoint.List, withAuth(listHandler, meta.federation_list_endpoint_auth_methods)],
+		[
+			FederationEndpoint.ExtendedList,
+			withAuth(extendedListHandler, meta.federation_extended_list_endpoint_auth_methods),
+		],
 		[
 			FederationEndpoint.HistoricalKeys,
 			withAuth(historicalKeysHandler, meta.federation_historical_keys_endpoint_auth_methods),
@@ -249,8 +300,60 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 		},
 
 		async listSubordinates(filter?: ListFilter): Promise<EntityId[]> {
-			const records = await config.subordinateStore.list(filter);
-			return records.map((r) => r.entityId);
+			const page = await config.subordinateStore.list(filter);
+			return page.items.map((r) => r.entityId);
+		},
+
+		async listSubordinatesExtended(
+			params?: ExtendedListInProcessParams,
+		): Promise<Result<ExtendedListInProcessResult, FederationError>> {
+			const url = new URL(FederationEndpoint.ExtendedList, config.entityId);
+			if (params?.fromEntityId !== undefined) {
+				url.searchParams.set("from_entity_id", params.fromEntityId);
+			}
+			if (params?.limit !== undefined) {
+				url.searchParams.set("limit", String(params.limit));
+			}
+			if (params?.updatedAfter !== undefined) {
+				url.searchParams.set("updated_after", String(params.updatedAfter));
+			}
+			if (params?.updatedBefore !== undefined) {
+				url.searchParams.set("updated_before", String(params.updatedBefore));
+			}
+			if (params?.auditTimestamps !== undefined) {
+				url.searchParams.set("audit_timestamps", params.auditTimestamps ? "true" : "false");
+			}
+			if (params?.claims !== undefined) {
+				const joined = Array.from(params.claims)
+					.filter((c) => c.length > 0)
+					.join(",");
+				if (joined.length > 0) url.searchParams.set("claims", joined);
+			}
+			if (params?.entityType !== undefined) {
+				const types = Array.isArray(params.entityType) ? params.entityType : [params.entityType];
+				for (const t of types) url.searchParams.append("entity_type", t as string);
+			}
+			if (params?.trustMarked !== undefined) {
+				url.searchParams.set("trust_marked", params.trustMarked ? "true" : "false");
+			}
+			if (params?.trustMarkType !== undefined) {
+				url.searchParams.set("trust_mark_type", params.trustMarkType);
+			}
+			if (params?.intermediate !== undefined) {
+				url.searchParams.set("intermediate", params.intermediate ? "true" : "false");
+			}
+			const req = new Request(url.toString());
+			const res = await extendedListHandler(req);
+			if (res.status !== 200) {
+				const body = (await res.json()) as { error?: string; error_description?: string };
+				const knownCodes = new Set<string>(Object.values(FederationErrorCode));
+				const code: FederationErrorCode =
+					body.error !== undefined && knownCodes.has(body.error)
+						? (body.error as FederationErrorCode)
+						: FederationErrorCode.ServerError;
+				return err(federationError(code, body.error_description ?? code));
+			}
+			return ok((await res.json()) as ExtendedListInProcessResult);
 		},
 
 		async resolveEntity(sub: EntityId, _ta?: EntityId): Promise<string> {
