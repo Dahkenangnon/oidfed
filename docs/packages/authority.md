@@ -67,6 +67,7 @@ interface AuthorityServer {
   getEntityConfiguration(): Promise<string>;
   getSubordinateStatement(sub: EntityId): Promise<string>;
   listSubordinates(filter?: ListFilter): Promise<EntityId[]>;
+  listSubordinatesExtended(params?: ExtendedListInProcessParams): Promise<ExtendedListInProcessResult>;
   resolveEntity(sub: EntityId, ta?: EntityId): Promise<string>;
   getTrustMarkStatus(trustMark: string): Promise<TrustMarkStatusResponsePayload>;
   listTrustMarkedEntities(trustMarkType: string): Promise<string[]>;
@@ -85,6 +86,7 @@ interface AuthorityServer {
 | `/.well-known/openid-federation` | GET | Entity Configuration |
 | `/federation_fetch` | GET | Subordinate Statement |
 | `/federation_list` | GET | List subordinates |
+| `/federation_extended_list` | GET | Paginated subordinate listing with audit timestamps and bulk claim retrieval (OpenID Federation Extended Subordinate Listing 1.0) |
 | `/federation_resolve` | GET | Resolve trust chain |
 | `/federation_registration` | POST | Explicit registration (§12) |
 | `/federation_trust_mark_status` | POST | Trust mark validity |
@@ -115,10 +117,29 @@ import type {
 ```ts
 interface SubordinateStore {
   get(entityId: EntityId): Promise<SubordinateRecord | undefined>;
-  list(filter?: ListFilter): Promise<SubordinateRecord[]>;
+  /**
+   * Records MUST be returned in deterministic order (lexicographic by entityId).
+   * When `options.cursor` is provided, results resume from that entityId (inclusive).
+   * When `options.limit` caps the page, `nextCursor` is the entityId of the first
+   * record that would have appeared after the returned page, and is undefined when
+   * the page exhausts the filtered set.
+   */
+  list(filter?: ListFilter, options?: ListPageOptions): Promise<ListPage>;
   add(record: SubordinateRecord): Promise<void>;
   update(entityId: EntityId, updates: Partial<SubordinateRecord>): Promise<void>;
   remove(entityId: EntityId): Promise<void>;
+}
+
+interface ListPageOptions {
+  cursor?: EntityId;       // Resume cursor (entityId, inclusive)
+  limit?: number;          // Maximum records returned in this page
+  updatedAfter?: number;   // Return only records with updatedAt ≥ this NumericDate
+  updatedBefore?: number;  // Return only records with updatedAt ≤ this NumericDate
+}
+
+interface ListPage {
+  readonly items: SubordinateRecord[];
+  readonly nextCursor?: EntityId;
 }
 
 // Key lifecycle: pending → active → retiring → revoked
@@ -139,8 +160,58 @@ interface TrustMarkStore {
   revoke(trustMarkType: string, subject: EntityId): Promise<void>;
   isActive(trustMarkType: string, subject: EntityId): Promise<boolean>;
   hasAnyActive(subject: EntityId): Promise<boolean>;
+  /** Optional: enumerate all active trust marks for a subject across all types.
+   *  Used by `/federation_extended_list` when `claims=trust_marks` is requested. */
+  listForSubject?(subject: EntityId): Promise<TrustMarkRecord[]>;
 }
 ```
+
+### Extended Subordinate Listing
+
+The `/federation_extended_list` endpoint implements the OpenID Federation Extended Subordinate Listing specification (draft-02). It is enabled by default and can be configured per authority:
+
+```ts
+import { createAuthorityServer } from "@oidfed/authority";
+
+const server = createAuthorityServer({
+  // ...
+  metadata: {
+    federation_entity: {
+      // Publish the endpoint in your Entity Configuration so peers can discover it:
+      federation_extended_list_endpoint: "https://ta.example.org/federation_extended_list",
+      // ...
+    },
+  },
+  extendedListing: {
+    enabled: true,                       // false → endpoint returns 404
+    defaultPageSize: 100,                // page size when client omits `limit`
+    maxPageSize: 500,                    // hard cap; client `limit` is clamped to this
+    supportTimeFilters: true,            // honour `updated_after` / `updated_before`
+    supportAuditTimestamps: true,        // honour `audit_timestamps`
+    defaultClaims: ["subordinate_statement"], // substituted when the client omits `claims`
+    maxStorePagesPerRequest: 16,         // inner store-fetch cap when post-filters drop records
+    storeBatchSize: 100,                 // inner store batch size (defaults to defaultPageSize)
+  },
+});
+```
+
+Request parameters (all OPTIONAL):
+
+| Parameter | Type | Notes |
+|---|---|---|
+| `from_entity_id` | Entity Identifier | Resume cursor (inclusive). Unknown value → `400 entity_id_not_found`. |
+| `limit` | positive integer | Page size; server clamps to `maxPageSize`. When omitted, `defaultPageSize` applies. |
+| `updated_after` | NumericDate (seconds) | Filter to records updated at or after this time. When present without `audit_timestamps`, the response auto-includes `registered`/`updated` per entity. |
+| `updated_before` | NumericDate (seconds) | Filter to records updated at or before this time. Same auto-include behaviour as `updated_after`. |
+| `audit_timestamps` | boolean | When `true`, every entity includes `registered` and `updated`. Explicit `audit_timestamps=false` suppresses the auto-include from `updated_after`/`updated_before`. |
+| `claims` | array of strings | Comma-separated (`?claims=a,b`) or repeated (`?claims=a&claims=b`) — both forms accepted. Supported top-level Subordinate Statement claims: `subordinate_statement`, `iss`, `sub`, `iat`, `exp`, `jwks`, `metadata`, `metadata_policy`, `constraints`, `crit`, `metadata_policy_crit`, `source_endpoint`, `trust_marks`. Other top-level Entity Statement claims (e.g. `authority_hints`, `trust_mark_issuers`) are intentionally out of scope and silently dropped per the spec's "if available" wording. When the client does NOT send `claims` at all, `defaultClaims` is substituted (default `["subordinate_statement"]`). When the client sends `claims=` (even empty), no substitution happens. |
+| `entity_type`, `trust_marked`, `trust_mark_type`, `intermediate` | inherited from `/federation_list` | Same semantics as the base endpoint. |
+
+Response: `200 application/json` containing `immediate_subordinate_entities` (array) and OPTIONAL `next_entity_id` cursor. Synthetic `iat`/`exp` claims are snapshot once per request and align with the `iat`/`exp` inside the same response's `subordinate_statement` JWT.
+
+Error responses use `400 application/json` with `error` in `{ entity_id_not_found, unsupported_parameter, invalid_request }`. Note: requesting `claims=trust_marks` against a deployment whose `TrustMarkStore` does not implement `listForSubject(subject)` returns `400 unsupported_parameter` (operator-facing policy; the spec permits silent omission via "if available", but we surface misconfiguration explicitly).
+
+In-process access (skipping HTTP) is available via `server.listSubordinatesExtended(params)`, returning `Promise<Result<ExtendedListInProcessResult, FederationError>>` so error codes are preserved instead of being thrown.
 
 See [storage-guide.md](../guide/storage-guide.md) for production implementations.
 

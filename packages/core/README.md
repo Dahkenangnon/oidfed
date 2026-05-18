@@ -2,7 +2,7 @@
 
 Federation primitives for JavaScript — entity statements, trust chain resolution, metadata policy, and cryptographic verification. The foundational layer of the complete [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) implementation.
 
-> **Status:** `v0.2.0` pre-release — API may change before the first stable `1.0` release.
+> **Status:** prerelease — API may change before the upcoming stable `1.0.0` release.
 
 ## Install
 
@@ -46,6 +46,7 @@ for (const chain of result.chains) {
 - Constraint checking — path length, naming constraints, allowed entity types
 - Typed Zod schemas for all federation data structures
 - Trust mark validation and delegation signing
+- Remote-endpoint clients — `fetchListSubordinates`, `fetchExtendedSubordinatesList` (paginated, with bulk claim retrieval), `fetchResolveResponse`, `fetchHistoricalKeys`, `fetchTrustMarkList`
 - LRU cache, Result type, pluggable storage interfaces
 - Fetch-compatible HTTP primitives (`Request` → `Response`)
 

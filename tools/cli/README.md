@@ -2,7 +2,7 @@
 
 Command-line interface for inspecting, validating, and debugging [OpenID Federation](https://openid.net/specs/openid-federation-1_0.html) deployments — resolve trust chains, decode entity statements, verify signatures, and more.
 
-> **Status:** `v0.2.0` pre-release — API may change before the first stable `1.0` release.
+> **Status:** prerelease — API may change before the upcoming stable `1.0.0` release.
 
 ## Install
 
@@ -33,6 +33,11 @@ oidfed keygen --alg ES256
 
 # Health check
 oidfed health https://ta.example.org
+
+# Page through a large federation with extended listing
+oidfed list-extended https://ta.example.org \
+  --limit 50 --audit-timestamps \
+  --claims subordinate_statement --claims trust_marks
 ```
 
 ## Commands
@@ -42,6 +47,7 @@ oidfed health https://ta.example.org
 | `entity <id>` | Fetch and display an entity configuration |
 | `fetch <id>` | Fetch a subordinate statement |
 | `list <id>` | List subordinate entities |
+| `list-extended <id>` | Paginated subordinate listing with audit timestamps and bulk claim retrieval |
 | `resolve <id>` | Resolve and validate trust chains |
 | `chain <id>` | Resolve trust chains |
 | `validate <jwt...>` | Validate a trust chain from JWTs |

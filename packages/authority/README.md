@@ -2,7 +2,7 @@
 
 Trust Anchor and Intermediate Authority operations — subordinate management, statement issuance, federation endpoint serving, and policy enforcement for the complete [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) implementation.
 
-> **Status:** `v0.2.0` pre-release — API may change before the first stable `1.0` release.
+> **Status:** prerelease — API may change before the upcoming stable `1.0.0` release.
 
 ## Install
 
@@ -29,6 +29,8 @@ const server = createAuthorityServer({
     federation_entity: {
       federation_fetch_endpoint: "https://ta.example.org/federation_fetch",
       federation_list_endpoint: "https://ta.example.org/federation_list",
+      federation_extended_list_endpoint:
+        "https://ta.example.org/federation_extended_list",
     },
   },
   subordinateStore: new MemorySubordinateStore(),
@@ -41,11 +43,17 @@ const handler = server.handler(); // fetch-compatible (Request → Response)
 ## What's Included
 
 - All spec-defined federation endpoints as a single fetch-compatible handler
-- Subordinate management — add, update, remove, list
+- Subordinate management — add, update, remove, list (ordered, paginated)
+- Extended Subordinate Listing (`/federation_extended_list`) — cursor pagination, time-window filtering, audit timestamps, and bulk per-entity claim retrieval (signed subordinate statements, trust marks, metadata, …) per the [OpenID Federation Extended Subordinate Listing](https://openid.net/specs/openid-federation-extended-listing-1_0.html) spec
 - Key lifecycle — pending → active → retiring → revoked
 - Trust mark issuance, delegation, and status checking
 - Middleware composition for logging, rate limiting, auth
 - Pluggable storage interfaces (memory implementations included)
+
+## Breaking changes from 0.2.x
+
+- `SubordinateStore.list(filter)` now returns `Promise<{ items: SubordinateRecord[]; nextCursor?: EntityId }>` (was `Promise<SubordinateRecord[]>`) and accepts a second `ListPageOptions` argument with `cursor`, `limit`, `updatedAfter`, `updatedBefore`. Custom store implementations MUST be migrated to the new shape; see [docs/packages/authority.md](https://github.com/Dahkenangnon/oidfed/blob/main/docs/packages/authority.md#storage-interfaces).
+- `TrustMarkStore.listForSubject?(subject)` is a new OPTIONAL method consumed only by `/federation_extended_list` with `claims=trust_marks`.
 
 ## Documentation
 

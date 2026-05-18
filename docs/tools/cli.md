@@ -34,6 +34,7 @@ pnpm oidfed <command>
 | `entity <entity-id>` | Fetch and display an entity configuration |
 | `fetch <authority-id>` | Fetch a subordinate statement from an authority |
 | `list <authority-id>` | List subordinate entities of an authority |
+| `list-extended <authority-id>` | Paginated subordinate listing with audit timestamps and bulk claim retrieval (`/federation_extended_list`) |
 | `resolve <entity-id>` | Resolve and validate trust chains for an entity |
 
 ### Trust
@@ -93,6 +94,20 @@ Override with `-c /path/to/config.yaml` or per-option flags.
 ```bash
 # Fetch an entity configuration
 oidfed entity https://ta.example.org
+
+# Page through subordinates of a large TA, embedding signed subordinate statements
+oidfed list-extended https://ta.example.org \
+  --limit 50 \
+  --audit-timestamps \
+  --claims subordinate_statement --claims trust_marks
+
+# Resume from a cursor returned by the previous page
+oidfed list-extended https://ta.example.org \
+  --from https://leaf-100.example.org --limit 50
+
+# Filter to entities updated in a time window
+oidfed list-extended https://ta.example.org \
+  --updated-after 1700000000 --updated-before 1700604800
 
 # Resolve and validate a trust chain
 oidfed resolve https://rp.example.com
