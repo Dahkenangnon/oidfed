@@ -2,7 +2,7 @@
 
 OpenID Connect and OAuth 2.0 federation flows — automatic and explicit client registration, Request Object validation, and RP/OP metadata processing as defined in [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html).
 
-> **Status:** `v0.2.0` pre-release — API may change before the first stable `1.0` release.
+> **Status:** prerelease — API may change before the upcoming stable `1.0.0` release.
 
 ## Install
 

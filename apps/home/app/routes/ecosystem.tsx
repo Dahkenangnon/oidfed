@@ -328,30 +328,49 @@ const specDocs = [
 		status: "Final",
 		tone: "success" as const,
 		href: "https://openid.net/specs/openid-federation-1_0.html",
+		implemented: true,
 	},
 	{
 		label: "OpenID Federation 1.1",
 		status: "Final",
 		tone: "success" as const,
 		href: "https://openid.net/specs/openid-federation-1_1.html",
+		implemented: true,
 	},
 	{
 		label: "OpenID Federation for OpenID Connect 1.1",
 		status: "Final",
 		tone: "success" as const,
 		href: "https://openid.net/specs/openid-federation-connect-1_1.html",
+		implemented: true,
 	},
 	{
-		label: "OpenID Federation Wallet Architectures 1.0",
-		status: "Draft",
-		tone: "warn" as const,
-		href: "https://openid.net/specs/openid-federation-wallet-1_0.html",
-	},
-	{
-		label: "OpenID Federation Extended Listing 1.0",
-		status: "Draft",
+		label: "OpenID Federation Extended Subordinate Listing 1.0",
+		status: "Draft 02",
 		tone: "warn" as const,
 		href: "https://openid.net/specs/openid-federation-extended-listing-1_0.html",
+		implemented: true,
+	},
+	{
+		label: "OpenID Federation Entity Collection 1.0",
+		status: "Draft 00",
+		tone: "warn" as const,
+		href: "https://openid.net/specs/openid-federation-entity-collection-1_0.html",
+		implemented: false,
+	},
+	{
+		label: "OpenID Federation for Wallet Architectures 1.0",
+		status: "Draft 05",
+		tone: "warn" as const,
+		href: "https://openid.net/specs/openid-federation-wallet-1_0.html",
+		implemented: false,
+	},
+	{
+		label: "ACME with OpenID Federation 1.0",
+		status: "IETF Draft",
+		tone: "warn" as const,
+		href: "https://datatracker.ietf.org/doc/draft-ietf-acme-openid-federation/",
+		implemented: false,
 	},
 ];
 
@@ -823,6 +842,18 @@ function SpecStatus() {
 											</div>
 										</div>
 										<div className="flex items-center gap-2">
+											{doc.implemented ? (
+												<Badge
+													variant="default"
+													className="bg-brand-500 font-mono text-[10px] text-white hover:bg-brand-600"
+												>
+													✓ Implemented
+												</Badge>
+											) : (
+												<Badge variant="outline" className="font-mono text-[10px] text-muted-foreground">
+													Tracked
+												</Badge>
+											)}
 											<Badge
 												variant={doc.tone === "success" ? "secondary" : "outline"}
 												className="font-mono text-[10px]"

@@ -34,11 +34,13 @@
 
 ## Related Specifications
 
-- [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) — this library's target spec.
-- [OpenID Federation 1.1](https://openid.net/specs/openid-federation-1_1.html) *(final)* — protocol-independent successor layer (Entity Statements, Trust Chains, Metadata, Policies, Trust Marks, Federation Endpoints).
-- [OpenID Federation for OpenID Connect 1.1](https://openid.net/specs/openid-federation-connect-1_1.html) *(final)* — protocol-specific layer (OAuth 2.0 / OIDC entity types, client registration).
-- [OpenID Federation Wallet Architectures 1.0](https://openid.net/specs/openid-federation-wallet-1_0.html) *(draft)* — trust establishment for Wallet ecosystems.
-- [OpenID Federation Extended Listing 1.0](https://openid.net/specs/openid-federation-extended-listing-1_0.html) *(draft)* — Subordinate Listings Specification for large-scale federations.
+- [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) *(final)* — this library's target spec. **Implemented.**
+- [OpenID Federation 1.1](https://openid.net/specs/openid-federation-1_1.html) *(final)* — protocol-independent successor layer (Entity Statements, Trust Chains, Metadata, Policies, Trust Marks, Federation Endpoints). **Implemented** by virtue of 1.0.
+- [OpenID Federation for OpenID Connect 1.1](https://openid.net/specs/openid-federation-connect-1_1.html) *(final)* — protocol-specific layer (OAuth 2.0 / OIDC entity types, client registration). **Implemented** by virtue of 1.0.
+- [OpenID Federation Extended Subordinate Listing 1.0](https://openid.net/specs/openid-federation-extended-listing-1_0.html) *(draft 02)* — paginated subordinate listing with audit timestamps and bulk per-entity claim retrieval. **Implemented** end-to-end (server, client, CLI).
+- [OpenID Federation Entity Collection 1.0](https://openid.net/specs/openid-federation-entity-collection-1_0.html) *(draft 00)* — sub-federation entity discovery endpoint with hierarchical filtering and UI metadata. Not yet implemented.
+- [OpenID Federation for Wallet Architectures 1.0](https://openid.net/specs/openid-federation-wallet-1_0.html) *(draft 05)* — trust establishment for Wallet ecosystems. Not yet implemented.
+- [ACME with OpenID Federation 1.0](https://datatracker.ietf.org/doc/draft-ietf-acme-openid-federation/) *(IETF Internet-Draft)* — Federation Entity Types for ACME Requestor / Issuer roles; automated X.509 over federation discovery. Not yet implemented.
 
 ## Federation Operator Notes
 
@@ -54,5 +56,5 @@ Report vulnerabilities to <dah.kenangnon@gmail.com> — see [SECURITY.md](https:
 - **npm organization:** <https://www.npmjs.com/org/oidfed>
 - **Author:** Justin Dah-kenangnon (<https://github.com/Dahkenangnon>)
 - **License:** Apache-2.0 (libraries · @oidfed/core·authority·leaf·oidc·cli) · MIT (apps · home·explorer·learn)
-- **Status:** `v0.2.0` pre-release — API may change before the first stable `1.0` release.
+- **Status:** prerelease — API may change before the upcoming stable `1.0.0` release.
 - **Runtime dependencies:** [`jose`](https://github.com/panva/jose), [`zod`](https://github.com/colinhacks/zod).
