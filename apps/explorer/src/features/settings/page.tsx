@@ -21,11 +21,13 @@ import {
 	Wifi,
 } from "lucide-react";
 import { useState } from "react";
+import { useSearchParams } from "react-router";
 import { usePageTitle } from "@/hooks/use-page-title";
 import { useSettings } from "@/hooks/use-settings";
 import { useTheme } from "@/hooks/use-theme";
 import { downloadJson } from "@/lib/export";
 import { SettingsSchema } from "@/lib/settings";
+import { UrlImportPreview } from "./components/url-import-preview.js";
 
 export function SettingsPage() {
 	usePageTitle("Settings — OidFed Explorer");
@@ -33,6 +35,14 @@ export function SettingsPage() {
 	const [theme, _cycleTheme] = useTheme();
 	const [newAnchorUrl, setNewAnchorUrl] = useState("");
 	const [importError, setImportError] = useState<string | null>(null);
+	const [searchParams, setSearchParams] = useSearchParams();
+	const importUrl = searchParams.get("import");
+
+	const clearImportParam = () => {
+		const next = new URLSearchParams(searchParams);
+		next.delete("import");
+		setSearchParams(next, { replace: true });
+	};
 
 	const addTrustAnchor = () => {
 		const trimmed = newAnchorUrl.trim();
@@ -83,6 +93,16 @@ export function SettingsPage() {
 				<h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
 				<p className="text-sm text-muted-foreground">Configure the OIDFED Explorer</p>
 			</div>
+
+			{importUrl ? (
+				<UrlImportPreview
+					importUrl={importUrl}
+					currentSettings={settings}
+					onApplyMerge={(next) => update(next)}
+					onApplyReplace={(next) => update(next)}
+					onDismiss={clearImportParam}
+				/>
+			) : null}
 
 			{/* Theme */}
 			<Card>
