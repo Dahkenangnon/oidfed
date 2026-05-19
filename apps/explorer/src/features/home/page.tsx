@@ -86,6 +86,21 @@ export function HomePage() {
 						</Button>
 					</div>
 
+					{/* First-party demo nudge — loads the fed.oidfed.com reference deployment's
+					    Trust Anchors via the Settings page URL-import flow. */}
+					<p className="mt-4 text-sm text-muted-foreground">
+						First time here?{" "}
+						<a
+							href="https://explore.oidfed.com/#/settings?import=https%3A%2F%2Fraw.githubusercontent.com%2FDahkenangnon%2Ffed-oidfed-com%2Fmain%2Fpages%2Fexplorer-settings.json"
+							target="_blank"
+							rel="noopener noreferrer"
+							className="inline-flex items-center gap-1 font-medium text-brand-500 hover:text-brand-600"
+						>
+							Try the fed.oidfed.com reference deployment
+							<ArrowUpRight className="size-3.5" />
+						</a>
+					</p>
+
 					{/* Meta row */}
 					<div className="mt-10 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 font-mono text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
 						<span className="flex items-center gap-1.5">

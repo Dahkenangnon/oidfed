@@ -85,6 +85,14 @@ const apps = [
 		href: "https://oidfed.com",
 		preview: "home" as const,
 	},
+	{
+		name: "fed.oidfed.com",
+		label: "Demo",
+		description:
+			"@oidfed's own reference deployment — OpenID Federation 1.0 topologies (single-anchor, hierarchical, multi-anchor, cross-federation, constrained, policy-operators) built on the spec packages, inspectable via the Explorer or the @oidfed/cli.",
+		href: "https://fed.oidfed.com",
+		preview: "fed" as const,
+	},
 ];
 
 const adopters = [
@@ -340,7 +348,64 @@ function ResolvedStatus() {
 }
 
 /** Preview tile for each app card. */
-function AppPreview({ kind }: { kind: "explorer" | "learn" | "home" }) {
+function AppPreview({ kind }: { kind: "explorer" | "learn" | "home" | "fed" }) {
+	if (kind === "fed") {
+		// Repeated mini trust-chain glyphs in a 2×3 grid — visual evidence of "many
+		// topologies side-by-side" without committing to a count in the label text.
+		const tiles: ReadonlyArray<{ col: number; row: number }> = [
+			{ col: 0, row: 0 },
+			{ col: 1, row: 0 },
+			{ col: 2, row: 0 },
+			{ col: 0, row: 1 },
+			{ col: 1, row: 1 },
+			{ col: 2, row: 1 },
+		];
+		return (
+			<svg viewBox="0 0 280 140" className="h-full w-full" aria-hidden="true" role="presentation">
+				<g stroke="currentColor" strokeWidth="0.4" opacity="0.1" className="text-foreground">
+					{Array.from({ length: 5 }, (_, i) => (i + 1) * 28).map((y) => (
+						<line key={`fed-grid-${y}`} x1="0" x2="280" y1={y} y2={y} />
+					))}
+				</g>
+				{tiles.map((t) => {
+					const cx = 47 + t.col * 92;
+					const cy = 38 + t.row * 56;
+					return (
+						<g key={`fed-tile-${t.col}-${t.row}`}>
+							<circle cx={cx} cy={cy} r="6" fill="#007acc" />
+							<circle cx={cx - 18} cy={cy + 22} r="3.5" fill="#007acc" opacity="0.85" />
+							<circle cx={cx + 18} cy={cy + 22} r="3.5" fill="#007acc" opacity="0.85" />
+							<line
+								x1={cx}
+								y1={cy + 6}
+								x2={cx - 18}
+								y2={cy + 18}
+								stroke="#007acc"
+								strokeWidth="1"
+								opacity="0.45"
+							/>
+							<line
+								x1={cx}
+								y1={cy + 6}
+								x2={cx + 18}
+								y2={cy + 18}
+								stroke="#007acc"
+								strokeWidth="1"
+								opacity="0.45"
+							/>
+						</g>
+					);
+				})}
+				<text
+					x="14"
+					y="22"
+					className="font-mono text-[8px] uppercase tracking-[0.2em] fill-muted-foreground"
+				>
+					live federation
+				</text>
+			</svg>
+		);
+	}
 	if (kind === "explorer") {
 		return (
 			<svg viewBox="0 0 280 140" className="h-full w-full" aria-hidden="true" role="presentation">

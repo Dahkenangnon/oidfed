@@ -12,6 +12,9 @@ The complete [OpenID Federation 1.0](https://openid.net/specs/openid-federation-
 
 </div>
 
+> [!TIP]
+> **Try it live.** [`fed.oidfed.com`](https://fed.oidfed.com) is @oidfed's own reference deployment — OpenID Federation 1.0 topologies (single-anchor, hierarchical, multi-anchor, cross-federation, constrained, policy-operators) running on the packages in this repo. Open any trust chain in one click via [`explore.oidfed.com`](https://explore.oidfed.com) or hit it directly with [`@oidfed/cli`](https://www.npmjs.com/package/@oidfed/cli). Source: [`Dahkenangnon/fed-oidfed-com`](https://github.com/Dahkenangnon/fed-oidfed-com).
+
 > [!IMPORTANT]
 > **Spec:** Full [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) implementation · 
 > 
