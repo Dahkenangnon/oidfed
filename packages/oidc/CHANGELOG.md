@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-19
+
 ### Added
 
 - `automaticRegistration` now supports four Request Object delivery modes via the new
