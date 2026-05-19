@@ -157,6 +157,7 @@ export async function launchFederation(
 					authority,
 					entityId: eid,
 					trustAnchors,
+					signingKey: keys.signing,
 				}),
 			);
 		} else {

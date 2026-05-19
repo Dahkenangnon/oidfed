@@ -14,7 +14,10 @@ describe("Metadata policy operators", () => {
 		const resolved = await resolveTrustChains(opId, trustAnchors);
 		expect(resolved.chains).toHaveLength(1);
 
-		const validation = await validateTrustChain([...resolved.chains[0].statements], trustAnchors);
+		const firstChain = resolved.chains[0];
+		expect(firstChain).toBeDefined();
+		if (!firstChain) return;
+		const validation = await validateTrustChain([...firstChain.statements], trustAnchors);
 		expect(validation.valid).toBe(true);
 		if (!validation.valid) return;
 
@@ -31,7 +34,10 @@ describe("Metadata policy operators", () => {
 
 		const opId = entityId(`https://op.ofed.test:${port}`);
 		const resolved = await resolveTrustChains(opId, trustAnchors);
-		const validation = await validateTrustChain([...resolved.chains[0].statements], trustAnchors);
+		const firstChain = resolved.chains[0];
+		expect(firstChain).toBeDefined();
+		if (!firstChain) return;
+		const validation = await validateTrustChain([...firstChain.statements], trustAnchors);
 		expect(validation.valid).toBe(true);
 		if (!validation.valid) return;
 
@@ -49,7 +55,10 @@ describe("Metadata policy operators", () => {
 
 		const opId = entityId(`https://op.ofed.test:${port}`);
 		const resolved = await resolveTrustChains(opId, trustAnchors);
-		const validation = await validateTrustChain([...resolved.chains[0].statements], trustAnchors);
+		const firstChain = resolved.chains[0];
+		expect(firstChain).toBeDefined();
+		if (!firstChain) return;
+		const validation = await validateTrustChain([...firstChain.statements], trustAnchors);
 		expect(validation.valid).toBe(true);
 		if (!validation.valid) return;
 
@@ -65,7 +74,10 @@ describe("Metadata policy operators", () => {
 
 		const opId = entityId(`https://op.ofed.test:${port}`);
 		const resolved = await resolveTrustChains(opId, trustAnchors);
-		const validation = await validateTrustChain([...resolved.chains[0].statements], trustAnchors);
+		const firstChain = resolved.chains[0];
+		expect(firstChain).toBeDefined();
+		if (!firstChain) return;
+		const validation = await validateTrustChain([...firstChain.statements], trustAnchors);
 		expect(validation.valid).toBe(true);
 		if (!validation.valid) return;
 

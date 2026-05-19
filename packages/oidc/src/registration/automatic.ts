@@ -13,8 +13,31 @@ import {
 	type ValidatedTrustChain,
 	validateTrustChain,
 } from "@oidfed/core";
+import { createClientAssertion } from "../client-auth/assertion.js";
 import { RequestObjectTyp } from "../constants.js";
 import { getRegistrationTypes } from "./helpers.js";
+
+const CLIENT_ASSERTION_TYPE = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
+
+/**
+ * How the Request Object reaches the OP's authorization endpoint.
+ *
+ * - `query` — Request Object value travels in the `request` query parameter of a
+ *   GET to the authorization endpoint. Compact but constrained by URL/header
+ *   length limits in HTTP intermediaries when the Request Object carries an
+ *   embedded `trust_chain`.
+ * - `form_post` — Default. Request Object value travels in an
+ *   `application/x-www-form-urlencoded` body POSTed to the authorization
+ *   endpoint. The user-agent submits an auto-submit HTML form supplied by the
+ *   RP. Avoids URL/header length ceilings.
+ * - `request_uri` — Request Object is hosted by the RP at a URL it provides;
+ *   the OP fetches that URL. The library does NOT host the JWT — the caller
+ *   must serve the returned `requestObjectJwt` at the supplied `requestUri`.
+ * - `par` — Library coordinates a Pushed Authorization Request to the OP's
+ *   `pushed_authorization_request_endpoint`, then returns the short-lived
+ *   `urn:`-style request_uri ready to redirect through.
+ */
+export type RequestDelivery = "query" | "form_post" | "request_uri" | "par";
 
 /** Reserved claims that authzRequestParams MUST NOT overwrite. */
 const RESERVED_REQUEST_OBJECT_CLAIMS = new Set([
@@ -44,14 +67,67 @@ export interface AutomaticRegistrationConfig {
 	 * peer chain to the shared Trust Anchor cannot be built.
 	 */
 	readonly includePeerTrustChain?: boolean;
+	/**
+	 * Selects how the signed Request Object reaches the OP's authorization
+	 * endpoint. Defaults to `"form_post"` — the safest choice for Request
+	 * Objects that carry an embedded `trust_chain` (the JWT can easily exceed
+	 * the practical URL/header length limits of HTTP intermediaries).
+	 *
+	 * Pass `"query"` to preserve the historical 0.3.x GET-query behavior.
+	 */
+	readonly requestDelivery?: RequestDelivery;
+	/**
+	 * For `requestDelivery: "request_uri"`: the publicly-reachable URL at
+	 * which the RP will host the signed Request Object JWT. REQUIRED in that
+	 * mode and ignored otherwise. The library does NOT host the JWT — the
+	 * caller must serve the returned `requestObjectJwt` at this URL with
+	 * Content-Type `application/oauth-authz-req+jwt`, typically with a short
+	 * TTL and single-use semantics.
+	 */
+	readonly requestUri?: string;
 }
 
-export interface AutomaticRegistrationResult {
+interface AutomaticRegistrationResultBase {
 	readonly requestObjectJwt: string;
-	readonly authorizationUrl: string;
 	readonly trustChain: ValidatedTrustChain;
 	readonly trustChainExpiresAt: number;
 }
+
+/**
+ * Discriminated union over `delivery`. Each variant carries exactly the
+ * additional fields the caller needs to dispatch the Request Object.
+ */
+export type AutomaticRegistrationResult =
+	| (AutomaticRegistrationResultBase & {
+			readonly delivery: "query";
+			/** Full authorization-endpoint URL with `?request=…&client_id=…`. Redirect the user-agent here. */
+			readonly authorizationUrl: string;
+	  })
+	| (AutomaticRegistrationResultBase & {
+			readonly delivery: "form_post";
+			/** Bare authorization-endpoint URL. POST `formParams` here. */
+			readonly authorizationEndpoint: string;
+			/** Form fields to submit as `application/x-www-form-urlencoded` body. */
+			readonly formParams: Record<string, string>;
+	  })
+	| (AutomaticRegistrationResultBase & {
+			readonly delivery: "request_uri";
+			/** Echoes the caller-supplied URI; cache the `requestObjectJwt` under this URL. */
+			readonly requestUri: string;
+			/** Full authorization-endpoint URL with `?request_uri=…&client_id=…`. Redirect the user-agent here. */
+			readonly authorizationUrl: string;
+	  })
+	| (AutomaticRegistrationResultBase & {
+			readonly delivery: "par";
+			/** PAR endpoint URL the library POSTed to. */
+			readonly pushedAuthorizationRequestEndpoint: string;
+			/** Full authorization-endpoint URL with `?request_uri=urn:…&client_id=…`. Redirect the user-agent here. */
+			readonly authorizationUrl: string;
+			/** The `urn:`-style request URI returned by the PAR endpoint. */
+			readonly parRequestUri: string;
+			/** Absolute expiration time (seconds since epoch) computed from the PAR `expires_in` response. */
+			readonly parExpiresAt: number;
+	  });
 
 /**
  * RP-side automatic registration: build a Request Object JWT and authorization URL.
@@ -167,14 +243,120 @@ export async function automaticRegistration(
 		},
 	);
 
-	const url = new URL(authorizationEndpoint);
-	url.searchParams.set("request", requestObjectJwt);
-	url.searchParams.set("client_id", rpConfig.entityId as string);
-
-	return {
+	const base: AutomaticRegistrationResultBase = {
 		requestObjectJwt,
-		authorizationUrl: url.toString(),
 		trustChain: discovery.trustChain,
 		trustChainExpiresAt: discovery.trustChain.expiresAt,
 	};
+
+	const delivery: RequestDelivery = rpConfig.requestDelivery ?? "form_post";
+	const clientIdStr = rpConfig.entityId as string;
+
+	switch (delivery) {
+		case "query":
+			return {
+				...base,
+				delivery: "query",
+				authorizationUrl: buildAuthorizationUrl(authorizationEndpoint, {
+					request: requestObjectJwt,
+					client_id: clientIdStr,
+				}),
+			};
+
+		case "form_post":
+			return {
+				...base,
+				delivery: "form_post",
+				authorizationEndpoint,
+				formParams: {
+					request: requestObjectJwt,
+					client_id: clientIdStr,
+				},
+			};
+
+		case "request_uri": {
+			const hostedUri = rpConfig.requestUri;
+			if (!hostedUri) {
+				throw new Error(
+					"requestDelivery 'request_uri' requires rpConfig.requestUri to be set to the URL at which the RP will host the Request Object JWT",
+				);
+			}
+			if (!hostedUri.startsWith("https://")) {
+				throw new Error("rpConfig.requestUri must be an https:// URL");
+			}
+			return {
+				...base,
+				delivery: "request_uri",
+				requestUri: hostedUri,
+				authorizationUrl: buildAuthorizationUrl(authorizationEndpoint, {
+					request_uri: hostedUri,
+					client_id: clientIdStr,
+				}),
+			};
+		}
+
+		case "par": {
+			const parEndpoint = opMeta?.pushed_authorization_request_endpoint as string | undefined;
+			if (!parEndpoint) {
+				throw new Error(
+					"requestDelivery 'par' requires the OP to advertise pushed_authorization_request_endpoint in its openid_provider metadata",
+				);
+			}
+			const httpClient = options?.httpClient ?? fetch;
+			// Client assertion audience is the OP's Entity Identifier under the
+			// federation profile of PAR + automatic registration — not the PAR
+			// endpoint URL.
+			const clientAssertion = await createClientAssertion(
+				rpConfig.entityId as string,
+				discovery.entityId as string,
+				signingKey as Parameters<typeof createClientAssertion>[2],
+				{ expiresInSeconds: 60 },
+			);
+			const formBody = new URLSearchParams({
+				request: requestObjectJwt,
+				client_id: clientIdStr,
+				client_assertion_type: CLIENT_ASSERTION_TYPE,
+				client_assertion: clientAssertion,
+			}).toString();
+			const response = await httpClient(parEndpoint, {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/x-www-form-urlencoded",
+					Accept: "application/json",
+				},
+				body: formBody,
+			});
+			if (response.status !== 201 && response.status !== 200) {
+				throw new Error(`PAR request failed (HTTP ${response.status})`);
+			}
+			const parPayload = (await response.json()) as Record<string, unknown>;
+			const parRequestUri = parPayload.request_uri;
+			const expiresIn = parPayload.expires_in;
+			if (typeof parRequestUri !== "string" || !parRequestUri.startsWith("urn:")) {
+				throw new Error("PAR response missing or invalid request_uri");
+			}
+			if (typeof expiresIn !== "number" || expiresIn <= 0) {
+				throw new Error("PAR response missing or invalid expires_in");
+			}
+			return {
+				...base,
+				delivery: "par",
+				pushedAuthorizationRequestEndpoint: parEndpoint,
+				authorizationUrl: buildAuthorizationUrl(authorizationEndpoint, {
+					request_uri: parRequestUri,
+					client_id: clientIdStr,
+				}),
+				parRequestUri,
+				parExpiresAt: nowSeconds() + expiresIn,
+			};
+		}
+	}
+}
+
+function buildAuthorizationUrl(endpoint: string, params: Record<string, string>): string {
+	const url = new URL(endpoint);
+	for (const [key, value] of Object.entries(params)) {
+		url.searchParams.set(key, value);
+	}
+	return url.toString();
 }

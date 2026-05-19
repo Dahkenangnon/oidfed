@@ -869,7 +869,7 @@ function bridgeHandler(handler: (req: Request) => Promise<Response>): express.Re
 	return async (req, res) => {
 		const url = new URL(req.originalUrl, `https://${req.headers.host}`);
 		const hasBody = req.method !== "GET" && req.method !== "HEAD";
-		let body: BodyInit | undefined;
+		let body: string | Uint8Array | undefined;
 		if (hasBody) {
 			if (Buffer.isBuffer(req.body)) {
 				body = req.body.toString("utf-8");

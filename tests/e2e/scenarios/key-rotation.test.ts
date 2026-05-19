@@ -90,11 +90,9 @@ describe("Key rotation", () => {
 			// Resolution may still collect the chain, but validation MUST fail.
 			const afterRotation = await resolveTrustChains(opId, trustAnchors);
 
-			if (afterRotation.chains.length > 0) {
-				const validation = await validateTrustChain(
-					[...afterRotation.chains[0].statements],
-					trustAnchors,
-				);
+			const firstChain = afterRotation.chains[0];
+			if (firstChain) {
+				const validation = await validateTrustChain([...firstChain.statements], trustAnchors);
 				expect(validation.valid).toBe(false);
 			} else {
 				// If resolution itself caught the key mismatch, that's also acceptable

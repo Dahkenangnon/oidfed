@@ -44,6 +44,8 @@ describe("Failure modes", () => {
 			expect(result.chains).toHaveLength(1);
 
 			const chain = result.chains[0];
+			expect(chain).toBeDefined();
+			if (!chain) return;
 
 			// Now validate the chain against fake anchors
 			const fakeKey = await generateSigningKey("ES256");
@@ -65,10 +67,15 @@ describe("Failure modes", () => {
 			expect(result.chains).toHaveLength(1);
 
 			const chain = result.chains[0];
+			expect(chain).toBeDefined();
+			if (!chain) return;
 			const statements = [...chain.statements];
 
 			// Tamper with the leaf EC (index 0)
-			const parts = statements[0]?.split(".");
+			const leafStmt = statements[0];
+			expect(leafStmt).toBeDefined();
+			if (!leafStmt) return;
+			const parts = leafStmt.split(".");
 			const payload = JSON.parse(Buffer.from(parts[1] as string, "base64url").toString());
 			payload.iss = "https://evil.example.com";
 			parts[1] = Buffer.from(JSON.stringify(payload)).toString("base64url");
@@ -108,6 +115,8 @@ describe("Failure modes", () => {
 			expect(result.chains).toHaveLength(1);
 
 			const chain = result.chains[0];
+			expect(chain).toBeDefined();
+			if (!chain) return;
 
 			// Validate with a clock far in the future (2 years from now)
 			const futureClock = { now: () => Math.floor(Date.now() / 1000) + 2 * 365 * 86400 };

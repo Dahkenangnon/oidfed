@@ -372,7 +372,8 @@ app.get("/login", async (req, res) => {
     httpClient: fetch,
   });
 
-  // 2. Automatic registration — builds Request Object with trust chain
+  // 2. Automatic registration — builds Request Object with trust chain.
+  //    Default delivery is "form_post"; pass requestDelivery: "query" to get a redirect URL.
   const result = await automaticRegistration(
     opDiscovery,
     {
@@ -386,12 +387,14 @@ app.get("/login", async (req, res) => {
           client_registration_types: ["automatic"],
         },
       },
+      requestDelivery: "query",
     },
     { scope: "openid profile", state: "random-state" },
     trustAnchors,
   );
 
   // 3. Redirect to OP
+  if (result.delivery !== "query") throw new Error("expected query-mode result");
   res.redirect(result.authorizationUrl);
 });
 

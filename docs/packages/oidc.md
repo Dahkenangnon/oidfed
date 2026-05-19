@@ -34,20 +34,25 @@ import type {
 
 ### RP — Automatic Registration
 
-For OPs that support `client_registration_types: ["automatic"]`. The RP embeds its trust chain in a signed Request Object and sends it to the authorization endpoint.
+For OPs that support `client_registration_types: ["automatic"]`. The RP embeds its trust chain in a signed Request Object and delivers it to the authorization endpoint via one of four `requestDelivery` modes (default: `"form_post"`).
 
 ```ts
 import { automaticRegistration } from "@oidfed/oidc";
-import type { AutomaticRegistrationConfig, AutomaticRegistrationResult } from "@oidfed/oidc";
+import type {
+  AutomaticRegistrationConfig,
+  AutomaticRegistrationResult,
+  RequestDelivery,
+} from "@oidfed/oidc";
 ```
 
+The result is a discriminated union on `delivery`:
+
 ```ts
-interface AutomaticRegistrationResult {
-  readonly requestObjectJwt: string;
-  readonly authorizationUrl: string;
-  readonly trustChain: ValidatedTrustChain;
-  readonly trustChainExpiresAt: number;
-}
+type AutomaticRegistrationResult =
+  | { delivery: "query"; requestObjectJwt; authorizationUrl; trustChain; trustChainExpiresAt }
+  | { delivery: "form_post"; requestObjectJwt; authorizationEndpoint; formParams; trustChain; trustChainExpiresAt }
+  | { delivery: "request_uri"; requestObjectJwt; requestUri; authorizationUrl; trustChain; trustChainExpiresAt }
+  | { delivery: "par"; requestObjectJwt; pushedAuthorizationRequestEndpoint; authorizationUrl; parRequestUri; parExpiresAt; trustChain; trustChainExpiresAt };
 ```
 
 ```ts
@@ -64,11 +69,25 @@ const result: AutomaticRegistrationResult = await automaticRegistration(
         client_registration_types: ["automatic"],
       },
     },
+    requestDelivery: "form_post", // default — also accepts "query", "request_uri", "par"
   },
   { scope: "openid profile", state: "xyz" },
   trustAnchors,
 );
+
+switch (result.delivery) {
+  case "form_post":
+    // render an auto-submit HTML form posting result.formParams to result.authorizationEndpoint
+    break;
+  case "query":
+  case "request_uri":
+  case "par":
+    // 302 the user-agent to result.authorizationUrl
+    break;
+}
 ```
+
+See the [package README](../../packages/oidc/README.md#request-object-delivery-modes) for per-mode rationale and code samples.
 
 ### RP — Explicit Registration
 

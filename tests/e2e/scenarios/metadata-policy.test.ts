@@ -18,6 +18,8 @@ describe("Metadata policy enforcement", () => {
 			expect(result.chains).toHaveLength(1);
 
 			const chain = result.chains[0];
+			expect(chain).toBeDefined();
+			if (!chain) return;
 			expect(chain.statements).toHaveLength(4);
 
 			// Validate the chain and get resolved metadata
@@ -26,6 +28,8 @@ describe("Metadata policy enforcement", () => {
 			expect(validation.chain).toBeDefined();
 
 			const resolved = validation.chain?.resolvedMetadata;
+			expect(resolved).toBeDefined();
+			if (!resolved) return;
 			expect(resolved.openid_provider).toBeDefined();
 			expect(resolved.openid_provider?.token_endpoint_auth_methods_supported).toEqual([
 				"private_key_jwt",
@@ -43,12 +47,16 @@ describe("Metadata policy enforcement", () => {
 			expect(result.chains).toHaveLength(1);
 
 			const chain = result.chains[0];
+			expect(chain).toBeDefined();
+			if (!chain) return;
 
 			const validation = await validateTrustChain([...chain.statements], trustAnchors);
 			expect(validation.valid).toBe(true);
 			expect(validation.chain).toBeDefined();
 
 			const resolved = validation.chain?.resolvedMetadata;
+			expect(resolved).toBeDefined();
+			if (!resolved) return;
 			expect(resolved.openid_provider).toBeDefined();
 			expect(resolved.openid_provider?.token_endpoint_auth_methods_supported).toEqual([
 				"private_key_jwt",

@@ -35,6 +35,7 @@ describe("Cross-federation registration", () => {
 							token_endpoint_auth_method: "private_key_jwt",
 						},
 					},
+					requestDelivery: "query",
 				},
 				{
 					client_id: rpId,
@@ -46,6 +47,8 @@ describe("Cross-federation registration", () => {
 			);
 
 			expect(result.requestObjectJwt).toBeTruthy();
+			expect(result.delivery).toBe("query");
+			if (result.delivery !== "query") return;
 			expect(result.authorizationUrl).toContain(`https://op.ofed.test:${port}/auth`);
 			expect(result.trustChain).toBeDefined();
 		});

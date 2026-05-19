@@ -15,6 +15,7 @@ export {
 	type AutomaticRegistrationConfig,
 	type AutomaticRegistrationResult,
 	automaticRegistration,
+	type RequestDelivery,
 } from "./registration/automatic.js";
 export {
 	type ExplicitRegistrationConfig,

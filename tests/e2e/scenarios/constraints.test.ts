@@ -17,7 +17,10 @@ describe("Constraint enforcement — maxPathLength", () => {
 		expect(result.errors).toHaveLength(0);
 
 		// Validate the chain
-		const validation = await validateTrustChain([...result.chains[0].statements], trustAnchors);
+		const firstChain = result.chains[0];
+		expect(firstChain).toBeDefined();
+		if (!firstChain) return;
+		const validation = await validateTrustChain([...firstChain.statements], trustAnchors);
 		expect(validation.errors).toHaveLength(0);
 	});
 
@@ -33,8 +36,9 @@ describe("Constraint enforcement — maxPathLength", () => {
 		const result = await resolveTrustChains(opDeepId, trustAnchors);
 
 		// Chain resolution may succeed but validation should fail due to constraint violation
-		if (result.chains.length > 0) {
-			const validation = await validateTrustChain([...result.chains[0].statements], trustAnchors, {
+		const firstChain = result.chains[0];
+		if (firstChain) {
+			const validation = await validateTrustChain([...firstChain.statements], trustAnchors, {
 				verboseErrors: true,
 			});
 			expect(validation.errors.length).toBeGreaterThan(0);

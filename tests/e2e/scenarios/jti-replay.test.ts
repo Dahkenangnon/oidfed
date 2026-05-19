@@ -34,6 +34,7 @@ describe("JTI replay detection", () => {
 						token_endpoint_auth_method: "private_key_jwt",
 					},
 				},
+				requestDelivery: "query",
 			},
 			{
 				client_id: rpId,
@@ -43,6 +44,9 @@ describe("JTI replay detection", () => {
 			},
 			trustAnchors,
 		);
+
+		expect(result.delivery).toBe("query");
+		if (result.delivery !== "query") return;
 
 		// First request — should succeed (< 500)
 		const firstResponse = await fetch(result.authorizationUrl);

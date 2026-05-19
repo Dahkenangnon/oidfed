@@ -18,6 +18,8 @@ describe("Trust chain resolution", () => {
 			expect(result.chains).toHaveLength(1);
 
 			const chain = result.chains[0];
+			expect(chain).toBeDefined();
+			if (!chain) return;
 			expect(chain.statements).toHaveLength(3); // RP EC + TA subordinate stmt + TA EC
 			expect(chain.entityId).toBe(rpId);
 			expect(chain.trustAnchorId).toBe(entityId(`https://ta.ofed.test:${server.port}`));
@@ -58,6 +60,8 @@ describe("Trust chain resolution", () => {
 			expect(result.chains).toHaveLength(1);
 
 			const chain = result.chains[0];
+			expect(chain).toBeDefined();
+			if (!chain) return;
 			// OP EC + IA sub stmt for OP + TA sub stmt for IA + TA EC = 4
 			expect(chain.statements).toHaveLength(4);
 			expect(chain.entityId).toBe(opId);

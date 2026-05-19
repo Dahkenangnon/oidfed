@@ -645,10 +645,13 @@ export default (QUnit: QUnit) => {
 			t.equal(p.nonce, params.nonce);
 		});
 
-		test("returns well-formed authorizationUrl", async (t) => {
+		test("query mode returns well-formed authorizationUrl with request + client_id", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
-			const { config } = await createRpConfig({ signingKeys: [fed.leafSigningKey] });
+			const { config } = await createRpConfig({
+				signingKeys: [fed.leafSigningKey],
+				requestDelivery: "query",
+			});
 			const result = await automaticRegistration(
 				discovery,
 				config,
@@ -656,6 +659,8 @@ export default (QUnit: QUnit) => {
 				fed.trustAnchors,
 				fed.options,
 			);
+			t.equal(result.delivery, "query");
+			if (result.delivery !== "query") return;
 			const url = new URL(result.authorizationUrl);
 			t.equal(url.searchParams.get("request"), result.requestObjectJwt);
 			t.equal(url.searchParams.get("client_id"), LEAF_ID);
@@ -757,6 +762,192 @@ export default (QUnit: QUnit) => {
 				fed.options,
 			);
 			t.ok(result.requestObjectJwt);
+		});
+	});
+
+	// -------------------------------------------------------------------------
+	// registration/automatic — Request Object delivery modes
+	// -------------------------------------------------------------------------
+	module("oidc / automaticRegistration delivery modes", () => {
+		const authzParams = {
+			redirect_uri: "https://rp.example.com/callback",
+			scope: "openid",
+			response_type: "code",
+		};
+
+		test("defaults to form_post when requestDelivery is omitted", async (t) => {
+			const fed = await createMockFederation();
+			const discovery = await createMockDiscovery(OP_ID, fed);
+			const { config } = await createRpConfig({ signingKeys: [fed.leafSigningKey] });
+			const result = await automaticRegistration(
+				discovery,
+				config,
+				authzParams,
+				fed.trustAnchors,
+				fed.options,
+			);
+			t.equal(result.delivery, "form_post");
+			if (result.delivery !== "form_post") return;
+			t.equal(typeof result.authorizationEndpoint, "string");
+			t.equal(result.formParams.request, result.requestObjectJwt);
+			t.equal(result.formParams.client_id, LEAF_ID);
+		});
+
+		test("form_post: authorizationEndpoint matches OP authorization_endpoint metadata", async (t) => {
+			const fed = await createMockFederation();
+			const discovery = await createMockDiscovery(OP_ID, fed);
+			const { config } = await createRpConfig({
+				signingKeys: [fed.leafSigningKey],
+				requestDelivery: "form_post",
+			});
+			const result = await automaticRegistration(
+				discovery,
+				config,
+				authzParams,
+				fed.trustAnchors,
+				fed.options,
+			);
+			t.equal(result.delivery, "form_post");
+			if (result.delivery !== "form_post") return;
+			const opMeta = discovery.resolvedMetadata.openid_provider as Record<string, unknown>;
+			t.equal(result.authorizationEndpoint, opMeta.authorization_endpoint as string);
+		});
+
+		test("request_uri: returns authorizationUrl with request_uri query and echoes input URI", async (t) => {
+			const fed = await createMockFederation();
+			const discovery = await createMockDiscovery(OP_ID, fed);
+			const hostedUri = "https://rp.example.com/request-object/xyz";
+			const { config } = await createRpConfig({
+				signingKeys: [fed.leafSigningKey],
+				requestDelivery: "request_uri",
+				requestUri: hostedUri,
+			});
+			const result = await automaticRegistration(
+				discovery,
+				config,
+				authzParams,
+				fed.trustAnchors,
+				fed.options,
+			);
+			t.equal(result.delivery, "request_uri");
+			if (result.delivery !== "request_uri") return;
+			t.equal(result.requestUri, hostedUri);
+			const url = new URL(result.authorizationUrl);
+			t.equal(url.searchParams.get("request_uri"), hostedUri);
+			t.equal(url.searchParams.get("client_id"), LEAF_ID);
+			t.equal(url.searchParams.get("request"), null);
+		});
+
+		test("request_uri: throws when requestUri is missing", async (t) => {
+			const fed = await createMockFederation();
+			const discovery = await createMockDiscovery(OP_ID, fed);
+			const { config } = await createRpConfig({
+				signingKeys: [fed.leafSigningKey],
+				requestDelivery: "request_uri",
+			});
+			let threw = false;
+			try {
+				await automaticRegistration(discovery, config, authzParams, fed.trustAnchors, fed.options);
+			} catch (e: unknown) {
+				threw = true;
+				t.ok((e as Error).message.toLowerCase().includes("request_uri"));
+			}
+			t.true(threw, "expected throw when requestUri missing");
+		});
+
+		test("par: POSTs request + client_id + client_assertion to PAR endpoint and returns urn-style authorizationUrl", async (t) => {
+			const parEndpoint = `${OP_ID}/request`;
+			const fed = await createMockFederation({
+				opMetadata: {
+					openid_provider: {
+						issuer: OP_ID,
+						authorization_endpoint: `${OP_ID}/authorize`,
+						token_endpoint: `${OP_ID}/token`,
+						pushed_authorization_request_endpoint: parEndpoint,
+						response_types_supported: ["code"],
+						subject_types_supported: ["public"],
+						id_token_signing_alg_values_supported: ["ES256"],
+						client_registration_types_supported: ["automatic", "explicit"],
+					},
+				},
+			});
+			const discovery = await createMockDiscovery(OP_ID, fed);
+			const { config } = await createRpConfig({
+				signingKeys: [fed.leafSigningKey],
+				requestDelivery: "par",
+			});
+
+			// Wrap the federation http client to intercept the PAR endpoint and
+			// return a canned response, while letting everything else fall through.
+			let capturedBody: string | undefined;
+			let capturedMethod: string | undefined;
+			const urn = "urn:ietf:params:oauth:request_uri:abc123";
+			const parHttpClient: HttpClient = async (input, init) => {
+				const url = typeof input === "string" ? input : (input as Request).url;
+				if (url === parEndpoint) {
+					capturedMethod = (init?.method as string | undefined) ?? "POST";
+					capturedBody =
+						typeof init?.body === "string"
+							? init.body
+							: input instanceof Request
+								? await (input as Request).text()
+								: undefined;
+					return new Response(JSON.stringify({ request_uri: urn, expires_in: 60 }), {
+						status: 201,
+						headers: { "content-type": "application/json" },
+					});
+				}
+				return fed.options.httpClient!(input, init);
+			};
+
+			const result = await automaticRegistration(discovery, config, authzParams, fed.trustAnchors, {
+				...fed.options,
+				httpClient: parHttpClient,
+			});
+			t.equal(result.delivery, "par");
+			if (result.delivery !== "par") return;
+			t.equal(capturedMethod, "POST");
+			t.equal(typeof capturedBody, "string");
+			const body = new URLSearchParams(capturedBody as string);
+			t.equal(body.get("request"), result.requestObjectJwt);
+			t.equal(body.get("client_id"), LEAF_ID);
+			t.equal(
+				body.get("client_assertion_type"),
+				"urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+			);
+			t.ok(body.get("client_assertion"));
+			const assertionJwt = body.get("client_assertion") as string;
+			const assertionDecoded = decodeEntityStatement(assertionJwt);
+			t.true(assertionDecoded.ok);
+			if (!assertionDecoded.ok) return;
+			const ap = assertionDecoded.value.payload as Record<string, unknown>;
+			t.equal(ap.iss, LEAF_ID);
+			t.equal(ap.sub, LEAF_ID);
+			// Audience MUST be OP Entity Identifier (not the PAR endpoint URL).
+			t.equal(ap.aud, OP_ID);
+			t.equal(result.pushedAuthorizationRequestEndpoint, parEndpoint);
+			t.equal(result.parRequestUri, urn);
+			const finalUrl = new URL(result.authorizationUrl);
+			t.equal(finalUrl.searchParams.get("request_uri"), urn);
+			t.equal(finalUrl.searchParams.get("client_id"), LEAF_ID);
+			t.ok(result.parExpiresAt > Math.floor(Date.now() / 1000));
+		});
+
+		test("par: throws when OP advertises no pushed_authorization_request_endpoint", async (t) => {
+			const fed = await createMockFederation();
+			const discovery = await createMockDiscovery(OP_ID, fed);
+			const { config } = await createRpConfig({
+				signingKeys: [fed.leafSigningKey],
+				requestDelivery: "par",
+			});
+			let threw = false;
+			try {
+				await automaticRegistration(discovery, config, authzParams, fed.trustAnchors, fed.options);
+			} catch (e: unknown) {
+				threw = true;
+				t.ok((e as Error).message.toLowerCase().includes("pushed_authorization_request_endpoint"));
+			}
+			t.true(threw, "expected throw when PAR endpoint absent");
 		});
 	});
 

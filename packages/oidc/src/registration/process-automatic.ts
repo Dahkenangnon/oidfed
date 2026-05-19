@@ -111,7 +111,7 @@ export async function processAutomaticRegistration(
 			return err(
 				federationError(
 					FederationErrorCode.InvalidMetadata,
-					"RP metadata does not comply with OIDC spec",
+					"RP metadata does not comply with the OpenID Connect Relying Party metadata schema",
 				),
 			);
 		}

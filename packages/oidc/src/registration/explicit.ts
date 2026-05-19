@@ -34,10 +34,10 @@ export interface ExplicitRegistrationConfig {
 	 * Metadata Integrity properties). The library throws if the peer chain
 	 * to the shared Trust Anchor cannot be built. The current emit path
 	 * always sends an Entity Configuration JWT body (never a Trust-Chain
-	 * JSON body), so the spec's mutual-exclusion rule between
-	 * peer_trust_chain and Trust-Chain-JSON request body is structurally
-	 * satisfied here; do NOT add a Trust-Chain-JSON body shape without also
-	 * refusing this option in that branch.
+	 * JSON body), so the mutual-exclusion rule between peer_trust_chain
+	 * and Trust-Chain-JSON request body is structurally satisfied here;
+	 * do NOT add a Trust-Chain-JSON body shape without also refusing this
+	 * option in that branch.
 	 */
 	readonly includePeerTrustChain?: boolean;
 }
