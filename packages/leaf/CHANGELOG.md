@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING (install-tree).** `@oidfed/core` moved from `dependencies` to `peerDependencies`. Consumers MUST install `@oidfed/core` alongside `@oidfed/leaf`. The peer range is `^0.4.0`. This guarantees a single resolved `@oidfed/core` when `@oidfed/leaf` is installed beside its siblings (`@oidfed/authority`, `@oidfed/oidc`); the previous model could install two side-by-side copies and silently break module identity.
+- Realigned with the `0.4.x` line of `@oidfed/core` and sibling packages.
+
 ## [0.3.0] - 2026-05-12
 
 ### Changed
