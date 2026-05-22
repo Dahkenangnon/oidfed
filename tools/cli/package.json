@@ -55,7 +55,7 @@
 		"clean": "rm -rf dist"
 	},
 	"dependencies": {
-		"@oidfed/core": "workspace:*",
+		"@oidfed/core": "workspace:^",
 		"commander": "^13.0.0",
 		"yaml": "^2.7.0",
 		"chalk": "^5.4.0",

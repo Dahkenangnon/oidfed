@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- `@oidfed/core` dependency uses `workspace:^` (rewritten to `^<core-version>` on publish) so npm/pnpm/yarn can dedupe `@oidfed/core` across the install tree.
+
 ## [0.4.0] - 2026-05-18
 
 ### Added
