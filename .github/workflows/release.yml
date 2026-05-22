@@ -67,11 +67,24 @@ jobs:
 
       - run: pnpm quick:test
 
+      - name: Verify @oidfed/core single-copy guarantee
+        run: node scripts/check-single-core.mjs
+
+      - name: Run repo scripts tests
+        run: pnpm test:scripts
+
+      - name: Extract changelog body
+        env:
+          SCOPE: ${{ steps.tag.outputs.scope }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: node scripts/extract-changelog.mjs "$SCOPE" "$VERSION" > RELEASE_BODY.md
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
         with:
           name: '${{ steps.tag.outputs.scope }} v${{ steps.tag.outputs.version }}'
-          generate_release_notes: true
+          body_path: RELEASE_BODY.md
+          generate_release_notes: false
 
       # Publish only the package(s) that were tagged
       - name: Publish to npm

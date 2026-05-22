@@ -83,7 +83,7 @@ if (pkg === "all") {
 	].join(" ");
 
 	run(`git add ${files}`);
-	run(`git commit -m "chore: release all v${v}"`);
+	run(`git commit -m "chore(release): all v${v}"`);
 	run(`git tag all/v${v}`);
 	run("git push");
 	run(`git push origin all/v${v}`);
