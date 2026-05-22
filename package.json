@@ -27,7 +27,11 @@
 		"cli": "NODE_TLS_REJECT_UNAUTHORIZED=0 node --no-warnings tools/cli/dist/bin.js",
 		"oidfed": "pnpm -s cli",
 		"build:publish": "turbo run build --filter='@oidfed/core' --filter='@oidfed/authority' --filter='@oidfed/leaf' --filter='@oidfed/oidc' --filter='@oidfed/cli'",
-		"release": "node scripts/release.mjs"
+		"release": "node scripts/release.mjs",
+		"test:scripts": "node --test scripts/*.test.mjs",
+		"prepare": "husky",
+		"commit": "commit",
+		"commitlint": "commitlint --edit"
 	},
 	"license": "Apache-2.0",
 	"repository": {
@@ -53,6 +57,9 @@
 	],
 	"devDependencies": {
 		"@biomejs/biome": "^2.4.0",
+		"@commitlint/cli": "^21.0.1",
+		"@commitlint/config-conventional": "^21.0.1",
+		"@commitlint/prompt-cli": "^21.0.1",
 		"@oidfed/authority": "workspace:*",
 		"@oidfed/core": "workspace:*",
 		"@oidfed/leaf": "workspace:*",
@@ -66,6 +73,7 @@
 		"electron": "^41.2.2",
 		"esbuild": "^0.27.7",
 		"express": "^5.2.1",
+		"husky": "^9.1.7",
 		"jose": "^6.2.2",
 		"oidc-provider": "^9.8.0",
 		"qunit": "^2.25.0",
