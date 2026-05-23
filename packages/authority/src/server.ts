@@ -44,8 +44,10 @@ import { createResolveHandler } from "./endpoints/resolve.js";
 import { createTrustMarkHandler, createTrustMarkIssuanceHandler } from "./endpoints/trust-mark.js";
 import { createTrustMarkListHandler } from "./endpoints/trust-mark-list.js";
 import { createTrustMarkStatusHandler } from "./endpoints/trust-mark-status.js";
+import { InvalidAuthorityConfig } from "./errors.js";
 import { rotateKey } from "./keys/index.js";
 import type { KeyStore, ListFilter, SubordinateStore, TrustMarkStore } from "./storage/types.js";
+import { assertMetadataValuesNotNull } from "./utils/subordinate-statement-shape.js";
 
 /** Parameters accepted by {@link AuthorityServer.listSubordinatesExtended}. */
 export interface ExtendedListInProcessParams {
@@ -155,6 +157,51 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 			throw new Error(`${name} must be positive`);
 		}
 	}
+
+	// authorityHints: must be undefined (Trust Anchor) or a non-empty array (Intermediate).
+	// An explicit empty array would advertise "I am an Intermediate but I have no superiors",
+	// which is contradictory and never valid.
+	if (config.authorityHints !== undefined && config.authorityHints.length === 0) {
+		throw new InvalidAuthorityConfig(
+			"authorityHints must be undefined (Trust Anchor) or a non-empty array of superior Entity Identifiers (Intermediate); an empty array is not allowed.",
+		);
+	}
+
+	const isTrustAnchor = (config.authorityHints?.length ?? 0) === 0;
+
+	// trust_mark_issuers / trust_mark_owners only have effect on a Trust Anchor's
+	// Entity Configuration. Refuse to construct an Intermediate that carries
+	// these — readers ignore them, and silently emitting ignored claims is a footgun.
+	if (!isTrustAnchor) {
+		if (config.trustMarkIssuers !== undefined) {
+			throw new InvalidAuthorityConfig(
+				"trustMarkIssuers is only meaningful for a Trust Anchor (an authority with no authorityHints). Remove it from the Intermediate's config.",
+			);
+		}
+		if (config.trustMarkOwners !== undefined) {
+			throw new InvalidAuthorityConfig(
+				"trustMarkOwners is only meaningful for a Trust Anchor (an authority with no authorityHints). Remove it from the Intermediate's config.",
+			);
+		}
+	}
+
+	// Any Authority (Trust Anchor or Intermediate) MUST publish a fetch endpoint
+	// and a list endpoint in its own Entity Configuration. Refuse to start an
+	// authority that doesn't advertise either.
+	const fedEntity = config.metadata.federation_entity as Record<string, unknown> | undefined;
+	if (!fedEntity || typeof fedEntity.federation_fetch_endpoint !== "string") {
+		throw new InvalidAuthorityConfig(
+			"metadata.federation_entity.federation_fetch_endpoint is required for an Authority. Set it to the URL where this server serves the fetch endpoint.",
+		);
+	}
+	if (typeof fedEntity.federation_list_endpoint !== "string") {
+		throw new InvalidAuthorityConfig(
+			"metadata.federation_entity.federation_list_endpoint is required for an Authority. Set it to the URL where this server serves the list endpoint.",
+		);
+	}
+
+	// No metadata claim may carry a null leaf at any depth — omit the field instead.
+	assertMetadataValuesNotNull(config.metadata as Record<string, unknown>);
 
 	const base: HandlerContext = {
 		entityId: config.entityId,
