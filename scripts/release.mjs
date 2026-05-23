@@ -84,7 +84,7 @@ if (pkg === "all") {
 
 	run(`git add ${files}`);
 	run(`git commit -m "chore(release): all v${v}"`);
-	run(`git tag all/v${v}`);
+	run(`git tag -a -m "release: all v${v}" all/v${v}`);
 	run("git push");
 	run(`git push origin all/v${v}`);
 	console.log(`\nReleased all packages at v${v} → tag all/v${v}`);
@@ -97,7 +97,7 @@ if (pkg === "all") {
 	stampChangelog(changelogPath, v);
 	run(`git add ${dir}/package.json ${changelogPath}`);
 	run(`git commit -m "chore(${scope}): release v${v}"`);
-	run(`git tag ${scope}/v${v}`);
+	run(`git tag -a -m "release: @oidfed/${scope} v${v}" ${scope}/v${v}`);
 	run("git push");
 	run(`git push origin ${scope}/v${v}`);
 	console.log(`\nReleased @oidfed/${scope} at v${v} → tag ${scope}/v${v}`);
