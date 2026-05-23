@@ -36,13 +36,11 @@ export const crossFederationTopology: TopologyDefinition = {
 			protocolRole: "op",
 			authorityHints: ["https://ia-x.ofed.test"],
 			metadata: {
-				federation_entity: {
-					federation_registration_endpoint: "https://op-x.ofed.test/federation_registration",
-				},
 				openid_provider: {
 					issuer: "https://op-x.ofed.test",
 					authorization_endpoint: "https://op-x.ofed.test/auth",
 					token_endpoint: "https://op-x.ofed.test/token",
+					federation_registration_endpoint: "https://op-x.ofed.test/federation_registration",
 					response_types_supported: ["code"],
 					subject_types_supported: ["public"],
 					id_token_signing_alg_values_supported: ["ES256"],
@@ -97,13 +95,11 @@ export const crossFederationTopology: TopologyDefinition = {
 			protocolRole: "op",
 			authorityHints: ["https://ia-y.ofed.test"],
 			metadata: {
-				federation_entity: {
-					federation_registration_endpoint: "https://op-y.ofed.test/federation_registration",
-				},
 				openid_provider: {
 					issuer: "https://op-y.ofed.test",
 					authorization_endpoint: "https://op-y.ofed.test/auth",
 					token_endpoint: "https://op-y.ofed.test/token",
+					federation_registration_endpoint: "https://op-y.ofed.test/federation_registration",
 					response_types_supported: ["code"],
 					subject_types_supported: ["public"],
 					id_token_signing_alg_values_supported: ["ES256"],

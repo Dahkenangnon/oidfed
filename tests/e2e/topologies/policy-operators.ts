@@ -60,13 +60,11 @@ export const policyOperatorsTopology: TopologyDefinition = {
 			protocolRole: "op",
 			authorityHints: ["https://ia.ofed.test"],
 			metadata: {
-				federation_entity: {
-					federation_registration_endpoint: "https://op.ofed.test/federation_registration",
-				},
 				openid_provider: {
 					issuer: "https://op.ofed.test",
 					authorization_endpoint: "https://op.ofed.test/auth",
 					token_endpoint: "https://op.ofed.test/token",
+					federation_registration_endpoint: "https://op.ofed.test/federation_registration",
 					response_types_supported: ["code"],
 					grant_types_supported: ["authorization_code"],
 					subject_types_supported: ["public"],

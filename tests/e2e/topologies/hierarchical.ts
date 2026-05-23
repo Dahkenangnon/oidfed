@@ -67,13 +67,11 @@ export const hierarchicalTopology: TopologyDefinition = {
 			protocolRole: "op",
 			authorityHints: ["https://ia-edu.ofed.test"],
 			metadata: {
-				federation_entity: {
-					federation_registration_endpoint: "https://op-uni.ofed.test/federation_registration",
-				},
 				openid_provider: {
 					issuer: "https://op-uni.ofed.test",
 					authorization_endpoint: "https://op-uni.ofed.test/auth",
 					token_endpoint: "https://op-uni.ofed.test/token",
+					federation_registration_endpoint: "https://op-uni.ofed.test/federation_registration",
 					response_types_supported: ["code"],
 					subject_types_supported: ["public"],
 					id_token_signing_alg_values_supported: ["ES256"],
@@ -102,13 +100,11 @@ export const hierarchicalTopology: TopologyDefinition = {
 			protocolRole: "op",
 			authorityHints: ["https://ia-health.ofed.test"],
 			metadata: {
-				federation_entity: {
-					federation_registration_endpoint: "https://op-hospital.ofed.test/federation_registration",
-				},
 				openid_provider: {
 					issuer: "https://op-hospital.ofed.test",
 					authorization_endpoint: "https://op-hospital.ofed.test/auth",
 					token_endpoint: "https://op-hospital.ofed.test/token",
+					federation_registration_endpoint: "https://op-hospital.ofed.test/federation_registration",
 					response_types_supported: ["code"],
 					subject_types_supported: ["public"],
 					id_token_signing_alg_values_supported: ["ES256"],

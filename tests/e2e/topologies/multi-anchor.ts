@@ -50,13 +50,11 @@ export const multiAnchorTopology: TopologyDefinition = {
 			protocolRole: "op",
 			authorityHints: ["https://ia-shared.ofed.test"],
 			metadata: {
-				federation_entity: {
-					federation_registration_endpoint: "https://op.ofed.test/federation_registration",
-				},
 				openid_provider: {
 					issuer: "https://op.ofed.test",
 					authorization_endpoint: "https://op.ofed.test/auth",
 					token_endpoint: "https://op.ofed.test/token",
+					federation_registration_endpoint: "https://op.ofed.test/federation_registration",
 					response_types_supported: ["code"],
 					subject_types_supported: ["public"],
 					id_token_signing_alg_values_supported: ["ES256"],
