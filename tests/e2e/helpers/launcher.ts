@@ -4,6 +4,7 @@ import {
 	MemoryKeyStore,
 	MemorySubordinateStore,
 	MemoryTrustMarkStore,
+	sanitizeSubordinateMetadata,
 } from "@oidfed/authority";
 import type { EntityType, JWK, TrustAnchorSet } from "@oidfed/core";
 import { entityId, generateSigningKey } from "@oidfed/core";
@@ -203,6 +204,10 @@ export async function launchFederation(
 			const keys = getKeys(entity.id);
 			const eid = rewriteUrl(entity.id);
 			const metadata = rewriteMetadata(entity.metadata);
+			// Strip the subordinate's own operational federation_entity claims —
+			// those belong only in its own Entity Configuration, not in the parent's
+			// Subordinate Statement.
+			const subordinateMetadata = sanitizeSubordinateMetadata(metadata as Record<string, unknown>);
 
 			// Parent's constraints apply to all subordinate statements it issues
 			const parentEntity = topology.entities.find((e) => e.id === parentId);
@@ -211,7 +216,7 @@ export async function launchFederation(
 			const record: SubordinateRecord = {
 				entityId: entityId(eid),
 				jwks: { keys: [keys.public] },
-				metadata,
+				...(subordinateMetadata !== undefined ? { metadata: subordinateMetadata } : {}),
 				...(entity.metadataPolicy !== undefined ? { metadataPolicy: entity.metadataPolicy } : {}),
 				...(parentConstraints !== undefined ? { constraints: parentConstraints } : {}),
 				entityTypes: getEntityTypes(entity) as EntityType[],
