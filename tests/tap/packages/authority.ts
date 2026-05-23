@@ -29,6 +29,12 @@ import {
 } from "../../../packages/authority/src/endpoints/trust-mark.js";
 import { createTrustMarkListHandler } from "../../../packages/authority/src/endpoints/trust-mark-list.js";
 import { createTrustMarkStatusHandler } from "../../../packages/authority/src/endpoints/trust-mark-status.js";
+import {
+	InvalidAuthorityConfig,
+	InvalidMetadata,
+	InvalidSubordinateRecord,
+	InvalidSubordinateStatementShape,
+} from "../../../packages/authority/src/errors.js";
 import { compose, type Middleware } from "../../../packages/authority/src/handler.js";
 import { rotateKey, rotateKeyCompromise } from "../../../packages/authority/src/keys/index.js";
 import {
@@ -44,6 +50,15 @@ import type {
 	SubordinateRecord,
 	TrustMarkRecord,
 } from "../../../packages/authority/src/storage/types.js";
+import {
+	assertCritShape,
+	assertMetadataPolicyCritShape,
+	assertMetadataPolicyShape,
+	assertMetadataValuesNotNull,
+	assertSubordinateStatementShape,
+	isFederationEntityOperationalField,
+	sanitizeSubordinateMetadata,
+} from "../../../packages/authority/src/utils/subordinate-statement-shape.js";
 import type { FederationError } from "../../../packages/core/src/index.js";
 import {
 	decodeEntityStatement,
@@ -6295,6 +6310,7 @@ export default (QUnit: QUnit) => {
 						metadata: {
 							federation_entity: {
 								federation_fetch_endpoint: `${INT_INTERMEDIATE_ID}${FederationEndpoint.Fetch}`,
+								federation_list_endpoint: `${INT_INTERMEDIATE_ID}${FederationEndpoint.List}`,
 							},
 						},
 						subordinateStore: new MemorySubordinateStore(),
@@ -6455,4 +6471,763 @@ export default (QUnit: QUnit) => {
 			});
 		});
 	}
+
+	// -------------------------------------------------------------------------
+	// utils/subordinate-statement-shape — pure helpers
+	// -------------------------------------------------------------------------
+	module("authority / sanitizeSubordinateMetadata", () => {
+		test("strips every federation_entity operational field", (t) => {
+			const input = {
+				federation_entity: {
+					federation_fetch_endpoint: "https://a.example/fetch",
+					federation_list_endpoint: "https://a.example/list",
+					federation_resolve_endpoint: "https://a.example/resolve",
+					federation_extended_list_endpoint: "https://a.example/extended",
+					federation_trust_mark_endpoint: "https://a.example/tm",
+					federation_trust_mark_status_endpoint: "https://a.example/tm-status",
+					federation_trust_mark_list_endpoint: "https://a.example/tm-list",
+					federation_historical_keys_endpoint: "https://a.example/hist",
+					organization_name: "Acme",
+				},
+			};
+			const out = sanitizeSubordinateMetadata(input);
+			t.deepEqual(out, { federation_entity: { organization_name: "Acme" } });
+		});
+
+		test("strips *_auth_methods companions", (t) => {
+			const input = {
+				federation_entity: {
+					federation_fetch_endpoint_auth_methods: ["private_key_jwt"],
+					federation_list_endpoint_auth_methods: ["none"],
+					organization_uri: "https://acme.example",
+				},
+			};
+			const out = sanitizeSubordinateMetadata(input);
+			t.deepEqual(out, { federation_entity: { organization_uri: "https://acme.example" } });
+		});
+
+		test("strips endpoint_auth_signing_alg_values_supported", (t) => {
+			const input = {
+				federation_entity: {
+					endpoint_auth_signing_alg_values_supported: ["ES256", "RS256"],
+					policy_uri: "https://acme.example/policy",
+				},
+			};
+			const out = sanitizeSubordinateMetadata(input);
+			t.deepEqual(out, { federation_entity: { policy_uri: "https://acme.example/policy" } });
+		});
+
+		test("keeps descriptive federation_entity claims", (t) => {
+			const input = {
+				federation_entity: {
+					organization_name: "Acme",
+					organization_uri: "https://acme.example",
+					policy_uri: "https://acme.example/policy",
+					homepage_uri: "https://acme.example",
+					logo_uri: "https://acme.example/logo.svg",
+					contacts: ["legal@acme.example"],
+				},
+			};
+			const out = sanitizeSubordinateMetadata(input);
+			t.deepEqual(out, input);
+		});
+
+		test("passes openid_relying_party / openid_provider / oauth_* blocks through unchanged", (t) => {
+			const input = {
+				openid_relying_party: { redirect_uris: ["https://rp.example/cb"] },
+				openid_provider: { issuer: "https://op.example" },
+				oauth_authorization_server: { issuer: "https://op.example" },
+				oauth_client: { redirect_uris: ["https://rp.example/cb"] },
+				oauth_resource: { resource: "https://api.example" },
+			};
+			const out = sanitizeSubordinateMetadata(input);
+			t.deepEqual(out, input);
+		});
+
+		test("preserves federation_registration_endpoint inside openid_provider", (t) => {
+			const input = {
+				openid_provider: {
+					issuer: "https://op.example",
+					federation_registration_endpoint: "https://op.example/fedreg",
+				},
+			};
+			const out = sanitizeSubordinateMetadata(input);
+			t.deepEqual(out, input);
+		});
+
+		test("returns undefined when input is undefined", (t) => {
+			t.equal(sanitizeSubordinateMetadata(undefined), undefined);
+		});
+
+		test("returns undefined when nothing survives", (t) => {
+			const input = {
+				federation_entity: {
+					federation_fetch_endpoint: "https://a.example/fetch",
+					federation_list_endpoint: "https://a.example/list",
+				},
+			};
+			t.equal(sanitizeSubordinateMetadata(input), undefined);
+		});
+
+		test("omits federation_entity entirely when only operational fields existed", (t) => {
+			const input = {
+				openid_provider: { issuer: "https://op.example" },
+				federation_entity: { federation_fetch_endpoint: "https://a.example/fetch" },
+			};
+			const out = sanitizeSubordinateMetadata(input);
+			t.deepEqual(out, { openid_provider: { issuer: "https://op.example" } });
+		});
+
+		test("FEDERATION_ENTITY_OPERATIONAL_FIELDS includes every endpoint URL and companion", (t) => {
+			const expected = [
+				"federation_fetch_endpoint",
+				"federation_list_endpoint",
+				"federation_resolve_endpoint",
+				"federation_extended_list_endpoint",
+				"federation_trust_mark_endpoint",
+				"federation_trust_mark_status_endpoint",
+				"federation_trust_mark_list_endpoint",
+				"federation_historical_keys_endpoint",
+			];
+			for (const field of expected) {
+				t.ok(isFederationEntityOperationalField(field), `${field} is operational`);
+				t.ok(
+					isFederationEntityOperationalField(`${field}_auth_methods`),
+					`${field}_auth_methods is operational`,
+				);
+			}
+			t.ok(isFederationEntityOperationalField("endpoint_auth_signing_alg_values_supported"));
+			t.notOk(isFederationEntityOperationalField("organization_name"));
+			t.notOk(isFederationEntityOperationalField("federation_registration_endpoint"));
+		});
+	});
+
+	module("authority / assertSubordinateStatementShape", () => {
+		test("throws on authority_hints", (t) => {
+			t.throws(
+				() => assertSubordinateStatementShape({ authority_hints: ["https://parent.example"] }),
+				InvalidSubordinateStatementShape,
+			);
+		});
+		test("throws on trust_anchor_hints", (t) => {
+			t.throws(
+				() => assertSubordinateStatementShape({ trust_anchor_hints: ["https://ta.example"] }),
+				InvalidSubordinateStatementShape,
+			);
+		});
+		test("throws on trust_marks", (t) => {
+			t.throws(
+				() => assertSubordinateStatementShape({ trust_marks: [] }),
+				InvalidSubordinateStatementShape,
+			);
+		});
+		test("throws on trust_mark_issuers", (t) => {
+			t.throws(
+				() => assertSubordinateStatementShape({ trust_mark_issuers: {} }),
+				InvalidSubordinateStatementShape,
+			);
+		});
+		test("throws on trust_mark_owners", (t) => {
+			t.throws(
+				() => assertSubordinateStatementShape({ trust_mark_owners: {} }),
+				InvalidSubordinateStatementShape,
+			);
+		});
+		test("throws on aud", (t) => {
+			t.throws(
+				() => assertSubordinateStatementShape({ aud: "https://op.example" }),
+				InvalidSubordinateStatementShape,
+			);
+		});
+		test("throws on trust_anchor", (t) => {
+			t.throws(
+				() => assertSubordinateStatementShape({ trust_anchor: "https://ta.example" }),
+				InvalidSubordinateStatementShape,
+			);
+		});
+		test("accepts a clean payload", (t) => {
+			assertSubordinateStatementShape({
+				iss: "https://parent.example",
+				sub: "https://child.example",
+				iat: 1,
+				exp: 2,
+				jwks: { keys: [] },
+				metadata_policy: {},
+				constraints: { max_path_length: 1 },
+			});
+			t.ok(true);
+		});
+		test("error carries the list of offending claim names", (t) => {
+			try {
+				assertSubordinateStatementShape({
+					authority_hints: [],
+					trust_marks: [],
+				});
+				t.notOk(true, "expected throw");
+			} catch (err) {
+				if (err instanceof InvalidSubordinateStatementShape) {
+					t.deepEqual([...err.forbiddenClaims].sort(), ["authority_hints", "trust_marks"]);
+				} else {
+					t.notOk(true, "wrong error type");
+				}
+			}
+		});
+	});
+
+	module("authority / assertCritShape", () => {
+		test("accepts payload without crit", (t) => {
+			assertCritShape({ iss: "x", sub: "y" });
+			t.ok(true);
+		});
+		test("throws on empty crit array", (t) => {
+			t.throws(() => assertCritShape({ crit: [], jti: "abc" }), InvalidSubordinateStatementShape);
+		});
+		test("throws when crit is not an array", (t) => {
+			t.throws(
+				() => assertCritShape({ crit: "jti" } as unknown as Record<string, unknown>),
+				InvalidSubordinateStatementShape,
+			);
+		});
+		test("throws when crit lists a spec-defined claim", (t) => {
+			t.throws(
+				() => assertCritShape({ crit: ["iss"], iss: "x" }),
+				InvalidSubordinateStatementShape,
+			);
+		});
+		test("throws when crit lists a name absent from the payload", (t) => {
+			t.throws(() => assertCritShape({ crit: ["jti"] }), InvalidSubordinateStatementShape);
+		});
+		test("throws on duplicate names in crit", (t) => {
+			t.throws(
+				() => assertCritShape({ crit: ["jti", "jti"], jti: "abc" }),
+				InvalidSubordinateStatementShape,
+			);
+		});
+		test("accepts a crit listing an extension claim that exists in the payload", (t) => {
+			assertCritShape({ crit: ["jti"], jti: "abc" });
+			t.ok(true);
+		});
+	});
+
+	module("authority / assertMetadataPolicyCritShape", () => {
+		test("accepts payload without metadata_policy_crit", (t) => {
+			assertMetadataPolicyCritShape({});
+			t.ok(true);
+		});
+		test("throws on empty metadata_policy_crit array", (t) => {
+			t.throws(
+				() => assertMetadataPolicyCritShape({ metadata_policy_crit: [] }),
+				InvalidSubordinateStatementShape,
+			);
+		});
+		test("throws when metadata_policy_crit lists a standard operator", (t) => {
+			t.throws(
+				() => assertMetadataPolicyCritShape({ metadata_policy_crit: ["one_of"] }),
+				InvalidSubordinateStatementShape,
+			);
+		});
+		test("throws on every standard operator name", (t) => {
+			for (const op of [
+				"value",
+				"add",
+				"default",
+				"one_of",
+				"subset_of",
+				"superset_of",
+				"essential",
+			]) {
+				t.throws(
+					() => assertMetadataPolicyCritShape({ metadata_policy_crit: [op] }),
+					InvalidSubordinateStatementShape,
+					`operator ${op} must be rejected`,
+				);
+			}
+		});
+		test("throws on duplicate entries", (t) => {
+			t.throws(
+				() => assertMetadataPolicyCritShape({ metadata_policy_crit: ["regexp", "regexp"] }),
+				InvalidSubordinateStatementShape,
+			);
+		});
+		test("throws when entry is not a string", (t) => {
+			t.throws(
+				() =>
+					assertMetadataPolicyCritShape({
+						metadata_policy_crit: [42] as unknown as string[],
+					}),
+				InvalidSubordinateStatementShape,
+			);
+		});
+		test("accepts a non-standard operator name", (t) => {
+			assertMetadataPolicyCritShape({ metadata_policy_crit: ["regexp"] });
+			t.ok(true);
+		});
+	});
+
+	module("authority / assertMetadataPolicyShape", () => {
+		test("accepts payload without metadata_policy", (t) => {
+			assertMetadataPolicyShape({ iss: "x" });
+			t.ok(true);
+		});
+		test("accepts metadata_policy that is a JSON object", (t) => {
+			assertMetadataPolicyShape({ metadata_policy: { openid_provider: {} } });
+			t.ok(true);
+		});
+		test("throws when metadata_policy is an array", (t) => {
+			t.throws(
+				() => assertMetadataPolicyShape({ metadata_policy: [] }),
+				InvalidSubordinateStatementShape,
+			);
+		});
+		test("throws when metadata_policy is null", (t) => {
+			t.throws(
+				() => assertMetadataPolicyShape({ metadata_policy: null }),
+				InvalidSubordinateStatementShape,
+			);
+		});
+		test("throws when metadata_policy is a string", (t) => {
+			t.throws(
+				() => assertMetadataPolicyShape({ metadata_policy: "x" }),
+				InvalidSubordinateStatementShape,
+			);
+		});
+	});
+
+	module("authority / assertMetadataValuesNotNull", () => {
+		test("accepts undefined", (t) => {
+			assertMetadataValuesNotNull(undefined);
+			t.ok(true);
+		});
+		test("accepts a clean object", (t) => {
+			assertMetadataValuesNotNull({
+				federation_entity: { organization_name: "Acme" },
+				openid_provider: { scopes_supported: ["openid"] },
+			});
+			t.ok(true);
+		});
+		test("throws on a null leaf one level deep", (t) => {
+			t.throws(
+				() => assertMetadataValuesNotNull({ federation_entity: { organization_name: null } }),
+				InvalidMetadata,
+			);
+		});
+		test("throws on a null leaf nested in an array element", (t) => {
+			t.throws(
+				() =>
+					assertMetadataValuesNotNull({
+						openid_provider: { response_types_supported: ["code", null] },
+					}),
+				InvalidMetadata,
+			);
+		});
+		test("error carries the dotted path to the null leaf", (t) => {
+			try {
+				assertMetadataValuesNotNull({
+					openid_provider: { issuer: null },
+				});
+				t.notOk(true, "expected throw");
+			} catch (err) {
+				if (err instanceof InvalidMetadata) {
+					t.equal(err.path, "openid_provider.issuer");
+				} else {
+					t.notOk(true, "wrong error type");
+				}
+			}
+		});
+	});
+
+	// -------------------------------------------------------------------------
+	// createAuthorityServer — construction-time guards
+	// -------------------------------------------------------------------------
+	module("authority / createAuthorityServer construction guards", () => {
+		const SPEC_ENTITY = entityId("https://acme.example");
+		const PARENT = entityId("https://parent.example");
+
+		async function baseConfig(overrides?: Partial<AuthorityConfig>): Promise<AuthorityConfig> {
+			const keyStore = new MemoryKeyStore();
+			const { privateKey } = await generateSigningKey("ES256");
+			const signingKey = { ...privateKey, kid: "ck-1" };
+			await keyStore.addKey(signingKey);
+			await keyStore.activateKey("ck-1");
+			return {
+				entityId: SPEC_ENTITY,
+				keyStore,
+				subordinateStore: new MemorySubordinateStore(),
+				metadata: {
+					federation_entity: {
+						federation_fetch_endpoint: `${SPEC_ENTITY}/federation_fetch`,
+						federation_list_endpoint: `${SPEC_ENTITY}/federation_list`,
+					},
+				},
+				...overrides,
+			} as AuthorityConfig;
+		}
+
+		test("accepts a minimal TA config (no authorityHints, both required endpoints)", async (t) => {
+			const cfg = await baseConfig();
+			const s = createAuthorityServer(cfg);
+			t.ok(s);
+		});
+
+		test("accepts a minimal Intermediate config (non-empty authorityHints)", async (t) => {
+			const cfg = await baseConfig({ authorityHints: [PARENT] });
+			const s = createAuthorityServer(cfg);
+			t.ok(s);
+		});
+
+		test("throws when authorityHints is an explicit empty array", async (t) => {
+			const cfg = await baseConfig({ authorityHints: [] });
+			t.throws(() => createAuthorityServer(cfg), InvalidAuthorityConfig);
+		});
+
+		test("throws when Intermediate config carries trustMarkIssuers", async (t) => {
+			const cfg = await baseConfig({
+				authorityHints: [PARENT],
+				trustMarkIssuers: { "https://example/tm": [SPEC_ENTITY] },
+			});
+			t.throws(() => createAuthorityServer(cfg), InvalidAuthorityConfig);
+		});
+
+		test("throws when Intermediate config carries trustMarkOwners", async (t) => {
+			const { publicKey } = await generateSigningKey("ES256");
+			const cfg = await baseConfig({
+				authorityHints: [PARENT],
+				trustMarkOwners: {
+					"https://example/tm": { sub: "https://owner.example", jwks: { keys: [publicKey] } },
+				},
+			});
+			t.throws(() => createAuthorityServer(cfg), InvalidAuthorityConfig);
+		});
+
+		test("accepts TA with trustMarkIssuers", async (t) => {
+			const cfg = await baseConfig({
+				trustMarkIssuers: { "https://example/tm": [SPEC_ENTITY] },
+			});
+			const s = createAuthorityServer(cfg);
+			t.ok(s);
+		});
+
+		test("throws when federation_entity lacks federation_fetch_endpoint", async (t) => {
+			const cfg = await baseConfig({
+				metadata: {
+					federation_entity: {
+						federation_list_endpoint: `${SPEC_ENTITY}/federation_list`,
+					},
+				},
+			});
+			t.throws(() => createAuthorityServer(cfg), InvalidAuthorityConfig);
+		});
+
+		test("throws when federation_entity lacks federation_list_endpoint", async (t) => {
+			const cfg = await baseConfig({
+				metadata: {
+					federation_entity: {
+						federation_fetch_endpoint: `${SPEC_ENTITY}/federation_fetch`,
+					},
+				},
+			});
+			t.throws(() => createAuthorityServer(cfg), InvalidAuthorityConfig);
+		});
+
+		test("throws when metadata has a null leaf", async (t) => {
+			const cfg = await baseConfig({
+				metadata: {
+					federation_entity: {
+						federation_fetch_endpoint: `${SPEC_ENTITY}/federation_fetch`,
+						federation_list_endpoint: `${SPEC_ENTITY}/federation_list`,
+						organization_name: null as unknown as string,
+					},
+				},
+			});
+			t.throws(() => createAuthorityServer(cfg), InvalidMetadata);
+		});
+	});
+
+	// -------------------------------------------------------------------------
+	// EC emission — role-aware gating of trust_mark_issuers / trust_mark_owners
+	// -------------------------------------------------------------------------
+	module("authority / EC emission role gating", () => {
+		const TA_AUTH = entityId("https://ta-shape.example");
+		const INT_AUTH = entityId("https://int-shape.example");
+		const PARENT = entityId("https://parent.example");
+
+		async function setupServer(opts: {
+			id: EntityId;
+			authorityHints?: EntityId[];
+			trustMarkIssuers?: Record<string, string[]>;
+			trustMarkOwners?: Record<string, { sub: string; jwks: { keys: JWK[] } }>;
+		}) {
+			const keyStore = new MemoryKeyStore();
+			const { privateKey } = await generateSigningKey("ES256");
+			const signingKey = { ...privateKey, kid: "k1" };
+			await keyStore.addKey(signingKey);
+			await keyStore.activateKey("k1");
+			const cfg: AuthorityConfig = {
+				entityId: opts.id,
+				keyStore,
+				subordinateStore: new MemorySubordinateStore(),
+				metadata: {
+					federation_entity: {
+						federation_fetch_endpoint: `${opts.id}/federation_fetch`,
+						federation_list_endpoint: `${opts.id}/federation_list`,
+					},
+				},
+				...(opts.authorityHints !== undefined ? { authorityHints: opts.authorityHints } : {}),
+				...(opts.trustMarkIssuers !== undefined ? { trustMarkIssuers: opts.trustMarkIssuers } : {}),
+				...(opts.trustMarkOwners !== undefined ? { trustMarkOwners: opts.trustMarkOwners } : {}),
+			} as AuthorityConfig;
+			return createAuthorityServer(cfg);
+		}
+
+		async function readEC(server: ReturnType<typeof createAuthorityServer>, id: EntityId) {
+			const httpHandler = server.handler();
+			const res = await httpHandler(new Request(`${id}${WELL_KNOWN_OPENID_FEDERATION}`));
+			const jwt = await res.text();
+			const decoded = decodeEntityStatement(jwt);
+			if (!isOk(decoded)) throw new Error("EC decode failed");
+			return decoded.value;
+		}
+
+		test("TA EC omits authority_hints", async (t) => {
+			const s = await setupServer({ id: TA_AUTH });
+			const { payload } = await readEC(s, TA_AUTH);
+			t.notOk((payload as Record<string, unknown>).authority_hints);
+		});
+
+		test("TA EC emits trust_mark_issuers when configured", async (t) => {
+			const s = await setupServer({
+				id: TA_AUTH,
+				trustMarkIssuers: { "https://example/tm": [TA_AUTH] },
+			});
+			const { payload } = await readEC(s, TA_AUTH);
+			t.ok((payload as Record<string, unknown>).trust_mark_issuers);
+		});
+
+		test("Intermediate EC includes authority_hints", async (t) => {
+			const s = await setupServer({ id: INT_AUTH, authorityHints: [PARENT] });
+			const { payload } = await readEC(s, INT_AUTH);
+			t.deepEqual((payload as Record<string, unknown>).authority_hints, [PARENT]);
+		});
+
+		test("EC payload has no constraints / metadata_policy / metadata_policy_crit / source_endpoint", async (t) => {
+			const s = await setupServer({ id: INT_AUTH, authorityHints: [PARENT] });
+			const { payload } = await readEC(s, INT_AUTH);
+			const p = payload as Record<string, unknown>;
+			t.notOk("constraints" in p);
+			t.notOk("metadata_policy" in p);
+			t.notOk("metadata_policy_crit" in p);
+			t.notOk("source_endpoint" in p);
+		});
+
+		test("EC payload has no trust_anchor_hints or aud", async (t) => {
+			const s = await setupServer({ id: INT_AUTH, authorityHints: [PARENT] });
+			const { payload } = await readEC(s, INT_AUTH);
+			const p = payload as Record<string, unknown>;
+			t.notOk("trust_anchor_hints" in p);
+			t.notOk("aud" in p);
+		});
+
+		test("EC JWT header has no trust_chain or peer_trust_chain", async (t) => {
+			const s = await setupServer({ id: TA_AUTH });
+			const { header } = await readEC(s, TA_AUTH);
+			const h = header as Record<string, unknown>;
+			t.notOk("trust_chain" in h);
+			t.notOk("peer_trust_chain" in h);
+		});
+
+		test("EC JWT header has typ=entity-statement+jwt and a kid", async (t) => {
+			const s = await setupServer({ id: TA_AUTH });
+			const { header } = await readEC(s, TA_AUTH);
+			t.equal(header.typ, JwtTyp.EntityStatement);
+			t.ok(header.kid);
+		});
+	});
+
+	// -------------------------------------------------------------------------
+	// Subordinate Statement build — sanitization in buildSubordinateStatement
+	// -------------------------------------------------------------------------
+	module("authority / Subordinate Statement build sanitization", () => {
+		const PARENT_ID = entityId("https://parent-shape.example");
+		const CHILD_ID = entityId("https://child-shape.example");
+
+		async function setupParent(): Promise<{
+			server: ReturnType<typeof createAuthorityServer>;
+		}> {
+			const keyStore = new MemoryKeyStore();
+			const { privateKey } = await generateSigningKey("ES256");
+			const signingKey = { ...privateKey, kid: "p1" };
+			await keyStore.addKey(signingKey);
+			await keyStore.activateKey("p1");
+			const subordinateStore = new MemorySubordinateStore();
+			const childKeys = await generateSigningKey("ES256");
+			const childPublic = { ...childKeys.publicKey, kid: "c1" };
+			// Insert a record with NO endpoint URLs in federation_entity (clean record);
+			// the bug-class test goes through the wire-layer sanitizer instead.
+			await subordinateStore.add({
+				entityId: CHILD_ID,
+				jwks: { keys: [childPublic] },
+				metadata: {
+					federation_entity: { organization_name: "Child" },
+					openid_relying_party: { redirect_uris: [`${CHILD_ID}/cb`] },
+				},
+				entityTypes: ["federation_entity", "openid_relying_party"],
+				isIntermediate: false,
+				createdAt: 1,
+				updatedAt: 1,
+			} as unknown as SubordinateRecord);
+			const cfg: AuthorityConfig = {
+				entityId: PARENT_ID,
+				keyStore,
+				subordinateStore,
+				metadata: {
+					federation_entity: {
+						federation_fetch_endpoint: `${PARENT_ID}/federation_fetch`,
+						federation_list_endpoint: `${PARENT_ID}/federation_list`,
+					},
+				},
+			} as AuthorityConfig;
+			return { server: createAuthorityServer(cfg) };
+		}
+
+		test("Subordinate Statement payload has none of the EC-only top-level claims", async (t) => {
+			const { server } = await setupParent();
+			const httpHandler = server.handler();
+			const res = await httpHandler(
+				new Request(`${PARENT_ID}/federation_fetch?sub=${encodeURIComponent(CHILD_ID)}`),
+			);
+			t.equal(res.status, 200);
+			const jwt = await res.text();
+			const decoded = decodeEntityStatement(jwt);
+			t.ok(isOk(decoded));
+			if (!isOk(decoded)) return;
+			const p = decoded.value.payload as Record<string, unknown>;
+			for (const claim of [
+				"authority_hints",
+				"trust_anchor_hints",
+				"trust_marks",
+				"trust_mark_issuers",
+				"trust_mark_owners",
+			]) {
+				t.notOk(claim in p, `${claim} must not appear`);
+			}
+		});
+
+		test("Subordinate Statement JWT header has no trust_chain or peer_trust_chain", async (t) => {
+			const { server } = await setupParent();
+			const httpHandler = server.handler();
+			const res = await httpHandler(
+				new Request(`${PARENT_ID}/federation_fetch?sub=${encodeURIComponent(CHILD_ID)}`),
+			);
+			t.equal(res.status, 200);
+			const jwt = await res.text();
+			const decoded = decodeEntityStatement(jwt);
+			t.ok(isOk(decoded));
+			if (!isOk(decoded)) return;
+			const h = decoded.value.header as Record<string, unknown>;
+			t.notOk("trust_chain" in h);
+			t.notOk("peer_trust_chain" in h);
+		});
+
+		test("Subordinate Statement JWT header is typ=entity-statement+jwt with kid", async (t) => {
+			const { server } = await setupParent();
+			const httpHandler = server.handler();
+			const res = await httpHandler(
+				new Request(`${PARENT_ID}/federation_fetch?sub=${encodeURIComponent(CHILD_ID)}`),
+			);
+			const jwt = await res.text();
+			const decoded = decodeEntityStatement(jwt);
+			t.ok(isOk(decoded));
+			if (!isOk(decoded)) return;
+			t.equal(decoded.value.header.typ, JwtTyp.EntityStatement);
+			t.ok(decoded.value.header.kid);
+		});
+	});
+
+	// -------------------------------------------------------------------------
+	// MemorySubordinateStore — strict-by-default validation
+	// -------------------------------------------------------------------------
+	module("authority / MemorySubordinateStore strict validation", () => {
+		const SUB_ID = entityId("https://sub-strict.example");
+
+		async function aRecord(metadata?: Record<string, unknown>): Promise<SubordinateRecord> {
+			const { publicKey } = await generateSigningKey("ES256");
+			return {
+				entityId: SUB_ID,
+				jwks: { keys: [{ ...publicKey, kid: "s1" }] },
+				...(metadata !== undefined ? { metadata } : {}),
+				entityTypes: ["federation_entity"],
+				isIntermediate: false,
+				createdAt: 1,
+				updatedAt: 1,
+			} as unknown as SubordinateRecord;
+		}
+
+		test("rejects records carrying federation_fetch_endpoint in federation_entity", async (t) => {
+			const store = new MemorySubordinateStore();
+			const rec = await aRecord({
+				federation_entity: { federation_fetch_endpoint: `${SUB_ID}/federation_fetch` },
+			});
+			await t.rejects(store.add(rec), InvalidSubordinateRecord);
+		});
+
+		test("rejects records carrying federation_list_endpoint_auth_methods", async (t) => {
+			const store = new MemorySubordinateStore();
+			const rec = await aRecord({
+				federation_entity: { federation_list_endpoint_auth_methods: ["private_key_jwt"] },
+			});
+			await t.rejects(store.add(rec), InvalidSubordinateRecord);
+		});
+
+		test("rejects records carrying endpoint_auth_signing_alg_values_supported in federation_entity", async (t) => {
+			const store = new MemorySubordinateStore();
+			const rec = await aRecord({
+				federation_entity: { endpoint_auth_signing_alg_values_supported: ["ES256"] },
+			});
+			await t.rejects(store.add(rec), InvalidSubordinateRecord);
+		});
+
+		test("rejects records with a null metadata leaf", async (t) => {
+			const store = new MemorySubordinateStore();
+			const rec = await aRecord({
+				openid_provider: { issuer: null as unknown as string },
+			});
+			await t.rejects(store.add(rec), InvalidSubordinateRecord);
+		});
+
+		test("accepts clean records (organization_name only)", async (t) => {
+			const store = new MemorySubordinateStore();
+			const rec = await aRecord({ federation_entity: { organization_name: "Sub" } });
+			await store.add(rec);
+			const stored = await store.get(SUB_ID);
+			t.ok(stored);
+		});
+
+		test("accepts records with no metadata claim at all", async (t) => {
+			const store = new MemorySubordinateStore();
+			const rec = await aRecord();
+			await store.add(rec);
+			const stored = await store.get(SUB_ID);
+			t.ok(stored);
+		});
+
+		test("accepts records with openid_provider.federation_registration_endpoint", async (t) => {
+			const store = new MemorySubordinateStore();
+			const rec = await aRecord({
+				openid_provider: {
+					issuer: "https://op.example",
+					federation_registration_endpoint: "https://op.example/fedreg",
+				},
+			});
+			await store.add(rec);
+			const stored = await store.get(SUB_ID);
+			t.ok(stored);
+		});
+
+		test("still rejects duplicate entityIds", async (t) => {
+			const store = new MemorySubordinateStore();
+			const rec = await aRecord({ federation_entity: { organization_name: "Sub" } });
+			await store.add(rec);
+			await t.rejects(store.add(rec), /already exists/);
+		});
+	});
 };
