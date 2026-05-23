@@ -2,6 +2,7 @@ export {
 	MemoryKeyStore,
 	MemorySubordinateStore,
 	MemoryTrustMarkStore,
+	validateSubordinateRecord,
 } from "./memory.js";
 export type {
 	KeyState,

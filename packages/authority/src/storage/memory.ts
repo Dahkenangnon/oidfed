@@ -1,6 +1,11 @@
 import type { Clock, EntityId, JWK, JWKSet } from "@oidfed/core";
 import { nowSeconds } from "@oidfed/core";
 import { stripPrivateFields } from "../endpoints/helpers.js";
+import { InvalidMetadata, InvalidSubordinateRecord } from "../errors.js";
+import {
+	assertMetadataValuesNotNull,
+	isFederationEntityOperationalField,
+} from "../utils/subordinate-statement-shape.js";
 import type {
 	KeyStore,
 	ListFilter,
@@ -12,6 +17,44 @@ import type {
 	TrustMarkRecord,
 	TrustMarkStore,
 } from "./types.js";
+
+/**
+ * Validates a SubordinateRecord against the shape rules a Subordinate Statement
+ * must satisfy. Throws InvalidSubordinateRecord on:
+ *   - metadata.federation_entity carrying any operational claim (endpoint URLs,
+ *     their _auth_methods companions, or endpoint_auth_signing_alg_values_supported)
+ *   - any null leaf value in metadata at any depth
+ *
+ * Other metadata blocks (openid_relying_party, openid_provider, oauth_*, ...)
+ * pass through unchanged. Callers that synthesize records from raw entity
+ * metadata should first run their input through `sanitizeSubordinateMetadata`.
+ */
+export function validateSubordinateRecord(record: SubordinateRecord): void {
+	const metadata = record.metadata;
+	if (!metadata) return;
+	const fed = (metadata as Record<string, unknown>).federation_entity;
+	if (fed && typeof fed === "object" && !Array.isArray(fed)) {
+		const offenders: string[] = [];
+		for (const key of Object.keys(fed as Record<string, unknown>)) {
+			if (isFederationEntityOperationalField(key)) offenders.push(key);
+		}
+		if (offenders.length > 0) {
+			throw new InvalidSubordinateRecord(
+				`SubordinateRecord.metadata.federation_entity must not carry operational fields (these belong only in the subordinate's own Entity Configuration). Offending field(s): ${offenders.join(", ")}. Apply sanitizeSubordinateMetadata before calling add().`,
+			);
+		}
+	}
+	try {
+		assertMetadataValuesNotNull(metadata as Record<string, unknown>);
+	} catch (err) {
+		if (err instanceof InvalidMetadata) {
+			throw new InvalidSubordinateRecord(
+				`SubordinateRecord.metadata has a null leaf value: ${err.message}`,
+			);
+		}
+		throw err;
+	}
+}
 
 /**
  * In-memory implementation of the subordinate entity store.
@@ -76,6 +119,7 @@ export class MemorySubordinateStore implements SubordinateStore {
 	}
 
 	async add(record: SubordinateRecord): Promise<void> {
+		validateSubordinateRecord(record);
 		if (this.records.has(record.entityId)) {
 			throw new Error(`Subordinate '${record.entityId}' already exists`);
 		}
