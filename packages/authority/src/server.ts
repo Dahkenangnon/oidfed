@@ -39,7 +39,6 @@ import { buildSubordinateStatement, createFetchHandler } from "./endpoints/fetch
 import { SECURITY_HEADERS } from "./endpoints/helpers.js";
 import { buildHistoricalKeys, createHistoricalKeysHandler } from "./endpoints/historical-keys.js";
 import { createListHandler } from "./endpoints/list.js";
-import { createRegistrationHandler } from "./endpoints/registration.js";
 import { createResolveHandler } from "./endpoints/resolve.js";
 import { createTrustMarkHandler, createTrustMarkIssuanceHandler } from "./endpoints/trust-mark.js";
 import { createTrustMarkListHandler } from "./endpoints/trust-mark-list.js";
@@ -98,16 +97,10 @@ export interface AuthorityConfig {
 	entityConfigurationTtlSeconds?: number;
 	/** TTL in seconds for subordinate statement JWTs. */
 	subordinateStatementTtlSeconds?: number;
-	/** TTL in seconds for registration response JWTs. */
-	registrationResponseTtlSeconds?: number;
 	/** TTL in seconds for issued trust mark JWTs. */
 	trustMarkTtlSeconds?: number;
 	/** Federation-wide options (httpClient, clock, etc.). */
 	options?: FederationOptions;
-	/** Registration-specific callbacks. */
-	registrationConfig?: {
-		generateClientSecret?: (sub: EntityId) => Promise<string | undefined>;
-	};
 	/**
 	 * Configuration for the Extended Subordinate Listing endpoint. Set
 	 * `enabled: false` to keep the endpoint disabled (router returns 404) and
@@ -149,7 +142,6 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 	const ttlFields = [
 		["entityConfigurationTtlSeconds", config.entityConfigurationTtlSeconds],
 		["subordinateStatementTtlSeconds", config.subordinateStatementTtlSeconds],
-		["registrationResponseTtlSeconds", config.registrationResponseTtlSeconds],
 		["trustMarkTtlSeconds", config.trustMarkTtlSeconds],
 	] as const;
 	for (const [name, value] of ttlFields) {
@@ -231,14 +223,10 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 			config.subordinateStatementTtlSeconds !== undefined && {
 				subordinateStatementTtlSeconds: config.subordinateStatementTtlSeconds,
 			},
-			config.registrationResponseTtlSeconds !== undefined && {
-				registrationResponseTtlSeconds: config.registrationResponseTtlSeconds,
-			},
 			config.trustMarkTtlSeconds !== undefined && {
 				trustMarkTtlSeconds: config.trustMarkTtlSeconds,
 			},
 			config.options && { options: config.options },
-			config.registrationConfig && { registrationConfig: config.registrationConfig },
 		].filter(Boolean),
 	);
 
@@ -262,7 +250,6 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 	const trustMarkHandler = createTrustMarkHandler(ctx);
 	const trustMarkIssuanceHandler = createTrustMarkIssuanceHandler(ctx);
 	const resolveHandler = createResolveHandler(ctx);
-	const registrationHandler = createRegistrationHandler(ctx);
 
 	const routeMap = new Map<string, (request: Request) => Promise<Response>>([
 		[WELL_KNOWN_OPENID_FEDERATION, ecHandler], // Entity Configuration — never authenticated
@@ -296,7 +283,6 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 			FederationEndpoint.Resolve,
 			withAuth(resolveHandler, meta.federation_resolve_endpoint_auth_methods),
 		],
-		[FederationEndpoint.Registration, registrationHandler],
 	]);
 
 	const router = async (request: Request): Promise<Response> => {

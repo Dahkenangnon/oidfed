@@ -6,7 +6,6 @@ import type {
 	FederationOptions,
 	JtiStore,
 	JWK,
-	RegistrationProtocolAdapter,
 	TrustAnchorSet,
 	TrustMarkOwner,
 	TrustMarkRef,
@@ -44,19 +43,10 @@ export interface HandlerContext {
 	readonly entityConfigurationTtlSeconds?: number;
 	/** TTL in seconds for subordinate statement JWTs. */
 	readonly subordinateStatementTtlSeconds?: number;
-	/** TTL in seconds for registration response JWTs. */
-	readonly registrationResponseTtlSeconds?: number;
 	/** TTL in seconds for issued trust mark JWTs. */
 	readonly trustMarkTtlSeconds?: number;
 	/** Returns the current active signing key and its kid. */
 	readonly getSigningKey: () => Promise<{ key: JWK; kid: string }>;
-	/** Registration-specific callbacks. */
-	readonly registrationConfig?: {
-		readonly generateClientSecret?: (sub: EntityId) => Promise<string | undefined>;
-		readonly onRegistrationInvalidation?: (sub: EntityId) => Promise<void>;
-	};
-	/** Protocol adapter for OIDC-specific registration processing. */
-	readonly registrationProtocolAdapter?: RegistrationProtocolAdapter;
 	/** Store for JTI replay protection. */
 	readonly jtiStore?: JtiStore;
 	/**
