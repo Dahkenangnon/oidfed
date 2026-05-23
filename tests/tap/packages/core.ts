@@ -9983,4 +9983,223 @@ export default (QUnit: QUnit) => {
 			t.equal(url.searchParams.get("from_entity_id"), null);
 		});
 	});
+
+	// -------------------------------------------------------------------------
+	// RS256 — end-to-end Entity Statement signature verification
+	//
+	// Locks in the §3 SHOULD: "Implementations SHOULD support signature
+	// verification with the RSA SHA-256 algorithm". These tests sign real
+	// Entity Statements with RS256, then assert that every layer of the
+	// verification stack accepts them.
+	// -------------------------------------------------------------------------
+	module("core / RS256 entity statement end-to-end", () => {
+		test("verifyEntityStatement accepts an RS256-signed Entity Configuration", async (t) => {
+			const { privateKey, publicKey } = await generateSigningKey("RS256");
+			const now = Math.floor(Date.now() / 1000);
+			const jwt = await signEntityStatement(
+				{
+					iss: "https://example.com",
+					sub: "https://example.com",
+					iat: now,
+					exp: now + 3600,
+					jwks: { keys: [publicKey] },
+				},
+				privateKey,
+				{ typ: JwtTyp.EntityStatement },
+			);
+
+			const decoded = decodeEntityStatement(jwt);
+			t.true(isOk(decoded));
+			if (!isOk(decoded)) return;
+			t.equal(decoded.value.header.alg, "RS256");
+			t.equal(decoded.value.header.typ, JwtTyp.EntityStatement);
+			t.equal(typeof decoded.value.header.kid, "string");
+
+			const verify = await verifyEntityStatement(jwt, { keys: [publicKey] });
+			t.true(isOk(verify));
+		});
+
+		test("verifyEntityStatement rejects an RS256 JWT when the JWKS is empty", async (t) => {
+			const { privateKey, publicKey } = await generateSigningKey("RS256");
+			const now = Math.floor(Date.now() / 1000);
+			const jwt = await signEntityStatement(
+				{
+					iss: "https://example.com",
+					sub: "https://example.com",
+					iat: now,
+					exp: now + 3600,
+					jwks: { keys: [publicKey] },
+				},
+				privateKey,
+				{ typ: JwtTyp.EntityStatement },
+			);
+			const verify = await verifyEntityStatement(jwt, { keys: [] });
+			t.false(isOk(verify));
+		});
+
+		test("validateTrustChain accepts an RS256-anchored single-EC chain", async (t) => {
+			const { privateKey, publicKey } = await generateSigningKey("RS256");
+			const now = Math.floor(Date.now() / 1000);
+			const taId = "https://ta.example.com";
+			const taEc = await signEntityStatement(
+				{
+					iss: taId,
+					sub: taId,
+					iat: now,
+					exp: now + 3600,
+					jwks: { keys: [publicKey] },
+					metadata: {
+						federation_entity: {
+							federation_fetch_endpoint: `${taId}/federation_fetch`,
+							federation_list_endpoint: `${taId}/federation_list`,
+						},
+					},
+				},
+				privateKey,
+				{ typ: JwtTyp.EntityStatement },
+			);
+
+			const trustAnchors = new Map();
+			trustAnchors.set(taId, { jwks: { keys: [publicKey] } });
+			const result = await validateTrustChain([taEc], trustAnchors as never, {});
+			t.true(result.valid, JSON.stringify(result.errors ?? []));
+			if (!result.valid) return;
+			t.equal(result.chain.trustAnchorId, taId);
+		});
+
+		test("validateTrustChain accepts a heterogeneous chain (TA RS256 + Subordinate Statement RS256 + Leaf ES256)", async (t) => {
+			const ta = await generateSigningKey("RS256");
+			const leaf = await generateSigningKey("ES256");
+			const now = Math.floor(Date.now() / 1000);
+			const exp = now + 3600;
+			const taId = "https://ta.example.com";
+			const leafId = "https://leaf.example.com";
+
+			const leafEc = await signEntityStatement(
+				{
+					iss: leafId,
+					sub: leafId,
+					iat: now,
+					exp,
+					jwks: { keys: [leaf.publicKey] },
+					authority_hints: [taId],
+					metadata: {
+						openid_relying_party: { redirect_uris: [`${leafId}/callback`] },
+					},
+				},
+				leaf.privateKey,
+				{ typ: JwtTyp.EntityStatement },
+			);
+			const subStmt = await signEntityStatement(
+				{
+					iss: taId,
+					sub: leafId,
+					iat: now,
+					exp,
+					jwks: { keys: [leaf.publicKey] },
+				},
+				ta.privateKey,
+				{ typ: JwtTyp.EntityStatement },
+			);
+			const taEc = await signEntityStatement(
+				{
+					iss: taId,
+					sub: taId,
+					iat: now,
+					exp,
+					jwks: { keys: [ta.publicKey] },
+					metadata: {
+						federation_entity: {
+							federation_fetch_endpoint: `${taId}/federation_fetch`,
+							federation_list_endpoint: `${taId}/federation_list`,
+						},
+					},
+				},
+				ta.privateKey,
+				{ typ: JwtTyp.EntityStatement },
+			);
+
+			const trustAnchors = new Map();
+			trustAnchors.set(taId, { jwks: { keys: [ta.publicKey] } });
+			const result = await validateTrustChain([leafEc, subStmt, taEc], trustAnchors as never, {});
+			t.true(result.valid, JSON.stringify(result.errors ?? []));
+			if (!result.valid) return;
+			t.equal(result.chain.trustAnchorId, taId);
+			t.equal(result.chain.entityId, leafId);
+		});
+
+		test("validateTrustChain accepts a chain where every statement is RS256", async (t) => {
+			const ta = await generateSigningKey("RS256");
+			const leaf = await generateSigningKey("RS256");
+			const now = Math.floor(Date.now() / 1000);
+			const exp = now + 3600;
+			const taId = "https://ta.example.com";
+			const leafId = "https://leaf.example.com";
+
+			const leafEc = await signEntityStatement(
+				{
+					iss: leafId,
+					sub: leafId,
+					iat: now,
+					exp,
+					jwks: { keys: [leaf.publicKey] },
+					authority_hints: [taId],
+					metadata: {
+						openid_relying_party: { redirect_uris: [`${leafId}/callback`] },
+					},
+				},
+				leaf.privateKey,
+				{ typ: JwtTyp.EntityStatement },
+			);
+			const subStmt = await signEntityStatement(
+				{ iss: taId, sub: leafId, iat: now, exp, jwks: { keys: [leaf.publicKey] } },
+				ta.privateKey,
+				{ typ: JwtTyp.EntityStatement },
+			);
+			const taEc = await signEntityStatement(
+				{
+					iss: taId,
+					sub: taId,
+					iat: now,
+					exp,
+					jwks: { keys: [ta.publicKey] },
+					metadata: {
+						federation_entity: {
+							federation_fetch_endpoint: `${taId}/federation_fetch`,
+							federation_list_endpoint: `${taId}/federation_list`,
+						},
+					},
+				},
+				ta.privateKey,
+				{ typ: JwtTyp.EntityStatement },
+			);
+
+			const trustAnchors = new Map();
+			trustAnchors.set(taId, { jwks: { keys: [ta.publicKey] } });
+			const result = await validateTrustChain([leafEc, subStmt, taEc], trustAnchors as never, {});
+			t.true(result.valid, JSON.stringify(result.errors ?? []));
+		});
+
+		test("verifyEntityStatement honors the kid + alg pair when the JWKS holds multiple keys", async (t) => {
+			const rsa = await generateSigningKey("RS256");
+			const ec = await generateSigningKey("ES256");
+			const now = Math.floor(Date.now() / 1000);
+
+			const jwt = await signEntityStatement(
+				{
+					iss: "https://example.com",
+					sub: "https://example.com",
+					iat: now,
+					exp: now + 3600,
+					jwks: { keys: [rsa.publicKey] },
+				},
+				rsa.privateKey,
+				{ typ: JwtTyp.EntityStatement },
+			);
+
+			const mixedJwks = { keys: [ec.publicKey, rsa.publicKey] };
+			const verify = await verifyEntityStatement(jwt, mixedJwks);
+			t.true(isOk(verify), "RSA key MUST be selected by kid against a mixed JWKS");
+		});
+	});
 };
