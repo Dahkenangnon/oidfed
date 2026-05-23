@@ -23,6 +23,7 @@ import {
 } from "../../../packages/core/src/index.js";
 import { createClientAssertion } from "../../../packages/oidc/src/client-auth/assertion.js";
 import {
+	ClientRegistrationType,
 	OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE,
 	OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE,
 	RequestObjectTyp,
@@ -41,6 +42,10 @@ import { processAutomaticRegistration } from "../../../packages/oidc/src/registr
 import { processExplicitRegistration } from "../../../packages/oidc/src/registration/process-explicit.js";
 import type { AutomaticRegistrationContext } from "../../../packages/oidc/src/registration/types.js";
 import { validateAutomaticRegistrationRequest } from "../../../packages/oidc/src/registration/validate-request-object.js";
+import {
+	ExplicitRegistrationRequestPayloadSchema,
+	ExplicitRegistrationResponsePayloadSchema,
+} from "../../../packages/oidc/src/schemas/explicit-registration.js";
 import {
 	OIDCFederationMetadataSchema,
 	OpenIDProviderMetadataSchema,
@@ -407,6 +412,107 @@ export default (QUnit: QUnit) => {
 			t.throws(() => validateOIDCMetadata({ openid_relying_party: { redirect_uris: [123] } }));
 		});
 	});
+
+	// -------------------------------------------------------------------------
+	// constants / ClientRegistrationType
+	// -------------------------------------------------------------------------
+	module("oidc / ClientRegistrationType", () => {
+		test("has 2 types", (t) => {
+			t.equal(Object.keys(ClientRegistrationType).length, 2);
+			t.equal(ClientRegistrationType.Automatic, "automatic");
+			t.equal(ClientRegistrationType.Explicit, "explicit");
+		});
+	});
+
+	// -------------------------------------------------------------------------
+	// schemas/explicit-registration
+	// -------------------------------------------------------------------------
+	{
+		const erp_now = Math.floor(Date.now() / 1000);
+
+		module("oidc / ExplicitRegistrationRequestPayloadSchema", () => {
+			const validReq = {
+				iss: "https://rp.example.com",
+				sub: "https://rp.example.com",
+				aud: "https://op.example.com",
+				iat: erp_now,
+				exp: erp_now + 3600,
+				jwks: { keys: [{ kty: "EC" as const, kid: "k1", crv: "P-256", x: "a", y: "b" }] },
+				authority_hints: ["https://ta.example.com"],
+				metadata: { openid_relying_party: { redirect_uris: ["https://rp.example.com/callback"] } },
+			};
+			test("accepts valid registration request", (t) => {
+				t.true(ExplicitRegistrationRequestPayloadSchema.safeParse(validReq).success);
+			});
+			test("rejects when iss !== sub", (t) => {
+				t.false(
+					ExplicitRegistrationRequestPayloadSchema.safeParse({
+						...validReq,
+						sub: "https://other.example.com",
+					}).success,
+				);
+			});
+			test("requires aud", (t) => {
+				const { aud: _, ...v } = validReq;
+				t.false(ExplicitRegistrationRequestPayloadSchema.safeParse(v).success);
+			});
+			test("requires authority_hints", (t) => {
+				const { authority_hints: _, ...v } = validReq;
+				t.false(ExplicitRegistrationRequestPayloadSchema.safeParse(v).success);
+			});
+			test("requires metadata", (t) => {
+				const { metadata: _, ...v } = validReq;
+				t.false(ExplicitRegistrationRequestPayloadSchema.safeParse(v).success);
+			});
+			test("requires metadata to contain openid_relying_party", (t) => {
+				t.false(
+					ExplicitRegistrationRequestPayloadSchema.safeParse({
+						...validReq,
+						metadata: { federation_entity: { organization_name: "Test" } },
+					}).success,
+				);
+			});
+		});
+
+		module("oidc / ExplicitRegistrationResponsePayloadSchema", () => {
+			const validResp = {
+				iss: "https://op.example.com",
+				sub: "https://rp.example.com",
+				aud: "https://rp.example.com",
+				iat: erp_now,
+				exp: erp_now + 3600,
+				trust_anchor: "https://ta.example.com",
+				authority_hints: ["https://intermediate.example.com"],
+			};
+			test("accepts valid registration response", (t) => {
+				t.true(ExplicitRegistrationResponsePayloadSchema.safeParse(validResp).success);
+			});
+			test("requires trust_anchor", (t) => {
+				const { trust_anchor: _, ...v } = validResp;
+				t.false(ExplicitRegistrationResponsePayloadSchema.safeParse(v).success);
+			});
+			test("accepts optional client_secret", (t) => {
+				t.true(
+					ExplicitRegistrationResponsePayloadSchema.safeParse({
+						...validResp,
+						client_secret: "secret123",
+					}).success,
+				);
+			});
+			test("requires authority_hints in response", (t) => {
+				const { authority_hints: _, ...v } = validResp;
+				t.false(ExplicitRegistrationResponsePayloadSchema.safeParse(v).success);
+			});
+			test("requires authority_hints to be exactly one element", (t) => {
+				t.false(
+					ExplicitRegistrationResponsePayloadSchema.safeParse({
+						...validResp,
+						authority_hints: ["https://a.example.com", "https://b.example.com"],
+					}).success,
+				);
+			});
+		});
+	}
 
 	// -------------------------------------------------------------------------
 	// registration/adapter
@@ -993,7 +1099,7 @@ export default (QUnit: QUnit) => {
 			const registrationResponseJwt = await signEntityStatement(
 				registrationResponsePayload,
 				fed.opSigningKey,
-				{ kid: fed.opSigningKey.kid, typ: JwtTyp.ExplicitRegistrationResponse },
+				{ kid: fed.opSigningKey.kid, typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
 			);
 			const originalHttpClient = fed.httpClient;
 			const httpClient: HttpClient = async (input, init) => {
@@ -1006,7 +1112,7 @@ export default (QUnit: QUnit) => {
 				if (new URL(url).pathname === "/federation_registration") {
 					return new Response(registrationResponseJwt, {
 						status: 200,
-						headers: { "Content-Type": MediaType.ExplicitRegistrationResponse },
+						headers: { "Content-Type": OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE },
 					});
 				}
 				return originalHttpClient(input, init);
@@ -1158,7 +1264,7 @@ export default (QUnit: QUnit) => {
 				mock.trustAnchors,
 				mock.options,
 			);
-			t.equal(result.registrationStatement.header.typ, JwtTyp.ExplicitRegistrationResponse);
+			t.equal(result.registrationStatement.header.typ, OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE);
 		});
 
 		test("throws if OP does not advertise explicit registration", async (t) => {
@@ -1196,7 +1302,7 @@ export default (QUnit: QUnit) => {
 			const badResponseJwt = await signEntityStatement(
 				{ iss: OP_ID, sub: LEAF_ID, aud: LEAF_ID, iat: now, exp: now + 86400, trust_anchor: TA_ID },
 				unknownKey,
-				{ kid: unknownKey.kid, typ: JwtTyp.ExplicitRegistrationResponse },
+				{ kid: unknownKey.kid, typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
 			);
 			const httpClient = async (input: string | URL | Request) => {
 				const url =
@@ -1208,7 +1314,7 @@ export default (QUnit: QUnit) => {
 				if (new URL(url).pathname === "/federation_registration")
 					return new Response(badResponseJwt, {
 						status: 200,
-						headers: { "Content-Type": MediaType.ExplicitRegistrationResponse },
+						headers: { "Content-Type": OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE },
 					});
 				return fed.httpClient(input);
 			};
@@ -1250,7 +1356,7 @@ export default (QUnit: QUnit) => {
 					metadata: { openid_relying_party: { client_id: LEAF_ID } },
 				},
 				fed.opSigningKey,
-				{ kid: fed.opSigningKey.kid, typ: JwtTyp.ExplicitRegistrationResponse },
+				{ kid: fed.opSigningKey.kid, typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
 			);
 			const httpClient = async (input: string | URL | Request) => {
 				const url =
@@ -1262,7 +1368,7 @@ export default (QUnit: QUnit) => {
 				if (new URL(url).pathname === "/federation_registration")
 					return new Response(badResponseJwt, {
 						status: 200,
-						headers: { "Content-Type": MediaType.ExplicitRegistrationResponse },
+						headers: { "Content-Type": OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE },
 					});
 				return fed.httpClient(input);
 			};
@@ -1293,7 +1399,7 @@ export default (QUnit: QUnit) => {
 					metadata: { openid_provider: { issuer: OP_ID } },
 				},
 				fed.opSigningKey,
-				{ kid: fed.opSigningKey.kid, typ: JwtTyp.ExplicitRegistrationResponse },
+				{ kid: fed.opSigningKey.kid, typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
 			);
 			const httpClient = async (input: string | URL | Request) => {
 				const url =
@@ -1305,7 +1411,7 @@ export default (QUnit: QUnit) => {
 				if (new URL(url).pathname === "/federation_registration")
 					return new Response(badEntityTypeJwt, {
 						status: 200,
-						headers: { "Content-Type": MediaType.ExplicitRegistrationResponse },
+						headers: { "Content-Type": OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE },
 					});
 				return fed.httpClient(input);
 			};
@@ -1358,7 +1464,7 @@ export default (QUnit: QUnit) => {
 					metadata: { openid_relying_party: { client_id: LEAF_ID } },
 				},
 				fed.opSigningKey,
-				{ kid: fed.opSigningKey.kid, typ: JwtTyp.ExplicitRegistrationResponse },
+				{ kid: fed.opSigningKey.kid, typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
 			);
 			const httpClient = async (input: string | URL | Request) => {
 				const url =
@@ -1370,7 +1476,7 @@ export default (QUnit: QUnit) => {
 				if (new URL(url).pathname === "/federation_registration")
 					return new Response(expiredResponseJwt, {
 						status: 200,
-						headers: { "Content-Type": MediaType.ExplicitRegistrationResponse },
+						headers: { "Content-Type": OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE },
 					});
 				return fed.httpClient(input);
 			};
@@ -1397,7 +1503,7 @@ export default (QUnit: QUnit) => {
 					metadata: { openid_relying_party: { client_id: LEAF_ID } },
 				},
 				fed.opSigningKey,
-				{ kid: fed.opSigningKey.kid, typ: JwtTyp.ExplicitRegistrationResponse },
+				{ kid: fed.opSigningKey.kid, typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
 			);
 			const httpClient = async (input: string | URL | Request) => {
 				const url =
@@ -1409,7 +1515,7 @@ export default (QUnit: QUnit) => {
 				if (new URL(url).pathname === "/federation_registration")
 					return new Response(noExpResponseJwt, {
 						status: 200,
-						headers: { "Content-Type": MediaType.ExplicitRegistrationResponse },
+						headers: { "Content-Type": OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE },
 					});
 				return fed.httpClient(input);
 			};

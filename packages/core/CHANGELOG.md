@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Removed
+
+- **BREAKING.** OIDC schemas moved to `@oidfed/oidc`. `ExplicitRegistrationRequestPayloadSchema` and `ExplicitRegistrationResponsePayloadSchema` are no longer exported from `@oidfed/core`; import them from `@oidfed/oidc` instead.
+- **BREAKING.** Typed OIDC metadata schemas (`OpenIDProviderMetadataSchema`, `OpenIDRelyingPartyMetadataSchema`) are no longer re-exported from `@oidfed/core`. The federation layer treats them as loose `z.record()`; for OIDC-strict validation, import the schemas from `@oidfed/oidc`.
+- **BREAKING.** `RegistrationProtocolAdapter` and `RegistrationProtocolAdapterContext` interfaces moved to `@oidfed/oidc`.
+- **BREAKING.** `ClientRegistrationType` constant + type moved to `@oidfed/oidc`.
+- **BREAKING.** `JwtTyp.ExplicitRegistrationResponse` and `MediaType.ExplicitRegistrationResponse` removed. The OIDC equivalents `OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE` and `OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE` live in `@oidfed/oidc`.
+- **BREAKING.** `normalizeScope` and `denormalizeScope` are no longer part of the public API; they are internal implementation details of `applyMetadataPolicy` and remain in `packages/core/src/metadata-policy/apply.ts`.
+
+### Changed
+
+- `packages/core/src/schemas/metadata.ts` continues to define loose `OpenIDProviderMetadataSchema` / `OpenIDRelyingPartyMetadataSchema` (each `z.record()`) for internal use by `FederationMetadataSchema`. They are no longer publicly exported.
+
 ## [0.4.1] - 2026-05-23
 
 ### Added

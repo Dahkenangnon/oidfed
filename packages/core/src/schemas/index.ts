@@ -11,8 +11,6 @@ export {
 	EntityIdSchema,
 	type EntityStatementPayload,
 	EntityStatementPayloadSchema,
-	ExplicitRegistrationRequestPayloadSchema,
-	ExplicitRegistrationResponsePayloadSchema,
 	FetchQuerySchema,
 	type HistoricalKeyEntry,
 	HistoricalKeyEntrySchema,
@@ -52,10 +50,6 @@ export {
 	type FederationMetadata,
 	FederationMetadataSchema,
 	getEntityTypes,
-	type OpenIDProviderMetadata,
-	OpenIDProviderMetadataSchema,
-	type OpenIDRelyingPartyMetadata,
-	OpenIDRelyingPartyMetadataSchema,
 } from "./metadata.js";
 
 export {

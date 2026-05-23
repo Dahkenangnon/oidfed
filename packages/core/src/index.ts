@@ -1,11 +1,7 @@
-// Registration adapter & JTI store
+// JTI store
 
 export { InMemoryJtiStore } from "./in-memory-jti-store.js";
 export type { JtiStore } from "./jti-store.js";
-export type {
-	RegistrationProtocolAdapter,
-	RegistrationProtocolAdapterContext,
-} from "./registration-adapter.js";
 
 // Constants
 
@@ -18,7 +14,6 @@ export {
 } from "./cache/index.js";
 export {
 	CachePrefix,
-	ClientRegistrationType,
 	DEFAULT_CACHE_MAX_TTL_SECONDS,
 	DEFAULT_CACHE_TTL_SECONDS,
 	DEFAULT_CLIENT_ASSERTION_TTL_SECONDS,
@@ -128,9 +123,7 @@ export { validateJwkSetUseRequirement } from "./jwks/use-requirement.js";
 // Metadata Policy
 export {
 	applyMetadataPolicy,
-	denormalizeScope,
 	type MetadataPolicyOptions,
-	normalizeScope,
 	resolveMetadataPolicy,
 	validateCustomOperators,
 } from "./metadata-policy/index.js";

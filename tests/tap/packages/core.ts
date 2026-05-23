@@ -8,7 +8,6 @@ import {
 } from "../../../packages/core/src/cache/index.js";
 import {
 	CachePrefix,
-	ClientRegistrationType,
 	DEFAULT_CACHE_MAX_TTL_SECONDS,
 	DEFAULT_CACHE_TTL_SECONDS,
 	DEFAULT_CLOCK_SKEW_SECONDS,
@@ -113,8 +112,6 @@ import {
 	BaseEntityStatementSchema,
 	EntityConfigurationSchema,
 	EntityIdSchema as EntityStatementEntityIdSchema,
-	ExplicitRegistrationRequestPayloadSchema,
-	ExplicitRegistrationResponsePayloadSchema,
 	HistoricalKeyEntrySchema,
 	SubordinateStatementSchema,
 } from "../../../packages/core/src/schemas/entity-statement.js";
@@ -409,15 +406,15 @@ export default (QUnit: QUnit) => {
 			t.equal(FederationEndpoint.HistoricalKeys, "/federation_historical_keys");
 		});
 
-		test("MediaType has all 11 types", (t) => {
-			t.equal(Object.keys(MediaType).length, 11);
+		test("MediaType has all 10 types", (t) => {
+			t.equal(Object.keys(MediaType).length, 10);
 			t.equal(MediaType.EntityStatement, "application/entity-statement+jwt");
 			t.equal(MediaType.TrustMark, "application/trust-mark+jwt");
 			t.equal(MediaType.Json, "application/json");
 		});
 
-		test("JwtTyp has all 7 values", (t) => {
-			t.equal(Object.keys(JwtTyp).length, 7);
+		test("JwtTyp has all 6 values", (t) => {
+			t.equal(Object.keys(JwtTyp).length, 6);
 			t.equal(JwtTyp.EntityStatement, "entity-statement+jwt");
 			t.equal(JwtTyp.TrustMark, "trust-mark+jwt");
 		});
@@ -430,12 +427,6 @@ export default (QUnit: QUnit) => {
 			t.equal(EntityType.OAuthAuthorizationServer, "oauth_authorization_server");
 			t.equal(EntityType.OAuthClient, "oauth_client");
 			t.equal(EntityType.OAuthResource, "oauth_resource");
-		});
-
-		test("ClientRegistrationType has 2 types", (t) => {
-			t.equal(Object.keys(ClientRegistrationType).length, 2);
-			t.equal(ClientRegistrationType.Automatic, "automatic");
-			t.equal(ClientRegistrationType.Explicit, "explicit");
 		});
 
 		test("PolicyOperator has all 7 operators", (t) => {
@@ -1606,89 +1597,6 @@ export default (QUnit: QUnit) => {
 			test("rejects when jwks is missing", (t) => {
 				const { jwks: _, ...ss } = validSS;
 				t.false(SubordinateStatementSchema.safeParse(ss).success);
-			});
-		});
-
-		module("core / schemas/entity-statement / ExplicitRegistrationRequestPayloadSchema", () => {
-			const validReq = {
-				iss: "https://rp.example.com",
-				sub: "https://rp.example.com",
-				aud: "https://op.example.com",
-				iat: es_now,
-				exp: es_now + 3600,
-				jwks: { keys: [{ kty: "EC" as const, kid: "k1", crv: "P-256", x: "a", y: "b" }] },
-				authority_hints: ["https://ta.example.com"],
-				metadata: { openid_relying_party: { redirect_uris: ["https://rp.example.com/callback"] } },
-			};
-			test("accepts valid registration request", (t) => {
-				t.true(ExplicitRegistrationRequestPayloadSchema.safeParse(validReq).success);
-			});
-			test("rejects when iss !== sub", (t) => {
-				t.false(
-					ExplicitRegistrationRequestPayloadSchema.safeParse({
-						...validReq,
-						sub: "https://other.example.com",
-					}).success,
-				);
-			});
-			test("requires aud", (t) => {
-				const { aud: _, ...v } = validReq;
-				t.false(ExplicitRegistrationRequestPayloadSchema.safeParse(v).success);
-			});
-			test("requires authority_hints", (t) => {
-				const { authority_hints: _, ...v } = validReq;
-				t.false(ExplicitRegistrationRequestPayloadSchema.safeParse(v).success);
-			});
-			test("requires metadata", (t) => {
-				const { metadata: _, ...v } = validReq;
-				t.false(ExplicitRegistrationRequestPayloadSchema.safeParse(v).success);
-			});
-			test("requires metadata to contain openid_relying_party", (t) => {
-				t.false(
-					ExplicitRegistrationRequestPayloadSchema.safeParse({
-						...validReq,
-						metadata: { federation_entity: { organization_name: "Test" } },
-					}).success,
-				);
-			});
-		});
-
-		module("core / schemas/entity-statement / ExplicitRegistrationResponsePayloadSchema", () => {
-			const validResp = {
-				iss: "https://op.example.com",
-				sub: "https://rp.example.com",
-				aud: "https://rp.example.com",
-				iat: es_now,
-				exp: es_now + 3600,
-				trust_anchor: "https://ta.example.com",
-				authority_hints: ["https://intermediate.example.com"],
-			};
-			test("accepts valid registration response", (t) => {
-				t.true(ExplicitRegistrationResponsePayloadSchema.safeParse(validResp).success);
-			});
-			test("requires trust_anchor", (t) => {
-				const { trust_anchor: _, ...v } = validResp;
-				t.false(ExplicitRegistrationResponsePayloadSchema.safeParse(v).success);
-			});
-			test("accepts optional client_secret", (t) => {
-				t.true(
-					ExplicitRegistrationResponsePayloadSchema.safeParse({
-						...validResp,
-						client_secret: "secret123",
-					}).success,
-				);
-			});
-			test("requires authority_hints in response", (t) => {
-				const { authority_hints: _, ...v } = validResp;
-				t.false(ExplicitRegistrationResponsePayloadSchema.safeParse(v).success);
-			});
-			test("requires authority_hints to be exactly one element", (t) => {
-				t.false(
-					ExplicitRegistrationResponsePayloadSchema.safeParse({
-						...validResp,
-						authority_hints: ["https://a.example.com", "https://b.example.com"],
-					}).success,
-				);
 			});
 		});
 

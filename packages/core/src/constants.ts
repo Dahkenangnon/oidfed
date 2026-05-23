@@ -21,7 +21,6 @@ export const MediaType = {
 	TrustChain: "application/trust-chain+json",
 	TrustMarkDelegation: "application/trust-mark-delegation+jwt",
 	JwkSet: "application/jwk-set+jwt",
-	ExplicitRegistrationResponse: "application/explicit-registration-response+jwt",
 	TrustMarkStatusResponse: "application/trust-mark-status-response+jwt",
 	Json: "application/json",
 	JwkSetJson: "application/jwk-set+json",
@@ -35,7 +34,6 @@ export const JwtTyp = {
 	TrustMarkDelegation: "trust-mark-delegation+jwt",
 	ResolveResponse: "resolve-response+jwt",
 	JwkSet: "jwk-set+jwt",
-	ExplicitRegistrationResponse: "explicit-registration-response+jwt",
 	TrustMarkStatusResponse: "trust-mark-status-response+jwt",
 } as const;
 export type JwtTyp = (typeof JwtTyp)[keyof typeof JwtTyp];
@@ -49,13 +47,6 @@ export const EntityType = {
 	OAuthResource: "oauth_resource",
 } as const;
 export type EntityType = (typeof EntityType)[keyof typeof EntityType];
-
-export const ClientRegistrationType = {
-	Automatic: "automatic",
-	Explicit: "explicit",
-} as const;
-export type ClientRegistrationType =
-	(typeof ClientRegistrationType)[keyof typeof ClientRegistrationType];
 
 export const PolicyOperator = {
 	Value: "value",
