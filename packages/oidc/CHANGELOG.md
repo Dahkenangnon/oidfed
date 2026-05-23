@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- `createExplicitRegistrationHandler(config)` — self-contained OP-side handler for the `/federation_registration` endpoint. Accepts `ExplicitRegistrationHandlerConfig` (opEntityId, signing-key resolver, trust anchors, optional protocol adapter, optional generateClientSecret and onRegistrationInvalidation hooks). Replaces the equivalent handler previously housed inside `@oidfed/authority`.
+- `ExplicitRegistrationRequestPayloadSchema`, `ExplicitRegistrationResponsePayloadSchema` (+ inferred types) now exported from `@oidfed/oidc`. Previously lived in `@oidfed/core`.
+- `RegistrationProtocolAdapter`, `RegistrationProtocolAdapterContext` interfaces now exported from `@oidfed/oidc`. Previously lived in `@oidfed/core`.
+- `ClientRegistrationType` constant + type now exported from `@oidfed/oidc`. Previously lived in `@oidfed/core`.
+- `OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE` and `OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE` constants. They replace the previous `JwtTyp.ExplicitRegistrationResponse` / `MediaType.ExplicitRegistrationResponse` entries (which have been removed from `@oidfed/core`).
+
 ### Changed
 
 - **BREAKING (install-tree).** `@oidfed/core` moved from `dependencies` to `peerDependencies`. Consumers MUST install `@oidfed/core` alongside `@oidfed/oidc`. The peer range is `^0.4.0`. This guarantees a single resolved `@oidfed/core` when `@oidfed/oidc` is installed beside its siblings; the previous model could install two side-by-side copies and silently break module identity.
