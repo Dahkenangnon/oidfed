@@ -4,11 +4,11 @@ import {
 	FederationErrorCode,
 	federationError,
 	ok,
-	type RegistrationProtocolAdapter,
 	type Result,
 	type ValidatedTrustChain,
 } from "@oidfed/core";
 import { OpenIDRelyingPartyMetadataSchema } from "../schemas/metadata.js";
+import type { RegistrationProtocolAdapter } from "./adapter-types.js";
 
 /**
  * OIDC-specific registration protocol adapter.
@@ -16,7 +16,7 @@ import { OpenIDRelyingPartyMetadataSchema } from "../schemas/metadata.js";
  * Validates `openid_relying_party` metadata against the OIDC RP metadata schema
  * and enriches the registration response with `client_id`.
  *
- * Implements the `RegistrationProtocolAdapter` interface from `@oidfed/core`.
+ * Implements the `RegistrationProtocolAdapter` interface from `@oidfed/oidc`.
  */
 export class OIDCRegistrationAdapter implements RegistrationProtocolAdapter {
 	validateClientMetadata(

@@ -1,6 +1,5 @@
 /** RP-side automatic registration: builds a signed Request Object with embedded trust chain. */
 import {
-	ClientRegistrationType,
 	DEFAULT_REQUEST_OBJECT_TTL_SECONDS,
 	type DiscoveryResult,
 	type EntityId,
@@ -14,7 +13,7 @@ import {
 	validateTrustChain,
 } from "@oidfed/core";
 import { createClientAssertion } from "../client-auth/assertion.js";
-import { RequestObjectTyp } from "../constants.js";
+import { ClientRegistrationType, RequestObjectTyp } from "../constants.js";
 import { getRegistrationTypes } from "./helpers.js";
 
 const CLIENT_ASSERTION_TYPE = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";

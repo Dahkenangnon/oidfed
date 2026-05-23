@@ -1,5 +1,4 @@
 import {
-	ClientRegistrationType,
 	DEFAULT_ENTITY_STATEMENT_TTL_SECONDS,
 	type DiscoveryResult,
 	decodeEntityStatement,
@@ -17,6 +16,10 @@ import {
 	type TrustAnchorSet,
 	verifyEntityStatement,
 } from "@oidfed/core";
+import {
+	ClientRegistrationType,
+	OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE,
+} from "../constants.js";
 import { getRegistrationTypes } from "./helpers.js";
 
 export interface ExplicitRegistrationConfig {
@@ -201,7 +204,7 @@ export async function explicitRegistration(
 	}
 
 	const verifyResult = await verifyEntityStatement(responseJwt, opJwks, {
-		expectedTyp: JwtTyp.ExplicitRegistrationResponse,
+		expectedTyp: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE,
 	});
 	if (!verifyResult.ok) {
 		throw new Error("Registration response signature verification failed");
@@ -212,8 +215,10 @@ export async function explicitRegistration(
 		throw new Error("Failed to decode registration response");
 	}
 
-	if (decoded.value.header.typ !== JwtTyp.ExplicitRegistrationResponse) {
-		throw new Error(`Invalid response typ: expected '${JwtTyp.ExplicitRegistrationResponse}'`);
+	if (decoded.value.header.typ !== OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE) {
+		throw new Error(
+			`Invalid response typ: expected '${OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE}'`,
+		);
 	}
 
 	const responsePayload = decoded.value.payload as Record<string, unknown>;

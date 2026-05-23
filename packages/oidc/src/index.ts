@@ -5,11 +5,19 @@ export { createClientAssertion } from "./client-auth/assertion.js";
 
 // Constants
 export {
+	ClientRegistrationType,
+	OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE,
+	OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE,
 	OIDCRegistrationErrorCode,
 	RequestObjectTyp,
 } from "./constants.js";
 // Registration — OIDC protocol adapter
 export { OIDCRegistrationAdapter } from "./registration/adapter.js";
+// Registration — adapter interface
+export type {
+	RegistrationProtocolAdapter,
+	RegistrationProtocolAdapterContext,
+} from "./registration/adapter-types.js";
 // Registration — RP-side flows
 export {
 	type AutomaticRegistrationConfig,
@@ -41,6 +49,12 @@ export type {
 // Registration — Request Object validation
 export { validateAutomaticRegistrationRequest } from "./registration/validate-request-object.js";
 // Schemas
+export {
+	type ExplicitRegistrationRequestPayload,
+	ExplicitRegistrationRequestPayloadSchema,
+	type ExplicitRegistrationResponsePayload,
+	ExplicitRegistrationResponsePayloadSchema,
+} from "./schemas/explicit-registration.js";
 export {
 	FederationEntityMetadataSchema,
 	FederationMetadataSchema,
