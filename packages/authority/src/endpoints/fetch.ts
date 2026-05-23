@@ -9,6 +9,14 @@ import {
 	signEntityStatement,
 } from "@oidfed/core";
 import type { SubordinateRecord } from "../storage/types.js";
+import {
+	assertCritShape,
+	assertMetadataPolicyCritShape,
+	assertMetadataPolicyShape,
+	assertMetadataValuesNotNull,
+	assertSubordinateStatementShape,
+	sanitizeSubordinateMetadata,
+} from "../utils/subordinate-statement-shape.js";
 import type { HandlerContext } from "./context.js";
 import { errorResponse, jwtResponse, parseQueryParams, requireMethod } from "./helpers.js";
 
@@ -75,7 +83,15 @@ export async function buildSubordinateStatement(
 		jwks: record.jwks,
 	};
 
-	if (record.metadata) payload.metadata = record.metadata;
+	// Strip operational federation_entity fields (endpoint URLs, _auth_methods,
+	// endpoint_auth_signing_alg_values_supported) — those belong only in the
+	// subordinate's own Entity Configuration, not in this Subordinate Statement.
+	const sanitized = sanitizeSubordinateMetadata(record.metadata);
+	if (sanitized !== undefined) {
+		assertMetadataValuesNotNull(sanitized);
+		payload.metadata = sanitized;
+	}
+
 	if (record.metadataPolicy) payload.metadata_policy = record.metadataPolicy;
 	if (record.constraints) payload.constraints = record.constraints;
 	if (record.sourceEndpoint) payload.source_endpoint = record.sourceEndpoint;
@@ -83,6 +99,13 @@ export async function buildSubordinateStatement(
 	if (record.metadataPolicyCrit && record.metadataPolicyCrit.length > 0) {
 		payload.metadata_policy_crit = [...record.metadataPolicyCrit];
 	}
+
+	// Defense in depth: fail loudly if any forbidden top-level claim slipped in
+	// or if crit / metadata_policy_crit / metadata_policy carry illegal shapes.
+	assertSubordinateStatementShape(payload);
+	assertMetadataPolicyShape(payload);
+	assertCritShape(payload);
+	assertMetadataPolicyCritShape(payload);
 
 	return signEntityStatement(payload, signingKey, {
 		kid,
