@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-23
+
 ### Added
 
 - `createExplicitRegistrationHandler(config)` — self-contained OP-side handler for the `/federation_registration` endpoint. Accepts `ExplicitRegistrationHandlerConfig` (opEntityId, signing-key resolver, trust anchors, optional protocol adapter, optional generateClientSecret and onRegistrationInvalidation hooks). Replaces the equivalent handler previously housed inside `@oidfed/authority`.

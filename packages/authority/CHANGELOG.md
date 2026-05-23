@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-23
+
 ### Removed
 
 - **BREAKING.** `/federation_registration` handler removed from `@oidfed/authority`. The endpoint is an OpenID-Connect-specific concern (§12) and has moved to `@oidfed/oidc` as `createExplicitRegistrationHandler`. Authorities no longer expose `FederationEndpoint.Registration` in their route map.
