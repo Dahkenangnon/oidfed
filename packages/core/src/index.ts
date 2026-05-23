@@ -40,6 +40,7 @@ export {
 	MediaType,
 	PolicyOperator,
 	REQUIRED_ALGORITHMS,
+	STANDARD_ENTITY_STATEMENT_CLAIMS,
 	SUPPORTED_ALGORITHMS,
 	type SupportedAlgorithm,
 	TrustMarkStatus,
