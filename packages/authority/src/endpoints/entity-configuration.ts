@@ -52,11 +52,17 @@ export async function buildEntityConfiguration(ctx: HandlerContext): Promise<str
 		payload.trust_marks = ctx.trustMarks;
 	}
 
-	if (ctx.trustMarkIssuers) {
+	// trust_mark_issuers and trust_mark_owners only have effect on a Trust
+	// Anchor's Entity Configuration; readers ignore them on Intermediates. The
+	// server constructor refuses to accept these fields on a non-TA config, so
+	// the inline check below is belt-and-suspenders.
+	const isTrustAnchor = (ctx.authorityHints?.length ?? 0) === 0;
+
+	if (isTrustAnchor && ctx.trustMarkIssuers) {
 		payload.trust_mark_issuers = ctx.trustMarkIssuers;
 	}
 
-	if (ctx.trustMarkOwners) {
+	if (isTrustAnchor && ctx.trustMarkOwners) {
 		payload.trust_mark_owners = ctx.trustMarkOwners;
 	}
 
