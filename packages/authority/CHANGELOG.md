@@ -6,9 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- `sanitizeSubordinateMetadata(metadata)` exported helper that strips operational `federation_entity` claims from metadata destined for a Subordinate Statement.
+- `FEDERATION_ENTITY_OPERATIONAL_FIELDS` and `isFederationEntityOperationalField(key)` for callers that need the same field list.
+- `assertSubordinateStatementShape(payload)`, `assertMetadataValuesNotNull(metadata)`, `assertCritShape(payload)`, `assertMetadataPolicyCritShape(payload)`, and `assertMetadataPolicyShape(payload)` defensive helpers.
+- `validateSubordinateRecord(record)` re-export for callers that want to pre-validate a record before insertion.
+- New typed errors: `InvalidAuthorityConfig`, `InvalidSubordinateRecord`, `InvalidSubordinateStatementShape`, `InvalidMetadata`.
+
+### Fixed
+
+- Subordinate Statements no longer include the subordinate's own federation endpoint URLs (`federation_fetch_endpoint`, `federation_list_endpoint`, `federation_resolve_endpoint`, `federation_extended_list_endpoint`, `federation_trust_mark_endpoint`, `federation_trust_mark_status_endpoint`, `federation_trust_mark_list_endpoint`, `federation_historical_keys_endpoint`, every `_auth_methods` companion, and `endpoint_auth_signing_alg_values_supported`). Stripping happens at the wire layer inside `buildSubordinateStatement`.
+- Subordinate Statements no longer accept the registration-only claims `aud` and `trust_anchor` in their top-level payload (those claims are reserved for Explicit Registration request/response). `assertSubordinateStatementShape` rejects them.
+- `buildSubordinateStatement` now validates the shape of `crit`, `metadata_policy_crit`, and `metadata_policy` before signing — rejecting empty arrays, duplicates, references to spec-defined claims (in `crit`), references to standard policy operators (in `metadata_policy_crit`), and non-object `metadata_policy` values.
+
 ### Changed
 
 - **BREAKING (install-tree).** `@oidfed/core` moved from `dependencies` to `peerDependencies`. Consumers MUST install `@oidfed/core` alongside `@oidfed/authority`. The peer range is `^0.4.0`. This guarantees a single resolved `@oidfed/core` when `@oidfed/authority` is installed beside its siblings; the previous model could install two side-by-side copies and silently break module identity.
+- `MemorySubordinateStore.add(record)` now throws `InvalidSubordinateRecord` when the record's `metadata.federation_entity` carries operational claims (endpoint URLs, `_auth_methods` companions, or `endpoint_auth_signing_alg_values_supported`), or when any metadata leaf value is `null`. The previous behavior produced non-conformant Subordinate Statements. Callers that synthesize records from raw entity metadata should run their input through `sanitizeSubordinateMetadata` first.
+- `createAuthorityServer(config)` now throws `InvalidAuthorityConfig` when the config is misconfigured: (a) `authorityHints` is an explicit empty array; (b) the config carries `trustMarkIssuers` or `trustMarkOwners` while not being a Trust Anchor (authorityHints non-empty); (c) `metadata.federation_entity` lacks `federation_fetch_endpoint` or `federation_list_endpoint`. Throws `InvalidMetadata` when any metadata leaf is `null`.
+- EC emission gates `trust_mark_issuers` and `trust_mark_owners` on Trust Anchor identity (derived from empty/absent `authorityHints`).
 
 ## [0.4.0] - 2026-05-18
 
