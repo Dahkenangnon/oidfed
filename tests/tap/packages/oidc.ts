@@ -4,10 +4,14 @@ import {
 	decodeEntityStatement,
 	type EntityId,
 	entityId,
+	err,
+	FederationErrorCode,
 	type FederationOptions,
+	federationError,
 	generateSigningKey,
 	type HttpClient,
 	InMemoryJtiStore,
+	isOk,
 	type JWK,
 	JwtTyp,
 	MediaType,
@@ -18,12 +22,21 @@ import {
 	validateTrustChain,
 } from "../../../packages/core/src/index.js";
 import { createClientAssertion } from "../../../packages/oidc/src/client-auth/assertion.js";
-import { RequestObjectTyp } from "../../../packages/oidc/src/constants.js";
+import {
+	OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE,
+	OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE,
+	RequestObjectTyp,
+} from "../../../packages/oidc/src/constants.js";
 import { OIDCRegistrationAdapter } from "../../../packages/oidc/src/registration/adapter.js";
+import type { RegistrationProtocolAdapter } from "../../../packages/oidc/src/registration/adapter-types.js";
 import type { AutomaticRegistrationConfig } from "../../../packages/oidc/src/registration/automatic.js";
 import { automaticRegistration } from "../../../packages/oidc/src/registration/automatic.js";
 import type { ExplicitRegistrationConfig } from "../../../packages/oidc/src/registration/explicit.js";
 import { explicitRegistration } from "../../../packages/oidc/src/registration/explicit.js";
+import {
+	createExplicitRegistrationHandler,
+	type ExplicitRegistrationHandlerConfig,
+} from "../../../packages/oidc/src/registration/handler.js";
 import { processAutomaticRegistration } from "../../../packages/oidc/src/registration/process-automatic.js";
 import { processExplicitRegistration } from "../../../packages/oidc/src/registration/process-explicit.js";
 import type { AutomaticRegistrationContext } from "../../../packages/oidc/src/registration/types.js";
@@ -2527,4 +2540,1054 @@ export default (QUnit: QUnit) => {
 			t.ok(result.error.description.includes("Trust Anchor"));
 		});
 	});
+
+	// -------------------------------------------------------------------------
+	// registration / createExplicitRegistrationHandler
+	// -------------------------------------------------------------------------
+	{
+		const REG_NOW = Math.floor(Date.now() / 1000);
+		const HANDLER_ENTITY_ID = entityId("https://op.example.com");
+		const REQUIRED_FIELDS = {
+			authority_hints: ["https://ta.example.com"],
+			metadata: {
+				openid_relying_party: {
+					redirect_uris: ["https://rp.example.com/callback"],
+					response_types: ["code"],
+				},
+			},
+		};
+
+		type HandlerConfigOverrides = {
+			[K in keyof ExplicitRegistrationHandlerConfig]?:
+				| ExplicitRegistrationHandlerConfig[K]
+				| undefined;
+		};
+		async function createHandlerConfig(
+			overrides?: HandlerConfigOverrides,
+		): Promise<ExplicitRegistrationHandlerConfig> {
+			const { privateKey } = await generateSigningKey("ES256");
+			const opSigningKey: JWK = { ...privateKey, kid: "op-handler-test-kid" };
+			const baseConfig: ExplicitRegistrationHandlerConfig = {
+				opEntityId: HANDLER_ENTITY_ID,
+				getSigningKey: async () => ({ key: opSigningKey, kid: opSigningKey.kid as string }),
+			};
+			return { ...baseConfig, ...overrides };
+		}
+
+		async function buildRegistrationRequest(
+			rpEntityId: string,
+			opEntityId: string,
+			rpPrivateKey: Parameters<typeof signEntityStatement>[1],
+			rpPublicKey: Record<string, unknown>,
+			overrides?: Record<string, unknown>,
+		) {
+			return signEntityStatement(
+				{
+					iss: rpEntityId,
+					sub: rpEntityId,
+					aud: opEntityId,
+					iat: REG_NOW,
+					exp: REG_NOW + 3600,
+					jwks: { keys: [rpPublicKey] },
+					...REQUIRED_FIELDS,
+					...overrides,
+				},
+				rpPrivateKey,
+				{ typ: JwtTyp.EntityStatement },
+			);
+		}
+
+		module("oidc / createExplicitRegistrationHandler", () => {
+			test("accepts a valid explicit registration request", async (t) => {
+				const config = await createHandlerConfig();
+				const handler = createExplicitRegistrationHandler(config);
+				const rpKeys = await generateSigningKey("ES256");
+				const rpId = "https://rp.example.com";
+				const jwt = await buildRegistrationRequest(
+					rpId,
+					HANDLER_ENTITY_ID as string,
+					rpKeys.privateKey,
+					rpKeys.publicKey as unknown as Record<string, unknown>,
+				);
+				const res = await handler(
+					new Request(`${HANDLER_ENTITY_ID}/federation_registration`, {
+						method: "POST",
+						headers: { "Content-Type": MediaType.EntityStatement },
+						body: jwt,
+					}),
+				);
+				t.equal(res.status, 200);
+				t.equal(res.headers.get("Content-Type"), OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE);
+				const responseJwt = await res.text();
+				const decoded = decodeEntityStatement(responseJwt);
+				t.true(isOk(decoded));
+				if (!isOk(decoded)) return;
+				t.equal(decoded.value.header.typ, OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE);
+				t.equal(decoded.value.payload.iss, HANDLER_ENTITY_ID);
+				t.equal(decoded.value.payload.sub, rpId);
+				const payload = decoded.value.payload as Record<string, unknown>;
+				t.equal(payload.aud, rpId);
+				t.ok(payload.trust_anchor);
+				t.ok(payload.authority_hints);
+				t.true(Array.isArray(payload.authority_hints));
+				t.equal((payload.authority_hints as string[]).length, 1);
+			});
+
+			test("response includes metadata with openid_relying_party and client_id", async (t) => {
+				const config = await createHandlerConfig();
+				const handler = createExplicitRegistrationHandler(config);
+				const rpKeys = await generateSigningKey("ES256");
+				const rpId = "https://rp.example.com";
+				const jwt = await buildRegistrationRequest(
+					rpId,
+					HANDLER_ENTITY_ID as string,
+					rpKeys.privateKey,
+					rpKeys.publicKey as unknown as Record<string, unknown>,
+				);
+				const res = await handler(
+					new Request(`${HANDLER_ENTITY_ID}/federation_registration`, {
+						method: "POST",
+						headers: { "Content-Type": MediaType.EntityStatement },
+						body: jwt,
+					}),
+				);
+				t.equal(res.status, 200);
+				const decoded = decodeEntityStatement(await res.text());
+				t.true(isOk(decoded));
+				if (!isOk(decoded)) return;
+				const meta = (decoded.value.payload as Record<string, unknown>).metadata as Record<
+					string,
+					Record<string, unknown>
+				>;
+				t.ok(meta.openid_relying_party);
+				t.equal(meta.openid_relying_party!.client_id, rpId);
+			});
+
+			test("response includes OIDC default values", async (t) => {
+				const config = await createHandlerConfig();
+				const handler = createExplicitRegistrationHandler(config);
+				const rpKeys = await generateSigningKey("ES256");
+				const rpId = "https://rp.example.com";
+				const jwt = await buildRegistrationRequest(
+					rpId,
+					HANDLER_ENTITY_ID as string,
+					rpKeys.privateKey,
+					rpKeys.publicKey as unknown as Record<string, unknown>,
+				);
+				const res = await handler(
+					new Request(`${HANDLER_ENTITY_ID}/federation_registration`, {
+						method: "POST",
+						headers: { "Content-Type": MediaType.EntityStatement },
+						body: jwt,
+					}),
+				);
+				t.equal(res.status, 200);
+				const decoded = decodeEntityStatement(await res.text());
+				t.true(isOk(decoded));
+				if (!isOk(decoded)) return;
+				const rpMeta = (
+					(decoded.value.payload as Record<string, unknown>).metadata as Record<
+						string,
+						Record<string, unknown>
+					>
+				).openid_relying_party as Record<string, unknown>;
+				t.deepEqual(rpMeta.response_types, ["code"]);
+				t.deepEqual(rpMeta.grant_types, ["authorization_code"]);
+				t.equal(rpMeta.token_endpoint_auth_method, "client_secret_basic");
+			});
+
+			test("rejects wrong Content-Type", async (t) => {
+				const config = await createHandlerConfig();
+				const handler = createExplicitRegistrationHandler(config);
+				const res = await handler(
+					new Request(`${HANDLER_ENTITY_ID}/federation_registration`, {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: "{}",
+					}),
+				);
+				t.equal(res.status, 400);
+			});
+
+			test("accepts application/trust-chain+json Content-Type", async (t) => {
+				const config = await createHandlerConfig();
+				const handler = createExplicitRegistrationHandler(config);
+				const rpKeys = await generateSigningKey("ES256");
+				const rpId = "https://rp.example.com";
+				const ecJwt = await buildRegistrationRequest(
+					rpId,
+					HANDLER_ENTITY_ID as string,
+					rpKeys.privateKey,
+					rpKeys.publicKey as unknown as Record<string, unknown>,
+				);
+				const res = await handler(
+					new Request(`${HANDLER_ENTITY_ID}/federation_registration`, {
+						method: "POST",
+						headers: { "Content-Type": MediaType.TrustChain },
+						body: JSON.stringify([ecJwt]),
+					}),
+				);
+				t.equal(res.status, 200);
+			});
+
+			test("rejects wrong aud", async (t) => {
+				const config = await createHandlerConfig();
+				const handler = createExplicitRegistrationHandler(config);
+				const rpKeys = await generateSigningKey("ES256");
+				const jwt = await buildRegistrationRequest(
+					"https://rp.example.com",
+					"https://wrong-op.example.com",
+					rpKeys.privateKey,
+					rpKeys.publicKey as unknown as Record<string, unknown>,
+				);
+				const res = await handler(
+					new Request(`${HANDLER_ENTITY_ID}/federation_registration`, {
+						method: "POST",
+						headers: { "Content-Type": MediaType.EntityStatement },
+						body: jwt,
+					}),
+				);
+				t.equal(res.status, 400);
+				t.true(
+					((await res.json()) as Record<string, string | undefined>).error_description!.includes(
+						"aud",
+					),
+				);
+			});
+
+			test("uses custom registrationResponseTtlSeconds for exp", async (t) => {
+				const config = await createHandlerConfig({ registrationResponseTtlSeconds: 7200 });
+				const handler = createExplicitRegistrationHandler(config);
+				const rpKeys = await generateSigningKey("ES256");
+				const rpId = "https://rp.example.com";
+				const jwt = await buildRegistrationRequest(
+					rpId,
+					HANDLER_ENTITY_ID as string,
+					rpKeys.privateKey,
+					rpKeys.publicKey as unknown as Record<string, unknown>,
+				);
+				const res = await handler(
+					new Request(`${HANDLER_ENTITY_ID}/federation_registration`, {
+						method: "POST",
+						headers: { "Content-Type": MediaType.EntityStatement },
+						body: jwt,
+					}),
+				);
+				t.equal(res.status, 200);
+				const decoded = decodeEntityStatement(await res.text());
+				t.true(isOk(decoded));
+				if (!isOk(decoded)) return;
+				const payload = decoded.value.payload as Record<string, unknown>;
+				t.equal((payload.exp as number) - (payload.iat as number), 7200);
+			});
+
+			test("rejects GET method", async (t) => {
+				const config = await createHandlerConfig();
+				const handler = createExplicitRegistrationHandler(config);
+				const res = await handler(new Request(`${HANDLER_ENTITY_ID}/federation_registration`));
+				t.equal(res.status, 405);
+			});
+
+			test("rejects invalid self-signature", async (t) => {
+				const config = await createHandlerConfig();
+				const handler = createExplicitRegistrationHandler(config);
+				const rpKeys = await generateSigningKey("ES256");
+				const wrongKeys = await generateSigningKey("ES256");
+				const jwt = await buildRegistrationRequest(
+					"https://rp.example.com",
+					HANDLER_ENTITY_ID as string,
+					wrongKeys.privateKey,
+					rpKeys.publicKey as unknown as Record<string, unknown>,
+				);
+				const res = await handler(
+					new Request(`${HANDLER_ENTITY_ID}/federation_registration`, {
+						method: "POST",
+						headers: { "Content-Type": MediaType.EntityStatement },
+						body: jwt,
+					}),
+				);
+				t.equal(res.status, 400);
+				t.true(
+					((await res.json()) as Record<string, string | undefined>).error_description!.includes(
+						"signature",
+					),
+				);
+			});
+
+			test("validates trust_chain header — first entry must be subject's EC", async (t) => {
+				const config = await createHandlerConfig();
+				const handler = createExplicitRegistrationHandler(config);
+				const rpKeys = await generateSigningKey("ES256");
+				const otherKeys = await generateSigningKey("ES256");
+				const rpId = "https://rp.example.com";
+				const wrongEc = await signEntityStatement(
+					{
+						iss: "https://other.example.com",
+						sub: "https://other.example.com",
+						iat: REG_NOW,
+						exp: REG_NOW + 3600,
+						jwks: { keys: [otherKeys.publicKey] },
+					},
+					otherKeys.privateKey,
+					{ typ: JwtTyp.EntityStatement },
+				);
+				const jwt = await signEntityStatement(
+					{
+						iss: rpId,
+						sub: rpId,
+						aud: HANDLER_ENTITY_ID,
+						iat: REG_NOW,
+						exp: REG_NOW + 3600,
+						jwks: { keys: [rpKeys.publicKey] },
+						...REQUIRED_FIELDS,
+					},
+					rpKeys.privateKey,
+					{ typ: JwtTyp.EntityStatement, extraHeaders: { trust_chain: [wrongEc] } },
+				);
+				const res = await handler(
+					new Request(`${HANDLER_ENTITY_ID}/federation_registration`, {
+						method: "POST",
+						headers: { "Content-Type": MediaType.EntityStatement },
+						body: jwt,
+					}),
+				);
+				t.equal(res.status, 400);
+				t.equal(((await res.json()) as Record<string, string>).error, "invalid_trust_chain");
+			});
+
+			test("calls registrationProtocolAdapter.validateClientMetadata when configured", async (t) => {
+				const rejectingAdapter: RegistrationProtocolAdapter = {
+					validateClientMetadata: () =>
+						err(federationError(FederationErrorCode.InvalidMetadata, "Bad RP metadata")),
+					enrichResponseMetadata: (meta) => meta,
+				};
+				const config = await createHandlerConfig({
+					registrationProtocolAdapter: rejectingAdapter,
+				});
+				const handler = createExplicitRegistrationHandler(config);
+				const rpKeys = await generateSigningKey("ES256");
+				const rpId = "https://rp.example.com";
+				const jwt = await buildRegistrationRequest(
+					rpId,
+					HANDLER_ENTITY_ID as string,
+					rpKeys.privateKey,
+					rpKeys.publicKey as unknown as Record<string, unknown>,
+				);
+				const res = await handler(
+					new Request(`${HANDLER_ENTITY_ID}/federation_registration`, {
+						method: "POST",
+						headers: { "Content-Type": MediaType.EntityStatement },
+						body: jwt,
+					}),
+				);
+				t.equal(res.status, 400);
+				t.equal(((await res.json()) as Record<string, string>).error, "invalid_metadata");
+			});
+
+			test("succeeds without adapter (federation-only)", async (t) => {
+				const config = await createHandlerConfig();
+				const handler = createExplicitRegistrationHandler(config);
+				const rpKeys = await generateSigningKey("ES256");
+				const rpId = "https://rp.example.com";
+				const jwt = await buildRegistrationRequest(
+					rpId,
+					HANDLER_ENTITY_ID as string,
+					rpKeys.privateKey,
+					rpKeys.publicKey as unknown as Record<string, unknown>,
+				);
+				const res = await handler(
+					new Request(`${HANDLER_ENTITY_ID}/federation_registration`, {
+						method: "POST",
+						headers: { "Content-Type": MediaType.EntityStatement },
+						body: jwt,
+					}),
+				);
+				t.equal(res.status, 200);
+			});
+
+			test("rejects request missing authority_hints", async (t) => {
+				const config = await createHandlerConfig();
+				const handler = createExplicitRegistrationHandler(config);
+				const rpKeys = await generateSigningKey("ES256");
+				const rpId = "https://rp.example.com";
+				const jwt = await signEntityStatement(
+					{
+						iss: rpId,
+						sub: rpId,
+						aud: HANDLER_ENTITY_ID,
+						iat: REG_NOW,
+						exp: REG_NOW + 3600,
+						jwks: { keys: [rpKeys.publicKey] },
+						metadata: {
+							openid_relying_party: { redirect_uris: ["https://rp.example.com/callback"] },
+						},
+					},
+					rpKeys.privateKey,
+					{ typ: JwtTyp.EntityStatement },
+				);
+				const res = await handler(
+					new Request(`${HANDLER_ENTITY_ID}/federation_registration`, {
+						method: "POST",
+						headers: { "Content-Type": MediaType.EntityStatement },
+						body: jwt,
+					}),
+				);
+				t.equal(res.status, 400);
+			});
+
+			test("rejects request without openid_relying_party in metadata", async (t) => {
+				const config = await createHandlerConfig();
+				const handler = createExplicitRegistrationHandler(config);
+				const rpKeys = await generateSigningKey("ES256");
+				const rpId = "https://rp.example.com";
+				const jwt = await signEntityStatement(
+					{
+						iss: rpId,
+						sub: rpId,
+						aud: HANDLER_ENTITY_ID,
+						iat: REG_NOW,
+						exp: REG_NOW + 3600,
+						jwks: { keys: [rpKeys.publicKey] },
+						authority_hints: ["https://ta.example.com"],
+						metadata: { federation_entity: { organization_name: "Test" } },
+					},
+					rpKeys.privateKey,
+					{ typ: JwtTyp.EntityStatement },
+				);
+				const res = await handler(
+					new Request(`${HANDLER_ENTITY_ID}/federation_registration`, {
+						method: "POST",
+						headers: { "Content-Type": MediaType.EntityStatement },
+						body: jwt,
+					}),
+				);
+				t.equal(res.status, 400);
+			});
+
+			test("calls onRegistrationInvalidation hook", async (t) => {
+				let invalidatedSub: string | undefined;
+				const config = await createHandlerConfig({
+					onRegistrationInvalidation: async (sub) => {
+						invalidatedSub = sub as string;
+					},
+				});
+				const handler = createExplicitRegistrationHandler(config);
+				const rpKeys = await generateSigningKey("ES256");
+				const rpId = "https://rp.example.com";
+				const jwt = await buildRegistrationRequest(
+					rpId,
+					HANDLER_ENTITY_ID as string,
+					rpKeys.privateKey,
+					rpKeys.publicKey as unknown as Record<string, unknown>,
+				);
+				const res = await handler(
+					new Request(`${HANDLER_ENTITY_ID}/federation_registration`, {
+						method: "POST",
+						headers: { "Content-Type": MediaType.EntityStatement },
+						body: jwt,
+					}),
+				);
+				t.equal(res.status, 200);
+				t.equal(invalidatedSub, rpId);
+			});
+		});
+
+		module("oidc / createExplicitRegistrationHandler — trust chain resolution", () => {
+			test("resolves chain and sets trust_anchor, authority_hints, exp from chain", async (t) => {
+				const fed = await createMockFederation();
+				const config = await createHandlerConfig({
+					trustAnchors: fed.trustAnchors,
+					options: fed.options,
+				});
+				const handler = createExplicitRegistrationHandler(config);
+				const rpKeys = await generateSigningKey("ES256");
+				const jwt = await buildRegistrationRequest(
+					LEAF_ID,
+					HANDLER_ENTITY_ID as string,
+					rpKeys.privateKey,
+					rpKeys.publicKey as unknown as Record<string, unknown>,
+				);
+				const res = await handler(
+					new Request(`${HANDLER_ENTITY_ID}/federation_registration`, {
+						method: "POST",
+						headers: { "Content-Type": MediaType.EntityStatement },
+						body: jwt,
+					}),
+				);
+				t.equal(res.status, 200);
+				const decoded = decodeEntityStatement(await res.text());
+				t.true(isOk(decoded));
+				if (!isOk(decoded)) return;
+				const payload = decoded.value.payload as Record<string, unknown>;
+				t.equal(payload.trust_anchor, TA_ID);
+				t.deepEqual(payload.authority_hints, [TA_ID]);
+				const exp = payload.exp as number;
+				const iat = payload.iat as number;
+				t.true(exp > iat);
+			});
+
+			test("returns 403 when no valid chain can be resolved for RP", async (t) => {
+				const fed = await createMockFederation();
+				const config = await createHandlerConfig({
+					trustAnchors: fed.trustAnchors,
+					options: fed.options,
+				});
+				const handler = createExplicitRegistrationHandler(config);
+				const rpKeys = await generateSigningKey("ES256");
+				const unknownRp = "https://unknown-rp.example.com";
+				const jwt = await buildRegistrationRequest(
+					unknownRp,
+					HANDLER_ENTITY_ID as string,
+					rpKeys.privateKey,
+					rpKeys.publicKey as unknown as Record<string, unknown>,
+				);
+				const res = await handler(
+					new Request(`${HANDLER_ENTITY_ID}/federation_registration`, {
+						method: "POST",
+						headers: { "Content-Type": MediaType.EntityStatement },
+						body: jwt,
+					}),
+				);
+				t.equal(res.status, 403);
+				t.equal(
+					((await res.json()) as Record<string, string>).error,
+					FederationErrorCode.InvalidTrustChain,
+				);
+			});
+
+			test("uses trust_chain JWT header when valid and present", async (t) => {
+				const fed = await createMockFederation();
+				const config = await createHandlerConfig({
+					trustAnchors: fed.trustAnchors,
+					options: fed.options,
+				});
+				const handler = createExplicitRegistrationHandler(config);
+				const rpKeys = await generateSigningKey("ES256");
+				const jwt = await signEntityStatement(
+					{
+						iss: LEAF_ID,
+						sub: LEAF_ID,
+						aud: HANDLER_ENTITY_ID,
+						iat: REG_NOW,
+						exp: REG_NOW + 3600,
+						jwks: { keys: [rpKeys.publicKey as unknown as Record<string, unknown>] },
+						...REQUIRED_FIELDS,
+					},
+					rpKeys.privateKey,
+					{
+						typ: JwtTyp.EntityStatement,
+						extraHeaders: {
+							trust_chain: [fed.leafEcJwt, fed.taSubStatementForLeaf, fed.taEcJwt],
+						},
+					},
+				);
+				const res = await handler(
+					new Request(`${HANDLER_ENTITY_ID}/federation_registration`, {
+						method: "POST",
+						headers: { "Content-Type": MediaType.EntityStatement },
+						body: jwt,
+					}),
+				);
+				t.equal(res.status, 200);
+				const decoded = decodeEntityStatement(await res.text());
+				t.true(isOk(decoded));
+				if (!isOk(decoded)) return;
+				t.equal((decoded.value.payload as Record<string, unknown>).trust_anchor, TA_ID);
+			});
+
+			test("invokes registrationProtocolAdapter.enrichResponseMetadata", async (t) => {
+				const fed = await createMockFederation();
+				let enrichCalled = false;
+				const adapter: RegistrationProtocolAdapter = {
+					validateClientMetadata: (metadata) => ({ ok: true, value: metadata }),
+					enrichResponseMetadata: (metadata) => {
+						enrichCalled = true;
+						return { ...metadata, injected: true };
+					},
+				};
+				const config = await createHandlerConfig({
+					trustAnchors: fed.trustAnchors,
+					options: fed.options,
+					registrationProtocolAdapter: adapter,
+				});
+				const handler = createExplicitRegistrationHandler(config);
+				const rpKeys = await generateSigningKey("ES256");
+				const jwt = await buildRegistrationRequest(
+					LEAF_ID,
+					HANDLER_ENTITY_ID as string,
+					rpKeys.privateKey,
+					rpKeys.publicKey as unknown as Record<string, unknown>,
+				);
+				const res = await handler(
+					new Request(`${HANDLER_ENTITY_ID}/federation_registration`, {
+						method: "POST",
+						headers: { "Content-Type": MediaType.EntityStatement },
+						body: jwt,
+					}),
+				);
+				t.equal(res.status, 200);
+				t.true(enrichCalled);
+				const decoded = decodeEntityStatement(await res.text());
+				t.true(isOk(decoded));
+				if (!isOk(decoded)) return;
+				const meta = (decoded.value.payload as Record<string, unknown>).metadata as Record<
+					string,
+					unknown
+				>;
+				t.equal(meta.injected, true);
+			});
+
+			test("emits client_secret when generateClientSecret hook returns a value", async (t) => {
+				const fed = await createMockFederation();
+				const config = await createHandlerConfig({
+					trustAnchors: fed.trustAnchors,
+					options: fed.options,
+					generateClientSecret: async () => "secret-abc",
+				});
+				const handler = createExplicitRegistrationHandler(config);
+				const rpKeys = await generateSigningKey("ES256");
+				const jwt = await buildRegistrationRequest(
+					LEAF_ID,
+					HANDLER_ENTITY_ID as string,
+					rpKeys.privateKey,
+					rpKeys.publicKey as unknown as Record<string, unknown>,
+				);
+				const res = await handler(
+					new Request(`${HANDLER_ENTITY_ID}/federation_registration`, {
+						method: "POST",
+						headers: { "Content-Type": MediaType.EntityStatement },
+						body: jwt,
+					}),
+				);
+				t.equal(res.status, 200);
+				const decoded = decodeEntityStatement(await res.text());
+				t.true(isOk(decoded));
+				if (!isOk(decoded)) return;
+				t.equal((decoded.value.payload as Record<string, unknown>).client_secret, "secret-abc");
+			});
+
+			test("omits client_secret when hook returns undefined", async (t) => {
+				const fed = await createMockFederation();
+				const config = await createHandlerConfig({
+					trustAnchors: fed.trustAnchors,
+					options: fed.options,
+					generateClientSecret: async () => undefined,
+				});
+				const handler = createExplicitRegistrationHandler(config);
+				const rpKeys = await generateSigningKey("ES256");
+				const jwt = await buildRegistrationRequest(
+					LEAF_ID,
+					HANDLER_ENTITY_ID as string,
+					rpKeys.privateKey,
+					rpKeys.publicKey as unknown as Record<string, unknown>,
+				);
+				const res = await handler(
+					new Request(`${HANDLER_ENTITY_ID}/federation_registration`, {
+						method: "POST",
+						headers: { "Content-Type": MediaType.EntityStatement },
+						body: jwt,
+					}),
+				);
+				t.equal(res.status, 200);
+				const decoded = decodeEntityStatement(await res.text());
+				t.true(isOk(decoded));
+				if (!isOk(decoded)) return;
+				t.notOk((decoded.value.payload as Record<string, unknown>).client_secret);
+			});
+		});
+
+		module("oidc / createExplicitRegistrationHandler — peer_trust_chain", () => {
+			async function buildPeerHandlerConfig(adapter?: RegistrationProtocolAdapter) {
+				const fed = await createMockFederation();
+				const overrides: HandlerConfigOverrides = {
+					opEntityId: OP_ID,
+					trustAnchors: fed.trustAnchors,
+					options: fed.options,
+					...(adapter ? { registrationProtocolAdapter: adapter } : {}),
+				};
+				const config = await createHandlerConfig(overrides);
+				return { config, fed };
+			}
+
+			async function signRpRequest(opts: {
+				fed: Awaited<ReturnType<typeof createMockFederation>>;
+				rpKeys: { privateKey: JWK; publicKey: JWK };
+				peerTrustChain: string[];
+				includeRpTrustChain?: boolean;
+			}) {
+				const { fed, rpKeys, peerTrustChain, includeRpTrustChain = true } = opts;
+				const trustChain = includeRpTrustChain
+					? [fed.leafEcJwt, fed.taSubStatementForLeaf, fed.taEcJwt]
+					: undefined;
+				return signEntityStatement(
+					{
+						iss: LEAF_ID,
+						sub: LEAF_ID,
+						aud: OP_ID,
+						iat: REG_NOW,
+						exp: REG_NOW + 3600,
+						jwks: { keys: [rpKeys.publicKey as unknown as Record<string, unknown>] },
+						...REQUIRED_FIELDS,
+					},
+					rpKeys.privateKey,
+					{
+						typ: JwtTyp.EntityStatement,
+						extraHeaders: {
+							...(trustChain ? { trust_chain: trustChain } : {}),
+							peer_trust_chain: peerTrustChain,
+						},
+					},
+				);
+			}
+
+			test("validates and exposes peer_trust_chain metadata to the adapter", async (t) => {
+				let receivedPeerMetadata: Readonly<Record<string, unknown>> | undefined;
+				const adapter: RegistrationProtocolAdapter = {
+					validateClientMetadata: (metadata, context) => {
+						receivedPeerMetadata = context?.peerResolvedOpMetadata;
+						return { ok: true, value: metadata };
+					},
+					enrichResponseMetadata: (metadata) => metadata,
+				};
+				const { config, fed } = await buildPeerHandlerConfig(adapter);
+				const handler = createExplicitRegistrationHandler(config);
+				const rpKeys = await generateSigningKey("ES256");
+				const jwt = await signRpRequest({
+					fed,
+					rpKeys: { privateKey: rpKeys.privateKey, publicKey: rpKeys.publicKey },
+					peerTrustChain: [fed.opEcJwt, fed.taSubStatementForOp, fed.taEcJwt],
+				});
+				const res = await handler(
+					new Request(`${OP_ID}/federation_registration`, {
+						method: "POST",
+						headers: { "Content-Type": MediaType.EntityStatement },
+						body: jwt,
+					}),
+				);
+				t.equal(res.status, 200);
+				t.ok(receivedPeerMetadata, "adapter received peerResolvedOpMetadata");
+				t.equal(
+					(receivedPeerMetadata as Record<string, unknown>).issuer,
+					OP_ID,
+					"peer chain resolved metadata has expected issuer",
+				);
+			});
+
+			test("rejects peer_trust_chain that does not begin at OP", async (t) => {
+				const { config, fed } = await buildPeerHandlerConfig();
+				const handler = createExplicitRegistrationHandler(config);
+				const rpKeys = await generateSigningKey("ES256");
+				const jwt = await signRpRequest({
+					fed,
+					rpKeys: { privateKey: rpKeys.privateKey, publicKey: rpKeys.publicKey },
+					peerTrustChain: [fed.leafEcJwt, fed.taSubStatementForLeaf, fed.taEcJwt],
+				});
+				const res = await handler(
+					new Request(`${OP_ID}/federation_registration`, {
+						method: "POST",
+						headers: { "Content-Type": MediaType.EntityStatement },
+						body: jwt,
+					}),
+				);
+				t.equal(res.status, 400);
+				const body = (await res.json()) as Record<string, string>;
+				t.equal(body.error, FederationErrorCode.InvalidTrustChain);
+				t.ok(body.error_description?.includes("OP's Entity Configuration"));
+			});
+
+			test("rejects peer_trust_chain whose TA differs from RP's trust_chain TA", async (t) => {
+				const { config, fed } = await buildPeerHandlerConfig();
+				const handler = createExplicitRegistrationHandler(config);
+				const rpKeys = await generateSigningKey("ES256");
+
+				const { privateKey: otherTaKey, publicKey: otherTaPub } = await generateSigningKey("ES256");
+				const otherTaId = "https://other-ta.example.com";
+				const now = REG_NOW;
+				const otherTaEc = await signEntityStatement(
+					{
+						iss: otherTaId,
+						sub: otherTaId,
+						iat: now,
+						exp: now + 3600,
+						jwks: { keys: [otherTaPub as unknown as Record<string, unknown>] },
+					},
+					otherTaKey,
+					{ typ: JwtTyp.EntityStatement },
+				);
+
+				const jwt = await signRpRequest({
+					fed,
+					rpKeys: { privateKey: rpKeys.privateKey, publicKey: rpKeys.publicKey },
+					peerTrustChain: [fed.opEcJwt, otherTaEc],
+				});
+				const res = await handler(
+					new Request(`${OP_ID}/federation_registration`, {
+						method: "POST",
+						headers: { "Content-Type": MediaType.EntityStatement },
+						body: jwt,
+					}),
+				);
+				t.equal(res.status, 400);
+				const body = (await res.json()) as Record<string, string>;
+				t.equal(body.error, FederationErrorCode.InvalidTrustChain);
+				t.ok(body.error_description?.includes("Trust Anchor"));
+			});
+
+			test("rejects peer_trust_chain when request body is a Trust Chain (trust-chain+json)", async (t) => {
+				const { config, fed } = await buildPeerHandlerConfig();
+				const handler = createExplicitRegistrationHandler(config);
+				const rpKeys = await generateSigningKey("ES256");
+				const leafEcWithPeer = await signEntityStatement(
+					{
+						iss: LEAF_ID,
+						sub: LEAF_ID,
+						aud: OP_ID,
+						iat: REG_NOW,
+						exp: REG_NOW + 3600,
+						jwks: { keys: [rpKeys.publicKey as unknown as Record<string, unknown>] },
+						...REQUIRED_FIELDS,
+					},
+					rpKeys.privateKey,
+					{
+						typ: JwtTyp.EntityStatement,
+						extraHeaders: {
+							peer_trust_chain: [fed.opEcJwt, fed.taSubStatementForOp, fed.taEcJwt],
+						},
+					},
+				);
+				const chainBody = JSON.stringify([leafEcWithPeer, fed.taSubStatementForLeaf, fed.taEcJwt]);
+				const res = await handler(
+					new Request(`${OP_ID}/federation_registration`, {
+						method: "POST",
+						headers: { "Content-Type": MediaType.TrustChain },
+						body: chainBody,
+					}),
+				);
+				t.equal(res.status, 400);
+				const body = (await res.json()) as Record<string, string>;
+				t.equal(body.error, "invalid_request");
+				t.ok(body.error_description?.includes("Trust Chain"));
+			});
+
+			test("same-TA derived from RP header trust_chain even when that header fails validation", async (t) => {
+				const { config, fed } = await buildPeerHandlerConfig();
+				const handler = createExplicitRegistrationHandler(config);
+				const rpKeys = await generateSigningKey("ES256");
+
+				const { privateKey: rogueTaKey, publicKey: rogueTaPub } = await generateSigningKey("ES256");
+				const rogueTaId = "https://rogue-ta.example.com";
+				const rogueTaEc = await signEntityStatement(
+					{
+						iss: rogueTaId,
+						sub: rogueTaId,
+						iat: REG_NOW,
+						exp: REG_NOW + 3600,
+						jwks: { keys: [rogueTaPub as unknown as Record<string, unknown>] },
+					},
+					rogueTaKey,
+					{ typ: JwtTyp.EntityStatement },
+				);
+				const fakeRpChain = [fed.leafEcJwt, rogueTaEc];
+
+				const jwt = await signEntityStatement(
+					{
+						iss: LEAF_ID,
+						sub: LEAF_ID,
+						aud: OP_ID,
+						iat: REG_NOW,
+						exp: REG_NOW + 3600,
+						jwks: { keys: [rpKeys.publicKey as unknown as Record<string, unknown>] },
+						...REQUIRED_FIELDS,
+					},
+					rpKeys.privateKey,
+					{
+						typ: JwtTyp.EntityStatement,
+						extraHeaders: {
+							trust_chain: fakeRpChain,
+							peer_trust_chain: [fed.opEcJwt, fed.taSubStatementForOp, fed.taEcJwt],
+						},
+					},
+				);
+				const res = await handler(
+					new Request(`${OP_ID}/federation_registration`, {
+						method: "POST",
+						headers: { "Content-Type": MediaType.EntityStatement },
+						body: jwt,
+					}),
+				);
+				t.equal(res.status, 400);
+				const body = (await res.json()) as Record<string, string>;
+				t.equal(body.error, FederationErrorCode.InvalidTrustChain);
+				t.ok(body.error_description?.includes("Trust Anchor"));
+			});
+
+			test("rejects peer_trust_chain rooted in a Trust Anchor not in the OP's trust set", async (t) => {
+				const { config, fed } = await buildPeerHandlerConfig();
+				const handler = createExplicitRegistrationHandler(config);
+				const rpKeys = await generateSigningKey("ES256");
+
+				const { privateKey: foreignTaKey, publicKey: foreignTaPub } =
+					await generateSigningKey("ES256");
+				const foreignTaId = "https://foreign-ta.example.com";
+				const foreignTaEc = await signEntityStatement(
+					{
+						iss: foreignTaId,
+						sub: foreignTaId,
+						iat: REG_NOW,
+						exp: REG_NOW + 3600,
+						jwks: { keys: [foreignTaPub as unknown as Record<string, unknown>] },
+					},
+					foreignTaKey,
+					{ typ: JwtTyp.EntityStatement },
+				);
+
+				const jwt = await signEntityStatement(
+					{
+						iss: LEAF_ID,
+						sub: LEAF_ID,
+						aud: OP_ID,
+						iat: REG_NOW,
+						exp: REG_NOW + 3600,
+						jwks: { keys: [rpKeys.publicKey as unknown as Record<string, unknown>] },
+						...REQUIRED_FIELDS,
+					},
+					rpKeys.privateKey,
+					{
+						typ: JwtTyp.EntityStatement,
+						extraHeaders: {
+							trust_chain: [fed.leafEcJwt, foreignTaEc],
+							peer_trust_chain: [fed.opEcJwt, foreignTaEc],
+						},
+					},
+				);
+				const res = await handler(
+					new Request(`${OP_ID}/federation_registration`, {
+						method: "POST",
+						headers: { "Content-Type": MediaType.EntityStatement },
+						body: jwt,
+					}),
+				);
+				t.equal(res.status, 400);
+				const body = (await res.json()) as Record<string, string>;
+				t.equal(body.error, FederationErrorCode.InvalidTrustChain);
+				t.ok(body.error_description?.includes("peer_trust_chain validation failed"));
+			});
+
+			test("treats empty peer_trust_chain array as absent (no rejection, no validation)", async (t) => {
+				let receivedPeerMetadata: Readonly<Record<string, unknown>> | undefined;
+				const adapter: RegistrationProtocolAdapter = {
+					validateClientMetadata: (metadata, context) => {
+						receivedPeerMetadata = context?.peerResolvedOpMetadata;
+						return { ok: true, value: metadata };
+					},
+					enrichResponseMetadata: (metadata) => metadata,
+				};
+				const { config, fed } = await buildPeerHandlerConfig(adapter);
+				const handler = createExplicitRegistrationHandler(config);
+				const rpKeys = await generateSigningKey("ES256");
+				const jwt = await signEntityStatement(
+					{
+						iss: LEAF_ID,
+						sub: LEAF_ID,
+						aud: OP_ID,
+						iat: REG_NOW,
+						exp: REG_NOW + 3600,
+						jwks: { keys: [rpKeys.publicKey as unknown as Record<string, unknown>] },
+						...REQUIRED_FIELDS,
+					},
+					rpKeys.privateKey,
+					{
+						typ: JwtTyp.EntityStatement,
+						extraHeaders: { peer_trust_chain: [] },
+					},
+				);
+				void fed;
+				const res = await handler(
+					new Request(`${OP_ID}/federation_registration`, {
+						method: "POST",
+						headers: { "Content-Type": MediaType.EntityStatement },
+						body: jwt,
+					}),
+				);
+				t.equal(res.status, 200, "empty peer_trust_chain should not block registration");
+				t.equal(receivedPeerMetadata, undefined, "no peer metadata exposed for empty array");
+			});
+
+			test("response trust_anchor matches both RP header trust_chain TA and peer_trust_chain TA", async (t) => {
+				const { config, fed } = await buildPeerHandlerConfig();
+				const handler = createExplicitRegistrationHandler(config);
+				const rpKeys = await generateSigningKey("ES256");
+				const jwt = await signRpRequest({
+					fed,
+					rpKeys: { privateKey: rpKeys.privateKey, publicKey: rpKeys.publicKey },
+					peerTrustChain: [fed.opEcJwt, fed.taSubStatementForOp, fed.taEcJwt],
+				});
+				const res = await handler(
+					new Request(`${OP_ID}/federation_registration`, {
+						method: "POST",
+						headers: { "Content-Type": MediaType.EntityStatement },
+						body: jwt,
+					}),
+				);
+				t.equal(res.status, 200);
+				const decoded = decodeEntityStatement(await res.text());
+				t.true(isOk(decoded));
+				if (!isOk(decoded)) return;
+				const payload = decoded.value.payload as Record<string, unknown>;
+				t.equal(
+					payload.trust_anchor,
+					TA_ID,
+					"response trust_anchor matches the shared TA root of both chains",
+				);
+			});
+		});
+
+		module("oidc / createExplicitRegistrationHandler — body size limits", () => {
+			test("body exactly at 64KB boundary is not rejected with 413", async (t) => {
+				const config = await createHandlerConfig();
+				const handler = createExplicitRegistrationHandler(config);
+				const body = "x".repeat(64 * 1024);
+				const res = await handler(
+					new Request(`${HANDLER_ENTITY_ID}/federation_registration`, {
+						method: "POST",
+						headers: { "Content-Type": MediaType.EntityStatement },
+						body,
+					}),
+				);
+				t.notEqual(res.status, 413);
+			});
+
+			test("body 1 byte over 64KB is rejected with 413", async (t) => {
+				const config = await createHandlerConfig();
+				const handler = createExplicitRegistrationHandler(config);
+				const body = "x".repeat(64 * 1024 + 1);
+				const res = await handler(
+					new Request(`${HANDLER_ENTITY_ID}/federation_registration`, {
+						method: "POST",
+						headers: { "Content-Type": MediaType.EntityStatement },
+						body,
+					}),
+				);
+				t.equal(res.status, 413);
+				t.equal(((await res.json()) as Record<string, string>).error, "invalid_request");
+			});
+
+			test("spoofed Content-Length: 10 with 65KB actual body is rejected with 413", async (t) => {
+				const config = await createHandlerConfig();
+				const handler = createExplicitRegistrationHandler(config);
+				const bigBody = "x".repeat(65 * 1024);
+				const res = await handler(
+					new Request(`${HANDLER_ENTITY_ID}/federation_registration`, {
+						method: "POST",
+						headers: {
+							"Content-Type": MediaType.EntityStatement,
+							"Content-Length": "10",
+						},
+						body: bigBody,
+					}),
+				);
+				t.equal(res.status, 413);
+			});
+		});
+	}
 };

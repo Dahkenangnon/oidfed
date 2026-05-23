@@ -30,6 +30,11 @@ export {
 	type ExplicitRegistrationResult,
 	explicitRegistration,
 } from "./registration/explicit.js";
+// Registration — OP-side explicit registration handler
+export {
+	createExplicitRegistrationHandler,
+	type ExplicitRegistrationHandlerConfig,
+} from "./registration/handler.js";
 // Registration — OP-side processing
 export {
 	type ProcessAutomaticRegistrationOptions,
