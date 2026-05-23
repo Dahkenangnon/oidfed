@@ -68,13 +68,11 @@ export async function createMockFederation(overrides?: {
 			issuer: OP_ID,
 			authorization_endpoint: `${OP_ID}/authorize`,
 			token_endpoint: `${OP_ID}/token`,
+			federation_registration_endpoint: `${OP_ID}/federation_registration`,
 			response_types_supported: ["code"],
 			subject_types_supported: ["public"],
 			id_token_signing_alg_values_supported: ["ES256"],
 			client_registration_types_supported: ["automatic", "explicit"],
-		},
-		federation_entity: {
-			federation_registration_endpoint: `${OP_ID}/federation_registration`,
 		},
 	};
 	const opEcPayload = {

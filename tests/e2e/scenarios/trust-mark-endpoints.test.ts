@@ -117,20 +117,17 @@ describe("Trust mark HTTP endpoints", () => {
 	});
 
 	describe("OP trust mark endpoints", () => {
-		it("GET /federation_trust_mark_list on OP returns 501 when no marks issued", async () => {
+		it("OP (leaf) does not expose federation_trust_mark_list endpoint", async () => {
 			const { server } = getTestBed();
 			const port = server.port;
 
-			// OP has a trust mark store but no trust mark issuers configured,
-			// so issuing is not possible, but the endpoint should still respond
+			// Per §5.1.1, an OP is a leaf and MUST NOT publish federation_*_endpoint
+			// claims meant for authorities. The endpoint is not mounted on the OP app.
 			const response = await fetch(
 				`https://op.ofed.test:${port}/federation_trust_mark_list?trust_mark_type=${encodeURIComponent("https://nonexistent")}`,
 			);
 
-			// OP has trustMarkStore configured, so it should return 200 with empty array
-			expect(response.status).toBe(200);
-			const body = (await response.json()) as string[];
-			expect(body).toEqual([]);
+			expect(response.status).toBe(404);
 		});
 	});
 });

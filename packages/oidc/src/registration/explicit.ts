@@ -77,12 +77,9 @@ export async function explicitRegistration(
 		throw new Error("OP does not support explicit registration");
 	}
 
-	const fedEntity = discovery.resolvedMetadata.federation_entity as
-		| Record<string, unknown>
-		| undefined;
-	const registrationEndpoint = fedEntity?.federation_registration_endpoint as string | undefined;
+	const registrationEndpoint = opMeta?.federation_registration_endpoint as string | undefined;
 	if (!registrationEndpoint) {
-		throw new Error("OP has no federation_registration_endpoint in federation_entity metadata");
+		throw new Error("OP has no federation_registration_endpoint in openid_provider metadata");
 	}
 
 	const opTrustAnchorId = discovery.trustChain.trustAnchorId;

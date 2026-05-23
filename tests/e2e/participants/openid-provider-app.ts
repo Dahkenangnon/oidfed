@@ -1,23 +1,26 @@
-import type { AuthorityServer } from "@oidfed/authority";
 import type { EntityId, JWK, TrustAnchorSet } from "@oidfed/core";
 import { decodeEntityStatement, InMemoryJtiStore } from "@oidfed/core";
-import { processAutomaticRegistration } from "@oidfed/oidc";
+import type { LeafEntity } from "@oidfed/leaf";
+import { createLeafHandler } from "@oidfed/leaf";
+import { createExplicitRegistrationHandler, processAutomaticRegistration } from "@oidfed/oidc";
 import express from "express";
 import Provider from "oidc-provider";
 
 export interface OpenIDProviderAppConfig {
-	authority: AuthorityServer;
+	/** Leaf entity backing the OP's `.well-known/openid-federation` endpoint. */
+	leaf: LeafEntity;
 	entityId: string;
 	trustAnchors: TrustAnchorSet;
-	/** OP signing key — reused for OIDC ID-token signing in the test bed. */
+	/** OP signing key — reused for OIDC ID-token signing in the test bed and for the explicit registration handler. */
 	signingKey: JWK;
 }
 
 /**
  * E2E OP participant.
  *
- * Exposes:
- *   • Federation surface via `authority.handler()`
+ * Exposes (leaf surface only — OP MUST NOT publish federation_fetch / federation_list / federation_resolve):
+ *   • GET `.well-known/openid-federation` via the leaf handler.
+ *   • POST `/federation_registration` via the oidc explicit-registration handler.
  *   • GET /auth — intercepts `?request=` (and `?request_uri=https://…`), runs
  *     `processAutomaticRegistration`, pre-registers the resulting RP into the
  *     in-memory client store, then forwards to node-oidc-provider.
@@ -31,13 +34,21 @@ export interface OpenIDProviderAppConfig {
  * In-memory adapter scoped per-process — fine for tests, not for production.
  */
 export function createOpenIDProviderApp(config: OpenIDProviderAppConfig): express.Express {
-	const { authority, entityId, trustAnchors, signingKey } = config;
+	const { leaf, entityId, trustAnchors, signingKey } = config;
 	const app = express();
 
 	const clientStore = new Map<string, StoredClient>();
 	const Adapter = createInMemoryAdapter(clientStore);
 	const jtiStore = new InMemoryJtiStore();
-	const federationHandler = authority.handler();
+	const leafHandler = createLeafHandler(leaf);
+	const registrationHandler = createExplicitRegistrationHandler({
+		opEntityId: entityId as EntityId,
+		getSigningKey: async () => ({
+			key: signingKey,
+			kid: (signingKey.kid as string) ?? "op-key",
+		}),
+		trustAnchors,
+	});
 
 	const oidc = new Provider(entityId, {
 		adapter: Adapter,
@@ -72,11 +83,11 @@ export function createOpenIDProviderApp(config: OpenIDProviderAppConfig): expres
 	app.use(express.raw({ type: "application/entity-statement+jwt", limit: "64kb" }));
 	app.use(express.urlencoded({ extended: false, limit: "128kb" }));
 
-	// Federation endpoints
+	// Leaf federation endpoint — serves Entity Configuration only.
 	app.all("/.well-known/openid-federation", async (req, res) => {
 		const url = new URL(req.originalUrl, entityId);
 		const request = new Request(url.toString(), { method: "GET" });
-		const response = await federationHandler(request);
+		const response = await leafHandler(request);
 		res.status(response.status);
 		for (const [key, value] of response.headers) {
 			res.setHeader(key, value);
@@ -84,25 +95,16 @@ export function createOpenIDProviderApp(config: OpenIDProviderAppConfig): expres
 		res.send(await response.text());
 	});
 
-	for (const path of [
-		"/federation_fetch",
-		"/federation_list",
-		"/federation_resolve",
-		"/federation_registration",
-		"/federation_trust_mark",
-		"/federation_trust_mark_status",
-		"/federation_trust_mark_list",
-	]) {
-		app.all(path, async (req, res) => {
-			const request = await toFetchRequest(req, entityId);
-			const response = await federationHandler(request);
-			res.status(response.status);
-			for (const [key, value] of response.headers) {
-				res.setHeader(key, value);
-			}
-			res.send(await response.text());
-		});
-	}
+	// OIDC explicit-registration endpoint.
+	app.all("/federation_registration", async (req, res) => {
+		const request = await toFetchRequest(req, entityId);
+		const response = await registrationHandler(request);
+		res.status(response.status);
+		for (const [key, value] of response.headers) {
+			res.setHeader(key, value);
+		}
+		res.send(await response.text());
+	});
 
 	// Federation-aware intercept that processes the Request Object and
 	// pre-registers the RP into the OIDC client store. Returns true if the

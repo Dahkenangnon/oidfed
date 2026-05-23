@@ -99,12 +99,9 @@ export async function launchFederation(
 	const subordinateStores = new Map<string, MemorySubordinateStore>();
 	const apps = new Map<string, Express>();
 
-	// 3. Create authority entities (TA, intermediate, OP)
+	// 3. Create authority entities (TA, intermediate) — OPs are leaves, handled in step 4.
 	for (const entity of topology.entities) {
-		const isAuthority =
-			entity.role === "trust-anchor" ||
-			entity.role === "intermediate" ||
-			entity.protocolRole === "op";
+		const isAuthority = entity.role === "trust-anchor" || entity.role === "intermediate";
 		if (!isAuthority) continue;
 
 		const eid = rewriteUrl(entity.id);
@@ -150,25 +147,11 @@ export async function launchFederation(
 		const authority = createAuthorityServer(authorityConfig as unknown as AuthorityConfig);
 
 		entities.set(entity.id, { server: authority, keys, keyStore, trustMarkStore });
-
-		if (entity.protocolRole === "op") {
-			apps.set(
-				entity.id,
-				createOpenIDProviderApp({
-					authority,
-					entityId: eid,
-					trustAnchors,
-					signingKey: keys.signing,
-				}),
-			);
-		} else {
-			apps.set(entity.id, createAuthorityApp(authority, eid));
-		}
+		apps.set(entity.id, createAuthorityApp(authority, eid));
 	}
 
-	// 4. Create leaf entities (non-OP)
+	// 4. Create leaf entities (RPs and OPs) — both are leaves under §5.1.1.
 	for (const entity of topology.entities) {
-		if (entity.protocolRole === "op") continue;
 		if (entity.role !== "leaf") continue;
 
 		const eid = rewriteUrl(entity.id);
@@ -190,7 +173,20 @@ export async function launchFederation(
 		const leaf = createLeafEntity(leafConfig as unknown as Parameters<typeof createLeafEntity>[0]);
 
 		entities.set(entity.id, { server: leaf, keys });
-		apps.set(entity.id, createLeafApp(leaf, eid));
+
+		if (entity.protocolRole === "op") {
+			apps.set(
+				entity.id,
+				createOpenIDProviderApp({
+					leaf,
+					entityId: eid,
+					trustAnchors,
+					signingKey: keys.signing,
+				}),
+			);
+		} else {
+			apps.set(entity.id, createLeafApp(leaf, eid));
+		}
 	}
 
 	// 5. Register subordinates in parent authority stores
