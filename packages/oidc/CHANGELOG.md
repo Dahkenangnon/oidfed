@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- Refreshed `zod` runtime dependency (^4.0.0 resolving to 4.4.3, minor). No API change.
+- Package README corrected — OP/RP schema description and `RegistrationProtocolAdapter` attribution updated to match the actual surface.
+
 ## [0.5.0] - 2026-05-23
 
 ### Added

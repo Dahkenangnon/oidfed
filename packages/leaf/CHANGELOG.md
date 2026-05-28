@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- Released alongside the coordinated 0.5.1 patch wave. No source changes; this version exists to keep `@oidfed/*` versions aligned.
+
 ## [0.5.0] - 2026-05-23
 
 ### Changed

@@ -40,7 +40,7 @@ export function createProgram(): Command {
 	program
 		.name("oidfed")
 		.description("OpenID Federation CLI — fetch, resolve, validate trust chains")
-		.version("0.5.0")
+		.version("0.5.1")
 		.option("--json", "Output raw JSON (machine-readable, suitable for piping to jq)")
 		.option("-q, --quiet", "Suppress informational output", false)
 		.option("-v, --verbose", "Enable debug output", false)
