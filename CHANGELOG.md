@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-05-28
+
 ### Added
 
 - **Supply chain hardening:** Dependabot configuration (weekly, grouped minor/patch for npm + github-actions, `chore(deps)` scope for both production and development dependencies); npm publish provenance via GitHub OIDC (`id-token: write` + `npm publish --provenance` in `release.yml`); pnpm overrides for `qs` (≥6.15.2) and `postcss` (≥8.5.10) to consume CVE patches transitively; branch protection on `main` with 14 required status checks including default-setup CodeQL.

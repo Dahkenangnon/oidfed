@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-05-28
+
 ### Fixed
 
 - Hardcoded `oidfed --version` literal in `src/index.ts` now matches the published `package.json` version (was drifting; bumped manually as part of this release).

@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-05-28
+
 ### Changed
 
 - Stripped lingering specification section / paragraph / figure references from internal comments, test descriptions, and prior CHANGELOG entries. No behaviour change; the package was already spec-conformant.
