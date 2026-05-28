@@ -1,5 +1,10 @@
 # @oidfed/leaf
 
+[![npm](https://img.shields.io/npm/v/@oidfed/leaf.svg)](https://www.npmjs.com/package/@oidfed/leaf)
+[![downloads](https://img.shields.io/npm/dm/@oidfed/leaf.svg)](https://www.npmjs.com/package/@oidfed/leaf)
+[![license](https://img.shields.io/npm/l/@oidfed/leaf.svg)](https://github.com/Dahkenangnon/oidfed/blob/main/packages/leaf/LICENSE)
+[![install size](https://packagephobia.com/badge?p=@oidfed/leaf)](https://packagephobia.com/result?p=@oidfed/leaf)
+
 Leaf Entity toolkit — Entity Configuration serving, authority discovery, and trust chain participation for any entity at the edge of an [OpenID Federation](https://openid.net/specs/openid-federation-1_0.html).
 
 > **Status:** prerelease — API may change before the upcoming stable `1.0.0` release.

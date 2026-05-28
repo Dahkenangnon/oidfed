@@ -1,5 +1,10 @@
 # @oidfed/authority
 
+[![npm](https://img.shields.io/npm/v/@oidfed/authority.svg)](https://www.npmjs.com/package/@oidfed/authority)
+[![downloads](https://img.shields.io/npm/dm/@oidfed/authority.svg)](https://www.npmjs.com/package/@oidfed/authority)
+[![license](https://img.shields.io/npm/l/@oidfed/authority.svg)](https://github.com/Dahkenangnon/oidfed/blob/main/packages/authority/LICENSE)
+[![install size](https://packagephobia.com/badge?p=@oidfed/authority)](https://packagephobia.com/result?p=@oidfed/authority)
+
 Trust Anchor and Intermediate Authority operations — subordinate management, statement issuance, federation endpoint serving, and policy enforcement for the complete [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) implementation.
 
 > **Status:** prerelease — API may change before the upcoming stable `1.0.0` release.
