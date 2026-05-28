@@ -1,0 +1,56 @@
+name: Spec compliance
+description: Report a deviation from the OpenID Federation specification.
+labels: [spec-compliance, triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template to report behaviour that disagrees with the
+        OpenID Federation 1.0 / 1.1 specification, related drafts, or
+        OAuth 2.0 / OpenID Connect referenced texts.
+
+  - type: input
+    id: spec-section
+    attributes:
+      label: Spec section
+      description: Anchor in the spec (e.g. "OpenID Federation 1.0 §12.2.2-MUST-4").
+      placeholder: "OpenID Federation 1.0 §..."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: package
+    attributes:
+      label: Affected package
+      options:
+        - "@oidfed/core"
+        - "@oidfed/authority"
+        - "@oidfed/leaf"
+        - "@oidfed/oidc"
+        - "@oidfed/cli"
+        - other / cross-package
+    validations:
+      required: true
+
+  - type: input
+    id: package-version
+    attributes:
+      label: Package version
+      placeholder: "x.y.z"
+    validations:
+      required: true
+
+  - type: textarea
+    id: deviation
+    attributes:
+      label: Observed deviation
+      description: What the implementation does vs what the spec mandates.
+    validations:
+      required: true
+
+  - type: textarea
+    id: fixture
+    attributes:
+      label: Fixture (optional)
+      description: A minimal entity statement, trust chain, or JWT that demonstrates the deviation.
+      render: text

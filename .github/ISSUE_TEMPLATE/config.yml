@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and discussion
+    url: https://github.com/Dahkenangnon/oidfed/discussions
+    about: Open-ended questions, how-tos, and design conversations.
+  - name: Security vulnerability
+    url: https://github.com/Dahkenangnon/oidfed/security/policy
+    about: Do not open a public issue for security. See SECURITY.md.

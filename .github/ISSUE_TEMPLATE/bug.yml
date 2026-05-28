@@ -1,0 +1,90 @@
+name: Bug report
+description: Report a defect in an @oidfed/* package, the CLI, or an app.
+labels: [bug, triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug.
+        Please fill in what you can — the more we know, the faster we can act.
+
+  - type: dropdown
+    id: package
+    attributes:
+      label: Affected package
+      options:
+        - "@oidfed/core"
+        - "@oidfed/authority"
+        - "@oidfed/leaf"
+        - "@oidfed/oidc"
+        - "@oidfed/cli"
+        - "@oidfed/explorer (app)"
+        - "@oidfed/learn (app)"
+        - "@oidfed/home (app)"
+        - other / not sure
+    validations:
+      required: true
+
+  - type: input
+    id: package-version
+    attributes:
+      label: Package version
+      placeholder: "x.y.z"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: runtime
+    attributes:
+      label: Runtime
+      options:
+        - Node
+        - Bun
+        - Deno
+        - workerd / Cloudflare Workers
+        - Electron
+        - Browser
+        - CLI
+        - other / not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What you thought would happen.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What actually happened (include error messages, stack traces).
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: A minimal reproduction is enormously helpful.
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+
+  - type: input
+    id: spec-section
+    attributes:
+      label: Spec section (optional)
+      description: If this is a spec-compliance issue, point us at the section.
+      placeholder: "OpenID Federation 1.0 §12.2"
+
+  - type: textarea
+    id: fixture
+    attributes:
+      label: Fixture (optional)
+      description: A minimal entity statement, trust chain, or other JWT-bearing fixture that reproduces the issue.
+      render: text

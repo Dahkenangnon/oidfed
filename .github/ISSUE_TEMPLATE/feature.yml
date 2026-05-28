@@ -1,0 +1,24 @@
+name: Feature request
+description: Suggest a new capability or improvement.
+labels: [enhancement, triage]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is the user / operator trying to do that does not work well today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed shape
+      description: A rough sketch of the API, CLI flag, configuration option, or behaviour you have in mind.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered (optional)
