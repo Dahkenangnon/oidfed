@@ -70,7 +70,7 @@
 		"@oidfed/oidc": "workspace:*",
 		"@playwright/test": "^1.59.1",
 		"@types/express": "^5.0.6",
-		"@types/node": "^22.0.0",
+		"@types/node": "^25.9.1",
 		"@types/oidc-provider": "^9.5.0",
 		"@types/qunit": "^2.19.13",
 		"c8": "^10.1.3",
