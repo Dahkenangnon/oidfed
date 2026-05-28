@@ -21,6 +21,9 @@
 		"components",
 		"tailwind"
 	],
+	"engines": {
+		"node": ">=22"
+	},
 	"type": "module",
 	"main": "./src/index.ts",
 	"types": "./src/index.ts",

@@ -22,6 +22,9 @@
 		"entity-configuration",
 		"visualization"
 	],
+	"engines": {
+		"node": ">=22"
+	},
 	"type": "module",
 	"scripts": {
 		"dev": "vite",

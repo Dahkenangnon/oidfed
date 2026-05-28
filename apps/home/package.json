@@ -20,6 +20,9 @@
 		"oidfed",
 		"homepage"
 	],
+	"engines": {
+		"node": ">=22"
+	},
 	"type": "module",
 	"scripts": {
 		"dev": "react-router dev",
