@@ -68,11 +68,6 @@ interface LeafEntity {
   getEntityConfiguration(): Promise<string>;
   isEntityConfigurationExpired(): boolean;
   refreshEntityConfiguration(): Promise<string>;
-  discoverEntity(
-    entityId: EntityId,
-    trustAnchors: TrustAnchorSet,
-    options?: FederationOptions,
-  ): Promise<DiscoveryResult>;
   handler(): (request: Request) => Promise<Response>;
 }
 ```
