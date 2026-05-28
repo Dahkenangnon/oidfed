@@ -38,6 +38,8 @@ export default {
 				"e2e",
 				"scripts",
 				"repo",
+				"docs",
+				"guide"
 			],
 		],
 		"scope-empty": [2, "never"],
