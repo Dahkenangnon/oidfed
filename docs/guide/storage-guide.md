@@ -15,23 +15,42 @@ In-memory storage implementations are provided for development and testing. They
 ## SubordinateStore
 
 ```ts
-import type { SubordinateStore, SubordinateRecord, ListFilter } from "@oidfed/authority";
+import type {
+  SubordinateStore,
+  SubordinateRecord,
+  ListFilter,
+  ListPage,
+  ListPageOptions,
+} from "@oidfed/authority";
 ```
 
 ```ts
 interface SubordinateStore {
   get(entityId: EntityId): Promise<SubordinateRecord | undefined>;
-  list(filter?: ListFilter): Promise<SubordinateRecord[]>;
+  list(filter?: ListFilter, options?: ListPageOptions): Promise<ListPage>;
   add(record: SubordinateRecord): Promise<void>;
   update(entityId: EntityId, updates: Partial<SubordinateRecord>): Promise<void>;
   remove(entityId: EntityId): Promise<void>;
+}
+
+interface ListPageOptions {
+  cursor?: EntityId;       // Resume cursor (entityId, inclusive)
+  limit?: number;          // Maximum records returned in this page
+  updatedAfter?: number;   // Filter to records with updatedAt ≥ this NumericDate
+  updatedBefore?: number;  // Filter to records with updatedAt ≤ this NumericDate
+}
+
+interface ListPage {
+  readonly items: SubordinateRecord[];
+  readonly nextCursor?: EntityId;
 }
 ```
 
 **Contract:**
 - `add()` MUST reject if `entityId` already exists.
 - `update()` and `remove()` MUST reject if `entityId` does not exist.
-- `list()` MUST support filtering by `entityTypes` (intersection) and `intermediate` (boolean).
+- `list()` MUST return records in deterministic order (lexicographic by `entityId`); when `options.cursor` is set, results resume from that `entityId` inclusive; when `options.limit` caps the page, `nextCursor` is the `entityId` of the first record that would have appeared next, or `undefined` if the page exhausts the filtered set.
+- `list()` MUST support filtering by `entityTypes` (intersection), `trustMarked` (boolean), `trustMarkType` (string), and `intermediate` (boolean).
 - `metadata`, `metadataPolicy`, `constraints` are JSON objects — store as JSONB or embedded documents.
 - `jwks` is a JWK Set — store as JSON/BSON.
 
@@ -85,6 +104,9 @@ interface TrustMarkStore {
   revoke(trustMarkType: string, subject: EntityId): Promise<void>;
   isActive(trustMarkType: string, subject: EntityId): Promise<boolean>;
   hasAnyActive(subject: EntityId): Promise<boolean>;
+  /** Optional: enumerate every active trust mark for a subject across all types.
+   *  Required only if you serve `/federation_extended_list` with `claims=trust_marks`. */
+  listForSubject?(subject: EntityId): Promise<TrustMarkRecord[]>;
 }
 ```
 
