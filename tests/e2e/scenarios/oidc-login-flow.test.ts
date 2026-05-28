@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { JWK, TrustAnchorSet } from "@oidfed/core";
 import { entityId } from "@oidfed/core";
 import { discoverEntity } from "@oidfed/leaf";
@@ -126,6 +127,68 @@ describe("Full OIDC login flow", () => {
 
 			// Federation pre-registration succeeded; oidc-provider proceeds past client lookup.
 			expect(authResponse.status).toBeLessThan(500);
+		});
+
+		it("OP fetches Request Object from RP via request_uri delivery", async () => {
+			const bed = getTestBed();
+			const { server, entities, trustAnchors, requestObjectStores } = bed;
+			const port = server.port;
+
+			const rpId = `https://rp.ofed.test:${port}`;
+			const opId = `https://op.ofed.test:${port}`;
+			const rpEntity = getEntity(entities, "https://rp.ofed.test");
+
+			const discovery = await discoverEntity(entityId(opId), trustAnchors);
+			expect(discovery.entityId).toBe(opId);
+
+			const hostedId = randomUUID();
+			const hostedUri = `${rpId}/request-object/${hostedId}`;
+
+			const regResult = await automaticRegistration(
+				discovery,
+				{
+					entityId: entityId(rpId),
+					signingKeys: [rpEntity.keys.signing],
+					authorityHints: [entityId(`https://ta.ofed.test:${port}`)],
+					metadata: {
+						openid_relying_party: {
+							redirect_uris: [`${rpId}/callback`],
+							response_types: ["code"],
+							grant_types: ["authorization_code"],
+							client_registration_types: ["automatic"],
+							token_endpoint_auth_method: "private_key_jwt",
+						},
+					},
+					requestDelivery: "request_uri",
+					requestUri: hostedUri,
+				},
+				{
+					client_id: rpId,
+					redirect_uri: `${rpId}/callback`,
+					response_type: "code",
+					scope: "openid",
+					state: "test-state",
+					nonce: "test-nonce",
+				},
+				trustAnchors,
+			);
+
+			expect(regResult.delivery).toBe("request_uri");
+			if (regResult.delivery !== "request_uri") return;
+			expect(regResult.requestUri).toBe(hostedUri);
+
+			const store = requestObjectStores.get("https://rp.ofed.test");
+			if (store === undefined) throw new Error("Expected request-object store for rp.ofed.test");
+			store.set(hostedId, regResult.requestObjectJwt, 60_000);
+			expect(store.has(hostedId)).toBe(true);
+
+			const authResponse = await fetch(regResult.authorizationUrl, { redirect: "manual" });
+
+			// The OP fetched the JWT, pre-registered, and forwarded to node-oidc-provider
+			// — which advances past client lookup. Federation-layer rejections would surface as 400.
+			expect(authResponse.status).toBeLessThan(500);
+			// The store entry was consumed by the OP's single-use fetch.
+			expect(store.has(hostedId)).toBe(false);
 		});
 	});
 

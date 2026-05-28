@@ -12,7 +12,11 @@ import type { LeafEntity } from "@oidfed/leaf";
 import { createLeafEntity } from "@oidfed/leaf";
 import type { Express } from "express";
 import { createAuthorityApp } from "../participants/authority-app.js";
-import { createLeafApp } from "../participants/leaf-app.js";
+import {
+	createLeafApp,
+	createRequestObjectStore,
+	type RequestObjectStore,
+} from "../participants/leaf-app.js";
 import { createOpenIDProviderApp } from "../participants/openid-provider-app.js";
 import type { EntityDefinition, TopologyDefinition } from "../topologies/types.js";
 import {
@@ -34,6 +38,12 @@ export interface FederationTestBed {
 	server: FederationTestServer;
 	entities: Map<string, EntityInstance>;
 	trustAnchors: TrustAnchorSet;
+	/**
+	 * Per-RP single-use request-object stores, keyed by the *original* RP
+	 * entity id (e.g. `https://rp.ofed.test`). Scenario tests seed these to
+	 * exercise the OP's `?request_uri=` fetch path.
+	 */
+	requestObjectStores: ReadonlyMap<string, RequestObjectStore>;
 	close(): Promise<void>;
 }
 
@@ -98,6 +108,15 @@ export async function launchFederation(
 	const entities = new Map<string, EntityInstance>();
 	const subordinateStores = new Map<string, MemorySubordinateStore>();
 	const apps = new Map<string, Express>();
+	const requestObjectStores = new Map<string, RequestObjectStore>();
+
+	// Server-controlled allowlist of hostnames the OPs are willing to fetch a
+	// by-reference Request Object from. Built from every RP in the topology
+	// before any HTTP request is processed.
+	const rpEntities = topology.entities.filter((e) => e.role === "leaf" && e.protocolRole === "rp");
+	const allowedRequestUriHosts: ReadonlySet<string> = new Set(
+		rpEntities.map((rp) => new URL(rewriteUrl(rp.id)).hostname),
+	);
 
 	// 3. Create authority entities (TA, intermediate) — OPs are leaves, handled in step 4.
 	for (const entity of topology.entities) {
@@ -182,10 +201,13 @@ export async function launchFederation(
 					entityId: eid,
 					trustAnchors,
 					signingKey: keys.signing,
+					allowedRequestUriHosts,
 				}),
 			);
 		} else {
-			apps.set(entity.id, createLeafApp(leaf, eid));
+			const store = createRequestObjectStore();
+			requestObjectStores.set(entity.id, store);
+			apps.set(entity.id, createLeafApp(leaf, eid, { requestObjectStore: store }));
 		}
 	}
 
@@ -234,6 +256,7 @@ export async function launchFederation(
 		server: testServer,
 		entities,
 		trustAnchors,
+		requestObjectStores,
 		async close() {
 			await testServer.close();
 		},

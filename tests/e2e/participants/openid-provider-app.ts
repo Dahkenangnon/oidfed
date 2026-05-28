@@ -13,6 +13,13 @@ export interface OpenIDProviderAppConfig {
 	trustAnchors: TrustAnchorSet;
 	/** OP signing key — reused for OIDC ID-token signing in the test bed and for the explicit registration handler. */
 	signingKey: JWK;
+	/**
+	 * Hostnames the OP is willing to fetch a by-reference Request Object from.
+	 * Constructed by the launcher from topology RP entity URLs — server-side
+	 * data, not derived from any HTTP request — so it acts as a true sanitizer
+	 * for the `?request_uri=` SSRF sink.
+	 */
+	allowedRequestUriHosts: ReadonlySet<string>;
 }
 
 /**
@@ -21,9 +28,10 @@ export interface OpenIDProviderAppConfig {
  * Exposes (leaf surface only — OP MUST NOT publish federation_fetch / federation_list / federation_resolve):
  *   • GET `.well-known/openid-federation` via the leaf handler.
  *   • POST `/federation_registration` via the oidc explicit-registration handler.
- *   • GET /auth — intercepts `?request=` (and `?request_uri=https://…`), runs
+ *   • GET /auth — intercepts `?request=` and `?request_uri=https://…`, runs
  *     `processAutomaticRegistration`, pre-registers the resulting RP into the
- *     in-memory client store, then forwards to node-oidc-provider.
+ *     in-memory client store, then forwards to node-oidc-provider. The
+ *     `request_uri` host MUST be in `allowedRequestUriHosts`.
  *   • POST /auth — same as GET /auth but with `request` in the form body.
  *   • POST /request — PAR endpoint. Intercepts before node-oidc-provider's
  *     client-auth middleware runs, federation-pre-registers the RP, then
@@ -34,7 +42,7 @@ export interface OpenIDProviderAppConfig {
  * In-memory adapter scoped per-process — fine for tests, not for production.
  */
 export function createOpenIDProviderApp(config: OpenIDProviderAppConfig): express.Express {
-	const { leaf, entityId, trustAnchors, signingKey } = config;
+	const { leaf, entityId, trustAnchors, signingKey, allowedRequestUriHosts } = config;
 	const app = express();
 
 	const clientStore = new Map<string, StoredClient>();
@@ -144,37 +152,45 @@ export function createOpenIDProviderApp(config: OpenIDProviderAppConfig): expres
 		return { ok: true };
 	}
 
-	function parseRequestUri(raw: string, clientId: string | undefined): URL | undefined {
-		if (typeof clientId !== "string" || clientId === "") return undefined;
+	async function fetchRequestObject(rawUri: string): Promise<string | undefined> {
 		let parsed: URL;
-		let client: URL;
 		try {
-			parsed = new URL(raw);
-			client = new URL(clientId);
+			parsed = new URL(rawUri);
 		} catch {
 			return undefined;
 		}
 		if (parsed.protocol !== "https:") return undefined;
 		if (parsed.username !== "" || parsed.password !== "") return undefined;
-		if (parsed.origin !== client.origin) return undefined;
-		return parsed;
+		if (parsed.hash !== "") return undefined;
+		// Allowlist is server-controlled at construction time — this guard
+		// breaks the taint flow from req.query.request_uri to fetch().
+		if (!allowedRequestUriHosts.has(parsed.hostname)) return undefined;
+
+		// Rebuild the target URL from validated components rather than passing
+		// the user-supplied string through unchanged.
+		const safeUrl = new URL("https://placeholder.invalid");
+		safeUrl.hostname = parsed.hostname;
+		if (parsed.port !== "") safeUrl.port = parsed.port;
+		safeUrl.pathname = parsed.pathname;
+		safeUrl.search = parsed.search;
+
+		const fetchResp = await fetch(safeUrl, { redirect: "error" });
+		if (!fetchResp.ok) return undefined;
+		return fetchResp.text();
 	}
 
 	// GET /auth — intercepts ?request= and ?request_uri=https://…
 	app.get("/auth", async (req, res, next) => {
 		const requestJwt = req.query.request as string | undefined;
 		const requestUri = req.query.request_uri as string | undefined;
-		const clientId = req.query.client_id as string | undefined;
 
 		let inboundJwt: string | undefined;
+		let rewroteRequestUri = false;
 		if (typeof requestJwt === "string") {
 			inboundJwt = requestJwt;
 		} else if (typeof requestUri === "string") {
-			const safeUri = parseRequestUri(requestUri, clientId);
-			if (safeUri !== undefined) {
-				const fetchResp = await fetch(safeUri.toString(), { redirect: "error" });
-				if (fetchResp.ok) inboundJwt = await fetchResp.text();
-			}
+			inboundJwt = await fetchRequestObject(requestUri);
+			if (inboundJwt !== undefined) rewroteRequestUri = true;
 		}
 
 		if (inboundJwt) {
@@ -183,6 +199,25 @@ export function createOpenIDProviderApp(config: OpenIDProviderAppConfig): expres
 				res.status(400).json({ error: pre.errorCode, error_description: pre.errorDescription });
 				return;
 			}
+		}
+
+		// node-oidc-provider rejects non-urn request_uri values; when we
+		// resolved one ourselves, substitute ?request=<JWT> inline before
+		// delegating. Express 5 exposes `req.query` as a getter — override it
+		// via defineProperty so downstream middleware sees the new params.
+		if (rewroteRequestUri && inboundJwt) {
+			const rewritten = new URL(req.originalUrl, entityId);
+			rewritten.searchParams.delete("request_uri");
+			rewritten.searchParams.set("request", inboundJwt);
+			const path = `${rewritten.pathname}${rewritten.search}`;
+			req.url = path;
+			(req as unknown as { originalUrl: string }).originalUrl = path;
+			Object.defineProperty(req, "query", {
+				configurable: true,
+				enumerable: true,
+				writable: true,
+				value: Object.fromEntries(rewritten.searchParams.entries()),
+			});
 		}
 
 		const handler = oidc.callback() as express.RequestHandler;
