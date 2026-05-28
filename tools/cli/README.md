@@ -6,9 +6,13 @@ Command-line interface for inspecting, validating, and debugging [OpenID Federat
 
 ## Install
 
+Requires Node.js ≥ 22.
+
 ```bash
 npm install -g @oidfed/cli
 ```
+
+Installs two equivalent binaries: `oidfed` and `openidfed`.
 
 ## Usage
 
@@ -17,7 +21,7 @@ npm install -g @oidfed/cli
 oidfed entity https://ta.example.org
 
 # Resolve and validate a trust chain
-oidfed resolve https://rp.example.com
+oidfed chain https://rp.example.com
 
 # Verify a JWT signature
 oidfed verify eyJ... --entity-id https://rp.example.com
@@ -25,11 +29,11 @@ oidfed verify eyJ... --entity-id https://rp.example.com
 # Check trust mark status
 oidfed trust-mark-status https://ta.example.org --trust-mark eyJ...
 
-# Machine-readable output
-oidfed entity https://ta.example.org --json | jq '.metadata'
+# Machine-readable output (decode the JWT first so `jq` sees the payload)
+oidfed entity https://ta.example.org --decode --json | jq '.metadata'
 
 # Generate a signing key
-oidfed keygen --alg ES256
+oidfed keygen --algorithm ES256
 
 # Health check
 oidfed health https://ta.example.org
@@ -44,25 +48,36 @@ oidfed list-extended https://ta.example.org \
 
 | Command | Description |
 |---------|-------------|
-| `entity <id>` | Fetch and display an entity configuration |
-| `fetch <id>` | Fetch a subordinate statement |
-| `list <id>` | List subordinate entities |
-| `list-extended <id>` | Paginated subordinate listing with audit timestamps and bulk claim retrieval |
-| `resolve <id>` | Resolve and validate trust chains |
-| `chain <id>` | Resolve trust chains |
-| `validate <jwt...>` | Validate a trust chain from JWTs |
+| `entity <entity-id>` | Fetch and display an entity configuration |
+| `fetch --issuer <url> --subject <url>` | Fetch a subordinate statement from an authority |
+| `list <entity-id>` | List subordinate entities |
+| `list-extended <entity-id>` | Paginated subordinate listing with audit timestamps and bulk claim retrieval |
+| `resolve <entity-id>` | Resolve trust chains for an entity |
+| `chain <entity-id>` | Resolve and validate trust chains for an entity |
+| `validate <jwt-or-entity-id...>` | Validate a trust chain from JWTs or by resolving an entity ID |
 | `verify <jwt>` | Verify a JWT signature |
-| `trust-mark-status` | Check trust mark status |
-| `trust-mark-list` | List entities with a trust mark |
+| `trust-mark-status <entity-id>` | Check trust mark status at its issuer |
+| `trust-mark-list <entity-id> --trust-mark-type <id>` | List entities holding an active Trust Mark of the given type |
 | `decode <jwt>` | Decode a JWT without verification |
 | `keygen` | Generate a signing key pair |
 | `sign` | Sign a JSON payload as a JWT |
-| `health <id>` | Check federation endpoint health |
-| `expiry <id>` | Show trust chain expiration details |
+| `health <entity-id>` | Check federation endpoint health |
+| `expiry <jwt-or-entity-id>` | Show expiration details for a JWT or entity trust chain |
+
+## Global flags
+
+Apply to every command:
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Output raw JSON (machine-readable, suitable for piping to `jq`) |
+| `-c, --config <path>` | Path to a config file (overrides default discovery) |
+| `-q, --quiet` | Suppress informational output |
+| `-v, --verbose` | Enable debug output |
 
 ## Configuration
 
-Config file: `~/.oidfed/config.yaml`
+Config file: `~/.oidfed/config.yaml` (override with `--config <path>` or the `OIDFED_CONFIG_PATH` environment variable).
 
 ```yaml
 trust_anchors:

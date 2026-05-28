@@ -32,32 +32,32 @@ pnpm oidfed <command>
 | Command | Description |
 |---------|-------------|
 | `entity <entity-id>` | Fetch and display an entity configuration |
-| `fetch <authority-id>` | Fetch a subordinate statement from an authority |
-| `list <authority-id>` | List subordinate entities of an authority |
-| `list-extended <authority-id>` | Paginated subordinate listing with audit timestamps and bulk claim retrieval (`/federation_extended_list`) |
-| `resolve <entity-id>` | Resolve and validate trust chains for an entity |
+| `fetch --issuer <url> --subject <url>` | Fetch a subordinate statement from an authority |
+| `list <entity-id>` | List subordinate entities of an authority |
+| `list-extended <entity-id>` | Paginated subordinate listing with audit timestamps and bulk claim retrieval (`/federation_extended_list`) |
+| `resolve <entity-id>` | Resolve trust chains for an entity |
 
 ### Trust
 
 | Command | Description |
 |---------|-------------|
-| `chain <entity-id>` | Resolve trust chains for an entity |
-| `validate <jwt...>` | Validate a trust chain from a list of JWTs |
+| `chain <entity-id>` | Resolve and validate trust chains for an entity |
+| `validate <jwt-or-entity-id...>` | Validate a trust chain from JWTs or by resolving an entity ID |
 | `verify <jwt>` | Verify a JWT signature (resolves JWKS from `--entity-id`, `--jwks-file`, or JWT `iss`) |
 
 ### Trust Marks
 
 | Command | Description |
 |---------|-------------|
-| `trust-mark-status <entity-id> --trust-mark <jwt>` | Check trust mark status |
-| `trust-mark-list <entity-id> [--trust-mark-type <type>]` | List entities with a given trust mark type |
+| `trust-mark-status <entity-id> --trust-mark <jwt>` | Check trust mark status at its issuer |
+| `trust-mark-list <entity-id> --trust-mark-type <id>` | List entities holding an active Trust Mark of the given type (`--trust-mark-type` is required) |
 
 ### Tooling
 
 | Command | Description |
 |---------|-------------|
 | `decode <jwt>` | Decode a federation JWT without verification |
-| `keygen [--alg <algorithm>]` | Generate a signing key pair (ES256, PS256, etc.) |
+| `keygen [-a, --algorithm <alg>]` | Generate a signing key pair (default `ES256`; also supports the other algorithms in `SUPPORTED_ALGORITHMS`) |
 | `sign -p <file> -k <file>` | Sign a JSON payload as a JWT entity statement |
 
 ### Ops
@@ -65,11 +65,11 @@ pnpm oidfed <command>
 | Command | Description |
 |---------|-------------|
 | `health <entity-id>` | Check health of federation endpoints for an entity |
-| `expiry <entity-id>` | Show expiration details for an entity's trust chain |
+| `expiry <jwt-or-entity-id>` | Show expiration details for a JWT or entity trust chain |
 
 ## Configuration
 
-Config file: `~/.oidfed/config.yaml` (auto-created on first use if missing).
+Config file: `~/.oidfed/config.yaml`. A missing file is **not** auto-created — `loadConfig` silently falls back to defaults. Create the file yourself when you need per-host configuration.
 
 ```yaml
 # Known trust anchors for chain resolution
@@ -87,7 +87,7 @@ http_timeout_ms: 10000
 max_chain_depth: 10
 ```
 
-Override with `-c /path/to/config.yaml` or per-option flags.
+Override with `-c /path/to/config.yaml`, the `OIDFED_CONFIG_PATH` environment variable, or per-option flags.
 
 ## Examples
 
@@ -121,11 +121,11 @@ oidfed verify eyJ... --entity-id https://rp.example.com
 # Check trust mark status
 oidfed trust-mark-status https://ta.example.org --trust-mark eyJ...
 
-# Machine-readable output piped to jq
-oidfed entity https://ta.example.org --json | jq '.metadata'
+# Machine-readable output piped to jq (decode first so jq sees the payload)
+oidfed entity https://ta.example.org --decode --json | jq '.metadata'
 
 # Generate a signing key
-oidfed keygen --alg ES256
+oidfed keygen --algorithm ES256
 
 # Health check
 oidfed health https://ta.example.org
