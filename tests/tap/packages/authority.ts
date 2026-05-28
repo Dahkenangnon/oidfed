@@ -3629,7 +3629,9 @@ export default (QUnit: QUnit) => {
 					active: true,
 				});
 				const parts = jwt.split(".");
-				const tamperedJwt = `${parts[0]}.${parts[1]}.${(parts[2] ?? "").slice(0, -2)}xx`;
+				const sig = parts[2] ?? "";
+				const flipped = sig.charAt(0) === "A" ? "B" : "A";
+				const tamperedJwt = `${parts[0]}.${parts[1]}.${flipped}${sig.slice(1)}`;
 				const handler = createTrustMarkStatusHandler(ctx);
 				const res = await handler(postRequest(`trust_mark=${encodeURIComponent(tamperedJwt)}`));
 				t.equal(res.status, 200);
