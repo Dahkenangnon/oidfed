@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 concurrency:
   group: release-${{ github.ref }}
@@ -99,7 +100,7 @@ jobs:
               --filter '@oidfed/leaf' \
               --filter '@oidfed/oidc' \
               --filter '@oidfed/cli' \
-              publish --access public --no-git-checks
+              publish --access public --no-git-checks --provenance
           else
-            pnpm --filter "@oidfed/$SCOPE" publish --access public --no-git-checks
+            pnpm --filter "@oidfed/$SCOPE" publish --access public --no-git-checks --provenance
           fi
