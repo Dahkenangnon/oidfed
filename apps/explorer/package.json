@@ -50,7 +50,7 @@
 		"react-diff-viewer-continued": "^4.0.0",
 		"react-dom": "^19.1.0",
 		"react-router": "^7.6.1",
-		"shiki": "^3.0.0",
+		"shiki": "^4.1.0",
 		"zod": "^4.0.0"
 	},
 	"devDependencies": {
