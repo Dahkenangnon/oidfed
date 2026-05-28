@@ -67,7 +67,7 @@ interface AuthorityServer {
   getEntityConfiguration(): Promise<string>;
   getSubordinateStatement(sub: EntityId): Promise<string>;
   listSubordinates(filter?: ListFilter): Promise<EntityId[]>;
-  listSubordinatesExtended(params?: ExtendedListInProcessParams): Promise<ExtendedListInProcessResult>;
+  listSubordinatesExtended(params?: ExtendedListInProcessParams): Promise<Result<ExtendedListInProcessResult, FederationError>>;
   resolveEntity(sub: EntityId, ta?: EntityId): Promise<string>;
   getTrustMarkStatus(trustMark: string): Promise<TrustMarkStatusResponsePayload>;
   listTrustMarkedEntities(trustMarkType: string): Promise<string[]>;
@@ -88,11 +88,12 @@ interface AuthorityServer {
 | `/federation_list` | GET | List subordinates |
 | `/federation_extended_list` | GET | Paginated subordinate listing with audit timestamps and bulk claim retrieval (OpenID Federation Extended Subordinate Listing 1.0) |
 | `/federation_resolve` | GET | Resolve trust chain |
-| `/federation_registration` | POST | Explicit registration (§12) |
 | `/federation_trust_mark_status` | POST | Trust mark validity |
 | `/federation_trust_mark_list` | GET | Entities with trust mark |
 | `/federation_trust_mark` | GET | Issue trust mark |
 | `/federation_historical_keys` | GET | Historical signing keys |
+
+Explicit registration (`/federation_registration`, §12) is **not** routed by `AuthorityServer`. Wire it yourself by mounting `createExplicitRegistrationHandler` from [`@oidfed/oidc`](./oidc.md#op--processing-explicit-registration) at the path of your choice (typically `/federation_registration`).
 
 ### Storage Interfaces
 
@@ -249,8 +250,8 @@ import {
   createEntityConfigurationHandler,
   createFetchHandler,
   createListHandler,
+  createExtendedListHandler,
   createResolveHandler,
-  createRegistrationHandler,
   createHistoricalKeysHandler,
   createTrustMarkHandler,
   createTrustMarkStatusHandler,
@@ -299,7 +300,6 @@ Individual handlers are available for custom routing. Response helpers: `jwtResp
 | `trustAnchors` | `TrustAnchorSet` | — | For chain resolution (resolve endpoint) |
 | `entityConfigurationTtlSeconds` | `number` | — | Entity Configuration JWT lifetime |
 | `subordinateStatementTtlSeconds` | `number` | — | Subordinate Statement JWT lifetime |
-| `registrationResponseTtlSeconds` | `number` | — | Registration response JWT lifetime |
 | `trustMarkTtlSeconds` | `number` | — | Issued trust mark lifetime |
 | `options` | `FederationOptions` | — | Core federation options (HTTP, cache, etc.) |
-| `registrationConfig` | `object` | — | `generateClientSecret` hook for explicit registration |
+| `extendedListing` | `ExtendedListingConfig` | enabled, `maxPageSize=500`, `defaultPageSize=100` | Per-authority configuration for `/federation_extended_list` (see [Extended Subordinate Listing](#extended-subordinate-listing)) |
