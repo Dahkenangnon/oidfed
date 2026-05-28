@@ -48,7 +48,7 @@
 		"clean": "rm -rf dist"
 	},
 	"dependencies": {
-		"zod": "^4.0.0"
+		"zod": "^4.4.3"
 	},
 	"peerDependencies": {
 		"@oidfed/core": "workspace:^"
