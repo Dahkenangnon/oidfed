@@ -10,6 +10,28 @@ Brief description of what this PR does.
 
 Closes #
 
+## Spec impact
+
+- [ ] No spec behavior change
+- [ ] Implements section:
+- [ ] Changes interpretation of section:
+- [ ] Adds tests for normative MUST/SHOULD/MAY behavior
+
+## Compatibility impact
+
+- [ ] Runtime-neutral
+- [ ] Node
+- [ ] Deno
+- [ ] Bun
+- [ ] Browser
+- [ ] workerd
+- [ ] Electron
+
+## Breaking change
+
+- [ ] No
+- [ ] Yes, documented in CHANGELOG
+
 ## Checklist
 
 - [ ] Tests added or updated
