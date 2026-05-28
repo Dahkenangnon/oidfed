@@ -1,10 +1,14 @@
 <div align="center">
 
-<a href="https://oidfed.com">
-	<img src="internal/assets/banner2.png" alt="@oidfed — OpenID Federation 1.0 for JavaScript · runtime-agnostic · spec-compliant · built on Web APIs" width="100%" height="70%" />
-</a>
-
 # @oidfed/* — OpenID Federation 1.0
+
+[![CI](https://github.com/Dahkenangnon/oidfed/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Dahkenangnon/oidfed/actions/workflows/ci.yml)
+[![@oidfed/core](https://img.shields.io/npm/v/@oidfed/core?label=%40oidfed%2Fcore)](https://www.npmjs.com/package/@oidfed/core)
+[![@oidfed/authority](https://img.shields.io/npm/v/@oidfed/authority?label=%40oidfed%2Fauthority)](https://www.npmjs.com/package/@oidfed/authority)
+[![@oidfed/leaf](https://img.shields.io/npm/v/@oidfed/leaf?label=%40oidfed%2Fleaf)](https://www.npmjs.com/package/@oidfed/leaf)
+[![@oidfed/oidc](https://img.shields.io/npm/v/@oidfed/oidc?label=%40oidfed%2Foidc)](https://www.npmjs.com/package/@oidfed/oidc)
+[![@oidfed/cli](https://img.shields.io/npm/v/@oidfed/cli?label=%40oidfed%2Fcli)](https://www.npmjs.com/package/@oidfed/cli)
+[![License](https://img.shields.io/badge/license-Apache--2.0%20(libs)%20%2F%20MIT%20(apps)-blue.svg)](#license)
 
 The complete [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) implementation for JavaScript — runtime-agnostic, spec-compliant, built on Web API standards. Trust chain resolution and validation, metadata policy enforcement, trust marks, constraint checking, and automatic and explicit client registration — split across four focused packages built on Web API primitives (`Request → Response`), running anywhere JavaScript runs: Node.js, Deno, Bun, and beyond. All persistent state is behind pluggable storage interfaces, keeping database and HSM integrations entirely outside the core packages. The only runtime dependencies are [`jose`](https://github.com/panva/jose) and [`zod`](https://github.com/colinhacks/zod). Two operational utilities — a CLI and a browser-based explorer — complete the toolchain.
 
@@ -58,8 +62,8 @@ The repository also ships a CLI ([`@oidfed/cli`](docs/tools/cli.md)), a live fed
 | Specification | Spec status | This monorepo | Scope |
 |---|---|---|---|
 | [**OpenID Federation 1.0**](https://openid.net/specs/openid-federation-1_0.html) | **Final** ✓ (2026-02-17) |  **Implemented** | Foundational protocol: Entity Statements, Trust Chains, Metadata, Policies, Trust Marks, Federation Endpoints, OpenID Connect client registration. |
-| [**OpenID Federation 1.1**](https://openid.net/specs/openid-federation-1_1.html) | **Final** ✓ (2026-05-06) |  **Implemented** (by virtue of 1.0) | Protocol-independent layer — the 1.0 functionality factored apart with no behavioural changes. |
-| [**OpenID Federation for OpenID Connect 1.1**](https://openid.net/specs/openid-federation-connect-1_1.html) | **Final** ✓ (2026-05-06) |  **Implemented** (by virtue of 1.0) | Protocol-specific layer — OAuth 2.0 / OpenID Connect entity types, automatic + explicit client registration. |
+| [**OpenID Federation 1.1**](https://openid.net/specs/openid-federation-1_1.html) | **Final** ✓ (2026-05-05) |  **Implemented** (by virtue of 1.0) | Protocol-independent layer — the 1.0 functionality factored apart with no behavioural changes. |
+| [**OpenID Federation for OpenID Connect 1.1**](https://openid.net/specs/openid-federation-connect-1_1.html) | **Final** ✓ (2026-05-05) |  **Implemented** (by virtue of 1.0) | Protocol-specific layer — OAuth 2.0 / OpenID Connect entity types, automatic + explicit client registration. |
 | [**OpenID Federation Extended Subordinate Listing 1.0**](https://openid.net/specs/openid-federation-extended-listing-1_0.html) | *Draft 02* |  **Implemented** (tracks draft-02) | Paginated subordinate listing with audit timestamps and bulk per-entity claim retrieval for large-scale federations. See [docs/packages/authority.md](docs/packages/authority.md#extended-subordinate-listing). |
 | [**OpenID Federation Entity Collection 1.0**](https://openid.net/specs/openid-federation-entity-collection-1_0.html) | *Draft 00* |  **Not yet implemented** | Sub-federation entity discovery endpoint with hierarchical filtering, pagination, and UI-oriented metadata for login pickers and admin tools. |
 | [**OpenID Federation for Wallet Architectures 1.0**](https://openid.net/specs/openid-federation-wallet-1_0.html) | *Draft 05* |  **Not yet implemented** | Trust-establishment profile for digital-wallet ecosystems — Wallet Provider / Wallet Relying Party metadata, policy templates, trust mark guidance. |
@@ -87,11 +91,9 @@ To report a vulnerability, email **dah.kenangnon@gmail.com** — see [SECURITY.m
 
 ## License
 
-@oidfed is dual-licensed by component:
+- **Libraries** (`@oidfed/core`, `@oidfed/authority`, `@oidfed/leaf`, `@oidfed/oidc`, `@oidfed/cli`) — [Apache 2.0](LICENSE).
+- **Apps & internal UI** (`@oidfed/explorer`, `@oidfed/home`, `@oidfed/learn`, `@oidfed/ui`) — MIT (see each component's own `LICENSE`).
 
-- **Libraries** — `@oidfed/core`, `@oidfed/authority`, `@oidfed/leaf`, `@oidfed/oidc`, `@oidfed/cli` — released under [Apache License 2.0](LICENSE).
-- **Apps & internal UI** — `@oidfed/explorer`, `@oidfed/home`, `@oidfed/learn`, `@oidfed/ui` — released under MIT. See each component's own `LICENSE` (e.g. `apps/home/LICENSE`).
-
-The repository root is governed by the Apache 2.0 `LICENSE` file. Apps and internal packages override this with their own MIT `LICENSE` file. Refer to the `LICENSE` in the nearest parent directory of any file to determine its license.
+The nearest `LICENSE` to any file governs that file.
 
 Copyright © 2026-Present [Justin Dah-kenangnon](https://github.com/Dahkenangnon).
