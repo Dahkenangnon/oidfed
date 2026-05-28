@@ -129,15 +129,13 @@ import {
   EntityStatementPayloadSchema,
   FederationMetadataSchema,
   FederationEntityMetadataSchema,
-  ExplicitRegistrationRequestPayloadSchema,
-  ExplicitRegistrationResponsePayloadSchema,
   JWKSchema,
   JWKSetSchema,
   TrustMarkPayloadSchema,
 } from "@oidfed/core";
 ```
 
-`openid_relying_party` and `openid_provider` fields in core schemas are `z.record()` (loose). For typed OIDC validation use `@oidfed/oidc`.
+`openid_relying_party` and `openid_provider` fields in core schemas are `z.record()` (loose). For typed OIDC validation and the `ExplicitRegistrationRequestPayloadSchema` / `ExplicitRegistrationResponsePayloadSchema` schemas, use `@oidfed/oidc`.
 
 ### Metadata Policy
 
@@ -192,14 +190,14 @@ import { validateTrustMark, signTrustMarkDelegation } from "@oidfed/core";
 import type { ValidatedTrustMark, ValidatedTrustMarkDelegation } from "@oidfed/core";
 ```
 
-### Registration Adapter & JTI Store
+### JTI Store
 
 ```ts
 import { InMemoryJtiStore } from "@oidfed/core";
-import type { JtiStore, RegistrationProtocolAdapter } from "@oidfed/core";
+import type { JtiStore } from "@oidfed/core";
 ```
 
-`RegistrationProtocolAdapter` — implement to plug protocol-specific metadata validation into the authority server. `@oidfed/oidc` provides `OIDCRegistrationAdapter`.
+The `RegistrationProtocolAdapter` interface (for plugging protocol-specific metadata validation into the authority server) and the `OIDCRegistrationAdapter` implementation are exported from [`@oidfed/oidc`](./oidc.md#registration-adapter), not from this package.
 
 `InMemoryJtiStore` is for development only. See the [Storage Guide](../guide/storage-guide.md) for production implementations.
 
@@ -226,3 +224,5 @@ import type { JtiStore, RegistrationProtocolAdapter } from "@oidfed/core";
 | `allowedHosts` | `string[]` | — | Host allowlist |
 | `authorityHintFilter` | `(hint, subject) => boolean` | — | Filter authority hints during resolution |
 | `understoodCriticalClaims` | `ReadonlySet<string>` | — | Critical claims this implementation understands |
+| `maxTotalFetches` | `number` | `50` | Maximum total HTTP fetches across entire trust chain resolution |
+| `customPolicyOperators` | `readonly PolicyOperatorDefinition[]` | — | Federation-defined policy operators in addition to the seven standard ones |
