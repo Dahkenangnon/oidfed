@@ -144,17 +144,37 @@ export function createOpenIDProviderApp(config: OpenIDProviderAppConfig): expres
 		return { ok: true };
 	}
 
+	function parseRequestUri(raw: string, clientId: string | undefined): URL | undefined {
+		if (typeof clientId !== "string" || clientId === "") return undefined;
+		let parsed: URL;
+		let client: URL;
+		try {
+			parsed = new URL(raw);
+			client = new URL(clientId);
+		} catch {
+			return undefined;
+		}
+		if (parsed.protocol !== "https:") return undefined;
+		if (parsed.username !== "" || parsed.password !== "") return undefined;
+		if (parsed.origin !== client.origin) return undefined;
+		return parsed;
+	}
+
 	// GET /auth — intercepts ?request= and ?request_uri=https://…
 	app.get("/auth", async (req, res, next) => {
 		const requestJwt = req.query.request as string | undefined;
 		const requestUri = req.query.request_uri as string | undefined;
+		const clientId = req.query.client_id as string | undefined;
 
 		let inboundJwt: string | undefined;
 		if (typeof requestJwt === "string") {
 			inboundJwt = requestJwt;
-		} else if (typeof requestUri === "string" && requestUri.startsWith("https://")) {
-			const fetchResp = await fetch(requestUri);
-			if (fetchResp.ok) inboundJwt = await fetchResp.text();
+		} else if (typeof requestUri === "string") {
+			const safeUri = parseRequestUri(requestUri, clientId);
+			if (safeUri !== undefined) {
+				const fetchResp = await fetch(safeUri.toString(), { redirect: "error" });
+				if (fetchResp.ok) inboundJwt = await fetchResp.text();
+			}
 		}
 
 		if (inboundJwt) {
