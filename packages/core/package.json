@@ -50,7 +50,7 @@
 		"clean": "rm -rf dist"
 	},
 	"dependencies": {
-		"jose": "^6.0.0",
-		"zod": "^4.0.0"
+		"jose": "^6.2.3",
+		"zod": "^4.4.3"
 	}
 }
