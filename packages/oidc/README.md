@@ -175,7 +175,7 @@ and default behavior:
 - RP-side automatic registration (Request Object + trust chain embedding)
 - RP-side explicit registration (Entity Configuration POST)
 - OP-side processing for both registration types (returns `Result`, never throws)
-- Typed OP/RP metadata schemas (extends core's loose `z.record()`)
+- Typed OP/RP metadata schemas (replace core's loose `z.record()` with field-level validation)
 - Request Object validation
 - Client assertion creation (`private_key_jwt`)
 - `OIDCRegistrationAdapter` for plugging into `@oidfed/authority`

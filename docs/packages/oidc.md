@@ -4,7 +4,7 @@ OpenID Connect and OAuth 2.0 federation flows — automatic and explicit client 
 
 ## Role
 
-Use when building an **RP** (alongside `@oidfed/leaf`) or an **OP** (alongside `@oidfed/authority`). Bridges federation trust chains to OIDC client registration and provides strictly typed OP/RP metadata schemas that extend the loose `z.record()` types in `@oidfed/core`.
+Use when building an **RP** (alongside `@oidfed/leaf`) or an **OP** (alongside `@oidfed/authority`). Bridges federation trust chains to OIDC client registration and provides strictly typed OP/RP metadata schemas that replace the loose `z.record()` types in `@oidfed/core` with field-level Zod validation.
 
 ## Install
 
@@ -180,7 +180,7 @@ const result = validateAutomaticRegistrationRequest(requestObjectJwt, {
 import { OIDCRegistrationAdapter } from "@oidfed/oidc";
 ```
 
-Implements `RegistrationProtocolAdapter` from `@oidfed/core`. Plug into `@oidfed/authority` for OIDC-aware registration processing: validates `openid_relying_party` against `OpenIDRelyingPartyMetadataSchema` and sets `client_id` to the trust chain entity ID.
+Implements the `RegistrationProtocolAdapter` interface (also exported from this package). Plug into `@oidfed/authority` for OIDC-aware registration processing: validates `openid_relying_party` against `OpenIDRelyingPartyMetadataSchema` and sets `client_id` to the trust chain entity ID.
 
 ### Client Assertions
 
