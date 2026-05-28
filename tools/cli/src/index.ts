@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { Command } from "commander";
+import pkg from "../package.json" with { type: "json" };
 import * as chainCmd from "./commands/chain.js";
 import * as decodeCmd from "./commands/decode.js";
 import * as entityCmd from "./commands/entity.js";
@@ -40,7 +41,7 @@ export function createProgram(): Command {
 	program
 		.name("oidfed")
 		.description("OpenID Federation CLI — fetch, resolve, validate trust chains")
-		.version("0.5.1")
+		.version(pkg.version)
 		.option("--json", "Output raw JSON (machine-readable, suitable for piping to jq)")
 		.option("-q, --quiet", "Suppress informational output", false)
 		.option("-v, --verbose", "Enable debug output", false)
