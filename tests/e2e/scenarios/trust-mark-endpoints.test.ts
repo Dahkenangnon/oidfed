@@ -117,12 +117,13 @@ describe("Trust mark HTTP endpoints", () => {
 	});
 
 	describe("OP trust mark endpoints", () => {
-		it("OP (leaf) does not expose federation_trust_mark_list endpoint", async () => {
+		it("OP (leaf-role) does not expose federation_trust_mark_list endpoint", async () => {
 			const { server } = getTestBed();
 			const port = server.port;
 
-			// Per §5.1.1, an OP is a leaf and MUST NOT publish federation_*_endpoint
-			// claims meant for authorities. The endpoint is not mounted on the OP app.
+			// Demo topologies wire OPs through the leaf factory; the OP app mounts
+			// only the leaf surface (.well-known/openid-federation) plus the OIDC
+			// explicit-registration endpoint. Authority-role endpoints are not mounted.
 			const response = await fetch(
 				`https://op.ofed.test:${port}/federation_trust_mark_list?trust_mark_type=${encodeURIComponent("https://nonexistent")}`,
 			);

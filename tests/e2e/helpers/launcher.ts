@@ -150,7 +150,7 @@ export async function launchFederation(
 		apps.set(entity.id, createAuthorityApp(authority, eid));
 	}
 
-	// 4. Create leaf entities (RPs and OPs) — both are leaves under §5.1.1.
+	// 4. Create leaf entities — both RPs and OPs are wired through the leaf phase here.
 	for (const entity of topology.entities) {
 		if (entity.role !== "leaf") continue;
 

@@ -9987,10 +9987,9 @@ export default (QUnit: QUnit) => {
 	// -------------------------------------------------------------------------
 	// RS256 — end-to-end Entity Statement signature verification
 	//
-	// Locks in the §3 SHOULD: "Implementations SHOULD support signature
-	// verification with the RSA SHA-256 algorithm". These tests sign real
-	// Entity Statements with RS256, then assert that every layer of the
-	// verification stack accepts them.
+	// Sign real Entity Statements with RS256 and assert every layer of the
+	// verification stack accepts them: decode, verifyEntityStatement,
+	// validateTrustChain (single-EC, all-RS256, and heterogeneous chains).
 	// -------------------------------------------------------------------------
 	module("core / RS256 entity statement end-to-end", () => {
 		test("verifyEntityStatement accepts an RS256-signed Entity Configuration", async (t) => {
