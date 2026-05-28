@@ -35,6 +35,9 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
           cache: pnpm
 
+      # npm trusted publishing requires npm CLI >= 11.5.1 (Node 22 ships with 10.x).
+      - run: npm install -g npm@latest
+
       - run: pnpm install --frozen-lockfile
 
       # Derive scope (core | authority | leaf | oidc | cli | all) and version from tag
@@ -87,20 +90,35 @@ jobs:
           body_path: RELEASE_BODY.md
           generate_release_notes: false
 
-      # Publish only the package(s) that were tagged
-      - name: Publish to npm
+      # Publish via npm trusted publishing (OIDC). No NODE_AUTH_TOKEN: the
+      # GitHub OIDC token (id-token: write) is exchanged at the registry for a
+      # short-lived publish credential, and Sigstore provenance is generated
+      # automatically. pnpm pack first to resolve workspace:^ ranges into the
+      # tarball; then npm publish ships that tarball verbatim.
+      - name: Publish to npm with provenance via trusted publishing
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           SCOPE: ${{ steps.tag.outputs.scope }}
         run: |
+          set -euo pipefail
+          publish_one() {
+            local dir="$1"
+            pushd "$dir" >/dev/null
+            pnpm pack
+            local tgz
+            tgz=$(ls -t ./*.tgz | head -1)
+            npm publish "$tgz" --provenance --access public
+            popd >/dev/null
+          }
           if [ "$SCOPE" = "all" ]; then
-            pnpm -r \
-              --filter '@oidfed/core' \
-              --filter '@oidfed/authority' \
-              --filter '@oidfed/leaf' \
-              --filter '@oidfed/oidc' \
-              --filter '@oidfed/cli' \
-              publish --access public --no-git-checks --provenance
+            publish_one packages/core
+            publish_one packages/authority
+            publish_one packages/leaf
+            publish_one packages/oidc
+            publish_one tools/cli
           else
-            pnpm --filter "@oidfed/$SCOPE" publish --access public --no-git-checks --provenance
+            case "$SCOPE" in
+              cli) dir=tools/cli ;;
+              *)   dir=packages/"$SCOPE" ;;
+            esac
+            publish_one "$dir"
           fi
