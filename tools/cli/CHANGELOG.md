@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-05-28
+
+### Bug Fixes
+
+* load version dynamically from package json ([2ac3e14](https://github.com/Dahkenangnon/oidfed/commit/2ac3e14d38a3e5d84c7d56dde4dc74163d3786bc))
+
+
 ## [0.5.1] - 2026-05-28
 
 ### Fixed

@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-05-28
+
+### Bug Fixes
+
+* publish via npm trusted publishing for sigstore provenance ([6990c7d](https://github.com/Dahkenangnon/oidfed/commit/6990c7d7da4a27a7f752192a7f02fc56d2e1d5a8))
+* load version dynamically from package json ([2ac3e14](https://github.com/Dahkenangnon/oidfed/commit/2ac3e14d38a3e5d84c7d56dde4dc74163d3786bc))
+
+
 ## [0.5.1] - 2026-05-28
 
 ### Added
