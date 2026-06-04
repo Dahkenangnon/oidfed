@@ -56,7 +56,7 @@
 		"trust-mark"
 	],
 	"engines": {
-		"node": ">=22",
+		"node": ">=22.12.0",
 		"pnpm": ">=10"
 	},
 	"devDependencies": {
@@ -74,7 +74,7 @@
 		"@types/oidc-provider": "^9.5.0",
 		"@types/qunit": "^2.19.14",
 		"c8": "^11.0.0",
-		"electron": "^41.2.2",
+		"electron": "^42.3.3",
 		"esbuild": "^0.28.0",
 		"express": "^5.2.1",
 		"husky": "^9.1.7",
