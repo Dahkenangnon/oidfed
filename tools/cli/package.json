@@ -43,7 +43,7 @@
 	],
 	"sideEffects": false,
 	"engines": {
-		"node": ">=22"
+		"node": ">=22.12.0"
 	},
 	"publishConfig": {
 		"access": "public"
@@ -56,7 +56,7 @@
 	},
 	"dependencies": {
 		"@oidfed/core": "workspace:^",
-		"commander": "^13.0.0",
+		"commander": "^15.0.0",
 		"yaml": "^2.9.0",
 		"chalk": "^5.4.0",
 		"zod": "^4.4.3"
