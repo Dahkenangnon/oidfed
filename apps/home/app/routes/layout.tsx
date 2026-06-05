@@ -10,6 +10,7 @@ const NAV_PRIMARY = [
 
 const NAV_EXTERNAL = [
 	{ href: "https://explore.oidfed.com", label: "Explorer" },
+	{ href: "https://fed.oidfed.com", label: "Federations" },
 	{ href: "https://learn.oidfed.com", label: "Learn" },
 	{ href: "https://github.com/Dahkenangnon/oidfed", label: "GitHub" },
 ];

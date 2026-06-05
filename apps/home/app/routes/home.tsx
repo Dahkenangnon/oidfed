@@ -14,8 +14,6 @@ import { Link } from "react-router";
 import { buildMeta, organizationJsonLd, softwareSourceCodeJsonLd, websiteJsonLd } from "../lib/seo";
 import type { Route } from "./+types/home";
 
-export const handle = { lastUpdated: "2026-04-28" };
-
 export function meta(_args: Route.MetaArgs) {
 	return buildMeta({
 		title: "OpenID Federation 1.0 for JavaScript — @oidfed",
@@ -587,19 +585,6 @@ function Hero() {
 			<div className="relative mx-auto grid max-w-6xl gap-12 px-6 py-16 sm:py-20 lg:grid-cols-[1.15fr_1fr] lg:items-center lg:gap-16 lg:py-28">
 				{/* Left — text */}
 				<div className="fade-rise">
-					<div className="inline-flex items-center gap-2.5 rounded-full bg-primary px-3.5 py-1.5 font-mono text-[10.5px] uppercase tracking-[0.2em] text-primary-foreground shadow-sm ring-1 ring-primary/20">
-						<span
-							className="relative inline-flex size-1.5 items-center justify-center"
-							aria-hidden
-						>
-							<span className="absolute inline-flex size-full animate-ping rounded-full bg-primary-foreground opacity-70" />
-							<span className="relative inline-flex size-1.5 rounded-full bg-primary-foreground" />
-						</span>
-						<span className="tabular-nums">§01</span>
-						<span className="h-3 w-px bg-primary-foreground/40" aria-hidden />
-						<span>Federation · prerelease</span>
-					</div>
-
 					<h1 className="mt-6 font-heading text-[40px] font-bold leading-[1.02] tracking-[-0.03em] text-balance sm:text-[56px] lg:text-[68px] xl:text-[76px]">
 						<span className="block">OpenID Federation&nbsp;1.0</span>
 						<span className="block bg-gradient-to-r from-brand-600 via-brand-500 to-brand-300 bg-clip-text text-transparent dark:from-brand-300 dark:via-brand-400 dark:to-brand-500">
@@ -623,44 +608,55 @@ function Hero() {
 					</p>
 
 					{/* CTAs */}
-					<div className="mt-10 flex flex-wrap items-center gap-3">
+					<div className="mt-10 flex flex-col gap-3 sm:flex-row sm:items-center sm:flex-wrap">
+						<div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+							<a
+								href="https://explore.oidfed.com"
+								target="_blank"
+								rel="noopener noreferrer"
+								className={`${buttonVariants()} group`}
+							>
+								Open the Explorer
+								<ArrowUpRight className="ml-1.5 size-4 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
+							</a>
+							<a
+								href="https://learn.oidfed.com"
+								target="_blank"
+								rel="noopener noreferrer"
+								className={buttonVariants({ variant: "outline" })}
+							>
+								Learn OpenID Federation
+							</a>
+							<div className="flex items-center gap-1">
+								<a
+									href="https://github.com/Dahkenangnon/oidfed"
+									target="_blank"
+									rel="noopener noreferrer"
+									aria-label="View source on GitHub"
+									className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:border-foreground/30 hover:text-foreground"
+								>
+									<GitHubGlyph />
+								</a>
+								<a
+									href="https://www.npmjs.com/org/oidfed"
+									target="_blank"
+									rel="noopener noreferrer"
+									aria-label="View packages on npm"
+									className="inline-flex h-9 items-center gap-1.5 rounded-md border border-border px-3 font-mono text-[11px] font-medium uppercase tracking-wider text-muted-foreground transition-colors hover:border-foreground/30 hover:text-foreground"
+								>
+									<NpmGlyph /> npm
+								</a>
+							</div>
+						</div>
 						<a
-							href="https://explore.oidfed.com"
+							href="https://fed.oidfed.com"
 							target="_blank"
 							rel="noopener noreferrer"
-							className={`${buttonVariants()} group`}
+							className={`${buttonVariants({ variant: "outline" })} group w-full !border-pink-500 !bg-pink-500 !text-white shadow-pink-500/20 hover:!border-red-500 hover:!bg-red-500 dark:!border-pink-400 dark:!bg-pink-500 dark:hover:!border-red-400 dark:hover:!bg-red-500 sm:w-auto`}
 						>
-							Open the Explorer
+							Play with Demo Federations
 							<ArrowUpRight className="ml-1.5 size-4 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
 						</a>
-						<a
-							href="https://learn.oidfed.com"
-							target="_blank"
-							rel="noopener noreferrer"
-							className={buttonVariants({ variant: "outline" })}
-						>
-							Learn OpenID Federation
-						</a>
-						<div className="ml-auto flex items-center gap-1 sm:ml-0">
-							<a
-								href="https://github.com/Dahkenangnon/oidfed"
-								target="_blank"
-								rel="noopener noreferrer"
-								aria-label="View source on GitHub"
-								className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:border-foreground/30 hover:text-foreground"
-							>
-								<GitHubGlyph />
-							</a>
-							<a
-								href="https://www.npmjs.com/org/oidfed"
-								target="_blank"
-								rel="noopener noreferrer"
-								aria-label="View packages on npm"
-								className="inline-flex h-9 items-center gap-1.5 rounded-md border border-border px-3 font-mono text-[11px] font-medium uppercase tracking-wider text-muted-foreground transition-colors hover:border-foreground/30 hover:text-foreground"
-							>
-								<NpmGlyph /> npm
-							</a>
-						</div>
 					</div>
 
 					{/* Meta row */}

@@ -10,8 +10,6 @@ import {
 } from "../components/section-ui";
 import { buildMeta, DOMAIN } from "../lib/seo";
 
-export const handle = { lastUpdated: "2026-04-28" };
-
 export function meta() {
 	return buildMeta({
 		title: "About — @oidfed",

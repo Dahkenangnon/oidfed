@@ -21,8 +21,6 @@ import {
 } from "../components/section-ui";
 import { buildMeta, DOMAIN } from "../lib/seo";
 
-export const handle = { lastUpdated: "2026-05-12" };
-
 export function meta() {
 	return buildMeta({
 		title: "Ecosystem — OpenID Federation adoption, pilots, and AI-agent identity | @oidfed",
