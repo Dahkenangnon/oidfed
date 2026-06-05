@@ -40,8 +40,6 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # Derive scope (core | authority | leaf | oidc | cli | all) and version from tag
-      # Tag formats: core/v1.2.3  authority/v1.2.3  all/v1.2.3
       - name: Parse tag
         id: tag
         env:
@@ -90,11 +88,6 @@ jobs:
           body_path: RELEASE_BODY.md
           generate_release_notes: false
 
-      # Publish via npm trusted publishing (OIDC). No NODE_AUTH_TOKEN: the
-      # GitHub OIDC token (id-token: write) is exchanged at the registry for a
-      # short-lived publish credential, and Sigstore provenance is generated
-      # automatically. pnpm pack first to resolve workspace:^ ranges into the
-      # tarball; then npm publish ships that tarball verbatim.
       - name: Publish to npm with provenance via trusted publishing
         env:
           SCOPE: ${{ steps.tag.outputs.scope }}

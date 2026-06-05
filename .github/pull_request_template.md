@@ -37,6 +37,7 @@ Closes #
 - [ ] Tests added or updated
 - [ ] `pnpm typecheck` passes
 - [ ] `pnpm test` passes
+- [ ] `pnpm test:e2e` passes (if applicable)
 - [ ] `pnpm lint` passes
 - [ ] `pnpm build` passes
 - [ ] Documentation updated (if applicable)
