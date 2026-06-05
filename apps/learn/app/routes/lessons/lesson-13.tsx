@@ -4,7 +4,7 @@ import { SearchFilter } from "~/components/search-filter";
 import { getLesson } from "~/data/lessons";
 
 import { lessonMetaForSlug } from "~/lib/seo";
-export const handle = { lastUpdated: "2026-04-28" };
+export const handle = { lastUpdated: "2026-06-05" };
 
 export function meta() {
 	return lessonMetaForSlug("glossary");
