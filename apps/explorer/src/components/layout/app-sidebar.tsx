@@ -77,7 +77,6 @@ export function AppSidebar() {
 								</div>
 								<div className="flex flex-col gap-0.5 leading-none">
 									<span className="font-semibold">OidFed Explorer</span>
-									<span className="text-xs text-muted-foreground">prerelease</span>
 								</div>
 							</SidebarMenuButton>
 							{!isCollapsed && (
@@ -121,7 +120,7 @@ export function AppSidebar() {
 
 			<SidebarContent>
 				<SidebarGroup>
-					<SidebarGroupLabel>Features</SidebarGroupLabel>
+					<SidebarGroupLabel>Tools</SidebarGroupLabel>
 					<SidebarGroupContent>
 						<SidebarMenu>
 							{navItems.map((item) => {
@@ -163,10 +162,13 @@ export function AppSidebar() {
 						<SidebarMenuButton
 							data-active={location.pathname === "/settings"}
 							onClick={() => navigate("/settings")}
-							className="cursor-pointer"
+							className="cursor-pointer border border-brand-500/25 bg-brand-500/10 text-brand-700 shadow-xs hover:bg-brand-500/15 hover:text-brand-800 dark:border-brand-400/25 dark:bg-brand-400/10 dark:text-brand-300 dark:hover:bg-brand-400/15 dark:hover:text-brand-200"
 						>
-							<Settings className="size-4" />
-							<span>Settings</span>
+							<Settings className="size-4 text-brand-600 dark:text-brand-300" />
+							<span className="font-medium">Settings</span>
+							<span className="ml-auto rounded-sm bg-brand-500 px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wider text-white group-data-[collapsible=icon]:hidden dark:bg-brand-400 dark:text-neutral-950">
+								Setup
+							</span>
 						</SidebarMenuButton>
 					</SidebarMenuItem>
 					<Separator className="my-1" />
@@ -183,6 +185,22 @@ export function AppSidebar() {
 						>
 							<Globe className="size-4" />
 							<span>Home Page</span>
+							<ExternalLink className="size-3 ml-auto opacity-50" />
+						</SidebarMenuButton>
+					</SidebarMenuItem>
+					<SidebarMenuItem>
+						<SidebarMenuButton
+							render={
+								<a
+									href="https://fed.oidfed.com"
+									target="_blank"
+									rel="noopener noreferrer"
+									aria-label="fed.oidfed.com"
+								/>
+							}
+						>
+							<Globe className="size-4" />
+							<span>fed.oidfed.com</span>
 							<ExternalLink className="size-3 ml-auto opacity-50" />
 						</SidebarMenuButton>
 					</SidebarMenuItem>

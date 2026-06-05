@@ -1,5 +1,5 @@
 import { Button } from "@oidfed/ui";
-import { ArrowUpRight, BookOpen } from "lucide-react";
+import { ArrowUpRight } from "lucide-react";
 import { useNavigate } from "react-router";
 import { usePageTitle } from "@/hooks/use-page-title";
 
@@ -30,17 +30,6 @@ export function HomePage() {
 				/>
 
 				<div className="relative mx-auto max-w-3xl text-center fade-rise">
-					{/* Signal badge */}
-					<div className="inline-flex items-center gap-2.5 rounded-full bg-primary px-3.5 py-1.5 font-mono text-[10.5px] uppercase tracking-[0.2em] text-primary-foreground shadow-sm ring-1 ring-primary/20">
-						<span className="relative inline-flex size-1.5 items-center justify-center" aria-hidden>
-							<span className="absolute inline-flex size-full animate-ping rounded-full bg-primary-foreground opacity-70" />
-							<span className="relative inline-flex size-1.5 rounded-full bg-primary-foreground" />
-						</span>
-						<span className="tabular-nums">§00</span>
-						<span className="h-3 w-px bg-primary-foreground/40" aria-hidden />
-						<span>Explorer · prerelease</span>
-					</div>
-
 					{/* Headline */}
 					<h1 className="mt-8 font-heading text-[40px] font-bold leading-[1.02] tracking-[-0.03em] text-balance sm:text-[56px] lg:text-[68px] xl:text-[76px]">
 						<span className="block">Explore any</span>
@@ -69,20 +58,6 @@ export function HomePage() {
 						<Button onClick={() => navigate("/entity")} className="group">
 							Open Entity Inspector
 							<ArrowUpRight className="ml-1.5 size-4 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
-						</Button>
-						<Button
-							variant="outline"
-							render={
-								<a
-									href="https://learn.oidfed.com"
-									target="_blank"
-									rel="noopener noreferrer"
-									aria-label="Learn OpenID Federation"
-								/>
-							}
-						>
-							<BookOpen className="mr-2 size-4" />
-							Learn OpenID Federation
 						</Button>
 					</div>
 

@@ -26,16 +26,7 @@ export function RootLayout() {
 				</main>
 				<footer className="shrink-0 border-t px-4 py-2 md:px-6 lg:px-8">
 					<p className="text-center text-xs text-muted-foreground">
-						Provided as-is with no guarantees. Self-hostable —{" "}
-						<a
-							href="https://github.com/Dahkenangnon/oidfed"
-							target="_blank"
-							rel="noopener noreferrer"
-							className="underline underline-offset-2 hover:text-foreground"
-						>
-							view source on GitHub
-						</a>
-						{" · "}By{" "}
+						By{" "}
 						<a
 							href="https://github.com/Dahkenangnon"
 							target="_blank"
@@ -43,6 +34,24 @@ export function RootLayout() {
 							className="underline underline-offset-2 hover:text-foreground"
 						>
 							Justin Dah-kenangnon
+						</a>
+						{" · "}
+						<a
+							href="https://github.com/Dahkenangnon/oidfed"
+							target="_blank"
+							rel="noopener noreferrer"
+							className="underline underline-offset-2 hover:text-foreground"
+						>
+							Repos
+						</a>
+						{" · "}
+						<a
+							href="https://github.com/Dahkenangnon/oidfed/issues"
+							target="_blank"
+							rel="noopener noreferrer"
+							className="underline underline-offset-2 hover:text-foreground"
+						>
+							Issues
 						</a>
 					</p>
 				</footer>
