@@ -1,10 +1,10 @@
 import {
-	Progress,
 	Separator,
 	Sidebar,
 	SidebarContent,
 	SidebarFooter,
 	SidebarGroup,
+	SidebarGroupContent,
 	SidebarGroupLabel,
 	SidebarHeader,
 	SidebarInset,
@@ -12,7 +12,6 @@ import {
 	SidebarMenuButton,
 	SidebarMenuItem,
 	SidebarProvider,
-	SidebarRail,
 	SidebarTrigger,
 	Tooltip,
 	TooltipPopup,
@@ -24,13 +23,14 @@ import {
 	ExternalLink,
 	Github,
 	Globe,
+	Network,
 	PanelLeftClose,
 	PanelLeftOpen,
 	Telescope,
 } from "lucide-react";
 import { Link, Outlet, useLocation } from "react-router";
 import { ThemeToggle } from "~/components/theme-toggle";
-import { getLessonsByPhase, lessons, phaseOrder, phases } from "~/data/lessons";
+import { getLessonsByPhase, phaseOrder, phases } from "~/data/lessons";
 
 function getSidebarDefault(): boolean {
 	if (typeof document === "undefined") return true;
@@ -43,8 +43,6 @@ function SidebarLayout() {
 	const { state, toggleSidebar } = useSidebar();
 	const isCollapsed = state === "collapsed";
 	const currentSlug = location.pathname.split("/").pop();
-	const currentLesson = lessons.find((l) => l.slug === currentSlug);
-	const progress = currentLesson ? Math.round((currentLesson.number / lessons.length) * 100) : 0;
 
 	return (
 		<>
@@ -58,8 +56,7 @@ function SidebarLayout() {
 										<BookOpen className="size-4" />
 									</div>
 									<div className="flex flex-col gap-0.5 leading-none">
-										<span className="font-semibold">Learn</span>
-										<span className="text-xs text-muted-foreground">OpenID Federation</span>
+										<span className="font-semibold">OidFed Learn</span>
 									</div>
 								</SidebarMenuButton>
 								{!isCollapsed && (
@@ -99,15 +96,6 @@ function SidebarLayout() {
 							</SidebarMenuItem>
 						)}
 					</SidebarMenu>
-					{!isCollapsed && (
-						<div className="px-2 mt-1">
-							<div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
-								<span>Progress</span>
-								<span>{progress}%</span>
-							</div>
-							<Progress value={progress} />
-						</div>
-					)}
 				</SidebarHeader>
 				<SidebarContent>
 					{phaseOrder.map((phaseId) => {
@@ -116,25 +104,27 @@ function SidebarLayout() {
 						return (
 							<SidebarGroup key={phaseId}>
 								<SidebarGroupLabel className={phase.color}>{phase.label}</SidebarGroupLabel>
-								<SidebarMenu>
-									{phaseLessons.map((lesson) => (
-										<SidebarMenuItem key={lesson.slug}>
-											<SidebarMenuButton
-												isActive={currentSlug === lesson.slug}
-												render={<Link to={`/lessons/${lesson.slug}`} />}
-												size="sm"
-											>
-												<span
-													className="mr-0.5 shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground"
-													aria-hidden
+								<SidebarGroupContent>
+									<SidebarMenu>
+										{phaseLessons.map((lesson) => (
+											<SidebarMenuItem key={lesson.slug}>
+												<SidebarMenuButton
+													isActive={currentSlug === lesson.slug}
+													render={<Link to={`/lessons/${lesson.slug}`} />}
+													size="sm"
 												>
-													{String(lesson.number).padStart(2, "0")}
-												</span>
-												<span className="truncate">{lesson.title}</span>
-											</SidebarMenuButton>
-										</SidebarMenuItem>
-									))}
-								</SidebarMenu>
+													<span
+														className="mr-0.5 shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground"
+														aria-hidden
+													>
+														{String(lesson.number).padStart(2, "0")}
+													</span>
+													<span className="truncate">{lesson.title}</span>
+												</SidebarMenuButton>
+											</SidebarMenuItem>
+										))}
+									</SidebarMenu>
+								</SidebarGroupContent>
 							</SidebarGroup>
 						);
 					})}
@@ -153,7 +143,23 @@ function SidebarLayout() {
 								}
 							>
 								<Globe className="size-4" />
-								<span>Project Home</span>
+								<span>Home Page</span>
+								<ExternalLink className="size-3 ml-auto opacity-50" />
+							</SidebarMenuButton>
+						</SidebarMenuItem>
+						<SidebarMenuItem>
+							<SidebarMenuButton
+								render={
+									<a
+										href="https://fed.oidfed.com"
+										target="_blank"
+										rel="noopener noreferrer"
+										aria-label="fed.oidfed.com"
+									/>
+								}
+							>
+								<Network className="size-4" />
+								<span>fed.oidfed.com</span>
 								<ExternalLink className="size-3 ml-auto opacity-50" />
 							</SidebarMenuButton>
 						</SidebarMenuItem>
@@ -191,20 +197,15 @@ function SidebarLayout() {
 						</SidebarMenuItem>
 					</SidebarMenu>
 				</SidebarFooter>
-				<SidebarRail />
 			</Sidebar>
 			<SidebarInset className="flex h-full flex-col overflow-hidden">
-				<header className="shrink-0 flex items-center gap-2 border-b border-border px-4 h-12">
-					<SidebarTrigger />
-					<Separator orientation="vertical" className="h-4" />
-					<span className="text-sm text-muted-foreground">
-						{currentLesson ? `Lesson ${currentLesson.number} of ${lessons.length}` : "Lessons"}
-					</span>
-					<div className="ml-auto flex items-center">
-						<ThemeToggle />
-					</div>
+				<header className="flex h-12 shrink-0 items-center gap-2 px-4 md:px-6 lg:px-8">
+					<SidebarTrigger className="md:hidden" />
+					<Separator orientation="vertical" className="h-4 md:hidden" />
+					<div className="flex-1" />
+					<ThemeToggle />
 				</header>
-				<main className="flex-1 overflow-y-auto">
+				<main className="flex-1 overflow-auto">
 					<Outlet />
 				</main>
 			</SidebarInset>

@@ -2,8 +2,9 @@ import { Button } from "@oidfed/ui";
 import {
 	ArrowUpRight,
 	BookOpen,
-	ExternalLink,
 	Github,
+	Globe,
+	Network,
 	ShieldCheck,
 	Telescope,
 } from "lucide-react";
@@ -13,7 +14,16 @@ import { getLessonsByPhase, lessons, phaseOrder, phases } from "~/data/lessons";
 import { buildMeta, courseJsonLd, organizationJsonLd } from "~/lib/seo";
 import type { Route } from "./+types/home";
 
-export const handle = { lastUpdated: "2026-04-28" };
+export const handle = { lastUpdated: "2026-06-05" };
+
+const NAV_LOCAL = [{ href: "#curriculum", label: "Curriculum", Icon: BookOpen }];
+
+const NAV_EXTERNAL = [
+	{ href: "https://oidfed.com", label: "Project Home", Icon: Globe },
+	{ href: "https://explore.oidfed.com", label: "Explorer", Icon: Telescope },
+	{ href: "https://fed.oidfed.com", label: "Federations", Icon: Network },
+	{ href: "https://github.com/Dahkenangnon/oidfed", label: "GitHub", Icon: Github },
+];
 
 export function meta(_args: Route.MetaArgs) {
 	return buildMeta({
@@ -45,62 +55,57 @@ export default function Home() {
 
 function AppHeader() {
 	return (
-		<header className="shrink-0 z-50 border-b border-border/60 bg-background/80 backdrop-blur">
-			<div className="max-w-6xl mx-auto flex items-center justify-between h-14 px-6">
-				<Link to="/" className="flex items-center gap-2">
-					<div className="flex size-7 items-center justify-center rounded-md bg-brand-500 text-white">
-						<BookOpen className="size-3.5" />
-					</div>
-					<span className="font-heading font-semibold text-[15px] tracking-tight">
-						Learn OpenID Federation
+		<header className="sticky top-0 z-50 shrink-0 border-b border-border/60 bg-background/80 backdrop-blur-md supports-[backdrop-filter]:bg-background/60">
+			<div className="mx-auto flex h-14 max-w-6xl items-center gap-4 px-4 sm:gap-6 sm:px-6">
+				<Link to="/" className="group flex items-center gap-2" aria-label="@oidfed Learn — home">
+					<span aria-hidden className="relative inline-flex size-6 items-center justify-center">
+						<span className="absolute inset-0 rounded-md bg-brand-500/15 transition-colors group-hover:bg-brand-500/25" />
+						<span className="relative font-mono text-[13px] font-bold text-brand-500">@</span>
 					</span>
+					<span className="font-heading text-[15px] font-semibold tracking-tight">oidfed Learn</span>
 				</Link>
-				<div className="flex items-center gap-1">
-					<Button
-						variant="ghost"
-						size="sm"
-						render={
+
+				<span aria-hidden className="hidden h-5 w-px bg-border/70 sm:block" />
+
+				<nav className="hidden min-w-0 items-center gap-1 sm:flex">
+					{NAV_LOCAL.map(({ href, label, Icon }) => (
+						<a
+							key={href}
+							href={href}
+							className="group flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[13px] text-muted-foreground transition-colors hover:text-foreground"
+						>
+							<Icon className="size-3.5 text-muted-foreground transition-colors group-hover:text-foreground" />
+							{label}
+						</a>
+					))}
+				</nav>
+
+				<div className="ml-auto flex items-center gap-1 sm:gap-2">
+					<nav className="hidden items-center gap-1 lg:flex">
+						{NAV_EXTERNAL.map(({ href, label, Icon }) => (
 							<a
-								href="https://explore.oidfed.com"
+								key={href}
+								href={href}
 								target="_blank"
 								rel="noopener noreferrer"
-								aria-label="OidFed Explorer"
-							/>
-						}
+								className="group flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[13px] text-muted-foreground transition-colors hover:text-foreground"
+							>
+								<Icon className="size-3.5 text-muted-foreground transition-colors group-hover:text-foreground" />
+								{label}
+								<ArrowUpRight className="size-3 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
+							</a>
+						))}
+					</nav>
+					<a
+						href="https://explore.oidfed.com"
+						target="_blank"
+						rel="noopener noreferrer"
+						className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-2.5 text-[12px] font-medium text-foreground transition-colors hover:border-foreground/30 lg:hidden"
 					>
 						<Telescope className="size-3.5" />
 						Explorer
-						<ExternalLink className="size-3 opacity-60" />
-					</Button>
-					<Button
-						variant="ghost"
-						size="sm"
-						render={
-							<a
-								href="https://oidfed.com"
-								target="_blank"
-								rel="noopener noreferrer"
-								aria-label="OidFed project home"
-							/>
-						}
-					>
-						Project Home
-						<ExternalLink className="size-3 opacity-60" />
-					</Button>
-					<Button
-						variant="ghost"
-						size="sm"
-						render={
-							<a
-								href="https://github.com/Dahkenangnon/oidfed"
-								target="_blank"
-								rel="noopener noreferrer"
-								aria-label="OidFed on GitHub"
-							/>
-						}
-					>
-						<Github className="size-3.5" />
-					</Button>
+						<ArrowUpRight className="size-3" />
+					</a>
 					<ThemeToggle />
 				</div>
 			</div>
@@ -184,21 +189,6 @@ function Hero() {
 						<Button variant="outline" size="lg" render={<a href="#curriculum" />}>
 							View Curriculum
 						</Button>
-					</div>
-
-					<div className="mt-10 flex flex-wrap items-center gap-x-6 gap-y-2 font-mono text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
-						<span className="flex items-center gap-1.5">
-							<span className="inline-block size-1.5 rounded-full bg-emerald-500" />
-							{lessons.length} lessons
-						</span>
-						<span className="flex items-center gap-1.5">
-							<span className="inline-block size-1.5 rounded-full bg-brand-500" />
-							Spec-accurate
-						</span>
-						<span className="flex items-center gap-1.5">
-							<span className="inline-block size-1.5 rounded-full bg-emerald-500" />
-							Free · Apache 2.0 · MIT
-						</span>
 					</div>
 				</div>
 
