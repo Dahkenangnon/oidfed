@@ -1786,8 +1786,8 @@ export default (QUnit: QUnit) => {
 			});
 			test("tolerates federation_entity when redundantly listed in constraint", (t) => {
 				// Spec: federation_entity is always allowed and MUST NOT be included.
-				// Library treats redundant inclusion as a no-op rather than rejecting,
-				// so an over-eager publisher does not break the chain.
+				// Redundant inclusion is treated as a no-op so a non-minimal publisher
+				// does not break the chain.
 				const result = applyAllowedEntityTypes(["federation_entity", "openid_provider"], {
 					federation_entity: { organization_name: "Test" },
 					openid_provider: { issuer: "https://op.example.com" },
@@ -3099,7 +3099,7 @@ export default (QUnit: QUnit) => {
 						openid_relying_party: { client_name: { default: "RP" } },
 					},
 				});
-				// Neither custom operator is registered → both critical → policy error.
+				// Neither custom operator is registered; both must remain critical and fail.
 				const result = resolveMetadataPolicy([stmt1, stmt2]);
 				t.true(isErr(result));
 				if (isErr(result)) {
@@ -5923,8 +5923,8 @@ export default (QUnit: QUnit) => {
 				);
 				t.true(isErr(result));
 				if (isErr(result)) {
-					// jose's jwtVerify catches the expired exp before our explicit guard fires;
-					// either error path is acceptable as long as the delegation is rejected.
+					// jwtVerify may reject the expired exp before the explicit guard runs;
+					// either error path is acceptable if the delegation is rejected.
 					const desc = result.error.description;
 					t.true(
 						desc.includes("Delegation has expired") ||
@@ -9276,7 +9276,7 @@ export default (QUnit: QUnit) => {
 					{ authority_hints: ["https://ta.example.com"] },
 				);
 				const taCryptoKey = await jose.importJWK(taKeys.privateKey as unknown as JoseJWK, "ES256");
-				// SS deliberately omits exp to exercise the required-claims path.
+				// This subordinate statement omits exp to exercise required-claim validation.
 				const ss = await new jose.SignJWT({
 					iss: "https://ta.example.com",
 					sub: "https://leaf.example.com",
@@ -9313,7 +9313,7 @@ export default (QUnit: QUnit) => {
 					{ authority_hints: ["https://ta.example.com"] },
 				);
 				const taCryptoKey = await jose.importJWK(taKeys.privateKey as unknown as JoseJWK, "ES256");
-				// SS deliberately omits iat to exercise the required-claims path.
+				// This subordinate statement omits iat to exercise required-claim validation.
 				const ss = await new jose.SignJWT({
 					iss: "https://ta.example.com",
 					sub: "https://leaf.example.com",

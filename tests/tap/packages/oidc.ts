@@ -695,7 +695,7 @@ export default (QUnit: QUnit) => {
 			t.ok(Array.isArray(h.peer_trust_chain), "peer_trust_chain should be present");
 			const peerChain = h.peer_trust_chain as string[];
 			t.ok(peerChain.length > 0);
-			// Same-TA invariant: peer chain ends at same TA as trust_chain.
+			// Same-Trust-Anchor invariant: peer chain ends at the same anchor as trust_chain.
 			const rpChain = h.trust_chain as string[];
 			const rpLast = decodeEntityStatement(rpChain[rpChain.length - 1] as string);
 			const peerLast = decodeEntityStatement(peerChain[peerChain.length - 1] as string);
@@ -705,7 +705,7 @@ export default (QUnit: QUnit) => {
 				(rpLast.value.payload as Record<string, unknown>).iss,
 				(peerLast.value.payload as Record<string, unknown>).iss,
 			);
-			// Peer chain begins at OP.
+			// The peer chain starts with the OpenID Provider Entity Configuration.
 			const peerFirst = decodeEntityStatement(peerChain[0] as string);
 			t.true(peerFirst.ok);
 			if (!peerFirst.ok) return;
@@ -717,8 +717,8 @@ export default (QUnit: QUnit) => {
 		test("throws when includePeerTrustChain is set but no peer chain to shared TA exists", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
-			// Strip the OP discovery responses from the http client so the peer
-			// chain cannot be resolved, while keeping the leaf chain intact.
+			// Exclude OP discovery responses so peer-chain resolution fails while
+			// preserving the RP leaf chain used by the main request.
 			const blockingHttpClient = async (input: string | URL | Request) => {
 				const url = typeof input === "string" ? input : (input as Request).url;
 				if (url.includes(OP_ID.replace(/^https?:\/\//, ""))) {
@@ -994,8 +994,8 @@ export default (QUnit: QUnit) => {
 				requestDelivery: "par",
 			});
 
-			// Wrap the federation http client to intercept the PAR endpoint and
-			// return a canned response, while letting everything else fall through.
+			// Intercept only the PAR endpoint; all federation discovery requests
+			// continue through the regular mock HTTP client.
 			let capturedBody: string | undefined;
 			let capturedMethod: string | undefined;
 			const urn = "urn:ietf:params:oauth:request_uri:abc123";
@@ -1381,8 +1381,8 @@ export default (QUnit: QUnit) => {
 			const { config } = await createRpConfig({ signingKeys: [fed.leafSigningKey] });
 			const discovery = await createMockDiscovery(OP_ID, fed);
 			const now = Math.floor(Date.now() / 1000);
-			// RP requested openid_relying_party (createRpConfig default); OP responds with
-			// metadata for a different entity type — must trigger the missing-entity-type guard.
+			// The RP requested openid_relying_party metadata, while the OP responds
+			// with a different entity type. This must hit the missing-entity-type guard.
 			const badEntityTypeJwt = await signEntityStatement(
 				{
 					iss: OP_ID,

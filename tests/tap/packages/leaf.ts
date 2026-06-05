@@ -50,7 +50,7 @@ async function createLeafConfig(
 	return { config, signingKey: privateKey, publicKey };
 }
 
-// Tiny mock function — replaces vi.fn()
+// Minimal call recorder used in place of vi.fn().
 function mockFn<A extends unknown[]>() {
 	const calls: A[] = [];
 	const fn = (...args: A): void => {

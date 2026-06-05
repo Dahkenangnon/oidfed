@@ -2578,7 +2578,7 @@ export default (QUnit: QUnit) => {
 				]) {
 					await subordinateStore.add(makeXListRecord(sub));
 				}
-				// no records trust-marked → every store page is filtered to empty
+				// No records carry trust marks, so every store page is filtered to empty.
 				const handler = createExtendedListHandler(ctx, {
 					maxStorePagesPerRequest: 2,
 					storeBatchSize: 2,
@@ -2607,7 +2607,7 @@ export default (QUnit: QUnit) => {
 				};
 				t.equal(first.immediate_subordinate_entities.length, 2);
 				t.ok(first.next_entity_id, "cap-exit cursor present");
-				// Resume with the cap-exit cursor — must continue without losing or duplicating.
+				// Resume from the page-scan limit cursor without skipping or duplicating records.
 				const handler2 = createExtendedListHandler(ctx);
 				const rest = (await (
 					await handler2(
@@ -2862,10 +2862,10 @@ export default (QUnit: QUnit) => {
 		});
 
 		test("response exp is capped to the chain's earliest expiry", async (t) => {
-			// Per §8.3.2 (lines 533–535), the resolve response exp MUST be the minimum of
-			// the trust-chain exp and any included Trust Mark exp. The mock federation
-			// signs every statement with the same exp = now + 86400, so the resolved exp
-			// should equal that bound (within a small fudge for iat/exp computation).
+			// Per §8.3.2 (lines 533-535), the resolve response exp MUST be the minimum of
+			// the trust-chain exp and any included Trust Mark exp. The mock federation signs
+			// every statement with exp = now + 86400, so the resolved exp should match that
+			// bound within a small tolerance for iat/exp computation.
 			const fed = await createMockFederation();
 			const { ctx } = await createTestContext({
 				trustAnchors: fed.trustAnchors,
@@ -5999,8 +5999,8 @@ export default (QUnit: QUnit) => {
 			const subordinateStore = new MemorySubordinateStore();
 			const childKeys = await generateSigningKey("ES256");
 			const childPublic = { ...childKeys.publicKey, kid: "c1" };
-			// Insert a record with NO endpoint URLs in federation_entity (clean record);
-			// the bug-class test goes through the wire-layer sanitizer instead.
+			// Insert a valid record without federation_entity endpoint URLs; wire-layer
+			// sanitization is covered separately.
 			await subordinateStore.add({
 				entityId: CHILD_ID,
 				jwks: { keys: [childPublic] },
