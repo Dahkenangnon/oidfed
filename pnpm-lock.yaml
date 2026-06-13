@@ -112,8 +112,8 @@ importers:
         specifier: ^0.7.54
         version: 0.7.54
       '@uiw/react-json-view':
-        specifier: 2.0.0-alpha.41
-        version: 2.0.0-alpha.41(@babel/runtime@7.29.7)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+        specifier: 2.0.0-alpha.43
+        version: 2.0.0-alpha.43(@babel/runtime@7.29.7)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@xyflow/react':
         specifier: ^12.11.0
         version: 12.11.0(@types/react-dom@19.2.3(@types/react@19.2.16))(@types/react@19.2.16)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -1753,8 +1753,8 @@ packages:
   '@types/yauzl@2.10.3':
     resolution: {integrity: sha512-oJoftv0LSuaDZE3Le4DbKX+KS9G36NzOeSap90UIK0yMA/NhKJhqlSGtNDORNRaIbQfzjXDrQa0ytJ6mNRGz/Q==}
 
-  '@uiw/react-json-view@2.0.0-alpha.41':
-    resolution: {integrity: sha512-botRpQ5AgymYEsqXSdT2/1LefAJEYfMntvdnx1SqhTQCTW9HygeFZXx9inkYqUmiQZ3+0QlZnodjBvwnUfZhVA==}
+  '@uiw/react-json-view@2.0.0-alpha.43':
+    resolution: {integrity: sha512-PMj+6xRDCPbVGccfLUDhx7yGrmVBSeFx3py6bqDds4QIYScXo9GEgtTbWXn3gXpoehsmOu//6dveYTf872wu3Q==}
     peerDependencies:
       '@babel/runtime': '>=7.10.0'
       react: '>=18.0.0'
@@ -5105,7 +5105,7 @@ snapshots:
       '@types/node': 25.9.1
     optional: true
 
-  '@uiw/react-json-view@2.0.0-alpha.41(@babel/runtime@7.29.7)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+  '@uiw/react-json-view@2.0.0-alpha.43(@babel/runtime@7.29.7)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
       '@babel/runtime': 7.29.7
       react: 19.2.7

@@ -39,7 +39,7 @@
 		"@fontsource-variable/inter": "^5.2.8",
 		"@oidfed/core": "workspace:*",
 		"@types/dagre": "^0.7.54",
-		"@uiw/react-json-view": "2.0.0-alpha.41",
+		"@uiw/react-json-view": "2.0.0-alpha.43",
 		"@xyflow/react": "^12.11.0",
 		"cytoscape": "^3.34.0",
 		"cytoscape-fcose": "^2.2.0",
