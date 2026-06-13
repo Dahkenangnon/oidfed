@@ -47,6 +47,9 @@
 		"typecheck": "tsc --noEmit",
 		"clean": "rm -rf dist"
 	},
+	"devDependencies": {
+		"@oidfed/core": "workspace:^"
+	},
 	"dependencies": {
 		"zod": "^4.4.3"
 	},

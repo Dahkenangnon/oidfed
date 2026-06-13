@@ -46,6 +46,9 @@
 		"typecheck": "tsc --noEmit",
 		"clean": "rm -rf dist"
 	},
+	"devDependencies": {
+		"@oidfed/core": "workspace:^"
+	},
 	"peerDependencies": {
 		"@oidfed/core": "workspace:^"
 	},
