@@ -44,7 +44,7 @@
 		"cytoscape": "^3.34.0",
 		"cytoscape-fcose": "^2.2.0",
 		"dagre": "^0.8.5",
-		"lucide-react": "^0.511.0",
+		"lucide-react": "^1.18.0",
 		"papaparse": "^5.5.0",
 		"react": "^19.2.7",
 		"react-diff-viewer-continued": "^4.2.2",
