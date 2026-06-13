@@ -20,6 +20,7 @@ export * from "./components/field";
 export * from "./components/fieldset";
 export * from "./components/form";
 export * from "./components/frame";
+export * from "./components/github";
 export * from "./components/group";
 export * from "./components/input";
 export * from "./components/input-group";

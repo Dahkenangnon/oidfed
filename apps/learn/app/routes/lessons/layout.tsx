@@ -21,13 +21,13 @@ import {
 import {
 	BookOpen,
 	ExternalLink,
-	Github,
 	Globe,
 	Network,
 	PanelLeftClose,
 	PanelLeftOpen,
 	Telescope,
 } from "lucide-react";
+import { GitHubIcon } from "@oidfed/ui";
 import { Link, Outlet, useLocation } from "react-router";
 import { ThemeToggle } from "~/components/theme-toggle";
 import { getLessonsByPhase, phaseOrder, phases } from "~/data/lessons";
@@ -190,7 +190,7 @@ function SidebarLayout() {
 									/>
 								}
 							>
-								<Github className="size-4" />
+								<GitHubIcon />
 								<span>GitHub</span>
 								<ExternalLink className="size-3 ml-auto opacity-50" />
 							</SidebarMenuButton>

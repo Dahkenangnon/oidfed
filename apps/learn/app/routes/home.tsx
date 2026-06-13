@@ -2,12 +2,12 @@ import { Button } from "@oidfed/ui";
 import {
 	ArrowUpRight,
 	BookOpen,
-	Github,
 	Globe,
 	Network,
 	ShieldCheck,
 	Telescope,
 } from "lucide-react";
+import { GitHubIcon } from "@oidfed/ui";
 import { Link } from "react-router";
 import { ThemeToggle } from "~/components/theme-toggle";
 import { getLessonsByPhase, lessons, phaseOrder, phases } from "~/data/lessons";
@@ -22,7 +22,7 @@ const NAV_EXTERNAL = [
 	{ href: "https://oidfed.com", label: "Project Home", Icon: Globe },
 	{ href: "https://explore.oidfed.com", label: "Explorer", Icon: Telescope },
 	{ href: "https://fed.oidfed.com", label: "Federations", Icon: Network },
-	{ href: "https://github.com/Dahkenangnon/oidfed", label: "GitHub", Icon: Github },
+	{ href: "https://github.com/Dahkenangnon/oidfed", label: "GitHub", Icon: GitHubIcon },
 ];
 
 export function meta(_args: Route.MetaArgs) {
