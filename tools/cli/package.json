@@ -14,12 +14,21 @@
 		"url": "https://github.com/Dahkenangnon/oidfed/issues"
 	},
 	"keywords": [
-		"openid",
-		"federation",
-		"oidc",
-		"cli",
+		"openid-federation",
+		"openid federation",
+		"trust chain",
 		"trust-chain",
-		"entity-statement"
+		"entity-statement",
+		"oauth2",
+		"oidc",
+		"federation",
+		"eidas",
+		"edugain",
+		"federated-identity",
+		"trust-mark",
+		"subordinate-statement",
+		"trust-anchor",
+		"cli"
 	],
 	"type": "module",
 	"main": "./dist/index.cjs",

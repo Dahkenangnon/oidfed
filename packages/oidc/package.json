@@ -14,10 +14,20 @@
 		"url": "https://github.com/Dahkenangnon/oidfed/issues"
 	},
 	"keywords": [
-		"openid",
-		"federation",
-		"oidc",
+		"openid-federation",
+		"openid federation",
+		"trust chain",
+		"trust-chain",
+		"entity-statement",
 		"oauth2",
+		"oidc",
+		"federation",
+		"eidas",
+		"edugain",
+		"federated-identity",
+		"trust-mark",
+		"subordinate-statement",
+		"trust-anchor",
 		"automatic-registration",
 		"explicit-registration",
 		"client-assertion"
