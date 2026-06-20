@@ -22,6 +22,8 @@ export interface MockFederation {
 	opPublicKey: JWK;
 	leafSigningKey: JWK;
 	leafPublicKey: JWK;
+	leafProtocolSigningKey: JWK;
+	leafProtocolPublicKey: JWK;
 	trustAnchors: TrustAnchorSet;
 	taEcJwt: string;
 	opEcJwt: string;
@@ -41,7 +43,8 @@ export async function createMockFederation(overrides?: {
 	const { privateKey: opSigningKey, publicKey: opPublicKey } = await generateSigningKey("ES256");
 	const { privateKey: leafSigningKey, publicKey: leafPublicKey } =
 		await generateSigningKey("ES256");
-	const { publicKey: leafProtocolPublicKey } = await generateSigningKey("ES256");
+	const { privateKey: leafProtocolSigningKey, publicKey: leafProtocolPublicKey } =
+		await generateSigningKey("ES256");
 
 	const now = Math.floor(Date.now() / 1000);
 	const exp = now + 86400;
@@ -197,6 +200,8 @@ export async function createMockFederation(overrides?: {
 		opPublicKey,
 		leafSigningKey,
 		leafPublicKey,
+		leafProtocolSigningKey,
+		leafProtocolPublicKey,
 		trustAnchors,
 		taEcJwt,
 		opEcJwt,

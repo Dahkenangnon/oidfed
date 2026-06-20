@@ -1549,7 +1549,7 @@ export default (QUnit: QUnit) => {
 					scope: "openid",
 					response_type: "code",
 				},
-				new JwkSigner(fed.leafSigningKey),
+				new JwkSigner(fed.leafProtocolSigningKey),
 				{ typ: "oauth-authz-req+jwt" },
 			);
 		}
@@ -1564,6 +1564,30 @@ export default (QUnit: QUnit) => {
 			t.true(result.ok);
 			if (!result.ok) return;
 			t.equal(result.value.rpEntityId, LEAF_ID);
+		});
+
+		test("verifies Request Objects with RP protocol keys, not federation keys", async (t) => {
+			const fed = await createMockFederation();
+			const now = Math.floor(Date.now() / 1000);
+			const jwt = await signEntityStatement(
+				{
+					iss: LEAF_ID,
+					client_id: LEAF_ID,
+					aud: OP_ID,
+					jti: crypto.randomUUID(),
+					iat: now,
+					exp: now + 300,
+				},
+				new JwkSigner(fed.leafSigningKey),
+				{ typ: RequestObjectTyp },
+			);
+			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
+				...fed.options,
+				opEntityId: OP_ID,
+			});
+			t.false(result.ok);
+			if (result.ok) return;
+			t.equal(result.error.code, "ERR_SIGNATURE_INVALID");
 		});
 
 		test("returns ok with resolvedRpMetadata", async (t) => {
@@ -1602,7 +1626,7 @@ export default (QUnit: QUnit) => {
 					iat: now,
 					exp: now + 300,
 				},
-				new JwkSigner(fed.leafSigningKey),
+				new JwkSigner(fed.leafProtocolSigningKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
@@ -1627,7 +1651,7 @@ export default (QUnit: QUnit) => {
 					iat: now,
 					exp: now + 300,
 				},
-				new JwkSigner(fed.leafSigningKey),
+				new JwkSigner(fed.leafProtocolSigningKey),
 				{ typ: "oauth-authz-req+jwt" },
 			);
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
@@ -1651,7 +1675,7 @@ export default (QUnit: QUnit) => {
 					iat: now,
 					exp: now + 300,
 				},
-				new JwkSigner(fed.leafSigningKey),
+				new JwkSigner(fed.leafProtocolSigningKey),
 				{ typ: "oauth-authz-req+jwt" },
 			);
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
@@ -1675,7 +1699,7 @@ export default (QUnit: QUnit) => {
 					iat: now,
 					exp: now + 300,
 				},
-				new JwkSigner(fed.leafSigningKey),
+				new JwkSigner(fed.leafProtocolSigningKey),
 				{ typ: "oauth-authz-req+jwt" },
 			);
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
@@ -1699,7 +1723,7 @@ export default (QUnit: QUnit) => {
 					iat: now - 600,
 					exp: now - 300,
 				},
-				new JwkSigner(fed.leafSigningKey),
+				new JwkSigner(fed.leafProtocolSigningKey),
 				{ typ: "oauth-authz-req+jwt" },
 			);
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
@@ -1716,7 +1740,7 @@ export default (QUnit: QUnit) => {
 			const now = Math.floor(Date.now() / 1000);
 			const jwt = await signEntityStatement(
 				{ iss: LEAF_ID, client_id: LEAF_ID, aud: OP_ID, jti: crypto.randomUUID(), iat: now },
-				new JwkSigner(fed.leafSigningKey),
+				new JwkSigner(fed.leafProtocolSigningKey),
 				{ typ: "oauth-authz-req+jwt" },
 			);
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
@@ -1733,7 +1757,7 @@ export default (QUnit: QUnit) => {
 			const now = Math.floor(Date.now() / 1000);
 			const jwt = await signEntityStatement(
 				{ iss: LEAF_ID, client_id: LEAF_ID, aud: OP_ID, iat: now, exp: now + 300 },
-				new JwkSigner(fed.leafSigningKey),
+				new JwkSigner(fed.leafProtocolSigningKey),
 				{ typ: "oauth-authz-req+jwt" },
 			);
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
@@ -1778,7 +1802,7 @@ export default (QUnit: QUnit) => {
 					iat: now - 330,
 					exp: now - 30,
 				},
-				new JwkSigner(fed.leafSigningKey),
+				new JwkSigner(fed.leafProtocolSigningKey),
 				{ typ: "oauth-authz-req+jwt" },
 			);
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
@@ -1825,7 +1849,7 @@ export default (QUnit: QUnit) => {
 					iat: now,
 					exp: now + 300,
 				},
-				new JwkSigner(fed.leafSigningKey),
+				new JwkSigner(fed.leafProtocolSigningKey),
 				{ typ: "oauth-authz-req+jwt" },
 			);
 			let warnCalled = false;

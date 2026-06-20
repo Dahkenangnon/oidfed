@@ -9,6 +9,7 @@ import {
 	type JtiStore,
 	ok,
 	type Result,
+	resolveEntityKeys,
 	type TrustAnchorSet,
 	type ValidatedTrustChain,
 	validateTrustChain,
@@ -82,17 +83,27 @@ export async function processAutomaticRegistration(
 	const bestChain = bestChainResult.value;
 
 	const leafStatement = bestChain.statements[0] as (typeof bestChain.statements)[0];
-	if (!leafStatement.payload.jwks) {
+	const federationJwks = leafStatement.payload.jwks;
+	if (!federationJwks) {
 		return err(
 			federationError(
 				InternalErrorCode.SignatureInvalid,
-				"RP Entity Configuration has no jwks — cannot verify signature",
+				"RP Entity Configuration has no federation jwks — cannot resolve OIDC protocol keys",
 			),
 		);
 	}
-	const verifyResult = await verifyEntityStatement(requestObjectJwt, leafStatement.payload.jwks, {
-		expectedTyp: RequestObjectTyp,
-	});
+
+	const resolvedRpMetadata = bestChain.resolvedMetadata.openid_relying_party ?? {};
+	const protocolKeysResult = await resolveEntityKeys(resolvedRpMetadata, federationJwks, options);
+	if (!protocolKeysResult.ok) return protocolKeysResult;
+
+	const verifyResult = await verifyEntityStatement(
+		requestObjectJwt,
+		{ keys: protocolKeysResult.value.keys },
+		{
+			expectedTyp: RequestObjectTyp,
+		},
+	);
 	if (!verifyResult.ok) {
 		return err(
 			federationError(
@@ -101,8 +112,6 @@ export async function processAutomaticRegistration(
 			),
 		);
 	}
-
-	const resolvedRpMetadata = bestChain.resolvedMetadata.openid_relying_party ?? {};
 
 	if (Object.keys(resolvedRpMetadata).length > 0) {
 		const { OpenIDRelyingPartyMetadataSchema } = await import("../schemas/metadata.js");
