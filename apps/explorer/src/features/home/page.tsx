@@ -75,22 +75,6 @@ export function HomePage() {
 							<ArrowUpRight className="size-3.5" />
 						</a>
 					</p>
-
-					{/* Meta row */}
-					<div className="mt-10 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 font-mono text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
-						<span className="flex items-center gap-1.5">
-							<span className="inline-block size-1.5 rounded-full bg-emerald-500" />
-							Runs in your browser
-						</span>
-						<span className="flex items-center gap-1.5">
-							<span className="inline-block size-1.5 rounded-full bg-brand-500" />
-							No install
-						</span>
-						<span className="flex items-center gap-1.5">
-							<span className="inline-block size-1.5 rounded-full bg-emerald-500" />
-							Zero tracking
-						</span>
-					</div>
 				</div>
 			</section>
 		</>
