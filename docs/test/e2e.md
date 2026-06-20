@@ -237,7 +237,8 @@ Complete flow for `smoke.test.ts`:
 
 The E2E vitest config is standalone (`tests/e2e/vitest.config.ts`), **not** in the root `vitest.config.ts` projects array. This means:
 
-- `pnpm test` — runs only unit/integration tests (885 unit tests, no certs needed)
+- `pnpm test` — runs package/tool unit and integration tests (no apps, no certs needed)
+- `pnpm test:apps` — runs application tests separately
 - `pnpm test:e2e` — runs only E2E tests (requires `pnpm setup:e2e` first)
 - CI can run unit tests without mkcert, and add E2E as a separate step
 
@@ -249,7 +250,7 @@ The same federation can run as a long-lived server accessible from a browser.
 
 ### Prerequisites
 
-1. **Build all packages** (the dev server imports from built `dist/`):
+1. **Build the packages and tools** (the dev server imports packages from built `dist/`):
 
    ```bash
    pnpm build

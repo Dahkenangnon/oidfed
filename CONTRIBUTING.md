@@ -30,6 +30,9 @@ pnpm test
 pnpm test:e2e
 pnpm lint
 pnpm build
+pnpm typecheck:apps  # required when apps/* or internal/* changes
+pnpm test:apps       # required when apps/* or internal/* changes
+pnpm build:apps      # required when apps/* or internal/* changes
 ```
 
 5. Commit using conventional commits (see below)
@@ -51,7 +54,7 @@ Scope should be the package name without the `@oidfed/` prefix: `core`, `authori
 
 ## Pull Request Process
 
-1. Ensure all checks pass (`typecheck`, `test`, `lint`, `build`)
+1. Ensure the package/tool checks pass (`typecheck`, `test`, `lint`, `build`), plus the `*:apps` checks when changing apps or internal UI
 2. Update relevant documentation if behavior changes
 3. Add or update tests for any new functionality
 4. Keep PRs focused — one logical change per PR
@@ -62,6 +65,8 @@ Scope should be the package name without the `@oidfed/` prefix: `core`, `authori
 Formatting and linting are handled by [Biome](https://biomejs.dev/). Run `pnpm lint:fix` to auto-fix issues.
 
 ## Testing
+
+The verification commands are split by release scope. Unqualified commands validate the published packages and tools; `*:apps` commands validate the applications and their internal UI dependencies.
 
 The test setup is split by purpose:
 
@@ -77,12 +82,17 @@ The 4 spec packages are framework-agnostic and run identically on Node, Bun, Den
 Commands:
 
 ```bash
-pnpm test                    # full cross-runtime: 6 TAP runtimes + cli + explorer
-pnpm quick:test              # fast local: Node TAP + cli + explorer
+pnpm test                    # published surface: 6 TAP runtimes + tools
+pnpm quick:test              # fast published-surface check: Node TAP + tools
+pnpm test:apps               # application tests (currently Explorer)
 pnpm test:tap                # all 6 TAP runtimes
 pnpm test:tap:bun            # one runtime (debug aid) — same for deno/workerd/electron/browser
 pnpm test:coverage           # c8 coverage with per-package thresholds
 pnpm test:e2e                # e2e suite (Node only)
+pnpm typecheck               # packages, tools, and TAP types
+pnpm typecheck:apps          # apps and internal UI
+pnpm build                   # packages and tools
+pnpm build:apps              # apps and internal UI dependencies
 ```
 
 ## Releasing

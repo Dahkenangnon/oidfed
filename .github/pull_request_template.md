@@ -40,5 +40,6 @@ Closes #
 - [ ] `pnpm test:e2e` passes (if applicable)
 - [ ] `pnpm lint` passes
 - [ ] `pnpm build` passes
+- [ ] `pnpm typecheck:apps`, `pnpm test:apps`, and `pnpm build:apps` pass (if apps/internal UI changed)
 - [ ] Documentation updated (if applicable)
 - [ ] Commit messages follow conventional commits
