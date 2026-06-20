@@ -1,4 +1,9 @@
 import {
+	GitHubIcon,
+	Menu,
+	MenuItem,
+	MenuPopup,
+	MenuTrigger,
 	Separator,
 	Sidebar,
 	SidebarContent,
@@ -20,17 +25,25 @@ import {
 } from "@oidfed/ui";
 import {
 	BookOpen,
+	ChevronUp,
 	ExternalLink,
 	Globe,
+	MoreHorizontal,
 	Network,
 	PanelLeftClose,
 	PanelLeftOpen,
 	Telescope,
 } from "lucide-react";
-import { GitHubIcon } from "@oidfed/ui";
 import { Link, Outlet, useLocation } from "react-router";
 import { ThemeToggle } from "~/components/theme-toggle";
 import { getLessonsByPhase, phaseOrder, phases } from "~/data/lessons";
+
+const externalLinks = [
+	{ label: "Home Page", href: "https://oidfed.com", icon: Globe },
+	{ label: "fed.oidfed.com", href: "https://fed.oidfed.com", icon: Network },
+	{ label: "Explorer", href: "https://explore.oidfed.com", icon: Telescope },
+	{ label: "GitHub", href: "https://github.com/Dahkenangnon/oidfed", icon: GitHubIcon },
+] as const;
 
 function getSidebarDefault(): boolean {
 	if (typeof document === "undefined") return true;
@@ -132,68 +145,47 @@ function SidebarLayout() {
 				<SidebarFooter>
 					<SidebarMenu>
 						<SidebarMenuItem>
-							<SidebarMenuButton
-								render={
-									<a
-										href="https://oidfed.com"
-										target="_blank"
-										rel="noopener noreferrer"
-										aria-label="oidfed.com — project home"
+							<Menu>
+								<MenuTrigger
+									render={
+										<SidebarMenuButton aria-label="More OidFed links" className="cursor-pointer" />
+									}
+								>
+									<MoreHorizontal aria-hidden="true" className="size-4" />
+									<span>More</span>
+									<ChevronUp
+										aria-hidden="true"
+										className="ml-auto size-3 opacity-50 group-data-[collapsible=icon]:hidden"
 									/>
-								}
-							>
-								<Globe className="size-4" />
-								<span>Home Page</span>
-								<ExternalLink className="size-3 ml-auto opacity-50" />
-							</SidebarMenuButton>
-						</SidebarMenuItem>
-						<SidebarMenuItem>
-							<SidebarMenuButton
-								render={
-									<a
-										href="https://fed.oidfed.com"
-										target="_blank"
-										rel="noopener noreferrer"
-										aria-label="fed.oidfed.com"
-									/>
-								}
-							>
-								<Network className="size-4" />
-								<span>fed.oidfed.com</span>
-								<ExternalLink className="size-3 ml-auto opacity-50" />
-							</SidebarMenuButton>
-						</SidebarMenuItem>
-						<SidebarMenuItem>
-							<SidebarMenuButton
-								render={
-									<a
-										href="https://explore.oidfed.com"
-										target="_blank"
-										rel="noopener noreferrer"
-										aria-label="OidFed Explorer"
-									/>
-								}
-							>
-								<Telescope className="size-4" />
-								<span>Explorer</span>
-								<ExternalLink className="size-3 ml-auto opacity-50" />
-							</SidebarMenuButton>
-						</SidebarMenuItem>
-						<SidebarMenuItem>
-							<SidebarMenuButton
-								render={
-									<a
-										href="https://github.com/Dahkenangnon/oidfed"
-										target="_blank"
-										rel="noopener noreferrer"
-										aria-label="OidFed on GitHub"
-									/>
-								}
-							>
-								<GitHubIcon />
-								<span>GitHub</span>
-								<ExternalLink className="size-3 ml-auto opacity-50" />
-							</SidebarMenuButton>
+								</MenuTrigger>
+								<MenuPopup
+									align="start"
+									className="w-56"
+									side={isCollapsed ? "right" : "top"}
+									sideOffset={8}
+								>
+									{externalLinks.map((item) => (
+										<MenuItem
+											closeOnClick
+											key={item.href}
+											render={
+												<a
+													href={item.href}
+													target="_blank"
+													rel="noopener noreferrer"
+												/>
+											}
+										>
+											<item.icon aria-hidden="true" />
+											<span>{item.label}</span>
+											<ExternalLink
+												aria-hidden="true"
+												className="ml-auto size-3 opacity-50"
+											/>
+										</MenuItem>
+									))}
+								</MenuPopup>
+							</Menu>
 						</SidebarMenuItem>
 					</SidebarMenu>
 				</SidebarFooter>

@@ -1,5 +1,9 @@
 import {
 	GitHubIcon,
+	Menu,
+	MenuItem,
+	MenuPopup,
+	MenuTrigger,
 	Separator,
 	Sidebar,
 	SidebarContent,
@@ -19,6 +23,7 @@ import {
 import {
 	BadgeCheck,
 	BookOpen,
+	ChevronUp,
 	Clock,
 	ExternalLink,
 	FileSearch,
@@ -28,6 +33,7 @@ import {
 	HeartPulse,
 	Link,
 	List,
+	MoreHorizontal,
 	PanelLeftClose,
 	PanelLeftOpen,
 	Route,
@@ -54,6 +60,13 @@ const navItems: readonly NavItem[] = [
 	{ label: "Resolve Proxy", path: "/resolve", icon: Route, disabled: false },
 	{ label: "Metadata Diff", path: "/diff", icon: GitCompare, disabled: false },
 ];
+
+const externalLinks = [
+	{ label: "Home Page", href: "https://oidfed.com", icon: Globe },
+	{ label: "fed.oidfed.com", href: "https://fed.oidfed.com", icon: Globe },
+	{ label: "Learn OpenID Federation", href: "https://learn.oidfed.com", icon: BookOpen },
+	{ label: "GitHub Repos", href: "https://github.com/Dahkenangnon/oidfed", icon: GitHubIcon },
+] as const;
 
 export function AppSidebar() {
 	const location = useLocation();
@@ -159,6 +172,41 @@ export function AppSidebar() {
 			<SidebarFooter>
 				<SidebarMenu>
 					<SidebarMenuItem>
+						<Menu>
+							<MenuTrigger
+								render={
+									<SidebarMenuButton aria-label="More OidFed links" className="cursor-pointer" />
+								}
+							>
+								<MoreHorizontal aria-hidden="true" className="size-4" />
+								<span>More</span>
+								<ChevronUp
+									aria-hidden="true"
+									className="ml-auto size-3 opacity-50 group-data-[collapsible=icon]:hidden"
+								/>
+							</MenuTrigger>
+							<MenuPopup
+								align="start"
+								className="w-60"
+								side={isCollapsed ? "right" : "top"}
+								sideOffset={8}
+							>
+								{externalLinks.map((item) => (
+									<MenuItem
+										closeOnClick
+										key={item.href}
+										render={<a href={item.href} target="_blank" rel="noopener noreferrer" />}
+									>
+										<item.icon aria-hidden="true" />
+										<span>{item.label}</span>
+										<ExternalLink aria-hidden="true" className="ml-auto size-3 opacity-50" />
+									</MenuItem>
+								))}
+							</MenuPopup>
+						</Menu>
+					</SidebarMenuItem>
+					<Separator className="my-1" />
+					<SidebarMenuItem>
 						<SidebarMenuButton
 							data-active={location.pathname === "/settings"}
 							onClick={() => navigate("/settings")}
@@ -169,71 +217,6 @@ export function AppSidebar() {
 							<span className="ml-auto rounded-sm bg-brand-500 px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wider text-white group-data-[collapsible=icon]:hidden dark:bg-brand-400 dark:text-neutral-950">
 								Setup
 							</span>
-						</SidebarMenuButton>
-					</SidebarMenuItem>
-					<Separator className="my-1" />
-					<SidebarMenuItem>
-						<SidebarMenuButton
-							render={
-								<a
-									href="https://oidfed.com"
-									target="_blank"
-									rel="noopener noreferrer"
-									aria-label="oidfed.com — project home"
-								/>
-							}
-						>
-							<Globe className="size-4" />
-							<span>Home Page</span>
-							<ExternalLink className="size-3 ml-auto opacity-50" />
-						</SidebarMenuButton>
-					</SidebarMenuItem>
-					<SidebarMenuItem>
-						<SidebarMenuButton
-							render={
-								<a
-									href="https://fed.oidfed.com"
-									target="_blank"
-									rel="noopener noreferrer"
-									aria-label="fed.oidfed.com"
-								/>
-							}
-						>
-							<Globe className="size-4" />
-							<span>fed.oidfed.com</span>
-							<ExternalLink className="size-3 ml-auto opacity-50" />
-						</SidebarMenuButton>
-					</SidebarMenuItem>
-					<SidebarMenuItem>
-						<SidebarMenuButton
-							render={
-								<a
-									href="https://learn.oidfed.com"
-									target="_blank"
-									rel="noopener noreferrer"
-									aria-label="Learn OpenID Federation"
-								/>
-							}
-						>
-							<BookOpen className="size-4" />
-							<span>Learn OpenID Federation</span>
-							<ExternalLink className="size-3 ml-auto opacity-50" />
-						</SidebarMenuButton>
-					</SidebarMenuItem>
-					<SidebarMenuItem>
-						<SidebarMenuButton
-							render={
-								<a
-									href="https://github.com/Dahkenangnon/oidfed"
-									target="_blank"
-									rel="noopener noreferrer"
-									aria-label="OidFed on GitHub"
-								/>
-							}
-						>
-							<GitHubIcon />
-							<span>GitHub Repos</span>
-							<ExternalLink className="size-3 ml-auto opacity-50" />
 						</SidebarMenuButton>
 					</SidebarMenuItem>
 				</SidebarMenu>
