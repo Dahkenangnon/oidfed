@@ -20,7 +20,6 @@ import express from "express";
 
 import {
 	createAuthorityServer,
-	MemoryKeyStore,
 	MemorySubordinateStore,
 	MemoryTrustMarkStore,
 	type AuthorityConfig,
@@ -31,8 +30,12 @@ import {
 	entityId,
 	generateSigningKey,
 	InMemoryJtiStore,
+	JwkSigner,
+	MemoryFederationKeyProvider,
+	stripPrivateFields,
 	type EntityId,
 	type EntityType,
+	type FederationKeyProvider,
 	type JWK,
 	type TrustAnchorSet,
 } from "@oidfed/core";
@@ -50,6 +53,10 @@ const { values } = parseArgs({
 
 const PORT = Number.parseInt(values.port!, 10);
 const CERT_DIR = join(import.meta.dirname, "../.certs");
+
+function federationSigningKey(signingKey: JWK) {
+	return { signer: new JwkSigner(signingKey), publicJwk: stripPrivateFields(signingKey) };
+}
 
 // ---------------------------------------------------------------------------
 // Topology definitions (adapted from e2e, with prefixed hostnames)
@@ -833,7 +840,7 @@ const TOPOLOGIES: TopologyDefinition[] = [
 
 interface EntityInstance {
 	server: AuthorityServer | LeafEntity;
-	keys: { signing: JWK; public: JWK };
+	keys: { signing: JWK; public: JWK; protocolSigning: JWK; protocolPublic: JWK };
 	def: EntityDefinition;
 	trustMarkStore?: MemoryTrustMarkStore;
 }
@@ -969,11 +976,20 @@ async function bootstrapTopology(
 	const rw = (url: string) => rewriteUrl(url, port);
 
 
-	// 1. Generate keys
-	const entityKeys = new Map<string, { signing: JWK; public: JWK }>();
+	// 1. Generate keys. Federation keys and OIDC protocol keys are distinct.
+	const entityKeys = new Map<
+		string,
+		{ signing: JWK; public: JWK; protocolSigning: JWK; protocolPublic: JWK }
+	>();
 	for (const entity of topology.entities) {
 		const key = await generateSigningKey("ES256");
-		entityKeys.set(entity.id, { signing: key.privateKey as JWK, public: key.publicKey as JWK });
+		const protocolKey = await generateSigningKey("ES256");
+		entityKeys.set(entity.id, {
+			signing: key.privateKey as JWK,
+			public: key.publicKey as JWK,
+			protocolSigning: protocolKey.privateKey as JWK,
+			protocolPublic: protocolKey.publicKey as JWK,
+		});
 	}
 	const getKeys = (id: string) => {
 		const k = entityKeys.get(id);
@@ -994,7 +1010,7 @@ async function bootstrapTopology(
 		entity: EntityDefinition,
 		subordinateStore: MemorySubordinateStore,
 		trustMarkStore: MemoryTrustMarkStore,
-		keyStore: MemoryKeyStore,
+		keyProvider: FederationKeyProvider,
 		extraTrustMarks?: Array<{ trust_mark_type: string; trust_mark: string }>,
 	): Record<string, unknown> {
 		const eid = rw(entity.id);
@@ -1003,13 +1019,12 @@ async function bootstrapTopology(
 
 		const cfg: Record<string, unknown> = {
 			entityId: entityId(eid),
-			signingKeys: [getKeys(entity.id).signing],
+			keyProvider,
 			metadata: {
 				federation_entity: (metadata.federation_entity as Record<string, string>) ?? {},
 				...Object.fromEntries(Object.entries(metadata).filter(([k]) => k !== "federation_entity")),
 			},
 			subordinateStore,
-			keyStore,
 			trustMarkStore,
 			trustAnchors,
 		};
@@ -1031,7 +1046,7 @@ async function bootstrapTopology(
 	// Stores reused across passes
 	const subordinateStoreMap = new Map<string, MemorySubordinateStore>();
 	const trustMarkStoreMap = new Map<string, MemoryTrustMarkStore>();
-	const keyStoreMap = new Map<string, MemoryKeyStore>();
+	const keyProviderMap = new Map<string, FederationKeyProvider>();
 
 	for (const entity of topology.entities) {
 		const isAuthority = entity.role === "trust-anchor" || entity.role === "intermediate" || entity.protocolRole === "op";
@@ -1039,7 +1054,10 @@ async function bootstrapTopology(
 		const keys = getKeys(entity.id);
 		subordinateStoreMap.set(entity.id, new MemorySubordinateStore());
 		trustMarkStoreMap.set(entity.id, new MemoryTrustMarkStore());
-		keyStoreMap.set(entity.id, new MemoryKeyStore(keys.signing));
+		keyProviderMap.set(
+			entity.id,
+			new MemoryFederationKeyProvider(federationSigningKey(keys.signing)),
+		);
 	}
 
 	// 3a. Create TAs and intermediates first (needed to issue trust marks)
@@ -1052,9 +1070,9 @@ async function bootstrapTopology(
 		const keys = getKeys(entity.id);
 		const subordinateStore = subordinateStoreMap.get(entity.id)!;
 		const trustMarkStore = trustMarkStoreMap.get(entity.id)!;
-		const keyStore = keyStoreMap.get(entity.id)!;
+		const keyProvider = keyProviderMap.get(entity.id)!;
 
-		const cfg = buildAuthorityConfig(entity, subordinateStore, trustMarkStore, keyStore);
+		const cfg = buildAuthorityConfig(entity, subordinateStore, trustMarkStore, keyProvider);
 		const authority = createAuthorityServer(cfg as unknown as AuthorityConfig);
 		entities.set(entity.id, { server: authority, keys, def: entity, trustMarkStore });
 
@@ -1095,10 +1113,16 @@ async function bootstrapTopology(
 		const keys = getKeys(entity.id);
 		const subordinateStore = subordinateStoreMap.get(entity.id)!;
 		const trustMarkStore = trustMarkStoreMap.get(entity.id)!;
-		const keyStore = keyStoreMap.get(entity.id)!;
+		const keyProvider = keyProviderMap.get(entity.id)!;
 		const extraTrustMarks = opTrustMarks.get(entity.id);
 
-		const cfg = buildAuthorityConfig(entity, subordinateStore, trustMarkStore, keyStore, extraTrustMarks);
+		const cfg = buildAuthorityConfig(
+			entity,
+			subordinateStore,
+			trustMarkStore,
+			keyProvider,
+			extraTrustMarks,
+		);
 		const authority = createAuthorityServer(cfg as unknown as AuthorityConfig);
 		entities.set(entity.id, { server: authority, keys, def: entity, trustMarkStore });
 
@@ -1116,23 +1140,21 @@ async function bootstrapTopology(
 		let metadata = rewriteMetadata(entity.metadata, port);
 		const authorityHints = entity.authorityHints?.map((ah) => entityId(rw(ah))) ?? [];
 
-		// Inject the RP's public JWKS into openid_relying_party so the OP can use it for
-		// private_key_jwt token-endpoint auth after resolving the trust chain. The leaf EC's
-		// top-level jwks carries the federation signing key; the RP's OIDC client key is the same
-		// key and must also be declared in openid_relying_party per §12.1. ✓
+		// Inject the RP's protocol JWKS into openid_relying_party so the OP can use it for
+		// Request Object and private_key_jwt verification after resolving the trust chain.
 		if (entity.protocolRole === "rp" && metadata.openid_relying_party) {
 			metadata = {
 				...metadata,
 				openid_relying_party: {
 					...metadata.openid_relying_party,
-					jwks: { keys: [keys.public] },
+					jwks: { keys: [keys.protocolPublic] },
 				},
 			};
 		}
 
 		const leaf = createLeafEntity({
 			entityId: entityId(eid),
-			signingKeys: [keys.signing],
+			keyProvider: new MemoryFederationKeyProvider(federationSigningKey(keys.signing)),
 			authorityHints,
 			metadata: metadata as Record<string, Record<string, unknown>>,
 		});
@@ -1155,14 +1177,14 @@ async function bootstrapTopology(
 			const eid = rw(entity.id);
 			let metadata = rewriteMetadata(entity.metadata, port);
 
-			// Mirror the JWKS injection from step 4 so the subordinate statement's metadata
-			// also carries the RP's client JWKS (used by the OP for token-endpoint auth). ✓
+			// Mirror the JWKS injection from step 4 so subordinate statement metadata
+			// also carries the RP's protocol JWKS.
 			if (entity.protocolRole === "rp" && metadata.openid_relying_party) {
 				metadata = {
 					...metadata,
 					openid_relying_party: {
 						...metadata.openid_relying_party,
-						jwks: { keys: [keys.public] },
+						jwks: { keys: [keys.protocolPublic] },
 					},
 				};
 			}

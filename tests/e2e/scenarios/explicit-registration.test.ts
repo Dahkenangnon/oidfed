@@ -25,7 +25,7 @@ describe("Explicit registration", () => {
 				discovery,
 				{
 					entityId: entityId(rpId),
-					signingKeys: [rp2Entity.keys.signing],
+					keyProvider: rp2Entity.keyProvider,
 					authorityHints: [entityId(`https://ta.ofed.test:${port}`)],
 					metadata: {
 						openid_relying_party: {
@@ -34,6 +34,7 @@ describe("Explicit registration", () => {
 							grant_types: ["authorization_code"],
 							client_registration_types: ["explicit"],
 							token_endpoint_auth_method: "private_key_jwt",
+							jwks: { keys: [rp2Entity.keys.protocolPublic] },
 						},
 					},
 				},
@@ -65,7 +66,7 @@ describe("Explicit registration", () => {
 				discovery,
 				{
 					entityId: entityId(rpId),
-					signingKeys: [rp2Entity.keys.signing],
+					keyProvider: rp2Entity.keyProvider,
 					authorityHints: [entityId(`https://ia-health.ofed.test:${port}`)],
 					metadata: {
 						openid_relying_party: {
@@ -74,6 +75,7 @@ describe("Explicit registration", () => {
 							grant_types: ["authorization_code"],
 							client_registration_types: ["explicit"],
 							token_endpoint_auth_method: "private_key_jwt",
+							jwks: { keys: [rp2Entity.keys.protocolPublic] },
 						},
 					},
 				},

@@ -1,15 +1,22 @@
 import type { AuthorityConfig, AuthorityServer, SubordinateRecord } from "@oidfed/authority";
 import {
 	createAuthorityServer,
-	MemoryKeyStore,
 	MemorySubordinateStore,
 	MemoryTrustMarkStore,
 	sanitizeSubordinateMetadata,
 } from "@oidfed/authority";
-import type { EntityType, JWK, TrustAnchorSet } from "@oidfed/core";
-import { entityId, generateSigningKey } from "@oidfed/core";
+import type { EntityType, FederationKeyProvider, JWK, TrustAnchorSet } from "@oidfed/core";
+import {
+	entityId,
+	generateSigningKey,
+	JwkSigner,
+	MemoryFederationKeyProvider,
+	stripPrivateFields,
+} from "@oidfed/core";
 import type { LeafEntity } from "@oidfed/leaf";
 import { createLeafEntity } from "@oidfed/leaf";
+import type { OidcProtocolKeyProvider } from "@oidfed/oidc";
+import { StaticOidcProtocolKeyProvider } from "@oidfed/oidc";
 import type { Express } from "express";
 import { createAuthorityApp } from "../participants/authority-app.js";
 import {
@@ -27,10 +34,20 @@ import {
 
 export interface LaunchOptions extends FederationServerOptions {}
 
+export function federationSigningKey(signingKey: JWK) {
+	return { signer: new JwkSigner(signingKey), publicJwk: stripPrivateFields(signingKey) };
+}
+
 export interface EntityInstance {
 	server: AuthorityServer | LeafEntity;
-	keys: { signing: JWK; public: JWK };
-	keyStore?: MemoryKeyStore;
+	keys: {
+		signing: JWK;
+		public: JWK;
+		protocolSigning: JWK;
+		protocolPublic: JWK;
+	};
+	keyProvider: FederationKeyProvider;
+	oidcProtocolKeyProvider: OidcProtocolKeyProvider;
 	trustMarkStore?: MemoryTrustMarkStore;
 }
 
@@ -80,13 +97,19 @@ export async function launchFederation(
 		return result;
 	};
 
-	// 1. Generate keys for all entities
-	const entityKeys = new Map<string, { signing: JWK; public: JWK }>();
+	// 1. Generate keys for all entities. Federation and OIDC protocol keys are distinct.
+	const entityKeys = new Map<
+		string,
+		{ signing: JWK; public: JWK; protocolSigning: JWK; protocolPublic: JWK }
+	>();
 	for (const entity of topology.entities) {
 		const key = await generateSigningKey("ES256");
+		const protocolKey = await generateSigningKey("ES256");
 		entityKeys.set(entity.id, {
 			signing: key.privateKey as JWK,
 			public: key.publicKey as JWK,
+			protocolSigning: protocolKey.privateKey as JWK,
+			protocolPublic: protocolKey.publicKey as JWK,
 		});
 	}
 
@@ -94,6 +117,24 @@ export async function launchFederation(
 		const k = entityKeys.get(id);
 		if (!k) throw new Error(`No keys for entity ${id}`);
 		return k;
+	};
+
+	const addProtocolJwks = (
+		entity: EntityDefinition,
+		metadata: Record<string, Record<string, unknown>>,
+		keys: ReturnType<typeof getKeys>,
+	): Record<string, Record<string, unknown>> => {
+		if (entity.protocolRole !== "rp") return metadata;
+		const rpMetadata = metadata.openid_relying_party;
+		if (!rpMetadata) return metadata;
+		if (rpMetadata.jwks || rpMetadata.jwks_uri || rpMetadata.signed_jwks_uri) return metadata;
+		return {
+			...metadata,
+			openid_relying_party: {
+				...rpMetadata,
+				jwks: { keys: [keys.protocolPublic] },
+			},
+		};
 	};
 
 	// 2. Build trust anchor set
@@ -125,25 +166,28 @@ export async function launchFederation(
 
 		const eid = rewriteUrl(entity.id);
 		const keys = getKeys(entity.id);
-		const metadata = rewriteMetadata(entity.metadata);
+		const metadata = addProtocolJwks(entity, rewriteMetadata(entity.metadata), keys);
 		const subordinateStore = new MemorySubordinateStore();
 		subordinateStores.set(entity.id, subordinateStore);
 
 		const authorityHints = entity.authorityHints?.map((h) => entityId(rewriteUrl(h)));
 
 		const trustMarkStore = new MemoryTrustMarkStore();
-		const keyStore = new MemoryKeyStore(keys.signing);
+		const keyProvider = new MemoryFederationKeyProvider(federationSigningKey(keys.signing));
+		const oidcProtocolKeyProvider = new StaticOidcProtocolKeyProvider({
+			requestObjectSigner: new JwkSigner(keys.protocolSigning),
+			clientAssertionSigner: new JwkSigner(keys.protocolSigning),
+		});
 
 		// eslint-disable-next-line -- dynamic config assembly for test setup
 		const authorityConfig: Record<string, unknown> = {
 			entityId: entityId(eid),
-			signingKeys: [keys.signing],
+			keyProvider,
 			metadata: {
 				federation_entity: (metadata.federation_entity as Record<string, string>) ?? {},
 				...Object.fromEntries(Object.entries(metadata).filter(([k]) => k !== "federation_entity")),
 			},
 			subordinateStore,
-			keyStore,
 			trustMarkStore,
 			trustAnchors,
 		};
@@ -165,7 +209,13 @@ export async function launchFederation(
 		}
 		const authority = createAuthorityServer(authorityConfig as unknown as AuthorityConfig);
 
-		entities.set(entity.id, { server: authority, keys, keyStore, trustMarkStore });
+		entities.set(entity.id, {
+			server: authority,
+			keys,
+			keyProvider,
+			oidcProtocolKeyProvider,
+			trustMarkStore,
+		});
 		apps.set(entity.id, createAuthorityApp(authority, eid));
 	}
 
@@ -175,13 +225,18 @@ export async function launchFederation(
 
 		const eid = rewriteUrl(entity.id);
 		const keys = getKeys(entity.id);
-		const metadata = rewriteMetadata(entity.metadata);
+		const metadata = addProtocolJwks(entity, rewriteMetadata(entity.metadata), keys);
+		const keyProvider = new MemoryFederationKeyProvider(federationSigningKey(keys.signing));
+		const oidcProtocolKeyProvider = new StaticOidcProtocolKeyProvider({
+			requestObjectSigner: new JwkSigner(keys.protocolSigning),
+			clientAssertionSigner: new JwkSigner(keys.protocolSigning),
+		});
 
 		const authorityHints = entity.authorityHints?.map((h) => entityId(rewriteUrl(h))) ?? [];
 
 		const leafConfig: Record<string, unknown> = {
 			entityId: entityId(eid),
-			signingKeys: [keys.signing],
+			keyProvider,
 			authorityHints,
 			metadata: metadata as Record<string, Record<string, unknown>>,
 		};
@@ -191,7 +246,7 @@ export async function launchFederation(
 		}
 		const leaf = createLeafEntity(leafConfig as unknown as Parameters<typeof createLeafEntity>[0]);
 
-		entities.set(entity.id, { server: leaf, keys });
+		entities.set(entity.id, { server: leaf, keys, keyProvider, oidcProtocolKeyProvider });
 
 		if (entity.protocolRole === "op") {
 			apps.set(
@@ -200,7 +255,8 @@ export async function launchFederation(
 					leaf,
 					entityId: eid,
 					trustAnchors,
-					signingKey: keys.signing,
+					federationKeyProvider: keyProvider,
+					oidcSigningKey: keys.protocolSigning,
 					allowedRequestUriHosts,
 				}),
 			);
@@ -221,7 +277,7 @@ export async function launchFederation(
 
 			const keys = getKeys(entity.id);
 			const eid = rewriteUrl(entity.id);
-			const metadata = rewriteMetadata(entity.metadata);
+			const metadata = addProtocolJwks(entity, rewriteMetadata(entity.metadata), keys);
 			// Strip the subordinate's own operational federation_entity claims —
 			// those belong only in its own Entity Configuration, not in the parent's
 			// Subordinate Statement.

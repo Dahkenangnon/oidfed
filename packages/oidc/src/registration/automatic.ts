@@ -4,6 +4,7 @@ import {
 	type DiscoveryResult,
 	type EntityId,
 	type FederationOptions,
+	type JwtSigner,
 	nowSeconds,
 	resolveTrustChainForAnchor,
 	resolveTrustChains,
@@ -14,6 +15,7 @@ import {
 } from "@oidfed/core";
 import { createClientAssertion } from "../client-auth/assertion.js";
 import { ClientRegistrationType, RequestObjectTyp } from "../constants.js";
+import type { OidcProtocolKeyProvider } from "../protocol-keys.js";
 import { getRegistrationTypes } from "./helpers.js";
 
 const CLIENT_ASSERTION_TYPE = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
@@ -52,7 +54,7 @@ const RESERVED_REQUEST_OBJECT_CLAIMS = new Set([
 
 export interface AutomaticRegistrationConfig {
 	readonly entityId: EntityId;
-	readonly signingKeys: ReadonlyArray<Record<string, unknown>>;
+	readonly protocolKeyProvider: OidcProtocolKeyProvider;
 	readonly authorityHints: ReadonlyArray<EntityId>;
 	readonly metadata: Record<string, Record<string, unknown>>;
 	/** TTL for the Request Object JWT in seconds (default: 300). */
@@ -157,7 +159,8 @@ export async function automaticRegistration(
 		throw new Error("OP has no authorization_endpoint in openid_provider metadata");
 	}
 
-	const signingKey = rpConfig.signingKeys[0] as Record<string, unknown>;
+	const requestObjectSigner = await rpConfig.protocolKeyProvider.getRequestObjectSigner();
+	assertOidcSignerPublished(rpConfig.metadata, requestObjectSigner, "Request Object");
 	const now = nowSeconds();
 
 	// Select RP chain — prefer one whose Trust Anchor is shared with the OP (single pass)
@@ -232,15 +235,10 @@ export async function automaticRegistration(
 		extraHeaders.peer_trust_chain = peerChainResult.value;
 	}
 
-	const requestObjectJwt = await signEntityStatement(
-		payload,
-		signingKey as Parameters<typeof signEntityStatement>[1],
-		{
-			kid: signingKey.kid as string,
-			typ: RequestObjectTyp,
-			...(Object.keys(extraHeaders).length > 0 ? { extraHeaders } : {}),
-		},
-	);
+	const requestObjectJwt = await signEntityStatement(payload, requestObjectSigner, {
+		typ: RequestObjectTyp,
+		...(Object.keys(extraHeaders).length > 0 ? { extraHeaders } : {}),
+	});
 
 	const base: AutomaticRegistrationResultBase = {
 		requestObjectJwt,
@@ -302,13 +300,17 @@ export async function automaticRegistration(
 				);
 			}
 			const httpClient = options?.httpClient ?? fetch;
+			const clientAssertionSigner = rpConfig.protocolKeyProvider.getClientAssertionSigner
+				? await rpConfig.protocolKeyProvider.getClientAssertionSigner()
+				: requestObjectSigner;
+			assertOidcSignerPublished(rpConfig.metadata, clientAssertionSigner, "client assertion");
 			// Client assertion audience is the OP's Entity Identifier under the
 			// federation profile of PAR + automatic registration — not the PAR
 			// endpoint URL.
 			const clientAssertion = await createClientAssertion(
 				rpConfig.entityId as string,
 				discovery.entityId as string,
-				signingKey as Parameters<typeof createClientAssertion>[2],
+				clientAssertionSigner,
 				{ expiresInSeconds: 60 },
 			);
 			const formBody = new URLSearchParams({
@@ -358,4 +360,39 @@ function buildAuthorizationUrl(endpoint: string, params: Record<string, string>)
 		url.searchParams.set(key, value);
 	}
 	return url.toString();
+}
+
+function assertOidcSignerPublished(
+	metadata: Record<string, Record<string, unknown>>,
+	signer: JwtSigner,
+	purpose: string,
+): void {
+	const rpMetadata = metadata.openid_relying_party;
+	if (!rpMetadata) {
+		throw new Error("metadata.openid_relying_party is required for automatic registration");
+	}
+
+	const inlineJwks = rpMetadata.jwks as { keys?: Array<{ kid?: unknown }> } | undefined;
+	const hasInlineJwks = inlineJwks !== undefined;
+	const hasUriPublication =
+		typeof rpMetadata.jwks_uri === "string" || typeof rpMetadata.signed_jwks_uri === "string";
+
+	if (hasInlineJwks) {
+		const keys = inlineJwks.keys;
+		if (!Array.isArray(keys)) {
+			throw new Error("metadata.openid_relying_party.jwks must be a JWK Set");
+		}
+		if (!keys.some((key) => key.kid === signer.kid)) {
+			throw new Error(
+				`OIDC ${purpose} signer kid '${signer.kid}' is not published in metadata.openid_relying_party.jwks`,
+			);
+		}
+		return;
+	}
+
+	if (!hasUriPublication) {
+		throw new Error(
+			"metadata.openid_relying_party must publish OIDC protocol keys with jwks, jwks_uri, or signed_jwks_uri",
+		);
+	}
 }

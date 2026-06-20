@@ -4,7 +4,7 @@ Leaf Entity toolkit — Entity Configuration serving, authority discovery, and t
 
 ## Role
 
-Use for any entity at the bottom of a trust chain (typically an **RP** or **OP**) that does not issue Subordinate Statements. Combine with `@oidfed/oidc` for OIDC registration flows.
+Use for any entity at the bottom of a trust chain, typically an RP or OP that does not issue subordinate statements. Combine with `@oidfed/oidc` for OIDC registration flows.
 
 ## Install
 
@@ -16,13 +16,16 @@ pnpm add @oidfed/core @oidfed/leaf
 
 ```ts
 import { createLeafEntity } from "@oidfed/leaf";
-import { entityId } from "@oidfed/core";
+import { entityId, JwkSigner, MemoryFederationKeyProvider } from "@oidfed/core";
 import express from "express";
 
 const leaf = createLeafEntity({
   entityId: entityId("https://rp.example.com"),
   authorityHints: [entityId("https://federation.example.org")],
-  signingKeys: [mySigningKey],
+  keyProvider: new MemoryFederationKeyProvider({
+    signer: new JwkSigner(myFederationSigningKey),
+    publicJwk: myFederationPublicKey,
+  }),
   metadata: {
     openid_relying_party: {
       redirect_uris: ["https://rp.example.com/callback"],
@@ -32,36 +35,39 @@ const leaf = createLeafEntity({
   },
 });
 
-const handler = leaf.handler(); // fetch-compatible
+const handler = leaf.handler();
 
 const app = express();
 app.use(async (req, res) => {
   const response = await handler(req as unknown as Request);
   res.status(response.status);
-  response.headers.forEach((v, k) => res.setHeader(k, v));
+  response.headers.forEach((value, key) => res.setHeader(key, value));
   res.send(await response.text());
 });
 ```
 
 ## API
 
-### Entity & Handler
+### Entity and Handler
 
 ```ts
 import { createLeafEntity, createLeafHandler } from "@oidfed/leaf";
 import type { LeafConfig, LeafEntity } from "@oidfed/leaf";
+import type { FederationKeyProvider } from "@oidfed/core";
 ```
 
-`createLeafEntity(config)` throws synchronously if `authorityHints` or `signingKeys` is empty, any key lacks `kid`, or `kid` values are duplicated. Private key material is stripped from the Entity Configuration JWKS automatically.
+`createLeafEntity(config)` throws synchronously if `authorityHints` is empty, any authority hint is not a valid Entity Identifier, or `keyProvider` is missing. At runtime it also validates that the active federation signer is published exactly once in the provider's federation JWKS.
 
 ```ts
 interface LeafConfig {
   entityId: EntityId;
-  signingKeys: JWK[];
-  authorityHints: EntityId[];         // must not be empty
+  keyProvider: FederationKeyProvider;
+  authorityHints: EntityId[];
   metadata: FederationMetadata;
   trustMarks?: TrustMarkRef[];
-  entityConfigurationTtlSeconds?: number; // default: 86400
+  entityConfigurationTtlSeconds?: number;
+  options?: FederationOptions;
+  clock?: Clock;
 }
 
 interface LeafEntity {
@@ -72,7 +78,9 @@ interface LeafEntity {
 }
 ```
 
-`createLeafHandler(entity)` — standalone handler for `/.well-known/openid-federation`. Responds 405 for non-GET, 404 for unknown paths. Sets `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`, and HSTS headers.
+The published top-level Entity Statement `jwks` comes from `keyProvider.getFederationKeySet()`. The provider, not the leaf config, is the source of truth for federation public keys.
+
+`createLeafHandler(entity)` is the standalone handler for `/.well-known/openid-federation`. It responds `405` for non-GET, `404` for unknown paths, and sets `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`, and HSTS headers.
 
 ### Discovery
 
@@ -88,10 +96,10 @@ const discovery = await discoverEntity(
   { httpClient: fetch },
 );
 
-// Branded DiscoveryResult — required by @oidfed/oidc registration functions.
-// Only discoverEntity can produce it; prevents unvalidated data from reaching registration.
 console.log(discovery.entityId);
 console.log(discovery.resolvedMetadata);
 console.log(discovery.trustChain);
 console.log(discovery.trustMarks);
 ```
+
+`DiscoveryResult` is branded so only `discoverEntity()` can produce it. RP registration functions in `@oidfed/oidc` require this type to prevent unvalidated data from entering registration flows.

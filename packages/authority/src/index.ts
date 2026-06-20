@@ -20,13 +20,9 @@ export {
 	type ExtendedListInProcessResult,
 } from "./server.js";
 export {
-	type KeyState,
-	type KeyStore,
 	type ListFilter,
 	type ListPage,
 	type ListPageOptions,
-	type ManagedKey,
-	MemoryKeyStore,
 	MemorySubordinateStore,
 	MemoryTrustMarkStore,
 	type SubordinateRecord,

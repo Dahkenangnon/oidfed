@@ -17,6 +17,12 @@ npm install @oidfed/core @oidfed/oidc
 
 ## Quick Start
 
+OIDC protocol keys are separate from federation entity keys:
+
+- `OidcProtocolKeyProvider` signs Request Objects and `private_key_jwt` assertions
+- RP or OP metadata publishes OIDC protocol public keys via `jwks`, `jwks_uri`, or `signed_jwks_uri`
+- federation Entity Configurations and other federation artifacts stay on federation key providers from `@oidfed/core`
+
 ### RP — Automatic Registration
 
 ```ts
@@ -182,6 +188,7 @@ and default behavior:
 - OP-side processing for both registration types (returns `Result`, never throws)
 - Typed OP/RP metadata schemas (replace core's loose `z.record()` with field-level validation)
 - Request Object validation
+- OIDC protocol signing via `OidcProtocolKeyProvider` and `JwtSigner`
 - Client assertion creation (`private_key_jwt`)
 - `OIDCRegistrationAdapter` for plugging into `@oidfed/authority`
 

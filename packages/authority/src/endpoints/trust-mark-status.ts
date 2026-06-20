@@ -76,8 +76,8 @@ export function createTrustMarkStatusHandler(
 
 		// Verify trust mark signature against all active+retiring keys
 		// Placed after expiry check so expired-but-valid tokens return Expired correctly.
-		const activeJwks = await ctx.keyStore.getActiveKeys();
-		const sigResult = await verifyEntityStatement(trustMarkJwt, activeJwks, {
+		const keySet = await ctx.keyProvider.getFederationKeySet();
+		const sigResult = await verifyEntityStatement(trustMarkJwt, keySet.jwks, {
 			expectedTyp: JwtTyp.TrustMark,
 		});
 		if (!isOk(sigResult)) {
@@ -103,7 +103,7 @@ async function buildStatusResponse(
 	trustMarkJwt: string,
 	status: TrustMarkStatus,
 ): Promise<Response> {
-	const { key: signingKey, kid } = await ctx.getSigningKey();
+	const keySet = await ctx.keyProvider.getFederationKeySet();
 	const now = nowSeconds(ctx.options?.clock);
 
 	const payload: Record<string, unknown> = {
@@ -113,8 +113,7 @@ async function buildStatusResponse(
 		status,
 	};
 
-	const jwt = await signEntityStatement(payload, signingKey, {
-		kid,
+	const jwt = await signEntityStatement(payload, keySet.signer, {
 		typ: JwtTyp.TrustMarkStatusResponse,
 	});
 

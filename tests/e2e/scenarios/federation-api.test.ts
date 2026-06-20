@@ -2,7 +2,7 @@ import type { AuthorityServer } from "@oidfed/authority";
 import type { JWK } from "@oidfed/core";
 import { decodeEntityStatement, generateSigningKey, isOk } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
-import { getEntity } from "../helpers/launcher.js";
+import { federationSigningKey, getEntity } from "../helpers/launcher.js";
 import { useFederation } from "../helpers/lifecycle.js";
 import { singleAnchorTopology } from "../topologies/single-anchor.js";
 
@@ -96,7 +96,7 @@ describe("Federation API endpoints", () => {
 
 		// Rotate
 		const newKey = await generateSigningKey("ES256");
-		await ta.rotateSigningKey(newKey.privateKey as JWK);
+		await ta.rotateSigningKey(federationSigningKey(newKey.privateKey as JWK));
 
 		// Historical keys should include old kid
 		const historicalJwt = await ta.getHistoricalKeys();

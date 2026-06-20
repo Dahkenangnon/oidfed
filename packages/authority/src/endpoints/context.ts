@@ -5,20 +5,20 @@ import type {
 	FederationEntityMetadata,
 	FederationOptions,
 	JtiStore,
-	JWK,
+	ManagedFederationKeyProvider,
 	TrustAnchorSet,
 	TrustMarkOwner,
 	TrustMarkRef,
 } from "@oidfed/core";
-import type { KeyStore, SubordinateStore, TrustMarkStore } from "../storage/types.js";
+import type { SubordinateStore, TrustMarkStore } from "../storage/types.js";
 
 export interface HandlerContext {
 	/** The entity identifier (URL) for this authority. */
 	readonly entityId: EntityId;
 	/** Superior authorities this entity is subordinate to. */
 	readonly authorityHints?: EntityId[];
-	/** Persistent store for signing key lifecycle. */
-	readonly keyStore: KeyStore;
+	/** Federation-only signing key provider and lifecycle manager. */
+	readonly keyProvider: ManagedFederationKeyProvider;
 	/** Persistent store for subordinate entity records. */
 	readonly subordinateStore: SubordinateStore;
 	/** Optional store for issued trust marks. */
@@ -45,8 +45,6 @@ export interface HandlerContext {
 	readonly subordinateStatementTtlSeconds?: number;
 	/** TTL in seconds for issued trust mark JWTs. */
 	readonly trustMarkTtlSeconds?: number;
-	/** Returns the current active signing key and its kid. */
-	readonly getSigningKey: () => Promise<{ key: JWK; kid: string }>;
 	/** Store for JTI replay protection. */
 	readonly jtiStore?: JtiStore;
 	/**

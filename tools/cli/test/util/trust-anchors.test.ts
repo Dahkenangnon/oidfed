@@ -1,4 +1,4 @@
-import { generateSigningKey, type HttpClient, signEntityStatement } from "@oidfed/core";
+import { generateSigningKey, type HttpClient, JwkSigner, signEntityStatement } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_CONFIG } from "../../src/config.js";
 import {
@@ -50,7 +50,7 @@ describe("buildTrustAnchors", () => {
 				exp: 9999999999,
 				jwks: { keys: [key.publicKey] },
 			},
-			key.privateKey,
+			new JwkSigner(key.privateKey),
 		);
 		const client: HttpClient = async () =>
 			new Response(jwt, {
@@ -87,7 +87,7 @@ describe("buildTrustAnchors", () => {
 				iat: 1000,
 				exp: 9999999999,
 			},
-			key.privateKey,
+			new JwkSigner(key.privateKey),
 		);
 		const client: HttpClient = async () =>
 			new Response(jwt, {
@@ -127,7 +127,7 @@ describe("buildTrustAnchors", () => {
 				exp: 9999999999,
 				jwks: { keys: [key.publicKey] },
 			},
-			key.privateKey,
+			new JwkSigner(key.privateKey),
 		);
 		let fetched = false;
 		const client: HttpClient = async () => {
@@ -158,7 +158,7 @@ describe("resolveOrError", () => {
 				exp: 9999999999,
 				jwks: { keys: [key.publicKey] },
 			},
-			key.privateKey,
+			new JwkSigner(key.privateKey),
 		);
 		// Return TA EC for anchor fetch, 404 for everything else
 		const client: HttpClient = async (input) => {

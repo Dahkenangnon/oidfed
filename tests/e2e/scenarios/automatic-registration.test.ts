@@ -25,7 +25,7 @@ describe("Automatic registration", () => {
 				discovery,
 				{
 					entityId: entityId(rpId),
-					signingKeys: [rpEntity.keys.signing],
+					protocolKeyProvider: rpEntity.oidcProtocolKeyProvider,
 					authorityHints: [entityId(`https://ta.ofed.test:${port}`)],
 					metadata: {
 						openid_relying_party: {
@@ -34,6 +34,7 @@ describe("Automatic registration", () => {
 							grant_types: ["authorization_code"],
 							client_registration_types: ["automatic"],
 							token_endpoint_auth_method: "private_key_jwt",
+							jwks: { keys: [rpEntity.keys.protocolPublic] },
 						},
 					},
 					requestDelivery: "query",
@@ -95,7 +96,7 @@ describe("Automatic registration", () => {
 				discovery,
 				{
 					entityId: entityId(rpId),
-					signingKeys: [rpEntity.keys.signing],
+					protocolKeyProvider: rpEntity.oidcProtocolKeyProvider,
 					authorityHints: [entityId(`https://ia-edu.ofed.test:${port}`)],
 					metadata: {
 						openid_relying_party: {
@@ -104,6 +105,7 @@ describe("Automatic registration", () => {
 							grant_types: ["authorization_code"],
 							client_registration_types: ["automatic"],
 							token_endpoint_auth_method: "private_key_jwt",
+							jwks: { keys: [rpEntity.keys.protocolPublic] },
 						},
 					},
 				},

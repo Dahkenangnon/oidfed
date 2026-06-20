@@ -6,9 +6,11 @@ import {
 	entityId,
 	generateSigningKey,
 	type JWK,
+	JwkSigner,
 	JwtTyp,
 	MediaType,
-	signEntityStatement,
+	MemoryFederationKeyProvider,
+	stripPrivateFields,
 	verifyEntityStatement,
 	WELL_KNOWN_OPENID_FEDERATION,
 } from "../../../packages/core/src/index.js";
@@ -30,13 +32,18 @@ import {
 // Shared test helpers
 // ---------------------------------------------------------------------------
 
+function federationKey(signingKey: JWK) {
+	return { signer: new JwkSigner(signingKey), publicJwk: stripPrivateFields(signingKey) };
+}
+
 async function createLeafConfig(
 	overrides?: Partial<LeafConfig>,
 ): Promise<{ config: LeafConfig; signingKey: JWK; publicKey: JWK }> {
 	const { privateKey, publicKey } = await generateSigningKey("ES256");
+	const signingKey = { ...privateKey, kid: privateKey.kid ?? "leaf-key-1" };
 	const config: LeafConfig = {
 		entityId: LEAF_ID,
-		signingKeys: [privateKey],
+		keyProvider: new MemoryFederationKeyProvider(federationKey(signingKey)),
 		authorityHints: [TA_ID],
 		metadata: {
 			openid_relying_party: {
@@ -47,7 +54,7 @@ async function createLeafConfig(
 		} as FederationMetadata,
 		...overrides,
 	};
-	return { config, signingKey: privateKey, publicKey };
+	return { config, signingKey, publicKey };
 }
 
 // Minimal call recorder used in place of vi.fn().
@@ -170,19 +177,16 @@ export default (QUnit: QUnit) => {
 			t.throws(() => createLeafEntity(config), /authorityHint/);
 		});
 
-		test("throws on empty signingKeys", async (t) => {
-			const { config } = await createLeafConfig({ signingKeys: [] });
-			t.throws(() => createLeafEntity(config), /signingKeys/);
+		test("throws when keyProvider is missing", async (t) => {
+			const { config } = await createLeafConfig({ keyProvider: undefined });
+			t.throws(() => createLeafEntity(config), /keyProvider/);
 		});
 
-		test("throws on signing key without kid", async (t) => {
+		test("throws on signer key without kid", async (t) => {
 			const { privateKey } = await generateSigningKey("ES256");
 			const keyWithoutKid = { ...privateKey } as Record<string, unknown>;
 			delete keyWithoutKid.kid;
-			const { config } = await createLeafConfig({
-				signingKeys: [keyWithoutKid as unknown as JWK],
-			});
-			t.throws(() => createLeafEntity(config), /kid/);
+			t.throws(() => new JwkSigner(keyWithoutKid as unknown as JWK), /kid/);
 		});
 
 		test("throws when metadata includes federation_fetch_endpoint", async (t) => {
@@ -215,15 +219,42 @@ export default (QUnit: QUnit) => {
 			const { privateKey: key1 } = await generateSigningKey("ES256");
 			const { privateKey: key2 } = await generateSigningKey("ES256");
 			const key2WithSameKid = { ...key2, kid: key1.kid } as unknown as JWK;
-			const { config } = await createLeafConfig({ signingKeys: [key1, key2WithSameKid] });
-			t.throws(() => createLeafEntity(config), /Duplicate kid/);
+			t.throws(
+				() =>
+					new MemoryFederationKeyProvider([federationKey(key1), federationKey(key2WithSameKid)]),
+				/Duplicate|already exists/,
+			);
 		});
 
 		test("rejects symmetric key (kty 'oct') — requires asymmetric keys", async (t) => {
-			const { config } = await createLeafConfig({
-				signingKeys: [{ kty: "oct", kid: "sym-1", k: "c2VjcmV0" } as unknown as JWK],
-			});
-			t.throws(() => createLeafEntity(config), /Symmetric keys/);
+			t.throws(
+				() => new JwkSigner({ kty: "oct", kid: "sym-1", k: "c2VjcmV0" } as unknown as JWK),
+				/Symmetric keys/,
+			);
+		});
+
+		test("rejects private material in the published federation JWK", async (t) => {
+			const { privateKey } = await generateSigningKey("ES256");
+			t.throws(
+				() =>
+					new MemoryFederationKeyProvider({
+						signer: new JwkSigner(privateKey),
+						publicJwk: privateKey,
+					}),
+				/public JWK/,
+			);
+		});
+
+		test("rejects a federation public JWK whose kid differs from the signer", async (t) => {
+			const { privateKey } = await generateSigningKey("ES256");
+			t.throws(
+				() =>
+					new MemoryFederationKeyProvider({
+						signer: new JwkSigner(privateKey),
+						publicJwk: { ...stripPrivateFields(privateKey), kid: "different-key" },
+					}),
+				/kid MUST match/,
+			);
 		});
 
 		test("rejects non-HTTPS entityId — requires https scheme", async (t) => {
@@ -429,43 +460,53 @@ export default (QUnit: QUnit) => {
 		test("includes all public keys for multi-key config", async (t) => {
 			const { privateKey: key1 } = await generateSigningKey("ES256");
 			const { privateKey: key2 } = await generateSigningKey("ES256");
-			const { config } = await createLeafConfig({ signingKeys: [key1, key2] });
+			const { config } = await createLeafConfig({
+				keyProvider: new MemoryFederationKeyProvider([federationKey(key1), federationKey(key2)]),
+			});
 			const entity = createLeafEntity(config);
 			const jwt = await entity.getEntityConfiguration();
 			const decoded = decodeEntityStatement(jwt);
 			t.true(decoded.ok);
 			if (!decoded.ok) return;
 			t.equal(decoded.value.payload.jwks?.keys.length, 2);
-			t.equal(decoded.value.header.kid, key1.kid);
+			t.equal(decoded.value.header.kid, key2.kid);
 		});
 
 		test("concurrent calls share one signing operation (stampede protection)", async (t) => {
-			let signCalls = 0;
-			const countingSigner: typeof signEntityStatement = (payload, key, opts) => {
-				signCalls++;
-				return signEntityStatement(payload, key, opts);
-			};
-			const { config } = await createLeafConfig({ _signFn: countingSigner });
+			const { config: baseConfig } = await createLeafConfig();
+			let providerCalls = 0;
+			const keySet = await baseConfig.keyProvider.getFederationKeySet();
+			const { config } = await createLeafConfig({
+				keyProvider: {
+					getFederationKeySet: async () => {
+						providerCalls++;
+						return keySet;
+					},
+				},
+			});
 			const entity = createLeafEntity(config);
 			const [jwt1, jwt2] = await Promise.all([
 				entity.getEntityConfiguration(),
 				entity.getEntityConfiguration(),
 			]);
 			t.equal(jwt1, jwt2);
-			t.equal(signCalls, 1);
+			t.equal(providerCalls, 1);
 		});
 
-		test("propagates signEntityStatement rejection", async (t) => {
-			const failingSigner = () => Promise.reject(new Error("signing failure"));
+		test("propagates key provider rejection", async (t) => {
 			const { config } = await createLeafConfig({
-				_signFn: failingSigner as unknown as typeof signEntityStatement,
+				keyProvider: {
+					getFederationKeySet: async () => {
+						throw new Error("key provider failure");
+					},
+				},
 			});
 			const entity = createLeafEntity(config);
 			try {
 				await entity.getEntityConfiguration();
 				t.ok(false, "should have thrown");
 			} catch (e) {
-				t.ok((e as Error).message.includes("signing failure"), (e as Error).message);
+				t.ok((e as Error).message.includes("key provider failure"), (e as Error).message);
 			}
 		});
 	});
@@ -707,7 +748,7 @@ export default (QUnit: QUnit) => {
 			const fed = await createMockFederation();
 			const config: LeafConfig = {
 				entityId: LEAF_ID,
-				signingKeys: [fed.leafSigningKey],
+				keyProvider: new MemoryFederationKeyProvider(federationKey(fed.leafSigningKey)),
 				authorityHints: [TA_ID],
 				metadata: {
 					openid_relying_party: {
@@ -736,7 +777,7 @@ export default (QUnit: QUnit) => {
 			const fed = await createMockFederation();
 			const config: LeafConfig = {
 				entityId: LEAF_ID,
-				signingKeys: [fed.leafSigningKey],
+				keyProvider: new MemoryFederationKeyProvider(federationKey(fed.leafSigningKey)),
 				authorityHints: [TA_ID],
 				metadata: {
 					openid_relying_party: {
@@ -756,7 +797,7 @@ export default (QUnit: QUnit) => {
 			const fed = await createMockFederation();
 			const config: LeafConfig = {
 				entityId: LEAF_ID,
-				signingKeys: [fed.leafSigningKey],
+				keyProvider: new MemoryFederationKeyProvider(federationKey(fed.leafSigningKey)),
 				authorityHints: [TA_ID],
 				metadata: {
 					openid_relying_party: { redirect_uris: ["https://rp.example.com/callback"] },

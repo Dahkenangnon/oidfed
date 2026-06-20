@@ -139,7 +139,7 @@ async function buildTrustMark(
 	trustMarkType: string,
 	sub: string,
 ): Promise<string> {
-	const { key: signingKey, kid } = await ctx.getSigningKey();
+	const keySet = await ctx.keyProvider.getFederationKeySet();
 	const now = nowSeconds(ctx.options?.clock);
 	const ttl = ctx.trustMarkTtlSeconds ?? DEFAULT_DELEGATION_TTL_SECONDS;
 
@@ -155,8 +155,7 @@ async function buildTrustMark(
 		payload.delegation = ctx.trustMarkDelegations[trustMarkType];
 	}
 
-	return signEntityStatement(payload, signingKey, {
-		kid,
+	return signEntityStatement(payload, keySet.signer, {
 		typ: JwtTyp.TrustMark,
 	});
 }

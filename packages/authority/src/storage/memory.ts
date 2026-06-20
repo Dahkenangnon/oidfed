@@ -1,17 +1,14 @@
-import type { Clock, EntityId, JWK, JWKSet } from "@oidfed/core";
+import type { Clock, EntityId } from "@oidfed/core";
 import { nowSeconds } from "@oidfed/core";
-import { stripPrivateFields } from "../endpoints/helpers.js";
 import { InvalidMetadata, InvalidSubordinateRecord } from "../errors.js";
 import {
 	assertMetadataValuesNotNull,
 	isFederationEntityOperationalField,
 } from "../utils/subordinate-statement-shape.js";
 import type {
-	KeyStore,
 	ListFilter,
 	ListPage,
 	ListPageOptions,
-	ManagedKey,
 	SubordinateRecord,
 	SubordinateStore,
 	TrustMarkRecord,
@@ -144,128 +141,6 @@ export class MemorySubordinateStore implements SubordinateStore {
 			throw new Error(`Subordinate '${entityId}' not found`);
 		}
 		this.records.delete(entityId);
-	}
-}
-
-/**
- * In-memory implementation of the signing key store with lifecycle management.
- *
- * **WARNING: Development and testing only.** All key material and lifecycle state
- * is lost on process restart. Historical keys needed for trust chain verification
- * will disappear. For production, implement {@link KeyStore} backed by a secrets
- * manager (HashiCorp Vault, AWS KMS) or encrypted database. See `docs/storage-guide.md`.
- */
-export class MemoryKeyStore implements KeyStore {
-	private readonly keys = new Map<string, ManagedKey>();
-
-	/**
-	 * Creates a new in-memory key store.
-	 * @param initialKeys - Optional key or array of keys to add and activate immediately.
-	 *   Each key MUST have a `kid`. Keys are activated in order; the last key becomes
-	 *   the current signing key (most recently activated).
-	 */
-	constructor(initialKeys?: JWK | JWK[]) {
-		if (initialKeys) {
-			const keysArray = Array.isArray(initialKeys) ? initialKeys : [initialKeys];
-			const now = Date.now();
-			for (let i = 0; i < keysArray.length; i++) {
-				const key = keysArray[i] as JWK;
-				if (!key.kid) {
-					throw new Error("Initial key must have a kid");
-				}
-				if (this.keys.has(key.kid)) {
-					throw new Error(`Duplicate kid '${key.kid}' in initial keys`);
-				}
-				this.keys.set(key.kid, {
-					key,
-					state: "active",
-					createdAt: now,
-					activatedAt: now + i, // Preserve insertion order for getSigningKey()
-				});
-			}
-		}
-	}
-
-	async addKey(key: JWK): Promise<void> {
-		if (!key.kid) {
-			throw new Error("Key must have a kid");
-		}
-		if (this.keys.has(key.kid)) {
-			throw new Error(`Key '${key.kid}' already exists`);
-		}
-		this.keys.set(key.kid, { key, state: "pending", createdAt: Date.now() });
-	}
-
-	async activateKey(kid: string): Promise<void> {
-		const managed = this.keys.get(kid);
-		if (!managed) {
-			throw new Error(`Key '${kid}' not found`);
-		}
-		if (managed.state !== "pending") {
-			throw new Error(`Key '${kid}' is in state '${managed.state}', expected 'pending'`);
-		}
-		this.keys.set(kid, {
-			...managed,
-			state: "active",
-			activatedAt: Date.now(),
-		});
-	}
-
-	async getActiveKeys(): Promise<JWKSet> {
-		const keys: JWK[] = [];
-		for (const managed of this.keys.values()) {
-			if (managed.state === "active" || managed.state === "retiring") {
-				keys.push(stripPrivateFields(managed.key));
-			}
-		}
-		return { keys };
-	}
-
-	async getSigningKey(): Promise<ManagedKey> {
-		let latest: ManagedKey | undefined;
-		for (const managed of this.keys.values()) {
-			if (managed.state === "active") {
-				if (!latest || (managed.activatedAt ?? 0) > (latest.activatedAt ?? 0)) {
-					latest = managed;
-				}
-			}
-		}
-		if (!latest) {
-			throw new Error("No active signing key available");
-		}
-		return latest;
-	}
-
-	async retireKey(kid: string, removeAfter: number): Promise<void> {
-		const managed = this.keys.get(kid);
-		if (!managed) {
-			throw new Error(`Key '${kid}' not found`);
-		}
-		if (managed.state !== "active") {
-			throw new Error(`Key '${kid}' is in state '${managed.state}', expected 'active'`);
-		}
-		this.keys.set(kid, {
-			...managed,
-			state: "retiring",
-			scheduledRemovalAt: removeAfter,
-		});
-	}
-
-	async revokeKey(kid: string, reason: string): Promise<void> {
-		const managed = this.keys.get(kid);
-		if (!managed) {
-			throw new Error(`Key '${kid}' not found`);
-		}
-		this.keys.set(kid, {
-			...managed,
-			state: "revoked",
-			revokedAt: Date.now(),
-			revocationReason: reason,
-		});
-	}
-
-	async getHistoricalKeys(): Promise<ManagedKey[]> {
-		return Array.from(this.keys.values());
 	}
 }
 

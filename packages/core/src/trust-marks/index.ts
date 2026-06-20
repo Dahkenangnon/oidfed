@@ -7,8 +7,9 @@ import {
 import { err, type FederationError, ok, type Result } from "../errors.js";
 import { isValidAlgorithm } from "../jose/keys.js";
 import { signEntityStatement } from "../jose/sign.js";
+import type { JwtSigner } from "../jose/signer.js";
 import { decodeEntityStatement, verifyEntityStatement } from "../jose/verify.js";
-import type { JWK, JWKSet } from "../schemas/jwk.js";
+import type { JWKSet } from "../schemas/jwk.js";
 import type { TrustMarkOwner } from "../schemas/trust-mark.js";
 import type {
 	Clock,
@@ -22,7 +23,7 @@ export async function signTrustMarkDelegation(params: {
 	issuer: string;
 	subject: string;
 	trustMarkType: string;
-	privateKey: JWK;
+	signer: JwtSigner;
 	ttlSeconds?: number;
 }): Promise<string> {
 	const now = nowSeconds();
@@ -36,14 +37,9 @@ export async function signTrustMarkDelegation(params: {
 		exp: now + ttl,
 	};
 
-	const signOptions: { typ: string; kid?: string } = {
+	return signEntityStatement(payload, params.signer, {
 		typ: JwtTyp.TrustMarkDelegation,
-	};
-	if (params.privateKey.kid) {
-		signOptions.kid = params.privateKey.kid;
-	}
-
-	return signEntityStatement(payload, params.privateKey, signOptions);
+	});
 }
 
 interface TrustMarkValidationOptions extends FederationOptions {

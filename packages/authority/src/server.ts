@@ -6,7 +6,8 @@ import type {
 	FederationEntityMetadata,
 	FederationError,
 	FederationOptions,
-	JWK,
+	FederationSigningKey,
+	ManagedFederationKeyProvider,
 	Result,
 	TrustAnchorSet,
 	TrustMarkOwner,
@@ -45,7 +46,7 @@ import { createTrustMarkListHandler } from "./endpoints/trust-mark-list.js";
 import { createTrustMarkStatusHandler } from "./endpoints/trust-mark-status.js";
 import { InvalidAuthorityConfig } from "./errors.js";
 import { rotateKey } from "./keys/index.js";
-import type { KeyStore, ListFilter, SubordinateStore, TrustMarkStore } from "./storage/types.js";
+import type { ListFilter, SubordinateStore, TrustMarkStore } from "./storage/types.js";
 import { assertMetadataValuesNotNull } from "./utils/subordinate-statement-shape.js";
 
 /** Parameters accepted by {@link AuthorityServer.listSubordinatesExtended}. */
@@ -77,8 +78,8 @@ export interface AuthorityConfig {
 	}>;
 	/** Persistent store for subordinate entity records. */
 	subordinateStore: SubordinateStore;
-	/** Persistent store for signing key lifecycle (rotation, revocation). */
-	keyStore: KeyStore;
+	/** Federation-only signing key provider and lifecycle manager. */
+	keyProvider: ManagedFederationKeyProvider;
 	/** Optional store for issued trust marks. Required if this authority issues trust marks. */
 	trustMarkStore?: TrustMarkStore;
 	/** Trust marks this authority claims about itself. */
@@ -129,7 +130,7 @@ export interface AuthorityServer {
 	issueTrustMark(sub: string, trustMarkType: string): Promise<string>;
 	issueTrustMarkDelegation(subject: string, trustMarkType: string): Promise<string>;
 	getHistoricalKeys(): Promise<string>;
-	rotateSigningKey(newKey: JWK): Promise<void>;
+	rotateSigningKey(newKey: FederationSigningKey): Promise<void>;
 	handler(): (request: Request) => Promise<Response>;
 }
 
@@ -197,15 +198,9 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 
 	const base: HandlerContext = {
 		entityId: config.entityId,
-		keyStore: config.keyStore,
+		keyProvider: config.keyProvider,
 		subordinateStore: config.subordinateStore,
 		metadata: config.metadata,
-		getSigningKey: async () => {
-			const managed = await config.keyStore.getSigningKey();
-			const kid = managed.key.kid;
-			if (!kid) throw new Error("Signing key must have a kid");
-			return { key: managed.key, kid };
-		},
 	};
 	const ctx: HandlerContext = Object.assign(
 		base,
@@ -447,12 +442,12 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 		},
 
 		async issueTrustMarkDelegation(subject: string, trustMarkType: string): Promise<string> {
-			const { key: signingKey, kid } = await ctx.getSigningKey();
+			const keySet = await ctx.keyProvider.getFederationKeySet();
 			const params: Parameters<typeof signTrustMarkDelegation>[0] = {
 				issuer: config.entityId,
 				subject,
 				trustMarkType,
-				privateKey: { ...signingKey, kid },
+				signer: keySet.signer,
 			};
 			if (config.trustMarkTtlSeconds !== undefined) {
 				params.ttlSeconds = config.trustMarkTtlSeconds;
@@ -464,8 +459,8 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 			return buildHistoricalKeys(ctx);
 		},
 
-		async rotateSigningKey(newKey: JWK): Promise<void> {
-			await rotateKey(config.keyStore, newKey);
+		async rotateSigningKey(newKey: FederationSigningKey): Promise<void> {
+			await rotateKey(config.keyProvider, newKey);
 		},
 
 		handler(): (request: Request) => Promise<Response> {

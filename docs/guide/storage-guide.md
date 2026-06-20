@@ -7,7 +7,7 @@ In-memory storage implementations are provided for development and testing. They
 | Interface | Package | In-memory default | Purpose |
 |-----------|---------|-------------------|---------|
 | `SubordinateStore` | `@oidfed/authority` | `MemorySubordinateStore` | Subordinate entity records |
-| `KeyStore` | `@oidfed/authority` | `MemoryKeyStore` | Signing key lifecycle |
+| `ManagedFederationKeyProvider` | `@oidfed/core` | `MemoryFederationKeyProvider` | Federation signer selection, public-key publication, and lifecycle |
 | `TrustMarkStore` | `@oidfed/authority` | `MemoryTrustMarkStore` | Issued trust marks and revocations |
 | `JtiStore` | `@oidfed/core` | `InMemoryJtiStore` | JWT replay prevention |
 | `CacheProvider` | `@oidfed/core` | `MemoryCache` | Entity config / trust chain cache |
@@ -58,35 +58,43 @@ interface ListPage {
 
 **Minimal schema hint (MongoDB fields):** `entityId` (unique index), `entityTypes` (index), `isIntermediate` (index), `jwks`, `metadata`, `metadataPolicy`, `constraints`, `sourceEndpoint`, `createdAt`, `updatedAt`.
 
-## KeyStore
+## ManagedFederationKeyProvider
 
 ```ts
-import type { KeyStore, KeyState, ManagedKey } from "@oidfed/authority";
+import type {
+  FederationSigningKey,
+  ManagedFederationKeyProvider,
+  ManagedFederationKeyEntry,
+} from "@oidfed/core";
 ```
 
 ```ts
-// Key lifecycle: pending → active → retiring → revoked
-interface KeyStore {
-  getActiveKeys(): Promise<JWKSet>;              // active + retiring keys (public only)
-  getSigningKey(): Promise<ManagedKey>;           // most recently activated key
-  getHistoricalKeys(): Promise<ManagedKey[]>;     // all keys ever (for historical JWKS endpoint)
-  addKey(key: JWK): Promise<void>;               // adds in "pending" state
-  activateKey(kid: string): Promise<void>;        // pending → active
-  retireKey(kid: string, removeAfter: number): Promise<void>; // active → retiring
-  revokeKey(kid: string, reason: string): Promise<void>;      // any → revoked
+interface FederationSigningKey {
+  readonly signer: JwtSigner;
+  readonly publicJwk: JWK;
+}
+
+interface ManagedFederationKeyProvider {
+  getFederationKeySet(): Promise<FederationKeySet>;
+  getHistoricalFederationKeys(): Promise<HistoricalKeyEntry[]>;
+  addKey(key: FederationSigningKey): Promise<void>;
+  activateKey(kid: string): Promise<void>;
+  retireKey(kid: string, removeAfter: number): Promise<void>;
+  revokeKey(kid: string, reason: string): Promise<void>;
 }
 ```
 
 **Contract:**
-- `getSigningKey()` MUST return the most recently activated key (by `activatedAt`).
-- `getActiveKeys()` MUST strip private key fields (`d`, `p`, `q`, `dp`, `dq`, `qi`, `k`).
-- `addKey()` MUST reject duplicate `kid` values.
+- `getFederationKeySet()` MUST publish the active signer and the federation JWKS exposed in top-level Entity Statements.
+- The federation JWKS MUST contain exactly one public key for the active signer `kid`, and MUST NOT contain private or symmetric key material.
+- `addKey()` MUST reject duplicate `kid` values and mismatched `kid` or `alg` between `signer` and `publicJwk`.
 - `activateKey()` MUST reject if key is not in `pending` state.
 - `retireKey()` MUST reject if key is not in `active` state.
+- `getHistoricalFederationKeys()` MUST preserve enough state for `/federation_historical_keys`.
 
-**Minimal schema hint (PostgreSQL columns):** `kid TEXT PK`, `public_jwk JSONB`, `private_key_ref TEXT` (secrets manager reference), `state TEXT CHECK(pending|active|retiring|revoked)`, `created_at FLOAT8`, `activated_at FLOAT8`, `expires_at FLOAT8`, `scheduled_removal_at FLOAT8`, `revoked_at FLOAT8`, `revocation_reason TEXT`. Index `(state, activated_at DESC)`.
+**Minimal schema hint (PostgreSQL columns):** `kid TEXT PK`, `public_jwk JSONB`, `signer_ref TEXT` (KMS/HSM/secrets-manager reference), `alg TEXT`, `state TEXT CHECK(pending|active|retiring|revoked)`, `created_at FLOAT8`, `activated_at FLOAT8`, `expires_at FLOAT8`, `scheduled_removal_at FLOAT8`, `revoked_at FLOAT8`, `revocation_reason TEXT`. Index `(state, activated_at DESC)`.
 
-**Minimal schema hint (MongoDB fields):** `kid` (unique index), `publicJwk`, `privateKeyRef`, `state` (index with `activatedAt`), `createdAt`, `activatedAt`, `expiresAt`, `scheduledRemovalAt`, `revokedAt`, `revocationReason`.
+**Minimal schema hint (MongoDB fields):** `kid` (unique index), `publicJwk`, `signerRef`, `alg`, `state` (index with `activatedAt`), `createdAt`, `activatedAt`, `expiresAt`, `scheduledRemovalAt`, `revokedAt`, `revocationReason`.
 
 ## TrustMarkStore
 
@@ -167,12 +175,12 @@ A shared cache is beneficial when running multiple Node.js processes, in serverl
 
 ## Security Considerations
 
-Private key material (`d`, `p`, `q`, `dp`, `dq`, `qi`, `k`) MUST be encrypted at rest. The recommended pattern is to store only public key components in the database and keep private key material in a secrets manager (HashiCorp Vault, AWS KMS, Azure Key Vault), referencing keys by ID in the `private_key_ref` / `privateKeyRef` column.
+Private key material MUST not be published through federation JWKS. The recommended pattern is to store only public federation key components in the database and keep signing custody behind a signer reference such as KMS, HSM, Vault, or another managed key system.
 
 ## Production Checklist
 
 - [ ] **SubordinateStore** — backed by a persistent database
-- [ ] **KeyStore** — private keys in a secrets manager; public keys + state in database
+- [ ] **ManagedFederationKeyProvider** — signer custody in KMS/HSM/secrets manager or equivalent; public federation keys + state in database
 - [ ] **TrustMarkStore** — backed by a persistent database with revocation preserved
 - [ ] **JtiStore** — backed by Redis or database with atomic check-and-set
 - [ ] **CacheProvider** — optional; use a shared cache if running multiple processes

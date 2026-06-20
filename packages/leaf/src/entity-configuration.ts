@@ -3,21 +3,21 @@ import {
 	type Clock,
 	DEFAULT_ENTITY_STATEMENT_TTL_SECONDS,
 	type EntityId,
+	type FederationKeyProvider,
 	type FederationMetadata,
 	type FederationOptions,
 	isValidEntityId,
-	type JWK,
 	JwtTyp,
 	nowSeconds,
 	signEntityStatement,
-	stripPrivateFields,
 	type TrustMarkRef,
+	validateFederationKeySet,
 } from "@oidfed/core";
 import { createLeafHandler } from "./handler.js";
 
 export interface LeafConfig {
 	entityId: EntityId;
-	signingKeys: JWK[];
+	keyProvider: FederationKeyProvider;
 	authorityHints: EntityId[];
 	metadata: FederationMetadata;
 	trustMarks?: TrustMarkRef[];
@@ -25,8 +25,6 @@ export interface LeafConfig {
 	options?: FederationOptions;
 	/** Injectable clock for deterministic testing. */
 	clock?: Clock;
-	/** Injectable signing function for testing (e.g. call counting, forced failures). */
-	_signFn?: typeof signEntityStatement;
 }
 
 export interface LeafEntity {
@@ -51,22 +49,8 @@ export function createLeafEntity(config: LeafConfig): LeafEntity {
 			);
 		}
 	}
-	if (!config.signingKeys || config.signingKeys.length === 0) {
-		throw new Error("signingKeys MUST NOT be empty");
-	}
-	const kids = new Set<string>();
-	for (const key of config.signingKeys) {
-		if (!key.kid) {
-			throw new Error("Every signing key MUST have a kid (Key ID) value");
-		}
-		if (kids.has(key.kid)) {
-			throw new Error(`Duplicate kid '${key.kid}' found — every JWK MUST have a unique kid`);
-		}
-		// Symmetric keys have no public/private distinction; publishing would expose the secret.
-		if ((key as Record<string, unknown>).kty === "oct") {
-			throw new Error("Symmetric keys (kty 'oct') cannot be used as signing keys");
-		}
-		kids.add(key.kid);
+	if (!config.keyProvider) {
+		throw new Error("keyProvider MUST be provided");
 	}
 
 	const fedEntity = config.metadata?.federation_entity as Record<string, unknown> | undefined;
@@ -94,18 +78,13 @@ export function createLeafEntity(config: LeafConfig): LeafEntity {
 		throw new Error("entityConfigurationTtlSeconds must be positive");
 	}
 
-	// Safe: validated non-empty above.
-	const signingKey = config.signingKeys[0] as JWK;
-
-	// Precompute public keys once — avoids re-stripping on every build.
-	const publicKeys = config.signingKeys.map(stripPrivateFields);
-
 	let cachedJwt: string | null = null;
 	let cachedExp: number | null = null;
 	let inflight: Promise<string> | null = null;
 
 	async function buildEntityConfiguration(): Promise<string> {
-		const sign = config._signFn ?? signEntityStatement;
+		const keySet = await config.keyProvider.getFederationKeySet();
+		validateFederationKeySet(keySet);
 		const now = nowSeconds(config.clock);
 		const exp = now + ttlSeconds;
 
@@ -114,7 +93,7 @@ export function createLeafEntity(config: LeafConfig): LeafEntity {
 			sub: entityId,
 			iat: now,
 			exp,
-			jwks: { keys: publicKeys },
+			jwks: keySet.jwks,
 			authority_hints: config.authorityHints,
 			metadata: config.metadata,
 		};
@@ -123,8 +102,7 @@ export function createLeafEntity(config: LeafConfig): LeafEntity {
 			payload.trust_marks = config.trustMarks;
 		}
 
-		const jwt = await sign(payload, signingKey, {
-			kid: signingKey.kid as string,
+		const jwt = await signEntityStatement(payload, keySet.signer, {
 			typ: JwtTyp.EntityStatement,
 		});
 

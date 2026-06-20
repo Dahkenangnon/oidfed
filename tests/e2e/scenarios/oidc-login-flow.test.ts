@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { JWK, TrustAnchorSet } from "@oidfed/core";
 import { entityId } from "@oidfed/core";
 import { discoverEntity } from "@oidfed/leaf";
+import type { OidcProtocolKeyProvider } from "@oidfed/oidc";
 import { automaticRegistration } from "@oidfed/oidc";
 import { describe, expect, it } from "vitest";
 import { getEntity } from "../helpers/launcher.js";
@@ -22,11 +23,12 @@ import { singleAnchorTopology } from "../topologies/single-anchor.js";
 async function performFederatedAuthRequest(params: {
 	rpId: string;
 	opId: string;
-	rpSigningKey: JWK;
+	protocolKeyProvider: OidcProtocolKeyProvider;
+	protocolPublicKey: JWK;
 	taId: string;
 	trustAnchors: TrustAnchorSet;
 }) {
-	const { rpId, opId, rpSigningKey, taId, trustAnchors } = params;
+	const { rpId, opId, protocolKeyProvider, protocolPublicKey, taId, trustAnchors } = params;
 
 	// 1. Discover OP — must succeed
 	const discovery = await discoverEntity(entityId(opId), trustAnchors);
@@ -38,7 +40,7 @@ async function performFederatedAuthRequest(params: {
 		discovery,
 		{
 			entityId: entityId(rpId),
-			signingKeys: [rpSigningKey],
+			protocolKeyProvider,
 			authorityHints: [entityId(taId)],
 			metadata: {
 				openid_relying_party: {
@@ -47,6 +49,7 @@ async function performFederatedAuthRequest(params: {
 					grant_types: ["authorization_code"],
 					client_registration_types: ["automatic"],
 					token_endpoint_auth_method: "private_key_jwt",
+					jwks: { keys: [protocolPublicKey] },
 				},
 			},
 			requestDelivery: "query",
@@ -98,7 +101,8 @@ describe("Full OIDC login flow", () => {
 			const { regResult } = await performFederatedAuthRequest({
 				rpId: `https://rp.ofed.test:${port}`,
 				opId: `https://op.ofed.test:${port}`,
-				rpSigningKey: rpEntity.keys.signing,
+				protocolKeyProvider: rpEntity.oidcProtocolKeyProvider,
+				protocolPublicKey: rpEntity.keys.protocolPublic,
 				taId: `https://ta.ofed.test:${port}`,
 				trustAnchors,
 			});
@@ -120,7 +124,8 @@ describe("Full OIDC login flow", () => {
 			const { authResponse } = await performFederatedAuthRequest({
 				rpId: `https://rp.ofed.test:${port}`,
 				opId: `https://op.ofed.test:${port}`,
-				rpSigningKey: rpEntity.keys.signing,
+				protocolKeyProvider: rpEntity.oidcProtocolKeyProvider,
+				protocolPublicKey: rpEntity.keys.protocolPublic,
 				taId: `https://ta.ofed.test:${port}`,
 				trustAnchors,
 			});
@@ -148,7 +153,7 @@ describe("Full OIDC login flow", () => {
 				discovery,
 				{
 					entityId: entityId(rpId),
-					signingKeys: [rpEntity.keys.signing],
+					protocolKeyProvider: rpEntity.oidcProtocolKeyProvider,
 					authorityHints: [entityId(`https://ta.ofed.test:${port}`)],
 					metadata: {
 						openid_relying_party: {
@@ -157,6 +162,7 @@ describe("Full OIDC login flow", () => {
 							grant_types: ["authorization_code"],
 							client_registration_types: ["automatic"],
 							token_endpoint_auth_method: "private_key_jwt",
+							jwks: { keys: [rpEntity.keys.protocolPublic] },
 						},
 					},
 					requestDelivery: "request_uri",
@@ -204,7 +210,8 @@ describe("Full OIDC login flow", () => {
 			const { regResult } = await performFederatedAuthRequest({
 				rpId: `https://rp1.ofed.test:${port}`,
 				opId: `https://op-uni.ofed.test:${port}`,
-				rpSigningKey: rpEntity.keys.signing,
+				protocolKeyProvider: rpEntity.oidcProtocolKeyProvider,
+				protocolPublicKey: rpEntity.keys.protocolPublic,
 				taId: `https://ta.ofed.test:${port}`,
 				trustAnchors,
 			});

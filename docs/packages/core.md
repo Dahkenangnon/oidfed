@@ -1,10 +1,10 @@
 # @oidfed/core
 
-Federation primitives for JavaScript — entity statements, trust chain resolution, metadata policy, and cryptographic verification. The foundational layer of the complete OpenID Federation 1.0 implementation.
+Federation primitives for JavaScript — entity statements, trust chain resolution, metadata policy, cryptographic verification, and federation signing abstractions. The foundational layer of the complete OpenID Federation 1.0 implementation.
 
 ## Role
 
-Provides trust chain resolution and validation, JOSE operations, metadata policy, typed schemas, caching, and trust mark support. Use directly when you need federation logic without OIDC-specific code. Serves as the foundation for `@oidfed/authority`, `@oidfed/leaf`, and `@oidfed/oidc`.
+Provides trust chain resolution and validation, JOSE operations, metadata policy, typed schemas, caching, trust mark support, and federation signing/key-provider primitives. Use directly when you need federation logic without OIDC-specific code. Serves as the foundation for `@oidfed/authority`, `@oidfed/leaf`, and `@oidfed/oidc`.
 
 ## Install
 
@@ -98,7 +98,7 @@ import { refreshTrustChain } from "@oidfed/core";
 import type { RefreshOptions } from "@oidfed/core";
 ```
 
-### JOSE
+### JOSE and Federation Signing
 
 ```ts
 import {
@@ -109,16 +109,92 @@ import {
   selectVerificationKey,
   assertTypHeader,
   verifyClientAssertion,
+  JwkSigner,
 } from "@oidfed/core";
-import type { VerifiedClientAssertion } from "@oidfed/core";
+import type { JwtSigner, VerifiedClientAssertion } from "@oidfed/core";
+```
+
+`JwtSigner` is the low-level signing boundary for compact JWT production:
+
+```ts
+interface JwtSigner {
+  readonly kid: string;
+  readonly alg: SupportedAlgorithm;
+  signJwt(
+    payload: Uint8Array,
+    protectedHeader: Readonly<Record<string, unknown>>,
+  ): Promise<string>;
+}
+```
+
+`JwkSigner` is the built-in software-key implementation. It is backed entirely by `jose`, so the package stays runtime-agnostic and does not ship a packaged Web Crypto signer implementation.
+
+```ts
+const keyPair = await generateSigningKey("ES256");
+const signer: JwtSigner = new JwkSigner(keyPair.privateKey);
+
+const jwt = await signEntityStatement(payload, signer);
+const verified = await verifyEntityStatement(jwt, { keys: [keyPair.publicKey] });
+const decoded = decodeEntityStatement(jwt);
+```
+
+### Federation Key Providers
+
+Federation entity keys are distinct from OIDC/OAuth protocol keys. `@oidfed/core` owns federation signing and federation public-key publication through provider types:
+
+```ts
+import {
+  JwkSigner,
+  MemoryFederationKeyProvider,
+  StaticFederationKeyProvider,
+} from "@oidfed/core";
+import type {
+  FederationKeyProvider,
+  FederationKeySet,
+  FederationSigningKey,
+  ManagedFederationKeyProvider,
+} from "@oidfed/core";
 ```
 
 ```ts
-const key = await generateSigningKey("ES256");
-const jwt = await signEntityStatement(payload, key);
-const verified = await verifyEntityStatement(jwt, jwks); // checks sig, typ, exp, iss
-const decoded = decodeEntityStatement(jwt);              // no verification
+interface FederationKeySet {
+  readonly signer: JwtSigner;
+  readonly jwks: JWKSet;
+}
+
+interface FederationSigningKey {
+  readonly signer: JwtSigner;
+  readonly publicJwk: JWK;
+}
 ```
+
+Use `StaticFederationKeyProvider` when the active federation signer and published JWKS are externally managed. Use `MemoryFederationKeyProvider` for in-memory rotation flows and tests.
+
+```ts
+const keyPair = await generateSigningKey("ES256");
+
+const keyProvider: ManagedFederationKeyProvider = new MemoryFederationKeyProvider({
+  signer: new JwkSigner(keyPair.privateKey),
+  publicJwk: keyPair.publicKey,
+});
+
+const keySet = await keyProvider.getFederationKeySet();
+console.log(keySet.signer.kid);
+console.log(keySet.jwks.keys);
+```
+
+Managed providers own federation key lifecycle:
+
+```ts
+await keyProvider.addKey({
+  signer: new JwkSigner(nextKeyPair.privateKey),
+  publicJwk: nextKeyPair.publicKey,
+});
+await keyProvider.activateKey(nextKeyPair.privateKey.kid!);
+await keyProvider.retireKey(currentKid, Date.now() + 7 * 24 * 60 * 60 * 1000);
+```
+
+The federation provider is the source of truth for published federation public keys. Generic signers do not publish keys themselves.
 
 ### Schemas
 
@@ -144,8 +220,8 @@ import { resolveMetadataPolicy, applyMetadataPolicy } from "@oidfed/core";
 import type { ResolvedMetadataPolicy, PolicyMergeResult } from "@oidfed/core";
 ```
 
-`resolveMetadataPolicy` merges policies from a chain's statements → `Result<ResolvedMetadataPolicy, FederationError>`.
-`applyMetadataPolicy` applies the merged policy to entity metadata → `Result<FederationMetadata, FederationError>`.
+`resolveMetadataPolicy` merges policies from a chain's statements into `Result<ResolvedMetadataPolicy, FederationError>`.
+`applyMetadataPolicy` applies the merged policy to entity metadata into `Result<FederationMetadata, FederationError>`.
 
 ### Constraints
 
@@ -176,10 +252,10 @@ import type { CacheProvider } from "@oidfed/core";
 ```
 
 ```ts
-const cache = new MemoryCache({ maxEntries: 1000 }); // LRU eviction
+const cache = new MemoryCache({ maxEntries: 1000 });
 
-const ecKey    = await ecCacheKey(entityId("https://example.com"));
-const esKey    = await esCacheKey(issuer, subject);
+const ecKey = await ecCacheKey(entityId("https://example.com"));
+const esKey = await esCacheKey(issuer, subject);
 const chainKey = await chainCacheKey(entityId, trustAnchorId);
 ```
 
@@ -197,13 +273,13 @@ import { InMemoryJtiStore } from "@oidfed/core";
 import type { JtiStore } from "@oidfed/core";
 ```
 
-The `RegistrationProtocolAdapter` interface (for plugging protocol-specific metadata validation into the authority server) and the `OIDCRegistrationAdapter` implementation are exported from [`@oidfed/oidc`](./oidc.md#registration-adapter), not from this package.
+The `RegistrationProtocolAdapter` interface and the `OIDCRegistrationAdapter` implementation are exported from [`@oidfed/oidc`](./oidc.md#registration-adapter), not from this package.
 
 `InMemoryJtiStore` is for development only. See the [Storage Guide](../guide/storage-guide.md) for production implementations.
 
 ## Configuration
 
-`FederationOptions` controls all configurable behaviour:
+`FederationOptions` controls all configurable behavior:
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
@@ -218,11 +294,3 @@ The `RegistrationProtocolAdapter` interface (for plugging protocol-specific meta
 | `maxConcurrentFetches` | `number` | — | Concurrent HTTP fetch limit |
 | `maxConcurrentResolutions` | `number` | — | Concurrent chain resolution limit |
 | `cacheMaxTtlSeconds` | `number` | `86400` | Maximum cache entry TTL |
-| `maxResponseBytes` | `number` | — | Maximum HTTP response size |
-| `signal` | `AbortSignal` | — | Cancellation signal |
-| `blockedCIDRs` | `string[]` | — | Additional CIDR ranges to block beyond the built-in IANA IPv4/IPv6 special-use list |
-| `allowedHosts` | `string[]` | — | Host allowlist |
-| `authorityHintFilter` | `(hint, subject) => boolean` | — | Filter authority hints during resolution |
-| `understoodCriticalClaims` | `ReadonlySet<string>` | — | Critical claims this implementation understands |
-| `maxTotalFetches` | `number` | `50` | Maximum total HTTP fetches across entire trust chain resolution |
-| `customPolicyOperators` | `readonly PolicyOperatorDefinition[]` | — | Federation-defined policy operators in addition to the seven standard ones |

@@ -28,11 +28,7 @@ export function createEntityConfigurationHandler(
 
 /** Builds and signs the Entity Configuration JWT from the current context. */
 export async function buildEntityConfiguration(ctx: HandlerContext): Promise<string> {
-	const activeKeys = await ctx.keyStore.getActiveKeys();
-	if (activeKeys.keys.length === 0) {
-		throw new Error("No active signing keys available");
-	}
-	const { key: signingKey, kid } = await ctx.getSigningKey();
+	const keySet = await ctx.keyProvider.getFederationKeySet();
 	const now = nowSeconds(ctx.options?.clock);
 
 	const payload: Record<string, unknown> = {
@@ -40,7 +36,7 @@ export async function buildEntityConfiguration(ctx: HandlerContext): Promise<str
 		sub: ctx.entityId,
 		iat: now,
 		exp: now + (ctx.entityConfigurationTtlSeconds ?? DEFAULT_ENTITY_STATEMENT_TTL_SECONDS),
-		jwks: activeKeys,
+		jwks: keySet.jwks,
 		metadata: ctx.metadata,
 	};
 
@@ -66,8 +62,7 @@ export async function buildEntityConfiguration(ctx: HandlerContext): Promise<str
 		payload.trust_mark_owners = ctx.trustMarkOwners;
 	}
 
-	return signEntityStatement(payload, signingKey, {
-		kid,
+	return signEntityStatement(payload, keySet.signer, {
 		typ: JwtTyp.EntityStatement,
 	});
 }

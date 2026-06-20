@@ -13,11 +13,14 @@ import {
 	InMemoryJtiStore,
 	isOk,
 	type JWK,
+	JwkSigner,
 	JwtTyp,
 	MediaType,
+	MemoryFederationKeyProvider,
 	resolveTrustChains,
 	shortestChain,
 	signEntityStatement,
+	stripPrivateFields,
 	type ValidatedTrustChain,
 	validateTrustChain,
 } from "../../../packages/core/src/index.js";
@@ -28,6 +31,7 @@ import {
 	OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE,
 	RequestObjectTyp,
 } from "../../../packages/oidc/src/constants.js";
+import { StaticOidcProtocolKeyProvider } from "../../../packages/oidc/src/protocol-keys.js";
 import { OIDCRegistrationAdapter } from "../../../packages/oidc/src/registration/adapter.js";
 import type { RegistrationProtocolAdapter } from "../../../packages/oidc/src/registration/adapter-types.js";
 import type { AutomaticRegistrationConfig } from "../../../packages/oidc/src/registration/automatic.js";
@@ -60,19 +64,29 @@ import { createMockFederation, LEAF_ID, OP_ID, TA_ID } from "../fixtures/index.j
 
 type RpConfig = AutomaticRegistrationConfig & ExplicitRegistrationConfig;
 
+function federationKey(signingKey: JWK) {
+	return { signer: new JwkSigner(signingKey), publicJwk: stripPrivateFields(signingKey) };
+}
+
 async function createRpConfig(
 	overrides?: Partial<RpConfig>,
 ): Promise<{ config: RpConfig; signingKey: JWK; publicKey: JWK }> {
 	const { privateKey, publicKey } = await generateSigningKey("ES256");
+	const { privateKey: protocolPrivateKey, publicKey: protocolPublicKey } =
+		await generateSigningKey("ES256");
 	const config: RpConfig = {
 		entityId: LEAF_ID,
-		signingKeys: [privateKey],
+		keyProvider: new MemoryFederationKeyProvider(federationKey(privateKey)),
+		protocolKeyProvider: new StaticOidcProtocolKeyProvider({
+			requestObjectSigner: new JwkSigner(protocolPrivateKey),
+		}),
 		authorityHints: [TA_ID],
 		metadata: {
 			openid_relying_party: {
 				redirect_uris: ["https://rp.example.com/callback"],
 				response_types: ["code"],
 				client_registration_types: ["automatic"],
+				jwks: { keys: [protocolPublicKey] },
 			},
 		},
 		...overrides,
@@ -119,7 +133,7 @@ export default (QUnit: QUnit) => {
 
 		test("produces valid JWT with correct claims", async (t) => {
 			const { privateKey } = await generateSigningKey("ES256");
-			const jwt = await createClientAssertion(clientId, audience, privateKey);
+			const jwt = await createClientAssertion(clientId, audience, new JwkSigner(privateKey));
 			const decoded = decodeEntityStatement(jwt);
 			t.true(decoded.ok);
 			if (!decoded.ok) return;
@@ -138,7 +152,7 @@ export default (QUnit: QUnit) => {
 
 		test("sets iss === sub === clientId", async (t) => {
 			const { privateKey } = await generateSigningKey("ES256");
-			const jwt = await createClientAssertion(clientId, audience, privateKey);
+			const jwt = await createClientAssertion(clientId, audience, new JwkSigner(privateKey));
 			const decoded = decodeEntityStatement(jwt);
 			t.true(decoded.ok);
 			if (!decoded.ok) return;
@@ -148,8 +162,9 @@ export default (QUnit: QUnit) => {
 
 		test("generates unique jti across calls", async (t) => {
 			const { privateKey } = await generateSigningKey("ES256");
-			const d1 = decodeEntityStatement(await createClientAssertion(clientId, audience, privateKey));
-			const d2 = decodeEntityStatement(await createClientAssertion(clientId, audience, privateKey));
+			const signer = new JwkSigner(privateKey);
+			const d1 = decodeEntityStatement(await createClientAssertion(clientId, audience, signer));
+			const d2 = decodeEntityStatement(await createClientAssertion(clientId, audience, signer));
 			t.true(d1.ok && d2.ok);
 			if (!d1.ok || !d2.ok) return;
 			const jti1 = (d1.value.payload as Record<string, unknown>).jti;
@@ -159,7 +174,7 @@ export default (QUnit: QUnit) => {
 
 		test("respects expiresInSeconds option", async (t) => {
 			const { privateKey } = await generateSigningKey("ES256");
-			const jwt = await createClientAssertion(clientId, audience, privateKey, {
+			const jwt = await createClientAssertion(clientId, audience, new JwkSigner(privateKey), {
 				expiresInSeconds: 120,
 			});
 			const decoded = decodeEntityStatement(jwt);
@@ -171,7 +186,7 @@ export default (QUnit: QUnit) => {
 
 		test("defaults expiresInSeconds to 60", async (t) => {
 			const { privateKey } = await generateSigningKey("ES256");
-			const jwt = await createClientAssertion(clientId, audience, privateKey);
+			const jwt = await createClientAssertion(clientId, audience, new JwkSigner(privateKey));
 			const decoded = decodeEntityStatement(jwt);
 			t.true(decoded.ok);
 			if (!decoded.ok) return;
@@ -181,7 +196,7 @@ export default (QUnit: QUnit) => {
 
 		test("signs with the provided key", async (t) => {
 			const { privateKey } = await generateSigningKey("ES256");
-			const jwt = await createClientAssertion(clientId, audience, privateKey);
+			const jwt = await createClientAssertion(clientId, audience, new JwkSigner(privateKey));
 			const decoded = decodeEntityStatement(jwt);
 			t.true(decoded.ok);
 			if (!decoded.ok) return;
@@ -191,7 +206,7 @@ export default (QUnit: QUnit) => {
 
 		test("works with RS256 key", async (t) => {
 			const { privateKey } = await generateSigningKey("RS256");
-			const jwt = await createClientAssertion(clientId, audience, privateKey);
+			const jwt = await createClientAssertion(clientId, audience, new JwkSigner(privateKey));
 			const decoded = decodeEntityStatement(jwt);
 			t.true(decoded.ok);
 			if (!decoded.ok) return;
@@ -204,7 +219,7 @@ export default (QUnit: QUnit) => {
 			const { privateKey } = await generateSigningKey("ES256");
 			const keyWithoutKid = { ...privateKey, kid: undefined } as unknown as typeof privateKey;
 			try {
-				await createClientAssertion(clientId, audience, keyWithoutKid);
+				await createClientAssertion(clientId, audience, new JwkSigner(keyWithoutKid));
 				t.ok(false, "should have thrown");
 			} catch (e) {
 				t.ok((e as Error).message.includes("kid"), (e as Error).message);
@@ -602,7 +617,7 @@ export default (QUnit: QUnit) => {
 		test("returns valid Request Object JWT with correct typ", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
-			const { config } = await createRpConfig({ signingKeys: [fed.leafSigningKey] });
+			const { config } = await createRpConfig({});
 			const result = await automaticRegistration(
 				discovery,
 				config,
@@ -619,7 +634,7 @@ export default (QUnit: QUnit) => {
 		test("has correct JWT claims: iss, client_id, aud, jti, exp", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
-			const { config } = await createRpConfig({ signingKeys: [fed.leafSigningKey] });
+			const { config } = await createRpConfig({});
 			const result = await automaticRegistration(
 				discovery,
 				config,
@@ -641,7 +656,7 @@ export default (QUnit: QUnit) => {
 		test("does NOT include sub claim", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
-			const { config } = await createRpConfig({ signingKeys: [fed.leafSigningKey] });
+			const { config } = await createRpConfig({});
 			const result = await automaticRegistration(
 				discovery,
 				config,
@@ -658,7 +673,7 @@ export default (QUnit: QUnit) => {
 		test("includes trust_chain as JWS header parameter", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
-			const { config } = await createRpConfig({ signingKeys: [fed.leafSigningKey] });
+			const { config } = await createRpConfig({});
 			const result = await automaticRegistration(
 				discovery,
 				config,
@@ -678,7 +693,6 @@ export default (QUnit: QUnit) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
 			const { config } = await createRpConfig({
-				signingKeys: [fed.leafSigningKey],
 				includePeerTrustChain: true,
 			});
 			const result = await automaticRegistration(
@@ -727,7 +741,6 @@ export default (QUnit: QUnit) => {
 				return fed.options.httpClient!(input);
 			};
 			const { config } = await createRpConfig({
-				signingKeys: [fed.leafSigningKey],
 				includePeerTrustChain: true,
 			});
 			let threw = false;
@@ -746,7 +759,7 @@ export default (QUnit: QUnit) => {
 		test("includes authzRequestParams in JWT payload", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
-			const { config } = await createRpConfig({ signingKeys: [fed.leafSigningKey] });
+			const { config } = await createRpConfig({});
 			const params = { ...authzParams, nonce: "test-nonce" };
 			const result = await automaticRegistration(
 				discovery,
@@ -768,7 +781,6 @@ export default (QUnit: QUnit) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
 			const { config } = await createRpConfig({
-				signingKeys: [fed.leafSigningKey],
 				requestDelivery: "query",
 			});
 			const result = await automaticRegistration(
@@ -788,7 +800,7 @@ export default (QUnit: QUnit) => {
 		test("does not allow authzRequestParams to overwrite required claims", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
-			const { config } = await createRpConfig({ signingKeys: [fed.leafSigningKey] });
+			const { config } = await createRpConfig({});
 			const result = await automaticRegistration(
 				discovery,
 				config,
@@ -826,7 +838,7 @@ export default (QUnit: QUnit) => {
 				},
 			});
 			const discovery = await createMockDiscovery(OP_ID, fed);
-			const { config } = await createRpConfig({ signingKeys: [fed.leafSigningKey] });
+			const { config } = await createRpConfig({});
 			try {
 				await automaticRegistration(discovery, config, authzParams, fed.trustAnchors, fed.options);
 				t.ok(false, "should have thrown");
@@ -838,7 +850,7 @@ export default (QUnit: QUnit) => {
 		test("does not include registration param in JWT payload", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
-			const { config } = await createRpConfig({ signingKeys: [fed.leafSigningKey] });
+			const { config } = await createRpConfig({});
 			const result = await automaticRegistration(
 				discovery,
 				config,
@@ -855,7 +867,7 @@ export default (QUnit: QUnit) => {
 		test("includes trustChainExpiresAt matching trust chain expiry", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
-			const { config } = await createRpConfig({ signingKeys: [fed.leafSigningKey] });
+			const { config } = await createRpConfig({});
 			const result = await automaticRegistration(
 				discovery,
 				config,
@@ -870,7 +882,7 @@ export default (QUnit: QUnit) => {
 		test("uses JWK allowlist for public keys (no private fields leak)", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
-			const { config } = await createRpConfig({ signingKeys: [fed.leafSigningKey] });
+			const { config } = await createRpConfig({});
 			const result = await automaticRegistration(
 				discovery,
 				config,
@@ -895,7 +907,7 @@ export default (QUnit: QUnit) => {
 		test("defaults to form_post when requestDelivery is omitted", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
-			const { config } = await createRpConfig({ signingKeys: [fed.leafSigningKey] });
+			const { config } = await createRpConfig({});
 			const result = await automaticRegistration(
 				discovery,
 				config,
@@ -914,7 +926,6 @@ export default (QUnit: QUnit) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
 			const { config } = await createRpConfig({
-				signingKeys: [fed.leafSigningKey],
 				requestDelivery: "form_post",
 			});
 			const result = await automaticRegistration(
@@ -935,7 +946,6 @@ export default (QUnit: QUnit) => {
 			const discovery = await createMockDiscovery(OP_ID, fed);
 			const hostedUri = "https://rp.example.com/request-object/xyz";
 			const { config } = await createRpConfig({
-				signingKeys: [fed.leafSigningKey],
 				requestDelivery: "request_uri",
 				requestUri: hostedUri,
 			});
@@ -959,7 +969,6 @@ export default (QUnit: QUnit) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
 			const { config } = await createRpConfig({
-				signingKeys: [fed.leafSigningKey],
 				requestDelivery: "request_uri",
 			});
 			let threw = false;
@@ -990,7 +999,6 @@ export default (QUnit: QUnit) => {
 			});
 			const discovery = await createMockDiscovery(OP_ID, fed);
 			const { config } = await createRpConfig({
-				signingKeys: [fed.leafSigningKey],
 				requestDelivery: "par",
 			});
 
@@ -1054,7 +1062,6 @@ export default (QUnit: QUnit) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
 			const { config } = await createRpConfig({
-				signingKeys: [fed.leafSigningKey],
 				requestDelivery: "par",
 			});
 			let threw = false;
@@ -1074,7 +1081,7 @@ export default (QUnit: QUnit) => {
 	module("oidc / explicitRegistration (RP-side)", () => {
 		async function createMockOpWithRegistration() {
 			const fed = await createMockFederation();
-			const { config } = await createRpConfig({ signingKeys: [fed.leafSigningKey] });
+			const { config } = await createRpConfig({});
 			const discovery = await createMockDiscovery(OP_ID, fed);
 			const now = Math.floor(Date.now() / 1000);
 			const registrationResponsePayload = {
@@ -1096,8 +1103,8 @@ export default (QUnit: QUnit) => {
 			};
 			const registrationResponseJwt = await signEntityStatement(
 				registrationResponsePayload,
-				fed.opSigningKey,
-				{ kid: fed.opSigningKey.kid, typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
+				new JwkSigner(fed.opSigningKey),
+				{ typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
 			);
 			const originalHttpClient = fed.httpClient;
 			const httpClient: HttpClient = async (input, init) => {
@@ -1242,7 +1249,7 @@ export default (QUnit: QUnit) => {
 				},
 			});
 			const discovery = await createMockDiscovery(OP_ID, fed);
-			const { config } = await createRpConfig({ signingKeys: [fed.leafSigningKey] });
+			const { config } = await createRpConfig({});
 			try {
 				await explicitRegistration(discovery, config, fed.trustAnchors, fed.options);
 				t.ok(false, "should have thrown");
@@ -1281,7 +1288,7 @@ export default (QUnit: QUnit) => {
 				},
 			});
 			const discovery = await createMockDiscovery(OP_ID, fed);
-			const { config } = await createRpConfig({ signingKeys: [fed.leafSigningKey] });
+			const { config } = await createRpConfig({});
 			try {
 				await explicitRegistration(discovery, config, fed.trustAnchors, fed.options);
 				t.ok(false, "should have thrown");
@@ -1297,8 +1304,8 @@ export default (QUnit: QUnit) => {
 			const now = Math.floor(Date.now() / 1000);
 			const badResponseJwt = await signEntityStatement(
 				{ iss: OP_ID, sub: LEAF_ID, aud: LEAF_ID, iat: now, exp: now + 86400, trust_anchor: TA_ID },
-				unknownKey,
-				{ kid: unknownKey.kid, typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
+				new JwkSigner(unknownKey),
+				{ typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
 			);
 			const httpClient = async (input: string | URL | Request) => {
 				const url =
@@ -1314,7 +1321,7 @@ export default (QUnit: QUnit) => {
 					});
 				return fed.httpClient(input);
 			};
-			const { config } = await createRpConfig({ signingKeys: [fed.leafSigningKey] });
+			const { config } = await createRpConfig({});
 			try {
 				await explicitRegistration(discovery, config, fed.trustAnchors, { httpClient });
 				t.ok(false, "should have thrown");
@@ -1337,7 +1344,7 @@ export default (QUnit: QUnit) => {
 
 		test("throws if response trust_anchor doesn't match OP chain root", async (t) => {
 			const fed = await createMockFederation();
-			const { config } = await createRpConfig({ signingKeys: [fed.leafSigningKey] });
+			const { config } = await createRpConfig({});
 			const discovery = await createMockDiscovery(OP_ID, fed);
 			const now = Math.floor(Date.now() / 1000);
 			const badResponseJwt = await signEntityStatement(
@@ -1351,8 +1358,8 @@ export default (QUnit: QUnit) => {
 					trust_anchor: "https://wrong-ta.example.com",
 					metadata: { openid_relying_party: { client_id: LEAF_ID } },
 				},
-				fed.opSigningKey,
-				{ kid: fed.opSigningKey.kid, typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
+				new JwkSigner(fed.opSigningKey),
+				{ typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
 			);
 			const httpClient = async (input: string | URL | Request) => {
 				const url =
@@ -1378,7 +1385,7 @@ export default (QUnit: QUnit) => {
 
 		test("throws if response metadata is missing a requested entity type", async (t) => {
 			const fed = await createMockFederation();
-			const { config } = await createRpConfig({ signingKeys: [fed.leafSigningKey] });
+			const { config } = await createRpConfig({});
 			const discovery = await createMockDiscovery(OP_ID, fed);
 			const now = Math.floor(Date.now() / 1000);
 			// The RP requested openid_relying_party metadata, while the OP responds
@@ -1394,8 +1401,8 @@ export default (QUnit: QUnit) => {
 					trust_anchor: TA_ID,
 					metadata: { openid_provider: { issuer: OP_ID } },
 				},
-				fed.opSigningKey,
-				{ kid: fed.opSigningKey.kid, typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
+				new JwkSigner(fed.opSigningKey),
+				{ typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
 			);
 			const httpClient = async (input: string | URL | Request) => {
 				const url =
@@ -1422,7 +1429,7 @@ export default (QUnit: QUnit) => {
 		test("does not leak raw OP response body in errors", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
-			const { config } = await createRpConfig({ signingKeys: [fed.leafSigningKey] });
+			const { config } = await createRpConfig({});
 			const httpClient = async (input: string | URL | Request) => {
 				const url =
 					typeof input === "string"
@@ -1447,7 +1454,7 @@ export default (QUnit: QUnit) => {
 		test("throws if OP response is already expired", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
-			const { config } = await createRpConfig({ signingKeys: [fed.leafSigningKey] });
+			const { config } = await createRpConfig({});
 			const past = Math.floor(Date.now() / 1000) - 7200;
 			const expiredResponseJwt = await signEntityStatement(
 				{
@@ -1459,8 +1466,8 @@ export default (QUnit: QUnit) => {
 					trust_anchor: TA_ID,
 					metadata: { openid_relying_party: { client_id: LEAF_ID } },
 				},
-				fed.opSigningKey,
-				{ kid: fed.opSigningKey.kid, typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
+				new JwkSigner(fed.opSigningKey),
+				{ typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
 			);
 			const httpClient = async (input: string | URL | Request) => {
 				const url =
@@ -1487,7 +1494,7 @@ export default (QUnit: QUnit) => {
 		test("throws if OP response is missing exp", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
-			const { config } = await createRpConfig({ signingKeys: [fed.leafSigningKey] });
+			const { config } = await createRpConfig({});
 			const now = Math.floor(Date.now() / 1000);
 			const noExpResponseJwt = await signEntityStatement(
 				{
@@ -1498,8 +1505,8 @@ export default (QUnit: QUnit) => {
 					trust_anchor: TA_ID,
 					metadata: { openid_relying_party: { client_id: LEAF_ID } },
 				},
-				fed.opSigningKey,
-				{ kid: fed.opSigningKey.kid, typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
+				new JwkSigner(fed.opSigningKey),
+				{ typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
 			);
 			const httpClient = async (input: string | URL | Request) => {
 				const url =
@@ -1542,8 +1549,8 @@ export default (QUnit: QUnit) => {
 					scope: "openid",
 					response_type: "code",
 				},
-				fed.leafSigningKey,
-				{ kid: fed.leafSigningKey.kid, typ: "oauth-authz-req+jwt" },
+				new JwkSigner(fed.leafSigningKey),
+				{ typ: "oauth-authz-req+jwt" },
 			);
 		}
 
@@ -1595,8 +1602,8 @@ export default (QUnit: QUnit) => {
 					iat: now,
 					exp: now + 300,
 				},
-				fed.leafSigningKey,
-				{ kid: fed.leafSigningKey.kid, typ: JwtTyp.EntityStatement },
+				new JwkSigner(fed.leafSigningKey),
+				{ typ: JwtTyp.EntityStatement },
 			);
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
 				...fed.options,
@@ -1620,8 +1627,8 @@ export default (QUnit: QUnit) => {
 					iat: now,
 					exp: now + 300,
 				},
-				fed.leafSigningKey,
-				{ kid: fed.leafSigningKey.kid, typ: "oauth-authz-req+jwt" },
+				new JwkSigner(fed.leafSigningKey),
+				{ typ: "oauth-authz-req+jwt" },
 			);
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
 				...fed.options,
@@ -1644,8 +1651,8 @@ export default (QUnit: QUnit) => {
 					iat: now,
 					exp: now + 300,
 				},
-				fed.leafSigningKey,
-				{ kid: fed.leafSigningKey.kid, typ: "oauth-authz-req+jwt" },
+				new JwkSigner(fed.leafSigningKey),
+				{ typ: "oauth-authz-req+jwt" },
 			);
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
 				...fed.options,
@@ -1668,8 +1675,8 @@ export default (QUnit: QUnit) => {
 					iat: now,
 					exp: now + 300,
 				},
-				fed.leafSigningKey,
-				{ kid: fed.leafSigningKey.kid, typ: "oauth-authz-req+jwt" },
+				new JwkSigner(fed.leafSigningKey),
+				{ typ: "oauth-authz-req+jwt" },
 			);
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
 				...fed.options,
@@ -1692,8 +1699,8 @@ export default (QUnit: QUnit) => {
 					iat: now - 600,
 					exp: now - 300,
 				},
-				fed.leafSigningKey,
-				{ kid: fed.leafSigningKey.kid, typ: "oauth-authz-req+jwt" },
+				new JwkSigner(fed.leafSigningKey),
+				{ typ: "oauth-authz-req+jwt" },
 			);
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
 				...fed.options,
@@ -1709,8 +1716,8 @@ export default (QUnit: QUnit) => {
 			const now = Math.floor(Date.now() / 1000);
 			const jwt = await signEntityStatement(
 				{ iss: LEAF_ID, client_id: LEAF_ID, aud: OP_ID, jti: crypto.randomUUID(), iat: now },
-				fed.leafSigningKey,
-				{ kid: fed.leafSigningKey.kid, typ: "oauth-authz-req+jwt" },
+				new JwkSigner(fed.leafSigningKey),
+				{ typ: "oauth-authz-req+jwt" },
 			);
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
 				...fed.options,
@@ -1726,8 +1733,8 @@ export default (QUnit: QUnit) => {
 			const now = Math.floor(Date.now() / 1000);
 			const jwt = await signEntityStatement(
 				{ iss: LEAF_ID, client_id: LEAF_ID, aud: OP_ID, iat: now, exp: now + 300 },
-				fed.leafSigningKey,
-				{ kid: fed.leafSigningKey.kid, typ: "oauth-authz-req+jwt" },
+				new JwkSigner(fed.leafSigningKey),
+				{ typ: "oauth-authz-req+jwt" },
 			);
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
 				...fed.options,
@@ -1771,8 +1778,8 @@ export default (QUnit: QUnit) => {
 					iat: now - 330,
 					exp: now - 30,
 				},
-				fed.leafSigningKey,
-				{ kid: fed.leafSigningKey.kid, typ: "oauth-authz-req+jwt" },
+				new JwkSigner(fed.leafSigningKey),
+				{ typ: "oauth-authz-req+jwt" },
 			);
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
 				...fed.options,
@@ -1796,8 +1803,8 @@ export default (QUnit: QUnit) => {
 					iat: now,
 					exp: now + 300,
 				},
-				privateKey,
-				{ kid: privateKey.kid, typ: "oauth-authz-req+jwt" },
+				new JwkSigner(privateKey),
+				{ typ: "oauth-authz-req+jwt" },
 			);
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
 				...fed.options,
@@ -1818,8 +1825,8 @@ export default (QUnit: QUnit) => {
 					iat: now,
 					exp: now + 300,
 				},
-				fed.leafSigningKey,
-				{ kid: fed.leafSigningKey.kid, typ: "oauth-authz-req+jwt" },
+				new JwkSigner(fed.leafSigningKey),
+				{ typ: "oauth-authz-req+jwt" },
 			);
 			let warnCalled = false;
 			const originalWarn = console.warn;
@@ -1868,7 +1875,7 @@ export default (QUnit: QUnit) => {
 						},
 					},
 				},
-				fed.leafSigningKey,
+				new JwkSigner(fed.leafSigningKey),
 				signOpts(fed.leafSigningKey),
 			);
 		}
@@ -1914,7 +1921,7 @@ export default (QUnit: QUnit) => {
 					authority_hints: [TA_ID],
 					metadata: {},
 				},
-				fed.leafSigningKey,
+				new JwkSigner(fed.leafSigningKey),
 				signOpts(fed.leafSigningKey),
 			);
 			const result = await processExplicitRegistration(
@@ -1942,7 +1949,7 @@ export default (QUnit: QUnit) => {
 					authority_hints: [TA_ID],
 					metadata: {},
 				},
-				fed.leafSigningKey,
+				new JwkSigner(fed.leafSigningKey),
 				signOpts(fed.leafSigningKey),
 			);
 			const result = await processExplicitRegistration(
@@ -1973,7 +1980,7 @@ export default (QUnit: QUnit) => {
 						openid_relying_party: { redirect_uris: ["https://rp.example.com/callback"] },
 					},
 				},
-				wrongKey,
+				new JwkSigner(wrongKey),
 				signOpts(wrongKey),
 			);
 			const result = await processExplicitRegistration(
@@ -2015,7 +2022,7 @@ export default (QUnit: QUnit) => {
 						openid_relying_party: { redirect_uris: ["https://rp.example.com/callback"] },
 					},
 				},
-				fed.leafSigningKey,
+				new JwkSigner(fed.leafSigningKey),
 				signOpts(fed.leafSigningKey),
 			);
 			const result = await processExplicitRegistration(
@@ -2042,7 +2049,7 @@ export default (QUnit: QUnit) => {
 					authority_hints: [TA_ID],
 					metadata: {},
 				},
-				fed.leafSigningKey,
+				new JwkSigner(fed.leafSigningKey),
 				signOpts(fed.leafSigningKey),
 			);
 			const result = await processExplicitRegistration(
@@ -2114,7 +2121,7 @@ export default (QUnit: QUnit) => {
 						openid_relying_party: { redirect_uris: ["https://rp.example.com/callback"] },
 					},
 				},
-				privateKey,
+				new JwkSigner(privateKey),
 				signOpts(privateKey),
 			);
 			t.false(
@@ -2143,7 +2150,7 @@ export default (QUnit: QUnit) => {
 						openid_relying_party: { redirect_uris: ["https://rp.example.com/callback"] },
 					},
 				},
-				fed.leafSigningKey,
+				new JwkSigner(fed.leafSigningKey),
 				signOpts(fed.leafSigningKey),
 			);
 			const result = await processExplicitRegistration(
@@ -2173,7 +2180,7 @@ export default (QUnit: QUnit) => {
 						openid_relying_party: { redirect_uris: ["https://rp.example.com/callback"] },
 					},
 				},
-				fed.leafSigningKey,
+				new JwkSigner(fed.leafSigningKey),
 				signOpts(fed.leafSigningKey),
 			);
 			const result = await processExplicitRegistration(
@@ -2202,7 +2209,7 @@ export default (QUnit: QUnit) => {
 						openid_relying_party: { redirect_uris: ["https://rp.example.com/callback"] },
 					},
 				},
-				fed.leafSigningKey,
+				new JwkSigner(fed.leafSigningKey),
 				signOpts(fed.leafSigningKey),
 			);
 			const result = await processExplicitRegistration(
@@ -2231,7 +2238,7 @@ export default (QUnit: QUnit) => {
 						openid_relying_party: { redirect_uris: ["https://rp.example.com/callback"] },
 					},
 				},
-				fed.leafSigningKey,
+				new JwkSigner(fed.leafSigningKey),
 				signOpts(fed.leafSigningKey),
 			);
 			const result = await processExplicitRegistration(
@@ -2259,7 +2266,7 @@ export default (QUnit: QUnit) => {
 					authority_hints: [TA_ID],
 					metadata: { federation_entity: { organization_name: "Test" } },
 				},
-				fed.leafSigningKey,
+				new JwkSigner(fed.leafSigningKey),
 				signOpts(fed.leafSigningKey),
 			);
 			const result = await processExplicitRegistration(
@@ -2286,7 +2293,7 @@ export default (QUnit: QUnit) => {
 					jwks: { keys: [fed.leafPublicKey] },
 					authority_hints: [TA_ID],
 				},
-				fed.leafSigningKey,
+				new JwkSigner(fed.leafSigningKey),
 				signOpts(fed.leafSigningKey),
 			);
 			const result = await processExplicitRegistration(
@@ -2315,7 +2322,7 @@ export default (QUnit: QUnit) => {
 						openid_relying_party: { redirect_uris: ["https://rp.example.com/callback"] },
 					},
 				},
-				fed.leafSigningKey,
+				new JwkSigner(fed.leafSigningKey),
 				signOpts(fed.leafSigningKey),
 			);
 			const result = await processExplicitRegistration(
@@ -2361,8 +2368,7 @@ export default (QUnit: QUnit) => {
 				...overrides?.payloadOverrides,
 			};
 			for (const key of overrides?.removeClaims ?? []) delete payload[key];
-			return signEntityStatement(payload, signingKey, {
-				kid: signingKey.kid as string,
+			return signEntityStatement(payload, new JwkSigner(signingKey), {
 				typ: (overrides?.typOverride ?? RequestObjectTyp) as string,
 				...(overrides?.extraHeaders ? { extraHeaders: overrides.extraHeaders } : {}),
 			});
@@ -2505,7 +2511,7 @@ export default (QUnit: QUnit) => {
 					exp: Math.floor(Date.now() / 1000) + 3600,
 					jwks: { keys: [otherPub] },
 				},
-				otherKey,
+				new JwkSigner(otherKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 			const result = validateAutomaticRegistrationRequest(
@@ -2527,7 +2533,7 @@ export default (QUnit: QUnit) => {
 					exp: Math.floor(Date.now() / 1000) + 3600,
 					jwks: { keys: [publicKey] },
 				},
-				privateKey,
+				new JwkSigner(privateKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 			const result = validateAutomaticRegistrationRequest(
@@ -2549,17 +2555,17 @@ export default (QUnit: QUnit) => {
 			const exp = now + 3600;
 			const rpEc = await signEntityStatement(
 				{ iss: rpId, sub: rpId, iat: now, exp, jwks: { keys: [rpPub] } },
-				rpKey,
+				new JwkSigner(rpKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 			const opEc = await signEntityStatement(
 				{ iss: opId, sub: opId, iat: now, exp, jwks: { keys: [opPub] } },
-				opKey,
+				new JwkSigner(opKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 			const taEc = await signEntityStatement(
 				{ iss: taId, sub: taId, iat: now, exp, jwks: { keys: [taPub] } },
-				taKey,
+				new JwkSigner(taKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 			return { rpKey, opKey, taKey, rpEc, opEc, taEc, rpPub, opPub, taPub };
@@ -2595,7 +2601,7 @@ export default (QUnit: QUnit) => {
 					exp: now + 3600,
 					jwks: { keys: [strangerPub] },
 				},
-				strangerKey,
+				new JwkSigner(strangerKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 			const result = validateAutomaticRegistrationRequest(
@@ -2625,7 +2631,7 @@ export default (QUnit: QUnit) => {
 					exp: now + 3600,
 					jwks: { keys: [otherTaPub] },
 				},
-				otherTaKey,
+				new JwkSigner(otherTaKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 			const result = validateAutomaticRegistrationRequest(
@@ -2671,7 +2677,7 @@ export default (QUnit: QUnit) => {
 			const opSigningKey: JWK = { ...privateKey, kid: "op-handler-test-kid" };
 			const baseConfig: ExplicitRegistrationHandlerConfig = {
 				opEntityId: HANDLER_ENTITY_ID,
-				getSigningKey: async () => ({ key: opSigningKey, kid: opSigningKey.kid as string }),
+				keyProvider: new MemoryFederationKeyProvider(federationKey(opSigningKey)),
 			};
 			return { ...baseConfig, ...overrides };
 		}
@@ -2679,7 +2685,7 @@ export default (QUnit: QUnit) => {
 		async function buildRegistrationRequest(
 			rpEntityId: string,
 			opEntityId: string,
-			rpPrivateKey: Parameters<typeof signEntityStatement>[1],
+			rpPrivateKey: JWK,
 			rpPublicKey: Record<string, unknown>,
 			overrides?: Record<string, unknown>,
 		) {
@@ -2694,7 +2700,7 @@ export default (QUnit: QUnit) => {
 					...REQUIRED_FIELDS,
 					...overrides,
 				},
-				rpPrivateKey,
+				new JwkSigner(rpPrivateKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 		}
@@ -2930,7 +2936,7 @@ export default (QUnit: QUnit) => {
 						exp: REG_NOW + 3600,
 						jwks: { keys: [otherKeys.publicKey] },
 					},
-					otherKeys.privateKey,
+					new JwkSigner(otherKeys.privateKey),
 					{ typ: JwtTyp.EntityStatement },
 				);
 				const jwt = await signEntityStatement(
@@ -2943,7 +2949,7 @@ export default (QUnit: QUnit) => {
 						jwks: { keys: [rpKeys.publicKey] },
 						...REQUIRED_FIELDS,
 					},
-					rpKeys.privateKey,
+					new JwkSigner(rpKeys.privateKey),
 					{ typ: JwtTyp.EntityStatement, extraHeaders: { trust_chain: [wrongEc] } },
 				);
 				const res = await handler(
@@ -3024,7 +3030,7 @@ export default (QUnit: QUnit) => {
 							openid_relying_party: { redirect_uris: ["https://rp.example.com/callback"] },
 						},
 					},
-					rpKeys.privateKey,
+					new JwkSigner(rpKeys.privateKey),
 					{ typ: JwtTyp.EntityStatement },
 				);
 				const res = await handler(
@@ -3053,7 +3059,7 @@ export default (QUnit: QUnit) => {
 						authority_hints: ["https://ta.example.com"],
 						metadata: { federation_entity: { organization_name: "Test" } },
 					},
-					rpKeys.privateKey,
+					new JwkSigner(rpKeys.privateKey),
 					{ typ: JwtTyp.EntityStatement },
 				);
 				const res = await handler(
@@ -3175,7 +3181,7 @@ export default (QUnit: QUnit) => {
 						jwks: { keys: [rpKeys.publicKey as unknown as Record<string, unknown>] },
 						...REQUIRED_FIELDS,
 					},
-					rpKeys.privateKey,
+					new JwkSigner(rpKeys.privateKey),
 					{
 						typ: JwtTyp.EntityStatement,
 						extraHeaders: {
@@ -3331,7 +3337,7 @@ export default (QUnit: QUnit) => {
 						jwks: { keys: [rpKeys.publicKey as unknown as Record<string, unknown>] },
 						...REQUIRED_FIELDS,
 					},
-					rpKeys.privateKey,
+					new JwkSigner(rpKeys.privateKey),
 					{
 						typ: JwtTyp.EntityStatement,
 						extraHeaders: {
@@ -3413,7 +3419,7 @@ export default (QUnit: QUnit) => {
 						exp: now + 3600,
 						jwks: { keys: [otherTaPub as unknown as Record<string, unknown>] },
 					},
-					otherTaKey,
+					new JwkSigner(otherTaKey),
 					{ typ: JwtTyp.EntityStatement },
 				);
 
@@ -3449,7 +3455,7 @@ export default (QUnit: QUnit) => {
 						jwks: { keys: [rpKeys.publicKey as unknown as Record<string, unknown>] },
 						...REQUIRED_FIELDS,
 					},
-					rpKeys.privateKey,
+					new JwkSigner(rpKeys.privateKey),
 					{
 						typ: JwtTyp.EntityStatement,
 						extraHeaders: {
@@ -3486,7 +3492,7 @@ export default (QUnit: QUnit) => {
 						exp: REG_NOW + 3600,
 						jwks: { keys: [rogueTaPub as unknown as Record<string, unknown>] },
 					},
-					rogueTaKey,
+					new JwkSigner(rogueTaKey),
 					{ typ: JwtTyp.EntityStatement },
 				);
 				const fakeRpChain = [fed.leafEcJwt, rogueTaEc];
@@ -3501,7 +3507,7 @@ export default (QUnit: QUnit) => {
 						jwks: { keys: [rpKeys.publicKey as unknown as Record<string, unknown>] },
 						...REQUIRED_FIELDS,
 					},
-					rpKeys.privateKey,
+					new JwkSigner(rpKeys.privateKey),
 					{
 						typ: JwtTyp.EntityStatement,
 						extraHeaders: {
@@ -3539,7 +3545,7 @@ export default (QUnit: QUnit) => {
 						exp: REG_NOW + 3600,
 						jwks: { keys: [foreignTaPub as unknown as Record<string, unknown>] },
 					},
-					foreignTaKey,
+					new JwkSigner(foreignTaKey),
 					{ typ: JwtTyp.EntityStatement },
 				);
 
@@ -3553,7 +3559,7 @@ export default (QUnit: QUnit) => {
 						jwks: { keys: [rpKeys.publicKey as unknown as Record<string, unknown>] },
 						...REQUIRED_FIELDS,
 					},
-					rpKeys.privateKey,
+					new JwkSigner(rpKeys.privateKey),
 					{
 						typ: JwtTyp.EntityStatement,
 						extraHeaders: {
@@ -3597,7 +3603,7 @@ export default (QUnit: QUnit) => {
 						jwks: { keys: [rpKeys.publicKey as unknown as Record<string, unknown>] },
 						...REQUIRED_FIELDS,
 					},
-					rpKeys.privateKey,
+					new JwkSigner(rpKeys.privateKey),
 					{
 						typ: JwtTyp.EntityStatement,
 						extraHeaders: { peer_trust_chain: [] },

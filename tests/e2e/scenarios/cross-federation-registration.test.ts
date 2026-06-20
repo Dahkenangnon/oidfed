@@ -24,7 +24,7 @@ describe("Cross-federation registration", () => {
 				discovery,
 				{
 					entityId: entityId(rpId),
-					signingKeys: [rpEntity.keys.signing],
+					protocolKeyProvider: rpEntity.oidcProtocolKeyProvider,
 					authorityHints: [entityId(`https://ia-shared.ofed.test:${port}`)],
 					metadata: {
 						openid_relying_party: {
@@ -33,6 +33,7 @@ describe("Cross-federation registration", () => {
 							grant_types: ["authorization_code"],
 							client_registration_types: ["automatic"],
 							token_endpoint_auth_method: "private_key_jwt",
+							jwks: { keys: [rpEntity.keys.protocolPublic] },
 						},
 					},
 					requestDelivery: "query",
@@ -67,7 +68,7 @@ describe("Cross-federation registration", () => {
 				discovery,
 				{
 					entityId: entityId(rpId),
-					signingKeys: [rp2Entity.keys.signing],
+					keyProvider: rp2Entity.keyProvider,
 					authorityHints: [entityId(`https://ia-shared.ofed.test:${port}`)],
 					metadata: {
 						openid_relying_party: {
@@ -76,6 +77,7 @@ describe("Cross-federation registration", () => {
 							grant_types: ["authorization_code"],
 							client_registration_types: ["explicit"],
 							token_endpoint_auth_method: "private_key_jwt",
+							jwks: { keys: [rp2Entity.keys.protocolPublic] },
 						},
 					},
 				},

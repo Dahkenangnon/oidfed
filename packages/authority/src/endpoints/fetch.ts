@@ -72,7 +72,7 @@ export async function buildSubordinateStatement(
 	record: SubordinateRecord,
 	now?: number,
 ): Promise<string> {
-	const { key: signingKey, kid } = await ctx.getSigningKey();
+	const keySet = await ctx.keyProvider.getFederationKeySet();
 	const iat = now ?? nowSeconds(ctx.options?.clock);
 
 	const payload: Record<string, unknown> = {
@@ -107,8 +107,7 @@ export async function buildSubordinateStatement(
 	assertCritShape(payload);
 	assertMetadataPolicyCritShape(payload);
 
-	return signEntityStatement(payload, signingKey, {
-		kid,
+	return signEntityStatement(payload, keySet.signer, {
 		typ: JwtTyp.EntityStatement,
 	});
 }

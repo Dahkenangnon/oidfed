@@ -1,4 +1,4 @@
-import { generateSigningKey, type HttpClient, signEntityStatement } from "@oidfed/core";
+import { generateSigningKey, type HttpClient, JwkSigner, signEntityStatement } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
 import { handler } from "../../src/commands/validate.js";
 import { DEFAULT_CONFIG } from "../../src/config.js";
@@ -41,7 +41,7 @@ describe("validate handler", () => {
 				exp: 9999999999,
 				jwks: { keys: [key.publicKey] },
 			},
-			key.privateKey,
+			new JwkSigner(key.privateKey),
 		);
 
 		const taClient: HttpClient = async () =>
@@ -88,7 +88,7 @@ describe("validate handler", () => {
 				exp: 9999999999,
 				jwks: { keys: [key.publicKey] },
 			},
-			key.privateKey,
+			new JwkSigner(key.privateKey),
 		);
 		const client: HttpClient = async (input) => {
 			const parsed = new URL(typeof input === "string" ? input : input.toString());

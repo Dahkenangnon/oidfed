@@ -83,6 +83,7 @@ import {
 	timingSafeEqual,
 } from "../../../packages/core/src/jose/keys.js";
 import { signEntityStatement } from "../../../packages/core/src/jose/sign.js";
+import { JwkSigner, type JwtSigner } from "../../../packages/core/src/jose/signer.js";
 import {
 	assertTypHeader,
 	decodeEntityStatement,
@@ -2168,6 +2169,26 @@ export default (QUnit: QUnit) => {
 		const sv_now = Math.floor(Date.now() / 1000);
 
 		module("core / sign and verify round-trip", () => {
+			test("accepts a custom signer without exposing key material", async (t) => {
+				const { publicKey, privateKey } = await generateSigningKey("ES256");
+				const softwareSigner = new JwkSigner(privateKey);
+				const customSigner: JwtSigner = {
+					kid: softwareSigner.kid,
+					alg: softwareSigner.alg,
+					signJwt: (payload, protectedHeader) => softwareSigner.signJwt(payload, protectedHeader),
+				};
+				const jwt = await signEntityStatement(
+					{
+						iss: "https://custom-signer.example.com",
+						sub: "https://custom-signer.example.com",
+						iat: sv_now,
+						exp: sv_now + 3600,
+					},
+					customSigner,
+				);
+				t.true(isOk(await verifyEntityStatement(jwt, { keys: [publicKey] })));
+			});
+
 			test("signs and verifies an entity statement with ES256", async (t) => {
 				const { publicKey, privateKey } = await generateSigningKey("ES256");
 				const jwt = await signEntityStatement(
@@ -2177,7 +2198,7 @@ export default (QUnit: QUnit) => {
 						iat: sv_now,
 						exp: sv_now + 3600,
 					},
-					privateKey,
+					new JwkSigner(privateKey),
 				);
 				t.equal(typeof jwt, "string");
 				t.equal(jwt.split(".").length, 3);
@@ -2198,8 +2219,7 @@ export default (QUnit: QUnit) => {
 						iat: sv_now,
 						exp: sv_now + 3600,
 					},
-					privateKey,
-					{ alg: "PS256" },
+					new JwkSigner(privateKey),
 				);
 				const result = await verifyEntityStatement(jwt, { keys: [publicKey] });
 				t.true(isOk(result));
@@ -2217,7 +2237,7 @@ export default (QUnit: QUnit) => {
 						iat: sv_now,
 						exp: sv_now + 3600,
 					},
-					keys1.privateKey,
+					new JwkSigner(keys1.privateKey),
 				);
 				t.true(isErr(await verifyEntityStatement(jwt, { keys: [keys2.publicKey] })));
 			});
@@ -2230,7 +2250,7 @@ export default (QUnit: QUnit) => {
 						iat: sv_now,
 						exp: sv_now + 3600,
 					},
-					privateKey,
+					new JwkSigner(privateKey),
 					{ typ: "trust-mark+jwt" },
 				);
 				const result = await verifyEntityStatement(jwt, { keys: [publicKey] });
@@ -2267,8 +2287,7 @@ export default (QUnit: QUnit) => {
 						iat: sv_now,
 						exp: sv_now + 3600,
 					},
-					keys1.privateKey,
-					{ kid: keys1.publicKey.kid },
+					new JwkSigner(keys1.privateKey),
 				);
 				t.true(isErr(await verifyEntityStatement(jwt, { keys: [keys2.publicKey] })));
 			});
@@ -2284,7 +2303,7 @@ export default (QUnit: QUnit) => {
 						iat: sv_now,
 						exp: sv_now + 3600,
 					},
-					privateKey,
+					new JwkSigner(privateKey),
 				);
 				const result = decodeEntityStatement(jwt);
 				t.true(isOk(result));
@@ -2340,11 +2359,7 @@ export default (QUnit: QUnit) => {
 			test("throws for alg: 'none'", async (t) => {
 				const { privateKey } = await generateSigningKey("ES256");
 				try {
-					await signEntityStatement(
-						{ iss: "https://example.com", sub: "https://example.com" },
-						privateKey,
-						{ alg: "none" },
-					);
+					new JwkSigner(privateKey, { alg: "none" as never });
 					t.ok(false, "should have thrown");
 				} catch (e: unknown) {
 					t.true(/Unsupported signing algorithm/.test((e as Error).message));
@@ -2353,11 +2368,7 @@ export default (QUnit: QUnit) => {
 			test("throws for unsupported alg with descriptive message", async (t) => {
 				const { privateKey } = await generateSigningKey("ES256");
 				try {
-					await signEntityStatement(
-						{ iss: "https://example.com", sub: "https://example.com" },
-						privateKey,
-						{ alg: "HS256" },
-					);
+					new JwkSigner(privateKey, { alg: "HS256" as never });
 					t.ok(false, "should have thrown");
 				} catch (e: unknown) {
 					t.true((e as Error).message.includes("HS256"));
@@ -2366,13 +2377,23 @@ export default (QUnit: QUnit) => {
 			test("throws when no kid is available", async (t) => {
 				const { privateKey } = await generateSigningKey("ES256");
 				try {
-					await signEntityStatement({ iss: "https://example.com", sub: "https://example.com" }, {
+					new JwkSigner({
 						...privateKey,
 						kid: undefined,
 					} as JWK);
 					t.ok(false, "should have thrown");
 				} catch (e: unknown) {
 					t.true((e as Error).message.toLowerCase().includes("kid"));
+				}
+			});
+			test("throws when constructed with a public JWK", async (t) => {
+				const { privateKey } = await generateSigningKey("ES256");
+				const publicKey = stripPrivateFields(privateKey);
+				try {
+					new JwkSigner(publicKey);
+					t.ok(false, "should have thrown");
+				} catch (e: unknown) {
+					t.true((e as Error).message.toLowerCase().includes("private key"));
 				}
 			});
 		});
@@ -2405,11 +2426,9 @@ export default (QUnit: QUnit) => {
 				exp: overrides?.exp ?? n + 60,
 			};
 			if (overrides?.jti !== undefined) payload.jti = overrides.jti;
-			const jwt = await signEntityStatement(payload, keys.privateKey, {
-				kid: keys.privateKey.kid,
-				typ: overrides?.typ ?? "JWT",
-				alg: overrides?.alg,
-			});
+			const options: { typ: string; alg?: never } = { typ: overrides?.typ ?? "JWT" };
+			if (overrides?.alg) options.alg = overrides.alg as never;
+			const jwt = await signEntityStatement(payload, new JwkSigner(keys.privateKey), options);
 			return { jwt, keys };
 		}
 
@@ -4004,12 +4023,13 @@ export default (QUnit: QUnit) => {
 			const priv = { ...privateKey, kid };
 			const pub = { ...publicKey, kid };
 			const jwks: import("../../../packages/core/src/schemas/jwk.js").JWKSet = { keys: [pub] };
-			return { priv, pub, jwks, kid };
+			const signer = new JwkSigner(priv);
+			return { priv, pub, jwks, kid, signer };
 		}
 
 		module("core / verifyResolveResponse", () => {
 			test("accepts valid resolve-response+jwt", async (t) => {
-				const { priv, jwks, kid } = await setupFAKeys();
+				const { signer, jwks } = await setupFAKeys();
 				const jwt = await _signES(
 					{
 						iss: "https://authority.example.com",
@@ -4019,8 +4039,8 @@ export default (QUnit: QUnit) => {
 						metadata: { federation_entity: { organization_name: "Test" } },
 						trust_chain: ["jwt1", "jwt2"],
 					},
-					priv,
-					{ kid, typ: JwtTyp.ResolveResponse },
+					signer,
+					{ typ: JwtTyp.ResolveResponse },
 				);
 				const result = await verifyResolveResponse(jwt, jwks);
 				t.true(result.ok);
@@ -4029,7 +4049,7 @@ export default (QUnit: QUnit) => {
 				}
 			});
 			test("rejects wrong typ header", async (t) => {
-				const { priv, jwks, kid } = await setupFAKeys();
+				const { signer, jwks } = await setupFAKeys();
 				const jwt = await _signES(
 					{
 						iss: "https://authority.example.com",
@@ -4039,13 +4059,13 @@ export default (QUnit: QUnit) => {
 						metadata: { federation_entity: {} },
 						trust_chain: ["jwt1"],
 					},
-					priv,
-					{ kid, typ: JwtTyp.EntityStatement },
+					signer,
+					{ typ: JwtTyp.EntityStatement },
 				);
 				t.false((await verifyResolveResponse(jwt, jwks)).ok);
 			});
 			test("accepts resolve response with aud claim", async (t) => {
-				const { priv, jwks, kid } = await setupFAKeys();
+				const { signer, jwks } = await setupFAKeys();
 				const jwt = await _signES(
 					{
 						iss: "https://authority.example.com",
@@ -4056,8 +4076,8 @@ export default (QUnit: QUnit) => {
 						trust_chain: ["jwt1", "jwt2"],
 						aud: "https://client.example.com",
 					},
-					priv,
-					{ kid, typ: JwtTyp.ResolveResponse },
+					signer,
+					{ typ: JwtTyp.ResolveResponse },
 				);
 				const result = await verifyResolveResponse(jwt, jwks);
 				t.true(result.ok);
@@ -4066,7 +4086,7 @@ export default (QUnit: QUnit) => {
 				}
 			});
 			test("accepts resolve response with additional claims", async (t) => {
-				const { priv, jwks, kid } = await setupFAKeys();
+				const { signer, jwks } = await setupFAKeys();
 				const jwt = await _signES(
 					{
 						iss: "https://authority.example.com",
@@ -4077,13 +4097,13 @@ export default (QUnit: QUnit) => {
 						trust_chain: ["jwt1"],
 						custom_claim: "value",
 					},
-					priv,
-					{ kid, typ: JwtTyp.ResolveResponse },
+					signer,
+					{ typ: JwtTyp.ResolveResponse },
 				);
 				t.true((await verifyResolveResponse(jwt, jwks)).ok);
 			});
 			test("rejects invalid signature", async (t) => {
-				const { priv, kid } = await setupFAKeys();
+				const { signer, kid } = await setupFAKeys();
 				const { publicKey: otherPub } = await _genKey("ES256");
 				const otherJwks = { keys: [{ ...otherPub, kid }] };
 				const jwt = await _signES(
@@ -4095,8 +4115,8 @@ export default (QUnit: QUnit) => {
 						metadata: { federation_entity: {} },
 						trust_chain: ["jwt1"],
 					},
-					priv,
-					{ kid, typ: JwtTyp.ResolveResponse },
+					signer,
+					{ typ: JwtTyp.ResolveResponse },
 				);
 				t.false((await verifyResolveResponse(jwt, otherJwks)).ok);
 			});
@@ -4104,7 +4124,7 @@ export default (QUnit: QUnit) => {
 
 		module("core / verifyTrustMarkStatusResponse", () => {
 			test("accepts valid trust-mark-status-response+jwt", async (t) => {
-				const { priv, jwks, kid } = await setupFAKeys();
+				const { signer, jwks } = await setupFAKeys();
 				const jwt = await _signES(
 					{
 						iss: "https://authority.example.com",
@@ -4112,8 +4132,8 @@ export default (QUnit: QUnit) => {
 						trust_mark: "some.jwt.token",
 						status: "active",
 					},
-					priv,
-					{ kid, typ: JwtTyp.TrustMarkStatusResponse },
+					signer,
+					{ typ: JwtTyp.TrustMarkStatusResponse },
 				);
 				const result = await verifyTrustMarkStatusResponse(jwt, jwks);
 				t.true(result.ok);
@@ -4122,7 +4142,7 @@ export default (QUnit: QUnit) => {
 				}
 			});
 			test("rejects wrong typ header", async (t) => {
-				const { priv, jwks, kid } = await setupFAKeys();
+				const { signer, jwks } = await setupFAKeys();
 				const jwt = await _signES(
 					{
 						iss: "https://authority.example.com",
@@ -4130,13 +4150,13 @@ export default (QUnit: QUnit) => {
 						trust_mark: "some.jwt",
 						status: "active",
 					},
-					priv,
-					{ kid, typ: JwtTyp.EntityStatement },
+					signer,
+					{ typ: JwtTyp.EntityStatement },
 				);
 				t.false((await verifyTrustMarkStatusResponse(jwt, jwks)).ok);
 			});
 			test("accepts additional status values", async (t) => {
-				const { priv, jwks, kid } = await setupFAKeys();
+				const { signer, jwks } = await setupFAKeys();
 				const jwt = await _signES(
 					{
 						iss: "https://authority.example.com",
@@ -4144,8 +4164,8 @@ export default (QUnit: QUnit) => {
 						trust_mark: "some.jwt.token",
 						status: "suspended",
 					},
-					priv,
-					{ kid, typ: JwtTyp.TrustMarkStatusResponse },
+					signer,
+					{ typ: JwtTyp.TrustMarkStatusResponse },
 				);
 				const result = await verifyTrustMarkStatusResponse(jwt, jwks);
 				t.true(result.ok);
@@ -4154,7 +4174,7 @@ export default (QUnit: QUnit) => {
 				}
 			});
 			test("accepts additional claims in trust mark status response", async (t) => {
-				const { priv, jwks, kid } = await setupFAKeys();
+				const { signer, jwks } = await setupFAKeys();
 				const jwt = await _signES(
 					{
 						iss: "https://authority.example.com",
@@ -4163,8 +4183,8 @@ export default (QUnit: QUnit) => {
 						status: "active",
 						custom_field: "extra",
 					},
-					priv,
-					{ kid, typ: JwtTyp.TrustMarkStatusResponse },
+					signer,
+					{ typ: JwtTyp.TrustMarkStatusResponse },
 				);
 				t.true((await verifyTrustMarkStatusResponse(jwt, jwks)).ok);
 			});
@@ -4172,15 +4192,15 @@ export default (QUnit: QUnit) => {
 
 		module("core / verifyHistoricalKeysResponse", () => {
 			test("accepts valid jwk-set+jwt", async (t) => {
-				const { priv, jwks, kid } = await setupFAKeys();
+				const { signer, jwks } = await setupFAKeys();
 				const jwt = await _signES(
 					{
 						iss: "https://authority.example.com",
 						iat: fa_now,
 						keys: [{ kty: "EC", kid: "old-key-1", exp: fa_now - 3600 }],
 					},
-					priv,
-					{ kid, typ: JwtTyp.JwkSet },
+					signer,
+					{ typ: JwtTyp.JwkSet },
 				);
 				const result = await verifyHistoricalKeysResponse(jwt, jwks);
 				t.true(result.ok);
@@ -4189,24 +4209,24 @@ export default (QUnit: QUnit) => {
 				}
 			});
 			test("rejects wrong typ header", async (t) => {
-				const { priv, jwks, kid } = await setupFAKeys();
+				const { signer, jwks } = await setupFAKeys();
 				const jwt = await _signES(
 					{
 						iss: "https://authority.example.com",
 						iat: fa_now,
 						keys: [{ kty: "EC", kid: "k1", exp: fa_now }],
 					},
-					priv,
-					{ kid, typ: JwtTyp.EntityStatement },
+					signer,
+					{ typ: JwtTyp.EntityStatement },
 				);
 				t.false((await verifyHistoricalKeysResponse(jwt, jwks)).ok);
 			});
 			test("rejects keys without kid", async (t) => {
-				const { priv, jwks, kid } = await setupFAKeys();
+				const { signer, jwks } = await setupFAKeys();
 				const jwt = await _signES(
 					{ iss: "https://authority.example.com", iat: fa_now, keys: [{ kty: "EC", exp: fa_now }] },
-					priv,
-					{ kid, typ: JwtTyp.JwkSet },
+					signer,
+					{ typ: JwtTyp.JwkSet },
 				);
 				t.false((await verifyHistoricalKeysResponse(jwt, jwks)).ok);
 			});
@@ -4214,7 +4234,7 @@ export default (QUnit: QUnit) => {
 
 		module("core / verifySignedJwkSet", () => {
 			test("accepts valid jwk-set+jwt with required claims iss, sub, keys", async (t) => {
-				const { priv, pub, jwks, kid } = await setupFAKeys();
+				const { signer, pub, jwks } = await setupFAKeys();
 				const jwt = await _signES(
 					{
 						iss: "https://entity.example.com",
@@ -4222,8 +4242,8 @@ export default (QUnit: QUnit) => {
 						iat: fa_now,
 						keys: [pub],
 					},
-					priv,
-					{ kid, typ: JwtTyp.JwkSet },
+					signer,
+					{ typ: JwtTyp.JwkSet },
 				);
 				const result = await verifySignedJwkSet(jwt, jwks);
 				t.true(result.ok);
@@ -4234,7 +4254,7 @@ export default (QUnit: QUnit) => {
 				}
 			});
 			test("rejects wrong typ header", async (t) => {
-				const { priv, jwks, kid } = await setupFAKeys();
+				const { signer, jwks } = await setupFAKeys();
 				const { publicKey: otherPub } = await _genKey("ES256");
 				const jwt = await _signES(
 					{
@@ -4243,45 +4263,45 @@ export default (QUnit: QUnit) => {
 						iat: fa_now,
 						keys: [otherPub],
 					},
-					priv,
-					{ kid, typ: JwtTyp.EntityStatement },
+					signer,
+					{ typ: JwtTyp.EntityStatement },
 				);
 				t.false((await verifySignedJwkSet(jwt, jwks)).ok);
 			});
 			test("rejects missing keys in payload", async (t) => {
-				const { priv, jwks, kid } = await setupFAKeys();
+				const { signer, jwks } = await setupFAKeys();
 				const jwt = await _signES(
 					{ iss: "https://entity.example.com", sub: "https://entity.example.com", iat: fa_now },
-					priv,
-					{ kid, typ: JwtTyp.JwkSet },
+					signer,
+					{ typ: JwtTyp.JwkSet },
 				);
 				t.false((await verifySignedJwkSet(jwt, jwks)).ok);
 			});
 			test("rejects missing iss in payload", async (t) => {
-				const { priv, pub, jwks, kid } = await setupFAKeys();
+				const { signer, pub, jwks } = await setupFAKeys();
 				const jwt = await _signES(
 					{ sub: "https://entity.example.com", iat: fa_now, keys: [pub] } as Parameters<
 						typeof _signES
 					>[0],
-					priv,
-					{ kid, typ: JwtTyp.JwkSet },
+					signer,
+					{ typ: JwtTyp.JwkSet },
 				);
 				t.false((await verifySignedJwkSet(jwt, jwks)).ok);
 			});
 			test("rejects missing sub in payload", async (t) => {
-				const { priv, pub, jwks, kid } = await setupFAKeys();
+				const { signer, pub, jwks } = await setupFAKeys();
 				const jwt = await _signES(
 					{ iss: "https://entity.example.com", iat: fa_now, keys: [pub] } as Parameters<
 						typeof _signES
 					>[0],
-					priv,
-					{ kid, typ: JwtTyp.JwkSet },
+					signer,
+					{ typ: JwtTyp.JwkSet },
 				);
 				t.false((await verifySignedJwkSet(jwt, jwks)).ok);
 			});
 			test("rejects invalid signature (wrong key)", async (t) => {
 				const { pub } = await setupFAKeys();
-				const { privateKey: signerPriv, publicKey: signerPub } = await _genKey("ES256");
+				const { privateKey: signerPriv } = await _genKey("ES256");
 				const { publicKey: wrongPub } = await _genKey("ES256");
 				const wrongJwks = { keys: [wrongPub] };
 				const jwt = await _signES(
@@ -4291,8 +4311,8 @@ export default (QUnit: QUnit) => {
 						iat: fa_now,
 						keys: [pub],
 					},
-					signerPriv,
-					{ kid: signerPub.kid as string, typ: JwtTyp.JwkSet },
+					new JwkSigner(signerPriv),
+					{ typ: JwtTyp.JwkSet },
 				);
 				t.false((await verifySignedJwkSet(jwt, wrongJwks)).ok);
 			});
@@ -4315,7 +4335,7 @@ export default (QUnit: QUnit) => {
 
 		module("core / fetchSignedJwkSet", () => {
 			async function buildSignedJwkSetJwt() {
-				const { priv, pub, jwks, kid } = await setupFAKeys();
+				const { signer, pub, jwks } = await setupFAKeys();
 				const jwt = await _signES(
 					{
 						iss: "https://entity.example.com",
@@ -4323,8 +4343,8 @@ export default (QUnit: QUnit) => {
 						iat: fa_now,
 						keys: [pub],
 					},
-					priv,
-					{ kid, typ: JwtTyp.JwkSet },
+					signer,
+					{ typ: JwtTyp.JwkSet },
 				);
 				return { jwt, jwks };
 			}
@@ -4403,7 +4423,7 @@ export default (QUnit: QUnit) => {
 			});
 
 			test("propagates verifier failure (typ mismatch)", async (t) => {
-				const { priv, pub, jwks, kid } = await setupFAKeys();
+				const { signer, pub, jwks } = await setupFAKeys();
 				const wrongTypJwt = await _signES(
 					{
 						iss: "https://entity.example.com",
@@ -4411,8 +4431,8 @@ export default (QUnit: QUnit) => {
 						iat: fa_now,
 						keys: [pub],
 					},
-					priv,
-					{ kid, typ: JwtTyp.EntityStatement },
+					signer,
+					{ typ: JwtTyp.EntityStatement },
 				);
 				const httpClient: HttpClient = async () =>
 					new Response(wrongTypJwt, {
@@ -4518,8 +4538,8 @@ export default (QUnit: QUnit) => {
 		});
 
 		module("core / resolveEntityKeys", () => {
-			async function buildSignedJwkSetJwt(opts?: { kidOverride?: string }) {
-				const { priv, pub, jwks, kid } = await setupFAKeys();
+			async function buildSignedJwkSetJwt() {
+				const { signer, pub, jwks } = await setupFAKeys();
 				const jwt = await _signES(
 					{
 						iss: "https://entity.example.com",
@@ -4527,8 +4547,8 @@ export default (QUnit: QUnit) => {
 						iat: fa_now,
 						keys: [pub],
 					},
-					priv,
-					{ kid: opts?.kidOverride ?? kid, typ: JwtTyp.JwkSet },
+					signer,
+					{ typ: JwtTyp.JwkSet },
 				);
 				return { jwt, jwks, pub };
 			}
@@ -4742,7 +4762,7 @@ export default (QUnit: QUnit) => {
 			});
 
 			test("default verifySignedJwkSet accepts sub !== iss (regression: library does NOT over-enforce SHOULD)", async (t) => {
-				const { priv, pub, jwks, kid } = await setupFAKeys();
+				const { signer, pub, jwks } = await setupFAKeys();
 				const jwt = await _signES(
 					{
 						iss: ENTITY,
@@ -4750,8 +4770,8 @@ export default (QUnit: QUnit) => {
 						iat: fa_now,
 						keys: [pub],
 					},
-					priv,
-					{ kid, typ: JwtTyp.JwkSet },
+					signer,
+					{ typ: JwtTyp.JwkSet },
 				);
 				const result = await verifySignedJwkSet(jwt, jwks);
 				t.true(
@@ -4826,15 +4846,15 @@ export default (QUnit: QUnit) => {
 
 		module("core / fetchHistoricalKeys", () => {
 			test("happy path: 200 + jwk-set+jwt verifies and returns payload", async (t) => {
-				const { priv, jwks, kid } = await setupFAKeys();
+				const { signer, jwks } = await setupFAKeys();
 				const jwt = await _signES(
 					{
 						iss: "https://authority.example.com",
 						iat: fa_now,
 						keys: [{ kty: "EC", kid: "old-1", exp: fa_now - 3600 }],
 					},
-					priv,
-					{ kid, typ: JwtTyp.JwkSet },
+					signer,
+					{ typ: JwtTyp.JwkSet },
 				);
 				const httpClient: HttpClient = async () =>
 					new Response(jwt, {
@@ -4876,15 +4896,15 @@ export default (QUnit: QUnit) => {
 			});
 
 			test("rejects wrong Content-Type", async (t) => {
-				const { priv, jwks, kid } = await setupFAKeys();
+				const { signer, jwks } = await setupFAKeys();
 				const jwt = await _signES(
 					{
 						iss: "https://authority.example.com",
 						iat: fa_now,
 						keys: [{ kty: "EC", kid: "k1", exp: fa_now }],
 					},
-					priv,
-					{ kid, typ: JwtTyp.JwkSet },
+					signer,
+					{ typ: JwtTyp.JwkSet },
 				);
 				const httpClient: HttpClient = async () =>
 					new Response(jwt, {
@@ -4901,15 +4921,15 @@ export default (QUnit: QUnit) => {
 			});
 
 			test("propagates verifier failure (wrong typ)", async (t) => {
-				const { priv, jwks, kid } = await setupFAKeys();
+				const { signer, jwks } = await setupFAKeys();
 				const jwt = await _signES(
 					{
 						iss: "https://authority.example.com",
 						iat: fa_now,
 						keys: [{ kty: "EC", kid: "k1", exp: fa_now }],
 					},
-					priv,
-					{ kid, typ: JwtTyp.EntityStatement },
+					signer,
+					{ typ: JwtTyp.EntityStatement },
 				);
 				const httpClient: HttpClient = async () =>
 					new Response(jwt, {
@@ -5002,7 +5022,7 @@ export default (QUnit: QUnit) => {
 
 		module("core / fetchResolveResponse", () => {
 			test("returns raw JWT bytes that pipe into verifyResolveResponse", async (t) => {
-				const { priv, jwks, kid } = await setupFAKeys();
+				const { signer, jwks } = await setupFAKeys();
 				const jwt = await _signES(
 					{
 						iss: "https://resolver.example.com",
@@ -5012,8 +5032,8 @@ export default (QUnit: QUnit) => {
 						metadata: { federation_entity: { organization_name: "Resolved" } },
 						trust_chain: ["jwt1", "jwt2"],
 					},
-					priv,
-					{ kid, typ: JwtTyp.ResolveResponse },
+					signer,
+					{ typ: JwtTyp.ResolveResponse },
 				);
 				const httpClient: HttpClient = async () =>
 					new Response(jwt, {
@@ -5316,7 +5336,7 @@ export default (QUnit: QUnit) => {
 			privateKey: JWK,
 			typ: string = JwtTyp.TrustMark,
 		) {
-			return signEntityStatement(payload, privateKey, { typ });
+			return signEntityStatement(payload, new JwkSigner(privateKey), { typ });
 		}
 		module("core / validateTrustMark", () => {
 			test("validates a well-formed trust mark", async (t) => {
@@ -5483,7 +5503,7 @@ export default (QUnit: QUnit) => {
 						iat: tm_now,
 						exp: tm_now + 86400,
 					},
-					ownerKeys.privateKey,
+					new JwkSigner(ownerKeys.privateKey),
 					{ typ: JwtTyp.TrustMarkDelegation },
 				);
 				const jwt = await tm_createJwt(
@@ -5524,7 +5544,7 @@ export default (QUnit: QUnit) => {
 						iat: tm_now + 7200,
 						exp: tm_now + 86400,
 					},
-					ownerKeys.privateKey,
+					new JwkSigner(ownerKeys.privateKey),
 					{ typ: JwtTyp.TrustMarkDelegation },
 				);
 				const jwt = await tm_createJwt(
@@ -5565,7 +5585,7 @@ export default (QUnit: QUnit) => {
 						iat: tm_now,
 						exp: tm_now + 86400,
 					},
-					ownerKeys.privateKey,
+					new JwkSigner(ownerKeys.privateKey),
 					{ typ: JwtTyp.TrustMarkDelegation },
 				);
 				const jwt = await tm_createJwt(
@@ -5784,8 +5804,8 @@ export default (QUnit: QUnit) => {
 							iat: tm_now,
 							exp: tm_now + 86400,
 						},
-						ownerKeys.privateKey,
-						{ typ: JwtTyp.TrustMarkDelegation, alg: "none" },
+						new JwkSigner(ownerKeys.privateKey),
+						{ typ: JwtTyp.TrustMarkDelegation, alg: "none" as never },
 					),
 					/Unsupported signing algorithm/,
 				);
@@ -5800,8 +5820,8 @@ export default (QUnit: QUnit) => {
 							trust_mark_type: "https://example.com/tm",
 							iat: tm_now,
 						},
-						issuerKeys.privateKey,
-						{ typ: JwtTyp.TrustMark, alg: "none" },
+						new JwkSigner(issuerKeys.privateKey),
+						{ typ: JwtTyp.TrustMark, alg: "none" as never },
 					),
 					/Unsupported signing algorithm/,
 				);
@@ -5816,7 +5836,7 @@ export default (QUnit: QUnit) => {
 						trust_mark_type: "https://example.com/tm",
 						iat: tm_now,
 					},
-					ownerKeys.privateKey,
+					new JwkSigner(ownerKeys.privateKey),
 					{ typ: JwtTyp.EntityStatement },
 				);
 				const jwt = await tm_createJwt(
@@ -5854,7 +5874,7 @@ export default (QUnit: QUnit) => {
 					issuer: "https://owner.example.com",
 					subject: "https://other-issuer.example.com",
 					trustMarkType: "https://example.com/tm",
-					privateKey: ownerKeys.privateKey,
+					signer: new JwkSigner(ownerKeys.privateKey),
 				});
 				const jwt = await tm_createJwt(
 					{
@@ -5895,7 +5915,7 @@ export default (QUnit: QUnit) => {
 						iat: tm_now - 7200,
 						exp: tm_now - 3600,
 					},
-					ownerKeys.privateKey,
+					new JwkSigner(ownerKeys.privateKey),
 					{ typ: JwtTyp.TrustMarkDelegation },
 				);
 				const jwt = await tm_createJwt(
@@ -5940,7 +5960,7 @@ export default (QUnit: QUnit) => {
 					issuer: "https://owner.example.com",
 					subject: "https://issuer.example.com",
 					trustMarkType: "https://example.com/tm-other",
-					privateKey: ownerKeys.privateKey,
+					signer: new JwkSigner(ownerKeys.privateKey),
 				});
 				const jwt = await tm_createJwt(
 					{
@@ -5978,7 +5998,7 @@ export default (QUnit: QUnit) => {
 					issuer: "https://owner.example.com",
 					subject: "https://issuer.example.com",
 					trustMarkType: "https://example.com/tm",
-					privateKey: ownerKeys.privateKey,
+					signer: new JwkSigner(ownerKeys.privateKey),
 				});
 				const decoded = decodeEntityStatement(delegationJwt);
 				t.true(isOk(decoded));
@@ -5998,7 +6018,7 @@ export default (QUnit: QUnit) => {
 					issuer: "https://owner.example.com",
 					subject: "https://issuer.example.com",
 					trustMarkType: "https://example.com/tm",
-					privateKey: ownerKeys.privateKey,
+					signer: new JwkSigner(ownerKeys.privateKey),
 				});
 				const jwt = await tm_createJwt(
 					{
@@ -6037,7 +6057,7 @@ export default (QUnit: QUnit) => {
 					issuer: "https://owner.example.com",
 					subject: "https://issuer.example.com",
 					trustMarkType: "https://example.com/tm",
-					privateKey: ownerKeys.privateKey,
+					signer: new JwkSigner(ownerKeys.privateKey),
 					ttlSeconds: 3600,
 				});
 				const decoded = decodeEntityStatement(delegationJwt);
@@ -6187,8 +6207,8 @@ export default (QUnit: QUnit) => {
 						trust_mark: "eyJ.original.jwt",
 						status,
 					} as Parameters<typeof _signES>[0],
-					signerKeys.privateKey,
-					{ kid: signerKeys.privateKey.kid as string, typ: JwtTyp.TrustMarkStatusResponse },
+					new JwkSigner(signerKeys.privateKey),
+					{ typ: JwtTyp.TrustMarkStatusResponse },
 				);
 			}
 
@@ -6298,7 +6318,7 @@ export default (QUnit: QUnit) => {
 					jwks: { keys: [publicKey] },
 					...overrides,
 				},
-				privateKey,
+				new JwkSigner(privateKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 		}
@@ -6352,7 +6372,7 @@ export default (QUnit: QUnit) => {
 						exp: rf_now + 7200,
 						jwks: { keys: [leafKeys.publicKey] },
 					},
-					taKeys.privateKey,
+					new JwkSigner(taKeys.privateKey),
 					{ typ: JwtTyp.EntityStatement },
 				);
 				const taEc = await rf_signEC(
@@ -6417,7 +6437,7 @@ export default (QUnit: QUnit) => {
 						exp: rf_now + 7200,
 						jwks: { keys: [leafKeys.publicKey] },
 					},
-					taKeys.privateKey,
+					new JwkSigner(taKeys.privateKey),
 					{ typ: JwtTyp.EntityStatement },
 				);
 				const taEc = await rf_signEC(
@@ -6482,24 +6502,24 @@ export default (QUnit: QUnit) => {
 	// ── trust-chain/resolve ───────────────────────────────────────────
 	{
 		const rs_now = Math.floor(Date.now() / 1000);
-		async function rs_signEC(eid: string, privateKey: JWK, overrides?: Record<string, unknown>) {
+		async function rs_signEC(eid: string, signingKey: JWK, overrides?: Record<string, unknown>) {
 			return signEntityStatement(
 				{
 					iss: eid,
 					sub: eid,
 					iat: rs_now,
 					exp: rs_now + 3600,
-					jwks: { keys: [privateKey] },
+					jwks: { keys: [stripPrivateFields(signingKey)] },
 					...overrides,
 				},
-				privateKey,
+				new JwkSigner(signingKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 		}
 		async function rs_signSS(
 			issuer: string,
 			subject: string,
-			privateKey: JWK,
+			signingKey: JWK,
 			overrides?: Record<string, unknown>,
 		) {
 			return signEntityStatement(
@@ -6508,10 +6528,10 @@ export default (QUnit: QUnit) => {
 					sub: subject,
 					iat: rs_now,
 					exp: rs_now + 3600,
-					jwks: { keys: [privateKey] },
+					jwks: { keys: [stripPrivateFields(signingKey)] },
 					...overrides,
 				},
-				privateKey,
+				new JwkSigner(signingKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 		}
@@ -7804,7 +7824,7 @@ export default (QUnit: QUnit) => {
 					jwks: { keys: [publicKey] },
 					...overrides,
 				},
-				privateKey,
+				new JwkSigner(privateKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 		}
@@ -7824,7 +7844,7 @@ export default (QUnit: QUnit) => {
 					jwks: { keys: [subjectPublicKey] },
 					...overrides,
 				},
-				privateKey,
+				new JwkSigner(privateKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 		}
@@ -7960,7 +7980,7 @@ export default (QUnit: QUnit) => {
 						jwks: { keys: [leafKeys.publicKey] },
 						authority_hints: ["https://ta.example.com"],
 					},
-					leafKeys.privateKey,
+					new JwkSigner(leafKeys.privateKey),
 					{ typ: JwtTyp.EntityStatement },
 				);
 				const ss = await vt_signSS(
@@ -8184,7 +8204,7 @@ export default (QUnit: QUnit) => {
 						iat: vt_now,
 						exp: vt_now + 3600,
 					},
-					taKeys.privateKey,
+					new JwkSigner(taKeys.privateKey),
 					{ typ: JwtTyp.EntityStatement },
 				);
 				const taEc = await vt_signEC("https://ta.example.com", taKeys.privateKey, taKeys.publicKey);
@@ -8619,7 +8639,7 @@ export default (QUnit: QUnit) => {
 						exp: vt_now + 3600,
 						id: "https://trust-mark-type.example.com",
 					},
-					tmIssuerKeys.privateKey,
+					new JwkSigner(tmIssuerKeys.privateKey),
 					{ typ: "trust-mark+jwt" },
 				);
 				const leafEc = await vt_signEC(
@@ -8675,7 +8695,7 @@ export default (QUnit: QUnit) => {
 						trust_mark_type: "https://tm-b.example.com",
 						iat: vt_now,
 					},
-					issuerKeys.privateKey,
+					new JwkSigner(issuerKeys.privateKey),
 					{ typ: JwtTyp.TrustMark },
 				);
 				const leafEc = await vt_signEC(
@@ -10003,7 +10023,7 @@ export default (QUnit: QUnit) => {
 					exp: now + 3600,
 					jwks: { keys: [publicKey] },
 				},
-				privateKey,
+				new JwkSigner(privateKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 
@@ -10029,7 +10049,7 @@ export default (QUnit: QUnit) => {
 					exp: now + 3600,
 					jwks: { keys: [publicKey] },
 				},
-				privateKey,
+				new JwkSigner(privateKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 			const verify = await verifyEntityStatement(jwt, { keys: [] });
@@ -10054,7 +10074,7 @@ export default (QUnit: QUnit) => {
 						},
 					},
 				},
-				privateKey,
+				new JwkSigner(privateKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 
@@ -10086,7 +10106,7 @@ export default (QUnit: QUnit) => {
 						openid_relying_party: { redirect_uris: [`${leafId}/callback`] },
 					},
 				},
-				leaf.privateKey,
+				new JwkSigner(leaf.privateKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 			const subStmt = await signEntityStatement(
@@ -10097,7 +10117,7 @@ export default (QUnit: QUnit) => {
 					exp,
 					jwks: { keys: [leaf.publicKey] },
 				},
-				ta.privateKey,
+				new JwkSigner(ta.privateKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 			const taEc = await signEntityStatement(
@@ -10114,7 +10134,7 @@ export default (QUnit: QUnit) => {
 						},
 					},
 				},
-				ta.privateKey,
+				new JwkSigner(ta.privateKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 
@@ -10147,12 +10167,12 @@ export default (QUnit: QUnit) => {
 						openid_relying_party: { redirect_uris: [`${leafId}/callback`] },
 					},
 				},
-				leaf.privateKey,
+				new JwkSigner(leaf.privateKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 			const subStmt = await signEntityStatement(
 				{ iss: taId, sub: leafId, iat: now, exp, jwks: { keys: [leaf.publicKey] } },
-				ta.privateKey,
+				new JwkSigner(ta.privateKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 			const taEc = await signEntityStatement(
@@ -10169,7 +10189,7 @@ export default (QUnit: QUnit) => {
 						},
 					},
 				},
-				ta.privateKey,
+				new JwkSigner(ta.privateKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 
@@ -10192,7 +10212,7 @@ export default (QUnit: QUnit) => {
 					exp: now + 3600,
 					jwks: { keys: [rsa.publicKey] },
 				},
-				rsa.privateKey,
+				new JwkSigner(rsa.privateKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 

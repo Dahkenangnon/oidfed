@@ -1,6 +1,7 @@
 import { JwtTyp, WELL_KNOWN_OPENID_FEDERATION } from "../../../packages/core/src/constants.js";
 import { generateSigningKey } from "../../../packages/core/src/jose/keys.js";
 import { signEntityStatement } from "../../../packages/core/src/jose/sign.js";
+import { JwkSigner } from "../../../packages/core/src/jose/signer.js";
 import type { JWK } from "../../../packages/core/src/schemas/jwk.js";
 import type {
 	FederationOptions,
@@ -10,10 +11,8 @@ import type {
 import { LEAF_ID, OP_ID, TA_ID } from "./entity-ids.js";
 import { createMockTrustAnchors } from "./mock-trust-anchors.js";
 
-function signOpts(key: JWK): { kid?: string; typ: string } {
-	return key.kid != null
-		? { kid: key.kid, typ: JwtTyp.EntityStatement }
-		: { typ: JwtTyp.EntityStatement };
+function signOpts(): { typ: string } {
+	return { typ: JwtTyp.EntityStatement };
 }
 
 export interface MockFederation {
@@ -42,6 +41,7 @@ export async function createMockFederation(overrides?: {
 	const { privateKey: opSigningKey, publicKey: opPublicKey } = await generateSigningKey("ES256");
 	const { privateKey: leafSigningKey, publicKey: leafPublicKey } =
 		await generateSigningKey("ES256");
+	const { publicKey: leafProtocolPublicKey } = await generateSigningKey("ES256");
 
 	const now = Math.floor(Date.now() / 1000);
 	const exp = now + 86400;
@@ -60,7 +60,7 @@ export async function createMockFederation(overrides?: {
 			},
 		},
 	};
-	const taEcJwt = await signEntityStatement(taEcPayload, taSigningKey, signOpts(taSigningKey));
+	const taEcJwt = await signEntityStatement(taEcPayload, new JwkSigner(taSigningKey), signOpts());
 
 	// OP Entity Configuration (self-signed)
 	const opMetadata = overrides?.opMetadata ?? {
@@ -84,7 +84,7 @@ export async function createMockFederation(overrides?: {
 		authority_hints: [TA_ID],
 		metadata: opMetadata,
 	};
-	const opEcJwt = await signEntityStatement(opEcPayload, opSigningKey, signOpts(opSigningKey));
+	const opEcJwt = await signEntityStatement(opEcPayload, new JwkSigner(opSigningKey), signOpts());
 
 	// Leaf Entity Configuration (self-signed)
 	const leafMetadata = overrides?.leafMetadata ?? {
@@ -92,6 +92,7 @@ export async function createMockFederation(overrides?: {
 			redirect_uris: ["https://rp.example.com/callback"],
 			response_types: ["code"],
 			client_registration_types: ["automatic"],
+			jwks: { keys: [leafProtocolPublicKey] },
 		},
 	};
 	const leafEcPayload = {
@@ -105,8 +106,8 @@ export async function createMockFederation(overrides?: {
 	};
 	const leafEcJwt = await signEntityStatement(
 		leafEcPayload,
-		leafSigningKey,
-		signOpts(leafSigningKey),
+		new JwkSigner(leafSigningKey),
+		signOpts(),
 	);
 
 	// TA subordinate statement about OP (signed by TA)
@@ -118,8 +119,8 @@ export async function createMockFederation(overrides?: {
 			exp,
 			jwks: { keys: [opPublicKey] },
 		},
-		taSigningKey,
-		signOpts(taSigningKey),
+		new JwkSigner(taSigningKey),
+		signOpts(),
 	);
 
 	// TA subordinate statement about leaf RP (signed by TA)
@@ -131,8 +132,8 @@ export async function createMockFederation(overrides?: {
 			exp,
 			jwks: { keys: [leafPublicKey] },
 		},
-		taSigningKey,
-		signOpts(taSigningKey),
+		new JwkSigner(taSigningKey),
+		signOpts(),
 	);
 
 	const trustAnchors = createMockTrustAnchors(TA_ID, taPublicKey);

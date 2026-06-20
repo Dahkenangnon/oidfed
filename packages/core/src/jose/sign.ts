@@ -1,37 +1,33 @@
 /** JWT signing for Entity Statements and other federation tokens. */
-import * as jose from "jose";
 import { JwtTyp, SUPPORTED_ALGORITHMS, type SupportedAlgorithm } from "../constants.js";
-import type { JWK } from "../schemas/jwk.js";
+import type { JwtSigner } from "./signer.js";
+import { validateSigner } from "./signer.js";
 
-/** Sign an entity statement payload as a JWT using the provided private key. */
+export interface SignEntityStatementOptions {
+	readonly alg?: SupportedAlgorithm;
+	readonly typ?: string;
+	readonly extraHeaders?: Record<string, unknown>;
+}
+
+/** Sign an entity statement payload as a compact JWT using the provided signing primitive. */
 export async function signEntityStatement(
 	payload: Record<string, unknown>,
-	privateKey: JWK,
-	options?: { kid?: string; alg?: string; typ?: string; extraHeaders?: Record<string, unknown> },
+	signer: JwtSigner,
+	options?: SignEntityStatementOptions,
 ): Promise<string> {
-	if (privateKey.use && privateKey.use !== "sig") {
-		throw new Error(`Key use must be "sig" for signing, got "${privateKey.use}"`);
-	}
+	validateSigner(signer);
 
-	const alg = options?.alg ?? privateKey.alg ?? "ES256";
-	if (!SUPPORTED_ALGORITHMS.includes(alg as SupportedAlgorithm)) {
+	const alg = options?.alg ?? signer.alg;
+	if (!SUPPORTED_ALGORITHMS.includes(alg)) {
 		throw new Error(
 			`Unsupported signing algorithm: "${alg}". Supported: ${SUPPORTED_ALGORITHMS.join(", ")}`,
 		);
 	}
-	const kid = options?.kid ?? privateKey.kid;
-	if (!kid) {
-		throw new Error(
-			"Signed federation JWT MUST include a kid header parameter; provide options.kid or set privateKey.kid",
-		);
+	if (alg !== signer.alg) {
+		throw new Error(`Signing algorithm mismatch: signer uses "${signer.alg}", requested "${alg}"`);
 	}
 	const typ = options?.typ ?? JwtTyp.EntityStatement;
 
-	const cryptoKey = await jose.importJWK(privateKey as unknown as jose.JWK, alg);
-
-	const header: Record<string, unknown> = { alg, typ, kid, ...options?.extraHeaders };
-
-	return new jose.SignJWT(payload as jose.JWTPayload)
-		.setProtectedHeader(header as jose.JWTHeaderParameters)
-		.sign(cryptoKey as Parameters<jose.SignJWT["sign"]>[0]);
+	const header: Record<string, unknown> = { alg, typ, kid: signer.kid, ...options?.extraHeaders };
+	return signer.signJwt(new TextEncoder().encode(JSON.stringify(payload)), header);
 }

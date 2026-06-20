@@ -1,4 +1,4 @@
-import type { EntityId, JWK, TrustAnchorSet } from "@oidfed/core";
+import type { EntityId, FederationKeyProvider, JWK, TrustAnchorSet } from "@oidfed/core";
 import { decodeEntityStatement, InMemoryJtiStore } from "@oidfed/core";
 import type { LeafEntity } from "@oidfed/leaf";
 import { createLeafHandler } from "@oidfed/leaf";
@@ -11,8 +11,10 @@ export interface OpenIDProviderAppConfig {
 	leaf: LeafEntity;
 	entityId: string;
 	trustAnchors: TrustAnchorSet;
-	/** OP signing key — reused for OIDC ID-token signing in the test bed and for the explicit registration handler. */
-	signingKey: JWK;
+	/** Federation signing provider for explicit-registration Entity Statements. */
+	federationKeyProvider: FederationKeyProvider;
+	/** OP protocol signing key for oidc-provider tokens in the test bed. */
+	oidcSigningKey: JWK;
 	/**
 	 * Hostnames the OP is willing to fetch a by-reference Request Object from.
 	 * Constructed by the launcher from topology RP entity URLs — server-side
@@ -42,7 +44,14 @@ export interface OpenIDProviderAppConfig {
  * In-memory adapter scoped per-process — fine for tests, not for production.
  */
 export function createOpenIDProviderApp(config: OpenIDProviderAppConfig): express.Express {
-	const { leaf, entityId, trustAnchors, signingKey, allowedRequestUriHosts } = config;
+	const {
+		leaf,
+		entityId,
+		trustAnchors,
+		federationKeyProvider,
+		oidcSigningKey,
+		allowedRequestUriHosts,
+	} = config;
 	const app = express();
 
 	const clientStore = new Map<string, StoredClient>();
@@ -51,16 +60,13 @@ export function createOpenIDProviderApp(config: OpenIDProviderAppConfig): expres
 	const leafHandler = createLeafHandler(leaf);
 	const registrationHandler = createExplicitRegistrationHandler({
 		opEntityId: entityId as EntityId,
-		getSigningKey: async () => ({
-			key: signingKey,
-			kid: (signingKey.kid as string) ?? "op-key",
-		}),
+		keyProvider: federationKeyProvider,
 		trustAnchors,
 	});
 
 	const oidc = new Provider(entityId, {
 		adapter: Adapter,
-		jwks: { keys: [signingKey] },
+		jwks: { keys: [oidcSigningKey] },
 		claims: { openid: ["sub"] },
 		scopes: ["openid"],
 		responseTypes: ["code"],

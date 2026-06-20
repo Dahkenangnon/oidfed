@@ -19,12 +19,15 @@ npm install @oidfed/core @oidfed/leaf
 
 ```ts
 import { createLeafEntity } from "@oidfed/leaf";
-import { entityId } from "@oidfed/core";
+import { entityId, JwkSigner, MemoryFederationKeyProvider } from "@oidfed/core";
 
 const leaf = createLeafEntity({
   entityId: entityId("https://rp.example.com"),
   authorityHints: [entityId("https://federation.example.org")],
-  signingKeys: [mySigningKey],
+  keyProvider: new MemoryFederationKeyProvider({
+    signer: new JwkSigner(myFederationSigningKey),
+    publicJwk: myFederationPublicKey,
+  }),
   metadata: {
     openid_relying_party: {
       redirect_uris: ["https://rp.example.com/callback"],
@@ -41,7 +44,7 @@ const handler = leaf.handler(); // fetch-compatible (Request → Response)
 
 - Entity Configuration serving at `/.well-known/openid-federation`
 - Authority discovery with branded `DiscoveryResult` type
-- Automatic key stripping (private fields removed from published JWKS)
+- Federation JWKS publication from `FederationKeyProvider`
 - Lazy EC generation with caching and refresh
 
 ## Documentation

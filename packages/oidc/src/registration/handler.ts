@@ -7,8 +7,8 @@ import {
 	entityId,
 	errorResponse,
 	FederationErrorCode,
+	type FederationKeyProvider,
 	type FederationOptions,
-	type JWK,
 	JwtTyp,
 	jwtResponse,
 	nowSeconds,
@@ -39,8 +39,8 @@ const OIDC_METADATA_DEFAULTS: Record<string, unknown> = {
 export interface ExplicitRegistrationHandlerConfig {
 	/** The OP's Entity Identifier — used as the aud check target and as the issuer of the response. */
 	readonly opEntityId: EntityId;
-	/** Returns the current active signing key and its kid. */
-	readonly getSigningKey: () => Promise<{ key: JWK; kid: string }>;
+	/** Federation-only signing key provider used for the signed registration response. */
+	readonly keyProvider: FederationKeyProvider;
 	/** Trust anchors for RP trust chain resolution. When absent, no chain is resolved and trust_anchor falls back to opEntityId. */
 	readonly trustAnchors?: TrustAnchorSet;
 	/** TTL in seconds for the registration response JWT. Capped to chain expiry when a chain is resolved. */
@@ -316,7 +316,7 @@ export function createExplicitRegistrationHandler(
 			validatedMetadata = adapterResult.value;
 		}
 
-		const { key: signingKey, kid } = await config.getSigningKey();
+		const keySet = await config.keyProvider.getFederationKeySet();
 		const now = nowSeconds(config.options?.clock);
 
 		let trustAnchorId: string;
@@ -396,8 +396,7 @@ export function createExplicitRegistrationHandler(
 			}
 		}
 
-		const responseJwt = await signEntityStatement(responsePayload, signingKey, {
-			kid,
+		const responseJwt = await signEntityStatement(responsePayload, keySet.signer, {
 			typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE,
 		});
 

@@ -1,4 +1,4 @@
-import { generateSigningKey, type HttpClient, signEntityStatement } from "@oidfed/core";
+import { generateSigningKey, type HttpClient, JwkSigner, signEntityStatement } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
 import { handler } from "../../src/commands/trust-mark-list.js";
 import { JsonFormatter } from "../../src/output/json.js";
@@ -25,7 +25,7 @@ async function buildIssuerEc() {
 				},
 			},
 		},
-		key.privateKey,
+		new JwkSigner(key.privateKey),
 	);
 }
 

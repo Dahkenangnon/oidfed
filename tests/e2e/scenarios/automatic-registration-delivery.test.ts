@@ -29,7 +29,7 @@ describe("Automatic registration — Request Object delivery modes", () => {
 				discovery,
 				{
 					entityId: entityId(rpId),
-					signingKeys: [rpEntity.keys.signing],
+					protocolKeyProvider: rpEntity.oidcProtocolKeyProvider,
 					authorityHints: [entityId(`https://ta.ofed.test:${port}`)],
 					metadata: {
 						openid_relying_party: {
@@ -38,6 +38,7 @@ describe("Automatic registration — Request Object delivery modes", () => {
 							grant_types: ["authorization_code"],
 							client_registration_types: ["automatic"],
 							token_endpoint_auth_method: "private_key_jwt",
+							jwks: { keys: [rpEntity.keys.protocolPublic] },
 						},
 					},
 					requestDelivery: "form_post",
@@ -89,7 +90,7 @@ describe("Automatic registration — Request Object delivery modes", () => {
 				discovery,
 				{
 					entityId: entityId(rpId),
-					signingKeys: [rpEntity.keys.signing],
+					protocolKeyProvider: rpEntity.oidcProtocolKeyProvider,
 					authorityHints: [entityId(`https://ta.ofed.test:${port}`)],
 					metadata: {
 						openid_relying_party: {
@@ -98,6 +99,7 @@ describe("Automatic registration — Request Object delivery modes", () => {
 							grant_types: ["authorization_code"],
 							client_registration_types: ["automatic"],
 							token_endpoint_auth_method: "private_key_jwt",
+							jwks: { keys: [rpEntity.keys.protocolPublic] },
 						},
 					},
 					requestDelivery: "par",
@@ -138,7 +140,7 @@ describe("Automatic registration — Request Object delivery modes", () => {
 				discovery,
 				{
 					entityId: entityId(rpId),
-					signingKeys: [rpEntity.keys.signing],
+					protocolKeyProvider: rpEntity.oidcProtocolKeyProvider,
 					authorityHints: [entityId(`https://ta.ofed.test:${port}`)],
 					metadata: {
 						openid_relying_party: {
@@ -147,6 +149,7 @@ describe("Automatic registration — Request Object delivery modes", () => {
 							grant_types: ["authorization_code"],
 							client_registration_types: ["automatic"],
 							token_endpoint_auth_method: "private_key_jwt",
+							jwks: { keys: [rpEntity.keys.protocolPublic] },
 						},
 					},
 					requestDelivery: "request_uri",

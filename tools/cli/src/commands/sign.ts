@@ -3,8 +3,12 @@ import {
 	FederationErrorCode,
 	federationError,
 	InternalErrorCode,
+	type JWK,
+	JwkSigner,
 	ok,
 	type Result,
+	SUPPORTED_ALGORITHMS,
+	type SupportedAlgorithm,
 	signEntityStatement,
 } from "@oidfed/core";
 import type { Command } from "commander";
@@ -62,11 +66,22 @@ export async function handler(args: SignArgs, deps: SignDeps): Promise<Result<st
 	}
 
 	try {
-		const jwt = await signEntityStatement(
-			payload,
-			privateKey as Parameters<typeof signEntityStatement>[1],
-			args.algorithm ? { alg: args.algorithm } : undefined,
+		if (
+			args.algorithm !== undefined &&
+			!(SUPPORTED_ALGORITHMS as readonly string[]).includes(args.algorithm)
+		) {
+			return err(
+				federationError(
+					FederationErrorCode.InvalidRequest,
+					`Unsupported algorithm: ${args.algorithm}. Supported: ${SUPPORTED_ALGORITHMS.join(", ")}`,
+				),
+			);
+		}
+		const signer = new JwkSigner(
+			privateKey as JWK,
+			args.algorithm ? { alg: args.algorithm as SupportedAlgorithm } : undefined,
 		);
+		const jwt = await signEntityStatement(payload, signer);
 		return ok(jwt);
 	} catch (e) {
 		return err(

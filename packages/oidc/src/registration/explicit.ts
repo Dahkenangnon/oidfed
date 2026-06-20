@@ -3,8 +3,8 @@ import {
 	type DiscoveryResult,
 	decodeEntityStatement,
 	type EntityId,
+	type FederationKeyProvider,
 	type FederationOptions,
-	type JWK,
 	JwtTyp,
 	MediaType,
 	nowSeconds,
@@ -12,8 +12,8 @@ import {
 	resolveTrustChainForAnchor,
 	resolveTrustChains,
 	signEntityStatement,
-	stripPrivateFields,
 	type TrustAnchorSet,
+	validateFederationKeySet,
 	verifyEntityStatement,
 } from "@oidfed/core";
 import {
@@ -24,7 +24,7 @@ import { getRegistrationTypes } from "./helpers.js";
 
 export interface ExplicitRegistrationConfig {
 	readonly entityId: EntityId;
-	readonly signingKeys: ReadonlyArray<Record<string, unknown>>;
+	readonly keyProvider: FederationKeyProvider;
 	readonly authorityHints: ReadonlyArray<EntityId>;
 	readonly metadata: Record<string, Record<string, unknown>>;
 	readonly entityConfigurationTtlSeconds?: number;
@@ -93,11 +93,10 @@ export async function explicitRegistration(
 
 	const authorityHints = rpConfig.authorityHints;
 
-	const signingKey = rpConfig.signingKeys[0] as Record<string, unknown>;
+	const keySet = await rpConfig.keyProvider.getFederationKeySet();
+	validateFederationKeySet(keySet);
 	const now = nowSeconds();
 	const ttl = rpConfig.entityConfigurationTtlSeconds ?? DEFAULT_ENTITY_STATEMENT_TTL_SECONDS;
-
-	const publicKeys = rpConfig.signingKeys.map((k) => stripPrivateFields(k as JWK));
 
 	// Include RP trust chain in header (recommended)
 	const rpChainResult = await resolveTrustChains(rpConfig.entityId, trustAnchors, options);
@@ -123,7 +122,7 @@ export async function explicitRegistration(
 		aud: discovery.entityId,
 		iat: now,
 		exp: now + ttl,
-		jwks: { keys: publicKeys },
+		jwks: keySet.jwks,
 		authority_hints: authorityHints,
 		metadata: rpConfig.metadata,
 	};
@@ -157,15 +156,10 @@ export async function explicitRegistration(
 		extraHeaders.peer_trust_chain = peerChainResult.value;
 	}
 
-	const ecJwt = await signEntityStatement(
-		ecPayload,
-		signingKey as Parameters<typeof signEntityStatement>[1],
-		{
-			kid: signingKey.kid as string,
-			typ: JwtTyp.EntityStatement,
-			...(Object.keys(extraHeaders).length > 0 ? { extraHeaders } : {}),
-		},
-	);
+	const ecJwt = await signEntityStatement(ecPayload, keySet.signer, {
+		typ: JwtTyp.EntityStatement,
+		...(Object.keys(extraHeaders).length > 0 ? { extraHeaders } : {}),
+	});
 
 	const httpClient = options?.httpClient ?? fetch;
 	const request = new Request(registrationEndpoint, {

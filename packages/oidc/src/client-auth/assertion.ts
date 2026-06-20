@@ -1,6 +1,6 @@
 import {
 	DEFAULT_CLIENT_ASSERTION_TTL_SECONDS,
-	type JWK,
+	type JwtSigner,
 	nowSeconds,
 	signEntityStatement,
 } from "@oidfed/core";
@@ -14,7 +14,7 @@ import {
 export async function createClientAssertion(
 	clientId: string,
 	audience: string,
-	signingKey: JWK,
+	signer: JwtSigner,
 	options?: { expiresInSeconds?: number },
 ): Promise<string> {
 	const expiresIn = options?.expiresInSeconds ?? DEFAULT_CLIENT_ASSERTION_TTL_SECONDS;
@@ -29,13 +29,8 @@ export async function createClientAssertion(
 		exp: now + expiresIn,
 	};
 
-	if (!signingKey.kid) {
-		throw new Error("Signing key MUST have a kid (Key ID) value");
-	}
-
 	// signEntityStatement is a generic JWT signer despite its name
-	return signEntityStatement(payload, signingKey, {
-		kid: signingKey.kid,
+	return signEntityStatement(payload, signer, {
 		typ: "JWT",
 	});
 }

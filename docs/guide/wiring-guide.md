@@ -48,17 +48,25 @@ A Trust Anchor using `@oidfed/authority` on Express.
 import express from "express";
 import {
   createAuthorityServer,
-  MemoryKeyStore,
   MemorySubordinateStore,
 } from "@oidfed/authority";
-import { entityId, generateSigningKey } from "@oidfed/core";
+import {
+  entityId,
+  generateSigningKey,
+  JwkSigner,
+  MemoryFederationKeyProvider,
+} from "@oidfed/core";
 
 const TA_ID = entityId("https://edugain.geant.org");
-const signingKey = await generateSigningKey("ES256");
+const federationKeyPair = await generateSigningKey("ES256");
+const keyProvider = new MemoryFederationKeyProvider({
+  signer: new JwkSigner(federationKeyPair.privateKey),
+  publicJwk: federationKeyPair.publicKey,
+});
 
 const ta = createAuthorityServer({
   entityId: TA_ID,
-  signingKeys: [signingKey],
+  keyProvider,
   metadata: {
     federation_entity: {
       federation_fetch_endpoint: "https://edugain.geant.org/federation_fetch",
@@ -67,7 +75,6 @@ const ta = createAuthorityServer({
     },
   },
   subordinateStore: new MemorySubordinateStore(),
-  keyStore: new MemoryKeyStore(signingKey),
   // No authorityHints — this is a Trust Anchor
 });
 
@@ -146,14 +153,22 @@ SWAMID as an Intermediate Authority — same pattern as the TA, but with `author
 ```typescript
 import {
   createAuthorityServer,
-  MemoryKeyStore,
   MemorySubordinateStore,
 } from "@oidfed/authority";
-import { entityId, generateSigningKey } from "@oidfed/core";
+import {
+  entityId,
+  generateSigningKey,
+  JwkSigner,
+  MemoryFederationKeyProvider,
+} from "@oidfed/core";
 import type { TrustAnchorSet } from "@oidfed/core";
 
 const SWAMID_ID = entityId("https://swamid.se");
-const signingKey = await generateSigningKey("ES256");
+const federationKeyPair = await generateSigningKey("ES256");
+const keyProvider = new MemoryFederationKeyProvider({
+  signer: new JwkSigner(federationKeyPair.privateKey),
+  publicJwk: federationKeyPair.publicKey,
+});
 
 // Trust Anchor keys for chain validation during registration
 const trustAnchors: TrustAnchorSet = new Map([
@@ -162,7 +177,7 @@ const trustAnchors: TrustAnchorSet = new Map([
 
 const swamid = createAuthorityServer({
   entityId: SWAMID_ID,
-  signingKeys: [signingKey],
+  keyProvider,
   metadata: {
     federation_entity: {
       federation_fetch_endpoint: "https://swamid.se/federation_fetch",
@@ -172,7 +187,6 @@ const swamid = createAuthorityServer({
   authorityHints: [entityId("https://edugain.geant.org")], // ← Intermediate
   trustAnchors,
   subordinateStore: new MemorySubordinateStore(),
-  keyStore: new MemoryKeyStore(signingKey),
 });
 
 // Register umu.se as a subordinate organization
@@ -190,13 +204,24 @@ The OP acts as an authority (issues its own Entity Configuration with `@oidfed/a
 ```typescript
 import express from "express";
 import Provider from "oidc-provider";
-import { createAuthorityServer, MemoryKeyStore, MemorySubordinateStore } from "@oidfed/authority";
+import { createAuthorityServer, MemorySubordinateStore } from "@oidfed/authority";
 import { OIDCRegistrationAdapter, processAutomaticRegistration, processExplicitRegistration } from "@oidfed/oidc";
-import { entityId, generateSigningKey, InMemoryJtiStore, isOk } from "@oidfed/core";
+import {
+  entityId,
+  generateSigningKey,
+  InMemoryJtiStore,
+  isOk,
+  JwkSigner,
+  MemoryFederationKeyProvider,
+} from "@oidfed/core";
 import type { TrustAnchorSet } from "@oidfed/core";
 
 const OP_ID = entityId("https://op.umu.se");
-const signingKey = await generateSigningKey("ES256");
+const federationKeyPair = await generateSigningKey("ES256");
+const keyProvider = new MemoryFederationKeyProvider({
+  signer: new JwkSigner(federationKeyPair.privateKey),
+  publicJwk: federationKeyPair.publicKey,
+});
 const jtiStore = new InMemoryJtiStore();
 
 const trustAnchors: TrustAnchorSet = new Map([
@@ -207,7 +232,7 @@ const trustAnchors: TrustAnchorSet = new Map([
 
 const opAuthority = createAuthorityServer({
   entityId: OP_ID,
-  signingKeys: [signingKey],
+  keyProvider,
   metadata: {
     federation_entity: {
       federation_registration_endpoint: "https://op.umu.se/federation_registration",
@@ -225,7 +250,6 @@ const opAuthority = createAuthorityServer({
   authorityHints: [entityId("https://umu.se")],
   trustAnchors,
   subordinateStore: new MemorySubordinateStore(),
-  keyStore: new MemoryKeyStore(signingKey),
 });
 
 // --- OIDC Provider (panva/node-oidc-provider) ---
@@ -322,23 +346,37 @@ import {
   automaticRegistration,
   explicitRegistration,
   createClientAssertion,
+  StaticOidcProtocolKeyProvider,
 } from "@oidfed/oidc";
-import { entityId, generateSigningKey } from "@oidfed/core";
+import {
+  entityId,
+  generateSigningKey,
+  JwkSigner,
+  MemoryFederationKeyProvider,
+} from "@oidfed/core";
 import type { TrustAnchorSet } from "@oidfed/core";
 
 const RP_ID = entityId("https://wiki.ligo.org");
-const signingKey = await generateSigningKey("ES256");
+const federationKeyPair = await generateSigningKey("ES256");
+const protocolKeyPair = await generateSigningKey("ES256");
+const federationKeyProvider = new MemoryFederationKeyProvider({
+  signer: new JwkSigner(federationKeyPair.privateKey),
+  publicJwk: federationKeyPair.publicKey,
+});
 
 const trustAnchors: TrustAnchorSet = new Map([
   [entityId("https://edugain.geant.org"), { jwks: { keys: [taPublicKey] } }],
 ]);
+
+// Federation keys sign the RP Entity Configuration. Protocol keys sign
+// Request Objects and private_key_jwt client assertions.
 
 // --- Leaf entity (serves Entity Configuration) ---
 
 const leaf = createLeafEntity({
   entityId: RP_ID,
   authorityHints: [entityId("https://incommon.org")],
-  signingKeys: [signingKey],
+  keyProvider: federationKeyProvider,
   metadata: {
     openid_relying_party: {
       redirect_uris: ["https://wiki.ligo.org/callback"],
@@ -346,6 +384,7 @@ const leaf = createLeafEntity({
       grant_types: ["authorization_code"],
       client_registration_types: ["automatic"],
       token_endpoint_auth_method: "private_key_jwt",
+      jwks: { keys: [protocolKeyPair.publicKey] },
     },
   },
 });
@@ -378,13 +417,17 @@ app.get("/login", async (req, res) => {
     opDiscovery,
     {
       entityId: RP_ID,
-      signingKeys: [signingKey],
+      protocolKeyProvider: new StaticOidcProtocolKeyProvider({
+        requestObjectSigner: new JwkSigner(protocolKeyPair.privateKey),
+      }),
       authorityHints: [entityId("https://incommon.org")],
       metadata: {
         openid_relying_party: {
           redirect_uris: ["https://wiki.ligo.org/callback"],
           response_types: ["code"],
           client_registration_types: ["automatic"],
+          token_endpoint_auth_method: "private_key_jwt",
+          jwks: { keys: [protocolKeyPair.publicKey] },
         },
       },
       requestDelivery: "query",
@@ -406,7 +449,7 @@ app.get("/callback", async (req, res) => {
   const assertion = await createClientAssertion(
     RP_ID,
     "https://op.umu.se/token",
-    signingKey,
+    new JwkSigner(protocolKeyPair.privateKey),
   );
 
   // Exchange code for tokens using private_key_jwt
@@ -442,13 +485,15 @@ app.get("/login-explicit", async (req, res) => {
     opDiscovery,
     {
       entityId: RP_ID,
-      signingKeys: [signingKey],
+      keyProvider: federationKeyProvider,
       authorityHints: [entityId("https://incommon.org")],
       metadata: {
         openid_relying_party: {
           redirect_uris: ["https://wiki.ligo.org/callback"],
           response_types: ["code"],
           client_registration_types: ["explicit"],
+          token_endpoint_auth_method: "private_key_jwt",
+          jwks: { keys: [protocolKeyPair.publicKey] },
         },
       },
     },

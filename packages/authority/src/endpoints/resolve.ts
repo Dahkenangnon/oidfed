@@ -140,7 +140,7 @@ export function createResolveHandler(ctx: HandlerContext): (request: Request) =>
 				resolvedMetadata = filtered;
 			}
 
-			const { key: signingKey, kid } = await ctx.getSigningKey();
+			const keySet = await ctx.keyProvider.getFederationKeySet();
 			const now = nowSeconds(ctx.options?.clock);
 
 			// Exp is capped to the earliest expiry across the chain and trust marks
@@ -200,8 +200,7 @@ export function createResolveHandler(ctx: HandlerContext): (request: Request) =>
 				}
 			}
 
-			const jwt = await signEntityStatement(payload, signingKey, {
-				kid,
+			const jwt = await signEntityStatement(payload, keySet.signer, {
 				typ: JwtTyp.ResolveResponse,
 				extraHeaders,
 			});

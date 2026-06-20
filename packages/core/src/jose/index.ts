@@ -8,7 +8,13 @@ export {
 	stripPrivateFields,
 	timingSafeEqual,
 } from "./keys.js";
-export { signEntityStatement } from "./sign.js";
+export { type SignEntityStatementOptions, signEntityStatement } from "./sign.js";
+export {
+	JwkSigner,
+	type JwkSignerOptions,
+	type JwtSigner,
+	validateSigner,
+} from "./signer.js";
 export {
 	assertTypHeader,
 	decodeEntityStatement,

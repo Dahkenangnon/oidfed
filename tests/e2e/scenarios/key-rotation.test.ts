@@ -9,7 +9,7 @@ import {
 	validateTrustChain,
 } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
-import { getEntity } from "../helpers/launcher.js";
+import { federationSigningKey, getEntity } from "../helpers/launcher.js";
 import { useFederation } from "../helpers/lifecycle.js";
 import { hierarchicalTopology } from "../topologies/hierarchical.js";
 import { singleAnchorTopology } from "../topologies/single-anchor.js";
@@ -38,7 +38,7 @@ describe("Key rotation", () => {
 
 			// Generate new key and rotate
 			const newKey = await generateSigningKey("ES256");
-			await ta.rotateSigningKey(newKey.privateKey as JWK);
+			await ta.rotateSigningKey(federationSigningKey(newKey.privateKey as JWK));
 
 			// Fetch new EC — should use new key
 			const newEc = await ta.getEntityConfiguration();
@@ -83,7 +83,7 @@ describe("Key rotation", () => {
 
 			// Rotate IA key
 			const newKey = await generateSigningKey("ES256");
-			await ia.rotateSigningKey(newKey.privateKey as JWK);
+			await ia.rotateSigningKey(federationSigningKey(newKey.privateKey as JWK));
 
 			// After IA rotation without parent updating the subordinate statement,
 			// the IA's new EC key won't match the parent's subordinate statement JWKS.

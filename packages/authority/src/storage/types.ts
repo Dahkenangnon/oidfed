@@ -1,5 +1,5 @@
-/** Storage interfaces for subordinate entity records, key material, and trust marks. */
-import type { EntityId, EntityType, JWK, JWKSet, TrustChainConstraints } from "@oidfed/core";
+/** Storage interfaces for subordinate entity records and trust marks. */
+import type { EntityId, EntityType, JWKSet, TrustChainConstraints } from "@oidfed/core";
 
 export interface SubordinateStore {
 	get(entityId: EntityId): Promise<SubordinateRecord | undefined>;
@@ -64,32 +64,6 @@ export interface ListFilter {
 	trustMarked?: boolean;
 	trustMarkType?: string;
 	intermediate?: boolean;
-}
-
-export type KeyState = "pending" | "active" | "retiring" | "revoked";
-
-export interface ManagedKey {
-	readonly key: JWK;
-	readonly state: KeyState;
-	readonly createdAt?: number;
-	/** Timestamp when the key became the active signing key. */
-	readonly activatedAt?: number;
-	/** Timestamp after which the key should no longer be used for signing. */
-	readonly expiresAt?: number;
-	/** Timestamp when a retiring key will be removed from the historical JWKS. */
-	readonly scheduledRemovalAt?: number;
-	readonly revokedAt?: number;
-	readonly revocationReason?: string;
-}
-
-export interface KeyStore {
-	getActiveKeys(): Promise<JWKSet>;
-	getSigningKey(): Promise<ManagedKey>;
-	getHistoricalKeys(): Promise<ManagedKey[]>;
-	addKey(key: JWK): Promise<void>;
-	activateKey(kid: string): Promise<void>;
-	retireKey(kid: string, removeAfter: number): Promise<void>;
-	revokeKey(kid: string, reason: string): Promise<void>;
 }
 
 export interface TrustMarkStore {

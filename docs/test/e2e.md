@@ -139,7 +139,7 @@ The OP app also wires `processAutomaticRegistration` and `processExplicitRegistr
 2. Generates signing keys for every entity (`generateSigningKey("ES256")`)
 3. Rewrites all URLs to include the ephemeral port (e.g., `https://ta.ofed.test` → `https://ta.ofed.test:54321`)
 4. Builds the `TrustAnchorSet` from TA entities' public keys
-5. Creates `AuthorityServer` instances (for TAs, intermediates, OPs) with `MemoryKeyStore(key)` and `MemorySubordinateStore`
+5. Creates `AuthorityServer` instances (for TAs, intermediates, OPs) with `MemoryFederationKeyProvider` and `MemorySubordinateStore`
 6. Creates `LeafEntity` instances (for RPs)
 7. Registers subordinates — walks each entity's `authorityHints` to find the parent authority and adds the entity to its `MemorySubordinateStore`
 8. Creates Express apps via the participant factories

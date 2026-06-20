@@ -1,4 +1,4 @@
-import { generateSigningKey, type HttpClient, signEntityStatement } from "@oidfed/core";
+import { generateSigningKey, type HttpClient, JwkSigner, signEntityStatement } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
 import { handler } from "../../src/commands/entity.js";
 import { JsonFormatter } from "../../src/output/json.js";
@@ -25,7 +25,7 @@ describe("entity handler", () => {
 				exp: 9999999999,
 				jwks: { keys: [key.publicKey] },
 			},
-			key.privateKey,
+			new JwkSigner(key.privateKey),
 		);
 
 		const result = await handler(
@@ -49,7 +49,7 @@ describe("entity handler", () => {
 				exp: 9999999999,
 				jwks: { keys: [key.publicKey] },
 			},
-			key.privateKey,
+			new JwkSigner(key.privateKey),
 		);
 
 		const result = await handler(
@@ -69,7 +69,7 @@ describe("entity handler", () => {
 				exp: 9999999999,
 				jwks: { keys: [key.publicKey] },
 			},
-			key.privateKey,
+			new JwkSigner(key.privateKey),
 		);
 
 		const result = await handler(

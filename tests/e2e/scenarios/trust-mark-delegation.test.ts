@@ -2,6 +2,7 @@ import type { AuthorityServer } from "@oidfed/authority";
 import {
 	decodeEntityStatement,
 	isOk,
+	JwkSigner,
 	signTrustMarkDelegation,
 	validateTrustMark,
 } from "@oidfed/core";
@@ -31,7 +32,7 @@ describe("Trust mark delegation", () => {
 			issuer: taId,
 			subject: opId,
 			trustMarkType: trustMarkType(port),
-			privateKey: taInstance.keys.signing,
+			signer: new JwkSigner(taInstance.keys.signing),
 		});
 
 		expect(delegationJwt).toBeTruthy();

@@ -1,4 +1,4 @@
-import { generateSigningKey, type HttpClient, signEntityStatement } from "@oidfed/core";
+import { generateSigningKey, type HttpClient, JwkSigner, signEntityStatement } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
 import { handler } from "../../src/commands/health.js";
 import { JsonFormatter } from "../../src/output/json.js";
@@ -26,7 +26,7 @@ describe("health handler", () => {
 				exp: 9999999999,
 				jwks: { keys: [key.publicKey] },
 			},
-			key.privateKey,
+			new JwkSigner(key.privateKey),
 		);
 
 		const client: HttpClient = async () =>
@@ -57,7 +57,7 @@ describe("health handler", () => {
 				exp: 9999999999,
 				jwks: { keys: [key.publicKey] },
 			},
-			key.privateKey,
+			new JwkSigner(key.privateKey),
 		);
 
 		const client: HttpClient = async () => new Response(jwt, { status: 200 });

@@ -20,16 +20,19 @@ npm install @oidfed/core @oidfed/authority
 ```ts
 import {
   createAuthorityServer,
-  MemoryKeyStore,
   MemorySubordinateStore,
 } from "@oidfed/authority";
-import { entityId, generateSigningKey } from "@oidfed/core";
+import { entityId, generateSigningKey, JwkSigner, MemoryFederationKeyProvider } from "@oidfed/core";
 
 const signingKey = await generateSigningKey("ES256");
+const keyProvider = new MemoryFederationKeyProvider({
+  signer: new JwkSigner(signingKey.privateKey),
+  publicJwk: signingKey.publicKey,
+});
 
 const server = createAuthorityServer({
   entityId: entityId("https://ta.example.org"),
-  signingKeys: [signingKey],
+  keyProvider,
   metadata: {
     federation_entity: {
       federation_fetch_endpoint: "https://ta.example.org/federation_fetch",
@@ -39,7 +42,6 @@ const server = createAuthorityServer({
     },
   },
   subordinateStore: new MemorySubordinateStore(),
-  keyStore: new MemoryKeyStore(signingKey),
 });
 
 const handler = server.handler(); // fetch-compatible (Request → Response)
@@ -50,7 +52,7 @@ const handler = server.handler(); // fetch-compatible (Request → Response)
 - All spec-defined federation endpoints as a single fetch-compatible handler
 - Subordinate management — add, update, remove, list (ordered, paginated)
 - Extended Subordinate Listing (`/federation_extended_list`) — cursor pagination, time-window filtering, audit timestamps, and bulk per-entity claim retrieval (signed subordinate statements, trust marks, metadata, …) per the [OpenID Federation Extended Subordinate Listing](https://openid.net/specs/openid-federation-extended-listing-1_0.html) spec
-- Key lifecycle — pending → active → retiring → revoked
+- Federation-only signing and public-key lifecycle via `ManagedFederationKeyProvider`
 - Trust mark issuance, delegation, and status checking
 - Middleware composition for logging, rate limiting, auth
 - Pluggable storage interfaces (memory implementations included)

@@ -47,6 +47,7 @@ for (const chain of result.chains) {
 
 - Trust chain resolution, validation, refresh, and selection strategies
 - JOSE operations — sign, verify, decode entity statements; key generation
+- Runtime-agnostic federation signing via `JwtSigner`, `JwkSigner`, and federation key providers
 - Metadata policy — merge and apply across trust chains
 - Constraint checking — path length, naming constraints, allowed entity types
 - Typed Zod schemas for all federation data structures

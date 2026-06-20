@@ -78,6 +78,18 @@ export {
 	verifySignedJwkSet,
 	verifyTrustMarkStatusResponse,
 } from "./federation-api/index.js";
+export {
+	type FederationKeyProvider,
+	type FederationKeySet,
+	type FederationKeyState,
+	type FederationSigningKey,
+	type ManagedFederationKeyEntry,
+	type ManagedFederationKeyProvider,
+	MemoryFederationKeyProvider,
+	rotateFederationKey,
+	StaticFederationKeyProvider,
+	validateFederationKeySet,
+} from "./federation-keys.js";
 // HTTP helpers
 export {
 	type ExtractedRequestParams,
@@ -100,12 +112,16 @@ export {
 	generateSigningKey,
 	isValidAlgorithm,
 	JWK_PUBLIC_FIELDS,
+	JwkSigner,
+	type JwkSignerOptions,
+	type JwtSigner,
 	jwkThumbprint,
 	selectVerificationKey,
 	signEntityStatement,
 	stripPrivateFields,
 	timingSafeEqual,
 	type VerifiedClientAssertion,
+	validateSigner,
 	verifyClientAssertion,
 	verifyEntityStatement,
 } from "./jose/index.js";

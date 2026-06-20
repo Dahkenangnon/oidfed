@@ -11,6 +11,10 @@ export {
 	OIDCRegistrationErrorCode,
 	RequestObjectTyp,
 } from "./constants.js";
+export {
+	type OidcProtocolKeyProvider,
+	StaticOidcProtocolKeyProvider,
+} from "./protocol-keys.js";
 // Registration — OIDC protocol adapter
 export { OIDCRegistrationAdapter } from "./registration/adapter.js";
 // Registration — adapter interface

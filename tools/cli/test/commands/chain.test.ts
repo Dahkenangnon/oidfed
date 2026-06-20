@@ -1,4 +1,4 @@
-import { generateSigningKey, type HttpClient, signEntityStatement } from "@oidfed/core";
+import { generateSigningKey, type HttpClient, JwkSigner, signEntityStatement } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
 import { handler } from "../../src/commands/chain.js";
 import { DEFAULT_CONFIG } from "../../src/config.js";
@@ -25,7 +25,7 @@ async function buildSimpleFederation() {
 				},
 			},
 		},
-		taKey.privateKey,
+		new JwkSigner(taKey.privateKey),
 	);
 	const leafEc = await signEntityStatement(
 		{
@@ -36,7 +36,7 @@ async function buildSimpleFederation() {
 			jwks: { keys: [leafKey.publicKey] },
 			authority_hints: ["https://ta.example.com"],
 		},
-		leafKey.privateKey,
+		new JwkSigner(leafKey.privateKey),
 	);
 	const subordinate = await signEntityStatement(
 		{
@@ -46,7 +46,7 @@ async function buildSimpleFederation() {
 			exp: 9_999_999_999,
 			jwks: { keys: [leafKey.publicKey] },
 		},
-		taKey.privateKey,
+		new JwkSigner(taKey.privateKey),
 	);
 
 	const client: HttpClient = async (input) => {
