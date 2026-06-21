@@ -20,8 +20,7 @@ import express from "express";
 
 import {
 	createAuthorityServer,
-	MemorySubordinateStore,
-	MemoryTrustMarkStore,
+	MemoryStorageAdapter,
 	type AuthorityConfig,
 	type AuthorityServer,
 	type SubordinateRecord,
@@ -29,9 +28,9 @@ import {
 import {
 	entityId,
 	generateSigningKey,
-	InMemoryJtiStore,
 	JwkSigner,
 	MemoryFederationKeyProvider,
+	MemoryReplayStore,
 	stripPrivateFields,
 	type EntityId,
 	type EntityType,
@@ -842,7 +841,7 @@ interface EntityInstance {
 	server: AuthorityServer | LeafEntity;
 	keys: { signing: JWK; public: JWK; protocolSigning: JWK; protocolPublic: JWK };
 	def: EntityDefinition;
-	trustMarkStore?: MemoryTrustMarkStore;
+	storage?: MemoryStorageAdapter;
 }
 
 function rewriteUrl(url: string, port: number): string {
@@ -907,7 +906,7 @@ function createOpApp(
 	app.use(express.raw({ type: "application/entity-statement+jwt", limit: "64kb" }));
 	app.use(express.urlencoded({ extended: false, limit: "64kb" }));
 
-	const jtiStore = new InMemoryJtiStore();
+	const replayStore = new MemoryReplayStore();
 	const fedHandler = authority.handler();
 
 	const oidc = new Provider(eid, {
@@ -939,7 +938,7 @@ function createOpApp(
 		if (requestJwt) {
 			const result = await processAutomaticRegistration(requestJwt, trustAnchors, {
 				opEntityId: eid as EntityId,
-				jtiStore,
+				replayStore,
 				httpClient: fetch,
 			});
 			if (!result.ok) {
@@ -1008,8 +1007,7 @@ async function bootstrapTopology(
 
 	function buildAuthorityConfig(
 		entity: EntityDefinition,
-		subordinateStore: MemorySubordinateStore,
-		trustMarkStore: MemoryTrustMarkStore,
+		storage: MemoryStorageAdapter,
 		keyProvider: FederationKeyProvider,
 		extraTrustMarks?: Array<{ trust_mark_type: string; trust_mark: string }>,
 	): Record<string, unknown> {
@@ -1024,8 +1022,7 @@ async function bootstrapTopology(
 				federation_entity: (metadata.federation_entity as Record<string, string>) ?? {},
 				...Object.fromEntries(Object.entries(metadata).filter(([k]) => k !== "federation_entity")),
 			},
-			subordinateStore,
-			trustMarkStore,
+			storage,
 			trustAnchors,
 		};
 		if (authorityHints) cfg.authorityHints = authorityHints;
@@ -1044,16 +1041,14 @@ async function bootstrapTopology(
 	}
 
 	// Stores reused across passes
-	const subordinateStoreMap = new Map<string, MemorySubordinateStore>();
-	const trustMarkStoreMap = new Map<string, MemoryTrustMarkStore>();
+	const storageMap = new Map<string, MemoryStorageAdapter>();
 	const keyProviderMap = new Map<string, FederationKeyProvider>();
 
 	for (const entity of topology.entities) {
 		const isAuthority = entity.role === "trust-anchor" || entity.role === "intermediate" || entity.protocolRole === "op";
 		if (!isAuthority) continue;
 		const keys = getKeys(entity.id);
-		subordinateStoreMap.set(entity.id, new MemorySubordinateStore());
-		trustMarkStoreMap.set(entity.id, new MemoryTrustMarkStore());
+		storageMap.set(entity.id, new MemoryStorageAdapter({ trustMarks: true }));
 		keyProviderMap.set(
 			entity.id,
 			new MemoryFederationKeyProvider(federationSigningKey(keys.signing)),
@@ -1068,13 +1063,12 @@ async function bootstrapTopology(
 
 		const eid = rw(entity.id);
 		const keys = getKeys(entity.id);
-		const subordinateStore = subordinateStoreMap.get(entity.id)!;
-		const trustMarkStore = trustMarkStoreMap.get(entity.id)!;
+		const storage = storageMap.get(entity.id)!;
 		const keyProvider = keyProviderMap.get(entity.id)!;
 
-		const cfg = buildAuthorityConfig(entity, subordinateStore, trustMarkStore, keyProvider);
+		const cfg = buildAuthorityConfig(entity, storage, keyProvider);
 		const authority = createAuthorityServer(cfg as unknown as AuthorityConfig);
-		entities.set(entity.id, { server: authority, keys, def: entity, trustMarkStore });
+		entities.set(entity.id, { server: authority, keys, def: entity, storage });
 
 		const hostname = new URL(eid).hostname;
 		vhosts.set(hostname, createAuthorityApp(authority, eid));
@@ -1111,20 +1105,18 @@ async function bootstrapTopology(
 
 		const eid = rw(entity.id);
 		const keys = getKeys(entity.id);
-		const subordinateStore = subordinateStoreMap.get(entity.id)!;
-		const trustMarkStore = trustMarkStoreMap.get(entity.id)!;
+		const storage = storageMap.get(entity.id)!;
 		const keyProvider = keyProviderMap.get(entity.id)!;
 		const extraTrustMarks = opTrustMarks.get(entity.id);
 
 		const cfg = buildAuthorityConfig(
 			entity,
-			subordinateStore,
-			trustMarkStore,
+			storage,
 			keyProvider,
 			extraTrustMarks,
 		);
 		const authority = createAuthorityServer(cfg as unknown as AuthorityConfig);
-		entities.set(entity.id, { server: authority, keys, def: entity, trustMarkStore });
+		entities.set(entity.id, { server: authority, keys, def: entity, storage });
 
 		const hostname = new URL(eid).hostname;
 		vhosts.set(hostname, createOpApp(authority, eid, trustAnchors));
@@ -1170,8 +1162,8 @@ async function bootstrapTopology(
 		if (!entity.authorityHints) continue;
 
 		for (const parentId of entity.authorityHints) {
-			const store = subordinateStoreMap.get(parentId);
-			if (!store) continue;
+			const storage = storageMap.get(parentId);
+			if (!storage) continue;
 
 			const keys = getKeys(entity.id);
 			const eid = rw(entity.id);
@@ -1205,7 +1197,7 @@ async function bootstrapTopology(
 				updatedAt: Date.now() / 1000,
 			};
 
-			await store.add(record);
+			await storage.subordinates.add(record);
 		}
 	}
 

@@ -1,4 +1,4 @@
-import { type EntityId, FederationErrorCode, isValidEntityId } from "@oidfed/core";
+import { type EntityId, FederationErrorCode, isValidEntityId, nowSeconds } from "@oidfed/core";
 import type { HandlerContext } from "./context.js";
 import { errorResponse, jsonResponse, parseQueryParams, requireMethod } from "./helpers.js";
 
@@ -10,7 +10,7 @@ export function createTrustMarkListHandler(
 		const methodError = requireMethod(request, "GET");
 		if (methodError) return methodError;
 
-		if (!ctx.trustMarkStore) {
+		if (!ctx.storage.trustMarks) {
 			return errorResponse(501, "server_error", "Trust mark store not configured");
 		}
 
@@ -32,13 +32,23 @@ export function createTrustMarkListHandler(
 		}
 
 		try {
-			const listOptions: { sub?: EntityId } = {};
-			if (sub) {
-				listOptions.sub = sub as EntityId;
-			}
-			const result = await ctx.trustMarkStore.list(trustMarkType, listOptions);
-
-			const entityIds = result.items.filter((item) => item.active).map((item) => item.subject);
+			const entityIds: EntityId[] = [];
+			const seenCursors = new Set<EntityId>();
+			let cursor: EntityId | undefined;
+			const validAt = nowSeconds(ctx.options?.clock);
+			do {
+				const result = await ctx.storage.trustMarks.listValid(trustMarkType, validAt, {
+					limit: 500,
+					...(sub ? { subject: sub as EntityId } : {}),
+					...(cursor ? { cursor } : {}),
+				});
+				entityIds.push(...result.items.map((item) => item.subject));
+				cursor = result.nextCursor;
+				if (cursor && seenCursors.has(cursor)) {
+					throw new Error("Trust mark storage returned a repeated cursor");
+				}
+				if (cursor) seenCursors.add(cursor);
+			} while (cursor);
 
 			return jsonResponse(entityIds);
 		} catch (error) {

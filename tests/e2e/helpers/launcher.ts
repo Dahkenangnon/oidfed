@@ -1,8 +1,7 @@
 import type { AuthorityConfig, AuthorityServer, SubordinateRecord } from "@oidfed/authority";
 import {
 	createAuthorityServer,
-	MemorySubordinateStore,
-	MemoryTrustMarkStore,
+	MemoryStorageAdapter,
 	sanitizeSubordinateMetadata,
 } from "@oidfed/authority";
 import type { EntityType, FederationKeyProvider, JWK, TrustAnchorSet } from "@oidfed/core";
@@ -48,7 +47,7 @@ export interface EntityInstance {
 	};
 	keyProvider: FederationKeyProvider;
 	oidcProtocolKeyProvider: OidcProtocolKeyProvider;
-	trustMarkStore?: MemoryTrustMarkStore;
+	storage?: MemoryStorageAdapter;
 }
 
 export interface FederationTestBed {
@@ -147,7 +146,7 @@ export async function launchFederation(
 	);
 
 	const entities = new Map<string, EntityInstance>();
-	const subordinateStores = new Map<string, MemorySubordinateStore>();
+	const authorityStorages = new Map<string, MemoryStorageAdapter>();
 	const apps = new Map<string, Express>();
 	const requestObjectStores = new Map<string, RequestObjectStore>();
 
@@ -167,12 +166,11 @@ export async function launchFederation(
 		const eid = rewriteUrl(entity.id);
 		const keys = getKeys(entity.id);
 		const metadata = addProtocolJwks(entity, rewriteMetadata(entity.metadata), keys);
-		const subordinateStore = new MemorySubordinateStore();
-		subordinateStores.set(entity.id, subordinateStore);
+		const storage = new MemoryStorageAdapter({ trustMarks: true });
+		authorityStorages.set(entity.id, storage);
 
 		const authorityHints = entity.authorityHints?.map((h) => entityId(rewriteUrl(h)));
 
-		const trustMarkStore = new MemoryTrustMarkStore();
 		const keyProvider = new MemoryFederationKeyProvider(federationSigningKey(keys.signing));
 		const oidcProtocolKeyProvider = new StaticOidcProtocolKeyProvider({
 			requestObjectSigner: new JwkSigner(keys.protocolSigning),
@@ -187,8 +185,7 @@ export async function launchFederation(
 				federation_entity: (metadata.federation_entity as Record<string, string>) ?? {},
 				...Object.fromEntries(Object.entries(metadata).filter(([k]) => k !== "federation_entity")),
 			},
-			subordinateStore,
-			trustMarkStore,
+			storage,
 			trustAnchors,
 		};
 		if (authorityHints) authorityConfig.authorityHints = authorityHints;
@@ -214,7 +211,7 @@ export async function launchFederation(
 			keys,
 			keyProvider,
 			oidcProtocolKeyProvider,
-			trustMarkStore,
+			storage,
 		});
 		apps.set(entity.id, createAuthorityApp(authority, eid));
 	}
@@ -272,8 +269,8 @@ export async function launchFederation(
 		if (!entity.authorityHints) continue;
 
 		for (const parentId of entity.authorityHints) {
-			const store = subordinateStores.get(parentId);
-			if (!store) continue;
+			const storage = authorityStorages.get(parentId);
+			if (!storage) continue;
 
 			const keys = getKeys(entity.id);
 			const eid = rewriteUrl(entity.id);
@@ -299,7 +296,7 @@ export async function launchFederation(
 				updatedAt: Date.now() / 1000,
 			};
 
-			await store.add(record);
+			await storage.subordinates.add(record);
 		}
 	}
 

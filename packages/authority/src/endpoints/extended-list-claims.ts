@@ -42,9 +42,9 @@ export const EXTENDED_LIST_CLAIM_EXTRACTORS: Readonly<Record<string, ClaimExtrac
 			? [...record.metadataPolicyCrit]
 			: undefined,
 	[ExtendedListClaim.SourceEndpoint]: (record) => record.sourceEndpoint,
-	[ExtendedListClaim.TrustMarks]: async (record, ctx) => {
-		if (!ctx.trustMarkStore?.listForSubject) return [];
-		const marks = await ctx.trustMarkStore.listForSubject(record.entityId);
+	[ExtendedListClaim.TrustMarks]: async (record, ctx, now) => {
+		if (!ctx.storage.trustMarks) return [];
+		const marks = await ctx.storage.trustMarks.listValidForSubject(record.entityId, now);
 		return marks.map((m) => ({ id: m.trustMarkType, trust_mark: m.jwt }));
 	},
 };

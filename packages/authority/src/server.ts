@@ -46,7 +46,7 @@ import { createTrustMarkListHandler } from "./endpoints/trust-mark-list.js";
 import { createTrustMarkStatusHandler } from "./endpoints/trust-mark-status.js";
 import { InvalidAuthorityConfig } from "./errors.js";
 import { rotateKey } from "./keys/index.js";
-import type { ListFilter, SubordinateStore, TrustMarkStore } from "./storage/types.js";
+import type { ListFilter, StorageAdapter } from "./storage/types.js";
 import { assertMetadataValuesNotNull } from "./utils/subordinate-statement-shape.js";
 
 /** Parameters accepted by {@link AuthorityServer.listSubordinatesExtended}. */
@@ -76,12 +76,10 @@ export interface AuthorityConfig {
 	metadata: { federation_entity: FederationEntityMetadata } & Partial<{
 		[K in EntityType]: EntityTypeMetadataMap[K];
 	}>;
-	/** Persistent store for subordinate entity records. */
-	subordinateStore: SubordinateStore;
+	/** Unified persistence adapter for all non-key authority state. */
+	storage: StorageAdapter;
 	/** Federation-only signing key provider and lifecycle manager. */
 	keyProvider: ManagedFederationKeyProvider;
-	/** Optional store for issued trust marks. Required if this authority issues trust marks. */
-	trustMarkStore?: TrustMarkStore;
 	/** Trust marks this authority claims about itself. */
 	trustMarks?: TrustMarkRef[];
 	/** Mapping of trust mark type → authorized issuer entity IDs. */
@@ -101,7 +99,7 @@ export interface AuthorityConfig {
 	/** TTL in seconds for issued trust mark JWTs. */
 	trustMarkTtlSeconds?: number;
 	/** Federation-wide options (httpClient, clock, etc.). */
-	options?: FederationOptions;
+	options?: Omit<FederationOptions, "cache">;
 	/**
 	 * Configuration for the Extended Subordinate Listing endpoint. Set
 	 * `enabled: false` to keep the endpoint disabled (router returns 404) and
@@ -192,6 +190,16 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 			"metadata.federation_entity.federation_list_endpoint is required for an Authority. Set it to the URL where this server serves the list endpoint.",
 		);
 	}
+	const advertisedTrustMarkEndpoints = [
+		fedEntity.federation_trust_mark_endpoint,
+		fedEntity.federation_trust_mark_status_endpoint,
+		fedEntity.federation_trust_mark_list_endpoint,
+	].some((endpoint) => typeof endpoint === "string");
+	if (advertisedTrustMarkEndpoints && !config.storage.trustMarks) {
+		throw new InvalidAuthorityConfig(
+			"Trust mark endpoints require storage.trustMarks to be configured.",
+		);
+	}
 
 	// No metadata claim may carry a null leaf at any depth — omit the field instead.
 	assertMetadataValuesNotNull(config.metadata as Record<string, unknown>);
@@ -199,15 +207,18 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 	const base: HandlerContext = {
 		entityId: config.entityId,
 		keyProvider: config.keyProvider,
-		subordinateStore: config.subordinateStore,
+		storage: config.storage,
 		metadata: config.metadata,
 	};
+	const effectiveOptions: FederationOptions | undefined =
+		config.options || config.storage.cache
+			? { ...config.options, ...(config.storage.cache ? { cache: config.storage.cache } : {}) }
+			: undefined;
 	const ctx: HandlerContext = Object.assign(
 		base,
 		...[
 			config.authorityHints && { authorityHints: config.authorityHints },
 			config.trustMarks && { trustMarks: config.trustMarks },
-			config.trustMarkStore && { trustMarkStore: config.trustMarkStore },
 			config.trustMarkIssuers && { trustMarkIssuers: config.trustMarkIssuers },
 			config.trustMarkOwners && { trustMarkOwners: config.trustMarkOwners },
 			config.trustMarkDelegations && { trustMarkDelegations: config.trustMarkDelegations },
@@ -221,7 +232,7 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 			config.trustMarkTtlSeconds !== undefined && {
 				trustMarkTtlSeconds: config.trustMarkTtlSeconds,
 			},
-			config.options && { options: config.options },
+			effectiveOptions && { options: effectiveOptions },
 		].filter(Boolean),
 	);
 
@@ -320,7 +331,7 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 		},
 
 		async getSubordinateStatement(sub: EntityId): Promise<string> {
-			const record = await config.subordinateStore.get(sub);
+			const record = await config.storage.subordinates.get(sub);
 			if (!record) {
 				throw new Error(`Subordinate '${sub}' not found`);
 			}
@@ -328,7 +339,7 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 		},
 
 		async listSubordinates(filter?: ListFilter): Promise<EntityId[]> {
-			const page = await config.subordinateStore.list(filter);
+			const page = await config.storage.subordinates.list(filter);
 			return page.items.map((r) => r.entityId);
 		},
 

@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING.** `processAutomaticRegistration()` now requires `replayStore: ReplayStore`, namespaces claims by RP issuer and OP audience, and claims the JTI only after all cryptographic, metadata, and trust-chain validation succeeds.
+
+### Fixed
+
+- Invalid Request Objects can no longer consume a legitimate JTI before signature validation. Replay backend failures now return `server_error`.
+
 ## [0.5.2] - 2026-05-28
 
 _No user-visible changes — released as part of the coordinated wave._

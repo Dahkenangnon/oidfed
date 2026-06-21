@@ -42,9 +42,9 @@ describe("Trust mark lifecycle", () => {
 			expect(isOk(validationResult)).toBe(true);
 
 			// Revoke via store
-			const trustMarkStore = taInstance.trustMarkStore;
-			if (!trustMarkStore) throw new Error("trustMarkStore not found");
-			await trustMarkStore.revoke(trustMarkType(port), entityId(rpId));
+			const trustMarks = taInstance.storage?.trustMarks;
+			if (!trustMarks) throw new Error("trust mark storage not found");
+			await trustMarks.revoke(trustMarkType(port), entityId(rpId), Math.floor(Date.now() / 1000));
 
 			// Re-check status — revoked (should return non-active directly)
 			const revokedStatus = await ta.getTrustMarkStatus(trustMarkJwt);
@@ -63,9 +63,9 @@ describe("Trust mark lifecycle", () => {
 
 			// Issue and then revoke
 			const trustMarkJwt = await ta.issueTrustMark(rpId, trustMarkType(port));
-			const trustMarkStore = taInstance.trustMarkStore;
-			if (!trustMarkStore) throw new Error("trustMarkStore not found");
-			await trustMarkStore.revoke(trustMarkType(port), entityId(rpId));
+			const trustMarks = taInstance.storage?.trustMarks;
+			if (!trustMarks) throw new Error("trust mark storage not found");
+			await trustMarks.revoke(trustMarkType(port), entityId(rpId), Math.floor(Date.now() / 1000));
 
 			// Validate after revoke — the JWT signature is still valid but status is revoked
 			const result = await validateTrustMark(

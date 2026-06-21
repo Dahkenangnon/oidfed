@@ -1,7 +1,11 @@
-// JTI store
+// Replay protection
 
-export { InMemoryJtiStore } from "./in-memory-jti-store.js";
-export type { JtiStore } from "./jti-store.js";
+export {
+	MemoryReplayStore,
+	type MemoryReplayStoreOptions,
+	ReplayStoreCapacityError,
+} from "./memory-replay-store.js";
+export type { JtiReplayClaim, ReplayStore } from "./replay-store.js";
 
 // Constants
 

@@ -266,16 +266,16 @@ import { validateTrustMark, signTrustMarkDelegation } from "@oidfed/core";
 import type { ValidatedTrustMark, ValidatedTrustMarkDelegation } from "@oidfed/core";
 ```
 
-### JTI Store
+### Replay Store
 
 ```ts
-import { InMemoryJtiStore } from "@oidfed/core";
-import type { JtiStore } from "@oidfed/core";
+import { MemoryReplayStore } from "@oidfed/core";
+import type { JtiReplayClaim, ReplayStore } from "@oidfed/core";
 ```
 
 The `RegistrationProtocolAdapter` interface and the `OIDCRegistrationAdapter` implementation are exported from [`@oidfed/oidc`](./oidc.md#registration-adapter), not from this package.
 
-`InMemoryJtiStore` is for development only. See the [Storage Guide](../guide/storage-guide.md) for production implementations.
+`ReplayStore.useJti({ issuer, audience, jti, expiresAt })` atomically returns `true` for a newly accepted claim and `false` for replay. Issuer and audience are part of the identity so shared deployments do not create cross-tenant collisions. `MemoryReplayStore` is development-only and fails closed when its capacity is full. See the [Storage Guide](../guide/storage-guide.md) for production implementations.
 
 ## Configuration
 

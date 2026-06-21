@@ -46,7 +46,7 @@ export function createFetchHandler(ctx: HandlerContext): (request: Request) => P
 				);
 			}
 
-			const record = await ctx.subordinateStore.get(sub as EntityId);
+			const record = await ctx.storage.subordinates.get(sub as EntityId);
 			if (!record) {
 				return errorResponse(404, FederationErrorCode.NotFound, "Entity not found");
 			}

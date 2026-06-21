@@ -68,7 +68,6 @@ import {
 	SECURITY_HEADERS,
 	toPublicError,
 } from "../../../packages/core/src/http.js";
-import { InMemoryJtiStore } from "../../../packages/core/src/in-memory-jti-store.js";
 import { verifyClientAssertion } from "../../../packages/core/src/jose/client-auth.js";
 import {
 	generateSigningKey as _genKey,
@@ -94,6 +93,10 @@ import { resolveEntityKeys } from "../../../packages/core/src/jwks/resolve.js";
 import { fetchSignedJwkSet } from "../../../packages/core/src/jwks/signed-jwks-uri.js";
 import { validateSignedJwkSetSpecHygiene } from "../../../packages/core/src/jwks/spec-hygiene.js";
 import { validateJwkSetUseRequirement } from "../../../packages/core/src/jwks/use-requirement.js";
+import {
+	MemoryReplayStore,
+	ReplayStoreCapacityError,
+} from "../../../packages/core/src/memory-replay-store.js";
 import {
 	applyMetadataPolicy,
 	denormalizeScope,
@@ -489,78 +492,50 @@ export default (QUnit: QUnit) => {
 		});
 	});
 
-	// ── in-memory-jti-store ───────────────────────────────────────────
-	module("core / InMemoryJtiStore", (hooks) => {
-		let store: InMemoryJtiStore;
-
-		hooks.beforeEach(() => {
-			store = new InMemoryJtiStore(0);
+	// ── replay-store ──────────────────────────────────────────────────
+	module("core / MemoryReplayStore", () => {
+		const claim = (overrides?: Partial<Parameters<MemoryReplayStore["useJti"]>[0]>) => ({
+			issuer: "https://rp.example.com",
+			audience: "https://op.example.com",
+			jti: "jti-1",
+			expiresAt: 2_000,
+			...overrides,
 		});
 
-		QUnit.testDone(() => {
-			store?.dispose();
+		test("accepts a new claim and rejects its replay", async (t) => {
+			const store = new MemoryReplayStore({ clock: { now: () => 1_000 } });
+			t.true(await store.useJti(claim()));
+			t.false(await store.useJti(claim()));
 		});
 
-		test("returns false on first record, true on replay", async (t) => {
-			const future = Math.floor(Date.now() / 1000) + 3600;
-			t.equal(await store.hasSeenAndRecord("jti-1", future), false);
-			t.equal(await store.hasSeenAndRecord("jti-1", future), true);
+		test("atomically admits one concurrent claimant", async (t) => {
+			const store = new MemoryReplayStore({ clock: { now: () => 1_000 } });
+			const results = await Promise.all(Array.from({ length: 10 }, () => store.useJti(claim())));
+			t.equal(results.filter(Boolean).length, 1);
 		});
 
-		test("returns false for distinct JTIs", async (t) => {
-			const future = Math.floor(Date.now() / 1000) + 3600;
-			t.equal(await store.hasSeenAndRecord("jti-a", future), false);
-			t.equal(await store.hasSeenAndRecord("jti-b", future), false);
+		test("namespaces the same JTI by issuer and audience", async (t) => {
+			const store = new MemoryReplayStore({ clock: { now: () => 1_000 } });
+			t.true(await store.useJti(claim()));
+			t.true(await store.useJti(claim({ issuer: "https://other-rp.example.com" })));
+			t.true(await store.useJti(claim({ audience: "https://other-op.example.com" })));
 		});
 
-		test("TTL cleanup removes expired entries", (t) => {
-			const past = Math.floor(Date.now() / 1000) - 1;
-			const s = store as unknown as { seen: Map<string, number>; cleanup(): void };
-			s.seen.set("expired-jti", past);
-			s.cleanup();
-			t.false(s.seen.has("expired-jti"));
+		test("allows a claim to be reused after its expiry boundary", async (t) => {
+			let now = 1_000;
+			const store = new MemoryReplayStore({ clock: { now: () => now } });
+			t.true(await store.useJti(claim({ expiresAt: 1_001 })));
+			now = 1_001;
+			t.true(await store.useJti(claim({ expiresAt: 2_000 })));
 		});
 
-		test("does not remove non-expired entries during cleanup", (t) => {
-			const future = Math.floor(Date.now() / 1000) + 3600;
-			const s = store as unknown as { seen: Map<string, number>; cleanup(): void };
-			s.seen.set("live-jti", future);
-			s.cleanup();
-			t.true(s.seen.has("live-jti"));
-		});
-
-		test("evicts oldest entry when maxEntries is reached", async (t) => {
-			const capped = new InMemoryJtiStore(0, 3);
-			const future = Math.floor(Date.now() / 1000) + 3600;
-			await capped.hasSeenAndRecord("jti-1", future);
-			await capped.hasSeenAndRecord("jti-2", future);
-			await capped.hasSeenAndRecord("jti-3", future);
-			await capped.hasSeenAndRecord("jti-4", future);
-			const s = capped as unknown as { seen: Map<string, number> };
-			t.equal(s.seen.size, 3);
-			t.false(s.seen.has("jti-1"));
-			t.true(s.seen.has("jti-4"));
-			capped.dispose();
-		});
-
-		test("default constructor uses maxEntries=10_000", (t) => {
-			const s = new InMemoryJtiStore() as unknown as { maxEntries: number };
-			t.equal(s.maxEntries, 10_000);
-			(s as unknown as InMemoryJtiStore).dispose();
-		});
-
-		test("custom maxEntries constructor is respected", (t) => {
-			const s = new InMemoryJtiStore(0, 500) as unknown as { maxEntries: number };
-			t.equal(s.maxEntries, 500);
-			(s as unknown as InMemoryJtiStore).dispose();
-		});
-
-		test("dispose clears all entries and stops timer", async (t) => {
-			const future = Math.floor(Date.now() / 1000) + 3600;
-			await store.hasSeenAndRecord("jti-x", future);
-			store.dispose();
-			const s = store as unknown as { seen: Map<string, number> };
-			t.equal(s.seen.size, 0);
+		test("fails closed when capacity contains only unexpired claims", async (t) => {
+			const store = new MemoryReplayStore({
+				clock: { now: () => 1_000 },
+				maxEntries: 1,
+			});
+			await store.useJti(claim());
+			await t.rejects(store.useJti(claim({ jti: "jti-2" })), ReplayStoreCapacityError);
 		});
 	});
 

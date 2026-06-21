@@ -1,4 +1,4 @@
-import { EntityType, FederationErrorCode } from "@oidfed/core";
+import { EntityType, FederationErrorCode, nowSeconds } from "@oidfed/core";
 import type { ListFilter } from "../storage/types.js";
 import type { HandlerContext } from "./context.js";
 import { errorResponse, jsonResponse, parseQueryParams, requireMethod } from "./helpers.js";
@@ -23,7 +23,7 @@ export function createListHandler(ctx: HandlerContext): (request: Request) => Pr
 		const trustMarkType = params.get("trust_mark_type");
 		const intermediate = params.get("intermediate");
 
-		if ((trustMarked !== null || trustMarkType !== null) && !ctx.trustMarkStore) {
+		if ((trustMarked !== null || trustMarkType !== null) && !ctx.storage.trustMarks) {
 			return errorResponse(
 				400,
 				FederationErrorCode.UnsupportedParameter,
@@ -34,45 +34,15 @@ export function createListHandler(ctx: HandlerContext): (request: Request) => Pr
 		const filter: ListFilter = {};
 		if (entityTypes.length > 0) filter.entityTypes = entityTypes;
 		if (intermediate !== null) filter.intermediate = intermediate === "true";
+		if (trustMarked !== null) filter.trustMarked = trustMarked === "true";
+		if (trustMarkType !== null) filter.trustMarkType = trustMarkType;
+		if (trustMarked !== null || trustMarkType !== null) {
+			filter.validAt = nowSeconds(ctx.options?.clock);
+		}
 
 		try {
-			const page = await ctx.subordinateStore.list(filter);
-			let records = page.items;
-
-			if (trustMarked === "true" && ctx.trustMarkStore) {
-				const filtered = [];
-				for (const record of records) {
-					if (trustMarkType) {
-						const active = await ctx.trustMarkStore.isActive(trustMarkType, record.entityId);
-						if (active) filtered.push(record);
-					} else {
-						const hasAny = await ctx.trustMarkStore.hasAnyActive(record.entityId);
-						if (hasAny) filtered.push(record);
-					}
-				}
-				records = filtered;
-			} else if (trustMarked === "false" && ctx.trustMarkStore) {
-				const filtered = [];
-				for (const record of records) {
-					if (trustMarkType) {
-						const active = await ctx.trustMarkStore.isActive(trustMarkType, record.entityId);
-						if (!active) filtered.push(record);
-					} else {
-						const hasAny = await ctx.trustMarkStore.hasAnyActive(record.entityId);
-						if (!hasAny) filtered.push(record);
-					}
-				}
-				records = filtered;
-			} else if (trustMarked === null && trustMarkType && ctx.trustMarkStore) {
-				const filtered = [];
-				for (const record of records) {
-					const active = await ctx.trustMarkStore.isActive(trustMarkType, record.entityId);
-					if (active) filtered.push(record);
-				}
-				records = filtered;
-			}
-
-			const entityIds = records.map((r) => r.entityId);
+			const page = await ctx.storage.subordinates.list(filter);
+			const entityIds = page.items.map((record) => record.entityId);
 			return jsonResponse(entityIds);
 		} catch (error) {
 			ctx.options?.logger?.error("Failed to list subordinates", { error });

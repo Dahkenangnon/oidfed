@@ -1,30 +1,40 @@
-/** Storage interfaces for subordinate entity records and trust marks. */
-import type { EntityId, EntityType, JWKSet, TrustChainConstraints } from "@oidfed/core";
+/** Unified authority persistence contracts. */
+import type {
+	CacheProvider,
+	EntityId,
+	EntityType,
+	JWKSet,
+	ReplayStore,
+	TrustChainConstraints,
+} from "@oidfed/core";
 
-export interface SubordinateStore {
+export interface StorageAdapter {
+	readonly subordinates: SubordinateStorage;
+	readonly trustMarks?: TrustMarkStorage;
+	readonly replay?: ReplayStore;
+	readonly cache?: CacheProvider;
+	transaction<T>(operation: (tx: StorageTransaction) => Promise<T>): Promise<T>;
+}
+
+export interface StorageTransaction {
+	readonly subordinates: SubordinateStorage;
+	readonly trustMarks?: TrustMarkStorage;
+}
+
+export interface SubordinateStorage {
 	get(entityId: EntityId): Promise<SubordinateRecord | undefined>;
-	/**
-	 * List subordinate records. Records MUST be returned in deterministic order
-	 * (lexicographic by `entityId`). When `options.cursor` is provided, results
-	 * resume from that `entityId` (inclusive). When `options.limit` caps the
-	 * page, `nextCursor` MUST equal the `entityId` of the first record that
-	 * would have appeared after the returned page, and MUST be undefined when
-	 * the page exhausts the filtered set.
-	 */
+	/** Records are ordered lexicographically by entityId; cursors are inclusive. */
 	list(filter?: ListFilter, options?: ListPageOptions): Promise<ListPage>;
 	add(record: SubordinateRecord): Promise<void>;
-	update(entityId: EntityId, updates: Partial<SubordinateRecord>): Promise<void>;
+	update(entityId: EntityId, updates: SubordinateRecordUpdate): Promise<void>;
 	remove(entityId: EntityId): Promise<void>;
 }
 
 export interface ListPageOptions {
-	/** Resume cursor (entityId, inclusive). */
+	/** EntityId of the first record to return. */
 	cursor?: EntityId;
-	/** Maximum number of records returned in this page. */
 	limit?: number;
-	/** Return only records whose `updatedAt` is ≥ this NumericDate. */
 	updatedAfter?: number;
-	/** Return only records whose `updatedAt` is ≤ this NumericDate. */
 	updatedBefore?: number;
 }
 
@@ -35,65 +45,69 @@ export interface ListPage {
 
 export interface SubordinateRecord {
 	readonly entityId: EntityId;
-	/** The subordinate's public keys, embedded in subordinate statements. */
 	readonly jwks: JWKSet;
-	/** Metadata overrides applied by this authority to the subordinate. */
 	readonly metadata?: Readonly<Record<string, unknown>>;
-	/** Metadata policy constraints applied during trust chain resolution. */
 	readonly metadataPolicy?: Readonly<Record<string, unknown>>;
-	/** Naming constraints limiting further subordination. */
 	readonly constraints?: Readonly<TrustChainConstraints>;
-	/** Entity types this subordinate is authorized to operate as. */
 	readonly entityTypes?: ReadonlyArray<EntityType>;
-	/** Whether this subordinate can itself act as an intermediate authority. */
 	readonly isIntermediate?: boolean;
-	/** The endpoint URL from which this record was originally fetched. */
 	readonly sourceEndpoint?: string;
-	/** Critical extensions emitted in the Subordinate Statement and surfaced via `claims=crit`. */
 	readonly crit?: ReadonlyArray<string>;
-	/** Critical metadata policy operators emitted in the Subordinate Statement and surfaced via `claims=metadata_policy_crit`. */
 	readonly metadataPolicyCrit?: ReadonlyArray<string>;
-	/** NumericDate (seconds since the epoch, per RFC 7519). */
+	/** NumericDate. */
 	readonly createdAt: number;
-	/** NumericDate (seconds since the epoch, per RFC 7519). */
+	/** NumericDate. */
 	readonly updatedAt: number;
 }
+
+export type SubordinateRecordUpdate = Partial<
+	Omit<SubordinateRecord, "entityId" | "createdAt" | "updatedAt">
+>;
 
 export interface ListFilter {
 	entityTypes?: EntityType[];
 	trustMarked?: boolean;
 	trustMarkType?: string;
 	intermediate?: boolean;
+	/** Required when trustMarked or trustMarkType is provided. */
+	validAt?: number;
 }
 
-export interface TrustMarkStore {
-	get(trustMarkType: string, subject: EntityId): Promise<TrustMarkRecord | undefined>;
-	list(
+export interface TrustMarkListOptions {
+	readonly subject?: EntityId;
+	readonly cursor?: EntityId;
+	readonly limit: number;
+}
+
+export interface TrustMarkListPage {
+	readonly items: TrustMarkRecord[];
+	readonly nextCursor?: EntityId;
+}
+
+export interface TrustMarkStorage {
+	getValid(
 		trustMarkType: string,
-		options?: { sub?: EntityId; cursor?: string; limit?: number },
-	): Promise<{ items: TrustMarkRecord[]; nextCursor?: string }>;
+		subject: EntityId,
+		validAt: number,
+	): Promise<TrustMarkRecord | undefined>;
+	getByJwt(jwt: string): Promise<TrustMarkRecord | undefined>;
+	listValid(
+		trustMarkType: string,
+		validAt: number,
+		options: TrustMarkListOptions,
+	): Promise<TrustMarkListPage>;
+	listValidForSubject(subject: EntityId, validAt: number): Promise<TrustMarkRecord[]>;
+	hasAnyValid(subject: EntityId, validAt: number): Promise<boolean>;
 	issue(record: TrustMarkRecord): Promise<void>;
-	revoke(trustMarkType: string, subject: EntityId): Promise<void>;
-	isActive(trustMarkType: string, subject: EntityId): Promise<boolean>;
-	hasAnyActive(subject: EntityId): Promise<boolean>;
-	/**
-	 * Return every active trust mark record for the given subject across all
-	 * trust mark types. Used by the Extended Subordinate Listing endpoint when
-	 * `claims=trust_marks` is requested. Optional: stores that cannot enumerate
-	 * across types should return an empty array.
-	 */
-	listForSubject?(subject: EntityId): Promise<TrustMarkRecord[]>;
+	revoke(trustMarkType: string, subject: EntityId, revokedAt: number): Promise<void>;
 }
 
 export interface TrustMarkRecord {
-	/** The trust mark type URI (e.g., "https://example.com/trust-mark/verified"). */
 	readonly trustMarkType: string;
-	/** The entity this trust mark was issued to. */
 	readonly subject: EntityId;
-	/** The signed trust mark JWT. */
 	readonly jwt: string;
 	readonly issuedAt: number;
 	readonly expiresAt?: number;
-	/** Whether this trust mark is currently valid (false if revoked). */
 	readonly active: boolean;
+	readonly revokedAt?: number;
 }

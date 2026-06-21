@@ -1,7 +1,6 @@
 import {
 	DEFAULT_MAX_REQUEST_BODY_BYTES,
 	decodeEntityStatement,
-	type EntityId,
 	FederationErrorCode,
 	isOk,
 	isValidEntityId,
@@ -23,7 +22,7 @@ export function createTrustMarkStatusHandler(
 		const methodError = requireMethod(request, "POST");
 		if (methodError) return methodError;
 
-		if (!ctx.trustMarkStore) {
+		if (!ctx.storage.trustMarks) {
 			return errorResponse(501, "server_error", "Trust mark store not configured");
 		}
 
@@ -68,14 +67,16 @@ export function createTrustMarkStatusHandler(
 		}
 
 		const now = nowSeconds(ctx.options?.clock);
-
+		const record = await ctx.storage.trustMarks.getByJwt(trustMarkJwt);
+		if (!record) {
+			return errorResponse(404, FederationErrorCode.NotFound, "Trust mark not found");
+		}
 		const exp = payload.exp as number | undefined;
-		if (exp !== undefined && exp < now) {
+		if (exp !== undefined && exp <= now) {
 			return buildStatusResponse(ctx, trustMarkJwt, TrustMarkStatus.Expired);
 		}
 
 		// Verify trust mark signature against all active+retiring keys
-		// Placed after expiry check so expired-but-valid tokens return Expired correctly.
 		const keySet = await ctx.keyProvider.getFederationKeySet();
 		const sigResult = await verifyEntityStatement(trustMarkJwt, keySet.jwks, {
 			expectedTyp: JwtTyp.TrustMark,
@@ -84,13 +85,7 @@ export function createTrustMarkStatusHandler(
 			return buildStatusResponse(ctx, trustMarkJwt, TrustMarkStatus.Invalid);
 		}
 
-		const isActive = await ctx.trustMarkStore.isActive(trustMarkType, sub as EntityId);
-
-		if (!isActive) {
-			const record = await ctx.trustMarkStore.get(trustMarkType, sub as EntityId);
-			if (!record) {
-				return errorResponse(404, FederationErrorCode.NotFound, "Trust mark not found");
-			}
+		if (!record.active) {
 			return buildStatusResponse(ctx, trustMarkJwt, TrustMarkStatus.Revoked);
 		}
 

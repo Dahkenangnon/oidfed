@@ -1,14 +1,19 @@
 export {
-	MemorySubordinateStore,
-	MemoryTrustMarkStore,
+	MemoryStorageAdapter,
+	type MemoryStorageAdapterOptions,
 	validateSubordinateRecord,
 } from "./memory.js";
 export type {
 	ListFilter,
 	ListPage,
 	ListPageOptions,
+	StorageAdapter,
+	StorageTransaction,
 	SubordinateRecord,
-	SubordinateStore,
+	SubordinateRecordUpdate,
+	SubordinateStorage,
+	TrustMarkListOptions,
+	TrustMarkListPage,
 	TrustMarkRecord,
-	TrustMarkStore,
+	TrustMarkStorage,
 } from "./types.js";

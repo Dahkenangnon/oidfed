@@ -6,8 +6,8 @@ import {
 	type FederationOptions,
 	federationError,
 	InternalErrorCode,
-	type JtiStore,
 	ok,
+	type ReplayStore,
 	type Result,
 	resolveEntityKeys,
 	type TrustAnchorSet,
@@ -36,8 +36,8 @@ export interface ProcessedRegistration {
 export interface ProcessAutomaticRegistrationOptions extends FederationOptions {
 	/** The OP's own Entity Identifier — REQUIRED to prevent cross-OP replay via `aud` validation. */
 	opEntityId: EntityId;
-	/** Optional JTI store for replay detection. */
-	jtiStore?: JtiStore;
+	/** Atomic replay protection required for one-time Request Object processing. */
+	replayStore: ReplayStore;
 }
 
 /**
@@ -58,24 +58,6 @@ export async function processAutomaticRegistration(
 			: {}),
 	});
 	if (!validated.ok) return validated;
-
-	if (!options.jtiStore) {
-		// JTI replay protection is opt-in via the jtiStore parameter.
-		// Callers who need replay protection should provide a JtiStore implementation.
-	} else {
-		const isReplay = await options.jtiStore.hasSeenAndRecord(
-			validated.value.jti,
-			validated.value.exp,
-		);
-		if (isReplay) {
-			return err(
-				federationError(
-					FederationErrorCode.InvalidRequest,
-					"Request Object JTI has already been used (replay detected)",
-				),
-			);
-		}
-	}
 
 	const rpEntityId = validated.value.rpEntityId;
 	const bestChainResult = await resolveAndValidateBestChain(rpEntityId, trustAnchors, options);
@@ -141,6 +123,31 @@ export async function processAutomaticRegistration(
 			);
 		}
 		peerResolvedOpMetadata = peerValidation.chain.resolvedMetadata.openid_provider ?? {};
+	}
+
+	try {
+		const accepted = await options.replayStore.useJti({
+			issuer: rpEntityId,
+			audience: options.opEntityId,
+			jti: validated.value.jti,
+			expiresAt: validated.value.exp,
+		});
+		if (!accepted) {
+			return err(
+				federationError(
+					FederationErrorCode.InvalidRequest,
+					"Request Object JTI has already been used (replay detected)",
+				),
+			);
+		}
+	} catch (error) {
+		options.logger?.error("Failed to claim Request Object JTI", { error });
+		return err(
+			federationError(
+				FederationErrorCode.ServerError,
+				"Request Object replay protection is unavailable",
+			),
+		);
 	}
 
 	return ok({

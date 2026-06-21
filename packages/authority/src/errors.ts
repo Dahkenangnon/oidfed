@@ -8,7 +8,7 @@ export class InvalidAuthorityConfig extends Error {
 	}
 }
 
-/** Thrown by `MemorySubordinateStore.add()` when a record violates record-shape rules. */
+/** Thrown when a subordinate record violates Subordinate Statement shape rules. */
 export class InvalidSubordinateRecord extends Error {
 	constructor(message: string) {
 		super(message);

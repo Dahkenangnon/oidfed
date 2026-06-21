@@ -57,7 +57,7 @@ import { processAutomaticRegistration } from "@oidfed/oidc";
 
 const result = await processAutomaticRegistration(requestObjectJwt, trustAnchors, {
   opEntityId: entityId("https://op.example.com"),
-  jtiStore,
+  replayStore,
 });
 // Result<ProcessedRegistration, FederationError> — never throws
 ```

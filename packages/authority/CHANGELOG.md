@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Unified `StorageAdapter` with subordinate, optional trust-mark, optional replay, optional cache, and serializable transaction capabilities.
+- `MemoryStorageAdapter` for development and tests, including transaction rollback, detached records, replay, and cache capabilities.
+
+### Changed
+
+- **BREAKING.** `AuthorityConfig` now accepts one `storage` adapter instead of separate subordinate and trust-mark stores.
+- Trust-mark persistence is expiry-aware, preserves exact issued JWT history, and supports complete deterministic pagination.
+
+### Removed
+
+- **BREAKING.** Removed `SubordinateStore`, `TrustMarkStore`, `MemorySubordinateStore`, and `MemoryTrustMarkStore`.
+
 ## [0.5.2] - 2026-05-28
 
 _No user-visible changes — released as part of the coordinated wave._

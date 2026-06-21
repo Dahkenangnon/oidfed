@@ -20,7 +20,7 @@ npm install @oidfed/core @oidfed/authority
 ```ts
 import {
   createAuthorityServer,
-  MemorySubordinateStore,
+  MemoryStorageAdapter,
 } from "@oidfed/authority";
 import { entityId, generateSigningKey, JwkSigner, MemoryFederationKeyProvider } from "@oidfed/core";
 
@@ -41,7 +41,7 @@ const server = createAuthorityServer({
         "https://ta.example.org/federation_extended_list",
     },
   },
-  subordinateStore: new MemorySubordinateStore(),
+  storage: new MemoryStorageAdapter(),
 });
 
 const handler = server.handler(); // fetch-compatible (Request → Response)
@@ -55,12 +55,11 @@ const handler = server.handler(); // fetch-compatible (Request → Response)
 - Federation-only signing and public-key lifecycle via `ManagedFederationKeyProvider`
 - Trust mark issuance, delegation, and status checking
 - Middleware composition for logging, rate limiting, auth
-- Pluggable storage interfaces (memory implementations included)
+- One transactional `StorageAdapter` with subordinate, optional trust-mark, replay, and cache capabilities
 
-## Breaking changes from 0.2.x
+## Unified Storage
 
-- `SubordinateStore.list(filter)` now returns `Promise<{ items: SubordinateRecord[]; nextCursor?: EntityId }>` (was `Promise<SubordinateRecord[]>`) and accepts a second `ListPageOptions` argument with `cursor`, `limit`, `updatedAfter`, `updatedBefore`. Custom store implementations MUST be migrated to the new shape; see [docs/packages/authority.md](https://github.com/Dahkenangnon/oidfed/blob/main/docs/packages/authority.md#storage-interfaces).
-- `TrustMarkStore.listForSubject?(subject)` is a new OPTIONAL method consumed only by `/federation_extended_list` with `claims=trust_marks`.
+`createAuthorityServer` accepts one `storage` adapter instead of separate stores. It owns subordinate records, optional trust marks, optional replay, optional cache, and serializable authority-record transactions. Federation key custody remains exclusively behind `ManagedFederationKeyProvider`. See [the authority reference](https://github.com/Dahkenangnon/oidfed/blob/main/docs/packages/authority.md#unified-storage-adapter).
 
 ## Documentation
 

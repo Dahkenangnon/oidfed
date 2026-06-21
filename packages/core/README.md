@@ -53,7 +53,7 @@ for (const chain of result.chains) {
 - Typed Zod schemas for all federation data structures
 - Trust mark validation and delegation signing
 - Remote-endpoint clients — `fetchListSubordinates`, `fetchExtendedSubordinatesList` (paginated, with bulk claim retrieval), `fetchResolveResponse`, `fetchHistoricalKeys`, `fetchTrustMarkList`
-- LRU cache, Result type, pluggable storage interfaces
+- LRU cache, atomic replay-store contracts, and Result type
 - Fetch-compatible HTTP primitives (`Request` → `Response`)
 
 ## Documentation

@@ -96,7 +96,11 @@ describe("Trust mark HTTP endpoints", () => {
 			expect(activeStatus.status).toBe("active");
 
 			// Revoke
-			await taInstance.trustMarkStore?.revoke(trustMarkType(port), entityId(rpId));
+			await taInstance.storage?.trustMarks?.revoke(
+				trustMarkType(port),
+				entityId(rpId),
+				Math.floor(Date.now() / 1000),
+			);
 
 			// Check via HTTP endpoint — should not be active
 			const response = await fetch(`https://ta.ofed.test:${port}/federation_trust_mark_status`, {

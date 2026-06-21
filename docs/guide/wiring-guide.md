@@ -48,7 +48,7 @@ A Trust Anchor using `@oidfed/authority` on Express.
 import express from "express";
 import {
   createAuthorityServer,
-  MemorySubordinateStore,
+  MemoryStorageAdapter,
 } from "@oidfed/authority";
 import {
   entityId,
@@ -63,6 +63,7 @@ const keyProvider = new MemoryFederationKeyProvider({
   signer: new JwkSigner(federationKeyPair.privateKey),
   publicJwk: federationKeyPair.publicKey,
 });
+const storage = new MemoryStorageAdapter();
 
 const ta = createAuthorityServer({
   entityId: TA_ID,
@@ -74,7 +75,7 @@ const ta = createAuthorityServer({
       federation_resolve_endpoint: "https://edugain.geant.org/federation_resolve",
     },
   },
-  subordinateStore: new MemorySubordinateStore(),
+  storage,
   // No authorityHints — this is a Trust Anchor
 });
 
@@ -112,13 +113,10 @@ app.listen(443);
 ### Adding Subordinates
 
 ```typescript
-import { MemorySubordinateStore } from "@oidfed/authority";
 import { entityId } from "@oidfed/core";
 
-const subordinateStore = new MemorySubordinateStore();
-
 // Register SWAMID as an Intermediate subordinate
-await subordinateStore.add({
+await storage.subordinates.add({
   entityId: entityId("https://swamid.se"),
   jwks: { keys: [swamidPublicKey] },
   entityTypes: ["federation_entity"],
@@ -134,7 +132,7 @@ await subordinateStore.add({
 });
 
 // Register InCommon as an Intermediate subordinate
-await subordinateStore.add({
+await storage.subordinates.add({
   entityId: entityId("https://incommon.org"),
   jwks: { keys: [incommonPublicKey] },
   entityTypes: ["federation_entity"],
@@ -153,7 +151,7 @@ SWAMID as an Intermediate Authority — same pattern as the TA, but with `author
 ```typescript
 import {
   createAuthorityServer,
-  MemorySubordinateStore,
+  MemoryStorageAdapter,
 } from "@oidfed/authority";
 import {
   entityId,
@@ -186,7 +184,7 @@ const swamid = createAuthorityServer({
   },
   authorityHints: [entityId("https://edugain.geant.org")], // ← Intermediate
   trustAnchors,
-  subordinateStore: new MemorySubordinateStore(),
+  storage: new MemoryStorageAdapter(),
 });
 
 // Register umu.se as a subordinate organization
@@ -204,12 +202,11 @@ The OP acts as an authority (issues its own Entity Configuration with `@oidfed/a
 ```typescript
 import express from "express";
 import Provider from "oidc-provider";
-import { createAuthorityServer, MemorySubordinateStore } from "@oidfed/authority";
+import { createAuthorityServer, MemoryStorageAdapter } from "@oidfed/authority";
 import { OIDCRegistrationAdapter, processAutomaticRegistration, processExplicitRegistration } from "@oidfed/oidc";
 import {
   entityId,
   generateSigningKey,
-  InMemoryJtiStore,
   isOk,
   JwkSigner,
   MemoryFederationKeyProvider,
@@ -222,7 +219,7 @@ const keyProvider = new MemoryFederationKeyProvider({
   signer: new JwkSigner(federationKeyPair.privateKey),
   publicJwk: federationKeyPair.publicKey,
 });
-const jtiStore = new InMemoryJtiStore();
+const storage = new MemoryStorageAdapter();
 
 const trustAnchors: TrustAnchorSet = new Map([
   [entityId("https://edugain.geant.org"), { jwks: { keys: [taPublicKey] } }],
@@ -249,7 +246,7 @@ const opAuthority = createAuthorityServer({
   },
   authorityHints: [entityId("https://umu.se")],
   trustAnchors,
-  subordinateStore: new MemorySubordinateStore(),
+  storage,
 });
 
 // --- OIDC Provider (panva/node-oidc-provider) ---
@@ -287,7 +284,8 @@ app.get("/auth", async (req, res, next) => {
     // Process the federation registration
     const result = await processAutomaticRegistration(requestJwt, trustAnchors, {
       opEntityId: OP_ID,
-      jtiStore,
+      replayStore: storage.replay,
+      cache: storage.cache,
       httpClient: fetch,
     });
 
@@ -534,6 +532,6 @@ Sequence when a user at `wiki.ligo.org` authenticates via `op.umu.se`:
 ### Key Security Properties
 
 - **Cross-OP replay prevention**: `opEntityId` is required in `processAutomaticRegistration` — the `aud` claim in the Request Object is validated against it
-- **JTI replay detection**: The `jtiStore` prevents Request Object reuse
+- **JTI replay detection**: The `replayStore` prevents Request Object reuse
 - **Branded DiscoveryResult**: Only `discoverEntity()` can produce it — prevents unchecked data from flowing into registration
 - **Trust chain expiry**: Explicit registration results include `trustChainExpiresAt` — the RP must re-register before this time

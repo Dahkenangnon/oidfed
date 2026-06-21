@@ -15,7 +15,7 @@ pnpm add @oidfed/core @oidfed/authority
 ## Quick Start
 
 ```ts
-import { createAuthorityServer, MemorySubordinateStore } from "@oidfed/authority";
+import { createAuthorityServer, MemoryStorageAdapter } from "@oidfed/authority";
 import { entityId, generateSigningKey, JwkSigner, MemoryFederationKeyProvider } from "@oidfed/core";
 import express from "express";
 
@@ -35,7 +35,7 @@ const server = createAuthorityServer({
       federation_resolve_endpoint: "https://ta.example.org/federation_resolve",
     },
   },
-  subordinateStore: new MemorySubordinateStore(),
+  storage: new MemoryStorageAdapter(),
 });
 
 const handler = server.handler();
@@ -94,57 +94,33 @@ interface AuthorityServer {
 
 Explicit registration (`/federation_registration`, section 12) is not routed by `AuthorityServer`. Mount `createExplicitRegistrationHandler` from [`@oidfed/oidc`](./oidc.md#op--processing-explicit-registration) yourself.
 
-### Storage Interfaces
+### Unified Storage Adapter
 
-`@oidfed/authority` no longer owns private federation signing key storage. Federation signing and federation public-key publication come from `ManagedFederationKeyProvider` in `@oidfed/core`. Authority storage is now limited to subordinate records and trust marks.
+`@oidfed/authority` accepts one adapter for all non-key persistence. Federation signing and public-key publication remain exclusively behind `ManagedFederationKeyProvider`.
 
 ```ts
-import {
-  MemorySubordinateStore,
-  MemoryTrustMarkStore,
-} from "@oidfed/authority";
+import { MemoryStorageAdapter } from "@oidfed/authority";
 import type {
-  ListFilter,
-  ListPage,
-  ListPageOptions,
-  SubordinateRecord,
-  SubordinateStore,
-  TrustMarkRecord,
-  TrustMarkStore,
+  StorageAdapter,
+  StorageTransaction,
+  SubordinateStorage,
+  TrustMarkStorage,
 } from "@oidfed/authority";
 ```
 
 ```ts
-interface SubordinateStore {
-  get(entityId: EntityId): Promise<SubordinateRecord | undefined>;
-  list(filter?: ListFilter, options?: ListPageOptions): Promise<ListPage>;
-  add(record: SubordinateRecord): Promise<void>;
-  update(entityId: EntityId, updates: Partial<SubordinateRecord>): Promise<void>;
-  remove(entityId: EntityId): Promise<void>;
-}
-
-interface ListPageOptions {
-  cursor?: EntityId;
-  limit?: number;
-  updatedAfter?: number;
-  updatedBefore?: number;
-}
-
-interface ListPage {
-  readonly items: SubordinateRecord[];
-  readonly nextCursor?: EntityId;
-}
-
-interface TrustMarkStore {
-  get(trustMarkType: string, subject: EntityId): Promise<TrustMarkRecord | undefined>;
-  list(trustMarkType: string, options?: { sub?: EntityId; cursor?: string; limit?: number }): Promise<{ items: TrustMarkRecord[]; nextCursor?: string }>;
-  issue(record: TrustMarkRecord): Promise<void>;
-  revoke(trustMarkType: string, subject: EntityId): Promise<void>;
-  isActive(trustMarkType: string, subject: EntityId): Promise<boolean>;
-  hasAnyActive(subject: EntityId): Promise<boolean>;
-  listForSubject?(subject: EntityId): Promise<TrustMarkRecord[]>;
+interface StorageAdapter {
+  readonly subordinates: SubordinateStorage;
+  readonly trustMarks?: TrustMarkStorage;
+  readonly replay?: ReplayStore;
+  readonly cache?: CacheProvider;
+  transaction<T>(operation: (tx: StorageTransaction) => Promise<T>): Promise<T>;
 }
 ```
+
+Transactions include only authoritative authority records. Replay claims are independently atomic and cache entries are non-authoritative. Transaction callbacks may be retried, so signing and external side effects must happen outside them.
+
+`MemoryStorageAdapter` always supplies subordinate, replay, and cache capabilities. Trust marks are opt-in with `{ trustMarks: true }`. The memory adapter is only for development and tests.
 
 ### Federation Key Provider
 
@@ -237,8 +213,7 @@ Individual endpoint factories and HTTP helpers are also exported for custom rout
 | `entityId` | `EntityId` | — | Required. This authority's entity identifier |
 | `keyProvider` | `ManagedFederationKeyProvider` | — | Required. Federation signer selection, public-key publication, and key lifecycle |
 | `metadata` | `object` | — | Required. Must include `federation_entity` |
-| `subordinateStore` | `SubordinateStore` | — | Required. Subordinate entity records |
-| `trustMarkStore` | `TrustMarkStore` | — | Trust mark issuance store |
+| `storage` | `StorageAdapter` | — | Required. Unified non-key persistence, replay, cache, and transactions |
 | `trustMarks` | `TrustMarkRef[]` | — | Trust marks this authority claims about itself |
 | `trustMarkIssuers` | `Record<string, string[]>` | — | Trust mark type to authorized issuer IDs |
 | `trustMarkOwners` | `Record<string, TrustMarkOwner>` | — | Delegated trust mark owners |
@@ -248,5 +223,5 @@ Individual endpoint factories and HTTP helpers are also exported for custom rout
 | `entityConfigurationTtlSeconds` | `number` | — | Entity Configuration JWT lifetime |
 | `subordinateStatementTtlSeconds` | `number` | — | Subordinate Statement JWT lifetime |
 | `trustMarkTtlSeconds` | `number` | — | Issued trust mark lifetime |
-| `options` | `FederationOptions` | — | Core federation options |
+| `options` | `Omit<FederationOptions, "cache">` | — | Core options; authority cache comes from `storage.cache` |
 | `extendedListing` | `ExtendedListingConfig` | endpoint enabled, `maxPageSize=500`, `defaultPageSize=100` | Per-authority configuration for `/federation_extended_list` |

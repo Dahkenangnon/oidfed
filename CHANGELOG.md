@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- Unified non-key authority persistence behind one transactional adapter while preserving separate federation key-provider custody.
+
 ## [0.5.2] - 2026-05-28
 
 ### Bug Fixes

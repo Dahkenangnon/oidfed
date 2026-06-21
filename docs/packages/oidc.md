@@ -110,12 +110,14 @@ import type { ProcessAutomaticRegistrationOptions, ProcessedRegistration } from 
 
 const result = await processAutomaticRegistration(requestObjectJwt, trustAnchors, {
   opEntityId: entityId("https://op.example.com"),
-  jtiStore,
+  replayStore: storage.replay,
+  cache: storage.cache,
   httpClient: fetch,
 });
 ```
 
 Returns `Result<ProcessedRegistration, FederationError>` and never throws.
+`replayStore` is required because automatic-registration Request Objects are single-use. The JTI is claimed only after claims, trust chains, metadata, protocol keys, and the Request Object signature have been validated.
 
 ### OP Processing Explicit Registration
 

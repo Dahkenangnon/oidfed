@@ -24,7 +24,7 @@
 ## Documentation
 
 - [Wiring Guide](https://github.com/Dahkenangnon/oidfed/blob/main/docs/guide/wiring-guide.md): End-to-end integration with Express.js and `panva/node-oidc-provider`. Worked eduGAIN-topology example covering Trust Anchor, Intermediate, OP, and RP.
-- [Storage Guide](https://github.com/Dahkenangnon/oidfed/blob/main/docs/guide/storage-guide.md): Production backends for `SubordinateStore`, `KeyStore`, `TrustMarkStore`, `JtiStore`, `CacheProvider`. Contract semantics, minimal PostgreSQL / MongoDB / Redis schema hints, HSM integration pattern.
+- [Storage Guide](https://github.com/Dahkenangnon/oidfed/blob/main/docs/guide/storage-guide.md): Production `StorageAdapter`, subordinate and trust-mark capabilities, atomic replay protection, cache integration, transactions, and the separate federation key-provider boundary.
 - [Dev Guide](https://github.com/Dahkenangnon/oidfed/blob/main/docs/guide/dev.md): Running the full multi-topology federation locally with wildcard DNS and TLS.
 - [E2E Test Infrastructure](https://github.com/Dahkenangnon/oidfed/blob/main/docs/test/e2e.md): Integration harness — real HTTPS over undici + Express + `oidc-provider`.
 - [Testing Guide](https://github.com/Dahkenangnon/oidfed/blob/main/docs/test/testing.md): Test framework split — QUnit-via-TAP across six runtimes for spec packages, vitest for cli/explorer/e2e.

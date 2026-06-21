@@ -1,5 +1,5 @@
 import type { EntityId, FederationKeyProvider, JWK, TrustAnchorSet } from "@oidfed/core";
-import { decodeEntityStatement, InMemoryJtiStore } from "@oidfed/core";
+import { decodeEntityStatement, MemoryReplayStore } from "@oidfed/core";
 import type { LeafEntity } from "@oidfed/leaf";
 import { createLeafHandler } from "@oidfed/leaf";
 import { createExplicitRegistrationHandler, processAutomaticRegistration } from "@oidfed/oidc";
@@ -56,7 +56,7 @@ export function createOpenIDProviderApp(config: OpenIDProviderAppConfig): expres
 
 	const clientStore = new Map<string, StoredClient>();
 	const Adapter = createInMemoryAdapter(clientStore);
-	const jtiStore = new InMemoryJtiStore();
+	const replayStore = new MemoryReplayStore();
 	const leafHandler = createLeafHandler(leaf);
 	const registrationHandler = createExplicitRegistrationHandler({
 		opEntityId: entityId as EntityId,
@@ -129,7 +129,7 @@ export function createOpenIDProviderApp(config: OpenIDProviderAppConfig): expres
 	): Promise<{ ok: true } | { ok: false; errorCode: string; errorDescription: string }> {
 		const result = await processAutomaticRegistration(requestJwt, trustAnchors, {
 			opEntityId: entityId as EntityId,
-			jtiStore,
+			replayStore,
 			httpClient: fetch,
 		});
 		if (!result.ok) {

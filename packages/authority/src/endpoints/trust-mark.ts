@@ -19,7 +19,7 @@ export function createTrustMarkHandler(
 		const methodError = requireMethod(request, "GET");
 		if (methodError) return methodError;
 
-		if (!ctx.trustMarkStore) {
+		if (!ctx.storage.trustMarks) {
 			return errorResponse(501, "server_error", "Trust mark store not configured");
 		}
 
@@ -44,12 +44,12 @@ export function createTrustMarkHandler(
 		}
 
 		try {
-			const existing = await ctx.trustMarkStore.get(trustMarkType, sub as EntityId);
-			if (existing?.active) {
-				const now = nowSeconds(ctx.options?.clock);
-				if (existing.expiresAt && existing.expiresAt < now) {
-					return errorResponse(404, FederationErrorCode.NotFound, "Trust mark not found");
-				}
+			const existing = await ctx.storage.trustMarks.getValid(
+				trustMarkType,
+				sub as EntityId,
+				nowSeconds(ctx.options?.clock),
+			);
+			if (existing) {
 				return jwtResponse(existing.jwt, MediaType.TrustMark);
 			}
 
@@ -72,7 +72,7 @@ export function createTrustMarkIssuanceHandler(
 		const methodError = requireMethod(request, "GET");
 		if (methodError) return methodError;
 
-		if (!ctx.trustMarkStore) {
+		if (!ctx.storage.trustMarks) {
 			return errorResponse(501, "server_error", "Trust mark store not configured");
 		}
 
@@ -108,25 +108,32 @@ export function createTrustMarkIssuanceHandler(
 		}
 
 		try {
-			const existing = await ctx.trustMarkStore.get(trustMarkType, sub as EntityId);
-			if (existing?.active) {
+			const subject = sub as EntityId;
+			const now = nowSeconds(ctx.options?.clock);
+			const existing = await ctx.storage.trustMarks.getValid(trustMarkType, subject, now);
+			if (existing) {
 				return jwtResponse(existing.jwt, MediaType.TrustMark);
 			}
 
-			const now = nowSeconds(ctx.options?.clock);
 			const ttl = ctx.trustMarkTtlSeconds ?? DEFAULT_DELEGATION_TTL_SECONDS;
-			const jwt = await buildTrustMark(ctx, trustMarkType, sub);
-
-			await ctx.trustMarkStore.issue({
+			const jwt = await buildTrustMark(ctx, trustMarkType, sub, now, ttl);
+			const candidate = {
 				trustMarkType,
-				subject: sub as EntityId,
+				subject,
 				jwt,
 				issuedAt: now,
 				expiresAt: now + ttl,
 				active: true,
+			} as const;
+			const selected = await ctx.storage.transaction(async (tx) => {
+				if (!tx.trustMarks) throw new Error("Trust mark storage is not configured");
+				const winner = await tx.trustMarks.getValid(trustMarkType, subject, now);
+				if (winner) return winner;
+				await tx.trustMarks.issue(candidate);
+				return candidate;
 			});
 
-			return jwtResponse(jwt, MediaType.TrustMark);
+			return jwtResponse(selected.jwt, MediaType.TrustMark);
 		} catch (error) {
 			ctx.options?.logger?.error("Failed to issue trust mark", { error });
 			return errorResponse(500, "server_error", "Failed to issue trust mark");
@@ -138,10 +145,10 @@ async function buildTrustMark(
 	ctx: HandlerContext,
 	trustMarkType: string,
 	sub: string,
+	now: number,
+	ttl: number,
 ): Promise<string> {
 	const keySet = await ctx.keyProvider.getFederationKeySet();
-	const now = nowSeconds(ctx.options?.clock);
-	const ttl = ctx.trustMarkTtlSeconds ?? DEFAULT_DELEGATION_TTL_SECONDS;
 
 	const payload: Record<string, unknown> = {
 		iss: ctx.entityId,

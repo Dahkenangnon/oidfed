@@ -137,7 +137,7 @@ export function createExtendedListHandler(
 		}
 		const trustMarkType = params.get("trust_mark_type");
 
-		if ((trustMarkedRaw !== null || trustMarkType !== null) && !ctx.trustMarkStore) {
+		if ((trustMarkedRaw !== null || trustMarkType !== null) && !ctx.storage.trustMarks) {
 			return errorResponse(
 				400,
 				FederationErrorCode.UnsupportedParameter,
@@ -213,16 +213,7 @@ export function createExtendedListHandler(
 		// wins so the MUST-NOT on subordinate_statement is honoured.
 		const requestedClaims = params.has("claims") ? parseClaimsParam(params) : [...defaultClaims];
 
-		// claims=trust_marks requires the trust mark store to be able to enumerate
-		// by subject. When `listForSubject` is unavailable we cannot honour the
-		// request meaningfully; surface unsupported_parameter so deployment
-		// misconfiguration is visible to the operator instead of silently
-		// returning empty arrays. This is an explicit operator-facing policy on
-		// our side (the spec gives leeway via "if available" for unknown claims).
-		if (
-			requestedClaims.includes(ExtendedListClaim.TrustMarks) &&
-			!ctx.trustMarkStore?.listForSubject
-		) {
+		if (requestedClaims.includes(ExtendedListClaim.TrustMarks) && !ctx.storage.trustMarks) {
 			return errorResponse(
 				400,
 				FederationErrorCode.UnsupportedParameter,
@@ -232,7 +223,7 @@ export function createExtendedListHandler(
 
 		// ── from_entity_id existence validation
 		if (fromEntityId !== null && fromEntityId !== "") {
-			const cursorRecord = await ctx.subordinateStore.get(fromEntityId as EntityId);
+			const cursorRecord = await ctx.storage.subordinates.get(fromEntityId as EntityId);
 			if (!cursorRecord) {
 				return errorResponse(
 					400,
@@ -246,6 +237,10 @@ export function createExtendedListHandler(
 		const filter: ListFilter = {};
 		if (rawEntityTypes.length > 0) filter.entityTypes = rawEntityTypes as EntityType[];
 		if (intermediate === true || intermediate === false) filter.intermediate = intermediate;
+		const now = nowSeconds(ctx.options?.clock);
+		if (trustMarked === true || trustMarked === false) filter.trustMarked = trustMarked;
+		if (trustMarkType !== null) filter.trustMarkType = trustMarkType;
+		if (trustMarked !== null || trustMarkType !== null) filter.validAt = now;
 
 		const requestedLimit = limitParam ?? defaultPageSize;
 		const effectiveLimit = Math.min(requestedLimit, maxPageSize);
@@ -253,18 +248,6 @@ export function createExtendedListHandler(
 		const baseOpts: { updatedAfter?: number; updatedBefore?: number } = {};
 		if (updatedAfterParam !== null) baseOpts.updatedAfter = updatedAfterParam;
 		if (updatedBeforeParam !== null) baseOpts.updatedBefore = updatedBeforeParam;
-
-		const trustMarkStore = ctx.trustMarkStore;
-		const hasTrustMarkFilter =
-			(trustMarked !== null || trustMarkType !== null) && trustMarkStore !== undefined;
-
-		async function passesTrustMarkFilter(entityIdValue: EntityId): Promise<boolean> {
-			if (!hasTrustMarkFilter || !trustMarkStore) return true;
-			const hasMark = trustMarkType
-				? await trustMarkStore.isActive(trustMarkType, entityIdValue)
-				: await trustMarkStore.hasAnyActive(entityIdValue);
-			return trustMarked === false ? !hasMark : hasMark;
-		}
 
 		try {
 			const accumulated: SubordinateRecord[] = [];
@@ -277,7 +260,7 @@ export function createExtendedListHandler(
 			while (accumulated.length < effectiveLimit && pagesFetched < maxStorePages) {
 				const opts: ListPageOptions = { limit: storeBatchSize, ...baseOpts };
 				if (storeCursor !== undefined) opts.cursor = storeCursor;
-				const page = await ctx.subordinateStore.list(filter, opts);
+				const page = await ctx.storage.subordinates.list(filter, opts);
 				pagesFetched += 1;
 				if (page.items.length === 0) {
 					storeExhausted = true;
@@ -286,24 +269,19 @@ export function createExtendedListHandler(
 
 				for (const record of page.items) {
 					if (accumulated.length >= effectiveLimit) break;
-					if (await passesTrustMarkFilter(record.entityId)) {
-						accumulated.push(record);
-					}
+					accumulated.push(record);
 				}
 
 				if (accumulated.length >= effectiveLimit) {
-					// Page filled. next_entity_id is the first MATCHING entity strictly
-					// past our last accumulated one. We look ahead in this page first
-					// (skipping non-matches that we'd otherwise force the client to
-					// re-discover), then fall back to the store's natural nextCursor.
+					// Page filled. The store already applied every filter, so the first
+					// following record is the resume cursor.
 					const lastRecord = accumulated[accumulated.length - 1];
 					if (lastRecord === undefined) break;
 					const lastId = lastRecord.entityId;
 					let foundInPage: EntityId | undefined;
-					for (const r of page.items) {
-						if (r.entityId <= lastId) continue;
-						if (await passesTrustMarkFilter(r.entityId)) {
-							foundInPage = r.entityId;
+					for (const record of page.items) {
+						if (record.entityId > lastId) {
+							foundInPage = record.entityId;
 							break;
 						}
 					}
@@ -323,11 +301,6 @@ export function createExtendedListHandler(
 				// Cap fired before fill or exhaustion — surface the store cursor for resume.
 				nextEntityId = storeCursor;
 			}
-
-			// Snapshot a single NumericDate per request so synthetic iat/exp claims
-			// match the iat/exp embedded inside subordinate_statement JWTs for the
-			// same response, and so the value is stable across all entries in the page.
-			const now = nowSeconds(ctx.options?.clock);
 
 			// When updated_after / updated_before are used and the client did not
 			// explicitly set audit_timestamps=false, include the audit timestamps

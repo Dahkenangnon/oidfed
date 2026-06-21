@@ -4,13 +4,12 @@ import type {
 	EntityType,
 	FederationEntityMetadata,
 	FederationOptions,
-	JtiStore,
 	ManagedFederationKeyProvider,
 	TrustAnchorSet,
 	TrustMarkOwner,
 	TrustMarkRef,
 } from "@oidfed/core";
-import type { SubordinateStore, TrustMarkStore } from "../storage/types.js";
+import type { StorageAdapter } from "../storage/types.js";
 
 export interface HandlerContext {
 	/** The entity identifier (URL) for this authority. */
@@ -19,10 +18,8 @@ export interface HandlerContext {
 	readonly authorityHints?: EntityId[];
 	/** Federation-only signing key provider and lifecycle manager. */
 	readonly keyProvider: ManagedFederationKeyProvider;
-	/** Persistent store for subordinate entity records. */
-	readonly subordinateStore: SubordinateStore;
-	/** Optional store for issued trust marks. */
-	readonly trustMarkStore?: TrustMarkStore;
+	/** Unified persistence adapter for all non-key authority state. */
+	readonly storage: StorageAdapter;
 	/** Metadata published in this authority's Entity Configuration. */
 	readonly metadata: { federation_entity: FederationEntityMetadata } & Partial<
 		Record<string, Record<string, unknown>>
@@ -45,8 +42,6 @@ export interface HandlerContext {
 	readonly subordinateStatementTtlSeconds?: number;
 	/** TTL in seconds for issued trust mark JWTs. */
 	readonly trustMarkTtlSeconds?: number;
-	/** Store for JTI replay protection. */
-	readonly jtiStore?: JtiStore;
 	/**
 	 * Optional callback returning a previously signed Resolve Response JWT for the
 	 * given subject + trust anchors + entity types. When supplied and a JWT is

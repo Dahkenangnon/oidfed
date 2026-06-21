@@ -10,13 +10,14 @@ import {
 	federationError,
 	generateSigningKey,
 	type HttpClient,
-	InMemoryJtiStore,
 	isOk,
 	type JWK,
 	JwkSigner,
 	JwtTyp,
 	MediaType,
 	MemoryFederationKeyProvider,
+	MemoryReplayStore,
+	type ReplayStore,
 	resolveTrustChains,
 	shortestChain,
 	signEntityStatement,
@@ -1535,6 +1536,8 @@ export default (QUnit: QUnit) => {
 	// registration/process-automatic
 	// -------------------------------------------------------------------------
 	module("oidc / processAutomaticRegistration", () => {
+		const replayStore = () => new MemoryReplayStore();
+
 		async function createValidRequestObject(fed: Awaited<ReturnType<typeof createMockFederation>>) {
 			const now = Math.floor(Date.now() / 1000);
 			return signEntityStatement(
@@ -1559,7 +1562,7 @@ export default (QUnit: QUnit) => {
 			const result = await processAutomaticRegistration(
 				await createValidRequestObject(fed),
 				fed.trustAnchors,
-				{ ...fed.options, opEntityId: OP_ID },
+				{ ...fed.options, opEntityId: OP_ID, replayStore: replayStore() },
 			);
 			t.true(result.ok);
 			if (!result.ok) return;
@@ -1584,10 +1587,42 @@ export default (QUnit: QUnit) => {
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
 				...fed.options,
 				opEntityId: OP_ID,
+				replayStore: replayStore(),
 			});
 			t.false(result.ok);
 			if (result.ok) return;
 			t.equal(result.error.code, "ERR_SIGNATURE_INVALID");
+		});
+
+		test("does not consume a JTI before Request Object signature validation", async (t) => {
+			const fed = await createMockFederation();
+			const now = Math.floor(Date.now() / 1000);
+			const jwt = await signEntityStatement(
+				{
+					iss: LEAF_ID,
+					client_id: LEAF_ID,
+					aud: OP_ID,
+					jti: "must-not-be-consumed",
+					iat: now,
+					exp: now + 300,
+				},
+				new JwkSigner(fed.leafSigningKey),
+				{ typ: RequestObjectTyp },
+			);
+			let claims = 0;
+			const store: ReplayStore = {
+				async useJti() {
+					claims += 1;
+					return true;
+				},
+			};
+			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
+				...fed.options,
+				opEntityId: OP_ID,
+				replayStore: store,
+			});
+			t.false(result.ok);
+			t.equal(claims, 0);
 		});
 
 		test("returns ok with resolvedRpMetadata", async (t) => {
@@ -1595,7 +1630,7 @@ export default (QUnit: QUnit) => {
 			const result = await processAutomaticRegistration(
 				await createValidRequestObject(fed),
 				fed.trustAnchors,
-				{ ...fed.options, opEntityId: OP_ID },
+				{ ...fed.options, opEntityId: OP_ID, replayStore: replayStore() },
 			);
 			t.true(result.ok);
 			if (!result.ok) return;
@@ -1607,7 +1642,7 @@ export default (QUnit: QUnit) => {
 			const result = await processAutomaticRegistration(
 				await createValidRequestObject(fed),
 				fed.trustAnchors,
-				{ ...fed.options, opEntityId: OP_ID },
+				{ ...fed.options, opEntityId: OP_ID, replayStore: replayStore() },
 			);
 			t.true(result.ok);
 			if (!result.ok) return;
@@ -1632,6 +1667,7 @@ export default (QUnit: QUnit) => {
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
 				...fed.options,
 				opEntityId: OP_ID,
+				replayStore: replayStore(),
 			});
 			t.false(result.ok);
 			if (result.ok) return;
@@ -1657,6 +1693,7 @@ export default (QUnit: QUnit) => {
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
 				...fed.options,
 				opEntityId: OP_ID,
+				replayStore: replayStore(),
 			});
 			t.false(result.ok);
 			if (result.ok) return;
@@ -1681,6 +1718,7 @@ export default (QUnit: QUnit) => {
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
 				...fed.options,
 				opEntityId: OP_ID,
+				replayStore: replayStore(),
 			});
 			t.false(result.ok);
 			if (result.ok) return;
@@ -1705,6 +1743,7 @@ export default (QUnit: QUnit) => {
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
 				...fed.options,
 				opEntityId: OP_ID,
+				replayStore: replayStore(),
 			});
 			t.false(result.ok);
 			if (result.ok) return;
@@ -1729,6 +1768,7 @@ export default (QUnit: QUnit) => {
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
 				...fed.options,
 				opEntityId: OP_ID,
+				replayStore: replayStore(),
 			});
 			t.false(result.ok);
 			if (result.ok) return;
@@ -1746,6 +1786,7 @@ export default (QUnit: QUnit) => {
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
 				...fed.options,
 				opEntityId: OP_ID,
+				replayStore: replayStore(),
 			});
 			t.false(result.ok);
 			if (result.ok) return;
@@ -1763,31 +1804,51 @@ export default (QUnit: QUnit) => {
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
 				...fed.options,
 				opEntityId: OP_ID,
+				replayStore: replayStore(),
 			});
 			t.false(result.ok);
 			if (result.ok) return;
 			t.ok(result.error.description.includes("jti"));
 		});
 
-		test("HIGH-1: detects replay via JTI store", async (t) => {
+		test("HIGH-1: detects replay via replay store", async (t) => {
 			const fed = await createMockFederation();
-			const jtiStore = new InMemoryJtiStore();
+			const store = replayStore();
 			const jwt = await createValidRequestObject(fed);
 			const result1 = await processAutomaticRegistration(jwt, fed.trustAnchors, {
 				...fed.options,
 				opEntityId: OP_ID,
-				jtiStore,
+				replayStore: store,
 			});
 			t.true(result1.ok);
 			const result2 = await processAutomaticRegistration(jwt, fed.trustAnchors, {
 				...fed.options,
 				opEntityId: OP_ID,
-				jtiStore,
+				replayStore: store,
 			});
 			t.false(result2.ok);
 			if (result2.ok) return;
 			t.ok(result2.error.description.includes("replay"));
-			jtiStore.dispose();
+		});
+
+		test("returns server_error when replay storage is unavailable", async (t) => {
+			const fed = await createMockFederation();
+			const result = await processAutomaticRegistration(
+				await createValidRequestObject(fed),
+				fed.trustAnchors,
+				{
+					...fed.options,
+					opEntityId: OP_ID,
+					replayStore: {
+						async useJti() {
+							throw new Error("database unavailable");
+						},
+					},
+				},
+			);
+			t.false(result.ok);
+			if (result.ok) return;
+			t.equal(result.error.code, FederationErrorCode.ServerError);
 		});
 
 		test("HIGH-3: respects clock skew", async (t) => {
@@ -1808,6 +1869,7 @@ export default (QUnit: QUnit) => {
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
 				...fed.options,
 				opEntityId: OP_ID,
+				replayStore: replayStore(),
 				clockSkewSeconds: 60,
 			});
 			t.true(result.ok);
@@ -1833,39 +1895,9 @@ export default (QUnit: QUnit) => {
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
 				...fed.options,
 				opEntityId: OP_ID,
+				replayStore: replayStore(),
 			});
 			t.false(result.ok);
-		});
-
-		test("does not emit console.warn when no jtiStore is provided", async (t) => {
-			const fed = await createMockFederation();
-			const now = Math.floor(Date.now() / 1000);
-			const jwt = await signEntityStatement(
-				{
-					iss: LEAF_ID,
-					client_id: LEAF_ID,
-					aud: OP_ID,
-					jti: crypto.randomUUID(),
-					iat: now,
-					exp: now + 300,
-				},
-				new JwkSigner(fed.leafProtocolSigningKey),
-				{ typ: "oauth-authz-req+jwt" },
-			);
-			let warnCalled = false;
-			const originalWarn = console.warn;
-			console.warn = () => {
-				warnCalled = true;
-			};
-			try {
-				await processAutomaticRegistration(jwt, fed.trustAnchors, {
-					...fed.options,
-					opEntityId: OP_ID,
-				});
-			} finally {
-				console.warn = originalWarn;
-			}
-			t.false(warnCalled, "console.warn not called");
 		});
 	});
 
