@@ -532,7 +532,10 @@ export default (QUnit: QUnit) => {
 			const ttl = 3600;
 			let nowMs = Date.now();
 			const clock = { now: () => Math.floor(nowMs / 1000) };
-			const { config } = await createLeafConfig({ entityConfigurationTtlSeconds: ttl, clock });
+			const { config } = await createLeafConfig({
+				entityConfigurationTtlSeconds: ttl,
+				options: { clock },
+			});
 			const entity = createLeafEntity(config);
 			await entity.getEntityConfiguration();
 			nowMs += ttl * 1000;
@@ -548,7 +551,10 @@ export default (QUnit: QUnit) => {
 			const ttl = 60;
 			let nowMs = Date.now();
 			const clock = { now: () => Math.floor(nowMs / 1000) };
-			const { config } = await createLeafConfig({ entityConfigurationTtlSeconds: ttl, clock });
+			const { config } = await createLeafConfig({
+				entityConfigurationTtlSeconds: ttl,
+				options: { clock },
+			});
 			const entity = createLeafEntity(config);
 			const jwt1 = await entity.getEntityConfiguration();
 			nowMs += (ttl + 1) * 1000;

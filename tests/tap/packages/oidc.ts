@@ -185,6 +185,19 @@ export default (QUnit: QUnit) => {
 			t.equal((p.exp as number) - (p.iat as number), 120);
 		});
 
+		test("uses the injected NumericDate clock", async (t) => {
+			const { privateKey } = await generateSigningKey("ES256");
+			const jwt = await createClientAssertion(clientId, audience, new JwkSigner(privateKey), {
+				expiresInSeconds: 120,
+				clock: { now: () => 1_700_000_000 },
+			});
+			const decoded = decodeEntityStatement(jwt);
+			t.true(decoded.ok);
+			if (!decoded.ok) return;
+			t.equal(decoded.value.payload.iat, 1_700_000_000);
+			t.equal(decoded.value.payload.exp, 1_700_000_120);
+		});
+
 		test("defaults expiresInSeconds to 60", async (t) => {
 			const { privateKey } = await generateSigningKey("ES256");
 			const jwt = await createClientAssertion(clientId, audience, new JwkSigner(privateKey));
@@ -654,6 +667,22 @@ export default (QUnit: QUnit) => {
 			t.equal(typeof p.exp, "number");
 		});
 
+		test("uses options.clock for Request Object timestamps", async (t) => {
+			const fed = await createMockFederation();
+			const discovery = await createMockDiscovery(OP_ID, fed);
+			const { config } = await createRpConfig({});
+			const fixedNow = Math.floor(Date.now() / 1000);
+			const result = await automaticRegistration(discovery, config, authzParams, fed.trustAnchors, {
+				...fed.options,
+				clock: { now: () => fixedNow },
+			});
+			const decoded = decodeEntityStatement(result.requestObjectJwt);
+			t.true(decoded.ok);
+			if (!decoded.ok) return;
+			t.equal(decoded.value.payload.iat, fixedNow);
+			t.equal(decoded.value.payload.exp, fixedNow + 300);
+		});
+
 		test("does NOT include sub claim", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
@@ -983,6 +1012,7 @@ export default (QUnit: QUnit) => {
 		});
 
 		test("par: POSTs request + client_id + client_assertion to PAR endpoint and returns urn-style authorizationUrl", async (t) => {
+			const now = Math.floor(Date.now() / 1000) + 30;
 			const parEndpoint = `${OP_ID}/request`;
 			const fed = await createMockFederation({
 				opMetadata: {
@@ -1028,6 +1058,7 @@ export default (QUnit: QUnit) => {
 
 			const result = await automaticRegistration(discovery, config, authzParams, fed.trustAnchors, {
 				...fed.options,
+				clock: { now: () => now },
 				httpClient: parHttpClient,
 			});
 			t.equal(result.delivery, "par");
@@ -1051,12 +1082,14 @@ export default (QUnit: QUnit) => {
 			t.equal(ap.sub, LEAF_ID);
 			// Audience MUST be OP Entity Identifier (not the PAR endpoint URL).
 			t.equal(ap.aud, OP_ID);
+			t.equal(ap.iat, now);
+			t.equal(ap.exp, now + 60);
 			t.equal(result.pushedAuthorizationRequestEndpoint, parEndpoint);
 			t.equal(result.parRequestUri, urn);
 			const finalUrl = new URL(result.authorizationUrl);
 			t.equal(finalUrl.searchParams.get("request_uri"), urn);
 			t.equal(finalUrl.searchParams.get("client_id"), LEAF_ID);
-			t.ok(result.parExpiresAt > Math.floor(Date.now() / 1000));
+			t.equal(result.parExpiresAt, now + 60);
 		});
 
 		test("par: throws when OP advertises no pushed_authorization_request_endpoint", async (t) => {
@@ -1188,6 +1221,33 @@ export default (QUnit: QUnit) => {
 			t.equal(p.aud, OP_ID);
 			t.ok(p.authority_hints);
 			t.ok(p.metadata);
+		});
+
+		test("uses options.clock for the RP Entity Configuration", async (t) => {
+			const mock = await createMockOpWithRegistration();
+			const now = Math.floor(Date.now() / 1000) + 30;
+			let capturedBody = "";
+			const trackingClient: HttpClient = async (input, init) => {
+				const url =
+					typeof input === "string"
+						? input
+						: input instanceof URL
+							? input.toString()
+							: (input as Request).url;
+				if (new URL(url).pathname === "/federation_registration" && input instanceof Request) {
+					capturedBody = await input.clone().text();
+				}
+				return mock.httpClient(input, init);
+			};
+			await explicitRegistration(mock.discovery, mock.config, mock.trustAnchors, {
+				clock: { now: () => now },
+				httpClient: trackingClient,
+			});
+			const decoded = decodeEntityStatement(capturedBody);
+			t.true(decoded.ok);
+			if (!decoded.ok) return;
+			t.equal(decoded.value.payload.iat, now);
+			t.equal(decoded.value.payload.exp, now + 86400);
 		});
 
 		test("attaches peer_trust_chain when includePeerTrustChain is true", async (t) => {
@@ -2530,6 +2590,17 @@ export default (QUnit: QUnit) => {
 			t.false(result.ok);
 			if (result.ok) return;
 			t.ok(result.error.description.includes("expired"));
+		});
+
+		test("uses the context clock for expiry validation", async (t) => {
+			const { privateKey } = await generateSigningKey("ES256");
+			const result = validateAutomaticRegistrationRequest(
+				await buildRequestObject(privateKey, {
+					payloadOverrides: { iat: 1_000, exp: 1_100 },
+				}),
+				{ ...ctx, clock: { now: () => 1_050 }, clockSkewSeconds: 0 },
+			);
+			t.true(result.ok);
 		});
 
 		test("rejects missing jti", async (t) => {

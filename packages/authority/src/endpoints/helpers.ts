@@ -1,4 +1,4 @@
-/** HTTP response helpers — re-exported from @oidfed/core for backward compatibility. */
+/** Internal authority facade over the shared core HTTP helpers. */
 export {
 	type ExtractedRequestParams,
 	errorResponse,

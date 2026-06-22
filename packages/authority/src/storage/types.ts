@@ -44,6 +44,7 @@ export interface ListPage {
 }
 
 export interface SubordinateRecord {
+	/** Immutable entity identifier. */
 	readonly entityId: EntityId;
 	readonly jwks: JWKSet;
 	readonly metadata?: Readonly<Record<string, unknown>>;
@@ -54,9 +55,9 @@ export interface SubordinateRecord {
 	readonly sourceEndpoint?: string;
 	readonly crit?: ReadonlyArray<string>;
 	readonly metadataPolicyCrit?: ReadonlyArray<string>;
-	/** NumericDate. */
+	/** Adapter-managed creation NumericDate. */
 	readonly createdAt: number;
-	/** NumericDate. */
+	/** Adapter-managed update NumericDate. */
 	readonly updatedAt: number;
 }
 
@@ -75,6 +76,7 @@ export interface ListFilter {
 
 export interface TrustMarkListOptions {
 	readonly subject?: EntityId;
+	/** Subject of the first unreturned record; inclusive. */
 	readonly cursor?: EntityId;
 	readonly limit: number;
 }

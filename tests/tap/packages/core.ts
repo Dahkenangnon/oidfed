@@ -310,12 +310,12 @@ export default (QUnit: QUnit) => {
 		});
 
 		test("expires entries after TTL", async (t) => {
-			let nowMs = Date.now();
-			const clock: Clock = { now: () => nowMs };
+			let now = 1_700_000_000;
+			const clock: Clock = { now: () => now };
 			const cache = new MemoryCache({ clock });
 			await cache.set("key1", "value", 1);
 			t.equal(await cache.get("key1"), "value");
-			nowMs += 1500;
+			now += 1;
 			t.equal(await cache.get("key1"), undefined);
 		});
 
@@ -2185,6 +2185,27 @@ export default (QUnit: QUnit) => {
 					t.equal(result.value.header.typ, JwtTyp.EntityStatement);
 				}
 			});
+			test("uses the injected NumericDate clock for claim verification", async (t) => {
+				const { publicKey, privateKey } = await generateSigningKey("ES256");
+				const jwt = await signEntityStatement(
+					{
+						iss: "https://clock.example.com",
+						sub: "https://clock.example.com",
+						iat: 1_000,
+						exp: 1_100,
+					},
+					new JwkSigner(privateKey),
+				);
+				const result = await verifyEntityStatement(
+					jwt,
+					{ keys: [publicKey] },
+					{
+						clock: { now: () => 1_050 },
+						clockSkewSeconds: 0,
+					},
+				);
+				t.true(isOk(result));
+			});
 			test("signs and verifies with PS256", async (t) => {
 				const { publicKey, privateKey } = await generateSigningKey("PS256");
 				const jwt = await signEntityStatement(
@@ -2434,6 +2455,25 @@ export default (QUnit: QUnit) => {
 				t.true(isErr(result));
 				if (!isErr(result)) return;
 				t.equal(result.error.code, "ERR_SIGNATURE_INVALID");
+			});
+			test("uses the injected NumericDate clock", async (t) => {
+				const keys = await generateSigningKey("ES256");
+				const jwt = await signEntityStatement(
+					{
+						iss: CA_CLIENT_ID,
+						sub: CA_CLIENT_ID,
+						aud: CA_AUDIENCE,
+						iat: 1_000,
+						exp: 1_100,
+					},
+					new JwkSigner(keys.privateKey),
+					{ typ: "JWT" },
+				);
+				const result = await verifyClientAssertion(jwt, { keys: [keys.publicKey] }, CA_AUDIENCE, {
+					clock: { now: () => 1_050 },
+					clockSkewSeconds: 0,
+				});
+				t.true(isOk(result));
 			});
 			test("rejects when iss !== sub", async (t) => {
 				const { jwt, keys } = await createClientAssertion({
@@ -6040,6 +6080,22 @@ export default (QUnit: QUnit) => {
 				if (!isOk(decoded)) return;
 				const payload = decoded.value.payload as Record<string, unknown>;
 				t.equal((payload.exp as number) - (payload.iat as number), 3600);
+			});
+			test("uses the injected NumericDate clock", async (t) => {
+				const ownerKeys = await generateSigningKey("ES256");
+				const delegationJwt = await signTrustMarkDelegation({
+					issuer: "https://owner.example.com",
+					subject: "https://issuer.example.com",
+					trustMarkType: "https://example.com/tm",
+					signer: new JwkSigner(ownerKeys.privateKey),
+					clock: { now: () => 123_456 },
+				});
+				const decoded = decodeEntityStatement(delegationJwt);
+				t.true(isOk(decoded));
+				if (!isOk(decoded)) return;
+				const payload = decoded.value.payload as Record<string, unknown>;
+				t.equal(payload.iat, 123_456);
+				t.equal(payload.exp, 123_456 + 86400);
 			});
 		});
 

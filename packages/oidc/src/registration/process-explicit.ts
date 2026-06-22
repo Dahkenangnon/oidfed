@@ -92,7 +92,7 @@ export async function processExplicitRegistration(
 
 	// iat and exp are REQUIRED in the RP Entity Configuration
 	const clockSkew = options.clockSkewSeconds ?? DEFAULT_CLOCK_SKEW_SECONDS;
-	const now = nowSeconds();
+	const now = nowSeconds(options.clock);
 
 	const iat = payload.iat as number | undefined;
 	if (iat === undefined) {
@@ -179,7 +179,13 @@ export async function processExplicitRegistration(
 	const selfVerify = await verifyEntityStatement(
 		rpEcJwt,
 		rpJwks as Parameters<typeof verifyEntityStatement>[1],
-		{ expectedTyp: JwtTyp.EntityStatement },
+		{
+			expectedTyp: JwtTyp.EntityStatement,
+			...(options.clock ? { clock: options.clock } : {}),
+			...(options.clockSkewSeconds !== undefined
+				? { clockSkewSeconds: options.clockSkewSeconds }
+				: {}),
+		},
 	);
 	if (!selfVerify.ok) {
 		return err(

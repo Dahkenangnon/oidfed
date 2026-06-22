@@ -9,6 +9,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Changed
 
 - **BREAKING.** `processAutomaticRegistration()` now requires `replayStore: ReplayStore`, namespaces claims by RP issuer and OP audience, and claims the JTI only after all cryptographic, metadata, and trust-chain validation succeeds.
+- Added public `ClientAssertionOptions`; its clock and every registration clock use NumericDate seconds.
+- Automatic and explicit registration now propagate injected clocks through Request Objects, Entity Configurations, PAR expiry, client assertions, and OP validation.
 
 ### Fixed
 

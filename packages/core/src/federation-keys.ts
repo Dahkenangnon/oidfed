@@ -23,13 +23,13 @@ export interface ManagedFederationKeyProvider extends FederationKeyProvider {
 	getHistoricalFederationKeys(): Promise<HistoricalKeyEntry[]>;
 	addKey(key: FederationSigningKey): Promise<void>;
 	activateKey(kid: string): Promise<void>;
-	retireKey(kid: string, removeAfter: number): Promise<void>;
+	retireKey(kid: string, removeAfterMs: number): Promise<void>;
 	revokeKey(kid: string, reason: string): Promise<void>;
 }
 
-export type FederationKeyState = "pending" | "active" | "retiring" | "revoked";
+type FederationKeyState = "pending" | "active" | "retiring" | "revoked";
 
-export interface ManagedFederationKeyEntry {
+interface ManagedFederationKeyEntry {
 	readonly signer: JwtSigner;
 	readonly publicJwk: JWK;
 	readonly state: FederationKeyState;
@@ -55,21 +55,22 @@ export class StaticFederationKeyProvider implements FederationKeyProvider {
 }
 
 export interface MemoryFederationKeyProviderOptions {
-	readonly now?: () => number;
+	/** Current Unix time in milliseconds for key-lifecycle scheduling. */
+	readonly nowMs?: () => number;
 }
 
 export class MemoryFederationKeyProvider implements ManagedFederationKeyProvider {
 	private readonly keys = new Map<string, ManagedFederationKeyEntry>();
-	private readonly now: () => number;
+	private readonly nowMs: () => number;
 
 	constructor(
 		initial?: FederationSigningKey | ReadonlyArray<FederationSigningKey>,
 		options?: MemoryFederationKeyProviderOptions,
 	) {
-		this.now = options?.now ?? Date.now;
+		this.nowMs = options?.nowMs ?? Date.now;
 		if (initial) {
 			const keys = Array.isArray(initial) ? initial : [initial];
-			const now = this.now();
+			const now = this.nowMs();
 			for (let i = 0; i < keys.length; i++) {
 				const { signer, publicJwk } = this.validateNewKey(keys[i] as FederationSigningKey);
 				this.keys.set(signer.kid, {
@@ -105,7 +106,7 @@ export class MemoryFederationKeyProvider implements ManagedFederationKeyProvider
 	}
 
 	async getHistoricalFederationKeys(): Promise<HistoricalKeyEntry[]> {
-		const nowSeconds = Math.floor(this.now() / 1000);
+		const nowSeconds = Math.floor(this.nowMs() / 1000);
 		return Array.from(this.keys.values()).map((entry) => mapHistoricalEntry(entry, nowSeconds));
 	}
 
@@ -115,7 +116,7 @@ export class MemoryFederationKeyProvider implements ManagedFederationKeyProvider
 			signer,
 			publicJwk,
 			state: "pending",
-			createdAt: this.now(),
+			createdAt: this.nowMs(),
 		});
 	}
 
@@ -124,15 +125,15 @@ export class MemoryFederationKeyProvider implements ManagedFederationKeyProvider
 		if (entry.state !== "pending") {
 			throw new Error(`Federation key '${kid}' is in state '${entry.state}', expected 'pending'`);
 		}
-		this.keys.set(kid, { ...entry, state: "active", activatedAt: this.now() });
+		this.keys.set(kid, { ...entry, state: "active", activatedAt: this.nowMs() });
 	}
 
-	async retireKey(kid: string, removeAfter: number): Promise<void> {
+	async retireKey(kid: string, removeAfterMs: number): Promise<void> {
 		const entry = this.getEntry(kid);
 		if (entry.state !== "active") {
 			throw new Error(`Federation key '${kid}' is in state '${entry.state}', expected 'active'`);
 		}
-		this.keys.set(kid, { ...entry, state: "retiring", scheduledRemovalAt: removeAfter });
+		this.keys.set(kid, { ...entry, state: "retiring", scheduledRemovalAt: removeAfterMs });
 	}
 
 	async revokeKey(kid: string, reason: string): Promise<void> {
@@ -140,7 +141,7 @@ export class MemoryFederationKeyProvider implements ManagedFederationKeyProvider
 		this.keys.set(kid, {
 			...entry,
 			state: "revoked",
-			revokedAt: this.now(),
+			revokedAt: this.nowMs(),
 			revocationReason: reason,
 		});
 	}
@@ -166,12 +167,12 @@ export class MemoryFederationKeyProvider implements ManagedFederationKeyProvider
 export async function rotateFederationKey(
 	provider: ManagedFederationKeyProvider,
 	newKey: FederationSigningKey,
-	options?: { removeAfterMs?: number; now?: () => number },
+	options?: { removeAfterMs?: number; nowMs?: () => number },
 ): Promise<void> {
 	const current = await provider.getFederationKeySet();
 	await provider.addKey(newKey);
 	await provider.activateKey(newKey.signer.kid);
-	const now = options?.now?.() ?? Date.now();
+	const now = options?.nowMs?.() ?? Date.now();
 	await provider.retireKey(
 		current.signer.kid,
 		now + (options?.removeAfterMs ?? DEFAULT_KEY_RETIRE_AFTER_MS),

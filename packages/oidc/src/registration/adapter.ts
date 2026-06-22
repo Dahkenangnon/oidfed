@@ -16,7 +16,7 @@ import type { RegistrationProtocolAdapter } from "./adapter-types.js";
  * Validates `openid_relying_party` metadata against the OIDC RP metadata schema
  * and enriches the registration response with `client_id`.
  *
- * Implements the `RegistrationProtocolAdapter` interface from `@oidfed/oidc`.
+ * Implements the `RegistrationProtocolAdapter` interface from `./adapter-types.js`.
  */
 export class OIDCRegistrationAdapter implements RegistrationProtocolAdapter {
 	validateClientMetadata(

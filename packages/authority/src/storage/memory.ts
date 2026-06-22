@@ -321,10 +321,8 @@ export class MemoryStorageAdapter implements StorageAdapter {
 			...(options?.clock ? { clock: options.clock } : {}),
 			...(options?.maxReplayEntries !== undefined ? { maxEntries: options.maxReplayEntries } : {}),
 		});
-		const clock = options?.clock;
-		const cacheClock = clock ? { now: () => clock.now() * 1_000 } : undefined;
 		this.cache = new MemoryCache({
-			...(cacheClock ? { clock: cacheClock } : {}),
+			...(options?.clock ? { clock: options.clock } : {}),
 			...(options?.maxCacheEntries !== undefined ? { maxEntries: options.maxCacheEntries } : {}),
 		});
 	}

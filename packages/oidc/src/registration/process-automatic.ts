@@ -56,6 +56,7 @@ export async function processAutomaticRegistration(
 		...(options.clockSkewSeconds !== undefined
 			? { clockSkewSeconds: options.clockSkewSeconds }
 			: {}),
+		...(options.clock ? { clock: options.clock } : {}),
 	});
 	if (!validated.ok) return validated;
 
@@ -84,6 +85,10 @@ export async function processAutomaticRegistration(
 		{ keys: protocolKeysResult.value.keys },
 		{
 			expectedTyp: RequestObjectTyp,
+			...(options.clock ? { clock: options.clock } : {}),
+			...(options.clockSkewSeconds !== undefined
+				? { clockSkewSeconds: options.clockSkewSeconds }
+				: {}),
 		},
 	);
 	if (!verifyResult.ok) {

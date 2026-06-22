@@ -194,6 +194,8 @@ await keyProvider.activateKey(nextKeyPair.privateKey.kid!);
 await keyProvider.retireKey(currentKid, Date.now() + 7 * 24 * 60 * 60 * 1000);
 ```
 
+Federation key lifecycle scheduling uses Unix epoch **milliseconds**. `MemoryFederationKeyProviderOptions.nowMs` and `retireKey(..., removeAfterMs)` are deliberately named to distinguish this operational schedule from the seconds-based protocol `Clock`.
+
 The federation provider is the source of truth for published federation public keys. Generic signers do not publish keys themselves.
 
 ### Schemas
@@ -248,7 +250,7 @@ import {
 
 ```ts
 import { MemoryCache, ecCacheKey, esCacheKey, chainCacheKey } from "@oidfed/core";
-import type { CacheProvider } from "@oidfed/core";
+import type { CacheProvider, MemoryCacheOptions } from "@oidfed/core";
 ```
 
 ```ts
@@ -258,6 +260,8 @@ const ecKey = await ecCacheKey(entityId("https://example.com"));
 const esKey = await esCacheKey(issuer, subject);
 const chainKey = await chainCacheKey(entityId, trustAnchorId);
 ```
+
+`MemoryCache` and `CacheProvider` TTL values use seconds. An injected `MemoryCacheOptions.clock` must return NumericDate seconds.
 
 ### Trust Marks
 
@@ -284,7 +288,7 @@ The `RegistrationProtocolAdapter` interface and the `OIDCRegistrationAdapter` im
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `httpClient` | `HttpClient` | — | Fetch-compatible HTTP client |
-| `clock` | `Clock` | `Date.now` | Custom clock (testing) |
+| `clock` | `Clock` | current time | Unix NumericDate clock in seconds, used for generation, expiry, and JOSE verification |
 | `cache` | `CacheProvider` | — | Cache implementation |
 | `logger` | `Logger` | — | Structured logger |
 | `httpTimeoutMs` | `number` | `10000` | HTTP request timeout (ms) |

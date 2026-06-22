@@ -1,9 +1,16 @@
 import {
+	type Clock,
 	DEFAULT_CLIENT_ASSERTION_TTL_SECONDS,
 	type JwtSigner,
 	nowSeconds,
 	signEntityStatement,
 } from "@oidfed/core";
+
+export interface ClientAssertionOptions {
+	readonly expiresInSeconds?: number;
+	/** NumericDate clock used for iat and exp. */
+	readonly clock?: Clock;
+}
 
 /**
  * Create a client assertion JWT for `private_key_jwt` authentication.
@@ -15,10 +22,10 @@ export async function createClientAssertion(
 	clientId: string,
 	audience: string,
 	signer: JwtSigner,
-	options?: { expiresInSeconds?: number },
+	options?: ClientAssertionOptions,
 ): Promise<string> {
 	const expiresIn = options?.expiresInSeconds ?? DEFAULT_CLIENT_ASSERTION_TTL_SECONDS;
-	const now = nowSeconds();
+	const now = nowSeconds(options?.clock);
 
 	const payload: Record<string, unknown> = {
 		iss: clientId,

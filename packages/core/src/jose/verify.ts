@@ -55,6 +55,7 @@ export async function verifyEntityStatement(
 			cryptoKey as unknown as Parameters<typeof jose.jwtVerify>[1],
 			{
 				clockTolerance: clockSkew,
+				...(options?.clock ? { currentDate: new Date(options.clock.now() * 1_000) } : {}),
 			},
 		);
 

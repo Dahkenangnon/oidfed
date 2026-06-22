@@ -43,7 +43,7 @@ export async function resolveAndValidateBestChain(
 
 	const validChains: ValidatedTrustChain[] = [];
 	for (const chain of chainResult.chains) {
-		const result = await validateTrustChain(chain.statements as string[], trustAnchors, options);
+		const result = await validateTrustChain(chain.statements, trustAnchors, options);
 		if (result.valid) {
 			validChains.push(result.chain);
 		}

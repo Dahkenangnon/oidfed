@@ -161,7 +161,7 @@ export async function automaticRegistration(
 
 	const requestObjectSigner = await rpConfig.protocolKeyProvider.getRequestObjectSigner();
 	assertOidcSignerPublished(rpConfig.metadata, requestObjectSigner, "Request Object");
-	const now = nowSeconds();
+	const now = nowSeconds(options?.clock);
 
 	// Select RP chain — prefer one whose Trust Anchor is shared with the OP (single pass)
 	const opTrustAnchorId = discovery.trustChain.trustAnchorId;
@@ -171,21 +171,17 @@ export async function automaticRegistration(
 	let selectedTrustAnchorId: EntityId | undefined;
 
 	for (const chain of rpChainResult.chains) {
-		const validationResult = await validateTrustChain(
-			chain.statements as string[],
-			trustAnchors,
-			options,
-		);
+		const validationResult = await validateTrustChain(chain.statements, trustAnchors, options);
 		if (validationResult.valid) {
 			if (chain.trustAnchorId === opTrustAnchorId) {
 				// Ideal: shared trust anchor — use immediately
-				selectedChain = chain.statements as string[];
+				selectedChain = [...chain.statements];
 				selectedTrustAnchorId = chain.trustAnchorId as EntityId;
 				break;
 			}
 			if (selectedChain.length === 0) {
 				// Fallback: first valid chain as backup
-				selectedChain = chain.statements as string[];
+				selectedChain = [...chain.statements];
 				selectedTrustAnchorId = chain.trustAnchorId as EntityId;
 			}
 		}
@@ -311,7 +307,10 @@ export async function automaticRegistration(
 				rpConfig.entityId as string,
 				discovery.entityId as string,
 				clientAssertionSigner,
-				{ expiresInSeconds: 60 },
+				{
+					expiresInSeconds: 60,
+					...(options?.clock ? { clock: options.clock } : {}),
+				},
 			);
 			const formBody = new URLSearchParams({
 				request: requestObjectJwt,
@@ -348,7 +347,7 @@ export async function automaticRegistration(
 					client_id: clientIdStr,
 				}),
 				parRequestUri,
-				parExpiresAt: nowSeconds() + expiresIn,
+				parExpiresAt: nowSeconds(options?.clock) + expiresIn,
 			};
 		}
 	}

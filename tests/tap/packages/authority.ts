@@ -634,6 +634,34 @@ export default (QUnit: QUnit) => {
 			t.ok(new MemoryStorageAdapter({ trustMarks: true }).trustMarks);
 		});
 
+		test("uses one NumericDate clock for records, replay, and cache", async (t) => {
+			let now = 100;
+			const storage = new MemoryStorageAdapter({ clock: { now: () => now } });
+			await storage.subordinates.add(record());
+			await storage.subordinates.update(id, { metadata: record().metadata });
+			t.equal((await storage.subordinates.get(id))?.updatedAt, 100);
+
+			await storage.cache.set("clock", "value", 10);
+			t.true(
+				await storage.replay.useJti({
+					issuer: "issuer",
+					audience: "audience",
+					jti: "jti",
+					expiresAt: 110,
+				}),
+			);
+			now = 110;
+			t.equal(await storage.cache.get("clock"), undefined);
+			t.true(
+				await storage.replay.useJti({
+					issuer: "issuer",
+					audience: "audience",
+					jti: "jti",
+					expiresAt: 120,
+				}),
+			);
+		});
+
 		test("commits all writes after a successful transaction", async (t) => {
 			const storage = new MemoryStorageAdapter();
 			await storage.transaction(async (tx) => {

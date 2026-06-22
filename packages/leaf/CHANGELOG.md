@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING.** Removed the duplicate top-level `LeafConfig.clock`; configure the NumericDate-seconds clock through `LeafConfig.options.clock`.
+- Trust-chain discovery accepts readonly statement arrays directly.
+
 ## [0.5.2] - 2026-05-28
 
 _No user-visible changes — released as part of the coordinated wave._

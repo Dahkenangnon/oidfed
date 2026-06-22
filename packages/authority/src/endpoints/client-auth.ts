@@ -137,11 +137,17 @@ export function createAuthenticatedHandler(
 		}
 
 		const clockSkewSeconds = ctx.options?.clockSkewSeconds;
+		const clock = ctx.options?.clock;
 		const verifyResult = await verifyClientAssertion(
 			clientAssertion,
 			clientJwks,
 			ctx.entityId,
-			clockSkewSeconds !== undefined ? { clockSkewSeconds } : undefined,
+			clockSkewSeconds !== undefined || clock !== undefined
+				? {
+						...(clockSkewSeconds !== undefined ? { clockSkewSeconds } : {}),
+						...(clock !== undefined ? { clock } : {}),
+					}
+				: undefined,
 		);
 
 		if (!verifyResult.ok) {

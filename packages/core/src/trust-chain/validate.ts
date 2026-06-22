@@ -64,13 +64,17 @@ function isValidUrl(value: unknown): boolean {
 
 /** Validate a raw trust chain (array of JWTs) against a set of trust anchors, returning resolved metadata. */
 export async function validateTrustChain(
-	chain: string[],
+	chain: ReadonlyArray<string>,
 	trustAnchors: TrustAnchorSet,
 	options?: FederationOptions & { verboseErrors?: boolean },
 ): Promise<ValidationResult> {
 	const errors: ValidationError[] = [];
 	const clockSkew = options?.clockSkewSeconds ?? DEFAULT_CLOCK_SKEW_SECONDS;
 	const nowSeconds = options?.clock ? options.clock.now() : defaultClock.now();
+	const verifyOptions = {
+		clockSkewSeconds: clockSkew,
+		...(options?.clock ? { clock: options.clock } : {}),
+	};
 
 	const parsed: ParsedEntityStatement[] = [];
 	for (let j = 0; j < chain.length; j++) {
@@ -437,7 +441,11 @@ export async function validateTrustChain(
 	}
 
 	if (leaf.payload.jwks) {
-		const selfVerify = await verifyEntityStatement(chain[0] as string, leaf.payload.jwks);
+		const selfVerify = await verifyEntityStatement(
+			chain[0] as string,
+			leaf.payload.jwks,
+			verifyOptions,
+		);
 		if (!selfVerify.ok) {
 			addError(
 				errors,
@@ -471,7 +479,11 @@ export async function validateTrustChain(
 		}
 
 		if (next.payload.jwks) {
-			const sigResult = await verifyEntityStatement(chain[j] as string, next.payload.jwks);
+			const sigResult = await verifyEntityStatement(
+				chain[j] as string,
+				next.payload.jwks,
+				verifyOptions,
+			);
 			if (!sigResult.ok) {
 				addError(
 					errors,
@@ -498,7 +510,11 @@ export async function validateTrustChain(
 
 	const taConfig = trustAnchors.get(lastIss as EntityId);
 	if (taConfig) {
-		const taVerify = await verifyEntityStatement(chain[lastIdx] as string, taConfig.jwks);
+		const taVerify = await verifyEntityStatement(
+			chain[lastIdx] as string,
+			taConfig.jwks,
+			verifyOptions,
+		);
 		if (!taVerify.ok) {
 			addError(
 				errors,

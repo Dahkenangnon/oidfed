@@ -1,4 +1,4 @@
-import type { EntityId, FederationError, Result } from "@oidfed/core";
+import type { Clock, EntityId, FederationError, Result } from "@oidfed/core";
 
 /** Typed output of Request Object JWT validation. */
 export interface ValidatedRequestObject {
@@ -26,6 +26,8 @@ export interface AutomaticRegistrationContext {
 	readonly opEntityId: EntityId;
 	/** Maximum allowed clock skew in seconds (default: 60) */
 	readonly clockSkewSeconds?: number;
+	/** NumericDate clock used for expiry validation. */
+	readonly clock?: Clock;
 }
 
 export type ValidatedRequestObjectResult = Result<ValidatedRequestObject, FederationError>;

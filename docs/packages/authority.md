@@ -106,6 +106,7 @@ import type {
   SubordinateStorage,
   TrustMarkStorage,
 } from "@oidfed/authority";
+import type { CacheProvider, ReplayStore } from "@oidfed/core";
 ```
 
 ```ts
@@ -121,6 +122,8 @@ interface StorageAdapter {
 Transactions include only authoritative authority records. Replay claims are independently atomic and cache entries are non-authoritative. Transaction callbacks may be retried, so signing and external side effects must happen outside them.
 
 `MemoryStorageAdapter` always supplies subordinate, replay, and cache capabilities. Trust marks are opt-in with `{ trustMarks: true }`. The memory adapter is only for development and tests.
+
+`SubordinateRecord.entityId`, `createdAt`, and `updatedAt` are adapter-managed and excluded from `SubordinateRecordUpdate`. Subordinate pages are ordered lexicographically by `entityId`; their inclusive cursor identifies the first unreturned entity. Trust-mark pages are ordered by subject and use the same inclusive cursor rule.
 
 ### Federation Key Provider
 
@@ -202,7 +205,7 @@ const logging: Middleware = async (req, next) => {
 const composed = compose(logging, rateLimiting);
 ```
 
-Individual endpoint factories and HTTP helpers are also exported for custom routing and composition.
+Individual authority endpoint factories and `HandlerContext` are exported for custom routing and composition. Generic request/response helpers such as `errorResponse`, `jsonResponse`, and `requireMethod` are imported directly from `@oidfed/core`.
 
 ## Configuration
 

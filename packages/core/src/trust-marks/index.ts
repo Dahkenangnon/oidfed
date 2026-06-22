@@ -25,8 +25,9 @@ export async function signTrustMarkDelegation(params: {
 	trustMarkType: string;
 	signer: JwtSigner;
 	ttlSeconds?: number;
+	clock?: Clock;
 }): Promise<string> {
-	const now = nowSeconds();
+	const now = nowSeconds(params.clock);
 	const ttl = params.ttlSeconds ?? DEFAULT_DELEGATION_TTL_SECONDS;
 
 	const payload: Record<string, unknown> = {

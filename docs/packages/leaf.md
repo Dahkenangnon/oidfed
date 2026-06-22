@@ -67,7 +67,6 @@ interface LeafConfig {
   trustMarks?: TrustMarkRef[];
   entityConfigurationTtlSeconds?: number;
   options?: FederationOptions;
-  clock?: Clock;
 }
 
 interface LeafEntity {
@@ -79,6 +78,8 @@ interface LeafEntity {
 ```
 
 The published top-level Entity Statement `jwks` comes from `keyProvider.getFederationKeySet()`. The provider, not the leaf config, is the source of truth for federation public keys.
+
+Configure time through `options.clock`. Like every core `Clock`, it returns Unix NumericDate seconds and controls Entity Configuration generation and expiry.
 
 `createLeafHandler(entity)` is the standalone handler for `/.well-known/openid-federation`. It responds `405` for non-GET, `404` for unknown paths, and sets `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`, and HSTS headers.
 

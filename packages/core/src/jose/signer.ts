@@ -62,7 +62,7 @@ function validateSignerKey(
 		throw new Error(`Key use must be "sig" for signing, got "${key.use}"`);
 	}
 	if ((key as Record<string, unknown>).kty === "oct") {
-		throw new Error("Symmetric keys (kty 'oct') cannot be used for federation signing");
+		throw new Error("Symmetric keys are unsupported; JwkSigner requires an asymmetric signing key");
 	}
 	if (Array.isArray(key.key_ops) && !key.key_ops.includes("sign")) {
 		throw new Error("JWK key_ops must include 'sign' for signing");

@@ -154,33 +154,6 @@ if (result.delivery === "par") {
 }
 ```
 
-## Migration from 0.3.x
-
-The 0.4.0 release introduces a breaking change to `automaticRegistration`'s return type
-and default behavior:
-
-- **`AutomaticRegistrationResult` is now a discriminated union on `result.delivery`.** Code
-  that reads `result.authorizationUrl` must first narrow on the delivery mode, OR opt back
-  into the historical shape by passing `requestDelivery: "query"`:
-
-  ```ts
-  // 0.3.x ergonomics, preserved in 0.4.0 with one extra config field:
-  const result = await automaticRegistration(
-    opDiscovery,
-    { ...rpConfig, requestDelivery: "query" },
-    authzParams,
-    trustAnchors,
-  );
-  if (result.delivery === "query") {
-    redirectTo(result.authorizationUrl);
-  }
-  ```
-
-- **The default delivery mode is `"form_post"`.** Existing callers that did not specify a
-  delivery mode previously received GET-query URLs; in 0.4.0 they now receive form-post
-  result shapes (`result.authorizationEndpoint` + `result.formParams`) and must render an
-  HTML form instead of issuing a 302.
-
 ## What's Included
 
 - RP-side automatic registration (Request Object + trust chain embedding)
@@ -191,6 +164,8 @@ and default behavior:
 - OIDC protocol signing via `OidcProtocolKeyProvider` and `JwtSigner`
 - Client assertion creation (`private_key_jwt`)
 - `OIDCRegistrationAdapter` for plugging into `@oidfed/authority`
+
+OIDC consumes generic `ReplayStore` and `CacheProvider` capabilities from `@oidfed/core`; it does not expose authority storage repositories. Registration and `ClientAssertionOptions` clocks return NumericDate seconds and control Request Object, Entity Configuration, PAR, assertion, and validation times.
 
 ## Documentation
 

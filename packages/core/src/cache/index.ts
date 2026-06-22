@@ -6,21 +6,27 @@ interface CacheEntry<T> {
 	expiresAt: number;
 }
 
+export interface MemoryCacheOptions {
+	readonly maxEntries?: number;
+	/** NumericDate clock in seconds. */
+	readonly clock?: Clock;
+}
+
 /**
  * LRU in-memory cache with TTL-based expiry and configurable max entries.
  *
  * **WARNING: Development and testing only.** Cache is not shared across processes
  * and is lost on restart. For production with multiple processes or containers,
- * implement {@link CacheProvider} with Redis or similar. See `docs/storage-guide.md`.
+ * implement {@link CacheProvider} with Redis or similar. See `docs/guide/storage-guide.md`.
  */
 export class MemoryCache implements CacheProvider {
 	private readonly store = new Map<string, CacheEntry<unknown>>();
 	private readonly maxEntries: number;
 	private readonly clock: Clock;
 
-	constructor(options?: { maxEntries?: number; clock?: Clock }) {
+	constructor(options?: MemoryCacheOptions) {
 		this.maxEntries = options?.maxEntries ?? 1000;
-		this.clock = options?.clock ?? { now: () => Date.now() };
+		this.clock = options?.clock ?? { now: () => Math.floor(Date.now() / 1000) };
 	}
 
 	async get<T>(key: string): Promise<T | undefined> {
@@ -49,7 +55,7 @@ export class MemoryCache implements CacheProvider {
 
 		this.store.set(key, {
 			value,
-			expiresAt: this.clock.now() + ttlSeconds * 1000,
+			expiresAt: this.clock.now() + ttlSeconds,
 		});
 	}
 

@@ -1,7 +1,10 @@
 // @oidfed/oidc — OIDC/OAuth2 protocol layer for OpenID Federation
 
 // Client authentication
-export { createClientAssertion } from "./client-auth/assertion.js";
+export {
+	type ClientAssertionOptions,
+	createClientAssertion,
+} from "./client-auth/assertion.js";
 
 // Constants
 export {

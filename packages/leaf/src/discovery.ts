@@ -34,9 +34,7 @@ export async function discoverEntity(
 	const validationErrors: string[] = [];
 
 	for (const chain of chainResult.chains) {
-		// Type friction: validateTrustChain accepts string[] but chain.statements is ReadonlyArray<string>.
-		// Real fix belongs in core (validateTrustChain should accept ReadonlyArray<string>).
-		const result = await validateTrustChain(chain.statements as string[], trustAnchors, options);
+		const result = await validateTrustChain(chain.statements, trustAnchors, options);
 		if (result.valid) {
 			validChains.push(result.chain);
 		} else {

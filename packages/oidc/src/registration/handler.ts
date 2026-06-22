@@ -134,7 +134,12 @@ export function createExplicitRegistrationHandler(
 			return errorResponse(400, "invalid_request", "aud MUST match the OP's Entity ID");
 		}
 
-		const selfVerify = await verifyEntityStatement(ecJwt, reqPayload.jwks);
+		const selfVerify = await verifyEntityStatement(ecJwt, reqPayload.jwks, {
+			...(config.options?.clock ? { clock: config.options.clock } : {}),
+			...(config.options?.clockSkewSeconds !== undefined
+				? { clockSkewSeconds: config.options.clockSkewSeconds }
+				: {}),
+		});
 		if (!selfVerify.ok) {
 			return errorResponse(
 				400,
@@ -256,7 +261,7 @@ export function createExplicitRegistrationHandler(
 				const validChains: ValidatedTrustChain[] = [];
 				for (const chain of chainResult.chains) {
 					const result = await validateTrustChain(
-						chain.statements as string[],
+						chain.statements,
 						config.trustAnchors,
 						config.options,
 					);

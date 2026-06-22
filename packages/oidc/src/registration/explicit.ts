@@ -95,7 +95,7 @@ export async function explicitRegistration(
 
 	const keySet = await rpConfig.keyProvider.getFederationKeySet();
 	validateFederationKeySet(keySet);
-	const now = nowSeconds();
+	const now = nowSeconds(options?.clock);
 	const ttl = rpConfig.entityConfigurationTtlSeconds ?? DEFAULT_ENTITY_STATEMENT_TTL_SECONDS;
 
 	// Include RP trust chain in header (recommended)
@@ -105,13 +105,13 @@ export async function explicitRegistration(
 	if (rpChainResult.chains.length > 0) {
 		for (const chain of rpChainResult.chains) {
 			if (chain.trustAnchorId === opTrustAnchorId) {
-				rpChainStatements = chain.statements as string[];
+				rpChainStatements = [...chain.statements];
 				selectedTrustAnchorId = chain.trustAnchorId as EntityId;
 				break;
 			}
 		}
 		if (rpChainStatements.length === 0) {
-			rpChainStatements = (rpChainResult.chains[0]?.statements ?? []) as string[];
+			rpChainStatements = [...(rpChainResult.chains[0]?.statements ?? [])];
 			selectedTrustAnchorId = rpChainResult.chains[0]?.trustAnchorId as EntityId | undefined;
 		}
 	}
@@ -196,6 +196,10 @@ export async function explicitRegistration(
 
 	const verifyResult = await verifyEntityStatement(responseJwt, opJwks, {
 		expectedTyp: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE,
+		...(options?.clock ? { clock: options.clock } : {}),
+		...(options?.clockSkewSeconds !== undefined
+			? { clockSkewSeconds: options.clockSkewSeconds }
+			: {}),
 	});
 	if (!verifyResult.ok) {
 		throw new Error("Registration response signature verification failed");
@@ -227,7 +231,7 @@ export async function explicitRegistration(
 	if (responseExp === undefined) {
 		throw new Error("Registration response missing required 'exp' claim");
 	}
-	const responseNow = nowSeconds();
+	const responseNow = nowSeconds(options?.clock);
 	if (responseNow >= responseExp) {
 		throw new Error("Registration response has expired");
 	}

@@ -178,6 +178,7 @@ It is not the source of truth for published federation keys.
 
 ```ts
 import { createClientAssertion } from "@oidfed/oidc";
+import type { ClientAssertionOptions } from "@oidfed/oidc";
 import { JwkSigner } from "@oidfed/core";
 
 const assertion = await createClientAssertion(
@@ -187,6 +188,8 @@ const assertion = await createClientAssertion(
   { expiresInSeconds: 60 },
 );
 ```
+
+`ClientAssertionOptions` exposes `expiresInSeconds` and `clock`. Automatic and explicit registration also consume `FederationOptions.clock`; all supplied clocks return Unix NumericDate seconds and drive Request Object, Entity Configuration, PAR, assertion, and validation times.
 
 ## Key Separation
 

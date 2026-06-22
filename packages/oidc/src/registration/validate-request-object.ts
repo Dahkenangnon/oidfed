@@ -116,7 +116,7 @@ export function validateAutomaticRegistrationRequest(
 		);
 	}
 	const clockSkew = context.clockSkewSeconds ?? DEFAULT_CLOCK_SKEW_SECONDS;
-	const now = nowSeconds();
+	const now = nowSeconds(context.clock);
 	if (now - clockSkew >= exp) {
 		return err(federationError(FederationErrorCode.InvalidRequest, "Request Object has expired"));
 	}

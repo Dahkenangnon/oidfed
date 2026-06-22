@@ -40,6 +40,7 @@ export type UnverifiedEntityStatement = ParsedEntityStatement & {
 export type HttpClient = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
 export interface Clock {
+	/** Current Unix time as a NumericDate in seconds. */
 	now(): number;
 }
 

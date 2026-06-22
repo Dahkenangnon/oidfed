@@ -463,6 +463,9 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 			if (config.trustMarkTtlSeconds !== undefined) {
 				params.ttlSeconds = config.trustMarkTtlSeconds;
 			}
+			if (config.options?.clock !== undefined) {
+				params.clock = config.options.clock;
+			}
 			return signTrustMarkDelegation(params);
 		},
 

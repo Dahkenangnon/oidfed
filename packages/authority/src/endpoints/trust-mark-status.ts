@@ -80,6 +80,10 @@ export function createTrustMarkStatusHandler(
 		const keySet = await ctx.keyProvider.getFederationKeySet();
 		const sigResult = await verifyEntityStatement(trustMarkJwt, keySet.jwks, {
 			expectedTyp: JwtTyp.TrustMark,
+			...(ctx.options?.clock ? { clock: ctx.options.clock } : {}),
+			...(ctx.options?.clockSkewSeconds !== undefined
+				? { clockSkewSeconds: ctx.options.clockSkewSeconds }
+				: {}),
 		});
 		if (!isOk(sigResult)) {
 			return buildStatusResponse(ctx, trustMarkJwt, TrustMarkStatus.Invalid);

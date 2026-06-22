@@ -47,6 +47,8 @@ const handler = leaf.handler(); // fetch-compatible (Request → Response)
 - Federation JWKS publication from `FederationKeyProvider`
 - Lazy EC generation with caching and refresh
 
+Configure a custom NumericDate-seconds clock through `LeafConfig.options.clock`. There is no duplicate top-level leaf clock or storage API.
+
 ## Documentation
 
 Full API reference: [docs/packages/leaf.md](https://github.com/Dahkenangnon/oidfed/blob/main/docs/packages/leaf.md)

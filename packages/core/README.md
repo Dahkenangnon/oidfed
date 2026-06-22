@@ -56,6 +56,10 @@ for (const chain of result.chains) {
 - LRU cache, atomic replay-store contracts, and Result type
 - Fetch-compatible HTTP primitives (`Request` → `Response`)
 
+## Time Contract
+
+`Clock.now()` returns Unix NumericDate seconds. The same seconds-based clock drives cache TTLs, replay expiry, JWT generation, and JOSE verification. Federation key lifecycle scheduling is intentionally separate and uses explicitly named millisecond APIs such as `nowMs` and `removeAfterMs`.
+
 ## Documentation
 
 Full API reference: [docs/packages/core.md](https://github.com/Dahkenangnon/oidfed/blob/main/docs/packages/core.md)

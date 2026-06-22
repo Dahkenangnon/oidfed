@@ -15,6 +15,7 @@ export {
 	ecCacheKey,
 	esCacheKey,
 	MemoryCache,
+	type MemoryCacheOptions,
 } from "./cache/index.js";
 export {
 	CachePrefix,
@@ -85,11 +86,10 @@ export {
 export {
 	type FederationKeyProvider,
 	type FederationKeySet,
-	type FederationKeyState,
 	type FederationSigningKey,
-	type ManagedFederationKeyEntry,
 	type ManagedFederationKeyProvider,
 	MemoryFederationKeyProvider,
+	type MemoryFederationKeyProviderOptions,
 	rotateFederationKey,
 	StaticFederationKeyProvider,
 	validateFederationKeySet,

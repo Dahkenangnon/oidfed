@@ -37,7 +37,7 @@ Replay and cache are excluded from `StorageTransaction`: replay claiming is inde
 
 `SubordinateStorage` provides `get`, `list`, `add`, `update`, and `remove`.
 
-- `entityId` and `createdAt` are immutable.
+- `entityId`, `createdAt`, and `updatedAt` are adapter-managed and excluded from `SubordinateRecordUpdate`.
 - Duplicate `add` and update/remove of unknown entities throw.
 - Returned values are detached; mutation does not persist data.
 - Listing is lexicographic by `entityId` with an inclusive first-unreturned cursor.
@@ -67,7 +67,7 @@ interface TrustMarkStorage {
 - `getByJwt` identifies the exact issued token used by status responses.
 - Issuing the same JWT is idempotent.
 - Revocation records `active: false` and `revokedAt` without deleting the JWT.
-- Listing is deterministic by subject and must support complete cursor traversal.
+- Listing is deterministic by subject. Its inclusive cursor identifies the first unreturned subject and must support complete traversal.
 
 Suggested relational columns: `jwt_hash BYTEA PRIMARY KEY`, `jwt TEXT NOT NULL`, `trust_mark_type TEXT`, `subject TEXT`, `issued_at DOUBLE PRECISION`, `expires_at DOUBLE PRECISION`, `active BOOLEAN`, `revoked_at DOUBLE PRECISION`. Index `(trust_mark_type, subject, active, expires_at)` and `(subject, active, expires_at)`.
 
@@ -96,11 +96,15 @@ Use a unique database key on `(issuer, audience, jti)`, or an equivalent Redis k
 
 Use a shared cache when processes should reuse remote Entity Configurations or statements. Cache loss must affect performance only, never correctness.
 
+`CacheProvider` TTLs and every injected `Clock` use NumericDate seconds. This is the same clock contract used by replay, subordinate, and trust-mark timestamps.
+
 ## Keys
 
 `ManagedFederationKeyProvider` remains separate from storage. A database may hold public key metadata and KMS references internally, but the provider is the only package contract that exposes signing, active federation JWKS publication, rotation, retirement, revocation, and historical federation keys.
 
 Never place private JWK material in `StorageAdapter` or published federation JWKS.
+
+The stable API exposes only `StorageAdapter`, its repository capabilities, and `MemoryStorageAdapter`. Pre-v1 store names remain in changelogs solely as release history and are not compatibility aliases.
 
 ## Production Checklist
 

@@ -1,6 +1,5 @@
 /** Leaf entity factory: Entity Configuration serving with caching and trust chain discovery. */
 import {
-	type Clock,
 	DEFAULT_ENTITY_STATEMENT_TTL_SECONDS,
 	type EntityId,
 	type FederationKeyProvider,
@@ -23,8 +22,6 @@ export interface LeafConfig {
 	trustMarks?: TrustMarkRef[];
 	entityConfigurationTtlSeconds?: number;
 	options?: FederationOptions;
-	/** Injectable clock for deterministic testing. */
-	clock?: Clock;
 }
 
 export interface LeafEntity {
@@ -85,7 +82,7 @@ export function createLeafEntity(config: LeafConfig): LeafEntity {
 	async function buildEntityConfiguration(): Promise<string> {
 		const keySet = await config.keyProvider.getFederationKeySet();
 		validateFederationKeySet(keySet);
-		const now = nowSeconds(config.clock);
+		const now = nowSeconds(config.options?.clock);
 		const exp = now + ttlSeconds;
 
 		const payload: Record<string, unknown> = {
@@ -126,7 +123,7 @@ export function createLeafEntity(config: LeafConfig): LeafEntity {
 
 		isEntityConfigurationExpired(): boolean {
 			if (cachedExp === null) return true;
-			const now = nowSeconds(config.clock);
+			const now = nowSeconds(config.options?.clock);
 			return now >= cachedExp;
 		},
 

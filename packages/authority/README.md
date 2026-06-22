@@ -61,6 +61,8 @@ const handler = server.handler(); // fetch-compatible (Request → Response)
 
 `createAuthorityServer` accepts one `storage` adapter instead of separate stores. It owns subordinate records, optional trust marks, optional replay, optional cache, and serializable authority-record transactions. Federation key custody remains exclusively behind `ManagedFederationKeyProvider`. See [the authority reference](https://github.com/Dahkenangnon/oidfed/blob/main/docs/packages/authority.md#unified-storage-adapter).
 
+The stable package exports `StorageAdapter`, `StorageTransaction`, `SubordinateStorage`, `TrustMarkStorage`, `MemoryStorageAdapter`, and their record/page/option types. It does not expose compatibility aliases for pre-v1 store names. Generic HTTP helpers are imported from `@oidfed/core`; authority keeps endpoint factories and `HandlerContext` public for custom routing.
+
 ## Documentation
 
 Full API reference: [docs/packages/authority.md](https://github.com/Dahkenangnon/oidfed/blob/main/docs/packages/authority.md)

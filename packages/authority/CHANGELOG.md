@@ -15,10 +15,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **BREAKING.** `AuthorityConfig` now accepts one `storage` adapter instead of separate subordinate and trust-mark stores.
 - Trust-mark persistence is expiry-aware, preserves exact issued JWT history, and supports complete deterministic pagination.
+- Authority clocks now propagate to cache, client-assertion verification, trust-mark verification, and delegation signing.
 
 ### Removed
 
 - **BREAKING.** Removed `SubordinateStore`, `TrustMarkStore`, `MemorySubordinateStore`, and `MemoryTrustMarkStore`.
+- **BREAKING.** Generic core HTTP helpers are no longer re-exported; import them from `@oidfed/core`.
 
 ## [0.5.2] - 2026-05-28
 
