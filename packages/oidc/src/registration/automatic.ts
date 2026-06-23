@@ -3,9 +3,15 @@ import {
 	DEFAULT_REQUEST_OBJECT_TTL_SECONDS,
 	type DiscoveryResult,
 	type EntityId,
+	err,
+	FederationErrorCode,
 	type FederationOptions,
+	federationError,
+	InternalErrorCode,
 	type JwtSigner,
 	nowSeconds,
+	ok,
+	type Result,
 	resolveTrustChainForAnchor,
 	resolveTrustChains,
 	signEntityStatement,
@@ -20,24 +26,6 @@ import { getRegistrationTypes } from "./helpers.js";
 
 const CLIENT_ASSERTION_TYPE = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
 
-/**
- * How the Request Object reaches the OP's authorization endpoint.
- *
- * - `query` — Request Object value travels in the `request` query parameter of a
- *   GET to the authorization endpoint. Compact but constrained by URL/header
- *   length limits in HTTP intermediaries when the Request Object carries an
- *   embedded `trust_chain`.
- * - `form_post` — Default. Request Object value travels in an
- *   `application/x-www-form-urlencoded` body POSTed to the authorization
- *   endpoint. The user-agent submits an auto-submit HTML form supplied by the
- *   RP. Avoids URL/header length ceilings.
- * - `request_uri` — Request Object is hosted by the RP at a URL it provides;
- *   the OP fetches that URL. The library does NOT host the JWT — the caller
- *   must serve the returned `requestObjectJwt` at the supplied `requestUri`.
- * - `par` — Library coordinates a Pushed Authorization Request to the OP's
- *   `pushed_authorization_request_endpoint`, then returns the short-lived
- *   `urn:`-style request_uri ready to redirect through.
- */
 export type RequestDelivery = "query" | "form_post" | "request_uri" | "par";
 
 /** Reserved claims that authzRequestParams MUST NOT overwrite. */
@@ -135,11 +123,6 @@ export type AutomaticRegistrationResult =
  *
  * Accepts a `DiscoveryResult` (from `discoverEntity()`) to ensure the OP
  * has been validated through the federation before registration.
- *
- * @throws {Error} If the OP does not support automatic registration.
- * @throws {Error} If the OP has no `authorization_endpoint` in `openid_provider` metadata.
- * @throws {Error} on any validation or network failure (RP-side convention).
- *   OP-side handlers (`processAutomaticRegistration`) use `Result<T, FederationError>` instead.
  */
 export async function automaticRegistration(
 	discovery: DiscoveryResult,
@@ -147,20 +130,37 @@ export async function automaticRegistration(
 	authzRequestParams: Record<string, string>,
 	trustAnchors: TrustAnchorSet,
 	options?: FederationOptions,
-): Promise<AutomaticRegistrationResult> {
+): Promise<Result<AutomaticRegistrationResult>> {
 	const opMeta = discovery.resolvedMetadata.openid_provider as Record<string, unknown> | undefined;
 	const registrationTypes = getRegistrationTypes(opMeta);
 	if (!registrationTypes.includes(ClientRegistrationType.Automatic)) {
-		throw new Error("OP does not support automatic registration");
+		return err(
+			federationError(
+				FederationErrorCode.InvalidRequest,
+				"OP does not support automatic registration",
+			),
+		);
 	}
 
 	const authorizationEndpoint = opMeta?.authorization_endpoint as string | undefined;
 	if (!authorizationEndpoint) {
-		throw new Error("OP has no authorization_endpoint in openid_provider metadata");
+		return err(
+			federationError(
+				FederationErrorCode.InvalidMetadata,
+				"OP has no authorization_endpoint in openid_provider metadata",
+			),
+		);
 	}
 
 	const requestObjectSigner = await rpConfig.protocolKeyProvider.getRequestObjectSigner();
-	assertOidcSignerPublished(rpConfig.metadata, requestObjectSigner, "Request Object");
+	const assertSignerResult = assertOidcSignerPublished(
+		rpConfig.metadata,
+		requestObjectSigner,
+		"Request Object",
+	);
+	if (!assertSignerResult.ok) {
+		return assertSignerResult;
+	}
 	const now = nowSeconds(options?.clock);
 
 	// Select RP chain — prefer one whose Trust Anchor is shared with the OP (single pass)
@@ -213,8 +213,11 @@ export async function automaticRegistration(
 
 	if (rpConfig.includePeerTrustChain) {
 		if (!selectedTrustAnchorId) {
-			throw new Error(
-				"includePeerTrustChain requires a selected RP Trust Anchor; no valid RP chain was built",
+			return err(
+				federationError(
+					InternalErrorCode.TrustAnchorUnknown,
+					"includePeerTrustChain requires a selected RP Trust Anchor; no valid RP chain was built",
+				),
 			);
 		}
 		const peerChainResult = await resolveTrustChainForAnchor(
@@ -224,8 +227,11 @@ export async function automaticRegistration(
 			options,
 		);
 		if (!peerChainResult.ok) {
-			throw new Error(
-				`includePeerTrustChain: cannot build peer Trust Chain for ${discovery.entityId} ending at ${selectedTrustAnchorId}: ${peerChainResult.error.description}`,
+			return err(
+				federationError(
+					InternalErrorCode.TrustChainInvalid,
+					`includePeerTrustChain: cannot build peer Trust Chain for ${discovery.entityId} ending at ${selectedTrustAnchorId}: ${peerChainResult.error.description}`,
+				),
 			);
 		}
 		extraHeaders.peer_trust_chain = peerChainResult.value;
@@ -247,17 +253,17 @@ export async function automaticRegistration(
 
 	switch (delivery) {
 		case "query":
-			return {
+			return ok({
 				...base,
 				delivery: "query",
 				authorizationUrl: buildAuthorizationUrl(authorizationEndpoint, {
 					request: requestObjectJwt,
 					client_id: clientIdStr,
 				}),
-			};
+			});
 
 		case "form_post":
-			return {
+			return ok({
 				...base,
 				delivery: "form_post",
 				authorizationEndpoint,
@@ -265,19 +271,27 @@ export async function automaticRegistration(
 					request: requestObjectJwt,
 					client_id: clientIdStr,
 				},
-			};
+			});
 
 		case "request_uri": {
 			const hostedUri = rpConfig.requestUri;
 			if (!hostedUri) {
-				throw new Error(
-					"requestDelivery 'request_uri' requires rpConfig.requestUri to be set to the URL at which the RP will host the Request Object JWT",
+				return err(
+					federationError(
+						FederationErrorCode.InvalidRequest,
+						"requestDelivery 'request_uri' requires rpConfig.requestUri to be set to the URL at which the RP will host the Request Object JWT",
+					),
 				);
 			}
 			if (!hostedUri.startsWith("https://")) {
-				throw new Error("rpConfig.requestUri must be an https:// URL");
+				return err(
+					federationError(
+						FederationErrorCode.InvalidRequest,
+						"rpConfig.requestUri must be an https:// URL",
+					),
+				);
 			}
-			return {
+			return ok({
 				...base,
 				delivery: "request_uri",
 				requestUri: hostedUri,
@@ -285,21 +299,33 @@ export async function automaticRegistration(
 					request_uri: hostedUri,
 					client_id: clientIdStr,
 				}),
-			};
+			});
 		}
 
 		case "par": {
 			const parEndpoint = opMeta?.pushed_authorization_request_endpoint as string | undefined;
 			if (!parEndpoint) {
-				throw new Error(
-					"requestDelivery 'par' requires the OP to advertise pushed_authorization_request_endpoint in its openid_provider metadata",
+				return err(
+					federationError(
+						FederationErrorCode.InvalidRequest,
+						"requestDelivery 'par' requires the OP to advertise pushed_authorization_request_endpoint in its openid_provider metadata",
+					),
 				);
 			}
 			const httpClient = options?.httpClient ?? fetch;
 			const clientAssertionSigner = rpConfig.protocolKeyProvider.getClientAssertionSigner
 				? await rpConfig.protocolKeyProvider.getClientAssertionSigner()
 				: requestObjectSigner;
-			assertOidcSignerPublished(rpConfig.metadata, clientAssertionSigner, "client assertion");
+
+			const assertAssertionSignerResult = assertOidcSignerPublished(
+				rpConfig.metadata,
+				clientAssertionSigner,
+				"client assertion",
+			);
+			if (!assertAssertionSignerResult.ok) {
+				return err(assertAssertionSignerResult.error);
+			}
+
 			// Client assertion audience is the OP's Entity Identifier under the
 			// federation profile of PAR + automatic registration — not the PAR
 			// endpoint URL.
@@ -327,18 +353,27 @@ export async function automaticRegistration(
 				body: formBody,
 			});
 			if (response.status !== 201 && response.status !== 200) {
-				throw new Error(`PAR request failed (HTTP ${response.status})`);
+				return err(
+					federationError(
+						InternalErrorCode.Network,
+						`PAR request failed (HTTP ${response.status})`,
+					),
+				);
 			}
 			const parPayload = (await response.json()) as Record<string, unknown>;
 			const parRequestUri = parPayload.request_uri;
 			const expiresIn = parPayload.expires_in;
 			if (typeof parRequestUri !== "string" || !parRequestUri.startsWith("urn:")) {
-				throw new Error("PAR response missing or invalid request_uri");
+				return err(
+					federationError(InternalErrorCode.Network, "PAR response missing or invalid request_uri"),
+				);
 			}
 			if (typeof expiresIn !== "number" || expiresIn <= 0) {
-				throw new Error("PAR response missing or invalid expires_in");
+				return err(
+					federationError(InternalErrorCode.Network, "PAR response missing or invalid expires_in"),
+				);
 			}
-			return {
+			return ok({
 				...base,
 				delivery: "par",
 				pushedAuthorizationRequestEndpoint: parEndpoint,
@@ -348,7 +383,7 @@ export async function automaticRegistration(
 				}),
 				parRequestUri,
 				parExpiresAt: nowSeconds(options?.clock) + expiresIn,
-			};
+			});
 		}
 	}
 }
@@ -365,10 +400,15 @@ function assertOidcSignerPublished(
 	metadata: Record<string, Record<string, unknown>>,
 	signer: JwtSigner,
 	purpose: string,
-): void {
+): Result<void> {
 	const rpMetadata = metadata.openid_relying_party;
 	if (!rpMetadata) {
-		throw new Error("metadata.openid_relying_party is required for automatic registration");
+		return err(
+			federationError(
+				FederationErrorCode.InvalidRequest,
+				"metadata.openid_relying_party is required for automatic registration",
+			),
+		);
 	}
 
 	const inlineJwks = rpMetadata.jwks as { keys?: Array<{ kid?: unknown }> } | undefined;
@@ -379,19 +419,32 @@ function assertOidcSignerPublished(
 	if (hasInlineJwks) {
 		const keys = inlineJwks.keys;
 		if (!Array.isArray(keys)) {
-			throw new Error("metadata.openid_relying_party.jwks must be a JWK Set");
-		}
-		if (!keys.some((key) => key.kid === signer.kid)) {
-			throw new Error(
-				`OIDC ${purpose} signer kid '${signer.kid}' is not published in metadata.openid_relying_party.jwks`,
+			return err(
+				federationError(
+					FederationErrorCode.InvalidRequest,
+					"metadata.openid_relying_party.jwks must be a JWK Set",
+				),
 			);
 		}
-		return;
+		if (!keys.some((key) => key.kid === signer.kid)) {
+			return err(
+				federationError(
+					FederationErrorCode.InvalidRequest,
+					`OIDC ${purpose} signer kid '${signer.kid}' is not published in metadata.openid_relying_party.jwks`,
+				),
+			);
+		}
+		return ok(undefined);
 	}
 
 	if (!hasUriPublication) {
-		throw new Error(
-			"metadata.openid_relying_party must publish OIDC protocol keys with jwks, jwks_uri, or signed_jwks_uri",
+		return err(
+			federationError(
+				FederationErrorCode.InvalidRequest,
+				"metadata.openid_relying_party must publish OIDC protocol keys with jwks, jwks_uri, or signed_jwks_uri",
+			),
 		);
 	}
+
+	return ok(undefined);
 }

@@ -1,3 +1,5 @@
+import { InternalErrorCode } from "../constants.js";
+import { err, federationError, ok, type Result } from "../errors.js";
 import type { Clock, FederationOptions, TrustAnchorSet, ValidatedTrustChain } from "../types.js";
 import { resolveTrustChains } from "./resolve.js";
 import { isChainExpired, validateTrustChain } from "./validate.js";
@@ -15,9 +17,9 @@ export async function refreshTrustChain(
 	trustAnchors: TrustAnchorSet,
 	options?: RefreshOptions,
 	clock?: Clock,
-): Promise<ValidatedTrustChain> {
+): Promise<Result<ValidatedTrustChain>> {
 	if (!options?.forceRefresh && !isChainExpired(chain, clock)) {
-		return chain;
+		return ok(chain);
 	}
 
 	const entityId = chain.entityId;
@@ -25,8 +27,11 @@ export async function refreshTrustChain(
 
 	if (resolveResult.chains.length === 0) {
 		const errMsgs = resolveResult.errors.map((e) => e.description).join("; ");
-		throw new Error(
-			`Failed to refresh trust chain for '${entityId}': ${errMsgs || "no chains resolved"}`,
+		return err(
+			federationError(
+				InternalErrorCode.TrustChainInvalid,
+				`Failed to refresh trust chain for '${entityId}': ${errMsgs || "no chains resolved"}`,
+			),
 		);
 	}
 
@@ -38,11 +43,14 @@ export async function refreshTrustChain(
 			options,
 		);
 		if (result.valid) {
-			return result.chain;
+			return ok(result.chain);
 		}
 	}
 
-	throw new Error(
-		`Failed to refresh trust chain for '${entityId}': all resolved chains failed validation`,
+	return err(
+		federationError(
+			InternalErrorCode.TrustChainInvalid,
+			`Failed to refresh trust chain for '${entityId}': all resolved chains failed validation`,
+		),
 	);
 }

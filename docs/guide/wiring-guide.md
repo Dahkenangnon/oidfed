@@ -349,6 +349,7 @@ import {
 import {
   entityId,
   generateSigningKey,
+  isOk,
   JwkSigner,
   MemoryFederationKeyProvider,
 } from "@oidfed/core";
@@ -405,13 +406,18 @@ app.get("/login", async (req, res) => {
   const opId = req.query.op as string;
 
   // 1. Discover the OP
-  const opDiscovery = await discoverEntity(entityId(opId), trustAnchors, {
+  const opDiscoveryResult = await discoverEntity(entityId(opId), trustAnchors, {
     httpClient: fetch,
   });
+  if (!isOk(opDiscoveryResult)) {
+    res.status(400).send("Discovery failed: " + opDiscoveryResult.error.description);
+    return;
+  }
+  const opDiscovery = opDiscoveryResult.value;
 
   // 2. Automatic registration — builds Request Object with trust chain.
   //    Default delivery is "form_post"; pass requestDelivery: "query" to get a redirect URL.
-  const result = await automaticRegistration(
+  const resultVal = await automaticRegistration(
     opDiscovery,
     {
       entityId: RP_ID,
@@ -433,6 +439,12 @@ app.get("/login", async (req, res) => {
     { scope: "openid profile", state: "random-state" },
     trustAnchors,
   );
+
+  if (!isOk(resultVal)) {
+    res.status(400).send("Registration failed: " + resultVal.error.description);
+    return;
+  }
+  const result = resultVal.value;
 
   // 3. Redirect to OP
   if (result.delivery !== "query") throw new Error("expected query-mode result");
@@ -476,10 +488,15 @@ app.listen(443);
 ```typescript
 app.get("/login-explicit", async (req, res) => {
   const opId = req.query.op as string;
-  const opDiscovery = await discoverEntity(entityId(opId), trustAnchors);
+  const opDiscoveryResult = await discoverEntity(entityId(opId), trustAnchors);
+  if (!isOk(opDiscoveryResult)) {
+    res.status(400).send("Discovery failed");
+    return;
+  }
+  const opDiscovery = opDiscoveryResult.value;
 
   // Explicit registration — sends EC to OP's registration endpoint
-  const registration = await explicitRegistration(
+  const registrationResult = await explicitRegistration(
     opDiscovery,
     {
       entityId: RP_ID,
@@ -497,6 +514,12 @@ app.get("/login-explicit", async (req, res) => {
     },
     trustAnchors,
   );
+
+  if (!isOk(registrationResult)) {
+    res.status(400).send("Registration failed: " + registrationResult.error.description);
+    return;
+  }
+  const registration = registrationResult.value;
 
   // registration.clientId — use for subsequent OIDC requests
   // registration.clientSecret — if provided

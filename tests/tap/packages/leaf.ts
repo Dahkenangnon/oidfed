@@ -5,6 +5,8 @@ import {
 	type EntityId,
 	entityId,
 	generateSigningKey,
+	isErr,
+	isOk,
 	type JWK,
 	JwkSigner,
 	JwtTyp,
@@ -81,78 +83,99 @@ export default (QUnit: QUnit) => {
 		test("returns correct entityId from valid discovery", async (t) => {
 			const fed = await createMockFederation();
 			const result = await discoverEntity(OP_ID, fed.trustAnchors, fed.options);
-			t.equal(result.entityId, OP_ID);
+			t.true(isOk(result));
+			if (isOk(result)) {
+				t.equal(result.value.entityId, OP_ID);
+			}
 		});
 
 		test("returns resolvedMetadata from valid discovery", async (t) => {
 			const fed = await createMockFederation();
 			const result = await discoverEntity(OP_ID, fed.trustAnchors, fed.options);
-			t.ok(result.resolvedMetadata, "resolvedMetadata defined");
-			t.ok(result.resolvedMetadata.openid_provider, "openid_provider defined");
+			t.true(isOk(result));
+			if (isOk(result)) {
+				t.ok(result.value.resolvedMetadata, "resolvedMetadata defined");
+				t.ok(result.value.resolvedMetadata.openid_provider, "openid_provider defined");
+			}
 		});
 
 		test("returns trustChain from valid discovery", async (t) => {
 			const fed = await createMockFederation();
 			const result = await discoverEntity(OP_ID, fed.trustAnchors, fed.options);
-			t.ok(result.trustChain, "trustChain defined");
-			t.equal(result.trustChain.entityId, OP_ID);
-			t.equal(result.trustChain.trustAnchorId, TA_ID);
-			t.ok(result.trustChain.statements.length >= 2, "at least 2 statements");
+			t.true(isOk(result));
+			if (isOk(result)) {
+				t.ok(result.value.trustChain, "trustChain defined");
+				t.equal(result.value.trustChain.entityId, OP_ID);
+				t.equal(result.value.trustChain.trustAnchorId, TA_ID);
+				t.ok(result.value.trustChain.statements.length >= 2, "at least 2 statements");
+			}
 		});
 
 		test("returns empty trustMarks array when none present", async (t) => {
 			const fed = await createMockFederation();
 			const result = await discoverEntity(OP_ID, fed.trustAnchors, fed.options);
-			t.deepEqual(result.trustMarks, []);
+			t.true(isOk(result));
+			if (isOk(result)) {
+				t.deepEqual(result.value.trustMarks, []);
+			}
 		});
 
-		test("throws when no trust chain can be resolved", async (t) => {
+		test("fails when no trust chain can be resolved", async (t) => {
 			const fed = await createMockFederation();
 			const unknownEntity = entityId("https://unknown.example.com");
-			try {
-				await discoverEntity(unknownEntity, fed.trustAnchors, fed.options);
-				t.ok(false, "should have thrown");
-			} catch (e) {
-				t.ok((e as Error).message.includes("No trust chains resolved"), (e as Error).message);
+			const result = await discoverEntity(unknownEntity, fed.trustAnchors, fed.options);
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.ok(
+					result.error.description.includes("No trust chains resolved"),
+					result.error.description,
+				);
 			}
 		});
 
 		test("error message includes chain resolution details when no chains resolve", async (t) => {
 			const fed = await createMockFederation();
 			const unknownEntity = entityId("https://unknown.example.com");
-			try {
-				await discoverEntity(unknownEntity, fed.trustAnchors, fed.options);
-				t.ok(false, "should have thrown");
-			} catch (e) {
+			const result = await discoverEntity(unknownEntity, fed.trustAnchors, fed.options);
+			t.true(isErr(result));
+			if (isErr(result)) {
 				t.ok(
-					/No trust chains resolved for entity/.test((e as Error).message),
-					(e as Error).message,
+					/No trust chains resolved for entity/.test(result.error.description),
+					result.error.description,
 				);
 			}
 		});
 
-		test("throws with validation details when all chains fail validation", async (t) => {
+		test("fails with validation details when all chains fail validation", async (t) => {
 			const fed = await createMockFederation();
 			const wrongTrustAnchors = createMockTrustAnchors(TA_ID, fed.opPublicKey);
-			try {
-				await discoverEntity(OP_ID, wrongTrustAnchors, fed.options);
-				t.ok(false, "should have thrown");
-			} catch (e) {
-				t.ok(/No valid trust chains for entity:/.test((e as Error).message), (e as Error).message);
+			const result = await discoverEntity(OP_ID, wrongTrustAnchors, fed.options);
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.ok(
+					/No valid trust chains for entity:/.test(result.error.description),
+					result.error.description,
+				);
 			}
 		});
 
 		test("discovers leaf entity through federation", async (t) => {
 			const fed = await createMockFederation();
 			const result = await discoverEntity(LEAF_ID, fed.trustAnchors, fed.options);
-			t.equal(result.entityId, LEAF_ID);
-			t.equal(result.trustChain.trustAnchorId, TA_ID);
+			t.true(isOk(result));
+			if (isOk(result)) {
+				t.equal(result.value.entityId, LEAF_ID);
+				t.equal(result.value.trustChain.trustAnchorId, TA_ID);
+			}
 		});
 
 		test("selects shortest chain when multiple valid chains exist", async (t) => {
 			const fed = await createMockFederation();
 			const result = await discoverEntity(OP_ID, fed.trustAnchors, fed.options);
-			t.ok(result.trustChain.statements.length >= 2, "at least 2 statements");
+			t.true(isOk(result));
+			if (isOk(result)) {
+				t.ok(result.value.trustChain.statements.length >= 2, "at least 2 statements");
+			}
 		});
 	});
 
@@ -796,9 +819,12 @@ export default (QUnit: QUnit) => {
 			};
 			createLeafEntity(config);
 			const discovery = await discoverEntity(OP_ID, fed.trustAnchors, fed.options);
-			t.equal(discovery.entityId, OP_ID);
-			t.ok(discovery.resolvedMetadata.openid_provider, "openid_provider present");
-			t.equal(discovery.trustChain.trustAnchorId, TA_ID);
+			t.true(isOk(discovery));
+			if (isOk(discovery)) {
+				t.equal(discovery.value.entityId, OP_ID);
+				t.ok(discovery.value.resolvedMetadata.openid_provider, "openid_provider present");
+				t.equal(discovery.value.trustChain.trustAnchorId, TA_ID);
+			}
 		});
 
 		test("EC caching and refresh cycle", async (t) => {

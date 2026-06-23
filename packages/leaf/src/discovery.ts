@@ -2,7 +2,12 @@
 import {
 	type DiscoveryResult,
 	type EntityId,
+	err,
 	type FederationOptions,
+	federationError,
+	InternalErrorCode,
+	ok,
+	type Result,
 	resolveTrustChains,
 	shortestChain,
 	type TrustAnchorSet,
@@ -20,14 +25,19 @@ export async function discoverEntity(
 	entityId: EntityId,
 	trustAnchors: TrustAnchorSet,
 	options?: FederationOptions,
-): Promise<DiscoveryResult> {
+): Promise<Result<DiscoveryResult>> {
 	const chainResult = await resolveTrustChains(entityId, trustAnchors, options);
 
 	if (chainResult.chains.length === 0) {
 		const details = chainResult.errors.length
 			? `: ${chainResult.errors.map((e) => e.description).join("; ")}`
 			: "";
-		throw new Error(`No trust chains resolved for entity${details}`);
+		return err(
+			federationError(
+				InternalErrorCode.TrustChainInvalid,
+				`No trust chains resolved for entity${details}`,
+			),
+		);
 	}
 
 	const validChains: ValidatedTrustChain[] = [];
@@ -44,16 +54,21 @@ export async function discoverEntity(
 
 	if (validChains.length === 0) {
 		const details = validationErrors.length ? `: ${validationErrors.join(" | ")}` : "";
-		throw new Error(`No valid trust chains for entity${details}`);
+		return err(
+			federationError(
+				InternalErrorCode.TrustChainInvalid,
+				`No valid trust chains for entity${details}`,
+			),
+		);
 	}
 
 	const bestChain = shortestChain(validChains);
 
 	// Brand applied here; leaf is the sole authorised DiscoveryResult producer (see core types.ts).
-	return {
+	return ok({
 		entityId,
 		resolvedMetadata: bestChain.resolvedMetadata,
 		trustChain: bestChain,
 		trustMarks: bestChain.trustMarks,
-	} as DiscoveryResult;
+	} as DiscoveryResult);
 }

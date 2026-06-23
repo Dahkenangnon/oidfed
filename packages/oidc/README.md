@@ -28,25 +28,33 @@ OIDC protocol keys are separate from federation entity keys:
 ```ts
 import { automaticRegistration } from "@oidfed/oidc";
 import { discoverEntity } from "@oidfed/leaf";
+import { isOk } from "@oidfed/core";
 
-const opDiscovery = await discoverEntity(opEntityId, trustAnchors);
+const opDiscoveryResult = await discoverEntity(opEntityId, trustAnchors);
+if (!isOk(opDiscoveryResult)) {
+  throw new Error("Discovery failed");
+}
+const opDiscovery = opDiscoveryResult.value;
 
-const result = await automaticRegistration(
+const resultVal = await automaticRegistration(
   opDiscovery,
   rpConfig, // defaults to form_post delivery
   { scope: "openid profile", state: "xyz" },
   trustAnchors,
 );
 
-switch (result.delivery) {
-  case "form_post":
-    // Render an HTML form posting result.formParams to result.authorizationEndpoint
-    break;
-  case "query":
-  case "request_uri":
-  case "par":
-    // 302 the user-agent to result.authorizationUrl
-    break;
+if (isOk(resultVal)) {
+  const result = resultVal.value;
+  switch (result.delivery) {
+    case "form_post":
+      // Render an HTML form posting result.formParams to result.authorizationEndpoint
+      break;
+    case "query":
+    case "request_uri":
+    case "par":
+      // 302 the user-agent to result.authorizationUrl
+      break;
+  }
 }
 ```
 
@@ -75,18 +83,21 @@ Posts the Request Object as an `application/x-www-form-urlencoded` body. The RP 
 auto-submit HTML form whose `action` is the OP authorization endpoint.
 
 ```ts
-const result = await automaticRegistration(
+const resultVal = await automaticRegistration(
   opDiscovery,
   { ...rpConfig, requestDelivery: "form_post" },
   authzParams,
   trustAnchors,
 );
-if (result.delivery === "form_post") {
-  // Serve an HTML form to the user-agent:
-  //   <form method="post" action={result.authorizationEndpoint}>
-  //     <input type="hidden" name="request" value={result.formParams.request}>
-  //     <input type="hidden" name="client_id" value={result.formParams.client_id}>
-  //   </form>
+if (isOk(resultVal)) {
+  const result = resultVal.value;
+  if (result.delivery === "form_post") {
+    // Serve an HTML form to the user-agent:
+    //   <form method="post" action={result.authorizationEndpoint}>
+    //     <input type="hidden" name="request" value={result.formParams.request}>
+    //     <input type="hidden" name="client_id" value={result.formParams.client_id}>
+    //   </form>
+  }
 }
 ```
 
@@ -97,14 +108,17 @@ authorization endpoint. Compact but constrained by URL/header length limits when
 Request Object carries an embedded `trust_chain`.
 
 ```ts
-const result = await automaticRegistration(
+const resultVal = await automaticRegistration(
   opDiscovery,
   { ...rpConfig, requestDelivery: "query" },
   authzParams,
   trustAnchors,
 );
-if (result.delivery === "query") {
-  // 302 the user-agent to result.authorizationUrl (contains ?request=&client_id=)
+if (isOk(resultVal)) {
+  const result = resultVal.value;
+  if (result.delivery === "query") {
+    // 302 the user-agent to result.authorizationUrl (contains ?request=&client_id=)
+  }
 }
 ```
 
@@ -117,7 +131,7 @@ NOT host the JWT — the caller must serve `result.requestObjectJwt` at the supp
 TTL and single-use semantics.
 
 ```ts
-const result = await automaticRegistration(
+const resultVal = await automaticRegistration(
   opDiscovery,
   {
     ...rpConfig,
@@ -127,9 +141,12 @@ const result = await automaticRegistration(
   authzParams,
   trustAnchors,
 );
-if (result.delivery === "request_uri") {
-  // 1. Cache result.requestObjectJwt under the URL path you provided
-  // 2. 302 the user-agent to result.authorizationUrl
+if (isOk(resultVal)) {
+  const result = resultVal.value;
+  if (result.delivery === "request_uri") {
+    // 1. Cache result.requestObjectJwt under the URL path you provided
+    // 2. 302 the user-agent to result.authorizationUrl
+  }
 }
 ```
 
@@ -142,15 +159,18 @@ authorization URL embedding that urn. The PAR request includes a `private_key_jw
 client_assertion whose audience is the OP's Entity Identifier.
 
 ```ts
-const result = await automaticRegistration(
+const resultVal = await automaticRegistration(
   opDiscovery,
   { ...rpConfig, requestDelivery: "par" },
   authzParams,
   trustAnchors,
 );
-if (result.delivery === "par") {
-  // 302 the user-agent to result.authorizationUrl (contains ?request_uri=urn:...)
-  // result.parExpiresAt tells you when the urn becomes unusable
+if (isOk(resultVal)) {
+  const result = resultVal.value;
+  if (result.delivery === "par") {
+    // 302 the user-agent to result.authorizationUrl (contains ?request_uri=urn:...)
+    // result.parExpiresAt tells you when the urn becomes unusable
+  }
 }
 ```
 

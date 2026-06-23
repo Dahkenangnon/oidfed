@@ -3,12 +3,18 @@ import {
 	type DiscoveryResult,
 	decodeEntityStatement,
 	type EntityId,
+	err,
+	FederationErrorCode,
 	type FederationKeyProvider,
 	type FederationOptions,
+	federationError,
+	InternalErrorCode,
 	JwtTyp,
 	MediaType,
 	nowSeconds,
+	ok,
 	type ParsedEntityStatement,
+	type Result,
 	resolveTrustChainForAnchor,
 	resolveTrustChains,
 	signEntityStatement,
@@ -61,25 +67,32 @@ export interface ExplicitRegistrationResult {
  *
  * Accepts a `DiscoveryResult` (from `discoverEntity()`) to ensure the OP
  * has been validated through the federation before registration.
- *
- * @throws {Error} on any validation or network failure (RP-side convention).
- *   OP-side handlers (`processExplicitRegistration`) use `Result<T, FederationError>` instead.
  */
 export async function explicitRegistration(
 	discovery: DiscoveryResult,
 	rpConfig: ExplicitRegistrationConfig,
 	trustAnchors: TrustAnchorSet,
 	options?: FederationOptions,
-): Promise<ExplicitRegistrationResult> {
+): Promise<Result<ExplicitRegistrationResult>> {
 	const opMeta = discovery.resolvedMetadata.openid_provider as Record<string, unknown> | undefined;
 	const registrationTypes = getRegistrationTypes(opMeta);
 	if (!registrationTypes.includes(ClientRegistrationType.Explicit)) {
-		throw new Error("OP does not support explicit registration");
+		return err(
+			federationError(
+				FederationErrorCode.InvalidRequest,
+				"OP does not support explicit registration",
+			),
+		);
 	}
 
 	const registrationEndpoint = opMeta?.federation_registration_endpoint as string | undefined;
 	if (!registrationEndpoint) {
-		throw new Error("OP has no federation_registration_endpoint in openid_provider metadata");
+		return err(
+			federationError(
+				FederationErrorCode.InvalidMetadata,
+				"OP has no federation_registration_endpoint in openid_provider metadata",
+			),
+		);
 	}
 
 	const opTrustAnchorId = discovery.trustChain.trustAnchorId;
@@ -88,7 +101,12 @@ export async function explicitRegistration(
 		rpTaIds.add(taId as string);
 	}
 	if (!rpTaIds.has(opTrustAnchorId as string)) {
-		throw new Error("No shared Trust Anchor between RP and OP");
+		return err(
+			federationError(
+				FederationErrorCode.InvalidTrustAnchor,
+				"No shared Trust Anchor between RP and OP",
+			),
+		);
 	}
 
 	const authorityHints = rpConfig.authorityHints;
@@ -138,8 +156,11 @@ export async function explicitRegistration(
 
 	if (rpConfig.includePeerTrustChain) {
 		if (!selectedTrustAnchorId) {
-			throw new Error(
-				"includePeerTrustChain requires a selected RP Trust Anchor; no valid RP chain was built",
+			return err(
+				federationError(
+					InternalErrorCode.TrustAnchorUnknown,
+					"includePeerTrustChain requires a selected RP Trust Anchor; no valid RP chain was built",
+				),
 			);
 		}
 		const peerChainResult = await resolveTrustChainForAnchor(
@@ -149,8 +170,11 @@ export async function explicitRegistration(
 			options,
 		);
 		if (!peerChainResult.ok) {
-			throw new Error(
-				`includePeerTrustChain: cannot build peer Trust Chain for ${discovery.entityId} ending at ${selectedTrustAnchorId}: ${peerChainResult.error.description}`,
+			return err(
+				federationError(
+					InternalErrorCode.TrustChainInvalid,
+					`includePeerTrustChain: cannot build peer Trust Chain for ${discovery.entityId} ending at ${selectedTrustAnchorId}: ${peerChainResult.error.description}`,
+				),
 			);
 		}
 		extraHeaders.peer_trust_chain = peerChainResult.value;
@@ -173,7 +197,12 @@ export async function explicitRegistration(
 	const response = await httpClient(request);
 	if (!response.ok) {
 		// Intentionally omit response body to avoid leaking OP internals
-		throw new Error(`Explicit registration failed (HTTP ${response.status})`);
+		return err(
+			federationError(
+				InternalErrorCode.Network,
+				`Explicit registration failed (HTTP ${response.status})`,
+			),
+		);
 	}
 
 	const responseJwt = await response.text();
@@ -191,7 +220,12 @@ export async function explicitRegistration(
 	const opJwks = subordinateStmt.payload.jwks;
 
 	if (!opJwks) {
-		throw new Error("OP trust chain has no JWKS — cannot verify registration response signature");
+		return err(
+			federationError(
+				InternalErrorCode.TrustChainInvalid,
+				"OP trust chain has no JWKS — cannot verify registration response signature",
+			),
+		);
 	}
 
 	const verifyResult = await verifyEntityStatement(responseJwt, opJwks, {
@@ -202,51 +236,88 @@ export async function explicitRegistration(
 			: {}),
 	});
 	if (!verifyResult.ok) {
-		throw new Error("Registration response signature verification failed");
+		return err(
+			federationError(
+				InternalErrorCode.SignatureInvalid,
+				"Registration response signature verification failed",
+			),
+		);
 	}
 
 	const decoded = decodeEntityStatement(responseJwt);
 	if (!decoded.ok) {
-		throw new Error("Failed to decode registration response");
+		return err(
+			federationError(
+				InternalErrorCode.TrustChainInvalid,
+				"Failed to decode registration response",
+			),
+		);
 	}
 
 	if (decoded.value.header.typ !== OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE) {
-		throw new Error(
-			`Invalid response typ: expected '${OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE}'`,
+		return err(
+			federationError(
+				FederationErrorCode.InvalidRequest,
+				`Invalid response typ: expected '${OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE}'`,
+			),
 		);
 	}
 
 	const responsePayload = decoded.value.payload as Record<string, unknown>;
 
 	if (responsePayload.iss !== (discovery.entityId as string)) {
-		throw new Error("Response iss does not match OP");
+		return err(
+			federationError(FederationErrorCode.InvalidIssuer, "Response iss does not match OP"),
+		);
 	}
 
 	if (responsePayload.aud !== (rpConfig.entityId as string)) {
-		throw new Error("Response aud does not match RP");
+		return err(
+			federationError(FederationErrorCode.InvalidSubject, "Response aud does not match RP"),
+		);
 	}
 
 	// iat and exp are REQUIRED in the registration response
 	const responseExp = responsePayload.exp as number | undefined;
 	if (responseExp === undefined) {
-		throw new Error("Registration response missing required 'exp' claim");
+		return err(
+			federationError(
+				FederationErrorCode.InvalidRequest,
+				"Registration response missing required 'exp' claim",
+			),
+		);
 	}
 	const responseNow = nowSeconds(options?.clock);
 	if (responseNow >= responseExp) {
-		throw new Error("Registration response has expired");
+		return err(federationError(InternalErrorCode.Expired, "Registration response has expired"));
 	}
 
 	if (responsePayload.iat === undefined) {
-		throw new Error("Registration response missing required 'iat' claim");
+		return err(
+			federationError(
+				FederationErrorCode.InvalidRequest,
+				"Registration response missing required 'iat' claim",
+			),
+		);
 	}
 
 	const trustAnchor = responsePayload.trust_anchor as string | undefined;
 	if (!trustAnchor || !trustAnchors.has(trustAnchor as EntityId)) {
-		throw new Error("Response trust_anchor is not in configured trust anchors");
+		return err(
+			federationError(
+				FederationErrorCode.InvalidTrustAnchor,
+				"Response trust_anchor is not in configured trust anchors",
+			),
+		);
 	}
 
 	if (trustAnchor !== (opTrustAnchorId as string)) {
-		throw new Error("Response trust_anchor does not match OP trust chain root");
+		return err(
+			federationError(
+				FederationErrorCode.InvalidTrustAnchor,
+				"Response trust_anchor does not match OP trust chain root",
+			),
+		);
 	}
 
 	// Verify that at least one of the RP's authority_hints leads to the trust_anchor
@@ -256,11 +327,21 @@ export async function explicitRegistration(
 	const responseAuthorityHints = responsePayload.authority_hints as string[] | undefined;
 	if (responseAuthorityHints) {
 		if (!Array.isArray(responseAuthorityHints) || responseAuthorityHints.length !== 1) {
-			throw new Error("Response authority_hints MUST be a single-element array");
+			return err(
+				federationError(
+					FederationErrorCode.InvalidMetadata,
+					"Response authority_hints MUST be a single-element array",
+				),
+			);
 		}
 		for (const hint of responseAuthorityHints) {
 			if (typeof hint !== "string") {
-				throw new Error("Response authority_hints contains non-string value");
+				return err(
+					federationError(
+						FederationErrorCode.InvalidMetadata,
+						"Response authority_hints contains non-string value",
+					),
+				);
 			}
 		}
 	}
@@ -273,7 +354,12 @@ export async function explicitRegistration(
 		const responseTypes = new Set(Object.keys(responseMeta));
 		for (const requestedType of requestedTypes) {
 			if (!responseTypes.has(requestedType)) {
-				throw new Error("Response metadata missing requested entity type");
+				return err(
+					federationError(
+						FederationErrorCode.InvalidMetadata,
+						"Response metadata missing requested entity type",
+					),
+				);
 			}
 		}
 	}
@@ -293,7 +379,7 @@ export async function explicitRegistration(
 		trustChainExpiresAt,
 	};
 	if (clientSecret) {
-		return { ...result, clientSecret };
+		return ok({ ...result, clientSecret });
 	}
-	return result;
+	return ok(result);
 }

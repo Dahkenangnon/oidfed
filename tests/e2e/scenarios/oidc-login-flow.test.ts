@@ -31,12 +31,15 @@ async function performFederatedAuthRequest(params: {
 	const { rpId, opId, protocolKeyProvider, protocolPublicKey, taId, trustAnchors } = params;
 
 	// 1. Discover OP — must succeed
-	const discovery = await discoverEntity(entityId(opId), trustAnchors);
+	const discoveryResult = await discoverEntity(entityId(opId), trustAnchors);
+	expect(discoveryResult.ok).toBe(true);
+	if (!discoveryResult.ok) throw new Error("Discovery failed");
+	const discovery = discoveryResult.value;
 	expect(discovery).toBeTruthy();
 	expect(discovery.entityId).toBe(opId);
 
 	// 2. Automatic registration in GET-query mode — must produce a valid authorization URL
-	const regResult = await automaticRegistration(
+	const regResultVal = await automaticRegistration(
 		discovery,
 		{
 			entityId: entityId(rpId),
@@ -65,6 +68,9 @@ async function performFederatedAuthRequest(params: {
 		trustAnchors,
 	);
 
+	expect(regResultVal.ok).toBe(true);
+	if (!regResultVal.ok) throw new Error("Registration failed");
+	const regResult = regResultVal.value;
 	expect(regResult).toBeTruthy();
 	expect(regResult.delivery).toBe("query");
 	if (regResult.delivery !== "query") {
@@ -143,13 +149,16 @@ describe("Full OIDC login flow", () => {
 			const opId = `https://op.ofed.test:${port}`;
 			const rpEntity = getEntity(entities, "https://rp.ofed.test");
 
-			const discovery = await discoverEntity(entityId(opId), trustAnchors);
+			const discoveryResult = await discoverEntity(entityId(opId), trustAnchors);
+			expect(discoveryResult.ok).toBe(true);
+			if (!discoveryResult.ok) throw new Error("Discovery failed");
+			const discovery = discoveryResult.value;
 			expect(discovery.entityId).toBe(opId);
 
 			const hostedId = randomUUID();
 			const hostedUri = `${rpId}/request-object/${hostedId}`;
 
-			const regResult = await automaticRegistration(
+			const regResultVal = await automaticRegistration(
 				discovery,
 				{
 					entityId: entityId(rpId),
@@ -178,6 +187,10 @@ describe("Full OIDC login flow", () => {
 				},
 				trustAnchors,
 			);
+
+			expect(regResultVal.ok).toBe(true);
+			if (!regResultVal.ok) throw new Error("Registration failed");
+			const regResult = regResultVal.value;
 
 			expect(regResult.delivery).toBe("request_uri");
 			if (regResult.delivery !== "request_uri") return;

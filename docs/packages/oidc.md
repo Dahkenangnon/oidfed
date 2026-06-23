@@ -39,11 +39,15 @@ Automatic registration signs an OIDC Request Object. It uses OIDC protocol keys,
 ```ts
 import { automaticRegistration, StaticOidcProtocolKeyProvider, entityId } from "@oidfed/oidc";
 import { discoverEntity } from "@oidfed/leaf";
-import { JwkSigner } from "@oidfed/core";
+import { JwkSigner, isOk } from "@oidfed/core";
 
-const opDiscovery = await discoverEntity(opEntityId, trustAnchors);
+const discoveryResult = await discoverEntity(opEntityId, trustAnchors);
+if (!isOk(discoveryResult)) {
+  throw new Error("Discovery failed");
+}
+const opDiscovery = discoveryResult.value;
 
-const result = await automaticRegistration(
+const resultVal = await automaticRegistration(
   opDiscovery,
   {
     entityId: entityId("https://rp.example.com"),
@@ -64,9 +68,14 @@ const result = await automaticRegistration(
   { scope: "openid profile", state: "xyz" },
   trustAnchors,
 );
+
+if (isOk(resultVal)) {
+  const result = resultVal.value;
+  // use result
+}
 ```
 
-The result is a discriminated union on `delivery`:
+The result is a `Result` wrapper. On success, `resultVal.value` is a discriminated union on `delivery`:
 
 ```ts
 type AutomaticRegistrationResult =
@@ -82,8 +91,9 @@ Explicit registration sends the RP federation Entity Configuration to the OP. It
 
 ```ts
 import { explicitRegistration, entityId } from "@oidfed/oidc";
+import { isOk } from "@oidfed/core";
 
-const result = await explicitRegistration(
+const resultVal = await explicitRegistration(
   opDiscovery,
   {
     entityId: entityId("https://rp.example.com"),
@@ -100,6 +110,11 @@ const result = await explicitRegistration(
   },
   trustAnchors,
 );
+
+if (isOk(resultVal)) {
+  const result = resultVal.value;
+  // use result
+}
 ```
 
 ### OP Processing Automatic Registration

@@ -87,20 +87,25 @@ Configure time through `options.clock`. Like every core `Clock`, it returns Unix
 
 ```ts
 import { discoverEntity } from "@oidfed/leaf";
-import type { DiscoveryResult } from "@oidfed/leaf";
+import { isOk } from "@oidfed/core";
 ```
 
 ```ts
-const discovery = await discoverEntity(
+const result = await discoverEntity(
   entityId("https://op.example.com"),
   trustAnchors,
   { httpClient: fetch },
 );
 
-console.log(discovery.entityId);
-console.log(discovery.resolvedMetadata);
-console.log(discovery.trustChain);
-console.log(discovery.trustMarks);
+if (isOk(result)) {
+  const discovery = result.value;
+  console.log(discovery.entityId);
+  console.log(discovery.resolvedMetadata);
+  console.log(discovery.trustChain);
+  console.log(discovery.trustMarks);
+} else {
+  console.error("Discovery failed:", result.error.description);
+}
 ```
 
 `DiscoveryResult` is branded so only `discoverEntity()` can produce it. RP registration functions in `@oidfed/oidc` require this type to prevent unvalidated data from entering registration flows.

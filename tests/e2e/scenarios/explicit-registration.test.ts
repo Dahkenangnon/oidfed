@@ -19,9 +19,12 @@ describe("Explicit registration", () => {
 
 			const rpId = `https://rp2.ofed.test:${port}`;
 			const opId = entityId(`https://op.ofed.test:${port}`);
-			const discovery = await discoverEntity(opId, trustAnchors);
+			const discoveryResult = await discoverEntity(opId, trustAnchors);
+			expect(discoveryResult.ok).toBe(true);
+			if (!discoveryResult.ok) throw new Error("Discovery failed");
+			const discovery = discoveryResult.value;
 
-			const result = await explicitRegistration(
+			const resultVal = await explicitRegistration(
 				discovery,
 				{
 					entityId: entityId(rpId),
@@ -40,6 +43,10 @@ describe("Explicit registration", () => {
 				},
 				trustAnchors,
 			);
+
+			expect(resultVal.ok).toBe(true);
+			if (!resultVal.ok) throw new Error("Registration failed");
+			const result = resultVal.value;
 
 			expect(result.clientId).toBe(rpId);
 			expect(result.registeredMetadata).toBeDefined();
@@ -60,9 +67,12 @@ describe("Explicit registration", () => {
 
 			const rpId = `https://rp2.ofed.test:${port}`;
 			const opId = entityId(`https://op-hospital.ofed.test:${port}`);
-			const discovery = await discoverEntity(opId, trustAnchors);
+			const discoveryResult = await discoverEntity(opId, trustAnchors);
+			expect(discoveryResult.ok).toBe(true);
+			if (!discoveryResult.ok) throw new Error("Discovery failed");
+			const discovery = discoveryResult.value;
 
-			const result = await explicitRegistration(
+			const resultVal = await explicitRegistration(
 				discovery,
 				{
 					entityId: entityId(rpId),
@@ -81,6 +91,10 @@ describe("Explicit registration", () => {
 				},
 				trustAnchors,
 			);
+
+			expect(resultVal.ok).toBe(true);
+			if (!resultVal.ok) throw new Error("Registration failed");
+			const result = resultVal.value;
 
 			expect(result.clientId).toBe(rpId);
 			expect(result.registeredMetadata).toBeDefined();

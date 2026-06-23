@@ -6381,7 +6381,10 @@ export default (QUnit: QUnit) => {
 				const trustAnchors: TrustAnchorSet = new Map();
 				const futureClock: Clock = { now: () => rf_now };
 				const result = await refreshTrustChain(chain, trustAnchors, undefined, futureClock);
-				t.equal(result, chain);
+				t.true(isOk(result));
+				if (isOk(result)) {
+					t.equal(result.value, chain);
+				}
 			});
 			test("re-resolves when chain is expired", async (t) => {
 				const taKeys = await generateSigningKey("ES256");
@@ -6445,8 +6448,11 @@ export default (QUnit: QUnit) => {
 					{ httpClient },
 					{ now: () => rf_now },
 				);
-				t.notEqual(result, expiredChain);
-				t.equal(result.entityId, "https://leaf.example.com");
+				t.true(isOk(result));
+				if (isOk(result)) {
+					t.notEqual(result.value, expiredChain);
+					t.equal(result.value.entityId, "https://leaf.example.com");
+				}
 			});
 			test("re-resolves when forceRefresh is true even if not expired", async (t) => {
 				const taKeys = await generateSigningKey("ES256");
@@ -6515,17 +6521,26 @@ export default (QUnit: QUnit) => {
 					{ httpClient, forceRefresh: true },
 					{ now: () => rf_now },
 				);
-				t.notEqual(result, freshChain);
+				t.true(isOk(result));
+				if (isOk(result)) {
+					t.notEqual(result.value, freshChain);
+				}
 				t.true(calls.length > 0, "httpClient was called at least once");
 			});
-			test("throws if re-resolve fails", async (t) => {
+			test("fails if re-resolve fails", async (t) => {
 				const expiredChain = rf_makeChain({ expiresAt: rf_now - 100 });
 				const trustAnchors: TrustAnchorSet = new Map();
 				const httpClient = async () => new Response("Not Found", { status: 404 });
-				await t.rejects(
-					refreshTrustChain(expiredChain, trustAnchors, { httpClient }, { now: () => rf_now }),
-					/Failed to refresh trust chain/,
+				const result = await refreshTrustChain(
+					expiredChain,
+					trustAnchors,
+					{ httpClient },
+					{ now: () => rf_now },
 				);
+				t.true(isErr(result));
+				if (isErr(result)) {
+					t.ok(/Failed to refresh trust chain/.test(result.error.description));
+				}
 			});
 		});
 	}

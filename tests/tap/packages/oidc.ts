@@ -10,6 +10,7 @@ import {
 	federationError,
 	generateSigningKey,
 	type HttpClient,
+	isErr,
 	isOk,
 	type JWK,
 	JwkSigner,
@@ -639,7 +640,9 @@ export default (QUnit: QUnit) => {
 				fed.trustAnchors,
 				fed.options,
 			);
-			const decoded = decodeEntityStatement(result.requestObjectJwt);
+			t.true(isOk(result));
+			if (!isOk(result)) return;
+			const decoded = decodeEntityStatement(result.value.requestObjectJwt);
 			t.true(decoded.ok);
 			if (!decoded.ok) return;
 			t.equal(decoded.value.header.typ, "oauth-authz-req+jwt");
@@ -656,7 +659,9 @@ export default (QUnit: QUnit) => {
 				fed.trustAnchors,
 				fed.options,
 			);
-			const decoded = decodeEntityStatement(result.requestObjectJwt);
+			t.true(isOk(result));
+			if (!isOk(result)) return;
+			const decoded = decodeEntityStatement(result.value.requestObjectJwt);
 			t.true(decoded.ok);
 			if (!decoded.ok) return;
 			const p = decoded.value.payload as Record<string, unknown>;
@@ -676,7 +681,9 @@ export default (QUnit: QUnit) => {
 				...fed.options,
 				clock: { now: () => fixedNow },
 			});
-			const decoded = decodeEntityStatement(result.requestObjectJwt);
+			t.true(isOk(result));
+			if (!isOk(result)) return;
+			const decoded = decodeEntityStatement(result.value.requestObjectJwt);
 			t.true(decoded.ok);
 			if (!decoded.ok) return;
 			t.equal(decoded.value.payload.iat, fixedNow);
@@ -694,7 +701,9 @@ export default (QUnit: QUnit) => {
 				fed.trustAnchors,
 				fed.options,
 			);
-			const decoded = decodeEntityStatement(result.requestObjectJwt);
+			t.true(isOk(result));
+			if (!isOk(result)) return;
+			const decoded = decodeEntityStatement(result.value.requestObjectJwt);
 			t.true(decoded.ok);
 			if (!decoded.ok) return;
 			t.equal((decoded.value.payload as Record<string, unknown>).sub, undefined);
@@ -711,7 +720,9 @@ export default (QUnit: QUnit) => {
 				fed.trustAnchors,
 				fed.options,
 			);
-			const decoded = decodeEntityStatement(result.requestObjectJwt);
+			t.true(isOk(result));
+			if (!isOk(result)) return;
+			const decoded = decodeEntityStatement(result.value.requestObjectJwt);
 			t.true(decoded.ok);
 			if (!decoded.ok) return;
 			const h = decoded.value.header as Record<string, unknown>;
@@ -732,7 +743,9 @@ export default (QUnit: QUnit) => {
 				fed.trustAnchors,
 				fed.options,
 			);
-			const decoded = decodeEntityStatement(result.requestObjectJwt);
+			t.true(isOk(result));
+			if (!isOk(result)) return;
+			const decoded = decodeEntityStatement(result.value.requestObjectJwt);
 			t.true(decoded.ok);
 			if (!decoded.ok) return;
 			const h = decoded.value.header as Record<string, unknown>;
@@ -758,7 +771,7 @@ export default (QUnit: QUnit) => {
 			t.equal(peerFirstPayload.sub, OP_ID);
 		});
 
-		test("throws when includePeerTrustChain is set but no peer chain to shared TA exists", async (t) => {
+		test("fails when includePeerTrustChain is set but no peer chain to shared TA exists", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
 			// Exclude OP discovery responses so peer-chain resolution fails while
@@ -773,17 +786,14 @@ export default (QUnit: QUnit) => {
 			const { config } = await createRpConfig({
 				includePeerTrustChain: true,
 			});
-			let threw = false;
-			try {
-				await automaticRegistration(discovery, config, authzParams, fed.trustAnchors, {
-					...fed.options,
-					httpClient: blockingHttpClient,
-				});
-			} catch (e: unknown) {
-				threw = true;
-				t.ok((e as Error).message.toLowerCase().includes("peer"));
+			const result = await automaticRegistration(discovery, config, authzParams, fed.trustAnchors, {
+				...fed.options,
+				httpClient: blockingHttpClient,
+			});
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.ok(result.error.description.toLowerCase().includes("peer"));
 			}
-			t.true(threw, "expected throw when peer chain cannot be built");
 		});
 
 		test("includes authzRequestParams in JWT payload", async (t) => {
@@ -798,7 +808,9 @@ export default (QUnit: QUnit) => {
 				fed.trustAnchors,
 				fed.options,
 			);
-			const decoded = decodeEntityStatement(result.requestObjectJwt);
+			t.true(isOk(result));
+			if (!isOk(result)) return;
+			const decoded = decodeEntityStatement(result.value.requestObjectJwt);
 			t.true(decoded.ok);
 			if (!decoded.ok) return;
 			const p = decoded.value.payload as Record<string, unknown>;
@@ -820,10 +832,12 @@ export default (QUnit: QUnit) => {
 				fed.trustAnchors,
 				fed.options,
 			);
-			t.equal(result.delivery, "query");
-			if (result.delivery !== "query") return;
-			const url = new URL(result.authorizationUrl);
-			t.equal(url.searchParams.get("request"), result.requestObjectJwt);
+			t.true(isOk(result));
+			if (!isOk(result)) return;
+			t.equal(result.value.delivery, "query");
+			if (result.value.delivery !== "query") return;
+			const url = new URL(result.value.authorizationUrl);
+			t.equal(url.searchParams.get("request"), result.value.requestObjectJwt);
 			t.equal(url.searchParams.get("client_id"), LEAF_ID);
 		});
 
@@ -843,7 +857,9 @@ export default (QUnit: QUnit) => {
 				fed.trustAnchors,
 				fed.options,
 			);
-			const decoded = decodeEntityStatement(result.requestObjectJwt);
+			t.true(isOk(result));
+			if (!isOk(result)) return;
+			const decoded = decodeEntityStatement(result.value.requestObjectJwt);
 			t.true(decoded.ok);
 			if (!decoded.ok) return;
 			const p = decoded.value.payload as Record<string, unknown>;
@@ -852,7 +868,7 @@ export default (QUnit: QUnit) => {
 			t.equal(p.sub, undefined);
 		});
 
-		test("throws if OP does not advertise automatic", async (t) => {
+		test("fails if OP does not advertise automatic", async (t) => {
 			const fed = await createMockFederation({
 				opMetadata: {
 					openid_provider: {
@@ -869,11 +885,16 @@ export default (QUnit: QUnit) => {
 			});
 			const discovery = await createMockDiscovery(OP_ID, fed);
 			const { config } = await createRpConfig({});
-			try {
-				await automaticRegistration(discovery, config, authzParams, fed.trustAnchors, fed.options);
-				t.ok(false, "should have thrown");
-			} catch (e) {
-				t.ok((e as Error).message.includes("automatic"), (e as Error).message);
+			const result = await automaticRegistration(
+				discovery,
+				config,
+				authzParams,
+				fed.trustAnchors,
+				fed.options,
+			);
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.ok(result.error.description.includes("automatic"), result.error.description);
 			}
 		});
 
@@ -888,7 +909,9 @@ export default (QUnit: QUnit) => {
 				fed.trustAnchors,
 				fed.options,
 			);
-			const decoded = decodeEntityStatement(result.requestObjectJwt);
+			t.true(isOk(result));
+			if (!isOk(result)) return;
+			const decoded = decodeEntityStatement(result.value.requestObjectJwt);
 			t.true(decoded.ok);
 			if (!decoded.ok) return;
 			t.equal((decoded.value.payload as Record<string, unknown>).registration, undefined);
@@ -905,8 +928,10 @@ export default (QUnit: QUnit) => {
 				fed.trustAnchors,
 				fed.options,
 			);
-			t.ok(result.trustChainExpiresAt > 0);
-			t.equal(result.trustChainExpiresAt, discovery.trustChain.expiresAt);
+			t.true(isOk(result));
+			if (!isOk(result)) return;
+			t.ok(result.value.trustChainExpiresAt > 0);
+			t.equal(result.value.trustChainExpiresAt, discovery.trustChain.expiresAt);
 		});
 
 		test("uses JWK allowlist for public keys (no private fields leak)", async (t) => {
@@ -920,7 +945,9 @@ export default (QUnit: QUnit) => {
 				fed.trustAnchors,
 				fed.options,
 			);
-			t.ok(result.requestObjectJwt);
+			t.true(isOk(result));
+			if (!isOk(result)) return;
+			t.ok(result.value.requestObjectJwt);
 		});
 	});
 
@@ -945,11 +972,13 @@ export default (QUnit: QUnit) => {
 				fed.trustAnchors,
 				fed.options,
 			);
-			t.equal(result.delivery, "form_post");
-			if (result.delivery !== "form_post") return;
-			t.equal(typeof result.authorizationEndpoint, "string");
-			t.equal(result.formParams.request, result.requestObjectJwt);
-			t.equal(result.formParams.client_id, LEAF_ID);
+			t.true(isOk(result));
+			if (!isOk(result)) return;
+			t.equal(result.value.delivery, "form_post");
+			if (result.value.delivery !== "form_post") return;
+			t.equal(typeof result.value.authorizationEndpoint, "string");
+			t.equal(result.value.formParams.request, result.value.requestObjectJwt);
+			t.equal(result.value.formParams.client_id, LEAF_ID);
 		});
 
 		test("form_post: authorizationEndpoint matches OP authorization_endpoint metadata", async (t) => {
@@ -965,10 +994,12 @@ export default (QUnit: QUnit) => {
 				fed.trustAnchors,
 				fed.options,
 			);
-			t.equal(result.delivery, "form_post");
-			if (result.delivery !== "form_post") return;
+			t.true(isOk(result));
+			if (!isOk(result)) return;
+			t.equal(result.value.delivery, "form_post");
+			if (result.value.delivery !== "form_post") return;
 			const opMeta = discovery.resolvedMetadata.openid_provider as Record<string, unknown>;
-			t.equal(result.authorizationEndpoint, opMeta.authorization_endpoint as string);
+			t.equal(result.value.authorizationEndpoint, opMeta.authorization_endpoint as string);
 		});
 
 		test("request_uri: returns authorizationUrl with request_uri query and echoes input URI", async (t) => {
@@ -986,29 +1017,34 @@ export default (QUnit: QUnit) => {
 				fed.trustAnchors,
 				fed.options,
 			);
-			t.equal(result.delivery, "request_uri");
-			if (result.delivery !== "request_uri") return;
-			t.equal(result.requestUri, hostedUri);
-			const url = new URL(result.authorizationUrl);
+			t.true(isOk(result));
+			if (!isOk(result)) return;
+			t.equal(result.value.delivery, "request_uri");
+			if (result.value.delivery !== "request_uri") return;
+			t.equal(result.value.requestUri, hostedUri);
+			const url = new URL(result.value.authorizationUrl);
 			t.equal(url.searchParams.get("request_uri"), hostedUri);
 			t.equal(url.searchParams.get("client_id"), LEAF_ID);
 			t.equal(url.searchParams.get("request"), null);
 		});
 
-		test("request_uri: throws when requestUri is missing", async (t) => {
+		test("request_uri: fails when requestUri is missing", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
 			const { config } = await createRpConfig({
 				requestDelivery: "request_uri",
 			});
-			let threw = false;
-			try {
-				await automaticRegistration(discovery, config, authzParams, fed.trustAnchors, fed.options);
-			} catch (e: unknown) {
-				threw = true;
-				t.ok((e as Error).message.toLowerCase().includes("request_uri"));
+			const result = await automaticRegistration(
+				discovery,
+				config,
+				authzParams,
+				fed.trustAnchors,
+				fed.options,
+			);
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.ok(result.error.description.toLowerCase().includes("request_uri"));
 			}
-			t.true(threw, "expected throw when requestUri missing");
 		});
 
 		test("par: POSTs request + client_id + client_assertion to PAR endpoint and returns urn-style authorizationUrl", async (t) => {
@@ -1061,12 +1097,14 @@ export default (QUnit: QUnit) => {
 				clock: { now: () => now },
 				httpClient: parHttpClient,
 			});
-			t.equal(result.delivery, "par");
-			if (result.delivery !== "par") return;
+			t.true(isOk(result));
+			if (!isOk(result)) return;
+			t.equal(result.value.delivery, "par");
+			if (result.value.delivery !== "par") return;
 			t.equal(capturedMethod, "POST");
 			t.equal(typeof capturedBody, "string");
 			const body = new URLSearchParams(capturedBody as string);
-			t.equal(body.get("request"), result.requestObjectJwt);
+			t.equal(body.get("request"), result.value.requestObjectJwt);
 			t.equal(body.get("client_id"), LEAF_ID);
 			t.equal(
 				body.get("client_assertion_type"),
@@ -1084,28 +1122,33 @@ export default (QUnit: QUnit) => {
 			t.equal(ap.aud, OP_ID);
 			t.equal(ap.iat, now);
 			t.equal(ap.exp, now + 60);
-			t.equal(result.pushedAuthorizationRequestEndpoint, parEndpoint);
-			t.equal(result.parRequestUri, urn);
-			const finalUrl = new URL(result.authorizationUrl);
+			t.equal(result.value.pushedAuthorizationRequestEndpoint, parEndpoint);
+			t.equal(result.value.parRequestUri, urn);
+			const finalUrl = new URL(result.value.authorizationUrl);
 			t.equal(finalUrl.searchParams.get("request_uri"), urn);
 			t.equal(finalUrl.searchParams.get("client_id"), LEAF_ID);
-			t.equal(result.parExpiresAt, now + 60);
+			t.equal(result.value.parExpiresAt, now + 60);
 		});
 
-		test("par: throws when OP advertises no pushed_authorization_request_endpoint", async (t) => {
+		test("par: fails when OP advertises no pushed_authorization_request_endpoint", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
 			const { config } = await createRpConfig({
 				requestDelivery: "par",
 			});
-			let threw = false;
-			try {
-				await automaticRegistration(discovery, config, authzParams, fed.trustAnchors, fed.options);
-			} catch (e: unknown) {
-				threw = true;
-				t.ok((e as Error).message.toLowerCase().includes("pushed_authorization_request_endpoint"));
+			const result = await automaticRegistration(
+				discovery,
+				config,
+				authzParams,
+				fed.trustAnchors,
+				fed.options,
+			);
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.ok(
+					result.error.description.toLowerCase().includes("pushed_authorization_request_endpoint"),
+				);
 			}
-			t.true(threw, "expected throw when PAR endpoint absent");
 		});
 	});
 
@@ -1184,9 +1227,10 @@ export default (QUnit: QUnit) => {
 				}
 				return mock.httpClient(input, init);
 			};
-			await explicitRegistration(mock.discovery, mock.config, mock.trustAnchors, {
+			const result = await explicitRegistration(mock.discovery, mock.config, mock.trustAnchors, {
 				httpClient: trackingClient,
 			});
+			t.true(isOk(result));
 			t.ok(capturedUrl.includes("/federation_registration"));
 			t.equal(capturedContentType, MediaType.EntityStatement);
 		});
@@ -1206,9 +1250,10 @@ export default (QUnit: QUnit) => {
 				}
 				return mock.httpClient(input, init);
 			};
-			await explicitRegistration(mock.discovery, mock.config, mock.trustAnchors, {
+			const result = await explicitRegistration(mock.discovery, mock.config, mock.trustAnchors, {
 				httpClient: trackingClient,
 			});
+			t.true(isOk(result));
 			const decoded = decodeEntityStatement(capturedBody);
 			t.true(decoded.ok);
 			if (!decoded.ok) return;
@@ -1239,10 +1284,11 @@ export default (QUnit: QUnit) => {
 				}
 				return mock.httpClient(input, init);
 			};
-			await explicitRegistration(mock.discovery, mock.config, mock.trustAnchors, {
+			const result = await explicitRegistration(mock.discovery, mock.config, mock.trustAnchors, {
 				clock: { now: () => now },
 				httpClient: trackingClient,
 			});
+			t.true(isOk(result));
 			const decoded = decodeEntityStatement(capturedBody);
 			t.true(decoded.ok);
 			if (!decoded.ok) return;
@@ -1265,12 +1311,13 @@ export default (QUnit: QUnit) => {
 				}
 				return mock.httpClient(input, init);
 			};
-			await explicitRegistration(
+			const result = await explicitRegistration(
 				mock.discovery,
 				{ ...mock.config, includePeerTrustChain: true },
 				mock.trustAnchors,
 				{ httpClient: trackingClient },
 			);
+			t.true(isOk(result));
 			const decoded = decodeEntityStatement(capturedBody);
 			t.true(decoded.ok);
 			if (!decoded.ok) return;
@@ -1294,12 +1341,15 @@ export default (QUnit: QUnit) => {
 				mock.trustAnchors,
 				mock.options,
 			);
-			t.equal(result.clientId, LEAF_ID);
-			t.ok(result.registeredMetadata);
-			t.ok(result.expiresAt > 0);
+			t.true(isOk(result));
+			if (isOk(result)) {
+				t.equal(result.value.clientId, LEAF_ID);
+				t.ok(result.value.registeredMetadata);
+				t.ok(result.value.expiresAt > 0);
+			}
 		});
 
-		test("throws if OP has no federation_registration_endpoint", async (t) => {
+		test("fails if OP has no federation_registration_endpoint", async (t) => {
 			const fed = await createMockFederation({
 				opMetadata: {
 					openid_provider: {
@@ -1311,13 +1361,12 @@ export default (QUnit: QUnit) => {
 			});
 			const discovery = await createMockDiscovery(OP_ID, fed);
 			const { config } = await createRpConfig({});
-			try {
-				await explicitRegistration(discovery, config, fed.trustAnchors, fed.options);
-				t.ok(false, "should have thrown");
-			} catch (e) {
+			const result = await explicitRegistration(discovery, config, fed.trustAnchors, fed.options);
+			t.true(isErr(result));
+			if (isErr(result)) {
 				t.ok(
-					(e as Error).message.includes("federation_registration_endpoint"),
-					(e as Error).message,
+					result.error.description.includes("federation_registration_endpoint"),
+					result.error.description,
 				);
 			}
 		});
@@ -1330,10 +1379,16 @@ export default (QUnit: QUnit) => {
 				mock.trustAnchors,
 				mock.options,
 			);
-			t.equal(result.registrationStatement.header.typ, OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE);
+			t.true(isOk(result));
+			if (isOk(result)) {
+				t.equal(
+					result.value.registrationStatement.header.typ,
+					OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE,
+				);
+			}
 		});
 
-		test("throws if OP does not advertise explicit registration", async (t) => {
+		test("fails if OP does not advertise explicit registration", async (t) => {
 			const fed = await createMockFederation({
 				opMetadata: {
 					openid_provider: {
@@ -1350,15 +1405,14 @@ export default (QUnit: QUnit) => {
 			});
 			const discovery = await createMockDiscovery(OP_ID, fed);
 			const { config } = await createRpConfig({});
-			try {
-				await explicitRegistration(discovery, config, fed.trustAnchors, fed.options);
-				t.ok(false, "should have thrown");
-			} catch (e) {
-				t.ok((e as Error).message.includes("explicit"), (e as Error).message);
+			const result = await explicitRegistration(discovery, config, fed.trustAnchors, fed.options);
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.ok(result.error.description.includes("explicit"), result.error.description);
 			}
 		});
 
-		test("CRIT-1: throws if JWKS is missing (cannot verify response)", async (t) => {
+		test("CRIT-1: fails if JWKS is missing (cannot verify response)", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
 			const { privateKey: unknownKey } = await generateSigningKey("ES256");
@@ -1383,11 +1437,12 @@ export default (QUnit: QUnit) => {
 				return fed.httpClient(input);
 			};
 			const { config } = await createRpConfig({});
-			try {
-				await explicitRegistration(discovery, config, fed.trustAnchors, { httpClient });
-				t.ok(false, "should have thrown");
-			} catch (e) {
-				t.ok(/signature|verification/i.test((e as Error).message), (e as Error).message);
+			const result = await explicitRegistration(discovery, config, fed.trustAnchors, {
+				httpClient,
+			});
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.ok(/signature|verification/i.test(result.error.description), result.error.description);
 			}
 		});
 
@@ -1399,11 +1454,14 @@ export default (QUnit: QUnit) => {
 				mock.trustAnchors,
 				mock.options,
 			);
-			t.ok(result.trustChainExpiresAt > 0);
-			t.equal(result.trustChainExpiresAt, mock.discovery.trustChain.expiresAt);
+			t.true(isOk(result));
+			if (isOk(result)) {
+				t.ok(result.value.trustChainExpiresAt > 0);
+				t.equal(result.value.trustChainExpiresAt, mock.discovery.trustChain.expiresAt);
+			}
 		});
 
-		test("throws if response trust_anchor doesn't match OP chain root", async (t) => {
+		test("fails if response trust_anchor doesn't match OP chain root", async (t) => {
 			const fed = await createMockFederation();
 			const { config } = await createRpConfig({});
 			const discovery = await createMockDiscovery(OP_ID, fed);
@@ -1436,15 +1494,16 @@ export default (QUnit: QUnit) => {
 					});
 				return fed.httpClient(input);
 			};
-			try {
-				await explicitRegistration(discovery, config, fed.trustAnchors, { httpClient });
-				t.ok(false, "should have thrown");
-			} catch (e) {
-				t.ok(/trust_anchor/i.test((e as Error).message), (e as Error).message);
+			const result = await explicitRegistration(discovery, config, fed.trustAnchors, {
+				httpClient,
+			});
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.ok(/trust_anchor/i.test(result.error.description), result.error.description);
 			}
 		});
 
-		test("throws if response metadata is missing a requested entity type", async (t) => {
+		test("fails if response metadata is missing a requested entity type", async (t) => {
 			const fed = await createMockFederation();
 			const { config } = await createRpConfig({});
 			const discovery = await createMockDiscovery(OP_ID, fed);
@@ -1479,11 +1538,15 @@ export default (QUnit: QUnit) => {
 					});
 				return fed.httpClient(input);
 			};
-			try {
-				await explicitRegistration(discovery, config, fed.trustAnchors, { httpClient });
-				t.ok(false, "should have thrown");
-			} catch (e) {
-				t.ok(/missing requested entity type/i.test((e as Error).message), (e as Error).message);
+			const result = await explicitRegistration(discovery, config, fed.trustAnchors, {
+				httpClient,
+			});
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.ok(
+					/missing requested entity type/i.test(result.error.description),
+					result.error.description,
+				);
 			}
 		});
 
@@ -1502,17 +1565,18 @@ export default (QUnit: QUnit) => {
 					return new Response("SECRET_INTERNAL_ERROR_DETAILS", { status: 500 });
 				return fed.httpClient(input);
 			};
-			try {
-				await explicitRegistration(discovery, config, fed.trustAnchors, { httpClient });
-				t.ok(false, "should have thrown");
-			} catch (e) {
-				const msg = (e as Error).message;
+			const result = await explicitRegistration(discovery, config, fed.trustAnchors, {
+				httpClient,
+			});
+			t.true(isErr(result));
+			if (isErr(result)) {
+				const msg = result.error.description;
 				t.notOk(msg.includes("SECRET_INTERNAL_ERROR_DETAILS"), "no secret in message");
 				t.ok(msg.includes("500"), "includes status code");
 			}
 		});
 
-		test("throws if OP response is already expired", async (t) => {
+		test("fails if OP response is already expired", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
 			const { config } = await createRpConfig({});
@@ -1544,15 +1608,19 @@ export default (QUnit: QUnit) => {
 					});
 				return fed.httpClient(input);
 			};
-			try {
-				await explicitRegistration(discovery, config, fed.trustAnchors, { httpClient });
-				t.ok(false, "should have thrown");
-			} catch (e) {
-				t.ok(/expired|signature|verification/i.test((e as Error).message), (e as Error).message);
+			const result = await explicitRegistration(discovery, config, fed.trustAnchors, {
+				httpClient,
+			});
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.ok(
+					/expired|signature|verification/i.test(result.error.description),
+					result.error.description,
+				);
 			}
 		});
 
-		test("throws if OP response is missing exp", async (t) => {
+		test("fails if OP response is missing exp", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
 			const { config } = await createRpConfig({});
@@ -1583,11 +1651,12 @@ export default (QUnit: QUnit) => {
 					});
 				return fed.httpClient(input);
 			};
-			try {
-				await explicitRegistration(discovery, config, fed.trustAnchors, { httpClient });
-				t.ok(false, "should have thrown");
-			} catch (e) {
-				t.ok(/exp/i.test((e as Error).message), (e as Error).message);
+			const result = await explicitRegistration(discovery, config, fed.trustAnchors, {
+				httpClient,
+			});
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.ok(/exp/i.test(result.error.description), result.error.description);
 			}
 		});
 	});

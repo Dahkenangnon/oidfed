@@ -19,9 +19,12 @@ describe("Automatic registration", () => {
 
 			const rpId = `https://rp.ofed.test:${port}`;
 			const opId = entityId(`https://op.ofed.test:${port}`);
-			const discovery = await discoverEntity(opId, trustAnchors);
+			const discoveryResult = await discoverEntity(opId, trustAnchors);
+			expect(discoveryResult.ok).toBe(true);
+			if (!discoveryResult.ok) throw new Error("Discovery failed");
+			const discovery = discoveryResult.value;
 
-			const result = await automaticRegistration(
+			const resultVal = await automaticRegistration(
 				discovery,
 				{
 					entityId: entityId(rpId),
@@ -47,6 +50,10 @@ describe("Automatic registration", () => {
 				},
 				trustAnchors,
 			);
+
+			expect(resultVal.ok).toBe(true);
+			if (!resultVal.ok) throw new Error("Registration failed");
+			const result = resultVal.value;
 
 			expect(result.requestObjectJwt).toBeTruthy();
 			expect(result.delivery).toBe("query");
@@ -90,9 +97,12 @@ describe("Automatic registration", () => {
 
 			const rpId = `https://rp1.ofed.test:${port}`;
 			const opId = entityId(`https://op-uni.ofed.test:${port}`);
-			const discovery = await discoverEntity(opId, trustAnchors);
+			const discoveryResult = await discoverEntity(opId, trustAnchors);
+			expect(discoveryResult.ok).toBe(true);
+			if (!discoveryResult.ok) throw new Error("Discovery failed");
+			const discovery = discoveryResult.value;
 
-			const result = await automaticRegistration(
+			const resultVal = await automaticRegistration(
 				discovery,
 				{
 					entityId: entityId(rpId),
@@ -117,6 +127,10 @@ describe("Automatic registration", () => {
 				},
 				trustAnchors,
 			);
+
+			expect(resultVal.ok).toBe(true);
+			if (!resultVal.ok) throw new Error("Registration failed");
+			const result = resultVal.value;
 
 			expect(result.requestObjectJwt).toBeTruthy();
 			expect(result.trustChain).toBeDefined();
