@@ -1,11 +1,9 @@
 version: 2
 
 updates:
-  # npm / pnpm / yarn dependencies for public packages + tools only
+  # npm / pnpm / yarn dependencies for the entire workspace
   - package-ecosystem: npm
-    directories:
-      - "/packages/*"
-      - "/tools/*"
+    directory: "/"
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
@@ -14,22 +12,6 @@ updates:
       prefix-development: "chore(deps)"
     groups:
       npm-minor-and-patch:
-        update-types:
-          - minor
-          - patch
-
-  # Apps only once per month, low noise
-  - package-ecosystem: npm
-    directories:
-      - "/apps/*"
-    schedule:
-      interval: monthly
-    open-pull-requests-limit: 1
-    commit-message:
-      prefix: "chore(deps-apps)"
-      prefix-development: "chore(deps-apps)"
-    groups:
-      apps-npm-minor-and-patch:
         update-types:
           - minor
           - patch
