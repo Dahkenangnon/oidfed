@@ -37,9 +37,9 @@ import type {
 Automatic registration signs an OIDC Request Object. It uses OIDC protocol keys, not federation entity keys.
 
 ```ts
-import { automaticRegistration, StaticOidcProtocolKeyProvider } from "@oidfed/oidc";
+import { automaticRegistration, StaticOidcProtocolKeyProvider, entityId } from "@oidfed/oidc";
 import { discoverEntity } from "@oidfed/leaf";
-import { entityId, JwkSigner } from "@oidfed/core";
+import { JwkSigner } from "@oidfed/core";
 
 const opDiscovery = await discoverEntity(opEntityId, trustAnchors);
 
@@ -81,7 +81,7 @@ type AutomaticRegistrationResult =
 Explicit registration sends the RP federation Entity Configuration to the OP. It therefore uses federation keys, not OIDC protocol keys.
 
 ```ts
-import { explicitRegistration } from "@oidfed/oidc";
+import { explicitRegistration, entityId } from "@oidfed/oidc";
 
 const result = await explicitRegistration(
   opDiscovery,
@@ -105,7 +105,7 @@ const result = await explicitRegistration(
 ### OP Processing Automatic Registration
 
 ```ts
-import { processAutomaticRegistration } from "@oidfed/oidc";
+import { processAutomaticRegistration, entityId } from "@oidfed/oidc";
 import type { ProcessAutomaticRegistrationOptions, ProcessedRegistration } from "@oidfed/oidc";
 
 const result = await processAutomaticRegistration(requestObjectJwt, trustAnchors, {
@@ -122,7 +122,7 @@ Returns `Result<ProcessedRegistration, FederationError>` and never throws.
 ### OP Processing Explicit Registration
 
 ```ts
-import { processExplicitRegistration } from "@oidfed/oidc";
+import { processExplicitRegistration, entityId } from "@oidfed/oidc";
 import type { ProcessExplicitRegistrationOptions } from "@oidfed/oidc";
 
 const result = await processExplicitRegistration(
@@ -136,7 +136,7 @@ const result = await processExplicitRegistration(
 ### Request Object Validation
 
 ```ts
-import { validateAutomaticRegistrationRequest } from "@oidfed/oidc";
+import { validateAutomaticRegistrationRequest, entityId } from "@oidfed/oidc";
 import type { ValidatedRequestObject, ValidatedRequestObjectResult } from "@oidfed/oidc";
 
 const result = validateAutomaticRegistrationRequest(requestObjectJwt, {

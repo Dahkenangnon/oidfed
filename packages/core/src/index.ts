@@ -41,6 +41,7 @@ export {
 	PolicyOperator,
 	REQUIRED_ALGORITHMS,
 	STANDARD_ENTITY_STATEMENT_CLAIMS,
+	StandardPolicyOperator,
 	SUPPORTED_ALGORITHMS,
 	type SupportedAlgorithm,
 	TrustMarkStatus,

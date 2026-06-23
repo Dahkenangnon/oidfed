@@ -48,14 +48,24 @@ export const EntityType = {
 } as const;
 export type EntityType = (typeof EntityType)[keyof typeof EntityType];
 
+export enum StandardPolicyOperator {
+	VALUE = "value",
+	ADD = "add",
+	DEFAULT = "default",
+	ESSENTIAL = "essential",
+	ONE_OF = "one_of",
+	SUBSET_OF = "subset_of",
+	SUPERSET_OF = "superset_of",
+}
+
 export const PolicyOperator = {
-	Value: "value",
-	Add: "add",
-	Default: "default",
-	OneOf: "one_of",
-	SubsetOf: "subset_of",
-	SupersetOf: "superset_of",
-	Essential: "essential",
+	Value: StandardPolicyOperator.VALUE,
+	Add: StandardPolicyOperator.ADD,
+	Default: StandardPolicyOperator.DEFAULT,
+	OneOf: StandardPolicyOperator.ONE_OF,
+	SubsetOf: StandardPolicyOperator.SUBSET_OF,
+	SupersetOf: StandardPolicyOperator.SUPERSET_OF,
+	Essential: StandardPolicyOperator.ESSENTIAL,
 } as const;
 export type PolicyOperator = (typeof PolicyOperator)[keyof typeof PolicyOperator];
 

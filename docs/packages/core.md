@@ -220,8 +220,11 @@ import {
 ### Metadata Policy
 
 ```ts
-import { resolveMetadataPolicy, applyMetadataPolicy } from "@oidfed/core";
+import { resolveMetadataPolicy, applyMetadataPolicy, StandardPolicyOperator } from "@oidfed/core";
 import type { ResolvedMetadataPolicy, PolicyMergeResult } from "@oidfed/core";
+
+// Reference standard policy operators type-safely
+const operator = StandardPolicyOperator.VALUE; // "value"
 ```
 
 `resolveMetadataPolicy` merges policies from a chain's statements into `Result<ResolvedMetadataPolicy, FederationError>`.

@@ -1,11 +1,20 @@
 // @oidfed/oidc — OIDC/OAuth2 protocol layer for OpenID Federation
 
+// Re-export common core types
+export type {
+	EntityId,
+	FederationError,
+	FederationOptions,
+	Result,
+	TrustAnchorSet,
+} from "@oidfed/core";
+// Re-export common core functions & enums
+export { entityId, err, isErr, isOk, ok, StandardPolicyOperator } from "@oidfed/core";
 // Client authentication
 export {
 	type ClientAssertionOptions,
 	createClientAssertion,
 } from "./client-auth/assertion.js";
-
 // Constants
 export {
 	ClientRegistrationType,
