@@ -1,9 +1,11 @@
 version: 2
 
 updates:
-  # npm / pnpm / yarn dependencies for the entire workspace
+  # npm / pnpm / yarn dependencies for public packages + tools only
   - package-ecosystem: npm
-    directory: "/"
+    directories:
+      - "/packages/*"
+      - "/tools/*"
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
