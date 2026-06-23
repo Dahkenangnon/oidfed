@@ -54,7 +54,7 @@ export interface CacheProvider {
 	set<T>(key: string, value: T, ttlSeconds: number): Promise<void>;
 	delete(key: string): Promise<void>;
 	clear(): Promise<void>;
-	[Symbol.asyncDispose]?(): Promise<void>;
+	[Symbol.asyncDispose](): Promise<void>;
 }
 
 export interface Logger {
@@ -93,6 +93,13 @@ export interface FederationOptions {
 }
 
 export type TrustAnchorSet = ReadonlyMap<EntityId, Readonly<{ jwks: JWKSet }>>;
+
+/** Create a TrustAnchorSet from a list of trust anchor configurations. */
+export function createTrustAnchorSet(
+	anchors: ReadonlyArray<{ readonly entityId: EntityId; readonly jwks: JWKSet }>,
+): TrustAnchorSet {
+	return new Map(anchors.map((a) => [a.entityId, { jwks: a.jwks }]));
+}
 
 export interface TrustChain {
 	readonly statements: ReadonlyArray<string>;

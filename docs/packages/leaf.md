@@ -62,7 +62,7 @@ import type { FederationKeyProvider } from "@oidfed/core";
 interface LeafConfig {
   entityId: EntityId;
   keyProvider: FederationKeyProvider;
-  authorityHints: EntityId[];
+  authorityHints: readonly [EntityId, ...EntityId[]];
   metadata: FederationMetadata;
   trustMarks?: TrustMarkRef[];
   entityConfigurationTtlSeconds?: number;

@@ -221,7 +221,7 @@ Individual authority endpoint factories and `HandlerContext` are exported for cu
 | `trustMarkIssuers` | `Record<string, string[]>` | — | Trust mark type to authorized issuer IDs |
 | `trustMarkOwners` | `Record<string, TrustMarkOwner>` | — | Delegated trust mark owners |
 | `trustMarkDelegations` | `Record<string, string>` | — | Pre-signed delegation JWTs |
-| `authorityHints` | `EntityId[]` | — | Omit for Trust Anchors; required for Intermediates |
+| `authorityHints` | `readonly [EntityId, ...EntityId[]]` | — | Omit for Trust Anchors; required for Intermediates |
 | `trustAnchors` | `TrustAnchorSet` | — | Used for chain resolution |
 | `entityConfigurationTtlSeconds` | `number` | — | Entity Configuration JWT lifetime |
 | `subordinateStatementTtlSeconds` | `number` | — | Subordinate Statement JWT lifetime |

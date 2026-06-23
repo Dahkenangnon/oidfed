@@ -48,6 +48,7 @@ import {
   fetchEntityConfiguration,
   fetchSubordinateStatement,
   createConcurrencyLimiter,
+  createTrustAnchorSet,
 } from "@oidfed/core";
 import type {
   TrustAnchorSet,
@@ -58,9 +59,10 @@ import type {
 ```
 
 ```ts
-const trustAnchors: TrustAnchorSet = new Map([
-  [entityId("https://ta.example.org"), { jwks: { keys: [taKey] } }],
+const trustAnchors = createTrustAnchorSet([
+  { entityId: entityId("https://ta.example.org"), jwks: { keys: [taKey] } },
 ]);
+
 
 const result = await resolveTrustChains(
   entityId("https://leaf.example.com"),

@@ -25,7 +25,7 @@ import { getRegistrationTypes } from "./helpers.js";
 export interface ExplicitRegistrationConfig {
 	readonly entityId: EntityId;
 	readonly keyProvider: FederationKeyProvider;
-	readonly authorityHints: ReadonlyArray<EntityId>;
+	readonly authorityHints: readonly [EntityId, ...EntityId[]];
 	readonly metadata: Record<string, Record<string, unknown>>;
 	readonly entityConfigurationTtlSeconds?: number;
 	readonly trustMarks?: ReadonlyArray<Record<string, unknown>>;

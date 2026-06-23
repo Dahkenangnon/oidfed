@@ -55,7 +55,7 @@ const RESERVED_REQUEST_OBJECT_CLAIMS = new Set([
 export interface AutomaticRegistrationConfig {
 	readonly entityId: EntityId;
 	readonly protocolKeyProvider: OidcProtocolKeyProvider;
-	readonly authorityHints: ReadonlyArray<EntityId>;
+	readonly authorityHints: readonly [EntityId, ...EntityId[]];
 	readonly metadata: Record<string, Record<string, unknown>>;
 	/** TTL for the Request Object JWT in seconds (default: 300). */
 	readonly requestObjectTtlSeconds?: number;

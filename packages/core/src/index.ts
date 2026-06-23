@@ -197,6 +197,7 @@ export {
 	type CacheProvider,
 	type ChainSelectionStrategy,
 	type Clock,
+	createTrustAnchorSet,
 	type DiscoveryResult,
 	type EntityId,
 	entityId,

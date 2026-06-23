@@ -66,6 +66,10 @@ export class MemoryCache implements CacheProvider {
 	async clear(): Promise<void> {
 		this.store.clear();
 	}
+
+	async [Symbol.asyncDispose](): Promise<void> {
+		await this.clear();
+	}
 }
 
 async function sha256Hex(input: string): Promise<string> {

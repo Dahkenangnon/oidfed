@@ -89,7 +89,7 @@ export interface AuthorityConfig {
 	/** Pre-signed trust mark delegation JWTs, keyed by trust mark type. */
 	trustMarkDelegations?: Record<string, string>;
 	/** Superior authorities this entity is subordinate to. */
-	authorityHints?: EntityId[];
+	authorityHints?: readonly [EntityId, ...EntityId[]];
 	/** Trust anchors used for trust chain resolution (e.g., during registration). */
 	trustAnchors?: TrustAnchorSet;
 	/** TTL in seconds for the Entity Configuration JWT. */

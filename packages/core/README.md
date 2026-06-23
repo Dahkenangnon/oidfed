@@ -23,11 +23,11 @@ import {
   generateSigningKey,
   resolveTrustChains,
   validateTrustChain,
+  createTrustAnchorSet,
 } from "@oidfed/core";
-import type { TrustAnchorSet } from "@oidfed/core";
 
-const trustAnchors: TrustAnchorSet = new Map([
-  [entityId("https://ta.example.org"), { jwks: { keys: [taKey] } }],
+const trustAnchors = createTrustAnchorSet([
+  { entityId: entityId("https://ta.example.org"), jwks: { keys: [taKey] } },
 ]);
 
 const result = await resolveTrustChains(

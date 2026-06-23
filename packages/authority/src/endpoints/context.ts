@@ -15,7 +15,7 @@ export interface HandlerContext {
 	/** The entity identifier (URL) for this authority. */
 	readonly entityId: EntityId;
 	/** Superior authorities this entity is subordinate to. */
-	readonly authorityHints?: EntityId[];
+	readonly authorityHints?: readonly [EntityId, ...EntityId[]];
 	/** Federation-only signing key provider and lifecycle manager. */
 	readonly keyProvider: ManagedFederationKeyProvider;
 	/** Unified persistence adapter for all non-key authority state. */
