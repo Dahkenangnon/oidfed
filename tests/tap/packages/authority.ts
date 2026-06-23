@@ -5696,7 +5696,7 @@ export default (QUnit: QUnit) => {
 		});
 
 		test("throws when authorityHints is an explicit empty array", async (t) => {
-			const cfg = await baseConfig({ authorityHints: [] as any });
+			const cfg = await baseConfig({ authorityHints: [] as unknown as [EntityId, ...EntityId[]] });
 			t.throws(() => createAuthorityServer(cfg), InvalidAuthorityConfig);
 		});
 

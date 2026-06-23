@@ -166,7 +166,9 @@ export default (QUnit: QUnit) => {
 		});
 
 		test("throws on empty authorityHints", async (t) => {
-			const { config } = await createLeafConfig({ authorityHints: [] as any });
+			const { config } = await createLeafConfig({
+				authorityHints: [] as unknown as [EntityId, ...EntityId[]],
+			});
 			t.throws(() => createLeafEntity(config), /authorityHints/);
 		});
 
