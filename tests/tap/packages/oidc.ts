@@ -955,6 +955,95 @@ export default (QUnit: QUnit) => {
 			if (!isOk(result)) return;
 			t.ok(result.value.requestObjectJwt);
 		});
+
+		test("fails when openid_relying_party and oauth_client are missing", async (t) => {
+			const fed = await createMockFederation();
+			const discovery = await createMockDiscovery(OP_ID, fed);
+			const { config } = await createRpConfig({
+				metadata: {},
+			});
+			const result = await automaticRegistration(
+				discovery,
+				config,
+				authzParams,
+				fed.trustAnchors,
+				fed.options,
+			);
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.true(result.error.description.includes("is required for automatic registration"));
+			}
+		});
+
+		test("fails when jwks is not a JWK Set", async (t) => {
+			const fed = await createMockFederation();
+			const discovery = await createMockDiscovery(OP_ID, fed);
+			const { config } = await createRpConfig({
+				metadata: {
+					openid_relying_party: {
+						// biome-ignore lint/suspicious/noExplicitAny: test
+						jwks: "not-a-jwk-set" as any,
+					},
+				},
+			});
+			const result = await automaticRegistration(
+				discovery,
+				config,
+				authzParams,
+				fed.trustAnchors,
+				fed.options,
+			);
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.true(result.error.description.includes("must be a JWK Set"));
+			}
+		});
+
+		test("fails when signer kid is not published in jwks", async (t) => {
+			const fed = await createMockFederation();
+			const discovery = await createMockDiscovery(OP_ID, fed);
+			const { config } = await createRpConfig({
+				metadata: {
+					openid_relying_party: {
+						jwks: { keys: [] },
+					},
+				},
+			});
+			const result = await automaticRegistration(
+				discovery,
+				config,
+				authzParams,
+				fed.trustAnchors,
+				fed.options,
+			);
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.true(result.error.description.includes("is not published in metadata"));
+			}
+		});
+
+		test("fails when OIDC protocol keys are not published", async (t) => {
+			const fed = await createMockFederation();
+			const discovery = await createMockDiscovery(OP_ID, fed);
+			const { config } = await createRpConfig({
+				metadata: {
+					openid_relying_party: {
+						client_name: "test",
+					},
+				},
+			});
+			const result = await automaticRegistration(
+				discovery,
+				config,
+				authzParams,
+				fed.trustAnchors,
+				fed.options,
+			);
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.true(result.error.description.includes("must publish OIDC protocol keys"));
+			}
+		});
 	});
 
 	// -------------------------------------------------------------------------
@@ -3911,6 +4000,11 @@ export default (QUnit: QUnit) => {
 				protocolKeyProvider,
 				metadata: { client_name: "My OIDC RP" },
 			});
+			role.initialize({
+				entityId: "https://rp.example.com",
+				// biome-ignore lint/suspicious/noExplicitAny: test
+				keyProvider: {} as any,
+			});
 			t.equal(role.type, "openid_relying_party");
 			t.equal(role.metadata.client_name, "My OIDC RP");
 		});
@@ -3922,6 +4016,7 @@ export default (QUnit: QUnit) => {
 			});
 			role.initialize({
 				entityId: "https://op.example.com",
+				// biome-ignore lint/suspicious/noExplicitAny: test
 				keyProvider: {} as any,
 			});
 			t.equal(role.type, "openid_provider");
@@ -3940,6 +4035,7 @@ export default (QUnit: QUnit) => {
 			});
 			role.initialize({
 				entityId: "https://rp.example.com",
+				// biome-ignore lint/suspicious/noExplicitAny: test
 				keyProvider: {} as any,
 			});
 			t.equal(role.type, "oauth_client");
@@ -3953,11 +4049,73 @@ export default (QUnit: QUnit) => {
 			});
 			role.initialize({
 				entityId: "https://op.example.com",
+				// biome-ignore lint/suspicious/noExplicitAny: test
 				keyProvider: {} as any,
 			});
 			t.equal(role.type, "oauth_authorization_server");
 			t.equal(role.metadata.auth_server_name, "My AS");
 			t.ok(role.routes?.has("/oauth-reg"), "routes must map custom registration path");
+		});
+
+		test("FedOidcClient and FedOauthClient createAuthorizationRequest", async (t) => {
+			const { privateKey } = await generateSigningKey("ES256");
+			const protocolKeyProvider = new StaticOidcProtocolKeyProvider({
+				requestObjectSigner: new JwkSigner(privateKey),
+			});
+			const role = new FedOidcClient({
+				protocolKeyProvider,
+				metadata: {
+					client_name: "My OIDC RP",
+					redirect_uris: ["https://rp.example.com/callback"],
+					response_types: ["code"],
+					client_registration_types: ["automatic"],
+					jwks: { keys: [stripPrivateFields(privateKey)] },
+				},
+			});
+			const oauthRole = new FedOauthClient({
+				protocolKeyProvider,
+				metadata: {
+					client_name: "My OAuth Client",
+					redirect_uris: ["https://rp.example.com/callback"],
+					response_types: ["code"],
+					client_registration_types: ["automatic"],
+					jwks: { keys: [stripPrivateFields(privateKey)] },
+				},
+			});
+
+			const fed = await createMockFederation();
+			const discovery = await createMockDiscovery(OP_ID, fed);
+
+			const context = {
+				entityId: LEAF_ID,
+				// biome-ignore lint/suspicious/noExplicitAny: test
+				keyProvider: {} as any,
+				options: fed.options,
+				authorityHints: [TA_ID],
+			};
+
+			role.initialize(context);
+			oauthRole.initialize(context);
+
+			const authzParams = {
+				redirect_uri: "https://rp.example.com/callback",
+				scope: "openid",
+				response_type: "code",
+			};
+
+			const result1 = await role.createAuthorizationRequest(
+				discovery,
+				authzParams,
+				fed.trustAnchors,
+			);
+			t.true(isOk(result1));
+
+			const result2 = await oauthRole.createAuthorizationRequest(
+				discovery,
+				authzParams,
+				fed.trustAnchors,
+			);
+			t.true(isOk(result2));
 		});
 	});
 };

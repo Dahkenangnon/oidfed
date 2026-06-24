@@ -4,6 +4,7 @@
 [![downloads](https://img.shields.io/npm/dm/@oidfed/core.svg)](https://www.npmjs.com/package/@oidfed/core)
 [![license](https://img.shields.io/npm/l/@oidfed/core.svg)](https://github.com/Dahkenangnon/oidfed/blob/main/packages/core/LICENSE)
 [![install size](https://packagephobia.com/badge?p=@oidfed/core)](https://packagephobia.com/result?p=@oidfed/core)
+[![coverage](https://img.shields.io/badge/coverage-%E2%89%A590%25-brightgreen)](https://github.com/Dahkenangnon/oidfed/blob/main/scripts/coverage-check.sh)
 
 Federation primitives for JavaScript — entity statements, trust chain resolution, metadata policy, and cryptographic verification. The foundational layer of the complete [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) implementation.
 

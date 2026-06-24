@@ -4,6 +4,7 @@
 [![downloads](https://img.shields.io/npm/dm/@oidfed/oidc.svg)](https://www.npmjs.com/package/@oidfed/oidc)
 [![license](https://img.shields.io/npm/l/@oidfed/oidc.svg)](https://github.com/Dahkenangnon/oidfed/blob/main/packages/oidc/LICENSE)
 [![install size](https://packagephobia.com/badge?p=@oidfed/oidc)](https://packagephobia.com/result?p=@oidfed/oidc)
+[![coverage](https://img.shields.io/badge/coverage-%E2%89%A585%25-brightgreen)](https://github.com/Dahkenangnon/oidfed/blob/main/scripts/coverage-check.sh)
 
 OpenID Connect and OAuth 2.0 federation flows — automatic and explicit client registration, Request Object validation, and RP/OP metadata processing as defined in [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html).
 

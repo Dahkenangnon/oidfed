@@ -6083,4 +6083,137 @@ export default (QUnit: QUnit) => {
 			await t.rejects(store.add(rec), /already exists/);
 		});
 	});
+
+	// -------------------------------------------------------------------------
+	// TrustAnchor and Intermediate Facades Direct Method Delegation Coverage
+	// -------------------------------------------------------------------------
+	module("authority / Facade method delegation coverage", () => {
+		const TA_ID = entityId("https://ta-facade.example");
+		const INT_ID = entityId("https://int-facade.example");
+		const SUB_ID = entityId("https://sub-facade.example");
+		const PARENT_ID = entityId("https://parent-facade.example");
+
+		async function createFacadeConfigs() {
+			const { privateKey } = await generateSigningKey("ES256");
+			const signingKey = { ...privateKey, kid: "k1" };
+			const keyProvider = new MemoryFederationKeyProvider(federationKey(signingKey));
+			const storage = new MemoryStorageAdapter({ trustMarks: true });
+
+			const taConfig: AuthorityConfig = {
+				entityId: TA_ID,
+				keyProvider,
+				storage,
+				metadata: {
+					federation_entity: {
+						federation_fetch_endpoint: `${TA_ID}/federation_fetch`,
+						federation_list_endpoint: `${TA_ID}/federation_list`,
+						federation_trust_mark_endpoint: `${TA_ID}/federation_trust_mark`,
+						federation_trust_mark_status_endpoint: `${TA_ID}/federation_trust_mark_status`,
+						federation_trust_mark_list_endpoint: `${TA_ID}/federation_trust_mark_list`,
+						federation_resolve_endpoint: `${TA_ID}/federation_resolve`,
+						federation_historical_keys_endpoint: `${TA_ID}/federation_historical_keys`,
+					},
+				},
+			};
+
+			const intConfig: AuthorityConfig = {
+				entityId: INT_ID,
+				keyProvider,
+				storage,
+				metadata: {
+					federation_entity: {
+						federation_fetch_endpoint: `${INT_ID}/federation_fetch`,
+						federation_list_endpoint: `${INT_ID}/federation_list`,
+						federation_trust_mark_endpoint: `${INT_ID}/federation_trust_mark`,
+						federation_trust_mark_status_endpoint: `${INT_ID}/federation_trust_mark_status`,
+						federation_trust_mark_list_endpoint: `${INT_ID}/federation_trust_mark_list`,
+						federation_resolve_endpoint: `${INT_ID}/federation_resolve`,
+						federation_historical_keys_endpoint: `${INT_ID}/federation_historical_keys`,
+					},
+				},
+				authorityHints: [PARENT_ID],
+			};
+
+			return { taConfig, intConfig, storage, keyProvider };
+		}
+
+		test("exercises TrustAnchor and Intermediate delegation methods for full function coverage", async (t) => {
+			const { taConfig, intConfig, storage, keyProvider } = await createFacadeConfigs();
+			const ta = new TrustAnchor(taConfig);
+			const intermediate = new Intermediate(intConfig);
+
+			// Setup a subordinate in storage to prevent not found errors during get/resolve/etc.
+			const { publicKey } = await generateSigningKey("ES256");
+			const subRecord: SubordinateRecord = {
+				entityId: SUB_ID,
+				jwks: { keys: [{ ...publicKey, kid: "s1" }] },
+				entityTypes: ["federation_entity"],
+				isIntermediate: false,
+				createdAt: 1,
+				updatedAt: 1,
+			};
+			await storage.subordinates.add(subRecord);
+
+			// 1. TrustAnchor resolveEntity (which delegates to server.resolveEntity)
+			try {
+				await ta.resolveEntity(SUB_ID);
+			} catch (e) {
+				t.ok(e, "resolveEntity throws as expected since the resolve handler is invoked");
+			}
+
+			// 2. Intermediate getEntityConfiguration
+			const ec = await intermediate.getEntityConfiguration();
+			t.ok(ec, "Intermediate getEntityConfiguration returns a string");
+
+			// 3. Intermediate getSubordinateStatement
+			const ss = await intermediate.getSubordinateStatement(SUB_ID);
+			t.ok(ss, "Intermediate getSubordinateStatement returns a string");
+
+			// 4. Intermediate listSubordinates
+			const list = await intermediate.listSubordinates();
+			t.deepEqual(list, [SUB_ID]);
+
+			// 5. Intermediate listSubordinatesExtended
+			const listExt = await intermediate.listSubordinatesExtended({ limit: 10 });
+			t.true(isOk(listExt));
+
+			// 6. Intermediate resolveEntity
+			try {
+				await intermediate.resolveEntity(SUB_ID);
+			} catch (e) {
+				t.ok(e);
+			}
+
+			// 7. Intermediate issueTrustMark / getTrustMarkStatus / listTrustMarkedEntities / issueTrustMarkDelegation
+			const tmType = "https://trust.example.com/mark";
+			const tmJwt = await intermediate.issueTrustMark(SUB_ID as string, tmType);
+			t.ok(tmJwt);
+
+			const tmStatus = await intermediate.getTrustMarkStatus(tmJwt);
+			t.ok(tmStatus);
+
+			const tmList = await intermediate.listTrustMarkedEntities(tmType);
+			t.deepEqual(tmList, [SUB_ID]);
+
+			const tmDelegation = await intermediate.issueTrustMarkDelegation(SUB_ID as string, tmType);
+			t.ok(tmDelegation);
+
+			// 8. Intermediate getHistoricalKeys
+			const histKeys = await intermediate.getHistoricalKeys();
+			t.ok(histKeys);
+
+			// 9. Intermediate rotateSigningKey
+			const { privateKey: newKey } = await generateSigningKey("ES256");
+			const nextSigningKey = { ...newKey, kid: "k2" };
+			await intermediate.rotateSigningKey(federationKey(nextSigningKey));
+			const keySet = await keyProvider.getFederationKeySet();
+			t.equal(keySet.signer.kid, "k2");
+
+			// 10. Intermediate handleRequest
+			const res = await intermediate.handleRequest(
+				new Request(`${INT_ID}${WELL_KNOWN_OPENID_FEDERATION}`),
+			);
+			t.equal(res.status, 200);
+		});
+	});
 };

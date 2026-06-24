@@ -401,12 +401,13 @@ function assertOidcSignerPublished(
 	signer: JwtSigner,
 	purpose: string,
 ): Result<void> {
-	const rpMetadata = metadata.openid_relying_party;
+	const type = metadata.openid_relying_party ? "openid_relying_party" : "oauth_client";
+	const rpMetadata = metadata[type];
 	if (!rpMetadata) {
 		return err(
 			federationError(
 				FederationErrorCode.InvalidRequest,
-				"metadata.openid_relying_party is required for automatic registration",
+				"metadata.openid_relying_party or metadata.oauth_client is required for automatic registration",
 			),
 		);
 	}
@@ -422,7 +423,7 @@ function assertOidcSignerPublished(
 			return err(
 				federationError(
 					FederationErrorCode.InvalidRequest,
-					"metadata.openid_relying_party.jwks must be a JWK Set",
+					`metadata.${type}.jwks must be a JWK Set`,
 				),
 			);
 		}
@@ -430,7 +431,7 @@ function assertOidcSignerPublished(
 			return err(
 				federationError(
 					FederationErrorCode.InvalidRequest,
-					`OIDC ${purpose} signer kid '${signer.kid}' is not published in metadata.openid_relying_party.jwks`,
+					`OIDC ${purpose} signer kid '${signer.kid}' is not published in metadata.${type}.jwks`,
 				),
 			);
 		}
@@ -441,7 +442,7 @@ function assertOidcSignerPublished(
 		return err(
 			federationError(
 				FederationErrorCode.InvalidRequest,
-				"metadata.openid_relying_party must publish OIDC protocol keys with jwks, jwks_uri, or signed_jwks_uri",
+				`metadata.${type} must publish OIDC protocol keys with jwks, jwks_uri, or signed_jwks_uri`,
 			),
 		);
 	}
