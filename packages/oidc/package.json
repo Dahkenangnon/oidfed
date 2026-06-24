@@ -61,7 +61,7 @@
 		"@oidfed/core": "workspace:^"
 	},
 	"dependencies": {
-		"zod": "^4.4.3"
+		"zod": "4.4.3"
 	},
 	"peerDependencies": {
 		"@oidfed/core": "workspace:^"

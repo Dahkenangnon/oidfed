@@ -65,9 +65,9 @@
 	},
 	"dependencies": {
 		"@oidfed/core": "workspace:^",
-		"commander": "^15.0.0",
-		"yaml": "^2.9.0",
-		"chalk": "^5.4.0",
-		"zod": "^4.4.3"
+		"commander": "15.0.0",
+		"yaml": "2.9.0",
+		"chalk": "5.6.2",
+		"zod": "4.4.3"
 	}
 }
