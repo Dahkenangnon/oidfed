@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-06-24
+
+### Features
+
+* relax entityId and authorityHints parameter type constraints ([07a3da5](https://github.com/Dahkenangnon/oidfed/commit/07a3da5618a740f6b7ed5547fb45c0b2bdf8ec08))
+* unify runtime errors to monadic Result ([ba58a65](https://github.com/Dahkenangnon/oidfed/commit/ba58a656eec56ff34ef0ce1254b5747210219e17))
+* export standard policy operators enum and re-export common core primitives ([92aeda6](https://github.com/Dahkenangnon/oidfed/commit/92aeda67ff5c8279b8211e089fc10374d7803433))
+* unify persistence behind storage adapter ([f622fca](https://github.com/Dahkenangnon/oidfed/commit/f622fca5955bfee03c90192308bd86bd3e1ec9ed))
+* consolidate sidebar links ([e23e712](https://github.com/Dahkenangnon/oidfed/commit/e23e7120598d1fc0ea35fe914c229e63d7f7d772))
+* separate federation and OIDC signing keys ([0664c90](https://github.com/Dahkenangnon/oidfed/commit/0664c90641288f41b561588d954badd7f6ae5a4e))
+* enhance the npm published keyworks ([a0e38c4](https://github.com/Dahkenangnon/oidfed/commit/a0e38c46c7fcafd75341a3aa306350e8f0f1df8d))
+* migrate biome ([32cbaaf](https://github.com/Dahkenangnon/oidfed/commit/32cbaaf3f39ba7bb3616fbece93ab9b00f1300d9))
+* share github icon across apps ([1faf78e](https://github.com/Dahkenangnon/oidfed/commit/1faf78e64cfc22fc5d56e8965c9efb755dfe865f))
+* align navigation and simplify not found ([3e646bb](https://github.com/Dahkenangnon/oidfed/commit/3e646bb6622679f80c801bef0e7b8f5b321c1d65))
+* polish layout navigation ([1b0ed2b](https://github.com/Dahkenangnon/oidfed/commit/1b0ed2b90c237b937b8a87edee13affca499c9ba))
+* promote demo federation links ([108d507](https://github.com/Dahkenangnon/oidfed/commit/108d5072476907e5b8875f96bd261fda95b95feb))
+
+### Bug Fixes
+
+* harden public API types and add trust anchor helper ([ad06c9b](https://github.com/Dahkenangnon/oidfed/commit/ad06c9baaea806990f76b25371a4bd90563da9e4))
+* harden public API types and add trust anchor helper ([3283001](https://github.com/Dahkenangnon/oidfed/commit/3283001bbd291a42843c5e768d34405c0b064eac))
+* review the public api of every pkg ([a95c473](https://github.com/Dahkenangnon/oidfed/commit/a95c473f1a92bdd55a248fcc1a8b319da2208295))
+* verify request objects with protocol keys ([c759b87](https://github.com/Dahkenangnon/oidfed/commit/c759b87f65fd04e9c35d695ba0ffbeb9917f21b2))
+* bump esbuild to patched version ([4f7b42f](https://github.com/Dahkenangnon/oidfed/commit/4f7b42f6ed31ec8cde8d1ca4e9eb8df9d9c24080))
+* add core dependency for package builds ([30d986d](https://github.com/Dahkenangnon/oidfed/commit/30d986df000c85c8e0320cc6b019c1c89d8015c7))
+* upgrade vitest to ^4.1.0 to fix CVE-2026-47429 (GHSA-5xrq-8626-4rwp) ([98735bf](https://github.com/Dahkenangnon/oidfed/commit/98735bf40595d0c111273920855b5469bfa88396))
+
+### Refactor
+
+* implement new class-based developer experience and API design ([b2fe982](https://github.com/Dahkenangnon/oidfed/commit/b2fe98287f0c553feded3ec11b8b0059ebb41061))
+
+
 ### Changed
 
 - Unified non-key authority persistence behind one transactional adapter while preserving separate federation key-provider custody.
