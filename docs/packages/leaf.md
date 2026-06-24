@@ -1,29 +1,42 @@
-# @oidfed/leaf
+# `@oidfed/leaf`
 
 Leaf Entity toolkit — Entity Configuration serving, authority discovery, and trust chain participation for any entity at the edge of an OpenID Federation.
 
-## Role
+## Overview
 
-Use for any entity at the bottom of a trust chain, typically an RP or OP that does not issue subordinate statements. Combine with `@oidfed/oidc` for OIDC registration flows.
+The `@oidfed/leaf` package provides components to configure and run entities at the bottom (edge) of a trust chain, typically Relying Parties (RPs) or OpenID Providers (OPs) that do not issue subordinate statements themselves. It manages self-signed Entity Configuration generation, signature creation, caching, and provides authority discovery features to validate trust chains up to configured Trust Anchors.
 
-## Install
+---
 
-```bash
-pnpm add @oidfed/core @oidfed/leaf
-```
+## Capabilities & Usage Guide
 
-## Quick Start
+### Creating a Leaf Entity
+A Leaf entity publishes its own self-signed configuration but relies on superior authorities (authority hints) to attest to its status. It must not publish authority endpoints like list or fetch endpoints.
 
 ```ts
 import { Leaf } from "@oidfed/leaf";
-import { FedOidcClient } from "@oidfed/oidc";
-import { MemoryFederationKeyProvider, federationKey } from "@oidfed/core";
-import express from "express";
+import { FedOidcClient, StaticOidcProtocolKeyProvider } from "@oidfed/oidc";
+import { generateSigningKey, JwkSigner, MemoryFederationKeyProvider } from "@oidfed/core";
 
+// 1. Generate keys and key providers
+const keyPair = await generateSigningKey("ES256");
+const keyProvider = new MemoryFederationKeyProvider({
+  signer: new JwkSigner(keyPair.privateKey),
+  publicJwk: keyPair.publicKey
+});
+
+// 2. Generate OIDC protocol keys and initialize the protocol key provider
+const protocolKeyPair = await generateSigningKey("ES256");
+const protocolKeyProvider = new StaticOidcProtocolKeyProvider({
+  signer: new JwkSigner(protocolKeyPair.privateKey),
+  publicJwk: protocolKeyPair.publicKey
+});
+
+// 3. Initialize the Leaf Entity
 const leaf = new Leaf({
   entityId: "https://rp.example.com",
   authorityHints: ["https://federation.example.org"],
-  keyProvider: new MemoryFederationKeyProvider(federationKey(myFederationSigningKey)),
+  keyProvider,
   metadata: {
     federation_entity: {
       organization_name: "My Relying Party",
@@ -31,97 +44,101 @@ const leaf = new Leaf({
   },
   roles: [
     new FedOidcClient({
-      redirect_uris: ["https://rp.example.com/callback"],
-      response_types: ["code"],
-      client_registration_types: ["automatic"],
-      jwks: { keys: [protocolPublicKey] },
       protocolKeyProvider,
+      metadata: {
+        redirect_uris: ["https://rp.example.com/callback"],
+        response_types: ["code"],
+        client_registration_types: ["automatic"],
+        jwks: { keys: [protocolKeyPair.publicKey] },
+      }
     })
   ]
 });
+```
+
+---
+
+### Serving the Entity Configuration
+The `Leaf` class manages internal caching of the signed configuration token. It routes standard federation path requests and delegate role requests to appropriate handlers.
+
+```ts
+import express from "express";
 
 const app = express();
+
 app.use(async (req, res) => {
-  // Convert Node HTTP req to Web Request, then handle
-  const request = new Request(`https://${req.headers.host}${req.url}`, {
+  // Translate Node request to standard Web Request
+  const webRequest = new Request(`https://${req.headers.host}${req.url}`, {
     method: req.method,
     headers: req.headers as any,
-    body: req.method !== "GET" && req.method !== "HEAD" ? req : undefined,
+    body: req.method !== "GET" && req.method !== "HEAD" ? req : undefined
   });
 
-  const response = await leaf.handleRequest(request);
-  res.status(response.status);
-  response.headers.forEach((value, key) => res.setHeader(key, value));
-  res.send(await response.text());
+  const webResponse = await leaf.handleRequest(webRequest);
+
+  res.status(webResponse.status);
+  webResponse.headers.forEach((value, key) => res.setHeader(key, value));
+  res.send(await webResponse.text());
 });
 ```
 
-## API
+---
 
-### Leaf Class
-
-```ts
-import { Leaf } from "@oidfed/leaf";
-import type { LeafConfig } from "@oidfed/leaf";
-import type { FederationKeyProvider, EntityId } from "@oidfed/core";
-```
-
-`new Leaf(config)` throws synchronously if `authorityHints` is empty, any authority hint is not a valid Entity Identifier, or `keyProvider` is missing. It performs strict validation on initialization.
-
-```ts
-export class Leaf {
-  constructor(config: LeafConfig);
-  entityId: EntityId;
-  getEntityConfiguration(): Promise<string>;
-  isEntityConfigurationExpired(): boolean;
-  refreshEntityConfiguration(): Promise<string>;
-  handleRequest(request: Request): Promise<Response>;
-}
-
-interface LeafConfig {
-  entityId: EntityId | string;
-  authorityHints: readonly (EntityId | string)[];
-  metadata: Record<string, any>;
-  keyProvider: FederationKeyProvider;
-  roles?: EntityRole[];
-  options?: FederationOptions;
-  trustMarks?: TrustMarkRef[];
-  entityConfigurationTtlSeconds?: number;
-}
-```
-
-The published top-level Entity Statement `jwks` comes from `keyProvider.getFederationKeySet()`. The provider, not the leaf config, is the source of truth for federation public keys.
-
-Configure time through `options.clock`. Like every core `Clock`, it returns Unix NumericDate seconds and controls Entity Configuration generation and expiry.
-
-`leaf.handleRequest(request: Request): Promise<Response>` matches incoming requests to:
-- `/.well-known/openid-federation`: responds with the signed Entity Configuration JWT.
-- Routes dynamically registered by composition roles (e.g. OIDC Client/Provider routes).
-- Returns `404` for unmatched paths.
-
-### Discovery
+### Discovering Entities and Trust Chains
+Leaf entities can discover other entities in the federation and validate their trust chains up to configured anchors using the static `Leaf.discoverEntity` method.
 
 ```ts
 import { Leaf } from "@oidfed/leaf";
-import { isOk } from "@oidfed/core";
-```
+import { createTrustAnchorSet, entityId, isOk } from "@oidfed/core";
 
-```ts
+const trustAnchors = createTrustAnchorSet([
+  {
+    entityId: entityId("https://ta.example.org"),
+    jwks: { keys: [taPublicKey] }
+  }
+]);
+
 const result = await Leaf.discoverEntity(
-  "https://op.example.com",
+  entityId("https://op.example.com"),
   trustAnchors,
-  { httpClient: fetch },
+  { httpClient: fetch }
 );
 
 if (isOk(result)) {
   const discovery = result.value;
-  console.log(discovery.entityId);
-  console.log(discovery.resolvedMetadata);
-  console.log(discovery.trustChain);
-  console.log(discovery.trustMarks);
+  console.log("Metadata:", discovery.resolvedMetadata);
+  console.log("Trust Chain Expires At:", new Date(discovery.trustChain.expiresAt * 1000));
 } else {
   console.error("Discovery failed:", result.error.description);
 }
 ```
 
-`DiscoveryResult` is branded so only `discoverEntity()` can produce it. RP registration functions in `@oidfed/oidc` require this type to prevent unvalidated data from entering registration flows.
+---
+
+## Configuration API Reference
+
+When constructing a `Leaf` entity, you pass a `LeafConfig` configuration object.
+
+| Configuration Field | Type | Required | Description & Constraints |
+|:---|:---|:---|:---|
+| `entityId` | `EntityId \| string` | **Yes** | The entity identifier URL for this leaf. Must be a valid HTTPS URL without query parameters or fragments. Normalizes trailing slashes. |
+| `authorityHints` | `readonly (EntityId \| string)[]` | **Yes** | Non-empty list of superior authority entity IDs this leaf is registered with. Every entry must be a valid HTTPS URL. |
+| `metadata` | `Record<string, any>` | **Yes** | The metadata block to publish. Must contain at least one Entity Type Identifier. The `federation_entity` block **must not** contain operational authority fields like `federation_fetch_endpoint` or `federation_list_endpoint`. |
+| `keyProvider` | `FederationKeyProvider` | **Yes** | Key provider managing active federation signing keys. |
+| `roles` | `EntityRole[]` | No | Composition roles (like OIDC Client/Provider roles) bound to this entity context. |
+| `options` | `FederationOptions` | No | Core federation options (e.g. clock configurations). |
+| `trustMarks` | `TrustMarkRef[]` | No | Trust marks this leaf claims about itself in its Entity Configuration. |
+| `entityConfigurationTtlSeconds`| `number` | No | TTL in seconds for the self-signed Entity Configuration JWT. Must be positive if defined. Defaults to 86400 (24 hours). |
+
+---
+
+## Frequently Asked Questions (FAQ)
+
+### Q: Why does the Leaf constructor throw when my metadata block contains endpoints?
+**A:** Leaf entities are client or provider endpoints at the edge of the trust tree and do not issue subordinate statements or list subordinates. Therefore, they are forbidden from publishing `federation_fetch_endpoint` or `federation_list_endpoint` in their `federation_entity` metadata block.
+
+### Q: How does the Entity Configuration caching work?
+**A:** The Leaf class signs and caches the Entity Configuration JWT internally. When `getEntityConfiguration()` is called, it returns the cached JWT if it has not expired yet. If it has expired or if `refreshEntityConfiguration()` is called, it re-queries the `keyProvider` for keys and generates a new signature.
+
+### Q: What is `DiscoveryResult` and how is it used?
+**A:** `DiscoveryResult` is a branded type returned by `Leaf.discoverEntity` containing the validated trust chain metadata and marks. RP registration flows in `@oidfed/oidc` require this branded type to guarantee that only fully resolved and validated metadata is used for automatic or explicit client registrations.

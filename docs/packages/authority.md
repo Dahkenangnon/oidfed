@@ -1,222 +1,236 @@
-# @oidfed/authority
+# `@oidfed/authority`
 
-Trust Anchor and Intermediate Authority operations — subordinate management, statement issuance, federation endpoint serving, and policy enforcement for the complete OpenID Federation 1.0 implementation.
+Trust Anchor and Intermediate Authority operations — subordinate management, statement issuance, federation endpoint serving, and policy enforcement for the complete OpenID Federation 1.0/1.1 implementation.
 
-## Role
+## Overview
 
-Use when building a Trust Anchor or Intermediate Authority. Provides all spec-defined federation endpoints as a single fetch-compatible class, pluggable subordinate and trust-mark storage, and managed federation key rotation. Combine with `@oidfed/oidc` for OIDC-aware registration processing.
+The `@oidfed/authority` package enables the construction of Trust Anchors (root authorities) and Intermediates (intermediate authorities). It routes all spec-defined federation endpoints (fetch, list, resolve, historical keys, and trust mark status/list) as a single, fetch-compatible engine. Key management and persistence layers are decoupled through pluggable provider interfaces.
 
-## Install
+---
 
-```bash
-pnpm add @oidfed/core @oidfed/authority
-```
+## Capabilities & Usage Guide
 
-## Quick Start
+### Creating a Trust Anchor or Intermediate
+A **Trust Anchor** is a root authority with no superiors, which serves as the trust source for the federation. An **Intermediate** represents a delegated authority that must specify one or more superior parent entity IDs.
 
 ```ts
-import { TrustAnchor, MemoryStorageAdapter } from "@oidfed/authority";
-import { generateSigningKey, MemoryFederationKeyProvider, federationKey } from "@oidfed/core";
-import express from "express";
+import { TrustAnchor, Intermediate, MemoryStorageAdapter } from "@oidfed/authority";
+import { generateSigningKey, JwkSigner, MemoryFederationKeyProvider } from "@oidfed/core";
 
+// 1. Generate keys and key provider
 const keyPair = await generateSigningKey("ES256");
-const keyProvider = new MemoryFederationKeyProvider(federationKey({
-  ...keyPair.privateKey,
-  kid: "key-1",
-}));
+const keyProvider = new MemoryFederationKeyProvider({
+  signer: new JwkSigner(keyPair.privateKey),
+  publicJwk: keyPair.publicKey
+});
 
+const storage = new MemoryStorageAdapter({ trustMarks: true });
+
+// 2. Initialize a Trust Anchor (no authorityHints)
 const ta = new TrustAnchor({
   entityId: "https://ta.example.org",
   keyProvider,
+  storage,
   metadata: {
     federation_entity: {
       federation_fetch_endpoint: "https://ta.example.org/federation_fetch",
       federation_list_endpoint: "https://ta.example.org/federation_list",
-      federation_resolve_endpoint: "https://ta.example.org/federation_resolve",
-    },
-  },
-  storage: new MemoryStorageAdapter(),
+      federation_resolve_endpoint: "https://ta.example.org/federation_resolve"
+    }
+  }
 });
+
+// 3. Initialize an Intermediate (requires authorityHints)
+const intermediate = new Intermediate({
+  entityId: "https://intermediate.example.org",
+  keyProvider,
+  storage,
+  authorityHints: ["https://ta.example.org"],
+  metadata: {
+    federation_entity: {
+      federation_fetch_endpoint: "https://intermediate.example.org/federation_fetch",
+      federation_list_endpoint: "https://intermediate.example.org/federation_list"
+    }
+  }
+});
+```
+
+---
+
+### Enrolling and Managing Subordinates
+Authorities attest to subordinate entities by issuing Subordinate Statements. Because subordinates own their own operational endpoints, their `metadata.federation_entity` must be sanitized to strip operational endpoints (e.g. `federation_fetch_endpoint`) before enrollment.
+
+```ts
+import { sanitizeSubordinateMetadata } from "@oidfed/authority";
+import { entityId } from "@oidfed/core";
+
+const subordinateId = entityId("https://leaf.example.com");
+
+// Sanitize metadata to strip operational fields
+const rawMetadata = {
+  federation_entity: {
+    name: "Example Leaf Entity",
+    federation_fetch_endpoint: "https://leaf.example.com/fetch" // Will be stripped
+  }
+};
+const sanitized = sanitizeSubordinateMetadata(rawMetadata);
+
+// Add the record directly using your storage adapter reference
+await storage.subordinates.add({
+  entityId: subordinateId,
+  jwks: {
+    keys: [subordinatePublicKey]
+  },
+  metadata: sanitized,
+  createdAt: Math.floor(Date.now() / 1000),
+  updatedAt: Math.floor(Date.now() / 1000)
+});
+```
+
+---
+
+### Plugging a Custom Storage Adapter
+Persistence is decoupled via the `StorageAdapter` interface. You can inject custom databases by implementing this contract.
+
+```ts
+import type { StorageAdapter, SubordinateStorage, StorageTransaction } from "@oidfed/authority";
+
+class CustomStorageAdapter implements StorageAdapter {
+  readonly subordinates: SubordinateStorage;
+
+  constructor() {
+    this.subordinates = {
+      async get(entityId) { /* Retrieve from DB */ return undefined; },
+      async list(filter, options) { /* Return paginated items */ return { items: [] }; },
+      async add(record) { /* Insert into DB */ },
+      async update(entityId, updates) { /* Update record in DB */ },
+      async remove(entityId) { /* Delete from DB */ }
+    };
+  }
+
+  async transaction<T>(operation: (tx: StorageTransaction) => Promise<T>): Promise<T> {
+    const tx: StorageTransaction = { subordinates: this.subordinates };
+    return operation(tx);
+  }
+}
+```
+
+---
+
+### Federation Key Rotation
+Federation signing keys are managed by the `ManagedFederationKeyProvider`. The authority supports dynamic signing key rotations and records the history for the historical keys endpoint.
+
+```ts
+import { rotateKey } from "@oidfed/authority";
+import { generateSigningKey, JwkSigner } from "@oidfed/core";
+
+// Generate new rotation key
+const nextKeyPair = await generateSigningKey("ES256");
+const newSigningKey = {
+  signer: new JwkSigner(nextKeyPair.privateKey),
+  publicJwk: nextKeyPair.publicKey
+};
+
+// Rotate active key
+await rotateKey(keyProvider, newSigningKey, {
+  removeAfterMs: 7 * 24 * 60 * 60 * 1000 // Keep retired key for 7 days (relative duration in ms)
+});
+```
+
+---
+
+### Issuing and Revoking Trust Marks
+Trust Anchors can issue and track Trust Marks to indicate subordinate compliance with federation profiles.
+
+```ts
+// 1. Issue a trust mark
+const trustMarkJwt = await ta.issueTrustMark(
+  "https://leaf.example.com",
+  "https://profile.example.org/bronze"
+);
+
+// 2. Revoke an issued trust mark via the storage adapter reference
+await storage.trustMarks?.revoke(
+  "https://profile.example.org/bronze",
+  "https://leaf.example.com",
+  Math.floor(Date.now() / 1000)
+);
+```
+
+---
+
+### HTTP Routing and Request Handling
+Both `TrustAnchor` and `Intermediate` provide a `handleRequest` method that parses standard Web API `Request` objects and returns `Response` objects.
+
+```ts
+import express from "express";
 
 const app = express();
+
 app.use(async (req, res) => {
-  const request = new Request(`https://${req.headers.host}${req.url}`, {
+  // Translate Express request to Web standard Request
+  const webRequest = new Request(`https://${req.headers.host}${req.url}`, {
     method: req.method,
     headers: req.headers as any,
-    body: req.method !== "GET" && req.method !== "HEAD" ? req : undefined,
+    body: req.method !== "GET" && req.method !== "HEAD" ? req : undefined
   });
 
-  const response = await ta.handleRequest(request);
-  res.status(response.status);
-  response.headers.forEach((value, key) => res.setHeader(key, value));
-  res.send(await response.text());
+  const webResponse = await ta.handleRequest(webRequest);
+
+  res.status(webResponse.status);
+  webResponse.headers.forEach((value, key) => res.setHeader(key, value));
+  res.send(await webResponse.text());
 });
 ```
 
-## API
+---
 
-### TrustAnchor & Intermediate Classes
+## Configuration API Reference
 
-```ts
-import { TrustAnchor, Intermediate } from "@oidfed/authority";
-import type { AuthorityConfig } from "@oidfed/authority";
-```
+When constructing a `TrustAnchor` or `Intermediate`, you pass an `AuthorityConfig` configuration object.
 
-`new TrustAnchor(config)` and `new Intermediate(config)` return the authority entity instances:
+| Configuration Field | Type | Required | Description & Constraints |
+|:---|:---|:---|:---|
+| `entityId` | `EntityId \| string` | **Yes** | The entity identifier URL for this authority. Must be a valid HTTPS URL without query parameters or fragments. |
+| `metadata` | `object` | **Yes** | Metadata block published in the authority's self-signed configuration. Must include a `federation_entity` sub-object. No leaf value within the metadata may be `null`. |
+| `storage` | `StorageAdapter` | **Yes** | Persistence adapter for subordinates, trust marks, cache, and replays. |
+| `keyProvider` | `ManagedFederationKeyProvider`| **Yes** | Key provider managing active federation signing keys and key history (e.g., `MemoryFederationKeyProvider` implements `ManagedFederationKeyProvider`). |
+| `authorityHints` | `readonly (EntityId \| string)[]` | *Conditional* | List of superior authorities this entity is subordinate to. Must be `undefined` or omitted for a `TrustAnchor`. Must be a non-empty array for an `Intermediate`. |
+| `roles` | `EntityRole[]` | No | Optional composition roles (like OIDC Provider or Relying Party roles) bound to this entity context. |
+| `trustMarks` | `TrustMarkRef[]` | No | Trust marks this authority claims about itself in its Entity Configuration. |
+| `trustMarkIssuers` | `Record<string, string[]>` | No | Mapping of trust mark type URLs to authorized issuer entity IDs. Rejected on Intermediates (this implementation throws an error to enforce strict configuration separation, which is stricter than the spec's "MUST be ignored" rule). |
+| `trustMarkOwners` | `Record<string, TrustMarkOwner>`| No | Mapping of trust mark type URLs to owner declarations. Rejected on Intermediates (this implementation throws an error to enforce strict configuration separation, which is stricter than the spec's "MUST be ignored" rule). |
+| `trustMarkDelegations` | `Record<string, string>` | No | Pre-signed trust mark delegation JWTs, keyed by trust mark type. |
+| `trustAnchors` | `TrustAnchorSet` | No | Configured trust anchors used for validating chains (e.g. during RP registration). |
+| `entityConfigurationTtlSeconds`| `number` | No | TTL in seconds for the Entity Configuration JWT. Must be positive if defined. |
+| `subordinateStatementTtlSeconds`| `number` | No | TTL in seconds for subordinate statement JWTs. Must be positive if defined. |
+| `trustMarkTtlSeconds` | `number` | No | TTL in seconds for issued trust marks. Must be positive if defined. |
+| `options` | `Omit<FederationOptions, "cache">`| No | Core federation options (e.g. custom clock skew, http timeouts, etc.). |
+| `extendedListing` | `ExtendedListingConfig` | No | Configuration for `/federation_extended_list`. Can set `enabled: false` to disable. |
 
-```ts
-export class TrustAnchor {
-  constructor(config: AuthorityConfig);
-  entityId: EntityId;
-  getEntityConfiguration(): Promise<string>;
-  getSubordinateStatement(sub: EntityId): Promise<string>;
-  listSubordinates(filter?: ListFilter): Promise<EntityId[]>;
-  listSubordinatesExtended(
-    params?: ExtendedListInProcessParams,
-  ): Promise<Result<ExtendedListInProcessResult, FederationError>>;
-  resolveEntity(sub: EntityId, ta?: EntityId): Promise<string>;
-  getTrustMarkStatus(trustMark: string): Promise<TrustMarkStatusResponsePayload>;
-  listTrustMarkedEntities(trustMarkType: string): Promise<string[]>;
-  issueTrustMark(sub: string, trustMarkType: string): Promise<string>;
-  issueTrustMarkDelegation(subject: string, trustMarkType: string): Promise<string>;
-  getHistoricalKeys(): Promise<string>;
-  rotateSigningKey(newKey: FederationSigningKey): Promise<void>;
-  handleRequest(request: Request): Promise<Response>;
-}
+### Extended Listing Config Options
+The `extendedListing` configuration object supports the following fields:
+- `enabled` (`boolean`): Whether the `/federation_extended_list` endpoint is active. Defaults to `true`.
+- `maxPageSize` (`number`): Upper limit on page sizes. Defaults to `500`.
+- `defaultPageSize` (`number`): Default page size if client omits the `limit` query. Defaults to `100`.
+- `supportTimeFilters` (`boolean`): Whether to honor `updated_after` and `updated_before` queries. Defaults to `true`.
+- `supportAuditTimestamps` (`boolean`): Whether to honor `audit_timestamps` query. Defaults to `true`.
+- `defaultClaims` (`ReadonlyArray<string>`): Claims fetched when the client sends no `claims` query. Defaults to `["subordinate_statement"]`.
+- `maxStorePagesPerRequest` (`number`): Maximum index page lookups allowed per request to protect performance. Defaults to `16`.
+- `storeBatchSize` (`number`): Page batch sizes retrieved during filtering. Defaults to `defaultPageSize`.
 
-export class Intermediate {
-  constructor(config: AuthorityConfig);
-  entityId: EntityId;
-  getEntityConfiguration(): Promise<string>;
-  getSubordinateStatement(sub: EntityId): Promise<string>;
-  listSubordinates(filter?: ListFilter): Promise<EntityId[]>;
-  listSubordinatesExtended(
-    params?: ExtendedListInProcessParams,
-  ): Promise<Result<ExtendedListInProcessResult, FederationError>>;
-  resolveEntity(sub: EntityId, ta?: EntityId): Promise<string>;
-  getTrustMarkStatus(trustMark: string): Promise<TrustMarkStatusResponsePayload>;
-  listTrustMarkedEntities(trustMarkType: string): Promise<string[]>;
-  issueTrustMark(sub: string, trustMarkType: string): Promise<string>;
-  issueTrustMarkDelegation(subject: string, trustMarkType: string): Promise<string>;
-  getHistoricalKeys(): Promise<string>;
-  rotateSigningKey(newKey: FederationSigningKey): Promise<void>;
-  handleRequest(request: Request): Promise<Response>;
-}
-```
+---
 
-`handleRequest()` routes all spec-defined federation endpoints:
+## Frequently Asked Questions (FAQ)
 
-| Path | Method | Description |
-|------|--------|-------------|
-| `/.well-known/openid-federation` | GET | Entity Configuration |
-| `/federation_fetch` | GET | Subordinate Statement |
-| `/federation_list` | GET | List subordinates |
-| `/federation_extended_list` | GET | Paginated subordinate listing with audit timestamps and bulk claim retrieval |
-| `/federation_resolve` | GET | Resolve trust chain |
-| `/federation_trust_mark_status` | POST | Trust mark validity |
-| `/federation_trust_mark_list` | GET | Entities with trust mark |
-| `/federation_trust_mark` | GET | Issue trust mark |
-| `/federation_historical_keys` | GET | Historical federation signing keys |
+### Q: What is the difference between `TrustAnchor` and `Intermediate`?
+**A:** A `TrustAnchor` represents a root of trust and cannot specify `authorityHints`. An `Intermediate` is a subordinate authority that must list at least one superior authority in `authorityHints`. Intermediates also cannot carry `trustMarkIssuers` or `trustMarkOwners` metadata block configurations since those claims are reserved for Trust Anchors.
 
-Explicit registration (`/federation_registration`, section 12) is not routed natively by `TrustAnchor`. Mount `FedOidcProvider` or `FedOidcClient` from `@oidfed/oidc` via `roles` composition to enable OIDC federation endpoints automatically.
+### Q: How do I enroll a subordinate entity?
+**A:** Subordinates are added directly to the subordinates store using the storage adapter: `await storage.subordinates.add(record)`.
 
-### Unified Storage Adapter
+### Q: Why does `validateSubordinateRecord` reject my metadata?
+**A:** A subordinate's metadata block in the storage record must not carry operational fields (such as `federation_fetch_endpoint` or `federation_list_endpoint`) inside `metadata.federation_entity`. Use the `sanitizeSubordinateMetadata(metadata)` helper to strip these fields before calling `.add()` or `.update()`.
 
-`@oidfed/authority` accepts one adapter for all non-key persistence. Federation signing and public-key publication remain exclusively behind `ManagedFederationKeyProvider`.
-
-```ts
-import { MemoryStorageAdapter } from "@oidfed/authority";
-import type {
-  StorageAdapter,
-  StorageTransaction,
-  SubordinateStorage,
-  TrustMarkStorage,
-} from "@oidfed/authority";
-import type { CacheProvider, ReplayStore } from "@oidfed/core";
-```
-
-```ts
-interface StorageAdapter {
-  readonly subordinates: SubordinateStorage;
-  readonly trustMarks?: TrustMarkStorage;
-  readonly replay?: ReplayStore;
-  readonly cache?: CacheProvider;
-  transaction<T>(operation: (tx: StorageTransaction) => Promise<T>): Promise<T>;
-}
-```
-
-Transactions include only authoritative authority records. Replay claims are independently atomic and cache entries are non-authoritative. Transaction callbacks may be retried, so signing and external side effects must happen outside them.
-
-`MemoryStorageAdapter` always supplies subordinate, replay, and cache capabilities. Trust marks are opt-in with `{ trustMarks: true }`. The memory adapter is only for development and tests.
-
-`SubordinateRecord.entityId`, `createdAt`, and `updatedAt` are adapter-managed and excluded from `SubordinateRecordUpdate`. Subordinate pages are ordered lexicographically by `entityId`; their inclusive cursor identifies the first unreturned entity. Trust-mark pages are ordered by subject and use the same inclusive cursor rule.
-
-### Federation Key Provider
-
-Authorities sign federation artifacts only, using federation keys only.
-
-```ts
-import type {
-  FederationSigningKey,
-  ManagedFederationKeyProvider,
-} from "@oidfed/core";
-```
-
-`AuthorityConfig.keyProvider` must be a `ManagedFederationKeyProvider`. It is responsible for:
-
-- providing the active signer used for Entity Configurations, subordinate statements, resolve responses, trust marks, trust mark status responses, and historical-keys responses
-- publishing the federation public keys that appear in top-level Entity Statement `jwks`
-- tracking historical federation key state for `/federation_historical_keys`
-
-### Extended Subordinate Listing
-
-The `/federation_extended_list` endpoint implements the OpenID Federation Extended Subordinate Listing specification. It is enabled by default and configurable per authority:
-
-```ts
-const ta = new TrustAnchor({
-  // ...
-  metadata: {
-    federation_entity: {
-      federation_fetch_endpoint: "https://ta.example.org/federation_fetch",
-      federation_list_endpoint: "https://ta.example.org/federation_list",
-      federation_extended_list_endpoint: "https://ta.example.org/federation_extended_list",
-    },
-  },
-  storage: new MemoryStorageAdapter(),
-  extendedListing: {
-    enabled: true,
-    defaultPageSize: 100,
-    maxPageSize: 500,
-    supportTimeFilters: true,
-    supportAuditTimestamps: true,
-    defaultClaims: ["subordinate_statement"],
-    maxStorePagesPerRequest: 16,
-    storeBatchSize: 100,
-  },
-});
-```
-
-The request parameters, pagination, and error semantics remain as documented by the endpoint behavior in the package tests and guide. Production subordinate stores must return deterministic ordering and correct `nextCursor` semantics.
-
-## Configuration
-
-`AuthorityConfig` fields:
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `entityId` | `EntityId \| string` | — | Required. This authority's entity identifier |
-| `keyProvider` | `ManagedFederationKeyProvider` | — | Required. Federation signer selection, public-key publication, and key lifecycle |
-| `metadata` | `object` | — | Required. Must include `federation_entity` |
-| `storage` | `StorageAdapter` | — | Required. Unified non-key persistence, replay, cache, and transactions |
-| `roles` | `EntityRole[]` | — | Array of composition roles (e.g. OIDC Client/Provider roles) bound to this entity |
-| `trustMarks` | `TrustMarkRef[]` | — | Trust marks this authority claims about itself |
-| `trustMarkIssuers` | `Record<string, string[]>` | — | Trust mark type to authorized issuer IDs |
-| `trustMarkOwners` | `Record<string, TrustMarkOwner>` | — | Delegated trust mark owners |
-| `trustMarkDelegations` | `Record<string, string>` | — | Pre-signed delegation JWTs |
-| `authorityHints` | `readonly (EntityId \| string)[]` | — | Omit for Trust Anchors; required for Intermediates |
-| `trustAnchors` | `TrustAnchorSet` | — | Used for chain resolution |
-| `entityConfigurationTtlSeconds` | `number` | — | Entity Configuration JWT lifetime |
-| `subordinateStatementTtlSeconds` | `number` | — | Subordinate Statement JWT lifetime |
-| `trustMarkTtlSeconds` | `number` | — | Issued trust mark lifetime |
-| `options` | `Omit<FederationOptions, "cache">` | — | Core options; authority cache comes from `storage.cache` |
-| `extendedListing` | `ExtendedListingConfig` | endpoint enabled, `maxPageSize=500`, `defaultPageSize=100` | Per-authority configuration for `/federation_extended_list` |
+### Q: Is explicit client registration handled automatically?
+**A:** No. `handleRequest()` handles only core federation endpoints (fetch, list, resolve, historical keys, trust mark status, etc.). To handle OIDC explicit client registration, you must mount OIDC role adapters (e.g. from `@oidfed/oidc`) to bind `roles` on the entity context.

@@ -1,305 +1,258 @@
-# @oidfed/core
+# `@oidfed/core`
 
-Federation primitives for JavaScript — entity statements, trust chain resolution, metadata policy, cryptographic verification, and federation signing abstractions. The foundational layer of the complete OpenID Federation 1.0 implementation.
+Federation primitives for JavaScript — entity statements, trust chain resolution, metadata policy, cryptographic verification, and federation signing abstractions. This is the foundational layer of the OpenID Federation 1.0/1.1 implementation.
 
-## Role
+## Overview
 
-Provides trust chain resolution and validation, JOSE operations, metadata policy, typed schemas, caching, trust mark support, and federation signing/key-provider primitives. Use directly when you need federation logic without OIDC-specific code. Serves as the foundation for `@oidfed/authority`, `@oidfed/leaf`, and `@oidfed/oidc`.
+The `@oidfed/core` package provides the low-level building blocks required to interact with an OpenID Federation. It encapsulates key parsing, signature verification, HTTP discovery workflows, constraint enforcement, and hierarchical metadata policy merges. It maintains zero dependencies on OIDC-specific presentation logic, making it suitable for any federation client, authority server, or intermediate node.
 
-## Install
+---
 
-```bash
-pnpm add @oidfed/core
-```
+## Capabilities & Usage Guide
 
-## API
-
-### Result Type
+### 1. Functional Error Management (`Result`)
+To avoid side-effects from uncaught exceptions, the library encapsulates operations in a serializable, structurally typed `Result<T, E>` wrapper. 
 
 ```ts
-import { ok, err, isOk, isErr, map, flatMap, unwrapOr, federationError } from "@oidfed/core";
+import { ok, err, isOk, federationError } from "@oidfed/core";
 import type { Result, FederationError } from "@oidfed/core";
+
+function parsePort(portStr: string): Result<number, FederationError> {
+  const parsed = Number.parseInt(portStr, 10);
+  if (Number.isNaN(parsed)) {
+    return err(federationError("invalid_request", "Port must be a valid number"));
+  }
+  return ok(parsed);
+}
+
+const res = parsePort("8080");
+if (isOk(res)) {
+  console.log("Success:", res.value); // 8080
+} else {
+  console.error("Failed:", res.error.description);
+}
 ```
 
-Error codes: `FederationErrorCode` (spec-defined) and `InternalErrorCode` (implementation-specific).
+---
 
-### Entity IDs
+### 2. Entity Identifiers (`EntityId`)
+Validates that strings conform to OpenID Federation rules: must be valid URLs using the `https` scheme, without fragment or query components, and under 2048 characters. Per Section 3.1.2 of the OpenID Federation 1.0 specification, the `authority_hints` list of immediate superiors must not be empty `[]` and must not be present in the configurations of Trust Anchors with no superiors.
 
 ```ts
 import { entityId, isValidEntityId } from "@oidfed/core";
 import type { EntityId } from "@oidfed/core";
-```
 
-```ts
+// Safely brand a string as an EntityId (throws TypeError on invalid formats)
 const id: EntityId = entityId("https://op.example.com");
-// Throws TypeError if not a valid HTTPS URL (no credentials, query, or fragment)
 
-if (isValidEntityId("https://valid.example.com")) {
-  // type narrows to EntityId
+// Check validity without throwing exceptions
+if (isValidEntityId("https://client.example.com?query=true")) {
+  // Prohibited: contains a query component
 }
 ```
 
-### Trust Chain Resolution
+---
+
+### 3. HTTP Discovery and Fetching
+Provides HTTP fetching primitives equipped with SSRF protection (IP address validation blocking special-use ranges like loopback and private networks) to retrieve configurations and statements.
 
 ```ts
-import {
-  resolveTrustChains,
-  validateTrustChain,
-  fetchEntityConfiguration,
-  fetchSubordinateStatement,
-  createConcurrencyLimiter,
-  createTrustAnchorSet,
-} from "@oidfed/core";
-import type {
-  TrustAnchorSet,
-  TrustChainResult,
-  ValidatedTrustChain,
-  FederationOptions,
-} from "@oidfed/core";
+import { fetchEntityConfiguration, fetchSubordinateStatement, entityId } from "@oidfed/core";
+
+const target = entityId("https://leaf.example.com");
+
+// Fetch the self-signed Entity Configuration from its well-known endpoint
+const ecResult = await fetchEntityConfiguration(target, {
+  httpTimeoutMs: 5000,
+  clockSkewSeconds: 60
+});
+
+if (ecResult.ok) {
+  console.log("Entity Configuration JWT:", ecResult.value);
+}
 ```
 
+---
+
+### 4. JOSE & Cryptographic Signing
+Implements signing, decoding, and signature verification on entity statements using cryptographic key adapters.
+
 ```ts
+import { generateSigningKey, signEntityStatement, verifyEntityStatement, JwkSigner } from "@oidfed/core";
+import type { JwtSigner } from "@oidfed/core";
+
+const keyPair = await generateSigningKey("ES256");
+const signer: JwtSigner = new JwkSigner(keyPair.privateKey);
+
+const payload = {
+  iss: "https://leaf.example.com",
+  sub: "https://leaf.example.com",
+  iat: Math.floor(Date.now() / 1000),
+  exp: Math.floor(Date.now() / 1000) + 3600,
+  metadata: {}
+};
+
+// Sign statement
+const signedJwt = await signEntityStatement(payload, signer);
+
+// Verify statement
+const result = await verifyEntityStatement(signedJwt, {
+  keys: [keyPair.publicKey]
+});
+```
+
+---
+
+### 5. Trust Chain Discovery & Validation
+Finds trust paths from a leaf entity to configured Trust Anchors, validates each link's signature/expiration, and resolves the final metadata.
+
+```ts
+import { resolveTrustChains, validateTrustChain, createTrustAnchorSet, entityId } from "@oidfed/core";
+
 const trustAnchors = createTrustAnchorSet([
-  { entityId: entityId("https://ta.example.org"), jwks: { keys: [taKey] } },
+  {
+    entityId: entityId("https://ta.example.org"),
+    jwks: { keys: [taPublicKey] }
+  }
 ]);
 
-
-const result = await resolveTrustChains(
+// 1. Resolve trust chain candidates
+const resolution = await resolveTrustChains(
   entityId("https://leaf.example.com"),
-  trustAnchors,
-  { httpClient: fetch, maxChainDepth: 8, clockSkewSeconds: 60 },
+  trustAnchors
 );
 
-for (const chain of result.chains) {
-  const validated = await validateTrustChain(chain.statements, trustAnchors, options);
-  if (validated.valid) {
-    console.log(validated.chain.resolvedMetadata);
-    console.log("Expires:", new Date(validated.chain.expiresAt * 1000));
+// 2. Validate chain signature continuity and resolve policy
+for (const chain of resolution.chains) {
+  const validation = await validateTrustChain(chain.statements, trustAnchors);
+  if (validation.valid) {
+    console.log("Validated Metadata:", validation.chain.resolvedMetadata);
+    console.log("Chain Expiry:", new Date(validation.chain.expiresAt * 1000));
   }
 }
 ```
 
-### Trust Chain Selection & Utilities
+---
+
+### 6. Metadata Policy Resolution
+Merges policy trees resolved from intermediate subordinates in a chain and applies them to metadata properties. It fully supports standard operators defined in Section 6.1.3.1 of the specification: `value`, `default`, `one_of`, `subset_of`, `superset_of`, `add`, and `essential`.
 
 ```ts
-import {
-  shortestChain,
-  longestExpiry,
-  preferTrustAnchor,
-  isChainExpired,
-  chainRemainingTtl,
-  describeTrustChain,
-} from "@oidfed/core";
-import type { ChainSelectionStrategy } from "@oidfed/core";
-```
+import { resolveMetadataPolicy, applyMetadataPolicy } from "@oidfed/core";
 
-### Trust Chain Refresh
+const anchorPolicy = {
+  openid_relying_party: {
+    contacts: { essential: true }
+  }
+};
 
-```ts
-import { refreshTrustChain } from "@oidfed/core";
-import type { RefreshOptions } from "@oidfed/core";
-```
+const subordinatePolicy = {
+  openid_relying_party: {
+    contacts: { add: ["admin@intermediate.org"] }
+  }
+};
 
-### JOSE and Federation Signing
+// Resolve the policy chain
+const policyResult = resolveMetadataPolicy([anchorPolicy, subordinatePolicy]);
 
-```ts
-import {
-  generateSigningKey,
-  signEntityStatement,
-  verifyEntityStatement,
-  decodeEntityStatement,
-  selectVerificationKey,
-  assertTypHeader,
-  verifyClientAssertion,
-  JwkSigner,
-} from "@oidfed/core";
-import type { JwtSigner, VerifiedClientAssertion } from "@oidfed/core";
-```
-
-`JwtSigner` is the low-level signing boundary for compact JWT production:
-
-```ts
-interface JwtSigner {
-  readonly kid: string;
-  readonly alg: SupportedAlgorithm;
-  signJwt(
-    payload: Uint8Array,
-    protectedHeader: Readonly<Record<string, unknown>>,
-  ): Promise<string>;
+if (policyResult.ok) {
+  // Apply the resolved policy to raw metadata
+  const finalMetadata = applyMetadataPolicy(rawMetadata, policyResult.value);
 }
 ```
 
-`JwkSigner` is the built-in software-key implementation. It is backed entirely by `jose`, so the package stays runtime-agnostic and does not ship a packaged Web Crypto signer implementation.
+---
+
+### 7. Entity Constraints Enforcer
+Enforces path length limitations and naming constraints (permitted and excluded domains) along the trust chain.
 
 ```ts
-const keyPair = await generateSigningKey("ES256");
-const signer: JwtSigner = new JwkSigner(keyPair.privateKey);
+import { checkConstraints } from "@oidfed/core";
 
-const jwt = await signEntityStatement(payload, signer);
-const verified = await verifyEntityStatement(jwt, { keys: [keyPair.publicKey] });
-const decoded = decodeEntityStatement(jwt);
-```
+const constraints = {
+  max_path_length: 2,
+  naming_constraints: {
+    permitted: [".org", ".example.com"]
+  }
+};
 
-### Federation Key Providers
-
-Federation entity keys are distinct from OIDC/OAuth protocol keys. `@oidfed/core` owns federation signing and federation public-key publication through provider types:
-
-```ts
-import {
-  JwkSigner,
-  MemoryFederationKeyProvider,
-  StaticFederationKeyProvider,
-} from "@oidfed/core";
-import type {
-  FederationKeyProvider,
-  FederationKeySet,
-  FederationSigningKey,
-  ManagedFederationKeyProvider,
-} from "@oidfed/core";
-```
-
-```ts
-interface FederationKeySet {
-  readonly signer: JwtSigner;
-  readonly jwks: JWKSet;
-}
-
-interface FederationSigningKey {
-  readonly signer: JwtSigner;
-  readonly publicJwk: JWK;
+// Depth level 1 check
+const constraintsResult = checkConstraints(constraints, 1, parsedStatements);
+if (constraintsResult.ok) {
+  // Satisfies all path and domain restrictions
 }
 ```
 
-Use `StaticFederationKeyProvider` when the active federation signer and published JWKS are externally managed. Use `MemoryFederationKeyProvider` for in-memory rotation flows and tests.
+---
+
+### 8. Federation Key Providers
+Manages signing configurations and public JWKS publications for federation entities, supporting rotation schedules.
 
 ```ts
-const keyPair = await generateSigningKey("ES256");
+import { MemoryFederationKeyProvider, JwkSigner } from "@oidfed/core";
 
-const keyProvider: ManagedFederationKeyProvider = new MemoryFederationKeyProvider({
-  signer: new JwkSigner(keyPair.privateKey),
-  publicJwk: keyPair.publicKey,
+const keyProvider = new MemoryFederationKeyProvider({
+  signer: new JwkSigner(activePrivateKey),
+  publicJwk: activePublicKey
 });
 
-const keySet = await keyProvider.getFederationKeySet();
-console.log(keySet.signer.kid);
-console.log(keySet.jwks.keys);
+// Retrieve current signing configuration and published keys
+const { signer, jwks } = await keyProvider.getFederationKeySet();
 ```
 
-Managed providers own federation key lifecycle:
+---
 
-```ts
-await keyProvider.addKey({
-  signer: new JwkSigner(nextKeyPair.privateKey),
-  publicJwk: nextKeyPair.publicKey,
-});
-await keyProvider.activateKey(nextKeyPair.privateKey.kid!);
-await keyProvider.retireKey(currentKid, Date.now() + 7 * 24 * 60 * 60 * 1000);
-```
-
-Federation key lifecycle scheduling uses Unix epoch **milliseconds**. `MemoryFederationKeyProviderOptions.nowMs` and `retireKey(..., removeAfterMs)` are deliberately named to distinguish this operational schedule from the seconds-based protocol `Clock`.
-
-The federation provider is the source of truth for published federation public keys. Generic signers do not publish keys themselves.
-
-### Schemas
-
-```ts
-import {
-  EntityConfigurationSchema,
-  SubordinateStatementSchema,
-  EntityStatementPayloadSchema,
-  FederationMetadataSchema,
-  FederationEntityMetadataSchema,
-  JWKSchema,
-  JWKSetSchema,
-  TrustMarkPayloadSchema,
-} from "@oidfed/core";
-```
-
-`openid_relying_party` and `openid_provider` fields in core schemas are `z.record()` (loose). For typed OIDC validation and the `ExplicitRegistrationRequestPayloadSchema` / `ExplicitRegistrationResponsePayloadSchema` schemas, use `@oidfed/oidc`.
-
-### Metadata Policy
-
-```ts
-import { resolveMetadataPolicy, applyMetadataPolicy, StandardPolicyOperator } from "@oidfed/core";
-import type { ResolvedMetadataPolicy, PolicyMergeResult } from "@oidfed/core";
-
-// Reference standard policy operators type-safely
-const operator = StandardPolicyOperator.VALUE; // "value"
-```
-
-`resolveMetadataPolicy` merges policies from a chain's statements into `Result<ResolvedMetadataPolicy, FederationError>`.
-`applyMetadataPolicy` applies the merged policy to entity metadata into `Result<FederationMetadata, FederationError>`.
-
-### Constraints
-
-```ts
-import {
-  checkConstraints,
-  checkMaxPathLength,
-  checkNamingConstraints,
-  applyAllowedEntityTypes,
-} from "@oidfed/core";
-```
-
-### Federation API Verification
-
-```ts
-import {
-  verifyHistoricalKeysResponse,
-  verifyResolveResponse,
-  verifyTrustMarkStatusResponse,
-} from "@oidfed/core";
-```
-
-### Caching
-
-```ts
-import { MemoryCache, ecCacheKey, esCacheKey, chainCacheKey } from "@oidfed/core";
-import type { CacheProvider, MemoryCacheOptions } from "@oidfed/core";
-```
-
-```ts
-const cache = new MemoryCache({ maxEntries: 1000 });
-
-const ecKey = await ecCacheKey(entityId("https://example.com"));
-const esKey = await esCacheKey(issuer, subject);
-const chainKey = await chainCacheKey(entityId, trustAnchorId);
-```
-
-`MemoryCache` and `CacheProvider` TTL values use seconds. An injected `MemoryCacheOptions.clock` must return NumericDate seconds.
-
-### Trust Marks
-
-```ts
-import { validateTrustMark, signTrustMarkDelegation } from "@oidfed/core";
-import type { ValidatedTrustMark, ValidatedTrustMarkDelegation } from "@oidfed/core";
-```
-
-### Replay Store
+### 9. Replay Protection (`ReplayStore`)
+Enforces message uniqueness by checking transaction identifiers (`jti`) within token validation loops.
 
 ```ts
 import { MemoryReplayStore } from "@oidfed/core";
-import type { JtiReplayClaim, ReplayStore } from "@oidfed/core";
+
+const store = new MemoryReplayStore({ maxEntries: 1000 });
+
+const isNew = await store.useJti({
+  issuer: "https://issuer.example.com",
+  audience: "https://audience.example.com",
+  jti: "jti-id-7890",
+  expiresAt: Math.floor(Date.now() / 1000) + 600
+});
+
+if (!isNew) {
+  console.warn("Replay detected");
+}
 ```
 
-The `RegistrationProtocolAdapter` interface and the `OIDCRegistrationAdapter` implementation are exported from [`@oidfed/oidc`](./oidc.md#registration-adapter), not from this package.
+---
 
-`ReplayStore.useJti({ issuer, audience, jti, expiresAt })` atomically returns `true` for a newly accepted claim and `false` for replay. Issuer and audience are part of the identity so shared deployments do not create cross-tenant collisions. `MemoryReplayStore` is development-only and fails closed when its capacity is full. See the [Storage Guide](../guide/storage-guide.md) for production implementations.
+### 10. Memory Cache
+Implements in-memory cache helpers using standard TTL parameters (seconds) to cache entity configurations and trust chains.
 
-## Configuration
+```ts
+import { MemoryCache, ecCacheKey } from "@oidfed/core";
+import { entityId } from "@oidfed/core";
 
-`FederationOptions` controls all configurable behavior:
+const cache = new MemoryCache({ maxEntries: 100 });
+const key = await ecCacheKey(entityId("https://example.com"));
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `httpClient` | `HttpClient` | — | Fetch-compatible HTTP client |
-| `clock` | `Clock` | current time | Unix NumericDate clock in seconds, used for generation, expiry, and JOSE verification |
-| `cache` | `CacheProvider` | — | Cache implementation |
-| `logger` | `Logger` | — | Structured logger |
-| `httpTimeoutMs` | `number` | `10000` | HTTP request timeout (ms) |
-| `clockSkewSeconds` | `number` | `60` | Allowed clock drift |
-| `maxChainDepth` | `number` | `8` | Maximum trust chain length |
-| `maxAuthorityHints` | `number` | `10` | Max authority hints per entity |
-| `maxConcurrentFetches` | `number` | — | Concurrent HTTP fetch limit |
-| `maxConcurrentResolutions` | `number` | — | Concurrent chain resolution limit |
-| `cacheMaxTtlSeconds` | `number` | `86400` | Maximum cache entry TTL |
+await cache.set(key, "cached-statement-jwt", 3600);
+const cached = await cache.get<string>(key);
+```
+
+---
+
+### 11. Trust Marks
+Provides verification of trust mark assertions, checking signatures and validating their active status.
+
+```ts
+import { validateTrustMark, fetchTrustMarkStatus } from "@oidfed/core";
+
+const validation = await validateTrustMark(rawTrustMarkJwt, trustMarkIssuers, issuerJwks, {
+  expectedSubject: "https://leaf.example.com",
+  trustMarkOwners // Optional dictionary mapping trust mark types to owners for delegation checks
+});
+
+if (validation.ok) {
+  const status = await fetchTrustMarkStatus(validation.value, { httpClient: fetch });
+  console.log("Trust Mark Status:", status);
+}
+```
