@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type { JWK, TrustAnchorSet } from "@oidfed/core";
 import { entityId } from "@oidfed/core";
-import { discoverEntity } from "@oidfed/leaf";
+import { Leaf } from "@oidfed/leaf";
 import type { OidcProtocolKeyProvider } from "@oidfed/oidc";
-import { automaticRegistration } from "@oidfed/oidc";
 import { describe, expect, it } from "vitest";
+import { automaticRegistration } from "../../../packages/oidc/src/registration/automatic.js";
 import { getEntity } from "../helpers/launcher.js";
 import { useFederation } from "../helpers/lifecycle.js";
 import { hierarchicalTopology } from "../topologies/hierarchical.js";
@@ -31,7 +31,7 @@ async function performFederatedAuthRequest(params: {
 	const { rpId, opId, protocolKeyProvider, protocolPublicKey, taId, trustAnchors } = params;
 
 	// 1. Discover OP — must succeed
-	const discoveryResult = await discoverEntity(entityId(opId), trustAnchors);
+	const discoveryResult = await Leaf.discoverEntity(entityId(opId), trustAnchors);
 	expect(discoveryResult.ok).toBe(true);
 	if (!discoveryResult.ok) throw new Error("Discovery failed");
 	const discovery = discoveryResult.value;
@@ -149,7 +149,7 @@ describe("Full OIDC login flow", () => {
 			const opId = `https://op.ofed.test:${port}`;
 			const rpEntity = getEntity(entities, "https://rp.ofed.test");
 
-			const discoveryResult = await discoverEntity(entityId(opId), trustAnchors);
+			const discoveryResult = await Leaf.discoverEntity(entityId(opId), trustAnchors);
 			expect(discoveryResult.ok).toBe(true);
 			if (!discoveryResult.ok) throw new Error("Discovery failed");
 			const discovery = discoveryResult.value;

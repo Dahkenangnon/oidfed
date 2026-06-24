@@ -1,17 +1,13 @@
-export * from "./endpoints/index.js";
-
 export {
 	InvalidAuthorityConfig,
 	InvalidMetadata,
 	InvalidSubordinateRecord,
 	InvalidSubordinateStatementShape,
 } from "./errors.js";
-export {
-	compose,
-	type FederationHandler,
-	type Middleware,
+export type {
+	FederationHandler,
+	Middleware,
 } from "./handler.js";
-export { rotateKey, rotateKeyCompromise } from "./keys/index.js";
 export {
 	type AuthorityConfig,
 	type ExtendedListInProcessParams,
@@ -34,16 +30,4 @@ export {
 	type TrustMarkListPage,
 	type TrustMarkRecord,
 	type TrustMarkStorage,
-	validateSubordinateRecord,
 } from "./storage/index.js";
-export {
-	assertCritShape,
-	assertMetadataPolicyCritShape,
-	assertMetadataPolicyShape,
-	assertMetadataValuesNotNull,
-	assertSubordinateStatementShape,
-	FEDERATION_ENTITY_OPERATIONAL_FIELDS,
-	isFederationEntityOperationalField,
-	SUBORDINATE_STATEMENT_FORBIDDEN_TOP_LEVEL_CLAIMS,
-	sanitizeSubordinateMetadata,
-} from "./utils/subordinate-statement-shape.js";

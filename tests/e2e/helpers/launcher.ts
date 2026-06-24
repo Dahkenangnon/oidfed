@@ -1,10 +1,5 @@
 import type { AuthorityConfig, SubordinateRecord } from "@oidfed/authority";
-import {
-	Intermediate,
-	MemoryStorageAdapter,
-	sanitizeSubordinateMetadata,
-	TrustAnchor,
-} from "@oidfed/authority";
+import { Intermediate, MemoryStorageAdapter, TrustAnchor } from "@oidfed/authority";
 import type { EntityType, FederationKeyProvider, JWK, TrustAnchorSet } from "@oidfed/core";
 import {
 	entityId,
@@ -17,6 +12,7 @@ import { Leaf } from "@oidfed/leaf";
 import type { OidcProtocolKeyProvider } from "@oidfed/oidc";
 import { StaticOidcProtocolKeyProvider } from "@oidfed/oidc";
 import type { Express } from "express";
+import { sanitizeSubordinateMetadata } from "../../../packages/authority/src/utils/subordinate-statement-shape.js";
 import { createAuthorityApp } from "../participants/authority-app.js";
 import {
 	createLeafApp,

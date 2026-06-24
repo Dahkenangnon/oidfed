@@ -102,12 +102,12 @@ Configure time through `options.clock`. Like every core `Clock`, it returns Unix
 ### Discovery
 
 ```ts
-import { discoverEntity } from "@oidfed/leaf";
+import { Leaf } from "@oidfed/leaf";
 import { isOk } from "@oidfed/core";
 ```
 
 ```ts
-const result = await discoverEntity(
+const result = await Leaf.discoverEntity(
   "https://op.example.com",
   trustAnchors,
   { httpClient: fetch },

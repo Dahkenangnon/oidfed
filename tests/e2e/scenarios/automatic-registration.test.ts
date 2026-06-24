@@ -1,7 +1,7 @@
 import { decodeEntityStatement, entityId, isOk } from "@oidfed/core";
-import { discoverEntity } from "@oidfed/leaf";
-import { automaticRegistration } from "@oidfed/oidc";
+import { Leaf } from "@oidfed/leaf";
 import { describe, expect, it } from "vitest";
+import { automaticRegistration } from "../../../packages/oidc/src/registration/automatic.js";
 import { getEntity } from "../helpers/launcher.js";
 import { useFederation } from "../helpers/lifecycle.js";
 import { hierarchicalTopology } from "../topologies/hierarchical.js";
@@ -19,7 +19,7 @@ describe("Automatic registration", () => {
 
 			const rpId = `https://rp.ofed.test:${port}`;
 			const opId = entityId(`https://op.ofed.test:${port}`);
-			const discoveryResult = await discoverEntity(opId, trustAnchors);
+			const discoveryResult = await Leaf.discoverEntity(opId, trustAnchors);
 			expect(discoveryResult.ok).toBe(true);
 			if (!discoveryResult.ok) throw new Error("Discovery failed");
 			const discovery = discoveryResult.value;
@@ -97,7 +97,7 @@ describe("Automatic registration", () => {
 
 			const rpId = `https://rp1.ofed.test:${port}`;
 			const opId = entityId(`https://op-uni.ofed.test:${port}`);
-			const discoveryResult = await discoverEntity(opId, trustAnchors);
+			const discoveryResult = await Leaf.discoverEntity(opId, trustAnchors);
 			expect(discoveryResult.ok).toBe(true);
 			if (!discoveryResult.ok) throw new Error("Discovery failed");
 			const discovery = discoveryResult.value;

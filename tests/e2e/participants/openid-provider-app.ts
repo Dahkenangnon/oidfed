@@ -1,9 +1,10 @@
 import type { EntityId, FederationKeyProvider, JWK, TrustAnchorSet } from "@oidfed/core";
 import { decodeEntityStatement, MemoryReplayStore } from "@oidfed/core";
 import type { Leaf } from "@oidfed/leaf";
-import { createExplicitRegistrationHandler, processAutomaticRegistration } from "@oidfed/oidc";
 import express from "express";
 import Provider from "oidc-provider";
+import { createExplicitRegistrationHandler } from "../../../packages/oidc/src/registration/handler.js";
+import { processAutomaticRegistration } from "../../../packages/oidc/src/registration/process-automatic.js";
 
 export interface OpenIDProviderAppConfig {
 	/** Leaf entity backing the OP's `.well-known/openid-federation` endpoint. */

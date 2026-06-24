@@ -7,6 +7,7 @@ import type {
 	Result,
 	TrustAnchorSet,
 } from "@oidfed/core";
+import { createClientAssertion } from "./client-auth/assertion.js";
 import type { OidcProtocolKeyProvider } from "./protocol-keys.js";
 import {
 	type AutomaticRegistrationResult,
@@ -25,6 +26,8 @@ export interface FedOidcClientConfig {
 }
 
 export class FedOidcClient implements EntityRole {
+	static createClientAssertion = createClientAssertion;
+
 	public readonly type = "openid_relying_party";
 	public readonly metadata: Record<string, unknown>;
 	private context?: EntityContext;
@@ -138,6 +141,8 @@ export interface FedOauthClientConfig {
 }
 
 export class FedOauthClient implements EntityRole {
+	static createClientAssertion = createClientAssertion;
+
 	public readonly type = "oauth_client";
 	public readonly metadata: Record<string, unknown>;
 	private context?: EntityContext;
@@ -238,5 +243,28 @@ export class FedOauthProvider implements EntityRole {
 		});
 
 		this.routes.set(registrationPath, handler);
+	}
+}
+
+export interface FedOauthResourceConfig {
+	readonly metadata?: Record<string, unknown>;
+	readonly jwks?: { keys: any[] };
+}
+
+export class FedOauthResource implements EntityRole {
+	public readonly type = "oauth_resource";
+	public readonly metadata: Record<string, unknown> = {};
+	public readonly routes = new Map<string, (request: Request) => Promise<Response>>();
+	private context?: EntityContext;
+
+	constructor(public readonly config: FedOauthResourceConfig) {
+		this.metadata = config.metadata ?? {};
+		if (config.jwks) {
+			this.metadata.jwks = config.jwks;
+		}
+	}
+
+	initialize(context: EntityContext): void {
+		this.context = context;
 	}
 }

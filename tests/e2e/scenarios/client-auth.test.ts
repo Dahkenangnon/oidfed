@@ -1,5 +1,5 @@
 import { decodeEntityStatement, generateSigningKey, isOk, JwkSigner } from "@oidfed/core";
-import { createClientAssertion } from "@oidfed/oidc";
+import { FedOidcClient } from "@oidfed/oidc";
 import { describe, expect, it } from "vitest";
 import { getEntity } from "../helpers/launcher.js";
 import { useFederation } from "../helpers/lifecycle.js";
@@ -17,7 +17,7 @@ describe("Client authentication", () => {
 			const rpId = `https://rp.ofed.test:${port}`;
 			const opId = `https://op.ofed.test:${port}`;
 
-			const assertion = await createClientAssertion(
+			const assertion = await FedOidcClient.createClientAssertion(
 				rpId,
 				opId,
 				new JwkSigner(rpEntity.keys.protocolSigning),
@@ -66,7 +66,11 @@ describe("Client authentication", () => {
 			const opId = `https://op.ofed.test:${port}`;
 
 			const wrongKey = await generateSigningKey("ES256");
-			const assertion = await createClientAssertion(rpId, opId, new JwkSigner(wrongKey.privateKey));
+			const assertion = await FedOidcClient.createClientAssertion(
+				rpId,
+				opId,
+				new JwkSigner(wrongKey.privateKey),
+			);
 
 			const response = await fetch(`${opId}/token`, {
 				method: "POST",
@@ -92,7 +96,7 @@ describe("Client authentication", () => {
 			const rpId = `https://rp.ofed.test:${port}`;
 			const opId = `https://op.ofed.test:${port}`;
 
-			const assertion = await createClientAssertion(
+			const assertion = await FedOidcClient.createClientAssertion(
 				rpId,
 				opId,
 				new JwkSigner(rpEntity.keys.protocolSigning),

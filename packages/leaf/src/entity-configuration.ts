@@ -17,6 +17,7 @@ import {
 	type TrustMarkRef,
 	validateFederationKeySet,
 } from "@oidfed/core";
+import { discoverEntity } from "./discovery.js";
 
 export interface LeafConfig {
 	entityId: EntityId | string;
@@ -30,6 +31,8 @@ export interface LeafConfig {
 }
 
 export class Leaf {
+	static discoverEntity = discoverEntity;
+
 	public readonly entityId: EntityId;
 	private readonly routes = new Map<string, (request: Request) => Promise<Response>>();
 	private readonly config: LeafConfig;

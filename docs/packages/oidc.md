@@ -79,7 +79,7 @@ const rpRole = new FedOidcClient({
 #### `createAuthorizationRequest(discovery, authzRequestParams, trustAnchors, options?)`
 Creates a signed Request Object and builds authorization parameters/URLs for automatic registration.
 
-- **`discovery`**: A `DiscoveryResult` (returned from `discoverEntity()`).
+- **`discovery`**: A `DiscoveryResult` (returned from `Leaf.discoverEntity()`).
 - **`authzRequestParams`**: Standard authorization request parameters (e.g., `{ scope: "openid", state: "state" }`).
 - **`trustAnchors`**: A `TrustAnchorSet` used to construct and validate trust chains.
 - **`options`**: Optional `FederationOptions` to override clock/httpClient settings.
@@ -183,17 +183,9 @@ const rpEntity = new Leaf({
 
 The resulting Entity Configuration JSON will automatically merge the role's metadata under the matching type key (e.g. `openid_relying_party`). Any incoming requests to the OIDC registration endpoints will be routed by `.handleRequest(request)`.
 
-### Typed OIDC Metadata Schemas
+### Typed OIDC Metadata Types
 
 ```ts
-import {
-  OpenIDRelyingPartyMetadataSchema,
-  OpenIDProviderMetadataSchema,
-  OIDCFederationMetadataSchema,
-  FederationEntityMetadataSchema,
-  FederationMetadataSchema,
-  validateOIDCMetadata,
-} from "@oidfed/oidc";
 import type {
   OpenIDRelyingPartyMetadata,
   OpenIDProviderMetadata,
