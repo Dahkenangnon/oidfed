@@ -6,14 +6,46 @@
 [![install size](https://packagephobia.com/badge?p=@oidfed/authority)](https://packagephobia.com/result?p=@oidfed/authority)
 [![coverage](https://img.shields.io/badge/coverage-%E2%89%A590%25-brightgreen)](https://github.com/Dahkenangnon/oidfed/blob/main/scripts/coverage-check.sh)
 
-Trust Anchor and Intermediate Authority operations — subordinate management, statement issuance, federation endpoint serving, and policy enforcement for the complete [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) implementation.
+<div align="center">
+  <img src="https://raw.githubusercontent.com/Dahkenangnon/oidfed/main/internal/assets/authority.png" alt="@oidfed/authority banner" width="600" />
+</div>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/@oidfed/core">@oidfed/core</a> &nbsp;•&nbsp;
+  <b>@oidfed/authority</b> &nbsp;•&nbsp;
+  <a href="https://www.npmjs.com/package/@oidfed/leaf">@oidfed/leaf</a> &nbsp;•&nbsp;
+  <a href="https://www.npmjs.com/package/@oidfed/oidc">@oidfed/oidc</a> &nbsp;•&nbsp;
+  <a href="https://www.npmjs.com/package/@oidfed/cli">@oidfed/cli</a>
+</p>
+
+Trust Anchor and Intermediate Authority operations — subordinate management, statement issuance, federation endpoint serving, and policy enforcement for the complete OpenID Federation 1.0 implementation.
+
+Implements the final [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) specification and its successor specifications:
+* [OpenID Federation 1.1](https://openid.net/specs/openid-federation-1_1.html) (protocol-independent layer)
+* [OpenID Federation for OpenID Connect 1.1](https://openid.net/specs/openid-federation-connect-1_1.html) (protocol-specific layer)
+* [OpenID Federation Extended Subordinate Listing 1.0](https://openid.net/specs/openid-federation-extended-listing-1_0.html) (tracks draft-02)
 
 > **Status:** prerelease — API may change before the upcoming stable `1.0.0` release.
 
 ## Install
 
+Choose the command for your preferred JavaScript package manager or runtime:
+
 ```bash
+# npm
 npm install @oidfed/core @oidfed/authority
+
+# pnpm
+pnpm add @oidfed/core @oidfed/authority
+
+# yarn
+yarn add @oidfed/core @oidfed/authority
+
+# bun
+bun add @oidfed/core @oidfed/authority
+
+# Deno (Deno 2.0+ / JSR/npm specifier auto-resolution)
+deno add npm:@oidfed/core npm:@oidfed/authority
 ```
 
 ## Quick Start
@@ -45,33 +77,9 @@ const ta = new TrustAnchor({
 const response = await ta.handleRequest(request);
 ```
 
-## What's Included
-
-- All spec-defined federation endpoints as a single fetch-compatible class-based interface
-- Subordinate management — add, update, remove, list (ordered, paginated)
-- Extended Subordinate Listing (`/federation_extended_list`) — cursor pagination, time-window filtering, audit timestamps, and bulk per-entity claim retrieval (signed subordinate statements, trust marks, metadata, …) per the [OpenID Federation Extended Subordinate Listing](https://openid.net/specs/openid-federation-extended-listing-1_0.html) spec
-- Federation-only signing and public-key lifecycle via `ManagedFederationKeyProvider`
-- Trust mark issuance, delegation, and status checking
-- Middleware composition for logging, rate limiting, auth
-- One transactional `StorageAdapter` with subordinate, optional trust-mark, replay, and cache capabilities
-
-## Unified Storage
-
-`TrustAnchor` / `Intermediate` accepts one `storage` adapter. It owns subordinate records, optional trust marks, optional replay, optional cache, and serializable authority-record transactions. Federation key custody remains exclusively behind `ManagedFederationKeyProvider`. See [the authority reference](https://github.com/Dahkenangnon/oidfed/blob/main/docs/packages/authority.md#unified-storage-adapter).
-
 ## Documentation
 
-Full API reference: [docs/packages/authority.md](https://github.com/Dahkenangnon/oidfed/blob/main/docs/packages/authority.md)
-
-## Part of @oidfed
-
-| Package | Role |
-|---------|------|
-| [@oidfed/core](https://www.npmjs.com/package/@oidfed/core) | Federation primitives |
-| **@oidfed/authority** | Trust Anchor & Intermediate operations (this package) |
-| [@oidfed/leaf](https://www.npmjs.com/package/@oidfed/leaf) | Leaf Entity toolkit |
-| [@oidfed/oidc](https://www.npmjs.com/package/@oidfed/oidc) | OIDC/OAuth 2.0 federation flows |
-| [@oidfed/cli](https://www.npmjs.com/package/@oidfed/cli) | CLI for federation debugging |
+For a detailed API reference, subordinate management APIs, and unified storage adapter setups, see the [docs/packages/authority.md](https://github.com/Dahkenangnon/oidfed/blob/main/docs/packages/authority.md) file.
 
 ## License
 

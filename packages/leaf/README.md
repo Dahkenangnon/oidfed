@@ -6,14 +6,45 @@
 [![install size](https://packagephobia.com/badge?p=@oidfed/leaf)](https://packagephobia.com/result?p=@oidfed/leaf)
 [![coverage](https://img.shields.io/badge/coverage-%E2%89%A590%25-brightgreen)](https://github.com/Dahkenangnon/oidfed/blob/main/scripts/coverage-check.sh)
 
-Leaf Entity toolkit — Entity Configuration serving, authority discovery, and trust chain participation for any entity at the edge of an [OpenID Federation](https://openid.net/specs/openid-federation-1_0.html).
+<div align="center">
+  <img src="https://raw.githubusercontent.com/Dahkenangnon/oidfed/main/internal/assets/leaf.png" alt="@oidfed/leaf banner" width="600" />
+</div>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/@oidfed/core">@oidfed/core</a> &nbsp;•&nbsp;
+  <a href="https://www.npmjs.com/package/@oidfed/authority">@oidfed/authority</a> &nbsp;•&nbsp;
+  <b>@oidfed/leaf</b> &nbsp;•&nbsp;
+  <a href="https://www.npmjs.com/package/@oidfed/oidc">@oidfed/oidc</a> &nbsp;•&nbsp;
+  <a href="https://www.npmjs.com/package/@oidfed/cli">@oidfed/cli</a>
+</p>
+
+Leaf Entity toolkit — Entity Configuration serving, authority discovery, and trust chain participation for any entity at the edge of an OpenID Federation.
+
+Implements the final [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) specification and its successor specifications:
+* [OpenID Federation 1.1](https://openid.net/specs/openid-federation-1_1.html) (protocol-independent layer)
+* [OpenID Federation for OpenID Connect 1.1](https://openid.net/specs/openid-federation-connect-1_1.html) (protocol-specific layer)
 
 > **Status:** prerelease — API may change before the upcoming stable `1.0.0` release.
 
 ## Install
 
+Choose the command for your preferred JavaScript package manager or runtime:
+
 ```bash
+# npm
 npm install @oidfed/core @oidfed/leaf
+
+# pnpm
+pnpm add @oidfed/core @oidfed/leaf
+
+# yarn
+yarn add @oidfed/core @oidfed/leaf
+
+# bun
+bun add @oidfed/core @oidfed/leaf
+
+# Deno (Deno 2.0+ / JSR/npm specifier auto-resolution)
+deno add npm:@oidfed/core npm:@oidfed/leaf
 ```
 
 ## Quick Start
@@ -47,28 +78,9 @@ const leaf = new Leaf({
 const response = await leaf.handleRequest(request);
 ```
 
-## What's Included
-
-- Entity Configuration serving at `/.well-known/openid-federation`
-- Authority discovery with branded `DiscoveryResult` type
-- Federation JWKS publication from `FederationKeyProvider`
-- Lazy EC generation with caching and refresh
-
-Configure a custom NumericDate-seconds clock through `LeafConfig.options.clock`.
-
 ## Documentation
 
-Full API reference: [docs/packages/leaf.md](https://github.com/Dahkenangnon/oidfed/blob/main/docs/packages/leaf.md)
-
-## Part of @oidfed
-
-| Package | Role |
-|---------|------|
-| [@oidfed/core](https://www.npmjs.com/package/@oidfed/core) | Federation primitives |
-| [@oidfed/authority](https://www.npmjs.com/package/@oidfed/authority) | Trust Anchor & Intermediate operations |
-| **@oidfed/leaf** | Leaf Entity toolkit (this package) |
-| [@oidfed/oidc](https://www.npmjs.com/package/@oidfed/oidc) | OIDC/OAuth 2.0 federation flows |
-| [@oidfed/cli](https://www.npmjs.com/package/@oidfed/cli) | CLI for federation debugging |
+For a detailed API reference, entity configuration setups, and authority discovery guides, see the [docs/packages/leaf.md](https://github.com/Dahkenangnon/oidfed/blob/main/docs/packages/leaf.md) file.
 
 ## License
 

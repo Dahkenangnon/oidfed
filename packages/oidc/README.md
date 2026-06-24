@@ -6,14 +6,45 @@
 [![install size](https://packagephobia.com/badge?p=@oidfed/oidc)](https://packagephobia.com/result?p=@oidfed/oidc)
 [![coverage](https://img.shields.io/badge/coverage-%E2%89%A585%25-brightgreen)](https://github.com/Dahkenangnon/oidfed/blob/main/scripts/coverage-check.sh)
 
-OpenID Connect and OAuth 2.0 federation flows — automatic and explicit client registration, Request Object validation, and RP/OP metadata processing as defined in [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html).
+<div align="center">
+  <img src="https://raw.githubusercontent.com/Dahkenangnon/oidfed/main/internal/assets/oidc.png" alt="@oidfed/oidc banner" width="600" />
+</div>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/@oidfed/core">@oidfed/core</a> &nbsp;•&nbsp;
+  <a href="https://www.npmjs.com/package/@oidfed/authority">@oidfed/authority</a> &nbsp;•&nbsp;
+  <a href="https://www.npmjs.com/package/@oidfed/leaf">@oidfed/leaf</a> &nbsp;•&nbsp;
+  <b>@oidfed/oidc</b> &nbsp;•&nbsp;
+  <a href="https://www.npmjs.com/package/@oidfed/cli">@oidfed/cli</a>
+</p>
+
+OpenID Connect and OAuth 2.0 federation flows — automatic and explicit client registration, Request Object validation, and RP/OP metadata processing as defined in OpenID Federation 1.0.
+
+Implements the final [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) specification and its successor specifications:
+* [OpenID Federation 1.1](https://openid.net/specs/openid-federation-1_1.html) (protocol-independent layer)
+* [OpenID Federation for OpenID Connect 1.1](https://openid.net/specs/openid-federation-connect-1_1.html) (protocol-specific layer)
 
 > **Status:** prerelease — API may change before the upcoming stable `1.0.0` release.
 
 ## Install
 
+Choose the command for your preferred JavaScript package manager or runtime:
+
 ```bash
+# npm
 npm install @oidfed/core @oidfed/oidc
+
+# pnpm
+pnpm add @oidfed/core @oidfed/oidc
+
+# yarn
+yarn add @oidfed/core @oidfed/oidc
+
+# bun
+bun add @oidfed/core @oidfed/oidc
+
+# Deno (Deno 2.0+ / JSR/npm specifier auto-resolution)
+deno add npm:@oidfed/core npm:@oidfed/oidc
 ```
 
 ## Quick Start
@@ -79,30 +110,9 @@ const opEntity = new TrustAnchor({
 });
 ```
 
-## What's Included
-
-- OIDC Provider Role (`FedOidcProvider`)
-- OIDC Relying Party Role (`FedOidcClient`)
-- OAuth Authorization Server Role (`FedOauthProvider`)
-- OAuth Client Role (`FedOauthClient`)
-- OAuth Resource Server Role (`FedOauthResource`)
-- Automatic and Explicit client registration processing
-- Typed OP/RP/AS/Client metadata schemas
-- OIDC protocol signing and Request Object validation
-
 ## Documentation
 
-Full API reference: [docs/packages/oidc.md](https://github.com/Dahkenangnon/oidfed/blob/main/docs/packages/oidc.md)
-
-## Part of @oidfed
-
-| Package | Role |
-|---------|------|
-| [@oidfed/core](https://www.npmjs.com/package/@oidfed/core) | Federation primitives |
-| [@oidfed/authority](https://www.npmjs.com/package/@oidfed/authority) | Trust Anchor & Intermediate operations |
-| [@oidfed/leaf](https://www.npmjs.com/package/@oidfed/leaf) | Leaf Entity toolkit |
-| **@oidfed/oidc** | OIDC/OAuth 2.0 federation flows (this package) |
-| [@oidfed/cli](https://www.npmjs.com/package/@oidfed/cli) | CLI for federation debugging |
+For a detailed API reference, OIDC role classes, automatic/explicit registration details, and metadata schemas, see the [docs/packages/oidc.md](https://github.com/Dahkenangnon/oidfed/blob/main/docs/packages/oidc.md) file.
 
 ## License
 

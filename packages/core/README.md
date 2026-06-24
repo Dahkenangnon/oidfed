@@ -6,14 +6,46 @@
 [![install size](https://packagephobia.com/badge?p=@oidfed/core)](https://packagephobia.com/result?p=@oidfed/core)
 [![coverage](https://img.shields.io/badge/coverage-%E2%89%A590%25-brightgreen)](https://github.com/Dahkenangnon/oidfed/blob/main/scripts/coverage-check.sh)
 
-Federation primitives for JavaScript — entity statements, trust chain resolution, metadata policy, and cryptographic verification. The foundational layer of the complete [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) implementation.
+<div align="center">
+  <img src="https://raw.githubusercontent.com/Dahkenangnon/oidfed/main/internal/assets/core.png" alt="@oidfed/core banner" width="600" />
+</div>
+
+<p align="center">
+  <b>@oidfed/core</b> &nbsp;•&nbsp;
+  <a href="https://www.npmjs.com/package/@oidfed/authority">@oidfed/authority</a> &nbsp;•&nbsp;
+  <a href="https://www.npmjs.com/package/@oidfed/leaf">@oidfed/leaf</a> &nbsp;•&nbsp;
+  <a href="https://www.npmjs.com/package/@oidfed/oidc">@oidfed/oidc</a> &nbsp;•&nbsp;
+  <a href="https://www.npmjs.com/package/@oidfed/cli">@oidfed/cli</a>
+</p>
+
+Federation primitives for JavaScript — entity statements, trust chain resolution, metadata policy, and cryptographic verification. The foundational layer of the complete OpenID Federation 1.0 implementation.
+
+Implements the final [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) specification and its successor specifications:
+* [OpenID Federation 1.1](https://openid.net/specs/openid-federation-1_1.html) (protocol-independent layer)
+* [OpenID Federation for OpenID Connect 1.1](https://openid.net/specs/openid-federation-connect-1_1.html) (protocol-specific layer)
+* [OpenID Federation Extended Subordinate Listing 1.0](https://openid.net/specs/openid-federation-extended-listing-1_0.html) (tracks draft-02)
 
 > **Status:** prerelease — API may change before the upcoming stable `1.0.0` release.
 
 ## Install
 
+Choose the command for your preferred JavaScript package manager or runtime:
+
 ```bash
+# npm
 npm install @oidfed/core
+
+# pnpm
+pnpm add @oidfed/core
+
+# yarn
+yarn add @oidfed/core
+
+# bun
+bun add @oidfed/core
+
+# Deno (Deno 2.0+ / JSR/npm specifier auto-resolution)
+deno add npm:@oidfed/core
 ```
 
 ## Quick Start
@@ -44,36 +76,9 @@ for (const chain of result.chains) {
 }
 ```
 
-## What's Included
-
-- Trust chain resolution, validation, refresh, and selection strategies
-- JOSE operations — sign, verify, decode entity statements; key generation
-- Runtime-agnostic federation signing via `JwtSigner`, `JwkSigner`, and federation key providers
-- Metadata policy — merge and apply across trust chains
-- Constraint checking — path length, naming constraints, allowed entity types
-- Typed Zod schemas for all federation data structures
-- Trust mark validation and delegation signing
-- Remote-endpoint clients — `fetchListSubordinates`, `fetchExtendedSubordinatesList` (paginated, with bulk claim retrieval), `fetchResolveResponse`, `fetchHistoricalKeys`, `fetchTrustMarkList`
-- LRU cache, atomic replay-store contracts, and Result type
-- Fetch-compatible HTTP primitives (`Request` → `Response`)
-
-## Time Contract
-
-`Clock.now()` returns Unix NumericDate seconds. The same seconds-based clock drives cache TTLs, replay expiry, JWT generation, and JOSE verification. Federation key lifecycle scheduling is intentionally separate and uses explicitly named millisecond APIs such as `nowMs` and `removeAfterMs`.
-
 ## Documentation
 
-Full API reference: [docs/packages/core.md](https://github.com/Dahkenangnon/oidfed/blob/main/docs/packages/core.md)
-
-## Part of @oidfed
-
-| Package | Role |
-|---------|------|
-| **@oidfed/core** | Federation primitives (this package) |
-| [@oidfed/authority](https://www.npmjs.com/package/@oidfed/authority) | Trust Anchor & Intermediate operations |
-| [@oidfed/leaf](https://www.npmjs.com/package/@oidfed/leaf) | Leaf Entity toolkit |
-| [@oidfed/oidc](https://www.npmjs.com/package/@oidfed/oidc) | OIDC/OAuth 2.0 federation flows |
-| [@oidfed/cli](https://www.npmjs.com/package/@oidfed/cli) | CLI for federation debugging |
+For a detailed API reference, configuration options, and core architectural guides, see the [docs/packages/core.md](https://github.com/Dahkenangnon/oidfed/blob/main/docs/packages/core.md) file.
 
 ## License
 
