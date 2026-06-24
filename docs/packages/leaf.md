@@ -16,6 +16,7 @@ pnpm add @oidfed/core @oidfed/leaf
 
 ```ts
 import { Leaf } from "@oidfed/leaf";
+import { FedOidcClient } from "@oidfed/oidc";
 import { MemoryFederationKeyProvider, federationKey } from "@oidfed/core";
 import express from "express";
 
@@ -24,12 +25,19 @@ const leaf = new Leaf({
   authorityHints: ["https://federation.example.org"],
   keyProvider: new MemoryFederationKeyProvider(federationKey(myFederationSigningKey)),
   metadata: {
-    openid_relying_party: {
+    federation_entity: {
+      organization_name: "My Relying Party",
+    },
+  },
+  roles: [
+    new FedOidcClient({
       redirect_uris: ["https://rp.example.com/callback"],
       response_types: ["code"],
       client_registration_types: ["automatic"],
-    },
-  },
+      jwks: { keys: [protocolPublicKey] },
+      protocolKeyProvider,
+    })
+  ]
 });
 
 const app = express();
@@ -55,15 +63,24 @@ app.use(async (req, res) => {
 ```ts
 import { Leaf } from "@oidfed/leaf";
 import type { LeafConfig } from "@oidfed/leaf";
-import type { FederationKeyProvider } from "@oidfed/core";
+import type { FederationKeyProvider, EntityId } from "@oidfed/core";
 ```
 
 `new Leaf(config)` throws synchronously if `authorityHints` is empty, any authority hint is not a valid Entity Identifier, or `keyProvider` is missing. It performs strict validation on initialization.
 
 ```ts
+export class Leaf {
+  constructor(config: LeafConfig);
+  entityId: EntityId;
+  getEntityConfiguration(): Promise<string>;
+  isEntityConfigurationExpired(): boolean;
+  refreshEntityConfiguration(): Promise<string>;
+  handleRequest(request: Request): Promise<Response>;
+}
+
 interface LeafConfig {
-  entityId: string;
-  authorityHints: readonly string[];
+  entityId: EntityId | string;
+  authorityHints: readonly (EntityId | string)[];
   metadata: Record<string, any>;
   keyProvider: FederationKeyProvider;
   roles?: EntityRole[];

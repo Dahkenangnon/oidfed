@@ -47,7 +47,7 @@ A Trust Anchor using `@oidfed/authority` on Express.
 ```typescript
 import express from "express";
 import {
-  createAuthorityServer,
+  TrustAnchor,
   MemoryStorageAdapter,
 } from "@oidfed/authority";
 import {
@@ -65,7 +65,7 @@ const keyProvider = new MemoryFederationKeyProvider({
 });
 const storage = new MemoryStorageAdapter();
 
-const ta = createAuthorityServer({
+const ta = new TrustAnchor({
   entityId: TA_ID,
   keyProvider,
   metadata: {
@@ -86,10 +86,6 @@ await ta.listSubordinates(); // (just to show the API)
 // Wire into Express
 const app = express();
 
-// The handler() returns a (Request) => Promise<Response> function.
-// Bridge it to Express:
-const federationHandler = ta.handler();
-
 app.all("/*", async (req, res) => {
   const url = new URL(req.originalUrl, `https://${req.headers.host}`);
   const request = new Request(url.toString(), {
@@ -98,7 +94,7 @@ app.all("/*", async (req, res) => {
     body: req.method !== "GET" && req.method !== "HEAD" ? req.body : undefined,
   });
 
-  const response = await federationHandler(request);
+  const response = await ta.handleRequest(request);
 
   res.status(response.status);
   for (const [key, value] of response.headers) {
@@ -108,6 +104,7 @@ app.all("/*", async (req, res) => {
 });
 
 app.listen(443);
+```
 ```
 
 ### Adding Subordinates
@@ -150,7 +147,7 @@ SWAMID as an Intermediate Authority — same pattern as the TA, but with `author
 
 ```typescript
 import {
-  createAuthorityServer,
+  Intermediate,
   MemoryStorageAdapter,
 } from "@oidfed/authority";
 import {
@@ -173,7 +170,7 @@ const trustAnchors: TrustAnchorSet = new Map([
   [entityId("https://edugain.geant.org"), { jwks: { keys: [taPublicKey] } }],
 ]);
 
-const swamid = createAuthorityServer({
+const swamid = new Intermediate({
   entityId: SWAMID_ID,
   keyProvider,
   metadata: {
@@ -197,13 +194,13 @@ const swamid = createAuthorityServer({
 
 An OpenID Provider at `op.umu.se` using Express + `panva/node-oidc-provider` + `@oidfed/authority` + `@oidfed/oidc`.
 
-The OP acts as an authority (issues its own Entity Configuration with `@oidfed/authority`) and processes incoming registrations (with `@oidfed/oidc`).
+The OP acts as an authority (issues its own Entity Configuration with `@oidfed/authority` and `Intermediate`) and processes incoming registrations (with the `FedOidcProvider` role from `@oidfed/oidc`).
 
 ```typescript
 import express from "express";
 import Provider from "oidc-provider";
-import { createAuthorityServer, MemoryStorageAdapter } from "@oidfed/authority";
-import { OIDCRegistrationAdapter, processAutomaticRegistration, processExplicitRegistration } from "@oidfed/oidc";
+import { Intermediate, MemoryStorageAdapter } from "@oidfed/authority";
+import { FedOidcProvider, processAutomaticRegistration } from "@oidfed/oidc";
 import {
   entityId,
   generateSigningKey,
@@ -225,28 +222,36 @@ const trustAnchors: TrustAnchorSet = new Map([
   [entityId("https://edugain.geant.org"), { jwks: { keys: [taPublicKey] } }],
 ]);
 
-// --- Federation server (Entity Configuration + endpoints) ---
+// --- Federation server (Entity Configuration + role endpoints) ---
 
-const opAuthority = createAuthorityServer({
+const opAuthority = new Intermediate({
   entityId: OP_ID,
   keyProvider,
   metadata: {
-    federation_entity: {
-      federation_registration_endpoint: "https://op.umu.se/federation_registration",
-    },
-    openid_provider: {
-      issuer: "https://op.umu.se",
-      authorization_endpoint: "https://op.umu.se/auth",
-      token_endpoint: "https://op.umu.se/token",
-      response_types_supported: ["code"],
-      subject_types_supported: ["public"],
-      id_token_signing_alg_values_supported: ["ES256"],
-      client_registration_types_supported: ["automatic", "explicit"],
-    },
+    federation_entity: {},
   },
   authorityHints: [entityId("https://umu.se")],
   trustAnchors,
   storage,
+  roles: [
+    new FedOidcProvider({
+      registrationPath: "/registration",
+      metadata: {
+        issuer: "https://op.umu.se",
+        authorization_endpoint: "https://op.umu.se/auth",
+        token_endpoint: "https://op.umu.se/token",
+        response_types_supported: ["code"],
+        subject_types_supported: ["public"],
+        id_token_signing_alg_values_supported: ["ES256"],
+        client_registration_types_supported: ["automatic", "explicit"],
+      },
+      // Optional: Pluggable hooks for client registration validation
+      onRegisterClient: async (clientId, metadata, trustChain) => {
+        // Custom check/storage logic for new clients. Returning true approves registration.
+        return true;
+      }
+    })
+  ]
 });
 
 // --- OIDC Provider (panva/node-oidc-provider) ---
@@ -268,11 +273,21 @@ const oidc = new Provider("https://op.umu.se", {
 const app = express();
 app.use(express.raw({ type: "application/entity-statement+jwt", limit: "64kb" }));
 
-// Federation endpoints (Entity Configuration, fetch, list, etc.)
-const federationHandler = opAuthority.handler();
+// Route federation configuration requests
 app.all("/.well-known/openid-federation", async (req, res) => {
   const request = new Request(`https://op.umu.se${req.originalUrl}`, { method: "GET" });
-  const response = await federationHandler(request);
+  const response = await opAuthority.handleRequest(request);
+  res.status(response.status).type("application/entity-statement+jwt").send(await response.text());
+});
+
+// Route explicit registration requests to the FedOidcProvider role handler
+app.post("/registration", async (req, res) => {
+  const request = new Request(`https://op.umu.se${req.originalUrl}`, {
+    method: "POST",
+    headers: req.headers as Record<string, string>,
+    body: req.body,
+  });
+  const response = await opAuthority.handleRequest(request);
   res.status(response.status).type("application/entity-statement+jwt").send(await response.text());
 });
 
@@ -305,26 +320,6 @@ app.get("/auth", async (req, res, next) => {
   return oidc.callback()(req, res, next);
 });
 
-// Explicit registration endpoint
-app.post("/federation_registration", async (req, res) => {
-  const result = await processExplicitRegistration(
-    req.body.toString(),
-    req.headers["content-type"] || "",
-    trustAnchors,
-    { opEntityId: OP_ID },
-  );
-
-  if (isOk(result)) {
-    const { rpEntityId, resolvedRpMetadata, trustChain } = result.value;
-
-    // Generate a registration response (client_id, client_secret, etc.)
-    // Sign and return as application/entity-statement+jwt
-    // See §12.2.3 for response format
-  } else {
-    res.status(400).json({ error: result.error.code, error_description: result.error.description });
-  }
-});
-
 // Standard OIDC endpoints
 app.use("/", oidc.callback());
 
@@ -339,9 +334,9 @@ A Relying Party at `wiki.ligo.org` using Express + `@oidfed/leaf` + `@oidfed/oid
 
 ```typescript
 import express from "express";
-import { createLeafEntity, discoverEntity } from "@oidfed/leaf";
+import { Leaf, discoverEntity } from "@oidfed/leaf";
 import {
-  automaticRegistration,
+  FedOidcClient,
   explicitRegistration,
   createClientAssertion,
   StaticOidcProtocolKeyProvider,
@@ -372,23 +367,32 @@ const trustAnchors: TrustAnchorSet = new Map([
 
 // --- Leaf entity (serves Entity Configuration) ---
 
-const leaf = createLeafEntity({
+const rpRole = new FedOidcClient({
+  protocolKeyProvider: new StaticOidcProtocolKeyProvider({
+    requestObjectSigner: new JwkSigner(protocolKeyPair.privateKey),
+  }),
+  metadata: {
+    redirect_uris: ["https://wiki.ligo.org/callback"],
+    response_types: ["code"],
+    grant_types: ["authorization_code"],
+    client_registration_types: ["automatic"],
+    token_endpoint_auth_method: "private_key_jwt",
+    jwks: { keys: [protocolKeyPair.publicKey] },
+  },
+  requestDelivery: "query",
+});
+
+const leaf = new Leaf({
   entityId: RP_ID,
   authorityHints: [entityId("https://incommon.org")],
   keyProvider: federationKeyProvider,
   metadata: {
-    openid_relying_party: {
-      redirect_uris: ["https://wiki.ligo.org/callback"],
-      response_types: ["code"],
-      grant_types: ["authorization_code"],
-      client_registration_types: ["automatic"],
-      token_endpoint_auth_method: "private_key_jwt",
-      jwks: { keys: [protocolKeyPair.publicKey] },
+    federation_entity: {
+      organization_name: "Wiki Ligo",
     },
   },
+  roles: [rpRole],
 });
-
-const leafHandler = leaf.handler();
 
 // --- Express wiring ---
 
@@ -397,7 +401,7 @@ const app = express();
 // Serve Entity Configuration
 app.get("/.well-known/openid-federation", async (req, res) => {
   const request = new Request(`https://wiki.ligo.org${req.originalUrl}`, { method: "GET" });
-  const response = await leafHandler(request);
+  const response = await leaf.handleRequest(request);
   res.status(response.status).type("application/entity-statement+jwt").send(await response.text());
 });
 
@@ -415,27 +419,9 @@ app.get("/login", async (req, res) => {
   }
   const opDiscovery = opDiscoveryResult.value;
 
-  // 2. Automatic registration — builds Request Object with trust chain.
-  //    Default delivery is "form_post"; pass requestDelivery: "query" to get a redirect URL.
-  const resultVal = await automaticRegistration(
+  // 2. Automatic registration — builds Request Object with trust chain using OIDC role instance.
+  const resultVal = await rpRole.createAuthorizationRequest(
     opDiscovery,
-    {
-      entityId: RP_ID,
-      protocolKeyProvider: new StaticOidcProtocolKeyProvider({
-        requestObjectSigner: new JwkSigner(protocolKeyPair.privateKey),
-      }),
-      authorityHints: [entityId("https://incommon.org")],
-      metadata: {
-        openid_relying_party: {
-          redirect_uris: ["https://wiki.ligo.org/callback"],
-          response_types: ["code"],
-          client_registration_types: ["automatic"],
-          token_endpoint_auth_method: "private_key_jwt",
-          jwks: { keys: [protocolKeyPair.publicKey] },
-        },
-      },
-      requestDelivery: "query",
-    },
     { scope: "openid profile", state: "random-state" },
     trustAnchors,
   );
@@ -481,6 +467,7 @@ app.get("/callback", async (req, res) => {
 });
 
 app.listen(443);
+```
 ```
 
 ### Explicit Registration Variant

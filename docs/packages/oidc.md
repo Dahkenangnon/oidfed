@@ -62,11 +62,37 @@ Acts as an OpenID Connect Relying Party (RP). Registers OIDC Relying Party metad
 import { FedOidcClient } from "@oidfed/oidc";
 
 const rpRole = new FedOidcClient({
-  redirect_uris: ["https://rp.example.com/callback"],
-  response_types: ["code"],
-  client_registration_types: ["automatic"],
-  jwks: { keys: [protocolKey] },
+  protocolKeyProvider: oidcProtocolKeyProvider,
+  metadata: {
+    client_name: "My OIDC RP",
+    redirect_uris: ["https://rp.example.com/callback"],
+    response_types: ["code"],
+    client_registration_types: ["automatic"],
+    jwks: { keys: [protocolPublicKey] },
+  },
+  requestObjectTtlSeconds: 300,
+  includePeerTrustChain: true,
+  requestDelivery: "query", // "query" | "form_post" | "request_uri"
 });
+```
+
+#### `createAuthorizationRequest(discovery, authzRequestParams, trustAnchors, options?)`
+Creates a signed Request Object and builds authorization parameters/URLs for automatic registration.
+
+- **`discovery`**: A `DiscoveryResult` (returned from `discoverEntity()`).
+- **`authzRequestParams`**: Standard authorization request parameters (e.g., `{ scope: "openid", state: "state" }`).
+- **`trustAnchors`**: A `TrustAnchorSet` used to construct and validate trust chains.
+- **`options`**: Optional `FederationOptions` to override clock/httpClient settings.
+
+Returns a `Promise<Result<AutomaticRegistrationResult>>`:
+```ts
+interface AutomaticRegistrationResult {
+  delivery: "query" | "form_post" | "request_uri";
+  authorizationUrl?: string;
+  formPostAction?: string;
+  formPostFields?: Record<string, string>;
+  requestObjectJwt?: string;
+}
 ```
 
 ---
@@ -93,10 +119,22 @@ Acts as an OAuth 2.0 Client.
 import { FedOauthClient } from "@oidfed/oidc";
 
 const oauthClientRole = new FedOauthClient({
-  redirect_uris: ["https://client.example.com/callback"],
-  response_types: ["code"],
-  jwks: { keys: [protocolKey] },
+  protocolKeyProvider: oidcProtocolKeyProvider,
+  metadata: {
+    client_name: "My OAuth Client",
+    redirect_uris: ["https://client.example.com/callback"],
+    response_types: ["code"],
+    client_registration_types: ["automatic"],
+    jwks: { keys: [protocolPublicKey] },
+  },
+  requestObjectTtlSeconds: 300,
+  includePeerTrustChain: true,
+  requestDelivery: "query", // "query" | "form_post" | "request_uri"
 });
+```
+
+#### `createAuthorizationRequest(discovery, authzRequestParams, trustAnchors, options?)`
+Has the same signature and return type as `FedOidcClient.createAuthorizationRequest()`.
 ```
 
 ---

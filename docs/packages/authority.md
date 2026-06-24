@@ -67,14 +67,39 @@ import type { AuthorityConfig } from "@oidfed/authority";
 ```ts
 export class TrustAnchor {
   constructor(config: AuthorityConfig);
-  entityId: string;
+  entityId: EntityId;
   getEntityConfiguration(): Promise<string>;
+  getSubordinateStatement(sub: EntityId): Promise<string>;
+  listSubordinates(filter?: ListFilter): Promise<EntityId[]>;
+  listSubordinatesExtended(
+    params?: ExtendedListInProcessParams,
+  ): Promise<Result<ExtendedListInProcessResult, FederationError>>;
+  resolveEntity(sub: EntityId, ta?: EntityId): Promise<string>;
+  getTrustMarkStatus(trustMark: string): Promise<TrustMarkStatusResponsePayload>;
+  listTrustMarkedEntities(trustMarkType: string): Promise<string[]>;
+  issueTrustMark(sub: string, trustMarkType: string): Promise<string>;
+  issueTrustMarkDelegation(subject: string, trustMarkType: string): Promise<string>;
+  getHistoricalKeys(): Promise<string>;
+  rotateSigningKey(newKey: FederationSigningKey): Promise<void>;
   handleRequest(request: Request): Promise<Response>;
 }
 
 export class Intermediate {
   constructor(config: AuthorityConfig);
-  entityId: string;
+  entityId: EntityId;
+  getEntityConfiguration(): Promise<string>;
+  getSubordinateStatement(sub: EntityId): Promise<string>;
+  listSubordinates(filter?: ListFilter): Promise<EntityId[]>;
+  listSubordinatesExtended(
+    params?: ExtendedListInProcessParams,
+  ): Promise<Result<ExtendedListInProcessResult, FederationError>>;
+  resolveEntity(sub: EntityId, ta?: EntityId): Promise<string>;
+  getTrustMarkStatus(trustMark: string): Promise<TrustMarkStatusResponsePayload>;
+  listTrustMarkedEntities(trustMarkType: string): Promise<string[]>;
+  issueTrustMark(sub: string, trustMarkType: string): Promise<string>;
+  issueTrustMarkDelegation(subject: string, trustMarkType: string): Promise<string>;
+  getHistoricalKeys(): Promise<string>;
+  rotateSigningKey(newKey: FederationSigningKey): Promise<void>;
   handleRequest(request: Request): Promise<Response>;
 }
 ```
@@ -179,7 +204,7 @@ The request parameters, pagination, and error semantics remain as documented by 
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `entityId` | `string` | — | Required. This authority's entity identifier |
+| `entityId` | `EntityId \| string` | — | Required. This authority's entity identifier |
 | `keyProvider` | `ManagedFederationKeyProvider` | — | Required. Federation signer selection, public-key publication, and key lifecycle |
 | `metadata` | `object` | — | Required. Must include `federation_entity` |
 | `storage` | `StorageAdapter` | — | Required. Unified non-key persistence, replay, cache, and transactions |
@@ -188,7 +213,7 @@ The request parameters, pagination, and error semantics remain as documented by 
 | `trustMarkIssuers` | `Record<string, string[]>` | — | Trust mark type to authorized issuer IDs |
 | `trustMarkOwners` | `Record<string, TrustMarkOwner>` | — | Delegated trust mark owners |
 | `trustMarkDelegations` | `Record<string, string>` | — | Pre-signed delegation JWTs |
-| `authorityHints` | `readonly string[]` | — | Omit for Trust Anchors; required for Intermediates |
+| `authorityHints` | `readonly (EntityId \| string)[]` | — | Omit for Trust Anchors; required for Intermediates |
 | `trustAnchors` | `TrustAnchorSet` | — | Used for chain resolution |
 | `entityConfigurationTtlSeconds` | `number` | — | Entity Configuration JWT lifetime |
 | `subordinateStatementTtlSeconds` | `number` | — | Subordinate Statement JWT lifetime |

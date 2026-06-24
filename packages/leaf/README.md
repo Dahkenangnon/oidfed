@@ -20,6 +20,7 @@ npm install @oidfed/core @oidfed/leaf
 
 ```ts
 import { Leaf } from "@oidfed/leaf";
+import { FedOidcClient } from "@oidfed/oidc";
 import { MemoryFederationKeyProvider, federationKey } from "@oidfed/core";
 
 const leaf = new Leaf({
@@ -27,12 +28,19 @@ const leaf = new Leaf({
   authorityHints: ["https://federation.example.org"],
   keyProvider: new MemoryFederationKeyProvider(federationKey(myFederationSigningKey)),
   metadata: {
-    openid_relying_party: {
+    federation_entity: {
+      organization_name: "My Relying Party",
+    },
+  },
+  roles: [
+    new FedOidcClient({
       redirect_uris: ["https://rp.example.com/callback"],
       response_types: ["code"],
       client_registration_types: ["automatic"],
-    },
-  },
+      jwks: { keys: [protocolPublicKey] },
+      protocolKeyProvider,
+    })
+  ]
 });
 
 // Serve the request directly using a fetch-compatible interface:

@@ -123,9 +123,9 @@ res.send(await response.text());
 
 | Factory | Wraps | Serves |
 |---------|-------|--------|
-| `createAuthorityApp` | `AuthorityServer.handler()` | All federation endpoints |
-| `createLeafApp` | `LeafEntity.handler()` | `GET /.well-known/openid-federation` only |
-| `createOpenIDProviderApp` | `AuthorityServer.handler()` + `oidc-provider` | Federation endpoints + OIDC (`/auth`, `/token`, etc.) |
+| `createAuthorityApp` | `TrustAnchor / Intermediate.handleRequest()` | All federation endpoints |
+| `createLeafApp` | `Leaf.handleRequest()` | `GET /.well-known/openid-federation` only |
+| `createOpenIDProviderApp` | `Leaf.handleRequest()` + `oidc-provider` | Federation endpoints + OIDC (`/auth`, `/token`, etc.) |
 
 The OP app also wires `processAutomaticRegistration` and `processExplicitRegistration` from `@oidfed/oidc` on the registration endpoints, and uses `oidc-provider` (panva/node-oidc-provider) for standard OIDC flows.
 
@@ -139,8 +139,8 @@ The OP app also wires `processAutomaticRegistration` and `processExplicitRegistr
 2. Generates signing keys for every entity (`generateSigningKey("ES256")`)
 3. Rewrites all URLs to include the ephemeral port (e.g., `https://ta.ofed.test` → `https://ta.ofed.test:54321`)
 4. Builds the `TrustAnchorSet` from TA entities' public keys
-5. Creates `AuthorityServer` instances for TAs and intermediates with `MemoryFederationKeyProvider` and one `MemoryStorageAdapter` each
-6. Creates `LeafEntity` instances for RPs and OPs; OP processing uses `MemoryReplayStore`
+5. Creates `TrustAnchor` or `Intermediate` instances for authorities with `MemoryFederationKeyProvider` and one `MemoryStorageAdapter` each
+6. Creates `Leaf` instances for RPs and OPs; OP processing uses `MemoryReplayStore`
 7. Registers subordinates through each parent adapter's `subordinates` capability
 8. Creates Express apps via the participant factories
 9. Registers all apps in the vhost server
@@ -217,7 +217,7 @@ Complete flow for `smoke.test.ts`:
       ↓
 3. beforeAll: useFederation(singleAnchorTopology)
       → generateSigningKey("ES256") × 3
-      → createAuthorityServer (TA), createAuthorityServer (OP), createLeafEntity (RP)
+      → TrustAnchor (TA), Leaf (OP), Leaf (RP)
       → register OP and RP as subordinates in TA's store
       → create Express apps (authority-app, openid-provider-app, leaf-app)
       → start HTTPS server on ephemeral port (e.g., 54321)
@@ -227,7 +227,7 @@ Complete flow for `smoke.test.ts`:
       → undici resolves ta.ofed.test → 127.0.0.1
       → TLS handshake with .certs/ofed.pem (trusted via mkcert CA)
       → vhost server: Host=ta.ofed.test → TA Express app
-      → Express bridge → AuthorityServer.handler() → signs JWT
+      → Express bridge → TrustAnchor.handleRequest() → signs JWT
       → 200 + application/entity-statement+jwt + valid 3-part JWT
       ↓
 5. afterAll: close server + close undici agent
