@@ -19,6 +19,7 @@ export {
 } from "./protocol-keys.js";
 
 // Registration types
+export { OIDCRegistrationAdapter } from "./registration/adapter.js";
 export type {
 	RegistrationProtocolAdapter,
 	RegistrationProtocolAdapterContext,
