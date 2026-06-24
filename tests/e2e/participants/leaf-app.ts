@@ -1,4 +1,4 @@
-import type { LeafEntity } from "@oidfed/leaf";
+import type { Leaf } from "@oidfed/leaf";
 import express from "express";
 
 interface StoredRequestObject {
@@ -44,12 +44,12 @@ export function createRequestObjectStore(): RequestObjectStore {
 }
 
 export function createLeafApp(
-	leaf: LeafEntity,
+	leaf: Leaf,
 	entityId: string,
 	options?: { requestObjectStore?: RequestObjectStore },
 ): express.Express {
 	const app = express();
-	const leafHandler = leaf.handler();
+	const leafHandler = (request: Request) => leaf.handleRequest(request);
 	const store = options?.requestObjectStore;
 
 	app.get("/.well-known/openid-federation", async (req, res) => {

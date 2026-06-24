@@ -33,6 +33,12 @@ import {
 	OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE,
 	RequestObjectTyp,
 } from "../../../packages/oidc/src/constants.js";
+import {
+	FedOauthClient,
+	FedOauthProvider,
+	FedOidcClient,
+	FedOidcProvider,
+} from "../../../packages/oidc/src/index.js";
 import { StaticOidcProtocolKeyProvider } from "../../../packages/oidc/src/protocol-keys.js";
 import { OIDCRegistrationAdapter } from "../../../packages/oidc/src/registration/adapter.js";
 import type { RegistrationProtocolAdapter } from "../../../packages/oidc/src/registration/adapter-types.js";
@@ -3894,4 +3900,64 @@ export default (QUnit: QUnit) => {
 			});
 		});
 	}
+
+	module("oidc / Role Composition Facades", () => {
+		test("FedOidcClient role composition metadata and type", async (t) => {
+			const { privateKey } = await generateSigningKey("ES256");
+			const protocolKeyProvider = new StaticOidcProtocolKeyProvider({
+				requestObjectSigner: new JwkSigner(privateKey),
+			});
+			const role = new FedOidcClient({
+				protocolKeyProvider,
+				metadata: { client_name: "My OIDC RP" },
+			});
+			t.equal(role.type, "openid_relying_party");
+			t.equal(role.metadata.client_name, "My OIDC RP");
+		});
+
+		test("FedOidcProvider role composition metadata and type", async (t) => {
+			const role = new FedOidcProvider({
+				registrationPath: "/my-reg",
+				metadata: { op_name: "My OIDC OP" },
+			});
+			role.initialize({
+				entityId: "https://op.example.com",
+				keyProvider: {} as any,
+			});
+			t.equal(role.type, "openid_provider");
+			t.equal(role.metadata.op_name, "My OIDC OP");
+			t.ok(role.routes?.has("/my-reg"), "routes must map custom registration path");
+		});
+
+		test("FedOauthClient role composition metadata and type", async (t) => {
+			const { privateKey } = await generateSigningKey("ES256");
+			const protocolKeyProvider = new StaticOidcProtocolKeyProvider({
+				requestObjectSigner: new JwkSigner(privateKey),
+			});
+			const role = new FedOauthClient({
+				protocolKeyProvider,
+				metadata: { client_name: "My OAuth Client" },
+			});
+			role.initialize({
+				entityId: "https://rp.example.com",
+				keyProvider: {} as any,
+			});
+			t.equal(role.type, "oauth_client");
+			t.equal(role.metadata.client_name, "My OAuth Client");
+		});
+
+		test("FedOauthProvider role composition metadata and type", async (t) => {
+			const role = new FedOauthProvider({
+				registrationPath: "/oauth-reg",
+				metadata: { auth_server_name: "My AS" },
+			});
+			role.initialize({
+				entityId: "https://op.example.com",
+				keyProvider: {} as any,
+			});
+			t.equal(role.type, "oauth_authorization_server");
+			t.equal(role.metadata.auth_server_name, "My AS");
+			t.ok(role.routes?.has("/oauth-reg"), "routes must map custom registration path");
+		});
+	});
 };

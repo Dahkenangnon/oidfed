@@ -1,8 +1,9 @@
-import type { AuthorityConfig, AuthorityServer, SubordinateRecord } from "@oidfed/authority";
+import type { AuthorityConfig, SubordinateRecord } from "@oidfed/authority";
 import {
-	createAuthorityServer,
+	Intermediate,
 	MemoryStorageAdapter,
 	sanitizeSubordinateMetadata,
+	TrustAnchor,
 } from "@oidfed/authority";
 import type { EntityType, FederationKeyProvider, JWK, TrustAnchorSet } from "@oidfed/core";
 import {
@@ -12,8 +13,7 @@ import {
 	MemoryFederationKeyProvider,
 	stripPrivateFields,
 } from "@oidfed/core";
-import type { LeafEntity } from "@oidfed/leaf";
-import { createLeafEntity } from "@oidfed/leaf";
+import { Leaf } from "@oidfed/leaf";
 import type { OidcProtocolKeyProvider } from "@oidfed/oidc";
 import { StaticOidcProtocolKeyProvider } from "@oidfed/oidc";
 import type { Express } from "express";
@@ -38,7 +38,7 @@ export function federationSigningKey(signingKey: JWK) {
 }
 
 export interface EntityInstance {
-	server: AuthorityServer | LeafEntity;
+	server: TrustAnchor | Intermediate | Leaf;
 	keys: {
 		signing: JWK;
 		public: JWK;
@@ -204,7 +204,10 @@ export async function launchFederation(
 		if (entity.entityConfigurationTtlSeconds !== undefined) {
 			authorityConfig.entityConfigurationTtlSeconds = entity.entityConfigurationTtlSeconds;
 		}
-		const authority = createAuthorityServer(authorityConfig as unknown as AuthorityConfig);
+		const authority =
+			authorityConfig.authorityHints && (authorityConfig.authorityHints as any).length > 0
+				? new Intermediate(authorityConfig as unknown as AuthorityConfig)
+				: new TrustAnchor(authorityConfig as unknown as AuthorityConfig);
 
 		entities.set(entity.id, {
 			server: authority,
@@ -213,7 +216,7 @@ export async function launchFederation(
 			oidcProtocolKeyProvider,
 			storage,
 		});
-		apps.set(entity.id, createAuthorityApp(authority, eid));
+		apps.set(entity.id, createAuthorityApp(authority as any, eid));
 	}
 
 	// 4. Create leaf entities — both RPs and OPs are wired through the leaf phase here.
@@ -241,7 +244,7 @@ export async function launchFederation(
 		if (entity.entityConfigurationTtlSeconds !== undefined) {
 			leafConfig.entityConfigurationTtlSeconds = entity.entityConfigurationTtlSeconds;
 		}
-		const leaf = createLeafEntity(leafConfig as unknown as Parameters<typeof createLeafEntity>[0]);
+		const leaf = new Leaf(leafConfig as unknown as ConstructorParameters<typeof Leaf>[0]);
 
 		entities.set(entity.id, { server: leaf, keys, keyProvider, oidcProtocolKeyProvider });
 

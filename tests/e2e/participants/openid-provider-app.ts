@@ -1,14 +1,13 @@
 import type { EntityId, FederationKeyProvider, JWK, TrustAnchorSet } from "@oidfed/core";
 import { decodeEntityStatement, MemoryReplayStore } from "@oidfed/core";
-import type { LeafEntity } from "@oidfed/leaf";
-import { createLeafHandler } from "@oidfed/leaf";
+import type { Leaf } from "@oidfed/leaf";
 import { createExplicitRegistrationHandler, processAutomaticRegistration } from "@oidfed/oidc";
 import express from "express";
 import Provider from "oidc-provider";
 
 export interface OpenIDProviderAppConfig {
 	/** Leaf entity backing the OP's `.well-known/openid-federation` endpoint. */
-	leaf: LeafEntity;
+	leaf: Leaf;
 	entityId: string;
 	trustAnchors: TrustAnchorSet;
 	/** Federation signing provider for explicit-registration Entity Statements. */
@@ -57,7 +56,7 @@ export function createOpenIDProviderApp(config: OpenIDProviderAppConfig): expres
 	const clientStore = new Map<string, StoredClient>();
 	const Adapter = createInMemoryAdapter(clientStore);
 	const replayStore = new MemoryReplayStore();
-	const leafHandler = createLeafHandler(leaf);
+	const leafHandler = (request: Request) => leaf.handleRequest(request);
 	const registrationHandler = createExplicitRegistrationHandler({
 		opEntityId: entityId as EntityId,
 		keyProvider: federationKeyProvider,

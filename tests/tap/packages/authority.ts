@@ -34,11 +34,34 @@ import {
 	InvalidSubordinateStatementShape,
 } from "../../../packages/authority/src/errors.js";
 import { compose, type Middleware } from "../../../packages/authority/src/handler.js";
-import { rotateKey, rotateKeyCompromise } from "../../../packages/authority/src/keys/index.js";
 import {
 	type AuthorityConfig,
-	createAuthorityServer,
-} from "../../../packages/authority/src/server.js";
+	Intermediate,
+	TrustAnchor,
+} from "../../../packages/authority/src/index.js";
+import { rotateKey, rotateKeyCompromise } from "../../../packages/authority/src/keys/index.js";
+
+function createAuthorityServer(config: AuthorityConfig): any {
+	const server =
+		config.authorityHints && config.authorityHints.length > 0
+			? new Intermediate(config)
+			: new TrustAnchor(config);
+	return {
+		getEntityConfiguration: () => server.getEntityConfiguration(),
+		getSubordinateStatement: (sub: any) => server.getSubordinateStatement(sub),
+		listSubordinates: (filter: any) => server.listSubordinates(filter),
+		listSubordinatesExtended: (params: any) => server.listSubordinatesExtended(params),
+		resolveEntity: (sub: any, ta: any) => server.resolveEntity(sub, ta),
+		getTrustMarkStatus: (tm: any) => server.getTrustMarkStatus(tm),
+		listTrustMarkedEntities: (type: any) => server.listTrustMarkedEntities(type),
+		issueTrustMark: (sub: any, type: any) => server.issueTrustMark(sub, type),
+		issueTrustMarkDelegation: (sub: any, type: any) => server.issueTrustMarkDelegation(sub, type),
+		getHistoricalKeys: () => server.getHistoricalKeys(),
+		rotateSigningKey: (newKey: any) => server.rotateSigningKey(newKey),
+		handler: () => (request: Request) => server.handleRequest(request),
+	};
+}
+
 import { MemoryStorageAdapter } from "../../../packages/authority/src/storage/memory.js";
 import type {
 	SubordinateRecord,

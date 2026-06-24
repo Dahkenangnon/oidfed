@@ -1,12 +1,15 @@
-import type { AuthorityServer } from "@oidfed/authority";
+import type { Intermediate, TrustAnchor } from "@oidfed/authority";
 import express from "express";
 
-export function createAuthorityApp(authority: AuthorityServer, entityId: string): express.Express {
+export function createAuthorityApp(
+	authority: TrustAnchor | Intermediate,
+	entityId: string,
+): express.Express {
 	const app = express();
 	app.use(express.raw({ type: "application/entity-statement+jwt", limit: "64kb" }));
 	app.use(express.urlencoded({ extended: false, limit: "64kb" }));
 
-	const federationHandler = authority.handler();
+	const federationHandler = (request: Request) => authority.handleRequest(request);
 
 	app.all("/*splat", async (req, res) => {
 		const url = new URL(req.originalUrl, entityId);

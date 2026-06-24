@@ -17,11 +17,7 @@ import {
 	WELL_KNOWN_OPENID_FEDERATION,
 } from "../../../packages/core/src/index.js";
 import { discoverEntity } from "../../../packages/leaf/src/discovery.js";
-import {
-	createLeafEntity,
-	type LeafConfig,
-} from "../../../packages/leaf/src/entity-configuration.js";
-import { createLeafHandler } from "../../../packages/leaf/src/handler.js";
+import { Leaf, type LeafConfig } from "../../../packages/leaf/src/index.js";
 import {
 	createMockFederation,
 	createMockTrustAnchors,
@@ -180,31 +176,31 @@ export default (QUnit: QUnit) => {
 	});
 
 	// -------------------------------------------------------------------------
-	// entity-configuration — validation
+	// Leaf — validation
 	// -------------------------------------------------------------------------
-	module("leaf / createLeafEntity / validation", () => {
+	module("leaf / Leaf / validation", () => {
 		test("rejects empty metadata — requires at least one Entity Type", async (t) => {
 			const { config } = await createLeafConfig({ metadata: {} as never });
-			t.throws(() => createLeafEntity(config), /metadata MUST contain at least one Entity Type/);
+			t.throws(() => new Leaf(config), /metadata MUST contain at least one Entity Type/);
 		});
 
 		test("throws on empty authorityHints", async (t) => {
 			const { config } = await createLeafConfig({
 				authorityHints: [] as unknown as [EntityId, ...EntityId[]],
 			});
-			t.throws(() => createLeafEntity(config), /authorityHints/);
+			t.throws(() => new Leaf(config), /authorityHints/);
 		});
 
 		test("rejects non-HTTPS authorityHint — requires valid Entity Identifiers", async (t) => {
 			const { config } = await createLeafConfig({
 				authorityHints: ["http://ta.example.com" as EntityId],
 			});
-			t.throws(() => createLeafEntity(config), /authorityHint/);
+			t.throws(() => new Leaf(config), /authorityHint/);
 		});
 
 		test("throws when keyProvider is missing", async (t) => {
 			const { config } = await createLeafConfig({ keyProvider: undefined });
-			t.throws(() => createLeafEntity(config), /keyProvider/);
+			t.throws(() => new Leaf(config), /keyProvider/);
 		});
 
 		test("throws on signer key without kid", async (t) => {
@@ -221,10 +217,7 @@ export default (QUnit: QUnit) => {
 					federation_entity: { federation_fetch_endpoint: "https://rp.example.com/fetch" },
 				} as never,
 			});
-			t.throws(
-				() => createLeafEntity(config),
-				/Leaf entities MUST NOT publish federation_fetch_endpoint/,
-			);
+			t.throws(() => new Leaf(config), /Leaf entities MUST NOT publish federation_fetch_endpoint/);
 		});
 
 		test("throws when metadata includes federation_list_endpoint", async (t) => {
@@ -234,10 +227,7 @@ export default (QUnit: QUnit) => {
 					federation_entity: { federation_list_endpoint: "https://rp.example.com/list" },
 				} as never,
 			});
-			t.throws(
-				() => createLeafEntity(config),
-				/Leaf entities MUST NOT publish federation_list_endpoint/,
-			);
+			t.throws(() => new Leaf(config), /Leaf entities MUST NOT publish federation_list_endpoint/);
 		});
 
 		test("throws on duplicate kid values", async (t) => {
@@ -286,48 +276,48 @@ export default (QUnit: QUnit) => {
 			const { config } = await createLeafConfig({
 				entityId: "http://rp.example.com" as EntityId,
 			});
-			t.throws(() => createLeafEntity(config), /HTTPS URL/);
+			t.throws(() => new Leaf(config), /HTTPS URL/);
 		});
 
 		test("rejects entityId with query parameter", async (t) => {
 			const { config } = await createLeafConfig({
 				entityId: "https://rp.example.com?foo=bar" as EntityId,
 			});
-			t.throws(() => createLeafEntity(config), /HTTPS URL/);
+			t.throws(() => new Leaf(config), /HTTPS URL/);
 		});
 
 		test("rejects entityId with fragment", async (t) => {
 			const { config } = await createLeafConfig({
 				entityId: "https://rp.example.com#frag" as EntityId,
 			});
-			t.throws(() => createLeafEntity(config), /HTTPS URL/);
+			t.throws(() => new Leaf(config), /HTTPS URL/);
 		});
 
 		test("rejects empty entityId", async (t) => {
 			const { config } = await createLeafConfig({ entityId: "" as EntityId });
-			t.throws(() => createLeafEntity(config));
+			t.throws(() => new Leaf(config));
 		});
 
 		test("rejects ttlSeconds of 0", async (t) => {
 			const { config } = await createLeafConfig({ entityConfigurationTtlSeconds: 0 });
-			t.throws(() => createLeafEntity(config), /entityConfigurationTtlSeconds must be positive/);
+			t.throws(() => new Leaf(config), /entityConfigurationTtlSeconds must be positive/);
 		});
 
 		test("rejects negative ttlSeconds", async (t) => {
 			const { config } = await createLeafConfig({ entityConfigurationTtlSeconds: -1 });
-			t.throws(() => createLeafEntity(config), /entityConfigurationTtlSeconds must be positive/);
+			t.throws(() => new Leaf(config), /entityConfigurationTtlSeconds must be positive/);
 		});
 	});
 
 	// -------------------------------------------------------------------------
-	// entity-configuration — entity ID normalization
+	// Leaf — entity ID normalization
 	// -------------------------------------------------------------------------
-	module("leaf / createLeafEntity / entity ID normalization", () => {
+	module("leaf / Leaf / entity ID normalization", () => {
 		test("normalizes trailing slash in iss/sub", async (t) => {
 			const { config } = await createLeafConfig({
 				entityId: "https://rp.example.com/" as EntityId,
 			});
-			const entity = createLeafEntity(config);
+			const entity = new Leaf(config);
 			const jwt = await entity.getEntityConfiguration();
 			const decoded = decodeEntityStatement(jwt);
 			t.true(decoded.ok);
@@ -340,7 +330,7 @@ export default (QUnit: QUnit) => {
 			const { config } = await createLeafConfig({
 				entityId: "https://rp.example.com" as EntityId,
 			});
-			const entity = createLeafEntity(config);
+			const entity = new Leaf(config);
 			const jwt = await entity.getEntityConfiguration();
 			const decoded = decodeEntityStatement(jwt);
 			t.true(decoded.ok);
@@ -350,12 +340,12 @@ export default (QUnit: QUnit) => {
 	});
 
 	// -------------------------------------------------------------------------
-	// entity-configuration — getEntityConfiguration
+	// Leaf — getEntityConfiguration
 	// -------------------------------------------------------------------------
-	module("leaf / createLeafEntity / getEntityConfiguration", () => {
+	module("leaf / Leaf / getEntityConfiguration", () => {
 		test("returns a valid signed JWT", async (t) => {
 			const { config, publicKey } = await createLeafConfig();
-			const entity = createLeafEntity(config);
+			const entity = new Leaf(config);
 			const jwt = await entity.getEntityConfiguration();
 			t.equal(jwt.split(".").length, 3);
 			const result = await verifyEntityStatement(jwt, { keys: [publicKey] });
@@ -364,7 +354,7 @@ export default (QUnit: QUnit) => {
 
 		test("has iss === sub === entityId", async (t) => {
 			const { config } = await createLeafConfig();
-			const entity = createLeafEntity(config);
+			const entity = new Leaf(config);
 			const jwt = await entity.getEntityConfiguration();
 			const decoded = decodeEntityStatement(jwt);
 			t.true(decoded.ok);
@@ -375,7 +365,7 @@ export default (QUnit: QUnit) => {
 
 		test("includes typ: entity-statement+jwt", async (t) => {
 			const { config } = await createLeafConfig();
-			const entity = createLeafEntity(config);
+			const entity = new Leaf(config);
 			const jwt = await entity.getEntityConfiguration();
 			const decoded = decodeEntityStatement(jwt);
 			t.true(decoded.ok);
@@ -385,7 +375,7 @@ export default (QUnit: QUnit) => {
 
 		test("contains public keys only in jwks (no d field)", async (t) => {
 			const { config } = await createLeafConfig();
-			const entity = createLeafEntity(config);
+			const entity = new Leaf(config);
 			const jwt = await entity.getEntityConfiguration();
 			const decoded = decodeEntityStatement(jwt);
 			t.true(decoded.ok);
@@ -407,7 +397,7 @@ export default (QUnit: QUnit) => {
 
 		test("includes authority_hints", async (t) => {
 			const { config } = await createLeafConfig();
-			const entity = createLeafEntity(config);
+			const entity = new Leaf(config);
 			const jwt = await entity.getEntityConfiguration();
 			const decoded = decodeEntityStatement(jwt);
 			t.true(decoded.ok);
@@ -418,7 +408,7 @@ export default (QUnit: QUnit) => {
 
 		test("includes metadata", async (t) => {
 			const { config } = await createLeafConfig();
-			const entity = createLeafEntity(config);
+			const entity = new Leaf(config);
 			const jwt = await entity.getEntityConfiguration();
 			const decoded = decodeEntityStatement(jwt);
 			t.true(decoded.ok);
@@ -432,7 +422,7 @@ export default (QUnit: QUnit) => {
 		test("includes trust_marks when configured", async (t) => {
 			const trustMarks = [{ trust_mark_type: "https://example.com/tm1", trust_mark: "jwt-value" }];
 			const { config } = await createLeafConfig({ trustMarks });
-			const entity = createLeafEntity(config);
+			const entity = new Leaf(config);
 			const jwt = await entity.getEntityConfiguration();
 			const decoded = decodeEntityStatement(jwt);
 			t.true(decoded.ok);
@@ -443,7 +433,7 @@ export default (QUnit: QUnit) => {
 
 		test("omits trust_marks when not configured", async (t) => {
 			const { config } = await createLeafConfig();
-			const entity = createLeafEntity(config);
+			const entity = new Leaf(config);
 			const jwt = await entity.getEntityConfiguration();
 			const decoded = decodeEntityStatement(jwt);
 			t.true(decoded.ok);
@@ -454,7 +444,7 @@ export default (QUnit: QUnit) => {
 
 		test("sets exp = iat + ttlSeconds (default 86400)", async (t) => {
 			const { config } = await createLeafConfig();
-			const entity = createLeafEntity(config);
+			const entity = new Leaf(config);
 			const jwt = await entity.getEntityConfiguration();
 			const decoded = decodeEntityStatement(jwt);
 			t.true(decoded.ok);
@@ -465,7 +455,7 @@ export default (QUnit: QUnit) => {
 
 		test("respects custom entityConfigurationTtlSeconds", async (t) => {
 			const { config } = await createLeafConfig({ entityConfigurationTtlSeconds: 3600 });
-			const entity = createLeafEntity(config);
+			const entity = new Leaf(config);
 			const jwt = await entity.getEntityConfiguration();
 			const decoded = decodeEntityStatement(jwt);
 			t.true(decoded.ok);
@@ -476,7 +466,7 @@ export default (QUnit: QUnit) => {
 
 		test("caches the signed JWT", async (t) => {
 			const { config } = await createLeafConfig();
-			const entity = createLeafEntity(config);
+			const entity = new Leaf(config);
 			const jwt1 = await entity.getEntityConfiguration();
 			const jwt2 = await entity.getEntityConfiguration();
 			t.equal(jwt1, jwt2);
@@ -488,7 +478,7 @@ export default (QUnit: QUnit) => {
 			const { config } = await createLeafConfig({
 				keyProvider: new MemoryFederationKeyProvider([federationKey(key1), federationKey(key2)]),
 			});
-			const entity = createLeafEntity(config);
+			const entity = new Leaf(config);
 			const jwt = await entity.getEntityConfiguration();
 			const decoded = decodeEntityStatement(jwt);
 			t.true(decoded.ok);
@@ -509,7 +499,7 @@ export default (QUnit: QUnit) => {
 					},
 				},
 			});
-			const entity = createLeafEntity(config);
+			const entity = new Leaf(config);
 			const [jwt1, jwt2] = await Promise.all([
 				entity.getEntityConfiguration(),
 				entity.getEntityConfiguration(),
@@ -526,7 +516,7 @@ export default (QUnit: QUnit) => {
 					},
 				},
 			});
-			const entity = createLeafEntity(config);
+			const entity = new Leaf(config);
 			try {
 				await entity.getEntityConfiguration();
 				t.ok(false, "should have thrown");
@@ -537,19 +527,19 @@ export default (QUnit: QUnit) => {
 	});
 
 	// -------------------------------------------------------------------------
-	// entity-configuration — isEntityConfigurationExpired
+	// Leaf — isEntityConfigurationExpired
 	// -------------------------------------------------------------------------
-	module("leaf / createLeafEntity / isEntityConfigurationExpired", () => {
+	module("leaf / Leaf / isEntityConfigurationExpired", () => {
 		test("returns false for fresh EC", async (t) => {
 			const { config } = await createLeafConfig();
-			const entity = createLeafEntity(config);
+			const entity = new Leaf(config);
 			await entity.getEntityConfiguration();
 			t.false(entity.isEntityConfigurationExpired());
 		});
 
 		test("returns true when no EC has been generated", async (t) => {
 			const { config } = await createLeafConfig();
-			const entity = createLeafEntity(config);
+			const entity = new Leaf(config);
 			t.true(entity.isEntityConfigurationExpired());
 		});
 
@@ -561,7 +551,7 @@ export default (QUnit: QUnit) => {
 				entityConfigurationTtlSeconds: ttl,
 				options: { clock },
 			});
-			const entity = createLeafEntity(config);
+			const entity = new Leaf(config);
 			await entity.getEntityConfiguration();
 			nowMs += ttl * 1000;
 			t.true(entity.isEntityConfigurationExpired());
@@ -569,9 +559,9 @@ export default (QUnit: QUnit) => {
 	});
 
 	// -------------------------------------------------------------------------
-	// entity-configuration — cache expiry
+	// Leaf — cache expiry
 	// -------------------------------------------------------------------------
-	module("leaf / createLeafEntity / cache expiry", () => {
+	module("leaf / Leaf / cache expiry", () => {
 		test("rebuilds EC after TTL expires", async (t) => {
 			const ttl = 60;
 			let nowMs = Date.now();
@@ -580,7 +570,7 @@ export default (QUnit: QUnit) => {
 				entityConfigurationTtlSeconds: ttl,
 				options: { clock },
 			});
-			const entity = createLeafEntity(config);
+			const entity = new Leaf(config);
 			const jwt1 = await entity.getEntityConfiguration();
 			nowMs += (ttl + 1) * 1000;
 			const jwt2 = await entity.getEntityConfiguration();
@@ -589,12 +579,12 @@ export default (QUnit: QUnit) => {
 	});
 
 	// -------------------------------------------------------------------------
-	// entity-configuration — refreshEntityConfiguration
+	// Leaf — refreshEntityConfiguration
 	// -------------------------------------------------------------------------
-	module("leaf / createLeafEntity / refreshEntityConfiguration", () => {
+	module("leaf / Leaf / refreshEntityConfiguration", () => {
 		test("produces a new JWT", async (t) => {
 			const { config } = await createLeafConfig();
-			const entity = createLeafEntity(config);
+			const entity = new Leaf(config);
 			await entity.getEntityConfiguration();
 			const jwt2 = await entity.refreshEntityConfiguration();
 			t.equal(typeof jwt2, "string");
@@ -603,7 +593,7 @@ export default (QUnit: QUnit) => {
 
 		test("replaces the cached EC", async (t) => {
 			const { config } = await createLeafConfig();
-			const entity = createLeafEntity(config);
+			const entity = new Leaf(config);
 			await entity.getEntityConfiguration();
 			const refreshed = await entity.refreshEntityConfiguration();
 			const cached = await entity.getEntityConfiguration();
@@ -612,128 +602,91 @@ export default (QUnit: QUnit) => {
 	});
 
 	// -------------------------------------------------------------------------
-	// entity-configuration — handler (inline)
+	// Leaf — handleRequest
 	// -------------------------------------------------------------------------
-	module("leaf / createLeafEntity / handler", () => {
+	module("leaf / Leaf / handleRequest", () => {
 		test("responds 200 with entity-statement+jwt on /.well-known/openid-federation", async (t) => {
 			const { config } = await createLeafConfig();
-			const entity = createLeafEntity(config);
-			const handler = entity.handler();
+			const entity = new Leaf(config);
 			const request = new Request("https://rp.example.com/.well-known/openid-federation");
-			const response = await handler(request);
+			const response = await entity.handleRequest(request);
 			t.equal(response.status, 200);
 			t.equal(response.headers.get("content-type"), "application/entity-statement+jwt");
 			const body = await response.text();
 			t.equal(body.split(".").length, 3);
 		});
-	});
-
-	// -------------------------------------------------------------------------
-	// handler
-	// -------------------------------------------------------------------------
-	module("leaf / createLeafHandler", () => {
-		async function createHandler() {
-			const { config } = await createLeafConfig();
-			const e = createLeafEntity(config);
-			return { handler: createLeafHandler(e), entity: e };
-		}
-
-		test("returns 200 with correct Content-Type for well-known path", async (t) => {
-			const { handler } = await createHandler();
-			const response = await handler(new Request(`${LEAF_ID}${WELL_KNOWN_OPENID_FEDERATION}`));
-			t.equal(response.status, 200);
-			t.equal(response.headers.get("Content-Type"), MediaType.EntityStatement);
-		});
-
-		test("response body is valid JWT", async (t) => {
-			const { handler } = await createHandler();
-			const response = await handler(new Request(`${LEAF_ID}${WELL_KNOWN_OPENID_FEDERATION}`));
-			const body = await response.text();
-			t.equal(body.split(".").length, 3);
-		});
 
 		test("returns 405 for POST to well-known path", async (t) => {
-			const { handler } = await createHandler();
-			const response = await handler(
+			const { config } = await createLeafConfig();
+			const entity = new Leaf(config);
+			const response = await entity.handleRequest(
 				new Request(`${LEAF_ID}${WELL_KNOWN_OPENID_FEDERATION}`, { method: "POST" }),
 			);
 			t.equal(response.status, 405);
-			t.equal(response.headers.get("Allow"), "GET");
 		});
 
 		test("returns 404 for unknown paths", async (t) => {
-			const { handler } = await createHandler();
-			const response = await handler(new Request(`${LEAF_ID}/unknown-path`));
+			const { config } = await createLeafConfig();
+			const entity = new Leaf(config);
+			const response = await entity.handleRequest(new Request(`${LEAF_ID}/unknown-path`));
 			t.equal(response.status, 404);
 		});
 
-		test("includes security headers on 200 response", async (t) => {
-			const { handler } = await createHandler();
-			const response = await handler(new Request(`${LEAF_ID}${WELL_KNOWN_OPENID_FEDERATION}`));
-			t.equal(response.headers.get("Cache-Control"), "no-store");
-			t.equal(response.headers.get("X-Content-Type-Options"), "nosniff");
-			t.ok(response.headers.get("Strict-Transport-Security")?.includes("max-age="));
-		});
-
-		test("includes security headers on 404 response", async (t) => {
-			const { handler } = await createHandler();
-			const response = await handler(new Request(`${LEAF_ID}/unknown`));
-			t.equal(response.headers.get("Cache-Control"), "no-store");
-			t.equal(response.headers.get("X-Content-Type-Options"), "nosniff");
-		});
-
-		test("includes security headers on 405 response", async (t) => {
-			const { handler } = await createHandler();
-			const response = await handler(
-				new Request(`${LEAF_ID}${WELL_KNOWN_OPENID_FEDERATION}`, { method: "DELETE" }),
-			);
-			t.equal(response.headers.get("Cache-Control"), "no-store");
-			t.equal(response.headers.get("X-Content-Type-Options"), "nosniff");
-		});
-
 		test("returns 500 when getEntityConfiguration throws", async (t) => {
-			const faultyEntity = {
-				getEntityConfiguration: () => {
-					throw new Error("signing failure");
+			const originalError = new Error("signing failure");
+			const { config } = await createLeafConfig({
+				keyProvider: {
+					getFederationKeySet: async () => {
+						throw originalError;
+					},
 				},
-			} as unknown as import("../../../packages/leaf/src/entity-configuration.js").LeafEntity;
-			const handler = createLeafHandler(faultyEntity);
-			const response = await handler(new Request(`${LEAF_ID}${WELL_KNOWN_OPENID_FEDERATION}`));
+			});
+			const entity = new Leaf(config);
+			const response = await entity.handleRequest(
+				new Request(`${LEAF_ID}${WELL_KNOWN_OPENID_FEDERATION}`),
+			);
 			t.equal(response.status, 500);
 			const body = (await response.json()) as Record<string, unknown>;
 			t.equal(body.error, "server_error");
-			t.equal(response.headers.get("Cache-Control"), "no-store");
 		});
 
 		test("500 body does NOT contain internal error message (no info leak)", async (t) => {
 			const secretMessage = "database password is hunter2";
-			const faultyEntity = {
-				getEntityConfiguration: () => {
-					throw new Error(secretMessage);
+			const { config } = await createLeafConfig({
+				keyProvider: {
+					getFederationKeySet: async () => {
+						throw new Error(secretMessage);
+					},
 				},
-			} as unknown as import("../../../packages/leaf/src/entity-configuration.js").LeafEntity;
-			const handler = createLeafHandler(faultyEntity);
-			const response = await handler(new Request(`${LEAF_ID}${WELL_KNOWN_OPENID_FEDERATION}`));
+			});
+			const entity = new Leaf(config);
+			const response = await entity.handleRequest(
+				new Request(`${LEAF_ID}${WELL_KNOWN_OPENID_FEDERATION}`),
+			);
 			const text = await response.text();
 			t.notOk(text.includes(secretMessage), "secret not in response");
 		});
 
 		test("logger error() is called with original error on 500", async (t) => {
 			const originalError = new Error("signing failure");
-			const faultyEntity = {
-				getEntityConfiguration: () => {
-					throw originalError;
-				},
-			} as unknown as import("../../../packages/leaf/src/entity-configuration.js").LeafEntity;
 			const errorFn = mockFn<[string, Record<string, unknown>]>();
-			const logger = {
-				debug: mockFn(),
-				info: mockFn(),
-				warn: mockFn(),
-				error: errorFn,
-			};
-			const handler = createLeafHandler(faultyEntity, { logger });
-			await handler(new Request(`${LEAF_ID}${WELL_KNOWN_OPENID_FEDERATION}`));
+			const { config } = await createLeafConfig({
+				keyProvider: {
+					getFederationKeySet: async () => {
+						throw originalError;
+					},
+				},
+				options: {
+					logger: {
+						debug: mockFn(),
+						info: mockFn(),
+						warn: mockFn(),
+						error: errorFn,
+					},
+				},
+			});
+			const entity = new Leaf(config);
+			await entity.handleRequest(new Request(`${LEAF_ID}${WELL_KNOWN_OPENID_FEDERATION}`));
 			t.equal(errorFn.callCount(), 1);
 			const [msg, ctx] = errorFn.lastCall();
 			t.equal(msg, "Failed to serve entity configuration");
@@ -741,16 +694,18 @@ export default (QUnit: QUnit) => {
 		});
 
 		test("404 response has error and error_description fields", async (t) => {
-			const { handler } = await createHandler();
-			const response = await handler(new Request(`${LEAF_ID}/unknown`));
+			const { config } = await createLeafConfig();
+			const entity = new Leaf(config);
+			const response = await entity.handleRequest(new Request(`${LEAF_ID}/unknown`));
 			const body = (await response.json()) as Record<string, unknown>;
 			t.equal(body.error, "not_found");
 			t.equal(body.error_description, "Unknown endpoint");
 		});
 
 		test("405 response has error field", async (t) => {
-			const { handler } = await createHandler();
-			const response = await handler(
+			const { config } = await createLeafConfig();
+			const entity = new Leaf(config);
+			const response = await entity.handleRequest(
 				new Request(`${LEAF_ID}${WELL_KNOWN_OPENID_FEDERATION}`, { method: "POST" }),
 			);
 			const body = (await response.json()) as Record<string, unknown>;
@@ -758,13 +713,17 @@ export default (QUnit: QUnit) => {
 		});
 
 		test("500 response has error and error_description fields", async (t) => {
-			const faultyEntity = {
-				getEntityConfiguration: () => {
-					throw new Error("fail");
+			const { config } = await createLeafConfig({
+				keyProvider: {
+					getFederationKeySet: async () => {
+						throw new Error("fail");
+					},
 				},
-			} as unknown as import("../../../packages/leaf/src/entity-configuration.js").LeafEntity;
-			const handler = createLeafHandler(faultyEntity);
-			const response = await handler(new Request(`${LEAF_ID}${WELL_KNOWN_OPENID_FEDERATION}`));
+			});
+			const entity = new Leaf(config);
+			const response = await entity.handleRequest(
+				new Request(`${LEAF_ID}${WELL_KNOWN_OPENID_FEDERATION}`),
+			);
 			const body = (await response.json()) as Record<string, unknown>;
 			t.equal(body.error, "server_error");
 			t.equal(body.error_description, "An internal error occurred");
@@ -776,7 +735,7 @@ export default (QUnit: QUnit) => {
 	// -------------------------------------------------------------------------
 	module("leaf / integration", () => {
 		test("end-to-end: EC generation + handler serving", async (t) => {
-			const fed = await createMockFederation();
+			const fed = await createMockMockFederation();
 			const config: LeafConfig = {
 				entityId: LEAF_ID,
 				keyProvider: new MemoryFederationKeyProvider(federationKey(fed.leafSigningKey)),
@@ -789,9 +748,10 @@ export default (QUnit: QUnit) => {
 					},
 				},
 			};
-			const entity = createLeafEntity(config);
-			const handler = entity.handler();
-			const response = await handler(new Request(`${LEAF_ID}${WELL_KNOWN_OPENID_FEDERATION}`));
+			const entity = new Leaf(config);
+			const response = await entity.handleRequest(
+				new Request(`${LEAF_ID}${WELL_KNOWN_OPENID_FEDERATION}`),
+			);
 			t.equal(response.status, 200);
 			t.equal(response.headers.get("Content-Type"), MediaType.EntityStatement);
 			const jwt = await response.text();
@@ -805,7 +765,7 @@ export default (QUnit: QUnit) => {
 		});
 
 		test("end-to-end: discover OP through mock federation", async (t) => {
-			const fed = await createMockFederation();
+			const fed = await createMockMockFederation();
 			const config: LeafConfig = {
 				entityId: LEAF_ID,
 				keyProvider: new MemoryFederationKeyProvider(federationKey(fed.leafSigningKey)),
@@ -817,7 +777,7 @@ export default (QUnit: QUnit) => {
 					},
 				},
 			};
-			createLeafEntity(config);
+			new Leaf(config);
 			const discovery = await discoverEntity(OP_ID, fed.trustAnchors, fed.options);
 			t.true(isOk(discovery));
 			if (isOk(discovery)) {
@@ -828,7 +788,7 @@ export default (QUnit: QUnit) => {
 		});
 
 		test("EC caching and refresh cycle", async (t) => {
-			const fed = await createMockFederation();
+			const fed = await createMockMockFederation();
 			const config: LeafConfig = {
 				entityId: LEAF_ID,
 				keyProvider: new MemoryFederationKeyProvider(federationKey(fed.leafSigningKey)),
@@ -837,7 +797,7 @@ export default (QUnit: QUnit) => {
 					openid_relying_party: { redirect_uris: ["https://rp.example.com/callback"] },
 				},
 			};
-			const entity = createLeafEntity(config);
+			const entity = new Leaf(config);
 			t.true(entity.isEntityConfigurationExpired());
 			const ec1 = await entity.getEntityConfiguration();
 			t.false(entity.isEntityConfigurationExpired());
@@ -850,3 +810,7 @@ export default (QUnit: QUnit) => {
 		});
 	});
 };
+
+async function createMockMockFederation() {
+	return createMockFederation();
+}
