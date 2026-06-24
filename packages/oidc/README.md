@@ -17,175 +17,77 @@ npm install @oidfed/core @oidfed/oidc
 
 ## Quick Start
 
-OIDC protocol keys are separate from federation entity keys:
+This package provides role classes that compose directly with `Leaf`, `TrustAnchor`, or `Intermediate` instances.
 
-- `OidcProtocolKeyProvider` signs Request Objects and `private_key_jwt` assertions
-- RP or OP metadata publishes OIDC protocol public keys via `jwks`, `jwks_uri`, or `signed_jwks_uri`
-- federation Entity Configurations and other federation artifacts stay on federation key providers from `@oidfed/core`
+OIDC/OAuth protocol keys are separate from federation entity keys:
+- OIDC/OAuth roles publish OIDC/OAuth protocol public keys via `jwks` inside the role configuration.
+- Federation Entity Configurations and other federation artifacts stay on federation key providers from `@oidfed/core`.
 
-### RP — Automatic Registration
-
-```ts
-import { automaticRegistration } from "@oidfed/oidc";
-import { discoverEntity } from "@oidfed/leaf";
-import { isOk } from "@oidfed/core";
-
-const opDiscoveryResult = await discoverEntity(opEntityId, trustAnchors);
-if (!isOk(opDiscoveryResult)) {
-  throw new Error("Discovery failed");
-}
-const opDiscovery = opDiscoveryResult.value;
-
-const resultVal = await automaticRegistration(
-  opDiscovery,
-  rpConfig, // defaults to form_post delivery
-  { scope: "openid profile", state: "xyz" },
-  trustAnchors,
-);
-
-if (isOk(resultVal)) {
-  const result = resultVal.value;
-  switch (result.delivery) {
-    case "form_post":
-      // Render an HTML form posting result.formParams to result.authorizationEndpoint
-      break;
-    case "query":
-    case "request_uri":
-    case "par":
-      // 302 the user-agent to result.authorizationUrl
-      break;
-  }
-}
-```
-
-### OP — Processing Registration
+### RP Composition Example
 
 ```ts
-import { processAutomaticRegistration } from "@oidfed/oidc";
+import { Leaf } from "@oidfed/leaf";
+import { FedOidcClient } from "@oidfed/oidc";
+import { MemoryFederationKeyProvider, federationKey } from "@oidfed/core";
 
-const result = await processAutomaticRegistration(requestObjectJwt, trustAnchors, {
-  opEntityId: entityId("https://op.example.com"),
-  replayStore,
-});
-// Result<ProcessedRegistration, FederationError> — never throws
-```
-
-## Request Object delivery modes
-
-The Authorization Request can carry the signed Request Object in four ways. Select one via
-`rpConfig.requestDelivery`. **The default is `"form_post"`** — the safest choice when the
-Request Object embeds a `trust_chain` header (the JWT often exceeds 8 KB, hitting URL and
-header-length ceilings in HTTP intermediaries).
-
-### `form_post` (default)
-
-Posts the Request Object as an `application/x-www-form-urlencoded` body. The RP renders an
-auto-submit HTML form whose `action` is the OP authorization endpoint.
-
-```ts
-const resultVal = await automaticRegistration(
-  opDiscovery,
-  { ...rpConfig, requestDelivery: "form_post" },
-  authzParams,
-  trustAnchors,
-);
-if (isOk(resultVal)) {
-  const result = resultVal.value;
-  if (result.delivery === "form_post") {
-    // Serve an HTML form to the user-agent:
-    //   <form method="post" action={result.authorizationEndpoint}>
-    //     <input type="hidden" name="request" value={result.formParams.request}>
-    //     <input type="hidden" name="client_id" value={result.formParams.client_id}>
-    //   </form>
-  }
-}
-```
-
-### `query`
-
-Places the Request Object value in a `?request=` query parameter of a GET to the OP
-authorization endpoint. Compact but constrained by URL/header length limits when the
-Request Object carries an embedded `trust_chain`.
-
-```ts
-const resultVal = await automaticRegistration(
-  opDiscovery,
-  { ...rpConfig, requestDelivery: "query" },
-  authzParams,
-  trustAnchors,
-);
-if (isOk(resultVal)) {
-  const result = resultVal.value;
-  if (result.delivery === "query") {
-    // 302 the user-agent to result.authorizationUrl (contains ?request=&client_id=)
-  }
-}
-```
-
-### `request_uri` (by reference)
-
-The RP hosts the signed Request Object at a publicly-reachable URL it provides. The OP
-fetches that URL when it receives `?request_uri=<URL>&client_id=<RP>`. The library does
-NOT host the JWT — the caller must serve `result.requestObjectJwt` at the supplied
-`requestUri` with `Content-Type: application/oauth-authz-req+jwt`, typically with a short
-TTL and single-use semantics.
-
-```ts
-const resultVal = await automaticRegistration(
-  opDiscovery,
-  {
-    ...rpConfig,
-    requestDelivery: "request_uri",
-    requestUri: "https://rp.example.com/request-object/abc123",
+const rpEntity = new Leaf({
+  entityId: "https://rp.example.com",
+  authorityHints: ["https://ta.example.org"],
+  keyProvider: new MemoryFederationKeyProvider(federationKey(federationSigningKey)),
+  metadata: {
+    federation_entity: {
+      organization_name: "My Relying Party",
+    },
   },
-  authzParams,
-  trustAnchors,
-);
-if (isOk(resultVal)) {
-  const result = resultVal.value;
-  if (result.delivery === "request_uri") {
-    // 1. Cache result.requestObjectJwt under the URL path you provided
-    // 2. 302 the user-agent to result.authorizationUrl
-  }
-}
+  roles: [
+    new FedOidcClient({
+      redirect_uris: ["https://rp.example.com/callback"],
+      response_types: ["code"],
+      client_registration_types: ["automatic"],
+      jwks: { keys: [protocolPublicKey] },
+    })
+  ]
+});
 ```
 
-### `par` (Pushed Authorization Request)
-
-The library POSTs the Request Object directly to the OP's
-`pushed_authorization_request_endpoint` (advertised in the OP `openid_provider` metadata),
-receives a short-lived `urn:ietf:params:oauth:request_uri:<id>`, and returns an
-authorization URL embedding that urn. The PAR request includes a `private_key_jwt`
-client_assertion whose audience is the OP's Entity Identifier.
+### OP Composition Example
 
 ```ts
-const resultVal = await automaticRegistration(
-  opDiscovery,
-  { ...rpConfig, requestDelivery: "par" },
-  authzParams,
-  trustAnchors,
-);
-if (isOk(resultVal)) {
-  const result = resultVal.value;
-  if (result.delivery === "par") {
-    // 302 the user-agent to result.authorizationUrl (contains ?request_uri=urn:...)
-    // result.parExpiresAt tells you when the urn becomes unusable
-  }
-}
+import { TrustAnchor, MemoryStorageAdapter } from "@oidfed/authority";
+import { FedOidcProvider } from "@oidfed/oidc";
+
+const opEntity = new TrustAnchor({
+  entityId: "https://op.example.com",
+  keyProvider,
+  storage: new MemoryStorageAdapter(),
+  metadata: {
+    federation_entity: {
+      federation_fetch_endpoint: "https://op.example.com/federation_fetch",
+      federation_list_endpoint: "https://op.example.com/federation_list",
+    },
+  },
+  roles: [
+    new FedOidcProvider({
+      authorization_endpoint: "https://op.example.com/auth",
+      token_endpoint: "https://op.example.com/token",
+      federation_registration_endpoint: "https://op.example.com/register",
+      client_registration_types_supported: ["automatic", "explicit"],
+      jwks: { keys: [protocolPublicKey] },
+    })
+  ]
+});
 ```
 
 ## What's Included
 
-- RP-side automatic registration (Request Object + trust chain embedding)
-- RP-side explicit registration (Entity Configuration POST)
-- OP-side processing for both registration types (returns `Result`, never throws)
-- Typed OP/RP metadata schemas (replace core's loose `z.record()` with field-level validation)
-- Request Object validation
-- OIDC protocol signing via `OidcProtocolKeyProvider` and `JwtSigner`
-- Client assertion creation (`private_key_jwt`)
-- `OIDCRegistrationAdapter` for plugging into `@oidfed/authority`
-
-OIDC consumes generic `ReplayStore` and `CacheProvider` capabilities from `@oidfed/core`; it does not expose authority storage repositories. Registration and `ClientAssertionOptions` clocks return NumericDate seconds and control Request Object, Entity Configuration, PAR, assertion, and validation times.
+- OIDC Provider Role (`FedOidcProvider`)
+- OIDC Relying Party Role (`FedOidcClient`)
+- OAuth Authorization Server Role (`FedOauthProvider`)
+- OAuth Client Role (`FedOauthClient`)
+- OAuth Resource Server Role (`FedOauthResource`)
+- Automatic and Explicit client registration processing
+- Typed OP/RP/AS/Client metadata schemas
+- OIDC protocol signing and Request Object validation
 
 ## Documentation
 

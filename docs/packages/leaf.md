@@ -15,17 +15,14 @@ pnpm add @oidfed/core @oidfed/leaf
 ## Quick Start
 
 ```ts
-import { createLeafEntity } from "@oidfed/leaf";
-import { entityId, JwkSigner, MemoryFederationKeyProvider } from "@oidfed/core";
+import { Leaf } from "@oidfed/leaf";
+import { MemoryFederationKeyProvider, federationKey } from "@oidfed/core";
 import express from "express";
 
-const leaf = createLeafEntity({
-  entityId: entityId("https://rp.example.com"),
-  authorityHints: [entityId("https://federation.example.org")],
-  keyProvider: new MemoryFederationKeyProvider({
-    signer: new JwkSigner(myFederationSigningKey),
-    publicJwk: myFederationPublicKey,
-  }),
+const leaf = new Leaf({
+  entityId: "https://rp.example.com",
+  authorityHints: ["https://federation.example.org"],
+  keyProvider: new MemoryFederationKeyProvider(federationKey(myFederationSigningKey)),
   metadata: {
     openid_relying_party: {
       redirect_uris: ["https://rp.example.com/callback"],
@@ -35,11 +32,16 @@ const leaf = createLeafEntity({
   },
 });
 
-const handler = leaf.handler();
-
 const app = express();
 app.use(async (req, res) => {
-  const response = await handler(req as unknown as Request);
+  // Convert Node HTTP req to Web Request, then handle
+  const request = new Request(`https://${req.headers.host}${req.url}`, {
+    method: req.method,
+    headers: req.headers as any,
+    body: req.method !== "GET" && req.method !== "HEAD" ? req : undefined,
+  });
+
+  const response = await leaf.handleRequest(request);
   res.status(response.status);
   response.headers.forEach((value, key) => res.setHeader(key, value));
   res.send(await response.text());
@@ -48,32 +50,26 @@ app.use(async (req, res) => {
 
 ## API
 
-### Entity and Handler
+### Leaf Class
 
 ```ts
-import { createLeafEntity, createLeafHandler } from "@oidfed/leaf";
-import type { LeafConfig, LeafEntity } from "@oidfed/leaf";
+import { Leaf } from "@oidfed/leaf";
+import type { LeafConfig } from "@oidfed/leaf";
 import type { FederationKeyProvider } from "@oidfed/core";
 ```
 
-`createLeafEntity(config)` throws synchronously if `authorityHints` is empty, any authority hint is not a valid Entity Identifier, or `keyProvider` is missing. At runtime it also validates that the active federation signer is published exactly once in the provider's federation JWKS.
+`new Leaf(config)` throws synchronously if `authorityHints` is empty, any authority hint is not a valid Entity Identifier, or `keyProvider` is missing. It performs strict validation on initialization.
 
 ```ts
 interface LeafConfig {
-  entityId: EntityId;
+  entityId: string;
+  authorityHints: readonly string[];
+  metadata: Record<string, any>;
   keyProvider: FederationKeyProvider;
-  authorityHints: readonly [EntityId, ...EntityId[]];
-  metadata: FederationMetadata;
+  roles?: EntityRole[];
+  options?: FederationOptions;
   trustMarks?: TrustMarkRef[];
   entityConfigurationTtlSeconds?: number;
-  options?: FederationOptions;
-}
-
-interface LeafEntity {
-  getEntityConfiguration(): Promise<string>;
-  isEntityConfigurationExpired(): boolean;
-  refreshEntityConfiguration(): Promise<string>;
-  handler(): (request: Request) => Promise<Response>;
 }
 ```
 
@@ -81,7 +77,10 @@ The published top-level Entity Statement `jwks` comes from `keyProvider.getFeder
 
 Configure time through `options.clock`. Like every core `Clock`, it returns Unix NumericDate seconds and controls Entity Configuration generation and expiry.
 
-`createLeafHandler(entity)` is the standalone handler for `/.well-known/openid-federation`. It responds `405` for non-GET, `404` for unknown paths, and sets `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`, and HSTS headers.
+`leaf.handleRequest(request: Request): Promise<Response>` matches incoming requests to:
+- `/.well-known/openid-federation`: responds with the signed Entity Configuration JWT.
+- Routes dynamically registered by composition roles (e.g. OIDC Client/Provider routes).
+- Returns `404` for unmatched paths.
 
 ### Discovery
 
@@ -92,7 +91,7 @@ import { isOk } from "@oidfed/core";
 
 ```ts
 const result = await discoverEntity(
-  entityId("https://op.example.com"),
+  "https://op.example.com",
   trustAnchors,
   { httpClient: fetch },
 );

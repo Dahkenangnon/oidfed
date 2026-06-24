@@ -4,7 +4,7 @@ OpenID Connect and OAuth 2.0 federation flows — automatic and explicit client 
 
 ## Role
 
-Use when building an RP alongside `@oidfed/leaf` or an OP alongside `@oidfed/authority`. This package bridges federation trust chains to OIDC client registration and provides typed OP/RP metadata schemas that replace the loose `z.record()` entity-type metadata in `@oidfed/core`.
+This package bridges federation trust chains to OIDC/OAuth client registration and provides typed OP/RP metadata schemas, plus class-based role facades that plug directly into `Leaf`, `TrustAnchor`, or `Intermediate` instances.
 
 ## Install
 
@@ -13,6 +13,137 @@ pnpm add @oidfed/core @oidfed/oidc
 ```
 
 ## API
+
+### OIDC & OAuth Roles
+
+These roles are added to the `roles` array when initializing a `Leaf`, `TrustAnchor`, or `Intermediate`. They automatically merge their respective metadata into the parent entity configuration, handle incoming HTTP requests (like registration endpoints), and initialize with the parent entity's context.
+
+All roles implement the `EntityRole` interface:
+
+```ts
+export interface EntityRole {
+  type: string;
+  metadata: Record<string, any>;
+  routes: Map<string, (request: Request) => Promise<Response>>;
+  initialize?(context: EntityContext): void;
+}
+```
+
+---
+
+### `FedOidcProvider`
+Acts as an OpenID Connect Provider (OP). Registers the OIDC provider metadata and serves the federation registration endpoints.
+
+```ts
+import { FedOidcProvider } from "@oidfed/oidc";
+
+const opRole = new FedOidcProvider({
+  authorization_endpoint: "https://op.example.com/auth",
+  token_endpoint: "https://op.example.com/token",
+  jwks: { keys: [protocolKey] },
+  // Optional endpoints:
+  federation_registration_endpoint: "https://op.example.com/register",
+  pushed_authorization_request_endpoint: "https://op.example.com/par",
+  client_registration_types_supported: ["automatic", "explicit"],
+  // Pluggable hooks for client registration validation:
+  onRegisterClient: async (clientId, metadata, trustChain) => {
+    // Custom check/storage logic for new clients. Returning true approves registration.
+    return true;
+  }
+});
+```
+
+---
+
+### `FedOidcClient`
+Acts as an OpenID Connect Relying Party (RP). Registers OIDC Relying Party metadata.
+
+```ts
+import { FedOidcClient } from "@oidfed/oidc";
+
+const rpRole = new FedOidcClient({
+  redirect_uris: ["https://rp.example.com/callback"],
+  response_types: ["code"],
+  client_registration_types: ["automatic"],
+  jwks: { keys: [protocolKey] },
+});
+```
+
+---
+
+### `FedOauthProvider`
+Acts as an OAuth 2.0 Authorization Server (AS).
+
+```ts
+import { FedOauthProvider } from "@oidfed/oidc";
+
+const oauthAsRole = new FedOauthProvider({
+  authorization_endpoint: "https://as.example.com/auth",
+  token_endpoint: "https://as.example.com/token",
+  jwks: { keys: [protocolKey] },
+});
+```
+
+---
+
+### `FedOauthClient`
+Acts as an OAuth 2.0 Client.
+
+```ts
+import { FedOauthClient } from "@oidfed/oidc";
+
+const oauthClientRole = new FedOauthClient({
+  redirect_uris: ["https://client.example.com/callback"],
+  response_types: ["code"],
+  jwks: { keys: [protocolKey] },
+});
+```
+
+---
+
+### `FedOauthResource`
+Acts as an OAuth 2.0 Resource Server (RS).
+
+```ts
+import { FedOauthResource } from "@oidfed/oidc";
+
+const rsRole = new FedOauthResource({
+  jwks: { keys: [protocolKey] },
+});
+```
+
+---
+
+### Composing Roles with Entities
+
+To compose any role, pass it in the `roles` option of `Leaf`, `TrustAnchor`, or `Intermediate`:
+
+```ts
+import { Leaf } from "@oidfed/leaf";
+import { FedOidcClient } from "@oidfed/oidc";
+import { MemoryFederationKeyProvider, federationKey } from "@oidfed/core";
+
+const rpEntity = new Leaf({
+  entityId: "https://rp.example.com",
+  authorityHints: ["https://federation.example.org"],
+  keyProvider: new MemoryFederationKeyProvider(federationKey(federationSigningKey)),
+  metadata: {
+    federation_entity: {
+      organization_name: "My Leaf Entity",
+    },
+  },
+  roles: [
+    new FedOidcClient({
+      redirect_uris: ["https://rp.example.com/callback"],
+      response_types: ["code"],
+      client_registration_types: ["automatic"],
+      jwks: { keys: [protocolPublicKey] },
+    })
+  ]
+});
+```
+
+The resulting Entity Configuration JSON will automatically merge the role's metadata under the matching type key (e.g. `openid_relying_party`). Any incoming requests to the OIDC registration endpoints will be routed by `.handleRequest(request)`.
 
 ### Typed OIDC Metadata Schemas
 
@@ -32,187 +163,13 @@ import type {
 } from "@oidfed/oidc";
 ```
 
-### RP Automatic Registration
+### Key Separation
 
-Automatic registration signs an OIDC Request Object. It uses OIDC protocol keys, not federation entity keys.
+Two key domains must stay separate:
 
-```ts
-import { automaticRegistration, StaticOidcProtocolKeyProvider, entityId } from "@oidfed/oidc";
-import { discoverEntity } from "@oidfed/leaf";
-import { JwkSigner, isOk } from "@oidfed/core";
-
-const discoveryResult = await discoverEntity(opEntityId, trustAnchors);
-if (!isOk(discoveryResult)) {
-  throw new Error("Discovery failed");
-}
-const opDiscovery = discoveryResult.value;
-
-const resultVal = await automaticRegistration(
-  opDiscovery,
-  {
-    entityId: entityId("https://rp.example.com"),
-    protocolKeyProvider: new StaticOidcProtocolKeyProvider({
-      requestObjectSigner: new JwkSigner(rpProtocolSigningKey),
-    }),
-    authorityHints: [entityId("https://federation.example.org")],
-    metadata: {
-      openid_relying_party: {
-        redirect_uris: ["https://rp.example.com/callback"],
-        response_types: ["code"],
-        client_registration_types: ["automatic"],
-        jwks: { keys: [rpProtocolPublicKey] },
-      },
-    },
-    requestDelivery: "form_post",
-  },
-  { scope: "openid profile", state: "xyz" },
-  trustAnchors,
-);
-
-if (isOk(resultVal)) {
-  const result = resultVal.value;
-  // use result
-}
-```
-
-The result is a `Result` wrapper. On success, `resultVal.value` is a discriminated union on `delivery`:
-
-```ts
-type AutomaticRegistrationResult =
-  | { delivery: "query"; requestObjectJwt; authorizationUrl; trustChain; trustChainExpiresAt }
-  | { delivery: "form_post"; requestObjectJwt; authorizationEndpoint; formParams; trustChain; trustChainExpiresAt }
-  | { delivery: "request_uri"; requestObjectJwt; requestUri; authorizationUrl; trustChain; trustChainExpiresAt }
-  | { delivery: "par"; requestObjectJwt; pushedAuthorizationRequestEndpoint; authorizationUrl; parRequestUri; parExpiresAt; trustChain; trustChainExpiresAt };
-```
-
-### RP Explicit Registration
-
-Explicit registration sends the RP federation Entity Configuration to the OP. It therefore uses federation keys, not OIDC protocol keys.
-
-```ts
-import { explicitRegistration, entityId } from "@oidfed/oidc";
-import { isOk } from "@oidfed/core";
-
-const resultVal = await explicitRegistration(
-  opDiscovery,
-  {
-    entityId: entityId("https://rp.example.com"),
-    keyProvider: rpFederationKeyProvider,
-    authorityHints: [entityId("https://federation.example.org")],
-    metadata: {
-      openid_relying_party: {
-        redirect_uris: ["https://rp.example.com/callback"],
-        response_types: ["code"],
-        client_registration_types: ["explicit"],
-        jwks: { keys: [rpProtocolPublicKey] },
-      },
-    },
-  },
-  trustAnchors,
-);
-
-if (isOk(resultVal)) {
-  const result = resultVal.value;
-  // use result
-}
-```
-
-### OP Processing Automatic Registration
-
-```ts
-import { processAutomaticRegistration, entityId } from "@oidfed/oidc";
-import type { ProcessAutomaticRegistrationOptions, ProcessedRegistration } from "@oidfed/oidc";
-
-const result = await processAutomaticRegistration(requestObjectJwt, trustAnchors, {
-  opEntityId: entityId("https://op.example.com"),
-  replayStore: storage.replay,
-  cache: storage.cache,
-  httpClient: fetch,
-});
-```
-
-Returns `Result<ProcessedRegistration, FederationError>` and never throws.
-`replayStore` is required because automatic-registration Request Objects are single-use. The JTI is claimed only after claims, trust chains, metadata, protocol keys, and the Request Object signature have been validated.
-
-### OP Processing Explicit Registration
-
-```ts
-import { processExplicitRegistration, entityId } from "@oidfed/oidc";
-import type { ProcessExplicitRegistrationOptions } from "@oidfed/oidc";
-
-const result = await processExplicitRegistration(
-  requestBody,
-  contentType,
-  trustAnchors,
-  { opEntityId: entityId("https://op.example.com") },
-);
-```
-
-### Request Object Validation
-
-```ts
-import { validateAutomaticRegistrationRequest, entityId } from "@oidfed/oidc";
-import type { ValidatedRequestObject, ValidatedRequestObjectResult } from "@oidfed/oidc";
-
-const result = validateAutomaticRegistrationRequest(requestObjectJwt, {
-  opEntityId: entityId("https://op.example.com"),
-});
-```
-
-### Registration Adapter
-
-```ts
-import { OIDCRegistrationAdapter } from "@oidfed/oidc";
-```
-
-Implements `RegistrationProtocolAdapter` for plugging OIDC-aware registration validation into `@oidfed/authority`.
-
-### Protocol Key Provider
-
-```ts
-import { StaticOidcProtocolKeyProvider } from "@oidfed/oidc";
-import type { OidcProtocolKeyProvider } from "@oidfed/oidc";
-```
-
-```ts
-interface OidcProtocolKeyProvider {
-  getRequestObjectSigner(): Promise<JwtSigner>;
-  getClientAssertionSigner?(): Promise<JwtSigner>;
-}
-```
-
-This provider is only for OIDC/OAuth protocol signatures such as:
-
-- automatic-registration Request Objects
-- PAR `private_key_jwt` client assertions
-- other RP-side protocol assertions the hosting application chooses to build with this package
-
-It is not the source of truth for published federation keys.
-
-### Client Assertions
-
-```ts
-import { createClientAssertion } from "@oidfed/oidc";
-import type { ClientAssertionOptions } from "@oidfed/oidc";
-import { JwkSigner } from "@oidfed/core";
-
-const assertion = await createClientAssertion(
-  "https://rp.example.com",
-  "https://op.example.com/token",
-  new JwkSigner(rpProtocolSigningKey),
-  { expiresInSeconds: 60 },
-);
-```
-
-`ClientAssertionOptions` exposes `expiresInSeconds` and `clock`. Automatic and explicit registration also consume `FederationOptions.clock`; all supplied clocks return Unix NumericDate seconds and drive Request Object, Entity Configuration, PAR, assertion, and validation times.
-
-## Key Separation
-
-For stable `v1.0.0`, two key domains must stay separate:
-
-- Federation entity keys:
+- **Federation entity keys**:
   top-level Entity Statement `jwks`, Entity Configurations, subordinate statements, trust marks, resolve responses, explicit-registration federation artifacts
-- OIDC protocol keys:
-  `openid_relying_party.jwks`, `jwks_uri`, `signed_jwks_uri`, Request Objects, PAR client assertions, and token-endpoint `private_key_jwt`
+- **OIDC/OAuth protocol keys**:
+  `openid_relying_party.jwks`, `openid_provider.jwks`, Request Objects, PAR client assertions, and token-endpoint signatures.
 
-The hosting application owns OIDC protocol public-key publication through RP or OP metadata. This package only consumes that metadata and uses `OidcProtocolKeyProvider` for protocol signing.
+The hosting application owns OIDC/OAuth protocol public-key publication through role metadata configurations. This package consumes that metadata and uses `OidcProtocolKeyProvider` for protocol signing.

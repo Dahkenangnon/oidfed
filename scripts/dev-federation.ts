@@ -19,10 +19,10 @@ import { parseArgs } from "node:util";
 import express from "express";
 
 import {
-	createAuthorityServer,
+	TrustAnchor,
+	Intermediate,
 	MemoryStorageAdapter,
 	type AuthorityConfig,
-	type AuthorityServer,
 	type SubordinateRecord,
 } from "@oidfed/authority";
 import {
@@ -38,7 +38,7 @@ import {
 	type JWK,
 	type TrustAnchorSet,
 } from "@oidfed/core";
-import { createLeafEntity, type LeafEntity } from "@oidfed/leaf";
+import { Leaf } from "@oidfed/leaf";
 import { processAutomaticRegistration } from "@oidfed/oidc";
 import Provider from "oidc-provider";
 
@@ -838,7 +838,7 @@ const TOPOLOGIES: TopologyDefinition[] = [
 // ---------------------------------------------------------------------------
 
 interface EntityInstance {
-	server: AuthorityServer | LeafEntity;
+	server: TrustAnchor | Intermediate | Leaf;
 	keys: { signing: JWK; public: JWK; protocolSigning: JWK; protocolPublic: JWK };
 	def: EntityDefinition;
 	storage?: MemoryStorageAdapter;
@@ -898,7 +898,7 @@ function bridgeHandler(handler: (req: Request) => Promise<Response>): express.Re
 }
 
 function createOpApp(
-	authority: AuthorityServer,
+	authority: TrustAnchor | Intermediate,
 	eid: string,
 	trustAnchors: TrustAnchorSet,
 ): express.Express {
@@ -907,7 +907,7 @@ function createOpApp(
 	app.use(express.urlencoded({ extended: false, limit: "64kb" }));
 
 	const replayStore = new MemoryReplayStore();
-	const fedHandler = authority.handler();
+	const fedHandler = (req: Request) => authority.handleRequest(req);
 
 	const oidc = new Provider(eid, {
 		clients: [],
@@ -954,17 +954,17 @@ function createOpApp(
 	return app;
 }
 
-function createAuthorityApp(authority: AuthorityServer, eid: string): express.Express {
+function createAuthorityApp(authority: TrustAnchor | Intermediate, eid: string): express.Express {
 	const app = express();
 	app.use(express.raw({ type: "application/entity-statement+jwt", limit: "64kb" }));
 	app.use(express.urlencoded({ extended: false, limit: "64kb" }));
-	app.all("/*splat", bridgeHandler(authority.handler()));
+	app.all("/*splat", bridgeHandler(req => authority.handleRequest(req)));
 	return app;
 }
 
-function createLeafApp(leaf: LeafEntity, eid: string): express.Express {
+function createLeafApp(leaf: Leaf, eid: string): express.Express {
 	const app = express();
-	app.get("/.well-known/openid-federation", bridgeHandler(leaf.handler()));
+	app.get("/.well-known/openid-federation", bridgeHandler(req => leaf.handleRequest(req)));
 	return app;
 }
 
@@ -1067,7 +1067,9 @@ async function bootstrapTopology(
 		const keyProvider = keyProviderMap.get(entity.id)!;
 
 		const cfg = buildAuthorityConfig(entity, storage, keyProvider);
-		const authority = createAuthorityServer(cfg as unknown as AuthorityConfig);
+		const authority = entity.role === "intermediate"
+			? new Intermediate(cfg as unknown as AuthorityConfig)
+			: new TrustAnchor(cfg as unknown as AuthorityConfig);
 		entities.set(entity.id, { server: authority, keys, def: entity, storage });
 
 		const hostname = new URL(eid).hostname;
@@ -1082,7 +1084,7 @@ async function bootstrapTopology(
 		if (!ta.trustMarkIssuers) continue;
 		const taInstance = entities.get(ta.id);
 		if (!taInstance) continue;
-		const taServer = taInstance.server as AuthorityServer;
+		const taServer = taInstance.server as TrustAnchor;
 
 		for (const [tmType] of Object.entries(ta.trustMarkIssuers)) {
 			const rewrittenTmType = rw(tmType);
@@ -1115,7 +1117,9 @@ async function bootstrapTopology(
 			keyProvider,
 			extraTrustMarks,
 		);
-		const authority = createAuthorityServer(cfg as unknown as AuthorityConfig);
+		const authority = entity.role === "intermediate"
+			? new Intermediate(cfg as unknown as AuthorityConfig)
+			: new TrustAnchor(cfg as unknown as AuthorityConfig);
 		entities.set(entity.id, { server: authority, keys, def: entity, storage });
 
 		const hostname = new URL(eid).hostname;
@@ -1144,7 +1148,7 @@ async function bootstrapTopology(
 			};
 		}
 
-		const leaf = createLeafEntity({
+		const leaf = new Leaf({
 			entityId: entityId(eid),
 			keyProvider: new MemoryFederationKeyProvider(federationSigningKey(keys.signing)),
 			authorityHints,

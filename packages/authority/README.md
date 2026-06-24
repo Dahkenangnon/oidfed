@@ -18,38 +18,35 @@ npm install @oidfed/core @oidfed/authority
 ## Quick Start
 
 ```ts
-import {
-  createAuthorityServer,
-  MemoryStorageAdapter,
-} from "@oidfed/authority";
-import { entityId, generateSigningKey, JwkSigner, MemoryFederationKeyProvider } from "@oidfed/core";
+import { TrustAnchor, MemoryStorageAdapter } from "@oidfed/authority";
+import { generateSigningKey, MemoryFederationKeyProvider, federationKey } from "@oidfed/core";
 
 const signingKey = await generateSigningKey("ES256");
-const keyProvider = new MemoryFederationKeyProvider({
-  signer: new JwkSigner(signingKey.privateKey),
-  publicJwk: signingKey.publicKey,
-});
+const keyProvider = new MemoryFederationKeyProvider(federationKey({
+  ...signingKey.privateKey,
+  kid: "key-1",
+}));
 
-const server = createAuthorityServer({
-  entityId: entityId("https://ta.example.org"),
+const ta = new TrustAnchor({
+  entityId: "https://ta.example.org",
   keyProvider,
   metadata: {
     federation_entity: {
       federation_fetch_endpoint: "https://ta.example.org/federation_fetch",
       federation_list_endpoint: "https://ta.example.org/federation_list",
-      federation_extended_list_endpoint:
-        "https://ta.example.org/federation_extended_list",
+      federation_extended_list_endpoint: "https://ta.example.org/federation_extended_list",
     },
   },
   storage: new MemoryStorageAdapter(),
 });
 
-const handler = server.handler(); // fetch-compatible (Request → Response)
+// Serve requests directly with fetch-compatible handleRequest:
+const response = await ta.handleRequest(request);
 ```
 
 ## What's Included
 
-- All spec-defined federation endpoints as a single fetch-compatible handler
+- All spec-defined federation endpoints as a single fetch-compatible class-based interface
 - Subordinate management — add, update, remove, list (ordered, paginated)
 - Extended Subordinate Listing (`/federation_extended_list`) — cursor pagination, time-window filtering, audit timestamps, and bulk per-entity claim retrieval (signed subordinate statements, trust marks, metadata, …) per the [OpenID Federation Extended Subordinate Listing](https://openid.net/specs/openid-federation-extended-listing-1_0.html) spec
 - Federation-only signing and public-key lifecycle via `ManagedFederationKeyProvider`
@@ -59,9 +56,7 @@ const handler = server.handler(); // fetch-compatible (Request → Response)
 
 ## Unified Storage
 
-`createAuthorityServer` accepts one `storage` adapter instead of separate stores. It owns subordinate records, optional trust marks, optional replay, optional cache, and serializable authority-record transactions. Federation key custody remains exclusively behind `ManagedFederationKeyProvider`. See [the authority reference](https://github.com/Dahkenangnon/oidfed/blob/main/docs/packages/authority.md#unified-storage-adapter).
-
-The stable package exports `StorageAdapter`, `StorageTransaction`, `SubordinateStorage`, `TrustMarkStorage`, `MemoryStorageAdapter`, and their record/page/option types. It does not expose compatibility aliases for pre-v1 store names. Generic HTTP helpers are imported from `@oidfed/core`; authority keeps endpoint factories and `HandlerContext` public for custom routing.
+`TrustAnchor` / `Intermediate` accepts one `storage` adapter. It owns subordinate records, optional trust marks, optional replay, optional cache, and serializable authority-record transactions. Federation key custody remains exclusively behind `ManagedFederationKeyProvider`. See [the authority reference](https://github.com/Dahkenangnon/oidfed/blob/main/docs/packages/authority.md#unified-storage-adapter).
 
 ## Documentation
 

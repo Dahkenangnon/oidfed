@@ -18,16 +18,13 @@ npm install @oidfed/core @oidfed/leaf
 ## Quick Start
 
 ```ts
-import { createLeafEntity } from "@oidfed/leaf";
-import { entityId, JwkSigner, MemoryFederationKeyProvider } from "@oidfed/core";
+import { Leaf } from "@oidfed/leaf";
+import { MemoryFederationKeyProvider, federationKey } from "@oidfed/core";
 
-const leaf = createLeafEntity({
-  entityId: entityId("https://rp.example.com"),
-  authorityHints: [entityId("https://federation.example.org")],
-  keyProvider: new MemoryFederationKeyProvider({
-    signer: new JwkSigner(myFederationSigningKey),
-    publicJwk: myFederationPublicKey,
-  }),
+const leaf = new Leaf({
+  entityId: "https://rp.example.com",
+  authorityHints: ["https://federation.example.org"],
+  keyProvider: new MemoryFederationKeyProvider(federationKey(myFederationSigningKey)),
   metadata: {
     openid_relying_party: {
       redirect_uris: ["https://rp.example.com/callback"],
@@ -37,7 +34,8 @@ const leaf = createLeafEntity({
   },
 });
 
-const handler = leaf.handler(); // fetch-compatible (Request → Response)
+// Serve the request directly using a fetch-compatible interface:
+const response = await leaf.handleRequest(request);
 ```
 
 ## What's Included
@@ -47,7 +45,7 @@ const handler = leaf.handler(); // fetch-compatible (Request → Response)
 - Federation JWKS publication from `FederationKeyProvider`
 - Lazy EC generation with caching and refresh
 
-Configure a custom NumericDate-seconds clock through `LeafConfig.options.clock`. There is no duplicate top-level leaf clock or storage API.
+Configure a custom NumericDate-seconds clock through `LeafConfig.options.clock`.
 
 ## Documentation
 

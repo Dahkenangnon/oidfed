@@ -51,6 +51,62 @@ The complete [OpenID Federation 1.0](https://openid.net/specs/openid-federation-
 | `@oidfed/leaf` | Leaf Entity toolkit — Entity Configuration serving, authority discovery, and trust chain participation for any entity at the edge of an OpenID Federation | Relying Party | [docs/packages/leaf.md](docs/packages/leaf.md) |
 | `@oidfed/oidc` | OpenID Connect and OAuth 2.0 federation flows — automatic and explicit client registration, Request Object validation, and RP/OP metadata processing as defined in OpenID Federation 1.0 | OP or RP | [docs/packages/oidc.md](docs/packages/oidc.md) |
 
+## Usage Example
+
+```ts
+import { Leaf } from "@oidfed/leaf";
+import { TrustAnchor, Intermediate, MemoryStorageAdapter } from "@oidfed/authority";
+import { FedOidcClient, FedOidcProvider } from "@oidfed/oidc";
+
+// 1. Create a Leaf Entity composed with an OIDC Relying Party role
+const leaf = new Leaf({
+  entityId: "https://rp.example.com",
+  authorityHints: ["https://ta.example.org"],
+  keyProvider: myFederationKeyProvider,
+  metadata: { federation_entity: { organization_name: "Leaf RP" } },
+  roles: [
+    new FedOidcClient({
+      redirect_uris: ["https://rp.example.com/callback"],
+      jwks: { keys: [protocolPublicKey] }
+    })
+  ]
+});
+
+// 2. Create a Trust Anchor (No authorityHints, storage required)
+const ta = new TrustAnchor({
+  entityId: "https://ta.example.org",
+  keyProvider: myTAKeyProvider,
+  storage: new MemoryStorageAdapter(),
+  metadata: {
+    federation_entity: {
+      federation_fetch_endpoint: "https://ta.example.org/fetch",
+      federation_list_endpoint: "https://ta.example.org/list"
+    }
+  }
+});
+
+// 3. Create an Intermediate Authority composed with an OIDC Provider role
+const ia = new Intermediate({
+  entityId: "https://ia.example.org",
+  authorityHints: ["https://ta.example.org"],
+  keyProvider: myIAKeyProvider,
+  storage: new MemoryStorageAdapter(),
+  metadata: {
+    federation_entity: {
+      federation_fetch_endpoint: "https://ia.example.org/fetch",
+      federation_list_endpoint: "https://ia.example.org/list"
+    }
+  },
+  roles: [
+    new FedOidcProvider({
+      authorization_endpoint: "https://ia.example.org/auth",
+      token_endpoint: "https://ia.example.org/token",
+      jwks: { keys: [protocolPublicKey] }
+    })
+  ]
+});
+```
+
 For integration examples, see the [Wiring Guide](docs/guide/wiring-guide.md). For production storage backends (PostgreSQL, MongoDB, Redis) and HSM key stores, see the [Storage Guide](docs/guide/storage-guide.md). To run a full multi-topology federation locally with wildcard DNS and TLS, see the [Dev Guide](docs/guide/dev.md) and [E2E Test infrastructure](docs/test/e2e.md).
 
 The repository also ships a CLI ([`@oidfed/cli`](docs/tools/cli.md)), a live federation explorer at [explore.oidfed.com](https://explore.oidfed.com), an interactive course at [learn.oidfed.com](https://learn.oidfed.com), and a few internal packages that support the workspace — browse the source or the [docs/](docs/) directory to learn more.
@@ -94,6 +150,4 @@ To report a vulnerability, email **dah.kenangnon@gmail.com** — see [SECURITY.m
 - **Libraries** (`@oidfed/core`, `@oidfed/authority`, `@oidfed/leaf`, `@oidfed/oidc`, `@oidfed/cli`) — [Apache 2.0](LICENSE).
 - **Apps & internal UI** (`@oidfed/explorer`, `@oidfed/home`, `@oidfed/learn`, `@oidfed/ui`) — MIT (see each component's own `LICENSE`).
 
-The nearest `LICENSE` to any file governs that file.
-
-Copyright © 2026-Present [Justin Dah-kenangnon](https://github.com/Dahkenangnon).
+Copyright © 2026-Present [Yamonwan Justin Dah-kenangnon](https://github.com/Dahkenangnon).
