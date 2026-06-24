@@ -1,6 +1,7 @@
 /** Branded types for compile-time safety: EntityId, DiscoveryResult, and Result/Err helpers. */
 import type { InternalErrorCode } from "./constants.js";
 import type { FederationError } from "./errors.js";
+import type { FederationKeyProvider } from "./federation-keys.js";
 import type { EntityStatementPayload, JWKSet } from "./schemas/index.js";
 
 declare const EntityIdBrand: unique symbol;
@@ -194,3 +195,16 @@ export type DiscoveryResult = {
 	readonly trustChain: ValidatedTrustChain;
 	readonly trustMarks: ReadonlyArray<ValidatedTrustMark>;
 };
+
+export interface EntityContext {
+	readonly entityId: string;
+	readonly keyProvider: FederationKeyProvider;
+	readonly options?: FederationOptions | undefined;
+}
+
+export interface EntityRole {
+	readonly type: string;
+	readonly metadata: Record<string, unknown>;
+	readonly routes?: ReadonlyMap<string, (request: Request) => Promise<Response>>;
+	initialize?(context: EntityContext): void;
+}
