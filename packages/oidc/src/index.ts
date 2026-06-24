@@ -69,6 +69,17 @@ export type {
 } from "./registration/types.js";
 // Registration — Request Object validation
 export { validateAutomaticRegistrationRequest } from "./registration/validate-request-object.js";
+// Roles composition
+export {
+	FedOauthClient,
+	type FedOauthClientConfig,
+	FedOauthProvider,
+	type FedOauthProviderConfig,
+	FedOidcClient,
+	type FedOidcClientConfig,
+	FedOidcProvider,
+	type FedOidcProviderConfig,
+} from "./roles.js";
 // Schemas
 export {
 	type ExplicitRegistrationRequestPayload,

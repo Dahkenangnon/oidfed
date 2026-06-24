@@ -1,6 +1,8 @@
 /** Federation Authority server: wires endpoint handlers, key management, and subordinate storage into an HTTP server. */
 import type {
+	EntityContext,
 	EntityId,
+	EntityRole,
 	EntityType,
 	EntityTypeMetadataMap,
 	FederationEntityMetadata,
@@ -71,7 +73,7 @@ export interface ExtendedListInProcessResult {
 
 export interface AuthorityConfig {
 	/** The entity identifier (URL) for this authority. */
-	entityId: EntityId;
+	entityId: EntityId | string;
 	/** Metadata published in this authority's Entity Configuration. Must include `federation_entity`. */
 	metadata: { federation_entity: FederationEntityMetadata } & Partial<{
 		[K in EntityType]: EntityTypeMetadataMap[K];
@@ -80,6 +82,8 @@ export interface AuthorityConfig {
 	storage: StorageAdapter;
 	/** Federation-only signing key provider and lifecycle manager. */
 	keyProvider: ManagedFederationKeyProvider;
+	/** Roles (like OIDC OP, RP etc.) bound to this authority. */
+	roles?: EntityRole[];
 	/** Trust marks this authority claims about itself. */
 	trustMarks?: TrustMarkRef[];
 	/** Mapping of trust mark type → authorized issuer entity IDs. */
@@ -89,7 +93,7 @@ export interface AuthorityConfig {
 	/** Pre-signed trust mark delegation JWTs, keyed by trust mark type. */
 	trustMarkDelegations?: Record<string, string>;
 	/** Superior authorities this entity is subordinate to. */
-	authorityHints?: readonly [EntityId, ...EntityId[]];
+	authorityHints?: readonly (EntityId | string)[];
 	/** Trust anchors used for trust chain resolution (e.g., during registration). */
 	trustAnchors?: TrustAnchorSet;
 	/** TTL in seconds for the Entity Configuration JWT. */
@@ -481,4 +485,202 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 			return router;
 		},
 	};
+}
+
+export class TrustAnchor {
+	public readonly entityId: EntityId;
+	private readonly routes = new Map<string, (request: Request) => Promise<Response>>();
+	private readonly server: AuthorityServer;
+
+	constructor(config: AuthorityConfig) {
+		if (config.authorityHints !== undefined && config.authorityHints.length > 0) {
+			throw new Error("Trust Anchor MUST NOT have authorityHints");
+		}
+		const rawEntityId = (
+			config.entityId.endsWith("/") ? config.entityId.slice(0, -1) : config.entityId
+		) as EntityId;
+		this.entityId = rawEntityId;
+
+		const context: EntityContext = {
+			entityId: this.entityId,
+			keyProvider: config.keyProvider,
+			options: config.options,
+		};
+
+		if (config.roles) {
+			for (const role of config.roles) {
+				if (role.initialize) {
+					role.initialize(context);
+				}
+				const metadataRecord = config.metadata as Record<string, unknown>;
+				metadataRecord[role.type] = {
+					...(metadataRecord[role.type] as Record<string, unknown>),
+					...role.metadata,
+				};
+				if (role.routes) {
+					for (const [path, handler] of role.routes.entries()) {
+						const resolvedPath = path.startsWith("http") ? new URL(path).pathname : path;
+						this.routes.set(resolvedPath, handler);
+					}
+				}
+			}
+		}
+
+		this.server = createAuthorityServer(config);
+	}
+
+	async getEntityConfiguration(): Promise<string> {
+		return this.server.getEntityConfiguration();
+	}
+
+	async getSubordinateStatement(sub: EntityId): Promise<string> {
+		return this.server.getSubordinateStatement(sub);
+	}
+
+	async listSubordinates(filter?: ListFilter): Promise<EntityId[]> {
+		return this.server.listSubordinates(filter);
+	}
+
+	async listSubordinatesExtended(
+		params?: ExtendedListInProcessParams,
+	): Promise<Result<ExtendedListInProcessResult, FederationError>> {
+		return this.server.listSubordinatesExtended(params);
+	}
+
+	async resolveEntity(sub: EntityId, ta?: EntityId): Promise<string> {
+		return this.server.resolveEntity(sub, ta);
+	}
+
+	async getTrustMarkStatus(trustMark: string): Promise<TrustMarkStatusResponsePayload> {
+		return this.server.getTrustMarkStatus(trustMark);
+	}
+
+	async listTrustMarkedEntities(trustMarkType: string): Promise<string[]> {
+		return this.server.listTrustMarkedEntities(trustMarkType);
+	}
+
+	async issueTrustMark(sub: string, trustMarkType: string): Promise<string> {
+		return this.server.issueTrustMark(sub, trustMarkType);
+	}
+
+	async issueTrustMarkDelegation(subject: string, trustMarkType: string): Promise<string> {
+		return this.server.issueTrustMarkDelegation(subject, trustMarkType);
+	}
+
+	async getHistoricalKeys(): Promise<string> {
+		return this.server.getHistoricalKeys();
+	}
+
+	async rotateSigningKey(newKey: FederationSigningKey): Promise<void> {
+		return this.server.rotateSigningKey(newKey);
+	}
+
+	async handleRequest(request: Request): Promise<Response> {
+		const url = new URL(request.url);
+		const pathname = url.pathname;
+		const roleHandler = this.routes.get(pathname);
+		if (roleHandler) {
+			return roleHandler(request);
+		}
+		return this.server.handler()(request);
+	}
+}
+
+export class Intermediate {
+	public readonly entityId: EntityId;
+	private readonly routes = new Map<string, (request: Request) => Promise<Response>>();
+	private readonly server: AuthorityServer;
+
+	constructor(config: AuthorityConfig) {
+		if (config.authorityHints === undefined || config.authorityHints.length === 0) {
+			throw new Error("Intermediate MUST have at least one authorityHint");
+		}
+		const rawEntityId = (
+			config.entityId.endsWith("/") ? config.entityId.slice(0, -1) : config.entityId
+		) as EntityId;
+		this.entityId = rawEntityId;
+
+		const context: EntityContext = {
+			entityId: this.entityId,
+			keyProvider: config.keyProvider,
+			options: config.options,
+		};
+
+		if (config.roles) {
+			for (const role of config.roles) {
+				if (role.initialize) {
+					role.initialize(context);
+				}
+				const metadataRecord = config.metadata as Record<string, unknown>;
+				metadataRecord[role.type] = {
+					...(metadataRecord[role.type] as Record<string, unknown>),
+					...role.metadata,
+				};
+				if (role.routes) {
+					for (const [path, handler] of role.routes.entries()) {
+						const resolvedPath = path.startsWith("http") ? new URL(path).pathname : path;
+						this.routes.set(resolvedPath, handler);
+					}
+				}
+			}
+		}
+
+		this.server = createAuthorityServer(config);
+	}
+
+	async getEntityConfiguration(): Promise<string> {
+		return this.server.getEntityConfiguration();
+	}
+
+	async getSubordinateStatement(sub: EntityId): Promise<string> {
+		return this.server.getSubordinateStatement(sub);
+	}
+
+	async listSubordinates(filter?: ListFilter): Promise<EntityId[]> {
+		return this.server.listSubordinates(filter);
+	}
+
+	async listSubordinatesExtended(
+		params?: ExtendedListInProcessParams,
+	): Promise<Result<ExtendedListInProcessResult, FederationError>> {
+		return this.server.listSubordinatesExtended(params);
+	}
+
+	async resolveEntity(sub: EntityId, ta?: EntityId): Promise<string> {
+		return this.server.resolveEntity(sub, ta);
+	}
+
+	async getTrustMarkStatus(trustMark: string): Promise<TrustMarkStatusResponsePayload> {
+		return this.server.getTrustMarkStatus(trustMark);
+	}
+
+	async listTrustMarkedEntities(trustMarkType: string): Promise<string[]> {
+		return this.server.listTrustMarkedEntities(trustMarkType);
+	}
+
+	async issueTrustMark(sub: string, trustMarkType: string): Promise<string> {
+		return this.server.issueTrustMark(sub, trustMarkType);
+	}
+
+	async issueTrustMarkDelegation(subject: string, trustMarkType: string): Promise<string> {
+		return this.server.issueTrustMarkDelegation(subject, trustMarkType);
+	}
+
+	async getHistoricalKeys(): Promise<string> {
+		return this.server.getHistoricalKeys();
+	}
+
+	async rotateSigningKey(newKey: FederationSigningKey): Promise<void> {
+		return this.server.rotateSigningKey(newKey);
+	}
+
+	async handleRequest(request: Request): Promise<Response> {
+		const url = new URL(request.url);
+		const pathname = url.pathname;
+		const roleHandler = this.routes.get(pathname);
+		if (roleHandler) {
+			return roleHandler(request);
+		}
+		return this.server.handler()(request);
+	}
 }

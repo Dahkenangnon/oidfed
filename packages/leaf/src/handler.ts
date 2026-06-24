@@ -6,15 +6,12 @@ import {
 	requireMethod,
 	WELL_KNOWN_OPENID_FEDERATION,
 } from "@oidfed/core";
-import type { LeafEntity } from "./entity-configuration.js";
+import type { Leaf } from "./entity-configuration.js";
 
 export type FederationHandler = (request: Request) => Promise<Response>;
 
 /** Creates an HTTP handler that serves the leaf entity's well-known federation endpoint. */
-export function createLeafHandler(
-	entity: LeafEntity,
-	options?: FederationOptions,
-): FederationHandler {
+export function createLeafHandler(entity: Leaf, options?: FederationOptions): FederationHandler {
 	return async (request: Request): Promise<Response> => {
 		const url = new URL(request.url);
 		const pathname = url.pathname;

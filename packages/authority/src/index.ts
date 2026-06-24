@@ -14,10 +14,10 @@ export {
 export { rotateKey, rotateKeyCompromise } from "./keys/index.js";
 export {
 	type AuthorityConfig,
-	type AuthorityServer,
-	createAuthorityServer,
 	type ExtendedListInProcessParams,
 	type ExtendedListInProcessResult,
+	Intermediate,
+	TrustAnchor,
 } from "./server.js";
 export {
 	type ListFilter,

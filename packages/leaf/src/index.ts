@@ -3,11 +3,6 @@
 export type { DiscoveryResult } from "@oidfed/core";
 export { discoverEntity } from "./discovery.js";
 export {
-	createLeafEntity,
+	Leaf,
 	type LeafConfig,
-	type LeafEntity,
 } from "./entity-configuration.js";
-export {
-	createLeafHandler,
-	type FederationHandler,
-} from "./handler.js";
