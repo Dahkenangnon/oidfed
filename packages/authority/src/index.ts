@@ -10,6 +10,7 @@ export type {
 } from "./handler.js";
 export {
 	type AuthorityConfig,
+	type AuthorityServer,
 	type ExtendedListInProcessParams,
 	type ExtendedListInProcessResult,
 	Intermediate,

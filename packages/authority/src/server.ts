@@ -512,6 +512,7 @@ export class TrustAnchor {
 			entityId: this.entityId,
 			keyProvider: config.keyProvider,
 			options: config.options,
+			...(config.trustAnchors ? { trustAnchors: config.trustAnchors } : {}),
 		};
 
 		if (config.roles) {
@@ -630,6 +631,10 @@ export class Intermediate {
 			entityId: this.entityId,
 			keyProvider: config.keyProvider,
 			options: config.options,
+			...(config.trustAnchors ? { trustAnchors: config.trustAnchors } : {}),
+			...(config.authorityHints
+				? { authorityHints: config.authorityHints as readonly EntityId[] }
+				: {}),
 		};
 
 		if (config.roles) {

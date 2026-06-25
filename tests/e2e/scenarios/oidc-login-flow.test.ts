@@ -118,21 +118,15 @@ describe("Full OIDC login flow", () => {
 			const hostedId = randomUUID();
 			const hostedUri = `${rpId}/request-object/${hostedId}`;
 
-			// We need to inject the requestUri option into the Client config since the mock needs it
-			const clientWithRequestUri = new rpEntity.oidcClient!.constructor({
-				...rpEntity.oidcClient!.config,
-				requestUri: hostedUri,
-				requestDelivery: "request_uri",
-			});
-			(clientWithRequestUri as any).initialize((rpEntity.oidcClient! as any).context);
-
-			const regResultVal = await (clientWithRequestUri as any).automaticallyRegister(
+			const regResultVal = await rpEntity.oidcClient!.automaticallyRegister(
 				{
 					opEntityId: entityId(opId),
 					redirect_uri: `${rpId}/callback`,
 					scope: "openid",
 					state: "test-state",
 					nonce: "test-nonce",
+					requestDelivery: "request_uri",
+					requestUri: hostedUri,
 				},
 				{ trustAnchors },
 			);

@@ -75,6 +75,7 @@ export class Leaf {
 			keyProvider: config.keyProvider,
 			options: config.options,
 			...(config.trustAnchors ? { trustAnchors: config.trustAnchors } : {}),
+			authorityHints: config.authorityHints as readonly EntityId[],
 		};
 
 		if (config.roles) {

@@ -1,4 +1,4 @@
-import type { AuthorityConfig, SubordinateRecord } from "@oidfed/authority";
+import type { AuthorityConfig, AuthorityServer, SubordinateRecord } from "@oidfed/authority";
 import { Intermediate, MemoryStorageAdapter, TrustAnchor } from "@oidfed/authority";
 import type {
 	EntityRole,
@@ -40,7 +40,7 @@ export function federationSigningKey(signingKey: JWK) {
 }
 
 export interface EntityInstance {
-	server: TrustAnchor | Intermediate | Leaf;
+	server: AuthorityServer | Leaf;
 	keys: {
 		signing: JWK;
 		public: JWK;
@@ -243,7 +243,6 @@ export async function launchFederation(
 			oidcClient = new FedOidcClient({
 				protocolKeyProvider: oidcProtocolKeyProvider,
 				trustAnchors,
-				authorityHints,
 				metadata: metadata.openid_relying_party,
 			});
 			roles.push(oidcClient);

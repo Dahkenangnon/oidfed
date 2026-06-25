@@ -17,11 +17,7 @@ describe("Client authentication", () => {
 			const rpId = `https://rp.ofed.test:${port}`;
 			const opId = `https://op.ofed.test:${port}`;
 
-			const assertion = await FedOidcClient.createClientAssertion(
-				rpId,
-				opId,
-				new JwkSigner(rpEntity.keys.protocolSigning),
-			);
+			const assertion = await rpEntity.oidcClient!.createClientAssertion(opId);
 
 			expect(assertion).toBeTruthy();
 			expect(assertion.split(".")).toHaveLength(3);

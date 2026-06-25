@@ -201,6 +201,7 @@ export interface EntityContext {
 	readonly keyProvider: FederationKeyProvider;
 	readonly options?: FederationOptions | undefined;
 	readonly trustAnchors?: TrustAnchorSet;
+	readonly authorityHints?: readonly EntityId[];
 }
 
 export interface EntityRole {

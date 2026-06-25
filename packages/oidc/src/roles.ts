@@ -9,7 +9,7 @@ import type {
 	Result,
 	TrustAnchorSet,
 } from "@oidfed/core";
-import { discoverEntity, err } from "@oidfed/core";
+import { discoverEntity, err, FederationErrorCode, federationError } from "@oidfed/core";
 import type { ClientAssertionOptions } from "./client-auth/assertion.js";
 import { createClientAssertion } from "./client-auth/assertion.js";
 import type { OidcProtocolKeyProvider } from "./protocol-keys.js";
@@ -39,6 +39,9 @@ export interface FedOidcClientConfig {
 
 export interface CreateAuthorizationRequestOptions extends FederationOptions {
 	readonly requestDelivery?: RequestDelivery;
+	readonly requestUri?: string;
+	readonly includePeerTrustChain?: boolean;
+	readonly requestObjectTtlSeconds?: number;
 	readonly trustAnchors?: TrustAnchorSet;
 }
 
@@ -81,6 +84,7 @@ export class FedOidcClient implements EntityRole {
 			readonly state?: string;
 			readonly nonce?: string;
 			readonly requestDelivery?: RequestDelivery;
+			readonly requestUri?: string;
 		},
 		options?: CreateAuthorizationRequestOptions,
 	): Promise<Result<AutomaticRegistrationResult>> {
@@ -117,6 +121,14 @@ export class FedOidcClient implements EntityRole {
 			...this.config,
 			...(params.requestDelivery ? { requestDelivery: params.requestDelivery } : {}),
 			...(options?.requestDelivery ? { requestDelivery: options.requestDelivery } : {}),
+			...(params.requestUri ? { requestUri: params.requestUri } : {}),
+			...(options?.requestUri ? { requestUri: options.requestUri } : {}),
+			...(options?.includePeerTrustChain !== undefined
+				? { includePeerTrustChain: options.includePeerTrustChain }
+				: {}),
+			...(options?.requestObjectTtlSeconds !== undefined
+				? { requestObjectTtlSeconds: options.requestObjectTtlSeconds }
+				: {}),
 		};
 
 		const rpConfig = {
@@ -314,7 +326,20 @@ export class FedOidcProvider implements EntityRole {
 			...options,
 		});
 
-		if (result.ok && this.config.onRegistration) {
+		if (!result.ok) return result;
+
+		if (this.config.registrationProtocolAdapter?.validateClientMetadata) {
+			const validationResult = await this.config.registrationProtocolAdapter.validateClientMetadata(
+				result.value.resolvedRpMetadata,
+			);
+			if (!validationResult.ok) {
+				return err(
+					federationError(FederationErrorCode.InvalidMetadata, validationResult.error.message),
+				);
+			}
+		}
+
+		if (this.config.onRegistration) {
 			const jwks = result.value.resolvedRpMetadata.jwks ?? {
 				keys: (result.value.trustChain.statements[0]?.payload as any)?.jwks?.keys ?? [],
 			};

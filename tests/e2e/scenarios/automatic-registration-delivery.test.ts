@@ -105,19 +105,13 @@ describe("Automatic registration — Request Object delivery modes", () => {
 
 			const hostedUri = `${rpId}/request-object/abc123`;
 
-			// We need to inject the requestUri option into the Client config since the mock needs it
-			const clientWithRequestUri = new rpEntity.oidcClient!.constructor({
-				...rpEntity.oidcClient!.config,
-				requestUri: hostedUri,
-				requestDelivery: "request_uri",
-			});
-			(clientWithRequestUri as any).initialize((rpEntity.oidcClient! as any).context);
-
-			const resultVal = await (clientWithRequestUri as any).automaticallyRegister(
+			const resultVal = await rpEntity.oidcClient!.automaticallyRegister(
 				{
 					opEntityId: opId,
 					redirect_uri: `${rpId}/callback`,
 					scope: "openid",
+					requestDelivery: "request_uri",
+					requestUri: hostedUri,
 				},
 				{ trustAnchors },
 			);
