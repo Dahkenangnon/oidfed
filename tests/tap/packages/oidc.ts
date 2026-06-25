@@ -36,6 +36,7 @@ import {
 import {
 	FedOauthClient,
 	FedOauthProvider,
+	FedOauthResource,
 	FedOidcClient,
 	FedOidcProvider,
 } from "../../../packages/oidc/src/index.js";
@@ -4055,6 +4056,45 @@ export default (QUnit: QUnit) => {
 			t.equal(role.type, "oauth_authorization_server");
 			t.equal(role.metadata.auth_server_name, "My AS");
 			t.ok(role.routes?.has("/oauth-reg"), "routes must map custom registration path");
+		});
+
+		test("FedOauthProvider role composition with all config options", async (t) => {
+			const adapter: RegistrationProtocolAdapter = {
+				validateClientMetadata: (metadata) => ({ ok: true, value: metadata }),
+				enrichResponseMetadata: (metadata) => metadata,
+			};
+			const role = new FedOauthProvider({
+				registrationPath: "/oauth-reg",
+				metadata: { auth_server_name: "My AS" },
+				registrationResponseTtlSeconds: 3600,
+				registrationProtocolAdapter: adapter,
+				generateClientSecret: async () => "secret",
+				onRegistrationInvalidation: async () => {},
+			});
+			role.initialize({
+				entityId: "https://op.example.com",
+				// biome-ignore lint/suspicious/noExplicitAny: test
+				keyProvider: {} as any,
+				options: {} as any,
+			});
+			t.equal(role.type, "oauth_authorization_server");
+			t.equal(role.metadata.auth_server_name, "My AS");
+			t.ok(role.routes?.has("/oauth-reg"));
+		});
+
+		test("FedOauthResource role composition metadata and type", async (t) => {
+			const role = new FedOauthResource({
+				metadata: { resource_name: "My Resource" },
+				jwks: { keys: [] },
+			});
+			role.initialize({
+				entityId: "https://rs.example.com",
+				// biome-ignore lint/suspicious/noExplicitAny: test
+				keyProvider: {} as any,
+			});
+			t.equal(role.type, "oauth_resource");
+			t.equal(role.metadata.resource_name, "My Resource");
+			t.deepEqual(role.metadata.jwks, { keys: [] });
 		});
 
 		test("FedOidcClient and FedOauthClient createAuthorizationRequest", async (t) => {
