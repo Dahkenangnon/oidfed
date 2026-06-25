@@ -1,6 +1,7 @@
 /** Leaf entity class: Entity Configuration serving with caching and trust chain discovery. */
 import {
 	DEFAULT_ENTITY_STATEMENT_TTL_SECONDS,
+	discoverEntity,
 	type EntityContext,
 	type EntityId,
 	type EntityRole,
@@ -14,10 +15,10 @@ import {
 	nowSeconds,
 	requireMethod,
 	signEntityStatement,
+	type TrustAnchorSet,
 	type TrustMarkRef,
 	validateFederationKeySet,
 } from "@oidfed/core";
-import { discoverEntity } from "./discovery.js";
 
 export interface LeafConfig {
 	entityId: EntityId | string;
@@ -28,6 +29,7 @@ export interface LeafConfig {
 	options?: FederationOptions;
 	trustMarks?: TrustMarkRef[];
 	entityConfigurationTtlSeconds?: number;
+	trustAnchors?: TrustAnchorSet;
 }
 
 export class Leaf {
@@ -72,6 +74,7 @@ export class Leaf {
 			entityId: this.entityId,
 			keyProvider: config.keyProvider,
 			options: config.options,
+			...(config.trustAnchors ? { trustAnchors: config.trustAnchors } : {}),
 		};
 
 		if (config.roles) {

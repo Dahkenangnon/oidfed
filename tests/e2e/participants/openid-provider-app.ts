@@ -1,10 +1,9 @@
 import type { EntityId, FederationKeyProvider, JWK, TrustAnchorSet } from "@oidfed/core";
 import { decodeEntityStatement, MemoryReplayStore } from "@oidfed/core";
 import type { Leaf } from "@oidfed/leaf";
+import { FedOidcProvider } from "@oidfed/oidc";
 import express from "express";
 import Provider from "oidc-provider";
-import { createExplicitRegistrationHandler } from "../../../packages/oidc/src/registration/handler.js";
-import { processAutomaticRegistration } from "../../../packages/oidc/src/registration/process-automatic.js";
 
 export interface OpenIDProviderAppConfig {
 	/** Leaf entity backing the OP's `.well-known/openid-federation` endpoint. */
@@ -58,8 +57,27 @@ export function createOpenIDProviderApp(config: OpenIDProviderAppConfig): expres
 	const Adapter = createInMemoryAdapter(clientStore);
 	const replayStore = new MemoryReplayStore();
 	const leafHandler = (request: Request) => leaf.handleRequest(request);
-	const registrationHandler = createExplicitRegistrationHandler({
-		opEntityId: entityId as EntityId,
+	const oidcProvider = new FedOidcProvider({
+		registrationPath: "/federation_registration",
+		registrationResponseTtlSeconds: 3600,
+		replayStore,
+		onRegistration: async (sub, clientMetadata) => {
+			registerClient(clientStore, {
+				client_id: sub,
+				redirect_uris: (clientMetadata.redirect_uris as string[]) || [],
+				response_types: (clientMetadata.response_types as string[]) || ["code"],
+				grant_types: (clientMetadata.grant_types as string[]) || ["authorization_code"],
+				token_endpoint_auth_method: "private_key_jwt",
+				token_endpoint_auth_signing_alg: "ES256",
+				id_token_signed_response_alg: "ES256",
+				request_object_signing_alg: "ES256",
+				jwks: clientMetadata.jwks as { keys: JWK[] } | undefined,
+				application_type: "web",
+			});
+		},
+	});
+	oidcProvider.initialize({
+		entityId: entityId as EntityId,
 		keyProvider: federationKeyProvider,
 		trustAnchors,
 	});
@@ -112,7 +130,7 @@ export function createOpenIDProviderApp(config: OpenIDProviderAppConfig): expres
 	// OIDC explicit-registration endpoint.
 	app.all("/federation_registration", async (req, res) => {
 		const request = await toFetchRequest(req, entityId);
-		const response = await registrationHandler(request);
+		const response = await oidcProvider.processExplicitRegistration(request);
 		res.status(response.status);
 		for (const [key, value] of response.headers) {
 			res.setHeader(key, value);
@@ -127,9 +145,7 @@ export function createOpenIDProviderApp(config: OpenIDProviderAppConfig): expres
 	async function preregister(
 		requestJwt: string,
 	): Promise<{ ok: true } | { ok: false; errorCode: string; errorDescription: string }> {
-		const result = await processAutomaticRegistration(requestJwt, trustAnchors, {
-			opEntityId: entityId as EntityId,
-			replayStore,
+		const result = await oidcProvider.processAutomaticRegistration(requestJwt, {
 			httpClient: fetch,
 		});
 		if (!result.ok) {
@@ -139,22 +155,6 @@ export function createOpenIDProviderApp(config: OpenIDProviderAppConfig): expres
 				errorDescription: result.error.description,
 			};
 		}
-		const rpMeta = result.value.resolvedRpMetadata as Record<string, unknown>;
-		const leafStmt = result.value.trustChain.statements[0];
-		const fedJwks = leafStmt?.payload.jwks as { keys: JWK[] } | undefined;
-		const rpJwks = (rpMeta.jwks as { keys: JWK[] } | undefined) ?? fedJwks;
-		registerClient(clientStore, {
-			client_id: result.value.rpEntityId,
-			redirect_uris: (rpMeta.redirect_uris as string[]) || [],
-			response_types: (rpMeta.response_types as string[]) || ["code"],
-			grant_types: (rpMeta.grant_types as string[]) || ["authorization_code"],
-			token_endpoint_auth_method: "private_key_jwt",
-			token_endpoint_auth_signing_alg: "ES256",
-			id_token_signed_response_alg: "ES256",
-			request_object_signing_alg: "ES256",
-			jwks: rpJwks,
-			application_type: "web",
-		});
 		return { ok: true };
 	}
 

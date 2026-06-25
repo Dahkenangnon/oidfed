@@ -1,19 +1,15 @@
 /** Trust chain discovery: resolves and validates chains, returning a branded DiscoveryResult. */
-import {
-	type DiscoveryResult,
-	type EntityId,
-	err,
-	type FederationOptions,
-	federationError,
-	InternalErrorCode,
-	ok,
-	type Result,
-	resolveTrustChains,
-	shortestChain,
-	type TrustAnchorSet,
-	type ValidatedTrustChain,
-	validateTrustChain,
-} from "@oidfed/core";
+import { InternalErrorCode } from "../constants.js";
+import { err, federationError, ok, type Result } from "../errors.js";
+import type {
+	DiscoveryResult,
+	EntityId,
+	FederationOptions,
+	TrustAnchorSet,
+	ValidatedTrustChain,
+} from "../types.js";
+import { resolveTrustChains } from "./resolve.js";
+import { shortestChain, validateTrustChain } from "./validate.js";
 
 /**
  * Resolves and validates trust chains for a target entity, returning the shortest valid chain.
@@ -64,7 +60,7 @@ export async function discoverEntity(
 
 	const bestChain = shortestChain(validChains);
 
-	// Brand applied here; leaf is the sole authorised DiscoveryResult producer (see core types.ts).
+	// Brand applied here; leaf/core is the sole authorised DiscoveryResult producer.
 	return ok({
 		entityId,
 		resolvedMetadata: bestChain.resolvedMetadata,

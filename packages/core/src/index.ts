@@ -156,6 +156,7 @@ export {
 	compareTrustAnchorKeys,
 } from "./trust-chain/anchor-keys.js";
 // Trust Chain
+export { discoverEntity } from "./trust-chain/discovery.js";
 export {
 	fetchEntityConfiguration,
 	fetchSubordinateStatement,

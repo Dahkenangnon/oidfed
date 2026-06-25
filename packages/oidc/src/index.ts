@@ -47,6 +47,7 @@ export type {
 
 // Roles composition
 export {
+	type CreateAuthorizationRequestOptions,
 	FedOauthClient,
 	type FedOauthClientConfig,
 	FedOauthProvider,

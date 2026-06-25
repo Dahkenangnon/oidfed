@@ -1,10 +1,7 @@
 import { randomUUID } from "node:crypto";
-import type { JWK, TrustAnchorSet } from "@oidfed/core";
+import type { TrustAnchorSet } from "@oidfed/core";
 import { entityId } from "@oidfed/core";
-import { Leaf } from "@oidfed/leaf";
-import type { OidcProtocolKeyProvider } from "@oidfed/oidc";
 import { describe, expect, it } from "vitest";
-import { automaticRegistration } from "../../../packages/oidc/src/registration/automatic.js";
 import { getEntity } from "../helpers/launcher.js";
 import { useFederation } from "../helpers/lifecycle.js";
 import { hierarchicalTopology } from "../topologies/hierarchical.js";
@@ -21,51 +18,24 @@ import { singleAnchorTopology } from "../topologies/single-anchor.js";
  * failures still surface as 400.
  */
 async function performFederatedAuthRequest(params: {
+	rpEntity: any;
 	rpId: string;
 	opId: string;
-	protocolKeyProvider: OidcProtocolKeyProvider;
-	protocolPublicKey: JWK;
-	taId: string;
 	trustAnchors: TrustAnchorSet;
 }) {
-	const { rpId, opId, protocolKeyProvider, protocolPublicKey, taId, trustAnchors } = params;
-
-	// 1. Discover OP — must succeed
-	const discoveryResult = await Leaf.discoverEntity(entityId(opId), trustAnchors);
-	expect(discoveryResult.ok).toBe(true);
-	if (!discoveryResult.ok) throw new Error("Discovery failed");
-	const discovery = discoveryResult.value;
-	expect(discovery).toBeTruthy();
-	expect(discovery.entityId).toBe(opId);
+	const { rpEntity, rpId, opId, trustAnchors } = params;
 
 	// 2. Automatic registration in GET-query mode — must produce a valid authorization URL
-	const regResultVal = await automaticRegistration(
-		discovery,
+	const regResultVal = await rpEntity.oidcClient!.automaticallyRegister(
 		{
-			entityId: entityId(rpId),
-			protocolKeyProvider,
-			authorityHints: [entityId(taId)],
-			metadata: {
-				openid_relying_party: {
-					redirect_uris: [`${rpId}/callback`],
-					response_types: ["code"],
-					grant_types: ["authorization_code"],
-					client_registration_types: ["automatic"],
-					token_endpoint_auth_method: "private_key_jwt",
-					jwks: { keys: [protocolPublicKey] },
-				},
-			},
-			requestDelivery: "query",
-		},
-		{
-			client_id: rpId,
+			opEntityId: entityId(opId),
 			redirect_uri: `${rpId}/callback`,
-			response_type: "code",
 			scope: "openid",
 			state: "test-state",
 			nonce: "test-nonce",
+			requestDelivery: "query",
 		},
-		trustAnchors,
+		{ trustAnchors },
 	);
 
 	expect(regResultVal.ok).toBe(true);
@@ -105,11 +75,9 @@ describe("Full OIDC login flow", () => {
 			const rpEntity = getEntity(entities, "https://rp.ofed.test");
 
 			const { regResult } = await performFederatedAuthRequest({
+				rpEntity,
 				rpId: `https://rp.ofed.test:${port}`,
 				opId: `https://op.ofed.test:${port}`,
-				protocolKeyProvider: rpEntity.oidcProtocolKeyProvider,
-				protocolPublicKey: rpEntity.keys.protocolPublic,
-				taId: `https://ta.ofed.test:${port}`,
 				trustAnchors,
 			});
 
@@ -128,11 +96,9 @@ describe("Full OIDC login flow", () => {
 			const rpEntity = getEntity(entities, "https://rp.ofed.test");
 
 			const { authResponse } = await performFederatedAuthRequest({
+				rpEntity,
 				rpId: `https://rp.ofed.test:${port}`,
 				opId: `https://op.ofed.test:${port}`,
-				protocolKeyProvider: rpEntity.oidcProtocolKeyProvider,
-				protocolPublicKey: rpEntity.keys.protocolPublic,
-				taId: `https://ta.ofed.test:${port}`,
 				trustAnchors,
 			});
 
@@ -149,43 +115,26 @@ describe("Full OIDC login flow", () => {
 			const opId = `https://op.ofed.test:${port}`;
 			const rpEntity = getEntity(entities, "https://rp.ofed.test");
 
-			const discoveryResult = await Leaf.discoverEntity(entityId(opId), trustAnchors);
-			expect(discoveryResult.ok).toBe(true);
-			if (!discoveryResult.ok) throw new Error("Discovery failed");
-			const discovery = discoveryResult.value;
-			expect(discovery.entityId).toBe(opId);
-
 			const hostedId = randomUUID();
 			const hostedUri = `${rpId}/request-object/${hostedId}`;
 
-			const regResultVal = await automaticRegistration(
-				discovery,
+			// We need to inject the requestUri option into the Client config since the mock needs it
+			const clientWithRequestUri = new rpEntity.oidcClient!.constructor({
+				...rpEntity.oidcClient!.config,
+				requestUri: hostedUri,
+				requestDelivery: "request_uri",
+			});
+			(clientWithRequestUri as any).initialize((rpEntity.oidcClient! as any).context);
+
+			const regResultVal = await (clientWithRequestUri as any).automaticallyRegister(
 				{
-					entityId: entityId(rpId),
-					protocolKeyProvider: rpEntity.oidcProtocolKeyProvider,
-					authorityHints: [entityId(`https://ta.ofed.test:${port}`)],
-					metadata: {
-						openid_relying_party: {
-							redirect_uris: [`${rpId}/callback`],
-							response_types: ["code"],
-							grant_types: ["authorization_code"],
-							client_registration_types: ["automatic"],
-							token_endpoint_auth_method: "private_key_jwt",
-							jwks: { keys: [rpEntity.keys.protocolPublic] },
-						},
-					},
-					requestDelivery: "request_uri",
-					requestUri: hostedUri,
-				},
-				{
-					client_id: rpId,
+					opEntityId: entityId(opId),
 					redirect_uri: `${rpId}/callback`,
-					response_type: "code",
 					scope: "openid",
 					state: "test-state",
 					nonce: "test-nonce",
 				},
-				trustAnchors,
+				{ trustAnchors },
 			);
 
 			expect(regResultVal.ok).toBe(true);
@@ -221,11 +170,9 @@ describe("Full OIDC login flow", () => {
 			const rpEntity = getEntity(entities, "https://rp1.ofed.test");
 
 			const { regResult } = await performFederatedAuthRequest({
+				rpEntity,
 				rpId: `https://rp1.ofed.test:${port}`,
 				opId: `https://op-uni.ofed.test:${port}`,
-				protocolKeyProvider: rpEntity.oidcProtocolKeyProvider,
-				protocolPublicKey: rpEntity.keys.protocolPublic,
-				taId: `https://ta.ofed.test:${port}`,
 				trustAnchors,
 			});
 

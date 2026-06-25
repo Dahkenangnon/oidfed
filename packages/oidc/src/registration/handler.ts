@@ -51,6 +51,12 @@ export interface ExplicitRegistrationHandlerConfig {
 	readonly generateClientSecret?: (sub: EntityId) => Promise<string | undefined>;
 	/** Optional invalidation hook fired before each (re-)registration response is produced. */
 	readonly onRegistrationInvalidation?: (sub: EntityId) => Promise<void>;
+	/** Optional callback fired when dynamic registration completes successfully. */
+	readonly onRegistration?: (
+		sub: EntityId,
+		clientMetadata: Record<string, unknown>,
+		clientSecret?: string,
+	) => Promise<void>;
 	/** Federation-wide options (httpClient, clock, etc.). */
 	readonly options?: FederationOptions;
 }
@@ -404,6 +410,19 @@ export function createExplicitRegistrationHandler(
 		const responseJwt = await signEntityStatement(responsePayload, keySet.signer, {
 			typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE,
 		});
+
+		if (config.onRegistration) {
+			const metadataRecord = responsePayload.metadata as Record<string, unknown>;
+			const clientMetadata = (metadataRecord?.openid_relying_party ?? {}) as Record<
+				string,
+				unknown
+			>;
+			await config.onRegistration(
+				rpEntityId,
+				clientMetadata,
+				responsePayload.client_secret as string | undefined,
+			);
+		}
 
 		return jwtResponse(responseJwt, OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE);
 	};

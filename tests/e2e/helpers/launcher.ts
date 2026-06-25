@@ -1,6 +1,12 @@
 import type { AuthorityConfig, SubordinateRecord } from "@oidfed/authority";
 import { Intermediate, MemoryStorageAdapter, TrustAnchor } from "@oidfed/authority";
-import type { EntityType, FederationKeyProvider, JWK, TrustAnchorSet } from "@oidfed/core";
+import type {
+	EntityRole,
+	EntityType,
+	FederationKeyProvider,
+	JWK,
+	TrustAnchorSet,
+} from "@oidfed/core";
 import {
 	entityId,
 	generateSigningKey,
@@ -10,7 +16,7 @@ import {
 } from "@oidfed/core";
 import { Leaf } from "@oidfed/leaf";
 import type { OidcProtocolKeyProvider } from "@oidfed/oidc";
-import { StaticOidcProtocolKeyProvider } from "@oidfed/oidc";
+import { FedOidcClient, StaticOidcProtocolKeyProvider } from "@oidfed/oidc";
 import type { Express } from "express";
 import { sanitizeSubordinateMetadata } from "../../../packages/authority/src/utils/subordinate-statement-shape.js";
 import { createAuthorityApp } from "../participants/authority-app.js";
@@ -44,6 +50,7 @@ export interface EntityInstance {
 	keyProvider: FederationKeyProvider;
 	oidcProtocolKeyProvider: OidcProtocolKeyProvider;
 	storage?: MemoryStorageAdapter;
+	oidcClient?: FedOidcClient;
 }
 
 export interface FederationTestBed {
@@ -230,11 +237,25 @@ export async function launchFederation(
 
 		const authorityHints = entity.authorityHints?.map((h) => entityId(rewriteUrl(h))) ?? [];
 
+		const roles: EntityRole[] = [];
+		let oidcClient: FedOidcClient | undefined;
+		if (entity.protocolRole === "rp") {
+			oidcClient = new FedOidcClient({
+				protocolKeyProvider: oidcProtocolKeyProvider,
+				trustAnchors,
+				authorityHints,
+				metadata: metadata.openid_relying_party,
+			});
+			roles.push(oidcClient);
+		}
+
 		const leafConfig: Record<string, unknown> = {
 			entityId: entityId(eid),
 			keyProvider,
 			authorityHints,
 			metadata: metadata as Record<string, Record<string, unknown>>,
+			roles,
+			trustAnchors,
 		};
 		if (entity.trustMarks) leafConfig.trustMarks = entity.trustMarks;
 		if (entity.entityConfigurationTtlSeconds !== undefined) {
@@ -242,7 +263,13 @@ export async function launchFederation(
 		}
 		const leaf = new Leaf(leafConfig as unknown as ConstructorParameters<typeof Leaf>[0]);
 
-		entities.set(entity.id, { server: leaf, keys, keyProvider, oidcProtocolKeyProvider });
+		entities.set(entity.id, {
+			server: leaf,
+			keys,
+			keyProvider,
+			oidcProtocolKeyProvider,
+			oidcClient,
+		});
 
 		if (entity.protocolRole === "op") {
 			apps.set(

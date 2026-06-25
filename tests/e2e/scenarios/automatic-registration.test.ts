@@ -1,7 +1,5 @@
 import { decodeEntityStatement, entityId, isOk } from "@oidfed/core";
-import { Leaf } from "@oidfed/leaf";
 import { describe, expect, it } from "vitest";
-import { automaticRegistration } from "../../../packages/oidc/src/registration/automatic.js";
 import { getEntity } from "../helpers/launcher.js";
 import { useFederation } from "../helpers/lifecycle.js";
 import { hierarchicalTopology } from "../topologies/hierarchical.js";
@@ -19,36 +17,15 @@ describe("Automatic registration", () => {
 
 			const rpId = `https://rp.ofed.test:${port}`;
 			const opId = entityId(`https://op.ofed.test:${port}`);
-			const discoveryResult = await Leaf.discoverEntity(opId, trustAnchors);
-			expect(discoveryResult.ok).toBe(true);
-			if (!discoveryResult.ok) throw new Error("Discovery failed");
-			const discovery = discoveryResult.value;
 
-			const resultVal = await automaticRegistration(
-				discovery,
+			const resultVal = await rpEntity.oidcClient!.automaticallyRegister(
 				{
-					entityId: entityId(rpId),
-					protocolKeyProvider: rpEntity.oidcProtocolKeyProvider,
-					authorityHints: [entityId(`https://ta.ofed.test:${port}`)],
-					metadata: {
-						openid_relying_party: {
-							redirect_uris: [`${rpId}/callback`],
-							response_types: ["code"],
-							grant_types: ["authorization_code"],
-							client_registration_types: ["automatic"],
-							token_endpoint_auth_method: "private_key_jwt",
-							jwks: { keys: [rpEntity.keys.protocolPublic] },
-						},
-					},
+					opEntityId: opId,
+					redirect_uri: `${rpId}/callback`,
+					scope: "openid",
 					requestDelivery: "query",
 				},
-				{
-					client_id: rpId,
-					redirect_uri: `${rpId}/callback`,
-					response_type: "code",
-					scope: "openid",
-				},
-				trustAnchors,
+				{ trustAnchors },
 			);
 
 			expect(resultVal.ok).toBe(true);
@@ -97,35 +74,14 @@ describe("Automatic registration", () => {
 
 			const rpId = `https://rp1.ofed.test:${port}`;
 			const opId = entityId(`https://op-uni.ofed.test:${port}`);
-			const discoveryResult = await Leaf.discoverEntity(opId, trustAnchors);
-			expect(discoveryResult.ok).toBe(true);
-			if (!discoveryResult.ok) throw new Error("Discovery failed");
-			const discovery = discoveryResult.value;
 
-			const resultVal = await automaticRegistration(
-				discovery,
+			const resultVal = await rpEntity.oidcClient!.automaticallyRegister(
 				{
-					entityId: entityId(rpId),
-					protocolKeyProvider: rpEntity.oidcProtocolKeyProvider,
-					authorityHints: [entityId(`https://ia-edu.ofed.test:${port}`)],
-					metadata: {
-						openid_relying_party: {
-							redirect_uris: [`${rpId}/callback`],
-							response_types: ["code"],
-							grant_types: ["authorization_code"],
-							client_registration_types: ["automatic"],
-							token_endpoint_auth_method: "private_key_jwt",
-							jwks: { keys: [rpEntity.keys.protocolPublic] },
-						},
-					},
-				},
-				{
-					client_id: rpId,
+					opEntityId: opId,
 					redirect_uri: `${rpId}/callback`,
-					response_type: "code",
 					scope: "openid",
 				},
-				trustAnchors,
+				{ trustAnchors },
 			);
 
 			expect(resultVal.ok).toBe(true);

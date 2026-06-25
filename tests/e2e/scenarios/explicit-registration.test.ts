@@ -1,7 +1,5 @@
 import { entityId } from "@oidfed/core";
-import { Leaf } from "@oidfed/leaf";
 import { describe, expect, it } from "vitest";
-import { explicitRegistration } from "../../../packages/oidc/src/registration/explicit.js";
 import { getEntity } from "../helpers/launcher.js";
 import { useFederation } from "../helpers/lifecycle.js";
 import { hierarchicalTopology } from "../topologies/hierarchical.js";
@@ -19,30 +17,8 @@ describe("Explicit registration", () => {
 
 			const rpId = `https://rp2.ofed.test:${port}`;
 			const opId = entityId(`https://op.ofed.test:${port}`);
-			const discoveryResult = await Leaf.discoverEntity(opId, trustAnchors);
-			expect(discoveryResult.ok).toBe(true);
-			if (!discoveryResult.ok) throw new Error("Discovery failed");
-			const discovery = discoveryResult.value;
 
-			const resultVal = await explicitRegistration(
-				discovery,
-				{
-					entityId: entityId(rpId),
-					keyProvider: rp2Entity.keyProvider,
-					authorityHints: [entityId(`https://ta.ofed.test:${port}`)],
-					metadata: {
-						openid_relying_party: {
-							redirect_uris: [`${rpId}/callback`],
-							response_types: ["code"],
-							grant_types: ["authorization_code"],
-							client_registration_types: ["explicit"],
-							token_endpoint_auth_method: "private_key_jwt",
-							jwks: { keys: [rp2Entity.keys.protocolPublic] },
-						},
-					},
-				},
-				trustAnchors,
-			);
+			const resultVal = await rp2Entity.oidcClient!.explicitlyRegister(opId, { trustAnchors });
 
 			expect(resultVal.ok).toBe(true);
 			if (!resultVal.ok) throw new Error("Registration failed");
@@ -67,30 +43,8 @@ describe("Explicit registration", () => {
 
 			const rpId = `https://rp2.ofed.test:${port}`;
 			const opId = entityId(`https://op-hospital.ofed.test:${port}`);
-			const discoveryResult = await Leaf.discoverEntity(opId, trustAnchors);
-			expect(discoveryResult.ok).toBe(true);
-			if (!discoveryResult.ok) throw new Error("Discovery failed");
-			const discovery = discoveryResult.value;
 
-			const resultVal = await explicitRegistration(
-				discovery,
-				{
-					entityId: entityId(rpId),
-					keyProvider: rp2Entity.keyProvider,
-					authorityHints: [entityId(`https://ia-health.ofed.test:${port}`)],
-					metadata: {
-						openid_relying_party: {
-							redirect_uris: [`${rpId}/callback`],
-							response_types: ["code"],
-							grant_types: ["authorization_code"],
-							client_registration_types: ["explicit"],
-							token_endpoint_auth_method: "private_key_jwt",
-							jwks: { keys: [rp2Entity.keys.protocolPublic] },
-						},
-					},
-				},
-				trustAnchors,
-			);
+			const resultVal = await rp2Entity.oidcClient!.explicitlyRegister(opId, { trustAnchors });
 
 			expect(resultVal.ok).toBe(true);
 			if (!resultVal.ok) throw new Error("Registration failed");

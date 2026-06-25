@@ -2,6 +2,7 @@ import type QUnit from "qunit";
 import type { FederationMetadata } from "../../../packages/core/src/index.js";
 import {
 	decodeEntityStatement,
+	discoverEntity,
 	type EntityId,
 	entityId,
 	generateSigningKey,
@@ -16,7 +17,6 @@ import {
 	verifyEntityStatement,
 	WELL_KNOWN_OPENID_FEDERATION,
 } from "../../../packages/core/src/index.js";
-import { discoverEntity } from "../../../packages/leaf/src/discovery.js";
 import { Leaf, type LeafConfig } from "../../../packages/leaf/src/index.js";
 import {
 	createMockFederation,

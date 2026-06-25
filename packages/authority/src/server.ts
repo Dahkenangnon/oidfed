@@ -48,8 +48,11 @@ import { createTrustMarkListHandler } from "./endpoints/trust-mark-list.js";
 import { createTrustMarkStatusHandler } from "./endpoints/trust-mark-status.js";
 import { InvalidAuthorityConfig } from "./errors.js";
 import { rotateKey } from "./keys/index.js";
-import type { ListFilter, StorageAdapter } from "./storage/types.js";
-import { assertMetadataValuesNotNull } from "./utils/subordinate-statement-shape.js";
+import type { ListFilter, StorageAdapter, SubordinateRecord } from "./storage/types.js";
+import {
+	assertMetadataValuesNotNull,
+	sanitizeSubordinateMetadata,
+} from "./utils/subordinate-statement-shape.js";
 
 /** Parameters accepted by {@link AuthorityServer.listSubordinatesExtended}. */
 export interface ExtendedListInProcessParams {
@@ -488,9 +491,12 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 }
 
 export class TrustAnchor {
+	static sanitizeSubordinateMetadata = sanitizeSubordinateMetadata;
+
 	public readonly entityId: EntityId;
 	private readonly routes = new Map<string, (request: Request) => Promise<Response>>();
 	private readonly server: AuthorityServer;
+	private readonly storage: StorageAdapter;
 
 	constructor(config: AuthorityConfig) {
 		if (config.authorityHints !== undefined && config.authorityHints.length > 0) {
@@ -500,6 +506,7 @@ export class TrustAnchor {
 			config.entityId.endsWith("/") ? config.entityId.slice(0, -1) : config.entityId
 		) as EntityId;
 		this.entityId = rawEntityId;
+		this.storage = config.storage;
 
 		const context: EntityContext = {
 			entityId: this.entityId,
@@ -573,6 +580,21 @@ export class TrustAnchor {
 
 	async rotateSigningKey(newKey: FederationSigningKey): Promise<void> {
 		return this.server.rotateSigningKey(newKey);
+	}
+
+	async registerSubordinate(
+		record: Omit<SubordinateRecord, "createdAt" | "updatedAt">,
+	): Promise<void> {
+		const sanitizedMetadata = record.metadata
+			? sanitizeSubordinateMetadata(record.metadata)
+			: undefined;
+		const now = Math.floor(Date.now() / 1000);
+		await this.storage.subordinates.add({
+			...record,
+			...(sanitizedMetadata ? { metadata: sanitizedMetadata } : {}),
+			createdAt: now,
+			updatedAt: now,
+		});
 	}
 
 	async handleRequest(request: Request): Promise<Response> {
@@ -587,9 +609,12 @@ export class TrustAnchor {
 }
 
 export class Intermediate {
+	static sanitizeSubordinateMetadata = sanitizeSubordinateMetadata;
+
 	public readonly entityId: EntityId;
 	private readonly routes = new Map<string, (request: Request) => Promise<Response>>();
 	private readonly server: AuthorityServer;
+	private readonly storage: StorageAdapter;
 
 	constructor(config: AuthorityConfig) {
 		if (config.authorityHints === undefined || config.authorityHints.length === 0) {
@@ -599,6 +624,7 @@ export class Intermediate {
 			config.entityId.endsWith("/") ? config.entityId.slice(0, -1) : config.entityId
 		) as EntityId;
 		this.entityId = rawEntityId;
+		this.storage = config.storage;
 
 		const context: EntityContext = {
 			entityId: this.entityId,
@@ -672,6 +698,21 @@ export class Intermediate {
 
 	async rotateSigningKey(newKey: FederationSigningKey): Promise<void> {
 		return this.server.rotateSigningKey(newKey);
+	}
+
+	async registerSubordinate(
+		record: Omit<SubordinateRecord, "createdAt" | "updatedAt">,
+	): Promise<void> {
+		const sanitizedMetadata = record.metadata
+			? sanitizeSubordinateMetadata(record.metadata)
+			: undefined;
+		const now = Math.floor(Date.now() / 1000);
+		await this.storage.subordinates.add({
+			...record,
+			...(sanitizedMetadata ? { metadata: sanitizedMetadata } : {}),
+			createdAt: now,
+			updatedAt: now,
+		});
 	}
 
 	async handleRequest(request: Request): Promise<Response> {

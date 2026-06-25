@@ -1,6 +1,7 @@
 import { DEFAULT_KEY_RETIRE_AFTER_MS } from "./constants.js";
+import { stripPrivateFields } from "./jose/keys.js";
 import type { JwtSigner } from "./jose/signer.js";
-import { validateSigner } from "./jose/signer.js";
+import { JwkSigner, validateSigner } from "./jose/signer.js";
 import type { HistoricalKeyEntry } from "./schemas/entity-statement.js";
 import type { JWK, JWKSet } from "./schemas/jwk.js";
 import { JWKSetSchema } from "./schemas/jwk.js";
@@ -60,6 +61,19 @@ export interface MemoryFederationKeyProviderOptions {
 }
 
 export class MemoryFederationKeyProvider implements ManagedFederationKeyProvider {
+	static fromJWK(
+		jwk: JWK,
+		options?: MemoryFederationKeyProviderOptions,
+	): MemoryFederationKeyProvider {
+		return new MemoryFederationKeyProvider(
+			{
+				signer: new JwkSigner(jwk),
+				publicJwk: stripPrivateFields(jwk),
+			},
+			options,
+		);
+	}
+
 	private readonly keys = new Map<string, ManagedFederationKeyEntry>();
 	private readonly nowMs: () => number;
 
