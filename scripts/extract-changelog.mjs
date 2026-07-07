@@ -32,7 +32,9 @@ export const PKG_FILES = {
 	cli: "tools/cli/CHANGELOG.md",
 };
 
+const REMOTE = "https://github.com/Dahkenangnon/oidfed";
 const EMPTY_PLACEHOLDER = "_(no user-facing changes)_";
+const NO_CHANGE_RE = /no\s+user[\s-]?(?:visible|facing)/i;
 
 function escapeRegExp(s) {
 	return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -70,37 +72,113 @@ function renderSection(body) {
 	return body && body.length > 0 ? body : EMPTY_PLACEHOLDER;
 }
 
+function isEmptyBody(body) {
+	return !body || body.length === 0 || NO_CHANGE_RE.test(body);
+}
+
+export function extractBreakingChanges(body) {
+	if (!body) return null;
+	const lines = body.split("\n");
+	const breaking = lines.filter((l) => l.includes("**BREAKING"));
+	return breaking.length > 0 ? breaking.join("\n") : null;
+}
+
 /**
  * Build the release-notes body. Pure function so it can be unit-tested without
  * touching the filesystem — pass an injected reader for the file lookups.
  */
-export function buildBody(scope, version, readSection) {
+export function buildBody(scope, version, readSection, prevTag) {
 	if (scope === "all") {
 		const parts = [];
 		const root = readSection("CHANGELOG.md");
+
+		const rootBreaking = root ? extractBreakingChanges(root) : null;
+		if (rootBreaking) parts.push(`### ⚠ BREAKING\n\n${rootBreaking}`, "---");
+
 		if (root) parts.push(root, "---");
+
+		const pkgBodies = {};
 		for (const name of Object.keys(PKG_FILES)) {
-			const body = readSection(PKG_FILES[name]);
-			parts.push(`### @oidfed/${name} ${version}\n\n${renderSection(body)}`);
+			pkgBodies[name] = readSection(PKG_FILES[name]);
 		}
+
+		const unchanged = Object.entries(pkgBodies)
+			.filter(([, b]) => isEmptyBody(b))
+			.map(([n]) => n);
+		const changed = Object.fromEntries(
+			Object.entries(pkgBodies).filter(([n]) => !unchanged.includes(n)),
+		);
+
+		if (unchanged.length === Object.keys(PKG_FILES).length) {
+			parts.push(
+				"All packages released as a coordinated wave with no user-visible changes.",
+			);
+		} else if (new Set(Object.values(changed)).size <= 1) {
+			const [sharedBody] = Object.values(changed);
+			const changedList = Object.keys(changed);
+			if (changedList.length > 1) {
+				parts.push(
+					`All packages received the same update:\n\n${sharedBody}`,
+				);
+			} else {
+				parts.push(
+					`### @oidfed/${changedList[0]} ${version}\n\n${sharedBody}`,
+				);
+			}
+			if (unchanged.length > 0) {
+				const names = unchanged
+					.map((n) => `@oidfed/${n}`)
+					.join(", ");
+				parts.push(`_${names} — no user-visible changes._`);
+			}
+		} else {
+			for (const [name, body] of Object.entries(pkgBodies)) {
+				parts.push(
+					`### @oidfed/${name} ${version}\n\n${renderSection(body)}`,
+				);
+			}
+		}
+
+		if (prevTag) {
+			parts.push(
+				`\n---\n**Full Changelog**: ${REMOTE}/compare/${prevTag}...all/v${version}`,
+			);
+		}
+
 		return `${parts.join("\n\n")}\n`;
 	}
+
 	const path = PKG_FILES[scope];
 	if (!path) return { error: `Unknown scope: ${scope}` };
 	const body = readSection(path);
 	if (!body) return { error: `No section [${version}] in ${path}` };
-	return `${body}\n`;
+
+	const soloBreaking = extractBreakingChanges(body);
+	let result = "";
+	if (soloBreaking) result += `### ⚠ BREAKING\n\n${soloBreaking}\n\n`;
+	result += `${body}\n`;
+
+	if (prevTag) {
+		result += `\n---\n**Full Changelog**: ${REMOTE}/compare/${prevTag}...${scope}/v${version}\n`;
+	}
+
+	return result;
 }
 
 function main() {
-	const [, , scope, version] = process.argv;
+	const [, , scope, version, prevTag] = process.argv;
 	if (!scope || !version) {
 		process.stderr.write(
-			"Usage: extract-changelog.mjs <core|authority|leaf|oidc|cli|all> <version>\n",
+			"Usage: extract-changelog.mjs <core|authority|leaf|oidc|cli|all> <version> [prev-tag]\n",
 		);
 		process.exit(2);
 	}
-	const result = buildBody(scope, version, (p) => extractSection(p, version));
+	const result = buildBody(
+		scope,
+		version,
+		(p) => extractSection(p, version),
+		prevTag || "",
+	);
 	if (typeof result === "object" && result.error) {
 		process.stderr.write(`${result.error}\n`);
 		process.exit(scope === "all" ? 2 : 1);

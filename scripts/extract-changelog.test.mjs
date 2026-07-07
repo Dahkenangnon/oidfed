@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
 	PKG_FILES,
 	buildBody,
+	extractBreakingChanges,
 	extractSectionFromText,
 } from "./extract-changelog.mjs";
 
@@ -113,6 +114,25 @@ describe("buildBody — solo scope", () => {
 	});
 });
 
+describe("extractBreakingChanges", () => {
+	it("returns null when body has no breaking markers", () => {
+		assert.equal(extractBreakingChanges("### Added\n\n- new feature"), null);
+	});
+
+	it("returns null for null input", () => {
+		assert.equal(extractBreakingChanges(null), null);
+	});
+
+	it("extracts lines containing **BREAKING.**", () => {
+		const body =
+			"### Changed\n\n- **BREAKING.** `Clock.now()` returns seconds.\n- Minor tweak.\n- **BREAKING (install).** Peer dep required.\n";
+		const result = extractBreakingChanges(body);
+		assert.ok(result.includes("**BREAKING.** `Clock.now()`"));
+		assert.ok(result.includes("**BREAKING (install).** Peer dep"));
+		assert.ok(!result.includes("Minor tweak."));
+	});
+});
+
 describe("buildBody — all scope", () => {
 	it("emits root section, separator, then every package in fixed order", () => {
 		const read = (p) => {
@@ -142,7 +162,38 @@ describe("buildBody — all scope", () => {
 		}
 	});
 
-	it("renders empty package sections with the placeholder", () => {
+	it("deduplicates when all packages have identical content", () => {
+		const body = "### Refactor\n\n* context propagation\n* migrate E2E";
+		const read = (p) => (p === "CHANGELOG.md" ? null : body);
+		const out = buildBody("all", "0.8.0", read);
+		assert.ok(out.includes("All packages received the same update:"));
+		assert.ok(out.includes("context propagation"));
+		assert.ok(!out.includes("### @oidfed/core 0.8.0"));
+		assert.ok(!out.includes("### @oidfed/authority 0.8.0"));
+	});
+
+	it("collapses changed + unchanged packages when 4 have content and 1 is empty", () => {
+		const body = "### Refactor\n\n* shared change";
+		const read = (p) => {
+			if (p === "CHANGELOG.md") return null;
+			if (p === PKG_FILES.cli) return ""; // empty
+			return body;
+		};
+		const out = buildBody("all", "0.8.0", read);
+		assert.ok(out.includes("All packages received the same update:"));
+		assert.ok(out.includes("_@oidfed/cli — no user-visible changes._"));
+		assert.ok(!out.includes("### @oidfed/core 0.8.0"));
+	});
+
+	it("collapses to one line when all packages have no user-visible changes", () => {
+		const body = "_No user-visible changes — released as part of the coordinated wave._";
+		const read = (p) => (p === "CHANGELOG.md" ? null : body);
+		const out = buildBody("all", "0.6.1", read);
+		assert.ok(out.includes("coordinated wave with no user-visible changes"));
+		assert.ok(!out.includes("### @oidfed/"));
+	});
+
+	it("uses single package heading when exactly one changed package has content", () => {
 		const read = (p) => {
 			if (p === "CHANGELOG.md") return null;
 			if (p === PKG_FILES.core) return "core body";
@@ -150,17 +201,40 @@ describe("buildBody — all scope", () => {
 		};
 		const out = buildBody("all", "0.5.0", read);
 		assert.ok(out.includes("### @oidfed/core 0.5.0\n\ncore body"));
-		assert.ok(out.includes("### @oidfed/authority 0.5.0\n\n_(no user-facing changes)_"));
-		assert.ok(out.includes("### @oidfed/leaf 0.5.0\n\n_(no user-facing changes)_"));
-		assert.ok(out.includes("### @oidfed/oidc 0.5.0\n\n_(no user-facing changes)_"));
-		assert.ok(out.includes("### @oidfed/cli 0.5.0\n\n_(no user-facing changes)_"));
+		assert.ok(
+			out.includes(
+				"_@oidfed/authority, @oidfed/leaf, @oidfed/oidc, @oidfed/cli — no user-visible changes._",
+			),
+		);
+		assert.ok(!out.includes("_(no user-facing changes)_"));
+	});
+
+	it("falls back to per-package breakdown when bodies differ", () => {
+		const read = (p) => {
+			if (p === "CHANGELOG.md") return null;
+			if (p === PKG_FILES.core) return "### Added\n\n- Core specific";
+			if (p === PKG_FILES.authority) return "### Fixed\n\n- Authority fix";
+			return ""; // empty
+		};
+		const out = buildBody("all", "0.5.0", read);
+		assert.ok(out.includes("### @oidfed/core 0.5.0"));
+		assert.ok(out.includes("### @oidfed/authority 0.5.0"));
+		assert.ok(out.includes("Core specific"));
+		assert.ok(out.includes("Authority fix"));
+	});
+
+	it("emits breaking changes at top when root contains **BREAKING.**", () => {
+		const root = "### Changed\n\n- **BREAKING.** `Clock.now()` seconds.\n- Non-breaking.\n";
+		const read = (p) => (p === "CHANGELOG.md" ? root : "some body");
+		const out = buildBody("all", "0.6.0", read);
+		assert.ok(out.indexOf("### ⚠ BREAKING") < out.indexOf("### Changed"));
+		assert.ok(out.includes("`Clock.now()`"));
 	});
 
 	it("omits the separator when there is no root section", () => {
 		const read = (p) => (p === "CHANGELOG.md" ? null : "x");
 		const out = buildBody("all", "0.5.0", read);
 		assert.ok(!out.startsWith("---"));
-		assert.ok(out.startsWith("### @oidfed/core"));
 	});
 
 	it("always ends with a single trailing newline", () => {
@@ -168,5 +242,30 @@ describe("buildBody — all scope", () => {
 		const out = buildBody("all", "0.5.0", read);
 		assert.ok(out.endsWith("\n"));
 		assert.ok(!out.endsWith("\n\n"));
+	});
+
+	it("appends compare link when prevTag is given", () => {
+		const read = () => "body";
+		const out = buildBody("all", "0.8.0", read, "all/v0.7.0");
+		assert.ok(out.includes("**Full Changelog**"));
+		assert.ok(out.includes("all/v0.7.0...all/v0.8.0"));
+	});
+
+	it("omits compare link when prevTag is empty", () => {
+		const read = () => "body";
+		const out = buildBody("all", "0.8.0", read, "");
+		assert.ok(!out.includes("**Full Changelog**"));
+	});
+});
+
+describe("buildBody — solo scope", () => {
+	it("emits breaking changes and compare link when prevTag is given", () => {
+		const body = "### Changed\n\n- **BREAKING.** Dropped X.\n- Minor change.\n";
+		const read = () => body;
+		const out = buildBody("core", "0.5.0", read, "core/v0.4.0");
+		assert.ok(out.includes("### ⚠ BREAKING"));
+		assert.ok(out.includes("**BREAKING.** Dropped X"));
+		assert.ok(out.includes("**Full Changelog**"));
+		assert.ok(out.includes("core/v0.4.0...core/v0.5.0"));
 	});
 });

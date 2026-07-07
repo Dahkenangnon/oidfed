@@ -97,32 +97,43 @@ pnpm build:apps              # apps and internal UI dependencies
 
 ## Releasing
 
-Releases are fully automated via GitHub Actions. Maintainers only need to run one command from `main`:
+Releases are tag-driven through GitHub Actions. The maintainer flow has a manual changelog review checkpoint before anything is committed, tagged, or pushed.
+
+Preview the exact files that would change:
 
 ```bash
-# Single package (patch | minor | major)
-pnpm release core patch
-pnpm release authority minor
-pnpm release oidc major
-
-# All five packages at once (same version bump applied to all)
-pnpm release all patch
+pnpm release core patch --dry-run
+pnpm release all minor --dry-run
 ```
 
-Before running the release command, add your changes to the `## [Unreleased]` section in the relevant changelog:
+Prepare release files for review:
 
-- **Single package release** → edit `<package-dir>/CHANGELOG.md` (e.g. `packages/core/CHANGELOG.md`)
-- **All-packages release** → edit the root `CHANGELOG.md` (repo-wide changes only)
+```bash
+pnpm release core patch --prepare
+pnpm release all minor --prepare
+```
 
-The script handles the rest automatically.
+`--prepare` only writes package versions and changelog sections. It does not commit, tag, or push. After it runs, edit the generated `## [<X.Y.Z>] - <date>` changelog section directly:
 
-The script (`scripts/release.mjs`):
-1. Bumps the package version(s) in `package.json`
-2. Renames `## [Unreleased]` → `## [<X.Y.Z>] - <today>` in `CHANGELOG.md` and inserts a fresh empty `## [Unreleased]` above it
-3. Creates a conventional commit (`chore(<scope>): release v<X.Y.Z>`) that includes `CHANGELOG.md`
-4. Pushes a scoped tag (`core/v0.2.1`, `all/v0.3.0`, …)
+- **Single package release** → edit `<package-dir>/CHANGELOG.md` (for example, `packages/core/CHANGELOG.md`)
+- **All-packages release** → edit package changelogs plus the root `CHANGELOG.md`; the root section is intentionally empty for curated cross-package notes
 
-The tag push triggers `.github/workflows/release.yml`, which validates, builds, creates a GitHub Release with auto-generated notes, and publishes to npm.
+Finalize after reviewing the diff and custom changelog content:
+
+```bash
+pnpm release core --finalize
+pnpm release all --finalize
+```
+
+`--finalize` validates that the prepared version and changelog sections exist, refuses unexpected dirty files, then creates the release commit, tag, and push. The scoped tag (`core/v0.8.1`, `all/v0.9.0`, …) triggers `.github/workflows/release.yml`, which validates, builds, creates the GitHub Release from the committed changelog section, and publishes to npm.
+
+The script still supports the one-shot form for automation:
+
+```bash
+pnpm release oidc patch
+```
+
+Use the one-shot form only when the generated changelog body is already acceptable without manual editing.
 
 ## Questions?
 

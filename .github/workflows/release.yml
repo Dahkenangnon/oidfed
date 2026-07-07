@@ -75,11 +75,19 @@ jobs:
       - name: Run repo scripts tests
         run: pnpm test:scripts
 
+      - name: Determine previous tag for compare link
+        id: prev
+        run: |
+          SCOPE="${{ steps.tag.outputs.scope }}"
+          PREV=$(git tag --list "${SCOPE}/v*" --sort=-v:refname | sed -n '2p')
+          echo "tag=$PREV" >> "$GITHUB_OUTPUT"
+
       - name: Extract changelog body
         env:
           SCOPE: ${{ steps.tag.outputs.scope }}
           VERSION: ${{ steps.tag.outputs.version }}
-        run: node scripts/extract-changelog.mjs "$SCOPE" "$VERSION" > RELEASE_BODY.md
+          PREV_TAG: ${{ steps.prev.outputs.tag }}
+        run: node scripts/extract-changelog.mjs "$SCOPE" "$VERSION" "$PREV_TAG" > RELEASE_BODY.md
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
