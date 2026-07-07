@@ -6939,6 +6939,36 @@ export default (QUnit: QUnit) => {
 				t.equal(result.errors[0]?.code, "ERR_TRUST_CHAIN_INVALID");
 				t.true(result.errors[0]?.description?.includes("identity mismatch") ?? false);
 			});
+			test("compares Entity Identifiers by exact code-point equality", async (t) => {
+				const taKeys = await generateSigningKey("ES256");
+				const leafKeys = await generateSigningKey("ES256");
+				const precomposed = "https://entity.example.com/caf\u00e9";
+				const decomposed = "https://entity.example.com/cafe\u0301";
+				t.notEqual(precomposed, decomposed);
+				t.equal(precomposed.normalize("NFC"), decomposed.normalize("NFC"));
+				const leafEc = await rs_signEC(precomposed, leafKeys.privateKey, {
+					jwks: { keys: [leafKeys.publicKey] },
+					authority_hints: ["https://ta.example.com"],
+				});
+				const mockFetch = async (url: string | URL | Request) => {
+					const urlStr = url.toString();
+					if (urlStr.endsWith("/.well-known/openid-federation")) {
+						return new Response(leafEc, {
+							status: 200,
+							headers: { "Content-Type": "application/entity-statement+jwt" },
+						});
+					}
+					return new Response("Not found", { status: 404 });
+				};
+				const taSet: TrustAnchorSet = new Map([
+					["https://ta.example.com" as EntityId, { jwks: { keys: [taKeys.publicKey] } }],
+				]);
+				const result = await resolveTrustChains(decomposed as EntityId, taSet, {
+					httpClient: mockFetch,
+				});
+				t.equal(result.chains.length, 0);
+				t.true(result.errors[0]?.description?.includes("identity mismatch") ?? false);
+			});
 			test("errors when authority hint entity has no federation_fetch_endpoint", async (t) => {
 				const taKeys = await generateSigningKey("ES256");
 				const leafKeys = await generateSigningKey("ES256");

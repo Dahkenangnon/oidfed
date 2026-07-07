@@ -325,46 +325,72 @@ export async function explicitRegistration(
 	// opTrustAnchorId is in the RP's configured trust anchors.
 
 	const responseAuthorityHints = responsePayload.authority_hints as string[] | undefined;
-	if (responseAuthorityHints) {
-		if (!Array.isArray(responseAuthorityHints) || responseAuthorityHints.length !== 1) {
+	if (!Array.isArray(responseAuthorityHints) || responseAuthorityHints.length !== 1) {
+		return err(
+			federationError(
+				FederationErrorCode.InvalidMetadata,
+				"Response authority_hints MUST be a single-element array",
+			),
+		);
+	}
+	for (const hint of responseAuthorityHints) {
+		if (typeof hint !== "string") {
 			return err(
 				federationError(
 					FederationErrorCode.InvalidMetadata,
-					"Response authority_hints MUST be a single-element array",
+					"Response authority_hints contains non-string value",
 				),
 			);
-		}
-		for (const hint of responseAuthorityHints) {
-			if (typeof hint !== "string") {
-				return err(
-					federationError(
-						FederationErrorCode.InvalidMetadata,
-						"Response authority_hints contains non-string value",
-					),
-				);
-			}
 		}
 	}
 
 	const responseMeta = responsePayload.metadata as
 		| Record<string, Record<string, unknown>>
 		| undefined;
-	if (responseMeta) {
-		const requestedTypes = new Set(Object.keys(rpConfig.metadata));
-		const responseTypes = new Set(Object.keys(responseMeta));
-		for (const requestedType of requestedTypes) {
-			if (!responseTypes.has(requestedType)) {
-				return err(
-					federationError(
-						FederationErrorCode.InvalidMetadata,
-						"Response metadata missing requested entity type",
-					),
-				);
-			}
+	if (!responseMeta || typeof responseMeta !== "object") {
+		return err(
+			federationError(
+				FederationErrorCode.InvalidMetadata,
+				"Registration response missing required 'metadata' claim",
+			),
+		);
+	}
+	const requestedTypes = new Set(Object.keys(rpConfig.metadata));
+	const responseTypes = new Set(Object.keys(responseMeta));
+	for (const requestedType of requestedTypes) {
+		if (!responseTypes.has(requestedType)) {
+			return err(
+				federationError(
+					FederationErrorCode.InvalidMetadata,
+					"Response metadata missing requested entity type",
+				),
+			);
+		}
+	}
+	for (const responseType of responseTypes) {
+		if (!requestedTypes.has(responseType)) {
+			return err(
+				federationError(
+					FederationErrorCode.InvalidMetadata,
+					"Response metadata contains unrequested entity type",
+				),
+			);
 		}
 	}
 
-	const registeredMetadata = responseMeta?.openid_relying_party ?? responseMeta ?? {};
+	if (
+		responsePayload.jwks !== undefined &&
+		JSON.stringify(responsePayload.jwks) !== JSON.stringify(keySet.jwks)
+	) {
+		return err(
+			federationError(
+				FederationErrorCode.InvalidMetadata,
+				"Response jwks MUST be a verbatim copy of the request Entity Configuration jwks",
+			),
+		);
+	}
+
+	const registeredMetadata = responseMeta.openid_relying_party ?? responseMeta;
 
 	const clientSecret = responsePayload.client_secret as string | undefined;
 

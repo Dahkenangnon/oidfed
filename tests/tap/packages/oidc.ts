@@ -1272,13 +1272,7 @@ export default (QUnit: QUnit) => {
 						response_types: ["code"],
 					},
 				},
-				jwks: { keys: [fed.leafPublicKey] },
 			};
-			const registrationResponseJwt = await signEntityStatement(
-				registrationResponsePayload,
-				new JwkSigner(fed.opSigningKey),
-				{ typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
-			);
 			const originalHttpClient = fed.httpClient;
 			const httpClient: HttpClient = async (input, init) => {
 				const url =
@@ -1288,6 +1282,19 @@ export default (QUnit: QUnit) => {
 							? input.toString()
 							: (input as Request).url;
 				if (new URL(url).pathname === "/federation_registration") {
+					const requestBody = input instanceof Request ? await input.clone().text() : "";
+					const requestPayload = decodeEntityStatement(requestBody);
+					const responsePayload = {
+						...registrationResponsePayload,
+						...(requestPayload.ok
+							? { jwks: (requestPayload.value.payload as Record<string, unknown>).jwks }
+							: {}),
+					};
+					const registrationResponseJwt = await signEntityStatement(
+						responsePayload,
+						new JwkSigner(fed.opSigningKey),
+						{ typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
+					);
 					return new Response(registrationResponseJwt, {
 						status: 200,
 						headers: { "Content-Type": OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE },
@@ -1302,6 +1309,51 @@ export default (QUnit: QUnit) => {
 				httpClient,
 				options: { httpClient } as FederationOptions,
 				registrationResponsePayload,
+			};
+		}
+
+		async function explicitRegistrationWithResponse(
+			responsePayload: Record<string, unknown>,
+			configOverrides?: Partial<RpConfig>,
+		) {
+			const fed = await createMockFederation();
+			const discovery = await createMockDiscovery(OP_ID, fed);
+			const { config } = await createRpConfig(configOverrides);
+			const responseJwt = await signEntityStatement(
+				responsePayload,
+				new JwkSigner(fed.opSigningKey),
+				{ typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
+			);
+			const httpClient = async (input: string | URL | Request) => {
+				const url =
+					typeof input === "string"
+						? input
+						: input instanceof URL
+							? input.toString()
+							: (input as Request).url;
+				if (new URL(url).pathname === "/federation_registration") {
+					return new Response(responseJwt, {
+						status: 200,
+						headers: { "Content-Type": OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE },
+					});
+				}
+				return fed.httpClient(input);
+			};
+			return explicitRegistration(discovery, config, fed.trustAnchors, { httpClient });
+		}
+
+		function explicitRegistrationResponseBase(overrides?: Record<string, unknown>) {
+			const now = Math.floor(Date.now() / 1000);
+			return {
+				iss: OP_ID,
+				sub: LEAF_ID,
+				aud: LEAF_ID,
+				iat: now,
+				exp: now + 86400,
+				authority_hints: [TA_ID],
+				trust_anchor: TA_ID,
+				metadata: { openid_relying_party: { client_id: LEAF_ID } },
+				...overrides,
 			};
 		}
 
@@ -1326,7 +1378,7 @@ export default (QUnit: QUnit) => {
 			const result = await explicitRegistration(mock.discovery, mock.config, mock.trustAnchors, {
 				httpClient: trackingClient,
 			});
-			t.true(isOk(result));
+			t.true(isOk(result), isErr(result) ? result.error.description : undefined);
 			t.ok(capturedUrl.includes("/federation_registration"));
 			t.equal(capturedContentType, MediaType.EntityStatement);
 		});
@@ -1643,6 +1695,62 @@ export default (QUnit: QUnit) => {
 					/missing requested entity type/i.test(result.error.description),
 					result.error.description,
 				);
+			}
+		});
+
+		test("fails if response metadata is missing", async (t) => {
+			const { metadata: _, ...payload } = explicitRegistrationResponseBase();
+			const result = await explicitRegistrationWithResponse(payload);
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.ok(/metadata/i.test(result.error.description), result.error.description);
+			}
+		});
+
+		test("fails if response authority_hints is missing", async (t) => {
+			const { authority_hints: _, ...payload } = explicitRegistrationResponseBase();
+			const result = await explicitRegistrationWithResponse(payload);
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.ok(/authority_hints/i.test(result.error.description), result.error.description);
+			}
+		});
+
+		test("fails if response authority_hints has multiple elements", async (t) => {
+			const result = await explicitRegistrationWithResponse(
+				explicitRegistrationResponseBase({
+					authority_hints: [TA_ID, "https://other.example.com"],
+				}),
+			);
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.ok(/single-element/i.test(result.error.description), result.error.description);
+			}
+		});
+
+		test("fails if response metadata contains an unrequested entity type", async (t) => {
+			const result = await explicitRegistrationWithResponse(
+				explicitRegistrationResponseBase({
+					metadata: {
+						openid_relying_party: { client_id: LEAF_ID },
+						oauth_client: { client_id: LEAF_ID },
+					},
+				}),
+			);
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.ok(/unrequested entity type/i.test(result.error.description), result.error.description);
+			}
+		});
+
+		test("fails if response jwks is not a verbatim copy of request EC jwks", async (t) => {
+			const otherKey = await generateSigningKey("ES256");
+			const result = await explicitRegistrationWithResponse(
+				explicitRegistrationResponseBase({ jwks: { keys: [otherKey.publicKey] } }),
+			);
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.ok(/jwks/i.test(result.error.description), result.error.description);
 			}
 		});
 
@@ -2048,6 +2156,7 @@ export default (QUnit: QUnit) => {
 					iat: now,
 					exp: now + 86400,
 					trust_anchor: TA_ID,
+					authority_hints: [TA_ID],
 					client_secret: "super-secret-123",
 					metadata: { openid_relying_party: { client_id: LEAF_ID } },
 				},
@@ -3235,6 +3344,38 @@ export default (QUnit: QUnit) => {
 			t.false(result.ok);
 			if (result.ok) return;
 			t.ok(result.error.description.includes("aud"));
+		});
+
+		test("does not normalize aud or client_id before comparison", async (t) => {
+			const { privateKey } = await generateSigningKey("ES256");
+			const precomposedOpId = entityId("https://op.example.com/caf\u00e9");
+			const decomposedOpId = entityId("https://op.example.com/cafe\u0301");
+			t.notEqual(precomposedOpId, decomposedOpId);
+			t.equal(precomposedOpId.normalize("NFC"), decomposedOpId.normalize("NFC"));
+			const wrongAud = validateAutomaticRegistrationRequest(
+				await buildRequestObject(privateKey, {
+					payloadOverrides: { aud: precomposedOpId },
+				}),
+				{ opEntityId: decomposedOpId },
+			);
+			t.false(wrongAud.ok);
+			if (!wrongAud.ok) {
+				t.ok(wrongAud.error.description.includes("aud"));
+			}
+			const precomposedRpId = "https://rp.example.com/caf\u00e9";
+			const decomposedRpId = "https://rp.example.com/cafe\u0301";
+			t.notEqual(precomposedRpId, decomposedRpId);
+			t.equal(precomposedRpId.normalize("NFC"), decomposedRpId.normalize("NFC"));
+			const wrongClientId = validateAutomaticRegistrationRequest(
+				await buildRequestObject(privateKey, {
+					payloadOverrides: { iss: precomposedRpId, client_id: decomposedRpId },
+				}),
+				ctx,
+			);
+			t.false(wrongClientId.ok);
+			if (!wrongClientId.ok) {
+				t.ok(wrongClientId.error.description.includes("client_id"));
+			}
 		});
 
 		test("rejects multi-value aud", async (t) => {

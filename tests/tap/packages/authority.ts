@@ -2728,6 +2728,22 @@ export default (QUnit: QUnit) => {
 			t.equal(decoded.value.header.typ, JwtTyp.ResolveResponse);
 		});
 
+		test("ignores unknown query parameters on resolve", async (t) => {
+			const fed = await createMockFederation();
+			const { ctx } = await createTestContext({
+				trustAnchors: fed.trustAnchors,
+				options: fed.options,
+			});
+			const handler = createResolveHandler(ctx);
+			const res = await handler(
+				new Request(
+					`https://authority.example.com/federation_resolve?sub=${encodeURIComponent(LEAF_ID)}&trust_anchor=${encodeURIComponent(TA_ID)}&unknown_param=ignored`,
+				),
+			);
+			t.equal(res.status, 200);
+			t.equal(res.headers.get("Content-Type"), MediaType.ResolveResponse);
+		});
+
 		test("response exp is capped to the chain's earliest expiry", async (t) => {
 			// Per §8.3.2 (lines 533-535), the resolve response exp MUST be the minimum of
 			// the trust-chain exp and any included Trust Mark exp. The mock federation signs
@@ -2781,6 +2797,48 @@ export default (QUnit: QUnit) => {
 			>;
 			t.ok(metadata.openid_relying_party);
 			t.notOk(metadata.federation_entity);
+		});
+
+		test("repeated entity_type returns only requested entity types that are present", async (t) => {
+			const fed = await createMockFederation();
+			const { ctx } = await createTestContext({
+				trustAnchors: fed.trustAnchors,
+				options: fed.options,
+			});
+			const handler = createResolveHandler(ctx);
+			const res = await handler(
+				new Request(
+					`https://authority.example.com/federation_resolve?sub=${encodeURIComponent(LEAF_ID)}&trust_anchor=${encodeURIComponent(TA_ID)}&entity_type=openid_provider&entity_type=openid_relying_party`,
+				),
+			);
+			t.equal(res.status, 200);
+			const decoded = decodeEntityStatement(await res.text());
+			t.true(decoded.ok);
+			if (!decoded.ok) return;
+			const metadata = (decoded.value.payload as Record<string, unknown>).metadata as Record<
+				string,
+				unknown
+			>;
+			t.ok(metadata.openid_relying_party);
+			t.notOk(metadata.federation_entity);
+			t.notOk(metadata.openid_provider);
+		});
+
+		test("repeated trust_anchor succeeds when one supplied anchor is acceptable", async (t) => {
+			const fed = await createMockFederation();
+			const unknownTa = "https://unknown-ta.example.com";
+			const { ctx } = await createTestContext({
+				trustAnchors: fed.trustAnchors,
+				options: fed.options,
+			});
+			const handler = createResolveHandler(ctx);
+			const res = await handler(
+				new Request(
+					`https://authority.example.com/federation_resolve?sub=${encodeURIComponent(LEAF_ID)}&trust_anchor=${encodeURIComponent(unknownTa)}&trust_anchor=${encodeURIComponent(TA_ID)}`,
+				),
+			);
+			t.equal(res.status, 200);
+			t.equal(res.headers.get("Content-Type"), MediaType.ResolveResponse);
 		});
 
 		test("returns 404 when entity_type filter produces no matches", async (t) => {
@@ -3296,6 +3354,25 @@ export default (QUnit: QUnit) => {
 				t.deepEqual(await res.json(), [TML_SUB1]);
 			});
 
+			test("ignores unknown query parameters on trust mark list", async (t) => {
+				const { ctx, trustMarks } = await createTestContext();
+				await trustMarks.issue({
+					trustMarkType: TML_MARK_TYPE,
+					subject: TML_SUB1,
+					jwt: "jwt1",
+					issuedAt: Math.floor(Date.now() / 1000),
+					active: true,
+				});
+				const handler = createTrustMarkListHandler(ctx);
+				const res = await handler(
+					new Request(
+						`https://authority.example.com/federation_trust_mark_list?trust_mark_type=${encodeURIComponent(TML_MARK_TYPE)}&unknown_param=ignored`,
+					),
+				);
+				t.equal(res.status, 200);
+				t.deepEqual(await res.json(), [TML_SUB1]);
+			});
+
 			test("excludes revoked trust marks", async (t) => {
 				const { ctx, trustMarks } = await createTestContext();
 				await trustMarks.issue({
@@ -3434,6 +3511,24 @@ export default (QUnit: QUnit) => {
 				t.equal(res.headers.get("Content-Type"), "application/trust-mark-status-response+jwt");
 				const payload = await decodeStatusResponse(res);
 				t.equal(payload.status, TrustMarkStatus.Active);
+			});
+
+			test("ignores unknown form parameters on trust mark status", async (t) => {
+				const { ctx, signingKey, trustMarks } = await createTestContext();
+				const jwt = await issueTrustMarkJwt(ENTITY_ID, TMS_SUB1, TMS_MARK_TYPE, signingKey);
+				await trustMarks.issue({
+					trustMarkType: TMS_MARK_TYPE,
+					subject: TMS_SUB1,
+					jwt,
+					issuedAt: Math.floor(Date.now() / 1000),
+					active: true,
+				});
+				const handler = createTrustMarkStatusHandler(ctx);
+				const res = await handler(
+					postRequest(`trust_mark=${encodeURIComponent(jwt)}&unknown_param=ignored`),
+				);
+				t.equal(res.status, 200);
+				t.equal((await decodeStatusResponse(res)).status, TrustMarkStatus.Active);
 			});
 
 			test("returns status: revoked for revoked trust mark", async (t) => {
@@ -3720,6 +3815,25 @@ export default (QUnit: QUnit) => {
 				);
 				t.equal(res.status, 200);
 				t.equal(res.headers.get("Content-Type"), "application/trust-mark+jwt");
+				t.equal(await res.text(), "existing.jwt.token");
+			});
+
+			test("ignores unknown query parameters on trust mark retrieval", async (t) => {
+				const { ctx, trustMarks } = await createTestContext();
+				await trustMarks.issue({
+					trustMarkType: TM_MARK_TYPE,
+					subject: TM_SUB1,
+					jwt: "existing.jwt.token",
+					issuedAt: Math.floor(Date.now() / 1000),
+					active: true,
+				});
+				const handler = createTrustMarkHandler(ctx);
+				const res = await handler(
+					new Request(
+						`https://authority.example.com/federation_trust_mark?trust_mark_type=${encodeURIComponent(TM_MARK_TYPE)}&sub=${encodeURIComponent(TM_SUB1)}&unknown_param=ignored`,
+					),
+				);
+				t.equal(res.status, 200);
 				t.equal(await res.text(), "existing.jwt.token");
 			});
 
@@ -4171,7 +4285,7 @@ export default (QUnit: QUnit) => {
 
 		module("authority / createAuthenticatedHandler", () => {
 			module("no auth required (passthrough)", () => {
-				test("returns inner handler unchanged when authMethods is undefined", async (t) => {
+				test("omitted endpoint auth metadata defaults to ['none']", async (t) => {
 					const { ctx } = await setupClientAuthContext();
 					const handler = createAuthenticatedHandler(ctx, echoHandler, undefined);
 					t.equal(handler, echoHandler);
@@ -4307,6 +4421,38 @@ export default (QUnit: QUnit) => {
 						}),
 					);
 					t.equal(res.status, 401);
+				});
+
+				test("rejects private_key_jwt with multiple audience values", async (t) => {
+					const { ctx, createClientAssertionJwt, makeHttpClient } = await setupClientAuthContext();
+					const ctxWithHttp: HandlerContext = { ...ctx, options: { httpClient: makeHttpClient() } };
+					const handler = createAuthenticatedHandler(ctxWithHttp, echoHandler, ["private_key_jwt"]);
+					const assertion = await createClientAssertionJwt({
+						aud: [CA_AUTHORITY_ID, "https://wrong.example.com"],
+					});
+					const res = await handler(
+						new Request(`${CA_AUTHORITY_ID}/test`, {
+							method: "POST",
+							headers: { "Content-Type": "application/x-www-form-urlencoded" },
+							body: `sub=test&client_assertion=${encodeURIComponent(assertion)}&client_assertion_type=${encodeURIComponent(JWT_BEARER_TYPE)}`,
+						}),
+					);
+					t.equal(res.status, 401);
+				});
+
+				test("accepts private_key_jwt with sole audience as endpoint Entity Identifier", async (t) => {
+					const { ctx, createClientAssertionJwt, makeHttpClient } = await setupClientAuthContext();
+					const ctxWithHttp: HandlerContext = { ...ctx, options: { httpClient: makeHttpClient() } };
+					const handler = createAuthenticatedHandler(ctxWithHttp, echoHandler, ["private_key_jwt"]);
+					const assertion = await createClientAssertionJwt({ aud: [CA_AUTHORITY_ID] });
+					const res = await handler(
+						new Request(`${CA_AUTHORITY_ID}/test`, {
+							method: "POST",
+							headers: { "Content-Type": "application/x-www-form-urlencoded" },
+							body: `sub=test&client_assertion=${encodeURIComponent(assertion)}&client_assertion_type=${encodeURIComponent(JWT_BEARER_TYPE)}`,
+						}),
+					);
+					t.equal(res.status, 200);
 				});
 
 				test("rejects POST when trust chain resolution fails", async (t) => {

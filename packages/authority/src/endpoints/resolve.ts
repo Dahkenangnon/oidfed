@@ -57,10 +57,17 @@ export function createResolveHandler(ctx: HandlerContext): (request: Request) =>
 			);
 		}
 
+		const usableTrustAnchors: EntityId[] = [];
 		for (const ta of trustAnchorParam) {
-			if (!isValidEntityId(ta) || !ctx.trustAnchors.has(ta as EntityId)) {
+			if (!isValidEntityId(ta)) {
 				return errorResponse(404, FederationErrorCode.InvalidTrustAnchor, "Unknown trust anchor");
 			}
+			if (ctx.trustAnchors.has(ta as EntityId)) {
+				usableTrustAnchors.push(ta as EntityId);
+			}
+		}
+		if (usableTrustAnchors.length === 0) {
+			return errorResponse(404, FederationErrorCode.InvalidTrustAnchor, "Unknown trust anchor");
 		}
 
 		// Cache-first short-circuit: if a previously vetted Resolve Response is
@@ -69,7 +76,7 @@ export function createResolveHandler(ctx: HandlerContext): (request: Request) =>
 		if (ctx.cachedResolutionLookup) {
 			const cached = await ctx.cachedResolutionLookup(
 				sub as EntityId,
-				trustAnchorParam as EntityId[],
+				usableTrustAnchors,
 				entityTypeParam as EntityType[],
 			);
 			if (cached !== undefined) {
@@ -92,10 +99,10 @@ export function createResolveHandler(ctx: HandlerContext): (request: Request) =>
 
 		try {
 			const requestedAnchors: Map<EntityId, Readonly<{ jwks: JWKSet }>> = new Map();
-			for (const ta of trustAnchorParam) {
-				const anchorData = ctx.trustAnchors.get(ta as EntityId);
+			for (const ta of usableTrustAnchors) {
+				const anchorData = ctx.trustAnchors.get(ta);
 				if (anchorData) {
-					requestedAnchors.set(ta as EntityId, anchorData);
+					requestedAnchors.set(ta, anchorData);
 				}
 			}
 
