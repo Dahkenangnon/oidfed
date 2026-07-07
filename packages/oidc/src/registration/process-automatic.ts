@@ -65,16 +65,12 @@ export async function processAutomaticRegistration(
 	if (!bestChainResult.ok) return bestChainResult;
 	const bestChain = bestChainResult.value;
 
-	const leafStatement = bestChain.statements[0] as (typeof bestChain.statements)[0];
+	type LeafStatement = (typeof bestChain.statements)[0];
+	type LeafFederationJwks = NonNullable<LeafStatement["payload"]["jwks"]>;
+	const leafStatement = bestChain.statements[0] as LeafStatement & {
+		payload: LeafStatement["payload"] & { jwks: LeafFederationJwks };
+	};
 	const federationJwks = leafStatement.payload.jwks;
-	if (!federationJwks) {
-		return err(
-			federationError(
-				InternalErrorCode.SignatureInvalid,
-				"RP Entity Configuration has no federation jwks — cannot resolve OIDC protocol keys",
-			),
-		);
-	}
 
 	const resolvedRpMetadata = bestChain.resolvedMetadata.openid_relying_party ?? {};
 	const protocolKeysResult = await resolveEntityKeys(resolvedRpMetadata, federationJwks, options);

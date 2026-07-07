@@ -1755,6 +1755,327 @@ export default (QUnit: QUnit) => {
 				t.ok(/exp/i.test(result.error.description), result.error.description);
 			}
 		});
+
+		test("fails if response cannot be decoded", async (t) => {
+			const fed = await createMockFederation();
+			const discovery = await createMockDiscovery(OP_ID, fed);
+			const { config } = await createRpConfig({});
+			const httpClient = async (input: string | URL | Request) => {
+				const url =
+					typeof input === "string"
+						? input
+						: input instanceof URL
+							? input.toString()
+							: (input as Request).url;
+				if (new URL(url).pathname === "/federation_registration")
+					return new Response("not-a-jwt", {
+						status: 200,
+						headers: { "Content-Type": OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE },
+					});
+				return fed.httpClient(input);
+			};
+			const result = await explicitRegistration(discovery, config, fed.trustAnchors, {
+				httpClient,
+			});
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.ok(
+					/signature verification failed/i.test(result.error.description),
+					result.error.description,
+				);
+			}
+		});
+
+		test("fails if response has wrong typ header", async (t) => {
+			const fed = await createMockFederation();
+			const discovery = await createMockDiscovery(OP_ID, fed);
+			const { config } = await createRpConfig({});
+			const now = Math.floor(Date.now() / 1000);
+			const wrongTypResponseJwt = await signEntityStatement(
+				{
+					iss: OP_ID,
+					sub: LEAF_ID,
+					aud: LEAF_ID,
+					iat: now,
+					exp: now + 86400,
+					trust_anchor: TA_ID,
+					metadata: { openid_relying_party: { client_id: LEAF_ID } },
+				},
+				new JwkSigner(fed.opSigningKey),
+				{ typ: "invalid-typ" },
+			);
+			const httpClient = async (input: string | URL | Request) => {
+				const url =
+					typeof input === "string"
+						? input
+						: input instanceof URL
+							? input.toString()
+							: (input as Request).url;
+				if (new URL(url).pathname === "/federation_registration")
+					return new Response(wrongTypResponseJwt, {
+						status: 200,
+						headers: { "Content-Type": OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE },
+					});
+				return fed.httpClient(input);
+			};
+			const result = await explicitRegistration(discovery, config, fed.trustAnchors, {
+				httpClient,
+			});
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.ok(
+					/signature verification failed/i.test(result.error.description),
+					result.error.description,
+				);
+			}
+		});
+
+		test("fails if response iss does not match OP", async (t) => {
+			const fed = await createMockFederation();
+			const discovery = await createMockDiscovery(OP_ID, fed);
+			const { config } = await createRpConfig({});
+			const now = Math.floor(Date.now() / 1000);
+			const wrongIssResponseJwt = await signEntityStatement(
+				{
+					iss: "https://wrong-op.example.com",
+					sub: LEAF_ID,
+					aud: LEAF_ID,
+					iat: now,
+					exp: now + 86400,
+					trust_anchor: TA_ID,
+					metadata: { openid_relying_party: { client_id: LEAF_ID } },
+				},
+				new JwkSigner(fed.opSigningKey),
+				{ typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
+			);
+			const httpClient = async (input: string | URL | Request) => {
+				const url =
+					typeof input === "string"
+						? input
+						: input instanceof URL
+							? input.toString()
+							: (input as Request).url;
+				if (new URL(url).pathname === "/federation_registration")
+					return new Response(wrongIssResponseJwt, {
+						status: 200,
+						headers: { "Content-Type": OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE },
+					});
+				return fed.httpClient(input);
+			};
+			const result = await explicitRegistration(discovery, config, fed.trustAnchors, {
+				httpClient,
+			});
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.ok(/iss/i.test(result.error.description), result.error.description);
+			}
+		});
+
+		test("fails if response aud does not match RP", async (t) => {
+			const fed = await createMockFederation();
+			const discovery = await createMockDiscovery(OP_ID, fed);
+			const { config } = await createRpConfig({});
+			const now = Math.floor(Date.now() / 1000);
+			const wrongAudResponseJwt = await signEntityStatement(
+				{
+					iss: OP_ID,
+					sub: LEAF_ID,
+					aud: "https://wrong-rp.example.com",
+					iat: now,
+					exp: now + 86400,
+					trust_anchor: TA_ID,
+					metadata: { openid_relying_party: { client_id: LEAF_ID } },
+				},
+				new JwkSigner(fed.opSigningKey),
+				{ typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
+			);
+			const httpClient = async (input: string | URL | Request) => {
+				const url =
+					typeof input === "string"
+						? input
+						: input instanceof URL
+							? input.toString()
+							: (input as Request).url;
+				if (new URL(url).pathname === "/federation_registration")
+					return new Response(wrongAudResponseJwt, {
+						status: 200,
+						headers: { "Content-Type": OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE },
+					});
+				return fed.httpClient(input);
+			};
+			const result = await explicitRegistration(discovery, config, fed.trustAnchors, {
+				httpClient,
+			});
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.ok(/aud/i.test(result.error.description), result.error.description);
+			}
+		});
+
+		test("fails if response is missing iat", async (t) => {
+			const fed = await createMockFederation();
+			const discovery = await createMockDiscovery(OP_ID, fed);
+			const { config } = await createRpConfig({});
+			const now = Math.floor(Date.now() / 1000);
+			const noIatResponseJwt = await signEntityStatement(
+				{
+					iss: OP_ID,
+					sub: LEAF_ID,
+					aud: LEAF_ID,
+					exp: now + 86400,
+					trust_anchor: TA_ID,
+					metadata: { openid_relying_party: { client_id: LEAF_ID } },
+				},
+				new JwkSigner(fed.opSigningKey),
+				{ typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
+			);
+			const httpClient = async (input: string | URL | Request) => {
+				const url =
+					typeof input === "string"
+						? input
+						: input instanceof URL
+							? input.toString()
+							: (input as Request).url;
+				if (new URL(url).pathname === "/federation_registration")
+					return new Response(noIatResponseJwt, {
+						status: 200,
+						headers: { "Content-Type": OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE },
+					});
+				return fed.httpClient(input);
+			};
+			const result = await explicitRegistration(discovery, config, fed.trustAnchors, {
+				httpClient,
+			});
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.ok(/iat/i.test(result.error.description), result.error.description);
+			}
+		});
+
+		test("fails if response trust_anchor is unknown", async (t) => {
+			const fed = await createMockFederation();
+			const discovery = await createMockDiscovery(OP_ID, fed);
+			const { config } = await createRpConfig({});
+			const now = Math.floor(Date.now() / 1000);
+			const unknownTaResponseJwt = await signEntityStatement(
+				{
+					iss: OP_ID,
+					sub: LEAF_ID,
+					aud: LEAF_ID,
+					iat: now,
+					exp: now + 86400,
+					trust_anchor: "https://unknown-ta.example.com",
+					metadata: { openid_relying_party: { client_id: LEAF_ID } },
+				},
+				new JwkSigner(fed.opSigningKey),
+				{ typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
+			);
+			const httpClient = async (input: string | URL | Request) => {
+				const url =
+					typeof input === "string"
+						? input
+						: input instanceof URL
+							? input.toString()
+							: (input as Request).url;
+				if (new URL(url).pathname === "/federation_registration")
+					return new Response(unknownTaResponseJwt, {
+						status: 200,
+						headers: { "Content-Type": OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE },
+					});
+				return fed.httpClient(input);
+			};
+			const result = await explicitRegistration(discovery, config, fed.trustAnchors, {
+				httpClient,
+			});
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.ok(/trust_anchor.*configured/i.test(result.error.description), result.error.description);
+			}
+		});
+
+		test("fails if response authority_hints is invalid", async (t) => {
+			const fed = await createMockFederation();
+			const discovery = await createMockDiscovery(OP_ID, fed);
+			const { config } = await createRpConfig({});
+			const now = Math.floor(Date.now() / 1000);
+			const invalidHintsResponseJwt = await signEntityStatement(
+				{
+					iss: OP_ID,
+					sub: LEAF_ID,
+					aud: LEAF_ID,
+					iat: now,
+					exp: now + 86400,
+					trust_anchor: TA_ID,
+					authority_hints: ["not-a-string-hint", 123],
+					metadata: { openid_relying_party: { client_id: LEAF_ID } },
+				},
+				new JwkSigner(fed.opSigningKey),
+				{ typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
+			);
+			const httpClient = async (input: string | URL | Request) => {
+				const url =
+					typeof input === "string"
+						? input
+						: input instanceof URL
+							? input.toString()
+							: (input as Request).url;
+				if (new URL(url).pathname === "/federation_registration")
+					return new Response(invalidHintsResponseJwt, {
+						status: 200,
+						headers: { "Content-Type": OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE },
+					});
+				return fed.httpClient(input);
+			};
+			const result = await explicitRegistration(discovery, config, fed.trustAnchors, {
+				httpClient,
+			});
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.ok(/authority_hints/i.test(result.error.description), result.error.description);
+			}
+		});
+
+		test("returns clientSecret if present in response", async (t) => {
+			const fed = await createMockFederation();
+			const discovery = await createMockDiscovery(OP_ID, fed);
+			const { config } = await createRpConfig({});
+			const now = Math.floor(Date.now() / 1000);
+			const secretResponseJwt = await signEntityStatement(
+				{
+					iss: OP_ID,
+					sub: LEAF_ID,
+					aud: LEAF_ID,
+					iat: now,
+					exp: now + 86400,
+					trust_anchor: TA_ID,
+					client_secret: "super-secret-123",
+					metadata: { openid_relying_party: { client_id: LEAF_ID } },
+				},
+				new JwkSigner(fed.opSigningKey),
+				{ typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
+			);
+			const httpClient = async (input: string | URL | Request) => {
+				const url =
+					typeof input === "string"
+						? input
+						: input instanceof URL
+							? input.toString()
+							: (input as Request).url;
+				if (new URL(url).pathname === "/federation_registration")
+					return new Response(secretResponseJwt, {
+						status: 200,
+						headers: { "Content-Type": OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE },
+					});
+				return fed.httpClient(input);
+			};
+			const result = await explicitRegistration(discovery, config, fed.trustAnchors, {
+				httpClient,
+			});
+			t.true(isOk(result));
+			if (isOk(result)) {
+				t.equal(result.value.clientSecret, "super-secret-123");
+			}
+		});
 	});
 
 	// -------------------------------------------------------------------------
@@ -2123,6 +2444,190 @@ export default (QUnit: QUnit) => {
 				replayStore: replayStore(),
 			});
 			t.false(result.ok);
+		});
+
+		test("returns err during trust-chain validation if RP EC has no federation jwks", async (t) => {
+			const fed = await createMockFederation();
+			const now = Math.floor(Date.now() / 1000);
+			const badLeafEcPayload = {
+				iss: LEAF_ID,
+				sub: LEAF_ID,
+				iat: now,
+				exp: now + 86400,
+				authority_hints: [TA_ID],
+				metadata: {
+					openid_relying_party: {
+						redirect_uris: ["https://rp.example.com/callback"],
+						response_types: ["code"],
+						client_registration_types: ["automatic"],
+						jwks: { keys: [fed.leafProtocolPublicKey] },
+					},
+				},
+			};
+			const badLeafEcJwt = await signEntityStatement(
+				badLeafEcPayload,
+				new JwkSigner(fed.leafSigningKey),
+				{ typ: JwtTyp.EntityStatement },
+			);
+			const httpClient: HttpClient = async (input, init) => {
+				const url =
+					typeof input === "string"
+						? input
+						: input instanceof URL
+							? input.toString()
+							: (input as Request).url;
+				const parsed = new URL(url);
+				if (parsed.pathname === "/.well-known/openid-federation" && parsed.origin === LEAF_ID) {
+					return new Response(badLeafEcJwt, {
+						status: 200,
+						headers: { "Content-Type": "application/entity-statement+jwt" },
+					});
+				}
+				return fed.httpClient(input, init);
+			};
+			const result = await processAutomaticRegistration(
+				await createValidRequestObject(fed),
+				fed.trustAnchors,
+				{ ...fed.options, httpClient, opEntityId: OP_ID, replayStore: replayStore() },
+			);
+			t.false(result.ok);
+			if (result.ok) return;
+			t.equal(result.error.code, FederationErrorCode.InvalidTrustChain);
+			t.ok(result.error.description.includes("No valid trust chains found for RP"));
+		});
+
+		test("returns err if RP metadata does not comply with schema", async (t) => {
+			const fed = await createMockFederation();
+			const now = Math.floor(Date.now() / 1000);
+			const badLeafEcPayload = {
+				iss: LEAF_ID,
+				sub: LEAF_ID,
+				iat: now,
+				exp: now + 86400,
+				jwks: { keys: [fed.leafPublicKey] },
+				authority_hints: [TA_ID],
+				metadata: {
+					openid_relying_party: {
+						redirect_uris: "not-an-array-of-uris",
+						response_types: ["code"],
+						client_registration_types: ["automatic"],
+						jwks: { keys: [fed.leafProtocolPublicKey] },
+					},
+				},
+			};
+			const badLeafEcJwt = await signEntityStatement(
+				badLeafEcPayload,
+				new JwkSigner(fed.leafSigningKey),
+				{ typ: JwtTyp.EntityStatement },
+			);
+			const httpClient: HttpClient = async (input, init) => {
+				const url =
+					typeof input === "string"
+						? input
+						: input instanceof URL
+							? input.toString()
+							: (input as Request).url;
+				const parsed = new URL(url);
+				if (parsed.pathname === "/.well-known/openid-federation" && parsed.origin === LEAF_ID) {
+					return new Response(badLeafEcJwt, {
+						status: 200,
+						headers: { "Content-Type": "application/entity-statement+jwt" },
+					});
+				}
+				return fed.httpClient(input, init);
+			};
+			const result = await processAutomaticRegistration(
+				await createValidRequestObject(fed),
+				fed.trustAnchors,
+				{ ...fed.options, httpClient, opEntityId: OP_ID, replayStore: replayStore() },
+			);
+			t.false(result.ok);
+			if (result.ok) return;
+			t.ok(
+				result.error.description.includes("Relying Party metadata schema"),
+				result.error.description,
+			);
+		});
+
+		test("returns err if peer_trust_chain header fails validation", async (t) => {
+			const fed = await createMockFederation();
+			const now = Math.floor(Date.now() / 1000);
+			const invalidOpEcJwt = await signEntityStatement(
+				{
+					iss: OP_ID,
+					sub: OP_ID,
+					iat: now,
+					exp: now + 86400,
+					jwks: { keys: [fed.opPublicKey] },
+					metadata: {},
+				},
+				new JwkSigner(fed.leafSigningKey),
+				{ typ: JwtTyp.EntityStatement },
+			);
+			const jwt = await signEntityStatement(
+				{
+					iss: LEAF_ID,
+					client_id: LEAF_ID,
+					aud: OP_ID,
+					jti: crypto.randomUUID(),
+					iat: now,
+					exp: now + 300,
+					redirect_uri: "https://rp.example.com/callback",
+					scope: "openid",
+					response_type: "code",
+				},
+				new JwkSigner(fed.leafProtocolSigningKey),
+				{
+					typ: "oauth-authz-req+jwt",
+					extraHeaders: {
+						trust_chain: [fed.leafEcJwt, fed.taSubStatementForLeaf, fed.taEcJwt],
+						peer_trust_chain: [invalidOpEcJwt, fed.taSubStatementForOp, fed.taEcJwt],
+					},
+				},
+			);
+			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
+				...fed.options,
+				opEntityId: OP_ID,
+				replayStore: replayStore(),
+			});
+			t.false(result.ok);
+			if (result.ok) return;
+			t.ok(
+				result.error.description.includes("peer_trust_chain validation failed"),
+				result.error.description,
+			);
+		});
+
+		test("succeeds with valid peer_trust_chain header", async (t) => {
+			const fed = await createMockFederation();
+			const now = Math.floor(Date.now() / 1000);
+			const jwt = await signEntityStatement(
+				{
+					iss: LEAF_ID,
+					client_id: LEAF_ID,
+					aud: OP_ID,
+					jti: crypto.randomUUID(),
+					iat: now,
+					exp: now + 300,
+					redirect_uri: "https://rp.example.com/callback",
+					scope: "openid",
+					response_type: "code",
+				},
+				new JwkSigner(fed.leafProtocolSigningKey),
+				{
+					typ: "oauth-authz-req+jwt",
+					extraHeaders: {
+						trust_chain: [fed.leafEcJwt, fed.taSubStatementForLeaf, fed.taEcJwt],
+						peer_trust_chain: [fed.opEcJwt, fed.taSubStatementForOp, fed.taEcJwt],
+					},
+				},
+			);
+			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
+				...fed.options,
+				opEntityId: OP_ID,
+				replayStore: replayStore(),
+			});
+			t.true(result.ok);
 		});
 	});
 
@@ -4075,6 +4580,7 @@ export default (QUnit: QUnit) => {
 				entityId: "https://op.example.com",
 				// biome-ignore lint/suspicious/noExplicitAny: test
 				keyProvider: {} as any,
+				// biome-ignore lint/suspicious/noExplicitAny: test
 				options: {} as any,
 			});
 			t.equal(role.type, "oauth_authorization_server");
