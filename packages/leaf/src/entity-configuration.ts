@@ -6,6 +6,7 @@ import {
 	type EntityContext,
 	type EntityId,
 	type EntityRole,
+	type EntityStatementMetadata,
 	entityId,
 	errorResponse,
 	type FederationKeyProvider,
@@ -25,13 +26,21 @@ import {
 export interface LeafConfig {
 	entityId: EntityId | string;
 	authorityHints: readonly (EntityId | string)[];
-	metadata: Record<string, any>;
+	metadata: EntityStatementMetadata;
 	keyProvider: FederationKeyProvider;
 	roles?: EntityRole[];
 	options?: FederationOptions;
 	trustMarks?: TrustMarkRef[];
 	entityConfigurationTtlSeconds?: number;
 	trustAnchors?: TrustAnchorSet;
+}
+
+function cloneMetadata(metadata: EntityStatementMetadata): Record<string, Record<string, unknown>> {
+	const cloned: Record<string, Record<string, unknown>> = {};
+	for (const [entityType, entityMetadata] of Object.entries(metadata)) {
+		cloned[entityType] = { ...entityMetadata };
+	}
+	return cloned;
 }
 
 export class Leaf {
@@ -46,6 +55,7 @@ export class Leaf {
 	public readonly entityId: EntityId;
 	private readonly routes = new Map<string, (request: Request) => Promise<Response>>();
 	private readonly config: LeafConfig;
+	private readonly metadata: Record<string, Record<string, unknown>>;
 
 	private cachedJwt: string | null = null;
 	private cachedExp: number | null = null;
@@ -78,6 +88,7 @@ export class Leaf {
 		}
 
 		// Initialize roles & merge metadata/routes
+		const metadata = cloneMetadata(config.metadata);
 		const context: EntityContext = {
 			entityId: this.entityId,
 			keyProvider: config.keyProvider,
@@ -91,8 +102,8 @@ export class Leaf {
 				if (role.initialize) {
 					role.initialize(context);
 				}
-				config.metadata[role.type] = {
-					...config.metadata[role.type],
+				metadata[role.type] = {
+					...(metadata[role.type] ?? {}),
 					...role.metadata,
 				};
 				if (role.routes) {
@@ -103,12 +114,13 @@ export class Leaf {
 				}
 			}
 		}
+		this.metadata = metadata;
 
-		if (!config.metadata || Object.keys(config.metadata).length === 0) {
+		if (Object.keys(this.metadata).length === 0) {
 			throw new Error("metadata MUST contain at least one Entity Type Identifier");
 		}
 
-		const fedEntity = config.metadata?.federation_entity as Record<string, unknown> | undefined;
+		const fedEntity = this.metadata.federation_entity;
 		if (fedEntity) {
 			if ("federation_fetch_endpoint" in fedEntity) {
 				throw new Error("Leaf entities MUST NOT publish federation_fetch_endpoint");
@@ -133,7 +145,7 @@ export class Leaf {
 		const payload = buildEntityConfigurationPayload({
 			entityId: this.entityId,
 			jwks: keySet.jwks,
-			metadata: this.config.metadata,
+			metadata: this.metadata,
 			authorityHints: this.config.authorityHints,
 			...(this.config.trustMarks ? { trustMarks: this.config.trustMarks } : {}),
 			issuedAt: now,

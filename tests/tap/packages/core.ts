@@ -68,7 +68,10 @@ import {
 	SECURITY_HEADERS,
 	toPublicError,
 } from "../../../packages/core/src/http.js";
-import type { SignEntityStatementOptions } from "../../../packages/core/src/index.js";
+import type {
+	FederationSigningKey,
+	SignEntityStatementOptions,
+} from "../../../packages/core/src/index.js";
 import * as CorePublic from "../../../packages/core/src/index.js";
 import { verifyClientAssertion } from "../../../packages/core/src/jose/client-auth.js";
 import {
@@ -210,6 +213,16 @@ export default (QUnit: QUnit) => {
 			const keySet = await provider.getFederationKeySet();
 			t.equal(keySet.signer.kid, privateKey.kid);
 			t.deepEqual(keySet.jwks.keys, [key.publicJwk]);
+		});
+
+		test("rejects empty memory federation key provider construction", (t) => {
+			t.throws(
+				() =>
+					new CorePublic.MemoryFederationKeyProvider(
+						[] as unknown as [FederationSigningKey, ...FederationSigningKey[]],
+					),
+				/at least one initial federation key/,
+			);
 		});
 
 		test("exports stable Entity Statement builder APIs", (t) => {

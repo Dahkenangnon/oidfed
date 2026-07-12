@@ -5280,6 +5280,7 @@ export default (QUnit: QUnit) => {
 			const role = new FedOidcProvider({
 				registrationPath: "/my-reg",
 				metadata: { op_name: "My OIDC OP" },
+				registrationProtocolAdapter: new OIDCRegistrationAdapter(),
 			});
 			t.throws(
 				() =>
@@ -5375,9 +5376,11 @@ export default (QUnit: QUnit) => {
 		});
 
 		test("FedOauthResource role composition metadata and type", async (t) => {
+			const { publicKey } = await generateSigningKey("ES256");
+			const jwks = { keys: [publicKey] };
 			const role = new FedOauthResource({
 				metadata: { resource_name: "My Resource" },
-				jwks: { keys: [] },
+				jwks,
 			});
 			role.initialize({
 				entityId: "https://rs.example.com",
@@ -5386,7 +5389,7 @@ export default (QUnit: QUnit) => {
 			});
 			t.equal(role.type, "oauth_resource");
 			t.equal(role.metadata.resource_name, "My Resource");
-			t.deepEqual(role.metadata.jwks, { keys: [] });
+			t.deepEqual(role.metadata.jwks, jwks);
 		});
 
 		test("FedOidcClient and FedOauthClient createAuthorizationRequest", async (t) => {

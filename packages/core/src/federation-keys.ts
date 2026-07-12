@@ -78,23 +78,26 @@ export class MemoryFederationKeyProvider implements ManagedFederationKeyProvider
 	private readonly nowMs: () => number;
 
 	constructor(
-		initial?: FederationSigningKey | ReadonlyArray<FederationSigningKey>,
+		initial: FederationSigningKey | readonly [FederationSigningKey, ...FederationSigningKey[]],
 		options?: MemoryFederationKeyProviderOptions,
 	) {
 		this.nowMs = options?.nowMs ?? Date.now;
-		if (initial) {
-			const keys = Array.isArray(initial) ? initial : [initial];
-			const now = this.nowMs();
-			for (let i = 0; i < keys.length; i++) {
-				const { signer, publicJwk } = this.validateNewKey(keys[i] as FederationSigningKey);
-				this.keys.set(signer.kid, {
-					signer,
-					publicJwk,
-					state: "active",
-					createdAt: now,
-					activatedAt: now + i,
-				});
-			}
+		const keys = Array.isArray(initial) ? initial : [initial];
+		if (keys.length === 0) {
+			throw new Error("MemoryFederationKeyProvider requires at least one initial federation key");
+		}
+		const now = this.nowMs();
+		let activationOrder = 0;
+		for (const key of keys) {
+			const { signer, publicJwk } = this.validateNewKey(key);
+			this.keys.set(signer.kid, {
+				signer,
+				publicJwk,
+				state: "active",
+				createdAt: now,
+				activatedAt: now + activationOrder,
+			});
+			activationOrder++;
 		}
 	}
 

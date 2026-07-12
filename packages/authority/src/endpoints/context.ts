@@ -1,6 +1,7 @@
 /** Shared handler context: signing keys, stores, and configuration for all endpoints. */
 import type {
 	EntityId,
+	EntityStatementMetadata,
 	EntityType,
 	FederationEntityMetadata,
 	FederationOptions,
@@ -29,9 +30,9 @@ export interface HandlerContext {
 	/** Resolves remote client Federation Entity Keys for private_key_jwt endpoint auth. */
 	readonly clientKeyProvider: AuthorityClientKeyProvider;
 	/** Metadata published in this authority's Entity Configuration. */
-	readonly metadata: { federation_entity: FederationEntityMetadata } & Partial<
-		Record<string, Record<string, unknown>>
-	>;
+	readonly metadata: EntityStatementMetadata & {
+		readonly federation_entity: FederationEntityMetadata;
+	};
 	/** Trust marks this authority claims about itself. */
 	readonly trustMarks?: ReadonlyArray<TrustMarkRef>;
 	/** Mapping of trust mark type → authorized issuer entity IDs. */

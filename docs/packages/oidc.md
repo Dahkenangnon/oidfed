@@ -218,7 +218,7 @@ Configuration parameters used to instantiate `FedOauthResource` facades.
 | Configuration Field | Type | Required | Description |
 |:---|:---|:---|:---|
 | `metadata` | `Record<string, unknown>` | No | Role-specific metadata properties merged under `oauth_resource` keys. |
-| `jwks` | `{ keys: any[] }` | No | JWK Set representing resource server key validation material. |
+| `jwks` | `JWKSet` | No | Core JWK Set representing resource server key validation material. |
 
 ---
 

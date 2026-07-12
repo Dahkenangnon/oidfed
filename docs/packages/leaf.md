@@ -119,7 +119,7 @@ When constructing a `Leaf` entity, you pass a `LeafConfig` configuration object.
 |:---|:---|:---|:---|
 | `entityId` | `EntityId \| string` | **Yes** | The entity identifier URL for this leaf. Must be a valid HTTPS URL without query parameters or fragments. Normalizes trailing slashes. |
 | `authorityHints` | `readonly (EntityId \| string)[]` | **Yes** | Non-empty list of superior authority entity IDs this leaf is registered with. Every entry must be a valid HTTPS URL. |
-| `metadata` | `Record<string, any>` | **Yes** | The metadata block to publish. Must contain at least one Entity Type Identifier. The `federation_entity` block **must not** contain operational authority fields like `federation_fetch_endpoint` or `federation_list_endpoint`. |
+| `metadata` | `EntityStatementMetadata` | **Yes** | Object-valued metadata blocks to publish, keyed by Entity Type Identifier. Must contain at least one Entity Type Identifier. The `federation_entity` block **must not** contain operational authority fields like `federation_fetch_endpoint` or `federation_list_endpoint`. |
 | `keyProvider` | `FederationKeyProvider` | **Yes** | Key provider managing active federation signing keys. |
 | `roles` | `EntityRole[]` | No | Composition roles (like OIDC Client/Provider roles) bound to this entity context. |
 | `options` | `FederationOptions` | No | Core federation options (e.g. clock configurations). |

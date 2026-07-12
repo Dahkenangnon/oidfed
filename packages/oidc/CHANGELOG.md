@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - OP-side registration now validates supplied `trust_chain`, `peer_trust_chain`, and `application/trust-chain+json` inputs as full Trust Chains. Valid supplied RP chains are used before live Federation Entity Discovery; invalid supplied chains fail registration instead of falling back silently.
 - Explicit-registration invalidation hooks now run only after validation and response preparation, immediately before registration commit hooks. Hook failures return sanitized `server_error` responses.
 - RP-side explicit registration response processing now requires HTTP `200`, exact `application/explicit-registration-response+jwt`, a matching RP `sub`, and registered credentials under `metadata.openid_relying_party`.
+- Provider role `registrationProtocolAdapter` config and OAuth resource `jwks` config now use typed public contracts instead of avoidable `any`.
 
 ## [0.8.0] - 2026-06-25
 

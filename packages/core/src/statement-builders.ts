@@ -28,7 +28,7 @@ export interface ValidateEntityStatementClaimsOptions {
 	readonly kind: EntityStatementKind;
 }
 
-export type EntityStatementMetadata = Readonly<Record<string, unknown>>;
+export type EntityStatementMetadata = Readonly<Record<string, Readonly<Record<string, unknown>>>>;
 
 interface StatementTimeOptions {
 	readonly clock?: Clock;

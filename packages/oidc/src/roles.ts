@@ -5,6 +5,7 @@ import type {
 	EntityRole,
 	FederationError,
 	FederationOptions,
+	JWKSet,
 	ReplayStore,
 	Result,
 	TrustAnchorSet,
@@ -13,6 +14,7 @@ import { discoverEntity, err, FederationErrorCode, federationError } from "@oidf
 import type { ClientAssertionOptions } from "./client-auth/assertion.js";
 import { createClientAssertion } from "./client-auth/assertion.js";
 import type { OidcProtocolKeyProvider } from "./protocol-keys.js";
+import type { RegistrationProtocolAdapter } from "./registration/adapter-types.js";
 import {
 	type AutomaticRegistrationResult,
 	automaticRegistration,
@@ -95,7 +97,7 @@ export class FedOidcClient implements EntityRole {
 			);
 		}
 		const trustAnchors =
-			options?.trustAnchors ?? this.config.trustAnchors ?? (this.context as any).trustAnchors;
+			options?.trustAnchors ?? this.config.trustAnchors ?? this.context.trustAnchors;
 		if (!trustAnchors) {
 			throw new Error("No trustAnchors configured. Set them in config, options, or context.");
 		}
@@ -135,7 +137,7 @@ export class FedOidcClient implements EntityRole {
 		const rpConfig = {
 			entityId: this.context.entityId as EntityId,
 			protocolKeyProvider: overrideConfig.protocolKeyProvider,
-			authorityHints: ((this.context as any).authorityHints ??
+			authorityHints: (this.context.authorityHints ??
 				this.config.authorityHints ??
 				[]) as readonly [EntityId, ...EntityId[]],
 			metadata: {
@@ -172,7 +174,7 @@ export class FedOidcClient implements EntityRole {
 			);
 		}
 		const trustAnchors =
-			options?.trustAnchors ?? this.config.trustAnchors ?? (this.context as any).trustAnchors;
+			options?.trustAnchors ?? this.config.trustAnchors ?? this.context.trustAnchors;
 		if (!trustAnchors) {
 			throw new Error("No trustAnchors configured. Set them in config, options, or context.");
 		}
@@ -188,7 +190,7 @@ export class FedOidcClient implements EntityRole {
 		const rpConfig = {
 			entityId: this.context.entityId as EntityId,
 			keyProvider: this.context.keyProvider,
-			authorityHints: ((this.context as any).authorityHints ??
+			authorityHints: (this.context.authorityHints ??
 				this.config.authorityHints ??
 				[]) as readonly [EntityId, ...EntityId[]],
 			metadata: {
@@ -225,7 +227,7 @@ export class FedOidcClient implements EntityRole {
 		const rpConfig = {
 			entityId: this.context.entityId as EntityId,
 			protocolKeyProvider: overrideConfig.protocolKeyProvider,
-			authorityHints: ((this.context as any).authorityHints ??
+			authorityHints: (this.context.authorityHints ??
 				this.config.authorityHints ??
 				[]) as readonly [EntityId, ...EntityId[]],
 			metadata: {
@@ -257,7 +259,7 @@ export interface FedOidcProviderConfig {
 	readonly metadata?: Record<string, unknown>;
 	readonly trustAnchors?: TrustAnchorSet;
 	readonly registrationResponseTtlSeconds?: number;
-	readonly registrationProtocolAdapter?: any;
+	readonly registrationProtocolAdapter?: RegistrationProtocolAdapter;
 	readonly generateClientSecret?: (sub: EntityId) => Promise<string | undefined>;
 	/** Late pre-commit hook called after validation and response preparation, before `onRegistration`. */
 	readonly onRegistrationInvalidation?: (sub: EntityId) => Promise<void>;
@@ -342,15 +344,14 @@ export class FedOidcProvider implements EntityRole {
 			);
 			if (!validationResult.ok) {
 				return err(
-					federationError(FederationErrorCode.InvalidMetadata, validationResult.error.message),
+					federationError(FederationErrorCode.InvalidMetadata, validationResult.error.description),
 				);
 			}
 		}
 
 		if (this.config.onRegistration) {
-			const jwks = result.value.resolvedRpMetadata.jwks ?? {
-				keys: (result.value.trustChain.statements[0]?.payload as any)?.jwks?.keys ?? [],
-			};
+			const federationJwks = result.value.trustChain.statements[0]?.payload.jwks;
+			const jwks = result.value.resolvedRpMetadata.jwks ?? federationJwks ?? { keys: [] };
 			await this.config.onRegistration(result.value.rpEntityId, {
 				...result.value.resolvedRpMetadata,
 				jwks,
@@ -408,10 +409,7 @@ export class FedOauthClient implements EntityRole {
 		const rpConfig = {
 			entityId: this.context.entityId as EntityId,
 			protocolKeyProvider: this.config.protocolKeyProvider,
-			authorityHints: ((this.context as any).authorityHints ?? []) as readonly [
-				EntityId,
-				...EntityId[],
-			],
+			authorityHints: (this.context.authorityHints ?? []) as readonly [EntityId, ...EntityId[]],
 			metadata: {
 				[this.type]: this.metadata,
 			},
@@ -441,7 +439,7 @@ export interface FedOauthProviderConfig {
 	readonly metadata?: Record<string, unknown>;
 	readonly trustAnchors?: TrustAnchorSet;
 	readonly registrationResponseTtlSeconds?: number;
-	readonly registrationProtocolAdapter?: any;
+	readonly registrationProtocolAdapter?: RegistrationProtocolAdapter;
 	readonly generateClientSecret?: (sub: EntityId) => Promise<string | undefined>;
 	/** Late pre-commit hook called after validation and response preparation. */
 	readonly onRegistrationInvalidation?: (sub: EntityId) => Promise<void>;
@@ -451,14 +449,12 @@ export class FedOauthProvider implements EntityRole {
 	public readonly type = "oauth_authorization_server";
 	public readonly metadata: Record<string, unknown> = {};
 	public readonly routes = new Map<string, (request: Request) => Promise<Response>>();
-	private context?: EntityContext;
 
 	constructor(public readonly config: FedOauthProviderConfig) {
 		this.metadata = config.metadata ?? {};
 	}
 
 	initialize(context: EntityContext): void {
-		this.context = context;
 		const registrationPath = this.config.registrationPath ?? "/registration";
 		const registrationUrl = new URL(registrationPath, context.entityId).toString();
 		const trustAnchors = assertNonEmptyTrustAnchors(
@@ -492,14 +488,13 @@ export class FedOauthProvider implements EntityRole {
 
 export interface FedOauthResourceConfig {
 	readonly metadata?: Record<string, unknown>;
-	readonly jwks?: { keys: any[] };
+	readonly jwks?: JWKSet;
 }
 
 export class FedOauthResource implements EntityRole {
 	public readonly type = "oauth_resource";
 	public readonly metadata: Record<string, unknown> = {};
 	public readonly routes = new Map<string, (request: Request) => Promise<Response>>();
-	private context?: EntityContext;
 
 	constructor(public readonly config: FedOauthResourceConfig) {
 		this.metadata = config.metadata ?? {};
@@ -508,7 +503,5 @@ export class FedOauthResource implements EntityRole {
 		}
 	}
 
-	initialize(context: EntityContext): void {
-		this.context = context;
-	}
+	initialize(_context: EntityContext): void {}
 }

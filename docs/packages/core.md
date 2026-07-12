@@ -215,6 +215,7 @@ const keyProvider = new MemoryFederationKeyProvider({
   publicJwk: activePublicKey
 });
 
+// The in-memory provider requires at least one initial active signing key.
 // Retrieve current signing configuration and published keys
 const { signer, jwks } = await keyProvider.getFederationKeySet();
 ```

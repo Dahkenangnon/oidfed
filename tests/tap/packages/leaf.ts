@@ -1,9 +1,9 @@
 import type QUnit from "qunit";
-import type { FederationMetadata } from "../../../packages/core/src/index.js";
 import {
 	decodeEntityStatement,
 	discoverEntity,
 	type EntityId,
+	type EntityStatementMetadata,
 	entityId,
 	generateSigningKey,
 	isErr,
@@ -50,7 +50,7 @@ async function createLeafConfig(
 				response_types: ["code"],
 				client_registration_types: ["automatic"],
 			},
-		} as FederationMetadata,
+		} satisfies EntityStatementMetadata,
 		...overrides,
 	};
 	return { config, signingKey, publicKey };
@@ -625,6 +625,33 @@ export default (QUnit: QUnit) => {
 			t.equal(response.headers.get("content-type"), "application/entity-statement+jwt");
 			const body = await response.text();
 			t.equal(body.split(".").length, 3);
+		});
+
+		test("merges role metadata without mutating caller metadata", async (t) => {
+			const inputMetadata = {
+				federation_entity: { organization_name: "Leaf" },
+			};
+			const role = {
+				type: "openid_relying_party",
+				metadata: { client_name: "Role RP" },
+			};
+			const { config } = await createLeafConfig({
+				metadata: inputMetadata,
+				roles: [role],
+			});
+			const entity = new Leaf(config);
+
+			t.false(Object.hasOwn(inputMetadata, "openid_relying_party"));
+			const jwt = await entity.getEntityConfiguration();
+			const decoded = decodeEntityStatement(jwt);
+			t.true(isOk(decoded));
+			if (!isOk(decoded)) return;
+			t.deepEqual(decoded.value.payload.metadata?.federation_entity, {
+				organization_name: "Leaf",
+			});
+			t.deepEqual(decoded.value.payload.metadata?.openid_relying_party, {
+				client_name: "Role RP",
+			});
 		});
 
 		test("serves path-based Entity Identifier at derived well-known path", async (t) => {

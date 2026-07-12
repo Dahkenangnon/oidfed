@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- `LeafConfig.metadata` now uses core object-valued Entity Statement metadata typing, and role metadata composition no longer mutates the caller-provided metadata object.
+
 ## [0.8.0] - 2026-06-25
 
 ### Refactor
