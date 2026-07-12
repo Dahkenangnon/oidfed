@@ -45,7 +45,7 @@ export function validateSubordinateRecord(record: SubordinateRecord): void {
 		);
 		if (offenders.length > 0) {
 			throw new InvalidSubordinateRecord(
-				`SubordinateRecord.metadata.federation_entity must not carry operational fields (these belong only in the subordinate's own Entity Configuration). Offending field(s): ${offenders.join(", ")}. Apply sanitizeSubordinateMetadata before calling add().`,
+				`SubordinateRecord.metadata.federation_entity must not carry operational fields (these belong only in the subordinate's own Entity Configuration). Offending field(s): ${offenders.join(", ")}. Apply TrustAnchor.sanitizeSubordinateMetadata or Intermediate.sanitizeSubordinateMetadata before calling add().`,
 			);
 		}
 	}

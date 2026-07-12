@@ -56,7 +56,7 @@ The complete [OpenID Federation 1.0](https://openid.net/specs/openid-federation-
 ```ts
 import { Leaf } from "@oidfed/leaf";
 import { TrustAnchor, Intermediate, MemoryStorageAdapter } from "@oidfed/authority";
-import { FedOidcClient, FedOidcProvider } from "@oidfed/oidc";
+import { FedOidcClient, FedOidcProvider, StaticOidcProtocolKeyProvider } from "@oidfed/oidc";
 
 // 1. Create a Leaf Entity composed with an OIDC Relying Party role
 const leaf = new Leaf({
@@ -66,8 +66,15 @@ const leaf = new Leaf({
   metadata: { federation_entity: { organization_name: "Leaf RP" } },
   roles: [
     new FedOidcClient({
-      redirect_uris: ["https://rp.example.com/callback"],
-      jwks: { keys: [protocolPublicKey] }
+      protocolKeyProvider: new StaticOidcProtocolKeyProvider({
+        requestObjectSigner: protocolSigner
+      }),
+      metadata: {
+        redirect_uris: ["https://rp.example.com/callback"],
+        response_types: ["code"],
+        client_registration_types: ["automatic"],
+        jwks: { keys: [protocolPublicKey] }
+      }
     })
   ]
 });
@@ -79,8 +86,8 @@ const ta = new TrustAnchor({
   storage: new MemoryStorageAdapter(),
   metadata: {
     federation_entity: {
-      federation_fetch_endpoint: "https://ta.example.org/fetch",
-      federation_list_endpoint: "https://ta.example.org/list"
+      federation_fetch_endpoint: "https://ta.example.org/federation_fetch",
+      federation_list_endpoint: "https://ta.example.org/federation_list"
     }
   }
 });
@@ -93,15 +100,22 @@ const ia = new Intermediate({
   storage: new MemoryStorageAdapter(),
   metadata: {
     federation_entity: {
-      federation_fetch_endpoint: "https://ia.example.org/fetch",
-      federation_list_endpoint: "https://ia.example.org/list"
+      federation_fetch_endpoint: "https://ia.example.org/federation_fetch",
+      federation_list_endpoint: "https://ia.example.org/federation_list"
     }
   },
   roles: [
     new FedOidcProvider({
-      authorization_endpoint: "https://ia.example.org/auth",
-      token_endpoint: "https://ia.example.org/token",
-      jwks: { keys: [protocolPublicKey] }
+      metadata: {
+        issuer: "https://ia.example.org",
+        authorization_endpoint: "https://ia.example.org/auth",
+        token_endpoint: "https://ia.example.org/token",
+        response_types_supported: ["code"],
+        subject_types_supported: ["public"],
+        id_token_signing_alg_values_supported: ["ES256"],
+        client_registration_types_supported: ["automatic", "explicit"],
+        jwks: { keys: [protocolPublicKey] }
+      }
     })
   ]
 });

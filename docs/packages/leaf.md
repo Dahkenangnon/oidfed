@@ -16,20 +16,16 @@ A Leaf entity publishes its own self-signed configuration but relies on superior
 ```ts
 import { Leaf } from "@oidfed/leaf";
 import { FedOidcClient, StaticOidcProtocolKeyProvider } from "@oidfed/oidc";
-import { generateSigningKey, JwkSigner, MemoryFederationKeyProvider } from "@oidfed/core";
+import { federationKey, generateSigningKey, JwkSigner, MemoryFederationKeyProvider } from "@oidfed/core";
 
 // 1. Generate keys and key providers
 const keyPair = await generateSigningKey("ES256");
-const keyProvider = new MemoryFederationKeyProvider({
-  signer: new JwkSigner(keyPair.privateKey),
-  publicJwk: keyPair.publicKey
-});
+const keyProvider = new MemoryFederationKeyProvider(federationKey(keyPair.privateKey));
 
 // 2. Generate OIDC protocol keys and initialize the protocol key provider
 const protocolKeyPair = await generateSigningKey("ES256");
 const protocolKeyProvider = new StaticOidcProtocolKeyProvider({
-  signer: new JwkSigner(protocolKeyPair.privateKey),
-  publicJwk: protocolKeyPair.publicKey
+  requestObjectSigner: new JwkSigner(protocolKeyPair.privateKey)
 });
 
 // 3. Initialize the Leaf Entity

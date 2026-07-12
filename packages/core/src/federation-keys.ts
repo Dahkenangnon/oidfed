@@ -178,6 +178,13 @@ export class MemoryFederationKeyProvider implements ManagedFederationKeyProvider
 	}
 }
 
+export function federationKey(jwk: JWK): FederationSigningKey {
+	return {
+		signer: new JwkSigner(jwk),
+		publicJwk: stripPrivateFields(jwk),
+	};
+}
+
 export async function rotateFederationKey(
 	provider: ManagedFederationKeyProvider,
 	newKey: FederationSigningKey,

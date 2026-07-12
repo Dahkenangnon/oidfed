@@ -89,10 +89,8 @@ _No user-visible changes — released as part of the coordinated wave._
 
 ### Added
 
-- `sanitizeSubordinateMetadata(metadata)` exported helper that strips operational `federation_entity` claims from metadata destined for a Subordinate Statement.
-- `FEDERATION_ENTITY_OPERATIONAL_FIELDS` and `isFederationEntityOperationalField(key)` for callers that need the same field list.
-- `assertSubordinateStatementShape(payload)`, `assertMetadataValuesNotNull(metadata)`, `assertCritShape(payload)`, `assertMetadataPolicyCritShape(payload)`, and `assertMetadataPolicyShape(payload)` defensive helpers.
-- `validateSubordinateRecord(record)` re-export for callers that want to pre-validate a record before insertion.
+- `TrustAnchor.sanitizeSubordinateMetadata(metadata)` and `Intermediate.sanitizeSubordinateMetadata(metadata)` class helpers that strip operational `federation_entity` claims from metadata destined for a Subordinate Statement.
+- Internal subordinate-statement shape validation now rejects operational fields and null metadata values before storage or statement issuance.
 - New typed errors: `InvalidAuthorityConfig`, `InvalidSubordinateRecord`, `InvalidSubordinateStatementShape`, `InvalidMetadata`.
 
 ### Fixed

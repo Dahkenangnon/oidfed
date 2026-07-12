@@ -88,6 +88,7 @@ export {
 	type FederationKeyProvider,
 	type FederationKeySet,
 	type FederationSigningKey,
+	federationKey,
 	type ManagedFederationKeyProvider,
 	MemoryFederationKeyProvider,
 	type MemoryFederationKeyProviderOptions,

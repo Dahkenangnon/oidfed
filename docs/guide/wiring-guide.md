@@ -52,17 +52,14 @@ import {
 } from "@oidfed/authority";
 import {
   entityId,
+  federationKey,
   generateSigningKey,
-  JwkSigner,
   MemoryFederationKeyProvider,
 } from "@oidfed/core";
 
 const TA_ID = entityId("https://edugain.geant.org");
 const federationKeyPair = await generateSigningKey("ES256");
-const keyProvider = new MemoryFederationKeyProvider({
-  signer: new JwkSigner(federationKeyPair.privateKey),
-  publicJwk: federationKeyPair.publicKey,
-});
+const keyProvider = new MemoryFederationKeyProvider(federationKey(federationKeyPair.privateKey));
 const storage = new MemoryStorageAdapter();
 
 const ta = new TrustAnchor({
@@ -152,18 +149,15 @@ import {
 } from "@oidfed/authority";
 import {
   entityId,
+  federationKey,
   generateSigningKey,
-  JwkSigner,
   MemoryFederationKeyProvider,
 } from "@oidfed/core";
 import type { TrustAnchorSet } from "@oidfed/core";
 
 const SWAMID_ID = entityId("https://swamid.se");
 const federationKeyPair = await generateSigningKey("ES256");
-const keyProvider = new MemoryFederationKeyProvider({
-  signer: new JwkSigner(federationKeyPair.privateKey),
-  publicJwk: federationKeyPair.publicKey,
-});
+const keyProvider = new MemoryFederationKeyProvider(federationKey(federationKeyPair.privateKey));
 
 // Trust Anchor keys for chain validation during registration
 const trustAnchors: TrustAnchorSet = new Map([
@@ -200,22 +194,19 @@ The OP acts as an authority (issues its own Entity Configuration with `@oidfed/a
 import express from "express";
 import Provider from "oidc-provider";
 import { Intermediate, MemoryStorageAdapter } from "@oidfed/authority";
-import { FedOidcProvider, processAutomaticRegistration } from "@oidfed/oidc";
+import { FedOidcProvider } from "@oidfed/oidc";
 import {
   entityId,
+  federationKey,
   generateSigningKey,
   isOk,
-  JwkSigner,
   MemoryFederationKeyProvider,
 } from "@oidfed/core";
 import type { TrustAnchorSet } from "@oidfed/core";
 
 const OP_ID = entityId("https://op.umu.se");
 const federationKeyPair = await generateSigningKey("ES256");
-const keyProvider = new MemoryFederationKeyProvider({
-  signer: new JwkSigner(federationKeyPair.privateKey),
-  publicJwk: federationKeyPair.publicKey,
-});
+const keyProvider = new MemoryFederationKeyProvider(federationKey(federationKeyPair.privateKey));
 const storage = new MemoryStorageAdapter();
 
 const trustAnchors: TrustAnchorSet = new Map([
@@ -223,6 +214,24 @@ const trustAnchors: TrustAnchorSet = new Map([
 ]);
 
 // --- Federation server (Entity Configuration + role endpoints) ---
+
+const opRole = new FedOidcProvider({
+  registrationPath: "/registration",
+  replayStore: storage.replay,
+  metadata: {
+    issuer: "https://op.umu.se",
+    authorization_endpoint: "https://op.umu.se/auth",
+    token_endpoint: "https://op.umu.se/token",
+    response_types_supported: ["code"],
+    subject_types_supported: ["public"],
+    id_token_signing_alg_values_supported: ["ES256"],
+    client_registration_types_supported: ["automatic", "explicit"],
+  },
+  // Optional: Pluggable hook for storing registered clients.
+  onRegistration: async (clientId, metadata) => {
+    // Custom storage logic for new clients.
+  }
+});
 
 const opAuthority = new Intermediate({
   entityId: OP_ID,
@@ -233,25 +242,7 @@ const opAuthority = new Intermediate({
   authorityHints: [entityId("https://umu.se")],
   trustAnchors,
   storage,
-  roles: [
-    new FedOidcProvider({
-      registrationPath: "/registration",
-      metadata: {
-        issuer: "https://op.umu.se",
-        authorization_endpoint: "https://op.umu.se/auth",
-        token_endpoint: "https://op.umu.se/token",
-        response_types_supported: ["code"],
-        subject_types_supported: ["public"],
-        id_token_signing_alg_values_supported: ["ES256"],
-        client_registration_types_supported: ["automatic", "explicit"],
-      },
-      // Optional: Pluggable hooks for client registration validation
-      onRegisterClient: async (clientId, metadata, trustChain) => {
-        // Custom check/storage logic for new clients. Returning true approves registration.
-        return true;
-      }
-    })
-  ]
+  roles: [opRole]
 });
 
 // --- OIDC Provider (panva/node-oidc-provider) ---
@@ -297,9 +288,7 @@ app.get("/auth", async (req, res, next) => {
 
   if (requestJwt) {
     // Process the federation registration
-    const result = await processAutomaticRegistration(requestJwt, trustAnchors, {
-      opEntityId: OP_ID,
-      replayStore: storage.replay,
+    const result = await opRole.processAutomaticRegistration(requestJwt, {
       cache: storage.cache,
       httpClient: fetch,
     });
@@ -334,15 +323,15 @@ A Relying Party at `wiki.ligo.org` using Express + `@oidfed/leaf` + `@oidfed/oid
 
 ```typescript
 import express from "express";
-import { Leaf, discoverEntity } from "@oidfed/leaf";
+import { Leaf } from "@oidfed/leaf";
 import {
   FedOidcClient,
-  explicitRegistration,
-  createClientAssertion,
   StaticOidcProtocolKeyProvider,
 } from "@oidfed/oidc";
 import {
+  discoverEntity,
   entityId,
+  federationKey,
   generateSigningKey,
   isOk,
   JwkSigner,
@@ -353,10 +342,9 @@ import type { TrustAnchorSet } from "@oidfed/core";
 const RP_ID = entityId("https://wiki.ligo.org");
 const federationKeyPair = await generateSigningKey("ES256");
 const protocolKeyPair = await generateSigningKey("ES256");
-const federationKeyProvider = new MemoryFederationKeyProvider({
-  signer: new JwkSigner(federationKeyPair.privateKey),
-  publicJwk: federationKeyPair.publicKey,
-});
+const federationKeyProvider = new MemoryFederationKeyProvider(
+  federationKey(federationKeyPair.privateKey),
+);
 
 const trustAnchors: TrustAnchorSet = new Map([
   [entityId("https://edugain.geant.org"), { jwks: { keys: [taPublicKey] } }],
@@ -375,7 +363,7 @@ const rpRole = new FedOidcClient({
     redirect_uris: ["https://wiki.ligo.org/callback"],
     response_types: ["code"],
     grant_types: ["authorization_code"],
-    client_registration_types: ["automatic"],
+    client_registration_types: ["automatic", "explicit"],
     token_endpoint_auth_method: "private_key_jwt",
     jwks: { keys: [protocolKeyPair.publicKey] },
   },
@@ -442,11 +430,7 @@ app.get("/callback", async (req, res) => {
   const { code, state } = req.query;
 
   // Create a client assertion for token endpoint authentication
-  const assertion = await createClientAssertion(
-    RP_ID,
-    "https://op.umu.se/token",
-    new JwkSigner(protocolKeyPair.privateKey),
-  );
+  const assertion = await rpRole.createClientAssertion("https://op.umu.se/token");
 
   // Exchange code for tokens using private_key_jwt
   const tokenResponse = await fetch("https://op.umu.se/token", {
@@ -475,32 +459,12 @@ app.listen(443);
 ```typescript
 app.get("/login-explicit", async (req, res) => {
   const opId = req.query.op as string;
-  const opDiscoveryResult = await discoverEntity(entityId(opId), trustAnchors);
-  if (!isOk(opDiscoveryResult)) {
-    res.status(400).send("Discovery failed");
-    return;
-  }
-  const opDiscovery = opDiscoveryResult.value;
 
   // Explicit registration — sends EC to OP's registration endpoint
-  const registrationResult = await explicitRegistration(
-    opDiscovery,
-    {
-      entityId: RP_ID,
-      keyProvider: federationKeyProvider,
-      authorityHints: [entityId("https://incommon.org")],
-      metadata: {
-        openid_relying_party: {
-          redirect_uris: ["https://wiki.ligo.org/callback"],
-          response_types: ["code"],
-          client_registration_types: ["explicit"],
-          token_endpoint_auth_method: "private_key_jwt",
-          jwks: { keys: [protocolKeyPair.publicKey] },
-        },
-      },
-    },
+  const registrationResult = await rpRole.explicitlyRegister(entityId(opId), {
     trustAnchors,
-  );
+    httpClient: fetch,
+  });
 
   if (!isOk(registrationResult)) {
     res.status(400).send("Registration failed: " + registrationResult.error.description);
@@ -536,12 +500,12 @@ Sequence when a user at `wiki.ligo.org` authenticates via `op.umu.se`:
 ### Authentication Phase
 
 7. **Standard OIDC**: Authorization code flow proceeds normally — user authenticates, RP receives code
-8. **Token exchange**: RP uses `private_key_jwt` (via `createClientAssertion`) to authenticate at the token endpoint
+8. **Token exchange**: RP uses `private_key_jwt` (via `rpRole.createClientAssertion`) to authenticate at the token endpoint
 9. **ID Token**: RP receives and validates the ID Token
 
 ### Key Security Properties
 
-- **Cross-OP replay prevention**: `opEntityId` is required in `processAutomaticRegistration` — the `aud` claim in the Request Object is validated against it
+- **Cross-OP replay prevention**: `FedOidcProvider.processAutomaticRegistration` validates the Request Object `aud` claim against the initialized OP entity ID
 - **JTI replay detection**: The `replayStore` prevents Request Object reuse
 - **Branded DiscoveryResult**: Only `discoverEntity()` can produce it — prevents unchecked data from flowing into registration
 - **Trust chain expiry**: Explicit registration results include `trustChainExpiresAt` — the RP must re-register before this time

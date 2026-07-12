@@ -52,15 +52,15 @@ deno add npm:@oidfed/core npm:@oidfed/oidc
 This package provides role classes that compose directly with `Leaf`, `TrustAnchor`, or `Intermediate` instances.
 
 OIDC/OAuth protocol keys are separate from federation entity keys:
-- OIDC/OAuth roles publish OIDC/OAuth protocol public keys via `jwks` inside the role configuration.
+- OIDC/OAuth roles publish OIDC/OAuth protocol public keys via `jwks` inside the role `metadata` configuration.
 - Federation Entity Configurations and other federation artifacts stay on federation key providers from `@oidfed/core`.
 
 ### RP Composition Example
 
 ```ts
 import { Leaf } from "@oidfed/leaf";
-import { FedOidcClient } from "@oidfed/oidc";
-import { MemoryFederationKeyProvider, federationKey } from "@oidfed/core";
+import { FedOidcClient, StaticOidcProtocolKeyProvider } from "@oidfed/oidc";
+import { JwkSigner, MemoryFederationKeyProvider, federationKey } from "@oidfed/core";
 
 const rpEntity = new Leaf({
   entityId: "https://rp.example.com",
@@ -73,10 +73,15 @@ const rpEntity = new Leaf({
   },
   roles: [
     new FedOidcClient({
-      redirect_uris: ["https://rp.example.com/callback"],
-      response_types: ["code"],
-      client_registration_types: ["automatic"],
-      jwks: { keys: [protocolPublicKey] },
+      protocolKeyProvider: new StaticOidcProtocolKeyProvider({
+        requestObjectSigner: new JwkSigner(protocolSigningKey),
+      }),
+      metadata: {
+        redirect_uris: ["https://rp.example.com/callback"],
+        response_types: ["code"],
+        client_registration_types: ["automatic"],
+        jwks: { keys: [protocolPublicKey] },
+      },
     })
   ]
 });
@@ -100,11 +105,17 @@ const opEntity = new TrustAnchor({
   },
   roles: [
     new FedOidcProvider({
-      authorization_endpoint: "https://op.example.com/auth",
-      token_endpoint: "https://op.example.com/token",
-      federation_registration_endpoint: "https://op.example.com/register",
-      client_registration_types_supported: ["automatic", "explicit"],
-      jwks: { keys: [protocolPublicKey] },
+      registrationPath: "/register",
+      metadata: {
+        issuer: "https://op.example.com",
+        authorization_endpoint: "https://op.example.com/auth",
+        token_endpoint: "https://op.example.com/token",
+        response_types_supported: ["code"],
+        subject_types_supported: ["public"],
+        id_token_signing_alg_values_supported: ["ES256"],
+        client_registration_types_supported: ["automatic", "explicit"],
+        jwks: { keys: [protocolPublicKey] },
+      },
     })
   ]
 });

@@ -17,6 +17,7 @@ import {
 	verifyEntityStatement,
 	WELL_KNOWN_OPENID_FEDERATION,
 } from "../../../packages/core/src/index.js";
+import * as LeafPublic from "../../../packages/leaf/src/index.js";
 import { Leaf, type LeafConfig } from "../../../packages/leaf/src/index.js";
 import {
 	createMockFederation,
@@ -71,6 +72,15 @@ function mockFn<A extends unknown[]>() {
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+
+	module("leaf / public root exports", () => {
+		test("exports only the leaf class as a runtime entrypoint", (t) => {
+			t.equal(LeafPublic.Leaf, Leaf);
+			t.equal(typeof LeafPublic.Leaf.discoverEntity, "function");
+			t.false("discoverEntity" in LeafPublic);
+			t.false("federationKey" in LeafPublic);
+		});
+	});
 
 	// -------------------------------------------------------------------------
 	// discovery

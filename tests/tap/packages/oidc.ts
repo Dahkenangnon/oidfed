@@ -33,6 +33,7 @@ import {
 	OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE,
 	RequestObjectTyp,
 } from "../../../packages/oidc/src/constants.js";
+import * as OidcPublic from "../../../packages/oidc/src/index.js";
 import {
 	FedOauthClient,
 	FedOauthProvider,
@@ -132,6 +133,36 @@ async function createMockDiscovery(
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+
+	module("oidc / public root exports", () => {
+		test("keeps registration and client-auth helpers behind role classes", async (t) => {
+			t.false("createClientAssertion" in OidcPublic);
+			t.false("processAutomaticRegistration" in OidcPublic);
+			t.false("explicitRegistration" in OidcPublic);
+
+			t.equal(typeof OidcPublic.FedOidcClient.createClientAssertion, "function");
+			t.equal(typeof OidcPublic.FedOidcClient.prototype.createClientAssertion, "function");
+			t.equal(typeof OidcPublic.FedOidcClient.prototype.explicitlyRegister, "function");
+			t.equal(typeof OidcPublic.FedOidcProvider.prototype.processAutomaticRegistration, "function");
+			t.equal(typeof OidcPublic.FedOidcProvider.prototype.processExplicitRegistration, "function");
+
+			const { privateKey } = await generateSigningKey("ES256");
+			const jwt = await OidcPublic.FedOidcClient.createClientAssertion(
+				"https://rp.example.com",
+				"https://op.example.com/token",
+				new JwkSigner(privateKey),
+			);
+			const decoded = decodeEntityStatement(jwt);
+			t.true(decoded.ok);
+			if (!decoded.ok) return;
+			t.equal(decoded.value.payload.iss, "https://rp.example.com");
+			t.equal(decoded.value.payload.sub, "https://rp.example.com");
+			t.equal(
+				(decoded.value.payload as Record<string, unknown>).aud,
+				"https://op.example.com/token",
+			);
+		});
+	});
 
 	// -------------------------------------------------------------------------
 	// client-auth/assertion

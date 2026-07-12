@@ -68,6 +68,7 @@ import {
 	SECURITY_HEADERS,
 	toPublicError,
 } from "../../../packages/core/src/http.js";
+import * as CorePublic from "../../../packages/core/src/index.js";
 import { verifyClientAssertion } from "../../../packages/core/src/jose/client-auth.js";
 import {
 	generateSigningKey as _genKey,
@@ -193,6 +194,23 @@ import { MockFederationBuilder } from "../fixtures/mock-federation.js";
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+
+	module("core / public root exports", () => {
+		test("exports federationKey for public federation key provider setup", async (t) => {
+			const { privateKey } = await generateSigningKey("ES256");
+			const key = CorePublic.federationKey(privateKey);
+
+			t.true(key.signer instanceof JwkSigner);
+			t.equal(key.signer.kid, privateKey.kid);
+			t.deepEqual(key.publicJwk, stripPrivateFields(privateKey));
+			t.equal((key.publicJwk as Record<string, unknown>).d, undefined);
+
+			const provider = new CorePublic.MemoryFederationKeyProvider(key);
+			const keySet = await provider.getFederationKeySet();
+			t.equal(keySet.signer.kid, privateKey.kid);
+			t.deepEqual(keySet.jwks.keys, [key.publicJwk]);
+		});
+	});
 
 	// ── errors ────────────────────────────────────────────────────────
 	module("core / federationError", () => {

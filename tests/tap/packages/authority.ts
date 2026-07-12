@@ -34,6 +34,7 @@ import {
 	InvalidSubordinateStatementShape,
 } from "../../../packages/authority/src/errors.js";
 import { compose, type Middleware } from "../../../packages/authority/src/handler.js";
+import * as AuthorityPublic from "../../../packages/authority/src/index.js";
 import {
 	type AuthorityConfig,
 	Intermediate,
@@ -156,6 +157,47 @@ async function createTestContext(overrides?: TestContextOverrides): Promise<{
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+
+	module("authority / public root exports", () => {
+		test("keeps utility behavior behind authority classes", async (t) => {
+			t.false("sanitizeSubordinateMetadata" in AuthorityPublic);
+			t.false("rotateKey" in AuthorityPublic);
+			t.false("rotateKeyCompromise" in AuthorityPublic);
+
+			const sanitized = AuthorityPublic.TrustAnchor.sanitizeSubordinateMetadata({
+				federation_entity: {
+					organization_name: "Example Leaf",
+					federation_fetch_endpoint: "https://leaf.example.com/federation_fetch",
+				},
+			});
+			t.deepEqual(sanitized, {
+				federation_entity: {
+					organization_name: "Example Leaf",
+				},
+			});
+
+			const { privateKey } = await generateSigningKey("ES256");
+			const { privateKey: nextKey } = await generateSigningKey("ES256");
+			const keyProvider = new MemoryFederationKeyProvider(
+				federationKey({ ...privateKey, kid: "authority-key-1" }),
+			);
+			const ta = new AuthorityPublic.TrustAnchor({
+				entityId: ENTITY_ID,
+				keyProvider,
+				storage: new AuthorityPublic.MemoryStorageAdapter(),
+				metadata: {
+					federation_entity: {
+						federation_fetch_endpoint: `${ENTITY_ID}/federation_fetch`,
+						federation_list_endpoint: `${ENTITY_ID}/federation_list`,
+					},
+				},
+			});
+
+			await ta.rotateSigningKey(federationKey({ ...nextKey, kid: "authority-key-2" }));
+			const rotated = await keyProvider.getFederationKeySet();
+			t.equal(rotated.signer.kid, "authority-key-2");
+		});
+	});
 
 	// -------------------------------------------------------------------------
 	// handler — compose

@@ -15,14 +15,11 @@ A **Trust Anchor** is a root authority with no superiors, which serves as the tr
 
 ```ts
 import { TrustAnchor, Intermediate, MemoryStorageAdapter } from "@oidfed/authority";
-import { generateSigningKey, JwkSigner, MemoryFederationKeyProvider } from "@oidfed/core";
+import { federationKey, generateSigningKey, MemoryFederationKeyProvider } from "@oidfed/core";
 
 // 1. Generate keys and key provider
 const keyPair = await generateSigningKey("ES256");
-const keyProvider = new MemoryFederationKeyProvider({
-  signer: new JwkSigner(keyPair.privateKey),
-  publicJwk: keyPair.publicKey
-});
+const keyProvider = new MemoryFederationKeyProvider(federationKey(keyPair.privateKey));
 
 const storage = new MemoryStorageAdapter({ trustMarks: true });
 
@@ -61,7 +58,7 @@ const intermediate = new Intermediate({
 Authorities attest to subordinate entities by issuing Subordinate Statements. Because subordinates own their own operational endpoints, their `metadata.federation_entity` must be sanitized to strip operational endpoints (e.g. `federation_fetch_endpoint`) before enrollment.
 
 ```ts
-import { sanitizeSubordinateMetadata } from "@oidfed/authority";
+import { TrustAnchor } from "@oidfed/authority";
 import { entityId } from "@oidfed/core";
 
 const subordinateId = entityId("https://leaf.example.com");
@@ -70,10 +67,10 @@ const subordinateId = entityId("https://leaf.example.com");
 const rawMetadata = {
   federation_entity: {
     name: "Example Leaf Entity",
-    federation_fetch_endpoint: "https://leaf.example.com/fetch" // Will be stripped
+    federation_fetch_endpoint: "https://leaf.example.com/federation_fetch" // Will be stripped
   }
 };
-const sanitized = sanitizeSubordinateMetadata(rawMetadata);
+const sanitized = TrustAnchor.sanitizeSubordinateMetadata(rawMetadata);
 
 // Add the record directly using your storage adapter reference
 await storage.subordinates.add({
@@ -121,20 +118,14 @@ class CustomStorageAdapter implements StorageAdapter {
 Federation signing keys are managed by the `ManagedFederationKeyProvider`. The authority supports dynamic signing key rotations and records the history for the historical keys endpoint.
 
 ```ts
-import { rotateKey } from "@oidfed/authority";
-import { generateSigningKey, JwkSigner } from "@oidfed/core";
+import { federationKey, generateSigningKey } from "@oidfed/core";
 
 // Generate new rotation key
 const nextKeyPair = await generateSigningKey("ES256");
-const newSigningKey = {
-  signer: new JwkSigner(nextKeyPair.privateKey),
-  publicJwk: nextKeyPair.publicKey
-};
+const newSigningKey = federationKey(nextKeyPair.privateKey);
 
-// Rotate active key
-await rotateKey(keyProvider, newSigningKey, {
-  removeAfterMs: 7 * 24 * 60 * 60 * 1000 // Keep retired key for 7 days (relative duration in ms)
-});
+// Rotate active key through the authority instance.
+await ta.rotateSigningKey(newSigningKey);
 ```
 
 ---
@@ -230,7 +221,7 @@ The `extendedListing` configuration object supports the following fields:
 **A:** Subordinates are added directly to the subordinates store using the storage adapter: `await storage.subordinates.add(record)`.
 
 ### Q: Why does `validateSubordinateRecord` reject my metadata?
-**A:** A subordinate's metadata block in the storage record must not carry operational fields (such as `federation_fetch_endpoint` or `federation_list_endpoint`) inside `metadata.federation_entity`. Use the `sanitizeSubordinateMetadata(metadata)` helper to strip these fields before calling `.add()` or `.update()`.
+**A:** A subordinate's metadata block in the storage record must not carry operational fields (such as `federation_fetch_endpoint` or `federation_list_endpoint`) inside `metadata.federation_entity`. Use `TrustAnchor.sanitizeSubordinateMetadata(metadata)` or `Intermediate.sanitizeSubordinateMetadata(metadata)` to strip these fields before calling `.add()` or `.update()`.
 
 ### Q: Is explicit client registration handled automatically?
 **A:** No. `handleRequest()` handles only core federation endpoints (fetch, list, resolve, historical keys, trust mark status, etc.). To handle OIDC explicit client registration, you must mount OIDC role adapters (e.g. from `@oidfed/oidc`) to bind `roles` on the entity context.

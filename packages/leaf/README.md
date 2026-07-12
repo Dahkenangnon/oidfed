@@ -51,8 +51,8 @@ deno add npm:@oidfed/core npm:@oidfed/leaf
 
 ```ts
 import { Leaf } from "@oidfed/leaf";
-import { FedOidcClient } from "@oidfed/oidc";
-import { MemoryFederationKeyProvider, federationKey } from "@oidfed/core";
+import { FedOidcClient, StaticOidcProtocolKeyProvider } from "@oidfed/oidc";
+import { JwkSigner, MemoryFederationKeyProvider, federationKey } from "@oidfed/core";
 
 const leaf = new Leaf({
   entityId: "https://rp.example.com",
@@ -65,11 +65,15 @@ const leaf = new Leaf({
   },
   roles: [
     new FedOidcClient({
-      redirect_uris: ["https://rp.example.com/callback"],
-      response_types: ["code"],
-      client_registration_types: ["automatic"],
-      jwks: { keys: [protocolPublicKey] },
-      protocolKeyProvider,
+      protocolKeyProvider: new StaticOidcProtocolKeyProvider({
+        requestObjectSigner: new JwkSigner(myProtocolSigningKey),
+      }),
+      metadata: {
+        redirect_uris: ["https://rp.example.com/callback"],
+        response_types: ["code"],
+        client_registration_types: ["automatic"],
+        jwks: { keys: [protocolPublicKey] },
+      },
     })
   ]
 });
