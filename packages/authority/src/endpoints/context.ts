@@ -4,12 +4,18 @@ import type {
 	EntityType,
 	FederationEntityMetadata,
 	FederationOptions,
+	JWKSet,
 	ManagedFederationKeyProvider,
 	TrustAnchorSet,
 	TrustMarkOwner,
 	TrustMarkRef,
 } from "@oidfed/core";
 import type { StorageAdapter } from "../storage/types.js";
+
+/** Resolves public Federation Entity Keys for authenticated authority endpoint clients. */
+export interface AuthorityClientKeyProvider {
+	getClientFederationJwks(entityId: EntityId): Promise<JWKSet | undefined>;
+}
 
 export interface HandlerContext {
 	/** The entity identifier (URL) for this authority. */
@@ -20,6 +26,8 @@ export interface HandlerContext {
 	readonly keyProvider: ManagedFederationKeyProvider;
 	/** Unified persistence adapter for all non-key authority state. */
 	readonly storage: StorageAdapter;
+	/** Resolves remote client Federation Entity Keys for private_key_jwt endpoint auth. */
+	readonly clientKeyProvider: AuthorityClientKeyProvider;
 	/** Metadata published in this authority's Entity Configuration. */
 	readonly metadata: { federation_entity: FederationEntityMetadata } & Partial<
 		Record<string, Record<string, unknown>>

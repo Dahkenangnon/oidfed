@@ -9,6 +9,7 @@ export type {
 	Middleware,
 } from "./handler.js";
 export {
+	type AuthorityClientKeyProvider,
 	type AuthorityConfig,
 	type AuthorityServer,
 	type ExtendedListInProcessParams,

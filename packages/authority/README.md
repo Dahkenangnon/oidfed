@@ -77,6 +77,10 @@ const ta = new TrustAnchor({
 const response = await ta.handleRequest(request);
 ```
 
+Federation endpoint `private_key_jwt` authentication uses `AuthorityConfig.clientKeyProvider`
+to resolve a caller's public Federation Entity Keys. Omit it to use the default
+subordinate-storage lookup: `storage.subordinates.get(entityId)?.jwks`.
+
 ## Documentation
 
 For a detailed API reference, subordinate management APIs, and unified storage adapter setups, see the [docs/packages/authority.md](https://github.com/Dahkenangnon/oidfed/blob/main/docs/packages/authority.md) file.

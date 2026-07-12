@@ -141,6 +141,11 @@ async function createTestContext(overrides?: TestContextOverrides): Promise<{
 		entityId: ENTITY_ID,
 		keyProvider,
 		storage,
+		clientKeyProvider: {
+			async getClientFederationJwks(entityId) {
+				return (await storage.subordinates.get(entityId))?.jwks;
+			},
+		},
 		metadata: {
 			federation_entity: {
 				federation_fetch_endpoint: `${ENTITY_ID}/federation_fetch`,
@@ -163,6 +168,7 @@ export default (QUnit: QUnit) => {
 			t.false("sanitizeSubordinateMetadata" in AuthorityPublic);
 			t.false("rotateKey" in AuthorityPublic);
 			t.false("rotateKeyCompromise" in AuthorityPublic);
+			t.false("AuthorityClientKeyProvider" in AuthorityPublic);
 
 			const sanitized = AuthorityPublic.TrustAnchor.sanitizeSubordinateMetadata({
 				federation_entity: {
@@ -4202,27 +4208,28 @@ export default (QUnit: QUnit) => {
 		}
 
 		async function setupClientAuthContext(overrides?: Partial<HandlerContext>) {
-			const taKeys = await generateSigningKey("ES256");
-			const taSigningKey = { ...taKeys.privateKey, kid: "ta-key-1" };
-			const taPublicKey = { ...taKeys.publicKey, kid: "ta-key-1" };
+			const { privateKey: taPrivateKey } = await generateSigningKey("ES256");
+			const taSigningKey = { ...taPrivateKey, kid: "ta-key-1" };
 			const clientKeys = await generateSigningKey("ES256");
 			const clientSigningKey = { ...clientKeys.privateKey, kid: "client-key-1" };
 			const clientPublicKey = { ...clientKeys.publicKey, kid: "client-key-1" };
-			const trustAnchors: TrustAnchorSet = new Map([
-				[CA_AUTHORITY_ID, { jwks: { keys: [taPublicKey] } }],
-			]);
 			const keyProvider = new MemoryFederationKeyProvider(federationKey(taSigningKey));
 			const storage = new MemoryStorageAdapter({ trustMarks: true });
+			const clientKeyProvider = {
+				async getClientFederationJwks(clientEntityId: EntityId) {
+					return clientEntityId === CA_CLIENT_ID ? { keys: [clientPublicKey] } : undefined;
+				},
+			};
 			const ctx: HandlerContext = {
 				entityId: CA_AUTHORITY_ID,
 				keyProvider,
 				storage,
+				clientKeyProvider,
 				metadata: {
 					federation_entity: {
 						federation_fetch_endpoint: `${CA_AUTHORITY_ID}${FederationEndpoint.Fetch}`,
 					},
 				},
-				trustAnchors,
 				...overrides,
 			};
 
@@ -4247,81 +4254,10 @@ export default (QUnit: QUnit) => {
 				);
 			};
 
-			const makeHttpClient =
-				() =>
-				async (input: string | URL | Request): Promise<Response> => {
-					const url =
-						typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-					const now = Math.floor(Date.now() / 1000);
-					if (url === `${CA_CLIENT_ID}${WELL_KNOWN_OPENID_FEDERATION}`) {
-						const ecJwt = await signEntityStatement(
-							{
-								iss: CA_CLIENT_ID,
-								sub: CA_CLIENT_ID,
-								iat: now,
-								exp: now + 3600,
-								jwks: { keys: [clientPublicKey] },
-								authority_hints: [CA_AUTHORITY_ID],
-							},
-							new JwkSigner(clientSigningKey),
-						);
-						return new Response(ecJwt, {
-							status: 200,
-							headers: { "Content-Type": "application/entity-statement+jwt" },
-						});
-					}
-					if (url === `${CA_AUTHORITY_ID}${WELL_KNOWN_OPENID_FEDERATION}`) {
-						const ecJwt = await signEntityStatement(
-							{
-								iss: CA_AUTHORITY_ID,
-								sub: CA_AUTHORITY_ID,
-								iat: now,
-								exp: now + 3600,
-								jwks: { keys: [taPublicKey] },
-								metadata: {
-									federation_entity: {
-										federation_fetch_endpoint: `${CA_AUTHORITY_ID}${FederationEndpoint.Fetch}`,
-									},
-								},
-							},
-							new JwkSigner(taSigningKey),
-						);
-						return new Response(ecJwt, {
-							status: 200,
-							headers: { "Content-Type": "application/entity-statement+jwt" },
-						});
-					}
-					if (url.startsWith(`${CA_AUTHORITY_ID}${FederationEndpoint.Fetch}`)) {
-						const parsedUrl = new URL(url);
-						if (parsedUrl.searchParams.get("sub") === CA_CLIENT_ID) {
-							const ssJwt = await signEntityStatement(
-								{
-									iss: CA_AUTHORITY_ID,
-									sub: CA_CLIENT_ID,
-									iat: now,
-									exp: now + 3600,
-									jwks: { keys: [clientPublicKey] },
-								},
-								new JwkSigner(taSigningKey),
-							);
-							return new Response(ssJwt, {
-								status: 200,
-								headers: { "Content-Type": "application/entity-statement+jwt" },
-							});
-						}
-					}
-					return new Response("Not found", { status: 404 });
-				};
-
 			return {
 				ctx,
-				taSigningKey,
-				taPublicKey,
-				clientSigningKey,
 				clientPublicKey,
-				trustAnchors,
 				createClientAssertionJwt,
-				makeHttpClient,
 			};
 		}
 
@@ -4397,9 +4333,18 @@ export default (QUnit: QUnit) => {
 				});
 
 				test("accepts valid POST with correct client_assertion", async (t) => {
-					const { ctx, createClientAssertionJwt, makeHttpClient } = await setupClientAuthContext();
-					const ctxWithHttp: HandlerContext = { ...ctx, options: { httpClient: makeHttpClient() } };
-					const handler = createAuthenticatedHandler(ctxWithHttp, echoHandler, ["private_key_jwt"]);
+					const { ctx, createClientAssertionJwt } = await setupClientAuthContext();
+					const ctxWithoutDiscovery: HandlerContext = {
+						...ctx,
+						options: {
+							httpClient: async () => {
+								throw new Error("discovery should not run for endpoint authentication");
+							},
+						},
+					};
+					const handler = createAuthenticatedHandler(ctxWithoutDiscovery, echoHandler, [
+						"private_key_jwt",
+					]);
 					const assertion = await createClientAssertionJwt();
 					const res = await handler(
 						new Request(`${CA_AUTHORITY_ID}/test`, {
@@ -4415,9 +4360,8 @@ export default (QUnit: QUnit) => {
 				});
 
 				test("forwards endpoint params correctly from POST body", async (t) => {
-					const { ctx, createClientAssertionJwt, makeHttpClient } = await setupClientAuthContext();
-					const ctxWithHttp: HandlerContext = { ...ctx, options: { httpClient: makeHttpClient() } };
-					const handler = createAuthenticatedHandler(ctxWithHttp, echoHandler, ["private_key_jwt"]);
+					const { ctx, createClientAssertionJwt } = await setupClientAuthContext();
+					const handler = createAuthenticatedHandler(ctx, echoHandler, ["private_key_jwt"]);
 					const subValue = "https://sub.example.com";
 					const assertion = await createClientAssertionJwt();
 					const res = await handler(
@@ -4432,12 +4376,14 @@ export default (QUnit: QUnit) => {
 				});
 
 				test("rejects POST with expired client_assertion", async (t) => {
-					const { ctx, createClientAssertionJwt, makeHttpClient } = await setupClientAuthContext();
-					const ctxWithHttp: HandlerContext = {
+					const { ctx, createClientAssertionJwt } = await setupClientAuthContext();
+					const ctxWithClock: HandlerContext = {
 						...ctx,
-						options: { httpClient: makeHttpClient(), clockSkewSeconds: 0 },
+						options: { clockSkewSeconds: 0 },
 					};
-					const handler = createAuthenticatedHandler(ctxWithHttp, echoHandler, ["private_key_jwt"]);
+					const handler = createAuthenticatedHandler(ctxWithClock, echoHandler, [
+						"private_key_jwt",
+					]);
 					const now = Math.floor(Date.now() / 1000);
 					const assertion = await createClientAssertionJwt({ exp: now - 120 });
 					const res = await handler(
@@ -4451,9 +4397,8 @@ export default (QUnit: QUnit) => {
 				});
 
 				test("rejects POST with wrong aud in assertion", async (t) => {
-					const { ctx, createClientAssertionJwt, makeHttpClient } = await setupClientAuthContext();
-					const ctxWithHttp: HandlerContext = { ...ctx, options: { httpClient: makeHttpClient() } };
-					const handler = createAuthenticatedHandler(ctxWithHttp, echoHandler, ["private_key_jwt"]);
+					const { ctx, createClientAssertionJwt } = await setupClientAuthContext();
+					const handler = createAuthenticatedHandler(ctx, echoHandler, ["private_key_jwt"]);
 					const assertion = await createClientAssertionJwt({ aud: "https://wrong.example.com" });
 					const res = await handler(
 						new Request(`${CA_AUTHORITY_ID}/test`, {
@@ -4466,9 +4411,8 @@ export default (QUnit: QUnit) => {
 				});
 
 				test("rejects private_key_jwt with multiple audience values", async (t) => {
-					const { ctx, createClientAssertionJwt, makeHttpClient } = await setupClientAuthContext();
-					const ctxWithHttp: HandlerContext = { ...ctx, options: { httpClient: makeHttpClient() } };
-					const handler = createAuthenticatedHandler(ctxWithHttp, echoHandler, ["private_key_jwt"]);
+					const { ctx, createClientAssertionJwt } = await setupClientAuthContext();
+					const handler = createAuthenticatedHandler(ctx, echoHandler, ["private_key_jwt"]);
 					const assertion = await createClientAssertionJwt({
 						aud: [CA_AUTHORITY_ID, "https://wrong.example.com"],
 					});
@@ -4483,9 +4427,8 @@ export default (QUnit: QUnit) => {
 				});
 
 				test("accepts private_key_jwt with sole audience as endpoint Entity Identifier", async (t) => {
-					const { ctx, createClientAssertionJwt, makeHttpClient } = await setupClientAuthContext();
-					const ctxWithHttp: HandlerContext = { ...ctx, options: { httpClient: makeHttpClient() } };
-					const handler = createAuthenticatedHandler(ctxWithHttp, echoHandler, ["private_key_jwt"]);
+					const { ctx, createClientAssertionJwt } = await setupClientAuthContext();
+					const handler = createAuthenticatedHandler(ctx, echoHandler, ["private_key_jwt"]);
 					const assertion = await createClientAssertionJwt({ aud: [CA_AUTHORITY_ID] });
 					const res = await handler(
 						new Request(`${CA_AUTHORITY_ID}/test`, {
@@ -4497,16 +4440,14 @@ export default (QUnit: QUnit) => {
 					t.equal(res.status, 200);
 				});
 
-				test("rejects POST when trust chain resolution fails", async (t) => {
+				test("rejects POST when client key provider has no keys for issuer", async (t) => {
 					const { ctx, createClientAssertionJwt } = await setupClientAuthContext();
-					const ctxWithBrokenHttp: HandlerContext = {
-						...ctx,
-						options: { httpClient: async () => new Response("Not found", { status: 404 }) },
-					};
-					const handler = createAuthenticatedHandler(ctxWithBrokenHttp, echoHandler, [
-						"private_key_jwt",
-					]);
-					const assertion = await createClientAssertionJwt();
+					const handler = createAuthenticatedHandler(ctx, echoHandler, ["private_key_jwt"]);
+					const unknownClientId = "https://unknown-client.example.com";
+					const assertion = await createClientAssertionJwt({
+						iss: unknownClientId,
+						sub: unknownClientId,
+					});
 					const res = await handler(
 						new Request(`${CA_AUTHORITY_ID}/test`, {
 							method: "POST",
@@ -4515,12 +4456,14 @@ export default (QUnit: QUnit) => {
 						}),
 					);
 					t.equal(res.status, 401);
+					const body = (await res.json()) as Record<string, string>;
+					t.equal(body.error, FederationErrorCode.InvalidClient);
+					t.true(body.error_description!.includes("No federation keys"));
 				});
 
 				test("rejects POST with invalid signature", async (t) => {
-					const { ctx, makeHttpClient } = await setupClientAuthContext();
-					const ctxWithHttp: HandlerContext = { ...ctx, options: { httpClient: makeHttpClient() } };
-					const handler = createAuthenticatedHandler(ctxWithHttp, echoHandler, ["private_key_jwt"]);
+					const { ctx } = await setupClientAuthContext();
+					const handler = createAuthenticatedHandler(ctx, echoHandler, ["private_key_jwt"]);
 					const otherKeys = await generateSigningKey("ES256");
 					const now = Math.floor(Date.now() / 1000);
 					const badAssertion = await signEntityStatement(
@@ -4545,12 +4488,13 @@ export default (QUnit: QUnit) => {
 					t.equal(res.status, 401);
 				});
 
-				test("returns 500 when trust anchors not configured", async (t) => {
+				test("accepts POST without trust anchors when key provider resolves keys", async (t) => {
 					const { ctx, createClientAssertionJwt } = await setupClientAuthContext();
 					const ctxNoTa: HandlerContext = {
 						entityId: ctx.entityId,
 						keyProvider: ctx.keyProvider,
 						storage: ctx.storage,
+						clientKeyProvider: ctx.clientKeyProvider,
 						metadata: ctx.metadata,
 					};
 					const handler = createAuthenticatedHandler(ctxNoTa, echoHandler, ["private_key_jwt"]);
@@ -4562,13 +4506,91 @@ export default (QUnit: QUnit) => {
 							body: `sub=test&client_assertion=${encodeURIComponent(assertion)}&client_assertion_type=${encodeURIComponent(JWT_BEARER_TYPE)}`,
 						}),
 					);
+					t.equal(res.status, 200);
+				});
+
+				test("passes assertion issuer to configured client key provider", async (t) => {
+					const { ctx, createClientAssertionJwt, clientPublicKey } = await setupClientAuthContext();
+					let requestedEntityId: EntityId | undefined;
+					const ctxWithCustomProvider: HandlerContext = {
+						...ctx,
+						clientKeyProvider: {
+							async getClientFederationJwks(entityId) {
+								requestedEntityId = entityId;
+								return { keys: [clientPublicKey] };
+							},
+						},
+					};
+					const handler = createAuthenticatedHandler(ctxWithCustomProvider, echoHandler, [
+						"private_key_jwt",
+					]);
+					const assertion = await createClientAssertionJwt();
+					const res = await handler(
+						new Request(`${CA_AUTHORITY_ID}/test`, {
+							method: "POST",
+							headers: { "Content-Type": "application/x-www-form-urlencoded" },
+							body: `sub=test&client_assertion=${encodeURIComponent(assertion)}&client_assertion_type=${encodeURIComponent(JWT_BEARER_TYPE)}`,
+						}),
+					);
+					t.equal(res.status, 200);
+					t.equal(requestedEntityId, CA_CLIENT_ID);
+				});
+
+				test("returns sanitized server_error when client key provider fails", async (t) => {
+					const { ctx, createClientAssertionJwt } = await setupClientAuthContext();
+					const ctxWithFailingProvider: HandlerContext = {
+						...ctx,
+						clientKeyProvider: {
+							async getClientFederationJwks() {
+								throw new Error("secret backend detail");
+							},
+						},
+					};
+					const handler = createAuthenticatedHandler(ctxWithFailingProvider, echoHandler, [
+						"private_key_jwt",
+					]);
+					const assertion = await createClientAssertionJwt();
+					const res = await handler(
+						new Request(`${CA_AUTHORITY_ID}/test`, {
+							method: "POST",
+							headers: { "Content-Type": "application/x-www-form-urlencoded" },
+							body: `sub=test&client_assertion=${encodeURIComponent(assertion)}&client_assertion_type=${encodeURIComponent(JWT_BEARER_TYPE)}`,
+						}),
+					);
 					t.equal(res.status, 500);
+					const body = (await res.json()) as Record<string, string>;
+					t.equal(body.error, FederationErrorCode.ServerError);
+					t.false(body.error_description!.includes("secret backend detail"));
+				});
+
+				test("rejects POST when client key provider returns the wrong key", async (t) => {
+					const { ctx, createClientAssertionJwt } = await setupClientAuthContext();
+					const wrongKeys = await generateSigningKey("ES256");
+					const ctxWithWrongKey: HandlerContext = {
+						...ctx,
+						clientKeyProvider: {
+							async getClientFederationJwks() {
+								return { keys: [{ ...wrongKeys.publicKey, kid: "wrong-client-key" }] };
+							},
+						},
+					};
+					const handler = createAuthenticatedHandler(ctxWithWrongKey, echoHandler, [
+						"private_key_jwt",
+					]);
+					const assertion = await createClientAssertionJwt();
+					const res = await handler(
+						new Request(`${CA_AUTHORITY_ID}/test`, {
+							method: "POST",
+							headers: { "Content-Type": "application/x-www-form-urlencoded" },
+							body: `sub=test&client_assertion=${encodeURIComponent(assertion)}&client_assertion_type=${encodeURIComponent(JWT_BEARER_TYPE)}`,
+						}),
+					);
+					t.equal(res.status, 401);
 				});
 
 				test("iss !== sub in assertion returns 401", async (t) => {
-					const { ctx, createClientAssertionJwt, makeHttpClient } = await setupClientAuthContext();
-					const ctxWithHttp: HandlerContext = { ...ctx, options: { httpClient: makeHttpClient() } };
-					const handler = createAuthenticatedHandler(ctxWithHttp, echoHandler, ["private_key_jwt"]);
+					const { ctx, createClientAssertionJwt } = await setupClientAuthContext();
+					const handler = createAuthenticatedHandler(ctx, echoHandler, ["private_key_jwt"]);
 					const assertion = await createClientAssertionJwt({
 						iss: CA_CLIENT_ID,
 						sub: "https://other.example.com",
@@ -4586,14 +4608,10 @@ export default (QUnit: QUnit) => {
 
 			module("nativeMethod: POST", () => {
 				test("forwards remaining POST body for POST-native endpoints", async (t) => {
-					const { ctx, createClientAssertionJwt, makeHttpClient } = await setupClientAuthContext();
-					const ctxWithHttp: HandlerContext = { ...ctx, options: { httpClient: makeHttpClient() } };
-					const handler = createAuthenticatedHandler(
-						ctxWithHttp,
-						postEchoHandler,
-						["private_key_jwt"],
-						{ nativeMethod: "POST" },
-					);
+					const { ctx, createClientAssertionJwt } = await setupClientAuthContext();
+					const handler = createAuthenticatedHandler(ctx, postEchoHandler, ["private_key_jwt"], {
+						nativeMethod: "POST",
+					});
 					const assertion = await createClientAssertionJwt();
 					const res = await handler(
 						new Request(`${CA_AUTHORITY_ID}/test`, {
@@ -5079,9 +5097,8 @@ export default (QUnit: QUnit) => {
 				async function setupAuthenticatedServer(authMethods: string[]) {
 					const taStorage = new MemoryStorageAdapter();
 					const taSubStore = taStorage.subordinates;
-					const { privateKey: taPrivKey, publicKey: taPubKey } = await generateSigningKey("ES256");
+					const { privateKey: taPrivKey } = await generateSigningKey("ES256");
 					const taSigningKey = { ...taPrivKey, kid: "ta-key-1" };
-					const taPublicKey = { ...taPubKey, kid: "ta-key-1" };
 					const taKeyProvider = new MemoryFederationKeyProvider(federationKey(taSigningKey));
 
 					const { privateKey: clientPrivKey, publicKey: clientPubKey } =
@@ -5089,79 +5106,12 @@ export default (QUnit: QUnit) => {
 					const clientSigningKey = { ...clientPrivKey, kid: "client-key-1" };
 					const clientPublicKey = { ...clientPubKey, kid: "client-key-1" };
 
-					const trustAnchors: TrustAnchorSet = new Map([
-						[SERVER_AUTHORITY_ID, { jwks: { keys: [taPublicKey] } }],
-					]) as unknown as TrustAnchorSet;
-
-					const httpClient = async (input: string | URL | Request): Promise<Response> => {
-						const url =
-							typeof input === "string"
-								? input
-								: input instanceof URL
-									? input.toString()
-									: input.url;
-						const now = Math.floor(Date.now() / 1000);
-						if (url === `${CLIENT_ID}${WELL_KNOWN_OPENID_FEDERATION}`) {
-							const jwt = await signEntityStatement(
-								{
-									iss: CLIENT_ID,
-									sub: CLIENT_ID,
-									iat: now,
-									exp: now + 3600,
-									jwks: { keys: [clientPublicKey] },
-									authority_hints: [SERVER_AUTHORITY_ID],
-								},
-								new JwkSigner(clientSigningKey),
-							);
-							return new Response(jwt, {
-								status: 200,
-								headers: { "Content-Type": "application/entity-statement+jwt" },
-							});
-						}
-						if (url === `${SERVER_AUTHORITY_ID}${WELL_KNOWN_OPENID_FEDERATION}`) {
-							const jwt = await signEntityStatement(
-								{
-									iss: SERVER_AUTHORITY_ID,
-									sub: SERVER_AUTHORITY_ID,
-									iat: now,
-									exp: now + 3600,
-									jwks: { keys: [taPublicKey] },
-									metadata: {
-										federation_entity: {
-											federation_fetch_endpoint: `${SERVER_AUTHORITY_ID}${FederationEndpoint.Fetch}`,
-										},
-									},
-								},
-								new JwkSigner(taSigningKey),
-							);
-							return new Response(jwt, {
-								status: 200,
-								headers: { "Content-Type": "application/entity-statement+jwt" },
-							});
-						}
-						if (url.startsWith(`${SERVER_AUTHORITY_ID}${FederationEndpoint.Fetch}`)) {
-							const parsedUrl = new URL(url);
-							if (parsedUrl.searchParams.get("sub") === CLIENT_ID) {
-								const jwt = await signEntityStatement(
-									{
-										iss: SERVER_AUTHORITY_ID,
-										sub: CLIENT_ID,
-										iat: now,
-										exp: now + 3600,
-										jwks: { keys: [clientPublicKey] },
-									},
-									new JwkSigner(taSigningKey),
-								);
-								return new Response(jwt, {
-									status: 200,
-									headers: { "Content-Type": "application/entity-statement+jwt" },
-								});
-							}
-						}
-						return new Response("Not found", { status: 404 });
-					};
-
 					await taSubStore.add(makeServerRecord(SERVER_SUB1));
+					await taSubStore.add(
+						makeServerRecord(CLIENT_ID, {
+							jwks: { keys: [clientPublicKey] },
+						}),
+					);
 
 					const authConfig: AuthorityConfig = {
 						entityId: SERVER_AUTHORITY_ID,
@@ -5174,8 +5124,11 @@ export default (QUnit: QUnit) => {
 						},
 						storage: taStorage,
 						keyProvider: taKeyProvider,
-						trustAnchors,
-						options: { httpClient },
+						options: {
+							httpClient: async () => {
+								throw new Error("discovery should not run for endpoint authentication");
+							},
+						},
 					};
 
 					const createAssertion = async () => {
@@ -5194,7 +5147,7 @@ export default (QUnit: QUnit) => {
 						);
 					};
 
-					return { config: authConfig, createAssertion };
+					return { config: authConfig, createAssertion, clientPublicKey };
 				}
 
 				test("server with private_key_jwt rejects unauthenticated GET on fetch", async (t) => {
@@ -5209,7 +5162,7 @@ export default (QUnit: QUnit) => {
 					t.equal(res.status, 405);
 				});
 
-				test("server with private_key_jwt accepts authenticated POST on fetch", async (t) => {
+				test("server with private_key_jwt accepts storage-backed authenticated POST on fetch", async (t) => {
 					const { config: authConfig, createAssertion } = await setupAuthenticatedServer([
 						"private_key_jwt",
 					]);
@@ -5224,6 +5177,70 @@ export default (QUnit: QUnit) => {
 						}),
 					);
 					t.equal(res.status, 200);
+				});
+
+				test("server with private_key_jwt accepts custom provider with empty client storage", async (t) => {
+					const {
+						config: authConfig,
+						createAssertion,
+						clientPublicKey,
+					} = await setupAuthenticatedServer(["private_key_jwt"]);
+					const storage = new MemoryStorageAdapter();
+					await storage.subordinates.add(makeServerRecord(SERVER_SUB1));
+					let requestedEntityId: EntityId | undefined;
+					const server = createAuthorityServer({
+						...authConfig,
+						storage,
+						clientKeyProvider: {
+							async getClientFederationJwks(entityId) {
+								requestedEntityId = entityId;
+								return entityId === CLIENT_ID ? { keys: [clientPublicKey] } : undefined;
+							},
+						},
+					});
+					const handler = server.handler();
+					const assertion = await createAssertion();
+					const res = await handler(
+						new Request(`${SERVER_AUTHORITY_ID}${FederationEndpoint.Fetch}`, {
+							method: "POST",
+							headers: { "Content-Type": "application/x-www-form-urlencoded" },
+							body: `sub=${encodeURIComponent(SERVER_SUB1)}&client_assertion=${encodeURIComponent(assertion)}&client_assertion_type=${encodeURIComponent(JWT_BEARER_TYPE)}`,
+						}),
+					);
+					t.equal(res.status, 200);
+					t.equal(requestedEntityId, CLIENT_ID);
+				});
+
+				test("server with private_key_jwt sanitizes storage-backed lookup failures", async (t) => {
+					const { config: authConfig, createAssertion } = await setupAuthenticatedServer([
+						"private_key_jwt",
+					]);
+					const storage = new MemoryStorageAdapter();
+					await storage.subordinates.add(makeServerRecord(SERVER_SUB1));
+					const originalGet = storage.subordinates.get.bind(storage.subordinates);
+					storage.subordinates.get = async (entityId) => {
+						if (entityId === CLIENT_ID) {
+							throw new Error("secret storage failure");
+						}
+						return originalGet(entityId);
+					};
+					const server = createAuthorityServer({
+						...authConfig,
+						storage,
+					});
+					const handler = server.handler();
+					const assertion = await createAssertion();
+					const res = await handler(
+						new Request(`${SERVER_AUTHORITY_ID}${FederationEndpoint.Fetch}`, {
+							method: "POST",
+							headers: { "Content-Type": "application/x-www-form-urlencoded" },
+							body: `sub=${encodeURIComponent(SERVER_SUB1)}&client_assertion=${encodeURIComponent(assertion)}&client_assertion_type=${encodeURIComponent(JWT_BEARER_TYPE)}`,
+						}),
+					);
+					t.equal(res.status, 500);
+					const body = (await res.json()) as Record<string, string>;
+					t.equal(body.error, FederationErrorCode.ServerError);
+					t.false(body.error_description!.includes("secret storage failure"));
 				});
 
 				test("server without auth methods accepts unauthenticated GET", async (t) => {

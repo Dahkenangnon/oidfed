@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- Federation endpoint `private_key_jwt` authentication now resolves remote caller keys through `AuthorityConfig.clientKeyProvider`, defaulting to subordinate storage, instead of live trust-chain discovery.
+
 ## [0.8.0] - 2026-06-25
 
 ### Refactor

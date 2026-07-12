@@ -186,6 +186,7 @@ When constructing a `TrustAnchor` or `Intermediate`, you pass an `AuthorityConfi
 | `metadata` | `object` | **Yes** | Metadata block published in the authority's self-signed configuration. Must include a `federation_entity` sub-object. No leaf value within the metadata may be `null`. |
 | `storage` | `StorageAdapter` | **Yes** | Persistence adapter for subordinates, trust marks, cache, and replays. |
 | `keyProvider` | `ManagedFederationKeyProvider`| **Yes** | Key provider managing active federation signing keys and key history (e.g., `MemoryFederationKeyProvider` implements `ManagedFederationKeyProvider`). |
+| `clientKeyProvider` | `AuthorityClientKeyProvider` | No | Resolves public Federation Entity Keys for `private_key_jwt` federation endpoint callers. Defaults to `storage.subordinates.get(entityId)?.jwks`. |
 | `authorityHints` | `readonly (EntityId \| string)[]` | *Conditional* | List of superior authorities this entity is subordinate to. Must be `undefined` or omitted for a `TrustAnchor`. Must be a non-empty array for an `Intermediate`. |
 | `roles` | `EntityRole[]` | No | Optional composition roles (like OIDC Provider or Relying Party roles) bound to this entity context. |
 | `trustMarks` | `TrustMarkRef[]` | No | Trust marks this authority claims about itself in its Entity Configuration. |
@@ -198,6 +199,8 @@ When constructing a `TrustAnchor` or `Intermediate`, you pass an `AuthorityConfi
 | `trustMarkTtlSeconds` | `number` | No | TTL in seconds for issued trust marks. Must be positive if defined. |
 | `options` | `Omit<FederationOptions, "cache">`| No | Core federation options (e.g. custom clock skew, http timeouts, etc.). |
 | `extendedListing` | `ExtendedListingConfig` | No | Configuration for `/federation_extended_list`. Can set `enabled: false` to disable. |
+
+Federation endpoint `private_key_jwt` authentication verifies the remote caller's assertion with keys returned by `clientKeyProvider`. If omitted, the authority uses the caller Entity Identifier to read the subordinate record from `storage.subordinates` and uses that record's `jwks`. Configure a custom provider when caller keys live in an external registry or key service; invalid, missing, or mismatched keys fail closed.
 
 ### Extended Listing Config Options
 The `extendedListing` configuration object supports the following fields:

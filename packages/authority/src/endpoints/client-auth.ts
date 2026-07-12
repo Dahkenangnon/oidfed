@@ -5,9 +5,7 @@ import {
 	isValidEntityId,
 	type JWKSet,
 	JWT_BEARER_CLIENT_ASSERTION_TYPE,
-	resolveTrustChains,
 	entityId as toEntityId,
-	validateTrustChain,
 	verifyClientAssertion,
 } from "@oidfed/core";
 import type { HandlerContext } from "./context.js";
@@ -79,60 +77,19 @@ export function createAuthenticatedHandler(
 			);
 		}
 
-		if (!ctx.trustAnchors || ctx.trustAnchors.size === 0) {
-			return errorResponse(
-				500,
-				FederationErrorCode.ServerError,
-				"Trust anchors not configured for client authentication",
-			);
-		}
-
-		let clientJwks: JWKSet;
+		let clientJwks: JWKSet | undefined;
 		try {
 			const clientEntityId = toEntityId(iss);
-			const trustChainResult = await resolveTrustChains(
-				clientEntityId,
-				ctx.trustAnchors,
-				ctx.options,
-			);
-
-			if (trustChainResult.chains.length === 0) {
-				return errorResponse(
-					401,
-					FederationErrorCode.InvalidClient,
-					"Unable to resolve trust chain for client",
-				);
-			}
-
-			let foundJwks: JWKSet | undefined;
-			for (const chain of trustChainResult.chains) {
-				const validation = await validateTrustChain(
-					[...chain.statements],
-					ctx.trustAnchors,
-					ctx.options,
-				);
-				if (validation.valid) {
-					const leafStatement = validation.chain.statements[0];
-					if (leafStatement?.payload.jwks) {
-						foundJwks = leafStatement.payload.jwks;
-						break;
-					}
-				}
-			}
-
-			if (!foundJwks) {
-				return errorResponse(
-					401,
-					FederationErrorCode.InvalidClient,
-					"Unable to extract JWKS from client's trust chain",
-				);
-			}
-			clientJwks = foundJwks;
+			clientJwks = await ctx.clientKeyProvider.getClientFederationJwks(clientEntityId);
 		} catch {
+			return errorResponse(500, FederationErrorCode.ServerError, "Client key lookup failed");
+		}
+
+		if (!clientJwks) {
 			return errorResponse(
 				401,
 				FederationErrorCode.InvalidClient,
-				"Trust chain resolution failed for client",
+				"No federation keys found for client",
 			);
 		}
 

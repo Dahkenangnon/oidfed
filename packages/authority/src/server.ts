@@ -29,7 +29,7 @@ import {
 	WELL_KNOWN_OPENID_FEDERATION,
 } from "@oidfed/core";
 import { createAuthenticatedHandler } from "./endpoints/client-auth.js";
-import type { HandlerContext } from "./endpoints/context.js";
+import type { AuthorityClientKeyProvider, HandlerContext } from "./endpoints/context.js";
 import {
 	buildEntityConfiguration,
 	createEntityConfigurationHandler,
@@ -53,6 +53,8 @@ import {
 	assertMetadataValuesNotNull,
 	sanitizeSubordinateMetadata,
 } from "./utils/subordinate-statement-shape.js";
+
+export type { AuthorityClientKeyProvider } from "./endpoints/context.js";
 
 /** Parameters accepted by {@link AuthorityServer.listSubordinatesExtended}. */
 export interface ExtendedListInProcessParams {
@@ -85,6 +87,11 @@ export interface AuthorityConfig {
 	storage: StorageAdapter;
 	/** Federation-only signing key provider and lifecycle manager. */
 	keyProvider: ManagedFederationKeyProvider;
+	/**
+	 * Resolves public Federation Entity Keys for authenticated remote authority
+	 * endpoint clients. Defaults to `storage.subordinates.get(entityId)?.jwks`.
+	 */
+	clientKeyProvider?: AuthorityClientKeyProvider;
 	/** Roles (like OIDC OP, RP etc.) bound to this authority. */
 	roles?: EntityRole[];
 	/** Trust marks this authority claims about itself. */
@@ -211,10 +218,14 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 	// No metadata claim may carry a null leaf at any depth — omit the field instead.
 	assertMetadataValuesNotNull(config.metadata as Record<string, unknown>);
 
+	const clientKeyProvider =
+		config.clientKeyProvider ?? createStorageBackedClientKeyProvider(config.storage);
+
 	const base: HandlerContext = {
 		entityId: config.entityId,
 		keyProvider: config.keyProvider,
 		storage: config.storage,
+		clientKeyProvider,
 		metadata: config.metadata,
 	};
 	const effectiveOptions: FederationOptions | undefined =
@@ -486,6 +497,15 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 
 		handler(): (request: Request) => Promise<Response> {
 			return router;
+		},
+	};
+}
+
+function createStorageBackedClientKeyProvider(storage: StorageAdapter): AuthorityClientKeyProvider {
+	return {
+		async getClientFederationJwks(entityId: EntityId) {
+			const record = await storage.subordinates.get(entityId);
+			return record?.jwks;
 		},
 	};
 }
