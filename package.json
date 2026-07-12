@@ -21,7 +21,7 @@
 		"test:coverage": "bash scripts/coverage-check.sh",
 		"typecheck": "turbo run typecheck --filter='./packages/*' --filter='./tools/*' && tsc -p tests/tap/tsconfig.json --noEmit",
 		"typecheck:apps": "turbo run typecheck --filter='./apps/*' --filter='./internal/*'",
-		"lint": "biome check .",
+		"lint": "biome check --error-on-warnings .",
 		"lint:fix": "biome check --write .",
 		"clean": "turbo run clean",
 		"setup:e2e": "bash scripts/setup-e2e.sh",
@@ -34,7 +34,8 @@
 		"test:scripts": "node --test scripts/*.test.mjs",
 		"prepare": "husky",
 		"commit": "commit",
-		"commitlint": "commitlint --edit"
+		"commitlint": "commitlint --edit",
+		"release:verify": "pnpm build:publish && pnpm lint && pnpm typecheck && pnpm quick:test && node scripts/check-single-core.mjs && pnpm test:scripts && node scripts/check-pack-manifests.mjs"
 	},
 	"license": "Apache-2.0",
 	"repository": {

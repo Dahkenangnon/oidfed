@@ -37,28 +37,29 @@ import { compose, type Middleware } from "../../../packages/authority/src/handle
 import * as AuthorityPublic from "../../../packages/authority/src/index.js";
 import {
 	type AuthorityConfig,
+	type AuthorityServer,
 	Intermediate,
 	TrustAnchor,
 } from "../../../packages/authority/src/index.js";
 import { rotateKey, rotateKeyCompromise } from "../../../packages/authority/src/keys/index.js";
 
-function createAuthorityServer(config: AuthorityConfig): any {
+function createAuthorityServer(config: AuthorityConfig): AuthorityServer {
 	const server =
 		config.authorityHints && config.authorityHints.length > 0
 			? new Intermediate(config)
 			: new TrustAnchor(config);
 	return {
 		getEntityConfiguration: () => server.getEntityConfiguration(),
-		getSubordinateStatement: (sub: any) => server.getSubordinateStatement(sub),
-		listSubordinates: (filter: any) => server.listSubordinates(filter),
-		listSubordinatesExtended: (params: any) => server.listSubordinatesExtended(params),
-		resolveEntity: (sub: any, ta: any) => server.resolveEntity(sub, ta),
-		getTrustMarkStatus: (tm: any) => server.getTrustMarkStatus(tm),
-		listTrustMarkedEntities: (type: any) => server.listTrustMarkedEntities(type),
-		issueTrustMark: (sub: any, type: any) => server.issueTrustMark(sub, type),
-		issueTrustMarkDelegation: (sub: any, type: any) => server.issueTrustMarkDelegation(sub, type),
+		getSubordinateStatement: (sub) => server.getSubordinateStatement(sub),
+		listSubordinates: (filter) => server.listSubordinates(filter),
+		listSubordinatesExtended: (params) => server.listSubordinatesExtended(params),
+		resolveEntity: (sub, ta) => server.resolveEntity(sub, ta),
+		getTrustMarkStatus: (tm) => server.getTrustMarkStatus(tm),
+		listTrustMarkedEntities: (type) => server.listTrustMarkedEntities(type),
+		issueTrustMark: (sub, type) => server.issueTrustMark(sub, type),
+		issueTrustMarkDelegation: (sub, type) => server.issueTrustMarkDelegation(sub, type),
 		getHistoricalKeys: () => server.getHistoricalKeys(),
-		rotateSigningKey: (newKey: any) => server.rotateSigningKey(newKey),
+		rotateSigningKey: (newKey) => server.rotateSigningKey(newKey),
 		handler: () => (request: Request) => server.handleRequest(request),
 	};
 }

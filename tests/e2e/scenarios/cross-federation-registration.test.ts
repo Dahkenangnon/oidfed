@@ -1,6 +1,6 @@
 import { entityId } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
-import { getEntity } from "../helpers/launcher.js";
+import { getOidcClientEntity } from "../helpers/launcher.js";
 import { useFederation } from "../helpers/lifecycle.js";
 import { multiAnchorTopology } from "../topologies/multi-anchor.js";
 
@@ -12,12 +12,12 @@ describe("Cross-federation registration", () => {
 			const { server, entities, trustAnchors } = getTestBed();
 			const port = server.port;
 
-			const rpEntity = getEntity(entities, "https://rp1.ofed.test");
+			const rpEntity = getOidcClientEntity(entities, "https://rp1.ofed.test");
 
 			const rpId = `https://rp1.ofed.test:${port}`;
 			const opId = entityId(`https://op.ofed.test:${port}`);
 
-			const resultVal = await rpEntity.oidcClient!.automaticallyRegister(
+			const resultVal = await rpEntity.oidcClient.automaticallyRegister(
 				{
 					opEntityId: opId,
 					redirect_uri: `${rpId}/callback`,
@@ -42,12 +42,12 @@ describe("Cross-federation registration", () => {
 			const { server, entities, trustAnchors } = getTestBed();
 			const port = server.port;
 
-			const rp2Entity = getEntity(entities, "https://rp2.ofed.test");
+			const rp2Entity = getOidcClientEntity(entities, "https://rp2.ofed.test");
 
 			const rpId = `https://rp2.ofed.test:${port}`;
 			const opId = entityId(`https://op.ofed.test:${port}`);
 
-			const resultVal = await rp2Entity.oidcClient!.explicitlyRegister(opId, { trustAnchors });
+			const resultVal = await rp2Entity.oidcClient.explicitlyRegister(opId, { trustAnchors });
 
 			expect(resultVal.ok).toBe(true);
 			if (!resultVal.ok) throw new Error("Registration failed");

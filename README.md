@@ -25,6 +25,8 @@ An [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) 
 > **Crypto:** All JOSE operations delegated to [`jose`](https://github.com/panva/jose) · 
 > 
 > **Status:** prerelease — API may change before the upcoming stable `1.0.0` release.
+>
+> **Engines:** The library packages intentionally omit published `engines` metadata because they are runtime-agnostic. Repository development and release verification require Node.js `>=22.12.0` with pnpm `>=10`; `@oidfed/cli` publishes its Node.js runtime requirement separately.
 
 ---
 

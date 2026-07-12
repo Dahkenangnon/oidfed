@@ -1,6 +1,6 @@
 import { decodeEntityStatement, entityId, isOk } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
-import { getEntity } from "../helpers/launcher.js";
+import { getOidcClientEntity } from "../helpers/launcher.js";
 import { useFederation } from "../helpers/lifecycle.js";
 import { singleAnchorTopology } from "../topologies/single-anchor.js";
 
@@ -18,11 +18,11 @@ describe("Automatic registration — Request Object delivery modes", () => {
 			const { server, entities, trustAnchors } = getTestBed();
 			const port = server.port;
 
-			const rpEntity = getEntity(entities, "https://rp.ofed.test");
+			const rpEntity = getOidcClientEntity(entities, "https://rp.ofed.test");
 			const rpId = `https://rp.ofed.test:${port}`;
 			const opId = entityId(`https://op.ofed.test:${port}`);
 
-			const resultVal = await rpEntity.oidcClient!.automaticallyRegister(
+			const resultVal = await rpEntity.oidcClient.automaticallyRegister(
 				{
 					opEntityId: opId,
 					redirect_uri: `${rpId}/callback`,
@@ -65,11 +65,11 @@ describe("Automatic registration — Request Object delivery modes", () => {
 			const { server, entities, trustAnchors } = getTestBed();
 			const port = server.port;
 
-			const rpEntity = getEntity(entities, "https://rp.ofed.test");
+			const rpEntity = getOidcClientEntity(entities, "https://rp.ofed.test");
 			const rpId = `https://rp.ofed.test:${port}`;
 			const opId = entityId(`https://op.ofed.test:${port}`);
 
-			const resultVal = await rpEntity.oidcClient!.automaticallyRegister(
+			const resultVal = await rpEntity.oidcClient.automaticallyRegister(
 				{
 					opEntityId: opId,
 					redirect_uri: `${rpId}/callback`,
@@ -99,13 +99,13 @@ describe("Automatic registration — Request Object delivery modes", () => {
 			const { server, entities, trustAnchors } = getTestBed();
 			const port = server.port;
 
-			const rpEntity = getEntity(entities, "https://rp.ofed.test");
+			const rpEntity = getOidcClientEntity(entities, "https://rp.ofed.test");
 			const rpId = `https://rp.ofed.test:${port}`;
 			const opId = entityId(`https://op.ofed.test:${port}`);
 
 			const hostedUri = `${rpId}/request-object/abc123`;
 
-			const resultVal = await rpEntity.oidcClient!.automaticallyRegister(
+			const resultVal = await rpEntity.oidcClient.automaticallyRegister(
 				{
 					opEntityId: opId,
 					redirect_uri: `${rpId}/callback`,

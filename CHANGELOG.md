@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- Release verification now fails on lint warnings and checks packed package manifests before publish.
+
 ## [0.8.0] - 2026-06-25
 
 ### Refactor

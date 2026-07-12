@@ -1,7 +1,7 @@
 import { decodeEntityStatement, generateSigningKey, isOk, JwkSigner } from "@oidfed/core";
 import { FedOidcClient } from "@oidfed/oidc";
 import { describe, expect, it } from "vitest";
-import { getEntity } from "../helpers/launcher.js";
+import { getOidcClientEntity } from "../helpers/launcher.js";
 import { useFederation } from "../helpers/lifecycle.js";
 import { singleAnchorTopology } from "../topologies/single-anchor.js";
 
@@ -13,11 +13,11 @@ describe("Client authentication", () => {
 			const { server, entities } = getTestBed();
 			const port = server.port;
 
-			const rpEntity = getEntity(entities, "https://rp.ofed.test");
+			const rpEntity = getOidcClientEntity(entities, "https://rp.ofed.test");
 			const rpId = `https://rp.ofed.test:${port}`;
 			const opId = `https://op.ofed.test:${port}`;
 
-			const assertion = await rpEntity.oidcClient!.createClientAssertion(opId);
+			const assertion = await rpEntity.oidcClient.createClientAssertion(opId);
 
 			expect(assertion).toBeTruthy();
 			expect(assertion.split(".")).toHaveLength(3);
@@ -88,7 +88,7 @@ describe("Client authentication", () => {
 			const { server, entities } = getTestBed();
 			const port = server.port;
 
-			const rpEntity = getEntity(entities, "https://rp.ofed.test");
+			const rpEntity = getOidcClientEntity(entities, "https://rp.ofed.test");
 			const rpId = `https://rp.ofed.test:${port}`;
 			const opId = `https://op.ofed.test:${port}`;
 

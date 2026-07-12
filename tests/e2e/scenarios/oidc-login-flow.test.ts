@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { TrustAnchorSet } from "@oidfed/core";
 import { entityId } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
-import { getEntity } from "../helpers/launcher.js";
+import { getOidcClientEntity, type OidcClientEntityInstance } from "../helpers/launcher.js";
 import { useFederation } from "../helpers/lifecycle.js";
 import { hierarchicalTopology } from "../topologies/hierarchical.js";
 import { singleAnchorTopology } from "../topologies/single-anchor.js";
@@ -18,7 +18,7 @@ import { singleAnchorTopology } from "../topologies/single-anchor.js";
  * failures still surface as 400.
  */
 async function performFederatedAuthRequest(params: {
-	rpEntity: any;
+	rpEntity: OidcClientEntityInstance;
 	rpId: string;
 	opId: string;
 	trustAnchors: TrustAnchorSet;
@@ -26,7 +26,7 @@ async function performFederatedAuthRequest(params: {
 	const { rpEntity, rpId, opId, trustAnchors } = params;
 
 	// 2. Automatic registration in GET-query mode — must produce a valid authorization URL
-	const regResultVal = await rpEntity.oidcClient!.automaticallyRegister(
+	const regResultVal = await rpEntity.oidcClient.automaticallyRegister(
 		{
 			opEntityId: entityId(opId),
 			redirect_uri: `${rpId}/callback`,
@@ -72,7 +72,7 @@ describe("Full OIDC login flow", () => {
 			const { server, entities, trustAnchors } = getTestBed();
 			const port = server.port;
 
-			const rpEntity = getEntity(entities, "https://rp.ofed.test");
+			const rpEntity = getOidcClientEntity(entities, "https://rp.ofed.test");
 
 			const { regResult } = await performFederatedAuthRequest({
 				rpEntity,
@@ -93,7 +93,7 @@ describe("Full OIDC login flow", () => {
 			const { server, entities, trustAnchors } = getTestBed();
 			const port = server.port;
 
-			const rpEntity = getEntity(entities, "https://rp.ofed.test");
+			const rpEntity = getOidcClientEntity(entities, "https://rp.ofed.test");
 
 			const { authResponse } = await performFederatedAuthRequest({
 				rpEntity,
@@ -113,12 +113,12 @@ describe("Full OIDC login flow", () => {
 
 			const rpId = `https://rp.ofed.test:${port}`;
 			const opId = `https://op.ofed.test:${port}`;
-			const rpEntity = getEntity(entities, "https://rp.ofed.test");
+			const rpEntity = getOidcClientEntity(entities, "https://rp.ofed.test");
 
 			const hostedId = randomUUID();
 			const hostedUri = `${rpId}/request-object/${hostedId}`;
 
-			const regResultVal = await rpEntity.oidcClient!.automaticallyRegister(
+			const regResultVal = await rpEntity.oidcClient.automaticallyRegister(
 				{
 					opEntityId: entityId(opId),
 					redirect_uri: `${rpId}/callback`,
@@ -161,7 +161,7 @@ describe("Full OIDC login flow", () => {
 			const { server, entities, trustAnchors } = getTestBed();
 			const port = server.port;
 
-			const rpEntity = getEntity(entities, "https://rp1.ofed.test");
+			const rpEntity = getOidcClientEntity(entities, "https://rp1.ofed.test");
 
 			const { regResult } = await performFederatedAuthRequest({
 				rpEntity,

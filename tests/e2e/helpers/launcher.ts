@@ -53,6 +53,10 @@ export interface EntityInstance {
 	oidcClient?: FedOidcClient;
 }
 
+export interface OidcClientEntityInstance extends EntityInstance {
+	oidcClient: FedOidcClient;
+}
+
 export interface FederationTestBed {
 	server: FederationTestServer;
 	entities: Map<string, EntityInstance>;
@@ -180,14 +184,16 @@ export async function launchFederation(
 			clientAssertionSigner: new JwkSigner(keys.protocolSigning),
 		});
 
-		// eslint-disable-next-line -- dynamic config assembly for test setup
-		const authorityConfig: Record<string, unknown> = {
+		const authorityConfig: AuthorityConfig = {
 			entityId: entityId(eid),
 			keyProvider,
 			metadata: {
-				federation_entity: (metadata.federation_entity as Record<string, string>) ?? {},
+				federation_entity:
+					(metadata.federation_entity as
+						| AuthorityConfig["metadata"]["federation_entity"]
+						| undefined) ?? {},
 				...Object.fromEntries(Object.entries(metadata).filter(([k]) => k !== "federation_entity")),
-			},
+			} as AuthorityConfig["metadata"],
 			storage,
 			trustAnchors,
 		};
@@ -208,9 +214,9 @@ export async function launchFederation(
 			authorityConfig.entityConfigurationTtlSeconds = entity.entityConfigurationTtlSeconds;
 		}
 		const authority =
-			authorityConfig.authorityHints && (authorityConfig.authorityHints as any).length > 0
-				? new Intermediate(authorityConfig as unknown as AuthorityConfig)
-				: new TrustAnchor(authorityConfig as unknown as AuthorityConfig);
+			authorityHints !== undefined && authorityHints.length > 0
+				? new Intermediate(authorityConfig)
+				: new TrustAnchor(authorityConfig);
 
 		entities.set(entity.id, {
 			server: authority,
@@ -219,7 +225,7 @@ export async function launchFederation(
 			oidcProtocolKeyProvider,
 			storage,
 		});
-		apps.set(entity.id, createAuthorityApp(authority as any, eid));
+		apps.set(entity.id, createAuthorityApp(authority, eid));
 	}
 
 	// 4. Create leaf entities — both RPs and OPs are wired through the leaf phase here.
@@ -345,6 +351,17 @@ export function getEntity(entities: Map<string, EntityInstance>, id: string): En
 	const entity = entities.get(id);
 	if (!entity) throw new Error(`Entity ${id} not found in test bed`);
 	return entity;
+}
+
+export function getOidcClientEntity(
+	entities: Map<string, EntityInstance>,
+	id: string,
+): OidcClientEntityInstance {
+	const entity = getEntity(entities, id);
+	if (entity.oidcClient === undefined) {
+		throw new Error(`Entity ${id} has no OIDC client in test bed`);
+	}
+	return { ...entity, oidcClient: entity.oidcClient };
 }
 
 function getEntityTypes(entity: EntityDefinition): string[] {

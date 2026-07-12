@@ -1,6 +1,6 @@
 import { entityId } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
-import { getEntity } from "../helpers/launcher.js";
+import { getOidcClientEntity } from "../helpers/launcher.js";
 import { useFederation } from "../helpers/lifecycle.js";
 import { hierarchicalTopology } from "../topologies/hierarchical.js";
 import { singleAnchorTopology } from "../topologies/single-anchor.js";
@@ -13,12 +13,12 @@ describe("Explicit registration", () => {
 			const { server, entities, trustAnchors } = getTestBed();
 			const port = server.port;
 
-			const rp2Entity = getEntity(entities, "https://rp2.ofed.test");
+			const rp2Entity = getOidcClientEntity(entities, "https://rp2.ofed.test");
 
 			const rpId = `https://rp2.ofed.test:${port}`;
 			const opId = entityId(`https://op.ofed.test:${port}`);
 
-			const resultVal = await rp2Entity.oidcClient!.explicitlyRegister(opId, { trustAnchors });
+			const resultVal = await rp2Entity.oidcClient.explicitlyRegister(opId, { trustAnchors });
 
 			expect(resultVal.ok).toBe(true);
 			if (!resultVal.ok) throw new Error("Registration failed");
@@ -39,12 +39,12 @@ describe("Explicit registration", () => {
 			const { server, entities, trustAnchors } = getTestBed();
 			const port = server.port;
 
-			const rp2Entity = getEntity(entities, "https://rp2.ofed.test");
+			const rp2Entity = getOidcClientEntity(entities, "https://rp2.ofed.test");
 
 			const rpId = `https://rp2.ofed.test:${port}`;
 			const opId = entityId(`https://op-hospital.ofed.test:${port}`);
 
-			const resultVal = await rp2Entity.oidcClient!.explicitlyRegister(opId, { trustAnchors });
+			const resultVal = await rp2Entity.oidcClient.explicitlyRegister(opId, { trustAnchors });
 
 			expect(resultVal.ok).toBe(true);
 			if (!resultVal.ok) throw new Error("Registration failed");
