@@ -74,29 +74,48 @@ if (ecResult.ok) {
 
 ---
 
-### 4. JOSE & Cryptographic Signing
-Implements signing, decoding, and signature verification on entity statements using cryptographic key adapters.
+### 4. Entity Statement Builders & Signing
+Use the stable builders for normal Entity Configurations and Subordinate Statements. They validate Entity Identifier syntax, JWKS shape, time windows, metadata shape, and claim placement before signing. The lower-level `signEntityStatement` helper remains available for advanced extension payloads after callers perform their own validation.
 
 ```ts
-import { generateSigningKey, signEntityStatement, verifyEntityStatement, JwkSigner } from "@oidfed/core";
-import type { JwtSigner } from "@oidfed/core";
+import {
+  generateSigningKey,
+  signEntityConfiguration,
+  signSubordinateStatement,
+  verifyEntityStatement,
+  JwkSigner
+} from "@oidfed/core";
 
 const keyPair = await generateSigningKey("ES256");
-const signer: JwtSigner = new JwkSigner(keyPair.privateKey);
+const signer = new JwkSigner(keyPair.privateKey);
 
-const payload = {
-  iss: "https://leaf.example.com",
-  sub: "https://leaf.example.com",
-  iat: Math.floor(Date.now() / 1000),
-  exp: Math.floor(Date.now() / 1000) + 3600,
-  metadata: {}
-};
+const entityConfigurationJwt = await signEntityConfiguration({
+  entityId: "https://leaf.example.com",
+  jwks: { keys: [keyPair.publicKey] },
+  metadata: {
+    federation_entity: {
+      organization_name: "Example Leaf"
+    }
+  },
+  authorityHints: ["https://ta.example.org"],
+  signer,
+  ttlSeconds: 3600
+});
 
-// Sign statement
-const signedJwt = await signEntityStatement(payload, signer);
+const subordinateStatementJwt = await signSubordinateStatement({
+  issuer: "https://ta.example.org",
+  subject: "https://leaf.example.com",
+  jwks: { keys: [keyPair.publicKey] },
+  metadata: {
+    federation_entity: {
+      organization_name: "Example Leaf"
+    }
+  },
+  signer,
+  ttlSeconds: 3600
+});
 
-// Verify statement
-const result = await verifyEntityStatement(signedJwt, {
+const result = await verifyEntityStatement(entityConfigurationJwt, {
   keys: [keyPair.publicKey]
 });
 ```

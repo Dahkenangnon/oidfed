@@ -117,6 +117,10 @@ function federationKey(signingKey: JWK) {
 	return { signer: new JwkSigner(signingKey), publicJwk: stripPrivateFields(signingKey) };
 }
 
+function testPublicJwk(kid = "subordinate-key-1", x = "abc", y = "def"): JWK {
+	return { kty: "EC", kid, crv: "P-256", x, y };
+}
+
 type TestContextOverrides = { [K in keyof HandlerContext]?: HandlerContext[K] | undefined };
 async function createTestContext(overrides?: TestContextOverrides): Promise<{
 	ctx: HandlerContext;
@@ -281,7 +285,7 @@ export default (QUnit: QUnit) => {
 			const now = Math.floor(Date.now() / 1000);
 			return {
 				entityId: id,
-				jwks: { keys: [{ kty: "EC", crv: "P-256", x: "abc", y: "def" }] },
+				jwks: { keys: [testPublicJwk()] },
 				createdAt: now,
 				updatedAt: now,
 				...overrides,
@@ -691,7 +695,7 @@ export default (QUnit: QUnit) => {
 		const id = entityId("https://transaction.example.com");
 		const record = (): SubordinateRecord => ({
 			entityId: id,
-			jwks: { keys: [{ kty: "EC", crv: "P-256", x: "x", y: "y" }] },
+			jwks: { keys: [testPublicJwk("transaction-key-1", "x", "y")] },
 			metadata: { openid_relying_party: { client_name: "original" } },
 			createdAt: 1,
 			updatedAt: 1,
@@ -1205,12 +1209,13 @@ export default (QUnit: QUnit) => {
 		});
 
 		test("includes trust_mark_owners when configured", async (t) => {
+			const { publicKey } = await generateSigningKey("ES256");
 			const owners = {
 				"https://trust.example.com/mark-a": {
-					iss: entityId("https://owner.example.com"),
-					sub: entityId("https://delegate.example.com"),
+					sub: entityId("https://owner.example.com"),
+					jwks: { keys: [{ ...publicKey, kid: "owner-key-1" }] },
 				},
-			} as unknown as HandlerContext["trustMarkOwners"];
+			} satisfies HandlerContext["trustMarkOwners"];
 			const { ctx } = await createTestContext({ trustMarkOwners: owners });
 			const handler = createEntityConfigurationHandler(ctx);
 			const res = await handler(
@@ -1298,7 +1303,7 @@ export default (QUnit: QUnit) => {
 		): SubordinateRecord {
 			return {
 				entityId: id,
-				jwks: { keys: [{ kty: "EC", crv: "P-256", x: "abc", y: "def" }] },
+				jwks: { keys: [testPublicJwk()] },
 				createdAt: Date.now(),
 				updatedAt: Date.now(),
 				...overrides,
@@ -1459,7 +1464,7 @@ export default (QUnit: QUnit) => {
 			const now = Math.floor(Date.now() / 1000);
 			return {
 				entityId: id,
-				jwks: { keys: [{ kty: "EC", crv: "P-256", x: "abc", y: "def" }] },
+				jwks: { keys: [testPublicJwk()] },
 				createdAt: now,
 				updatedAt: now,
 				...overrides,
@@ -1680,7 +1685,7 @@ export default (QUnit: QUnit) => {
 		): SubordinateRecord {
 			return {
 				entityId: id,
-				jwks: { keys: [{ kty: "EC", crv: "P-256", x: "abc", y: "def" }] },
+				jwks: { keys: [testPublicJwk()] },
 				createdAt: Math.floor(Date.now() / 1000),
 				updatedAt: Math.floor(Date.now() / 1000),
 				...overrides,
@@ -2660,7 +2665,7 @@ export default (QUnit: QUnit) => {
 		test("returns 404 for unknown trust anchor", async (t) => {
 			const taId = entityId("https://known-ta.example.com");
 			const anchors: TrustAnchorSet = new Map([
-				[taId, { jwks: { keys: [{ kty: "EC", crv: "P-256", x: "abc", y: "def" }] } }],
+				[taId, { jwks: { keys: [testPublicJwk("known-ta-key-1")] } }],
 			]);
 			const { ctx } = await createTestContext({ trustAnchors: anchors });
 			const handler = createResolveHandler(ctx);
@@ -3051,7 +3056,7 @@ export default (QUnit: QUnit) => {
 			const sentinelJwt = "header.payload.sentinel-cache-hit";
 			const { ctx } = await createTestContext({
 				trustAnchors: new Map([
-					[entityId(TA_ID), { jwks: { keys: [{ kty: "EC", crv: "P-256", x: "abc", y: "def" }] } }],
+					[entityId(TA_ID), { jwks: { keys: [testPublicJwk("cached-ta-key-1")] } }],
 				]),
 				options: {
 					httpClient: async () => {
@@ -4703,7 +4708,7 @@ export default (QUnit: QUnit) => {
 		): import("../../../packages/authority/src/storage/types.js").SubordinateRecord {
 			return {
 				entityId: id,
-				jwks: { keys: [{ kty: "EC", crv: "P-256", x: "abc", y: "def" }] },
+				jwks: { keys: [testPublicJwk()] },
 				createdAt: Date.now(),
 				updatedAt: Date.now(),
 				...overrides,
@@ -5454,7 +5459,7 @@ export default (QUnit: QUnit) => {
 				intSubordinates = intStorage.subordinates;
 				intTrustMarks = intStorage.trustMarks!;
 
-				const { privateKey } = await generateSigningKey("ES256");
+				const { privateKey, publicKey } = await generateSigningKey("ES256");
 				const signingKey = { ...privateKey, kid: "ta-key-1" };
 				intKeyProvider = new MemoryFederationKeyProvider(federationKey(signingKey));
 
@@ -5474,7 +5479,12 @@ export default (QUnit: QUnit) => {
 					storage: intStorage,
 					keyProvider: intKeyProvider,
 					trustMarkIssuers: { [INT_MARK_TYPE]: [INT_AUTHORITY_ID] },
-					trustMarkOwners: { [INT_MARK_TYPE]: { sub: INT_AUTHORITY_ID, jwks: { keys: [] } } },
+					trustMarkOwners: {
+						[INT_MARK_TYPE]: {
+							sub: INT_AUTHORITY_ID,
+							jwks: { keys: [{ ...publicKey, kid: "trust-owner-key-1" }] },
+						},
+					},
 				};
 
 				intServer = createAuthorityServer(config);
@@ -5536,7 +5546,7 @@ export default (QUnit: QUnit) => {
 					const opRecord: import("../../../packages/authority/src/storage/types.js").SubordinateRecord =
 						{
 							entityId: INT_LEAF_OP,
-							jwks: { keys: [{ kty: "EC", crv: "P-256", x: "abc", y: "def" }] },
+							jwks: { keys: [testPublicJwk("op-key-1")] },
 							metadata: { openid_provider: { issuer: INT_LEAF_OP } },
 							entityTypes: [EntityType.OpenIDProvider],
 							sourceEndpoint: `${INT_LEAF_OP}${FederationEndpoint.Fetch}`,
@@ -5546,7 +5556,7 @@ export default (QUnit: QUnit) => {
 					const rpRecord: import("../../../packages/authority/src/storage/types.js").SubordinateRecord =
 						{
 							entityId: INT_LEAF_RP,
-							jwks: { keys: [{ kty: "EC", crv: "P-256", x: "ghi", y: "jkl" }] },
+							jwks: { keys: [testPublicJwk("rp-key-1", "ghi", "jkl")] },
 							metadata: { openid_relying_party: { client_name: "Test RP" } },
 							entityTypes: [EntityType.OpenIDRelyingParty],
 							createdAt: Date.now(),
@@ -5579,7 +5589,7 @@ export default (QUnit: QUnit) => {
 				test("fetches subordinate via HTTP handler", async (t) => {
 					await intSubordinates.add({
 						entityId: INT_LEAF_OP,
-						jwks: { keys: [{ kty: "EC", crv: "P-256", x: "abc", y: "def" }] },
+						jwks: { keys: [testPublicJwk("op-key-1")] },
 						createdAt: Date.now(),
 						updatedAt: Date.now(),
 					});

@@ -122,6 +122,7 @@ export {
 	type JwkSignerOptions,
 	type JwtSigner,
 	jwkThumbprint,
+	type SignEntityStatementOptions,
 	selectVerificationKey,
 	signEntityStatement,
 	stripPrivateFields,
@@ -152,6 +153,21 @@ export {
 export { operators } from "./metadata-policy/operators.js";
 // Schemas
 export * from "./schemas/index.js";
+// Statement builders
+export {
+	type BuildEntityConfigurationPayloadOptions,
+	type BuildSubordinateStatementPayloadOptions,
+	buildEntityConfigurationPayload,
+	buildSubordinateStatementPayload,
+	type EntityStatementKind,
+	type EntityStatementMetadata,
+	type SignEntityConfigurationOptions,
+	type SignSubordinateStatementOptions,
+	signEntityConfiguration,
+	signSubordinateStatement,
+	type ValidateEntityStatementClaimsOptions,
+	validateEntityStatementClaims,
+} from "./statement-builders.js";
 export {
 	type AnchorKeyComparisonResult,
 	compareTrustAnchorKeys,

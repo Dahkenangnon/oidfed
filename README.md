@@ -46,7 +46,7 @@ The complete [OpenID Federation 1.0](https://openid.net/specs/openid-federation-
 
 | Package | Role | Install when building a… | Docs |
 |---------|------|--------------------------|------|
-| `@oidfed/core` | Federation primitives — entity statements, trust chain resolution, metadata policy, and cryptographic verification. The foundational layer of the complete OpenID Federation 1.0 implementation | Any federation participant | [docs/packages/core.md](docs/packages/core.md) |
+| `@oidfed/core` | Federation primitives — Entity Statement builders, trust chain resolution, metadata policy, and cryptographic verification. The foundational layer of the complete OpenID Federation 1.0 implementation | Any federation participant | [docs/packages/core.md](docs/packages/core.md) |
 | `@oidfed/authority` | Trust Anchor and Intermediate Authority operations — subordinate management, statement issuance, federation endpoint serving, and policy enforcement | Trust Anchor or Intermediate Authority | [docs/packages/authority.md](docs/packages/authority.md) |
 | `@oidfed/leaf` | Leaf Entity toolkit — Entity Configuration serving, authority discovery, and trust chain participation for any entity at the edge of an OpenID Federation | Relying Party | [docs/packages/leaf.md](docs/packages/leaf.md) |
 | `@oidfed/oidc` | OpenID Connect and OAuth 2.0 federation flows — automatic and explicit client registration, Request Object validation, and RP/OP metadata processing as defined in OpenID Federation 1.0 | OP or RP | [docs/packages/oidc.md](docs/packages/oidc.md) |

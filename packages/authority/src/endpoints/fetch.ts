@@ -1,4 +1,5 @@
 import {
+	buildSubordinateStatementPayload,
 	DEFAULT_ENTITY_STATEMENT_TTL_SECONDS,
 	type EntityId,
 	FederationErrorCode,
@@ -9,14 +10,7 @@ import {
 	signEntityStatement,
 } from "@oidfed/core";
 import type { SubordinateRecord } from "../storage/types.js";
-import {
-	assertCritShape,
-	assertMetadataPolicyCritShape,
-	assertMetadataPolicyShape,
-	assertMetadataValuesNotNull,
-	assertSubordinateStatementShape,
-	sanitizeSubordinateMetadata,
-} from "../utils/subordinate-statement-shape.js";
+import { sanitizeSubordinateMetadata } from "../utils/subordinate-statement-shape.js";
 import type { HandlerContext } from "./context.js";
 import { errorResponse, jwtResponse, parseQueryParams, requireMethod } from "./helpers.js";
 
@@ -75,37 +69,25 @@ export async function buildSubordinateStatement(
 	const keySet = await ctx.keyProvider.getFederationKeySet();
 	const iat = now ?? nowSeconds(ctx.options?.clock);
 
-	const payload: Record<string, unknown> = {
-		iss: ctx.entityId,
-		sub: record.entityId,
-		iat,
-		exp: iat + (ctx.subordinateStatementTtlSeconds ?? DEFAULT_ENTITY_STATEMENT_TTL_SECONDS),
-		jwks: record.jwks,
-	};
-
 	// Strip operational federation_entity fields (endpoint URLs, _auth_methods,
 	// endpoint_auth_signing_alg_values_supported) — those belong only in the
 	// subordinate's own Entity Configuration, not in this Subordinate Statement.
 	const sanitized = sanitizeSubordinateMetadata(record.metadata);
-	if (sanitized !== undefined) {
-		assertMetadataValuesNotNull(sanitized);
-		payload.metadata = sanitized;
-	}
-
-	if (record.metadataPolicy) payload.metadata_policy = record.metadataPolicy;
-	if (record.constraints) payload.constraints = record.constraints;
-	if (record.sourceEndpoint) payload.source_endpoint = record.sourceEndpoint;
-	if (record.crit && record.crit.length > 0) payload.crit = [...record.crit];
-	if (record.metadataPolicyCrit && record.metadataPolicyCrit.length > 0) {
-		payload.metadata_policy_crit = [...record.metadataPolicyCrit];
-	}
-
-	// Defense in depth: fail loudly if any forbidden top-level claim slipped in
-	// or if crit / metadata_policy_crit / metadata_policy carry illegal shapes.
-	assertSubordinateStatementShape(payload);
-	assertMetadataPolicyShape(payload);
-	assertCritShape(payload);
-	assertMetadataPolicyCritShape(payload);
+	const payload = buildSubordinateStatementPayload({
+		issuer: ctx.entityId,
+		subject: record.entityId,
+		jwks: record.jwks,
+		...(sanitized !== undefined ? { metadata: sanitized } : {}),
+		...(record.metadataPolicy ? { metadataPolicy: record.metadataPolicy } : {}),
+		...(record.constraints ? { constraints: record.constraints } : {}),
+		...(record.sourceEndpoint ? { sourceEndpoint: record.sourceEndpoint } : {}),
+		...(record.crit && record.crit.length > 0 ? { crit: record.crit } : {}),
+		...(record.metadataPolicyCrit && record.metadataPolicyCrit.length > 0
+			? { metadataPolicyCrit: record.metadataPolicyCrit }
+			: {}),
+		issuedAt: iat,
+		ttlSeconds: ctx.subordinateStatementTtlSeconds ?? DEFAULT_ENTITY_STATEMENT_TTL_SECONDS,
+	});
 
 	return signEntityStatement(payload, keySet.signer, {
 		typ: JwtTyp.EntityStatement,

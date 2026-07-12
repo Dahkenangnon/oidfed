@@ -1,4 +1,5 @@
 import {
+	buildEntityConfigurationPayload,
 	DEFAULT_ENTITY_STATEMENT_TTL_SECONDS,
 	JwtTyp,
 	MediaType,
@@ -30,37 +31,30 @@ export function createEntityConfigurationHandler(
 export async function buildEntityConfiguration(ctx: HandlerContext): Promise<string> {
 	const keySet = await ctx.keyProvider.getFederationKeySet();
 	const now = nowSeconds(ctx.options?.clock);
+	const ttlSeconds = ctx.entityConfigurationTtlSeconds ?? DEFAULT_ENTITY_STATEMENT_TTL_SECONDS;
 
-	const payload: Record<string, unknown> = {
-		iss: ctx.entityId,
-		sub: ctx.entityId,
-		iat: now,
-		exp: now + (ctx.entityConfigurationTtlSeconds ?? DEFAULT_ENTITY_STATEMENT_TTL_SECONDS),
+	const payloadOptions = {
+		entityId: ctx.entityId,
 		jwks: keySet.jwks,
 		metadata: ctx.metadata,
+		issuedAt: now,
+		ttlSeconds,
 	};
-
-	if (ctx.authorityHints && ctx.authorityHints.length > 0) {
-		payload.authority_hints = ctx.authorityHints;
-	}
-
-	if (ctx.trustMarks && ctx.trustMarks.length > 0) {
-		payload.trust_marks = ctx.trustMarks;
-	}
 
 	// trust_mark_issuers and trust_mark_owners only have effect on a Trust
 	// Anchor's Entity Configuration; readers ignore them on Intermediates. The
 	// server constructor refuses to accept these fields on a non-TA config, so
 	// the inline check below is belt-and-suspenders.
 	const isTrustAnchor = (ctx.authorityHints?.length ?? 0) === 0;
-
-	if (isTrustAnchor && ctx.trustMarkIssuers) {
-		payload.trust_mark_issuers = ctx.trustMarkIssuers;
-	}
-
-	if (isTrustAnchor && ctx.trustMarkOwners) {
-		payload.trust_mark_owners = ctx.trustMarkOwners;
-	}
+	const payload = buildEntityConfigurationPayload({
+		...payloadOptions,
+		...(ctx.authorityHints && ctx.authorityHints.length > 0
+			? { authorityHints: ctx.authorityHints }
+			: {}),
+		...(ctx.trustMarks && ctx.trustMarks.length > 0 ? { trustMarks: ctx.trustMarks } : {}),
+		...(isTrustAnchor && ctx.trustMarkIssuers ? { trustMarkIssuers: ctx.trustMarkIssuers } : {}),
+		...(isTrustAnchor && ctx.trustMarkOwners ? { trustMarkOwners: ctx.trustMarkOwners } : {}),
+	});
 
 	return signEntityStatement(payload, keySet.signer, {
 		typ: JwtTyp.EntityStatement,

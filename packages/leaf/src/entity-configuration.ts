@@ -1,5 +1,6 @@
 /** Leaf entity class: Entity Configuration serving with caching and trust chain discovery. */
 import {
+	buildEntityConfigurationPayload,
 	DEFAULT_ENTITY_STATEMENT_TTL_SECONDS,
 	discoverEntity as discoverEntityThroughTrustChain,
 	type EntityContext,
@@ -129,28 +130,22 @@ export class Leaf {
 		const now = nowSeconds(this.config.options?.clock);
 		const ttlSeconds =
 			this.config.entityConfigurationTtlSeconds ?? DEFAULT_ENTITY_STATEMENT_TTL_SECONDS;
-		const exp = now + ttlSeconds;
-
-		const payload: Record<string, unknown> = {
-			iss: this.entityId,
-			sub: this.entityId,
-			iat: now,
-			exp,
+		const payload = buildEntityConfigurationPayload({
+			entityId: this.entityId,
 			jwks: keySet.jwks,
-			authority_hints: this.config.authorityHints,
 			metadata: this.config.metadata,
-		};
-
-		if (this.config.trustMarks && this.config.trustMarks.length > 0) {
-			payload.trust_marks = this.config.trustMarks;
-		}
+			authorityHints: this.config.authorityHints,
+			...(this.config.trustMarks ? { trustMarks: this.config.trustMarks } : {}),
+			issuedAt: now,
+			ttlSeconds,
+		});
 
 		const jwt = await signEntityStatement(payload, keySet.signer, {
 			typ: JwtTyp.EntityStatement,
 		});
 
 		this.cachedJwt = jwt;
-		this.cachedExp = exp;
+		this.cachedExp = payload.exp;
 		return jwt;
 	}
 

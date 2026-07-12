@@ -68,6 +68,7 @@ import {
 	SECURITY_HEADERS,
 	toPublicError,
 } from "../../../packages/core/src/http.js";
+import type { SignEntityStatementOptions } from "../../../packages/core/src/index.js";
 import * as CorePublic from "../../../packages/core/src/index.js";
 import { verifyClientAssertion } from "../../../packages/core/src/jose/client-auth.js";
 import {
@@ -209,6 +210,304 @@ export default (QUnit: QUnit) => {
 			const keySet = await provider.getFederationKeySet();
 			t.equal(keySet.signer.kid, privateKey.kid);
 			t.deepEqual(keySet.jwks.keys, [key.publicJwk]);
+		});
+
+		test("exports stable Entity Statement builder APIs", (t) => {
+			t.equal(typeof CorePublic.buildEntityConfigurationPayload, "function");
+			t.equal(typeof CorePublic.signEntityConfiguration, "function");
+			t.equal(typeof CorePublic.buildSubordinateStatementPayload, "function");
+			t.equal(typeof CorePublic.signSubordinateStatement, "function");
+			t.equal(typeof CorePublic.validateEntityStatementClaims, "function");
+
+			const rawSignOptions: SignEntityStatementOptions = { typ: JwtTyp.EntityStatement };
+			t.equal(rawSignOptions.typ, JwtTyp.EntityStatement);
+		});
+	});
+
+	module("core / statement builders", () => {
+		test("builds Entity Configuration payloads with optional federation claims", async (t) => {
+			const { publicKey } = await generateSigningKey("ES256");
+			const payload = CorePublic.buildEntityConfigurationPayload({
+				entityId: "https://leaf.example.com",
+				jwks: { keys: [publicKey] },
+				metadata: {
+					federation_entity: { organization_name: "Leaf" },
+					custom_entity_type: { enabled: true },
+				},
+				authorityHints: ["https://ta.example.org"],
+				trustAnchorHints: ["https://hint.example.org"],
+				trustMarks: [{ trust_mark_type: "https://trust.example.org/mark", trust_mark: "jwt" }],
+				issuedAt: 1_000,
+				ttlSeconds: 600,
+			});
+
+			t.equal(payload.iss, "https://leaf.example.com");
+			t.equal(payload.sub, "https://leaf.example.com");
+			t.equal(payload.iat, 1_000);
+			t.equal(payload.exp, 1_600);
+			t.deepEqual(payload.authority_hints, ["https://ta.example.org"]);
+			t.deepEqual(payload.trust_anchor_hints, ["https://hint.example.org"]);
+			t.deepEqual(payload.metadata?.custom_entity_type, { enabled: true });
+			t.equal(payload.trust_marks?.[0]?.trust_mark_type, "https://trust.example.org/mark");
+		});
+
+		test("builds Subordinate Statement payloads with policy and constraints", async (t) => {
+			const { publicKey } = await generateSigningKey("ES256");
+			const payload = CorePublic.buildSubordinateStatementPayload({
+				issuer: "https://ta.example.org",
+				subject: "https://leaf.example.com",
+				jwks: { keys: [publicKey] },
+				metadata: {
+					federation_entity: { organization_name: "Leaf" },
+					custom_entity_type: { enabled: true },
+				},
+				metadataPolicy: {
+					openid_relying_party: {
+						contacts: { add: ["ops@example.org"] },
+					},
+				},
+				constraints: {
+					allowed_entity_types: ["openid_relying_party"],
+				},
+				sourceEndpoint: "https://ta.example.org/federation_fetch",
+				metadataPolicyCrit: ["custom_operator"],
+				issuedAt: 2_000,
+				ttlSeconds: 900,
+			});
+
+			t.equal(payload.iss, "https://ta.example.org");
+			t.equal(payload.sub, "https://leaf.example.com");
+			t.equal(payload.iat, 2_000);
+			t.equal(payload.exp, 2_900);
+			t.deepEqual(payload.metadata?.custom_entity_type, { enabled: true });
+			t.deepEqual(payload.metadata_policy_crit, ["custom_operator"]);
+			t.deepEqual(payload.constraints?.allowed_entity_types, ["openid_relying_party"]);
+		});
+
+		test("sign helpers produce verifiable entity-statement JWTs", async (t) => {
+			const issuerKeys = await generateSigningKey("ES256");
+			const subjectKeys = await generateSigningKey("ES256");
+
+			const ecJwt = await CorePublic.signEntityConfiguration({
+				entityId: "https://ta.example.org",
+				jwks: { keys: [issuerKeys.publicKey] },
+				metadata: { federation_entity: { organization_name: "Trust Anchor" } },
+				signer: new JwkSigner(issuerKeys.privateKey),
+				issuedAt: 1_000,
+				ttlSeconds: 600,
+			});
+			const ecDecoded = decodeEntityStatement(ecJwt);
+			t.true(isOk(ecDecoded));
+			if (!isOk(ecDecoded)) return;
+			t.equal(ecDecoded.value.header.typ, JwtTyp.EntityStatement);
+			const ecVerify = await verifyEntityStatement(
+				ecJwt,
+				{ keys: [issuerKeys.publicKey] },
+				{
+					clock: { now: () => 1_100 },
+					clockSkewSeconds: 0,
+				},
+			);
+			t.true(isOk(ecVerify));
+
+			const ssJwt = await CorePublic.signSubordinateStatement({
+				issuer: "https://ta.example.org",
+				subject: "https://leaf.example.com",
+				jwks: { keys: [subjectKeys.publicKey] },
+				metadata: { federation_entity: { organization_name: "Leaf" } },
+				signer: new JwkSigner(issuerKeys.privateKey),
+				issuedAt: 1_000,
+				ttlSeconds: 600,
+			});
+			const ssDecoded = decodeEntityStatement(ssJwt);
+			t.true(isOk(ssDecoded));
+			if (!isOk(ssDecoded)) return;
+			t.equal(ssDecoded.value.header.typ, JwtTyp.EntityStatement);
+			const ssVerify = await verifyEntityStatement(
+				ssJwt,
+				{ keys: [issuerKeys.publicKey] },
+				{
+					clock: { now: () => 1_100 },
+					clockSkewSeconds: 0,
+				},
+			);
+			t.true(isOk(ssVerify));
+		});
+
+		test("rejects misplaced normal Entity Statement claims", async (t) => {
+			const { publicKey } = await generateSigningKey("ES256");
+			const jwks = { keys: [publicKey] };
+			const ecPayload = {
+				iss: "https://leaf.example.com",
+				sub: "https://leaf.example.com",
+				iat: 1_000,
+				exp: 1_600,
+				jwks,
+				metadata: { federation_entity: {} },
+			};
+			const ssPayload = {
+				iss: "https://ta.example.org",
+				sub: "https://leaf.example.com",
+				iat: 1_000,
+				exp: 1_600,
+				jwks,
+			};
+
+			t.true(
+				isErr(
+					CorePublic.validateEntityStatementClaims(
+						{ ...ecPayload, metadata_policy: { openid_relying_party: {} } },
+						{ kind: "entity-configuration" },
+					),
+				),
+			);
+			t.true(
+				isErr(
+					CorePublic.validateEntityStatementClaims(
+						{ ...ssPayload, authority_hints: ["https://ta.example.org"] },
+						{ kind: "subordinate-statement" },
+					),
+				),
+			);
+			for (const claim of ["aud", "trust_anchor"] as const) {
+				t.true(
+					isErr(
+						CorePublic.validateEntityStatementClaims(
+							{ ...ecPayload, [claim]: "https://op.example.org" },
+							{ kind: "entity-configuration" },
+						),
+					),
+				);
+				t.true(
+					isErr(
+						CorePublic.validateEntityStatementClaims(
+							{ ...ssPayload, [claim]: "https://op.example.org" },
+							{ kind: "subordinate-statement" },
+						),
+					),
+				);
+			}
+		});
+
+		test("rejects malformed critical claim declarations", async (t) => {
+			const { publicKey } = await generateSigningKey("ES256");
+			const base = {
+				iss: "https://ta.example.org",
+				sub: "https://leaf.example.com",
+				iat: 1_000,
+				exp: 1_600,
+				jwks: { keys: [publicKey] },
+			};
+
+			t.true(
+				isErr(
+					CorePublic.validateEntityStatementClaims(
+						{ ...base, crit: ["iss"] },
+						{ kind: "subordinate-statement" },
+					),
+				),
+			);
+			t.true(
+				isErr(
+					CorePublic.validateEntityStatementClaims(
+						{ ...base, crit: ["extension"] },
+						{ kind: "subordinate-statement" },
+					),
+				),
+			);
+			t.true(
+				isOk(
+					CorePublic.validateEntityStatementClaims(
+						{ ...base, crit: ["extension"], extension: true },
+						{ kind: "subordinate-statement" },
+					),
+				),
+			);
+			t.true(
+				isErr(
+					CorePublic.validateEntityStatementClaims(
+						{ ...base, metadata_policy_crit: [PolicyOperator.Value] },
+						{ kind: "subordinate-statement" },
+					),
+				),
+			);
+			t.true(
+				isErr(
+					CorePublic.validateEntityStatementClaims(
+						{ ...base, metadata_policy_crit: ["custom_operator", "custom_operator"] },
+						{ kind: "subordinate-statement" },
+					),
+				),
+			);
+		});
+
+		test("rejects malformed metadata, identifiers, keys, and time windows", async (t) => {
+			const keys = await generateSigningKey("ES256");
+			const jwks = { keys: [keys.publicKey] };
+			const base = {
+				iss: "https://leaf.example.com",
+				sub: "https://leaf.example.com",
+				iat: 1_000,
+				exp: 1_600,
+				jwks,
+				metadata: { federation_entity: {} },
+			};
+
+			t.true(
+				isErr(
+					CorePublic.validateEntityStatementClaims(
+						{
+							...base,
+							metadata: { federation_entity: { organization_name: null } },
+						},
+						{ kind: "entity-configuration" },
+					),
+				),
+			);
+			t.throws(() =>
+				CorePublic.buildEntityConfigurationPayload({
+					entityId: "http://leaf.example.com",
+					jwks,
+					metadata: { federation_entity: {} },
+					issuedAt: 1_000,
+					ttlSeconds: 600,
+				}),
+			);
+			t.throws(() =>
+				CorePublic.buildEntityConfigurationPayload({
+					entityId: "https://leaf.example.com",
+					jwks,
+					metadata: { federation_entity: {} },
+					issuedAt: 1_000,
+					ttlSeconds: 0,
+				}),
+			);
+			t.true(
+				isErr(
+					CorePublic.validateEntityStatementClaims(
+						{ ...base, exp: 1_000 },
+						{ kind: "entity-configuration" },
+					),
+				),
+			);
+			t.throws(() =>
+				CorePublic.buildEntityConfigurationPayload({
+					entityId: "https://leaf.example.com",
+					jwks: { keys: [{ ...keys.publicKey, kid: undefined } as JWK] },
+					metadata: { federation_entity: {} },
+					issuedAt: 1_000,
+					ttlSeconds: 600,
+				}),
+			);
+			t.throws(() =>
+				CorePublic.buildEntityConfigurationPayload({
+					entityId: "https://leaf.example.com",
+					jwks: { keys: [keys.publicKey, keys.publicKey] },
+					metadata: { federation_entity: {} },
+					issuedAt: 1_000,
+					ttlSeconds: 600,
+				}),
+			);
 		});
 	});
 

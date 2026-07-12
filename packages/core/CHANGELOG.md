@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Stable Entity Configuration and Subordinate Statement payload builders, signing helpers, and claim-placement validation helpers for normal Entity Statements.
+
 ### Changed
 
 - `validateTrustChain()` now rejects malformed raw Entity Statements, invalid metadata policy critical operators, and invalid published Trust Marks during Trust Chain validation.
