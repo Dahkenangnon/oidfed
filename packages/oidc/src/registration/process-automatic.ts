@@ -12,11 +12,14 @@ import {
 	resolveEntityKeys,
 	type TrustAnchorSet,
 	type ValidatedTrustChain,
-	validateTrustChain,
 	verifyEntityStatement,
 } from "@oidfed/core";
 import { RequestObjectTyp } from "../constants.js";
-import { requireNonEmptyTrustAnchors, resolveAndValidateBestChain } from "./helpers.js";
+import {
+	requireNonEmptyTrustAnchors,
+	resolveAndValidateBestChain,
+	validateSuppliedTrustChain,
+} from "./helpers.js";
 import { validateAutomaticRegistrationRequest } from "./validate-request-object.js";
 
 export interface ProcessedRegistration {
@@ -65,11 +68,14 @@ export async function processAutomaticRegistration(
 	if (!validated.ok) return validated;
 
 	const rpEntityId = validated.value.rpEntityId;
-	const bestChainResult = await resolveAndValidateBestChain(
-		rpEntityId,
-		configuredTrustAnchors,
-		options,
-	);
+	const bestChainResult =
+		validated.value.trustChainHeader !== undefined
+			? await validateSuppliedTrustChain(validated.value.trustChainHeader, configuredTrustAnchors, {
+					...options,
+					expectedSubject: rpEntityId,
+					label: "trust_chain",
+				})
+			: await resolveAndValidateBestChain(rpEntityId, configuredTrustAnchors, options);
 	if (!bestChainResult.ok) return bestChainResult;
 	const bestChain = bestChainResult.value;
 
@@ -120,22 +126,23 @@ export async function processAutomaticRegistration(
 	let peerResolvedOpMetadata: Readonly<Record<string, unknown>> | undefined;
 	const peerHeader = validated.value.peerTrustChainHeader;
 	if (peerHeader && peerHeader.length > 0) {
-		const peerValidation = await validateTrustChain(
-			[...peerHeader],
-			configuredTrustAnchors,
-			options,
-		);
-		if (!peerValidation.valid) {
+		const peerValidation = await validateSuppliedTrustChain(peerHeader, configuredTrustAnchors, {
+			...options,
+			expectedSubject: options.opEntityId,
+			label: "peer_trust_chain",
+		});
+		if (!peerValidation.ok) {
+			return err(peerValidation.error);
+		}
+		if (peerValidation.value.trustAnchorId !== bestChain.trustAnchorId) {
 			return err(
 				federationError(
-					InternalErrorCode.TrustChainInvalid,
-					`peer_trust_chain validation failed: ${
-						peerValidation.errors[0]?.message ?? "unknown error"
-					}`,
+					FederationErrorCode.InvalidTrustChain,
+					`peer_trust_chain Trust Anchor ('${peerValidation.value.trustAnchorId}') does not match selected RP Trust Anchor ('${bestChain.trustAnchorId}')`,
 				),
 			);
 		}
-		peerResolvedOpMetadata = peerValidation.chain.resolvedMetadata.openid_provider ?? {};
+		peerResolvedOpMetadata = peerValidation.value.resolvedMetadata.openid_provider ?? {};
 	}
 
 	try {

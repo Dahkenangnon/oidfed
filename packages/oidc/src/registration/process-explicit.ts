@@ -16,12 +16,19 @@ import {
 	type TrustAnchorSet,
 	verifyEntityStatement,
 } from "@oidfed/core";
-import { requireNonEmptyTrustAnchors, resolveAndValidateBestChain } from "./helpers.js";
+import {
+	parseTrustChainJsonBody,
+	requireNonEmptyTrustAnchors,
+	resolveAndValidateBestChain,
+	validateSuppliedTrustChain,
+} from "./helpers.js";
 import type { ProcessedRegistration } from "./process-automatic.js";
 
 export interface ProcessExplicitRegistrationOptions extends FederationOptions {
 	/** The OP's own Entity Identifier — REQUIRED for `aud` validation. */
 	opEntityId: EntityId;
+	/** Optional `trust_chain` JWS header value supplied with an entity-statement body. */
+	trustChainHeader?: readonly string[];
 }
 
 /**
@@ -51,29 +58,19 @@ export async function processExplicitRegistration(
 		);
 	}
 
-	// O2: trust-chain+json body is a JSON array of JWTs; entity-statement+jwt is a single JWT
 	let rpEcJwt: string;
+	let suppliedTrustChain: readonly string[] | undefined;
+	let suppliedTrustChainLabel: "trust-chain+json" | "trust_chain" | undefined;
 
 	if (contentType === MediaType.TrustChain) {
-		let chain: unknown;
-		try {
-			chain = JSON.parse(requestBody);
-		} catch {
-			return err(
-				federationError(FederationErrorCode.InvalidRequest, "Invalid trust-chain+json body"),
-			);
-		}
-		if (!Array.isArray(chain) || chain.length === 0 || !chain.every((s) => typeof s === "string")) {
-			return err(
-				federationError(
-					FederationErrorCode.InvalidRequest,
-					"trust-chain+json must be a non-empty array of JWT strings",
-				),
-			);
-		}
-		rpEcJwt = chain[0] as string;
-		// Optimization: the OP MAY evaluate the supplied Trust Chain directly (not implemented)
+		const parseResult = parseTrustChainJsonBody(requestBody);
+		if (!parseResult.ok) return parseResult;
+		suppliedTrustChain = parseResult.value;
+		suppliedTrustChainLabel = "trust-chain+json";
+		rpEcJwt = suppliedTrustChain[0] as string;
 	} else {
+		suppliedTrustChain = options.trustChainHeader;
+		suppliedTrustChainLabel = options.trustChainHeader !== undefined ? "trust_chain" : undefined;
 		rpEcJwt = requestBody;
 	}
 
@@ -200,11 +197,15 @@ export async function processExplicitRegistration(
 		);
 	}
 
-	const bestChainResult = await resolveAndValidateBestChain(
-		rpEntityId,
-		configuredTrustAnchors,
-		options,
-	);
+	const bestChainResult =
+		suppliedTrustChain !== undefined
+			? await validateSuppliedTrustChain(suppliedTrustChain, configuredTrustAnchors, {
+					...options,
+					expectedSubject: rpEntityId,
+					explicitRegistrationAudience: options.opEntityId,
+					label: suppliedTrustChainLabel ?? "trust_chain",
+				})
+			: await resolveAndValidateBestChain(rpEntityId, configuredTrustAnchors, options);
 	if (!bestChainResult.ok) return bestChainResult;
 	const bestChain = bestChainResult.value;
 	const resolvedRpMetadata = bestChain.resolvedMetadata.openid_relying_party ?? {};

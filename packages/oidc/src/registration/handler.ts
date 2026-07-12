@@ -14,12 +14,9 @@ import {
 	nowSeconds,
 	readBodyWithLimit,
 	requireMethod,
-	resolveTrustChains,
-	shortestChain,
 	signEntityStatement,
 	type TrustAnchorSet,
 	type ValidatedTrustChain,
-	validateTrustChain,
 	verifyEntityStatement,
 } from "@oidfed/core";
 import {
@@ -28,7 +25,12 @@ import {
 } from "../constants.js";
 import { ExplicitRegistrationRequestPayloadSchema } from "../schemas/explicit-registration.js";
 import type { RegistrationProtocolAdapter } from "./adapter-types.js";
-import { assertNonEmptyTrustAnchors } from "./helpers.js";
+import {
+	assertNonEmptyTrustAnchors,
+	parseTrustChainJsonBody,
+	resolveAndValidateBestChain,
+	validateSuppliedTrustChain,
+} from "./helpers.js";
 
 /** OIDC default values applied when the RP omits standard fields. */
 const OIDC_METADATA_DEFAULTS: Record<string, unknown> = {
@@ -96,21 +98,15 @@ export function createExplicitRegistrationHandler(
 		if (!body) return errorResponse(400, "invalid_request", "Missing request body");
 
 		let ecJwt: string;
+		let suppliedBodyTrustChain: readonly string[] | undefined;
 		const isTrustChainBody = contentType.includes("trust-chain+json");
 		if (isTrustChainBody) {
-			try {
-				const chain = JSON.parse(body) as string[];
-				if (!Array.isArray(chain) || chain.length === 0) {
-					return errorResponse(
-						400,
-						"invalid_request",
-						"Trust chain must be a non-empty JSON array",
-					);
-				}
-				ecJwt = chain[0] as string;
-			} catch {
-				return errorResponse(400, "invalid_request", "Invalid JSON in trust chain body");
+			const parseResult = parseTrustChainJsonBody(body);
+			if (!parseResult.ok) {
+				return errorResponse(400, parseResult.error.code, parseResult.error.description);
 			}
+			suppliedBodyTrustChain = parseResult.value;
+			ecJwt = suppliedBodyTrustChain[0] as string;
 		} else {
 			ecJwt = body;
 		}
@@ -248,56 +244,66 @@ export function createExplicitRegistrationHandler(
 		const rpEntityId = entityId(reqPayload.sub);
 		let bestChain: ValidatedTrustChain | undefined;
 
-		if (trustChainHeader && trustChainHeader.length > 0) {
-			const headerValidation = await validateTrustChain(
-				trustChainHeader,
+		if (suppliedBodyTrustChain !== undefined) {
+			const bodyValidation = await validateSuppliedTrustChain(
+				suppliedBodyTrustChain,
 				trustAnchors,
-				config.options,
+				{
+					...config.options,
+					expectedSubject: rpEntityId,
+					explicitRegistrationAudience: config.opEntityId,
+					label: "trust-chain+json",
+				},
 			);
-			if (headerValidation.valid) {
-				bestChain = headerValidation.chain;
+			if (!bodyValidation.ok) {
+				return errorResponse(400, bodyValidation.error.code, bodyValidation.error.description);
 			}
-		}
-
-		if (!bestChain) {
-			const chainResult = await resolveTrustChains(rpEntityId, trustAnchors, config.options);
-
-			const validChains: ValidatedTrustChain[] = [];
-			for (const chain of chainResult.chains) {
-				const result = await validateTrustChain(chain.statements, trustAnchors, config.options);
-				if (result.valid) {
-					validChains.push(result.chain);
-				}
+			bestChain = bodyValidation.value;
+		} else if (trustChainHeader !== undefined) {
+			const headerValidation = await validateSuppliedTrustChain(trustChainHeader, trustAnchors, {
+				...config.options,
+				expectedSubject: rpEntityId,
+				explicitRegistrationAudience: config.opEntityId,
+				label: "trust_chain",
+			});
+			if (!headerValidation.ok) {
+				return errorResponse(400, headerValidation.error.code, headerValidation.error.description);
 			}
-
-			if (validChains.length === 0) {
-				return errorResponse(
-					403,
-					FederationErrorCode.InvalidTrustChain,
-					"No valid trust chains found for RP",
-				);
+			bestChain = headerValidation.value;
+		} else {
+			const chainResult = await resolveAndValidateBestChain(
+				rpEntityId,
+				trustAnchors,
+				config.options ?? {},
+			);
+			if (!chainResult.ok) {
+				return errorResponse(403, chainResult.error.code, chainResult.error.description);
 			}
-
-			bestChain = shortestChain(validChains);
+			bestChain = chainResult.value;
 		}
 
 		let peerResolvedOpMetadata: Readonly<Record<string, unknown>> | undefined;
 		if (peerTrustChainHeader && peerTrustChainHeader.length > 0) {
-			const peerValidation = await validateTrustChain(
-				peerTrustChainHeader,
-				trustAnchors,
-				config.options,
-			);
-			if (!peerValidation.valid) {
+			const peerValidation = await validateSuppliedTrustChain(peerTrustChainHeader, trustAnchors, {
+				...config.options,
+				expectedSubject: config.opEntityId,
+				label: "peer_trust_chain",
+			});
+			if (!peerValidation.ok) {
 				return errorResponse(
 					400,
 					FederationErrorCode.InvalidTrustChain,
-					`peer_trust_chain validation failed: ${
-						peerValidation.errors[0]?.message ?? "unknown error"
-					}`,
+					peerValidation.error.description,
 				);
 			}
-			peerResolvedOpMetadata = peerValidation.chain.resolvedMetadata.openid_provider ?? {};
+			if (peerValidation.value.trustAnchorId !== bestChain.trustAnchorId) {
+				return errorResponse(
+					400,
+					FederationErrorCode.InvalidTrustChain,
+					`peer_trust_chain Trust Anchor ('${peerValidation.value.trustAnchorId}') does not match selected RP Trust Anchor ('${bestChain.trustAnchorId}')`,
+				);
+			}
+			peerResolvedOpMetadata = peerValidation.value.resolvedMetadata.openid_provider ?? {};
 		}
 
 		if (config.onRegistrationInvalidation) {

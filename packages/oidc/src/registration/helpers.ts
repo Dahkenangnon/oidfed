@@ -25,6 +25,32 @@ const REQUIRED_TRUST_ANCHORS_MESSAGE =
 
 type TrustAnchorConfig = TrustAnchorSet extends ReadonlyMap<string, infer Config> ? Config : never;
 
+export function parseTrustChainJsonBody(body: string): Result<readonly string[], FederationError> {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(body);
+	} catch {
+		return err(
+			federationError(FederationErrorCode.InvalidRequest, "Invalid trust-chain+json body"),
+		);
+	}
+
+	if (
+		!Array.isArray(parsed) ||
+		parsed.length === 0 ||
+		!parsed.every((statement) => typeof statement === "string")
+	) {
+		return err(
+			federationError(
+				FederationErrorCode.InvalidRequest,
+				"trust-chain+json must be a non-empty array of JWT strings",
+			),
+		);
+	}
+
+	return ok(parsed);
+}
+
 export function requireNonEmptyTrustAnchors(
 	trustAnchors: TrustAnchorSet | undefined,
 ): Result<TrustAnchorSet, FederationError> {
@@ -58,6 +84,52 @@ export function assertNonEmptyTrustAnchors(
 		throw new Error(result.error.description);
 	}
 	return result.value;
+}
+
+export async function validateSuppliedTrustChain(
+	chain: readonly string[] | undefined,
+	trustAnchors: TrustAnchorSet,
+	options: FederationOptions & {
+		readonly expectedSubject: EntityId;
+		readonly label: string;
+		readonly explicitRegistrationAudience?: EntityId;
+	},
+): Promise<Result<ValidatedTrustChain, FederationError>> {
+	if (!Array.isArray(chain) || chain.length === 0 || !chain.every((s) => typeof s === "string")) {
+		return err(
+			federationError(
+				FederationErrorCode.InvalidTrustChain,
+				`${options.label} must be a non-empty array of JWT strings`,
+			),
+		);
+	}
+
+	const validation = await validateTrustChain(chain, trustAnchors, {
+		...options,
+		verboseErrors: true,
+		...(options.explicitRegistrationAudience !== undefined
+			? { explicitRegistrationAudience: options.explicitRegistrationAudience }
+			: {}),
+	});
+	if (!validation.valid) {
+		return err(
+			federationError(
+				FederationErrorCode.InvalidTrustChain,
+				`${options.label} validation failed: ${validation.errors[0]?.message ?? "unknown error"}`,
+			),
+		);
+	}
+
+	if (validation.chain.entityId !== options.expectedSubject) {
+		return err(
+			federationError(
+				FederationErrorCode.InvalidTrustChain,
+				`${options.label} subject '${validation.chain.entityId}' does not match expected subject '${options.expectedSubject}'`,
+			),
+		);
+	}
+
+	return ok(validation.chain);
 }
 
 /**

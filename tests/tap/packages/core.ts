@@ -7980,6 +7980,67 @@ export default (QUnit: QUnit) => {
 					t.equal(result.chain.statements.length, 3);
 				}
 			});
+			test("rejects aud in ordinary trust chains by default", async (t) => {
+				const { chain, taSet, leafKeys } = await vt_buildSimple();
+				const registrationEc = await vt_signEC(
+					"https://leaf.example.com",
+					leafKeys.privateKey,
+					leafKeys.publicKey,
+					{
+						aud: "https://op.example.com",
+						authority_hints: ["https://ta.example.com"],
+						metadata: {
+							federation_entity: { organization_name: "Leaf Org" },
+							openid_relying_party: { client_name: "Leaf RP" },
+						},
+					},
+				);
+				const result = await validateTrustChain([registrationEc, ...chain.slice(1)], taSet, {
+					verboseErrors: true,
+				});
+				t.false(result.valid);
+				t.true(result.errors.some((e) => e.field === "aud"));
+			});
+			test("allows aud only on the first explicit registration trust-chain statement", async (t) => {
+				const { chain, taSet, leafKeys } = await vt_buildSimple();
+				const registrationEc = await vt_signEC(
+					"https://leaf.example.com",
+					leafKeys.privateKey,
+					leafKeys.publicKey,
+					{
+						aud: "https://op.example.com",
+						authority_hints: ["https://ta.example.com"],
+						metadata: {
+							federation_entity: { organization_name: "Leaf Org" },
+							openid_relying_party: { client_name: "Leaf RP" },
+						},
+					},
+				);
+				const result = await validateTrustChain([registrationEc, ...chain.slice(1)], taSet, {
+					explicitRegistrationAudience: "https://op.example.com",
+				});
+				t.true(result.valid);
+			});
+			test("rejects aud on later statements even with explicit registration audience", async (t) => {
+				const { chain, taSet, taKeys, leafKeys } = await vt_buildSimple();
+				const ssWithAud = await vt_signSS(
+					"https://ta.example.com",
+					"https://leaf.example.com",
+					taKeys.privateKey,
+					leafKeys.publicKey,
+					{ aud: "https://op.example.com" },
+				);
+				const result = await validateTrustChain(
+					[chain[0] as string, ssWithAud, chain[2] as string],
+					taSet,
+					{
+						verboseErrors: true,
+						explicitRegistrationAudience: "https://op.example.com",
+					},
+				);
+				t.false(result.valid);
+				t.true(result.errors.some((e) => e.field === "aud" && e.statementIndex === 1));
+			});
 			test("accepts chain that omits the Trust Anchor EC at the end", async (t) => {
 				const { chain, taSet } = await vt_buildSimple();
 				// Drop the trailing TA Entity Configuration. The remaining array is

@@ -66,7 +66,10 @@ function isValidUrl(value: unknown): boolean {
 export async function validateTrustChain(
 	chain: ReadonlyArray<string>,
 	trustAnchors: TrustAnchorSet,
-	options?: FederationOptions & { verboseErrors?: boolean },
+	options?: FederationOptions & {
+		verboseErrors?: boolean;
+		explicitRegistrationAudience?: EntityId | string;
+	},
 ): Promise<ValidationResult> {
 	const errors: ValidationError[] = [];
 	const clockSkew = options?.clockSkewSeconds ?? DEFAULT_CLOCK_SKEW_SECONDS;
@@ -371,7 +374,11 @@ export async function validateTrustChain(
 			);
 		}
 
-		if (p.aud !== undefined) {
+		const allowedExplicitRegistrationAudience =
+			j === 0 &&
+			options?.explicitRegistrationAudience !== undefined &&
+			p.aud === options.explicitRegistrationAudience;
+		if (p.aud !== undefined && !allowedExplicitRegistrationAudience) {
 			addError(
 				errors,
 				InternalErrorCode.TrustChainInvalid,

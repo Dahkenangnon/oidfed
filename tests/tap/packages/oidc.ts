@@ -2256,7 +2256,10 @@ export default (QUnit: QUnit) => {
 	module("oidc / processAutomaticRegistration", () => {
 		const replayStore = () => new MemoryReplayStore();
 
-		async function createValidRequestObject(fed: Awaited<ReturnType<typeof createMockFederation>>) {
+		async function createValidRequestObject(
+			fed: Awaited<ReturnType<typeof createMockFederation>>,
+			extraHeaders?: Record<string, unknown>,
+		) {
 			const now = Math.floor(Date.now() / 1000);
 			return signEntityStatement(
 				{
@@ -2271,7 +2274,10 @@ export default (QUnit: QUnit) => {
 					response_type: "code",
 				},
 				new JwkSigner(fed.leafProtocolSigningKey),
-				{ typ: "oauth-authz-req+jwt" },
+				{
+					typ: RequestObjectTyp,
+					...(extraHeaders ? { extraHeaders } : {}),
+				},
 			);
 		}
 
@@ -2311,6 +2317,39 @@ export default (QUnit: QUnit) => {
 			t.true(result.ok);
 			if (!result.ok) return;
 			t.equal(result.value.rpEntityId, LEAF_ID);
+		});
+
+		test("uses valid trust_chain header without discovery fetch", async (t) => {
+			const fed = await createMockFederation();
+			const httpClient: HttpClient = async () => {
+				throw new Error("discovery fetch should not run for supplied trust_chain");
+			};
+			const jwt = await createValidRequestObject(fed, {
+				trust_chain: [fed.leafEcJwt, fed.taSubStatementForLeaf, fed.taEcJwt],
+			});
+			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
+				...fed.options,
+				httpClient,
+				opEntityId: OP_ID,
+				replayStore: replayStore(),
+			});
+			t.true(result.ok);
+			if (!result.ok) return;
+			t.equal(result.value.trustChain.trustAnchorId, TA_ID);
+		});
+
+		test("rejects invalid trust_chain header instead of falling back to discovery", async (t) => {
+			const fed = await createMockFederation();
+			const jwt = await createValidRequestObject(fed, { trust_chain: [fed.leafEcJwt] });
+			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
+				...fed.options,
+				opEntityId: OP_ID,
+				replayStore: replayStore(),
+			});
+			t.false(result.ok);
+			if (result.ok) return;
+			t.equal(result.error.code, FederationErrorCode.InvalidTrustChain);
+			t.ok(result.error.description.includes("trust_chain validation failed"));
 		});
 
 		test("verifies Request Objects with RP protocol keys, not federation keys", async (t) => {
@@ -2827,6 +2866,71 @@ export default (QUnit: QUnit) => {
 			});
 			t.true(result.ok);
 		});
+
+		test("rejects peer_trust_chain whose Trust Anchor differs from selected RP chain", async (t) => {
+			const fed = await createMockFederation();
+			const { privateKey: otherTaKey, publicKey: otherTaPublicKey } =
+				await generateSigningKey("ES256");
+			const otherTaId = entityId("https://other-ta.example.com");
+			const now = Math.floor(Date.now() / 1000);
+			const otherOpEcJwt = await signEntityStatement(
+				{
+					iss: OP_ID,
+					sub: OP_ID,
+					iat: now,
+					exp: now + 86400,
+					jwks: { keys: [fed.opPublicKey] },
+					authority_hints: [otherTaId],
+					metadata: {
+						openid_provider: {
+							issuer: OP_ID,
+							authorization_endpoint: `${OP_ID}/authorize`,
+							token_endpoint: `${OP_ID}/token`,
+							response_types_supported: ["code"],
+							subject_types_supported: ["public"],
+						},
+					},
+				},
+				new JwkSigner(fed.opSigningKey),
+				{ typ: JwtTyp.EntityStatement },
+			);
+			const otherTaSubStatementForOp = await signEntityStatement(
+				{
+					iss: otherTaId,
+					sub: OP_ID,
+					iat: now,
+					exp: now + 86400,
+					jwks: { keys: [fed.opPublicKey] },
+				},
+				new JwkSigner(otherTaKey),
+				{ typ: JwtTyp.EntityStatement },
+			);
+			const otherTaEcJwt = await signEntityStatement(
+				{
+					iss: otherTaId,
+					sub: otherTaId,
+					iat: now,
+					exp: now + 86400,
+					jwks: { keys: [otherTaPublicKey] },
+				},
+				new JwkSigner(otherTaKey),
+				{ typ: JwtTyp.EntityStatement },
+			);
+			const trustAnchors = new Map(fed.trustAnchors);
+			trustAnchors.set(otherTaId, { jwks: { keys: [otherTaPublicKey] } });
+			const jwt = await createValidRequestObject(fed, {
+				peer_trust_chain: [otherOpEcJwt, otherTaSubStatementForOp, otherTaEcJwt],
+			});
+			const result = await processAutomaticRegistration(jwt, trustAnchors, {
+				...fed.options,
+				opEntityId: OP_ID,
+				replayStore: replayStore(),
+			});
+			t.false(result.ok);
+			if (result.ok) return;
+			t.equal(result.error.code, FederationErrorCode.InvalidTrustChain);
+			t.ok(result.error.description.includes("does not match selected RP Trust Anchor"));
+		});
 	});
 
 	// -------------------------------------------------------------------------
@@ -3004,6 +3108,45 @@ export default (QUnit: QUnit) => {
 			t.equal(result.value.trustChain.entityId, LEAF_ID);
 		});
 
+		test("uses valid trust_chain header without discovery fetch", async (t) => {
+			const fed = await createMockFederation();
+			const httpClient: HttpClient = async () => {
+				throw new Error("discovery fetch should not run for supplied trust_chain");
+			};
+			const result = await processExplicitRegistration(
+				await createValidExplicitRequest(fed),
+				MediaType.EntityStatement,
+				fed.trustAnchors,
+				{
+					...fed.options,
+					httpClient,
+					opEntityId: OP_ID,
+					trustChainHeader: [fed.leafEcJwt, fed.taSubStatementForLeaf, fed.taEcJwt],
+				},
+			);
+			t.true(result.ok);
+			if (!result.ok) return;
+			t.equal(result.value.trustChain.trustAnchorId, TA_ID);
+		});
+
+		test("rejects invalid trust_chain header instead of falling back to discovery", async (t) => {
+			const fed = await createMockFederation();
+			const result = await processExplicitRegistration(
+				await createValidExplicitRequest(fed),
+				MediaType.EntityStatement,
+				fed.trustAnchors,
+				{
+					...fed.options,
+					opEntityId: OP_ID,
+					trustChainHeader: [fed.leafEcJwt],
+				},
+			);
+			t.false(result.ok);
+			if (result.ok) return;
+			t.equal(result.error.code, FederationErrorCode.InvalidTrustChain);
+			t.ok(result.error.description.includes("trust_chain validation failed"));
+		});
+
 		test("returns err if RP EC has no jwks", async (t) => {
 			const fed = await createMockFederation();
 			const now = Math.floor(Date.now() / 1000);
@@ -3063,11 +3206,14 @@ export default (QUnit: QUnit) => {
 		test("accepts valid trust-chain+json body", async (t) => {
 			const fed = await createMockFederation();
 			const ecJwt = await createValidExplicitRequest(fed);
+			const httpClient: HttpClient = async () => {
+				throw new Error("discovery fetch should not run for supplied trust-chain+json");
+			};
 			const result = await processExplicitRegistration(
-				JSON.stringify([ecJwt]),
+				JSON.stringify([ecJwt, fed.taSubStatementForLeaf, fed.taEcJwt]),
 				MediaType.TrustChain,
 				fed.trustAnchors,
-				{ ...fed.options, opEntityId: OP_ID },
+				{ ...fed.options, httpClient, opEntityId: OP_ID },
 			);
 			t.true(result.ok);
 			if (!result.ok) return;
@@ -3098,6 +3244,49 @@ export default (QUnit: QUnit) => {
 			t.false(result.ok);
 			if (result.ok) return;
 			t.ok(result.error.description.includes("non-empty array"));
+		});
+
+		test("returns err for trust-chain+json with non-string array members", async (t) => {
+			const fed = await createMockFederation();
+			const result = await processExplicitRegistration(
+				JSON.stringify([{}]),
+				MediaType.TrustChain,
+				fed.trustAnchors,
+				{ ...fed.options, opEntityId: OP_ID },
+			);
+			t.false(result.ok);
+			if (result.ok) return;
+			t.ok(result.error.description.includes("non-empty array"));
+		});
+
+		test("rejects one-entry trust-chain+json body instead of falling back to discovery", async (t) => {
+			const fed = await createMockFederation();
+			const ecJwt = await createValidExplicitRequest(fed);
+			const result = await processExplicitRegistration(
+				JSON.stringify([ecJwt]),
+				MediaType.TrustChain,
+				fed.trustAnchors,
+				{ ...fed.options, opEntityId: OP_ID },
+			);
+			t.false(result.ok);
+			if (result.ok) return;
+			t.equal(result.error.code, FederationErrorCode.InvalidTrustChain);
+			t.ok(result.error.description.includes("trust-chain+json validation failed"));
+		});
+
+		test("rejects malformed trust-chain+json body instead of falling back to discovery", async (t) => {
+			const fed = await createMockFederation();
+			const ecJwt = await createValidExplicitRequest(fed);
+			const result = await processExplicitRegistration(
+				JSON.stringify([ecJwt, fed.taEcJwt]),
+				MediaType.TrustChain,
+				fed.trustAnchors,
+				{ ...fed.options, opEntityId: OP_ID },
+			);
+			t.false(result.ok);
+			if (result.ok) return;
+			t.equal(result.error.code, FederationErrorCode.InvalidTrustChain);
+			t.ok(result.error.description.includes("trust-chain+json validation failed"));
 		});
 
 		test("returns err for unknown RP", async (t) => {
@@ -3875,14 +4064,38 @@ export default (QUnit: QUnit) => {
 			});
 
 			test("accepts application/trust-chain+json Content-Type", async (t) => {
-				const { config } = await createFederatedHandlerFixture();
+				const { config, fed } = await createFederatedHandlerFixture({
+					options: {
+						httpClient: async () => {
+							throw new Error("discovery fetch should not run for supplied trust-chain+json");
+						},
+					},
+				});
 				const handler = createExplicitRegistrationHandler(config);
-				const rpKeys = await generateSigningKey("ES256");
 				const ecJwt = await buildRegistrationRequest(
 					LEAF_ID,
 					HANDLER_ENTITY_ID as string,
-					rpKeys.privateKey,
-					rpKeys.publicKey as unknown as Record<string, unknown>,
+					fed.leafSigningKey,
+					fed.leafPublicKey as unknown as Record<string, unknown>,
+				);
+				const res = await handler(
+					new Request(`${HANDLER_ENTITY_ID}/federation_registration`, {
+						method: "POST",
+						headers: { "Content-Type": MediaType.TrustChain },
+						body: JSON.stringify([ecJwt, fed.taSubStatementForLeaf, fed.taEcJwt]),
+					}),
+				);
+				t.equal(res.status, 200);
+			});
+
+			test("rejects one-entry application/trust-chain+json body", async (t) => {
+				const { config, fed } = await createFederatedHandlerFixture();
+				const handler = createExplicitRegistrationHandler(config);
+				const ecJwt = await buildRegistrationRequest(
+					LEAF_ID,
+					HANDLER_ENTITY_ID as string,
+					fed.leafSigningKey,
+					fed.leafPublicKey as unknown as Record<string, unknown>,
 				);
 				const res = await handler(
 					new Request(`${HANDLER_ENTITY_ID}/federation_registration`, {
@@ -3891,7 +4104,24 @@ export default (QUnit: QUnit) => {
 						body: JSON.stringify([ecJwt]),
 					}),
 				);
-				t.equal(res.status, 200);
+				t.equal(res.status, 400);
+				const body = (await res.json()) as Record<string, string>;
+				t.equal(body.error, FederationErrorCode.InvalidTrustChain);
+			});
+
+			test("rejects application/trust-chain+json body with non-string members", async (t) => {
+				const { config } = await createFederatedHandlerFixture();
+				const handler = createExplicitRegistrationHandler(config);
+				const res = await handler(
+					new Request(`${HANDLER_ENTITY_ID}/federation_registration`, {
+						method: "POST",
+						headers: { "Content-Type": MediaType.TrustChain },
+						body: JSON.stringify([{}]),
+					}),
+				);
+				t.equal(res.status, 400);
+				const body = (await res.json()) as Record<string, string>;
+				t.equal(body.error, FederationErrorCode.InvalidRequest);
 			});
 
 			test("rejects wrong aud", async (t) => {
@@ -4221,10 +4451,13 @@ export default (QUnit: QUnit) => {
 				const fed = await createMockFederation();
 				const config = await createHandlerConfig({
 					trustAnchors: fed.trustAnchors,
-					options: fed.options,
+					options: {
+						httpClient: async () => {
+							throw new Error("discovery fetch should not run for supplied trust_chain");
+						},
+					},
 				});
 				const handler = createExplicitRegistrationHandler(config);
-				const rpKeys = await generateSigningKey("ES256");
 				const jwt = await signEntityStatement(
 					{
 						iss: LEAF_ID,
@@ -4232,10 +4465,10 @@ export default (QUnit: QUnit) => {
 						aud: HANDLER_ENTITY_ID,
 						iat: REG_NOW,
 						exp: REG_NOW + 3600,
-						jwks: { keys: [rpKeys.publicKey as unknown as Record<string, unknown>] },
+						jwks: { keys: [fed.leafPublicKey as unknown as Record<string, unknown>] },
 						...REQUIRED_FIELDS,
 					},
-					new JwkSigner(rpKeys.privateKey),
+					new JwkSigner(fed.leafSigningKey),
 					{
 						typ: JwtTyp.EntityStatement,
 						extraHeaders: {
@@ -4255,6 +4488,42 @@ export default (QUnit: QUnit) => {
 				t.true(isOk(decoded));
 				if (!isOk(decoded)) return;
 				t.equal((decoded.value.payload as Record<string, unknown>).trust_anchor, TA_ID);
+			});
+
+			test("rejects invalid trust_chain JWT header instead of falling back to discovery", async (t) => {
+				const fed = await createMockFederation();
+				const config = await createHandlerConfig({
+					trustAnchors: fed.trustAnchors,
+					options: fed.options,
+				});
+				const handler = createExplicitRegistrationHandler(config);
+				const jwt = await signEntityStatement(
+					{
+						iss: LEAF_ID,
+						sub: LEAF_ID,
+						aud: HANDLER_ENTITY_ID,
+						iat: REG_NOW,
+						exp: REG_NOW + 3600,
+						jwks: { keys: [fed.leafPublicKey as unknown as Record<string, unknown>] },
+						...REQUIRED_FIELDS,
+					},
+					new JwkSigner(fed.leafSigningKey),
+					{
+						typ: JwtTyp.EntityStatement,
+						extraHeaders: { trust_chain: [fed.leafEcJwt] },
+					},
+				);
+				const res = await handler(
+					new Request(`${HANDLER_ENTITY_ID}/federation_registration`, {
+						method: "POST",
+						headers: { "Content-Type": MediaType.EntityStatement },
+						body: jwt,
+					}),
+				);
+				t.equal(res.status, 400);
+				const body = (await res.json()) as Record<string, string>;
+				t.equal(body.error, FederationErrorCode.InvalidTrustChain);
+				t.ok(body.error_description?.includes("trust_chain validation failed"));
 			});
 
 			test("invokes registrationProtocolAdapter.enrichResponseMetadata", async (t) => {
@@ -4616,10 +4885,7 @@ export default (QUnit: QUnit) => {
 					new JwkSigner(rpKeys.privateKey),
 					{
 						typ: JwtTyp.EntityStatement,
-						extraHeaders: {
-							trust_chain: [fed.leafEcJwt, foreignTaEc],
-							peer_trust_chain: [fed.opEcJwt, foreignTaEc],
-						},
+						extraHeaders: { peer_trust_chain: [fed.opEcJwt, foreignTaEc] },
 					},
 				);
 				const res = await handler(

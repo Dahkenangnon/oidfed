@@ -93,6 +93,8 @@ if (isOk(opDiscoveryResult)) {
 ### Provider-Side Explicit Registration
 For explicit registration, OPs serve a `/registration` endpoint. RPs post their self-signed Entity Configuration or trust chains, and OPs reply with a signed explicit registration response containing a `client_id` and registered metadata.
 
+When an RP supplies a `trust_chain` header or an `application/trust-chain+json` request body, OP-side processing validates that supplied value as a full Trust Chain and uses it before attempting live Federation Entity Discovery. Invalid supplied chains fail registration.
+
 ```ts
 import { FedOidcProvider, OIDCRegistrationAdapter } from "@oidfed/oidc";
 
@@ -228,6 +230,7 @@ Configuration parameters used to instantiate `FedOauthResource` facades.
 Crucially:
 - It allows the RP to supply the OP's trust chain as resolved/chosen by the RP, ensuring both entities establish trust under a common selected Trust Anchor. This helps achieve **Federation Integrity** and **Metadata Integrity** properties.
 - If both `trust_chain` (describing the RP's own chain) and `peer_trust_chain` are present, the Trust Anchor at the root of both chains **MUST** be the same.
+- OP-side processing validates supplied `trust_chain` and `peer_trust_chain` values as full Trust Chains. Invalid supplied chains are rejected instead of being ignored in favor of live discovery.
 - According to **Section 12.2.1**, the `peer_trust_chain` header parameter **MUST NOT** be used when the request body itself is a Trust Chain (`application/trust-chain+json`); it is only permitted when the request body is the Entity Configuration of the RP (`application/entity-statement+jwt`).
 - It **MUST NOT** be included inside Entity Configurations or Subordinate Statements themselves.
 
