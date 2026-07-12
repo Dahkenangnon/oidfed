@@ -91,9 +91,11 @@ if (isOk(opDiscoveryResult)) {
 ---
 
 ### Provider-Side Explicit Registration
-For explicit registration, OPs serve a `/registration` endpoint. RPs post their self-signed Entity Configuration or trust chains, and OPs reply with a signed explicit registration response containing a `client_id` and registered metadata.
+For explicit registration, OPs serve a `/registration` endpoint. RPs post their self-signed Entity Configuration or trust chains, and OPs reply with a signed explicit registration response whose `sub` is the RP Entity Identifier and whose registered client credentials are under `metadata.openid_relying_party`.
 
 When an RP supplies a `trust_chain` header or an `application/trust-chain+json` request body, OP-side processing validates that supplied value as a full Trust Chain and uses it before attempting live Federation Entity Discovery. Invalid supplied chains fail registration.
+
+RP-side explicit registration accepts only HTTP `200` responses with exact `Content-Type: application/explicit-registration-response+jwt`. It returns `clientId` from `metadata.openid_relying_party.client_id` and `clientSecret` from `metadata.openid_relying_party.client_secret` when the OP provisions one.
 
 ```ts
 import { FedOidcProvider, OIDCRegistrationAdapter } from "@oidfed/oidc";
@@ -108,7 +110,8 @@ const opRole = new FedOidcProvider({
   registrationResponseTtlSeconds: 3600,
   registrationProtocolAdapter: new OIDCRegistrationAdapter(),
   generateClientSecret: async (clientId) => {
-    // Return a client secret or undefined if public client
+    // Return a client secret to embed under metadata.openid_relying_party.client_secret,
+    // or undefined if the RP is a public client.
     return "generated-secret-string";
   },
   metadata: {
@@ -206,7 +209,7 @@ Configuration parameters used to instantiate `FedOidcProvider` and `FedOauthProv
 | `trustAnchors` | `TrustAnchorSet` | Yes, via role config or parent context | Non-empty trust anchors required for OP-side automatic and explicit registration processing. |
 | `registrationResponseTtlSeconds`| `number` | No | TTL in seconds for signed explicit registration responses. Capped by RP trust chain validity. |
 | `registrationProtocolAdapter` | `RegistrationProtocolAdapter`| No | Pluggable adapter to customize metadata schema validations and response enrichments. |
-| `generateClientSecret` | `(sub: EntityId) => Promise<string>`| No | Hook called to issue a client secret for confidential Relying Parties. |
+| `generateClientSecret` | `(sub: EntityId) => Promise<string>`| No | Hook called to issue a client secret for confidential Relying Parties. Returned values are embedded under `metadata.openid_relying_party.client_secret`. |
 | `onRegistrationInvalidation` | `(sub: EntityId) => Promise<void>`| No | Late pre-commit hook called after validation and response preparation, immediately before `onRegistration`. |
 
 ### `FedOauthResourceConfig`

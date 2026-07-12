@@ -391,7 +391,11 @@ export function createExplicitRegistrationHandler(
 		if (config.generateClientSecret) {
 			const clientSecret = await config.generateClientSecret(rpEntityId);
 			if (clientSecret) {
-				responsePayload.client_secret = clientSecret;
+				const metadataRecord = responsePayload.metadata as Record<string, unknown>;
+				const rpMeta = (metadataRecord.openid_relying_party ?? {}) as Record<string, unknown>;
+				rpMeta.client_secret = clientSecret;
+				metadataRecord.openid_relying_party = rpMeta;
+				responsePayload.metadata = metadataRecord;
 			}
 		}
 
@@ -413,12 +417,10 @@ export function createExplicitRegistrationHandler(
 				string,
 				unknown
 			>;
+			const clientSecret =
+				typeof clientMetadata.client_secret === "string" ? clientMetadata.client_secret : undefined;
 			try {
-				await config.onRegistration(
-					rpEntityId,
-					clientMetadata,
-					responsePayload.client_secret as string | undefined,
-				);
+				await config.onRegistration(rpEntityId, clientMetadata, clientSecret);
 			} catch {
 				return errorResponse(500, FederationErrorCode.ServerError, "Registration hook failed");
 			}

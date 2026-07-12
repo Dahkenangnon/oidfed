@@ -25,6 +25,7 @@ import {
 import {
 	ClientRegistrationType,
 	OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE,
+	OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE,
 } from "../constants.js";
 import { getRegistrationTypes } from "./helpers.js";
 
@@ -195,12 +196,22 @@ export async function explicitRegistration(
 	});
 
 	const response = await httpClient(request);
-	if (!response.ok) {
+	if (response.status !== 200) {
 		// Intentionally omit response body to avoid leaking OP internals
 		return err(
 			federationError(
 				InternalErrorCode.Network,
 				`Explicit registration failed (HTTP ${response.status})`,
+			),
+		);
+	}
+
+	const responseContentType = response.headers.get("Content-Type");
+	if (responseContentType !== OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE) {
+		return err(
+			federationError(
+				FederationErrorCode.InvalidRequest,
+				`Explicit registration response Content-Type must be '${OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE}'`,
 			),
 		);
 	}
@@ -268,6 +279,21 @@ export async function explicitRegistration(
 	if (responsePayload.iss !== (discovery.entityId as string)) {
 		return err(
 			federationError(FederationErrorCode.InvalidIssuer, "Response iss does not match OP"),
+		);
+	}
+
+	if (responsePayload.sub === undefined) {
+		return err(
+			federationError(
+				FederationErrorCode.InvalidSubject,
+				"Registration response missing required 'sub' claim",
+			),
+		);
+	}
+
+	if (responsePayload.sub !== (rpConfig.entityId as string)) {
+		return err(
+			federationError(FederationErrorCode.InvalidSubject, "Response sub does not match RP"),
 		);
 	}
 
@@ -378,6 +404,49 @@ export async function explicitRegistration(
 		}
 	}
 
+	if (responsePayload.client_secret !== undefined) {
+		return err(
+			federationError(
+				FederationErrorCode.InvalidMetadata,
+				"Registration response client_secret MUST be under metadata.openid_relying_party",
+			),
+		);
+	}
+
+	const registeredMetadata = responseMeta.openid_relying_party;
+	if (
+		!registeredMetadata ||
+		typeof registeredMetadata !== "object" ||
+		Array.isArray(registeredMetadata)
+	) {
+		return err(
+			federationError(
+				FederationErrorCode.InvalidMetadata,
+				"Registration response metadata MUST contain openid_relying_party",
+			),
+		);
+	}
+
+	const clientId = registeredMetadata.client_id;
+	if (typeof clientId !== "string") {
+		return err(
+			federationError(
+				FederationErrorCode.InvalidMetadata,
+				"Registration response metadata.openid_relying_party.client_id is required",
+			),
+		);
+	}
+
+	const clientSecret = registeredMetadata.client_secret;
+	if (clientSecret !== undefined && typeof clientSecret !== "string") {
+		return err(
+			federationError(
+				FederationErrorCode.InvalidMetadata,
+				"Registration response metadata.openid_relying_party.client_secret MUST be a string",
+			),
+		);
+	}
+
 	if (
 		responsePayload.jwks !== undefined &&
 		JSON.stringify(responsePayload.jwks) !== JSON.stringify(keySet.jwks)
@@ -390,21 +459,17 @@ export async function explicitRegistration(
 		);
 	}
 
-	const registeredMetadata = responseMeta.openid_relying_party ?? responseMeta;
-
-	const clientSecret = responsePayload.client_secret as string | undefined;
-
 	// RP must not use the registration past trust chain expiry
 	const trustChainExpiresAt = discovery.trustChain.expiresAt;
 
 	const result: ExplicitRegistrationResult = {
 		registrationStatement: decoded.value,
-		clientId: (responsePayload.sub as string) ?? (rpConfig.entityId as string),
+		clientId,
 		expiresAt: responsePayload.exp as number,
 		registeredMetadata,
 		trustChainExpiresAt,
 	};
-	if (clientSecret) {
+	if (clientSecret !== undefined) {
 		return ok({ ...result, clientSecret });
 	}
 	return ok(result);

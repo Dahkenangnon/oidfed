@@ -583,6 +583,11 @@ export default (QUnit: QUnit) => {
 				exp: erp_now + 3600,
 				trust_anchor: "https://ta.example.com",
 				authority_hints: ["https://intermediate.example.com"],
+				metadata: {
+					openid_relying_party: {
+						client_id: "client-123",
+					},
+				},
 			};
 			test("accepts valid registration response", (t) => {
 				t.true(ExplicitRegistrationResponsePayloadSchema.safeParse(validResp).success);
@@ -591,11 +596,44 @@ export default (QUnit: QUnit) => {
 				const { trust_anchor: _, ...v } = validResp;
 				t.false(ExplicitRegistrationResponsePayloadSchema.safeParse(v).success);
 			});
-			test("accepts optional client_secret", (t) => {
+			test("accepts nested client_secret", (t) => {
 				t.true(
 					ExplicitRegistrationResponsePayloadSchema.safeParse({
 						...validResp,
+						metadata: {
+							openid_relying_party: {
+								client_id: "client-123",
+								client_secret: "secret123",
+							},
+						},
+					}).success,
+				);
+			});
+			test("rejects top-level client_secret", (t) => {
+				t.false(
+					ExplicitRegistrationResponsePayloadSchema.safeParse({
+						...validResp,
 						client_secret: "secret123",
+					}).success,
+				);
+			});
+			test("requires response metadata", (t) => {
+				const { metadata: _, ...v } = validResp;
+				t.false(ExplicitRegistrationResponsePayloadSchema.safeParse(v).success);
+			});
+			test("requires openid_relying_party response metadata", (t) => {
+				t.false(
+					ExplicitRegistrationResponsePayloadSchema.safeParse({
+						...validResp,
+						metadata: { oauth_client: { client_id: "client-123" } },
+					}).success,
+				);
+			});
+			test("requires response metadata client_id", (t) => {
+				t.false(
+					ExplicitRegistrationResponsePayloadSchema.safeParse({
+						...validResp,
+						metadata: { openid_relying_party: { response_types: ["code"] } },
 					}).success,
 				);
 			});
@@ -1378,6 +1416,10 @@ export default (QUnit: QUnit) => {
 		async function explicitRegistrationWithResponse(
 			responsePayload: Record<string, unknown>,
 			configOverrides?: Partial<RpConfig>,
+			responseOptions?: {
+				readonly status?: number;
+				readonly contentType?: string | null;
+			},
 		) {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
@@ -1395,9 +1437,16 @@ export default (QUnit: QUnit) => {
 							? input.toString()
 							: (input as Request).url;
 				if (new URL(url).pathname === "/federation_registration") {
+					const headers = new Headers();
+					if (responseOptions?.contentType !== null) {
+						headers.set(
+							"Content-Type",
+							responseOptions?.contentType ?? OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE,
+						);
+					}
 					return new Response(responseJwt, {
-						status: 200,
-						headers: { "Content-Type": OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE },
+						status: responseOptions?.status ?? 200,
+						headers,
 					});
 				}
 				return fed.httpClient(input);
@@ -1557,6 +1606,72 @@ export default (QUnit: QUnit) => {
 				t.equal(result.value.clientId, LEAF_ID);
 				t.ok(result.value.registeredMetadata);
 				t.ok(result.value.expiresAt > 0);
+			}
+		});
+
+		test("returns clientId from response metadata instead of response sub", async (t) => {
+			const result = await explicitRegistrationWithResponse(
+				explicitRegistrationResponseBase({
+					metadata: {
+						openid_relying_party: {
+							client_id: "op-issued-client-id",
+							redirect_uris: ["https://rp.example.com/callback"],
+						},
+					},
+				}),
+			);
+			t.true(isOk(result), isErr(result) ? result.error.description : undefined);
+			if (isOk(result)) {
+				t.equal(result.value.clientId, "op-issued-client-id");
+				t.equal(result.value.registeredMetadata.client_id, "op-issued-client-id");
+			}
+		});
+
+		test("fails if explicit registration response status is not exactly 200", async (t) => {
+			const result = await explicitRegistrationWithResponse(
+				explicitRegistrationResponseBase(),
+				undefined,
+				{ status: 201 },
+			);
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.ok(/HTTP 201/.test(result.error.description), result.error.description);
+			}
+		});
+
+		test("fails if explicit registration response Content-Type is missing", async (t) => {
+			const result = await explicitRegistrationWithResponse(
+				explicitRegistrationResponseBase(),
+				undefined,
+				{ contentType: null },
+			);
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.ok(/Content-Type/.test(result.error.description), result.error.description);
+			}
+		});
+
+		test("fails if explicit registration response Content-Type is wrong", async (t) => {
+			const result = await explicitRegistrationWithResponse(
+				explicitRegistrationResponseBase(),
+				undefined,
+				{ contentType: "application/entity-statement+jwt" },
+			);
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.ok(/Content-Type/.test(result.error.description), result.error.description);
+			}
+		});
+
+		test("fails if explicit registration response Content-Type has parameters", async (t) => {
+			const result = await explicitRegistrationWithResponse(
+				explicitRegistrationResponseBase(),
+				undefined,
+				{ contentType: `${OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE}; charset=utf-8` },
+			);
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.ok(/Content-Type/.test(result.error.description), result.error.description);
 			}
 		});
 
@@ -1767,6 +1882,18 @@ export default (QUnit: QUnit) => {
 			t.true(isErr(result));
 			if (isErr(result)) {
 				t.ok(/metadata/i.test(result.error.description), result.error.description);
+			}
+		});
+
+		test("fails if response metadata.openid_relying_party.client_id is missing", async (t) => {
+			const result = await explicitRegistrationWithResponse(
+				explicitRegistrationResponseBase({
+					metadata: { openid_relying_party: { response_types: ["code"] } },
+				}),
+			);
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.ok(/client_id/i.test(result.error.description), result.error.description);
 			}
 		});
 
@@ -2042,6 +2169,25 @@ export default (QUnit: QUnit) => {
 			}
 		});
 
+		test("fails if response sub is missing", async (t) => {
+			const { sub: _, ...payload } = explicitRegistrationResponseBase();
+			const result = await explicitRegistrationWithResponse(payload);
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.ok(/sub/i.test(result.error.description), result.error.description);
+			}
+		});
+
+		test("fails if response sub does not match RP", async (t) => {
+			const result = await explicitRegistrationWithResponse(
+				explicitRegistrationResponseBase({ sub: "https://other-rp.example.com" }),
+			);
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.ok(/sub/i.test(result.error.description), result.error.description);
+			}
+		});
+
 		test("fails if response aud does not match RP", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
@@ -2206,46 +2352,30 @@ export default (QUnit: QUnit) => {
 			}
 		});
 
-		test("returns clientSecret if present in response", async (t) => {
-			const fed = await createMockFederation();
-			const discovery = await createMockDiscovery(OP_ID, fed);
-			const { config } = await createRpConfig({});
-			const now = Math.floor(Date.now() / 1000);
-			const secretResponseJwt = await signEntityStatement(
-				{
-					iss: OP_ID,
-					sub: LEAF_ID,
-					aud: LEAF_ID,
-					iat: now,
-					exp: now + 86400,
-					trust_anchor: TA_ID,
-					authority_hints: [TA_ID],
-					client_secret: "super-secret-123",
-					metadata: { openid_relying_party: { client_id: LEAF_ID } },
-				},
-				new JwkSigner(fed.opSigningKey),
-				{ typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
+		test("returns clientSecret from nested response metadata", async (t) => {
+			const result = await explicitRegistrationWithResponse(
+				explicitRegistrationResponseBase({
+					metadata: {
+						openid_relying_party: {
+							client_id: LEAF_ID,
+							client_secret: "super-secret-123",
+						},
+					},
+				}),
 			);
-			const httpClient = async (input: string | URL | Request) => {
-				const url =
-					typeof input === "string"
-						? input
-						: input instanceof URL
-							? input.toString()
-							: (input as Request).url;
-				if (new URL(url).pathname === "/federation_registration")
-					return new Response(secretResponseJwt, {
-						status: 200,
-						headers: { "Content-Type": OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE },
-					});
-				return fed.httpClient(input);
-			};
-			const result = await explicitRegistration(discovery, config, fed.trustAnchors, {
-				httpClient,
-			});
 			t.true(isOk(result));
 			if (isOk(result)) {
 				t.equal(result.value.clientSecret, "super-secret-123");
+			}
+		});
+
+		test("fails if response uses top-level client_secret", async (t) => {
+			const result = await explicitRegistrationWithResponse(
+				explicitRegistrationResponseBase({ client_secret: "super-secret-123" }),
+			);
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.ok(/client_secret/i.test(result.error.description), result.error.description);
 			}
 		});
 	});
@@ -4665,10 +4795,14 @@ export default (QUnit: QUnit) => {
 
 			test("emits client_secret when generateClientSecret hook returns a value", async (t) => {
 				const fed = await createMockFederation();
+				let capturedClientSecret: string | undefined;
 				const config = await createHandlerConfig({
 					trustAnchors: fed.trustAnchors,
 					options: fed.options,
 					generateClientSecret: async () => "secret-abc",
+					onRegistration: async (_sub, _metadata, clientSecret) => {
+						capturedClientSecret = clientSecret;
+					},
 				});
 				const handler = createExplicitRegistrationHandler(config);
 				const rpKeys = await generateSigningKey("ES256");
@@ -4689,7 +4823,12 @@ export default (QUnit: QUnit) => {
 				const decoded = decodeEntityStatement(await res.text());
 				t.true(isOk(decoded));
 				if (!isOk(decoded)) return;
-				t.equal((decoded.value.payload as Record<string, unknown>).client_secret, "secret-abc");
+				const payload = decoded.value.payload as Record<string, unknown>;
+				const metadata = payload.metadata as Record<string, unknown>;
+				const rpMeta = metadata.openid_relying_party as Record<string, unknown>;
+				t.equal(payload.client_secret, undefined);
+				t.equal(rpMeta.client_secret, "secret-abc");
+				t.equal(capturedClientSecret, "secret-abc");
 			});
 
 			test("omits client_secret when hook returns undefined", async (t) => {
@@ -4718,7 +4857,11 @@ export default (QUnit: QUnit) => {
 				const decoded = decodeEntityStatement(await res.text());
 				t.true(isOk(decoded));
 				if (!isOk(decoded)) return;
-				t.notOk((decoded.value.payload as Record<string, unknown>).client_secret);
+				const payload = decoded.value.payload as Record<string, unknown>;
+				const metadata = payload.metadata as Record<string, unknown>;
+				const rpMeta = metadata.openid_relying_party as Record<string, unknown>;
+				t.equal(payload.client_secret, undefined);
+				t.equal(rpMeta.client_secret, undefined);
 			});
 		});
 

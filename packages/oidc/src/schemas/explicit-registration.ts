@@ -46,15 +46,38 @@ export const ExplicitRegistrationResponsePayloadSchema = z
 		aud: z.string(),
 		iat: z.number().int().positive(),
 		exp: z.number().int().positive(),
-		metadata: z.record(z.string(), z.record(z.string(), z.unknown())).optional(),
+		metadata: z.record(z.string(), z.record(z.string(), z.unknown())),
 		trust_anchor: EntityIdSchema,
 		authority_hints: z.array(EntityIdSchema).length(1),
-		client_secret: z.string().optional(),
 	})
 	.refine((obj) => obj.exp > obj.iat, {
 		message: "exp must be after iat",
 		path: ["exp"],
-	});
+	})
+	.refine((obj) => !("client_secret" in obj), {
+		message: "client_secret MUST be nested under metadata.openid_relying_party",
+		path: ["client_secret"],
+	})
+	.refine(
+		(obj) => {
+			const rpMeta = obj.metadata.openid_relying_party;
+			return rpMeta !== undefined && typeof rpMeta === "object" && !Array.isArray(rpMeta);
+		},
+		{
+			message: "metadata.openid_relying_party is required",
+			path: ["metadata", "openid_relying_party"],
+		},
+	)
+	.refine(
+		(obj) => {
+			const rpMeta = obj.metadata.openid_relying_party;
+			return typeof rpMeta?.client_id === "string";
+		},
+		{
+			message: "metadata.openid_relying_party.client_id is required",
+			path: ["metadata", "openid_relying_party", "client_id"],
+		},
+	);
 
 export type ExplicitRegistrationRequestPayload = z.infer<
 	typeof ExplicitRegistrationRequestPayloadSchema
