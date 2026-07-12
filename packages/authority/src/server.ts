@@ -76,6 +76,24 @@ export interface ExtendedListInProcessResult {
 	next_entity_id?: string;
 }
 
+function assertTrustAnchorHintsConfig(config: AuthorityConfig, isTrustAnchor: boolean): void {
+	if (config.trustAnchorHints !== undefined && config.trustAnchorHints.length === 0) {
+		throw new InvalidAuthorityConfig("trustAnchorHints must be a non-empty array when provided.");
+	}
+	for (const hint of config.trustAnchorHints ?? []) {
+		if (!isValidEntityId(hint)) {
+			throw new InvalidAuthorityConfig(
+				`trustAnchorHint '${hint}' is not a valid Entity Identifier; it must be an HTTPS URL without query or fragment.`,
+			);
+		}
+	}
+	if (isTrustAnchor && config.trustAnchorHints !== undefined) {
+		throw new InvalidAuthorityConfig(
+			"trustAnchorHints is only meaningful for an Intermediate Authority; Trust Anchor Entity Configurations must not contain trust_anchor_hints.",
+		);
+	}
+}
+
 export interface AuthorityConfig {
 	/** The entity identifier (URL) for this authority. */
 	entityId: EntityId | string;
@@ -104,6 +122,8 @@ export interface AuthorityConfig {
 	trustMarkDelegations?: Record<string, string>;
 	/** Superior authorities this entity is subordinate to. */
 	authorityHints?: readonly (EntityId | string)[];
+	/** Preferred trust anchors this entity hints to resolvers in its Entity Configuration. */
+	trustAnchorHints?: readonly (EntityId | string)[];
 	/** Trust anchors used for trust chain resolution (e.g., during registration). */
 	trustAnchors?: TrustAnchorSet;
 	/** TTL in seconds for the Entity Configuration JWT. */
@@ -171,6 +191,7 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 	}
 
 	const isTrustAnchor = (config.authorityHints?.length ?? 0) === 0;
+	assertTrustAnchorHintsConfig(config, isTrustAnchor);
 
 	// trust_mark_issuers / trust_mark_owners only have effect on a Trust Anchor's
 	// Entity Configuration. Refuse to construct an Intermediate that carries
@@ -237,6 +258,7 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 		base,
 		...[
 			config.authorityHints && { authorityHints: config.authorityHints },
+			config.trustAnchorHints && { trustAnchorHints: config.trustAnchorHints },
 			config.trustMarks && { trustMarks: config.trustMarks },
 			config.trustMarkIssuers && { trustMarkIssuers: config.trustMarkIssuers },
 			config.trustMarkOwners && { trustMarkOwners: config.trustMarkOwners },
@@ -644,6 +666,7 @@ export class TrustAnchor {
 		if (config.authorityHints !== undefined && config.authorityHints.length > 0) {
 			throw new Error("Trust Anchor MUST NOT have authorityHints");
 		}
+		assertTrustAnchorHintsConfig(config, true);
 		const normalizedConfig: AuthorityConfig = {
 			...config,
 			entityId: normalizeAuthorityEntityId(config.entityId),
@@ -764,6 +787,7 @@ export class Intermediate {
 		if (config.authorityHints === undefined || config.authorityHints.length === 0) {
 			throw new Error("Intermediate MUST have at least one authorityHint");
 		}
+		assertTrustAnchorHintsConfig(config, false);
 		const normalizedConfig: AuthorityConfig = {
 			...config,
 			entityId: normalizeAuthorityEntityId(config.entityId),

@@ -1,6 +1,6 @@
 # E2E Test Infrastructure
 
-End-to-end test infrastructure for `@oidfed/*`. Exercises all packages together over real HTTPS using spec-compliant entity identifiers (`*.ofed.test`).
+End-to-end test infrastructure for `@oidfed/*`. Exercises all packages together over real HTTPS using valid federation entity identifiers (`*.ofed.test`).
 
 ## Why
 

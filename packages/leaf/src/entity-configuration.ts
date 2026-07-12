@@ -31,6 +31,7 @@ export interface LeafConfig {
 	roles?: EntityRole[];
 	options?: FederationOptions;
 	trustMarks?: TrustMarkRef[];
+	trustAnchorHints?: readonly (EntityId | string)[];
 	entityConfigurationTtlSeconds?: number;
 	trustAnchors?: TrustAnchorSet;
 }
@@ -83,6 +84,16 @@ export class Leaf {
 			if (!isValidEntityId(hint)) {
 				throw new Error(
 					`authorityHint '${hint}' is not a valid Entity Identifier — MUST be HTTPS URL without query or fragment`,
+				);
+			}
+		}
+		if (config.trustAnchorHints !== undefined && config.trustAnchorHints.length === 0) {
+			throw new Error("trustAnchorHints MUST NOT be empty when provided");
+		}
+		for (const hint of config.trustAnchorHints ?? []) {
+			if (!isValidEntityId(hint)) {
+				throw new Error(
+					`trustAnchorHint '${hint}' is not a valid Entity Identifier — MUST be HTTPS URL without query or fragment`,
 				);
 			}
 		}
@@ -147,6 +158,7 @@ export class Leaf {
 			jwks: keySet.jwks,
 			metadata: this.metadata,
 			authorityHints: this.config.authorityHints,
+			...(this.config.trustAnchorHints ? { trustAnchorHints: this.config.trustAnchorHints } : {}),
 			...(this.config.trustMarks ? { trustMarks: this.config.trustMarks } : {}),
 			issuedAt: now,
 			ttlSeconds,

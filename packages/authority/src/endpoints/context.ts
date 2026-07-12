@@ -23,6 +23,8 @@ export interface HandlerContext {
 	readonly entityId: EntityId;
 	/** Superior authorities this entity is subordinate to. */
 	readonly authorityHints?: readonly [EntityId, ...EntityId[]];
+	/** Preferred trust anchors this entity hints to resolvers in its Entity Configuration. */
+	readonly trustAnchorHints?: readonly [EntityId, ...EntityId[]];
 	/** Federation-only signing key provider and lifecycle manager. */
 	readonly keyProvider: ManagedFederationKeyProvider;
 	/** Unified persistence adapter for all non-key authority state. */

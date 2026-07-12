@@ -1,6 +1,6 @@
 # `@oidfed/authority`
 
-Trust Anchor and Intermediate Authority operations — subordinate management, statement issuance, federation endpoint serving, and policy enforcement for the complete OpenID Federation 1.0/1.1 implementation.
+Trust Anchor and Intermediate Authority operations — subordinate management, statement issuance, federation endpoint serving, and policy enforcement for OpenID Federation 1.0/1.1 deployments.
 
 ## Overview
 
@@ -183,11 +183,12 @@ When constructing a `TrustAnchor` or `Intermediate`, you pass an `AuthorityConfi
 | Configuration Field | Type | Required | Description & Constraints |
 |:---|:---|:---|:---|
 | `entityId` | `EntityId \| string` | **Yes** | The entity identifier URL for this authority. Must be a valid HTTPS URL without query parameters or fragments. |
-| `metadata` | `object` | **Yes** | Metadata block published in the authority's self-signed configuration. Must include a `federation_entity` sub-object. No leaf value within the metadata may be `null`. |
+| `metadata` | `{ federation_entity: FederationEntityMetadata } & EntityStatementMetadata` | **Yes** | Structured object-valued metadata blocks published in the authority's self-signed configuration. Must include `federation_entity`; no leaf value within the metadata may be `null`. |
 | `storage` | `StorageAdapter` | **Yes** | Persistence adapter for subordinates, trust marks, cache, and replays. |
 | `keyProvider` | `ManagedFederationKeyProvider`| **Yes** | Key provider managing active federation signing keys and key history (e.g., `MemoryFederationKeyProvider` implements `ManagedFederationKeyProvider`). |
 | `clientKeyProvider` | `AuthorityClientKeyProvider` | No | Resolves public Federation Entity Keys for `private_key_jwt` federation endpoint callers. Defaults to `storage.subordinates.get(entityId)?.jwks`. |
 | `authorityHints` | `readonly (EntityId \| string)[]` | *Conditional* | List of superior authorities this entity is subordinate to. Must be `undefined` or omitted for a `TrustAnchor`. Must be a non-empty array for an `Intermediate`. |
+| `trustAnchorHints` | `readonly (EntityId \| string)[]` | No | Optional non-empty list of preferred trust anchors to publish as `trust_anchor_hints` for an `Intermediate`. Rejected on `TrustAnchor` configurations. |
 | `roles` | `EntityRole[]` | No | Optional composition roles (like OIDC Provider or Relying Party roles) bound to this entity context. |
 | `trustMarks` | `TrustMarkRef[]` | No | Trust marks this authority claims about itself in its Entity Configuration. |
 | `trustMarkIssuers` | `Record<string, string[]>` | No | Mapping of trust mark type URLs to authorized issuer entity IDs. Rejected on Intermediates (this implementation throws an error to enforce strict configuration separation, which is stricter than the spec's "MUST be ignored" rule). |

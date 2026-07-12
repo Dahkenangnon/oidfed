@@ -208,6 +208,20 @@ export default (QUnit: QUnit) => {
 			t.throws(() => new Leaf(config), /authorityHint/);
 		});
 
+		test("throws on empty trustAnchorHints", async (t) => {
+			const { config } = await createLeafConfig({
+				trustAnchorHints: [],
+			});
+			t.throws(() => new Leaf(config), /trustAnchorHints/);
+		});
+
+		test("rejects non-HTTPS trustAnchorHint — requires valid Entity Identifiers", async (t) => {
+			const { config } = await createLeafConfig({
+				trustAnchorHints: ["http://ta.example.com" as EntityId],
+			});
+			t.throws(() => new Leaf(config), /trustAnchorHint/);
+		});
+
 		test("throws when keyProvider is missing", async (t) => {
 			const { config } = await createLeafConfig({ keyProvider: undefined });
 			t.throws(() => new Leaf(config), /keyProvider/);
@@ -415,6 +429,18 @@ export default (QUnit: QUnit) => {
 			if (!decoded.ok) return;
 			const p = decoded.value.payload as Record<string, unknown>;
 			t.deepEqual(p.authority_hints, [TA_ID]);
+		});
+
+		test("includes trust_anchor_hints when configured", async (t) => {
+			const trustAnchorHint = entityId("https://preferred-ta.example.com");
+			const { config } = await createLeafConfig({ trustAnchorHints: [trustAnchorHint] });
+			const entity = new Leaf(config);
+			const jwt = await entity.getEntityConfiguration();
+			const decoded = decodeEntityStatement(jwt);
+			t.true(decoded.ok);
+			if (!decoded.ok) return;
+			const p = decoded.value.payload as Record<string, unknown>;
+			t.deepEqual(p.trust_anchor_hints, [trustAnchorHint]);
 		});
 
 		test("includes metadata", async (t) => {

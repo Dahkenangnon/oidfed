@@ -51,6 +51,9 @@ export async function buildEntityConfiguration(ctx: HandlerContext): Promise<str
 		...(ctx.authorityHints && ctx.authorityHints.length > 0
 			? { authorityHints: ctx.authorityHints }
 			: {}),
+		...(ctx.trustAnchorHints && ctx.trustAnchorHints.length > 0
+			? { trustAnchorHints: ctx.trustAnchorHints }
+			: {}),
 		...(ctx.trustMarks && ctx.trustMarks.length > 0 ? { trustMarks: ctx.trustMarks } : {}),
 		...(isTrustAnchor && ctx.trustMarkIssuers ? { trustMarkIssuers: ctx.trustMarkIssuers } : {}),
 		...(isTrustAnchor && ctx.trustMarkOwners ? { trustMarkOwners: ctx.trustMarkOwners } : {}),

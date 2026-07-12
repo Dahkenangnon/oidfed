@@ -1194,6 +1194,26 @@ export default (QUnit: QUnit) => {
 			t.deepEqual((decoded.value.payload as Record<string, unknown>).authority_hints, [superiorId]);
 		});
 
+		test("includes trust_anchor_hints for intermediates when configured", async (t) => {
+			const superiorId = entityId("https://ta.example.com");
+			const trustAnchorHint = entityId("https://preferred-ta.example.com");
+			const { ctx } = await createTestContext({
+				authorityHints: [superiorId],
+				trustAnchorHints: [trustAnchorHint],
+			});
+			const handler = createEntityConfigurationHandler(ctx);
+			const res = await handler(
+				new Request("https://authority.example.com/.well-known/openid-federation"),
+			);
+			const jwt = await res.text();
+			const decoded = decodeEntityStatement(jwt);
+			t.true(isOk(decoded));
+			if (!isOk(decoded)) return;
+			t.deepEqual((decoded.value.payload as Record<string, unknown>).trust_anchor_hints, [
+				trustAnchorHint,
+			]);
+		});
+
 		test("includes trust_mark_issuers when configured", async (t) => {
 			const issuers = { "https://trust.example.com/mark-a": ["https://issuer.example.com"] };
 			const { ctx } = await createTestContext({ trustMarkIssuers: issuers });
@@ -6090,6 +6110,27 @@ export default (QUnit: QUnit) => {
 			t.throws(() => createAuthorityServer(cfg), InvalidAuthorityConfig);
 		});
 
+		test("throws when trustAnchorHints is an explicit empty array", async (t) => {
+			const cfg = await baseConfig({
+				authorityHints: [PARENT],
+				trustAnchorHints: [],
+			});
+			t.throws(() => createAuthorityServer(cfg), InvalidAuthorityConfig);
+		});
+
+		test("throws when trustAnchorHints contains an invalid Entity Identifier", async (t) => {
+			const cfg = await baseConfig({
+				authorityHints: [PARENT],
+				trustAnchorHints: ["http://ta.example" as EntityId],
+			});
+			t.throws(() => createAuthorityServer(cfg), InvalidAuthorityConfig);
+		});
+
+		test("throws when Trust Anchor config carries trustAnchorHints", async (t) => {
+			const cfg = await baseConfig({ trustAnchorHints: [PARENT] });
+			t.throws(() => createAuthorityServer(cfg), InvalidAuthorityConfig);
+		});
+
 		test("throws when Intermediate config carries trustMarkIssuers", async (t) => {
 			const cfg = await baseConfig({
 				authorityHints: [PARENT],
@@ -6201,6 +6242,7 @@ export default (QUnit: QUnit) => {
 		async function setupServer(opts: {
 			id: EntityId;
 			authorityHints?: EntityId[];
+			trustAnchorHints?: EntityId[];
 			trustMarkIssuers?: Record<string, string[]>;
 			trustMarkOwners?: Record<string, { sub: string; jwks: { keys: JWK[] } }>;
 		}) {
@@ -6218,6 +6260,7 @@ export default (QUnit: QUnit) => {
 					},
 				},
 				...(opts.authorityHints !== undefined ? { authorityHints: opts.authorityHints } : {}),
+				...(opts.trustAnchorHints !== undefined ? { trustAnchorHints: opts.trustAnchorHints } : {}),
 				...(opts.trustMarkIssuers !== undefined ? { trustMarkIssuers: opts.trustMarkIssuers } : {}),
 				...(opts.trustMarkOwners !== undefined ? { trustMarkOwners: opts.trustMarkOwners } : {}),
 			} as AuthorityConfig;
@@ -6252,6 +6295,17 @@ export default (QUnit: QUnit) => {
 			const s = await setupServer({ id: INT_AUTH, authorityHints: [PARENT] });
 			const { payload } = await readEC(s, INT_AUTH);
 			t.deepEqual((payload as Record<string, unknown>).authority_hints, [PARENT]);
+		});
+
+		test("Intermediate EC includes trust_anchor_hints when configured", async (t) => {
+			const preferredAnchor = entityId("https://preferred-ta.example");
+			const s = await setupServer({
+				id: INT_AUTH,
+				authorityHints: [PARENT],
+				trustAnchorHints: [preferredAnchor],
+			});
+			const { payload } = await readEC(s, INT_AUTH);
+			t.deepEqual((payload as Record<string, unknown>).trust_anchor_hints, [preferredAnchor]);
 		});
 
 		test("EC payload has no constraints / metadata_policy / metadata_policy_crit / source_endpoint", async (t) => {

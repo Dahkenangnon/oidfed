@@ -1,6 +1,6 @@
 # End-to-End Wiring Guide
 
-Integration guide for `@oidfed/*` with Express.js and [`panva/node-oidc-provider`](https://github.com/panva/node-oidc-provider). Demonstrates a complete OpenID Federation deployment.
+Integration guide for `@oidfed/*` with Express.js and [`panva/node-oidc-provider`](https://github.com/panva/node-oidc-provider). Demonstrates a representative OpenID Federation deployment.
 
 ## Installation
 

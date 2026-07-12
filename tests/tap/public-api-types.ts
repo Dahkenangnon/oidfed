@@ -1,9 +1,12 @@
+import type { AuthorityConfig, StorageAdapter } from "@oidfed/authority";
 import {
 	type EntityStatementMetadata,
 	type FederationKeyProvider,
 	type FederationSigningKey,
 	type JWKSet,
+	type ManagedFederationKeyProvider,
 	MemoryFederationKeyProvider,
+	type TrustAnchorSet,
 } from "@oidfed/core";
 import type { LeafConfig } from "@oidfed/leaf";
 import type {
@@ -14,7 +17,10 @@ import type {
 } from "@oidfed/oidc";
 
 declare const federationKeyProvider: FederationKeyProvider;
+declare const managedFederationKeyProvider: ManagedFederationKeyProvider;
 declare const federationSigningKey: FederationSigningKey;
+declare const trustAnchors: TrustAnchorSet;
+declare const authorityStorage: StorageAdapter;
 
 const leafMetadata = {
 	federation_entity: { organization_name: "Example Leaf" },
@@ -24,10 +30,27 @@ const leafMetadata = {
 const leafConfig = {
 	entityId: "https://leaf.example.com",
 	authorityHints: ["https://ta.example.com"],
+	trustAnchorHints: ["https://preferred-ta.example.com"],
+	trustAnchors,
 	metadata: leafMetadata,
 	keyProvider: federationKeyProvider,
 } satisfies LeafConfig;
 void leafConfig;
+
+const intermediateAuthorityConfig = {
+	entityId: "https://authority.example.com",
+	authorityHints: ["https://ta.example.com"],
+	trustAnchorHints: ["https://preferred-ta.example.com"],
+	metadata: {
+		federation_entity: {
+			federation_fetch_endpoint: "https://authority.example.com/federation_fetch",
+			federation_list_endpoint: "https://authority.example.com/federation_list",
+		},
+	},
+	storage: authorityStorage,
+	keyProvider: managedFederationKeyProvider,
+} satisfies AuthorityConfig;
+void intermediateAuthorityConfig;
 
 const leafConfigWithScalarMetadata = {
 	entityId: "https://leaf.example.com",

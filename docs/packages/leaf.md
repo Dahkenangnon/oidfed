@@ -119,11 +119,13 @@ When constructing a `Leaf` entity, you pass a `LeafConfig` configuration object.
 |:---|:---|:---|:---|
 | `entityId` | `EntityId \| string` | **Yes** | The entity identifier URL for this leaf. Must be a valid HTTPS URL without query parameters or fragments. Normalizes trailing slashes. |
 | `authorityHints` | `readonly (EntityId \| string)[]` | **Yes** | Non-empty list of superior authority entity IDs this leaf is registered with. Every entry must be a valid HTTPS URL. |
+| `trustAnchorHints` | `readonly (EntityId \| string)[]` | No | Optional non-empty list of preferred trust anchors to publish as `trust_anchor_hints` in the Entity Configuration. Every entry must be a valid HTTPS URL. |
 | `metadata` | `EntityStatementMetadata` | **Yes** | Object-valued metadata blocks to publish, keyed by Entity Type Identifier. Must contain at least one Entity Type Identifier. The `federation_entity` block **must not** contain operational authority fields like `federation_fetch_endpoint` or `federation_list_endpoint`. |
 | `keyProvider` | `FederationKeyProvider` | **Yes** | Key provider managing active federation signing keys. |
 | `roles` | `EntityRole[]` | No | Composition roles (like OIDC Client/Provider roles) bound to this entity context. |
 | `options` | `FederationOptions` | No | Core federation options (e.g. clock configurations). |
 | `trustMarks` | `TrustMarkRef[]` | No | Trust marks this leaf claims about itself in its Entity Configuration. |
+| `trustAnchors` | `TrustAnchorSet` | No | Configured trust anchors made available to composed roles and discovery workflows. This field is not published in the Entity Configuration. |
 | `entityConfigurationTtlSeconds`| `number` | No | TTL in seconds for the self-signed Entity Configuration JWT. Must be positive if defined. Defaults to 86400 (24 hours). |
 
 ---

@@ -1,7 +1,7 @@
 {
 	"name": "@oidfed/core",
 	"version": "0.8.0",
-	"description": "Federation primitives for JavaScript — entity statements, trust chain resolution, metadata policy, and cryptographic verification. The foundational layer of the complete OpenID Federation 1.0 implementation.",
+	"description": "Federation primitives for JavaScript — entity statements, trust chain resolution, metadata policy, and cryptographic verification for OpenID Federation 1.0 deployments.",
 	"license": "Apache-2.0",
 	"author": "Justin Dah-kenangnon <dah.kenangnon@gmail.com>",
 	"repository": {

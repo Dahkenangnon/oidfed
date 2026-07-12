@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- `LeafConfig.trustAnchorHints` publishes preferred trust anchors as `trust_anchor_hints` in the Entity Configuration.
+
 ### Changed
 
 - `LeafConfig.metadata` now uses core object-valued Entity Statement metadata typing, and role metadata composition no longer mutates the caller-provided metadata object.
