@@ -259,6 +259,7 @@ export interface FedOidcProviderConfig {
 	readonly registrationResponseTtlSeconds?: number;
 	readonly registrationProtocolAdapter?: any;
 	readonly generateClientSecret?: (sub: EntityId) => Promise<string | undefined>;
+	/** Late pre-commit hook called after validation and response preparation, before `onRegistration`. */
 	readonly onRegistrationInvalidation?: (sub: EntityId) => Promise<void>;
 	readonly replayStore?: ReplayStore;
 	readonly onRegistration?: (
@@ -442,6 +443,7 @@ export interface FedOauthProviderConfig {
 	readonly registrationResponseTtlSeconds?: number;
 	readonly registrationProtocolAdapter?: any;
 	readonly generateClientSecret?: (sub: EntityId) => Promise<string | undefined>;
+	/** Late pre-commit hook called after validation and response preparation. */
 	readonly onRegistrationInvalidation?: (sub: EntityId) => Promise<void>;
 }
 

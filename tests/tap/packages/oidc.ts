@@ -4278,6 +4278,39 @@ export default (QUnit: QUnit) => {
 				t.equal(((await res.json()) as Record<string, string>).error, "invalid_metadata");
 			});
 
+			test("does not invalidate registration when adapter validation rejects metadata", async (t) => {
+				let invalidated = false;
+				const rejectingAdapter: RegistrationProtocolAdapter = {
+					validateClientMetadata: () =>
+						err(federationError(FederationErrorCode.InvalidMetadata, "Bad RP metadata")),
+					enrichResponseMetadata: (meta) => meta,
+				};
+				const { config } = await createFederatedHandlerFixture({
+					registrationProtocolAdapter: rejectingAdapter,
+					onRegistrationInvalidation: async () => {
+						invalidated = true;
+					},
+				});
+				const handler = createExplicitRegistrationHandler(config);
+				const rpKeys = await generateSigningKey("ES256");
+				const jwt = await buildRegistrationRequest(
+					LEAF_ID,
+					HANDLER_ENTITY_ID as string,
+					rpKeys.privateKey,
+					rpKeys.publicKey as unknown as Record<string, unknown>,
+				);
+				const res = await handler(
+					new Request(`${HANDLER_ENTITY_ID}/federation_registration`, {
+						method: "POST",
+						headers: { "Content-Type": MediaType.EntityStatement },
+						body: jwt,
+					}),
+				);
+				t.equal(res.status, 400);
+				t.equal(((await res.json()) as Record<string, string>).error, "invalid_metadata");
+				t.false(invalidated);
+			});
+
 			test("succeeds without adapter (federation-only)", async (t) => {
 				const { config } = await createFederatedHandlerFixture();
 				const handler = createExplicitRegistrationHandler(config);
@@ -4357,11 +4390,14 @@ export default (QUnit: QUnit) => {
 				t.equal(res.status, 400);
 			});
 
-			test("calls onRegistrationInvalidation hook", async (t) => {
-				let invalidatedSub: string | undefined;
+			test("calls onRegistrationInvalidation before onRegistration on success", async (t) => {
+				const events: string[] = [];
 				const { config } = await createFederatedHandlerFixture({
 					onRegistrationInvalidation: async (sub) => {
-						invalidatedSub = sub as string;
+						events.push(`invalidate:${sub}`);
+					},
+					onRegistration: async (sub) => {
+						events.push(`register:${sub}`);
 					},
 				});
 				const handler = createExplicitRegistrationHandler(config);
@@ -4380,7 +4416,66 @@ export default (QUnit: QUnit) => {
 					}),
 				);
 				t.equal(res.status, 200);
-				t.equal(invalidatedSub, LEAF_ID);
+				t.deepEqual(events, [`invalidate:${LEAF_ID}`, `register:${LEAF_ID}`]);
+			});
+
+			test("does not call onRegistration when invalidation hook fails", async (t) => {
+				let registered = false;
+				const { config } = await createFederatedHandlerFixture({
+					onRegistrationInvalidation: async () => {
+						throw new Error("secret invalidation failure");
+					},
+					onRegistration: async () => {
+						registered = true;
+					},
+				});
+				const handler = createExplicitRegistrationHandler(config);
+				const rpKeys = await generateSigningKey("ES256");
+				const jwt = await buildRegistrationRequest(
+					LEAF_ID,
+					HANDLER_ENTITY_ID as string,
+					rpKeys.privateKey,
+					rpKeys.publicKey as unknown as Record<string, unknown>,
+				);
+				const res = await handler(
+					new Request(`${HANDLER_ENTITY_ID}/federation_registration`, {
+						method: "POST",
+						headers: { "Content-Type": MediaType.EntityStatement },
+						body: jwt,
+					}),
+				);
+				t.equal(res.status, 500);
+				t.false(registered);
+				const body = (await res.json()) as Record<string, string>;
+				t.equal(body.error, FederationErrorCode.ServerError);
+				t.false((body.error_description ?? "").includes("secret invalidation failure"));
+			});
+
+			test("returns sanitized server_error when registration hook fails", async (t) => {
+				const { config } = await createFederatedHandlerFixture({
+					onRegistration: async () => {
+						throw new Error("secret registration failure");
+					},
+				});
+				const handler = createExplicitRegistrationHandler(config);
+				const rpKeys = await generateSigningKey("ES256");
+				const jwt = await buildRegistrationRequest(
+					LEAF_ID,
+					HANDLER_ENTITY_ID as string,
+					rpKeys.privateKey,
+					rpKeys.publicKey as unknown as Record<string, unknown>,
+				);
+				const res = await handler(
+					new Request(`${HANDLER_ENTITY_ID}/federation_registration`, {
+						method: "POST",
+						headers: { "Content-Type": MediaType.EntityStatement },
+						body: jwt,
+					}),
+				);
+				t.equal(res.status, 500);
+				const body = (await res.json()) as Record<string, string>;
+				t.equal(body.error, FederationErrorCode.ServerError);
+				t.false((body.error_description ?? "").includes("secret registration failure"));
 			});
 		});
 

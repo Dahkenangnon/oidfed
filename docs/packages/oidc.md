@@ -207,7 +207,7 @@ Configuration parameters used to instantiate `FedOidcProvider` and `FedOauthProv
 | `registrationResponseTtlSeconds`| `number` | No | TTL in seconds for signed explicit registration responses. Capped by RP trust chain validity. |
 | `registrationProtocolAdapter` | `RegistrationProtocolAdapter`| No | Pluggable adapter to customize metadata schema validations and response enrichments. |
 | `generateClientSecret` | `(sub: EntityId) => Promise<string>`| No | Hook called to issue a client secret for confidential Relying Parties. |
-| `onRegistrationInvalidation` | `(sub: EntityId) => Promise<void>`| No | Hook called before registration responses are signed to clear historical registries. |
+| `onRegistrationInvalidation` | `(sub: EntityId) => Promise<void>`| No | Late pre-commit hook called after validation and response preparation, immediately before `onRegistration`. |
 
 ### `FedOauthResourceConfig`
 Configuration parameters used to instantiate `FedOauthResource` facades.

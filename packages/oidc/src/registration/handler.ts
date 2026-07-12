@@ -52,7 +52,7 @@ export interface ExplicitRegistrationHandlerConfig {
 	readonly registrationProtocolAdapter?: RegistrationProtocolAdapter;
 	/** Optional generator producing a client_secret embedded in the response. Returning undefined omits the field. */
 	readonly generateClientSecret?: (sub: EntityId) => Promise<string | undefined>;
-	/** Optional invalidation hook fired before each (re-)registration response is produced. */
+	/** Optional late pre-commit hook fired after response preparation and before `onRegistration`. */
 	readonly onRegistrationInvalidation?: (sub: EntityId) => Promise<void>;
 	/** Optional callback fired when dynamic registration completes successfully. */
 	readonly onRegistration?: (
@@ -306,10 +306,6 @@ export function createExplicitRegistrationHandler(
 			peerResolvedOpMetadata = peerValidation.value.resolvedMetadata.openid_provider ?? {};
 		}
 
-		if (config.onRegistrationInvalidation) {
-			await config.onRegistrationInvalidation(rpEntityId);
-		}
-
 		const adapterContext =
 			peerResolvedOpMetadata !== undefined ? { peerResolvedOpMetadata } : undefined;
 
@@ -403,17 +399,29 @@ export function createExplicitRegistrationHandler(
 			typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE,
 		});
 
+		if (config.onRegistrationInvalidation) {
+			try {
+				await config.onRegistrationInvalidation(rpEntityId);
+			} catch {
+				return errorResponse(500, FederationErrorCode.ServerError, "Registration hook failed");
+			}
+		}
+
 		if (config.onRegistration) {
 			const metadataRecord = responsePayload.metadata as Record<string, unknown>;
 			const clientMetadata = (metadataRecord?.openid_relying_party ?? {}) as Record<
 				string,
 				unknown
 			>;
-			await config.onRegistration(
-				rpEntityId,
-				clientMetadata,
-				responsePayload.client_secret as string | undefined,
-			);
+			try {
+				await config.onRegistration(
+					rpEntityId,
+					clientMetadata,
+					responsePayload.client_secret as string | undefined,
+				);
+			} catch {
+				return errorResponse(500, FederationErrorCode.ServerError, "Registration hook failed");
+			}
 		}
 
 		return jwtResponse(responseJwt, OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE);
