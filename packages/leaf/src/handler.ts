@@ -15,8 +15,10 @@ export function createLeafHandler(entity: Leaf, options?: FederationOptions): Fe
 	return async (request: Request): Promise<Response> => {
 		const url = new URL(request.url);
 		const pathname = url.pathname;
+		const basePath = new URL(entity.entityId).pathname.replace(/\/$/, "");
+		const wellKnownPath = `${basePath}${WELL_KNOWN_OPENID_FEDERATION}`;
 
-		if (pathname === WELL_KNOWN_OPENID_FEDERATION) {
+		if (pathname === wellKnownPath) {
 			const methodError = requireMethod(request, "GET");
 			if (methodError) return methodError;
 

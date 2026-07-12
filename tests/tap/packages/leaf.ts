@@ -328,6 +328,7 @@ export default (QUnit: QUnit) => {
 				entityId: "https://rp.example.com/" as EntityId,
 			});
 			const entity = new Leaf(config);
+			t.equal(entity.entityId, "https://rp.example.com");
 			const jwt = await entity.getEntityConfiguration();
 			const decoded = decodeEntityStatement(jwt);
 			t.true(decoded.ok);
@@ -624,6 +625,38 @@ export default (QUnit: QUnit) => {
 			t.equal(response.headers.get("content-type"), "application/entity-statement+jwt");
 			const body = await response.text();
 			t.equal(body.split(".").length, 3);
+		});
+
+		test("serves path-based Entity Identifier at derived well-known path", async (t) => {
+			const pathEntityId = entityId("https://rp.example.com/tenant");
+			const { config } = await createLeafConfig({ entityId: pathEntityId });
+			const entity = new Leaf(config);
+			const response = await entity.handleRequest(
+				new Request(`${pathEntityId}${WELL_KNOWN_OPENID_FEDERATION}`),
+			);
+			t.equal(response.status, 200);
+			const jwt = await response.text();
+			const decoded = decodeEntityStatement(jwt);
+			t.true(isOk(decoded));
+			if (!isOk(decoded)) return;
+			t.equal(decoded.value.payload.iss, pathEntityId);
+			t.equal(decoded.value.payload.sub, pathEntityId);
+		});
+
+		test("normalizes trailing slash before deriving well-known route", async (t) => {
+			const { config } = await createLeafConfig({
+				entityId: "https://rp.example.com/tenant/" as EntityId,
+			});
+			const entity = new Leaf(config);
+			t.equal(entity.entityId, "https://rp.example.com/tenant");
+			const response = await entity.handleRequest(
+				new Request("https://rp.example.com/tenant/.well-known/openid-federation"),
+			);
+			t.equal(response.status, 200);
+			const rootResponse = await entity.handleRequest(
+				new Request("https://rp.example.com/.well-known/openid-federation"),
+			);
+			t.equal(rootResponse.status, 404);
 		});
 
 		test("returns 405 for POST to well-known path", async (t) => {

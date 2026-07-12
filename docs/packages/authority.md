@@ -202,6 +202,10 @@ When constructing a `TrustAnchor` or `Intermediate`, you pass an `AuthorityConfi
 
 Federation endpoint `private_key_jwt` authentication verifies the remote caller's assertion with keys returned by `clientKeyProvider`. If omitted, the authority uses the caller Entity Identifier to read the subordinate record from `storage.subordinates` and uses that record's `jwks`. Configure a custom provider when caller keys live in an external registry or key service; invalid, missing, or mismatched keys fail closed.
 
+Authorities normalize only their own configured `entityId` by removing a trailing `/`. The Entity Configuration HTTP route is then derived from that normalized Entity Identifier path: `https://ta.example.org/tenant` serves `https://ta.example.org/tenant/.well-known/openid-federation`, while `https://ta.example.org` serves `https://ta.example.org/.well-known/openid-federation`.
+
+Federation endpoint HTTP routes are derived from the paths advertised in `metadata.federation_entity`, not from fixed defaults. For example, advertising `federation_fetch_endpoint: "https://ta.example.org/custom/fetch"` mounts fetch handling at `/custom/fetch`. Optional endpoints are mounted only when their corresponding endpoint URL is advertised. Endpoint URLs must use HTTPS, must not contain fragments, and their route paths must be distinct.
+
 ### Extended Listing Config Options
 The `extendedListing` configuration object supports the following fields:
 - `enabled` (`boolean`): Whether the `/federation_extended_list` endpoint is active. Defaults to `true`.

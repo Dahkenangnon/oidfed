@@ -81,6 +81,11 @@ Federation endpoint `private_key_jwt` authentication uses `AuthorityConfig.clien
 to resolve a caller's public Federation Entity Keys. Omit it to use the default
 subordinate-storage lookup: `storage.subordinates.get(entityId)?.jwks`.
 
+HTTP routes follow the URLs advertised in `metadata.federation_entity`. The
+Entity Configuration route is derived from the configured Entity Identifier path,
+and fetch/list/optional federation endpoints are served on the advertised
+endpoint URL paths.
+
 ## Documentation
 
 For a detailed API reference, subordinate management APIs, and unified storage adapter setups, see the [docs/packages/authority.md](https://github.com/Dahkenangnon/oidfed/blob/main/docs/packages/authority.md) file.

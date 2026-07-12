@@ -4710,6 +4710,33 @@ export default (QUnit: QUnit) => {
 			};
 		}
 
+		function withFederationEntityMetadata(
+			config: AuthorityConfig,
+			federationEntity: Record<string, unknown>,
+		): AuthorityConfig {
+			return {
+				...config,
+				metadata: {
+					...config.metadata,
+					federation_entity: {
+						...config.metadata.federation_entity,
+						...federationEntity,
+					},
+				},
+			};
+		}
+
+		function withOptionalServerEndpoints(config: AuthorityConfig): AuthorityConfig {
+			return withFederationEntityMetadata(config, {
+				federation_extended_list_endpoint: `${SERVER_AUTHORITY_ID}${FederationEndpoint.ExtendedList}`,
+				federation_historical_keys_endpoint: `${SERVER_AUTHORITY_ID}${FederationEndpoint.HistoricalKeys}`,
+				federation_resolve_endpoint: `${SERVER_AUTHORITY_ID}${FederationEndpoint.Resolve}`,
+				federation_trust_mark_endpoint: `${SERVER_AUTHORITY_ID}${FederationEndpoint.TrustMark}`,
+				federation_trust_mark_list_endpoint: `${SERVER_AUTHORITY_ID}${FederationEndpoint.TrustMarkList}`,
+				federation_trust_mark_status_endpoint: `${SERVER_AUTHORITY_ID}${FederationEndpoint.TrustMarkStatus}`,
+			});
+		}
+
 		module("authority / createAuthorityServer", (hooks) => {
 			let srvStorage: MemoryStorageAdapter;
 			let srvKeyProvider: MemoryFederationKeyProvider;
@@ -4747,6 +4774,39 @@ export default (QUnit: QUnit) => {
 					if (!isOk(decoded)) return;
 					t.equal(decoded.value.payload.iss, SERVER_AUTHORITY_ID);
 					t.equal(decoded.value.payload.sub, SERVER_AUTHORITY_ID);
+				});
+
+				test("TrustAnchor normalizes trailing slash for facade and Entity Configuration", async (t) => {
+					const trustAnchor = new TrustAnchor({
+						...srvConfig,
+						entityId: `${SERVER_AUTHORITY_ID}/`,
+					});
+					t.equal(trustAnchor.entityId, SERVER_AUTHORITY_ID);
+					const jwt = await trustAnchor.getEntityConfiguration();
+					const decoded = decodeEntityStatement(jwt);
+					t.true(isOk(decoded));
+					if (!isOk(decoded)) return;
+					t.equal(decoded.value.payload.iss, SERVER_AUTHORITY_ID);
+					t.equal(decoded.value.payload.sub, SERVER_AUTHORITY_ID);
+				});
+
+				test("Intermediate normalizes trailing slash for facade and Entity Configuration", async (t) => {
+					const parent = entityId("https://parent.example.com");
+					const intermediateConfig: AuthorityConfig = {
+						...srvConfig,
+						entityId: `${SERVER_AUTHORITY_ID}/`,
+						authorityHints: [parent],
+					};
+					delete intermediateConfig.trustMarkIssuers;
+					const intermediate = new Intermediate(intermediateConfig);
+					t.equal(intermediate.entityId, SERVER_AUTHORITY_ID);
+					const jwt = await intermediate.getEntityConfiguration();
+					const decoded = decodeEntityStatement(jwt);
+					t.true(isOk(decoded));
+					if (!isOk(decoded)) return;
+					t.equal(decoded.value.payload.iss, SERVER_AUTHORITY_ID);
+					t.equal(decoded.value.payload.sub, SERVER_AUTHORITY_ID);
+					t.deepEqual(decoded.value.payload.authority_hints, [parent.toString()]);
 				});
 
 				test("getSubordinateStatement returns signed JWT", async (t) => {
@@ -4874,6 +4934,52 @@ export default (QUnit: QUnit) => {
 					t.equal(res.headers.get("Content-Type"), "application/entity-statement+jwt");
 				});
 
+				test("serves path-based authority Entity Configuration at derived well-known path", async (t) => {
+					const pathAuthorityId = entityId("https://authority.example.com/tenant");
+					const server = createAuthorityServer({
+						...srvConfig,
+						entityId: pathAuthorityId,
+						metadata: {
+							federation_entity: {
+								federation_fetch_endpoint: `${pathAuthorityId}/federation_fetch`,
+								federation_list_endpoint: `${pathAuthorityId}/federation_list`,
+							},
+						},
+						trustMarkIssuers: { [SERVER_MARK_TYPE]: [pathAuthorityId] },
+					});
+					const handler = server.handler();
+					const res = await handler(
+						new Request(`${pathAuthorityId}${WELL_KNOWN_OPENID_FEDERATION}`),
+					);
+					t.equal(res.status, 200);
+					const jwt = await res.text();
+					const decoded = decodeEntityStatement(jwt);
+					t.true(isOk(decoded));
+					if (!isOk(decoded)) return;
+					t.equal(decoded.value.payload.iss, pathAuthorityId);
+					t.equal(decoded.value.payload.sub, pathAuthorityId);
+				});
+
+				test("does not serve path-based authority Entity Configuration at root well-known path", async (t) => {
+					const pathAuthorityId = entityId("https://authority.example.com/tenant");
+					const server = createAuthorityServer({
+						...srvConfig,
+						entityId: pathAuthorityId,
+						metadata: {
+							federation_entity: {
+								federation_fetch_endpoint: `${pathAuthorityId}/federation_fetch`,
+								federation_list_endpoint: `${pathAuthorityId}/federation_list`,
+							},
+						},
+						trustMarkIssuers: { [SERVER_MARK_TYPE]: [pathAuthorityId] },
+					});
+					const handler = server.handler();
+					const res = await handler(
+						new Request(`https://authority.example.com${WELL_KNOWN_OPENID_FEDERATION}`),
+					);
+					t.equal(res.status, 404);
+				});
+
 				test("routes to fetch endpoint", async (t) => {
 					await srvSubordinates.add(makeServerRecord(SERVER_SUB1));
 					const server = createAuthorityServer(srvConfig);
@@ -4896,8 +5002,54 @@ export default (QUnit: QUnit) => {
 					t.equal(res.headers.get("Content-Type"), "application/json");
 				});
 
+				test("routes fetch and list through advertised metadata paths", async (t) => {
+					await srvSubordinates.add(makeServerRecord(SERVER_SUB1));
+					const server = createAuthorityServer(
+						withFederationEntityMetadata(srvConfig, {
+							federation_fetch_endpoint: `${SERVER_AUTHORITY_ID}/custom/fetch`,
+							federation_list_endpoint: `${SERVER_AUTHORITY_ID}/custom/list`,
+						}),
+					);
+					const handler = server.handler();
+					const fetchRes = await handler(
+						new Request(
+							`${SERVER_AUTHORITY_ID}/custom/fetch?sub=${encodeURIComponent(SERVER_SUB1)}`,
+						),
+					);
+					t.equal(fetchRes.status, 200);
+					const listRes = await handler(new Request(`${SERVER_AUTHORITY_ID}/custom/list`));
+					t.equal(listRes.status, 200);
+					const oldFetchRes = await handler(
+						new Request(
+							`${SERVER_AUTHORITY_ID}${FederationEndpoint.Fetch}?sub=${encodeURIComponent(SERVER_SUB1)}`,
+						),
+					);
+					t.equal(oldFetchRes.status, 404);
+				});
+
+				test("routes optional endpoints through advertised metadata paths", async (t) => {
+					const server = createAuthorityServer(
+						withFederationEntityMetadata(srvConfig, {
+							federation_resolve_endpoint: `${SERVER_AUTHORITY_ID}/custom/resolve`,
+						}),
+					);
+					const handler = server.handler();
+					const customRes = await handler(
+						new Request(
+							`${SERVER_AUTHORITY_ID}/custom/resolve?sub=${encodeURIComponent(SERVER_SUB1)}`,
+						),
+					);
+					t.equal(customRes.status, 400);
+					const fixedRes = await handler(
+						new Request(
+							`${SERVER_AUTHORITY_ID}${FederationEndpoint.Resolve}?sub=${encodeURIComponent(SERVER_SUB1)}`,
+						),
+					);
+					t.equal(fixedRes.status, 404);
+				});
+
 				test("routes to historical keys endpoint", async (t) => {
-					const server = createAuthorityServer(srvConfig);
+					const server = createAuthorityServer(withOptionalServerEndpoints(srvConfig));
 					const handler = server.handler();
 					const res = await handler(
 						new Request(`${SERVER_AUTHORITY_ID}${FederationEndpoint.HistoricalKeys}`),
@@ -4907,7 +5059,7 @@ export default (QUnit: QUnit) => {
 				});
 
 				test("routes to trust mark status endpoint", async (t) => {
-					const server = createAuthorityServer(srvConfig);
+					const server = createAuthorityServer(withOptionalServerEndpoints(srvConfig));
 					const handler = server.handler();
 					const res = await handler(
 						new Request(`${SERVER_AUTHORITY_ID}${FederationEndpoint.TrustMarkStatus}`, {
@@ -4920,7 +5072,7 @@ export default (QUnit: QUnit) => {
 				});
 
 				test("routes to trust mark list endpoint", async (t) => {
-					const server = createAuthorityServer(srvConfig);
+					const server = createAuthorityServer(withOptionalServerEndpoints(srvConfig));
 					const handler = server.handler();
 					const res = await handler(
 						new Request(
@@ -4931,7 +5083,7 @@ export default (QUnit: QUnit) => {
 				});
 
 				test("routes to trust mark endpoint — returns 404 when no trust mark exists", async (t) => {
-					const server = createAuthorityServer(srvConfig);
+					const server = createAuthorityServer(withOptionalServerEndpoints(srvConfig));
 					const handler = server.handler();
 					const res = await handler(
 						new Request(
@@ -4942,7 +5094,7 @@ export default (QUnit: QUnit) => {
 				});
 
 				test("routes to trust mark endpoint — returns 200 when trust mark exists", async (t) => {
-					const server = createAuthorityServer(srvConfig);
+					const server = createAuthorityServer(withOptionalServerEndpoints(srvConfig));
 					await server.issueTrustMark(SERVER_SUB1, SERVER_MARK_TYPE);
 					const handler = server.handler();
 					const res = await handler(
@@ -4954,7 +5106,7 @@ export default (QUnit: QUnit) => {
 				});
 
 				test("routes to resolve endpoint", async (t) => {
-					const server = createAuthorityServer(srvConfig);
+					const server = createAuthorityServer(withOptionalServerEndpoints(srvConfig));
 					const handler = server.handler();
 					const res = await handler(
 						new Request(
@@ -5971,6 +6123,30 @@ export default (QUnit: QUnit) => {
 				metadata: {
 					federation_entity: {
 						federation_fetch_endpoint: `${SPEC_ENTITY}/federation_fetch`,
+					},
+				},
+			});
+			t.throws(() => createAuthorityServer(cfg), InvalidAuthorityConfig);
+		});
+
+		test("throws when an advertised federation endpoint URL is not HTTPS", async (t) => {
+			const cfg = await baseConfig({
+				metadata: {
+					federation_entity: {
+						federation_fetch_endpoint: "http://acme.example/federation_fetch",
+						federation_list_endpoint: `${SPEC_ENTITY}/federation_list`,
+					},
+				},
+			});
+			t.throws(() => createAuthorityServer(cfg), InvalidAuthorityConfig);
+		});
+
+		test("throws when advertised federation endpoint paths collide", async (t) => {
+			const cfg = await baseConfig({
+				metadata: {
+					federation_entity: {
+						federation_fetch_endpoint: `${SPEC_ENTITY}/same-endpoint`,
+						federation_list_endpoint: `${SPEC_ENTITY}/same-endpoint`,
 					},
 				},
 			});

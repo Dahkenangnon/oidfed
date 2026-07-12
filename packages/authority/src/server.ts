@@ -148,9 +148,7 @@ export interface AuthorityServer {
 
 /** Creates a federation authority server with all spec-defined endpoints. */
 export function createAuthorityServer(config: AuthorityConfig): AuthorityServer {
-	if (!isValidEntityId(config.entityId)) {
-		throw new Error("entityId MUST be a valid HTTPS URL without query or fragment");
-	}
+	const normalizedEntityId = normalizeAuthorityEntityId(config.entityId);
 
 	const ttlFields = [
 		["entityConfigurationTtlSeconds", config.entityConfigurationTtlSeconds],
@@ -193,17 +191,20 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 	// Any Authority (Trust Anchor or Intermediate) MUST publish a fetch endpoint
 	// and a list endpoint in its own Entity Configuration. Refuse to start an
 	// authority that doesn't advertise either.
-	const fedEntity = config.metadata.federation_entity as Record<string, unknown> | undefined;
-	if (!fedEntity || typeof fedEntity.federation_fetch_endpoint !== "string") {
+	const fedEntity = config.metadata.federation_entity as FederationEntityMetadata | undefined;
+	if (!fedEntity) {
 		throw new InvalidAuthorityConfig(
 			"metadata.federation_entity.federation_fetch_endpoint is required for an Authority. Set it to the URL where this server serves the fetch endpoint.",
 		);
 	}
-	if (typeof fedEntity.federation_list_endpoint !== "string") {
-		throw new InvalidAuthorityConfig(
-			"metadata.federation_entity.federation_list_endpoint is required for an Authority. Set it to the URL where this server serves the list endpoint.",
-		);
-	}
+	const fetchEndpointPath = requireAdvertisedEndpointPath(
+		"federation_fetch_endpoint",
+		fedEntity.federation_fetch_endpoint,
+	);
+	const listEndpointPath = requireAdvertisedEndpointPath(
+		"federation_list_endpoint",
+		fedEntity.federation_list_endpoint,
+	);
 	const advertisedTrustMarkEndpoints = [
 		fedEntity.federation_trust_mark_endpoint,
 		fedEntity.federation_trust_mark_status_endpoint,
@@ -222,7 +223,7 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 		config.clientKeyProvider ?? createStorageBackedClientKeyProvider(config.storage);
 
 	const base: HandlerContext = {
-		entityId: config.entityId,
+		entityId: normalizedEntityId,
 		keyProvider: config.keyProvider,
 		storage: config.storage,
 		clientKeyProvider,
@@ -275,39 +276,75 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 	const trustMarkIssuanceHandler = createTrustMarkIssuanceHandler(ctx);
 	const resolveHandler = createResolveHandler(ctx);
 
-	const routeMap = new Map<string, (request: Request) => Promise<Response>>([
-		[WELL_KNOWN_OPENID_FEDERATION, ecHandler], // Entity Configuration — never authenticated
-		[FederationEndpoint.Fetch, withAuth(fetchHandler, meta.federation_fetch_endpoint_auth_methods)],
-		[FederationEndpoint.List, withAuth(listHandler, meta.federation_list_endpoint_auth_methods)],
-		[
-			FederationEndpoint.ExtendedList,
-			withAuth(extendedListHandler, meta.federation_extended_list_endpoint_auth_methods),
-		],
-		[
-			FederationEndpoint.HistoricalKeys,
-			withAuth(historicalKeysHandler, meta.federation_historical_keys_endpoint_auth_methods),
-		],
-		[
-			FederationEndpoint.TrustMarkStatus,
-			withAuth(
-				trustMarkStatusHandler,
-				meta.federation_trust_mark_status_endpoint_auth_methods,
-				"POST",
-			),
-		],
-		[
-			FederationEndpoint.TrustMarkList,
-			withAuth(trustMarkListHandler, meta.federation_trust_mark_list_endpoint_auth_methods),
-		],
-		[
-			FederationEndpoint.TrustMark,
-			withAuth(trustMarkHandler, meta.federation_trust_mark_endpoint_auth_methods),
-		],
-		[
-			FederationEndpoint.Resolve,
-			withAuth(resolveHandler, meta.federation_resolve_endpoint_auth_methods),
-		],
-	]);
+	const routeMap = new Map<string, (request: Request) => Promise<Response>>();
+	const routeNames = new Map<string, string>();
+	addAuthorityRoute(
+		routeMap,
+		routeNames,
+		"entity configuration",
+		wellKnownPathForEntityId(normalizedEntityId),
+		ecHandler,
+	);
+	addAuthorityRoute(
+		routeMap,
+		routeNames,
+		"federation_fetch_endpoint",
+		fetchEndpointPath,
+		withAuth(fetchHandler, meta.federation_fetch_endpoint_auth_methods),
+	);
+	addAuthorityRoute(
+		routeMap,
+		routeNames,
+		"federation_list_endpoint",
+		listEndpointPath,
+		withAuth(listHandler, meta.federation_list_endpoint_auth_methods),
+	);
+	addOptionalAuthorityRoute(
+		routeMap,
+		routeNames,
+		"federation_extended_list_endpoint",
+		meta.federation_extended_list_endpoint,
+		withAuth(extendedListHandler, meta.federation_extended_list_endpoint_auth_methods),
+	);
+	addOptionalAuthorityRoute(
+		routeMap,
+		routeNames,
+		"federation_historical_keys_endpoint",
+		meta.federation_historical_keys_endpoint,
+		withAuth(historicalKeysHandler, meta.federation_historical_keys_endpoint_auth_methods),
+	);
+	addOptionalAuthorityRoute(
+		routeMap,
+		routeNames,
+		"federation_trust_mark_status_endpoint",
+		meta.federation_trust_mark_status_endpoint,
+		withAuth(
+			trustMarkStatusHandler,
+			meta.federation_trust_mark_status_endpoint_auth_methods,
+			"POST",
+		),
+	);
+	addOptionalAuthorityRoute(
+		routeMap,
+		routeNames,
+		"federation_trust_mark_list_endpoint",
+		meta.federation_trust_mark_list_endpoint,
+		withAuth(trustMarkListHandler, meta.federation_trust_mark_list_endpoint_auth_methods),
+	);
+	addOptionalAuthorityRoute(
+		routeMap,
+		routeNames,
+		"federation_trust_mark_endpoint",
+		meta.federation_trust_mark_endpoint,
+		withAuth(trustMarkHandler, meta.federation_trust_mark_endpoint_auth_methods),
+	);
+	addOptionalAuthorityRoute(
+		routeMap,
+		routeNames,
+		"federation_resolve_endpoint",
+		meta.federation_resolve_endpoint,
+		withAuth(resolveHandler, meta.federation_resolve_endpoint_auth_methods),
+	);
 
 	const router = async (request: Request): Promise<Response> => {
 		// Strip X-Authenticated-Entity to prevent spoofing — the auth wrapper re-adds it after verification
@@ -364,7 +401,7 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 		async listSubordinatesExtended(
 			params?: ExtendedListInProcessParams,
 		): Promise<Result<ExtendedListInProcessResult, FederationError>> {
-			const url = new URL(FederationEndpoint.ExtendedList, config.entityId);
+			const url = new URL(FederationEndpoint.ExtendedList, normalizedEntityId);
 			if (params?.fromEntityId !== undefined) {
 				url.searchParams.set("from_entity_id", params.fromEntityId);
 			}
@@ -414,7 +451,7 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 		},
 
 		async resolveEntity(sub: EntityId, _ta?: EntityId): Promise<string> {
-			const baseUrl = config.entityId;
+			const baseUrl = normalizedEntityId;
 			const url = new URL(FederationEndpoint.Resolve, baseUrl);
 			url.searchParams.set("sub", sub);
 			if (_ta) url.searchParams.set("trust_anchor", _ta);
@@ -429,7 +466,7 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 
 		async getTrustMarkStatus(trustMark: string): Promise<TrustMarkStatusResponsePayload> {
 			const req = new Request(
-				new URL(FederationEndpoint.TrustMarkStatus, config.entityId).toString(),
+				new URL(FederationEndpoint.TrustMarkStatus, normalizedEntityId).toString(),
 				{
 					method: "POST",
 					headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -450,7 +487,7 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 		},
 
 		async listTrustMarkedEntities(trustMarkType: string): Promise<string[]> {
-			const url = new URL(FederationEndpoint.TrustMarkList, config.entityId);
+			const url = new URL(FederationEndpoint.TrustMarkList, normalizedEntityId);
 			url.searchParams.set("trust_mark_type", trustMarkType);
 			const req = new Request(url.toString());
 			const res = await trustMarkListHandler(req);
@@ -458,7 +495,7 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 		},
 
 		async issueTrustMark(sub: string, trustMarkType: string): Promise<string> {
-			const url = new URL(FederationEndpoint.TrustMark, config.entityId);
+			const url = new URL(FederationEndpoint.TrustMark, normalizedEntityId);
 			url.searchParams.set("trust_mark_type", trustMarkType);
 			url.searchParams.set("sub", sub);
 			const req = new Request(url.toString());
@@ -473,7 +510,7 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 		async issueTrustMarkDelegation(subject: string, trustMarkType: string): Promise<string> {
 			const keySet = await ctx.keyProvider.getFederationKeySet();
 			const params: Parameters<typeof signTrustMarkDelegation>[0] = {
-				issuer: config.entityId,
+				issuer: normalizedEntityId,
 				subject,
 				trustMarkType,
 				signer: keySet.signer,
@@ -501,6 +538,91 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 	};
 }
 
+function normalizeAuthorityEntityId(value: EntityId | string): EntityId {
+	const normalized = value.endsWith("/") ? value.slice(0, -1) : value;
+	if (!isValidEntityId(normalized)) {
+		throw new Error("entityId MUST be a valid HTTPS URL without query or fragment");
+	}
+	return normalized as EntityId;
+}
+
+function wellKnownPathForEntityId(value: EntityId): string {
+	const basePath = new URL(value).pathname.replace(/\/$/, "");
+	return `${basePath}${WELL_KNOWN_OPENID_FEDERATION}`;
+}
+
+function requireAdvertisedEndpointPath(endpointName: string, endpoint: unknown): string {
+	if (typeof endpoint !== "string") {
+		throw new InvalidAuthorityConfig(
+			`metadata.federation_entity.${endpointName} is required for an Authority.`,
+		);
+	}
+	const path = advertisedEndpointPath(endpointName, endpoint);
+	if (path === undefined) {
+		throw new InvalidAuthorityConfig(
+			`metadata.federation_entity.${endpointName} is required for an Authority.`,
+		);
+	}
+	return path;
+}
+
+function advertisedEndpointPath(endpointName: string, endpoint: unknown): string | undefined {
+	if (endpoint === undefined) {
+		return undefined;
+	}
+	if (typeof endpoint !== "string") {
+		throw new InvalidAuthorityConfig(
+			`metadata.federation_entity.${endpointName} must be an HTTPS URL without fragment.`,
+		);
+	}
+
+	let url: URL;
+	try {
+		url = new URL(endpoint);
+	} catch {
+		throw new InvalidAuthorityConfig(
+			`metadata.federation_entity.${endpointName} must be an HTTPS URL without fragment.`,
+		);
+	}
+	if (url.protocol !== "https:" || url.hash) {
+		throw new InvalidAuthorityConfig(
+			`metadata.federation_entity.${endpointName} must be an HTTPS URL without fragment.`,
+		);
+	}
+	return url.pathname;
+}
+
+function addAuthorityRoute(
+	routeMap: Map<string, (request: Request) => Promise<Response>>,
+	routeNames: Map<string, string>,
+	endpointName: string,
+	path: string,
+	handler: (request: Request) => Promise<Response>,
+): void {
+	const existingEndpoint = routeNames.get(path);
+	if (existingEndpoint !== undefined) {
+		throw new InvalidAuthorityConfig(
+			`Authority endpoint route path '${path}' is used by both ${existingEndpoint} and ${endpointName}. Advertise distinct endpoint URLs.`,
+		);
+	}
+	routeNames.set(path, endpointName);
+	routeMap.set(path, handler);
+}
+
+function addOptionalAuthorityRoute(
+	routeMap: Map<string, (request: Request) => Promise<Response>>,
+	routeNames: Map<string, string>,
+	endpointName: string,
+	endpoint: unknown,
+	handler: (request: Request) => Promise<Response>,
+): void {
+	const path = advertisedEndpointPath(endpointName, endpoint);
+	if (path === undefined) {
+		return;
+	}
+	addAuthorityRoute(routeMap, routeNames, endpointName, path, handler);
+}
+
 function createStorageBackedClientKeyProvider(storage: StorageAdapter): AuthorityClientKeyProvider {
 	return {
 		async getClientFederationJwks(entityId: EntityId) {
@@ -522,25 +644,26 @@ export class TrustAnchor {
 		if (config.authorityHints !== undefined && config.authorityHints.length > 0) {
 			throw new Error("Trust Anchor MUST NOT have authorityHints");
 		}
-		const rawEntityId = (
-			config.entityId.endsWith("/") ? config.entityId.slice(0, -1) : config.entityId
-		) as EntityId;
-		this.entityId = rawEntityId;
-		this.storage = config.storage;
+		const normalizedConfig: AuthorityConfig = {
+			...config,
+			entityId: normalizeAuthorityEntityId(config.entityId),
+		};
+		this.entityId = normalizedConfig.entityId as EntityId;
+		this.storage = normalizedConfig.storage;
 
 		const context: EntityContext = {
 			entityId: this.entityId,
-			keyProvider: config.keyProvider,
-			options: config.options,
-			...(config.trustAnchors ? { trustAnchors: config.trustAnchors } : {}),
+			keyProvider: normalizedConfig.keyProvider,
+			options: normalizedConfig.options,
+			...(normalizedConfig.trustAnchors ? { trustAnchors: normalizedConfig.trustAnchors } : {}),
 		};
 
-		if (config.roles) {
-			for (const role of config.roles) {
+		if (normalizedConfig.roles) {
+			for (const role of normalizedConfig.roles) {
 				if (role.initialize) {
 					role.initialize(context);
 				}
-				const metadataRecord = config.metadata as Record<string, unknown>;
+				const metadataRecord = normalizedConfig.metadata as Record<string, unknown>;
 				metadataRecord[role.type] = {
 					...(metadataRecord[role.type] as Record<string, unknown>),
 					...role.metadata,
@@ -554,7 +677,7 @@ export class TrustAnchor {
 			}
 		}
 
-		this.server = createAuthorityServer(config);
+		this.server = createAuthorityServer(normalizedConfig);
 	}
 
 	async getEntityConfiguration(): Promise<string> {
@@ -641,28 +764,29 @@ export class Intermediate {
 		if (config.authorityHints === undefined || config.authorityHints.length === 0) {
 			throw new Error("Intermediate MUST have at least one authorityHint");
 		}
-		const rawEntityId = (
-			config.entityId.endsWith("/") ? config.entityId.slice(0, -1) : config.entityId
-		) as EntityId;
-		this.entityId = rawEntityId;
-		this.storage = config.storage;
+		const normalizedConfig: AuthorityConfig = {
+			...config,
+			entityId: normalizeAuthorityEntityId(config.entityId),
+		};
+		this.entityId = normalizedConfig.entityId as EntityId;
+		this.storage = normalizedConfig.storage;
 
 		const context: EntityContext = {
 			entityId: this.entityId,
-			keyProvider: config.keyProvider,
-			options: config.options,
-			...(config.trustAnchors ? { trustAnchors: config.trustAnchors } : {}),
-			...(config.authorityHints
-				? { authorityHints: config.authorityHints as readonly EntityId[] }
+			keyProvider: normalizedConfig.keyProvider,
+			options: normalizedConfig.options,
+			...(normalizedConfig.trustAnchors ? { trustAnchors: normalizedConfig.trustAnchors } : {}),
+			...(normalizedConfig.authorityHints
+				? { authorityHints: normalizedConfig.authorityHints as readonly EntityId[] }
 				: {}),
 		};
 
-		if (config.roles) {
-			for (const role of config.roles) {
+		if (normalizedConfig.roles) {
+			for (const role of normalizedConfig.roles) {
 				if (role.initialize) {
 					role.initialize(context);
 				}
-				const metadataRecord = config.metadata as Record<string, unknown>;
+				const metadataRecord = normalizedConfig.metadata as Record<string, unknown>;
 				metadataRecord[role.type] = {
 					...(metadataRecord[role.type] as Record<string, unknown>),
 					...role.metadata,
@@ -676,7 +800,7 @@ export class Intermediate {
 			}
 		}
 
-		this.server = createAuthorityServer(config);
+		this.server = createAuthorityServer(normalizedConfig);
 	}
 
 	async getEntityConfiguration(): Promise<string> {

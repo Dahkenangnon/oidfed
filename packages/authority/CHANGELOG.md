@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Changed
 
 - Federation endpoint `private_key_jwt` authentication now resolves remote caller keys through `AuthorityConfig.clientKeyProvider`, defaulting to subordinate storage, instead of live trust-chain discovery.
+- Authority HTTP routing now derives the Entity Configuration path from the normalized Entity Identifier and federation endpoint routes from advertised metadata endpoint URLs.
 
 ## [0.8.0] - 2026-06-25
 

@@ -7357,6 +7357,21 @@ export default (QUnit: QUnit) => {
 			t.true(isOk(result));
 			t.equal(capturedUrl, "https://example.com/.well-known/openid-federation");
 		});
+		test("preserves path component when constructing well-known URL", async (t) => {
+			let capturedUrl = "";
+			const mockFetch = async (url: string | URL | Request) => {
+				capturedUrl = url.toString();
+				return new Response("jwt-token", {
+					status: 200,
+					headers: { "Content-Type": "application/entity-statement+jwt" },
+				});
+			};
+			const result = await fetchEntityConfiguration("https://example.com/tenant/" as EntityId, {
+				httpClient: mockFetch,
+			});
+			t.true(isOk(result));
+			t.equal(capturedUrl, "https://example.com/tenant/.well-known/openid-federation");
+		});
 		test("sets Accept header for entity-statement+jwt", async (t) => {
 			let capturedInit: RequestInit | undefined;
 			const mockFetch = async (_url: string | URL | Request, init?: RequestInit) => {
