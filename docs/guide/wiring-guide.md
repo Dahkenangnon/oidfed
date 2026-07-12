@@ -161,7 +161,7 @@ const keyProvider = new MemoryFederationKeyProvider(federationKey(federationKeyP
 
 // Trust Anchor keys for chain validation during registration
 const trustAnchors: TrustAnchorSet = new Map([
-  [entityId("https://edugain.geant.org"), { jwks: { keys: [taPublicKey] } }],
+  ["https://edugain.geant.org", { jwks: { keys: [taPublicKey] } }],
 ]);
 
 const swamid = new Intermediate({
@@ -210,7 +210,7 @@ const keyProvider = new MemoryFederationKeyProvider(federationKey(federationKeyP
 const storage = new MemoryStorageAdapter();
 
 const trustAnchors: TrustAnchorSet = new Map([
-  [entityId("https://edugain.geant.org"), { jwks: { keys: [taPublicKey] } }],
+  ["https://edugain.geant.org", { jwks: { keys: [taPublicKey] } }],
 ]);
 
 // --- Federation server (Entity Configuration + role endpoints) ---
@@ -347,7 +347,7 @@ const federationKeyProvider = new MemoryFederationKeyProvider(
 );
 
 const trustAnchors: TrustAnchorSet = new Map([
-  [entityId("https://edugain.geant.org"), { jwks: { keys: [taPublicKey] } }],
+  ["https://edugain.geant.org", { jwks: { keys: [taPublicKey] } }],
 ]);
 
 // Federation keys sign the RP Entity Configuration. Protocol keys sign

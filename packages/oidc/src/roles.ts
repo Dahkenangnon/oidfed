@@ -20,6 +20,7 @@ import {
 } from "./registration/automatic.js";
 import { type ExplicitRegistrationResult, explicitRegistration } from "./registration/explicit.js";
 import { createExplicitRegistrationHandler } from "./registration/handler.js";
+import { assertNonEmptyTrustAnchors } from "./registration/helpers.js";
 import {
 	type ProcessAutomaticRegistrationOptions,
 	type ProcessedRegistration,
@@ -254,6 +255,7 @@ export class FedOidcClient implements EntityRole {
 export interface FedOidcProviderConfig {
 	readonly registrationPath?: string;
 	readonly metadata?: Record<string, unknown>;
+	readonly trustAnchors?: TrustAnchorSet;
 	readonly registrationResponseTtlSeconds?: number;
 	readonly registrationProtocolAdapter?: any;
 	readonly generateClientSecret?: (sub: EntityId) => Promise<string | undefined>;
@@ -280,13 +282,16 @@ export class FedOidcProvider implements EntityRole {
 		this.context = context;
 		const registrationPath = this.config.registrationPath ?? "/registration";
 		const registrationUrl = new URL(registrationPath, context.entityId).toString();
+		const trustAnchors = assertNonEmptyTrustAnchors(
+			this.config.trustAnchors ?? context.trustAnchors,
+		);
 
 		this.metadata.federation_registration_endpoint = registrationUrl;
 
 		const handler = createExplicitRegistrationHandler({
 			opEntityId: context.entityId as EntityId,
 			keyProvider: context.keyProvider,
-			trustAnchors: (context as any).trustAnchors,
+			trustAnchors,
 			...(this.config.registrationResponseTtlSeconds !== undefined
 				? { registrationResponseTtlSeconds: this.config.registrationResponseTtlSeconds }
 				: {}),
@@ -319,7 +324,9 @@ export class FedOidcProvider implements EntityRole {
 		if (!replayStore) {
 			throw new Error("replayStore is required to process automatic registration.");
 		}
-		const trustAnchors = (this.context as any).trustAnchors ?? new Map();
+		const trustAnchors = assertNonEmptyTrustAnchors(
+			this.config.trustAnchors ?? this.context.trustAnchors,
+		);
 		const result = await processAutomaticRegistration(requestObjectJwt, trustAnchors, {
 			opEntityId: this.context.entityId as EntityId,
 			replayStore,
@@ -431,6 +438,7 @@ export class FedOauthClient implements EntityRole {
 export interface FedOauthProviderConfig {
 	readonly registrationPath?: string;
 	readonly metadata?: Record<string, unknown>;
+	readonly trustAnchors?: TrustAnchorSet;
 	readonly registrationResponseTtlSeconds?: number;
 	readonly registrationProtocolAdapter?: any;
 	readonly generateClientSecret?: (sub: EntityId) => Promise<string | undefined>;
@@ -451,13 +459,16 @@ export class FedOauthProvider implements EntityRole {
 		this.context = context;
 		const registrationPath = this.config.registrationPath ?? "/registration";
 		const registrationUrl = new URL(registrationPath, context.entityId).toString();
+		const trustAnchors = assertNonEmptyTrustAnchors(
+			this.config.trustAnchors ?? context.trustAnchors,
+		);
 
 		this.metadata.federation_registration_endpoint = registrationUrl;
 
 		const handler = createExplicitRegistrationHandler({
 			opEntityId: context.entityId as EntityId,
 			keyProvider: context.keyProvider,
-			trustAnchors: (context as any).trustAnchors,
+			trustAnchors,
 			...(this.config.registrationResponseTtlSeconds !== undefined
 				? { registrationResponseTtlSeconds: this.config.registrationResponseTtlSeconds }
 				: {}),

@@ -111,7 +111,7 @@ import { resolveTrustChains, validateTrustChain, createTrustAnchorSet, entityId 
 
 const trustAnchors = createTrustAnchorSet([
   {
-    entityId: entityId("https://ta.example.org"),
+    entityId: "https://ta.example.org",
     jwks: { keys: [taPublicKey] }
   }
 ]);

@@ -1,10 +1,11 @@
 /** Leaf entity class: Entity Configuration serving with caching and trust chain discovery. */
 import {
 	DEFAULT_ENTITY_STATEMENT_TTL_SECONDS,
-	discoverEntity,
+	discoverEntity as discoverEntityThroughTrustChain,
 	type EntityContext,
 	type EntityId,
 	type EntityRole,
+	entityId,
 	errorResponse,
 	type FederationKeyProvider,
 	type FederationOptions,
@@ -33,7 +34,13 @@ export interface LeafConfig {
 }
 
 export class Leaf {
-	static discoverEntity = discoverEntity;
+	static discoverEntity(
+		targetEntityId: EntityId | string,
+		trustAnchors: TrustAnchorSet,
+		options?: FederationOptions,
+	) {
+		return discoverEntityThroughTrustChain(entityId(targetEntityId), trustAnchors, options);
+	}
 
 	public readonly entityId: EntityId;
 	private readonly routes = new Map<string, (request: Request) => Promise<Response>>();

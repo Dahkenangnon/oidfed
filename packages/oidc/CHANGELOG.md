@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Changed
 
 - Public documentation now treats the root `@oidfed/oidc` runtime surface as role/class-owned. Low-level registration helpers, constants, validators, and schemas are implementation details; use `FedOidcClient`, `FedOidcProvider`, OAuth role classes, and type-only exports from the root package.
+- OP-side automatic and explicit registration now require a non-empty Trust Anchor set. Provider roles fail during initialization when neither the role config nor parent entity context supplies trust anchors.
 
 ## [0.8.0] - 2026-06-25
 

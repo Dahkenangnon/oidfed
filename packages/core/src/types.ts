@@ -93,13 +93,13 @@ export interface FederationOptions {
 	customPolicyOperators?: readonly PolicyOperatorDefinition[];
 }
 
-export type TrustAnchorSet = ReadonlyMap<EntityId, Readonly<{ jwks: JWKSet }>>;
+export type TrustAnchorSet = ReadonlyMap<string, Readonly<{ jwks: JWKSet }>>;
 
 /** Create a TrustAnchorSet from a list of trust anchor configurations. */
 export function createTrustAnchorSet(
-	anchors: ReadonlyArray<{ readonly entityId: EntityId; readonly jwks: JWKSet }>,
+	anchors: ReadonlyArray<{ readonly entityId: string; readonly jwks: JWKSet }>,
 ): TrustAnchorSet {
-	return new Map(anchors.map((a) => [a.entityId, { jwks: a.jwks }]));
+	return new Map(anchors.map((a) => [entityId(a.entityId), { jwks: a.jwks }]));
 }
 
 export interface TrustChain {

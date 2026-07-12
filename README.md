@@ -93,9 +93,14 @@ const ta = new TrustAnchor({
 });
 
 // 3. Create an Intermediate Authority composed with an OIDC Provider role
+const trustAnchors = new Map([
+  ["https://ta.example.org", { jwks: { keys: [taPublicKey] } }]
+]);
+
 const ia = new Intermediate({
   entityId: "https://ia.example.org",
   authorityHints: ["https://ta.example.org"],
+  trustAnchors,
   keyProvider: myIAKeyProvider,
   storage: new MemoryStorageAdapter(),
   metadata: {

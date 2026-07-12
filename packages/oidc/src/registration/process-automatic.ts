@@ -16,7 +16,7 @@ import {
 	verifyEntityStatement,
 } from "@oidfed/core";
 import { RequestObjectTyp } from "../constants.js";
-import { resolveAndValidateBestChain } from "./helpers.js";
+import { requireNonEmptyTrustAnchors, resolveAndValidateBestChain } from "./helpers.js";
 import { validateAutomaticRegistrationRequest } from "./validate-request-object.js";
 
 export interface ProcessedRegistration {
@@ -48,9 +48,13 @@ export interface ProcessAutomaticRegistrationOptions extends FederationOptions {
  */
 export async function processAutomaticRegistration(
 	requestObjectJwt: string,
-	trustAnchors: TrustAnchorSet,
+	trustAnchors: TrustAnchorSet | undefined,
 	options: ProcessAutomaticRegistrationOptions,
 ): Promise<Result<ProcessedRegistration, FederationError>> {
+	const trustAnchorsResult = requireNonEmptyTrustAnchors(trustAnchors);
+	if (!trustAnchorsResult.ok) return trustAnchorsResult;
+	const configuredTrustAnchors = trustAnchorsResult.value;
+
 	const validated = validateAutomaticRegistrationRequest(requestObjectJwt, {
 		opEntityId: options.opEntityId,
 		...(options.clockSkewSeconds !== undefined
@@ -61,7 +65,11 @@ export async function processAutomaticRegistration(
 	if (!validated.ok) return validated;
 
 	const rpEntityId = validated.value.rpEntityId;
-	const bestChainResult = await resolveAndValidateBestChain(rpEntityId, trustAnchors, options);
+	const bestChainResult = await resolveAndValidateBestChain(
+		rpEntityId,
+		configuredTrustAnchors,
+		options,
+	);
 	if (!bestChainResult.ok) return bestChainResult;
 	const bestChain = bestChainResult.value;
 
@@ -112,7 +120,11 @@ export async function processAutomaticRegistration(
 	let peerResolvedOpMetadata: Readonly<Record<string, unknown>> | undefined;
 	const peerHeader = validated.value.peerTrustChainHeader;
 	if (peerHeader && peerHeader.length > 0) {
-		const peerValidation = await validateTrustChain([...peerHeader], trustAnchors, options);
+		const peerValidation = await validateTrustChain(
+			[...peerHeader],
+			configuredTrustAnchors,
+			options,
+		);
 		if (!peerValidation.valid) {
 			return err(
 				federationError(

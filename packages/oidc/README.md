@@ -96,6 +96,9 @@ import { FedOidcProvider } from "@oidfed/oidc";
 const opEntity = new TrustAnchor({
   entityId: "https://op.example.com",
   keyProvider,
+  trustAnchors: new Map([
+    ["https://op.example.com", { jwks: { keys: [opFederationPublicKey] } }],
+  ]),
   storage: new MemoryStorageAdapter(),
   metadata: {
     federation_entity: {

@@ -85,17 +85,17 @@ Leaf entities can discover other entities in the federation and validate their t
 
 ```ts
 import { Leaf } from "@oidfed/leaf";
-import { createTrustAnchorSet, entityId, isOk } from "@oidfed/core";
+import { createTrustAnchorSet, isOk } from "@oidfed/core";
 
 const trustAnchors = createTrustAnchorSet([
   {
-    entityId: entityId("https://ta.example.org"),
+    entityId: "https://ta.example.org",
     jwks: { keys: [taPublicKey] }
   }
 ]);
 
 const result = await Leaf.discoverEntity(
-  entityId("https://op.example.com"),
+  "https://op.example.com",
   trustAnchors,
   { httpClient: fetch }
 );

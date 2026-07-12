@@ -1,5 +1,6 @@
 import {
 	type EntityId,
+	entityId,
 	err,
 	type FederationError,
 	FederationErrorCode,
@@ -17,6 +18,46 @@ import {
 /** Extracts `client_registration_types_supported` from OP metadata. */
 export function getRegistrationTypes(opMeta: Record<string, unknown> | undefined): string[] {
 	return (opMeta?.client_registration_types_supported as string[] | undefined) ?? [];
+}
+
+const REQUIRED_TRUST_ANCHORS_MESSAGE =
+	"OP-side registration requires a non-empty Trust Anchor set.";
+
+type TrustAnchorConfig = TrustAnchorSet extends ReadonlyMap<string, infer Config> ? Config : never;
+
+export function requireNonEmptyTrustAnchors(
+	trustAnchors: TrustAnchorSet | undefined,
+): Result<TrustAnchorSet, FederationError> {
+	if (!trustAnchors || trustAnchors.size === 0) {
+		return err(
+			federationError(FederationErrorCode.InvalidTrustChain, REQUIRED_TRUST_ANCHORS_MESSAGE),
+		);
+	}
+	const normalized = new Map<string, TrustAnchorConfig>();
+	for (const [anchorId, config] of trustAnchors) {
+		try {
+			normalized.set(entityId(anchorId), config);
+		} catch (cause) {
+			return err(
+				federationError(
+					FederationErrorCode.InvalidTrustChain,
+					`Invalid Trust Anchor entity ID '${anchorId}'.`,
+					cause,
+				),
+			);
+		}
+	}
+	return ok(normalized);
+}
+
+export function assertNonEmptyTrustAnchors(
+	trustAnchors: TrustAnchorSet | undefined,
+): TrustAnchorSet {
+	const result = requireNonEmptyTrustAnchors(trustAnchors);
+	if (!result.ok) {
+		throw new Error(result.error.description);
+	}
+	return result.value;
 }
 
 /**

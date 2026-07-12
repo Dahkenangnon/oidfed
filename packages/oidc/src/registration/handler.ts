@@ -28,6 +28,7 @@ import {
 } from "../constants.js";
 import { ExplicitRegistrationRequestPayloadSchema } from "../schemas/explicit-registration.js";
 import type { RegistrationProtocolAdapter } from "./adapter-types.js";
+import { assertNonEmptyTrustAnchors } from "./helpers.js";
 
 /** OIDC default values applied when the RP omits standard fields. */
 const OIDC_METADATA_DEFAULTS: Record<string, unknown> = {
@@ -41,8 +42,8 @@ export interface ExplicitRegistrationHandlerConfig {
 	readonly opEntityId: EntityId;
 	/** Federation-only signing key provider used for the signed registration response. */
 	readonly keyProvider: FederationKeyProvider;
-	/** Trust anchors for RP trust chain resolution. When absent, no chain is resolved and trust_anchor falls back to opEntityId. */
-	readonly trustAnchors?: TrustAnchorSet;
+	/** Non-empty trust anchors required for RP trust chain resolution. */
+	readonly trustAnchors: TrustAnchorSet;
 	/** TTL in seconds for the registration response JWT. Capped to chain expiry when a chain is resolved. */
 	readonly registrationResponseTtlSeconds?: number;
 	/** Optional protocol-specific adapter for metadata validation/enrichment. */
@@ -71,6 +72,8 @@ export interface ExplicitRegistrationHandlerConfig {
 export function createExplicitRegistrationHandler(
 	config: ExplicitRegistrationHandlerConfig,
 ): (request: Request) => Promise<Response> {
+	const trustAnchors = assertNonEmptyTrustAnchors(config.trustAnchors);
+
 	return async (request: Request) => {
 		const methodError = requireMethod(request, "POST");
 		if (methodError) return methodError;
@@ -245,54 +248,44 @@ export function createExplicitRegistrationHandler(
 		const rpEntityId = entityId(reqPayload.sub);
 		let bestChain: ValidatedTrustChain | undefined;
 
-		if (config.trustAnchors && config.trustAnchors.size > 0) {
-			if (trustChainHeader && trustChainHeader.length > 0) {
-				const headerValidation = await validateTrustChain(
-					trustChainHeader,
-					config.trustAnchors,
-					config.options,
-				);
-				if (headerValidation.valid) {
-					bestChain = headerValidation.chain;
-				}
-			}
-
-			if (!bestChain) {
-				const chainResult = await resolveTrustChains(
-					rpEntityId,
-					config.trustAnchors,
-					config.options,
-				);
-
-				const validChains: ValidatedTrustChain[] = [];
-				for (const chain of chainResult.chains) {
-					const result = await validateTrustChain(
-						chain.statements,
-						config.trustAnchors,
-						config.options,
-					);
-					if (result.valid) {
-						validChains.push(result.chain);
-					}
-				}
-
-				if (validChains.length === 0) {
-					return errorResponse(
-						403,
-						FederationErrorCode.InvalidTrustChain,
-						"No valid trust chains found for RP",
-					);
-				}
-
-				bestChain = shortestChain(validChains);
+		if (trustChainHeader && trustChainHeader.length > 0) {
+			const headerValidation = await validateTrustChain(
+				trustChainHeader,
+				trustAnchors,
+				config.options,
+			);
+			if (headerValidation.valid) {
+				bestChain = headerValidation.chain;
 			}
 		}
 
+		if (!bestChain) {
+			const chainResult = await resolveTrustChains(rpEntityId, trustAnchors, config.options);
+
+			const validChains: ValidatedTrustChain[] = [];
+			for (const chain of chainResult.chains) {
+				const result = await validateTrustChain(chain.statements, trustAnchors, config.options);
+				if (result.valid) {
+					validChains.push(result.chain);
+				}
+			}
+
+			if (validChains.length === 0) {
+				return errorResponse(
+					403,
+					FederationErrorCode.InvalidTrustChain,
+					"No valid trust chains found for RP",
+				);
+			}
+
+			bestChain = shortestChain(validChains);
+		}
+
 		let peerResolvedOpMetadata: Readonly<Record<string, unknown>> | undefined;
-		if (peerTrustChainHeader && peerTrustChainHeader.length > 0 && config.trustAnchors) {
+		if (peerTrustChainHeader && peerTrustChainHeader.length > 0) {
 			const peerValidation = await validateTrustChain(
 				peerTrustChainHeader,
-				config.trustAnchors,
+				trustAnchors,
 				config.options,
 			);
 			if (!peerValidation.valid) {
@@ -330,14 +323,7 @@ export function createExplicitRegistrationHandler(
 		const keySet = await config.keyProvider.getFederationKeySet();
 		const now = nowSeconds(config.options?.clock);
 
-		let trustAnchorId: string;
-		if (bestChain) {
-			trustAnchorId = bestChain.trustAnchorId as string;
-		} else if (config.trustAnchors && config.trustAnchors.size > 0) {
-			trustAnchorId = config.trustAnchors.keys().next().value as string;
-		} else {
-			trustAnchorId = config.opEntityId;
-		}
+		const trustAnchorId = bestChain.trustAnchorId as string;
 
 		const configuredTtl =
 			config.registrationResponseTtlSeconds ?? DEFAULT_ENTITY_STATEMENT_TTL_SECONDS;

@@ -16,7 +16,7 @@ import {
 	type TrustAnchorSet,
 	verifyEntityStatement,
 } from "@oidfed/core";
-import { resolveAndValidateBestChain } from "./helpers.js";
+import { requireNonEmptyTrustAnchors, resolveAndValidateBestChain } from "./helpers.js";
 import type { ProcessedRegistration } from "./process-automatic.js";
 
 export interface ProcessExplicitRegistrationOptions extends FederationOptions {
@@ -35,9 +35,13 @@ export interface ProcessExplicitRegistrationOptions extends FederationOptions {
 export async function processExplicitRegistration(
 	requestBody: string,
 	contentType: string,
-	trustAnchors: TrustAnchorSet,
+	trustAnchors: TrustAnchorSet | undefined,
 	options: ProcessExplicitRegistrationOptions,
 ): Promise<Result<ProcessedRegistration, FederationError>> {
+	const trustAnchorsResult = requireNonEmptyTrustAnchors(trustAnchors);
+	if (!trustAnchorsResult.ok) return trustAnchorsResult;
+	const configuredTrustAnchors = trustAnchorsResult.value;
+
 	if (contentType !== MediaType.EntityStatement && contentType !== MediaType.TrustChain) {
 		return err(
 			federationError(
@@ -196,7 +200,11 @@ export async function processExplicitRegistration(
 		);
 	}
 
-	const bestChainResult = await resolveAndValidateBestChain(rpEntityId, trustAnchors, options);
+	const bestChainResult = await resolveAndValidateBestChain(
+		rpEntityId,
+		configuredTrustAnchors,
+		options,
+	);
 	if (!bestChainResult.ok) return bestChainResult;
 	const bestChain = bestChainResult.value;
 	const resolvedRpMetadata = bestChain.resolvedMetadata.openid_relying_party ?? {};

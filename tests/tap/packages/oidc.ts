@@ -2275,6 +2275,32 @@ export default (QUnit: QUnit) => {
 			);
 		}
 
+		test("returns err when trust anchors are empty", async (t) => {
+			const result = await processAutomaticRegistration("not-a-request-object", new Map(), {
+				opEntityId: OP_ID,
+				replayStore: replayStore(),
+			});
+			t.false(result.ok);
+			if (result.ok) return;
+			t.equal(result.error.code, FederationErrorCode.InvalidTrustChain);
+			t.ok(result.error.description.includes("Trust Anchor"));
+		});
+
+		test("returns err when trust anchor IDs are invalid", async (t) => {
+			const result = await processAutomaticRegistration(
+				"not-a-request-object",
+				new Map([["http://ta.example.com", { jwks: { keys: [] } }]]),
+				{
+					opEntityId: OP_ID,
+					replayStore: replayStore(),
+				},
+			);
+			t.false(result.ok);
+			if (result.ok) return;
+			t.equal(result.error.code, FederationErrorCode.InvalidTrustChain);
+			t.ok(/Invalid Trust Anchor entity ID/.test(result.error.description));
+		});
+
 		test("returns ok for valid Request Object", async (t) => {
 			const fed = await createMockFederation();
 			const result = await processAutomaticRegistration(
@@ -2837,6 +2863,19 @@ export default (QUnit: QUnit) => {
 				signOpts(fed.leafSigningKey),
 			);
 		}
+
+		test("returns err when trust anchors are empty", async (t) => {
+			const result = await processExplicitRegistration(
+				"not-an-entity-statement",
+				MediaType.EntityStatement,
+				new Map(),
+				{ opEntityId: OP_ID },
+			);
+			t.false(result.ok);
+			if (result.ok) return;
+			t.equal(result.error.code, FederationErrorCode.InvalidTrustChain);
+			t.ok(result.error.description.includes("Trust Anchor"));
+		});
 
 		test("returns ok for valid explicit request", async (t) => {
 			const fed = await createMockFederation();
@@ -3679,8 +3718,19 @@ export default (QUnit: QUnit) => {
 			const baseConfig: ExplicitRegistrationHandlerConfig = {
 				opEntityId: HANDLER_ENTITY_ID,
 				keyProvider: new MemoryFederationKeyProvider(federationKey(opSigningKey)),
+				trustAnchors: new Map([[TA_ID, { jwks: { keys: [] } }]]),
 			};
 			return { ...baseConfig, ...overrides };
+		}
+
+		async function createFederatedHandlerFixture(overrides?: HandlerConfigOverrides) {
+			const fed = await createMockFederation();
+			const config = await createHandlerConfig({
+				trustAnchors: fed.trustAnchors,
+				options: fed.options,
+				...overrides,
+			});
+			return { config, fed };
 		}
 
 		async function buildRegistrationRequest(
@@ -3707,13 +3757,20 @@ export default (QUnit: QUnit) => {
 		}
 
 		module("oidc / createExplicitRegistrationHandler", () => {
+			test("requires non-empty trust anchors when constructed", async (t) => {
+				const missingTrustAnchors = await createHandlerConfig({ trustAnchors: undefined });
+				t.throws(() => createExplicitRegistrationHandler(missingTrustAnchors), /Trust Anchor/);
+
+				const emptyTrustAnchors = await createHandlerConfig({ trustAnchors: new Map() });
+				t.throws(() => createExplicitRegistrationHandler(emptyTrustAnchors), /Trust Anchor/);
+			});
+
 			test("accepts a valid explicit registration request", async (t) => {
-				const config = await createHandlerConfig();
+				const { config } = await createFederatedHandlerFixture();
 				const handler = createExplicitRegistrationHandler(config);
 				const rpKeys = await generateSigningKey("ES256");
-				const rpId = "https://rp.example.com";
 				const jwt = await buildRegistrationRequest(
-					rpId,
+					LEAF_ID,
 					HANDLER_ENTITY_ID as string,
 					rpKeys.privateKey,
 					rpKeys.publicKey as unknown as Record<string, unknown>,
@@ -3733,22 +3790,22 @@ export default (QUnit: QUnit) => {
 				if (!isOk(decoded)) return;
 				t.equal(decoded.value.header.typ, OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE);
 				t.equal(decoded.value.payload.iss, HANDLER_ENTITY_ID);
-				t.equal(decoded.value.payload.sub, rpId);
+				t.equal(decoded.value.payload.sub, LEAF_ID);
 				const payload = decoded.value.payload as Record<string, unknown>;
-				t.equal(payload.aud, rpId);
-				t.ok(payload.trust_anchor);
+				t.equal(payload.aud, LEAF_ID);
+				t.equal(payload.trust_anchor, TA_ID);
+				t.notEqual(payload.trust_anchor, HANDLER_ENTITY_ID);
 				t.ok(payload.authority_hints);
 				t.true(Array.isArray(payload.authority_hints));
 				t.equal((payload.authority_hints as string[]).length, 1);
 			});
 
 			test("response includes metadata with openid_relying_party and client_id", async (t) => {
-				const config = await createHandlerConfig();
+				const { config } = await createFederatedHandlerFixture();
 				const handler = createExplicitRegistrationHandler(config);
 				const rpKeys = await generateSigningKey("ES256");
-				const rpId = "https://rp.example.com";
 				const jwt = await buildRegistrationRequest(
-					rpId,
+					LEAF_ID,
 					HANDLER_ENTITY_ID as string,
 					rpKeys.privateKey,
 					rpKeys.publicKey as unknown as Record<string, unknown>,
@@ -3769,16 +3826,15 @@ export default (QUnit: QUnit) => {
 					Record<string, unknown>
 				>;
 				t.ok(meta.openid_relying_party);
-				t.equal(meta.openid_relying_party!.client_id, rpId);
+				t.equal(meta.openid_relying_party!.client_id, LEAF_ID);
 			});
 
 			test("response includes OIDC default values", async (t) => {
-				const config = await createHandlerConfig();
+				const { config } = await createFederatedHandlerFixture();
 				const handler = createExplicitRegistrationHandler(config);
 				const rpKeys = await generateSigningKey("ES256");
-				const rpId = "https://rp.example.com";
 				const jwt = await buildRegistrationRequest(
-					rpId,
+					LEAF_ID,
 					HANDLER_ENTITY_ID as string,
 					rpKeys.privateKey,
 					rpKeys.publicKey as unknown as Record<string, unknown>,
@@ -3819,12 +3875,11 @@ export default (QUnit: QUnit) => {
 			});
 
 			test("accepts application/trust-chain+json Content-Type", async (t) => {
-				const config = await createHandlerConfig();
+				const { config } = await createFederatedHandlerFixture();
 				const handler = createExplicitRegistrationHandler(config);
 				const rpKeys = await generateSigningKey("ES256");
-				const rpId = "https://rp.example.com";
 				const ecJwt = await buildRegistrationRequest(
-					rpId,
+					LEAF_ID,
 					HANDLER_ENTITY_ID as string,
 					rpKeys.privateKey,
 					rpKeys.publicKey as unknown as Record<string, unknown>,
@@ -3865,12 +3920,13 @@ export default (QUnit: QUnit) => {
 			});
 
 			test("uses custom registrationResponseTtlSeconds for exp", async (t) => {
-				const config = await createHandlerConfig({ registrationResponseTtlSeconds: 7200 });
+				const { config } = await createFederatedHandlerFixture({
+					registrationResponseTtlSeconds: 7200,
+				});
 				const handler = createExplicitRegistrationHandler(config);
 				const rpKeys = await generateSigningKey("ES256");
-				const rpId = "https://rp.example.com";
 				const jwt = await buildRegistrationRequest(
-					rpId,
+					LEAF_ID,
 					HANDLER_ENTITY_ID as string,
 					rpKeys.privateKey,
 					rpKeys.publicKey as unknown as Record<string, unknown>,
@@ -3970,14 +4026,13 @@ export default (QUnit: QUnit) => {
 						err(federationError(FederationErrorCode.InvalidMetadata, "Bad RP metadata")),
 					enrichResponseMetadata: (meta) => meta,
 				};
-				const config = await createHandlerConfig({
+				const { config } = await createFederatedHandlerFixture({
 					registrationProtocolAdapter: rejectingAdapter,
 				});
 				const handler = createExplicitRegistrationHandler(config);
 				const rpKeys = await generateSigningKey("ES256");
-				const rpId = "https://rp.example.com";
 				const jwt = await buildRegistrationRequest(
-					rpId,
+					LEAF_ID,
 					HANDLER_ENTITY_ID as string,
 					rpKeys.privateKey,
 					rpKeys.publicKey as unknown as Record<string, unknown>,
@@ -3994,12 +4049,11 @@ export default (QUnit: QUnit) => {
 			});
 
 			test("succeeds without adapter (federation-only)", async (t) => {
-				const config = await createHandlerConfig();
+				const { config } = await createFederatedHandlerFixture();
 				const handler = createExplicitRegistrationHandler(config);
 				const rpKeys = await generateSigningKey("ES256");
-				const rpId = "https://rp.example.com";
 				const jwt = await buildRegistrationRequest(
-					rpId,
+					LEAF_ID,
 					HANDLER_ENTITY_ID as string,
 					rpKeys.privateKey,
 					rpKeys.publicKey as unknown as Record<string, unknown>,
@@ -4075,16 +4129,15 @@ export default (QUnit: QUnit) => {
 
 			test("calls onRegistrationInvalidation hook", async (t) => {
 				let invalidatedSub: string | undefined;
-				const config = await createHandlerConfig({
+				const { config } = await createFederatedHandlerFixture({
 					onRegistrationInvalidation: async (sub) => {
 						invalidatedSub = sub as string;
 					},
 				});
 				const handler = createExplicitRegistrationHandler(config);
 				const rpKeys = await generateSigningKey("ES256");
-				const rpId = "https://rp.example.com";
 				const jwt = await buildRegistrationRequest(
-					rpId,
+					LEAF_ID,
 					HANDLER_ENTITY_ID as string,
 					rpKeys.privateKey,
 					rpKeys.publicKey as unknown as Record<string, unknown>,
@@ -4097,7 +4150,7 @@ export default (QUnit: QUnit) => {
 					}),
 				);
 				t.equal(res.status, 200);
-				t.equal(invalidatedSub, rpId);
+				t.equal(invalidatedSub, LEAF_ID);
 			});
 		});
 
@@ -4724,10 +4777,33 @@ export default (QUnit: QUnit) => {
 				registrationPath: "/my-reg",
 				metadata: { op_name: "My OIDC OP" },
 			});
+			t.throws(
+				() =>
+					role.initialize({
+						entityId: "https://op.example.com",
+						// biome-ignore lint/suspicious/noExplicitAny: test
+						keyProvider: {} as any,
+					}),
+				/Trust Anchor/,
+			);
+		});
+
+		test("FedOidcProvider role composition works with configured trust anchors", async (t) => {
+			const fed = await createMockFederation();
+			const trustAnchorConfig = fed.trustAnchors.get(TA_ID);
+			t.ok(trustAnchorConfig, "fixture exposes TA config");
+			if (!trustAnchorConfig) return;
+			const trustAnchors = new Map([[TA_ID as string, trustAnchorConfig]]);
+			const role = new FedOidcProvider({
+				registrationPath: "/my-reg",
+				metadata: { op_name: "My OIDC OP" },
+			});
 			role.initialize({
-				entityId: "https://op.example.com",
+				entityId: OP_ID,
 				// biome-ignore lint/suspicious/noExplicitAny: test
 				keyProvider: {} as any,
+				trustAnchors,
+				options: fed.options,
 			});
 			t.equal(role.type, "openid_provider");
 			t.equal(role.metadata.op_name, "My OIDC OP");
@@ -4757,17 +4833,19 @@ export default (QUnit: QUnit) => {
 				registrationPath: "/oauth-reg",
 				metadata: { auth_server_name: "My AS" },
 			});
-			role.initialize({
-				entityId: "https://op.example.com",
-				// biome-ignore lint/suspicious/noExplicitAny: test
-				keyProvider: {} as any,
-			});
-			t.equal(role.type, "oauth_authorization_server");
-			t.equal(role.metadata.auth_server_name, "My AS");
-			t.ok(role.routes?.has("/oauth-reg"), "routes must map custom registration path");
+			t.throws(
+				() =>
+					role.initialize({
+						entityId: "https://op.example.com",
+						// biome-ignore lint/suspicious/noExplicitAny: test
+						keyProvider: {} as any,
+					}),
+				/Trust Anchor/,
+			);
 		});
 
 		test("FedOauthProvider role composition with all config options", async (t) => {
+			const fed = await createMockFederation();
 			const adapter: RegistrationProtocolAdapter = {
 				validateClientMetadata: (metadata) => ({ ok: true, value: metadata }),
 				enrichResponseMetadata: (metadata) => metadata,
@@ -4775,17 +4853,17 @@ export default (QUnit: QUnit) => {
 			const role = new FedOauthProvider({
 				registrationPath: "/oauth-reg",
 				metadata: { auth_server_name: "My AS" },
+				trustAnchors: fed.trustAnchors,
 				registrationResponseTtlSeconds: 3600,
 				registrationProtocolAdapter: adapter,
 				generateClientSecret: async () => "secret",
 				onRegistrationInvalidation: async () => {},
 			});
 			role.initialize({
-				entityId: "https://op.example.com",
+				entityId: OP_ID,
 				// biome-ignore lint/suspicious/noExplicitAny: test
 				keyProvider: {} as any,
-				// biome-ignore lint/suspicious/noExplicitAny: test
-				options: {} as any,
+				options: fed.options,
 			});
 			t.equal(role.type, "oauth_authorization_server");
 			t.equal(role.metadata.auth_server_name, "My AS");

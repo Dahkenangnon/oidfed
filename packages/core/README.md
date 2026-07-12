@@ -60,7 +60,7 @@ import {
 } from "@oidfed/core";
 
 const trustAnchors = createTrustAnchorSet([
-  { entityId: entityId("https://ta.example.org"), jwks: { keys: [taKey] } },
+  { entityId: "https://ta.example.org", jwks: { keys: [taKey] } },
 ]);
 
 const result = await resolveTrustChains(

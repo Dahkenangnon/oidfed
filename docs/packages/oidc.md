@@ -61,14 +61,14 @@ For automatic registration, RPs sign authorization requests (Request Objects) th
 
 ```ts
 import { Leaf } from "@oidfed/leaf";
-import { createTrustAnchorSet, entityId, isOk } from "@oidfed/core";
+import { createTrustAnchorSet, isOk } from "@oidfed/core";
 
 // 1. Resolve and validate OP's metadata
 const trustAnchors = createTrustAnchorSet([
-  { entityId: entityId("https://ta.example.org"), jwks: { keys: [taKey] } }
+  { entityId: "https://ta.example.org", jwks: { keys: [taKey] } }
 ]);
 const opDiscoveryResult = await Leaf.discoverEntity(
-  entityId("https://op.example.com"),
+  "https://op.example.com",
   trustAnchors,
   { httpClient: fetch }
 );
@@ -96,8 +96,13 @@ For explicit registration, OPs serve a `/registration` endpoint. RPs post their 
 ```ts
 import { FedOidcProvider, OIDCRegistrationAdapter } from "@oidfed/oidc";
 
+const trustAnchors = new Map([
+  ["https://ta.example.org", { jwks: { keys: [taPublicKey] } }]
+]);
+
 const opRole = new FedOidcProvider({
   registrationPath: "/registration",
+  trustAnchors,
   registrationResponseTtlSeconds: 3600,
   registrationProtocolAdapter: new OIDCRegistrationAdapter(),
   generateClientSecret: async (clientId) => {
@@ -196,6 +201,7 @@ Configuration parameters used to instantiate `FedOidcProvider` and `FedOauthProv
 |:---|:---|:---|:---|
 | `registrationPath` | `string` | No | Endpoint sub-path mapped for explicit client registration requests. Defaults to `"/registration"`. |
 | `metadata` | `Record<string, unknown>` | No | Role-specific provider metadata properties (e.g. `authorization_endpoint`, `jwks`) merged under the matching entity type key. |
+| `trustAnchors` | `TrustAnchorSet` | Yes, via role config or parent context | Non-empty trust anchors required for OP-side automatic and explicit registration processing. |
 | `registrationResponseTtlSeconds`| `number` | No | TTL in seconds for signed explicit registration responses. Capped by RP trust chain validity. |
 | `registrationProtocolAdapter` | `RegistrationProtocolAdapter`| No | Pluggable adapter to customize metadata schema validations and response enrichments. |
 | `generateClientSecret` | `(sub: EntityId) => Promise<string>`| No | Hook called to issue a client secret for confidential Relying Parties. |
