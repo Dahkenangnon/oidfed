@@ -268,7 +268,9 @@ app.use(express.raw({ type: "application/entity-statement+jwt", limit: "64kb" })
 app.all("/.well-known/openid-federation", async (req, res) => {
   const request = new Request(`https://op.umu.se${req.originalUrl}`, { method: "GET" });
   const response = await opAuthority.handleRequest(request);
-  res.status(response.status).type("application/entity-statement+jwt").send(await response.text());
+  res.status(response.status);
+  res.setHeader("Content-Type", response.headers.get("Content-Type") ?? "application/entity-statement+jwt");
+  res.end(await response.text());
 });
 
 // Route explicit registration requests to the FedOidcProvider role handler
@@ -279,7 +281,9 @@ app.post("/registration", async (req, res) => {
     body: req.body,
   });
   const response = await opAuthority.handleRequest(request);
-  res.status(response.status).type("application/entity-statement+jwt").send(await response.text());
+  res.status(response.status);
+  res.setHeader("Content-Type", response.headers.get("Content-Type") ?? "application/entity-statement+jwt");
+  res.end(await response.text());
 });
 
 // Automatic registration: RP sends a Request Object in the authorization request
@@ -390,7 +394,9 @@ const app = express();
 app.get("/.well-known/openid-federation", async (req, res) => {
   const request = new Request(`https://wiki.ligo.org${req.originalUrl}`, { method: "GET" });
   const response = await leaf.handleRequest(request);
-  res.status(response.status).type("application/entity-statement+jwt").send(await response.text());
+  res.status(response.status);
+  res.setHeader("Content-Type", response.headers.get("Content-Type") ?? "application/entity-statement+jwt");
+  res.end(await response.text());
 });
 
 // Login: discover OP, register, redirect

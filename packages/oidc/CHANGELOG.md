@@ -10,7 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Public documentation now treats the root `@oidfed/oidc` runtime surface as role/class-owned. Low-level registration helpers, constants, validators, and schemas are implementation details; use `FedOidcClient`, `FedOidcProvider`, OAuth role classes, and type-only exports from the root package.
 - OP-side automatic and explicit registration now require a non-empty Trust Anchor set. Provider roles fail during initialization when neither the role config nor parent entity context supplies trust anchors.
-- OP-side registration now validates supplied `trust_chain`, `peer_trust_chain`, and `application/trust-chain+json` inputs as full Trust Chains. Valid supplied RP chains are used before live Federation Entity Discovery; invalid supplied chains fail registration instead of falling back silently.
+- OP-side registration now validates supplied `trust_chain`, `peer_trust_chain`, and exact parameter-free `application/trust-chain+json` inputs as full Trust Chains. Valid supplied RP chains are used before live Federation Entity Discovery; invalid supplied chains fail registration instead of falling back silently.
 - Explicit-registration invalidation hooks now run only after validation and response preparation, immediately before registration commit hooks. Hook failures return sanitized `server_error` responses.
 - RP-side explicit registration response processing now requires HTTP `200`, exact `application/explicit-registration-response+jwt`, a matching RP `sub`, and registered credentials under `metadata.openid_relying_party`.
 - Provider role `registrationProtocolAdapter` config and OAuth resource `jwks` config now use typed public contracts instead of avoidable `any`.

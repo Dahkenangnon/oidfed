@@ -124,7 +124,7 @@ export function createOpenIDProviderApp(config: OpenIDProviderAppConfig): expres
 		for (const [key, value] of response.headers) {
 			res.setHeader(key, value);
 		}
-		res.send(await response.text());
+		res.end(await response.text());
 	});
 
 	// OIDC explicit-registration endpoint.

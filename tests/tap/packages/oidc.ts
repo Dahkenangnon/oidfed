@@ -3363,6 +3363,21 @@ export default (QUnit: QUnit) => {
 			t.ok(result.error.description.includes("trust-chain+json"));
 		});
 
+		test("returns err for trust-chain+json body that is not an array", async (t) => {
+			const fed = await createMockFederation();
+			for (const requestBody of ["{}", JSON.stringify("jwt")]) {
+				const result = await processExplicitRegistration(
+					requestBody,
+					MediaType.TrustChain,
+					fed.trustAnchors,
+					{ ...fed.options, opEntityId: OP_ID },
+				);
+				t.false(result.ok);
+				if (result.ok) continue;
+				t.ok(result.error.description.includes("non-empty array"));
+			}
+		});
+
 		test("returns err for empty trust-chain+json array", async (t) => {
 			const fed = await createMockFederation();
 			const result = await processExplicitRegistration(
@@ -4193,6 +4208,29 @@ export default (QUnit: QUnit) => {
 				t.equal(res.status, 400);
 			});
 
+			test("rejects parameterized or substring Content-Type", async (t) => {
+				const config = await createHandlerConfig();
+				const handler = createExplicitRegistrationHandler(config);
+				const cases = [
+					`${MediaType.EntityStatement}; charset=utf-8`,
+					"text/plain; note=application/entity-statement+jwt",
+					`${MediaType.TrustChain}; charset=utf-8`,
+				];
+
+				for (const contentType of cases) {
+					const res = await handler(
+						new Request(`${String(HANDLER_ENTITY_ID)}/federation_registration`, {
+							method: "POST",
+							headers: { "Content-Type": contentType },
+							body: "ignored",
+						}),
+					);
+					t.equal(res.status, 400, contentType);
+					const body = (await res.json()) as Record<string, string>;
+					t.equal(body.error, FederationErrorCode.InvalidRequest, contentType);
+				}
+			});
+
 			test("accepts application/trust-chain+json Content-Type", async (t) => {
 				const { config, fed } = await createFederatedHandlerFixture({
 					options: {
@@ -4237,6 +4275,21 @@ export default (QUnit: QUnit) => {
 				t.equal(res.status, 400);
 				const body = (await res.json()) as Record<string, string>;
 				t.equal(body.error, FederationErrorCode.InvalidTrustChain);
+			});
+
+			test("rejects application/trust-chain+json body that is not an array", async (t) => {
+				const { config } = await createFederatedHandlerFixture();
+				const handler = createExplicitRegistrationHandler(config);
+				const res = await handler(
+					new Request(`${String(HANDLER_ENTITY_ID)}/federation_registration`, {
+						method: "POST",
+						headers: { "Content-Type": MediaType.TrustChain },
+						body: JSON.stringify({ trust_chain: [] }),
+					}),
+				);
+				t.equal(res.status, 400);
+				const body = (await res.json()) as Record<string, string>;
+				t.equal(body.error, FederationErrorCode.InvalidRequest);
 			});
 
 			test("rejects application/trust-chain+json body with non-string members", async (t) => {

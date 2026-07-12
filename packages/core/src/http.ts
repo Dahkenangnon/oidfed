@@ -11,6 +11,39 @@ export const SECURITY_HEADERS: Record<string, string> = {
 	"Referrer-Policy": "no-referrer",
 };
 
+export interface ParsedContentTypeHeader {
+	readonly raw: string;
+	readonly mediaType: string;
+	readonly parameters: readonly string[];
+}
+
+export function parseContentTypeHeader(
+	value: string | null | undefined,
+): ParsedContentTypeHeader | undefined {
+	const raw = value?.trim();
+	if (!raw) return undefined;
+
+	const [mediaType = "", ...parameters] = raw.split(";");
+	const trimmedMediaType = mediaType.trim();
+	if (!trimmedMediaType) return undefined;
+
+	return {
+		raw,
+		mediaType: trimmedMediaType,
+		parameters: parameters.map((parameter) => parameter.trim()),
+	};
+}
+
+export function isExactContentType(
+	value: string | null | undefined,
+	expectedMediaType: string,
+): boolean {
+	const parsed = parseContentTypeHeader(value);
+	return (
+		parsed !== undefined && parsed.parameters.length === 0 && parsed.mediaType === expectedMediaType
+	);
+}
+
 /** Creates a 200 response with the given JWT body and media type. */
 export function jwtResponse(jwt: string, mediaType: string): Response {
 	return new Response(jwt, {

@@ -9,8 +9,10 @@ import {
 	FederationErrorCode,
 	type FederationKeyProvider,
 	type FederationOptions,
+	isExactContentType,
 	JwtTyp,
 	jwtResponse,
+	MediaType,
 	nowSeconds,
 	readBodyWithLimit,
 	requireMethod,
@@ -81,14 +83,13 @@ export function createExplicitRegistrationHandler(
 		if (methodError) return methodError;
 
 		const contentType = request.headers.get("Content-Type");
-		if (
-			!contentType ||
-			(!contentType.includes("entity-statement+jwt") && !contentType.includes("trust-chain+json"))
-		) {
+		const isEntityStatementBody = isExactContentType(contentType, MediaType.EntityStatement);
+		const isTrustChainBody = isExactContentType(contentType, MediaType.TrustChain);
+		if (!isEntityStatementBody && !isTrustChainBody) {
 			return errorResponse(
 				400,
 				"invalid_request",
-				"Content-Type must be application/entity-statement+jwt or application/trust-chain+json",
+				"Content-Type must be exactly application/entity-statement+jwt or application/trust-chain+json",
 			);
 		}
 
@@ -99,7 +100,6 @@ export function createExplicitRegistrationHandler(
 
 		let ecJwt: string;
 		let suppliedBodyTrustChain: readonly string[] | undefined;
-		const isTrustChainBody = contentType.includes("trust-chain+json");
 		if (isTrustChainBody) {
 			const parseResult = parseTrustChainJsonBody(body);
 			if (!parseResult.ok) {

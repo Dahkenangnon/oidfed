@@ -9,7 +9,7 @@ import {
 	WELL_KNOWN_OPENID_FEDERATION,
 } from "../constants.js";
 import { err, type FederationError, ok, type Result } from "../errors.js";
-import { readStreamWithLimit } from "../http.js";
+import { isExactContentType, readStreamWithLimit } from "../http.js";
 import type { EntityId, FederationOptions } from "../types.js";
 import { entityId, isValidEntityId } from "../types.js";
 
@@ -337,11 +337,12 @@ export async function performFetch(
 			});
 		}
 
-		const contentType = response.headers.get("content-type")?.split(";")[0]?.trim();
-		if (expectedContentType !== null && contentType && contentType !== expectedContentType) {
+		const contentType = response.headers.get("content-type");
+		if (expectedContentType !== null && !isExactContentType(contentType, expectedContentType)) {
+			const actual = contentType?.trim() || "<missing>";
 			return err({
 				code: InternalErrorCode.Network,
-				description: `Unexpected Content-Type '${contentType}' from ${url}, expected '${expectedContentType}'`,
+				description: `Unexpected Content-Type '${actual}' from ${url}, expected '${expectedContentType}'`,
 			});
 		}
 

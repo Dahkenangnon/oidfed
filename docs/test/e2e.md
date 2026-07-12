@@ -184,7 +184,7 @@ it("fetches TA entity configuration", async () => {
     `https://ta.ofed.test:${server.port}/.well-known/openid-federation`
   );
   expect(response.status).toBe(200);
-  expect(response.headers.get("content-type")).toContain("application/entity-statement+jwt");
+  expect(response.headers.get("content-type")).toBe("application/entity-statement+jwt");
 });
 ```
 

@@ -11,6 +11,7 @@ import {
 	MediaType,
 } from "../constants.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
+import { isExactContentType } from "../http.js";
 import {
 	type ExtendedListRequestParams,
 	type ExtendedListResponse,
@@ -157,7 +158,7 @@ export async function fetchExtendedSubordinatesList(
 	}
 	clearTimeout(timer);
 
-	const contentType = response.headers.get("content-type")?.split(";")[0]?.trim();
+	const contentType = response.headers.get("content-type");
 
 	if (response.status === 400) {
 		let body = "";
@@ -168,7 +169,7 @@ export async function fetchExtendedSubordinatesList(
 		}
 		let code: string | undefined;
 		let description: string | undefined;
-		if (contentType === MediaType.Json) {
+		if (isExactContentType(contentType, MediaType.Json)) {
 			try {
 				const parsedBody = JSON.parse(body) as { error?: unknown; error_description?: unknown };
 				if (typeof parsedBody.error === "string") code = parsedBody.error;
@@ -198,10 +199,11 @@ export async function fetchExtendedSubordinatesList(
 		});
 	}
 
-	if (contentType && contentType !== MediaType.Json) {
+	if (!isExactContentType(contentType, MediaType.Json)) {
+		const actual = contentType?.trim() || "<missing>";
 		return err({
 			code: InternalErrorCode.Network,
-			description: `Unexpected Content-Type '${contentType}' from ${endpoint}, expected '${MediaType.Json}'`,
+			description: `Unexpected Content-Type '${actual}' from ${endpoint}, expected '${MediaType.Json}'`,
 		});
 	}
 

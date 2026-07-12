@@ -6,6 +6,7 @@
  */
 import { FederationErrorCode, JwtTyp, MediaType, type TrustMarkStatus } from "../constants.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
+import { isExactContentType } from "../http.js";
 import { verifyEntityStatement } from "../jose/verify.js";
 import type { JWKSet } from "../schemas/jwk.js";
 import { performFetch } from "../trust-chain/fetch.js";
@@ -126,12 +127,13 @@ export async function fetchTrustMarkStatus(
 			),
 		);
 	}
-	const contentType = response.headers.get("content-type")?.split(";")[0]?.trim() ?? "";
-	if (contentType !== MediaType.TrustMarkStatusResponse) {
+	const contentType = response.headers.get("content-type");
+	if (!isExactContentType(contentType, MediaType.TrustMarkStatusResponse)) {
+		const actual = contentType?.trim() || "<missing>";
 		return err(
 			federationError(
 				FederationErrorCode.InvalidRequest,
-				`Unexpected Content-Type '${contentType}'`,
+				`Unexpected Content-Type '${actual}', expected '${MediaType.TrustMarkStatusResponse}'`,
 			),
 		);
 	}

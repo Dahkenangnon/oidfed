@@ -11,6 +11,7 @@
  */
 import { DEFAULT_HTTP_TIMEOUT_MS, FederationErrorCode } from "../constants.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
+import { parseContentTypeHeader } from "../http.js";
 import { validateFetchUrl } from "../trust-chain/fetch.js";
 import type { FederationOptions } from "../types.js";
 
@@ -56,7 +57,8 @@ export async function validateTrustMarkLogo(
 				),
 			);
 		}
-		const contentType = response.headers.get("content-type")?.split(";")[0]?.trim() ?? "";
+		const contentType =
+			parseContentTypeHeader(response.headers.get("content-type"))?.mediaType ?? "";
 		if (!contentType.toLowerCase().startsWith("image/")) {
 			return err(
 				federationError(

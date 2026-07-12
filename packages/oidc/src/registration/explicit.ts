@@ -9,6 +9,7 @@ import {
 	type FederationOptions,
 	federationError,
 	InternalErrorCode,
+	isExactContentType,
 	JwtTyp,
 	MediaType,
 	nowSeconds,
@@ -207,7 +208,7 @@ export async function explicitRegistration(
 	}
 
 	const responseContentType = response.headers.get("Content-Type");
-	if (responseContentType !== OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE) {
+	if (!isExactContentType(responseContentType, OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE)) {
 		return err(
 			federationError(
 				FederationErrorCode.InvalidRequest,

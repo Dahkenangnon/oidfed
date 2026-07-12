@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- Federation HTTP fetch helpers now require exact parameter-free Content-Type values for spec-defined media types, including Entity Statements, Resolve Responses, Trust Marks, signed JWK Sets, and federation JSON list responses.
 - `validateTrustChain()` now rejects malformed raw Entity Statements, invalid metadata policy critical operators, and invalid published Trust Marks during Trust Chain validation.
 - `MemoryFederationKeyProvider` now requires an initial federation signing key or non-empty key array and rejects empty arrays during construction.
 

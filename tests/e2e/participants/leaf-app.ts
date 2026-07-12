@@ -61,7 +61,7 @@ export function createLeafApp(
 		for (const [key, value] of response.headers) {
 			res.setHeader(key, value);
 		}
-		res.send(await response.text());
+		res.end(await response.text());
 	});
 
 	if (store !== undefined) {
@@ -79,7 +79,7 @@ export function createLeafApp(
 			res.status(200);
 			res.setHeader("content-type", "application/oauth-authz-req+jwt");
 			res.setHeader("cache-control", "no-store");
-			res.send(jwt);
+			res.end(jwt);
 		});
 	}
 

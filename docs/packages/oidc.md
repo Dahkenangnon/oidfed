@@ -93,7 +93,7 @@ if (isOk(opDiscoveryResult)) {
 ### Provider-Side Explicit Registration
 For explicit registration, OPs serve a `/registration` endpoint. RPs post their self-signed Entity Configuration or trust chains, and OPs reply with a signed explicit registration response whose `sub` is the RP Entity Identifier and whose registered client credentials are under `metadata.openid_relying_party`.
 
-When an RP supplies a `trust_chain` header or an `application/trust-chain+json` request body, OP-side processing validates that supplied value as a full Trust Chain and uses it before attempting live Federation Entity Discovery. Invalid supplied chains fail registration.
+When an RP supplies a `trust_chain` header or an exact `application/trust-chain+json` request body, OP-side processing validates that supplied value as a full Trust Chain and uses it before attempting live Federation Entity Discovery. Explicit registration request media types are parameter-free and matched exactly. Invalid supplied chains fail registration.
 
 RP-side explicit registration accepts only HTTP `200` responses with exact `Content-Type: application/explicit-registration-response+jwt`. It returns `clientId` from `metadata.openid_relying_party.client_id` and `clientSecret` from `metadata.openid_relying_party.client_secret` when the OP provisions one.
 

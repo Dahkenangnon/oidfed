@@ -229,7 +229,7 @@ export async function fetchResolveResponse(
 	return performFetch(url.toString(), {
 		...(options ?? {}),
 		accept: MediaType.ResolveResponse,
-		expectedContentType: null,
+		expectedContentType: MediaType.ResolveResponse,
 	});
 }
 

@@ -58,8 +58,10 @@ import {
 import {
 	errorResponse,
 	extractRequestParams,
+	isExactContentType,
 	jsonResponse,
 	jwtResponse,
+	parseContentTypeHeader,
 	parseQueryParams,
 	readBodyWithLimit,
 	readStreamWithLimit,
@@ -223,6 +225,11 @@ export default (QUnit: QUnit) => {
 					),
 				/at least one initial federation key/,
 			);
+		});
+
+		test("exports exact Content-Type helpers", (t) => {
+			t.equal(typeof CorePublic.parseContentTypeHeader, "function");
+			t.equal(typeof CorePublic.isExactContentType, "function");
 		});
 
 		test("exports stable Entity Statement builder APIs", (t) => {
@@ -878,6 +885,28 @@ export default (QUnit: QUnit) => {
 			t.equal(SECURITY_HEADERS["X-Frame-Options"], "DENY");
 			t.equal(SECURITY_HEADERS["Referrer-Policy"], "no-referrer");
 			t.equal(Object.keys(SECURITY_HEADERS).length, 5);
+		});
+	});
+
+	module("core / Content-Type helpers", () => {
+		test("parses media type and parameters without accepting them as exact", (t) => {
+			const parsed = parseContentTypeHeader(" application/entity-statement+jwt; charset=utf-8 ");
+			t.equal(parsed?.raw, "application/entity-statement+jwt; charset=utf-8");
+			t.equal(parsed?.mediaType, MediaType.EntityStatement);
+			t.deepEqual(parsed?.parameters, ["charset=utf-8"]);
+			t.false(isExactContentType(parsed?.raw, MediaType.EntityStatement));
+		});
+
+		test("requires exact registered media type after trimming outer whitespace", (t) => {
+			t.true(isExactContentType(" application/entity-statement+jwt ", MediaType.EntityStatement));
+			t.false(isExactContentType(null, MediaType.EntityStatement));
+			t.false(isExactContentType("Application/Entity-Statement+Jwt", MediaType.EntityStatement));
+			t.false(
+				isExactContentType(
+					"text/plain; note=application/entity-statement+jwt",
+					MediaType.EntityStatement,
+				),
+			);
 		});
 	});
 
@@ -4758,7 +4787,7 @@ export default (QUnit: QUnit) => {
 				t.ok(result.error.description.includes("Content-Type"));
 			});
 
-			test("accepts Content-Type with parameters (charset)", async (t) => {
+			test("rejects Content-Type with parameters", async (t) => {
 				const { jwt, jwks } = await buildSignedJwkSetJwt();
 				const httpClient: HttpClient = async () =>
 					new Response(jwt, {
@@ -4768,7 +4797,8 @@ export default (QUnit: QUnit) => {
 				const result = await fetchSignedJwkSet("https://entity.example.com/jwks.jose", jwks, {
 					httpClient,
 				});
-				t.true(result.ok);
+				t.false(result.ok);
+				if (!result.ok) t.ok(result.error.description.includes("Content-Type"));
 			});
 
 			test("propagates verifier failure (typ mismatch)", async (t) => {
@@ -5269,6 +5299,31 @@ export default (QUnit: QUnit) => {
 				if (isErr(result)) t.true(result.error.description.toLowerCase().includes("content-type"));
 			});
 
+			test("rejects Content-Type with parameters", async (t) => {
+				const { signer, jwks } = await setupFAKeys();
+				const jwt = await _signES(
+					{
+						iss: "https://authority.example.com",
+						iat: fa_now,
+						keys: [{ kty: "EC", kid: "k1", exp: fa_now }],
+					},
+					signer,
+					{ typ: JwtTyp.JwkSet },
+				);
+				const httpClient: HttpClient = async () =>
+					new Response(jwt, {
+						status: 200,
+						headers: { "Content-Type": "application/jwk-set+jwt; charset=utf-8" },
+					});
+				const result = await fetchHistoricalKeys(
+					"https://ta.example.com/federation_historical_keys",
+					jwks,
+					{ httpClient },
+				);
+				t.true(isErr(result));
+				if (isErr(result)) t.true(result.error.description.toLowerCase().includes("content-type"));
+			});
+
 			test("propagates verifier failure (wrong typ)", async (t) => {
 				const { signer, jwks } = await setupFAKeys();
 				const jwt = await _signES(
@@ -5351,6 +5406,29 @@ export default (QUnit: QUnit) => {
 				);
 				t.true(isErr(result));
 				if (isErr(result)) t.true(result.error.description.includes("trust_mark_type"));
+			});
+
+			test("rejects missing or parameterized Content-Type", async (t) => {
+				const cases: Array<[string, Record<string, string> | undefined]> = [
+					["missing", undefined],
+					["parameterized", { "Content-Type": "application/json; charset=utf-8" }],
+				];
+
+				for (const [name, headers] of cases) {
+					const httpClient: HttpClient = async () =>
+						new Response(JSON.stringify(["https://leaf.example.com"]), {
+							status: 200,
+							...(headers ? { headers } : {}),
+						});
+					const result = await fetchTrustMarkList(
+						"https://issuer.example.com/federation_trust_mark_list",
+						{ trustMarkType: "https://example.com/tm" },
+						{ httpClient },
+					);
+					t.true(isErr(result), name);
+					if (isErr(result))
+						t.true(result.error.description.toLowerCase().includes("content-type"), name);
+				}
 			});
 
 			test("rejects non-array JSON response", async (t) => {
@@ -5448,6 +5526,29 @@ export default (QUnit: QUnit) => {
 					{ httpClient },
 				);
 				t.false(result.ok);
+			});
+
+			test("rejects missing, wrong, or parameterized Content-Type", async (t) => {
+				const cases: Array<[string, Record<string, string> | undefined]> = [
+					["missing", undefined],
+					["wrong", { "Content-Type": MediaType.Json }],
+					["parameterized", { "Content-Type": `${MediaType.ResolveResponse}; charset=utf-8` }],
+				];
+
+				for (const [name, headers] of cases) {
+					const httpClient: HttpClient = async () =>
+						new Response("jwt", { status: 200, ...(headers ? { headers } : {}) });
+					const result = await fetchResolveResponse(
+						"https://resolver.example.com/federation_resolve",
+						{
+							sub: "https://leaf.example.com" as EntityId,
+							trustAnchor: "https://ta.example.com" as EntityId,
+						},
+						{ httpClient },
+					);
+					t.false(result.ok, name);
+					if (!result.ok) t.true(result.error.description.includes("Content-Type"), name);
+				}
 			});
 		});
 	}
@@ -6557,6 +6658,28 @@ export default (QUnit: QUnit) => {
 				t.true(isErr(result));
 				if (isErr(result)) t.true(result.error.description.includes("trust_mark_type"));
 			});
+
+			test("rejects missing or parameterized Content-Type", async (t) => {
+				const cases: Array<[string, Record<string, string> | undefined]> = [
+					["missing", undefined],
+					["parameterized", { "Content-Type": "application/trust-mark+jwt; charset=utf-8" }],
+				];
+
+				for (const [name, headers] of cases) {
+					const httpClient: HttpClient = async () =>
+						new Response("eyJ.fake.jwt", { status: 200, ...(headers ? { headers } : {}) });
+					const result = await fetchTrustMark(
+						"https://ta.example.com/federation_trust_mark",
+						{
+							trustMarkType: "https://example.com/tm",
+							sub: "https://leaf.example.com" as EntityId,
+						},
+						{ httpClient },
+					);
+					t.true(isErr(result), name);
+					if (isErr(result)) t.true(result.error.description.includes("Content-Type"), name);
+				}
+			});
 		});
 
 		module("core / fetchTrustMarkStatus", () => {
@@ -6632,6 +6755,31 @@ export default (QUnit: QUnit) => {
 				);
 				t.true(isErr(result));
 				if (isErr(result)) t.true(result.error.description.includes("Content-Type"));
+			});
+
+			test("rejects missing or parameterized Content-Type", async (t) => {
+				const signerKeys = await _genKey("ES256");
+				const responseJwt = await buildStatusResponseJwt("active", signerKeys);
+				const cases: Array<[string, Record<string, string> | undefined]> = [
+					["missing", undefined],
+					[
+						"parameterized",
+						{ "Content-Type": "application/trust-mark-status-response+jwt; charset=utf-8" },
+					],
+				];
+
+				for (const [name, headers] of cases) {
+					const httpClient: HttpClient = async () =>
+						new Response(responseJwt, { status: 200, ...(headers ? { headers } : {}) });
+					const result = await fetchTrustMarkStatus(
+						"https://ta.example.com/federation_trust_mark_status",
+						"eyJ.original.jwt",
+						{ keys: [signerKeys.publicKey] },
+						{ httpClient },
+					);
+					t.true(isErr(result), name);
+					if (isErr(result)) t.true(result.error.description.includes("Content-Type"), name);
+				}
 			});
 
 			test("rejects signature failure (wrong signer key)", async (t) => {
@@ -7745,19 +7893,28 @@ export default (QUnit: QUnit) => {
 				t.true(result.error.description.includes("Content-Type"));
 			}
 		});
-		test("accepts response with Content-Type including charset parameter", async (t) => {
+		test("rejects response with Content-Type including parameters", async (t) => {
 			const mockFetch = async () =>
 				new Response("jwt-token", {
 					status: 200,
 					headers: { "Content-Type": "application/entity-statement+jwt; charset=utf-8" },
 				});
-			t.true(
-				isOk(
-					await fetchEntityConfiguration("https://example.com" as EntityId, {
-						httpClient: mockFetch,
-					}),
-				),
-			);
+			const result = await fetchEntityConfiguration("https://example.com" as EntityId, {
+				httpClient: mockFetch,
+			});
+			t.true(isErr(result));
+			if (isErr(result)) t.true(result.error.description.includes("Content-Type"));
+		});
+		test("rejects response with missing Content-Type", async (t) => {
+			const mockFetch = async () => new Response("jwt-token", { status: 200 });
+			const result = await fetchEntityConfiguration("https://example.com" as EntityId, {
+				httpClient: mockFetch,
+			});
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.equal(result.error.code, "ERR_NETWORK");
+				t.true(result.error.description.includes("Content-Type"));
+			}
 		});
 		test("rejects response with text/plain Content-Type", async (t) => {
 			const mockFetch = async () =>
@@ -10541,6 +10698,29 @@ export default (QUnit: QUnit) => {
 			);
 			t.false(result.ok);
 			if (!result.ok) t.true(result.error.description.toLowerCase().includes("content-type"));
+		});
+
+		test("rejects missing or parameterized Content-Type on 200", async (t) => {
+			const cases: Array<[string, Record<string, string> | undefined]> = [
+				["missing", undefined],
+				["parameterized", { "Content-Type": "application/json; charset=utf-8" }],
+			];
+
+			for (const [name, headers] of cases) {
+				const httpClient: HttpClient = async () =>
+					new Response(JSON.stringify({ subordinates: [] }), {
+						status: 200,
+						...(headers ? { headers } : {}),
+					});
+				const result = await fetchExtendedSubordinatesList(
+					"https://ta.example.com/federation_extended_list",
+					undefined,
+					{ httpClient },
+				);
+				t.false(result.ok, name);
+				if (!result.ok)
+					t.true(result.error.description.toLowerCase().includes("content-type"), name);
+			}
 		});
 
 		test("rejects 200 body that fails schema validation", async (t) => {

@@ -54,7 +54,7 @@ if (isValidEntityId("https://client.example.com?query=true")) {
 ---
 
 ### 3. HTTP Discovery and Fetching
-Provides HTTP fetching primitives equipped with SSRF protection (IP address validation blocking special-use ranges like loopback and private networks) to retrieve configurations and statements.
+Provides HTTP fetching primitives equipped with SSRF protection (IP address validation blocking special-use ranges like loopback and private networks) to retrieve configurations and statements. Successful federation responses must carry the exact registered media type with no parameters.
 
 ```ts
 import { fetchEntityConfiguration, fetchSubordinateStatement, entityId } from "@oidfed/core";
