@@ -71,11 +71,11 @@ _No user-visible changes — released as part of the coordinated wave._
 
 ### Removed
 
-- **BREAKING.** OIDC schemas moved to `@oidfed/oidc`. `ExplicitRegistrationRequestPayloadSchema` and `ExplicitRegistrationResponsePayloadSchema` are no longer exported from `@oidfed/core`; import them from `@oidfed/oidc` instead.
-- **BREAKING.** Typed OIDC metadata schemas (`OpenIDProviderMetadataSchema`, `OpenIDRelyingPartyMetadataSchema`) are no longer re-exported from `@oidfed/core`. The federation layer treats them as loose `z.record()`; for OIDC-strict validation, import the schemas from `@oidfed/oidc`.
+- **BREAKING.** OIDC explicit-registration payload schemas are no longer exported from `@oidfed/core`; use the type-only payload exports and role APIs from `@oidfed/oidc` instead.
+- **BREAKING.** Typed OIDC metadata schemas (`OpenIDProviderMetadataSchema`, `OpenIDRelyingPartyMetadataSchema`) are no longer re-exported from `@oidfed/core`. The federation layer treats them as loose `z.record()`; OIDC-strict validation happens inside `@oidfed/oidc` role APIs.
 - **BREAKING.** `RegistrationProtocolAdapter` and `RegistrationProtocolAdapterContext` interfaces moved to `@oidfed/oidc`.
-- **BREAKING.** `ClientRegistrationType` constant + type moved to `@oidfed/oidc`.
-- **BREAKING.** `JwtTyp.ExplicitRegistrationResponse` and `MediaType.ExplicitRegistrationResponse` removed. The OIDC equivalents `OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE` and `OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE` live in `@oidfed/oidc`.
+- **BREAKING.** Client registration type definitions moved to `@oidfed/oidc`; runtime constants are implementation details.
+- **BREAKING.** `JwtTyp.ExplicitRegistrationResponse` and `MediaType.ExplicitRegistrationResponse` removed. OIDC-specific response type and media-type constants are internal to `@oidfed/oidc`.
 - **BREAKING.** `normalizeScope` and `denormalizeScope` are no longer part of the public API; they are internal implementation details of `applyMetadataPolicy` and remain in `packages/core/src/metadata-policy/apply.ts`.
 
 ### Changed

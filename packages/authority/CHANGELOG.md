@@ -76,13 +76,13 @@ _No user-visible changes — released as part of the coordinated wave._
 
 ### Removed
 
-- **BREAKING.** `/federation_registration` handler removed from `@oidfed/authority`. The endpoint is an OpenID-Connect-specific concern and has moved to `@oidfed/oidc` as `createExplicitRegistrationHandler`. Authorities no longer expose `FederationEndpoint.Registration` in their route map.
+- **BREAKING.** `/federation_registration` handler removed from `@oidfed/authority`. The endpoint is an OpenID-Connect-specific concern and is handled through `@oidfed/oidc` provider roles. Authorities no longer expose `FederationEndpoint.Registration` in their route map.
 - **BREAKING.** `RegistrationProtocolAdapter` type re-export removed from `@oidfed/authority`. Import it from `@oidfed/oidc` instead.
 - `createRegistrationHandler` export removed.
 
 ### Changed
 
-- **BREAKING.** `AuthorityConfig.registrationResponseTtlSeconds` and `AuthorityConfig.registrationConfig` removed. Callers configuring an explicit-registration endpoint should construct it via `createExplicitRegistrationHandler({ ... })` from `@oidfed/oidc` and mount it on their own server (e.g. alongside a leaf entity's `.well-known/openid-federation`).
+- **BREAKING.** `AuthorityConfig.registrationResponseTtlSeconds` and `AuthorityConfig.registrationConfig` removed. Callers configuring an explicit-registration endpoint should compose a `FedOidcProvider` role from `@oidfed/oidc` and mount it on their own server (e.g. alongside a leaf entity's `.well-known/openid-federation`).
 - `HandlerContext` no longer carries `registrationResponseTtlSeconds`, `registrationConfig`, or `registrationProtocolAdapter`.
 
 ## [0.4.1] - 2026-05-23

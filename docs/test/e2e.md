@@ -127,7 +127,7 @@ res.send(await response.text());
 | `createLeafApp` | `Leaf.handleRequest()` | `GET /.well-known/openid-federation` only |
 | `createOpenIDProviderApp` | `Leaf.handleRequest()` + `oidc-provider` | Federation endpoints + OIDC (`/auth`, `/token`, etc.) |
 
-The OP app also wires `processAutomaticRegistration` and `processExplicitRegistration` from `@oidfed/oidc` on the registration endpoints, and uses `oidc-provider` (panva/node-oidc-provider) for standard OIDC flows.
+The OP app also wires `FedOidcProvider` role methods for automatic and explicit registration endpoints, and uses `oidc-provider` (panva/node-oidc-provider) for standard OIDC flows.
 
 ### Layer 4: Launcher
 

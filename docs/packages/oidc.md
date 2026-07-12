@@ -4,7 +4,7 @@ OpenID Connect and OAuth 2.0 federation flows — automatic and explicit client 
 
 ## Overview
 
-The `@oidfed/oidc` package bridges federation trust chains with OIDC/OAuth client registration. It provides schemas for validating metadata blocks, facades to declare provider/client metadata in parent entity contexts, and functions to create or validate signed Request Objects.
+The `@oidfed/oidc` package bridges federation trust chains with OIDC/OAuth client registration. It provides role classes that declare provider/client metadata in parent entity contexts and class-owned methods to create or validate signed Request Objects.
 
 ---
 
@@ -161,7 +161,7 @@ Configuration parameters used to instantiate `FedOidcClient` and `FedOauthClient
 | `requestUri` | `string` | No | Prefiled Request Object URI if using `"request_uri"` transmission delivery. |
 
 ### `AutomaticRegistrationResult`
-The result of `createAuthorizationRequest` (or the underlying `automaticRegistration` function) is a discriminated union based on the selected `requestDelivery` mode:
+The result of `FedOidcClient.createAuthorizationRequest(...)` is a discriminated union based on the selected `requestDelivery` mode:
 
 - **`delivery: "query"`**:
   - `requestObjectJwt` (`string`): The signed Request Object JWT.
@@ -227,4 +227,3 @@ Crucially:
 
 ### Q: How do OPs prevent Request Object replay attacks?
 **A:** Every Request Object includes a unique identifier (`jti`) and expiration time (`exp`). The OP-side validator enforces that the request has not expired and queries a `ReplayStore` to verify that the `jti` has not been previously observed from the same issuer.
-

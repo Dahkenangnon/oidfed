@@ -136,9 +136,41 @@ export default (QUnit: QUnit) => {
 
 	module("oidc / public root exports", () => {
 		test("keeps registration and client-auth helpers behind role classes", async (t) => {
-			t.false("createClientAssertion" in OidcPublic);
-			t.false("processAutomaticRegistration" in OidcPublic);
-			t.false("explicitRegistration" in OidcPublic);
+			const runtimeExports = Object.keys(OidcPublic).sort();
+			t.deepEqual(runtimeExports, [
+				"FedOauthClient",
+				"FedOauthProvider",
+				"FedOauthResource",
+				"FedOidcClient",
+				"FedOidcProvider",
+				"OIDCRegistrationAdapter",
+				"StaticOidcProtocolKeyProvider",
+			]);
+
+			const hiddenRuntimeExports = [
+				"automaticRegistration",
+				"createClientAssertion",
+				"createExplicitRegistrationHandler",
+				"explicitRegistration",
+				"processAutomaticRegistration",
+				"processExplicitRegistration",
+				"validateAutomaticRegistrationRequest",
+				"validateOIDCMetadata",
+				"ClientRegistrationType",
+				"RequestObjectTyp",
+				"OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE",
+				"OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE",
+				"OIDCRegistrationErrorCode",
+				"ExplicitRegistrationRequestPayloadSchema",
+				"ExplicitRegistrationResponsePayloadSchema",
+				"OIDCFederationMetadataSchema",
+				"OpenIDProviderMetadataSchema",
+				"OpenIDRelyingPartyMetadataSchema",
+			] as const;
+
+			for (const exportName of hiddenRuntimeExports) {
+				t.false(exportName in OidcPublic, `${exportName} is not a root runtime export`);
+			}
 
 			t.equal(typeof OidcPublic.FedOidcClient.createClientAssertion, "function");
 			t.equal(typeof OidcPublic.FedOidcClient.prototype.createClientAssertion, "function");

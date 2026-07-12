@@ -343,6 +343,3 @@ export function createExtendedListHandler(
 		}
 	};
 }
-
-// Re-export the claim constant so consumers can use it without a separate import.
-export { ExtendedListClaim };

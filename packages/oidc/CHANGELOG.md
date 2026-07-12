@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- Public documentation now treats the root `@oidfed/oidc` runtime surface as role/class-owned. Low-level registration helpers, constants, validators, and schemas are implementation details; use `FedOidcClient`, `FedOidcProvider`, OAuth role classes, and type-only exports from the root package.
+
 ## [0.8.0] - 2026-06-25
 
 ### Refactor
@@ -54,7 +58,7 @@ _No user-visible changes — released as part of the coordinated wave._
 
 ### Changed
 
-- **BREAKING.** `processAutomaticRegistration()` now requires `replayStore: ReplayStore`, namespaces claims by RP issuer and OP audience, and claims the JTI only after all cryptographic, metadata, and trust-chain validation succeeds.
+- **BREAKING.** OP automatic registration processing now requires `replayStore: ReplayStore`, namespaces claims by RP issuer and OP audience, and claims the JTI only after all cryptographic, metadata, and trust-chain validation succeeds.
 - Added public `ClientAssertionOptions`; its clock and every registration clock use NumericDate seconds.
 - Automatic and explicit registration now propagate injected clocks through Request Objects, Entity Configurations, PAR expiry, client assertions, and OP validation.
 
@@ -78,11 +82,11 @@ _No user-visible changes — released as part of the coordinated wave._
 
 ### Added
 
-- `createExplicitRegistrationHandler(config)` — self-contained OP-side handler for the `/federation_registration` endpoint. Accepts `ExplicitRegistrationHandlerConfig` (opEntityId, signing-key resolver, trust anchors, optional protocol adapter, optional generateClientSecret and onRegistrationInvalidation hooks). Replaces the equivalent handler previously housed inside `@oidfed/authority`.
-- `ExplicitRegistrationRequestPayloadSchema`, `ExplicitRegistrationResponsePayloadSchema` (+ inferred types) now exported from `@oidfed/oidc`. Previously lived in `@oidfed/core`.
+- OP-side explicit registration handler support for the `/federation_registration` endpoint. It accepts `ExplicitRegistrationHandlerConfig` (opEntityId, signing-key resolver, trust anchors, optional protocol adapter, optional generateClientSecret and onRegistrationInvalidation hooks) and replaces the equivalent handler previously housed inside `@oidfed/authority`.
+- `ExplicitRegistrationRequestPayload`, `ExplicitRegistrationResponsePayload` types now exported from `@oidfed/oidc`. The runtime schemas are implementation details.
 - `RegistrationProtocolAdapter`, `RegistrationProtocolAdapterContext` interfaces now exported from `@oidfed/oidc`. Previously lived in `@oidfed/core`.
-- `ClientRegistrationType` constant + type now exported from `@oidfed/oidc`. Previously lived in `@oidfed/core`.
-- `OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE` and `OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE` constants. They replace the previous `JwtTyp.ExplicitRegistrationResponse` / `MediaType.ExplicitRegistrationResponse` entries (which have been removed from `@oidfed/core`).
+- Client registration type definitions now live in `@oidfed/oidc`. The runtime constants are implementation details.
+- OIDC explicit registration response JWT and media-type constants are internal to `@oidfed/oidc`. They replace the previous `JwtTyp.ExplicitRegistrationResponse` / `MediaType.ExplicitRegistrationResponse` entries, which have been removed from `@oidfed/core`.
 
 ### Changed
 
@@ -92,7 +96,7 @@ _No user-visible changes — released as part of the coordinated wave._
 
 ### Added
 
-- `automaticRegistration` now supports four Request Object delivery modes via the new
+- RP automatic registration now supports four Request Object delivery modes via the new
   `requestDelivery` config field: `"query"`, `"form_post"`, `"request_uri"`, and `"par"`.
 - New `RequestDelivery` type re-exported from `@oidfed/oidc`.
 - `par` mode coordinates a Pushed Authorization Request internally and returns a
@@ -114,18 +118,18 @@ _No user-visible changes — released as part of the coordinated wave._
 
 ### Migration
 
-Either narrow on `result.delivery`, or pass `requestDelivery: "query"` to preserve the
+Either narrow on `result.value.delivery`, or configure the RP role with `requestDelivery: "query"` to preserve the
 0.3.x result shape:
 
 ```ts
-const result = await automaticRegistration(
+const result = await rpRole.createAuthorizationRequest(
   opDiscovery,
-  { ...rpConfig, requestDelivery: "query" },
   authzParams,
   trustAnchors,
+  { requestDelivery: "query" },
 );
-if (result.delivery === "query") {
-  redirectTo(result.authorizationUrl);
+if (result.ok && result.value.delivery === "query") {
+  redirectTo(result.value.authorizationUrl);
 }
 ```
 

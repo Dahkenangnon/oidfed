@@ -123,7 +123,7 @@ const opEntity = new TrustAnchor({
 
 ## Documentation
 
-For a detailed API reference, OIDC role classes, automatic/explicit registration details, and metadata schemas, see the [docs/packages/oidc.md](https://github.com/Dahkenangnon/oidfed/blob/main/docs/packages/oidc.md) file.
+For a detailed API reference, OIDC role classes, automatic/explicit registration details, and metadata types, see the [docs/packages/oidc.md](https://github.com/Dahkenangnon/oidfed/blob/main/docs/packages/oidc.md) file.
 
 ## License
 
