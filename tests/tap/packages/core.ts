@@ -3111,7 +3111,7 @@ export default (QUnit: QUnit) => {
 				}
 			});
 
-			test("metadata_policy_crit: multiple critical names, all standard, resolves successfully", (t) => {
+			test("metadata_policy_crit: rejects standard operator names", (t) => {
 				const stmt = makeMergeStmt({
 					metadata_policy_crit: ["value", "subset_of"],
 					metadata_policy: {
@@ -3122,12 +3122,13 @@ export default (QUnit: QUnit) => {
 					},
 				});
 				const result = resolveMetadataPolicy([stmt]);
-				t.true(isOk(result));
+				t.true(isErr(result));
+				if (isErr(result)) {
+					t.true(result.error.description.includes("standard metadata policy operator"));
+				}
 			});
 
-			test("metadata_policy_crit: tolerates a critical name that shadows a standard operator", (t) => {
-				// Standard operator names are always understood, so listing one in
-				// metadata_policy_crit is a no-op rather than an error.
+			test("metadata_policy_crit: rejects a standard operator even when the policy uses it", (t) => {
 				const stmt = makeMergeStmt({
 					metadata_policy_crit: ["essential"],
 					metadata_policy: {
@@ -3135,7 +3136,10 @@ export default (QUnit: QUnit) => {
 					},
 				});
 				const result = resolveMetadataPolicy([stmt]);
-				t.true(isOk(result));
+				t.true(isErr(result));
+				if (isErr(result)) {
+					t.true(result.error.description.includes("standard metadata policy operator"));
+				}
 			});
 
 			test("metadata_policy_crit: critical operators aggregate across multiple subordinate statements", (t) => {
@@ -7995,6 +7999,263 @@ export default (QUnit: QUnit) => {
 					t.equal(result.chain.statements.length, 3);
 				}
 			});
+			test("rejects Entity Statement identifiers that are not Entity Identifiers", async (t) => {
+				const taKeys = await generateSigningKey("ES256");
+				const leafKeys = await generateSigningKey("ES256");
+				const leafEc = await vt_signEC(
+					"http://leaf.example.com",
+					leafKeys.privateKey,
+					leafKeys.publicKey,
+					{ authority_hints: ["https://ta.example.com"] },
+				);
+				const ss = await vt_signSS(
+					"https://ta.example.com",
+					"http://leaf.example.com",
+					taKeys.privateKey,
+					leafKeys.publicKey,
+				);
+				const taEc = await vt_signEC("https://ta.example.com", taKeys.privateKey, taKeys.publicKey);
+				const taSet: TrustAnchorSet = new Map([
+					["https://ta.example.com" as EntityId, { jwks: { keys: [taKeys.publicKey] } }],
+				]);
+				const result = await validateTrustChain([leafEc, ss, taEc], taSet, {
+					verboseErrors: true,
+				});
+				t.false(result.valid);
+				t.true(result.errors.some((e) => e.field === "iss" || e.field === "sub"));
+			});
+			test("rejects statements whose expiration is not after issued-at", async (t) => {
+				const { chain, taSet, leafKeys } = await vt_buildSimple();
+				const leafEc = await vt_signEC(
+					"https://leaf.example.com",
+					leafKeys.privateKey,
+					leafKeys.publicKey,
+					{
+						iat: vt_now,
+						exp: vt_now,
+						authority_hints: ["https://ta.example.com"],
+					},
+				);
+				const result = await validateTrustChain([leafEc, ...chain.slice(1)], taSet, {
+					verboseErrors: true,
+				});
+				t.false(result.valid);
+				t.true(result.errors.some((e) => e.field === "exp" || e.message.includes("exp")));
+			});
+			test("rejects malformed federation JWKS values in raw statements", async (t) => {
+				const { chain, taSet, leafKeys } = await vt_buildSimple();
+				const secondKeys = await generateSigningKey("ES256");
+				const { kid: _missingKid, ...keyWithoutKid } = leafKeys.publicKey;
+				const duplicateA = { ...leafKeys.publicKey, kid: "dup-kid" };
+				const duplicateB = { ...secondKeys.publicKey, kid: "dup-kid" };
+				const invalidJwksCases: Array<{ name: string; jwks: unknown }> = [
+					{ name: "private material", jwks: { keys: [leafKeys.privateKey] } },
+					{ name: "duplicate kid", jwks: { keys: [duplicateA, duplicateB] } },
+					{ name: "missing kid", jwks: { keys: [keyWithoutKid] } },
+				];
+				for (const invalidCase of invalidJwksCases) {
+					const leafEc = await vt_signEC(
+						"https://leaf.example.com",
+						leafKeys.privateKey,
+						leafKeys.publicKey,
+						{
+							authority_hints: ["https://ta.example.com"],
+							jwks: invalidCase.jwks,
+						},
+					);
+					const result = await validateTrustChain([leafEc, ...chain.slice(1)], taSet, {
+						verboseErrors: true,
+					});
+					t.false(result.valid, invalidCase.name);
+					t.true(
+						result.errors.some((e) => e.field === "jwks"),
+						invalidCase.name,
+					);
+				}
+			});
+			test("rejects malformed metadata shapes in raw statements", async (t) => {
+				const { chain, taSet, leafKeys } = await vt_buildSimple();
+				const invalidMetadataCases: Array<{ name: string; metadata: unknown }> = [
+					{ name: "metadata scalar", metadata: "bad" },
+					{ name: "entity metadata scalar", metadata: { openid_relying_party: "bad" } },
+					{ name: "nested null", metadata: { custom_entity: { nested: { value: null } } } },
+				];
+				for (const invalidCase of invalidMetadataCases) {
+					const leafEc = await vt_signEC(
+						"https://leaf.example.com",
+						leafKeys.privateKey,
+						leafKeys.publicKey,
+						{
+							authority_hints: ["https://ta.example.com"],
+							metadata: invalidCase.metadata,
+						},
+					);
+					const result = await validateTrustChain([leafEc, ...chain.slice(1)], taSet, {
+						verboseErrors: true,
+					});
+					t.false(result.valid, invalidCase.name);
+					t.true(
+						result.errors.some((e) => e.field === "metadata"),
+						invalidCase.name,
+					);
+				}
+			});
+			test("preserves valid custom entity type metadata", async (t) => {
+				const { chain, taSet, leafKeys } = await vt_buildSimple();
+				const leafEc = await vt_signEC(
+					"https://leaf.example.com",
+					leafKeys.privateKey,
+					leafKeys.publicKey,
+					{
+						authority_hints: ["https://ta.example.com"],
+						metadata: { custom_protocol: { display_name: "Custom Entity" } },
+					},
+				);
+				const result = await validateTrustChain([leafEc, ...chain.slice(1)], taSet);
+				t.true(result.valid);
+				if (!result.valid) return;
+				t.equal(result.chain.resolvedMetadata.custom_protocol?.display_name, "Custom Entity");
+			});
+			test("rejects malformed critical-claim fields in raw statements", async (t) => {
+				const { chain, taSet, leafKeys } = await vt_buildSimple();
+				const invalidCritCases: Array<{ name: string; overrides: Record<string, unknown> }> = [
+					{ name: "empty crit", overrides: { crit: [] } },
+					{ name: "non-array crit", overrides: { crit: "x_custom" } },
+					{ name: "non-array metadata_policy_crit", overrides: { metadata_policy_crit: "regex" } },
+				];
+				for (const invalidCase of invalidCritCases) {
+					const leafEc = await vt_signEC(
+						"https://leaf.example.com",
+						leafKeys.privateKey,
+						leafKeys.publicKey,
+						{
+							authority_hints: ["https://ta.example.com"],
+							...invalidCase.overrides,
+						},
+					);
+					const result = await validateTrustChain([leafEc, ...chain.slice(1)], taSet, {
+						verboseErrors: true,
+					});
+					t.false(result.valid, invalidCase.name);
+				}
+			});
+			test("rejects malformed metadata policy and constraints in raw subordinate statements", async (t) => {
+				const { chain, taSet, taKeys, leafKeys } = await vt_buildSimple();
+				const invalidSsCases: Array<{ name: string; overrides: Record<string, unknown> }> = [
+					{ name: "metadata_policy null", overrides: { metadata_policy: null } },
+					{
+						name: "metadata_policy parameter not object",
+						overrides: { metadata_policy: { openid_relying_party: { scope: "bad" } } },
+					},
+					{ name: "standard metadata_policy_crit", overrides: { metadata_policy_crit: ["value"] } },
+					{
+						name: "invalid allowed_entity_types",
+						overrides: { constraints: { allowed_entity_types: ["federation_entity"] } },
+					},
+				];
+				for (const invalidCase of invalidSsCases) {
+					const ss = await vt_signSS(
+						"https://ta.example.com",
+						"https://leaf.example.com",
+						taKeys.privateKey,
+						leafKeys.publicKey,
+						invalidCase.overrides,
+					);
+					const result = await validateTrustChain(
+						[chain[0] as string, ss, chain[2] as string],
+						taSet,
+						{ verboseErrors: true },
+					);
+					t.false(result.valid, invalidCase.name);
+				}
+			});
+			test("applies final subordinate statement when Trust Anchor configuration is omitted", async (t) => {
+				const taKeys = await generateSigningKey("ES256");
+				const leafKeys = await generateSigningKey("ES256");
+				const leafEc = await vt_signEC(
+					"https://leaf.example.com",
+					leafKeys.privateKey,
+					leafKeys.publicKey,
+					{
+						authority_hints: ["https://ta.example.com"],
+						metadata: {
+							openid_relying_party: { client_name: "Original RP" },
+							oauth_client: { client_id: "removed-by-constraint" },
+						},
+					},
+				);
+				const ss = await vt_signSS(
+					"https://ta.example.com",
+					"https://leaf.example.com",
+					taKeys.privateKey,
+					leafKeys.publicKey,
+					{
+						metadata: { openid_relying_party: { client_name: "TA Override" } },
+						metadata_policy: {
+							openid_relying_party: { contacts: { default: ["ops@example.com"] } },
+						},
+						constraints: { allowed_entity_types: ["openid_relying_party"] },
+					},
+				);
+				const taSet: TrustAnchorSet = new Map([
+					["https://ta.example.com" as EntityId, { jwks: { keys: [taKeys.publicKey] } }],
+				]);
+				const result = await validateTrustChain([leafEc, ss], taSet, { verboseErrors: true });
+				t.true(result.valid);
+				if (!result.valid) return;
+				t.equal(result.chain.trustAnchorId, "https://ta.example.com");
+				t.equal(result.chain.resolvedMetadata.openid_relying_party?.client_name, "TA Override");
+				t.deepEqual(result.chain.resolvedMetadata.openid_relying_party?.contacts, [
+					"ops@example.com",
+				]);
+				t.false("oauth_client" in result.chain.resolvedMetadata);
+			});
+			test("accepts registered critical custom metadata policy operators", async (t) => {
+				const { chain, taSet, taKeys, leafKeys } = await vt_buildSimple();
+				const regexOp: PolicyOperatorDefinition = {
+					name: "regex",
+					order: 4,
+					action: "check",
+					apply: (parameterValue, operatorValue) => {
+						if (parameterValue === undefined) return { ok: true, value: undefined };
+						return new RegExp(operatorValue as string).test(parameterValue as string)
+							? { ok: true, value: parameterValue }
+							: { ok: false, error: "regex mismatch" };
+					},
+					merge: (a, _b) => ({ ok: true, value: a }),
+					canCombineWith: () => true,
+				};
+				const leafEc = await vt_signEC(
+					"https://leaf.example.com",
+					leafKeys.privateKey,
+					leafKeys.publicKey,
+					{
+						authority_hints: ["https://ta.example.com"],
+						metadata: {
+							openid_relying_party: {
+								sector_identifier_uri: "https://rp.example.com/sector.json",
+							},
+						},
+					},
+				);
+				const ss = await vt_signSS(
+					"https://ta.example.com",
+					"https://leaf.example.com",
+					taKeys.privateKey,
+					leafKeys.publicKey,
+					{
+						metadata_policy_crit: ["regex"],
+						metadata_policy: {
+							openid_relying_party: { sector_identifier_uri: { regex: "^https://rp" } },
+						},
+					},
+				);
+				const result = await validateTrustChain([leafEc, ss, chain[2] as string], taSet, {
+					customPolicyOperators: [regexOp],
+					verboseErrors: true,
+				});
+				t.true(result.valid);
+			});
 			test("rejects aud in ordinary trust chains by default", async (t) => {
 				const { chain, taSet, leafKeys } = await vt_buildSimple();
 				const registrationEc = await vt_signEC(
@@ -8796,7 +9057,7 @@ export default (QUnit: QUnit) => {
 				t.false(result.valid);
 				t.true(result.errors.some((e) => e.message.includes("trust_anchor")));
 			});
-			test("only collects trust_mark_issuers from TA EC", async (t) => {
+			test("rejects published trust mark from issuer outside validated chain", async (t) => {
 				const taKeys = await generateSigningKey("ES256");
 				const intKeys = await generateSigningKey("ES256");
 				const leafKeys = await generateSigningKey("ES256");
@@ -8807,7 +9068,7 @@ export default (QUnit: QUnit) => {
 						sub: "https://leaf.example.com",
 						iat: vt_now,
 						exp: vt_now + 3600,
-						id: "https://trust-mark-type.example.com",
+						trust_mark_type: "https://trust-mark-type.example.com",
 					},
 					new JwkSigner(tmIssuerKeys.privateKey),
 					{ typ: "trust-mark+jwt" },
@@ -8851,10 +9112,10 @@ export default (QUnit: QUnit) => {
 				const result = await validateTrustChain([leafEc, ssIntLeaf, ssTaInt, taEc], taSet, {
 					verboseErrors: true,
 				});
-				t.true(result.valid);
-				if (result.valid) t.equal(result.chain.trustMarks.length, 0);
+				t.false(result.valid);
+				t.true(result.errors.some((e) => e.field === "trust_marks"));
 			});
-			test("ignores trust mark when outer trust_mark_type does not match inner JWT trust_mark_type", async (t) => {
+			test("rejects published trust mark when outer type does not match inner type", async (t) => {
 				const taKeys = await generateSigningKey("ES256");
 				const leafKeys = await generateSigningKey("ES256");
 				const issuerKeys = await generateSigningKey("ES256");
@@ -8897,9 +9158,11 @@ export default (QUnit: QUnit) => {
 				const taSet: TrustAnchorSet = new Map([
 					["https://ta.example.com" as EntityId, { jwks: { keys: [taKeys.publicKey] } }],
 				]);
-				const result = await validateTrustChain([leafEc, ss, taEc], taSet);
-				t.true(result.valid);
-				if (result.valid) t.equal(result.chain.trustMarks.length, 0);
+				const result = await validateTrustChain([leafEc, ss, taEc], taSet, {
+					verboseErrors: true,
+				});
+				t.false(result.valid);
+				t.true(result.errors.some((e) => e.field === "trust_marks"));
 			});
 			test("rejects entity statement with missing kid header", async (t) => {
 				const jose = await import("jose");

@@ -72,18 +72,24 @@ export const FederationMetadataSchema = z
 		oauth_client: z.record(z.string(), z.unknown()).optional(),
 		oauth_resource: z.record(z.string(), z.unknown()).optional(),
 	})
-	.refine(
-		(m) =>
-			!!(
-				m.federation_entity ||
-				m.openid_relying_party ||
-				m.openid_provider ||
-				m.oauth_authorization_server ||
-				m.oauth_client ||
-				m.oauth_resource
-			),
-		{ message: "Metadata must contain at least one entity type" },
-	);
+	.superRefine((metadata, ctx) => {
+		const entries = Object.entries(metadata);
+		if (entries.length === 0) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "Metadata must contain at least one entity type",
+			});
+		}
+		for (const [entityType, value] of entries) {
+			if (!value || typeof value !== "object" || Array.isArray(value)) {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: "Entity type metadata must be a JSON object",
+					path: [entityType],
+				});
+			}
+		}
+	});
 
 export type FederationEntityMetadata = z.infer<typeof FederationEntityMetadataSchema>;
 /** Federation-layer RP metadata (loose record). For typed OIDC fields, use `@oidfed/oidc`. */

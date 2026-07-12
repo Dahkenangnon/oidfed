@@ -3,6 +3,7 @@ import {
 	DEFAULT_CLOCK_SKEW_SECONDS,
 	InternalErrorCode,
 	JwtTyp,
+	PolicyOperator,
 	STANDARD_ENTITY_STATEMENT_CLAIMS,
 	SUPPORTED_ALGORITHMS,
 } from "../constants.js";
@@ -11,6 +12,10 @@ import { decodeEntityStatement, verifyEntityStatement } from "../jose/verify.js"
 import { validateJwkSetUseRequirement } from "../jwks/use-requirement.js";
 import { applyMetadataPolicy } from "../metadata-policy/apply.js";
 import { resolveMetadataPolicy } from "../metadata-policy/merge.js";
+import {
+	EntityConfigurationSchema,
+	SubordinateStatementSchema,
+} from "../schemas/entity-statement.js";
 import type { JWK, JWKSet } from "../schemas/jwk.js";
 import type { FederationMetadata } from "../schemas/metadata.js";
 import { validateTrustMark } from "../trust-marks/index.js";
@@ -32,6 +37,10 @@ const defaultClock: Clock = {
 	now: () => nowSeconds(),
 };
 
+const STANDARD_METADATA_POLICY_OPERATORS: ReadonlySet<string> = new Set(
+	Object.values(PolicyOperator),
+);
+
 /** Calculate the earliest expiration across all statements in a chain. */
 export function calculateChainExpiration(chain: ParsedEntityStatement[]): number {
 	return Math.min(...chain.map((es) => es.payload.exp));
@@ -52,13 +61,150 @@ function addError(
 	});
 }
 
-function isValidUrl(value: unknown): boolean {
-	if (typeof value !== "string") return false;
-	try {
-		new URL(value);
-		return true;
-	} catch {
-		return false;
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+	return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function addSchemaIssues(
+	errors: ValidationError[],
+	issues: ReadonlyArray<{ path: readonly PropertyKey[]; message: string }>,
+	statementIndex: number,
+	defaultField: string,
+) {
+	for (const issue of issues) {
+		const field = issue.path[0] ? String(issue.path[0]) : defaultField;
+		const path = issue.path.length > 0 ? issue.path.map(String).join(".") : defaultField;
+		addError(
+			errors,
+			InternalErrorCode.TrustChainInvalid,
+			`Invalid ${path} at statement ${statementIndex}: ${issue.message}`,
+			{ statementIndex, field, checkNumber: 1 },
+		);
+	}
+}
+
+function addMetadataNullErrors(
+	errors: ValidationError[],
+	value: unknown,
+	statementIndex: number,
+	path: string,
+) {
+	if (value === null) {
+		addError(
+			errors,
+			InternalErrorCode.TrustChainInvalid,
+			`Metadata value '${path}' MUST NOT be null at statement ${statementIndex}`,
+			{ statementIndex, field: "metadata", checkNumber: 16 },
+		);
+		return;
+	}
+	if (Array.isArray(value)) {
+		for (let i = 0; i < value.length; i++) {
+			addMetadataNullErrors(errors, value[i], statementIndex, `${path}.${i}`);
+		}
+		return;
+	}
+	if (isJsonObject(value)) {
+		for (const [key, child] of Object.entries(value)) {
+			addMetadataNullErrors(errors, child, statementIndex, `${path}.${key}`);
+		}
+	}
+}
+
+function validateMetadataPolicyShape(
+	errors: ValidationError[],
+	policy: unknown,
+	statementIndex: number,
+) {
+	if (policy === undefined) {
+		return;
+	}
+	if (!isJsonObject(policy)) {
+		addError(
+			errors,
+			InternalErrorCode.TrustChainInvalid,
+			`metadata_policy MUST be a JSON object at statement ${statementIndex}`,
+			{ statementIndex, field: "metadata_policy", checkNumber: 19 },
+		);
+		return;
+	}
+	for (const [entityType, parameterPolicies] of Object.entries(policy)) {
+		if (!isJsonObject(parameterPolicies)) {
+			addError(
+				errors,
+				InternalErrorCode.TrustChainInvalid,
+				`metadata_policy.${entityType} MUST be a JSON object at statement ${statementIndex}`,
+				{ statementIndex, field: "metadata_policy", checkNumber: 19 },
+			);
+			continue;
+		}
+		for (const [parameter, operatorPolicy] of Object.entries(parameterPolicies)) {
+			if (!isJsonObject(operatorPolicy)) {
+				addError(
+					errors,
+					InternalErrorCode.TrustChainInvalid,
+					`metadata_policy.${entityType}.${parameter} MUST be a JSON object at statement ${statementIndex}`,
+					{ statementIndex, field: "metadata_policy", checkNumber: 19 },
+				);
+			}
+		}
+	}
+}
+
+function validateRawStatementShape(
+	errors: ValidationError[],
+	statement: ParsedEntityStatement,
+	statementIndex: number,
+	lastIndex: number,
+) {
+	const payload = statement.payload as Record<string, unknown>;
+	const isSubjectEc = statementIndex === 0;
+	const isTrailingTrustAnchorEc = statementIndex === lastIndex && payload.iss === payload.sub;
+	const schema =
+		isSubjectEc || isTrailingTrustAnchorEc ? EntityConfigurationSchema : SubordinateStatementSchema;
+	const schemaResult = schema.safeParse(payload);
+	if (!schemaResult.success) {
+		addSchemaIssues(errors, schemaResult.error.issues, statementIndex, "payload");
+	}
+
+	if (payload.metadata !== undefined) {
+		if (!isJsonObject(payload.metadata)) {
+			addError(
+				errors,
+				InternalErrorCode.TrustChainInvalid,
+				`metadata MUST be a JSON object at statement ${statementIndex}`,
+				{ statementIndex, field: "metadata", checkNumber: 16 },
+			);
+		} else {
+			for (const [entityType, metadata] of Object.entries(payload.metadata)) {
+				if (!isJsonObject(metadata)) {
+					addError(
+						errors,
+						InternalErrorCode.TrustChainInvalid,
+						`metadata.${entityType} MUST be a JSON object at statement ${statementIndex}`,
+						{ statementIndex, field: "metadata", checkNumber: 16 },
+					);
+				} else {
+					addMetadataNullErrors(errors, metadata, statementIndex, `metadata.${entityType}`);
+				}
+			}
+		}
+	}
+
+	validateMetadataPolicyShape(errors, payload.metadata_policy, statementIndex);
+
+	const metadataPolicyCrit = payload.metadata_policy_crit;
+	if (Array.isArray(metadataPolicyCrit)) {
+		for (const operator of metadataPolicyCrit) {
+			if (typeof operator === "string" && STANDARD_METADATA_POLICY_OPERATORS.has(operator)) {
+				addError(
+					errors,
+					InternalErrorCode.TrustChainInvalid,
+					`metadata_policy_crit MUST NOT list standard operator '${operator}' at statement ${statementIndex}`,
+					{ statementIndex, field: "metadata_policy_crit", checkNumber: 19 },
+				);
+			}
+		}
 	}
 }
 
@@ -79,6 +225,13 @@ export async function validateTrustChain(
 		...(options?.clock ? { clock: options.clock } : {}),
 	};
 
+	if (chain.length === 0) {
+		addError(errors, InternalErrorCode.TrustChainInvalid, "Trust chain MUST NOT be empty", {
+			checkNumber: 1,
+		});
+		return { valid: false, errors };
+	}
+
 	const parsed: ParsedEntityStatement[] = [];
 	for (let j = 0; j < chain.length; j++) {
 		const decodeResult = decodeEntityStatement(chain[j] as string);
@@ -97,10 +250,13 @@ export async function validateTrustChain(
 		parsed.push(decodeResult.value);
 	}
 
+	const lastStatementIndex = parsed.length - 1;
 	for (let j = 0; j < parsed.length; j++) {
 		const es = parsed[j] as ParsedEntityStatement;
 		const p = es.payload as Record<string, unknown>;
 		const h = es.header;
+
+		validateRawStatementShape(errors, es, j, lastStatementIndex);
 
 		if (!p.iss)
 			addError(errors, InternalErrorCode.TrustChainInvalid, `Missing 'iss' at statement ${j}`, {
@@ -126,23 +282,6 @@ export async function validateTrustChain(
 				field: "exp",
 				checkNumber: 1,
 			});
-
-		if (p.iss && !isValidUrl(p.iss)) {
-			addError(
-				errors,
-				InternalErrorCode.TrustChainInvalid,
-				`Invalid URL for 'iss' at statement ${j}`,
-				{ statementIndex: j, field: "iss", checkNumber: 2 },
-			);
-		}
-		if (p.sub && !isValidUrl(p.sub)) {
-			addError(
-				errors,
-				InternalErrorCode.TrustChainInvalid,
-				`Invalid URL for 'sub' at statement ${j}`,
-				{ statementIndex: j, field: "sub", checkNumber: 3 },
-			);
-		}
 
 		if (typeof p.iat === "number") {
 			if (!Number.isSafeInteger(p.iat)) {
@@ -504,7 +643,9 @@ export async function validateTrustChain(
 
 	const lastIdx = parsed.length - 1;
 	const last = parsed[lastIdx] as ParsedEntityStatement;
-	const lastIss = (last.payload as Record<string, unknown>).iss as string;
+	const lastPayload = last.payload as Record<string, unknown>;
+	const lastIss = lastPayload.iss as string;
+	const hasTrailingTrustAnchorEc = lastPayload.iss === lastPayload.sub;
 
 	if (!trustAnchors.has(lastIss as EntityId)) {
 		addError(
@@ -533,8 +674,7 @@ export async function validateTrustChain(
 	}
 
 	// TA EC MUST NOT have authority_hints or trust_anchor_hints
-	const lastPayload = last.payload as Record<string, unknown>;
-	if (lastPayload.iss === lastPayload.sub && trustAnchors.has(lastIss as EntityId)) {
+	if (hasTrailingTrustAnchorEc && trustAnchors.has(lastIss as EntityId)) {
 		if (lastPayload.authority_hints !== undefined) {
 			addError(
 				errors,
@@ -604,7 +744,7 @@ export async function validateTrustChain(
 		};
 	}
 
-	const subordinateStatements = parsed.slice(1, -1);
+	const subordinateStatements = hasTrailingTrustAnchorEc ? parsed.slice(1, -1) : parsed.slice(1);
 
 	let metadata = (leafPayload.metadata ?? {}) as Record<string, Record<string, unknown>>;
 
@@ -692,6 +832,9 @@ export async function validateTrustChain(
 		const entityJwks: Record<string, JWKSet> = {};
 		const taStatement = parsed[lastIdx] as ParsedEntityStatement;
 		const taPayloadRec = taStatement.payload as Record<string, unknown>;
+		if (taConfig) {
+			entityJwks[lastIss] = taConfig.jwks;
+		}
 		if (taPayloadRec.iss === taPayloadRec.sub) {
 			const issuers = taPayloadRec.trust_mark_issuers as Record<string, string[]> | undefined;
 			if (issuers) {
@@ -712,16 +855,39 @@ export async function validateTrustChain(
 
 		for (const tmRef of leafTrustMarks) {
 			const tmDecoded = decodeEntityStatement(tmRef.trust_mark);
-			if (!tmDecoded.ok) continue;
+			if (!tmDecoded.ok) {
+				addError(
+					errors,
+					InternalErrorCode.TrustMarkInvalid,
+					`Failed to decode published trust mark: ${tmDecoded.error.description}`,
+					{ statementIndex: 0, field: "trust_marks", checkNumber: 16 },
+				);
+				continue;
+			}
 
 			const tmPayload = tmDecoded.value.payload as Record<string, unknown>;
 
-			// Outer trust_mark_type MUST match inner JWT trust_mark_type
-			if (tmRef.trust_mark_type !== tmPayload.trust_mark_type) continue;
+			if (tmRef.trust_mark_type !== tmPayload.trust_mark_type) {
+				addError(
+					errors,
+					InternalErrorCode.TrustMarkInvalid,
+					`Published trust mark type does not match embedded trust mark type`,
+					{ statementIndex: 0, field: "trust_marks", checkNumber: 16 },
+				);
+				continue;
+			}
 
 			const tmIss = tmPayload.iss as string | undefined;
 			const jwksForIssuer = tmIss ? entityJwks[tmIss] : undefined;
-			if (!jwksForIssuer) continue;
+			if (!jwksForIssuer) {
+				addError(
+					errors,
+					InternalErrorCode.TrustMarkInvalid,
+					`No trusted federation keys found for published trust mark issuer '${String(tmIss)}'`,
+					{ statementIndex: 0, field: "trust_marks", checkNumber: 16 },
+				);
+				continue;
+			}
 
 			const tmResult = await validateTrustMark(tmRef.trust_mark, trustMarkIssuers, jwksForIssuer, {
 				...options,
@@ -737,6 +903,13 @@ export async function validateTrustChain(
 			});
 			if (tmResult.ok) {
 				trustMarks.push(tmResult.value);
+			} else {
+				addError(
+					errors,
+					InternalErrorCode.TrustMarkInvalid,
+					`Invalid published trust mark: ${tmResult.error.description}`,
+					{ statementIndex: 0, field: "trust_marks", checkNumber: 16 },
+				);
 			}
 		}
 	}

@@ -1,4 +1,4 @@
-import { InternalErrorCode } from "../constants.js";
+import { InternalErrorCode, PolicyOperator } from "../constants.js";
 import { err, type FederationError, ok, type Result } from "../errors.js";
 import type {
 	ParsedEntityStatement,
@@ -10,6 +10,10 @@ import {
 	type MetadataPolicyOptions,
 	validateCustomOperators,
 } from "./custom-operators.js";
+
+const STANDARD_METADATA_POLICY_OPERATORS: ReadonlySet<string> = new Set(
+	Object.values(PolicyOperator),
+);
 
 /**
  * Merge metadata policies from subordinate statements in TA-to-leaf order.
@@ -40,6 +44,12 @@ export function resolveMetadataPolicy(
 	}
 
 	for (const critOp of criticalOps) {
+		if (STANDARD_METADATA_POLICY_OPERATORS.has(critOp)) {
+			return err({
+				code: InternalErrorCode.MetadataPolicyError,
+				description: `metadata_policy_crit must not list standard metadata policy operator '${critOp}'`,
+			});
+		}
 		if (!lookup[critOp]) {
 			return err({
 				code: InternalErrorCode.MetadataPolicyError,
