@@ -3,6 +3,7 @@ import { err, type FederationError, ok, type Result } from "../errors.js";
 import { verifyEntityStatement } from "../jose/verify.js";
 import { validateJwkSetUseRequirement } from "../jwks/use-requirement.js";
 import {
+	type HistoricalKeyEntry,
 	type HistoricalKeysPayload,
 	HistoricalKeysPayloadSchema,
 	type ResolveResponsePayload,
@@ -96,6 +97,43 @@ export async function verifyHistoricalKeysResponse(
 		return err(apiError(`Invalid historical keys response payload: ${parsed.error.message}`));
 	}
 	return { ok: true, value: parsed.data };
+}
+
+const SECURITY_REVOCATION_REASONS = new Set(["compromised", "keyCompromise", "key_compromise"]);
+
+export interface SelectHistoricalVerificationKeyOptions {
+	readonly kid: string;
+	readonly validAt: number;
+}
+
+/** Select a historical key usable for verifying material issued at the supplied NumericDate. */
+export function selectHistoricalVerificationKey(
+	keys: readonly HistoricalKeyEntry[],
+	options: SelectHistoricalVerificationKeyOptions,
+): Result<HistoricalKeyEntry, FederationError> {
+	const matchingKeys = keys.filter((key) => key.kid === options.kid);
+	if (matchingKeys.length === 0) {
+		return err(apiError(`No historical key found for kid '${options.kid}'`));
+	}
+
+	for (const key of matchingKeys) {
+		const revoked = key.revoked;
+		if (revoked?.reason && SECURITY_REVOCATION_REASONS.has(revoked.reason)) {
+			continue;
+		}
+		if (revoked?.revoked_at !== undefined && options.validAt >= revoked.revoked_at) {
+			continue;
+		}
+		if (key.nbf !== undefined && options.validAt < key.nbf) {
+			continue;
+		}
+		if (options.validAt >= key.exp) {
+			continue;
+		}
+		return ok(key);
+	}
+
+	return err(apiError(`Historical key '${options.kid}' is not valid at ${options.validAt}`));
 }
 
 /**

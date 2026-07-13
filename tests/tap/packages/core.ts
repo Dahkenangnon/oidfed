@@ -50,6 +50,7 @@ import {
 	fetchListSubordinates,
 	fetchResolveResponse,
 	fetchTrustMarkList,
+	selectHistoricalVerificationKey,
 	verifyHistoricalKeysResponse,
 	verifyResolveResponse,
 	verifySignedJwkSet,
@@ -993,6 +994,24 @@ export default (QUnit: QUnit) => {
 		test("maps temporarily_unavailable to 503", (t) => {
 			const result = toPublicError({ code: "temporarily_unavailable", description: "try later" });
 			t.equal(result.status, 503);
+		});
+
+		test("maps federation endpoint error codes to public statuses", (t) => {
+			const cases: Array<[FederationErrorCode, number]> = [
+				[FederationErrorCode.InvalidIssuer, 404],
+				[FederationErrorCode.InvalidSubject, 404],
+				[FederationErrorCode.InvalidTrustAnchor, 404],
+				[FederationErrorCode.InvalidTrustChain, 400],
+				[FederationErrorCode.InvalidMetadata, 400],
+				[FederationErrorCode.UnsupportedParameter, 400],
+			];
+
+			for (const [code, status] of cases) {
+				const result = toPublicError({ code, description: `${code} description` });
+				t.equal(result.status, status, code);
+				t.equal(result.code, code, code);
+				t.equal(result.description, `${code} description`, code);
+			}
 		});
 	});
 
@@ -3081,6 +3100,25 @@ export default (QUnit: QUnit) => {
 				if (!isErr(result)) return;
 				t.equal(result.error.code, "ERR_UNSUPPORTED_ALG");
 			});
+			test("accepts an assertion signed with an allowed endpoint algorithm", async (t) => {
+				const { jwt, keys } = await createClientAssertion();
+				const result = await verifyClientAssertion(jwt, { keys: [keys.publicKey] }, CA_AUDIENCE, {
+					allowedAlgorithms: ["ES256"],
+				});
+				t.true(isOk(result));
+				if (!isOk(result)) return;
+				t.equal(result.value.clientId, CA_CLIENT_ID);
+			});
+			test("rejects an assertion signed outside the endpoint algorithm list", async (t) => {
+				const { jwt, keys } = await createClientAssertion();
+				const result = await verifyClientAssertion(jwt, { keys: [keys.publicKey] }, CA_AUDIENCE, {
+					allowedAlgorithms: ["RS256"],
+				});
+				t.true(isErr(result));
+				if (!isErr(result)) return;
+				t.equal(result.error.code, "ERR_UNSUPPORTED_ALG");
+				t.true(result.error.description.includes("not allowed"));
+			});
 			test("rejects when no matching key in JWKS", async (t) => {
 				const { jwt } = await createClientAssertion();
 				const otherKeys = await generateSigningKey("ES256");
@@ -4795,6 +4833,27 @@ export default (QUnit: QUnit) => {
 					t.equal(result.value.aud, "https://client.example.com");
 				}
 			});
+			test("rejects resolve response with array aud claim", async (t) => {
+				const { signer, jwks } = await setupFAKeys();
+				const jwt = await _signES(
+					{
+						iss: "https://authority.example.com",
+						sub: "https://leaf.example.com",
+						iat: fa_now,
+						exp: fa_now + 3600,
+						metadata: { federation_entity: { organization_name: "Test" } },
+						trust_chain: ["jwt1", "jwt2"],
+						aud: ["https://client.example.com"],
+					},
+					signer,
+					{ typ: JwtTyp.ResolveResponse },
+				);
+				const result = await verifyResolveResponse(jwt, jwks);
+				t.false(result.ok);
+				if (!result.ok) {
+					t.true(result.error.description.includes("aud"));
+				}
+			});
 			test("accepts resolve response with additional claims", async (t) => {
 				const { signer, jwks } = await setupFAKeys();
 				const jwt = await _signES(
@@ -4939,6 +4998,79 @@ export default (QUnit: QUnit) => {
 					{ typ: JwtTyp.JwkSet },
 				);
 				t.false((await verifyHistoricalKeysResponse(jwt, jwks)).ok);
+			});
+		});
+
+		module("core / selectHistoricalVerificationKey", () => {
+			const historicalKey = {
+				kty: "EC",
+				kid: "old-key-1",
+				crv: "P-256",
+				x: "abc",
+				y: "def",
+				iat: 1_000,
+				exp: 2_000,
+			};
+
+			test("selects a matching key valid at statement time", (t) => {
+				const result = selectHistoricalVerificationKey([historicalKey], {
+					kid: "old-key-1",
+					validAt: 1_500,
+				});
+				t.true(result.ok);
+				if (result.ok) {
+					t.equal(result.value.kid, "old-key-1");
+				}
+			});
+
+			test("rejects a key at or after expiration", (t) => {
+				const result = selectHistoricalVerificationKey([historicalKey], {
+					kid: "old-key-1",
+					validAt: 2_000,
+				});
+				t.false(result.ok);
+			});
+
+			test("rejects a key before its validity window", (t) => {
+				const result = selectHistoricalVerificationKey([{ ...historicalKey, nbf: 1_600 }], {
+					kid: "old-key-1",
+					validAt: 1_500,
+				});
+				t.false(result.ok);
+			});
+
+			test("rejects a key revoked at the validation time", (t) => {
+				const result = selectHistoricalVerificationKey(
+					[
+						{
+							...historicalKey,
+							revoked: { revoked_at: 1_500, reason: "superseded" },
+						},
+					],
+					{ kid: "old-key-1", validAt: 1_500 },
+				);
+				t.false(result.ok);
+			});
+
+			test("rejects a security-revoked key before the revocation time", (t) => {
+				const result = selectHistoricalVerificationKey(
+					[
+						{
+							...historicalKey,
+							revoked: { revoked_at: 1_900, reason: "compromised" },
+						},
+					],
+					{ kid: "old-key-1", validAt: 1_200 },
+				);
+				t.false(result.ok);
+			});
+
+			test("rejects missing kid", (t) => {
+				const result = selectHistoricalVerificationKey([historicalKey], {
+					kid: "missing",
+					validAt: 1_500,
+				});
+				t.false(result.ok);
 			});
 		});
 

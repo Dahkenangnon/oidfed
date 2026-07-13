@@ -284,7 +284,12 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 		authMethods: string[] | undefined,
 		nativeMethod?: "GET" | "POST",
 	): (req: Request) => Promise<Response> {
-		return createAuthenticatedHandler(ctx, handler, authMethods, { nativeMethod });
+		return createAuthenticatedHandler(ctx, handler, authMethods, {
+			...(nativeMethod !== undefined ? { nativeMethod } : {}),
+			...(meta.endpoint_auth_signing_alg_values_supported !== undefined
+				? { allowedAlgorithms: meta.endpoint_auth_signing_alg_values_supported }
+				: {}),
+		});
 	}
 
 	const ecHandler = createEntityConfigurationHandler(ctx);

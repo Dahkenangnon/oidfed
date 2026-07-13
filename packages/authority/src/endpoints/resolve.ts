@@ -2,18 +2,29 @@ import {
 	type EntityId,
 	type EntityType,
 	FederationErrorCode,
+	fetchTrustMarkStatus,
 	isValidEntityId,
 	type JWKSet,
 	JwtTyp,
 	MediaType,
 	nowSeconds,
+	type ParsedEntityStatement,
 	resolveTrustChains,
 	signEntityStatement,
 	type TrustAnchorSet,
+	TrustMarkStatus,
+	type ValidatedTrustMark,
 	validateTrustChain,
 } from "@oidfed/core";
 import type { HandlerContext } from "./context.js";
 import { errorResponse, jwtResponse, parseQueryParams, requireMethod } from "./helpers.js";
+
+type ResolveTrustMarkRef = { trust_mark_type: string; trust_mark: string };
+
+interface ActiveResolveTrustMark {
+	ref: ResolveTrustMarkRef;
+	mark: ValidatedTrustMark;
+}
 
 /** Handles resolve endpoint requests to produce a signed resolve response. */
 export function createResolveHandler(ctx: HandlerContext): (request: Request) => Promise<Response> {
@@ -149,14 +160,18 @@ export function createResolveHandler(ctx: HandlerContext): (request: Request) =>
 
 			const keySet = await ctx.keyProvider.getFederationKeySet();
 			const now = nowSeconds(ctx.options?.clock);
+			const activeTrustMarks = await resolveActiveTrustMarks(
+				ctx,
+				validation.chain.statements,
+				validation.chain.trustMarks,
+				now,
+			);
 
 			// Exp is capped to the earliest expiry across the chain and trust marks
 			let resolveExp = chain.expiresAt;
-			if (validation.chain.trustMarks) {
-				for (const tm of validation.chain.trustMarks) {
-					if (tm.expiresAt !== undefined && tm.expiresAt < resolveExp) {
-						resolveExp = tm.expiresAt;
-					}
+			for (const { mark } of activeTrustMarks) {
+				if (mark.expiresAt !== undefined && mark.expiresAt < resolveExp) {
+					resolveExp = mark.expiresAt;
 				}
 			}
 
@@ -174,20 +189,8 @@ export function createResolveHandler(ctx: HandlerContext): (request: Request) =>
 				payload.aud = rawEntity;
 			}
 
-			if (validation.chain.trustMarks && validation.chain.trustMarks.length > 0) {
-				const leafStatement = validation.chain.statements[0];
-				const leafTrustMarks = leafStatement
-					? ((leafStatement.payload as Record<string, unknown>).trust_marks as
-							| Array<{ trust_mark_type: string; trust_mark: string }>
-							| undefined)
-					: undefined;
-
-				if (leafTrustMarks) {
-					const validatedTypes = new Set(validation.chain.trustMarks.map((tm) => tm.trustMarkType));
-					payload.trust_marks = leafTrustMarks.filter((ref) =>
-						validatedTypes.has(ref.trust_mark_type),
-					);
-				}
+			if (activeTrustMarks.length > 0) {
+				payload.trust_marks = activeTrustMarks.map(({ ref }) => ref);
 			}
 
 			const extraHeaders: Record<string, unknown> = {};
@@ -218,4 +221,89 @@ export function createResolveHandler(ctx: HandlerContext): (request: Request) =>
 			return errorResponse(500, "server_error", "Failed to resolve entity");
 		}
 	};
+}
+
+async function resolveActiveTrustMarks(
+	ctx: HandlerContext,
+	statements: ReadonlyArray<ParsedEntityStatement>,
+	validatedTrustMarks: ReadonlyArray<ValidatedTrustMark>,
+	now: number,
+): Promise<ActiveResolveTrustMark[]> {
+	if (validatedTrustMarks.length === 0) return [];
+	const leafStatement = statements[0];
+	const leafTrustMarks = leafStatement
+		? ((leafStatement.payload as Record<string, unknown>).trust_marks as
+				| ResolveTrustMarkRef[]
+				| undefined)
+		: undefined;
+	if (!leafTrustMarks || leafTrustMarks.length === 0) return [];
+
+	const active: ActiveResolveTrustMark[] = [];
+	const usedValidatedIndexes = new Set<number>();
+	for (const ref of leafTrustMarks) {
+		const validatedIndex = validatedTrustMarks.findIndex(
+			(mark, index) =>
+				!usedValidatedIndexes.has(index) && mark.trustMarkType === ref.trust_mark_type,
+		);
+		if (validatedIndex === -1) continue;
+
+		const mark = validatedTrustMarks[validatedIndex];
+		if (!mark) continue;
+		usedValidatedIndexes.add(validatedIndex);
+
+		if (await isTrustMarkActiveForResolve(ctx, statements, ref, mark, now)) {
+			active.push({ ref, mark });
+		}
+	}
+	return active;
+}
+
+async function isTrustMarkActiveForResolve(
+	ctx: HandlerContext,
+	statements: ReadonlyArray<ParsedEntityStatement>,
+	ref: ResolveTrustMarkRef,
+	mark: ValidatedTrustMark,
+	now: number,
+): Promise<boolean> {
+	if (mark.issuer === ctx.entityId && ctx.storage.trustMarks) {
+		try {
+			const record = await ctx.storage.trustMarks.getByJwt(ref.trust_mark);
+			return (
+				record?.active === true &&
+				record.trustMarkType === ref.trust_mark_type &&
+				record.subject === mark.subject &&
+				(record.expiresAt === undefined || record.expiresAt > now)
+			);
+		} catch (error) {
+			ctx.options?.logger?.debug("Failed to read local trust mark status", { error });
+			return false;
+		}
+	}
+
+	const issuerStatement = statements.find(
+		(statement) => statement.payload.iss === mark.issuer && statement.payload.sub === mark.issuer,
+	);
+	const issuerPayload = issuerStatement?.payload as Record<string, unknown> | undefined;
+	const issuerJwks = issuerPayload?.jwks as JWKSet | undefined;
+	const metadata = issuerPayload?.metadata as Record<string, unknown> | undefined;
+	const federationMetadata = metadata?.federation_entity as Record<string, unknown> | undefined;
+	const statusEndpoint = federationMetadata?.federation_trust_mark_status_endpoint;
+	if (typeof statusEndpoint !== "string" || !issuerJwks) return false;
+
+	try {
+		const status = await fetchTrustMarkStatus(
+			statusEndpoint,
+			ref.trust_mark,
+			issuerJwks,
+			ctx.options,
+		);
+		return (
+			status.ok &&
+			status.value.status === TrustMarkStatus.Active &&
+			status.value.issuer === mark.issuer
+		);
+	} catch (error) {
+		ctx.options?.logger?.debug("Failed to verify remote trust mark status", { error });
+		return false;
+	}
 }

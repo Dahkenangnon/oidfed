@@ -79,6 +79,8 @@ export {
 	fetchTrustMarkList,
 	type ListSubordinatesFilter,
 	type ResolveRequestParams,
+	type SelectHistoricalVerificationKeyOptions,
+	selectHistoricalVerificationKey,
 	verifyHistoricalKeysResponse,
 	verifyResolveResponse,
 	verifySignedJwkSet,

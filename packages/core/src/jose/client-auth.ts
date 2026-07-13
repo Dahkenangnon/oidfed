@@ -17,7 +17,7 @@ export async function verifyClientAssertion(
 	assertion: string,
 	jwks: JWKSet,
 	expectedAudience: string,
-	options?: { clockSkewSeconds?: number; clock?: Clock },
+	options?: { clockSkewSeconds?: number; clock?: Clock; allowedAlgorithms?: readonly string[] },
 ): Promise<Result<VerifiedClientAssertion, FederationError>> {
 	let header: jose.ProtectedHeaderParameters;
 	try {
@@ -41,6 +41,12 @@ export async function verifyClientAssertion(
 		return err({
 			code: "ERR_UNSUPPORTED_ALG",
 			description: `Unsupported algorithm: '${String(header.alg)}'`,
+		});
+	}
+	if (options?.allowedAlgorithms !== undefined && !options.allowedAlgorithms.includes(header.alg)) {
+		return err({
+			code: "ERR_UNSUPPORTED_ALG",
+			description: `Algorithm '${header.alg}' is not allowed for this endpoint`,
 		});
 	}
 

@@ -123,7 +123,7 @@ export const ResolveResponsePayloadSchema = z.looseObject({
 	metadata: FederationMetadataSchema,
 	trust_marks: z.array(TrustMarkRefSchema).optional(),
 	trust_chain: z.array(z.string()),
-	aud: z.union([z.string(), z.array(z.string())]).optional(),
+	aud: z.string().optional(),
 });
 
 /** Trust Mark Status Response payload. */

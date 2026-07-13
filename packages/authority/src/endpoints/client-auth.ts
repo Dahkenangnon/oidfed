@@ -16,7 +16,10 @@ export function createAuthenticatedHandler(
 	ctx: HandlerContext,
 	innerHandler: (request: Request) => Promise<Response>,
 	authMethods: string[] | undefined,
-	options?: { nativeMethod?: "GET" | "POST" | undefined },
+	options?: {
+		nativeMethod?: "GET" | "POST" | undefined;
+		allowedAlgorithms?: readonly string[] | undefined;
+	},
 ): (request: Request) => Promise<Response> {
 	const nativeMethod = options?.nativeMethod ?? "GET";
 
@@ -99,10 +102,15 @@ export function createAuthenticatedHandler(
 			clientAssertion,
 			clientJwks,
 			ctx.entityId,
-			clockSkewSeconds !== undefined || clock !== undefined
+			clockSkewSeconds !== undefined ||
+				clock !== undefined ||
+				options?.allowedAlgorithms !== undefined
 				? {
 						...(clockSkewSeconds !== undefined ? { clockSkewSeconds } : {}),
 						...(clock !== undefined ? { clock } : {}),
+						...(options?.allowedAlgorithms !== undefined
+							? { allowedAlgorithms: options.allowedAlgorithms }
+							: {}),
 					}
 				: undefined,
 		);

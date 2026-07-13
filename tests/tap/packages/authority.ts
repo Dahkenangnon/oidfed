@@ -1673,6 +1673,25 @@ export default (QUnit: QUnit) => {
 				t.deepEqual(await res.json(), [LIST_SUB2]);
 			});
 
+			test("rejects malformed boolean filters", async (t) => {
+				const { ctx } = await createTestContext();
+				const handler = createListHandler(ctx);
+				const cases = [
+					["trust_marked", "maybe"],
+					["intermediate", "maybe"],
+				] as const;
+
+				for (const [name, value] of cases) {
+					const res = await handler(
+						new Request(`https://authority.example.com/federation_list?${name}=${value}`),
+					);
+					t.equal(res.status, 400, name);
+					const body = (await res.json()) as Record<string, string>;
+					t.equal(body.error, FederationErrorCode.InvalidRequest, name);
+					t.true((body.error_description ?? "").includes(name), name);
+				}
+			});
+
 			test("includes security headers", async (t) => {
 				const { ctx } = await createTestContext();
 				const handler = createListHandler(ctx);
@@ -2647,6 +2666,182 @@ export default (QUnit: QUnit) => {
 	// endpoints/resolve
 	// -------------------------------------------------------------------------
 	module("authority / createResolveHandler", () => {
+		async function createResolveTrustMarkFixture(options?: {
+			readonly status?: TrustMarkStatus;
+			readonly resolverEntityId?: EntityId;
+			readonly useLocalTrustMarkStore?: boolean;
+			readonly trustMarkExpiresAt?: number;
+		}): Promise<{
+			ctx: HandlerContext;
+			chainExp: number;
+			requestUrl: string;
+			trustMarkJwt: string;
+			trustMarkType: string;
+			trustMarkExpiresAt: number;
+		}> {
+			const now = 1_700_000_000;
+			const chainExp = now + 3_600;
+			const trustMarkExpiresAt = options?.trustMarkExpiresAt ?? now + 600;
+			const status = options?.status ?? TrustMarkStatus.Active;
+			const resolverEntityId = options?.resolverEntityId ?? ENTITY_ID;
+			const trustMarkType = "https://trust.example.com/assurance";
+
+			const { privateKey: taPrivateKey, publicKey: taRawPublicKey } =
+				await generateSigningKey("ES256");
+			const { privateKey: leafPrivateKey, publicKey: leafRawPublicKey } =
+				await generateSigningKey("ES256");
+			const taSigningKey = { ...taPrivateKey, kid: "resolve-ta-key-1" };
+			const taPublicKey = { ...taRawPublicKey, kid: "resolve-ta-key-1" };
+			const leafSigningKey = { ...leafPrivateKey, kid: "resolve-leaf-key-1" };
+			const leafPublicKey = { ...leafRawPublicKey, kid: "resolve-leaf-key-1" };
+
+			const trustMarkJwt = await signEntityStatement(
+				{
+					iss: TA_ID,
+					sub: LEAF_ID,
+					trust_mark_type: trustMarkType,
+					iat: now,
+					exp: trustMarkExpiresAt,
+				},
+				new JwkSigner(taSigningKey),
+				{ typ: JwtTyp.TrustMark },
+			);
+
+			const taEcJwt = await signEntityStatement(
+				{
+					iss: TA_ID,
+					sub: TA_ID,
+					iat: now,
+					exp: chainExp,
+					jwks: { keys: [taPublicKey] },
+					trust_mark_issuers: { [trustMarkType]: [TA_ID] },
+					metadata: {
+						federation_entity: {
+							federation_fetch_endpoint: `${TA_ID}${FederationEndpoint.Fetch}`,
+							federation_list_endpoint: `${TA_ID}${FederationEndpoint.List}`,
+							federation_trust_mark_status_endpoint: `${TA_ID}${FederationEndpoint.TrustMarkStatus}`,
+						},
+					},
+				},
+				new JwkSigner(taSigningKey),
+				{ typ: JwtTyp.EntityStatement },
+			);
+
+			const leafEcJwt = await signEntityStatement(
+				{
+					iss: LEAF_ID,
+					sub: LEAF_ID,
+					iat: now,
+					exp: chainExp,
+					jwks: { keys: [leafPublicKey] },
+					authority_hints: [TA_ID],
+					metadata: {
+						openid_relying_party: {
+							redirect_uris: ["https://rp.example.com/callback"],
+							response_types: ["code"],
+							client_registration_types: ["automatic"],
+							jwks: { keys: [leafPublicKey] },
+						},
+					},
+					trust_marks: [{ trust_mark_type: trustMarkType, trust_mark: trustMarkJwt }],
+				},
+				new JwkSigner(leafSigningKey),
+				{ typ: JwtTyp.EntityStatement },
+			);
+
+			const subordinateStatementJwt = await signEntityStatement(
+				{
+					iss: TA_ID,
+					sub: LEAF_ID,
+					iat: now,
+					exp: chainExp,
+					jwks: { keys: [leafPublicKey] },
+				},
+				new JwkSigner(taSigningKey),
+				{ typ: JwtTyp.EntityStatement },
+			);
+
+			const statusJwt = await signEntityStatement(
+				{
+					iss: TA_ID,
+					iat: now,
+					trust_mark: trustMarkJwt,
+					status,
+				},
+				new JwkSigner(taSigningKey),
+				{ typ: JwtTyp.TrustMarkStatusResponse },
+			);
+
+			const httpClient: import("../../../packages/core/src/index.js").HttpClient = async (
+				input,
+			) => {
+				const url =
+					typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+				const parsed = new URL(url);
+
+				if (parsed.pathname === WELL_KNOWN_OPENID_FEDERATION) {
+					if (parsed.origin === TA_ID) {
+						return new Response(taEcJwt, {
+							status: 200,
+							headers: { "Content-Type": MediaType.EntityStatement },
+						});
+					}
+					if (parsed.origin === LEAF_ID) {
+						return new Response(leafEcJwt, {
+							status: 200,
+							headers: { "Content-Type": MediaType.EntityStatement },
+						});
+					}
+				}
+
+				if (parsed.origin === TA_ID && parsed.pathname === FederationEndpoint.Fetch) {
+					if (parsed.searchParams.get("sub") === LEAF_ID) {
+						return new Response(subordinateStatementJwt, {
+							status: 200,
+							headers: { "Content-Type": MediaType.EntityStatement },
+						});
+					}
+				}
+
+				if (parsed.origin === TA_ID && parsed.pathname === FederationEndpoint.TrustMarkStatus) {
+					return new Response(statusJwt, {
+						status: 200,
+						headers: { "Content-Type": MediaType.TrustMarkStatusResponse },
+					});
+				}
+
+				return new Response("Not Found", { status: 404 });
+			};
+
+			const { ctx, trustMarks } = await createTestContext({
+				entityId: resolverEntityId,
+				trustAnchors: new Map([[TA_ID, { jwks: { keys: [taPublicKey] } }]]),
+				options: { httpClient, clock: { now: () => now } },
+			});
+
+			if (options?.useLocalTrustMarkStore) {
+				await trustMarks.issue({
+					trustMarkType,
+					subject: LEAF_ID,
+					jwt: trustMarkJwt,
+					issuedAt: now,
+					expiresAt: trustMarkExpiresAt,
+					active: status === TrustMarkStatus.Active,
+				});
+			}
+
+			return {
+				ctx,
+				chainExp,
+				requestUrl: `${resolverEntityId}${FederationEndpoint.Resolve}?sub=${encodeURIComponent(
+					LEAF_ID,
+				)}&trust_anchor=${encodeURIComponent(TA_ID)}`,
+				trustMarkJwt,
+				trustMarkType,
+				trustMarkExpiresAt,
+			};
+		}
+
 		test("returns 400 when sub is missing", async (t) => {
 			const { ctx } = await createTestContext();
 			const handler = createResolveHandler(ctx);
@@ -2800,6 +2995,74 @@ export default (QUnit: QUnit) => {
 			t.ok(payload.metadata);
 			t.true(Array.isArray(payload.trust_chain));
 			t.equal(decoded.value.header.typ, JwtTyp.ResolveResponse);
+		});
+
+		test("omits aud from successful unauthenticated resolve response", async (t) => {
+			const fed = await createMockFederation();
+			const { ctx } = await createTestContext({
+				trustAnchors: fed.trustAnchors,
+				options: fed.options,
+			});
+			const handler = createResolveHandler(ctx);
+			const res = await handler(
+				new Request(
+					`https://authority.example.com/federation_resolve?sub=${encodeURIComponent(LEAF_ID)}&trust_anchor=${encodeURIComponent(TA_ID)}`,
+				),
+			);
+			t.equal(res.status, 200);
+			const decoded = decodeEntityStatement(await res.text());
+			t.true(decoded.ok);
+			if (!decoded.ok) return;
+			const payload = decoded.value.payload as Record<string, unknown>;
+			t.notOk("aud" in payload);
+		});
+
+		test("includes active Trust Marks and caps response expiration", async (t) => {
+			const fixture = await createResolveTrustMarkFixture({
+				status: TrustMarkStatus.Active,
+				trustMarkExpiresAt: 1_700_000_300,
+			});
+			const handler = createResolveHandler(fixture.ctx);
+			const res = await handler(new Request(fixture.requestUrl));
+			t.equal(res.status, 200);
+			const decoded = decodeEntityStatement(await res.text());
+			t.true(decoded.ok);
+			if (!decoded.ok) return;
+			const payload = decoded.value.payload as Record<string, unknown>;
+			t.equal(payload.exp, fixture.trustMarkExpiresAt);
+			t.deepEqual(payload.trust_marks, [
+				{ trust_mark_type: fixture.trustMarkType, trust_mark: fixture.trustMarkJwt },
+			]);
+		});
+
+		test("excludes remotely revoked Trust Marks from resolve responses", async (t) => {
+			const fixture = await createResolveTrustMarkFixture({ status: TrustMarkStatus.Revoked });
+			const handler = createResolveHandler(fixture.ctx);
+			const res = await handler(new Request(fixture.requestUrl));
+			t.equal(res.status, 200);
+			const decoded = decodeEntityStatement(await res.text());
+			t.true(decoded.ok);
+			if (!decoded.ok) return;
+			const payload = decoded.value.payload as Record<string, unknown>;
+			t.equal(payload.exp, fixture.chainExp);
+			t.notOk("trust_marks" in payload);
+		});
+
+		test("excludes locally inactive Trust Marks from resolve responses", async (t) => {
+			const fixture = await createResolveTrustMarkFixture({
+				status: TrustMarkStatus.Revoked,
+				resolverEntityId: TA_ID,
+				useLocalTrustMarkStore: true,
+			});
+			const handler = createResolveHandler(fixture.ctx);
+			const res = await handler(new Request(fixture.requestUrl));
+			t.equal(res.status, 200);
+			const decoded = decodeEntityStatement(await res.text());
+			t.true(decoded.ok);
+			if (!decoded.ok) return;
+			const payload = decoded.value.payload as Record<string, unknown>;
+			t.equal(payload.exp, fixture.chainExp);
+			t.notOk("trust_marks" in payload);
 		});
 
 		test("ignores unknown query parameters on resolve", async (t) => {
@@ -5355,6 +5618,63 @@ export default (QUnit: QUnit) => {
 						}),
 					);
 					t.equal(res.status, 200);
+				});
+
+				test("server with private_key_jwt rejects assertions outside endpoint algorithms", async (t) => {
+					const { config: authConfig, createAssertion } = await setupAuthenticatedServer([
+						"private_key_jwt",
+					]);
+					const server = createAuthorityServer(
+						withFederationEntityMetadata(authConfig, {
+							endpoint_auth_signing_alg_values_supported: ["RS256"],
+						}),
+					);
+					const handler = server.handler();
+					const assertion = await createAssertion();
+					const res = await handler(
+						new Request(`${SERVER_AUTHORITY_ID}${FederationEndpoint.Fetch}`, {
+							method: "POST",
+							headers: { "Content-Type": "application/x-www-form-urlencoded" },
+							body: `sub=${encodeURIComponent(SERVER_SUB1)}&client_assertion=${encodeURIComponent(assertion)}&client_assertion_type=${encodeURIComponent(JWT_BEARER_TYPE)}`,
+						}),
+					);
+					t.equal(res.status, 401);
+					const body = (await res.json()) as Record<string, string>;
+					t.equal(body.error, FederationErrorCode.InvalidClient);
+					t.true((body.error_description ?? "").includes("not allowed"));
+				});
+
+				test("server authenticated POST resolve sets aud from verified client", async (t) => {
+					const fed = await createMockFederation();
+					const { config: authConfig, createAssertion } = await setupAuthenticatedServer([
+						"private_key_jwt",
+					]);
+					const server = createAuthorityServer({
+						...withFederationEntityMetadata(authConfig, {
+							federation_resolve_endpoint: `${SERVER_AUTHORITY_ID}${FederationEndpoint.Resolve}`,
+							federation_resolve_endpoint_auth_methods: ["private_key_jwt"],
+						}),
+						options: fed.options,
+						trustAnchors: fed.trustAnchors,
+					});
+					const handler = server.handler();
+					const assertion = await createAssertion();
+					const res = await handler(
+						new Request(`${SERVER_AUTHORITY_ID}${FederationEndpoint.Resolve}`, {
+							method: "POST",
+							headers: {
+								"Content-Type": "application/x-www-form-urlencoded",
+								"X-Authenticated-Entity": "https://spoof.example.com",
+							},
+							body: `sub=${encodeURIComponent(LEAF_ID)}&trust_anchor=${encodeURIComponent(TA_ID)}&client_assertion=${encodeURIComponent(assertion)}&client_assertion_type=${encodeURIComponent(JWT_BEARER_TYPE)}`,
+						}),
+					);
+					t.equal(res.status, 200);
+					const decoded = decodeEntityStatement(await res.text());
+					t.true(isOk(decoded));
+					if (!isOk(decoded)) return;
+					const payload = decoded.value.payload as Record<string, unknown>;
+					t.equal(payload.aud, CLIENT_ID);
 				});
 
 				test("server with private_key_jwt accepts custom provider with empty client storage", async (t) => {
