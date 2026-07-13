@@ -25,7 +25,11 @@ import {
 	OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE,
 	OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE,
 } from "../constants.js";
-import { ExplicitRegistrationRequestPayloadSchema } from "../schemas/explicit-registration.js";
+import {
+	ExplicitRegistrationRequestPayloadSchema,
+	ExplicitRegistrationResponsePayloadSchema,
+} from "../schemas/explicit-registration.js";
+import { OpenIDRelyingPartyMetadataSchema } from "../schemas/metadata.js";
 import type { RegistrationProtocolAdapter } from "./adapter-types.js";
 import {
 	assertNonEmptyTrustAnchors,
@@ -133,6 +137,17 @@ export function createExplicitRegistrationHandler(
 		}
 
 		const reqPayload = parseResult.data;
+
+		const rpMetadataResult = OpenIDRelyingPartyMetadataSchema.safeParse(
+			reqPayload.metadata.openid_relying_party,
+		);
+		if (!rpMetadataResult.success) {
+			return errorResponse(
+				400,
+				FederationErrorCode.InvalidMetadata,
+				"RP metadata does not comply with the OpenID Connect Relying Party metadata schema",
+			);
+		}
 
 		const aud = reqPayload.aud;
 		if (aud !== config.opEntityId) {
@@ -355,18 +370,19 @@ export function createExplicitRegistrationHandler(
 
 		const metadataForResponse = validatedMetadata ?? reqPayload.metadata;
 		if (metadataForResponse) {
-			let enrichedMeta: Record<string, unknown>;
+			const responseMetadata = { ...(metadataForResponse as Record<string, unknown>) };
+			const sourceRpMeta = (responseMetadata.openid_relying_party ?? {}) as Record<string, unknown>;
+			let rpMeta: Record<string, unknown>;
 			if (config.registrationProtocolAdapter && bestChain) {
-				enrichedMeta = config.registrationProtocolAdapter.enrichResponseMetadata(
-					metadataForResponse as Record<string, unknown>,
+				rpMeta = config.registrationProtocolAdapter.enrichResponseMetadata(
+					sourceRpMeta,
 					bestChain,
 					adapterContext,
 				);
 			} else {
-				enrichedMeta = metadataForResponse as Record<string, unknown>;
+				rpMeta = { ...sourceRpMeta };
 			}
 
-			const rpMeta = (enrichedMeta.openid_relying_party ?? {}) as Record<string, unknown>;
 			if (!rpMeta.client_id) {
 				rpMeta.client_id = reqPayload.sub;
 			}
@@ -377,8 +393,8 @@ export function createExplicitRegistrationHandler(
 				}
 			}
 
-			enrichedMeta.openid_relying_party = rpMeta;
-			responsePayload.metadata = enrichedMeta;
+			responseMetadata.openid_relying_party = rpMeta;
+			responsePayload.metadata = responseMetadata;
 		} else {
 			responsePayload.metadata = {
 				openid_relying_party: {
@@ -397,6 +413,15 @@ export function createExplicitRegistrationHandler(
 				metadataRecord.openid_relying_party = rpMeta;
 				responsePayload.metadata = metadataRecord;
 			}
+		}
+
+		const responseValidation = ExplicitRegistrationResponsePayloadSchema.safeParse(responsePayload);
+		if (!responseValidation.success) {
+			return errorResponse(
+				500,
+				FederationErrorCode.ServerError,
+				"Registration response metadata preparation failed",
+			);
 		}
 
 		const responseJwt = await signEntityStatement(responsePayload, keySet.signer, {

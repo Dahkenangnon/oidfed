@@ -28,6 +28,7 @@ import {
 	OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE,
 	OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE,
 } from "../constants.js";
+import { OpenIDRelyingPartyRegistrationResponseMetadataSchema } from "../schemas/metadata.js";
 import { getRegistrationTypes } from "./helpers.js";
 
 export interface ExplicitRegistrationConfig {
@@ -428,25 +429,36 @@ export async function explicitRegistration(
 		);
 	}
 
-	const clientId = registeredMetadata.client_id;
-	if (typeof clientId !== "string") {
+	const registeredMetadataResult =
+		OpenIDRelyingPartyRegistrationResponseMetadataSchema.safeParse(registeredMetadata);
+	if (!registeredMetadataResult.success) {
+		const issuePaths = registeredMetadataResult.error.issues.map((issue) => issue.path.join("."));
+		if (issuePaths.some((path) => path === "client_id")) {
+			return err(
+				federationError(
+					FederationErrorCode.InvalidMetadata,
+					"Registration response metadata.openid_relying_party.client_id is required",
+				),
+			);
+		}
+		if (issuePaths.some((path) => path === "client_secret")) {
+			return err(
+				federationError(
+					FederationErrorCode.InvalidMetadata,
+					"Registration response metadata.openid_relying_party.client_secret MUST be a string",
+				),
+			);
+		}
 		return err(
 			federationError(
 				FederationErrorCode.InvalidMetadata,
-				"Registration response metadata.openid_relying_party.client_id is required",
+				"Registration response metadata.openid_relying_party is invalid",
 			),
 		);
 	}
 
-	const clientSecret = registeredMetadata.client_secret;
-	if (clientSecret !== undefined && typeof clientSecret !== "string") {
-		return err(
-			federationError(
-				FederationErrorCode.InvalidMetadata,
-				"Registration response metadata.openid_relying_party.client_secret MUST be a string",
-			),
-		);
-	}
+	const clientId = registeredMetadataResult.data.client_id;
+	const clientSecret = registeredMetadataResult.data.client_secret;
 
 	if (
 		responsePayload.jwks !== undefined &&

@@ -6,6 +6,7 @@ import {
 	TrustMarkRefSchema,
 } from "@oidfed/core";
 import { z } from "zod";
+import { OpenIDRelyingPartyRegistrationResponseMetadataSchema } from "./metadata.js";
 
 /** Explicit registration request payload. */
 export const ExplicitRegistrationRequestPayloadSchema = z
@@ -38,6 +39,21 @@ export const ExplicitRegistrationRequestPayloadSchema = z
 		},
 	);
 
+const ExplicitRegistrationResponseMetadataSchema = z
+	.record(z.string(), z.record(z.string(), z.unknown()))
+	.superRefine((metadata, ctx) => {
+		const result = OpenIDRelyingPartyRegistrationResponseMetadataSchema.safeParse(
+			metadata.openid_relying_party,
+		);
+		if (!result.success) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "metadata.openid_relying_party must be valid registration response metadata",
+				path: ["openid_relying_party"],
+			});
+		}
+	});
+
 /** Explicit registration response payload. */
 export const ExplicitRegistrationResponsePayloadSchema = z
 	.looseObject({
@@ -46,7 +62,7 @@ export const ExplicitRegistrationResponsePayloadSchema = z
 		aud: z.string(),
 		iat: z.number().int().positive(),
 		exp: z.number().int().positive(),
-		metadata: z.record(z.string(), z.record(z.string(), z.unknown())),
+		metadata: ExplicitRegistrationResponseMetadataSchema,
 		trust_anchor: EntityIdSchema,
 		authority_hints: z.array(EntityIdSchema).length(1),
 	})
@@ -57,27 +73,7 @@ export const ExplicitRegistrationResponsePayloadSchema = z
 	.refine((obj) => !("client_secret" in obj), {
 		message: "client_secret MUST be nested under metadata.openid_relying_party",
 		path: ["client_secret"],
-	})
-	.refine(
-		(obj) => {
-			const rpMeta = obj.metadata.openid_relying_party;
-			return rpMeta !== undefined && typeof rpMeta === "object" && !Array.isArray(rpMeta);
-		},
-		{
-			message: "metadata.openid_relying_party is required",
-			path: ["metadata", "openid_relying_party"],
-		},
-	)
-	.refine(
-		(obj) => {
-			const rpMeta = obj.metadata.openid_relying_party;
-			return typeof rpMeta?.client_id === "string";
-		},
-		{
-			message: "metadata.openid_relying_party.client_id is required",
-			path: ["metadata", "openid_relying_party", "client_id"],
-		},
-	);
+	});
 
 export type ExplicitRegistrationRequestPayload = z.infer<
 	typeof ExplicitRegistrationRequestPayloadSchema

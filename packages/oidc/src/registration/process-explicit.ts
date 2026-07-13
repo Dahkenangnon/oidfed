@@ -16,6 +16,7 @@ import {
 	type TrustAnchorSet,
 	verifyEntityStatement,
 } from "@oidfed/core";
+import { OpenIDRelyingPartyMetadataSchema } from "../schemas/metadata.js";
 import {
 	parseTrustChainJsonBody,
 	requireNonEmptyTrustAnchors,
@@ -162,6 +163,18 @@ export async function processExplicitRegistration(
 			federationError(
 				FederationErrorCode.InvalidRequest,
 				"RP EC MUST contain 'metadata' with 'openid_relying_party'",
+			),
+		);
+	}
+
+	const rpMetadataResult = OpenIDRelyingPartyMetadataSchema.safeParse(
+		metadata.openid_relying_party,
+	);
+	if (!rpMetadataResult.success) {
+		return err(
+			federationError(
+				FederationErrorCode.InvalidMetadata,
+				"RP metadata does not comply with the OpenID Connect Relying Party metadata schema",
 			),
 		);
 	}

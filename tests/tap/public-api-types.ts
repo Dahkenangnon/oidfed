@@ -13,6 +13,8 @@ import type {
 	FedOauthProviderConfig,
 	FedOauthResourceConfig,
 	FedOidcProviderConfig,
+	OpenIDRelyingPartyMetadata,
+	OpenIDRelyingPartyRegistrationResponseMetadata,
 	RegistrationProtocolAdapter,
 } from "@oidfed/oidc";
 
@@ -60,6 +62,27 @@ const leafConfigWithScalarMetadata = {
 	keyProvider: federationKeyProvider,
 } satisfies LeafConfig;
 void leafConfigWithScalarMetadata;
+
+const rpEntityMetadata = {
+	redirect_uris: ["https://rp.example.com/callback"],
+	custom_extension: "allowed",
+} satisfies OpenIDRelyingPartyMetadata;
+void rpEntityMetadata;
+
+const rpEntityMetadataWithResponseField = {
+	redirect_uris: ["https://rp.example.com/callback"],
+	// @ts-expect-error client_id is response metadata, not RP Entity Configuration metadata.
+	client_id: "client-123",
+} satisfies OpenIDRelyingPartyMetadata;
+void rpEntityMetadataWithResponseField;
+
+const rpRegistrationResponseMetadata = {
+	client_id: "client-123",
+	client_secret: "secret-123",
+	client_id_issued_at: 1,
+	client_secret_expires_at: 2,
+} satisfies OpenIDRelyingPartyRegistrationResponseMetadata;
+void rpRegistrationResponseMetadata;
 
 const registrationAdapter: RegistrationProtocolAdapter = {
 	validateClientMetadata: (raw) => ({ ok: true, value: raw }),

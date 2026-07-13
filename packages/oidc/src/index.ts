@@ -72,4 +72,5 @@ export type {
 	OIDCFederationMetadata,
 	OpenIDProviderMetadata,
 	OpenIDRelyingPartyMetadata,
+	OpenIDRelyingPartyRegistrationResponseMetadata,
 } from "./schemas/metadata.js";

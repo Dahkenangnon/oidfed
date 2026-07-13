@@ -64,6 +64,7 @@ import {
 	OIDCFederationMetadataSchema,
 	OpenIDProviderMetadataSchema,
 	OpenIDRelyingPartyMetadataSchema,
+	OpenIDRelyingPartyRegistrationResponseMetadataSchema,
 	validateOIDCMetadata,
 } from "../../../packages/oidc/src/schemas/metadata.js";
 import { createMockFederation, LEAF_ID, OP_ID, TA_ID } from "../fixtures/index.js";
@@ -341,6 +342,44 @@ export default (QUnit: QUnit) => {
 			t.true(result.success);
 		});
 
+		test("rejects registration response fields in openid_relying_party entity metadata", (t) => {
+			const responseOnlyFields: Array<[string, unknown]> = [
+				["client_id", "client-123"],
+				["client_secret", "secret-123"],
+				["client_id_issued_at", 1],
+				["client_secret_expires_at", 2],
+			];
+			for (const [field, value] of responseOnlyFields) {
+				t.false(
+					OpenIDRelyingPartyMetadataSchema.safeParse({
+						redirect_uris: ["https://rp.example.com/callback"],
+						[field]: value,
+					}).success,
+					field,
+				);
+				t.false(
+					OIDCFederationMetadataSchema.safeParse({
+						openid_relying_party: {
+							redirect_uris: ["https://rp.example.com/callback"],
+							[field]: value,
+						},
+					}).success,
+					field,
+				);
+			}
+		});
+
+		test("accepts registration response metadata credentials in the response schema", (t) => {
+			const result = OpenIDRelyingPartyRegistrationResponseMetadataSchema.safeParse({
+				client_id: "client-123",
+				client_secret: "secret-123",
+				client_id_issued_at: 1,
+				client_secret_expires_at: 2,
+				redirect_uris: ["https://rp.example.com/callback"],
+			});
+			t.true(result.success);
+		});
+
 		test("rejects OP metadata with invalid issuer URL", (t) => {
 			const result = OIDCFederationMetadataSchema.safeParse({
 				openid_provider: {
@@ -609,6 +648,41 @@ export default (QUnit: QUnit) => {
 					}).success,
 				);
 			});
+			test("accepts response credential timestamps", (t) => {
+				t.true(
+					ExplicitRegistrationResponsePayloadSchema.safeParse({
+						...validResp,
+						metadata: {
+							openid_relying_party: {
+								client_id: "client-123",
+								client_id_issued_at: 1,
+								client_secret_expires_at: 2,
+							},
+						},
+					}).success,
+				);
+			});
+			test("rejects invalid response credential types", (t) => {
+				const invalidMetadata = [
+					{ openid_relying_party: { client_id: 123 } },
+					{ openid_relying_party: { client_id: "client-123", client_secret: 123 } },
+					{ openid_relying_party: { client_id: "client-123", client_id_issued_at: -1 } },
+					{
+						openid_relying_party: {
+							client_id: "client-123",
+							client_secret_expires_at: -1,
+						},
+					},
+				];
+				for (const metadata of invalidMetadata) {
+					t.false(
+						ExplicitRegistrationResponsePayloadSchema.safeParse({
+							...validResp,
+							metadata,
+						}).success,
+					);
+				}
+			});
 			test("rejects top-level client_secret", (t) => {
 				t.false(
 					ExplicitRegistrationResponsePayloadSchema.safeParse({
@@ -684,6 +758,18 @@ export default (QUnit: QUnit) => {
 		test("rejects invalid openid_relying_party metadata", (t) => {
 			const result = adapter.validateClientMetadata({
 				openid_relying_party: { redirect_uris: ["not-a-url"] },
+			});
+			t.false(result.ok);
+			if (result.ok) return;
+			t.equal(result.error.code, "invalid_metadata");
+		});
+
+		test("rejects registration response fields in RP entity metadata", (t) => {
+			const result = adapter.validateClientMetadata({
+				openid_relying_party: {
+					redirect_uris: ["https://rp.example.com/callback"],
+					client_id: "client-123",
+				},
 			});
 			t.false(result.ok);
 			if (result.ok) return;
@@ -2369,6 +2455,40 @@ export default (QUnit: QUnit) => {
 			}
 		});
 
+		test("fails if nested response client_secret is not a string", async (t) => {
+			const result = await explicitRegistrationWithResponse(
+				explicitRegistrationResponseBase({
+					metadata: {
+						openid_relying_party: {
+							client_id: LEAF_ID,
+							client_secret: 123,
+						},
+					},
+				}),
+			);
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.ok(/client_secret/i.test(result.error.description), result.error.description);
+			}
+		});
+
+		test("fails if response credential timestamps are invalid", async (t) => {
+			const result = await explicitRegistrationWithResponse(
+				explicitRegistrationResponseBase({
+					metadata: {
+						openid_relying_party: {
+							client_id: LEAF_ID,
+							client_id_issued_at: -1,
+						},
+					},
+				}),
+			);
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.ok(/invalid/i.test(result.error.description), result.error.description);
+			}
+		});
+
 		test("fails if response uses top-level client_secret", async (t) => {
 			const result = await explicitRegistrationWithResponse(
 				explicitRegistrationResponseBase({ client_secret: "super-secret-123" }),
@@ -2447,6 +2567,43 @@ export default (QUnit: QUnit) => {
 			t.true(result.ok);
 			if (!result.ok) return;
 			t.equal(result.value.rpEntityId, LEAF_ID);
+		});
+
+		test("returns err when RP entity metadata includes registration response fields", async (t) => {
+			const fed = await createMockFederation();
+			const now = Math.floor(Date.now() / 1000);
+			const leafEcJwt = await signEntityStatement(
+				{
+					iss: LEAF_ID,
+					sub: LEAF_ID,
+					iat: now,
+					exp: now + 86400,
+					jwks: { keys: [fed.leafPublicKey] },
+					authority_hints: [TA_ID],
+					metadata: {
+						openid_relying_party: {
+							redirect_uris: ["https://rp.example.com/callback"],
+							response_types: ["code"],
+							jwks: { keys: [fed.leafProtocolPublicKey] },
+							client_id: "client-123",
+						},
+					},
+				},
+				new JwkSigner(fed.leafSigningKey),
+				{ typ: JwtTyp.EntityStatement },
+			);
+			const jwt = await createValidRequestObject(fed, {
+				trust_chain: [leafEcJwt, fed.taSubStatementForLeaf, fed.taEcJwt],
+			});
+			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
+				...fed.options,
+				opEntityId: OP_ID,
+				replayStore: replayStore(),
+			});
+			t.false(result.ok);
+			if (result.ok) return;
+			t.equal(result.error.code, FederationErrorCode.InvalidMetadata);
+			t.ok(result.error.description.includes("Relying Party metadata"));
 		});
 
 		test("uses valid trust_chain header without discovery fetch", async (t) => {
@@ -3123,6 +3280,40 @@ export default (QUnit: QUnit) => {
 			if (!result.ok) return;
 			t.equal(result.value.rpEntityId, LEAF_ID);
 			t.ok(result.value.resolvedRpMetadata);
+		});
+
+		test("returns err when explicit request RP metadata includes registration response fields", async (t) => {
+			const fed = await createMockFederation();
+			const now = Math.floor(Date.now() / 1000);
+			const ecJwt = await signEntityStatement(
+				{
+					iss: LEAF_ID,
+					sub: LEAF_ID,
+					aud: OP_ID,
+					iat: now,
+					exp: now + 86400,
+					jwks: { keys: [fed.leafPublicKey] },
+					authority_hints: [TA_ID],
+					metadata: {
+						openid_relying_party: {
+							redirect_uris: ["https://rp.example.com/callback"],
+							client_secret: "response-secret",
+						},
+					},
+				},
+				new JwkSigner(fed.leafSigningKey),
+				signOpts(fed.leafSigningKey),
+			);
+			const result = await processExplicitRegistration(
+				ecJwt,
+				MediaType.EntityStatement,
+				fed.trustAnchors,
+				{ ...fed.options, opEntityId: OP_ID },
+			);
+			t.false(result.ok);
+			if (result.ok) return;
+			t.equal(result.error.code, FederationErrorCode.InvalidMetadata);
+			t.ok(result.error.description.includes("Relying Party metadata"));
 		});
 
 		test("returns err for unknown Content-Type", async (t) => {
@@ -4134,6 +4325,35 @@ export default (QUnit: QUnit) => {
 				t.equal((payload.authority_hints as string[]).length, 1);
 			});
 
+			test("rejects request RP metadata with registration response fields", async (t) => {
+				const { config, fed } = await createFederatedHandlerFixture();
+				const handler = createExplicitRegistrationHandler(config);
+				const jwt = await buildRegistrationRequest(
+					LEAF_ID,
+					HANDLER_ENTITY_ID as string,
+					fed.leafSigningKey,
+					fed.leafPublicKey as unknown as Record<string, unknown>,
+					{
+						metadata: {
+							openid_relying_party: {
+								redirect_uris: ["https://rp.example.com/callback"],
+								client_id_issued_at: 1,
+							},
+						},
+					},
+				);
+				const res = await handler(
+					new Request(`${String(HANDLER_ENTITY_ID)}/federation_registration`, {
+						method: "POST",
+						headers: { "Content-Type": MediaType.EntityStatement },
+						body: jwt,
+					}),
+				);
+				t.equal(res.status, 400);
+				const body = (await res.json()) as Record<string, string>;
+				t.equal(body.error, FederationErrorCode.InvalidMetadata);
+			});
+
 			test("response includes metadata with openid_relying_party and client_id", async (t) => {
 				const { config } = await createFederatedHandlerFixture();
 				const handler = createExplicitRegistrationHandler(config);
@@ -4459,6 +4679,38 @@ export default (QUnit: QUnit) => {
 				);
 				t.equal(res.status, 400);
 				t.equal(((await res.json()) as Record<string, string>).error, "invalid_metadata");
+			});
+
+			test("returns server_error when response metadata preparation is invalid", async (t) => {
+				const invalidResponseAdapter: RegistrationProtocolAdapter = {
+					validateClientMetadata: (raw) => ({ ok: true, value: raw }),
+					enrichResponseMetadata: (meta) => ({
+						...meta,
+						client_id: 123,
+					}),
+				};
+				const { config } = await createFederatedHandlerFixture({
+					registrationProtocolAdapter: invalidResponseAdapter,
+				});
+				const handler = createExplicitRegistrationHandler(config);
+				const rpKeys = await generateSigningKey("ES256");
+				const jwt = await buildRegistrationRequest(
+					LEAF_ID,
+					HANDLER_ENTITY_ID as string,
+					rpKeys.privateKey,
+					rpKeys.publicKey as unknown as Record<string, unknown>,
+				);
+				const res = await handler(
+					new Request(`${String(HANDLER_ENTITY_ID)}/federation_registration`, {
+						method: "POST",
+						headers: { "Content-Type": MediaType.EntityStatement },
+						body: jwt,
+					}),
+				);
+				t.equal(res.status, 500);
+				const body = (await res.json()) as Record<string, string>;
+				t.equal(body.error, FederationErrorCode.ServerError);
+				t.false((body.error_description ?? "").includes("client_id"));
 			});
 
 			test("does not invalidate registration when adapter validation rejects metadata", async (t) => {
@@ -4841,9 +5093,9 @@ export default (QUnit: QUnit) => {
 				if (!isOk(decoded)) return;
 				const meta = (decoded.value.payload as Record<string, unknown>).metadata as Record<
 					string,
-					unknown
+					Record<string, unknown>
 				>;
-				t.equal(meta.injected, true);
+				t.equal(meta.openid_relying_party?.injected, true);
 			});
 
 			test("emits client_secret when generateClientSecret hook returns a value", async (t) => {

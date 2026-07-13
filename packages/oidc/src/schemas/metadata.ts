@@ -44,7 +44,7 @@ const httpsUrlNoFragment = z.url().refine(
  * RFC 7591 core client metadata, logout / CIBA extensions, and
  * OpenID Federation 1.0 Section 5.1/5.2 federation-specific parameters.
  */
-export const OpenIDRelyingPartyMetadataSchema = z.looseObject({
+const OpenIDRelyingPartyMetadataShape = {
 	// RFC 7591 / OIDC Registration core
 	redirect_uris: z.array(z.string().url()).optional(),
 	response_types: z.array(z.string()).optional(),
@@ -86,17 +86,46 @@ export const OpenIDRelyingPartyMetadataSchema = z.looseObject({
 	backchannel_client_notification_endpoint: z.string().url().optional(),
 	backchannel_authentication_request_signing_alg: z.string().optional(),
 	backchannel_user_code_parameter: z.boolean().optional(),
-	// Registration output parameters
-	client_id: z.string().optional(),
-	client_secret: z.string().optional(),
-	client_id_issued_at: z.number().int().nonnegative().optional(),
-	client_secret_expires_at: z.number().int().nonnegative().optional(),
 	// Federation-specific (OpenID Federation 1.0 Section 5.1/5.2)
 	client_registration_types: z.array(z.string()).optional(),
 	signed_jwks_uri: httpsUrlNoFragment.optional(),
 	organization_name: z.string().optional(),
 	organization_identifier: z.string().optional(),
 	scope: z.string().optional(),
+};
+
+const OPENID_RP_REGISTRATION_RESPONSE_FIELDS = [
+	"client_id",
+	"client_secret",
+	"client_id_issued_at",
+	"client_secret_expires_at",
+] as const;
+
+export const OpenIDRelyingPartyMetadataSchema = z
+	.looseObject(OpenIDRelyingPartyMetadataShape)
+	.superRefine((meta, ctx) => {
+		for (const field of OPENID_RP_REGISTRATION_RESPONSE_FIELDS) {
+			if (Object.hasOwn(meta, field)) {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: `${field} is only valid in explicit registration response metadata`,
+					path: [field],
+				});
+			}
+		}
+	});
+
+/**
+ * Typed OpenID Relying Party metadata as carried in an Explicit Registration Response.
+ * Includes registration-response credential fields that are not valid in Entity
+ * Configuration or Subordinate Statement metadata.
+ */
+export const OpenIDRelyingPartyRegistrationResponseMetadataSchema = z.looseObject({
+	...OpenIDRelyingPartyMetadataShape,
+	client_id: z.string(),
+	client_secret: z.string().optional(),
+	client_id_issued_at: z.number().int().nonnegative().optional(),
+	client_secret_expires_at: z.number().int().nonnegative().optional(),
 });
 
 // ---------------------------------------------------------------------------
@@ -209,7 +238,14 @@ export const OpenIDProviderMetadataSchema = z
 		}
 	});
 
-export type OpenIDRelyingPartyMetadata = z.infer<typeof OpenIDRelyingPartyMetadataSchema>;
+type OpenIDRelyingPartyResponseOnlyFields = {
+	readonly [K in (typeof OPENID_RP_REGISTRATION_RESPONSE_FIELDS)[number]]?: never;
+};
+export type OpenIDRelyingPartyMetadata = z.infer<typeof OpenIDRelyingPartyMetadataSchema> &
+	OpenIDRelyingPartyResponseOnlyFields;
+export type OpenIDRelyingPartyRegistrationResponseMetadata = z.infer<
+	typeof OpenIDRelyingPartyRegistrationResponseMetadataSchema
+>;
 export type OpenIDProviderMetadata = z.infer<typeof OpenIDProviderMetadataSchema>;
 
 // ---------------------------------------------------------------------------
@@ -389,11 +425,18 @@ export const OIDCFederationMetadataSchema = FederationMetadataSchema.pipe(
 	}),
 );
 
-export type OIDCFederationMetadata = z.infer<typeof OIDCFederationMetadataSchema>;
+export type OIDCFederationMetadata = FederationMetadata & {
+	readonly federation_entity?: z.infer<typeof FederationEntityMetadataSchema>;
+	readonly openid_relying_party?: OpenIDRelyingPartyMetadata;
+	readonly openid_provider?: OpenIDProviderMetadata;
+	readonly oauth_authorization_server?: OAuthAuthorizationServerMetadata;
+	readonly oauth_client?: OAuthClientMetadata;
+	readonly oauth_resource?: OAuthResourceMetadata;
+};
 
 /**
  * Parse and validate metadata with OIDC-strict validation.
  */
 export function validateOIDCMetadata(raw: unknown): OIDCFederationMetadata {
-	return OIDCFederationMetadataSchema.parse(raw);
+	return OIDCFederationMetadataSchema.parse(raw) as OIDCFederationMetadata;
 }
