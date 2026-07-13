@@ -59,6 +59,8 @@ const leaf = new Leaf({
 ### Client-Side Automatic Registration
 For automatic registration, RPs sign authorization requests (Request Objects) that carry their metadata and trust chain in header parameters. The client role generates this JWT and prepares standard authorization parameters automatically.
 
+When `requestDelivery: "par"` is used, the role posts the signed Request Object with `private_key_jwt` client authentication. Both the Request Object signer and client-assertion signer must be published in the RP protocol metadata through `jwks`, `jwks_uri`, or `signed_jwks_uri`. The current API does not configure mutual-TLS/self-signed TLS client authentication for PAR.
+
 ```ts
 import { Leaf } from "@oidfed/leaf";
 import { createTrustAnchorSet, isOk } from "@oidfed/core";
@@ -97,7 +99,9 @@ When an RP supplies a `trust_chain` header or an exact `application/trust-chain+
 
 RP Entity Configuration metadata under `metadata.openid_relying_party` must not include registration-response-only credential fields such as `client_id`, `client_secret`, `client_id_issued_at`, or `client_secret_expires_at`.
 
-RP-side explicit registration accepts only HTTP `200` responses with exact `Content-Type: application/explicit-registration-response+jwt`. It returns `clientId` from `metadata.openid_relying_party.client_id` and `clientSecret` from `metadata.openid_relying_party.client_secret` when the OP provisions one.
+RP-side explicit registration accepts only HTTP `200` responses with exact `Content-Type: application/explicit-registration-response+jwt`. The response must name the selected Trust Anchor, use the authority hint from the selected RP trust chain, and expire no later than that selected RP trust chain. It returns `clientId` from `metadata.openid_relying_party.client_id` and `clientSecret` from `metadata.openid_relying_party.client_secret` when the OP provisions one. If the OP also sends `client_secret_expires_at`, that value must not be earlier than the signed response expiry.
+
+OP-side explicit registration does not publish registration-management tokens in the signed response metadata. Adapter-enriched `registration_access_token` and `registration_client_uri` values are removed before signing and before registration hooks are called.
 
 ```ts
 import { OidcProviderRole, OIDCRegistrationAdapter } from "@oidfed/oidc";

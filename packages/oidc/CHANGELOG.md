@@ -14,6 +14,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - OP-side registration now validates supplied `trust_chain`, `peer_trust_chain`, and exact parameter-free `application/trust-chain+json` inputs as full Trust Chains. Valid supplied RP chains are used before live Federation Entity Discovery; invalid supplied chains fail registration instead of falling back silently.
 - Explicit-registration invalidation hooks now run only after validation and response preparation, immediately before registration commit hooks. Hook failures return sanitized `server_error` responses.
 - RP-side explicit registration response processing now requires HTTP `200`, exact `application/explicit-registration-response+jwt`, a matching RP `sub`, and registered credentials under `metadata.openid_relying_party`.
+- RP-side explicit registration now verifies response `authority_hints`, response lifetime, and nested `client_secret_expires_at` against the selected RP registration trust chain.
+- OP-side explicit registration removes registration-management token and URI fields from response metadata before signing and registration hooks.
+- Automatic registration now rejects non-Entity-Identifier `client_id` values before trust-chain processing, and PAR delivery requires published protocol signing keys before the PAR POST is sent.
 - RP Entity Configuration metadata now rejects explicit-registration response-only credential fields; `client_id`, `client_secret`, `client_id_issued_at`, and `client_secret_expires_at` are valid only in explicit-registration response metadata.
 - Provider role `registrationProtocolAdapter` config and OAuth resource `jwks` config now use typed public contracts instead of avoidable `any`.
 

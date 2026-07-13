@@ -44,6 +44,10 @@ const OIDC_METADATA_DEFAULTS: Record<string, unknown> = {
 	grant_types: ["authorization_code"],
 	token_endpoint_auth_method: "client_secret_basic",
 };
+const REGISTRATION_MANAGEMENT_METADATA_FIELDS = [
+	"registration_access_token",
+	"registration_client_uri",
+] as const;
 
 export interface ExplicitRegistrationHandlerConfig {
 	/** The OP's Entity Identifier — used as the aud check target and as the issuer of the response. */
@@ -414,6 +418,10 @@ export function createExplicitRegistrationHandler(
 				responsePayload.metadata = metadataRecord;
 			}
 		}
+		const metadataRecord = responsePayload.metadata as Record<string, unknown>;
+		const rpMeta = (metadataRecord.openid_relying_party ?? {}) as Record<string, unknown>;
+		metadataRecord.openid_relying_party = stripRegistrationManagementFields(rpMeta);
+		responsePayload.metadata = metadataRecord;
 
 		const responseValidation = ExplicitRegistrationResponsePayloadSchema.safeParse(responsePayload);
 		if (!responseValidation.success) {
@@ -453,4 +461,14 @@ export function createExplicitRegistrationHandler(
 
 		return jwtResponse(responseJwt, OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE);
 	};
+}
+
+function stripRegistrationManagementFields(
+	metadata: Record<string, unknown>,
+): Record<string, unknown> {
+	const scrubbed = { ...metadata };
+	for (const field of REGISTRATION_MANAGEMENT_METADATA_FIELDS) {
+		delete scrubbed[field];
+	}
+	return scrubbed;
 }

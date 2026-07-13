@@ -6,6 +6,7 @@ import {
 	err,
 	FederationErrorCode,
 	federationError,
+	isValidEntityId,
 	nowSeconds,
 	ok,
 } from "@oidfed/core";
@@ -73,6 +74,14 @@ export function validateAutomaticRegistrationRequest(
 			federationError(
 				FederationErrorCode.InvalidRequest,
 				"Request Object missing required 'client_id' claim",
+			),
+		);
+	}
+	if (!isValidEntityId(clientId)) {
+		return err(
+			federationError(
+				FederationErrorCode.InvalidRequest,
+				"Request Object 'client_id' MUST be an Entity Identifier",
 			),
 		);
 	}

@@ -349,6 +349,27 @@ export async function explicitRegistration(
 			);
 		}
 	}
+	const expectedAuthorityHint = expectedRegistrationAuthorityHint(
+		sharedChains.value.rpChain,
+		selectedTrustAnchorId,
+	);
+	if (responseAuthorityHints[0] !== expectedAuthorityHint) {
+		return err(
+			federationError(
+				FederationErrorCode.InvalidMetadata,
+				"Response authority_hints does not match selected RP trust chain",
+			),
+		);
+	}
+
+	if (responseExp > sharedChains.value.rpChain.expiresAt) {
+		return err(
+			federationError(
+				FederationErrorCode.InvalidRequest,
+				"Registration response exp exceeds selected RP trust chain expiry",
+			),
+		);
+	}
 
 	const responseMeta = responsePayload.metadata as
 		| Record<string, Record<string, unknown>>
@@ -437,6 +458,17 @@ export async function explicitRegistration(
 
 	const clientId = registeredMetadataResult.data.client_id;
 	const clientSecret = registeredMetadataResult.data.client_secret;
+	const clientSecretExpiresAt = registeredMetadataResult.data.client_secret_expires_at;
+	if (clientSecret !== undefined && clientSecretExpiresAt !== undefined) {
+		if (clientSecretExpiresAt < responseExp) {
+			return err(
+				federationError(
+					FederationErrorCode.InvalidMetadata,
+					"Registration response client_secret_expires_at must not be earlier than response exp",
+				),
+			);
+		}
+	}
 
 	if (
 		responsePayload.jwks !== undefined &&
@@ -451,7 +483,7 @@ export async function explicitRegistration(
 	}
 
 	// RP must not use the registration past trust chain expiry
-	const trustChainExpiresAt = discovery.trustChain.expiresAt;
+	const trustChainExpiresAt = sharedChains.value.rpChain.expiresAt;
 
 	const result: ExplicitRegistrationResult = {
 		registrationStatement: decoded.value,
@@ -464,4 +496,13 @@ export async function explicitRegistration(
 		return ok({ ...result, clientSecret });
 	}
 	return ok(result);
+}
+
+function expectedRegistrationAuthorityHint(
+	rpChain: { readonly statements: readonly { readonly payload: Record<string, unknown> }[] },
+	trustAnchorId: EntityId,
+): string {
+	const superiorStatement = rpChain.statements[1];
+	if (!superiorStatement) return trustAnchorId as string;
+	return superiorStatement.payload.iss as string;
 }

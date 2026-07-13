@@ -73,6 +73,20 @@ export const ExplicitRegistrationResponsePayloadSchema = z
 	.refine((obj) => !("client_secret" in obj), {
 		message: "client_secret MUST be nested under metadata.openid_relying_party",
 		path: ["client_secret"],
+	})
+	.superRefine((obj, ctx) => {
+		const rpMetadata = obj.metadata.openid_relying_party as Record<string, unknown> | undefined;
+		if (
+			typeof rpMetadata?.client_secret === "string" &&
+			typeof rpMetadata.client_secret_expires_at === "number" &&
+			rpMetadata.client_secret_expires_at < obj.exp
+		) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "client_secret_expires_at must not be earlier than exp",
+				path: ["metadata", "openid_relying_party", "client_secret_expires_at"],
+			});
+		}
 	});
 
 export type ExplicitRegistrationRequestPayload = z.infer<
