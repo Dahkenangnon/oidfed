@@ -4,10 +4,10 @@
 
 | Version | Supported |
 |---------|-----------|
-| 1.x.y (upcoming stable) | Will receive security fixes once released. |
-| 0.x.y (current prerelease) | No security fixes. Pin a version and upgrade when 1.x ships. |
+| Latest release line | Security fixes provided. |
+| Older release lines | No backported security fixes unless explicitly announced. |
 
-The `0.x.y` line is a prerelease series. It will not receive backported security fixes; users are expected to upgrade to the upcoming stable `1.x.y` line once available.
+Security fixes target the latest release line. Users should upgrade promptly when a security release is published.
 
 ## Reporting a Vulnerability
 
@@ -19,7 +19,7 @@ GitHub Private Vulnerability Reporting will be enabled via the repository Securi
 - Affected package(s) and version(s)
 - Any suggested fix or patch (optional)
 
-You will receive an acknowledgement within 72 hours. Fixes target the upcoming stable line; expect a release within 14 days of confirmation once `1.x.y` is generally available.
+You will receive an acknowledgement within 72 hours. Confirmed vulnerabilities are triaged for a fix release within 14 days whenever a coordinated disclosure timeline allows it.
 
 ## Scope
 

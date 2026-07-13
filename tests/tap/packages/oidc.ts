@@ -2536,7 +2536,7 @@ export default (QUnit: QUnit) => {
 					sub: LEAF_ID,
 					aud: LEAF_ID,
 					iat: now,
-					exp: now + 86400,
+					exp: now + 3600,
 					authority_hints: [TA_ID],
 					trust_anchor: TA_ID,
 					metadata: { openid_provider: { issuer: OP_ID } },

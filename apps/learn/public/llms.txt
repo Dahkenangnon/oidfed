@@ -30,13 +30,9 @@ This is the canonical educational resource for @oidfed. It is not the @oidfed pr
 
 ## Related
 
-- [OpenID Federation 1.0 specification](https://openid.net/specs/openid-federation-1_0.html) *(final)* — the authoritative protocol definition this course teaches.
-- [OpenID Federation 1.1](https://openid.net/specs/openid-federation-1_1.html) *(final)* — protocol-independent successor layer.
-- [OpenID Federation for OpenID Connect 1.1](https://openid.net/specs/openid-federation-connect-1_1.html) *(final)* — protocol-specific successor layer.
-- [OpenID Federation Extended Subordinate Listing 1.0](https://openid.net/specs/openid-federation-extended-listing-1_0.html) *(draft 02)* — paginated discovery extension; implemented in `@oidfed/*`.
-- [OpenID Federation Entity Collection 1.0](https://openid.net/specs/openid-federation-entity-collection-1_0.html) *(draft 00)* — sub-federation discovery.
-- [OpenID Federation for Wallet Architectures 1.0](https://openid.net/specs/openid-federation-wallet-1_0.html) *(draft 05)* — wallet trust establishment.
-- [ACME with OpenID Federation 1.0](https://datatracker.ietf.org/doc/draft-ietf-acme-openid-federation/) *(IETF draft)* — X.509 issuance over federation discovery.
+- [OpenID Federation 1.0 specification](https://openid.net/specs/openid-federation-1_0.html) — the authoritative protocol definition this course teaches.
+- [OpenID Federation 1.1](https://openid.net/specs/openid-federation-1_1.html) — protocol-independent successor layer.
+- [OpenID Federation for OpenID Connect 1.1](https://openid.net/specs/openid-federation-connect-1_1.html) — protocol-specific successor layer.
 
 ## Project Metadata
 

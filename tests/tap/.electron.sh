@@ -10,4 +10,5 @@ set -e
   --outfile=tests/tap/.build/run-electron.js \
   tests/tap/run-electron.ts
 
+unset ELECTRON_RUN_AS_NODE
 ./node_modules/.bin/electron --no-sandbox tests/tap/.build/run-electron.js

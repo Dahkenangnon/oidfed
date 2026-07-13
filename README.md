@@ -10,7 +10,7 @@
 [![@oidfed/cli](https://img.shields.io/npm/v/@oidfed/cli?label=%40oidfed%2Fcli)](https://www.npmjs.com/package/@oidfed/cli)
 [![License](https://img.shields.io/badge/license-Apache--2.0%20(libs)%20%2F%20MIT%20(apps)-blue.svg)](#license)
 
-An [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) toolkit for JavaScript — runtime-agnostic, built on Web API standards, and in pre-1.0 conformance hardening. Trust chain resolution and validation, metadata policy enforcement, trust marks, constraint checking, and automatic and explicit client registration are split across four focused packages built on Web API primitives (`Request → Response`), running anywhere JavaScript runs: Node.js, Deno, Bun, and beyond. All persistent state is behind pluggable storage interfaces, keeping database and HSM integrations entirely outside the core packages. The only runtime dependencies are [`jose`](https://github.com/panva/jose) and [`zod`](https://github.com/colinhacks/zod). Two operational utilities — a CLI and a browser-based explorer — round out the toolchain.
+An [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) toolkit for JavaScript — runtime-agnostic, built on Web API standards, and designed for production federation deployments. Trust chain resolution and validation, metadata policy enforcement, trust marks, constraint checking, and automatic and explicit client registration are split across four focused packages built on Web API primitives (`Request → Response`), running anywhere JavaScript runs: Node.js, Deno, Bun, and beyond. All persistent state is behind pluggable storage interfaces, keeping database and HSM integrations entirely outside the core packages. The only runtime dependencies are [`jose`](https://github.com/panva/jose) and [`zod`](https://github.com/colinhacks/zod). Two operational utilities — a CLI and a browser-based explorer — round out the toolchain.
 
 [Explorer](https://explore.oidfed.com) · [Project Home](https://oidfed.com) · [Learn OpenID Federation](https://learn.oidfed.com)
 
@@ -20,12 +20,10 @@ An [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) 
 > **Try it live.** [`fed.oidfed.com`](https://fed.oidfed.com) is @oidfed's own reference deployment — OpenID Federation 1.0 topologies (single-anchor, hierarchical, multi-anchor, cross-federation, constrained, policy-operators) running on the packages in this repo. Open any trust chain in one click via [`explore.oidfed.com`](https://explore.oidfed.com) or hit it directly with [`@oidfed/cli`](https://www.npmjs.com/package/@oidfed/cli). Source: [`Dahkenangnon/fed-oidfed-com`](https://github.com/Dahkenangnon/fed-oidfed-com).
 
 > [!IMPORTANT]
-> **Spec target:** [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html), with pre-1.0 conformance hardening in progress ·
+> **Spec target:** [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) ·
 > 
 > **Crypto:** All JOSE operations delegated to [`jose`](https://github.com/panva/jose) · 
 > 
-> **Status:** prerelease — API may change before the upcoming stable `1.0.0` release.
->
 > **Engines:** The library packages intentionally omit published `engines` metadata because they are runtime-agnostic. Repository development and release verification require Node.js `>=22.12.0` with pnpm `>=10`; `@oidfed/cli` publishes its Node.js runtime requirement separately.
 
 ---
@@ -138,9 +136,9 @@ The repository also ships a CLI ([`@oidfed/cli`](docs/tools/cli.md)), a live fed
 
 | Specification | Spec status | This monorepo | Scope |
 |---|---|---|---|
-| [**OpenID Federation 1.0**](https://openid.net/specs/openid-federation-1_0.html) | **Final** ✓ (2026-02-17) |  **Pre-1.0 hardening** | Foundational protocol: Entity Statements, Trust Chains, Metadata, Policies, Trust Marks, Federation Endpoints, OpenID Connect client registration. |
-| [**OpenID Federation 1.1**](https://openid.net/specs/openid-federation-1_1.html) | **Final** ✓ (2026-05-05) |  **Tracked via 1.0 hardening** | Protocol-independent layer — the 1.0 functionality factored apart with no behavioural changes. |
-| [**OpenID Federation for OpenID Connect 1.1**](https://openid.net/specs/openid-federation-connect-1_1.html) | **Final** ✓ (2026-05-05) |  **Tracked via 1.0 hardening** | Protocol-specific layer — OAuth 2.0 / OpenID Connect entity types, automatic + explicit client registration. |
+| [**OpenID Federation 1.0**](https://openid.net/specs/openid-federation-1_0.html) | **Final** ✓ (2026-02-17) |  **Implemented** | Foundational protocol: Entity Statements, Trust Chains, Metadata, Policies, Trust Marks, Federation Endpoints, OpenID Connect client registration. |
+| [**OpenID Federation 1.1**](https://openid.net/specs/openid-federation-1_1.html) | **Final** ✓ (2026-05-05) |  **Covered by the 1.0 implementation scope** | Protocol-independent layer — the 1.0 functionality factored apart with no behavioural changes. |
+| [**OpenID Federation for OpenID Connect 1.1**](https://openid.net/specs/openid-federation-connect-1_1.html) | **Final** ✓ (2026-05-05) |  **Covered by the 1.0 implementation scope** | Protocol-specific layer — OAuth 2.0 / OpenID Connect entity types, automatic + explicit client registration. |
 | [**OpenID Federation Extended Subordinate Listing 1.0**](https://openid.net/specs/openid-federation-extended-listing-1_0.html) | *Draft 02* |  **Available** (tracks draft-02) | Paginated subordinate listing with audit timestamps and bulk per-entity claim retrieval for large-scale federations. See [docs/packages/authority.md](docs/packages/authority.md#extended-subordinate-listing). |
 | [**OpenID Federation Entity Collection 1.0**](https://openid.net/specs/openid-federation-entity-collection-1_0.html) | *Draft 00* |  **Not available yet** | Sub-federation entity discovery endpoint with hierarchical filtering, pagination, and UI-oriented metadata for login pickers and admin tools. |
 | [**OpenID Federation for Wallet Architectures 1.0**](https://openid.net/specs/openid-federation-wallet-1_0.html) | *Draft 05* |  **Not available yet** | Trust-establishment profile for digital-wallet ecosystems — Wallet Provider / Wallet Relying Party metadata, policy templates, trust mark guidance. |
@@ -148,7 +146,7 @@ The repository also ships a CLI ([`@oidfed/cli`](docs/tools/cli.md)), a live fed
 
 
 > [!NOTE]
-> **OpenID Federation 1.1 + OpenID Federation for OpenID Connect 1.1** are a clean split of 1.0 — no functionality was added or removed, only factored apart. The 1.1 specifications are tracked through the same pre-1.0 hardening work. **Extended Subordinate Listing** is available end-to-end (server endpoint, federation-api client, CLI `list-extended` command) and tracks draft-02 verbatim — see [docs/packages/authority.md](docs/packages/authority.md#extended-subordinate-listing). **Entity Collection**, **Wallet Architectures**, and **ACME-with-Federation** are tracked but not available yet; contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+> **OpenID Federation 1.1 + OpenID Federation for OpenID Connect 1.1** are a clean split of 1.0 — no functionality was added or removed, only factored apart. **Extended Subordinate Listing** is available end-to-end (server endpoint, federation-api client, CLI `list-extended` command) and tracks draft-02 verbatim — see [docs/packages/authority.md](docs/packages/authority.md#extended-subordinate-listing). **Entity Collection**, **Wallet Architectures**, and **ACME-with-Federation** are tracked but not available yet; contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 For real-world integration examples see the [Wiring Guide](docs/guide/wiring-guide.md), the [dev federation server](docs/guide/dev.md), and the [E2E test infrastructure](docs/test/e2e.md).
 

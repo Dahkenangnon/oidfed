@@ -138,7 +138,7 @@ _No user-visible changes — released as part of the coordinated wave._
 ### Changed
 
 - **BREAKING:** `SubordinateStore.list(filter)` signature changed from `Promise<SubordinateRecord[]>` to `list(filter?, options?): Promise<ListPage>` where `ListPage = { items: SubordinateRecord[]; nextCursor?: EntityId }` and `ListPageOptions = { cursor?, limit?, updatedAfter?, updatedBefore? }`. Records MUST be returned in deterministic lexicographic order by `entityId`. The bundled `MemorySubordinateStore` is migrated. Custom store implementations need to adopt the new shape. Observable behaviour of the base `/federation_list` endpoint is unchanged — it still returns the same flat JSON array of entity IDs.
-- **BREAKING (pre-release):** `AuthorityServer.listSubordinatesExtended` (introduced earlier on this branch, not yet released) now returns `Promise<Result<ExtendedSubordinateListingResult, FederationError>>` instead of throwing on errors — error codes (`entity_id_not_found`, `unsupported_parameter`, `invalid_request`) are preserved in the `Result.err` branch.
+- **BREAKING:** `AuthorityServer.listSubordinatesExtended` now returns `Promise<Result<ExtendedSubordinateListingResult, FederationError>>` instead of throwing on errors — error codes (`entity_id_not_found`, `unsupported_parameter`, `invalid_request`) are preserved in the `Result.err` branch.
 - `SubordinateRecord.createdAt` / `updatedAt` are now contractually NumericDates (seconds since the epoch). Custom store implementations and fixtures that previously wrote `Date.now()` (milliseconds) must use `Math.floor(Date.now() / 1000)` or `nowSeconds(clock)`.
 
 ### Fixed

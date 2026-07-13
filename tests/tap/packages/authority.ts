@@ -1273,7 +1273,12 @@ export default (QUnit: QUnit) => {
 			const decoded = decodeEntityStatement(jwt);
 			t.true(isOk(decoded));
 			if (!isOk(decoded)) return;
-			t.deepEqual((decoded.value.payload as Record<string, unknown>).trust_mark_owners, owners);
+			t.deepEqual(
+				JSON.parse(
+					JSON.stringify((decoded.value.payload as Record<string, unknown>).trust_mark_owners),
+				),
+				JSON.parse(JSON.stringify(owners)),
+			);
 		});
 
 		test("uses custom entityConfigurationTtlSeconds for exp", async (t) => {

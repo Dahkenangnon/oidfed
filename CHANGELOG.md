@@ -93,7 +93,7 @@ _No user-visible changes — released as part of the coordinated wave._
 ### Changed
 
 - Root README refreshed with a sparse badge row, 30-second start, and a maturity box; the README banner image was removed and the orphaned banner assets deleted from `internal/assets/`.
-- `SECURITY.md` rewritten to explicitly state that only the upcoming stable `1.x.y` line will receive security fixes; the current `0.x.y` prerelease line receives no backports.
+- `SECURITY.md` rewritten to define supported release lines and backport expectations.
 - `apps/explorer` and `apps/learn` READMEs reduced to title + one descriptive paragraph; new `apps/home/README.md` added.
 - Repository topic list pruned and reset; `trusted-execution-environment` removed; `openid-connect`, `oauth2`, and `trust-mark` added.
 - Toolchain bumps via Dependabot: `turbo`, `biome`, `esbuild`, `tsx`, `ts-blank-space`, `undici`, `@playwright/test`, `@types/qunit` and others — see PR #7. GitHub Actions bumped: `actions/checkout`, `actions/setup-node`, `pnpm/action-setup` to v6.
