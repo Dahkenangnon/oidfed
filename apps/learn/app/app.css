@@ -8,7 +8,7 @@
 	--animate-skeleton: skeleton 2s -1s infinite linear;
 	--animate-caret-blink: 1s ease-out infinite caret-blink;
 	--font-heading: "Inter Variable", "Inter", sans-serif;
-	--font-mono: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+	--font-mono: ui-monospace, monospace;
 	--font-sans: "Inter Variable", "Inter", sans-serif;
 	--color-sidebar-ring: var(--sidebar-ring);
 	--color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
@@ -104,7 +104,7 @@
 }
 
 @theme {
-	/* VS Code Blue brand colors */
+	/* Shared @oidfed brand colors */
 	--color-brand-50: #e6f2ff;
 	--color-brand-100: #b3d9ff;
 	--color-brand-200: #80bfff;

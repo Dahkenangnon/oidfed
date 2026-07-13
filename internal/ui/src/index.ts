@@ -30,6 +30,7 @@ export * from "./components/label";
 export * from "./components/menu";
 export * from "./components/meter";
 export * from "./components/number-field";
+export * from "./components/oidfed-logo";
 export * from "./components/pagination";
 export * from "./components/popover";
 export * from "./components/preview-card";

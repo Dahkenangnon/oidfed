@@ -4,6 +4,7 @@ import {
 	MenuItem,
 	MenuPopup,
 	MenuTrigger,
+	OidfedLogo,
 	Separator,
 	Sidebar,
 	SidebarContent,
@@ -24,7 +25,6 @@ import {
 	useSidebar,
 } from "@oidfed/ui";
 import {
-	BookOpen,
 	ChevronUp,
 	ExternalLink,
 	Globe,
@@ -65,12 +65,7 @@ function SidebarLayout() {
 						<SidebarMenuItem>
 							<div className="flex items-center gap-1">
 								<SidebarMenuButton size="lg" render={<Link to="/" />} className="flex-1">
-									<div className="flex size-8 items-center justify-center rounded-lg bg-brand-500 text-white shrink-0">
-										<BookOpen className="size-4" />
-									</div>
-									<div className="flex flex-col gap-0.5 leading-none">
-										<span className="font-semibold">OidFed Learn</span>
-									</div>
+									<OidfedLogo label="OidFed Learn" markClassName="size-8" />
 								</SidebarMenuButton>
 								{!isCollapsed && (
 									<Tooltip>

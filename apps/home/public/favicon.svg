@@ -1,4 +1,40 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="12" fill="#007acc"/>
-  <text x="32" y="42" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="30" font-weight="700" fill="#ffffff" text-anchor="middle">@</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">oidfed logo</title>
+  <desc id="desc">A trust graph mark with an at sign in the center.</desc>
+  <defs>
+    <linearGradient id="bg" x1="72" y1="48" x2="440" y2="464" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#06101f"/>
+      <stop offset="0.58" stop-color="#0b1220"/>
+      <stop offset="1" stop-color="#0d2239"/>
+    </linearGradient>
+    <linearGradient id="edge" x1="132" y1="92" x2="380" y2="420" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#b3d9ff"/>
+      <stop offset="0.48" stop-color="#4da6ff"/>
+      <stop offset="1" stop-color="#007acc"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="32%" r="56%">
+      <stop offset="0" stop-color="#4da6ff" stop-opacity="0.42"/>
+      <stop offset="0.55" stop-color="#007acc" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="#007acc" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#000814" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <rect width="512" height="512" rx="112" fill="url(#glow)"/>
+
+  <g filter="url(#shadow)">
+    <path d="M256 116 156 232v96l100 68 100-68v-96L256 116Z" fill="#007acc" fill-opacity="0.1" stroke="url(#edge)" stroke-width="18" stroke-linejoin="round"/>
+    <path d="M256 158v196M176 244h160M176 324h160" fill="none" stroke="#b3d9ff" stroke-width="13" stroke-linecap="round" opacity="0.62"/>
+
+    <circle cx="256" cy="116" r="38" fill="#80bfff"/>
+    <circle cx="156" cy="232" r="34" fill="#4da6ff"/>
+    <circle cx="356" cy="232" r="34" fill="#4da6ff"/>
+    <circle cx="256" cy="396" r="34" fill="#007acc"/>
+
+    <circle cx="256" cy="256" r="64" fill="#0b1220" stroke="#e6f2ff" stroke-width="15"/>
+    <text x="256" y="300" text-anchor="middle" font-family="Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="122" font-weight="800" fill="#f8fbff">@</text>
+  </g>
 </svg>

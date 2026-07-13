@@ -13,7 +13,7 @@ import "./app.css";
 export const links: Route.LinksFunction = () => [
 	{ rel: "author", href: "https://github.com/Dahkenangnon" },
 	{ rel: "icon", href: "/favicon.svg", type: "image/svg+xml" },
-	{ rel: "apple-touch-icon", href: "/favicon.svg" },
+	{ rel: "apple-touch-icon", href: "/icon-512.png" },
 	{ rel: "manifest", href: "/site.webmanifest" },
 ];
 

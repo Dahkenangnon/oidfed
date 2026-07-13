@@ -1,4 +1,6 @@
-import { ArrowUpRight } from "lucide-react";
+import { OidfedLogo } from "@oidfed/ui";
+import { ArrowUpRight, Menu, X } from "lucide-react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Link, Outlet, useLocation } from "react-router";
 import { ThemeToggle } from "../components/theme-toggle";
 
@@ -28,27 +30,42 @@ export default function SiteLayout() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Header (unchanged from previous redesign)
+// Header
 // ─────────────────────────────────────────────────────────────────────────────
 
 function SiteHeader() {
 	const location = useLocation();
+	const mobileMenuId = useId();
+	const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+	const previousPathname = useRef(location.pathname);
+
+	useEffect(() => {
+		if (previousPathname.current === location.pathname) return;
+		previousPathname.current = location.pathname;
+		setMobileMenuOpen(false);
+	}, [location.pathname]);
+
+	const isActive = (to: string) => location.pathname === to;
+
 	return (
 		<header className="sticky top-0 z-50 border-b border-border/60 bg-background/80 backdrop-blur-md supports-[backdrop-filter]:bg-background/60">
-			<div className="mx-auto flex h-14 max-w-6xl items-center gap-4 px-4 sm:gap-6 sm:px-6">
-				<Link to="/" className="group flex items-center gap-2" aria-label="@oidfed — home">
-					<span aria-hidden className="relative inline-flex size-6 items-center justify-center">
-						<span className="absolute inset-0 rounded-md bg-brand-500/15 transition-colors group-hover:bg-brand-500/25" />
-						<span className="relative font-mono text-[13px] font-bold text-brand-500">@</span>
-					</span>
-					<span className="font-heading text-[15px] font-semibold tracking-tight">oidfed</span>
+			<div className="mx-auto flex h-14 max-w-6xl items-center gap-3 px-4 sm:gap-5 sm:px-6">
+				<Link
+					to="/"
+					className="group flex min-w-0 items-center gap-2"
+					aria-label="@oidfed — home"
+				>
+					<OidfedLogo
+						label="oidfed"
+						markClassName="size-7 transition-transform group-hover:scale-105"
+					/>
 				</Link>
 
-				<span aria-hidden className="h-5 w-px bg-border/70" />
+				<span aria-hidden className="hidden h-5 w-px bg-border/70 md:block" />
 
-				<nav className="flex min-w-0 items-center gap-1">
+				<nav className="hidden min-w-0 items-center gap-1 md:flex" aria-label="Primary">
 					{NAV_PRIMARY.filter((n) => n.to !== "/").map((item) => {
-						const active = location.pathname === item.to;
+						const active = isActive(item.to);
 						return (
 							<Link
 								key={item.to}
@@ -71,7 +88,7 @@ function SiteHeader() {
 				</nav>
 
 				<div className="ml-auto flex items-center gap-1 sm:gap-2">
-					<nav className="hidden items-center gap-1 md:flex">
+					<nav className="hidden items-center gap-1 lg:flex" aria-label="External">
 						{NAV_EXTERNAL.map((item) => (
 							<a
 								key={item.href}
@@ -85,15 +102,67 @@ function SiteHeader() {
 							</a>
 						))}
 					</nav>
-					<a
-						href="https://explore.oidfed.com"
-						target="_blank"
-						rel="noopener noreferrer"
-						className="inline-flex h-8 items-center gap-1 rounded-md border border-border bg-background px-2.5 text-[12px] font-medium text-foreground transition-colors hover:border-foreground/30 md:hidden"
-					>
-						Explorer <ArrowUpRight className="size-3" />
-					</a>
 					<ThemeToggle />
+					<button
+						type="button"
+						className="inline-flex size-9 items-center justify-center rounded-md border border-border bg-background text-muted-foreground transition-colors hover:border-foreground/30 hover:text-foreground lg:hidden"
+						aria-label={mobileMenuOpen ? "Close navigation menu" : "Open navigation menu"}
+						aria-controls={mobileMenuId}
+						aria-expanded={mobileMenuOpen}
+						onClick={() => setMobileMenuOpen((open) => !open)}
+					>
+						{mobileMenuOpen ? <X className="size-4" /> : <Menu className="size-4" />}
+					</button>
+				</div>
+			</div>
+
+			<div
+				id={mobileMenuId}
+				className={`${mobileMenuOpen ? "block" : "hidden"} border-t border-border/60 bg-background/95 shadow-sm lg:hidden`}
+			>
+				<div className="mx-auto grid max-w-6xl gap-4 px-4 py-4 sm:px-6 md:grid-cols-2">
+					<nav aria-label="Primary mobile navigation" className="grid gap-1">
+						<p className="px-2 font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+							Pages
+						</p>
+						{NAV_PRIMARY.map((item) => {
+							const active = isActive(item.to);
+							return (
+								<Link
+									key={item.to}
+									to={item.to}
+									className={`flex h-10 items-center rounded-md px-2.5 text-[14px] transition-colors ${
+										active
+											? "bg-brand-500/10 text-foreground"
+											: "text-muted-foreground hover:bg-muted hover:text-foreground"
+									}`}
+									aria-current={active ? "page" : undefined}
+									onClick={() => setMobileMenuOpen(false)}
+								>
+									{item.label}
+								</Link>
+							);
+						})}
+					</nav>
+
+					<nav aria-label="External mobile navigation" className="grid gap-1">
+						<p className="px-2 font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+							Tools
+						</p>
+						{NAV_EXTERNAL.map((item) => (
+							<a
+								key={item.href}
+								href={item.href}
+								target="_blank"
+								rel="noopener noreferrer"
+								className="group flex h-10 items-center justify-between rounded-md px-2.5 text-[14px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+								onClick={() => setMobileMenuOpen(false)}
+							>
+								<span>{item.label}</span>
+								<ArrowUpRight className="size-3.5 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
+							</a>
+						))}
+					</nav>
 				</div>
 			</div>
 		</header>
@@ -113,13 +182,7 @@ function SiteFooter() {
 			/>
 			<div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 px-6 py-6 text-[12px] text-muted-foreground/80 sm:flex-row">
 				<Link to="/" className="flex items-center gap-2 transition-colors hover:text-foreground">
-					<span aria-hidden className="relative inline-flex size-5 items-center justify-center">
-						<span className="absolute inset-0 rounded-md bg-brand-500/15" />
-						<span className="relative font-mono text-[11px] font-bold text-brand-500">@</span>
-					</span>
-					<span className="font-heading text-[13px] font-medium tracking-tight text-foreground">
-						oidfed
-					</span>
+					<OidfedLogo label="oidfed" markClassName="size-6" labelClassName="text-[13px]" />
 				</Link>
 				<p className="font-mono text-[11px] tracking-wide">
 					© 2026{" "}

@@ -4,6 +4,7 @@ import {
 	MenuItem,
 	MenuPopup,
 	MenuTrigger,
+	OidfedLogo,
 	Separator,
 	Sidebar,
 	SidebarContent,
@@ -85,12 +86,7 @@ export function AppSidebar() {
 								onClick={() => navigate("/")}
 								className="cursor-pointer flex-1"
 							>
-								<div className="flex size-8 items-center justify-center rounded-lg bg-brand-500 text-white shrink-0">
-									<Globe className="size-4" />
-								</div>
-								<div className="flex flex-col gap-0.5 leading-none">
-									<span className="font-semibold">OidFed Explorer</span>
-								</div>
+								<OidfedLogo label="OidFed Explorer" markClassName="size-8" />
 							</SidebarMenuButton>
 							{!isCollapsed && (
 								<Tooltip>
@@ -156,7 +152,7 @@ export function AppSidebar() {
 										{item.disabled && isCollapsed ? (
 											<Tooltip>
 												<TooltipTrigger render={button} />
-												<TooltipPopup side="right">{item.label} — Coming soon</TooltipPopup>
+												<TooltipPopup side="right">{item.label}</TooltipPopup>
 											</Tooltip>
 										) : (
 											button

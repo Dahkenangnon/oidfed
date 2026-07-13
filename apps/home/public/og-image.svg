@@ -1,24 +1,35 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
   <defs>
-    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#0b1220"/>
-      <stop offset="100%" stop-color="#1a3a5c"/>
+    <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="630" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#06101f"/>
+      <stop offset="0.58" stop-color="#0b1220"/>
+      <stop offset="1" stop-color="#0d2239"/>
+    </linearGradient>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <circle cx="1" cy="1" r="1" fill="#80bfff" opacity="0.18"/>
+    </pattern>
+    <linearGradient id="mark" x1="482" y1="64" x2="718" y2="300" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#b3d9ff"/>
+      <stop offset="0.5" stop-color="#4da6ff"/>
+      <stop offset="1" stop-color="#007acc"/>
     </linearGradient>
   </defs>
   <rect width="1200" height="630" fill="url(#bg)"/>
-  <!-- Trust-chain diagram (simple) -->
-  <g stroke="#80bfff" stroke-width="3" fill="none" opacity="0.35">
-    <circle cx="600" cy="150" r="18" fill="#007acc"/>
-    <line x1="600" y1="168" x2="480" y2="240"/>
-    <line x1="600" y1="168" x2="720" y2="240"/>
-    <circle cx="480" cy="258" r="15"/>
-    <circle cx="720" cy="258" r="15"/>
-    <line x1="480" y1="273" x2="410" y2="330"/>
-    <line x1="720" y1="273" x2="790" y2="330"/>
-    <circle cx="410" cy="348" r="12"/>
-    <circle cx="790" cy="348" r="12"/>
+  <rect width="1200" height="630" fill="url(#grid)" opacity="0.45"/>
+  <circle cx="600" cy="176" r="144" fill="#007acc" opacity="0.13"/>
+  <g fill="none" stroke="url(#mark)" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M600 82 512 184v84l88 60 88-60v-84L600 82Z" fill="#007acc" fill-opacity="0.1" stroke-width="13"/>
+    <path d="M600 120v170M530 194h140M530 264h140" stroke="#b3d9ff" stroke-width="10" opacity="0.65"/>
   </g>
-  <text x="600" y="420" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="96" font-weight="800" fill="#ffffff" text-anchor="middle">@oidfed</text>
-  <text x="600" y="490" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="36" font-weight="500" fill="#80bfff" text-anchor="middle">OpenID Federation 1.0 for JavaScript</text>
-  <text x="600" y="545" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="24" font-weight="400" fill="#b3d9ff" text-anchor="middle">runtime-agnostic · spec-compliant · built on Web APIs</text>
+  <g>
+    <circle cx="600" cy="82" r="28" fill="#80bfff"/>
+    <circle cx="512" cy="184" r="25" fill="#4da6ff"/>
+    <circle cx="688" cy="184" r="25" fill="#4da6ff"/>
+    <circle cx="600" cy="328" r="25" fill="#007acc"/>
+    <circle cx="600" cy="220" r="48" fill="#0b1220" stroke="#e6f2ff" stroke-width="11"/>
+    <text x="600" y="253" text-anchor="middle" font-family="Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="92" font-weight="800" fill="#f8fbff">@</text>
+  </g>
+  <text x="600" y="430" font-family="Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="96" font-weight="800" fill="#ffffff" text-anchor="middle">@oidfed</text>
+  <text x="600" y="498" font-family="Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="36" font-weight="500" fill="#80bfff" text-anchor="middle">OpenID Federation 1.0 for JavaScript</text>
+  <text x="600" y="552" font-family="Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="24" font-weight="400" fill="#b3d9ff" text-anchor="middle">runtime-agnostic · spec-compliant · built on Web APIs</text>
 </svg>

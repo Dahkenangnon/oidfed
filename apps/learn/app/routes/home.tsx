@@ -1,14 +1,16 @@
-import { Button } from "@oidfed/ui";
+import { Button, GitHubIcon, OidfedLogo } from "@oidfed/ui";
 import {
 	ArrowUpRight,
 	BookOpen,
 	Globe,
+	Menu,
 	Network,
 	ShieldCheck,
 	Telescope,
+	X,
 } from "lucide-react";
-import { GitHubIcon } from "@oidfed/ui";
-import { Link } from "react-router";
+import { useEffect, useId, useRef, useState } from "react";
+import { Link, useLocation } from "react-router";
 import { ThemeToggle } from "~/components/theme-toggle";
 import { getLessonsByPhase, lessons, phaseOrder, phases } from "~/data/lessons";
 import { buildMeta, courseJsonLd, organizationJsonLd } from "~/lib/seo";
@@ -54,20 +56,34 @@ export default function Home() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function AppHeader() {
+	const location = useLocation();
+	const mobileMenuId = useId();
+	const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+	const previousPathname = useRef(location.pathname);
+
+	useEffect(() => {
+		if (previousPathname.current === location.pathname) return;
+		previousPathname.current = location.pathname;
+		setMobileMenuOpen(false);
+	}, [location.pathname]);
+
 	return (
 		<header className="sticky top-0 z-50 shrink-0 border-b border-border/60 bg-background/80 backdrop-blur-md supports-[backdrop-filter]:bg-background/60">
-			<div className="mx-auto flex h-14 max-w-6xl items-center gap-4 px-4 sm:gap-6 sm:px-6">
-				<Link to="/" className="group flex items-center gap-2" aria-label="@oidfed Learn — home">
-					<span aria-hidden className="relative inline-flex size-6 items-center justify-center">
-						<span className="absolute inset-0 rounded-md bg-brand-500/15 transition-colors group-hover:bg-brand-500/25" />
-						<span className="relative font-mono text-[13px] font-bold text-brand-500">@</span>
-					</span>
-					<span className="font-heading text-[15px] font-semibold tracking-tight">oidfed Learn</span>
+			<div className="mx-auto flex h-14 max-w-6xl items-center gap-3 px-4 sm:gap-5 sm:px-6">
+				<Link
+					to="/"
+					className="group flex min-w-0 items-center gap-2"
+					aria-label="@oidfed Learn — home"
+				>
+					<OidfedLogo
+						label="oidfed Learn"
+						markClassName="size-7 transition-transform group-hover:scale-105"
+					/>
 				</Link>
 
-				<span aria-hidden className="hidden h-5 w-px bg-border/70 sm:block" />
+				<span aria-hidden className="hidden h-5 w-px bg-border/70 md:block" />
 
-				<nav className="hidden min-w-0 items-center gap-1 sm:flex">
+				<nav className="hidden min-w-0 items-center gap-1 md:flex" aria-label="Course">
 					{NAV_LOCAL.map(({ href, label, Icon }) => (
 						<a
 							key={href}
@@ -96,17 +112,63 @@ function AppHeader() {
 							</a>
 						))}
 					</nav>
-					<a
-						href="https://explore.oidfed.com"
-						target="_blank"
-						rel="noopener noreferrer"
-						className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-2.5 text-[12px] font-medium text-foreground transition-colors hover:border-foreground/30 lg:hidden"
-					>
-						<Telescope className="size-3.5" />
-						Explorer
-						<ArrowUpRight className="size-3" />
-					</a>
 					<ThemeToggle />
+					<button
+						type="button"
+						className="inline-flex size-9 items-center justify-center rounded-md border border-border bg-background text-muted-foreground transition-colors hover:border-foreground/30 hover:text-foreground lg:hidden"
+						aria-label={mobileMenuOpen ? "Close navigation menu" : "Open navigation menu"}
+						aria-controls={mobileMenuId}
+						aria-expanded={mobileMenuOpen}
+						onClick={() => setMobileMenuOpen((open) => !open)}
+					>
+						{mobileMenuOpen ? <X className="size-4" /> : <Menu className="size-4" />}
+					</button>
+				</div>
+			</div>
+
+			<div
+				id={mobileMenuId}
+				className={`${mobileMenuOpen ? "block" : "hidden"} border-t border-border/60 bg-background/95 shadow-sm lg:hidden`}
+			>
+				<div className="mx-auto grid max-w-6xl gap-4 px-4 py-4 sm:px-6 md:grid-cols-2">
+					<nav aria-label="Course mobile navigation" className="grid gap-1">
+						<p className="px-2 font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+							Course
+						</p>
+						{NAV_LOCAL.map(({ href, label, Icon }) => (
+							<a
+								key={href}
+								href={href}
+								className="flex h-10 items-center gap-2 rounded-md px-2.5 text-[14px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+								onClick={() => setMobileMenuOpen(false)}
+							>
+								<Icon className="size-3.5" />
+								{label}
+							</a>
+						))}
+					</nav>
+
+					<nav aria-label="External mobile navigation" className="grid gap-1">
+						<p className="px-2 font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+							Project
+						</p>
+						{NAV_EXTERNAL.map(({ href, label, Icon }) => (
+							<a
+								key={href}
+								href={href}
+								target="_blank"
+								rel="noopener noreferrer"
+								className="group flex h-10 items-center justify-between rounded-md px-2.5 text-[14px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+								onClick={() => setMobileMenuOpen(false)}
+							>
+								<span className="inline-flex items-center gap-2">
+									<Icon className="size-3.5" />
+									{label}
+								</span>
+								<ArrowUpRight className="size-3.5 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
+							</a>
+						))}
+					</nav>
 				</div>
 			</div>
 		</header>
@@ -238,10 +300,10 @@ function TrustMarkSeal() {
 	// 60 radial tick marks between r=170 and r=182 for a guilloché-style engraving
 	const ticks = Array.from({ length: 60 }, (_, i) => {
 		const angle = (i * Math.PI * 2) / 60 - Math.PI / 2;
-		const x1 = 250 + Math.cos(angle) * 170;
-		const y1 = 250 + Math.sin(angle) * 170;
-		const x2 = 250 + Math.cos(angle) * 182;
-		const y2 = 250 + Math.sin(angle) * 182;
+		const x1 = Number((250 + Math.cos(angle) * 170).toFixed(3));
+		const y1 = Number((250 + Math.sin(angle) * 170).toFixed(3));
+		const x2 = Number((250 + Math.cos(angle) * 182).toFixed(3));
+		const y2 = Number((250 + Math.sin(angle) * 182).toFixed(3));
 		return { x1, y1, x2, y2, key: i };
 	});
 

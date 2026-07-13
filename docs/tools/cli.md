@@ -1,9 +1,11 @@
 # @oidfed/cli
 
-[![npm](https://img.shields.io/npm/v/@oidfed/cli.svg)](https://www.npmjs.com/package/@oidfed/cli)
-[![downloads](https://img.shields.io/npm/dm/@oidfed/cli.svg)](https://www.npmjs.com/package/@oidfed/cli)
-[![license](https://img.shields.io/npm/l/@oidfed/cli.svg)](https://github.com/Dahkenangnon/oidfed/blob/main/tools/cli/LICENSE)
-[![Node](https://img.shields.io/node/v/@oidfed/cli)](https://nodejs.org)
+<p align="center">
+  <a href="https://www.npmjs.com/package/@oidfed/cli"><img alt="npm" src="https://img.shields.io/npm/v/@oidfed/cli.svg" /></a>
+  <a href="https://www.npmjs.com/package/@oidfed/cli"><img alt="downloads" src="https://img.shields.io/npm/dm/@oidfed/cli.svg" /></a>
+  <a href="https://github.com/Dahkenangnon/oidfed/blob/main/tools/cli/LICENSE"><img alt="license" src="https://img.shields.io/npm/l/@oidfed/cli.svg" /></a>
+  <a href="https://nodejs.org"><img alt="Node" src="https://img.shields.io/node/v/@oidfed/cli" /></a>
+</p>
 
 Command-line interface for inspecting, validating, and debugging OpenID Federation deployments — resolve trust chains, decode entity statements, verify signatures, and more.
 

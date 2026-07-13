@@ -1,5 +1,5 @@
-import { Separator, SidebarInset, SidebarProvider, SidebarTrigger } from "@oidfed/ui";
-import { Outlet } from "react-router";
+import { OidfedLogo, Separator, SidebarInset, SidebarProvider, SidebarTrigger } from "@oidfed/ui";
+import { Link, Outlet } from "react-router";
 import { AppSidebar } from "./app-sidebar";
 import { ThemeToggle } from "./theme-toggle";
 
@@ -16,6 +16,13 @@ export function RootLayout() {
 				<header className="flex h-12 shrink-0 items-center gap-2 px-4 md:px-6 lg:px-8">
 					<SidebarTrigger className="md:hidden" />
 					<Separator orientation="vertical" className="h-4 md:hidden" />
+					<Link to="/" className="md:hidden" aria-label="@oidfed Explorer — home">
+						<OidfedLogo
+							label="OidFed Explorer"
+							markClassName="size-7"
+							labelClassName="text-[14px]"
+						/>
+					</Link>
 					<div className="flex-1" />
 					<ThemeToggle />
 				</header>

@@ -1,10 +1,12 @@
 # `@oidfed/leaf`
 
-[![npm](https://img.shields.io/npm/v/@oidfed/leaf.svg)](https://www.npmjs.com/package/@oidfed/leaf)
-[![downloads](https://img.shields.io/npm/dm/@oidfed/leaf.svg)](https://www.npmjs.com/package/@oidfed/leaf)
-[![license](https://img.shields.io/npm/l/@oidfed/leaf.svg)](https://github.com/Dahkenangnon/oidfed/blob/main/packages/leaf/LICENSE)
-[![install size](https://packagephobia.com/badge?p=@oidfed/leaf)](https://packagephobia.com/result?p=@oidfed/leaf)
-[![coverage](https://img.shields.io/badge/coverage-%E2%89%A590%25-brightgreen)](https://github.com/Dahkenangnon/oidfed/blob/main/scripts/coverage-check.sh)
+<p align="center">
+  <a href="https://www.npmjs.com/package/@oidfed/leaf"><img alt="npm" src="https://img.shields.io/npm/v/@oidfed/leaf.svg" /></a>
+  <a href="https://www.npmjs.com/package/@oidfed/leaf"><img alt="downloads" src="https://img.shields.io/npm/dm/@oidfed/leaf.svg" /></a>
+  <a href="https://github.com/Dahkenangnon/oidfed/blob/main/packages/leaf/LICENSE"><img alt="license" src="https://img.shields.io/npm/l/@oidfed/leaf.svg" /></a>
+  <a href="https://packagephobia.com/result?p=@oidfed/leaf"><img alt="install size" src="https://packagephobia.com/badge?p=@oidfed/leaf" /></a>
+  <a href="https://github.com/Dahkenangnon/oidfed/blob/main/scripts/coverage-check.sh"><img alt="coverage" src="https://img.shields.io/badge/coverage-%E2%89%A590%25-brightgreen" /></a>
+</p>
 
 Leaf Entity toolkit — Entity Configuration serving, authority discovery, and trust chain participation for any entity at the edge of an OpenID Federation.
 

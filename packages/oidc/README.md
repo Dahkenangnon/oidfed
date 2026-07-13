@@ -1,10 +1,12 @@
 # @oidfed/oidc
 
-[![npm](https://img.shields.io/npm/v/@oidfed/oidc.svg)](https://www.npmjs.com/package/@oidfed/oidc)
-[![downloads](https://img.shields.io/npm/dm/@oidfed/oidc.svg)](https://www.npmjs.com/package/@oidfed/oidc)
-[![license](https://img.shields.io/npm/l/@oidfed/oidc.svg)](https://github.com/Dahkenangnon/oidfed/blob/main/packages/oidc/LICENSE)
-[![install size](https://packagephobia.com/badge?p=@oidfed/oidc)](https://packagephobia.com/result?p=@oidfed/oidc)
-[![coverage](https://img.shields.io/badge/coverage-%E2%89%A585%25-brightgreen)](https://github.com/Dahkenangnon/oidfed/blob/main/scripts/coverage-check.sh)
+<p align="center">
+  <a href="https://www.npmjs.com/package/@oidfed/oidc"><img alt="npm" src="https://img.shields.io/npm/v/@oidfed/oidc.svg" /></a>
+  <a href="https://www.npmjs.com/package/@oidfed/oidc"><img alt="downloads" src="https://img.shields.io/npm/dm/@oidfed/oidc.svg" /></a>
+  <a href="https://github.com/Dahkenangnon/oidfed/blob/main/packages/oidc/LICENSE"><img alt="license" src="https://img.shields.io/npm/l/@oidfed/oidc.svg" /></a>
+  <a href="https://packagephobia.com/result?p=@oidfed/oidc"><img alt="install size" src="https://packagephobia.com/badge?p=@oidfed/oidc" /></a>
+  <a href="https://github.com/Dahkenangnon/oidfed/blob/main/scripts/coverage-check.sh"><img alt="coverage" src="https://img.shields.io/badge/coverage-%E2%89%A585%25-brightgreen" /></a>
+</p>
 
 <div align="center">
   <img src="https://raw.githubusercontent.com/Dahkenangnon/oidfed/main/internal/assets/oidc.png" alt="@oidfed/oidc banner" width="600" />
