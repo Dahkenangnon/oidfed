@@ -1,6 +1,6 @@
 {
 	"name": "@oidfed/authority",
-	"version": "0.8.0",
+	"version": "1.0.0",
 	"description": "Trust Anchor and Intermediate Authority operations — subordinate management, statement issuance, federation endpoint serving, and policy enforcement for OpenID Federation 1.0 deployments.",
 	"license": "Apache-2.0",
 	"author": "Justin Dah-kenangnon <dah.kenangnon@gmail.com>",

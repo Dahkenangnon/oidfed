@@ -6,6 +6,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-07-13
+
+### Features
+
+* expose typed entity statement decoders ([c81bdf5](https://github.com/Dahkenangnon/oidfed/commit/c81bdf5005906e69fe5a977a4a18cb20ac0d3637))
+* add stable statement builders ([e726a5c](https://github.com/Dahkenangnon/oidfed/commit/e726a5ccbb24a816dba3356ba3b1607a3fbc3d6a))
+
+### Bug Fixes
+
+* return public generated signing keys ([8c2a966](https://github.com/Dahkenangnon/oidfed/commit/8c2a966f1440de321db09a273052603977b2d475))
+* enforce provider-owned federation key rollover ([776d123](https://github.com/Dahkenangnon/oidfed/commit/776d1236092366b007ed8a7d9882bd570a35f004))
+* enforce federation endpoint validation ([ceae64b](https://github.com/Dahkenangnon/oidfed/commit/ceae64baf66980758db445ebc4bdb5343dff7f1d))
+* enforce trust mark payload validation ([cd3af0c](https://github.com/Dahkenangnon/oidfed/commit/cd3af0cb31c99eabbcd9ebd4f4d2e783731a62ae))
+* enforce federation policy validation ([54de0f0](https://github.com/Dahkenangnon/oidfed/commit/54de0f06b733258dfd4f0b94d627b469dff94fc5))
+* tighten federation metadata validation ([a102e38](https://github.com/Dahkenangnon/oidfed/commit/a102e386736a8be57e191352dab7a4d6a165ef53))
+* cover section 3 entity statement validation ([d098c56](https://github.com/Dahkenangnon/oidfed/commit/d098c56f2a3278ae5dcb520026bd25d2b529ff1d))
+* enforce exact federation media types ([6c00afe](https://github.com/Dahkenangnon/oidfed/commit/6c00afeb3549ed06fde3fc077c039a561826db28))
+* align config docs and package claims ([ea093ac](https://github.com/Dahkenangnon/oidfed/commit/ea093acb7d3df03bbd43e90b30525681aedb7824))
+* remove avoidable public any ([d0e754d](https://github.com/Dahkenangnon/oidfed/commit/d0e754d9a2f72fdf57b1bf584a131491a5ef4006))
+* harden raw trust-chain validation ([3d5f2c4](https://github.com/Dahkenangnon/oidfed/commit/3d5f2c4a185d9791fb551cf087415f601962bf13))
+* validate supplied registration trust chains ([5c21f4f](https://github.com/Dahkenangnon/oidfed/commit/5c21f4f9d62b1d35a2802414e9391047b54f487f))
+* require trust anchors for op registration ([36bd338](https://github.com/Dahkenangnon/oidfed/commit/36bd33813fdfced76f0930fa6da0b95e30297133))
+* align root docs with class api ([f8ae317](https://github.com/Dahkenangnon/oidfed/commit/f8ae317783708d5a89d107c93a1d6665f4ba0ca2))
+* align public docs with class-only APIs ([eb6c359](https://github.com/Dahkenangnon/oidfed/commit/eb6c35953963b8dae0b9f700bfbe69ba92f223f4))
+
+### Refactor
+
+* clarify public role and key provider names ([1211280](https://github.com/Dahkenangnon/oidfed/commit/1211280b7cea233b6522830c149e8ac0abc7a352))
+
+
 ### Added
 
 - Stable Entity Configuration and Subordinate Statement payload builders, signing helpers, and claim-placement validation helpers for normal Entity Statements.

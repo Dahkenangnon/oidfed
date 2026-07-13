@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-07-13
+
+### Stable Release
+
+- First stable release of the `@oidfed/*` OpenID Federation 1.0 package set: `@oidfed/core`, `@oidfed/authority`, `@oidfed/leaf`, `@oidfed/oidc`, and `@oidfed/cli`.
+- The stable release locks in the provider-owned federation key lifecycle, explicit OIDC/OAuth role names, protocol signing-key separation, Web API request handlers, pluggable storage and key providers, strict trust-chain validation, Trust Mark validation, federation endpoint validation, and automatic and explicit client registration hardening.
+
+### Breaking Changes
+
+- **BREAKING.** Pre-1.0 public API names were removed instead of kept as compatibility aliases. Use the renamed OIDC/OAuth role classes, `ProtocolSigningKeyProvider`, `FederationKeyLifecycleProvider`, `createFederationSigningKey()`, `TrustAnchorKeyComparisonResult`, and extended subordinate listing type names documented in the package references.
+- **BREAKING.** Authority rollover methods are not exposed through authority facades. Federation signing-key rollover is owned by the injected `FederationKeyLifecycleProvider`.
+
 ### Changed
 
 - Release verification now fails on lint warnings and checks packed package manifests before publish.

@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-07-13
+
+### Bug Fixes
+
+* respect request uri delivery metadata ([89e38a9](https://github.com/Dahkenangnon/oidfed/commit/89e38a9d36bea0cbd947c14c2d847e0338936623))
+* enforce client registration trust checks ([4817cb4](https://github.com/Dahkenangnon/oidfed/commit/4817cb4652c7b74d72a9f21990b0541cb433ac14))
+* tighten federation metadata validation ([a102e38](https://github.com/Dahkenangnon/oidfed/commit/a102e386736a8be57e191352dab7a4d6a165ef53))
+* require shared trust anchor for registration ([aafa370](https://github.com/Dahkenangnon/oidfed/commit/aafa37016ac7ebfa9f9dbbf7ebc3e2d5a19c7589))
+* split rp registration metadata schemas ([1584d0b](https://github.com/Dahkenangnon/oidfed/commit/1584d0b8d27384d651c7a51dde48588cfd5fe447))
+* enforce exact federation media types ([6c00afe](https://github.com/Dahkenangnon/oidfed/commit/6c00afeb3549ed06fde3fc077c039a561826db28))
+* align config docs and package claims ([ea093ac](https://github.com/Dahkenangnon/oidfed/commit/ea093acb7d3df03bbd43e90b30525681aedb7824))
+* remove avoidable public any ([d0e754d](https://github.com/Dahkenangnon/oidfed/commit/d0e754d9a2f72fdf57b1bf584a131491a5ef4006))
+* tighten explicit registration response validation ([20f0d32](https://github.com/Dahkenangnon/oidfed/commit/20f0d3281c20cb775a5006bcc3336ac70112bc6a))
+* stabilize explicit registration hooks ([5a9ad92](https://github.com/Dahkenangnon/oidfed/commit/5a9ad9246ddb3ad56d146985a4f63897c10d29ca))
+* validate supplied registration trust chains ([5c21f4f](https://github.com/Dahkenangnon/oidfed/commit/5c21f4f9d62b1d35a2802414e9391047b54f487f))
+* require trust anchors for op registration ([36bd338](https://github.com/Dahkenangnon/oidfed/commit/36bd33813fdfced76f0930fa6da0b95e30297133))
+* align root docs with class api ([f8ae317](https://github.com/Dahkenangnon/oidfed/commit/f8ae317783708d5a89d107c93a1d6665f4ba0ca2))
+* align public docs with class-only APIs ([eb6c359](https://github.com/Dahkenangnon/oidfed/commit/eb6c35953963b8dae0b9f700bfbe69ba92f223f4))
+* harden resolve, explicit registration, and client auth validation ([f673908](https://github.com/Dahkenangnon/oidfed/commit/f673908aa7fc06422fefeef233bceca864f2e83d))
+
+### Refactor
+
+* clarify public role and key provider names ([1211280](https://github.com/Dahkenangnon/oidfed/commit/1211280b7cea233b6522830c149e8ac0abc7a352))
+
+
 ### Changed
 
 - OIDC/OAuth role classes, role config types, and protocol signing-key providers now use explicit domain names across root exports and docs.

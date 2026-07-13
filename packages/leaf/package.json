@@ -1,6 +1,6 @@
 {
 	"name": "@oidfed/leaf",
-	"version": "0.8.0",
+	"version": "1.0.0",
 	"description": "Leaf Entity toolkit — Entity Configuration serving, authority discovery, and trust chain participation for any entity at the edge of an OpenID Federation.",
 	"license": "Apache-2.0",
 	"author": "Justin Dah-kenangnon <dah.kenangnon@gmail.com>",

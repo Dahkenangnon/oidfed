@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-07-13
+
+### Features
+
+* add stable statement builders ([e726a5c](https://github.com/Dahkenangnon/oidfed/commit/e726a5ccbb24a816dba3356ba3b1607a3fbc3d6a))
+
+### Bug Fixes
+
+* enforce provider-owned federation key rollover ([776d123](https://github.com/Dahkenangnon/oidfed/commit/776d1236092366b007ed8a7d9882bd570a35f004))
+* enforce federation endpoint validation ([ceae64b](https://github.com/Dahkenangnon/oidfed/commit/ceae64baf66980758db445ebc4bdb5343dff7f1d))
+* align config docs and package claims ([ea093ac](https://github.com/Dahkenangnon/oidfed/commit/ea093acb7d3df03bbd43e90b30525681aedb7824))
+* remove avoidable public any ([d0e754d](https://github.com/Dahkenangnon/oidfed/commit/d0e754d9a2f72fdf57b1bf584a131491a5ef4006))
+* normalize endpoint routing and entity ids ([bdbf7f4](https://github.com/Dahkenangnon/oidfed/commit/bdbf7f4cadc29f7ac6b74b15a8d8e0c123d49363))
+* abstract endpoint auth key lookup ([6c3f700](https://github.com/Dahkenangnon/oidfed/commit/6c3f7000b64b0db308c3eac1aafba324064fe701))
+* align root docs with class api ([f8ae317](https://github.com/Dahkenangnon/oidfed/commit/f8ae317783708d5a89d107c93a1d6665f4ba0ca2))
+* align public docs with class-only APIs ([eb6c359](https://github.com/Dahkenangnon/oidfed/commit/eb6c35953963b8dae0b9f700bfbe69ba92f223f4))
+* harden resolve, explicit registration, and client auth validation ([f673908](https://github.com/Dahkenangnon/oidfed/commit/f673908aa7fc06422fefeef233bceca864f2e83d))
+
+### Refactor
+
+* clarify public role and key provider names ([1211280](https://github.com/Dahkenangnon/oidfed/commit/1211280b7cea233b6522830c149e8ac0abc7a352))
+
+
 ### Added
 
 - `AuthorityConfig.trustAnchorHints` publishes preferred trust anchors as `trust_anchor_hints` for Intermediate Authority Entity Configurations.
