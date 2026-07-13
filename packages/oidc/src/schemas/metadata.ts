@@ -34,6 +34,20 @@ const httpsUrlNoFragment = z.url().refine(
 	{ message: "URL must use https scheme and must not contain a fragment" },
 );
 
+const nonEmptyStringArray = z.array(z.string()).min(1);
+
+const CommonInformationalMetadataShape = {
+	organization_name: z.string().optional(),
+	display_name: z.string().optional(),
+	description: z.string().optional(),
+	keywords: nonEmptyStringArray.optional(),
+	contacts: nonEmptyStringArray.optional(),
+	logo_uri: z.string().url().optional(),
+	policy_uri: z.string().url().optional(),
+	information_uri: z.string().url().optional(),
+	organization_uri: z.string().url().optional(),
+};
+
 // ---------------------------------------------------------------------------
 // 1. OpenID Connect Relying Party (OIDC Registration 1.0 + Federation 1.0)
 // ---------------------------------------------------------------------------
@@ -50,12 +64,10 @@ const OpenIDRelyingPartyMetadataShape = {
 	response_types: z.array(z.string()).optional(),
 	grant_types: z.array(z.string()).optional(),
 	application_type: z.enum(["web", "native"]).optional(),
-	contacts: z.array(z.string().email()).optional(),
 	client_name: z.string().optional(),
-	logo_uri: z.string().url().optional(),
 	client_uri: z.string().url().optional(),
-	policy_uri: z.string().url().optional(),
 	tos_uri: z.string().url().optional(),
+	...CommonInformationalMetadataShape,
 	jwks_uri: httpsUrlNoFragment.optional(),
 	jwks: JWKSetSchema.optional(),
 	sector_identifier_uri: z.string().url().optional(),
@@ -89,7 +101,6 @@ const OpenIDRelyingPartyMetadataShape = {
 	// Federation-specific (OpenID Federation 1.0 Section 5.1/5.2)
 	client_registration_types: z.array(z.string()).optional(),
 	signed_jwks_uri: httpsUrlNoFragment.optional(),
-	organization_name: z.string().optional(),
 	organization_identifier: z.string().optional(),
 	scope: z.string().optional(),
 };
@@ -191,11 +202,11 @@ export const OpenIDProviderMetadataSchema = z
 		backchannel_token_delivery_modes_supported: z.array(z.string()).optional(),
 		backchannel_authentication_endpoint: z.string().url().optional(),
 		backchannel_user_code_parameter_supported: z.boolean().optional(),
+		...CommonInformationalMetadataShape,
 		// Federation-specific (OpenID Federation 1.0 Section 5.1)
 		client_registration_types_supported: z.array(z.string()).optional(),
 		federation_registration_endpoint: httpsUrlNoFragment.optional(),
 		signed_jwks_uri: httpsUrlNoFragment.optional(),
-		organization_name: z.string().optional(),
 		organization_identifier: z.string().optional(),
 	})
 	.superRefine((meta, ctx) => {
@@ -295,11 +306,11 @@ export const OAuthAuthorizationServerMetadataSchema = z
 		dpop_signing_alg_values_supported: z.array(z.string()).optional(),
 		// Issuer Identification (RFC 9207)
 		authorization_response_iss_parameter_supported: z.boolean().optional(),
+		...CommonInformationalMetadataShape,
 		// Federation-specific (OpenID Federation 1.0 Section 5.1.3)
 		client_registration_types_supported: z.array(z.string()).optional(),
 		federation_registration_endpoint: httpsUrlNoFragment.optional(),
 		signed_jwks_uri: httpsUrlNoFragment.optional(),
-		organization_name: z.string().optional(),
 		organization_identifier: z.string().optional(),
 	})
 	.superRefine((meta, ctx) => {
@@ -361,11 +372,9 @@ export const OAuthClientMetadataSchema = z.looseObject({
 	response_types: z.array(z.string()).optional(),
 	client_name: z.string().optional(),
 	client_uri: z.string().url().optional(),
-	logo_uri: z.string().url().optional(),
 	scope: z.string().optional(),
-	contacts: z.array(z.string().email()).optional(),
 	tos_uri: z.string().url().optional(),
-	policy_uri: z.string().url().optional(),
+	...CommonInformationalMetadataShape,
 	jwks_uri: httpsUrlNoFragment.optional(),
 	jwks: JWKSetSchema.optional(),
 	software_id: z.string().optional(),
@@ -373,7 +382,6 @@ export const OAuthClientMetadataSchema = z.looseObject({
 	// Federation-specific (OpenID Federation 1.0 Section 5.1.4)
 	client_registration_types: z.array(z.string()).optional(),
 	signed_jwks_uri: httpsUrlNoFragment.optional(),
-	organization_name: z.string().optional(),
 	organization_identifier: z.string().optional(),
 });
 
@@ -397,9 +405,9 @@ export const OAuthResourceMetadataSchema = z.looseObject({
 	scopes_supported: z.array(z.string()).optional(),
 	jwks_uri: httpsUrlNoFragment.optional(),
 	jwks: JWKSetSchema.optional(),
+	...CommonInformationalMetadataShape,
 	// Federation-specific (OpenID Federation 1.0 Section 5.2)
 	signed_jwks_uri: httpsUrlNoFragment.optional(),
-	organization_name: z.string().optional(),
 	organization_identifier: z.string().optional(),
 });
 

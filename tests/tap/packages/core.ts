@@ -1446,6 +1446,34 @@ export default (QUnit: QUnit) => {
 				}).success,
 			);
 		});
+
+		test("FederationEntityMetadataSchema validates common informational fields", (t) => {
+			const valid = FederationEntityMetadataSchema.safeParse({
+				organization_name: "Example Org",
+				display_name: "Example Federation",
+				description: "Federation operations",
+				keywords: ["federation", "identity"],
+				contacts: ["Ops Desk", "+1 555 0100"],
+				logo_uri: "https://example.com/logo.svg",
+				policy_uri: "https://example.com/policy",
+				information_uri: "https://example.com/info",
+				organization_uri: "https://example.com",
+			});
+			t.true(valid.success);
+
+			const invalidCases: Array<{ name: string; metadata: Record<string, unknown> }> = [
+				{ name: "empty keywords", metadata: { keywords: [] } },
+				{ name: "empty contacts", metadata: { contacts: [] } },
+				{ name: "non-string display name", metadata: { display_name: 123 } },
+				{ name: "invalid logo URL", metadata: { logo_uri: "not-a-url" } },
+			];
+			for (const invalidCase of invalidCases) {
+				t.false(
+					FederationEntityMetadataSchema.safeParse(invalidCase.metadata).success,
+					invalidCase.name,
+				);
+			}
+		});
 	});
 
 	// ── jwks/use-requirement ──────────────────────────────────────────
@@ -4735,6 +4763,12 @@ export default (QUnit: QUnit) => {
 			});
 		});
 
+		function mixedSigningAndEncryptionKeys(publicKey: JWK): JWK[] {
+			const signingKey = { ...publicKey, kid: "sig-1", alg: "ES256" };
+			delete signingKey.use;
+			return [signingKey, { kty: "RSA", kid: "enc-1", n: "n1", e: "AQAB", alg: "RSA-OAEP-256" }];
+		}
+
 		module("core / verifySignedJwkSet", () => {
 			test("accepts valid jwk-set+jwt with required claims iss, sub, keys", async (t) => {
 				const { signer, pub, jwks } = await setupFAKeys();
@@ -4819,6 +4853,24 @@ export default (QUnit: QUnit) => {
 				);
 				t.false((await verifySignedJwkSet(jwt, wrongJwks)).ok);
 			});
+			test("rejects mixed signing and encryption keys without use", async (t) => {
+				const { signer, pub, jwks } = await setupFAKeys();
+				const jwt = await _signES(
+					{
+						iss: "https://entity.example.com",
+						sub: "https://entity.example.com",
+						iat: fa_now,
+						keys: mixedSigningAndEncryptionKeys(pub),
+					},
+					signer,
+					{ typ: JwtTyp.JwkSet },
+				);
+				const result = await verifySignedJwkSet(jwt, jwks);
+				t.false(result.ok);
+				if (result.ok) return;
+				t.equal(result.error.code, FederationErrorCode.InvalidMetadata);
+				t.ok(result.error.description.includes("'use'"));
+			});
 			test("rejects JWT without kid header", async (t) => {
 				const jose = await import("jose");
 				const { priv, pub, jwks } = await setupFAKeys();
@@ -4837,14 +4889,14 @@ export default (QUnit: QUnit) => {
 		});
 
 		module("core / fetchSignedJwkSet", () => {
-			async function buildSignedJwkSetJwt() {
+			async function buildSignedJwkSetJwt(keysFor?: (publicKey: JWK) => JWK[]) {
 				const { signer, pub, jwks } = await setupFAKeys();
 				const jwt = await _signES(
 					{
 						iss: "https://entity.example.com",
 						sub: "https://entity.example.com",
 						iat: fa_now,
-						keys: [pub],
+						keys: keysFor ? keysFor(pub) : [pub],
 					},
 					signer,
 					{ typ: JwtTyp.JwkSet },
@@ -4924,6 +4976,22 @@ export default (QUnit: QUnit) => {
 				});
 				t.false(result.ok);
 				if (!result.ok) t.ok(result.error.description.includes("Content-Type"));
+			});
+
+			test("rejects mixed signing and encryption keys without use", async (t) => {
+				const { jwt, jwks } = await buildSignedJwkSetJwt(mixedSigningAndEncryptionKeys);
+				const httpClient: HttpClient = async () =>
+					new Response(jwt, {
+						status: 200,
+						headers: { "Content-Type": "application/jwk-set+jwt" },
+					});
+				const result = await fetchSignedJwkSet("https://entity.example.com/jwks.jose", jwks, {
+					httpClient,
+				});
+				t.false(result.ok);
+				if (result.ok) return;
+				t.equal(result.error.code, FederationErrorCode.InvalidMetadata);
+				t.ok(result.error.description.includes("'use'"));
 			});
 
 			test("propagates verifier failure (typ mismatch)", async (t) => {
@@ -8743,7 +8811,9 @@ export default (QUnit: QUnit) => {
 				const { chain, taSet, leafKeys } = await vt_buildSimple();
 				const invalidMetadataCases: Array<{ name: string; metadata: unknown }> = [
 					{ name: "metadata scalar", metadata: "bad" },
+					{ name: "entity metadata null", metadata: { openid_relying_party: null } },
 					{ name: "entity metadata scalar", metadata: { openid_relying_party: "bad" } },
+					{ name: "entity metadata array", metadata: { openid_relying_party: [] } },
 					{ name: "nested null", metadata: { custom_entity: { nested: { value: null } } } },
 				];
 				for (const invalidCase of invalidMetadataCases) {
@@ -8765,6 +8835,22 @@ export default (QUnit: QUnit) => {
 						invalidCase.name,
 					);
 				}
+			});
+			test("accepts empty entity metadata objects in raw statements", async (t) => {
+				const { chain, taSet, leafKeys } = await vt_buildSimple();
+				const leafEc = await vt_signEC(
+					"https://leaf.example.com",
+					leafKeys.privateKey,
+					leafKeys.publicKey,
+					{
+						authority_hints: ["https://ta.example.com"],
+						metadata: { openid_relying_party: {} },
+					},
+				);
+				const result = await validateTrustChain([leafEc, ...chain.slice(1)], taSet);
+				t.true(result.valid);
+				if (!result.valid) return;
+				t.deepEqual(result.chain.resolvedMetadata.openid_relying_party, {});
 			});
 			test("preserves valid custom entity type metadata", async (t) => {
 				const { chain, taSet, leafKeys } = await vt_buildSimple();

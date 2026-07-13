@@ -62,6 +62,9 @@ import {
 	ExplicitRegistrationResponsePayloadSchema,
 } from "../../../packages/oidc/src/schemas/explicit-registration.js";
 import {
+	OAuthAuthorizationServerMetadataSchema,
+	OAuthClientMetadataSchema,
+	OAuthResourceMetadataSchema,
 	OIDCFederationMetadataSchema,
 	OpenIDProviderMetadataSchema,
 	OpenIDRelyingPartyMetadataSchema,
@@ -577,6 +580,93 @@ export default (QUnit: QUnit) => {
 		});
 	});
 
+	module("oidc / metadata common informational fields", () => {
+		const commonFields = {
+			organization_name: "Example Org",
+			display_name: "Example Entity",
+			description: "Identity service",
+			keywords: ["identity", "federation"],
+			contacts: ["Operations Desk", "+1 555 0100"],
+			logo_uri: "https://example.com/logo.svg",
+			policy_uri: "https://example.com/policy",
+			information_uri: "https://example.com/info",
+			organization_uri: "https://example.com",
+		};
+
+		const validProvider = {
+			issuer: "https://op.example.com",
+			authorization_endpoint: "https://op.example.com/auth",
+			token_endpoint: "https://op.example.com/token",
+			response_types_supported: ["code"],
+			subject_types_supported: ["public"],
+			id_token_signing_alg_values_supported: ["RS256"],
+		};
+		const validAuthorizationServer = {
+			issuer: "https://as.example.com",
+			response_types_supported: ["code"],
+		};
+		const metadataCases: Array<{
+			name: string;
+			parse: (metadata: Record<string, unknown>) => boolean;
+		}> = [
+			{
+				name: "OpenID Provider metadata",
+				parse: (metadata) =>
+					OpenIDProviderMetadataSchema.safeParse({ ...validProvider, ...metadata }).success,
+			},
+			{
+				name: "OpenID Relying Party metadata",
+				parse: (metadata) =>
+					OpenIDRelyingPartyMetadataSchema.safeParse({
+						redirect_uris: ["https://rp.example.com/callback"],
+						...metadata,
+					}).success,
+			},
+			{
+				name: "OAuth Authorization Server metadata",
+				parse: (metadata) =>
+					OAuthAuthorizationServerMetadataSchema.safeParse({
+						...validAuthorizationServer,
+						...metadata,
+					}).success,
+			},
+			{
+				name: "OAuth Client metadata",
+				parse: (metadata) =>
+					OAuthClientMetadataSchema.safeParse({
+						redirect_uris: ["https://client.example.com/callback"],
+						...metadata,
+					}).success,
+			},
+			{
+				name: "OAuth Resource metadata",
+				parse: (metadata) =>
+					OAuthResourceMetadataSchema.safeParse({
+						resource: "https://resource.example.com",
+						...metadata,
+					}).success,
+			},
+		];
+
+		for (const metadataCase of metadataCases) {
+			test(`${metadataCase.name} accepts common informational fields`, (t) => {
+				t.true(metadataCase.parse(commonFields));
+			});
+
+			test(`${metadataCase.name} rejects malformed common informational fields`, (t) => {
+				const invalidCases: Array<{ name: string; metadata: Record<string, unknown> }> = [
+					{ name: "empty keywords", metadata: { keywords: [] } },
+					{ name: "empty contacts", metadata: { contacts: [] } },
+					{ name: "non-string display name", metadata: { display_name: 123 } },
+					{ name: "invalid information URL", metadata: { information_uri: "not-a-url" } },
+				];
+				for (const invalidCase of invalidCases) {
+					t.false(metadataCase.parse(invalidCase.metadata), invalidCase.name);
+				}
+			});
+		}
+	});
+
 	module("oidc / OpenIDProviderMetadataSchema — URL validation", () => {
 		const validOP = {
 			issuer: "https://op.example.com",
@@ -695,6 +785,126 @@ export default (QUnit: QUnit) => {
 			t.false(
 				OpenIDRelyingPartyMetadataSchema.safeParse({ jwks_uri: "http://rp.example.com/jwks" })
 					.success,
+			);
+		});
+	});
+
+	module("oidc / OAuth metadata schemas", () => {
+		const validAuthorizationServer = {
+			issuer: "https://as.example.com",
+			response_types_supported: ["code"],
+		};
+
+		test("OAuth Authorization Server validates issuer and registration endpoint", (t) => {
+			const invalidIssuers = [
+				"http://as.example.com",
+				"https://as.example.com?tenant=1",
+				"https://as.example.com#fragment",
+			];
+			for (const issuer of invalidIssuers) {
+				t.false(
+					OAuthAuthorizationServerMetadataSchema.safeParse({
+						...validAuthorizationServer,
+						issuer,
+					}).success,
+					issuer,
+				);
+			}
+
+			t.false(
+				OAuthAuthorizationServerMetadataSchema.safeParse({
+					...validAuthorizationServer,
+					client_registration_types_supported: ["explicit"],
+				}).success,
+			);
+			t.false(
+				OAuthAuthorizationServerMetadataSchema.safeParse({
+					...validAuthorizationServer,
+					client_registration_types_supported: ["explicit"],
+					federation_registration_endpoint: "http://as.example.com/register",
+				}).success,
+			);
+			t.true(
+				OAuthAuthorizationServerMetadataSchema.safeParse({
+					...validAuthorizationServer,
+					client_registration_types_supported: ["explicit"],
+					federation_registration_endpoint: "https://as.example.com/register",
+				}).success,
+			);
+		});
+
+		test("OAuth metadata schemas validate JWK Set URLs", (t) => {
+			const urlCases: Array<{
+				name: string;
+				host: string;
+				parse: (field: "jwks_uri" | "signed_jwks_uri", value: string) => boolean;
+			}> = [
+				{
+					name: "authorization server",
+					host: "as.example.com",
+					parse: (field, value) =>
+						OAuthAuthorizationServerMetadataSchema.safeParse({
+							...validAuthorizationServer,
+							[field]: value,
+						}).success,
+				},
+				{
+					name: "client",
+					host: "client.example.com",
+					parse: (field, value) => OAuthClientMetadataSchema.safeParse({ [field]: value }).success,
+				},
+				{
+					name: "resource",
+					host: "resource.example.com",
+					parse: (field, value) =>
+						OAuthResourceMetadataSchema.safeParse({
+							resource: "https://resource.example.com",
+							[field]: value,
+						}).success,
+				},
+			];
+
+			for (const urlCase of urlCases) {
+				for (const field of ["jwks_uri", "signed_jwks_uri"] as const) {
+					t.false(urlCase.parse(field, `http://${urlCase.host}/jwks`), urlCase.name);
+					t.false(urlCase.parse(field, `https://${urlCase.host}/jwks#frag`), urlCase.name);
+					t.true(urlCase.parse(field, `https://${urlCase.host}/jwks`), urlCase.name);
+				}
+			}
+		});
+
+		test("OAuth Resource requires a resource URL", (t) => {
+			t.false(OAuthResourceMetadataSchema.safeParse({}).success);
+			t.false(OAuthResourceMetadataSchema.safeParse({ resource: "not-a-url" }).success);
+			t.true(
+				OAuthResourceMetadataSchema.safeParse({
+					resource: "https://resource.example.com",
+					authorization_servers: ["https://as.example.com"],
+				}).success,
+			);
+		});
+
+		test("combined federation metadata validates OAuth entity metadata", (t) => {
+			t.true(
+				OIDCFederationMetadataSchema.safeParse({
+					oauth_authorization_server: {
+						...validAuthorizationServer,
+						signed_jwks_uri: "https://as.example.com/jwks.jose",
+					},
+					oauth_client: {
+						redirect_uris: ["https://client.example.com/callback"],
+						contacts: ["Client Operations"],
+					},
+					oauth_resource: {
+						resource: "https://resource.example.com",
+						keywords: ["resource"],
+					},
+				}).success,
+			);
+			t.false(
+				OIDCFederationMetadataSchema.safeParse({
+					oauth_resource: { keywords: ["missing resource"] },
+				}).success,
 			);
 		});
 	});

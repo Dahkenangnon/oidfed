@@ -1,6 +1,7 @@
 import { type EntityType, InternalErrorCode, JwtTyp, MediaType } from "../constants.js";
 import { err, type FederationError, ok, type Result } from "../errors.js";
 import { verifyEntityStatement } from "../jose/verify.js";
+import { validateJwkSetUseRequirement } from "../jwks/use-requirement.js";
 import {
 	type HistoricalKeysPayload,
 	HistoricalKeysPayloadSchema,
@@ -117,6 +118,8 @@ export async function verifySignedJwkSet(
 	if (!parsed.success) {
 		return err(apiError(`Invalid signed JWK Set payload: ${parsed.error.message}`));
 	}
+	const useResult = validateJwkSetUseRequirement(parsed.data.keys);
+	if (!useResult.ok) return useResult;
 	return { ok: true, value: parsed.data };
 }
 

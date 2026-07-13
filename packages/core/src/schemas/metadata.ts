@@ -2,6 +2,8 @@
 import { z } from "zod";
 import { EntityType } from "../constants.js";
 
+const nonEmptyStringArray = z.array(z.string()).min(1);
+
 /** URL that MUST use https scheme and MUST NOT contain a fragment. */
 const httpsUrlNoFragment = z.url().refine(
 	(val) => {
@@ -39,8 +41,8 @@ export const FederationEntityMetadataSchema = z.looseObject({
 	organization_name: z.string().optional(),
 	display_name: z.string().optional(),
 	description: z.string().optional(),
-	keywords: z.array(z.string()).optional(),
-	contacts: z.array(z.string()).optional(),
+	keywords: nonEmptyStringArray.optional(),
+	contacts: nonEmptyStringArray.optional(),
 	logo_uri: z.string().url().optional(),
 	policy_uri: z.string().url().optional(),
 	information_uri: z.string().url().optional(),
