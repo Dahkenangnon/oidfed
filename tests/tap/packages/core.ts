@@ -6254,6 +6254,41 @@ export default (QUnit: QUnit) => {
 				t.true(isErr(result));
 				if (isErr(result)) t.equal(result.error.code, "ERR_TRUST_MARK_INVALID");
 			});
+			test("rejects malformed trust mark payload claims", async (t) => {
+				const invalidCases: Array<{ name: string; overrides: Record<string, unknown> }> = [
+					{ name: "invalid issuer", overrides: { iss: "http://issuer.example.com" } },
+					{ name: "invalid subject", overrides: { sub: "http://subject.example.com" } },
+					{ name: "invalid logo URI", overrides: { logo_uri: "not-a-url" } },
+					{ name: "invalid reference URI", overrides: { ref: "not-a-url" } },
+					{ name: "non-integer issued-at", overrides: { iat: tm_now + 0.5 } },
+					{ name: "non-positive issued-at", overrides: { iat: 0 } },
+					{ name: "non-integer expiration", overrides: { exp: tm_now + 0.5 } },
+					{ name: "non-positive expiration", overrides: { exp: 0 } },
+					{ name: "non-string delegation", overrides: { delegation: { jwt: "not-a-jwt" } } },
+				];
+
+				for (const invalidCase of invalidCases) {
+					const issuerKeys = await generateSigningKey("ES256");
+					const payload = {
+						iss: "https://issuer.example.com",
+						sub: "https://subject.example.com",
+						trust_mark_type: "https://example.com/tm",
+						iat: tm_now,
+						...invalidCase.overrides,
+					};
+					const jwt = await tm_createJwt(payload, issuerKeys.privateKey);
+					const result = await validateTrustMark(
+						jwt,
+						{ "https://example.com/tm": ["https://issuer.example.com"] },
+						{ keys: [issuerKeys.publicKey] },
+					);
+					t.true(isErr(result), invalidCase.name);
+					if (isErr(result)) {
+						t.equal(result.error.code, "ERR_TRUST_MARK_INVALID", invalidCase.name);
+						t.true(result.error.description.includes("Invalid Trust Mark payload"));
+					}
+				}
+			});
 			test("accepts trust mark with exp in the future", async (t) => {
 				const issuerKeys = await generateSigningKey("ES256");
 				const jwt = await tm_createJwt(
@@ -6354,6 +6389,61 @@ export default (QUnit: QUnit) => {
 				t.true(isErr(result));
 				if (isErr(result))
 					t.true(result.error.description.includes("does not match trust_mark_owners sub"));
+			});
+			test("rejects malformed trust mark delegation payload claims", async (t) => {
+				const invalidCases: Array<{ name: string; overrides: Record<string, unknown> }> = [
+					{ name: "invalid issuer", overrides: { iss: "http://owner.example.com" } },
+					{ name: "invalid subject", overrides: { sub: "http://issuer.example.com" } },
+					{ name: "invalid reference URI", overrides: { ref: "not-a-url" } },
+					{ name: "non-integer issued-at", overrides: { iat: tm_now + 0.5 } },
+					{ name: "non-positive issued-at", overrides: { iat: 0 } },
+					{ name: "non-integer expiration", overrides: { exp: tm_now + 0.5 } },
+					{ name: "non-positive expiration", overrides: { exp: 0 } },
+				];
+
+				for (const invalidCase of invalidCases) {
+					const ownerKeys = await generateSigningKey("ES256");
+					const issuerKeys = await generateSigningKey("ES256");
+					const delegationJwt = await signEntityStatement(
+						{
+							iss: "https://owner.example.com",
+							sub: "https://issuer.example.com",
+							trust_mark_type: "https://example.com/tm",
+							iat: tm_now,
+							...invalidCase.overrides,
+						},
+						new JwkSigner(ownerKeys.privateKey),
+						{ typ: JwtTyp.TrustMarkDelegation },
+					);
+					const jwt = await tm_createJwt(
+						{
+							iss: "https://issuer.example.com",
+							sub: "https://subject.example.com",
+							trust_mark_type: "https://example.com/tm",
+							iat: tm_now,
+							delegation: delegationJwt,
+						},
+						issuerKeys.privateKey,
+					);
+					const result = await validateTrustMark(
+						jwt,
+						{ "https://example.com/tm": ["https://issuer.example.com"] },
+						{ keys: [issuerKeys.publicKey] },
+						{
+							trustMarkOwners: {
+								"https://example.com/tm": {
+									sub: "https://owner.example.com",
+									jwks: { keys: [ownerKeys.publicKey] },
+								},
+							},
+						},
+					);
+					t.true(isErr(result), invalidCase.name);
+					if (isErr(result)) {
+						t.equal(result.error.code, "ERR_TRUST_MARK_INVALID", invalidCase.name);
+						t.true(result.error.description.includes("Invalid Trust Mark delegation payload"));
+					}
+				}
 			});
 			test("rejects delegation with iat in the future", async (t) => {
 				const ownerKeys = await generateSigningKey("ES256");
@@ -10334,6 +10424,97 @@ export default (QUnit: QUnit) => {
 				});
 				t.false(result.valid);
 				t.true(result.errors.some((e) => e.field === "trust_marks"));
+			});
+			test("rejects published trust mark whose listed issuer has no trusted federation keys", async (t) => {
+				const { chain, taSet, taKeys, leafKeys } = await vt_buildSimple();
+				const issuerKeys = await generateSigningKey("ES256");
+				const trustMarkType = "https://trust-mark-type.example.com";
+				const trustMarkJwt = await signEntityStatement(
+					{
+						iss: "https://issuer.example.com",
+						sub: "https://leaf.example.com",
+						iat: vt_now,
+						trust_mark_type: trustMarkType,
+					},
+					new JwkSigner(issuerKeys.privateKey),
+					{ typ: JwtTyp.TrustMark },
+				);
+				const leafEc = await vt_signEC(
+					"https://leaf.example.com",
+					leafKeys.privateKey,
+					leafKeys.publicKey,
+					{
+						authority_hints: ["https://ta.example.com"],
+						trust_marks: [{ trust_mark_type: trustMarkType, trust_mark: trustMarkJwt }],
+					},
+				);
+				const taEc = await vt_signEC(
+					"https://ta.example.com",
+					taKeys.privateKey,
+					taKeys.publicKey,
+					{
+						trust_mark_issuers: {
+							[trustMarkType]: ["https://issuer.example.com"],
+						},
+					},
+				);
+
+				const result = await validateTrustChain([leafEc, chain[1] as string, taEc], taSet, {
+					verboseErrors: true,
+				});
+
+				t.false(result.valid);
+				t.true(
+					result.errors.some(
+						(e) =>
+							e.field === "trust_marks" && e.message.includes("No trusted federation keys found"),
+					),
+				);
+			});
+			test("rejects published trust mark with malformed payload claims", async (t) => {
+				const { chain, taSet, taKeys, leafKeys } = await vt_buildSimple();
+				const trustMarkType = "https://trust-mark-type.example.com";
+				const trustMarkJwt = await signEntityStatement(
+					{
+						iss: "https://ta.example.com",
+						sub: "https://leaf.example.com",
+						iat: vt_now,
+						logo_uri: "not-a-url",
+						trust_mark_type: trustMarkType,
+					},
+					new JwkSigner(taKeys.privateKey),
+					{ typ: JwtTyp.TrustMark },
+				);
+				const leafEc = await vt_signEC(
+					"https://leaf.example.com",
+					leafKeys.privateKey,
+					leafKeys.publicKey,
+					{
+						authority_hints: ["https://ta.example.com"],
+						trust_marks: [{ trust_mark_type: trustMarkType, trust_mark: trustMarkJwt }],
+					},
+				);
+				const taEc = await vt_signEC(
+					"https://ta.example.com",
+					taKeys.privateKey,
+					taKeys.publicKey,
+					{
+						trust_mark_issuers: {
+							[trustMarkType]: ["https://ta.example.com"],
+						},
+					},
+				);
+
+				const result = await validateTrustChain([leafEc, chain[1] as string, taEc], taSet, {
+					verboseErrors: true,
+				});
+
+				t.false(result.valid);
+				t.true(
+					result.errors.some(
+						(e) => e.field === "trust_marks" && e.message.includes("Invalid Trust Mark payload"),
+					),
+				);
 			});
 			test("rejects published trust mark when outer type does not match inner type", async (t) => {
 				const taKeys = await generateSigningKey("ES256");

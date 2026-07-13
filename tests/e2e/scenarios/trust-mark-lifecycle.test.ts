@@ -1,5 +1,12 @@
 import type { AuthorityServer } from "@oidfed/authority";
-import { entityId, isOk, validateTrustMark } from "@oidfed/core";
+import {
+	entityId,
+	isOk,
+	JwkSigner,
+	JwtTyp,
+	signEntityStatement,
+	validateTrustMark,
+} from "@oidfed/core";
 import { describe, expect, it } from "vitest";
 import { getEntity } from "../helpers/launcher.js";
 import { useFederation } from "../helpers/lifecycle.js";
@@ -78,6 +85,53 @@ describe("Trust mark lifecycle", () => {
 			// The signature is still valid, so this passes. Status check is a separate concern.
 			// We already tested getTrustMarkStatus returns non-active above.
 			expect(isOk(result)).toBe(true);
+		});
+
+		it("keeps a non-expiring trust mark active until revocation", async () => {
+			const { server, entities } = getTestBed();
+			const port = server.port;
+
+			const taInstance = getEntity(entities, "https://ta.ofed.test");
+			const ta = taInstance.server as AuthorityServer;
+			const trustMarks = taInstance.storage?.trustMarks;
+			if (!trustMarks) throw new Error("trust mark storage not found");
+
+			const rpId = `https://rp.ofed.test:${port}`;
+			const taId = `https://ta.ofed.test:${port}`;
+			const type = trustMarkType(port);
+			const issuedAt = Math.floor(Date.now() / 1000);
+			const trustMarkJwt = await signEntityStatement(
+				{
+					iss: taId,
+					sub: rpId,
+					trust_mark_type: type,
+					iat: issuedAt,
+				},
+				new JwkSigner(taInstance.keys.signing),
+				{ typ: JwtTyp.TrustMark },
+			);
+
+			await trustMarks.issue({
+				trustMarkType: type,
+				subject: entityId(rpId),
+				jwt: trustMarkJwt,
+				issuedAt,
+				active: true,
+			});
+
+			const status = await ta.getTrustMarkStatus(trustMarkJwt);
+			expect(status.status).toBe("active");
+
+			const listed = await ta.listTrustMarkedEntities(type);
+			expect(listed).toContain(rpId);
+
+			await trustMarks.revoke(type, entityId(rpId), issuedAt + 1);
+
+			const revokedStatus = await ta.getTrustMarkStatus(trustMarkJwt);
+			expect(revokedStatus.status).toBe("revoked");
+
+			const listedAfterRevocation = await ta.listTrustMarkedEntities(type);
+			expect(listedAfterRevocation).not.toContain(rpId);
 		});
 	});
 

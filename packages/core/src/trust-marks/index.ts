@@ -10,7 +10,11 @@ import { signEntityStatement } from "../jose/sign.js";
 import type { JwtSigner } from "../jose/signer.js";
 import { decodeEntityStatement, verifyEntityStatement } from "../jose/verify.js";
 import type { JWKSet } from "../schemas/jwk.js";
-import type { TrustMarkOwner } from "../schemas/trust-mark.js";
+import {
+	TrustMarkDelegationPayloadSchema,
+	type TrustMarkOwner,
+	TrustMarkPayloadSchema,
+} from "../schemas/trust-mark.js";
 import type {
 	Clock,
 	FederationOptions,
@@ -52,6 +56,17 @@ function tmError(description: string): FederationError {
 	return { code: InternalErrorCode.TrustMarkInvalid, description };
 }
 
+function describeSchemaIssues(
+	issues: ReadonlyArray<{ path: readonly PropertyKey[]; message: string }>,
+) {
+	return issues
+		.map((issue) => {
+			const path = issue.path.length > 0 ? issue.path.map(String).join(".") : "payload";
+			return `${path}: ${issue.message}`;
+		})
+		.join("; ");
+}
+
 export async function validateTrustMark(
 	trustMarkJwt: string,
 	trustMarkIssuers: Record<string, string[]>,
@@ -82,15 +97,17 @@ export async function validateTrustMark(
 		return err(tmError("Trust Mark JWT must include kid header parameter"));
 	}
 
-	const p = payload as Record<string, unknown>;
-	const iss = p.iss as string | undefined;
-	const sub = p.sub as string | undefined;
-	const trustMarkType = p.trust_mark_type as string | undefined;
-	const iat = p.iat as number | undefined;
-
-	if (!iss || !sub || !trustMarkType || iat === undefined) {
-		return err(tmError("Missing required claims: iss, sub, trust_mark_type, iat"));
+	const parsedPayload = TrustMarkPayloadSchema.safeParse(payload);
+	if (!parsedPayload.success) {
+		return err(
+			tmError(`Invalid Trust Mark payload: ${describeSchemaIssues(parsedPayload.error.issues)}`),
+		);
 	}
+	const p = parsedPayload.data;
+	const iss = p.iss;
+	const sub = p.sub;
+	const trustMarkType = p.trust_mark_type;
+	const iat = p.iat;
 
 	if (options?.expectedSubject && sub !== options.expectedSubject) {
 		return err(tmError("Trust mark sub does not match expected entity"));
@@ -119,13 +136,13 @@ export async function validateTrustMark(
 		return err(tmError(`iat is in the future: ${iat}`));
 	}
 
-	const exp = p.exp as number | undefined;
+	const exp = p.exp;
 	if (exp !== undefined && exp < now - clockSkew) {
 		return err(tmError(`Trust mark has expired: exp=${exp}`));
 	}
 
 	// Delegation is mandatory when the TA lists this type in trust_mark_owners
-	const delegationJwt = p.delegation as string | undefined;
+	const delegationJwt = p.delegation;
 	if (options?.trustMarkOwners?.[trustMarkType] && !delegationJwt) {
 		return err(
 			tmError(
@@ -190,15 +207,19 @@ async function validateDelegation(
 		return err(tmError(`Unsupported delegation algorithm: '${String(dAlg)}'`));
 	}
 
-	const dp = payload as Record<string, unknown>;
-	const dIss = dp.iss as string | undefined;
-	const dSub = dp.sub as string | undefined;
-	const dTmType = dp.trust_mark_type as string | undefined;
-	const dIat = dp.iat as number | undefined;
-
-	if (!dIss || !dSub || !dTmType || dIat === undefined) {
-		return err(tmError("Missing required claims in delegation: iss, sub, trust_mark_type, iat"));
+	const parsedPayload = TrustMarkDelegationPayloadSchema.safeParse(payload);
+	if (!parsedPayload.success) {
+		return err(
+			tmError(
+				`Invalid Trust Mark delegation payload: ${describeSchemaIssues(parsedPayload.error.issues)}`,
+			),
+		);
 	}
+	const dp = parsedPayload.data;
+	const dIss = dp.iss;
+	const dSub = dp.sub;
+	const dTmType = dp.trust_mark_type;
+	const dIat = dp.iat;
 
 	if (dSub !== trustMarkIssuer) {
 		return err(
@@ -241,7 +262,7 @@ async function validateDelegation(
 		);
 	}
 
-	const dExp = dp.exp as number | undefined;
+	const dExp = dp.exp;
 	if (dExp !== undefined && dExp < now - clockSkew) {
 		return err(tmError(`Delegation has expired: exp=${dExp}`));
 	}
