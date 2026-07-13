@@ -65,6 +65,149 @@ function isJsonObject(value: unknown): value is Record<string, unknown> {
 	return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
+function decodeJwtPayloadJson(jwt: string): string | undefined {
+	const payload = jwt.split(".")[1];
+	if (!payload) return undefined;
+	const base64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+	const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, "=");
+	try {
+		const binary = atob(padded);
+		const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+		return new TextDecoder().decode(bytes);
+	} catch {
+		return undefined;
+	}
+}
+
+function findDuplicateMetadataPolicyMembers(json: string): string[] {
+	const duplicates: string[] = [];
+	let index = 0;
+
+	function skipWhitespace() {
+		while (/\s/.test(json[index] ?? "")) index++;
+	}
+
+	function parseString(): string {
+		const start = index;
+		index++;
+		while (index < json.length) {
+			const char = json[index];
+			if (char === "\\") {
+				index += 2;
+				continue;
+			}
+			if (char === '"') {
+				index++;
+				return JSON.parse(json.slice(start, index)) as string;
+			}
+			index++;
+		}
+		throw new Error("Unterminated JSON string");
+	}
+
+	function parsePrimitive() {
+		while (index < json.length && !/[\s,\]}]/.test(json[index] ?? "")) index++;
+	}
+
+	function shouldCheckObject(path: readonly string[]): boolean {
+		return path[0] === "metadata_policy" && path.length >= 1 && path.length <= 3;
+	}
+
+	function duplicatePath(path: readonly string[], key: string): string {
+		return [...path, key].join(".");
+	}
+
+	function parseArray(path: string[]) {
+		index++;
+		skipWhitespace();
+		if (json[index] === "]") {
+			index++;
+			return;
+		}
+		while (index < json.length) {
+			parseValue(path);
+			skipWhitespace();
+			if (json[index] === "]") {
+				index++;
+				return;
+			}
+			if (json[index] !== ",") throw new Error("Expected comma in JSON array");
+			index++;
+			skipWhitespace();
+		}
+	}
+
+	function parseObject(path: string[]) {
+		const checkDuplicates = shouldCheckObject(path);
+		const seen = new Set<string>();
+		index++;
+		skipWhitespace();
+		if (json[index] === "}") {
+			index++;
+			return;
+		}
+		while (index < json.length) {
+			if (json[index] !== '"') throw new Error("Expected JSON object member name");
+			const key = parseString();
+			if (checkDuplicates) {
+				if (seen.has(key)) duplicates.push(duplicatePath(path, key));
+				seen.add(key);
+			}
+			skipWhitespace();
+			if (json[index] !== ":") throw new Error("Expected JSON object colon");
+			index++;
+			skipWhitespace();
+			parseValue([...path, key]);
+			skipWhitespace();
+			if (json[index] === "}") {
+				index++;
+				return;
+			}
+			if (json[index] !== ",") throw new Error("Expected comma in JSON object");
+			index++;
+			skipWhitespace();
+		}
+	}
+
+	function parseValue(path: string[]) {
+		skipWhitespace();
+		const char = json[index];
+		if (char === "{") {
+			parseObject(path);
+		} else if (char === "[") {
+			parseArray(path);
+		} else if (char === '"') {
+			parseString();
+		} else {
+			parsePrimitive();
+		}
+	}
+
+	try {
+		parseValue([]);
+	} catch {
+		return [];
+	}
+	return duplicates;
+}
+
+function addMetadataPolicyDuplicateMemberErrors(
+	errors: ValidationError[],
+	jwt: string,
+	statementIndex: number,
+) {
+	const payloadJson = decodeJwtPayloadJson(jwt);
+	if (!payloadJson) return;
+	for (const duplicate of findDuplicateMetadataPolicyMembers(payloadJson)) {
+		addError(
+			errors,
+			InternalErrorCode.TrustChainInvalid,
+			`Duplicate metadata_policy member '${duplicate}' at statement ${statementIndex}`,
+			{ statementIndex, field: "metadata_policy", checkNumber: 19 },
+		);
+	}
+}
+
 function addSchemaIssues(
 	errors: ValidationError[],
 	issues: ReadonlyArray<{ path: readonly PropertyKey[]; message: string }>,
@@ -290,6 +433,7 @@ export async function validateTrustChain(
 			);
 			return { valid: false, errors };
 		}
+		addMetadataPolicyDuplicateMemberErrors(errors, chain[j] as string, j);
 		parsed.push(decodeResult.value);
 	}
 

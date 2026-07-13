@@ -72,6 +72,11 @@ export function applyMetadataPolicy(
 
 				if (applyResult.removed) {
 					delete entityMetadata[paramName];
+				} else if (applyResult.value === null) {
+					return err({
+						code: InternalErrorCode.MetadataPolicyViolation,
+						description: `Policy violation for ${entityType}.${paramName} (operator '${opName}'): operator output must not be null`,
+					});
 				} else {
 					entityMetadata[paramName] = applyResult.value;
 				}

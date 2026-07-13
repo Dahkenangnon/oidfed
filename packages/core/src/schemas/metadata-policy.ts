@@ -1,13 +1,18 @@
 /** Zod schema for federation metadata policy: operator constraints applied during trust chain resolution. */
 import { z } from "zod";
 
+const jsonObject = z.record(z.string(), z.unknown());
+const metadataValue = z.union([z.string(), z.number(), z.boolean(), z.array(z.unknown())]);
+const comparableValue = z.union([z.string(), z.number(), jsonObject]);
+const comparableArray = z.array(comparableValue);
+
 export const MetadataParameterPolicySchema = z.looseObject({
-	value: z.unknown().optional(),
-	add: z.unknown().optional(),
-	default: z.unknown().optional(),
-	one_of: z.array(z.unknown()).optional(),
-	subset_of: z.array(z.unknown()).optional(),
-	superset_of: z.array(z.unknown()).optional(),
+	value: z.union([metadataValue, z.null()]).optional(),
+	add: comparableArray.optional(),
+	default: metadataValue.optional(),
+	one_of: comparableArray.optional(),
+	subset_of: comparableArray.optional(),
+	superset_of: comparableArray.optional(),
 	essential: z.boolean().optional(),
 });
 

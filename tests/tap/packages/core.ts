@@ -1,4 +1,4 @@
-import type { JWK as JoseJWK, JWTHeaderParameters, JWTPayload, SignJWT } from "jose";
+import type { CompactSign, JWK as JoseJWK, JWTHeaderParameters, JWTPayload, SignJWT } from "jose";
 import type QUnit from "qunit";
 import {
 	chainCacheKey,
@@ -1322,6 +1322,24 @@ export default (QUnit: QUnit) => {
 			t.true(
 				MetadataParameterPolicySchema.safeParse({ value: "test", custom_operator: ["x"] }).success,
 			);
+		});
+
+		test("MetadataParameterPolicySchema rejects invalid standard operator value shapes", (t) => {
+			const invalidCases: Array<{ name: string; policy: Record<string, unknown> }> = [
+				{ name: "add scalar", policy: { add: "profile" } },
+				{ name: "subset_of scalar", policy: { subset_of: "openid" } },
+				{ name: "superset_of scalar", policy: { superset_of: "openid" } },
+				{ name: "one_of scalar", policy: { one_of: "openid" } },
+				{ name: "default null", policy: { default: null } },
+				{ name: "essential string", policy: { essential: "true" } },
+			];
+
+			for (const invalidCase of invalidCases) {
+				t.false(
+					MetadataParameterPolicySchema.safeParse(invalidCase.policy).success,
+					invalidCase.name,
+				);
+			}
 		});
 
 		test("EntityTypeMetadataPolicySchema accepts record of parameter policies", (t) => {
@@ -3265,6 +3283,127 @@ export default (QUnit: QUnit) => {
 				t.equal(result.value.openid_relying_party?.scope, "openid");
 			}
 		});
+		test("rejects invalid standard operator configuration types", (t) => {
+			const invalidCases: Array<{
+				name: string;
+				metadata: FederationMetadata;
+				policy: Parameters<typeof applyMetadataPolicy>[1];
+			}> = [
+				{
+					name: "add scalar",
+					metadata: { openid_relying_party: { contacts: ["ops@example.com"] } },
+					policy: { openid_relying_party: { contacts: { add: "support@example.com" } } },
+				},
+				{
+					name: "subset_of scalar",
+					metadata: { openid_relying_party: { grant_types: ["authorization_code"] } },
+					policy: { openid_relying_party: { grant_types: { subset_of: "authorization_code" } } },
+				},
+				{
+					name: "superset_of scalar",
+					metadata: { openid_relying_party: { grant_types: ["authorization_code"] } },
+					policy: { openid_relying_party: { grant_types: { superset_of: "authorization_code" } } },
+				},
+				{
+					name: "one_of scalar",
+					metadata: { openid_relying_party: { token_endpoint_auth_method: "private_key_jwt" } },
+					policy: {
+						openid_relying_party: { token_endpoint_auth_method: { one_of: "private_key_jwt" } },
+					},
+				},
+				{
+					name: "default null",
+					metadata: { openid_relying_party: {} },
+					policy: { openid_relying_party: { client_name: { default: null } } },
+				},
+				{
+					name: "essential string",
+					metadata: { openid_relying_party: { contacts: ["ops@example.com"] } },
+					policy: { openid_relying_party: { contacts: { essential: "true" } } },
+				},
+			];
+
+			for (const invalidCase of invalidCases) {
+				const result = applyMetadataPolicy(invalidCase.metadata, invalidCase.policy);
+				t.true(isErr(result), invalidCase.name);
+				if (isErr(result)) {
+					t.equal(result.error.code, "ERR_METADATA_POLICY_VIOLATION", invalidCase.name);
+				}
+			}
+		});
+		test("rejects unsupported metadata value types for standard operators", (t) => {
+			const invalidCases: Array<{
+				name: string;
+				metadata: FederationMetadata;
+				policy: Parameters<typeof applyMetadataPolicy>[1];
+			}> = [
+				{
+					name: "value with object metadata",
+					metadata: {
+						openid_relying_party: { client_name: { localized: "Leaf RP" } },
+					} as unknown as FederationMetadata,
+					policy: { openid_relying_party: { client_name: { value: "Forced RP" } } },
+				},
+				{
+					name: "default with object metadata",
+					metadata: {
+						openid_relying_party: { client_name: { localized: "Leaf RP" } },
+					} as unknown as FederationMetadata,
+					policy: { openid_relying_party: { client_name: { default: "Fallback RP" } } },
+				},
+				{
+					name: "add with scalar metadata",
+					metadata: {
+						openid_relying_party: { contacts: "ops@example.com" },
+					} as unknown as FederationMetadata,
+					policy: { openid_relying_party: { contacts: { add: ["support@example.com"] } } },
+				},
+				{
+					name: "one_of with array metadata",
+					metadata: {
+						openid_relying_party: { token_endpoint_auth_method: ["private_key_jwt"] },
+					} as unknown as FederationMetadata,
+					policy: {
+						openid_relying_party: {
+							token_endpoint_auth_method: { one_of: ["private_key_jwt"] },
+						},
+					},
+				},
+				{
+					name: "subset_of with scalar metadata",
+					metadata: {
+						openid_relying_party: { grant_types: "authorization_code" },
+					} as unknown as FederationMetadata,
+					policy: {
+						openid_relying_party: { grant_types: { subset_of: ["authorization_code"] } },
+					},
+				},
+				{
+					name: "superset_of with scalar metadata",
+					metadata: {
+						openid_relying_party: { grant_types: "authorization_code" },
+					} as unknown as FederationMetadata,
+					policy: {
+						openid_relying_party: { grant_types: { superset_of: ["authorization_code"] } },
+					},
+				},
+				{
+					name: "essential with null metadata",
+					metadata: {
+						openid_relying_party: { contacts: null },
+					} as unknown as FederationMetadata,
+					policy: { openid_relying_party: { contacts: { essential: false } } },
+				},
+			];
+
+			for (const invalidCase of invalidCases) {
+				const result = applyMetadataPolicy(invalidCase.metadata, invalidCase.policy);
+				t.true(isErr(result), invalidCase.name);
+				if (isErr(result)) {
+					t.equal(result.error.code, "ERR_METADATA_POLICY_VIOLATION", invalidCase.name);
+				}
+			}
+		});
 		test("essential=true + subset_of reducing to empty array does not error", (t) => {
 			const result = applyMetadataPolicy(
 				{ openid_relying_party: { grant_types: ["implicit"] } },
@@ -3420,6 +3559,29 @@ export default (QUnit: QUnit) => {
 			if (isErr(result)) {
 				t.equal(result.error.code, "ERR_METADATA_POLICY_VIOLATION");
 				t.ok(result.error.description.includes("regex mismatch"));
+			}
+		});
+
+		test("custom operator: rejects null output without removing the parameter", (t) => {
+			const nullingOp: PolicyOperatorDefinition = {
+				name: "nullify",
+				order: 2,
+				action: "modify",
+				apply: () => ({ ok: true, value: null }),
+				merge: (a, _b) => ({ ok: true, value: a }),
+				canCombineWith: () => true,
+			};
+			const result = applyMetadataPolicy(
+				{ openid_relying_party: { client_name: "Leaf RP" } } as FederationMetadata,
+				{ openid_relying_party: { client_name: { nullify: true } } },
+				undefined,
+				{ customOperators: [nullingOp] },
+			);
+
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.equal(result.error.code, "ERR_METADATA_POLICY_VIOLATION");
+				t.true(result.error.description.includes("must not be null"));
 			}
 		});
 
@@ -3602,6 +3764,43 @@ export default (QUnit: QUnit) => {
 					t.deepEqual(result.value, {
 						openid_relying_party: { scope: { subset_of: ["openid", "profile"] } },
 					});
+				}
+			});
+
+			test("rejects invalid standard operator configuration during merge", (t) => {
+				const invalidCases: Array<{
+					name: string;
+					metadataPolicy: NonNullable<ParsedEntityStatement["payload"]["metadata_policy"]>;
+				}> = [
+					{
+						name: "scalar add",
+						metadataPolicy: {
+							openid_relying_party: { contacts: { add: "support@example.com" } },
+						} as unknown as NonNullable<ParsedEntityStatement["payload"]["metadata_policy"]>,
+					},
+					{
+						name: "scalar subset_of",
+						metadataPolicy: {
+							openid_relying_party: { grant_types: { subset_of: "authorization_code" } },
+						} as unknown as NonNullable<ParsedEntityStatement["payload"]["metadata_policy"]>,
+					},
+					{
+						name: "scalar superset_of",
+						metadataPolicy: {
+							openid_relying_party: { grant_types: { superset_of: "authorization_code" } },
+						} as unknown as NonNullable<ParsedEntityStatement["payload"]["metadata_policy"]>,
+					},
+				];
+
+				for (const invalidCase of invalidCases) {
+					const result = resolveMetadataPolicy([
+						makeMergeStmt({ metadata_policy: invalidCase.metadataPolicy }),
+					]);
+					t.true(isErr(result), invalidCase.name);
+					if (isErr(result)) {
+						t.equal(result.error.code, "ERR_METADATA_POLICY_ERROR", invalidCase.name);
+						t.true(result.error.description.includes("Invalid"), invalidCase.name);
+					}
 				}
 			});
 
@@ -3921,6 +4120,21 @@ export default (QUnit: QUnit) => {
 			const op = operators[name];
 			if (!op) throw new Error(`Operator '${name}' not found`);
 			return op;
+		}
+
+		function operatorConfigValue(operator: PolicyOperator): unknown {
+			switch (operator) {
+				case PolicyOperator.Add:
+				case PolicyOperator.OneOf:
+				case PolicyOperator.SubsetOf:
+				case PolicyOperator.SupersetOf:
+					return ["x"];
+				case PolicyOperator.Essential:
+					return true;
+				case PolicyOperator.Value:
+				case PolicyOperator.Default:
+					return "x";
+			}
 		}
 
 		module("core / operators registry", () => {
@@ -4291,10 +4505,8 @@ export default (QUnit: QUnit) => {
 				for (const b of ops2) {
 					if (matrix[a]?.[b] === "Y") {
 						test(`${a} + ${b} is always allowed`, (t) => {
-							const thisVal =
-								a === "essential" ? true : a === "add" ? ["x"] : a === "superset_of" ? ["x"] : "x";
-							const otherVal =
-								b === "essential" ? true : b === "add" ? ["x"] : b === "superset_of" ? ["x"] : "x";
+							const thisVal = operatorConfigValue(a);
+							const otherVal = operatorConfigValue(b);
 							t.true(getOp(a).canCombineWith(b, thisVal, otherVal));
 						});
 					}
@@ -4381,22 +4593,8 @@ export default (QUnit: QUnit) => {
 				for (const b of ops3) {
 					if (neverMatrix[a]?.[b] === "-") {
 						test(`${a} + ${b} is never allowed`, (t) => {
-							const thisVal =
-								a === "essential"
-									? true
-									: a === "add"
-										? ["x"]
-										: a === "superset_of"
-											? ["x"]
-											: ["x"];
-							const otherVal =
-								b === "essential"
-									? true
-									: b === "add"
-										? ["x"]
-										: b === "superset_of"
-											? ["x"]
-											: ["x"];
+							const thisVal = operatorConfigValue(a);
+							const otherVal = operatorConfigValue(b);
 							t.false(getOp(a).canCombineWith(b, thisVal, otherVal));
 						});
 					}
@@ -4435,10 +4633,10 @@ export default (QUnit: QUnit) => {
 			test("value + subset_of: rejected when value not subset", (t) => {
 				t.false(operators.value?.canCombineWith("subset_of", ["a", "d"], ["a", "b", "c"]));
 			});
-			test("value + subset_of: scalar in subset_of", (t) => {
-				t.true(operators.value?.canCombineWith("subset_of", "a", ["a", "b"]));
+			test("value + subset_of: rejected when value is scalar", (t) => {
+				t.false(operators.value?.canCombineWith("subset_of", "a", ["a", "b"]));
 			});
-			test("value + subset_of: scalar not in subset_of", (t) => {
+			test("value + subset_of: rejected when scalar value is not in subset_of", (t) => {
 				t.false(operators.value?.canCombineWith("subset_of", "z", ["a", "b"]));
 			});
 			test("value + superset_of: allowed when value superset", (t) => {
@@ -4486,61 +4684,42 @@ export default (QUnit: QUnit) => {
 		});
 
 		module("core / operator non-array robustness", () => {
-			test("add apply: wraps scalar parameterValue in array before union", (t) => {
-				const r = getOp(PolicyOperator.Add).apply("existing", ["new1", "new2"]);
-				t.true(r.ok);
-				if (r.ok) {
-					t.deepEqual(r.value, ["existing", "new1", "new2"]);
-				}
-			});
-			test("add apply: handles scalar operatorValue", (t) => {
-				const r = getOp(PolicyOperator.Add).apply(["a"], "b");
-				t.true(r.ok);
-				if (r.ok) {
-					t.deepEqual(r.value, ["a", "b"]);
-				}
-			});
-			test("add merge: handles scalar values by wrapping in arrays", (t) => {
-				const r = getOp(PolicyOperator.Add).merge("a", "b");
-				t.true(r.ok);
-				if (r.ok) {
-					t.deepEqual(r.value, ["a", "b"]);
-				}
-			});
-			test("subset_of apply: handles scalar parameterValue against array constraint (in set)", (t) => {
-				const r = getOp(PolicyOperator.SubsetOf).apply("a", ["a", "b"]);
-				t.true(r.ok);
-				if (r.ok) {
-					t.equal(r.value, "a");
-				}
-			});
-			test("subset_of apply: handles scalar parameterValue against array constraint (not in set)", (t) => {
-				t.false(getOp(PolicyOperator.SubsetOf).apply("c", ["a", "b"]).ok);
-			});
-			test("subset_of merge: handles scalar values by wrapping in arrays", (t) => {
-				const r = getOp(PolicyOperator.SubsetOf).merge("a", "b");
-				t.true(r.ok);
-				if (r.ok) {
-					t.deepEqual(r.value, []);
-				}
-			});
-			test("superset_of apply: handles scalar parameterValue against array constraint (is superset)", (t) => {
-				const r = getOp(PolicyOperator.SupersetOf).apply("a", ["a"]);
-				t.true(r.ok);
-				if (r.ok) {
-					t.equal(r.value, "a");
-				}
-			});
-			test("superset_of apply: handles scalar parameterValue against array constraint (not superset)", (t) => {
-				t.false(getOp(PolicyOperator.SupersetOf).apply("a", ["a", "b"]).ok);
-			});
-			test("superset_of merge: handles scalar values by wrapping in arrays", (t) => {
-				const r = getOp(PolicyOperator.SupersetOf).merge("a", "b");
-				t.true(r.ok);
-				if (r.ok) {
-					t.deepEqual(r.value, ["a", "b"]);
-				}
-			});
+			const scalarCases: Array<{ name: string; result: () => { ok: boolean } }> = [
+				{
+					name: "add rejects scalar metadata value",
+					result: () => getOp(PolicyOperator.Add).apply("existing", ["new1", "new2"]),
+				},
+				{
+					name: "add rejects scalar operator value",
+					result: () => getOp(PolicyOperator.Add).apply(["a"], "b"),
+				},
+				{
+					name: "add rejects scalar merge values",
+					result: () => getOp(PolicyOperator.Add).merge("a", "b"),
+				},
+				{
+					name: "subset_of rejects scalar metadata value",
+					result: () => getOp(PolicyOperator.SubsetOf).apply("a", ["a", "b"]),
+				},
+				{
+					name: "subset_of rejects scalar merge values",
+					result: () => getOp(PolicyOperator.SubsetOf).merge("a", "b"),
+				},
+				{
+					name: "superset_of rejects scalar metadata value",
+					result: () => getOp(PolicyOperator.SupersetOf).apply("a", ["a"]),
+				},
+				{
+					name: "superset_of rejects scalar merge values",
+					result: () => getOp(PolicyOperator.SupersetOf).merge("a", "b"),
+				},
+			];
+
+			for (const scalarCase of scalarCases) {
+				test(scalarCase.name, (t) => {
+					t.false(scalarCase.result().ok);
+				});
+			}
 		});
 	}
 
@@ -8623,6 +8802,17 @@ export default (QUnit: QUnit) => {
 				{ typ: JwtTyp.EntityStatement },
 			);
 		}
+		async function vt_signRawPayload(payloadJson: string, privateKey: JWK) {
+			const jose = await import("jose");
+			const cryptoKey = await jose.importJWK(privateKey as unknown as JoseJWK, "ES256");
+			return new jose.CompactSign(new TextEncoder().encode(payloadJson))
+				.setProtectedHeader({
+					alg: "ES256",
+					kid: privateKey.kid,
+					typ: JwtTyp.EntityStatement,
+				} as JWTHeaderParameters)
+				.sign(cryptoKey as Parameters<CompactSign["sign"]>[0]);
+		}
 		async function vt_buildSimple() {
 			const taKeys = await generateSigningKey("ES256");
 			const leafKeys = await generateSigningKey("ES256");
@@ -9077,6 +9267,10 @@ export default (QUnit: QUnit) => {
 						name: "invalid allowed_entity_types",
 						overrides: { constraints: { allowed_entity_types: ["federation_entity"] } },
 					},
+					{
+						name: "unknown allowed_entity_types",
+						overrides: { constraints: { allowed_entity_types: ["unknown_entity_type"] } },
+					},
 				];
 				for (const invalidCase of invalidSsCases) {
 					const ss = await vt_signSS(
@@ -9092,6 +9286,54 @@ export default (QUnit: QUnit) => {
 						{ verboseErrors: true },
 					);
 					t.false(result.valid, invalidCase.name);
+				}
+			});
+			test("rejects duplicate metadata_policy members in raw subordinate statements", async (t) => {
+				const { chain, taSet, taKeys, leafKeys } = await vt_buildSimple();
+				const baseClaims = [
+					`"iss":"https://ta.example.com"`,
+					`"sub":"https://leaf.example.com"`,
+					`"iat":${vt_now}`,
+					`"exp":${vt_now + 3600}`,
+					`"jwks":${JSON.stringify({ keys: [leafKeys.publicKey] })}`,
+				].join(",");
+				const duplicateCases: Array<{ name: string; metadataPolicyJson: string }> = [
+					{
+						name: "duplicate entity type",
+						metadataPolicyJson:
+							'{"openid_relying_party":{"scope":{"default":"openid"}},"openid_relying_party":{"scope":{"default":"profile"}}}',
+					},
+					{
+						name: "duplicate metadata parameter",
+						metadataPolicyJson:
+							'{"openid_relying_party":{"scope":{"default":"openid"},"scope":{"default":"profile"}}}',
+					},
+					{
+						name: "duplicate operator",
+						metadataPolicyJson:
+							'{"openid_relying_party":{"scope":{"default":"openid","default":"profile"}}}',
+					},
+				];
+
+				for (const duplicateCase of duplicateCases) {
+					const ss = await vt_signRawPayload(
+						`{${baseClaims},"metadata_policy":${duplicateCase.metadataPolicyJson}}`,
+						taKeys.privateKey,
+					);
+					const result = await validateTrustChain(
+						[chain[0] as string, ss, chain[2] as string],
+						taSet,
+						{ verboseErrors: true },
+					);
+					t.false(result.valid, duplicateCase.name);
+					t.true(
+						result.errors.some(
+							(error) =>
+								error.field === "metadata_policy" &&
+								error.message.includes("Duplicate metadata_policy member"),
+						),
+						duplicateCase.name,
+					);
 				}
 			});
 			test("applies final subordinate statement when Trust Anchor configuration is omitted", async (t) => {

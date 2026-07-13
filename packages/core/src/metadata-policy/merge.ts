@@ -10,6 +10,7 @@ import {
 	type MetadataPolicyOptions,
 	validateCustomOperators,
 } from "./custom-operators.js";
+import { validateStandardPolicyOperatorConfiguration } from "./operators.js";
 
 const STANDARD_METADATA_POLICY_OPERATORS: ReadonlySet<string> = new Set(
 	Object.values(PolicyOperator),
@@ -86,6 +87,13 @@ export function resolveMetadataPolicy(
 					if (!lookup[opName]) continue;
 
 					const opDef = lookup[opName] as PolicyOperatorDefinition;
+					const configError = validateStandardPolicyOperatorConfiguration(opName, opValue);
+					if (configError) {
+						return err({
+							code: InternalErrorCode.MetadataPolicyError,
+							description: `Invalid '${opName}' operator for ${entityType}.${paramName}: ${configError}`,
+						});
+					}
 
 					if (mergedParam[opName] !== undefined) {
 						const mergeResult = opDef.merge(mergedParam[opName], opValue);

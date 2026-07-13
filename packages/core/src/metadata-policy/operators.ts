@@ -53,6 +53,92 @@ function containsElement(arr: unknown[], element: unknown): boolean {
 	return arr.some((item) => deepEqual(item, element));
 }
 
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+	return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function valueType(value: unknown): string {
+	if (value === null) return "null";
+	if (Array.isArray(value)) return "array";
+	return typeof value;
+}
+
+function isScalar(value: unknown): value is string | number | boolean {
+	return typeof value === "string" || typeof value === "number" || typeof value === "boolean";
+}
+
+function isValueOrDefaultMetadataValue(value: unknown): boolean {
+	return isScalar(value) || Array.isArray(value);
+}
+
+function isComparableElement(value: unknown): boolean {
+	return typeof value === "string" || typeof value === "number" || isJsonObject(value);
+}
+
+function isComparableArray(value: unknown): value is unknown[] {
+	return Array.isArray(value) && value.every(isComparableElement);
+}
+
+function isOneOfMetadataValue(value: unknown): boolean {
+	return typeof value === "string" || typeof value === "number" || isJsonObject(value);
+}
+
+function isEssentialMetadataValue(value: unknown): boolean {
+	return value !== null && value !== undefined;
+}
+
+function invalidOperatorValue(name: string, expected: string, value: unknown): string {
+	return `'${name}' operator value must be ${expected}; got ${valueType(value)}`;
+}
+
+function invalidMetadataValue(name: string, expected: string, value: unknown): string {
+	return `'${name}' operator does not support metadata value type ${valueType(value)}; expected ${expected}`;
+}
+
+export function validateStandardPolicyOperatorConfiguration(
+	operatorName: string,
+	operatorValue: unknown,
+): string | undefined {
+	switch (operatorName) {
+		case PolicyOperator.Value:
+			return operatorValue === null || isValueOrDefaultMetadataValue(operatorValue)
+				? undefined
+				: invalidOperatorValue(
+						operatorName,
+						"a string, number, boolean, array, or null",
+						operatorValue,
+					);
+		case PolicyOperator.Default:
+			return isValueOrDefaultMetadataValue(operatorValue)
+				? undefined
+				: invalidOperatorValue(operatorName, "a string, number, boolean, or array", operatorValue);
+		case PolicyOperator.Add:
+		case PolicyOperator.SubsetOf:
+		case PolicyOperator.SupersetOf:
+			return isComparableArray(operatorValue)
+				? undefined
+				: invalidOperatorValue(
+						operatorName,
+						"an array of strings, numbers, or objects",
+						operatorValue,
+					);
+		case PolicyOperator.OneOf:
+			return isComparableArray(operatorValue)
+				? undefined
+				: invalidOperatorValue(
+						operatorName,
+						"an array of strings, numbers, or objects",
+						operatorValue,
+					);
+		case PolicyOperator.Essential:
+			return typeof operatorValue === "boolean"
+				? undefined
+				: invalidOperatorValue(operatorName, "a boolean", operatorValue);
+		default:
+			return undefined;
+	}
+}
+
 const NEVER_ALLOWED = new Set([
 	"add:one_of",
 	"one_of:add",
@@ -66,29 +152,24 @@ function checkValueCombination(otherOp: string, valueVal: unknown, otherVal: unk
 	switch (otherOp) {
 		case PolicyOperator.Add: {
 			const addArr = otherVal as unknown[];
-			if (Array.isArray(valueVal)) {
-				return isSubset(addArr, valueVal);
-			}
-			return addArr.length === 1 && deepEqual(addArr[0], valueVal);
+			if (!Array.isArray(valueVal)) return false;
+			return isSubset(addArr, valueVal);
 		}
 		case PolicyOperator.Default:
 			if (valueVal === null) return false;
 			return deepEqual(valueVal, otherVal);
 		case PolicyOperator.OneOf:
+			if (Array.isArray(valueVal)) return false;
 			return containsElement(otherVal as unknown[], valueVal);
 		case PolicyOperator.SubsetOf: {
 			const subsetOfArr = otherVal as unknown[];
-			if (Array.isArray(valueVal)) {
-				return isSubset(valueVal, subsetOfArr);
-			}
-			return containsElement(subsetOfArr, valueVal);
+			if (!Array.isArray(valueVal)) return false;
+			return isSubset(valueVal, subsetOfArr);
 		}
 		case PolicyOperator.SupersetOf: {
 			const supersetOfArr = otherVal as unknown[];
-			if (Array.isArray(valueVal)) {
-				return isSubset(supersetOfArr, valueVal);
-			}
-			return supersetOfArr.length === 1 && deepEqual(supersetOfArr[0], valueVal);
+			if (!Array.isArray(valueVal)) return false;
+			return isSubset(supersetOfArr, valueVal);
 		}
 		case PolicyOperator.Essential: {
 			if (valueVal === null && otherVal === true) return false;
@@ -103,13 +184,35 @@ const valueOperator: PolicyOperatorDefinition = {
 	name: PolicyOperator.Value,
 	order: 1,
 	action: "modify",
-	apply(_parameterValue: unknown, operatorValue: unknown): PolicyOperatorResult {
+	apply(parameterValue: unknown, operatorValue: unknown): PolicyOperatorResult {
+		const configError = validateStandardPolicyOperatorConfiguration(
+			PolicyOperator.Value,
+			operatorValue,
+		);
+		if (configError) return { ok: false, error: configError };
+		if (parameterValue !== undefined && !isValueOrDefaultMetadataValue(parameterValue)) {
+			return {
+				ok: false,
+				error: invalidMetadataValue(
+					PolicyOperator.Value,
+					"a string, number, boolean, or array",
+					parameterValue,
+				),
+			};
+		}
 		if (operatorValue === null) {
 			return { ok: true, value: null, removed: true };
 		}
 		return { ok: true, value: operatorValue };
 	},
 	merge(existingValue: unknown, newValue: unknown): PolicyMergeResult {
+		const existingError = validateStandardPolicyOperatorConfiguration(
+			PolicyOperator.Value,
+			existingValue,
+		);
+		if (existingError) return { ok: false, error: existingError };
+		const newError = validateStandardPolicyOperatorConfiguration(PolicyOperator.Value, newValue);
+		if (newError) return { ok: false, error: newError };
 		if (deepEqual(existingValue, newValue)) {
 			return { ok: true, value: existingValue };
 		}
@@ -127,17 +230,36 @@ const addOperator: PolicyOperatorDefinition = {
 	order: 2,
 	action: "modify",
 	apply(parameterValue: unknown, operatorValue: unknown): PolicyOperatorResult {
+		const configError = validateStandardPolicyOperatorConfiguration(
+			PolicyOperator.Add,
+			operatorValue,
+		);
+		if (configError) return { ok: false, error: configError };
 		if (parameterValue === undefined) {
 			return { ok: true, value: operatorValue };
 		}
-		const opArr = Array.isArray(operatorValue) ? operatorValue : [operatorValue];
-		const paramArr = Array.isArray(parameterValue) ? parameterValue : [parameterValue];
-		return { ok: true, value: arrayUnion(paramArr, opArr) };
+		if (!isComparableArray(parameterValue)) {
+			return {
+				ok: false,
+				error: invalidMetadataValue(
+					PolicyOperator.Add,
+					"an array of strings, numbers, or objects",
+					parameterValue,
+				),
+			};
+		}
+		const operatorArray = operatorValue as unknown[];
+		return { ok: true, value: arrayUnion(parameterValue, operatorArray) };
 	},
 	merge(existingValue: unknown, newValue: unknown): PolicyMergeResult {
-		const existArr = Array.isArray(existingValue) ? existingValue : [existingValue];
-		const newArr = Array.isArray(newValue) ? newValue : [newValue];
-		return { ok: true, value: arrayUnion(existArr, newArr) };
+		const existingError = validateStandardPolicyOperatorConfiguration(
+			PolicyOperator.Add,
+			existingValue,
+		);
+		if (existingError) return { ok: false, error: existingError };
+		const newError = validateStandardPolicyOperatorConfiguration(PolicyOperator.Add, newValue);
+		if (newError) return { ok: false, error: newError };
+		return { ok: true, value: arrayUnion(existingValue as unknown[], newValue as unknown[]) };
 	},
 	canCombineWith(otherOperator: string, thisValue: unknown, otherValue: unknown): boolean {
 		if (otherOperator === PolicyOperator.Add) return false;
@@ -147,9 +269,8 @@ const addOperator: PolicyOperatorDefinition = {
 			return checkValueCombination(PolicyOperator.Add, otherValue, thisValue);
 		}
 		if (otherOperator === PolicyOperator.SubsetOf) {
-			const thisArr = Array.isArray(thisValue) ? thisValue : [thisValue];
-			const otherArr = Array.isArray(otherValue) ? otherValue : [otherValue];
-			return isSubset(thisArr, otherArr);
+			if (!isComparableArray(thisValue) || !isComparableArray(otherValue)) return false;
+			return isSubset(thisValue, otherValue);
 		}
 		return true;
 	},
@@ -160,12 +281,34 @@ const defaultOperator: PolicyOperatorDefinition = {
 	order: 3,
 	action: "modify",
 	apply(parameterValue: unknown, operatorValue: unknown): PolicyOperatorResult {
+		const configError = validateStandardPolicyOperatorConfiguration(
+			PolicyOperator.Default,
+			operatorValue,
+		);
+		if (configError) return { ok: false, error: configError };
 		if (parameterValue === undefined) {
 			return { ok: true, value: operatorValue };
+		}
+		if (!isValueOrDefaultMetadataValue(parameterValue)) {
+			return {
+				ok: false,
+				error: invalidMetadataValue(
+					PolicyOperator.Default,
+					"a string, number, boolean, or array",
+					parameterValue,
+				),
+			};
 		}
 		return { ok: true, value: parameterValue };
 	},
 	merge(existingValue: unknown, newValue: unknown): PolicyMergeResult {
+		const existingError = validateStandardPolicyOperatorConfiguration(
+			PolicyOperator.Default,
+			existingValue,
+		);
+		if (existingError) return { ok: false, error: existingError };
+		const newError = validateStandardPolicyOperatorConfiguration(PolicyOperator.Default, newValue);
+		if (newError) return { ok: false, error: newError };
 		if (deepEqual(existingValue, newValue)) {
 			return { ok: true, value: existingValue };
 		}
@@ -186,16 +329,38 @@ const oneOfOperator: PolicyOperatorDefinition = {
 	order: 4,
 	action: "check",
 	apply(parameterValue: unknown, operatorValue: unknown): PolicyOperatorResult {
+		const configError = validateStandardPolicyOperatorConfiguration(
+			PolicyOperator.OneOf,
+			operatorValue,
+		);
+		if (configError) return { ok: false, error: configError };
 		if (parameterValue === undefined) {
 			return { ok: true, value: undefined };
 		}
-		const allowed = operatorValue as unknown[];
-		if (containsElement(allowed, parameterValue)) {
+		if (!isOneOfMetadataValue(parameterValue)) {
+			return {
+				ok: false,
+				error: invalidMetadataValue(
+					PolicyOperator.OneOf,
+					"a string, number, or object",
+					parameterValue,
+				),
+			};
+		}
+		const operatorArray = operatorValue as unknown[];
+		if (containsElement(operatorArray, parameterValue)) {
 			return { ok: true, value: parameterValue };
 		}
 		return { ok: false, error: `Value not in one_of set` };
 	},
 	merge(existingValue: unknown, newValue: unknown): PolicyMergeResult {
+		const existingError = validateStandardPolicyOperatorConfiguration(
+			PolicyOperator.OneOf,
+			existingValue,
+		);
+		if (existingError) return { ok: false, error: existingError };
+		const newError = validateStandardPolicyOperatorConfiguration(PolicyOperator.OneOf, newValue);
+		if (newError) return { ok: false, error: newError };
 		const intersection = arrayIntersection(existingValue as unknown[], newValue as unknown[]);
 		if (intersection.length === 0) {
 			return { ok: false, error: `one_of merge resulted in empty intersection` };
@@ -218,22 +383,39 @@ const subsetOfOperator: PolicyOperatorDefinition = {
 	order: 5,
 	action: "both",
 	apply(parameterValue: unknown, operatorValue: unknown): PolicyOperatorResult {
+		const configError = validateStandardPolicyOperatorConfiguration(
+			PolicyOperator.SubsetOf,
+			operatorValue,
+		);
+		if (configError) return { ok: false, error: configError };
 		if (parameterValue === undefined) {
 			return { ok: true, value: undefined };
 		}
-		const opArr = Array.isArray(operatorValue) ? operatorValue : [operatorValue];
-		if (Array.isArray(parameterValue)) {
-			return { ok: true, value: arrayIntersection(parameterValue, opArr) };
+		if (!isComparableArray(parameterValue)) {
+			return {
+				ok: false,
+				error: invalidMetadataValue(
+					PolicyOperator.SubsetOf,
+					"an array of strings, numbers, or objects",
+					parameterValue,
+				),
+			};
 		}
-		if (containsElement(opArr, parameterValue)) {
-			return { ok: true, value: parameterValue };
-		}
-		return { ok: false, error: `Value not in subset_of set` };
+		const operatorArray = operatorValue as unknown[];
+		return { ok: true, value: arrayIntersection(parameterValue, operatorArray) };
 	},
 	merge(existingValue: unknown, newValue: unknown): PolicyMergeResult {
-		const existArr = Array.isArray(existingValue) ? existingValue : [existingValue];
-		const newArr = Array.isArray(newValue) ? newValue : [newValue];
-		return { ok: true, value: arrayIntersection(existArr, newArr) };
+		const existingError = validateStandardPolicyOperatorConfiguration(
+			PolicyOperator.SubsetOf,
+			existingValue,
+		);
+		if (existingError) return { ok: false, error: existingError };
+		const newError = validateStandardPolicyOperatorConfiguration(PolicyOperator.SubsetOf, newValue);
+		if (newError) return { ok: false, error: newError };
+		return {
+			ok: true,
+			value: arrayIntersection(existingValue as unknown[], newValue as unknown[]),
+		};
 	},
 	canCombineWith(otherOperator: string, thisValue: unknown, otherValue: unknown): boolean {
 		if (otherOperator === PolicyOperator.SubsetOf) return false;
@@ -243,15 +425,13 @@ const subsetOfOperator: PolicyOperatorDefinition = {
 			return checkValueCombination(PolicyOperator.SubsetOf, otherValue, thisValue);
 		}
 		if (otherOperator === PolicyOperator.Add) {
-			const otherArr = Array.isArray(otherValue) ? otherValue : [otherValue];
-			const thisArr = Array.isArray(thisValue) ? thisValue : [thisValue];
-			return isSubset(otherArr, thisArr);
+			if (!isComparableArray(thisValue) || !isComparableArray(otherValue)) return false;
+			return isSubset(otherValue, thisValue);
 		}
 		if (otherOperator === PolicyOperator.SupersetOf) {
 			// Floor must be subset of ceiling
-			const otherArr = Array.isArray(otherValue) ? otherValue : [otherValue];
-			const thisArr = Array.isArray(thisValue) ? thisValue : [thisValue];
-			return isSubset(otherArr, thisArr);
+			if (!isComparableArray(thisValue) || !isComparableArray(otherValue)) return false;
+			return isSubset(otherValue, thisValue);
 		}
 		return true;
 	},
@@ -262,20 +442,42 @@ const supersetOfOperator: PolicyOperatorDefinition = {
 	order: 6,
 	action: "check",
 	apply(parameterValue: unknown, operatorValue: unknown): PolicyOperatorResult {
+		const configError = validateStandardPolicyOperatorConfiguration(
+			PolicyOperator.SupersetOf,
+			operatorValue,
+		);
+		if (configError) return { ok: false, error: configError };
 		if (parameterValue === undefined) {
 			return { ok: true, value: undefined };
 		}
-		const opArr = Array.isArray(operatorValue) ? operatorValue : [operatorValue];
-		const paramArr = Array.isArray(parameterValue) ? parameterValue : [parameterValue];
-		if (isSubset(opArr, paramArr)) {
+		if (!isComparableArray(parameterValue)) {
+			return {
+				ok: false,
+				error: invalidMetadataValue(
+					PolicyOperator.SupersetOf,
+					"an array of strings, numbers, or objects",
+					parameterValue,
+				),
+			};
+		}
+		const operatorArray = operatorValue as unknown[];
+		if (isSubset(operatorArray, parameterValue)) {
 			return { ok: true, value: parameterValue };
 		}
 		return { ok: false, error: `Value does not contain all required elements from superset_of` };
 	},
 	merge(existingValue: unknown, newValue: unknown): PolicyMergeResult {
-		const existArr = Array.isArray(existingValue) ? existingValue : [existingValue];
-		const newArr = Array.isArray(newValue) ? newValue : [newValue];
-		return { ok: true, value: arrayUnion(existArr, newArr) };
+		const existingError = validateStandardPolicyOperatorConfiguration(
+			PolicyOperator.SupersetOf,
+			existingValue,
+		);
+		if (existingError) return { ok: false, error: existingError };
+		const newError = validateStandardPolicyOperatorConfiguration(
+			PolicyOperator.SupersetOf,
+			newValue,
+		);
+		if (newError) return { ok: false, error: newError };
+		return { ok: true, value: arrayUnion(existingValue as unknown[], newValue as unknown[]) };
 	},
 	canCombineWith(otherOperator: string, thisValue: unknown, otherValue: unknown): boolean {
 		if (otherOperator === PolicyOperator.SupersetOf) return false;
@@ -286,9 +488,8 @@ const supersetOfOperator: PolicyOperatorDefinition = {
 		}
 		if (otherOperator === PolicyOperator.SubsetOf) {
 			// Floor (this) must be subset of ceiling (other)
-			const thisArr = Array.isArray(thisValue) ? thisValue : [thisValue];
-			const otherArr = Array.isArray(otherValue) ? otherValue : [otherValue];
-			return isSubset(thisArr, otherArr);
+			if (!isComparableArray(thisValue) || !isComparableArray(otherValue)) return false;
+			return isSubset(thisValue, otherValue);
 		}
 		return true;
 	},
@@ -299,12 +500,37 @@ const essentialOperator: PolicyOperatorDefinition = {
 	order: 7,
 	action: "check",
 	apply(parameterValue: unknown, operatorValue: unknown): PolicyOperatorResult {
+		const configError = validateStandardPolicyOperatorConfiguration(
+			PolicyOperator.Essential,
+			operatorValue,
+		);
+		if (configError) return { ok: false, error: configError };
 		if (operatorValue === true && parameterValue === undefined) {
 			return { ok: false, error: `Essential parameter is missing` };
+		}
+		if (parameterValue !== undefined && !isEssentialMetadataValue(parameterValue)) {
+			return {
+				ok: false,
+				error: invalidMetadataValue(
+					PolicyOperator.Essential,
+					"a string, number, boolean, object, or array",
+					parameterValue,
+				),
+			};
 		}
 		return { ok: true, value: parameterValue };
 	},
 	merge(existingValue: unknown, newValue: unknown): PolicyMergeResult {
+		const existingError = validateStandardPolicyOperatorConfiguration(
+			PolicyOperator.Essential,
+			existingValue,
+		);
+		if (existingError) return { ok: false, error: existingError };
+		const newError = validateStandardPolicyOperatorConfiguration(
+			PolicyOperator.Essential,
+			newValue,
+		);
+		if (newError) return { ok: false, error: newError };
 		return { ok: true, value: (existingValue as boolean) || (newValue as boolean) };
 	},
 	canCombineWith(otherOperator: string, thisValue: unknown, otherValue: unknown): boolean {
