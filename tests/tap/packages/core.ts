@@ -1389,6 +1389,22 @@ export default (QUnit: QUnit) => {
 			);
 		});
 
+		test("FederationMetadataSchema preserves language-tagged metadata names", (t) => {
+			const result = FederationMetadataSchema.safeParse({
+				federation_entity: {
+					organization_name: "Example Org",
+					"organization_name#de": "Beispiel Organisation",
+					"organization_name#ja-Kana-JP": "エグザンプル",
+				},
+			});
+			t.true(result.success);
+			if (!result.success) return;
+			const metadata = result.data.federation_entity as Record<string, unknown>;
+			t.equal(metadata.organization_name, "Example Org");
+			t.equal(metadata["organization_name#de"], "Beispiel Organisation");
+			t.equal(metadata["organization_name#ja-Kana-JP"], "エグザンプル");
+		});
+
 		test("FederationMetadataSchema accepts metadata with multiple entity types", (t) => {
 			t.true(
 				FederationMetadataSchema.safeParse({
@@ -1618,6 +1634,29 @@ export default (QUnit: QUnit) => {
 					}).success,
 				);
 			});
+			test("TrustMarkPayloadSchema preserves language-tagged parameters", (t) => {
+				const result = TrustMarkPayloadSchema.safeParse({
+					...validPayload,
+					ref: "https://example.com/policy",
+					"ref#de": "https://example.com/richtlinie",
+					"logo_uri#ja-Kana-JP": "https://example.com/logo-ja.svg",
+				});
+				t.true(result.success);
+				if (!result.success) return;
+				const payload = result.data as Record<string, unknown>;
+				t.equal(payload.ref, "https://example.com/policy");
+				t.equal(payload["ref#de"], "https://example.com/richtlinie");
+				t.equal(payload["logo_uri#ja-Kana-JP"], "https://example.com/logo-ja.svg");
+			});
+			test("TrustMarkPayloadSchema rejects malformed reference and delegation values", (t) => {
+				t.false(TrustMarkPayloadSchema.safeParse({ ...validPayload, ref: "not-a-url" }).success);
+				t.false(
+					TrustMarkPayloadSchema.safeParse({
+						...validPayload,
+						delegation: { jwt: "not-a-jwt" },
+					}).success,
+				);
+			});
 			test("TrustMarkPayloadSchema rejects non-HTTPS iss", (t) => {
 				t.false(
 					TrustMarkPayloadSchema.safeParse({ ...validPayload, iss: "http://issuer.example.com" })
@@ -1669,6 +1708,14 @@ export default (QUnit: QUnit) => {
 				t.true(
 					TrustMarkDelegationPayloadSchema.safeParse({ ...validDelegation, exp: 1700100000 })
 						.success,
+				);
+			});
+			test("TrustMarkDelegationPayloadSchema rejects malformed reference values", (t) => {
+				t.false(
+					TrustMarkDelegationPayloadSchema.safeParse({
+						...validDelegation,
+						ref: "not-a-url",
+					}).success,
 				);
 			});
 		}
@@ -3497,6 +3544,23 @@ export default (QUnit: QUnit) => {
 				t.equal(fe.organization_name, "Forced English");
 				t.equal(fe["organization_name#de"], "Beispiel GmbH");
 				t.equal(fe["organization_name#ja-Kana-JP"], "エグザンプル");
+			}
+		});
+		test("applies policy to a language-tagged member name independently", (t) => {
+			const metadata: FederationMetadata = {
+				federation_entity: {
+					organization_name: "Example Corp",
+					"organization_name#de": "Beispiel GmbH",
+				},
+			};
+			const result = applyMetadataPolicy(metadata, {
+				federation_entity: { "organization_name#de": { value: "Beispiel AG" } },
+			});
+			t.true(isOk(result));
+			if (isOk(result)) {
+				const fe = result.value.federation_entity as Record<string, unknown>;
+				t.equal(fe.organization_name, "Example Corp");
+				t.equal(fe["organization_name#de"], "Beispiel AG");
 			}
 		});
 
@@ -9270,6 +9334,42 @@ export default (QUnit: QUnit) => {
 					t.equal(result.chain.trustAnchorId, "https://ta.example.com");
 					t.equal(result.chain.statements.length, 3);
 				}
+			});
+			test("validates chains whose compared strings use JSON escapes", async (t) => {
+				const taKeys = await generateSigningKey("ES256");
+				const leafKeys = await generateSigningKey("ES256");
+				const leafEc = await vt_signRawPayload(
+					`{"iss":"\\u0068ttps:\\/\\/leaf.example.com","sub":"https:\\/\\/leaf.example.com","iat":${vt_now},"exp":${vt_now + 3600},"jwks":{"keys":[${JSON.stringify(leafKeys.publicKey)}]},"authority_hints":["\\u0068ttps:\\/\\/ta.example.com"]}`,
+					leafKeys.privateKey,
+				);
+
+				const decodedLeaf = decodeEntityConfiguration(leafEc);
+				t.true(isOk(decodedLeaf));
+				if (!isOk(decodedLeaf)) return;
+				t.equal(decodedLeaf.value.payload.iss, "https://leaf.example.com");
+				t.equal(decodedLeaf.value.payload.sub, "https://leaf.example.com");
+				t.deepEqual(decodedLeaf.value.payload.authority_hints, ["https://ta.example.com"]);
+
+				const ss = await vt_signSS(
+					"https://ta.example.com",
+					"https://leaf.example.com",
+					taKeys.privateKey,
+					leafKeys.publicKey,
+				);
+				const taEc = await vt_signEC("https://ta.example.com", taKeys.privateKey, taKeys.publicKey);
+				const taSet: TrustAnchorSet = new Map([
+					["https://ta.example.com" as EntityId, { jwks: { keys: [taKeys.publicKey] } }],
+				]);
+				const result = await validateTrustChain([leafEc, ss, taEc], taSet, {
+					verboseErrors: true,
+				});
+
+				if (!result.valid) {
+					t.true(result.valid, result.errors.map((error) => error.message).join("; "));
+					return;
+				}
+				t.equal(result.chain.entityId, "https://leaf.example.com");
+				t.equal(result.chain.trustAnchorId, "https://ta.example.com");
 			});
 			test("does not match Trust Anchors that differ only by port", async (t) => {
 				const taKeys = await generateSigningKey("ES256");

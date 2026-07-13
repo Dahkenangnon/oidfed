@@ -519,6 +519,23 @@ export default (QUnit: QUnit) => {
 			t.true(result.success);
 		});
 
+		test("preserves language-tagged relying party metadata names", (t) => {
+			const result = OIDCFederationMetadataSchema.safeParse({
+				openid_relying_party: {
+					redirect_uris: ["https://rp.example.com/callback"],
+					response_types: ["code"],
+					client_registration_types: ["automatic"],
+					client_name: "Example RP",
+					"client_name#de": "Beispiel RP",
+				},
+			});
+			t.true(result.success);
+			if (!result.success) return;
+			const metadata = result.data.openid_relying_party as Record<string, unknown>;
+			t.equal(metadata.client_name, "Example RP");
+			t.equal(metadata["client_name#de"], "Beispiel RP");
+		});
+
 		test("rejects registration response fields in openid_relying_party entity metadata", (t) => {
 			const responseOnlyFields: Array<[string, unknown]> = [
 				["client_id", "client-123"],
@@ -1748,6 +1765,39 @@ export default (QUnit: QUnit) => {
 			t.equal(url.searchParams.get("request_uri"), hostedUri);
 			t.equal(url.searchParams.get("client_id"), LEAF_ID);
 			t.equal(url.searchParams.get("request"), null);
+		});
+
+		test("request_uri: fails when OP disables request_uri", async (t) => {
+			const fed = await createMockFederation({
+				opMetadata: {
+					openid_provider: {
+						issuer: OP_ID,
+						authorization_endpoint: `${OP_ID}/authorize`,
+						token_endpoint: `${OP_ID}/token`,
+						response_types_supported: ["code"],
+						subject_types_supported: ["public"],
+						id_token_signing_alg_values_supported: ["ES256"],
+						client_registration_types_supported: ["automatic"],
+						request_uri_parameter_supported: false,
+					},
+				},
+			});
+			const discovery = await createMockDiscovery(OP_ID, fed);
+			const { config } = await createRpConfig({
+				requestDelivery: "request_uri",
+				requestUri: "https://rp.example.com/request-object/xyz",
+			});
+			const result = await automaticRegistration(
+				discovery,
+				config,
+				authzParams,
+				fed.trustAnchors,
+				fed.options,
+			);
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.ok(result.error.description.includes("request_uri"), result.error.description);
+			}
 		});
 
 		test("request_uri: fails when requestUri is missing", async (t) => {

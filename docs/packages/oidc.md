@@ -61,6 +61,8 @@ For automatic registration, RPs sign authorization requests (Request Objects) th
 
 When `requestDelivery: "par"` is used, the role posts the signed Request Object with `private_key_jwt` client authentication. Both the Request Object signer and client-assertion signer must be published in the RP protocol metadata through `jwks`, `jwks_uri`, or `signed_jwks_uri`. The current API does not configure mutual-TLS/self-signed TLS client authentication for PAR.
 
+When `requestDelivery: "request_uri"` is used, OP metadata that explicitly sets `request_uri_parameter_supported: false` blocks delivery before an authorization URL is produced.
+
 ```ts
 import { Leaf } from "@oidfed/leaf";
 import { createTrustAnchorSet, isOk } from "@oidfed/core";

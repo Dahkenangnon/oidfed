@@ -262,6 +262,14 @@ export async function automaticRegistration(
 			});
 
 		case "request_uri": {
+			if (opMeta?.request_uri_parameter_supported === false) {
+				return err(
+					federationError(
+						FederationErrorCode.InvalidRequest,
+						"requestDelivery 'request_uri' requires the OP to support the request_uri parameter",
+					),
+				);
+			}
 			const hostedUri = rpConfig.requestUri;
 			if (!hostedUri) {
 				return err(
