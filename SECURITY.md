@@ -4,10 +4,10 @@
 
 | Version | Supported |
 |---------|-----------|
-| Latest release line | Security fixes provided. |
-| Older release lines | No backported security fixes unless explicitly announced. |
+| 1.x.y | Security fixes provided. |
+| 0.x.y and earlier prerelease lines | Not supported. Upgrade to the 1.x.y series. |
 
-Security fixes target the latest release line. Users should upgrade promptly when a security release is published.
+Security fixes target the supported `1.x.y` release series. Prerelease versions and older release lines do not receive backported security fixes; users should upgrade promptly to the latest `1.x.y` release when a security update is published.
 
 ## Reporting a Vulnerability
 
