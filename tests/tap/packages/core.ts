@@ -8782,6 +8782,169 @@ export default (QUnit: QUnit) => {
 				if (!result.valid) return;
 				t.equal(result.chain.resolvedMetadata.custom_protocol?.display_name, "Custom Entity");
 			});
+			test("preserves OAuth-only subject metadata", async (t) => {
+				const cases: Array<{
+					name: string;
+					entityType: "oauth_authorization_server" | "oauth_client" | "oauth_resource";
+					metadata: Record<string, unknown>;
+				}> = [
+					{
+						name: "OAuth authorization server metadata",
+						entityType: "oauth_authorization_server",
+						metadata: {
+							issuer: "https://leaf.example.com",
+							authorization_endpoint: "https://leaf.example.com/oauth2/authorize",
+							token_endpoint: "https://leaf.example.com/oauth2/token",
+							response_types_supported: ["code"],
+						},
+					},
+					{
+						name: "OAuth client metadata",
+						entityType: "oauth_client",
+						metadata: {
+							client_name: "Leaf OAuth Client",
+							redirect_uris: ["https://client.example.com/callback"],
+							scope: "read write",
+							client_registration_types: ["automatic"],
+						},
+					},
+					{
+						name: "OAuth resource metadata",
+						entityType: "oauth_resource",
+						metadata: {
+							resource: "https://leaf.example.com/resource",
+							authorization_servers: ["https://leaf.example.com"],
+							scopes_supported: ["read", "write"],
+						},
+					},
+				];
+
+				for (const testCase of cases) {
+					const { chain, taSet, leafKeys } = await vt_buildSimple();
+					const leafEc = await vt_signEC(
+						"https://leaf.example.com",
+						leafKeys.privateKey,
+						leafKeys.publicKey,
+						{
+							authority_hints: ["https://ta.example.com"],
+							metadata: { [testCase.entityType]: testCase.metadata },
+						},
+					);
+					const result = await validateTrustChain([leafEc, ...chain.slice(1)], taSet);
+					t.true(result.valid, testCase.name);
+					if (!result.valid) continue;
+					t.deepEqual(
+						result.chain.resolvedMetadata[testCase.entityType],
+						testCase.metadata,
+						testCase.name,
+					);
+					t.false(
+						"openid_provider" in result.chain.resolvedMetadata,
+						`${testCase.name} has no OpenID Provider metadata`,
+					);
+					t.false(
+						"openid_relying_party" in result.chain.resolvedMetadata,
+						`${testCase.name} has no OpenID Relying Party metadata`,
+					);
+				}
+			});
+			test("ignores superior metadata for subject entity types that are absent", async (t) => {
+				const { chain, taSet, taKeys, leafKeys } = await vt_buildSimple();
+				const ss = await vt_signSS(
+					"https://ta.example.com",
+					"https://leaf.example.com",
+					taKeys.privateKey,
+					leafKeys.publicKey,
+					{ metadata: { oauth_client: { client_name: "Injected OAuth Client" } } },
+				);
+				const result = await validateTrustChain(
+					[chain[0] as string, ss, chain[2] as string],
+					taSet,
+				);
+				t.true(result.valid);
+				if (!result.valid) return;
+				t.false("oauth_client" in result.chain.resolvedMetadata);
+				t.true("openid_relying_party" in result.chain.resolvedMetadata);
+			});
+			test("rejects malformed Entity Configuration claim values in raw statements", async (t) => {
+				const { chain, taSet, taKeys, leafKeys } = await vt_buildSimple();
+				const leafCases: Array<{ name: string; overrides: Record<string, unknown> }> = [
+					{
+						name: "invalid authority_hints entry",
+						overrides: { authority_hints: ["http://ta.example.com"] },
+					},
+					{
+						name: "invalid trust_anchor_hints entry",
+						overrides: {
+							authority_hints: ["https://ta.example.com"],
+							trust_anchor_hints: ["http://ta.example.com"],
+						},
+					},
+					{
+						name: "malformed trust mark reference",
+						overrides: {
+							authority_hints: ["https://ta.example.com"],
+							trust_marks: [{ trust_mark_type: "https://tm.example.com", trust_mark: "not-a-jwt" }],
+						},
+					},
+				];
+
+				for (const invalidCase of leafCases) {
+					const leafEc = await vt_signEC(
+						"https://leaf.example.com",
+						leafKeys.privateKey,
+						leafKeys.publicKey,
+						invalidCase.overrides,
+					);
+					const result = await validateTrustChain([leafEc, ...chain.slice(1)], taSet, {
+						verboseErrors: true,
+					});
+					t.false(result.valid, invalidCase.name);
+				}
+
+				const taCases: Array<{ name: string; overrides: Record<string, unknown> }> = [
+					{
+						name: "invalid trust mark issuer entity ID",
+						overrides: {
+							trust_mark_issuers: {
+								"https://tm.example.com": ["http://issuer.example.com"],
+							},
+						},
+					},
+					{
+						name: "invalid trust mark owner entity ID",
+						overrides: {
+							trust_mark_owners: {
+								"https://tm.example.com": {
+									sub: "http://owner.example.com",
+									jwks: { keys: [taKeys.publicKey] },
+								},
+							},
+						},
+					},
+					{
+						name: "malformed trust mark reference in Trust Anchor configuration",
+						overrides: {
+							trust_marks: [{ trust_mark_type: "https://tm.example.com", trust_mark: "not-a-jwt" }],
+						},
+					},
+				];
+
+				for (const invalidCase of taCases) {
+					const taEc = await vt_signEC(
+						"https://ta.example.com",
+						taKeys.privateKey,
+						taKeys.publicKey,
+						invalidCase.overrides,
+					);
+					const result = await validateTrustChain(
+						[chain[0] as string, chain[1] as string, taEc],
+						taSet,
+						{ verboseErrors: true },
+					);
+					t.false(result.valid, invalidCase.name);
+				}
+			});
 			test("rejects malformed critical-claim fields in raw statements", async (t) => {
 				const { chain, taSet, leafKeys } = await vt_buildSimple();
 				const invalidCritCases: Array<{ name: string; overrides: Record<string, unknown> }> = [
@@ -8812,6 +8975,16 @@ export default (QUnit: QUnit) => {
 					{
 						name: "metadata_policy parameter not object",
 						overrides: { metadata_policy: { openid_relying_party: { scope: "bad" } } },
+					},
+					{ name: "source_endpoint is not a URL", overrides: { source_endpoint: "not-a-url" } },
+					{ name: "empty metadata_policy_crit", overrides: { metadata_policy_crit: [] } },
+					{
+						name: "non-array metadata_policy_crit",
+						overrides: { metadata_policy_crit: "regex" },
+					},
+					{
+						name: "non-string metadata_policy_crit",
+						overrides: { metadata_policy_crit: [123] },
 					},
 					{ name: "standard metadata_policy_crit", overrides: { metadata_policy_crit: ["value"] } },
 					{

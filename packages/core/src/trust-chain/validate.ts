@@ -151,6 +151,48 @@ function validateMetadataPolicyShape(
 	}
 }
 
+function validateTrustMarkReferenceSyntax(
+	errors: ValidationError[],
+	trustMarks: unknown,
+	statementIndex: number,
+) {
+	if (!Array.isArray(trustMarks)) {
+		return;
+	}
+	for (let i = 0; i < trustMarks.length; i++) {
+		const trustMarkRef = trustMarks[i];
+		if (!isJsonObject(trustMarkRef)) {
+			continue;
+		}
+		const trustMarkType = trustMarkRef.trust_mark_type;
+		const trustMarkJwt = trustMarkRef.trust_mark;
+		if (typeof trustMarkType !== "string" || typeof trustMarkJwt !== "string") {
+			continue;
+		}
+
+		const decoded = decodeEntityStatement(trustMarkJwt);
+		if (!decoded.ok) {
+			addError(
+				errors,
+				InternalErrorCode.TrustChainInvalid,
+				`Invalid trust_marks entry at statement ${statementIndex}: trust_mark is not a signed JWT`,
+				{ statementIndex, field: "trust_marks", checkNumber: 16 },
+			);
+			continue;
+		}
+		const embeddedTrustMarkType = (decoded.value.payload as Record<string, unknown>)
+			.trust_mark_type;
+		if (embeddedTrustMarkType !== trustMarkType) {
+			addError(
+				errors,
+				InternalErrorCode.TrustChainInvalid,
+				`Invalid trust_marks entry at statement ${statementIndex}: trust_mark_type does not match embedded Trust Mark`,
+				{ statementIndex, field: "trust_marks", checkNumber: 16 },
+			);
+		}
+	}
+}
+
 function validateRawStatementShape(
 	errors: ValidationError[],
 	statement: ParsedEntityStatement,
@@ -192,6 +234,7 @@ function validateRawStatementShape(
 	}
 
 	validateMetadataPolicyShape(errors, payload.metadata_policy, statementIndex);
+	validateTrustMarkReferenceSyntax(errors, payload.trust_marks, statementIndex);
 
 	const metadataPolicyCrit = payload.metadata_policy_crit;
 	if (Array.isArray(metadataPolicyCrit)) {
@@ -756,8 +799,9 @@ export async function validateTrustChain(
 			| undefined;
 		if (immSupMeta) {
 			for (const [entityType, params] of Object.entries(immSupMeta)) {
-				if (!metadata[entityType]) metadata[entityType] = {};
-				Object.assign(metadata[entityType], params as Record<string, unknown>);
+				const existingMetadata = metadata[entityType];
+				if (!existingMetadata) continue;
+				Object.assign(existingMetadata, params as Record<string, unknown>);
 			}
 		}
 	}

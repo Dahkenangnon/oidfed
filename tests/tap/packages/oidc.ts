@@ -595,6 +595,14 @@ export default (QUnit: QUnit) => {
 				const { aud: _, ...v } = validReq;
 				t.false(ExplicitRegistrationRequestPayloadSchema.safeParse(v).success);
 			});
+			test("rejects aud arrays", (t) => {
+				t.false(
+					ExplicitRegistrationRequestPayloadSchema.safeParse({
+						...validReq,
+						aud: ["https://op.example.com", "https://other-op.example.com"],
+					}).success,
+				);
+			});
 			test("requires authority_hints", (t) => {
 				const { authority_hints: _, ...v } = validReq;
 				t.false(ExplicitRegistrationRequestPayloadSchema.safeParse(v).success);
@@ -630,6 +638,14 @@ export default (QUnit: QUnit) => {
 			};
 			test("accepts valid registration response", (t) => {
 				t.true(ExplicitRegistrationResponsePayloadSchema.safeParse(validResp).success);
+			});
+			test("rejects aud arrays", (t) => {
+				t.false(
+					ExplicitRegistrationResponsePayloadSchema.safeParse({
+						...validResp,
+						aud: ["https://rp.example.com", "https://other-rp.example.com"],
+					}).success,
+				);
 			});
 			test("requires trust_anchor", (t) => {
 				const { trust_anchor: _, ...v } = validResp;
@@ -2315,6 +2331,18 @@ export default (QUnit: QUnit) => {
 			}
 		});
 
+		test("fails if response aud has multiple values", async (t) => {
+			const result = await explicitRegistrationWithResponse(
+				explicitRegistrationResponseBase({
+					aud: [LEAF_ID, "https://other-rp.example.com"],
+				}),
+			);
+			t.true(isErr(result));
+			if (isErr(result)) {
+				t.ok(/aud/i.test(result.error.description), result.error.description);
+			}
+		});
+
 		test("fails if response is missing iat", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
@@ -3365,6 +3393,34 @@ export default (QUnit: QUnit) => {
 					iss: LEAF_ID,
 					sub: LEAF_ID,
 					aud: "https://wrong-op.example.com",
+					iat: now,
+					exp: now + 86400,
+					jwks: { keys: [fed.leafPublicKey] },
+					authority_hints: [TA_ID],
+					metadata: {},
+				},
+				new JwkSigner(fed.leafSigningKey),
+				signOpts(fed.leafSigningKey),
+			);
+			const result = await processExplicitRegistration(
+				ecJwt,
+				MediaType.EntityStatement,
+				fed.trustAnchors,
+				{ ...fed.options, opEntityId: OP_ID },
+			);
+			t.false(result.ok);
+			if (result.ok) return;
+			t.ok(result.error.description.includes("aud"));
+		});
+
+		test("returns err if aud has multiple values", async (t) => {
+			const fed = await createMockFederation();
+			const now = Math.floor(Date.now() / 1000);
+			const ecJwt = await signEntityStatement(
+				{
+					iss: LEAF_ID,
+					sub: LEAF_ID,
+					aud: [OP_ID, "https://other-op.example.com"],
 					iat: now,
 					exp: now + 86400,
 					jwks: { keys: [fed.leafPublicKey] },

@@ -21,7 +21,7 @@ const BaseEntityStatementFields = {
 	crit: z.array(z.string()).min(1).optional(),
 	metadata_policy_crit: z.array(z.string()).min(1).optional(),
 	trust_marks: z.array(TrustMarkRefSchema).optional(),
-	trust_mark_issuers: z.record(z.string(), z.array(z.string())).optional(),
+	trust_mark_issuers: z.record(z.string(), z.array(EntityIdSchema)).optional(),
 	trust_mark_owners: z.record(z.string(), TrustMarkOwnerSchema).optional(),
 	aud: z.union([z.string(), z.array(z.string())]).optional(),
 } as const;
