@@ -12,8 +12,8 @@ export {
 	type AuthorityClientKeyProvider,
 	type AuthorityConfig,
 	type AuthorityServer,
-	type ExtendedListInProcessParams,
-	type ExtendedListInProcessResult,
+	type ExtendedSubordinateListingParams,
+	type ExtendedSubordinateListingResult,
 	Intermediate,
 	TrustAnchor,
 } from "./server.js";

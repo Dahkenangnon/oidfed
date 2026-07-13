@@ -1,11 +1,11 @@
 import type { JwtSigner } from "@oidfed/core";
 
-export interface OidcProtocolKeyProvider {
+export interface ProtocolSigningKeyProvider {
 	getRequestObjectSigner(): Promise<JwtSigner>;
 	getClientAssertionSigner?(): Promise<JwtSigner>;
 }
 
-export class StaticOidcProtocolKeyProvider implements OidcProtocolKeyProvider {
+export class StaticProtocolSigningKeyProvider implements ProtocolSigningKeyProvider {
 	private readonly requestObjectSigner: JwtSigner;
 	private readonly clientAssertionSigner: JwtSigner | undefined;
 

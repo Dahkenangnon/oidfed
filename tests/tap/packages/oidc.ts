@@ -36,13 +36,13 @@ import {
 } from "../../../packages/oidc/src/constants.js";
 import * as OidcPublic from "../../../packages/oidc/src/index.js";
 import {
-	FedOauthClient,
-	FedOauthProvider,
-	FedOauthResource,
-	FedOidcClient,
-	FedOidcProvider,
+	OAuthAuthorizationServerRole,
+	OAuthClientRole,
+	OAuthResourceRole,
+	OidcProviderRole,
+	OidcRelyingPartyRole,
 } from "../../../packages/oidc/src/index.js";
-import { StaticOidcProtocolKeyProvider } from "../../../packages/oidc/src/protocol-keys.js";
+import { StaticProtocolSigningKeyProvider } from "../../../packages/oidc/src/protocol-keys.js";
 import { OIDCRegistrationAdapter } from "../../../packages/oidc/src/registration/adapter.js";
 import type { RegistrationProtocolAdapter } from "../../../packages/oidc/src/registration/adapter-types.js";
 import type { AutomaticRegistrationConfig } from "../../../packages/oidc/src/registration/automatic.js";
@@ -79,7 +79,7 @@ import { createMockFederation, LEAF_ID, OP_ID, TA_ID } from "../fixtures/index.j
 
 type RpConfig = AutomaticRegistrationConfig & ExplicitRegistrationConfig;
 
-function federationKey(signingKey: JWK) {
+function createFederationSigningKey(signingKey: JWK) {
 	return { signer: new JwkSigner(signingKey), publicJwk: stripPrivateFields(signingKey) };
 }
 
@@ -91,8 +91,8 @@ async function createRpConfig(
 		await generateSigningKey("ES256");
 	const config: RpConfig = {
 		entityId: LEAF_ID,
-		keyProvider: new MemoryFederationKeyProvider(federationKey(privateKey)),
-		protocolKeyProvider: new StaticOidcProtocolKeyProvider({
+		keyProvider: new MemoryFederationKeyProvider(createFederationSigningKey(privateKey)),
+		protocolKeyProvider: new StaticProtocolSigningKeyProvider({
 			requestObjectSigner: new JwkSigner(protocolPrivateKey),
 		}),
 		authorityHints: [TA_ID],
@@ -285,8 +285,8 @@ async function createDualAnchorRegistrationFixture() {
 	} as DiscoveryResult;
 	const rpConfig: RpConfig = {
 		entityId: LEAF_ID,
-		keyProvider: new MemoryFederationKeyProvider(federationKey(leafSigningKey)),
-		protocolKeyProvider: new StaticOidcProtocolKeyProvider({
+		keyProvider: new MemoryFederationKeyProvider(createFederationSigningKey(leafSigningKey)),
+		protocolKeyProvider: new StaticProtocolSigningKeyProvider({
 			requestObjectSigner: new JwkSigner(leafProtocolSigningKey),
 		}),
 		authorityHints: [taB],
@@ -313,13 +313,13 @@ export default (QUnit: QUnit) => {
 		test("keeps registration and client-auth helpers behind role classes", async (t) => {
 			const runtimeExports = Object.keys(OidcPublic).sort();
 			t.deepEqual(runtimeExports, [
-				"FedOauthClient",
-				"FedOauthProvider",
-				"FedOauthResource",
-				"FedOidcClient",
-				"FedOidcProvider",
+				"OAuthAuthorizationServerRole",
+				"OAuthClientRole",
+				"OAuthResourceRole",
 				"OIDCRegistrationAdapter",
-				"StaticOidcProtocolKeyProvider",
+				"OidcProviderRole",
+				"OidcRelyingPartyRole",
+				"StaticProtocolSigningKeyProvider",
 			]);
 
 			const hiddenRuntimeExports = [
@@ -347,14 +347,17 @@ export default (QUnit: QUnit) => {
 				t.false(exportName in OidcPublic, `${exportName} is not a root runtime export`);
 			}
 
-			t.equal(typeof OidcPublic.FedOidcClient.createClientAssertion, "function");
-			t.equal(typeof OidcPublic.FedOidcClient.prototype.createClientAssertion, "function");
-			t.equal(typeof OidcPublic.FedOidcClient.prototype.explicitlyRegister, "function");
-			t.equal(typeof OidcPublic.FedOidcProvider.prototype.processAutomaticRegistration, "function");
-			t.equal(typeof OidcPublic.FedOidcProvider.prototype.processExplicitRegistration, "function");
+			t.equal(typeof OidcPublic.OidcRelyingPartyRole.createClientAssertion, "function");
+			t.equal(typeof OidcPublic.OidcRelyingPartyRole.prototype.createClientAssertion, "function");
+			t.equal(typeof OidcPublic.OidcRelyingPartyRole.prototype.explicitlyRegister, "function");
+			t.equal(
+				typeof OidcPublic.OidcProviderRole.prototype.processAutomaticRegistration,
+				"function",
+			);
+			t.equal(typeof OidcPublic.OidcProviderRole.prototype.processExplicitRegistration, "function");
 
 			const { privateKey } = await generateSigningKey("ES256");
-			const jwt = await OidcPublic.FedOidcClient.createClientAssertion(
+			const jwt = await OidcPublic.OidcRelyingPartyRole.createClientAssertion(
 				"https://rp.example.com",
 				"https://op.example.com/token",
 				new JwkSigner(privateKey),
@@ -4759,7 +4762,7 @@ export default (QUnit: QUnit) => {
 			const opSigningKey: JWK = { ...privateKey, kid: "op-handler-test-kid" };
 			const baseConfig: ExplicitRegistrationHandlerConfig = {
 				opEntityId: HANDLER_ENTITY_ID,
-				keyProvider: new MemoryFederationKeyProvider(federationKey(opSigningKey)),
+				keyProvider: new MemoryFederationKeyProvider(createFederationSigningKey(opSigningKey)),
 				trustAnchors: new Map([[TA_ID, { jwks: { keys: [] } }]]),
 			};
 			return { ...baseConfig, ...overrides };
@@ -6079,13 +6082,13 @@ export default (QUnit: QUnit) => {
 		});
 	}
 
-	module("oidc / Role Composition Facades", () => {
-		test("FedOidcClient role composition metadata and type", async (t) => {
+	module("oidc / role composition", () => {
+		test("OidcRelyingPartyRole role composition metadata and type", async (t) => {
 			const { privateKey } = await generateSigningKey("ES256");
-			const protocolKeyProvider = new StaticOidcProtocolKeyProvider({
+			const protocolKeyProvider = new StaticProtocolSigningKeyProvider({
 				requestObjectSigner: new JwkSigner(privateKey),
 			});
-			const role = new FedOidcClient({
+			const role = new OidcRelyingPartyRole({
 				protocolKeyProvider,
 				metadata: { client_name: "My OIDC RP" },
 			});
@@ -6098,8 +6101,8 @@ export default (QUnit: QUnit) => {
 			t.equal(role.metadata.client_name, "My OIDC RP");
 		});
 
-		test("FedOidcProvider role composition metadata and type", async (t) => {
-			const role = new FedOidcProvider({
+		test("OidcProviderRole role composition metadata and type", async (t) => {
+			const role = new OidcProviderRole({
 				registrationPath: "/my-reg",
 				metadata: { op_name: "My OIDC OP" },
 				registrationProtocolAdapter: new OIDCRegistrationAdapter(),
@@ -6115,13 +6118,13 @@ export default (QUnit: QUnit) => {
 			);
 		});
 
-		test("FedOidcProvider role composition works with configured trust anchors", async (t) => {
+		test("OidcProviderRole role composition works with configured trust anchors", async (t) => {
 			const fed = await createMockFederation();
 			const trustAnchorConfig = fed.trustAnchors.get(TA_ID);
 			t.ok(trustAnchorConfig, "fixture exposes TA config");
 			if (!trustAnchorConfig) return;
 			const trustAnchors = new Map([[TA_ID as string, trustAnchorConfig]]);
-			const role = new FedOidcProvider({
+			const role = new OidcProviderRole({
 				registrationPath: "/my-reg",
 				metadata: { op_name: "My OIDC OP" },
 			});
@@ -6137,12 +6140,12 @@ export default (QUnit: QUnit) => {
 			t.ok(role.routes?.has("/my-reg"), "routes must map custom registration path");
 		});
 
-		test("FedOauthClient role composition metadata and type", async (t) => {
+		test("OAuthClientRole role composition metadata and type", async (t) => {
 			const { privateKey } = await generateSigningKey("ES256");
-			const protocolKeyProvider = new StaticOidcProtocolKeyProvider({
+			const protocolKeyProvider = new StaticProtocolSigningKeyProvider({
 				requestObjectSigner: new JwkSigner(privateKey),
 			});
-			const role = new FedOauthClient({
+			const role = new OAuthClientRole({
 				protocolKeyProvider,
 				metadata: { client_name: "My OAuth Client" },
 			});
@@ -6155,8 +6158,8 @@ export default (QUnit: QUnit) => {
 			t.equal(role.metadata.client_name, "My OAuth Client");
 		});
 
-		test("FedOauthProvider role composition metadata and type", async (t) => {
-			const role = new FedOauthProvider({
+		test("OAuthAuthorizationServerRole role composition metadata and type", async (t) => {
+			const role = new OAuthAuthorizationServerRole({
 				registrationPath: "/oauth-reg",
 				metadata: { auth_server_name: "My AS" },
 			});
@@ -6171,13 +6174,13 @@ export default (QUnit: QUnit) => {
 			);
 		});
 
-		test("FedOauthProvider role composition with all config options", async (t) => {
+		test("OAuthAuthorizationServerRole role composition with all config options", async (t) => {
 			const fed = await createMockFederation();
 			const adapter: RegistrationProtocolAdapter = {
 				validateClientMetadata: (metadata) => ({ ok: true, value: metadata }),
 				enrichResponseMetadata: (metadata) => metadata,
 			};
-			const role = new FedOauthProvider({
+			const role = new OAuthAuthorizationServerRole({
 				registrationPath: "/oauth-reg",
 				metadata: { auth_server_name: "My AS" },
 				trustAnchors: fed.trustAnchors,
@@ -6197,10 +6200,10 @@ export default (QUnit: QUnit) => {
 			t.ok(role.routes?.has("/oauth-reg"));
 		});
 
-		test("FedOauthResource role composition metadata and type", async (t) => {
+		test("OAuthResourceRole role composition metadata and type", async (t) => {
 			const { publicKey } = await generateSigningKey("ES256");
 			const jwks = { keys: [publicKey] };
-			const role = new FedOauthResource({
+			const role = new OAuthResourceRole({
 				metadata: { resource_name: "My Resource" },
 				jwks,
 			});
@@ -6214,12 +6217,12 @@ export default (QUnit: QUnit) => {
 			t.deepEqual(role.metadata.jwks, jwks);
 		});
 
-		test("FedOidcClient and FedOauthClient createAuthorizationRequest", async (t) => {
+		test("OidcRelyingPartyRole and OAuthClientRole createAuthorizationRequest", async (t) => {
 			const { privateKey } = await generateSigningKey("ES256");
-			const protocolKeyProvider = new StaticOidcProtocolKeyProvider({
+			const protocolKeyProvider = new StaticProtocolSigningKeyProvider({
 				requestObjectSigner: new JwkSigner(privateKey),
 			});
-			const role = new FedOidcClient({
+			const role = new OidcRelyingPartyRole({
 				protocolKeyProvider,
 				metadata: {
 					client_name: "My OIDC RP",
@@ -6229,7 +6232,7 @@ export default (QUnit: QUnit) => {
 					jwks: { keys: [stripPrivateFields(privateKey)] },
 				},
 			});
-			const oauthRole = new FedOauthClient({
+			const oauthRole = new OAuthClientRole({
 				protocolKeyProvider,
 				metadata: {
 					client_name: "My OAuth Client",

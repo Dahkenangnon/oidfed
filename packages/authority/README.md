@@ -52,10 +52,10 @@ deno add npm:@oidfed/core npm:@oidfed/authority
 
 ```ts
 import { TrustAnchor, MemoryStorageAdapter } from "@oidfed/authority";
-import { generateSigningKey, MemoryFederationKeyProvider, federationKey } from "@oidfed/core";
+import { generateSigningKey, MemoryFederationKeyProvider, createFederationSigningKey } from "@oidfed/core";
 
 const signingKey = await generateSigningKey("ES256");
-const keyProvider = new MemoryFederationKeyProvider(federationKey({
+const keyProvider = new MemoryFederationKeyProvider(createFederationSigningKey({
   ...signingKey.privateKey,
   kid: "key-1",
 }));
@@ -76,6 +76,11 @@ const ta = new TrustAnchor({
 // Serve requests directly with fetch-compatible handleRequest:
 const response = await ta.handleRequest(request);
 ```
+
+Authority entities require a federation key provider with lifecycle support. Use
+`FederationKeyLifecycleProvider` when plugging in KMS-backed or database-backed
+rollover; `MemoryFederationKeyProvider` is the in-memory implementation shown
+above.
 
 Federation endpoint `private_key_jwt` authentication uses `AuthorityConfig.clientKeyProvider`
 to resolve a caller's public Federation Entity Keys. Omit it to use the default

@@ -13,7 +13,7 @@ import type {
 import { discoverEntity, err, FederationErrorCode, federationError } from "@oidfed/core";
 import type { ClientAssertionOptions } from "./client-auth/assertion.js";
 import { createClientAssertion } from "./client-auth/assertion.js";
-import type { OidcProtocolKeyProvider } from "./protocol-keys.js";
+import type { ProtocolSigningKeyProvider } from "./protocol-keys.js";
 import type { RegistrationProtocolAdapter } from "./registration/adapter-types.js";
 import {
 	type AutomaticRegistrationResult,
@@ -29,8 +29,8 @@ import {
 	processAutomaticRegistration,
 } from "./registration/process-automatic.js";
 
-export interface FedOidcClientConfig {
-	readonly protocolKeyProvider: OidcProtocolKeyProvider;
+export interface OidcRelyingPartyRoleConfig {
+	readonly protocolKeyProvider: ProtocolSigningKeyProvider;
 	readonly metadata?: Record<string, unknown>;
 	readonly requestObjectTtlSeconds?: number;
 	readonly includePeerTrustChain?: boolean;
@@ -48,14 +48,14 @@ export interface CreateAuthorizationRequestOptions extends FederationOptions {
 	readonly trustAnchors?: TrustAnchorSet;
 }
 
-export class FedOidcClient implements EntityRole {
+export class OidcRelyingPartyRole implements EntityRole {
 	static createClientAssertion = createClientAssertion;
 
 	public readonly type = "openid_relying_party";
 	public readonly metadata: Record<string, unknown>;
 	private context?: EntityContext;
 
-	constructor(public readonly config: FedOidcClientConfig) {
+	constructor(public readonly config: OidcRelyingPartyRoleConfig) {
 		this.metadata = config.metadata ?? {};
 	}
 
@@ -254,7 +254,7 @@ export class FedOidcClient implements EntityRole {
 	}
 }
 
-export interface FedOidcProviderConfig {
+export interface OidcProviderRoleConfig {
 	readonly registrationPath?: string;
 	readonly metadata?: Record<string, unknown>;
 	readonly trustAnchors?: TrustAnchorSet;
@@ -271,13 +271,13 @@ export interface FedOidcProviderConfig {
 	) => Promise<void>;
 }
 
-export class FedOidcProvider implements EntityRole {
+export class OidcProviderRole implements EntityRole {
 	public readonly type = "openid_provider";
 	public readonly metadata: Record<string, unknown> = {};
 	public readonly routes = new Map<string, (request: Request) => Promise<Response>>();
 	private context?: EntityContext;
 
-	constructor(public readonly config: FedOidcProviderConfig) {
+	constructor(public readonly config: OidcProviderRoleConfig) {
 		this.metadata = config.metadata ?? {};
 	}
 
@@ -371,8 +371,8 @@ export class FedOidcProvider implements EntityRole {
 	}
 }
 
-export interface FedOauthClientConfig {
-	readonly protocolKeyProvider: OidcProtocolKeyProvider;
+export interface OAuthClientRoleConfig {
+	readonly protocolKeyProvider: ProtocolSigningKeyProvider;
 	readonly metadata?: Record<string, unknown>;
 	readonly requestObjectTtlSeconds?: number;
 	readonly includePeerTrustChain?: boolean;
@@ -380,14 +380,14 @@ export interface FedOauthClientConfig {
 	readonly requestUri?: string;
 }
 
-export class FedOauthClient implements EntityRole {
+export class OAuthClientRole implements EntityRole {
 	static createClientAssertion = createClientAssertion;
 
 	public readonly type = "oauth_client";
 	public readonly metadata: Record<string, unknown>;
 	private context?: EntityContext;
 
-	constructor(public readonly config: FedOauthClientConfig) {
+	constructor(public readonly config: OAuthClientRoleConfig) {
 		this.metadata = config.metadata ?? {};
 	}
 
@@ -434,7 +434,7 @@ export class FedOauthClient implements EntityRole {
 	}
 }
 
-export interface FedOauthProviderConfig {
+export interface OAuthAuthorizationServerRoleConfig {
 	readonly registrationPath?: string;
 	readonly metadata?: Record<string, unknown>;
 	readonly trustAnchors?: TrustAnchorSet;
@@ -445,12 +445,12 @@ export interface FedOauthProviderConfig {
 	readonly onRegistrationInvalidation?: (sub: EntityId) => Promise<void>;
 }
 
-export class FedOauthProvider implements EntityRole {
+export class OAuthAuthorizationServerRole implements EntityRole {
 	public readonly type = "oauth_authorization_server";
 	public readonly metadata: Record<string, unknown> = {};
 	public readonly routes = new Map<string, (request: Request) => Promise<Response>>();
 
-	constructor(public readonly config: FedOauthProviderConfig) {
+	constructor(public readonly config: OAuthAuthorizationServerRoleConfig) {
 		this.metadata = config.metadata ?? {};
 	}
 
@@ -486,17 +486,17 @@ export class FedOauthProvider implements EntityRole {
 	}
 }
 
-export interface FedOauthResourceConfig {
+export interface OAuthResourceRoleConfig {
 	readonly metadata?: Record<string, unknown>;
 	readonly jwks?: JWKSet;
 }
 
-export class FedOauthResource implements EntityRole {
+export class OAuthResourceRole implements EntityRole {
 	public readonly type = "oauth_resource";
 	public readonly metadata: Record<string, unknown> = {};
 	public readonly routes = new Map<string, (request: Request) => Promise<Response>>();
 
-	constructor(public readonly config: FedOauthResourceConfig) {
+	constructor(public readonly config: OAuthResourceRoleConfig) {
 		this.metadata = config.metadata ?? {};
 		if (config.jwks) {
 			this.metadata.jwks = config.jwks;

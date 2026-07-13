@@ -54,26 +54,27 @@ This package provides role classes that compose directly with `Leaf`, `TrustAnch
 OIDC/OAuth protocol keys are separate from federation entity keys:
 - OIDC/OAuth roles publish OIDC/OAuth protocol public keys via `jwks` inside the role `metadata` configuration.
 - Federation Entity Configurations and other federation artifacts stay on federation key providers from `@oidfed/core`.
+- OIDC/OAuth helpers only require the read-only `FederationKeyProvider`; authority-owned rollover and historical keys stay on `FederationKeyLifecycleProvider`.
 
 ### RP Composition Example
 
 ```ts
 import { Leaf } from "@oidfed/leaf";
-import { FedOidcClient, StaticOidcProtocolKeyProvider } from "@oidfed/oidc";
-import { JwkSigner, MemoryFederationKeyProvider, federationKey } from "@oidfed/core";
+import { OidcRelyingPartyRole, StaticProtocolSigningKeyProvider } from "@oidfed/oidc";
+import { JwkSigner, MemoryFederationKeyProvider, createFederationSigningKey } from "@oidfed/core";
 
 const rpEntity = new Leaf({
   entityId: "https://rp.example.com",
   authorityHints: ["https://ta.example.org"],
-  keyProvider: new MemoryFederationKeyProvider(federationKey(federationSigningKey)),
+  keyProvider: new MemoryFederationKeyProvider(createFederationSigningKey(federationSigningKey)),
   metadata: {
     federation_entity: {
       organization_name: "My Relying Party",
     },
   },
   roles: [
-    new FedOidcClient({
-      protocolKeyProvider: new StaticOidcProtocolKeyProvider({
+    new OidcRelyingPartyRole({
+      protocolKeyProvider: new StaticProtocolSigningKeyProvider({
         requestObjectSigner: new JwkSigner(protocolSigningKey),
       }),
       metadata: {
@@ -91,7 +92,7 @@ const rpEntity = new Leaf({
 
 ```ts
 import { TrustAnchor, MemoryStorageAdapter } from "@oidfed/authority";
-import { FedOidcProvider } from "@oidfed/oidc";
+import { OidcProviderRole } from "@oidfed/oidc";
 
 const opEntity = new TrustAnchor({
   entityId: "https://op.example.com",
@@ -107,7 +108,7 @@ const opEntity = new TrustAnchor({
     },
   },
   roles: [
-    new FedOidcProvider({
+    new OidcProviderRole({
       registrationPath: "/register",
       metadata: {
         issuer: "https://op.example.com",

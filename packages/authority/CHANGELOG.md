@@ -14,7 +14,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Federation endpoint `private_key_jwt` authentication now resolves remote caller keys through `AuthorityConfig.clientKeyProvider`, defaulting to subordinate storage, instead of live trust-chain discovery.
 - Authority HTTP routing now derives the Entity Configuration path from the normalized Entity Identifier and federation endpoint routes from advertised metadata endpoint URLs.
-- **BREAKING.** Authority server and class facades no longer expose `rotateSigningKey()`. Federation key rollover is owned by the injected `ManagedFederationKeyProvider`, so applications can plug in KMS-backed or database-backed key managers without authority-level lifecycle duplication.
+- **BREAKING.** Authority server and class facades no longer expose `rotateSigningKey()`. Federation key rollover is owned by the injected `FederationKeyLifecycleProvider`, so applications can plug in KMS-backed or database-backed key managers without authority-level lifecycle duplication.
+- Extended subordinate listing in-process parameter and result types now use endpoint-oriented public names.
 
 ## [0.8.0] - 2026-06-25
 
@@ -92,7 +93,7 @@ _No user-visible changes — released as part of the coordinated wave._
 
 ### Changed
 
-- **BREAKING.** `AuthorityConfig.registrationResponseTtlSeconds` and `AuthorityConfig.registrationConfig` removed. Callers configuring an explicit-registration endpoint should compose a `FedOidcProvider` role from `@oidfed/oidc` and mount it on their own server (e.g. alongside a leaf entity's `.well-known/openid-federation`).
+- **BREAKING.** `AuthorityConfig.registrationResponseTtlSeconds` and `AuthorityConfig.registrationConfig` removed. Callers configuring an explicit-registration endpoint should compose an `OidcProviderRole` role from `@oidfed/oidc` and mount it on their own server (e.g. alongside a leaf entity's `.well-known/openid-federation`).
 - `HandlerContext` no longer carries `registrationResponseTtlSeconds`, `registrationConfig`, or `registrationProtocolAdapter`.
 
 ## [0.4.1] - 2026-05-23
@@ -128,7 +129,7 @@ _No user-visible changes — released as part of the coordinated wave._
 - New `SubordinateRecord` optional fields: `crit?: ReadonlyArray<string>`, `metadataPolicyCrit?: ReadonlyArray<string>`. `buildSubordinateStatement` emits them in the signed JWT when present.
 - New `createExtendedListHandler(ctx, config?)` and `ExtendedListingConfig` (`enabled`, `defaultPageSize`, `maxPageSize`, `supportTimeFilters`, `supportAuditTimestamps`, `defaultClaims`, `maxStorePagesPerRequest`, `storeBatchSize`).
 - New `EXTENDED_LIST_CLAIM_EXTRACTORS` map and `extractClaims(record, ctx, claims, now)` helper for plugging in custom per-claim extractors.
-- New `AuthorityServer.listSubordinatesExtended(params?)` in-process API returning `Promise<Result<ExtendedListInProcessResult, FederationError>>`; types `ExtendedListInProcessParams` and `ExtendedListInProcessResult`.
+- New `AuthorityServer.listSubordinatesExtended(params?)` in-process API returning `Promise<Result<ExtendedSubordinateListingResult, FederationError>>`; types `ExtendedSubordinateListingParams` and `ExtendedSubordinateListingResult`.
 - New OPTIONAL `TrustMarkStore.listForSubject(subject)` method used by `/federation_extended_list` when `claims=trust_marks` is requested. `MemoryTrustMarkStore` ships the implementation; deployments whose store cannot enumerate-by-subject receive `400 unsupported_parameter`.
 - `AuthorityConfig.extendedListing?: ExtendedListingConfig` to configure the new endpoint.
 - Page-fill loop: when post-filters reduce a store page below the requested limit, the handler continues fetching from the store (bounded by `maxStorePagesPerRequest`) until either the page is full or the store is exhausted. `next_entity_id` skips known non-matches in the current page so clients don't iterate through empty pages.
@@ -137,7 +138,7 @@ _No user-visible changes — released as part of the coordinated wave._
 ### Changed
 
 - **BREAKING:** `SubordinateStore.list(filter)` signature changed from `Promise<SubordinateRecord[]>` to `list(filter?, options?): Promise<ListPage>` where `ListPage = { items: SubordinateRecord[]; nextCursor?: EntityId }` and `ListPageOptions = { cursor?, limit?, updatedAfter?, updatedBefore? }`. Records MUST be returned in deterministic lexicographic order by `entityId`. The bundled `MemorySubordinateStore` is migrated. Custom store implementations need to adopt the new shape. Observable behaviour of the base `/federation_list` endpoint is unchanged — it still returns the same flat JSON array of entity IDs.
-- **BREAKING (pre-release):** `AuthorityServer.listSubordinatesExtended` (introduced earlier on this branch, not yet released) now returns `Promise<Result<ExtendedListInProcessResult, FederationError>>` instead of throwing on errors — error codes (`entity_id_not_found`, `unsupported_parameter`, `invalid_request`) are preserved in the `Result.err` branch.
+- **BREAKING (pre-release):** `AuthorityServer.listSubordinatesExtended` (introduced earlier on this branch, not yet released) now returns `Promise<Result<ExtendedSubordinateListingResult, FederationError>>` instead of throwing on errors — error codes (`entity_id_not_found`, `unsupported_parameter`, `invalid_request`) are preserved in the `Result.err` branch.
 - `SubordinateRecord.createdAt` / `updatedAt` are now contractually NumericDates (seconds since the epoch). Custom store implementations and fixtures that previously wrote `Date.now()` (milliseconds) must use `Math.floor(Date.now() / 1000)` or `nowSeconds(clock)`.
 
 ### Fixed

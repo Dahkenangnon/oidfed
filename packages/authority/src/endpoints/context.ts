@@ -4,9 +4,9 @@ import type {
 	EntityStatementMetadata,
 	EntityType,
 	FederationEntityMetadata,
+	FederationKeyLifecycleProvider,
 	FederationOptions,
 	JWKSet,
-	ManagedFederationKeyProvider,
 	TrustAnchorSet,
 	TrustMarkOwner,
 	TrustMarkRef,
@@ -26,7 +26,7 @@ export interface HandlerContext {
 	/** Preferred trust anchors this entity hints to resolvers in its Entity Configuration. */
 	readonly trustAnchorHints?: readonly [EntityId, ...EntityId[]];
 	/** Federation-only signing key provider and lifecycle manager. */
-	readonly keyProvider: ManagedFederationKeyProvider;
+	readonly keyProvider: FederationKeyLifecycleProvider;
 	/** Unified persistence adapter for all non-key authority state. */
 	readonly storage: StorageAdapter;
 	/** Resolves remote client Federation Entity Keys for private_key_jwt endpoint auth. */

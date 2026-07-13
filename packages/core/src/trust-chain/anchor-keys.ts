@@ -3,7 +3,7 @@ import type { JWK, JWKSet } from "../schemas/jwk.js";
 import type { EntityId } from "../types.js";
 
 /** Result of comparing Trust Anchor keys from two sources. */
-export interface AnchorKeyComparisonResult {
+export interface TrustAnchorKeyComparisonResult {
 	match: boolean;
 	entityId: EntityId;
 	missingInEntityConfiguration: string[];
@@ -19,7 +19,7 @@ export async function compareTrustAnchorKeys(
 	ecJwks: Pick<JWKSet, "keys">,
 	independentJwks: Pick<JWKSet, "keys">,
 	entityId: EntityId,
-): Promise<AnchorKeyComparisonResult> {
+): Promise<TrustAnchorKeyComparisonResult> {
 	const ecKeys = keysByKid(ecJwks.keys);
 	const independentKeys = keysByKid(independentJwks.keys);
 	const ecKids = [...ecKeys.keys()].sort();

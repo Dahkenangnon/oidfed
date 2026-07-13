@@ -217,18 +217,23 @@ if (constraintsResult.ok) {
 ---
 
 ### 8. Federation Key Providers
-Manages signing configurations and public JWKS publications for federation entities, supporting rotation schedules.
+Federation signing keys are exposed through two contracts:
+
+- `FederationKeyProvider` returns the current federation signer and the active published Federation JWKS. Leaf entities and OIDC/OAuth federation helpers use this read-only contract.
+- `FederationKeyLifecycleProvider` extends `FederationKeyProvider` with key publication, active-key switching, revocation state, and historical federation keys for authorities and operator-owned rollover workflows.
+
+OIDC/OAuth protocol keys remain separate from federation entity keys and are configured through protocol key providers in `@oidfed/oidc`.
 
 ```ts
-import { MemoryFederationKeyProvider, JwkSigner } from "@oidfed/core";
+import { JwkSigner, MemoryFederationKeyProvider } from "@oidfed/core";
 
 const keyProvider = new MemoryFederationKeyProvider({
   signer: new JwkSigner(activePrivateKey),
   publicJwk: activePublicKey
 });
 
-// The in-memory provider requires at least one initial active signing key.
-// Retrieve current signing configuration and published keys
+// The in-memory provider implements FederationKeyLifecycleProvider
+// and requires at least one initial active signing key.
 const { signer, jwks } = await keyProvider.getFederationKeySet();
 ```
 

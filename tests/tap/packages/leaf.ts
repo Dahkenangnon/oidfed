@@ -31,7 +31,7 @@ import {
 // Shared test helpers
 // ---------------------------------------------------------------------------
 
-function federationKey(signingKey: JWK) {
+function createFederationSigningKey(signingKey: JWK) {
 	return { signer: new JwkSigner(signingKey), publicJwk: stripPrivateFields(signingKey) };
 }
 
@@ -42,7 +42,7 @@ async function createLeafConfig(
 	const signingKey = { ...privateKey, kid: privateKey.kid ?? "leaf-key-1" };
 	const config: LeafConfig = {
 		entityId: LEAF_ID,
-		keyProvider: new MemoryFederationKeyProvider(federationKey(signingKey)),
+		keyProvider: new MemoryFederationKeyProvider(createFederationSigningKey(signingKey)),
 		authorityHints: [TA_ID],
 		metadata: {
 			openid_relying_party: {
@@ -78,7 +78,7 @@ export default (QUnit: QUnit) => {
 			t.equal(LeafPublic.Leaf, Leaf);
 			t.equal(typeof LeafPublic.Leaf.discoverEntity, "function");
 			t.false("discoverEntity" in LeafPublic);
-			t.false("federationKey" in LeafPublic);
+			t.false("createFederationSigningKey" in LeafPublic);
 		});
 	});
 
@@ -260,7 +260,10 @@ export default (QUnit: QUnit) => {
 			const key2WithSameKid = { ...key2, kid: key1.kid } as unknown as JWK;
 			t.throws(
 				() =>
-					new MemoryFederationKeyProvider([federationKey(key1), federationKey(key2WithSameKid)]),
+					new MemoryFederationKeyProvider([
+						createFederationSigningKey(key1),
+						createFederationSigningKey(key2WithSameKid),
+					]),
 				/Duplicate|already exists/,
 			);
 		});
@@ -513,7 +516,10 @@ export default (QUnit: QUnit) => {
 			const { privateKey: key1 } = await generateSigningKey("ES256");
 			const { privateKey: key2 } = await generateSigningKey("ES256");
 			const { config } = await createLeafConfig({
-				keyProvider: new MemoryFederationKeyProvider([federationKey(key1), federationKey(key2)]),
+				keyProvider: new MemoryFederationKeyProvider([
+					createFederationSigningKey(key1),
+					createFederationSigningKey(key2),
+				]),
 			});
 			const entity = new Leaf(config);
 			const jwt = await entity.getEntityConfiguration();
@@ -874,7 +880,9 @@ export default (QUnit: QUnit) => {
 			const fed = await createMockMockFederation();
 			const config: LeafConfig = {
 				entityId: LEAF_ID,
-				keyProvider: new MemoryFederationKeyProvider(federationKey(fed.leafSigningKey)),
+				keyProvider: new MemoryFederationKeyProvider(
+					createFederationSigningKey(fed.leafSigningKey),
+				),
 				authorityHints: [TA_ID],
 				metadata: {
 					openid_relying_party: {
@@ -904,7 +912,9 @@ export default (QUnit: QUnit) => {
 			const fed = await createMockMockFederation();
 			const config: LeafConfig = {
 				entityId: LEAF_ID,
-				keyProvider: new MemoryFederationKeyProvider(federationKey(fed.leafSigningKey)),
+				keyProvider: new MemoryFederationKeyProvider(
+					createFederationSigningKey(fed.leafSigningKey),
+				),
 				authorityHints: [TA_ID],
 				metadata: {
 					openid_relying_party: {
@@ -927,7 +937,9 @@ export default (QUnit: QUnit) => {
 			const fed = await createMockMockFederation();
 			const config: LeafConfig = {
 				entityId: LEAF_ID,
-				keyProvider: new MemoryFederationKeyProvider(federationKey(fed.leafSigningKey)),
+				keyProvider: new MemoryFederationKeyProvider(
+					createFederationSigningKey(fed.leafSigningKey),
+				),
 				authorityHints: [TA_ID],
 				metadata: {
 					openid_relying_party: { redirect_uris: ["https://rp.example.com/callback"] },

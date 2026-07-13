@@ -7,8 +7,8 @@ import type {
 	EntityTypeMetadataMap,
 	FederationEntityMetadata,
 	FederationError,
+	FederationKeyLifecycleProvider,
 	FederationOptions,
-	ManagedFederationKeyProvider,
 	Result,
 	TrustAnchorSet,
 	TrustMarkOwner,
@@ -55,7 +55,7 @@ import {
 export type { AuthorityClientKeyProvider } from "./endpoints/context.js";
 
 /** Parameters accepted by {@link AuthorityServer.listSubordinatesExtended}. */
-export interface ExtendedListInProcessParams {
+export interface ExtendedSubordinateListingParams {
 	fromEntityId?: EntityId;
 	limit?: number;
 	updatedAfter?: number;
@@ -69,7 +69,7 @@ export interface ExtendedListInProcessParams {
 }
 
 /** Decoded body returned by {@link AuthorityServer.listSubordinatesExtended}. */
-export interface ExtendedListInProcessResult {
+export interface ExtendedSubordinateListingResult {
 	immediate_subordinate_entities: Array<Record<string, unknown> & { id: string }>;
 	next_entity_id?: string;
 }
@@ -102,7 +102,7 @@ export interface AuthorityConfig {
 	/** Unified persistence adapter for all non-key authority state. */
 	storage: StorageAdapter;
 	/** Federation-only signing key provider and lifecycle manager. */
-	keyProvider: ManagedFederationKeyProvider;
+	keyProvider: FederationKeyLifecycleProvider;
 	/**
 	 * Resolves public Federation Entity Keys for authenticated remote authority
 	 * endpoint clients. Defaults to `storage.subordinates.get(entityId)?.jwks`.
@@ -152,8 +152,8 @@ export interface AuthorityServer {
 	 * server-side rendering, and tests.
 	 */
 	listSubordinatesExtended(
-		params?: ExtendedListInProcessParams,
-	): Promise<Result<ExtendedListInProcessResult, FederationError>>;
+		params?: ExtendedSubordinateListingParams,
+	): Promise<Result<ExtendedSubordinateListingResult, FederationError>>;
 	resolveEntity(sub: EntityId, ta?: EntityId): Promise<string>;
 	getTrustMarkStatus(trustMark: string): Promise<TrustMarkStatusResponsePayload>;
 	listTrustMarkedEntities(trustMarkType: string): Promise<string[]>;
@@ -423,8 +423,8 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 		},
 
 		async listSubordinatesExtended(
-			params?: ExtendedListInProcessParams,
-		): Promise<Result<ExtendedListInProcessResult, FederationError>> {
+			params?: ExtendedSubordinateListingParams,
+		): Promise<Result<ExtendedSubordinateListingResult, FederationError>> {
 			const url = new URL(FederationEndpoint.ExtendedList, normalizedEntityId);
 			if (params?.fromEntityId !== undefined) {
 				url.searchParams.set("from_entity_id", params.fromEntityId);
@@ -471,7 +471,7 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 						: FederationErrorCode.ServerError;
 				return err(federationError(code, body.error_description ?? code));
 			}
-			return ok((await res.json()) as ExtendedListInProcessResult);
+			return ok((await res.json()) as ExtendedSubordinateListingResult);
 		},
 
 		async resolveEntity(sub: EntityId, _ta?: EntityId): Promise<string> {
@@ -714,8 +714,8 @@ export class TrustAnchor {
 	}
 
 	async listSubordinatesExtended(
-		params?: ExtendedListInProcessParams,
-	): Promise<Result<ExtendedListInProcessResult, FederationError>> {
+		params?: ExtendedSubordinateListingParams,
+	): Promise<Result<ExtendedSubordinateListingResult, FederationError>> {
 		return this.server.listSubordinatesExtended(params);
 	}
 
@@ -834,8 +834,8 @@ export class Intermediate {
 	}
 
 	async listSubordinatesExtended(
-		params?: ExtendedListInProcessParams,
-	): Promise<Result<ExtendedListInProcessResult, FederationError>> {
+		params?: ExtendedSubordinateListingParams,
+	): Promise<Result<ExtendedSubordinateListingResult, FederationError>> {
 		return this.server.listSubordinatesExtended(params);
 	}
 

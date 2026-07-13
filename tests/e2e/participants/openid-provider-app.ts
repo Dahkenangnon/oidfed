@@ -1,7 +1,7 @@
 import type { EntityId, FederationKeyProvider, JWK, TrustAnchorSet } from "@oidfed/core";
 import { decodeEntityStatement, MemoryReplayStore } from "@oidfed/core";
 import type { Leaf } from "@oidfed/leaf";
-import { FedOidcProvider } from "@oidfed/oidc";
+import { OidcProviderRole } from "@oidfed/oidc";
 import express from "express";
 import Provider from "oidc-provider";
 
@@ -57,7 +57,7 @@ export function createOpenIDProviderApp(config: OpenIDProviderAppConfig): expres
 	const Adapter = createInMemoryAdapter(clientStore);
 	const replayStore = new MemoryReplayStore();
 	const leafHandler = (request: Request) => leaf.handleRequest(request);
-	const oidcProvider = new FedOidcProvider({
+	const oidcProvider = new OidcProviderRole({
 		registrationPath: "/federation_registration",
 		registrationResponseTtlSeconds: 3600,
 		replayStore,

@@ -15,7 +15,7 @@ Roles represent OIDC and OAuth functions (such as Relying Parties or OpenID Prov
 
 ```ts
 import { Leaf } from "@oidfed/leaf";
-import { FedOidcClient, StaticOidcProtocolKeyProvider } from "@oidfed/oidc";
+import { OidcRelyingPartyRole, StaticProtocolSigningKeyProvider } from "@oidfed/oidc";
 import { generateSigningKey, JwkSigner, MemoryFederationKeyProvider } from "@oidfed/core";
 
 // 1. Setup federation keys
@@ -27,11 +27,11 @@ const keyProvider = new MemoryFederationKeyProvider({
 
 // 2. Setup protocol key provider (used to sign Request Objects)
 const protocolKeyPair = await generateSigningKey("ES256");
-const protocolKeyProvider = new StaticOidcProtocolKeyProvider({
+const protocolKeyProvider = new StaticProtocolSigningKeyProvider({
   requestObjectSigner: new JwkSigner(protocolKeyPair.privateKey)
 });
 
-// 3. Initialize parent Leaf with FedOidcClient role composed
+// 3. Initialize parent Leaf with OidcRelyingPartyRole role composed
 const leaf = new Leaf({
   entityId: "https://rp.example.com",
   authorityHints: ["https://federation.example.org"],
@@ -40,7 +40,7 @@ const leaf = new Leaf({
     federation_entity: { organization_name: "My Org" }
   },
   roles: [
-    new FedOidcClient({
+    new OidcRelyingPartyRole({
       protocolKeyProvider,
       metadata: {
         client_name: "My OIDC RP",
@@ -100,13 +100,13 @@ RP Entity Configuration metadata under `metadata.openid_relying_party` must not 
 RP-side explicit registration accepts only HTTP `200` responses with exact `Content-Type: application/explicit-registration-response+jwt`. It returns `clientId` from `metadata.openid_relying_party.client_id` and `clientSecret` from `metadata.openid_relying_party.client_secret` when the OP provisions one.
 
 ```ts
-import { FedOidcProvider, OIDCRegistrationAdapter } from "@oidfed/oidc";
+import { OidcProviderRole, OIDCRegistrationAdapter } from "@oidfed/oidc";
 
 const trustAnchors = new Map([
   ["https://ta.example.org", { jwks: { keys: [taPublicKey] } }]
 ]);
 
-const opRole = new FedOidcProvider({
+const opRole = new OidcProviderRole({
   registrationPath: "/registration",
   trustAnchors,
   registrationResponseTtlSeconds: 3600,
@@ -160,12 +160,12 @@ class CustomAdapter implements RegistrationProtocolAdapter {
 
 ## Configuration API Reference
 
-### `FedOidcClientConfig` & `FedOauthClientConfig`
-Configuration parameters used to instantiate `FedOidcClient` and `FedOauthClient` facades.
+### `OidcRelyingPartyRoleConfig` & `OAuthClientRoleConfig`
+Configuration parameters used to instantiate `OidcRelyingPartyRole` and `OAuthClientRole`.
 
 | Configuration Field | Type | Required | Description |
 |:---|:---|:---|:---|
-| `protocolKeyProvider` | `OidcProtocolKeyProvider` | **Yes** | Provider managing active signing keys for OIDC/OAuth protocol assertions (e.g. Request Objects). |
+| `protocolKeyProvider` | `ProtocolSigningKeyProvider` | **Yes** | Provider managing active signing keys for OIDC/OAuth protocol assertions (e.g. Request Objects). |
 | `metadata` | `Record<string, unknown>` | No | Role-specific metadata parameters (e.g. `redirect_uris`, `response_types`, `jwks`) merged under the corresponding entity type key. |
 | `requestObjectTtlSeconds` | `number` | No | Lifespan in seconds for generated Request Objects. Defaults to 60. |
 | `includePeerTrustChain` | `boolean` | No | Whether to include a Trust Chain for the peer entity (OP) in the `peer_trust_chain` JWS header, as defined in Section 4.4. Defaults to false. |
@@ -173,7 +173,7 @@ Configuration parameters used to instantiate `FedOidcClient` and `FedOauthClient
 | `requestUri` | `string` | No | Prefiled Request Object URI if using `"request_uri"` transmission delivery. |
 
 ### `AutomaticRegistrationResult`
-The result of `FedOidcClient.createAuthorizationRequest(...)` is a discriminated union based on the selected `requestDelivery` mode:
+The result of `OidcRelyingPartyRole.createAuthorizationRequest(...)` is a discriminated union based on the selected `requestDelivery` mode:
 
 - **`delivery: "query"`**:
   - `requestObjectJwt` (`string`): The signed Request Object JWT.
@@ -201,8 +201,8 @@ The result of `FedOidcClient.createAuthorizationRequest(...)` is a discriminated
   - `parRequestUri` (`string`): The URN-style request URI returned by the OP's PAR endpoint.
   - `parExpiresAt` (`number`): Expiration timestamp of the PAR session.
 
-### `FedOidcProviderConfig` & `FedOauthProviderConfig`
-Configuration parameters used to instantiate `FedOidcProvider` and `FedOauthProvider` facades.
+### `OidcProviderRoleConfig` & `OAuthAuthorizationServerRoleConfig`
+Configuration parameters used to instantiate `OidcProviderRole` and `OAuthAuthorizationServerRole`.
 
 | Configuration Field | Type | Required | Description |
 |:---|:---|:---|:---|
@@ -214,8 +214,8 @@ Configuration parameters used to instantiate `FedOidcProvider` and `FedOauthProv
 | `generateClientSecret` | `(sub: EntityId) => Promise<string>`| No | Hook called to issue a client secret for confidential Relying Parties. Returned values are embedded under `metadata.openid_relying_party.client_secret`. |
 | `onRegistrationInvalidation` | `(sub: EntityId) => Promise<void>`| No | Late pre-commit hook called after validation and response preparation, immediately before `onRegistration`. |
 
-### `FedOauthResourceConfig`
-Configuration parameters used to instantiate `FedOauthResource` facades.
+### `OAuthResourceRoleConfig`
+Configuration parameters used to instantiate `OAuthResourceRole`.
 
 | Configuration Field | Type | Required | Description |
 |:---|:---|:---|:---|

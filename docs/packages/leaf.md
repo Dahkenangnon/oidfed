@@ -15,16 +15,16 @@ A Leaf entity publishes its own self-signed configuration but relies on superior
 
 ```ts
 import { Leaf } from "@oidfed/leaf";
-import { FedOidcClient, StaticOidcProtocolKeyProvider } from "@oidfed/oidc";
-import { federationKey, generateSigningKey, JwkSigner, MemoryFederationKeyProvider } from "@oidfed/core";
+import { OidcRelyingPartyRole, StaticProtocolSigningKeyProvider } from "@oidfed/oidc";
+import { createFederationSigningKey, generateSigningKey, JwkSigner, MemoryFederationKeyProvider } from "@oidfed/core";
 
 // 1. Generate keys and key providers
 const keyPair = await generateSigningKey("ES256");
-const keyProvider = new MemoryFederationKeyProvider(federationKey(keyPair.privateKey));
+const keyProvider = new MemoryFederationKeyProvider(createFederationSigningKey(keyPair.privateKey));
 
 // 2. Generate OIDC protocol keys and initialize the protocol key provider
 const protocolKeyPair = await generateSigningKey("ES256");
-const protocolKeyProvider = new StaticOidcProtocolKeyProvider({
+const protocolKeyProvider = new StaticProtocolSigningKeyProvider({
   requestObjectSigner: new JwkSigner(protocolKeyPair.privateKey)
 });
 
@@ -39,7 +39,7 @@ const leaf = new Leaf({
     },
   },
   roles: [
-    new FedOidcClient({
+    new OidcRelyingPartyRole({
       protocolKeyProvider,
       metadata: {
         redirect_uris: ["https://rp.example.com/callback"],
@@ -121,7 +121,7 @@ When constructing a `Leaf` entity, you pass a `LeafConfig` configuration object.
 | `authorityHints` | `readonly (EntityId \| string)[]` | **Yes** | Non-empty list of superior authority entity IDs this leaf is registered with. Every entry must be a valid HTTPS URL. |
 | `trustAnchorHints` | `readonly (EntityId \| string)[]` | No | Optional non-empty list of preferred trust anchors to publish as `trust_anchor_hints` in the Entity Configuration. Every entry must be a valid HTTPS URL. |
 | `metadata` | `EntityStatementMetadata` | **Yes** | Object-valued metadata blocks to publish, keyed by Entity Type Identifier. Must contain at least one Entity Type Identifier. The `federation_entity` block **must not** contain operational authority fields like `federation_fetch_endpoint` or `federation_list_endpoint`. |
-| `keyProvider` | `FederationKeyProvider` | **Yes** | Key provider managing active federation signing keys. |
+| `keyProvider` | `FederationKeyProvider` | **Yes** | Read-only provider for the current federation signer and published Federation JWKS. |
 | `roles` | `EntityRole[]` | No | Composition roles (like OIDC Client/Provider roles) bound to this entity context. |
 | `options` | `FederationOptions` | No | Core federation options (e.g. clock configurations). |
 | `trustMarks` | `TrustMarkRef[]` | No | Trust marks this leaf claims about itself in its Entity Configuration. |

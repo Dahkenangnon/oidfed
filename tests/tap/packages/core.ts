@@ -205,9 +205,9 @@ export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
 
 	module("core / public root exports", () => {
-		test("exports federationKey for public federation key provider setup", async (t) => {
+		test("exports createFederationSigningKey for public federation key provider setup", async (t) => {
 			const { privateKey } = await generateSigningKey("ES256");
-			const key = CorePublic.federationKey(privateKey);
+			const key = CorePublic.createFederationSigningKey(privateKey);
 
 			t.true(key.signer instanceof JwkSigner);
 			t.equal(key.signer.kid, privateKey.kid);

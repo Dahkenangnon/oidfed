@@ -51,21 +51,21 @@ deno add npm:@oidfed/core npm:@oidfed/leaf
 
 ```ts
 import { Leaf } from "@oidfed/leaf";
-import { FedOidcClient, StaticOidcProtocolKeyProvider } from "@oidfed/oidc";
-import { JwkSigner, MemoryFederationKeyProvider, federationKey } from "@oidfed/core";
+import { OidcRelyingPartyRole, StaticProtocolSigningKeyProvider } from "@oidfed/oidc";
+import { JwkSigner, MemoryFederationKeyProvider, createFederationSigningKey } from "@oidfed/core";
 
 const leaf = new Leaf({
   entityId: "https://rp.example.com",
   authorityHints: ["https://federation.example.org"],
-  keyProvider: new MemoryFederationKeyProvider(federationKey(myFederationSigningKey)),
+  keyProvider: new MemoryFederationKeyProvider(createFederationSigningKey(myFederationSigningKey)),
   metadata: {
     federation_entity: {
       organization_name: "My Relying Party",
     },
   },
   roles: [
-    new FedOidcClient({
-      protocolKeyProvider: new StaticOidcProtocolKeyProvider({
+    new OidcRelyingPartyRole({
+      protocolKeyProvider: new StaticProtocolSigningKeyProvider({
         requestObjectSigner: new JwkSigner(myProtocolSigningKey),
       }),
       metadata: {
@@ -81,6 +81,11 @@ const leaf = new Leaf({
 // Serve the request directly using a fetch-compatible interface:
 const response = await leaf.handleRequest(request);
 ```
+
+`Leaf` accepts the read-only `FederationKeyProvider` contract because it only
+needs the current federation signer and published Federation JWKS. The in-memory
+provider used above also supports lifecycle operations, but leaf code does not
+depend on those methods.
 
 ## Documentation
 

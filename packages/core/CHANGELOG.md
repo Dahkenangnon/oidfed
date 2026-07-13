@@ -16,7 +16,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Federation HTTP fetch helpers now require exact parameter-free Content-Type values for spec-defined media types, including Entity Statements, Resolve Responses, Trust Marks, signed JWK Sets, and federation JSON list responses.
 - `validateTrustChain()` now rejects malformed raw Entity Statements, invalid metadata policy critical operators, and invalid published Trust Marks during Trust Chain validation.
 - `MemoryFederationKeyProvider` now requires an initial federation signing key or non-empty key array and rejects empty arrays during construction.
-- **BREAKING.** `ManagedFederationKeyProvider` now exposes provider-owned federation rollover through `publishKey()` and `switchActiveKey()` instead of the pre-1.0 `addKey()` / `activateKey()` / `retireKey()` sequence. Published keys appear in the active Federation JWKS before signer switch, and expired retiring keys are excluded from the active Federation JWKS while remaining available through historical keys.
+- **BREAKING.** `FederationKeyLifecycleProvider` is the public contract for provider-owned federation rollover through `publishKey()` and `switchActiveKey()` instead of the pre-1.0 `addKey()` / `activateKey()` / `retireKey()` sequence. Published keys appear in the active Federation JWKS before signer switch, and expired retiring keys are excluded from the active Federation JWKS while remaining available through historical keys.
+- Public federation signing-key construction and Trust Anchor key comparison result types now use explicit behavior-oriented names.
 - `compareTrustAnchorKeys()` now compares public key material for matching `kid` values and reports missing or mismatched keys with behavior-focused field names.
 
 ## [0.8.0] - 2026-06-25

@@ -52,14 +52,14 @@ import {
 } from "@oidfed/authority";
 import {
   entityId,
-  federationKey,
+  createFederationSigningKey,
   generateSigningKey,
   MemoryFederationKeyProvider,
 } from "@oidfed/core";
 
 const TA_ID = entityId("https://edugain.geant.org");
 const federationKeyPair = await generateSigningKey("ES256");
-const keyProvider = new MemoryFederationKeyProvider(federationKey(federationKeyPair.privateKey));
+const keyProvider = new MemoryFederationKeyProvider(createFederationSigningKey(federationKeyPair.privateKey));
 const storage = new MemoryStorageAdapter();
 
 const ta = new TrustAnchor({
@@ -149,7 +149,7 @@ import {
 } from "@oidfed/authority";
 import {
   entityId,
-  federationKey,
+  createFederationSigningKey,
   generateSigningKey,
   MemoryFederationKeyProvider,
 } from "@oidfed/core";
@@ -157,7 +157,7 @@ import type { TrustAnchorSet } from "@oidfed/core";
 
 const SWAMID_ID = entityId("https://swamid.se");
 const federationKeyPair = await generateSigningKey("ES256");
-const keyProvider = new MemoryFederationKeyProvider(federationKey(federationKeyPair.privateKey));
+const keyProvider = new MemoryFederationKeyProvider(createFederationSigningKey(federationKeyPair.privateKey));
 
 // Trust Anchor keys for chain validation during registration
 const trustAnchors: TrustAnchorSet = new Map([
@@ -188,16 +188,16 @@ const swamid = new Intermediate({
 
 An OpenID Provider at `op.umu.se` using Express + `panva/node-oidc-provider` + `@oidfed/authority` + `@oidfed/oidc`.
 
-The OP acts as an authority (issues its own Entity Configuration with `@oidfed/authority` and `Intermediate`) and processes incoming registrations (with the `FedOidcProvider` role from `@oidfed/oidc`).
+The OP acts as an authority (issues its own Entity Configuration with `@oidfed/authority` and `Intermediate`) and processes incoming registrations (with the `OidcProviderRole` role from `@oidfed/oidc`).
 
 ```typescript
 import express from "express";
 import Provider from "oidc-provider";
 import { Intermediate, MemoryStorageAdapter } from "@oidfed/authority";
-import { FedOidcProvider } from "@oidfed/oidc";
+import { OidcProviderRole } from "@oidfed/oidc";
 import {
   entityId,
-  federationKey,
+  createFederationSigningKey,
   generateSigningKey,
   isOk,
   MemoryFederationKeyProvider,
@@ -206,7 +206,7 @@ import type { TrustAnchorSet } from "@oidfed/core";
 
 const OP_ID = entityId("https://op.umu.se");
 const federationKeyPair = await generateSigningKey("ES256");
-const keyProvider = new MemoryFederationKeyProvider(federationKey(federationKeyPair.privateKey));
+const keyProvider = new MemoryFederationKeyProvider(createFederationSigningKey(federationKeyPair.privateKey));
 const storage = new MemoryStorageAdapter();
 
 const trustAnchors: TrustAnchorSet = new Map([
@@ -215,7 +215,7 @@ const trustAnchors: TrustAnchorSet = new Map([
 
 // --- Federation server (Entity Configuration + role endpoints) ---
 
-const opRole = new FedOidcProvider({
+const opRole = new OidcProviderRole({
   registrationPath: "/registration",
   replayStore: storage.replay,
   metadata: {
@@ -273,7 +273,7 @@ app.all("/.well-known/openid-federation", async (req, res) => {
   res.end(await response.text());
 });
 
-// Route explicit registration requests to the FedOidcProvider role handler
+// Route explicit registration requests to the OidcProviderRole role handler
 app.post("/registration", async (req, res) => {
   const request = new Request(`https://op.umu.se${req.originalUrl}`, {
     method: "POST",
@@ -329,13 +329,13 @@ A Relying Party at `wiki.ligo.org` using Express + `@oidfed/leaf` + `@oidfed/oid
 import express from "express";
 import { Leaf } from "@oidfed/leaf";
 import {
-  FedOidcClient,
-  StaticOidcProtocolKeyProvider,
+  OidcRelyingPartyRole,
+  StaticProtocolSigningKeyProvider,
 } from "@oidfed/oidc";
 import {
   discoverEntity,
   entityId,
-  federationKey,
+  createFederationSigningKey,
   generateSigningKey,
   isOk,
   JwkSigner,
@@ -347,7 +347,7 @@ const RP_ID = entityId("https://wiki.ligo.org");
 const federationKeyPair = await generateSigningKey("ES256");
 const protocolKeyPair = await generateSigningKey("ES256");
 const federationKeyProvider = new MemoryFederationKeyProvider(
-  federationKey(federationKeyPair.privateKey),
+  createFederationSigningKey(federationKeyPair.privateKey),
 );
 
 const trustAnchors: TrustAnchorSet = new Map([
@@ -359,8 +359,8 @@ const trustAnchors: TrustAnchorSet = new Map([
 
 // --- Leaf entity (serves Entity Configuration) ---
 
-const rpRole = new FedOidcClient({
-  protocolKeyProvider: new StaticOidcProtocolKeyProvider({
+const rpRole = new OidcRelyingPartyRole({
+  protocolKeyProvider: new StaticProtocolSigningKeyProvider({
     requestObjectSigner: new JwkSigner(protocolKeyPair.privateKey),
   }),
   metadata: {
@@ -511,7 +511,7 @@ Sequence when a user at `wiki.ligo.org` authenticates via `op.umu.se`:
 
 ### Key Security Properties
 
-- **Cross-OP replay prevention**: `FedOidcProvider.processAutomaticRegistration` validates the Request Object `aud` claim against the initialized OP entity ID
+- **Cross-OP replay prevention**: `OidcProviderRole.processAutomaticRegistration` validates the Request Object `aud` claim against the initialized OP entity ID
 - **JTI replay detection**: The `replayStore` prevents Request Object reuse
 - **Branded DiscoveryResult**: Only `discoverEntity()` can produce it — prevents unchecked data from flowing into registration
 - **Trust chain expiry**: Explicit registration results include `trustChainExpiresAt` — the RP must re-register before this time

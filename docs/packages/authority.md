@@ -15,11 +15,11 @@ A **Trust Anchor** is a root authority with no superiors, which serves as the tr
 
 ```ts
 import { TrustAnchor, Intermediate, MemoryStorageAdapter } from "@oidfed/authority";
-import { federationKey, generateSigningKey, MemoryFederationKeyProvider } from "@oidfed/core";
+import { createFederationSigningKey, generateSigningKey, MemoryFederationKeyProvider } from "@oidfed/core";
 
 // 1. Generate keys and key provider
 const keyPair = await generateSigningKey("ES256");
-const keyProvider = new MemoryFederationKeyProvider(federationKey(keyPair.privateKey));
+const keyProvider = new MemoryFederationKeyProvider(createFederationSigningKey(keyPair.privateKey));
 
 const storage = new MemoryStorageAdapter({ trustMarks: true });
 
@@ -115,14 +115,14 @@ class CustomStorageAdapter implements StorageAdapter {
 ---
 
 ### Federation Key Rotation
-Federation signing keys are managed by the `ManagedFederationKeyProvider`. Authorities read the current signer, published Federation JWKS, and historical keys from the injected provider; applications that own the provider drive rollover there.
+Federation signing key lifecycle is exposed through `FederationKeyLifecycleProvider`. Authorities read the current signer, published Federation JWKS, and historical keys from the injected provider; applications that own the provider drive rollover there.
 
 ```ts
-import { federationKey, generateSigningKey } from "@oidfed/core";
+import { createFederationSigningKey, generateSigningKey } from "@oidfed/core";
 
 // Generate new rotation key
 const nextKeyPair = await generateSigningKey("ES256");
-const newSigningKey = federationKey(nextKeyPair.privateKey);
+const newSigningKey = createFederationSigningKey(nextKeyPair.privateKey);
 
 // Publish first so participants can refresh the new public key.
 await keyProvider.publishKey(newSigningKey);
@@ -191,7 +191,7 @@ When constructing a `TrustAnchor` or `Intermediate`, you pass an `AuthorityConfi
 | `entityId` | `EntityId \| string` | **Yes** | The entity identifier URL for this authority. Must be a valid HTTPS URL without query parameters or fragments. |
 | `metadata` | `{ federation_entity: FederationEntityMetadata } & EntityStatementMetadata` | **Yes** | Structured object-valued metadata blocks published in the authority's self-signed configuration. Must include `federation_entity`; no leaf value within the metadata may be `null`. |
 | `storage` | `StorageAdapter` | **Yes** | Persistence adapter for subordinates, trust marks, cache, and replays. |
-| `keyProvider` | `ManagedFederationKeyProvider`| **Yes** | Key provider managing active federation signing keys and key history (e.g., `MemoryFederationKeyProvider` implements `ManagedFederationKeyProvider`). |
+| `keyProvider` | `FederationKeyLifecycleProvider`| **Yes** | Key provider exposing active federation signing keys, rollover lifecycle, and historical keys (e.g., `MemoryFederationKeyProvider` implements `FederationKeyLifecycleProvider`). |
 | `clientKeyProvider` | `AuthorityClientKeyProvider` | No | Resolves public Federation Entity Keys for `private_key_jwt` federation endpoint callers. Defaults to `storage.subordinates.get(entityId)?.jwks`. |
 | `authorityHints` | `readonly (EntityId \| string)[]` | *Conditional* | List of superior authorities this entity is subordinate to. Must be `undefined` or omitted for a `TrustAnchor`. Must be a non-empty array for an `Intermediate`. |
 | `trustAnchorHints` | `readonly (EntityId \| string)[]` | No | Optional non-empty list of preferred trust anchors to publish as `trust_anchor_hints` for an `Intermediate`. Rejected on `TrustAnchor` configurations. |

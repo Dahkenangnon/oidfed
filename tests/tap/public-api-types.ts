@@ -4,10 +4,10 @@ import {
 	decodeSubordinateStatement,
 	type EntityConfigurationPayload,
 	type EntityStatementMetadata,
+	type FederationKeyLifecycleProvider,
 	type FederationKeyProvider,
 	type FederationSigningKey,
 	type JWKSet,
-	type ManagedFederationKeyProvider,
 	MemoryFederationKeyProvider,
 	type SubordinateStatementPayload,
 	type SwitchActiveFederationKeyOptions,
@@ -15,16 +15,16 @@ import {
 } from "@oidfed/core";
 import type { LeafConfig } from "@oidfed/leaf";
 import type {
-	FedOauthProviderConfig,
-	FedOauthResourceConfig,
-	FedOidcProviderConfig,
+	OAuthAuthorizationServerRoleConfig,
+	OAuthResourceRoleConfig,
+	OidcProviderRoleConfig,
 	OpenIDRelyingPartyMetadata,
 	OpenIDRelyingPartyRegistrationResponseMetadata,
 	RegistrationProtocolAdapter,
 } from "@oidfed/oidc";
 
 declare const federationKeyProvider: FederationKeyProvider;
-declare const managedFederationKeyProvider: ManagedFederationKeyProvider;
+declare const federationKeyLifecycleProvider: FederationKeyLifecycleProvider;
 declare const federationSigningKey: FederationSigningKey;
 declare const trustAnchors: TrustAnchorSet;
 declare const authorityStorage: StorageAdapter;
@@ -55,7 +55,7 @@ const intermediateAuthorityConfig = {
 		},
 	},
 	storage: authorityStorage,
-	keyProvider: managedFederationKeyProvider,
+	keyProvider: federationKeyLifecycleProvider,
 } satisfies AuthorityConfig;
 void intermediateAuthorityConfig;
 
@@ -96,12 +96,12 @@ const registrationAdapter: RegistrationProtocolAdapter = {
 
 const oidcProviderConfig = {
 	registrationProtocolAdapter: registrationAdapter,
-} satisfies FedOidcProviderConfig;
+} satisfies OidcProviderRoleConfig;
 void oidcProviderConfig;
 
 const oauthProviderConfig = {
 	registrationProtocolAdapter: registrationAdapter,
-} satisfies FedOauthProviderConfig;
+} satisfies OAuthAuthorizationServerRoleConfig;
 void oauthProviderConfig;
 
 const incompleteRegistrationAdapter = {
@@ -111,7 +111,7 @@ const incompleteRegistrationAdapter = {
 const oidcProviderConfigWithIncompleteAdapter = {
 	// @ts-expect-error registrationProtocolAdapter must implement the full adapter contract.
 	registrationProtocolAdapter: incompleteRegistrationAdapter,
-} satisfies FedOidcProviderConfig;
+} satisfies OidcProviderRoleConfig;
 void oidcProviderConfigWithIncompleteAdapter;
 
 const resourceJwks = {
@@ -120,23 +120,23 @@ const resourceJwks = {
 
 const oauthResourceConfig = {
 	jwks: resourceJwks,
-} satisfies FedOauthResourceConfig;
+} satisfies OAuthResourceRoleConfig;
 void oauthResourceConfig;
 
 const oauthResourceConfigWithInvalidJwks = {
 	// @ts-expect-error jwks must satisfy the core JWKSet shape.
 	jwks: { keys: ["not-a-jwk"] },
-} satisfies FedOauthResourceConfig;
+} satisfies OAuthResourceRoleConfig;
 void oauthResourceConfigWithInvalidJwks;
 
 void new MemoryFederationKeyProvider(federationSigningKey);
 void new MemoryFederationKeyProvider([federationSigningKey]);
-void managedFederationKeyProvider.publishKey(federationSigningKey);
-void managedFederationKeyProvider.switchActiveKey("next-key");
-void managedFederationKeyProvider.switchActiveKey("next-key", {
+void federationKeyLifecycleProvider.publishKey(federationSigningKey);
+void federationKeyLifecycleProvider.switchActiveKey("next-key");
+void federationKeyLifecycleProvider.switchActiveKey("next-key", {
 	retirePreviousAfterMs: 60_000,
 } satisfies SwitchActiveFederationKeyOptions);
-void managedFederationKeyProvider.revokeKey("old-key", "keyCompromise");
+void federationKeyLifecycleProvider.revokeKey("old-key", "keyCompromise");
 
 // @ts-expect-error an initial federation signing key is required.
 void new MemoryFederationKeyProvider();

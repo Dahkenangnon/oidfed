@@ -15,8 +15,8 @@ import {
 	stripPrivateFields,
 } from "@oidfed/core";
 import { Leaf } from "@oidfed/leaf";
-import type { OidcProtocolKeyProvider } from "@oidfed/oidc";
-import { FedOidcClient, StaticOidcProtocolKeyProvider } from "@oidfed/oidc";
+import type { ProtocolSigningKeyProvider } from "@oidfed/oidc";
+import { OidcRelyingPartyRole, StaticProtocolSigningKeyProvider } from "@oidfed/oidc";
 import type { Express } from "express";
 import { sanitizeSubordinateMetadata } from "../../../packages/authority/src/utils/subordinate-statement-shape.js";
 import { createAuthorityApp } from "../participants/authority-app.js";
@@ -48,13 +48,13 @@ export interface EntityInstance {
 		protocolPublic: JWK;
 	};
 	keyProvider: FederationKeyProvider;
-	oidcProtocolKeyProvider: OidcProtocolKeyProvider;
+	oidcProtocolKeyProvider: ProtocolSigningKeyProvider;
 	storage?: MemoryStorageAdapter;
-	oidcClient?: FedOidcClient;
+	oidcClient?: OidcRelyingPartyRole;
 }
 
 export interface OidcClientEntityInstance extends EntityInstance {
-	oidcClient: FedOidcClient;
+	oidcClient: OidcRelyingPartyRole;
 }
 
 export interface FederationTestBed {
@@ -179,7 +179,7 @@ export async function launchFederation(
 		const authorityHints = entity.authorityHints?.map((h) => entityId(rewriteUrl(h)));
 
 		const keyProvider = new MemoryFederationKeyProvider(federationSigningKey(keys.signing));
-		const oidcProtocolKeyProvider = new StaticOidcProtocolKeyProvider({
+		const oidcProtocolKeyProvider = new StaticProtocolSigningKeyProvider({
 			requestObjectSigner: new JwkSigner(keys.protocolSigning),
 			clientAssertionSigner: new JwkSigner(keys.protocolSigning),
 		});
@@ -236,7 +236,7 @@ export async function launchFederation(
 		const keys = getKeys(entity.id);
 		const metadata = addProtocolJwks(entity, rewriteMetadata(entity.metadata), keys);
 		const keyProvider = new MemoryFederationKeyProvider(federationSigningKey(keys.signing));
-		const oidcProtocolKeyProvider = new StaticOidcProtocolKeyProvider({
+		const oidcProtocolKeyProvider = new StaticProtocolSigningKeyProvider({
 			requestObjectSigner: new JwkSigner(keys.protocolSigning),
 			clientAssertionSigner: new JwkSigner(keys.protocolSigning),
 		});
@@ -244,9 +244,9 @@ export async function launchFederation(
 		const authorityHints = entity.authorityHints?.map((h) => entityId(rewriteUrl(h))) ?? [];
 
 		const roles: EntityRole[] = [];
-		let oidcClient: FedOidcClient | undefined;
+		let oidcClient: OidcRelyingPartyRole | undefined;
 		if (entity.protocolRole === "rp") {
-			oidcClient = new FedOidcClient({
+			oidcClient = new OidcRelyingPartyRole({
 				protocolKeyProvider: oidcProtocolKeyProvider,
 				trustAnchors,
 				metadata: metadata.openid_relying_party,

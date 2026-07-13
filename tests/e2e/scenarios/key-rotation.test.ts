@@ -3,9 +3,9 @@ import type { JWK } from "@oidfed/core";
 import {
 	decodeEntityStatement,
 	entityId,
+	type FederationKeyLifecycleProvider,
 	generateSigningKey,
 	isOk,
-	type ManagedFederationKeyProvider,
 	resolveTrustChains,
 	validateTrustChain,
 } from "@oidfed/core";
@@ -39,7 +39,7 @@ describe("Key rotation", () => {
 
 			// Generate new key and rotate
 			const newKey = await generateSigningKey("ES256");
-			const taKeyProvider = taInstance.keyProvider as ManagedFederationKeyProvider;
+			const taKeyProvider = taInstance.keyProvider as FederationKeyLifecycleProvider;
 			const nextSigningKey = federationSigningKey(newKey.privateKey as JWK);
 			await taKeyProvider.publishKey(nextSigningKey);
 			const overlapEc = await ta.getEntityConfiguration();
@@ -94,7 +94,7 @@ describe("Key rotation", () => {
 
 			// Rotate IA key
 			const newKey = await generateSigningKey("ES256");
-			const iaKeyProvider = iaEntity.keyProvider as ManagedFederationKeyProvider;
+			const iaKeyProvider = iaEntity.keyProvider as FederationKeyLifecycleProvider;
 			const nextSigningKey = federationSigningKey(newKey.privateKey as JWK);
 			await iaKeyProvider.publishKey(nextSigningKey);
 			await iaKeyProvider.switchActiveKey(nextSigningKey.signer.kid);

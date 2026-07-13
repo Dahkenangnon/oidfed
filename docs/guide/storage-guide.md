@@ -2,7 +2,7 @@
 
 `@oidfed/authority` accepts one `StorageAdapter` for all non-key state. The bundled `MemoryStorageAdapter` is for development and tests only; production deployments need shared, durable implementations.
 
-Federation signing keys are not storage capabilities. Signer custody, federation public-key publication, and rotation remain behind `ManagedFederationKeyProvider`.
+Federation signing keys are not storage capabilities. Signer custody, federation public-key publication, and rollover lifecycle remain behind `FederationKeyLifecycleProvider`.
 
 ## Adapter Shape
 
@@ -100,7 +100,7 @@ Use a shared cache when processes should reuse remote Entity Configurations or s
 
 ## Keys
 
-`ManagedFederationKeyProvider` remains separate from storage. A database may hold public key metadata and KMS references internally, but the provider is the only package contract that exposes signing, active federation JWKS publication, rotation, retirement, revocation, and historical federation keys.
+Federation key lifecycle remains separate from storage. A database may hold public key metadata and KMS references internally, but `FederationKeyLifecycleProvider` is the package contract that exposes signing, active federation JWKS publication, rotation, retirement, revocation, and historical federation keys.
 
 Never place private JWK material in `StorageAdapter` or published federation JWKS.
 
@@ -116,4 +116,4 @@ The stable API exposes only `StorageAdapter`, its repository capabilities, and `
 - [ ] Replay failures fail closed.
 - [ ] Cache is treated as disposable, non-authoritative data.
 - [ ] All authoritative state is shared across deployment processes and survives restarts.
-- [ ] Federation signer custody remains behind `ManagedFederationKeyProvider`.
+- [ ] Federation signer custody remains behind `FederationKeyLifecycleProvider`.

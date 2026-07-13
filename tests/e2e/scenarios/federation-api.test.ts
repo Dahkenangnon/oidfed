@@ -2,9 +2,9 @@ import type { AuthorityServer } from "@oidfed/authority";
 import type { JWK } from "@oidfed/core";
 import {
 	decodeEntityStatement,
+	type FederationKeyLifecycleProvider,
 	generateSigningKey,
 	isOk,
-	type ManagedFederationKeyProvider,
 } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
 import { federationSigningKey, getEntity } from "../helpers/launcher.js";
@@ -101,7 +101,7 @@ describe("Federation API endpoints", () => {
 
 		// Rotate
 		const newKey = await generateSigningKey("ES256");
-		const keyProvider = taInstance.keyProvider as ManagedFederationKeyProvider;
+		const keyProvider = taInstance.keyProvider as FederationKeyLifecycleProvider;
 		const nextSigningKey = federationSigningKey(newKey.privateKey as JWK);
 		await keyProvider.publishKey(nextSigningKey);
 		await keyProvider.switchActiveKey(nextSigningKey.signer.kid);

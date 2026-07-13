@@ -19,7 +19,7 @@ import {
 } from "@oidfed/core";
 import { createClientAssertion } from "../client-auth/assertion.js";
 import { ClientRegistrationType, RequestObjectTyp } from "../constants.js";
-import type { OidcProtocolKeyProvider } from "../protocol-keys.js";
+import type { ProtocolSigningKeyProvider } from "../protocol-keys.js";
 import { getRegistrationTypes, selectSharedRegistrationTrustChains } from "./helpers.js";
 
 const CLIENT_ASSERTION_TYPE = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
@@ -40,7 +40,7 @@ const RESERVED_REQUEST_OBJECT_CLAIMS = new Set([
 
 export interface AutomaticRegistrationConfig {
 	readonly entityId: EntityId;
-	readonly protocolKeyProvider: OidcProtocolKeyProvider;
+	readonly protocolKeyProvider: ProtocolSigningKeyProvider;
 	readonly authorityHints: readonly [EntityId, ...EntityId[]];
 	readonly metadata: Record<string, Record<string, unknown>>;
 	/** TTL for the Request Object JWT in seconds (default: 300). */

@@ -14,8 +14,8 @@ export type { ClientAssertionOptions } from "./client-auth/assertion.js";
 
 // Protocol keys
 export {
-	type OidcProtocolKeyProvider,
-	StaticOidcProtocolKeyProvider,
+	type ProtocolSigningKeyProvider,
+	StaticProtocolSigningKeyProvider,
 } from "./protocol-keys.js";
 
 // Registration types
@@ -48,16 +48,16 @@ export type {
 // Roles composition
 export {
 	type CreateAuthorizationRequestOptions,
-	FedOauthClient,
-	type FedOauthClientConfig,
-	FedOauthProvider,
-	type FedOauthProviderConfig,
-	FedOauthResource,
-	type FedOauthResourceConfig,
-	FedOidcClient,
-	type FedOidcClientConfig,
-	FedOidcProvider,
-	type FedOidcProviderConfig,
+	OAuthAuthorizationServerRole,
+	type OAuthAuthorizationServerRoleConfig,
+	OAuthClientRole,
+	type OAuthClientRoleConfig,
+	OAuthResourceRole,
+	type OAuthResourceRoleConfig,
+	OidcProviderRole,
+	type OidcProviderRoleConfig,
+	OidcRelyingPartyRole,
+	type OidcRelyingPartyRoleConfig,
 } from "./roles.js";
 
 // Schemas & Types

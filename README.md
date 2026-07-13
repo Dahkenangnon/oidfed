@@ -58,7 +58,7 @@ An [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) 
 ```ts
 import { Leaf } from "@oidfed/leaf";
 import { TrustAnchor, Intermediate, MemoryStorageAdapter } from "@oidfed/authority";
-import { FedOidcClient, FedOidcProvider, StaticOidcProtocolKeyProvider } from "@oidfed/oidc";
+import { OidcRelyingPartyRole, OidcProviderRole, StaticProtocolSigningKeyProvider } from "@oidfed/oidc";
 
 // 1. Create a Leaf Entity composed with an OIDC Relying Party role
 const leaf = new Leaf({
@@ -67,8 +67,8 @@ const leaf = new Leaf({
   keyProvider: myFederationKeyProvider,
   metadata: { federation_entity: { organization_name: "Leaf RP" } },
   roles: [
-    new FedOidcClient({
-      protocolKeyProvider: new StaticOidcProtocolKeyProvider({
+    new OidcRelyingPartyRole({
+      protocolKeyProvider: new StaticProtocolSigningKeyProvider({
         requestObjectSigner: protocolSigner
       }),
       metadata: {
@@ -112,7 +112,7 @@ const ia = new Intermediate({
     }
   },
   roles: [
-    new FedOidcProvider({
+    new OidcProviderRole({
       metadata: {
         issuer: "https://ia.example.org",
         authorization_endpoint: "https://ia.example.org/auth",

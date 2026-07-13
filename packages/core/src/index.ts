@@ -87,11 +87,11 @@ export {
 	verifyTrustMarkStatusResponse,
 } from "./federation-api/index.js";
 export {
+	createFederationSigningKey,
+	type FederationKeyLifecycleProvider,
 	type FederationKeyProvider,
 	type FederationKeySet,
 	type FederationSigningKey,
-	federationKey,
-	type ManagedFederationKeyProvider,
 	MemoryFederationKeyProvider,
 	type MemoryFederationKeyProviderOptions,
 	StaticFederationKeyProvider,
@@ -176,8 +176,8 @@ export {
 	validateEntityStatementClaims,
 } from "./statement-builders.js";
 export {
-	type AnchorKeyComparisonResult,
 	compareTrustAnchorKeys,
+	type TrustAnchorKeyComparisonResult,
 } from "./trust-chain/anchor-keys.js";
 // Trust Chain
 export { discoverEntity } from "./trust-chain/discovery.js";

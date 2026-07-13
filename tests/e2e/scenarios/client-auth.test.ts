@@ -1,5 +1,5 @@
 import { decodeEntityStatement, generateSigningKey, isOk, JwkSigner } from "@oidfed/core";
-import { FedOidcClient } from "@oidfed/oidc";
+import { OidcRelyingPartyRole } from "@oidfed/oidc";
 import { describe, expect, it } from "vitest";
 import { getOidcClientEntity } from "../helpers/launcher.js";
 import { useFederation } from "../helpers/lifecycle.js";
@@ -62,7 +62,7 @@ describe("Client authentication", () => {
 			const opId = `https://op.ofed.test:${port}`;
 
 			const wrongKey = await generateSigningKey("ES256");
-			const assertion = await FedOidcClient.createClientAssertion(
+			const assertion = await OidcRelyingPartyRole.createClientAssertion(
 				rpId,
 				opId,
 				new JwkSigner(wrongKey.privateKey),
@@ -92,7 +92,7 @@ describe("Client authentication", () => {
 			const rpId = `https://rp.ofed.test:${port}`;
 			const opId = `https://op.ofed.test:${port}`;
 
-			const assertion = await FedOidcClient.createClientAssertion(
+			const assertion = await OidcRelyingPartyRole.createClientAssertion(
 				rpId,
 				opId,
 				new JwkSigner(rpEntity.keys.protocolSigning),

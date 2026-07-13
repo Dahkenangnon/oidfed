@@ -20,7 +20,7 @@ export interface FederationSigningKey {
 	readonly publicJwk: JWK;
 }
 
-export interface ManagedFederationKeyProvider extends FederationKeyProvider {
+export interface FederationKeyLifecycleProvider extends FederationKeyProvider {
 	getHistoricalFederationKeys(): Promise<HistoricalKeyEntry[]>;
 	publishKey(key: FederationSigningKey): Promise<void>;
 	switchActiveKey(kid: string, options?: SwitchActiveFederationKeyOptions): Promise<void>;
@@ -63,7 +63,7 @@ export interface MemoryFederationKeyProviderOptions {
 	readonly nowMs?: () => number;
 }
 
-export class MemoryFederationKeyProvider implements ManagedFederationKeyProvider {
+export class MemoryFederationKeyProvider implements FederationKeyLifecycleProvider {
 	static fromJWK(
 		jwk: JWK,
 		options?: MemoryFederationKeyProviderOptions,
@@ -200,7 +200,7 @@ export class MemoryFederationKeyProvider implements ManagedFederationKeyProvider
 	}
 }
 
-export function federationKey(jwk: JWK): FederationSigningKey {
+export function createFederationSigningKey(jwk: JWK): FederationSigningKey {
 	return {
 		signer: new JwkSigner(jwk),
 		publicJwk: stripPrivateFields(jwk),
