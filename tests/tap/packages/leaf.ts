@@ -653,6 +653,29 @@ export default (QUnit: QUnit) => {
 			t.equal(body.split(".").length, 3);
 		});
 
+		test("serves descriptive federation entity metadata at the well-known endpoint", async (t) => {
+			const descriptiveMetadata = {
+				organization_name: "Leaf Federation Entity",
+				contacts: ["ops@rp.example.com"],
+				organization_uri: "https://rp.example.com/about",
+			};
+			const { config } = await createLeafConfig({
+				metadata: {
+					federation_entity: descriptiveMetadata,
+				},
+			});
+			const entity = new Leaf(config);
+			const response = await entity.handleRequest(
+				new Request("https://rp.example.com/.well-known/openid-federation"),
+			);
+			t.equal(response.status, 200);
+			t.equal(response.headers.get("content-type"), MediaType.EntityStatement);
+			const decoded = decodeEntityStatement(await response.text());
+			t.true(isOk(decoded));
+			if (!isOk(decoded)) return;
+			t.deepEqual(decoded.value.payload.metadata?.federation_entity, descriptiveMetadata);
+		});
+
 		test("merges role metadata without mutating caller metadata", async (t) => {
 			const inputMetadata = {
 				federation_entity: { organization_name: "Leaf" },
@@ -694,6 +717,23 @@ export default (QUnit: QUnit) => {
 			if (!isOk(decoded)) return;
 			t.equal(decoded.value.payload.iss, pathEntityId);
 			t.equal(decoded.value.payload.sub, pathEntityId);
+		});
+
+		test("preserves port and path when serving the well-known endpoint", async (t) => {
+			const { config } = await createLeafConfig({
+				entityId: "https://rp.example.com:8443/tenant/" as EntityId,
+			});
+			const entity = new Leaf(config);
+			t.equal(entity.entityId, "https://rp.example.com:8443/tenant");
+			const response = await entity.handleRequest(
+				new Request("https://rp.example.com:8443/tenant/.well-known/openid-federation"),
+			);
+			t.equal(response.status, 200);
+			const decoded = decodeEntityStatement(await response.text());
+			t.true(isOk(decoded));
+			if (!isOk(decoded)) return;
+			t.equal(decoded.value.payload.iss, "https://rp.example.com:8443/tenant");
+			t.equal(decoded.value.payload.sub, "https://rp.example.com:8443/tenant");
 		});
 
 		test("normalizes trailing slash before deriving well-known route", async (t) => {
