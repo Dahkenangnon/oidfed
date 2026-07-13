@@ -5,6 +5,7 @@ import {
 	entityId,
 	generateSigningKey,
 	isOk,
+	type ManagedFederationKeyProvider,
 	resolveTrustChains,
 	validateTrustChain,
 } from "@oidfed/core";
@@ -38,7 +39,18 @@ describe("Key rotation", () => {
 
 			// Generate new key and rotate
 			const newKey = await generateSigningKey("ES256");
-			await ta.rotateSigningKey(federationSigningKey(newKey.privateKey as JWK));
+			const taKeyProvider = taInstance.keyProvider as ManagedFederationKeyProvider;
+			const nextSigningKey = federationSigningKey(newKey.privateKey as JWK);
+			await taKeyProvider.publishKey(nextSigningKey);
+			const overlapEc = await ta.getEntityConfiguration();
+			const overlapDecoded = decodeEntityStatement(overlapEc);
+			expect(isOk(overlapDecoded)).toBe(true);
+			if (!isOk(overlapDecoded)) return;
+			expect(overlapDecoded.value.header.kid).toBe(originalKid);
+			const overlapPayload = overlapDecoded.value.payload as Record<string, unknown>;
+			const overlapJwks = overlapPayload.jwks as { keys: JWK[] };
+			expect(overlapJwks.keys.map((key) => key.kid)).toContain(nextSigningKey.signer.kid);
+			await taKeyProvider.switchActiveKey(nextSigningKey.signer.kid);
 
 			// Fetch new EC — should use new key
 			const newEc = await ta.getEntityConfiguration();
@@ -74,7 +86,6 @@ describe("Key rotation", () => {
 			const port = server.port;
 
 			const iaEntity = getEntity(entities, "https://ia-edu.ofed.test");
-			const ia = iaEntity.server as AuthorityServer;
 
 			// Baseline
 			const opId = entityId(`https://op-uni.ofed.test:${port}`);
@@ -83,7 +94,10 @@ describe("Key rotation", () => {
 
 			// Rotate IA key
 			const newKey = await generateSigningKey("ES256");
-			await ia.rotateSigningKey(federationSigningKey(newKey.privateKey as JWK));
+			const iaKeyProvider = iaEntity.keyProvider as ManagedFederationKeyProvider;
+			const nextSigningKey = federationSigningKey(newKey.privateKey as JWK);
+			await iaKeyProvider.publishKey(nextSigningKey);
+			await iaKeyProvider.switchActiveKey(nextSigningKey.signer.kid);
 
 			// After IA rotation without parent updating the subordinate statement,
 			// the IA's new EC key won't match the parent's subordinate statement JWKS.

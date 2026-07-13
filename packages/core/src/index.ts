@@ -94,8 +94,8 @@ export {
 	type ManagedFederationKeyProvider,
 	MemoryFederationKeyProvider,
 	type MemoryFederationKeyProviderOptions,
-	rotateFederationKey,
 	StaticFederationKeyProvider,
+	type SwitchActiveFederationKeyOptions,
 	validateFederationKeySet,
 } from "./federation-keys.js";
 // HTTP helpers

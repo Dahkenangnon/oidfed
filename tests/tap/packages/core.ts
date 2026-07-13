@@ -6061,56 +6061,68 @@ export default (QUnit: QUnit) => {
 	{
 		const ak_entityId = "https://ta.example.com" as EntityId;
 		module("core / compareTrustAnchorKeys", () => {
-			test("returns match: true when JWK sets have same kids", (t) => {
+			test("returns match when both sources publish the same keys", async (t) => {
+				const keyOne = await generateSigningKey("ES256");
+				const keyTwo = await generateSigningKey("ES256");
 				const ecJwks = {
-					keys: [
-						{ kty: "EC" as const, kid: "key-1", crv: "P-256", x: "x1", y: "y1" },
-						{ kty: "EC" as const, kid: "key-2", crv: "P-256", x: "x2", y: "y2" },
-					],
+					keys: [keyOne.publicKey, keyTwo.publicKey],
 				};
 				const independentJwks = {
-					keys: [
-						{ kty: "EC" as const, kid: "key-2", crv: "P-256", x: "x2", y: "y2" },
-						{ kty: "EC" as const, kid: "key-1", crv: "P-256", x: "x1", y: "y1" },
-					],
+					keys: [keyTwo.publicKey, keyOne.publicKey],
 				};
-				const result = compareTrustAnchorKeys(ecJwks, independentJwks, ak_entityId);
+				const result = await compareTrustAnchorKeys(ecJwks, independentJwks, ak_entityId);
 				t.true(result.match);
-				t.deepEqual(result.missingInEc, []);
-				t.deepEqual(result.missingInIndependent, []);
+				t.deepEqual(result.missingInEntityConfiguration, []);
+				t.deepEqual(result.missingInIndependentSource, []);
+				t.deepEqual(result.mismatchedKeyMaterial, []);
 			});
-			test("returns match: false with diff details when kids differ", (t) => {
+			test("returns missing key details when kids differ", async (t) => {
+				const keyOne = await generateSigningKey("ES256");
+				const keyTwo = await generateSigningKey("ES256");
+				const keyThree = await generateSigningKey("ES256");
+				const ecKeyOne = { ...keyOne.publicKey, kid: "key-1" };
+				const ecKeyTwo = { ...keyTwo.publicKey, kid: "key-2" };
+				const independentKeyTwo = { ...keyTwo.publicKey, kid: "key-2" };
+				const independentKeyThree = { ...keyThree.publicKey, kid: "key-3" };
 				const ecJwks = {
-					keys: [
-						{ kty: "EC" as const, kid: "key-1", crv: "P-256", x: "x1", y: "y1" },
-						{ kty: "EC" as const, kid: "key-2", crv: "P-256", x: "x2", y: "y2" },
-					],
+					keys: [ecKeyOne, ecKeyTwo],
 				};
 				const independentJwks = {
-					keys: [
-						{ kty: "EC" as const, kid: "key-2", crv: "P-256", x: "x2", y: "y2" },
-						{ kty: "EC" as const, kid: "key-3", crv: "P-256", x: "x3", y: "y3" },
-					],
+					keys: [independentKeyTwo, independentKeyThree],
 				};
-				const result = compareTrustAnchorKeys(ecJwks, independentJwks, ak_entityId);
+				const result = await compareTrustAnchorKeys(ecJwks, independentJwks, ak_entityId);
 				t.false(result.match);
-				t.deepEqual(result.missingInEc, ["key-3"]);
-				t.deepEqual(result.missingInIndependent, ["key-1"]);
-				t.deepEqual(result.ecKids, ["key-1", "key-2"]);
-				t.deepEqual(result.independentKids, ["key-2", "key-3"]);
+				t.deepEqual(result.missingInEntityConfiguration, ["key-3"]);
+				t.deepEqual(result.missingInIndependentSource, ["key-1"]);
+				t.deepEqual(result.mismatchedKeyMaterial, []);
 			});
-			test("handles empty JWK sets", (t) => {
+			test("reports same kid with different key material", async (t) => {
+				const ecKey = await generateSigningKey("ES256");
+				const independentKey = await generateSigningKey("ES256");
+				const ecJwks = { keys: [{ ...ecKey.publicKey, kid: "shared-key" }] };
+				const independentJwks = {
+					keys: [{ ...independentKey.publicKey, kid: "shared-key" }],
+				};
+				const result = await compareTrustAnchorKeys(ecJwks, independentJwks, ak_entityId);
+				t.false(result.match);
+				t.deepEqual(result.missingInEntityConfiguration, []);
+				t.deepEqual(result.missingInIndependentSource, []);
+				t.deepEqual(result.mismatchedKeyMaterial, ["shared-key"]);
+			});
+			test("handles empty JWK sets", async (t) => {
+				const keyOne = await generateSigningKey("ES256");
+				const nonEmptyKey = { ...keyOne.publicKey, kid: "key-1" };
 				const emptyJwks = {
 					keys: [] as Array<{ kty: "EC"; kid: string; crv: string; x: string; y: string }>,
 				};
 				const nonEmptyJwks = {
-					keys: [{ kty: "EC" as const, kid: "key-1", crv: "P-256", x: "x1", y: "y1" }],
+					keys: [nonEmptyKey],
 				};
-				const result = compareTrustAnchorKeys(emptyJwks, nonEmptyJwks, ak_entityId);
+				const result = await compareTrustAnchorKeys(emptyJwks, nonEmptyJwks, ak_entityId);
 				t.false(result.match);
-				t.deepEqual(result.ecKids, []);
-				t.deepEqual(result.missingInEc, ["key-1"]);
-				t.deepEqual(result.missingInIndependent, []);
+				t.deepEqual(result.missingInEntityConfiguration, ["key-1"]);
+				t.deepEqual(result.missingInIndependentSource, []);
+				t.deepEqual(result.mismatchedKeyMaterial, []);
 			});
 		});
 	}

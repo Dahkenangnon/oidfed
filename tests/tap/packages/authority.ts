@@ -41,7 +41,6 @@ import {
 	Intermediate,
 	TrustAnchor,
 } from "../../../packages/authority/src/index.js";
-import { rotateKey, rotateKeyCompromise } from "../../../packages/authority/src/keys/index.js";
 
 function createAuthorityServer(config: AuthorityConfig): AuthorityServer {
 	const server =
@@ -59,7 +58,6 @@ function createAuthorityServer(config: AuthorityConfig): AuthorityServer {
 		issueTrustMark: (sub, type) => server.issueTrustMark(sub, type),
 		issueTrustMarkDelegation: (sub, type) => server.issueTrustMarkDelegation(sub, type),
 		getHistoricalKeys: () => server.getHistoricalKeys(),
-		rotateSigningKey: (newKey) => server.rotateSigningKey(newKey),
 		handler: () => (request: Request) => server.handleRequest(request),
 	};
 }
@@ -204,7 +202,9 @@ export default (QUnit: QUnit) => {
 				},
 			});
 
-			await ta.rotateSigningKey(federationKey({ ...nextKey, kid: "authority-key-2" }));
+			t.false("rotateSigningKey" in ta);
+			await keyProvider.publishKey(federationKey({ ...nextKey, kid: "authority-key-2" }));
+			await keyProvider.switchActiveKey("authority-key-2");
 			const rotated = await keyProvider.getFederationKeySet();
 			t.equal(rotated.signer.kid, "authority-key-2");
 		});
@@ -817,32 +817,57 @@ export default (QUnit: QUnit) => {
 	// -------------------------------------------------------------------------
 	// keys/rotation
 	// -------------------------------------------------------------------------
-	module("authority / rotateKey", (hooks) => {
+	module("authority / provider-owned key rollover", (hooks) => {
 		let keyProvider: MemoryFederationKeyProvider;
+		let nowMs: number;
 
 		hooks.beforeEach(async () => {
+			nowMs = 1_000_000;
 			const { privateKey } = await generateSigningKey("ES256");
 			keyProvider = new MemoryFederationKeyProvider(
 				federationKey({ ...privateKey, kid: "old-key" }),
+				{ nowMs: () => nowMs },
 			);
 		});
 
-		test("activates new key and retires old key", async (t) => {
+		test("publishes next key before signer switch", async (t) => {
 			const { privateKey: newKey } = await generateSigningKey("ES256");
-			await rotateKey(keyProvider, federationKey({ ...newKey, kid: "new-key" }));
+			await keyProvider.publishKey(federationKey({ ...newKey, kid: "new-key" }));
+
+			const keySet = await keyProvider.getFederationKeySet();
+			t.equal(keySet.signer.kid, "old-key");
+			t.deepEqual(keySet.jwks.keys.map((k) => k.kid).sort(), ["new-key", "old-key"]);
+		});
+
+		test("switches signer and schedules previous key removal", async (t) => {
+			const { privateKey: newKey } = await generateSigningKey("ES256");
+			await keyProvider.publishKey(federationKey({ ...newKey, kid: "new-key" }));
+			await keyProvider.switchActiveKey("new-key", { retirePreviousAfterMs: 10_000 });
+
 			const keySet = await keyProvider.getFederationKeySet();
 			t.equal(keySet.signer.kid, "new-key");
+			t.deepEqual(keySet.jwks.keys.map((k) => k.kid).sort(), ["new-key", "old-key"]);
+
 			const history = await keyProvider.getHistoricalFederationKeys();
 			const oldKey = history.find((k) => k.kid === "old-key");
 			t.ok(oldKey);
-			t.true((oldKey?.exp ?? 0) > Math.floor(Date.now() / 1000));
+			t.equal(oldKey?.exp, Math.floor((nowMs + 10_000) / 1000));
 		});
 
-		test("old key is still in active keys (retiring)", async (t) => {
+		test("excludes retired key from active JWKS after removal time", async (t) => {
 			const { privateKey: newKey } = await generateSigningKey("ES256");
-			await rotateKey(keyProvider, federationKey({ ...newKey, kid: "new-key" }));
+			await keyProvider.publishKey(federationKey({ ...newKey, kid: "new-key" }));
+			await keyProvider.switchActiveKey("new-key", { retirePreviousAfterMs: 10_000 });
+			nowMs += 10_000;
+
 			const keySet = await keyProvider.getFederationKeySet();
-			t.equal(keySet.jwks.keys.length, 2);
+			t.deepEqual(
+				keySet.jwks.keys.map((k) => k.kid),
+				["new-key"],
+			);
+
+			const history = await keyProvider.getHistoricalFederationKeys();
+			t.ok(history.find((k) => k.kid === "old-key"));
 		});
 	});
 
@@ -3318,9 +3343,8 @@ export default (QUnit: QUnit) => {
 						throw new Error("boom");
 					},
 					getHistoricalFederationKeys: async () => [],
-					addKey: async () => {},
-					activateKey: async () => {},
-					retireKey: async () => {},
+					publishKey: async () => {},
+					switchActiveKey: async () => {},
 					revokeKey: async () => {},
 				},
 			});
@@ -3440,11 +3464,10 @@ export default (QUnit: QUnit) => {
 		test("includes all key states", async (t) => {
 			const { ctx, keyProvider } = await createTestContext();
 			const { privateKey: pk2 } = await generateSigningKey("ES256");
-			await keyProvider.addKey(federationKey({ ...pk2, kid: "pending-key" }));
+			await keyProvider.publishKey(federationKey({ ...pk2, kid: "published-key" }));
 			const { privateKey: pk3 } = await generateSigningKey("ES256");
-			await keyProvider.addKey(federationKey({ ...pk3, kid: "retiring-key" }));
-			await keyProvider.activateKey("retiring-key");
-			await keyProvider.retireKey("retiring-key", Date.now() + 86400000);
+			await keyProvider.publishKey(federationKey({ ...pk3, kid: "new-active-key" }));
+			await keyProvider.switchActiveKey("new-active-key", { retirePreviousAfterMs: 86_400_000 });
 			const handler = createHistoricalKeysHandler(ctx);
 			const res = await handler(
 				new Request("https://authority.example.com/federation_historical_keys"),
@@ -3461,10 +3484,10 @@ export default (QUnit: QUnit) => {
 
 		test("revoked keys have revoked metadata", async (t) => {
 			const { ctx, keyProvider } = await createTestContext();
-			await keyProvider.revokeKey("test-key-1", "keyCompromise");
 			const { privateKey: pk2 } = await generateSigningKey("ES256");
-			await keyProvider.addKey(federationKey({ ...pk2, kid: "new-active" }));
-			await keyProvider.activateKey("new-active");
+			await keyProvider.publishKey(federationKey({ ...pk2, kid: "new-active" }));
+			await keyProvider.switchActiveKey("new-active");
+			await keyProvider.revokeKey("test-key-1", "keyCompromise");
 			const handler = createHistoricalKeysHandler(ctx);
 			const res = await handler(
 				new Request("https://authority.example.com/federation_historical_keys"),
@@ -3524,7 +3547,7 @@ export default (QUnit: QUnit) => {
 		test("omits nbf for keys without activatedAt", async (t) => {
 			const { ctx, keyProvider } = await createTestContext();
 			const { privateKey: pk2 } = await generateSigningKey("ES256");
-			await keyProvider.addKey(federationKey({ ...pk2, kid: "pending-key" }));
+			await keyProvider.publishKey(federationKey({ ...pk2, kid: "published-key" }));
 			const handler = createHistoricalKeysHandler(ctx);
 			const res = await handler(
 				new Request("https://authority.example.com/federation_historical_keys"),
@@ -3536,9 +3559,9 @@ export default (QUnit: QUnit) => {
 			const keys = (decoded.value.payload as Record<string, unknown>).keys as Array<
 				Record<string, unknown>
 			>;
-			const pendingKey = keys.find((k) => k.kid === "pending-key");
-			t.ok(pendingKey);
-			t.equal(pendingKey?.nbf, undefined);
+			const publishedKey = keys.find((k) => k.kid === "published-key");
+			t.ok(publishedKey);
+			t.equal(publishedKey?.nbf, undefined);
 		});
 
 		test("strips private key fields", async (t) => {
@@ -4084,7 +4107,8 @@ export default (QUnit: QUnit) => {
 					active: true,
 				});
 				const { privateKey: newKey } = await generateSigningKey("ES256");
-				await rotateKey(keyProvider, federationKey({ ...newKey, kid: "rotated-key-1" }));
+				await keyProvider.publishKey(federationKey({ ...newKey, kid: "rotated-key-1" }));
+				await keyProvider.switchActiveKey("rotated-key-1");
 				const handler = createTrustMarkStatusHandler(ctx);
 				const res = await handler(postRequest(`trust_mark=${encodeURIComponent(jwt)}`));
 				t.equal(res.status, 200);
@@ -4102,11 +4126,9 @@ export default (QUnit: QUnit) => {
 					active: true,
 				});
 				const { privateKey: newKey } = await generateSigningKey("ES256");
-				await rotateKeyCompromise(
-					keyProvider,
-					federationKey({ ...newKey, kid: "new-key-1" }),
-					"test-key-1",
-				);
+				await keyProvider.publishKey(federationKey({ ...newKey, kid: "new-key-1" }));
+				await keyProvider.switchActiveKey("new-key-1");
+				await keyProvider.revokeKey("test-key-1", "keyCompromise");
 				const handler = createTrustMarkStatusHandler(ctx);
 				const res = await handler(postRequest(`trust_mark=${encodeURIComponent(jwt)}`));
 				t.equal(res.status, 200);
@@ -4918,7 +4940,7 @@ export default (QUnit: QUnit) => {
 		});
 	}
 
-	module("authority / rotateKeyCompromise", (hooks) => {
+	module("authority / compromised key rollover", (hooks) => {
 		let keyProvider: MemoryFederationKeyProvider;
 
 		hooks.beforeEach(async () => {
@@ -4928,13 +4950,11 @@ export default (QUnit: QUnit) => {
 			);
 		});
 
-		test("immediately revokes old key and activates new", async (t) => {
+		test("revokes old key after switching to replacement", async (t) => {
 			const { privateKey: newKey } = await generateSigningKey("ES256");
-			await rotateKeyCompromise(
-				keyProvider,
-				federationKey({ ...newKey, kid: "new-key" }),
-				"compromised-key",
-			);
+			await keyProvider.publishKey(federationKey({ ...newKey, kid: "new-key" }));
+			await keyProvider.switchActiveKey("new-key");
+			await keyProvider.revokeKey("compromised-key", "keyCompromise");
 			const keySet = await keyProvider.getFederationKeySet();
 			t.equal(keySet.signer.kid, "new-key");
 			const history = await keyProvider.getHistoricalFederationKeys();
@@ -4945,11 +4965,9 @@ export default (QUnit: QUnit) => {
 
 		test("revoked key is not in active keys", async (t) => {
 			const { privateKey: newKey } = await generateSigningKey("ES256");
-			await rotateKeyCompromise(
-				keyProvider,
-				federationKey({ ...newKey, kid: "new-key" }),
-				"compromised-key",
-			);
+			await keyProvider.publishKey(federationKey({ ...newKey, kid: "new-key" }));
+			await keyProvider.switchActiveKey("new-key");
+			await keyProvider.revokeKey("compromised-key", "keyCompromise");
 			const keySet = await keyProvider.getFederationKeySet();
 			t.equal(keySet.jwks.keys.length, 1);
 			t.equal(keySet.jwks.keys[0]!.kid, "new-key");
@@ -4957,7 +4975,7 @@ export default (QUnit: QUnit) => {
 	});
 
 	module("authority / key rotation validation", () => {
-		test("rotateKey throws when new key is missing kid", async (t) => {
+		test("published key must have a kid", async (t) => {
 			const { privateKey } = await generateSigningKey("ES256");
 			const { privateKey: newKey } = await generateSigningKey("ES256");
 			const keyWithoutKid = { ...newKey };
@@ -4966,7 +4984,7 @@ export default (QUnit: QUnit) => {
 			t.throws(() => new JwkSigner(keyWithoutKid), /kid/);
 		});
 
-		test("rotateKeyCompromise throws when new key is missing kid", async (t) => {
+		test("replacement key must have a kid", async (t) => {
 			const { privateKey } = await generateSigningKey("ES256");
 			new MemoryFederationKeyProvider(federationKey({ ...privateKey, kid: "compromised" }));
 			const { privateKey: newKey } = await generateSigningKey("ES256");
@@ -5203,12 +5221,14 @@ export default (QUnit: QUnit) => {
 					t.true(isOk(decoded));
 				});
 
-				test("rotateSigningKey rotates the key", async (t) => {
+				test("injected key provider owns signer rollover", async (t) => {
 					const server = createAuthorityServer(srvConfig);
 					const { privateKey: newKey } = await generateSigningKey("ES256");
-					await server.rotateSigningKey(federationKey({ ...newKey, kid: "server-key-2" }));
+					await srvKeyProvider.publishKey(federationKey({ ...newKey, kid: "server-key-2" }));
+					await srvKeyProvider.switchActiveKey("server-key-2");
 					const keySet = await srvKeyProvider.getFederationKeySet();
 					t.equal(keySet.signer.kid, "server-key-2");
+					t.ok(await server.getEntityConfiguration());
 				});
 			});
 
@@ -5974,7 +5994,8 @@ export default (QUnit: QUnit) => {
 					t.equal(activeKeysBefore.jwks.keys.length, 1);
 					const { privateKey: newKey } = await generateSigningKey("ES256");
 					const newSigningKey = federationKey({ ...newKey, kid: "ta-key-2" });
-					await intServer.rotateSigningKey(newSigningKey);
+					await intKeyProvider.publishKey(newSigningKey);
+					await intKeyProvider.switchActiveKey("ta-key-2");
 					const signing = await intKeyProvider.getFederationKeySet();
 					t.equal(signing.signer.kid, "ta-key-2");
 					t.equal(signing.jwks.keys.length, 2);
@@ -6968,10 +6989,11 @@ export default (QUnit: QUnit) => {
 			const histKeys = await intermediate.getHistoricalKeys();
 			t.ok(histKeys);
 
-			// 9. Intermediate rotateSigningKey
+			// 9. Intermediate key provider rollover
 			const { privateKey: newKey } = await generateSigningKey("ES256");
 			const nextSigningKey = { ...newKey, kid: "k2" };
-			await intermediate.rotateSigningKey(federationKey(nextSigningKey));
+			await keyProvider.publishKey(federationKey(nextSigningKey));
+			await keyProvider.switchActiveKey("k2");
 			const keySet = await keyProvider.getFederationKeySet();
 			t.equal(keySet.signer.kid, "k2");
 

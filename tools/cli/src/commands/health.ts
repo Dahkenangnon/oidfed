@@ -7,7 +7,7 @@ import {
 	federationError,
 	fetchEntityConfiguration,
 	type HttpClient,
-	type JWKSet,
+	JWKSetSchema,
 	ok,
 	type Result,
 	WELL_KNOWN_OPENID_FEDERATION,
@@ -110,12 +110,21 @@ export async function handler(args: HealthArgs, deps: HealthDeps): Promise<Resul
 			);
 		}
 
-		let fileJwks: JWKSet;
+		let fileJwksRaw: unknown;
 		try {
-			fileJwks = JSON.parse(taJwksRaw) as JWKSet;
+			fileJwksRaw = JSON.parse(taJwksRaw);
 		} catch {
 			return err(
 				federationError(FederationErrorCode.InvalidRequest, "TA JWKS file is not valid JSON"),
+			);
+		}
+		const fileJwks = JWKSetSchema.safeParse(fileJwksRaw);
+		if (!fileJwks.success) {
+			return err(
+				federationError(
+					FederationErrorCode.InvalidRequest,
+					"TA JWKS file must be a public JWK Set with unique non-empty kids",
+				),
 			);
 		}
 
@@ -124,7 +133,7 @@ export async function handler(args: HealthArgs, deps: HealthDeps): Promise<Resul
 			const payload = decoded.value.payload as Record<string, unknown>;
 			const jwksResult = extractJwks(payload);
 			if (!jwksResult.ok) return jwksResult;
-			keyComparison = compareTrustAnchorKeys(jwksResult.value, fileJwks, eid);
+			keyComparison = await compareTrustAnchorKeys(jwksResult.value, fileJwks.data, eid);
 		}
 	}
 

@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Federation endpoint `private_key_jwt` authentication now resolves remote caller keys through `AuthorityConfig.clientKeyProvider`, defaulting to subordinate storage, instead of live trust-chain discovery.
 - Authority HTTP routing now derives the Entity Configuration path from the normalized Entity Identifier and federation endpoint routes from advertised metadata endpoint URLs.
+- **BREAKING.** Authority server and class facades no longer expose `rotateSigningKey()`. Federation key rollover is owned by the injected `ManagedFederationKeyProvider`, so applications can plug in KMS-backed or database-backed key managers without authority-level lifecycle duplication.
 
 ## [0.8.0] - 2026-06-25
 

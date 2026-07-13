@@ -10,6 +10,7 @@ import {
 	type ManagedFederationKeyProvider,
 	MemoryFederationKeyProvider,
 	type SubordinateStatementPayload,
+	type SwitchActiveFederationKeyOptions,
 	type TrustAnchorSet,
 } from "@oidfed/core";
 import type { LeafConfig } from "@oidfed/leaf";
@@ -130,6 +131,12 @@ void oauthResourceConfigWithInvalidJwks;
 
 void new MemoryFederationKeyProvider(federationSigningKey);
 void new MemoryFederationKeyProvider([federationSigningKey]);
+void managedFederationKeyProvider.publishKey(federationSigningKey);
+void managedFederationKeyProvider.switchActiveKey("next-key");
+void managedFederationKeyProvider.switchActiveKey("next-key", {
+	retirePreviousAfterMs: 60_000,
+} satisfies SwitchActiveFederationKeyOptions);
+void managedFederationKeyProvider.revokeKey("old-key", "keyCompromise");
 
 // @ts-expect-error an initial federation signing key is required.
 void new MemoryFederationKeyProvider();

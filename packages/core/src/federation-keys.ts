@@ -22,13 +22,16 @@ export interface FederationSigningKey {
 
 export interface ManagedFederationKeyProvider extends FederationKeyProvider {
 	getHistoricalFederationKeys(): Promise<HistoricalKeyEntry[]>;
-	addKey(key: FederationSigningKey): Promise<void>;
-	activateKey(kid: string): Promise<void>;
-	retireKey(kid: string, removeAfterMs: number): Promise<void>;
+	publishKey(key: FederationSigningKey): Promise<void>;
+	switchActiveKey(kid: string, options?: SwitchActiveFederationKeyOptions): Promise<void>;
 	revokeKey(kid: string, reason: string): Promise<void>;
 }
 
-type FederationKeyState = "pending" | "active" | "retiring" | "revoked";
+export interface SwitchActiveFederationKeyOptions {
+	readonly retirePreviousAfterMs?: number;
+}
+
+type FederationKeyState = "published" | "active" | "retiring" | "revoked";
 
 interface ManagedFederationKeyEntry {
 	readonly signer: JwtSigner;
@@ -104,8 +107,14 @@ export class MemoryFederationKeyProvider implements ManagedFederationKeyProvider
 	async getFederationKeySet(): Promise<FederationKeySet> {
 		let selected: ManagedFederationKeyEntry | undefined;
 		const keys: JWK[] = [];
+		const now = this.nowMs();
 		for (const entry of this.keys.values()) {
-			if (entry.state === "active" || entry.state === "retiring") {
+			if (
+				entry.state === "active" ||
+				entry.state === "published" ||
+				(entry.state === "retiring" &&
+					(entry.scheduledRemovalAt === undefined || entry.scheduledRemovalAt > now))
+			) {
 				keys.push(entry.publicJwk);
 			}
 			if (entry.state === "active") {
@@ -127,30 +136,40 @@ export class MemoryFederationKeyProvider implements ManagedFederationKeyProvider
 		return Array.from(this.keys.values()).map((entry) => mapHistoricalEntry(entry, nowSeconds));
 	}
 
-	async addKey(key: FederationSigningKey): Promise<void> {
+	async publishKey(key: FederationSigningKey): Promise<void> {
 		const { signer, publicJwk } = this.validateNewKey(key);
 		this.keys.set(signer.kid, {
 			signer,
 			publicJwk,
-			state: "pending",
+			state: "published",
 			createdAt: this.nowMs(),
 		});
 	}
 
-	async activateKey(kid: string): Promise<void> {
+	async switchActiveKey(
+		kid: string,
+		options: SwitchActiveFederationKeyOptions = {},
+	): Promise<void> {
 		const entry = this.getEntry(kid);
-		if (entry.state !== "pending") {
-			throw new Error(`Federation key '${kid}' is in state '${entry.state}', expected 'pending'`);
+		if (entry.state !== "published") {
+			throw new Error(`Federation key '${kid}' is in state '${entry.state}', expected 'published'`);
 		}
-		this.keys.set(kid, { ...entry, state: "active", activatedAt: this.nowMs() });
-	}
 
-	async retireKey(kid: string, removeAfterMs: number): Promise<void> {
-		const entry = this.getEntry(kid);
-		if (entry.state !== "active") {
-			throw new Error(`Federation key '${kid}' is in state '${entry.state}', expected 'active'`);
+		const current = await this.getFederationKeySet();
+		const previousKid = current.signer.kid;
+		const now = this.nowMs();
+		this.keys.set(kid, { ...entry, state: "active", activatedAt: now });
+
+		if (previousKid !== kid) {
+			const previous = this.getEntry(previousKid);
+			if (previous.state === "active") {
+				this.keys.set(previousKid, {
+					...previous,
+					state: "retiring",
+					scheduledRemovalAt: now + (options.retirePreviousAfterMs ?? DEFAULT_KEY_RETIRE_AFTER_MS),
+				});
+			}
 		}
-		this.keys.set(kid, { ...entry, state: "retiring", scheduledRemovalAt: removeAfterMs });
 	}
 
 	async revokeKey(kid: string, reason: string): Promise<void> {
@@ -186,21 +205,6 @@ export function federationKey(jwk: JWK): FederationSigningKey {
 		signer: new JwkSigner(jwk),
 		publicJwk: stripPrivateFields(jwk),
 	};
-}
-
-export async function rotateFederationKey(
-	provider: ManagedFederationKeyProvider,
-	newKey: FederationSigningKey,
-	options?: { removeAfterMs?: number; nowMs?: () => number },
-): Promise<void> {
-	const current = await provider.getFederationKeySet();
-	await provider.addKey(newKey);
-	await provider.activateKey(newKey.signer.kid);
-	const now = options?.nowMs?.() ?? Date.now();
-	await provider.retireKey(
-		current.signer.kid,
-		now + (options?.removeAfterMs ?? DEFAULT_KEY_RETIRE_AFTER_MS),
-	);
 }
 
 export function validateFederationKeySet(keySet: FederationKeySet): void {

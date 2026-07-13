@@ -115,7 +115,7 @@ class CustomStorageAdapter implements StorageAdapter {
 ---
 
 ### Federation Key Rotation
-Federation signing keys are managed by the `ManagedFederationKeyProvider`. The authority supports dynamic signing key rotations and records the history for the historical keys endpoint.
+Federation signing keys are managed by the `ManagedFederationKeyProvider`. Authorities read the current signer, published Federation JWKS, and historical keys from the injected provider; applications that own the provider drive rollover there.
 
 ```ts
 import { federationKey, generateSigningKey } from "@oidfed/core";
@@ -124,8 +124,14 @@ import { federationKey, generateSigningKey } from "@oidfed/core";
 const nextKeyPair = await generateSigningKey("ES256");
 const newSigningKey = federationKey(nextKeyPair.privateKey);
 
-// Rotate active key through the authority instance.
-await ta.rotateSigningKey(newSigningKey);
+// Publish first so participants can refresh the new public key.
+await keyProvider.publishKey(newSigningKey);
+
+// Later, switch signing to the published key and keep the previous key
+// available until its retirement window ends.
+await keyProvider.switchActiveKey(newSigningKey.signer.kid, {
+  retirePreviousAfterMs: 7 * 24 * 60 * 60 * 1000,
+});
 ```
 
 ---

@@ -8,7 +8,6 @@ import type {
 	FederationEntityMetadata,
 	FederationError,
 	FederationOptions,
-	FederationSigningKey,
 	ManagedFederationKeyProvider,
 	Result,
 	TrustAnchorSet,
@@ -47,7 +46,6 @@ import { createTrustMarkHandler, createTrustMarkIssuanceHandler } from "./endpoi
 import { createTrustMarkListHandler } from "./endpoints/trust-mark-list.js";
 import { createTrustMarkStatusHandler } from "./endpoints/trust-mark-status.js";
 import { InvalidAuthorityConfig } from "./errors.js";
-import { rotateKey } from "./keys/index.js";
 import type { ListFilter, StorageAdapter, SubordinateRecord } from "./storage/types.js";
 import {
 	assertMetadataValuesNotNull,
@@ -162,7 +160,6 @@ export interface AuthorityServer {
 	issueTrustMark(sub: string, trustMarkType: string): Promise<string>;
 	issueTrustMarkDelegation(subject: string, trustMarkType: string): Promise<string>;
 	getHistoricalKeys(): Promise<string>;
-	rotateSigningKey(newKey: FederationSigningKey): Promise<void>;
 	handler(): (request: Request) => Promise<Response>;
 }
 
@@ -555,10 +552,6 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 			return buildHistoricalKeys(ctx);
 		},
 
-		async rotateSigningKey(newKey: FederationSigningKey): Promise<void> {
-			await rotateKey(config.keyProvider, newKey);
-		},
-
 		handler(): (request: Request) => Promise<Response> {
 			return router;
 		},
@@ -750,10 +743,6 @@ export class TrustAnchor {
 		return this.server.getHistoricalKeys();
 	}
 
-	async rotateSigningKey(newKey: FederationSigningKey): Promise<void> {
-		return this.server.rotateSigningKey(newKey);
-	}
-
 	async registerSubordinate(
 		record: Omit<SubordinateRecord, "createdAt" | "updatedAt">,
 	): Promise<void> {
@@ -872,10 +861,6 @@ export class Intermediate {
 
 	async getHistoricalKeys(): Promise<string> {
 		return this.server.getHistoricalKeys();
-	}
-
-	async rotateSigningKey(newKey: FederationSigningKey): Promise<void> {
-		return this.server.rotateSigningKey(newKey);
 	}
 
 	async registerSubordinate(
