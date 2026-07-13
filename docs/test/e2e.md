@@ -113,8 +113,21 @@ Express app factories that bridge Express `(req, res)` to the library's Web API 
 
 ```typescript
 // The bridge pattern (from docs/wiring-guide.md)
+const headers = new Headers();
+for (const [name, value] of Object.entries(req.headers)) {
+  if (Array.isArray(value)) {
+    for (const item of value) headers.append(name, item);
+  } else if (value !== undefined) {
+    headers.set(name, value);
+  }
+}
+
 const url = new URL(req.originalUrl, entityId);
-const request = new Request(url.toString(), { method, headers, body });
+const request = new Request(url.toString(), {
+  method: req.method,
+  headers,
+  ...(body !== undefined ? { body } : {})
+});
 const response = await handler(request);
 res.status(response.status);
 for (const [key, value] of response.headers) res.setHeader(key, value);

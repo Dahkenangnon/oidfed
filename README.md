@@ -57,6 +57,7 @@ An [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) 
 import { Leaf } from "@oidfed/leaf";
 import { TrustAnchor, Intermediate, MemoryStorageAdapter } from "@oidfed/authority";
 import { OidcRelyingPartyRole, OidcProviderRole, StaticProtocolSigningKeyProvider } from "@oidfed/oidc";
+import { createTrustAnchorSet } from "@oidfed/core";
 
 // 1. Create a Leaf Entity composed with an OIDC Relying Party role
 const leaf = new Leaf({
@@ -93,8 +94,11 @@ const ta = new TrustAnchor({
 });
 
 // 3. Create an Intermediate Authority composed with an OIDC Provider role
-const trustAnchors = new Map([
-  ["https://ta.example.org", { jwks: { keys: [taPublicKey] } }]
+const trustAnchors = createTrustAnchorSet([
+  {
+    entityId: "https://ta.example.org",
+    jwks: { keys: [taPublicKey] }
+  }
 ]);
 
 const ia = new Intermediate({

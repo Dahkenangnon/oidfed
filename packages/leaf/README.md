@@ -50,12 +50,18 @@ deno add npm:@oidfed/core npm:@oidfed/leaf
 ```ts
 import { Leaf } from "@oidfed/leaf";
 import { OidcRelyingPartyRole, StaticProtocolSigningKeyProvider } from "@oidfed/oidc";
-import { JwkSigner, MemoryFederationKeyProvider, createFederationSigningKey } from "@oidfed/core";
+import {
+  createFederationSigningKey,
+  JwkSigner,
+  MemoryFederationKeyProvider,
+} from "@oidfed/core";
 
 const leaf = new Leaf({
   entityId: "https://rp.example.com",
   authorityHints: ["https://federation.example.org"],
-  keyProvider: new MemoryFederationKeyProvider(createFederationSigningKey(myFederationSigningKey)),
+  keyProvider: new MemoryFederationKeyProvider(
+    createFederationSigningKey(myFederationSigningKey),
+  ),
   metadata: {
     federation_entity: {
       organization_name: "My Relying Party",

@@ -59,12 +59,18 @@ OIDC/OAuth protocol keys are separate from federation entity keys:
 ```ts
 import { Leaf } from "@oidfed/leaf";
 import { OidcRelyingPartyRole, StaticProtocolSigningKeyProvider } from "@oidfed/oidc";
-import { JwkSigner, MemoryFederationKeyProvider, createFederationSigningKey } from "@oidfed/core";
+import {
+  createFederationSigningKey,
+  JwkSigner,
+  MemoryFederationKeyProvider,
+} from "@oidfed/core";
 
 const rpEntity = new Leaf({
   entityId: "https://rp.example.com",
   authorityHints: ["https://ta.example.org"],
-  keyProvider: new MemoryFederationKeyProvider(createFederationSigningKey(federationSigningKey)),
+  keyProvider: new MemoryFederationKeyProvider(
+    createFederationSigningKey(federationSigningKey),
+  ),
   metadata: {
     federation_entity: {
       organization_name: "My Relying Party",
@@ -91,12 +97,16 @@ const rpEntity = new Leaf({
 ```ts
 import { TrustAnchor, MemoryStorageAdapter } from "@oidfed/authority";
 import { OidcProviderRole } from "@oidfed/oidc";
+import { createTrustAnchorSet } from "@oidfed/core";
 
 const opEntity = new TrustAnchor({
   entityId: "https://op.example.com",
   keyProvider,
-  trustAnchors: new Map([
-    ["https://op.example.com", { jwks: { keys: [opFederationPublicKey] } }],
+  trustAnchors: createTrustAnchorSet([
+    {
+      entityId: "https://op.example.com",
+      jwks: { keys: [opFederationPublicKey] },
+    },
   ]),
   storage: new MemoryStorageAdapter(),
   metadata: {

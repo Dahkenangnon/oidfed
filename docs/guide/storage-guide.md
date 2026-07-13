@@ -104,7 +104,7 @@ Federation key lifecycle remains separate from storage. A database may hold publ
 
 Never place private JWK material in `StorageAdapter` or published federation JWKS.
 
-The stable API exposes only `StorageAdapter`, its repository capabilities, and `MemoryStorageAdapter`. Pre-v1 store names remain in changelogs solely as release history and are not compatibility aliases.
+The stable API exposes only `StorageAdapter`, its repository capabilities, and `MemoryStorageAdapter`.
 
 ## Production Checklist
 

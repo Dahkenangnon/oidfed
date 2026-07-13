@@ -59,7 +59,9 @@ import {
 
 const TA_ID = entityId("https://edugain.geant.org");
 const federationKeyPair = await generateSigningKey("ES256");
-const keyProvider = new MemoryFederationKeyProvider(createFederationSigningKey(federationKeyPair.privateKey));
+const keyProvider = new MemoryFederationKeyProvider(
+  createFederationSigningKey(federationKeyPair.privateKey),
+);
 const storage = new MemoryStorageAdapter();
 
 const ta = new TrustAnchor({
@@ -83,11 +85,23 @@ await ta.listSubordinates(); // (just to show the API)
 // Wire into Express
 const app = express();
 
+function headersFromNode(headers: express.Request["headers"]): Headers {
+  const result = new Headers();
+  for (const [name, value] of Object.entries(headers)) {
+    if (Array.isArray(value)) {
+      for (const item of value) result.append(name, item);
+    } else if (value !== undefined) {
+      result.set(name, value);
+    }
+  }
+  return result;
+}
+
 app.all("/*", async (req, res) => {
   const url = new URL(req.originalUrl, `https://${req.headers.host}`);
   const request = new Request(url.toString(), {
     method: req.method,
-    headers: req.headers as Record<string, string>,
+    headers: headersFromNode(req.headers),
     body: req.method !== "GET" && req.method !== "HEAD" ? req.body : undefined,
   });
 
@@ -102,12 +116,13 @@ app.all("/*", async (req, res) => {
 
 app.listen(443);
 ```
-```
 
 ### Adding Subordinates
 
 ```typescript
 import { entityId } from "@oidfed/core";
+
+const now = Math.floor(Date.now() / 1000);
 
 // Register SWAMID as an Intermediate subordinate
 await storage.subordinates.add({
@@ -121,8 +136,8 @@ await storage.subordinates.add({
       federation_list_endpoint: "https://swamid.se/federation_list",
     },
   },
-  createdAt: Date.now() / 1000,
-  updatedAt: Date.now() / 1000,
+  createdAt: now,
+  updatedAt: now,
 });
 
 // Register InCommon as an Intermediate subordinate
@@ -131,8 +146,8 @@ await storage.subordinates.add({
   jwks: { keys: [incommonPublicKey] },
   entityTypes: ["federation_entity"],
   isIntermediate: true,
-  createdAt: Date.now() / 1000,
-  updatedAt: Date.now() / 1000,
+  createdAt: now,
+  updatedAt: now,
 });
 ```
 
@@ -149,19 +164,24 @@ import {
 } from "@oidfed/authority";
 import {
   entityId,
+  createTrustAnchorSet,
   createFederationSigningKey,
   generateSigningKey,
   MemoryFederationKeyProvider,
 } from "@oidfed/core";
-import type { TrustAnchorSet } from "@oidfed/core";
 
 const SWAMID_ID = entityId("https://swamid.se");
 const federationKeyPair = await generateSigningKey("ES256");
-const keyProvider = new MemoryFederationKeyProvider(createFederationSigningKey(federationKeyPair.privateKey));
+const keyProvider = new MemoryFederationKeyProvider(
+  createFederationSigningKey(federationKeyPair.privateKey),
+);
 
 // Trust Anchor keys for chain validation during registration
-const trustAnchors: TrustAnchorSet = new Map([
-  ["https://edugain.geant.org", { jwks: { keys: [taPublicKey] } }],
+const trustAnchors = createTrustAnchorSet([
+  {
+    entityId: "https://edugain.geant.org",
+    jwks: { keys: [taPublicKey] },
+  },
 ]);
 
 const swamid = new Intermediate({
@@ -197,20 +217,25 @@ import { Intermediate, MemoryStorageAdapter } from "@oidfed/authority";
 import { OidcProviderRole } from "@oidfed/oidc";
 import {
   entityId,
+  createTrustAnchorSet,
   createFederationSigningKey,
   generateSigningKey,
   isOk,
   MemoryFederationKeyProvider,
 } from "@oidfed/core";
-import type { TrustAnchorSet } from "@oidfed/core";
 
 const OP_ID = entityId("https://op.umu.se");
 const federationKeyPair = await generateSigningKey("ES256");
-const keyProvider = new MemoryFederationKeyProvider(createFederationSigningKey(federationKeyPair.privateKey));
+const keyProvider = new MemoryFederationKeyProvider(
+  createFederationSigningKey(federationKeyPair.privateKey),
+);
 const storage = new MemoryStorageAdapter();
 
-const trustAnchors: TrustAnchorSet = new Map([
-  ["https://edugain.geant.org", { jwks: { keys: [taPublicKey] } }],
+const trustAnchors = createTrustAnchorSet([
+  {
+    entityId: "https://edugain.geant.org",
+    jwks: { keys: [taPublicKey] },
+  },
 ]);
 
 // --- Federation server (Entity Configuration + role endpoints) ---
@@ -275,9 +300,18 @@ app.all("/.well-known/openid-federation", async (req, res) => {
 
 // Route explicit registration requests to the OidcProviderRole role handler
 app.post("/registration", async (req, res) => {
+  const headers = new Headers();
+  for (const [name, value] of Object.entries(req.headers)) {
+    if (Array.isArray(value)) {
+      for (const item of value) headers.append(name, item);
+    } else if (value !== undefined) {
+      headers.set(name, value);
+    }
+  }
+
   const request = new Request(`https://op.umu.se${req.originalUrl}`, {
     method: "POST",
-    headers: req.headers as Record<string, string>,
+    headers,
     body: req.body,
   });
   const response = await opAuthority.handleRequest(request);
@@ -333,15 +367,14 @@ import {
   StaticProtocolSigningKeyProvider,
 } from "@oidfed/oidc";
 import {
-  discoverEntity,
   entityId,
+  createTrustAnchorSet,
   createFederationSigningKey,
   generateSigningKey,
   isOk,
   JwkSigner,
   MemoryFederationKeyProvider,
 } from "@oidfed/core";
-import type { TrustAnchorSet } from "@oidfed/core";
 
 const RP_ID = entityId("https://wiki.ligo.org");
 const federationKeyPair = await generateSigningKey("ES256");
@@ -350,8 +383,11 @@ const federationKeyProvider = new MemoryFederationKeyProvider(
   createFederationSigningKey(federationKeyPair.privateKey),
 );
 
-const trustAnchors: TrustAnchorSet = new Map([
-  ["https://edugain.geant.org", { jwks: { keys: [taPublicKey] } }],
+const trustAnchors = createTrustAnchorSet([
+  {
+    entityId: "https://edugain.geant.org",
+    jwks: { keys: [taPublicKey] },
+  },
 ]);
 
 // Federation keys sign the RP Entity Configuration. Protocol keys sign
@@ -399,25 +435,19 @@ app.get("/.well-known/openid-federation", async (req, res) => {
   res.end(await response.text());
 });
 
-// Login: discover OP, register, redirect
+// Login: register with the OP and redirect
 app.get("/login", async (req, res) => {
   const opId = req.query.op as string;
 
-  // 1. Discover the OP
-  const opDiscoveryResult = await discoverEntity(entityId(opId), trustAnchors, {
-    httpClient: fetch,
-  });
-  if (!isOk(opDiscoveryResult)) {
-    res.status(400).send("Discovery failed: " + opDiscoveryResult.error.description);
-    return;
-  }
-  const opDiscovery = opDiscoveryResult.value;
-
-  // 2. Automatic registration — builds Request Object with trust chain using OIDC role instance.
-  const resultVal = await rpRole.createAuthorizationRequest(
-    opDiscovery,
-    { scope: "openid profile", state: "random-state" },
-    trustAnchors,
+  // Automatic registration discovers the OP, validates trust, and builds the Request Object.
+  const resultVal = await rpRole.automaticallyRegister(
+    {
+      opEntityId: opId,
+      redirect_uri: "https://wiki.ligo.org/callback",
+      scope: "openid profile",
+      state: "random-state",
+    },
+    { trustAnchors, httpClient: fetch },
   );
 
   if (!isOk(resultVal)) {
@@ -426,7 +456,6 @@ app.get("/login", async (req, res) => {
   }
   const result = resultVal.value;
 
-  // 3. Redirect to OP
   if (result.delivery !== "query") throw new Error("expected query-mode result");
   res.redirect(result.authorizationUrl);
 });
@@ -513,5 +542,5 @@ Sequence when a user at `wiki.ligo.org` authenticates via `op.umu.se`:
 
 - **Cross-OP replay prevention**: `OidcProviderRole.processAutomaticRegistration` validates the Request Object `aud` claim against the initialized OP entity ID
 - **JTI replay detection**: The `replayStore` prevents Request Object reuse
-- **Branded DiscoveryResult**: Only `discoverEntity()` can produce it — prevents unchecked data from flowing into registration
+- **Trusted discovery inputs**: RP registration helpers resolve and validate peer metadata before building registration artifacts, and lower-level registration helpers accept only branded `DiscoveryResult` values
 - **Trust chain expiry**: Explicit registration results include `trustChainExpiresAt` — the RP must re-register before this time

@@ -50,13 +50,16 @@ deno add npm:@oidfed/core npm:@oidfed/authority
 
 ```ts
 import { TrustAnchor, MemoryStorageAdapter } from "@oidfed/authority";
-import { generateSigningKey, MemoryFederationKeyProvider, createFederationSigningKey } from "@oidfed/core";
+import {
+  createFederationSigningKey,
+  generateSigningKey,
+  MemoryFederationKeyProvider,
+} from "@oidfed/core";
 
 const signingKey = await generateSigningKey("ES256");
-const keyProvider = new MemoryFederationKeyProvider(createFederationSigningKey({
-  ...signingKey.privateKey,
-  kid: "key-1",
-}));
+const keyProvider = new MemoryFederationKeyProvider(
+  createFederationSigningKey(signingKey.privateKey),
+);
 
 const ta = new TrustAnchor({
   entityId: "https://ta.example.org",

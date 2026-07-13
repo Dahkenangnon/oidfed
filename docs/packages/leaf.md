@@ -1,5 +1,11 @@
 # `@oidfed/leaf`
 
+[![npm](https://img.shields.io/npm/v/@oidfed/leaf.svg)](https://www.npmjs.com/package/@oidfed/leaf)
+[![downloads](https://img.shields.io/npm/dm/@oidfed/leaf.svg)](https://www.npmjs.com/package/@oidfed/leaf)
+[![license](https://img.shields.io/npm/l/@oidfed/leaf.svg)](https://github.com/Dahkenangnon/oidfed/blob/main/packages/leaf/LICENSE)
+[![install size](https://packagephobia.com/badge?p=@oidfed/leaf)](https://packagephobia.com/result?p=@oidfed/leaf)
+[![coverage](https://img.shields.io/badge/coverage-%E2%89%A590%25-brightgreen)](https://github.com/Dahkenangnon/oidfed/blob/main/scripts/coverage-check.sh)
+
 Leaf Entity toolkit — Entity Configuration serving, authority discovery, and trust chain participation for any entity at the edge of an OpenID Federation.
 
 ## Overview
@@ -16,11 +22,18 @@ A Leaf entity publishes its own self-signed configuration but relies on superior
 ```ts
 import { Leaf } from "@oidfed/leaf";
 import { OidcRelyingPartyRole, StaticProtocolSigningKeyProvider } from "@oidfed/oidc";
-import { createFederationSigningKey, generateSigningKey, JwkSigner, MemoryFederationKeyProvider } from "@oidfed/core";
+import {
+  createFederationSigningKey,
+  generateSigningKey,
+  JwkSigner,
+  MemoryFederationKeyProvider,
+} from "@oidfed/core";
 
 // 1. Generate keys and key providers
 const keyPair = await generateSigningKey("ES256");
-const keyProvider = new MemoryFederationKeyProvider(createFederationSigningKey(keyPair.privateKey));
+const keyProvider = new MemoryFederationKeyProvider(
+  createFederationSigningKey(keyPair.privateKey),
+);
 
 // 2. Generate OIDC protocol keys and initialize the protocol key provider
 const protocolKeyPair = await generateSigningKey("ES256");
@@ -63,10 +76,19 @@ import express from "express";
 const app = express();
 
 app.use(async (req, res) => {
+  const headers = new Headers();
+  for (const [name, value] of Object.entries(req.headers)) {
+    if (Array.isArray(value)) {
+      for (const item of value) headers.append(name, item);
+    } else if (value !== undefined) {
+      headers.set(name, value);
+    }
+  }
+
   // Translate Node request to standard Web Request
   const webRequest = new Request(`https://${req.headers.host}${req.url}`, {
     method: req.method,
-    headers: req.headers as any,
+    headers,
     body: req.method !== "GET" && req.method !== "HEAD" ? req : undefined
   });
 

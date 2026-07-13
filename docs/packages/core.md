@@ -1,5 +1,11 @@
 # `@oidfed/core`
 
+[![npm](https://img.shields.io/npm/v/@oidfed/core.svg)](https://www.npmjs.com/package/@oidfed/core)
+[![downloads](https://img.shields.io/npm/dm/@oidfed/core.svg)](https://www.npmjs.com/package/@oidfed/core)
+[![license](https://img.shields.io/npm/l/@oidfed/core.svg)](https://github.com/Dahkenangnon/oidfed/blob/main/packages/core/LICENSE)
+[![install size](https://packagephobia.com/badge?p=@oidfed/core)](https://packagephobia.com/result?p=@oidfed/core)
+[![coverage](https://img.shields.io/badge/coverage-%E2%89%A590%25-brightgreen)](https://github.com/Dahkenangnon/oidfed/blob/main/scripts/coverage-check.sh)
+
 Federation primitives for JavaScript — entity statements, trust chain resolution, metadata policy, cryptographic verification, and federation signing abstractions. This is the foundational layer of the OpenID Federation 1.0/1.1 implementation.
 
 ## Overview
@@ -225,12 +231,11 @@ Federation signing keys are exposed through two contracts:
 OIDC/OAuth protocol keys remain separate from federation entity keys and are configured through protocol key providers in `@oidfed/oidc`.
 
 ```ts
-import { JwkSigner, MemoryFederationKeyProvider } from "@oidfed/core";
+import { createFederationSigningKey, MemoryFederationKeyProvider } from "@oidfed/core";
 
-const keyProvider = new MemoryFederationKeyProvider({
-  signer: new JwkSigner(activePrivateKey),
-  publicJwk: activePublicKey
-});
+const keyProvider = new MemoryFederationKeyProvider(
+  createFederationSigningKey(activePrivateKey),
+);
 
 // The in-memory provider implements FederationKeyLifecycleProvider
 // and requires at least one initial active signing key.

@@ -1,5 +1,11 @@
 # `@oidfed/authority`
 
+[![npm](https://img.shields.io/npm/v/@oidfed/authority.svg)](https://www.npmjs.com/package/@oidfed/authority)
+[![downloads](https://img.shields.io/npm/dm/@oidfed/authority.svg)](https://www.npmjs.com/package/@oidfed/authority)
+[![license](https://img.shields.io/npm/l/@oidfed/authority.svg)](https://github.com/Dahkenangnon/oidfed/blob/main/packages/authority/LICENSE)
+[![install size](https://packagephobia.com/badge?p=@oidfed/authority)](https://packagephobia.com/result?p=@oidfed/authority)
+[![coverage](https://img.shields.io/badge/coverage-%E2%89%A590%25-brightgreen)](https://github.com/Dahkenangnon/oidfed/blob/main/scripts/coverage-check.sh)
+
 Trust Anchor and Intermediate Authority operations — subordinate management, statement issuance, federation endpoint serving, and policy enforcement for OpenID Federation 1.0/1.1 deployments.
 
 ## Overview
@@ -15,11 +21,17 @@ A **Trust Anchor** is a root authority with no superiors, which serves as the tr
 
 ```ts
 import { TrustAnchor, Intermediate, MemoryStorageAdapter } from "@oidfed/authority";
-import { createFederationSigningKey, generateSigningKey, MemoryFederationKeyProvider } from "@oidfed/core";
+import {
+  createFederationSigningKey,
+  generateSigningKey,
+  MemoryFederationKeyProvider,
+} from "@oidfed/core";
 
 // 1. Generate keys and key provider
 const keyPair = await generateSigningKey("ES256");
-const keyProvider = new MemoryFederationKeyProvider(createFederationSigningKey(keyPair.privateKey));
+const keyProvider = new MemoryFederationKeyProvider(
+  createFederationSigningKey(keyPair.privateKey),
+);
 
 const storage = new MemoryStorageAdapter({ trustMarks: true });
 
@@ -165,10 +177,19 @@ import express from "express";
 const app = express();
 
 app.use(async (req, res) => {
+  const headers = new Headers();
+  for (const [name, value] of Object.entries(req.headers)) {
+    if (Array.isArray(value)) {
+      for (const item of value) headers.append(name, item);
+    } else if (value !== undefined) {
+      headers.set(name, value);
+    }
+  }
+
   // Translate Express request to Web standard Request
   const webRequest = new Request(`https://${req.headers.host}${req.url}`, {
     method: req.method,
-    headers: req.headers as any,
+    headers,
     body: req.method !== "GET" && req.method !== "HEAD" ? req : undefined
   });
 

@@ -1,5 +1,11 @@
 # `@oidfed/oidc`
 
+[![npm](https://img.shields.io/npm/v/@oidfed/oidc.svg)](https://www.npmjs.com/package/@oidfed/oidc)
+[![downloads](https://img.shields.io/npm/dm/@oidfed/oidc.svg)](https://www.npmjs.com/package/@oidfed/oidc)
+[![license](https://img.shields.io/npm/l/@oidfed/oidc.svg)](https://github.com/Dahkenangnon/oidfed/blob/main/packages/oidc/LICENSE)
+[![install size](https://packagephobia.com/badge?p=@oidfed/oidc)](https://packagephobia.com/result?p=@oidfed/oidc)
+[![coverage](https://img.shields.io/badge/coverage-%E2%89%A585%25-brightgreen)](https://github.com/Dahkenangnon/oidfed/blob/main/scripts/coverage-check.sh)
+
 OpenID Connect and OAuth 2.0 federation flows — automatic and explicit client registration, Request Object validation, and RP/OP metadata validation as defined in OpenID Federation 1.0.
 
 ## Overview
@@ -11,19 +17,23 @@ The `@oidfed/oidc` package bridges federation trust chains with OIDC/OAuth clien
 ## Capabilities & Usage Guide
 
 ### Composing Roles with Parent Entities
-Roles represent OIDC and OAuth functions (such as Relying Parties or OpenID Providers). They are composed directly into a parent `Leaf`, `TrustAnchor`, or `Intermediates` entity. The parent entity merges the role's metadata and routes standard path requests to the role's handlers automatically.
+Roles represent OIDC and OAuth functions (such as Relying Parties or OpenID Providers). They are composed directly into a parent `Leaf`, `TrustAnchor`, or `Intermediate` entity. The parent entity merges the role's metadata and routes standard path requests to the role's handlers automatically.
 
 ```ts
 import { Leaf } from "@oidfed/leaf";
 import { OidcRelyingPartyRole, StaticProtocolSigningKeyProvider } from "@oidfed/oidc";
-import { generateSigningKey, JwkSigner, MemoryFederationKeyProvider } from "@oidfed/core";
+import {
+  createFederationSigningKey,
+  generateSigningKey,
+  JwkSigner,
+  MemoryFederationKeyProvider,
+} from "@oidfed/core";
 
 // 1. Setup federation keys
 const fedKeyPair = await generateSigningKey("ES256");
-const keyProvider = new MemoryFederationKeyProvider({
-  signer: new JwkSigner(fedKeyPair.privateKey),
-  publicJwk: fedKeyPair.publicKey
-});
+const keyProvider = new MemoryFederationKeyProvider(
+  createFederationSigningKey(fedKeyPair.privateKey),
+);
 
 // 2. Setup protocol key provider (used to sign Request Objects)
 const protocolKeyPair = await generateSigningKey("ES256");
@@ -57,38 +67,33 @@ const leaf = new Leaf({
 ---
 
 ### Client-Side Automatic Registration
-For automatic registration, RPs sign authorization requests (Request Objects) that carry their metadata and trust chain in header parameters. The client role generates this JWT and prepares standard authorization parameters automatically.
+For automatic registration, RPs sign authorization requests (Request Objects) that carry their metadata and trust chain in header parameters. Use `OidcRelyingPartyRole.automaticallyRegister(...)` for the normal RP flow: it discovers the OP, validates the selected trust chain, signs the Request Object, and returns the delivery-specific authorization parameters. Use `createAuthorizationRequest(...)` only when you already have a validated `DiscoveryResult`.
 
 When `requestDelivery: "par"` is used, the role posts the signed Request Object with `private_key_jwt` client authentication. Both the Request Object signer and client-assertion signer must be published in the RP protocol metadata through `jwks`, `jwks_uri`, or `signed_jwks_uri`. The current API does not configure mutual-TLS/self-signed TLS client authentication for PAR.
 
 When `requestDelivery: "request_uri"` is used, OP metadata that explicitly sets `request_uri_parameter_supported: false` blocks delivery before an authorization URL is produced.
 
 ```ts
-import { Leaf } from "@oidfed/leaf";
 import { createTrustAnchorSet, isOk } from "@oidfed/core";
 
-// 1. Resolve and validate OP's metadata
 const trustAnchors = createTrustAnchorSet([
   { entityId: "https://ta.example.org", jwks: { keys: [taKey] } }
 ]);
-const opDiscoveryResult = await Leaf.discoverEntity(
-  "https://op.example.com",
-  trustAnchors,
-  { httpClient: fetch }
+
+const authzResult = await rpRole.automaticallyRegister(
+  {
+    opEntityId: "https://op.example.com",
+    redirect_uri: "https://rp.example.com/callback",
+    scope: "openid profile",
+    state: "xyz-state-abc",
+    requestDelivery: "query"
+  },
+  { trustAnchors, httpClient: fetch }
 );
 
-if (isOk(opDiscoveryResult)) {
-  // 2. Build authorization request
-  const authzResult = await rpRole.createAuthorizationRequest(
-    opDiscoveryResult.value,
-    { scope: "openid profile", state: "xyz-state-abc" },
-    trustAnchors
-  );
-
-  if (isOk(authzResult)) {
-    const { authorizationUrl } = authzResult.value;
-    console.log("Redirect user to:", authorizationUrl);
-  }
+if (isOk(authzResult)) {
+  const { authorizationUrl } = authzResult.value;
+  console.log("Redirect user to:", authorizationUrl);
 }
 ```
 
@@ -107,9 +112,13 @@ OP-side explicit registration does not publish registration-management tokens in
 
 ```ts
 import { OidcProviderRole, OIDCRegistrationAdapter } from "@oidfed/oidc";
+import { createTrustAnchorSet } from "@oidfed/core";
 
-const trustAnchors = new Map([
-  ["https://ta.example.org", { jwks: { keys: [taPublicKey] } }]
+const trustAnchors = createTrustAnchorSet([
+  {
+    entityId: "https://ta.example.org",
+    jwks: { keys: [taPublicKey] }
+  }
 ]);
 
 const opRole = new OidcProviderRole({
@@ -174,12 +183,12 @@ Configuration parameters used to instantiate `OidcRelyingPartyRole` and `OAuthCl
 | `protocolKeyProvider` | `ProtocolSigningKeyProvider` | **Yes** | Provider managing active signing keys for OIDC/OAuth protocol assertions (e.g. Request Objects). |
 | `metadata` | `Record<string, unknown>` | No | Role-specific metadata parameters (e.g. `redirect_uris`, `response_types`, `jwks`) merged under the corresponding entity type key. |
 | `requestObjectTtlSeconds` | `number` | No | Lifespan in seconds for generated Request Objects. Defaults to 60. |
-| `includePeerTrustChain` | `boolean` | No | Whether to include a Trust Chain for the peer entity (OP) in the `peer_trust_chain` JWS header, as defined in Section 4.4. Defaults to false. |
+| `includePeerTrustChain` | `boolean` | No | Whether to include a Trust Chain for the peer entity (OP) in the `peer_trust_chain` JWS header. Defaults to false. |
 | `requestDelivery` | `RequestDelivery` | No | Request object transmission mode: `"form_post"` (default), `"query"`, `"request_uri"`, or `"par"`. |
-| `requestUri` | `string` | No | Prefiled Request Object URI if using `"request_uri"` transmission delivery. |
+| `requestUri` | `string` | No | Preconfigured Request Object URI if using `"request_uri"` transmission delivery. |
 
 ### `AutomaticRegistrationResult`
-The result of `OidcRelyingPartyRole.createAuthorizationRequest(...)` is a discriminated union based on the selected `requestDelivery` mode:
+The result of `OidcRelyingPartyRole.automaticallyRegister(...)` and the lower-level `createAuthorizationRequest(...)` helper is a discriminated union based on the selected `requestDelivery` mode:
 
 - **`delivery: "query"`**:
   - `requestObjectJwt` (`string`): The signed Request Object JWT.
