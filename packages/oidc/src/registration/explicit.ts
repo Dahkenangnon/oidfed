@@ -17,7 +17,6 @@ import {
 	type ParsedEntityStatement,
 	type Result,
 	resolveTrustChainForAnchor,
-	resolveTrustChains,
 	signEntityStatement,
 	type TrustAnchorSet,
 	validateFederationKeySet,
@@ -29,7 +28,7 @@ import {
 	OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE,
 } from "../constants.js";
 import { OpenIDRelyingPartyRegistrationResponseMetadataSchema } from "../schemas/metadata.js";
-import { getRegistrationTypes } from "./helpers.js";
+import { getRegistrationTypes, selectSharedRegistrationTrustChains } from "./helpers.js";
 
 export interface ExplicitRegistrationConfig {
 	readonly entityId: EntityId;
@@ -77,7 +76,18 @@ export async function explicitRegistration(
 	trustAnchors: TrustAnchorSet,
 	options?: FederationOptions,
 ): Promise<Result<ExplicitRegistrationResult>> {
-	const opMeta = discovery.resolvedMetadata.openid_provider as Record<string, unknown> | undefined;
+	const sharedChains = await selectSharedRegistrationTrustChains(
+		rpConfig.entityId,
+		discovery.entityId as EntityId,
+		discovery.trustChain,
+		trustAnchors,
+		options,
+	);
+	if (!sharedChains.ok) return err(sharedChains.error);
+
+	const opMeta = sharedChains.value.opChain.resolvedMetadata.openid_provider as
+		| Record<string, unknown>
+		| undefined;
 	const registrationTypes = getRegistrationTypes(opMeta);
 	if (!registrationTypes.includes(ClientRegistrationType.Explicit)) {
 		return err(
@@ -98,44 +108,14 @@ export async function explicitRegistration(
 		);
 	}
 
-	const opTrustAnchorId = discovery.trustChain.trustAnchorId;
-	const rpTaIds = new Set<string>();
-	for (const taId of trustAnchors.keys()) {
-		rpTaIds.add(taId as string);
-	}
-	if (!rpTaIds.has(opTrustAnchorId as string)) {
-		return err(
-			federationError(
-				FederationErrorCode.InvalidTrustAnchor,
-				"No shared Trust Anchor between RP and OP",
-			),
-		);
-	}
-
+	const selectedTrustAnchorId = sharedChains.value.trustAnchorId;
 	const authorityHints = rpConfig.authorityHints;
 
 	const keySet = await rpConfig.keyProvider.getFederationKeySet();
 	validateFederationKeySet(keySet);
 	const now = nowSeconds(options?.clock);
 	const ttl = rpConfig.entityConfigurationTtlSeconds ?? DEFAULT_ENTITY_STATEMENT_TTL_SECONDS;
-
-	// Include RP trust chain in header (recommended)
-	const rpChainResult = await resolveTrustChains(rpConfig.entityId, trustAnchors, options);
-	let rpChainStatements: string[] = [];
-	let selectedTrustAnchorId: EntityId | undefined;
-	if (rpChainResult.chains.length > 0) {
-		for (const chain of rpChainResult.chains) {
-			if (chain.trustAnchorId === opTrustAnchorId) {
-				rpChainStatements = [...chain.statements];
-				selectedTrustAnchorId = chain.trustAnchorId as EntityId;
-				break;
-			}
-		}
-		if (rpChainStatements.length === 0) {
-			rpChainStatements = [...(rpChainResult.chains[0]?.statements ?? [])];
-			selectedTrustAnchorId = rpChainResult.chains[0]?.trustAnchorId as EntityId | undefined;
-		}
-	}
+	const rpChainStatements = [...sharedChains.value.rpChainStatements];
 
 	const ecPayload: Record<string, unknown> = {
 		iss: rpConfig.entityId,
@@ -225,7 +205,7 @@ export async function explicitRegistration(
 	// The subordinate statement about the OP is the one where sub === OP entity ID and iss !== sub.
 	// In a properly-ordered chain [leaf_EC, sub_stmt_from_superior, ..., TA_EC],
 	// this is always opStatements[1] for the OP's chain.
-	const opStatements = discovery.trustChain.statements;
+	const opStatements = sharedChains.value.opChain.statements;
 	const subordinateStmt =
 		opStatements.length > 1
 			? (opStatements[1] as (typeof opStatements)[0])
@@ -339,7 +319,7 @@ export async function explicitRegistration(
 		);
 	}
 
-	if (trustAnchor !== (opTrustAnchorId as string)) {
+	if (trustAnchor !== (selectedTrustAnchorId as string)) {
 		return err(
 			federationError(
 				FederationErrorCode.InvalidTrustAnchor,
@@ -348,9 +328,7 @@ export async function explicitRegistration(
 		);
 	}
 
-	// Verify that at least one of the RP's authority_hints leads to the trust_anchor
-	// the OP selected. This is guaranteed by the shared-TA check above which ensures
-	// opTrustAnchorId is in the RP's configured trust anchors.
+	// The response must name the Trust Anchor selected for both RP and OP chains.
 
 	const responseAuthorityHints = responsePayload.authority_hints as string[] | undefined;
 	if (!Array.isArray(responseAuthorityHints) || responseAuthorityHints.length !== 1) {

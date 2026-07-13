@@ -13,16 +13,14 @@ import {
 	ok,
 	type Result,
 	resolveTrustChainForAnchor,
-	resolveTrustChains,
 	signEntityStatement,
 	type TrustAnchorSet,
 	type ValidatedTrustChain,
-	validateTrustChain,
 } from "@oidfed/core";
 import { createClientAssertion } from "../client-auth/assertion.js";
 import { ClientRegistrationType, RequestObjectTyp } from "../constants.js";
 import type { OidcProtocolKeyProvider } from "../protocol-keys.js";
-import { getRegistrationTypes } from "./helpers.js";
+import { getRegistrationTypes, selectSharedRegistrationTrustChains } from "./helpers.js";
 
 const CLIENT_ASSERTION_TYPE = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
 
@@ -131,7 +129,18 @@ export async function automaticRegistration(
 	trustAnchors: TrustAnchorSet,
 	options?: FederationOptions,
 ): Promise<Result<AutomaticRegistrationResult>> {
-	const opMeta = discovery.resolvedMetadata.openid_provider as Record<string, unknown> | undefined;
+	const sharedChains = await selectSharedRegistrationTrustChains(
+		rpConfig.entityId,
+		discovery.entityId as EntityId,
+		discovery.trustChain,
+		trustAnchors,
+		options,
+	);
+	if (!sharedChains.ok) return err(sharedChains.error);
+
+	const opMeta = sharedChains.value.opChain.resolvedMetadata.openid_provider as
+		| Record<string, unknown>
+		| undefined;
 	const registrationTypes = getRegistrationTypes(opMeta);
 	if (!registrationTypes.includes(ClientRegistrationType.Automatic)) {
 		return err(
@@ -163,29 +172,8 @@ export async function automaticRegistration(
 	}
 	const now = nowSeconds(options?.clock);
 
-	// Select RP chain — prefer one whose Trust Anchor is shared with the OP (single pass)
-	const opTrustAnchorId = discovery.trustChain.trustAnchorId;
-	const rpChainResult = await resolveTrustChains(rpConfig.entityId, trustAnchors, options);
-
-	let selectedChain: string[] = [];
-	let selectedTrustAnchorId: EntityId | undefined;
-
-	for (const chain of rpChainResult.chains) {
-		const validationResult = await validateTrustChain(chain.statements, trustAnchors, options);
-		if (validationResult.valid) {
-			if (chain.trustAnchorId === opTrustAnchorId) {
-				// Ideal: shared trust anchor — use immediately
-				selectedChain = [...chain.statements];
-				selectedTrustAnchorId = chain.trustAnchorId as EntityId;
-				break;
-			}
-			if (selectedChain.length === 0) {
-				// Fallback: first valid chain as backup
-				selectedChain = [...chain.statements];
-				selectedTrustAnchorId = chain.trustAnchorId as EntityId;
-			}
-		}
-	}
+	const selectedChain = [...sharedChains.value.rpChainStatements];
+	const selectedTrustAnchorId = sharedChains.value.trustAnchorId;
 
 	// Reserved claims must not be overwritten by caller-supplied params
 	const filteredParams: Record<string, string> = {};
@@ -244,8 +232,8 @@ export async function automaticRegistration(
 
 	const base: AutomaticRegistrationResultBase = {
 		requestObjectJwt,
-		trustChain: discovery.trustChain,
-		trustChainExpiresAt: discovery.trustChain.expiresAt,
+		trustChain: sharedChains.value.opChain,
+		trustChainExpiresAt: sharedChains.value.opChain.expiresAt,
 	};
 
 	const delivery: RequestDelivery = rpConfig.requestDelivery ?? "form_post";

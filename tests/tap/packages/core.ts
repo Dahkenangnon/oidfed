@@ -721,6 +721,18 @@ export default (QUnit: QUnit) => {
 			t.notEqual(key1, key2);
 		});
 
+		test("port and path components affect cache keys", async (t) => {
+			const base = "https://example.com" as EntityId;
+			const withPort = "https://example.com:8443" as EntityId;
+			const withPath = "https://example.com/tenant" as EntityId;
+			const ta = "https://ta.example.com" as EntityId;
+
+			t.notEqual(await ecCacheKey(base), await ecCacheKey(withPort));
+			t.notEqual(await ecCacheKey(base), await ecCacheKey(withPath));
+			t.notEqual(await esCacheKey(ta, base), await esCacheKey(ta, withPath));
+			t.notEqual(await chainCacheKey(base, ta), await chainCacheKey(withPort, ta));
+		});
+
 		test("same inputs produce same keys", async (t) => {
 			const key1 = await ecCacheKey(entityId);
 			const key2 = await ecCacheKey(entityId);
@@ -8466,6 +8478,78 @@ export default (QUnit: QUnit) => {
 					t.equal(result.chain.entityId, "https://leaf.example.com");
 					t.equal(result.chain.trustAnchorId, "https://ta.example.com");
 					t.equal(result.chain.statements.length, 3);
+				}
+			});
+			test("does not match Trust Anchors that differ only by port", async (t) => {
+				const taKeys = await generateSigningKey("ES256");
+				const leafKeys = await generateSigningKey("ES256");
+				const taWithPort = "https://ta.example.com:8443";
+				const leafEc = await vt_signEC(
+					"https://leaf.example.com",
+					leafKeys.privateKey,
+					leafKeys.publicKey,
+					{ authority_hints: [taWithPort] },
+				);
+				const ss = await vt_signSS(
+					taWithPort,
+					"https://leaf.example.com",
+					taKeys.privateKey,
+					leafKeys.publicKey,
+				);
+				const taEc = await vt_signEC(taWithPort, taKeys.privateKey, taKeys.publicKey);
+				const taSet: TrustAnchorSet = new Map([
+					["https://ta.example.com" as EntityId, { jwks: { keys: [taKeys.publicKey] } }],
+				]);
+
+				const result = await validateTrustChain([leafEc, ss, taEc], taSet, {
+					verboseErrors: true,
+				});
+
+				t.false(result.valid);
+				t.true(result.errors.some((e) => e.code === InternalErrorCode.TrustAnchorUnknown));
+			});
+			test("does not match leaf Entity Identifiers that differ by port or path", async (t) => {
+				const taKeys = await generateSigningKey("ES256");
+				const leafKeys = await generateSigningKey("ES256");
+				const mismatchCases = [
+					{ leafId: "https://leaf.example.com:8443", statementSub: "https://leaf.example.com" },
+					{
+						leafId: "https://leaf.example.com/tenant-a",
+						statementSub: "https://leaf.example.com/tenant-b",
+					},
+				];
+
+				for (const mismatchCase of mismatchCases) {
+					const leafEc = await vt_signEC(
+						mismatchCase.leafId,
+						leafKeys.privateKey,
+						leafKeys.publicKey,
+						{ authority_hints: ["https://ta.example.com"] },
+					);
+					const ss = await vt_signSS(
+						"https://ta.example.com",
+						mismatchCase.statementSub,
+						taKeys.privateKey,
+						leafKeys.publicKey,
+					);
+					const taEc = await vt_signEC(
+						"https://ta.example.com",
+						taKeys.privateKey,
+						taKeys.publicKey,
+					);
+					const taSet: TrustAnchorSet = new Map([
+						["https://ta.example.com" as EntityId, { jwks: { keys: [taKeys.publicKey] } }],
+					]);
+
+					const result = await validateTrustChain([leafEc, ss, taEc], taSet, {
+						verboseErrors: true,
+					});
+
+					t.false(result.valid, mismatchCase.leafId);
+					t.true(
+						result.errors.some((e) => e.checkNumber === 12),
+						mismatchCase.leafId,
+					);
 				}
 			});
 			test("rejects Entity Statement identifiers that are not Entity Identifiers", async (t) => {

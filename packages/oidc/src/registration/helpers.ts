@@ -132,6 +132,125 @@ export async function validateSuppliedTrustChain(
 	return ok(validation.chain);
 }
 
+type ValidRegistrationChain = {
+	readonly statements: readonly string[];
+	readonly chain: ValidatedTrustChain;
+};
+
+export interface SharedRegistrationTrustChains {
+	readonly rpChainStatements: readonly string[];
+	readonly rpChain: ValidatedTrustChain;
+	readonly opChain: ValidatedTrustChain;
+	readonly trustAnchorId: EntityId;
+}
+
+function shortestRegistrationChain(
+	chains: readonly ValidRegistrationChain[],
+): ValidRegistrationChain {
+	const selected = chains
+		.slice()
+		.sort((a, b) => a.chain.statements.length - b.chain.statements.length)[0];
+	if (!selected) throw new Error("No registration trust chains available");
+	return selected;
+}
+
+async function resolveValidRegistrationChains(
+	subject: EntityId,
+	trustAnchors: TrustAnchorSet,
+	options: FederationOptions | undefined,
+	label: string,
+): Promise<Result<readonly ValidRegistrationChain[], FederationError>> {
+	const chainResult = await resolveTrustChains(subject, trustAnchors, options);
+
+	if (chainResult.chains.length === 0) {
+		const errorMsgs = chainResult.errors.map((e) => e.description).join("; ");
+		return err(
+			federationError(
+				FederationErrorCode.InvalidTrustChain,
+				`Failed to resolve trust chain for ${label}: ${errorMsgs || "no chains found"}`,
+			),
+		);
+	}
+
+	const validChains: ValidRegistrationChain[] = [];
+	for (const chain of chainResult.chains) {
+		const validation = await validateTrustChain(chain.statements, trustAnchors, options);
+		if (validation.valid) {
+			validChains.push({ statements: chain.statements, chain: validation.chain });
+		}
+	}
+
+	if (validChains.length === 0) {
+		return err(
+			federationError(
+				FederationErrorCode.InvalidTrustChain,
+				`No valid trust chains found for ${label}`,
+			),
+		);
+	}
+
+	return ok(validChains);
+}
+
+export async function selectSharedRegistrationTrustChains(
+	rpEntityId: EntityId,
+	opEntityId: EntityId,
+	preferredOpChain: ValidatedTrustChain,
+	trustAnchors: TrustAnchorSet,
+	options?: FederationOptions,
+): Promise<Result<SharedRegistrationTrustChains, FederationError>> {
+	const rpChainsResult = await resolveValidRegistrationChains(
+		rpEntityId,
+		trustAnchors,
+		options,
+		"RP",
+	);
+	if (!rpChainsResult.ok) return rpChainsResult;
+
+	const preferredRpChains = rpChainsResult.value.filter(
+		(candidate) => candidate.chain.trustAnchorId === preferredOpChain.trustAnchorId,
+	);
+	if (preferredRpChains.length > 0) {
+		const rpChain = shortestRegistrationChain(preferredRpChains);
+		return ok({
+			rpChainStatements: rpChain.statements,
+			rpChain: rpChain.chain,
+			opChain: preferredOpChain,
+			trustAnchorId: preferredOpChain.trustAnchorId,
+		});
+	}
+
+	const opChainsResult = await resolveValidRegistrationChains(
+		opEntityId,
+		trustAnchors,
+		options,
+		"OP",
+	);
+	if (!opChainsResult.ok) return opChainsResult;
+
+	for (const rpChain of rpChainsResult.value) {
+		const matchingOpChains = opChainsResult.value.filter(
+			(candidate) => candidate.chain.trustAnchorId === rpChain.chain.trustAnchorId,
+		);
+		if (matchingOpChains.length > 0) {
+			const opChain = shortestRegistrationChain(matchingOpChains);
+			return ok({
+				rpChainStatements: rpChain.statements,
+				rpChain: rpChain.chain,
+				opChain: opChain.chain,
+				trustAnchorId: rpChain.chain.trustAnchorId,
+			});
+		}
+	}
+
+	return err(
+		federationError(
+			FederationErrorCode.InvalidTrustAnchor,
+			"No shared Trust Anchor between RP and OP",
+		),
+	);
+}
+
 /**
  * Resolve trust chains for an entity and return the shortest valid chain.
  *
