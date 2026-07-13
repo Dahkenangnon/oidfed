@@ -2321,6 +2321,8 @@ export default (QUnit: QUnit) => {
 
 	// ── jose/keys ─────────────────────────────────────────────────────
 	module("core / keys / generateSigningKey", () => {
+		const privateFields = ["d", "p", "q", "dp", "dq", "qi", "oth", "k"] as const;
+
 		test("generates an ES256 key pair by default", async (t) => {
 			const { publicKey, privateKey } = await generateSigningKey();
 			t.equal(publicKey.kty, "EC");
@@ -2330,13 +2332,18 @@ export default (QUnit: QUnit) => {
 			t.equal(privateKey.kid, publicKey.kid);
 			t.equal(privateKey.alg, "ES256");
 			t.notEqual((privateKey as Record<string, unknown>).d, undefined);
-			t.equal((publicKey as Record<string, unknown>).d, undefined);
+			for (const field of privateFields) {
+				t.equal((publicKey as Record<string, unknown>)[field], undefined);
+			}
 		});
 		test("generates a PS256 key pair", async (t) => {
 			const { publicKey, privateKey } = await generateSigningKey("PS256");
 			t.equal(publicKey.kty, "RSA");
 			t.equal(publicKey.alg, "PS256");
 			t.equal(privateKey.kty, "RSA");
+			for (const field of privateFields) {
+				t.equal((publicKey as Record<string, unknown>)[field], undefined);
+			}
 		});
 		test("generates unique kids for different keys", async (t) => {
 			const key1 = await generateSigningKey();

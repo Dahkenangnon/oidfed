@@ -34,7 +34,7 @@ export async function generateSigningKey(
 	const priv = await jose.exportJWK(privateKey);
 	const kid = await jose.calculateJwkThumbprint(pub);
 	return {
-		publicKey: { ...pub, kid, alg, use: "sig" } as unknown as JWK,
+		publicKey: stripPrivateFields({ ...pub, kid, alg, use: "sig" } as unknown as JWK),
 		privateKey: { ...priv, kid, alg, use: "sig" } as unknown as JWK,
 	};
 }
