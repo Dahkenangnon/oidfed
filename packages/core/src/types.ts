@@ -30,13 +30,14 @@ export function isValidEntityId(value: string): value is EntityId {
 }
 
 declare const Unverified: unique symbol;
-export type ParsedEntityStatement = {
+export type ParsedEntityStatement<Payload = EntityStatementPayload> = {
 	readonly header: Record<string, unknown>;
-	readonly payload: EntityStatementPayload;
+	readonly payload: Payload;
 };
-export type UnverifiedEntityStatement = ParsedEntityStatement & {
-	readonly [Unverified]: true;
-};
+export type UnverifiedEntityStatement<Payload = EntityStatementPayload> =
+	ParsedEntityStatement<Payload> & {
+		readonly [Unverified]: true;
+	};
 
 export type HttpClient = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 

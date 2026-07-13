@@ -79,6 +79,8 @@ Use the stable builders for normal Entity Configurations and Subordinate Stateme
 
 ```ts
 import {
+  decodeEntityConfiguration,
+  decodeSubordinateStatement,
   generateSigningKey,
   signEntityConfiguration,
   signSubordinateStatement,
@@ -115,10 +117,20 @@ const subordinateStatementJwt = await signSubordinateStatement({
   ttlSeconds: 3600
 });
 
+const decodedEc = decodeEntityConfiguration(entityConfigurationJwt);
+const decodedSs = decodeSubordinateStatement(subordinateStatementJwt);
+
+if (decodedEc.ok && decodedSs.ok) {
+  console.log(decodedEc.value.payload.iss);
+  console.log(decodedSs.value.payload.sub);
+}
+
 const result = await verifyEntityStatement(entityConfigurationJwt, {
   keys: [keyPair.publicKey]
 });
 ```
+
+`decodeEntityConfiguration` and `decodeSubordinateStatement` validate the JWT `typ` header and payload shape but do not verify signatures. Use them for local inspection and kind-safe parsing. Use `verifyEntityStatement`, trust-chain validation, or the higher-level verification helpers before trusting remote input.
 
 ---
 

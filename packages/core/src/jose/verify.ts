@@ -1,7 +1,13 @@
 /** JWT signature verification with key matching by kid and algorithm. */
 import * as jose from "jose";
-import { DEFAULT_CLOCK_SKEW_SECONDS, JwtTyp } from "../constants.js";
+import { DEFAULT_CLOCK_SKEW_SECONDS, InternalErrorCode, JwtTyp } from "../constants.js";
 import { err, type FederationError, ok, type Result } from "../errors.js";
+import {
+	type EntityConfigurationPayload,
+	EntityConfigurationSchema,
+	type SubordinateStatementPayload,
+	SubordinateStatementSchema,
+} from "../schemas/entity-statement.js";
 import type { JWKSet } from "../schemas/jwk.js";
 import type { Clock, ParsedEntityStatement, UnverifiedEntityStatement } from "../types.js";
 import { isValidAlgorithm, selectVerificationKey } from "./keys.js";
@@ -91,6 +97,68 @@ export function decodeEntityStatement(
 			cause,
 		});
 	}
+}
+
+/** Decode and schema-validate an Entity Configuration JWT without signature verification. */
+export function decodeEntityConfiguration(
+	jwt: string,
+): Result<UnverifiedEntityStatement<EntityConfigurationPayload>, FederationError> {
+	const decoded = decodeEntityStatement(jwt);
+	if (!decoded.ok) return decoded;
+
+	const typResult = requireEntityStatementTyp(decoded.value.header);
+	if (!typResult.ok) return typResult;
+
+	const parsed = EntityConfigurationSchema.safeParse(decoded.value.payload);
+	if (!parsed.success) {
+		return err({
+			code: InternalErrorCode.TrustChainInvalid,
+			description: `Invalid Entity Configuration payload: ${parsed.error.message}`,
+			cause: parsed.error,
+		});
+	}
+
+	return ok({
+		header: decoded.value.header,
+		payload: parsed.data,
+	} as UnverifiedEntityStatement<EntityConfigurationPayload>);
+}
+
+/** Decode and schema-validate a Subordinate Statement JWT without signature verification. */
+export function decodeSubordinateStatement(
+	jwt: string,
+): Result<UnverifiedEntityStatement<SubordinateStatementPayload>, FederationError> {
+	const decoded = decodeEntityStatement(jwt);
+	if (!decoded.ok) return decoded;
+
+	const typResult = requireEntityStatementTyp(decoded.value.header);
+	if (!typResult.ok) return typResult;
+
+	const parsed = SubordinateStatementSchema.safeParse(decoded.value.payload);
+	if (!parsed.success) {
+		return err({
+			code: InternalErrorCode.TrustChainInvalid,
+			description: `Invalid Subordinate Statement payload: ${parsed.error.message}`,
+			cause: parsed.error,
+		});
+	}
+
+	return ok({
+		header: decoded.value.header,
+		payload: parsed.data,
+	} as UnverifiedEntityStatement<SubordinateStatementPayload>);
+}
+
+function requireEntityStatementTyp(header: Record<string, unknown>): Result<void, FederationError> {
+	if (header.typ !== JwtTyp.EntityStatement) {
+		const actualTyp = String(header.typ);
+		return err({
+			code: InternalErrorCode.SignatureInvalid,
+			description: `Invalid typ header: expected '${JwtTyp.EntityStatement}', got '${actualTyp}'`,
+		});
+	}
+
+	return ok(undefined);
 }
 
 function decodeProtectedHeader(

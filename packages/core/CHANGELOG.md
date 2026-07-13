@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 
 - Stable Entity Configuration and Subordinate Statement payload builders, signing helpers, and claim-placement validation helpers for normal Entity Statements.
+- Schema-backed `decodeEntityConfiguration()` and `decodeSubordinateStatement()` helpers for kind-safe unsigned Entity Statement inspection.
 
 ### Changed
 

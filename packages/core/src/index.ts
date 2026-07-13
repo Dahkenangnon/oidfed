@@ -117,7 +117,9 @@ export {
 // JOSE
 export {
 	assertTypHeader,
+	decodeEntityConfiguration,
 	decodeEntityStatement,
+	decodeSubordinateStatement,
 	generateSigningKey,
 	isValidAlgorithm,
 	JWK_PUBLIC_FIELDS,

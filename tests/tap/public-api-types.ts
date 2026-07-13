@@ -1,11 +1,15 @@
 import type { AuthorityConfig, StorageAdapter } from "@oidfed/authority";
 import {
+	decodeEntityConfiguration,
+	decodeSubordinateStatement,
+	type EntityConfigurationPayload,
 	type EntityStatementMetadata,
 	type FederationKeyProvider,
 	type FederationSigningKey,
 	type JWKSet,
 	type ManagedFederationKeyProvider,
 	MemoryFederationKeyProvider,
+	type SubordinateStatementPayload,
 	type TrustAnchorSet,
 } from "@oidfed/core";
 import type { LeafConfig } from "@oidfed/leaf";
@@ -132,3 +136,22 @@ void new MemoryFederationKeyProvider();
 
 // @ts-expect-error initial key arrays must be non-empty.
 void new MemoryFederationKeyProvider([]);
+
+declare const entityConfigurationJwt: string;
+declare const subordinateStatementJwt: string;
+
+const decodedEntityConfiguration = decodeEntityConfiguration(entityConfigurationJwt);
+if (decodedEntityConfiguration.ok) {
+	const payload: EntityConfigurationPayload = decodedEntityConfiguration.value.payload;
+	const subject: string = payload.sub;
+	void subject;
+}
+
+const decodedSubordinateStatement = decodeSubordinateStatement(subordinateStatementJwt);
+if (decodedSubordinateStatement.ok) {
+	const payload: SubordinateStatementPayload = decodedSubordinateStatement.value.payload;
+	const issuer: string = payload.iss;
+	const subject: string = payload.sub;
+	void issuer;
+	void subject;
+}

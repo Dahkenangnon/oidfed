@@ -92,7 +92,9 @@ import { signEntityStatement } from "../../../packages/core/src/jose/sign.js";
 import { JwkSigner, type JwtSigner } from "../../../packages/core/src/jose/signer.js";
 import {
 	assertTypHeader,
+	decodeEntityConfiguration,
 	decodeEntityStatement,
+	decodeSubordinateStatement,
 	verifyEntityStatement,
 } from "../../../packages/core/src/jose/verify.js";
 import { fetchJwkSet } from "../../../packages/core/src/jwks/jwks-uri.js";
@@ -233,6 +235,8 @@ export default (QUnit: QUnit) => {
 		});
 
 		test("exports stable Entity Statement builder APIs", (t) => {
+			t.equal(typeof CorePublic.decodeEntityConfiguration, "function");
+			t.equal(typeof CorePublic.decodeSubordinateStatement, "function");
 			t.equal(typeof CorePublic.buildEntityConfigurationPayload, "function");
 			t.equal(typeof CorePublic.signEntityConfiguration, "function");
 			t.equal(typeof CorePublic.buildSubordinateStatementPayload, "function");
@@ -2681,6 +2685,115 @@ export default (QUnit: QUnit) => {
 			});
 			test("returns error for invalid JWT", (t) => {
 				t.true(isErr(decodeEntityStatement("not-a-jwt")));
+			});
+
+			test("decodes and validates Entity Configuration JWTs", async (t) => {
+				const { privateKey, publicKey } = await generateSigningKey("ES256");
+				const jwt = await signEntityStatement(
+					{
+						iss: "https://ec-decode.example.com",
+						sub: "https://ec-decode.example.com",
+						iat: sv_now,
+						exp: sv_now + 3600,
+						jwks: { keys: [publicKey] },
+						metadata: { federation_entity: { organization_name: "Decode EC" } },
+					},
+					new JwkSigner(privateKey),
+				);
+
+				const result = decodeEntityConfiguration(jwt);
+				t.true(isOk(result));
+				if (!isOk(result)) return;
+				t.equal(result.value.header.typ, JwtTyp.EntityStatement);
+				t.equal(result.value.payload.iss, "https://ec-decode.example.com");
+				t.equal(result.value.payload.sub, "https://ec-decode.example.com");
+				t.equal(result.value.payload.jwks.keys[0]?.kid, publicKey.kid);
+			});
+
+			test("decodes and validates Subordinate Statement JWTs", async (t) => {
+				const { privateKey, publicKey } = await generateSigningKey("ES256");
+				const jwt = await signEntityStatement(
+					{
+						iss: "https://ta-decode.example.com",
+						sub: "https://leaf-decode.example.com",
+						iat: sv_now,
+						exp: sv_now + 3600,
+						jwks: { keys: [publicKey] },
+						metadata: { federation_entity: { organization_name: "Decode SS" } },
+						source_endpoint: "https://ta-decode.example.com/federation_fetch",
+					},
+					new JwkSigner(privateKey),
+				);
+
+				const result = decodeSubordinateStatement(jwt);
+				t.true(isOk(result));
+				if (!isOk(result)) return;
+				t.equal(result.value.header.typ, JwtTyp.EntityStatement);
+				t.equal(result.value.payload.iss, "https://ta-decode.example.com");
+				t.equal(result.value.payload.sub, "https://leaf-decode.example.com");
+				t.equal(
+					result.value.payload.source_endpoint,
+					"https://ta-decode.example.com/federation_fetch",
+				);
+			});
+
+			test("schema-backed decode helpers reject malformed JWTs", (t) => {
+				t.true(isErr(decodeEntityConfiguration("not-a-jwt")));
+				t.true(isErr(decodeSubordinateStatement("not-a-jwt")));
+			});
+
+			test("schema-backed decode helpers reject the wrong typ header", async (t) => {
+				const { privateKey, publicKey } = await generateSigningKey("ES256");
+				const jwt = await signEntityStatement(
+					{
+						iss: "https://wrong-typ.example.com",
+						sub: "https://wrong-typ.example.com",
+						iat: sv_now,
+						exp: sv_now + 3600,
+						jwks: { keys: [publicKey] },
+					},
+					new JwkSigner(privateKey),
+					{ typ: JwtTyp.TrustMark },
+				);
+
+				const ecResult = decodeEntityConfiguration(jwt);
+				const ssResult = decodeSubordinateStatement(jwt);
+				t.true(isErr(ecResult));
+				t.true(isErr(ssResult));
+				if (isErr(ecResult)) t.true(ecResult.error.description.includes("typ"));
+				if (isErr(ssResult)) t.true(ssResult.error.description.includes("typ"));
+			});
+
+			test("Entity Configuration decode rejects Subordinate Statement payloads", async (t) => {
+				const { privateKey, publicKey } = await generateSigningKey("ES256");
+				const jwt = await signEntityStatement(
+					{
+						iss: "https://ta-kind.example.com",
+						sub: "https://leaf-kind.example.com",
+						iat: sv_now,
+						exp: sv_now + 3600,
+						jwks: { keys: [publicKey] },
+					},
+					new JwkSigner(privateKey),
+				);
+
+				t.true(isErr(decodeEntityConfiguration(jwt)));
+			});
+
+			test("Subordinate Statement decode rejects Entity Configuration payloads", async (t) => {
+				const { privateKey, publicKey } = await generateSigningKey("ES256");
+				const jwt = await signEntityStatement(
+					{
+						iss: "https://ec-kind.example.com",
+						sub: "https://ec-kind.example.com",
+						iat: sv_now,
+						exp: sv_now + 3600,
+						jwks: { keys: [publicKey] },
+					},
+					new JwkSigner(privateKey),
+				);
+
+				t.true(isErr(decodeSubordinateStatement(jwt)));
 			});
 		});
 

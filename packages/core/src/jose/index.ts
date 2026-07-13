@@ -17,6 +17,8 @@ export {
 } from "./signer.js";
 export {
 	assertTypHeader,
+	decodeEntityConfiguration,
 	decodeEntityStatement,
+	decodeSubordinateStatement,
 	verifyEntityStatement,
 } from "./verify.js";
