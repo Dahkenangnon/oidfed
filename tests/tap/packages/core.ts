@@ -9205,6 +9205,59 @@ export default (QUnit: QUnit) => {
 				t.true(result.errors.some((e) => e.checkNumber === 5));
 			});
 
+			test("rejects statements whose exp is not after iat", async (t) => {
+				const cases = [
+					{ name: "leaf Entity Configuration", statementIndex: 0 },
+					{ name: "Subordinate Statement", statementIndex: 1 },
+					{ name: "Trust Anchor Entity Configuration", statementIndex: 2 },
+				] as const;
+
+				for (const invalidCase of cases) {
+					const taKeys = await generateSigningKey("ES256");
+					const leafKeys = await generateSigningKey("ES256");
+					const invalidTimes = { iat: vt_now, exp: vt_now };
+					const leafEc = await vt_signEC(
+						"https://leaf.example.com",
+						leafKeys.privateKey,
+						leafKeys.publicKey,
+						{
+							authority_hints: ["https://ta.example.com"],
+							...(invalidCase.statementIndex === 0 ? invalidTimes : {}),
+						},
+					);
+					const ss = await vt_signSS(
+						"https://ta.example.com",
+						"https://leaf.example.com",
+						taKeys.privateKey,
+						leafKeys.publicKey,
+						invalidCase.statementIndex === 1 ? invalidTimes : {},
+					);
+					const taEc = await vt_signEC(
+						"https://ta.example.com",
+						taKeys.privateKey,
+						taKeys.publicKey,
+						invalidCase.statementIndex === 2 ? invalidTimes : {},
+					);
+					const taSet: TrustAnchorSet = new Map([
+						["https://ta.example.com" as EntityId, { jwks: { keys: [taKeys.publicKey] } }],
+					]);
+					const result = await validateTrustChain([leafEc, ss, taEc], taSet, {
+						clock: { now: () => vt_now },
+						verboseErrors: true,
+					});
+					t.false(result.valid, invalidCase.name);
+					t.true(
+						result.errors.some(
+							(e) =>
+								e.statementIndex === invalidCase.statementIndex &&
+								e.field === "exp" &&
+								/exp must be after iat/i.test(e.message),
+						),
+						invalidCase.name,
+					);
+				}
+			});
+
 			test("rejects statement with iat in the future", async (t) => {
 				const taKeys = await generateSigningKey("ES256");
 				const leafKeys = await generateSigningKey("ES256");

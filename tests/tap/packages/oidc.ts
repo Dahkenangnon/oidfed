@@ -25,6 +25,7 @@ import {
 	stripPrivateFields,
 	type ValidatedTrustChain,
 	validateTrustChain,
+	WELL_KNOWN_OPENID_FEDERATION,
 } from "../../../packages/core/src/index.js";
 import { createClientAssertion } from "../../../packages/oidc/src/client-auth/assertion.js";
 import {
@@ -128,6 +129,176 @@ async function createMockDiscovery(
 		trustChain: bestChain,
 		trustMarks: bestChain.trustMarks,
 	} as DiscoveryResult;
+}
+
+async function createDualAnchorRegistrationFixture() {
+	const taA = entityId("https://ta-a.example.com");
+	const taB = entityId("https://ta-b.example.com");
+	const { privateKey: taASigningKey, publicKey: taAPublicKey } = await generateSigningKey("ES256");
+	const { privateKey: taBSigningKey, publicKey: taBPublicKey } = await generateSigningKey("ES256");
+	const { privateKey: opSigningKey, publicKey: opPublicKey } = await generateSigningKey("ES256");
+	const { privateKey: leafSigningKey, publicKey: leafPublicKey } =
+		await generateSigningKey("ES256");
+	const { privateKey: leafProtocolSigningKey, publicKey: leafProtocolPublicKey } =
+		await generateSigningKey("ES256");
+	const now = Math.floor(Date.now() / 1000);
+	const exp = now + 86400;
+	const signStatement = (payload: Record<string, unknown>, key: JWK) =>
+		signEntityStatement(payload, new JwkSigner(key), { typ: JwtTyp.EntityStatement });
+	const taMetadata = (ta: EntityId) => ({
+		federation_entity: {
+			federation_fetch_endpoint: `${ta}/federation_fetch`,
+		},
+	});
+	const opMetadata = {
+		openid_provider: {
+			issuer: OP_ID,
+			authorization_endpoint: `${OP_ID}/authorize`,
+			token_endpoint: `${OP_ID}/token`,
+			federation_registration_endpoint: `${OP_ID}/federation_registration`,
+			response_types_supported: ["code"],
+			subject_types_supported: ["public"],
+			client_registration_types_supported: ["automatic", "explicit"],
+		},
+	};
+	const leafMetadata = {
+		openid_relying_party: {
+			redirect_uris: ["https://rp.example.com/callback"],
+			response_types: ["code"],
+			client_registration_types: ["automatic"],
+			jwks: { keys: [leafProtocolPublicKey] },
+		},
+	};
+	const taAEcJwt = await signStatement(
+		{
+			iss: taA,
+			sub: taA,
+			iat: now,
+			exp,
+			jwks: { keys: [taAPublicKey] },
+			metadata: taMetadata(taA),
+		},
+		taASigningKey,
+	);
+	const taBEcJwt = await signStatement(
+		{
+			iss: taB,
+			sub: taB,
+			iat: now,
+			exp,
+			jwks: { keys: [taBPublicKey] },
+			metadata: taMetadata(taB),
+		},
+		taBSigningKey,
+	);
+	const opEcJwt = await signStatement(
+		{
+			iss: OP_ID,
+			sub: OP_ID,
+			iat: now,
+			exp,
+			jwks: { keys: [opPublicKey] },
+			authority_hints: [taA, taB],
+			metadata: opMetadata,
+		},
+		opSigningKey,
+	);
+	const leafEcJwt = await signStatement(
+		{
+			iss: LEAF_ID,
+			sub: LEAF_ID,
+			iat: now,
+			exp,
+			jwks: { keys: [leafPublicKey] },
+			authority_hints: [taB],
+			metadata: leafMetadata,
+		},
+		leafSigningKey,
+	);
+	const taASubStatementForOp = await signStatement(
+		{ iss: taA, sub: OP_ID, iat: now, exp, jwks: { keys: [opPublicKey] } },
+		taASigningKey,
+	);
+	const taBSubStatementForOp = await signStatement(
+		{ iss: taB, sub: OP_ID, iat: now, exp, jwks: { keys: [opPublicKey] } },
+		taBSigningKey,
+	);
+	const taBSubStatementForLeaf = await signStatement(
+		{ iss: taB, sub: LEAF_ID, iat: now, exp, jwks: { keys: [leafPublicKey] } },
+		taBSigningKey,
+	);
+	const trustAnchors = new Map([
+		[taA, { jwks: { keys: [taAPublicKey] } }],
+		[taB, { jwks: { keys: [taBPublicKey] } }],
+	]);
+	const httpClient: HttpClient = async (input: string | URL | Request): Promise<Response> => {
+		const url =
+			typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+		const parsed = new URL(url);
+		if (parsed.pathname === WELL_KNOWN_OPENID_FEDERATION) {
+			const byOrigin: Record<string, string> = {
+				[taA]: taAEcJwt,
+				[taB]: taBEcJwt,
+				[OP_ID]: opEcJwt,
+				[LEAF_ID]: leafEcJwt,
+			};
+			const jwt = byOrigin[parsed.origin];
+			if (jwt) {
+				return new Response(jwt, {
+					status: 200,
+					headers: { "Content-Type": MediaType.EntityStatement },
+				});
+			}
+		}
+		if (parsed.pathname === "/federation_fetch") {
+			const sub = parsed.searchParams.get("sub");
+			let jwt: string | undefined;
+			if (parsed.origin === taA && sub === OP_ID) jwt = taASubStatementForOp;
+			if (parsed.origin === taB && sub === OP_ID) jwt = taBSubStatementForOp;
+			if (parsed.origin === taB && sub === LEAF_ID) jwt = taBSubStatementForLeaf;
+			if (jwt) {
+				return new Response(jwt, {
+					status: 200,
+					headers: { "Content-Type": MediaType.EntityStatement },
+				});
+			}
+		}
+		return new Response("Not Found", { status: 404 });
+	};
+	const options: FederationOptions = { httpClient };
+	const preferredOpChain = await validateTrustChain(
+		[opEcJwt, taASubStatementForOp, taAEcJwt],
+		trustAnchors,
+		options,
+	);
+	if (!preferredOpChain.valid) {
+		throw new Error("dual-anchor preferred OP chain is invalid");
+	}
+	const discovery = {
+		entityId: OP_ID,
+		resolvedMetadata: preferredOpChain.chain.resolvedMetadata,
+		trustChain: preferredOpChain.chain,
+		trustMarks: preferredOpChain.chain.trustMarks,
+	} as DiscoveryResult;
+	const rpConfig: RpConfig = {
+		entityId: LEAF_ID,
+		keyProvider: new MemoryFederationKeyProvider(federationKey(leafSigningKey)),
+		protocolKeyProvider: new StaticOidcProtocolKeyProvider({
+			requestObjectSigner: new JwkSigner(leafProtocolSigningKey),
+		}),
+		authorityHints: [taB],
+		metadata: leafMetadata,
+	};
+	return {
+		discovery,
+		httpClient,
+		now,
+		opSigningKey,
+		rpConfig,
+		taA,
+		taB,
+		trustAnchors,
+	};
 }
 
 // ---------------------------------------------------------------------------
@@ -940,6 +1111,31 @@ export default (QUnit: QUnit) => {
 			t.ok((h.trust_chain as string[]).length > 0);
 		});
 
+		test("selects a trust_chain rooted in a Trust Anchor shared with the OP", async (t) => {
+			const fx = await createDualAnchorRegistrationFixture();
+			const result = await automaticRegistration(
+				fx.discovery,
+				fx.rpConfig,
+				authzParams,
+				fx.trustAnchors,
+				{ httpClient: fx.httpClient },
+			);
+			t.true(isOk(result), isErr(result) ? result.error.description : undefined);
+			if (!isOk(result)) return;
+			t.equal(result.value.trustChain.trustAnchorId, fx.taB);
+			const decoded = decodeEntityStatement(result.value.requestObjectJwt);
+			t.true(decoded.ok);
+			if (!decoded.ok) return;
+			const trustChain = (decoded.value.header as Record<string, unknown>).trust_chain;
+			t.true(Array.isArray(trustChain));
+			if (!Array.isArray(trustChain)) return;
+			const root = decodeEntityStatement(trustChain[trustChain.length - 1] as string);
+			t.true(root.ok);
+			if (!root.ok) return;
+			t.equal(root.value.payload.iss, fx.taB);
+			t.equal(root.value.payload.sub, fx.taB);
+		});
+
 		test("attaches peer_trust_chain when includePeerTrustChain is true", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
@@ -1693,6 +1889,61 @@ export default (QUnit: QUnit) => {
 			const peerFirstPayload = peerFirst.value.payload as Record<string, unknown>;
 			t.equal(peerFirstPayload.iss, OP_ID);
 			t.equal(peerFirstPayload.sub, OP_ID);
+		});
+
+		test("selects a trust_chain rooted in a Trust Anchor shared with the OP", async (t) => {
+			const fx = await createDualAnchorRegistrationFixture();
+			let capturedBody = "";
+			const httpClient: HttpClient = async (input, init) => {
+				const url =
+					typeof input === "string"
+						? input
+						: input instanceof URL
+							? input.toString()
+							: (input as Request).url;
+				if (new URL(url).pathname === "/federation_registration" && input instanceof Request) {
+					capturedBody = await input.clone().text();
+					const responseJwt = await signEntityStatement(
+						{
+							iss: OP_ID,
+							sub: LEAF_ID,
+							aud: LEAF_ID,
+							iat: fx.now,
+							exp: fx.now + 86400,
+							authority_hints: [fx.taB],
+							trust_anchor: fx.taB,
+							metadata: { openid_relying_party: { client_id: LEAF_ID } },
+						},
+						new JwkSigner(fx.opSigningKey),
+						{ typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
+					);
+					return new Response(responseJwt, {
+						status: 200,
+						headers: { "Content-Type": OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE },
+					});
+				}
+				return fx.httpClient(input, init);
+			};
+			const result = await explicitRegistration(fx.discovery, fx.rpConfig, fx.trustAnchors, {
+				httpClient,
+			});
+			t.true(isOk(result), isErr(result) ? result.error.description : undefined);
+			if (!isOk(result)) return;
+			t.equal(
+				(result.value.registrationStatement.payload as Record<string, unknown>).trust_anchor,
+				fx.taB,
+			);
+			const decoded = decodeEntityStatement(capturedBody);
+			t.true(decoded.ok);
+			if (!decoded.ok) return;
+			const trustChain = (decoded.value.header as Record<string, unknown>).trust_chain;
+			t.true(Array.isArray(trustChain));
+			if (!Array.isArray(trustChain)) return;
+			const root = decodeEntityStatement(trustChain[trustChain.length - 1] as string);
+			t.true(root.ok);
+			if (!root.ok) return;
+			t.equal(root.value.payload.iss, fx.taB);
+			t.equal(root.value.payload.sub, fx.taB);
 		});
 
 		test("returns correct clientId and registeredMetadata", async (t) => {
