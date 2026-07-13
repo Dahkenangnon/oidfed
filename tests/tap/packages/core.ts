@@ -8142,6 +8142,176 @@ export default (QUnit: QUnit) => {
 				t.ok(result.chains.length >= 1);
 				t.ok(result.errors.length >= 1);
 			});
+			test("handles looped authority-hint branch without aborting valid branches", async (t) => {
+				const taKeys = await generateSigningKey("ES256");
+				const intKeys = await generateSigningKey("ES256");
+				const loopKeys = await generateSigningKey("ES256");
+				const leafKeys = await generateSigningKey("ES256");
+				const taEc = await rs_signEC("https://ta.example.com", taKeys.privateKey, {
+					jwks: { keys: [taKeys.publicKey] },
+					metadata: {
+						federation_entity: {
+							federation_fetch_endpoint: "https://ta.example.com/federation_fetch",
+						},
+					},
+				});
+				const intEc = await rs_signEC("https://int.example.com", intKeys.privateKey, {
+					jwks: { keys: [intKeys.publicKey] },
+					authority_hints: ["https://ta.example.com"],
+					metadata: {
+						federation_entity: {
+							federation_fetch_endpoint: "https://int.example.com/federation_fetch",
+						},
+					},
+				});
+				const loopEc = await rs_signEC("https://loop.example.com", loopKeys.privateKey, {
+					jwks: { keys: [loopKeys.publicKey] },
+					authority_hints: ["https://leaf.example.com"],
+					metadata: {
+						federation_entity: {
+							federation_fetch_endpoint: "https://loop.example.com/federation_fetch",
+						},
+					},
+				});
+				const leafEc = await rs_signEC("https://leaf.example.com", leafKeys.privateKey, {
+					jwks: { keys: [leafKeys.publicKey] },
+					authority_hints: ["https://loop.example.com", "https://int.example.com"],
+				});
+				const ssLoopLeaf = await rs_signSS(
+					"https://loop.example.com",
+					"https://leaf.example.com",
+					loopKeys.privateKey,
+					{ jwks: { keys: [leafKeys.publicKey] } },
+				);
+				const ssIntLeaf = await rs_signSS(
+					"https://int.example.com",
+					"https://leaf.example.com",
+					intKeys.privateKey,
+					{ jwks: { keys: [leafKeys.publicKey] } },
+				);
+				const ssTaInt = await rs_signSS(
+					"https://ta.example.com",
+					"https://int.example.com",
+					taKeys.privateKey,
+					{ jwks: { keys: [intKeys.publicKey] } },
+				);
+				const responses: Record<string, string> = {
+					"https://leaf.example.com/.well-known/openid-federation": leafEc,
+					"https://loop.example.com/.well-known/openid-federation": loopEc,
+					"https://int.example.com/.well-known/openid-federation": intEc,
+					"https://ta.example.com/.well-known/openid-federation": taEc,
+					"https://loop.example.com/federation_fetch?sub=https%3A%2F%2Fleaf.example.com":
+						ssLoopLeaf,
+					"https://int.example.com/federation_fetch?sub=https%3A%2F%2Fleaf.example.com": ssIntLeaf,
+					"https://ta.example.com/federation_fetch?sub=https%3A%2F%2Fint.example.com": ssTaInt,
+				};
+				const mockFetch = async (url: string | URL | Request) => {
+					const body = responses[url.toString()];
+					return body
+						? new Response(body, {
+								status: 200,
+								headers: { "Content-Type": "application/entity-statement+jwt" },
+							})
+						: new Response("Not found", { status: 404 });
+				};
+				const taSet: TrustAnchorSet = new Map([
+					["https://ta.example.com" as EntityId, { jwks: { keys: [taKeys.publicKey] } }],
+				]);
+				const result = await resolveTrustChains("https://leaf.example.com" as EntityId, taSet, {
+					httpClient: mockFetch,
+				});
+				t.equal(result.chains.length, 1);
+				t.equal(result.chains[0]?.trustAnchorId, "https://ta.example.com");
+				t.true(result.errors.some((e) => e.code === "ERR_LOOP_DETECTED"));
+			});
+			test("handles untrusted self-signed branch without aborting valid branches", async (t) => {
+				const taKeys = await generateSigningKey("ES256");
+				const intKeys = await generateSigningKey("ES256");
+				const untrustedKeys = await generateSigningKey("ES256");
+				const leafKeys = await generateSigningKey("ES256");
+				const taEc = await rs_signEC("https://ta.example.com", taKeys.privateKey, {
+					jwks: { keys: [taKeys.publicKey] },
+					metadata: {
+						federation_entity: {
+							federation_fetch_endpoint: "https://ta.example.com/federation_fetch",
+						},
+					},
+				});
+				const intEc = await rs_signEC("https://int.example.com", intKeys.privateKey, {
+					jwks: { keys: [intKeys.publicKey] },
+					authority_hints: ["https://ta.example.com"],
+					metadata: {
+						federation_entity: {
+							federation_fetch_endpoint: "https://int.example.com/federation_fetch",
+						},
+					},
+				});
+				const untrustedEc = await rs_signEC(
+					"https://untrusted.example.com",
+					untrustedKeys.privateKey,
+					{
+						jwks: { keys: [untrustedKeys.publicKey] },
+						metadata: {
+							federation_entity: {
+								federation_fetch_endpoint: "https://untrusted.example.com/federation_fetch",
+							},
+						},
+					},
+				);
+				const leafEc = await rs_signEC("https://leaf.example.com", leafKeys.privateKey, {
+					jwks: { keys: [leafKeys.publicKey] },
+					authority_hints: ["https://untrusted.example.com", "https://int.example.com"],
+				});
+				const ssUntrustedLeaf = await rs_signSS(
+					"https://untrusted.example.com",
+					"https://leaf.example.com",
+					untrustedKeys.privateKey,
+					{ jwks: { keys: [leafKeys.publicKey] } },
+				);
+				const ssIntLeaf = await rs_signSS(
+					"https://int.example.com",
+					"https://leaf.example.com",
+					intKeys.privateKey,
+					{ jwks: { keys: [leafKeys.publicKey] } },
+				);
+				const ssTaInt = await rs_signSS(
+					"https://ta.example.com",
+					"https://int.example.com",
+					taKeys.privateKey,
+					{ jwks: { keys: [intKeys.publicKey] } },
+				);
+				const responses: Record<string, string> = {
+					"https://leaf.example.com/.well-known/openid-federation": leafEc,
+					"https://untrusted.example.com/.well-known/openid-federation": untrustedEc,
+					"https://int.example.com/.well-known/openid-federation": intEc,
+					"https://ta.example.com/.well-known/openid-federation": taEc,
+					"https://untrusted.example.com/federation_fetch?sub=https%3A%2F%2Fleaf.example.com":
+						ssUntrustedLeaf,
+					"https://int.example.com/federation_fetch?sub=https%3A%2F%2Fleaf.example.com": ssIntLeaf,
+					"https://ta.example.com/federation_fetch?sub=https%3A%2F%2Fint.example.com": ssTaInt,
+				};
+				const mockFetch = async (url: string | URL | Request) => {
+					const body = responses[url.toString()];
+					return body
+						? new Response(body, {
+								status: 200,
+								headers: { "Content-Type": "application/entity-statement+jwt" },
+							})
+						: new Response("Not found", { status: 404 });
+				};
+				const taSet: TrustAnchorSet = new Map([
+					["https://ta.example.com" as EntityId, { jwks: { keys: [taKeys.publicKey] } }],
+				]);
+				const result = await resolveTrustChains("https://leaf.example.com" as EntityId, taSet, {
+					httpClient: mockFetch,
+				});
+				t.equal(result.chains.length, 1);
+				t.equal(result.chains[0]?.trustAnchorId, "https://ta.example.com");
+				t.true(
+					result.errors.some((e) => e.description.includes("not a trust anchor")),
+					"expected untrusted branch to be recorded without aborting valid resolution",
+				);
+			});
 			test("exhausts fetch budget when maxTotalFetches: 1", async (t) => {
 				const taKeys = await generateSigningKey("ES256");
 				const leafKeys = await generateSigningKey("ES256");
@@ -9734,6 +9904,62 @@ export default (QUnit: QUnit) => {
 					t.equal(result.chain.trustAnchorId, "https://ta.example.com");
 					t.equal(result.chain.statements.length, 2);
 				}
+			});
+			test("rejects omitted Trust Anchor EC chain ending at an unknown issuer", async (t) => {
+				const leafKeys = await generateSigningKey("ES256");
+				const unknownKeys = await generateSigningKey("ES256");
+				const trustedKeys = await generateSigningKey("ES256");
+				const leafEc = await vt_signEC(
+					"https://leaf.example.com",
+					leafKeys.privateKey,
+					leafKeys.publicKey,
+					{ authority_hints: ["https://unknown.example.com"] },
+				);
+				const ss = await vt_signSS(
+					"https://unknown.example.com",
+					"https://leaf.example.com",
+					unknownKeys.privateKey,
+					leafKeys.publicKey,
+				);
+				const taSet: TrustAnchorSet = new Map([
+					["https://ta.example.com" as EntityId, { jwks: { keys: [trustedKeys.publicKey] } }],
+				]);
+				const result = await validateTrustChain([leafEc, ss], taSet, { verboseErrors: true });
+				t.false(result.valid);
+				t.true(
+					result.errors.some(
+						(e) => e.code === "ERR_TRUST_ANCHOR_UNKNOWN" && e.statementIndex === 1,
+					),
+					"expected final issuer to be rejected when no configured Trust Anchor matches it",
+				);
+			});
+			test("rejects omitted Trust Anchor EC chain signed with untrusted keys", async (t) => {
+				const taSigningKeys = await generateSigningKey("ES256");
+				const taPreTrustedKeys = await generateSigningKey("ES256");
+				const leafKeys = await generateSigningKey("ES256");
+				const leafEc = await vt_signEC(
+					"https://leaf.example.com",
+					leafKeys.privateKey,
+					leafKeys.publicKey,
+					{ authority_hints: ["https://ta.example.com"] },
+				);
+				const ss = await vt_signSS(
+					"https://ta.example.com",
+					"https://leaf.example.com",
+					taSigningKeys.privateKey,
+					leafKeys.publicKey,
+				);
+				const taSet: TrustAnchorSet = new Map([
+					["https://ta.example.com" as EntityId, { jwks: { keys: [taPreTrustedKeys.publicKey] } }],
+				]);
+				const result = await validateTrustChain([leafEc, ss], taSet, { verboseErrors: true });
+				t.false(result.valid);
+				t.true(
+					result.errors.some(
+						(e) => e.statementIndex === 1 && /TA signature verification failed/i.test(e.message),
+					),
+					"expected final statement to validate with configured Trust Anchor keys",
+				);
 			});
 			test("rejects chain with unknown trust anchor", async (t) => {
 				const { chain } = await vt_buildSimple();
