@@ -136,22 +136,40 @@ The repository also ships a CLI ([`@oidfed/cli`](docs/tools/cli.md)), a live fed
 
 ## Related Specifications
 
-[OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) has been factored into two final successor specifications (1.1 protocol-independent + 1.1 for OpenID Connect) that together cover exactly the same functionality as 1.0. Several active extensions build on top of 1.0/1.1 — wallets, large-federation discovery, subordinate-event publication, ACME certificate issuance, and more. The table below tracks every Federation-family specification we are aware of, with this monorepo's implementation status alongside.
+[OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) has been factored into two final successor specifications (1.1 protocol-independent + 1.1 for OpenID Connect) that together cover exactly the same functionality as 1.0. Several extensions and related drafts build on top of 1.0/1.1 — wallets, large-federation discovery, subordinate-event publication, ACME certificate issuance, and more. Their maturity ranges from active drafts to expired historical work. The table below tracks the Federation-family specifications and this monorepo's implementation status.
 
 | Specification | Spec status | This monorepo | Scope |
 |---|---|---|---|
 | [**OpenID Federation 1.0**](https://openid.net/specs/openid-federation-1_0.html) | **Final** ✓ (2026-02-17) |  **Implemented** | Foundational protocol: Entity Statements, Trust Chains, Metadata, Policies, Trust Marks, Federation Endpoints, OpenID Connect client registration. |
 | [**OpenID Federation 1.1**](https://openid.net/specs/openid-federation-1_1.html) | **Final** ✓ (2026-05-05) |  **Covered by the 1.0 implementation scope** | Protocol-independent layer — the 1.0 functionality factored apart with no behavioural changes. |
 | [**OpenID Federation for OpenID Connect 1.1**](https://openid.net/specs/openid-federation-connect-1_1.html) | **Final** ✓ (2026-05-05) |  **Covered by the 1.0 implementation scope** | Protocol-specific layer — OAuth 2.0 / OpenID Connect entity types, automatic + explicit client registration. |
-| [**OpenID Federation Extended Subordinate Listing 1.0**](https://openid.net/specs/openid-federation-extended-listing-1_0.html) | *Draft 02* |  **Available** (tracks draft-02) | Paginated subordinate listing with audit timestamps and bulk per-entity claim retrieval for large-scale federations. See [docs/packages/authority.md](docs/packages/authority.md#extended-subordinate-listing). |
+| [**OpenID Federation Extended Subordinate Listing 1.0**](https://openid.net/specs/openid-federation-extended-listing-1_0.html) | *Draft 03* (2026-07-02) |  **Available for Draft 02**; Draft 03 compatibility pending | Paginated subordinate listing with audit timestamps and bulk per-entity claim retrieval for large-scale federations. See [docs/packages/authority.md](docs/packages/authority.md#extended-subordinate-listing). |
 | [**OpenID Federation Subordinate Events Endpoint 1.0**](https://openid.net/specs/openid-federation-subordinate-events-1_0.html) | *Draft 01* |  **Not available yet** | Optional Trust Anchor / Intermediate endpoint for publishing historical subordinate registration, revocation, metadata, policy, and Federation Entity Key update events. |
 | [**OpenID Federation Entity Collection 1.0**](https://openid.net/specs/openid-federation-entity-collection-1_0.html) | *Draft 00* |  **Not available yet** | Sub-federation entity discovery endpoint with hierarchical filtering, pagination, and UI-oriented metadata for login pickers and admin tools. |
 | [**OpenID Federation for Wallet Architectures 1.0**](https://openid.net/specs/openid-federation-wallet-1_0.html) | *Draft 05* |  **Not available yet** | Trust-establishment profile for digital-wallet ecosystems — Wallet Provider / Wallet Relying Party metadata, policy templates, trust mark guidance. |
-| [**Automatic Certificate Management Environment (ACME) with OpenID Federation 1.0**](https://datatracker.ietf.org/doc/draft-ietf-acme-openid-federation/) | *IETF Internet-Draft (draft-ietf-acme-openid-federation-00)* |  **Not available yet** | New Federation Entity Types for ACME Requestor / Issuer roles, enabling automated X.509 issuance over federation discovery. |
+| [**Automatic Certificate Management Environment (ACME) with OpenID Federation 1.0**](https://datatracker.ietf.org/doc/draft-ietf-acme-openid-federation/) | *Expired IETF ACME WG Internet-Draft (draft 00)* |  **Not available** | Historical proposal for ACME Requestor / Issuer Federation Entity Types and automated X.509 issuance over federation discovery; monitor for a replacement revision. |
 
 
 > [!NOTE]
-> **OpenID Federation 1.1 + OpenID Federation for OpenID Connect 1.1** are a clean split of 1.0 — no functionality was added or removed, only factored apart. **Extended Subordinate Listing** is available end-to-end (server endpoint, federation-api client, CLI `list-extended` command) and tracks draft-02 verbatim — see [docs/packages/authority.md](docs/packages/authority.md#extended-subordinate-listing). **Subordinate Events Endpoint**, **Entity Collection**, **Wallet Architectures**, and **ACME-with-Federation** are tracked but not available yet; contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+> **OpenID Federation 1.1 + OpenID Federation for OpenID Connect 1.1** are a clean split of 1.0 — no functionality was added or removed, only factored apart. **Extended Subordinate Listing** is available end-to-end (server endpoint, federation-api client, CLI `list-extended` command) for Draft 02 — see [docs/packages/authority.md](docs/packages/authority.md#extended-subordinate-listing). Draft 03 replaces `from_entity_id` / `next_entity_id` pagination with opaque `from` / `next` values and permits multiple `trust_mark_type` filters, so the Draft 03 support claim remains pending a compatibility update. **Subordinate Events Endpoint**, **Entity Collection**, and **Wallet Architectures** are tracked but not available yet; the expired **ACME-with-Federation** draft is retained as historical work. Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+### Companion and downstream specifications
+
+These specifications are not part of the core Federation family, but they normatively invoke OpenID Federation processing or transport Federation artifacts.
+
+| Specification | Status | Federation relationship |
+|---|---|---|
+| [**OpenID Connect Relying Party Metadata Choices 1.0**](https://openid.net/specs/openid-connect-rp-metadata-choices-1_0.html) | **Final** ✓ (2026-03-25) | Lets an RP express alternative supported metadata values, particularly when Federation Automatic Registration has no registration response for negotiation. |
+| [**OpenID for Verifiable Presentations 1.0**](https://openid.net/specs/openid-4-verifiable-presentations-1_0.html) | **Final** ✓ (2025-07-09) | Defines `openid_federation:` client identifiers, Federation-resolved Verifier metadata, and optional `trust_chain` transport. |
+| [**OpenID for Verifiable Credential Issuance 1.0**](https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html) | **Final** ✓ (2025-09-16) | Defines an optional JOSE `trust_chain` header and normatively references OpenID Federation draft 43. |
+
+Existing generic Trust Chain parsing and validation does not by itself constitute OpenID4VP or OpenID4VCI support.
+
+### Project listing and specification ecosystem
+
+`@oidfed` is listed in the OpenID Foundation's [OpenID Federation implementation registry](https://openid.net/developers/openid-federation-implementations/). This is a project-specific visibility signal only; registry inclusion is not OpenID certification or evidence of conformance.
+
+Separately, the wider OpenID Federation specification ecosystem demonstrated interoperability across [nine implementations from nine countries](https://openid.net/nine-countries-prove-openid-federation-interoperability/) at TIIME 2026. That result concerns adoption and interoperability of the specification across the ecosystem; it is not evidence that `@oidfed` was one of those implementations or participated in the event. As of July 2026, OIDF describes its [Federation conformance tests](https://openid.net/certification-old/federation_testing/) as early-stage and supports Automatic Registration only. This repository does not claim an OIDF certification result.
 
 For real-world integration examples see the [Wiring Guide](docs/guide/wiring-guide.md), the [dev federation server](docs/guide/dev.md), and the [E2E test infrastructure](docs/test/e2e.md).
 
@@ -162,6 +180,7 @@ Running a federation involves responsibilities beyond what this library enforces
 - [**§18 — Security Considerations**](https://openid.net/specs/openid-federation-1_0.html#section-18): DoS prevention for the resolve, fetch, and registration endpoints; `authority_hints` depth limits; Trust Mark filtering; reverse-proxy end-to-end signing.
 - [**§19 — Privacy Considerations**](https://openid.net/specs/openid-federation-1_0.html#section-19): Entity Statements are org-level infrastructure — keep personal data minimal; mitigate Trust Mark Status and Fetch endpoint tracking via short-lived tokens and static Trust Chains.
 - [**§17 — Implementation Considerations**](https://openid.net/specs/openid-federation-1_0.html#section-17): Multi-path topology ambiguity; Trust Mark policy design; resolver and Trust Anchor co-location.
+- [**`private_key_jwt` audience security**](https://openid.net/notice-of-a-security-vulnerability/) ([CVE-2025-27370](https://www.cve.org/CVERecord?id=CVE-2025-27370), [CVE-2025-27371](https://www.cve.org/CVERecord?id=CVE-2025-27371)): A client assertion must contain exactly one audience value identifying the authorization server by its Federation Entity Identifier; token and PAR endpoint URLs are not substitutes. `@oidfed` verification enforces an exact singleton match. Callers using low-level assertion-creation APIs must supply the validated AS/OP Entity Identifier.
 
 This library provides the protocol mechanisms; policy, rate limiting, key management, HSM integration, and operational hardening are the operator's responsibility.
 
