@@ -45,7 +45,7 @@ export default {
 		"scope-empty": [2, "never"],
 		"subject-case": [2, "never", ["upper-case", "pascal-case", "start-case"]],
 		"subject-full-stop": [2, "never", "."],
-		"header-max-length": [2, "always", 100],
+		"header-max-length": [2, "always", 120],
 		"body-max-line-length": [2, "always", 120],
 	},
 };
