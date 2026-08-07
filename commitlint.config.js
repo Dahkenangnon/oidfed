@@ -34,6 +34,7 @@ export default {
 				"release",
 				"ci",
 				"deps",
+				"deps-dev",
 				"tests",
 				"e2e",
 				"scripts",
