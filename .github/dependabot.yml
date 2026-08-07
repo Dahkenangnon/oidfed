@@ -1,11 +1,9 @@
 version: 2
 
 updates:
-  # npm / pnpm / yarn dependencies for public packages + tools only
+  # pnpm workspace dependencies; use the root manifest and shared lockfile together
   - package-ecosystem: npm
-    directories:
-      - "/packages/*"
-      - "/tools/*"
+    directory: /
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
