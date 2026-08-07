@@ -74,7 +74,7 @@
 		"@oidfed/oidc": "workspace:*",
 		"@playwright/test": "^1.61.0",
 		"@types/express": "^5.0.6",
-		"@types/node": "^25.9.3",
+		"@types/node": "^26.1.2",
 		"@types/oidc-provider": "^9.5.0",
 		"@types/qunit": "^2.19.14",
 		"c8": "^11.0.0",
