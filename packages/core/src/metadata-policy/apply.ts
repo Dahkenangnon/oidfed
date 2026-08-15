@@ -7,6 +7,7 @@ import {
 	type MetadataPolicyOptions,
 	validateCustomOperators,
 } from "./custom-operators.js";
+import { hasOwn, isPrototypeKey } from "./safe-keys.js";
 
 export type { MetadataPolicyOptions };
 
@@ -26,28 +27,38 @@ export function applyMetadataPolicy(
 	);
 
 	const result = structuredClone(metadata) as Record<string, Record<string, unknown>>;
+	const metadataKeyError = findUnsafeMetadataKey(result);
+	if (metadataKeyError) return unsafeMetadataKey(metadataKeyError);
 
 	if (superiorMetadataOverride) {
 		for (const [entityType, params] of Object.entries(superiorMetadataOverride)) {
-			if (!result[entityType]) {
+			if (isPrototypeKey(entityType)) return unsafeMetadataKey(entityType);
+			if (!hasOwn(result, entityType)) {
 				result[entityType] = {};
 			}
 			const entityResult = result[entityType];
 			for (const [param, value] of Object.entries(params as Record<string, unknown>)) {
+				if (isPrototypeKey(param)) return unsafeMetadataKey(`${entityType}.${param}`);
 				if (entityResult) entityResult[param] = value;
 			}
 		}
 	}
 
 	for (const [entityType, paramPolicies] of Object.entries(policy)) {
-		if (!result[entityType]) {
+		if (isPrototypeKey(entityType)) return unsafeMetadataKey(entityType);
+		if (!hasOwn(result, entityType)) {
 			result[entityType] = {};
 		}
 		const entityMetadata = result[entityType] as Record<string, unknown>;
 
 		for (const [paramName, opEntries] of Object.entries(paramPolicies)) {
+			if (isPrototypeKey(paramName)) return unsafeMetadataKey(`${entityType}.${paramName}`);
+			const unsafeOperator = Object.keys(opEntries as Record<string, unknown>).find(isPrototypeKey);
+			if (unsafeOperator) {
+				return unsafeMetadataKey(`${entityType}.${paramName}.${unsafeOperator}`);
+			}
 			const sortedOps = Object.entries(opEntries as Record<string, unknown>)
-				.filter(([opName]) => lookup[opName] !== undefined)
+				.filter(([opName]) => hasOwn(lookup, opName))
 				.sort(([a], [b]) => (lookup[a]?.order ?? 0) - (lookup[b]?.order ?? 0));
 
 			// Scope is space-delimited in OIDC but operators expect arrays
@@ -89,6 +100,25 @@ export function applyMetadataPolicy(
 	}
 
 	return ok(result as FederationMetadata);
+}
+
+function findUnsafeMetadataKey(
+	metadata: Record<string, Record<string, unknown>>,
+): string | undefined {
+	for (const [entityType, params] of Object.entries(metadata)) {
+		if (isPrototypeKey(entityType)) return entityType;
+		for (const param of Object.keys(params)) {
+			if (isPrototypeKey(param)) return `${entityType}.${param}`;
+		}
+	}
+	return undefined;
+}
+
+function unsafeMetadataKey(path: string): Result<never, FederationError> {
+	return err({
+		code: InternalErrorCode.MetadataPolicyViolation,
+		description: `Metadata policy contains unsafe key '${path}'`,
+	});
 }
 
 export function normalizeScope(scope: string): string[] {
