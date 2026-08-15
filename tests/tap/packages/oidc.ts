@@ -4987,6 +4987,10 @@ export default (QUnit: QUnit) => {
 
 		async function createFederatedHandlerFixture(overrides?: HandlerConfigOverrides) {
 			const fed = await createMockFederation();
+			activeHandlerLeafKeys = {
+				privateKey: fed.leafSigningKey,
+				publicKey: fed.leafPublicKey as unknown as Record<string, unknown>,
+			};
 			const config = await createHandlerConfig({
 				trustAnchors: fed.trustAnchors,
 				options: fed.options,
@@ -4994,6 +4998,7 @@ export default (QUnit: QUnit) => {
 			});
 			return { config, fed };
 		}
+		let activeHandlerLeafKeys: { privateKey: JWK; publicKey: Record<string, unknown> } | undefined;
 
 		async function buildRegistrationRequest(
 			rpEntityId: string,
@@ -5001,7 +5006,10 @@ export default (QUnit: QUnit) => {
 			rpPrivateKey: JWK,
 			rpPublicKey: Record<string, unknown>,
 			overrides?: Record<string, unknown>,
+			useProvidedKeys = false,
 		) {
+			const signingKeys =
+				rpEntityId === LEAF_ID && !useProvidedKeys ? activeHandlerLeafKeys : undefined;
 			return signEntityStatement(
 				{
 					iss: rpEntityId,
@@ -5009,11 +5017,11 @@ export default (QUnit: QUnit) => {
 					aud: opEntityId,
 					iat: REG_NOW,
 					exp: REG_NOW + 3600,
-					jwks: { keys: [rpPublicKey] },
+					jwks: { keys: [signingKeys?.publicKey ?? rpPublicKey] },
 					...REQUIRED_FIELDS,
 					...overrides,
 				},
-				new JwkSigner(rpPrivateKey),
+				new JwkSigner(signingKeys?.privateKey ?? rpPrivateKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 		}
@@ -5060,6 +5068,37 @@ export default (QUnit: QUnit) => {
 				t.ok(payload.authority_hints);
 				t.true(Array.isArray(payload.authority_hints));
 				t.equal((payload.authority_hints as string[]).length, 1);
+			});
+
+			test("rejects a self-signed request not authorized by the RP trust chain", async (t) => {
+				const { config } = await createFederatedHandlerFixture();
+				const handler = createExplicitRegistrationHandler(config);
+				const attackerKeys = await generateSigningKey("ES256");
+				const jwt = await signEntityStatement(
+					{
+						iss: LEAF_ID,
+						sub: LEAF_ID,
+						aud: HANDLER_ENTITY_ID,
+						iat: REG_NOW,
+						exp: REG_NOW + 3600,
+						jwks: { keys: [attackerKeys.publicKey] },
+						...REQUIRED_FIELDS,
+					},
+					new JwkSigner(attackerKeys.privateKey),
+					{ typ: JwtTyp.EntityStatement },
+				);
+
+				const res = await handler(
+					new Request(`${HANDLER_ENTITY_ID}/federation_registration`, {
+						method: "POST",
+						headers: { "Content-Type": MediaType.EntityStatement },
+						body: jwt,
+					}),
+				);
+				t.equal(res.status, 403);
+				const body = (await res.json()) as Record<string, string>;
+				t.equal(body.error, FederationErrorCode.InvalidTrustChain);
+				t.ok(body.error_description?.includes("authorized"));
 			});
 
 			test("rejects request RP metadata with registration response fields", async (t) => {
@@ -5378,6 +5417,8 @@ export default (QUnit: QUnit) => {
 					HANDLER_ENTITY_ID as string,
 					wrongKeys.privateKey,
 					rpKeys.publicKey as unknown as Record<string, unknown>,
+					undefined,
+					true,
 				);
 				const res = await handler(
 					new Request(`${HANDLER_ENTITY_ID}/federation_registration`, {
@@ -5752,6 +5793,10 @@ export default (QUnit: QUnit) => {
 		module("oidc / createExplicitRegistrationHandler — trust chain resolution", () => {
 			test("resolves chain and sets trust_anchor, authority_hints, exp from chain", async (t) => {
 				const fed = await createMockFederation();
+				activeHandlerLeafKeys = {
+					privateKey: fed.leafSigningKey,
+					publicKey: fed.leafPublicKey as unknown as Record<string, unknown>,
+				};
 				const config = await createHandlerConfig({
 					trustAnchors: fed.trustAnchors,
 					options: fed.options,
@@ -5785,6 +5830,10 @@ export default (QUnit: QUnit) => {
 
 			test("returns 403 when no valid chain can be resolved for RP", async (t) => {
 				const fed = await createMockFederation();
+				activeHandlerLeafKeys = {
+					privateKey: fed.leafSigningKey,
+					publicKey: fed.leafPublicKey as unknown as Record<string, unknown>,
+				};
 				const config = await createHandlerConfig({
 					trustAnchors: fed.trustAnchors,
 					options: fed.options,
@@ -5814,6 +5863,10 @@ export default (QUnit: QUnit) => {
 
 			test("uses trust_chain JWT header when valid and present", async (t) => {
 				const fed = await createMockFederation();
+				activeHandlerLeafKeys = {
+					privateKey: fed.leafSigningKey,
+					publicKey: fed.leafPublicKey as unknown as Record<string, unknown>,
+				};
 				const config = await createHandlerConfig({
 					trustAnchors: fed.trustAnchors,
 					options: {
@@ -5857,6 +5910,10 @@ export default (QUnit: QUnit) => {
 
 			test("rejects invalid trust_chain JWT header instead of falling back to discovery", async (t) => {
 				const fed = await createMockFederation();
+				activeHandlerLeafKeys = {
+					privateKey: fed.leafSigningKey,
+					publicKey: fed.leafPublicKey as unknown as Record<string, unknown>,
+				};
 				const config = await createHandlerConfig({
 					trustAnchors: fed.trustAnchors,
 					options: fed.options,
@@ -5893,6 +5950,10 @@ export default (QUnit: QUnit) => {
 
 			test("invokes registrationProtocolAdapter.enrichResponseMetadata", async (t) => {
 				const fed = await createMockFederation();
+				activeHandlerLeafKeys = {
+					privateKey: fed.leafSigningKey,
+					publicKey: fed.leafPublicKey as unknown as Record<string, unknown>,
+				};
 				let enrichCalled = false;
 				const adapter: RegistrationProtocolAdapter = {
 					validateClientMetadata: (metadata) => ({ ok: true, value: metadata }),
@@ -5935,6 +5996,10 @@ export default (QUnit: QUnit) => {
 
 			test("emits client_secret when generateClientSecret hook returns a value", async (t) => {
 				const fed = await createMockFederation();
+				activeHandlerLeafKeys = {
+					privateKey: fed.leafSigningKey,
+					publicKey: fed.leafPublicKey as unknown as Record<string, unknown>,
+				};
 				let capturedClientSecret: string | undefined;
 				const config = await createHandlerConfig({
 					trustAnchors: fed.trustAnchors,
@@ -5973,6 +6038,10 @@ export default (QUnit: QUnit) => {
 
 			test("omits client_secret when hook returns undefined", async (t) => {
 				const fed = await createMockFederation();
+				activeHandlerLeafKeys = {
+					privateKey: fed.leafSigningKey,
+					publicKey: fed.leafPublicKey as unknown as Record<string, unknown>,
+				};
 				const config = await createHandlerConfig({
 					trustAnchors: fed.trustAnchors,
 					options: fed.options,
@@ -6008,6 +6077,10 @@ export default (QUnit: QUnit) => {
 		module("oidc / createExplicitRegistrationHandler — peer_trust_chain", () => {
 			async function buildPeerHandlerConfig(adapter?: RegistrationProtocolAdapter) {
 				const fed = await createMockFederation();
+				activeHandlerLeafKeys = {
+					privateKey: fed.leafSigningKey,
+					publicKey: fed.leafPublicKey as unknown as Record<string, unknown>,
+				};
 				const overrides: HandlerConfigOverrides = {
 					opEntityId: OP_ID,
 					trustAnchors: fed.trustAnchors,
@@ -6024,7 +6097,7 @@ export default (QUnit: QUnit) => {
 				peerTrustChain: string[];
 				includeRpTrustChain?: boolean;
 			}) {
-				const { fed, rpKeys, peerTrustChain, includeRpTrustChain = true } = opts;
+				const { fed, peerTrustChain, includeRpTrustChain = true } = opts;
 				const trustChain = includeRpTrustChain
 					? [fed.leafEcJwt, fed.taSubStatementForLeaf, fed.taEcJwt]
 					: undefined;
@@ -6035,10 +6108,12 @@ export default (QUnit: QUnit) => {
 						aud: OP_ID,
 						iat: REG_NOW,
 						exp: REG_NOW + 3600,
-						jwks: { keys: [rpKeys.publicKey as unknown as Record<string, unknown>] },
+						jwks: {
+							keys: [fed.leafPublicKey as unknown as Record<string, unknown>],
+						},
 						...REQUIRED_FIELDS,
 					},
-					new JwkSigner(rpKeys.privateKey),
+					new JwkSigner(fed.leafSigningKey),
 					{
 						typ: JwtTyp.EntityStatement,
 						extraHeaders: {
@@ -6233,7 +6308,6 @@ export default (QUnit: QUnit) => {
 			test("rejects peer_trust_chain rooted in a Trust Anchor not in the OP's trust set", async (t) => {
 				const { config, fed } = await buildPeerHandlerConfig();
 				const handler = createExplicitRegistrationHandler(config);
-				const rpKeys = await generateSigningKey("ES256");
 
 				const { privateKey: foreignTaKey, publicKey: foreignTaPub } =
 					await generateSigningKey("ES256");
@@ -6257,10 +6331,10 @@ export default (QUnit: QUnit) => {
 						aud: OP_ID,
 						iat: REG_NOW,
 						exp: REG_NOW + 3600,
-						jwks: { keys: [rpKeys.publicKey as unknown as Record<string, unknown>] },
+						jwks: { keys: [fed.leafPublicKey as unknown as Record<string, unknown>] },
 						...REQUIRED_FIELDS,
 					},
-					new JwkSigner(rpKeys.privateKey),
+					new JwkSigner(fed.leafSigningKey),
 					{
 						typ: JwtTyp.EntityStatement,
 						extraHeaders: { peer_trust_chain: [fed.opEcJwt, foreignTaEc] },
@@ -6290,7 +6364,6 @@ export default (QUnit: QUnit) => {
 				};
 				const { config, fed } = await buildPeerHandlerConfig(adapter);
 				const handler = createExplicitRegistrationHandler(config);
-				const rpKeys = await generateSigningKey("ES256");
 				const jwt = await signEntityStatement(
 					{
 						iss: LEAF_ID,
@@ -6298,16 +6371,15 @@ export default (QUnit: QUnit) => {
 						aud: OP_ID,
 						iat: REG_NOW,
 						exp: REG_NOW + 3600,
-						jwks: { keys: [rpKeys.publicKey as unknown as Record<string, unknown>] },
+						jwks: { keys: [fed.leafPublicKey as unknown as Record<string, unknown>] },
 						...REQUIRED_FIELDS,
 					},
-					new JwkSigner(rpKeys.privateKey),
+					new JwkSigner(fed.leafSigningKey),
 					{
 						typ: JwtTyp.EntityStatement,
 						extraHeaders: { peer_trust_chain: [] },
 					},
 				);
-				void fed;
 				const res = await handler(
 					new Request(`${OP_ID}/federation_registration`, {
 						method: "POST",
