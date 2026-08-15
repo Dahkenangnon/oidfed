@@ -11,6 +11,7 @@ import {
 	validateCustomOperators,
 } from "./custom-operators.js";
 import { validateStandardPolicyOperatorConfiguration } from "./operators.js";
+import { hasOwn, isPrototypeKey } from "./safe-keys.js";
 
 const STANDARD_METADATA_POLICY_OPERATORS: ReadonlySet<string> = new Set(
 	Object.values(PolicyOperator),
@@ -51,7 +52,7 @@ export function resolveMetadataPolicy(
 				description: `metadata_policy_crit must not list standard metadata policy operator '${critOp}'`,
 			});
 		}
-		if (!lookup[critOp]) {
+		if (!hasOwn(lookup, critOp)) {
 			return err({
 				code: InternalErrorCode.MetadataPolicyError,
 				description: `Unknown critical metadata policy operator: '${critOp}'`,
@@ -72,19 +73,28 @@ export function resolveMetadataPolicy(
 		>;
 
 		for (const [entityType, paramPolicies] of Object.entries(clonedPolicy)) {
-			if (!merged[entityType]) {
+			if (isPrototypeKey(entityType)) {
+				return unsafePolicyKey(entityType);
+			}
+			if (!hasOwn(merged, entityType)) {
 				merged[entityType] = {};
 			}
 			const mergedEntityType = merged[entityType] as Record<string, Record<string, unknown>>;
 
 			for (const [paramName, opEntries] of Object.entries(paramPolicies)) {
-				if (!mergedEntityType[paramName]) {
+				if (isPrototypeKey(paramName)) {
+					return unsafePolicyKey(`${entityType}.${paramName}`);
+				}
+				if (!hasOwn(mergedEntityType, paramName)) {
 					mergedEntityType[paramName] = {};
 				}
 				const mergedParam = mergedEntityType[paramName] as Record<string, unknown>;
 
 				for (const [opName, opValue] of Object.entries(opEntries as Record<string, unknown>)) {
-					if (!lookup[opName]) continue;
+					if (isPrototypeKey(opName)) {
+						return unsafePolicyKey(`${entityType}.${paramName}.${opName}`);
+					}
+					if (!hasOwn(lookup, opName)) continue;
 
 					const opDef = lookup[opName] as PolicyOperatorDefinition;
 					const configError = validateStandardPolicyOperatorConfiguration(opName, opValue);
@@ -95,7 +105,7 @@ export function resolveMetadataPolicy(
 						});
 					}
 
-					if (mergedParam[opName] !== undefined) {
+					if (hasOwn(mergedParam, opName)) {
 						const mergeResult = opDef.merge(mergedParam[opName], opValue);
 						if (!mergeResult.ok) {
 							return err({
@@ -109,7 +119,7 @@ export function resolveMetadataPolicy(
 					}
 				}
 
-				const opNames = Object.keys(mergedParam).filter((k) => lookup[k] !== undefined);
+				const opNames = Object.keys(mergedParam).filter((k) => hasOwn(lookup, k));
 				for (let a = 0; a < opNames.length; a++) {
 					for (let b = a + 1; b < opNames.length; b++) {
 						const opA = opNames[a] as string;
@@ -132,4 +142,11 @@ export function resolveMetadataPolicy(
 	}
 
 	return ok(merged);
+}
+
+function unsafePolicyKey(path: string): Result<never, FederationError> {
+	return err({
+		code: InternalErrorCode.MetadataPolicyError,
+		description: `Metadata policy contains unsafe key '${path}'`,
+	});
 }
