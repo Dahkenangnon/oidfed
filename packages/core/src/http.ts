@@ -182,15 +182,31 @@ export async function extractRequestParams(request: Request): Promise<ExtractedR
 export async function readStreamWithLimit(
 	body: ReadableStream<Uint8Array>,
 	maxBytes: number,
+	signal?: AbortSignal,
 ): Promise<{ ok: true; text: string } | { ok: false }> {
 	const chunks: Uint8Array[] = [];
 	let received = 0;
-	for await (const chunk of body as AsyncIterable<Uint8Array>) {
-		received += chunk.length;
-		if (received > maxBytes) {
-			return { ok: false };
+	const reader = body.getReader();
+	const abort = () => {
+		void reader.cancel(signal?.reason);
+	};
+	signal?.addEventListener("abort", abort, { once: true });
+	if (signal?.aborted) abort();
+	try {
+		while (true) {
+			const { done, value: chunk } = await reader.read();
+			if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+			if (done) break;
+			received += chunk.length;
+			if (received > maxBytes) {
+				await reader.cancel();
+				return { ok: false };
+			}
+			chunks.push(chunk);
 		}
-		chunks.push(chunk);
+	} finally {
+		signal?.removeEventListener("abort", abort);
+		reader.releaseLock();
 	}
 	const buf = new Uint8Array(received);
 	let off = 0;
