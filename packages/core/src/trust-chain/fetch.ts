@@ -286,6 +286,8 @@ export interface PerformFetchOptions extends FederationOptions {
 	 * inspects the response body header itself).
 	 */
 	expectedContentType?: string | null;
+	/** Request fields used by federation endpoints that do not use GET. */
+	request?: Pick<RequestInit, "method" | "headers" | "body">;
 }
 
 export async function performFetch(
@@ -300,6 +302,8 @@ export async function performFetch(
 	const accept = options?.accept ?? MediaType.EntityStatement;
 	const expectedContentType =
 		options?.expectedContentType !== undefined ? options.expectedContentType : accept;
+	const headers = new Headers(options?.request?.headers);
+	headers.set("Accept", accept);
 
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -322,10 +326,9 @@ export async function performFetch(
 
 	try {
 		const response = await fetchFn(url, {
+			...options?.request,
 			signal: controller.signal,
-			headers: {
-				Accept: accept,
-			},
+			headers,
 		});
 
 		clearTimeout(timer);

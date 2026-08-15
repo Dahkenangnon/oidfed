@@ -7380,11 +7380,14 @@ export default (QUnit: QUnit) => {
 			test("happy path: POST returns status JWT (active)", async (t) => {
 				const signerKeys = await _genKey("ES256");
 				const responseJwt = await buildStatusResponseJwt("active", signerKeys);
-				const httpClient: HttpClient = async () =>
-					new Response(responseJwt, {
+				let requestInit: RequestInit | undefined;
+				const httpClient: HttpClient = async (_url, init) => {
+					requestInit = init;
+					return new Response(responseJwt, {
 						status: 200,
 						headers: { "Content-Type": "application/trust-mark-status-response+jwt" },
 					});
+				};
 				const result = await fetchTrustMarkStatus(
 					"https://ta.example.com/federation_trust_mark_status",
 					"eyJ.original.jwt",
@@ -7396,6 +7399,43 @@ export default (QUnit: QUnit) => {
 					t.equal(result.value.status, "active");
 					t.equal(result.value.issuer, "https://ta.example.com");
 				}
+				t.equal(requestInit?.method, "POST");
+				t.equal(requestInit?.body, "trust_mark=eyJ.original.jwt");
+				t.true(requestInit?.signal instanceof AbortSignal);
+				const headers = new Headers(requestInit?.headers);
+				t.equal(headers.get("content-type"), "application/x-www-form-urlencoded");
+				t.equal(headers.get("accept"), MediaType.TrustMarkStatusResponse);
+			});
+
+			test("applies federation SSRF and response-size controls", async (t) => {
+				const signerKeys = await _genKey("ES256");
+				let fetchCalls = 0;
+				const httpClient: HttpClient = async () => {
+					fetchCalls++;
+					return new Response("oversized", {
+						status: 200,
+						headers: { "Content-Type": MediaType.TrustMarkStatusResponse },
+					});
+				};
+
+				const blocked = await fetchTrustMarkStatus(
+					"https://127.0.0.1/private/status",
+					"eyJ.original.jwt",
+					{ keys: [signerKeys.publicKey] },
+					{ httpClient },
+				);
+				t.true(isErr(blocked));
+				t.equal(fetchCalls, 0);
+
+				const oversized = await fetchTrustMarkStatus(
+					"https://status.example.com/status",
+					"eyJ.original.jwt",
+					{ keys: [signerKeys.publicKey] },
+					{ httpClient, allowedHosts: ["status.example.com"], maxResponseBytes: 1 },
+				);
+				t.true(isErr(oversized));
+				if (isErr(oversized)) t.true(oversized.error.description.includes("too large"));
+				t.equal(fetchCalls, 1);
 			});
 
 			test("returns expired status pass-through", async (t) => {
