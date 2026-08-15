@@ -1986,6 +1986,40 @@ export default (QUnit: QUnit) => {
 				);
 			}
 		});
+
+		test("par: rejects an unsafe pushed_authorization_request_endpoint without posting", async (t) => {
+			const parEndpoint = "http://127.0.0.1/internal/par";
+			const fed = await createMockFederation({
+				opMetadata: {
+					openid_provider: {
+						issuer: OP_ID,
+						authorization_endpoint: `${OP_ID}/authorize`,
+						token_endpoint: `${OP_ID}/token`,
+						pushed_authorization_request_endpoint: parEndpoint,
+						response_types_supported: ["code"],
+						subject_types_supported: ["public"],
+						id_token_signing_alg_values_supported: ["ES256"],
+						client_registration_types_supported: ["automatic"],
+					},
+				},
+			});
+			const discovery = await createMockDiscovery(OP_ID, fed);
+			const { config } = await createRpConfig({ requestDelivery: "par" });
+			let parPosts = 0;
+			const httpClient: HttpClient = async (input, init) => {
+				const url = typeof input === "string" ? input : (input as Request).url;
+				if (url === parEndpoint) parPosts++;
+				return fed.options.httpClient!(input, init);
+			};
+
+			const result = await automaticRegistration(discovery, config, authzParams, fed.trustAnchors, {
+				...fed.options,
+				httpClient,
+			});
+			t.true(isErr(result));
+			if (isErr(result)) t.ok(result.error.description.includes("HTTPS"));
+			t.equal(parPosts, 0);
+		});
 	});
 
 	// -------------------------------------------------------------------------

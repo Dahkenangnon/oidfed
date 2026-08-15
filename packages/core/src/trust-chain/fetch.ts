@@ -286,6 +286,10 @@ export interface PerformFetchOptions extends FederationOptions {
 	 * inspects the response body header itself).
 	 */
 	expectedContentType?: string | null;
+	/** Additional request fields for safe non-GET federation endpoint calls. */
+	requestInit?: Omit<RequestInit, "signal">;
+	/** Accepted HTTP statuses. Defaults to any successful (2xx) status. */
+	acceptedStatuses?: readonly number[];
 }
 
 export async function performFetch(
@@ -300,6 +304,8 @@ export async function performFetch(
 	const accept = options?.accept ?? MediaType.EntityStatement;
 	const expectedContentType =
 		options?.expectedContentType !== undefined ? options.expectedContentType : accept;
+	const headers = new Headers(options?.requestInit?.headers);
+	if (!headers.has("Accept")) headers.set("Accept", accept);
 
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -322,15 +328,16 @@ export async function performFetch(
 
 	try {
 		const response = await fetchFn(url, {
+			...options?.requestInit,
 			signal: controller.signal,
-			headers: {
-				Accept: accept,
-			},
+			headers,
 		});
 
 		clearTimeout(timer);
 
-		if (!response.ok) {
+		if (
+			options?.acceptedStatuses ? !options.acceptedStatuses.includes(response.status) : !response.ok
+		) {
 			return err({
 				code: InternalErrorCode.Network,
 				description: `HTTP ${response.status} from ${url}`,

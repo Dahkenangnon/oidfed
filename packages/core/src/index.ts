@@ -184,6 +184,8 @@ export { discoverEntity } from "./trust-chain/discovery.js";
 export {
 	fetchEntityConfiguration,
 	fetchSubordinateStatement,
+	type PerformFetchOptions,
+	performFetch,
 	validateEntityId,
 	validateFetchUrl,
 } from "./trust-chain/fetch.js";
