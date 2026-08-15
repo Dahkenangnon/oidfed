@@ -1927,6 +1927,48 @@ export default (QUnit: QUnit) => {
 				t.deepEqual(commaBody, repeatedBody);
 			});
 
+			test("deduplicates repeated claims before extracting them", async (t) => {
+				const { ctx, subordinates, keyProvider } = await createTestContext();
+				await subordinates.add(makeXListRecord(XLIST_SUB_A));
+				let signingKeyLookups = 0;
+				const countedKeyProvider = new Proxy(keyProvider, {
+					get(target, property, receiver) {
+						if (property !== "getFederationKeySet") return Reflect.get(target, property, receiver);
+						return async () => {
+							signingKeyLookups++;
+							return keyProvider.getFederationKeySet();
+						};
+					},
+				});
+				const handler = createExtendedListHandler({
+					...ctx,
+					keyProvider: countedKeyProvider,
+				});
+				const res = await handler(
+					new Request(
+						`${XLIST_BASE_URL}?claims=subordinate_statement,subordinate_statement&claims=subordinate_statement`,
+					),
+				);
+
+				t.equal(res.status, 200);
+				t.equal(signingKeyLookups, 1, "signs each subordinate statement only once");
+			});
+
+			test("ignores claim names inherited from Object.prototype", async (t) => {
+				const { ctx, subordinates } = await createTestContext();
+				await subordinates.add(makeXListRecord(XLIST_SUB_A));
+				const handler = createExtendedListHandler(ctx);
+				const res = await handler(
+					new Request(`${XLIST_BASE_URL}?claims=__proto__,constructor,toString`),
+				);
+				const body = (await res.json()) as {
+					immediate_subordinate_entities: Array<Record<string, unknown>>;
+				};
+
+				t.equal(res.status, 200);
+				t.deepEqual(body.immediate_subordinate_entities[0], { id: XLIST_SUB_A });
+			});
+
 			test("comma syntax tolerates empty tokens", async (t) => {
 				const { ctx, subordinates } = await createTestContext();
 				await subordinates.add(makeXListRecord(XLIST_SUB_A));
