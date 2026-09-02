@@ -6,7 +6,6 @@
  */
 import { FederationErrorCode, JwtTyp, MediaType, type TrustMarkStatus } from "../constants.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
-import { isExactContentType } from "../http.js";
 import { verifyEntityStatement } from "../jose/verify.js";
 import type { JWKSet } from "../schemas/jwk.js";
 import { performFetch } from "../trust-chain/fetch.js";
@@ -109,35 +108,19 @@ export async function fetchTrustMarkStatus(
 		);
 	}
 
-	const fetchFn = options?.httpClient ?? fetch;
 	const body = new URLSearchParams({ trust_mark: trustMarkJwt }).toString();
-	const response = await fetchFn(endpoint, {
-		method: "POST",
-		headers: {
-			"Content-Type": "application/x-www-form-urlencoded",
-			Accept: MediaType.TrustMarkStatusResponse,
+	const fetched = await performFetch(parsed.toString(), {
+		...options,
+		accept: MediaType.TrustMarkStatusResponse,
+		expectedContentType: MediaType.TrustMarkStatusResponse,
+		request: {
+			method: "POST",
+			headers: { "Content-Type": "application/x-www-form-urlencoded" },
+			body,
 		},
-		body,
 	});
-	if (!response.ok) {
-		return err(
-			federationError(
-				FederationErrorCode.InvalidRequest,
-				`HTTP ${response.status} from trust mark status endpoint`,
-			),
-		);
-	}
-	const contentType = response.headers.get("content-type");
-	if (!isExactContentType(contentType, MediaType.TrustMarkStatusResponse)) {
-		const actual = contentType?.trim() || "<missing>";
-		return err(
-			federationError(
-				FederationErrorCode.InvalidRequest,
-				`Unexpected Content-Type '${actual}', expected '${MediaType.TrustMarkStatusResponse}'`,
-			),
-		);
-	}
-	const jwt = await response.text();
+	if (!fetched.ok) return fetched;
+	const jwt = fetched.value;
 
 	const verifyOpts: { expectedTyp: string; clockSkewSeconds?: number; clock?: Clock } = {
 		expectedTyp: JwtTyp.TrustMarkStatusResponse,
