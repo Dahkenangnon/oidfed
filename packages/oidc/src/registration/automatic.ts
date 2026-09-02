@@ -11,6 +11,7 @@ import {
 	type JwtSigner,
 	nowSeconds,
 	ok,
+	performFetch,
 	type Result,
 	resolveTrustChainForAnchor,
 	signEntityStatement,
@@ -308,7 +309,6 @@ export async function automaticRegistration(
 					),
 				);
 			}
-			const httpClient = options?.httpClient ?? fetch;
 			const clientAssertionSigner = rpConfig.protocolKeyProvider.getClientAssertionSigner
 				? await rpConfig.protocolKeyProvider.getClientAssertionSigner()
 				: requestObjectSigner;
@@ -340,23 +340,25 @@ export async function automaticRegistration(
 				client_assertion_type: CLIENT_ASSERTION_TYPE,
 				client_assertion: clientAssertion,
 			}).toString();
-			const response = await httpClient(parEndpoint, {
-				method: "POST",
-				headers: {
-					"Content-Type": "application/x-www-form-urlencoded",
-					Accept: "application/json",
+			const parResponse = await performFetch(parEndpoint, {
+				...options,
+				accept: "application/json",
+				acceptedStatuses: [200, 201],
+				expectedContentType: "application/json",
+				requestInit: {
+					method: "POST",
+					redirect: "error",
+					headers: { "Content-Type": "application/x-www-form-urlencoded" },
+					body: formBody,
 				},
-				body: formBody,
 			});
-			if (response.status !== 201 && response.status !== 200) {
-				return err(
-					federationError(
-						InternalErrorCode.Network,
-						`PAR request failed (HTTP ${response.status})`,
-					),
-				);
+			if (!parResponse.ok) return err(parResponse.error);
+			let parPayload: Record<string, unknown>;
+			try {
+				parPayload = JSON.parse(parResponse.value) as Record<string, unknown>;
+			} catch {
+				return err(federationError(InternalErrorCode.Network, "PAR response is not valid JSON"));
 			}
-			const parPayload = (await response.json()) as Record<string, unknown>;
 			const parRequestUri = parPayload.request_uri;
 			const expiresIn = parPayload.expires_in;
 			if (typeof parRequestUri !== "string" || !parRequestUri.startsWith("urn:")) {

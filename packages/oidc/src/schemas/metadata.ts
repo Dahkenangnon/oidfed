@@ -300,7 +300,7 @@ export const OAuthAuthorizationServerMetadataSchema = z
 		// Device Authorization (RFC 8628)
 		device_authorization_endpoint: z.string().url().optional(),
 		// PAR (RFC 9126)
-		pushed_authorization_request_endpoint: z.string().url().optional(),
+		pushed_authorization_request_endpoint: httpsUrlNoFragment.optional(),
 		require_pushed_authorization_requests: z.boolean().optional(),
 		// DPoP (RFC 9449)
 		dpop_signing_alg_values_supported: z.array(z.string()).optional(),
