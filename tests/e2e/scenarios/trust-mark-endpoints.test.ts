@@ -1,7 +1,6 @@
-import type { AuthorityServer } from "@oidfed/authority";
 import { decodeEntityStatement, entityId, isOk } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
-import { getEntity } from "../helpers/launcher.js";
+import { getAuthorityEntity } from "../helpers/launcher.js";
 import { useFederation } from "../helpers/lifecycle.js";
 import { singleAnchorTopology } from "../topologies/single-anchor.js";
 
@@ -17,8 +16,8 @@ describe("Trust mark HTTP endpoints", () => {
 			const { server, entities } = getTestBed();
 			const port = server.port;
 
-			const taInstance = getEntity(entities, "https://ta.ofed.test");
-			const ta = taInstance.server as AuthorityServer;
+			const taInstance = getAuthorityEntity(entities, "https://ta.ofed.test");
+			const ta = taInstance.server;
 			const rpId = `https://rp.ofed.test:${port}`;
 
 			await ta.issueTrustMark(rpId, trustMarkType(port));
@@ -44,8 +43,8 @@ describe("Trust mark HTTP endpoints", () => {
 			const { server, entities } = getTestBed();
 			const port = server.port;
 
-			const taInstance = getEntity(entities, "https://ta.ofed.test");
-			const ta = taInstance.server as AuthorityServer;
+			const taInstance = getAuthorityEntity(entities, "https://ta.ofed.test");
+			const ta = taInstance.server;
 			const rpId = `https://rp.ofed.test:${port}`;
 
 			const trustMarkJwt = await ta.issueTrustMark(rpId, trustMarkType(port));
@@ -65,8 +64,8 @@ describe("Trust mark HTTP endpoints", () => {
 			const { server, entities } = getTestBed();
 			const port = server.port;
 
-			const taInstance = getEntity(entities, "https://ta.ofed.test");
-			const ta = taInstance.server as AuthorityServer;
+			const taInstance = getAuthorityEntity(entities, "https://ta.ofed.test");
+			const ta = taInstance.server;
 			const rpId = `https://rp.ofed.test:${port}`;
 
 			await ta.issueTrustMark(rpId, trustMarkType(port));
@@ -85,8 +84,8 @@ describe("Trust mark HTTP endpoints", () => {
 			const { server, entities } = getTestBed();
 			const port = server.port;
 
-			const taInstance = getEntity(entities, "https://ta.ofed.test");
-			const ta = taInstance.server as AuthorityServer;
+			const taInstance = getAuthorityEntity(entities, "https://ta.ofed.test");
+			const ta = taInstance.server;
 			const rpId = `https://rp.ofed.test:${port}`;
 
 			const trustMarkJwt = await ta.issueTrustMark(rpId, trustMarkType(port));

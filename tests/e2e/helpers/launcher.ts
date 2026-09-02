@@ -1,4 +1,4 @@
-import type { AuthorityConfig, AuthorityServer, SubordinateRecord } from "@oidfed/authority";
+import type { AuthorityConfig, SubordinateRecord } from "@oidfed/authority";
 import { Intermediate, MemoryStorageAdapter, TrustAnchor } from "@oidfed/authority";
 import type {
 	EntityRole,
@@ -40,7 +40,7 @@ export function federationSigningKey(signingKey: JWK) {
 }
 
 export interface EntityInstance {
-	server: AuthorityServer | Leaf;
+	server: TrustAnchor | Intermediate | Leaf;
 	keys: {
 		signing: JWK;
 		public: JWK;
@@ -55,6 +55,9 @@ export interface EntityInstance {
 
 export interface OidcClientEntityInstance extends EntityInstance {
 	oidcClient: OidcRelyingPartyRole;
+}
+export interface AuthorityEntityInstance extends EntityInstance {
+	server: TrustAnchor | Intermediate;
 }
 
 export interface FederationTestBed {
@@ -249,7 +252,9 @@ export async function launchFederation(
 			oidcClient = new OidcRelyingPartyRole({
 				protocolKeyProvider: oidcProtocolKeyProvider,
 				trustAnchors,
-				metadata: metadata.openid_relying_party,
+				...(metadata.openid_relying_party !== undefined
+					? { metadata: metadata.openid_relying_party }
+					: {}),
 			});
 			roles.push(oidcClient);
 		}
@@ -273,7 +278,7 @@ export async function launchFederation(
 			keys,
 			keyProvider,
 			oidcProtocolKeyProvider,
-			oidcClient,
+			...(oidcClient !== undefined ? { oidcClient } : {}),
 		});
 
 		if (entity.protocolRole === "op") {
@@ -322,7 +327,7 @@ export async function launchFederation(
 				...(entity.metadataPolicy !== undefined ? { metadataPolicy: entity.metadataPolicy } : {}),
 				...(parentConstraints !== undefined ? { constraints: parentConstraints } : {}),
 				entityTypes: getEntityTypes(entity) as EntityType[],
-				isIntermediate: entity.role === "intermediate" || entity.protocolRole === "op",
+				isIntermediate: entity.role === "intermediate",
 				createdAt: Date.now() / 1000,
 				updatedAt: Date.now() / 1000,
 			};
@@ -351,6 +356,16 @@ export function getEntity(entities: Map<string, EntityInstance>, id: string): En
 	const entity = entities.get(id);
 	if (!entity) throw new Error(`Entity ${id} not found in test bed`);
 	return entity;
+}
+export function getAuthorityEntity(
+	entities: Map<string, EntityInstance>,
+	id: string,
+): AuthorityEntityInstance {
+	const entity = getEntity(entities, id);
+	if (!(entity.server instanceof TrustAnchor) && !(entity.server instanceof Intermediate)) {
+		throw new Error(`Entity ${id} is not an authority in the test bed`);
+	}
+	return { ...entity, server: entity.server };
 }
 
 export function getOidcClientEntity(

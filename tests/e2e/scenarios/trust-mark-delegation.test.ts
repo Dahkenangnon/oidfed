@@ -1,4 +1,3 @@
-import type { AuthorityServer } from "@oidfed/authority";
 import {
 	decodeEntityStatement,
 	isOk,
@@ -7,7 +6,7 @@ import {
 	validateTrustMark,
 } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
-import { getEntity } from "../helpers/launcher.js";
+import { getAuthorityEntity } from "../helpers/launcher.js";
 import { useFederation } from "../helpers/lifecycle.js";
 import { singleAnchorTopology } from "../topologies/single-anchor.js";
 
@@ -22,8 +21,7 @@ describe("Trust mark delegation", () => {
 		const { server, entities } = getTestBed();
 		const port = server.port;
 
-		const taInstance = getEntity(entities, "https://ta.ofed.test");
-		const _ta = taInstance.server as AuthorityServer;
+		const taInstance = getAuthorityEntity(entities, "https://ta.ofed.test");
 		const taId = `https://ta.ofed.test:${port}`;
 		const opId = `https://op.ofed.test:${port}`;
 
@@ -53,8 +51,8 @@ describe("Trust mark delegation", () => {
 		const { server, entities } = getTestBed();
 		const port = server.port;
 
-		const taInstance = getEntity(entities, "https://ta.ofed.test");
-		const ta = taInstance.server as AuthorityServer;
+		const taInstance = getAuthorityEntity(entities, "https://ta.ofed.test");
+		const ta = taInstance.server;
 		const taId = `https://ta.ofed.test:${port}`;
 		const opId = `https://op.ofed.test:${port}`;
 
@@ -77,8 +75,8 @@ describe("Trust mark delegation", () => {
 		const { server, entities } = getTestBed();
 		const port = server.port;
 
-		const taInstance = getEntity(entities, "https://ta.ofed.test");
-		const ta = taInstance.server as AuthorityServer;
+		const taInstance = getAuthorityEntity(entities, "https://ta.ofed.test");
+		const ta = taInstance.server;
 		const taId = `https://ta.ofed.test:${port}`;
 		const rpId = `https://rp.ofed.test:${port}`;
 

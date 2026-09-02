@@ -1,4 +1,3 @@
-import type { AuthorityServer } from "@oidfed/authority";
 import type { JWK } from "@oidfed/core";
 import {
 	decodeEntityStatement,
@@ -7,7 +6,7 @@ import {
 	isOk,
 } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
-import { federationSigningKey, getEntity } from "../helpers/launcher.js";
+import { federationSigningKey, getAuthorityEntity } from "../helpers/launcher.js";
 import { useFederation } from "../helpers/lifecycle.js";
 import { singleAnchorTopology } from "../topologies/single-anchor.js";
 
@@ -89,8 +88,8 @@ describe("Federation API endpoints", () => {
 	it("historical keys contain old kid after TA key rotation", async () => {
 		const { entities } = getTestBed();
 
-		const taInstance = getEntity(entities, "https://ta.ofed.test");
-		const ta = taInstance.server as AuthorityServer;
+		const taInstance = getAuthorityEntity(entities, "https://ta.ofed.test");
+		const ta = taInstance.server;
 
 		// Get original kid
 		const originalEc = await ta.getEntityConfiguration();

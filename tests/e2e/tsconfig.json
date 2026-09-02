@@ -10,5 +10,5 @@
 		"rootDir": "../..",
 		"noEmit": true
 	},
-	"include": ["./**/*.ts", "../../scripts/dev-federation.ts"]
+	"include": ["./**/*.ts"]
 }

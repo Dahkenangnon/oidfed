@@ -1,4 +1,3 @@
-import type { AuthorityServer } from "@oidfed/authority";
 import type { JWK } from "@oidfed/core";
 import {
 	decodeEntityStatement,
@@ -10,7 +9,7 @@ import {
 	validateTrustChain,
 } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
-import { federationSigningKey, getEntity } from "../helpers/launcher.js";
+import { federationSigningKey, getAuthorityEntity, getEntity } from "../helpers/launcher.js";
 import { useFederation } from "../helpers/lifecycle.js";
 import { hierarchicalTopology } from "../topologies/hierarchical.js";
 import { singleAnchorTopology } from "../topologies/single-anchor.js";
@@ -23,8 +22,8 @@ describe("Key rotation", () => {
 			const { server, entities, trustAnchors } = getTestBed();
 			const port = server.port;
 
-			const taInstance = getEntity(entities, "https://ta.ofed.test");
-			const ta = taInstance.server as AuthorityServer;
+			const taInstance = getAuthorityEntity(entities, "https://ta.ofed.test");
+			const ta = taInstance.server;
 
 			// Baseline: resolve RP chain
 			const rpId = entityId(`https://rp.ofed.test:${port}`);

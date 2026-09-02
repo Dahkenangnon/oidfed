@@ -54,6 +54,7 @@
 			"internal/**/test/**/*.tsx",
 			"tests/**/*.ts",
 			"scripts/**/*.sh",
+			"scripts/**/*.ts",
 			"!apps/**/.react-router"
 		],
 		"ignoreUnknown": true

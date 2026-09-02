@@ -1,5 +1,6 @@
 import { decodeEntityStatement, isOk } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
+import { startDevFederation } from "../../../scripts/dev-federation.js";
 import { useFederation } from "../helpers/lifecycle.js";
 import { singleAnchorTopology } from "../topologies/single-anchor.js";
 
@@ -59,5 +60,22 @@ describe("E2E smoke test", () => {
 		expect(body.split(".")).toHaveLength(3);
 
 		verifyEntityConfiguration(body, opId);
+	});
+
+	it("starts the developer federation and serves an OP entity configuration", async () => {
+		const federation = await startDevFederation({ port: 0 });
+
+		try {
+			const opId = `https://op-sa.ofed.test:${federation.port}`;
+			const response = await fetch(`${opId}/.well-known/openid-federation`);
+			const body = await response.text();
+
+			expect(response.status, body).toBe(200);
+			expect(response.headers.get("content-type")).toContain("application/entity-statement+jwt");
+			expect(body.split(".")).toHaveLength(3);
+			verifyEntityConfiguration(body, opId);
+		} finally {
+			await federation.close();
+		}
 	});
 });

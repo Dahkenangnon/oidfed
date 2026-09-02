@@ -1,4 +1,3 @@
-import type { AuthorityServer } from "@oidfed/authority";
 import {
 	entityId,
 	isOk,
@@ -8,7 +7,7 @@ import {
 	validateTrustMark,
 } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
-import { getEntity } from "../helpers/launcher.js";
+import { getAuthorityEntity } from "../helpers/launcher.js";
 import { useFederation } from "../helpers/lifecycle.js";
 import { hierarchicalTopology } from "../topologies/hierarchical.js";
 import { singleAnchorTopology } from "../topologies/single-anchor.js";
@@ -25,8 +24,8 @@ describe("Trust mark lifecycle", () => {
 			const { server, entities } = getTestBed();
 			const port = server.port;
 
-			const taInstance = getEntity(entities, "https://ta.ofed.test");
-			const ta = taInstance.server as AuthorityServer;
+			const taInstance = getAuthorityEntity(entities, "https://ta.ofed.test");
+			const ta = taInstance.server;
 
 			const rpId = `https://rp.ofed.test:${port}`;
 
@@ -62,8 +61,8 @@ describe("Trust mark lifecycle", () => {
 			const { server, entities } = getTestBed();
 			const port = server.port;
 
-			const taInstance = getEntity(entities, "https://ta.ofed.test");
-			const ta = taInstance.server as AuthorityServer;
+			const taInstance = getAuthorityEntity(entities, "https://ta.ofed.test");
+			const ta = taInstance.server;
 
 			const rpId = `https://rp.ofed.test:${port}`;
 			const taId = `https://ta.ofed.test:${port}`;
@@ -91,8 +90,8 @@ describe("Trust mark lifecycle", () => {
 			const { server, entities } = getTestBed();
 			const port = server.port;
 
-			const taInstance = getEntity(entities, "https://ta.ofed.test");
-			const ta = taInstance.server as AuthorityServer;
+			const taInstance = getAuthorityEntity(entities, "https://ta.ofed.test");
+			const ta = taInstance.server;
 			const trustMarks = taInstance.storage?.trustMarks;
 			if (!trustMarks) throw new Error("trust mark storage not found");
 
@@ -142,8 +141,8 @@ describe("Trust mark lifecycle", () => {
 			const { server, entities } = getTestBed();
 			const port = server.port;
 
-			const taInstance = getEntity(entities, "https://ta.ofed.test");
-			const ta = taInstance.server as AuthorityServer;
+			const taInstance = getAuthorityEntity(entities, "https://ta.ofed.test");
+			const ta = taInstance.server;
 
 			const opUniId = `https://op-uni.ofed.test:${port}`;
 

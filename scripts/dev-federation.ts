@@ -15,42 +15,32 @@
 import { readFileSync } from "node:fs";
 import https from "node:https";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import express from "express";
-
 import {
-	TrustAnchor,
+	type AuthorityConfig,
 	Intermediate,
 	MemoryStorageAdapter,
-	type AuthorityConfig,
 	type SubordinateRecord,
+	TrustAnchor,
 } from "@oidfed/authority";
 import {
+	type EntityType,
 	entityId,
+	type FederationKeyProvider,
 	generateSigningKey,
+	type JWK,
 	JwkSigner,
 	MemoryFederationKeyProvider,
-	MemoryReplayStore,
 	stripPrivateFields,
-	type EntityId,
-	type EntityType,
-	type FederationKeyProvider,
-	type JWK,
 	type TrustAnchorSet,
 } from "@oidfed/core";
 import { Leaf } from "@oidfed/leaf";
-import { processAutomaticRegistration } from "@oidfed/oidc";
-import Provider from "oidc-provider";
+import express from "express";
+import { createOpenIDProviderApp } from "../tests/e2e/participants/openid-provider-app.js";
 
 // ---------------------------------------------------------------------------
 
-const { values } = parseArgs({
-	options: {
-		port: { type: "string", default: "8443" },
-	},
-});
-
-const PORT = Number.parseInt(values.port!, 10);
 const CERT_DIR = join(import.meta.dirname, "../.certs");
 
 function federationSigningKey(signingKey: JWK) {
@@ -106,15 +96,9 @@ function iaFedEntity(hostname: string): Record<string, string> {
 	return fedEntity(hostname, ["federation_fetch", "federation_list", "federation_resolve"]);
 }
 
-/**
- * Federation-entity metadata for an OP leaf.
- * Advertises the endpoints actually served by createOpApp():
- *   federation_fetch, federation_list, federation_registration.
- * (resolve, trust-mark endpoints are NOT advertised; leaf OPs don't issue
- * trust marks or run a resolve service on behalf of others.)
- */
-function opFedEntity(hostname: string): Record<string, string> {
-	return fedEntity(hostname, ["federation_fetch", "federation_list", "federation_registration"]);
+/** Leaf OPs do not expose authority endpoints under federation_entity metadata. */
+function opFedEntity(): Record<string, string> {
+	return {};
 }
 
 /**
@@ -217,7 +201,7 @@ const TOPOLOGIES: TopologyDefinition[] = [
 				protocolRole: "op",
 				authorityHints: [h("ta-sa")],
 				metadata: {
-					federation_entity: richFedEntity(opFedEntity("op-sa"), {
+					federation_entity: richFedEntity(opFedEntity(), {
 						organization_name: "SA OpenID Provider Inc.",
 						display_name: "SA Identity Service",
 						description: "OpenID Provider serving the single-anchor federation",
@@ -243,12 +227,15 @@ const TOPOLOGIES: TopologyDefinition[] = [
 				protocolRole: "rp",
 				authorityHints: [h("ta-sa")],
 				metadata: {
-					federation_entity: richFedEntity({}, {
-						organization_name: "SA Relying Party 1",
-						description: "Consumer-facing relying party (automatic registration)",
-						contacts: ["dev@rp-sa.ofed.test"],
-						keywords: ["relying-party", "consumer"],
-					}),
+					federation_entity: richFedEntity(
+						{},
+						{
+							organization_name: "SA Relying Party 1",
+							description: "Consumer-facing relying party (automatic registration)",
+							contacts: ["dev@rp-sa.ofed.test"],
+							keywords: ["relying-party", "consumer"],
+						},
+					),
 					openid_relying_party: rpMetadata("rp-sa"),
 				},
 			},
@@ -258,13 +245,16 @@ const TOPOLOGIES: TopologyDefinition[] = [
 				protocolRole: "rp",
 				authorityHints: [h("ta-sa")],
 				metadata: {
-					federation_entity: richFedEntity({}, {
-						organization_name: "SA Relying Party 2",
-						display_name: "SA RP2 (Explicit)",
-						description: "Enterprise relying party using explicit registration",
-						contacts: ["enterprise@rp2-sa.ofed.test"],
-						keywords: ["relying-party", "explicit-registration"],
-					}),
+					federation_entity: richFedEntity(
+						{},
+						{
+							organization_name: "SA Relying Party 2",
+							display_name: "SA RP2 (Explicit)",
+							description: "Enterprise relying party using explicit registration",
+							contacts: ["enterprise@rp2-sa.ofed.test"],
+							keywords: ["relying-party", "explicit-registration"],
+						},
+					),
 					openid_relying_party: {
 						...rpMetadata("rp2-sa"),
 						client_registration_types: ["explicit"],
@@ -341,7 +331,7 @@ const TOPOLOGIES: TopologyDefinition[] = [
 				protocolRole: "op",
 				authorityHints: [h("ia-edu-hi")],
 				metadata: {
-					federation_entity: richFedEntity(opFedEntity("op-uni-hi"), {
+					federation_entity: richFedEntity(opFedEntity(), {
 						organization_name: "State University",
 						display_name: "UniLogin",
 						description: "University identity provider for students and faculty",
@@ -365,12 +355,15 @@ const TOPOLOGIES: TopologyDefinition[] = [
 				protocolRole: "rp",
 				authorityHints: [h("ia-edu-hi")],
 				metadata: {
-					federation_entity: richFedEntity({}, {
-						organization_name: "Student Portal",
-						description: "Learning management system for enrolled students",
-						contacts: ["support@rp1-hi.ofed.test"],
-						keywords: ["relying-party", "education", "lms"],
-					}),
+					federation_entity: richFedEntity(
+						{},
+						{
+							organization_name: "Student Portal",
+							description: "Learning management system for enrolled students",
+							contacts: ["support@rp1-hi.ofed.test"],
+							keywords: ["relying-party", "education", "lms"],
+						},
+					),
 					openid_relying_party: rpMetadata("rp1-hi"),
 				},
 			},
@@ -380,7 +373,7 @@ const TOPOLOGIES: TopologyDefinition[] = [
 				protocolRole: "op",
 				authorityHints: [h("ia-health-hi")],
 				metadata: {
-					federation_entity: richFedEntity(opFedEntity("op-hosp-hi"), {
+					federation_entity: richFedEntity(opFedEntity(), {
 						organization_name: "Central Hospital",
 						display_name: "HospitalID",
 						description: "Healthcare identity provider for clinical staff",
@@ -404,14 +397,17 @@ const TOPOLOGIES: TopologyDefinition[] = [
 				protocolRole: "rp",
 				authorityHints: [h("ia-health-hi")],
 				metadata: {
-					federation_entity: richFedEntity({}, {
-						organization_name: "Patient Records Portal",
-						display_name: "PatientAccess",
-						description: "Electronic health records portal with explicit registration",
-						contacts: ["compliance@rp2-hi.ofed.test"],
-						policy_uri: `${h("rp2-hi")}/privacy`,
-						keywords: ["relying-party", "healthcare", "ehr"],
-					}),
+					federation_entity: richFedEntity(
+						{},
+						{
+							organization_name: "Patient Records Portal",
+							display_name: "PatientAccess",
+							description: "Electronic health records portal with explicit registration",
+							contacts: ["compliance@rp2-hi.ofed.test"],
+							policy_uri: `${h("rp2-hi")}/privacy`,
+							keywords: ["relying-party", "healthcare", "ehr"],
+						},
+					),
 					openid_relying_party: {
 						...rpMetadata("rp2-hi"),
 						client_registration_types: ["explicit"],
@@ -480,7 +476,7 @@ const TOPOLOGIES: TopologyDefinition[] = [
 				protocolRole: "op",
 				authorityHints: [h("ia-shared-ma")],
 				metadata: {
-					federation_entity: richFedEntity(opFedEntity("op-ma"), {
+					federation_entity: richFedEntity(opFedEntity(), {
 						organization_name: "Unified Identity Services",
 						display_name: "UnifiedID",
 						description: "OpenID Provider trusted by both government and industry anchors",
@@ -502,11 +498,14 @@ const TOPOLOGIES: TopologyDefinition[] = [
 				protocolRole: "rp",
 				authorityHints: [h("ia-shared-ma")],
 				metadata: {
-					federation_entity: richFedEntity({}, {
-						organization_name: "Gov Services Portal",
-						contacts: ["admin@rp1-ma.ofed.test"],
-						keywords: ["relying-party", "government"],
-					}),
+					federation_entity: richFedEntity(
+						{},
+						{
+							organization_name: "Gov Services Portal",
+							contacts: ["admin@rp1-ma.ofed.test"],
+							keywords: ["relying-party", "government"],
+						},
+					),
 					openid_relying_party: rpMetadata("rp1-ma"),
 				},
 			},
@@ -516,12 +515,15 @@ const TOPOLOGIES: TopologyDefinition[] = [
 				protocolRole: "rp",
 				authorityHints: [h("ia-shared-ma")],
 				metadata: {
-					federation_entity: richFedEntity({}, {
-						organization_name: "Industry Compliance Platform",
-						display_name: "ComplianceHub",
-						contacts: ["compliance@rp2-ma.ofed.test"],
-						keywords: ["relying-party", "industry", "compliance"],
-					}),
+					federation_entity: richFedEntity(
+						{},
+						{
+							organization_name: "Industry Compliance Platform",
+							display_name: "ComplianceHub",
+							contacts: ["compliance@rp2-ma.ofed.test"],
+							keywords: ["relying-party", "industry", "compliance"],
+						},
+					),
 					openid_relying_party: {
 						...rpMetadata("rp2-ma"),
 						client_registration_types: ["explicit"],
@@ -558,7 +560,7 @@ const TOPOLOGIES: TopologyDefinition[] = [
 				protocolRole: "op",
 				authorityHints: [h("ta-co")],
 				metadata: {
-					federation_entity: richFedEntity(opFedEntity("op-direct-co"), {
+					federation_entity: richFedEntity(opFedEntity(), {
 						organization_name: "Compliant Direct Provider",
 						description: "OP directly under TA (0 intermediates — compliant)",
 						contacts: ["ops@op-direct-co.ofed.test"],
@@ -591,7 +593,7 @@ const TOPOLOGIES: TopologyDefinition[] = [
 				protocolRole: "op",
 				authorityHints: [h("ia-deep-co")],
 				metadata: {
-					federation_entity: richFedEntity(opFedEntity("op-deep-co"), {
+					federation_entity: richFedEntity(opFedEntity(), {
 						organization_name: "Deep Nested Provider",
 						description: "OP behind unauthorized intermediate (chain will fail validation)",
 						keywords: ["openid-provider", "violation"],
@@ -644,7 +646,7 @@ const TOPOLOGIES: TopologyDefinition[] = [
 				protocolRole: "op",
 				authorityHints: [h("ia-x-xf")],
 				metadata: {
-					federation_entity: richFedEntity(opFedEntity("op-x-xf"), {
+					federation_entity: richFedEntity(opFedEntity(), {
 						organization_name: "FedX Identity Provider",
 						contacts: ["iam@op-x-xf.ofed.test"],
 						keywords: ["openid-provider", "federation-x"],
@@ -664,10 +666,13 @@ const TOPOLOGIES: TopologyDefinition[] = [
 				protocolRole: "rp",
 				authorityHints: [h("ia-x-xf")],
 				metadata: {
-					federation_entity: richFedEntity({}, {
-						organization_name: "FedX Client App",
-						keywords: ["relying-party", "federation-x"],
-					}),
+					federation_entity: richFedEntity(
+						{},
+						{
+							organization_name: "FedX Client App",
+							keywords: ["relying-party", "federation-x"],
+						},
+					),
 					openid_relying_party: rpMetadata("rp-x-xf"),
 				},
 			},
@@ -707,7 +712,7 @@ const TOPOLOGIES: TopologyDefinition[] = [
 				protocolRole: "op",
 				authorityHints: [h("ia-y-xf")],
 				metadata: {
-					federation_entity: richFedEntity(opFedEntity("op-y-xf"), {
+					federation_entity: richFedEntity(opFedEntity(), {
 						organization_name: "FedY Identity Provider",
 						contacts: ["iam@op-y-xf.ofed.test"],
 						keywords: ["openid-provider", "federation-y"],
@@ -727,10 +732,13 @@ const TOPOLOGIES: TopologyDefinition[] = [
 				protocolRole: "rp",
 				authorityHints: [h("ia-y-xf")],
 				metadata: {
-					federation_entity: richFedEntity({}, {
-						organization_name: "FedY Client App",
-						keywords: ["relying-party", "federation-y"],
-					}),
+					federation_entity: richFedEntity(
+						{},
+						{
+							organization_name: "FedY Client App",
+							keywords: ["relying-party", "federation-y"],
+						},
+					),
 					openid_relying_party: rpMetadata("rp-y-xf"),
 				},
 			},
@@ -792,7 +800,7 @@ const TOPOLOGIES: TopologyDefinition[] = [
 				protocolRole: "op",
 				authorityHints: [h("ia-po")],
 				metadata: {
-					federation_entity: richFedEntity(opFedEntity("op-po"), {
+					federation_entity: richFedEntity(opFedEntity(), {
 						organization_name: "Policy Test Provider",
 						description: "OP with diverse policy operators applied to its metadata",
 						contacts: ["test@op-po.ofed.test"],
@@ -821,11 +829,14 @@ const TOPOLOGIES: TopologyDefinition[] = [
 				protocolRole: "rp",
 				authorityHints: [h("ia-po")],
 				metadata: {
-					federation_entity: richFedEntity({}, {
-						organization_name: "Policy Test RP",
-						contacts: ["test@rp-po.ofed.test"],
-						keywords: ["relying-party", "policy-test"],
-					}),
+					federation_entity: richFedEntity(
+						{},
+						{
+							organization_name: "Policy Test RP",
+							contacts: ["test@rp-po.ofed.test"],
+							keywords: ["relying-party", "policy-test"],
+						},
+					),
 					openid_relying_party: rpMetadata("rp-po"),
 				},
 			},
@@ -836,13 +847,6 @@ const TOPOLOGIES: TopologyDefinition[] = [
 // ---------------------------------------------------------------------------
 // Generic bootstrap
 // ---------------------------------------------------------------------------
-
-interface EntityInstance {
-	server: TrustAnchor | Intermediate | Leaf;
-	keys: { signing: JWK; public: JWK; protocolSigning: JWK; protocolPublic: JWK };
-	def: EntityDefinition;
-	storage?: MemoryStorageAdapter;
-}
 
 function rewriteUrl(url: string, port: number): string {
 	return url.replace(/https:\/\/([^/:]+)/g, `https://$1:${port}`);
@@ -893,87 +897,35 @@ function bridgeHandler(handler: (req: Request) => Promise<Response>): express.Re
 		for (const [key, value] of response.headers) {
 			res.setHeader(key, value);
 		}
-		res.send(await response.text());
+		res.end(await response.text());
 	};
 }
 
-function createOpApp(
-	authority: TrustAnchor | Intermediate,
-	eid: string,
-	trustAnchors: TrustAnchorSet,
-): express.Express {
+function createAuthorityApp(authority: TrustAnchor | Intermediate): express.Express {
 	const app = express();
 	app.use(express.raw({ type: "application/entity-statement+jwt", limit: "64kb" }));
 	app.use(express.urlencoded({ extended: false, limit: "64kb" }));
-
-	const replayStore = new MemoryReplayStore();
-	const fedHandler = (req: Request) => authority.handleRequest(req);
-
-	const oidc = new Provider(eid, {
-		clients: [],
-		findAccount: async (_ctx: unknown, id: string) => ({
-			accountId: id,
-			async claims() {
-				return { sub: id };
-			},
-		}),
-		features: { registration: { enabled: false } },
-	});
-	oidc.proxy = true;
-
-	app.all("/.well-known/openid-federation", bridgeHandler(fedHandler));
-	for (const path of [
-		"/federation_fetch",
-		"/federation_list",
-		"/federation_resolve",
-		"/federation_trust_mark",
-		"/federation_trust_mark_status",
-		"/federation_trust_mark_list",
-	]) {
-		app.all(path, bridgeHandler(fedHandler));
-	}
-
-	app.get("/auth", async (req, res, next) => {
-		const requestJwt = req.query.request as string | undefined;
-		if (requestJwt) {
-			const result = await processAutomaticRegistration(requestJwt, trustAnchors, {
-				opEntityId: eid as EntityId,
-				replayStore,
-				httpClient: fetch,
-			});
-			if (!result.ok) {
-				res.status(400).json({ error: result.error.code, error_description: result.error.description });
-				return;
-			}
-		}
-		const handler = oidc.callback() as express.RequestHandler;
-		return handler(req, res, next);
-	});
-
-	app.use("/", oidc.callback() as express.RequestHandler);
+	app.all(
+		"/*splat",
+		bridgeHandler((req) => authority.handleRequest(req)),
+	);
 	return app;
 }
 
-function createAuthorityApp(authority: TrustAnchor | Intermediate, eid: string): express.Express {
+function createLeafApp(leaf: Leaf): express.Express {
 	const app = express();
-	app.use(express.raw({ type: "application/entity-statement+jwt", limit: "64kb" }));
-	app.use(express.urlencoded({ extended: false, limit: "64kb" }));
-	app.all("/*splat", bridgeHandler(req => authority.handleRequest(req)));
-	return app;
-}
-
-function createLeafApp(leaf: Leaf, eid: string): express.Express {
-	const app = express();
-	app.get("/.well-known/openid-federation", bridgeHandler(req => leaf.handleRequest(req)));
+	app.get(
+		"/.well-known/openid-federation",
+		bridgeHandler((req) => leaf.handleRequest(req)),
+	);
 	return app;
 }
 
 async function bootstrapTopology(
 	topology: TopologyDefinition,
 	port: number,
-): Promise<{ vhosts: Map<string, express.Express>; entities: Map<string, EntityInstance>; trustAnchors: TrustAnchorSet }> {
+): Promise<Map<string, express.Express>> {
 	const rw = (url: string) => rewriteUrl(url, port);
-
 
 	// 1. Generate keys. Federation keys and OIDC protocol keys are distinct.
 	const entityKeys = new Map<
@@ -1002,14 +954,13 @@ async function bootstrapTopology(
 		taEntities.map((ta) => [entityId(rw(ta.id)), { jwks: { keys: [getKeys(ta.id).public] } }]),
 	);
 
-	const entities = new Map<string, EntityInstance>();
+	const trustAnchorServers = new Map<string, TrustAnchor>();
 	const vhosts = new Map<string, express.Express>();
 
 	function buildAuthorityConfig(
 		entity: EntityDefinition,
 		storage: MemoryStorageAdapter,
 		keyProvider: FederationKeyProvider,
-		extraTrustMarks?: Array<{ trust_mark_type: string; trust_mark: string }>,
 	): Record<string, unknown> {
 		const eid = rw(entity.id);
 		const metadata = rewriteMetadata(entity.metadata, port);
@@ -1034,25 +985,29 @@ async function bootstrapTopology(
 				]),
 			);
 		}
-		if (extraTrustMarks && extraTrustMarks.length > 0) {
-			cfg.trustMarks = extraTrustMarks;
-		}
 		return cfg;
 	}
 
 	// Stores reused across passes
+	const allowedRequestUriHosts: ReadonlySet<string> = new Set(
+		topology.entities
+			.filter((entity) => entity.role === "leaf" && entity.protocolRole === "rp")
+			.map((entity) => new URL(rw(entity.id)).hostname),
+	);
 	const storageMap = new Map<string, MemoryStorageAdapter>();
 	const keyProviderMap = new Map<string, FederationKeyProvider>();
 
 	for (const entity of topology.entities) {
-		const isAuthority = entity.role === "trust-anchor" || entity.role === "intermediate" || entity.protocolRole === "op";
-		if (!isAuthority) continue;
+		const isAuthority = entity.role === "trust-anchor" || entity.role === "intermediate";
+		if (!isAuthority && entity.protocolRole !== "op") continue;
 		const keys = getKeys(entity.id);
-		storageMap.set(entity.id, new MemoryStorageAdapter({ trustMarks: true }));
 		keyProviderMap.set(
 			entity.id,
 			new MemoryFederationKeyProvider(federationSigningKey(keys.signing)),
 		);
+		if (isAuthority) {
+			storageMap.set(entity.id, new MemoryStorageAdapter({ trustMarks: true }));
+		}
 	}
 
 	// 3a. Create TAs and intermediates first (needed to issue trust marks)
@@ -1062,18 +1017,23 @@ async function bootstrapTopology(
 		if (!isAuthority) continue;
 
 		const eid = rw(entity.id);
-		const keys = getKeys(entity.id);
-		const storage = storageMap.get(entity.id)!;
-		const keyProvider = keyProviderMap.get(entity.id)!;
+		const storage = storageMap.get(entity.id);
+		const keyProvider = keyProviderMap.get(entity.id);
+		if (!storage || !keyProvider) {
+			throw new Error(`Missing bootstrap resources for authority ${entity.id}`);
+		}
 
 		const cfg = buildAuthorityConfig(entity, storage, keyProvider);
-		const authority = entity.role === "intermediate"
-			? new Intermediate(cfg as unknown as AuthorityConfig)
-			: new TrustAnchor(cfg as unknown as AuthorityConfig);
-		entities.set(entity.id, { server: authority, keys, def: entity, storage });
+		let authority: TrustAnchor | Intermediate;
+		if (entity.role === "intermediate") {
+			authority = new Intermediate(cfg as unknown as AuthorityConfig);
+		} else {
+			authority = new TrustAnchor(cfg as unknown as AuthorityConfig);
+			trustAnchorServers.set(entity.id, authority);
+		}
 
 		const hostname = new URL(eid).hostname;
-		vhosts.set(hostname, createAuthorityApp(authority, eid));
+		vhosts.set(hostname, createAuthorityApp(authority));
 	}
 
 	// 3b. Issue trust marks from TAs before creating OPs (so OPs can embed them)
@@ -1082,9 +1042,8 @@ async function bootstrapTopology(
 
 	for (const ta of taEntities) {
 		if (!ta.trustMarkIssuers) continue;
-		const taInstance = entities.get(ta.id);
-		if (!taInstance) continue;
-		const taServer = taInstance.server as TrustAnchor;
+		const taServer = trustAnchorServers.get(ta.id);
+		if (!taServer) continue;
 
 		for (const [tmType] of Object.entries(ta.trustMarkIssuers)) {
 			const rewrittenTmType = rw(tmType);
@@ -1101,29 +1060,41 @@ async function bootstrapTopology(
 		}
 	}
 
-	// 3c. Create OP authorities with trust marks embedded in their EC
+	// 3c. Create OP leaves with trust marks embedded in their Entity Configurations.
 	for (const entity of topology.entities) {
 		if (entity.protocolRole !== "op") continue;
 
 		const eid = rw(entity.id);
 		const keys = getKeys(entity.id);
-		const storage = storageMap.get(entity.id)!;
-		const keyProvider = keyProviderMap.get(entity.id)!;
+		const metadata = rewriteMetadata(entity.metadata, port);
+		const authorityHints = entity.authorityHints?.map((ah) => entityId(rw(ah))) ?? [];
+		const keyProvider = keyProviderMap.get(entity.id);
+		if (!keyProvider) {
+			throw new Error(`Missing federation key provider for OP ${entity.id}`);
+		}
 		const extraTrustMarks = opTrustMarks.get(entity.id);
 
-		const cfg = buildAuthorityConfig(
-			entity,
-			storage,
+		const leaf = new Leaf({
+			entityId: entityId(eid),
 			keyProvider,
-			extraTrustMarks,
-		);
-		const authority = entity.role === "intermediate"
-			? new Intermediate(cfg as unknown as AuthorityConfig)
-			: new TrustAnchor(cfg as unknown as AuthorityConfig);
-		entities.set(entity.id, { server: authority, keys, def: entity, storage });
+			authorityHints,
+			metadata,
+			trustAnchors,
+			...(extraTrustMarks !== undefined ? { trustMarks: extraTrustMarks } : {}),
+		});
 
 		const hostname = new URL(eid).hostname;
-		vhosts.set(hostname, createOpApp(authority, eid, trustAnchors));
+		vhosts.set(
+			hostname,
+			createOpenIDProviderApp({
+				leaf,
+				entityId: eid,
+				trustAnchors,
+				federationKeyProvider: keyProvider,
+				oidcSigningKey: keys.protocolSigning,
+				allowedRequestUriHosts,
+			}),
+		);
 	}
 
 	// 4. Create leaf entities (non-OP)
@@ -1155,10 +1126,8 @@ async function bootstrapTopology(
 			metadata: metadata as Record<string, Record<string, unknown>>,
 		});
 
-		entities.set(entity.id, { server: leaf, keys, def: entity });
-
 		const hostname = new URL(eid).hostname;
-		vhosts.set(hostname, createLeafApp(leaf, eid));
+		vhosts.set(hostname, createLeafApp(leaf));
 	}
 
 	// 5. Register subordinates in parent authority stores
@@ -1184,6 +1153,9 @@ async function bootstrapTopology(
 					},
 				};
 			}
+			// Operational authority endpoints belong only in the subordinate's own Entity
+			// Configuration, never in the statement issued by its parent.
+			const subordinateMetadata = TrustAnchor.sanitizeSubordinateMetadata(metadata);
 
 			// Parent's constraints apply to all subordinate statements it issues
 			const parentEntity = topology.entities.find((e) => e.id === parentId);
@@ -1192,11 +1164,11 @@ async function bootstrapTopology(
 			const record: SubordinateRecord = {
 				entityId: entityId(eid),
 				jwks: { keys: [keys.public] },
-				metadata,
+				...(subordinateMetadata !== undefined ? { metadata: subordinateMetadata } : {}),
 				...(entity.metadataPolicy !== undefined ? { metadataPolicy: entity.metadataPolicy } : {}),
 				...(parentConstraints !== undefined ? { constraints: parentConstraints } : {}),
 				entityTypes: Object.keys(entity.metadata) as EntityType[],
-				isIntermediate: entity.role === "intermediate" || entity.protocolRole === "op",
+				isIntermediate: entity.role === "intermediate",
 				createdAt: Date.now() / 1000,
 				updatedAt: Date.now() / 1000,
 			};
@@ -1205,40 +1177,40 @@ async function bootstrapTopology(
 		}
 	}
 
-	return { vhosts, entities, trustAnchors };
+	return vhosts;
 }
 
 // ---------------------------------------------------------------------------
-// Main
+// Dev server lifecycle
 // ---------------------------------------------------------------------------
 
-async function main() {
-	const allVhosts = new Map<string, express.Express>();
-	const allHostnames: string[] = [];
-	const topologyInfo: Array<{ name: string; entities: Array<{ role: string; url: string }> }> = [];
+export interface DevFederationOptions {
+	port?: number;
+}
 
-	for (const topology of TOPOLOGIES) {
-		const { vhosts } = await bootstrapTopology(topology, PORT);
+export interface DevFederationTopologyInfo {
+	name: string;
+	entities: Array<{ role: string; url: string }>;
+}
 
-		const entityInfo: Array<{ role: string; url: string }> = [];
-		for (const entity of topology.entities) {
-			const eid = rewriteUrl(entity.id, PORT);
-			const hostname = new URL(eid).hostname;
-			allHostnames.push(hostname);
+export interface DevFederationHandle {
+	readonly port: number;
+	readonly hostnames: readonly string[];
+	readonly topologies: readonly DevFederationTopologyInfo[];
+	close(): Promise<void>;
+}
 
-			const role = entity.protocolRole
-				? `${entity.role}/${entity.protocolRole}`
-				: entity.role;
-			entityInfo.push({ role, url: `${eid}/.well-known/openid-federation` });
-		}
-		topologyInfo.push({ name: topology.name, entities: entityInfo });
-
-		for (const [hostname, app] of vhosts) {
-			allVhosts.set(hostname, app);
-		}
+export async function startDevFederation(
+	options: DevFederationOptions = {},
+): Promise<DevFederationHandle> {
+	const requestedPort = options.port ?? 8443;
+	if (!Number.isInteger(requestedPort) || requestedPort < 0 || requestedPort > 65_535) {
+		throw new Error("port must be an integer between 0 and 65535");
 	}
 
-	// Start HTTPS vhost server
+	const allVhosts = new Map<string, express.Express>();
+	const allHostnames: string[] = [];
+	const topologyInfo: DevFederationTopologyInfo[] = [];
 	const cert = readFileSync(join(CERT_DIR, "ofed.pem"));
 	const key = readFileSync(join(CERT_DIR, "ofed-key.pem"));
 
@@ -1256,53 +1228,122 @@ async function main() {
 			return;
 		}
 
-		const host = (req.headers.host ?? "").replace(/:\d+$/, "");
-		const app = allVhosts.get(host);
+		const requestHost = (req.headers.host ?? "").replace(/:\d+$/, "");
+		const app = allVhosts.get(requestHost);
 		if (typeof app !== "function") {
 			res.writeHead(404, { "Content-Type": "text/plain" });
-			res.end(`No vhost for ${host}`);
+			res.end(`No vhost for ${requestHost}`);
 			return;
 		}
 		app(req, res);
 	});
 
-	await new Promise<void>((resolve) => {
-		server.listen(PORT, "127.0.0.1", () => resolve());
+	let closePromise: Promise<void> | undefined;
+	const close = (): Promise<void> => {
+		if (closePromise) return closePromise;
+		if (!server.listening) return Promise.resolve();
+		closePromise = new Promise<void>((resolve, reject) => {
+			server.close((error) => (error ? reject(error) : resolve()));
+		});
+		return closePromise;
+	};
+
+	const port = await new Promise<number>((resolve, reject) => {
+		const onError = (error: Error) => {
+			server.off("listening", onListening);
+			reject(error);
+		};
+		const onListening = () => {
+			server.off("error", onError);
+			const address = server.address();
+			resolve(typeof address === "object" && address ? address.port : requestedPort);
+		};
+		server.once("error", onError);
+		server.once("listening", onListening);
+		server.listen(requestedPort, "127.0.0.1");
 	});
 
-	console.log(`Federation is running on port ${PORT}`);
+	try {
+		for (const topology of TOPOLOGIES) {
+			const vhosts = await bootstrapTopology(topology, port);
+			const entityInfo: Array<{ role: string; url: string }> = [];
+
+			for (const entity of topology.entities) {
+				const eid = rewriteUrl(entity.id, port);
+				const hostname = new URL(eid).hostname;
+				allHostnames.push(hostname);
+				const role = entity.protocolRole ? `${entity.role}/${entity.protocolRole}` : entity.role;
+				entityInfo.push({ role, url: `${eid}/.well-known/openid-federation` });
+			}
+			topologyInfo.push({ name: topology.name, entities: entityInfo });
+
+			for (const [hostname, app] of vhosts) {
+				allVhosts.set(hostname, app);
+			}
+		}
+	} catch (error) {
+		await close();
+		throw error;
+	}
+
+	return {
+		port,
+		hostnames: allHostnames,
+		topologies: topologyInfo,
+		close,
+	};
+}
+
+function printDevFederationInfo(handle: DevFederationHandle): void {
+	console.log(`Federation is running on port ${handle.port}`);
 	console.log();
 
-	for (const topo of topologyInfo) {
-		console.log(`[${topo.name}]`);
-		for (const e of topo.entities) {
-			console.log(`  ${e.role.padEnd(22)} ${e.url}`);
+	for (const topology of handle.topologies) {
+		console.log(`[${topology.name}]`);
+		for (const entity of topology.entities) {
+			console.log(`  ${entity.role.padEnd(22)} ${entity.url}`);
 		}
 		console.log();
 	}
 
 	console.log("Required /etc/hosts entry:");
-	// Split into lines of ~8 hostnames each for readability
-	const hostnameChunks: string[][] = [];
-	for (let i = 0; i < allHostnames.length; i += 8) {
-		hostnameChunks.push(allHostnames.slice(i, i + 8));
-	}
-	for (const chunk of hostnameChunks) {
-		console.log(`  127.0.0.1  ${chunk.join(" ")}`);
+	for (let index = 0; index < handle.hostnames.length; index += 8) {
+		console.log(`  127.0.0.1  ${handle.hostnames.slice(index, index + 8).join(" ")}`);
 	}
 	console.log();
 	console.log("Press Ctrl+C to stop.");
-
-	process.on("SIGINT", () => {
-		console.log("\nShutting down...");
-		server.close(() => process.exit(0));
-	});
-	process.on("SIGTERM", () => {
-		server.close(() => process.exit(0));
-	});
 }
 
-main().catch((err) => {
-	console.error("Failed to start federation:", err);
-	process.exit(1);
-});
+async function runCli(): Promise<void> {
+	const args = process.argv[2] === "--" ? process.argv.slice(3) : process.argv.slice(2);
+	const { values } = parseArgs({
+		args,
+		options: {
+			port: { type: "string", default: "8443" },
+		},
+	});
+	const port = Number.parseInt(values.port ?? "8443", 10);
+	const handle = await startDevFederation({ port });
+	printDevFederationInfo(handle);
+
+	const shutdown = async () => {
+		console.log("\nShutting down...");
+		try {
+			await handle.close();
+		} catch (error) {
+			console.error("Failed to stop federation:", error);
+			process.exitCode = 1;
+		}
+	};
+	process.once("SIGINT", () => void shutdown());
+	process.once("SIGTERM", () => void shutdown());
+}
+
+const isDirectExecution =
+	process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isDirectExecution) {
+	runCli().catch((error) => {
+		console.error("Failed to start federation:", error);
+		process.exitCode = 1;
+	});
+}

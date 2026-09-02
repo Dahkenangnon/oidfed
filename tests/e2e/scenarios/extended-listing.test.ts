@@ -1,7 +1,6 @@
-import type { AuthorityServer } from "@oidfed/authority";
 import { decodeEntityStatement, isOk } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
-import { getEntity } from "../helpers/launcher.js";
+import { getAuthorityEntity } from "../helpers/launcher.js";
 import { useFederation } from "../helpers/lifecycle.js";
 import { singleAnchorTopology } from "../topologies/single-anchor.js";
 
@@ -38,6 +37,32 @@ describe("Extended Subordinate Listing endpoint", () => {
 		expect(ids).toContain(`https://op.ofed.test:${port}`);
 		expect(ids).toContain(`https://rp.ofed.test:${port}`);
 		expect(ids).toContain(`https://rp2.ofed.test:${port}`);
+	});
+
+	it("intermediate filtering treats OP and RP entities as leaves", async () => {
+		const { server } = getTestBed();
+		const port = server.port;
+		const endpoint = `https://ta.ofed.test:${port}/federation_extended_list`;
+
+		const intermediateResponse = await fetch(`${endpoint}?intermediate=true`);
+		expect(intermediateResponse.status).toBe(200);
+		const intermediateBody = (await intermediateResponse.json()) as {
+			immediate_subordinate_entities: Array<{ id: string }>;
+		};
+		expect(intermediateBody.immediate_subordinate_entities).toEqual([]);
+
+		const leafResponse = await fetch(`${endpoint}?intermediate=false`);
+		expect(leafResponse.status).toBe(200);
+		const leafBody = (await leafResponse.json()) as {
+			immediate_subordinate_entities: Array<{ id: string }>;
+		};
+		expect(leafBody.immediate_subordinate_entities.map(({ id }) => id).sort()).toEqual(
+			[
+				`https://op.ofed.test:${port}`,
+				`https://rp.ofed.test:${port}`,
+				`https://rp2.ofed.test:${port}`,
+			].sort(),
+		);
 	});
 
 	it("audit_timestamps=true returns registered + updated per entity", async () => {
@@ -155,8 +180,8 @@ describe("Extended Subordinate Listing endpoint", () => {
 
 	it("listSubordinatesExtended server API returns paginated entries with audit timestamps", async () => {
 		const { entities } = getTestBed();
-		const taInstance = getEntity(entities, "https://ta.ofed.test");
-		const ta = taInstance.server as AuthorityServer;
+		const taInstance = getAuthorityEntity(entities, "https://ta.ofed.test");
+		const ta = taInstance.server;
 
 		const result = await ta.listSubordinatesExtended({ auditTimestamps: true, limit: 100 });
 		expect(result.ok).toBe(true);
