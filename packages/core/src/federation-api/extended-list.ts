@@ -11,7 +11,7 @@ import {
 	MediaType,
 } from "../constants.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
-import { isExactContentType } from "../http.js";
+import { isExactContentType, readStreamWithLimit } from "../http.js";
 import {
 	type ExtendedListRequestParams,
 	type ExtendedListResponse,
@@ -89,15 +89,22 @@ function buildUrl(
 	return ok(url);
 }
 
-function readBody(response: Response, maxBytes: number): Promise<string> {
+async function readBody(
+	response: Response,
+	maxBytes: number,
+	signal: AbortSignal,
+): Promise<string> {
 	const contentLength = response.headers.get("content-length");
 	if (contentLength) {
 		const size = Number.parseInt(contentLength, 10);
 		if (Number.isFinite(size) && size > maxBytes) {
-			return Promise.resolve("");
+			throw new Error("Response too large");
 		}
 	}
-	return response.text();
+	if (!response.body) throw new Error("Empty response body");
+	const result = await readStreamWithLimit(response.body, maxBytes, signal);
+	if (!result.ok) throw new Error("Response too large");
+	return result.text;
 }
 
 /** Fetch the Extended Subordinate Listing endpoint and return the parsed response. */
@@ -156,17 +163,23 @@ export async function fetchExtendedSubordinatesList(
 			cause,
 		});
 	}
-	clearTimeout(timer);
-
 	const contentType = response.headers.get("content-type");
 
 	if (response.status === 400) {
 		let body = "";
 		try {
-			body = await readBody(response, maxBytes);
-		} catch {
+			body = await readBody(response, maxBytes, controller.signal);
+		} catch (cause) {
+			if (controller.signal.aborted) {
+				return err({
+					code: InternalErrorCode.Timeout,
+					description: `Request aborted or timed out: ${endpoint}`,
+					cause,
+				});
+			}
 			// fall through with empty body
 		}
+		clearTimeout(timer);
 		let code: string | undefined;
 		let description: string | undefined;
 		if (isExactContentType(contentType, MediaType.Json)) {
@@ -193,6 +206,7 @@ export async function fetchExtendedSubordinatesList(
 	}
 
 	if (!response.ok) {
+		clearTimeout(timer);
 		return err({
 			code: InternalErrorCode.Network,
 			description: `HTTP ${response.status} from ${endpoint}`,
@@ -200,6 +214,7 @@ export async function fetchExtendedSubordinatesList(
 	}
 
 	if (!isExactContentType(contentType, MediaType.Json)) {
+		clearTimeout(timer);
 		const actual = contentType?.trim() || "<missing>";
 		return err({
 			code: InternalErrorCode.Network,
@@ -209,14 +224,23 @@ export async function fetchExtendedSubordinatesList(
 
 	let body: string;
 	try {
-		body = await readBody(response, maxBytes);
+		body = await readBody(response, maxBytes, controller.signal);
 	} catch (cause) {
+		if (controller.signal.aborted) {
+			return err({
+				code: InternalErrorCode.Timeout,
+				description: `Request aborted or timed out: ${endpoint}`,
+				cause,
+			});
+		}
+		clearTimeout(timer);
 		return err({
 			code: InternalErrorCode.Network,
 			description: cause instanceof Error ? cause.message : `Failed to read response body`,
 			cause,
 		});
 	}
+	clearTimeout(timer);
 
 	let raw: unknown;
 	try {

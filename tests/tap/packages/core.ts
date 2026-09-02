@@ -12295,6 +12295,50 @@ export default (QUnit: QUnit) => {
 			}
 		});
 
+		test("rejects streamed responses exceeding maxResponseBytes", async (t) => {
+			let pulls = 0;
+			const body = new ReadableStream<Uint8Array>({
+				pull(controller) {
+					pulls++;
+					controller.enqueue(new Uint8Array(64));
+				},
+			});
+			const httpClient: HttpClient = async () =>
+				new Response(body, {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				});
+			const result = await fetchExtendedSubordinatesList(
+				"https://ta.example.com/federation_extended_list",
+				undefined,
+				{ httpClient, maxResponseBytes: 100 },
+			);
+			t.false(result.ok);
+			if (!result.ok) t.true(result.error.description.includes("Response too large"));
+			t.true(pulls < 4, "stops consuming the response after crossing the limit");
+		});
+
+		test("applies httpTimeoutMs while reading the response body", async (t) => {
+			const body = new ReadableStream<Uint8Array>({
+				async pull(controller) {
+					await new Promise((resolve) => setTimeout(resolve, 100));
+					controller.enqueue(new Uint8Array([32]));
+				},
+			});
+			const httpClient: HttpClient = async () =>
+				new Response(body, {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				});
+			const result = await fetchExtendedSubordinatesList(
+				"https://ta.example.com/federation_extended_list",
+				undefined,
+				{ httpClient, httpTimeoutMs: 10 },
+			);
+			t.false(result.ok);
+			if (!result.ok) t.equal(result.error.code, InternalErrorCode.Timeout);
+		});
+
 		test("respects an aborted AbortSignal", async (t) => {
 			const httpClient: HttpClient = async (_url, init) => {
 				if (init?.signal?.aborted) {
