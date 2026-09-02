@@ -3235,6 +3235,22 @@ export default (QUnit: QUnit) => {
 	});
 
 	module("core / applyMetadataPolicy", () => {
+		test("rejects prototype-polluting metadata and policy keys", (t) => {
+			const maliciousMetadata = JSON.parse(
+				'{"__proto__":{"polluted":"metadata"}}',
+			) as FederationMetadata;
+			const maliciousPolicy = JSON.parse(
+				'{"__proto__":{"client_name":{"value":"policy"}}}',
+			) as Parameters<typeof applyMetadataPolicy>[1];
+			const maliciousOverride = JSON.parse(
+				'{"__proto__":{"polluted":"override"}}',
+			) as FederationMetadata;
+
+			t.false(applyMetadataPolicy(maliciousMetadata, {}).ok);
+			t.false(applyMetadataPolicy({ openid_relying_party: {} }, maliciousPolicy).ok);
+			t.false(applyMetadataPolicy({ openid_relying_party: {} }, {}, maliciousOverride).ok);
+			t.equal((Object.prototype as Record<string, unknown>).polluted, undefined);
+		});
 		test("returns metadata unchanged when policy is empty", (t) => {
 			const metadata: FederationMetadata = { openid_relying_party: { client_name: "Test RP" } };
 			const result = applyMetadataPolicy(metadata, {});
@@ -3784,6 +3800,15 @@ export default (QUnit: QUnit) => {
 		}
 
 		module("core / resolveMetadataPolicy", () => {
+			test("rejects prototype-polluting policy keys", (t) => {
+				const metadataPolicy = JSON.parse(
+					'{"__proto__":{"openid_relying_party":{"value":"polluted"}}}',
+				) as ParsedEntityStatement["payload"]["metadata_policy"];
+				const result = resolveMetadataPolicy([makeMergeStmt({ metadata_policy: metadataPolicy })]);
+
+				t.false(result.ok);
+				t.equal((Object.prototype as Record<string, unknown>).openid_relying_party, undefined);
+			});
 			test("returns empty policy when no statements have metadata_policy", (t) => {
 				const result = resolveMetadataPolicy([makeMergeStmt()]);
 				t.true(isOk(result));
