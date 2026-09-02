@@ -301,6 +301,31 @@ export function createExplicitRegistrationHandler(
 			bestChain = chainResult.value;
 		}
 
+		// The request's embedded JWKS is sender-controlled and only proves possession
+		// of an arbitrary key. Bind the request to the validated federation identity
+		// by also verifying it with the leaf keys from the selected trust chain.
+		const trustedLeafJwks = bestChain.statements[0]?.payload.jwks;
+		if (!trustedLeafJwks || typeof trustedLeafJwks !== "object") {
+			return errorResponse(
+				403,
+				FederationErrorCode.InvalidTrustChain,
+				"Validated RP trust chain does not contain leaf JWKS",
+			);
+		}
+		const federationVerify = await verifyEntityStatement(ecJwt, trustedLeafJwks, {
+			...(config.options?.clock ? { clock: config.options.clock } : {}),
+			...(config.options?.clockSkewSeconds !== undefined
+				? { clockSkewSeconds: config.options.clockSkewSeconds }
+				: {}),
+		});
+		if (!federationVerify.ok) {
+			return errorResponse(
+				403,
+				FederationErrorCode.InvalidTrustChain,
+				"Request JWT is not signed by keys authorized by the validated RP trust chain",
+			);
+		}
+
 		let peerResolvedOpMetadata: Readonly<Record<string, unknown>> | undefined;
 		if (peerTrustChainHeader && peerTrustChainHeader.length > 0) {
 			const peerValidation = await validateSuppliedTrustChain(peerTrustChainHeader, trustAnchors, {
