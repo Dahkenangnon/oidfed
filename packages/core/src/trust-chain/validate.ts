@@ -943,9 +943,14 @@ export async function validateTrustChain(
 			| undefined;
 		if (immSupMeta) {
 			for (const [entityType, params] of Object.entries(immSupMeta)) {
+				if (["__proto__", "prototype", "constructor"].includes(entityType)) continue;
+				if (!Object.hasOwn(metadata, entityType)) continue;
 				const existingMetadata = metadata[entityType];
 				if (!existingMetadata) continue;
-				Object.assign(existingMetadata, params as Record<string, unknown>);
+				for (const [key, value] of Object.entries(params as Record<string, unknown>)) {
+					if (["__proto__", "prototype", "constructor"].includes(key)) continue;
+					existingMetadata[key] = value;
+				}
 			}
 		}
 	}

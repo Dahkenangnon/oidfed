@@ -11612,6 +11612,35 @@ export default (QUnit: QUnit) => {
 					"openid_relying_party" in (result.chain.resolvedMetadata as Record<string, unknown>),
 				);
 			});
+			test("does not allow Immediate Superior SS metadata to pollute object prototypes", async (t) => {
+				const taKeys = await generateSigningKey("ES256");
+				const leafKeys = await generateSigningKey("ES256");
+				const leafEc = await vt_signEC(
+					"https://leaf.example.com",
+					leafKeys.privateKey,
+					leafKeys.publicKey,
+					{ authority_hints: ["https://ta.example.com"] },
+				);
+				const maliciousMetadata = JSON.parse(
+					'{"__proto__":{"oidfedPrototypePolluted":true}}',
+				) as Record<string, Record<string, unknown>>;
+				const ss = await vt_signSS(
+					"https://ta.example.com",
+					"https://leaf.example.com",
+					taKeys.privateKey,
+					leafKeys.publicKey,
+					{ metadata: maliciousMetadata },
+				);
+				const taEc = await vt_signEC("https://ta.example.com", taKeys.privateKey, taKeys.publicKey);
+				const taSet: TrustAnchorSet = new Map([
+					["https://ta.example.com" as EntityId, { jwks: { keys: [taKeys.publicKey] } }],
+				]);
+
+				const result = await validateTrustChain([leafEc, ss, taEc], taSet, { verboseErrors: true });
+
+				t.true(result.valid);
+				t.false("oidfedPrototypePolluted" in {});
+			});
 			test("rejects chain statement with missing exp", async (t) => {
 				const jose = await import("jose");
 				const taKeys = await generateSigningKey("ES256");
