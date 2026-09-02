@@ -84,14 +84,14 @@ function parseBooleanQuery(value: string | null): boolean | null | undefined {
  */
 function parseClaimsParam(params: URLSearchParams): string[] {
 	const raw = params.getAll("claims");
-	const out: string[] = [];
+	const out = new Set<string>();
 	for (const value of raw) {
 		for (const token of value.split(",")) {
 			const trimmed = token.trim();
-			if (trimmed.length > 0) out.push(trimmed);
+			if (trimmed.length > 0) out.add(trimmed);
 		}
 	}
-	return out;
+	return [...out];
 }
 
 export function createExtendedListHandler(

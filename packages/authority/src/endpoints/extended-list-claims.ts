@@ -63,8 +63,9 @@ export async function extractClaims(
 ): Promise<Record<string, unknown>> {
 	const out: Record<string, unknown> = {};
 	for (const claim of requestedClaims) {
+		if (!Object.hasOwn(EXTENDED_LIST_CLAIM_EXTRACTORS, claim)) continue;
 		const extractor = EXTENDED_LIST_CLAIM_EXTRACTORS[claim];
-		if (!extractor) continue;
+		if (typeof extractor !== "function") continue;
 		const value = await extractor(record, ctx, now);
 		if (value !== undefined) out[claim] = value;
 	}
