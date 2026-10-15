@@ -5,46 +5,43 @@
   <a href="https://www.npmjs.com/package/@oidfed/core"><img alt="downloads" src="https://img.shields.io/npm/dm/@oidfed/core.svg" /></a>
   <a href="https://github.com/Dahkenangnon/oidfed/blob/main/packages/core/LICENSE"><img alt="license" src="https://img.shields.io/npm/l/@oidfed/core.svg" /></a>
   <a href="https://packagephobia.com/result?p=@oidfed/core"><img alt="install size" src="https://packagephobia.com/badge?p=@oidfed/core" /></a>
-  <a href="https://github.com/Dahkenangnon/oidfed/blob/main/scripts/coverage-check.sh"><img alt="coverage" src="https://img.shields.io/badge/coverage-%E2%89%A590%25-brightgreen" /></a>
 </p>
 
-Federation primitives for JavaScript — entity statements, trust chain resolution, metadata policy, cryptographic verification, and federation signing abstractions. This is the foundational layer of the OpenID Federation 1.0/1.1 implementation.
+`@oidfed/core` provides Entity Statement builders, signature verification, trust-chain discovery and validation, metadata policies, constraints, and trust marks for OpenID Federation 1.0. Authority, leaf, and OIDC packages use these primitives.
 
-## Overview
+Use the functions here when you need direct control over federation processing. For an HTTP-serving entity, start with [authority](authority.md) or [leaf](leaf.md).
 
-The `@oidfed/core` package provides the low-level building blocks required to interact with an OpenID Federation. It encapsulates key parsing, signature verification, HTTP discovery workflows, constraint enforcement, and hierarchical metadata policy merges. It maintains zero dependencies on OIDC-specific presentation logic, making it suitable for any federation client, authority server, or intermediate node.
+## Usage
 
----
+Examples with names such as `taPublicKey`, `rawMetadata`, and `parsedStatements` assume application-supplied values of the corresponding public API types. They are integration fragments. `subordinateStatements` is a `ParsedEntityStatement[]` in leaf-to-TA order; use verified inputs when applying policy to a trust decision.
 
-## Capabilities & Usage Guide
+### Handling errors with `Result`
 
-### 1. Functional Error Management (`Result`)
-To avoid side-effects from uncaught exceptions, the library encapsulates operations in a serializable, structurally typed `Result<T, E>` wrapper. 
+Many protocol operations return `Result<T, E>`. Check `ok` before reading `value` or `error`. Constructors, signing operations, and configuration validation can still throw; a `Result` return type does not make the whole API exception-free.
 
 ```ts
-import { ok, err, isOk, federationError } from "@oidfed/core";
+import { ok, err, federationError } from "@oidfed/core";
 import type { Result, FederationError } from "@oidfed/core";
 
 function parsePort(portStr: string): Result<number, FederationError> {
-  const parsed = Number.parseInt(portStr, 10);
-  if (Number.isNaN(parsed)) {
-    return err(federationError("invalid_request", "Port must be a valid number"));
+  const parsed = Number(portStr);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
+    return err(federationError("invalid_request", "Port must be an integer from 1 to 65535"));
   }
   return ok(parsed);
 }
 
 const res = parsePort("8080");
-if (isOk(res)) {
+if (res.ok) {
   console.log("Success:", res.value); // 8080
 } else {
   console.error("Failed:", res.error.description);
 }
 ```
 
----
+### Entity Identifiers (`EntityId`)
 
-### 2. Entity Identifiers (`EntityId`)
-Validates that strings conform to OpenID Federation rules: must be valid URLs using the `https` scheme, without fragment or query components, and under 2048 characters. Per Section 3.1.2 of the OpenID Federation 1.0 specification, the `authority_hints` list of immediate superiors must not be empty `[]` and must not be present in the configurations of Trust Anchors with no superiors.
+Validates that strings conform to OpenID Federation rules: must be valid URLs using the `https` scheme, without credentials, fragment, or query components, and at most 2048 characters. Per Section 3.1.2 of the OpenID Federation 1.0 specification, the `authority_hints` list of immediate superiors must not be empty `[]` and must not be present in the configurations of Trust Anchors with no superiors.
 
 ```ts
 import { entityId, isValidEntityId } from "@oidfed/core";
@@ -59,10 +56,9 @@ if (isValidEntityId("https://client.example.com?query=true")) {
 }
 ```
 
----
+### HTTP discovery and fetching
 
-### 3. HTTP Discovery and Fetching
-Provides HTTP fetching primitives equipped with SSRF protection (IP address validation blocking special-use ranges like loopback and private networks) to retrieve configurations and statements. Successful federation responses must carry the exact registered media type with no parameters.
+Fetch Entity Configurations and Subordinate Statements over HTTPS. The URL checks reject special-use IP literals and support host allowlists and additional blocked IPv4 ranges. DNS resolution and redirect policy belong to the HTTP transport: configure your injected `httpClient` and network access controls for the deployment. Federation response checks require the exact registered media type without parameters.
 
 ```ts
 import { fetchEntityConfiguration, fetchSubordinateStatement, entityId } from "@oidfed/core";
@@ -80,9 +76,8 @@ if (ecResult.ok) {
 }
 ```
 
----
+### Building and signing Entity Statements
 
-### 4. Entity Statement Builders & Signing
 Use the stable builders for normal Entity Configurations and Subordinate Statements. They validate Entity Identifier syntax, JWKS shape, time windows, metadata shape, and claim placement before signing. The lower-level `signEntityStatement` helper remains available for advanced extension payloads after callers perform their own validation.
 
 ```ts
@@ -98,6 +93,8 @@ import {
 
 const keyPair = await generateSigningKey("ES256");
 const signer = new JwkSigner(keyPair.privateKey);
+const authorityKeyPair = await generateSigningKey("ES256");
+const authoritySigner = new JwkSigner(authorityKeyPair.privateKey);
 
 const entityConfigurationJwt = await signEntityConfiguration({
   entityId: "https://leaf.example.com",
@@ -121,7 +118,7 @@ const subordinateStatementJwt = await signSubordinateStatement({
       organization_name: "Example Leaf"
     }
   },
-  signer,
+  signer: authoritySigner,
   ttlSeconds: 3600
 });
 
@@ -140,10 +137,9 @@ const result = await verifyEntityStatement(entityConfigurationJwt, {
 
 `decodeEntityConfiguration` and `decodeSubordinateStatement` validate the JWT `typ` header and payload shape but do not verify signatures. Use them for local inspection and kind-safe parsing. Use `verifyEntityStatement`, trust-chain validation, or the higher-level verification helpers before trusting remote input.
 
----
+### Trust-chain discovery and validation
 
-### 5. Trust Chain Discovery & Validation
-Finds trust paths from a leaf entity to configured Trust Anchors, validates each link's signature/expiration, and resolves the final metadata.
+`resolveTrustChains()` builds candidate paths. Pass each candidate to `validateTrustChain()` to check signatures, expiry, constraints, and metadata policy. Use `discoverEntity()` when you want a validated, selected chain in one call.
 
 ```ts
 import { resolveTrustChains, validateTrustChain, createTrustAnchorSet, entityId } from "@oidfed/core";
@@ -171,39 +167,26 @@ for (const chain of resolution.chains) {
 }
 ```
 
----
+### Metadata policy resolution
 
-### 6. Metadata Policy Resolution
-Merges policy trees resolved from intermediate subordinates in a chain and applies them to metadata properties. It fully supports standard operators defined in Section 6.1.3.1 of the specification: `value`, `default`, `one_of`, `subset_of`, `superset_of`, `add`, and `essential`.
+Resolve policies from the chain, then apply the combined policy to metadata. The standard operators in Section 9.2 are `value`, `default`, `one_of`, `subset_of`, `superset_of`, `add`, and `essential`.
 
 ```ts
 import { resolveMetadataPolicy, applyMetadataPolicy } from "@oidfed/core";
 
-const anchorPolicy = {
-  openid_relying_party: {
-    contacts: { essential: true }
-  }
-};
-
-const subordinatePolicy = {
-  openid_relying_party: {
-    contacts: { add: ["admin@intermediate.org"] }
-  }
-};
-
-// Resolve the policy chain
-const policyResult = resolveMetadataPolicy([anchorPolicy, subordinatePolicy]);
+// Parsed, verified Subordinate Statements in leaf-to-TA order.
+// resolveMetadataPolicy reads each statement's payload.metadata_policy.
+const policyResult = resolveMetadataPolicy(subordinateStatements);
 
 if (policyResult.ok) {
-  // Apply the resolved policy to raw metadata
   const finalMetadata = applyMetadataPolicy(rawMetadata, policyResult.value);
+  if (finalMetadata.ok) console.log(finalMetadata.value);
 }
 ```
 
----
+### Checking constraints
 
-### 7. Entity Constraints Enforcer
-Enforces path length limitations and naming constraints (permitted and excluded domains) along the trust chain.
+Check maximum path length and permitted/excluded names against a parsed chain. `validateTrustChain()` runs the chain-level constraint checks and applies `allowed_entity_types` when resolving metadata.
 
 ```ts
 import { checkConstraints } from "@oidfed/core";
@@ -222,9 +205,8 @@ if (constraintsResult.ok) {
 }
 ```
 
----
+### Federation key providers
 
-### 8. Federation Key Providers
 Federation signing keys are exposed through two contracts:
 
 - `FederationKeyProvider` returns the current federation signer and the active published Federation JWKS. Leaf entities and OIDC/OAuth federation helpers use this read-only contract.
@@ -244,10 +226,9 @@ const keyProvider = new MemoryFederationKeyProvider(
 const { signer, jwks } = await keyProvider.getFederationKeySet();
 ```
 
----
+### Replay protection (`ReplayStore`)
 
-### 9. Replay Protection (`ReplayStore`)
-Enforces message uniqueness by checking transaction identifiers (`jti`) within token validation loops.
+A `ReplayStore` claims an `(issuer, audience, jti)` tuple until expiry. Claims must be atomic across the processes serving one tenant. The in-memory implementation is for development and tests.
 
 ```ts
 import { MemoryReplayStore } from "@oidfed/core";
@@ -266,10 +247,9 @@ if (!isNew) {
 }
 ```
 
----
+### Memory cache
 
-### 10. Memory Cache
-Implements in-memory cache helpers using standard TTL parameters (seconds) to cache entity configurations and trust chains.
+`MemoryCache` stores values with TTLs in seconds and evicts least recently used entries at capacity. Its data is process-local and lost on restart.
 
 ```ts
 import { MemoryCache, ecCacheKey } from "@oidfed/core";
@@ -282,10 +262,9 @@ await cache.set(key, "cached-statement-jwt", 3600);
 const cached = await cache.get<string>(key);
 ```
 
----
+### Trust marks
 
-### 11. Trust Marks
-Provides verification of trust mark assertions, checking signatures and validating their active status.
+Validate the Trust Mark signature, issuer authorization, subject, expiry, and any delegation first. Status is a separate request to the issuer's advertised status endpoint. The example assumes `issuerJwks`, `trustMarkIssuers`, `trustMarkOwners`, and `statusEndpoint` came from trusted federation processing.
 
 ```ts
 import { validateTrustMark, fetchTrustMarkStatus } from "@oidfed/core";
@@ -296,7 +275,9 @@ const validation = await validateTrustMark(rawTrustMarkJwt, trustMarkIssuers, is
 });
 
 if (validation.ok) {
-  const status = await fetchTrustMarkStatus(validation.value, { httpClient: fetch });
+  const status = await fetchTrustMarkStatus(
+    statusEndpoint, rawTrustMarkJwt, issuerJwks, { httpClient: fetch },
+  );
   console.log("Trust Mark Status:", status);
 }
 ```

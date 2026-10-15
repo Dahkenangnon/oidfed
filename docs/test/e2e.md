@@ -1,325 +1,119 @@
-# E2E Test Infrastructure
+# End-to-end tests
 
-End-to-end test infrastructure for `@oidfed/*`. Exercises all packages together over real HTTPS using valid federation entity identifiers (`*.ofed.test`).
+The E2E suite exercises federation packages together over HTTPS. Entity Identifiers use the `https` scheme, including in tests. Local certificates and an injected DNS lookup let the suite use `*.ofed.test` without external DNS.
 
-## Why
+## Setup and commands
 
-The spec (Section 1.2) mandates that all Entity Identifiers use the `https` scheme — no exceptions for testing. Unit tests mock HTTP, but E2E tests need real TLS handshakes, real DNS resolution, and real cross-package wiring to verify the library works as developers will actually use it.
-
-## Prerequisites
-
-- **Node.js 22+**
-- **mkcert** — generates locally-trusted TLS certificates
-
-## Setup
-
-One-time, per machine:
+Use the repository's Node.js `>=22.22.0` and pinned pnpm version. Install [mkcert](https://github.com/FiloSottile/mkcert#installation); Linux browser trust may also need `libnss3-tools` or its platform equivalent.
 
 ```bash
-pnpm setup:e2e      # installs mkcert CA, generates *.ofed.test certs into .certs/
+pnpm setup:e2e
+pnpm test:e2e
 ```
 
-This creates:
+Setup installs a development CA and generates these ignored files:
 
-```
+```text
 .certs/
-├── ofed.pem         # TLS certificate (wildcard *.ofed.test + localhost)
+├── ofed.pem         # *.ofed.test, localhost, and loopback addresses
 ├── ofed-key.pem     # TLS private key
-└── ca-path.txt      # path to mkcert's root CA (used at runtime)
+└── ca-path.txt      # directory containing the signing CA's rootCA.pem
 ```
 
-`.certs/` is gitignored. Each developer/CI runner generates their own.
+Each machine or CI runner generates its own certificates. Setup skips generation if both server files already exist; it does not verify that they match the CA recorded in `ca-path.txt`. See [TLS troubleshooting](../guide/dev.md#tls-trust) for a verification command.
 
-## Running
+`test:e2e` sets `NODE_EXTRA_CA_CERTS` to the recorded CA file and runs [`tests/e2e/vitest.config.ts`](../../tests/e2e/vitest.config.ts). The tests also inject that CA into undici's dispatcher. No hosts-file changes are needed for automated tests.
 
-```bash
-pnpm test:e2e       # runs E2E tests only (requires setup:e2e first)
-pnpm test           # runs unit/integration tests only (no certs needed)
-```
+## How the test infrastructure fits together
 
-The `test:e2e` script sets `NODE_EXTRA_CA_CERTS` so Node's built-in TLS trusts the mkcert CA, then runs vitest with the E2E config.
+| Layer | Source under `tests/e2e/` | Responsibility |
+|---|---|---|
+| DNS and TLS | [`helpers/setup-file.ts`](../../tests/e2e/helpers/setup-file.ts) | Install an undici dispatcher with the local CA and a loopback DNS lookup |
+| HTTPS server | [`helpers/federation-server.ts`](../../tests/e2e/helpers/federation-server.ts) | Bind one ephemeral port on `127.0.0.1` and dispatch requests by hostname |
+| HTTP applications | [`participants/`](../../tests/e2e/participants/) | Adapt Express to Web API handlers; connect OP registration to `node-oidc-provider` |
+| Launcher | [`helpers/launcher.ts`](../../tests/e2e/helpers/launcher.ts) | Create keys, entities, stores, trust anchors, and subordinate records from a topology |
+| Lifecycle | [`helpers/lifecycle.ts`](../../tests/e2e/helpers/lifecycle.ts) | Start and close a test bed through Vitest hooks |
+| Scenarios | [`scenarios/`](../../tests/e2e/scenarios/) | Make HTTPS requests and assert protocol behavior |
 
-## Architecture
+The dispatcher setup runs through `setupFiles` in the test worker so `setGlobalDispatcher()` affects that worker's fetch calls. Its lookup redirects requests to loopback; keep external network requests out of these scenarios.
 
-Six layers, each building on the previous:
+The server uses one port for all entities. The launcher adds that port to topology URLs, creates separate federation and protocol keys for each entity, and pins the generated TA keys in a `TrustAnchorSet`. Authorities get their own `MemoryStorageAdapter`; OP processing uses replay protection. RP test instances expose their OIDC role and request-object stores for registration scenarios.
 
-```
-┌─────────────────────────────────────────────────┐
-│  Layer 6: Test Scenarios (smoke.test.ts, ...)   │
-├─────────────────────────────────────────────────┤
-│  Layer 5: Lifecycle (useFederation)             │
-├─────────────────────────────────────────────────┤
-│  Layer 4: Launcher (topology → running infra)   │
-├─────────────────────────────────────────────────┤
-│  Layer 3: Participant Apps (Express wrappers)   │
-├─────────────────────────────────────────────────┤
-│  Layer 2: Vhost HTTPS Server (federation-server)│
-├─────────────────────────────────────────────────┤
-│  Layer 1: DNS + TLS (undici custom dispatcher)  │
-└─────────────────────────────────────────────────┘
-```
+Participant applications preserve the request body and forward the handler's HTTP status, headers, and response body. A leaf's own handler also supports composed role routes; the test leaf wrapper mounts the Entity Configuration route and optional Request Object retrieval. The OP participant adds explicit registration, authorization, token, and PAR integration used by the suite. The [wiring guide](../guide/wiring-guide.md) explains the application boundary.
 
-### Layer 1: DNS + TLS Interception
+## Add a scenario
 
-**File:** `helpers/setup-file.ts`
+Use a topology from [`tests/e2e/topologies/`](../../tests/e2e/topologies/) and the lifecycle helper:
 
-`*.ofed.test` domains don't exist in real DNS. We use undici's `Agent` with a custom `lookup` to resolve all hostnames to `127.0.0.1`, and inject mkcert's root CA so TLS handshakes succeed.
+```ts
+import { expect, it } from "vitest";
+import { useFederation } from "../helpers/lifecycle.js";
+import { singleAnchorTopology } from "../topologies/single-anchor.js";
 
-This runs as a vitest `setupFiles` entry (not `globalSetup`), because `setGlobalDispatcher` must execute in the same process as the test workers.
-
-```
-fetch("https://ta.ofed.test:PORT/...")
-  → undici lookup → 127.0.0.1
-  → undici TLS   → trusts mkcert root CA
-  → connects to localhost:PORT with valid TLS
-```
-
-### Layer 2: Vhost HTTPS Server
-
-**File:** `helpers/federation-server.ts`
-
-A single `node:https` server binds to an ephemeral port on `127.0.0.1`. It reads the `Host` header and dispatches to the correct Express app:
-
-```
-                    https://ta.ofed.test:PORT
-                              │
-                    Host: ta.ofed.test
-                              │
-                    vhost map lookup
-                              │
-               ┌──────────────┼──────────────┐
-               ▼              ▼              ▼
-          TA Express     OP Express     RP Express
-             app            app            app
-```
-
-One port serves all entities. This avoids port exhaustion and mirrors real reverse-proxy deployments.
-
-**API:**
-
-```typescript
-const server = await createAndStartFederationTestServer();
-server.addEntity("https://ta.ofed.test:PORT", taApp);
-server.addEntity("https://op.ofed.test:PORT", opApp);
-// ...
-await server.close();
-```
-
-### Layer 3: Participant App Factories
-
-**Files:** `participants/authority-app.ts`, `participants/leaf-app.ts`, `participants/openid-provider-app.ts`
-
-Express app factories that bridge Express `(req, res)` to the library's Web API `(Request) => Promise<Response>`:
-
-```typescript
-// The bridge pattern (from docs/wiring-guide.md)
-const headers = new Headers();
-for (const [name, value] of Object.entries(req.headers)) {
-  if (Array.isArray(value)) {
-    for (const item of value) headers.append(name, item);
-  } else if (value !== undefined) {
-    headers.set(name, value);
-  }
-}
-
-const url = new URL(req.originalUrl, entityId);
-const request = new Request(url.toString(), {
-  method: req.method,
-  headers,
-  ...(body !== undefined ? { body } : {})
-});
-const response = await handler(request);
-res.status(response.status);
-for (const [key, value] of response.headers) res.setHeader(key, value);
-res.send(await response.text());
-```
-
-| Factory | Wraps | Serves |
-|---------|-------|--------|
-| `createAuthorityApp` | `TrustAnchor / Intermediate.handleRequest()` | All federation endpoints |
-| `createLeafApp` | `Leaf.handleRequest()` | `GET /.well-known/openid-federation` only |
-| `createOpenIDProviderApp` | `Leaf.handleRequest()` + `oidc-provider` | Federation endpoints + OIDC (`/auth`, `/token`, etc.) |
-
-The OP app also wires `OidcProviderRole` role methods for automatic and explicit registration endpoints, and uses `oidc-provider` (panva/node-oidc-provider) for standard OIDC flows.
-
-### Layer 4: Launcher
-
-**File:** `helpers/launcher.ts`
-
-`launchFederation(topology)` is the orchestrator. Given a declarative topology definition, it:
-
-1. Starts the vhost server on an ephemeral port
-2. Generates signing keys for every entity (`generateSigningKey("ES256")`)
-3. Rewrites all URLs to include the ephemeral port (e.g., `https://ta.ofed.test` → `https://ta.ofed.test:54321`)
-4. Builds the `TrustAnchorSet` from TA entities' public keys
-5. Creates `TrustAnchor` or `Intermediate` instances for authorities with `MemoryFederationKeyProvider` and one `MemoryStorageAdapter` each
-6. Creates `Leaf` instances for RPs and OPs; OP processing uses `MemoryReplayStore`
-7. Registers subordinates through each parent adapter's `subordinates` capability
-8. Creates Express apps via the participant factories
-9. Registers all apps in the vhost server
-
-Returns a `FederationTestBed`:
-
-```typescript
-interface FederationTestBed {
-  server: FederationTestServer;        // port, addEntity, close
-  entities: Map<string, EntityInstance>; // server + keys per entity
-  trustAnchors: TrustAnchorSet;
-  close(): Promise<void>;
-}
-```
-
-### Layer 5: Lifecycle Helper
-
-**File:** `helpers/lifecycle.ts`
-
-Convenience wrapper for `beforeAll`/`afterAll`:
-
-```typescript
 const getTestBed = useFederation(singleAnchorTopology);
 
-it("my test", async () => {
-  const { server, entities, trustAnchors } = getTestBed();
-  // server is running, all entities registered
-});
-```
-
-### Layer 6: Test Scenarios
-
-**Directory:** `scenarios/`
-
-Each test file uses `useFederation(topology)` and makes real HTTPS requests:
-
-```typescript
-it("fetches TA entity configuration", async () => {
+it("serves the Trust Anchor's Entity Configuration", async () => {
   const { server } = getTestBed();
   const response = await fetch(
-    `https://ta.ofed.test:${server.port}/.well-known/openid-federation`
+    `https://ta.ofed.test:${server.port}/.well-known/openid-federation`,
   );
   expect(response.status).toBe(200);
   expect(response.headers.get("content-type")).toBe("application/entity-statement+jwt");
 });
 ```
 
+The lifecycle helper launches the federation in `beforeAll` and closes it in `afterAll`. The dispatcher is also closed by its setup-file hook. A single-anchor test bed has four entities: one TA, one OP, and two RPs. Each gets a federation key pair and a separate protocol key pair.
+
+`FederationTestBed` exposes `server`, `entities`, `trustAnchors`, `requestObjectStores`, and `close()`. See the [launcher types](../../tests/e2e/helpers/launcher.ts) for the complete shape.
+
 ## Topologies
 
-Six topology definitions in `topologies/`. Each is a declarative `TopologyDefinition` that `launchFederation()` instantiates. See [dev.md](../guide/dev.md) for entity IDs and full topology diagrams.
+| Topology | Scenario |
+|---|---|
+| `single-anchor` | One TA, one OP, and two RPs for automatic and explicit registration |
+| `hierarchical` | One TA with education and health Intermediates above OPs and RPs |
+| `multi-anchor` | Two TAs above a shared Intermediate |
+| `constrained` | `max_path_length=0`, with a valid direct path and a deliberately invalid deeper path |
+| `cross-federation` | Two federations and a bridge Intermediate |
+| `policy-operators` | `subset_of`, `value`, `add`, and `essential` metadata policies |
 
-| Topology | Description |
-|----------|-------------|
-| `single-anchor` | 1 TA, 1 OP, 2 RPs (one automatic, one explicit) |
-| `hierarchical` | TA → 2 intermediates (edu, health) → OPs + RPs |
-| `multi-anchor` | 2 TAs sharing one intermediate, OP, 2 RPs |
-| `constrained` | TA with `max_path_length=0`; one valid chain, one deliberately failing |
-| `cross-federation` | Two separate federations linked by a bridge intermediate |
-| `policy-operators` | Demonstrates all §9.2 metadata policy operators |
+Add a `TopologyDefinition` in `topologies/` when a scenario needs a different trust structure, then pass it to `useFederation()` or `launchFederation()`.
 
-Adding new topologies is just creating a new file that exports a `TopologyDefinition`.
+## Test commands and isolation
 
-## How a Test Runs
+| Command | Runs |
+|---|---|
+| `pnpm quick:test` | Node TAP suite and CLI tests |
+| `pnpm test` | TAP suite across the configured runtimes, then CLI tests |
+| `pnpm test:apps` | Application tests |
+| `pnpm test:e2e` | HTTPS scenarios using the local test CA |
 
-Complete flow for `smoke.test.ts`:
+E2E has a standalone Vitest configuration. It maps the four federation libraries to `src/index.ts` through aliases. The other suites do not need E2E certificates.
 
-```
-1. vitest loads tests/e2e/vitest.config.ts
-      ↓
-2. setupFiles: helpers/setup-file.ts
-      → reads .certs/ca-path.txt → mkcert root CA
-      → creates undici Agent (custom DNS lookup + CA)
-      → setGlobalDispatcher(agent)
-      ↓
-3. beforeAll: useFederation(singleAnchorTopology)
-      → generateSigningKey("ES256") × 3
-      → TrustAnchor (TA), Leaf (OP), Leaf (RP)
-      → register OP and RP as subordinates in TA's store
-      → create Express apps (authority-app, openid-provider-app, leaf-app)
-      → start HTTPS server on ephemeral port (e.g., 54321)
-      → register all apps in vhost map
-      ↓
-4. test: fetch("https://ta.ofed.test:54321/.well-known/openid-federation")
-      → undici resolves ta.ofed.test → 127.0.0.1
-      → TLS handshake with .certs/ofed.pem (trusted via mkcert CA)
-      → vhost server: Host=ta.ofed.test → TA Express app
-      → Express bridge → TrustAnchor.handleRequest() → signs JWT
-      → 200 + application/entity-statement+jwt + valid 3-part JWT
-      ↓
-5. afterAll: close server + close undici agent
-```
+## Browser testing
 
-## Isolation from Unit Tests
-
-The E2E vitest config is standalone (`tests/e2e/vitest.config.ts`), **not** in the root `vitest.config.ts` projects array. This means:
-
-- `pnpm test` — runs package/tool unit and integration tests (no apps, no certs needed)
-- `pnpm test:apps` — runs application tests separately
-- `pnpm test:e2e` — runs only E2E tests (requires `pnpm setup:e2e` first)
-- CI can run unit tests without mkcert, and add E2E as a separate step
-
-The E2E config includes `resolve.alias` entries for all `@oidfed/*` packages, mapping them to their source `src/index.ts` files (same pattern the per-package vitest configs use).
-
-## Browser / Manual Testing
-
-The same federation can run as a long-lived server accessible from a browser.
-
-### Prerequisites
-
-1. **Build the packages and tools** (the dev server imports packages from built `dist/`):
-
-   ```bash
-   pnpm build
-   ```
-
-2. **Generate TLS certificates** (if not done already):
-
-   ```bash
-   pnpm setup:e2e
-   ```
-
-3. **Add DNS entries** to `/etc/hosts`:
-
-   ```
-   127.0.0.1  ta.ofed.test op.ofed.test rp.ofed.test
-   ```
-
-   > Actual hostnames are topology-prefixed (e.g. `ta-sa.ofed.test`, `op-uni-hi.ofed.test`). The bare names above are illustrative only. See [dev.md](../guide/dev.md) for the full list.
-
-4. **Trust the mkcert CA in your browser.** Running `mkcert -install` (done by `setup:e2e`) adds it to the system trust store. Most browsers pick this up automatically. Firefox users may need to import the CA manually via Settings > Certificates > Import (the CA path is in `.certs/ca-path.txt`).
-
-### Running
+The long-running dev server defines its own six topologies in [`scripts/dev-federation.ts`](../../scripts/dev-federation.ts). It uses fixed port `8443` by default and imports built package output. Build and configure browser DNS/TLS through the [development guide](../guide/dev.md).
 
 ```bash
-pnpm dev:federation             # starts on port 8443
-pnpm dev:federation -- --port 9443  # custom port
+pnpm build
+pnpm setup:e2e
+pnpm dev:federation
 ```
 
-Then open in your browser:
+Then inspect the single-anchor entities:
 
-- **Trust Anchor:** `https://ta.ofed.test:8443/.well-known/openid-federation`
-- **OpenID Provider:** `https://op.ofed.test:8443/.well-known/openid-federation`
-- **Relying Party:** `https://rp.ofed.test:8443/.well-known/openid-federation`
+- `https://ta-sa.ofed.test:8443/.well-known/openid-federation`
+- `https://op-sa.ofed.test:8443/.well-known/openid-federation`
+- `https://rp-sa.ofed.test:8443/.well-known/openid-federation`
 
-Each URL returns the entity's signed Entity Configuration JWT.
+The `-sa` names belong to the dev server; automated single-anchor tests use names such as `ta.ofed.test` with an ephemeral port. Test DNS interception does not configure the browser's resolver.
 
-### How it differs from E2E tests
+## CI
 
-| | E2E tests (`pnpm test:e2e`) | Dev server (`pnpm dev:federation`) |
-|---|---|---|
-| Port | Ephemeral (random) | Fixed (default 8443) |
-| DNS | undici in-process interception | System `/etc/hosts` |
-| TLS trust | `NODE_EXTRA_CA_CERTS` env var | System/browser trust store |
-| Lifecycle | Per-test (beforeAll/afterAll) | Long-running (Ctrl+C to stop) |
-| Imports | Source (`src/index.ts` via vitest alias) | Built (`dist/` via workspace deps) |
-
-### Script details
-
-**File:** `scripts/dev-federation.ts`
-
-The dev server reuses the same participant app pattern (Express bridge → library handlers) as the E2E infrastructure. It defines all 6 topologies inline and launches each in sequence on the same vhost HTTPS server with a fixed port — equivalent to calling `launchFederation()` for each topology, but without a test framework dependency.
-
-## CI Setup
+The E2E job in [the CI workflow](../../.github/workflows/ci.yml) installs mkcert, generates certificates, and runs the suite. The relevant steps on Ubuntu are:
 
 ```yaml
-- name: Setup E2E certificates
+- name: Set up E2E certificates
   run: |
     sudo apt-get install -y mkcert libnss3-tools
     pnpm setup:e2e

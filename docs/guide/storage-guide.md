@@ -1,15 +1,13 @@
-# Storage Guide
+# Storage guide
 
 `@oidfed/authority` accepts one `StorageAdapter` for all non-key state. The bundled `MemoryStorageAdapter` is for development and tests only; production deployments need shared, durable implementations.
 
-Federation signing keys are not storage capabilities. Signer custody, federation public-key publication, and rollover lifecycle remain behind `FederationKeyLifecycleProvider`.
+Federation key custody, public-key publication, and rollover use the separate `FederationKeyLifecycleProvider` contract.
 
-## Adapter Shape
+## Adapter shape
 
 ```ts
 import type {
-  StorageAdapter,
-  StorageTransaction,
   SubordinateStorage,
   TrustMarkStorage,
 } from "@oidfed/authority";
@@ -37,7 +35,7 @@ Replay and cache are excluded from `StorageTransaction`: replay claiming is inde
 
 `SubordinateStorage` provides `get`, `list`, `add`, `update`, and `remove`.
 
-- `entityId`, `createdAt`, and `updatedAt` are adapter-managed and excluded from `SubordinateRecordUpdate`.
+- `entityId` is immutable; adapters preserve `createdAt` and manage `updatedAt` on updates. All three fields are excluded from `SubordinateRecordUpdate`. Direct `add()` calls supply a complete record, including timestamps; `registerSubordinate()` supplies those timestamps for you.
 - Duplicate `add` and update/remove of unknown entities throw.
 - Returned values are detached; mutation does not persist data.
 - Listing is lexicographic by `entityId` with an inclusive first-unreturned cursor.
@@ -46,7 +44,7 @@ Replay and cache are excluded from `StorageTransaction`: replay claiming is inde
 
 Suggested relational columns: `entity_id TEXT PRIMARY KEY`, `jwks JSONB`, `metadata JSONB`, `metadata_policy JSONB`, `constraints JSONB`, `entity_types TEXT[]`, `is_intermediate BOOLEAN`, `source_endpoint TEXT`, `created_at DOUBLE PRECISION`, `updated_at DOUBLE PRECISION`.
 
-## Trust Marks
+## Trust marks
 
 Trust-mark storage is optional. If an authority advertises a trust-mark endpoint, the capability is required at startup.
 
@@ -62,7 +60,7 @@ interface TrustMarkStorage {
 }
 ```
 
-- Valid means unrevoked and `expiresAt > validAt`, or no expiry.
+- A record is valid when it is active and either has no expiry or has `expiresAt > validAt`.
 - Every issued JWT is preserved. Reissuance must not overwrite historical records.
 - `getByJwt` identifies the exact issued token used by status responses.
 - Issuing the same JWT is idempotent.
@@ -73,7 +71,7 @@ Suggested relational columns: `jwt_hash BYTEA PRIMARY KEY`, `jwt TEXT NOT NULL`,
 
 Hashing the JWT for indexing is acceptable, but `getByJwt` must compare the exact token and handle hash collisions safely.
 
-## Replay Protection
+## Replay protection
 
 ```ts
 interface ReplayStore {
@@ -96,7 +94,7 @@ Use a unique database key on `(issuer, audience, jti)`, or an equivalent Redis k
 
 Use a shared cache when processes should reuse remote Entity Configurations or statements. Cache loss must affect performance only, never correctness.
 
-`CacheProvider` TTLs and every injected `Clock` use NumericDate seconds. This is the same clock contract used by replay, subordinate, and trust-mark timestamps.
+Cache TTLs are durations in seconds. `Clock.now()` returns NumericDate seconds since the Unix epoch, as do replay expiry, subordinate timestamps, and trust-mark timestamps.
 
 ## Keys
 
@@ -104,9 +102,9 @@ Federation key lifecycle remains separate from storage. A database may hold publ
 
 Never place private JWK material in `StorageAdapter` or published federation JWKS.
 
-The stable API exposes only `StorageAdapter`, its repository capabilities, and `MemoryStorageAdapter`.
+The authority package exports the storage contracts and `MemoryStorageAdapter`. Its nested in-memory repository implementations are internal.
 
-## Production Checklist
+## Production checklist
 
 - [ ] One adapter object owns all configured non-key capabilities.
 - [ ] Authority transactions are serializable and roll back atomically.

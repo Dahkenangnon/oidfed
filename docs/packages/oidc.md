@@ -5,20 +5,14 @@
   <a href="https://www.npmjs.com/package/@oidfed/oidc"><img alt="downloads" src="https://img.shields.io/npm/dm/@oidfed/oidc.svg" /></a>
   <a href="https://github.com/Dahkenangnon/oidfed/blob/main/packages/oidc/LICENSE"><img alt="license" src="https://img.shields.io/npm/l/@oidfed/oidc.svg" /></a>
   <a href="https://packagephobia.com/result?p=@oidfed/oidc"><img alt="install size" src="https://packagephobia.com/badge?p=@oidfed/oidc" /></a>
-  <a href="https://github.com/Dahkenangnon/oidfed/blob/main/scripts/coverage-check.sh"><img alt="coverage" src="https://img.shields.io/badge/coverage-%E2%89%A585%25-brightgreen" /></a>
 </p>
 
-OpenID Connect and OAuth 2.0 federation flows — automatic and explicit client registration, Request Object validation, and RP/OP metadata validation as defined in OpenID Federation 1.0.
+`@oidfed/oidc` adds OpenID Connect and OAuth federation roles to a `Leaf`, `TrustAnchor`, or `Intermediate`. It creates and validates registration artifacts and supplies metadata for the parent Entity Configuration. Your existing OP and RP remain responsible for the OIDC protocol flow.
 
-## Overview
+## Usage
 
-The `@oidfed/oidc` package bridges federation trust chains with OIDC/OAuth client registration. It provides role classes that declare provider/client metadata in parent entity contexts and class-owned methods to create or validate signed Request Objects.
+### Composing roles with parent entities
 
----
-
-## Capabilities & Usage Guide
-
-### Composing Roles with Parent Entities
 Roles represent OIDC and OAuth functions (such as Relying Parties or OpenID Providers). They are composed directly into a parent `Leaf`, `TrustAnchor`, or `Intermediate` entity. The parent entity merges the role's metadata and routes standard path requests to the role's handlers automatically.
 
 ```ts
@@ -66,10 +60,10 @@ const leaf = new Leaf({
 });
 ```
 
----
+### Client-side automatic registration
 
-### Client-Side Automatic Registration
-For automatic registration, RPs sign authorization requests (Request Objects) that carry their metadata and trust chain in header parameters. Use `OidcRelyingPartyRole.automaticallyRegister(...)` for the normal RP flow: it discovers the OP, validates the selected trust chain, signs the Request Object, and returns the delivery-specific authorization parameters. Use `createAuthorizationRequest(...)` only when you already have a validated `DiscoveryResult`.
+This fragment uses an `rpRole` already composed into a parent, a pinned `taKey`, and fresh `sessionState` / `sessionNonce` values bound to the login session.
+For automatic registration, RPs sign authorization requests as Request Objects using protocol keys. The `trust_chain` JOSE header carries the RP's chain when available; metadata is resolved from its Entity Statements. Use `OidcRelyingPartyRole.automaticallyRegister(...)` for the normal RP flow: it discovers the OP, validates the selected trust chain, signs the Request Object, and returns the delivery-specific authorization parameters. Use `createAuthorizationRequest(...)` only when you already have a validated `DiscoveryResult`.
 
 When `requestDelivery: "par"` is used, the role posts the signed Request Object with `private_key_jwt` client authentication. Both the Request Object signer and client-assertion signer must be published in the RP protocol metadata through `jwks`, `jwks_uri`, or `signed_jwks_uri`. The current API does not configure mutual-TLS/self-signed TLS client authentication for PAR.
 
@@ -87,21 +81,22 @@ const authzResult = await rpRole.automaticallyRegister(
     opEntityId: "https://op.example.com",
     redirect_uri: "https://rp.example.com/callback",
     scope: "openid profile",
-    state: "xyz-state-abc",
+    state: sessionState,
+    nonce: sessionNonce,
     requestDelivery: "query"
   },
   { trustAnchors, httpClient: fetch }
 );
 
-if (isOk(authzResult)) {
+if (isOk(authzResult) && authzResult.value.delivery === "query") {
   const { authorizationUrl } = authzResult.value;
   console.log("Redirect user to:", authorizationUrl);
 }
 ```
 
----
+### Provider-side explicit registration
 
-### Provider-Side Explicit Registration
+The example assumes pinned `taPublicKey` and an `opProtocolPublicKey` used by the existing OP. Compose `opRole` into the parent entity to initialize and route it. If confidential clients need secrets, provide `generateClientSecret` backed by your credential store and a cryptographically secure generator.
 For explicit registration, OPs serve a `/registration` endpoint. RPs post their self-signed Entity Configuration or trust chains, and OPs reply with a signed explicit registration response whose `sub` is the RP Entity Identifier and whose registered client credentials are under `metadata.openid_relying_party`.
 
 When an RP supplies a `trust_chain` header or an exact `application/trust-chain+json` request body, OP-side processing validates that supplied value as a full Trust Chain and uses it before attempting live Federation Entity Discovery. Explicit registration request media types are parameter-free and matched exactly. Invalid supplied chains fail registration.
@@ -128,12 +123,11 @@ const opRole = new OidcProviderRole({
   trustAnchors,
   registrationResponseTtlSeconds: 3600,
   registrationProtocolAdapter: new OIDCRegistrationAdapter(),
-  generateClientSecret: async (clientId) => {
-    // Return a client secret to embed under metadata.openid_relying_party.client_secret,
-    // or undefined if the RP is a public client.
-    return "generated-secret-string";
-  },
   metadata: {
+    issuer: "https://op.example.com",
+    response_types_supported: ["code"],
+    subject_types_supported: ["public"],
+    id_token_signing_alg_values_supported: ["ES256"],
     authorization_endpoint: "https://op.example.com/auth",
     token_endpoint: "https://op.example.com/token",
     client_registration_types_supported: ["automatic", "explicit"],
@@ -142,42 +136,39 @@ const opRole = new OidcProviderRole({
 });
 ```
 
----
+### Custom protocol registration adapter
 
-### Custom Protocol Registration Adapter
-To customize how client metadata is validated or enriched during explicit registration requests, implement the `RegistrationProtocolAdapter` interface.
+Implement `RegistrationProtocolAdapter` to add profile checks or enrich explicit registration responses. This example adds one profile rule; compose it with `OIDCRegistrationAdapter` if you also need its OIDC schema checks. The optional `context` contains validated peer-chain metadata when supplied.
 
 ```ts
-import type { RegistrationProtocolAdapter, RegistrationProtocolAdapterContext } from "@oidfed/oidc";
+import type { RegistrationProtocolAdapter } from "@oidfed/oidc";
 import { federationError, FederationErrorCode, ok, err } from "@oidfed/core";
 
-class CustomAdapter implements RegistrationProtocolAdapter {
+const customAdapter: RegistrationProtocolAdapter = {
   validateClientMetadata(raw, context) {
-    const oidcMeta = raw.openid_relying_party;
-    if (oidcMeta && typeof oidcMeta === "object" && !oidcMeta.contacts) {
+    const metadata = raw.openid_relying_party;
+    if (metadata && typeof metadata === "object" && !("contacts" in metadata)) {
       return err(federationError(
         FederationErrorCode.InvalidMetadata,
-        "contacts field is required by this federation profile"
+        "contacts field is required by this federation profile",
       ));
     }
     return ok(raw);
-  }
-
+  },
   enrichResponseMetadata(rpMeta, trustChain, context) {
     return {
       ...rpMeta,
       client_id: trustChain.entityId,
-      custom_enriched_field: "enriched-value"
+      custom_enriched_field: "enriched-value",
     };
-  }
-}
+  },
+};
 ```
 
----
-
-## Configuration API Reference
+## Configuration
 
 ### `OidcRelyingPartyRoleConfig` & `OAuthClientRoleConfig`
+
 Configuration parameters used to instantiate `OidcRelyingPartyRole` and `OAuthClientRole`.
 
 | Configuration Field | Type | Required | Description |
@@ -189,36 +180,23 @@ Configuration parameters used to instantiate `OidcRelyingPartyRole` and `OAuthCl
 | `requestDelivery` | `RequestDelivery` | No | Request object transmission mode: `"form_post"` (default), `"query"`, `"request_uri"`, or `"par"`. |
 | `requestUri` | `string` | No | Preconfigured Request Object URI if using `"request_uri"` transmission delivery. |
 
-### `AutomaticRegistrationResult`
-The result of `OidcRelyingPartyRole.automaticallyRegister(...)` and the lower-level `createAuthorizationRequest(...)` helper is a discriminated union based on the selected `requestDelivery` mode:
+`OidcRelyingPartyRoleConfig` also accepts `trustAnchors` and `authorityHints`. Its registration methods take trust anchors from call options, then role config, then the parent context. Authority hints come from the parent context when present.
 
-- **`delivery: "query"`**:
-  - `requestObjectJwt` (`string`): The signed Request Object JWT.
-  - `trustChain` (`ValidatedTrustChain`): The validated OP trust chain.
-  - `trustChainExpiresAt` (`number`): Expiration timestamp of the chain.
-  - `authorizationUrl` (`string`): Full redirect URL containing `request` and `client_id` as query parameters.
-- **`delivery: "form_post"`**:
-  - `requestObjectJwt` (`string`): The signed Request Object JWT.
-  - `trustChain` (`ValidatedTrustChain`): The validated OP trust chain.
-  - `trustChainExpiresAt` (`number`): Expiration timestamp of the chain.
-  - `authorizationEndpoint` (`string`): Endpoint to POST the request object to.
-  - `formParams` (`Record<string, string>`): Form parameters to submit (contains `request` and `client_id`).
-- **`delivery: "request_uri"`**:
-  - `requestObjectJwt` (`string`): The signed Request Object JWT.
-  - `trustChain` (`ValidatedTrustChain`): The validated OP trust chain.
-  - `trustChainExpiresAt` (`number`): Expiration timestamp of the chain.
-  - `requestUri` (`string`): The pre-configured URI where the caller must serve the Request Object.
-  - `authorizationUrl` (`string`): Full redirect URL containing `request_uri` and `client_id` as query parameters.
-- **`delivery: "par"`**:
-  - `requestObjectJwt` (`string`): The signed Request Object JWT.
-  - `trustChain` (`ValidatedTrustChain`): The validated OP trust chain.
-  - `trustChainExpiresAt` (`number`): Expiration timestamp of the chain.
-  - `pushedAuthorizationRequestEndpoint` (`string`): The PAR endpoint of the OP.
-  - `authorizationUrl` (`string`): Full redirect URL containing the OP-issued `request_uri` and `client_id` as query parameters.
-  - `parRequestUri` (`string`): The URN-style request URI returned by the OP's PAR endpoint.
-  - `parExpiresAt` (`number`): Expiration timestamp of the PAR session.
+### Automatic registration result
 
-### `OidcProviderRoleConfig` & `OAuthAuthorizationServerRoleConfig`
+`automaticallyRegister()` and `createAuthorizationRequest()` return a `Result<AutomaticRegistrationResult>`. After checking `ok`, narrow `value.delivery` before accessing fields specific to a delivery mode.
+
+Every successful result contains `requestObjectJwt` (`string`), `trustChain` (`ValidatedTrustChain`, for the OP), and `trustChainExpiresAt` (NumericDate seconds).
+
+| `delivery` | Additional fields | Application action |
+|---|---|---|
+| `"query"` | `authorizationUrl: string` | Redirect to the URL carrying `request` and `client_id` |
+| `"form_post"` | `authorizationEndpoint: string`, `formParams: Record<string, string>` | POST the returned form fields to the endpoint |
+| `"request_uri"` | `requestUri: string`, `authorizationUrl: string` | Serve `requestObjectJwt` at `requestUri`, then redirect |
+| `"par"` | `pushedAuthorizationRequestEndpoint: string`, `authorizationUrl: string`, `parRequestUri: string`, `parExpiresAt: number` | Redirect to the returned URL before PAR expiry |
+
+### `OidcProviderRoleConfig` and `OAuthAuthorizationServerRoleConfig`
+
 Configuration parameters used to instantiate `OidcProviderRole` and `OAuthAuthorizationServerRole`.
 
 | Configuration Field | Type | Required | Description |
@@ -228,10 +206,13 @@ Configuration parameters used to instantiate `OidcProviderRole` and `OAuthAuthor
 | `trustAnchors` | `TrustAnchorSet` | Yes, via role config or parent context | Non-empty trust anchors required for OP-side automatic and explicit registration processing. |
 | `registrationResponseTtlSeconds`| `number` | No | TTL in seconds for signed explicit registration responses. Capped by RP trust chain validity. |
 | `registrationProtocolAdapter` | `RegistrationProtocolAdapter`| No | Pluggable adapter to customize metadata schema validations and response enrichments. |
-| `generateClientSecret` | `(sub: EntityId) => Promise<string>`| No | Hook called to issue a client secret for confidential Relying Parties. Returned values are embedded under `metadata.openid_relying_party.client_secret`. |
+| `generateClientSecret` | `(sub: EntityId) => Promise<string \| undefined>`| No | Hook called to issue a client secret for confidential Relying Parties. Returned values are embedded under `metadata.openid_relying_party.client_secret`. |
 | `onRegistrationInvalidation` | `(sub: EntityId) => Promise<void>`| No | Late pre-commit hook called after validation and response preparation, immediately before `onRegistration`. |
 
+`OidcProviderRoleConfig` additionally accepts `replayStore` and `onRegistration`. `replayStore` is required when calling `processAutomaticRegistration()`; it is not inherited from the parent storage automatically. `onRegistration(sub, clientMetadata, clientSecret?)` lets you persist the accepted registration. The OAuth authorization-server role exposes the explicit-registration route and does not expose the OP's automatic-registration method or these two hooks.
+
 ### `OAuthResourceRoleConfig`
+
 Configuration parameters used to instantiate `OAuthResourceRole`.
 
 | Configuration Field | Type | Required | Description |
@@ -239,22 +220,24 @@ Configuration parameters used to instantiate `OAuthResourceRole`.
 | `metadata` | `Record<string, unknown>` | No | Role-specific metadata properties merged under `oauth_resource` keys. |
 | `jwks` | `JWKSet` | No | Core JWK Set representing resource server key validation material. |
 
----
+## Common questions
 
-## Frequently Asked Questions (FAQ)
+### Why must federation signing keys and OIDC/OAuth protocol keys remain separate?
 
-### Q: Why must federation signing keys and OIDC/OAuth protocol keys remain separate?
-**A:** Separating key scopes is an essential security requirement of the OpenID Federation specification. Federation keys are used solely to sign federation artifacts (Entity Configurations, subordinate statements, trust marks). OIDC/OAuth protocol keys are used for transaction-level operations (signing Request Objects, verifying authorization requests, client assertions). Mixing these roles weakens key isolation.
+Separating key scopes is an essential security requirement of the OpenID Federation specification. Federation keys are used solely to sign federation artifacts (Entity Configurations, subordinate statements, trust marks). OIDC/OAuth protocol keys are used for transaction-level operations (signing Request Objects, verifying authorization requests, client assertions). Mixing these roles weakens key isolation.
 
-### Q: What is the `peer_trust_chain` JWS header parameter?
-**A:** As defined in **Section 4.4** of the OpenID Federation specification, the `peer_trust_chain` parameter is a JOSE JWS header parameter containing a JSON array of Entity Statements representing the Trust Chain between the peer entity being interacted with (e.g. the OP, when sent by the RP in a Request Object) and the selected Trust Anchor. 
+### What is the `peer_trust_chain` JWS header parameter?
 
-Crucially:
-- It allows the RP to supply the OP's trust chain as resolved/chosen by the RP, ensuring both entities establish trust under a common selected Trust Anchor. This helps achieve **Federation Integrity** and **Metadata Integrity** properties.
+As defined in **Section 4.4** of the OpenID Federation specification, the `peer_trust_chain` parameter is a JOSE JWS header parameter containing a JSON array of Entity Statements representing the Trust Chain between the peer entity being interacted with (e.g. the OP, when sent by the RP in a Request Object) and the selected Trust Anchor.
+
+The processing rules are:
+
+- It allows the RP to supply the OP's trust chain as resolved/chosen by the RP, so both entities establish trust under a common selected Trust Anchor. This binds the two views to the same federation.
 - If both `trust_chain` (describing the RP's own chain) and `peer_trust_chain` are present, the Trust Anchor at the root of both chains **MUST** be the same.
 - OP-side processing validates supplied `trust_chain` and `peer_trust_chain` values as full Trust Chains. Invalid supplied chains are rejected instead of being ignored in favor of live discovery.
 - According to **Section 12.2.1**, the `peer_trust_chain` header parameter **MUST NOT** be used when the request body itself is a Trust Chain (`application/trust-chain+json`); it is only permitted when the request body is the Entity Configuration of the RP (`application/entity-statement+jwt`).
 - It **MUST NOT** be included inside Entity Configurations or Subordinate Statements themselves.
 
-### Q: How do OPs prevent Request Object replay attacks?
-**A:** Every Request Object includes a unique identifier (`jti`) and expiration time (`exp`). The OP-side validator enforces that the request has not expired and queries a `ReplayStore` to verify that the `jti` has not been previously observed from the same issuer.
+### How do OPs prevent Request Object replay attacks?
+
+Every Request Object needs a `jti` and `exp`. OP-side processing checks expiry and claims the `(issuer, audience, jti)` tuple through the configured `ReplayStore`. Use a shared atomic implementation across instances; the OP role requires this store for automatic registration.
