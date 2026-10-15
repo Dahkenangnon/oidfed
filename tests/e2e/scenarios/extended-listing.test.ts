@@ -132,8 +132,12 @@ describe("Extended Subordinate Listing endpoint", () => {
 			immediate_subordinate_entities: Array<{ id: string; subordinate_statement?: string }>;
 		};
 		const first = body.immediate_subordinate_entities[0];
-		expect(first?.subordinate_statement).toBeTruthy();
-		expect((first?.subordinate_statement as string).split(".")).toHaveLength(3);
+		expect(first).toBeDefined();
+		if (!first) throw new Error("Expected at least one subordinate entity");
+		const jwt = first.subordinate_statement;
+		expect(jwt).toBeTruthy();
+		if (!jwt) throw new Error("Expected a subordinate statement JWT");
+		expect(jwt.split(".")).toHaveLength(3);
 	});
 
 	it("limit + from_entity_id paginate through the full set in deterministic order", async () => {
