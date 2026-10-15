@@ -7,11 +7,7 @@
   <a href="https://nodejs.org"><img alt="Node" src="https://img.shields.io/node/v/@oidfed/cli" /></a>
 </p>
 
-Command-line interface for inspecting, validating, and debugging OpenID Federation deployments — resolve trust chains, decode entity statements, verify signatures, and more.
-
-## Role
-
-Command-line tool for operators and developers working with an OpenID Federation. Useful for inspecting entity configurations, resolving trust chains, verifying signatures, checking trust mark status, and diagnosing federation health — all from the terminal.
+Inspect Entity Configurations, find and validate trust chains, verify signatures, and check federation endpoints from the terminal. The CLI declares Node.js `>=22.12.0`; development in this repository requires `>=22.22.0`.
 
 ## Install
 
@@ -19,11 +15,13 @@ Command-line tool for operators and developers working with an OpenID Federation
 # Global
 pnpm add -g @oidfed/cli
 
-# Or run via workspace
-pnpm oidfed <command>
+# From a built checkout, with normal TLS verification:
+node tools/cli/dist/bin.js <command>
 ```
 
-## Global Options
+The workspace shortcuts `pnpm oidfed` and `pnpm cli` disable TLS certificate verification through `NODE_TLS_REJECT_UNAUTHORIZED=0`. They are local test helpers. Use the installed `oidfed` command or the direct Node invocation above when inspecting remote deployments. To trust the local test CA without disabling verification, set `NODE_EXTRA_CA_CERTS` as described in the [development guide](../guide/dev.md#tls-trust).
+
+## Global options
 
 ```
     --json              Output raw JSON (machine-readable, suitable for piping to jq)
@@ -52,7 +50,7 @@ pnpm oidfed <command>
 | `validate <jwt-or-entity-id...>` | Validate a trust chain from JWTs or by resolving an entity ID |
 | `verify <jwt>` | Verify a JWT signature (resolves JWKS from `--entity-id`, `--jwks-file`, or JWT `iss`) |
 
-### Trust Marks
+### Trust marks
 
 | Command | Description |
 |---------|-------------|
@@ -76,7 +74,7 @@ pnpm oidfed <command>
 
 ## Configuration
 
-Config file: `~/.oidfed/config.yaml`. A missing file is **not** auto-created — `loadConfig` silently falls back to defaults. Create the file yourself when you need per-host configuration.
+The default path is `~/.oidfed/config.yaml`. A missing file uses defaults and is not created automatically. Create it when you need saved trust anchors or HTTP settings. The abbreviated JWK below is a placeholder; replace it with the anchor's public key obtained through your trusted configuration process.
 
 ```yaml
 # Known trust anchors for chain resolution
@@ -94,7 +92,7 @@ http_timeout_ms: 10000
 max_chain_depth: 10
 ```
 
-Override with `-c /path/to/config.yaml`, the `OIDFED_CONFIG_PATH` environment variable, or per-option flags.
+Configuration path precedence is `-c /path/to/config.yaml`, then `OIDFED_CONFIG_PATH`, then the default path. Command-specific flags such as `--trust-anchor` override the corresponding saved value where supported.
 
 ## Examples
 
@@ -116,7 +114,7 @@ oidfed list-extended https://ta.example.org \
 oidfed list-extended https://ta.example.org \
   --updated-after 1700000000 --updated-before 1700604800
 
-# Resolve and validate a trust chain
+# Find candidate trust chains
 oidfed resolve https://rp.example.com
 
 # Build a trust chain with policy and constraints
@@ -141,6 +139,8 @@ oidfed health https://ta.example.org
 oidfed expiry https://rp.example.com --trust-anchor https://ta.example.org
 ```
 
+`decode` inspects a token without verifying it. `verify` checks a signature against the selected keys; discovering those keys from the JWT issuer does not establish trust in that issuer. Use `chain` or `validate` with trusted anchors for federation trust validation.
+
 ## Command pattern
 
-Each command exports `handler(args, deps) → Result<string>` and `register(program, deps)` — dependencies injected, commands independently testable.
+Commands expose an asynchronous `handler(args, deps)` returning `Promise<Result<string>>` and a `register(program, deps)` function. Injected dependencies let tests run command handlers without network access.

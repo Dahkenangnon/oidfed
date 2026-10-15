@@ -1,546 +1,270 @@
-# End-to-End Wiring Guide
+# Wiring a federation into your application
 
-Integration guide for `@oidfed/*` with Express.js and [`panva/node-oidc-provider`](https://github.com/panva/node-oidc-provider). Demonstrates a representative OpenID Federation deployment.
+This guide connects a Trust Anchor, Intermediate, OP, and RP. The TypeScript examples build on one another. They use temporary in-memory keys and stores for development; the [storage guide](storage-guide.md) describes production contracts.
 
-## Installation
+For a working Express integration with [`node-oidc-provider`](https://github.com/panva/node-oidc-provider), read the [E2E OP participant](../../tests/e2e/participants/openid-provider-app.ts) and [launcher](../../tests/e2e/helpers/launcher.ts). Those are test applications with test accounts and interactions.
+
+## Install
 
 ```bash
-# Trust Anchor / Intermediate Authority
+# Trust Anchor or Intermediate
 pnpm add @oidfed/core @oidfed/authority
 
-# OpenID Provider (OP)
-pnpm add @oidfed/core @oidfed/authority @oidfed/oidc
-
-# Relying Party (RP)
+# Leaf OP or RP with OIDC federation roles
 pnpm add @oidfed/core @oidfed/leaf @oidfed/oidc
 
-# CLI (global)
-pnpm add -g @oidfed/cli
+# Express HTTP adapter used below
+pnpm add express
+pnpm add -D @types/express
 ```
 
-This guide follows the **eduGAIN topology** from the spec appendix:
+The federation hierarchy in this example is:
 
-```
-Trust Anchor (edugain.geant.org)
-       ┌────────┴────────┐
- SWAMID (swamid.se)   InCommon (incommon.org)
-       │                      │
- umu.se (Org)                 │
-       │                      │
- op.umu.se (OP)         wiki.ligo.org (RP)
+```text
+https://ta.example.org
+└── https://ia.example.org
+    ├── https://op.example.com
+    └── https://rp.example.com
 ```
 
-## Table of Contents
+Each identifier needs its own HTTPS endpoint. An OP and RP share federation membership here; neither is the other's superior authority.
 
-1. [Trust Anchor Setup](#1-trust-anchor-setup)
-2. [Intermediate Setup](#2-intermediate-setup)
-3. [OP Setup (Express + node-oidc-provider)](#3-op-setup)
-4. [RP Setup (Express + @oidfed/leaf + @oidfed/oidc)](#4-rp-setup)
-5. [End-to-End Flow](#5-end-to-end-flow)
+## 1. Create the Trust Anchor
 
----
-
-## 1. Trust Anchor Setup
-
-A Trust Anchor using `@oidfed/authority` on Express.
-
-```typescript
-import express from "express";
+```ts
+import { Intermediate, MemoryStorageAdapter, TrustAnchor } from "@oidfed/authority";
 import {
-  TrustAnchor,
-  MemoryStorageAdapter,
-} from "@oidfed/authority";
-import {
-  entityId,
   createFederationSigningKey,
+  createTrustAnchorSet,
   generateSigningKey,
+  JwkSigner,
   MemoryFederationKeyProvider,
+  MemoryReplayStore,
 } from "@oidfed/core";
 
-const TA_ID = entityId("https://edugain.geant.org");
-const federationKeyPair = await generateSigningKey("ES256");
-const keyProvider = new MemoryFederationKeyProvider(
-  createFederationSigningKey(federationKeyPair.privateKey),
-);
-const storage = new MemoryStorageAdapter();
-
+const taKeys = await generateSigningKey("ES256");
 const ta = new TrustAnchor({
-  entityId: TA_ID,
-  keyProvider,
-  metadata: {
-    federation_entity: {
-      federation_fetch_endpoint: "https://edugain.geant.org/federation_fetch",
-      federation_list_endpoint: "https://edugain.geant.org/federation_list",
-      federation_resolve_endpoint: "https://edugain.geant.org/federation_resolve",
-    },
-  },
-  storage,
-  // No authorityHints — this is a Trust Anchor
-});
-
-// Register subordinate Intermediates
-const swamidKey = /* SWAMID's public signing key */;
-await ta.listSubordinates(); // (just to show the API)
-
-// Wire into Express
-const app = express();
-
-function headersFromNode(headers: express.Request["headers"]): Headers {
-  const result = new Headers();
-  for (const [name, value] of Object.entries(headers)) {
-    if (Array.isArray(value)) {
-      for (const item of value) result.append(name, item);
-    } else if (value !== undefined) {
-      result.set(name, value);
-    }
-  }
-  return result;
-}
-
-app.all("/*", async (req, res) => {
-  const url = new URL(req.originalUrl, `https://${req.headers.host}`);
-  const request = new Request(url.toString(), {
-    method: req.method,
-    headers: headersFromNode(req.headers),
-    body: req.method !== "GET" && req.method !== "HEAD" ? req.body : undefined,
-  });
-
-  const response = await ta.handleRequest(request);
-
-  res.status(response.status);
-  for (const [key, value] of response.headers) {
-    res.setHeader(key, value);
-  }
-  res.send(await response.text());
-});
-
-app.listen(443);
-```
-
-### Adding Subordinates
-
-```typescript
-import { entityId } from "@oidfed/core";
-
-const now = Math.floor(Date.now() / 1000);
-
-// Register SWAMID as an Intermediate subordinate
-await storage.subordinates.add({
-  entityId: entityId("https://swamid.se"),
-  jwks: { keys: [swamidPublicKey] },
-  entityTypes: ["federation_entity"],
-  isIntermediate: true,
-  metadata: {
-    federation_entity: {
-      federation_fetch_endpoint: "https://swamid.se/federation_fetch",
-      federation_list_endpoint: "https://swamid.se/federation_list",
-    },
-  },
-  createdAt: now,
-  updatedAt: now,
-});
-
-// Register InCommon as an Intermediate subordinate
-await storage.subordinates.add({
-  entityId: entityId("https://incommon.org"),
-  jwks: { keys: [incommonPublicKey] },
-  entityTypes: ["federation_entity"],
-  isIntermediate: true,
-  createdAt: now,
-  updatedAt: now,
-});
-```
-
----
-
-## 2. Intermediate Setup
-
-SWAMID as an Intermediate Authority — same pattern as the TA, but with `authorityHints`.
-
-```typescript
-import {
-  Intermediate,
-  MemoryStorageAdapter,
-} from "@oidfed/authority";
-import {
-  entityId,
-  createTrustAnchorSet,
-  createFederationSigningKey,
-  generateSigningKey,
-  MemoryFederationKeyProvider,
-} from "@oidfed/core";
-
-const SWAMID_ID = entityId("https://swamid.se");
-const federationKeyPair = await generateSigningKey("ES256");
-const keyProvider = new MemoryFederationKeyProvider(
-  createFederationSigningKey(federationKeyPair.privateKey),
-);
-
-// Trust Anchor keys for chain validation during registration
-const trustAnchors = createTrustAnchorSet([
-  {
-    entityId: "https://edugain.geant.org",
-    jwks: { keys: [taPublicKey] },
-  },
-]);
-
-const swamid = new Intermediate({
-  entityId: SWAMID_ID,
-  keyProvider,
-  metadata: {
-    federation_entity: {
-      federation_fetch_endpoint: "https://swamid.se/federation_fetch",
-      federation_list_endpoint: "https://swamid.se/federation_list",
-    },
-  },
-  authorityHints: [entityId("https://edugain.geant.org")], // ← Intermediate
-  trustAnchors,
+  entityId: "https://ta.example.org",
+  keyProvider: new MemoryFederationKeyProvider(
+    createFederationSigningKey(taKeys.privateKey),
+  ),
   storage: new MemoryStorageAdapter(),
+  metadata: {
+    federation_entity: {
+      federation_fetch_endpoint: "https://ta.example.org/fetch",
+      federation_list_endpoint: "https://ta.example.org/list",
+    },
+  },
 });
 
-// Register umu.se as a subordinate organization
-// (umu.se itself may be an Intermediate with op.umu.se as its subordinate)
+const trustAnchors = createTrustAnchorSet([
+  { entityId: ta.entityId, jwks: { keys: [taKeys.publicKey] } },
+]);
 ```
 
----
+A Trust Anchor omits `authorityHints`. Pin its public federation keys through your own trusted configuration process. Learning keys from the same untrusted endpoint you are evaluating does not establish that trust.
 
-## 3. OP Setup
+## 2. Create and enroll the Intermediate
 
-An OpenID Provider at `op.umu.se` using Express + `panva/node-oidc-provider` + `@oidfed/authority` + `@oidfed/oidc`.
-
-The OP acts as an authority (issues its own Entity Configuration with `@oidfed/authority` and `Intermediate`) and processes incoming registrations (with the `OidcProviderRole` role from `@oidfed/oidc`).
-
-```typescript
-import express from "express";
-import Provider from "oidc-provider";
-import { Intermediate, MemoryStorageAdapter } from "@oidfed/authority";
-import { OidcProviderRole } from "@oidfed/oidc";
-import {
-  entityId,
-  createTrustAnchorSet,
-  createFederationSigningKey,
-  generateSigningKey,
-  isOk,
-  MemoryFederationKeyProvider,
-} from "@oidfed/core";
-
-const OP_ID = entityId("https://op.umu.se");
-const federationKeyPair = await generateSigningKey("ES256");
-const keyProvider = new MemoryFederationKeyProvider(
-  createFederationSigningKey(federationKeyPair.privateKey),
-);
-const storage = new MemoryStorageAdapter();
-
-const trustAnchors = createTrustAnchorSet([
-  {
-    entityId: "https://edugain.geant.org",
-    jwks: { keys: [taPublicKey] },
+```ts
+const iaKeys = await generateSigningKey("ES256");
+const intermediate = new Intermediate({
+  entityId: "https://ia.example.org",
+  authorityHints: [ta.entityId],
+  trustAnchors,
+  keyProvider: new MemoryFederationKeyProvider(
+    createFederationSigningKey(iaKeys.privateKey),
+  ),
+  storage: new MemoryStorageAdapter(),
+  metadata: {
+    federation_entity: {
+      federation_fetch_endpoint: "https://ia.example.org/fetch",
+      federation_list_endpoint: "https://ia.example.org/list",
+    },
   },
-]);
+});
 
-// --- Federation server (Entity Configuration + role endpoints) ---
+await ta.registerSubordinate({
+  entityId: intermediate.entityId,
+  jwks: { keys: [iaKeys.publicKey] },
+  entityTypes: ["federation_entity"],
+  isIntermediate: true,
+});
+```
+
+Authorities must advertise fetch and list endpoints. `registerSubordinate()` supplies timestamps and sanitizes subordinate metadata. If you write directly through `storage.subordinates`, supply timestamps and use `TrustAnchor.sanitizeSubordinateMetadata()` or `Intermediate.sanitizeSubordinateMetadata()` before storing metadata.
+
+## 3. Add the OP's federation role
+
+Use a `Leaf` when the OP does not issue Subordinate Statements. An OP that is also an authority can instead compose the role into an `Intermediate` with the required fetch and list metadata.
+
+```ts
+import { Leaf } from "@oidfed/leaf";
+import {
+  OIDCRegistrationAdapter,
+  OidcProviderRole,
+  OidcRelyingPartyRole,
+  StaticProtocolSigningKeyProvider,
+} from "@oidfed/oidc";
+
+const opFederationKeys = await generateSigningKey("ES256");
+const opProtocolKeys = await generateSigningKey("ES256");
+const registeredClients = new Map<string, Record<string, unknown>>();
 
 const opRole = new OidcProviderRole({
-  registrationPath: "/registration",
-  replayStore: storage.replay,
+  trustAnchors,
+  replayStore: new MemoryReplayStore(),
+  registrationProtocolAdapter: new OIDCRegistrationAdapter(),
   metadata: {
-    issuer: "https://op.umu.se",
-    authorization_endpoint: "https://op.umu.se/auth",
-    token_endpoint: "https://op.umu.se/token",
+    issuer: "https://op.example.com",
+    authorization_endpoint: "https://op.example.com/auth",
+    token_endpoint: "https://op.example.com/token",
     response_types_supported: ["code"],
     subject_types_supported: ["public"],
     id_token_signing_alg_values_supported: ["ES256"],
     client_registration_types_supported: ["automatic", "explicit"],
+    jwks: { keys: [opProtocolKeys.publicKey] },
   },
-  // Optional: Pluggable hook for storing registered clients.
   onRegistration: async (clientId, metadata) => {
-    // Custom storage logic for new clients.
-  }
+    registeredClients.set(clientId, metadata);
+  },
 });
 
-const opAuthority = new Intermediate({
-  entityId: OP_ID,
-  keyProvider,
-  metadata: {
-    federation_entity: {},
-  },
-  authorityHints: [entityId("https://umu.se")],
+const op = new Leaf({
+  entityId: "https://op.example.com",
+  authorityHints: [intermediate.entityId],
   trustAnchors,
-  storage,
-  roles: [opRole]
+  keyProvider: new MemoryFederationKeyProvider(
+    createFederationSigningKey(opFederationKeys.privateKey),
+  ),
+  metadata: { federation_entity: { organization_name: "Example OP" } },
+  roles: [opRole],
 });
 
-// --- OIDC Provider (panva/node-oidc-provider) ---
-
-const oidc = new Provider("https://op.umu.se", {
-  // Standard OIDC provider configuration
-  clients: [], // Clients registered dynamically via federation
-  findAccount: async (ctx, id) => ({
-    accountId: id,
-    async claims() { return { sub: id }; },
-  }),
-  features: {
-    registration: { enabled: false }, // Federation handles registration
-  },
+await intermediate.registerSubordinate({
+  entityId: op.entityId,
+  jwks: { keys: [opFederationKeys.publicKey] },
+  entityTypes: ["openid_provider"],
 });
-
-// --- Express wiring ---
-
-const app = express();
-app.use(express.raw({ type: "application/entity-statement+jwt", limit: "64kb" }));
-
-// Route federation configuration requests
-app.all("/.well-known/openid-federation", async (req, res) => {
-  const request = new Request(`https://op.umu.se${req.originalUrl}`, { method: "GET" });
-  const response = await opAuthority.handleRequest(request);
-  res.status(response.status);
-  res.setHeader("Content-Type", response.headers.get("Content-Type") ?? "application/entity-statement+jwt");
-  res.end(await response.text());
-});
-
-// Route explicit registration requests to the OidcProviderRole role handler
-app.post("/registration", async (req, res) => {
-  const headers = new Headers();
-  for (const [name, value] of Object.entries(req.headers)) {
-    if (Array.isArray(value)) {
-      for (const item of value) headers.append(name, item);
-    } else if (value !== undefined) {
-      headers.set(name, value);
-    }
-  }
-
-  const request = new Request(`https://op.umu.se${req.originalUrl}`, {
-    method: "POST",
-    headers,
-    body: req.body,
-  });
-  const response = await opAuthority.handleRequest(request);
-  res.status(response.status);
-  res.setHeader("Content-Type", response.headers.get("Content-Type") ?? "application/entity-statement+jwt");
-  res.end(await response.text());
-});
-
-// Automatic registration: RP sends a Request Object in the authorization request
-app.get("/auth", async (req, res, next) => {
-  const requestJwt = req.query.request as string | undefined;
-
-  if (requestJwt) {
-    // Process the federation registration
-    const result = await opRole.processAutomaticRegistration(requestJwt, {
-      cache: storage.cache,
-      httpClient: fetch,
-    });
-
-    if (isOk(result)) {
-      const { rpEntityId, resolvedRpMetadata } = result.value;
-
-      // Dynamically register the client in node-oidc-provider
-      // (implementation depends on your adapter/storage)
-      // Then forward to the OIDC provider's authorization endpoint
-    } else {
-      res.status(400).json({ error: result.error.code, error_description: result.error.description });
-      return;
-    }
-  }
-
-  // Forward to node-oidc-provider for standard OIDC flow
-  return oidc.callback()(req, res, next);
-});
-
-// Standard OIDC endpoints
-app.use("/", oidc.callback());
-
-app.listen(443);
 ```
 
----
+`Leaf.handleRequest()` serves the Entity Configuration and dispatches explicit registration to the role's `/registration` handler. The role publishes that URL as `federation_registration_endpoint`.
 
-## 4. RP Setup
+Connect `onRegistration` to the client store your OP actually reads, including protocol-key metadata and registration expiry. The map above only demonstrates that handoff. Configure the OP to use the same protocol keys it publishes here; generating this metadata does not configure its token signer.
 
-A Relying Party at `wiki.ligo.org` using Express + `@oidfed/leaf` + `@oidfed/oidc`.
+For automatic registration, your authorization endpoint calls `opRole.processAutomaticRegistration(requestObjectJwt, options)` before continuing the OIDC request. On success, use the returned `rpEntityId`, `resolvedRpMetadata`, and `trustChain` to provision the client and bound its lifetime. Reject a failed result. A shared atomic `ReplayStore` is required for this method in a multi-process deployment.
 
-```typescript
-import express from "express";
-import { Leaf } from "@oidfed/leaf";
-import {
-  OidcRelyingPartyRole,
-  StaticProtocolSigningKeyProvider,
-} from "@oidfed/oidc";
-import {
-  entityId,
-  createTrustAnchorSet,
-  createFederationSigningKey,
-  generateSigningKey,
-  isOk,
-  JwkSigner,
-  MemoryFederationKeyProvider,
-} from "@oidfed/core";
+If the OP supports `request_uri` or PAR, integrate Request Object retrieval and PAR processing into those endpoints too. The [E2E OP participant](../../tests/e2e/participants/openid-provider-app.ts) shows the application wiring for the supported delivery modes.
 
-const RP_ID = entityId("https://wiki.ligo.org");
-const federationKeyPair = await generateSigningKey("ES256");
-const protocolKeyPair = await generateSigningKey("ES256");
-const federationKeyProvider = new MemoryFederationKeyProvider(
-  createFederationSigningKey(federationKeyPair.privateKey),
-);
+## 4. Add the RP's federation role
 
-const trustAnchors = createTrustAnchorSet([
-  {
-    entityId: "https://edugain.geant.org",
-    jwks: { keys: [taPublicKey] },
-  },
-]);
-
-// Federation keys sign the RP Entity Configuration. Protocol keys sign
-// Request Objects and private_key_jwt client assertions.
-
-// --- Leaf entity (serves Entity Configuration) ---
-
+```ts
+const rpFederationKeys = await generateSigningKey("ES256");
+const rpProtocolKeys = await generateSigningKey("ES256");
 const rpRole = new OidcRelyingPartyRole({
   protocolKeyProvider: new StaticProtocolSigningKeyProvider({
-    requestObjectSigner: new JwkSigner(protocolKeyPair.privateKey),
+    requestObjectSigner: new JwkSigner(rpProtocolKeys.privateKey),
   }),
   metadata: {
-    redirect_uris: ["https://wiki.ligo.org/callback"],
+    redirect_uris: ["https://rp.example.com/callback"],
     response_types: ["code"],
     grant_types: ["authorization_code"],
     client_registration_types: ["automatic", "explicit"],
     token_endpoint_auth_method: "private_key_jwt",
-    jwks: { keys: [protocolKeyPair.publicKey] },
+    jwks: { keys: [rpProtocolKeys.publicKey] },
   },
-  requestDelivery: "query",
 });
 
-const leaf = new Leaf({
-  entityId: RP_ID,
-  authorityHints: [entityId("https://incommon.org")],
-  keyProvider: federationKeyProvider,
-  metadata: {
-    federation_entity: {
-      organization_name: "Wiki Ligo",
-    },
-  },
+const rp = new Leaf({
+  entityId: "https://rp.example.com",
+  authorityHints: [intermediate.entityId],
+  trustAnchors,
+  keyProvider: new MemoryFederationKeyProvider(
+    createFederationSigningKey(rpFederationKeys.privateKey),
+  ),
+  metadata: { federation_entity: { organization_name: "Example RP" } },
   roles: [rpRole],
 });
 
-// --- Express wiring ---
-
-const app = express();
-
-// Serve Entity Configuration
-app.get("/.well-known/openid-federation", async (req, res) => {
-  const request = new Request(`https://wiki.ligo.org${req.originalUrl}`, { method: "GET" });
-  const response = await leaf.handleRequest(request);
-  res.status(response.status);
-  res.setHeader("Content-Type", response.headers.get("Content-Type") ?? "application/entity-statement+jwt");
-  res.end(await response.text());
+await intermediate.registerSubordinate({
+  entityId: rp.entityId,
+  jwks: { keys: [rpFederationKeys.publicKey] },
+  entityTypes: ["openid_relying_party"],
 });
+```
 
-// Login: register with the OP and redirect
-app.get("/login", async (req, res) => {
-  const opId = req.query.op as string;
+At login, call `rpRole.automaticallyRegister()` with the OP Entity Identifier, registered redirect URI, scope, and fresh state/nonce bound to the browser session. Handle its `Result`, then narrow the returned `delivery` field before using mode-specific fields such as `authorizationUrl` or `formParams`. See [OIDC roles](../packages/oidc.md#automatic-registration-result).
 
-  // Automatic registration discovers the OP, validates trust, and builds the Request Object.
-  const resultVal = await rpRole.automaticallyRegister(
-    {
-      opEntityId: opId,
-      redirect_uri: "https://wiki.ligo.org/callback",
-      scope: "openid profile",
-      state: "random-state",
-    },
-    { trustAnchors, httpClient: fetch },
-  );
+For explicit registration, call `rpRole.explicitlyRegister(op.entityId, { trustAnchors })`. Persist a successful result's `clientId`, any `clientSecret`, and `trustChainExpiresAt`. Use your OIDC client to construct the authorization request and re-register before the chain expires.
 
-  if (!isOk(resultVal)) {
-    res.status(400).send("Registration failed: " + resultVal.error.description);
-    return;
+During token exchange, the HTTP destination is the validated token endpoint. A `private_key_jwt` assertion's audience is the validated OP Entity Identifier:
+
+```ts
+const clientAssertion = await rpRole.createClientAssertion(op.entityId);
+```
+
+Your OIDC client must validate session state, use the applicable PKCE/nonce protections, handle token-endpoint errors, and validate the ID Token before creating a session. Federation registration supplies trusted metadata and client credentials; these OIDC responsibilities remain in the application.
+
+## 5. Adapt the Web API handler to Express
+
+This Express 5 adapter buffers the original request bytes with a 64 KiB limit. Mount it before other body parsers and only on federation routes. It builds URLs from the configured public Entity Identifier.
+
+```ts
+import express from "express";
+
+function federationApp(
+  publicEntityId: string,
+  handler: (request: Request) => Promise<Response>,
+  paths: string[],
+) {
+  const app = express();
+  app.use(express.raw({ type: () => true, limit: "64kb" }));
+
+  for (const path of paths) {
+    app.all(path, async (req, res) => {
+      const url = new URL(req.originalUrl, publicEntityId);
+      if (url.origin !== new URL(publicEntityId).origin) {
+        res.status(400).end();
+        return;
+      }
+      const headers = new Headers();
+      for (const [name, value] of Object.entries(req.headers)) {
+        if (Array.isArray(value)) {
+          for (const item of value) headers.append(name, item);
+        } else if (value !== undefined) {
+          headers.set(name, value);
+        }
+      }
+      const body = req.method !== "GET" && req.method !== "HEAD" && Buffer.isBuffer(req.body)
+        ? new Uint8Array(req.body).buffer
+        : undefined;
+      const response = await handler(new Request(url, {
+        method: req.method,
+        headers,
+        ...(body !== undefined ? { body } : {}),
+      }));
+      res.status(response.status);
+      response.headers.forEach((value, name) => res.setHeader(name, value));
+      res.end(await response.text());
+    });
   }
-  const result = resultVal.value;
+  return app;
+}
 
-  if (result.delivery !== "query") throw new Error("expected query-mode result");
-  res.redirect(result.authorizationUrl);
-});
-
-// Callback: exchange code for tokens
-app.get("/callback", async (req, res) => {
-  const { code, state } = req.query;
-
-  // Create a client assertion for token endpoint authentication
-  const assertion = await rpRole.createClientAssertion("https://op.umu.se/token");
-
-  // Exchange code for tokens using private_key_jwt
-  const tokenResponse = await fetch("https://op.umu.se/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "authorization_code",
-      code: code as string,
-      redirect_uri: "https://wiki.ligo.org/callback",
-      client_id: RP_ID,
-      client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
-      client_assertion: assertion,
-    }),
-  });
-
-  const tokens = await tokenResponse.json();
-  res.json(tokens);
-});
-
-app.listen(443);
-```
+const taApp = federationApp(ta.entityId, (request) => ta.handleRequest(request), [
+  "/.well-known/openid-federation", "/fetch", "/list",
+]);
+const opFederationApp = federationApp(op.entityId, (request) => op.handleRequest(request), [
+  "/.well-known/openid-federation", "/registration",
+]);
 ```
 
-### Explicit Registration Variant
+Serve each app on its configured HTTPS origin, directly or through a TLS reverse proxy. Add the Intermediate and RP handlers the same way. In the OP application, mount the federation routes alongside the existing authorization/token routes. Forward exact JWT response content types, status codes, and bodies.
 
-```typescript
-app.get("/login-explicit", async (req, res) => {
-  const opId = req.query.op as string;
+## Registration flow
 
-  // Explicit registration — sends EC to OP's registration endpoint
-  const registrationResult = await rpRole.explicitlyRegister(entityId(opId), {
-    trustAnchors,
-    httpClient: fetch,
-  });
-
-  if (!isOk(registrationResult)) {
-    res.status(400).send("Registration failed: " + registrationResult.error.description);
-    return;
-  }
-  const registration = registrationResult.value;
-
-  // registration.clientId — use for subsequent OIDC requests
-  // registration.clientSecret — if provided
-  // registration.trustChainExpiresAt — must re-register before this time
-  // Now make a standard authorization request with the assigned client_id
-});
-```
-
----
-
-## 5. End-to-End Flow
-
-Sequence when a user at `wiki.ligo.org` authenticates via `op.umu.se`:
-
-### Discovery Phase (bottom-up)
-
-1. **RP discovers OP**: `wiki.ligo.org` fetches `https://op.umu.se/.well-known/openid-federation` → Entity Configuration JWT
-2. **Resolve trust chains**: Follow `authority_hints` upward: `op.umu.se → umu.se → swamid.se → edugain.geant.org`
-3. **Fetch Subordinate Statements**: At each level, fetch from the authority's `federation_fetch_endpoint`
-4. **Validate**: Check signatures top-down from Trust Anchor, apply metadata policies, check constraints
-
-### Registration Phase
-
-5. **Automatic**: RP builds a signed Request Object containing its Entity Configuration + trust chain, sends it as the `request` parameter in the authorization URL
-6. **OP processes**: Validates Request Object, resolves RP's trust chain (`wiki.ligo.org → incommon.org → edugain.geant.org`), verifies signature, validates RP metadata
-
-### Authentication Phase
-
-7. **Standard OIDC**: Authorization code flow proceeds normally — user authenticates, RP receives code
-8. **Token exchange**: RP uses `private_key_jwt` (via `rpRole.createClientAssertion`) to authenticate at the token endpoint
-9. **ID Token**: RP receives and validates the ID Token
-
-### Key Security Properties
-
-- **Cross-OP replay prevention**: `OidcProviderRole.processAutomaticRegistration` validates the Request Object `aud` claim against the initialized OP entity ID
-- **JTI replay detection**: The `replayStore` prevents Request Object reuse
-- **Trusted discovery inputs**: RP registration helpers resolve and validate peer metadata before building registration artifacts, and lower-level registration helpers accept only branded `DiscoveryResult` values
-- **Trust chain expiry**: Explicit registration results include `trustChainExpiresAt` — the RP must re-register before this time
+1. The RP fetches the OP's Entity Configuration, follows authority hints, and obtains Subordinate Statements.
+2. Discovery validates the chain against configured trust anchors, checks constraints, and applies metadata policies.
+3. Automatic registration signs a protocol Request Object and delivers it through the selected mode. The OP validates it and the RP's chain, claims its replay identifier, and provisions the client.
+4. Explicit registration instead posts a federation-signed Entity Configuration and receives a signed registration response. Supplied chains are validated before live discovery is attempted.
+5. The existing OP and RP complete the authorization code flow using the trusted metadata and credentials. Registration lifetime is bounded by trust-chain validity.

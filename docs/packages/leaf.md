@@ -5,21 +5,15 @@
   <a href="https://www.npmjs.com/package/@oidfed/leaf"><img alt="downloads" src="https://img.shields.io/npm/dm/@oidfed/leaf.svg" /></a>
   <a href="https://github.com/Dahkenangnon/oidfed/blob/main/packages/leaf/LICENSE"><img alt="license" src="https://img.shields.io/npm/l/@oidfed/leaf.svg" /></a>
   <a href="https://packagephobia.com/result?p=@oidfed/leaf"><img alt="install size" src="https://packagephobia.com/badge?p=@oidfed/leaf" /></a>
-  <a href="https://github.com/Dahkenangnon/oidfed/blob/main/scripts/coverage-check.sh"><img alt="coverage" src="https://img.shields.io/badge/coverage-%E2%89%A590%25-brightgreen" /></a>
 </p>
 
-Leaf Entity toolkit — Entity Configuration serving, authority discovery, and trust chain participation for any entity at the edge of an OpenID Federation.
+`@oidfed/leaf` publishes self-signed Entity Configurations for participants that do not issue Subordinate Statements, such as OPs, RPs, and resource servers. It signs and caches configurations and exposes validated discovery through `Leaf.discoverEntity()`.
 
-## Overview
+## Usage
 
-The `@oidfed/leaf` package provides components to configure and run entities at the bottom (edge) of a trust chain, typically Relying Parties (RPs) or OpenID Providers (OPs) that do not issue subordinate statements themselves. It manages self-signed Entity Configuration generation, signature creation, caching, and provides authority discovery features to validate trust chains up to configured Trust Anchors.
+### Creating a leaf entity
 
----
-
-## Capabilities & Usage Guide
-
-### Creating a Leaf Entity
-A Leaf entity publishes its own self-signed configuration but relies on superior authorities (authority hints) to attest to its status. It must not publish authority endpoints like list or fetch endpoints.
+A Leaf entity publishes its own self-signed configuration but relies on superior authorities (authority hints) to attest to its status. Its `federation_entity` metadata must omit `federation_fetch_endpoint` and `federation_list_endpoint`.
 
 ```ts
 import { Leaf } from "@oidfed/leaf";
@@ -67,49 +61,20 @@ const leaf = new Leaf({
 });
 ```
 
----
-
 ### Serving the Entity Configuration
-The `Leaf` class manages internal caching of the signed configuration token. It routes standard federation path requests and delegate role requests to appropriate handlers.
 
-```ts
-import express from "express";
+`leaf.handleRequest(request)` serves `GET /.well-known/openid-federation` and dispatches any composed role routes. For an Entity Identifier with a path, the well-known suffix is appended to that path. Use the [Express adapter](../guide/wiring-guide.md#5-adapt-the-web-api-handler-to-express) to serve it in a Node application.
 
-const app = express();
+`getEntityConfiguration()` reuses the cached JWT until expiry. Call `refreshEntityConfiguration()` after a key change when you need a new configuration before the cached token expires.
 
-app.use(async (req, res) => {
-  const headers = new Headers();
-  for (const [name, value] of Object.entries(req.headers)) {
-    if (Array.isArray(value)) {
-      for (const item of value) headers.append(name, item);
-    } else if (value !== undefined) {
-      headers.set(name, value);
-    }
-  }
+### Discovering entities and trust chains
 
-  // Translate Node request to standard Web Request
-  const webRequest = new Request(`https://${req.headers.host}${req.url}`, {
-    method: req.method,
-    headers,
-    body: req.method !== "GET" && req.method !== "HEAD" ? req : undefined
-  });
-
-  const webResponse = await leaf.handleRequest(webRequest);
-
-  res.status(webResponse.status);
-  webResponse.headers.forEach((value, key) => res.setHeader(key, value));
-  res.send(await webResponse.text());
-});
-```
-
----
-
-### Discovering Entities and Trust Chains
+The following fragment assumes `taPublicKey` is the public federation key pinned for that Trust Anchor.
 Leaf entities can discover other entities in the federation and validate their trust chains up to configured anchors using the static `Leaf.discoverEntity` method.
 
 ```ts
 import { Leaf } from "@oidfed/leaf";
-import { createTrustAnchorSet, isOk } from "@oidfed/core";
+import { createTrustAnchorSet } from "@oidfed/core";
 
 const trustAnchors = createTrustAnchorSet([
   {
@@ -124,7 +89,7 @@ const result = await Leaf.discoverEntity(
   { httpClient: fetch }
 );
 
-if (isOk(result)) {
+if (result.ok) {
   const discovery = result.value;
   console.log("Metadata:", discovery.resolvedMetadata);
   console.log("Trust Chain Expires At:", new Date(discovery.trustChain.expiresAt * 1000));
@@ -133,34 +98,33 @@ if (isOk(result)) {
 }
 ```
 
----
-
-## Configuration API Reference
+## Configuration
 
 When constructing a `Leaf` entity, you pass a `LeafConfig` configuration object.
 
 | Configuration Field | Type | Required | Description & Constraints |
 |:---|:---|:---|:---|
-| `entityId` | `EntityId \| string` | **Yes** | The entity identifier URL for this leaf. Must be a valid HTTPS URL without query parameters or fragments. Normalizes trailing slashes. |
+| `entityId` | `EntityId \| string` | **Yes** | The entity identifier URL for this leaf. Must be a valid HTTPS URL without query parameters or fragments. Removes one trailing slash from its own configured Entity Identifier. |
 | `authorityHints` | `readonly (EntityId \| string)[]` | **Yes** | Non-empty list of superior authority entity IDs this leaf is registered with. Every entry must be a valid HTTPS URL. |
 | `trustAnchorHints` | `readonly (EntityId \| string)[]` | No | Optional non-empty list of preferred trust anchors to publish as `trust_anchor_hints` in the Entity Configuration. Every entry must be a valid HTTPS URL. |
-| `metadata` | `EntityStatementMetadata` | **Yes** | Object-valued metadata blocks to publish, keyed by Entity Type Identifier. Must contain at least one Entity Type Identifier. The `federation_entity` block **must not** contain operational authority fields like `federation_fetch_endpoint` or `federation_list_endpoint`. |
+| `metadata` | `EntityStatementMetadata` | **Yes** | Object-valued metadata blocks to publish, keyed by Entity Type Identifier. Must contain at least one Entity Type Identifier. The `federation_entity` block must omit `federation_fetch_endpoint` and `federation_list_endpoint`. |
 | `keyProvider` | `FederationKeyProvider` | **Yes** | Read-only provider for the current federation signer and published Federation JWKS. |
 | `roles` | `EntityRole[]` | No | Composition roles (like OIDC Client/Provider roles) bound to this entity context. |
 | `options` | `FederationOptions` | No | Core federation options (e.g. clock configurations). |
 | `trustMarks` | `TrustMarkRef[]` | No | Trust marks this leaf claims about itself in its Entity Configuration. |
-| `trustAnchors` | `TrustAnchorSet` | No | Configured trust anchors made available to composed roles and discovery workflows. This field is not published in the Entity Configuration. |
+| `trustAnchors` | `TrustAnchorSet` | No | Configured trust anchors made available to composed roles. The static `Leaf.discoverEntity()` method takes its own trust-anchor argument. This field is not published in the Entity Configuration. |
 | `entityConfigurationTtlSeconds`| `number` | No | TTL in seconds for the self-signed Entity Configuration JWT. Must be positive if defined. Defaults to 86400 (24 hours). |
 
----
+## Common questions
 
-## Frequently Asked Questions (FAQ)
+### Why does the Leaf constructor throw when my metadata block contains endpoints?
 
-### Q: Why does the Leaf constructor throw when my metadata block contains endpoints?
-**A:** Leaf entities are client or provider endpoints at the edge of the trust tree and do not issue subordinate statements or list subordinates. Therefore, they are forbidden from publishing `federation_fetch_endpoint` or `federation_list_endpoint` in their `federation_entity` metadata block.
+Leaf entities are client or provider endpoints at the edge of the trust tree and do not issue subordinate statements or list subordinates. Therefore, they are forbidden from publishing `federation_fetch_endpoint` or `federation_list_endpoint` in their `federation_entity` metadata block.
 
-### Q: How does the Entity Configuration caching work?
-**A:** The Leaf class signs and caches the Entity Configuration JWT internally. When `getEntityConfiguration()` is called, it returns the cached JWT if it has not expired yet. If it has expired or if `refreshEntityConfiguration()` is called, it re-queries the `keyProvider` for keys and generates a new signature.
+### How does the Entity Configuration caching work?
 
-### Q: What is `DiscoveryResult` and how is it used?
-**A:** `DiscoveryResult` is a branded type returned by `Leaf.discoverEntity` containing the validated trust chain metadata and marks. RP registration flows in `@oidfed/oidc` require this branded type to guarantee that only fully resolved and validated metadata is used for automatic or explicit client registrations.
+The Leaf class signs and caches the Entity Configuration JWT internally. When `getEntityConfiguration()` is called, it returns the cached JWT if it has not expired yet. If it has expired or if `refreshEntityConfiguration()` is called, it re-queries the `keyProvider` for keys and generates a new signature.
+
+### What is `DiscoveryResult` and how is it used?
+
+`DiscoveryResult` is a branded value containing a selected validated trust chain, resolved metadata, and trust marks. `Leaf.discoverEntity()` returns it. The RP role's `automaticallyRegister()` and `explicitlyRegister()` methods perform discovery internally; `createAuthorizationRequest()` takes an existing `DiscoveryResult`.
