@@ -937,8 +937,9 @@ export async function validateTrustChain(
 
 	// Merge Immediate Superior's SS metadata before applying allowed_entity_types constraints,
 	// so the filter sees the fully merged metadata as required by the spec.
-	if (subordinateStatements.length > 0) {
-		const immSupMeta = (subordinateStatements[0]?.payload as Record<string, unknown>).metadata as
+	const immediateSuperior = subordinateStatements[0];
+	if (immediateSuperior) {
+		const immSupMeta = (immediateSuperior.payload as Record<string, unknown>).metadata as
 			| Record<string, Record<string, unknown>>
 			| undefined;
 		if (immSupMeta) {

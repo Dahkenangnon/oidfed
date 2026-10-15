@@ -808,8 +808,10 @@ export default (QUnit: QUnit) => {
 			const metadata = loaded?.metadata as { openid_relying_party: { client_name: string } };
 			metadata.openid_relying_party.client_name = "mutated";
 			const reloaded = await storage.subordinates.get(id);
+			t.ok(reloaded, "persisted record is present");
+			if (!reloaded) return;
 			t.equal(
-				(reloaded?.metadata as { openid_relying_party: { client_name: string } })
+				(reloaded.metadata as { openid_relying_party: { client_name: string } })
 					.openid_relying_party.client_name,
 				"original",
 			);
