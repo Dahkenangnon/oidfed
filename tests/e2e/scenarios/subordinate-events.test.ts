@@ -10,6 +10,7 @@ import {
 	fetchExtendedSubordinatesList,
 	fetchSubordinateEvents,
 	fetchSubordinateStatement,
+	InternalErrorCode,
 	JwkSigner,
 	MediaType,
 	signEntityStatement,
@@ -52,9 +53,6 @@ describe("Subordinate Events over HTTPS", () => {
 		let received = 0;
 		let forwardedAssertion = false;
 		app.use(express.urlencoded({ extended: false }));
-		app.all("/redirect", (req, res) =>
-			res.redirect(Number(req.query.status), String(req.query.target)),
-		);
 		app.all("/capture", (req, res) => {
 			received++;
 			forwardedAssertion ||= Boolean(req.body?.client_assertion);
@@ -98,17 +96,28 @@ describe("Subordinate Events over HTTPS", () => {
 				`http://127.0.0.1:${address.port}/capture`,
 			];
 			for (const status of [301, 302, 303, 307, 308]) {
-				for (const target of destinations) {
+				for (const [index, target] of destinations.entries()) {
+					const path = `/redirect/${status}/${index}`;
+					let redirectRequests = 0;
+					app.all(path, (_req, res) => {
+						redirectRequests++;
+						res.redirect(status, target);
+					});
 					for (const authenticated of [false, true]) {
-						const url = new URL("/redirect", redirectOrigin);
-						url.searchParams.set("status", String(status));
-						url.searchParams.set("target", target);
+						const url = new URL(path, redirectOrigin);
 						const result = await fetchSubordinateEvents(url.toString(), subject, {
 							issuer,
 							issuerJwks: { keys: [authority.keys.public] },
 							...(authenticated ? { clientAssertion: "synthetic-assertion" } : {}),
 						});
-						expect(result.ok).toBe(false);
+						expect(result).toMatchObject({
+							ok: false,
+							error: {
+								code: InternalErrorCode.Network,
+								description: expect.stringContaining(`HTTP ${status} from `),
+							},
+						});
+						expect(redirectRequests).toBe(authenticated ? 2 : 1);
 						expect(received).toBe(0);
 						expect(forwardedAssertion).toBe(false);
 					}
