@@ -350,6 +350,13 @@ const specDocs = [
 		implemented: true,
 	},
 	{
+		label: "OpenID Federation Subordinate Events Endpoint 1.0",
+		status: "Draft 01",
+		tone: "warn" as const,
+		href: "https://openid.net/specs/openid-federation-subordinate-events-1_0.html",
+		implemented: true,
+	},
+	{
 		label: "OpenID Federation Entity Collection 1.0",
 		status: "Draft 00",
 		tone: "warn" as const,

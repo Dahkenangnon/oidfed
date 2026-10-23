@@ -283,3 +283,10 @@ export {
 	type FetchTrustMarkListParams,
 	fetchTrustMarkList,
 } from "./fetch-trust-mark-list.js";
+
+export {
+	type FetchSubordinateEventsOptions,
+	fetchSubordinateEvents,
+	type VerifySubordinateEventsOptions,
+	verifySubordinateEventsResponse,
+} from "./subordinate-events.js";

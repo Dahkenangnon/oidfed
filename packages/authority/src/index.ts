@@ -25,6 +25,7 @@ export {
 	type MemoryStorageAdapterOptions,
 	type StorageAdapter,
 	type StorageTransaction,
+	type SubordinateEventStorage,
 	type SubordinateRecord,
 	type SubordinateRecordUpdate,
 	type SubordinateStorage,

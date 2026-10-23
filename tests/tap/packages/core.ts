@@ -764,15 +764,15 @@ export default (QUnit: QUnit) => {
 			t.equal(FederationEndpoint.HistoricalKeys, "/federation_historical_keys");
 		});
 
-		test("MediaType has all 10 types", (t) => {
-			t.equal(Object.keys(MediaType).length, 10);
+		test("MediaType has all 11 types", (t) => {
+			t.equal(Object.keys(MediaType).length, 11);
 			t.equal(MediaType.EntityStatement, "application/entity-statement+jwt");
 			t.equal(MediaType.TrustMark, "application/trust-mark+jwt");
 			t.equal(MediaType.Json, "application/json");
 		});
 
-		test("JwtTyp has all 6 values", (t) => {
-			t.equal(Object.keys(JwtTyp).length, 6);
+		test("JwtTyp has all 7 values", (t) => {
+			t.equal(Object.keys(JwtTyp).length, 7);
 			t.equal(JwtTyp.EntityStatement, "entity-statement+jwt");
 			t.equal(JwtTyp.TrustMark, "trust-mark+jwt");
 		});

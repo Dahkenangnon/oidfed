@@ -4,6 +4,8 @@ import {
 	MemoryCache,
 	MemoryReplayStore,
 	nowSeconds,
+	type SubordinateEvent,
+	SubordinateEventSchema,
 } from "@oidfed/core";
 import { InvalidMetadata, InvalidSubordinateRecord } from "../errors.js";
 import {
@@ -16,6 +18,7 @@ import type {
 	ListPageOptions,
 	StorageAdapter,
 	StorageTransaction,
+	SubordinateEventStorage,
 	SubordinateRecord,
 	SubordinateRecordUpdate,
 	SubordinateStorage,
@@ -26,6 +29,7 @@ import type {
 } from "./types.js";
 
 interface MemoryState {
+	subordinateEvents?: Map<string, Map<string, SubordinateEvent[]>>;
 	subordinates: Map<string, SubordinateRecord>;
 	trustMarks?: Map<string, TrustMarkRecord>;
 }
@@ -293,7 +297,35 @@ class MemoryTrustMarkStorage implements TrustMarkStorage {
 	}
 }
 
+class MemorySubordinateEventStorage implements SubordinateEventStorage {
+	constructor(
+		private readonly read: StateReader,
+		private readonly mutate: StateMutation,
+	) {}
+	async append(
+		issuer: EntityId,
+		subject: EntityId,
+		events: readonly SubordinateEvent[],
+	): Promise<void> {
+		const parsed = events.map((event) => SubordinateEventSchema.parse(event));
+		await this.mutate((state) => {
+			const history = state.subordinateEvents;
+			if (!history) throw new Error("Subordinate event storage is not enabled");
+			let subjects = history.get(issuer);
+			if (!subjects) {
+				subjects = new Map();
+				history.set(issuer, subjects);
+			}
+			subjects.set(subject, [...(subjects.get(subject) ?? []), ...detached(parsed)]);
+		});
+	}
+	async list(issuer: EntityId, subject: EntityId): Promise<readonly SubordinateEvent[]> {
+		return detached(this.read().subordinateEvents?.get(issuer)?.get(subject) ?? []);
+	}
+}
+
 export interface MemoryStorageAdapterOptions {
+	readonly subordinateEvents?: boolean;
 	readonly trustMarks?: boolean;
 	readonly clock?: Clock;
 	readonly maxReplayEntries?: number;
@@ -307,6 +339,7 @@ export class MemoryStorageAdapter implements StorageAdapter {
 	private readonly clock: Clock | undefined;
 	readonly subordinates: SubordinateStorage;
 	readonly trustMarks?: TrustMarkStorage;
+	readonly subordinateEvents?: SubordinateEventStorage;
 	readonly replay: MemoryReplayStore;
 	readonly cache: MemoryCache;
 
@@ -314,6 +347,7 @@ export class MemoryStorageAdapter implements StorageAdapter {
 		this.clock = options?.clock;
 		this.state = {
 			subordinates: new Map(),
+			...(options?.subordinateEvents ? { subordinateEvents: new Map() } : {}),
 			...(options?.trustMarks ? { trustMarks: new Map() } : {}),
 		};
 		const mutate: StateMutation = (operation) => this.runExclusive(() => operation(this.state));
@@ -321,6 +355,8 @@ export class MemoryStorageAdapter implements StorageAdapter {
 		if (options?.trustMarks) {
 			this.trustMarks = new MemoryTrustMarkStorage(() => this.state, mutate);
 		}
+		if (options?.subordinateEvents)
+			this.subordinateEvents = new MemorySubordinateEventStorage(() => this.state, mutate);
 		this.replay = new MemoryReplayStore({
 			...(options?.clock ? { clock: options.clock } : {}),
 			...(options?.maxReplayEntries !== undefined ? { maxEntries: options.maxReplayEntries } : {}),
@@ -337,6 +373,9 @@ export class MemoryStorageAdapter implements StorageAdapter {
 			const directMutation: StateMutation = async (mutate) => mutate(draft);
 			const tx: StorageTransaction = {
 				subordinates: new MemorySubordinateStorage(() => draft, directMutation, this.clock),
+				...(draft.subordinateEvents
+					? { subordinateEvents: new MemorySubordinateEventStorage(() => draft, directMutation) }
+					: {}),
 				...(draft.trustMarks
 					? { trustMarks: new MemoryTrustMarkStorage(() => draft, directMutation) }
 					: {}),
