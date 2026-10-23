@@ -202,6 +202,7 @@ export async function fetchExtendedSubordinatesList(
 		}
 
 		if (!response.ok) {
+			void response.body?.cancel().catch(() => {});
 			return err({
 				code: InternalErrorCode.Network,
 				description: `HTTP ${response.status} from ${endpoint}`,
@@ -209,6 +210,7 @@ export async function fetchExtendedSubordinatesList(
 		}
 
 		if (!isExactContentType(contentType, MediaType.Json)) {
+			void response.body?.cancel().catch(() => {});
 			const actual = contentType?.trim() || "<missing>";
 			return err({
 				code: InternalErrorCode.Network,

@@ -12047,6 +12047,71 @@ export default (QUnit: QUnit) => {
 
 	// ── extended subordinate listing — client ──────────────────────────
 	module("core / fetchExtendedSubordinatesList", () => {
+		test("cancels rejected response bodies and preserves errors when cancellation fails", async (t) => {
+			const endpoint = "https://ta.example.com/extended";
+			for (const [status, contentType, description] of [
+				[500, "application/json", `HTTP 500 from ${endpoint}`],
+				[503, "text/plain", `HTTP 503 from ${endpoint}`],
+				[
+					200,
+					"text/plain",
+					`Unexpected Content-Type 'text/plain' from ${endpoint}, expected 'application/json'`,
+				],
+				[
+					200,
+					undefined,
+					`Unexpected Content-Type '<missing>' from ${endpoint}, expected 'application/json'`,
+				],
+				[
+					200,
+					"application/json; charset=utf-8",
+					`Unexpected Content-Type 'application/json; charset=utf-8' from ${endpoint}, expected 'application/json'`,
+				],
+			] as const) {
+				for (const failCancellation of [false, true]) {
+					let cancelled = false;
+					let read = false;
+					const body = new ReadableStream<Uint8Array>(
+						{
+							pull() {
+								read = true;
+							},
+							cancel() {
+								cancelled = true;
+								if (failCancellation) return Promise.reject(new Error("Cancellation failed"));
+							},
+						},
+						{ highWaterMark: 0 },
+					);
+					const result = await fetchExtendedSubordinatesList(endpoint, undefined, {
+						httpClient: async () =>
+							new Response(body, {
+								status,
+								headers: contentType === undefined ? {} : { "Content-Type": contentType },
+							}),
+					});
+					t.true(cancelled, `${status} ${contentType}: cancel requested`);
+					t.false(read, "rejected body is not consumed");
+					t.deepEqual(result, {
+						ok: false,
+						error: { code: InternalErrorCode.Network, description },
+					});
+					if (!cancelled) await body.cancel().catch(() => {});
+				}
+			}
+		});
+		test("preserves early-return errors for responses without a body", async (t) => {
+			const endpoint = "https://ta.example.com/extended";
+			for (const [status, description] of [
+				[500, `HTTP 500 from ${endpoint}`],
+				[200, `Unexpected Content-Type '<missing>' from ${endpoint}, expected 'application/json'`],
+			] as const) {
+				const result = await fetchExtendedSubordinatesList(endpoint, undefined, {
+					httpClient: async () => new Response(null, { status }),
+				});
+				t.deepEqual(result, { ok: false, error: { code: InternalErrorCode.Network, description } });
+			}
+		});
 		test("round-trips fractional and negative NumericDates", async (t) => {
 			const entry = { id: "https://a.example.com", registered: -0.5, updated: 1500.5 };
 			const result = await fetchExtendedSubordinatesList(
