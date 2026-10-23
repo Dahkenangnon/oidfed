@@ -26,6 +26,7 @@ test("commit subjects allow 72 characters and reject 73", () => {
 test("early references and issue-closing body footers are accepted", () => {
 	for (const prefix of ["feat(authority)", "feat(authority)!"])
 		assert.doesNotThrow(() => lint(`${prefix}: #116 add subordinate events\n\nCloses #115`));
+	assert.doesNotThrow(() => lint("fix(core): #116 #115 validate event dates"));
 });
 
 test("development commits can omit a subject reference", () => {
@@ -34,6 +35,20 @@ test("development commits can omit a subject reference", () => {
 
 test("URL fragments are not treated as issue references", () => {
 	assert.doesNotThrow(() => lint("fix(core): preserve https://example.com/#123 fragments"));
+	assert.doesNotThrow(() => lint("fix(core): #116 preserve https://example.com/#123 fragments"));
+});
+
+test("bracketed references and references after the description are rejected", () => {
+	for (const subject of [
+		"fix(core): handle [#115] validation",
+		"fix(core): #116 add events (#115)",
+		"fix(core): #116 handle [#115] validation",
+		"fix(core): preserve https://example.com/#123 [#115]",
+	])
+		assert.throws(
+			() => lint(subject),
+			(error) => error.stdout.includes("reference-position"),
+		);
 });
 
 test("trailing and embedded numbered references are rejected", () => {

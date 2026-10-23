@@ -51,7 +51,7 @@ Keep the full subject at 72 characters or fewer, including the type, scope, spac
 
 The local commit hook and CI run commitlint to enforce syntax and length. These checks also apply to bot-authored commits. If a generated subject is too long, shorten that commit's subject; editing only the final squash title leaves the original commits unchanged for PR checks.
 
-Development commits do not need a PR number. If a subject includes a numbered reference such as `#116`, commitlint requires it immediately after the conventional prefix, followed by a description. The final squash commit uses the PR reference format described below.
+Development commits do not need a PR number. If a subject includes numbered references such as `#116`, commitlint requires them immediately after the conventional prefix, before the description. The final squash commit uses the PR reference format described below.
 
 ## Pull requests
 
@@ -87,7 +87,9 @@ GitHub UI merges do not run local hooks. PR CI checks the branch's commits; CI o
 
 ## Testing
 
-Unqualified verification commands cover the published packages and tools. Commands ending in `:apps` cover the applications and their internal UI dependencies.
+`pnpm test` and `pnpm build` cover the published packages and tools. Their `:apps` variants cover the applications and their internal UI dependencies.
+
+`pnpm typecheck` also checks TAP tests, E2E tests, and scripts. `pnpm lint` uses the root Biome configuration. `pnpm test:e2e` runs the HTTPS federation scenarios.
 
 | Scope | Framework | Location |
 |---|---|---|

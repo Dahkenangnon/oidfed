@@ -3,10 +3,14 @@ export default {
 	plugins: [
 		{
 			rules: {
-				"reference-position": ({ subject }) => [
-					!subject || !/(?:^|[\s(])#\d+\b/.test(subject) || /^#\d+\s+\S/.test(subject),
-					"put a numbered reference immediately after type(scope):, followed by a description",
-				],
+				"reference-position": ({ subject = "" }) => {
+					const description = subject.replace(/^(?:#\d+\s+)+(?=\S)/, "");
+					const withoutUrls = description.replace(/\b[a-z][a-z\d+.-]*:\/\/\S+/gi, "");
+					return [
+						!/(?:^|\W)#\d+\b/.test(withoutUrls),
+						"put numbered references immediately after type(scope):, before the description",
+					];
+				},
 			},
 		},
 	],
