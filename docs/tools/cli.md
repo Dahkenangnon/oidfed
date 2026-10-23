@@ -7,7 +7,7 @@
   <a href="https://nodejs.org"><img alt="Node" src="https://img.shields.io/node/v/@oidfed/cli" /></a>
 </p>
 
-Inspect Entity Configurations, find and validate trust chains, verify signatures, and check federation endpoints from the terminal. The CLI declares Node.js `>=22.12.0`; development in this repository requires `>=22.22.0`.
+Inspect Entity Configurations, find and validate trust chains, verify signatures, and check federation endpoints from the terminal. The CLI declares Node.js `>=22.12.0`; repository development supports Node.js `^22.22.2 || ^24.15.0 || >=26.0.0`.
 
 ## Install
 
