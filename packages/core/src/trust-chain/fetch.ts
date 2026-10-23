@@ -4,12 +4,14 @@ import {
 	DEFAULT_CACHE_TTL_SECONDS,
 	DEFAULT_HTTP_TIMEOUT_MS,
 	DEFAULT_MAX_RESPONSE_BYTES,
+	FederationErrorCode,
 	InternalErrorCode,
 	MediaType,
 	WELL_KNOWN_OPENID_FEDERATION,
 } from "../constants.js";
 import { err, type FederationError, ok, type Result } from "../errors.js";
-import { isExactContentType, readStreamWithLimit } from "../http.js";
+import { isExactContentType } from "../http.js";
+import { readResponseBody } from "../http-response.js";
 import type { EntityId, FederationOptions } from "../types.js";
 import { entityId, isValidEntityId } from "../types.js";
 
@@ -259,24 +261,6 @@ export function validateEntityId(value: string): Result<EntityId, FederationErro
 	});
 }
 
-async function readResponseBodyWithLimit(
-	response: Response,
-	maxBytes: number,
-	url: string,
-): Promise<Result<string, FederationError>> {
-	if (!response.body) {
-		return err({ code: InternalErrorCode.Network, description: `Empty response body from ${url}` });
-	}
-	const result = await readStreamWithLimit(response.body, maxBytes);
-	if (!result.ok) {
-		return err({
-			code: InternalErrorCode.Network,
-			description: `Response too large from ${url}`,
-		});
-	}
-	return ok(result.text);
-}
-
 export interface PerformFetchOptions extends FederationOptions {
 	/** Accept header to send. Defaults to application/entity-statement+jwt. */
 	accept?: string;
@@ -286,6 +270,14 @@ export interface PerformFetchOptions extends FederationOptions {
 	 * inspects the response body header itself).
 	 */
 	expectedContentType?: string | null;
+	method?: "GET" | "POST";
+	/** Explicit request redirect policy; omitted callers keep Fetch's default. */
+	redirect?: RequestInit["redirect"];
+	/** Form-encoded body for authenticated federation endpoint requests. */
+	body?: URLSearchParams;
+	expectedStatus?: number;
+	/** Decode Federation JSON errors without changing legacy callers. */
+	federationErrors?: boolean;
 }
 
 export async function performFetch(
@@ -304,33 +296,57 @@ export async function performFetch(
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-	if (options?.signal) {
-		if (options.signal.aborted) {
-			clearTimeout(timer);
-			controller.abort();
-		} else {
-			options.signal.addEventListener(
-				"abort",
-				() => {
-					clearTimeout(timer);
-					controller.abort();
-				},
-				{ once: true },
-			);
-		}
-	}
+	const onAbort = () => controller.abort();
+	options?.signal?.addEventListener("abort", onAbort, { once: true });
+	if (options?.signal?.aborted) controller.abort();
 
 	try {
+		if (controller.signal.aborted) throw new DOMException("Request aborted", "AbortError");
 		const response = await fetchFn(url, {
 			signal: controller.signal,
+			...(options?.redirect !== undefined ? { redirect: options.redirect } : {}),
+			method: options?.method ?? "GET",
+			...(options?.body ? { body: options.body.toString() } : {}),
 			headers: {
 				Accept: accept,
+				...(options?.body ? { "Content-Type": "application/x-www-form-urlencoded" } : {}),
 			},
 		});
 
-		clearTimeout(timer);
-
-		if (!response.ok) {
+		if (
+			!response.ok ||
+			(options?.expectedStatus !== undefined && response.status !== options.expectedStatus)
+		) {
+			if (
+				options?.federationErrors &&
+				!response.ok &&
+				isExactContentType(response.headers.get("content-type"), MediaType.Json)
+			) {
+				const body = await readResponseBody(
+					response,
+					options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES,
+					controller.signal,
+				);
+				try {
+					const parsed = JSON.parse(body) as { error?: unknown; error_description?: unknown };
+					if (
+						typeof parsed?.error === "string" &&
+						Object.values(FederationErrorCode).includes(parsed.error as FederationErrorCode)
+					) {
+						return err({
+							code: parsed.error as FederationErrorCode,
+							description:
+								typeof parsed.error_description === "string"
+									? parsed.error_description
+									: `HTTP ${response.status} from ${url}`,
+						});
+					}
+				} catch {
+					/* Fall back to the HTTP error for malformed JSON. */
+				}
+			} else {
+				void response.body?.cancel().catch(() => {});
+			}
 			return err({
 				code: InternalErrorCode.Network,
 				description: `HTTP ${response.status} from ${url}`,
@@ -339,6 +355,7 @@ export async function performFetch(
 
 		const contentType = response.headers.get("content-type");
 		if (expectedContentType !== null && !isExactContentType(contentType, expectedContentType)) {
+			void response.body?.cancel().catch(() => {});
 			const actual = contentType?.trim() || "<missing>";
 			return err({
 				code: InternalErrorCode.Network,
@@ -346,25 +363,22 @@ export async function performFetch(
 			});
 		}
 
-		const maxBytes = options?.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
-		const contentLength = response.headers.get("content-length");
-		if (contentLength) {
-			const size = Number.parseInt(contentLength, 10);
-			if (size > maxBytes) {
-				return err({
-					code: InternalErrorCode.Network,
-					description: `Response too large from ${url}`,
-				});
-			}
-		}
-
-		const bodyResult = await readResponseBodyWithLimit(response, maxBytes, url);
-		if (!bodyResult.ok) return bodyResult;
-		const body = bodyResult.value;
+		if (!response.body)
+			return err({
+				code: InternalErrorCode.Network,
+				description: `Empty response body from ${url}`,
+			});
+		const body = await readResponseBody(
+			response,
+			options?.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES,
+			controller.signal,
+		);
 		return ok(body);
 	} catch (cause) {
-		clearTimeout(timer);
-		if (cause instanceof DOMException && cause.name === "AbortError") {
+		if (
+			controller.signal.aborted ||
+			(cause instanceof DOMException && cause.name === "AbortError")
+		) {
 			return err({
 				code: InternalErrorCode.Timeout,
 				description: `Request aborted or timed out: ${url}`,
@@ -373,9 +387,17 @@ export async function performFetch(
 		}
 		return err({
 			code: InternalErrorCode.Network,
-			description: cause instanceof Error ? cause.message : `Network error fetching ${url}`,
+			description:
+				cause instanceof RangeError
+					? `Response too large from ${url}`
+					: cause instanceof Error
+						? cause.message
+						: `Network error fetching ${url}`,
 			cause,
 		});
+	} finally {
+		clearTimeout(timer);
+		options?.signal?.removeEventListener("abort", onAbort);
 	}
 }
 

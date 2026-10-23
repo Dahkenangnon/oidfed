@@ -12,6 +12,7 @@ import {
 } from "../constants.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
 import { isExactContentType } from "../http.js";
+import { readResponseBody } from "../http-response.js";
 import {
 	type ExtendedListRequestParams,
 	type ExtendedListResponse,
@@ -35,7 +36,7 @@ function buildUrl(
 			federationError(FederationErrorCode.InvalidRequest, `URL must use https scheme: ${endpoint}`),
 		);
 	}
-	if (url.hash) {
+	if (url.href.includes("#")) {
 		return err(
 			federationError(
 				FederationErrorCode.InvalidRequest,
@@ -91,49 +92,6 @@ function buildUrl(
 	return ok(url);
 }
 
-async function readBody(
-	response: Response,
-	maxBytes: number,
-	signal: AbortSignal,
-): Promise<string> {
-	if (!response.body) return "";
-	const contentLength = response.headers.get("content-length");
-	if (contentLength && Number.parseInt(contentLength, 10) > maxBytes) {
-		void response.body.cancel().catch(() => {});
-		throw new RangeError(`Response exceeds maximum size of ${maxBytes} bytes`);
-	}
-	const reader = response.body.getReader();
-	// Cancel pending reads even when an injected HTTP client ignores the signal.
-	const onAbort = () => {
-		void reader.cancel().catch(() => {});
-	};
-	signal.addEventListener("abort", onAbort, { once: true });
-	let finished = false;
-	try {
-		const decoder = new TextDecoder();
-		let received = 0;
-		let text = "";
-		while (true) {
-			if (signal.aborted) throw new DOMException("Request aborted", "AbortError");
-			const { done, value } = await reader.read();
-			if (signal.aborted) throw new DOMException("Request aborted", "AbortError");
-			if (done) {
-				finished = true;
-				return text + decoder.decode();
-			}
-			received += value.byteLength;
-			if (received > maxBytes) {
-				throw new RangeError(`Response exceeds maximum size of ${maxBytes} bytes`);
-			}
-			text += decoder.decode(value, { stream: true });
-		}
-	} finally {
-		signal.removeEventListener("abort", onAbort);
-		if (!finished) void reader.cancel().catch(() => {});
-		reader.releaseLock();
-	}
-}
-
 /** Fetch the Extended Subordinate Listing endpoint and return the parsed response. */
 export async function fetchExtendedSubordinatesList(
 	endpoint: string,
@@ -170,7 +128,7 @@ export async function fetchExtendedSubordinatesList(
 			let code: string | undefined;
 			let description: string | undefined;
 			if (isExactContentType(contentType, MediaType.Json)) {
-				const body = await readBody(response, maxBytes, controller.signal);
+				const body = await readResponseBody(response, maxBytes, controller.signal);
 				try {
 					const parsedBody = JSON.parse(body) as { error?: unknown; error_description?: unknown };
 					if (typeof parsedBody.error === "string") code = parsedBody.error;
@@ -218,7 +176,7 @@ export async function fetchExtendedSubordinatesList(
 			});
 		}
 
-		const body = await readBody(response, maxBytes, controller.signal);
+		const body = await readResponseBody(response, maxBytes, controller.signal);
 
 		let raw: unknown;
 		try {

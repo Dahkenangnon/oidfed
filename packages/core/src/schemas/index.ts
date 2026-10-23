@@ -61,6 +61,13 @@ export {
 	MetadataParameterPolicySchema,
 } from "./metadata-policy.js";
 export {
+	type SubordinateEvent,
+	SubordinateEventSchema,
+	type SubordinateEventsResponse,
+	SubordinateEventsResponseSchema,
+	SubordinateEventType,
+} from "./subordinate-events.js";
+export {
 	type TrustMarkDelegationPayload,
 	TrustMarkDelegationPayloadSchema,
 	type TrustMarkOwner,

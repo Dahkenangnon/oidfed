@@ -48,6 +48,11 @@ function createAuthorityServer(config: AuthorityConfig): AuthorityServer {
 			? new Intermediate(config)
 			: new TrustAnchor(config);
 	return {
+		registerSubordinate: (record) => server.registerSubordinate(record),
+		updateSubordinate: (sub, updates) => server.updateSubordinate(sub, updates),
+		revokeSubordinate: (sub) => server.revokeSubordinate(sub),
+		recordSubordinateEvents: (sub, events) => server.recordSubordinateEvents(sub, events),
+		getSubordinateEvents: (sub) => server.getSubordinateEvents(sub),
 		getEntityConfiguration: () => server.getEntityConfiguration(),
 		getSubordinateStatement: (sub) => server.getSubordinateStatement(sub),
 		listSubordinates: (filter) => server.listSubordinates(filter),

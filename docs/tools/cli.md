@@ -39,6 +39,7 @@ The workspace shortcuts `pnpm oidfed` and `pnpm cli` disable TLS certificate ver
 | `entity <entity-id>` | Fetch and display an entity configuration |
 | `fetch --issuer <url> --subject <url>` | Fetch a subordinate statement from an authority |
 | `list <entity-id>` | List subordinate entities of an authority |
+| `subordinate-events <entity-id> <subject> --jwks-file <path>` | Retrieve and verify an authority's recorded subordinate history |
 | `list-extended <entity-id>` | Paginated subordinate listing with audit timestamps and bulk claim retrieval (`/federation_extended_list`) |
 | `resolve <entity-id>` | Resolve trust chains for an entity |
 
@@ -153,3 +154,18 @@ oidfed expiry https://rp.example.com --trust-anchor https://ta.example.org
 ## Command pattern
 
 Commands expose an asynchronous `handler(args, deps)` returning `Promise<Result<string>>` and a `register(program, deps)` function. Injected dependencies let tests run command handlers without network access.
+
+## Subordinate event history
+
+```bash
+oidfed --json subordinate-events https://ta.example.org https://client.example.org \
+  --jwks-file ./trusted-authority-jwks.json
+```
+
+The command implements Subordinate Events Draft 01. The JWKS file is required and must contain authority Federation Entity Keys obtained from a trusted source. The CLI verifies the authority's Entity Configuration with those keys before using its advertised `federation_subordinate_events_endpoint`, then verifies the history's signature, type, dates, issuer, and subject. It does not discover trust through federation chains automatically.
+
+The command rejects endpoint redirects, including for authenticated requests. The authority must advertise its final HTTPS endpoint URL without a fragment.
+
+For an endpoint requiring client authentication, add `--client-assertion-file ./assertion.jwt`. The file contains a `private_key_jwt` assertion signed with the client's Federation Entity Key, with the authority Entity Identifier as its audience. The CLI sends the request parameters and assertion in a form-encoded POST body.
+
+The JSON output contains verified statement claims, including the event array. An authority can return an empty history for a known subject. Events report recorded observations; a suspension entry does not itself enforce suspension or prove historical trust-chain validity.

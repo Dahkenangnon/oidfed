@@ -87,6 +87,12 @@ export {
 	verifyTrustMarkStatusResponse,
 } from "./federation-api/index.js";
 export {
+	type FetchSubordinateEventsOptions,
+	fetchSubordinateEvents,
+	type VerifySubordinateEventsOptions,
+	verifySubordinateEventsResponse,
+} from "./federation-api/subordinate-events.js";
+export {
 	createFederationSigningKey,
 	type FederationKeyLifecycleProvider,
 	type FederationKeyProvider,
