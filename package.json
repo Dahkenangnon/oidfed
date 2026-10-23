@@ -62,14 +62,14 @@
 		"trust-mark"
 	],
 	"engines": {
-		"node": ">=22.22.0",
+		"node": "^22.22.2 || ^24.15.0 || >=26.0.0",
 		"pnpm": ">=10"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.5.15",
-		"@commitlint/cli": "^21.2.3",
-		"@commitlint/config-conventional": "^21.2.3",
-		"@commitlint/prompt-cli": "^21.2.3",
+		"@commitlint/cli": "^21.2.4",
+		"@commitlint/config-conventional": "^21.2.4",
+		"@commitlint/prompt-cli": "^21.2.4",
 		"@oidfed/authority": "workspace:*",
 		"@oidfed/core": "workspace:*",
 		"@oidfed/leaf": "workspace:*",
@@ -80,20 +80,20 @@
 		"@types/oidc-provider": "^9.12.1",
 		"@types/qunit": "^2.19.14",
 		"c8": "^12.0.0",
-		"electron": "^44.7.0",
+		"electron": "^44.9.0",
 		"esbuild": "^0.28.2",
 		"express": "^5.3.0",
 		"husky": "^9.1.7",
 		"jose": "^6.2.12",
 		"oidc-provider": "^9.12.2",
-		"qunit": "^2.26.0",
+		"qunit": "^3.0.0",
 		"ts-blank-space": "^0.9.0",
 		"tsup": "^8.0.0",
 		"tsx": "^4.23.15",
-		"turbo": "^2.11.7",
+		"turbo": "^2.11.9",
 		"typescript": "^6.0.3",
-		"undici": "^8.11.2",
-		"vitest": "^4.1.11"
+		"undici": "^8.12.2",
+		"vitest": "^5.0.5"
 	},
 	"pnpm": {
 		"onlyBuiltDependencies": [

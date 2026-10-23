@@ -1,6 +1,6 @@
 # Local development
 
-Use Node.js `>=22.22.0` and the repository's pinned pnpm `10.33.0`. Corepack can select that version from `package.json`.
+Use Node.js `^22.22.2 || ^24.15.0 || >=26.0.0` and the repository's pinned pnpm `10.33.0`. Corepack can select that version from `package.json`.
 
 ```bash
 corepack pnpm install --frozen-lockfile

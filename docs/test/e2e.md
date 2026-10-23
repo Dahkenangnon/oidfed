@@ -4,7 +4,7 @@ The E2E suite exercises federation packages together over HTTPS. Entity Identifi
 
 ## Setup and commands
 
-Use the repository's Node.js `>=22.22.0` and pinned pnpm version. Install [mkcert](https://github.com/FiloSottile/mkcert#installation); Linux browser trust may also need `libnss3-tools` or its platform equivalent.
+Use a supported Node.js version (`^22.22.2 || ^24.15.0 || >=26.0.0`) and the repository's pinned pnpm version. Install [mkcert](https://github.com/FiloSottile/mkcert#installation); Linux browser trust may also need `libnss3-tools` or its platform equivalent.
 
 ```bash
 pnpm setup:e2e

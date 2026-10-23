@@ -22,7 +22,7 @@ The four libraries use Web APIs, including `Request`, `Response`, and Web Crypto
 
 ## Requirements
 
-Repository development requires Node.js `>=22.22.0`. Use the pinned pnpm version, `10.33.0`, through Corepack. The four library packages omit Node-specific `engines` metadata; the CLI separately declares Node.js `>=22.12.0`. JOSE signing and verification use `jose`.
+Repository development supports Node.js `^22.22.2 || ^24.15.0 || >=26.0.0`; CI uses `22.22.2`. Use the pinned pnpm version, `10.33.0`, through Corepack. The four library packages omit Node-specific `engines` metadata; the CLI separately declares Node.js `>=22.12.0`. JOSE signing and verification use `jose`.
 
 ## Choose a package
 
