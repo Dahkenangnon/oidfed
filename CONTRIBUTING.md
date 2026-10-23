@@ -1,11 +1,8 @@
 # Contributing to @oidfed
 
-Thank you for your interest in contributing to the OpenID Federation TypeScript implementation.
-
 ## Prerequisites
 
-- Node.js >= 22
-- pnpm >= 10
+Use the Node.js version in `.node-version`, or another version supported by the `engines.node` range in [package.json](package.json). The repository requires pnpm >= 10 and pins its package manager version through `packageManager`.
 
 ## Setup
 
@@ -17,12 +14,11 @@ pnpm build
 pnpm test
 ```
 
-## Development Workflow
+## Development workflow
 
-1. Create a feature branch from `main`: `git checkout -b feat/scope/my-feature` (e.g. `feat/core/trust-mark-validation`, `fix/oidc/registration-schema`)
-2. Write tests first (TDD is the default workflow)
-3. Implement your changes
-4. Run the full verification loop:
+Create a feature branch from `main`: `git checkout -b feat/scope/my-feature`. For example, use `feat/core/trust-mark-validation` or `fix/oidc/registration-schema`.
+
+Write tests before implementing a change. Before opening a pull request, run:
 
 ```bash
 pnpm typecheck
@@ -35,40 +31,65 @@ pnpm test:apps       # required when apps/* or internal/* changes
 pnpm build:apps      # required when apps/* or internal/* changes
 ```
 
-5. Commit using conventional commits (see below)
-6. Open a pull request against `main`
+Run `pnpm setup:e2e` before your first E2E test run to prepare the local certificates. Commit your changes using the conventions below, then open a pull request against `main`.
 
-## Commit Conventions
+## Commit conventions
 
-Use [Conventional Commits](https://www.conventionalcommits.org/):
+Use [Conventional Commits](https://www.conventionalcommits.org/) with a required scope:
 
-```
+```text
 feat(core): add trust mark delegation validation
 fix(oidc): correct explicit registration response schema
-docs: update architecture decision record for package split
+docs(repo): update architecture decision record
 test(authority): add subordinate statement edge cases
-chore: update dependencies
+chore(deps): update dependencies
 ```
 
-Scope should be the package name without the `@oidfed/` prefix: `core`, `authority`, `leaf`, `oidc`, `cli`, `explorer`, `home`, `learn`, `ui`.
+For package changes, use the package name without `@oidfed/`, such as `core`, `authority`, or `cli`. For repository changes, use a scope such as `repo`, `deps`, or `ci`. [commitlint.config.js](commitlint.config.js) lists the allowed types and scopes.
 
-## Pull Request Process
+Keep the full subject at 72 characters or fewer, including the type, scope, spaces, and references. Put supporting details in the body and wrap body lines at 120 characters. Short subjects are easier to scan in GitHub's file list, where the available width depends on the screen size.
 
-1. Ensure the package/tool checks pass (`typecheck`, `test`, `lint`, `build`), plus the `*:apps` checks when changing apps or internal UI
-2. Update relevant documentation if behavior changes
-3. Add or update tests for any new functionality
-4. Keep PRs focused — one logical change per PR
-5. Fill out the PR template
+The local commit hook and CI run commitlint to enforce syntax and length. These checks also apply to bot-authored commits. If a generated subject is too long, shorten that commit's subject; editing only the final squash title leaves the original commits unchanged for PR checks.
 
-## Code Style
+Development commits do not need a PR number. If a subject includes numbered references such as `#116`, commitlint requires them immediately after the conventional prefix, before the description. The final squash commit uses the PR reference format described below.
 
-Formatting and linting are handled by [Biome](https://biomejs.dev/). Run `pnpm lint:fix` to auto-fix issues.
+## Pull requests
+
+Keep each PR focused on one change and fill out the [PR template](.github/pull_request_template.md). Include tests for new behavior and update the relevant documentation when behavior changes. Check that the package and tool verification commands pass, along with the application checks when changing `apps/*` or `internal/*`.
+
+### Merging in GitHub
+
+Choose **Squash and merge**, then edit the final commit message before confirming the merge.
+
+Put the actual PR number immediately after the conventional prefix:
+
+```text
+feat(authority): #116 add subordinate events
+```
+
+Include the PR reference when counting the 72-character subject limit. If GitHub puts a reference such as `(#116)` at the end, move it to the position shown above.
+
+Use the commit body to explain the change and retain issue-closing references:
+
+```text
+Publish signed subordinate histories with transactional event storage.
+
+Closes #115
+```
+
+Use the PR number in the subject and the issue number in the closing reference. Review both fields before confirming the merge.
+
+GitHub UI merges do not run local hooks. PR CI checks the branch's commits; CI on `main` checks the final squash commit after it is merged. Commitlint enforces conventional syntax, length, and the position of numbered subject references. Maintainers must check that the final UI message includes the correct PR number before merging.
+
+## Code style
+
+[Biome](https://biomejs.dev/) handles formatting and linting. Run `pnpm lint:fix` to apply its fixes.
 
 ## Testing
 
-The verification commands are split by release scope. Unqualified commands validate the published packages and tools; `*:apps` commands validate the applications and their internal UI dependencies.
+`pnpm test` and `pnpm build` cover the published packages and tools. Their `:apps` variants cover the applications and their internal UI dependencies.
 
-The test setup is split by purpose:
+`pnpm typecheck` also checks TAP tests, E2E tests, and scripts. `pnpm lint` uses the root Biome configuration. `pnpm test:e2e` runs the HTTPS federation scenarios.
 
 | Scope | Framework | Location |
 |---|---|---|
@@ -77,9 +98,7 @@ The test setup is split by purpose:
 | Explorer (`apps/explorer`) | Vitest | `apps/explorer/test/` |
 | E2E | Vitest | `tests/e2e/` (requires `pnpm setup:e2e` first) |
 
-The 4 spec packages are framework-agnostic and run identically on Node, Bun, Deno, workerd, Electron, and browsers — the TAP suite is the sole unit-test gate.
-
-Commands:
+The four specification packages are framework-agnostic. Their unit tests use the same TAP suite across Node, Bun, Deno, workerd, Electron, and browsers.
 
 ```bash
 pnpm test                    # published surface: 6 TAP runtimes + tools
@@ -97,44 +116,44 @@ pnpm build:apps              # apps and internal UI dependencies
 
 ## Releasing
 
-Releases are tag-driven through GitHub Actions. The maintainer flow has a manual changelog review checkpoint before anything is committed, tagged, or pushed.
+GitHub Actions publishes releases from scoped tags. The maintainer workflow separates preparation from publishing so you can review the changelog before committing, tagging, or pushing.
 
-Preview the exact files that would change:
+Preview the files that would change:
 
 ```bash
 pnpm release core patch --dry-run
 pnpm release all minor --dry-run
 ```
 
-Prepare release files for review:
+Prepare the release files:
 
 ```bash
 pnpm release core patch --prepare
 pnpm release all minor --prepare
 ```
 
-`--prepare` only writes package versions and changelog sections. It does not commit, tag, or push. After it runs, edit the generated `## [<X.Y.Z>] - <date>` changelog section directly:
+`--prepare` writes package versions and changelog sections. Review and edit each generated `## [<X.Y.Z>] - <date>` section before finalizing:
 
-- **Single package release** → edit `<package-dir>/CHANGELOG.md` (for example, `packages/core/CHANGELOG.md`)
-- **All-packages release** → edit package changelogs plus the root `CHANGELOG.md`; the root section is intentionally empty for curated cross-package notes
+- For a single package, edit its `CHANGELOG.md`, such as `packages/core/CHANGELOG.md`.
+- For an all-packages release, edit the package changelogs and the root `CHANGELOG.md`. The root section starts empty for you to write notes that cover changes across packages.
 
-Finalize after reviewing the diff and custom changelog content:
+Preparation does not commit, tag, or push. After reviewing the diff and changelogs, finalize the release:
 
 ```bash
 pnpm release core --finalize
 pnpm release all --finalize
 ```
 
-`--finalize` validates that the prepared version and changelog sections exist, refuses unexpected dirty files, then creates the release commit, tag, and push. The scoped tag (`core/v0.8.1`, `all/v0.9.0`, …) triggers `.github/workflows/release.yml`, which validates, builds, creates the GitHub Release from the committed changelog section, and publishes to npm.
+`--finalize` checks the prepared versions and changelog sections, refuses unexpected dirty files, then creates the release commit and tag and pushes them. Tags such as `core/v0.8.1` and `all/v0.9.0` trigger `.github/workflows/release.yml`, which validates, builds, creates the GitHub Release from the committed changelog, and publishes to npm.
 
-The script still supports the one-shot form for automation:
+The one-shot command prepares and publishes without a changelog review step:
 
 ```bash
 pnpm release oidc patch
 ```
 
-Use the one-shot form only when the generated changelog body is already acceptable without manual editing.
+Use it only when the generated changelog is already acceptable without editing.
 
-## Questions?
+## Questions
 
 Open a [discussion](https://github.com/Dahkenangnon/oidfed/discussions) or file an issue.
