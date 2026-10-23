@@ -57,9 +57,9 @@ export function createListHandler(ctx: HandlerContext): (request: Request) => Pr
 		const filter: ListFilter = {};
 		if (entityTypes.length > 0) filter.entityTypes = entityTypes;
 		if (typeof intermediate === "boolean") filter.intermediate = intermediate;
-		if (typeof trustMarked === "boolean") filter.trustMarked = trustMarked;
+		if (trustMarked === true) filter.trustMarked = true;
 		if (trustMarkType !== null) filter.trustMarkType = trustMarkType;
-		if (trustMarkedRaw !== null || trustMarkType !== null) {
+		if (trustMarked === true || trustMarkType !== null) {
 			filter.validAt = nowSeconds(ctx.options?.clock);
 		}
 

@@ -254,6 +254,20 @@ export default (QUnit: QUnit) => {
 			t.throws(() => new Leaf(config), /Leaf entities MUST NOT publish federation_list_endpoint/);
 		});
 
+		test("rejects extended listing endpoint metadata directly and through roles", async (t) => {
+			const endpoint = { federation_extended_list_endpoint: "https://rp.example.com/extended" };
+			for (const overrides of [
+				{ metadata: { federation_entity: endpoint } },
+				{ roles: [{ type: "federation_entity", metadata: endpoint }] },
+			]) {
+				const { config } = await createLeafConfig(overrides);
+				t.throws(
+					() => new Leaf(config),
+					/Leaf entities MUST NOT publish federation_extended_list_endpoint/,
+				);
+			}
+		});
+
 		test("throws on duplicate kid values", async (t) => {
 			const { privateKey: key1 } = await generateSigningKey("ES256");
 			const { privateKey: key2 } = await generateSigningKey("ES256");

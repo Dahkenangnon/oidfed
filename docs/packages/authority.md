@@ -185,7 +185,26 @@ Federation endpoint HTTP routes are derived from the paths advertised in `metada
 
 ### Extended subordinate listing
 
-The endpoint implements Draft 02. Advertise `federation_extended_list_endpoint` in `metadata.federation_entity` to mount it, and leave `extendedListing.enabled` enabled. Enabling the handler alone does not add the metadata or route. See the [README compatibility note](../../README.md#specification-support) for Draft 03 differences.
+The endpoint implements Draft 03. Advertise `federation_extended_list_endpoint` in `metadata.federation_entity` to mount it, and leave `extendedListing.enabled` enabled. Enabling the handler alone does not add the metadata or route.
+
+Read `next` from each response and pass it unchanged as `from` to resume from that entry, inclusive. Treat it as an opaque string; its encoding is chosen by the server. Unknown cursors return HTTP 404 with the JSON error `page_not_found`.
+
+```typescript
+const first = await ta.listSubordinatesExtended({ limit: 50, claims: [] });
+if (first.ok && first.value.next !== undefined) {
+  const second = await ta.listSubordinatesExtended({ from: first.value.next, limit: 50, claims: [] });
+}
+```
+
+The same parameters are supported by `fetchExtendedSubordinatesList` in `@oidfed/core`. `trustMarkType` accepts a string or an array of strings. An entity matches if the authority has issued a still-valid mark of any requested type. On the wire, send one `trust_mark_type` parameter per type. Custom storage adapters must handle the array form of `ListFilter.trustMarkType` with the same OR semantics before paginating results.
+
+Both listing endpoints treat `trust_marked=true` as requiring a valid issued mark. They treat `false` as adding no mark restriction; any supplied `trust_mark_type` filter still applies. The base specification defines the true case and leaves the false case unspecified. Custom storage adapters should follow the same policy for `ListFilter.trustMarked`.
+
+Extended Listing time filters and audit timestamps use NumericDate seconds. Fractional and negative values are accepted, and `updated_after` and `updated_before` include records exactly at the boundary. Query values also accept decimal exponent notation. Values must be finite numbers.
+
+Omitting `claims` uses `defaultClaims`. An explicit `claims: []` sends `claims=` and suppresses the default statements. If a claim selection is present, `subordinate_statement` is returned only when requested; other requested statement claims are included when available.
+
+Leaf entities cannot advertise this endpoint.
 
 The `extendedListing` object supports:
 

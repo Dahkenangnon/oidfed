@@ -42,6 +42,8 @@ The workspace shortcuts `pnpm oidfed` and `pnpm cli` disable TLS certificate ver
 | `list-extended <entity-id>` | Paginated subordinate listing with audit timestamps and bulk claim retrieval (`/federation_extended_list`) |
 | `resolve <entity-id>` | Resolve trust chains for an entity |
 
+For `list-extended`, `--updated-after` and `--updated-before` accept finite NumericDate seconds, including fractional, negative, and decimal exponent values. Both time boundaries are inclusive.
+
 ### Trust
 
 | Command | Description |
@@ -108,7 +110,12 @@ oidfed list-extended https://ta.example.org \
 
 # Resume from a cursor returned by the previous page
 oidfed list-extended https://ta.example.org \
-  --from https://leaf-100.example.org --limit 50
+  --from "$NEXT_CURSOR" --limit 50
+
+# Match either trust mark type and return entries without signed statements
+oidfed list-extended https://ta.example.org \
+  --trust-mark-type https://marks.example.org/alpha \
+  --trust-mark-type https://marks.example.org/beta --claims ""
 
 # Filter to entities updated in a time window
 oidfed list-extended https://ta.example.org \
@@ -140,6 +147,8 @@ oidfed expiry https://rp.example.com --trust-anchor https://ta.example.org
 ```
 
 `decode` inspects a token without verifying it. `verify` checks a signature against the selected keys; discovering those keys from the JWT issuer does not establish trust in that issuer. Use `chain` or `validate` with trusted anchors for federation trust validation.
+
+`list-extended` uses Extended Listing Draft 03. Set `NEXT_CURSOR` to the previous response's `next` string and pass it unchanged to `--from`; an unknown cursor reports `page_not_found`. Repeating `--trust-mark-type` matches any requested type with a valid issued mark. Omitted `--claims` uses the server defaults; `--claims ""` requests an empty claim selection.
 
 ## Command pattern
 

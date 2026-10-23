@@ -67,10 +67,12 @@ export type SubordinateRecordUpdate = Partial<
 
 export interface ListFilter {
 	entityTypes?: EntityType[];
+	/** When true, require a valid issued mark. False adds no restriction. */
 	trustMarked?: boolean;
-	trustMarkType?: string;
+	/** Match any of the supplied Trust Mark types. */
+	trustMarkType?: string | ReadonlyArray<string>;
 	intermediate?: boolean;
-	/** Required when trustMarked or trustMarkType is provided. */
+	/** Required when trustMarked is true or trustMarkType is provided. */
 	validAt?: number;
 }
 

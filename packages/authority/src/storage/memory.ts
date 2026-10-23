@@ -109,20 +109,24 @@ class MemorySubordinateStorage implements SubordinateStorage {
 				(record) => (record.isIntermediate ?? false) === filter.intermediate,
 			);
 		}
-		if (filter?.trustMarked !== undefined || filter?.trustMarkType !== undefined) {
+		// Federation §8.2.1 defines true; false is unspecified.
+		// Here false adds no restriction; supplied mark types still filter.
+		if (filter?.trustMarked === true || filter?.trustMarkType !== undefined) {
 			if (filter.validAt === undefined) {
 				throw new TypeError("validAt is required for trust mark filters");
 			}
 			const marks = this.read().trustMarks;
 			if (!marks) throw new Error("Trust mark filtering is not supported by this adapter");
+			const requestedTypes =
+				typeof filter.trustMarkType === "string" ? [filter.trustMarkType] : filter.trustMarkType;
 			results = results.filter((record) => {
 				const valid = [...marks.values()].some(
 					(mark) =>
 						mark.subject === record.entityId &&
-						(filter.trustMarkType === undefined || mark.trustMarkType === filter.trustMarkType) &&
+						(requestedTypes === undefined || requestedTypes.includes(mark.trustMarkType)) &&
 						isValidTrustMark(mark, filter.validAt as number),
 				);
-				return filter.trustMarked === false ? !valid : valid;
+				return valid;
 			});
 		}
 		if (options?.updatedAfter !== undefined) {

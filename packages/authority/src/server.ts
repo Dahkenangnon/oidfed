@@ -56,7 +56,8 @@ export type { AuthorityClientKeyProvider } from "./endpoints/context.js";
 
 /** Parameters accepted by {@link AuthorityServer.listSubordinatesExtended}. */
 export interface ExtendedSubordinateListingParams {
-	fromEntityId?: EntityId;
+	/** Opaque continuation value returned as `next` by the server. */
+	from?: string;
 	limit?: number;
 	updatedAfter?: number;
 	updatedBefore?: number;
@@ -64,14 +65,14 @@ export interface ExtendedSubordinateListingParams {
 	claims?: ReadonlyArray<string>;
 	entityType?: EntityType | ReadonlyArray<EntityType>;
 	trustMarked?: boolean;
-	trustMarkType?: string;
+	trustMarkType?: string | ReadonlyArray<string>;
 	intermediate?: boolean;
 }
 
 /** Decoded body returned by {@link AuthorityServer.listSubordinatesExtended}. */
 export interface ExtendedSubordinateListingResult {
 	immediate_subordinate_entities: Array<Record<string, unknown> & { id: string }>;
-	next_entity_id?: string;
+	next?: string;
 }
 
 function assertTrustAnchorHintsConfig(config: AuthorityConfig, isTrustAnchor: boolean): void {
@@ -426,8 +427,8 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 			params?: ExtendedSubordinateListingParams,
 		): Promise<Result<ExtendedSubordinateListingResult, FederationError>> {
 			const url = new URL(FederationEndpoint.ExtendedList, normalizedEntityId);
-			if (params?.fromEntityId !== undefined) {
-				url.searchParams.set("from_entity_id", params.fromEntityId);
+			if (params?.from !== undefined) {
+				url.searchParams.set("from", params.from);
 			}
 			if (params?.limit !== undefined) {
 				url.searchParams.set("limit", String(params.limit));
@@ -445,7 +446,7 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 				const joined = Array.from(params.claims)
 					.filter((c) => c.length > 0)
 					.join(",");
-				if (joined.length > 0) url.searchParams.set("claims", joined);
+				url.searchParams.set("claims", joined);
 			}
 			if (params?.entityType !== undefined) {
 				const types = Array.isArray(params.entityType) ? params.entityType : [params.entityType];
@@ -455,7 +456,9 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 				url.searchParams.set("trust_marked", params.trustMarked ? "true" : "false");
 			}
 			if (params?.trustMarkType !== undefined) {
-				url.searchParams.set("trust_mark_type", params.trustMarkType);
+				const types =
+					typeof params.trustMarkType === "string" ? [params.trustMarkType] : params.trustMarkType;
+				for (const type of types) url.searchParams.append("trust_mark_type", type);
 			}
 			if (params?.intermediate !== undefined) {
 				url.searchParams.set("intermediate", params.intermediate ? "true" : "false");

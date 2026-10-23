@@ -82,6 +82,7 @@ export const FederationErrorCode = {
 	TemporarilyUnavailable: "temporarily_unavailable",
 	UnsupportedParameter: "unsupported_parameter",
 	EntityIdNotFound: "entity_id_not_found",
+	PageNotFound: "page_not_found",
 } as const;
 export type FederationErrorCode = (typeof FederationErrorCode)[keyof typeof FederationErrorCode];
 

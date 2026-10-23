@@ -1,6 +1,7 @@
 import {
 	type EntityType,
 	type ExtendedListClaim,
+	ExtendedListQuerySchema,
 	type ExtendedListRequestParams,
 	type ExtendedListResponse,
 	fetchExtendedSubordinatesList,
@@ -30,7 +31,7 @@ export interface ListExtendedArgs {
 	readonly claims?: ReadonlyArray<string> | undefined;
 	readonly entityType?: string | undefined;
 	readonly trustMarked?: boolean | undefined;
-	readonly trustMarkType?: string | undefined;
+	readonly trustMarkType?: string | ReadonlyArray<string> | undefined;
 	readonly intermediate?: boolean | undefined;
 	readonly extendedListEndpoint?: string | undefined;
 }
@@ -56,7 +57,7 @@ export async function handler(
 	}
 
 	const params: ExtendedListRequestParams = {};
-	if (args.from !== undefined) params.fromEntityId = args.from;
+	if (args.from !== undefined) params.from = args.from;
 	if (args.limit !== undefined) params.limit = args.limit;
 	if (args.updatedAfter !== undefined) params.updatedAfter = args.updatedAfter;
 	if (args.updatedBefore !== undefined) params.updatedBefore = args.updatedBefore;
@@ -86,10 +87,11 @@ function parsePositiveIntOption(raw: string): number {
 }
 
 function parseNumericDateOption(raw: string): number {
-	if (!/^[0-9]+$/.test(raw)) {
-		throw new Error(`expected NumericDate (non-negative integer), got '${raw}'`);
+	const parsed = ExtendedListQuerySchema.shape.updated_after.safeParse(raw);
+	if (!parsed.success || parsed.data === undefined) {
+		throw new Error(`expected finite NumericDate, got '${raw}'`);
 	}
-	return Number.parseInt(raw, 10);
+	return parsed.data;
 }
 
 export function register(program: Command, deps: ListExtendedDeps): void {
@@ -99,7 +101,7 @@ export function register(program: Command, deps: ListExtendedDeps): void {
 			"List subordinate entities of an authority via the Extended Subordinate Listing endpoint (paginated, with bulk claim retrieval)",
 		)
 		.argument("<entity-id>", "Authority entity ID")
-		.option("--from <entity-id>", "Resume cursor: from_entity_id (inclusive)")
+		.option("--from <cursor>", "Resume from the opaque next cursor (inclusive)")
 		.option("--limit <n>", "Maximum number of entities to return", parsePositiveIntOption)
 		.option(
 			"--updated-after <numericdate>",
@@ -119,7 +121,11 @@ export function register(program: Command, deps: ListExtendedDeps): void {
 		)
 		.option("--entity-type <type>", "Inherited base filter: only this entity type")
 		.option("--trust-marked", "Inherited base filter: only entities with a recognised Trust Mark")
-		.option("--trust-mark-type <id>", "Inherited base filter: trust mark type identifier")
+		.option(
+			"--trust-mark-type <id>",
+			"Repeatable: match any of these trust mark type identifiers",
+			(value: string, previous: string[] | undefined) => [...(previous ?? []), value],
+		)
 		.option("--intermediate", "Inherited base filter: only intermediate authorities")
 		.option(
 			"--extended-list-endpoint <url>",
@@ -137,7 +143,7 @@ export function register(program: Command, deps: ListExtendedDeps): void {
 					claims?: string[];
 					entityType?: string;
 					trustMarked?: boolean;
-					trustMarkType?: string;
+					trustMarkType?: string[];
 					intermediate?: boolean;
 					extendedListEndpoint?: string;
 				},
