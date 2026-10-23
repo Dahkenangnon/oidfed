@@ -58,7 +58,7 @@
 		"clean": "rm -rf dist"
 	},
 	"dependencies": {
-		"jose": "6.2.12",
+		"jose": "6.2.13",
 		"zod": "4.6.7"
 	}
 }
