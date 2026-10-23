@@ -9,6 +9,7 @@ export type {
 	ListPageOptions,
 	StorageAdapter,
 	StorageTransaction,
+	SubordinateEventStorage,
 	SubordinateRecord,
 	SubordinateRecordUpdate,
 	SubordinateStorage,

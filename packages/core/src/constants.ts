@@ -15,6 +15,7 @@ export const FederationEndpoint = {
 export type FederationEndpoint = (typeof FederationEndpoint)[keyof typeof FederationEndpoint];
 
 export const MediaType = {
+	EntityEventsStatement: "application/entity-events-statement+jwt",
 	EntityStatement: "application/entity-statement+jwt",
 	TrustMark: "application/trust-mark+jwt",
 	ResolveResponse: "application/resolve-response+jwt",
@@ -29,6 +30,7 @@ export const MediaType = {
 export type MediaType = (typeof MediaType)[keyof typeof MediaType];
 
 export const JwtTyp = {
+	EntityEventsStatement: "entity-events-statement+jwt",
 	EntityStatement: "entity-statement+jwt",
 	TrustMark: "trust-mark+jwt",
 	TrustMarkDelegation: "trust-mark-delegation+jwt",
@@ -82,6 +84,7 @@ export const FederationErrorCode = {
 	TemporarilyUnavailable: "temporarily_unavailable",
 	UnsupportedParameter: "unsupported_parameter",
 	EntityIdNotFound: "entity_id_not_found",
+	PageNotFound: "page_not_found",
 } as const;
 export type FederationErrorCode = (typeof FederationErrorCode)[keyof typeof FederationErrorCode];
 

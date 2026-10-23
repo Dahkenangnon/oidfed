@@ -139,6 +139,15 @@ export class Leaf {
 			if ("federation_list_endpoint" in fedEntity) {
 				throw new Error("Leaf entities MUST NOT publish federation_list_endpoint");
 			}
+			if (
+				"federation_subordinate_events_endpoint" in fedEntity ||
+				"federation_subordinate_events_endpoint_auth_methods" in fedEntity
+			) {
+				throw new Error("Leaf entities cannot publish federation_subordinate_events_endpoint");
+			}
+			if ("federation_extended_list_endpoint" in fedEntity) {
+				throw new Error("Leaf entities MUST NOT publish federation_extended_list_endpoint");
+			}
 		}
 
 		const ttlSeconds = config.entityConfigurationTtlSeconds ?? DEFAULT_ENTITY_STATEMENT_TTL_SECONDS;

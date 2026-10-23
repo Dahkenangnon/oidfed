@@ -107,6 +107,7 @@ function errorCodeToStatus(code: string): number {
 		case FederationErrorCode.InvalidClient:
 			return 401;
 		case FederationErrorCode.NotFound:
+		case FederationErrorCode.PageNotFound:
 		case FederationErrorCode.InvalidIssuer:
 		case FederationErrorCode.InvalidSubject:
 		case FederationErrorCode.InvalidTrustAnchor:

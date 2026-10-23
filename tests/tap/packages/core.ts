@@ -764,15 +764,15 @@ export default (QUnit: QUnit) => {
 			t.equal(FederationEndpoint.HistoricalKeys, "/federation_historical_keys");
 		});
 
-		test("MediaType has all 10 types", (t) => {
-			t.equal(Object.keys(MediaType).length, 10);
+		test("MediaType has all 11 types", (t) => {
+			t.equal(Object.keys(MediaType).length, 11);
 			t.equal(MediaType.EntityStatement, "application/entity-statement+jwt");
 			t.equal(MediaType.TrustMark, "application/trust-mark+jwt");
 			t.equal(MediaType.Json, "application/json");
 		});
 
-		test("JwtTyp has all 6 values", (t) => {
-			t.equal(Object.keys(JwtTyp).length, 6);
+		test("JwtTyp has all 7 values", (t) => {
+			t.equal(Object.keys(JwtTyp).length, 7);
 			t.equal(JwtTyp.EntityStatement, "entity-statement+jwt");
 			t.equal(JwtTyp.TrustMark, "trust-mark+jwt");
 		});
@@ -793,11 +793,12 @@ export default (QUnit: QUnit) => {
 			t.equal(PolicyOperator.Essential, "essential");
 		});
 
-		test("FederationErrorCode has 12 codes", (t) => {
-			t.equal(Object.keys(FederationErrorCode).length, 12);
+		test("FederationErrorCode has 13 codes", (t) => {
+			t.equal(Object.keys(FederationErrorCode).length, 13);
 			t.equal(FederationErrorCode.InvalidRequest, "invalid_request");
 			t.equal(FederationErrorCode.NotFound, "not_found");
 			t.equal(FederationErrorCode.EntityIdNotFound, "entity_id_not_found");
+			t.equal(FederationErrorCode.PageNotFound, "page_not_found");
 		});
 
 		test("InternalErrorCode has 12 codes", (t) => {
@@ -11874,6 +11875,52 @@ export default (QUnit: QUnit) => {
 	});
 
 	module("core / ExtendedListQuerySchema", () => {
+		test("preserves finite decimal NumericDates and rejects malformed values", (t) => {
+			for (const raw of ["0", "001500", "1500.5", "-0.5", "1.5005e3", "1E-7"]) {
+				const parsed = ExtendedListQuerySchema.safeParse({
+					updated_after: raw,
+					updated_before: raw,
+				});
+				t.true(parsed.success, raw);
+				if (parsed.success) {
+					t.equal(parsed.data.updated_after, Number(raw));
+					t.equal(parsed.data.updated_before, Number(raw));
+				}
+			}
+			for (const raw of [
+				"",
+				" ",
+				" 1",
+				"1 ",
+				"1\n",
+				"1\r\n",
+				"0x10",
+				"1.5junk",
+				"NaN",
+				"Infinity",
+				"-Infinity",
+				"1e309",
+				"+1",
+				".5",
+				"1.",
+			]) {
+				for (const field of ["updated_after", "updated_before"]) {
+					t.false(ExtendedListQuerySchema.safeParse({ [field]: raw }).success, `${field}=${raw}`);
+				}
+			}
+		});
+		test("preserves opaque cursors and repeated trust mark types", (t) => {
+			const query = {
+				from: "opaque +/=cursor",
+				trust_mark_type: ["https://marks.example/a", "https://marks.example/b"],
+			};
+			const parsed = ExtendedListQuerySchema.safeParse(query);
+			t.true(parsed.success);
+			if (parsed.success) t.deepEqual(parsed.data, query);
+			t.true(
+				ExtendedListQuerySchema.safeParse({ trust_mark_type: "https://marks.example/a" }).success,
+			);
+		});
 		test("accepts an empty query", (t) => {
 			const parsed = ExtendedListQuerySchema.safeParse({});
 			t.true(parsed.success);
@@ -11919,6 +11966,17 @@ export default (QUnit: QUnit) => {
 	});
 
 	module("core / ExtendedListEntitySchema", () => {
+		test("accepts finite fractional and negative audit timestamps", (t) => {
+			const entry = { id: "https://a.example.com", registered: -0.5, updated: 1500.5 };
+			const parsed = ExtendedListEntitySchema.safeParse(entry);
+			t.true(parsed.success);
+			if (parsed.success) t.deepEqual<unknown>(parsed.data, entry);
+			for (const value of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+				for (const field of ["registered", "updated"]) {
+					t.false(ExtendedListEntitySchema.safeParse({ ...entry, [field]: value }).success);
+				}
+			}
+		});
 		test("requires id", (t) => {
 			t.false(ExtendedListEntitySchema.safeParse({}).success);
 		});
@@ -11957,25 +12015,31 @@ export default (QUnit: QUnit) => {
 	});
 
 	module("core / ExtendedListResponseSchema", () => {
+		test("preserves opaque next cursors without Entity Identifier validation", (t) => {
+			const response = { immediate_subordinate_entities: [], next: "opaque +/=cursor" };
+			const parsed = ExtendedListResponseSchema.safeParse(response);
+			t.true(parsed.success);
+			if (parsed.success) t.deepEqual(parsed.data, response);
+		});
 		test("requires immediate_subordinate_entities array", (t) => {
 			t.false(ExtendedListResponseSchema.safeParse({}).success);
 		});
-		test("accepts response without next_entity_id", (t) => {
+		test("accepts response without next", (t) => {
 			t.true(ExtendedListResponseSchema.safeParse({ immediate_subordinate_entities: [] }).success);
 		});
-		test("accepts response with next_entity_id present", (t) => {
+		test("accepts response with next present", (t) => {
 			t.true(
 				ExtendedListResponseSchema.safeParse({
 					immediate_subordinate_entities: [{ id: "https://a.example.com" }],
-					next_entity_id: "https://b.example.com",
+					next: "https://b.example.com",
 				}).success,
 			);
 		});
-		test("rejects invalid next_entity_id", (t) => {
+		test("rejects non-string next", (t) => {
 			t.false(
 				ExtendedListResponseSchema.safeParse({
 					immediate_subordinate_entities: [],
-					next_entity_id: "not a url",
+					next: 123,
 				}).success,
 			);
 		});
@@ -11983,6 +12047,329 @@ export default (QUnit: QUnit) => {
 
 	// ── extended subordinate listing — client ──────────────────────────
 	module("core / fetchExtendedSubordinatesList", () => {
+		test("cancels rejected response bodies and preserves errors when cancellation fails", async (t) => {
+			const endpoint = "https://ta.example.com/extended";
+			for (const [status, contentType, description] of [
+				[500, "application/json", `HTTP 500 from ${endpoint}`],
+				[503, "text/plain", `HTTP 503 from ${endpoint}`],
+				[
+					200,
+					"text/plain",
+					`Unexpected Content-Type 'text/plain' from ${endpoint}, expected 'application/json'`,
+				],
+				[
+					200,
+					undefined,
+					`Unexpected Content-Type '<missing>' from ${endpoint}, expected 'application/json'`,
+				],
+				[
+					200,
+					"application/json; charset=utf-8",
+					`Unexpected Content-Type 'application/json; charset=utf-8' from ${endpoint}, expected 'application/json'`,
+				],
+			] as const) {
+				for (const failCancellation of [false, true]) {
+					let cancelled = false;
+					let read = false;
+					const body = new ReadableStream<Uint8Array>(
+						{
+							pull() {
+								read = true;
+							},
+							cancel() {
+								cancelled = true;
+								if (failCancellation) return Promise.reject(new Error("Cancellation failed"));
+							},
+						},
+						{ highWaterMark: 0 },
+					);
+					const result = await fetchExtendedSubordinatesList(endpoint, undefined, {
+						httpClient: async () =>
+							new Response(body, {
+								status,
+								headers: contentType === undefined ? {} : { "Content-Type": contentType },
+							}),
+					});
+					t.true(cancelled, `${status} ${contentType}: cancel requested`);
+					t.false(read, "rejected body is not consumed");
+					t.deepEqual(result, {
+						ok: false,
+						error: { code: InternalErrorCode.Network, description },
+					});
+					if (!cancelled) await body.cancel().catch(() => {});
+				}
+			}
+		});
+		test("preserves early-return errors for responses without a body", async (t) => {
+			const endpoint = "https://ta.example.com/extended";
+			for (const [status, description] of [
+				[500, `HTTP 500 from ${endpoint}`],
+				[200, `Unexpected Content-Type '<missing>' from ${endpoint}, expected 'application/json'`],
+			] as const) {
+				const result = await fetchExtendedSubordinatesList(endpoint, undefined, {
+					httpClient: async () => new Response(null, { status }),
+				});
+				t.deepEqual(result, { ok: false, error: { code: InternalErrorCode.Network, description } });
+			}
+		});
+		test("round-trips fractional and negative NumericDates", async (t) => {
+			const entry = { id: "https://a.example.com", registered: -0.5, updated: 1500.5 };
+			const result = await fetchExtendedSubordinatesList(
+				"https://ta.example.com/extended",
+				{
+					updatedAfter: -0.5,
+					updatedBefore: 1500.5,
+				},
+				{
+					httpClient: async (input) => {
+						const params = new URL(String(input)).searchParams;
+						t.equal(params.get("updated_after"), "-0.5");
+						t.equal(params.get("updated_before"), "1500.5");
+						return new Response(JSON.stringify({ immediate_subordinate_entities: [entry] }), {
+							headers: { "Content-Type": "application/json" },
+						});
+					},
+				},
+			);
+			t.true(result.ok);
+			if (result.ok) t.deepEqual<unknown>(result.value.immediate_subordinate_entities, [entry]);
+		});
+		test("times out and cancels a stalled JSON 404 body", async (t) => {
+			let closeBody = () => {};
+			let cancelled = false;
+			const body = new ReadableStream<Uint8Array>({
+				start(controller) {
+					closeBody = () => controller.close();
+				},
+				cancel() {
+					cancelled = true;
+				},
+			});
+			const fallback = setTimeout(closeBody, 200);
+			try {
+				const result = await fetchExtendedSubordinatesList(
+					"https://ta.example.com/extended",
+					undefined,
+					{
+						httpTimeoutMs: 10,
+						httpClient: async () =>
+							new Response(body, { status: 404, headers: { "Content-Type": "application/json" } }),
+					},
+				);
+				t.false(result.ok);
+				if (!result.ok) t.equal(result.error.code, InternalErrorCode.Timeout);
+				t.true(
+					cancelled,
+					"the pending body is cancelled even when the injected client ignores abort",
+				);
+			} finally {
+				clearTimeout(fallback);
+			}
+		});
+
+		test("caller cancellation interrupts a stalled JSON 404 body", async (t) => {
+			const abort = new AbortController();
+			let closeBody = () => {};
+			let cancelled = false;
+			const body = new ReadableStream<Uint8Array>({
+				start(controller) {
+					closeBody = () => controller.close();
+				},
+				cancel() {
+					cancelled = true;
+				},
+			});
+			const fallback = setTimeout(closeBody, 200);
+			const cancel = setTimeout(() => abort.abort(), 10);
+			try {
+				const result = await fetchExtendedSubordinatesList(
+					"https://ta.example.com/extended",
+					undefined,
+					{
+						signal: abort.signal,
+						httpClient: async () =>
+							new Response(body, { status: 404, headers: { "Content-Type": "application/json" } }),
+					},
+				);
+				t.false(result.ok);
+				if (!result.ok) t.equal(result.error.code, InternalErrorCode.Timeout);
+				t.true(cancelled);
+			} finally {
+				clearTimeout(cancel);
+				clearTimeout(fallback);
+			}
+		});
+
+		test("rejects and cancels oversized JSON 404 bodies with absent or false lengths", async (t) => {
+			const payload = new TextEncoder().encode(
+				JSON.stringify({ error: "page_not_found", error_description: "é".repeat(1024) }),
+			);
+			for (const contentLength of [undefined, "1", String(payload.length)]) {
+				let offset = 0;
+				let cancelled = false;
+				const body = new ReadableStream<Uint8Array>({
+					pull(controller) {
+						if (offset >= payload.length) {
+							controller.close();
+							return;
+						}
+						controller.enqueue(payload.slice(offset, offset + 32));
+						offset += 32;
+					},
+					cancel() {
+						cancelled = true;
+					},
+				});
+				const result = await fetchExtendedSubordinatesList(
+					"https://ta.example.com/extended",
+					undefined,
+					{
+						maxResponseBytes: 64,
+						httpClient: async () =>
+							new Response(body, {
+								status: 404,
+								headers: {
+									"Content-Type": "application/json",
+									...(contentLength === undefined ? {} : { "Content-Length": contentLength }),
+								},
+							}),
+					},
+				);
+				t.false(result.ok);
+				if (!result.ok) {
+					t.equal(result.error.code, InternalErrorCode.Network);
+					t.true(result.error.description.includes("exceeds"));
+				}
+				t.true(cancelled);
+				t.true(offset < payload.length, "the entire oversized payload is not consumed");
+			}
+		});
+
+		test("accepts JSON 404 bodies exactly at the byte limit", async (t) => {
+			const description = "Unknown cursor é";
+			const payload = new TextEncoder().encode(
+				JSON.stringify({ error: "page_not_found", error_description: description }),
+			);
+			let offset = 0;
+			const body = new ReadableStream<Uint8Array>({
+				pull(controller) {
+					if (offset === payload.length) controller.close();
+					else controller.enqueue(payload.slice(offset, ++offset));
+				},
+			});
+			const result = await fetchExtendedSubordinatesList(
+				"https://ta.example.com/extended",
+				undefined,
+				{
+					maxResponseBytes: payload.length,
+					httpClient: async () =>
+						new Response(body, { status: 404, headers: { "Content-Type": "application/json" } }),
+				},
+			);
+			t.false(result.ok);
+			if (!result.ok) {
+				t.equal(result.error.code, FederationErrorCode.PageNotFound);
+				t.equal(result.error.description, description);
+			}
+		});
+
+		test("does not consume a non-JSON 404 body", async (t) => {
+			let cancelled = false;
+			let read = false;
+			const response = new Response(
+				new ReadableStream<Uint8Array>(
+					{
+						pull() {
+							read = true;
+						},
+						cancel() {
+							cancelled = true;
+						},
+					},
+					{ highWaterMark: 0 },
+				),
+				{
+					status: 404,
+					headers: { "Content-Type": "text/html" },
+				},
+			);
+			const result = await fetchExtendedSubordinatesList(
+				"https://ta.example.com/extended",
+				undefined,
+				{ httpTimeoutMs: 10, httpClient: async () => response },
+			);
+			t.false(result.ok);
+			if (!result.ok) t.equal(result.error.code, InternalErrorCode.Network);
+			t.false(read);
+			t.true(cancelled);
+		});
+
+		test("preserves empty claims, repeated mark types and opaque response cursors", async (t) => {
+			const types = ["https://marks.example/a", "https://marks.example/b"];
+			const result = await fetchExtendedSubordinatesList(
+				"https://ta.example.com/extended",
+				{ from: "opaque +/=cursor", claims: [], trustMarkType: types },
+				{
+					httpClient: async (input) => {
+						const url = new URL(String(input));
+						t.equal(url.searchParams.get("from"), "opaque +/=cursor");
+						t.true(url.searchParams.has("claims"));
+						t.equal(url.searchParams.get("claims"), "");
+						t.deepEqual(url.searchParams.getAll("trust_mark_type"), types);
+						return new Response(
+							JSON.stringify({ immediate_subordinate_entities: [], next: "next +/=" }),
+							{
+								headers: { "Content-Type": "application/json" },
+							},
+						);
+					},
+				},
+			);
+			t.true(result.ok);
+			if (result.ok) t.equal(result.value.next, "next +/=");
+		});
+
+		test("preserves page_not_found errors from JSON 404 responses", async (t) => {
+			const result = await fetchExtendedSubordinatesList(
+				"https://ta.example.com/extended",
+				{ from: "unknown +/=" },
+				{
+					httpClient: async () =>
+						new Response(
+							JSON.stringify({
+								error: "page_not_found",
+								error_description: "Unknown continuation cursor",
+							}),
+							{ status: 404, headers: { "Content-Type": "application/json" } },
+						),
+				},
+			);
+			t.false(result.ok);
+			if (!result.ok) {
+				t.equal(result.error.code, FederationErrorCode.PageNotFound);
+				t.equal(result.error.description, "Unknown continuation cursor");
+				t.equal(toPublicError(result.error).status, 404);
+			}
+		});
+
+		test("keeps unrelated or non-JSON 404 responses as network errors", async (t) => {
+			for (const [body, contentType] of [
+				[JSON.stringify({ error: "not_found" }), "application/json"],
+				[JSON.stringify({ error: "page_not_found" }), "text/plain"],
+				["not json", "application/json"],
+			]) {
+				const result = await fetchExtendedSubordinatesList(
+					"https://ta.example.com/extended",
+					undefined,
+					{
+						httpClient: async () =>
+							new Response(body, { status: 404, headers: { "Content-Type": contentType! } }),
+					},
+				);
+				t.false(result.ok);
+				if (!result.ok) t.equal(result.error.code, InternalErrorCode.Network);
+			}
+		});
 		test("happy path: returns parsed response with entity ids", async (t) => {
 			const body = {
 				immediate_subordinate_entities: [
@@ -12004,7 +12391,7 @@ export default (QUnit: QUnit) => {
 			if (result.ok) {
 				t.equal(result.value.immediate_subordinate_entities.length, 2);
 				t.equal(result.value.immediate_subordinate_entities[0]?.id, "https://a.example.com");
-				t.equal(result.value.next_entity_id, undefined);
+				t.equal(result.value.next, undefined);
 			}
 		});
 
@@ -12020,7 +12407,7 @@ export default (QUnit: QUnit) => {
 			const result = await fetchExtendedSubordinatesList(
 				"https://ta.example.com/federation_extended_list",
 				{
-					fromEntityId: "https://x.example.com",
+					from: "opaque +/=cursor",
 					limit: 50,
 					updatedAfter: 1_700_000_000,
 					updatedBefore: 1_700_000_500,
@@ -12035,7 +12422,7 @@ export default (QUnit: QUnit) => {
 			);
 			t.true(result.ok);
 			const url = new URL(capturedUrl);
-			t.equal(url.searchParams.get("from_entity_id"), "https://x.example.com");
+			t.equal(url.searchParams.get("from"), "opaque +/=cursor");
 			t.equal(url.searchParams.get("limit"), "50");
 			t.equal(url.searchParams.get("updated_after"), "1700000000");
 			t.equal(url.searchParams.get("updated_before"), "1700000500");
@@ -12077,7 +12464,7 @@ export default (QUnit: QUnit) => {
 				);
 			const result = await fetchExtendedSubordinatesList(
 				"https://ta.example.com/federation_extended_list",
-				{ fromEntityId: "https://missing.example.com" },
+				{ from: "https://missing.example.com" },
 				{ httpClient },
 			);
 			t.false(result.ok);
@@ -12162,12 +12549,12 @@ export default (QUnit: QUnit) => {
 			t.false(result.ok);
 		});
 
-		test("returns next_entity_id when present", async (t) => {
+		test("returns next when present", async (t) => {
 			const httpClient: HttpClient = async () =>
 				new Response(
 					JSON.stringify({
 						immediate_subordinate_entities: [{ id: "https://a.example.com" }],
-						next_entity_id: "https://b.example.com",
+						next: "https://b.example.com",
 					}),
 					{ status: 200, headers: { "Content-Type": "application/json" } },
 				);
@@ -12177,7 +12564,7 @@ export default (QUnit: QUnit) => {
 				{ httpClient },
 			);
 			t.true(result.ok);
-			if (result.ok) t.equal(result.value.next_entity_id, "https://b.example.com");
+			if (result.ok) t.equal(result.value.next, "https://b.example.com");
 		});
 
 		test("rejects invalid URL string", async (t) => {
@@ -12350,7 +12737,7 @@ export default (QUnit: QUnit) => {
 			);
 			const url = new URL(capturedUrl);
 			t.equal(url.searchParams.get("limit"), null);
-			t.equal(url.searchParams.get("from_entity_id"), null);
+			t.equal(url.searchParams.get("from"), null);
 		});
 	});
 

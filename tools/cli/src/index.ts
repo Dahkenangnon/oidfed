@@ -12,6 +12,7 @@ import * as listCmd from "./commands/list.js";
 import * as listExtendedCmd from "./commands/list-extended.js";
 import * as resolveCmd from "./commands/resolve.js";
 import * as signCmd from "./commands/sign.js";
+import * as subordinateEventsCmd from "./commands/subordinate-events.js";
 import * as trustMarkListCmd from "./commands/trust-mark-list.js";
 import * as trustMarkStatusCmd from "./commands/trust-mark-status.js";
 import * as validateCmd from "./commands/validate.js";
@@ -82,6 +83,7 @@ export async function run(argv: string[]): Promise<number> {
 	expiryCmd.register(program, { httpClient, formatter, logger, config });
 	fetchCmd.register(program, { httpClient, formatter, logger });
 	listCmd.register(program, { httpClient, formatter, logger });
+	subordinateEventsCmd.register(program, { httpClient, formatter, logger, readFile: fileReader });
 	listExtendedCmd.register(program, { httpClient, formatter, logger });
 	trustMarkStatusCmd.register(program, { httpClient, formatter, logger });
 	trustMarkListCmd.register(program, { httpClient, formatter, logger });

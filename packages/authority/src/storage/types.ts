@@ -5,10 +5,12 @@ import type {
 	EntityType,
 	JWKSet,
 	ReplayStore,
+	SubordinateEvent,
 	TrustChainConstraints,
 } from "@oidfed/core";
 
 export interface StorageAdapter {
+	readonly subordinateEvents?: SubordinateEventStorage;
 	readonly subordinates: SubordinateStorage;
 	readonly trustMarks?: TrustMarkStorage;
 	readonly replay?: ReplayStore;
@@ -17,6 +19,7 @@ export interface StorageAdapter {
 }
 
 export interface StorageTransaction {
+	readonly subordinateEvents?: SubordinateEventStorage;
 	readonly subordinates: SubordinateStorage;
 	readonly trustMarks?: TrustMarkStorage;
 }
@@ -67,10 +70,12 @@ export type SubordinateRecordUpdate = Partial<
 
 export interface ListFilter {
 	entityTypes?: EntityType[];
+	/** When true, require a valid issued mark. False adds no restriction. */
 	trustMarked?: boolean;
-	trustMarkType?: string;
+	/** Match any of the supplied Trust Mark types. */
+	trustMarkType?: string | ReadonlyArray<string>;
 	intermediate?: boolean;
-	/** Required when trustMarked or trustMarkType is provided. */
+	/** Required when trustMarked is true or trustMarkType is provided. */
 	validAt?: number;
 }
 
@@ -112,4 +117,10 @@ export interface TrustMarkRecord {
 	readonly expiresAt?: number;
 	readonly active: boolean;
 	readonly revokedAt?: number;
+}
+
+/** History remains independent of the current registration record. */
+export interface SubordinateEventStorage {
+	append(issuer: EntityId, subject: EntityId, events: readonly SubordinateEvent[]): Promise<void>;
+	list(issuer: EntityId, subject: EntityId): Promise<readonly SubordinateEvent[]>;
 }

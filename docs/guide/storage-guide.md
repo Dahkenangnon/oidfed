@@ -9,6 +9,7 @@ Federation key custody, public-key publication, and rollover use the separate `F
 ```ts
 import type {
   SubordinateStorage,
+  SubordinateEventStorage,
   TrustMarkStorage,
 } from "@oidfed/authority";
 import type { CacheProvider, ReplayStore } from "@oidfed/core";
@@ -16,6 +17,7 @@ import type { CacheProvider, ReplayStore } from "@oidfed/core";
 interface StorageAdapter {
   readonly subordinates: SubordinateStorage;
   readonly trustMarks?: TrustMarkStorage;
+  readonly subordinateEvents?: SubordinateEventStorage;
   readonly replay?: ReplayStore;
   readonly cache?: CacheProvider;
   transaction<T>(operation: (tx: StorageTransaction) => Promise<T>): Promise<T>;
@@ -24,6 +26,7 @@ interface StorageAdapter {
 interface StorageTransaction {
   readonly subordinates: SubordinateStorage;
   readonly trustMarks?: TrustMarkStorage;
+  readonly subordinateEvents?: SubordinateEventStorage;
 }
 ```
 
@@ -115,3 +118,34 @@ The authority package exports the storage contracts and `MemoryStorageAdapter`. 
 - [ ] Cache is treated as disposable, non-authoritative data.
 - [ ] All authoritative state is shared across deployment processes and survives restarts.
 - [ ] Federation signer custody remains behind `FederationKeyLifecycleProvider`.
+
+## Subordinate events
+
+`subordinateEvents` is an optional history repository scoped by authority issuer and subordinate subject. Authorities advertising the Subordinate Events endpoint require it. Configure the memory implementation with `new MemoryStorageAdapter({ subordinateEvents: true })`.
+
+```ts
+interface SubordinateEventStorage {
+  append(issuer: EntityId, subject: EntityId, events: readonly SubordinateEvent[]): Promise<void>;
+  list(issuer: EntityId, subject: EntityId): Promise<readonly SubordinateEvent[]>;
+}
+```
+
+`SubordinateEvent` comes from `@oidfed/core`. Events use numeric epoch seconds in `iat`, an extensible `event` string, and optional `event_description` and `information_uri`. Preserve supplied occurrence times and append order, including ties and repeated event types. Return detached values. A caller must not be able to mutate persisted events through input objects or returned values.
+
+Keep history independent of the current subordinate row. Removing that row must not delete events, and re-registration extends its existing history. Do not backfill from `createdAt` or `updatedAt`, silently prune records, or truncate responses. Durable retention and issuer/subject isolation are responsibilities of the production adapter.
+
+Automatic capture occurs through `registerSubordinate`, `updateSubordinate`, and `revokeSubordinate`. Their callbacks use transaction-bound repositories and commit state and generated events together. An events-enabled adapter must supply `tx.subordinateEvents`; otherwise the authority fails before mutation. Rollback and serialization retries must leave no changes from failed attempts.
+
+Direct storage writes remain untracked. Applications using them can explicitly append in the same transaction:
+
+```ts
+await storage.transaction(async (tx) => {
+  if (!tx.subordinateEvents) throw new Error("Event storage is required");
+  await tx.subordinates.remove(subject);
+  await tx.subordinateEvents.append(issuer, subject, [
+    { iat: Math.floor(Date.now() / 1000), event: "revocation" },
+  ]);
+});
+```
+
+Only record `revocation` when the removal represents an actual revocation. Technical cleanup alone does not establish that meaning. The transaction callback may run again after a conflict; keep signing and network operations outside it.

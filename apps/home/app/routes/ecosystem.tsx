@@ -344,9 +344,16 @@ const specDocs = [
 	},
 	{
 		label: "OpenID Federation Extended Subordinate Listing 1.0",
-		status: "Draft 02",
+		status: "Draft 03",
 		tone: "warn" as const,
 		href: "https://openid.net/specs/openid-federation-extended-listing-1_0.html",
+		implemented: true,
+	},
+	{
+		label: "OpenID Federation Subordinate Events Endpoint 1.0",
+		status: "Draft 01",
+		tone: "warn" as const,
+		href: "https://openid.net/specs/openid-federation-subordinate-events-1_0.html",
 		implemented: true,
 	},
 	{

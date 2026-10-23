@@ -9,7 +9,7 @@ const httpsUrlNoFragment = z.url().refine(
 	(val) => {
 		try {
 			const u = new URL(val);
-			return u.protocol === "https:" && !u.hash;
+			return u.protocol === "https:" && !u.href.includes("#");
 		} catch {
 			return false;
 		}
@@ -21,6 +21,7 @@ export const FederationEntityMetadataSchema = z.looseObject({
 	federation_fetch_endpoint: httpsUrlNoFragment.optional(),
 	federation_list_endpoint: httpsUrlNoFragment.optional(),
 	federation_extended_list_endpoint: httpsUrlNoFragment.optional(),
+	federation_subordinate_events_endpoint: httpsUrlNoFragment.optional(),
 	federation_resolve_endpoint: httpsUrlNoFragment.optional(),
 	federation_trust_mark_status_endpoint: httpsUrlNoFragment.optional(),
 	federation_trust_mark_list_endpoint: httpsUrlNoFragment.optional(),
@@ -29,6 +30,7 @@ export const FederationEntityMetadataSchema = z.looseObject({
 	federation_fetch_endpoint_auth_methods: z.array(z.string()).optional(),
 	federation_list_endpoint_auth_methods: z.array(z.string()).optional(),
 	federation_extended_list_endpoint_auth_methods: z.array(z.string()).optional(),
+	federation_subordinate_events_endpoint_auth_methods: z.array(z.string()).optional(),
 	federation_resolve_endpoint_auth_methods: z.array(z.string()).optional(),
 	federation_trust_mark_status_endpoint_auth_methods: z.array(z.string()).optional(),
 	federation_trust_mark_list_endpoint_auth_methods: z.array(z.string()).optional(),

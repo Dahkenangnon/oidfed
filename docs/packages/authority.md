@@ -7,7 +7,7 @@
   <a href="https://packagephobia.com/result?p=@oidfed/authority"><img alt="install size" src="https://packagephobia.com/badge?p=@oidfed/authority" /></a>
 </p>
 
-`@oidfed/authority` runs Trust Anchors and Intermediate Authorities. It issues Subordinate Statements and serves federation fetch, list, extended-list, resolve, historical-key, and trust-mark endpoints through Web API handlers. Storage and federation signing keys come from injected providers.
+`@oidfed/authority` runs Trust Anchors and Intermediate Authorities. It issues Subordinate Statements and serves federation fetch, list, extended-list, subordinate-events, resolve, historical-key, and trust-mark endpoints through Web API handlers. Storage and federation signing keys come from injected providers.
 
 ## Usage
 
@@ -185,7 +185,26 @@ Federation endpoint HTTP routes are derived from the paths advertised in `metada
 
 ### Extended subordinate listing
 
-The endpoint implements Draft 02. Advertise `federation_extended_list_endpoint` in `metadata.federation_entity` to mount it, and leave `extendedListing.enabled` enabled. Enabling the handler alone does not add the metadata or route. See the [README compatibility note](../../README.md#specification-support) for Draft 03 differences.
+The endpoint implements Draft 03. Advertise `federation_extended_list_endpoint` in `metadata.federation_entity` to mount it, and leave `extendedListing.enabled` enabled. Enabling the handler alone does not add the metadata or route.
+
+Read `next` from each response and pass it unchanged as `from` to resume from that entry, inclusive. Treat it as an opaque string; its encoding is chosen by the server. Unknown cursors return HTTP 404 with the JSON error `page_not_found`.
+
+```typescript
+const first = await ta.listSubordinatesExtended({ limit: 50, claims: [] });
+if (first.ok && first.value.next !== undefined) {
+  const second = await ta.listSubordinatesExtended({ from: first.value.next, limit: 50, claims: [] });
+}
+```
+
+The same parameters are supported by `fetchExtendedSubordinatesList` in `@oidfed/core`. `trustMarkType` accepts a string or an array of strings. An entity matches if the authority has issued a still-valid mark of any requested type. On the wire, send one `trust_mark_type` parameter per type. Custom storage adapters must handle the array form of `ListFilter.trustMarkType` with the same OR semantics before paginating results.
+
+Both listing endpoints treat `trust_marked=true` as requiring a valid issued mark. They treat `false` as adding no mark restriction; any supplied `trust_mark_type` filter still applies. The base specification defines the true case and leaves the false case unspecified. Custom storage adapters should follow the same policy for `ListFilter.trustMarked`.
+
+Extended Listing time filters and audit timestamps use NumericDate seconds. Fractional and negative values are accepted, and `updated_after` and `updated_before` include records exactly at the boundary. Query values also accept decimal exponent notation. Values must be finite numbers.
+
+Omitting `claims` uses `defaultClaims`. An explicit `claims: []` sends `claims=` and suppresses the default statements. If a claim selection is present, `subordinate_statement` is returned only when requested; other requested statement claims are included when available.
+
+Leaf entities cannot advertise this endpoint.
 
 The `extendedListing` object supports:
 
@@ -215,3 +234,40 @@ A subordinate's metadata block in the storage record must not carry operational 
 ### Is explicit client registration handled automatically?
 
 Compose an `OidcProviderRole` from `@oidfed/oidc` into the entity's `roles`. The parent initializes its registration handler and dispatches matching requests through `handleRequest()`. Connect registration hooks to your OP's client store. Automatic registration still needs a call from the OP's authorization or PAR flow.
+
+## Subordinate event history
+
+The optional [Subordinate Events Endpoint, Draft 01](https://openid.net/specs/openid-federation-subordinate-events-1_0.html) publishes an authority's recorded history about its Immediate Subordinates. Both `TrustAnchor` and `Intermediate` support it. Enable event storage and advertise `federation_subordinate_events_endpoint` in the authority's own metadata:
+
+```ts
+const storage = new MemoryStorageAdapter({ subordinateEvents: true });
+
+// In the authority configuration's metadata.federation_entity:
+// federation_subordinate_events_endpoint: "https://ta.example.org/history"
+```
+
+The memory adapter is for development and tests. Production adapters implement the optional `subordinateEvents` repository in both the adapter and its transactions. Advertising the endpoint without event storage fails at construction.
+
+Use the authority instance's lifecycle methods to record changes automatically:
+
+| Method | Behavior |
+|---|---|
+| `registerSubordinate(record)` | Adds a registration and records `registration`, including its initial configuration. |
+| `updateSubordinate(subject, updates)` | Records changes to attested metadata, metadata policy, and registered public keys as `metadata_update`, `metadata_policy_update`, or `jwks_update`. |
+| `revokeSubordinate(subject)` | Removes the current registration and records `revocation`, preserving history. |
+| `recordSubordinateEvents(subject, events)` | Appends explicit observations or imported events, including `suspension` and custom event types. It does not change registration state. |
+| `getSubordinateEvents(subject)` | Returns a signed history JWT for local use. Throws for unknown history or unavailable storage. |
+
+State changes and generated events commit in one transaction. Registration captures a copy of the supplied record before asynchronous work, so later changes to the caller's object cannot change the stored identity or its event. No-op updates, reordered object properties, reordered key sets, and authority signing-key rotation do not produce subordinate update events. Initial registration produces only its registration event. Draft 01 §2.3.3's "at the same time" exclusion is interpreted as applying to initial updates within the registration operation; a later change retains its event even if the clock gives it the same timestamp.
+
+Direct `storage.subordinates` writes remain supported and do not automatically record events. Enabling event storage does not reconstruct past history from record timestamps. See the [storage contract](../guide/storage-guide.md#subordinate-events) for explicit transactional appends.
+
+The endpoint accepts GET with a required `sub` Entity Identifier. If authentication is configured through `federation_subordinate_events_endpoint_auth_methods`, it uses the existing federation client-authentication middleware and authenticated form POST. A `private_key_jwt` assertion names the authority's Entity Identifier as its audience, which can differ from the endpoint URL. The authenticated client and requested subject need not be identical.
+
+Unsupported methods receive HTTP 405 with `Allow` and a Federation JSON error containing `error: "invalid_request"` and `error_description`. This applies to both the anonymous handler and authenticated route. The advertised URL must have no fragment, including an empty trailing `#`.
+
+Successful responses are compact JWTs with media type `application/entity-events-statement+jwt` and JWT type `entity-events-statement+jwt`, signed with the authority's Federation Entity Key. They contain `iss`, `sub`, a fresh response `iat`, and `federation_registration_events`. The authority omits the optional `exp`; event occurrence times remain unchanged when a new response is issued.
+
+A current subordinate with no recorded events receives a signed empty history. Retained history remains available after removal and re-registration. A subject with neither a current record nor history receives HTTP 404 JSON `not_found`. Storage failures produce a server error, not empty history. These lookup and retention rules are oidfed policies; the draft does not prescribe them.
+
+History contains the authority's recorded observations and may be incomplete. A suspension event does not enforce suspension, and event history alone does not prove past trust-chain validity. The endpoint provides no pagination or notifications.

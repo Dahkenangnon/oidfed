@@ -10,6 +10,7 @@ import type {
 	FederationKeyLifecycleProvider,
 	FederationOptions,
 	Result,
+	SubordinateEvent,
 	TrustAnchorSet,
 	TrustMarkOwner,
 	TrustMarkRef,
@@ -42,11 +43,22 @@ import { SECURITY_HEADERS } from "./endpoints/helpers.js";
 import { buildHistoricalKeys, createHistoricalKeysHandler } from "./endpoints/historical-keys.js";
 import { createListHandler } from "./endpoints/list.js";
 import { createResolveHandler } from "./endpoints/resolve.js";
+import {
+	buildSubordinateEvents,
+	createSubordinateEventsHandler,
+	withSubordinateEventsMethodErrors,
+} from "./endpoints/subordinate-events.js";
 import { createTrustMarkHandler, createTrustMarkIssuanceHandler } from "./endpoints/trust-mark.js";
 import { createTrustMarkListHandler } from "./endpoints/trust-mark-list.js";
 import { createTrustMarkStatusHandler } from "./endpoints/trust-mark-status.js";
 import { InvalidAuthorityConfig } from "./errors.js";
-import type { ListFilter, StorageAdapter, SubordinateRecord } from "./storage/types.js";
+import type {
+	ListFilter,
+	StorageAdapter,
+	SubordinateRecord,
+	SubordinateRecordUpdate,
+} from "./storage/types.js";
+import { createSubordinateLifecycle } from "./subordinate-lifecycle.js";
 import {
 	assertMetadataValuesNotNull,
 	sanitizeSubordinateMetadata,
@@ -56,7 +68,8 @@ export type { AuthorityClientKeyProvider } from "./endpoints/context.js";
 
 /** Parameters accepted by {@link AuthorityServer.listSubordinatesExtended}. */
 export interface ExtendedSubordinateListingParams {
-	fromEntityId?: EntityId;
+	/** Opaque continuation value returned as `next` by the server. */
+	from?: string;
 	limit?: number;
 	updatedAfter?: number;
 	updatedBefore?: number;
@@ -64,14 +77,14 @@ export interface ExtendedSubordinateListingParams {
 	claims?: ReadonlyArray<string>;
 	entityType?: EntityType | ReadonlyArray<EntityType>;
 	trustMarked?: boolean;
-	trustMarkType?: string;
+	trustMarkType?: string | ReadonlyArray<string>;
 	intermediate?: boolean;
 }
 
 /** Decoded body returned by {@link AuthorityServer.listSubordinatesExtended}. */
 export interface ExtendedSubordinateListingResult {
 	immediate_subordinate_entities: Array<Record<string, unknown> & { id: string }>;
-	next_entity_id?: string;
+	next?: string;
 }
 
 function assertTrustAnchorHintsConfig(config: AuthorityConfig, isTrustAnchor: boolean): void {
@@ -143,6 +156,12 @@ export interface AuthorityConfig {
 }
 
 export interface AuthorityServer {
+	registerSubordinate(record: Omit<SubordinateRecord, "createdAt" | "updatedAt">): Promise<void>;
+	updateSubordinate(subject: EntityId, updates: SubordinateRecordUpdate): Promise<void>;
+	revokeSubordinate(subject: EntityId): Promise<void>;
+	recordSubordinateEvents(subject: EntityId, events: readonly SubordinateEvent[]): Promise<void>;
+	getSubordinateEvents(subject: EntityId): Promise<string>;
+
 	getEntityConfiguration(): Promise<string>;
 	getSubordinateStatement(sub: EntityId): Promise<string>;
 	listSubordinates(filter?: ListFilter): Promise<EntityId[]>;
@@ -234,6 +253,15 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 		);
 	}
 
+	if (
+		fedEntity.federation_subordinate_events_endpoint !== undefined &&
+		!config.storage.subordinateEvents
+	) {
+		throw new InvalidAuthorityConfig(
+			"The subordinate events endpoint requires storage.subordinateEvents",
+		);
+	}
+
 	// No metadata claim may carry a null leaf at any depth — omit the field instead.
 	assertMetadataValuesNotNull(config.metadata as Record<string, unknown>);
 
@@ -274,6 +302,7 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 		].filter(Boolean),
 	);
 
+	const lifecycle = createSubordinateLifecycle(ctx);
 	const meta = config.metadata.federation_entity;
 
 	function withAuth(
@@ -289,6 +318,7 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 		});
 	}
 
+	const subordinateEventsHandler = createSubordinateEventsHandler(ctx);
 	const ecHandler = createEntityConfigurationHandler(ctx);
 	const fetchHandler = createFetchHandler(ctx);
 	const listHandler = createListHandler(ctx);
@@ -370,6 +400,16 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 		withAuth(resolveHandler, meta.federation_resolve_endpoint_auth_methods),
 	);
 
+	addOptionalAuthorityRoute(
+		routeMap,
+		routeNames,
+		"federation_subordinate_events_endpoint",
+		meta.federation_subordinate_events_endpoint,
+		withSubordinateEventsMethodErrors(
+			withAuth(subordinateEventsHandler, meta.federation_subordinate_events_endpoint_auth_methods),
+		),
+	);
+
 	const router = async (request: Request): Promise<Response> => {
 		// Strip X-Authenticated-Entity to prevent spoofing — the auth wrapper re-adds it after verification
 		const headers = new Headers(request.headers);
@@ -405,6 +445,12 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 	};
 
 	return {
+		...lifecycle,
+		async getSubordinateEvents(subject: EntityId): Promise<string> {
+			const jwt = await buildSubordinateEvents(ctx, subject);
+			if (jwt === undefined) throw new Error(`Subordinate history '${subject}' not found`);
+			return jwt;
+		},
 		async getEntityConfiguration(): Promise<string> {
 			return buildEntityConfiguration(ctx);
 		},
@@ -426,8 +472,8 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 			params?: ExtendedSubordinateListingParams,
 		): Promise<Result<ExtendedSubordinateListingResult, FederationError>> {
 			const url = new URL(FederationEndpoint.ExtendedList, normalizedEntityId);
-			if (params?.fromEntityId !== undefined) {
-				url.searchParams.set("from_entity_id", params.fromEntityId);
+			if (params?.from !== undefined) {
+				url.searchParams.set("from", params.from);
 			}
 			if (params?.limit !== undefined) {
 				url.searchParams.set("limit", String(params.limit));
@@ -445,7 +491,7 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 				const joined = Array.from(params.claims)
 					.filter((c) => c.length > 0)
 					.join(",");
-				if (joined.length > 0) url.searchParams.set("claims", joined);
+				url.searchParams.set("claims", joined);
 			}
 			if (params?.entityType !== undefined) {
 				const types = Array.isArray(params.entityType) ? params.entityType : [params.entityType];
@@ -455,7 +501,9 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 				url.searchParams.set("trust_marked", params.trustMarked ? "true" : "false");
 			}
 			if (params?.trustMarkType !== undefined) {
-				url.searchParams.set("trust_mark_type", params.trustMarkType);
+				const types =
+					typeof params.trustMarkType === "string" ? [params.trustMarkType] : params.trustMarkType;
+				for (const type of types) url.searchParams.append("trust_mark_type", type);
 			}
 			if (params?.intermediate !== undefined) {
 				url.searchParams.set("intermediate", params.intermediate ? "true" : "false");
@@ -604,7 +652,7 @@ function advertisedEndpointPath(endpointName: string, endpoint: unknown): string
 			`metadata.federation_entity.${endpointName} must be an HTTPS URL without fragment.`,
 		);
 	}
-	if (url.protocol !== "https:" || url.hash) {
+	if (url.protocol !== "https:" || url.href.includes("#")) {
 		throw new InvalidAuthorityConfig(
 			`metadata.federation_entity.${endpointName} must be an HTTPS URL without fragment.`,
 		);
@@ -658,7 +706,6 @@ export class TrustAnchor {
 	public readonly entityId: EntityId;
 	private readonly routes = new Map<string, (request: Request) => Promise<Response>>();
 	private readonly server: AuthorityServer;
-	private readonly storage: StorageAdapter;
 
 	constructor(config: AuthorityConfig) {
 		if (config.authorityHints !== undefined && config.authorityHints.length > 0) {
@@ -670,7 +717,6 @@ export class TrustAnchor {
 			entityId: normalizeAuthorityEntityId(config.entityId),
 		};
 		this.entityId = normalizedConfig.entityId as EntityId;
-		this.storage = normalizedConfig.storage;
 
 		const context: EntityContext = {
 			entityId: this.entityId,
@@ -746,16 +792,22 @@ export class TrustAnchor {
 	async registerSubordinate(
 		record: Omit<SubordinateRecord, "createdAt" | "updatedAt">,
 	): Promise<void> {
-		const sanitizedMetadata = record.metadata
-			? sanitizeSubordinateMetadata(record.metadata)
-			: undefined;
-		const now = Math.floor(Date.now() / 1000);
-		await this.storage.subordinates.add({
-			...record,
-			...(sanitizedMetadata ? { metadata: sanitizedMetadata } : {}),
-			createdAt: now,
-			updatedAt: now,
-		});
+		return this.server.registerSubordinate(record);
+	}
+	async updateSubordinate(subject: EntityId, updates: SubordinateRecordUpdate): Promise<void> {
+		return this.server.updateSubordinate(subject, updates);
+	}
+	async revokeSubordinate(subject: EntityId): Promise<void> {
+		return this.server.revokeSubordinate(subject);
+	}
+	async recordSubordinateEvents(
+		subject: EntityId,
+		events: readonly SubordinateEvent[],
+	): Promise<void> {
+		return this.server.recordSubordinateEvents(subject, events);
+	}
+	async getSubordinateEvents(subject: EntityId): Promise<string> {
+		return this.server.getSubordinateEvents(subject);
 	}
 
 	async handleRequest(request: Request): Promise<Response> {
@@ -775,7 +827,6 @@ export class Intermediate {
 	public readonly entityId: EntityId;
 	private readonly routes = new Map<string, (request: Request) => Promise<Response>>();
 	private readonly server: AuthorityServer;
-	private readonly storage: StorageAdapter;
 
 	constructor(config: AuthorityConfig) {
 		if (config.authorityHints === undefined || config.authorityHints.length === 0) {
@@ -787,7 +838,6 @@ export class Intermediate {
 			entityId: normalizeAuthorityEntityId(config.entityId),
 		};
 		this.entityId = normalizedConfig.entityId as EntityId;
-		this.storage = normalizedConfig.storage;
 
 		const context: EntityContext = {
 			entityId: this.entityId,
@@ -866,16 +916,22 @@ export class Intermediate {
 	async registerSubordinate(
 		record: Omit<SubordinateRecord, "createdAt" | "updatedAt">,
 	): Promise<void> {
-		const sanitizedMetadata = record.metadata
-			? sanitizeSubordinateMetadata(record.metadata)
-			: undefined;
-		const now = Math.floor(Date.now() / 1000);
-		await this.storage.subordinates.add({
-			...record,
-			...(sanitizedMetadata ? { metadata: sanitizedMetadata } : {}),
-			createdAt: now,
-			updatedAt: now,
-		});
+		return this.server.registerSubordinate(record);
+	}
+	async updateSubordinate(subject: EntityId, updates: SubordinateRecordUpdate): Promise<void> {
+		return this.server.updateSubordinate(subject, updates);
+	}
+	async revokeSubordinate(subject: EntityId): Promise<void> {
+		return this.server.revokeSubordinate(subject);
+	}
+	async recordSubordinateEvents(
+		subject: EntityId,
+		events: readonly SubordinateEvent[],
+	): Promise<void> {
+		return this.server.recordSubordinateEvents(subject, events);
+	}
+	async getSubordinateEvents(subject: EntityId): Promise<string> {
+		return this.server.getSubordinateEvents(subject);
 	}
 
 	async handleRequest(request: Request): Promise<Response> {

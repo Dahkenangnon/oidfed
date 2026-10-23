@@ -1,7 +1,7 @@
 /**
  * Client-side helper for the federation Extended Subordinate Listing endpoint.
  * Performs the HTTPS GET, enforces URL/status/Content-Type, parses the JSON
- * response, and surfaces spec-defined error codes from 400 responses.
+ * response, and surfaces spec-defined error codes from 400 and 404 responses.
  */
 import {
 	DEFAULT_HTTP_TIMEOUT_MS,
@@ -12,6 +12,7 @@ import {
 } from "../constants.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
 import { isExactContentType } from "../http.js";
+import { readResponseBody } from "../http-response.js";
 import {
 	type ExtendedListRequestParams,
 	type ExtendedListResponse,
@@ -35,7 +36,7 @@ function buildUrl(
 			federationError(FederationErrorCode.InvalidRequest, `URL must use https scheme: ${endpoint}`),
 		);
 	}
-	if (url.hash) {
+	if (url.href.includes("#")) {
 		return err(
 			federationError(
 				FederationErrorCode.InvalidRequest,
@@ -46,8 +47,8 @@ function buildUrl(
 
 	if (!params) return ok(url);
 
-	if (params.fromEntityId !== undefined) {
-		url.searchParams.set("from_entity_id", params.fromEntityId);
+	if (params.from !== undefined) {
+		url.searchParams.set("from", params.from);
 	}
 	if (params.limit !== undefined) {
 		if (!Number.isInteger(params.limit) || params.limit <= 0) {
@@ -70,7 +71,7 @@ function buildUrl(
 		const joined = Array.from(params.claims)
 			.filter((c) => c.length > 0)
 			.join(",");
-		if (joined.length > 0) url.searchParams.set("claims", joined);
+		url.searchParams.set("claims", joined);
 	}
 	if (params.entityType !== undefined) {
 		const types = Array.isArray(params.entityType) ? params.entityType : [params.entityType];
@@ -80,24 +81,15 @@ function buildUrl(
 		url.searchParams.set("trust_marked", params.trustMarked ? "true" : "false");
 	}
 	if (params.trustMarkType !== undefined) {
-		url.searchParams.set("trust_mark_type", params.trustMarkType);
+		const types =
+			typeof params.trustMarkType === "string" ? [params.trustMarkType] : params.trustMarkType;
+		for (const type of types) url.searchParams.append("trust_mark_type", type);
 	}
 	if (params.intermediate !== undefined) {
 		url.searchParams.set("intermediate", params.intermediate ? "true" : "false");
 	}
 
 	return ok(url);
-}
-
-function readBody(response: Response, maxBytes: number): Promise<string> {
-	const contentLength = response.headers.get("content-length");
-	if (contentLength) {
-		const size = Number.parseInt(contentLength, 10);
-		if (Number.isFinite(size) && size > maxBytes) {
-			return Promise.resolve("");
-		}
-	}
-	return response.text();
 }
 
 /** Fetch the Extended Subordinate Listing endpoint and return the parsed response. */
@@ -119,31 +111,98 @@ export async function fetchExtendedSubordinatesList(
 
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), timeoutMs);
-	if (options?.signal) {
-		if (options.signal.aborted) {
-			clearTimeout(timer);
-			controller.abort();
-		} else {
-			options.signal.addEventListener(
-				"abort",
-				() => {
-					clearTimeout(timer);
-					controller.abort();
-				},
-				{ once: true },
-			);
-		}
-	}
+	const onAbort = () => controller.abort();
+	options?.signal?.addEventListener("abort", onAbort, { once: true });
+	if (options?.signal?.aborted) controller.abort();
 
-	let response: Response;
 	try {
-		response = await fetchFn(url, {
+		if (controller.signal.aborted) throw new DOMException("Request aborted", "AbortError");
+		const response = await fetchFn(url, {
 			signal: controller.signal,
 			headers: { Accept: MediaType.Json },
 		});
+
+		const contentType = response.headers.get("content-type");
+
+		if (response.status === 400 || response.status === 404) {
+			let code: string | undefined;
+			let description: string | undefined;
+			if (isExactContentType(contentType, MediaType.Json)) {
+				const body = await readResponseBody(response, maxBytes, controller.signal);
+				try {
+					const parsedBody = JSON.parse(body) as { error?: unknown; error_description?: unknown };
+					if (typeof parsedBody.error === "string") code = parsedBody.error;
+					if (typeof parsedBody.error_description === "string") {
+						description = parsedBody.error_description;
+					}
+				} catch {
+					// non-JSON body — leave code undefined
+				}
+			} else {
+				void response.body?.cancel().catch(() => {});
+			}
+			const knownCodes = new Set<string>(Object.values(FederationErrorCode));
+			if (response.status === 404 && code !== FederationErrorCode.PageNotFound) {
+				return err({
+					code: InternalErrorCode.Network,
+					description: `HTTP 404 from ${endpoint}`,
+				});
+			}
+			const mappedCode: FederationErrorCode = knownCodes.has(code ?? "")
+				? (code as FederationErrorCode)
+				: FederationErrorCode.InvalidRequest;
+			return err(
+				federationError(
+					mappedCode,
+					description ?? `HTTP ${response.status} from ${endpoint}${code ? ` (${code})` : ""}`,
+				),
+			);
+		}
+
+		if (!response.ok) {
+			void response.body?.cancel().catch(() => {});
+			return err({
+				code: InternalErrorCode.Network,
+				description: `HTTP ${response.status} from ${endpoint}`,
+			});
+		}
+
+		if (!isExactContentType(contentType, MediaType.Json)) {
+			void response.body?.cancel().catch(() => {});
+			const actual = contentType?.trim() || "<missing>";
+			return err({
+				code: InternalErrorCode.Network,
+				description: `Unexpected Content-Type '${actual}' from ${endpoint}, expected '${MediaType.Json}'`,
+			});
+		}
+
+		const body = await readResponseBody(response, maxBytes, controller.signal);
+
+		let raw: unknown;
+		try {
+			raw = JSON.parse(body);
+		} catch (cause) {
+			return err({
+				code: InternalErrorCode.Network,
+				description: `Extended list response is not valid JSON: ${endpoint}`,
+				cause,
+			});
+		}
+
+		const parsed = ExtendedListResponseSchema.safeParse(raw);
+		if (!parsed.success) {
+			return err({
+				code: InternalErrorCode.Network,
+				description: `Extended list response failed schema validation: ${parsed.error.message}`,
+			});
+		}
+
+		return ok(parsed.data);
 	} catch (cause) {
-		clearTimeout(timer);
-		if (cause instanceof DOMException && cause.name === "AbortError") {
+		if (
+			controller.signal.aborted ||
+			(cause instanceof DOMException && cause.name === "AbortError")
+		) {
 			return err({
 				code: InternalErrorCode.Timeout,
 				description: `Request aborted or timed out: ${endpoint}`,
@@ -155,87 +214,8 @@ export async function fetchExtendedSubordinatesList(
 			description: cause instanceof Error ? cause.message : `Network error fetching ${endpoint}`,
 			cause,
 		});
+	} finally {
+		clearTimeout(timer);
+		options?.signal?.removeEventListener("abort", onAbort);
 	}
-	clearTimeout(timer);
-
-	const contentType = response.headers.get("content-type");
-
-	if (response.status === 400) {
-		let body = "";
-		try {
-			body = await readBody(response, maxBytes);
-		} catch {
-			// fall through with empty body
-		}
-		let code: string | undefined;
-		let description: string | undefined;
-		if (isExactContentType(contentType, MediaType.Json)) {
-			try {
-				const parsedBody = JSON.parse(body) as { error?: unknown; error_description?: unknown };
-				if (typeof parsedBody.error === "string") code = parsedBody.error;
-				if (typeof parsedBody.error_description === "string") {
-					description = parsedBody.error_description;
-				}
-			} catch {
-				// non-JSON body — leave code undefined
-			}
-		}
-		const knownCodes = new Set<string>(Object.values(FederationErrorCode));
-		const mappedCode: FederationErrorCode = knownCodes.has(code ?? "")
-			? (code as FederationErrorCode)
-			: FederationErrorCode.InvalidRequest;
-		return err(
-			federationError(
-				mappedCode,
-				description ?? `HTTP 400 from ${endpoint}${code ? ` (${code})` : ""}`,
-			),
-		);
-	}
-
-	if (!response.ok) {
-		return err({
-			code: InternalErrorCode.Network,
-			description: `HTTP ${response.status} from ${endpoint}`,
-		});
-	}
-
-	if (!isExactContentType(contentType, MediaType.Json)) {
-		const actual = contentType?.trim() || "<missing>";
-		return err({
-			code: InternalErrorCode.Network,
-			description: `Unexpected Content-Type '${actual}' from ${endpoint}, expected '${MediaType.Json}'`,
-		});
-	}
-
-	let body: string;
-	try {
-		body = await readBody(response, maxBytes);
-	} catch (cause) {
-		return err({
-			code: InternalErrorCode.Network,
-			description: cause instanceof Error ? cause.message : `Failed to read response body`,
-			cause,
-		});
-	}
-
-	let raw: unknown;
-	try {
-		raw = JSON.parse(body);
-	} catch (cause) {
-		return err({
-			code: InternalErrorCode.Network,
-			description: `Extended list response is not valid JSON: ${endpoint}`,
-			cause,
-		});
-	}
-
-	const parsed = ExtendedListResponseSchema.safeParse(raw);
-	if (!parsed.success) {
-		return err({
-			code: InternalErrorCode.Network,
-			description: `Extended list response failed schema validation: ${parsed.error.message}`,
-		});
-	}
-
-	return ok(parsed.data);
 }

@@ -39,8 +39,11 @@ The workspace shortcuts `pnpm oidfed` and `pnpm cli` disable TLS certificate ver
 | `entity <entity-id>` | Fetch and display an entity configuration |
 | `fetch --issuer <url> --subject <url>` | Fetch a subordinate statement from an authority |
 | `list <entity-id>` | List subordinate entities of an authority |
+| `subordinate-events <entity-id> <subject> --jwks-file <path>` | Retrieve and verify an authority's recorded subordinate history |
 | `list-extended <entity-id>` | Paginated subordinate listing with audit timestamps and bulk claim retrieval (`/federation_extended_list`) |
 | `resolve <entity-id>` | Resolve trust chains for an entity |
+
+For `list-extended`, `--updated-after` and `--updated-before` accept finite NumericDate seconds, including fractional, negative, and decimal exponent values. Both time boundaries are inclusive.
 
 ### Trust
 
@@ -108,7 +111,12 @@ oidfed list-extended https://ta.example.org \
 
 # Resume from a cursor returned by the previous page
 oidfed list-extended https://ta.example.org \
-  --from https://leaf-100.example.org --limit 50
+  --from "$NEXT_CURSOR" --limit 50
+
+# Match either trust mark type and return entries without signed statements
+oidfed list-extended https://ta.example.org \
+  --trust-mark-type https://marks.example.org/alpha \
+  --trust-mark-type https://marks.example.org/beta --claims ""
 
 # Filter to entities updated in a time window
 oidfed list-extended https://ta.example.org \
@@ -141,6 +149,23 @@ oidfed expiry https://rp.example.com --trust-anchor https://ta.example.org
 
 `decode` inspects a token without verifying it. `verify` checks a signature against the selected keys; discovering those keys from the JWT issuer does not establish trust in that issuer. Use `chain` or `validate` with trusted anchors for federation trust validation.
 
+`list-extended` uses Extended Listing Draft 03. Set `NEXT_CURSOR` to the previous response's `next` string and pass it unchanged to `--from`; an unknown cursor reports `page_not_found`. Repeating `--trust-mark-type` matches any requested type with a valid issued mark. Omitted `--claims` uses the server defaults; `--claims ""` requests an empty claim selection.
+
 ## Command pattern
 
 Commands expose an asynchronous `handler(args, deps)` returning `Promise<Result<string>>` and a `register(program, deps)` function. Injected dependencies let tests run command handlers without network access.
+
+## Subordinate event history
+
+```bash
+oidfed --json subordinate-events https://ta.example.org https://client.example.org \
+  --jwks-file ./trusted-authority-jwks.json
+```
+
+The command implements Subordinate Events Draft 01. The JWKS file is required and must contain authority Federation Entity Keys obtained from a trusted source. The CLI verifies the authority's Entity Configuration with those keys before using its advertised `federation_subordinate_events_endpoint`, then verifies the history's signature, type, dates, issuer, and subject. It does not discover trust through federation chains automatically.
+
+The command rejects endpoint redirects, including for authenticated requests. The authority must advertise its final HTTPS endpoint URL without a fragment.
+
+For an endpoint requiring client authentication, add `--client-assertion-file ./assertion.jwt`. The file contains a `private_key_jwt` assertion signed with the client's Federation Entity Key, with the authority Entity Identifier as its audience. The CLI sends the request parameters and assertion in a form-encoded POST body.
+
+The JSON output contains verified statement claims, including the event array. An authority can return an empty history for a known subject. Events report recorded observations; a suspension entry does not itself enforce suspension or prove historical trust-chain validity.

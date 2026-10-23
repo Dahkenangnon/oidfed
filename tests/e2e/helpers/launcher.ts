@@ -176,7 +176,11 @@ export async function launchFederation(
 		const eid = rewriteUrl(entity.id);
 		const keys = getKeys(entity.id);
 		const metadata = addProtocolJwks(entity, rewriteMetadata(entity.metadata), keys);
-		const storage = new MemoryStorageAdapter({ trustMarks: true });
+		const storage = new MemoryStorageAdapter({
+			trustMarks: true,
+			subordinateEvents:
+				typeof metadata.federation_entity?.federation_subordinate_events_endpoint === "string",
+		});
 		authorityStorages.set(entity.id, storage);
 
 		const authorityHints = entity.authorityHints?.map((h) => entityId(rewriteUrl(h)));
