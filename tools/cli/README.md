@@ -21,7 +21,7 @@
 
 Command-line interface for inspecting, validating, and debugging OpenID Federation deployments — resolve trust chains, decode entity statements, verify signatures, and more.
 
-Implements command-line inspection and debugging utilities for the final [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) / [1.1](https://openid.net/specs/openid-federation-1_1.html) specifications, and [Extended Subordinate Listing 1.0](https://openid.net/specs/openid-federation-extended-listing-1_0.html) (tracks draft-02).
+Implements command-line inspection and debugging utilities for the final [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) / [1.1](https://openid.net/specs/openid-federation-1_1.html) specifications, and [Extended Subordinate Listing 1.0](https://openid.net/specs/openid-federation-extended-listing-1_0.html) (tracks draft-03).
 
 ## Install
 

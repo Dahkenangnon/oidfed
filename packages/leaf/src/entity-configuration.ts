@@ -139,6 +139,9 @@ export class Leaf {
 			if ("federation_list_endpoint" in fedEntity) {
 				throw new Error("Leaf entities MUST NOT publish federation_list_endpoint");
 			}
+			if ("federation_extended_list_endpoint" in fedEntity) {
+				throw new Error("Leaf entities MUST NOT publish federation_extended_list_endpoint");
+			}
 		}
 
 		const ttlSeconds = config.entityConfigurationTtlSeconds ?? DEFAULT_ENTITY_STATEMENT_TTL_SECONDS;

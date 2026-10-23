@@ -9,6 +9,7 @@ import {
 	type EntityId,
 	EntityType,
 	ExtendedListClaim,
+	ExtendedListQuerySchema,
 	FederationErrorCode,
 	nowSeconds,
 } from "@oidfed/core";
@@ -56,7 +57,6 @@ const DEFAULT_PAGE_SIZE = 100;
 const DEFAULT_MAX_STORE_PAGES = 16;
 const DEFAULT_CLAIMS: ReadonlyArray<string> = ["subordinate_statement"];
 const POSITIVE_INT = /^[1-9][0-9]*$/;
-const NON_NEG_INT = /^[0-9]+$/;
 
 function parsePositiveInt(value: string | null): number | null {
 	if (value === null) return null;
@@ -66,8 +66,8 @@ function parsePositiveInt(value: string | null): number | null {
 
 function parseNumericDate(value: string | null): number | null {
 	if (value === null) return null;
-	if (!NON_NEG_INT.test(value)) return Number.NaN;
-	return Number.parseInt(value, 10);
+	const parsed = ExtendedListQuerySchema.shape.updated_after.safeParse(value);
+	return parsed.success ? (parsed.data ?? Number.NaN) : Number.NaN;
 }
 
 function parseBooleanQuery(value: string | null): boolean | null | undefined {
@@ -135,9 +135,9 @@ export function createExtendedListHandler(
 				"trust_marked must be 'true' or 'false'",
 			);
 		}
-		const trustMarkType = params.get("trust_mark_type");
+		const trustMarkTypes = params.getAll("trust_mark_type");
 
-		if ((trustMarkedRaw !== null || trustMarkType !== null) && !ctx.storage.trustMarks) {
+		if ((trustMarkedRaw !== null || trustMarkTypes.length > 0) && !ctx.storage.trustMarks) {
 			return errorResponse(
 				400,
 				FederationErrorCode.UnsupportedParameter,
@@ -156,7 +156,7 @@ export function createExtendedListHandler(
 		}
 
 		// ── Extended-endpoint parameters
-		const fromEntityId = params.get("from_entity_id");
+		const from = params.get("from");
 		const limitParam = parsePositiveInt(params.get("limit"));
 		if (limitParam !== null && Number.isNaN(limitParam)) {
 			return errorResponse(
@@ -171,7 +171,7 @@ export function createExtendedListHandler(
 			return errorResponse(
 				400,
 				FederationErrorCode.InvalidRequest,
-				"updated_after must be a NumericDate (non-negative integer)",
+				"updated_after must be a finite NumericDate",
 			);
 		}
 		const updatedBeforeParam = parseNumericDate(params.get("updated_before"));
@@ -179,7 +179,7 @@ export function createExtendedListHandler(
 			return errorResponse(
 				400,
 				FederationErrorCode.InvalidRequest,
-				"updated_before must be a NumericDate (non-negative integer)",
+				"updated_before must be a finite NumericDate",
 			);
 		}
 
@@ -221,15 +221,11 @@ export function createExtendedListHandler(
 			);
 		}
 
-		// ── from_entity_id existence validation
-		if (fromEntityId !== null && fromEntityId !== "") {
-			const cursorRecord = await ctx.storage.subordinates.get(fromEntityId as EntityId);
+		// The wire cursor is opaque to callers; this implementation uses the store bookmark.
+		if (from !== null) {
+			const cursorRecord = await ctx.storage.subordinates.get(from as EntityId);
 			if (!cursorRecord) {
-				return errorResponse(
-					400,
-					FederationErrorCode.EntityIdNotFound,
-					"from_entity_id does not match any subordinate",
-				);
+				return errorResponse(404, FederationErrorCode.PageNotFound, "Unknown continuation cursor");
 			}
 		}
 
@@ -238,9 +234,9 @@ export function createExtendedListHandler(
 		if (rawEntityTypes.length > 0) filter.entityTypes = rawEntityTypes as EntityType[];
 		if (intermediate === true || intermediate === false) filter.intermediate = intermediate;
 		const now = nowSeconds(ctx.options?.clock);
-		if (trustMarked === true || trustMarked === false) filter.trustMarked = trustMarked;
-		if (trustMarkType !== null) filter.trustMarkType = trustMarkType;
-		if (trustMarked !== null || trustMarkType !== null) filter.validAt = now;
+		if (trustMarked === true) filter.trustMarked = true;
+		if (trustMarkTypes.length > 0) filter.trustMarkType = trustMarkTypes;
+		if (trustMarked === true || trustMarkTypes.length > 0) filter.validAt = now;
 
 		const requestedLimit = limitParam ?? defaultPageSize;
 		const effectiveLimit = Math.min(requestedLimit, maxPageSize);
@@ -251,8 +247,7 @@ export function createExtendedListHandler(
 
 		try {
 			const accumulated: SubordinateRecord[] = [];
-			let storeCursor: EntityId | undefined =
-				fromEntityId !== null && fromEntityId !== "" ? (fromEntityId as EntityId) : undefined;
+			let storeCursor: EntityId | undefined = from !== null ? (from as EntityId) : undefined;
 			let nextEntityId: EntityId | undefined;
 			let pagesFetched = 0;
 			let storeExhausted = false;
@@ -330,7 +325,7 @@ export function createExtendedListHandler(
 			}
 
 			const body: Record<string, unknown> = { immediate_subordinate_entities: entries };
-			if (nextEntityId !== undefined) body.next_entity_id = nextEntityId;
+			if (nextEntityId !== undefined) body.next = nextEntityId;
 
 			return jsonResponse(body);
 		} catch (error) {

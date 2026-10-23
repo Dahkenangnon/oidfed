@@ -37,13 +37,17 @@ const positiveIntQueryValue = z
 
 const numericDateQueryValue = z
 	.string()
-	.regex(/^[0-9]+$/, "must be a NumericDate (non-negative integer)")
-	.transform((v) => Number.parseInt(v, 10))
+	.refine(
+		(value) => value === value.trim() && /^-?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$/.test(value),
+		"must be a NumericDate",
+	)
+	.transform(Number)
+	.pipe(z.number().finite())
 	.optional();
 
 /** Server-side query schema. Accepts raw HTTP query strings and coerces them into typed values. */
 export const ExtendedListQuerySchema = z.object({
-	from_entity_id: EntityIdSchema.optional(),
+	from: z.string().optional(),
 	limit: positiveIntQueryValue,
 	updated_after: numericDateQueryValue,
 	updated_before: numericDateQueryValue,
@@ -51,7 +55,7 @@ export const ExtendedListQuerySchema = z.object({
 	claims: z.array(z.string()).optional(),
 	entity_type: z.array(z.string()).optional(),
 	trust_marked: booleanQueryValue,
-	trust_mark_type: z.string().optional(),
+	trust_mark_type: z.union([z.string(), z.array(z.string())]).optional(),
 	intermediate: booleanQueryValue,
 });
 
@@ -59,14 +63,14 @@ export const ExtendedListQuerySchema = z.object({
 export const ExtendedListEntitySchema = z.looseObject({
 	id: EntityIdSchema,
 	subordinate_statement: z.string().optional(),
-	registered: z.number().int().nonnegative().optional(),
-	updated: z.number().int().nonnegative().optional(),
+	registered: z.number().finite().optional(),
+	updated: z.number().finite().optional(),
 });
 
 /** Top-level response shape. */
 export const ExtendedListResponseSchema = z.object({
 	immediate_subordinate_entities: z.array(ExtendedListEntitySchema),
-	next_entity_id: EntityIdSchema.optional(),
+	next: z.string().optional(),
 });
 
 export type ExtendedListQuery = z.infer<typeof ExtendedListQuerySchema>;
@@ -75,7 +79,8 @@ export type ExtendedListResponse = z.infer<typeof ExtendedListResponseSchema>;
 
 /** Client-facing request parameters; serialised into URL query string by the fetch helper. */
 export interface ExtendedListRequestParams {
-	fromEntityId?: string;
+	/** Opaque continuation value returned as `next` by the server. */
+	from?: string;
 	limit?: number;
 	updatedAfter?: number;
 	updatedBefore?: number;
@@ -83,6 +88,6 @@ export interface ExtendedListRequestParams {
 	claims?: ReadonlyArray<ExtendedListClaim | string>;
 	entityType?: string | ReadonlyArray<string>;
 	trustMarked?: boolean;
-	trustMarkType?: string;
+	trustMarkType?: string | ReadonlyArray<string>;
 	intermediate?: boolean;
 }
