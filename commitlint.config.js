@@ -4,11 +4,12 @@ export default {
 		{
 			rules: {
 				"reference-position": ({ subject = "" }) => {
-					const description = subject.replace(/^(?:#\d+\s+)+(?=\S)/, "");
+					const description = subject.replace(/\s+\(#\d+\)$/, "");
 					const withoutUrls = description.replace(/\b[a-z][a-z\d+.-]*:\/\/\S+/gi, "");
 					return [
-						!/(?:^|\W)#\d+\b/.test(withoutUrls),
-						"put numbered references immediately after type(scope):, before the description",
+						(description === subject || description.trim().length > 0) &&
+							!/(?:^|\W)#\d+\b/.test(withoutUrls),
+						"put one numbered reference at the end of the subject as (#123)",
 					];
 				},
 			},

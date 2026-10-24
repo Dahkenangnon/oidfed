@@ -47,11 +47,11 @@ chore(deps): update dependencies
 
 For package changes, use the package name without `@oidfed/`, such as `core`, `authority`, or `cli`. For repository changes, use a scope such as `repo`, `deps`, or `ci`. [commitlint.config.js](commitlint.config.js) lists the allowed types and scopes.
 
-Keep the full subject at 72 characters or fewer, including the type, scope, spaces, and references. Put supporting details in the body and wrap body lines at 120 characters. Short subjects are easier to scan in GitHub's file list, where the available width depends on the screen size.
+Keep the full subject at 72 characters or fewer, including the type, scope, spaces, and references. Aim for about 50 characters, including the trailing PR reference, so it is easier to see in GitHub's file list. GitHub truncates subjects to fit the available width; no repository setting can guarantee that the reference stays visible on every screen. Put supporting details in the body and wrap body lines at 120 characters.
 
 The local commit hook and CI run commitlint to enforce syntax and length. These checks also apply to bot-authored commits. If a generated subject is too long, shorten that commit's subject; editing only the final squash title leaves the original commits unchanged for PR checks.
 
-Development commits do not need a PR number. If a subject includes numbered references such as `#116`, commitlint requires them immediately after the conventional prefix, before the description. The final squash commit uses the PR reference format described below.
+Development commits do not need a PR number. If a subject includes a numbered reference, commitlint allows exactly one at the end, in the form `(#116)`. Leading, embedded, and duplicate references are rejected. Keep other issue references in the body.
 
 ## Pull requests
 
@@ -59,15 +59,17 @@ Keep each PR focused on one change and fill out the [PR template](.github/pull_r
 
 ### Merging in GitHub
 
-Choose **Squash and merge**, then edit the final commit message before confirming the merge.
+Keep the PR title conventional and omit its own PR number. Choose **Squash and merge**, then review the generated commit message before confirming the merge.
 
-Put the actual PR number immediately after the conventional prefix:
+Use one trailing PR reference:
 
 ```text
-feat(authority): #116 add subordinate events
+feat(authority): add subordinate events (#116)
 ```
 
-Include the PR reference when counting the 72-character subject limit. If GitHub puts a reference such as `(#116)` at the end, move it to the position shown above.
+Keep GitHub's generated `(#116)` suffix and shorten the description if needed. Include the suffix when counting the subject length. Do not add the number after the conventional prefix or repeat it in the PR title.
+
+For consistent squash subjects, use **Settings → General → Pull Requests → Allow squash merging → Default to pull request title**. GitHub uses the PR title and number as the final subject.
 
 Use the commit body to explain the change and retain issue-closing references:
 
