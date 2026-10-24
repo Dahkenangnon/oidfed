@@ -8,7 +8,7 @@ export default {
 					const withoutUrls = description.replace(/\b[a-z][a-z\d+.-]*:\/\/\S+/gi, "");
 					return [
 						(description === subject || description.trim().length > 0) &&
-							!/(?:^|\W)#\d+\b/.test(withoutUrls),
+							!/(?:^|\W|[\w.-]+\/[\w.-]+)#\d+\b/.test(withoutUrls),
 						"put one numbered reference at the end of the subject as (#123)",
 					];
 				},

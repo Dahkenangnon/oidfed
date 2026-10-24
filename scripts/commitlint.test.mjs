@@ -34,12 +34,14 @@ test("one trailing reference and issue-closing body footers are accepted", () =>
 
 test("development commits can omit a subject reference", () => {
 	assert.doesNotThrow(() => lint("fix(core): validate event dates\n\nCloses #115"));
+	assert.doesNotThrow(() => lint("fix(core): support C#12 clients"));
 });
 
 test("URL fragments are not treated as issue references", () => {
 	assert.doesNotThrow(() => lint("fix(core): preserve https://example.com/#123 fragments"));
 	assert.doesNotThrow(() => lint("fix(core): preserve https://example.com/#123 (#116)"));
 	assert.doesNotThrow(() => lint("fix(core): preserve https://example.com/(#123)"));
+	assert.doesNotThrow(() => lint("fix(core): use https://github.com/owner/repo#115 (#116)"));
 });
 
 test("leading, embedded, and bracketed references are rejected", () => {
@@ -50,6 +52,19 @@ test("leading, embedded, and bracketed references are rejected", () => {
 		"fix(core): address #115 validation failures",
 		"fix(core): validate event dates #115",
 		"fix(core): preserve https://example.com/#123 [#115]",
+	])
+		assert.throws(
+			() => lint(subject),
+			(error) => error.stdout.includes("reference-position"),
+		);
+});
+
+test("repository-qualified references are rejected outside the trailing reference", () => {
+	for (const subject of [
+		"fix(core): follow owner/repo#115 (#116)",
+		"fix(core): follow owner/repo#115",
+		"fix(core): follow owner-name/repo.name#115 (#116)",
+		"fix(core): follow owner/repo_name#115 (#116)",
 	])
 		assert.throws(
 			() => lint(subject),
