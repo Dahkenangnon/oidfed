@@ -1,3 +1,4 @@
+import type { Result } from "../errors.js";
 import type { ReplayStore } from "../replay-store.js";
 import type { EntityCollectionEntity } from "../schemas/entity-collection.js";
 import type { JWKSet } from "../schemas/jwk.js";
@@ -6,7 +7,10 @@ import type { Clock, EntityId, FederationOptions, TrustAnchorSet } from "../type
 /** Evidence is local server state; it is never returned as collection data. */
 export interface CollectionEntry {
 	entity: EntityCollectionEntity;
-	chainExpiresAt: number;
+	/** Application or collector eligibility deadline, in seconds since the epoch. */
+	expiresAt: number;
+	/** Present only when core collected a valid chain for this entry. */
+	chainExpiresAt?: number;
 	verifiedMarks: readonly { type: string; expiresAt: number }[];
 }
 export interface EntityCollectionSnapshot {
@@ -38,8 +42,37 @@ export interface CollectionAuthentication {
 	getClientFederationJwks?: (client: EntityId) => Promise<JWKSet | undefined>;
 	allowedAlgorithms?: readonly string[];
 }
+/** Informational input from an application-owned collector; core verifies mark evidence. */
+export interface EntityCollectionCandidate {
+	entity: EntityCollectionEntity;
+	expiresAt: number;
+}
+
+/** Refresh context; network calls through options share the refresh limits and cancellation. */
+export interface EntityCollectionCollectorContext {
+	readonly trustAnchor: EntityId;
+	readonly trustAnchorJwks: JWKSet;
+	readonly options: Readonly<FederationOptions>;
+	readonly signal: AbortSignal;
+}
+
+/** Return the complete candidate set; failures leave the previously published snapshot intact. */
+export type EntityCollectionCollector = (
+	context: EntityCollectionCollectorContext,
+) => Promise<Result<readonly EntityCollectionCandidate[]>>;
+
+/** Run once per entry during refresh; an explicit deadline can only shorten eligibility. */
+export type EntityCollectionFilter = (
+	entry: Readonly<CollectionEntry>,
+	context: EntityCollectionCollectorContext,
+) => boolean | { expiresAt: number } | Promise<boolean | { expiresAt: number }>;
+
 export interface EntityCollectionConfig {
 	trustAnchors: TrustAnchorSet;
+	/** Defaults to core's validated federation traversal. */
+	collector?: EntityCollectionCollector;
+	/** Additional snapshot-time restriction, applied after mark verification. */
+	filter?: EntityCollectionFilter;
 	/** Optional serving URL, including fixed query components. */
 	endpoint?: string;
 	store?: EntityCollectionStore;

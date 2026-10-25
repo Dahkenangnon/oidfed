@@ -238,7 +238,7 @@ export class EntityCollectionService {
 				});
 			let validUntil = now + (this.config.cursorTtlSeconds ?? 900);
 			const entries = snapshot.entries.filter((entry) => {
-				if (entry.chainExpiresAt <= now) return false;
+				if (entry.expiresAt <= now || (entry.chainExpiresAt ?? Infinity) <= now) return false;
 				if (
 					request.entityType?.length &&
 					!request.entityType.some((type) => entry.entity.entity_types?.includes(type))
@@ -252,7 +252,8 @@ export class EntityCollectionService {
 				if (marks.some((matches) => !matches.length)) return false;
 				validUntil = Math.min(
 					validUntil,
-					entry.chainExpiresAt,
+					entry.expiresAt,
+					entry.chainExpiresAt ?? Infinity,
 					...marks.map((matches) => Math.max(...matches.map((mark) => mark.expiresAt))),
 				);
 				return true;

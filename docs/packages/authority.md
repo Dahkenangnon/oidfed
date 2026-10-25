@@ -275,3 +275,5 @@ History contains the authority's recorded observations and may be incomplete. A 
 ## Entity Collection
 
 To serve the optional Draft 01 endpoint from a Trust Anchor or Intermediate, supply `collection` configuration and publish `federation_collection_endpoint`. Use the `collection` property to refresh snapshots and query the shared core service in process. Snapshots use `storage.collections` or `collection.store`, separately from registration records. See the [Entity Collection guide](../guide/entity-collection.md).
+
+The `collection.collector` and `collection.filter` callbacks configure the shared service's collection policy. Authorities can use application inventories or additional restrictions while keeping registration records separate. See [collection policy](../guide/entity-collection.md#collection-policy).

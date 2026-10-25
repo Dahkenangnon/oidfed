@@ -97,6 +97,36 @@ describe("collection", () => {
 		expect((await handler({ endpoint, limit: -1 }, f.deps)).ok).toBe(false);
 		expect(f.calls).toHaveLength(0);
 	});
+	it.each(["-1", "1.5", "NaN", "9007199254740992"])(
+		"reports invalid limit %s before making a request",
+		async (value) => {
+			const f = fixture();
+			const stderr: string[] = [];
+			const program = new Command()
+				.exitOverride()
+				.configureOutput({ writeErr: (text) => stderr.push(text) });
+			register(program, f.deps);
+			await expect(
+				program.parseAsync(["collection", endpoint, "--limit", value], { from: "user" }),
+			).rejects.toMatchObject({ code: "commander.invalidArgument" });
+			expect(stderr.join("")).toContain("Expected a nonnegative safe integer");
+			expect(f.calls).toHaveLength(0);
+		},
+	);
+	it.each(["0", "9007199254740991"])("accepts valid limit %s", async (value) => {
+		const f = fixture();
+		const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+		try {
+			const program = new Command().exitOverride();
+			register(program, f.deps);
+			await program.parseAsync(["collection", endpoint, "--limit", value], { from: "user" });
+			expect(f.calls).toHaveLength(1);
+			expect(f.calls[0]?.url.searchParams.get("limit")).toBe(value);
+		} finally {
+			output.mockRestore();
+		}
+	});
+
 	it("preserves repeated command options and prints the informational response", async () => {
 		const f = fixture();
 		const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);

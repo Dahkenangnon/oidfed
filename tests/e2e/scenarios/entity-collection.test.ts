@@ -1,10 +1,12 @@
 import {
 	createTrustAnchorSet,
+	EntityCollectionEntitySchema,
 	EntityCollectionService,
 	entityId,
 	fetchEntityCollection,
 	InternalErrorCode,
 	JwkSigner,
+	ok,
 	signEntityStatement,
 } from "@oidfed/core";
 import express from "express";
@@ -131,6 +133,72 @@ describe("Entity Collection over HTTPS", () => {
 			ok: true,
 			value: { entities: [] },
 		});
+	});
+
+	it("serves application inventories through the shared collector and filter APIs", async () => {
+		const { entities, server } = bed();
+		const authority = getAuthorityEntity(entities, "https://ta.ofed.test");
+		const anchor = entityId(`https://ta.ofed.test:${server.port}`);
+		const origin = `https://inventory.ofed.test:${server.port}`;
+		const now = Math.floor(Date.now() / 1000);
+		let collected = 0;
+		let filtered = 0;
+		const service = new EntityCollectionService({
+			trustAnchors: createTrustAnchorSet([
+				{ entityId: anchor, jwks: { keys: [authority.keys.public] } },
+			]),
+			collector: async (context) => {
+				collected++;
+				expect(context.trustAnchor).toBe(anchor);
+				return ok(
+					["visible", "excluded"].map((name) => ({
+						entity: EntityCollectionEntitySchema.parse({
+							entity_id: `https://${name}.example`,
+							entity_types: ["custom"],
+						}),
+						expiresAt: now + 300,
+					})),
+				);
+			},
+			filter: (entry) => {
+				filtered++;
+				return entry.entity.entity_id === "https://excluded.example"
+					? false
+					: { expiresAt: now + 60 };
+			},
+		});
+		const app = express();
+		app.use(express.text({ type: "application/x-www-form-urlencoded" }));
+		app.all("/collect", async (req, res) => {
+			const response = await service.handleRequest(
+				new Request(`${origin}${req.originalUrl}`, {
+					method: req.method,
+					headers: { "content-type": req.get("content-type") ?? "" },
+					...(req.method === "POST" ? { body: String(req.body ?? "") } : {}),
+				}),
+			);
+			response.headers.forEach((value, name) => {
+				res.setHeader(name, value);
+			});
+			res.status(response.status).end(await response.text());
+		});
+		server.addEntity(origin, app);
+		expect((await service.refresh(anchor)).ok).toBe(true);
+		for (const method of ["GET", "POST"] as const) {
+			const result = await fetchEntityCollection(
+				`${origin}/collect`,
+				{ trustAnchor: anchor, entityType: ["custom"] },
+				{ method },
+			);
+			expect(result).toMatchObject({
+				ok: true,
+				value: { entities: [{ entity_id: "https://visible.example" }] },
+			});
+			if (result.ok) expect(result.value.entities).toHaveLength(1);
+		}
+		expect(collected).toBe(1);
+		expect(filtered).toBe(2);
+		expect((await service.store.getCurrent(anchor))?.entries[0]?.chainExpiresAt).toBeUndefined();
 	});
 
 	it("accepts framework-generated JSON content types for success and errors", async () => {

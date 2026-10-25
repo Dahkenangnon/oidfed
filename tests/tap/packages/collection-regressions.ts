@@ -495,6 +495,7 @@ export default function collectionRegressions(QUnit: QUnit): void {
 									},
 								},
 							}),
+							expiresAt: 5000,
 							chainExpiresAt: 5000,
 							verifiedMarks: [],
 						},

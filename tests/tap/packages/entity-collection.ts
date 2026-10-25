@@ -62,6 +62,7 @@ async function seed() {
 					federation_entity: { organization_name: "Organization" },
 				},
 			},
+			expiresAt: 5000,
 			chainExpiresAt: 5000,
 			verifiedMarks:
 				index === 0
@@ -104,7 +105,15 @@ async function query(
 }
 
 async function federation(
-	markMode: "none" | "valid" | "expired" | "wrong-subject" | "wrong-type" | "unauthorized" = "none",
+	markMode:
+		| "none"
+		| "valid"
+		| "expired"
+		| "wrong-subject"
+		| "wrong-type"
+		| "unauthorized"
+		| "invalid-signature"
+		| "malformed" = "none",
 ) {
 	const rootKey = await generateSigningKey("ES256");
 	const middleKey = await generateSigningKey("ES256");
@@ -209,14 +218,20 @@ async function federation(
 			exp: markMode === "expired" ? 1100 : 3000,
 			trust_mark_type: markMode === "wrong-type" ? "two" : "one",
 		},
-		new JwkSigner(issuerKey.privateKey),
+		new JwkSigner(markMode === "invalid-signature" ? leafKey.privateKey : issuerKey.privateKey),
 		{ typ: "trust-mark+jwt" },
 	);
 	const leaf = new Leaf({
 		entityId: leafId,
 		authorityHints: [middleId],
 		keyProvider: provider(leafKey),
-		...(markMode !== "none" ? { trustMarks: [{ trust_mark_type: "one", trust_mark: mark }] } : {}),
+		...(markMode !== "none"
+			? {
+					trustMarks: [
+						{ trust_mark_type: "one", trust_mark: markMode === "malformed" ? "not-a-jwt" : mark },
+					],
+				}
+			: {}),
 		options: { clock },
 		collection,
 		metadata: {
@@ -751,10 +766,18 @@ export default async function entityCollectionTests(QUnit: QUnit): Promise<void>
 					"wrong-subject",
 					"wrong-type",
 					"unauthorized",
+					"invalid-signature",
+					"malformed",
 				] as const) {
 					const f = await federation(mode);
 					const refreshed = await f.root.collection!.refresh(anchor);
 					assert.true(refreshed.ok, `${mode}: ${JSON.stringify(refreshed)}`);
+					const unfiltered = await query(f.root.collection!);
+					assert.equal(
+						unfiltered.entities.some((entity) => String(entity.entity_id) === leafId),
+						mode !== "wrong-type" && mode !== "malformed",
+						`${mode}: mark trust is separate from mandatory reference syntax`,
+					);
 					const response = await query(f.root.collection!, { trustMarkType: ["one"] });
 					assert.equal(
 						response.entities.length,

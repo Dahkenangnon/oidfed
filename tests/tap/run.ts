@@ -14,6 +14,7 @@ export default async (QUnit: QUnit, done: (stats: QUnit.DoneDetails) => void) =>
 		import("./packages/subordinate-events.js"),
 		import("./packages/entity-collection.js"),
 		import("./packages/collection-regressions.js"),
+		import("./packages/collection-policies.js"),
 	]);
 	for (const { default: module } of modules) {
 		await module(QUnit);

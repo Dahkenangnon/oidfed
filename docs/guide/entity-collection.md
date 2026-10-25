@@ -62,11 +62,77 @@ A Federation Entity publishing the endpoint should also publish a Resolve endpoi
 
 The anchor rules come from [§3.3.1](https://openid.net/specs/openid-federation-entity-collection-1_0-01.html#section-3.3.1).
 
+## Collection policy
+
+The default collector walks the federation and requires valid chains. You can replace it with a `collector` callback to use an application-owned inventory or another collection method, as permitted by [§5.1](https://openid.net/specs/openid-federation-entity-collection-1_0-01.html#section-5.1). The responder chooses which entities it exposes under [§5.3](https://openid.net/specs/openid-federation-entity-collection-1_0-01.html#section-5.3).
+
+A custom collector returns `Result<readonly EntityCollectionCandidate[]>`. Each candidate contains an `entity` object and a finite `expiresAt` value in seconds since the epoch. Core supplies the snapshot identifier and refresh timestamp, validates the output, sorts by Entity Identifier, and publishes it atomically. Duplicate identifiers, malformed entries, unsupported evidence fields, and candidate sets above `maxEntities` fail refresh and preserve the previous snapshot.
+
+For example, an independent application can publish an inventory without collecting trust chains for its entries:
+
+```ts
+import {
+  createTrustAnchorSet,
+  EntityCollectionEntitySchema,
+  EntityCollectionService,
+  entityId,
+  nowSeconds,
+  ok,
+} from "@oidfed/core";
+
+const anchor = entityId("https://anchor.example");
+const trustAnchors = createTrustAnchorSet([
+  { entityId: anchor, jwks: anchorPublicJwks },
+]);
+
+const directory = new EntityCollectionService({
+  trustAnchors,
+  collector: async ({ options }) => ok([
+    {
+      entity: EntityCollectionEntitySchema.parse({
+        entity_id: "https://rp.example",
+        entity_types: ["openid_relying_party"],
+        entity_infos: {
+          openid_relying_party: { display_name: "Example service" },
+        },
+      }),
+      expiresAt: nowSeconds(options.clock) + 300,
+    },
+  ]),
+});
+```
+
+The callback receives the selected `trustAnchor`, its pinned `trustAnchorJwks`, effective `options`, and a cancellation `signal`. Use this context to select entities associated with the requested anchor; the inventory source is responsible for that association. Network calls through the supplied options share the refresh budget and redirect policy. Core rejects unsupported anchors before invoking the callback.
+
+Custom entries do not gain chain evidence. If they include Trust Marks, core confirms publication in the entity's self-signed Entity Configuration and verifies each qualifying mark using trusted issuer keys in the selected anchor context. The publication check alone does not establish a chain for the entry. Collectors cannot supply `verifiedMarks` or `chainExpiresAt` as proof. Verification happens during refresh; queries never fetch or verify marks on demand.
+
+Use `filter` for an additional application restriction. It runs once per eligible entry after mark verification, with a detached, frozen entry and the same anchor context. Return `false` to exclude an entry, `true` to retain it, or `{ expiresAt }` to shorten its eligibility. Filtering an intermediate does not prevent collection of its descendants.
+
+This example keeps entries with a particular verified mark and expires them when that evidence expires:
+
+```ts
+const curated = new EntityCollectionService({
+  trustAnchors,
+  filter: (entry) => {
+    const matches = entry.verifiedMarks.filter(
+      (mark) => mark.type === "https://marks.example/member",
+    );
+    return matches.length
+      ? { expiresAt: Math.max(...matches.map((mark) => mark.expiresAt)) }
+      : false;
+  },
+});
+```
+
+Filters may be asynchronous, so an application can consult its Resolve service or other policy data using the refresh context. Results are stored in the snapshot. If the policy depends on evidence that expires, return its expiry; the filter cannot extend the candidate's deadline. Filters and collectors never run while serving pages.
+
+A callback failure or cancellation prevents publication. Cancellation releases the refresh queue even if a callback has not settled. Callbacks are trusted application code and must use the supplied signal to stop their own I/O. Shorten entry lifetimes or refresh explicitly when inventory or policy changes.
+
 ## Refresh and storage
 
-Refresh walks the configured anchor's subordinate hierarchy and validates chains against pinned anchor keys. It collects informational metadata from Entity Configurations. The built-in collector includes only entities with a valid chain at refresh time, an oidfed policy permitted by [§5.3](https://openid.net/specs/openid-federation-entity-collection-1_0-01.html#section-5.3).
+By default, refresh walks the configured anchor's subordinate hierarchy and validates chains against pinned anchor keys. It collects informational metadata from Entity Configurations. The default collector includes only entities with a valid chain at refresh time, an oidfed policy permitted by [§5.3](https://openid.net/specs/openid-federation-entity-collection-1_0-01.html#section-5.3).
 
-The collector excludes invalid entities. If a branch is unreachable, traversal is incomplete, a budget runs out, or the caller cancels, refresh fails and keeps the previous snapshot. The service publishes snapshots atomically and runs refreshes for each anchor in sequence. Queries read stored snapshots without starting traversal or a scheduler. The `last_updated` value records the successful refresh time and stays unchanged when a page is read.
+The default collector excludes entities with invalid chains or malformed Entity Configurations. An expired or untrusted Trust Mark does not invalidate an otherwise valid chain for collection purposes; it cannot satisfy a mark filter. If a branch is unreachable, traversal is incomplete, a budget runs out, or the caller cancels, refresh fails and keeps the previous snapshot. The service publishes snapshots atomically and runs refreshes for each anchor in sequence. Queries read stored snapshots without starting traversal or a scheduler. The `last_updated` value records the successful refresh time and stays unchanged when a page is read.
 
 Refresh checks alternate valid paths through shared intermediates and returns each entity once. It reuses fetched statements and listings within the refresh. Chain and mark expiry times reflect the verified paths in that snapshot. Exploring alternate paths counts toward the work limits; reaching a limit fails refresh and prevents publication of a partial collection. Cached subordinate attestations use the actual issuer identifier to keep authorities on the same origin separate.
 
@@ -74,7 +140,7 @@ Refresh checks alternate valid paths through shared intermediates and returns ea
 |---|---|
 | `maxPageSize` | 100; also used when `limit` is omitted. |
 | `cursorTtlSeconds` | 900 seconds. |
-| `maxEntities` | 10,000 examined descendant candidates. |
+| `maxEntities` | 10,000 examined candidates; custom inventories have the same entry cap. |
 | `options.maxTotalFetches` | 1,000 network calls across the refresh, including issuer resolution. |
 | `options.maxConcurrentFetches` | 6. |
 | `options.maxChainDepth` | 8. |
@@ -83,9 +149,9 @@ Refresh checks alternate valid paths through shared intermediates and returns ea
 
 To fit the byte cap, a response may contain fewer entities than requested. Each included entity keeps all requested claims that are available. If a single entry cannot fit, the query returns an availability error. Setting `limit=0` returns no entities, with a continuation value if results remain.
 
-The default memory store retains superseded snapshots for 900 seconds. It holds up to 100 snapshots and 10,000 cursors; eviction at capacity can invalidate cursors sooner. Current snapshots remain available until replaced or their evidence becomes unusable. Each process has its own memory store, which is lost on restart.
+The default memory store retains superseded snapshots for 900 seconds. It holds up to 100 snapshots and 10,000 cursors; eviction at capacity can invalidate cursors sooner. Current snapshots remain available until replaced; queries exclude entries whose eligibility or applicable chain evidence has expired. Each process has its own memory store, which is lost on restart.
 
-Implement `EntityCollectionStore` for durable or shared storage. Its `publish` operation must atomically select the new snapshot for the anchor. Return detached values from reads, retain referenced snapshots and cursors, enforce expiry, and isolate anchors. Keep entries ordered by Entity Identifier. A `CollectionEntry` separates server-side chain and mark validity evidence from public `entity` data. Snapshot producers must validate that evidence; unsigned collection responses cannot supply it.
+Implement `EntityCollectionStore` for durable or shared storage. Its `publish` operation must atomically select the new snapshot for the anchor. Return detached values from reads, retain referenced snapshots and cursors, enforce expiry, and isolate anchors. Keep entries ordered by Entity Identifier. A `CollectionEntry` stores public `entity` data, an `expiresAt` eligibility deadline, optional `chainExpiresAt` evidence, and `verifiedMarks`. The default collector sets eligibility to its verified chain expiry. Custom collectors supply an eligibility deadline without claiming that a chain was validated. Core derives verified mark evidence during refresh; unsigned collection responses cannot supply it.
 
 Authorities can supply the store through `storage.collections`, or enable the core memory store with `MemoryStorageAdapter({ collections: true })`. An explicit `collection.store` takes precedence. If neither is supplied, the service creates its own memory store. Publishing a snapshot runs separately from subordinate registration transactions and leaves registration records unchanged.
 
@@ -102,7 +168,7 @@ Declare additional claims for custom snapshot producers in the `entityClaims` an
 
 In-process queries accept empty selector arrays. Use `entityClaims: []` to return only `entity_id`, or `infoClaims: []` to select no informational values. Draft 01 defines no wire representation for an empty list of claim names, so the HTTP client returns `invalid_request` for either empty selector array before fetching. Omit the selector to use the responder's defaults.
 
-Queries exclude entries with expired chain evidence. Expired marks no longer satisfy mark filters. Cursors expire before the evidence they depend on can change their result set. Choose a refresh schedule that keeps your application's collection data useful.
+Queries exclude entries with an expired eligibility deadline or expired chain evidence when present. Expired marks no longer satisfy mark filters. Cursors expire before the evidence they depend on can change their result set. Choose a refresh schedule that keeps your application's collection data useful.
 
 ## Authentication and HTTP clients
 

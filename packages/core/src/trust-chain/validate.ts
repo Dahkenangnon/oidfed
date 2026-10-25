@@ -294,7 +294,8 @@ function validateMetadataPolicyShape(
 	}
 }
 
-function validateTrustMarkReferenceSyntax(
+/** Internal statement-shape check, shared with custom collection input validation. */
+export function validateTrustMarkReferenceSyntax(
 	errors: ValidationError[],
 	trustMarks: unknown,
 	statementIndex: number,
@@ -394,17 +395,64 @@ function validateRawStatementShape(
 	}
 }
 
-/** Validate a raw trust chain (array of JWTs) against a set of trust anchors, returning resolved metadata. */
-export async function validateTrustChain(
+interface TrustChainValidationOptions extends FederationOptions {
+	verboseErrors?: boolean;
+	explicitRegistrationAudience?: EntityId | string;
+	/** Independently trusted keys for issuers resolved outside this chain. */
+	trustMarkIssuerKeys?: ReadonlyMap<string, JWKSet>;
+}
+
+/** Validate a chain and its published Trust Marks, retaining the public validation contract. */
+export function validateTrustChain(
 	chain: ReadonlyArray<string>,
 	trustAnchors: TrustAnchorSet,
-	options?: FederationOptions & {
-		verboseErrors?: boolean;
-		explicitRegistrationAudience?: EntityId | string;
-		/** Independently trusted issuer keys, supplied by callers that resolve issuers outside this chain. */
-		trustMarkIssuerKeys?: ReadonlyMap<string, JWKSet>;
-	},
+	options?: TrustChainValidationOptions,
 ): Promise<ValidationResult> {
+	return validateTrustChainImpl(chain, trustAnchors, options, true);
+}
+
+/** Internal collection primitive: mark syntax is mandatory; mark trust is evaluated separately. */
+export function validateTrustChainStructure(
+	chain: ReadonlyArray<string>,
+	trustAnchors: TrustAnchorSet,
+	options?: TrustChainValidationOptions,
+): Promise<ValidationResult> {
+	return validateTrustChainImpl(chain, trustAnchors, options, false);
+}
+
+type PublicationValidationResult =
+	| { valid: true; statement: ParsedEntityStatement; errors: readonly ValidationError[] }
+	| { valid: false; errors: readonly ValidationError[] };
+
+/** Internal publication check: authenticates the EC itself without establishing a trusted path. */
+export function validateEntityConfigurationPublication(
+	jwt: string,
+	options?: FederationOptions,
+): Promise<PublicationValidationResult> {
+	return validateTrustChainImpl([jwt], new Map(), options, false, true);
+}
+
+function validateTrustChainImpl(
+	chain: ReadonlyArray<string>,
+	trustAnchors: TrustAnchorSet,
+	options: TrustChainValidationOptions | undefined,
+	verifyMarks: boolean,
+	publicationOnly: true,
+): Promise<PublicationValidationResult>;
+function validateTrustChainImpl(
+	chain: ReadonlyArray<string>,
+	trustAnchors: TrustAnchorSet,
+	options: TrustChainValidationOptions | undefined,
+	verifyMarks: boolean,
+	publicationOnly?: false,
+): Promise<ValidationResult>;
+async function validateTrustChainImpl(
+	chain: ReadonlyArray<string>,
+	trustAnchors: TrustAnchorSet,
+	options: TrustChainValidationOptions | undefined,
+	verifyMarks: boolean,
+	publicationOnly = false,
+): Promise<ValidationResult | PublicationValidationResult> {
 	const errors: ValidationError[] = [];
 	const clockSkew = options?.clockSkewSeconds ?? DEFAULT_CLOCK_SKEW_SECONDS;
 	const nowSeconds = options?.clock ? options.clock.now() : defaultClock.now();
@@ -798,6 +846,9 @@ export async function validateTrustChain(
 		);
 	}
 
+	if (publicationOnly)
+		return errors.length ? { valid: false, errors } : { valid: true, statement: leaf, errors };
+
 	for (let j = 0; j < parsed.length - 1; j++) {
 		const current = parsed[j] as ParsedEntityStatement;
 		const next = parsed[j + 1] as ParsedEntityStatement;
@@ -1017,7 +1068,7 @@ export async function validateTrustChain(
 		| Array<{ trust_mark_type: string; trust_mark: string }>
 		| undefined;
 
-	if (leafTrustMarks && leafTrustMarks.length > 0) {
+	if (verifyMarks && leafTrustMarks && leafTrustMarks.length > 0) {
 		const trustMarkIssuers: Record<string, string[]> = {};
 		let trustMarkOwners: Record<string, unknown> | undefined;
 		const entityJwks: Record<string, JWKSet> = {};

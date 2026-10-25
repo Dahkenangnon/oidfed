@@ -132,3 +132,5 @@ The Leaf class signs and caches the Entity Configuration JWT internally. When `g
 ## Entity Collection
 
 A leaf can serve the optional Draft 01 collection endpoint while keeping its leaf role. Configure `collection` and publish `federation_collection_endpoint`. Requests through `Leaf.handleRequest` use the core service. Requests that omit `trust_anchor` receive an empty collection; an explicit supported anchor selects that collection. See the [Entity Collection guide](../guide/entity-collection.md).
+
+Use `collection.collector` for an application-owned inventory or `collection.filter` for an additional restriction. These callbacks run during explicit refresh, through the same core service used by authorities and independent providers. See [collection policy](../guide/entity-collection.md#collection-policy).

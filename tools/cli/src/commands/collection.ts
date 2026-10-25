@@ -6,7 +6,7 @@ import {
 	ok,
 	type Result,
 } from "@oidfed/core";
-import type { Command } from "commander";
+import { type Command, InvalidArgumentError } from "commander";
 import type { OutputFormatter } from "../output/index.js";
 import type { Logger } from "../util/logger.js";
 
@@ -57,7 +57,7 @@ export function register(program: Command, deps: CollectionDeps): void {
 		.option("--from <cursor>", "Opaque continuation value from a previous response")
 		.option("--limit <number>", "Maximum entities in the response", (raw: string) => {
 			if (!/^[0-9]+$/.test(raw) || !Number.isSafeInteger(Number(raw)))
-				throw new Error("Expected a nonnegative safe integer");
+				throw new InvalidArgumentError("Expected a nonnegative safe integer");
 			return Number(raw);
 		})
 		.option("--post", "Use anonymous form POST instead of GET")
