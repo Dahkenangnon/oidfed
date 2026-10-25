@@ -18,6 +18,9 @@
 			],
 			"@oidfed/oidc": [
 				"../../packages/oidc/src/index.ts"
+			],
+			"@oidfed/wallet": [
+				"../../packages/wallet/src/index.ts"
 			]
 		},
 		"rootDir": "../..",

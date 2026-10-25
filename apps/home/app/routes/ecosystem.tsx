@@ -368,7 +368,7 @@ const specDocs = [
 		status: "Draft 05",
 		tone: "warn" as const,
 		href: "https://openid.net/specs/openid-federation-wallet-1_0.html",
-		implemented: false,
+		implemented: true,
 	},
 	{
 		label: "ACME with OpenID Federation 1.0",

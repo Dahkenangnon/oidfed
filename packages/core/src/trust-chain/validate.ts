@@ -8,10 +8,12 @@ import {
 	SUPPORTED_ALGORITHMS,
 } from "../constants.js";
 import { applyAllowedEntityTypes, checkConstraints } from "../constraints/index.js";
+import { err, ok, type Result } from "../errors.js";
 import { decodeEntityStatement, verifyEntityStatement } from "../jose/verify.js";
 import { validateJwkSetUseRequirement } from "../jwks/use-requirement.js";
 import { applyMetadataPolicy } from "../metadata-policy/apply.js";
 import { resolveMetadataPolicy } from "../metadata-policy/merge.js";
+import { findInvalidMetadataNullPaths } from "../metadata-values.js";
 import {
 	EntityConfigurationSchema,
 	SubordinateStatementSchema,
@@ -226,31 +228,14 @@ function addSchemaIssues(
 	}
 }
 
-function addMetadataNullErrors(
-	errors: ValidationError[],
-	value: unknown,
-	statementIndex: number,
-	path: string,
-) {
-	if (value === null) {
+function addMetadataNullErrors(errors: ValidationError[], value: unknown, statementIndex: number) {
+	for (const path of findInvalidMetadataNullPaths(value)) {
 		addError(
 			errors,
 			InternalErrorCode.TrustChainInvalid,
-			`Metadata value '${path}' MUST NOT be null at statement ${statementIndex}`,
+			`Metadata value 'metadata.${path.join(".")}' MUST NOT be null at statement ${statementIndex}`,
 			{ statementIndex, field: "metadata", checkNumber: 16 },
 		);
-		return;
-	}
-	if (Array.isArray(value)) {
-		for (let i = 0; i < value.length; i++) {
-			addMetadataNullErrors(errors, value[i], statementIndex, `${path}.${i}`);
-		}
-		return;
-	}
-	if (isJsonObject(value)) {
-		for (const [key, child] of Object.entries(value)) {
-			addMetadataNullErrors(errors, child, statementIndex, `${path}.${key}`);
-		}
 	}
 }
 
@@ -370,10 +355,9 @@ function validateRawStatementShape(
 						`metadata.${entityType} MUST be a JSON object at statement ${statementIndex}`,
 						{ statementIndex, field: "metadata", checkNumber: 16 },
 					);
-				} else {
-					addMetadataNullErrors(errors, metadata, statementIndex, `metadata.${entityType}`);
 				}
 			}
+			addMetadataNullErrors(errors, payload.metadata, statementIndex);
 		}
 	}
 
@@ -411,6 +395,173 @@ export function validateTrustChain(
 	return validateTrustChainImpl(chain, trustAnchors, options, true);
 }
 
+export interface ContextualMetadataClaim {
+	readonly entityType: string;
+	readonly parameter: string;
+}
+
+export interface PrepareTrustChainOptions extends TrustChainValidationOptions {
+	/** Only policies for absent values in these fields may remain pending. */
+	readonly deferredClaims: readonly ContextualMetadataClaim[];
+}
+
+declare const preparedBrand: unique symbol;
+
+/** Authenticated chain evidence with explicitly unfinished metadata policy checks. */
+export interface PreparedTrustChain {
+	readonly [preparedBrand]: true;
+	readonly entityId: EntityId;
+	readonly trustAnchorId: EntityId;
+	readonly expiresAt: number;
+	readonly resolvedMetadata: Readonly<Record<string, Record<string, unknown>>>;
+	readonly statements: ReadonlyArray<ParsedEntityStatement>;
+	readonly pendingClaims: readonly ContextualMetadataClaim[];
+}
+
+interface MetadataStage {
+	deferred?: readonly ContextualMetadataClaim[];
+	context?: Readonly<Record<string, Record<string, unknown>>>;
+	pending: ContextualMetadataClaim[];
+}
+
+const preparations = new WeakMap<
+	PreparedTrustChain,
+	{
+		chain: readonly string[];
+		anchors: TrustAnchorSet;
+		options: TrustChainValidationOptions;
+		pending: readonly ContextualMetadataClaim[];
+	}
+>();
+
+function freezeEvidence<T>(value: T): T {
+	if (value && typeof value === "object") {
+		for (const nested of Object.values(value)) freezeEvidence(nested);
+		Object.freeze(value);
+	}
+	return value;
+}
+
+function validationFailure(errors: readonly ValidationError[]) {
+	return err({
+		code: InternalErrorCode.TrustChainInvalid,
+		description: errors.map((error) => error.message).join("; "),
+	});
+}
+
+/** Authenticate a chain while reserving explicitly named, absent policy inputs. */
+export async function prepareTrustChainValidation(
+	chain: readonly string[],
+	anchors: TrustAnchorSet,
+	options: PrepareTrustChainOptions,
+): Promise<Result<PreparedTrustChain>> {
+	if (options.signal?.aborted)
+		return validationFailure([
+			{ code: InternalErrorCode.TrustChainInvalid, message: "Validation was cancelled" },
+		]);
+	const savedChain = [...chain];
+	const savedAnchors = new Map([...anchors].map(([id, anchor]) => [id, structuredClone(anchor)]));
+	const { deferredClaims, ...validationOptions } = options;
+	const savedOptions = {
+		...validationOptions,
+		...(options.trustMarkIssuerKeys
+			? {
+					trustMarkIssuerKeys: new Map(
+						[...options.trustMarkIssuerKeys].map(([id, keys]) => [id, structuredClone(keys)]),
+					),
+				}
+			: {}),
+	};
+	const stage: MetadataStage = { deferred: structuredClone(deferredClaims), pending: [] };
+	const result = await validateTrustChainImpl(
+		savedChain,
+		savedAnchors,
+		savedOptions,
+		true,
+		false,
+		stage,
+	);
+	if (!result.valid) return validationFailure(result.errors);
+	if (options.signal?.aborted)
+		return validationFailure([
+			{ code: InternalErrorCode.TrustChainInvalid, message: "Validation was cancelled" },
+		]);
+	const prepared = freezeEvidence(
+		structuredClone({
+			entityId: result.chain.entityId,
+			trustAnchorId: result.chain.trustAnchorId,
+			expiresAt: result.chain.expiresAt,
+			resolvedMetadata: result.chain.resolvedMetadata,
+			statements: result.chain.statements,
+			pendingClaims: stage.pending,
+		}),
+	) as unknown as PreparedTrustChain;
+	preparations.set(prepared, {
+		chain: savedChain,
+		anchors: savedAnchors,
+		options: savedOptions,
+		pending: stage.pending,
+	});
+	return ok(prepared);
+}
+
+/** Finish the original chain's policies; contextual values cannot replace published metadata. */
+export async function completeTrustChainValidation(
+	prepared: PreparedTrustChain,
+	context: Readonly<Record<string, Record<string, unknown>>> = {},
+): Promise<Result<ValidatedTrustChain>> {
+	const saved = preparations.get(prepared);
+	if (!isJsonObject(context))
+		return validationFailure([
+			{ code: InternalErrorCode.TrustChainInvalid, message: "Context must be a metadata object" },
+		]);
+	if (
+		!saved ||
+		saved.options.signal?.aborted ||
+		prepared.expiresAt <= (saved.options.clock ?? defaultClock).now()
+	) {
+		return validationFailure([
+			{
+				code: InternalErrorCode.TrustChainInvalid,
+				message: "Unknown, expired, or cancelled preparation",
+			},
+		]);
+	}
+	for (const [type, parameters] of Object.entries(context)) {
+		if (
+			!isJsonObject(parameters) ||
+			Object.keys(parameters).some(
+				(parameter) =>
+					!saved.pending.some(
+						(claim) => claim.entityType === type && claim.parameter === parameter,
+					),
+			)
+		) {
+			return validationFailure([
+				{
+					code: InternalErrorCode.TrustChainInvalid,
+					message: "Context contains an unreserved metadata field",
+				},
+			]);
+		}
+	}
+	const stage: MetadataStage = { context: structuredClone(context), pending: [] };
+	const result = await validateTrustChainImpl(
+		saved.chain,
+		saved.anchors,
+		saved.options,
+		true,
+		false,
+		stage,
+	);
+	if (!result.valid) return validationFailure(result.errors);
+	if (saved.options.signal?.aborted)
+		return validationFailure([
+			{ code: InternalErrorCode.TrustChainInvalid, message: "Validation was cancelled" },
+		]);
+	return ok(result.chain);
+}
+
 /** Internal collection primitive: mark syntax is mandatory; mark trust is evaluated separately. */
 export function validateTrustChainStructure(
 	chain: ReadonlyArray<string>,
@@ -445,6 +596,7 @@ function validateTrustChainImpl(
 	options: TrustChainValidationOptions | undefined,
 	verifyMarks: boolean,
 	publicationOnly?: false,
+	stage?: MetadataStage,
 ): Promise<ValidationResult>;
 async function validateTrustChainImpl(
 	chain: ReadonlyArray<string>,
@@ -452,6 +604,7 @@ async function validateTrustChainImpl(
 	options: TrustChainValidationOptions | undefined,
 	verifyMarks: boolean,
 	publicationOnly = false,
+	stage?: MetadataStage,
 ): Promise<ValidationResult | PublicationValidationResult> {
 	const errors: ValidationError[] = [];
 	const clockSkew = options?.clockSkewSeconds ?? DEFAULT_CLOCK_SKEW_SECONDS;
@@ -986,7 +1139,10 @@ async function validateTrustChainImpl(
 
 	const subordinateStatements = hasTrailingTrustAnchorEc ? parsed.slice(1, -1) : parsed.slice(1);
 
-	let metadata = (leafPayload.metadata ?? {}) as Record<string, Record<string, unknown>>;
+	let metadata = structuredClone(leafPayload.metadata ?? {}) as Record<
+		string,
+		Record<string, unknown>
+	>;
 
 	// Merge Immediate Superior's SS metadata before applying allowed_entity_types constraints,
 	// so the filter sees the fully merged metadata as required by the spec.
@@ -1046,6 +1202,24 @@ async function validateTrustChainImpl(
 				checkNumber: 19,
 			});
 		} else if (Object.keys(policyResult.value).length > 0) {
+			for (const [type, values] of Object.entries(stage?.context ?? {})) {
+				for (const [parameter, value] of Object.entries(values)) {
+					if (metadata[type]?.[parameter] === undefined && metadata[type]) {
+						metadata[type][parameter] = value;
+					}
+				}
+			}
+			for (const claim of stage?.deferred ?? []) {
+				const policies = policyResult.value[claim.entityType];
+				if (
+					metadata[claim.entityType] &&
+					metadata[claim.entityType]?.[claim.parameter] === undefined &&
+					policies?.[claim.parameter] !== undefined
+				) {
+					delete policies[claim.parameter];
+					stage?.pending.push({ ...claim });
+				}
+			}
 			// Superior metadata already merged above; pass only leaf metadata + policy here.
 			const applyResult = applyMetadataPolicy(
 				metadata as FederationMetadata,

@@ -22,6 +22,7 @@ export default defineConfig({
 			"@oidfed/authority": resolve(packages, "authority/src/index.ts"),
 			"@oidfed/leaf": resolve(packages, "leaf/src/index.ts"),
 			"@oidfed/oidc": resolve(packages, "oidc/src/index.ts"),
+			"@oidfed/wallet": resolve(packages, "wallet/src/index.ts"),
 		},
 	},
 });

@@ -30,6 +30,7 @@ export {
 	DEFAULT_MAX_AUTHORITY_HINTS,
 	DEFAULT_MAX_CHAIN_DEPTH,
 	DEFAULT_MAX_REQUEST_BODY_BYTES,
+	DEFAULT_MAX_RESPONSE_BYTES,
 	DEFAULT_REQUEST_OBJECT_TTL_SECONDS,
 	EntityType,
 	FederationEndpoint,
@@ -161,6 +162,7 @@ export {
 export { type FetchSignedJwkSetOptions, fetchSignedJwkSet } from "./jwks/signed-jwks-uri.js";
 export { validateSignedJwkSetSpecHygiene } from "./jwks/spec-hygiene.js";
 export { validateJwkSetUseRequirement } from "./jwks/use-requirement.js";
+export { isLanguageTag } from "./language-tags.js";
 // Metadata Policy
 export {
 	applyMetadataPolicy,
@@ -169,6 +171,8 @@ export {
 	validateCustomOperators,
 } from "./metadata-policy/index.js";
 export { operators } from "./metadata-policy/operators.js";
+export { findInvalidMetadataNullPaths } from "./metadata-values.js";
+export { validateRoleMetadata } from "./roles.js";
 // Schemas
 export * from "./schemas/index.js";
 // Statement builders
@@ -209,12 +213,17 @@ export {
 	resolveTrustChains,
 } from "./trust-chain/resolve.js";
 export {
+	type ContextualMetadataClaim,
 	calculateChainExpiration,
 	chainRemainingTtl,
+	completeTrustChainValidation,
 	describeTrustChain,
 	isChainExpired,
 	longestExpiry,
+	type PreparedTrustChain,
+	type PrepareTrustChainOptions,
 	preferTrustAnchor,
+	prepareTrustChainValidation,
 	shortestChain,
 	validateTrustChain,
 } from "./trust-chain/validate.js";

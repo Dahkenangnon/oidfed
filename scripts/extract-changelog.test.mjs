@@ -141,6 +141,7 @@ describe("buildBody — all scope", () => {
 			if (p === PKG_FILES.authority) return "authority body";
 			if (p === PKG_FILES.leaf) return "leaf body";
 			if (p === PKG_FILES.oidc) return "oidc body";
+			if (p === PKG_FILES.wallet) return "wallet body";
 			if (p === PKG_FILES.cli) return "cli body";
 			return null;
 		};
@@ -152,6 +153,7 @@ describe("buildBody — all scope", () => {
 			"### @oidfed/authority 0.5.0",
 			"### @oidfed/leaf 0.5.0",
 			"### @oidfed/oidc 0.5.0",
+			"### @oidfed/wallet 0.5.0",
 			"### @oidfed/cli 0.5.0",
 		];
 		let cursor = -1;
@@ -203,7 +205,7 @@ describe("buildBody — all scope", () => {
 		assert.ok(out.includes("### @oidfed/core 0.5.0\n\ncore body"));
 		assert.ok(
 			out.includes(
-				"_@oidfed/authority, @oidfed/leaf, @oidfed/oidc, @oidfed/cli — no user-visible changes._",
+				"_@oidfed/authority, @oidfed/leaf, @oidfed/oidc, @oidfed/wallet, @oidfed/cli — no user-visible changes._",
 			),
 		);
 		assert.ok(!out.includes("_(no user-facing changes)_"));

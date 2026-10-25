@@ -1,0 +1,64 @@
+{
+	"name": "@oidfed/wallet",
+	"version": "1.0.0",
+	"description": "OpenID Federation for Wallet Architectures: composable provider, issuer, and verifier roles and federation-backed trust operations.",
+	"license": "Apache-2.0",
+	"author": "Justin Dah-kenangnon <dah.kenangnon@gmail.com>",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/Dahkenangnon/oidfed.git",
+		"directory": "packages/wallet"
+	},
+	"homepage": "https://github.com/Dahkenangnon/oidfed/tree/main/packages/wallet#readme",
+	"bugs": {
+		"url": "https://github.com/Dahkenangnon/oidfed/issues"
+	},
+	"keywords": [
+		"openid-federation",
+		"wallet",
+		"openid4vci",
+		"openid4vp",
+		"trust-chain",
+		"wallet-attestation"
+	],
+	"type": "module",
+	"main": "./dist/index.cjs",
+	"module": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js",
+			"require": "./dist/index.cjs"
+		}
+	},
+	"files": [
+		"dist",
+		"LICENSE",
+		"NOTICE"
+	],
+	"sideEffects": false,
+	"publishConfig": {
+		"access": "public"
+	},
+	"scripts": {
+		"build": "tsup",
+		"typecheck": "tsc --noEmit",
+		"clean": "rm -rf dist"
+	},
+	"devDependencies": {
+		"@oidfed/core": "workspace:^"
+	},
+	"dependencies": {
+		"jose": "6.2.13",
+		"zod": "4.6.7"
+	},
+	"peerDependencies": {
+		"@oidfed/core": "workspace:^"
+	},
+	"peerDependenciesMeta": {
+		"@oidfed/core": {
+			"optional": false
+		}
+	}
+}

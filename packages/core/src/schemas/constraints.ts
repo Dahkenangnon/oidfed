@@ -24,6 +24,9 @@ export const TrustChainConstraintsSchema = z.looseObject({
 				"oauth_authorization_server",
 				"oauth_client",
 				"oauth_resource",
+				"openid_wallet_provider",
+				"openid_credential_issuer",
+				"openid_credential_verifier",
 			]),
 		)
 		.optional(),

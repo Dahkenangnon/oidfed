@@ -25,6 +25,7 @@ export const PUBLISHABLE_TARGETS = [
 	{ scope: "authority", name: "@oidfed/authority", dir: "packages/authority", kind: "library" },
 	{ scope: "leaf", name: "@oidfed/leaf", dir: "packages/leaf", kind: "library" },
 	{ scope: "oidc", name: "@oidfed/oidc", dir: "packages/oidc", kind: "library" },
+	{ scope: "wallet", name: "@oidfed/wallet", dir: "packages/wallet", kind: "library" },
 	{ scope: "cli", name: "@oidfed/cli", dir: "tools/cli", kind: "cli" },
 ];
 
@@ -262,7 +263,7 @@ function packTarget(target, packDir) {
 }
 
 function usage() {
-	return `Usage: node scripts/check-pack-manifests.mjs [--scope <core|authority|leaf|oidc|cli|all>] [--expected-version <version>]\n`;
+	return `Usage: node scripts/check-pack-manifests.mjs [--scope <core|authority|leaf|oidc|wallet|cli|all>] [--expected-version <version>]\n`;
 }
 
 function main() {

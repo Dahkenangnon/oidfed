@@ -212,4 +212,6 @@ export interface EntityRole {
 	readonly metadata: Record<string, unknown>;
 	readonly routes?: ReadonlyMap<string, (request: Request) => Promise<Response>>;
 	initialize?(context: EntityContext): void;
+	/** Validate the final composed role block before its host publishes metadata. */
+	validateMetadata?(metadata: Readonly<Record<string, unknown>>, context: EntityContext): void;
 }

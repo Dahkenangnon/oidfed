@@ -316,3 +316,15 @@ Use `EntityCollectionService` to refresh Draft 01 collections, query them in pro
 When cancellation or a work limit stops resolution, `resolveTrustChains` reports `incomplete: true` alongside its `chains` and `errors`. Collection refresh rejects these incomplete results. Pass a signal to `createConcurrencyLimiter(maxConcurrent, signal?)` to cancel queued work. When caching calls to `fetchSubordinateStatement`, supply the actual Entity Identifier as `issuer` in the options to distinguish authorities hosted on the same origin.
 
 Collection configuration accepts an optional `collector` for application inventories and a `filter` for additional restrictions. Core validates collector output and verifies the marks used for filtering. `EntityCollectionCandidate` contains informational entity data and an eligibility deadline; `CollectionEntry` adds optional chain evidence and core-verified mark evidence. The [collection policy examples](../guide/entity-collection.md#collection-policy) cover independent sources and snapshot-time filters. Existing `validateTrustChain` callers retain strict Trust Mark validation.
+
+## Contextual metadata validation
+
+`prepareTrustChainValidation(statements, trustAnchors, options)` authenticates chain evidence while reserving explicitly named policy inputs that are absent from published metadata. Specify them through `deferredClaims`, an array of `{ entityType, parameter }` pairs. Unrelated policies and policies for published values must pass during preparation.
+
+The returned `PreparedTrustChain` is an opaque handle with pending claims and preliminary effective metadata. It is distinct from `ValidatedTrustChain` and `DiscoveryResult`. Call `completeTrustChainValidation(prepared, contextualMetadata)` to finish the policies against the original evidence. Only reserved fields can receive contextual values. Completion revalidates the chain, expiry, and cancellation; request-derived metadata stays outside signed statement payloads and shared discovery caches.
+
+`validateTrustChain` keeps its existing strict behavior and never defers required inputs. Wallet roles use the staged APIs for request-dependent DCQL checks; see the [wallet guide](wallet.md).
+
+`EntityRole.validateMetadata(metadata, context)` is an optional synchronous hook. Hosts invoke it on detached composed role metadata before publication. Existing roles can omit it.
+
+`findInvalidMetadataNullPaths(metadata)` returns the paths of forbidden null values. Statement builders, chain validation, and authority publication share this check. It permits null wildcard components only in the wallet specifications' issuer claim-description and verifier DCQL path arrays; other null metadata values remain invalid. Wallet roles validate the paths' format-specific syntax.

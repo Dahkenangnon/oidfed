@@ -27,6 +27,7 @@ const PUBLISHABLE = [
 	"packages/authority/package.json",
 	"packages/leaf/package.json",
 	"packages/oidc/package.json",
+	"packages/wallet/package.json",
 	"tools/cli/package.json",
 ];
 

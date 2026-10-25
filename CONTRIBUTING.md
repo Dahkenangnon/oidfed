@@ -95,12 +95,12 @@ GitHub UI merges do not run local hooks. PR CI checks the branch's commits; CI o
 
 | Scope | Framework | Location |
 |---|---|---|
-| Unit (`core`, `authority`, `leaf`, `oidc`) | QUnit via TAP | `tests/tap/` |
+| Unit (`core`, `authority`, `leaf`, `oidc`, `wallet`) | QUnit via TAP | `tests/tap/` |
 | CLI (`tools/cli`) | Vitest | `tools/cli/test/` |
 | Explorer (`apps/explorer`) | Vitest | `apps/explorer/test/` |
 | E2E | Vitest | `tests/e2e/` (requires `pnpm setup:e2e` first) |
 
-The four specification packages are framework-agnostic. Their unit tests use the same TAP suite across Node, Bun, Deno, workerd, Electron, and browsers.
+The five libraries are framework-agnostic. Their unit tests use the same TAP suite across Node, Bun, Deno, workerd, Electron, and browsers.
 
 ```bash
 pnpm test                    # published surface: 6 TAP runtimes + tools

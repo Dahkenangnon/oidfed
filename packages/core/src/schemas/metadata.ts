@@ -77,6 +77,9 @@ export const FederationMetadataSchema = z
 		oauth_authorization_server: z.record(z.string(), z.unknown()).optional(),
 		oauth_client: z.record(z.string(), z.unknown()).optional(),
 		oauth_resource: z.record(z.string(), z.unknown()).optional(),
+		openid_wallet_provider: z.record(z.string(), z.unknown()).optional(),
+		openid_credential_issuer: z.record(z.string(), z.unknown()).optional(),
+		openid_credential_verifier: z.record(z.string(), z.unknown()).optional(),
 	})
 	.superRefine((metadata, ctx) => {
 		const entries = Object.entries(metadata);
@@ -112,10 +115,16 @@ export function getEntityTypes(metadata: FederationMetadata): ReadonlyArray<Enti
 	if (metadata.oauth_authorization_server) types.push(EntityType.OAuthAuthorizationServer);
 	if (metadata.oauth_client) types.push(EntityType.OAuthClient);
 	if (metadata.oauth_resource) types.push(EntityType.OAuthResource);
+	if (metadata.openid_wallet_provider) types.push(EntityType.OpenIDWalletProvider);
+	if (metadata.openid_credential_issuer) types.push(EntityType.OpenIDCredentialIssuer);
+	if (metadata.openid_credential_verifier) types.push(EntityType.OpenIDCredentialVerifier);
 	return types;
 }
 
 export type EntityTypeMetadataMap = {
+	readonly [EntityType.OpenIDWalletProvider]: Record<string, unknown>;
+	readonly [EntityType.OpenIDCredentialIssuer]: Record<string, unknown>;
+	readonly [EntityType.OpenIDCredentialVerifier]: Record<string, unknown>;
 	readonly [EntityType.FederationEntity]: FederationEntityMetadata;
 	readonly [EntityType.OpenIDRelyingParty]: OpenIDRelyingPartyMetadata;
 	readonly [EntityType.OpenIDProvider]: OpenIDProviderMetadata;

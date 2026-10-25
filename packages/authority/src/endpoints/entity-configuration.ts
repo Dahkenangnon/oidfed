@@ -5,6 +5,7 @@ import {
 	MediaType,
 	nowSeconds,
 	signEntityStatement,
+	validateRoleMetadata,
 } from "@oidfed/core";
 import type { HandlerContext } from "./context.js";
 import { errorResponse, jwtResponse, requireMethod } from "./helpers.js";
@@ -29,6 +30,7 @@ export function createEntityConfigurationHandler(
 
 /** Builds and signs the Entity Configuration JWT from the current context. */
 export async function buildEntityConfiguration(ctx: HandlerContext): Promise<string> {
+	validateRoleMetadata(ctx.roles, ctx.metadata, ctx);
 	const keySet = await ctx.keyProvider.getFederationKeySet();
 	const now = nowSeconds(ctx.options?.clock);
 	const ttlSeconds = ctx.entityConfigurationTtlSeconds ?? DEFAULT_ENTITY_STATEMENT_TTL_SECONDS;
