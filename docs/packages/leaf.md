@@ -128,3 +128,7 @@ The Leaf class signs and caches the Entity Configuration JWT internally. When `g
 ### What is `DiscoveryResult` and how is it used?
 
 `DiscoveryResult` is a branded value containing a selected validated trust chain, resolved metadata, and trust marks. `Leaf.discoverEntity()` returns it. The RP role's `automaticallyRegister()` and `explicitlyRegister()` methods perform discovery internally; `createAuthorizationRequest()` takes an existing `DiscoveryResult`.
+
+## Entity Collection
+
+A leaf can serve the optional Draft 01 collection endpoint while keeping its leaf role. Configure `collection` and publish `federation_collection_endpoint`. Requests through `Leaf.handleRequest` use the core service. Requests that omit `trust_anchor` receive an empty collection; an explicit supported anchor selects that collection. See the [Entity Collection guide](../guide/entity-collection.md).

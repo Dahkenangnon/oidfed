@@ -76,6 +76,10 @@ for (const chain of result.chains) {
 }
 ```
 
+## Entity Collection
+
+Core provides the Draft 01 collection service and HTTP client. The service supports explicit snapshot refresh, filters, informational metadata, language selection, and pagination. Independent applications can use it to serve collections. See the [Entity Collection guide](https://github.com/Dahkenangnon/oidfed/blob/main/docs/guide/entity-collection.md) for standalone providers and the HTTP client.
+
 ## Documentation
 
 For a detailed API reference, configuration options, and core architectural guides, see the [docs/packages/core.md](https://github.com/Dahkenangnon/oidfed/blob/main/docs/packages/core.md) file.

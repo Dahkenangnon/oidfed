@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { Command } from "commander";
 import pkg from "../package.json" with { type: "json" };
 import * as chainCmd from "./commands/chain.js";
+import * as collectionCmd from "./commands/collection.js";
 import * as decodeCmd from "./commands/decode.js";
 import * as entityCmd from "./commands/entity.js";
 import * as expiryCmd from "./commands/expiry.js";
@@ -84,6 +85,7 @@ export async function run(argv: string[]): Promise<number> {
 	fetchCmd.register(program, { httpClient, formatter, logger });
 	listCmd.register(program, { httpClient, formatter, logger });
 	subordinateEventsCmd.register(program, { httpClient, formatter, logger, readFile: fileReader });
+	collectionCmd.register(program, { httpClient, formatter, logger, readFile: fileReader });
 	listExtendedCmd.register(program, { httpClient, formatter, logger });
 	trustMarkStatusCmd.register(program, { httpClient, formatter, logger });
 	trustMarkListCmd.register(program, { httpClient, formatter, logger });

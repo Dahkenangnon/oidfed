@@ -169,3 +169,15 @@ The command rejects endpoint redirects, including for authenticated requests. Th
 For an endpoint requiring client authentication, add `--client-assertion-file ./assertion.jwt`. The file contains a `private_key_jwt` assertion signed with the client's Federation Entity Key, with the authority Entity Identifier as its audience. The CLI sends the request parameters and assertion in a form-encoded POST body.
 
 The JSON output contains verified statement claims, including the event array. An authority can return an empty history for a known subject. Events report recorded observations; a suspension entry does not itself enforce suspension or prove historical trust-chain validity.
+
+## Entity Collection
+
+```sh
+oidfed collection https://directory.example/collect \
+  --trust-anchor https://anchor.example \
+  --entity-type openid_provider --info-claims display_name --locale en
+```
+
+The endpoint can belong to an independent provider. Repeat `--entity-type` to match any listed type, or `--trust-mark-type` to require every listed mark type. You can also repeat `--entity-claims`, `--info-claims`, and `--locale` to select several values. Use `--query` to search, and `--limit` and `--from` to paginate.
+
+Use `--post` for anonymous form POST. To authenticate, supply a JWT with `--client-assertion-file <path>`; the command sends it in a POST body. Results are unsigned and informational. Validate a selected entity separately before relying on it. See the [Entity Collection guide](../guide/entity-collection.md).

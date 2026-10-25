@@ -1,7 +1,9 @@
 import {
 	type Clock,
+	type EntityCollectionStore,
 	type EntityId,
 	MemoryCache,
+	MemoryEntityCollectionStore,
 	MemoryReplayStore,
 	nowSeconds,
 	type SubordinateEvent,
@@ -325,6 +327,7 @@ class MemorySubordinateEventStorage implements SubordinateEventStorage {
 }
 
 export interface MemoryStorageAdapterOptions {
+	readonly collections?: boolean;
 	readonly subordinateEvents?: boolean;
 	readonly trustMarks?: boolean;
 	readonly clock?: Clock;
@@ -334,6 +337,7 @@ export interface MemoryStorageAdapterOptions {
 
 /** Development-only unified authority storage adapter. */
 export class MemoryStorageAdapter implements StorageAdapter {
+	readonly collections?: EntityCollectionStore;
 	private state: MemoryState;
 	private tail: Promise<void> = Promise.resolve();
 	private readonly clock: Clock | undefined;
@@ -345,6 +349,10 @@ export class MemoryStorageAdapter implements StorageAdapter {
 
 	constructor(options?: MemoryStorageAdapterOptions) {
 		this.clock = options?.clock;
+		if (options?.collections)
+			this.collections = new MemoryEntityCollectionStore({
+				...(options.clock ? { clock: options.clock } : {}),
+			});
 		this.state = {
 			subordinates: new Map(),
 			...(options?.subordinateEvents ? { subordinateEvents: new Map() } : {}),

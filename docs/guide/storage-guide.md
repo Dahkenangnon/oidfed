@@ -149,3 +149,9 @@ await storage.transaction(async (tx) => {
 ```
 
 Only record `revocation` when the removal represents an actual revocation. Technical cleanup alone does not establish that meaning. The transaction callback may run again after a conflict; keep signing and network operations outside it.
+
+## Collection snapshots
+
+Entity Collection stores snapshots separately from subordinate registration records, using the core `EntityCollectionStore` contract. The service uses `collection.store` when supplied, then `storage.collections`, then its own memory store. Enable the storage capability with `MemoryStorageAdapter({ collections: true })`.
+
+The service publishes each snapshot atomically after traversal, outside registration transactions. A store shared across instances must isolate anchors, retain snapshots and opaque cursors, enforce expiry, and return detached values. See [Entity Collection](entity-collection.md#refresh-and-storage).

@@ -5,6 +5,7 @@ export const FederationEndpoint = {
 	Fetch: "/federation_fetch",
 	List: "/federation_list",
 	ExtendedList: "/federation_extended_list",
+	Collection: "/federation_collection",
 	Resolve: "/federation_resolve",
 	Registration: "/federation_registration",
 	TrustMarkStatus: "/federation_trust_mark_status",
@@ -83,6 +84,7 @@ export const FederationErrorCode = {
 	ServerError: "server_error",
 	TemporarilyUnavailable: "temporarily_unavailable",
 	UnsupportedParameter: "unsupported_parameter",
+	UnsupportedClaim: "unsupported_claim",
 	EntityIdNotFound: "entity_id_not_found",
 	PageNotFound: "page_not_found",
 } as const;

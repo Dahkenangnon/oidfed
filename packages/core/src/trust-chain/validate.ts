@@ -401,6 +401,8 @@ export async function validateTrustChain(
 	options?: FederationOptions & {
 		verboseErrors?: boolean;
 		explicitRegistrationAudience?: EntityId | string;
+		/** Independently trusted issuer keys, supplied by callers that resolve issuers outside this chain. */
+		trustMarkIssuerKeys?: ReadonlyMap<string, JWKSet>;
 	},
 ): Promise<ValidationResult> {
 	const errors: ValidationError[] = [];
@@ -1067,7 +1069,9 @@ export async function validateTrustChain(
 			}
 
 			const tmIss = tmPayload.iss as string | undefined;
-			const jwksForIssuer = tmIss ? entityJwks[tmIss] : undefined;
+			const jwksForIssuer = tmIss
+				? (options?.trustMarkIssuerKeys?.get(tmIss) ?? entityJwks[tmIss])
+				: undefined;
 			if (!jwksForIssuer) {
 				addError(
 					errors,

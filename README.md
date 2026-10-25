@@ -15,6 +15,7 @@ Protocol-specific roles can add metadata and handlers to those entities. `@oidfe
 | [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) | The combined trust framework and OIDC/OAuth functionality from which the two 1.1 specifications were separated. |
 | [Extended Subordinate Listing 1.0, Draft 03](https://openid.net/specs/openid-federation-extended-listing-1_0.html) | Opaque `from` / `next` pagination, repeated Trust Mark type filters, audit timestamps, and selected Subordinate Statement claims. |
 | [Subordinate Events Endpoint 1.0, Draft 01](https://openid.net/specs/openid-federation-subordinate-events-1_0.html) | Signed subordinate event history, transactional lifecycle recording, and verified library and CLI retrieval. |
+| [Entity Collection Endpoint 1.0, Draft 01](https://openid.net/specs/openid-federation-entity-collection-1_0.html) | Discovery of direct and indirect subordinates, with filters, informational metadata, language selection, and opaque pagination. Federation Entities and independent applications can serve the endpoint. |
 
 The two Federation 1.1 specifications separate the functionality defined in 1.0 and introduce no new functionality. Optional endpoints and registration features require the corresponding metadata and configuration; see the package documentation below.
 
@@ -24,7 +25,7 @@ See the [OpenID Federation ecosystem](https://oidfed.com/ecosystem/) for related
 
 | Package | Use it for |
 |---|---|
-| [`@oidfed/core`](docs/packages/core.md) | Entity Statements, trust-chain resolution and validation, metadata policies, constraints, Trust Marks, and federation key providers. |
+| [`@oidfed/core`](docs/packages/core.md) | Entity Statements, trust-chain resolution and validation, metadata policies, constraints, Trust Marks, federation key providers, and the shared Entity Collection service and client. |
 | [`@oidfed/authority`](docs/packages/authority.md) | Trust Anchors and Intermediates: subordinate management, statement issuance, and federation endpoint handlers. |
 | [`@oidfed/leaf`](docs/packages/leaf.md) | Leaf Entity Configurations and trust-chain discovery. |
 | [`@oidfed/oidc`](docs/packages/oidc.md) | OIDC and OAuth roles composed into an authority or leaf, with federation registration for OPs and RPs. |

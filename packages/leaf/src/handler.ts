@@ -10,7 +10,7 @@ import type { Leaf } from "./entity-configuration.js";
 
 export type FederationHandler = (request: Request) => Promise<Response>;
 
-/** Creates an HTTP handler that serves the leaf entity's well-known federation endpoint. */
+/** Creates an HTTP handler for the leaf's configuration and configured routes. */
 export function createLeafHandler(entity: Leaf, options?: FederationOptions): FederationHandler {
 	return async (request: Request): Promise<Response> => {
 		const url = new URL(request.url);
@@ -31,6 +31,6 @@ export function createLeafHandler(entity: Leaf, options?: FederationOptions): Fe
 			}
 		}
 
-		return errorResponse(404, "not_found", "Unknown endpoint");
+		return entity.handleRequest(request);
 	};
 }

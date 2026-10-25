@@ -1,6 +1,7 @@
 /** Unified authority persistence contracts. */
 import type {
 	CacheProvider,
+	EntityCollectionStore,
 	EntityId,
 	EntityType,
 	JWKSet,
@@ -10,6 +11,7 @@ import type {
 } from "@oidfed/core";
 
 export interface StorageAdapter {
+	readonly collections?: EntityCollectionStore;
 	readonly subordinateEvents?: SubordinateEventStorage;
 	readonly subordinates: SubordinateStorage;
 	readonly trustMarks?: TrustMarkStorage;

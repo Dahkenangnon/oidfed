@@ -114,6 +114,8 @@ export interface TrustChain {
 export interface TrustChainResult {
 	readonly chains: ReadonlyArray<TrustChain>;
 	readonly errors: ReadonlyArray<FederationError>;
+	/** Resolution stopped before examining its configured scope because of a limit or cancellation. */
+	readonly incomplete?: true;
 }
 
 export interface ValidatedTrustChain {

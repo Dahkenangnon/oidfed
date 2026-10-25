@@ -3,6 +3,8 @@ import {
 	buildEntityConfigurationPayload,
 	DEFAULT_ENTITY_STATEMENT_TTL_SECONDS,
 	discoverEntity as discoverEntityThroughTrustChain,
+	type EntityCollectionIntegration,
+	EntityCollectionService,
 	type EntityContext,
 	type EntityId,
 	type EntityRole,
@@ -24,6 +26,7 @@ import {
 } from "@oidfed/core";
 
 export interface LeafConfig {
+	collection?: EntityCollectionIntegration;
 	entityId: EntityId | string;
 	authorityHints: readonly (EntityId | string)[];
 	metadata: EntityStatementMetadata;
@@ -45,6 +48,7 @@ function cloneMetadata(metadata: EntityStatementMetadata): Record<string, Record
 }
 
 export class Leaf {
+	readonly collection?: EntityCollectionService;
 	static discoverEntity(
 		targetEntityId: EntityId | string,
 		trustAnchors: TrustAnchorSet,
@@ -126,6 +130,50 @@ export class Leaf {
 			}
 		}
 		this.metadata = metadata;
+		const collectionEndpoint = metadata.federation_entity?.federation_collection_endpoint;
+		if (collectionEndpoint !== undefined && typeof collectionEndpoint !== "string")
+			throw new Error("Collection endpoint must be an HTTPS URL");
+		if (collectionEndpoint !== undefined && !config.collection)
+			throw new Error("The collection endpoint requires collection configuration");
+		if (config.collection) {
+			const endpoint = typeof collectionEndpoint === "string" ? collectionEndpoint : undefined;
+			const declaredMethods =
+				metadata.federation_entity?.federation_collection_endpoint_auth_methods;
+			const methods = Array.isArray(declaredMethods) ? declaredMethods : ["none"];
+			if (
+				config.collection.authentication &&
+				JSON.stringify([...new Set(config.collection.authentication.methods)].sort()) !==
+					JSON.stringify([...new Set(methods)].sort())
+			)
+				throw new Error(
+					"Collection authentication methods must match federation_collection_endpoint_auth_methods (default: none)",
+				);
+			this.collection = new EntityCollectionService({
+				...config.collection,
+				responder: { entityId: this.entityId, isTrustAnchor: false },
+				...(endpoint ? { endpoint } : {}),
+				options: { ...config.options, ...config.collection.options },
+				authentication: {
+					...config.collection.authentication,
+					methods: methods as ("none" | "private_key_jwt")[],
+					receiverEntityId: this.entityId,
+					...(Array.isArray(metadata.federation_entity?.endpoint_auth_signing_alg_values_supported)
+						? {
+								allowedAlgorithms: metadata.federation_entity
+									.endpoint_auth_signing_alg_values_supported as string[],
+							}
+						: {}),
+				},
+			});
+			if (endpoint) {
+				const path = new URL(endpoint).pathname;
+				const wellKnownPath = `${new URL(this.entityId).pathname.replace(/\/$/, "")}/.well-known/openid-federation`;
+				if (this.routes.has(path) || path === wellKnownPath)
+					throw new Error("Collection endpoint conflicts with an existing route");
+				const collection = this.collection;
+				this.routes.set(path, (request) => collection.handleRequest(request));
+			}
+		}
 
 		if (Object.keys(this.metadata).length === 0) {
 			throw new Error("metadata MUST contain at least one Entity Type Identifier");

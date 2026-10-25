@@ -751,8 +751,9 @@ export default (QUnit: QUnit) => {
 			t.equal(WELL_KNOWN_OPENID_FEDERATION, "/.well-known/openid-federation");
 		});
 
-		test("FederationEndpoint has all 9 paths", (t) => {
-			t.equal(Object.keys(FederationEndpoint).length, 9);
+		test("FederationEndpoint has all 10 paths", (t) => {
+			t.equal(Object.keys(FederationEndpoint).length, 10);
+			t.equal(FederationEndpoint.Collection, "/federation_collection");
 			t.equal(FederationEndpoint.Fetch, "/federation_fetch");
 			t.equal(FederationEndpoint.List, "/federation_list");
 			t.equal(FederationEndpoint.ExtendedList, "/federation_extended_list");
@@ -793,8 +794,9 @@ export default (QUnit: QUnit) => {
 			t.equal(PolicyOperator.Essential, "essential");
 		});
 
-		test("FederationErrorCode has 13 codes", (t) => {
-			t.equal(Object.keys(FederationErrorCode).length, 13);
+		test("FederationErrorCode has 14 codes", (t) => {
+			t.equal(Object.keys(FederationErrorCode).length, 14);
+			t.equal(FederationErrorCode.UnsupportedClaim, "unsupported_claim");
 			t.equal(FederationErrorCode.InvalidRequest, "invalid_request");
 			t.equal(FederationErrorCode.NotFound, "not_found");
 			t.equal(FederationErrorCode.EntityIdNotFound, "entity_id_not_found");

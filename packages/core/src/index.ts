@@ -54,6 +54,7 @@ export {
 	checkMaxPathLength,
 	checkNamingConstraints,
 } from "./constraints/index.js";
+export * from "./entity-collection/index.js";
 // Errors & Result
 export {
 	err,
@@ -68,6 +69,10 @@ export {
 	type Result,
 	unwrapOr,
 } from "./errors.js";
+export {
+	type FetchEntityCollectionOptions,
+	fetchEntityCollection,
+} from "./federation-api/entity-collection.js";
 // Federation API verification + remote-endpoint clients
 export {
 	type FetchHistoricalKeysOptions,
@@ -188,6 +193,7 @@ export {
 // Trust Chain
 export { discoverEntity } from "./trust-chain/discovery.js";
 export {
+	type FetchSubordinateStatementOptions,
 	fetchEntityConfiguration,
 	fetchSubordinateStatement,
 	validateEntityId,

@@ -10,7 +10,7 @@ import {
 	WELL_KNOWN_OPENID_FEDERATION,
 } from "../constants.js";
 import { err, type FederationError, ok, type Result } from "../errors.js";
-import { isExactContentType } from "../http.js";
+import { isExactContentType, parseContentTypeHeader } from "../http.js";
 import { readResponseBody } from "../http-response.js";
 import type { EntityId, FederationOptions } from "../types.js";
 import { entityId, isValidEntityId } from "../types.js";
@@ -262,6 +262,8 @@ export function validateEntityId(value: string): Result<EntityId, FederationErro
 }
 
 export interface PerformFetchOptions extends FederationOptions {
+	/** Opt-in media-type matching; existing callers retain exact matching. */
+	contentTypePolicy?: "exact" | "media-type";
 	/** Accept header to send. Defaults to application/entity-statement+jwt. */
 	accept?: string;
 	/**
@@ -292,6 +294,10 @@ export async function performFetch(
 	const accept = options?.accept ?? MediaType.EntityStatement;
 	const expectedContentType =
 		options?.expectedContentType !== undefined ? options.expectedContentType : accept;
+	const matchesContentType = (actual: string | null, expected: string) =>
+		options?.contentTypePolicy === "media-type"
+			? parseContentTypeHeader(actual)?.mediaType.toLowerCase() === expected.toLowerCase()
+			: isExactContentType(actual, expected);
 
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -320,7 +326,7 @@ export async function performFetch(
 			if (
 				options?.federationErrors &&
 				!response.ok &&
-				isExactContentType(response.headers.get("content-type"), MediaType.Json)
+				matchesContentType(response.headers.get("content-type"), MediaType.Json)
 			) {
 				const body = await readResponseBody(
 					response,
@@ -354,7 +360,7 @@ export async function performFetch(
 		}
 
 		const contentType = response.headers.get("content-type");
-		if (expectedContentType !== null && !isExactContentType(contentType, expectedContentType)) {
+		if (expectedContentType !== null && !matchesContentType(contentType, expectedContentType)) {
 			void response.body?.cancel().catch(() => {});
 			const actual = contentType?.trim() || "<missing>";
 			return err({
@@ -430,18 +436,23 @@ export async function fetchEntityConfiguration(
 	return result;
 }
 
+export interface FetchSubordinateStatementOptions extends FederationOptions {
+	/** Actual issuer identifier for isolating cached attestations when it is known. */
+	issuer?: EntityId;
+}
+
 /** Fetch a Subordinate Statement about a subject from a superior's fetch endpoint. */
 export async function fetchSubordinateStatement(
 	fetchEndpoint: string,
 	subject: EntityId,
-	options?: FederationOptions,
+	options?: FetchSubordinateStatementOptions,
 ): Promise<Result<string, FederationError>> {
 	const url = new URL(fetchEndpoint);
 	url.searchParams.set("sub", subject);
 	const urlStr = url.toString();
 
 	if (options?.cache) {
-		const issuer = new URL(fetchEndpoint).origin as EntityId;
+		const issuer = options.issuer ?? (new URL(fetchEndpoint).origin as EntityId);
 		const cacheKey = await esCacheKey(issuer, subject);
 		const cached = await options.cache.get<string>(cacheKey);
 		if (cached !== undefined) {
@@ -454,7 +465,7 @@ export async function fetchSubordinateStatement(
 	const result = await performFetch(urlStr, options);
 
 	if (result.ok && options?.cache) {
-		const issuer = new URL(fetchEndpoint).origin as EntityId;
+		const issuer = options.issuer ?? (new URL(fetchEndpoint).origin as EntityId);
 		const cacheKey = await esCacheKey(issuer, subject);
 		const ttl = options.cacheMaxTtlSeconds ?? DEFAULT_CACHE_TTL_SECONDS;
 		await options.cache.set(cacheKey, result.value, ttl);
