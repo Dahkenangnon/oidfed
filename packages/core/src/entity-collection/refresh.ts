@@ -16,6 +16,7 @@ import {
 	type CacheProvider,
 	type EntityId,
 	type FederationOptions,
+	type HttpClient,
 	isValidEntityId,
 	nowSeconds,
 } from "../types.js";
@@ -26,6 +27,9 @@ import type {
 	EntityCollectionConfig,
 	EntityCollectionSnapshot,
 } from "./types.js";
+
+const MAX_OPEN_ISSUER_FETCHES = 50;
+const MAX_OPEN_ISSUER_TOTAL_FETCHES = 100;
 
 function informationalMetadata(
 	metadata: Record<string, Record<string, unknown>>,
@@ -109,6 +113,8 @@ export async function buildCollectionSnapshot(
 	const anchors = new Map([[anchor, pinned]]);
 	let exhausted = false;
 	let fetches = 0;
+	let openIssuerFetches = 0;
+	const maxFetches = config.options?.maxTotalFetches ?? 1000;
 	const http = config.options?.httpClient ?? fetch;
 	const controller = new AbortController();
 	const limit = createConcurrencyLimiter(
@@ -143,16 +149,24 @@ export async function buildCollectionSnapshot(
 			frozen.clear();
 		},
 	};
-	const options: FederationOptions = {
-		...config.options,
-		maxTotalFetches: config.options?.maxTotalFetches ?? 1000,
-		cache,
-		signal: controller.signal,
-		httpClient: async (url, init) =>
+	function createHttpClient(openIssuer = false): HttpClient {
+		let issuerFetches = 0;
+		return async (url, init) =>
 			limit(async () => {
 				if (controller.signal.aborted || init?.signal?.aborted)
 					throw new DOMException("Refresh aborted", "AbortError");
-				if (++fetches > (config.options?.maxTotalFetches ?? 1000)) {
+				// Optional proofs stop before they can abort the refresh-wide controller.
+				if (openIssuer) {
+					if (
+						issuerFetches >= MAX_OPEN_ISSUER_FETCHES ||
+						openIssuerFetches >= MAX_OPEN_ISSUER_TOTAL_FETCHES ||
+						fetches >= maxFetches
+					)
+						throw new Error("Open Trust Mark issuer fetch allowance exhausted");
+					issuerFetches++;
+					openIssuerFetches++;
+				}
+				if (++fetches > maxFetches) {
 					exhausted = true;
 					controller.abort();
 					throw new Error("Collection fetch budget exhausted");
@@ -162,7 +176,14 @@ export async function buildCollectionSnapshot(
 					signal: init?.signal ?? controller.signal,
 					redirect: "manual",
 				});
-			}),
+			});
+	}
+	const options: FederationOptions = {
+		...config.options,
+		maxTotalFetches: maxFetches,
+		cache,
+		signal: controller.signal,
+		httpClient: createHttpClient(),
 	};
 	const configurations = new Map<EntityId, ReturnType<typeof fetchEntityConfiguration>>();
 	const statements = new Map<string, ReturnType<typeof fetchSubordinateStatement>>();
@@ -193,7 +214,11 @@ export async function buildCollectionSnapshot(
 		}
 		return pending;
 	}
-	const evidence = createCollectionEvidence(anchor, anchors, options, configuration);
+	const evidence = createCollectionEvidence(anchor, anchors, options, configuration, () => ({
+		...options,
+		maxTotalFetches: MAX_OPEN_ISSUER_FETCHES,
+		httpClient: createHttpClient(true),
+	}));
 	const context: EntityCollectionCollectorContext = Object.freeze({
 		trustAnchor: anchor,
 		trustAnchorJwks: freeze(structuredClone(pinned.jwks)),
@@ -297,6 +322,10 @@ export async function buildCollectionSnapshot(
 				continue;
 			}
 			await evidence.verifyMarks(entry, publications.get(id));
+		}
+		// Finish mandatory publication and explicit issuer checks before optional discovery.
+		for (const [id, entry] of entries) {
+			await evidence.verifyMarks(entry, publications.get(id), true);
 			const filter = config.filter;
 			if (filter) {
 				const decision = await callback(

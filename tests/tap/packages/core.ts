@@ -14847,6 +14847,7 @@ export default (QUnit: QUnit) => {
 				maxTotalFetches?: number;
 				custom?: boolean;
 				knownIssuer?: boolean;
+				issuerGraphs?: boolean;
 			} = {},
 		) {
 			const graph = await createCollectionFederation({
@@ -14882,6 +14883,7 @@ export default (QUnit: QUnit) => {
 				entered = resolve;
 			});
 			const diagnostics: string[] = [];
+			const issuerRequests = new Map<string, number>();
 			const service = new EntityCollectionService({
 				trustAnchors: graph.trustAnchors,
 				options: {
@@ -14897,7 +14899,41 @@ export default (QUnit: QUnit) => {
 						error() {},
 					},
 					httpClient: async (url, init) => {
-						if (String(url).startsWith(unreachable)) {
+						const parsed = new URL(String(url));
+						const branch = config.issuerGraphs
+							? /^issuer-(\d+)-(\d+)-(\d+)\.example$/.exec(parsed.hostname)
+							: null;
+						if (branch) {
+							const [, graphId, depth, index] = branch;
+							issuerRequests.set(graphId!, (issuerRequests.get(graphId!) ?? 0) + 1);
+							const identity = parsed.origin;
+							const jwt = await signEntityStatement(
+								{
+									iat: 1000,
+									exp: 5000,
+									iss: identity,
+									sub: parsed.pathname === "/fetch" ? parsed.searchParams.get("sub") : identity,
+									jwks: { keys: [graph.keys.get("leaf")!.publicKey] },
+									...(parsed.pathname === "/fetch"
+										? {}
+										: {
+												authority_hints: Array.from(
+													{ length: 5 },
+													(_, i) =>
+														`https://issuer-${graphId}-${Number(depth) + 1}-${Number(index) * 5 + i}.example`,
+												),
+												metadata: {
+													federation_entity: { federation_fetch_endpoint: `${identity}/fetch` },
+												},
+											}),
+								},
+								new JwkSigner(graph.keys.get("leaf")!.privateKey),
+							);
+							return new Response(jwt, {
+								headers: { "content-type": "application/entity-statement+jwt" },
+							});
+						}
+						if (parsed.origin === new URL(unreachable).origin) {
 							attempts++;
 							entered();
 							if (config.timeout)
@@ -14927,19 +14963,27 @@ export default (QUnit: QUnit) => {
 						}
 					: {}),
 			});
-			async function marks(types: readonly string[], validSignature = true) {
+			async function marks(types: readonly string[], validSignature = true, issuers = [issuer]) {
 				const refs = await Promise.all(
-					types.map(async (type) => ({
-						trust_mark_type: type,
-						trust_mark: await signEntityStatement(
-							{ iss: issuer, sub: graph.id("leaf"), iat: 1000, exp: 4000, trust_mark_type: type },
-							new JwkSigner(
-								graph.keys.get(config.knownIssuer && validSignature ? "issuer" : "leaf")!
-									.privateKey,
+					types.flatMap((type) =>
+						issuers.map(async (markIssuer) => ({
+							trust_mark_type: type,
+							trust_mark: await signEntityStatement(
+								{
+									iss: markIssuer,
+									sub: graph.id("leaf"),
+									iat: 1000,
+									exp: 4000,
+									trust_mark_type: type,
+								},
+								new JwkSigner(
+									graph.keys.get(config.knownIssuer && validSignature ? "issuer" : "leaf")!
+										.privateKey,
+								),
+								{ typ: "trust-mark+jwt" },
 							),
-							{ typ: "trust-mark+jwt" },
-						),
-					})),
+						})),
+					),
 				);
 				await publish("leaf", { trust_marks: refs });
 			}
@@ -14950,6 +14994,7 @@ export default (QUnit: QUnit) => {
 				publish,
 				pendingIssuer,
 				diagnostics,
+				issuerRequests,
 				attempts: () => attempts,
 			};
 		}
@@ -15041,34 +15086,118 @@ export default (QUnit: QUnit) => {
 				},
 			);
 
-			QUnit.test(
-				"global fetch exhaustion is never downgraded to an optional mark failure",
-				async (assert) => {
-					const f = await fixture({ maxTotalFetches: 6 });
+			QUnit.test("issuer failure simulation matches the exact origin", async (assert) => {
+				const f = await fixture();
+				for (const issuer of [
+					"https://unreachable-issuer.example.attacker.test",
+					"https://unreachable-issuer.example:8443",
+				]) {
+					await f.marks(["open"], true, [issuer]);
+					assert.true((await f.service.refresh(f.graph.id("ta"))).ok);
+					assert.true(f.graph.requests.includes(`${issuer}/.well-known/openid-federation`));
+					assert.equal(f.attempts(), 0, "a different origin reaches the normal mock router");
+				}
+			});
+
+			QUnit.test("open issuer lookups stop at the remaining refresh allowance", async (assert) => {
+				for (const budget of [6, 9, 25]) {
+					const f = await fixture({ maxTotalFetches: budget, issuerGraphs: true });
 					const anchor = f.graph.id("ta");
 					assert.true((await f.service.refresh(anchor)).ok);
 					const previous = await f.service.store.getCurrent(anchor);
-					await f.marks(["open"]);
-					assert.false((await f.service.refresh(anchor)).ok);
-					assert.equal(f.attempts(), 0, "the global budget blocks the issuer request");
-					assert.deepEqual(await f.service.store.getCurrent(anchor), previous);
+					await f.marks(["open"], true, ["https://issuer-0-0-0.example"]);
+					f.graph.requests.length = 0;
+					assert.true((await f.service.refresh(anchor)).ok, `budget ${budget}`);
+					const current = await f.service.store.getCurrent(anchor);
+					assert.notEqual(current?.id, previous?.id);
+					assert.equal(current?.entries.length, 2);
+					assert.true(current!.entries.every((entry) => entry.verifiedMarks.length === 0));
+					assert.true(f.graph.requests.length + (f.issuerRequests.get("0") ?? 0) <= budget);
+				}
+			});
+
+			QUnit.test("open issuer graphs have per-issuer and aggregate limits", async (assert) => {
+				for (const custom of [false, true]) {
+					const f = await fixture({ issuerGraphs: true, custom });
+					const anchor = f.graph.id("ta");
+					const issuers = [0, 1, 2, 3].map((id) => `https://issuer-${id}-0-0.example`);
+					await f.marks(["open"], true, issuers);
+					for (let refresh = 1; refresh <= 2; refresh++) {
+						assert.true((await f.service.refresh(anchor)).ok);
+						assert.equal(f.issuerRequests.get("0"), 50 * refresh);
+						assert.equal(f.issuerRequests.get("1"), 50 * refresh);
+						assert.equal(f.issuerRequests.get("2") ?? 0, 0);
+						assert.equal(f.issuerRequests.get("3") ?? 0, 0);
+						const current = await f.service.store.getCurrent(anchor);
+						assert.equal(current?.entries.length, 2);
+						assert.true(current!.entries.every((entry) => entry.verifiedMarks.length === 0));
+					}
+				}
+			});
+
+			QUnit.test("explicit issuer work completes before optional issuer graphs", async (assert) => {
+				const f = await fixture({
+					custom: true,
+					knownIssuer: true,
+					issuerGraphs: true,
+					maxTotalFetches: 6,
+				});
+				await f.marks(["open"], true, ["https://issuer-0-0-0.example"]);
+				const mark = await signEntityStatement(
+					{
+						iss: f.graph.id("issuer"),
+						sub: f.graph.id("healthy"),
+						iat: 1000,
+						exp: 4000,
+						trust_mark_type: "required",
+					},
+					new JwkSigner(f.graph.keys.get("issuer")!.privateKey),
+					{ typ: "trust-mark+jwt" },
+				);
+				await f.publish("healthy", {
+					trust_marks: [{ trust_mark_type: "required", trust_mark: mark }],
+				});
+				assert.true((await f.service.refresh(f.graph.id("ta"))).ok);
+				const current = await f.service.store.getCurrent(f.graph.id("ta"));
+				assert.deepEqual(
+					current?.entries.find((entry) => String(entry.entity.entity_id) === f.graph.id("leaf"))
+						?.verifiedMarks,
+					[],
+				);
+				assert.equal(
+					current?.entries.find((entry) => String(entry.entity.entity_id) === f.graph.id("healthy"))
+						?.verifiedMarks[0]?.type,
+					"required",
+				);
+				assert.true(f.graph.requests.length + (f.issuerRequests.get("0") ?? 0) <= 6);
+			});
+
+			QUnit.test(
+				"mandatory traversal still fails when its fetch budget is exceeded",
+				async (assert) => {
+					const f = await fixture({ maxTotalFetches: 5 });
+					assert.false((await f.service.refresh(f.graph.id("ta"))).ok);
+					assert.strictEqual(await f.service.store.getCurrent(f.graph.id("ta")), undefined);
+					assert.equal(f.graph.requests.length, 5);
 				},
 			);
 
 			QUnit.test(
 				"open mark types still require a trusted issuer and a valid signature",
 				async (assert) => {
-					const f = await fixture({ knownIssuer: true });
-					const anchor = f.graph.id("ta");
-					for (const valid of [true, false]) {
-						await f.marks(["open"], valid);
-						assert.true((await f.service.refresh(anchor)).ok);
-						const filtered = await f.service.query({
-							trustAnchor: anchor,
-							trustMarkType: ["open"],
-						});
-						assert.true(filtered.ok);
-						if (filtered.ok) assert.equal(filtered.value.entities.length, valid ? 1 : 0);
+					for (const custom of [false, true]) {
+						const f = await fixture({ knownIssuer: true, custom });
+						const anchor = f.graph.id("ta");
+						for (const valid of [true, false]) {
+							await f.marks(["open"], valid);
+							assert.true((await f.service.refresh(anchor)).ok);
+							const filtered = await f.service.query({
+								trustAnchor: anchor,
+								trustMarkType: ["open"],
+							});
+							assert.true(filtered.ok);
+							if (filtered.ok) assert.equal(filtered.value.entities.length, valid ? 1 : 0);
+						}
 					}
 				},
 			);

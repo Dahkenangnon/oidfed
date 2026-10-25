@@ -29,6 +29,7 @@ export function createCollectionEvidence(
 	anchors: TrustAnchorSet,
 	options: FederationOptions,
 	configuration: (id: EntityId) => ReturnType<typeof fetchEntityConfiguration>,
+	openIssuerOptions: () => FederationOptions,
 ) {
 	const proofs = new Map<string, IssuerProof>();
 	const resolutions = new Map<string, Promise<IssuerResolution>>();
@@ -79,7 +80,11 @@ export function createCollectionEvidence(
 		if (!pending) {
 			// Cache resolution facts once; each mark type applies its own failure policy below.
 			pending = (async () => {
-				const paths = await resolveTrustChains(issuer as EntityId, anchors, options);
+				const paths = await resolveTrustChains(
+					issuer as EntityId,
+					anchors,
+					explicitlyListed ? options : openIssuerOptions(),
+				);
 				const incomplete =
 					paths.incomplete === true ||
 					paths.errors.some(
@@ -103,7 +108,11 @@ export function createCollectionEvidence(
 		return resolved.proof;
 	}
 
-	async function verifyMarks(entry: CollectionEntry, publication?: EntityConfigurationPayload) {
+	async function verifyMarks(
+		entry: CollectionEntry,
+		publication?: EntityConfigurationPayload,
+		openOnly = false,
+	) {
 		if (!entry.entity.trust_marks?.length) return;
 		const trustedRoot = await root();
 		if (!trustedRoot.ok) throw new Error(trustedRoot.error.description);
@@ -135,11 +144,11 @@ export function createCollectionEvidence(
 				)
 			)
 				continue;
+			const authorized = trustedRoot.value.payload.trust_mark_issuers?.[ref.trust_mark_type];
+			if (!authorized || (authorized.length === 0) !== openOnly) continue;
 			const mark = decodeEntityStatement(ref.trust_mark);
 			if (!mark.ok || !isValidEntityId(mark.value.payload.iss)) continue;
-			const authorized = trustedRoot.value.payload.trust_mark_issuers?.[ref.trust_mark_type];
-			if (!authorized || (authorized.length && !authorized.includes(mark.value.payload.iss)))
-				continue;
+			if (authorized.length && !authorized.includes(mark.value.payload.iss)) continue;
 			const proof = await issuerProof(mark.value.payload.iss, authorized.length > 0);
 			if (!proof) continue;
 			const checked = await validateTrustMark(
