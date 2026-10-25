@@ -12,12 +12,13 @@ import type {
   SubordinateEventStorage,
   TrustMarkStorage,
 } from "@oidfed/authority";
-import type { CacheProvider, ReplayStore } from "@oidfed/core";
+import type { CacheProvider, EntityCollectionStore, ReplayStore } from "@oidfed/core";
 
 interface StorageAdapter {
   readonly subordinates: SubordinateStorage;
   readonly trustMarks?: TrustMarkStorage;
   readonly subordinateEvents?: SubordinateEventStorage;
+  readonly collections?: EntityCollectionStore;
   readonly replay?: ReplayStore;
   readonly cache?: CacheProvider;
   transaction<T>(operation: (tx: StorageTransaction) => Promise<T>): Promise<T>;
@@ -149,3 +150,11 @@ await storage.transaction(async (tx) => {
 ```
 
 Only record `revocation` when the removal represents an actual revocation. Technical cleanup alone does not establish that meaning. The transaction callback may run again after a conflict; keep signing and network operations outside it.
+
+## Collection snapshots
+
+Entity Collection stores snapshots separately from subordinate registration records, using the core `EntityCollectionStore` contract. The service uses `collection.store` when supplied, then `storage.collections`, then its own memory store. Enable the storage capability with `MemoryStorageAdapter({ collections: true })`.
+
+The service publishes each snapshot atomically after collection, outside registration transactions. A store shared across instances must isolate anchors, retain snapshots and opaque cursors, enforce expiry, and return detached values. See [Entity Collection](entity-collection.md#refresh-and-storage).
+
+Collection entries have an `expiresAt` eligibility deadline and may also carry `chainExpiresAt` evidence. Custom collectors do not need to provide chain evidence. Core derives the mark evidence used for filtering during refresh. Keep these internal fields separate from the public entity data when persisting snapshots.

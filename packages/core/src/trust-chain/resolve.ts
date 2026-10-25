@@ -19,21 +19,41 @@ import { calculateChainExpiration } from "./validate.js";
 /** Create a concurrency limiter that allows at most `maxConcurrent` parallel executions. */
 export function createConcurrencyLimiter(
 	maxConcurrent: number,
+	signal?: AbortSignal,
 ): <T>(fn: () => Promise<T>) => Promise<T> {
+	if (!Number.isSafeInteger(maxConcurrent) || maxConcurrent <= 0)
+		throw new RangeError("maxConcurrent must be a positive safe integer");
 	let active = 0;
-	const queue: Array<() => void> = [];
+	const queue: Array<{ resolve: () => void; reject: (reason: unknown) => void }> = [];
+	const aborted = () => new DOMException("Operation aborted", "AbortError");
+	const onAbort = () => {
+		for (const pending of queue.splice(0)) pending.reject(aborted());
+		signal?.removeEventListener("abort", onAbort);
+	};
+	async function acquire(): Promise<void> {
+		if (signal?.aborted) throw aborted();
+		if (active < maxConcurrent) {
+			active++;
+			return;
+		}
+		await new Promise<void>((resolve, reject) => {
+			queue.push({ resolve, reject });
+			if (queue.length === 1) signal?.addEventListener("abort", onAbort, { once: true });
+			if (signal?.aborted) onAbort();
+		});
+	}
 
 	return async <T>(fn: () => Promise<T>): Promise<T> => {
-		if (active >= maxConcurrent) {
-			await new Promise<void>((resolve) => queue.push(resolve));
-		}
-		active++;
+		await acquire();
 		try {
+			if (signal?.aborted) throw aborted();
 			return await fn();
 		} finally {
-			active--;
 			const next = queue.shift();
-			if (next) next();
+			if (!queue.length) signal?.removeEventListener("abort", onAbort);
+			// Transfer the occupied slot directly to a waiter before admitting new work.
+			if (next) next.resolve();
+			else active--;
 		}
 	};
 }
@@ -46,23 +66,29 @@ export async function resolveTrustChains(
 ): Promise<TrustChainResult> {
 	const maxDepth = options?.maxChainDepth ?? DEFAULT_MAX_CHAIN_DEPTH;
 	const maxHints = options?.maxAuthorityHints ?? DEFAULT_MAX_AUTHORITY_HINTS;
-	const limiter = createConcurrencyLimiter(options?.maxConcurrentFetches ?? 6);
+	const limiter = createConcurrencyLimiter(options?.maxConcurrentFetches ?? 6, options?.signal);
 	const maxTotalFetches = options?.maxTotalFetches ?? 50;
 	const fetchBudget = { remaining: maxTotalFetches };
 
 	const chains: TrustChain[] = [];
 	const errors: FederationError[] = [];
+	let incomplete = false;
 
 	if (fetchBudget.remaining <= 0) {
 		return {
 			chains: [],
 			errors: [federationError(InternalErrorCode.TrustChainInvalid, "Fetch budget exhausted")],
+			incomplete: true,
 		};
 	}
 	fetchBudget.remaining--;
 	const leafEcResult = await fetchEntityConfiguration(entityId, options);
 	if (!leafEcResult.ok) {
-		return { chains: [], errors: [leafEcResult.error] };
+		return {
+			chains: [],
+			errors: [leafEcResult.error],
+			...(options?.signal?.aborted ? { incomplete: true as const } : {}),
+		};
 	}
 	const leafEcJwt = leafEcResult.value;
 
@@ -122,6 +148,7 @@ export async function resolveTrustChains(
 		depth: number,
 	): Promise<void> {
 		if (depth > maxDepth) {
+			incomplete = true;
 			errors.push(
 				federationError(
 					InternalErrorCode.TrustChainInvalid,
@@ -131,9 +158,21 @@ export async function resolveTrustChains(
 			return;
 		}
 
-		if (options?.signal?.aborted) return;
+		if (options?.signal?.aborted) {
+			incomplete = true;
+			return;
+		}
 
 		let filteredHints = currentHints.slice(0, maxHints);
+		if (currentHints.length > maxHints) {
+			incomplete = true;
+			errors.push(
+				federationError(
+					InternalErrorCode.TrustChainInvalid,
+					`Max authority hints (${maxHints}) exceeded`,
+				),
+			);
+		}
 		if (options?.authorityHintFilter) {
 			filteredHints = filteredHints.filter((h) => {
 				try {
@@ -145,118 +184,123 @@ export async function resolveTrustChains(
 		}
 
 		const settled = await Promise.allSettled(
-			filteredHints.map((hint) =>
-				limiter(async () => {
-					const branchVisited = new Set(visited);
+			filteredHints.map(async (hint) => {
+				const branchVisited = new Set(visited);
 
-					if (branchVisited.has(hint)) {
-						errors.push(
-							federationError(
-								InternalErrorCode.LoopDetected,
-								`Loop detected: '${hint}' already in chain`,
-							),
-						);
-						return;
-					}
-					branchVisited.add(hint);
-
-					if (fetchBudget.remaining <= 0) {
-						errors.push(
-							federationError(InternalErrorCode.TrustChainInvalid, "Fetch budget exhausted"),
-						);
-						return;
-					}
-					fetchBudget.remaining--;
-					const hintEcResult = await fetchEntityConfiguration(hint as EntityId, options);
-					if (!hintEcResult.ok) {
-						errors.push(hintEcResult.error);
-						return;
-					}
-
-					const hintDecoded = decodeEntityStatement(hintEcResult.value);
-					if (!hintDecoded.ok) {
-						errors.push(hintDecoded.error);
-						return;
-					}
-
-					const hintMeta = hintDecoded.value.payload.metadata as
-						| Record<string, Record<string, unknown>>
-						| undefined;
-					const fedEntity = hintMeta?.federation_entity;
-					const fetchEndpoint = fedEntity?.federation_fetch_endpoint as string | undefined;
-
-					if (!fetchEndpoint) {
-						errors.push(
-							federationError(
-								InternalErrorCode.TrustChainInvalid,
-								`Entity '${hint}' has no federation_fetch_endpoint in metadata`,
-							),
-						);
-						return;
-					}
-
-					if (fetchBudget.remaining <= 0) {
-						errors.push(
-							federationError(InternalErrorCode.TrustChainInvalid, "Fetch budget exhausted"),
-						);
-						return;
-					}
-					fetchBudget.remaining--;
-					const ssResult = await fetchSubordinateStatement(
-						fetchEndpoint,
-						currentEntityId as EntityId,
-						options,
+				if (branchVisited.has(hint)) {
+					errors.push(
+						federationError(
+							InternalErrorCode.LoopDetected,
+							`Loop detected: '${hint}' already in chain`,
+						),
 					);
-					if (!ssResult.ok) {
-						errors.push(ssResult.error);
-						return;
-					}
+					return;
+				}
+				branchVisited.add(hint);
 
-					if (trustAnchors.has(hint as EntityId)) {
-						const fullChain = [...chainSoFar, ssResult.value, hintEcResult.value];
-						const parsed = fullChain.map((jwt) => {
-							const d = decodeEntityStatement(jwt);
-							return d.ok ? d.value : null;
+				if (fetchBudget.remaining <= 0) {
+					incomplete = true;
+					errors.push(
+						federationError(InternalErrorCode.TrustChainInvalid, "Fetch budget exhausted"),
+					);
+					return;
+				}
+				fetchBudget.remaining--;
+				const hintEcResult = await limiter(() =>
+					fetchEntityConfiguration(hint as EntityId, options),
+				);
+				if (!hintEcResult.ok) {
+					errors.push(hintEcResult.error);
+					return;
+				}
+
+				const hintDecoded = decodeEntityStatement(hintEcResult.value);
+				if (!hintDecoded.ok) {
+					errors.push(hintDecoded.error);
+					return;
+				}
+
+				const hintMeta = hintDecoded.value.payload.metadata as
+					| Record<string, Record<string, unknown>>
+					| undefined;
+				const fedEntity = hintMeta?.federation_entity;
+				const fetchEndpoint = fedEntity?.federation_fetch_endpoint as string | undefined;
+
+				if (!fetchEndpoint) {
+					errors.push(
+						federationError(
+							InternalErrorCode.TrustChainInvalid,
+							`Entity '${hint}' has no federation_fetch_endpoint in metadata`,
+						),
+					);
+					return;
+				}
+
+				if (fetchBudget.remaining <= 0) {
+					incomplete = true;
+					errors.push(
+						federationError(InternalErrorCode.TrustChainInvalid, "Fetch budget exhausted"),
+					);
+					return;
+				}
+				fetchBudget.remaining--;
+				const ssResult = await limiter(() =>
+					fetchSubordinateStatement(fetchEndpoint, currentEntityId as EntityId, {
+						...options,
+						issuer: hint as EntityId,
+					}),
+				);
+				if (!ssResult.ok) {
+					errors.push(ssResult.error);
+					return;
+				}
+
+				if (trustAnchors.has(hint as EntityId)) {
+					const fullChain = [...chainSoFar, ssResult.value, hintEcResult.value];
+					const parsed = fullChain.map((jwt) => {
+						const d = decodeEntityStatement(jwt);
+						return d.ok ? d.value : null;
+					});
+					if (parsed.every((p) => p !== null)) {
+						chains.push({
+							statements: fullChain,
+							entityId,
+							trustAnchorId: hint as EntityId,
+							expiresAt: calculateChainExpiration(parsed as NonNullable<(typeof parsed)[0]>[]),
 						});
-						if (parsed.every((p) => p !== null)) {
-							chains.push({
-								statements: fullChain,
-								entityId,
-								trustAnchorId: hint as EntityId,
-								expiresAt: calculateChainExpiration(parsed as NonNullable<(typeof parsed)[0]>[]),
-							});
-						}
-						return;
 					}
+					return;
+				}
 
-					const hintHints = (hintDecoded.value.payload as Record<string, unknown>)
-						.authority_hints as string[] | undefined;
-					if (!hintHints || hintHints.length === 0) {
-						errors.push(
-							federationError(
-								InternalErrorCode.TrustChainInvalid,
-								`Entity '${hint}' has no authority_hints and is not a trust anchor`,
-							),
-						);
-						return;
-					}
-
-					await buildChains(
-						hint,
-						hintHints,
-						[...chainSoFar, ssResult.value],
-						branchVisited,
-						depth + 1,
+				const hintHints = (hintDecoded.value.payload as Record<string, unknown>).authority_hints as
+					| string[]
+					| undefined;
+				if (!hintHints || hintHints.length === 0) {
+					errors.push(
+						federationError(
+							InternalErrorCode.TrustChainInvalid,
+							`Entity '${hint}' has no authority_hints and is not a trust anchor`,
+						),
 					);
-				}),
-			),
+					return;
+				}
+
+				await buildChains(
+					hint,
+					hintHints,
+					[...chainSoFar, ssResult.value],
+					branchVisited,
+					depth + 1,
+				);
+			}),
 		);
 
 		for (const result of settled) {
 			if (result.status === "rejected") {
+				if (options?.signal?.aborted) incomplete = true;
 				errors.push(
 					federationError(
-						InternalErrorCode.Network,
+						options?.signal?.aborted ? InternalErrorCode.Timeout : InternalErrorCode.Network,
 						result.reason instanceof Error
 							? result.reason.message
 							: "Unknown error during chain resolution",
@@ -270,5 +314,6 @@ export async function resolveTrustChains(
 	const initialVisited = new Set<string>([entityId]);
 	await buildChains(entityId, hints, [leafEcJwt], initialVisited, 1);
 
-	return { chains, errors };
+	if (options?.signal?.aborted) incomplete = true;
+	return { chains, errors, ...(incomplete ? { incomplete: true as const } : {}) };
 }

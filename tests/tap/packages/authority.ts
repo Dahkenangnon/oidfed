@@ -39,8 +39,10 @@ import {
 	type AuthorityConfig,
 	type AuthorityServer,
 	Intermediate,
+	type StorageAdapter,
 	TrustAnchor,
 } from "../../../packages/authority/src/index.js";
+import * as SubordinateEventsFixture from "../fixtures/subordinate-events.js";
 
 function createAuthorityServer(config: AuthorityConfig): AuthorityServer {
 	const server =
@@ -7375,4 +7377,240 @@ export default (QUnit: QUnit) => {
 			t.equal(res.status, 200);
 		});
 	});
+
+	{
+		const { issuer, subject, endpoint, fixture } = SubordinateEventsFixture;
+		QUnit.module("Subordinate Events Draft 01", () => {
+			for (const intermediate of [false, true]) {
+				for (const withMetadata of [false, true]) {
+					QUnit.test(
+						`${intermediate ? "Intermediate" : "TrustAnchor"} snapshots pending registration ${withMetadata ? "with" : "without"} metadata`,
+						async (assert) => {
+							const f = await fixture(intermediate);
+							let release!: () => void;
+							const gate = new Promise<void>((resolve) => {
+								release = resolve;
+							});
+							const blocker = f.storage.transaction(async () => gate);
+							const { metadata, ...base } = structuredClone(f.record);
+							const record = { ...base, ...(withMetadata ? { metadata } : {}) };
+							const expected = structuredClone(record);
+							const other = entityId("https://other.example");
+							const pending = f.authority.registerSubordinate(record);
+							record.entityId = other;
+							record.jwks.keys.length = 0;
+							if (record.metadata)
+								record.metadata.openid_relying_party.organization_name = "Changed";
+							release();
+							await blocker;
+							await pending;
+							const stored = await f.storage.subordinates.get(subject);
+							assert.deepEqual(stored?.jwks, expected.jwks);
+							assert.deepEqual(stored?.metadata, expected.metadata);
+							assert.strictEqual(await f.storage.subordinates.get(other), undefined);
+							assert.deepEqual(await f.storage.subordinateEvents?.list(issuer, other), []);
+							assert.deepEqual(
+								(await f.storage.subordinateEvents?.list(issuer, subject))?.map((e) => e.event),
+								["registration"],
+							);
+						},
+					);
+				}
+			}
+
+			QUnit.test(
+				"missing transaction capability fails before mutation and failed appends roll back state",
+				async (assert) => {
+					const f = await fixture();
+					const broken: StorageAdapter = {
+						subordinates: f.storage.subordinates,
+						subordinateEvents: f.storage.subordinateEvents,
+						transaction: (operation) =>
+							f.storage.transaction((tx) => operation({ subordinates: tx.subordinates })),
+					};
+					await assert.rejects(
+						new TrustAnchor({ ...f.config, storage: broken }).registerSubordinate(f.record),
+						/transaction-bound/,
+					);
+					assert.strictEqual(await f.storage.subordinates.get(subject), undefined);
+					const failing: StorageAdapter = {
+						...broken,
+						transaction: (operation) =>
+							f.storage.transaction((tx) =>
+								operation({
+									...tx,
+									subordinateEvents: {
+										list: async () => [],
+										append: async () => {
+											throw new Error("disk full");
+										},
+									},
+								}),
+							),
+					};
+					await assert.rejects(
+						new TrustAnchor({ ...f.config, storage: failing }).registerSubordinate(f.record),
+						/disk full/,
+					);
+					assert.strictEqual(await f.storage.subordinates.get(subject), undefined);
+					assert.deepEqual(await f.storage.subordinateEvents?.list(issuer, subject), []);
+				},
+			);
+
+			QUnit.test(
+				"transaction retries commit only the successful attempt's events",
+				async (assert) => {
+					const f = await fixture();
+					const retry = new Error("retry");
+					let attempts = 0;
+					const storage: StorageAdapter = {
+						subordinates: f.storage.subordinates,
+						subordinateEvents: f.storage.subordinateEvents,
+						async transaction(operation) {
+							try {
+								await f.storage.transaction(async (tx) => {
+									attempts++;
+									await operation(tx);
+									throw retry;
+								});
+							} catch (error) {
+								if (error !== retry) throw error;
+							}
+							return f.storage.transaction((tx) => {
+								attempts++;
+								return operation(tx);
+							});
+						},
+					};
+					await new TrustAnchor({ ...f.config, storage }).registerSubordinate(f.record);
+					assert.strictEqual(attempts, 2);
+					assert.strictEqual((await f.storage.subordinateEvents?.list(issuer, subject))?.length, 1);
+				},
+			);
+
+			QUnit.test(
+				"event capture can be enabled without publishing an HTTP route",
+				async (assert) => {
+					const f = await fixture();
+					const authority = new TrustAnchor({
+						...f.config,
+						metadata: {
+							federation_entity: {
+								federation_fetch_endpoint: `${issuer}/fetch`,
+								federation_list_endpoint: `${issuer}/list`,
+							},
+						},
+					});
+					await authority.registerSubordinate(f.record);
+					assert.strictEqual((await f.storage.subordinateEvents?.list(issuer, subject))?.length, 1);
+					const response = await authority.handleRequest(
+						new Request(`${endpoint}&sub=${encodeURIComponent(subject)}`),
+					);
+					assert.strictEqual(response.status, 404);
+					const ec = decodeEntityStatement(await authority.getEntityConfiguration());
+					assert.true(ec.ok);
+					if (ec.ok)
+						assert.strictEqual(
+							ec.value.payload.metadata?.federation_entity?.federation_subordinate_events_endpoint,
+							undefined,
+						);
+				},
+			);
+
+			QUnit.test("method errors are Federation errors only on the events route", async (assert) => {
+				for (const methods of [undefined, ["private_key_jwt"], ["none", "private_key_jwt"]]) {
+					const f = await fixture();
+					const authority = new TrustAnchor({
+						...f.config,
+						metadata: {
+							federation_entity: {
+								...f.config.metadata.federation_entity,
+								...(methods
+									? { federation_subordinate_events_endpoint_auth_methods: methods }
+									: {}),
+							},
+						},
+					});
+					const allow = methods?.includes("none") ? "GET, POST" : methods ? "POST" : "GET";
+					const disallowed = methods?.includes("none")
+						? ["PUT"]
+						: methods
+							? ["GET", "PUT"]
+							: ["POST", "PUT"];
+					for (const method of disallowed) {
+						const response = await authority.handleRequest(new Request(endpoint, { method }));
+						assert.strictEqual(response.status, 405);
+						assert.strictEqual(response.headers.get("allow"), allow);
+						assert.strictEqual(response.headers.get("content-type"), MediaType.Json);
+						assert.strictEqual(response.headers.get("cache-control"), "no-store");
+						const body = (await response.json()) as { error: string; error_description: string };
+						assert.strictEqual(body.error, "invalid_request");
+						assert.strictEqual(typeof body.error_description, "string");
+					}
+					const legacy = await authority.handleRequest(
+						new Request(`${issuer}/list`, { method: "PUT" }),
+					);
+					assert.strictEqual(legacy.status, 405);
+					assert.deepEqual(await legacy.json(), { error: "method_not_allowed" });
+				}
+			});
+		});
+	}
+
+	{
+		const anchor = entityId("https://ta.example");
+		QUnit.module("Collection regressions", () => {
+			QUnit.test(
+				"authority routing preserves abort signals for form body readers",
+				async (assert) => {
+					const key = await generateSigningKey("ES256");
+					const keyProvider = new MemoryFederationKeyProvider({
+						signer: new JwkSigner(key.privateKey),
+						publicJwk: key.publicKey,
+					});
+					const authority = new TrustAnchor({
+						entityId: anchor,
+						keyProvider,
+						storage: new MemoryStorageAdapter(),
+						metadata: {
+							federation_entity: {
+								federation_fetch_endpoint: `${anchor}/fetch`,
+								federation_list_endpoint: `${anchor}/list`,
+								federation_collection_endpoint: `${anchor}/collect`,
+							},
+						},
+						collection: { trustAnchors: new Map(), options: { httpTimeoutMs: 1000 } },
+					});
+					let signal: AbortSignal | undefined;
+					const handle = authority.collection!.handleRequest.bind(authority.collection);
+					authority.collection!.handleRequest = async (request) => {
+						signal = request.signal;
+						return handle(request);
+					};
+					const ac = new AbortController();
+					ac.abort();
+					let cancelled = false;
+					const pending = authority.handleRequest(
+						new Request(`${anchor}/collect`, {
+							method: "POST",
+							headers: { "content-type": "application/x-www-form-urlencoded" },
+							body: new ReadableStream({
+								cancel() {
+									cancelled = true;
+								},
+							}),
+							signal: ac.signal,
+							...({ duplex: "half" } as RequestInit),
+						}),
+					);
+					assert.true(
+						signal?.aborted ?? false,
+						"the handler must receive the incoming aborted state",
+					);
+					assert.equal((await pending).status, 400);
+					assert.true(cancelled);
+				},
+			);
+		});
+	}
 };

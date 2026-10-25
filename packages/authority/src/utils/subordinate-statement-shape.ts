@@ -19,6 +19,8 @@ const STANDARD_POLICY_OPERATORS: readonly string[] = Object.values(PolicyOperato
  * then `_auth_methods` companions, then the signing-alg list).
  */
 export const FEDERATION_ENTITY_OPERATIONAL_FIELDS: readonly string[] = Object.freeze([
+	"federation_collection_endpoint",
+	"federation_collection_endpoint_auth_methods",
 	"federation_subordinate_events_endpoint",
 	"federation_subordinate_events_endpoint_auth_methods",
 	"federation_extended_list_endpoint",

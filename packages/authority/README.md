@@ -94,6 +94,10 @@ Entity Configuration route is derived from the configured Entity Identifier path
 and fetch/list/optional federation endpoints are served on the advertised
 endpoint URL paths.
 
+## Entity Collection
+
+Trust Anchors and Intermediates can serve Draft 01 collections through the shared core service. Refresh snapshots explicitly, then query them with filters, informational claims, language selection, and pagination. See the [Entity Collection guide](https://github.com/Dahkenangnon/oidfed/blob/main/docs/guide/entity-collection.md) for configuration and endpoint integration.
+
 ## Documentation
 
 For a detailed API reference, subordinate management APIs, and unified storage adapter setups, see the [docs/packages/authority.md](https://github.com/Dahkenangnon/oidfed/blob/main/docs/packages/authority.md) file.

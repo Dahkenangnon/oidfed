@@ -358,10 +358,10 @@ const specDocs = [
 	},
 	{
 		label: "OpenID Federation Entity Collection 1.0",
-		status: "Draft 00",
+		status: "Draft 01",
 		tone: "warn" as const,
 		href: "https://openid.net/specs/openid-federation-entity-collection-1_0.html",
-		implemented: false,
+		implemented: true,
 	},
 	{
 		label: "OpenID Federation for Wallet Architectures 1.0",

@@ -93,6 +93,10 @@ needs the current federation signer and published Federation JWKS. The in-memory
 provider used above also supports lifecycle operations, but leaf code does not
 depend on those methods.
 
+## Entity Collection
+
+Leaves can serve Draft 01 collections through the shared core service. It supports explicit snapshot refresh, filters, informational metadata, language selection, and pagination. See the [Entity Collection guide](https://github.com/Dahkenangnon/oidfed/blob/main/docs/guide/entity-collection.md) for configuration and endpoint integration.
+
 ## Documentation
 
 For a detailed API reference, entity configuration setups, and authority discovery guides, see the [docs/packages/leaf.md](https://github.com/Dahkenangnon/oidfed/blob/main/docs/packages/leaf.md) file.

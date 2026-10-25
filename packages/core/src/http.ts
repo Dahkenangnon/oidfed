@@ -103,6 +103,7 @@ function errorCodeToStatus(code: string): number {
 		case FederationErrorCode.InvalidTrustChain:
 		case FederationErrorCode.InvalidMetadata:
 		case FederationErrorCode.UnsupportedParameter:
+		case FederationErrorCode.UnsupportedClaim:
 			return 400;
 		case FederationErrorCode.InvalidClient:
 			return 401;

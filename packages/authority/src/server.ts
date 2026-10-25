@@ -1,5 +1,6 @@
 /** Federation Authority server: wires endpoint handlers, key management, and subordinate storage into an HTTP server. */
 import type {
+	EntityCollectionIntegration,
 	EntityContext,
 	EntityId,
 	EntityRole,
@@ -18,6 +19,7 @@ import type {
 } from "@oidfed/core";
 import {
 	decodeEntityStatement,
+	EntityCollectionService,
 	err,
 	FederationEndpoint,
 	FederationErrorCode,
@@ -106,6 +108,8 @@ function assertTrustAnchorHintsConfig(config: AuthorityConfig, isTrustAnchor: bo
 }
 
 export interface AuthorityConfig {
+	/** Optional shared collection service; snapshots are independent of registrations. */
+	collection?: EntityCollectionIntegration;
 	/** The entity identifier (URL) for this authority. */
 	entityId: EntityId | string;
 	/** Metadata published in this authority's Entity Configuration. Must include `federation_entity`. */
@@ -156,6 +160,7 @@ export interface AuthorityConfig {
 }
 
 export interface AuthorityServer {
+	readonly collection?: EntityCollectionService;
 	registerSubordinate(record: Omit<SubordinateRecord, "createdAt" | "updatedAt">): Promise<void>;
 	updateSubordinate(subject: EntityId, updates: SubordinateRecordUpdate): Promise<void>;
 	revokeSubordinate(subject: EntityId): Promise<void>;
@@ -304,6 +309,44 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 
 	const lifecycle = createSubordinateLifecycle(ctx);
 	const meta = config.metadata.federation_entity;
+	const collectionMethods = meta.federation_collection_endpoint_auth_methods ?? ["none"];
+	if (
+		config.collection?.authentication &&
+		JSON.stringify([...new Set(config.collection.authentication.methods)].sort()) !==
+			JSON.stringify([...new Set(collectionMethods)].sort())
+	)
+		throw new InvalidAuthorityConfig(
+			"Collection authentication methods must match federation_collection_endpoint_auth_methods (default: none)",
+		);
+	if (meta.federation_collection_endpoint && !config.collection)
+		throw new InvalidAuthorityConfig("The collection endpoint requires collection configuration");
+	const collection = config.collection
+		? new EntityCollectionService({
+				...config.collection,
+				responder: { entityId: normalizedEntityId, isTrustAnchor },
+				...(meta.federation_collection_endpoint
+					? { endpoint: meta.federation_collection_endpoint }
+					: {}),
+				...((config.collection.store ?? config.storage.collections)
+					? { store: config.collection.store ?? config.storage.collections }
+					: {}),
+				options: { ...effectiveOptions, ...config.collection.options },
+				authentication: {
+					...config.collection.authentication,
+					methods: collectionMethods as ("none" | "private_key_jwt")[],
+					receiverEntityId: normalizedEntityId,
+					getClientFederationJwks: (id) => clientKeyProvider.getClientFederationJwks(id),
+					...(config.storage.replay
+						? {
+								replayStore: config.collection.authentication?.replayStore ?? config.storage.replay,
+							}
+						: {}),
+					...(meta.endpoint_auth_signing_alg_values_supported
+						? { allowedAlgorithms: meta.endpoint_auth_signing_alg_values_supported }
+						: {}),
+				},
+			})
+		: undefined;
 
 	function withAuth(
 		handler: (req: Request) => Promise<Response>,
@@ -410,12 +453,22 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 		),
 	);
 
+	if (collection)
+		addOptionalAuthorityRoute(
+			routeMap,
+			routeNames,
+			"federation_collection_endpoint",
+			meta.federation_collection_endpoint,
+			(request) => collection.handleRequest(request),
+		);
+
 	const router = async (request: Request): Promise<Response> => {
 		// Strip X-Authenticated-Entity to prevent spoofing — the auth wrapper re-adds it after verification
 		const headers = new Headers(request.headers);
 		headers.delete("X-Authenticated-Entity");
 		const init: RequestInit = {
 			method: request.method,
+			signal: request.signal,
 			headers,
 			body: request.body,
 		};
@@ -446,6 +499,7 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 
 	return {
 		...lifecycle,
+		...(collection ? { collection } : {}),
 		async getSubordinateEvents(subject: EntityId): Promise<string> {
 			const jwt = await buildSubordinateEvents(ctx, subject);
 			if (jwt === undefined) throw new Error(`Subordinate history '${subject}' not found`);
@@ -701,6 +755,9 @@ function createStorageBackedClientKeyProvider(storage: StorageAdapter): Authorit
 }
 
 export class TrustAnchor {
+	get collection(): EntityCollectionService | undefined {
+		return this.server.collection;
+	}
 	static sanitizeSubordinateMetadata = sanitizeSubordinateMetadata;
 
 	public readonly entityId: EntityId;
@@ -822,6 +879,9 @@ export class TrustAnchor {
 }
 
 export class Intermediate {
+	get collection(): EntityCollectionService | undefined {
+		return this.server.collection;
+	}
 	static sanitizeSubordinateMetadata = sanitizeSubordinateMetadata;
 
 	public readonly entityId: EntityId;

@@ -4,6 +4,7 @@ export {
 	type TrustChainConstraints,
 	TrustChainConstraintsSchema,
 } from "./constraints.js";
+export * from "./entity-collection.js";
 export {
 	BaseEntityStatementSchema,
 	type EntityConfigurationPayload,
@@ -51,7 +52,6 @@ export {
 	FederationMetadataSchema,
 	getEntityTypes,
 } from "./metadata.js";
-
 export {
 	type EntityTypeMetadataPolicy,
 	EntityTypeMetadataPolicySchema,

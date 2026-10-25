@@ -11,7 +11,8 @@ export default async (QUnit: QUnit, done: (stats: QUnit.DoneDetails) => void) =>
 		import("./packages/oidc.js"),
 		import("./packages/authority.js"),
 		import("./packages/core.js"),
-		import("./packages/subordinate-events.js"),
+		import("./integration/subordinate-events.js"),
+		import("./integration/entity-collection.js"),
 	]);
 	for (const { default: module } of modules) {
 		await module(QUnit);
