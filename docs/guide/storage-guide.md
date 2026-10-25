@@ -12,12 +12,13 @@ import type {
   SubordinateEventStorage,
   TrustMarkStorage,
 } from "@oidfed/authority";
-import type { CacheProvider, ReplayStore } from "@oidfed/core";
+import type { CacheProvider, EntityCollectionStore, ReplayStore } from "@oidfed/core";
 
 interface StorageAdapter {
   readonly subordinates: SubordinateStorage;
   readonly trustMarks?: TrustMarkStorage;
   readonly subordinateEvents?: SubordinateEventStorage;
+  readonly collections?: EntityCollectionStore;
   readonly replay?: ReplayStore;
   readonly cache?: CacheProvider;
   transaction<T>(operation: (tx: StorageTransaction) => Promise<T>): Promise<T>;
