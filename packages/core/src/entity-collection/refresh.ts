@@ -154,6 +154,7 @@ export async function buildCollectionSnapshot(
 					throw new DOMException("Refresh aborted", "AbortError");
 				if (++fetches > (config.options?.maxTotalFetches ?? 1000)) {
 					exhausted = true;
+					controller.abort();
 					throw new Error("Collection fetch budget exhausted");
 				}
 				return http(url, {

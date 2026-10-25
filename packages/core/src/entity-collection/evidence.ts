@@ -20,6 +20,8 @@ import {
 import type { CollectionEntry } from "./types.js";
 
 type Root = { jwt: string; payload: EntityConfigurationPayload; expiresAt: number };
+type IssuerProof = { keys: JWKSet; expiresAt: number };
+type IssuerResolution = { incomplete: boolean; proof: IssuerProof | undefined };
 
 /** Refresh-local chain and mark evidence; self-published keys never become issuer proofs. */
 export function createCollectionEvidence(
@@ -28,8 +30,8 @@ export function createCollectionEvidence(
 	options: FederationOptions,
 	configuration: (id: EntityId) => ReturnType<typeof fetchEntityConfiguration>,
 ) {
-	const proofs = new Map<string, { keys: JWKSet; expiresAt: number }>();
-	const resolutions = new Map<string, Promise<{ keys: JWKSet; expiresAt: number } | undefined>>();
+	const proofs = new Map<string, IssuerProof>();
+	const resolutions = new Map<string, Promise<IssuerResolution>>();
 	let rootPending: Promise<Result<Root>> | undefined;
 
 	async function validatePath(chain: readonly string[]): Promise<ValidatedTrustChain | undefined> {
@@ -69,27 +71,36 @@ export function createCollectionEvidence(
 		return rootPending;
 	}
 
-	async function issuerProof(issuer: string) {
+	async function issuerProof(issuer: string, explicitlyListed: boolean) {
+		if (options.signal?.aborted) throw new DOMException("Refresh aborted", "AbortError");
 		const existing = proofs.get(issuer);
 		if (existing) return existing;
 		let pending = resolutions.get(issuer);
 		if (!pending) {
+			// Cache resolution facts once; each mark type applies its own failure policy below.
 			pending = (async () => {
 				const paths = await resolveTrustChains(issuer as EntityId, anchors, options);
-				if (
-					paths.incomplete ||
+				const incomplete =
+					paths.incomplete === true ||
 					paths.errors.some(
 						(error) =>
 							error.code === InternalErrorCode.Network || error.code === InternalErrorCode.Timeout,
-					)
-				)
-					throw new Error("Unable to resolve Trust Mark issuer");
-				for (const path of paths.chains) await validatePath(path.statements);
-				return proofs.get(issuer);
+					);
+				if (!incomplete) {
+					for (const path of paths.chains) await validatePath(path.statements);
+				}
+				return { incomplete, proof: incomplete ? undefined : proofs.get(issuer) };
 			})();
 			resolutions.set(issuer, pending);
 		}
-		return pending;
+		const resolved = await pending;
+		if (options.signal?.aborted) throw new DOMException("Refresh aborted", "AbortError");
+		if (resolved.incomplete) {
+			if (explicitlyListed) throw new Error("Unable to resolve Trust Mark issuer");
+			options.logger?.debug("Skipped Trust Mark from an unresolved open issuer", { issuer });
+			return undefined;
+		}
+		return resolved.proof;
 	}
 
 	async function verifyMarks(entry: CollectionEntry, publication?: EntityConfigurationPayload) {
@@ -129,7 +140,7 @@ export function createCollectionEvidence(
 			const authorized = trustedRoot.value.payload.trust_mark_issuers?.[ref.trust_mark_type];
 			if (!authorized || (authorized.length && !authorized.includes(mark.value.payload.iss)))
 				continue;
-			const proof = await issuerProof(mark.value.payload.iss);
+			const proof = await issuerProof(mark.value.payload.iss, authorized.length > 0);
 			if (!proof) continue;
 			const checked = await validateTrustMark(
 				ref.trust_mark,

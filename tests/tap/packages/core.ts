@@ -32,6 +32,7 @@ import {
 	checkMaxPathLength,
 	checkNamingConstraints,
 } from "../../../packages/core/src/constraints/index.js";
+import { buildCollectionSnapshot } from "../../../packages/core/src/entity-collection/refresh.js";
 import {
 	err,
 	federationError,
@@ -76,6 +77,23 @@ import type {
 	SignEntityStatementOptions,
 } from "../../../packages/core/src/index.js";
 import * as CorePublic from "../../../packages/core/src/index.js";
+import {
+	COLLECTION_INFO_CLAIMS,
+	type EntityCollectionCandidate,
+	type EntityCollectionCollectorContext,
+	EntityCollectionEntitySchema,
+	type EntityCollectionRequestParams,
+	EntityCollectionRequestSchema,
+	EntityCollectionResponseSchema,
+	EntityCollectionService,
+	type EntityCollectionSnapshot,
+	fetchEntityCollection,
+	fetchSubordinateEvents,
+	MemoryEntityCollectionStore,
+	SubordinateEventSchema,
+	SubordinateEventsResponseSchema,
+	verifySubordinateEventsResponse,
+} from "../../../packages/core/src/index.js";
 import { verifyClientAssertion } from "../../../packages/core/src/jose/client-auth.js";
 import {
 	generateSigningKey as _genKey,
@@ -163,6 +181,7 @@ import {
 	isSpecialUseIP,
 	isSpecialUseIPv4,
 	isSpecialUseIPv6,
+	performFetch,
 	validateEntityId,
 	validateFetchUrl,
 } from "../../../packages/core/src/trust-chain/fetch.js";
@@ -199,7 +218,13 @@ import type {
 	ValidatedTrustChain,
 } from "../../../packages/core/src/types.js";
 import { entityId, isValidEntityId } from "../../../packages/core/src/types.js";
+import {
+	type CollectionGraphEdge,
+	createCollectionFederation,
+} from "../fixtures/collection-federation.js";
+import * as EntityCollectionFixture from "../fixtures/entity-collection.js";
 import { MockFederationBuilder } from "../fixtures/mock-federation.js";
+import * as SubordinateEventsFixture from "../fixtures/subordinate-events.js";
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
@@ -12960,4 +12985,2093 @@ export default (QUnit: QUnit) => {
 			t.true(isOk(verify), "RSA key MUST be selected by kid against a mixed JWKS");
 		});
 	});
+
+	{
+		const { issuer, subject, endpoint, fixture } = SubordinateEventsFixture;
+		QUnit.module("Subordinate Events Draft 01", () => {
+			QUnit.test(
+				"dedicated schemas preserve extension names, optional expiration, and NumericDates",
+				(assert) => {
+					const event = {
+						iat: -0.5,
+						event: "operator.custom",
+						event_description: "Recorded observation",
+						information_uri: "http://docs.example/events#details",
+					};
+					assert.true(SubordinateEventSchema.safeParse(event).success);
+					assert.true(
+						SubordinateEventsResponseSchema.safeParse({
+							iss: issuer,
+							sub: subject,
+							iat: 1500.5,
+							federation_registration_events: [event],
+						}).success,
+					);
+					for (const invalid of [NaN, Infinity, -Infinity, "1000", null]) {
+						assert.false(SubordinateEventSchema.safeParse({ ...event, iat: invalid }).success);
+					}
+					for (const bad of [
+						{},
+						{ iat: 1 },
+						{ event: "registration" },
+						{ iat: 1, event: 2 },
+						{ ...event, event_description: 3 },
+						{ ...event, information_uri: "relative" },
+					]) {
+						assert.false(SubordinateEventSchema.safeParse(bad).success);
+					}
+				},
+			);
+
+			QUnit.test(
+				"verification binds the issuer, subject, key, JWT type, and expiration",
+				async (assert) => {
+					const f = await fixture();
+					await f.authority.registerSubordinate(f.record);
+					const jwt = await f.authority.getSubordinateEvents(subject);
+					const opts = { issuer, subject, clock: f.clock, clockSkewSeconds: 0 };
+					assert.true((await verifySubordinateEventsResponse(jwt, f.options.issuerJwks, opts)).ok);
+					assert.false(
+						(
+							await verifySubordinateEventsResponse(jwt, f.options.issuerJwks, {
+								...opts,
+								issuer: entityId("https://other.example"),
+							})
+						).ok,
+					);
+					assert.false(
+						(
+							await verifySubordinateEventsResponse(jwt, f.options.issuerJwks, {
+								...opts,
+								subject: issuer,
+							})
+						).ok,
+					);
+					assert.false(
+						(await verifySubordinateEventsResponse(jwt, { keys: [f.clientKey.publicKey] }, opts))
+							.ok,
+					);
+					const payload = {
+						iss: issuer,
+						sub: subject,
+						iat: 1400,
+						federation_registration_events: [
+							{ iat: -0.5, event: "custom", information_uri: "http://docs.example/#event" },
+						],
+					};
+					for (const [body, typ, expected] of [
+						[payload, JwtTyp.EntityEventsStatement, true],
+						[{ ...payload, exp: 1600 }, JwtTyp.EntityEventsStatement, true],
+						[{ ...payload, exp: 1499 }, JwtTyp.EntityEventsStatement, false],
+						[payload, JwtTyp.EntityStatement, false],
+						[
+							{ ...payload, federation_registration_events: null },
+							JwtTyp.EntityEventsStatement,
+							false,
+						],
+					] as const) {
+						const signed = await signEntityStatement(body, new JwkSigner(f.key.privateKey), {
+							typ,
+						});
+						assert.strictEqual(
+							(await verifySubordinateEventsResponse(signed, f.options.issuerJwks, opts)).ok,
+							expected,
+						);
+					}
+					const parts = jwt.split(".");
+					for (const alg of ["none", "HS256"]) {
+						const header = btoa(
+							JSON.stringify({ alg, typ: JwtTyp.EntityEventsStatement, kid: "untrusted" }),
+						)
+							.replace(/=/g, "")
+							.replace(/\+/g, "-")
+							.replace(/\//g, "_");
+						assert.false(
+							(
+								await verifySubordinateEventsResponse(
+									`${header}.${parts[1]}.signature`,
+									f.options.issuerJwks,
+									opts,
+								)
+							).ok,
+						);
+					}
+					const wrongStatus = await fetchSubordinateEvents(endpoint, subject, {
+						...f.options,
+						httpClient: async () =>
+							new Response(jwt, {
+								status: 201,
+								headers: { "content-type": MediaType.EntityEventsStatement },
+							}),
+					});
+					assert.false(wrongStatus.ok, "a valid JWT with a non-200 success status is rejected");
+					parts[1] = (parts[1] ?? "").replace(/^./, (c) => (c === "a" ? "b" : "a"));
+					assert.false(
+						(await verifySubordinateEventsResponse(parts.join("."), f.options.issuerJwks, opts)).ok,
+					);
+				},
+			);
+
+			QUnit.test(
+				"events set a redirect rejection policy without changing existing fetch clients",
+				async (assert) => {
+					const f = await fixture();
+					for (const clientAssertion of [undefined, "synthetic-assertion"]) {
+						let calls = 0;
+						const result = await fetchSubordinateEvents(endpoint, subject, {
+							...f.options,
+							...(clientAssertion === undefined ? {} : { clientAssertion }),
+							httpClient: async (_url, init) => {
+								calls++;
+								assert.strictEqual(init?.redirect, "manual");
+								return new Response(null, {
+									status: 307,
+									headers: { location: "http://127.0.0.1/history" },
+								});
+							},
+						});
+						assert.false(result.ok);
+						assert.strictEqual(calls, 1);
+					}
+					const httpClient: HttpClient = async (_url, init) => {
+						assert.strictEqual(
+							init?.redirect,
+							undefined,
+							"legacy callers retain Fetch's default redirect policy",
+						);
+						return new Response("{}", { headers: { "content-type": MediaType.Json } });
+					};
+					assert.true((await performFetch(endpoint, { httpClient, accept: MediaType.Json })).ok);
+					assert.true(
+						(
+							await fetchExtendedSubordinatesList(endpoint, undefined, {
+								httpClient: async (url, init) => {
+									await httpClient(url, init);
+									return new Response('{"immediate_subordinate_entities":[]}', {
+										headers: { "content-type": MediaType.Json },
+									});
+								},
+							})
+						).ok,
+					);
+				},
+			);
+
+			QUnit.test(
+				"shared transport bounds stalled and oversized bodies and cancels discarded responses",
+				async (assert) => {
+					const f = await fixture();
+					for (const throughEvents of [false, true]) {
+						let cancelled = 0;
+						const httpClient: HttpClient = async () =>
+							new Response(
+								new ReadableStream({
+									cancel() {
+										cancelled++;
+									},
+								}),
+								{
+									headers: {
+										"content-type": throughEvents
+											? MediaType.EntityEventsStatement
+											: MediaType.EntityStatement,
+									},
+								},
+							);
+						const result = throughEvents
+							? await fetchSubordinateEvents(endpoint, subject, {
+									...f.options,
+									httpClient,
+									httpTimeoutMs: 20,
+								})
+							: await performFetch(endpoint, { httpClient, httpTimeoutMs: 20 });
+						assert.false(result.ok);
+						if (!result.ok) assert.strictEqual(result.error.code, "ERR_TIMEOUT");
+						assert.strictEqual(cancelled, 1);
+						const tooBig = await performFetch(endpoint, {
+							maxResponseBytes: 2,
+							httpClient: async () =>
+								new Response("large", { headers: { "content-type": MediaType.EntityStatement } }),
+						});
+						assert.false(tooBig.ok);
+					}
+					for (const [status, type] of [
+						[500, MediaType.EntityStatement],
+						[200, MediaType.Json],
+					] as const) {
+						let cancelled = false;
+						const response = await performFetch(endpoint, {
+							httpClient: async () =>
+								new Response(
+									new ReadableStream({
+										cancel() {
+											cancelled = true;
+											throw new Error("cancel failed");
+										},
+									}),
+									{ status, headers: { "content-type": type } },
+								),
+						});
+						assert.false(response.ok);
+						assert.true(cancelled);
+						if (!response.ok) assert.strictEqual(response.error.code, "ERR_NETWORK");
+					}
+				},
+			);
+		});
+	}
+
+	{
+		const { anchor, other, leafId, endpoint, now, seed, query, federation } =
+			EntityCollectionFixture;
+		QUnit.module("Entity Collection Draft 01", () => {
+			QUnit.test("metadata and extensible schemas enforce wire types", (assert) => {
+				assert.true(
+					FederationEntityMetadataSchema.safeParse({ federation_collection_endpoint: endpoint })
+						.success,
+				);
+				for (const url of ["http://example.com/collect", `${endpoint}#`, `${endpoint}#fragment`])
+					assert.false(
+						FederationEntityMetadataSchema.safeParse({ federation_collection_endpoint: url })
+							.success,
+					);
+				assert.true(
+					EntityCollectionResponseSchema.safeParse({
+						entities: [],
+						last_updated: -0.5,
+						extension: true,
+					}).success,
+				);
+				assert.true(
+					EntityCollectionResponseSchema.safeParse({
+						entities: [
+							{
+								entity_id: leafId,
+								entity_types: ["custom"],
+								entity_infos: { custom: { extension: true } },
+							},
+						],
+					}).success,
+				);
+				for (const bad of [
+					{},
+					{ entities: [{}] },
+					{ entities: [], last_updated: Infinity },
+					{ entities: [{ entity_id: leafId, entity_infos: { custom: { keywords: "wrong" } } }] },
+				])
+					assert.false(EntityCollectionResponseSchema.safeParse(bad).success);
+				for (const locale of ["en", "en-US", "zh-Hant", "x-private", "i-klingon"])
+					assert.true(EntityCollectionRequestSchema.safeParse({ locale: [locale] }).success);
+				for (const locale of ["*", "en_US", "", "en-!"])
+					assert.false(EntityCollectionRequestSchema.safeParse({ locale: [locale] }).success);
+			});
+
+			QUnit.test(
+				"standalone and hosted responders apply all anchor selection rules",
+				async (assert) => {
+					const f = await seed();
+					const standalone = new EntityCollectionService({
+						trustAnchors: f.trustAnchors,
+						store: f.store,
+						options: { clock: f.clock },
+					});
+					assert.false((await standalone.query()).ok);
+					assert.equal((await query(standalone, { trustAnchor: anchor })).entities.length, 3);
+					const identified = new EntityCollectionService({
+						trustAnchors: f.trustAnchors,
+						store: f.store,
+						responder: { entityId: leafId, isTrustAnchor: false },
+					});
+					assert.deepEqual(await query(identified), { entities: [] });
+					assert.equal((await query(f.service)).entities.length, 2);
+					const unsupported = await f.service.query({ trustAnchor: other });
+					assert.false(unsupported.ok);
+					if (!unsupported.ok) assert.equal(unsupported.error.code, "invalid_trust_anchor");
+					assert.equal(
+						(await f.service.handleRequest(new Request(`${endpoint}&trust_anchor=${other}`)))
+							.status,
+						404,
+					);
+				},
+			);
+
+			QUnit.test(
+				"pagination retains snapshots, binds requests, and allows changed page sizes",
+				async (assert) => {
+					const f = await seed();
+					const first = await query(f.service, { limit: 1 });
+					assert.equal(first.entities[0]?.entity_id, "https://a.example");
+					assert.ok(first.next);
+					await f.store.publish({ ...f.snapshot, id: "second", lastUpdated: 1600, entries: [] });
+					const remaining = await query(f.service, { from: first.next, limit: 2 });
+					assert.deepEqual(
+						remaining.entities.map((entity) => entity.entity_id),
+						["https://b.example", "https://c.example"],
+					);
+					assert.equal(remaining.last_updated, -0.5);
+					assert.notOk(remaining.next);
+					assert.false((await f.service.query({ from: first.next, query: "different" })).ok);
+					assert.false((await f.service.query({ from: "unknown" })).ok);
+					f.setNow(now + 901);
+					assert.false((await f.service.query({ from: first.next })).ok);
+					assert.deepEqual((await query(f.service)).entities, []);
+				},
+			);
+
+			QUnit.test("omitted, capped, zero, and malformed limits", async (assert) => {
+				const f = await seed();
+				assert.equal((await query(f.service)).entities.length, 2);
+				assert.equal((await query(f.service, { limit: 1000 })).entities.length, 2);
+				const zero = await query(f.service, { limit: 0 });
+				assert.deepEqual(zero.entities, []);
+				assert.ok(zero.next);
+				assert.equal(
+					(await query(f.service, { from: zero.next, limit: 1 })).entities[0]?.entity_id,
+					"https://a.example",
+				);
+				for (const limit of [-1, 0.5, Infinity, Number.MAX_SAFE_INTEGER + 1])
+					assert.false((await f.service.query({ limit })).ok);
+			});
+
+			QUnit.test(
+				"OR types, AND verified marks, and case-insensitive query compose",
+				async (assert) => {
+					const f = await seed();
+					const all = await query(f.service, { entityType: ["custom_type", "openid_provider"] });
+					assert.equal(all.entities.length, 2);
+					assert.equal(
+						(await query(f.service, { trustMarkType: ["one", "two"] })).entities.length,
+						1,
+					);
+					assert.equal((await query(f.service, { trustMarkType: ["unknown"] })).entities.length, 0);
+					assert.equal(
+						(await query(f.service, { entityType: ["custom_type"], query: "B DEUTSCH" }))
+							.entities[0]?.entity_id,
+						"https://b.example",
+					);
+					const first = await query(f.service, { trustMarkType: ["one"], limit: 1 });
+					f.setNow(2000);
+					assert.equal((await query(f.service, { trustMarkType: ["one"] })).entities.length, 0);
+					assert.false(
+						(await f.service.query({ trustMarkType: ["one"], limit: 1, from: first.next })).ok,
+					);
+				},
+			);
+
+			QUnit.test(
+				"claim projections and locales retain only requested available values",
+				async (assert) => {
+					const f = await seed();
+					const result = await query(f.service, {
+						entityType: ["openid_provider"],
+						entityClaims: ["entity_infos", "entity_types"],
+						infoClaims: ["display_name"],
+						locale: ["EN", "de"],
+					});
+					const entity = result.entities[0]!;
+					assert.deepEqual(entity.entity_types, ["openid_provider", "federation_entity"]);
+					assert.deepEqual(entity.entity_infos?.openid_provider, {
+						display_name: "A",
+						"display_name#en-US": "a English",
+						"display_name#de": "a Deutsch",
+					});
+					assert.deepEqual(entity.entity_infos?.federation_entity, {});
+					const minimal = (await query(f.service, { entityClaims: [] })).entities[0]!;
+					assert.deepEqual(Object.keys(minimal), ["entity_id"]);
+					assert.equal(minimal.entity_id, "https://a.example");
+					assert.equal(
+						Object.keys(
+							(await query(f.service, { infoClaims: ["display_name"], locale: ["fr"] }))
+								.entities[0]!.entity_infos!.openid_provider!,
+						).length,
+						1,
+					);
+					for (const params of [{ entityClaims: ["unknown"] }, { infoClaims: ["unknown"] }]) {
+						const failed = await f.service.query(params);
+						assert.false(failed.ok);
+						if (!failed.ok) assert.equal(failed.error.code, "unsupported_claim");
+					}
+					assert.true((await f.service.query({ infoClaims: [...COLLECTION_INFO_CLAIMS] })).ok);
+				},
+			);
+
+			QUnit.test(
+				"HTTP GET and form POST preserve repetitions and fixed query components",
+				async (assert) => {
+					const f = await seed();
+					const client: HttpClient = async (input, init) =>
+						f.service.handleRequest(new Request(String(input), init));
+					for (const method of ["GET", "POST"] as const) {
+						const result = await fetchEntityCollection(
+							endpoint,
+							{
+								entityType: ["openid_provider", "custom_type"],
+								locale: ["en", "de"],
+								entityClaims: ["entity_infos", "entity_types"],
+							},
+							{ httpClient: client, method },
+						);
+						assert.true(result.ok);
+					}
+					for (const [suffix, code] of [
+						["&limit=one", "invalid_request"],
+						["&limit=1&limit=2", "invalid_request"],
+						["&info_claims=unknown", "unsupported_claim"],
+					]) {
+						const response = await f.service.handleRequest(new Request(`${endpoint}${suffix}`));
+						assert.equal(response.status, 400);
+						const body = (await response.json()) as Record<string, unknown>;
+						assert.equal(body.error, code);
+						assert.equal(typeof body.error_description, "string");
+					}
+					const badPost = await f.service.handleRequest(
+						new Request(endpoint, {
+							method: "POST",
+							body: "{}",
+							headers: { "content-type": "application/json" },
+						}),
+					);
+					assert.equal(badPost.status, 400);
+					const wrongMethod = await f.service.handleRequest(
+						new Request(endpoint, { method: "DELETE" }),
+					);
+					assert.equal(wrongMethod.status, 405);
+					assert.equal(
+						typeof ((await wrongMethod.json()) as Record<string, unknown>).error_description,
+						"string",
+					);
+				},
+			);
+
+			QUnit.test(
+				"unknown GET and POST extensions leave filtering and validation unchanged",
+				async (assert) => {
+					const f = await seed();
+					const expected = await query(f.service, {
+						query: "https://a.example",
+						entityClaims: ["entity_infos"],
+						infoClaims: ["display_name"],
+						locale: ["en"],
+					});
+					for (const method of ["GET", "POST"]) {
+						const form = new URLSearchParams([
+							["future_extension", "first"],
+							["future_extension", "second"],
+							["__proto__", "ignored"],
+							["constructor", "ignored"],
+							["query", "https://a.example"],
+							["entity_claims", "entity_infos"],
+							["info_claims", "display_name"],
+							["locale", "en"],
+						]);
+						const request = (params: URLSearchParams) => {
+							const url = new URL(endpoint);
+							if (method === "GET")
+								for (const [name, value] of params) url.searchParams.append(name, value);
+							return new Request(url, {
+								method,
+								...(method === "POST" ? { body: params } : {}),
+							});
+						};
+						const response = await f.service.handleRequest(request(form));
+						assert.equal(response.status, 200, method);
+						assert.deepEqual(
+							await response.json(),
+							expected,
+							`${method}: same filtered projection`,
+						);
+						for (const [name, value, code, status] of [
+							["limit", "one", "invalid_request", 400],
+							["info_claims", "unknown", "unsupported_claim", 400],
+							["client_assertion", "invalid", "invalid_client", 401],
+						] as const) {
+							const invalid = new URLSearchParams(form);
+							invalid.append(name, value);
+							const rejected = await f.service.handleRequest(request(invalid));
+							assert.equal(rejected.status, status, `${method}: ${name}`);
+							assert.propContains(await rejected.json(), { error: code });
+						}
+					}
+				},
+			);
+
+			QUnit.test(
+				"mixed authentication permits anonymous POST but rejects supplied invalid credentials",
+				async (assert) => {
+					const f = await seed();
+					const service = new EntityCollectionService({
+						trustAnchors: f.trustAnchors,
+						store: f.store,
+						endpoint,
+						responder: { entityId: anchor, isTrustAnchor: true },
+						options: { clock: f.clock },
+						authentication: {
+							methods: ["none", "private_key_jwt"],
+							receiverEntityId: anchor,
+							getClientFederationJwks: async () => ({ keys: [f.key.publicKey] }),
+						},
+					});
+					const client: HttpClient = async (input, init) =>
+						service.handleRequest(new Request(String(input), init));
+					assert.true(
+						(await fetchEntityCollection(endpoint, {}, { httpClient: client, method: "POST" })).ok,
+					);
+					assert.false(
+						(await fetchEntityCollection(endpoint, {}, { httpClient: client, clientAssertion: "" }))
+							.ok,
+					);
+					assert.false(
+						(
+							await fetchEntityCollection(
+								endpoint,
+								{},
+								{ httpClient: client, clientAssertion: "invalid" },
+							)
+						).ok,
+					);
+					const jwt = await signEntityStatement(
+						{
+							iss: leafId,
+							sub: leafId,
+							aud: anchor,
+							iat: now,
+							exp: 1800,
+							jti: "unique-client-assertion",
+						},
+						new JwkSigner(f.key.privateKey),
+						{ typ: "JWT" },
+					);
+					assert.true(
+						(
+							await fetchEntityCollection(
+								endpoint,
+								{},
+								{ httpClient: client, clientAssertion: jwt },
+							)
+						).ok,
+					);
+					assert.equal(
+						(await service.handleRequest(new Request(`${endpoint}&client_assertion_type=bad`)))
+							.status,
+						401,
+					);
+					assert.equal(
+						(
+							await service.handleRequest(
+								new Request(`${endpoint}&client_assertion=invalid`, {
+									method: "POST",
+									headers: { "content-type": "application/x-www-form-urlencoded" },
+									body: "",
+								}),
+							)
+						).status,
+						400,
+						"misplaced credentials cannot fall back to anonymous POST",
+					);
+				},
+			);
+
+			QUnit.test(
+				"response failures cancel unread streams and never follow redirects",
+				async (assert) => {
+					let cancelled = 0;
+					for (const status of [301, 302, 303, 307, 308]) {
+						let calls = 0;
+						const result = await fetchEntityCollection(
+							endpoint,
+							{},
+							{
+								clientAssertion: "secret",
+								httpClient: async (_url, init) => {
+									calls++;
+									assert.equal(init?.redirect, "manual");
+									return new Response(
+										new ReadableStream({
+											cancel() {
+												cancelled++;
+											},
+										}),
+										{ status, headers: { location: "https://attacker.example" } },
+									);
+								},
+							},
+						);
+						assert.false(result.ok);
+						assert.equal(calls, 1);
+					}
+					assert.equal(cancelled, 5);
+					for (const [body, contentType] of [
+						["{}", "application/json"],
+						["bad", "application/json"],
+						["{}", "text/plain"],
+					])
+						assert.false(
+							(
+								await fetchEntityCollection(
+									endpoint,
+									{},
+									{
+										httpClient: async () =>
+											new Response(body, { headers: { "content-type": contentType! } }),
+									},
+								)
+							).ok,
+						);
+					assert.false(
+						(
+							await fetchEntityCollection(
+								endpoint,
+								{},
+								{
+									maxResponseBytes: 1,
+									httpClient: async () =>
+										new Response('{"entities":[]}', {
+											headers: { "content-type": MediaType.Json },
+										}),
+								},
+							)
+						).ok,
+					);
+					const stalled = await fetchEntityCollection(
+						endpoint,
+						{},
+						{
+							httpTimeoutMs: 5,
+							httpClient: async () =>
+								new Response(
+									new ReadableStream({
+										cancel() {
+											cancelled++;
+										},
+									}),
+									{ headers: { "content-type": MediaType.Json } },
+								),
+						},
+					);
+					assert.false(stalled.ok);
+					assert.equal(cancelled, 6);
+				},
+			);
+
+			QUnit.test(
+				"failed, cancelled, and budget-limited refreshes preserve the preceding snapshot",
+				async (assert) => {
+					const f = await federation();
+					assert.true((await f.root.collection!.refresh(anchor)).ok);
+					const before = await f.root.collection!.store.getCurrent(anchor);
+					f.fail("middle.example");
+					assert.false((await f.root.collection!.refresh(anchor)).ok);
+					assert.deepEqual(await f.root.collection!.store.getCurrent(anchor), before);
+					const controller = new AbortController();
+					controller.abort();
+					assert.false(
+						(await f.root.collection!.refresh(anchor, { signal: controller.signal })).ok,
+					);
+					assert.deepEqual(await f.root.collection!.store.getCurrent(anchor), before);
+					const limited = new EntityCollectionService({
+						...f.collection,
+						store: f.root.collection!.store,
+						options: { ...f.collection.options, maxTotalFetches: 1 },
+					});
+					assert.false((await limited.refresh(anchor)).ok);
+					assert.deepEqual(await f.root.collection!.store.getCurrent(anchor), before);
+				},
+			);
+
+			QUnit.test(
+				"signed marks require an authorized issuer, correct binding, and current validity",
+				async (assert) => {
+					for (const mode of [
+						"valid",
+						"expired",
+						"wrong-subject",
+						"wrong-type",
+						"unauthorized",
+						"invalid-signature",
+						"malformed",
+					] as const) {
+						const f = await federation(mode);
+						const refreshed = await f.root.collection!.refresh(anchor);
+						assert.true(refreshed.ok, `${mode}: ${JSON.stringify(refreshed)}`);
+						const unfiltered = await query(f.root.collection!);
+						assert.equal(
+							unfiltered.entities.some((entity) => String(entity.entity_id) === leafId),
+							mode !== "wrong-type" && mode !== "malformed",
+							`${mode}: mark trust is separate from mandatory reference syntax`,
+						);
+						const response = await query(f.root.collection!, { trustMarkType: ["one"] });
+						assert.equal(
+							response.entities.length,
+							mode === "valid" ? 1 : 0,
+							`${mode}: ${JSON.stringify(f.diagnostics)}`,
+						);
+						if (mode === "valid") {
+							assert.equal(response.entities[0]?.entity_id, leafId);
+							assert.equal(response.entities[0]?.trust_marks?.[0]?.trust_mark_type, "one");
+						}
+					}
+				},
+			);
+
+			QUnit.test(
+				"cycles terminate and invalid attestations cannot introduce entities",
+				async (assert) => {
+					const f = await federation();
+					await f.middleStorage.subordinates.add({
+						entityId: anchor,
+						jwks: { keys: [f.rootKey.publicKey] },
+						createdAt: now,
+						updatedAt: now,
+					});
+					assert.true((await f.root.collection!.refresh(anchor)).ok);
+					assert.equal((await query(f.root.collection!)).entities.length, 2);
+					await f.middleStorage.subordinates.update(leafId, {
+						jwks: { keys: [f.rootKey.publicKey] },
+					});
+					await f.storage.cache.clear();
+					assert.true((await f.root.collection!.refresh(anchor)).ok);
+					assert.equal(
+						(await query(f.root.collection!, { entityType: ["oauth_resource"] })).entities.length,
+						0,
+					);
+					const limited = new EntityCollectionService({ ...f.collection, maxEntities: 1 });
+					assert.false((await limited.refresh(anchor)).ok);
+				},
+			);
+
+			QUnit.test(
+				"byte caps paginate whole entries without dropping requested claims",
+				async (assert) => {
+					const f = await seed();
+					const service = new EntityCollectionService({
+						trustAnchors: f.trustAnchors,
+						store: f.store,
+						responder: { entityId: anchor, isTrustAnchor: true },
+						options: { clock: f.clock, maxResponseBytes: 600 },
+					});
+					const page = await query(service);
+					assert.equal(page.entities.length, 1);
+					assert.ok(page.next);
+					assert.deepEqual(
+						page.entities[0]?.entity_infos,
+						(await query(f.service)).entities[0]?.entity_infos,
+					);
+					const tiny = new EntityCollectionService({
+						trustAnchors: f.trustAnchors,
+						store: f.store,
+						responder: { entityId: anchor, isTrustAnchor: true },
+						options: { clock: f.clock, maxResponseBytes: 100 },
+					});
+					assert.false((await tiny.query()).ok);
+				},
+			);
+
+			QUnit.test(
+				"strict authentication rejects replay, wrong audience, and incomplete assertions",
+				async (assert) => {
+					const f = await seed();
+					const service = new EntityCollectionService({
+						trustAnchors: f.trustAnchors,
+						store: f.store,
+						responder: { entityId: anchor, isTrustAnchor: true },
+						options: { clock: f.clock, clockSkewSeconds: 0 },
+						authentication: {
+							methods: ["private_key_jwt"],
+							receiverEntityId: anchor,
+							allowedAlgorithms: ["ES256"],
+							getClientFederationJwks: async () => ({ keys: [f.key.publicKey] }),
+						},
+					});
+					const httpClient: HttpClient = async (input, init) =>
+						service.handleRequest(new Request(String(input), init));
+					assert.false((await fetchEntityCollection(endpoint, {}, { httpClient })).ok);
+					for (const extra of [
+						{ aud: other },
+						{ exp: 1000 },
+						{ jti: "" },
+						{ iat: 2000 },
+						{ sub: other },
+					]) {
+						const jwt = await signEntityStatement(
+							{
+								iss: leafId,
+								sub: leafId,
+								aud: anchor,
+								iat: now,
+								exp: 2000,
+								jti: crypto.randomUUID(),
+								...extra,
+							},
+							new JwkSigner(f.key.privateKey),
+							{ typ: "JWT" },
+						);
+						assert.false(
+							(await fetchEntityCollection(endpoint, {}, { httpClient, clientAssertion: jwt })).ok,
+							JSON.stringify(extra),
+						);
+					}
+					const jwt = await signEntityStatement(
+						{ iss: leafId, sub: leafId, aud: anchor, exp: 2000, jti: crypto.randomUUID() },
+						new JwkSigner(f.key.privateKey),
+						{ typ: "JWT" },
+					);
+					assert.true(
+						(await fetchEntityCollection(endpoint, {}, { httpClient, clientAssertion: jwt })).ok,
+					);
+					assert.false(
+						(await fetchEntityCollection(endpoint, {}, { httpClient, clientAssertion: jwt })).ok,
+					);
+				},
+			);
+
+			QUnit.test(
+				"request bodies are bounded and cancellation cannot hang a handler",
+				async (assert) => {
+					const f = await seed();
+					const service = new EntityCollectionService({
+						trustAnchors: f.trustAnchors,
+						options: { httpTimeoutMs: 5 },
+					});
+					let cancelled = false;
+					const stalled = new Request(endpoint, {
+						method: "POST",
+						headers: { "content-type": "application/x-www-form-urlencoded" },
+						body: new ReadableStream({
+							cancel() {
+								cancelled = true;
+							},
+						}),
+						...({ duplex: "half" } as RequestInit),
+					});
+					assert.equal((await service.handleRequest(stalled)).status, 400);
+					assert.true(cancelled);
+					assert.equal(
+						(
+							await service.handleRequest(
+								new Request(endpoint, {
+									method: "POST",
+									headers: { "content-type": "application/x-www-form-urlencoded" },
+									body: "a".repeat(65537),
+								}),
+							)
+						).status,
+						400,
+					);
+					assert.equal(
+						(await service.handleRequest(new Request(`${endpoint}&query=${"a".repeat(65537)}`)))
+							.status,
+						400,
+					);
+				},
+			);
+
+			QUnit.test("expired evidence and unsupported anchors remain isolated", async (assert) => {
+				const f = await seed();
+				const service = new EntityCollectionService({
+					trustAnchors: new Map([...f.trustAnchors, [other, f.trustAnchors.get(anchor)!]]),
+					store: f.store,
+					options: { clock: f.clock },
+				});
+				const unavailable = await service.query({ trustAnchor: other });
+				assert.false(unavailable.ok);
+				if (!unavailable.ok) assert.equal(unavailable.error.code, "temporarily_unavailable");
+				const first = await query(f.service, { limit: 1 });
+				assert.false((await service.query({ trustAnchor: other, from: first.next })).ok);
+				f.setNow(5000);
+				assert.equal((await query(f.service)).entities.length, 0);
+			});
+
+			QUnit.test("receiver identity and claim support cannot be misrepresented", async (assert) => {
+				const f = await seed();
+				const service = new EntityCollectionService({
+					trustAnchors: f.trustAnchors,
+					authentication: { methods: ["none"], receiverEntityId: leafId },
+				});
+				assert.deepEqual(await query(service), { entities: [] });
+				for (const endpoint of ["", "http://example.com/collect", "https://example.com/collect#"])
+					assert.throws(
+						() => new EntityCollectionService({ trustAnchors: f.trustAnchors, endpoint }),
+					);
+				assert.throws(
+					() =>
+						new EntityCollectionService({
+							trustAnchors: f.trustAnchors,
+							responder: { entityId: anchor, isTrustAnchor: true },
+							authentication: { methods: ["none"], receiverEntityId: leafId },
+						}),
+				);
+				const invalidClaim = await f.service.query({ entityClaims: ["entity_types#en"] });
+				assert.false(invalidClaim.ok);
+				if (!invalidClaim.ok) assert.equal(invalidClaim.error.code, "unsupported_claim");
+			});
+
+			QUnit.test(
+				"snapshot/cursor capacity and detached reads protect stored state",
+				async (assert) => {
+					const f = await seed();
+					const snapshot = (await f.store.getCurrent(anchor))!;
+					snapshot.entries[0]!.entity.entity_infos!.openid_provider!.display_name = "mutated";
+					assert.equal(
+						(await query(f.service)).entities[0]?.entity_infos?.openid_provider?.display_name,
+						"A",
+					);
+					const limited = new MemoryEntityCollectionStore({
+						clock: f.clock,
+						maxSnapshots: 1,
+						maxCursors: 1,
+					});
+					await limited.publish(f.snapshot);
+					await limited.publish({ ...f.snapshot, id: "replacement" });
+					assert.notOk(await limited.getSnapshot("first"));
+					assert.equal((await limited.getCurrent(anchor))?.id, "replacement");
+					assert.throws(
+						() => new EntityCollectionService({ trustAnchors: f.trustAnchors, maxPageSize: 0 }),
+					);
+				},
+			);
+		});
+	}
+
+	{
+		const clock = { now: () => 1500 };
+		const anchor = entityId("https://ta.example");
+		const endpoint = "https://provider.example/collect";
+		async function seeded() {
+			const store = new MemoryEntityCollectionStore({ clock });
+			const snapshot: EntityCollectionSnapshot = {
+				id: "previous",
+				trustAnchor: anchor,
+				lastUpdated: 1200,
+				entries: [],
+			};
+			await store.publish(snapshot);
+			return { store, snapshot };
+		}
+		QUnit.module("Collection regressions", () => {
+			QUnit.test(
+				"subordinate fetches without issuer context retain their cache contract",
+				async (assert) => {
+					const cache = new MemoryCache({ clock });
+					const subject = entityId("https://client.example");
+					await cache.set(await esCacheKey(anchor, subject), "cached statement", 1000);
+					let requests = 0;
+					const result = await fetchSubordinateStatement(`${anchor}/fetch`, subject, {
+						cache,
+						httpClient: async () => {
+							requests++;
+							throw new Error("Unexpected fetch");
+						},
+					});
+					assert.true(result.ok);
+					if (result.ok) assert.equal(result.value, "cached statement");
+					assert.equal(requests, 0);
+				},
+			);
+
+			QUnit.test(
+				"aborted limiter waiters settle without acquiring an occupied slot",
+				async (assert) => {
+					const ac = new AbortController();
+					const limiter = createConcurrencyLimiter(1, ac.signal);
+					let release!: () => void;
+					let started!: () => void;
+					const gate = new Promise<void>((resolve) => {
+						release = resolve;
+					});
+					const entered = new Promise<void>((resolve) => {
+						started = resolve;
+					});
+					const active = limiter(async () => {
+						started();
+						await gate;
+						return "active";
+					});
+					await entered;
+					let admitted = 0;
+					const queued = [1, 2, 3].map(() =>
+						limiter(async () => {
+							admitted++;
+						}).then(
+							() => "ran",
+							(error: Error) => error.name,
+						),
+					);
+					ac.abort();
+					assert.deepEqual(await Promise.all(queued), ["AbortError", "AbortError", "AbortError"]);
+					assert.equal(admitted, 0);
+					release();
+					assert.equal(await active, "active");
+					assert.equal(
+						await limiter(async () => "late").catch((error: Error) => error.name),
+						"AbortError",
+					);
+				},
+			);
+
+			QUnit.test(
+				"resolver completion status identifies limits and cancellation",
+				async (assert) => {
+					const graph = await createCollectionFederation({
+						edges: [
+							{ issuer: "ta", subject: "a" },
+							{ issuer: "ta", subject: "b" },
+							{ issuer: "a", subject: "issuer" },
+							{ issuer: "b", subject: "issuer" },
+						],
+					});
+					for (const limits of [
+						{ maxTotalFetches: 0 },
+						{ maxTotalFetches: 1 },
+						{ maxChainDepth: 1 },
+						{ maxAuthorityHints: 1 },
+					]) {
+						const result = await resolveTrustChains(graph.id("issuer"), graph.trustAnchors, {
+							clock,
+							httpClient: graph.httpClient,
+							maxConcurrentFetches: 1,
+							...limits,
+						});
+						assert.true(result.incomplete === true, JSON.stringify(limits));
+						if ("maxAuthorityHints" in limits)
+							assert.equal(result.chains.length, 1, "a valid partial result is still incomplete");
+					}
+					const ac = new AbortController();
+					ac.abort();
+					assert.true(
+						(
+							await resolveTrustChains(graph.id("issuer"), graph.trustAnchors, {
+								clock,
+								httpClient: graph.httpClient,
+								signal: ac.signal,
+							})
+						).incomplete === true,
+					);
+					const complete = await resolveTrustChains(graph.id("issuer"), graph.trustAnchors, {
+						clock,
+						httpClient: graph.httpClient,
+						maxConcurrentFetches: 1,
+					});
+					assert.equal(complete.chains.length, 2);
+					assert.notOk(complete.incomplete);
+				},
+			);
+
+			QUnit.test(
+				"issuer resolution finishes at concurrency one and abort releases refresh queues",
+				async (assert) => {
+					const graph = await createCollectionFederation({
+						edges: [
+							{ issuer: "ta", subject: "leaf" },
+							{ issuer: "ta", subject: "mid" },
+							{ issuer: "mid", subject: "issuer" },
+						],
+						marked: true,
+					});
+					const service = new EntityCollectionService({
+						trustAnchors: graph.trustAnchors,
+						options: { clock, httpClient: graph.httpClient, maxConcurrentFetches: 1 },
+					});
+					const ac = new AbortController();
+					const first = service.refresh(graph.id("ta"), { signal: ac.signal });
+					let timeout: ReturnType<typeof setTimeout> | undefined;
+					const result = await Promise.race([
+						first,
+						new Promise<undefined>((resolve) => {
+							timeout = setTimeout(() => resolve(undefined), 1000);
+						}),
+					]);
+					clearTimeout(timeout);
+					if (!result) {
+						ac.abort();
+						assert.ok(result, "refresh must finish instead of deadlocking");
+						return;
+					}
+					assert.true(result.ok, JSON.stringify(result));
+					assert.equal(result.ok ? result.value.entityCount : 0, 3);
+					const cancelled = new AbortController();
+					cancelled.abort();
+					assert.false((await service.refresh(graph.id("ta"), { signal: cancelled.signal })).ok);
+					assert.true(
+						(await service.refresh(graph.id("ta"))).ok,
+						"a cancelled refresh must not block its successor",
+					);
+				},
+			);
+
+			QUnit.test(
+				"documented default budget matches explicit budget for outside-chain issuers",
+				async (assert) => {
+					const edges: CollectionGraphEdge[] = [{ issuer: "ta", subject: "leaf" }];
+					for (let i = 0; i < 10; i++)
+						edges.push(
+							{ issuer: "ta", subject: `b${i}` },
+							{ issuer: `b${i}`, subject: `a${i}` },
+							{ issuer: `a${i}`, subject: "issuer" },
+						);
+					const graph = await createCollectionFederation({ edges, marked: true });
+					const config = {
+						trustAnchors: graph.trustAnchors,
+						options: { clock, httpClient: graph.httpClient, maxConcurrentFetches: 64 },
+					};
+					const explicit = await buildCollectionSnapshot(graph.id("ta"), {
+						...config,
+						options: { ...config.options, maxTotalFetches: 1000 },
+					});
+					const implicit = await buildCollectionSnapshot(graph.id("ta"), config);
+					assert.true(explicit.ok);
+					assert.true(implicit.ok);
+					if (implicit.ok && explicit.ok)
+						assert.deepEqual(implicit.value.entries, explicit.value.entries);
+				},
+			);
+
+			QUnit.test("truncated issuer resolution preserves the published snapshot", async (assert) => {
+				const graph = await createCollectionFederation({
+					edges: [
+						{ issuer: "ta", subject: "leaf" },
+						{ issuer: "ta", subject: "b" },
+						{ issuer: "b", subject: "a" },
+						{ issuer: "a", subject: "issuer" },
+					],
+					marked: true,
+					listOrder: { ta: ["leaf"] },
+				});
+				const { store, snapshot } = await seeded();
+				const service = new EntityCollectionService({
+					trustAnchors: graph.trustAnchors,
+					store,
+					options: {
+						clock,
+						httpClient: graph.httpClient,
+						maxChainDepth: 1,
+						maxConcurrentFetches: 8,
+					},
+				});
+				assert.false((await service.refresh(graph.id("ta"))).ok);
+				assert.deepEqual(await store.getCurrent(anchor), snapshot);
+			});
+
+			QUnit.test(
+				"alternate paths retain valid descendants and merge their expiry bounds",
+				async (assert) => {
+					for (const order of [
+						["a", "b"],
+						["b", "a"],
+					]) {
+						const graph = await createCollectionFederation({
+							edges: [
+								{
+									issuer: "ta",
+									subject: "a",
+									constraints: { max_path_length: 1 },
+									expiresAt: 2000,
+								},
+								{ issuer: "ta", subject: "b", expiresAt: 4000 },
+								{ issuer: "a", subject: "issuer" },
+								{ issuer: "b", subject: "issuer" },
+								{ issuer: "issuer", subject: "leaf" },
+							],
+							listOrder: { ta: order },
+							marked: true,
+						});
+						const result = await buildCollectionSnapshot(graph.id("ta"), {
+							trustAnchors: graph.trustAnchors,
+							options: { clock, httpClient: graph.httpClient },
+						});
+						assert.true(result.ok);
+						if (result.ok) {
+							assert.equal(result.value.entries.length, 4, order.join(","));
+							assert.equal(
+								result.value.entries.find(
+									(entry) => String(entry.entity.entity_id) === graph.id("leaf"),
+								)?.verifiedMarks[0]?.expiresAt,
+								4000,
+							);
+							assert.equal(
+								new Set(graph.requests.filter((url) => url.endsWith("/list"))).size,
+								graph.requests.filter((url) => url.endsWith("/list")).length,
+								"alternate paths reuse listings",
+							);
+							assert.equal(
+								result.value.entries.find(
+									(entry) => String(entry.entity.entity_id) === graph.id("issuer"),
+								)?.chainExpiresAt,
+								4000,
+							);
+							assert.equal(
+								result.value.entries.find(
+									(entry) => String(entry.entity.entity_id) === graph.id("leaf"),
+								)?.chainExpiresAt,
+								4000,
+							);
+						}
+					}
+				},
+			);
+
+			QUnit.test(
+				"same-origin authorities do not share cached subordinate attestations",
+				async (assert) => {
+					const graph = await createCollectionFederation({
+						edges: [
+							{ issuer: "ta", subject: "a" },
+							{ issuer: "ta", subject: "b" },
+							{ issuer: "a", subject: "i" },
+							{ issuer: "b", subject: "i" },
+						],
+						ids: {
+							ta: "https://host.example/ta",
+							a: "https://host.example/a",
+							b: "https://host.example/b",
+						},
+						badKeyEdge: "a|i",
+					});
+					for (const cache of [undefined, new MemoryCache({ clock })]) {
+						const result = await buildCollectionSnapshot(graph.id("ta"), {
+							trustAnchors: graph.trustAnchors,
+							options: { clock, httpClient: graph.httpClient, ...(cache ? { cache } : {}) },
+						});
+						assert.true(result.ok);
+						if (result.ok)
+							assert.true(
+								result.value.entries.some(
+									(entry) => String(entry.entity.entity_id) === graph.id("i"),
+								),
+							);
+					}
+				},
+			);
+
+			QUnit.test(
+				"JSON charset policy is collection-specific for success and error bodies",
+				async (assert) => {
+					for (const contentType of [
+						"application/json; charset=utf-8",
+						"Application/JSON; charset=UTF-8",
+					]) {
+						const httpClient: HttpClient = async () =>
+							new Response('{"entities":[]}', { headers: { "content-type": contentType } });
+						assert.true((await fetchEntityCollection(endpoint, {}, { httpClient })).ok);
+						assert.false(
+							(await performFetch(endpoint, { httpClient, accept: "application/json" })).ok,
+							"legacy exact matching remains the default",
+						);
+						const error = await fetchEntityCollection(
+							endpoint,
+							{},
+							{
+								httpClient: async () =>
+									new Response(
+										'{"error":"unsupported_claim","error_description":"Unsupported claim"}',
+										{ status: 400, headers: { "content-type": contentType } },
+									),
+							},
+						);
+						assert.false(error.ok);
+						if (!error.ok) assert.equal(error.error.code, "unsupported_claim");
+					}
+				},
+			);
+
+			QUnit.test("empty wire selectors fail before fetching", async (assert) => {
+				let calls = 0;
+				for (const params of [
+					{ entityClaims: [] },
+					{ infoClaims: [] },
+				] satisfies EntityCollectionRequestParams[]) {
+					const result = await fetchEntityCollection(endpoint, params, {
+						httpClient: async () => {
+							calls++;
+							return new Response('{"entities":[]}');
+						},
+					});
+					assert.false(result.ok);
+					if (!result.ok) assert.equal(result.error.code, "invalid_request");
+				}
+				assert.equal(calls, 0);
+			});
+
+			QUnit.test(
+				"declared hash-containing claims and their locales preserve their full names",
+				async (assert) => {
+					const { store } = await seeded();
+					const name = "https://claims.example/#name";
+					await store.publish({
+						id: "custom",
+						trustAnchor: anchor,
+						lastUpdated: 1500,
+						entries: [
+							{
+								entity: EntityCollectionEntitySchema.parse({
+									entity_id: "https://leaf.example",
+									entity_infos: {
+										custom: {
+											[name]: "Default",
+											[`${name}#en-US`]: "English",
+											[`${name}#de`]: "Deutsch",
+										},
+									},
+								}),
+								expiresAt: 5000,
+								chainExpiresAt: 5000,
+								verifiedMarks: [],
+							},
+						],
+					});
+					const service = new EntityCollectionService({
+						trustAnchors: new Map([[anchor, { jwks: { keys: [] } }]]),
+						store,
+						options: { clock },
+						infoClaims: [name],
+					});
+					for (const params of [
+						{ infoClaims: [name] },
+						{ infoClaims: [name], locale: ["en"] },
+						{ infoClaims: [`${name}#en-US`], locale: ["en"] },
+					]) {
+						const result = await service.query({ trustAnchor: anchor, ...params });
+						assert.true(result.ok, JSON.stringify(result));
+						if (result.ok)
+							assert.deepEqual(
+								result.value.entities[0]?.entity_infos?.custom,
+								params.infoClaims[0] !== name
+									? { [`${name}#en-US`]: "English" }
+									: params.locale
+										? { [name]: "Default", [`${name}#en-US`]: "English" }
+										: {
+												[name]: "Default",
+												[`${name}#en-US`]: "English",
+												[`${name}#de`]: "Deutsch",
+											},
+							);
+					}
+				},
+			);
+		});
+	}
+
+	{
+		const anchor = entityId("https://ta.example");
+		const candidate = (
+			id = "https://leaf.example",
+			expiresAt = 3000,
+		): EntityCollectionCandidate => ({
+			entity: EntityCollectionEntitySchema.parse({ entity_id: id, entity_types: ["custom"] }),
+			expiresAt,
+		});
+		const keys = { keys: [] };
+		const anchors = new Map([[anchor, { jwks: keys }]]);
+		QUnit.module("Collection policies", () => {
+			QUnit.test(
+				"custom inventories use anchor context without traversal or query-time callbacks",
+				async (assert) => {
+					const other = entityId("https://other.example");
+					let collected = 0;
+					let filtered = 0;
+					const contexts: EntityCollectionCollectorContext[] = [];
+					const original = candidate();
+					const service = new EntityCollectionService({
+						trustAnchors: new Map([...anchors, [other, { jwks: keys }]]),
+						options: {
+							clock: { now: () => 1500 },
+							httpClient: async () => {
+								throw new Error("Unexpected network call");
+							},
+						},
+						collector: async (context) => {
+							collected++;
+							contexts.push(context);
+							return ok([
+								candidate("https://z.example"),
+								context.trustAnchor === anchor ? original : candidate("https://other-leaf.example"),
+							]);
+						},
+						filter: async (entry, context) => {
+							filtered++;
+							assert.true(Object.isFrozen(entry.entity));
+							assert.false(Reflect.set(entry.entity, "entity_id", "https://changed.example"));
+							assert.true(Object.isFrozen(context.trustAnchorJwks.keys));
+							assert.strictEqual(entry.chainExpiresAt, undefined);
+							return true;
+						},
+					});
+					assert.true((await service.refresh(anchor)).ok);
+					original.entity.entity_types?.push("changed-after-collection");
+					assert.true((await service.refresh(other)).ok);
+					for (let i = 0; i < 2; i++) {
+						const page = await service.query({ trustAnchor: anchor });
+						assert.true(page.ok);
+						if (page.ok) {
+							assert.deepEqual(
+								page.value.entities.map((entity) => entity.entity_id),
+								["https://leaf.example", "https://z.example"],
+							);
+							assert.deepEqual(page.value.entities[0]?.entity_types, ["custom"]);
+						}
+					}
+					assert.equal(collected, 2);
+					assert.equal(filtered, 4);
+					assert.deepEqual(
+						contexts.map((context) => context.trustAnchor),
+						[anchor, other],
+					);
+					assert.equal(contexts[0]?.options.maxTotalFetches, 1000);
+					const snapshot = await service.store.getCurrent(anchor);
+					assert.equal(snapshot?.lastUpdated, 1500);
+					assert.equal(snapshot?.entries[0]?.expiresAt, 3000);
+					assert.strictEqual(snapshot?.entries[0]?.chainExpiresAt, undefined);
+					assert.false((await service.refresh(entityId("https://unsupported.example"))).ok);
+					assert.equal(collected, 2);
+				},
+			);
+
+			QUnit.test(
+				"filters can exclude entries and shorten but never extend eligibility",
+				async (assert) => {
+					let time = 1500;
+					let deadline = 4000;
+					const service = new EntityCollectionService({
+						trustAnchors: anchors,
+						options: { clock: { now: () => time } },
+						collector: async () => ok([candidate(), candidate("https://excluded.example")]),
+						filter: (entry) =>
+							entry.entity.entity_id === "https://excluded.example"
+								? false
+								: { expiresAt: deadline },
+					});
+					assert.true((await service.refresh(anchor)).ok);
+					assert.equal((await service.store.getCurrent(anchor))?.entries[0]?.expiresAt, 3000);
+					deadline = 2000;
+					assert.true((await service.refresh(anchor)).ok);
+					assert.equal((await service.store.getCurrent(anchor))?.entries.length, 1);
+					assert.equal((await service.store.getCurrent(anchor))?.entries[0]?.expiresAt, 2000);
+					time = 2000;
+					assert.deepEqual(await service.query({ trustAnchor: anchor }), {
+						ok: true,
+						value: { entities: [], last_updated: 1500 },
+					});
+				},
+			);
+
+			QUnit.test("excluding an intermediate does not prune its descendants", async (assert) => {
+				const graph = await createCollectionFederation({
+					edges: [
+						{ issuer: "ta", subject: "mid" },
+						{ issuer: "mid", subject: "leaf" },
+					],
+				});
+				const service = new EntityCollectionService({
+					trustAnchors: graph.trustAnchors,
+					options: { clock: { now: () => 1500 }, httpClient: graph.httpClient },
+					filter: (entry) => String(entry.entity.entity_id) === graph.id("leaf"),
+				});
+				assert.true((await service.refresh(anchor)).ok);
+				const result = await service.query({ trustAnchor: anchor });
+				assert.true(result.ok);
+				if (result.ok)
+					assert.deepEqual(
+						result.value.entities.map((entity) => String(entity.entity_id)),
+						[String(graph.id("leaf"))],
+					);
+				assert.equal((await service.store.getCurrent(anchor))?.entries[0]?.chainExpiresAt, 5000);
+			});
+
+			QUnit.test(
+				"invalid candidate sets preserve the current snapshot and existing cursors",
+				async (assert) => {
+					const graph = await createCollectionFederation({
+						edges: [
+							{ issuer: "ta", subject: "issuer" },
+							{ issuer: "ta", subject: "leaf" },
+						],
+						marked: true,
+					});
+					const leaf = decodeEntityConfiguration(graph.configurations.get("leaf")!);
+					if (!leaf.ok) throw new Error("Invalid fixture");
+					const mismatch = {
+						...candidate(),
+						entity: {
+							...candidate().entity,
+							trust_marks: leaf.value.payload.trust_marks?.map((ref) => ({
+								...ref,
+								trust_mark_type: "different",
+							})),
+						},
+					};
+					let values: unknown = [candidate(), candidate("https://second.example")];
+					const service = new EntityCollectionService({
+						trustAnchors: anchors,
+						maxEntities: 3,
+						maxPageSize: 1,
+						options: { clock: { now: () => 1500 } },
+						collector: async () => ok(values as EntityCollectionCandidate[]),
+					});
+					assert.true((await service.refresh(anchor)).ok);
+					const previous = await service.store.getCurrent(anchor);
+					const first = await service.query({ trustAnchor: anchor });
+					assert.true(first.ok && !!first.value.next);
+					for (const invalid of [
+						null,
+						[mismatch],
+						[{ ...candidate(), expiresAt: Infinity }],
+						[{ ...candidate(), entity: { entity_id: "invalid" } }],
+						[candidate(), candidate()],
+						[1, 2, 3, 4].map((i) => candidate(`https://leaf${i}.example`)),
+						[{ ...candidate(), verifiedMarks: [{ type: "forged", expiresAt: 3000 }] }],
+						[
+							{
+								...candidate(),
+								entity: {
+									...candidate().entity,
+									trust_marks: [{ trust_mark_type: "one", trust_mark: "not-a-jwt" }],
+								},
+							},
+						],
+					]) {
+						values = invalid;
+						assert.false((await service.refresh(anchor)).ok);
+						assert.deepEqual(await service.store.getCurrent(anchor), previous);
+						if (first.ok)
+							assert.true(
+								(await service.query({ trustAnchor: anchor, from: first.value.next })).ok,
+							);
+					}
+				},
+			);
+
+			QUnit.test(
+				"callback errors and invalid decisions never replace a published snapshot",
+				async (assert) => {
+					for (const phase of ["collector", "source-error", "filter", "decision"] as const) {
+						let fail = false;
+						const service = new EntityCollectionService({
+							trustAnchors: anchors,
+							options: { clock: { now: () => 1500 } },
+							collector: async () => {
+								if (fail && phase === "collector") throw new Error("Source failed");
+								if (fail && phase === "source-error")
+									return err({
+										code: "temporarily_unavailable",
+										description: "Source unavailable",
+									});
+								return ok([candidate()]);
+							},
+							filter: () => {
+								if (fail && phase === "filter") throw new Error("Policy failed");
+								return fail && phase === "decision" ? { expiresAt: NaN } : true;
+							},
+						});
+						assert.true((await service.refresh(anchor)).ok);
+						const previous = await service.store.getCurrent(anchor);
+						fail = true;
+						assert.false((await service.refresh(anchor)).ok, phase);
+						assert.deepEqual(await service.store.getCurrent(anchor), previous);
+					}
+				},
+			);
+
+			QUnit.test(
+				"cancellation settles uncooperative callbacks and releases subsequent refreshes",
+				async (assert) => {
+					for (const phase of ["collector", "filter", "transport"]) {
+						let calls = 0;
+						let transportSignal: AbortSignal | null | undefined;
+						let entered!: () => void;
+						let release!: () => void;
+						const started = new Promise<void>((resolve) => {
+							entered = resolve;
+						});
+						const gate = new Promise<void>((resolve) => {
+							release = resolve;
+						});
+						const wait = async () => {
+							if (++calls === 1) {
+								entered();
+								await gate;
+							}
+						};
+						const service = new EntityCollectionService({
+							trustAnchors: anchors,
+							options: {
+								clock: { now: () => 1500 },
+								httpClient: async (_url, init) => {
+									transportSignal = init?.signal;
+									await wait();
+									return new Response("{}");
+								},
+							},
+							collector: async (context) => {
+								if (phase === "collector") await wait();
+								if (phase === "transport")
+									await context.options.httpClient!("https://slow.example");
+								return ok([candidate()]);
+							},
+							filter: async () => {
+								if (phase === "filter") await wait();
+								return true;
+							},
+						});
+						const controller = new AbortController();
+						const pending = service.refresh(anchor, { signal: controller.signal });
+						await started;
+						controller.abort();
+						if (phase === "transport") assert.true(transportSignal?.aborted ?? false);
+						let timer: ReturnType<typeof setTimeout> | undefined;
+						const settled = await Promise.race([
+							pending,
+							new Promise<undefined>((resolve) => {
+								timer = setTimeout(() => resolve(undefined), 1000);
+							}),
+						]);
+						clearTimeout(timer);
+						if (!settled) {
+							release();
+							await pending;
+							assert.ok(settled, `${phase}: abort must settle refresh`);
+							continue;
+						}
+						assert.false(settled.ok, phase);
+						assert.strictEqual(await service.store.getCurrent(anchor), undefined);
+						assert.true((await service.refresh(anchor)).ok);
+						const published = await service.store.getCurrent(anchor);
+						release();
+						await Promise.resolve();
+						assert.deepEqual(await service.store.getCurrent(anchor), published);
+					}
+				},
+			);
+
+			QUnit.test("pre-aborted refreshes do not invoke application code", async (assert) => {
+				let calls = 0;
+				const service = new EntityCollectionService({
+					trustAnchors: anchors,
+					collector: async () => {
+						calls++;
+						return ok([]);
+					},
+				});
+				const controller = new AbortController();
+				controller.abort();
+				assert.false((await service.refresh(anchor, { signal: controller.signal })).ok);
+				assert.equal(calls, 0);
+			});
+
+			QUnit.test(
+				"custom sources qualify only marks published and verified by core",
+				async (assert) => {
+					for (const mode of ["valid", "unpublished", "untrusted-issuer", "bad-publication"]) {
+						const graph = await createCollectionFederation({
+							edges: [
+								{ issuer: "ta", subject: "issuer" },
+								{ issuer: "ta", subject: "leaf" },
+							],
+							marked: true,
+							...(mode === "untrusted-issuer" ? { badKeyEdge: "ta|issuer" } : {}),
+						});
+						const raw = graph.configurations.get("leaf")!;
+						const decoded = decodeEntityConfiguration(raw);
+						if (!decoded.ok) throw new Error("Invalid fixture");
+						if (mode === "unpublished" || mode === "bad-publication") {
+							const jwt = await signEntityStatement(
+								{
+									...decoded.value.payload,
+									...(mode === "unpublished" ? { trust_marks: [] } : {}),
+								},
+								new JwkSigner(
+									graph.keys.get(mode === "bad-publication" ? "ta" : "leaf")!.privateKey,
+								),
+							);
+							graph.routes.set(
+								`${graph.id("leaf")}/.well-known/openid-federation`,
+								() =>
+									new Response(jwt, {
+										headers: { "content-type": "application/entity-statement+jwt" },
+									}),
+							);
+						}
+						const service = new EntityCollectionService({
+							trustAnchors: graph.trustAnchors,
+							options: { clock: { now: () => 1500 }, httpClient: graph.httpClient },
+							collector: async () =>
+								ok([
+									{
+										entity: EntityCollectionEntitySchema.parse({
+											entity_id: graph.id("leaf"),
+											trust_marks: decoded.value.payload.trust_marks,
+										}),
+										expiresAt: 6000,
+									},
+								]),
+							filter: (entry) => {
+								assert.equal(entry.verifiedMarks.length, mode === "valid" ? 1 : 0);
+								return true;
+							},
+						});
+						assert.true((await service.refresh(anchor)).ok, mode);
+						const unfiltered = await service.query({ trustAnchor: anchor });
+						assert.true(unfiltered.ok && unfiltered.value.entities.length === 1, mode);
+						const filtered = await service.query({ trustAnchor: anchor, trustMarkType: ["one"] });
+						assert.true(filtered.ok);
+						if (filtered.ok) assert.equal(filtered.value.entities.length, mode === "valid" ? 1 : 0);
+						const entry = (await service.store.getCurrent(anchor))?.entries[0];
+						assert.equal(entry?.expiresAt, 6000);
+						assert.strictEqual(entry?.chainExpiresAt, undefined);
+						if (mode === "valid") assert.equal(entry?.verifiedMarks[0]?.expiresAt, 4000);
+						assert.false(
+							graph.requests.some((url) => url.endsWith("/list")),
+							"custom collection never traverses listings",
+						);
+					}
+				},
+			);
+
+			QUnit.test(
+				"network limits and incomplete custom mark verification preserve prior snapshots",
+				async (assert) => {
+					for (const mode of ["transport", "issuer-budget", "collector-budget"]) {
+						const graph = await createCollectionFederation({
+							edges: [
+								{ issuer: "ta", subject: "issuer" },
+								{ issuer: "ta", subject: "leaf" },
+							],
+							marked: true,
+						});
+						const leaf = decodeEntityConfiguration(graph.configurations.get("leaf")!);
+						if (!leaf.ok) throw new Error("Invalid fixture");
+						let changed = false;
+						const service = new EntityCollectionService({
+							trustAnchors: graph.trustAnchors,
+							options: {
+								clock: { now: () => 1500 },
+								maxTotalFetches: mode === "transport" ? 1000 : mode === "issuer-budget" ? 2 : 1,
+								httpClient: async (url, init) => {
+									if (mode === "transport" && String(url).startsWith(graph.id("issuer")))
+										throw new Error("Issuer unavailable");
+									assert.equal(init?.redirect, "manual");
+									return graph.httpClient(url, init);
+								},
+							},
+							collector: async (context) => {
+								if (changed && mode === "collector-budget") {
+									await fetchEntityConfiguration(anchor, context.options);
+									await fetchEntityConfiguration(graph.id("leaf"), context.options);
+								}
+								return ok([
+									{
+										...candidate(),
+										...(changed && mode !== "collector-budget"
+											? {
+													entity: EntityCollectionEntitySchema.parse({
+														entity_id: graph.id("leaf"),
+														trust_marks: leaf.value.payload.trust_marks,
+													}),
+												}
+											: {}),
+									},
+								]);
+							},
+						});
+						assert.true((await service.refresh(anchor)).ok);
+						const previous = await service.store.getCurrent(anchor);
+						changed = true;
+						assert.false((await service.refresh(anchor)).ok, mode);
+						assert.deepEqual(await service.store.getCurrent(anchor), previous, mode);
+					}
+				},
+			);
+
+			QUnit.test(
+				"legacy chain validation remains strict about invalid published marks",
+				async (assert) => {
+					const graph = await createCollectionFederation({
+						edges: [
+							{ issuer: "ta", subject: "issuer" },
+							{ issuer: "ta", subject: "leaf" },
+						],
+						marked: true,
+					});
+					const result = await validateTrustChain(
+						[
+							graph.configurations.get("leaf")!,
+							graph.statements.get(`${anchor}|${graph.id("leaf")}`)!,
+							graph.configurations.get("ta")!,
+						],
+						graph.trustAnchors,
+						{
+							clock: { now: () => 4250 },
+							verboseErrors: true,
+							trustMarkIssuerKeys: new Map([
+								[graph.id("issuer"), { keys: [graph.keys.get("issuer")!.publicKey] }],
+							]),
+						},
+					);
+					assert.false(result.valid);
+					assert.true(result.errors.some((error) => error.code === "ERR_TRUST_MARK_INVALID"));
+				},
+			);
+
+			QUnit.test(
+				"entry lifetime and optional chain evidence independently bound eligibility",
+				async (assert) => {
+					const store = new MemoryEntityCollectionStore({ clock: { now: () => 1500 } });
+					await store.publish({
+						id: "mixed",
+						trustAnchor: anchor,
+						lastUpdated: 1400,
+						entries: [
+							{ ...candidate(), chainExpiresAt: 1400, verifiedMarks: [] },
+							{ ...candidate("https://informational.example"), verifiedMarks: [] },
+						],
+					});
+					const service = new EntityCollectionService({
+						trustAnchors: anchors,
+						store,
+						options: { clock: { now: () => 1500 } },
+					});
+					const page = await service.query({ trustAnchor: anchor });
+					assert.true(page.ok);
+					if (page.ok)
+						assert.deepEqual(
+							page.value.entities.map((entity) => entity.entity_id),
+							["https://informational.example"],
+						);
+				},
+			);
+		});
+	}
+
+	{
+		async function fixture(
+			config: {
+				timeout?: boolean;
+				maxTotalFetches?: number;
+				custom?: boolean;
+				knownIssuer?: boolean;
+			} = {},
+		) {
+			const graph = await createCollectionFederation({
+				edges: [
+					{ issuer: "ta", subject: "leaf" },
+					{ issuer: "ta", subject: "healthy" },
+					...(config.knownIssuer ? [{ issuer: "ta", subject: "issuer" }] : []),
+				],
+			});
+			const unreachable = "https://unreachable-issuer.example";
+			const issuer = config.knownIssuer ? graph.id("issuer") : unreachable;
+			const payload = (name: string) => {
+				const decoded = decodeEntityConfiguration(graph.configurations.get(name)!);
+				if (!decoded.ok) throw new Error("Invalid signed fixture");
+				return decoded.value.payload;
+			};
+			async function publish(name: string, changes: Record<string, unknown>) {
+				const jwt = await signEntityStatement(
+					{ ...payload(name), ...changes },
+					new JwkSigner(graph.keys.get(name)!.privateKey),
+				);
+				graph.configurations.set(name, jwt);
+				graph.routes.set(
+					`${graph.id(name)}/.well-known/openid-federation`,
+					() =>
+						new Response(jwt, { headers: { "content-type": "application/entity-statement+jwt" } }),
+				);
+			}
+			await publish("ta", { trust_mark_issuers: { open: [], required: [issuer] } });
+			let attempts = 0;
+			let entered!: () => void;
+			const pendingIssuer = new Promise<void>((resolve) => {
+				entered = resolve;
+			});
+			const diagnostics: string[] = [];
+			const service = new EntityCollectionService({
+				trustAnchors: graph.trustAnchors,
+				options: {
+					clock: { now: () => 1500 },
+					httpTimeoutMs: config.timeout ? 20 : 1000,
+					...(config.maxTotalFetches ? { maxTotalFetches: config.maxTotalFetches } : {}),
+					logger: {
+						debug(message) {
+							diagnostics.push(message);
+						},
+						info() {},
+						warn() {},
+						error() {},
+					},
+					httpClient: async (url, init) => {
+						if (String(url).startsWith(unreachable)) {
+							attempts++;
+							entered();
+							if (config.timeout)
+								return new Promise<Response>((_resolve, reject) => {
+									const abort = () =>
+										reject(new DOMException("Issuer request aborted", "AbortError"));
+									if (init?.signal?.aborted) abort();
+									else init?.signal?.addEventListener("abort", abort, { once: true });
+								});
+							throw new TypeError("Issuer unavailable");
+						}
+						return graph.httpClient(url, init);
+					},
+				},
+				...(config.custom
+					? {
+							collector: async () =>
+								ok(
+									["leaf", "healthy"].map((name) => ({
+										entity: EntityCollectionEntitySchema.parse({
+											entity_id: graph.id(name),
+											trust_marks: payload(name).trust_marks,
+										}),
+										expiresAt: 3000,
+									})),
+								),
+						}
+					: {}),
+			});
+			async function marks(types: readonly string[], validSignature = true) {
+				const refs = await Promise.all(
+					types.map(async (type) => ({
+						trust_mark_type: type,
+						trust_mark: await signEntityStatement(
+							{ iss: issuer, sub: graph.id("leaf"), iat: 1000, exp: 4000, trust_mark_type: type },
+							new JwkSigner(
+								graph.keys.get(config.knownIssuer && validSignature ? "issuer" : "leaf")!
+									.privateKey,
+							),
+							{ typ: "trust-mark+jwt" },
+						),
+					})),
+				);
+				await publish("leaf", { trust_marks: refs });
+			}
+			return {
+				graph,
+				service,
+				marks,
+				publish,
+				pendingIssuer,
+				diagnostics,
+				attempts: () => attempts,
+			};
+		}
+		QUnit.module("Collection open issuers", () => {
+			QUnit.test(
+				"unreachable open issuers do not block fresh snapshots or qualify marks",
+				async (assert) => {
+					for (const config of [{}, { timeout: true }, { custom: true }]) {
+						const f = await fixture(config);
+						const anchor = f.graph.id("ta");
+						assert.true((await f.service.refresh(anchor)).ok);
+						const previous = await f.service.store.getCurrent(anchor);
+						await f.marks(["open", "open"]);
+						await f.publish("healthy", {
+							metadata: { federation_entity: { display_name: "Updated" } },
+						});
+						for (let i = 1; i <= 2; i++) {
+							assert.true((await f.service.refresh(anchor)).ok, JSON.stringify(config));
+							const current = await f.service.store.getCurrent(anchor);
+							assert.notEqual(current?.id, previous?.id, "a new snapshot is published");
+							assert.equal(current?.entries.length, 2);
+							const leaf = current?.entries.find(
+								(entry) => String(entry.entity.entity_id) === f.graph.id("leaf"),
+							);
+							assert.deepEqual(leaf?.verifiedMarks, []);
+							assert.equal(
+								f.attempts(),
+								i,
+								"one lookup per issuer per refresh, despite repeated marks",
+							);
+							const filtered = await f.service.query({
+								trustAnchor: anchor,
+								trustMarkType: ["open"],
+							});
+							assert.true(filtered.ok && filtered.value.entities.length === 0);
+							if (!config.custom)
+								assert.equal(
+									current?.entries.find(
+										(entry) => String(entry.entity.entity_id) === f.graph.id("healthy"),
+									)?.entity.entity_infos?.federation_entity?.display_name,
+									"Updated",
+								);
+						}
+						assert.true(
+							f.diagnostics.some((message) => message.includes("unresolved open issuer")),
+						);
+					}
+				},
+			);
+
+			QUnit.test(
+				"cached open failures cannot hide a later explicit issuer failure",
+				async (assert) => {
+					for (const types of [["required"], ["open", "required"], ["required", "open"]]) {
+						const f = await fixture();
+						const anchor = f.graph.id("ta");
+						assert.true((await f.service.refresh(anchor)).ok);
+						const previous = await f.service.store.getCurrent(anchor);
+						await f.marks(types);
+						assert.false((await f.service.refresh(anchor)).ok, types.join(","));
+						assert.equal(
+							f.attempts(),
+							1,
+							"the unresolved outcome is reused without repeating network calls",
+						);
+						assert.deepEqual(await f.service.store.getCurrent(anchor), previous);
+					}
+				},
+			);
+
+			QUnit.test(
+				"cancellation during an open issuer lookup still fails refresh",
+				async (assert) => {
+					const f = await fixture({ timeout: true });
+					const anchor = f.graph.id("ta");
+					assert.true((await f.service.refresh(anchor)).ok);
+					const previous = await f.service.store.getCurrent(anchor);
+					await f.marks(["open"]);
+					const controller = new AbortController();
+					const pending = f.service.refresh(anchor, { signal: controller.signal });
+					await f.pendingIssuer;
+					controller.abort();
+					assert.false((await pending).ok);
+					assert.deepEqual(await f.service.store.getCurrent(anchor), previous);
+					assert.true(
+						(await f.service.refresh(anchor)).ok,
+						"a later refresh can complete without the unresolved mark",
+					);
+				},
+			);
+
+			QUnit.test(
+				"global fetch exhaustion is never downgraded to an optional mark failure",
+				async (assert) => {
+					const f = await fixture({ maxTotalFetches: 6 });
+					const anchor = f.graph.id("ta");
+					assert.true((await f.service.refresh(anchor)).ok);
+					const previous = await f.service.store.getCurrent(anchor);
+					await f.marks(["open"]);
+					assert.false((await f.service.refresh(anchor)).ok);
+					assert.equal(f.attempts(), 0, "the global budget blocks the issuer request");
+					assert.deepEqual(await f.service.store.getCurrent(anchor), previous);
+				},
+			);
+
+			QUnit.test(
+				"open mark types still require a trusted issuer and a valid signature",
+				async (assert) => {
+					const f = await fixture({ knownIssuer: true });
+					const anchor = f.graph.id("ta");
+					for (const valid of [true, false]) {
+						await f.marks(["open"], valid);
+						assert.true((await f.service.refresh(anchor)).ok);
+						const filtered = await f.service.query({
+							trustAnchor: anchor,
+							trustMarkType: ["open"],
+						});
+						assert.true(filtered.ok);
+						if (filtered.ok) assert.equal(filtered.value.entities.length, valid ? 1 : 0);
+					}
+				},
+			);
+		});
+	}
 };
