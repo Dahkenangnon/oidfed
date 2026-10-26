@@ -16,6 +16,7 @@
   <a href="https://www.npmjs.com/package/@oidfed/authority">@oidfed/authority</a> &nbsp;•&nbsp;
   <a href="https://www.npmjs.com/package/@oidfed/leaf">@oidfed/leaf</a> &nbsp;•&nbsp;
   <a href="https://www.npmjs.com/package/@oidfed/oidc">@oidfed/oidc</a> &nbsp;•&nbsp;
+  <a href="https://www.npmjs.com/package/@oidfed/wallet">@oidfed/wallet</a> &nbsp;•&nbsp;
   <b>@oidfed/cli</b>
 </p>
 
@@ -23,11 +24,13 @@ Command-line interface for inspecting, validating, and debugging OpenID Federati
 
 Implements command-line inspection and debugging utilities for the final [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) / [1.1](https://openid.net/specs/openid-federation-1_1.html) specifications, and [Extended Subordinate Listing 1.0](https://openid.net/specs/openid-federation-extended-listing-1_0.html) (tracks draft-03).
 
+The CLI also retrieves [Subordinate Events](https://openid.net/specs/openid-federation-subordinate-events-1_0-01.html) (Draft 01) and [Entity Collections](https://openid.net/specs/openid-federation-entity-collection-1_0-01.html) (Draft 01). See the [command reference](https://github.com/Dahkenangnon/oidfed/blob/main/docs/tools/cli.md) for their parameters and verification requirements.
+
 ## Install
 
-Requires Node.js ≥ 22 or Bun or Deno.
+Requires Node.js `>=22.12.0`. The CLI is tested on Node.js. The runtime coverage for the federation libraries does not extend to the CLI.
 
-Choose the command for your preferred JavaScript package manager or runtime:
+Install with a package manager:
 
 ```bash
 # npm (global install)
@@ -38,12 +41,6 @@ pnpm add -g @oidfed/cli
 
 # yarn (global install)
 yarn global add @oidfed/cli
-
-# bun (global install)
-bun add -g @oidfed/cli
-
-# Deno (global install)
-deno install --allow-read --allow-net --global npm:@oidfed/cli
 ```
 
 Alternatively, run commands directly without installation:
@@ -51,9 +48,6 @@ Alternatively, run commands directly without installation:
 ```bash
 # npx
 npx @oidfed/cli --help
-
-# bunx
-bunx @oidfed/cli --help
 ```
 
 Installs two equivalent binaries: `oidfed` and `openidfed`.

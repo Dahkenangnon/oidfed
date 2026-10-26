@@ -6641,4 +6641,124 @@ export default (QUnit: QUnit) => {
 			t.false(attemptedUrls.some((url) => url === `${OP_ID}/request`));
 		});
 	});
+	module("oidc / role operation context", () => {
+		test("honors authorization overrides while retaining host HTTP and clock options", async (t) => {
+			const fed = await createMockFederation();
+			const discovery = await createMockDiscovery(OP_ID, fed);
+			let fetches = 0;
+			const now = Math.floor(Date.now() / 1000) - 10;
+			const role = new OidcRelyingPartyRole({
+				protocolKeyProvider: new StaticProtocolSigningKeyProvider({
+					requestObjectSigner: new JwkSigner(fed.leafProtocolSigningKey),
+				}),
+				includePeerTrustChain: true,
+				metadata: { jwks: { keys: [fed.leafProtocolPublicKey] } },
+			});
+			role.initialize({
+				entityId: LEAF_ID,
+				keyProvider: MemoryFederationKeyProvider.fromJWK(fed.leafSigningKey),
+				authorityHints: [TA_ID],
+				options: {
+					...fed.options,
+					clock: { now: () => now },
+					httpClient: async (...args) => {
+						fetches++;
+						return fed.httpClient(...args);
+					},
+				},
+			});
+			const params = { redirect_uri: `${LEAF_ID}/callback`, response_type: "code" };
+			const result = await role.createAuthorizationRequest(discovery, params, fed.trustAnchors, {
+				requestDelivery: "request_uri",
+				requestUri: `${LEAF_ID}/request.jwt`,
+				requestObjectTtlSeconds: 42,
+				includePeerTrustChain: false,
+			});
+			t.true(result.ok, JSON.stringify(result));
+			t.true(fetches > 0, "partial overrides preserve the host HTTP client");
+			if (!result.ok) return;
+			t.equal(result.value.delivery, "request_uri");
+			if (result.value.delivery === "request_uri")
+				t.equal(result.value.requestUri, `${LEAF_ID}/request.jwt`);
+			const decoded = decodeEntityStatement(result.value.requestObjectJwt);
+			t.true(decoded.ok);
+			if (decoded.ok) {
+				t.equal(decoded.value.payload.iat, now);
+				t.equal(decoded.value.payload.exp! - decoded.value.payload.iat!, 42);
+				t.strictEqual(decoded.value.header.peer_trust_chain, undefined);
+			}
+			const provider = new OidcProviderRole({ replayStore: new MemoryReplayStore() });
+			provider.initialize({
+				entityId: OP_ID,
+				keyProvider: MemoryFederationKeyProvider.fromJWK(fed.opSigningKey),
+				trustAnchors: fed.trustAnchors,
+				options: fed.options,
+			});
+			t.true(
+				(
+					await provider.processAutomaticRegistration(result.value.requestObjectJwt, {
+						clockSkewSeconds: 60,
+					})
+				).ok,
+				"provider partial options preserve host discovery settings",
+			);
+		});
+		test("uses detached composed RP and OAuth client metadata for requests", async (t) => {
+			const fed = await createMockFederation();
+			const discovery = await createMockDiscovery(OP_ID, fed);
+			for (const Role of [OidcRelyingPartyRole, OAuthClientRole]) {
+				const role = new Role({
+					protocolKeyProvider: new StaticProtocolSigningKeyProvider({
+						requestObjectSigner: new JwkSigner(fed.leafProtocolSigningKey),
+					}),
+				});
+				role.initialize({
+					entityId: LEAF_ID,
+					keyProvider: MemoryFederationKeyProvider.fromJWK(fed.leafSigningKey),
+					authorityHints: [TA_ID],
+					options: fed.options,
+				});
+				const composed = { jwks: { keys: [structuredClone(fed.leafProtocolPublicKey)] } };
+				role.validateMetadata(composed);
+				composed.jwks.keys.length = 0;
+				const result = await role.createAuthorizationRequest(
+					discovery,
+					{ redirect_uri: `${LEAF_ID}/callback`, response_type: "code" },
+					fed.trustAnchors,
+				);
+				t.true(result.ok, JSON.stringify(result));
+			}
+		});
+		test("stateful roles reject a second host without changing their first owner", async (t) => {
+			const fed = await createMockFederation();
+			const protocolKeyProvider = new StaticProtocolSigningKeyProvider({
+				requestObjectSigner: new JwkSigner(fed.leafProtocolSigningKey),
+			});
+			const context = {
+				entityId: LEAF_ID,
+				keyProvider: MemoryFederationKeyProvider.fromJWK(fed.leafSigningKey),
+				authorityHints: [TA_ID],
+				trustAnchors: fed.trustAnchors,
+				options: fed.options,
+			};
+			const rp = new OidcRelyingPartyRole({ protocolKeyProvider });
+			for (const role of [
+				rp,
+				new OAuthClientRole({ protocolKeyProvider }),
+				new OidcProviderRole({}),
+				new OAuthAuthorizationServerRole({}),
+			]) {
+				role.initialize(context);
+				role.initialize(context);
+				t.throws(
+					() => role.initialize({ ...context, entityId: "https://another.example" }),
+					/separate.*instance/,
+				);
+			}
+			const jwt = await rp.createClientAssertion(OP_ID);
+			const decoded = decodeEntityStatement(jwt);
+			t.true(decoded.ok);
+			if (decoded.ok) t.equal(decoded.value.payload.iss, LEAF_ID);
+		});
+	});
 };

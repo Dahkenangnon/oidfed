@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Subordinate Events Draft 01 histories, Entity Collection Draft 01 discovery, and Wallet Architectures Draft 05 roles across the relevant libraries and CLI.
+
+### Breaking changes
+
+- Extended Listing follows Draft 03: use `from` and `next` instead of `fromEntityId`, `from_entity_id`, and `next_entity_id`. Legacy cursor names are unsupported. Unknown cursors return `page_not_found`.
+- `trust_marked=false` adds no restriction to either listing endpoint; supplied Trust Mark types still filter results.
+- Authority federation endpoints using `private_key_jwt` require replay storage. Assertions require `exp` and `jti`; `iat` remains optional.
+- A stateful OIDC/OAuth role instance belongs to one host. Create separate instances for separate hosts.
+
+### Fixed
+
+- Federation assertion replay protection, key lifecycle ordering, WebCrypto JWK publication, Leaf refresh ordering, OIDC operation context, and queued subordinate update ownership.
+- Package references, app capability descriptions, protocol examples, storage namespace guidance, and CLI runtime requirements.
+
 ## [1.0.0] - 2026-07-13
 
 ### Stable Release

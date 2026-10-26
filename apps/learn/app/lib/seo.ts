@@ -158,7 +158,7 @@ export const LESSONS: readonly LessonMeta[] = [
 		number: 8,
 		title: "Federation Endpoints",
 		description:
-			"The 9 HTTP APIs that federation entities expose for discovery, fetch, resolution, listing, trust-mark issuance and status, and historical keys.",
+			"The nine discovery, federation, and OIDC registration APIs in OpenID Federation 1.0, including fetch, resolve, subordinate listing, trust marks, and historical keys.",
 		phase: "Advanced",
 		keyConcept: "Federation Endpoints",
 	},

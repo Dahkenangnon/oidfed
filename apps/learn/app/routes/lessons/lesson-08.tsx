@@ -7,7 +7,7 @@ import { SpecRef } from "~/components/spec-ref";
 import { getLesson } from "~/data/lessons";
 
 import { lessonMetaForSlug } from "~/lib/seo";
-export const handle = { lastUpdated: "2026-06-05" };
+export const handle = { lastUpdated: "2026-10-26" };
 
 export function meta() {
 	return lessonMetaForSlug("federation-endpoints");
@@ -65,14 +65,14 @@ const endpoints = [
 	},
 	{
 		name: "Trust Mark Status",
-		path: "/trust_mark_status?sub=...&trust_mark_type=...",
-		method: "GET",
+		path: "/trust_mark_status",
+		method: "POST",
 		who: "Trust Mark Issuers",
 		section: "Section 8.4",
 		description:
-			"Checks whether a specific Trust Mark is still active, expired, or revoked. When client authentication is not used, the request MUST be GET with query parameters. POST is used when client authentication is present.",
+			"Checks the supplied Trust Mark instance. The request uses form POST with the trust_mark parameter, whether or not client authentication is configured.",
 		request:
-			"GET /trust_mark_status?sub=https://login.uni.edu&trust_mark_type=https://edufed.gov/trust-marks/gdpr HTTP/1.1",
+			"POST /trust_mark_status HTTP/1.1\nContent-Type: application/x-www-form-urlencoded\n\ntrust_mark=eyJ...",
 		response:
 			"HTTP/1.1 200 OK\nContent-Type: application/trust-mark-status-response+jwt\n\neyJhbGciOiJSUzI1NiJ9...",
 	},
@@ -122,7 +122,7 @@ const endpoints = [
 		request:
 			"POST /federation_registration HTTP/1.1\nContent-Type: application/entity-statement+jwt\n\neyJhbGciOiJSUzI1NiJ9...",
 		response:
-			"HTTP/1.1 200 OK\nContent-Type: application/entity-statement+jwt\n\neyJhbGciOiJSUzI1NiJ9...",
+			"HTTP/1.1 200 OK\nContent-Type: application/explicit-registration-response+jwt\n\neyJhbGciOiJSUzI1NiJ9...",
 	},
 ];
 
@@ -158,14 +158,13 @@ export default function Lesson08() {
 			}}
 		>
 			<p>
-				OpenID Federation defines 1 well-known discovery URL (
+				OpenID Federation 1.0 defines one Entity Configuration discovery URL (
 				<SpecRef sec="9" title="Obtaining Federation Entity Configuration Information" />
-				), 7 federation endpoints (
-				<SpecRef sec="8" title="Federation Endpoints" />), and 1 registration endpoint (
+				), seven federation endpoints (
+				<SpecRef sec="8" title="Federation Endpoints" />), and an OP registration endpoint (
 				<SpecRef sec="12.2" title="Explicit Registration" />
-				). Not every entity implements all of them — leaf entities only need the well-known URL,
-				while Trust Anchors and Intermediates may implement up to eight. The registration endpoint
-				is exposed by OpenID Providers, not Trust Anchors.
+				). Entities expose endpoints appropriate to their roles. An OP can be a Leaf,
+				Intermediate, or Trust Anchor. Extensions define additional endpoints.
 			</p>
 
 			<Accordion>
@@ -224,7 +223,7 @@ export default function Lesson08() {
 							{ mt: "application/entity-statement+jwt", who: "Entity Configurations & Subordinate Statements", sec: "15.1" },
 							{ mt: "application/trust-mark+jwt", who: "Trust Marks", sec: "15.2" },
 							{ mt: "application/resolve-response+jwt", who: "Resolve endpoint responses", sec: "15.3" },
-							{ mt: "application/trust-chain+json", who: "Trust Chain header parameter", sec: "15.4" },
+							{ mt: "application/trust-chain+json", who: "Trust Chain JSON representations", sec: "15.4" },
 							{ mt: "application/trust-mark-delegation+jwt", who: "Trust Mark delegations", sec: "15.5" },
 							{ mt: "application/jwk-set+jwt", who: "Historical Keys responses", sec: "15.6" },
 							{ mt: "application/trust-mark-status-response+jwt", who: "Trust Mark Status responses", sec: "15.7" },

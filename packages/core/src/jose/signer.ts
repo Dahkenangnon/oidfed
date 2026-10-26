@@ -27,7 +27,7 @@ export class JwkSigner implements JwtSigner {
 
 	constructor(key: JWK, options?: JwkSignerOptions) {
 		const { alg, kid } = validateSignerKey(key, options?.alg ?? key.alg);
-		this.key = key;
+		this.key = structuredClone(key);
 		this.kid = kid;
 		this.alg = alg;
 	}

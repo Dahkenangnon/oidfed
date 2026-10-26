@@ -17,6 +17,7 @@
   <a href="https://www.npmjs.com/package/@oidfed/authority">@oidfed/authority</a> &nbsp;•&nbsp;
   <a href="https://www.npmjs.com/package/@oidfed/leaf">@oidfed/leaf</a> &nbsp;•&nbsp;
   <b>@oidfed/oidc</b> &nbsp;•&nbsp;
+  <a href="https://www.npmjs.com/package/@oidfed/wallet">@oidfed/wallet</a> &nbsp;•&nbsp;
   <a href="https://www.npmjs.com/package/@oidfed/cli">@oidfed/cli</a>
 </p>
 

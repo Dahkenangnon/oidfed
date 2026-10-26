@@ -971,6 +971,133 @@ export default (QUnit: QUnit) => {
 			t.equal(ec4, ec3);
 		});
 	});
+	module("leaf / overlapping configuration refresh", () => {
+		test("explicit refresh publishes provider changes through every rollover stage", async (t) => {
+			let nowMs = 1000000;
+			const original = await generateSigningKey("ES256");
+			const next = await generateSigningKey("ES256");
+			const provider = MemoryFederationKeyProvider.fromJWK(original.privateKey, {
+				nowMs: () => nowMs,
+			});
+			const { config } = await createLeafConfig({
+				keyProvider: provider,
+				options: { clock: { now: () => Math.floor(nowMs / 1000) } },
+			});
+			const leaf = new Leaf(config);
+			let cached = await leaf.getEntityConfiguration();
+			await provider.publishKey(createFederationSigningKey(next.privateKey));
+			t.equal(await leaf.getEntityConfiguration(), cached);
+			cached = await leaf.refreshEntityConfiguration();
+			let decoded = decodeEntityStatement(cached);
+			t.true(decoded.ok);
+			if (decoded.ok) {
+				t.equal(decoded.value.header.kid, original.publicKey.kid);
+				t.equal(decoded.value.payload.jwks?.keys.length, 2);
+			}
+			await provider.switchActiveKey(next.privateKey.kid!, { retirePreviousAfterMs: 1000 });
+			t.equal(await leaf.getEntityConfiguration(), cached);
+			cached = await leaf.refreshEntityConfiguration();
+			decoded = decodeEntityStatement(cached);
+			t.true(decoded.ok);
+			if (decoded.ok) {
+				t.equal(decoded.value.header.kid, next.publicKey.kid);
+				t.equal(decoded.value.payload.jwks?.keys.length, 2);
+			}
+			nowMs += 1000;
+			t.equal(await leaf.getEntityConfiguration(), cached);
+			decoded = decodeEntityStatement(await leaf.refreshEntityConfiguration());
+			t.true(decoded.ok);
+			if (decoded.ok)
+				t.deepEqual(
+					decoded.value.payload.jwks?.keys.map((key) => key.kid),
+					[next.publicKey.kid],
+				);
+		});
+
+		test("an older build cannot overwrite the refreshed configuration", async (t) => {
+			const { config } = await createLeafConfig();
+			const old = await config.keyProvider.getFederationKeySet();
+			const next = await generateSigningKey("ES256");
+			let entered!: () => void, release!: () => void;
+			const started = new Promise<void>((r) => {
+				entered = r;
+			});
+			const gate = new Promise<void>((r) => {
+				release = r;
+			});
+			let current = {
+				...old,
+				signer: {
+					kid: old.signer.kid,
+					alg: old.signer.alg,
+					signJwt: async (...args: Parameters<typeof old.signer.signJwt>) => {
+						entered();
+						await gate;
+						return old.signer.signJwt(...args);
+					},
+				},
+			};
+			const leaf = new Leaf({
+				...config,
+				keyProvider: { getFederationKeySet: async () => current },
+			});
+			const pending = leaf.getEntityConfiguration();
+			await started;
+			current = { signer: new JwkSigner(next.privateKey), jwks: { keys: [next.publicKey] } };
+			const refreshed = await leaf.refreshEntityConfiguration();
+			release();
+			await pending;
+			t.equal(await leaf.getEntityConfiguration(), refreshed);
+			const decoded = decodeEntityStatement(refreshed);
+			t.true(decoded.ok);
+			if (decoded.ok) t.equal(decoded.value.header.kid, next.publicKey.kid);
+		});
+		test("old failures cannot clear the current in-flight refresh", async (t) => {
+			const { config } = await createLeafConfig();
+			const set = await config.keyProvider.getFederationKeySet();
+			let failOld!: () => void, releaseNew!: () => void, started!: () => void;
+			const oldGate = new Promise<void>((_, reject) => {
+				failOld = () => reject(new Error("old signing failed"));
+			});
+			const newGate = new Promise<void>((r) => {
+				releaseNew = r;
+			});
+			const entered = new Promise<void>((r) => {
+				started = r;
+			});
+			let calls = 0;
+			const leaf = new Leaf({
+				...config,
+				keyProvider: {
+					getFederationKeySet: async () => ({
+						...set,
+						signer: {
+							kid: set.signer.kid,
+							alg: set.signer.alg,
+							signJwt: async (...args: Parameters<typeof set.signer.signJwt>) => {
+								calls++;
+								if (calls === 1) {
+									started();
+									await oldGate;
+								} else await newGate;
+								return set.signer.signJwt(...args);
+							},
+						},
+					}),
+				},
+			});
+			const old = leaf.getEntityConfiguration();
+			const rejected = t.rejects(old, /old signing failed/);
+			await entered;
+			const refreshed = leaf.refreshEntityConfiguration();
+			failOld();
+			await rejected;
+			const concurrent = leaf.getEntityConfiguration();
+			releaseNew();
+			t.equal(await concurrent, await refreshed);
+			t.equal(calls, 2, "get reuses the current refresh rather than starting another build");
+		});
+	});
 };
 
 async function createMockMockFederation() {

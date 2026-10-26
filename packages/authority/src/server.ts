@@ -378,6 +378,7 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 
 	const routeMap = new Map<string, (request: Request) => Promise<Response>>();
 	const routeNames = new Map<string, string>();
+	// Entity Configuration discovery is GET (§9.1), separate from §8.8 endpoint authentication.
 	addAuthorityRoute(
 		routeMap,
 		routeNames,

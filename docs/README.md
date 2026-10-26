@@ -44,6 +44,7 @@ Keep federation signing keys separate from protocol keys. Federation key provide
 
 ## Guides
 
+- [Operator and application responsibilities](guide/operator-responsibilities.md): protocol requirements, library policies, and deployment ownership for each implemented specification.
 - [Wiring guide](guide/wiring-guide.md): configure entities, enroll subordinates, adapt HTTP requests, and connect OP/RP registration.
 - [Storage guide](guide/storage-guide.md): persistence, transaction, replay, and cache contracts.
 - [Development guide](guide/dev.md): workspace commands, local federation topologies, DNS, and TLS.

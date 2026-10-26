@@ -9,6 +9,8 @@
 
 `@oidfed/authority` runs Trust Anchors and Intermediate Authorities. It issues Subordinate Statements and serves federation fetch, list, extended-list, subordinate-events, resolve, historical-key, and trust-mark endpoints through Web API handlers. Storage and federation signing keys come from injected providers.
 
+See [operator and application responsibilities](../guide/operator-responsibilities.md) for authentication policy, key rollover, and the storage and capture contracts of optional endpoints.
+
 ## Usage
 
 Later fragments reuse `ta`, `storage`, and `keyProvider` from the first example. Supply the subordinate's public federation key as `subordinatePublicKey` when enrolling it.
@@ -106,24 +108,35 @@ See the [storage guide](../guide/storage-guide.md) for repository interfaces, cu
 
 ### Federation key rotation
 
-Federation signing key lifecycle is exposed through `FederationKeyLifecycleProvider`. Authorities read the current signer, published Federation JWKS, and historical keys from the injected provider; applications that own the provider drive rollover there.
+Applications drive rollover through the injected `FederationKeyLifecycleProvider`. [Federation §11.2](https://openid.net/specs/openid-federation-1_0.html#section-11.2) describes four stages: publish the new keys, continue signing with the old keys while participants refresh, switch signers, then remove the old keys after a suitable overlap.
+
+First, publish the next key:
 
 ```ts
 import { createFederationSigningKey, generateSigningKey } from "@oidfed/core";
 
-// Generate new rotation key
 const nextKeyPair = await generateSigningKey("ES256");
-const newSigningKey = createFederationSigningKey(nextKeyPair.privateKey);
+const nextSigningKey = createFederationSigningKey(nextKeyPair.privateKey);
+await keyProvider.publishKey(nextSigningKey);
+```
 
-// Publish first so participants can refresh the new public key.
-await keyProvider.publishKey(newSigningKey);
+The authority's next Entity Configuration contains the new public key and is still signed by the current signer. Authority configuration requests read the provider's current state. If a proxy caches those responses, account for its cache lifetime when choosing the propagation interval.
 
-// Later, switch signing to the published key and keep the previous key
-// available until its retirement window ends.
-await keyProvider.switchActiveKey(newSigningKey.signer.kid, {
+After the federation's publication and propagation interval, run the switch as a separate administrative step:
+
+```ts
+await keyProvider.switchActiveKey(nextSigningKey.signer.kid, {
   retirePreviousAfterMs: 7 * 24 * 60 * 60 * 1000,
 });
 ```
+
+The memory provider now signs with the new key and keeps the previous signer's public key available until the retirement deadline. Subsequent key-set reads exclude that old key at the deadline; its historical record remains. No background deletion timer runs. Other active keys, if supplied during initialization, are unaffected by this switch.
+
+The propagation interval before switching and the retirement interval after switching serve different stages. The application chooses when to switch; `retirePreviousAfterMs` controls only the post-switch overlap. Seven days is the memory provider's default, not a duration prescribed by the specification. Choose both intervals and Entity Configuration expiry according to the federation's security profile. A Leaf using the same provider must refresh its cached configuration after key-set changes; see [Leaf configuration caching](leaf.md#how-does-the-entity-configuration-caching-work).
+
+Production key providers must preserve lifecycle state across restarts and coordinate serving processes. The in-memory provider does not persist or distribute changes.
+
+`revokeKey(kid, reason)` applies the provider's local revocation policy. It excludes the key from current publication and signer selection and retains historical revocation information under [§8.7.2](https://openid.net/specs/openid-federation-1_0.html#section-8.7.2). It does not invalidate statements already held by other participants. [§11.4](https://openid.net/specs/openid-federation-1_0.html#section-11.4) leaves the federation-wide revocation process to the trust framework.
 
 ### Issuing and revoking Trust Marks
 
@@ -178,6 +191,22 @@ When constructing a `TrustAnchor` or `Intermediate`, you pass an `AuthorityConfi
 | `extendedListing` | `ExtendedListingConfig` | No | Settings for the advertised `federation_extended_list_endpoint` route. Set `enabled: false` to disable handling. |
 
 Federation endpoint `private_key_jwt` authentication verifies the remote caller's assertion with keys returned by `clientKeyProvider`. If omitted, the authority uses the caller Entity Identifier to read the subordinate record from `storage.subordinates` and uses that record's `jwks`. Configure a custom provider when caller keys live in an external registry or key service; invalid, missing, or mismatched keys fail closed.
+
+Each hosted federation endpoint uses its own `*_auth_methods` metadata, following [§8.8.1](https://openid.net/specs/openid-federation-1_0.html#section-8.8.1):
+
+| Methods | Access |
+|---|---|
+| Omitted or `["none"]` | Anonymous requests |
+| `["private_key_jwt"]` | Authenticated form POST required |
+| `["none", "private_key_jwt"]` | Anonymous requests or authenticated form POST |
+
+The built-in authority rejects empty lists and unsupported method names during construction, including unsupported names mixed with recognized methods. This hosting implementation supports `none` and `private_key_jwt`; core metadata schemas remain extensible for other implementations.
+
+Most anonymous federation endpoints use GET. Trust Mark Status uses form POST with `trust_mark` whether authentication is enabled or not, as defined in [§8.4.1](https://openid.net/specs/openid-federation-1_0.html#section-8.4.1). Under optional authentication, omitting both credential fields allows anonymous access. Supplied empty, partial, invalid, or replayed assertions are rejected. Requests containing assertions must use POST. Form reads are bounded before dispatch.
+
+Authority endpoints using this middleware require `storage.replay` when `private_key_jwt` is configured. Assertions must include `exp` and a non-empty `jti`; `iat` is optional. After signature and claim validation, the authority atomically claims the assertion before dispatch. Reuse across endpoints sharing that replay store is rejected, and replay-storage failures prevent dispatch. [Collection authentication](../guide/entity-collection.md#authentication-and-http-clients) uses the core service; it accepts a configured replay store or falls back to memory. Production instances must share replay state.
+
+Entity Configuration discovery uses unauthenticated GET independently of these settings, following [§9.1](https://openid.net/specs/openid-federation-1_0.html#section-9.1). Federation defines no discovery auth-method parameter or client-assertion flow for it. The specification does not explicitly prohibit profile-specific network or TLS access controls; deployments using them need matching client transport support.
 
 Authorities normalize only their own configured `entityId` by removing a trailing `/`. The Entity Configuration HTTP route is then derived from that normalized Entity Identifier path: `https://ta.example.org/tenant` serves `https://ta.example.org/tenant/.well-known/openid-federation`, while `https://ta.example.org` serves `https://ta.example.org/.well-known/openid-federation`.
 
@@ -258,7 +287,7 @@ Use the authority instance's lifecycle methods to record changes automatically:
 | `recordSubordinateEvents(subject, events)` | Appends explicit observations or imported events, including `suspension` and custom event types. It does not change registration state. |
 | `getSubordinateEvents(subject)` | Returns a signed history JWT for local use. Throws for unknown history or unavailable storage. |
 
-State changes and generated events commit in one transaction. Registration captures a copy of the supplied record before asynchronous work, so later changes to the caller's object cannot change the stored identity or its event. No-op updates, reordered object properties, reordered key sets, and authority signing-key rotation do not produce subordinate update events. Initial registration produces only its registration event. Draft 01 §2.3.3's "at the same time" exclusion is interpreted as applying to initial updates within the registration operation; a later change retains its event even if the clock gives it the same timestamp.
+State changes and generated events commit in one transaction. Registration and updates copy their inputs before asynchronous work, so later changes to the caller’s object cannot alter the stored record or its events. No-op updates, reordered object properties, reordered key sets, and authority signing-key rotation do not produce subordinate update events. Initial registration produces only its registration event. Draft 01 §2.3.3's "at the same time" exclusion is interpreted as applying to initial updates within the registration operation; a later change retains its event even if the clock gives it the same timestamp.
 
 Direct `storage.subordinates` writes remain supported and do not automatically record events. Enabling event storage does not reconstruct past history from record timestamps. See the [storage contract](../guide/storage-guide.md#subordinate-events) for explicit transactional appends.
 

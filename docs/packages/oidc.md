@@ -9,6 +9,8 @@
 
 `@oidfed/oidc` adds OpenID Connect and OAuth federation roles to a `Leaf`, `TrustAnchor`, or `Intermediate`. It creates and validates registration artifacts and supplies metadata for the parent Entity Configuration. Your existing OP and RP remain responsible for the OIDC protocol flow.
 
+See [OIDC federation responsibilities](../guide/operator-responsibilities.md#oidc-federation) for registration lifetime enforcement, persistence, protocol keys, and replay storage.
+
 ## Usage
 
 ### Composing roles with parent entities
@@ -59,6 +61,8 @@ const leaf = new Leaf({
   ]
 });
 ```
+
+Each stateful role instance belongs to one host. Create a separate instance for another Entity Identifier. Request construction uses the final composed local metadata, including fields supplied by the host. Per-call options override supplied fields while retaining the host’s other federation options, including its HTTP client and clock.
 
 ### Client-side automatic registration
 
@@ -175,7 +179,7 @@ Configuration parameters used to instantiate `OidcRelyingPartyRole` and `OAuthCl
 |:---|:---|:---|:---|
 | `protocolKeyProvider` | `ProtocolSigningKeyProvider` | **Yes** | Provider managing active signing keys for OIDC/OAuth protocol assertions (e.g. Request Objects). |
 | `metadata` | `Record<string, unknown>` | No | Role-specific metadata parameters (e.g. `redirect_uris`, `response_types`, `jwks`) merged under the corresponding entity type key. |
-| `requestObjectTtlSeconds` | `number` | No | Lifespan in seconds for generated Request Objects. Defaults to 60. |
+| `requestObjectTtlSeconds` | `number` | No | Lifespan in seconds for generated Request Objects. Defaults to 300. |
 | `includePeerTrustChain` | `boolean` | No | Whether to include a Trust Chain for the peer entity (OP) in the `peer_trust_chain` JWS header. Defaults to false. |
 | `requestDelivery` | `RequestDelivery` | No | Request object transmission mode: `"form_post"` (default), `"query"`, `"request_uri"`, or `"par"`. |
 | `requestUri` | `string` | No | Preconfigured Request Object URI if using `"request_uri"` transmission delivery. |
@@ -222,9 +226,17 @@ Configuration parameters used to instantiate `OAuthResourceRole`.
 
 ## Common questions
 
-### Why must federation signing keys and OIDC/OAuth protocol keys remain separate?
+### Federation and protocol signing keys
 
-Separating key scopes is an essential security requirement of the OpenID Federation specification. Federation keys are used solely to sign federation artifacts (Entity Configurations, subordinate statements, trust marks). OIDC/OAuth protocol keys are used for transaction-level operations (signing Request Objects, verifying authorization requests, client assertions). Mixing these roles weakens key isolation.
+[OpenID Federation §3.1.1](https://openid.net/specs/openid-federation-1_0.html#section-3.1.1) says Federation Entity Keys **SHOULD NOT** be used for other protocols. oidfed provides separate federation and protocol key providers so applications can maintain that separation. Federation keys sign federation artifacts and federation endpoint client assertions; protocol keys sign OIDC/OAuth Request Objects and protocol client assertions.
+
+The application manages protocol-key rotation and publishes the matching public keys in role metadata. `ProtocolSigningKeyProvider` selects signers; it has no federation-style publication or retirement lifecycle.
+
+### Registration lifetime enforcement
+
+[Federation §12.3](https://openid.net/specs/openid-federation-1_0.html#section-12.3) requires an OP registration to expire no later than the RP chain used to establish it. The RP must also stop using registration when its selected OP chain expires, then successfully reevaluate trust for automatic registration or renew explicit registration.
+
+The explicit handler caps its signed response expiry. OP automatic processing returns the validated RP `trustChain`; RP automatic registration returns the OP chain and `trustChainExpiresAt`. Applications must preserve the relevant deadlines and enforce them in their client database and request processing. Explicit-registration integrations must also retain the selected OP chain's expiry. `onRegistration` does not receive a chain deadline, so that hook alone does not enforce registration lifetime. See [the integration responsibilities](../guide/operator-responsibilities.md#oidc-federation).
 
 ### What is the `peer_trust_chain` JWS header parameter?
 

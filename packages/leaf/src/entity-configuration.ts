@@ -67,6 +67,7 @@ export class Leaf {
 	private cachedJwt: string | null = null;
 	private cachedExp: number | null = null;
 	private inflight: Promise<string> | null = null;
+	private generation = 0;
 
 	constructor(config: LeafConfig) {
 		const rawEntityId = (
@@ -208,7 +209,7 @@ export class Leaf {
 		}
 	}
 
-	private async buildEntityConfiguration(): Promise<string> {
+	private async buildEntityConfiguration(generation: number): Promise<string> {
 		validateRoleMetadata(this.config.roles, this.metadata, this.roleContext);
 		const keySet = await this.config.keyProvider.getFederationKeySet();
 		validateFederationKeySet(keySet);
@@ -230,8 +231,10 @@ export class Leaf {
 			typ: JwtTyp.EntityStatement,
 		});
 
-		this.cachedJwt = jwt;
-		this.cachedExp = payload.exp;
+		if (generation === this.generation) {
+			this.cachedJwt = jwt;
+			this.cachedExp = payload.exp;
+		}
 		return jwt;
 	}
 
@@ -240,8 +243,9 @@ export class Leaf {
 			return this.cachedJwt;
 		}
 		if (this.inflight) return this.inflight;
-		this.inflight = this.buildEntityConfiguration().finally(() => {
-			this.inflight = null;
+		const generation = this.generation;
+		this.inflight = this.buildEntityConfiguration(generation).finally(() => {
+			if (generation === this.generation) this.inflight = null;
 		});
 		return this.inflight;
 	}
@@ -253,8 +257,13 @@ export class Leaf {
 	}
 
 	async refreshEntityConfiguration(): Promise<string> {
-		this.inflight = null;
-		return this.buildEntityConfiguration();
+		const generation = ++this.generation;
+		this.cachedJwt = null;
+		this.cachedExp = null;
+		this.inflight = this.buildEntityConfiguration(generation).finally(() => {
+			if (generation === this.generation) this.inflight = null;
+		});
+		return this.inflight;
 	}
 
 	async handleRequest(request: Request): Promise<Response> {
@@ -267,7 +276,7 @@ export class Leaf {
 			return roleHandler(request);
 		}
 
-		// 2. Check standard well-known route
+		// Standard GET discovery (§9.1) is separate from the optional Collection authentication.
 		const basePath = new URL(this.entityId).pathname.replace(/\/$/, "");
 		const wellKnownPath = `${basePath}/.well-known/openid-federation`;
 		if (pathname === wellKnownPath) {

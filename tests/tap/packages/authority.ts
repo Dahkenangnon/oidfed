@@ -87,6 +87,7 @@ import {
 } from "../../../packages/authority/src/utils/subordinate-statement-shape.js";
 import type { FederationError } from "../../../packages/core/src/index.js";
 import {
+	DEFAULT_MAX_REQUEST_BODY_BYTES,
 	decodeEntityStatement,
 	type EntityId,
 	EntityType,
@@ -963,6 +964,52 @@ export default (QUnit: QUnit) => {
 			);
 		});
 
+		test("published configurations follow propagation, switch, and retirement boundaries", async (t) => {
+			const authority = new TrustAnchor({
+				entityId: ENTITY_ID,
+				keyProvider,
+				storage: new MemoryStorageAdapter(),
+				options: { clock: { now: () => Math.floor(nowMs / 1000) } },
+				metadata: {
+					federation_entity: {
+						federation_fetch_endpoint: `${ENTITY_ID}/fetch`,
+						federation_list_endpoint: `${ENTITY_ID}/list`,
+					},
+				},
+			});
+			const original = await keyProvider.getFederationKeySet();
+			const { privateKey } = await generateSigningKey("ES256");
+			await keyProvider.publishKey(createFederationSigningKey({ ...privateKey, kid: "next-key" }));
+			const published = await verifyEntityStatement(
+				await authority.getEntityConfiguration(),
+				original.jwks,
+				{ clock: { now: () => Math.floor(nowMs / 1000) } },
+			);
+			t.true(published.ok);
+			if (!published.ok) return;
+			const learned = published.value.payload.jwks;
+			t.ok(learned);
+			if (!learned) return;
+			t.equal(published.value.header.kid, "old-key");
+			t.deepEqual(learned.keys.map((key) => key.kid).sort(), ["next-key", "old-key"]);
+			await keyProvider.switchActiveKey("next-key", { retirePreviousAfterMs: 10000 });
+			for (const elapsed of [0, 9999, 10000]) {
+				nowMs = 1000000 + elapsed;
+				const checked = await verifyEntityStatement(
+					await authority.getEntityConfiguration(),
+					learned,
+					{ clock: { now: () => Math.floor(nowMs / 1000) } },
+				);
+				t.true(checked.ok);
+				if (!checked.ok) continue;
+				t.equal(checked.value.header.kid, "next-key");
+				t.deepEqual(
+					checked.value.payload.jwks?.keys.map((key) => key.kid).sort(),
+					elapsed < 10000 ? ["next-key", "old-key"] : ["next-key"],
+				);
+			}
+			t.ok((await keyProvider.getHistoricalFederationKeys()).find((key) => key.kid === "old-key"));
+		});
 		test("publishes next key before signer switch", async (t) => {
 			const { privateKey: newKey } = await generateSigningKey("ES256");
 			await keyProvider.publishKey(createFederationSigningKey({ ...newKey, kid: "new-key" }));
@@ -4838,6 +4885,325 @@ export default (QUnit: QUnit) => {
 		}
 
 		module("authority / createAuthenticatedHandler", () => {
+			test("optional Trust Mark Status and required fetch leave discovery public", async (t) => {
+				const { ctx, createClientAssertionJwt } = await setupClientAuthContext();
+				const config: AuthorityConfig = {
+					entityId: ctx.entityId,
+					keyProvider: ctx.keyProvider,
+					storage: ctx.storage,
+					clientKeyProvider: ctx.clientKeyProvider,
+					metadata: {
+						federation_entity: {
+							federation_fetch_endpoint: `${CA_AUTHORITY_ID}/fetch`,
+							federation_list_endpoint: `${CA_AUTHORITY_ID}/list`,
+							federation_fetch_endpoint_auth_methods: ["private_key_jwt"],
+							federation_trust_mark_status_endpoint: `${CA_AUTHORITY_ID}/status`,
+							federation_trust_mark_status_endpoint_auth_methods: ["none", "private_key_jwt"],
+						},
+					},
+				};
+				for (const authority of [
+					new TrustAnchor(configForHost()),
+					new Intermediate({ ...configForHost(), authorityHints: [TA_ID] }),
+				]) {
+					const discovery = await authority.handleRequest(
+						new Request(`${CA_AUTHORITY_ID}/.well-known/openid-federation`),
+					);
+					t.equal(discovery.status, 200);
+					t.true(
+						(
+							await verifyEntityStatement(
+								await discovery.text(),
+								(
+									await ctx.keyProvider.getFederationKeySet()
+								).jwks,
+							)
+						).ok,
+					);
+					t.equal(
+						(
+							await authority.handleRequest(
+								new Request(`${CA_AUTHORITY_ID}/fetch?sub=${CA_CLIENT_ID}`),
+							)
+						).status,
+						405,
+					);
+					const anonymous = await authority.handleRequest(
+						new Request(`${CA_AUTHORITY_ID}/status`, {
+							method: "POST",
+							body: new URLSearchParams({ trust_mark: "invalid" }),
+						}),
+					);
+					t.equal(anonymous.status, 200);
+					const checked = await verifyEntityStatement(
+						await anonymous.text(),
+						(await ctx.keyProvider.getFederationKeySet()).jwks,
+						{ expectedTyp: JwtTyp.TrustMarkStatusResponse },
+					);
+					t.true(checked.ok);
+					if (checked.ok) t.equal(checked.value.payload.status, "invalid");
+					const authenticated = await authority.handleRequest(
+						new Request(`${CA_AUTHORITY_ID}/status`, {
+							method: "POST",
+							body: new URLSearchParams({
+								trust_mark: "invalid",
+								client_assertion: await createClientAssertionJwt(),
+								client_assertion_type: JWT_BEARER_TYPE,
+							}),
+						}),
+					);
+					t.equal(authenticated.status, 200);
+				}
+				function configForHost(): AuthorityConfig {
+					return { ...config, metadata: structuredClone(config.metadata) };
+				}
+			});
+
+			test("unsupported authentication cannot leave an advertised endpoint open", async (t) => {
+				const { ctx } = await setupClientAuthContext();
+				for (const suffix of [
+					"fetch",
+					"list",
+					"extended_list",
+					"resolve",
+					"historical_keys",
+					"trust_mark",
+					"trust_mark_status",
+					"trust_mark_list",
+					"subordinate_events",
+					"collection",
+				]) {
+					for (const methods of [
+						[],
+						["private_key_jwt_typo"],
+						["none", "private_key_jwt_typo"],
+						["private_key_jwt", "private_key_jwt_typo"],
+					]) {
+						const endpoint = `federation_${suffix}_endpoint`;
+						t.throws(
+							() =>
+								new TrustAnchor({
+									entityId: ctx.entityId,
+									keyProvider: ctx.keyProvider,
+									storage: new MemoryStorageAdapter({ trustMarks: true, subordinateEvents: true }),
+									...(suffix === "collection" ? { collection: { trustAnchors: new Map() } } : {}),
+									metadata: {
+										federation_entity: {
+											federation_fetch_endpoint: `${ctx.entityId}/fetch`,
+											federation_list_endpoint: `${ctx.entityId}/list`,
+											[endpoint]: `${ctx.entityId}/${suffix}`,
+											[`${endpoint}_auth_methods`]: methods,
+										},
+									},
+								}),
+							/auth.*method/i,
+							`${endpoint}: ${JSON.stringify(methods)}`,
+						);
+					}
+				}
+			});
+			test("optional POST preserves anonymous parameters and authenticates supplied assertions", async (t) => {
+				const { ctx, createClientAssertionJwt } = await setupClientAuthContext();
+				let forwardedSignal: AbortSignal | undefined;
+				const inner = async (request: Request) => {
+					forwardedSignal = request.signal;
+					const form = new URLSearchParams(await request.text());
+					return jsonResponse({
+						method: request.method,
+						marks: form.getAll("trust_mark"),
+						authenticated: request.headers.get("X-Authenticated-Entity"),
+						contentLength: request.headers.get("Content-Length"),
+						hasCredentials: form.has("client_assertion") || form.has("client_assertion_type"),
+					});
+				};
+				const handler = createAuthenticatedHandler(ctx, inner, ["none", "private_key_jwt"], {
+					nativeMethod: "POST",
+				});
+				const controller = new AbortController();
+				const response = await handler(
+					new Request(`${CA_AUTHORITY_ID}/status`, {
+						method: "POST",
+						signal: controller.signal,
+						headers: {
+							"Content-Type": "application/x-www-form-urlencoded",
+							"Content-Length": "20",
+							"X-Authenticated-Entity": "https://spoof.example",
+						},
+						body: "trust_mark=a&trust_mark=b",
+					}),
+				);
+				t.equal(response.status, 200);
+				t.deepEqual(await response.json(), {
+					method: "POST",
+					marks: ["a", "b"],
+					authenticated: null,
+					contentLength: null,
+					hasCredentials: false,
+				});
+				controller.abort();
+				t.true(forwardedSignal?.aborted);
+				const assertion = await createClientAssertionJwt();
+				const authenticated = await handler(
+					new Request(`${CA_AUTHORITY_ID}/status`, {
+						method: "POST",
+						body: new URLSearchParams({
+							trust_mark: "mark",
+							client_assertion: assertion,
+							client_assertion_type: JWT_BEARER_TYPE,
+						}),
+					}),
+				);
+				t.equal(authenticated.status, 200);
+				t.deepEqual(await authenticated.json(), {
+					method: "POST",
+					marks: ["mark"],
+					authenticated: CA_CLIENT_ID,
+					contentLength: null,
+					hasCredentials: false,
+				});
+				t.equal(
+					(await handler(new Request(`${CA_AUTHORITY_ID}/status`))).status,
+					405,
+					"anonymous Trust Mark Status still requires POST",
+				);
+			});
+			test("optional authentication never downgrades supplied invalid credentials", async (t) => {
+				const { ctx, createClientAssertionJwt } = await setupClientAuthContext();
+				for (const nativeMethod of ["GET", "POST"] as const) {
+					let calls = 0;
+					const handler = createAuthenticatedHandler(
+						ctx,
+						async () => {
+							calls++;
+							return jsonResponse({});
+						},
+						["none", "private_key_jwt"],
+						{ nativeMethod },
+					);
+					const valid = await createClientAssertionJwt();
+					const expired = await createClientAssertionJwt({
+						exp: Math.floor(Date.now() / 1000) - 120,
+					});
+					for (const credentials of [
+						"client_assertion=",
+						"client_assertion_type=",
+						`client_assertion=${valid}`,
+						`client_assertion_type=${JWT_BEARER_TYPE}`,
+						`client_assertion=invalid&client_assertion_type=${JWT_BEARER_TYPE}`,
+						`client_assertion=${expired}&client_assertion_type=${JWT_BEARER_TYPE}`,
+						`client_assertion=${valid}&client_assertion=${valid}&client_assertion_type=${JWT_BEARER_TYPE}`,
+					]) {
+						t.equal(
+							(
+								await handler(
+									new Request(`${CA_AUTHORITY_ID}/endpoint`, {
+										method: "POST",
+										body: `trust_mark=mark&${credentials}`,
+									}),
+								)
+							).status,
+							401,
+							credentials.slice(0, 40),
+						);
+					}
+					t.equal(calls, 0);
+					const replay = () =>
+						handler(
+							new Request(`${CA_AUTHORITY_ID}/endpoint`, {
+								method: "POST",
+								body: new URLSearchParams({
+									trust_mark: "mark",
+									client_assertion: valid,
+									client_assertion_type: JWT_BEARER_TYPE,
+								}),
+							}),
+						);
+					t.equal((await replay()).status, 200);
+					t.equal((await replay()).status, 401);
+					t.equal(calls, 1);
+				}
+			});
+			test("optional authentication bounds forms before dispatch and rejects credential-bearing GET", async (t) => {
+				const { ctx } = await setupClientAuthContext();
+				for (const nativeMethod of ["GET", "POST"] as const) {
+					let calls = 0;
+					const handler = createAuthenticatedHandler(
+						ctx,
+						async () => {
+							calls++;
+							return jsonResponse({});
+						},
+						["none", "private_key_jwt"],
+						{ nativeMethod },
+					);
+					t.equal(
+						(
+							await handler(
+								new Request(`${CA_AUTHORITY_ID}/endpoint`, {
+									method: "POST",
+									body: `trust_mark=${"a".repeat(DEFAULT_MAX_REQUEST_BODY_BYTES + 1)}`,
+								}),
+							)
+						).status,
+						413,
+					);
+					t.equal(
+						(await handler(new Request(`${CA_AUTHORITY_ID}/endpoint?client_assertion=`))).status,
+						nativeMethod === "GET" ? 401 : 405,
+					);
+					t.equal(calls, 0);
+				}
+			});
+
+			test("requires replay storage only for authenticated endpoints", async (t) => {
+				const { ctx } = await setupClientAuthContext();
+				const storage: StorageAdapter = {
+					subordinates: ctx.storage.subordinates,
+					transaction: (operation) => ctx.storage.transaction(operation),
+				};
+				t.equal(
+					createAuthenticatedHandler({ ...ctx, storage }, echoHandler, ["none"]),
+					echoHandler,
+				);
+				t.throws(
+					() => createAuthenticatedHandler({ ...ctx, storage }, echoHandler, ["private_key_jwt"]),
+					/storage.replay/,
+				);
+			});
+			test("rejects concurrent reuse across endpoint handlers and fails closed on store errors", async (t) => {
+				const { ctx, createClientAssertionJwt } = await setupClientAuthContext();
+				const assertion = await createClientAssertionJwt();
+				const request = () =>
+					new Request(`${CA_AUTHORITY_ID}/fetch`, {
+						method: "POST",
+						headers: { "Content-Type": "application/x-www-form-urlencoded" },
+						body: new URLSearchParams({
+							sub: "test",
+							client_assertion: assertion,
+							client_assertion_type: JWT_BEARER_TYPE,
+						}),
+					});
+				const handlers = [
+					createAuthenticatedHandler(ctx, echoHandler, ["private_key_jwt"]),
+					createAuthenticatedHandler(ctx, echoHandler, ["private_key_jwt"]),
+				];
+				const responses = await Promise.all(handlers.map((handler) => handler(request())));
+				t.deepEqual(responses.map((r) => r.status).sort(), [200, 401]);
+				const storage: StorageAdapter = {
+					subordinates: ctx.storage.subordinates,
+					transaction: (operation) => ctx.storage.transaction(operation),
+					replay: {
+						useJti: async () => {
+							throw new Error("unavailable");
+						},
+					},
+				};
+				const handler = createAuthenticatedHandler({ ...ctx, storage }, echoHandler, [
+					"private_key_jwt",
+				]);
+				t.equal((await handler(request())).status, 500);
+			});
+
 			module("no auth required (passthrough)", () => {
 				test("omitted endpoint auth metadata defaults to ['none']", async (t) => {
 					const { ctx } = await setupClientAuthContext();
@@ -4851,10 +5217,12 @@ export default (QUnit: QUnit) => {
 					t.equal(handler, echoHandler);
 				});
 
-				test("returns inner handler unchanged when authMethods is empty []", async (t) => {
+				test("rejects explicit empty auth methods", async (t) => {
 					const { ctx } = await setupClientAuthContext();
-					const handler = createAuthenticatedHandler(ctx, echoHandler, []);
-					t.equal(handler, echoHandler);
+					t.throws(
+						() => createAuthenticatedHandler(ctx, echoHandler, []),
+						/auth methods must not be empty/,
+					);
 				});
 			});
 
@@ -7433,6 +7801,40 @@ export default (QUnit: QUnit) => {
 	{
 		const { issuer, subject, endpoint, fixture } = SubordinateEventsFixture;
 		QUnit.module("Subordinate Events Draft 01", () => {
+			for (const intermediate of [false, true]) {
+				QUnit.test(
+					`${intermediate ? "Intermediate" : "TrustAnchor"} snapshots queued updates and their events`,
+					async (assert) => {
+						const f = await fixture(intermediate);
+						await f.authority.registerSubordinate(f.record);
+						const next = await generateSigningKey("ES256");
+						let release!: () => void;
+						const gate = new Promise<void>((resolve) => {
+							release = resolve;
+						});
+						const blocker = f.storage.transaction(async () => gate);
+						const updates = {
+							jwks: { keys: [next.publicKey] },
+							metadata: { openid_relying_party: { organization_name: "Requested" } },
+						};
+						const expected = structuredClone(updates);
+						const pending = f.authority.updateSubordinate(subject, updates);
+						updates.jwks.keys.length = 0;
+						updates.metadata.openid_relying_party.organization_name = "Changed";
+						release();
+						await blocker;
+						await pending;
+						const stored = await f.storage.subordinates.get(subject);
+						assert.deepEqual(stored?.jwks, expected.jwks);
+						assert.deepEqual(stored?.metadata, expected.metadata);
+						assert.deepEqual(
+							(await f.storage.subordinateEvents?.list(issuer, subject))?.map((e) => e.event),
+							["registration", "metadata_update", "jwks_update"],
+						);
+					},
+				);
+			}
+
 			for (const intermediate of [false, true]) {
 				for (const withMetadata of [false, true]) {
 					QUnit.test(

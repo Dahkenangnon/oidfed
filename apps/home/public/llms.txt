@@ -25,12 +25,10 @@
 ## Documentation
 
 - [Wiring Guide](https://github.com/Dahkenangnon/oidfed/blob/main/docs/guide/wiring-guide.md): End-to-end integration with Express.js and `panva/node-oidc-provider`. Worked eduGAIN-topology example covering Trust Anchor, Intermediate, OP, and RP.
-- [Storage Guide](https://github.com/Dahkenangnon/oidfed/blob/main/docs/guide/storage-guide.md): Production `StorageAdapter`, subordinate and trust-mark capabilities, atomic replay protection, cache integration, transactions, and the separate federation key-provider boundary.
+- [Storage Guide](https://github.com/Dahkenangnon/oidfed/blob/main/docs/guide/storage-guide.md): Production storage adapters, authority namespaces, subordinate records and event histories, Trust Marks, collection snapshots, replay protection, and the separate federation key-provider boundary.
 - [Dev Guide](https://github.com/Dahkenangnon/oidfed/blob/main/docs/guide/dev.md): Running the full multi-topology federation locally with wildcard DNS and TLS.
 - [E2E Test Infrastructure](https://github.com/Dahkenangnon/oidfed/blob/main/docs/test/e2e.md): Integration harness — real HTTPS over undici + Express + `oidc-provider`.
-- [Testing Guide](https://github.com/Dahkenangnon/oidfed/blob/main/docs/test/testing.md): Test framework split — QUnit-via-TAP across six runtimes for spec packages, vitest for cli/explorer/e2e.
-- [ADR-001](https://github.com/Dahkenangnon/oidfed/blob/main/docs/adr/ADR-001-tap-as-canonical-test-framework.md): Canonical test framework decision.
-- [CONTRIBUTING](https://github.com/Dahkenangnon/oidfed/blob/main/CONTRIBUTING.md): Setup, commit conventions, PR process.
+- [CONTRIBUTING](https://github.com/Dahkenangnon/oidfed/blob/main/CONTRIBUTING.md): Setup, test commands and runtime coverage, commit conventions, and the PR process.
 - [SECURITY](https://github.com/Dahkenangnon/oidfed/blob/main/SECURITY.md): Vulnerability disclosure policy.
 
 ## Related Specifications
@@ -39,6 +37,7 @@
 - [OpenID Federation 1.1](https://openid.net/specs/openid-federation-1_1.html) *(final)* — protocol-independent successor layer (Entity Statements, Trust Chains, Metadata, Policies, Trust Marks, Federation Endpoints). **Implemented** by virtue of 1.0.
 - [OpenID Federation for OpenID Connect 1.1](https://openid.net/specs/openid-federation-connect-1_1.html) *(final)* — protocol-specific layer (OAuth 2.0 / OIDC entity types, client registration). **Implemented** by virtue of 1.0.
 - [OpenID Federation Extended Subordinate Listing 1.0](https://openid.net/specs/openid-federation-extended-listing-1_0.html) *(draft 03)* — paginated subordinate listing with audit timestamps and bulk per-entity claim retrieval. **Implemented** end-to-end (server, client, CLI).
+- [OpenID Federation Subordinate Events 1.0](https://openid.net/specs/openid-federation-subordinate-events-1_0-01.html) *(draft 01)*: signed authority histories, core verification, and CLI retrieval. Event storage is optional; authority lifecycle operations capture changes transactionally.
 - [OpenID Federation Entity Collection 1.0](https://openid.net/specs/openid-federation-entity-collection-1_0.html) *(draft 01)*: implemented in core. Authorities and leaves can serve the endpoint. Supports explicit snapshot refresh, filters, informational metadata, language selection, and CLI queries.
 - [OpenID Federation for Wallet Architectures 1.0](https://openid.net/specs/openid-federation-wallet-1_0.html) *(draft 05)*: implemented in `@oidfed/wallet` with composable provider, issuer, and verifier roles, JWT Wallet Attestations, and federation-backed request validation. Applications supply VCI/VP protocol engines and credential-format verification.
 - [ACME with OpenID Federation 1.0](https://datatracker.ietf.org/doc/draft-ietf-acme-openid-federation/) *(IETF Internet-Draft)* — Federation Entity Types for ACME Requestor / Issuer roles; automated X.509 over federation discovery. Not yet implemented.

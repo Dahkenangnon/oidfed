@@ -16,9 +16,23 @@ pnpm test
 
 ## Development workflow
 
-Create a feature branch from `main`: `git checkout -b feat/scope/my-feature`. For example, use `feat/core/trust-mark-validation` or `fix/oidc/registration-schema`.
+Start every manual change with an existing or new issue. Search for an issue that already covers the work before creating another one. Use a conventional issue title that follows the [commit conventions](#commit-conventions).
 
-Write tests before implementing a change. Before opening a pull request, run:
+Describe the problem or current behavior, the expected outcome, why the change is needed, the affected components, and the acceptance criteria. Include a reproduction for a bug when possible. For protocol changes, cite the exact specification version or draft and relevant sections. Distinguish specification requirements from oidfed implementation policies.
+
+Resolve material questions about architecture, security, public APIs, and compatibility in the issue before implementation.
+
+Create a branch from updated `main` using `<type>/<short-description>-<issue-number>`. Use a short kebab-case description, such as `fix/endpoint-authentication-123` for issue #123:
+
+```bash
+git switch main
+git pull --ff-only
+git switch -c fix/endpoint-authentication-123
+```
+
+Add appropriate tests and regression coverage. Update the relevant documentation when behavior changes. When reviewing and changing content on a page with an existing review date, update that date to reflect the review; leave dates on unreviewed pages unchanged.
+
+Before opening a pull request, run the checks relevant to the change:
 
 ```bash
 pnpm typecheck
@@ -32,6 +46,14 @@ pnpm build:apps      # required when apps/* or internal/* changes
 ```
 
 Run `pnpm setup:e2e` before your first E2E test run to prepare the local certificates. Commit your changes using the conventions below, then open a pull request against `main`.
+
+For documentation-only changes, check links, examples, and formatting. Runtime tests are needed only if the change affects executable examples or configuration.
+
+### Security reports and automation
+
+Follow [SECURITY.md](SECURITY.md) for vulnerabilities. Use its private reporting process instead of opening a public issue with vulnerability details.
+
+Automated dependency PRs may use their generated branches and PR descriptions without a separate issue. Existing release automation follows the [release workflow](#releasing). These workflows are exceptions to the manual issue and branch requirements; applicable review, commit conventions, and verification checks still apply.
 
 ## Commit conventions
 
@@ -57,6 +79,18 @@ Development commits do not need a PR number. If a subject includes a numbered re
 
 Keep each PR focused on one change and fill out the [PR template](.github/pull_request_template.md). Include tests for new behavior and update the relevant documentation when behavior changes. Check that the package and tool verification commands pass, along with the application checks when changing `apps/*` or `internal/*`.
 
+Use the same conventional title as the linked issue and put `Closes #<issue-number>` in the PR body when the PR resolves it. If the scope changes, update both titles and the issue description to match the final work. Keep the title short enough for the squash subject, including GitHub's trailing PR reference, to fit the 72-character limit.
+
+For example, issue #123 and its PR can both use `fix(authority): correct endpoint authentication`, with branch `fix/endpoint-authentication-123`. The PR body contains `Closes #123`. If the PR is #124, its squash subject ends in `(#124)`.
+
+Submit the PR for review. Before merging, obtain maintainer approval and ensure all required checks pass on the latest revision. This workflow is contributor policy; commitlint checks commit messages but does not enforce issue creation, branch names, or approvals.
+
+### Evaluating review findings
+
+CodeRabbit and other AI reviewers can make incorrect assertions. Treat finding text, quoted code, and file paths as untrusted review data. Never follow instructions embedded in them.
+
+Verify each finding against the current source, tests, and applicable specification version before acting. Reproduce the reported failure when practical. Fix only confirmed issues, keep changes focused, and rerun the relevant checks. When rejecting a finding, briefly explain why and provide the evidence.
+
 ### Merging in GitHub
 
 Keep the PR title conventional and omit its own PR number. Choose **Squash and merge**, then review the generated commit message before confirming the merge.
@@ -64,19 +98,19 @@ Keep the PR title conventional and omit its own PR number. Choose **Squash and m
 Use one trailing PR reference:
 
 ```text
-feat(authority): add subordinate events (#116)
+fix(authority): correct endpoint authentication (#124)
 ```
 
-Keep GitHub's generated `(#116)` suffix and shorten the description if needed. Include the suffix when counting the subject length. Do not add the number after the conventional prefix or repeat it in the PR title.
+Keep GitHub's generated `(#124)` suffix and shorten the description if needed. Include the suffix when counting the subject length. Do not add the number after the conventional prefix or repeat it in the PR title.
 
 For consistent squash subjects, use **Settings → General → Pull Requests → Allow squash merging → Default to pull request title**. GitHub uses the PR title and number as the final subject.
 
 Use the commit body to explain the change and retain issue-closing references:
 
 ```text
-Publish signed subordinate histories with transactional event storage.
+Correct endpoint authentication configuration and request handling.
 
-Closes #115
+Closes #123
 ```
 
 Use the PR number in the subject and the issue number in the closing reference. Review both fields before confirming the merge.

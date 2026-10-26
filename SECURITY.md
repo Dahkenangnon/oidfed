@@ -4,10 +4,11 @@
 
 | Version | Supported |
 |---------|-----------|
+| 2.x.y | Security fixes provided. |
 | 1.x.y | Security fixes provided. |
-| 0.x.y and earlier prerelease lines | Not supported. Upgrade to the 1.x.y series. |
+| 0.x.y and earlier prerelease lines | Not supported. Upgrade to a supported release series. |
 
-Security fixes target the supported `1.x.y` release series. Prerelease versions and older release lines do not receive backported security fixes; users should upgrade promptly to the latest `1.x.y` release when a security update is published.
+Security fixes target the `2.x.y` and supported `1.x.y` release series. Prerelease versions and the `0.x.y` series do not receive backported fixes. Use the latest patch release in a supported series.
 
 ## Reporting a Vulnerability
 
@@ -28,6 +29,7 @@ Security reports are accepted for all `@oidfed/*` packages:
 - `@oidfed/authority` — federation endpoint handlers
 - `@oidfed/leaf` — entity configuration serving
 - `@oidfed/oidc` — registration protocol handling
+- `@oidfed/wallet` — wallet federation roles, attestations, and request validation
 - `@oidfed/cli` — command-line interface
 
 The following applications are included in scope for security reports. All are read-only, client-side only tools; reports are welcome but will be treated as lower severity:

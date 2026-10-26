@@ -407,7 +407,7 @@ export async function performFetch(
 	}
 }
 
-/** Fetch an entity's self-signed Entity Configuration from its well-known endpoint. */
+/** Fetch an Entity Configuration using §9.1 GET discovery, without a Federation client assertion. */
 export async function fetchEntityConfiguration(
 	entityId: EntityId,
 	options?: FederationOptions,

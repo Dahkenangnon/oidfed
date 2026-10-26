@@ -1,15 +1,16 @@
 import * as jose from "jose";
 import { DEFAULT_CLOCK_SKEW_SECONDS } from "../constants.js";
 import { err, type FederationError, ok, type Result } from "../errors.js";
+import type { ReplayStore } from "../replay-store.js";
 import type { JWKSet } from "../schemas/jwk.js";
-import type { Clock } from "../types.js";
+import { type Clock, nowSeconds } from "../types.js";
 import { isValidAlgorithm, selectVerificationKey } from "./keys.js";
 
 export interface VerifiedClientAssertion {
 	readonly clientId: string;
-	readonly issuedAt: number;
+	readonly issuedAt?: number;
 	readonly expiresAt: number;
-	readonly jti?: string;
+	readonly jti: string;
 }
 
 /** Verify a `private_key_jwt` client assertion against the client's JWKS and expected audience. */
@@ -17,7 +18,12 @@ export async function verifyClientAssertion(
 	assertion: string,
 	jwks: JWKSet,
 	expectedAudience: string,
-	options?: { clockSkewSeconds?: number; clock?: Clock; allowedAlgorithms?: readonly string[] },
+	options?: {
+		clockSkewSeconds?: number;
+		clock?: Clock;
+		allowedAlgorithms?: readonly string[];
+		replayStore?: ReplayStore;
+	},
 ): Promise<Result<VerifiedClientAssertion, FederationError>> {
 	let header: jose.ProtectedHeaderParameters;
 	try {
@@ -110,10 +116,43 @@ export async function verifyClientAssertion(
 		});
 	}
 
+	const now = nowSeconds(options?.clock);
+	const skew = options?.clockSkewSeconds ?? DEFAULT_CLOCK_SKEW_SECONDS;
+	if (
+		typeof payload.exp !== "number" ||
+		!Number.isFinite(payload.exp) ||
+		payload.exp + skew <= now ||
+		typeof payload.jti !== "string" ||
+		!payload.jti
+	) {
+		return err({ code: "invalid_client", description: "Client assertions require exp and jti" });
+	}
+	// OIDC Core §9 requires exp and jti; iat is optional.
+	if (payload.iat !== undefined && (!Number.isFinite(payload.iat) || payload.iat > now + skew)) {
+		return err({ code: "invalid_client", description: "Invalid client assertion issuance time" });
+	}
+	if (options?.replayStore) {
+		try {
+			const claimed = await options.replayStore.useJti({
+				issuer: payload.iss,
+				audience: expectedAudience,
+				jti: payload.jti,
+				expiresAt: payload.exp + skew,
+			});
+			if (!claimed)
+				return err({ code: "invalid_client", description: "Client assertion was already used" });
+		} catch (cause) {
+			return err({
+				code: "server_error",
+				description: "Client assertion replay storage failed",
+				cause,
+			});
+		}
+	}
 	return ok({
 		clientId: payload.iss,
-		issuedAt: payload.iat ?? 0,
-		expiresAt: payload.exp ?? 0,
-		...(payload.jti ? { jti: payload.jti } : {}),
+		...(payload.iat !== undefined ? { issuedAt: payload.iat } : {}),
+		expiresAt: payload.exp,
+		jti: payload.jti,
 	});
 }
