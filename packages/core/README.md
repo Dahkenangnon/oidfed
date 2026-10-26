@@ -17,6 +17,7 @@
   <a href="https://www.npmjs.com/package/@oidfed/authority">@oidfed/authority</a> &nbsp;•&nbsp;
   <a href="https://www.npmjs.com/package/@oidfed/leaf">@oidfed/leaf</a> &nbsp;•&nbsp;
   <a href="https://www.npmjs.com/package/@oidfed/oidc">@oidfed/oidc</a> &nbsp;•&nbsp;
+  <a href="https://www.npmjs.com/package/@oidfed/wallet">@oidfed/wallet</a> &nbsp;•&nbsp;
   <a href="https://www.npmjs.com/package/@oidfed/cli">@oidfed/cli</a>
 </p>
 
@@ -25,7 +26,9 @@ Federation primitives for JavaScript — entity statements, trust chain resoluti
 Targets the final [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) specification and its successor specifications:
 * [OpenID Federation 1.1](https://openid.net/specs/openid-federation-1_1.html) (protocol-independent layer)
 * [OpenID Federation for OpenID Connect 1.1](https://openid.net/specs/openid-federation-connect-1_1.html) (protocol-specific layer)
-* [OpenID Federation Extended Subordinate Listing 1.0](https://openid.net/specs/openid-federation-extended-listing-1_0.html) (tracks draft-03)
+* [Extended Subordinate Listing, Draft 03](https://openid.net/specs/openid-federation-extended-listing-1_0-03.html)
+* [Subordinate Events, Draft 01](https://openid.net/specs/openid-federation-subordinate-events-1_0-01.html)
+* [Entity Collection, Draft 01](https://openid.net/specs/openid-federation-entity-collection-1_0-01.html)
 
 ## Install
 
@@ -75,6 +78,10 @@ for (const chain of result.chains) {
   }
 }
 ```
+
+## Subordinate Events
+
+Core provides event schemas, media types, and a client that verifies signed histories against trusted authority keys. See the [core guide](https://github.com/Dahkenangnon/oidfed/blob/main/docs/packages/core.md#subordinate-events-endpoint) for request and verification options.
 
 ## Entity Collection
 

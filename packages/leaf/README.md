@@ -17,6 +17,7 @@
   <a href="https://www.npmjs.com/package/@oidfed/authority">@oidfed/authority</a> &nbsp;•&nbsp;
   <b>@oidfed/leaf</b> &nbsp;•&nbsp;
   <a href="https://www.npmjs.com/package/@oidfed/oidc">@oidfed/oidc</a> &nbsp;•&nbsp;
+  <a href="https://www.npmjs.com/package/@oidfed/wallet">@oidfed/wallet</a> &nbsp;•&nbsp;
   <a href="https://www.npmjs.com/package/@oidfed/cli">@oidfed/cli</a>
 </p>
 
@@ -92,6 +93,8 @@ const response = await leaf.handleRequest(request);
 needs the current federation signer and published Federation JWKS. The in-memory
 provider used above also supports lifecycle operations, but leaf code does not
 depend on those methods.
+
+Leaves can compose [wallet roles](https://github.com/Dahkenangnon/oidfed/blob/main/docs/packages/wallet.md) for Wallet Providers, Credential Issuers, and Credential Verifiers.
 
 ## Entity Collection
 

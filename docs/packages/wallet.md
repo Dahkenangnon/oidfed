@@ -4,6 +4,8 @@
 
 The package validates federation evidence and applies the wallet profile's metadata and policy rules. Your OpenID4VCI/OpenID4VP implementation owns its protocol endpoints, sessions, credential selection, presentation processing, and credential formats.
 
+See [wallet federation responsibilities](../guide/operator-responsibilities.md#wallet-federation-draft-05) for verification callbacks, protocol keys, replay storage, provider revalidation, and offline evidence lifetimes.
+
 ## Compose roles into a host
 
 ```ts

@@ -33,21 +33,21 @@ const specPackages = [
 		name: "@oidfed/core",
 		install: "npm i @oidfed/core",
 		description:
-			"Federation primitives — entity statements, trust chain resolution, metadata policy, and cryptographic verification.",
+			"Entity statements, trust chains, metadata policy, signed event verification, and the Entity Collection service and client.",
 		href: "https://www.npmjs.com/package/@oidfed/core",
 	},
 	{
 		name: "@oidfed/authority",
 		install: "npm i @oidfed/authority",
 		description:
-			"Trust Anchor and Intermediate Authority operations — subordinate management, statement issuance, and policy enforcement.",
+			"Trust Anchor and Intermediate hosts with subordinate management, statement issuance, Extended Listing, and signed event histories.",
 		href: "https://www.npmjs.com/package/@oidfed/authority",
 	},
 	{
 		name: "@oidfed/leaf",
 		install: "npm i @oidfed/leaf",
 		description:
-			"Leaf Entity toolkit — Entity Configuration serving, authority discovery, and trust chain participation.",
+			"Leaf hosts with Entity Configuration serving, trust-chain discovery, optional Entity Collections, and composable protocol roles.",
 		href: "https://www.npmjs.com/package/@oidfed/leaf",
 	},
 	{
@@ -56,6 +56,13 @@ const specPackages = [
 		description:
 			"OpenID Connect and OAuth 2.0 federation flows — automatic and explicit client registration, Request Object validation.",
 		href: "https://www.npmjs.com/package/@oidfed/oidc",
+	},
+	{
+		name: "@oidfed/wallet",
+		install: "npm i @oidfed/core @oidfed/wallet",
+		description:
+			"Wallet Provider, Credential Issuer, and Credential Verifier roles, Wallet Attestations, and federation-backed request validation.",
+		href: "https://www.npmjs.com/package/@oidfed/wallet",
 	},
 ];
 
@@ -792,7 +799,7 @@ function WhatsInside() {
 					<div>
 						<SignalLabel id="03" label="What's Inside" />
 						<h2 className="mt-6 font-heading text-3xl font-semibold tracking-[-0.02em] text-balance sm:text-4xl">
-							Four spec packages, three apps, one CLI.
+							Five libraries, three apps, one CLI.
 						</h2>
 						<p className="mt-4 max-w-xl text-[15px] leading-relaxed text-muted-foreground">
 							Modular by design. Install only what you need — from core primitives to full OIDC

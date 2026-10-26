@@ -11,6 +11,8 @@
 
 Use the functions here when you need direct control over federation processing. For an HTTP-serving entity, start with [authority](authority.md) or [leaf](leaf.md).
 
+See [operator and application responsibilities](../guide/operator-responsibilities.md#openid-federation) for anchor provisioning, independent key comparisons, trust reevaluation, and production key and storage contracts.
+
 ## Usage
 
 Examples with names such as `taPublicKey`, `rawMetadata`, and `parsedStatements` assume application-supplied values of the corresponding public API types. They are integration fragments. `subordinateStatements` is a `ParsedEntityStatement[]` in leaf-to-TA order; use verified inputs when applying policy to a trust decision.
@@ -58,7 +60,7 @@ if (isValidEntityId("https://client.example.com?query=true")) {
 
 ### HTTP discovery and fetching
 
-Fetch Entity Configurations and Subordinate Statements over HTTPS. The URL checks reject special-use IP literals and support host allowlists and additional blocked IPv4 ranges. DNS resolution and redirect policy belong to the HTTP transport: configure your injected `httpClient` and network access controls for the deployment. Federation response checks require the exact registered media type without parameters.
+Fetch Entity Configurations and Subordinate Statements over HTTPS. The URL checks reject special-use IP literals and support host allowlists and additional blocked IPv4 ranges. DNS resolution and redirect policy belong to the HTTP transport: configure your injected `httpClient` and network access controls for the deployment. Federation response checks require the exact registered media type without parameters. Entity Configuration discovery uses GET under [§9.1](https://openid.net/specs/openid-federation-1_0.html#section-9.1), without a Federation client assertion. The advertised `*_auth_methods` settings cover other federation endpoints. Profile-specific discovery access controls require a suitably configured HTTP transport.
 
 ```ts
 import { fetchEntityConfiguration, fetchSubordinateStatement, entityId } from "@oidfed/core";
@@ -226,7 +228,17 @@ const keyProvider = new MemoryFederationKeyProvider(
 const { signer, jwks } = await keyProvider.getFederationKeySet();
 ```
 
+The bundled key providers copy supplied and returned public JWK data; `JwkSigner` copies its software key on construction. Opaque signers retain custody of their own key material. When creating federation signing keys from private JWKs, the derived public key permits verification rather than signing.
+
+`MemoryFederationKeyProvider` orders activations independently of the clock and applies each lifecycle transition atomically. Publishing does not change the signer. Switching selects the requested published key and schedules the previous signer for retirement. Retirement removes a key from subsequent published JWKS results without deleting its historical record.
+
+Rollover follows [Federation §11.2](https://openid.net/specs/openid-federation-1_0.html#section-11.2). The application publishes a key, allows a propagation interval, then switches signers. `retirePreviousAfterMs` controls the separate post-switch overlap; the memory provider defaults to seven days. The provider does not decide when participants have obtained a new key. See the [staged authority example](authority.md#federation-key-rotation).
+
+Revocation is a local provider operation, with historical key status defined by [§8.7.2](https://openid.net/specs/openid-federation-1_0.html#section-8.7.2). It does not notify other participants or invalidate their cached statements; [§11.4](https://openid.net/specs/openid-federation-1_0.html#section-11.4) leaves that process to the federation. Occurrence timestamps remain stable on later history reads, including epoch zero.
+
 ### Replay protection (`ReplayStore`)
+
+`verifyClientAssertion()` requires `exp` and a non-empty `jti`; `iat` is optional. It checks the signature, issuer/subject equality, exact audience, expiry, and any supplied issuance time. Pass `replayStore` to atomically claim a verified assertion. Without it, the function verifies the JWT without recording its use. Authentication handlers must provide replay storage. These claims follow [OIDC Core §9](https://openid.net/specs/openid-connect-core-1_0.html#ClientAuthentication), referenced by [Federation §8.8](https://openid.net/specs/openid-federation-1_0.html#section-8.8).
 
 A `ReplayStore` claims an `(issuer, audience, jti)` tuple until expiry. Claims must be atomic across the processes serving one tenant. The in-memory implementation is for development and tests.
 

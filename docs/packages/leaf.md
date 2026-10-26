@@ -9,6 +9,8 @@
 
 `@oidfed/leaf` publishes self-signed Entity Configurations for participants that do not issue Subordinate Statements, such as OPs, RPs, and resource servers. It signs and caches configurations and exposes validated discovery through `Leaf.discoverEntity()`.
 
+See [operator and application responsibilities](../guide/operator-responsibilities.md) for key publication, configuration refresh, and the application state required by composed roles.
+
 ## Usage
 
 ### Creating a leaf entity
@@ -63,9 +65,9 @@ const leaf = new Leaf({
 
 ### Serving the Entity Configuration
 
-`leaf.handleRequest(request)` serves `GET /.well-known/openid-federation` and dispatches any composed role routes. For an Entity Identifier with a path, the well-known suffix is appended to that path. Use the [Express adapter](../guide/wiring-guide.md#5-adapt-the-web-api-handler-to-express) to serve it in a Node application.
+`leaf.handleRequest(request)` serves `GET /.well-known/openid-federation` and dispatches any composed role routes. Built-in Entity Configuration discovery remains anonymous independently of Collection authentication; [Federation §9.1](https://openid.net/specs/openid-federation-1_0.html#section-9.1) defines its GET request without a client-assertion authentication flow. For an Entity Identifier with a path, the well-known suffix is appended to that path. Use the [Express adapter](../guide/wiring-guide.md#5-adapt-the-web-api-handler-to-express) to serve it in a Node application.
 
-`getEntityConfiguration()` reuses the cached JWT until expiry. Call `refreshEntityConfiguration()` after a key change when you need a new configuration before the cached token expires.
+`getEntityConfiguration()` reuses the cached JWT until expiry. Call `refreshEntityConfiguration()` after a key change when you need a new configuration before the cached token expires. A refresh supersedes earlier builds: their results cannot replace the refreshed cache, and concurrent reads reuse the current build.
 
 ### Discovering entities and trust chains
 
@@ -122,6 +124,8 @@ When constructing a `Leaf` entity, you pass a `LeafConfig` configuration object.
 Leaf entities are client or provider endpoints at the edge of the trust tree and do not issue subordinate statements or list subordinates. Therefore, they are forbidden from publishing `federation_fetch_endpoint` or `federation_list_endpoint` in their `federation_entity` metadata block.
 
 ### How does the Entity Configuration caching work?
+
+A key provider can publish a new key while retaining the old signer, then switch signers and retire the previous key. The Leaf cache does not track those provider transitions automatically. Call `refreshEntityConfiguration()` after publication, signer switch, and retirement when the served configuration must reflect a change before expiry. The application chooses propagation and overlap intervals; see the [rollover stages](authority.md#federation-key-rotation).
 
 The Leaf class signs and caches the Entity Configuration JWT internally. When `getEntityConfiguration()` is called, it returns the cached JWT if it has not expired yet. If it has expired or if `refreshEntityConfiguration()` is called, it re-queries the `keyProvider` for keys and generates a new signature.
 

@@ -2,6 +2,8 @@
 
 Inspect Entity Configurations, trust chains, metadata policies, trust marks, and subordinate listings in the browser. The explorer is a static client-side app: requests go directly to federation endpoints, which must allow browser access through CORS. The browser must also trust their TLS certificates.
 
+The current views cover the base federation workflows. There are no dedicated Extended Listing, Subordinate Events, Entity Collection, or wallet protocol views. Entity Inspector can display their published metadata; this does not run their protocol operations or add them to every health probe.
+
 ## Running locally
 
 ```bash

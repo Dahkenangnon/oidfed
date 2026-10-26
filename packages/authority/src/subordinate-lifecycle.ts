@@ -70,7 +70,7 @@ export function createSubordinateLifecycle(ctx: HandlerContext) {
 			});
 		},
 		async updateSubordinate(subject: EntityId, updates: SubordinateRecordUpdate): Promise<void> {
-			const normalized = sanitize(updates);
+			const normalized = sanitize(structuredClone(updates));
 			await ctx.storage.transaction(async (tx) => {
 				requireTransactionEvents(tx);
 				const before = await tx.subordinates.get(subject);

@@ -17,6 +17,7 @@
   <b>@oidfed/authority</b> &nbsp;•&nbsp;
   <a href="https://www.npmjs.com/package/@oidfed/leaf">@oidfed/leaf</a> &nbsp;•&nbsp;
   <a href="https://www.npmjs.com/package/@oidfed/oidc">@oidfed/oidc</a> &nbsp;•&nbsp;
+  <a href="https://www.npmjs.com/package/@oidfed/wallet">@oidfed/wallet</a> &nbsp;•&nbsp;
   <a href="https://www.npmjs.com/package/@oidfed/cli">@oidfed/cli</a>
 </p>
 
@@ -25,7 +26,9 @@ Trust Anchor and Intermediate Authority operations — subordinate management, s
 Targets the final [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) specification and its successor specifications:
 * [OpenID Federation 1.1](https://openid.net/specs/openid-federation-1_1.html) (protocol-independent layer)
 * [OpenID Federation for OpenID Connect 1.1](https://openid.net/specs/openid-federation-connect-1_1.html) (protocol-specific layer)
-* [OpenID Federation Extended Subordinate Listing 1.0](https://openid.net/specs/openid-federation-extended-listing-1_0.html) (tracks draft-03)
+* [Extended Subordinate Listing, Draft 03](https://openid.net/specs/openid-federation-extended-listing-1_0-03.html)
+* [Subordinate Events, Draft 01](https://openid.net/specs/openid-federation-subordinate-events-1_0-01.html)
+* [Entity Collection, Draft 01](https://openid.net/specs/openid-federation-entity-collection-1_0-01.html)
 
 ## Install
 
@@ -88,6 +91,14 @@ above.
 Federation endpoint `private_key_jwt` authentication uses `AuthorityConfig.clientKeyProvider`
 to resolve a caller's public Federation Entity Keys. Omit it to use the default
 subordinate-storage lookup: `storage.subordinates.get(entityId)?.jwks`.
+Authenticated federation endpoints require `storage.replay`. Claims are checked and
+atomically recorded before the endpoint runs; production processes serving the same
+authority must share replay state.
+
+Authorities can publish signed subordinate histories through the optional
+[Subordinate Events endpoint](https://github.com/Dahkenangnon/oidfed/blob/main/docs/packages/authority.md#subordinate-event-history).
+Compose [wallet roles](https://github.com/Dahkenangnon/oidfed/blob/main/docs/packages/wallet.md)
+when an authority also acts as a Wallet Provider, Credential Issuer, or Verifier.
 
 HTTP routes follow the URLs advertised in `metadata.federation_entity`. The
 Entity Configuration route is derived from the configured Entity Identifier path,

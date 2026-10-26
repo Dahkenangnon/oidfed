@@ -3286,7 +3286,7 @@ export default (QUnit: QUnit) => {
 				iat: n,
 				exp: overrides?.exp ?? n + 60,
 			};
-			if (overrides?.jti !== undefined) payload.jti = overrides.jti;
+			payload.jti = overrides?.jti ?? "assertion-id";
 			const options: { typ: string; alg?: never } = { typ: overrides?.typ ?? "JWT" };
 			if (overrides?.alg) options.alg = overrides.alg as never;
 			const jwt = await signEntityStatement(payload, new JwkSigner(keys.privateKey), options);
@@ -3301,8 +3301,8 @@ export default (QUnit: QUnit) => {
 				if (!isOk(result)) return;
 				t.equal(result.value.clientId, CA_CLIENT_ID);
 				t.true(result.value.expiresAt > 0);
-				t.true(result.value.issuedAt > 0);
-				t.equal(result.value.jti, undefined);
+				t.true((result.value.issuedAt ?? 0) > 0);
+				t.equal(result.value.jti, "assertion-id");
 			});
 			test("returns jti when present", async (t) => {
 				const { jwt, keys } = await createClientAssertion({ jti: "unique-id-123" });
@@ -3330,6 +3330,7 @@ export default (QUnit: QUnit) => {
 						aud: CA_AUDIENCE,
 						iat: 1_000,
 						exp: 1_100,
+						jti: "clock-assertion",
 					},
 					new JwkSigner(keys.privateKey),
 					{ typ: "JWT" },
@@ -3462,6 +3463,7 @@ export default (QUnit: QUnit) => {
 					aud: CA_AUDIENCE,
 					iat: n,
 					exp: n + 60,
+					jti: "typ-absent",
 				};
 				const jose = await import("jose");
 				const cryptoKey = await jose.importJWK(keys.privateKey as unknown as JoseJWK, "ES256");
@@ -14055,6 +14057,32 @@ export default (QUnit: QUnit) => {
 					assert.false(
 						(await fetchEntityCollection(endpoint, {}, { httpClient, clientAssertion: jwt })).ok,
 					);
+					const unavailable = new EntityCollectionService({
+						trustAnchors: f.trustAnchors,
+						responder: { entityId: anchor, isTrustAnchor: true },
+						options: { clock: f.clock },
+						authentication: {
+							methods: ["private_key_jwt"],
+							receiverEntityId: anchor,
+							getClientFederationJwks: async () => ({ keys: [f.key.publicKey] }),
+							replayStore: {
+								useJti: async () => {
+									throw new Error("unavailable");
+								},
+							},
+						},
+					});
+					const response = await unavailable.handleRequest(
+						new Request(endpoint, {
+							method: "POST",
+							headers: { "Content-Type": "application/x-www-form-urlencoded" },
+							body: new URLSearchParams({
+								client_assertion: jwt,
+								client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+							}),
+						}),
+					);
+					assert.equal(response.status, 500, "replay backend errors remain server failures");
 				},
 			);
 
@@ -15437,4 +15465,238 @@ export default (QUnit: QUnit) => {
 			);
 		});
 	}
+	module("core / assertion claims and replay", () => {
+		test("requires exp and jti while allowing absent iat and finite fractional dates", async (t) => {
+			const keys = await generateSigningKey("ES256");
+			const base = {
+				iss: "https://client.example",
+				sub: "https://client.example",
+				aud: "https://receiver.example",
+			};
+			for (const claims of [
+				{},
+				{ exp: 2000 },
+				{ jti: "a" },
+				{ exp: 2000, jti: "" },
+				{ exp: "2000", jti: "a" },
+				{ exp: 2000, jti: "a", iat: 1600 },
+			]) {
+				const jwt = await signEntityStatement(
+					{ ...base, ...claims },
+					new JwkSigner(keys.privateKey),
+					{ typ: "JWT" },
+				);
+				t.false(
+					(
+						await verifyClientAssertion(jwt, { keys: [keys.publicKey] }, base.aud, {
+							clock: { now: () => 1500 },
+							clockSkewSeconds: 0,
+						})
+					).ok,
+					JSON.stringify(claims),
+				);
+			}
+			for (const claims of [
+				{ exp: 2000.5, jti: "a" },
+				{ exp: 2000.5, jti: "a", iat: -0.5 },
+			]) {
+				const jwt = await signEntityStatement(
+					{ ...base, ...claims },
+					new JwkSigner(keys.privateKey),
+					{ typ: "JWT" },
+				);
+				const checked = await verifyClientAssertion(jwt, { keys: [keys.publicKey] }, base.aud, {
+					clock: { now: () => 1500 },
+				});
+				t.true(checked.ok);
+				if (checked.ok)
+					t.strictEqual(checked.value.issuedAt, "iat" in claims ? claims.iat : undefined);
+			}
+		});
+		test("claims once through clock skew and fails closed on replay storage errors", async (t) => {
+			const keys = await generateSigningKey("ES256");
+			let now = 1500;
+			const clock = { now: () => now };
+			const jwt = await signEntityStatement(
+				{
+					iss: "https://client.example",
+					sub: "https://client.example",
+					aud: "https://receiver.example",
+					exp: 1490.5,
+					jti: "same",
+				},
+				new JwkSigner(keys.privateKey),
+				{ typ: "JWT" },
+			);
+			const replayStore = new CorePublic.MemoryReplayStore({ clock });
+			const verify = () =>
+				verifyClientAssertion(jwt, { keys: [keys.publicKey] }, "https://receiver.example", {
+					clock,
+					clockSkewSeconds: 20,
+					replayStore,
+				});
+			const checked = await Promise.all([verify(), verify()]);
+			t.equal(checked.filter((r) => r.ok).length, 1);
+			now = 1510;
+			t.false((await verify()).ok, "claim survives until expiry including skew");
+			now = 1510.5;
+			t.false((await verify()).ok, "assertion expires at the skew boundary");
+			now = 1500;
+			const failed = await verifyClientAssertion(
+				jwt,
+				{ keys: [keys.publicKey] },
+				"https://receiver.example",
+				{
+					clock,
+					clockSkewSeconds: 20,
+					replayStore: {
+						useJti: async () => {
+							throw new Error("offline");
+						},
+					},
+				},
+			);
+			t.false(failed.ok);
+			if (!failed.ok) t.equal(failed.error.code, "server_error");
+		});
+	});
+	module("core / federation key ownership and ordering", () => {
+		test("historical revocation at epoch zero remains stable on later reads", async (t) => {
+			const key = await generateSigningKey("ES256");
+			let nowMs = 0;
+			const provider = CorePublic.MemoryFederationKeyProvider.fromJWK(key.privateKey, {
+				nowMs: () => nowMs,
+			});
+			await provider.revokeKey(key.privateKey.kid!, "compromised");
+			for (const time of [0, 5000, 10000]) {
+				nowMs = time;
+				const historical = (await provider.getHistoricalFederationKeys())[0]!;
+				t.equal(historical.revoked?.revoked_at, 0);
+				t.equal(historical.exp, 0);
+			}
+		});
+
+		test("selects the requested signer when activations share a clock tick", async (t) => {
+			const keys = await Promise.all([
+				generateSigningKey("ES256"),
+				generateSigningKey("ES256"),
+				generateSigningKey("ES256"),
+			]);
+			const managed = keys.map((key) => CorePublic.createFederationSigningKey(key.privateKey));
+			const provider = new CorePublic.MemoryFederationKeyProvider([managed[0]!, managed[1]!], {
+				nowMs: () => 1000000,
+			});
+			t.equal((await provider.getFederationKeySet()).signer.kid, managed[1]!.signer.kid);
+			await provider.publishKey(managed[2]!);
+			await provider.switchActiveKey(managed[2]!.signer.kid);
+			t.equal((await provider.getFederationKeySet()).signer.kid, managed[2]!.signer.kid);
+			t.true(
+				(await provider.getHistoricalFederationKeys()).every(
+					(key) => key.nbf === undefined || key.nbf === 1000,
+				),
+				"ordering does not alter timestamps",
+			);
+		});
+		test("revocation wins over an overlapping activation", async (t) => {
+			const a = await generateSigningKey("ES256"),
+				b = await generateSigningKey("ES256");
+			const provider = CorePublic.MemoryFederationKeyProvider.fromJWK(a.privateKey);
+			await provider.publishKey(CorePublic.createFederationSigningKey(b.privateKey));
+			await Promise.all([
+				provider.switchActiveKey(b.privateKey.kid!),
+				provider.revokeKey(b.privateKey.kid!, "compromised"),
+			]);
+			t.ok(
+				(await provider.getHistoricalFederationKeys()).find((key) => key.kid === b.privateKey.kid)
+					?.revoked,
+			);
+			await t.rejects(provider.getFederationKeySet(), /No active/);
+			await t.rejects(provider.switchActiveKey(b.privateKey.kid!), /revoked/);
+		});
+		test("native WebCrypto signing JWKs publish verification-capable public keys", async (t) => {
+			const keys = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, [
+				"sign",
+				"verify",
+			]);
+			const privateJwk = {
+				...(await crypto.subtle.exportKey("jwk", keys.privateKey)),
+				kid: "native",
+				alg: "ES256",
+			} as JWK;
+			for (const provider of [
+				CorePublic.MemoryFederationKeyProvider.fromJWK(privateJwk),
+				new CorePublic.MemoryFederationKeyProvider(
+					CorePublic.createFederationSigningKey(privateJwk),
+				),
+			]) {
+				const set = await provider.getFederationKeySet();
+				t.deepEqual(set.jwks.keys[0]!.key_ops, ["verify"]);
+				const jwt = await signEntityStatement(
+					{
+						iss: "https://a.example",
+						sub: "https://a.example",
+						iat: 1000,
+						exp: 2000,
+						jwks: set.jwks,
+					},
+					set.signer,
+				);
+				t.true(
+					(await CorePublic.verifyEntityStatement(jwt, set.jwks, { clock: { now: () => 1500 } }))
+						.ok,
+				);
+			}
+		});
+		test("signers and providers detach supplied and returned JWK data", async (t) => {
+			const keys = await generateSigningKey("ES256");
+			const original = structuredClone(keys.publicKey);
+			const signer = new JwkSigner(keys.privateKey);
+			const staticSet = { signer, jwks: { keys: [keys.publicKey] } };
+			const fixed = new CorePublic.StaticFederationKeyProvider(staticSet);
+			const memory = new CorePublic.MemoryFederationKeyProvider({
+				signer,
+				publicJwk: keys.publicKey,
+			});
+			keys.privateKey.d = "changed";
+			keys.publicKey.kid = "changed";
+			for (const provider of [fixed, memory]) {
+				const set = await provider.getFederationKeySet();
+				t.deepEqual(set.jwks.keys, [original]);
+				set.jwks.keys[0]!.x = "changed";
+				t.deepEqual((await provider.getFederationKeySet()).jwks.keys, [original]);
+				const jwt = await signEntityStatement(
+					{
+						iss: "https://a.example",
+						sub: "https://a.example",
+						iat: 1000,
+						exp: 2000,
+						jwks: { keys: [original] },
+					},
+					set.signer,
+				);
+				t.true(
+					(
+						await CorePublic.verifyEntityStatement(
+							jwt,
+							{ keys: [original] },
+							{ clock: { now: () => 1500 } },
+						)
+					).ok,
+				);
+			}
+			t.throws(
+				() =>
+					new CorePublic.MemoryFederationKeyProvider({
+						signer,
+						publicJwk: { ...original, key_ops: ["sign"] },
+					}),
+				/verification/,
+			);
+			t.deepEqual(
+				stripPrivateFields({ ...original, key_ops: ["verify"] }).key_ops,
+				["verify"],
+				"public key restrictions remain intact",
+			);
+		});
+	});
 };

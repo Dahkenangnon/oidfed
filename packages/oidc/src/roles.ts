@@ -54,12 +54,18 @@ export class OidcRelyingPartyRole implements EntityRole {
 	public readonly type = "openid_relying_party";
 	public readonly metadata: Record<string, unknown>;
 	private context?: EntityContext;
+	private composedMetadata?: Record<string, unknown>;
 
 	constructor(public readonly config: OidcRelyingPartyRoleConfig) {
 		this.metadata = config.metadata ?? {};
 	}
 
+	validateMetadata(metadata: Readonly<Record<string, unknown>>): void {
+		this.composedMetadata = structuredClone(metadata);
+	}
+
 	initialize(context: EntityContext): void {
+		assertRoleOwner(this.context, context);
 		this.context = context;
 	}
 
@@ -71,12 +77,10 @@ export class OidcRelyingPartyRole implements EntityRole {
 			? await this.config.protocolKeyProvider.getClientAssertionSigner()
 			: await this.config.protocolKeyProvider.getRequestObjectSigner();
 
-		return createClientAssertion(
-			this.context.entityId as EntityId,
-			audience,
-			signer,
-			options ?? this.context.options,
-		);
+		return createClientAssertion(this.context.entityId as EntityId, audience, signer, {
+			...this.context.options,
+			...options,
+		});
 	}
 
 	async automaticallyRegister(
@@ -102,11 +106,10 @@ export class OidcRelyingPartyRole implements EntityRole {
 			throw new Error("No trustAnchors configured. Set them in config, options, or context.");
 		}
 		const opEntityId = params.opEntityId as EntityId;
-		const discoveryResult = await discoverEntity(
-			opEntityId,
-			trustAnchors,
-			options ?? this.context.options,
-		);
+		const discoveryResult = await discoverEntity(opEntityId, trustAnchors, {
+			...this.context.options,
+			...options,
+		});
 		if (!discoveryResult.ok) {
 			return err(discoveryResult.error);
 		}
@@ -141,7 +144,7 @@ export class OidcRelyingPartyRole implements EntityRole {
 				this.config.authorityHints ??
 				[]) as readonly [EntityId, ...EntityId[]],
 			metadata: {
-				[this.type]: this.metadata,
+				[this.type]: this.composedMetadata ?? this.metadata,
 			},
 			...(overrideConfig.requestObjectTtlSeconds !== undefined
 				? { requestObjectTtlSeconds: overrideConfig.requestObjectTtlSeconds }
@@ -160,7 +163,7 @@ export class OidcRelyingPartyRole implements EntityRole {
 			rpConfig,
 			authzRequestParams,
 			trustAnchors,
-			options ?? this.context.options,
+			{ ...this.context.options, ...options },
 		);
 	}
 
@@ -178,11 +181,10 @@ export class OidcRelyingPartyRole implements EntityRole {
 		if (!trustAnchors) {
 			throw new Error("No trustAnchors configured. Set them in config, options, or context.");
 		}
-		const discoveryResult = await discoverEntity(
-			opEntityId as EntityId,
-			trustAnchors,
-			options ?? this.context.options,
-		);
+		const discoveryResult = await discoverEntity(opEntityId as EntityId, trustAnchors, {
+			...this.context.options,
+			...options,
+		});
 		if (!discoveryResult.ok) {
 			return err(discoveryResult.error);
 		}
@@ -194,19 +196,17 @@ export class OidcRelyingPartyRole implements EntityRole {
 				this.config.authorityHints ??
 				[]) as readonly [EntityId, ...EntityId[]],
 			metadata: {
-				[this.type]: this.metadata,
+				[this.type]: this.composedMetadata ?? this.metadata,
 			},
 			...(this.config.includePeerTrustChain !== undefined
 				? { includePeerTrustChain: this.config.includePeerTrustChain }
 				: {}),
 		};
 
-		return explicitRegistration(
-			discoveryResult.value,
-			rpConfig,
-			trustAnchors,
-			options ?? this.context.options,
-		);
+		return explicitRegistration(discoveryResult.value, rpConfig, trustAnchors, {
+			...this.context.options,
+			...options,
+		});
 	}
 
 	async createAuthorizationRequest(
@@ -223,6 +223,13 @@ export class OidcRelyingPartyRole implements EntityRole {
 		const overrideConfig = {
 			...this.config,
 			...(options?.requestDelivery ? { requestDelivery: options.requestDelivery } : {}),
+			...(options?.requestUri !== undefined ? { requestUri: options.requestUri } : {}),
+			...(options?.includePeerTrustChain !== undefined
+				? { includePeerTrustChain: options.includePeerTrustChain }
+				: {}),
+			...(options?.requestObjectTtlSeconds !== undefined
+				? { requestObjectTtlSeconds: options.requestObjectTtlSeconds }
+				: {}),
 		};
 		const rpConfig = {
 			entityId: this.context.entityId as EntityId,
@@ -231,7 +238,7 @@ export class OidcRelyingPartyRole implements EntityRole {
 				this.config.authorityHints ??
 				[]) as readonly [EntityId, ...EntityId[]],
 			metadata: {
-				[this.type]: this.metadata,
+				[this.type]: this.composedMetadata ?? this.metadata,
 			},
 			...(overrideConfig.requestObjectTtlSeconds !== undefined
 				? { requestObjectTtlSeconds: overrideConfig.requestObjectTtlSeconds }
@@ -249,7 +256,7 @@ export class OidcRelyingPartyRole implements EntityRole {
 			rpConfig,
 			authzRequestParams,
 			options?.trustAnchors ?? trustAnchors,
-			options ?? this.context.options,
+			{ ...this.context.options, ...options },
 		);
 	}
 }
@@ -282,6 +289,7 @@ export class OidcProviderRole implements EntityRole {
 	}
 
 	initialize(context: EntityContext): void {
+		assertRoleOwner(this.context, context);
 		this.context = context;
 		const registrationPath = this.config.registrationPath ?? "/registration";
 		const registrationUrl = new URL(registrationPath, context.entityId).toString();
@@ -331,9 +339,10 @@ export class OidcProviderRole implements EntityRole {
 			this.config.trustAnchors ?? this.context.trustAnchors,
 		);
 		const result = await processAutomaticRegistration(requestObjectJwt, trustAnchors, {
+			...this.context.options,
+			...options,
 			opEntityId: this.context.entityId as EntityId,
 			replayStore,
-			...options,
 		});
 
 		if (!result.ok) return result;
@@ -386,12 +395,18 @@ export class OAuthClientRole implements EntityRole {
 	public readonly type = "oauth_client";
 	public readonly metadata: Record<string, unknown>;
 	private context?: EntityContext;
+	private composedMetadata?: Record<string, unknown>;
 
 	constructor(public readonly config: OAuthClientRoleConfig) {
 		this.metadata = config.metadata ?? {};
 	}
 
+	validateMetadata(metadata: Readonly<Record<string, unknown>>): void {
+		this.composedMetadata = structuredClone(metadata);
+	}
+
 	initialize(context: EntityContext): void {
+		assertRoleOwner(this.context, context);
 		this.context = context;
 	}
 
@@ -411,7 +426,7 @@ export class OAuthClientRole implements EntityRole {
 			protocolKeyProvider: this.config.protocolKeyProvider,
 			authorityHints: (this.context.authorityHints ?? []) as readonly [EntityId, ...EntityId[]],
 			metadata: {
-				[this.type]: this.metadata,
+				[this.type]: this.composedMetadata ?? this.metadata,
 			},
 			...(this.config.requestObjectTtlSeconds !== undefined
 				? { requestObjectTtlSeconds: this.config.requestObjectTtlSeconds }
@@ -424,13 +439,10 @@ export class OAuthClientRole implements EntityRole {
 				: {}),
 			...(this.config.requestUri !== undefined ? { requestUri: this.config.requestUri } : {}),
 		};
-		return automaticRegistration(
-			discovery,
-			rpConfig,
-			authzRequestParams,
-			trustAnchors,
-			options ?? this.context.options,
-		);
+		return automaticRegistration(discovery, rpConfig, authzRequestParams, trustAnchors, {
+			...this.context.options,
+			...options,
+		});
 	}
 }
 
@@ -449,12 +461,15 @@ export class OAuthAuthorizationServerRole implements EntityRole {
 	public readonly type = "oauth_authorization_server";
 	public readonly metadata: Record<string, unknown> = {};
 	public readonly routes = new Map<string, (request: Request) => Promise<Response>>();
+	private context?: EntityContext;
 
 	constructor(public readonly config: OAuthAuthorizationServerRoleConfig) {
 		this.metadata = config.metadata ?? {};
 	}
 
 	initialize(context: EntityContext): void {
+		assertRoleOwner(this.context, context);
+		this.context = context;
 		const registrationPath = this.config.registrationPath ?? "/registration";
 		const registrationUrl = new URL(registrationPath, context.entityId).toString();
 		const trustAnchors = assertNonEmptyTrustAnchors(
@@ -504,4 +519,9 @@ export class OAuthResourceRole implements EntityRole {
 	}
 
 	initialize(_context: EntityContext): void {}
+}
+
+function assertRoleOwner(current: EntityContext | undefined, context: EntityContext): void {
+	if (current && current !== context)
+		throw new Error("Create a separate OIDC/OAuth role instance for each host");
 }
