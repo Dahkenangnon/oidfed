@@ -265,14 +265,14 @@ export async function completeRequest(
 			);
 		return ok([query.data]);
 	};
-	let queries: DcqlQuery[];
-	if (metadata.value.dcql_queries !== undefined) {
-		queries = metadata.value.dcql_queries as DcqlQuery[];
-	} else {
+	let requested: DcqlQuery[] | undefined;
+	if (superiorQueries === undefined) {
 		const active = requestedQueries();
 		if (!active.ok) return active;
-		queries = active.value;
+		requested = active.value;
 	}
+	const queries = (metadata.value.dcql_queries as DcqlQuery[] | undefined) ?? requested;
+	if (!queries) return failure("Superior DCQL metadata did not produce an effective query");
 	if (request.transaction_data !== undefined) {
 		if (
 			!Array.isArray(request.transaction_data) ||
@@ -280,12 +280,7 @@ export async function completeRequest(
 			!saved.options.verifyTransactionData
 		)
 			return failure("Unsupported transaction_data");
-		let transactionQueries = queries;
-		if (superiorQueries === undefined && metadata.value.dcql_queries !== undefined) {
-			const active = requestedQueries();
-			if (!active.ok) return active;
-			transactionQueries = active.value;
-		}
+		const transactionQueries = requested ?? queries;
 		try {
 			const ids = new Set(
 				transactionQueries.flatMap((query) => query.credentials.map((credential) => credential.id)),

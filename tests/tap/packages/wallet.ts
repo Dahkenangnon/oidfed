@@ -1136,6 +1136,66 @@ export default (QUnit: QUnit) => {
 		});
 	});
 	module("wallet / federation-backed requests", () => {
+		test("validates selected queries and scope mappings even when metadata supplies scenarios", async (t) => {
+			for (const config of [
+				{ verifierMetadata: { dcql_queries: [walletQuery] } },
+				{ policy: { dcql_queries: { value: [walletQuery] } } },
+			]) {
+				const f = await walletFederation(config);
+				let policies = 0;
+				const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
+					{ client_id: f.requestPayload.client_id },
+					f.anchors,
+					{
+						...f.options,
+						queryPolicy: () => {
+							policies++;
+							return true;
+						},
+					},
+				);
+				t.true(prepared.ok, JSON.stringify(prepared));
+				if (!prepared.ok) continue;
+				const sign = (changes: Record<string, unknown>) =>
+					token(
+						{ ...f.requestPayload, ...changes },
+						f.protocol.verifier.privateKey,
+						"oauth-authz-req+jwt",
+					);
+				for (const dcql_query of [{}, null, { credentials: [] }]) {
+					t.false(
+						(
+							await CredentialVerifierRole.completeAuthorizationRequest(
+								prepared.value,
+								await sign({ dcql_query }),
+							)
+						).ok,
+						JSON.stringify(dcql_query),
+					);
+				}
+				const scoped = await sign({ dcql_query: undefined, scope: "identity_scope" });
+				t.false(
+					(await CredentialVerifierRole.completeAuthorizationRequest(prepared.value, scoped)).ok,
+				);
+				t.equal(policies, 0, "Invalid active queries do not reach framework policy");
+				t.true(
+					(
+						await CredentialVerifierRole.completeAuthorizationRequest(
+							prepared.value,
+							await sign({}),
+						)
+					).ok,
+				);
+				t.true(
+					(
+						await CredentialVerifierRole.completeAuthorizationRequest(prepared.value, scoped, {
+							scopeQuery: walletQuery,
+						})
+					).ok,
+				);
+				t.equal(policies, 2);
+			}
+		});
 		test("binds transaction data to the active query without widening it to published scenarios", async (t) => {
 			const { base64url } = await import("jose");
 			const education = { credentials: [{ ...walletQuery.credentials[0]!, id: "education" }] };
@@ -1762,6 +1822,64 @@ export default (QUnit: QUnit) => {
 			);
 			t.true(checked.ok, JSON.stringify(checked));
 			if (checked.ok) t.deepEqual(checked.value.effectiveQueries, [walletQuery]);
+		});
+		test("superior query overrides do not require a scope mapping and cannot fall back after policy removal", async (t) => {
+			const f = await walletFederation({
+				verifierOverride: { dcql_queries: [walletQuery] },
+				policy: { dcql_queries: { discard: true } },
+			});
+			const options = {
+				...f.options,
+				customPolicyOperators: [
+					{
+						name: "discard",
+						order: 100,
+						action: "modify" as const,
+						apply: () => ({ ok: true as const, value: undefined, removed: true }),
+						merge: (_existing: unknown, value: unknown) => ({ ok: true as const, value }),
+						canCombineWith: () => true,
+					},
+				],
+			};
+			const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
+				{ client_id: f.requestPayload.client_id },
+				f.anchors,
+				options,
+			);
+			t.true(prepared.ok, JSON.stringify(prepared));
+			if (prepared.ok)
+				t.false(
+					(
+						await CredentialVerifierRole.completeAuthorizationRequest(
+							prepared.value,
+							await token(f.requestPayload, f.protocol.verifier.privateKey, "oauth-authz-req+jwt"),
+						)
+					).ok,
+				);
+			const retained = await walletFederation({
+				verifierOverride: { dcql_queries: [walletQuery] },
+			});
+			const withOverride = await CredentialVerifierRole.prepareAuthorizationRequest(
+				{ client_id: retained.requestPayload.client_id },
+				retained.anchors,
+				retained.options,
+			);
+			t.true(withOverride.ok);
+			if (!withOverride.ok) return;
+			const scoped = await token(
+				{ ...retained.requestPayload, dcql_query: undefined, scope: "ignored_scope" },
+				retained.protocol.verifier.privateKey,
+				"oauth-authz-req+jwt",
+			);
+			const checked = await CredentialVerifierRole.completeAuthorizationRequest(
+				withOverride.value,
+				scoped,
+			);
+			t.true(checked.ok, JSON.stringify(checked));
+			if (checked.ok) {
+				t.deepEqual(checked.value.effectiveQueries, [walletQuery]);
+				t.strictEqual(checked.value.request.scope, undefined);
+			}
 		});
 		test("rejects fabricated or expired preparation and a failing framework query policy", async (t) => {
 			const f = await walletFederation();

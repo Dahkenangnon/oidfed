@@ -14,7 +14,7 @@ export function meta() {
 	return buildMeta({
 		title: "About — @oidfed",
 		description:
-			"About the @oidfed project — 4 spec packages, 3 apps, 14 CLI commands. Apache 2.0 (libraries) · MIT (apps). The complete OpenID Federation 1.0 implementation for JavaScript.",
+			"About @oidfed: 5 libraries, 3 apps, and 17 CLI commands for OpenID Federation. Apache 2.0 for libraries and CLI; MIT for apps.",
 		path: "/about",
 		jsonLd: {
 			"@context": "https://schema.org",
@@ -33,24 +33,25 @@ export function meta() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const highlights = [
-	{ value: "04", label: "Spec packages", sub: "core · authority · leaf · oidc" },
+	{ value: "05", label: "Libraries", sub: "core · authority · leaf · oidc · wallet" },
 	{ value: "03", label: "Apps", sub: "home · explorer · learn" },
-	{ value: "14", label: "CLI commands", sub: "resolve · chain · verify · …" },
+	{ value: "17", label: "CLI commands", sub: "resolve · chain · verify · …" },
 	{ value: "Apache 2.0 / MIT", label: "License", sub: "Libraries · Apps" },
 ];
 
 const architecture = [
 	{
 		Icon: Package,
-		title: "Spec packages",
+		title: "Libraries",
 		kind: "packages",
 		description:
-			"Full OpenID Federation 1.0 coverage — from primitives to OIDC registration flows. Tree-shakable, framework-agnostic.",
+			"Federation primitives, authority and leaf hosts, OIDC registration, and wallet trust operations. The libraries use standard Web APIs.",
 		items: [
 			{ name: "@oidfed/core", note: "primitives · chain · policy" },
 			{ name: "@oidfed/authority", note: "TA · intermediate" },
 			{ name: "@oidfed/leaf", note: "RP · OP (leaf)" },
 			{ name: "@oidfed/oidc", note: "auto · explicit registration" },
+			{ name: "@oidfed/wallet", note: "provider · issuer · verifier roles" },
 		],
 	},
 	{
@@ -70,7 +71,7 @@ const architecture = [
 		title: "Tools",
 		kind: "tools",
 		description:
-			"Inspect, validate, and debug federation deployments from the command line — 14 purpose-built commands.",
+			"Inspect, validate, and debug federation deployments with 17 commands.",
 		items: [{ name: "@oidfed/cli", note: "npm i -g @oidfed/cli" }],
 	},
 ];
@@ -174,8 +175,8 @@ function Architecture() {
 						<SignalLabel id="03" label="Architecture" />
 						<SectionTitle>A monorepo structured into packages, apps, and tools.</SectionTitle>
 						<SectionIntro>
-							Each workspace is independently versioned and published. Nothing is coupled across
-							siblings — a contract-driven design that keeps every layer swap-ready.
+							Libraries are versioned and published independently and share core contracts.
+							Applications connect them to their protocol implementations.
 						</SectionIntro>
 						<div className="mt-6 inline-flex items-center gap-3 font-mono text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
 							<span className="tabular-nums text-foreground">packages</span>
