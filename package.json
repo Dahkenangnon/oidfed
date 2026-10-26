@@ -1,6 +1,6 @@
 {
 	"name": "@oidfed/monorepo",
-	"version": "1.0.0",
+	"version": "2.0.0",
 	"description": "The complete OpenID Federation 1.0 implementation for JavaScript \u2014 runtime-agnostic, spec-compliant, built on Web API standards.",
 	"private": true,
 	"type": "module",

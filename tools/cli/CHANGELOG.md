@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-10-26
+
+### Breaking changes
+
+- `list-extended --from` now takes the opaque `next` cursor from a Draft 03 response. Returned JSON uses `next` instead of `next_entity_id`; legacy cursor names are unsupported. ([6c1c8a6](https://github.com/Dahkenangnon/oidfed/commit/6c1c8a60c234574109aedc062ead11094e99f82a))
+
+### Added
+
+- `subordinate-events` retrieves and verifies signed authority histories using the required `--jwks-file` pinned keys. Optional client assertions select authenticated POST. ([4c6398c](https://github.com/Dahkenangnon/oidfed/commit/4c6398cc568149ebeb01377e1df9cdee022ba44c))
+- `collection` retrieves unsigned Entity Collection Draft 01 results, with filters, claim selection, locales, opaque cursors, and optional authenticated POST. Validate selected entities separately before trusting them. ([3d69d77](https://github.com/Dahkenangnon/oidfed/commit/3d69d778bd4ea074826e89872467f65e6b2073ab))
+
+### Fixed
+
+- Accept repeated Trust Mark type filters and finite NumericDate time filters in `list-extended`, and preserve explicit empty claim selections. ([6c1c8a6](https://github.com/Dahkenangnon/oidfed/commit/6c1c8a60c234574109aedc062ead11094e99f82a))
+- Clarify the CLI's Node.js requirement and the scope of library runtime coverage. ([f51d9c6](https://github.com/Dahkenangnon/oidfed/commit/f51d9c64859a099d1720ee66675cd442554aedde))
+- Keep bundled TypeScript declaration generation working with TypeScript 6. ([a473ebb](https://github.com/Dahkenangnon/oidfed/commit/a473ebbb93d166ebcd69f9c8c52d376e48ff29fc))
+- Update command-line and schema-validation dependencies. ([d83b296](https://github.com/Dahkenangnon/oidfed/commit/d83b296634b86ae059cd71aa79b2a77d6fd05b89))
+
 ## [1.0.0] - 2026-07-13
 
 ### Bug Fixes

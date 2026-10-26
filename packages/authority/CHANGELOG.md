@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-10-26
+
+### Breaking changes
+
+- Extended Listing follows Draft 03: replace legacy cursor names with opaque `from` and `next` values. Unknown cursors return `page_not_found`. Both listing endpoints treat `trust_marked=false` as adding no restriction; supplied mark-type filters still apply. ([6c1c8a6](https://github.com/Dahkenangnon/oidfed/commit/6c1c8a60c234574109aedc062ead11094e99f82a))
+- Endpoints configured for `private_key_jwt` require `storage.replay`. Assertions require `exp` and `jti`; `iat` is optional. Empty or unsupported authentication method lists fail construction. ([f51d9c6](https://github.com/Dahkenangnon/oidfed/commit/f51d9c64859a099d1720ee66675cd442554aedde))
+
+### Added
+
+- Subordinate Events Draft 01 endpoint and optional transactional event storage. Lifecycle methods record registration, attested metadata and policy changes, registered key changes, and explicit revocation. Retain history after removal and allow explicit suspension and custom events; recording an event alone does not enforce suspension. ([4c6398c](https://github.com/Dahkenangnon/oidfed/commit/4c6398cc568149ebeb01377e1df9cdee022ba44c))
+- Optional Entity Collection hosting through core's shared service and an optional collection store. Support custom collectors and refresh-time filters. ([3d69d77](https://github.com/Dahkenangnon/oidfed/commit/3d69d778bd4ea074826e89872467f65e6b2073ab))
+- Validate composed wallet role metadata before publishing Entity Configurations, including wallet claim-path wildcards. ([5863459](https://github.com/Dahkenangnon/oidfed/commit/58634591566fc500f3872b46b480d34d01a29a7b))
+
+### Fixed
+
+- Preserve anonymous Trust Mark Status POST requests when authentication is optional. Reject empty, duplicate, or invalid supplied credentials, bound request-body reads, and preserve repeated parameters when forwarding authenticated requests. ([f51d9c6](https://github.com/Dahkenangnon/oidfed/commit/f51d9c64859a099d1720ee66675cd442554aedde))
+- Copy subordinate updates before queued transactions so caller mutations cannot change persisted records or event history. Document staged key rollover and production storage ownership. ([f51d9c6](https://github.com/Dahkenangnon/oidfed/commit/f51d9c64859a099d1720ee66675cd442554aedde))
+- Support repeated Extended Listing Trust Mark filters, explicit empty claim selections, and finite NumericDates. ([6c1c8a6](https://github.com/Dahkenangnon/oidfed/commit/6c1c8a60c234574109aedc062ead11094e99f82a))
+- Keep bundled TypeScript declaration generation working with TypeScript 6. ([a473ebb](https://github.com/Dahkenangnon/oidfed/commit/a473ebbb93d166ebcd69f9c8c52d376e48ff29fc))
+
 ## [1.0.0] - 2026-07-13
 
 ### Features

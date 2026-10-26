@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-10-26
+
+### Breaking changes
+
+- Extended Listing replaces `fromEntityId` / `from_entity_id` and `next_entity_id` with opaque `from` and `next` cursors. Legacy cursor names are unsupported. ([6c1c8a6](https://github.com/Dahkenangnon/oidfed/commit/6c1c8a60c234574109aedc062ead11094e99f82a))
+- Client assertions require `exp` and `jti`; `iat` is optional. `VerifiedClientAssertion.jti` is required and `issuedAt` is optional. Authentication integrations must supply replay storage for one-time use. ([f51d9c6](https://github.com/Dahkenangnon/oidfed/commit/f51d9c64859a099d1720ee66675cd442554aedde))
+
+### Added
+
+- Entity Collection Draft 01 service, schemas, storage contracts, and HTTP client. Support custom collectors, refresh-time filters, verified Trust Mark filtering, claim selection, language matching, and opaque pagination. Failed mandatory refresh work preserves the previous snapshot. ([3d69d77](https://github.com/Dahkenangnon/oidfed/commit/3d69d778bd4ea074826e89872467f65e6b2073ab))
+- Subordinate Events Draft 01 schemas, media types, and a client that verifies signed histories against caller-supplied trusted authority keys. Requests reject redirects and enforce response byte and time limits. ([4c6398c](https://github.com/Dahkenangnon/oidfed/commit/4c6398cc568149ebeb01377e1df9cdee022ba44c))
+- Staged trust-chain validation for request-dependent wallet policies, a composed-role metadata validation hook, and support for wallet claim-path wildcards without accepting null metadata fields elsewhere. ([5863459](https://github.com/Dahkenangnon/oidfed/commit/58634591566fc500f3872b46b480d34d01a29a7b))
+
+### Fixed
+
+- Make federation key transitions atomic and order activations independently of the clock. Copy key inputs and outputs, derive verification-capable public JWKs from WebCrypto signing keys, and preserve revocation timestamps at epoch zero. ([f51d9c6](https://github.com/Dahkenangnon/oidfed/commit/f51d9c64859a099d1720ee66675cd442554aedde))
+- Support repeated Extended Listing Trust Mark types and explicit empty claim selections. Accept finite NumericDates and enforce response limits, cancelling unread rejected response bodies. ([6c1c8a6](https://github.com/Dahkenangnon/oidfed/commit/6c1c8a60c234574109aedc062ead11094e99f82a))
+- Keep bundled TypeScript declaration generation working with TypeScript 6. ([a473ebb](https://github.com/Dahkenangnon/oidfed/commit/a473ebbb93d166ebcd69f9c8c52d376e48ff29fc))
+- Update JOSE and schema-validation dependencies. ([d83b296](https://github.com/Dahkenangnon/oidfed/commit/d83b296634b86ae059cd71aa79b2a77d6fd05b89)) ([692ef7d](https://github.com/Dahkenangnon/oidfed/commit/692ef7de7218c2085983fd05a620051f35c5971e))
+
 ## [1.0.0] - 2026-07-13
 
 ### Features

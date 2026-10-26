@@ -6,21 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-10-26
+
 ### Added
 
-- Subordinate Events Draft 01 histories, Entity Collection Draft 01 discovery, and Wallet Architectures Draft 05 roles across the relevant libraries and CLI.
+- Subordinate Events Draft 01: authorities publish signed histories, core verifies responses, and the CLI retrieves histories using pinned authority keys.
+- Entity Collection Draft 01: shared collection service and client, optional authority and leaf hosting, independent providers, and CLI retrieval. Collections support filters, claim selection, language matching, and opaque pagination.
+- Wallet Architectures Draft 05: composable Wallet Provider, Credential Issuer, and Credential Verifier roles, with Wallet Attestations, PoP authentication, and federation-backed presentation request checks. Applications supply their VCI/VP protocol engines and credential-format verification.
+- An [operator responsibilities guide](https://github.com/Dahkenangnon/oidfed/blob/main/docs/guide/operator-responsibilities.md) covering protocol requirements, library contracts, and deployment duties.
 
 ### Breaking changes
 
-- Extended Listing follows Draft 03: use `from` and `next` instead of `fromEntityId`, `from_entity_id`, and `next_entity_id`. Legacy cursor names are unsupported. Unknown cursors return `page_not_found`.
-- `trust_marked=false` adds no restriction to either listing endpoint; supplied Trust Mark types still filter results.
-- Authority federation endpoints using `private_key_jwt` require replay storage. Assertions require `exp` and `jti`; `iat` remains optional.
-- A stateful OIDC/OAuth role instance belongs to one host. Create separate instances for separate hosts.
+- Extended Listing uses Draft 03's `from` and `next` cursors. Replace `fromEntityId` / `from_entity_id` and `next_entity_id`; legacy names are unsupported. Unknown cursors return `page_not_found`.
+- `trust_marked=false` adds no restriction to either listing endpoint. Supplied Trust Mark types still filter results.
+- Authority federation endpoints using `private_key_jwt` require `storage.replay`. Assertions require `exp` and `jti`; `iat` is optional.
+- `VerifiedClientAssertion.jti` is required and `VerifiedClientAssertion.issuedAt` is optional. Update consumers that assumed an issuance time was always returned.
+- Stateful OIDC/OAuth role instances belong to one host. Create a separate instance for each host.
 
 ### Fixed
 
-- Federation assertion replay protection, key lifecycle ordering, WebCrypto JWK publication, Leaf refresh ordering, OIDC operation context, and queued subordinate update ownership.
-- Package references, app capability descriptions, protocol examples, storage namespace guidance, and CLI runtime requirements.
+- Reject empty or unsupported endpoint authentication settings. Preserve anonymous Trust Mark Status POST handling and reject supplied invalid credentials instead of falling back to anonymous access.
+- Make key lifecycle transitions atomic and independent of wall-clock ordering. Publish verification-capable public keys derived from WebCrypto signing keys and protect stored key data from caller mutation.
+- Prevent older Leaf configuration builds from replacing refreshed cached configurations. Preserve composed OIDC metadata, host options, and per-call overrides.
+- Copy subordinate updates before queued transactions so later caller mutations cannot change the stored record or generated events.
+- Update package references, app capability descriptions, protocol examples, storage namespace guidance, and CLI runtime documentation. Document the issue-to-PR workflow and verification of AI review findings.
 
 ## [1.0.0] - 2026-07-13
 

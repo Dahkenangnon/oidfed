@@ -1,6 +1,6 @@
 {
 	"name": "@oidfed/wallet",
-	"version": "1.0.0",
+	"version": "2.0.0",
 	"description": "OpenID Federation for Wallet Architectures: composable provider, issuer, and verifier roles and federation-backed trust operations.",
 	"license": "Apache-2.0",
 	"author": "Justin Dah-kenangnon <dah.kenangnon@gmail.com>",

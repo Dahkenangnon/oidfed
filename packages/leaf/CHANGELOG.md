@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-10-26
+
+### Added
+
+- Optional Entity Collection Draft 01 endpoint hosting through core's shared service, including configured authentication and snapshot storage. ([3d69d77](https://github.com/Dahkenangnon/oidfed/commit/3d69d778bd4ea074826e89872467f65e6b2073ab))
+- Validate composed wallet role metadata before publication and preserve permitted null claim-path wildcards. ([5863459](https://github.com/Dahkenangnon/oidfed/commit/58634591566fc500f3872b46b480d34d01a29a7b))
+
+### Changed
+
+- Reject authority-only Subordinate Events metadata on leaves. ([4c6398c](https://github.com/Dahkenangnon/oidfed/commit/4c6398cc568149ebeb01377e1df9cdee022ba44c))
+- Reject authority-only Extended Listing metadata on leaves. ([6c1c8a6](https://github.com/Dahkenangnon/oidfed/commit/6c1c8a60c234574109aedc062ead11094e99f82a))
+
+### Fixed
+
+- Prevent older Entity Configuration builds from overwriting a refreshed cache. Reads during a refresh share the current build. Document when key publication, signer switching, and retirement require an explicit configuration refresh. ([f51d9c6](https://github.com/Dahkenangnon/oidfed/commit/f51d9c64859a099d1720ee66675cd442554aedde))
+- Keep bundled TypeScript declaration generation working with TypeScript 6. ([a473ebb](https://github.com/Dahkenangnon/oidfed/commit/a473ebbb93d166ebcd69f9c8c52d376e48ff29fc))
+
 ## [1.0.0] - 2026-07-13
 
 ### Features

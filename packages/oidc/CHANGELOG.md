@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-10-26
+
+### Breaking changes
+
+- Stateful OIDC/OAuth role instances belong to one host. Create separate instances for separate hosts. ([f51d9c6](https://github.com/Dahkenangnon/oidfed/commit/f51d9c64859a099d1720ee66675cd442554aedde))
+
+### Fixed
+
+- Use final composed local metadata when constructing registration and authorization requests, including fields supplied by the host. ([f51d9c6](https://github.com/Dahkenangnon/oidfed/commit/f51d9c64859a099d1720ee66675cd442554aedde))
+- Retain host federation options when applying per-call overrides, including the HTTP client and clock. Honor declared request delivery, URI, peer-chain, and Request Object lifetime overrides. ([f51d9c6](https://github.com/Dahkenangnon/oidfed/commit/f51d9c64859a099d1720ee66675cd442554aedde))
+- Document registration lifetime enforcement, separate replay storage, and application-managed protocol-key rotation. Correct the documented Request Object lifetime default to 300 seconds. ([f51d9c6](https://github.com/Dahkenangnon/oidfed/commit/f51d9c64859a099d1720ee66675cd442554aedde))
+- Keep bundled TypeScript declaration generation working with TypeScript 6. ([a473ebb](https://github.com/Dahkenangnon/oidfed/commit/a473ebbb93d166ebcd69f9c8c52d376e48ff29fc))
+- Update the schema-validation dependency. ([d83b296](https://github.com/Dahkenangnon/oidfed/commit/d83b296634b86ae059cd71aa79b2a77d6fd05b89))
+
 ## [1.0.0] - 2026-07-13
 
 ### Bug Fixes
