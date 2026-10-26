@@ -36,8 +36,8 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
           cache: pnpm
 
-      # npm trusted publishing requires npm CLI >= 11.5.1 (Node 22 ships with 10.x).
-      - run: npm install -g npm@latest
+      # Run a fresh npm CLI for trusted publishing without self-upgrading Node's bundled npm.
+      - run: pnpm --package=npm@latest dlx npm --version
 
       - run: pnpm install --frozen-lockfile
 
@@ -114,7 +114,7 @@ jobs:
             pnpm pack
             local tgz
             tgz=$(ls -t ./*.tgz | head -1)
-            npm publish "$tgz" --provenance --access public
+            pnpm --package=npm@latest dlx npm publish "$tgz" --provenance --access public
             popd >/dev/null
           }
           if [ "$SCOPE" = "all" ]; then
