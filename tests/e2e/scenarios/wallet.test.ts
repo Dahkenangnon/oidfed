@@ -74,24 +74,29 @@ describe("Wallet federation over HTTPS", () => {
 				},
 			],
 		};
-		verifierApp.post("/request", express.urlencoded({ extended: false }), async (req, res) => {
-			retrieved++;
-			const signed = await verifier.createAuthorizationRequest(
-				{
-					response_type: "vp_token",
-					response_mode: "direct_post",
-					response_uri: `${verifierId}/response`,
-					nonce: "session-nonce",
-					dcql_query: query,
-				},
-				new JwkSigner(verifierProtocol.privateKey),
-				{ walletNonce: String(req.body.wallet_nonce) },
-			);
-			if (!signed.ok) {
-				res.status(500).end();
+		const walletNonce = "wallet-nonce";
+		// Sign the fixture once; the HTTP route only serves the matching nonce.
+		const requestObject = await verifier.createAuthorizationRequest(
+			{
+				response_type: "vp_token",
+				response_mode: "direct_post",
+				response_uri: `${verifierId}/response`,
+				nonce: "session-nonce",
+				dcql_query: query,
+			},
+			new JwkSigner(verifierProtocol.privateKey),
+			{ walletNonce },
+		);
+		expect(requestObject.ok, JSON.stringify(requestObject)).toBe(true);
+		if (!requestObject.ok) throw new Error(requestObject.error.description);
+		const requestJwt = requestObject.value;
+		verifierApp.post("/request", express.urlencoded({ extended: false }), (req, res) => {
+			if (req.body.wallet_nonce !== walletNonce) {
+				res.status(400).end();
 				return;
 			}
-			res.type("application/oauth-authz-req+jwt").send(signed.value);
+			retrieved++;
+			res.type("application/oauth-authz-req+jwt").send(requestJwt);
 		});
 		server.addEntity(verifierId, verifierApp);
 		await authority.server.registerSubordinate({
@@ -137,18 +142,27 @@ describe("Wallet federation over HTTPS", () => {
 		expect(retrieved).toBe(0);
 		const requestUri = prepared.value.requestUri;
 		if (!requestUri) throw new Error("Prepared request URI is missing");
+		const rejected = await fetch(requestUri, {
+			method: "POST",
+			body: new URLSearchParams({ wallet_nonce: "wrong" }),
+			headers: { accept: "application/oauth-authz-req+jwt" },
+		});
+		expect(rejected.status).toBe(400);
+		await rejected.arrayBuffer();
+		expect(retrieved).toBe(0);
 		const response = await fetch(requestUri, {
 			method: "POST",
-			body: new URLSearchParams({ wallet_nonce: "wallet-nonce" }),
+			body: new URLSearchParams({ wallet_nonce: walletNonce }),
 			headers: { accept: "application/oauth-authz-req+jwt" },
 		});
 		expect(response.status).toBe(200);
 		expect(response.headers.get("content-type")).toContain("application/oauth-authz-req+jwt");
 		const jwt = await response.text();
+		expect(jwt).toBe(requestJwt);
 		const completed = await CredentialVerifierRole.completeAuthorizationRequest(
 			prepared.value,
 			jwt,
-			{ walletNonce: "wallet-nonce" },
+			{ walletNonce },
 		);
 		expect(completed.ok, JSON.stringify(completed)).toBe(true);
 		expect(
