@@ -368,7 +368,7 @@ const specDocs = [
 		status: "Draft 05",
 		tone: "warn" as const,
 		href: "https://openid.net/specs/openid-federation-wallet-1_0.html",
-		implemented: false,
+		implemented: true,
 	},
 	{
 		label: "ACME with OpenID Federation 1.0",
@@ -718,8 +718,8 @@ function OurImplementation() {
 								</Badge>
 							</div>
 							<p className="text-[14px] leading-relaxed text-muted-foreground">
-								4 spec packages, 3 apps, 14 CLI commands. Runs identically on Node.js, Deno, Bun,
-								workerd, Electron, and browsers. Source at{" "}
+								5 libraries, 3 apps, and 17 CLI commands. The library test suite runs on Node.js,
+								Deno, Bun, workerd, Electron, and Chromium. Source at{" "}
 								<a
 									href="https://github.com/Dahkenangnon/oidfed"
 									target="_blank"
@@ -735,7 +735,7 @@ function OurImplementation() {
 						<div aria-hidden className="hidden bg-border/60 sm:block" />
 
 						<div className="grid grid-cols-2 gap-0 bg-muted/40 sm:grid-cols-1">
-							<Mini label="Packages" value="04" note="core · authority · leaf · oidc" />
+							<Mini label="Packages" value="05" note="core · authority · leaf · oidc · wallet" />
 							<Mini
 								label="Runtimes"
 								value="06"

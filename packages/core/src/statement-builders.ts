@@ -10,6 +10,7 @@ import {
 import { err, type FederationError, federationError, ok, type Result } from "./errors.js";
 import { signEntityStatement } from "./jose/sign.js";
 import type { JwtSigner } from "./jose/signer.js";
+import { findInvalidMetadataNullPaths } from "./metadata-values.js";
 import type { TrustChainConstraints } from "./schemas/constraints.js";
 import {
 	type EntityConfigurationPayload,
@@ -352,41 +353,19 @@ function validateMetadataPolicyShape(payload: Readonly<Record<string, unknown>>,
 	}
 }
 
-function validateMetadataValues(value: unknown, errors: string[], path = "metadata") {
+function validateMetadataValues(value: unknown, errors: string[]) {
 	if (value === undefined) return;
 	if (!isJsonObject(value)) {
-		errors.push(`${path} must be a JSON object`);
+		errors.push("metadata must be a JSON object");
 		return;
 	}
 	for (const [key, child] of Object.entries(value)) {
-		const childPath = `${path}.${key}`;
-		if (child === null) {
-			errors.push(`${childPath} must not be null`);
-			continue;
-		}
-		if (Array.isArray(child)) {
-			validateArrayMetadataValues(child, errors, childPath);
-			continue;
-		}
-		if (isJsonObject(child)) {
-			validateMetadataValues(child, errors, childPath);
-		} else if (path === "metadata") {
-			errors.push(`${childPath} must be a JSON object`);
+		if (child !== null && !Array.isArray(child) && !isJsonObject(child)) {
+			errors.push(`metadata.${key} must be a JSON object`);
 		}
 	}
-}
-
-function validateArrayMetadataValues(values: readonly unknown[], errors: string[], path: string) {
-	for (let i = 0; i < values.length; i++) {
-		const child = values[i];
-		const childPath = `${path}.${i}`;
-		if (child === null) {
-			errors.push(`${childPath} must not be null`);
-		} else if (Array.isArray(child)) {
-			validateArrayMetadataValues(child, errors, childPath);
-		} else if (isJsonObject(child)) {
-			validateMetadataValues(child, errors, childPath);
-		}
+	for (const path of findInvalidMetadataNullPaths(value)) {
+		errors.push(`metadata.${path.join(".")} must not be null`);
 	}
 }
 

@@ -42,6 +42,7 @@ export default {
 				"authority",
 				"leaf",
 				"oidc",
+				"wallet",
 				"cli",
 				"explorer",
 				"home",

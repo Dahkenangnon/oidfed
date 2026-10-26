@@ -28,6 +28,7 @@ import {
 	isValidEntityId,
 	ok,
 	signTrustMarkDelegation,
+	validateRoleMetadata,
 	WELL_KNOWN_OPENID_FEDERATION,
 } from "@oidfed/core";
 import { createAuthenticatedHandler } from "./endpoints/client-auth.js";
@@ -274,6 +275,7 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 		config.clientKeyProvider ?? createStorageBackedClientKeyProvider(config.storage);
 
 	const base: HandlerContext = {
+		...(config.roles ? { roles: config.roles } : {}),
 		entityId: normalizedEntityId,
 		keyProvider: config.keyProvider,
 		storage: config.storage,
@@ -307,6 +309,7 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 		].filter(Boolean),
 	);
 
+	validateRoleMetadata(config.roles, config.metadata, ctx);
 	const lifecycle = createSubordinateLifecycle(ctx);
 	const meta = config.metadata.federation_entity;
 	const collectionMethods = meta.federation_collection_endpoint_auth_methods ?? ["none"];

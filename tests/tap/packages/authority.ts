@@ -6742,6 +6742,58 @@ export default (QUnit: QUnit) => {
 	});
 
 	module("authority / assertMetadataValuesNotNull", () => {
+		test("allows only recognized wallet claim-path wildcard positions", (t) => {
+			assertMetadataValuesNotNull({
+				openid_credential_issuer: {
+					credential_configurations_supported: {
+						one: { credential_metadata: { claims: [{ path: ["namespace", "element", null] }] } },
+					},
+				},
+				openid_credential_verifier: {
+					dcql_queries: [{ credentials: [{ claims: [{ path: ["names", null, "given"] }] }] }],
+				},
+			});
+			for (const metadata of [
+				{ openid_credential_verifier: { dcql_queries: [null] } },
+				{
+					openid_credential_verifier: {
+						dcql_queries: [{ credentials: [{ claims: [{ path: null }] }] }],
+					},
+				},
+				{
+					openid_credential_verifier: {
+						dcql_queries: [{ credentials: [{ claims: [{ path: ["name", { nested: null }] }] }] }],
+					},
+				},
+				{
+					openid_credential_verifier: {
+						dcql_queries: [
+							{ credentials: [{ claims: [{ path: ["names", null], custom: null }] }] },
+						],
+					},
+				},
+				{ openid_credential_verifier: { "dcql_queries[0].credentials[0].claims[0].path": [null] } },
+				{
+					openid_provider: {
+						dcql_queries: [{ credentials: [{ claims: [{ path: ["names", null] }] }] }],
+					},
+				},
+				{
+					openid_credential_issuer: {
+						credential_configurations_supported: {
+							one: {
+								credential_metadata: { claims: [{ path: ["names", null], mandatory: null }] },
+							},
+						},
+					},
+				},
+			])
+				t.throws(
+					() => assertMetadataValuesNotNull(metadata),
+					InvalidMetadata,
+					JSON.stringify(metadata),
+				);
+		});
 		test("accepts undefined", (t) => {
 			assertMetadataValuesNotNull(undefined);
 			t.ok(true);

@@ -225,9 +225,240 @@ import {
 import * as EntityCollectionFixture from "../fixtures/entity-collection.js";
 import { MockFederationBuilder } from "../fixtures/mock-federation.js";
 import * as SubordinateEventsFixture from "../fixtures/subordinate-events.js";
+import { walletFederation, walletQuery } from "../fixtures/wallet.js";
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("core / contextual chain validation", () => {
+		test("preserves wallet claim-path wildcards in statement builders and chain validation", async (t) => {
+			const f = await walletFederation({
+				issuerMetadata: {
+					credential_configurations_supported: {
+						one: {
+							format: "mso_mdoc",
+							doctype: "example.id",
+							credential_metadata: { claims: [{ path: ["namespace", "entries", null, "name"] }] },
+						},
+					},
+				},
+				verifierMetadata: {
+					dcql_queries: [
+						{
+							credentials: [
+								{ ...walletQuery.credentials[0]!, claims: [{ path: ["names", null, "given"] }] },
+							],
+						},
+					],
+				},
+			});
+			for (const name of ["issuer", "verifier"] as const) {
+				const chain = f.chains.get(f.ids[name])!;
+				const decoded = CorePublic.decodeEntityStatement(chain[0]!);
+				t.true(decoded.ok);
+				if (!decoded.ok) continue;
+				t.true(
+					CorePublic.validateEntityStatementClaims(decoded.value.payload, {
+						kind: "entity-configuration",
+					}).ok,
+				);
+				const payload = CorePublic.buildEntityConfigurationPayload({
+					entityId: f.ids[name],
+					jwks: { keys: [f.keys[name].publicKey] },
+					metadata: f.metadata[name],
+					authorityHints: [f.ids.anchor],
+					issuedAt: 1000,
+					ttlSeconds: 4000,
+				});
+				t.deepEqual(payload.metadata, f.metadata[name]);
+				const attested = CorePublic.buildSubordinateStatementPayload({
+					issuer: f.ids.anchor,
+					subject: f.ids[name],
+					jwks: { keys: [f.keys[name].publicKey] },
+					metadata: f.metadata[name],
+					issuedAt: 1000,
+					ttlSeconds: 4000,
+				});
+				const withAttestation = [...chain];
+				withAttestation[1] = await CorePublic.signEntityStatement(
+					attested,
+					new CorePublic.JwkSigner(f.keys.anchor.privateKey),
+				);
+				const checked = await CorePublic.validateTrustChain(withAttestation, f.anchors, f.options);
+				t.true(checked.valid, JSON.stringify(checked));
+			}
+		});
+		test("wallet entity types can be constrained without removing permitted metadata", async (t) => {
+			for (const type of [
+				"openid_wallet_provider",
+				"openid_credential_issuer",
+				"openid_credential_verifier",
+			])
+				t.true(
+					TrustChainConstraintsSchema.safeParse({ allowed_entity_types: [type] }).success,
+					type,
+				);
+			const f = await walletFederation();
+			const chain = [...f.chains.get(f.ids.verifier)!];
+			const original = CorePublic.decodeEntityStatement(chain[1]!);
+			if (!original.ok) {
+				t.true(original.ok);
+				return;
+			}
+			chain[1] = await CorePublic.signEntityStatement(
+				{
+					...original.value.payload,
+					constraints: { allowed_entity_types: ["openid_credential_verifier"] },
+				},
+				new CorePublic.JwkSigner(f.keys.anchor.privateKey),
+			);
+			const result = await validateTrustChain(chain, f.anchors, f.options);
+			t.true(result.valid, JSON.stringify(result));
+			if (result.valid) t.ok(result.chain.resolvedMetadata.openid_credential_verifier);
+		});
+		test("role validation receives detached composed metadata and rejects missing role blocks", async (t) => {
+			const f = await walletFederation();
+			const metadata = { custom: { nested: { value: "published" } } };
+			const context = {
+				entityId: f.ids.provider,
+				keyProvider: {
+					getFederationKeySet: async () => ({
+						signer: new CorePublic.JwkSigner(f.keys.provider.privateKey),
+						jwks: { keys: [f.keys.provider.publicKey] },
+					}),
+				},
+			};
+			const role = {
+				type: "custom",
+				metadata: {},
+				validateMetadata: (block: Readonly<Record<string, unknown>>) => {
+					(block.nested as Record<string, unknown>).value = "changed by validator";
+				},
+			};
+			CorePublic.validateRoleMetadata([role], metadata, context);
+			t.equal(metadata.custom.nested.value, "published");
+			t.throws(() => CorePublic.validateRoleMetadata([role], {}, context), /must be an object/);
+		});
+		test("preserves strict validation and completes only reserved absent policy inputs", async (t) => {
+			const f = await walletFederation({ policy: { dcql_queries: { essential: true } } });
+			const chain = f.chains.get(f.ids.verifier)!;
+			t.false((await validateTrustChain(chain, f.anchors, f.options)).valid);
+			const prepared = await CorePublic.prepareTrustChainValidation(chain, f.anchors, {
+				...f.options,
+				deferredClaims: [{ entityType: "openid_credential_verifier", parameter: "dcql_queries" }],
+			});
+			t.true(prepared.ok, JSON.stringify(prepared));
+			if (!prepared.ok) return;
+			t.equal(prepared.value.pendingClaims.length, 1);
+			t.false((await CorePublic.completeTrustChainValidation(prepared.value)).ok);
+			t.false(
+				(
+					await CorePublic.completeTrustChainValidation(prepared.value, {
+						openid_credential_verifier: { jwks: {} },
+					})
+				).ok,
+			);
+			const completed = await CorePublic.completeTrustChainValidation(prepared.value, {
+				openid_credential_verifier: { dcql_queries: [walletQuery] },
+			});
+			t.true(completed.ok, JSON.stringify(completed));
+			if (completed.ok) {
+				t.deepEqual(completed.value.resolvedMetadata.openid_credential_verifier?.dcql_queries, [
+					walletQuery,
+				]);
+				t.strictEqual(
+					completed.value.statements[0]?.payload.metadata?.openid_credential_verifier?.dcql_queries,
+					undefined,
+					"Context never changes signed metadata",
+				);
+			}
+			t.false(
+				(await validateTrustChain(chain, f.anchors, f.options)).valid,
+				"Preparation does not weaken subsequent normal validation",
+			);
+		});
+		test("retains signed source metadata while applying superior replacements", async (t) => {
+			const f = await walletFederation({
+				verifierOverride: { request_uris: ["https://verifier.example/approved"] },
+			});
+			const checked = await validateTrustChain(f.chains.get(f.ids.verifier)!, f.anchors, f.options);
+			t.true(checked.valid, JSON.stringify(checked));
+			if (!checked.valid) return;
+			t.deepEqual(
+				checked.chain.statements[0]?.payload.metadata?.openid_credential_verifier?.request_uris,
+				["https://verifier.example/request"],
+			);
+			t.deepEqual(checked.chain.resolvedMetadata.openid_credential_verifier?.request_uris, [
+				"https://verifier.example/approved",
+			]);
+		});
+		test("cannot defer published values or unrelated required policies", async (t) => {
+			const f = await walletFederation({
+				policy: { dcql_queries: { essential: true }, required_endpoint: { essential: true } },
+			});
+			const result = await CorePublic.prepareTrustChainValidation(
+				f.chains.get(f.ids.verifier)!,
+				f.anchors,
+				{
+					...f.options,
+					deferredClaims: [{ entityType: "openid_credential_verifier", parameter: "dcql_queries" }],
+				},
+			);
+			t.false(result.ok);
+			const other = await walletFederation({
+				verifierMetadata: { dcql_queries: "invalid" },
+				policy: { dcql_queries: { subset_of: [walletQuery] } },
+			});
+			t.false(
+				(
+					await CorePublic.prepareTrustChainValidation(
+						other.chains.get(other.ids.verifier)!,
+						other.anchors,
+						{
+							...other.options,
+							deferredClaims: [
+								{ entityType: "openid_credential_verifier", parameter: "dcql_queries" },
+							],
+						},
+					)
+				).ok,
+			);
+		});
+		test("preparation snapshots anchors and rejects fabrication, expiry, and cancellation", async (t) => {
+			const f = await walletFederation();
+			const controller = new AbortController();
+			const prepared = await CorePublic.prepareTrustChainValidation(
+				f.chains.get(f.ids.verifier)!,
+				f.anchors,
+				{ ...f.options, signal: controller.signal, deferredClaims: [] },
+			);
+			t.true(prepared.ok);
+			if (!prepared.ok) return;
+			t.true(Object.isFrozen(prepared.value.resolvedMetadata));
+			t.false(
+				(await CorePublic.completeTrustChainValidation({ ...prepared.value })).ok,
+				"A copied handle is not authenticated preparation state",
+			);
+			f.anchors.get(f.ids.anchor)!.jwks.keys[0]!.kid = "changed-after-preparation";
+			t.true(
+				(await CorePublic.completeTrustChainValidation(prepared.value)).ok,
+				"Pinned evidence was snapshotted",
+			);
+			f.setTime(5000);
+			t.false((await CorePublic.completeTrustChainValidation(prepared.value)).ok);
+			f.setTime(1500);
+			controller.abort();
+			t.false((await CorePublic.completeTrustChainValidation(prepared.value)).ok);
+			t.false(
+				(
+					await CorePublic.prepareTrustChainValidation(f.chains.get(f.ids.verifier)!, f.anchors, {
+						...f.options,
+						signal: controller.signal,
+						deferredClaims: [],
+					})
+				).ok,
+			);
+		});
+	});
 
 	module("core / public root exports", () => {
 		test("exports createFederationSigningKey for public federation key provider setup", async (t) => {
@@ -803,14 +1034,17 @@ export default (QUnit: QUnit) => {
 			t.equal(JwtTyp.TrustMark, "trust-mark+jwt");
 		});
 
-		test("EntityType has all 6 types", (t) => {
-			t.equal(Object.keys(EntityType).length, 6);
+		test("EntityType includes protocol roles and wallet roles", (t) => {
+			t.equal(Object.keys(EntityType).length, 9);
 			t.equal(EntityType.FederationEntity, "federation_entity");
 			t.equal(EntityType.OpenIDRelyingParty, "openid_relying_party");
 			t.equal(EntityType.OpenIDProvider, "openid_provider");
 			t.equal(EntityType.OAuthAuthorizationServer, "oauth_authorization_server");
 			t.equal(EntityType.OAuthClient, "oauth_client");
 			t.equal(EntityType.OAuthResource, "oauth_resource");
+			t.equal(EntityType.OpenIDWalletProvider, "openid_wallet_provider");
+			t.equal(EntityType.OpenIDCredentialIssuer, "openid_credential_issuer");
+			t.equal(EntityType.OpenIDCredentialVerifier, "openid_credential_verifier");
 		});
 
 		test("PolicyOperator has all 7 operators", (t) => {

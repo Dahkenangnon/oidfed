@@ -20,3 +20,7 @@ npx c8 check-coverage --include 'packages/leaf/src/**' \
 
 npx c8 check-coverage --include 'packages/oidc/src/**' \
 	--statements 85 --branches 75 --functions 85 --lines 85
+
+# Wallet federation and authentication use the same floor as core.
+npx c8 check-coverage --include 'packages/wallet/src/**' \
+	--statements 90 --branches 85 --functions 90 --lines 90

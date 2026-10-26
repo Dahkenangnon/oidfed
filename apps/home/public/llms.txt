@@ -1,19 +1,20 @@
 # @oidfed
 
-> The complete OpenID Federation 1.0 implementation for JavaScript — runtime-agnostic, spec-compliant, built on Web API standards. Trust chain resolution and validation, metadata policy enforcement, trust marks, constraint checking, and automatic + explicit client registration, split across four focused packages. Runs on Node.js, Deno, Bun, workerd, Electron, and browsers with identical behaviour. Only runtime dependencies are `jose` and `zod`.
+> OpenID Federation for JavaScript and TypeScript: trust-chain discovery and validation, metadata policies, Trust Marks, constraints, OIDC registration, and wallet roles. The five libraries use standard Web APIs and share a test suite across Node.js, Deno, Bun, workerd, Electron, and Chromium. Their runtime dependencies are `jose` and `zod`.
 
-@oidfed is a protocol-complete, production-oriented implementation of the [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) specification. It is framework-agnostic and transport-agnostic: all endpoints are exposed as standard `(Request) => Promise<Response>` handlers you wire into any HTTP framework (Express, Hono, Fastify, Cloudflare Workers, Deno Deploy, etc.). All persistent state is behind pluggable storage interfaces — database and HSM integrations live entirely outside the core packages.
+@oidfed implements the [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) trust framework and related specifications listed below. Its endpoint handlers accept a standard `Request` and return a `Promise<Response>`. Applications connect them to an HTTP server or worker and supply persistent storage and key-provider implementations.
 
 ## Packages
 
 - [@oidfed/core](https://github.com/Dahkenangnon/oidfed/blob/main/packages/core/README.md): Federation primitives — entity statements, trust chain resolution and validation, metadata policy, JOSE operations, typed schemas, caching, and trust marks. Foundation for every other package.
-- [@oidfed/authority](https://github.com/Dahkenangnon/oidfed/blob/main/packages/authority/README.md): Trust Anchor and Intermediate Authority operations — subordinate management, statement issuance, spec-defined federation endpoint handlers (fetch, list, resolve, registration, trust-mark-status, historical-keys), and policy enforcement.
+- [@oidfed/authority](https://github.com/Dahkenangnon/oidfed/blob/main/packages/authority/README.md): Trust Anchor and Intermediate Authority operations: subordinate management, statement issuance, and federation endpoint handlers, including fetch, list, resolve, Extended Listing, Subordinate Events, and Entity Collection.
 - [@oidfed/leaf](https://github.com/Dahkenangnon/oidfed/blob/main/packages/leaf/README.md): Leaf Entity toolkit — Entity Configuration serving, authority discovery, and trust chain participation for any entity at the edge of a federation (typically RPs or OPs that don't issue subordinate statements).
 - [@oidfed/oidc](https://github.com/Dahkenangnon/oidfed/blob/main/packages/oidc/README.md): OpenID Connect and OAuth 2.0 federation flows — automatic and explicit client registration, Request Object validation, and typed RP/OP metadata processing as defined in OpenID Federation 1.0 §12.
+- [@oidfed/wallet](https://github.com/Dahkenangnon/oidfed/blob/main/docs/packages/wallet.md): Wallet Provider, Credential Issuer, and Credential Verifier roles, federation trust checks, JWT Wallet Attestations, and protocol-engine integrations.
 
 ## Tools
 
-- [@oidfed/cli](https://github.com/Dahkenangnon/oidfed/blob/main/docs/tools/cli.md): Command-line interface for inspecting, validating, and debugging OpenID Federation deployments — resolve trust chains, decode entity statements, verify signatures, check trust mark status, keygen, sign, health checks, expiry monitoring. 14 commands. Install with `npm i -g @oidfed/cli`.
+- [@oidfed/cli](https://github.com/Dahkenangnon/oidfed/blob/main/docs/tools/cli.md): Command-line interface for inspecting, validating, and debugging OpenID Federation deployments: resolve trust chains, decode entity statements, verify signatures, check trust mark status, generate keys, sign statements, and query listing, collection, and event endpoints. Install with `npm i -g @oidfed/cli`.
 
 ## Apps
 
@@ -39,7 +40,7 @@
 - [OpenID Federation for OpenID Connect 1.1](https://openid.net/specs/openid-federation-connect-1_1.html) *(final)* — protocol-specific layer (OAuth 2.0 / OIDC entity types, client registration). **Implemented** by virtue of 1.0.
 - [OpenID Federation Extended Subordinate Listing 1.0](https://openid.net/specs/openid-federation-extended-listing-1_0.html) *(draft 03)* — paginated subordinate listing with audit timestamps and bulk per-entity claim retrieval. **Implemented** end-to-end (server, client, CLI).
 - [OpenID Federation Entity Collection 1.0](https://openid.net/specs/openid-federation-entity-collection-1_0.html) *(draft 01)*: implemented in core. Authorities and leaves can serve the endpoint. Supports explicit snapshot refresh, filters, informational metadata, language selection, and CLI queries.
-- [OpenID Federation for Wallet Architectures 1.0](https://openid.net/specs/openid-federation-wallet-1_0.html) *(draft 05)* — trust establishment for Wallet ecosystems. Not yet implemented.
+- [OpenID Federation for Wallet Architectures 1.0](https://openid.net/specs/openid-federation-wallet-1_0.html) *(draft 05)*: implemented in `@oidfed/wallet` with composable provider, issuer, and verifier roles, JWT Wallet Attestations, and federation-backed request validation. Applications supply VCI/VP protocol engines and credential-format verification.
 - [ACME with OpenID Federation 1.0](https://datatracker.ietf.org/doc/draft-ietf-acme-openid-federation/) *(IETF Internet-Draft)* — Federation Entity Types for ACME Requestor / Issuer roles; automated X.509 over federation discovery. Not yet implemented.
 
 ## Federation Operator Notes
@@ -55,5 +56,5 @@ Report vulnerabilities to <dah.kenangnon@gmail.com> — see [SECURITY.md](https:
 - **Repository:** <https://github.com/Dahkenangnon/oidfed>
 - **npm organization:** <https://www.npmjs.com/org/oidfed>
 - **Author:** Justin Dah-kenangnon (<https://github.com/Dahkenangnon>)
-- **License:** Apache-2.0 (libraries · @oidfed/core·authority·leaf·oidc·cli) · MIT (apps · home·explorer·learn)
+- **License:** Apache-2.0 (libraries and CLI · @oidfed/core·authority·leaf·oidc·wallet·cli) · MIT (apps · home·explorer·learn)
 - **Runtime dependencies:** [`jose`](https://github.com/panva/jose), [`zod`](https://github.com/colinhacks/zod).

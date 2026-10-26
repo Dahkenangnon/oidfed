@@ -1,6 +1,7 @@
 /** Shared handler context: signing keys, stores, and configuration for all endpoints. */
 import type {
 	EntityId,
+	EntityRole,
 	EntityStatementMetadata,
 	EntityType,
 	FederationEntityMetadata,
@@ -19,6 +20,7 @@ export interface AuthorityClientKeyProvider {
 }
 
 export interface HandlerContext {
+	readonly roles?: readonly EntityRole[];
 	/** The entity identifier (URL) for this authority. */
 	readonly entityId: EntityId;
 	/** Superior authorities this entity is subordinate to. */

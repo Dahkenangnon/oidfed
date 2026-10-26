@@ -3,7 +3,11 @@
  * Subordinate Statements emitted by this Authority. Used by the EC builder,
  * the fetch endpoint, and the subordinate store.
  */
-import { PolicyOperator, STANDARD_ENTITY_STATEMENT_CLAIMS } from "@oidfed/core";
+import {
+	findInvalidMetadataNullPaths,
+	PolicyOperator,
+	STANDARD_ENTITY_STATEMENT_CLAIMS,
+} from "@oidfed/core";
 import { InvalidMetadata, InvalidSubordinateStatementShape } from "../errors.js";
 
 export { InvalidMetadata, InvalidSubordinateStatementShape };
@@ -230,30 +234,24 @@ export function assertMetadataPolicyShape(payload: Record<string, unknown>): voi
 }
 
 /**
- * Walks the metadata object recursively and throws `InvalidMetadata` if any
- * leaf is `null`. Treats arrays as ordered leaves and recurses into objects.
+ * Reject null metadata values, allowing wildcard components in wallet claim paths.
  */
 export function assertMetadataValuesNotNull(
 	metadata: Readonly<Record<string, unknown>> | undefined,
 ): void {
 	if (metadata === undefined) return;
 	if (!isPlainObject(metadata)) return;
-	walk(metadata, "");
-}
-
-function walk(value: unknown, path: string): void {
-	if (value === null) {
+	const invalid = findInvalidMetadataNullPaths(metadata)[0];
+	if (invalid) {
+		const path = invalid.reduce<string>(
+			(prefix, component) =>
+				typeof component === "number"
+					? `${prefix}[${component}]`
+					: prefix
+						? `${prefix}.${component}`
+						: component,
+			"",
+		);
 		throw new InvalidMetadata(path || "<root>");
-	}
-	if (Array.isArray(value)) {
-		for (let i = 0; i < value.length; i++) {
-			walk(value[i], `${path}[${i}]`);
-		}
-		return;
-	}
-	if (isPlainObject(value)) {
-		for (const [k, v] of Object.entries(value)) {
-			walk(v, path ? `${path}.${k}` : k);
-		}
 	}
 }

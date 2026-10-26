@@ -7,7 +7,7 @@
  *   node scripts/release.mjs <package> <bump> [--dry-run|--prepare]
  *   node scripts/release.mjs <package> --finalize
  *
- * <package>  core | authority | leaf | oidc | cli | all
+ * <package>  core | authority | leaf | oidc | wallet | cli | all
  * <bump>     patch | minor | major
  *
  * Examples:
@@ -32,6 +32,7 @@ const PACKAGES = {
 	authority: { dir: "packages/authority", scope: "authority" },
 	leaf: { dir: "packages/leaf", scope: "leaf" },
 	oidc: { dir: "packages/oidc", scope: "oidc" },
+	wallet: { dir: "packages/wallet", scope: "wallet" },
 	cli: { dir: "tools/cli", scope: "cli" },
 };
 

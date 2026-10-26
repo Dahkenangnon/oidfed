@@ -48,6 +48,9 @@ export const EntityType = {
 	OAuthAuthorizationServer: "oauth_authorization_server",
 	OAuthClient: "oauth_client",
 	OAuthResource: "oauth_resource",
+	OpenIDWalletProvider: "openid_wallet_provider",
+	OpenIDCredentialIssuer: "openid_credential_issuer",
+	OpenIDCredentialVerifier: "openid_credential_verifier",
 } as const;
 export type EntityType = (typeof EntityType)[keyof typeof EntityType];
 

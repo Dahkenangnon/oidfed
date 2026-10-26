@@ -15,6 +15,7 @@ const internalVersions = {
 	"@oidfed/authority": "0.8.0",
 	"@oidfed/leaf": "0.8.0",
 	"@oidfed/oidc": "0.8.0",
+	"@oidfed/wallet": "0.8.0",
 	"@oidfed/cli": "0.8.0",
 };
 

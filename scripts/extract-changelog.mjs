@@ -7,13 +7,13 @@
  * Usage:
  *   node scripts/extract-changelog.mjs <scope> <version>
  *
- *   <scope>   core | authority | leaf | oidc | cli | all
+ *   <scope>   core | authority | leaf | oidc | wallet | cli | all
  *   <version> e.g. 0.4.1
  *
  * Solo scope -> prints just that package's section (heading excluded).
  * 'all'      -> prints the root CHANGELOG section (if any), then one
  *               '### @oidfed/<name> <version>' block per package in the
- *               order core, authority, leaf, oidc, cli. Empty package
+ *               order core, authority, leaf, oidc, wallet, cli. Empty package
  *               sections render as '_(no user-facing changes)_'.
  *
  * Exit codes:
@@ -29,6 +29,7 @@ export const PKG_FILES = {
 	authority: "packages/authority/CHANGELOG.md",
 	leaf: "packages/leaf/CHANGELOG.md",
 	oidc: "packages/oidc/CHANGELOG.md",
+	wallet: "packages/wallet/CHANGELOG.md",
 	cli: "tools/cli/CHANGELOG.md",
 };
 
@@ -169,7 +170,7 @@ function main() {
 	const [, , scope, version, prevTag] = process.argv;
 	if (!scope || !version) {
 		process.stderr.write(
-			"Usage: extract-changelog.mjs <core|authority|leaf|oidc|cli|all> <version> [prev-tag]\n",
+			"Usage: extract-changelog.mjs <core|authority|leaf|oidc|wallet|cli|all> <version> [prev-tag]\n",
 		);
 		process.exit(2);
 	}

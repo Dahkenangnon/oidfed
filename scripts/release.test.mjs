@@ -89,6 +89,8 @@ function fixtureFiles() {
 		["packages/leaf/CHANGELOG.md", changelog()],
 		["packages/oidc/package.json", pkgJson("@oidfed/oidc")],
 		["packages/oidc/CHANGELOG.md", changelog()],
+		["packages/wallet/package.json", pkgJson("@oidfed/wallet")],
+		["packages/wallet/CHANGELOG.md", changelog()],
 		["tools/cli/package.json", pkgJson("@oidfed/cli")],
 		["tools/cli/CHANGELOG.md", changelog()],
 	]);
@@ -147,6 +149,8 @@ test("createReleasePlan — all packages includes every package plus manual root
 		"packages/leaf/CHANGELOG.md",
 		"packages/oidc/package.json",
 		"packages/oidc/CHANGELOG.md",
+		"packages/wallet/package.json",
+		"packages/wallet/CHANGELOG.md",
 		"tools/cli/package.json",
 		"tools/cli/CHANGELOG.md",
 		"package.json",

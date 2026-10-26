@@ -23,6 +23,7 @@ import {
 	type TrustAnchorSet,
 	type TrustMarkRef,
 	validateFederationKeySet,
+	validateRoleMetadata,
 } from "@oidfed/core";
 
 export interface LeafConfig {
@@ -61,6 +62,7 @@ export class Leaf {
 	private readonly routes = new Map<string, (request: Request) => Promise<Response>>();
 	private readonly config: LeafConfig;
 	private readonly metadata: Record<string, Record<string, unknown>>;
+	private readonly roleContext: EntityContext;
 
 	private cachedJwt: string | null = null;
 	private cachedExp: number | null = null;
@@ -111,6 +113,7 @@ export class Leaf {
 			...(config.trustAnchors ? { trustAnchors: config.trustAnchors } : {}),
 			authorityHints: config.authorityHints as readonly EntityId[],
 		};
+		this.roleContext = context;
 
 		if (config.roles) {
 			for (const role of config.roles) {
@@ -129,6 +132,7 @@ export class Leaf {
 				}
 			}
 		}
+		validateRoleMetadata(config.roles, metadata, context);
 		this.metadata = metadata;
 		const collectionEndpoint = metadata.federation_entity?.federation_collection_endpoint;
 		if (collectionEndpoint !== undefined && typeof collectionEndpoint !== "string")
@@ -205,6 +209,7 @@ export class Leaf {
 	}
 
 	private async buildEntityConfiguration(): Promise<string> {
+		validateRoleMetadata(this.config.roles, this.metadata, this.roleContext);
 		const keySet = await this.config.keyProvider.getFederationKeySet();
 		validateFederationKeySet(keySet);
 		const now = nowSeconds(this.config.options?.clock);

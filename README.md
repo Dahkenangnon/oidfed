@@ -2,9 +2,9 @@
 
 OpenID Federation's protocol-independent trust framework for JavaScript and TypeScript. Build Trust Anchors, Intermediate Authorities, and Leaf Entities that publish signed Entity Statements, discover and validate trust chains, apply metadata policies, and issue or verify Trust Marks.
 
-The four libraries use standard Web APIs, including `Request`, `Response`, and Web Crypto. The same package test suite runs on Node.js, Deno, Bun, workerd (the Cloudflare Workers runtime), Electron, and Chromium.
+The five libraries use standard Web APIs, including `Request`, `Response`, and Web Crypto. The same package test suite runs on Node.js, Deno, Bun, workerd (the Cloudflare Workers runtime), Electron, and Chromium.
 
-Protocol-specific roles can add metadata and handlers to those entities. `@oidfed/oidc` supplies the OpenID Connect and OAuth integrations.
+Protocol-specific roles add metadata and handlers to those entities. `@oidfed/oidc` supplies OpenID Connect and OAuth integrations; `@oidfed/wallet` supplies Wallet Provider, Credential Issuer, and Credential Verifier roles.
 
 ## Implemented specifications and features
 
@@ -16,6 +16,7 @@ Protocol-specific roles can add metadata and handlers to those entities. `@oidfe
 | [Extended Subordinate Listing 1.0, Draft 03](https://openid.net/specs/openid-federation-extended-listing-1_0.html) | Opaque `from` / `next` pagination, repeated Trust Mark type filters, audit timestamps, and selected Subordinate Statement claims. |
 | [Subordinate Events Endpoint 1.0, Draft 01](https://openid.net/specs/openid-federation-subordinate-events-1_0.html) | Signed subordinate event history, transactional lifecycle recording, and verified library and CLI retrieval. |
 | [Entity Collection Endpoint 1.0, Draft 01](https://openid.net/specs/openid-federation-entity-collection-1_0.html) | Discovery of direct and indirect subordinates, with filters, informational metadata, language selection, and opaque pagination. Federation Entities and independent applications can serve the endpoint. |
+| [Wallet Architectures 1.0, Draft 05](https://openid.net/specs/openid-federation-wallet-1_0.html) | Provider, issuer, and verifier roles, federation-backed request checks, Wallet Attestations, and credential-verification integrations. |
 
 The two Federation 1.1 specifications separate the functionality defined in 1.0 and introduce no new functionality. Optional endpoints and registration features require the corresponding metadata and configuration; see the package documentation below.
 
@@ -29,9 +30,10 @@ See the [OpenID Federation ecosystem](https://oidfed.com/ecosystem/) for related
 | [`@oidfed/authority`](docs/packages/authority.md) | Trust Anchors and Intermediates: subordinate management, statement issuance, and federation endpoint handlers. |
 | [`@oidfed/leaf`](docs/packages/leaf.md) | Leaf Entity Configurations and trust-chain discovery. |
 | [`@oidfed/oidc`](docs/packages/oidc.md) | OIDC and OAuth roles composed into an authority or leaf, with federation registration for OPs and RPs. |
+| [`@oidfed/wallet`](docs/packages/wallet.md) | Wallet ecosystem roles, trust discovery, Wallet Attestations, presentation request policies, and credential-format integrations. |
 | [`@oidfed/cli`](docs/tools/cli.md) | Inspect entities, resolve trust chains, verify statements, and check federation endpoints from the terminal. |
 
-All four libraries include TypeScript types. The CLI runs on Node.js.
+All five libraries include TypeScript types. The CLI runs on Node.js.
 
 ```mermaid
 flowchart TD
@@ -45,7 +47,7 @@ flowchart TD
     IA -->|issues Subordinate Statements| L2
 ```
 
-Arrows show which authority attests to each subordinate. Protocol roles, including OIDC/OAuth roles, can be composed into these entities independently of their position in the hierarchy.
+Arrows show which authority attests to each subordinate. Protocol roles, including OIDC/OAuth and wallet roles, can be composed into these entities independently of their position in the hierarchy.
 
 ## Usage
 
