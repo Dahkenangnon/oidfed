@@ -3,6 +3,7 @@ import { decodeEntityStatement, MemoryReplayStore } from "@oidfed/core";
 import type { Leaf } from "@oidfed/leaf";
 import { OidcProviderRole } from "@oidfed/oidc";
 import express from "express";
+import { decodeJwt } from "jose";
 import Provider from "oidc-provider";
 
 export interface OpenIDProviderAppConfig {
@@ -21,6 +22,10 @@ export interface OpenIDProviderAppConfig {
 	 * for the `?request_uri=` SSRF sink.
 	 */
 	allowedRequestUriHosts: ReadonlySet<string>;
+	/** Opt-in disposable-user login and consent for the external conformance harness. */
+	automaticInteractions?: boolean;
+	/** Fixed test-client callback for OAuth errors; never derived from a request. */
+	authorizationErrorRedirect?: string;
 }
 
 /**
@@ -52,6 +57,7 @@ export function createOpenIDProviderApp(config: OpenIDProviderAppConfig): expres
 		allowedRequestUriHosts,
 	} = config;
 	const app = express();
+	const protocolAlgorithm = oidcSigningKey.alg ?? "ES256";
 
 	const clientStore = new Map<string, StoredClient>();
 	const Adapter = createInMemoryAdapter(clientStore);
@@ -68,9 +74,9 @@ export function createOpenIDProviderApp(config: OpenIDProviderAppConfig): expres
 				response_types: (clientMetadata.response_types as string[]) || ["code"],
 				grant_types: (clientMetadata.grant_types as string[]) || ["authorization_code"],
 				token_endpoint_auth_method: "private_key_jwt",
-				token_endpoint_auth_signing_alg: "ES256",
-				id_token_signed_response_alg: "ES256",
-				request_object_signing_alg: "ES256",
+				token_endpoint_auth_signing_alg: protocolAlgorithm,
+				id_token_signed_response_alg: protocolAlgorithm,
+				request_object_signing_alg: protocolAlgorithm,
 				jwks: clientMetadata.jwks as { keys: JWK[] } | undefined,
 				application_type: "web",
 			});
@@ -104,16 +110,51 @@ export function createOpenIDProviderApp(config: OpenIDProviderAppConfig): expres
 			},
 		}),
 		features: {
+			...(config.automaticInteractions ? { devInteractions: { enabled: false } } : {}),
 			registration: { enabled: false },
 			requestObjects: { enabled: true },
 			pushedAuthorizationRequests: { enabled: true },
 		},
+		...(config.automaticInteractions
+			? {
+					interactions: {
+						url: (_ctx: unknown, interaction: { uid: string }) => `/interaction/${interaction.uid}`,
+					},
+				}
+			: {}),
 	});
 
 	oidc.proxy = true;
 
 	app.use(express.raw({ type: "application/entity-statement+jwt", limit: "64kb" }));
 	app.use(express.urlencoded({ extended: false, limit: "128kb" }));
+	if (config.automaticInteractions) {
+		app.get("/interaction/:uid", async (req, res) => {
+			const details = await oidc.interactionDetails(req, res);
+			if (details.prompt.name === "login") {
+				await oidc.interactionFinished(
+					req,
+					res,
+					{ login: { accountId: "conformance-user" } },
+					{ mergeWithLastSubmission: false },
+				);
+			} else if (details.prompt.name === "consent") {
+				const grant = new oidc.Grant({
+					accountId: details.session?.accountId ?? "conformance-user",
+					clientId: String(details.params.client_id),
+				});
+				grant.addOIDCScope(String(details.params.scope ?? "openid"));
+				await oidc.interactionFinished(
+					req,
+					res,
+					{ consent: { grantId: await grant.save() } },
+					{ mergeWithLastSubmission: true },
+				);
+			} else {
+				res.status(400).json({ error: "unsupported_interaction" });
+			}
+		});
+	}
 
 	// Leaf federation endpoint — serves Entity Configuration only.
 	app.all("/.well-known/openid-federation", async (req, res) => {
@@ -185,6 +226,31 @@ export function createOpenIDProviderApp(config: OpenIDProviderAppConfig): expres
 		return fetchResp.text();
 	}
 
+	function authorizationFailure(
+		res: express.Response,
+		requestJwt: string,
+		error: { errorCode: string; errorDescription: string },
+	) {
+		// Negative conformance cases need an OAuth callback rather than a screenshot
+		// of an error page. The sole permitted destination is configured by the test
+		// launcher. Decoding here supplies state only; it never establishes trust.
+		if (config.authorizationErrorRedirect) {
+			try {
+				const claims = decodeJwt(requestJwt);
+				if (claims.redirect_uri === config.authorizationErrorRedirect) {
+					const callback = new URL(config.authorizationErrorRedirect);
+					callback.searchParams.set("error", "invalid_request_object");
+					if (typeof claims.state === "string") callback.searchParams.set("state", claims.state);
+					res.redirect(callback.href);
+					return;
+				}
+			} catch {
+				// Malformed JWTs retain the ordinary non-redirecting error response.
+			}
+		}
+		res.status(400).json({ error: error.errorCode, error_description: error.errorDescription });
+	}
+
 	// GET /auth — intercepts ?request= and ?request_uri=https://…
 	app.get("/auth", async (req, res, next) => {
 		const requestJwt = req.query.request as string | undefined;
@@ -202,7 +268,18 @@ export function createOpenIDProviderApp(config: OpenIDProviderAppConfig): expres
 		if (inboundJwt) {
 			const pre = await preregister(inboundJwt);
 			if (!pre.ok) {
-				res.status(400).json({ error: pre.errorCode, error_description: pre.errorDescription });
+				authorizationFailure(res, inboundJwt, pre);
+				return;
+			}
+			if (
+				config.authorizationErrorRedirect &&
+				typeof req.query.client_id === "string" &&
+				req.query.client_id !== decodeJwt(inboundJwt).client_id
+			) {
+				authorizationFailure(res, inboundJwt, {
+					errorCode: "invalid_request_object",
+					errorDescription: "Outer client_id differs from the verified Request Object",
+				});
 				return;
 			}
 		}
@@ -237,7 +314,7 @@ export function createOpenIDProviderApp(config: OpenIDProviderAppConfig): expres
 		if (typeof requestJwt === "string") {
 			const pre = await preregister(requestJwt);
 			if (!pre.ok) {
-				res.status(400).json({ error: pre.errorCode, error_description: pre.errorDescription });
+				authorizationFailure(res, requestJwt, pre);
 				return;
 			}
 		}

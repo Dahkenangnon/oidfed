@@ -6,6 +6,7 @@ coverage/
 .certs/
 build/
 .react-router/
+.conformance/
 tests/tap/.build/
 test-results/
 .nyc_output/

@@ -19,9 +19,13 @@
 		"test:tap:electron": "bash tests/tap/.electron.sh",
 		"test:tap:browser": "bash tests/tap/.browsers.sh",
 		"test:coverage": "bash scripts/coverage-check.sh",
-		"typecheck": "turbo run typecheck --filter='./packages/*' --filter='./tools/*' && tsc -p tests/tap/tsconfig.json --noEmit && pnpm typecheck:e2e && pnpm typecheck:scripts",
+		"typecheck": "turbo run typecheck --filter='./packages/*' --filter='./tools/*' && tsc -p tests/tap/tsconfig.json --noEmit && pnpm typecheck:e2e && pnpm typecheck:scripts && pnpm typecheck:conformance",
 		"typecheck:scripts": "tsc -p scripts/tsconfig.json --noEmit",
 		"typecheck:e2e": "tsc -p tests/e2e/tsconfig.json --noEmit",
+		"typecheck:conformance": "tsc -p tests/conformance/tsconfig.json --noEmit",
+		"test:conformance": "python3 tests/conformance/run.py --profile deployed",
+		"test:conformance:full": "python3 tests/conformance/run.py --profile full",
+		"test:conformance:unit": "python3 -m unittest discover -s tests/conformance -p 'test_*.py'",
 		"typecheck:apps": "turbo run typecheck --filter='./apps/*' --filter='./internal/*'",
 		"lint": "biome check --error-on-warnings biome.json packages apps tools internal tests scripts",
 		"lint:fix": "biome check --write biome.json packages apps tools internal tests scripts",
@@ -74,6 +78,7 @@
 		"@oidfed/core": "workspace:*",
 		"@oidfed/leaf": "workspace:*",
 		"@oidfed/oidc": "workspace:*",
+		"@oidfed/wallet": "workspace:*",
 		"@playwright/test": "^1.64.0",
 		"@types/express": "^5.0.6",
 		"@types/node": "^22.20.5",
@@ -86,6 +91,7 @@
 		"husky": "^9.1.7",
 		"jose": "^6.2.13",
 		"oidc-provider": "^9.12.2",
+		"openid-client": "6.8.8",
 		"qunit": "^3.0.0",
 		"ts-blank-space": "^0.9.0",
 		"tsup": "^8.0.0",
@@ -93,8 +99,7 @@
 		"turbo": "^2.11.9",
 		"typescript": "^6.0.3",
 		"undici": "^8.12.2",
-		"vitest": "^5.0.5",
-		"@oidfed/wallet": "workspace:*"
+		"vitest": "^5.0.5"
 	},
 	"pnpm": {
 		"onlyBuiltDependencies": [
