@@ -238,6 +238,15 @@ export async function automaticRegistration(
 
 	const delivery: RequestDelivery = rpConfig.requestDelivery ?? "form_post";
 	const clientIdStr = rpConfig.entityId as string;
+	// OIDC Core §§6.1–6.2 require these outer parameters; RFC 9101 §5
+	// permits matching duplicates. Copy the signed values to prevent divergence.
+	const oidcParams: Record<string, string> = {};
+	if (rpConfig.metadata.openid_relying_party !== undefined) {
+		for (const name of ["scope", "response_type"]) {
+			const value = payload[name];
+			if (typeof value === "string") oidcParams[name] = value;
+		}
+	}
 
 	switch (delivery) {
 		case "query":
@@ -245,6 +254,7 @@ export async function automaticRegistration(
 				...base,
 				delivery: "query",
 				authorizationUrl: buildAuthorizationUrl(authorizationEndpoint, {
+					...oidcParams,
 					request: requestObjectJwt,
 					client_id: clientIdStr,
 				}),
@@ -256,6 +266,7 @@ export async function automaticRegistration(
 				delivery: "form_post",
 				authorizationEndpoint,
 				formParams: {
+					...oidcParams,
 					request: requestObjectJwt,
 					client_id: clientIdStr,
 				},
@@ -292,6 +303,7 @@ export async function automaticRegistration(
 				delivery: "request_uri",
 				requestUri: hostedUri,
 				authorizationUrl: buildAuthorizationUrl(authorizationEndpoint, {
+					...oidcParams,
 					request_uri: hostedUri,
 					client_id: clientIdStr,
 				}),
