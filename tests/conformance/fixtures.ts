@@ -14,6 +14,7 @@ import {
 } from "@oidfed/core";
 import { Leaf } from "@oidfed/leaf";
 import { OidcRelyingPartyRole, StaticProtocolSigningKeyProvider } from "@oidfed/oidc";
+import { rateLimit } from "express-rate-limit";
 import { importJWK, type JWK as JoseJWK } from "jose";
 import * as oidc from "openid-client";
 import { createAuthorityApp } from "../e2e/participants/authority-app.js";
@@ -130,6 +131,15 @@ const sessions = new Map<
 	{ configuration: oidc.Configuration; verifier: string; nonce: string; expires: number }
 >();
 const rpApp = createLeafApp(rpLeaf, base("rp"));
+rpApp.use(
+	rateLimit({
+		windowMs: 60_000,
+		limit: 1_000,
+		keyGenerator: () => "fixture",
+		standardHeaders: "draft-8",
+		legacyHeaders: false,
+	}),
+);
 rpApp.get("/login", async (_req, res) => {
 	for (const [id, session] of sessions) if (session.expires < Date.now()) sessions.delete(id);
 	if (sessions.size >= 100) {
@@ -210,25 +220,19 @@ rpApp.get("/callback", async (req, res) => {
 		res.status(400).json({ accepted: false, stage: "protocol" });
 	}
 });
-const apps = new Map([
-	["ta.ofed.test", createAuthorityApp(ta, base("ta"))],
-	["ia.ofed.test", createAuthorityApp(ia, base("ia"))],
-	["leaf.ofed.test", createLeafApp(leaf, base("leaf"))],
-	[
-		"op.ofed.test",
-		createOpenIDProviderApp({
-			leaf: opLeaf,
-			entityId: base("op"),
-			trustAnchors: anchors,
-			federationKeyProvider: opKeys,
-			oidcSigningKey: key(7).privateKey,
-			allowedRequestUriHosts: new Set(["suite.ofed.test"]),
-			automaticInteractions: true,
-			authorizationErrorRedirect: `${suite}/test/a/${settings.runId}-op/callback`,
-		}),
-	],
-	["rp.ofed.test", rpApp],
-]);
+const taApp = createAuthorityApp(ta, base("ta"));
+const iaApp = createAuthorityApp(ia, base("ia"));
+const leafApp = createLeafApp(leaf, base("leaf"));
+const opApp = createOpenIDProviderApp({
+	leaf: opLeaf,
+	entityId: base("op"),
+	trustAnchors: anchors,
+	federationKeyProvider: opKeys,
+	oidcSigningKey: key(7).privateKey,
+	allowedRequestUriHosts: new Set(["suite.ofed.test"]),
+	automaticInteractions: true,
+	authorizationErrorRedirect: `${suite}/test/a/${settings.runId}-op/callback`,
+});
 writeFileSync(
 	join(state, "suite-keys.json"),
 	JSON.stringify({
@@ -250,12 +254,25 @@ const server = https.createServer(
 			res.writeHead(200).end("ready");
 			return;
 		}
-		const app = apps.get((req.headers.host ?? "").split(":")[0] ?? "");
-		if (!app) {
-			res.writeHead(404).end();
-			return;
+		switch ((req.headers.host ?? "").split(":")[0]) {
+			case "ta.ofed.test":
+				taApp(req, res);
+				break;
+			case "ia.ofed.test":
+				iaApp(req, res);
+				break;
+			case "leaf.ofed.test":
+				leafApp(req, res);
+				break;
+			case "op.ofed.test":
+				opApp(req, res);
+				break;
+			case "rp.ofed.test":
+				rpApp(req, res);
+				break;
+			default:
+				res.writeHead(404).end();
 		}
-		app(req, res);
 	},
 );
 server.listen(8443, "0.0.0.0");

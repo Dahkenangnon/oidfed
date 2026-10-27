@@ -30,7 +30,7 @@ python3 tests/conformance/run.py --profile full --source /path/to/conformance-su
 
 The checkout must match the revision in
 [`baseline.json`](../../tests/conformance/baseline.json). The harness rejects a
-different revision or tracked source changes and checks the plan inventory
+different revision or local source changes and checks the plan inventory
 before building. It does not patch the Foundation's tests.
 
 Each run creates its own Compose project, network, database, CA, TLS certificate,

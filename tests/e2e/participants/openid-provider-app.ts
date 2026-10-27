@@ -3,6 +3,7 @@ import { decodeEntityStatement, MemoryReplayStore } from "@oidfed/core";
 import type { Leaf } from "@oidfed/leaf";
 import { OidcProviderRole } from "@oidfed/oidc";
 import express from "express";
+import { rateLimit } from "express-rate-limit";
 import { decodeJwt } from "jose";
 import Provider from "oidc-provider";
 
@@ -26,6 +27,8 @@ export interface OpenIDProviderAppConfig {
 	automaticInteractions?: boolean;
 	/** Fixed test-client callback for OAuth errors; never derived from a request. */
 	authorizationErrorRedirect?: string;
+	/** Shared fixture budget, independent of request headers or client identity. */
+	requestLimitPerMinute?: number;
 }
 
 /**
@@ -57,6 +60,15 @@ export function createOpenIDProviderApp(config: OpenIDProviderAppConfig): expres
 		allowedRequestUriHosts,
 	} = config;
 	const app = express();
+	app.use(
+		rateLimit({
+			windowMs: 60_000,
+			limit: config.requestLimitPerMinute ?? 1_000,
+			keyGenerator: () => "fixture",
+			standardHeaders: "draft-8",
+			legacyHeaders: false,
+		}),
+	);
 	const protocolAlgorithm = oidcSigningKey.alg ?? "ES256";
 
 	const clientStore = new Map<string, StoredClient>();

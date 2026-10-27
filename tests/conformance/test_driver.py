@@ -27,12 +27,12 @@ class ResultPolicy(unittest.TestCase):
 
     def test_optional_skip_is_narrow(self):
         info = {"status": "FINISHED", "result": "SKIPPED"}
-        logs = [{"msg": "The server does not support encrypted request objects"}]
+        logs = [{"result": "SKIPPED", "msg": "The test was skipped: The server does not support encrypted request objects"}]
         self.assertTrue(grade(ENCRYPTED, "op", info, logs))
         self.assertFalse(grade("another-module", "op", info, logs))
         self.assertFalse(grade(ENCRYPTED, "op", info, [{"msg": "Other failure"}]))
         fetch = "openid-federation-ensure-fetch-with-invalid-sub-fails"
-        logs = [{"msg": "Entity metadata does not contain a federation_fetch_endpoint."}]
+        logs = [{"result": "SKIPPED", "msg": "The test was skipped: Entity metadata does not contain a federation_fetch_endpoint."}]
         self.assertTrue(grade(fetch, "leaf", info, logs))
         self.assertFalse(grade(fetch, "ia", info, logs))
 
@@ -93,6 +93,15 @@ class ResultPolicy(unittest.TestCase):
             self.assertFalse(state.exists())
             self.assertIn("down", docker.call_args.args[0])
             self.assertIn("--volumes", docker.call_args.args[0])
+
+    def test_private_state_is_removed_when_docker_cleanup_raises(self):
+        with tempfile.TemporaryDirectory() as temp, patch("run.subprocess.run", side_effect=OSError("Docker unavailable")):
+            state = Path(temp) / "private"
+            state.mkdir()
+            with self.assertRaises(OSError):
+                with environment(["docker", "compose"], {}, state):
+                    (state / "disposable-key").write_text("private")
+            self.assertFalse(state.exists())
 
 
 class Lifecycle(unittest.IsolatedAsyncioTestCase):

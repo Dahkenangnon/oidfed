@@ -95,37 +95,35 @@ describe("Disposable conformance OP integration", () => {
 
 	it("completes automatic login, consent, code exchange, and ID Token validation", async () => {
 		const { result, rp, rpId, opId, verifier, nonce, state } = await authorization();
-		{
-			const response = await followLogin(result.authorizationUrl, opId, rpId);
-			expect(response.status).toBe(200);
-			const callback = new URL(response.url);
-			expect(callback.origin + callback.pathname).toBe(`${rpId}/callback`);
-			expect(callback.searchParams.get("state")).toBe(state);
-			expect(callback.searchParams.get("error")).toBeNull();
-			expect(callback.searchParams.get("code")).toBeTruthy();
-			const signingKey = await importJWK(
-				JSON.parse(JSON.stringify(rp.keys.protocolSigning)) as JWK,
-				"ES256",
-			);
-			if (signingKey instanceof Uint8Array) throw new Error("Expected an asymmetric key");
-			const configuration = new client.Configuration(
-				{
-					issuer: opId,
-					token_endpoint: `${opId}/token`,
-					jwks_uri: `${opId}/jwks`,
-				},
-				rpId,
-				{ token_endpoint_auth_signing_alg: "ES256", id_token_signed_response_alg: "ES256" },
-				client.PrivateKeyJwt(signingKey),
-			);
-			const tokens = await client.authorizationCodeGrant(configuration, callback, {
-				pkceCodeVerifier: verifier,
-				expectedState: state,
-				expectedNonce: nonce,
-				idTokenExpected: true,
-			});
-			expect(tokens.claims()?.sub).toBe("conformance-user");
-		}
+		const response = await followLogin(result.authorizationUrl, opId, rpId);
+		expect(response.status).toBe(200);
+		const callback = new URL(response.url);
+		expect(callback.origin + callback.pathname).toBe(`${rpId}/callback`);
+		expect(callback.searchParams.get("state")).toBe(state);
+		expect(callback.searchParams.get("error")).toBeNull();
+		expect(callback.searchParams.get("code")).toBeTruthy();
+		const signingKey = await importJWK(
+			JSON.parse(JSON.stringify(rp.keys.protocolSigning)) as JWK,
+			"ES256",
+		);
+		if (signingKey instanceof Uint8Array) throw new Error("Expected an asymmetric key");
+		const configuration = new client.Configuration(
+			{
+				issuer: opId,
+				token_endpoint: `${opId}/token`,
+				jwks_uri: `${opId}/jwks`,
+			},
+			rpId,
+			{ token_endpoint_auth_signing_alg: "ES256", id_token_signed_response_alg: "ES256" },
+			client.PrivateKeyJwt(signingKey),
+		);
+		const tokens = await client.authorizationCodeGrant(configuration, callback, {
+			pkceCodeVerifier: verifier,
+			expectedState: state,
+			expectedNonce: nonce,
+			idTokenExpected: true,
+		});
+		expect(tokens.claims()?.sub).toBe("conformance-user");
 	});
 
 	it("returns errors only to the configured callback and rejects replay", async () => {
@@ -149,5 +147,36 @@ describe("Disposable conformance OP integration", () => {
 		const rejected = await fetch(malicious, { redirect: "manual" });
 		expect(rejected.status).toBe(400);
 		expect(rejected.headers.get("location")).toBeNull();
+	});
+
+	it("limits requests before authentication and does not trust forwarded identities", async () => {
+		const { entities, server, trustAnchors } = getBed();
+		const op = entities.get("https://op.ofed.test");
+		if (!op || !(op.server instanceof Leaf)) throw new Error("Expected an OP leaf");
+		const opId = `https://op.ofed.test:${server.port}`;
+		server.addEntity(
+			opId,
+			createOpenIDProviderApp({
+				leaf: op.server,
+				entityId: opId,
+				trustAnchors,
+				federationKeyProvider: op.keyProvider,
+				oidcSigningKey: op.keys.protocolSigning,
+				allowedRequestUriHosts: new Set(),
+				requestLimitPerMinute: 1,
+			}),
+		);
+		const first = await fetch(`${opId}/.well-known/openid-federation`);
+		expect(first.status).toBe(200);
+		await first.body?.cancel();
+		for (const forwarded of ["198.51.100.1", "198.51.100.2"]) {
+			const blocked = await fetch(`${opId}/auth`, {
+				method: "POST",
+				headers: { "X-Forwarded-For": forwarded },
+			});
+			expect(blocked.status).toBe(429);
+			expect(blocked.headers.get("retry-after")).toBeTruthy();
+			await blocked.body?.cancel();
+		}
 	});
 });

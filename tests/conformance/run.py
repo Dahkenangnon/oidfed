@@ -30,7 +30,8 @@ def checkout(source):
     actual = subprocess.check_output(["git", "-C", str(source), "rev-parse", "HEAD"], text=True).strip()
     if actual != BASELINE["revision"]:
         raise ValueError("Suite checkout does not match baseline.json")
-    command("git", "-C", str(source), "diff", "--exit-code", "HEAD", "--")
+    if subprocess.check_output(["git", "-C", str(source), "status", "--porcelain", "--untracked-files=all"], text=True):
+        raise ValueError("Suite checkout contains local changes")
     # The checked-in inventory must still describe the source we will build.
     import re
     for plan in BASELINE["plans"].values():
@@ -63,9 +64,11 @@ def environment(compose, env, state):
         yield
     finally:
         # No raw container output: fixture and suite logs may include test secrets.
-        result = subprocess.run([*compose, "down", "--volumes", "--remove-orphans", "--timeout", "10"],
-                                env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        shutil.rmtree(state)
+        try:
+            result = subprocess.run([*compose, "down", "--volumes", "--remove-orphans", "--timeout", "10"],
+                                    env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=45)
+        finally:
+            shutil.rmtree(state)
         if result.returncode:
             raise RuntimeError("Docker cleanup failed; remove the reported Compose project manually")
 
@@ -94,23 +97,23 @@ def main(profile, source_override):
     results.mkdir()
     # Container processes use the caller's ownership for report and fixture files.
     # Java/nginx need only read access; the parent private directory is host-only.
-    certificates(state)
-    (state / "settings.json").write_text(json.dumps({"runId": run_id}))
     env = {**os.environ, "OIDF_ROOT": str(ROOT), "OIDF_SOURCE": str(source), "OIDF_STATE": str(state),
            "OIDF_RESULTS": str(results), "OIDF_PROFILE": profile,
            "OIDF_UID": str(os.getuid()), "OIDF_GID": str(os.getgid()), "OIDF_RUNNER": runner}
     compose = ["docker", "compose", "-p", run_id, "-f", str(ROOT / "tests/conformance/compose.yml")]
-    fixture_hash = hashlib.sha256()
-    for path in sorted(definition.iterdir()):
-        if path.is_file():
-            fixture_hash.update(path.name.encode() + b"\0" + path.read_bytes())
-    (results / "build.json").write_text(json.dumps({"revision": BASELINE["revision"],
-        "jarSha256": hashlib.sha256(jar.read_bytes()).hexdigest(), "profile": profile,
-        "oidfedCommit": subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True).strip(),
-        "dirty": bool(subprocess.check_output(["git", "-C", str(ROOT), "status", "--porcelain"], text=True)),
-        "fixtureSha256": fixture_hash.hexdigest(), "runnerImage": runner}, indent=2) + "\n")
-    print(f"Compose project: {run_id}\nReports: {results}", flush=True)
     with environment(compose, env, state):
+        certificates(state)
+        (state / "settings.json").write_text(json.dumps({"runId": run_id}))
+        fixture_hash = hashlib.sha256()
+        for path in sorted(definition.iterdir()):
+            if path.is_file():
+                fixture_hash.update(path.name.encode() + b"\0" + path.read_bytes())
+        (results / "build.json").write_text(json.dumps({"revision": BASELINE["revision"],
+            "jarSha256": hashlib.sha256(jar.read_bytes()).hexdigest(), "profile": profile,
+            "oidfedCommit": subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True).strip(),
+            "dirty": bool(subprocess.check_output(["git", "-C", str(ROOT), "status", "--porcelain"], text=True)),
+            "fixtureSha256": fixture_hash.hexdigest(), "runnerImage": runner}, indent=2) + "\n")
+        print(f"Compose project: {run_id}\nReports: {results}", flush=True)
         command(*compose, "up", "-d", "mongo", "suite", "proxy", "fixtures", env=env)
         command(*compose, "run", "--rm", "driver", env=env)
 

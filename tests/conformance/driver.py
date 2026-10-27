@@ -18,7 +18,11 @@ FETCH_MODULES = {
 }
 
 
-class ApplicationOutcomeError(ValueError):
+class HarnessError(ValueError):
+    """An error whose fixed, payload-free message may appear in CI reports."""
+
+
+class ApplicationOutcomeError(HarnessError):
     """The test application accepted or rejected a flow incorrectly."""
 
 
@@ -32,11 +36,11 @@ def grade(name, target, info, logs):
         return True
     if info.get("result") != "SKIPPED":
         return False
-    reasons = [str(x.get("msg", "")) for x in logs]
+    reasons = [str(x.get("msg", "")) for x in logs if x.get("result") == "SKIPPED"]
     if name == ENCRYPTED:
-        return "The server does not support encrypted request objects" in reasons
+        return "The test was skipped: The server does not support encrypted request objects" in reasons
     if name in FETCH_MODULES and target == "leaf":
-        return any("does not contain a federation_fetch_endpoint" in x for x in reasons)
+        return "The test was skipped: Entity metadata does not contain a federation_fetch_endpoint." in reasons
     return False
 
 
@@ -46,15 +50,15 @@ def inventory(plan, expected):
     names = [x.get("testModule") for x in modules]
     wanted = [x["name"] for x in expected["modules"]]
     if len(names) != len(set(names)) or set(names) != set(wanted):
-        raise ValueError("Official plan inventory differs from the pinned baseline")
+        raise HarnessError("plan_inventory_mismatch")
     if any(x.get("variant") != BASELINE["variants"] for x in modules):
-        raise ValueError("Official module variants differ from the pinned baseline")
+        raise HarnessError("module_variant_mismatch")
 
 
 def instances(plan, executed):
     if {x["testModule"]: x.get("instances") for x in plan["modules"]} != {
             name: [ident] for name, ident in executed.items()}:
-        raise ValueError("Missing or repeated module executions")
+        raise HarnessError("module_execution_mismatch")
 
 
 def rp_outcome(name, status, body):
@@ -64,7 +68,7 @@ def rp_outcome(name, status, body):
     expected_stage = {"protocol"} if positive or name.endswith("-in-id-token") else {"federation", "registration"}
     if (status != (200 if positive else 400) or body.get("accepted") is not positive
             or body.get("stage") not in expected_stage):
-        raise ApplicationOutcomeError("RP application outcome contradicts the module's expected behavior")
+        raise ApplicationOutcomeError("rp_outcome_mismatch")
 
 
 def diagnostics(logs):
@@ -88,16 +92,16 @@ def check_export(path, expected):
             if not entry.filename.endswith(".json"):
                 continue
             if entry.file_size > 50_000_000:
-                raise ValueError("Oversized suite export")
+                raise HarnessError("oversized_export")
             data = json.loads(archive.read(entry))
             info = data.get("testInfo", {})
             # The upstream export wraps Mongo TestInfo in its public JSON shape.
             ident = info.get("id", info.get("_id"))
             if ident in found:
-                raise ValueError("Duplicate test in suite export")
+                raise HarnessError("duplicate_export_instance")
             found[ident] = (info.get("status"), info.get("result"))
     if found != expected:
-        raise ValueError("Missing or inconsistent suite export results")
+        raise HarnessError("export_result_mismatch")
 
 
 async def execute(api, ident, role, trigger, timeout=180):
@@ -156,6 +160,7 @@ async def run(profile, output):
     report = {"revision": BASELINE["revision"], "profile": profile, "modules": [], "passed": False}
     output.mkdir(parents=True, exist_ok=True)
     try:
+        report["phase"] = "startup"
         async with asyncio.timeout(360):
             await api.wait_for_server_ready(timeout=330)
             async with httpx.AsyncClient(verify=context) as client:
@@ -174,6 +179,7 @@ async def run(profile, output):
             for target in (["ta", "ia", "leaf"] if role == "deployed" else [role]):
                 baseline = BASELINE["plans"][role]
                 variant = BASELINE["variants"]
+                report["phase"] = f"{role}-{target}:create-plan"
                 plan = await api.create_test_plan(baseline["name"], json.dumps(configuration(role, target, settings, keys)), variant)
                 inventory(plan, baseline)
                 expected = {}
@@ -182,6 +188,7 @@ async def run(profile, output):
                     record = {"name": module["name"], "target": target, "status": "INCOMPLETE",
                               "result": "UNKNOWN", "accepted": False, "diagnostics": []}
                     report["modules"].append(record)
+                    report["phase"] = "create-module"
                     created = await api.create_test_from_plan_with_variant(plan["id"], module["name"], variant)
                     ident = created["id"]
                     executed[module["name"]] = ident
@@ -193,12 +200,14 @@ async def run(profile, output):
                             # Foundation result, especially for invalid ID Tokens.
                             rp_outcome(module["name"], response.status_code, response.json())
 
+                    report["phase"] = "execute-module"
                     info, logs = await execute(api, ident, role, trigger)
                     passed = grade(module["name"], target, info, logs)
                     expected[ident] = (info.get("status"), info.get("result"))
                     record.update(status=info.get("status"), result=info.get("result"),
                                   accepted=passed, diagnostics=diagnostics(logs))
                     print(f"{target}: {module['name']}: {info.get('result')}", flush=True)
+                report["phase"] = "verify-plan"
                 response = await api.httpclient.get(f"{SUITE}/api/plan/{plan['id']}")
                 response.raise_for_status()
                 final_plan = response.json()
@@ -206,13 +215,17 @@ async def run(profile, output):
                 instances(final_plan, executed)
                 # Keep raw exports out of the upload directory, then delete them.
                 with tempfile.TemporaryDirectory(dir=state) as private:
+                    report["phase"] = "verify-export"
                     exported = await api.exportjson(plan["id"], private)
                     check_export(exported, expected)
         report["passed"] = bool(report["modules"]) and all(x["accepted"] for x in report["modules"])
+        report["phase"] = "complete"
     except BaseException as error:
         # Exception text from the upstream client can embed request/configuration data.
         report["infrastructureError"] = type(error).__name__
         report["failureKind"] = "application" if isinstance(error, ApplicationOutcomeError) else "orchestration"
+        if isinstance(error, HarnessError):
+            report["errorCode"] = str(error)
         raise
     finally:
         (output / "summary.json").write_text(json.dumps(report, indent=2) + "\n")
