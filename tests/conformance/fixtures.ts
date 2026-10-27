@@ -15,7 +15,6 @@ import {
 import { Leaf } from "@oidfed/leaf";
 import { OidcRelyingPartyRole, StaticProtocolSigningKeyProvider } from "@oidfed/oidc";
 import { rateLimit } from "express-rate-limit";
-import { importJWK, type JWK as JoseJWK } from "jose";
 import * as oidc from "openid-client";
 import { createAuthorityApp } from "../e2e/participants/authority-app.js";
 import { createLeafApp } from "../e2e/participants/leaf-app.js";
@@ -124,11 +123,6 @@ const rpLeaf = new Leaf({
 	roles: [rpRole],
 	trustAnchors: anchors,
 });
-const rpProtocolKey = await importJWK(
-	JSON.parse(JSON.stringify(key(5).privateKey)) as JoseJWK,
-	"RS256",
-);
-if (rpProtocolKey instanceof Uint8Array) throw new Error("Expected an asymmetric fixture key");
 const sessions = new Map<
 	string,
 	{ configuration: oidc.Configuration; verifier: string; nonce: string; expires: number }
@@ -169,7 +163,13 @@ rpApp.get("/login", async (_req, res) => {
 		engineMetadata,
 		base("rp"),
 		{ token_endpoint_auth_signing_alg: "RS256" },
-		oidc.PrivateKeyJwt(rpProtocolKey),
+		async (server, _client, body) => {
+			if (!server.token_endpoint) throw new Error("Missing fixture token endpoint");
+			body.set("client_id", base("rp"));
+			body.set("client_assertion_type", "urn:ietf:params:oauth:client-assertion-type:jwt-bearer");
+			// Reuse oidfed's signer (including kid) and the OIDC token-endpoint audience.
+			body.set("client_assertion", await rpRole.createClientAssertion(server.token_endpoint));
+		},
 	);
 	bound[oidc.customFetch] = (input, init) =>
 		String(input) === keyUri
@@ -219,7 +219,19 @@ rpApp.get("/callback", async (req, res) => {
 			},
 		);
 		res.json({ accepted: Boolean(tokens.claims()?.sub), stage: "protocol" });
-	} catch {
+	} catch (error) {
+		const details =
+			error instanceof Error
+				? {
+						name: error.name,
+						message: error.message,
+						cause:
+							error.cause instanceof Error
+								? { name: error.cause.name, message: error.cause.message }
+								: undefined,
+					}
+				: { name: "UnknownError" };
+		writeFileSync(join(state, "rp-protocol-error.json"), JSON.stringify(details), { mode: 0o600 });
 		res.status(400).json({ accepted: false, stage: "protocol" });
 	}
 });

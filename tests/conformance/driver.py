@@ -167,12 +167,11 @@ def configuration(role, target, settings, keys):
     return config
 
 
-async def run(profile, output):
+async def run(profile, output, state=Path("/run/oidfed")):
     # Imported only during integration execution; unit tests need no network/deps.
     import httpx
     from conformance import Conformance
 
-    state = Path("/run/oidfed")
     settings = json.loads((state / "settings.json").read_text())
     context = ssl.create_default_context(cafile=str(state / "ca.pem"))
     api = Conformance(SUITE, None, context)
@@ -237,7 +236,8 @@ async def run(profile, output):
                                 record.update(status=failed_info.get("status"), result=failed_info.get("result"))
                         except Exception:
                             pass
-                        if any(x.get("result") == "FAILURE" for x in failed_logs):
+                        if not isinstance(module_error, ApplicationOutcomeError) and any(
+                                x.get("result") == "FAILURE" for x in failed_logs):
                             raise ModuleFailure("foundation_module_failed") from module_error
                         raise
                     module_variant(info)
@@ -287,5 +287,6 @@ if __name__ == "__main__":
             asyncio.run(run(args.profile, Path("/results")))
         print("Conformance run passed. See the sanitized summary.json report.")
     except Exception as error:
-        print(f"Conformance run failed: {type(error).__name__}", flush=True)
+        code = f" ({error})" if isinstance(error, HarnessError) else ""
+        print(f"Conformance run failed: {type(error).__name__}{code}", flush=True)
         raise SystemExit(1) from None

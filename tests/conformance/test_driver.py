@@ -1,13 +1,16 @@
 """Regression tests for orchestration failures that must never turn CI green."""
 import asyncio
+from contextlib import redirect_stderr
+import io
 import json
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 import zipfile
 
-from driver import BASELINE, ENCRYPTED, check_export, diagnostics, execute, grade, instances, inventory, module_variant, rp_outcome
+from driver import ApplicationOutcomeError, BASELINE, ENCRYPTED, ModuleFailure, check_export, diagnostics, execute, grade, instances, inventory, module_variant, rp_outcome, run
 from run import environment, main
 
 
@@ -126,6 +129,46 @@ class ResultPolicy(unittest.TestCase):
 
 
 class Lifecycle(unittest.IsolatedAsyncioTestCase):
+    async def test_application_failure_survives_foundation_failure_logs(self):
+        name = "openid-federation-client-test"
+        for expected_error in [ApplicationOutcomeError, ModuleFailure]:
+            with self.subTest(expected_error=expected_error), tempfile.TemporaryDirectory() as temp:
+                state = Path(temp) / "private"
+                state.mkdir()
+                (state / "settings.json").write_text(json.dumps({"runId": "disposable"}))
+                (state / "suite-keys.json").write_text(json.dumps({
+                    key: {} for key in ["authority", "entity", "protocol", "encryption"]}))
+                output = Path(temp) / "results"
+                api = AsyncMock()
+                api.create_test_plan.return_value = {"id": "plan", "modules": [{"testModule": name}]}
+                api.create_test_from_plan_with_variant.return_value = {"id": "instance"}
+                api.get_module_info.side_effect = [{"status": "CONFIGURED"},
+                    {"status": "FINISHED", "result": "FAILED"}]
+                api.get_test_log.return_value = [{"src": "ValidateToken", "result": "FAILURE"}]
+                response = Mock(status_code=400, url="https://rp.ofed.test:8443/callback", text="private")
+                if expected_error is ApplicationOutcomeError:
+                    response.json.return_value = {"accepted": False, "stage": "protocol"}
+                else:
+                    response.json.side_effect = ValueError("untrusted response body")
+                client = AsyncMock()
+                client.get.return_value = response
+                client.__aenter__.return_value = client
+                with patch.dict("sys.modules", {
+                        "conformance": SimpleNamespace(Conformance=Mock(return_value=api)),
+                        "httpx": SimpleNamespace(AsyncClient=Mock(return_value=client), HTTPError=OSError)}), \
+                        patch("driver.ssl.create_default_context"), \
+                        patch.dict(BASELINE["plans"]["rp"], {"modules": [{"name": name}]}), \
+                        redirect_stderr(io.StringIO()), \
+                        self.assertRaises(expected_error):
+                    await run("rp", output, state)
+                report = json.loads((output / "summary.json").read_text())
+                self.assertFalse(report["passed"])
+                self.assertEqual(report["failureKind"],
+                    "application" if expected_error is ApplicationOutcomeError else "module")
+                self.assertNotIn("untrusted response body", json.dumps(report))
+                api.httpclient.delete.assert_awaited_once()
+                api.close_client.assert_awaited_once()
+
     async def test_timeout_cancels_module(self):
         api = AsyncMock()
         async def wait(*_):

@@ -95,26 +95,39 @@ mandatory typing requirement.
 
 The OP profile therefore fails at its first positive flow. Later OP modules are
 not established as coverage by that failed run. The driver preserves the suite's
-signed requests and oidfed's typing policy, and reports the failure. Resolving this blocker requires an upstream configuration or test change
+signed requests and oidfed's typing policy, and reports the failure. Resolving
+this blocker requires an upstream configuration or test change
 that supports explicitly typed Request Objects, followed by a new pinned baseline.
 
-### Current RP transport blocker
+### Current RP token-response blocker
 
 The RP's first six negative Entity Configuration and registration-type tests
-pass. Its positive flow is rejected by the suite's
-[`EnsureAuthorizationHttpRequestContainsOpenIDScope`](https://github.com/openid-certification/conformance-suite/blob/23353b36957d6466010de767c812d2c91ed37638/src/main/java/net/openid/conformance/condition/as/EnsureAuthorizationHttpRequestContainsOpenIDScope.java):
-oidfed's generated query URL includes `client_id` and `request`, while its
-`scope` and `response_type` values are inside the signed Request Object.
-[OpenID Connect Core §6.1](https://openid.net/specs/openid-connect-core-1_0.html#RequestObject)
-requires the outer OpenID scope and matching `response_type` and `client_id`.
-The failing module reports the missing outer scope.
+pass. Its positive flow reaches token issuance, and the Foundation module reports
+`PASSED`. The application still rejects the response: the pinned suite's
+[`OpenIDFederationClientTest.tokenResponse()`](https://github.com/openid-certification/conformance-suite/blob/23353b36957d6466010de767c812d2c91ed37638/src/main/java/net/openid/conformance/openid/federation/client/OpenIDFederationClientTest.java#L379-L411)
+returns only `id_token`, omitting `access_token` and `token_type`.
+[OpenID Connect Core §3.1.3.3](https://openid.net/specs/openid-connect-core-1_0.html#TokenResponse)
+requires an Access Token in a successful code-flow response;
+[OAuth 2.0 §5.1](https://www.rfc-editor.org/rfc/rfc6749.html#section-5.1)
+requires both response fields. The fixture's `openid-client` engine rejects the
+missing Access Token before validating the ID Token.
 
-This harness sends the generated URL as returned. It does not add those
-parameters to hide the library's transport limitation. The RP plan therefore
-fails before establishing positive-flow or ID Token rejection coverage. The full
-profile stops there; it does not reach the independently verified OP typing
-blocker described above. A library change needs its own issue, regression tests,
-and review before this baseline can pass in full.
+The driver requires application acceptance as well as the suite's result, so
+this run fails. The harness does not fabricate token fields or weaken token
+validation. A corrected upstream token response and a new pinned baseline are
+needed to establish positive-flow and later ID Token rejection coverage. The
+full profile stops at this failure, before the independently verified OP typing
+blocker described above.
+
+These tests also exposed an oidfed transport defect, fixed alongside the harness:
+OIDC query, form-post, and hosted Request Object delivery now repeat the supplied
+`scope` and `response_type` outside the JWT, matching the signed values under
+[OpenID Connect Core §§6.1–6.2](https://openid.net/specs/openid-connect-core-1_0.html#RequestObject).
+[JAR §5](https://www.rfc-editor.org/rfc/rfc9101.html#section-5)
+permits these matching parameters. OAuth-only delivery and PAR retain their
+existing behavior; [PAR §3](https://www.rfc-editor.org/rfc/rfc9126.html#section-3)
+keeps authorization parameters inside the Request Object. Package regressions
+cover these transport boundaries, and the harness uses the generated URL unchanged.
 
 The package tests still cover behavior that these plans do not exercise. In
 particular, this baseline has no dedicated plans for Extended Listing Draft 03,
@@ -168,8 +181,10 @@ do not weaken validation or add an expected-failure exception to make a run pass
 ## CI and baseline maintenance
 
 The [conformance workflow](../../.github/workflows/conformance.yml) runs the
-deployed profile for pull requests, and the full profile on `main` and nightly.
-Manual dispatch supports full runs and individual plans. The workflow has a
+deployed profile for pull requests. On `main` and nightly, it runs deployed, RP,
+and OP in separate jobs with matrix fail-fast disabled, so one plan's failure
+cannot prevent another from running. Manual dispatch supports the sequential
+full profile and individual plans. The workflow has a
 45-minute job limit, read-only repository permissions, no deployment credentials,
 and 14-day report retention.
 
