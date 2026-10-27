@@ -22,6 +22,10 @@ pnpm test:conformance       # deployed-entity plan against TA, IA, and leaf
 pnpm test:conformance:full  # deployed checks plus joined-federation OP/RP plans
 ```
 
+Use `python3 tests/conformance/run.py --profile rp` or `--profile op` to
+investigate either joined-federation plan independently. Both selectors are also
+available through manual workflow dispatch.
+
 To use an existing clean suite checkout, run:
 
 ```bash
@@ -38,6 +42,9 @@ Federation keys, protocol keys, and suite aliases. The suite, Trust Anchor,
 Intermediate, leaf, OP, and RP communicate through HTTPS names inside that
 network. No ports are published on the host. Node, Python, and Java trust the
 disposable CA; TLS verification remains enabled.
+The Node fixture, proxy, and Java backend allow headers up to 64 KiB so the
+query-delivery tests can carry RSA-signed Trust Chains. This is a bounded test
+configuration, not a recommendation for production request limits.
 
 The launcher removes containers, volumes, the network, and private run files on
 normal completion or an exception. It also handles `SIGTERM`. An uncatchable
@@ -51,7 +58,7 @@ The baseline pins revision
 [official read-only GitHub mirror](https://github.com/openid-certification/conformance-suite).
 The canonical upstream repository is
 [openid/conformance-suite on GitLab](https://gitlab.com/openid/conformance-suite).
-Both profiles use discovery metadata and automatic client registration.
+All profiles use discovery metadata and automatic client registration.
 
 | Plan | Modules in the pinned plan | Fixture |
 |---|---:|---|
@@ -64,13 +71,50 @@ anchor keys, and the manually built chain against the Resolve response. Its
 List-and-Fetch traversal module is commented out upstream and is not counted as
 coverage here.
 
-The OP/RP plans exercise actual authorization-code flows, including the protocol
+The OP/RP fixtures support authorization-code flows, including the protocol
 engine's token and ID Token checks. The OP fixture logs in and grants consent for
 a disposable user. The suite's own headless browser drives OP requests. The RP
 fixture uses state, nonce, PKCE, and protocol keys resolved from trusted
 Federation metadata. Its login target is fixed to the suite's test issuer.
 These applications are test integrations, not examples of production user login
 or consent policy.
+
+### Current OP interoperability blocker
+
+The pinned OP plan signs Request Objects with `typ: JWT`: its
+[`SignRequestObjectWithFederationTrustChain`](https://github.com/openid-certification/conformance-suite/blob/23353b36957d6466010de767c812d2c91ed37638/src/main/java/net/openid/conformance/openid/federation/SignRequestObjectWithFederationTrustChain.java)
+inherits the generic type from
+[`AbstractSignJWT`](https://github.com/openid-certification/conformance-suite/blob/23353b36957d6466010de767c812d2c91ed37638/src/main/java/net/openid/conformance/condition/client/AbstractSignJWT.java).
+oidfed requires `oauth-authz-req+jwt` in its
+[automatic-registration validator](../../packages/oidc/src/registration/validate-request-object.ts).
+[RFC 9101 §10.8](https://www.rfc-editor.org/rfc/rfc9101.html#section-10.8)
+describes explicit typing as a defense against JWT confusion and permits requiring
+it in new deployment profiles. This is an interoperability mismatch between the
+suite and oidfed's policy, rather than a finding that either side violates a
+mandatory typing requirement.
+
+The OP profile therefore fails at its first positive flow. Later OP modules are
+not established as coverage by that failed run. The driver preserves the suite's
+signed requests and oidfed's typing policy, and reports the failure. Resolving this blocker requires an upstream configuration or test change
+that supports explicitly typed Request Objects, followed by a new pinned baseline.
+
+### Current RP transport blocker
+
+The RP's first six negative Entity Configuration and registration-type tests
+pass. Its positive flow is rejected by the suite's
+[`EnsureAuthorizationHttpRequestContainsOpenIDScope`](https://github.com/openid-certification/conformance-suite/blob/23353b36957d6466010de767c812d2c91ed37638/src/main/java/net/openid/conformance/condition/as/EnsureAuthorizationHttpRequestContainsOpenIDScope.java):
+oidfed's generated query URL includes `client_id` and `request`, while its
+`scope` and `response_type` values are inside the signed Request Object.
+[OpenID Connect Core §6.1](https://openid.net/specs/openid-connect-core-1_0.html#RequestObject)
+requires the outer OpenID scope and matching `response_type` and `client_id`.
+The failing module reports the missing outer scope.
+
+This harness sends the generated URL as returned. It does not add those
+parameters to hide the library's transport limitation. The RP plan therefore
+fails before establishing positive-flow or ID Token rejection coverage. The full
+profile stops there; it does not reach the independently verified OP typing
+blocker described above. A library change needs its own issue, regression tests,
+and review before this baseline can pass in full.
 
 The package tests still cover behavior that these plans do not exercise. In
 particular, this baseline has no dedicated plans for Extended Listing Draft 03,
@@ -82,8 +126,9 @@ extension coverage. Trust Mark tests are tracked in an
 ## Results and failures
 
 The driver uses the upstream Python API wrapper to create plans and execute
-their modules. It checks the returned inventory against the baseline, runs each
-module once, and requires a finished lifecycle **and** a passing result.
+their modules. It checks the returned inventory against the baseline, executes
+modules without automatic reruns, and requires a finished lifecycle **and** a
+passing result.
 Warnings, manual-review results, unexpected skips, missing logs, interrupted
 modules, and timeouts fail the run. The exported results must contain every
 executed instance and agree with the API results. The driver does not rerun a
@@ -109,6 +154,11 @@ Raw suite logs and exports can contain private test keys, assertions, cookies,
 and authorization codes. They stay in the private run directory and are removed
 during cleanup. Only the bounded report fields are uploaded to GitHub.
 
+For local diagnosis, add `--keep-private` to the Python launcher command. It
+retains sensitive diagnostics under the run's `private/` directory while still
+removing Docker resources. This option is prohibited in CI. Keep these files
+local, never attach them to an issue or PR, and remove them after diagnosis.
+
 Start an investigation with the module and condition identifiers in the summary.
 Distinguish a fixture integration error, a protocol-engine error, a suite defect,
 and an oidfed defect. Check the current source and the applicable specification
@@ -119,8 +169,9 @@ do not weaken validation or add an expected-failure exception to make a run pass
 
 The [conformance workflow](../../.github/workflows/conformance.yml) runs the
 deployed profile for pull requests, and the full profile on `main` and nightly.
-Manual dispatch supports either profile. It has a 45-minute job limit, read-only
-repository permissions, no deployment credentials, and 14-day report retention.
+Manual dispatch supports full runs and individual plans. The workflow has a
+45-minute job limit, read-only repository permissions, no deployment credentials,
+and 14-day report retention.
 
 Do not require this new check in branch protection until both profiles have
 passed on at least three independent clean CI workers. Keep package and HTTPS

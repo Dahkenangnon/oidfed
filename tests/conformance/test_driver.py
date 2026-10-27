@@ -7,11 +7,18 @@ import unittest
 from unittest.mock import AsyncMock, patch
 import zipfile
 
-from driver import BASELINE, ENCRYPTED, check_export, diagnostics, execute, grade, instances, inventory, rp_outcome
-from run import environment
+from driver import BASELINE, ENCRYPTED, check_export, diagnostics, execute, grade, instances, inventory, module_variant, rp_outcome
+from run import environment, main
 
 
 class ResultPolicy(unittest.TestCase):
+    def test_full_profile_includes_each_plan_once(self):
+        full = BASELINE["profiles"]["full"]
+        self.assertEqual(set(full), set(BASELINE["plans"]))
+        self.assertEqual(len(full), len(set(full)))
+        for role in BASELINE["plans"]:
+            self.assertEqual(BASELINE["profiles"][role], [role])
+
     def test_only_finished_pass_is_success(self):
         for status in ["CONFIGURED", "WAITING", "RUNNING", "INTERRUPTED", "FINISHED"]:
             for result in ["PASSED", "FAILED", "WARNING", "REVIEW", "UNKNOWN", "SKIPPED", None]:
@@ -39,7 +46,7 @@ class ResultPolicy(unittest.TestCase):
     def test_inventory_rejects_missing_added_and_duplicate_modules(self):
         baseline = BASELINE["plans"]["deployed"]
         names = [x["name"] for x in baseline["modules"]]
-        inventory({"modules": [{"testModule": x, "variant": BASELINE["variants"]} for x in names]}, baseline)
+        inventory({"modules": [{"testModule": x, "variant": None} for x in names]}, baseline)
         for changed in [names[:-1], names + ["unexpected"], names + names[:1], []]:
             with self.assertRaises(ValueError):
                 inventory({"modules": [{"testModule": x} for x in changed]}, baseline)
@@ -49,6 +56,9 @@ class ResultPolicy(unittest.TestCase):
         with self.assertRaises(ValueError):
             inventory({"modules": [{"testModule": x["name"], "variant": {"server_metadata": "static"}}
                                     for x in baseline["modules"]]}, baseline)
+        module_variant({"variant": BASELINE["variants"]})
+        with self.assertRaises(ValueError):
+            module_variant({"variant": {"server_metadata": "static", "client_registration": "automatic"}})
         instances({"modules": [{"testModule": "module", "instances": ["one"]}]}, {"module": "one"})
         for ids in [[], ["one", "two"], ["other"]]:
             with self.assertRaises(ValueError):
@@ -102,6 +112,17 @@ class ResultPolicy(unittest.TestCase):
                 with environment(["docker", "compose"], {}, state):
                     (state / "disposable-key").write_text("private")
             self.assertFalse(state.exists())
+
+    def test_private_diagnostics_are_opt_in_and_prohibited_in_ci(self):
+        with tempfile.TemporaryDirectory() as temp, patch("run.subprocess.run") as docker:
+            docker.return_value.returncode = 0
+            state = Path(temp) / "private"
+            state.mkdir()
+            with environment(["docker", "compose"], {}, state, keep_private=True):
+                (state / "diagnostic").write_text("private")
+            self.assertTrue((state / "diagnostic").exists())
+        with patch.dict("os.environ", {"CI": "true"}), self.assertRaisesRegex(ValueError, "cannot be retained"):
+            main("full", None, keep_private=True)
 
 
 class Lifecycle(unittest.IsolatedAsyncioTestCase):

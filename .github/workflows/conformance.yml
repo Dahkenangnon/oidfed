@@ -12,7 +12,7 @@ on:
       profile:
         description: Foundation plan profile
         type: choice
-        options: [deployed, full]
+        options: [deployed, rp, op, full]
         default: full
 
 permissions:

@@ -164,5 +164,21 @@
         }
       ]
     }
+  },
+  "profiles": {
+    "deployed": [
+      "deployed"
+    ],
+    "rp": [
+      "rp"
+    ],
+    "op": [
+      "op"
+    ],
+    "full": [
+      "deployed",
+      "rp",
+      "op"
+    ]
   }
 }

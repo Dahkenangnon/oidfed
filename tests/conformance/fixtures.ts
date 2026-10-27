@@ -28,7 +28,7 @@ const settings = JSON.parse(readFileSync(join(state, "settings.json"), "utf8")) 
 const base = (name: string) => `https://${name}.ofed.test:8443`;
 const suite = base("suite");
 const suiteAuthority = (role: string) => `${suite}/test/a/${settings.runId}-${role}/trust-anchor`;
-const pairs = await Promise.all(Array.from({ length: 10 }, () => generateSigningKey("RS256")));
+const pairs = await Promise.all(Array.from({ length: 11 }, () => generateSigningKey("RS256")));
 const key = (index: number) => {
 	const value = pairs[index];
 	if (!value) throw new Error("Missing fixture key");
@@ -86,6 +86,7 @@ const opLeaf = new Leaf({
 			issuer: base("op"),
 			authorization_endpoint: `${base("op")}/auth`,
 			token_endpoint: `${base("op")}/token`,
+			userinfo_endpoint: `${base("op")}/me`,
 			jwks_uri: `${base("op")}/jwks`,
 			pushed_authorization_request_endpoint: `${base("op")}/request`,
 			response_types_supported: ["code"],
@@ -95,6 +96,7 @@ const opLeaf = new Leaf({
 			token_endpoint_auth_methods_supported: ["private_key_jwt"],
 			token_endpoint_auth_signing_alg_values_supported: ["RS256"],
 			scopes_supported: ["openid"],
+			claims_supported: ["sub"],
 			client_registration_types_supported: ["automatic"],
 			request_parameter_supported: true,
 			request_uri_parameter_supported: true,
@@ -109,6 +111,7 @@ const rpRole = new OidcRelyingPartyRole({
 		redirect_uris: [`${base("rp")}/callback`],
 		response_types: ["code"],
 		grant_types: ["authorization_code"],
+		client_registration_types: ["automatic"],
 		token_endpoint_auth_method: "private_key_jwt",
 		jwks: { keys: [key(5).publicKey] },
 	},
@@ -239,6 +242,7 @@ writeFileSync(
 		authority: key(6).privateKey,
 		entity: key(8).privateKey,
 		protocol: key(9).privateKey,
+		encryption: { ...key(10).privateKey, use: "enc", alg: "RSA-OAEP-256" },
 		anchorPublic: key(0).publicKey,
 	}),
 	{ mode: 0o600 },

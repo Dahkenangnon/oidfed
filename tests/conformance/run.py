@@ -59,7 +59,7 @@ def certificates(state):
 
 
 @contextmanager
-def environment(compose, env, state):
+def environment(compose, env, state, keep_private=False):
     try:
         yield
     finally:
@@ -68,12 +68,15 @@ def environment(compose, env, state):
             result = subprocess.run([*compose, "down", "--volumes", "--remove-orphans", "--timeout", "10"],
                                     env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=45)
         finally:
-            shutil.rmtree(state)
+            if not keep_private:
+                shutil.rmtree(state)
         if result.returncode:
             raise RuntimeError("Docker cleanup failed; remove the reported Compose project manually")
 
 
-def main(profile, source_override):
+def main(profile, source_override, keep_private=False):
+    if keep_private and os.environ.get("CI"):
+        raise ValueError("Private diagnostics cannot be retained in CI")
     cache = ROOT / ".conformance"
     source = Path(source_override).resolve() if source_override else cache / "suite" / BASELINE["revision"]
     checkout(source)
@@ -101,7 +104,7 @@ def main(profile, source_override):
            "OIDF_RESULTS": str(results), "OIDF_PROFILE": profile,
            "OIDF_UID": str(os.getuid()), "OIDF_GID": str(os.getgid()), "OIDF_RUNNER": runner}
     compose = ["docker", "compose", "-p", run_id, "-f", str(ROOT / "tests/conformance/compose.yml")]
-    with environment(compose, env, state):
+    with environment(compose, env, state, keep_private):
         certificates(state)
         (state / "settings.json").write_text(json.dumps({"runId": run_id}))
         fixture_hash = hashlib.sha256()
@@ -120,9 +123,10 @@ def main(profile, source_override):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--profile", choices=["deployed", "full"], default="deployed")
+    parser.add_argument("--profile", choices=list(BASELINE["profiles"]), default="deployed")
     parser.add_argument("--source", help="Existing clean checkout at the pinned suite revision")
+    parser.add_argument("--keep-private", action="store_true", help="Retain sensitive local diagnostics; prohibited in CI")
     args = parser.parse_args()
     # Convert CI termination into stack unwinding so Compose cleanup still runs.
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
-    main(args.profile, args.source)
+    main(args.profile, args.source, args.keep_private)

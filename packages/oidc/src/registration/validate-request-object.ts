@@ -20,8 +20,8 @@ import type {
 /**
  * Validate an incoming Authorization Request Object JWT for automatic registration.
  *
- * Federation-layer validation:
- * - `typ` MUST be `oauth-authz-req+jwt`
+ * Federation claim validation and oidfed's explicit-typing policy:
+ * - `typ` must be `oauth-authz-req+jwt` (oidfed policy; RFC 9101 §10.8)
  * - `sub` MUST NOT be present
  * - `client_id` REQUIRED and MUST equal `iss`
  * - `aud` MUST be the OP's Entity Identifier (single string)

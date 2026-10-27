@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import ssl
 import tempfile
+import traceback
 import zipfile
 
 BASELINE = json.loads(Path(__file__).with_name("baseline.json").read_text())
@@ -24,6 +25,10 @@ class HarnessError(ValueError):
 
 class ApplicationOutcomeError(HarnessError):
     """The test application accepted or rejected a flow incorrectly."""
+
+
+class ModuleFailure(HarnessError):
+    """The Foundation module rejected the observed protocol behavior."""
 
 
 def grade(name, target, info, logs):
@@ -51,7 +56,14 @@ def inventory(plan, expected):
     wanted = [x["name"] for x in expected["modules"]]
     if len(names) != len(set(names)) or set(names) != set(wanted):
         raise HarnessError("plan_inventory_mismatch")
-    if any(x.get("variant") != BASELINE["variants"] for x in modules):
+    # Plan.Module.variant describes fixed overrides, not the plan's selected
+    # variants. These three plan definitions do not declare fixed overrides.
+    if any(x.get("variant") is not None for x in modules):
+        raise HarnessError("module_variant_mismatch")
+
+
+def module_variant(info):
+    if info.get("variant") != BASELINE["variants"]:
         raise HarnessError("module_variant_mismatch")
 
 
@@ -82,6 +94,12 @@ def diagnostics(logs):
         result.append({"source": src if re.fullmatch(r"[\w.$-]{1,180}", src) else "unknown",
                        "result": entry["result"]})
     return result
+
+
+def private_log(state, target, name, logs):
+    path = state / f"{target}-{name}.json"
+    path.write_text(json.dumps(logs))
+    path.chmod(0o600)
 
 
 def check_export(path, expected):
@@ -141,10 +159,11 @@ def configuration(role, target, settings, keys):
             fed.update(rp_ec_jwks={"keys": [keys["entity"]]}, rp_client_jwks={"keys": [keys["protocol"]]})
             config["client"] = {"scope": "openid"}
             config["browser"] = [{"match": "https://op.ofed.test:8443/auth*", "tasks": [
-                {"task": "Verify Complete", "match": f"{SUITE}/test/a/{alias}/callback*"}
+                {"task": "Verify Complete", "match": f"{SUITE}/test/a/{alias}/callback*",
+                 "commands": [["wait", "id", "submission_complete", 15]]}
             ]}]
         else:
-            fed.update(op_ec_jwks={"keys": [keys["entity"]]}, op_server_jwks={"keys": [keys["protocol"]]})
+            fed.update(op_ec_jwks={"keys": [keys["entity"]]}, op_server_jwks={"keys": [keys["protocol"], keys["encryption"]]})
     return config
 
 
@@ -174,7 +193,7 @@ async def run(profile, output):
                         pass
                     await asyncio.sleep(1)
         keys = json.loads((state / "suite-keys.json").read_text())
-        roles = ["deployed"] if profile == "deployed" else ["deployed", "op", "rp"]
+        roles = BASELINE["profiles"][profile]
         for role in roles:
             for target in (["ta", "ia", "leaf"] if role == "deployed" else [role]):
                 baseline = BASELINE["plans"][role]
@@ -196,12 +215,33 @@ async def run(profile, output):
                     async def trigger():
                         async with httpx.AsyncClient(verify=context, follow_redirects=True, timeout=30) as client:
                             response = await client.get("https://rp.ofed.test:8443/login")
+                            debug = state / f"rp-{module['name']}-response.json"
+                            debug.write_text(json.dumps({"status": response.status_code,
+                                "url": str(response.url), "body": response.text}))
+                            debug.chmod(0o600)
                             # Check the application's observed outcome as well as the
                             # Foundation result, especially for invalid ID Tokens.
                             rp_outcome(module["name"], response.status_code, response.json())
 
                     report["phase"] = "execute-module"
-                    info, logs = await execute(api, ident, role, trigger)
+                    try:
+                        info, logs = await execute(api, ident, role, trigger)
+                    except Exception as module_error:
+                        failed_logs = []
+                        try:
+                            async with asyncio.timeout(5):
+                                failed_logs = await api.get_test_log(ident)
+                                private_log(state, target, module["name"], failed_logs)
+                                record["diagnostics"] = diagnostics(failed_logs)
+                                failed_info = await api.get_module_info(ident)
+                                record.update(status=failed_info.get("status"), result=failed_info.get("result"))
+                        except Exception:
+                            pass
+                        if any(x.get("result") == "FAILURE" for x in failed_logs):
+                            raise ModuleFailure("foundation_module_failed") from module_error
+                        raise
+                    module_variant(info)
+                    private_log(state, target, module["name"], logs)
                     passed = grade(module["name"], target, info, logs)
                     expected[ident] = (info.get("status"), info.get("result"))
                     record.update(status=info.get("status"), result=info.get("result"),
@@ -211,6 +251,8 @@ async def run(profile, output):
                 response = await api.httpclient.get(f"{SUITE}/api/plan/{plan['id']}")
                 response.raise_for_status()
                 final_plan = response.json()
+                if final_plan.get("variant") != BASELINE["variants"]:
+                    raise HarnessError("plan_variant_mismatch")
                 inventory(final_plan, baseline)
                 instances(final_plan, executed)
                 # Keep raw exports out of the upload directory, then delete them.
@@ -221,9 +263,11 @@ async def run(profile, output):
         report["passed"] = bool(report["modules"]) and all(x["accepted"] for x in report["modules"])
         report["phase"] = "complete"
     except BaseException as error:
+        traceback.print_exc()
         # Exception text from the upstream client can embed request/configuration data.
-        report["infrastructureError"] = type(error).__name__
-        report["failureKind"] = "application" if isinstance(error, ApplicationOutcomeError) else "orchestration"
+        report["errorClass"] = type(error).__name__
+        report["failureKind"] = ("application" if isinstance(error, ApplicationOutcomeError)
+                                 else "module" if isinstance(error, ModuleFailure) else "orchestration")
         if isinstance(error, HarnessError):
             report["errorCode"] = str(error)
         raise
@@ -236,12 +280,12 @@ async def run(profile, output):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--profile", choices=["deployed", "full"], default="deployed")
+    parser.add_argument("--profile", choices=list(BASELINE["profiles"]), default="deployed")
     args = parser.parse_args()
     try:
         with Path("/run/oidfed/driver-private.log").open("w") as log, redirect_stdout(log), redirect_stderr(log):
             asyncio.run(run(args.profile, Path("/results")))
         print("Conformance run passed. See the sanitized summary.json report.")
     except Exception as error:
-        print(f"Conformance infrastructure failed: {type(error).__name__}", flush=True)
+        print(f"Conformance run failed: {type(error).__name__}", flush=True)
         raise SystemExit(1) from None
