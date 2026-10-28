@@ -1,4 +1,4 @@
-name: OIDF Federation conformance
+name: OpenID Federation conformance
 
 on:
   pull_request:
@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       profile:
-        description: Foundation plan profile
+        description: OpenID Federation conformance profile
         type: choice
         options: [deployed, rp, op, full]
         default: full
@@ -24,7 +24,7 @@ concurrency:
 
 jobs:
   federation:
-    name: Foundation Federation plans (${{ matrix.profile }})
+    name: OpenID Federation conformance (${{ matrix.profile }})
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -43,10 +43,10 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck:conformance
       - run: pnpm test:conformance:unit
-      - name: Run pinned Foundation plans
+      - name: Run pinned OpenID Federation test plans
         env:
           PROFILE: ${{ matrix.profile }}
-        run: python3 tests/conformance/run.py --profile "$PROFILE"
+        run: pnpm exec tsx --tsconfig tests/conformance/tsconfig.json tests/conformance/run.ts --profile "$PROFILE"
       - name: Upload sanitized reports
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6

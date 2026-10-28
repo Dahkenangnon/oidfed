@@ -44,12 +44,10 @@ services:
     user: "${OIDF_UID}:${OIDF_GID}"
     volumes:
       - ${OIDF_ROOT}:/work:ro
-      - ${OIDF_SOURCE}:/suite:ro
       - ${OIDF_STATE}:/run/oidfed
       - ${OIDF_RESULTS}:/results
     environment:
-      PYTHONPATH: /suite/scripts
-      SSL_CERT_FILE: /run/oidfed/ca.pem
-      CONFORMANCE_RETRY_TIMEOUT: "10"
-    command: [python, tests/conformance/driver.py, --profile, "${OIDF_PROFILE}"]
+      NODE_EXTRA_CA_CERTS: /run/oidfed/ca.pem
+      OIDF_PROFILE: "${OIDF_PROFILE}"
+    command: [node, node_modules/vitest/vitest.mjs, run, --config, tests/conformance/vitest.config.ts, --configLoader, native, --project, plans]
     depends_on: [proxy, fixtures]

@@ -1,4 +1,4 @@
-/** Disposable HTTPS applications exercised by the external Foundation suite. */
+/** Disposable HTTPS applications exercised by the OpenID Foundation conformance suite. */
 import { readFileSync, writeFileSync } from "node:fs";
 import https from "node:https";
 import { join } from "node:path";

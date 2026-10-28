@@ -23,9 +23,9 @@
 		"typecheck:scripts": "tsc -p scripts/tsconfig.json --noEmit",
 		"typecheck:e2e": "tsc -p tests/e2e/tsconfig.json --noEmit",
 		"typecheck:conformance": "tsc -p tests/conformance/tsconfig.json --noEmit",
-		"test:conformance": "python3 tests/conformance/run.py --profile deployed",
-		"test:conformance:full": "python3 tests/conformance/run.py --profile full",
-		"test:conformance:unit": "python3 -m unittest discover -s tests/conformance -p 'test_*.py'",
+		"test:conformance": "tsx --tsconfig tests/conformance/tsconfig.json tests/conformance/run.ts --profile deployed",
+		"test:conformance:full": "tsx --tsconfig tests/conformance/tsconfig.json tests/conformance/run.ts --profile full",
+		"test:conformance:unit": "vitest run --config tests/conformance/vitest.config.ts --configLoader native --project unit",
 		"typecheck:apps": "turbo run typecheck --filter='./apps/*' --filter='./internal/*'",
 		"lint": "biome check --error-on-warnings biome.json packages apps tools internal tests scripts",
 		"lint:fix": "biome check --write biome.json packages apps tools internal tests scripts",
@@ -84,6 +84,7 @@
 		"@types/node": "^22.20.5",
 		"@types/oidc-provider": "^9.12.1",
 		"@types/qunit": "^2.19.14",
+		"@types/yauzl": "3.4.0",
 		"c8": "^12.0.0",
 		"electron": "^44.9.0",
 		"esbuild": "^0.28.2",
@@ -100,7 +101,8 @@
 		"turbo": "^2.11.9",
 		"typescript": "^6.0.3",
 		"undici": "^8.12.2",
-		"vitest": "^5.0.5"
+		"vitest": "^5.0.5",
+		"yauzl": "3.4.0"
 	},
 	"pnpm": {
 		"onlyBuiltDependencies": [
