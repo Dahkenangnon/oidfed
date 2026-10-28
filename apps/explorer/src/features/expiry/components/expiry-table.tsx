@@ -52,6 +52,27 @@ function formatDate(unix: number): string {
 
 type SortField = "entityId" | "expiresAt" | "daysRemaining" | "trustAnchorId";
 
+interface SortHeaderProps {
+	readonly field: SortField;
+	readonly sortField: SortField;
+	readonly sortAsc: boolean;
+	readonly onSort: (field: SortField) => void;
+	readonly children: React.ReactNode;
+}
+
+function SortHeader({ field, sortField, sortAsc, onSort, children }: SortHeaderProps) {
+	return (
+		<button
+			type="button"
+			onClick={() => onSort(field)}
+			className="flex items-center gap-1 hover:text-foreground"
+		>
+			{children}
+			{sortField === field && <span>{sortAsc ? "↑" : "↓"}</span>}
+		</button>
+	);
+}
+
 interface ExpiryTableProps {
 	readonly entries: readonly ExpiryEntry[];
 }
@@ -82,18 +103,7 @@ export function ExpiryTable({ entries }: ExpiryTableProps) {
 		}
 	}
 
-	function SortHeader({ field, children }: { field: SortField; children: React.ReactNode }) {
-		return (
-			<button
-				type="button"
-				onClick={() => toggleSort(field)}
-				className="flex items-center gap-1 hover:text-foreground"
-			>
-				{children}
-				{sortField === field && <span>{sortAsc ? "↑" : "↓"}</span>}
-			</button>
-		);
-	}
+	const sortHeaderProps = { sortField, sortAsc, onSort: toggleSort };
 
 	if (entries.length === 0) return null;
 
@@ -103,16 +113,24 @@ export function ExpiryTable({ entries }: ExpiryTableProps) {
 				<TableHeader>
 					<TableRow>
 						<TableHead>
-							<SortHeader field="entityId">Entity ID</SortHeader>
+							<SortHeader field="entityId" {...sortHeaderProps}>
+								Entity ID
+							</SortHeader>
 						</TableHead>
 						<TableHead>
-							<SortHeader field="trustAnchorId">Trust Anchor</SortHeader>
+							<SortHeader field="trustAnchorId" {...sortHeaderProps}>
+								Trust Anchor
+							</SortHeader>
 						</TableHead>
 						<TableHead>
-							<SortHeader field="expiresAt">Expires</SortHeader>
+							<SortHeader field="expiresAt" {...sortHeaderProps}>
+								Expires
+							</SortHeader>
 						</TableHead>
 						<TableHead>
-							<SortHeader field="daysRemaining">Days</SortHeader>
+							<SortHeader field="daysRemaining" {...sortHeaderProps}>
+								Days
+							</SortHeader>
 						</TableHead>
 						<TableHead>Status</TableHead>
 					</TableRow>
