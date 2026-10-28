@@ -49,5 +49,7 @@ services:
     environment:
       NODE_EXTRA_CA_CERTS: /run/oidfed/ca.pem
       OIDF_PROFILE: "${OIDF_PROFILE}"
+      # The CI UID may have no home directory; keep Vitest's token in private run state.
+      XDG_DATA_HOME: /run/oidfed/xdg-data
     command: [node, node_modules/vitest/vitest.mjs, run, --config, tests/conformance/vitest.config.ts, --configLoader, native, --project, plans]
     depends_on: [proxy, fixtures]
