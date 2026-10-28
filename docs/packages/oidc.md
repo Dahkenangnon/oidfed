@@ -73,6 +73,15 @@ When `requestDelivery: "par"` is used, the role posts the signed Request Object 
 
 When `requestDelivery: "request_uri"` is used, OP metadata that explicitly sets `request_uri_parameter_supported: false` blocks delivery before an authorization URL is produced.
 
+For OIDC query, form-post, and hosted Request Object delivery, the authorization
+URL or form fields include the supplied `scope` and `response_type` alongside
+`client_id`. These values match the signed claims, as required by
+[OpenID Connect Core §§6.1 and 6.2](https://openid.net/specs/openid-connect-core-1_0.html#RequestObject)
+and permitted by [JAR §5](https://www.rfc-editor.org/rfc/rfc9101.html#section-5).
+OAuth-only delivery uses the existing JAR parameters. With PAR, authorization
+parameters stay inside the JWT and client authentication stays outside it, per
+[RFC 9126 §3](https://www.rfc-editor.org/rfc/rfc9126.html#section-3).
+
 ```ts
 import { createTrustAnchorSet, isOk } from "@oidfed/core";
 

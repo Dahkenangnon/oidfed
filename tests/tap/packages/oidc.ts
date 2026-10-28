@@ -1700,6 +1700,83 @@ export default (QUnit: QUnit) => {
 			response_type: "code",
 		};
 
+		test("OIDC transports repeat the signed scope and response type outside the Request Object", async (t) => {
+			const fed = await createMockFederation();
+			const discovery = await createMockDiscovery(OP_ID, fed);
+			const params = { ...authzParams, scope: "openid email", client_id: "untrusted-client" };
+			for (const delivery of ["query", "form_post", "request_uri"] as const) {
+				const { config } = await createRpConfig({
+					requestDelivery: delivery,
+					requestUri: "https://rp.example.com/request-object/test",
+				});
+				const result = await automaticRegistration(
+					discovery,
+					config,
+					params,
+					fed.trustAnchors,
+					fed.options,
+				);
+				t.true(isOk(result), delivery);
+				if (!isOk(result)) continue;
+				const outer =
+					result.value.delivery === "form_post"
+						? new URLSearchParams(result.value.formParams)
+						: result.value.delivery === "par"
+							? undefined
+							: new URL(result.value.authorizationUrl).searchParams;
+				t.ok(outer, "Expected an authorization request transport");
+				if (!outer) continue;
+				const decoded = decodeEntityStatement(result.value.requestObjectJwt);
+				t.true(decoded.ok);
+				if (!decoded.ok) continue;
+				t.equal(outer.get("scope"), params.scope, `${delivery}: outer OpenID scope`);
+				t.equal(
+					outer.get("response_type"),
+					params.response_type,
+					`${delivery}: outer response type`,
+				);
+				t.equal(outer.get("client_id"), LEAF_ID, `${delivery}: authoritative client ID`);
+				t.equal(decoded.value.payload.scope, outer.get("scope"), "Signed and outer scopes match");
+				t.equal(
+					decoded.value.payload.response_type,
+					outer.get("response_type"),
+					"Signed and outer response types match",
+				);
+				t.equal(decoded.value.payload.client_id, outer.get("client_id"));
+			}
+		});
+
+		test("OAuth-only Request Object transports retain their existing parameters", async (t) => {
+			const fed = await createMockFederation();
+			const discovery = await createMockDiscovery(OP_ID, fed);
+			for (const delivery of ["query", "form_post", "request_uri"] as const) {
+				const { config } = await createRpConfig({
+					requestDelivery: delivery,
+					requestUri: "https://rp.example.com/request-object/test",
+				});
+				const rpMetadata = config.metadata.openid_relying_party;
+				if (!rpMetadata) throw new Error("Expected fixture protocol metadata");
+				const result = await automaticRegistration(
+					discovery,
+					{ ...config, metadata: { oauth_client: rpMetadata } },
+					{ ...authzParams, scope: "accounts.read" },
+					fed.trustAnchors,
+					fed.options,
+				);
+				t.true(isOk(result));
+				if (!isOk(result)) continue;
+				const outer =
+					result.value.delivery === "form_post"
+						? new URLSearchParams(result.value.formParams)
+						: result.value.delivery === "par"
+							? undefined
+							: new URL(result.value.authorizationUrl).searchParams;
+				if (!outer) throw new Error("Expected an authorization request transport");
+				t.false(outer.has("scope"));
+				t.false(outer.has("response_type"));
+			}
+		});
+
 		test("defaults to form_post when requestDelivery is omitted", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
@@ -1878,6 +1955,8 @@ export default (QUnit: QUnit) => {
 			const body = new URLSearchParams(capturedBody as string);
 			t.equal(body.get("request"), result.value.requestObjectJwt);
 			t.equal(body.get("client_id"), LEAF_ID);
+			t.false(body.has("scope"), "PAR keeps authorization parameters inside the Request Object");
+			t.false(body.has("response_type"));
 			t.equal(
 				body.get("client_assertion_type"),
 				"urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
@@ -1899,6 +1978,8 @@ export default (QUnit: QUnit) => {
 			const finalUrl = new URL(result.value.authorizationUrl);
 			t.equal(finalUrl.searchParams.get("request_uri"), urn);
 			t.equal(finalUrl.searchParams.get("client_id"), LEAF_ID);
+			t.false(finalUrl.searchParams.has("scope"));
+			t.false(finalUrl.searchParams.has("response_type"));
 			t.equal(result.value.parExpiresAt, now + 60);
 		});
 

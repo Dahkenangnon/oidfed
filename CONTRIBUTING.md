@@ -127,6 +127,11 @@ GitHub UI merges do not run local hooks. PR CI checks the branch's commits; CI o
 
 `pnpm typecheck` also checks TAP tests, E2E tests, and scripts. `pnpm lint` uses the root Biome configuration. `pnpm test:e2e` runs the HTTPS federation scenarios.
 
+See the [OpenID Federation conformance guide](docs/test/conformance.md) for
+the pinned test plans, local Docker setup, CI profiles, and coverage limits.
+Run `pnpm test:conformance:unit` when changing the harness. For fixture or
+configuration changes, run the affected conformance profile.
+
 | Scope | Framework | Location |
 |---|---|---|
 | Unit (`core`, `authority`, `leaf`, `oidc`, `wallet`) | QUnit via TAP | `tests/tap/` |

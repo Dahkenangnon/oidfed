@@ -1,0 +1,184 @@
+{
+  "revision": "23353b36957d6466010de767c812d2c91ed37638",
+  "repository": "https://github.com/openid-certification/conformance-suite.git",
+  "variants": {
+    "server_metadata": "discovery",
+    "client_registration": "automatic"
+  },
+  "plans": {
+    "deployed": {
+      "name": "openid-federation-deployed-entity-test-plan",
+      "source": "src/main/java/net/openid/conformance/openid/federation/OpenIDFederationDeployedEntityTestPlan.java",
+      "modules": [
+        {
+          "name": "openid-federation-entity-configuration",
+          "source": "src/main/java/net/openid/conformance/openid/federation/OpenIDFederationEntityConfigurationTest.java"
+        },
+        {
+          "name": "openid-federation-ensure-fetch-with-invalid-sub-fails",
+          "source": "src/main/java/net/openid/conformance/openid/federation/OpenIDFederationEnsureFetchWithInvalidSubFailsTest.java"
+        },
+        {
+          "name": "openid-federation-ensure-fetch-with-iss-as-sub-fails",
+          "source": "src/main/java/net/openid/conformance/openid/federation/OpenIDFederationEnsureFetchWithIssAsSubFailsTest.java"
+        },
+        {
+          "name": "openid-federation-preconfigured-keys-match-trust-anchors-keys",
+          "source": "src/main/java/net/openid/conformance/openid/federation/OpenIDFederationPreconfiguredKeysMatchTrustAnchorsKeysTest.java"
+        },
+        {
+          "name": "openid-federation-compare-trust-chain-to-resolve",
+          "source": "src/main/java/net/openid/conformance/openid/federation/OpenIDFederationCompareTrustChainToResolveTest.java"
+        }
+      ]
+    },
+    "op": {
+      "name": "openid-federation-entity-joined-to-test-federation-op-test-plan",
+      "source": "src/main/java/net/openid/conformance/openid/federation/OpenIDFederationClientRegistrationOPTestPlan.java",
+      "modules": [
+        {
+          "name": "openid-federation-automatic-client-registration-with-jar-and-get",
+          "source": "src/main/java/net/openid/conformance/openid/federation/OpenIDFederationAutomaticClientRegistrationWithJarAndGetTest.java"
+        },
+        {
+          "name": "openid-federation-automatic-client-registration-with-jar-and-post",
+          "source": "src/main/java/net/openid/conformance/openid/federation/OpenIDFederationAutomaticClientRegistrationWithJarAndPostTest.java"
+        },
+        {
+          "name": "openid-federation-automatic-client-registration-with-par",
+          "source": "src/main/java/net/openid/conformance/openid/federation/OpenIDFederationAutomaticClientRegistrationWithParTest.java"
+        },
+        {
+          "name": "openid-federation-automatic-client-registration-with-jar-and-get-and-trust-chain",
+          "source": "src/main/java/net/openid/conformance/openid/federation/OpenIDFederationAutomaticClientRegistrationWithJarAndGetAndTrustChainTest.java"
+        },
+        {
+          "name": "openid-federation-automatic-client-registration-with-jar-and-post-and-trust-chain",
+          "source": "src/main/java/net/openid/conformance/openid/federation/OpenIDFederationAutomaticClientRegistrationWithJarAndPostAndTrustChainTest.java"
+        },
+        {
+          "name": "openid-federation-automatic-client-registration-with-par-and-trust-chain",
+          "source": "src/main/java/net/openid/conformance/openid/federation/OpenIDFederationAutomaticClientRegistrationWithParAndTrustChainTest.java"
+        },
+        {
+          "name": "openid-federation-automatic-client-registration-with-jar-and-encrypted-request-object",
+          "source": "src/main/java/net/openid/conformance/openid/federation/OpenIDFederationAutomaticClientRegistrationWithJarAndEncryptedRequestObjectTest.java"
+        },
+        {
+          "name": "openid-federation-automatic-client-registration-invalid-client-id-in-request-object",
+          "source": "src/main/java/net/openid/conformance/openid/federation/OpenIDFederationAutomaticClientRegistrationInvalidClientIdInRequestObjectTest.java"
+        },
+        {
+          "name": "openid-federation-automatic-client-registration-invalid-client-id-in-query-parameters",
+          "source": "src/main/java/net/openid/conformance/openid/federation/OpenIDFederationAutomaticClientRegistrationInvalidClientIdInQueryParametersTest.java"
+        },
+        {
+          "name": "openid-federation-automatic-client-registration-invalid-signature-on-request-object",
+          "source": "src/main/java/net/openid/conformance/openid/federation/OpenIDFederationAutomaticClientRegistrationInvalidSignatureOnRequestObjectTest.java"
+        },
+        {
+          "name": "openid-federation-automatic-client-registration-invalid-signature-with-other-keys-on-request-object",
+          "source": "src/main/java/net/openid/conformance/openid/federation/OpenIDFederationAutomaticClientRegistrationInvalidSignatureWithOtherKeysOnRequestObjectTest.java"
+        },
+        {
+          "name": "openid-federation-automatic-client-registration-invalid-request-object-exp",
+          "source": "src/main/java/net/openid/conformance/openid/federation/OpenIDFederationAutomaticClientRegistrationInvalidRequestObjectExpTest.java"
+        },
+        {
+          "name": "openid-federation-automatic-client-registration-invalid-request-object-iss",
+          "source": "src/main/java/net/openid/conformance/openid/federation/OpenIDFederationAutomaticClientRegistrationInvalidRequestObjectIssTest.java"
+        },
+        {
+          "name": "openid-federation-automatic-client-registration-invalid-request-object-aud",
+          "source": "src/main/java/net/openid/conformance/openid/federation/OpenIDFederationAutomaticClientRegistrationInvalidRequestObjectAudTest.java"
+        },
+        {
+          "name": "openid-federation-automatic-client-registration-invalid-request-object-sub",
+          "source": "src/main/java/net/openid/conformance/openid/federation/OpenIDFederationAutomaticClientRegistrationInvalidRequestObjectSubTest.java"
+        },
+        {
+          "name": "openid-federation-automatic-client-registration-invalid-missing-request-object-jti",
+          "source": "src/main/java/net/openid/conformance/openid/federation/OpenIDFederationAutomaticClientRegistrationInvalidMissingRequestObjectJtiTest.java"
+        },
+        {
+          "name": "openid-federation-automatic-client-registration-invalid-missing-request-object-exp",
+          "source": "src/main/java/net/openid/conformance/openid/federation/OpenIDFederationAutomaticClientRegistrationInvalidMissingRequestObjectExpTest.java"
+        },
+        {
+          "name": "openid-federation-automatic-client-registration-invalid-missing-request-object-iss",
+          "source": "src/main/java/net/openid/conformance/openid/federation/OpenIDFederationAutomaticClientRegistrationInvalidMissingRequestObjectIssTest.java"
+        },
+        {
+          "name": "openid-federation-automatic-client-registration-invalid-missing-request-object-aud",
+          "source": "src/main/java/net/openid/conformance/openid/federation/OpenIDFederationAutomaticClientRegistrationInvalidMissingRequestObjectAudTest.java"
+        },
+        {
+          "name": "openid-federation-automatic-client-registration-invalid-duplicate-request-object-jti",
+          "source": "src/main/java/net/openid/conformance/openid/federation/OpenIDFederationAutomaticClientRegistrationInvalidDuplicateRequestObjectJtiTest.java"
+        }
+      ]
+    },
+    "rp": {
+      "name": "openid-federation-entity-joined-to-test-federation-rp-test-plan",
+      "source": "src/main/java/net/openid/conformance/openid/federation/client/OpenIDFederationClientRegistrationRPTestPlan.java",
+      "modules": [
+        {
+          "name": "openid-federation-client-invalid-iss-in-entity-configuration",
+          "source": "src/main/java/net/openid/conformance/openid/federation/client/OpenIDFederationClientInvalidIssInEntityConfigurationTest.java"
+        },
+        {
+          "name": "openid-federation-client-invalid-sub-in-entity-configuration",
+          "source": "src/main/java/net/openid/conformance/openid/federation/client/OpenIDFederationClientInvalidSubInEntityConfigurationTest.java"
+        },
+        {
+          "name": "openid-federation-client-invalid-missing-exp-in-entity-configuration",
+          "source": "src/main/java/net/openid/conformance/openid/federation/client/OpenIDFederationClientInvalidMissingExpInEntityConfigurationTest.java"
+        },
+        {
+          "name": "openid-federation-client-invalid-missing-iat-in-entity-configuration",
+          "source": "src/main/java/net/openid/conformance/openid/federation/client/OpenIDFederationClientInvalidMissingIatInEntityConfigurationTest.java"
+        },
+        {
+          "name": "openid-federation-client-invalid-missing-client-registration-types-supported",
+          "source": "src/main/java/net/openid/conformance/openid/federation/client/OpenIDFederationClientInvalidMissingClientRegistrationTypesSupportedTest.java"
+        },
+        {
+          "name": "openid-federation-client-invalid-empty-client-registration-types-supported",
+          "source": "src/main/java/net/openid/conformance/openid/federation/client/OpenIDFederationClientInvalidEmptyClientRegistrationTypesSupportedTest.java"
+        },
+        {
+          "name": "openid-federation-client-test",
+          "source": "src/main/java/net/openid/conformance/openid/federation/client/OpenIDFederationClientTest.java"
+        },
+        {
+          "name": "openid-federation-client-valid-unknown-client-registration-types-supported",
+          "source": "src/main/java/net/openid/conformance/openid/federation/client/OpenIDFederationClientValidUnknownClientRegistrationTypesSupportedTest.java"
+        },
+        {
+          "name": "openid-federation-client-invalid-aud-in-id-token",
+          "source": "src/main/java/net/openid/conformance/openid/federation/client/OpenIDFederationClientInvalidAudInIdTokenTest.java"
+        },
+        {
+          "name": "openid-federation-client-invalid-iss-in-id-token",
+          "source": "src/main/java/net/openid/conformance/openid/federation/client/OpenIDFederationClientInvalidIssInIdTokenTest.java"
+        }
+      ]
+    }
+  },
+  "profiles": {
+    "deployed": [
+      "deployed"
+    ],
+    "rp": [
+      "rp"
+    ],
+    "op": [
+      "op"
+    ],
+    "full": [
+      "deployed",
+      "rp",
+      "op"
+    ]
+  }
+}
