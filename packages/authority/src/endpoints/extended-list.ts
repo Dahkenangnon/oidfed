@@ -7,7 +7,6 @@
  */
 import {
 	type EntityId,
-	EntityType,
 	ExtendedListClaim,
 	ExtendedListQuerySchema,
 	FederationErrorCode,
@@ -118,11 +117,17 @@ export function createExtendedListHandler(
 		const params = parseQueryParams(request);
 
 		// ── Base-endpoint filters (entity_type, intermediate, trust_marked, trust_mark_type)
-		const validEntityTypes = new Set<string>(Object.values(EntityType));
+		// Ext-Listing §3.2 inherits the base §8.2.1 entity_type parameter, and
+		// Federation §5.1 keeps its value space open (no registry): filter, never
+		// reject unknown values — an unmatched identifier yields an empty page.
 		const rawEntityTypes = params.getAll("entity_type");
 		for (const et of rawEntityTypes) {
-			if (!validEntityTypes.has(et)) {
-				return errorResponse(400, FederationErrorCode.InvalidRequest, "Unknown entity_type value");
+			if (et.length === 0) {
+				return errorResponse(
+					400,
+					FederationErrorCode.InvalidRequest,
+					"entity_type must not be empty",
+				);
 			}
 		}
 
@@ -231,7 +236,7 @@ export function createExtendedListHandler(
 
 		// ── Build store filter + page options
 		const filter: ListFilter = {};
-		if (rawEntityTypes.length > 0) filter.entityTypes = rawEntityTypes as EntityType[];
+		if (rawEntityTypes.length > 0) filter.entityTypes = rawEntityTypes;
 		if (intermediate === true || intermediate === false) filter.intermediate = intermediate;
 		const now = nowSeconds(ctx.options?.clock);
 		if (trustMarked === true) filter.trustMarked = true;

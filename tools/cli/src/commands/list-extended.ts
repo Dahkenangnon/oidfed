@@ -1,5 +1,4 @@
 import {
-	type EntityType,
 	type ExtendedListClaim,
 	ExtendedListQuerySchema,
 	type ExtendedListRequestParams,
@@ -65,7 +64,7 @@ export async function handler(
 	if (args.claims !== undefined) {
 		params.claims = args.claims as ReadonlyArray<ExtendedListClaim | string>;
 	}
-	if (args.entityType !== undefined) params.entityType = args.entityType as EntityType;
+	if (args.entityType !== undefined) params.entityType = args.entityType;
 	if (args.trustMarked !== undefined) params.trustMarked = args.trustMarked;
 	if (args.trustMarkType !== undefined) params.trustMarkType = args.trustMarkType;
 	if (args.intermediate !== undefined) params.intermediate = args.intermediate;

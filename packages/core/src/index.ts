@@ -33,6 +33,7 @@ export {
 	DEFAULT_MAX_RESPONSE_BYTES,
 	DEFAULT_REQUEST_OBJECT_TTL_SECONDS,
 	EntityType,
+	type EntityTypeIdentifier,
 	FederationEndpoint,
 	FederationErrorCode,
 	InternalErrorCode,

@@ -1,4 +1,4 @@
-import { type EntityType, InternalErrorCode, JwtTyp, MediaType } from "../constants.js";
+import { type EntityTypeIdentifier, InternalErrorCode, JwtTyp, MediaType } from "../constants.js";
 import { err, type FederationError, ok, type Result } from "../errors.js";
 import { verifyEntityStatement } from "../jose/verify.js";
 import { validateJwkSetUseRequirement } from "../jwks/use-requirement.js";
@@ -163,7 +163,8 @@ export async function verifySignedJwkSet(
 
 /** Optional filters accepted by the subordinate listing endpoint. */
 export interface ListSubordinatesFilter {
-	entityType?: EntityType | EntityType[];
+	/** Open value space — Federation §5.1 permits identifiers beyond the published set. */
+	entityType?: EntityTypeIdentifier | EntityTypeIdentifier[];
 	trustMarked?: boolean;
 	trustMarkType?: string;
 	intermediate?: boolean;
@@ -229,7 +230,8 @@ export async function fetchListSubordinates(
 export interface ResolveRequestParams {
 	sub: EntityId;
 	trustAnchor: EntityId | EntityId[];
-	entityType?: EntityType | EntityType[];
+	/** Open value space — Federation §5.1 permits identifiers beyond the published set. */
+	entityType?: EntityTypeIdentifier | EntityTypeIdentifier[];
 }
 
 /** Fetch a Resolve Response JWT from a remote resolver. The verifier checks Content-Type and typ. */

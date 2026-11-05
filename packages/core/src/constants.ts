@@ -54,6 +54,20 @@ export const EntityType = {
 } as const;
 export type EntityType = (typeof EntityType)[keyof typeof EntityType];
 
+/**
+ * Any Entity Type Identifier, including extension identifiers.
+ *
+ * Federation 1.0 §1.2 defines the value space as an open string ("String
+ * identifier for an Entity Type"), §5.1 permits identifiers beyond the
+ * published set ("Additional Entity Type Identifiers MAY be defined to support
+ * use cases for other protocols"), and §20 establishes no registry — so no
+ * closed validation set exists. `EntityType` enumerates the identifiers
+ * published by Federation 1.0 §5.1 and Wallet Architectures Draft 05 §6; this
+ * type additionally admits any other identifier while keeping editor
+ * completion for the known constants.
+ */
+export type EntityTypeIdentifier = EntityType | (string & Record<never, never>);
+
 export enum StandardPolicyOperator {
 	VALUE = "value",
 	ADD = "add",

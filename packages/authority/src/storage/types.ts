@@ -3,7 +3,7 @@ import type {
 	CacheProvider,
 	EntityCollectionStore,
 	EntityId,
-	EntityType,
+	EntityTypeIdentifier,
 	JWKSet,
 	ReplayStore,
 	SubordinateEvent,
@@ -55,7 +55,8 @@ export interface SubordinateRecord {
 	readonly metadata?: Readonly<Record<string, unknown>>;
 	readonly metadataPolicy?: Readonly<Record<string, unknown>>;
 	readonly constraints?: Readonly<TrustChainConstraints>;
-	readonly entityTypes?: ReadonlyArray<EntityType>;
+	/** Entity Types published by the subordinate. Open value space — Federation §5.1 permits identifiers beyond the published set. */
+	readonly entityTypes?: ReadonlyArray<EntityTypeIdentifier>;
 	readonly isIntermediate?: boolean;
 	readonly sourceEndpoint?: string;
 	readonly crit?: ReadonlyArray<string>;
@@ -71,7 +72,16 @@ export type SubordinateRecordUpdate = Partial<
 >;
 
 export interface ListFilter {
-	entityTypes?: EntityType[];
+	/**
+	 * Matches records having ANY of the listed types (union semantics).
+	 * Federation §8.2.1's "include all specified Entity Types" condenses
+	 * explicitly-OR drafting (openid/federation ee7a372f → 49d194e3), and
+	 * Entity Collection Draft 01 clarifies the same sentence to "any of".
+	 * Values are open-ended identifiers (Federation §5.1, no registry):
+	 * custom adapters must not reject unknown values — filter and report no
+	 * matches instead.
+	 */
+	entityTypes?: EntityTypeIdentifier[];
 	/** When true, require a valid issued mark. False adds no restriction. */
 	trustMarked?: boolean;
 	/** Match any of the supplied Trust Mark types. */

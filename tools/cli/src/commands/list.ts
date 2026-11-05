@@ -1,5 +1,4 @@
 import {
-	type EntityType,
 	fetchListSubordinates,
 	type HttpClient,
 	type ListSubordinatesFilter,
@@ -45,7 +44,7 @@ export async function handler(args: ListArgs, deps: ListDeps): Promise<Result<st
 	}
 
 	const filter: ListSubordinatesFilter = {};
-	if (args.entityType) filter.entityType = args.entityType as EntityType;
+	if (args.entityType) filter.entityType = args.entityType;
 	if (args.trustMarked !== undefined) filter.trustMarked = args.trustMarked;
 	if (args.trustMarkType) filter.trustMarkType = args.trustMarkType;
 	if (args.intermediate !== undefined) filter.intermediate = args.intermediate;

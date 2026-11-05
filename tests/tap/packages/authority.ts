@@ -1805,6 +1805,10 @@ export default (QUnit: QUnit) => {
 				t.equal(((await res.json()) as Record<string, string>).error, "unsupported_parameter");
 			});
 
+			// Federation 1.0 §8.2.1: repeated entity_type values filter with union (OR)
+			// semantics. The published sentence "include all specified Entity Types"
+			// condenses explicitly-OR drafting (openid/federation ee7a372f → 49d194e3),
+			// and Entity Collection Draft 01 clarifies the same sentence to "any of".
 			test("filters by multiple entity_type values with OR logic", async (t) => {
 				const { ctx, subordinates } = await createTestContext();
 				await subordinates.add(
@@ -1825,6 +1829,53 @@ export default (QUnit: QUnit) => {
 				t.equal(body.length, 2);
 				t.true(body.includes(LIST_SUB1));
 				t.true(body.includes(LIST_SUB2));
+			});
+
+			test("filters by a custom entity_type value instead of rejecting it", async (t) => {
+				// Federation 1.0 §5.1: "Additional Entity Type Identifiers MAY be
+				// defined to support use cases for other protocols"; §20 establishes
+				// no registry, so the value space is open.
+				const { ctx, subordinates } = await createTestContext();
+				const customType = "https://extensions.example.com/custom_wallet_type";
+				await subordinates.add(makeListRecord(LIST_SUB1, { entityTypes: [customType] }));
+				await subordinates.add(
+					makeListRecord(LIST_SUB2, { entityTypes: [EntityType.OpenIDProvider] }),
+				);
+				const handler = createListHandler(ctx);
+				const res = await handler(
+					new Request(
+						`https://authority.example.com/federation_list?entity_type=${encodeURIComponent(customType)}`,
+					),
+				);
+				t.equal(res.status, 200);
+				t.deepEqual(await res.json(), [LIST_SUB1]);
+			});
+
+			test("returns an empty array for an unmatched custom entity_type", async (t) => {
+				// §8.2.1's filtering MUST: an identifier no subordinate carries yields
+				// an empty result, not a per-value error.
+				const { ctx, subordinates } = await createTestContext();
+				await subordinates.add(
+					makeListRecord(LIST_SUB1, { entityTypes: [EntityType.OpenIDProvider] }),
+				);
+				const handler = createListHandler(ctx);
+				const res = await handler(
+					new Request(
+						"https://authority.example.com/federation_list?entity_type=never_registered_type",
+					),
+				);
+				t.equal(res.status, 200);
+				t.deepEqual(await res.json(), []);
+			});
+
+			test("rejects an empty entity_type value as invalid_request", async (t) => {
+				const { ctx } = await createTestContext();
+				const handler = createListHandler(ctx);
+				const res = await handler(
+					new Request("https://authority.example.com/federation_list?entity_type="),
+				);
+				t.equal(res.status, 400);
+				t.equal(((await res.json()) as Record<string, string>).error, "invalid_request");
 			});
 
 			test("filters trust_marked=true without trust_mark_type to entities with any active trust mark", async (t) => {
@@ -2415,6 +2466,29 @@ export default (QUnit: QUnit) => {
 				);
 				const handler = createExtendedListHandler(ctx);
 				const res = await handler(new Request(`${XLIST_BASE_URL}?entity_type=openid_provider`));
+				const body = (await res.json()) as {
+					immediate_subordinate_entities: Array<{ id: string }>;
+				};
+				t.deepEqual(
+					body.immediate_subordinate_entities.map((e) => e.id),
+					[XLIST_SUB_A],
+				);
+			});
+
+			test("accepts a custom entity_type value instead of rejecting it", async (t) => {
+				// Ext-Listing §3.2 inherits the base §8.2.1 entity_type parameter;
+				// Federation §5.1 keeps its value space open (no registry).
+				const { ctx, subordinates } = await createTestContext();
+				const customType = "https://extensions.example.com/custom_wallet_type";
+				await subordinates.add(makeXListRecord(XLIST_SUB_A, { entityTypes: [customType] }));
+				await subordinates.add(
+					makeXListRecord(XLIST_SUB_B, { entityTypes: [EntityType.OpenIDRelyingParty] }),
+				);
+				const handler = createExtendedListHandler(ctx);
+				const res = await handler(
+					new Request(`${XLIST_BASE_URL}?entity_type=${encodeURIComponent(customType)}`),
+				);
+				t.equal(res.status, 200);
 				const body = (await res.json()) as {
 					immediate_subordinate_entities: Array<{ id: string }>;
 				};

@@ -1,4 +1,4 @@
-import { EntityType, FederationErrorCode, nowSeconds } from "@oidfed/core";
+import { FederationErrorCode, nowSeconds } from "@oidfed/core";
 import type { ListFilter } from "../storage/types.js";
 import type { HandlerContext } from "./context.js";
 import { errorResponse, jsonResponse, parseQueryParams, requireMethod } from "./helpers.js";
@@ -18,14 +18,21 @@ export function createListHandler(ctx: HandlerContext): (request: Request) => Pr
 
 		const params = parseQueryParams(request);
 
-		const validEntityTypes = new Set<string>(Object.values(EntityType));
-		const rawEntityTypes = params.getAll("entity_type");
-		for (const et of rawEntityTypes) {
-			if (!validEntityTypes.has(et)) {
-				return errorResponse(400, FederationErrorCode.InvalidRequest, "Unknown entity_type value");
+		// Federation 1.0 §5.1: "Additional Entity Type Identifiers MAY be defined
+		// to support use cases for other protocols", and §20 establishes no
+		// registry — the value space is open, so values are not checked against a
+		// known set. Per §8.2.1 the result is filtered; an identifier no
+		// subordinate carries yields an empty array, not a per-value error.
+		const entityTypes = params.getAll("entity_type");
+		for (const et of entityTypes) {
+			if (et.length === 0) {
+				return errorResponse(
+					400,
+					FederationErrorCode.InvalidRequest,
+					"entity_type must not be empty",
+				);
 			}
 		}
-		const entityTypes = rawEntityTypes as EntityType[];
 		const trustMarkedRaw = params.get("trust_marked");
 		const trustMarked = parseBooleanQuery(trustMarkedRaw);
 		if (trustMarkedRaw !== null && trustMarked === undefined) {
