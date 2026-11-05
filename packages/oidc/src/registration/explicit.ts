@@ -1,4 +1,5 @@
 import {
+	DEFAULT_CLOCK_SKEW_SECONDS,
 	DEFAULT_ENTITY_STATEMENT_TTL_SECONDS,
 	type DiscoveryResult,
 	decodeEntityStatement,
@@ -300,11 +301,23 @@ export async function explicitRegistration(
 		return err(federationError(InternalErrorCode.Expired, "Registration response has expired"));
 	}
 
-	if (responsePayload.iat === undefined) {
+	const responseIat = responsePayload.iat as number | undefined;
+	if (responseIat === undefined) {
 		return err(
 			federationError(
 				FederationErrorCode.InvalidRequest,
 				"Registration response missing required 'iat' claim",
+			),
+		);
+	}
+
+	// Federation §§12.2.5 and 3.2 require issued-at validation, allowing clock skew.
+	const clockSkew = options?.clockSkewSeconds ?? DEFAULT_CLOCK_SKEW_SECONDS;
+	if (responseIat > responseNow + clockSkew) {
+		return err(
+			federationError(
+				FederationErrorCode.InvalidRequest,
+				"Registration response 'iat' is in the future",
 			),
 		);
 	}

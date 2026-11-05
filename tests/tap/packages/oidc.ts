@@ -2140,6 +2140,7 @@ export default (QUnit: QUnit) => {
 				readonly status?: number;
 				readonly contentType?: string | null;
 			},
+			validationOptions?: Pick<FederationOptions, "clock" | "clockSkewSeconds">,
 		) {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
@@ -2171,7 +2172,10 @@ export default (QUnit: QUnit) => {
 				}
 				return fed.httpClient(input);
 			};
-			return explicitRegistration(discovery, config, fed.trustAnchors, { httpClient });
+			return explicitRegistration(discovery, config, fed.trustAnchors, {
+				...validationOptions,
+				httpClient,
+			});
 		}
 
 		function explicitRegistrationResponseBase(overrides?: Record<string, unknown>) {
@@ -3070,6 +3074,35 @@ export default (QUnit: QUnit) => {
 				t.ok(/aud/i.test(result.error.description), result.error.description);
 			}
 		});
+
+		for (const { name, offset, skew, accepted } of [
+			{ name: "past iat", offset: -1, skew: 0, accepted: true },
+			{ name: "current iat with zero skew", offset: 0, skew: 0, accepted: true },
+			{ name: "future iat with zero skew", offset: 1, skew: 0, accepted: false },
+			{ name: "iat at default skew boundary", offset: 60, skew: undefined, accepted: true },
+			{ name: "iat beyond default skew", offset: 61, skew: undefined, accepted: false },
+			{ name: "iat at custom skew boundary", offset: 120, skew: 120, accepted: true },
+			{ name: "iat beyond custom skew", offset: 121, skew: 120, accepted: false },
+		]) {
+			test(`registration response time validation: ${name}`, async (t) => {
+				// Keep fixture chains valid and distinguish the injected clock from wall time.
+				const now = Math.floor(Date.now() / 1000) + 300;
+				const result = await explicitRegistrationWithResponse(
+					explicitRegistrationResponseBase({ iat: now + offset, exp: now + 1800 }),
+					undefined,
+					undefined,
+					{
+						clock: { now: () => now },
+						...(skew !== undefined ? { clockSkewSeconds: skew } : {}),
+					},
+				);
+				t.strictEqual(result.ok, accepted);
+				if (!accepted && isErr(result)) {
+					t.strictEqual(result.error.code, FederationErrorCode.InvalidRequest);
+					t.strictEqual(result.error.description, "Registration response 'iat' is in the future");
+				}
+			});
+		}
 
 		test("fails if response is missing iat", async (t) => {
 			const fed = await createMockFederation();
