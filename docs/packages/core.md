@@ -190,6 +190,8 @@ if (policyResult.ok) {
 
 Check maximum path length and permitted/excluded names against a parsed chain. `validateTrustChain()` runs the chain-level constraint checks and applies `allowed_entity_types` when resolving metadata.
 
+`max_path_length` sets the maximum number of Intermediate Entities between the issuer of the constraint and the Trust Chain subject. [Federation §6.2.1](https://openid.net/specs/openid-federation-1_0.html#section-6.2.1) requires a non-negative integer and specifies no upper bound. The schema accepts non-negative JavaScript safe integers. Local discovery work is bounded separately by `maxChainDepth`, `maxAuthorityHints`, and `maxTotalFetches`; a large constraint value does not increase those budgets.
+
 `allowed_entity_types` accepts non-empty Entity Type identifiers, including custom types permitted by [Federation §5.1](https://openid.net/specs/openid-federation-1_0.html#section-5.1). Omit the constraint to allow all types, or use `[]` to retain only `federation_entity`. That type is always retained and must not appear in the array. Filtering follows [§6.2.3](https://openid.net/specs/openid-federation-1_0.html#section-6.2.3); applications validate the protocol-specific metadata they use.
 
 ```ts

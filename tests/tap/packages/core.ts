@@ -2015,8 +2015,22 @@ export default (QUnit: QUnit) => {
 		test("TrustChainConstraintsSchema rejects negative max_path_length", (t) => {
 			t.false(TrustChainConstraintsSchema.safeParse({ max_path_length: -1 }).success);
 		});
-		test("TrustChainConstraintsSchema rejects max_path_length > 100", (t) => {
-			t.false(TrustChainConstraintsSchema.safeParse({ max_path_length: 101 }).success);
+		test("TrustChainConstraintsSchema accepts large max_path_length values and omission", (t) => {
+			for (const value of [100, 101, 1000, Number.MAX_SAFE_INTEGER]) {
+				const constraints = { max_path_length: value };
+				const result = TrustChainConstraintsSchema.safeParse(constraints);
+				t.true(result.success, String(value));
+				if (result.success) t.deepEqual(result.data, constraints);
+			}
+			t.true(TrustChainConstraintsSchema.safeParse({}).success);
+		});
+		test("TrustChainConstraintsSchema rejects malformed max_path_length values", (t) => {
+			for (const value of [1.5, Number.NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, "101", null]) {
+				t.false(
+					TrustChainConstraintsSchema.safeParse({ max_path_length: value }).success,
+					`${String(value)} (${typeof value})`,
+				);
+			}
 		});
 		test("TrustChainConstraintsSchema accepts max_path_length of 0", (t) => {
 			t.true(TrustChainConstraintsSchema.safeParse({ max_path_length: 0 }).success);
@@ -11859,6 +11873,64 @@ export default (QUnit: QUnit) => {
 				]);
 				const result = await validateTrustChain([leafEc, ss, taEc], taSet, { verboseErrors: true });
 				t.true(result.valid);
+			});
+			test("accepts large max_path_length constraints on short signed chains", async (t) => {
+				const { chain, taSet, taKeys, leafKeys } = await vt_buildSimple();
+				for (const maxPathLength of [101, 1000]) {
+					const ss = await vt_signSS(
+						"https://ta.example.com",
+						"https://leaf.example.com",
+						taKeys.privateKey,
+						leafKeys.publicKey,
+						{ constraints: { max_path_length: maxPathLength } },
+					);
+					for (const includeAnchor of [false, true]) {
+						const statements = [chain[0] as string, ss];
+						if (includeAnchor) statements.push(chain[2] as string);
+						const result = await validateTrustChain(statements, taSet, { verboseErrors: true });
+						t.true(result.valid, `max=${maxPathLength}, anchor configuration=${includeAnchor}`);
+					}
+				}
+			});
+			test("enforces max_path_length against the actual intermediates in a signed chain", async (t) => {
+				const { chain, taSet, taKeys, leafKeys } = await vt_buildSimple();
+				const intermediateKeys = await generateSigningKey("ES256");
+				const leafEc = await vt_signEC(
+					"https://leaf.example.com",
+					leafKeys.privateKey,
+					leafKeys.publicKey,
+					{ authority_hints: ["https://intermediate.example.com"] },
+				);
+				const leafSs = await vt_signSS(
+					"https://intermediate.example.com",
+					"https://leaf.example.com",
+					intermediateKeys.privateKey,
+					leafKeys.publicKey,
+				);
+				for (const maxPathLength of [0, 1]) {
+					const intermediateSs = await vt_signSS(
+						"https://ta.example.com",
+						"https://intermediate.example.com",
+						taKeys.privateKey,
+						intermediateKeys.publicKey,
+						{ constraints: { max_path_length: maxPathLength } },
+					);
+					const result = await validateTrustChain(
+						[leafEc, leafSs, intermediateSs, chain[2] as string],
+						taSet,
+						{ verboseErrors: true },
+					);
+					t.equal(result.valid, maxPathLength === 1, `one intermediate, max=${maxPathLength}`);
+					if (maxPathLength === 0) {
+						t.true(
+							result.errors.some(
+								(error) =>
+									error.code === InternalErrorCode.ConstraintViolation &&
+									error.statementIndex === 2,
+							),
+						);
+					}
+				}
 			});
 			test("applies custom entity type constraints to signed chains", async (t) => {
 				const { chain, taSet, taKeys, leafKeys } = await vt_buildSimple();
