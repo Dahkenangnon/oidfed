@@ -2029,10 +2029,24 @@ export default (QUnit: QUnit) => {
 				}).success,
 			);
 		});
-		test("TrustChainConstraintsSchema rejects invalid entity types", (t) => {
-			t.false(
-				TrustChainConstraintsSchema.safeParse({ allowed_entity_types: ["invalid_type"] }).success,
-			);
+		test("TrustChainConstraintsSchema preserves custom entity types", (t) => {
+			const constraints = {
+				allowed_entity_types: ["openid_relying_party", "research_repository"],
+			};
+			const result = TrustChainConstraintsSchema.safeParse(constraints);
+			t.true(result.success);
+			if (result.success) t.deepEqual(result.data, constraints);
+		});
+		test("TrustChainConstraintsSchema accepts an empty allowed_entity_types array", (t) => {
+			t.true(TrustChainConstraintsSchema.safeParse({ allowed_entity_types: [] }).success);
+		});
+		test("TrustChainConstraintsSchema rejects malformed allowed_entity_types", (t) => {
+			for (const value of [null, "openid_provider", [""], [42], [null], [{}], [[]]]) {
+				t.false(
+					TrustChainConstraintsSchema.safeParse({ allowed_entity_types: value }).success,
+					JSON.stringify(value),
+				);
+			}
 		});
 		test("TrustChainConstraintsSchema rejects federation_entity in allowed_entity_types constraint", (t) => {
 			t.false(
@@ -10059,8 +10073,12 @@ export default (QUnit: QUnit) => {
 						overrides: { constraints: { allowed_entity_types: ["federation_entity"] } },
 					},
 					{
-						name: "unknown allowed_entity_types",
-						overrides: { constraints: { allowed_entity_types: ["unknown_entity_type"] } },
+						name: "empty allowed_entity_types identifier",
+						overrides: { constraints: { allowed_entity_types: [""] } },
+					},
+					{
+						name: "non-string allowed_entity_types identifier",
+						overrides: { constraints: { allowed_entity_types: [42] } },
 					},
 				];
 				for (const invalidCase of invalidSsCases) {
@@ -11841,6 +11859,63 @@ export default (QUnit: QUnit) => {
 				]);
 				const result = await validateTrustChain([leafEc, ss, taEc], taSet, { verboseErrors: true });
 				t.true(result.valid);
+			});
+			test("applies custom entity type constraints to signed chains", async (t) => {
+				const { chain, taSet, taKeys, leafKeys } = await vt_buildSimple();
+				const metadata = {
+					federation_entity: { organization_name: "Leaf Org" },
+					openid_relying_party: { client_name: "Leaf RP" },
+					research_repository: { repository_name: "Research Archive" },
+				};
+				const leafEc = await vt_signEC(
+					"https://leaf.example.com",
+					leafKeys.privateKey,
+					leafKeys.publicKey,
+					{ authority_hints: ["https://ta.example.com"], metadata },
+				);
+				const cases: Array<{
+					allowed: string[] | undefined;
+					expected: Record<string, Record<string, unknown>>;
+				}> = [
+					{
+						allowed: ["research_repository"],
+						expected: {
+							federation_entity: metadata.federation_entity,
+							research_repository: metadata.research_repository,
+						},
+					},
+					{
+						allowed: ["openid_relying_party", "research_repository"],
+						expected: metadata,
+					},
+					{
+						allowed: ["openid_relying_party", "unused_repository"],
+						expected: {
+							federation_entity: metadata.federation_entity,
+							openid_relying_party: metadata.openid_relying_party,
+						},
+					},
+					{
+						allowed: [],
+						expected: { federation_entity: metadata.federation_entity },
+					},
+					{ allowed: undefined, expected: metadata },
+				];
+				for (const { allowed, expected } of cases) {
+					const ss = await vt_signSS(
+						"https://ta.example.com",
+						"https://leaf.example.com",
+						taKeys.privateKey,
+						leafKeys.publicKey,
+						allowed === undefined ? {} : { constraints: { allowed_entity_types: allowed } },
+					);
+					const result = await validateTrustChain([leafEc, ss, chain[2] as string], taSet, {
+						verboseErrors: true,
+					});
+					const label = JSON.stringify(allowed) ?? "constraint omitted";
+					t.true(result.valid, label);
+					if (result.valid) t.deepEqual(result.chain.resolvedMetadata, expected, label);
+				}
 			});
 			test("applies allowed_entity_types filter after merging Immediate Superior SS metadata", async (t) => {
 				const taKeys = await generateSigningKey("ES256");

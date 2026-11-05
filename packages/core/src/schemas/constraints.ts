@@ -16,18 +16,15 @@ export const NamingConstraintsSchema = z.object({
 export const TrustChainConstraintsSchema = z.looseObject({
 	max_path_length: z.number().int().nonnegative().max(100).optional(),
 	naming_constraints: NamingConstraintsSchema.optional(),
+	// Federation §§5.1 and 6.2.3: custom types are valid; federation_entity is implicit.
 	allowed_entity_types: z
 		.array(
-			z.enum([
-				"openid_relying_party",
-				"openid_provider",
-				"oauth_authorization_server",
-				"oauth_client",
-				"oauth_resource",
-				"openid_wallet_provider",
-				"openid_credential_issuer",
-				"openid_credential_verifier",
-			]),
+			z
+				.string()
+				.min(1)
+				.refine((type) => type !== "federation_entity", {
+					message: "federation_entity must not appear in allowed_entity_types",
+				}),
 		)
 		.optional(),
 });
