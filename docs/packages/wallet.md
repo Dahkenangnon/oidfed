@@ -142,6 +142,12 @@ The helper sets the `openid_federation:` client identifier and wallet audience, 
 
 Supplied response and redirect URIs must be HTTPS URLs, matching [Wallet Draft 05 §6.3.1](https://openid.net/specs/openid-federation-wallet-1_0-05.html#section-6.3.1). Invalid response parameters return `invalid_request` before signing or trust-chain preparation. Without a supplied `trustChain`, creation needs no discovery; with one, provide pinned `trustAnchors` for its validation. Endpoint authorization is checked by the receiving wallet against the effective federation metadata during completion ([§7.1.1](https://openid.net/specs/openid-federation-wallet-1_0-05.html#section-7.1.1)). The application's OpenID4VP engine handles request delivery and response processing, including encryption for `direct_post.jwt`.
 
+Authorization Request `redirect_uri` and `response_uri` values must be fragment-free, including an empty trailing `#` ([RFC 6749 §3.1.2](https://www.rfc-editor.org/rfc/rfc6749.html#section-3.1.2), [OpenID4VP §8.2](https://openid.net/specs/openid-4-verifiable-presentations-1_0.html#section-8.2)). The same rule applies to registered `response_uris`. Query strings and percent-encoded `%23` remain valid.
+
+Registered `redirect_uris` can contain fragments for redirects returned after a direct-post response; [OpenID4VP §8.2](https://openid.net/specs/openid-4-verifiable-presentations-1_0.html#section-8.2) permits a random value in that fragment. Request Object URLs can also contain fragment hashes, as recommended by [OpenID Connect Registration §2](https://openid.net/specs/openid-connect-registration-1_0.html#ClientMetadata). Endpoint authorization compares the complete registered strings exactly.
+
+Metadata fields that require HTTPS, including endpoint and key-reference URLs, reject userinfo and empty `@` delimiters. This adopts the receiver rejection policy recommended by [RFC 9110 §4.2.4](https://www.rfc-editor.org/rfc/rfc9110.html#section-4.2.4); that section also prohibits senders from generating HTTP(S) target or field URIs containing userinfo. The same check applies to response and redirect URIs in Authorization Requests.
+
 ## Check federation-backed presentation requests
 
 ```ts

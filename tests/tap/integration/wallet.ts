@@ -214,6 +214,48 @@ export default (QUnit: QUnit) => {
 					}
 				});
 			}
+			QUnit.test(`${host} rejects invalid wallet endpoint URLs`, async (t) => {
+				const f = await walletFederation();
+				for (const responseUri of [
+					"https://verifier.example/response#",
+					"https://verifier.example/response#part",
+					"https://@verifier.example/response",
+					"https://user:secret@verifier.example/response",
+				]) {
+					const config = {
+						entityId: f.ids.verifier,
+						metadata: {
+							federation_entity:
+								host === "leaf"
+									? {}
+									: {
+											federation_fetch_endpoint: `${f.ids.verifier}/fetch`,
+											federation_list_endpoint: `${f.ids.verifier}/list`,
+										},
+							openid_credential_verifier: {
+								...f.metadata.verifier.openid_credential_verifier,
+								response_uris: [responseUri],
+							},
+						},
+						keyProvider: MemoryFederationKeyProvider.fromJWK(f.keys.verifier.privateKey),
+						roles: [new CredentialVerifierRole()],
+						options: f.options,
+					};
+					t.throws(
+						() =>
+							host === "leaf"
+								? new Leaf({ ...config, authorityHints: [f.ids.anchor] })
+								: host === "anchor"
+									? new TrustAnchor({ ...config, storage: new MemoryStorageAdapter() })
+									: new Intermediate({
+											...config,
+											authorityHints: [f.ids.anchor],
+											storage: new MemoryStorageAdapter(),
+										}),
+						/response_uris/,
+					);
+				}
+			});
 			QUnit.test(`${host} rejects invalid host-supplied wallet metadata`, async (t) => {
 				const f = await walletFederation();
 				const federationMetadata =

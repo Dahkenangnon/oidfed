@@ -125,6 +125,9 @@ function validateResponseParameters(request: z.infer<typeof requestSchema>): Res
 		["response_uri", CredentialVerifierMetadataSchema.shape.response_uris.unwrap().element],
 		["redirect_uri", CredentialVerifierMetadataSchema.shape.redirect_uris.unwrap().element],
 	] as const) {
+		// RFC 6749 §3.1.2 also applies to response_uri through OpenID4VP §8.2.
+		// Check the delimiter itself: URL.hash is empty for a trailing '#'.
+		if (request[field]?.includes("#")) return failure(`${field} must not contain a fragment`);
 		if (request[field] !== undefined && !schema.safeParse(request[field]).success)
 			return failure(`${field} must be an HTTPS URL`);
 	}

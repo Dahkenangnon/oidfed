@@ -4,9 +4,22 @@ import { z } from "zod";
 const strings = z.array(z.string()).min(1);
 const object = z.record(z.string(), z.unknown());
 const identifier = z.string().regex(/^[A-Za-z0-9_-]+$/);
-const https = z
-	.url()
-	.pipe(z.string().refine((value) => new URL(value).protocol === "https:", "Must use HTTPS"));
+const https = z.url().pipe(
+	z
+		.string()
+		.refine((value) => new URL(value).protocol === "https:", "Must use HTTPS")
+		.refine((value) => {
+			const url = new URL(value);
+			// URL parsing removes empty userinfo. Inspect the authority as well so
+			// RFC 9110 §4.2.4's rejection policy also covers https://@host/.
+			const authority = value.replace(/[\t\r\n]/g, "").match(/^[^:]*:[/\\]*([^/\\?#]*)/)?.[1];
+			return !url.username && !url.password && !authority?.includes("@");
+		}, "URL must not contain userinfo"),
+);
+const responseEndpoint = https.refine(
+	(value) => !value.includes("#"),
+	"Response endpoint must not contain a fragment",
+);
 const issuerId = https.refine(
 	(value) => !value.includes("?") && !value.includes("#"),
 	"Issuer must not contain query or fragment components",
@@ -124,7 +137,7 @@ export const CredentialVerifierMetadataSchema = z.looseObject({
 	vp_formats_supported: formatCapabilities,
 	...keyReferences,
 	request_uris: z.array(https).min(1).optional(),
-	response_uris: z.array(https).min(1).optional(),
+	response_uris: z.array(responseEndpoint).min(1).optional(),
 	redirect_uris: z.array(https).min(1).optional(),
 	dcql_queries: z.array(DcqlQuerySchema).min(1).optional(),
 });

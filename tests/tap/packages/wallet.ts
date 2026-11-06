@@ -190,6 +190,93 @@ export default (QUnit: QUnit) => {
 	});
 
 	module("wallet / metadata", () => {
+		test("applies URL rules according to each wallet metadata field", async (t) => {
+			const f = await walletFederation();
+			const credentials = ["user@", "user:secret@", ":secret@", "@", ":@", "%75ser:%73ecret@"];
+			for (const [role, metadata, fields] of [
+				[
+					WalletProviderRole,
+					f.metadata.provider.openid_wallet_provider,
+					["jwks_uri", "signed_jwks_uri"],
+				],
+				[
+					CredentialIssuerRole,
+					f.metadata.issuer.openid_credential_issuer,
+					[
+						"credential_issuer",
+						"authorization_servers",
+						"credential_endpoint",
+						"nonce_endpoint",
+						"deferred_credential_endpoint",
+						"notification_endpoint",
+						"jwks_uri",
+						"signed_jwks_uri",
+					],
+				],
+				[
+					CredentialVerifierRole,
+					f.metadata.verifier.openid_credential_verifier,
+					["request_uris", "response_uris", "redirect_uris", "jwks_uri", "signed_jwks_uri"],
+				],
+			] as const) {
+				for (const field of fields) {
+					const array = field.endsWith("_uris") || field === "authorization_servers";
+					for (const credential of credentials) {
+						const uri = `https://${credential}verifier.example/path`;
+						t.false(
+							role.parseMetadata({ ...metadata, [field]: array ? [uri] : uri }).success,
+							`${field} rejects userinfo`,
+						);
+					}
+				}
+			}
+			const base = f.metadata.verifier.openid_credential_verifier;
+			for (const uri of [
+				"\u0000https://@verifier.example/path",
+				"https:@verifier.example/path",
+				"https:\\@verifier.example/path",
+				"https://\t@verifier.example/path",
+			])
+				t.false(
+					CredentialVerifierRole.parseMetadata({ ...base, request_uris: [uri] }).success,
+					"rejects empty userinfo in forms accepted by the URL parser",
+				);
+			for (const suffix of ["#fragment", "#"]) {
+				const uri = `https://verifier.example/path${suffix}`;
+				t.false(CredentialVerifierRole.parseMetadata({ ...base, response_uris: [uri] }).success);
+				for (const field of ["redirect_uris", "request_uris", "jwks_uri", "signed_jwks_uri"])
+					t.true(
+						CredentialVerifierRole.parseMetadata({
+							...base,
+							[field]: field.endsWith("_uris") ? [uri] : uri,
+						}).success,
+						`${field} permits fragments`,
+					);
+			}
+			for (const uri of [
+				"HTTPS://verifier.example/path",
+				"https://verifier.example/path%23part?email=a@b",
+				"https://verifier.example/@path?value=1",
+			]) {
+				const parsed = CredentialVerifierRole.parseMetadata({ ...base, response_uris: [uri] });
+				t.true(parsed.success);
+				if (parsed.success)
+					t.deepEqual(parsed.data.response_uris, [uri], "preserves the registered string");
+			}
+			for (const field of [
+				"credential_endpoint",
+				"nonce_endpoint",
+				"deferred_credential_endpoint",
+				"notification_endpoint",
+			])
+				t.true(
+					CredentialIssuerRole.parseMetadata({
+						...f.metadata.issuer.openid_credential_issuer,
+						[field]: "https://issuer.example/path#fragment",
+					}).success,
+					`${field} keeps its existing fragment handling`,
+				);
+		});
 		test("validates issuer claim paths according to their credential format", async (t) => {
 			const f = await walletFederation();
 			const configuration = (format: string, paths: unknown[][]) => ({
@@ -1671,6 +1758,28 @@ export default (QUnit: QUnit) => {
 			t.true(prepared.ok);
 			if (!prepared.ok) return;
 			const invalid: [Record<string, unknown>, string][] = [];
+			for (const field of ["response_uri", "redirect_uri"] as const) {
+				for (const suffix of ["#fragment", "#", "?query=value#"]) {
+					invalid.push([
+						{
+							response_uri: undefined,
+							response_mode: field === "response_uri" ? "direct_post" : "fragment",
+							[field]: `https://verifier.example/path${suffix}`,
+						},
+						`${field} must not contain a fragment`,
+					]);
+				}
+				for (const userinfo of ["user:secret@", "@", ":@"]) {
+					invalid.push([
+						{
+							response_uri: undefined,
+							response_mode: field === "response_uri" ? "direct_post" : "fragment",
+							[field]: `https://${userinfo}verifier.example/path`,
+						},
+						`${field} must be an HTTPS URL`,
+					]);
+				}
+			}
 			for (const mode of ["direct_post", "direct_post.jwt"]) {
 				invalid.push([
 					{ response_mode: mode, response_uri: undefined },
@@ -1821,6 +1930,93 @@ export default (QUnit: QUnit) => {
 				);
 				t.false(checked.ok, "receiving wallet enforces the exact registered endpoint");
 				if (!checked.ok) t.true(checked.error.description.includes("Endpoint is not registered"));
+			}
+		});
+
+		test("preserves Request Object hashes and registered post-submission fragments", async (t) => {
+			const requestUri = "https://verifier.example/request#content-hash";
+			const redirectUri = "https://verifier.example/done#session";
+			for (const responseUri of [
+				"HTTPS://verifier.example/response",
+				"https://verifier.example/@response%23part?email=a@b",
+			]) {
+				const f = await walletFederation({
+					verifierMetadata: {
+						request_uris: [requestUri],
+						response_uris: [responseUri],
+						redirect_uris: [redirectUri],
+					},
+				});
+				const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
+					{ client_id: f.requestPayload.client_id, request_uri: requestUri },
+					f.anchors,
+					f.options,
+				);
+				t.true(prepared.ok, JSON.stringify(prepared));
+				if (!prepared.ok) continue;
+				t.equal(prepared.value.requestUri, requestUri);
+				const created = await CredentialVerifierRole.createAuthorizationRequest(
+					f.ids.verifier,
+					{ ...f.requestPayload, response_uri: responseUri },
+					new JwkSigner(f.protocol.verifier.privateKey),
+					f.options,
+				);
+				t.true(created.ok);
+				if (!created.ok) continue;
+				const checked = await CredentialVerifierRole.completeAuthorizationRequest(
+					prepared.value,
+					created.value,
+				);
+				t.true(checked.ok, JSON.stringify(checked));
+				if (!checked.ok) continue;
+				t.equal(checked.value.request.response_uri, responseUri);
+				t.true(CredentialVerifierRole.validateResponseRedirect(checked.value, redirectUri).ok);
+				t.false(
+					CredentialVerifierRole.validateResponseRedirect(checked.value, `${redirectUri}-other`).ok,
+				);
+				const jwt = await token(
+					{
+						...f.requestPayload,
+						response_mode: "fragment",
+						response_uri: undefined,
+						redirect_uri: redirectUri,
+					},
+					f.protocol.verifier.privateKey,
+					"oauth-authz-req+jwt",
+				);
+				const invalid = await CredentialVerifierRole.completeAuthorizationRequest(
+					prepared.value,
+					jwt,
+				);
+				t.false(
+					invalid.ok,
+					"registration for a later redirect does not authorize a request fragment",
+				);
+				if (!invalid.ok)
+					t.equal(invalid.error.description, "redirect_uri must not contain a fragment");
+			}
+		});
+
+		test("validates endpoint URLs in effective superior metadata", async (t) => {
+			for (const metadata of [
+				{ response_uris: ["https://verifier.example/response#fragment"] },
+				{ response_uris: ["https://verifier.example/response#"] },
+				{ request_uris: ["https://@verifier.example/request"] },
+				{ redirect_uris: ["https://user:secret@verifier.example/done"] },
+			]) {
+				const f = await walletFederation({ verifierOverride: metadata });
+				const result = await CredentialVerifierRole.prepareAuthorizationRequest(
+					{ client_id: f.requestPayload.client_id },
+					f.anchors,
+					f.options,
+				);
+				t.false(result.ok, "superior overrides receive endpoint validation");
+				if (!result.ok) {
+					t.equal(result.error.code, "ERR_TRUST_CHAIN_INVALID");
+					t.true(result.error.description.includes(Object.keys(metadata)[0]!));
+					t.true(/fragment|userinfo/.test(result.error.description));
+					t.false(result.error.description.includes("secret"));
+				}
 			}
 		});
 
