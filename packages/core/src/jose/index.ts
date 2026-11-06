@@ -22,3 +22,9 @@ export {
 	decodeSubordinateStatement,
 	verifyEntityStatement,
 } from "./verify.js";
+
+export {
+	type VerifiedProtocolJwt,
+	type VerifyProtocolJwtOptions,
+	verifyProtocolJwt,
+} from "./verify-protocol.js";

@@ -43,6 +43,7 @@ export {
 	JWKSchema,
 	type JWKSet,
 	JWKSetSchema,
+	MetadataJWKSetSchema,
 } from "./jwk.js";
 export {
 	type EntityTypeMetadataMap,

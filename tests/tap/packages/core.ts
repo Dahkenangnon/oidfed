@@ -235,6 +235,252 @@ import { walletFederation, walletQuery } from "../fixtures/wallet.js";
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("core / protocol key identifiers", () => {
+		test("separates protocol metadata keys from federation keys", async (t) => {
+			const { publicKey } = await generateSigningKey();
+			const anonymous = { ...publicKey };
+			delete anonymous.kid;
+			for (const keys of [[anonymous], [publicKey, publicKey]]) {
+				t.true(CorePublic.MetadataJWKSetSchema.safeParse({ keys }).success);
+				t.false(CorePublic.JWKSetSchema.safeParse({ keys }).success);
+				t.false(CorePublic.validatePublicJwkSet({ keys }).ok);
+			}
+			for (const keys of [[], [{ ...anonymous, d: "secret" }], [{ kty: "oct", k: "secret" }]]) {
+				t.false(CorePublic.MetadataJWKSetSchema.safeParse({ keys }).success);
+			}
+		});
+
+		test("resolves all protocol-key representations with optional identifiers", async (t) => {
+			const federation = await generateSigningKey();
+			const protocol = await generateSigningKey();
+			const anonymous = { ...protocol.publicKey };
+			delete anonymous.kid;
+			for (const keys of [[anonymous], [protocol.publicKey, protocol.publicKey]]) {
+				const jwt = await signEntityStatement(
+					{ iss: LEAF_ID, sub: LEAF_ID, keys },
+					new JwkSigner(federation.privateKey),
+					{ typ: JwtTyp.JwkSet },
+				);
+				for (const source of ["jwks", "jwks_uri", "signed_jwks_uri"] as const) {
+					const result = await CorePublic.resolveEntityKeys(
+						{ [source]: source === "jwks" ? { keys } : `${LEAF_ID}/keys` },
+						{ keys: [federation.publicKey] },
+						{
+							httpClient: async () =>
+								new Response(source === "signed_jwks_uri" ? jwt : JSON.stringify({ keys }), {
+									headers: {
+										"content-type":
+											source === "signed_jwks_uri" ? "application/jwk-set+jwt" : "application/json",
+									},
+								}),
+						},
+					);
+					t.true(result.ok, source);
+					if (result.ok) {
+						t.equal(result.value.source, source);
+						t.deepEqual(result.value.keys, keys);
+					}
+				}
+			}
+			for (const signer of [federation.privateKey, protocol.privateKey]) {
+				const jwt = await signEntityStatement(
+					{ iss: LEAF_ID, sub: LEAF_ID, keys: [anonymous] },
+					new JwkSigner(signer),
+					{
+						typ: JwtTyp.JwkSet,
+						...(signer === federation.privateKey ? { extraHeaders: { kid: undefined } } : {}),
+					},
+				);
+				t.false(
+					(await CorePublic.verifySignedJwkSet(jwt, { keys: [federation.publicKey] })).ok,
+					"signed metadata still needs its federation envelope identifier and signature",
+				);
+			}
+		});
+
+		test("permits an absent header identifier only for a single protocol key", async (t) => {
+			const pair = await generateSigningKey();
+			const other = await generateSigningKey();
+			const anonymous = { ...pair.publicKey };
+			delete anonymous.kid;
+			const jwt = await signEntityStatement(
+				{ iss: LEAF_ID, exp: 2000 },
+				new JwkSigner(pair.privateKey),
+				{
+					typ: "oauth-authz-req+jwt",
+					extraHeaders: { kid: undefined },
+				},
+			);
+			const options = {
+				expectedTyp: "oauth-authz-req+jwt",
+				clock: { now: () => 1500 },
+				clockSkewSeconds: 0,
+			};
+			for (const key of [anonymous, pair.publicKey]) {
+				t.true(
+					(
+						await CorePublic.verifyProtocolJwt(
+							jwt,
+							{ keys: [key] },
+							{ ...options, keyIdPolicy: "single-key" },
+						)
+					).ok,
+				);
+				t.false(
+					(await CorePublic.verifyProtocolJwt(jwt, { keys: [key] }, options)).ok,
+					"default requires kid",
+				);
+			}
+			t.false(
+				(
+					await CorePublic.verifyProtocolJwt(
+						jwt,
+						{ keys: [pair.publicKey, { ...other.publicKey, use: "enc" }] },
+						{
+							...options,
+							keyIdPolicy: "single-key",
+						},
+					)
+				).ok,
+				"count all published keys before signing-key selection",
+			);
+			t.false(
+				(await verifyEntityStatement(jwt, { keys: [pair.publicKey] }, options)).ok,
+				"federation verifier remains strict",
+			);
+		});
+
+		for (const alg of ["RS256", "PS256"] as const) {
+			test(`skips undersized ${alg} candidates without depending on key order`, async (t) => {
+				const pair = await generateSigningKey(alg);
+				const smallPair = await crypto.subtle.generateKey(
+					{
+						name: alg === "RS256" ? "RSASSA-PKCS1-v1_5" : "RSA-PSS",
+						modulusLength: 1024,
+						publicExponent: new Uint8Array([1, 0, 1]),
+						hash: "SHA-256",
+					},
+					true,
+					["sign", "verify"],
+				);
+				const exported = await crypto.subtle.exportKey("jwk", smallPair.publicKey);
+				const small = JWKSchema.parse({
+					kty: "RSA",
+					n: exported.n,
+					e: exported.e,
+					kid: pair.publicKey.kid,
+					alg,
+					use: "sig" as const,
+				});
+				const options = {
+					expectedTyp: "oauth-authz-req+jwt",
+					clock: { now: () => 1500 },
+					clockSkewSeconds: 0,
+				};
+				const sign = (claims: Record<string, unknown>) =>
+					signEntityStatement(claims, new JwkSigner(pair.privateKey), { typ: options.expectedTyp });
+				const jwt = await sign({ iss: LEAF_ID, exp: 2000 });
+				for (const keys of [
+					[small, pair.publicKey],
+					[pair.publicKey, small],
+				]) {
+					const verified = await CorePublic.verifyProtocolJwt(jwt, { keys }, options);
+					t.true(
+						verified.ok,
+						verified.ok
+							? "valid signature survives either candidate order"
+							: String(verified.error.cause),
+					);
+					for (const claims of [{ exp: 1500 }, { exp: 2000, nbf: 1501 }]) {
+						t.false(
+							(await CorePublic.verifyProtocolJwt(await sign(claims), { keys }, options)).ok,
+							"JWT time failures remain fatal",
+						);
+					}
+				}
+				for (const keys of [[small], [small, small]]) {
+					t.false(
+						(await CorePublic.verifyProtocolJwt(jwt, { keys }, options)).ok,
+						"all unusable candidates fail closed",
+					);
+				}
+			});
+		}
+
+		test("matches identifiers and signing capabilities before verifying", async (t) => {
+			const pair = await generateSigningKey();
+			const other = await generateSigningKey();
+			const rsa = await generateSigningKey("RS256");
+			const options = {
+				expectedTyp: "oauth-authz-req+jwt",
+				clock: { now: () => 1500 },
+				clockSkewSeconds: 0,
+			};
+			const jwt = await signEntityStatement(
+				{ iss: LEAF_ID, exp: 2000 },
+				new JwkSigner(pair.privateKey),
+				{ typ: options.expectedTyp },
+			);
+			const shared = { ...rsa.publicKey, kid: pair.publicKey.kid };
+			for (const keys of [
+				[shared, pair.publicKey],
+				[pair.publicKey, shared],
+				[{ ...other.publicKey, kid: pair.publicKey.kid }, pair.publicKey],
+			]) {
+				t.true(
+					(await CorePublic.verifyProtocolJwt(jwt, { keys }, options)).ok,
+					"verifies a compatible candidate with shared kid",
+				);
+			}
+			for (const key of [
+				{ ...pair.publicKey, kid: "different" },
+				{ ...pair.publicKey, use: "enc" as const },
+				{ ...pair.publicKey, key_ops: ["encrypt" as const] },
+				{ ...pair.publicKey, alg: "ES384" },
+				{ ...pair.publicKey, crv: "P-384" },
+				{ ...other.publicKey, kid: pair.publicKey.kid },
+			])
+				t.false((await CorePublic.verifyProtocolJwt(jwt, { keys: [key] }, options)).ok);
+			for (const header of [{ kid: "unknown" }, { kid: 42 }, { kid: "" }, { typ: "JWT" }]) {
+				const invalid = await signEntityStatement(
+					{ iss: LEAF_ID, exp: 2000 },
+					new JwkSigner(pair.privateKey),
+					{ typ: options.expectedTyp, extraHeaders: header },
+				);
+				t.false(
+					(
+						await CorePublic.verifyProtocolJwt(
+							invalid,
+							{ keys: [pair.publicKey] },
+							{ ...options, keyIdPolicy: "single-key" },
+						)
+					).ok,
+				);
+			}
+			for (const claims of [{ exp: 1500 }, { exp: 2000, nbf: 1501 }]) {
+				const expired = await signEntityStatement(
+					{ iss: LEAF_ID, ...claims },
+					new JwkSigner(pair.privateKey),
+					{ typ: options.expectedTyp },
+				);
+				t.false(
+					(await CorePublic.verifyProtocolJwt(expired, { keys: [pair.publicKey] }, options)).ok,
+					"JWT time claims remain enforced",
+				);
+			}
+			const { SignJWT } = await import("jose");
+			const symmetric = await new SignJWT({})
+				.setProtectedHeader({ alg: "HS256", typ: options.expectedTyp })
+				.sign(new Uint8Array(32));
+			const unsupported = await CorePublic.verifyProtocolJwt(
+				symmetric,
+				{ keys: [pair.publicKey] },
+				options,
+			);
+			t.false(unsupported.ok);
+			if (!unsupported.ok) t.equal(unsupported.error.code, InternalErrorCode.UnsupportedAlg);
+		});
+	});
 	module("core / authority hints validation", () => {
 		for (const hints of [
 			undefined,

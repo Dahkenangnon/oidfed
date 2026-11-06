@@ -149,9 +149,12 @@ export {
 	stripPrivateFields,
 	timingSafeEqual,
 	type VerifiedClientAssertion,
+	type VerifiedProtocolJwt,
+	type VerifyProtocolJwtOptions,
 	validateSigner,
 	verifyClientAssertion,
 	verifyEntityStatement,
+	verifyProtocolJwt,
 } from "./jose/index.js";
 // JWK Set helpers
 export { fetchJwkSet } from "./jwks/jwks-uri.js";

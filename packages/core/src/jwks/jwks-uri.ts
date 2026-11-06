@@ -1,10 +1,10 @@
 /**
  * HTTP fetcher for `jwks_uri` — performs the HTTPS GET, validates the JSON
- * shape against `JWKSetSchema`, and applies the conditional `use` rule.
+ * shape against `MetadataJWKSetSchema`, and applies the conditional `use` rule.
  */
 import { FederationErrorCode } from "../constants.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
-import { type JWKSet, JWKSetSchema } from "../schemas/jwk.js";
+import { type JWKSet, MetadataJWKSetSchema } from "../schemas/jwk.js";
 import { performFetch } from "../trust-chain/fetch.js";
 import type { FederationOptions } from "../types.js";
 import { validateJwkSetUseRequirement } from "./use-requirement.js";
@@ -14,7 +14,7 @@ import { validateJwkSetUseRequirement } from "./use-requirement.js";
  *
  * - URL MUST use https and MUST NOT contain a fragment.
  * - HTTP GET; non-2xx is rejected by the underlying fetcher.
- * - Body MUST parse as JSON and conform to `JWKSetSchema`.
+ * - Body MUST parse as JSON and conform to `MetadataJWKSetSchema`.
  * - The conditional `use` rule is enforced (mixed signing/encryption keys
  *   require `use` on every key).
  */
@@ -65,7 +65,7 @@ export async function fetchJwkSet(
 		);
 	}
 
-	const validated = JWKSetSchema.safeParse(raw);
+	const validated = MetadataJWKSetSchema.safeParse(raw);
 	if (!validated.success) {
 		return err(
 			federationError(

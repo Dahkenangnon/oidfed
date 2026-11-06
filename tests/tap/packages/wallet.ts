@@ -42,6 +42,85 @@ const proof = (f: Fixture) => ({
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("wallet / protocol key identifiers", () => {
+		test("retains verifier and credential encryption identifier requirements", async (t) => {
+			const f = await walletFederation();
+			const anonymous = { ...f.protocol.verifier.publicKey };
+			delete anonymous.kid;
+			for (const keys of [
+				[f.protocol.verifier.publicKey],
+				[anonymous],
+				[f.protocol.verifier.publicKey, f.protocol.verifier.publicKey],
+			]) {
+				const valid = keys.length === 1 && keys[0]?.kid !== undefined;
+				t.equal(
+					CredentialVerifierRole.parseMetadata({
+						...f.metadata.verifier.openid_credential_verifier,
+						jwks: { keys },
+					}).success,
+					valid,
+				);
+				t.equal(
+					CredentialIssuerRole.parseMetadata({
+						...f.metadata.issuer.openid_credential_issuer,
+						credential_request_encryption: {
+							jwks: { keys },
+							enc_values_supported: ["A256GCM"],
+							encryption_required: false,
+						},
+					}).success,
+					valid,
+				);
+			}
+		});
+		for (const source of ["jwks_uri", "signed_jwks_uri"] as const) {
+			test(`checks verifier identifiers after resolving ${source}`, async (t) => {
+				const uri = "https://verifier.example/keys";
+				const f = await walletFederation({ verifierMetadata: { jwks: undefined, [source]: uri } });
+				const anonymous = { ...f.protocol.verifier.publicKey };
+				delete anonymous.kid;
+				const request = await token(
+					f.requestPayload,
+					f.protocol.verifier.privateKey,
+					"oauth-authz-req+jwt",
+					{ kid: f.protocol.verifier.publicKey.kid },
+				);
+				for (const keys of [
+					[f.protocol.verifier.publicKey],
+					[anonymous],
+					[f.protocol.verifier.publicKey, f.protocol.verifier.publicKey],
+				]) {
+					const valid = keys.length === 1 && keys[0]?.kid !== undefined;
+					const signed = await token(
+						{ iss: f.ids.verifier, sub: f.ids.verifier, keys },
+						f.keys.verifier.privateKey,
+						"jwk-set+jwt",
+						{ kid: f.keys.verifier.publicKey.kid },
+					);
+					f.routes.set(
+						uri,
+						() =>
+							new Response(source === "signed_jwks_uri" ? signed : JSON.stringify({ keys }), {
+								headers: {
+									"content-type":
+										source === "signed_jwks_uri" ? "application/jwk-set+jwt" : "application/json",
+								},
+							}),
+					);
+					const checked = await CredentialVerifierRole.prepareAuthorizationRequest(
+						{ client_id: f.requestPayload.client_id, request },
+						f.anchors,
+						f.options,
+					);
+					t.equal(
+						checked.ok,
+						valid,
+						checked.ok ? "valid verifier keys" : checked.error.description,
+					);
+				}
+			});
+		}
+	});
 	module("wallet / anchor self-signature", () => {
 		test("rejects inconsistent anchor keys before attestation verification", async (t) => {
 			const protocol = await generateSigningKey();

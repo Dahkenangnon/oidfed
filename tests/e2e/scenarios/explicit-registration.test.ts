@@ -78,6 +78,61 @@ describe("Explicit registration", () => {
 		});
 	});
 
+	describe("protocol key identifiers", () => {
+		const getTestBed = useFederation(singleAnchorTopology);
+
+		it("registers an RP with a protocol key that omits kid over HTTPS", async () => {
+			const { server, entities } = getTestBed();
+			const rp = getOidcClientEntity(entities, "https://rp2.ofed.test");
+			const rpId = `https://rp2.ofed.test:${server.port}`;
+			const opId = `https://op.ofed.test:${server.port}`;
+			const response = await fetch(`${rpId}/.well-known/openid-federation`);
+			expect(response.status).toBe(200);
+			const published = decodeEntityStatement(await response.text());
+			if (!published.ok) throw new Error(published.error.description);
+			const protocol = await generateSigningKey();
+			const publicKey = { ...protocol.publicKey };
+			delete publicKey.kid;
+			const storage = entities.get("https://ta.ofed.test")?.storage;
+			if (!storage) throw new Error("Missing authority storage");
+			const record = await storage.subordinates.get(entityId(rpId));
+			if (!record) throw new Error("Missing RP registration");
+			await storage.subordinates.update(entityId(rpId), {
+				metadata: {
+					...record.metadata,
+					openid_relying_party: {
+						...published.value.payload.metadata?.openid_relying_party,
+						jwks: { keys: [publicKey] },
+					},
+				},
+			});
+			const jwt = await signEntityStatement(
+				{
+					...published.value.payload,
+					aud: opId,
+					metadata: {
+						openid_relying_party: {
+							...published.value.payload.metadata?.openid_relying_party,
+							jwks: { keys: [publicKey] },
+						},
+					},
+				},
+				new JwkSigner(rp.keys.signing),
+			);
+			const registered = await fetch(`${opId}/federation_registration`, {
+				method: "POST",
+				headers: { "Content-Type": MediaType.EntityStatement },
+				body: jwt,
+			});
+			expect(registered.status, await registered.clone().text()).toBe(200);
+			const result = decodeEntityStatement(await registered.text());
+			if (!result.ok) throw new Error(result.error.description);
+			expect(result.value.payload.metadata?.openid_relying_party?.jwks).toEqual({
+				keys: [publicKey],
+			});
+		});
+	});
+
 	describe("hierarchical", () => {
 		const getTestBed = useFederation(hierarchicalTopology);
 

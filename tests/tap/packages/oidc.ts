@@ -310,6 +310,115 @@ async function createDualAnchorRegistrationFixture() {
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("oidc / protocol key identifiers", () => {
+		test("accepts optional identifiers in OIDC and OAuth metadata", async (t) => {
+			const pair = await generateSigningKey();
+			const anonymous = { ...pair.publicKey };
+			delete anonymous.kid;
+			for (const keys of [[anonymous], [pair.publicKey, pair.publicKey]]) {
+				const jwks = { keys };
+				t.true(
+					OpenIDRelyingPartyMetadataSchema.safeParse({
+						redirect_uris: [`${LEAF_ID}/callback`],
+						jwks,
+					}).success,
+				);
+				t.true(
+					OpenIDProviderMetadataSchema.safeParse({
+						issuer: OP_ID,
+						authorization_endpoint: `${OP_ID}/authorize`,
+						response_types_supported: ["code"],
+						subject_types_supported: ["public"],
+						id_token_signing_alg_values_supported: ["ES256"],
+						jwks,
+					}).success,
+				);
+				t.true(
+					OAuthAuthorizationServerMetadataSchema.safeParse({
+						issuer: OP_ID,
+						response_types_supported: ["code"],
+						jwks,
+					}).success,
+				);
+				t.true(OAuthClientMetadataSchema.safeParse({ jwks }).success);
+				t.true(OAuthResourceMetadataSchema.safeParse({ resource: LEAF_ID, jwks }).success);
+			}
+		});
+
+		for (const source of ["jwks", "jwks_uri", "signed_jwks_uri"] as const) {
+			test(`registers single-key clients without identifiers using ${source}`, async (t) => {
+				const protocol = await generateSigningKey();
+				const key = { ...protocol.publicKey };
+				delete key.kid;
+				const uri = `${LEAF_ID}/protocol-keys`;
+				const metadata = {
+					redirect_uris: [`${LEAF_ID}/callback`],
+					response_types: ["code"],
+					[source]: source === "jwks" ? { keys: [key] } : uri,
+				};
+				const f = await createMockFederation({ leafMetadata: { openid_relying_party: metadata } });
+				const signedKeys = await signEntityStatement(
+					{ iss: LEAF_ID, sub: LEAF_ID, keys: [key] },
+					new JwkSigner(f.leafSigningKey),
+					{ typ: JwtTyp.JwkSet },
+				);
+				const options = {
+					...f.options,
+					opEntityId: OP_ID,
+					replayStore: new MemoryReplayStore(),
+					httpClient: async (...args: Parameters<HttpClient>) => {
+						if (String(args[0]) === uri)
+							return new Response(
+								source === "signed_jwks_uri" ? signedKeys : JSON.stringify({ keys: [key] }),
+								{
+									headers: {
+										"content-type":
+											source === "signed_jwks_uri" ? "application/jwk-set+jwt" : "application/json",
+									},
+								},
+							);
+						return f.httpClient(...args);
+					},
+				};
+				const now = Math.floor(Date.now() / 1000);
+				const request = await signEntityStatement(
+					{
+						iss: LEAF_ID,
+						client_id: LEAF_ID,
+						aud: OP_ID,
+						iat: now,
+						exp: now + 300,
+						jti: `kidless-${source}`,
+						scope: "openid",
+						response_type: "code",
+						redirect_uri: `${LEAF_ID}/callback`,
+					},
+					new JwkSigner(protocol.privateKey),
+					{ typ: RequestObjectTyp, extraHeaders: { kid: undefined } },
+				);
+				const automatic = await processAutomaticRegistration(request, f.trustAnchors, options);
+				t.true(automatic.ok, automatic.ok ? source : automatic.error.description);
+				if (automatic.ok) t.deepEqual(automatic.value.resolvedRpMetadata, metadata);
+				const replay = await processAutomaticRegistration(request, f.trustAnchors, options);
+				t.false(replay.ok, "accepted requests remain single-use");
+				if (!replay.ok) t.true(replay.error.description.includes("replay"));
+
+				const decoded = decodeEntityStatement(f.leafEcJwt);
+				if (!decoded.ok) throw new Error(decoded.error.description);
+				const registration = await signEntityStatement(
+					{ ...decoded.value.payload, aud: OP_ID },
+					new JwkSigner(f.leafSigningKey),
+				);
+				const explicit = await processExplicitRegistration(
+					registration,
+					MediaType.EntityStatement,
+					f.trustAnchors,
+					options,
+				);
+				t.true(explicit.ok, explicit.ok ? source : explicit.error.description);
+			});
+		}
+	});
 	module("oidc / anchor self-signature", () => {
 		test("rejects inconsistent anchor keys before persisting registration", async (t) => {
 			const f = await anchorKeyPaths({

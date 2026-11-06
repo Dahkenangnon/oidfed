@@ -2,7 +2,7 @@
 import { z } from "zod";
 import { TrustChainConstraintsSchema } from "./constraints.js";
 import { EntityIdSchema } from "./entity-id.js";
-import { JWKSchema, JWKSetSchema } from "./jwk.js";
+import { JWKSetSchema, MetadataJWKSetSchema } from "./jwk.js";
 import { FederationMetadataSchema } from "./metadata.js";
 import { TrustMarkOwnerSchema, TrustMarkRefSchema } from "./trust-mark.js";
 
@@ -108,7 +108,7 @@ export const HistoricalKeysPayloadSchema = z.object({
 export const SignedJwkSetPayloadSchema = z.looseObject({
 	iss: EntityIdSchema,
 	sub: EntityIdSchema,
-	keys: z.array(JWKSchema).min(1),
+	keys: MetadataJWKSetSchema.shape.keys,
 	iat: z.number().int().positive().optional(),
 	exp: z.number().int().positive().optional(),
 });

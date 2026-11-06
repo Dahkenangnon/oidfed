@@ -13,7 +13,7 @@ import {
 	resolveEntityKeys,
 	type TrustAnchorSet,
 	type ValidatedTrustChain,
-	verifyEntityStatement,
+	verifyProtocolJwt,
 } from "@oidfed/core";
 import { RequestObjectTyp } from "../constants.js";
 import {
@@ -91,11 +91,12 @@ export async function processAutomaticRegistration(
 	const protocolKeysResult = await resolveEntityKeys(resolvedRpMetadata, federationJwks, options);
 	if (!protocolKeysResult.ok) return protocolKeysResult;
 
-	const verifyResult = await verifyEntityStatement(
+	const verifyResult = await verifyProtocolJwt(
 		requestObjectJwt,
 		{ keys: protocolKeysResult.value.keys },
 		{
 			expectedTyp: RequestObjectTyp,
+			keyIdPolicy: "single-key",
 			...(options.clock ? { clock: options.clock } : {}),
 			...(options.clockSkewSeconds !== undefined
 				? { clockSkewSeconds: options.clockSkewSeconds }

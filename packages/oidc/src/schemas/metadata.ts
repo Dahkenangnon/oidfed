@@ -13,7 +13,7 @@ import {
 	FederationEntityMetadataSchema,
 	type FederationMetadata,
 	FederationMetadataSchema,
-	JWKSetSchema,
+	MetadataJWKSetSchema,
 } from "@oidfed/core";
 import { z } from "zod";
 
@@ -69,7 +69,7 @@ const OpenIDRelyingPartyMetadataShape = {
 	tos_uri: z.string().url().optional(),
 	...CommonInformationalMetadataShape,
 	jwks_uri: httpsUrlNoFragment.optional(),
-	jwks: JWKSetSchema.optional(),
+	jwks: MetadataJWKSetSchema.optional(),
 	sector_identifier_uri: z.string().url().optional(),
 	subject_type: z.enum(["public", "pairwise"]).optional(),
 	// ID Token signing/encryption
@@ -156,7 +156,7 @@ export const OpenIDProviderMetadataSchema = z
 		token_endpoint: z.string().url().optional(),
 		userinfo_endpoint: z.string().url().optional(),
 		jwks_uri: httpsUrlNoFragment.optional(),
-		jwks: JWKSetSchema.optional(),
+		jwks: MetadataJWKSetSchema.optional(),
 		registration_endpoint: httpsUrlNoFragment.optional(),
 		scopes_supported: z.array(z.string()).optional(),
 		response_types_supported: z.array(z.string()),
@@ -275,7 +275,7 @@ export const OAuthAuthorizationServerMetadataSchema = z
 		authorization_endpoint: z.string().url().optional(),
 		token_endpoint: z.string().url().optional(),
 		jwks_uri: httpsUrlNoFragment.optional(),
-		jwks: JWKSetSchema.optional(),
+		jwks: MetadataJWKSetSchema.optional(),
 		registration_endpoint: httpsUrlNoFragment.optional(),
 		scopes_supported: z.array(z.string()).optional(),
 		response_types_supported: z.array(z.string()),
@@ -376,7 +376,7 @@ export const OAuthClientMetadataSchema = z.looseObject({
 	tos_uri: z.string().url().optional(),
 	...CommonInformationalMetadataShape,
 	jwks_uri: httpsUrlNoFragment.optional(),
-	jwks: JWKSetSchema.optional(),
+	jwks: MetadataJWKSetSchema.optional(),
 	software_id: z.string().optional(),
 	software_version: z.string().optional(),
 	// Federation-specific (OpenID Federation 1.0 Section 5.1.4)
@@ -404,7 +404,7 @@ export const OAuthResourceMetadataSchema = z.looseObject({
 	dpop_signing_alg_values_supported: z.array(z.string()).optional(),
 	scopes_supported: z.array(z.string()).optional(),
 	jwks_uri: httpsUrlNoFragment.optional(),
-	jwks: JWKSetSchema.optional(),
+	jwks: MetadataJWKSetSchema.optional(),
 	...CommonInformationalMetadataShape,
 	// Federation-specific (OpenID Federation 1.0 Section 5.2)
 	signed_jwks_uri: httpsUrlNoFragment.optional(),

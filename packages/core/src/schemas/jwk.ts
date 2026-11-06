@@ -43,21 +43,25 @@ export const JWKSchema = z
 		}
 	});
 
-export const JWKSetSchema = z
-	.object({
-		keys: z.array(JWKSchema).min(1),
-	})
-	.refine((jwks) => jwks.keys.every((k) => typeof k.kid === "string" && k.kid.length > 0), {
+/** Public protocol keys under Federation §5.2.1 and RFC 7517 §4.5. */
+export const MetadataJWKSetSchema = z.object({
+	keys: z.array(JWKSchema).min(1),
+});
+
+/** Federation signing keys require distinct, nonempty identifiers (§3.1.1). */
+export const JWKSetSchema = MetadataJWKSetSchema.refine(
+	(jwks) => jwks.keys.every((k) => typeof k.kid === "string" && k.kid.length > 0),
+	{
 		message: "Every JWK in the set MUST have a non-empty kid",
 		path: ["keys"],
-	})
-	.refine(
-		(jwks) => {
-			const kids = jwks.keys.map((k) => k.kid).filter(Boolean);
-			return new Set(kids).size === kids.length;
-		},
-		{ message: "Every JWK kid MUST be unique within the set", path: ["keys"] },
-	);
+	},
+).refine(
+	(jwks) => {
+		const kids = jwks.keys.map((k) => k.kid).filter(Boolean);
+		return new Set(kids).size === kids.length;
+	},
+	{ message: "Every JWK kid MUST be unique within the set", path: ["keys"] },
+);
 
 export type JWK = z.infer<typeof JWKSchema>;
 export type JWKSet = z.infer<typeof JWKSetSchema>;

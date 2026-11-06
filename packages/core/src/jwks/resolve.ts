@@ -16,7 +16,7 @@
  */
 import { FederationErrorCode } from "../constants.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
-import { type JWK, type JWKSet, JWKSetSchema } from "../schemas/jwk.js";
+import { type JWK, type JWKSet, MetadataJWKSetSchema } from "../schemas/jwk.js";
 import type { Clock, FederationOptions } from "../types.js";
 import { fetchJwkSet } from "./jwks-uri.js";
 import { fetchSignedJwkSet } from "./signed-jwks-uri.js";
@@ -114,7 +114,7 @@ async function tryResolveSource(
 			return ok(result.value.keys);
 		}
 		case "jwks": {
-			const parsed = JWKSetSchema.safeParse(ctx.inlineJwks);
+			const parsed = MetadataJWKSetSchema.safeParse(ctx.inlineJwks);
 			if (!parsed.success) {
 				return err(
 					federationError(
