@@ -145,6 +145,7 @@ import {
 	EntityConfigurationSchema,
 	EntityIdSchema as EntityStatementEntityIdSchema,
 	HistoricalKeyEntrySchema,
+	HistoricalKeysPayloadSchema,
 	SubordinateStatementSchema,
 } from "../../../packages/core/src/schemas/entity-statement.js";
 import {
@@ -15852,6 +15853,145 @@ export default (QUnit: QUnit) => {
 			if (!failed.ok) t.equal(failed.error.code, "server_error");
 		});
 	});
+	module("core / historical key lifetimes", () => {
+		async function fixture() {
+			const a = await generateSigningKey("ES256");
+			const b = await generateSigningKey("ES256");
+			const time = { ms: 1_000_250 };
+			const provider = CorePublic.MemoryFederationKeyProvider.fromJWK(
+				{ ...a.privateKey, kid: "old" },
+				{ nowMs: () => time.ms },
+			);
+			const next = CorePublic.createFederationSigningKey({ ...b.privateKey, kid: "next" });
+			return { provider, next, time };
+		}
+		test("publishes history only at retirement, with stable fractional lifetimes", async (t) => {
+			const { provider, next, time } = await fixture();
+			t.deepEqual(await provider.getHistoricalFederationKeys(), []);
+			await provider.publishKey(next);
+			t.deepEqual(await provider.getHistoricalFederationKeys(), []);
+			await provider.switchActiveKey("next", { retirePreviousAfterMs: 1000 });
+			time.ms = 1_001_249;
+			t.deepEqual(
+				(await provider.getFederationKeySet()).jwks.keys.map((k) => k.kid),
+				["old", "next"],
+			);
+			t.deepEqual(await provider.getHistoricalFederationKeys(), []);
+			time.ms++;
+			t.deepEqual(
+				(await provider.getFederationKeySet()).jwks.keys.map((k) => k.kid),
+				["next"],
+			);
+			const history = await provider.getHistoricalFederationKeys();
+			t.equal(history.length, 1);
+			t.equal(history[0]?.kid, "old");
+			t.equal(history[0]?.exp, 1001.25);
+			t.equal(history[0]?.iat, 1000.25);
+			t.equal(history[0]?.nbf, 1000.25);
+			t.true(selectHistoricalVerificationKey(history, { kid: "old", validAt: 1001.249 }).ok);
+			t.false(selectHistoricalVerificationKey(history, { kid: "old", validAt: 1001.25 }).ok);
+			time.ms += 5000;
+			t.deepEqual(await provider.getHistoricalFederationKeys(), history);
+			if (history[0]) history[0].exp = 0;
+			t.equal(
+				(await provider.getHistoricalFederationKeys())[0]?.exp,
+				1001.25,
+				"returned records are detached",
+			);
+		});
+		test("zero overlap retires immediately and the default retains seven days", async (t) => {
+			for (const interval of [0, undefined]) {
+				const { provider, next, time } = await fixture();
+				await provider.publishKey(next);
+				await provider.switchActiveKey(
+					"next",
+					interval === undefined ? {} : { retirePreviousAfterMs: interval },
+				);
+				const deadline = time.ms + (interval ?? 7 * 24 * 60 * 60 * 1000);
+				if (interval === undefined) t.deepEqual(await provider.getHistoricalFederationKeys(), []);
+				time.ms = deadline;
+				t.equal((await provider.getHistoricalFederationKeys())[0]?.exp, deadline / 1000);
+				t.deepEqual(
+					(await provider.getFederationKeySet()).jwks.keys.map((k) => k.kid),
+					["next"],
+				);
+			}
+		});
+		test("invalid retirement intervals and overflow leave lifecycle state unchanged", async (t) => {
+			for (const interval of [-1, Number.NaN, Infinity, -Infinity, Number.MAX_VALUE]) {
+				const { provider, next, time } = await fixture();
+				await provider.publishKey(next);
+				const before = await provider.getFederationKeySet();
+				if (interval === Number.MAX_VALUE) time.ms = Number.MAX_VALUE;
+				await t.rejects(
+					provider.switchActiveKey("next", { retirePreviousAfterMs: interval }),
+					/retirement/i,
+				);
+				time.ms = 1_000_250;
+				t.equal((await provider.getFederationKeySet()).signer.kid, before.signer.kid);
+				t.deepEqual((await provider.getFederationKeySet()).jwks, before.jwks);
+				t.deepEqual(await provider.getHistoricalFederationKeys(), []);
+				await provider.switchActiveKey("next", { retirePreviousAfterMs: 0 });
+				t.equal((await provider.getFederationKeySet()).signer.kid, "next");
+			}
+		});
+		test("revocation preserves expiry and its first timestamp across lifecycle states", async (t) => {
+			for (const state of ["published", "active", "retiring", "expired"]) {
+				const { provider, next, time } = await fixture();
+				await provider.publishKey(next);
+				const kid = state === "published" ? "next" : "old";
+				const scheduled = state === "retiring" || state === "expired";
+				if (scheduled) await provider.switchActiveKey("next", { retirePreviousAfterMs: 10000 });
+				time.ms += state === "expired" ? 20000 : 1000;
+				const revokedAt = time.ms / 1000;
+				await provider.revokeKey(kid, "superseded");
+				const history = await provider.getHistoricalFederationKeys();
+				t.equal(history.length, 1, state);
+				const entry = history[0]!;
+				t.equal(entry.exp, scheduled ? 1010.25 : revokedAt, state);
+				t.equal(entry.revoked?.revoked_at, revokedAt, state);
+				t.equal(entry.nbf, state === "published" ? undefined : 1000.25, state);
+				time.ms += 2000;
+				await provider.revokeKey(kid, "compromised");
+				t.deepEqual(
+					(await provider.getHistoricalFederationKeys())[0],
+					{
+						...entry,
+						revoked: { revoked_at: revokedAt, reason: "compromised" },
+					},
+					state,
+				);
+				if (state === "active") await t.rejects(provider.getFederationKeySet(), /No active/);
+				else t.false((await provider.getFederationKeySet()).jwks.keys.some((k) => k.kid === kid));
+			}
+		});
+		test("historical schemas accept finite NumericDates and future expiry", (t) => {
+			for (const date of [-0.5, 0, 1000.25]) {
+				const key = {
+					kty: "EC",
+					kid: "history",
+					iat: date,
+					nbf: date,
+					exp: date + 10,
+					revoked: { revoked_at: date },
+				};
+				t.true(
+					HistoricalKeysPayloadSchema.safeParse({ iss: TA_ID, iat: date, keys: [key] }).success,
+				);
+				for (const invalid of [NaN, Infinity, -Infinity]) {
+					for (const field of ["iat", "nbf", "exp"])
+						t.false(HistoricalKeyEntrySchema.safeParse({ ...key, [field]: invalid }).success);
+					t.false(
+						HistoricalKeyEntrySchema.safeParse({ ...key, revoked: { revoked_at: invalid } })
+							.success,
+					);
+					t.false(
+						HistoricalKeysPayloadSchema.safeParse({ iss: TA_ID, iat: invalid, keys: [] }).success,
+					);
+				}
+			}
+		});
+	});
 	module("core / federation key ownership and ordering", () => {
 		test("historical revocation at epoch zero remains stable on later reads", async (t) => {
 			const key = await generateSigningKey("ES256");
@@ -15880,14 +16020,12 @@ export default (QUnit: QUnit) => {
 			});
 			t.equal((await provider.getFederationKeySet()).signer.kid, managed[1]!.signer.kid);
 			await provider.publishKey(managed[2]!);
-			await provider.switchActiveKey(managed[2]!.signer.kid);
+			await provider.switchActiveKey(managed[2]!.signer.kid, { retirePreviousAfterMs: 0 });
 			t.equal((await provider.getFederationKeySet()).signer.kid, managed[2]!.signer.kid);
-			t.true(
-				(await provider.getHistoricalFederationKeys()).every(
-					(key) => key.nbf === undefined || key.nbf === 1000,
-				),
-				"ordering does not alter timestamps",
-			);
+			const history = await provider.getHistoricalFederationKeys();
+			t.equal(history.length, 1);
+			t.equal(history[0]?.kid, managed[1]!.signer.kid);
+			t.equal(history[0]?.nbf, 1000, "ordering does not alter timestamps");
 		});
 		test("revocation wins over an overlapping activation", async (t) => {
 			const a = await generateSigningKey("ES256"),

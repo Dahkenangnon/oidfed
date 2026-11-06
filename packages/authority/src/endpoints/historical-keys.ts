@@ -2,7 +2,7 @@ import { JwtTyp, MediaType, nowSeconds, signEntityStatement } from "@oidfed/core
 import type { HandlerContext } from "./context.js";
 import { errorResponse, jwtResponse, requireMethod } from "./helpers.js";
 
-/** Handles historical keys endpoint requests, returning all key states as a signed JWK Set. */
+/** Publish the provider's historical keys as a signed JWK Set (Federation §8.7.2). */
 export function createHistoricalKeysHandler(
 	ctx: HandlerContext,
 ): (request: Request) => Promise<Response> {

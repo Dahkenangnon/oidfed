@@ -4,6 +4,7 @@ import {
 	type FederationKeyLifecycleProvider,
 	generateSigningKey,
 	isOk,
+	verifyHistoricalKeysResponse,
 } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
 import { federationSigningKey, getAuthorityEntity } from "../helpers/launcher.js";
@@ -86,7 +87,7 @@ describe("Federation API endpoints", () => {
 	});
 
 	it("historical keys contain old kid after TA key rotation", async () => {
-		const { entities } = getTestBed();
+		const { entities, server } = getTestBed();
 
 		const taInstance = getAuthorityEntity(entities, "https://ta.ofed.test");
 		const ta = taInstance.server;
@@ -103,19 +104,16 @@ describe("Federation API endpoints", () => {
 		const keyProvider = taInstance.keyProvider as FederationKeyLifecycleProvider;
 		const nextSigningKey = federationSigningKey(newKey.privateKey as JWK);
 		await keyProvider.publishKey(nextSigningKey);
-		await keyProvider.switchActiveKey(nextSigningKey.signer.kid);
+		await keyProvider.switchActiveKey(nextSigningKey.signer.kid, { retirePreviousAfterMs: 0 });
 
-		// Historical keys should include old kid
-		const historicalJwt = await ta.getHistoricalKeys();
-		expect(historicalJwt).toBeTruthy();
-
-		const historicalDecoded = decodeEntityStatement(historicalJwt as string);
-		expect(isOk(historicalDecoded)).toBe(true);
-		if (isOk(historicalDecoded)) {
-			const payload = historicalDecoded.value.payload as Record<string, unknown>;
-			const keys = payload.keys as Array<{ kid?: string }>;
-			const kids = keys.map((k) => k.kid);
-			expect(kids).toContain(originalKid);
-		}
+		const response = await fetch(`https://ta.ofed.test:${server.port}/federation_historical_keys`);
+		expect(response.status).toBe(200);
+		expect(response.headers.get("Content-Type")).toBe("application/jwk-set+jwt");
+		const verified = await verifyHistoricalKeysResponse(
+			await response.text(),
+			(await keyProvider.getFederationKeySet()).jwks,
+		);
+		expect(verified.ok).toBe(true);
+		if (verified.ok) expect(verified.value.keys.map((key) => key.kid)).toEqual([originalKid]);
 	});
 });

@@ -109,6 +109,7 @@ import {
 	TrustMarkStatus,
 	validateTrustMark,
 	verifyEntityStatement,
+	verifyHistoricalKeysResponse,
 	WELL_KNOWN_OPENID_FEDERATION,
 } from "../../../packages/core/src/index.js";
 import { createMockFederation, LEAF_ID, OP_ID, TA_ID } from "../fixtures/index.js";
@@ -1029,9 +1030,7 @@ export default (QUnit: QUnit) => {
 			t.deepEqual(keySet.jwks.keys.map((k) => k.kid).sort(), ["new-key", "old-key"]);
 
 			const history = await keyProvider.getHistoricalFederationKeys();
-			const oldKey = history.find((k) => k.kid === "old-key");
-			t.ok(oldKey);
-			t.equal(oldKey?.exp, Math.floor((nowMs + 10_000) / 1000));
+			t.deepEqual(history, [], "the old key remains in the current JWKS during overlap");
 		});
 
 		test("excludes retired key from active JWKS after removal time", async (t) => {
@@ -3892,25 +3891,23 @@ export default (QUnit: QUnit) => {
 			t.true((header.kid as string).length > 0);
 		});
 
-		test("includes all key states", async (t) => {
+		test("excludes active, prepublished, and overlapping keys", async (t) => {
 			const { ctx, keyProvider } = await createTestContext();
-			const { privateKey: pk2 } = await generateSigningKey("ES256");
-			await keyProvider.publishKey(createFederationSigningKey({ ...pk2, kid: "published-key" }));
-			const { privateKey: pk3 } = await generateSigningKey("ES256");
-			await keyProvider.publishKey(createFederationSigningKey({ ...pk3, kid: "new-active-key" }));
+			for (const kid of ["published-key", "new-active-key"]) {
+				const { privateKey } = await generateSigningKey("ES256");
+				await keyProvider.publishKey(createFederationSigningKey({ ...privateKey, kid }));
+			}
 			await keyProvider.switchActiveKey("new-active-key", { retirePreviousAfterMs: 86_400_000 });
-			const handler = createHistoricalKeysHandler(ctx);
-			const res = await handler(
-				new Request("https://authority.example.com/federation_historical_keys"),
+			const response = await createHistoricalKeysHandler(ctx)(
+				new Request(`${ENTITY_ID}/federation_historical_keys`),
 			);
-			const jwt = await res.text();
-			const decoded = decodeEntityStatement(jwt);
-			t.true(isOk(decoded));
-			if (!isOk(decoded)) return;
-			const keys = (decoded.value.payload as Record<string, unknown>).keys as Array<
-				Record<string, unknown>
-			>;
-			t.equal(keys.length, 3);
+			t.equal(response.status, 200);
+			const verified = await verifyHistoricalKeysResponse(
+				await response.text(),
+				(await keyProvider.getFederationKeySet()).jwks,
+			);
+			t.true(verified.ok);
+			if (verified.ok) t.deepEqual(verified.value.keys, []);
 		});
 
 		test("revoked keys have revoked metadata", async (t) => {
@@ -3938,79 +3935,89 @@ export default (QUnit: QUnit) => {
 			t.equal(revoked.reason, "keyCompromise");
 		});
 
-		test("active keys do not have revoked field", async (t) => {
-			const { ctx } = await createTestContext();
-			const handler = createHistoricalKeysHandler(ctx);
-			const res = await handler(
-				new Request("https://authority.example.com/federation_historical_keys"),
+		test("signs stable historical lifetimes with fresh response issuance times", async (t) => {
+			const initial = await generateSigningKey("ES256");
+			const next = await generateSigningKey("ES256");
+			let nowMs = 1_000_250;
+			const keyProvider = MemoryFederationKeyProvider.fromJWK(
+				{ ...initial.privateKey, kid: "old" },
+				{ nowMs: () => nowMs },
 			);
-			const jwt = await res.text();
-			const decoded = decodeEntityStatement(jwt);
-			t.true(isOk(decoded));
-			if (!isOk(decoded)) return;
-			const keys = (decoded.value.payload as Record<string, unknown>).keys as Array<
-				Record<string, unknown>
-			>;
-			const activeKey = keys.find((k) => k.kid === "test-key-1");
-			t.ok(activeKey);
-			t.equal(activeKey?.revoked, undefined);
-		});
-
-		test("includes nbf for keys with activatedAt", async (t) => {
-			const { ctx } = await createTestContext();
+			const options = { clock: { now: () => nowMs / 1000 }, clockSkewSeconds: 0 };
+			const { ctx } = await createTestContext({ keyProvider, options });
+			await keyProvider.publishKey(createFederationSigningKey({ ...next.privateKey, kid: "next" }));
+			await keyProvider.switchActiveKey("next", { retirePreviousAfterMs: 1000 });
 			const handler = createHistoricalKeysHandler(ctx);
-			const res = await handler(
-				new Request("https://authority.example.com/federation_historical_keys"),
-			);
-			const jwt = await res.text();
-			const decoded = decodeEntityStatement(jwt);
-			t.true(isOk(decoded));
-			if (!isOk(decoded)) return;
-			const keys = (decoded.value.payload as Record<string, unknown>).keys as Array<
-				Record<string, unknown>
-			>;
-			const activeKey = keys.find((k) => k.kid === "test-key-1");
-			t.ok(activeKey);
-			t.equal(typeof activeKey?.nbf, "number");
-			t.true((activeKey?.nbf as number) > 0);
-		});
-
-		test("omits nbf for keys without activatedAt", async (t) => {
-			const { ctx, keyProvider } = await createTestContext();
-			const { privateKey: pk2 } = await generateSigningKey("ES256");
-			await keyProvider.publishKey(createFederationSigningKey({ ...pk2, kid: "published-key" }));
-			const handler = createHistoricalKeysHandler(ctx);
-			const res = await handler(
-				new Request("https://authority.example.com/federation_historical_keys"),
-			);
-			const jwt = await res.text();
-			const decoded = decodeEntityStatement(jwt);
-			t.true(isOk(decoded));
-			if (!isOk(decoded)) return;
-			const keys = (decoded.value.payload as Record<string, unknown>).keys as Array<
-				Record<string, unknown>
-			>;
-			const publishedKey = keys.find((k) => k.kid === "published-key");
-			t.ok(publishedKey);
-			t.equal(publishedKey?.nbf, undefined);
-		});
-
-		test("strips private key fields", async (t) => {
-			const { ctx } = await createTestContext();
-			const handler = createHistoricalKeysHandler(ctx);
-			const res = await handler(
-				new Request("https://authority.example.com/federation_historical_keys"),
-			);
-			const jwt = await res.text();
-			const decoded = decodeEntityStatement(jwt);
-			t.true(isOk(decoded));
-			if (!isOk(decoded)) return;
-			const keys = (decoded.value.payload as Record<string, unknown>).keys as Array<
-				Record<string, unknown>
-			>;
-			for (const key of keys) {
-				t.false("d" in key);
+			for (const time of [1_001_249, 1_001_250, 1_002_750]) {
+				nowMs = time;
+				const response = await handler(new Request(`${ENTITY_ID}/federation_historical_keys`));
+				const verified = await verifyHistoricalKeysResponse(
+					await response.text(),
+					(await keyProvider.getFederationKeySet()).jwks,
+					options,
+				);
+				t.true(verified.ok);
+				if (!verified.ok) continue;
+				t.equal(verified.value.iat, time / 1000);
+				if (time < 1_001_250) {
+					t.deepEqual(verified.value.keys, []);
+					continue;
+				}
+				t.equal(verified.value.keys.length, 1);
+				const key = verified.value.keys[0]!;
+				t.equal(key.kid, "old");
+				t.equal(key.iat, 1000.25);
+				t.equal(key.nbf, 1000.25);
+				t.equal(key.exp, 1001.25);
+				t.strictEqual(key.revoked, undefined);
+				for (const field of ["d", "p", "q", "dp", "dq", "qi", "oth", "k"]) t.false(field in key);
 			}
+		});
+
+		test("revoked prepublished keys have no activation date", async (t) => {
+			const { ctx, keyProvider } = await createTestContext();
+			const { privateKey } = await generateSigningKey("ES256");
+			await keyProvider.publishKey(createFederationSigningKey({ ...privateKey, kid: "published" }));
+			await keyProvider.revokeKey("published", "compromised");
+			const response = await createHistoricalKeysHandler(ctx)(
+				new Request(`${ENTITY_ID}/federation_historical_keys`),
+			);
+			const verified = await verifyHistoricalKeysResponse(
+				await response.text(),
+				(await keyProvider.getFederationKeySet()).jwks,
+			);
+			t.true(verified.ok);
+			if (!verified.ok) return;
+			t.equal(verified.value.keys.length, 1);
+			const key = verified.value.keys[0]!;
+			t.equal(key.kid, "published");
+			t.strictEqual(key.nbf, undefined);
+			t.equal(key.exp, key.revoked?.revoked_at);
+			t.false("d" in key);
+		});
+
+		test("preserves a custom provider's recorded future expiry", async (t) => {
+			const { ctx, keyProvider, publicKey } = await createTestContext({
+				options: { clock: { now: () => 1000.5 } },
+			});
+			const historical = { ...publicKey, kid: publicKey.kid!, iat: 900.25, exp: 2000.75 };
+			const custom: HandlerContext["keyProvider"] = {
+				getFederationKeySet: () => keyProvider.getFederationKeySet(),
+				getHistoricalFederationKeys: async () => [historical],
+				publishKey: (key) => keyProvider.publishKey(key),
+				switchActiveKey: (kid, options) => keyProvider.switchActiveKey(kid, options),
+				revokeKey: (kid, reason) => keyProvider.revokeKey(kid, reason),
+			};
+			const response = await createHistoricalKeysHandler({ ...ctx, keyProvider: custom })(
+				new Request(`${ENTITY_ID}/federation_historical_keys`),
+			);
+			const verified = await verifyHistoricalKeysResponse(
+				await response.text(),
+				(await keyProvider.getFederationKeySet()).jwks,
+				ctx.options,
+			);
+			t.true(verified.ok);
+			if (verified.ok) t.deepEqual(verified.value.keys, [historical]);
 		});
 
 		test("includes security headers", async (t) => {
@@ -6857,17 +6864,17 @@ export default (QUnit: QUnit) => {
 					const { privateKey: newKey } = await generateSigningKey("ES256");
 					const newSigningKey = createFederationSigningKey({ ...newKey, kid: "ta-key-2" });
 					await intKeyProvider.publishKey(newSigningKey);
-					await intKeyProvider.switchActiveKey("ta-key-2");
+					await intKeyProvider.switchActiveKey("ta-key-2", { retirePreviousAfterMs: 0 });
 					const signing = await intKeyProvider.getFederationKeySet();
 					t.equal(signing.signer.kid, "ta-key-2");
-					t.equal(signing.jwks.keys.length, 2);
+					t.equal(signing.jwks.keys.length, 1);
 					const historicalJwt = await intServer.getHistoricalKeys();
 					const decoded = decodeEntityStatement(historicalJwt);
 					t.true(isOk(decoded));
 					if (!isOk(decoded)) return;
 					const payload = decoded.value.payload as Record<string, unknown>;
 					const keys = payload.keys as Array<Record<string, unknown>>;
-					t.equal(keys.length, 2);
+					t.equal(keys.length, 1);
 					const oldKey = keys.find((k) => k.kid === "ta-key-1");
 					t.ok(oldKey);
 					const ecAfterRotation = await intServer.getEntityConfiguration();
@@ -6876,7 +6883,7 @@ export default (QUnit: QUnit) => {
 					if (!isOk(ecDecoded)) return;
 					const ecPayload = ecDecoded.value.payload as Record<string, unknown>;
 					const ecJwks = ecPayload.jwks as { keys: Array<Record<string, unknown>> };
-					t.equal(ecJwks.keys.length, 2);
+					t.equal(ecJwks.keys.length, 1);
 					const verifyResult = await verifyEntityStatement(ecAfterRotation, signing.jwks);
 					t.true(isOk(verifyResult));
 				});

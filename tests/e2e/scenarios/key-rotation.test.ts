@@ -59,9 +59,10 @@ describe("Key rotation", () => {
 
 			expect(newDecoded.value.header.kid).not.toBe(originalKid);
 
-			// Historical keys should include old key
-			const historicalJwt = await ta.getHistoricalKeys();
-			expect(historicalJwt).toBeTruthy();
+			// The old key remains current during the post-switch overlap.
+			const historical = decodeEntityStatement(await ta.getHistoricalKeys());
+			expect(historical.ok).toBe(true);
+			if (historical.ok) expect(historical.value.payload.keys).toEqual([]);
 
 			// Update trust anchors with new key for resolution
 			const newPayload = newDecoded.value.payload as Record<string, unknown>;

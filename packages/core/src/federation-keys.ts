@@ -21,7 +21,7 @@ export interface FederationSigningKey {
 }
 
 export interface FederationKeyLifecycleProvider extends FederationKeyProvider {
-	/** Retain historical public keys independently of the currently published JWKS. */
+	/** Return historical public keys with recorded lifetimes (Federation §8.7.2). */
 	getHistoricalFederationKeys(): Promise<HistoricalKeyEntry[]>;
 	/** Publish a next key without changing the signer (Federation §11.2). */
 	publishKey(key: FederationSigningKey): Promise<void>;
@@ -32,7 +32,7 @@ export interface FederationKeyLifecycleProvider extends FederationKeyProvider {
 }
 
 export interface SwitchActiveFederationKeyOptions {
-	/** Post-switch overlap in milliseconds; the memory provider defaults to seven days. */
+	/** Post-switch overlap in milliseconds; the memory provider requires a finite, nonnegative value and defaults to seven days. */
 	readonly retirePreviousAfterMs?: number;
 }
 
@@ -46,7 +46,6 @@ interface ManagedFederationKeyEntry {
 	readonly activatedAt?: number;
 	readonly activationOrder?: number;
 	readonly expiresAt?: number;
-	readonly scheduledRemovalAt?: number;
 	readonly revokedAt?: number;
 	readonly revocationReason?: string;
 }
@@ -123,8 +122,7 @@ export class MemoryFederationKeyProvider implements FederationKeyLifecycleProvid
 			if (
 				entry.state === "active" ||
 				entry.state === "published" ||
-				(entry.state === "retiring" &&
-					(entry.scheduledRemovalAt === undefined || entry.scheduledRemovalAt > now))
+				(entry.state === "retiring" && (entry.expiresAt === undefined || entry.expiresAt > now))
 			) {
 				keys.push(structuredClone(entry.publicJwk));
 			}
@@ -143,8 +141,15 @@ export class MemoryFederationKeyProvider implements FederationKeyLifecycleProvid
 	}
 
 	async getHistoricalFederationKeys(): Promise<HistoricalKeyEntry[]> {
-		const nowSeconds = Math.floor(this.nowMs() / 1000);
-		return Array.from(this.keys.values()).map((entry) => mapHistoricalEntry(entry, nowSeconds));
+		const now = this.nowMs();
+		// Section 8.7 records retracted keys; overlap keys remain in the current JWKS.
+		return Array.from(this.keys.values())
+			.filter(
+				(entry) =>
+					entry.state === "revoked" ||
+					(entry.state === "retiring" && entry.expiresAt !== undefined && entry.expiresAt <= now),
+			)
+			.map(mapHistoricalEntry);
 	}
 
 	async publishKey(key: FederationSigningKey): Promise<void> {
@@ -171,6 +176,13 @@ export class MemoryFederationKeyProvider implements FederationKeyLifecycleProvid
 		const current = this.currentKeySet();
 		const previousKid = current.signer.kid;
 		const now = this.nowMs();
+		const interval = options.retirePreviousAfterMs ?? DEFAULT_KEY_RETIRE_AFTER_MS;
+		const expiresAt = now + interval;
+		if (!Number.isFinite(interval) || interval < 0 || !Number.isFinite(expiresAt)) {
+			throw new Error(
+				"Federation key retirement interval and deadline must be finite; interval must be nonnegative",
+			);
+		}
 		this.keys.set(kid, {
 			...entry,
 			state: "active",
@@ -185,7 +197,7 @@ export class MemoryFederationKeyProvider implements FederationKeyLifecycleProvid
 				this.keys.set(previousKid, {
 					...previous,
 					state: "retiring",
-					scheduledRemovalAt: now + (options.retirePreviousAfterMs ?? DEFAULT_KEY_RETIRE_AFTER_MS),
+					expiresAt,
 				});
 			}
 		}
@@ -194,10 +206,13 @@ export class MemoryFederationKeyProvider implements FederationKeyLifecycleProvid
 	async revokeKey(kid: string, reason: string): Promise<void> {
 		// Federation §11.4 leaves the revocation process to the federation's own policy.
 		const entry = this.getEntry(kid);
+		const revokedAt = entry.revokedAt ?? this.nowMs();
 		this.keys.set(kid, {
 			...entry,
 			state: "revoked",
-			revokedAt: this.nowMs(),
+			// Preserve an existing expiry, including when compromise is discovered after retirement (§8.7).
+			expiresAt: entry.expiresAt ?? revokedAt,
+			revokedAt,
 			revocationReason: reason,
 		});
 	}
@@ -280,29 +295,25 @@ function validateVerificationUsage(jwk: JWK): void {
 	}
 }
 
-function mapHistoricalEntry(
-	entry: ManagedFederationKeyEntry,
-	nowSeconds: number,
-): HistoricalKeyEntry {
-	const historical = structuredClone(entry.publicJwk) as HistoricalKeyEntry;
-	if (entry.expiresAt !== undefined) {
-		historical.exp = Math.floor(entry.expiresAt / 1000);
-	} else if (entry.scheduledRemovalAt !== undefined) {
-		historical.exp = Math.floor(entry.scheduledRemovalAt / 1000);
-	} else if (entry.revokedAt !== undefined) {
-		historical.exp = Math.floor(entry.revokedAt / 1000);
-	} else {
-		historical.exp = nowSeconds;
+function mapHistoricalEntry(entry: ManagedFederationKeyEntry): HistoricalKeyEntry {
+	if (entry.expiresAt === undefined) {
+		throw new Error("Historical federation key requires a recorded expiration time");
 	}
+	const historical = structuredClone(entry.publicJwk) as HistoricalKeyEntry;
+	// NumericDate permits fractions; preserve the provider's millisecond validity boundaries.
+	historical.exp = entry.expiresAt / 1000;
 	if (entry.createdAt !== undefined) {
-		historical.iat = Math.floor(entry.createdAt / 1000);
+		historical.iat = entry.createdAt / 1000;
 	}
 	if (entry.activatedAt !== undefined) {
-		historical.nbf = Math.floor(entry.activatedAt / 1000);
+		historical.nbf = entry.activatedAt / 1000;
 	}
 	if (entry.state === "revoked") {
+		if (entry.revokedAt === undefined) {
+			throw new Error("Revoked federation key requires a recorded revocation time");
+		}
 		historical.revoked = {
-			revoked_at: entry.revokedAt !== undefined ? Math.floor(entry.revokedAt / 1000) : nowSeconds,
+			revoked_at: entry.revokedAt / 1000,
 			...(entry.revocationReason ? { reason: entry.revocationReason } : {}),
 		};
 	}

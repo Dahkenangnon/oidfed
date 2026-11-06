@@ -87,12 +87,12 @@ export const HistoricalKeyEntrySchema = z.looseObject({
 	use: z.string().optional(),
 	alg: z.string().optional(),
 	key_ops: z.array(z.string()).optional(),
-	exp: z.number().int(),
-	iat: z.number().int().optional(),
-	nbf: z.number().int().optional(),
+	exp: z.number().finite(),
+	iat: z.number().finite().optional(),
+	nbf: z.number().finite().optional(),
 	revoked: z
 		.looseObject({
-			revoked_at: z.number().int(),
+			revoked_at: z.number().finite(),
 			reason: z.string().optional(),
 		})
 		.optional(),
@@ -100,7 +100,7 @@ export const HistoricalKeyEntrySchema = z.looseObject({
 
 export const HistoricalKeysPayloadSchema = z.object({
 	iss: EntityIdSchema,
-	iat: z.number().int().positive(),
+	iat: z.number().finite(),
 	keys: z.array(HistoricalKeyEntrySchema),
 });
 

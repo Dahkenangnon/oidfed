@@ -248,9 +248,15 @@ The bundled key providers copy supplied and returned public JWK data; `JwkSigner
 
 `MemoryFederationKeyProvider` orders activations independently of the clock and applies each lifecycle transition atomically. Publishing does not change the signer. Switching selects the requested published key and schedules the previous signer for retirement. Retirement removes a key from subsequent published JWKS results without deleting its historical record.
 
+The memory provider's `getHistoricalFederationKeys()` returns retired and revoked keys. A retiring key enters history at its recorded expiry; active keys, prepublished keys and keys still in overlap remain in the current JWKS. An empty history returns `[]`. Per-key `exp` records the lifetime required by [Federation §8.7.2](https://openid.net/specs/openid-federation-1_0.html#section-8.7.2); reads preserve that value. NumericDate values retain fractional seconds to match the provider's millisecond deadlines.
+
 Rollover follows [Federation §11.2](https://openid.net/specs/openid-federation-1_0.html#section-11.2). The application publishes a key, allows a propagation interval, then switches signers. `retirePreviousAfterMs` controls the separate post-switch overlap; the memory provider defaults to seven days. The provider does not decide when participants have obtained a new key. See the [staged authority example](authority.md#federation-key-rotation).
 
+The retirement interval must be finite and nonnegative, and the resulting deadline must be finite. Zero retires the previous signer immediately. Invalid intervals leave the key state unchanged.
+
 Revocation is a local provider operation, with historical key status defined by [§8.7.2](https://openid.net/specs/openid-federation-1_0.html#section-8.7.2). It does not notify other participants or invalidate their cached statements; [§11.4](https://openid.net/specs/openid-federation-1_0.html#section-11.4) leaves that process to the federation. Occurrence timestamps remain stable on later history reads, including epoch zero.
+
+The memory provider preserves a key's recorded expiry when revoking it. For a key with no recorded expiry, the first revocation sets its validity cutoff. Repeating `revokeKey()` updates the reason while preserving both expiry and the first `revoked_at`. This also preserves the original expiry when a compromise is discovered after retirement, as described in [§8.7](https://openid.net/specs/openid-federation-1_0.html#section-8.7).
 
 ### Replay protection (`ReplayStore`)
 

@@ -132,6 +132,8 @@ await keyProvider.switchActiveKey(nextSigningKey.signer.kid, {
 
 The memory provider now signs with the new key and keeps the previous signer's public key available until the retirement deadline. Subsequent key-set reads exclude that old key at the deadline; its historical record remains. No background deletion timer runs. Other active keys, if supplied during initialization, are unaffected by this switch.
 
+With the memory provider, the Historical Keys endpoint publishes retired and revoked keys. Before any such event, it returns a signed response with `keys: []`. Each key retains its recorded `exp` across requests; the response's `iat` identifies when that response was signed. The [core key lifecycle documentation](core.md#federation-key-providers) explains retirement and revocation timestamps. The endpoint signs the history supplied by a custom provider, whose records must describe actual key lifetimes under [§8.7.2](https://openid.net/specs/openid-federation-1_0.html#section-8.7.2).
+
 The propagation interval before switching and the retirement interval after switching serve different stages. The application chooses when to switch; `retirePreviousAfterMs` controls only the post-switch overlap. Seven days is the memory provider's default, not a duration prescribed by the specification. Choose both intervals and Entity Configuration expiry according to the federation's security profile. A Leaf using the same provider must refresh its cached configuration after key-set changes; see [Leaf configuration caching](leaf.md#how-does-the-entity-configuration-caching-work).
 
 Production key providers must preserve lifecycle state across restarts and coordinate serving processes. The in-memory provider does not persist or distribute changes.
