@@ -72,7 +72,8 @@ export function applyAllowedEntityTypes(
 
 /**
  * Validate all constraints from a subordinate statement against the chain.
- * For naming_constraints: checks all entities below the constrainer.
+ * position identifies the Subordinate Statement carrying the constraints.
+ * Naming constraints cover its subject and that subject's subordinates (§3.1.3).
  * allowed_entity_types is handled separately during validation (modifies metadata, doesn't reject chain).
  */
 export function checkConstraints(
@@ -90,7 +91,8 @@ export function checkConstraints(
 	}
 
 	if (constraints.naming_constraints) {
-		for (let i = 0; i < position; i++) {
+		// Include this statement's subject; its issuer is outside its own constraint.
+		for (let i = 0; i <= position; i++) {
 			const entityId = chain[i]?.payload.sub as unknown as EntityId;
 			if (!checkNamingConstraints(constraints.naming_constraints, entityId)) {
 				return err({

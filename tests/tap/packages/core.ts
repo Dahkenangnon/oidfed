@@ -4116,6 +4116,47 @@ export default (QUnit: QUnit) => {
 		});
 
 		module("core / checkConstraints", () => {
+			test("checks naming constraints on the carrying statement's subject", (t) => {
+				const leaf = "https://leaf.good.example";
+				const intermediate = "https://intermediate.bad.example";
+				const anchor = "https://anchor.example";
+				const chain = [
+					makeStmt(leaf, leaf),
+					makeStmt(intermediate, leaf),
+					makeStmt(anchor, intermediate),
+					makeStmt(anchor, anchor),
+				];
+				for (const naming of [
+					{ permitted: [".good.example"] },
+					{ excluded: ["intermediate.bad.example"] },
+				]) {
+					const result = checkConstraints({ naming_constraints: naming }, 2, chain);
+					t.false(result.ok, JSON.stringify(naming));
+					if (!result.ok) {
+						t.equal(result.error.code, InternalErrorCode.ConstraintViolation);
+						t.true(result.error.description.includes(intermediate));
+						t.true(result.error.description.includes("position 2"));
+					}
+				}
+			});
+			test("keeps the naming constraint issuer outside its own restriction", (t) => {
+				const leaf = "https://leaf.good.example";
+				const intermediate = "https://intermediate.good.example";
+				const anchor = "https://anchor.example";
+				const chain = [
+					makeStmt(leaf, leaf),
+					makeStmt(intermediate, leaf),
+					makeStmt(anchor, intermediate),
+					makeStmt(anchor, anchor),
+				];
+				t.true(
+					checkConstraints(
+						{ naming_constraints: { permitted: [".good.example"], excluded: ["anchor.example"] } },
+						2,
+						chain,
+					).ok,
+				);
+			});
 			test("returns ok when no constraint violations", (t) => {
 				const chain = [
 					makeStmt("https://leaf.example.com", "https://leaf.example.com"),
@@ -11305,6 +11346,143 @@ export default (QUnit: QUnit) => {
 			return { chain: [leafEc, ss, taEc], taSet, taKeys, leafKeys };
 		}
 		module("core / validateTrustChain", () => {
+			for (const scenario of [
+				{
+					name: "TA rejects its immediate intermediate outside the namespace",
+					intermediates: 1,
+					position: 2,
+					excluded: false,
+					violates: true,
+				},
+				{
+					name: "TA excludes its immediate intermediate despite a permitted namespace",
+					intermediates: 1,
+					position: 2,
+					excluded: true,
+					violates: true,
+				},
+				{
+					name: "TA rejects the top of two intermediates outside the namespace",
+					intermediates: 2,
+					position: 3,
+					excluded: false,
+					violates: true,
+				},
+				{
+					name: "Intermediate rejects its immediate intermediate outside the namespace",
+					intermediates: 2,
+					position: 2,
+					excluded: false,
+					violates: true,
+				},
+				{
+					name: "Intermediate excludes its immediate intermediate",
+					intermediates: 2,
+					position: 2,
+					excluded: true,
+					violates: true,
+				},
+				{
+					name: "TA outside the namespace accepts permitted subordinates",
+					intermediates: 2,
+					position: 3,
+					excluded: true,
+					violates: false,
+				},
+				{
+					name: "Intermediate outside the namespace accepts permitted subordinates",
+					intermediates: 2,
+					position: 2,
+					excluded: true,
+					violates: false,
+				},
+				{
+					name: "TA rejects a directly registered leaf outside the namespace",
+					intermediates: 0,
+					position: 1,
+					excluded: false,
+					violates: true,
+				},
+				{
+					name: "TA accepts a directly registered leaf within the namespace",
+					intermediates: 0,
+					position: 1,
+					excluded: false,
+					violates: false,
+				},
+			]) {
+				test(`naming constraint scope: ${scenario.name}`, async (t) => {
+					const ids = [
+						"https://leaf.good.example",
+						...Array.from(
+							{ length: scenario.intermediates },
+							(_, i) => `https://i${i + 1}.good.example`,
+						),
+						"https://anchor.example",
+					];
+					ids[scenario.position] = "https://issuer.example";
+					if (scenario.violates && !scenario.excluded)
+						ids[scenario.position - 1] = "https://subordinate.bad.example";
+					const keys = await Promise.all(ids.map(() => generateSigningKey("ES256")));
+					const id = (i: number) => ids[i]!;
+					const key = (i: number) => keys[i]!;
+					const last = ids.length - 1;
+					const chain = [
+						await vt_signEC(id(0), key(0).privateKey, key(0).publicKey, {
+							authority_hints: [id(1)],
+						}),
+					];
+					for (let i = 1; i <= last; i++)
+						chain.push(await vt_signSS(id(i), id(i - 1), key(i).privateKey, key(i - 1).publicKey));
+					const anchorEc = await vt_signEC(id(last), key(last).privateKey, key(last).publicKey);
+					const anchors: TrustAnchorSet = new Map([
+						[id(last) as EntityId, { jwks: { keys: [key(last).publicKey] } }],
+					]);
+					t.true(
+						(await validateTrustChain([...chain, anchorEc], anchors)).valid,
+						"unconstrained chain is valid",
+					);
+					const naming = {
+						permitted: [".good.example"],
+						...(scenario.excluded
+							? {
+									excluded: [
+										new URL(id(scenario.violates ? scenario.position - 1 : scenario.position))
+											.hostname,
+									],
+								}
+							: {}),
+					};
+					chain[scenario.position] = await vt_signSS(
+						id(scenario.position),
+						id(scenario.position - 1),
+						key(scenario.position).privateKey,
+						key(scenario.position - 1).publicKey,
+						{ constraints: { naming_constraints: naming } },
+					);
+					for (const includeAnchor of [false, true]) {
+						const result = await validateTrustChain(
+							includeAnchor ? [...chain, anchorEc] : chain,
+							anchors,
+							{ verboseErrors: true },
+						);
+						t.equal(result.valid, !scenario.violates, `trailing anchor EC: ${includeAnchor}`);
+						if (scenario.violates) {
+							t.true(
+								result.errors.some(
+									(error) =>
+										error.code === InternalErrorCode.ConstraintViolation &&
+										error.statementIndex === scenario.position &&
+										error.message.includes(id(scenario.position - 1)),
+								),
+								"reports the violating subject and carrying statement",
+							);
+						} else {
+							t.deepEqual(result.errors, []);
+						}
+					}
+				});
+			}
 			test("validates a simple 2-entity chain (leaf → TA)", async (t) => {
 				const { chain, taSet } = await vt_buildSimple();
 				const result = await validateTrustChain(chain, taSet);
