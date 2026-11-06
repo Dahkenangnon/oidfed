@@ -78,6 +78,22 @@ if (ecResult.ok) {
 }
 ```
 
+### Verifying Resolve Responses
+
+Use `verifyResolveResponse` with the resolver's trusted public keys. For an authenticated request, supply your application's Entity Identifier as `expectedAudience`:
+
+```ts
+import { verifyResolveResponse } from "@oidfed/core";
+
+const result = await verifyResolveResponse(responseJwt, resolverJwks, {
+  expectedAudience: "https://client.example.com",
+});
+```
+
+Under [Federation §8.3.2](https://openid.net/specs/openid-federation-1_0.html#section-8.3.2), `aud` is optional and identifies only the requesting party when present. The helper accepts a string or a nonempty array containing only that same identifier, following [RFC 7519 §4.1.3](https://www.rfc-editor.org/rfc/rfc7519.html#section-4.1.3). Each value must match `expectedAudience` exactly. A response containing `aud` fails verification if the caller omits `expectedAudience`. Responses without `aud` remain valid with or without a configured audience; any supplied `expectedAudience` must be a valid Entity Identifier.
+
+The helper checks the JWT signature, type, time claims, payload shape, and audience. The application chooses the trusted resolver keys and checks that the returned subject and trust chain satisfy its request and trust policy.
+
 ### Building and signing Entity Statements
 
 Use the stable builders for normal Entity Configurations and Subordinate Statements. They validate Entity Identifier syntax, JWKS shape, time windows, metadata shape, and claim placement before signing. The lower-level `signEntityStatement` helper remains available for advanced extension payloads after callers perform their own validation.

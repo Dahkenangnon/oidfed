@@ -89,6 +89,7 @@ export {
 	type ResolveRequestParams,
 	type SelectHistoricalVerificationKeyOptions,
 	selectHistoricalVerificationKey,
+	type VerifyResolveResponseOptions,
 	verifyHistoricalKeysResponse,
 	verifyResolveResponse,
 	verifySignedJwkSet,

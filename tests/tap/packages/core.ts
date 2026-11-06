@@ -7176,7 +7176,7 @@ export default (QUnit: QUnit) => {
 				);
 				t.false((await verifyResolveResponse(jwt, jwks)).ok);
 			});
-			test("accepts resolve response with aud claim", async (t) => {
+			async function audienceFixture(overrides: Record<string, unknown> = {}) {
 				const { signer, jwks } = await setupFAKeys();
 				const jwt = await _signES(
 					{
@@ -7184,39 +7184,108 @@ export default (QUnit: QUnit) => {
 						sub: "https://leaf.example.com",
 						iat: fa_now,
 						exp: fa_now + 3600,
-						metadata: { federation_entity: { organization_name: "Test" } },
-						trust_chain: ["jwt1", "jwt2"],
-						aud: "https://client.example.com",
+						metadata: { federation_entity: {} },
+						trust_chain: ["jwt1"],
+						...overrides,
 					},
 					signer,
 					{ typ: JwtTyp.ResolveResponse },
 				);
-				const result = await verifyResolveResponse(jwt, jwks);
-				t.true(result.ok);
-				if (result.ok) {
-					t.equal(result.value.aud, "https://client.example.com");
+				return { jwt, jwks };
+			}
+			test("audience binding accepts matching string and array recipients without rewriting them", async (t) => {
+				const recipient = "https://client.example.com";
+				for (const aud of [recipient, [recipient], [recipient, recipient]]) {
+					const { jwt, jwks } = await audienceFixture({ aud });
+					const result = await verifyResolveResponse(jwt, jwks, { expectedAudience: recipient });
+					t.true(result.ok, JSON.stringify(result));
+					if (result.ok) t.deepEqual(result.value.aud, aud);
 				}
 			});
-			test("rejects resolve response with array aud claim", async (t) => {
-				const { signer, jwks } = await setupFAKeys();
-				const jwt = await _signES(
-					{
-						iss: "https://authority.example.com",
-						sub: "https://leaf.example.com",
-						iat: fa_now,
-						exp: fa_now + 3600,
-						metadata: { federation_entity: { organization_name: "Test" } },
-						trust_chain: ["jwt1", "jwt2"],
-						aud: ["https://client.example.com"],
-					},
-					signer,
-					{ typ: JwtTyp.ResolveResponse },
-				);
-				const result = await verifyResolveResponse(jwt, jwks);
-				t.false(result.ok);
-				if (!result.ok) {
-					t.true(result.error.description.includes("aud"));
+			test("audience binding rejects missing caller identity and mismatched recipients", async (t) => {
+				for (const aud of ["https://client.example.com", ["https://client.example.com"]]) {
+					const { jwt, jwks } = await audienceFixture({ aud });
+					for (const options of [
+						undefined,
+						{ expectedAudience: "https://other.example.com" },
+						{ expectedAudience: "https://client.example.com/" },
+						{ expectedAudience: "https://CLIENT.example.com" },
+					]) {
+						const result = await verifyResolveResponse(jwt, jwks, options);
+						t.false(result.ok, JSON.stringify({ aud, options }));
+						if (!result.ok) {
+							t.equal(result.error.code, InternalErrorCode.SignatureInvalid);
+							t.true(result.error.description.includes("audience"));
+						}
+					}
 				}
+			});
+			test("audience binding preserves audience-free responses with or without caller identity", async (t) => {
+				const { jwt, jwks } = await audienceFixture();
+				for (const options of [undefined, { expectedAudience: "https://client.example.com" }]) {
+					const result = await verifyResolveResponse(jwt, jwks, options);
+					t.true(result.ok);
+					if (result.ok) t.equal(result.value.aud, undefined);
+				}
+			});
+			test("audience binding rejects malformed audiences and additional recipients", async (t) => {
+				for (const aud of [
+					[],
+					"",
+					[""],
+					null,
+					123,
+					["https://client.example.com", 123],
+					"http://client.example.com",
+					"https://client.example.com?query=1",
+					"https://client.example.com#fragment",
+					["https://client.example.com", "https://other.example.com"],
+				]) {
+					const { jwt, jwks } = await audienceFixture({ aud });
+					const result = await verifyResolveResponse(jwt, jwks, {
+						expectedAudience: "https://client.example.com",
+					});
+					t.false(result.ok, JSON.stringify(aud));
+					if (!result.ok) t.equal(result.error.code, InternalErrorCode.SignatureInvalid);
+				}
+			});
+			test("audience binding rejects invalid configured identities even without aud", async (t) => {
+				const { jwt, jwks } = await audienceFixture();
+				for (const expectedAudience of [
+					"",
+					"not-an-id",
+					"http://client.example.com",
+					"https://client.example.com?query=1",
+					"https://user@client.example.com",
+				]) {
+					const result = await verifyResolveResponse(jwt, jwks, { expectedAudience });
+					t.false(result.ok, expectedAudience);
+					if (!result.ok) t.equal(result.error.code, InternalErrorCode.SignatureInvalid);
+				}
+			});
+			test("audience binding preserves expiration, clock, and signature checks", async (t) => {
+				const expectedAudience = "https://client.example.com";
+				const { jwt, jwks } = await audienceFixture({ aud: expectedAudience, exp: fa_now + 10 });
+				t.false(
+					(
+						await verifyResolveResponse(jwt, jwks, {
+							expectedAudience,
+							clock: { now: () => fa_now + 10 },
+							clockSkewSeconds: 0,
+						})
+					).ok,
+				);
+				t.true(
+					(
+						await verifyResolveResponse(jwt, jwks, {
+							expectedAudience,
+							clock: { now: () => fa_now + 10 },
+							clockSkewSeconds: 1,
+						})
+					).ok,
+				);
+				const wrongKeys = await setupFAKeys();
+				t.false((await verifyResolveResponse(jwt, wrongKeys.jwks, { expectedAudience })).ok);
 			});
 			test("accepts resolve response with additional claims", async (t) => {
 				const { signer, jwks } = await setupFAKeys();

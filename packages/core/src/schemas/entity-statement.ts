@@ -115,6 +115,22 @@ export const SignedJwkSetPayloadSchema = z.looseObject({
 });
 export type SignedJwkSetPayload = z.infer<typeof SignedJwkSetPayloadSchema>;
 
+const ResolveResponseAudienceEntitySchema = z
+	.string()
+	.refine((value) => EntityIdSchema.safeParse(value).success, "Invalid audience Entity Identifier");
+
+// RFC 7519 §4.1.3 allows arrays; Federation §8.3.2 limits them to one distinct recipient.
+const ResolveResponseAudienceSchema = z.union([
+	ResolveResponseAudienceEntitySchema,
+	z
+		.array(ResolveResponseAudienceEntitySchema)
+		.min(1)
+		.refine(
+			(values) => values.every((value) => value === values[0]),
+			"Resolve response audience must identify only the requesting party",
+		),
+]);
+
 /** Resolve Response payload for the federation_resolve endpoint. */
 export const ResolveResponsePayloadSchema = z.looseObject({
 	iss: EntityIdSchema,
@@ -124,7 +140,7 @@ export const ResolveResponsePayloadSchema = z.looseObject({
 	metadata: FederationMetadataSchema,
 	trust_marks: z.array(TrustMarkRefSchema).optional(),
 	trust_chain: z.array(z.string()),
-	aud: z.string().optional(),
+	aud: ResolveResponseAudienceSchema.optional(),
 });
 
 /** Trust Mark Status Response payload. */

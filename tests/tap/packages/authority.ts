@@ -110,6 +110,7 @@ import {
 	validateTrustMark,
 	verifyEntityStatement,
 	verifyHistoricalKeysResponse,
+	verifyResolveResponse,
 	WELL_KNOWN_OPENID_FEDERATION,
 } from "../../../packages/core/src/index.js";
 import { createMockFederation, LEAF_ID, OP_ID, TA_ID } from "../fixtures/index.js";
@@ -3500,7 +3501,7 @@ export default (QUnit: QUnit) => {
 
 		test("omits aud from successful unauthenticated resolve response", async (t) => {
 			const fed = await createMockFederation();
-			const { ctx } = await createTestContext({
+			const { ctx, publicKey } = await createTestContext({
 				trustAnchors: fed.trustAnchors,
 				options: fed.options,
 			});
@@ -3511,11 +3512,22 @@ export default (QUnit: QUnit) => {
 				),
 			);
 			t.equal(res.status, 200);
-			const decoded = decodeEntityStatement(await res.text());
+			const jwt = await res.text();
+			const decoded = decodeEntityStatement(jwt);
 			t.true(decoded.ok);
 			if (!decoded.ok) return;
 			const payload = decoded.value.payload as Record<string, unknown>;
 			t.notOk("aud" in payload);
+			t.true((await verifyResolveResponse(jwt, { keys: [publicKey] })).ok);
+			t.true(
+				(
+					await verifyResolveResponse(
+						jwt,
+						{ keys: [publicKey] },
+						{ expectedAudience: "https://client.example.com" },
+					)
+				).ok,
+			);
 		});
 
 		test("includes active Trust Marks and caps response expiration", async (t) => {
@@ -6605,11 +6617,22 @@ export default (QUnit: QUnit) => {
 						}),
 					);
 					t.equal(res.status, 200);
-					const decoded = decodeEntityStatement(await res.text());
+					const jwt = await res.text();
+					const decoded = decodeEntityStatement(jwt);
 					t.true(isOk(decoded));
 					if (!isOk(decoded)) return;
 					const payload = decoded.value.payload as Record<string, unknown>;
 					t.equal(payload.aud, CLIENT_ID);
+					const { jwks } = await authConfig.keyProvider.getFederationKeySet();
+					t.true((await verifyResolveResponse(jwt, jwks, { expectedAudience: CLIENT_ID })).ok);
+					t.false(
+						(
+							await verifyResolveResponse(jwt, jwks, {
+								expectedAudience: "https://other.example.com",
+							})
+						).ok,
+					);
+					t.false((await verifyResolveResponse(jwt, jwks)).ok);
 				});
 
 				test("server with private_key_jwt accepts custom provider with empty client storage", async (t) => {

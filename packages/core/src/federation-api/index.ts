@@ -2,6 +2,7 @@ import { type EntityTypeIdentifier, InternalErrorCode, JwtTyp, MediaType } from 
 import { err, type FederationError, ok, type Result } from "../errors.js";
 import { verifyEntityStatement } from "../jose/verify.js";
 import { validateJwkSetUseRequirement } from "../jwks/use-requirement.js";
+import { EntityIdSchema } from "../schemas/entity-id.js";
 import {
 	type HistoricalKeyEntry,
 	type HistoricalKeysPayload,
@@ -26,6 +27,11 @@ interface VerifyOptions {
 	clock?: Clock;
 }
 
+export interface VerifyResolveResponseOptions extends VerifyOptions {
+	/** Requesting party's Entity Identifier; required to accept a response containing aud. */
+	expectedAudience?: string;
+}
+
 function buildVerifyOpts(expectedTyp: string, options?: VerifyOptions) {
 	const opts: { expectedTyp: string; clockSkewSeconds?: number; clock?: Clock } = { expectedTyp };
 	if (options?.clockSkewSeconds !== undefined) opts.clockSkewSeconds = options.clockSkewSeconds;
@@ -34,13 +40,18 @@ function buildVerifyOpts(expectedTyp: string, options?: VerifyOptions) {
 }
 
 /**
- * Verify and validate a Resolve Response JWT. Checks typ, signature, and claims.
+ * Verify a Resolve Response's typ, signature, claims, and recipient binding.
+ * Federation §8.3.2 permits aud to be absent, including on authenticated responses.
  */
 export async function verifyResolveResponse(
 	jwt: string,
 	issuerJwks: JWKSet,
-	options?: VerifyOptions,
+	options?: VerifyResolveResponseOptions,
 ): Promise<Result<ResolveResponsePayload, FederationError>> {
+	const expectedAudience = options?.expectedAudience;
+	if (expectedAudience !== undefined && !EntityIdSchema.safeParse(expectedAudience).success) {
+		return err(apiError("Expected resolve response audience must be a valid Entity Identifier"));
+	}
 	const result = await verifyEntityStatement(
 		jwt,
 		issuerJwks,
@@ -51,6 +62,16 @@ export async function verifyResolveResponse(
 	const parsed = ResolveResponsePayloadSchema.safeParse(result.value.payload);
 	if (!parsed.success) {
 		return err(apiError(`Invalid resolve response payload: ${parsed.error.message}`));
+	}
+	const audience = parsed.data.aud;
+	if (audience !== undefined) {
+		if (expectedAudience === undefined) {
+			return err(apiError("Resolve response audience requires an expectedAudience"));
+		}
+		const recipients = typeof audience === "string" ? [audience] : audience;
+		if (!recipients.every((recipient) => recipient === expectedAudience)) {
+			return err(apiError("Resolve response audience does not match the requesting party"));
+		}
 	}
 	return { ok: true, value: parsed.data };
 }
