@@ -5131,6 +5131,183 @@ export default (QUnit: QUnit) => {
 	});
 
 	module("core / applyMetadataPolicy", () => {
+		module("entity type scope", () => {
+			test("returns errors for malformed entity-type values before applying policies or overrides", (t) => {
+				for (const type of ["openid_relying_party", "research_repository"]) {
+					for (const value of [null, undefined, false, 0, "", "invalid", 42, []]) {
+						const metadata = { [type]: value } as unknown as FederationMetadata;
+						for (const mode of ["policy", "override", "neither"]) {
+							const result = applyMetadataPolicy(
+								metadata,
+								mode === "policy" ? { [type]: { display_name: { default: "Name" } } } : {},
+								mode === "override" ? { [type]: { display_name: "Name" } } : undefined,
+							);
+							t.false(result.ok, `${type}: ${String(value)}, ${mode}`);
+							if (!result.ok) {
+								t.equal(result.error.code, InternalErrorCode.MetadataPolicyViolation);
+								t.true(result.error.description.includes(type));
+							}
+						}
+					}
+				}
+			});
+			test("ignores policies and overrides for undeclared types", (t) => {
+				const metadata = { openid_relying_party: { client_name: "RP" } };
+				for (const type of ["openid_provider", "research_repository"]) {
+					for (const operator of [
+						{ value: "Other" },
+						{ default: "Other" },
+						{ add: ["other"] },
+						{ essential: true },
+					]) {
+						const result = applyMetadataPolicy(
+							metadata,
+							{ [type]: { display_name: operator } },
+							{ [type]: { organization_name: "Superior" } },
+						);
+						t.true(result.ok, JSON.stringify({ type, operator }));
+						if (result.ok) t.deepEqual(result.value, metadata);
+					}
+					const overrideOnly = applyMetadataPolicy(metadata, {}, { [type]: {} });
+					t.true(overrideOnly.ok);
+					if (overrideOnly.ok) t.deepEqual(overrideOnly.value, metadata);
+				}
+				t.deepEqual(metadata, { openid_relying_party: { client_name: "RP" } });
+				const empty = applyMetadataPolicy(
+					{},
+					{ openid_provider: { issuer: { essential: true } } },
+					{ openid_provider: {} },
+				);
+				t.true(empty.ok);
+				if (empty.ok) t.deepEqual(empty.value, {});
+			});
+			test("fills declared empty types and applies overrides before policies", (t) => {
+				for (const type of ["openid_relying_party", "research_repository"]) {
+					const metadata = { [type]: {} };
+					const override = { [type]: { display_name: "Superior", description: "Description" } };
+					const policy = { [type]: { display_name: { default: "Default", essential: true } } };
+					const result = applyMetadataPolicy(metadata, policy, override);
+					t.true(result.ok);
+					if (result.ok) t.deepEqual(result.value, override);
+					t.deepEqual(metadata, { [type]: {} });
+					t.false(
+						applyMetadataPolicy(metadata, { [type]: { display_name: { essential: true } } }).ok,
+					);
+				}
+			});
+			test("uses own entity types and skips inapplicable custom callbacks", (t) => {
+				for (const type of ["constructor", "toString", "__proto__"]) {
+					const result = applyMetadataPolicy(
+						{ openid_relying_party: {} },
+						{ [type]: { display_name: { essential: true } } },
+					);
+					t.true(result.ok, type);
+					if (result.ok) t.deepEqual(result.value, { openid_relying_party: {} });
+				}
+				let calls = 0;
+				const custom: PolicyOperatorDefinition = {
+					name: "label",
+					order: 2,
+					action: "modify",
+					apply: () => {
+						calls++;
+						return { ok: true, value: "Research" };
+					},
+					merge: (a) => ({ ok: true, value: a }),
+					canCombineWith: () => true,
+				};
+				const policy = { research_repository: { display_name: { label: true } } };
+				t.true(
+					applyMetadataPolicy({ openid_relying_party: {} }, policy, undefined, {
+						customOperators: [custom],
+					}).ok,
+				);
+				t.equal(calls, 0);
+				const result = applyMetadataPolicy({ research_repository: {} }, policy, undefined, {
+					customOperators: [custom],
+				});
+				t.true(result.ok);
+				if (result.ok)
+					t.deepEqual(result.value, { research_repository: { display_name: "Research" } });
+				t.equal(calls, 1);
+			});
+			test("signed chains retain only declared and permitted types", async (t) => {
+				for (const allowed of [undefined, ["openid_relying_party"], []]) {
+					const metadata = {
+						federation_entity: {},
+						openid_relying_party: {},
+						...(allowed === undefined ? {} : { openid_provider: {} }),
+					};
+					const fed = await createMockFederation({ leafMetadata: metadata });
+					const decoded = decodeEntityStatement(fed.taSubStatementForLeaf);
+					if (!decoded.ok) throw new Error("Invalid fixture");
+					for (const foreignPolicy of [
+						{ organization_name: { value: "OP" } },
+						{ issuer: { essential: true } },
+					]) {
+						const jwt = await signEntityStatement(
+							{
+								...decoded.value.payload,
+								...(allowed === undefined
+									? {}
+									: { constraints: { allowed_entity_types: allowed } }),
+								metadata_policy: {
+									openid_relying_party: { client_name: { value: "RP" } },
+									openid_provider: foreignPolicy,
+								},
+							},
+							new JwkSigner(fed.taSigningKey),
+							{ typ: JwtTyp.EntityStatement },
+						);
+						const result = await validateTrustChain(
+							[fed.leafEcJwt, jwt, fed.taEcJwt],
+							fed.trustAnchors,
+							{ verboseErrors: true },
+						);
+						t.true(result.valid, JSON.stringify({ allowed, foreignPolicy, errors: result.errors }));
+						if (result.valid)
+							t.deepEqual(
+								result.chain.resolvedMetadata,
+								allowed?.length === 0
+									? { federation_entity: {} }
+									: { federation_entity: {}, openid_relying_party: { client_name: "RP" } },
+							);
+					}
+				}
+			});
+			test("irrelevant types still undergo statement and merge validation", async (t) => {
+				const fed = await createMockFederation({ leafMetadata: { openid_relying_party: {} } });
+				const decoded = decodeEntityStatement(fed.taSubStatementForLeaf);
+				if (!decoded.ok) throw new Error("Invalid fixture");
+				for (const extra of [
+					{ metadata_policy: { openid_provider: { issuer: { essential: "yes" } } } },
+					{
+						metadata_policy: { openid_provider: { issuer: { unknown_policy: true } } },
+						metadata_policy_crit: ["unknown_policy"],
+					},
+				]) {
+					const jwt = await signEntityStatement(
+						{ ...decoded.value.payload, ...extra },
+						new JwkSigner(fed.taSigningKey),
+						{ typ: JwtTyp.EntityStatement },
+					);
+					t.false(
+						(await validateTrustChain([fed.leafEcJwt, jwt, fed.taEcJwt], fed.trustAnchors)).valid,
+					);
+				}
+				const base = decoded.value;
+				const policy = (value: string) => ({
+					...base,
+					payload: { ...base.payload, metadata_policy: { openid_provider: { issuer: { value } } } },
+				});
+				const conflict = resolveMetadataPolicy([
+					policy("https://one.example"),
+					policy("https://two.example"),
+				]);
+				t.false(conflict.ok);
+				if (!conflict.ok) t.equal(conflict.error.code, InternalErrorCode.MetadataPolicyError);
+			});
+		});
 		test("returns metadata unchanged when policy is empty", (t) => {
 			const metadata: FederationMetadata = { openid_relying_party: { client_name: "Test RP" } };
 			const result = applyMetadataPolicy(metadata, {});

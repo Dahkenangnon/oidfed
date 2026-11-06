@@ -193,6 +193,8 @@ for (const chain of resolution.chains) {
 
 Resolve policies from the chain, then apply the combined policy to metadata. The standard operators in [Federation §6.1.3](https://openid.net/specs/openid-federation-1_0.html#section-6.1.3) are `value`, `default`, `one_of`, `subset_of`, `superset_of`, `add`, and `essential`.
 
+Overrides and policies apply only to entity types present in the input metadata, following [§3.1.1](https://openid.net/specs/openid-federation-1_0.html#section-3.1.1) and [§6.1.1](https://openid.net/specs/openid-federation-1_0.html#section-6.1.1). When calling `applyMetadataPolicy()` directly, include an object for each intended type; `{}` allows its parameters to be supplied by overrides or policies. Types removed by `allowed_entity_types` remain absent. Policy syntax, critical operators, and merge conflicts are still checked during resolution under [§6.1.4.1](https://openid.net/specs/openid-federation-1_0.html#section-6.1.4.1).
+
 Core validates known `federation_entity` fields in Entity Configurations and Subordinate Statements under [§3.2](https://openid.net/specs/openid-federation-1_0.html#section-3.2) and [§5.1.1](https://openid.net/specs/openid-federation-1_0.html#section-5.1.1). `applyMetadataPolicy()` checks these fields after all operators finish; `validateTrustChain()` also checks the final metadata when no policy applies. Invalid results return validation errors, as required by [§6.1.4.2](https://openid.net/specs/openid-federation-1_0.html#section-6.1.4.2). Custom entity types and extension parameters are preserved. Protocol packages and applications validate their protocol-specific fields.
 
 ```ts

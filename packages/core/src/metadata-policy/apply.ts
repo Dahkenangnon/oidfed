@@ -26,12 +26,20 @@ export function applyMetadataPolicy(
 	);
 
 	const result = structuredClone(metadata) as Record<string, Record<string, unknown>>;
+	// Federation §3.1.1 requires an object for every declared entity type.
+	for (const [entityType, value] of Object.entries(result)) {
+		if (value === null || typeof value !== "object" || Array.isArray(value)) {
+			return err({
+				code: InternalErrorCode.MetadataPolicyViolation,
+				description: `Invalid metadata: ${entityType} must be a JSON object`,
+			});
+		}
+	}
 
 	if (superiorMetadataOverride) {
 		for (const [entityType, params] of Object.entries(superiorMetadataOverride)) {
-			if (!result[entityType]) {
-				result[entityType] = {};
-			}
+			// Federation §3.1.1: superior metadata applies to declared entity types.
+			if (!Object.hasOwn(result, entityType)) continue;
 			const entityResult = result[entityType];
 			for (const [param, value] of Object.entries(params as Record<string, unknown>)) {
 				if (entityResult) entityResult[param] = value;
@@ -40,9 +48,8 @@ export function applyMetadataPolicy(
 	}
 
 	for (const [entityType, paramPolicies] of Object.entries(policy)) {
-		if (!result[entityType]) {
-			result[entityType] = {};
-		}
+		// §§6.1.1 and 6.2.3: apply policies only to types retained in the metadata.
+		if (!Object.hasOwn(result, entityType)) continue;
 		const entityMetadata = result[entityType] as Record<string, unknown>;
 
 		for (const [paramName, opEntries] of Object.entries(paramPolicies)) {
