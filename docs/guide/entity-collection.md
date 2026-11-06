@@ -150,6 +150,7 @@ Refresh checks alternate valid paths through shared intermediates and returns ea
 | `options.maxTotalFetches` | 1,000 network calls across the refresh, including issuer resolution. |
 | `options.maxConcurrentFetches` | 6. |
 | `options.maxChainDepth` | 8. |
+| `options.maxResolutionSteps` | 1,000 branch expansions per Trust Mark issuer resolution, including reused statements. |
 | `options.maxResponseBytes` | 512 KiB for network reads and collection pages. |
 | `options.httpTimeoutMs` | 10 seconds per network operation and request-body read. |
 

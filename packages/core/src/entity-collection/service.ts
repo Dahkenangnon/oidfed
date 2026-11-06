@@ -1,6 +1,7 @@
 import {
 	DEFAULT_HTTP_TIMEOUT_MS,
 	DEFAULT_MAX_REQUEST_BODY_BYTES,
+	DEFAULT_MAX_RESOLUTION_STEPS,
 	DEFAULT_MAX_RESPONSE_BYTES,
 	FederationErrorCode,
 } from "../constants.js";
@@ -46,6 +47,7 @@ export class EntityCollectionService {
 			config.options?.maxConcurrentFetches ?? 6,
 			config.options?.maxTotalFetches ?? 1000,
 			config.options?.maxChainDepth ?? 8,
+			config.options?.maxResolutionSteps ?? DEFAULT_MAX_RESOLUTION_STEPS,
 			config.options?.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES,
 			config.options?.httpTimeoutMs ?? DEFAULT_HTTP_TIMEOUT_MS,
 		])

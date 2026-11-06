@@ -2,9 +2,10 @@
 import {
 	DEFAULT_MAX_AUTHORITY_HINTS,
 	DEFAULT_MAX_CHAIN_DEPTH,
+	DEFAULT_MAX_RESOLUTION_STEPS,
 	InternalErrorCode,
 } from "../constants.js";
-import { type FederationError, federationError } from "../errors.js";
+import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
 import { decodeEntityStatement } from "../jose/verify.js";
 import type {
 	EntityId,
@@ -78,6 +79,11 @@ export async function resolveTrustChains(
 	}
 	const maxDepth = options?.maxChainDepth ?? DEFAULT_MAX_CHAIN_DEPTH;
 	const maxHints = options?.maxAuthorityHints ?? DEFAULT_MAX_AUTHORITY_HINTS;
+	const maxSteps = options?.maxResolutionSteps ?? DEFAULT_MAX_RESOLUTION_STEPS;
+	if (!Number.isSafeInteger(maxSteps) || maxSteps <= 0)
+		throw new RangeError("maxResolutionSteps must be a positive safe integer");
+	let remainingSteps = maxSteps;
+	let stepLimitReported = false;
 	const limiter = createConcurrencyLimiter(options?.maxConcurrentFetches ?? 6, options?.signal);
 	const maxTotalFetches = options?.maxTotalFetches ?? 50;
 	const fetchBudget = { remaining: maxTotalFetches };
@@ -86,22 +92,73 @@ export async function resolveTrustChains(
 	const errors: FederationError[] = [];
 	let incomplete = false;
 
+	// Share statement retrievals within this resolution (Federation §10.1).
+	// Each candidate retains its own visited Entities; HTTP and traversal limits are separate.
+	const configurations = new Map<string, Promise<Result<string>>>();
+	const statements = new Map<string, Promise<Result<string>>>();
+	const budgetExhausted = new Error("Fetch budget exhausted");
+	const transport = options?.httpClient ?? fetch;
+	const fetchOptions: FederationOptions = {
+		...options,
+		httpClient: async (input, init) => {
+			if (options?.signal?.aborted || init?.signal?.aborted)
+				throw new DOMException("Operation aborted", "AbortError");
+			if (fetchBudget.remaining <= 0) {
+				incomplete = true;
+				throw budgetExhausted;
+			}
+			fetchBudget.remaining--;
+			return transport(input, init);
+		},
+	};
+	function retrieve(
+		store: Map<string, Promise<Result<string>>>,
+		key: string,
+		load: () => Promise<Result<string>>,
+	): Promise<Result<string>> {
+		let pending = store.get(key);
+		if (!pending) {
+			pending = limiter(load).then(
+				(result) => {
+					if (!result.ok && result.error.cause === budgetExhausted && !options?.signal?.aborted)
+						return err(
+							federationError(InternalErrorCode.TrustChainInvalid, "Fetch budget exhausted"),
+						);
+					return result;
+				},
+				(cause: unknown) => {
+					if (options?.signal?.aborted) incomplete = true;
+					return err(
+						federationError(
+							options?.signal?.aborted ? InternalErrorCode.Timeout : InternalErrorCode.Network,
+							cause instanceof Error ? cause.message : "Statement retrieval failed",
+							cause,
+						),
+					);
+				},
+			);
+			store.set(key, pending);
+		}
+		return pending;
+	}
+	const configuration = (id: string) =>
+		retrieve(configurations, id, () => fetchEntityConfiguration(id as EntityId, fetchOptions));
+	const statement = (issuer: string, subject: string, endpoint: string) =>
+		retrieve(statements, JSON.stringify([issuer, subject]), () =>
+			fetchSubordinateStatement(endpoint, subject as EntityId, {
+				...fetchOptions,
+				issuer: issuer as EntityId,
+			}),
+		);
+
 	let leafEcJwt = options?.entityConfigurationJwt;
 	if (leafEcJwt === undefined) {
-		if (fetchBudget.remaining <= 0) {
-			return {
-				chains: [],
-				errors: [federationError(InternalErrorCode.TrustChainInvalid, "Fetch budget exhausted")],
-				incomplete: true,
-			};
-		}
-		fetchBudget.remaining--;
-		const leafEcResult = await fetchEntityConfiguration(entityId, options);
+		const leafEcResult = await configuration(entityId);
 		if (!leafEcResult.ok) {
 			return {
 				chains: [],
 				errors: [leafEcResult.error],
-				...(options?.signal?.aborted ? { incomplete: true as const } : {}),
+				...(incomplete || options?.signal?.aborted ? { incomplete: true as const } : {}),
 			};
 		}
 		leafEcJwt = leafEcResult.value;
@@ -124,6 +181,9 @@ export async function resolveTrustChains(
 			],
 		};
 	}
+
+	if (options?.entityConfigurationJwt !== undefined)
+		configurations.set(entityId, Promise.resolve(ok(leafEcJwt)));
 
 	const hints = (leafPayload as Record<string, unknown>).authority_hints as string[] | undefined;
 
@@ -175,7 +235,7 @@ export async function resolveTrustChains(
 			return;
 		}
 
-		let filteredHints = currentHints.slice(0, maxHints);
+		let filteredHints = [...new Set(currentHints.slice(0, maxHints))];
 		if (currentHints.length > maxHints) {
 			incomplete = true;
 			errors.push(
@@ -210,17 +270,23 @@ export async function resolveTrustChains(
 				}
 				branchVisited.add(hint);
 
-				if (fetchBudget.remaining <= 0) {
+				// Cached statements can participate in many paths. Bound that work
+				// separately from the number of HTTP requests (Federation §18.1).
+				if (remainingSteps <= 0) {
 					incomplete = true;
-					errors.push(
-						federationError(InternalErrorCode.TrustChainInvalid, "Fetch budget exhausted"),
-					);
+					if (!stepLimitReported) {
+						stepLimitReported = true;
+						errors.push(
+							federationError(
+								InternalErrorCode.TrustChainInvalid,
+								`Max resolution steps (${maxSteps}) exceeded`,
+							),
+						);
+					}
 					return;
 				}
-				fetchBudget.remaining--;
-				const hintEcResult = await limiter(() =>
-					fetchEntityConfiguration(hint as EntityId, options),
-				);
+				remainingSteps--;
+				const hintEcResult = await configuration(hint);
 				if (!hintEcResult.ok) {
 					errors.push(hintEcResult.error);
 					return;
@@ -248,20 +314,7 @@ export async function resolveTrustChains(
 					return;
 				}
 
-				if (fetchBudget.remaining <= 0) {
-					incomplete = true;
-					errors.push(
-						federationError(InternalErrorCode.TrustChainInvalid, "Fetch budget exhausted"),
-					);
-					return;
-				}
-				fetchBudget.remaining--;
-				const ssResult = await limiter(() =>
-					fetchSubordinateStatement(fetchEndpoint, currentEntityId as EntityId, {
-						...options,
-						issuer: hint as EntityId,
-					}),
-				);
+				const ssResult = await statement(hint, currentEntityId, fetchEndpoint);
 				if (!ssResult.ok) {
 					errors.push(ssResult.error);
 					return;

@@ -235,6 +235,336 @@ import { walletFederation, walletQuery } from "../fixtures/wallet.js";
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("core / resolution sharing", () => {
+		const clock = { now: () => 1500 };
+		const converging = [
+			{ issuer: "ta", subject: "shared" },
+			{ issuer: "shared", subject: "a" },
+			{ issuer: "shared", subject: "b" },
+			{ issuer: "a", subject: "leaf" },
+			{ issuer: "b", subject: "leaf" },
+		];
+		test("fetches duplicate hints once and preserves distinct converging paths", async (t) => {
+			for (const duplicate of [true, false])
+				for (const concurrent of [1, 6])
+					for (const cached of [false, true]) {
+						const graph = await createCollectionFederation({
+							edges: duplicate
+								? [
+										{ issuer: "ta", subject: "leaf" },
+										{ issuer: "ta", subject: "leaf" },
+									]
+								: converging,
+						});
+						const count = duplicate ? 3 : 10;
+						const options = {
+							clock,
+							httpClient: graph.httpClient,
+							maxConcurrentFetches: concurrent,
+							maxTotalFetches: count,
+							...(cached ? { cache: new CorePublic.MemoryCache({ clock }) } : {}),
+						};
+						const result = await resolveTrustChains(graph.id("leaf"), graph.trustAnchors, options);
+						t.notOk(result.incomplete, JSON.stringify(result.errors));
+						t.equal(result.chains.length, duplicate ? 1 : 2);
+						t.equal(graph.requests.length, count);
+						t.equal(new Set(graph.requests).size, count);
+						t.equal(
+							new Set(result.chains.map((c) => JSON.stringify(c.statements))).size,
+							result.chains.length,
+						);
+						for (const chain of result.chains)
+							t.true(
+								(await validateTrustChain(chain.statements, graph.trustAnchors, options)).valid,
+							);
+					}
+		});
+		test("warm cache and supplied subject statements consume no network budget", async (t) => {
+			const graph = await createCollectionFederation({ edges: converging });
+			const cache = new CorePublic.MemoryCache({ clock });
+			const options = { clock, cache, httpClient: graph.httpClient };
+			t.equal(
+				(await resolveTrustChains(graph.id("leaf"), graph.trustAnchors, options)).chains.length,
+				2,
+			);
+			graph.requests.length = 0;
+			const cached = await resolveTrustChains(graph.id("leaf"), graph.trustAnchors, {
+				...options,
+				maxTotalFetches: 0,
+			});
+			t.equal(cached.chains.length, 2);
+			t.notOk(cached.incomplete);
+			t.equal(graph.requests.length, 0);
+			const original = await cache.get<string>(await CorePublic.ecCacheKey(graph.id("leaf")));
+			const decoded = CorePublic.decodeEntityStatement(graph.configurations.get("leaf")!);
+			if (!decoded.ok) throw new Error("Invalid test EC");
+			const supplied = await signEntityStatement(
+				{ ...decoded.value.payload, authority_hints: [graph.id("a")] },
+				new CorePublic.JwkSigner(graph.keys.get("leaf")!.privateKey),
+			);
+			const result = await resolveTrustChains(graph.id("leaf"), graph.trustAnchors, {
+				...options,
+				entityConfigurationJwt: supplied,
+				maxTotalFetches: 0,
+			});
+			t.equal(result.chains.length, 1);
+			t.equal(result.chains[0]?.statements[0], supplied);
+			t.equal(await cache.get<string>(await CorePublic.ecCacheKey(graph.id("leaf"))), original);
+			t.equal(graph.requests.length, 0);
+		});
+		test("failed retrievals are shared within a call and retried by a later call", async (t) => {
+			const graph = await createCollectionFederation({ edges: converging });
+			let failing = true,
+				attempts = 0;
+			const httpClient: HttpClient = async (url, init) => {
+				if (String(url) === `${graph.id("shared")}/.well-known/openid-federation`) {
+					attempts++;
+					if (failing) throw new Error("shared unavailable");
+				}
+				return graph.httpClient(url, init);
+			};
+			const first = await resolveTrustChains(graph.id("leaf"), graph.trustAnchors, {
+				clock,
+				httpClient,
+			});
+			t.equal(attempts, 1);
+			t.equal(first.chains.length, 0);
+			t.true(first.errors.some((e) => e.description === "shared unavailable"));
+			failing = false;
+			const second = await resolveTrustChains(graph.id("leaf"), graph.trustAnchors, {
+				clock,
+				httpClient,
+			});
+			t.equal(attempts, 2);
+			t.equal(second.chains.length, 2);
+			let network = 0;
+			const bounded = await resolveTrustChains(graph.id("leaf"), graph.trustAnchors, {
+				clock,
+				maxTotalFetches: 2,
+				httpClient: async (url, init) => {
+					network++;
+					if (String(url) !== `${graph.id("leaf")}/.well-known/openid-federation`)
+						throw new Error("unavailable");
+					return graph.httpClient(url, init);
+				},
+			});
+			t.equal(network, 2);
+			t.true(bounded.incomplete);
+			t.true(
+				bounded.errors.some(
+					(e) =>
+						e.code === InternalErrorCode.TrustChainInvalid &&
+						e.description === "Fetch budget exhausted",
+				),
+			);
+		});
+		test("keeps exact identities, subject filters and branch-local loop detection", async (t) => {
+			const graph = await createCollectionFederation({
+				edges: [...converging, { issuer: "a", subject: "shared" }],
+				ids: { a: "https://org.example/a", b: "https://org.example/b" },
+			});
+			const seen: string[] = [];
+			const result = await resolveTrustChains(graph.id("leaf"), graph.trustAnchors, {
+				clock,
+				httpClient: graph.httpClient,
+				authorityHintFilter: (hint, subject) => {
+					seen.push(`${subject}|${hint.href}`);
+					return !(subject === graph.id("b") && hint.href === new URL(graph.id("shared")).href);
+				},
+			});
+			t.equal(result.chains.length, 1);
+			t.true(result.errors.some((e) => e.code === InternalErrorCode.LoopDetected));
+			t.true(seen.includes(`${graph.id("a")}|${new URL(graph.id("shared")).href}`));
+			t.true(seen.includes(`${graph.id("b")}|${new URL(graph.id("shared")).href}`));
+			t.true(
+				(await validateTrustChain(result.chains[0]!.statements, graph.trustAnchors, { clock }))
+					.valid,
+			);
+			t.equal(new Set(graph.requests).size, graph.requests.length);
+		});
+		test("retains the raw hint cap before deduplication", async (t) => {
+			const graph = await createCollectionFederation({
+				edges: [
+					{ issuer: "ta", subject: "leaf" },
+					{ issuer: "ta", subject: "leaf" },
+				],
+			});
+			let filtered = 0;
+			const result = await resolveTrustChains(graph.id("leaf"), graph.trustAnchors, {
+				clock,
+				httpClient: graph.httpClient,
+				maxAuthorityHints: 1,
+				authorityHintFilter: () => {
+					filtered++;
+					return true;
+				},
+			});
+			t.equal(result.chains.length, 1);
+			t.true(result.incomplete);
+			t.equal(filtered, 1);
+		});
+		test("enforces exact traversal boundaries independently of the network budget", async (t) => {
+			const graph = await createCollectionFederation({
+				edges: [
+					{ issuer: "ta", subject: "a" },
+					{ issuer: "a", subject: "leaf" },
+				],
+			});
+			const cache = new CorePublic.MemoryCache({ clock });
+			const options = { clock, cache, httpClient: graph.httpClient };
+			await resolveTrustChains(graph.id("leaf"), graph.trustAnchors, options);
+			graph.requests.length = 0;
+			for (const maxResolutionSteps of [1, 2]) {
+				const result = await resolveTrustChains(graph.id("leaf"), graph.trustAnchors, {
+					...options,
+					maxTotalFetches: 0,
+					maxResolutionSteps,
+				});
+				t.equal(result.chains.length, maxResolutionSteps === 2 ? 1 : 0);
+				t.equal(result.incomplete === true, maxResolutionSteps === 1);
+				t.equal(
+					result.errors.filter((e) => e.description.includes("resolution steps")).length,
+					maxResolutionSteps === 1 ? 1 : 0,
+				);
+			}
+			t.equal(graph.requests.length, 0);
+			for (const value of [0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+				await t.rejects(
+					resolveTrustChains(graph.id("leaf"), graph.trustAnchors, {
+						...options,
+						maxResolutionSteps: value,
+					}),
+					/maxResolutionSteps must be a positive safe integer/,
+				);
+				t.throws(
+					() =>
+						new CorePublic.EntityCollectionService({
+							trustAnchors: graph.trustAnchors,
+							options: { maxResolutionSteps: value },
+						}),
+				);
+			}
+			t.equal(CorePublic.DEFAULT_MAX_RESOLUTION_STEPS, 1000);
+		});
+		test("bounds layered path enumeration and preserves admitted candidates", async (t) => {
+			const edges: CollectionGraphEdge[] = [];
+			let previous = ["leaf"];
+			for (let depth = 0; depth < 7; depth++) {
+				const next = [0, 1, 2].map((i) => `layer${depth}-${i}`);
+				for (const subject of previous) for (const issuer of next) edges.push({ issuer, subject });
+				previous = next;
+			}
+			for (const subject of previous) edges.push({ issuer: "ta", subject });
+			const graph = await createCollectionFederation({ edges });
+			const result = await resolveTrustChains(graph.id("leaf"), graph.trustAnchors, {
+				clock,
+				httpClient: graph.httpClient,
+				maxTotalFetches: 1000,
+			});
+			t.true(result.incomplete);
+			t.equal(result.errors.filter((e) => e.description.includes("resolution steps")).length, 1);
+			t.true(result.chains.length < 2187);
+			t.equal(new Set(graph.requests).size, graph.requests.length);
+			const simple = await createCollectionFederation({
+				edges: [
+					{ issuer: "ta", subject: "leaf" },
+					{ issuer: "a", subject: "leaf" },
+					{ issuer: "ta", subject: "a" },
+				],
+			});
+			const partial = await resolveTrustChains(simple.id("leaf"), simple.trustAnchors, {
+				clock,
+				httpClient: simple.httpClient,
+				maxResolutionSteps: 1,
+			});
+			t.true(partial.incomplete);
+			t.equal(partial.chains.length, 1);
+			t.true(
+				(await validateTrustChain(partial.chains[0]!.statements, simple.trustAnchors, { clock }))
+					.valid,
+			);
+		});
+		test("cancels pending shared requests and queued work without exceeding concurrency", async (t) => {
+			for (const maxConcurrentFetches of [1, 2]) {
+				const graph = await createCollectionFederation({ edges: converging });
+				const controller = new AbortController();
+				let active = 0,
+					peak = 0,
+					started = 0;
+				let enter!: () => void;
+				const entered = new Promise<void>((resolve) => {
+					enter = resolve;
+				});
+				const httpClient: HttpClient = async (url, init) => {
+					active++;
+					peak = Math.max(peak, active);
+					started++;
+					try {
+						if (String(url) === `${graph.id("shared")}/.well-known/openid-federation`) {
+							enter();
+							await new Promise<void>((_, reject) => {
+								const abort = () => reject(new DOMException("aborted", "AbortError"));
+								init?.signal?.addEventListener("abort", abort, { once: true });
+								if (init?.signal?.aborted) abort();
+							});
+						}
+						return await graph.httpClient(url, init);
+					} finally {
+						active--;
+					}
+				};
+				const pending = resolveTrustChains(graph.id("leaf"), graph.trustAnchors, {
+					clock,
+					httpClient,
+					signal: controller.signal,
+					maxConcurrentFetches,
+				});
+				await entered;
+				controller.abort();
+				const atAbort = started;
+				const result = await pending;
+				t.true(result.incomplete);
+				t.equal(result.chains.length, 0);
+				t.true(result.errors.some((e) => e.code === InternalErrorCode.Timeout));
+				t.equal(started, atAbort);
+				t.equal(active, 0);
+				t.true(peak <= maxConcurrentFetches);
+			}
+		});
+		test("collection retains its snapshot when required issuer resolution hits the work limit", async (t) => {
+			const graph = await createCollectionFederation({
+				edges: [
+					{ issuer: "ta", subject: "a" },
+					{ issuer: "a", subject: "issuer" },
+					{ issuer: "ta", subject: "leaf" },
+				],
+				marked: true,
+			});
+			const leaf = CorePublic.decodeEntityConfiguration(graph.configurations.get("leaf")!);
+			if (!leaf.ok) throw new Error("Invalid fixture");
+			let marked = false;
+			const service = new CorePublic.EntityCollectionService({
+				trustAnchors: graph.trustAnchors,
+				options: { clock, httpClient: graph.httpClient, maxResolutionSteps: 1 },
+				collector: async () =>
+					CorePublic.ok([
+						{
+							entity: CorePublic.EntityCollectionEntitySchema.parse({
+								entity_id: graph.id("leaf"),
+								...(marked ? { trust_marks: leaf.value.payload.trust_marks } : {}),
+							}),
+							expiresAt: 4000,
+						},
+					]),
+			});
+			t.true((await service.refresh(graph.id("ta"))).ok);
+			const previous = await service.store.getCurrent(graph.id("ta"));
+			t.ok(previous);
+			marked = true;
+			t.false((await service.refresh(graph.id("ta"))).ok);
+			t.deepEqual(await service.store.getCurrent(graph.id("ta")), previous);
+		});
+	});
 	module("core / anchor self-signature", () => {
 		test("rejects a missing signing key and a matching kid with different material", async (t) => {
 			const f = await anchorKeyPaths();

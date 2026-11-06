@@ -74,6 +74,8 @@ export interface FederationOptions {
 	httpTimeoutMs?: number;
 	clockSkewSeconds?: number;
 	maxChainDepth?: number;
+	/** Maximum eligible branch expansions per resolution, including reused statements. Default: 1000. */
+	maxResolutionSteps?: number;
 	maxAuthorityHints?: number;
 	maxConcurrentFetches?: number;
 	maxConcurrentResolutions?: number;
@@ -84,7 +86,7 @@ export interface FederationOptions {
 	allowedHosts?: string[];
 	authorityHintFilter?: (hint: URL, subject: EntityId) => boolean;
 	understoodCriticalClaims?: ReadonlySet<string>;
-	/** Maximum total HTTP fetches across entire trust chain resolution. Default: 50. */
+	/** Maximum HTTP client calls per resolution; cached and supplied statements use no allowance. Default: 50. */
 	maxTotalFetches?: number;
 	/**
 	 * Federation-defined policy operators in addition to the seven standard ones.
