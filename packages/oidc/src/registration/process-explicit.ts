@@ -1,5 +1,4 @@
 import {
-	DEFAULT_CLOCK_SKEW_SECONDS,
 	decodeEntityStatement,
 	type EntityId,
 	err,
@@ -10,20 +9,30 @@ import {
 	InternalErrorCode,
 	JwtTyp,
 	MediaType,
-	nowSeconds,
 	ok,
 	type Result,
+	resolveTrustChains,
+	shortestChain,
 	type TrustAnchorSet,
+	type ValidatedTrustChain,
+	validateCriticalClaims,
+	validateEntityStatementTimeClaims,
+	validateTrustChain,
 	verifyEntityStatement,
 } from "@oidfed/core";
+import { ExplicitRegistrationRequestPayloadSchema } from "../schemas/explicit-registration.js";
 import { OpenIDRelyingPartyMetadataSchema } from "../schemas/metadata.js";
 import {
 	parseTrustChainJsonBody,
 	requireNonEmptyTrustAnchors,
-	resolveAndValidateBestChain,
 	validateSuppliedTrustChain,
 } from "./helpers.js";
 import type { ProcessedRegistration } from "./process-automatic.js";
+
+export interface ProcessedExplicitRegistration extends ProcessedRegistration {
+	readonly requestPayload: Record<string, unknown>;
+	readonly peerResolvedOpMetadata?: Readonly<Record<string, unknown>>;
+}
 
 export interface ProcessExplicitRegistrationOptions extends FederationOptions {
 	/** The OP's own Entity Identifier — REQUIRED for `aud` validation. */
@@ -35,17 +44,17 @@ export interface ProcessExplicitRegistrationOptions extends FederationOptions {
 /**
  * OP-side processing of an explicit registration request.
  *
- * Validates the RP's Entity Configuration JWT, verifies its self-signature,
- * resolves trust chains, and extracts resolved `openid_relying_party` metadata.
+ * Authenticates the submitted EC with its own keys and each candidate's
+ * attested federation keys, then selects a path with valid resolved RP metadata.
  *
- * The caller MUST cap the registration `exp` to `trustChain.expiresAt` .
+ * The caller caps registration expiry to `trustChain.expiresAt` (§12.2.2).
  */
 export async function processExplicitRegistration(
 	requestBody: string,
 	contentType: string,
 	trustAnchors: TrustAnchorSet | undefined,
 	options: ProcessExplicitRegistrationOptions,
-): Promise<Result<ProcessedRegistration, FederationError>> {
+): Promise<Result<ProcessedExplicitRegistration, FederationError>> {
 	const trustAnchorsResult = requireNonEmptyTrustAnchors(trustAnchors);
 	if (!trustAnchorsResult.ok) return trustAnchorsResult;
 	const configuredTrustAnchors = trustAnchorsResult.value;
@@ -92,29 +101,9 @@ export async function processExplicitRegistration(
 		return err(federationError(FederationErrorCode.InvalidRequest, "RP EC missing 'iss' claim"));
 	}
 
-	// iat and exp are REQUIRED in the RP Entity Configuration
-	const clockSkew = options.clockSkewSeconds ?? DEFAULT_CLOCK_SKEW_SECONDS;
-	const now = nowSeconds(options.clock);
-
-	const iat = payload.iat as number | undefined;
-	if (iat === undefined) {
-		return err(
-			federationError(FederationErrorCode.InvalidRequest, "RP EC missing required 'iat' claim"),
-		);
-	}
-	if (iat > now + clockSkew) {
-		return err(federationError(FederationErrorCode.InvalidRequest, "RP EC 'iat' is in the future"));
-	}
-
-	const exp = payload.exp as number | undefined;
-	if (exp === undefined) {
-		return err(
-			federationError(FederationErrorCode.InvalidRequest, "RP EC missing required 'exp' claim"),
-		);
-	}
-	if (now - clockSkew >= exp) {
-		return err(federationError(FederationErrorCode.InvalidRequest, "RP EC has expired"));
-	}
+	const timeClaims = validateEntityStatementTimeClaims(payload, options);
+	if (!timeClaims.ok)
+		return err(federationError(FederationErrorCode.InvalidRequest, timeClaims.error.description));
 
 	if (payload.sub !== payload.iss) {
 		return err(
@@ -167,15 +156,58 @@ export async function processExplicitRegistration(
 		);
 	}
 
-	const rpMetadataResult = OpenIDRelyingPartyMetadataSchema.safeParse(
-		metadata.openid_relying_party,
-	);
-	if (!rpMetadataResult.success) {
+	const requestShape = ExplicitRegistrationRequestPayloadSchema.safeParse(payload);
+	if (!requestShape.success) {
 		return err(
 			federationError(
-				FederationErrorCode.InvalidMetadata,
-				"RP metadata does not comply with the OpenID Connect Relying Party metadata schema",
+				FederationErrorCode.InvalidRequest,
+				`Invalid registration request payload: ${requestShape.error.issues.map((issue) => issue.path.join(".")).join(", ")}`,
 			),
+		);
+	}
+	const criticalClaims = validateCriticalClaims(payload, options.understoodCriticalClaims);
+	if (!criticalClaims.ok) return criticalClaims;
+
+	const header = decoded.value.header;
+	if (contentType === MediaType.EntityStatement && header.trust_chain !== undefined) {
+		if (
+			options.trustChainHeader !== undefined &&
+			JSON.stringify(options.trustChainHeader) !== JSON.stringify(header.trust_chain)
+		) {
+			return err(
+				federationError(FederationErrorCode.InvalidTrustChain, "Conflicting trust_chain headers"),
+			);
+		}
+		suppliedTrustChain = header.trust_chain as readonly string[];
+		suppliedTrustChainLabel = "trust_chain";
+	}
+	if (
+		suppliedTrustChain !== undefined &&
+		(!Array.isArray(suppliedTrustChain) ||
+			suppliedTrustChain.length === 0 ||
+			!suppliedTrustChain.every((s) => typeof s === "string"))
+	) {
+		return err(
+			federationError(
+				FederationErrorCode.InvalidTrustChain,
+				"trust_chain must be a non-empty array of JWT strings",
+			),
+		);
+	}
+	if (
+		contentType === MediaType.TrustChain &&
+		(header.peer_trust_chain !== undefined || header.trust_chain !== undefined)
+	) {
+		return err(
+			federationError(
+				FederationErrorCode.InvalidRequest,
+				"trust_chain and peer_trust_chain MUST NOT be used when the request body is a Trust Chain",
+			),
+		);
+	}
+	if (header.peer_trust_chain !== undefined && suppliedTrustChain === undefined) {
+		return err(
+			federationError(FederationErrorCode.InvalidRequest, "peer_trust_chain requires trust_chain"),
 		);
 	}
 
@@ -210,22 +242,76 @@ export async function processExplicitRegistration(
 		);
 	}
 
-	const bestChainResult =
+	const candidates =
 		suppliedTrustChain !== undefined
-			? await validateSuppliedTrustChain(suppliedTrustChain, configuredTrustAnchors, {
-					...options,
-					expectedSubject: rpEntityId,
-					explicitRegistrationAudience: options.opEntityId,
-					label: suppliedTrustChainLabel ?? "trust_chain",
-				})
-			: await resolveAndValidateBestChain(rpEntityId, configuredTrustAnchors, options);
-	if (!bestChainResult.ok) return bestChainResult;
-	const bestChain = bestChainResult.value;
-	const resolvedRpMetadata = bestChain.resolvedMetadata.openid_relying_party ?? {};
-
+			? [suppliedTrustChain]
+			: (
+					await resolveTrustChains(rpEntityId, configuredTrustAnchors, {
+						...options,
+						entityConfigurationJwt: rpEcJwt,
+					})
+				).chains.map((chain) => chain.statements);
+	const validChains: ValidatedTrustChain[] = [];
+	let reason = "No valid trust chains found for RP";
+	let failureCode: FederationErrorCode = FederationErrorCode.InvalidTrustChain;
+	for (const candidate of candidates) {
+		const validation = await validateTrustChain(candidate, configuredTrustAnchors, {
+			...options,
+			verboseErrors: true,
+			explicitRegistrationRequest: { jwt: rpEcJwt, audience: options.opEntityId },
+		});
+		if (validation.valid) {
+			const metadata = validation.chain.resolvedMetadata;
+			if (
+				!OpenIDRelyingPartyMetadataSchema.safeParse(metadata.openid_relying_party).success ||
+				Object.keys(metadata).length !== Object.keys(payload.metadata as object).length ||
+				Object.keys(payload.metadata as object).some((type) => !Object.hasOwn(metadata, type))
+			) {
+				failureCode = FederationErrorCode.InvalidMetadata;
+				reason =
+					"Resolved metadata must retain the requested entity types and comply with the OpenID Connect Relying Party metadata schema";
+				continue;
+			}
+			validChains.push(validation.chain);
+		} else reason = validation.errors[0]?.message ?? reason;
+	}
+	if (!validChains.length) {
+		return err(
+			federationError(
+				failureCode,
+				`${suppliedTrustChainLabel ?? "Registration chain"} validation failed: ${reason}`,
+			),
+		);
+	}
+	const bestChain = shortestChain(validChains);
+	const resolvedRpMetadata = bestChain.resolvedMetadata.openid_relying_party;
+	let peerResolvedOpMetadata: Readonly<Record<string, unknown>> | undefined;
+	if (header.peer_trust_chain !== undefined) {
+		const peer = await validateSuppliedTrustChain(
+			header.peer_trust_chain as readonly string[],
+			configuredTrustAnchors,
+			{
+				...options,
+				expectedSubject: options.opEntityId,
+				label: "peer_trust_chain",
+			},
+		);
+		if (!peer.ok) return peer;
+		if (peer.value.trustAnchorId !== bestChain.trustAnchorId) {
+			return err(
+				federationError(
+					FederationErrorCode.InvalidTrustChain,
+					"peer_trust_chain Trust Anchor does not match selected RP Trust Anchor",
+				),
+			);
+		}
+		peerResolvedOpMetadata = peer.value.resolvedMetadata.openid_provider ?? {};
+	}
 	return ok({
 		rpEntityId,
-		resolvedRpMetadata,
+		resolvedRpMetadata: resolvedRpMetadata ?? {},
 		trustChain: bestChain,
+		requestPayload: payload,
+		...(peerResolvedOpMetadata !== undefined ? { peerResolvedOpMetadata } : {}),
 	});
 }

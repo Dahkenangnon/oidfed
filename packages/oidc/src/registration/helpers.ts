@@ -12,6 +12,7 @@ import {
 	shortestChain,
 	type TrustAnchorSet,
 	type ValidatedTrustChain,
+	type ValidationResult,
 	validateTrustChain,
 } from "@oidfed/core";
 
@@ -159,6 +160,7 @@ async function resolveValidRegistrationChains(
 	trustAnchors: TrustAnchorSet,
 	options: FederationOptions | undefined,
 	label: string,
+	validateCandidate?: (statements: readonly string[]) => Promise<ValidationResult>,
 ): Promise<Result<readonly ValidRegistrationChain[], FederationError>> {
 	const chainResult = await resolveTrustChains(subject, trustAnchors, options);
 
@@ -174,7 +176,9 @@ async function resolveValidRegistrationChains(
 
 	const validChains: ValidRegistrationChain[] = [];
 	for (const chain of chainResult.chains) {
-		const validation = await validateTrustChain(chain.statements, trustAnchors, options);
+		const validation = validateCandidate
+			? await validateCandidate(chain.statements)
+			: await validateTrustChain(chain.statements, trustAnchors, options);
 		if (validation.valid) {
 			validChains.push({ statements: chain.statements, chain: validation.chain });
 		}
@@ -198,16 +202,19 @@ export async function selectSharedRegistrationTrustChains(
 	preferredOpChain: ValidatedTrustChain,
 	trustAnchors: TrustAnchorSet,
 	options?: FederationOptions,
+	validateRpCandidate?: (statements: readonly string[]) => Promise<ValidationResult>,
 ): Promise<Result<SharedRegistrationTrustChains, FederationError>> {
 	const rpChainsResult = await resolveValidRegistrationChains(
 		rpEntityId,
 		trustAnchors,
 		options,
 		"RP",
+		validateRpCandidate,
 	);
 	if (!rpChainsResult.ok) return rpChainsResult;
+	const rpChains = rpChainsResult.value;
 
-	const preferredRpChains = rpChainsResult.value.filter(
+	const preferredRpChains = rpChains.filter(
 		(candidate) => candidate.chain.trustAnchorId === preferredOpChain.trustAnchorId,
 	);
 	if (preferredRpChains.length > 0) {
@@ -228,7 +235,7 @@ export async function selectSharedRegistrationTrustChains(
 	);
 	if (!opChainsResult.ok) return opChainsResult;
 
-	for (const rpChain of rpChainsResult.value) {
+	for (const rpChain of rpChains) {
 		const matchingOpChains = opChainsResult.value.filter(
 			(candidate) => candidate.chain.trustAnchorId === rpChain.chain.trustAnchorId,
 		);
@@ -254,7 +261,7 @@ export async function selectSharedRegistrationTrustChains(
 /**
  * Resolve trust chains for an entity and return the shortest valid chain.
  *
- * Shared by automatic and explicit registration flows.
+ * Resolves the client chain for automatic registration.
  */
 export async function resolveAndValidateBestChain(
 	rpEntityId: EntityId,

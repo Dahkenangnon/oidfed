@@ -1,5 +1,4 @@
 import {
-	DEFAULT_CLOCK_SKEW_SECONDS,
 	DEFAULT_ENTITY_STATEMENT_TTL_SECONDS,
 	type DiscoveryResult,
 	decodeEntityStatement,
@@ -20,7 +19,10 @@ import {
 	resolveTrustChainForAnchor,
 	signEntityStatement,
 	type TrustAnchorSet,
+	validateCriticalClaims,
+	validateEntityStatementTimeClaims,
 	validateFederationKeySet,
+	validateTrustChain,
 	verifyEntityStatement,
 } from "@oidfed/core";
 import {
@@ -28,8 +30,12 @@ import {
 	OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE,
 	OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE,
 } from "../constants.js";
-import { OpenIDRelyingPartyRegistrationResponseMetadataSchema } from "../schemas/metadata.js";
+import {
+	OpenIDRelyingPartyMetadataSchema,
+	OpenIDRelyingPartyRegistrationResponseMetadataSchema,
+} from "../schemas/metadata.js";
 import { getRegistrationTypes, selectSharedRegistrationTrustChains } from "./helpers.js";
+import { validateRegistrationMetadataPolicy } from "./metadata-policy.js";
 
 export interface ExplicitRegistrationConfig {
 	readonly entityId: EntityId;
@@ -39,17 +45,9 @@ export interface ExplicitRegistrationConfig {
 	readonly entityConfigurationTtlSeconds?: number;
 	readonly trustMarks?: ReadonlyArray<Record<string, unknown>>;
 	/**
-	 * When true, attach the peer_trust_chain JWS header — a Trust Chain for
-	 * the OP that ends at the same Trust Anchor as the RP chain. Disabled by
-	 * default; set to true only when the RP wants the OP to use the
-	 * metadata/policy values from the RP-built peer chain (Federation /
-	 * Metadata Integrity properties). The library throws if the peer chain
-	 * to the shared Trust Anchor cannot be built. The current emit path
-	 * always sends an Entity Configuration JWT body (never a Trust-Chain
-	 * JSON body), so the mutual-exclusion rule between peer_trust_chain
-	 * and Trust-Chain-JSON request body is structurally satisfied here;
-	 * do NOT add a Trust-Chain-JSON body shape without also refusing this
-	 * option in that branch.
+	 * Include the OP's chain to the selected shared anchor in the registration
+	 * JWT header (§12.2.1). Defaults to false. Returns an error if no peer path
+	 * can be resolved. Requests use the Entity Configuration JWT transport.
 	 */
 	readonly includePeerTrustChain?: boolean;
 }
@@ -60,7 +58,7 @@ export interface ExplicitRegistrationResult {
 	readonly clientSecret?: string;
 	readonly expiresAt: number;
 	readonly registeredMetadata: Readonly<Record<string, unknown>>;
-	/** Trust chain expiration — RP must not use the registration past this time. */
+	/** OP trust chain expiration; use the registration only until the earlier of this and expiresAt (§12.3). */
 	readonly trustChainExpiresAt: number;
 }
 
@@ -77,12 +75,57 @@ export async function explicitRegistration(
 	trustAnchors: TrustAnchorSet,
 	options?: FederationOptions,
 ): Promise<Result<ExplicitRegistrationResult>> {
+	const keySet = await rpConfig.keyProvider.getFederationKeySet();
+	validateFederationKeySet(keySet);
+	const now = nowSeconds(options?.clock);
+	const ttl = rpConfig.entityConfigurationTtlSeconds ?? DEFAULT_ENTITY_STATEMENT_TTL_SECONDS;
+	const candidateRequest = await signEntityStatement(
+		{
+			iss: rpConfig.entityId,
+			sub: rpConfig.entityId,
+			aud: discovery.entityId,
+			iat: now,
+			exp: now + ttl,
+			jwks: keySet.jwks,
+			authority_hints: rpConfig.authorityHints,
+			metadata: rpConfig.metadata,
+			...(rpConfig.trustMarks?.length ? { trust_marks: rpConfig.trustMarks } : {}),
+		},
+		keySet.signer,
+		{ typ: JwtTyp.EntityStatement },
+	);
 	const sharedChains = await selectSharedRegistrationTrustChains(
 		rpConfig.entityId,
 		discovery.entityId as EntityId,
 		discovery.trustChain,
 		trustAnchors,
 		options,
+		async (statements) => {
+			const validation = await validateTrustChain(statements, trustAnchors, {
+				...options,
+				explicitRegistrationRequest: { jwt: candidateRequest, audience: discovery.entityId },
+			});
+			if (!validation.valid) return validation;
+			const superior = validation.chain.statements[1]?.payload.iss;
+			const resolved = validation.chain.resolvedMetadata;
+			if (
+				!rpConfig.authorityHints.some((hint) => String(hint) === String(superior)) ||
+				!OpenIDRelyingPartyMetadataSchema.safeParse(resolved.openid_relying_party).success ||
+				Object.keys(resolved).length !== Object.keys(rpConfig.metadata).length ||
+				!Object.keys(rpConfig.metadata).every((type) => Object.hasOwn(resolved, type))
+			) {
+				return {
+					valid: false,
+					errors: [
+						{
+							code: InternalErrorCode.MetadataPolicyViolation,
+							message: "RP path is incompatible with the registration request",
+						},
+					],
+				} as const;
+			}
+			return validation;
+		},
 	);
 	if (!sharedChains.ok) return err(sharedChains.error);
 
@@ -110,12 +153,8 @@ export async function explicitRegistration(
 	}
 
 	const selectedTrustAnchorId = sharedChains.value.trustAnchorId;
-	const authorityHints = rpConfig.authorityHints;
-
-	const keySet = await rpConfig.keyProvider.getFederationKeySet();
-	validateFederationKeySet(keySet);
-	const now = nowSeconds(options?.clock);
-	const ttl = rpConfig.entityConfigurationTtlSeconds ?? DEFAULT_ENTITY_STATEMENT_TTL_SECONDS;
+	// Federation §12.2.1 permits selecting a single shared-anchor path.
+	const authorityHints = [sharedChains.value.rpChain.statements[1]?.payload.iss as string];
 	const rpChainStatements = [...sharedChains.value.rpChainStatements];
 
 	const ecPayload: Record<string, unknown> = {
@@ -258,6 +297,8 @@ export async function explicitRegistration(
 	}
 
 	const responsePayload = decoded.value.payload as Record<string, unknown>;
+	const criticalClaims = validateCriticalClaims(responsePayload, options?.understoodCriticalClaims);
+	if (!criticalClaims.ok) return criticalClaims;
 
 	if (responsePayload.iss !== (discovery.entityId as string)) {
 		return err(
@@ -311,16 +352,14 @@ export async function explicitRegistration(
 		);
 	}
 
-	// Federation §§12.2.5 and 3.2 require issued-at validation, allowing clock skew.
-	const clockSkew = options?.clockSkewSeconds ?? DEFAULT_CLOCK_SKEW_SECONDS;
-	if (responseIat > responseNow + clockSkew) {
+	const timeClaims = validateEntityStatementTimeClaims(responsePayload, options);
+	if (!timeClaims.ok)
 		return err(
 			federationError(
 				FederationErrorCode.InvalidRequest,
-				"Registration response 'iat' is in the future",
+				`Registration response ${timeClaims.error.description}`,
 			),
 		);
-	}
 
 	const trustAnchor = responsePayload.trust_anchor as string | undefined;
 	if (!trustAnchor || !trustAnchors.has(trustAnchor as EntityId)) {
@@ -496,7 +535,14 @@ export async function explicitRegistration(
 	}
 
 	// RP must not use the registration past trust chain expiry
-	const trustChainExpiresAt = sharedChains.value.rpChain.expiresAt;
+	const policyCheck = validateRegistrationMetadataPolicy(
+		responseMeta,
+		sharedChains.value.rpChain,
+		options,
+		Object.keys(rpConfig.metadata),
+	);
+	if (!policyCheck.ok) return policyCheck;
+	const trustChainExpiresAt = sharedChains.value.opChain.expiresAt;
 
 	const result: ExplicitRegistrationResult = {
 		registrationStatement: decoded.value,

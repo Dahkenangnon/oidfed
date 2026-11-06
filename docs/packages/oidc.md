@@ -112,7 +112,17 @@ if (isOk(authzResult) && authzResult.value.delivery === "query") {
 The example assumes pinned `taPublicKey` and an `opProtocolPublicKey` used by the existing OP. Compose `opRole` into the parent entity to initialize and route it. If confidential clients need secrets, provide `generateClientSecret` backed by your credential store and a cryptographically secure generator.
 For explicit registration, OPs serve a `/registration` endpoint. RPs post their self-signed Entity Configuration or trust chains, and OPs reply with a signed explicit registration response whose `sub` is the RP Entity Identifier and whose registered client credentials are under `metadata.openid_relying_party`.
 
-When an RP supplies a `trust_chain` header or an exact `application/trust-chain+json` request body, OP-side processing validates that supplied value as a full Trust Chain and uses it before attempting live Federation Entity Discovery. Explicit registration request media types are parameter-free and matched exactly. Invalid supplied chains fail registration.
+The OP validates a supplied `trust_chain` header or `application/trust-chain+json` body. Without a supplied chain, it starts discovery from the submitted Entity Configuration and its authority hints. Each candidate must authenticate that request with the RP federation keys attested by its Immediate Superior before the OP selects a path. Invalid supplied chains fail registration. Request media types are parameter-free and matched exactly. See [Federation §12.2.2](https://openid.net/specs/openid-federation-1_0.html#section-12.2.2).
+
+The submitted metadata is resolved through the selected chain's superior metadata, constraints, and metadata policy. The adapter receives that resolved metadata, and its final output must satisfy the same federation policy ([§12.2.2](https://openid.net/specs/openid-federation-1_0.html#section-12.2.2), [§6.1.4.2](https://openid.net/specs/openid-federation-1_0.html#section-6.1.4.2)). Registration hooks run after response preparation.
+
+Unchanged resolved values retain their policy result. Adapters may change fields governed by standard operators or custom check operators when the result passes those policies. Fields governed by a custom modifying operator must retain their resolved value, including an omission. This is the library's registration contract: custom operators may transform values without being idempotent under [§6.1.3.2](https://openid.net/specs/openid-federation-1_0.html#section-6.1.3.2). The RP applies the same rule when checking response metadata.
+
+Optional response defaults are included when federation policy permits them; a `value: null` removal remains omitted. See [§12.2.3](https://openid.net/specs/openid-federation-1_0.html#section-12.2.3) and [§6.1.3.1.1](https://openid.net/specs/openid-federation-1_0.html#section-6.1.3.1.1).
+
+The RP selects a shared-anchor path that attests its current signing key and sends that path's Immediate Superior as its authority hint, as allowed by [§12.2.1](https://openid.net/specs/openid-federation-1_0.html#section-12.2.1). Explicit registration needs an Immediate Superior because the response must name it under [§12.2.3](https://openid.net/specs/openid-federation-1_0.html#section-12.2.3). An entity that is also a configured anchor can register through an eligible upward path.
+
+Both sides accept finite NumericDates and validate required statement times and payload `crit` claims. Fractional timestamps are preserved in registration and chain deadlines. Configure `understoodCriticalClaims` only for extensions your application understands and processes. Unknown critical claims fail validation under [§3.1.1](https://openid.net/specs/openid-federation-1_0.html#section-3.1.1).
 
 RP Entity Configuration metadata under `metadata.openid_relying_party` must not include registration-response-only credential fields such as `client_id`, `client_secret`, `client_id_issued_at`, or `client_secret_expires_at`.
 
@@ -245,7 +255,9 @@ The application manages protocol-key rotation and publishes the matching public 
 
 [Federation §12.3](https://openid.net/specs/openid-federation-1_0.html#section-12.3) requires an OP registration to expire no later than the RP chain used to establish it. The RP must also stop using registration when its selected OP chain expires, then successfully reevaluate trust for automatic registration or renew explicit registration.
 
-The explicit handler caps its signed response expiry. OP automatic processing returns the validated RP `trustChain`; RP automatic registration returns the OP chain and `trustChainExpiresAt`. Applications must preserve the relevant deadlines and enforce them in their client database and request processing. Explicit-registration integrations must also retain the selected OP chain's expiry. `onRegistration` does not receive a chain deadline, so that hook alone does not enforce registration lifetime. See [the integration responsibilities](../guide/operator-responsibilities.md#oidc-federation).
+The explicit handler caps its signed response expiry to the RP chain, including the submitted Entity Configuration. OP automatic processing returns the validated RP `trustChain`. RP automatic and explicit registration return the selected OP chain's expiry as `trustChainExpiresAt`. An explicitly registered RP must renew before the earlier of `expiresAt` and `trustChainExpiresAt`.
+
+Your application persists and enforces these deadlines in its client database and request processing. `onRegistration` receives client metadata and an optional secret; obtain the registration deadline from the signed response when storing the OP's client record. See [the integration responsibilities](../guide/operator-responsibilities.md#oidc-federation).
 
 ### What is the `peer_trust_chain` JWS header parameter?
 
@@ -261,4 +273,4 @@ The processing rules are:
 
 ### How do OPs prevent Request Object replay attacks?
 
-Every Request Object needs a `jti` and `exp`. OP-side processing checks expiry and claims the `(issuer, audience, jti)` tuple through the configured `ReplayStore`. Use a shared atomic implementation across instances; the OP role requires this store for automatic registration.
+Every Request Object needs a `jti` and `exp`. OP-side processing checks expiry and claims the `(issuer, audience, jti)` tuple through the configured `ReplayStore`. The claim is retained until `exp + clockSkewSeconds`, covering the full acceptance window required by [Federation §12.1.1.1](https://openid.net/specs/openid-federation-1_0.html#section-12.1.1.1). Use a shared atomic implementation across instances; the OP role requires this store for automatic registration.

@@ -4,13 +4,11 @@ import {
 	DEFAULT_MAX_REQUEST_BODY_BYTES,
 	decodeEntityStatement,
 	type EntityId,
-	entityId,
 	errorResponse,
 	FederationErrorCode,
 	type FederationKeyProvider,
 	type FederationOptions,
 	isExactContentType,
-	JwtTyp,
 	jwtResponse,
 	MediaType,
 	nowSeconds,
@@ -18,25 +16,16 @@ import {
 	requireMethod,
 	signEntityStatement,
 	type TrustAnchorSet,
-	type ValidatedTrustChain,
-	verifyEntityStatement,
 } from "@oidfed/core";
 import {
 	OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE,
 	OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE,
 } from "../constants.js";
-import {
-	ExplicitRegistrationRequestPayloadSchema,
-	ExplicitRegistrationResponsePayloadSchema,
-} from "../schemas/explicit-registration.js";
-import { OpenIDRelyingPartyMetadataSchema } from "../schemas/metadata.js";
+import { ExplicitRegistrationResponsePayloadSchema } from "../schemas/explicit-registration.js";
 import type { RegistrationProtocolAdapter } from "./adapter-types.js";
-import {
-	assertNonEmptyTrustAnchors,
-	parseTrustChainJsonBody,
-	resolveAndValidateBestChain,
-	validateSuppliedTrustChain,
-} from "./helpers.js";
+import { assertNonEmptyTrustAnchors } from "./helpers.js";
+import { validateRegistrationMetadataPolicy } from "./metadata-policy.js";
+import { processExplicitRegistration } from "./process-explicit.js";
 
 /** OIDC default values applied when the RP omits standard fields. */
 const OIDC_METADATA_DEFAULTS: Record<string, unknown> = {
@@ -106,231 +95,37 @@ export function createExplicitRegistrationHandler(
 		const body = read.text;
 		if (!body) return errorResponse(400, "invalid_request", "Missing request body");
 
-		let ecJwt: string;
-		let suppliedBodyTrustChain: readonly string[] | undefined;
-		if (isTrustChainBody) {
-			const parseResult = parseTrustChainJsonBody(body);
-			if (!parseResult.ok) {
-				return errorResponse(400, parseResult.error.code, parseResult.error.description);
-			}
-			suppliedBodyTrustChain = parseResult.value;
-			ecJwt = suppliedBodyTrustChain[0] as string;
-		} else {
-			ecJwt = body;
-		}
-
-		const decoded = decodeEntityStatement(ecJwt);
-		if (!decoded.ok) {
-			return errorResponse(400, "invalid_request", "Failed to decode request JWT");
-		}
-
-		const header = decoded.value.header;
-		const payload = decoded.value.payload as Record<string, unknown>;
-
-		if (header.typ !== JwtTyp.EntityStatement) {
-			return errorResponse(
-				400,
-				"invalid_request",
-				`Invalid typ header: expected '${JwtTyp.EntityStatement}'`,
-			);
-		}
-
-		const parseResult = ExplicitRegistrationRequestPayloadSchema.safeParse(payload);
-		if (!parseResult.success) {
-			return errorResponse(400, "invalid_request", "Invalid registration request payload");
-		}
-
-		const reqPayload = parseResult.data;
-
-		const rpMetadataResult = OpenIDRelyingPartyMetadataSchema.safeParse(
-			reqPayload.metadata.openid_relying_party,
-		);
-		if (!rpMetadataResult.success) {
-			return errorResponse(
-				400,
-				FederationErrorCode.InvalidMetadata,
-				"RP metadata does not comply with the OpenID Connect Relying Party metadata schema",
-			);
-		}
-
-		const aud = reqPayload.aud;
-		if (aud !== config.opEntityId) {
-			return errorResponse(400, "invalid_request", "aud MUST match the OP's Entity ID");
-		}
-
-		const selfVerify = await verifyEntityStatement(ecJwt, reqPayload.jwks, {
-			...(config.options?.clock ? { clock: config.options.clock } : {}),
-			...(config.options?.clockSkewSeconds !== undefined
-				? { clockSkewSeconds: config.options.clockSkewSeconds }
-				: {}),
+		const processed = await processExplicitRegistration(body, contentType as string, trustAnchors, {
+			...config.options,
+			opEntityId: config.opEntityId,
 		});
-		if (!selfVerify.ok) {
+		if (!processed.ok) {
+			const decoded = isEntityStatementBody ? decodeEntityStatement(body) : undefined;
+			const discoveryFailure =
+				processed.error.code === FederationErrorCode.InvalidTrustChain &&
+				decoded?.ok &&
+				decoded.value.header.trust_chain === undefined;
 			return errorResponse(
-				400,
-				"invalid_request",
-				"Request JWT self-signature verification failed",
+				discoveryFailure ? 403 : 400,
+				processed.error.code,
+				processed.error.description,
 			);
 		}
+		const {
+			requestPayload: reqPayload,
+			rpEntityId,
+			trustChain: bestChain,
+			peerResolvedOpMetadata,
+		} = processed.value;
 
-		if (reqPayload.sub !== reqPayload.iss) {
-			return errorResponse(400, "invalid_request", "RP Entity Configuration iss MUST equal sub");
-		}
-
-		const trustChainHeader = header.trust_chain as string[] | undefined;
-		if (trustChainHeader && trustChainHeader.length > 0) {
-			const firstEntry = trustChainHeader[0] as string;
-			const firstDecoded = decodeEntityStatement(firstEntry);
-			if (!firstDecoded.ok) {
-				return errorResponse(
-					400,
-					FederationErrorCode.InvalidTrustChain,
-					"Failed to decode first entry of trust_chain header",
-				);
-			}
-			const firstPayload = firstDecoded.value.payload as Record<string, unknown>;
-			if (firstPayload.iss !== reqPayload.sub || firstPayload.sub !== reqPayload.sub) {
-				return errorResponse(
-					400,
-					FederationErrorCode.InvalidTrustChain,
-					"First entry of trust_chain header MUST be the subject's Entity Configuration",
-				);
-			}
-		}
-
-		const peerTrustChainHeader = header.peer_trust_chain as string[] | undefined;
-
-		// peer_trust_chain MUST NOT appear when the request body is a Trust Chain.
-		if (isTrustChainBody && peerTrustChainHeader !== undefined) {
-			return errorResponse(
-				400,
-				"invalid_request",
-				"peer_trust_chain MUST NOT be used when the request body is a Trust Chain",
-			);
-		}
-
-		if (peerTrustChainHeader && peerTrustChainHeader.length > 0) {
-			const peerFirstDecoded = decodeEntityStatement(peerTrustChainHeader[0] as string);
-			if (!peerFirstDecoded.ok) {
-				return errorResponse(
-					400,
-					FederationErrorCode.InvalidTrustChain,
-					"Failed to decode first entry of peer_trust_chain header",
-				);
-			}
-			const peerFirstPayload = peerFirstDecoded.value.payload as Record<string, unknown>;
-			if (
-				peerFirstPayload.iss !== config.opEntityId ||
-				peerFirstPayload.sub !== config.opEntityId
-			) {
-				return errorResponse(
-					400,
-					FederationErrorCode.InvalidTrustChain,
-					"First entry of peer_trust_chain header MUST be the OP's Entity Configuration",
-				);
-			}
-
-			// When both headers are present, both Trust Chains MUST end at the same TA.
-			// Compare the headers directly (independent of any validation fallback below).
-			if (trustChainHeader && trustChainHeader.length > 0) {
-				const rpHeaderLastDecoded = decodeEntityStatement(
-					trustChainHeader[trustChainHeader.length - 1] as string,
-				);
-				const peerHeaderLastDecoded = decodeEntityStatement(
-					peerTrustChainHeader[peerTrustChainHeader.length - 1] as string,
-				);
-				if (!rpHeaderLastDecoded.ok || !peerHeaderLastDecoded.ok) {
-					return errorResponse(
-						400,
-						FederationErrorCode.InvalidTrustChain,
-						"Failed to decode last entry of trust_chain or peer_trust_chain header",
-					);
-				}
-				const rpHeaderTaId = (rpHeaderLastDecoded.value.payload as Record<string, unknown>).iss as
-					| string
-					| undefined;
-				const peerHeaderTaId = (peerHeaderLastDecoded.value.payload as Record<string, unknown>)
-					.iss as string | undefined;
-				if (rpHeaderTaId !== peerHeaderTaId) {
-					return errorResponse(
-						400,
-						FederationErrorCode.InvalidTrustChain,
-						`peer_trust_chain Trust Anchor ('${peerHeaderTaId}') does not match trust_chain Trust Anchor ('${rpHeaderTaId}')`,
-					);
-				}
-			}
-		}
-
-		const rpEntityId = entityId(reqPayload.sub);
-		let bestChain: ValidatedTrustChain | undefined;
-
-		if (suppliedBodyTrustChain !== undefined) {
-			const bodyValidation = await validateSuppliedTrustChain(
-				suppliedBodyTrustChain,
-				trustAnchors,
-				{
-					...config.options,
-					expectedSubject: rpEntityId,
-					explicitRegistrationAudience: config.opEntityId,
-					label: "trust-chain+json",
-				},
-			);
-			if (!bodyValidation.ok) {
-				return errorResponse(400, bodyValidation.error.code, bodyValidation.error.description);
-			}
-			bestChain = bodyValidation.value;
-		} else if (trustChainHeader !== undefined) {
-			const headerValidation = await validateSuppliedTrustChain(trustChainHeader, trustAnchors, {
-				...config.options,
-				expectedSubject: rpEntityId,
-				explicitRegistrationAudience: config.opEntityId,
-				label: "trust_chain",
-			});
-			if (!headerValidation.ok) {
-				return errorResponse(400, headerValidation.error.code, headerValidation.error.description);
-			}
-			bestChain = headerValidation.value;
-		} else {
-			const chainResult = await resolveAndValidateBestChain(
-				rpEntityId,
-				trustAnchors,
-				config.options ?? {},
-			);
-			if (!chainResult.ok) {
-				return errorResponse(403, chainResult.error.code, chainResult.error.description);
-			}
-			bestChain = chainResult.value;
-		}
-
-		let peerResolvedOpMetadata: Readonly<Record<string, unknown>> | undefined;
-		if (peerTrustChainHeader && peerTrustChainHeader.length > 0) {
-			const peerValidation = await validateSuppliedTrustChain(peerTrustChainHeader, trustAnchors, {
-				...config.options,
-				expectedSubject: config.opEntityId,
-				label: "peer_trust_chain",
-			});
-			if (!peerValidation.ok) {
-				return errorResponse(
-					400,
-					FederationErrorCode.InvalidTrustChain,
-					peerValidation.error.description,
-				);
-			}
-			if (peerValidation.value.trustAnchorId !== bestChain.trustAnchorId) {
-				return errorResponse(
-					400,
-					FederationErrorCode.InvalidTrustChain,
-					`peer_trust_chain Trust Anchor ('${peerValidation.value.trustAnchorId}') does not match selected RP Trust Anchor ('${bestChain.trustAnchorId}')`,
-				);
-			}
-			peerResolvedOpMetadata = peerValidation.value.resolvedMetadata.openid_provider ?? {};
-		}
+		const policyChain = structuredClone(bestChain);
 
 		const adapterContext =
 			peerResolvedOpMetadata !== undefined ? { peerResolvedOpMetadata } : undefined;
 
 		let validatedMetadata: Record<string, unknown> | undefined;
-		if (config.registrationProtocolAdapter && reqPayload.metadata) {
-			const metadataRecord = reqPayload.metadata as Record<string, unknown>;
+		if (config.registrationProtocolAdapter) {
+			const metadataRecord = structuredClone(bestChain.resolvedMetadata);
 			const adapterResult = config.registrationProtocolAdapter.validateClientMetadata(
 				metadataRecord,
 				adapterContext,
@@ -356,6 +151,14 @@ export function createExplicitRegistrationHandler(
 			}
 		}
 
+		if (registrationExp <= now) {
+			return errorResponse(
+				400,
+				FederationErrorCode.InvalidTrustChain,
+				"Registration chain has expired",
+			);
+		}
+
 		let rpImmediateSuperior: string | undefined;
 		if (bestChain && bestChain.statements.length > 1) {
 			const superiorStmt = bestChain.statements[1] as (typeof bestChain.statements)[0];
@@ -369,18 +172,18 @@ export function createExplicitRegistrationHandler(
 			iat: now,
 			exp: registrationExp,
 			trust_anchor: trustAnchorId,
-			authority_hints: rpImmediateSuperior ? [rpImmediateSuperior] : [trustAnchorId],
+			authority_hints: [rpImmediateSuperior],
 		};
 
-		const metadataForResponse = validatedMetadata ?? reqPayload.metadata;
+		const metadataForResponse = validatedMetadata ?? bestChain.resolvedMetadata;
 		if (metadataForResponse) {
-			const responseMetadata = { ...(metadataForResponse as Record<string, unknown>) };
+			const responseMetadata = structuredClone(metadataForResponse) as Record<string, unknown>;
 			const sourceRpMeta = (responseMetadata.openid_relying_party ?? {}) as Record<string, unknown>;
 			let rpMeta: Record<string, unknown>;
 			if (config.registrationProtocolAdapter && bestChain) {
 				rpMeta = config.registrationProtocolAdapter.enrichResponseMetadata(
 					sourceRpMeta,
-					bestChain,
+					structuredClone(bestChain),
 					adapterContext,
 				);
 			} else {
@@ -393,7 +196,15 @@ export function createExplicitRegistrationHandler(
 
 			for (const [key, defaultValue] of Object.entries(OIDC_METADATA_DEFAULTS)) {
 				if (!(key in rpMeta)) {
-					rpMeta[key] = defaultValue;
+					const candidate = {
+						...responseMetadata,
+						openid_relying_party: { ...rpMeta, [key]: defaultValue },
+					} as Record<string, Record<string, unknown>>;
+					// Defaults are recommended (§12.2.3); federation policy can
+					// require their omission or a different value (§6.1.3.1.1).
+					if (validateRegistrationMetadataPolicy(candidate, policyChain, config.options).ok) {
+						rpMeta[key] = defaultValue;
+					}
 				}
 			}
 
@@ -406,6 +217,22 @@ export function createExplicitRegistrationHandler(
 					...OIDC_METADATA_DEFAULTS,
 				},
 			};
+		}
+
+		const policyCheck = validateRegistrationMetadataPolicy(
+			responsePayload.metadata as Record<string, Record<string, unknown>>,
+			policyChain,
+			config.options,
+		);
+		if (!policyCheck.ok)
+			return errorResponse(400, policyCheck.error.code, policyCheck.error.description);
+		const preparedResponse = ExplicitRegistrationResponsePayloadSchema.safeParse(responsePayload);
+		if (!preparedResponse.success) {
+			return errorResponse(
+				500,
+				FederationErrorCode.ServerError,
+				"Registration response metadata preparation failed",
+			);
 		}
 
 		if (config.generateClientSecret) {
@@ -431,6 +258,14 @@ export function createExplicitRegistrationHandler(
 				"Registration response metadata preparation failed",
 			);
 		}
+
+		const finalPolicy = validateRegistrationMetadataPolicy(
+			responsePayload.metadata as Record<string, Record<string, unknown>>,
+			policyChain,
+			config.options,
+		);
+		if (!finalPolicy.ok)
+			return errorResponse(400, finalPolicy.error.code, finalPolicy.error.description);
 
 		const responseJwt = await signEntityStatement(responsePayload, keySet.signer, {
 			typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE,

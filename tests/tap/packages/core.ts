@@ -224,6 +224,7 @@ import {
 	createCollectionFederation,
 } from "../fixtures/collection-federation.js";
 import * as EntityCollectionFixture from "../fixtures/entity-collection.js";
+import { createMockFederation, LEAF_ID, OP_ID, TA_ID } from "../fixtures/index.js";
 import { MockFederationBuilder } from "../fixtures/mock-federation.js";
 import * as SubordinateEventsFixture from "../fixtures/subordinate-events.js";
 import { walletFederation, walletQuery } from "../fixtures/wallet.js";
@@ -15980,6 +15981,206 @@ export default (QUnit: QUnit) => {
 				["verify"],
 				"public key restrictions remain intact",
 			);
+		});
+	});
+	module("core / supplied registration configuration", () => {
+		test("starts from a supplied EC without replacing the published cache entry", async (t) => {
+			const fed = await createMockFederation();
+			const cache = new MemoryCache();
+			const key = await ecCacheKey(LEAF_ID);
+			await cache.set(key, fed.leafEcJwt, 300);
+			const decoded = decodeEntityStatement(fed.leafEcJwt);
+			if (!decoded.ok) throw new Error(decoded.error.description);
+			const submitted = await signEntityStatement(
+				{
+					...decoded.value.payload,
+					aud: OP_ID,
+					metadata: {
+						openid_relying_party: { redirect_uris: ["https://rp.example.com/tailored"] },
+					},
+				},
+				new JwkSigner(fed.leafSigningKey),
+			);
+			let calls = 0;
+			const options = {
+				...fed.options,
+				cache,
+				entityConfigurationJwt: submitted,
+				maxTotalFetches: 2,
+				httpClient: (async (input, init) => {
+					calls++;
+					return fed.httpClient(input, init);
+				}) as HttpClient,
+			};
+			const chains = await resolveTrustChains(LEAF_ID, fed.trustAnchors, options);
+			t.equal(chains.chains.length, 1);
+			t.equal(chains.chains[0]?.statements[0], submitted);
+			t.equal(calls, 2, "only anchor EC and subordinate statement require HTTP");
+			t.equal(await cache.get(key), fed.leafEcJwt);
+			const ordinary = await resolveTrustChains(LEAF_ID, fed.trustAnchors, {
+				...fed.options,
+				cache,
+			});
+			t.equal(ordinary.chains[0]?.statements[0], fed.leafEcJwt);
+		});
+
+		test("keeps identity, fetch-budget, and cancellation checks for supplied ECs", async (t) => {
+			const fed = await createMockFederation();
+			let calls = 0;
+			const httpClient: HttpClient = async (input, init) => {
+				calls++;
+				return fed.httpClient(input, init);
+			};
+			const wrong = await resolveTrustChains(OP_ID, fed.trustAnchors, {
+				httpClient,
+				entityConfigurationJwt: fed.leafEcJwt,
+			});
+			t.equal(wrong.chains.length, 0);
+			t.equal(calls, 0);
+			const limited = await resolveTrustChains(LEAF_ID, fed.trustAnchors, {
+				httpClient,
+				entityConfigurationJwt: fed.leafEcJwt,
+				maxTotalFetches: 1,
+			});
+			t.equal(limited.chains.length, 0);
+			t.true(limited.incomplete);
+			t.equal(calls, 1);
+			const controller = new AbortController();
+			controller.abort();
+			const cancelled = await resolveTrustChains(TA_ID, fed.trustAnchors, {
+				httpClient,
+				entityConfigurationJwt: fed.taEcJwt,
+				signal: controller.signal,
+			});
+			t.equal(cancelled.chains.length, 0);
+			t.true(cancelled.incomplete);
+		});
+
+		test("registration context keeps the signed request and ordinary chain restrictions", async (t) => {
+			const fed = await createMockFederation();
+			const evidence = [fed.leafEcJwt, fed.taSubStatementForLeaf, fed.taEcJwt];
+			const decoded = decodeEntityStatement(fed.leafEcJwt);
+			if (!decoded.ok) throw new Error(decoded.error.description);
+			const submitted = await signEntityStatement(
+				{ ...decoded.value.payload, aud: OP_ID },
+				new JwkSigner(fed.leafSigningKey),
+				{ extraHeaders: { trust_chain: evidence } },
+			);
+			const ordinary = await validateTrustChain(
+				[submitted, ...evidence.slice(1)],
+				fed.trustAnchors,
+				{ ...fed.options, explicitRegistrationAudience: OP_ID },
+			);
+			t.false(ordinary.valid, "the audience option alone does not permit nested headers");
+			const registration = await validateTrustChain(evidence, fed.trustAnchors, {
+				...fed.options,
+				explicitRegistrationRequest: { jwt: submitted, audience: OP_ID },
+			});
+			t.true(registration.valid, JSON.stringify(registration.errors));
+			if (registration.valid)
+				t.deepEqual(registration.chain.statements[0]?.header.trust_chain, evidence);
+			const wrongAudience = await validateTrustChain(evidence, fed.trustAnchors, {
+				...fed.options,
+				explicitRegistrationRequest: { jwt: submitted, audience: LEAF_ID },
+			});
+			t.false(wrongAudience.valid);
+			t.true(
+				(await validateTrustChain([fed.taEcJwt], fed.trustAnchors, fed.options)).valid,
+				"ordinary direct-anchor validation remains available",
+			);
+			const anchor = decodeEntityStatement(fed.taEcJwt);
+			if (!anchor.ok) throw new Error(anchor.error.description);
+			const anchorRequest = await signEntityStatement(
+				{ ...anchor.value.payload, aud: OP_ID, authority_hints: [TA_ID] },
+				new JwkSigner(fed.taSigningKey),
+			);
+			const repeatedAnchor = await validateTrustChain(
+				[fed.taEcJwt, fed.taEcJwt],
+				fed.trustAnchors,
+				{ explicitRegistrationRequest: { jwt: anchorRequest, audience: OP_ID } },
+			);
+			t.false(
+				repeatedAnchor.valid,
+				"a second EC cannot substitute for an Immediate Superior's statement",
+			);
+		});
+	});
+
+	module("core / Entity Statement NumericDates", () => {
+		test("schemas and builders preserve finite fractional, zero, and negative dates", async (t) => {
+			const { publicKey } = await generateSigningKey("ES256");
+			for (const issuedAt of [-0.5, 0, 1500.25]) {
+				const payload = CorePublic.buildEntityConfigurationPayload({
+					entityId: LEAF_ID,
+					metadata: { federation_entity: { organization_name: "NumericDate fixture" } },
+					jwks: { keys: [publicKey] },
+					authorityHints: [TA_ID],
+					issuedAt,
+					ttlSeconds: 2,
+				});
+				t.equal(payload.iat, issuedAt);
+				t.equal(payload.exp, issuedAt + 2);
+				t.true(CorePublic.EntityConfigurationSchema.safeParse(payload).success);
+				t.true(
+					CorePublic.validateEntityStatementTimeClaims(payload, {
+						clock: { now: () => issuedAt + 0.25 },
+						clockSkewSeconds: 0,
+					}).ok,
+				);
+			}
+			for (const value of [NaN, Infinity, -Infinity, "1500", null]) {
+				t.false(
+					CorePublic.validateEntityStatementTimeClaims(
+						{ iat: value, exp: 2000 },
+						{ clock: { now: () => 1500 } },
+					).ok,
+				);
+				t.false(
+					CorePublic.validateEntityStatementTimeClaims(
+						{ iat: 1000, exp: value },
+						{ clock: { now: () => 1500 } },
+					).ok,
+				);
+			}
+			t.false(
+				CorePublic.validateEntityStatementTimeClaims(
+					{ iat: 1500.5, exp: 1600 },
+					{ clock: { now: () => 1500.25 }, clockSkewSeconds: 0 },
+				).ok,
+			);
+			t.false(
+				CorePublic.validateEntityStatementTimeClaims(
+					{ iat: 1490, exp: 1500.25 },
+					{ clock: { now: () => 1500.25 }, clockSkewSeconds: 0 },
+				).ok,
+			);
+		});
+		test("validates signed fractional and epoch-crossing chains and keeps their exact expiry", async (t) => {
+			const fed = await createMockFederation();
+			for (const iat of [-0.5, 0, 1500.25]) {
+				const exp = iat + 2.5;
+				const statements: string[] = [];
+				for (const [jwt, key] of [
+					[fed.leafEcJwt, fed.leafSigningKey],
+					[fed.taSubStatementForLeaf, fed.taSigningKey],
+					[fed.taEcJwt, fed.taSigningKey],
+				] as const) {
+					const parsed = decodeEntityStatement(jwt);
+					if (!parsed.ok) throw new Error(parsed.error.description);
+					const payload = { ...parsed.value.payload, iat, exp };
+					t.true(CorePublic.EntityStatementPayloadSchema.safeParse(payload).success);
+					t.false(
+						CorePublic.EntityStatementPayloadSchema.safeParse({ ...payload, exp: iat }).success,
+					);
+					statements.push(await signEntityStatement(payload, new JwkSigner(key)));
+				}
+				const result = await validateTrustChain(statements, fed.trustAnchors, {
+					clock: { now: () => iat + 0.25 },
+					clockSkewSeconds: 0,
+				});
+				t.true(result.valid, JSON.stringify(result.errors));
+				if (result.valid) t.equal(result.chain.expiresAt, exp);
+			}
 		});
 	});
 };

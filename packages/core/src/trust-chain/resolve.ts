@@ -58,12 +58,24 @@ export function createConcurrencyLimiter(
 	};
 }
 
+export interface ResolveTrustChainsOptions extends FederationOptions {
+	/** Start with this signed EC; its hints are traversed without fetching or caching a replacement. */
+	readonly entityConfigurationJwt?: string;
+}
+
 /** Resolve all possible trust chains for an entity against a set of trust anchors. */
 export async function resolveTrustChains(
 	entityId: EntityId,
 	trustAnchors: TrustAnchorSet,
-	options?: FederationOptions,
+	options?: ResolveTrustChainsOptions,
 ): Promise<TrustChainResult> {
+	if (options?.signal?.aborted) {
+		return {
+			chains: [],
+			errors: [federationError(InternalErrorCode.TrustChainInvalid, "Resolution aborted")],
+			incomplete: true,
+		};
+	}
 	const maxDepth = options?.maxChainDepth ?? DEFAULT_MAX_CHAIN_DEPTH;
 	const maxHints = options?.maxAuthorityHints ?? DEFAULT_MAX_AUTHORITY_HINTS;
 	const limiter = createConcurrencyLimiter(options?.maxConcurrentFetches ?? 6, options?.signal);
@@ -74,23 +86,26 @@ export async function resolveTrustChains(
 	const errors: FederationError[] = [];
 	let incomplete = false;
 
-	if (fetchBudget.remaining <= 0) {
-		return {
-			chains: [],
-			errors: [federationError(InternalErrorCode.TrustChainInvalid, "Fetch budget exhausted")],
-			incomplete: true,
-		};
+	let leafEcJwt = options?.entityConfigurationJwt;
+	if (leafEcJwt === undefined) {
+		if (fetchBudget.remaining <= 0) {
+			return {
+				chains: [],
+				errors: [federationError(InternalErrorCode.TrustChainInvalid, "Fetch budget exhausted")],
+				incomplete: true,
+			};
+		}
+		fetchBudget.remaining--;
+		const leafEcResult = await fetchEntityConfiguration(entityId, options);
+		if (!leafEcResult.ok) {
+			return {
+				chains: [],
+				errors: [leafEcResult.error],
+				...(options?.signal?.aborted ? { incomplete: true as const } : {}),
+			};
+		}
+		leafEcJwt = leafEcResult.value;
 	}
-	fetchBudget.remaining--;
-	const leafEcResult = await fetchEntityConfiguration(entityId, options);
-	if (!leafEcResult.ok) {
-		return {
-			chains: [],
-			errors: [leafEcResult.error],
-			...(options?.signal?.aborted ? { incomplete: true as const } : {}),
-		};
-	}
-	const leafEcJwt = leafEcResult.value;
 
 	const leafDecoded = decodeEntityStatement(leafEcJwt);
 	if (!leafDecoded.ok) {

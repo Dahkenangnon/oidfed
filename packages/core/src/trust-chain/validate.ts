@@ -4,7 +4,6 @@ import {
 	InternalErrorCode,
 	JwtTyp,
 	PolicyOperator,
-	STANDARD_ENTITY_STATEMENT_CLAIMS,
 	SUPPORTED_ALGORITHMS,
 } from "../constants.js";
 import { applyAllowedEntityTypes, checkConstraints } from "../constraints/index.js";
@@ -20,6 +19,10 @@ import {
 } from "../schemas/entity-statement.js";
 import type { JWK, JWKSet } from "../schemas/jwk.js";
 import type { FederationMetadata } from "../schemas/metadata.js";
+import {
+	validateCriticalClaims,
+	validateEntityStatementTimeClaims,
+} from "../statement-validation.js";
 import { validateTrustMark } from "../trust-marks/index.js";
 import {
 	type ChainSelectionStrategy,
@@ -382,17 +385,63 @@ function validateRawStatementShape(
 interface TrustChainValidationOptions extends FederationOptions {
 	verboseErrors?: boolean;
 	explicitRegistrationAudience?: EntityId | string;
+	/** Authenticate this registration EC against the candidate before resolving its metadata (Federation §12.2.2). */
+	readonly explicitRegistrationRequest?: {
+		readonly jwt: string;
+		readonly audience: EntityId | string;
+	};
 	/** Independently trusted keys for issuers resolved outside this chain. */
 	trustMarkIssuerKeys?: ReadonlyMap<string, JWKSet>;
 }
 
 /** Validate a chain and its published Trust Marks, retaining the public validation contract. */
-export function validateTrustChain(
+export async function validateTrustChain(
 	chain: ReadonlyArray<string>,
 	trustAnchors: TrustAnchorSet,
 	options?: TrustChainValidationOptions,
 ): Promise<ValidationResult> {
-	return validateTrustChainImpl(chain, trustAnchors, options, true);
+	const request = options?.explicitRegistrationRequest;
+	if (!request) return validateTrustChainImpl(chain, trustAnchors, options, true);
+	const fail = (message: string): ValidationResult => ({
+		valid: false,
+		errors: [{ code: InternalErrorCode.TrustChainInvalid, message }],
+	});
+	if (chain.length < 2) return fail("Explicit registration requires an Immediate Superior");
+	const decoded = decodeEntityStatement(request.jwt);
+	if (!decoded.ok) return fail(decoded.error.description);
+	const superior = decodeEntityStatement(chain[1] as string);
+	if (
+		!superior.ok ||
+		superior.value.payload.iss === superior.value.payload.sub ||
+		superior.value.payload.sub !== decoded.value.payload.iss
+	) {
+		return fail(
+			"Explicit registration requires a Subordinate Statement from the RP's Immediate Superior",
+		);
+	}
+	if (decoded.value.payload.aud !== request.audience)
+		return fail("Registration aud must match the OP");
+	if (chain[0] !== request.jwt) {
+		const { explicitRegistrationRequest: _request, ...evidenceOptions } = options ?? {};
+		const evidence = await authenticateChainStatements(chain, trustAnchors, {
+			...evidenceOptions,
+			explicitRegistrationAudience: request.audience,
+		});
+		if (!evidence.valid) return evidence;
+		if (String(evidence.statements[0]?.payload.iss) !== String(decoded.value.payload.iss)) {
+			return fail("Registration request does not match the supplied chain subject");
+		}
+	}
+	// Keep the signed request intact. Only its first-statement profile permits registration headers.
+	return validateTrustChainImpl(
+		[request.jwt, ...chain.slice(1)],
+		trustAnchors,
+		{
+			...options,
+			explicitRegistrationAudience: request.audience,
+		},
+		true,
+	);
 }
 
 export interface ContextualMetadataClaim {
@@ -400,7 +449,8 @@ export interface ContextualMetadataClaim {
 	readonly parameter: string;
 }
 
-export interface PrepareTrustChainOptions extends TrustChainValidationOptions {
+export interface PrepareTrustChainOptions
+	extends Omit<TrustChainValidationOptions, "explicitRegistrationRequest"> {
 	/** Only policies for absent values in these fields may remain pending. */
 	readonly deferredClaims: readonly ContextualMetadataClaim[];
 }
@@ -473,14 +523,7 @@ export async function prepareTrustChainValidation(
 			: {}),
 	};
 	const stage: MetadataStage = { deferred: structuredClone(deferredClaims), pending: [] };
-	const result = await validateTrustChainImpl(
-		savedChain,
-		savedAnchors,
-		savedOptions,
-		true,
-		false,
-		stage,
-	);
+	const result = await validateTrustChainImpl(savedChain, savedAnchors, savedOptions, true, stage);
 	if (!result.valid) return validationFailure(result.errors);
 	if (options.signal?.aborted)
 		return validationFailure([
@@ -551,7 +594,6 @@ export async function completeTrustChainValidation(
 		saved.anchors,
 		saved.options,
 		true,
-		false,
 		stage,
 	);
 	if (!result.valid) return validationFailure(result.errors);
@@ -576,39 +618,30 @@ type PublicationValidationResult =
 	| { valid: false; errors: readonly ValidationError[] };
 
 /** Internal publication check: authenticates the EC itself without establishing a trusted path. */
-export function validateEntityConfigurationPublication(
+export async function validateEntityConfigurationPublication(
 	jwt: string,
 	options?: FederationOptions,
 ): Promise<PublicationValidationResult> {
-	return validateTrustChainImpl([jwt], new Map(), options, false, true);
+	const result = await authenticateChainStatements([jwt], new Map(), options, true);
+	return result.valid
+		? { valid: true, statement: result.statements[0] as ParsedEntityStatement, errors: [] }
+		: result;
 }
 
-function validateTrustChainImpl(
-	chain: ReadonlyArray<string>,
+// Authentication is private: a path becomes a ValidatedTrustChain only after
+// its subject's metadata, constraints, and Trust Marks have been processed.
+type AuthenticatedStatements =
+	| { valid: true; statements: ParsedEntityStatement[] }
+	| { valid: false; errors: readonly ValidationError[] };
+
+async function authenticateChainStatements(
+	chain: readonly string[],
 	trustAnchors: TrustAnchorSet,
-	options: TrustChainValidationOptions | undefined,
-	verifyMarks: boolean,
-	publicationOnly: true,
-): Promise<PublicationValidationResult>;
-function validateTrustChainImpl(
-	chain: ReadonlyArray<string>,
-	trustAnchors: TrustAnchorSet,
-	options: TrustChainValidationOptions | undefined,
-	verifyMarks: boolean,
-	publicationOnly?: false,
-	stage?: MetadataStage,
-): Promise<ValidationResult>;
-async function validateTrustChainImpl(
-	chain: ReadonlyArray<string>,
-	trustAnchors: TrustAnchorSet,
-	options: TrustChainValidationOptions | undefined,
-	verifyMarks: boolean,
+	options?: TrustChainValidationOptions,
 	publicationOnly = false,
-	stage?: MetadataStage,
-): Promise<ValidationResult | PublicationValidationResult> {
+): Promise<AuthenticatedStatements> {
 	const errors: ValidationError[] = [];
 	const clockSkew = options?.clockSkewSeconds ?? DEFAULT_CLOCK_SKEW_SECONDS;
-	const nowSeconds = options?.clock ? options.clock.now() : defaultClock.now();
 	const verifyOptions = {
 		clockSkewSeconds: clockSkew,
 		...(options?.clock ? { clock: options.clock } : {}),
@@ -660,52 +693,26 @@ async function validateTrustChainImpl(
 				field: "sub",
 				checkNumber: 1,
 			});
-		if (!p.iat)
+		if (p.iat === undefined)
 			addError(errors, InternalErrorCode.TrustChainInvalid, `Missing 'iat' at statement ${j}`, {
 				statementIndex: j,
 				field: "iat",
 				checkNumber: 1,
 			});
-		if (!p.exp)
+		if (p.exp === undefined)
 			addError(errors, InternalErrorCode.TrustChainInvalid, `Missing 'exp' at statement ${j}`, {
 				statementIndex: j,
 				field: "exp",
 				checkNumber: 1,
 			});
 
-		if (typeof p.iat === "number") {
-			if (!Number.isSafeInteger(p.iat)) {
-				addError(
-					errors,
-					InternalErrorCode.TrustChainInvalid,
-					`'iat' is not a safe integer at statement ${j}`,
-					{ statementIndex: j, field: "iat", checkNumber: 4 },
-				);
-			} else if (p.iat > nowSeconds + clockSkew) {
-				addError(
-					errors,
-					InternalErrorCode.TrustChainInvalid,
-					`'iat' is in the future at statement ${j}`,
-					{ statementIndex: j, field: "iat", checkNumber: 4 },
-				);
-			}
-		}
-
-		if (typeof p.exp === "number") {
-			if (!Number.isSafeInteger(p.exp)) {
-				addError(
-					errors,
-					InternalErrorCode.TrustChainInvalid,
-					`'exp' is not a safe integer at statement ${j}`,
-					{ statementIndex: j, field: "exp", checkNumber: 5 },
-				);
-			} else if (p.exp < nowSeconds - clockSkew) {
-				addError(errors, InternalErrorCode.Expired, `Statement at index ${j} has expired`, {
-					statementIndex: j,
-					field: "exp",
-					checkNumber: 5,
-				});
-			}
+		const timeClaims = validateEntityStatementTimeClaims(p, options);
+		if (!timeClaims.ok) {
+			addError(errors, timeClaims.error.code, timeClaims.error.description, {
+				statementIndex: j,
+				field: timeClaims.error.field,
+				checkNumber: timeClaims.error.field === "iat" ? 4 : 5,
+			});
 		}
 
 		if (h.typ !== JwtTyp.EntityStatement) {
@@ -812,49 +819,13 @@ async function validateTrustChainImpl(
 			}
 		}
 
-		const critClaims = p.crit as string[] | undefined;
-		if (Array.isArray(critClaims)) {
-			const understood = options?.understoodCriticalClaims ?? new Set<string>();
-
-			const critSet = new Set<string>();
-			for (const claim of critClaims) {
-				if (critSet.has(claim)) {
-					addError(
-						errors,
-						InternalErrorCode.TrustChainInvalid,
-						`Duplicate claim '${claim}' in crit at statement ${j}`,
-						{ statementIndex: j, field: "crit", checkNumber: 13 },
-					);
-				}
-				critSet.add(claim);
-			}
-
-			for (const claim of critClaims) {
-				if (STANDARD_ENTITY_STATEMENT_CLAIMS.has(claim)) {
-					addError(
-						errors,
-						InternalErrorCode.TrustChainInvalid,
-						`Standard claim '${claim}' MUST NOT appear in crit at statement ${j}`,
-						{ statementIndex: j, field: "crit", checkNumber: 13 },
-					);
-				} else if (!understood.has(claim)) {
-					addError(
-						errors,
-						InternalErrorCode.TrustChainInvalid,
-						`Unknown critical claim '${claim}' at statement ${j}`,
-						{ statementIndex: j, field: "crit", checkNumber: 13 },
-					);
-				}
-
-				if (!(claim in p)) {
-					addError(
-						errors,
-						InternalErrorCode.TrustChainInvalid,
-						`Claim '${claim}' listed in crit does not exist in JWT payload at statement ${j}`,
-						{ statementIndex: j, field: "crit", checkNumber: 13 },
-					);
-				}
-			}
+		const criticalClaims = validateCriticalClaims(p, options?.understoodCriticalClaims);
+		if (!criticalClaims.ok) {
+			addError(errors, InternalErrorCode.TrustChainInvalid, criticalClaims.error.description, {
+				statementIndex: j,
+				field: "crit",
+				checkNumber: 13,
+			});
 		}
 
 		const isEC = p.iss === p.sub;
@@ -924,7 +895,7 @@ async function validateTrustChainImpl(
 			);
 		}
 
-		if ((h as Record<string, unknown>).trust_chain !== undefined) {
+		if (h.trust_chain !== undefined && !(j === 0 && options?.explicitRegistrationRequest)) {
 			addError(
 				errors,
 				InternalErrorCode.TrustChainInvalid,
@@ -932,7 +903,7 @@ async function validateTrustChainImpl(
 				{ statementIndex: j, field: "trust_chain", checkNumber: 24 },
 			);
 		}
-		if ((h as Record<string, unknown>).peer_trust_chain !== undefined) {
+		if (h.peer_trust_chain !== undefined && !(j === 0 && options?.explicitRegistrationRequest)) {
 			addError(
 				errors,
 				InternalErrorCode.TrustChainInvalid,
@@ -1000,7 +971,7 @@ async function validateTrustChainImpl(
 	}
 
 	if (publicationOnly)
-		return errors.length ? { valid: false, errors } : { valid: true, statement: leaf, errors };
+		return errors.length ? { valid: false, errors } : { valid: true, statements: parsed };
 
 	for (let j = 0; j < parsed.length - 1; j++) {
 		const current = parsed[j] as ParsedEntityStatement;
@@ -1133,6 +1104,27 @@ async function validateTrustChainImpl(
 		};
 	}
 
+	return { valid: true, statements: parsed };
+}
+
+async function validateTrustChainImpl(
+	chain: readonly string[],
+	trustAnchors: TrustAnchorSet,
+	options: TrustChainValidationOptions | undefined,
+	verifyMarks: boolean,
+	stage?: MetadataStage,
+): Promise<ValidationResult> {
+	const authenticated = await authenticateChainStatements(chain, trustAnchors, options);
+	if (!authenticated.valid) return authenticated;
+	const parsed = authenticated.statements;
+	const errors: ValidationError[] = [];
+	const leafPayload = (parsed[0] as ParsedEntityStatement).payload as Record<string, unknown>;
+	const lastIdx = parsed.length - 1;
+	const lastPayload = (parsed[lastIdx] as ParsedEntityStatement).payload;
+	const lastIss = lastPayload.iss as string;
+	const hasTrailingTrustAnchorEc = lastPayload.iss === lastPayload.sub;
+	const taConfig = trustAnchors.get(lastIss as EntityId);
+
 	const subordinateStatements = hasTrailingTrustAnchorEc ? parsed.slice(1, -1) : parsed.slice(1);
 
 	let metadata = structuredClone(leafPayload.metadata ?? {}) as Record<
@@ -1216,10 +1208,17 @@ async function validateTrustChainImpl(
 					stage?.pending.push({ ...claim });
 				}
 			}
+			// Registration retains the request's Entity Types (§12.2.5). A policy
+			// for another role does not declare that role on the RP's behalf.
+			const applicablePolicy = options?.explicitRegistrationRequest
+				? Object.fromEntries(
+						Object.entries(policyResult.value).filter(([type]) => Object.hasOwn(metadata, type)),
+					)
+				: policyResult.value;
 			// Superior metadata already merged above; pass only leaf metadata + policy here.
 			const applyResult = applyMetadataPolicy(
 				metadata as FederationMetadata,
-				policyResult.value,
+				applicablePolicy,
 				undefined,
 				policyOptions,
 			);

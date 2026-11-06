@@ -227,14 +227,14 @@ function assertValidEntityStatementClaims(
 function resolveStatementTime(options: StatementTimeOptions): { iat: number; exp: number } {
 	const iat = options.issuedAt ?? nowSeconds(options.clock);
 	const ttlSeconds = options.ttlSeconds ?? DEFAULT_ENTITY_STATEMENT_TTL_SECONDS;
-	if (!Number.isSafeInteger(iat) || iat <= 0) {
-		throw new TypeError("issuedAt must be a positive safe integer NumericDate");
+	if (!Number.isFinite(iat)) {
+		throw new TypeError("issuedAt must be a finite NumericDate");
 	}
 	if (!Number.isSafeInteger(ttlSeconds) || ttlSeconds <= 0) {
 		throw new TypeError("ttlSeconds must be a positive safe integer");
 	}
 	const exp = iat + ttlSeconds;
-	if (!Number.isSafeInteger(exp) || exp <= iat) {
+	if (!Number.isFinite(exp) || exp <= iat) {
 		throw new TypeError("expiration must be after issued-at");
 	}
 	return { iat, exp };

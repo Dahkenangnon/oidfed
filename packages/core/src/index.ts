@@ -192,6 +192,10 @@ export {
 	validateEntityStatementClaims,
 } from "./statement-builders.js";
 export {
+	validateCriticalClaims,
+	validateEntityStatementTimeClaims,
+} from "./statement-validation.js";
+export {
 	compareTrustAnchorKeys,
 	type TrustAnchorKeyComparisonResult,
 } from "./trust-chain/anchor-keys.js";
@@ -211,6 +215,7 @@ export {
 } from "./trust-chain/refresh.js";
 export {
 	createConcurrencyLimiter,
+	type ResolveTrustChainsOptions,
 	resolveTrustChains,
 } from "./trust-chain/resolve.js";
 export {

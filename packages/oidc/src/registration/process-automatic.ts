@@ -1,4 +1,5 @@
 import {
+	DEFAULT_CLOCK_SKEW_SECONDS,
 	type EntityId,
 	err,
 	type FederationError,
@@ -150,7 +151,7 @@ export async function processAutomaticRegistration(
 			issuer: rpEntityId,
 			audience: options.opEntityId,
 			jti: validated.value.jti,
-			expiresAt: validated.value.exp,
+			expiresAt: validated.value.exp + (options?.clockSkewSeconds ?? DEFAULT_CLOCK_SKEW_SECONDS),
 		});
 		if (!accepted) {
 			return err(

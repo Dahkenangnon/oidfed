@@ -4,7 +4,11 @@ export {
 	validateEntityId,
 	validateFetchUrl,
 } from "./fetch.js";
-export { createConcurrencyLimiter, resolveTrustChains } from "./resolve.js";
+export {
+	createConcurrencyLimiter,
+	type ResolveTrustChainsOptions,
+	resolveTrustChains,
+} from "./resolve.js";
 export {
 	calculateChainExpiration,
 	chainRemainingTtl,

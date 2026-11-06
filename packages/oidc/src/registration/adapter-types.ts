@@ -11,7 +11,7 @@ export interface RegistrationProtocolAdapterContext {
 	/**
 	 * The OP's resolved metadata as derived from the validated peer chain
 	 * (validated by the federation handler before this is passed in). When
-	 * absent, no peer chain was supplied or it failed validation.
+	 * absent, no peer chain was supplied. Invalid peer chains fail registration.
 	 */
 	readonly peerResolvedOpMetadata?: Readonly<Record<string, unknown>>;
 }
@@ -19,16 +19,17 @@ export interface RegistrationProtocolAdapterContext {
 /**
  * Protocol-specific adapter for the federation registration endpoint.
  *
- * The federation registration handler is protocol-agnostic by default.
- * When an adapter is provided, it is called for protocol-specific metadata
- * validation and enrichment (e.g., OIDC RP metadata validation).
+ * The handler validates resolved OIDC RP metadata. An adapter adds profile
+ * checks and response fields; its output must satisfy the federation policy.
+ * Values governed by custom modifying operators retain their resolved value
+ * or omission, so transformations are applied once.
  */
 export interface RegistrationProtocolAdapter {
 	/**
-	 * Validate protocol-specific client metadata from the registration request.
+	 * Validate resolved client metadata from the registration request.
 	 * Called after federation-layer validation succeeds.
 	 *
-	 * @param raw - The raw metadata object from the registration request
+	 * @param raw - Request metadata after superior overrides, constraints, and policy
 	 * @param context - Optional adapter context (peer chain metadata, etc.)
 	 * @returns The validated metadata or a federation error
 	 */

@@ -12,8 +12,8 @@ export { EntityIdSchema };
 const BaseEntityStatementFields = {
 	iss: EntityIdSchema,
 	sub: EntityIdSchema,
-	iat: z.number().int().positive(),
-	exp: z.number().int().positive(),
+	iat: z.number().finite(),
+	exp: z.number().finite(),
 	jwks: JWKSetSchema.optional(),
 	metadata: z.record(z.string(), z.record(z.string(), z.unknown())).optional(),
 	metadata_policy: z.record(z.string(), z.record(z.string(), z.unknown())).optional(),
