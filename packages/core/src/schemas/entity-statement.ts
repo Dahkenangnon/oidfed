@@ -39,7 +39,7 @@ export const EntityConfigurationSchema = z
 		...BaseEntityStatementFields,
 		jwks: JWKSetSchema,
 		metadata: FederationMetadataSchema.optional(),
-		authority_hints: z.array(EntityIdSchema).optional(),
+		authority_hints: z.array(EntityIdSchema).min(1).optional(),
 		trust_anchor_hints: z.array(EntityIdSchema).min(1).optional(),
 	})
 	.refine((obj) => obj.exp > obj.iat, {
@@ -70,7 +70,7 @@ export const SubordinateStatementSchema = z
 export const EntityStatementPayloadSchema = z
 	.looseObject({
 		...BaseEntityStatementFields,
-		authority_hints: z.array(EntityIdSchema).optional(),
+		authority_hints: z.array(EntityIdSchema).min(1).optional(),
 		trust_anchor_hints: z.array(EntityIdSchema).min(1).optional(),
 		source_endpoint: z.string().url().optional(),
 		trust_anchor: z.string().url().optional(),

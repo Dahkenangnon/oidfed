@@ -235,6 +235,79 @@ import { walletFederation, walletQuery } from "../fixtures/wallet.js";
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("core / authority hints validation", () => {
+		for (const hints of [
+			undefined,
+			[],
+			["https://superior.example"],
+			["https://a.example", "https://b.example"],
+		]) {
+			const label = hints === undefined ? "omitted" : `${hints.length} hints`;
+			test(`validates authority_hints consistently (${label})`, async (t) => {
+				const { publicKey, privateKey } = await generateSigningKey("ES256");
+				const id = entityId("https://anchor.example");
+				const jwks = { keys: [publicKey] };
+				const payload = {
+					iss: id,
+					sub: id,
+					iat: 1000,
+					exp: 5000,
+					jwks,
+					metadata: {
+						federation_entity: {
+							federation_fetch_endpoint: `${id}/fetch`,
+							federation_list_endpoint: `${id}/list`,
+						},
+					},
+					...(hints === undefined ? {} : { authority_hints: hints }),
+				};
+				const accepted = hints === undefined || hints.length > 0;
+				for (const schema of [
+					CorePublic.EntityConfigurationSchema,
+					CorePublic.EntityStatementPayloadSchema,
+				]) {
+					const parsed = schema.safeParse(payload);
+					t.equal(parsed.success, accepted);
+					if (!parsed.success)
+						t.true(parsed.error.issues.some((issue) => issue.path[0] === "authority_hints"));
+				}
+				const jwt = await signEntityStatement(payload, new JwkSigner(privateKey));
+				for (const result of [
+					CorePublic.validateEntityStatementClaims(payload, { kind: "entity-configuration" }),
+					decodeEntityConfiguration(jwt),
+				]) {
+					t.equal(result.ok, accepted);
+					if (!result.ok) {
+						t.equal(result.error.code, InternalErrorCode.TrustChainInvalid);
+						t.true(result.error.description.includes("authority_hints"));
+					}
+				}
+				const decoded = decodeEntityStatement(jwt);
+				t.true(decoded.ok, "raw decoding remains available for inspection");
+				if (decoded.ok) t.deepEqual(decoded.value.payload.authority_hints, hints);
+				const chain = await validateTrustChain(
+					[jwt],
+					CorePublic.createTrustAnchorSet([{ entityId: id, jwks }]),
+					{ clock: { now: () => 1500 }, verboseErrors: true },
+				);
+				t.equal(chain.valid, accepted);
+				if (!accepted) {
+					t.true(chain.errors.some((error) => error.field === "authority_hints"));
+					t.throws(
+						() =>
+							CorePublic.buildEntityConfigurationPayload({
+								entityId: id,
+								jwks,
+								metadata: payload.metadata,
+								authorityHints: hints,
+								issuedAt: 1000,
+							}),
+						/authority_hints must not be empty/,
+					);
+				}
+			});
+		}
+	});
 	module("core / resolution sharing", () => {
 		const clock = { now: () => 1500 };
 		const converging = [
