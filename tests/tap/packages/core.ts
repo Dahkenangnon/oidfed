@@ -2452,6 +2452,46 @@ export default (QUnit: QUnit) => {
 	module("core / public JWK publication", () => {
 		const bytes = (length: number) => btoa("\x01".repeat(length)).replace(/=+$/, "");
 
+		test("prepares a detached public JWK snapshot through the package root", async (t) => {
+			const { publicKey } = await generateSigningKey("ES256");
+			const source = {
+				keys: [{ ...publicKey, "example:key": "retained" }],
+				"example:set": "retained",
+			};
+			const before = structuredClone(source);
+			let reads = 0;
+			const prepared = CorePublic.preparePublicJwkSet({
+				toJSON() {
+					reads++;
+					return reads === 1 ? source : { keys: [{ ...publicKey, d: "private-value" }] };
+				},
+			});
+			t.true(prepared.ok);
+			if (!prepared.ok) return;
+			source.keys[0]!.kid = "changed";
+			t.deepEqual(prepared.value, before);
+			t.deepEqual(JSON.parse(JSON.stringify(prepared.value)), before);
+			t.equal(reads, 1);
+		});
+
+		test("public JWK preparation returns safe errors for serialization and private material", (t) => {
+			for (const value of [
+				{ keys: [{ kty: "RSA", kid: "key", n: "AQ", e: "AQAB", d: "private-value" }] },
+				{
+					toJSON() {
+						throw new Error("private-value");
+					},
+				},
+			]) {
+				const prepared = CorePublic.preparePublicJwkSet(value);
+				t.false(prepared.ok);
+				if (!prepared.ok) {
+					t.equal(prepared.error.code, FederationErrorCode.InvalidMetadata);
+					t.false(JSON.stringify(prepared.error).includes("private-value"));
+				}
+			}
+		});
+
 		test("rejects required parameters omitted by JSON serialization", async (t) => {
 			const pair = await generateSigningKey("ES256");
 			const signer = new JwkSigner(pair.privateKey);

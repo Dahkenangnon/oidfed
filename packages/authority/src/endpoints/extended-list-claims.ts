@@ -9,7 +9,11 @@
  * snapshot lets callers align the synthetic iat/exp with the iat/exp inside the
  * signed subordinate_statement JWT for the same record.
  */
-import { DEFAULT_ENTITY_STATEMENT_TTL_SECONDS, ExtendedListClaim } from "@oidfed/core";
+import {
+	DEFAULT_ENTITY_STATEMENT_TTL_SECONDS,
+	ExtendedListClaim,
+	preparePublicJwkSet,
+} from "@oidfed/core";
 import type { SubordinateRecord } from "../storage/types.js";
 import type { HandlerContext } from "./context.js";
 import { buildSubordinateStatement } from "./fetch.js";
@@ -31,7 +35,12 @@ export const EXTENDED_LIST_CLAIM_EXTRACTORS: Readonly<Record<string, ClaimExtrac
 	[ExtendedListClaim.Sub]: (record) => record.entityId,
 	[ExtendedListClaim.Iat]: (_record, _ctx, now) => now,
 	[ExtendedListClaim.Exp]: (_record, ctx, now) => statementExp(ctx, now),
-	[ExtendedListClaim.Jwks]: (record) => record.jwks,
+	[ExtendedListClaim.Jwks]: (record) => {
+		// Extended Listing §3.2 selects the public statement keys defined by Federation §3.1.1.
+		const prepared = preparePublicJwkSet(record.jwks);
+		if (!prepared.ok) throw new Error(prepared.error.description);
+		return prepared.value;
+	},
 	[ExtendedListClaim.Metadata]: (record) => record.metadata,
 	[ExtendedListClaim.MetadataPolicy]: (record) => record.metadataPolicy,
 	[ExtendedListClaim.Constraints]: (record) => record.constraints,

@@ -1998,6 +1998,189 @@ export default (QUnit: QUnit) => {
 		}
 
 		module("authority / createExtendedListHandler", () => {
+			test("JWKS publication rejects private material through HTTP and direct listing", async (t) => {
+				const logs: string[] = [];
+				const { ctx, storage, keyProvider, subordinates } = await createTestContext();
+				const secret = "private-key-publication-sentinel";
+				const server = createAuthorityServer({
+					entityId: ENTITY_ID,
+					metadata: {
+						federation_entity: {
+							...ctx.metadata.federation_entity,
+							federation_extended_list_endpoint: XLIST_BASE_URL,
+						},
+					},
+					storage,
+					keyProvider,
+					extendedListing: { defaultClaims: ["jwks"] },
+					options: {
+						logger: {
+							debug() {},
+							info() {},
+							warn() {},
+							error(message, context) {
+								logs.push(
+									message,
+									JSON.stringify(context, (_name, value) =>
+										value instanceof Error
+											? { message: value.message, stack: value.stack, cause: value.cause }
+											: value,
+									),
+								);
+							},
+						},
+					},
+				});
+				await subordinates.add(makeXListRecord(XLIST_SUB_A));
+				await subordinates.add(makeXListRecord(XLIST_SUB_B));
+				for (const field of ["d", "p", "q", "dp", "dq", "qi", "oth", "k"]) {
+					await subordinates.update(XLIST_SUB_B, {
+						jwks: { keys: [{ ...testPublicJwk(), [field]: secret }] },
+					});
+					const before = await subordinates.get(XLIST_SUB_B);
+					for (const query of ["?claims=jwks", "", "?claims=jwks,subordinate_statement"]) {
+						const response = await server.handler()(new Request(`${XLIST_BASE_URL}${query}`));
+						t.equal(response.status, 500, `${field}, ${query}`);
+						t.equal(response.headers.get("content-type"), "application/json");
+						const text = await response.text();
+						t.false(text.includes(secret));
+						t.deepEqual(
+							JSON.parse(text),
+							{
+								error: "server_error",
+								error_description: "Failed to build extended subordinate listing",
+							},
+							"no partial page is returned",
+						);
+					}
+					const result = await server.listSubordinatesExtended({ claims: ["jwks"] });
+					t.false(result.ok);
+					if (!result.ok) t.equal(result.error.code, FederationErrorCode.ServerError);
+					t.deepEqual(await subordinates.get(XLIST_SUB_B), before, "stored keys remain unchanged");
+				}
+				t.true(logs.length > 0);
+				t.false(logs.join("\n").includes(secret), "logs contain no private values");
+				const idOnly = await server.listSubordinatesExtended({ claims: [] });
+				t.true(idOnly.ok);
+				if (idOnly.ok)
+					t.deepEqual(idOnly.value.immediate_subordinate_entities, [
+						{ id: XLIST_SUB_A },
+						{ id: XLIST_SUB_B },
+					]);
+			});
+
+			test("JWKS publication rejects invalid sets from custom adapters", async (t) => {
+				const { ctx, storage, subordinates } = await createTestContext();
+				const key = testPublicJwk();
+				for (const jwks of [
+					null,
+					{},
+					{ keys: [] },
+					{ keys: [key, key] },
+					{ keys: [{ ...key, kid: undefined }] },
+					{ keys: [{ ...key, kid: "" }] },
+					{ keys: [{ ...key, x: "invalid" }] },
+					{ keys: [{ ...key, y: undefined }] },
+					{ keys: [{ kty: "oct", kid: "symmetric", k: "private-value" }] },
+					{ keys: [{ kty: "RSA", kid: "rsa", n: "AQ" }] },
+					{ keys: [{ kty: "OKP", kid: "okp", crv: "Ed25519", x: "AQ" }] },
+					{ toJSON: () => ({ keys: [{ ...key, d: "private-value" }] }) },
+				]) {
+					const record = { ...makeXListRecord(XLIST_SUB_A), jwks } as SubordinateRecord;
+					const handler = createExtendedListHandler({
+						...ctx,
+						storage: {
+							...storage,
+							transaction: storage.transaction.bind(storage),
+							subordinates: {
+								get: subordinates.get.bind(subordinates),
+								add: subordinates.add.bind(subordinates),
+								update: subordinates.update.bind(subordinates),
+								remove: subordinates.remove.bind(subordinates),
+								list: async () => ({ items: [record] }),
+							},
+						},
+					});
+					const response = await handler(new Request(`${XLIST_BASE_URL}?claims=jwks`));
+					t.equal(response.status, 500, JSON.stringify(jwks));
+					t.equal(((await response.json()) as { error: string }).error, "server_error");
+				}
+			});
+
+			test("JWKS publication preserves public sets, extensions and signed statement claims", async (t) => {
+				const { ctx, subordinates, publicKey } = await createTestContext();
+				const handler = createExtendedListHandler(ctx);
+				await subordinates.add(makeXListRecord(XLIST_SUB_A));
+				const publicKeys: JWK[] = [
+					(await generateSigningKey("ES256")).publicKey,
+					(await generateSigningKey("RS256")).publicKey,
+					{
+						kty: "OKP",
+						kid: "okp",
+						crv: "Ed25519",
+						x: "fgaB8ZkBBnPX5tPXrPjiXPDDWKcn_hmvaoRh5C-NKDg",
+					},
+				];
+				for (const key of publicKeys) {
+					const jwks = {
+						keys: [{ ...key, "example:key": "public-extension" }],
+						"example:set": "public-extension",
+					};
+					await subordinates.update(XLIST_SUB_A, { jwks });
+					const before = await subordinates.get(XLIST_SUB_A);
+					const response = await handler(
+						new Request(`${XLIST_BASE_URL}?claims=jwks,subordinate_statement`),
+					);
+					t.equal(response.status, 200);
+					const body = (await response.json()) as {
+						immediate_subordinate_entities: Array<{ jwks: unknown; subordinate_statement: string }>;
+					};
+					const entry = body.immediate_subordinate_entities[0]!;
+					t.deepEqual(entry.jwks, jwks);
+					const verified = await verifyEntityStatement(entry.subordinate_statement, {
+						keys: [publicKey],
+					});
+					t.true(verified.ok);
+					if (verified.ok) t.deepEqual(verified.value.payload.jwks, entry.jwks);
+					t.deepEqual(await subordinates.get(XLIST_SUB_A), before);
+				}
+			});
+
+			test("JWKS publication serializes a custom adapter's keys once before publishing", async (t) => {
+				const { ctx, storage, subordinates } = await createTestContext();
+				let reads = 0;
+				const publicSet = { keys: [testPublicJwk()] };
+				const jwks = {
+					...publicSet,
+					toJSON() {
+						reads++;
+						return reads === 1 ? publicSet : { keys: [{ ...testPublicJwk(), d: "private-value" }] };
+					},
+				};
+				const record = makeXListRecord(XLIST_SUB_A, { jwks });
+				const handler = createExtendedListHandler({
+					...ctx,
+					storage: {
+						...storage,
+						transaction: storage.transaction.bind(storage),
+						subordinates: {
+							get: subordinates.get.bind(subordinates),
+							add: subordinates.add.bind(subordinates),
+							update: subordinates.update.bind(subordinates),
+							remove: subordinates.remove.bind(subordinates),
+							list: async () => ({ items: [record] }),
+						},
+					},
+				});
+				const response = await handler(new Request(`${XLIST_BASE_URL}?claims=jwks`));
+				t.equal(response.status, 200);
+				const body = (await response.json()) as {
+					immediate_subordinate_entities: Array<{ jwks: unknown }>;
+				};
+				t.equal(reads, 1);
+				t.deepEqual(body.immediate_subordinate_entities[0]?.jwks, publicSet);
+			});
+
 			test("preserves fractional audit timestamps and inclusive time boundaries", async (t) => {
 				const { ctx, subordinates } = await createTestContext();
 				const dates = [-0.5, 1500.25, 1500.5, 1500.75];

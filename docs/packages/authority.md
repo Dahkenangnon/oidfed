@@ -241,6 +241,8 @@ Extended Listing time filters and audit timestamps use NumericDate seconds. Frac
 
 Omitting `claims` uses `defaultClaims`. An explicit `claims: []` sends `claims=` and suppresses the default statements. If a claim selection is present, `subordinate_statement` is returned only when requested; other requested statement claims are included when available.
 
+Requested `jwks` values pass the same public-key publication checks as signed Subordinate Statements. This follows [Draft 03 §3.2](https://openid.net/specs/openid-federation-extended-listing-1_0.html#section-3.2) and [Federation §3.1.1](https://openid.net/specs/openid-federation-1_0.html#section-3.1.1). If a stored set contains private material or fails validation, the whole request returns HTTP 500 with a generic JSON `server_error`; `listSubordinatesExtended()` returns an error `Result`. This handling of invalid server data uses [Federation §8.9](https://openid.net/specs/openid-federation-1_0.html#section-8.9). Validation preserves stored records and publishes a detached snapshot of valid keys, including their JSON extension members.
+
 Leaf entities cannot advertise this endpoint.
 
 The `extendedListing` object supports:
