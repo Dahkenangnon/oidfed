@@ -13,7 +13,7 @@ import { base64url } from "jose";
 import { z } from "zod";
 import { invokePolicy } from "./attestation.js";
 import { decodeToken, signToken, verifyToken } from "./jwt.js";
-import { type DcqlQuery, DcqlQuerySchema } from "./metadata.js";
+import { CredentialVerifierMetadataSchema, type DcqlQuery, DcqlQuerySchema } from "./metadata.js";
 import {
 	failure,
 	prepareVerifier,
@@ -106,6 +106,30 @@ const requestSchema = z.looseObject({
 	scope: z.string().optional(),
 	client_metadata: z.record(z.string(), z.unknown()).optional(),
 });
+
+function validateResponseParameters(request: z.infer<typeof requestSchema>): Result<true> {
+	// OpenID4VP §8.2 applies to direct_post.jwt through §8.3.1 as well.
+	if (request.response_uri !== undefined && request.redirect_uri !== undefined)
+		return failure("response_uri and redirect_uri cannot appear together");
+	const mode = request.response_mode;
+	if (mode === "direct_post" || mode === "direct_post.jwt") {
+		if (request.redirect_uri !== undefined)
+			return failure(`${mode} requests cannot include redirect_uri`);
+		if (request.response_uri === undefined)
+			return failure(`${mode} response mode requires response_uri`);
+	} else if (mode === "fragment" && request.redirect_uri === undefined) {
+		return failure("fragment response mode requires redirect_uri");
+	}
+	// Wallet §6.3.1 defines these endpoints as HTTPS URLs in federation metadata.
+	for (const [field, schema] of [
+		["response_uri", CredentialVerifierMetadataSchema.shape.response_uris.unwrap().element],
+		["redirect_uri", CredentialVerifierMetadataSchema.shape.redirect_uris.unwrap().element],
+	] as const) {
+		if (request[field] !== undefined && !schema.safeParse(request[field]).success)
+			return failure(`${field} must be an HTTPS URL`);
+	}
+	return ok(true);
+}
 
 export function checkEndpoint(
 	metadata: Readonly<Record<string, unknown>>,
@@ -201,6 +225,8 @@ export async function completeRequest(
 	const parsed = requestSchema.safeParse(verified.value);
 	if (!parsed.success) return failure("Invalid OpenID4VP Request Object parameters");
 	const request = parsed.data;
+	const responseParameters = validateResponseParameters(request);
+	if (!responseParameters.ok) return responseParameters;
 	if (request.client_id !== saved.outer.client_id)
 		return failure("Request Object client_id does not match the full outer identifier");
 	if (
@@ -225,18 +251,6 @@ export async function completeRequest(
 	if (!completed.ok) return completed;
 	const metadata = roleMetadata("openid_credential_verifier", prepared.verifierId, completed.value);
 	if (!metadata.ok) return metadata;
-	const mode = request.response_mode;
-	if (mode === "direct_post" || mode === "direct_post.jwt") {
-		if (request.redirect_uri !== undefined)
-			return failure("direct_post requests cannot include redirect_uri");
-		const endpoint = checkEndpoint(metadata.value, "response_uris", request.response_uri);
-		if (!endpoint.ok) return endpoint;
-	} else if (request.redirect_uri !== undefined) {
-		const endpoint = checkEndpoint(metadata.value, "redirect_uris", request.redirect_uri);
-		if (!endpoint.ok) return endpoint;
-	} else if (mode === "fragment") {
-		return failure("fragment response mode requires redirect_uri");
-	}
 	// Validate every supplied endpoint, even for an application-defined response mode.
 	for (const [field, value] of [
 		["request_uris", request.request_uri],
@@ -364,6 +378,8 @@ export async function createRequest(
 	};
 	const parsed = requestSchema.safeParse(payload);
 	if (!parsed.success) return failure("Invalid OpenID4VP Request Object parameters");
+	const responseParameters = validateResponseParameters(parsed.data);
+	if (!responseParameters.ok) return responseParameters;
 	if ((parsed.data.scope === undefined) === (parsed.data.dcql_query === undefined))
 		return failure("Exactly one DCQL query or scope is required");
 	if (

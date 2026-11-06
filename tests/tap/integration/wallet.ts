@@ -42,6 +42,14 @@ export default (QUnit: QUnit) => {
 					});
 					t.true((await role.discover(f.ids[name], f.options)).ok);
 				}
+				for (const response_mode of ["direct_post", "direct_post.jwt", "fragment"]) {
+					const invalid = await verifier.createAuthorizationRequest(
+						{ ...f.requestPayload, response_mode, response_uri: undefined },
+						new JwkSigner(f.protocol.verifier.privateKey),
+					);
+					t.false(invalid.ok, `${response_mode} requires its endpoint through instance APIs`);
+					if (!invalid.ok) t.equal(invalid.error.code, "invalid_request");
+				}
 				const signed = await verifier.createAuthorizationRequest(
 					f.requestPayload,
 					new JwkSigner(f.protocol.verifier.privateKey),

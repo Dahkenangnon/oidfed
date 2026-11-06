@@ -4,7 +4,9 @@ import { z } from "zod";
 const strings = z.array(z.string()).min(1);
 const object = z.record(z.string(), z.unknown());
 const identifier = z.string().regex(/^[A-Za-z0-9_-]+$/);
-const https = z.url().refine((value) => new URL(value).protocol === "https:", "Must use HTTPS");
+const https = z
+	.url()
+	.pipe(z.string().refine((value) => new URL(value).protocol === "https:", "Must use HTTPS"));
 const issuerId = https.refine(
 	(value) => !value.includes("?") && !value.includes("#"),
 	"Issuer must not contain query or fragment components",

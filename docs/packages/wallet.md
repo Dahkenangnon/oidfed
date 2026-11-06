@@ -120,6 +120,28 @@ An attestation's `iat` and a PoP's `exp` are optional. A PoP still requires `iat
 
 The application parses any authentication headers. OAuth Draft 07 requires exactly one attestation field and one PoP field, each containing one well-formed JWT. Pass that validated pair to the authentication operation.
 
+## Create a signed presentation request
+
+```ts
+const created = await CredentialVerifierRole.createAuthorizationRequest(
+  verifierEntityId,
+  {
+    response_type: "vp_token",
+    response_mode: "direct_post",
+    response_uri: "https://verifier.example/response",
+    nonce: sessionNonce,
+    dcql_query: presentationQuery,
+  },
+  protocolSigner,
+);
+if (!created.ok) throw new Error(created.error.description);
+const requestObject = created.value;
+```
+
+The helper sets the `openid_federation:` client identifier and wallet audience, validates the request parameters, and signs with the supplied protocol signer. `direct_post` requires `response_uri` and prohibits `redirect_uri` in the Authorization Request ([OpenID4VP §8.2](https://openid.net/specs/openid-4-verifiable-presentations-1_0.html#section-8.2)). The same rules apply to [`direct_post.jwt`](https://openid.net/specs/openid-4-verifiable-presentations-1_0.html#section-8.3.1). A request cannot contain both URI parameters. The helper requires `redirect_uri` for `fragment` and accepts other response-mode names for application-defined processing.
+
+Supplied response and redirect URIs must be HTTPS URLs, matching [Wallet Draft 05 §6.3.1](https://openid.net/specs/openid-federation-wallet-1_0-05.html#section-6.3.1). Invalid response parameters return `invalid_request` before signing or trust-chain preparation. Without a supplied `trustChain`, creation needs no discovery; with one, provide pinned `trustAnchors` for its validation. Endpoint authorization is checked by the receiving wallet against the effective federation metadata during completion ([§7.1.1](https://openid.net/specs/openid-federation-wallet-1_0-05.html#section-7.1.1)). The application's OpenID4VP engine handles request delivery and response processing, including encryption for `direct_post.jwt`.
+
 ## Check federation-backed presentation requests
 
 ```ts

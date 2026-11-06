@@ -413,8 +413,11 @@ export default (QUnit: QUnit) => {
 			for (const invalid of [
 				{ request_uris: [] },
 				{ request_uris: ["http://bad.example"] },
+				{ request_uris: ["not-a-url"] },
 				{ redirect_uris: [] },
+				{ redirect_uris: [""] },
 				{ response_uris: [] },
+				{ response_uris: ["not-a-url"] },
 				{ jwks: { keys: [f.protocol.verifier.privateKey] } },
 				{ jwks: { keys: [f.protocol.verifier.publicKey, f.protocol.verifier.publicKey] } },
 				{ dcql_queries: [] },
@@ -1647,6 +1650,180 @@ export default (QUnit: QUnit) => {
 			);
 			t.false((await CredentialVerifierRole.completeAuthorizationRequest(prepared.value, jwt)).ok);
 		});
+		test("rejects invalid response parameters before signing and in independently signed requests", async (t) => {
+			const f = await walletFederation();
+			const signer = new JwkSigner(f.protocol.verifier.privateKey);
+			let signatures = 0;
+			let requests = 0;
+			const countingSigner = {
+				alg: signer.alg,
+				kid: signer.kid,
+				signJwt: (...args: Parameters<typeof signer.signJwt>) => {
+					signatures++;
+					return signer.signJwt(...args);
+				},
+			};
+			const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
+				{ client_id: f.requestPayload.client_id },
+				f.anchors,
+				f.options,
+			);
+			t.true(prepared.ok);
+			if (!prepared.ok) return;
+			const invalid: [Record<string, unknown>, string][] = [];
+			for (const mode of ["direct_post", "direct_post.jwt"]) {
+				invalid.push([
+					{ response_mode: mode, response_uri: undefined },
+					`${mode} response mode requires response_uri`,
+				]);
+				for (const uri of ["", "not-a-url", "http://verifier.example/response"])
+					invalid.push([
+						{ response_mode: mode, response_uri: uri },
+						"response_uri must be an HTTPS URL",
+					]);
+				invalid.push([
+					{ response_mode: mode, redirect_uri: `${f.ids.verifier}/done`, response_uri: undefined },
+					`${mode} requests cannot include redirect_uri`,
+				]);
+			}
+			for (const mode of ["direct_post", "direct_post.jwt", "fragment", "custom"])
+				invalid.push([
+					{ response_mode: mode, redirect_uri: `${f.ids.verifier}/done` },
+					"response_uri and redirect_uri cannot appear together",
+				]);
+			invalid.push([
+				{ response_mode: "fragment", response_uri: undefined },
+				"fragment response mode requires redirect_uri",
+			]);
+			for (const uri of ["", "not-a-url", "http://verifier.example/done"])
+				invalid.push([
+					{ response_mode: "fragment", response_uri: undefined, redirect_uri: uri },
+					"redirect_uri must be an HTTPS URL",
+				]);
+			for (const [change, description] of invalid) {
+				const payload = { ...f.requestPayload, ...change };
+				for (const trustChain of [undefined, ["invalid chain must not be inspected"]]) {
+					const created = await CredentialVerifierRole.createAuthorizationRequest(
+						f.ids.verifier,
+						payload,
+						countingSigner,
+						{
+							...f.options,
+							trustChain,
+							trustAnchors: f.anchors,
+							httpClient: async () => {
+								requests++;
+								throw new Error("Unexpected discovery");
+							},
+						},
+					);
+					t.false(created.ok, description);
+					if (!created.ok) {
+						t.equal(created.error.code, "invalid_request");
+						t.equal(created.error.description, description);
+					}
+				}
+				const jwt = await token(payload, f.protocol.verifier.privateKey, "oauth-authz-req+jwt");
+				const checked = await CredentialVerifierRole.completeAuthorizationRequest(
+					prepared.value,
+					jwt,
+				);
+				t.false(checked.ok, description);
+				if (!checked.ok) {
+					t.equal(checked.error.code, "invalid_request");
+					t.equal(checked.error.description, description);
+				}
+			}
+			t.equal(signatures, 0, "invalid requests never reach the signer");
+			t.equal(requests, 0, "invalid requests never trigger discovery");
+		});
+
+		test("response parameter checks preserve supported modes, exact endpoints, and later redirects", async (t) => {
+			const f = await walletFederation();
+			const signer = new JwkSigner(f.protocol.verifier.privateKey);
+			const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
+				{ client_id: f.requestPayload.client_id },
+				f.anchors,
+				f.options,
+			);
+			t.true(prepared.ok);
+			if (!prepared.ok) return;
+			for (const change of [
+				{},
+				{ response_mode: "direct_post.jwt" },
+				{
+					response_mode: "fragment",
+					response_uri: undefined,
+					redirect_uri: `${f.ids.verifier}/done`,
+				},
+				{ response_mode: "custom", response_uri: undefined },
+				{ response_mode: "custom" },
+				{
+					response_mode: "custom",
+					response_uri: undefined,
+					redirect_uri: `${f.ids.verifier}/done`,
+				},
+			]) {
+				const payload = { ...f.requestPayload, ...change };
+				const created = await CredentialVerifierRole.createAuthorizationRequest(
+					f.ids.verifier,
+					payload,
+					signer,
+					{
+						clock: f.clock,
+						httpClient: async () => {
+							throw new Error("Unexpected discovery");
+						},
+					},
+				);
+				t.true(created.ok, JSON.stringify(change));
+				if (!created.ok) continue;
+				const checked = await CredentialVerifierRole.completeAuthorizationRequest(
+					prepared.value,
+					created.value,
+				);
+				t.true(checked.ok, JSON.stringify(checked));
+				if (!checked.ok) continue;
+				t.equal(checked.value.request.response_uri, payload.response_uri);
+				t.equal(checked.value.request.redirect_uri, payload.redirect_uri);
+				if (payload.response_mode.startsWith("direct_post")) {
+					t.true(
+						CredentialVerifierRole.validateResponseRedirect(checked.value, `${f.ids.verifier}/done`)
+							.ok,
+					);
+					t.false(
+						CredentialVerifierRole.validateResponseRedirect(
+							checked.value,
+							`${f.ids.verifier}/done/`,
+						).ok,
+					);
+				}
+			}
+			for (const change of [
+				{ response_uri: `${f.ids.verifier}/response/` },
+				{
+					response_mode: "fragment",
+					response_uri: undefined,
+					redirect_uri: `${f.ids.verifier}/done/`,
+				},
+			]) {
+				const created = await CredentialVerifierRole.createAuthorizationRequest(
+					f.ids.verifier,
+					{ ...f.requestPayload, ...change },
+					signer,
+					f.options,
+				);
+				t.true(created.ok, "creation validates syntax without claiming endpoint authorization");
+				if (!created.ok) continue;
+				const checked = await CredentialVerifierRole.completeAuthorizationRequest(
+					prepared.value,
+					created.value,
+				);
+				t.false(checked.ok, "receiving wallet enforces the exact registered endpoint");
+				if (!checked.ok) t.true(checked.error.description.includes("Endpoint is not registered"));
+			}
+		});
+
 		test("creates Request Objects and verifies supplied chains entirely offline", async (t) => {
 			const f = await walletFederation();
 			const created = await CredentialVerifierRole.createAuthorizationRequest(
