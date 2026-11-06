@@ -1066,21 +1066,17 @@ async function validateTrustChainImpl(
 		}
 	}
 
-	// TA EC MUST NOT have authority_hints or trust_anchor_hints
+	// Federation §4.1 permits a configured anchor to have superiors. Its signed
+	// authority_hints declare those relationships; configured trust ends this chain.
 	if (hasTrailingTrustAnchorEc && trustAnchors.has(lastIss as EntityId)) {
-		if (lastPayload.authority_hints !== undefined) {
+		const hasSuperiors =
+			Array.isArray(lastPayload.authority_hints) && lastPayload.authority_hints.length > 0;
+		// Section 3.1.2 forbids trust_anchor_hints on anchors with no superiors.
+		if (!hasSuperiors && lastPayload.trust_anchor_hints !== undefined) {
 			addError(
 				errors,
 				InternalErrorCode.TrustChainInvalid,
-				`Trust Anchor EC MUST NOT contain authority_hints`,
-				{ statementIndex: lastIdx, field: "authority_hints", checkNumber: 14 },
-			);
-		}
-		if (lastPayload.trust_anchor_hints !== undefined) {
-			addError(
-				errors,
-				InternalErrorCode.TrustChainInvalid,
-				`Trust Anchor EC MUST NOT contain trust_anchor_hints`,
+				`Trust Anchor EC with no superiors MUST NOT contain trust_anchor_hints`,
 				{ statementIndex: lastIdx, field: "trust_anchor_hints", checkNumber: 15 },
 			);
 		}

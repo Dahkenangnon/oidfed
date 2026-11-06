@@ -112,19 +112,16 @@ export async function resolveTrustChains(
 
 	const hints = (leafPayload as Record<string, unknown>).authority_hints as string[] | undefined;
 
-	if ((!hints || hints.length === 0) && trustAnchors.has(entityId)) {
-		const parsed = [leafDecoded.value];
-		return {
-			chains: [
-				{
-					statements: [leafEcJwt],
-					entityId,
-					trustAnchorId: entityId,
-					expiresAt: calculateChainExpiration(parsed),
-				},
-			],
-			errors: [],
-		};
+	if (trustAnchors.has(entityId)) {
+		// Federation §4.1 allows anchors with superiors. Include the direct
+		// candidate and keep exploring hints for paths to other configured anchors.
+		chains.push({
+			statements: [leafEcJwt],
+			entityId,
+			trustAnchorId: entityId,
+			expiresAt: calculateChainExpiration([leafDecoded.value]),
+		});
+		if (!hints || hints.length === 0) return { chains, errors };
 	}
 
 	if (!hints || hints.length === 0) {

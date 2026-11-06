@@ -143,6 +143,10 @@ const result = await verifyEntityStatement(entityConfigurationJwt, {
 
 `resolveTrustChains()` builds candidate paths. Pass each candidate to `validateTrustChain()` to check signatures, expiry, constraints, and metadata policy. Use `discoverEntity()` when you want a validated, selected chain in one call.
 
+A configured Trust Anchor can also have superiors, as described in [Federation §4.1](https://openid.net/specs/openid-federation-1_0.html#section-4.1). Its signed `authority_hints` declares those relationships; the configured anchor keys establish trust for your application. An anchor with superiors may also publish `trust_anchor_hints`. An anchor without superiors must omit both claims, and either array must be nonempty when present ([§3.1.2](https://openid.net/specs/openid-federation-1_0.html#section-3.1.2)).
+
+When the requested entity is a configured anchor, `resolveTrustChains()` includes its own Entity Configuration as a direct candidate and follows any authority hints for additional paths. Each candidate still needs validation against the configured keys. Errors or work limits on a superior path remain visible in `errors` and, when applicable, `incomplete`, even when a direct candidate is available.
+
 ```ts
 import { resolveTrustChains, validateTrustChain, createTrustAnchorSet, entityId } from "@oidfed/core";
 

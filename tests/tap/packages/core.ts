@@ -173,6 +173,7 @@ import {
 	TrustMarkRefSchema,
 } from "../../../packages/core/src/schemas/trust-mark.js";
 import { compareTrustAnchorKeys } from "../../../packages/core/src/trust-chain/anchor-keys.js";
+import { discoverEntity } from "../../../packages/core/src/trust-chain/discovery.js";
 import {
 	expandIPv6,
 	fetchEntityConfiguration,
@@ -8066,6 +8067,123 @@ export default (QUnit: QUnit) => {
 				t.deepEqual(order, [1, 2, 3]);
 			});
 		});
+		module("core / Trust Anchors with superiors", () => {
+			async function setup() {
+				const anchor = "https://national.example.com" as EntityId;
+				const superior = "https://regional.example.com" as EntityId;
+				const leaf = "https://university.example.com" as EntityId;
+				const anchorKeys = await generateSigningKey("ES256");
+				const superiorKeys = await generateSigningKey("ES256");
+				const leafKeys = await generateSigningKey("ES256");
+				const anchorEc = await rs_signEC(anchor, anchorKeys.privateKey, {
+					authority_hints: [superior],
+					trust_anchor_hints: [superior],
+					metadata: { federation_entity: { federation_fetch_endpoint: `${anchor}/fetch` } },
+				});
+				const superiorEc = await rs_signEC(superior, superiorKeys.privateKey, {
+					metadata: { federation_entity: { federation_fetch_endpoint: `${superior}/fetch` } },
+				});
+				const leafEc = await rs_signEC(leaf, leafKeys.privateKey, { authority_hints: [anchor] });
+				const anchorSs = await rs_signSS(superior, anchor, superiorKeys.privateKey, {
+					jwks: { keys: [anchorKeys.publicKey] },
+				});
+				const leafSs = await rs_signSS(anchor, leaf, anchorKeys.privateKey, {
+					jwks: { keys: [leafKeys.publicKey] },
+				});
+				const responses = new Map([
+					[`${anchor}${WELL_KNOWN_OPENID_FEDERATION}`, anchorEc],
+					[`${superior}${WELL_KNOWN_OPENID_FEDERATION}`, superiorEc],
+					[`${leaf}${WELL_KNOWN_OPENID_FEDERATION}`, leafEc],
+					[`${superior}/fetch?sub=${encodeURIComponent(anchor)}`, anchorSs],
+					[`${anchor}/fetch?sub=${encodeURIComponent(leaf)}`, leafSs],
+				]);
+				const requests: string[] = [];
+				const httpClient: HttpClient = async (input) => {
+					const url =
+						typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+					requests.push(url);
+					const jwt = responses.get(url);
+					return jwt
+						? new Response(jwt, { headers: { "Content-Type": MediaType.EntityStatement } })
+						: new Response("Not found", { status: 404 });
+				};
+				const anchors = new Map([[anchor, { jwks: { keys: [anchorKeys.publicKey] } }]]);
+				return {
+					anchor,
+					superior,
+					leaf,
+					anchorEc,
+					superiorEc,
+					anchorSs,
+					leafEc,
+					leafSs,
+					superiorKeys,
+					responses,
+					requests,
+					httpClient,
+					anchors,
+				};
+			}
+			for (const unavailable of [false, true]) {
+				test(`discovers a pinned anchor with an unconfigured superior (unavailable: ${unavailable})`, async (t) => {
+					const f = await setup();
+					if (unavailable) f.responses.delete(`${f.superior}${WELL_KNOWN_OPENID_FEDERATION}`);
+					const options = { httpClient: f.httpClient };
+					const result = await resolveTrustChains(f.anchor, f.anchors, options);
+					t.deepEqual(
+						result.chains.map((c) => c.statements),
+						[[f.anchorEc]],
+					);
+					t.ok(result.errors.length > 0, "reports the unsuccessful superior path");
+					const discovery = await discoverEntity(f.anchor, f.anchors, options);
+					t.true(discovery.ok);
+					if (discovery.ok) t.equal(discovery.value.trustChain.trustAnchorId, f.anchor);
+				});
+			}
+			test("preserves paths to both configured anchors", async (t) => {
+				const f = await setup();
+				f.anchors.set(f.superior, { jwks: { keys: [f.superiorKeys.publicKey] } });
+				const options = { httpClient: f.httpClient };
+				const result = await resolveTrustChains(f.anchor, f.anchors, options);
+				t.deepEqual(
+					result.chains.map((c) => c.statements),
+					[[f.anchorEc], [f.anchorEc, f.anchorSs, f.superiorEc]],
+				);
+				t.deepEqual(result.errors, []);
+				for (const [anchor, expected] of [
+					[f.anchor, [f.anchorEc]],
+					[f.superior, [f.anchorEc, f.anchorSs, f.superiorEc]],
+				] as const) {
+					const selected = await resolveTrustChainForAnchor(f.anchor, anchor, f.anchors, options);
+					t.true(selected.ok);
+					if (selected.ok) t.deepEqual(selected.value, expected);
+				}
+			});
+			test("discovers a subordinate through an anchor with superiors", async (t) => {
+				const f = await setup();
+				const discovery = await discoverEntity(f.leaf, f.anchors, { httpClient: f.httpClient });
+				t.true(discovery.ok);
+				if (discovery.ok) t.equal(discovery.value.trustChain.trustAnchorId, f.anchor);
+				t.false(
+					f.requests.some((url) => url.startsWith(f.superior)),
+					"stops this path at the configured anchor",
+				);
+			});
+			test("retains the direct candidate when the upward fetch budget runs out", async (t) => {
+				const f = await setup();
+				const result = await resolveTrustChains(f.anchor, f.anchors, {
+					httpClient: f.httpClient,
+					maxTotalFetches: 1,
+				});
+				t.deepEqual(
+					result.chains.map((c) => c.statements),
+					[[f.anchorEc]],
+				);
+				t.true(result.incomplete);
+				t.true(result.errors.some((e) => e.description.includes("Fetch budget exhausted")));
+				t.deepEqual(f.requests, [`${f.anchor}${WELL_KNOWN_OPENID_FEDERATION}`]);
+			});
+		});
 		module("core / resolveTrustChains", () => {
 			test("resolves single path: leaf → TA", async (t) => {
 				const taKeys = await generateSigningKey("ES256");
@@ -10922,39 +11040,57 @@ export default (QUnit: QUnit) => {
 					),
 				);
 			});
-			test("rejects TA EC with authority_hints", async (t) => {
-				const taKeys = await generateSigningKey("ES256");
-				const leafKeys = await generateSigningKey("ES256");
-				const leafEc = await vt_signEC(
-					"https://leaf.example.com",
-					leafKeys.privateKey,
-					leafKeys.publicKey,
-					{ authority_hints: ["https://ta.example.com"] },
-				);
-				const ss = await vt_signSS(
-					"https://ta.example.com",
-					"https://leaf.example.com",
-					taKeys.privateKey,
-					leafKeys.publicKey,
-				);
-				const taEc = await vt_signEC(
-					"https://ta.example.com",
-					taKeys.privateKey,
-					taKeys.publicKey,
-					{ authority_hints: ["https://other.example.com"] },
-				);
-				const taSet: TrustAnchorSet = new Map([
-					["https://ta.example.com" as EntityId, { jwks: { keys: [taKeys.publicKey] } }],
-				]);
-				const result = await validateTrustChain([leafEc, ss, taEc], taSet, { verboseErrors: true });
-				t.false(result.valid);
-				t.true(
-					result.errors.some(
-						(e) => e.message.includes("Trust Anchor") && e.message.includes("authority_hints"),
-					),
-				);
-			});
-			test("rejects TA EC with trust_anchor_hints", async (t) => {
+			for (const anchorHints of [false, true]) {
+				test(`accepts TA EC with superiors (anchor hints: ${anchorHints})`, async (t) => {
+					const { chain, taSet, taKeys } = await vt_buildSimple();
+					const taEc = await vt_signEC(
+						"https://ta.example.com",
+						taKeys.privateKey,
+						taKeys.publicKey,
+						{
+							authority_hints: ["https://other.example.com"],
+							...(anchorHints ? { trust_anchor_hints: ["https://other.example.com"] } : {}),
+						},
+					);
+					const statements = [...chain.slice(0, -1), taEc];
+					const result = await validateTrustChain(statements, taSet, { verboseErrors: true });
+					t.true(result.valid, JSON.stringify(result.errors));
+					const unknown = await validateTrustChain(statements, new Map(), { verboseErrors: true });
+					t.false(unknown.valid);
+					t.true(unknown.errors.some((e) => e.code === InternalErrorCode.TrustAnchorUnknown));
+					const wrongKeys = await generateSigningKey("ES256");
+					const untrusted = await validateTrustChain(
+						statements,
+						new Map([["https://ta.example.com", { jwks: { keys: [wrongKeys.publicKey] } }]]),
+						{ verboseErrors: true },
+					);
+					t.false(untrusted.valid);
+					t.true(untrusted.errors.some((e) => e.code === InternalErrorCode.SignatureInvalid));
+				});
+			}
+			for (const [field, value] of [
+				["authority_hints", []],
+				["authority_hints", ["http://other.example.com"]],
+				["authority_hints", "https://other.example.com"],
+				["trust_anchor_hints", []],
+				["trust_anchor_hints", ["http://other.example.com"]],
+			] as const) {
+				test(`rejects malformed TA hints: ${field}=${JSON.stringify(value)}`, async (t) => {
+					const { chain, taSet, taKeys } = await vt_buildSimple();
+					const taEc = await vt_signEC(
+						"https://ta.example.com",
+						taKeys.privateKey,
+						taKeys.publicKey,
+						{ authority_hints: ["https://other.example.com"], [field]: value },
+					);
+					const result = await validateTrustChain([...chain.slice(0, -1), taEc], taSet, {
+						verboseErrors: true,
+					});
+					t.false(result.valid);
+					t.true(result.errors.some((e) => e.field === field));
+				});
+			}
+			test("rejects TA EC with trust_anchor_hints but no declared superiors", async (t) => {
 				const taKeys = await generateSigningKey("ES256");
 				const leafKeys = await generateSigningKey("ES256");
 				const leafEc = await vt_signEC(
