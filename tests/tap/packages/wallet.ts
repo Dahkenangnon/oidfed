@@ -1,11 +1,17 @@
 import type QUnit from "qunit";
-import { type JWK, JwkSigner, MemoryReplayStore } from "../../../packages/core/src/index.js";
+import {
+	generateSigningKey,
+	type JWK,
+	JwkSigner,
+	MemoryReplayStore,
+} from "../../../packages/core/src/index.js";
 import {
 	CredentialIssuerRole,
 	CredentialVerifierRole,
 	type PreparedAuthorizationRequest,
 	WalletProviderRole,
 } from "../../../packages/wallet/src/index.js";
+import { trustChainPaths } from "../fixtures/trust-chain-paths.js";
 import { walletFederation, walletQuery } from "../fixtures/wallet.js";
 
 async function token(
@@ -36,6 +42,41 @@ const proof = (f: Fixture) => ({
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("wallet / chain loops", () => {
+		test("rejects cyclic provider evidence before attestation verification", async (t) => {
+			const protocol = await generateSigningKey();
+			const f = await trustChainPaths({
+				openid_wallet_provider: {
+					vp_formats_supported: { "dc+sd-jwt": {} },
+					jwks: { keys: [protocol.publicKey] },
+				},
+			});
+			for (const cyclic of [false, true]) {
+				let calls = 0;
+				const trustChain = await f.chain(
+					cyclic ? ["subject", "a", "b", "a", "anchor"] : ["subject", "a", "b", "anchor"],
+				);
+				const result = await CredentialIssuerRole.verifyProviderAttestation(
+					"custom",
+					f.ids.subject,
+					f.anchors,
+					{
+						...f.options,
+						trustChain,
+						offline: true,
+						verifyAttestation: () => {
+							calls++;
+							return true;
+						},
+					},
+				);
+				t.equal(result.ok, !cyclic);
+				t.equal(calls, cyclic ? 0 : 1);
+				if (!result.ok) t.true(result.error.description.includes("Loop detected"));
+			}
+		});
+	});
+
 	module("wallet / metadata", () => {
 		test("validates issuer claim paths according to their credential format", async (t) => {
 			const f = await walletFederation();

@@ -986,6 +986,41 @@ async function authenticateChainStatements(
 	if (publicationOnly)
 		return errors.length ? { valid: false, errors } : { valid: true, statements: parsed };
 
+	// Federation §§10.1 and 17.1 require each path to be loop-free. The closing
+	// anchor EC describes the anchor already introduced by its Subordinate Statement.
+	const seenEntities = new Set([leafPayload.sub as string]);
+	for (let j = 1; j < parsed.length; j++) {
+		const payload = (parsed[j] as ParsedEntityStatement).payload;
+		const previous = (parsed[j - 1] as ParsedEntityStatement).payload;
+		if (
+			j === parsed.length - 1 &&
+			payload.iss === payload.sub &&
+			previous.iss !== previous.sub &&
+			previous.iss === payload.sub
+		)
+			continue;
+		if (seenEntities.has(payload.iss)) {
+			addError(
+				errors,
+				InternalErrorCode.LoopDetected,
+				`Loop detected at statement ${j}: Entity '${payload.iss}' occurs more than once`,
+				{ statementIndex: j, field: "iss" },
+			);
+			return {
+				valid: false,
+				errors: options?.verboseErrors
+					? errors
+					: [
+							{
+								code: InternalErrorCode.TrustChainInvalid,
+								message: "Trust chain validation failed",
+							},
+						],
+			};
+		}
+		seenEntities.add(payload.iss);
+	}
+
 	for (let j = 0; j < parsed.length - 1; j++) {
 		const current = parsed[j] as ParsedEntityStatement;
 		const next = parsed[j + 1] as ParsedEntityStatement;

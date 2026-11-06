@@ -73,6 +73,7 @@ import {
 	validateOIDCMetadata,
 } from "../../../packages/oidc/src/schemas/metadata.js";
 import { createMockFederation, LEAF_ID, OP_ID, TA_ID } from "../fixtures/index.js";
+import { trustChainPaths } from "../fixtures/trust-chain-paths.js";
 
 // ---------------------------------------------------------------------------
 // Shared helpers (mirrors oidc/test/test-helpers.ts)
@@ -309,6 +310,47 @@ async function createDualAnchorRegistrationFixture() {
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("oidc / chain loops", () => {
+		test("rejects cyclic registration evidence before the persistence callback", async (t) => {
+			const f = await trustChainPaths({
+				openid_relying_party: {
+					redirect_uris: ["https://subject.example/callback"],
+					response_types: ["code"],
+					token_endpoint_auth_method: "none",
+				},
+			});
+			for (const cyclic of [false, true]) {
+				let calls = 0;
+				const handler = createExplicitRegistrationHandler({
+					opEntityId: OP_ID,
+					keyProvider: MemoryFederationKeyProvider.fromJWK(f.keys.anchor.privateKey),
+					trustAnchors: f.anchors,
+					options: f.options,
+					onRegistration: async () => {
+						calls++;
+					},
+				});
+				const chain = await f.chain(
+					cyclic ? ["subject", "a", "b", "a", "anchor"] : ["subject", "a", "b", "anchor"],
+					{ subjectClaims: { aud: OP_ID } },
+				);
+				const response = await handler(
+					new Request(`${OP_ID}/register`, {
+						method: "POST",
+						headers: { "Content-Type": MediaType.TrustChain },
+						body: JSON.stringify(chain),
+					}),
+				);
+				t.equal(response.status, cyclic ? 400 : 200);
+				t.equal(calls, cyclic ? 0 : 1);
+				if (cyclic) {
+					const error = (await response.json()) as { error: string; error_description: string };
+					t.equal(error.error, FederationErrorCode.InvalidTrustChain);
+					t.true(error.error_description.includes("Loop detected"));
+				}
+			}
+		});
+	});
 
 	module("oidc / public root exports", () => {
 		test("keeps registration and client-auth helpers behind role classes", async (t) => {

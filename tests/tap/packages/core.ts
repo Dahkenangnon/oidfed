@@ -201,7 +201,9 @@ import {
 	longestExpiry,
 	preferTrustAnchor,
 	shortestChain,
+	validateEntityConfigurationPublication,
 	validateTrustChain,
+	validateTrustChainStructure,
 } from "../../../packages/core/src/trust-chain/validate.js";
 import {
 	fetchTrustMark,
@@ -228,10 +230,125 @@ import * as EntityCollectionFixture from "../fixtures/entity-collection.js";
 import { createMockFederation, LEAF_ID, OP_ID, TA_ID } from "../fixtures/index.js";
 import { MockFederationBuilder } from "../fixtures/mock-federation.js";
 import * as SubordinateEventsFixture from "../fixtures/subordinate-events.js";
+import { trustChainPaths } from "../fixtures/trust-chain-paths.js";
 import { walletFederation, walletQuery } from "../fixtures/wallet.js";
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("core / chain loops", () => {
+		test("rejects repeated Entities with and without a trailing anchor EC", async (t) => {
+			const f = await trustChainPaths();
+			const cases = [
+				{ path: ["subject", "a", "b", "a", "anchor"], index: 3 },
+				{ path: ["subject", "a", "subject", "b", "anchor"], index: 2 },
+				{ path: ["subject", "anchor", "a", "anchor"], index: 3 },
+			] as const;
+			for (const { path, index } of cases)
+				for (const includeAnchorEc of [true, false]) {
+					const chain = await f.chain(path, { includeAnchorEc });
+					const checked = await validateTrustChain(chain, f.anchors, f.options);
+					t.false(checked.valid, `${path.join(" → ")}, anchor EC: ${includeAnchorEc}`);
+					t.deepEqual(
+						checked.errors.map(({ code, statementIndex, field }) => ({
+							code,
+							statementIndex,
+							field,
+						})),
+						[{ code: InternalErrorCode.LoopDetected, statementIndex: index, field: "iss" }],
+					);
+					const quiet = await validateTrustChain(chain, f.anchors, {
+						...f.options,
+						verboseErrors: false,
+					});
+					t.deepEqual(quiet.errors, [
+						{ code: InternalErrorCode.TrustChainInvalid, message: "Trust chain validation failed" },
+					]);
+				}
+		});
+		test("rejects duplicate anchor ECs without treating the closing EC as a hop", async (t) => {
+			const f = await trustChainPaths();
+			const direct = await f.chain(["anchor"]);
+			const ordinary = await f.chain(["subject", "a", "anchor"]);
+			for (const { chain, code } of [
+				{ chain: [...direct, ...direct], code: InternalErrorCode.LoopDetected },
+				{ chain: [...ordinary, ordinary.at(-1)!], code: InternalErrorCode.TrustChainInvalid },
+			]) {
+				const checked = await validateTrustChain(chain, f.anchors, f.options);
+				t.false(checked.valid);
+				t.equal(checked.errors[0]?.code, code);
+			}
+			for (const chain of [direct, ordinary])
+				t.true((await validateTrustChain(chain, f.anchors, f.options)).valid);
+		});
+		test("shares rejection across collection, prepared, and registration validation", async (t) => {
+			const f = await trustChainPaths();
+			for (const cyclic of [false, true]) {
+				const chain = await f.chain(
+					cyclic ? ["subject", "a", "b", "a", "anchor"] : ["subject", "a", "b", "anchor"],
+				);
+				const structure = await validateTrustChainStructure(chain, f.anchors, f.options);
+				t.equal(structure.valid, !cyclic);
+				const prepared = await CorePublic.prepareTrustChainValidation(chain, f.anchors, {
+					...f.options,
+					deferredClaims: [],
+				});
+				t.equal(prepared.ok, !cyclic);
+				if (!prepared.ok) t.true(prepared.error.description.includes("Loop detected"));
+				const request = await f.sign("subject", "subject", {
+					authority_hints: [f.ids.a],
+					aud: "https://op.example",
+				});
+				const registered = await validateTrustChain(chain, f.anchors, {
+					...f.options,
+					explicitRegistrationRequest: { jwt: request, audience: entityId("https://op.example") },
+				});
+				t.equal(registered.valid, !cyclic);
+				if (cyclic) t.equal(registered.errors[0]?.code, InternalErrorCode.LoopDetected);
+			}
+		});
+		test("compares Entity Identifiers as exact strings", async (t) => {
+			const f = await trustChainPaths({}, true);
+			f.ids.b = entityId(`${f.ids.a}/`);
+			const chain = await f.chain(["subject", "a", "b", "anchor"]);
+			const checked = await validateTrustChain(chain, f.anchors, f.options);
+			t.true(checked.valid, JSON.stringify(checked.errors));
+		});
+		test("preserves alternate paths, intermediate subjects, shared keys and anchors with superiors", async (t) => {
+			const f = await trustChainPaths({}, true);
+			for (const includeAnchorEc of [true, false])
+				for (const path of [
+					["subject", "a", "b", "anchor"],
+					["subject", "b", "a", "anchor"],
+					["a", "b", "anchor"],
+					["anchor"],
+				] as const) {
+					const chain = await f.chain(path, {
+						includeAnchorEc,
+						anchorClaims: {
+							authority_hints: ["https://other.example"],
+							trust_anchor_hints: ["https://other.example"],
+						},
+					});
+					const checked = await validateTrustChain(chain, f.anchors, f.options);
+					t.true(checked.valid, JSON.stringify(checked.errors));
+					t.true((await validateEntityConfigurationPublication(chain[0]!, f.options)).valid);
+				}
+			const chain = await f.chain(["subject", "a", "anchor"]);
+			chain[1] = await signEntityStatement(
+				{
+					iss: f.ids.a,
+					sub: f.ids.subject,
+					jwks: { keys: [f.keys.subject.publicKey] },
+					iat: 1000,
+					exp: 5000,
+				},
+				new CorePublic.JwkSigner(f.keys.subject.privateKey),
+			);
+			const forged = await validateTrustChain(chain, f.anchors, f.options);
+			t.false(forged.valid);
+			t.true(forged.errors.some((e) => e.code === InternalErrorCode.SignatureInvalid));
+		});
+	});
 	module("core / contextual chain validation", () => {
 		test("preserves wallet claim-path wildcards in statement builders and chain validation", async (t) => {
 			const f = await walletFederation({
