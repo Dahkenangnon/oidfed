@@ -11,6 +11,8 @@
 
 See [OIDC federation responsibilities](../guide/operator-responsibilities.md#oidc-federation) for registration lifetime enforcement, persistence, protocol keys, and replay storage.
 
+OIDC federation registration validates chains independently of published Trust Mark acceptance. Applications that require an accreditation must check it before accepting the registration, using core's [`checkTrustMarkRequirements()`](core.md#trust-marks) with the validated chain supplied to their registration integration.
+
 ## Usage
 
 ### Composing roles with parent entities

@@ -3077,6 +3077,7 @@ export default (QUnit: QUnit) => {
 	module("authority / createResolveHandler", () => {
 		async function createResolveTrustMarkFixture(options?: {
 			readonly status?: TrustMarkStatus;
+			readonly expiredMarkPosition?: "before" | "after";
 			readonly resolverEntityId?: EntityId;
 			readonly useLocalTrustMarkStore?: boolean;
 			readonly trustMarkExpiresAt?: number;
@@ -3136,6 +3137,24 @@ export default (QUnit: QUnit) => {
 				{ typ: JwtTyp.EntityStatement },
 			);
 
+			const refs = [{ trust_mark_type: trustMarkType, trust_mark: trustMarkJwt }];
+			if (options?.expiredMarkPosition) {
+				const expired = await signEntityStatement(
+					{
+						iss: TA_ID,
+						sub: LEAF_ID,
+						trust_mark_type: trustMarkType,
+						iat: now - 600,
+						exp: now - 300,
+					},
+					new JwkSigner(taSigningKey),
+					{ typ: JwtTyp.TrustMark },
+				);
+				const ref = { trust_mark_type: trustMarkType, trust_mark: expired };
+				if (options.expiredMarkPosition === "before") refs.unshift(ref);
+				else refs.push(ref);
+			}
+
 			const leafEcJwt = await signEntityStatement(
 				{
 					iss: LEAF_ID,
@@ -3152,7 +3171,7 @@ export default (QUnit: QUnit) => {
 							jwks: { keys: [leafPublicKey] },
 						},
 					},
-					trust_marks: [{ trust_mark_type: trustMarkType, trust_mark: trustMarkJwt }],
+					trust_marks: refs,
 				},
 				new JwkSigner(leafSigningKey),
 				{ typ: JwtTyp.EntityStatement },
@@ -3250,6 +3269,34 @@ export default (QUnit: QUnit) => {
 				trustMarkExpiresAt,
 			};
 		}
+
+		test("resolve returns the exact verified mark when an expired mark shares its type", async (t) => {
+			for (const expiredMarkPosition of ["before", "after"] as const) {
+				const fixture = await createResolveTrustMarkFixture({ expiredMarkPosition });
+				const response = await createResolveHandler(fixture.ctx)(new Request(fixture.requestUrl));
+				t.equal(response.status, 200);
+				const decoded = decodeEntityStatement(await response.text());
+				t.true(decoded.ok);
+				if (decoded.ok) {
+					t.deepEqual(decoded.value.payload.trust_marks, [
+						{ trust_mark_type: fixture.trustMarkType, trust_mark: fixture.trustMarkJwt },
+					]);
+					t.equal(decoded.value.payload.exp, fixture.trustMarkExpiresAt);
+				}
+			}
+		});
+		test("resolve excludes an expired mark without rejecting valid metadata", async (t) => {
+			const fixture = await createResolveTrustMarkFixture({ trustMarkExpiresAt: 1_699_999_700 });
+			const response = await createResolveHandler(fixture.ctx)(new Request(fixture.requestUrl));
+			t.equal(response.status, 200);
+			const decoded = decodeEntityStatement(await response.text());
+			t.true(decoded.ok);
+			if (decoded.ok) {
+				t.strictEqual(decoded.value.payload.trust_marks, undefined);
+				t.equal(decoded.value.payload.exp, fixture.chainExp);
+				t.ok(decoded.value.payload.metadata);
+			}
+		});
 
 		test("returns 400 when sub is missing", async (t) => {
 			const { ctx } = await createTestContext();

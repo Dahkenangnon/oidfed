@@ -54,6 +54,8 @@ Installs two equivalent binaries: `oidfed` and `openidfed`.
 
 ## Usage
 
+`oidfed validate` reports chain validity in `valid` and individual Trust Mark outcomes in `trust_marks`, for both entity-ID and JWT input. Each outcome is `verified`, `invalid`, or `unevaluated`. A valid chain can contain an expired or unverifiable mark; application accreditation requirements are a separate decision. The [core guide](../../docs/packages/core.md#trust-marks) describes the checks.
+
 You can try the following commands immediately against `@oidfed`'s live reference deployment ([fed.oidfed.com](https://fed.oidfed.com/)):
 
 ```bash

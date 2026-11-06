@@ -292,6 +292,35 @@ const cached = await cache.get<string>(key);
 
 ### Trust marks
 
+`validateTrustChain()` reports chain validity separately from Trust Mark trust, following [Federation §3.2](https://openid.net/specs/openid-federation-1_0.html#section-3.2) and [§17.5](https://openid.net/specs/openid-federation-1_0.html#section-17.5). Mandatory reference syntax checks, including matching the reference's type to the JWT's type, remain part of chain validation. An expired mark or unavailable issuer evidence appears in the mark results while an otherwise valid chain remains valid.
+
+For a valid chain, `trustMarkEvaluations` contains one result per published subject mark, in reference order. Each result identifies its `referenceIndex` and `trustMarkType`:
+
+- `verified` includes the validated `mark`.
+- `invalid` includes the validation `error`.
+- `unevaluated` includes a `reason` and `description`: issuer policy or trusted keys were unavailable, or evaluation was reserved for a separate step.
+
+`chain.trustMarks` contains only verified marks. Verification describes the evidence at validation time; active status is checked separately. Chain expiry remains the earliest Entity Statement expiry under [§10.4](https://openid.net/specs/openid-federation-1_0.html#section-10.4).
+
+Use `checkTrustMarkRequirements()` to apply your application's accreditation requirements:
+
+```ts
+import { checkTrustMarkRequirements, validateTrustChain } from "@oidfed/core";
+
+const result = await validateTrustChain(statements, trustAnchors);
+if (!result.valid) throw new Error("Invalid federation chain");
+
+const accreditation = checkTrustMarkRequirements(result.chain, {
+  requiredTypes: ["https://accreditation.example/university"],
+});
+if (!accreditation.ok) throw new Error(accreditation.error.description);
+```
+
+Each required type needs at least one verified mark whose dates remain valid. Set `requireAllPublished: true` to require every published mark to pass as an additional application policy; an empty publication satisfies that option, so use `requiredTypes` when a mark must exist. Both checks apply when combined. The helper rejects expired chain evidence and rechecks mark and delegation dates using the supplied clock and clock skew. The helper uses the supplied evidence. Obtain fresh issuer evidence and check active status when your policy requires it.
+
+Chain validation uses the included anchor Entity Configuration's issuer and owner declarations. An omitted anchor configuration or undeclared type leaves the mark unevaluated. For issuers outside the supplied chain, `trustMarkIssuerKeys` accepts keys whose federation trust the caller has independently established under [§7.3](https://openid.net/specs/openid-federation-1_0.html#section-7.3). Supply the necessary anchor configuration when evaluating its mark policy. Fetching an issuer's self-published keys alone does not establish that trust.
+
+
 Validate the Trust Mark signature, issuer authorization, subject, expiry, and any delegation first. Status is a separate request to the issuer's advertised status endpoint. The example assumes `issuerJwks`, `trustMarkIssuers`, `trustMarkOwners`, and `statusEndpoint` came from trusted federation processing.
 
 Issuer and owner registries use explicitly declared JSON members. In `validateTrustMark()`, an explicit empty issuer array permits any issuer for that type; a nonempty array restricts issuance to its listed Entity Identifiers ([Federation §3.1.2](https://openid.net/specs/openid-federation-1_0.html#section-3.1.2)). An explicit owner entry requires a valid delegation under [§7.3](https://openid.net/specs/openid-federation-1_0.html#section-7.3). Malformed entries return validation errors.
@@ -345,7 +374,7 @@ Use `EntityCollectionService` to refresh Draft 01 collections, query them in pro
 
 When cancellation or a work limit stops resolution, `resolveTrustChains` reports `incomplete: true` alongside its `chains` and `errors`. Collection refresh rejects these incomplete results. Pass a signal to `createConcurrencyLimiter(maxConcurrent, signal?)` to cancel queued work. When caching calls to `fetchSubordinateStatement`, supply the actual Entity Identifier as `issuer` in the options to distinguish authorities hosted on the same origin.
 
-Collection configuration accepts an optional `collector` for application inventories and a `filter` for additional restrictions. Core validates collector output and verifies the marks used for filtering. `EntityCollectionCandidate` contains informational entity data and an eligibility deadline; `CollectionEntry` adds optional chain evidence and core-verified mark evidence. The [collection policy examples](../guide/entity-collection.md#collection-policy) cover independent sources and snapshot-time filters. Existing `validateTrustChain` callers retain strict Trust Mark validation.
+Collection configuration accepts an optional `collector` for application inventories and a `filter` for additional restrictions. Core validates collector output and verifies the marks used for filtering. `EntityCollectionCandidate` contains informational entity data and an eligibility deadline; `CollectionEntry` adds optional chain evidence and core-verified mark evidence. The [collection policy examples](../guide/entity-collection.md#collection-policy) cover independent sources and snapshot-time filters. Chain validation and Trust Mark evaluation have separate results, as described [above](#trust-marks).
 
 ## Contextual metadata validation
 

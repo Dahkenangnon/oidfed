@@ -12,6 +12,7 @@ import {
 	resolveTrustChains,
 	signEntityStatement,
 	type TrustAnchorSet,
+	type TrustMarkEvaluation,
 	TrustMarkStatus,
 	type ValidatedTrustMark,
 	validateTrustChain,
@@ -163,7 +164,7 @@ export function createResolveHandler(ctx: HandlerContext): (request: Request) =>
 			const activeTrustMarks = await resolveActiveTrustMarks(
 				ctx,
 				validation.chain.statements,
-				validation.chain.trustMarks,
+				validation.chain.trustMarkEvaluations,
 				now,
 			);
 
@@ -226,10 +227,10 @@ export function createResolveHandler(ctx: HandlerContext): (request: Request) =>
 async function resolveActiveTrustMarks(
 	ctx: HandlerContext,
 	statements: ReadonlyArray<ParsedEntityStatement>,
-	validatedTrustMarks: ReadonlyArray<ValidatedTrustMark>,
+	evaluations: ReadonlyArray<TrustMarkEvaluation>,
 	now: number,
 ): Promise<ActiveResolveTrustMark[]> {
-	if (validatedTrustMarks.length === 0) return [];
+	if (evaluations.length === 0) return [];
 	const leafStatement = statements[0];
 	const leafTrustMarks = leafStatement
 		? ((leafStatement.payload as Record<string, unknown>).trust_marks as
@@ -239,17 +240,11 @@ async function resolveActiveTrustMarks(
 	if (!leafTrustMarks || leafTrustMarks.length === 0) return [];
 
 	const active: ActiveResolveTrustMark[] = [];
-	const usedValidatedIndexes = new Set<number>();
-	for (const ref of leafTrustMarks) {
-		const validatedIndex = validatedTrustMarks.findIndex(
-			(mark, index) =>
-				!usedValidatedIndexes.has(index) && mark.trustMarkType === ref.trust_mark_type,
-		);
-		if (validatedIndex === -1) continue;
-
-		const mark = validatedTrustMarks[validatedIndex];
-		if (!mark) continue;
-		usedValidatedIndexes.add(validatedIndex);
+	for (const evaluation of evaluations) {
+		if (evaluation.status !== "verified") continue;
+		const ref = leafTrustMarks[evaluation.referenceIndex];
+		if (!ref || ref.trust_mark_type !== evaluation.trustMarkType) continue;
+		const mark = evaluation.mark;
 
 		if (await isTrustMarkActiveForResolve(ctx, statements, ref, mark, now)) {
 			active.push({ ref, mark });

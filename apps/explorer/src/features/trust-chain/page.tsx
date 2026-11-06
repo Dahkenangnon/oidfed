@@ -255,7 +255,7 @@ export function TrustChainPage() {
 
 							<TabsContent value="trust-marks" className="mt-4">
 								{validationDetails.chain ? (
-									<TrustMarkList trustMarks={validationDetails.chain.trustMarks} />
+									<TrustMarkList evaluations={validationDetails.chain.trustMarkEvaluations} />
 								) : (
 									<p className="text-sm text-muted-foreground">
 										Chain validation required for trust marks view.

@@ -7825,6 +7825,7 @@ export default (QUnit: QUnit) => {
 				expiresAt: rf_now + 3600,
 				resolvedMetadata: {},
 				trustMarks: [],
+				trustMarkEvaluations: [],
 				...overrides,
 			};
 		}
@@ -11293,7 +11294,7 @@ export default (QUnit: QUnit) => {
 				t.false(result.valid);
 				t.true(result.errors.some((e) => e.message.includes("trust_anchor")));
 			});
-			test("rejects published trust mark from issuer outside validated chain", async (t) => {
+			test("reports an unauthorized published mark independently of chain validity", async (t) => {
 				const taKeys = await generateSigningKey("ES256");
 				const intKeys = await generateSigningKey("ES256");
 				const leafKeys = await generateSigningKey("ES256");
@@ -11348,10 +11349,13 @@ export default (QUnit: QUnit) => {
 				const result = await validateTrustChain([leafEc, ssIntLeaf, ssTaInt, taEc], taSet, {
 					verboseErrors: true,
 				});
-				t.false(result.valid);
-				t.true(result.errors.some((e) => e.field === "trust_marks"));
+				t.true(result.valid);
+				if (result.valid) {
+					t.deepEqual(result.chain.trustMarks, []);
+					t.equal(result.chain.trustMarkEvaluations[0]?.status, "invalid");
+				}
 			});
-			test("rejects published trust mark whose listed issuer has no trusted federation keys", async (t) => {
+			test("reports a published mark with unavailable issuer keys as unevaluated", async (t) => {
 				const { chain, taSet, taKeys, leafKeys } = await vt_buildSimple();
 				const issuerKeys = await generateSigningKey("ES256");
 				const trustMarkType = "https://trust-mark-type.example.com";
@@ -11389,15 +11393,13 @@ export default (QUnit: QUnit) => {
 					verboseErrors: true,
 				});
 
-				t.false(result.valid);
-				t.true(
-					result.errors.some(
-						(e) =>
-							e.field === "trust_marks" && e.message.includes("No trusted federation keys found"),
-					),
-				);
+				t.true(result.valid);
+				if (result.valid) {
+					t.deepEqual(result.chain.trustMarks, []);
+					t.equal(result.chain.trustMarkEvaluations[0]?.status, "unevaluated");
+				}
 			});
-			test("rejects published trust mark with malformed payload claims", async (t) => {
+			test("reports malformed mark payload claims independently of chain validity", async (t) => {
 				const { chain, taSet, taKeys, leafKeys } = await vt_buildSimple();
 				const trustMarkType = "https://trust-mark-type.example.com";
 				const trustMarkJwt = await signEntityStatement(
@@ -11435,12 +11437,11 @@ export default (QUnit: QUnit) => {
 					verboseErrors: true,
 				});
 
-				t.false(result.valid);
-				t.true(
-					result.errors.some(
-						(e) => e.field === "trust_marks" && e.message.includes("Invalid Trust Mark payload"),
-					),
-				);
+				t.true(result.valid);
+				if (result.valid) {
+					t.deepEqual(result.chain.trustMarks, []);
+					t.equal(result.chain.trustMarkEvaluations[0]?.status, "invalid");
+				}
 			});
 			test("rejects published trust mark when outer type does not match inner type", async (t) => {
 				const taKeys = await generateSigningKey("ES256");
@@ -12278,6 +12279,7 @@ export default (QUnit: QUnit) => {
 					expiresAt: vt_now - 100,
 					resolvedMetadata: {},
 					trustMarks: [],
+					trustMarkEvaluations: [],
 				} as ValidatedTrustChain;
 				t.true(isChainExpired(chain, { now: () => vt_now }));
 			});
@@ -12289,6 +12291,7 @@ export default (QUnit: QUnit) => {
 					expiresAt: vt_now + 3600,
 					resolvedMetadata: {},
 					trustMarks: [],
+					trustMarkEvaluations: [],
 				} as ValidatedTrustChain;
 				t.false(isChainExpired(chain, { now: () => vt_now }));
 			});
@@ -12300,6 +12303,7 @@ export default (QUnit: QUnit) => {
 					expiresAt: vt_now,
 					resolvedMetadata: {},
 					trustMarks: [],
+					trustMarkEvaluations: [],
 				} as ValidatedTrustChain;
 				t.true(isChainExpired(chain, { now: () => vt_now }));
 			});
@@ -12354,6 +12358,7 @@ export default (QUnit: QUnit) => {
 				expiresAt,
 				resolvedMetadata: {},
 				trustMarks: [],
+				trustMarkEvaluations: [],
 			});
 			module("core / shortestChain", () => {
 				test("selects chain with fewest statements", (t) => {
@@ -15326,35 +15331,38 @@ export default (QUnit: QUnit) => {
 				},
 			);
 
-			QUnit.test(
-				"legacy chain validation remains strict about invalid published marks",
-				async (assert) => {
-					const graph = await createCollectionFederation({
-						edges: [
-							{ issuer: "ta", subject: "issuer" },
-							{ issuer: "ta", subject: "leaf" },
-						],
-						marked: true,
-					});
-					const result = await validateTrustChain(
-						[
-							graph.configurations.get("leaf")!,
-							graph.statements.get(`${anchor}|${graph.id("leaf")}`)!,
-							graph.configurations.get("ta")!,
-						],
-						graph.trustAnchors,
-						{
-							clock: { now: () => 4250 },
-							verboseErrors: true,
-							trustMarkIssuerKeys: new Map([
-								[graph.id("issuer"), { keys: [graph.keys.get("issuer")!.publicKey] }],
-							]),
-						},
+			QUnit.test("chain validation reports invalid published marks separately", async (assert) => {
+				const graph = await createCollectionFederation({
+					edges: [
+						{ issuer: "ta", subject: "issuer" },
+						{ issuer: "ta", subject: "leaf" },
+					],
+					marked: true,
+				});
+				const result = await validateTrustChain(
+					[
+						graph.configurations.get("leaf")!,
+						graph.statements.get(`${anchor}|${graph.id("leaf")}`)!,
+						graph.configurations.get("ta")!,
+					],
+					graph.trustAnchors,
+					{
+						clock: { now: () => 4250 },
+						verboseErrors: true,
+						trustMarkIssuerKeys: new Map([
+							[graph.id("issuer"), { keys: [graph.keys.get("issuer")!.publicKey] }],
+						]),
+					},
+				);
+				assert.true(result.valid);
+				if (result.valid) {
+					assert.deepEqual(result.chain.trustMarks, []);
+					assert.true(
+						result.chain.trustMarkEvaluations.every((mark) => mark.status !== "verified"),
 					);
-					assert.false(result.valid);
-					assert.true(result.errors.some((error) => error.code === "ERR_TRUST_MARK_INVALID"));
-				},
-			);
+				}
+				assert.deepEqual(result.errors, []);
+			});
 
 			QUnit.test(
 				"entry lifetime and optional chain evidence independently bound eligibility",
@@ -16217,7 +16225,7 @@ export default (QUnit: QUnit) => {
 					t.equal(result.ok, issuers.length === 0 || issuers.includes(LEAF_ID));
 				}
 			});
-			test(`registry properties: signed chain rejects undeclared ${type}`, async (t) => {
+			test(`registry properties: signed chain leaves undeclared marks unevaluated for ${type}`, async (t) => {
 				const { fed, jwt } = await markFixture(type);
 				const decoded = decodeEntityStatement(fed.leafEcJwt);
 				if (!decoded.ok) throw new Error(decoded.error.description);
@@ -16230,9 +16238,14 @@ export default (QUnit: QUnit) => {
 					fed.trustAnchors,
 					{ verboseErrors: true },
 				);
-				t.false(result.valid);
-				if (!result.valid)
-					t.true(result.errors.some((e) => e.message.includes("type not recognized")));
+				t.true(result.valid);
+				if (result.valid) {
+					t.deepEqual(result.chain.trustMarks, []);
+					t.equal(result.chain.trustMarkEvaluations[0]?.status, "unevaluated");
+					t.false(
+						CorePublic.checkTrustMarkRequirements(result.chain, { requireAllPublished: true }).ok,
+					);
+				}
 			});
 		}
 		test("registry properties: malformed issuer entries return validation errors", async (t) => {
@@ -16335,14 +16348,16 @@ export default (QUnit: QUnit) => {
 				{ ...payload, trust_mark_issuers: Object.fromEntries([["__proto__", [TA_ID]]]) },
 				new JwkSigner(fed.taSigningKey),
 			);
-			t.false(
-				(
-					await validateTrustChain(
-						[ec, fed.taSubStatementForLeaf, rejectedAnchor],
-						fed.trustAnchors,
-					)
-				).valid,
+			const rejected = await validateTrustChain(
+				[ec, fed.taSubStatementForLeaf, rejectedAnchor],
+				fed.trustAnchors,
 			);
+			t.true(rejected.valid);
+			if (rejected.valid) {
+				t.deepEqual(rejected.chain.trustMarks, []);
+				t.equal(rejected.chain.trustMarkEvaluations[0]?.status, "invalid");
+			}
+
 			t.true((await validateTrustMark(jwt, issuers, keys)).ok);
 		});
 		test("registry properties: collection ignores inherited marks without issuer discovery", async (t) => {
@@ -16398,6 +16413,393 @@ export default (QUnit: QUnit) => {
 				t.true(result.ok);
 				if (result.ok) t.equal(result.value.entities.length, 0);
 			}
+		});
+	});
+	module("core / independent Trust Mark evaluation", () => {
+		const type = "https://marks.example/accredited";
+		async function fixture() {
+			const fed = await createMockFederation();
+			const now = Math.floor(Date.now() / 1000);
+			const decode = (jwt: string) => {
+				const result = decodeEntityStatement(jwt);
+				if (!result.ok) throw new Error(result.error.description);
+				return result.value.payload;
+			};
+			const mark = (overrides: Record<string, unknown> = {}, key = fed.taSigningKey) =>
+				signEntityStatement(
+					{
+						iss: TA_ID,
+						sub: LEAF_ID,
+						trust_mark_type: type,
+						iat: now - 600,
+						exp: now + 300,
+						...overrides,
+					},
+					new JwkSigner(key),
+					{ typ: JwtTyp.TrustMark },
+				);
+			const leaf = (
+				marks: { trust_mark_type: string; trust_mark: string }[],
+				overrides: Record<string, unknown> = {},
+			) =>
+				signEntityStatement(
+					{ ...decode(fed.leafEcJwt), trust_marks: marks, ...overrides },
+					new JwkSigner(fed.leafSigningKey),
+				);
+			const anchor = await signEntityStatement(
+				{ ...decode(fed.taEcJwt), trust_mark_issuers: { [type]: [TA_ID, OP_ID] } },
+				new JwkSigner(fed.taSigningKey),
+			);
+			const options = { clock: { now: () => now }, clockSkewSeconds: 0, verboseErrors: true };
+			return { fed, now, decode, mark, leaf, anchor, options };
+		}
+		test("keeps chain expiry and validity independent of mixed mark outcomes", async (t) => {
+			const f = await fixture();
+			const jwt = await f.leaf([
+				{ trust_mark_type: type, trust_mark: await f.mark({ exp: f.now - 1 }) },
+				{ trust_mark_type: type, trust_mark: await f.mark() },
+				{ trust_mark_type: type, trust_mark: await f.mark({ iss: OP_ID }, f.fed.opSigningKey) },
+			]);
+			const result = await validateTrustChain(
+				[jwt, f.fed.taSubStatementForLeaf, f.anchor],
+				f.fed.trustAnchors,
+				f.options,
+			);
+			t.true(result.valid);
+			if (!result.valid) return;
+			t.deepEqual(result.errors, []);
+			t.deepEqual(
+				result.chain.trustMarkEvaluations.map((m) => [m.referenceIndex, m.status]),
+				[
+					[0, "invalid"],
+					[1, "verified"],
+					[2, "unevaluated"],
+				],
+			);
+			t.equal(result.chain.trustMarks.length, 1);
+			t.equal(result.chain.expiresAt, f.decode(f.fed.taSubStatementForLeaf).exp);
+			t.true(
+				CorePublic.checkTrustMarkRequirements(result.chain, { requiredTypes: [type] }, f.options)
+					.ok,
+			);
+			t.false(
+				CorePublic.checkTrustMarkRequirements(
+					result.chain,
+					{ requiredTypes: [`${type}/missing`] },
+					f.options,
+				).ok,
+			);
+			t.false(
+				CorePublic.checkTrustMarkRequirements(
+					result.chain,
+					{ requireAllPublished: true },
+					f.options,
+				).ok,
+			);
+			t.false(
+				CorePublic.checkTrustMarkRequirements(
+					result.chain,
+					{ requiredTypes: [type], requireAllPublished: true },
+					f.options,
+				).ok,
+			);
+		});
+		test("missing issuer policy and omitted anchor EC leave marks unevaluated", async (t) => {
+			const f = await fixture();
+			const jwt = await f.leaf([{ trust_mark_type: type, trust_mark: await f.mark() }]);
+			for (const ending of [[f.fed.taEcJwt], []]) {
+				const result = await validateTrustChain(
+					[jwt, f.fed.taSubStatementForLeaf, ...ending],
+					f.fed.trustAnchors,
+					f.options,
+				);
+				t.true(result.valid);
+				if (!result.valid) continue;
+				t.deepEqual(result.chain.trustMarks, []);
+				const evaluation = result.chain.trustMarkEvaluations[0];
+				t.equal(evaluation?.status, "unevaluated");
+				if (evaluation?.status === "unevaluated")
+					t.equal(evaluation.reason, "issuer_policy_unavailable");
+			}
+		});
+		test("uses independently trusted external issuer keys without fetching", async (t) => {
+			const f = await fixture();
+			const jwt = await f.leaf([
+				{ trust_mark_type: type, trust_mark: await f.mark({ iss: OP_ID }, f.fed.opSigningKey) },
+			]);
+			let calls = 0;
+			const result = await validateTrustChain(
+				[jwt, f.fed.taSubStatementForLeaf, f.anchor],
+				f.fed.trustAnchors,
+				{
+					...f.options,
+					trustMarkIssuerKeys: new Map([[OP_ID, { keys: [f.fed.opPublicKey] }]]),
+					httpClient: async () => {
+						calls++;
+						throw new Error("Unexpected request");
+					},
+				},
+			);
+			t.true(result.valid);
+			if (result.valid) {
+				t.equal(result.chain.trustMarkEvaluations[0]?.status, "verified");
+				t.true(
+					CorePublic.checkTrustMarkRequirements(
+						result.chain,
+						{ requireAllPublished: true },
+						f.options,
+					).ok,
+				);
+			}
+			t.equal(calls, 0);
+		});
+		test("rejects unsigned and malformed compact JWT references before mark evaluation", async (t) => {
+			const f = await fixture();
+			const good = await f.mark();
+			const [header, payload, signature] = good.split(".") as [string, string, string];
+			const encode = (value: unknown) =>
+				btoa(JSON.stringify(value)).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+			const malformed = [
+				`${encode({ alg: "none", typ: JwtTyp.TrustMark })}.${payload}.`,
+				`${encode({ alg: "none", typ: JwtTyp.TrustMark })}.${payload}.${signature}`,
+				`${encode({ typ: JwtTyp.TrustMark })}.${payload}.${signature}`,
+				`${encode({ alg: "", typ: JwtTyp.TrustMark })}.${payload}.${signature}`,
+				`${encode({ alg: 42, typ: JwtTyp.TrustMark })}.${payload}.${signature}`,
+				`${header}.${payload}.`,
+				`${header}.${payload}.%%%`,
+				`${header}.${payload}.A`,
+				`${header}.${payload}.${signature}=`,
+				`${header}.${payload}.${signature}\n`,
+				`${header}.${payload}.${signature}.extra`,
+				`${header}=.${payload}.${signature}`,
+				`${header}.${payload}=.${signature}`,
+			];
+			for (const mark of malformed) {
+				const jwt = await f.leaf([{ trust_mark_type: type, trust_mark: mark }]);
+				for (const anchor of [f.anchor, f.fed.taEcJwt]) {
+					const result = await validateTrustChain(
+						[jwt, f.fed.taSubStatementForLeaf, anchor],
+						f.fed.trustAnchors,
+						f.options,
+					);
+					t.false(result.valid, "syntax failure is independent of available issuer policy");
+					t.true(
+						result.errors.some(
+							(error) =>
+								error.field === "trust_marks" && error.message.includes("not a signed JWT"),
+						),
+					);
+				}
+			}
+		});
+		test("well-formed marks with failed verification remain separate from chain validity", async (t) => {
+			const f = await fixture();
+			const good = await f.mark();
+			const [header, payload] = good.split(".");
+			const wrongSignature = btoa(String.fromCharCode(...new Uint8Array(64))).replace(/=/g, "");
+			const unknownAlgorithm = btoa(
+				JSON.stringify({
+					alg: "custom-signature-algorithm",
+					typ: JwtTyp.TrustMark,
+					kid: "custom-key",
+				}),
+			)
+				.replace(/=/g, "")
+				.replace(/\+/g, "-")
+				.replace(/\//g, "_");
+			for (const mark of [
+				`${header}.${payload}.${wrongSignature}`,
+				`${unknownAlgorithm}.${payload}.${wrongSignature}`,
+				await f.mark({ exp: f.now - 1 }),
+			]) {
+				const jwt = await f.leaf([{ trust_mark_type: type, trust_mark: mark }]);
+				const result = await validateTrustChain(
+					[jwt, f.fed.taSubStatementForLeaf, f.anchor],
+					f.fed.trustAnchors,
+					f.options,
+				);
+				t.true(result.valid);
+				if (result.valid) {
+					t.deepEqual(result.chain.trustMarks, []);
+					t.equal(result.chain.trustMarkEvaluations[0]?.status, "invalid");
+					t.false(
+						CorePublic.checkTrustMarkRequirements(
+							result.chain,
+							{ requiredTypes: [type] },
+							f.options,
+						).ok,
+					);
+				}
+			}
+		});
+
+		test("reference syntax and chain signatures remain mandatory", async (t) => {
+			const f = await fixture();
+			for (const ref of [
+				{ trust_mark_type: type, trust_mark: "not-a-jwt" },
+				{ trust_mark_type: `${type}/wrong`, trust_mark: await f.mark() },
+			]) {
+				const jwt = await f.leaf([ref]);
+				t.false(
+					(
+						await validateTrustChain(
+							[jwt, f.fed.taSubStatementForLeaf, f.anchor],
+							f.fed.trustAnchors,
+							f.options,
+						)
+					).valid,
+				);
+			}
+			const jwt = await f.leaf([{ trust_mark_type: type, trust_mark: await f.mark() }]);
+			const wrong = await signEntityStatement(f.decode(jwt), new JwkSigner(f.fed.opSigningKey));
+			t.false(
+				(
+					await validateTrustChain(
+						[wrong, f.fed.taSubStatementForLeaf, f.anchor],
+						f.fed.trustAnchors,
+						f.options,
+					)
+				).valid,
+			);
+		});
+		test("requirements handle empty publications and recheck mark and chain expiry", async (t) => {
+			const f = await fixture();
+			const empty = await validateTrustChain(
+				[f.fed.leafEcJwt, f.fed.taSubStatementForLeaf, f.anchor],
+				f.fed.trustAnchors,
+				f.options,
+			);
+			t.true(empty.valid);
+			if (empty.valid) {
+				t.true(
+					CorePublic.checkTrustMarkRequirements(
+						empty.chain,
+						{ requireAllPublished: true },
+						f.options,
+					).ok,
+				);
+				t.false(
+					CorePublic.checkTrustMarkRequirements(empty.chain, { requiredTypes: [type] }, f.options)
+						.ok,
+				);
+			}
+			const jwt = await f.leaf([{ trust_mark_type: type, trust_mark: await f.mark() }]);
+			const result = await validateTrustChain(
+				[jwt, f.fed.taSubStatementForLeaf, f.anchor],
+				f.fed.trustAnchors,
+				f.options,
+			);
+			if (!result.valid) throw new Error(JSON.stringify(result.errors));
+			t.false(
+				CorePublic.checkTrustMarkRequirements(
+					result.chain,
+					{ requiredTypes: [type] },
+					{ clock: { now: () => f.now + 300 }, clockSkewSeconds: 0 },
+				).ok,
+			);
+			t.true(
+				CorePublic.checkTrustMarkRequirements(
+					result.chain,
+					{},
+					{ clock: { now: () => f.now + 300 }, clockSkewSeconds: 0 },
+				).ok,
+			);
+			t.false(
+				CorePublic.checkTrustMarkRequirements(
+					result.chain,
+					{},
+					{ clock: { now: () => result.chain.expiresAt } },
+				).ok,
+			);
+		});
+		test("requirements recheck delegation expiry and future issuance", async (t) => {
+			const f = await fixture();
+			const delegation = await signTrustMarkDelegation({
+				issuer: TA_ID,
+				subject: TA_ID,
+				trustMarkType: type,
+				signer: new JwkSigner(f.fed.taSigningKey),
+				clock: f.options.clock,
+				ttlSeconds: 100,
+			});
+			const jwt = await f.leaf([
+				{ trust_mark_type: type, trust_mark: await f.mark({ delegation }) },
+			]);
+			const root = await signEntityStatement(
+				{
+					...f.decode(f.anchor),
+					trust_mark_owners: { [type]: { sub: TA_ID, jwks: { keys: [f.fed.taPublicKey] } } },
+				},
+				new JwkSigner(f.fed.taSigningKey),
+			);
+			const result = await validateTrustChain(
+				[jwt, f.fed.taSubStatementForLeaf, root],
+				f.fed.trustAnchors,
+				f.options,
+			);
+			t.true(result.valid);
+			if (!result.valid) return;
+			t.equal(result.chain.trustMarkEvaluations[0]?.status, "verified");
+			t.true(
+				CorePublic.checkTrustMarkRequirements(result.chain, { requiredTypes: [type] }, f.options)
+					.ok,
+			);
+			for (const now of [f.now + 100, f.now - 1]) {
+				t.false(
+					CorePublic.checkTrustMarkRequirements(
+						result.chain,
+						{ requiredTypes: [type] },
+						{ clock: { now: () => now }, clockSkewSeconds: 0 },
+					).ok,
+				);
+			}
+		});
+
+		test("prepared validation reevaluates marks at completion time", async (t) => {
+			const f = await fixture();
+			const jwt = await f.leaf([{ trust_mark_type: type, trust_mark: await f.mark() }]);
+			let now = f.now;
+			const prepared = await CorePublic.prepareTrustChainValidation(
+				[jwt, f.fed.taSubStatementForLeaf, f.anchor],
+				f.fed.trustAnchors,
+				{ ...f.options, clock: { now: () => now }, deferredClaims: [] },
+			);
+			t.true(prepared.ok);
+			if (!prepared.ok) return;
+			now += 301;
+			const completed = await CorePublic.completeTrustChainValidation(prepared.value);
+			t.true(completed.ok);
+			if (completed.ok) {
+				t.deepEqual(completed.value.trustMarks, []);
+				t.equal(completed.value.trustMarkEvaluations[0]?.status, "invalid");
+			}
+		});
+		test("explicit registration binds the signed request while reporting an invalid mark", async (t) => {
+			const f = await fixture();
+			const request = await f.leaf(
+				[{ trust_mark_type: type, trust_mark: await f.mark({ exp: f.now - 1 }) }],
+				{ aud: OP_ID },
+			);
+			const result = await validateTrustChain(
+				[request, f.fed.taSubStatementForLeaf, f.anchor],
+				f.fed.trustAnchors,
+				{ ...f.options, explicitRegistrationRequest: { jwt: request, audience: OP_ID } },
+			);
+			t.true(result.valid, JSON.stringify(result.errors));
+			if (result.valid) t.equal(result.chain.trustMarkEvaluations[0]?.status, "invalid");
+			const forged = await signEntityStatement(
+				f.decode(request),
+				new JwkSigner(f.fed.opSigningKey),
+			);
+			t.false(
+				(
+					await validateTrustChain(
+						[forged, f.fed.taSubStatementForLeaf, f.anchor],
+						f.fed.trustAnchors,
+						{ ...f.options, explicitRegistrationRequest: { jwt: forged, audience: OP_ID } },
+					)
+				).valid,
+			);
 		});
 	});
 };

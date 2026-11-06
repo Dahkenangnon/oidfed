@@ -125,6 +125,8 @@ export interface ValidatedTrustChain {
 	readonly expiresAt: number;
 	readonly resolvedMetadata: Readonly<Record<string, Record<string, unknown>>>;
 	readonly trustMarks: ReadonlyArray<ValidatedTrustMark>;
+	/** Evaluation of each published subject mark, in reference order. */
+	readonly trustMarkEvaluations: ReadonlyArray<TrustMarkEvaluation>;
 }
 
 export type ValidationResult =
@@ -146,6 +148,21 @@ export interface ValidationError {
 	readonly field?: string;
 	readonly checkNumber?: number;
 }
+
+/** Evaluation of a Trust Mark, independent of the enclosing chain's validity. */
+export type TrustMarkEvaluation = Readonly<{
+	referenceIndex: number;
+	trustMarkType: string;
+}> &
+	(
+		| Readonly<{ status: "verified"; mark: ValidatedTrustMark }>
+		| Readonly<{ status: "invalid"; error: FederationError }>
+		| Readonly<{
+				status: "unevaluated";
+				reason: "not_evaluated" | "issuer_policy_unavailable" | "issuer_keys_unavailable";
+				description: string;
+		  }>
+	);
 
 export interface ValidatedTrustMark {
 	readonly trustMarkType: string;

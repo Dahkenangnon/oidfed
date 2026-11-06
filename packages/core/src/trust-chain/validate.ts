@@ -23,7 +23,7 @@ import {
 	validateCriticalClaims,
 	validateEntityStatementTimeClaims,
 } from "../statement-validation.js";
-import { validateTrustMark } from "../trust-marks/index.js";
+import { evaluatePublishedTrustMarks } from "../trust-marks/evaluate.js";
 import {
 	type ChainSelectionStrategy,
 	type Clock,
@@ -33,7 +33,6 @@ import {
 	type ParsedEntityStatement,
 	type TrustAnchorSet,
 	type ValidatedTrustChain,
-	type ValidatedTrustMark,
 	type ValidationError,
 	type ValidationResult,
 } from "../types.js";
@@ -302,8 +301,22 @@ export function validateTrustMarkReferenceSyntax(
 			continue;
 		}
 
+		// Sections 3.1.2 and 3.2 require signed-JWT syntax independently of Trust Mark evaluation.
+		const segments = trustMarkJwt.split(".");
+		const hasSignedCompactForm =
+			segments.length === 3 &&
+			segments.every(
+				(segment) =>
+					segment.length > 0 && segment.length % 4 !== 1 && !/[^A-Za-z0-9_-]/.test(segment),
+			);
 		const decoded = decodeEntityStatement(trustMarkJwt);
-		if (!decoded.ok) {
+		if (
+			!hasSignedCompactForm ||
+			!decoded.ok ||
+			typeof decoded.value.header.alg !== "string" ||
+			decoded.value.header.alg.length === 0 ||
+			decoded.value.header.alg === "none"
+		) {
 			addError(
 				errors,
 				InternalErrorCode.TrustChainInvalid,
@@ -394,7 +407,7 @@ interface TrustChainValidationOptions extends FederationOptions {
 	trustMarkIssuerKeys?: ReadonlyMap<string, JWKSet>;
 }
 
-/** Validate a chain and its published Trust Marks, retaining the public validation contract. */
+/** Validate a chain and report its published Trust Marks independently (Federation §§3.2, 7.3). */
 export async function validateTrustChain(
 	chain: ReadonlyArray<string>,
 	trustAnchors: TrustAnchorSet,
@@ -629,7 +642,7 @@ export async function validateEntityConfigurationPublication(
 }
 
 // Authentication is private: a path becomes a ValidatedTrustChain only after
-// its subject's metadata, constraints, and Trust Marks have been processed.
+// its subject's metadata and constraints have been processed.
 type AuthenticatedStatements =
 	| { valid: true; statements: ParsedEntityStatement[] }
 	| { valid: false; errors: readonly ValidationError[] };
@@ -1123,7 +1136,6 @@ async function validateTrustChainImpl(
 	const lastPayload = (parsed[lastIdx] as ParsedEntityStatement).payload;
 	const lastIss = lastPayload.iss as string;
 	const hasTrailingTrustAnchorEc = lastPayload.iss === lastPayload.sub;
-	const taConfig = trustAnchors.get(lastIss as EntityId);
 
 	const subordinateStatements = hasTrailingTrustAnchorEc ? parsed.slice(1, -1) : parsed.slice(1);
 
@@ -1232,98 +1244,14 @@ async function validateTrustChainImpl(
 		}
 	}
 
-	const trustMarks: ValidatedTrustMark[] = [];
-	const leafTrustMarks = leafPayload.trust_marks as
-		| Array<{ trust_mark_type: string; trust_mark: string }>
-		| undefined;
-
-	if (verifyMarks && leafTrustMarks && leafTrustMarks.length > 0) {
-		let trustMarkIssuers: Record<string, string[]> = {};
-		let trustMarkOwners: Record<string, unknown> | undefined;
-		const entityJwks: Record<string, JWKSet> = {};
-		const taStatement = parsed[lastIdx] as ParsedEntityStatement;
-		const taPayloadRec = taStatement.payload as Record<string, unknown>;
-		if (taConfig) {
-			entityJwks[lastIss] = taConfig.jwks;
-		}
-		if (taPayloadRec.iss === taPayloadRec.sub) {
-			const issuers = taPayloadRec.trust_mark_issuers as Record<string, string[]> | undefined;
-			if (issuers) {
-				trustMarkIssuers = Object.fromEntries(Object.entries(issuers));
-			}
-			const owners = taPayloadRec.trust_mark_owners as Record<string, unknown> | undefined;
-			if (owners) {
-				trustMarkOwners = owners;
-			}
-		}
-		for (const stmt of parsed) {
-			if (stmt.payload.iss === stmt.payload.sub && stmt.payload.jwks) {
-				entityJwks[stmt.payload.iss as string] = stmt.payload.jwks;
-			}
-		}
-
-		for (const tmRef of leafTrustMarks) {
-			const tmDecoded = decodeEntityStatement(tmRef.trust_mark);
-			if (!tmDecoded.ok) {
-				addError(
-					errors,
-					InternalErrorCode.TrustMarkInvalid,
-					`Failed to decode published trust mark: ${tmDecoded.error.description}`,
-					{ statementIndex: 0, field: "trust_marks", checkNumber: 16 },
-				);
-				continue;
-			}
-
-			const tmPayload = tmDecoded.value.payload as Record<string, unknown>;
-
-			if (tmRef.trust_mark_type !== tmPayload.trust_mark_type) {
-				addError(
-					errors,
-					InternalErrorCode.TrustMarkInvalid,
-					`Published trust mark type does not match embedded trust mark type`,
-					{ statementIndex: 0, field: "trust_marks", checkNumber: 16 },
-				);
-				continue;
-			}
-
-			const tmIss = tmPayload.iss as string | undefined;
-			const jwksForIssuer = tmIss
-				? (options?.trustMarkIssuerKeys?.get(tmIss) ?? entityJwks[tmIss])
-				: undefined;
-			if (!jwksForIssuer) {
-				addError(
-					errors,
-					InternalErrorCode.TrustMarkInvalid,
-					`No trusted federation keys found for published trust mark issuer '${String(tmIss)}'`,
-					{ statementIndex: 0, field: "trust_marks", checkNumber: 16 },
-				);
-				continue;
-			}
-
-			const tmResult = await validateTrustMark(tmRef.trust_mark, trustMarkIssuers, jwksForIssuer, {
-				...options,
-				expectedSubject: leafPayload.iss as string,
-				...(trustMarkOwners
-					? {
-							trustMarkOwners: trustMarkOwners as Record<
-								string,
-								import("../schemas/trust-mark.js").TrustMarkOwner
-							>,
-						}
-					: {}),
-			});
-			if (tmResult.ok) {
-				trustMarks.push(tmResult.value);
-			} else {
-				addError(
-					errors,
-					InternalErrorCode.TrustMarkInvalid,
-					`Invalid published trust mark: ${tmResult.error.description}`,
-					{ statementIndex: 0, field: "trust_marks", checkNumber: 16 },
-				);
-			}
-		}
-	}
+	// Federation §§3.2 and 7.3 distinguish reference syntax from trust in a mark.
+	const trustMarkEvaluations =
+		errors.length === 0
+			? await evaluatePublishedTrustMarks(parsed, trustAnchors, options, verifyMarks)
+			: [];
+	const trustMarks = trustMarkEvaluations.flatMap((result) =>
+		result.status === "verified" ? [result.mark] : [],
+	);
 
 	const expiresAt = calculateChainExpiration(parsed);
 
@@ -1352,6 +1280,7 @@ async function validateTrustChainImpl(
 		expiresAt,
 		resolvedMetadata,
 		trustMarks,
+		trustMarkEvaluations,
 	};
 
 	return { valid: true, chain: validatedChain, errors };

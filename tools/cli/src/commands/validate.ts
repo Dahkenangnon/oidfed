@@ -1,6 +1,5 @@
 import {
 	chainRemainingTtl,
-	decodeEntityStatement,
 	describeTrustChain,
 	err,
 	FederationErrorCode,
@@ -8,16 +7,14 @@ import {
 	type HttpClient,
 	isChainExpired,
 	isValidEntityId,
-	type JWKSet,
 	ok,
 	type Result,
 	validateTrustChain,
-	validateTrustMark,
 } from "@oidfed/core";
 import type { Command } from "commander";
 import type { Config } from "../config.js";
 import type { OutputFormatter } from "../output/index.js";
-import { extractJwks, parseEntityIdOrError } from "../util/entity-id.js";
+import { parseEntityIdOrError } from "../util/entity-id.js";
 import type { Logger } from "../util/logger.js";
 import { buildTrustAnchors, requireAnchorIds, resolveOrError } from "../util/trust-anchors.js";
 
@@ -64,42 +61,6 @@ async function handleEntityIdMode(
 	}
 	const validationResult = await validateTrustChain([...chain.statements], anchors);
 
-	// Decode the leaf EC to extract trust_marks
-	const leafStatement = chain.statements[0];
-	if (!leafStatement) {
-		return err(federationError(FederationErrorCode.InvalidTrustChain, "Empty chain"));
-	}
-	const leafEc = decodeEntityStatement(leafStatement);
-	const trustMarkResults: { id: string; valid: boolean; error?: string | undefined }[] = [];
-
-	if (leafEc.ok) {
-		const payload = leafEc.value.payload as Record<string, unknown>;
-		const trustMarks = payload.trust_marks as { id: string; trust_mark: string }[] | undefined;
-
-		if (trustMarks && Array.isArray(trustMarks)) {
-			// Extract trust_mark_issuers from TA EC for validation
-			const taStatement = chain.statements[chain.statements.length - 1];
-			const taEc = taStatement ? decodeEntityStatement(taStatement) : undefined;
-			if (taEc?.ok) {
-				const taPayload = taEc.value.payload as Record<string, unknown>;
-				const taJwksResult = extractJwks(taPayload);
-				const taJwks: JWKSet = taJwksResult.ok ? taJwksResult.value : { keys: [] };
-				const trustMarkIssuers = ((taPayload.trust_mark_issuers as
-					| Record<string, string[]>
-					| undefined) ?? {}) as Record<string, string[]>;
-
-				for (const tm of trustMarks) {
-					const tmResult = await validateTrustMark(tm.trust_mark, trustMarkIssuers, taJwks);
-					trustMarkResults.push({
-						id: tm.id,
-						valid: tmResult.ok,
-						...(tmResult.ok ? {} : { error: tmResult.error.description }),
-					});
-				}
-			}
-		}
-	}
-
 	const chainValid = validationResult.valid;
 	const output: Record<string, unknown> = {
 		valid: chainValid,
@@ -119,11 +80,9 @@ async function handleEntityIdMode(
 		}));
 	}
 
-	if (trustMarkResults.length > 0) {
-		output.trust_marks = trustMarkResults;
+	if (validationResult.valid) {
+		output.trust_marks = validationResult.chain.trustMarkEvaluations;
 	}
-
-	output.pass = chainValid && trustMarkResults.every((tm) => tm.valid);
 
 	return ok(deps.formatter.format(output));
 }
@@ -157,7 +116,7 @@ export async function handler(args: ValidateArgs, deps: ValidateDeps): Promise<R
 				entity_id: validationResult.chain.entityId,
 				trust_anchor_id: validationResult.chain.trustAnchorId,
 				statements: validationResult.chain.statements.length,
-				warnings: validationResult.errors.map((e) => e.message),
+				trust_marks: validationResult.chain.trustMarkEvaluations,
 			}),
 		);
 	}

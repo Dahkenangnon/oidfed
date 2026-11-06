@@ -138,6 +138,10 @@ Production key providers must preserve lifecycle state across restarts and coord
 
 `revokeKey(kid, reason)` applies the provider's local revocation policy. It excludes the key from current publication and signer selection and retains historical revocation information under [§8.7.2](https://openid.net/specs/openid-federation-1_0.html#section-8.7.2). It does not invalidate statements already held by other participants. [§11.4](https://openid.net/specs/openid-federation-1_0.html#section-11.4) leaves the federation-wide revocation process to the trust framework.
 
+### Resolving Trust Marks
+
+Resolve validates the chain and evaluates published marks separately. An expired or unverifiable mark is excluded from the response. The resolver checks active status before including a verified mark, as required by [Federation §8.3](https://openid.net/specs/openid-federation-1_0.html#section-8.3), and caps response expiry to the chain and included marks. Applications enforce required accreditations using the [core requirement helper](core.md#trust-marks).
+
 ### Issuing and revoking Trust Marks
 
 Authorities with `storage.trustMarks` can issue and track Trust Marks. Trust Anchors declare authorized issuers and owners for the trust-mark types recognized by their federation.

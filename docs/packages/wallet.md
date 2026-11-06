@@ -6,6 +6,8 @@ The package validates federation evidence and applies the wallet profile's metad
 
 See [wallet federation responsibilities](../guide/operator-responsibilities.md#wallet-federation-draft-05) for verification callbacks, protocol keys, replay storage, provider revalidation, and offline evidence lifetimes.
 
+Wallet trust results expose the chain's verified marks and individual mark outcomes. Apply application accreditation requirements with [`checkTrustMarkRequirements()`](core.md#trust-marks) before using an entity for an operation that requires those marks. Federation chain validation alone establishes no required accreditation.
+
 ## Compose roles into a host
 
 ```ts

@@ -233,7 +233,6 @@ export {
 	shortestChain,
 	validateTrustChain,
 } from "./trust-chain/validate.js";
-// Trust Marks
 export {
 	type FetchTrustMarkParams,
 	type FetchTrustMarkStatusOptions,
@@ -245,6 +244,11 @@ export {
 	validateTrustMark,
 	validateTrustMarkLogo,
 } from "./trust-marks/index.js";
+// Trust Marks
+export {
+	checkTrustMarkRequirements,
+	type TrustMarkRequirements,
+} from "./trust-marks/requirements.js";
 // Types
 export {
 	type CacheProvider,
@@ -269,6 +273,7 @@ export {
 	type TrustAnchorSet,
 	type TrustChain,
 	type TrustChainResult,
+	type TrustMarkEvaluation,
 	type UnverifiedEntityStatement,
 	type ValidatedTrustChain,
 	type ValidatedTrustMark,

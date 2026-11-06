@@ -1,4 +1,11 @@
-import { generateSigningKey, type HttpClient, JwkSigner, signEntityStatement } from "@oidfed/core";
+import {
+	generateSigningKey,
+	type HttpClient,
+	JwkSigner,
+	JwtTyp,
+	MediaType,
+	signEntityStatement,
+} from "@oidfed/core";
 import { describe, expect, it } from "vitest";
 import { handler } from "../../src/commands/validate.js";
 import { DEFAULT_CONFIG } from "../../src/config.js";
@@ -107,5 +114,41 @@ describe("validate handler", () => {
 		);
 		// Resolution will fail because leaf is unreachable
 		expect(result.ok).toBe(false);
+	});
+	it("reports chain validity and mark outcomes in both input modes", async () => {
+		const key = await generateSigningKey("ES256");
+		const now = Math.floor(Date.now() / 1000);
+		const id = "https://ta.example.com";
+		const type = "https://marks.example/accredited";
+		const mark = await signEntityStatement(
+			{ iss: id, sub: id, iat: now - 600, exp: now - 300, trust_mark_type: type },
+			new JwkSigner(key.privateKey),
+			{ typ: JwtTyp.TrustMark },
+		);
+		const jwt = await signEntityStatement(
+			{
+				iss: id,
+				sub: id,
+				iat: now,
+				exp: now + 3600,
+				jwks: { keys: [key.publicKey] },
+				trust_mark_issuers: { [type]: [id] },
+				trust_marks: [{ trust_mark_type: type, trust_mark: mark }],
+			},
+			new JwkSigner(key.privateKey),
+		);
+		const httpClient: HttpClient = async () =>
+			new Response(jwt, { headers: { "content-type": MediaType.EntityStatement } });
+		for (const input of [id, jwt]) {
+			const result = await handler({ jwts: [input], trustAnchors: [id] }, { ...deps, httpClient });
+			expect(result.ok).toBe(true);
+			if (!result.ok) continue;
+			const output = JSON.parse(result.value);
+			expect(output.valid).toBe(true);
+			expect(output.pass).toBeUndefined();
+			expect(output.trust_marks).toEqual([
+				expect.objectContaining({ referenceIndex: 0, trustMarkType: type, status: "invalid" }),
+			]);
+		}
 	});
 });
