@@ -18,7 +18,7 @@ import {
 	SubordinateStatementSchema,
 } from "../schemas/entity-statement.js";
 import type { JWK, JWKSet } from "../schemas/jwk.js";
-import type { FederationMetadata } from "../schemas/metadata.js";
+import { type FederationMetadata, FederationMetadataValuesSchema } from "../schemas/metadata.js";
 import {
 	validateCriticalClaims,
 	validateEntityStatementTimeClaims,
@@ -1293,6 +1293,23 @@ async function validateTrustChainImpl(
 				});
 			} else {
 				resolvedMetadata = applyResult.value as Record<string, Record<string, unknown>>;
+			}
+		}
+	}
+
+	// Federation §§5.1.1 and 6.1.4.2 apply to the final metadata, including
+	// chains resolved through superior overrides without a metadata policy.
+	if (errors.length === 0) {
+		const checkedMetadata = FederationMetadataValuesSchema.safeParse(resolvedMetadata);
+		if (!checkedMetadata.success) {
+			for (const issue of checkedMetadata.error.issues) {
+				const field = issue.path.map(String).join(".");
+				addError(
+					errors,
+					InternalErrorCode.MetadataPolicyViolation,
+					`Invalid resolved metadata at ${field}: ${issue.message}`,
+					{ field: `metadata.${field}`, checkNumber: 24 },
+				);
 			}
 		}
 	}

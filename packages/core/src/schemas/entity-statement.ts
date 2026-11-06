@@ -3,7 +3,7 @@ import { z } from "zod";
 import { TrustChainConstraintsSchema } from "./constraints.js";
 import { EntityIdSchema } from "./entity-id.js";
 import { JWKSetSchema, MetadataJWKSetSchema } from "./jwk.js";
-import { FederationMetadataSchema } from "./metadata.js";
+import { FederationMetadataSchema, FederationMetadataValuesSchema } from "./metadata.js";
 import { TrustMarkOwnerSchema, TrustMarkRefSchema } from "./trust-mark.js";
 
 export { EntityIdSchema };
@@ -54,6 +54,7 @@ export const EntityConfigurationSchema = z
 export const SubordinateStatementSchema = z
 	.looseObject({
 		...BaseEntityStatementFields,
+		metadata: FederationMetadataValuesSchema.optional(),
 		jwks: JWKSetSchema,
 		source_endpoint: z.string().url().optional(),
 		trust_anchor: z.string().url().optional(),

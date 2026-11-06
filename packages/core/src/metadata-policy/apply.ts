@@ -1,6 +1,6 @@
 import { InternalErrorCode } from "../constants.js";
 import { err, type FederationError, ok, type Result } from "../errors.js";
-import type { FederationMetadata } from "../schemas/metadata.js";
+import { type FederationMetadata, FederationMetadataValuesSchema } from "../schemas/metadata.js";
 import type { PolicyOperatorDefinition, ResolvedMetadataPolicy } from "../types.js";
 import {
 	buildOperatorLookup,
@@ -86,6 +86,15 @@ export function applyMetadataPolicy(
 				entityMetadata[paramName] = denormalizeScope(entityMetadata[paramName] as string[]);
 			}
 		}
+	}
+
+	// Federation §6.1.4.2: check the completed result after every operator has run.
+	const validated = FederationMetadataValuesSchema.safeParse(result);
+	if (!validated.success) {
+		return err({
+			code: InternalErrorCode.MetadataPolicyViolation,
+			description: `Invalid resolved metadata: ${validated.error.issues.map((issue) => `${issue.path.map(String).join(".")}: ${issue.message}`).join("; ")}`,
+		});
 	}
 
 	return ok(result as FederationMetadata);

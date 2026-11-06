@@ -3430,6 +3430,48 @@ export default (QUnit: QUnit) => {
 			t.equal(res.headers.get("X-Content-Type-Options"), "nosniff");
 		});
 
+		test("refuses to sign invalid resolved federation metadata", async (t) => {
+			const fed = await createMockFederation({ leafMetadata: { federation_entity: {} } });
+			const decoded = decodeEntityStatement(fed.taSubStatementForLeaf);
+			if (!decoded.ok) throw new Error("Invalid fixture");
+			const jwt = await signEntityStatement(
+				{
+					...decoded.value.payload,
+					metadata_policy: {
+						federation_entity: {
+							federation_resolve_endpoint: { value: "http://leaf.example.com/resolve" },
+						},
+					},
+				},
+				new JwkSigner(fed.taSigningKey),
+				{ typ: JwtTyp.EntityStatement },
+			);
+			const { ctx } = await createTestContext({
+				trustAnchors: fed.trustAnchors,
+				options: {
+					...fed.options,
+					httpClient: async (input, init) => {
+						const url = new URL(input instanceof Request ? input.url : String(input));
+						if (
+							url.origin === TA_ID &&
+							url.pathname === "/federation_fetch" &&
+							url.searchParams.get("sub") === LEAF_ID
+						) {
+							return new Response(jwt, { headers: { "Content-Type": MediaType.EntityStatement } });
+						}
+						return fed.httpClient(input, init);
+					},
+				},
+			});
+			const response = await createResolveHandler(ctx)(
+				new Request(
+					`https://authority.example.com/federation_resolve?sub=${encodeURIComponent(LEAF_ID)}&trust_anchor=${encodeURIComponent(TA_ID)}`,
+				),
+			);
+			t.equal(response.status, 404);
+			t.equal(((await response.json()) as { error: string }).error, "not_found");
+		});
+
 		test("resolves successfully and returns signed JWT with expected payload", async (t) => {
 			const fed = await createMockFederation();
 			const { ctx } = await createTestContext({

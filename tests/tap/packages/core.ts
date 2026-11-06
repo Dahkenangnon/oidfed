@@ -3560,6 +3560,325 @@ export default (QUnit: QUnit) => {
 			});
 		});
 
+		module("core / federation metadata validation", () => {
+			const invalidFields: Record<string, unknown>[] = [
+				{ endpoint_auth_signing_alg_values_supported: ["none"] },
+				{ federation_resolve_endpoint: "http://leaf.example.com/resolve" },
+				{ federation_resolve_endpoint: "https://leaf.example.com/resolve#fragment" },
+				{ federation_resolve_endpoint: "https://leaf.example.com/resolve#" },
+				{ federation_resolve_endpoint: 42 },
+				{ endpoint_auth_signing_alg_values_supported: "ES256" },
+			];
+
+			test("rejects invalid subordinate federation metadata at public entry points", async (t) => {
+				const fed = await createMockFederation();
+				const decoded = decodeEntityStatement(fed.taSubStatementForLeaf);
+				if (!decoded.ok) throw new Error("Invalid fixture");
+				for (const fields of invalidFields) {
+					const payload = { ...decoded.value.payload, metadata: { federation_entity: fields } };
+					const label = JSON.stringify(fields);
+					t.false(SubordinateStatementSchema.safeParse(payload).success, label);
+					t.false(
+						CorePublic.validateEntityStatementClaims(payload, { kind: "subordinate-statement" }).ok,
+						label,
+					);
+					const jwt = await signEntityStatement(payload, new JwkSigner(fed.taSigningKey), {
+						typ: JwtTyp.EntityStatement,
+					});
+					t.false(decodeSubordinateStatement(jwt).ok, label);
+					t.throws(
+						() =>
+							CorePublic.buildSubordinateStatementPayload({
+								issuer: TA_ID,
+								subject: LEAF_ID,
+								jwks: { keys: [fed.leafPublicKey] },
+								metadata: payload.metadata,
+							}),
+						/metadata\.federation_entity/,
+						label,
+					);
+				}
+			});
+
+			test("rejects invalid final federation metadata from policy operators", (t) => {
+				for (const fields of invalidFields) {
+					for (const operator of ["value", "default"]) {
+						const policy = Object.fromEntries(
+							Object.entries(fields).map(([key, value]) => [key, { [operator]: value }]),
+						);
+						const result = applyMetadataPolicy(
+							{ federation_entity: {} },
+							{ federation_entity: policy },
+						);
+						t.false(result.ok, JSON.stringify({ fields, operator }));
+						if (!result.ok) {
+							t.equal(result.error.code, InternalErrorCode.MetadataPolicyViolation);
+							t.true(
+								result.error.description.includes(`federation_entity.${Object.keys(fields)[0]}`),
+							);
+						}
+					}
+				}
+				const custom: PolicyOperatorDefinition = {
+					name: "replace_endpoint",
+					order: 2,
+					action: "modify",
+					apply: () => ({ ok: true, value: "http://leaf.example.com/resolve" }),
+					merge: (a) => ({ ok: true, value: a }),
+					canCombineWith: () => true,
+				};
+				t.false(
+					applyMetadataPolicy(
+						{ federation_entity: {} },
+						{
+							federation_entity: { federation_resolve_endpoint: { replace_endpoint: true } },
+						},
+						undefined,
+						{ customOperators: [custom] },
+					).ok,
+				);
+			});
+
+			test("preserves empty results, extensions and valid final transformations", (t) => {
+				const samples = [
+					{},
+					{ federation_entity: {} },
+					{
+						federation_entity: {
+							federation_resolve_endpoint: "https://leaf.example.com:8443/resolve?tenant=a",
+							extension: { enabled: true },
+						},
+						custom_entity: { value: 7 },
+					},
+				];
+				for (const metadata of samples) {
+					const result = applyMetadataPolicy(metadata, {});
+					t.true(result.ok);
+					if (result.ok) t.deepEqual(result.value, metadata);
+				}
+				const repair: PolicyOperatorDefinition = {
+					name: "secure_endpoint",
+					order: 2,
+					action: "modify",
+					apply: () => ({ ok: true, value: "https://leaf.example.com/resolve" }),
+					merge: (a) => ({ ok: true, value: a }),
+					canCombineWith: () => true,
+				};
+				const result = applyMetadataPolicy(
+					{ federation_entity: {} },
+					{
+						federation_entity: {
+							federation_resolve_endpoint: {
+								value: "http://leaf.example.com/resolve",
+								secure_endpoint: true,
+							},
+						},
+					},
+					undefined,
+					{ customOperators: [repair] },
+				);
+				t.true(result.ok, "validate after all operators finish");
+			});
+
+			test("checks higher statements even when a policy could repair their metadata", async (t) => {
+				const fed = await createMockFederation({ leafMetadata: { federation_entity: {} } });
+				const leaf = decodeEntityStatement(fed.leafEcJwt);
+				const subordinate = decodeEntityStatement(fed.taSubStatementForLeaf);
+				const higher = decodeEntityStatement(fed.taSubStatementForOp);
+				if (!leaf.ok || !subordinate.ok || !higher.ok) throw new Error("Invalid fixture");
+				const leafJwt = await signEntityStatement(
+					{ ...leaf.value.payload, authority_hints: [OP_ID] },
+					new JwkSigner(fed.leafSigningKey),
+					{ typ: JwtTyp.EntityStatement },
+				);
+				const innerJwt = await signEntityStatement(
+					{ ...subordinate.value.payload, iss: OP_ID },
+					new JwkSigner(fed.opSigningKey),
+					{ typ: JwtTyp.EntityStatement },
+				);
+				const outerJwt = await signEntityStatement(
+					{
+						...higher.value.payload,
+						metadata: {
+							federation_entity: { endpoint_auth_signing_alg_values_supported: ["none"] },
+						},
+						metadata_policy: {
+							federation_entity: {
+								endpoint_auth_signing_alg_values_supported: { value: ["ES256"] },
+							},
+						},
+					},
+					new JwkSigner(fed.taSigningKey),
+					{ typ: JwtTyp.EntityStatement },
+				);
+				const result = await validateTrustChain(
+					[leafJwt, innerJwt, outerJwt, fed.taEcJwt],
+					fed.trustAnchors,
+					{ verboseErrors: true },
+				);
+				t.false(result.valid);
+				t.true(
+					result.errors.some(
+						(e) =>
+							e.statementIndex === 2 &&
+							e.message.includes(
+								"metadata.federation_entity.endpoint_auth_signing_alg_values_supported",
+							),
+					),
+				);
+			});
+
+			test("checks contextual and custom-operator federation metadata", async (t) => {
+				const fed = await createMockFederation({ leafMetadata: { federation_entity: {} } });
+				const decoded = decodeEntityStatement(fed.taSubStatementForLeaf);
+				if (!decoded.ok) throw new Error("Invalid fixture");
+				const custom: PolicyOperatorDefinition = {
+					name: "replace_endpoint",
+					order: 2,
+					action: "modify",
+					apply: () => ({ ok: true, value: "http://leaf.example.com/resolve" }),
+					merge: (a) => ({ ok: true, value: a }),
+					canCombineWith: () => true,
+				};
+				const customJwt = await signEntityStatement(
+					{
+						...decoded.value.payload,
+						metadata_policy: {
+							federation_entity: { federation_resolve_endpoint: { replace_endpoint: true } },
+						},
+					},
+					new JwkSigner(fed.taSigningKey),
+					{ typ: JwtTyp.EntityStatement },
+				);
+				t.false(
+					(
+						await validateTrustChain([fed.leafEcJwt, customJwt, fed.taEcJwt], fed.trustAnchors, {
+							customPolicyOperators: [custom],
+						})
+					).valid,
+				);
+				const jwt = await signEntityStatement(
+					{
+						...decoded.value.payload,
+						metadata_policy: {
+							federation_entity: { federation_resolve_endpoint: { essential: true } },
+						},
+					},
+					new JwkSigner(fed.taSigningKey),
+					{ typ: JwtTyp.EntityStatement },
+				);
+				const prepared = await CorePublic.prepareTrustChainValidation(
+					[fed.leafEcJwt, jwt, fed.taEcJwt],
+					fed.trustAnchors,
+					{
+						deferredClaims: [
+							{ entityType: "federation_entity", parameter: "federation_resolve_endpoint" },
+						],
+					},
+				);
+				t.true(prepared.ok);
+				if (!prepared.ok) return;
+				t.false(
+					(
+						await CorePublic.completeTrustChainValidation(prepared.value, {
+							federation_entity: { federation_resolve_endpoint: "http://leaf.example.com/resolve" },
+						})
+					).ok,
+				);
+				t.true(
+					(
+						await CorePublic.completeTrustChainValidation(prepared.value, {
+							federation_entity: {
+								federation_resolve_endpoint: "https://leaf.example.com/resolve",
+							},
+						})
+					).ok,
+				);
+			});
+
+			test("retains valid overrides and empty resolved metadata", async (t) => {
+				const fed = await createMockFederation({
+					leafMetadata: { federation_entity: {}, custom_entity: {} },
+				});
+				const leaf = decodeEntityStatement(fed.leafEcJwt);
+				const decoded = decodeEntityStatement(fed.taSubStatementForLeaf);
+				if (!leaf.ok || !decoded.ok) throw new Error("Invalid fixture");
+				const metadata = {
+					federation_entity: { organization_name: "Research Federation", extension: true },
+					custom_entity: { answer: 42 },
+				};
+				const jwt = await signEntityStatement(
+					{ ...decoded.value.payload, metadata },
+					new JwkSigner(fed.taSigningKey),
+					{ typ: JwtTyp.EntityStatement },
+				);
+				const result = await validateTrustChain(
+					[fed.leafEcJwt, jwt, fed.taEcJwt],
+					fed.trustAnchors,
+				);
+				t.true(result.valid);
+				if (result.valid) t.deepEqual(result.chain.resolvedMetadata, metadata);
+				for (const leafMetadata of [undefined, { custom_entity: {} }]) {
+					const leafJwt = await signEntityStatement(
+						{ ...leaf.value.payload, metadata: leafMetadata },
+						new JwkSigner(fed.leafSigningKey),
+						{ typ: JwtTyp.EntityStatement },
+					);
+					const ssJwt = await signEntityStatement(
+						{ ...decoded.value.payload, metadata: {}, constraints: { allowed_entity_types: [] } },
+						new JwkSigner(fed.taSigningKey),
+						{ typ: JwtTyp.EntityStatement },
+					);
+					const checked = await validateTrustChain([leafJwt, ssJwt, fed.taEcJwt], fed.trustAnchors);
+					t.true(checked.valid);
+					if (checked.valid) t.deepEqual(checked.chain.resolvedMetadata, {});
+				}
+			});
+
+			test("rejects invalid federation metadata in signed overrides and resolved policies", async (t) => {
+				const fed = await createMockFederation({ leafMetadata: { federation_entity: {} } });
+				const decoded = decodeEntityStatement(fed.taSubStatementForLeaf);
+				if (!decoded.ok) throw new Error("Invalid fixture");
+				for (const fields of invalidFields) {
+					for (const mode of ["override", "value", "default"]) {
+						const policy = Object.fromEntries(
+							Object.entries(fields).map(([key, value]) => [key, { [mode]: value }]),
+						);
+						const payload = {
+							...decoded.value.payload,
+							...(mode === "override"
+								? { metadata: { federation_entity: fields } }
+								: { metadata_policy: { federation_entity: policy } }),
+						};
+						const jwt = await signEntityStatement(payload, new JwkSigner(fed.taSigningKey), {
+							typ: JwtTyp.EntityStatement,
+						});
+						const chain = [fed.leafEcJwt, jwt, fed.taEcJwt];
+						const result = await validateTrustChain(chain, fed.trustAnchors, {
+							verboseErrors: true,
+						});
+						t.false(result.valid, JSON.stringify({ fields, mode }));
+						t.true(
+							result.errors.some(
+								(e) =>
+									e.code ===
+									(mode === "override"
+										? InternalErrorCode.TrustChainInvalid
+										: InternalErrorCode.MetadataPolicyViolation),
+							),
+						);
+						const generic = await validateTrustChain(chain, fed.trustAnchors);
+						t.deepEqual(generic.errors, [
+							{
+								code: InternalErrorCode.TrustChainInvalid,
+								message: "Trust chain validation failed",
+							},
+						]);
+					}
+				}
+			});
+		});
+
 		module("core / schemas/entity-statement / SubordinateStatementSchema", () => {
 			const validSS = {
 				iss: "https://authority.example.com",

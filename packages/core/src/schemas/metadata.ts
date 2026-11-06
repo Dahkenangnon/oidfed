@@ -69,7 +69,8 @@ export const OpenIDRelyingPartyMetadataSchema = z.record(z.string(), z.unknown()
  */
 export const OpenIDProviderMetadataSchema = z.record(z.string(), z.unknown());
 
-export const FederationMetadataSchema = z
+/** Internal schema for supplied and resolved metadata, including empty results. */
+export const FederationMetadataValuesSchema = z
 	.looseObject({
 		federation_entity: FederationEntityMetadataSchema.optional(),
 		openid_relying_party: OpenIDRelyingPartyMetadataSchema.optional(),
@@ -83,12 +84,6 @@ export const FederationMetadataSchema = z
 	})
 	.superRefine((metadata, ctx) => {
 		const entries = Object.entries(metadata);
-		if (entries.length === 0) {
-			ctx.addIssue({
-				code: z.ZodIssueCode.custom,
-				message: "Metadata must contain at least one entity type",
-			});
-		}
 		for (const [entityType, value] of entries) {
 			if (!value || typeof value !== "object" || Array.isArray(value)) {
 				ctx.addIssue({
@@ -99,6 +94,17 @@ export const FederationMetadataSchema = z
 			}
 		}
 	});
+
+export const FederationMetadataSchema = FederationMetadataValuesSchema.superRefine(
+	(metadata, ctx) => {
+		if (Object.keys(metadata).length === 0) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "Metadata must contain at least one entity type",
+			});
+		}
+	},
+);
 
 export type FederationEntityMetadata = z.infer<typeof FederationEntityMetadataSchema>;
 /** Federation-layer RP metadata (loose record). For typed OIDC fields, use `@oidfed/oidc`. */
