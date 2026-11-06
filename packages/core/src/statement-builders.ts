@@ -10,6 +10,7 @@ import {
 import { err, type FederationError, federationError, ok, type Result } from "./errors.js";
 import { signEntityStatement } from "./jose/sign.js";
 import type { JwtSigner } from "./jose/signer.js";
+import { preparePublicJwkSet } from "./jwks/public-material.js";
 import { findInvalidMetadataNullPaths } from "./metadata-values.js";
 import type { TrustChainConstraints } from "./schemas/constraints.js";
 import {
@@ -101,7 +102,7 @@ export function buildEntityConfigurationPayload(
 		sub: eid,
 		iat,
 		exp,
-		jwks: options.jwks,
+		jwks: copyPublicJwkSet(options.jwks),
 		metadata: options.metadata,
 	};
 
@@ -146,7 +147,7 @@ export function buildSubordinateStatementPayload(
 		sub: subject,
 		iat,
 		exp,
-		jwks: options.jwks,
+		jwks: copyPublicJwkSet(options.jwks),
 	};
 
 	if (options.metadata !== undefined) payload.metadata = options.metadata;
@@ -222,6 +223,12 @@ function assertValidEntityStatementClaims(
 	if (!result.ok) {
 		throw new Error(result.error.description);
 	}
+}
+
+function copyPublicJwkSet(jwks: JWKSet): JWKSet {
+	const prepared = preparePublicJwkSet(jwks);
+	if (!prepared.ok) throw new Error(prepared.error.description);
+	return prepared.value;
 }
 
 function resolveStatementTime(options: StatementTimeOptions): { iat: number; exp: number } {

@@ -155,6 +155,7 @@ export {
 } from "./jose/index.js";
 // JWK Set helpers
 export { fetchJwkSet } from "./jwks/jwks-uri.js";
+export { validatePublicJwkSet } from "./jwks/public-material.js";
 export {
 	type EntityKeysSource,
 	type ResolvedEntityKeys,

@@ -2,9 +2,9 @@ import { DEFAULT_KEY_RETIRE_AFTER_MS } from "./constants.js";
 import { stripPrivateFields } from "./jose/keys.js";
 import type { JwtSigner } from "./jose/signer.js";
 import { JwkSigner, validateSigner } from "./jose/signer.js";
+import { preparePublicJwkSet } from "./jwks/public-material.js";
 import type { HistoricalKeyEntry } from "./schemas/entity-statement.js";
 import type { JWK, JWKSet } from "./schemas/jwk.js";
-import { JWKSetSchema } from "./schemas/jwk.js";
 
 export interface FederationKeySet {
 	readonly signer: JwtSigner;
@@ -54,8 +54,7 @@ export class StaticFederationKeyProvider implements FederationKeyProvider {
 	private readonly keySet: FederationKeySet;
 
 	constructor(keySet: FederationKeySet) {
-		validateFederationKeySet(keySet);
-		this.keySet = { signer: keySet.signer, jwks: structuredClone(keySet.jwks) };
+		this.keySet = prepareFederationKeySet(keySet);
 	}
 
 	async getFederationKeySet(): Promise<FederationKeySet> {
@@ -246,13 +245,19 @@ export function createFederationSigningKey(jwk: JWK): FederationSigningKey {
 }
 
 export function validateFederationKeySet(keySet: FederationKeySet): void {
+	prepareFederationKeySet(keySet);
+}
+
+function prepareFederationKeySet(keySet: FederationKeySet): FederationKeySet {
 	validateSigner(keySet.signer);
-	const parsed = JWKSetSchema.safeParse(keySet.jwks);
-	if (!parsed.success) {
-		throw new Error("Federation JWKS MUST be a public JWK Set with unique non-empty kids");
+	const prepared = preparePublicJwkSet(keySet.jwks);
+	if (!prepared.ok) {
+		throw new Error(
+			`Federation JWKS MUST be a public JWK Set with unique non-empty kids: ${prepared.error.description}`,
+		);
 	}
 	let signerKeyCount = 0;
-	for (const key of parsed.data.keys) {
+	for (const key of prepared.value.keys) {
 		if (key.kid === keySet.signer.kid) {
 			signerKeyCount++;
 			validateVerificationUsage(key);
@@ -268,14 +273,17 @@ export function validateFederationKeySet(keySet: FederationKeySet): void {
 			"Federation JWKS MUST publish exactly one public key for the active signer kid",
 		);
 	}
+	return { signer: keySet.signer, jwks: prepared.value };
 }
 
 function validateFederationPublicJwk(publicJwk: JWK, signer: JwtSigner): JWK {
-	const parsed = JWKSetSchema.safeParse({ keys: [publicJwk] });
-	if (!parsed.success) {
-		throw new Error("Federation public JWK MUST contain only asymmetric public key material");
+	const prepared = preparePublicJwkSet({ keys: [publicJwk] });
+	if (!prepared.ok) {
+		throw new Error(
+			`Federation public JWK MUST contain only asymmetric public key material: ${prepared.error.description}`,
+		);
 	}
-	const jwk = parsed.data.keys[0] as JWK;
+	const jwk = prepared.value.keys[0] as JWK;
 	validateVerificationUsage(jwk);
 	if (jwk.kid !== signer.kid) {
 		throw new Error("Federation public JWK kid MUST match signer kid");
@@ -283,7 +291,7 @@ function validateFederationPublicJwk(publicJwk: JWK, signer: JwtSigner): JWK {
 	if (jwk.alg && jwk.alg !== signer.alg) {
 		throw new Error("Federation public JWK alg MUST match signer alg");
 	}
-	return structuredClone(jwk);
+	return jwk;
 }
 
 function validateVerificationUsage(jwk: JWK): void {

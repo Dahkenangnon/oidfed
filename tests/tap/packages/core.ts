@@ -2203,6 +2203,377 @@ export default (QUnit: QUnit) => {
 		});
 	});
 
+	module("core / public JWK publication", () => {
+		const bytes = (length: number) => btoa("\x01".repeat(length)).replace(/=+$/, "");
+
+		test("rejects required parameters omitted by JSON serialization", async (t) => {
+			const pair = await generateSigningKey("ES256");
+			const signer = new JwkSigner(pair.privateKey);
+			const material = { crv: pair.publicKey.crv, x: pair.publicKey.x, y: pair.publicKey.y };
+			const inherited = Object.assign(Object.create(material), { kty: "EC", kid: signer.kid });
+			const hidden = { ...pair.publicKey };
+			Object.defineProperty(hidden, "x", { enumerable: false });
+			for (const key of [inherited, hidden]) {
+				const jwks = { keys: [key] };
+				t.false(CorePublic.validatePublicJwkSet(jwks).ok);
+				t.throws(() => CorePublic.validateFederationKeySet({ signer, jwks }), /keys\[0\]/);
+				t.throws(() => new CorePublic.StaticFederationKeyProvider({ signer, jwks }), /keys\[0\]/);
+				t.throws(
+					() => new CorePublic.MemoryFederationKeyProvider({ signer, publicJwk: key }),
+					/keys\[0\]/,
+				);
+				await t.rejects(
+					CorePublic.signEntityConfiguration({
+						entityId: "https://leaf.example",
+						metadata: { federation_entity: {} },
+						jwks,
+						signer,
+					}),
+					/keys\[0\]/,
+				);
+				await t.rejects(
+					CorePublic.signSubordinateStatement({
+						issuer: "https://anchor.example",
+						subject: "https://leaf.example",
+						jwks,
+						signer,
+					}),
+					/keys\[0\]/,
+				);
+			}
+			t.false(CorePublic.validatePublicJwkSet(Object.create({ keys: [pair.publicKey] })).ok);
+		});
+
+		test("validates the serialized key representation and controls serialization failures", async (t) => {
+			const pair = await generateSigningKey("ES256");
+			const exported = CorePublic.buildEntityConfigurationPayload({
+				entityId: "https://leaf.example",
+				metadata: { federation_entity: {} },
+				jwks: { keys: [{ ...pair.publicKey, toJSON: () => pair.publicKey }] },
+			});
+			t.deepEqual(
+				exported.jwks,
+				{ keys: [pair.publicKey] },
+				"valid custom JSON exports retain their public parameters",
+			);
+			for (const toJSON of [
+				() => ({ kty: "EC", kid: pair.publicKey.kid }),
+				() => ({ ...pair.publicKey, d: "sensitive-value" }),
+			]) {
+				const key = { ...pair.publicKey, toJSON };
+				t.false(CorePublic.validatePublicJwkSet({ keys: [key] }).ok);
+				t.throws(() =>
+					CorePublic.buildEntityConfigurationPayload({
+						entityId: "https://leaf.example",
+						metadata: { federation_entity: {} },
+						jwks: { keys: [key] },
+					}),
+				);
+			}
+			const cyclic: Record<string, unknown> = { keys: [pair.publicKey] };
+			cyclic.self = cyclic;
+			for (const value of [
+				cyclic,
+				{ keys: [pair.publicKey], extension: 1n },
+				{
+					get keys() {
+						throw new Error("sensitive-value");
+					},
+				},
+			]) {
+				const result = CorePublic.validatePublicJwkSet(value);
+				t.false(result.ok);
+				if (!result.ok) {
+					t.equal(result.error.code, FederationErrorCode.InvalidMetadata);
+					t.false(JSON.stringify(result.error).includes("sensitive-value"));
+				}
+			}
+		});
+
+		test("builders detach the validated set and preserve JSON extensions", async (t) => {
+			const pair = await generateSigningKey("ES256");
+			for (const kind of ["ec", "ss"]) {
+				let reads = 0;
+				const key = {
+					...pair.publicKey,
+					get x() {
+						reads++;
+						return reads === 1 ? pair.publicKey.x : "invalid";
+					},
+				};
+				const jwks = { keys: [key], extension: { enabled: true } };
+				const payload =
+					kind === "ec"
+						? CorePublic.buildEntityConfigurationPayload({
+								entityId: "https://leaf.example",
+								metadata: { federation_entity: {} },
+								jwks,
+							})
+						: CorePublic.buildSubordinateStatementPayload({
+								issuer: "https://anchor.example",
+								subject: "https://leaf.example",
+								jwks,
+							});
+				t.equal(reads, 1, "key accessors are read once at the publication boundary");
+				jwks.keys.length = 0;
+				jwks.extension.enabled = false;
+				const expected = { keys: [pair.publicKey], extension: { enabled: true } };
+				t.deepEqual(payload.jwks, expected);
+				t.true(CorePublic.validatePublicJwkSet(JSON.parse(JSON.stringify(payload.jwks))).ok);
+			}
+		});
+
+		test("providers retain the snapshot that passed validation", async (t) => {
+			const pair = await generateSigningKey("ES256");
+			const signer = new JwkSigner(pair.privateKey);
+			for (const kind of ["static", "memory", "publish"]) {
+				let reads = 0;
+				const key = {
+					...pair.publicKey,
+					get x() {
+						reads++;
+						return reads === 1 ? pair.publicKey.x : "invalid";
+					},
+				};
+				const provider =
+					kind === "static"
+						? new CorePublic.StaticFederationKeyProvider({ signer, jwks: { keys: [key] } })
+						: new CorePublic.MemoryFederationKeyProvider({
+								signer,
+								publicJwk: kind === "publish" ? pair.publicKey : key,
+							});
+				if (kind === "publish" && provider instanceof CorePublic.MemoryFederationKeyProvider) {
+					const nextSigner = { kid: "next", alg: signer.alg, signJwt: signer.signJwt.bind(signer) };
+					key.kid = "next";
+					await provider.publishKey({ signer: nextSigner, publicJwk: key });
+				}
+				t.equal(reads, 1, `${kind} reads the supplied key once`);
+				const set = await provider.getFederationKeySet();
+				t.true(CorePublic.validatePublicJwkSet(set.jwks).ok);
+				t.equal(set.jwks.keys.at(-1)?.x, pair.publicKey.x);
+			}
+		});
+
+		test("checks required public material and preserves its input", async (t) => {
+			for (const alg of ["ES256", "ES384", "ES512", "RS256"] as const) {
+				const { publicKey } = await generateSigningKey(alg);
+				const jwks = { keys: [publicKey] };
+				const before = structuredClone(jwks);
+				t.true(CorePublic.validatePublicJwkSet(jwks).ok, `${alg} public key`);
+				t.deepEqual(jwks, before);
+			}
+			const valid: JWK[] = [
+				{ kty: "RSA", kid: "rsa", n: "AQ", e: "AQAB" },
+				{ kty: "EC", kid: "ec", crv: "P-256", x: bytes(32), y: bytes(32) },
+				{ kty: "OKP", kid: "okp", crv: "Ed25519", x: bytes(32) },
+			];
+			for (const key of valid) {
+				const fields =
+					key.kty === "RSA" ? ["n", "e"] : key.kty === "EC" ? ["crv", "x", "y"] : ["crv", "x"];
+				for (const field of fields) {
+					for (const value of [undefined, "", 42, null]) {
+						const result = CorePublic.validatePublicJwkSet({ keys: [{ ...key, [field]: value }] });
+						t.false(result.ok, `${key.kty}.${field} rejects ${String(value)}`);
+						if (!result.ok) {
+							t.equal(result.error.code, FederationErrorCode.InvalidMetadata);
+							t.true(result.error.description.includes(`keys[0].${field}`));
+						}
+					}
+				}
+			}
+		});
+
+		test("checks base64url and minimum RSA unsigned encoding", (t) => {
+			for (const value of ["A", "AB", "AAB", "AQ==", "+w", "/w", " AQ", "AAA\n", "AQ\r", "éA"]) {
+				for (const field of ["n", "e", "x", "y"] as const) {
+					const key =
+						field === "n" || field === "e"
+							? { kty: "RSA", kid: "key", n: "AQ", e: "AQAB", [field]: value }
+							: { kty: "EC", kid: "key", crv: "extension-curve", x: "AQ", y: "AQ", [field]: value };
+					const result = CorePublic.validatePublicJwkSet({ keys: [key] });
+					t.false(result.ok, `${field} rejects malformed encoding ${JSON.stringify(value)}`);
+					if (!result.ok)
+						t.equal(
+							result.error.description,
+							`Invalid keys[0].${field}: expected nonempty base64url`,
+						);
+				}
+			}
+			for (const field of ["n", "e"]) {
+				t.false(
+					CorePublic.validatePublicJwkSet({
+						keys: [{ kty: "RSA", kid: "key", n: "AQ", e: "AQAB", [field]: "AAE" }],
+					}).ok,
+					"reject leading zero octet",
+				);
+			}
+			for (const value of ["AA", "AQ", "_w", "-w", "AQAB"]) {
+				t.true(
+					CorePublic.validatePublicJwkSet({
+						keys: [{ kty: "RSA", kid: "key", n: value, e: "AQAB" }],
+					}).ok,
+					"structural unsigned encoding; arithmetic is checked by the backend",
+				);
+			}
+		});
+
+		test("checks known curve lengths while keeping curve identifiers extensible", (t) => {
+			for (const [kty, crv, size] of [
+				["EC", "P-256", 32],
+				["EC", "P-384", 48],
+				["EC", "P-521", 66],
+				["OKP", "Ed25519", 32],
+				["OKP", "Ed448", 57],
+				["OKP", "X25519", 32],
+				["OKP", "X448", 56],
+			] as const) {
+				for (const length of [size - 1, size, size + 1]) {
+					const key = {
+						kty,
+						crv,
+						kid: "key",
+						x: bytes(length),
+						...(kty === "EC" ? { y: bytes(size) } : {}),
+					};
+					t.equal(
+						CorePublic.validatePublicJwkSet({ keys: [key] }).ok,
+						length === size,
+						`${crv}: ${length} octets`,
+					);
+					if (kty === "EC")
+						t.equal(
+							CorePublic.validatePublicJwkSet({
+								keys: [{ ...key, x: bytes(size), y: bytes(length) }],
+							}).ok,
+							length === size,
+							`${crv} y: ${length} octets`,
+						);
+				}
+			}
+			for (const kty of ["EC", "OKP"]) {
+				for (const crv of ["extension-curve", "constructor", "__proto__"]) {
+					t.true(CorePublic.validatePublicJwkSet({ keys: [{ kty, kid: "key", crv, x: "AQ" }] }).ok);
+				}
+			}
+		});
+
+		test("preserves federation structure and private-material restrictions", (t) => {
+			const key = { kty: "RSA", kid: "key", n: "AQ", e: "AQAB" };
+			for (const value of [
+				null,
+				{},
+				{ keys: [] },
+				{ keys: [key, key] },
+				{ keys: [{ ...key, kid: "" }] },
+				{ keys: [{ ...key, kid: undefined }] },
+			]) {
+				t.false(CorePublic.validatePublicJwkSet(value).ok);
+			}
+			for (const field of ["d", "p", "q", "dp", "dq", "qi", "oth", "k"]) {
+				const result = CorePublic.validatePublicJwkSet({
+					keys: [{ ...key, [field]: "sensitive-value" }],
+				});
+				t.false(result.ok);
+				if (!result.ok) t.false(JSON.stringify(result.error).includes("sensitive-value"));
+			}
+		});
+
+		test("received sets keep valid signing keys alongside unused incomplete keys", async (t) => {
+			const fed = await createMockFederation();
+			const decoded = CorePublic.decodeEntityConfiguration(fed.leafEcJwt);
+			if (!decoded.ok) throw new Error(decoded.error.description);
+			const jwks: JWKSet = {
+				keys: [...decoded.value.payload.jwks.keys, { kty: "RSA", kid: "unused" }],
+			};
+			const payload = { ...decoded.value.payload, jwks };
+			const jwt = await signEntityStatement(payload, new JwkSigner(fed.leafSigningKey));
+			t.true(JWKSetSchema.safeParse(jwks).success);
+			t.true(
+				CorePublic.validateEntityStatementClaims(payload, { kind: "entity-configuration" }).ok,
+			);
+			t.true(CorePublic.decodeEntityConfiguration(jwt).ok);
+			t.true((await CorePublic.verifyEntityStatement(jwt, jwks, fed.options)).ok);
+			const chain = await validateTrustChain(
+				[jwt, fed.taSubStatementForLeaf, fed.taEcJwt],
+				fed.trustAnchors,
+				fed.options,
+			);
+			t.true(chain.valid, "the incomplete unused key does not invalidate the chain");
+			const selected = await CorePublic.verifyEntityStatement(
+				jwt,
+				{ keys: [{ kty: "EC", kid: fed.leafSigningKey.kid }] },
+				fed.options,
+			);
+			t.false(selected.ok);
+			if (!selected.ok) t.equal(selected.error.code, InternalErrorCode.SignatureInvalid);
+		});
+
+		test("rejects incomplete keys before building or signing statements", async (t) => {
+			const key = await generateSigningKey("ES256");
+			let signCalls = 0;
+			const signer: CorePublic.JwtSigner = {
+				kid: key.publicKey.kid!,
+				alg: "ES256",
+				async signJwt() {
+					signCalls++;
+					return "unexpected";
+				},
+			};
+			const jwks: JWKSet = { keys: [{ kty: "EC", kid: signer.kid }] };
+			const ec = {
+				entityId: "https://leaf.example",
+				jwks,
+				metadata: { federation_entity: {} },
+				signer,
+			};
+			const ss = { issuer: "https://anchor.example", subject: ec.entityId, jwks, signer };
+			t.throws(() => CorePublic.buildEntityConfigurationPayload(ec), /keys\[0\]\.crv/);
+			t.throws(() => CorePublic.buildSubordinateStatementPayload(ss), /keys\[0\]\.crv/);
+			await t.rejects(CorePublic.signEntityConfiguration(ec), /keys\[0\]\.crv/);
+			await t.rejects(CorePublic.signSubordinateStatement(ss), /keys\[0\]\.crv/);
+			t.equal(signCalls, 0, "invalid material never reaches the signer");
+		});
+
+		test("rejects incomplete active and next keys without changing lifecycle state", async (t) => {
+			const key = await generateSigningKey("ES256");
+			const signer = new JwkSigner(key.privateKey);
+			const incomplete: JWK = { kty: "EC", kid: signer.kid };
+			t.throws(
+				() => new CorePublic.StaticFederationKeyProvider({ signer, jwks: { keys: [incomplete] } }),
+				/keys\[0\]\.crv/,
+			);
+			t.throws(
+				() => new CorePublic.MemoryFederationKeyProvider({ signer, publicJwk: incomplete }),
+				/keys\[0\]\.crv/,
+			);
+			t.throws(
+				() =>
+					CorePublic.validateFederationKeySet({
+						signer,
+						jwks: { keys: [key.publicKey, { kty: "RSA", kid: "next" }] },
+					}),
+				/keys\[1\]\.n/,
+				"every published key is checked, including unused keys",
+			);
+			const provider = new CorePublic.MemoryFederationKeyProvider({
+				signer,
+				publicJwk: key.publicKey,
+			});
+			const before = await provider.getFederationKeySet();
+			const next = await generateSigningKey("ES256");
+			await t.rejects(
+				provider.publishKey({
+					signer: new JwkSigner(next.privateKey),
+					publicJwk: { kty: "EC", kid: next.publicKey.kid },
+				}),
+				/keys\[0\]\.crv/,
+			);
+			t.deepEqual((await provider.getFederationKeySet()).jwks, before.jwks);
+			t.equal((await provider.getFederationKeySet()).signer.kid, before.signer.kid);
+			t.deepEqual(await provider.getHistoricalFederationKeys(), []);
+		});
+	});
+
 	// ── schemas/metadata-policy ───────────────────────────────────────
 	module("core / schemas/metadata-policy", () => {
 		test("MetadataParameterPolicySchema accepts valid policy with all operators", (t) => {

@@ -1,4 +1,4 @@
-/** Zod schemas for JSON Web Keys and JWK Sets, with algorithm-specific field validation. */
+/** Structural schemas for public JSON Web Keys and federation JWK Sets. */
 import { z } from "zod";
 
 const PRIVATE_KEY_FIELDS = ["d", "p", "q", "dp", "dq", "qi", "oth", "k"] as const;

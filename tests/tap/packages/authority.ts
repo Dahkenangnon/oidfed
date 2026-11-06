@@ -125,7 +125,11 @@ function createFederationSigningKey(signingKey: JWK) {
 	return { signer: new JwkSigner(signingKey), publicJwk: stripPrivateFields(signingKey) };
 }
 
-function testPublicJwk(kid = "subordinate-key-1", x = "abc", y = "def"): JWK {
+function testPublicJwk(
+	kid = "subordinate-key-1",
+	x = "OUdYsCLIbES6cmG2MHFuXamZ60fem7Tkk7LPO3nX9QY",
+	y = "7TjTIz97de-2yxmBudZuhUS-eP6egZSw3ZV_n4URxHQ",
+): JWK {
 	return { kty: "EC", kid, crv: "P-256", x, y };
 }
 
