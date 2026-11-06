@@ -19,6 +19,40 @@ import { walletFederation } from "../fixtures/wallet.js";
 
 export default (QUnit: QUnit) => {
 	QUnit.module("Wallet role composition", () => {
+		QUnit.test("instance attestation verification requires provider protocol keys", async (t) => {
+			for (const published of [false, true]) {
+				const f = await walletFederation(
+					published ? {} : { providerMetadata: { jwks: undefined } },
+				);
+				for (const [Role, name] of [
+					[CredentialIssuerRole, "issuer"],
+					[CredentialVerifierRole, "verifier"],
+				] as const) {
+					const role = new Role({ trustAnchors: f.anchors });
+					new Leaf({
+						entityId: f.ids[name],
+						authorityHints: [f.ids.anchor],
+						keyProvider: MemoryFederationKeyProvider.fromJWK(f.keys[name].privateKey),
+						metadata: f.metadata[name],
+						roles: [role],
+						options: f.options,
+					});
+					let calls = 0;
+					const result = await role.verifyProviderAttestation("custom", f.ids.provider, {
+						...f.options,
+						offline: true,
+						verifyAttestation: ({ keys }) => {
+							calls++;
+							t.deepEqual(keys.keys, [f.protocol.provider.publicKey]);
+							return true;
+						},
+					});
+					t.equal(result.ok, published);
+					t.equal(calls, published ? 1 : 0);
+					if (!result.ok) t.true(result.error.description.includes("Offline verification"));
+				}
+			}
+		});
 		QUnit.test(
 			"instance operations use initialized host context and configured anchors",
 			async (t) => {

@@ -6,6 +6,7 @@ import {
 	MemoryReplayStore,
 } from "../../../packages/core/src/index.js";
 import {
+	type AttestationVerificationOptions,
 	CredentialIssuerRole,
 	CredentialVerifierRole,
 	type PreparedAuthorizationRequest,
@@ -42,6 +43,239 @@ const proof = (f: Fixture) => ({
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("wallet / provider attestation keys", () => {
+		for (const source of ["jwks", "jwks_uri", "signed_jwks_uri"] as const) {
+			test(`verifies attestation signatures with resolved ${source} keys`, async (t) => {
+				const { compactVerify, importJWK } = await import("jose");
+				const uri = "https://provider.example/keys";
+				const f = await walletFederation(
+					source === "jwks" ? {} : { providerMetadata: { jwks: undefined, [source]: uri } },
+				);
+				const keys = [f.protocol.provider.publicKey];
+				const signed = await token(
+					{ iss: f.ids.provider, sub: f.ids.provider, keys },
+					f.keys.provider.privateKey,
+					"jwk-set+jwt",
+					{ kid: f.keys.provider.publicKey.kid },
+				);
+				f.routes.set(
+					uri,
+					() =>
+						new Response(source === "signed_jwks_uri" ? signed : JSON.stringify({ keys }), {
+							headers: {
+								"content-type":
+									source === "signed_jwks_uri" ? "application/jwk-set+jwt" : "application/json",
+							},
+						}),
+				);
+				for (const Role of [CredentialIssuerRole, CredentialVerifierRole]) {
+					for (const valid of [true, false]) {
+						let calls = 0;
+						const jwt = await token(
+							attestation(f),
+							valid ? f.protocol.provider.privateKey : f.keys.provider.privateKey,
+							"custom-attestation+jwt",
+						);
+						const result = await Role.verifyProviderAttestation(jwt, f.ids.provider, f.anchors, {
+							...f.options,
+							offline: source === "jwks",
+							verifyAttestation: async ({ attestation: input, keys: resolved }) => {
+								calls++;
+								t.deepEqual(resolved.keys, keys);
+								await compactVerify(input as string, await importJWK(resolved.keys[0]!));
+								return true;
+							},
+						});
+						t.equal(
+							result.ok,
+							valid,
+							"the callback verifies against protocol keys, not federation signing keys",
+						);
+						t.equal(calls, 1);
+					}
+				}
+				t.deepEqual(f.requests, source === "jwks" ? [] : [uri, uri, uri, uri]);
+			});
+		}
+		test("key resolution failures prevent format callbacks", async (t) => {
+			for (const scenario of ["unavailable", "malformed", "bad-signature", "offline"] as const) {
+				const source = scenario === "bad-signature" ? "signed_jwks_uri" : "jwks_uri";
+				const uri = "https://provider.example/keys";
+				const f = await walletFederation({ providerMetadata: { jwks: undefined, [source]: uri } });
+				if (scenario === "malformed") f.routes.set(uri, () => Response.json({ keys: [] }));
+				if (scenario === "bad-signature") {
+					const signed = await token(
+						{ iss: f.ids.provider, sub: f.ids.provider, keys: [f.protocol.provider.publicKey] },
+						f.protocol.provider.privateKey,
+						"jwk-set+jwt",
+						{ kid: f.keys.provider.publicKey.kid },
+					);
+					f.routes.set(
+						uri,
+						() => new Response(signed, { headers: { "content-type": "application/jwk-set+jwt" } }),
+					);
+				}
+				for (const Role of [CredentialIssuerRole, CredentialVerifierRole]) {
+					let calls = 0;
+					const result = await Role.verifyProviderAttestation("custom", f.ids.provider, f.anchors, {
+						...f.options,
+						offline: scenario === "offline",
+						verifyAttestation: () => {
+							calls++;
+							return true;
+						},
+					});
+					t.false(result.ok, scenario);
+					t.equal(calls, 0);
+					if (!result.ok)
+						t.false(
+							result.error.description.includes("Verification policy"),
+							"failure originates in key resolution",
+						);
+				}
+				t.deepEqual(f.requests, scenario === "offline" ? [] : [uri, uri]);
+			}
+		});
+		test("uses superior replacement keys when verifying provider attestations", async (t) => {
+			const { compactVerify, importJWK } = await import("jose");
+			const f = await walletFederation();
+			const replacement = await generateSigningKey();
+			const original = f.chains.get(f.ids.provider)!;
+			const statement = await token(
+				{
+					iss: f.ids.anchor,
+					sub: f.ids.provider,
+					iat: 1000,
+					exp: 5000,
+					jwks: { keys: [f.keys.provider.publicKey] },
+					metadata: { openid_wallet_provider: { jwks: { keys: [replacement.publicKey] } } },
+				},
+				f.keys.anchor.privateKey,
+				"entity-statement+jwt",
+				{ kid: f.keys.anchor.publicKey.kid },
+			);
+			f.chains.set(f.ids.provider, [original[0]!, statement, original[2]!]);
+			for (const Role of [CredentialIssuerRole, CredentialVerifierRole]) {
+				for (const valid of [true, false]) {
+					let calls = 0;
+					const jwt = await token(
+						attestation(f),
+						valid ? replacement.privateKey : f.protocol.provider.privateKey,
+						"custom-attestation+jwt",
+					);
+					const result = await Role.verifyProviderAttestation(jwt, f.ids.provider, f.anchors, {
+						...f.options,
+						offline: true,
+						verifyAttestation: async ({ attestation: input, keys }) => {
+							calls++;
+							t.deepEqual(keys.keys, [replacement.publicKey]);
+							await compactVerify(input as string, await importJWK(keys.keys[0]!));
+							return true;
+						},
+					});
+					t.equal(result.ok, valid);
+					t.equal(calls, 1);
+				}
+			}
+		});
+		test("preserves callback rejection, cancellation, deadlines, and evidence expiry", async (t) => {
+			for (const scenario of [
+				"missing",
+				"reject",
+				"throw",
+				"cancel",
+				"timeout",
+				"expire",
+			] as const) {
+				const f = await walletFederation();
+				const controller = new AbortController();
+				let calls = 0;
+				const verify: AttestationVerificationOptions["verifyAttestation"] = () => {
+					calls++;
+					if (scenario === "throw") throw new Error("bad signature");
+					if (scenario === "reject") return false;
+					if (scenario === "cancel") controller.abort();
+					if (scenario === "timeout") return new Promise(() => {});
+					if (scenario === "expire") f.setTime(5000);
+					return true;
+				};
+				const result = await CredentialIssuerRole.verifyProviderAttestation(
+					"custom",
+					f.ids.provider,
+					f.anchors,
+					{
+						...f.options,
+						httpTimeoutMs: 100,
+						signal: controller.signal,
+						verifyAttestation:
+							scenario === "missing" ? (undefined as unknown as typeof verify) : verify,
+					},
+				);
+				t.false(result.ok, scenario);
+				t.equal(calls, scenario === "missing" ? 0 : 1);
+			}
+		});
+		test("keeps alternative credential verification available without published keys", async (t) => {
+			const f = await walletFederation({ issuerMetadata: { jwks: undefined } });
+			for (const accepted of [true, false]) {
+				let calls = 0;
+				const result = await CredentialVerifierRole.verifyCredential(
+					"credential",
+					f.ids.issuer,
+					f.anchors,
+					{
+						...f.options,
+						offline: true,
+						verifyCredential: ({ keys }) => {
+							calls++;
+							t.strictEqual(keys, undefined);
+							return accepted;
+						},
+					},
+				);
+				t.equal(result.ok, accepted);
+				t.equal(calls, 1);
+			}
+		});
+		test("requires federation-resolved keys before calling a format verifier", async (t) => {
+			const { compactVerify, importJWK } = await import("jose");
+			const f = await walletFederation({ providerMetadata: { jwks: undefined } });
+			const jwt = await token(
+				attestation(f),
+				f.protocol.provider.privateKey,
+				"custom-attestation+jwt",
+			);
+			const applicationKey = await importJWK(f.protocol.provider.publicKey);
+			await compactVerify(jwt, applicationKey);
+			for (const Role of [CredentialIssuerRole, CredentialVerifierRole]) {
+				for (const offline of [false, true]) {
+					let calls = 0;
+					const result = await Role.verifyProviderAttestation(jwt, f.ids.provider, f.anchors, {
+						...f.options,
+						offline,
+						verifyAttestation: async ({ attestation: input }) => {
+							calls++;
+							await compactVerify(input as string, applicationKey);
+							return true;
+						},
+					});
+					t.false(result.ok, "an application-held key cannot replace federation key resolution");
+					t.equal(calls, 0);
+					if (!result.ok)
+						t.true(
+							result.error.description.includes(
+								offline ? "Offline verification" : "no JWK Set representation",
+							),
+						);
+				}
+			}
+			t.equal(f.requests.length, 0);
+			t.true(
+				(await WalletProviderRole.discover(f.ids.provider, f.anchors, f.options)).ok,
+				"discovery remains available without published protocol keys",
+			);
+		});
+	});
 	module("wallet / protocol key identifiers", () => {
 		test("retains verifier and credential encryption identifier requirements", async (t) => {
 			const f = await walletFederation();

@@ -110,7 +110,8 @@ abstract class AttestationConsumer extends WalletRole {
 		const scoped = operationOptions(options);
 		const provider = await trustedEntity("openid_wallet_provider", providerId, anchors, scoped);
 		if (!provider.ok) return provider;
-		const keys = await adapterKeys(provider.value, "openid_wallet_provider", scoped);
+		// Wallet §8.5 requires attestation verification with federation-provided material.
+		const keys = await protocolKeys(provider.value, "openid_wallet_provider", scoped);
 		if (!keys.ok) return keys;
 		const accepted = await invokePolicy(
 			options.verifyAttestation,
@@ -171,8 +172,9 @@ abstract class AttestationConsumer extends WalletRole {
 }
 
 export interface AttestationVerificationOptions extends WalletTrustOptions {
+	/** Verify the attestation with the supplied keys and apply format-specific checks before accepting it. */
 	readonly verifyAttestation: (
-		context: { attestation: unknown; provider: TrustedWalletEntity; keys: JWKSet | undefined },
+		context: { attestation: unknown; provider: TrustedWalletEntity; keys: JWKSet },
 		signal?: AbortSignal,
 	) => boolean | Promise<boolean>;
 }
