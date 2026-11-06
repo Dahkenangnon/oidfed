@@ -1,4 +1,4 @@
-import { InternalErrorCode } from "../constants.js";
+import { EntityType, InternalErrorCode } from "../constants.js";
 import { err, type FederationError, ok, type Result } from "../errors.js";
 import { type FederationMetadata, FederationMetadataValuesSchema } from "../schemas/metadata.js";
 import type { PolicyOperatorDefinition, ResolvedMetadataPolicy } from "../types.js";
@@ -57,12 +57,12 @@ export function applyMetadataPolicy(
 				.filter(([opName]) => lookup[opName] !== undefined)
 				.sort(([a], [b]) => (lookup[a]?.order ?? 0) - (lookup[b]?.order ?? 0));
 
-			// Scope is space-delimited in OIDC but operators expect arrays
-			const isScope = paramName === "scope";
-			let scopeWasNormalized = false;
+			// Federation §6.1.3.1.8 applies to the OAuth client scope parameter.
+			const isScope =
+				paramName === "scope" &&
+				(entityType === EntityType.OpenIDRelyingParty || entityType === EntityType.OAuthClient);
 			if (isScope && typeof entityMetadata[paramName] === "string") {
 				entityMetadata[paramName] = normalizeScope(entityMetadata[paramName] as string);
-				scopeWasNormalized = true;
 			}
 
 			for (const [opName, opValue] of sortedOps) {
@@ -89,8 +89,18 @@ export function applyMetadataPolicy(
 				}
 			}
 
-			if (scopeWasNormalized && Array.isArray(entityMetadata[paramName])) {
-				entityMetadata[paramName] = denormalizeScope(entityMetadata[paramName] as string[]);
+			// Federation §6.1.3.1.8: policy-generated scopes also resolve to a string.
+			const scopeValues = entityMetadata[paramName];
+			if (isScope && Array.isArray(scopeValues)) {
+				for (const value of scopeValues) {
+					if (typeof value !== "string") {
+						return err({
+							code: InternalErrorCode.MetadataPolicyViolation,
+							description: `Invalid resolved metadata: ${entityType}.scope must contain only strings`,
+						});
+					}
+				}
+				entityMetadata[paramName] = denormalizeScope(scopeValues as string[]);
 			}
 		}
 	}

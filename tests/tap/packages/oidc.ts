@@ -7740,6 +7740,44 @@ export default (QUnit: QUnit) => {
 				t.true(result.error.description.includes("policy"));
 			}
 		});
+		test("scope serialization: explicit registration accepts policy-initialized scopes", async (t) => {
+			for (const operator of ["default", "add", "value"]) {
+				const fx = await fixture(undefined, {
+					metadata_policy: {
+						openid_relying_party: { scope: { [operator]: ["openid", "profile"] } },
+					},
+				});
+				t.false(Object.hasOwn(fx.payload.metadata.openid_relying_party, "scope"));
+				const response = await fx.post(await fx.sign({}, undefined, { trust_chain: fx.chain }));
+				t.equal(response.status, 200, `${operator}: ${await response.clone().text()}`);
+				if (response.status === 200) {
+					const parsed = decodeEntityStatement(await response.text());
+					t.true(parsed.ok);
+					if (parsed.ok)
+						t.equal(parsed.value.payload.metadata?.openid_relying_party?.scope, "openid profile");
+					t.true(fx.events.includes("register"));
+				}
+			}
+		});
+
+		test("scope serialization: explicit registration rejects non-string scope members", async (t) => {
+			for (const operator of ["default", "add", "value"]) {
+				for (const scope of [[123], [{}]]) {
+					const fx = await fixture(undefined, {
+						metadata_policy: { openid_relying_party: { scope: { [operator]: scope } } },
+					});
+					const response = await fx.post(await fx.sign({}, undefined, { trust_chain: fx.chain }));
+					t.equal(response.status, 400, `${operator}: ${await response.clone().text()}`);
+					if (response.status === 400) {
+						const body = (await response.json()) as { error: string; error_description: string };
+						t.equal(body.error, FederationErrorCode.InvalidTrustChain);
+						t.true(body.error_description.includes("scope"));
+					}
+					t.deepEqual(fx.events, []);
+				}
+			}
+		});
+
 		test("honors critical custom policy operators throughout explicit registration", async (t) => {
 			let calls = 0;
 			const fx = await fixture(

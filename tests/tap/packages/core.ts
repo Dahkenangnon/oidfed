@@ -5416,6 +5416,156 @@ export default (QUnit: QUnit) => {
 				t.equal(result.value.openid_relying_party?.token_endpoint_auth_method, "private_key_jwt");
 			}
 		});
+		module("scope serialization", () => {
+			test("serializes scopes initialized by each modifying operator", (t) => {
+				for (const entityType of ["openid_relying_party", "oauth_client"]) {
+					for (const operator of ["default", "add", "value"]) {
+						const metadata = { [entityType]: {} };
+						const policy = { [entityType]: { scope: { [operator]: ["openid", "profile"] } } };
+						const originalPolicy = structuredClone(policy);
+						const result = applyMetadataPolicy(metadata, policy);
+						t.true(result.ok, `${entityType}: ${operator}`);
+						if (result.ok) t.deepEqual(result.value, { [entityType]: { scope: "openid profile" } });
+						t.deepEqual(metadata, { [entityType]: {} });
+						t.deepEqual(policy, originalPolicy);
+					}
+				}
+			});
+			test("preserves scope fields outside OAuth client metadata", (t) => {
+				for (const entityType of ["research_repository", "openid_provider"]) {
+					for (const scope of [["records", "datasets"], [123], "records datasets"]) {
+						for (const operator of ["default", "value"]) {
+							const result = applyMetadataPolicy(
+								{ [entityType]: {} },
+								{ [entityType]: { scope: { [operator]: scope } } },
+							);
+							t.true(result.ok);
+							if (result.ok) t.deepEqual(result.value, { [entityType]: { scope } });
+						}
+					}
+					const existing = applyMetadataPolicy(
+						{ [entityType]: { scope: "records datasets" } },
+						{ [entityType]: { scope: { one_of: ["records datasets"] } } },
+					);
+					t.true(existing.ok);
+					if (existing.ok)
+						t.deepEqual(existing.value, { [entityType]: { scope: "records datasets" } });
+				}
+			});
+			test("rejects non-string OAuth scope members before serialization", (t) => {
+				for (const entityType of ["openid_relying_party", "oauth_client"]) {
+					for (const scope of [[123], [{}], [null], [false], [["openid"]], ["openid", 123]]) {
+						for (const operator of ["default", "add", "value"]) {
+							const result = applyMetadataPolicy(
+								{ [entityType]: {} },
+								{ [entityType]: { scope: { [operator]: scope } } },
+							);
+							t.false(result.ok, JSON.stringify({ entityType, operator, scope }));
+							if (!result.ok) t.equal(result.error.code, InternalErrorCode.MetadataPolicyViolation);
+						}
+					}
+					const filtered = applyMetadataPolicy(
+						{ [entityType]: {} },
+						{ [entityType]: { scope: { default: ["openid", 123], subset_of: ["openid"] } } },
+					);
+					t.true(filtered.ok);
+					if (filtered.ok) t.deepEqual(filtered.value, { [entityType]: { scope: "openid" } });
+				}
+			});
+			test("keeps scopes as arrays until every operator has run", (t) => {
+				for (const scope of [
+					{
+						default: ["openid", "profile", "email"],
+						subset_of: ["openid", "profile"],
+						superset_of: ["openid"],
+					},
+					{ add: ["openid", "profile"], subset_of: ["openid", "profile"], superset_of: ["openid"] },
+					{
+						value: ["openid", "profile"],
+						subset_of: ["openid", "profile"],
+						superset_of: ["openid"],
+					},
+				]) {
+					const result = applyMetadataPolicy(
+						{ openid_relying_party: {} },
+						{ openid_relying_party: { scope } },
+					);
+					t.true(result.ok);
+					if (result.ok) t.equal(result.value.openid_relying_party?.scope, "openid profile");
+				}
+			});
+			test("preserves existing and superior-supplied strings, absent scopes, and removal", (t) => {
+				const policy = { openid_relying_party: { scope: { add: ["profile"] } } };
+				for (const [metadata, override] of [
+					[{ openid_relying_party: { scope: "openid" } }, undefined],
+					[{ openid_relying_party: {} }, { openid_relying_party: { scope: "openid" } }],
+				] as const) {
+					const original = structuredClone({ metadata, override });
+					const result = applyMetadataPolicy(metadata, policy, override);
+					t.true(result.ok);
+					if (result.ok) t.equal(result.value.openid_relying_party?.scope, "openid profile");
+					t.deepEqual({ metadata, override }, original);
+				}
+				const absent = applyMetadataPolicy(
+					{ openid_relying_party: {} },
+					{ openid_relying_party: { scope: { subset_of: ["openid"], essential: false } } },
+				);
+				t.true(absent.ok);
+				if (absent.ok) t.equal(absent.value.openid_relying_party?.scope, undefined);
+				const removed = applyMetadataPolicy(
+					{ openid_relying_party: { scope: "openid" } },
+					{ openid_relying_party: { scope: { value: null } } },
+				);
+				t.true(removed.ok);
+				if (removed.ok) t.deepEqual(removed.value, { openid_relying_party: {} });
+			});
+			test("joins empty scope arrays and preserves other array metadata", (t) => {
+				const result = applyMetadataPolicy(
+					{ openid_relying_party: {} },
+					{
+						openid_relying_party: {
+							scope: { default: [] },
+							grant_types: { default: ["authorization_code", "refresh_token"] },
+						},
+					},
+				);
+				t.true(result.ok);
+				if (result.ok)
+					t.deepEqual(result.value, {
+						openid_relying_party: {
+							scope: "",
+							grant_types: ["authorization_code", "refresh_token"],
+						},
+					});
+			});
+			test("signed chains publish policy-initialized scopes as strings", async (t) => {
+				const fed = await createMockFederation({ leafMetadata: { openid_relying_party: {} } });
+				const decoded = decodeEntityStatement(fed.taSubStatementForLeaf);
+				if (!decoded.ok) throw new Error("Invalid fixture");
+				for (const operator of ["default", "add", "value"]) {
+					const jwt = await signEntityStatement(
+						{
+							...decoded.value.payload,
+							metadata_policy: {
+								openid_relying_party: { scope: { [operator]: ["openid", "profile"] } },
+							},
+						},
+						new JwkSigner(fed.taSigningKey),
+						{ typ: JwtTyp.EntityStatement },
+					);
+					const result = await validateTrustChain(
+						[fed.leafEcJwt, jwt, fed.taEcJwt],
+						fed.trustAnchors,
+						{ verboseErrors: true },
+					);
+					t.true(result.valid, JSON.stringify(result.errors));
+					if (result.valid)
+						t.deepEqual(result.chain.resolvedMetadata, {
+							openid_relying_party: { scope: "openid profile" },
+						});
+				}
+			});
+		});
 		test("handles scope normalization: string → array → operators → string", (t) => {
 			const result = applyMetadataPolicy(
 				{ openid_relying_party: { scope: "openid profile email address" } },
