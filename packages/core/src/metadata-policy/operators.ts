@@ -156,8 +156,8 @@ function checkValueCombination(otherOp: string, valueVal: unknown, otherVal: unk
 			return isSubset(addArr, valueVal);
 		}
 		case PolicyOperator.Default:
-			if (valueVal === null) return false;
-			return deepEqual(valueVal, otherVal);
+			// Federation §6.1.3.1.1 permits this combination when value is non-null.
+			return valueVal !== null;
 		case PolicyOperator.OneOf:
 			if (Array.isArray(valueVal)) return false;
 			return containsElement(otherVal as unknown[], valueVal);

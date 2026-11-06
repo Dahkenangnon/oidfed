@@ -5857,6 +5857,66 @@ export default (QUnit: QUnit) => {
 		}
 
 		module("core / resolveMetadataPolicy", () => {
+			test("value + default: resolves combinations and preserves the forced value", (t) => {
+				for (const [value, fallback] of [
+					["Pinned", "Fallback"],
+					["", "Fallback"],
+					[0, 1],
+					[false, true],
+					[["a"], ["b"]],
+				]) {
+					const statement = (ops: Record<string, unknown>) =>
+						makeMergeStmt({
+							metadata_policy: { research_repository: { setting: ops } },
+						});
+					for (const statements of [
+						[statement({ value, default: fallback })],
+						[statement({ default: fallback, value })],
+						[statement({ default: fallback }), statement({ value })],
+						[statement({ value }), statement({ default: fallback })],
+					]) {
+						const original = structuredClone(statements);
+						const resolved = resolveMetadataPolicy(statements);
+						t.true(resolved.ok, JSON.stringify(statements.map((s) => s.payload.metadata_policy)));
+						if (resolved.ok) {
+							t.deepEqual(resolved.value, {
+								research_repository: { setting: { value, default: fallback } },
+							});
+							for (const metadata of [
+								{ research_repository: {} },
+								{ research_repository: { setting: "Existing" } },
+							]) {
+								const originalMetadata = structuredClone(metadata);
+								const result = applyMetadataPolicy(metadata, resolved.value);
+								t.true(result.ok);
+								if (result.ok)
+									t.deepEqual(result.value, { research_repository: { setting: value } });
+								t.deepEqual(metadata, originalMetadata);
+							}
+						}
+						t.deepEqual(statements, original);
+					}
+				}
+			});
+			test("value + default: retains null, malformed value, and same-operator conflict errors", (t) => {
+				const statement = (ops: Record<string, unknown>) =>
+					makeMergeStmt({ metadata_policy: { research_repository: { setting: ops } } });
+				for (const statements of [
+					[statement({ value: null, default: "Fallback" })],
+					[statement({ default: "Fallback", value: null })],
+					[statement({ value: null }), statement({ default: "Fallback" })],
+					[statement({ default: "Fallback" }), statement({ value: null })],
+					[statement({ value: "Pinned", default: null })],
+					[statement({ value: {}, default: "Fallback" })],
+					[statement({ value: "Pinned", default: {} })],
+					[statement({ value: "Pinned" }), statement({ value: "Other" })],
+					[statement({ default: "Fallback" }), statement({ default: "Other" })],
+				]) {
+					const result = resolveMetadataPolicy(statements);
+					t.false(result.ok);
+					if (!result.ok) t.equal(result.error.code, InternalErrorCode.MetadataPolicyError);
+				}
+			});
 			test("returns empty policy when no statements have metadata_policy", (t) => {
 				const result = resolveMetadataPolicy([makeMergeStmt()]);
 				t.true(isOk(result));
@@ -6797,11 +6857,21 @@ export default (QUnit: QUnit) => {
 			test("value + default: allowed when equal", (t) => {
 				t.true(operators.value?.canCombineWith("default", "x", "x"));
 			});
-			test("value + default: rejected when different", (t) => {
-				t.false(operators.value?.canCombineWith("default", "x", "y"));
+			test("value + default: accepts unequal non-null values in both directions", (t) => {
+				for (const [value, fallback] of [
+					["x", "y"],
+					["", "fallback"],
+					[0, 1],
+					[false, true],
+					[["a"], ["b"]],
+				]) {
+					t.true(operators.value?.canCombineWith("default", value, fallback));
+					t.true(operators.default?.canCombineWith("value", fallback, value));
+				}
 			});
 			test("value + default: rejected when value is null", (t) => {
-				t.false(operators.value?.canCombineWith("default", null, null));
+				t.false(operators.value?.canCombineWith("default", null, "fallback"));
+				t.false(operators.default?.canCombineWith("value", "fallback", null));
 			});
 			test("value + one_of: allowed when value in one_of set", (t) => {
 				t.true(operators.value?.canCombineWith("one_of", "a", ["a", "b"]));
@@ -13927,6 +13997,58 @@ export default (QUnit: QUnit) => {
 				]);
 				const result = await validateTrustChain([leafEc, ss, taEc], taSet, { verboseErrors: true });
 				t.true(result.valid);
+			});
+			test("value + default: validates signed policies within and across superiors", async (t) => {
+				const { chain, taSet, taKeys, leafKeys } = await vt_buildSimple();
+				const intermediateKeys = await generateSigningKey("ES256");
+				const leafEc = await vt_signEC(
+					"https://leaf.example.com",
+					leafKeys.privateKey,
+					leafKeys.publicKey,
+					{
+						authority_hints: ["https://intermediate.example.com"],
+						metadata: { openid_relying_party: {} },
+					},
+				);
+				const policy = (ops: Record<string, unknown>) => ({
+					metadata_policy: { openid_relying_party: { client_name: ops } },
+				});
+				for (const value of ["Pinned", null]) {
+					for (const [superior, immediate] of [
+						[{}, policy({ value, default: "Fallback" })],
+						[policy({ value }), policy({ default: "Fallback" })],
+						[policy({ default: "Fallback" }), policy({ value })],
+					]) {
+						const intermediateSs = await vt_signSS(
+							"https://ta.example.com",
+							"https://intermediate.example.com",
+							taKeys.privateKey,
+							intermediateKeys.publicKey,
+							superior,
+						);
+						const leafSs = await vt_signSS(
+							"https://intermediate.example.com",
+							"https://leaf.example.com",
+							intermediateKeys.privateKey,
+							leafKeys.publicKey,
+							immediate,
+						);
+						const result = await validateTrustChain(
+							[leafEc, leafSs, intermediateSs, chain[2] as string],
+							taSet,
+							{ verboseErrors: true },
+						);
+						t.equal(result.valid, value !== null, JSON.stringify(result.errors));
+						if (value === null)
+							t.true(
+								result.errors.some((error) => error.code === InternalErrorCode.MetadataPolicyError),
+							);
+						else if (result.valid)
+							t.deepEqual(result.chain.resolvedMetadata, {
+								openid_relying_party: { client_name: "Pinned" },
+							});
+					}
+				}
 			});
 			test("accepts large max_path_length constraints on short signed chains", async (t) => {
 				const { chain, taSet, taKeys, leafKeys } = await vt_buildSimple();
