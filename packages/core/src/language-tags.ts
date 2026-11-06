@@ -54,14 +54,15 @@ export function isLanguageTag(tag: string): boolean {
 export function splitInformationalClaim(
 	name: string,
 	declared: ReadonlySet<string>,
-): { base: string; tag?: string } {
+): { base: string; tag?: string; malformed?: boolean } {
 	if (declared.has(name)) return { base: name };
 	const candidates = [...declared]
 		.filter((base) => name.startsWith(`${base}#`))
 		.sort((a, b) => b.length - a.length);
-	for (const base of candidates) {
+	const base = candidates[0];
+	if (base !== undefined) {
 		const tag = name.slice(base.length + 1);
-		if (isLanguageTag(tag)) return { base, tag };
+		return isLanguageTag(tag) ? { base, tag } : { base, malformed: true };
 	}
 	return { base: name };
 }

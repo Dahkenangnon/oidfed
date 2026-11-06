@@ -17140,6 +17140,167 @@ export default (QUnit: QUnit) => {
 			});
 
 			QUnit.test(
+				"malformed custom language variants preserve the previous snapshot",
+				async (assert) => {
+					const { store, snapshot } = await seeded();
+					for (const suffix of ["de_DE", "", "en#US"]) {
+						const service = new EntityCollectionService({
+							trustAnchors: new Map([[anchor, { jwks: { keys: [] } }]]),
+							store,
+							options: { clock },
+							infoClaims: ["vendor_label"],
+							collector: async () =>
+								ok([
+									{
+										entity: EntityCollectionEntitySchema.parse({
+											entity_id: "https://leaf.example",
+											entity_infos: {
+												custom: { [`vendor_label#${suffix}`]: "Private fixture value" },
+											},
+										}),
+										expiresAt: 5000,
+									},
+								]),
+						});
+						const result = await service.refresh(anchor);
+						assert.false(result.ok, `reject malformed suffix: ${suffix}`);
+						if (!result.ok) assert.equal(result.error.code, "temporarily_unavailable");
+						assert.deepEqual(await store.getCurrent(anchor), snapshot);
+						assert.false(JSON.stringify(result).includes("Private fixture value"));
+					}
+				},
+			);
+
+			QUnit.test(
+				"malformed selected snapshot variants fail without returning a partial page",
+				async (assert) => {
+					const { store, snapshot } = await seeded();
+					await store.publish({
+						...snapshot,
+						id: "malformed",
+						entries: ["https://a.example", "https://b.example"].map((id, index) => ({
+							entity: EntityCollectionEntitySchema.parse({
+								entity_id: id,
+								entity_types: ["custom", "other"],
+								entity_infos: {
+									other: { display_name: "Other" },
+									custom: {
+										display_name: "Default",
+										[index ? "vendor_label#de_DE" : "vendor_label#en"]: "Private fixture value",
+									},
+								},
+							}),
+							expiresAt: 5000,
+							verifiedMarks: [],
+						})),
+					});
+					const service = new EntityCollectionService({
+						trustAnchors: new Map([[anchor, { jwks: { keys: [] } }]]),
+						store,
+						options: { clock },
+						infoClaims: ["vendor_label"],
+					});
+					for (const params of [{}, { locale: ["en"] }, { infoClaims: ["vendor_label"] }]) {
+						const result = await service.query({ trustAnchor: anchor, ...params });
+						assert.false(result.ok);
+						if (!result.ok) assert.equal(result.error.code, "server_error");
+					}
+					const response = await service.handleRequest(
+						new Request(`${endpoint}?trust_anchor=${anchor}&locale=en`),
+					);
+					assert.equal(response.status, 500);
+					assert.true(response.headers.get("content-type")?.startsWith("application/json"));
+					const body = (await response.json()) as Record<string, unknown>;
+					assert.equal(body.error, "server_error");
+					assert.strictEqual(body.entities, undefined);
+					assert.false(JSON.stringify(body).includes("Private fixture value"));
+					for (const params of [
+						{ entityClaims: [] },
+						{ infoClaims: [] },
+						{ infoClaims: ["display_name"] },
+						{ entityType: ["other"] },
+						{ query: "https://a.example" },
+					]) {
+						assert.true(
+							(await service.query({ trustAnchor: anchor, ...params })).ok,
+							JSON.stringify(params),
+						);
+					}
+					for (const name of ["vendor_label#de_DE", "vendor_label#", "vendor_label#en#US"]) {
+						const result = await service.query({ trustAnchor: anchor, infoClaims: [name] });
+						assert.false(result.ok);
+						if (!result.ok) assert.equal(result.error.code, "unsupported_claim");
+					}
+				},
+			);
+
+			QUnit.test(
+				"custom locale validation preserves exact extension names and valid tags",
+				async (assert) => {
+					const uri = "https://claims.example/#name";
+					const info = {
+						vendor_label: "Default",
+						"vendor_label#en-US": "English",
+						"vendor_label#de-DE": "Deutsch",
+						"vendor_label#x-private": "Private use",
+						"vendor_label#i-klingon": "Grandfathered",
+						"vendor_label#de_DE": "Exact declared name",
+						[uri]: "URI default",
+						[`${uri}#en-US`]: "URI English",
+						"opaque#de_DE": "Opaque extension",
+					};
+					const service = new EntityCollectionService({
+						trustAnchors: new Map([[anchor, { jwks: { keys: [] } }]]),
+						options: { clock },
+						infoClaims: ["vendor_label", "vendor_label#de_DE", uri],
+						collector: async () =>
+							ok([
+								{
+									entity: EntityCollectionEntitySchema.parse({
+										entity_id: "https://leaf.example",
+										entity_infos: { custom: info },
+									}),
+									expiresAt: 5000,
+								},
+							]),
+					});
+					assert.true((await service.refresh(anchor)).ok);
+					for (const [params, expected] of [
+						[{}, info],
+						[
+							{ infoClaims: ["vendor_label"], locale: ["EN", "de"] },
+							{
+								vendor_label: "Default",
+								"vendor_label#en-US": "English",
+								"vendor_label#de-DE": "Deutsch",
+							},
+						],
+						[
+							{ infoClaims: ["vendor_label"], locale: ["X-private", "I-klingon"] },
+							{
+								vendor_label: "Default",
+								"vendor_label#x-private": "Private use",
+								"vendor_label#i-klingon": "Grandfathered",
+							},
+						],
+						[
+							{ infoClaims: ["vendor_label#de_DE"], locale: ["en"] },
+							{ "vendor_label#de_DE": "Exact declared name" },
+						],
+						[
+							{ infoClaims: [uri], locale: ["en"] },
+							{ [uri]: "URI default", [`${uri}#en-US`]: "URI English" },
+						],
+					] satisfies [EntityCollectionRequestParams, Record<string, string>][]) {
+						const result = await service.query({ trustAnchor: anchor, ...params });
+						assert.true(result.ok, JSON.stringify(params));
+						if (result.ok)
+							assert.deepEqual(result.value.entities[0]?.entity_infos?.custom, expected);
+					}
+				},
+			);
+
+			QUnit.test(
 				"declared hash-containing claims and their locales preserve their full names",
 				async (assert) => {
 					const { store } = await seeded();

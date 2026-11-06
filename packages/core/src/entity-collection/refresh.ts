@@ -3,6 +3,7 @@ import { DEFAULT_MAX_CHAIN_DEPTH, FederationErrorCode } from "../constants.js";
 import { err, ok, type Result } from "../errors.js";
 import { fetchListSubordinates } from "../federation-api/index.js";
 import { decodeEntityConfiguration } from "../jose/verify.js";
+import { splitInformationalClaim } from "../language-tags.js";
 import {
 	COLLECTION_INFO_CLAIMS,
 	EntityCollectionEntitySchema,
@@ -234,8 +235,14 @@ export async function buildCollectionSnapshot(
 			if (!supplied.ok) return supplied;
 			if (!Array.isArray(supplied.value) || supplied.value.length > (config.maxEntities ?? 10000))
 				throw new Error("Invalid or oversized collection candidate set");
+			const infoClaims = new Set<string>([...COLLECTION_INFO_CLAIMS, ...(config.infoClaims ?? [])]);
 			for (const input of supplied.value) {
 				const candidate = candidateSchema.parse(input);
+				// Draft 01 §4 defines BCP 47 suffixes; oidfed rejects malformed declared variants.
+				for (const info of Object.values(candidate.entity.entity_infos ?? {}))
+					for (const name of Object.keys(info))
+						if (splitInformationalClaim(name, infoClaims).malformed)
+							throw new Error("Invalid collection informational language tag");
 				JSON.stringify(candidate.entity);
 				const errors: Parameters<typeof validateTrustMarkReferenceSyntax>[0] = [];
 				validateTrustMarkReferenceSyntax(errors, candidate.entity.trust_marks, 0);

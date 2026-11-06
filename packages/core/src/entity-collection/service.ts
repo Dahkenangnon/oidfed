@@ -179,16 +179,16 @@ export class EntityCollectionService {
 			],
 			[request.infoClaims, [...COLLECTION_INFO_CLAIMS, ...(this.config.infoClaims ?? [])], true],
 		] as const)
-			for (const claim of claims ?? [])
-				if (
-					!supported.includes(
-						localized ? splitInformationalClaim(claim, supportedInfoClaims).base : claim,
-					)
-				)
+			for (const claim of claims ?? []) {
+				const parsed = localized
+					? splitInformationalClaim(claim, supportedInfoClaims)
+					: { base: claim };
+				if (parsed.malformed || !supported.includes(parsed.base))
 					return err({
 						code: FederationErrorCode.UnsupportedClaim,
 						description: `Unsupported claim: ${claim}`,
 					});
+			}
 		let anchor: EntityId | undefined =
 			request.trustAnchor === undefined ? undefined : entityId(request.trustAnchor);
 		if (anchor === undefined) {

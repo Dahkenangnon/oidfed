@@ -101,13 +101,14 @@ export function projectCollectionEntity(
 					type,
 					Object.fromEntries(
 						Object.entries(info).filter(([name]) => {
-							const { base, tag } = splitInformationalClaim(name, infoClaims);
+							const { base, tag, malformed } = splitInformationalClaim(name, infoClaims);
 							if (
 								params.infoClaims !== undefined &&
 								!params.infoClaims.includes(name) &&
 								!params.infoClaims.includes(base)
 							)
 								return false;
+							if (malformed) throw new Error("Invalid collection informational language tag");
 							return (
 								!tag ||
 								!params.locale?.length ||
