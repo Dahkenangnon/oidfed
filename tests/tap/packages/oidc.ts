@@ -73,7 +73,7 @@ import {
 	validateOIDCMetadata,
 } from "../../../packages/oidc/src/schemas/metadata.js";
 import { createMockFederation, LEAF_ID, OP_ID, TA_ID } from "../fixtures/index.js";
-import { trustChainPaths } from "../fixtures/trust-chain-paths.js";
+import { anchorKeyPaths, trustChainPaths } from "../fixtures/trust-chain-paths.js";
 
 // ---------------------------------------------------------------------------
 // Shared helpers (mirrors oidc/test/test-helpers.ts)
@@ -310,6 +310,45 @@ async function createDualAnchorRegistrationFixture() {
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("oidc / anchor self-signature", () => {
+		test("rejects inconsistent anchor keys before persisting registration", async (t) => {
+			const f = await anchorKeyPaths({
+				openid_relying_party: {
+					redirect_uris: ["https://subject.example/callback"],
+					response_types: ["code"],
+					token_endpoint_auth_method: "none",
+				},
+			});
+			for (const publication of ["overlap", "missing-signer", "wrong-material"] as const) {
+				let calls = 0;
+				const handler = createExplicitRegistrationHandler({
+					opEntityId: OP_ID,
+					keyProvider: MemoryFederationKeyProvider.fromJWK(f.keys.anchor.privateKey),
+					trustAnchors: f.anchors,
+					options: f.options,
+					onRegistration: async () => {
+						calls++;
+					},
+				});
+				const chain = await f.anchorKeyChain(publication, { aud: OP_ID });
+				const response = await handler(
+					new Request(`${OP_ID}/register`, {
+						method: "POST",
+						headers: { "Content-Type": MediaType.TrustChain },
+						body: JSON.stringify(chain),
+					}),
+				);
+				const valid = publication === "overlap";
+				t.equal(response.status, valid ? 200 : 400);
+				t.equal(calls, valid ? 1 : 0);
+				if (response.status === 400) {
+					const error = (await response.json()) as { error: string; error_description: string };
+					t.equal(error.error, FederationErrorCode.InvalidTrustChain);
+					t.true(error.error_description.includes("TA EC self-signature invalid"));
+				}
+			}
+		});
+	});
 	module("oidc / chain loops", () => {
 		test("rejects cyclic registration evidence before the persistence callback", async (t) => {
 			const f = await trustChainPaths({

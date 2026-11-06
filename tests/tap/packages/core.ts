@@ -230,11 +230,115 @@ import * as EntityCollectionFixture from "../fixtures/entity-collection.js";
 import { createMockFederation, LEAF_ID, OP_ID, TA_ID } from "../fixtures/index.js";
 import { MockFederationBuilder } from "../fixtures/mock-federation.js";
 import * as SubordinateEventsFixture from "../fixtures/subordinate-events.js";
-import { trustChainPaths } from "../fixtures/trust-chain-paths.js";
+import { anchorKeyPaths, trustChainPaths } from "../fixtures/trust-chain-paths.js";
 import { walletFederation, walletQuery } from "../fixtures/wallet.js";
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("core / anchor self-signature", () => {
+		test("rejects a missing signing key and a matching kid with different material", async (t) => {
+			const f = await anchorKeyPaths();
+			for (const publication of ["missing-signer", "wrong-material"] as const) {
+				const chain = await f.anchorKeyChain(publication);
+				for (const bothPinned of [false, true]) {
+					const anchors = new Map([
+						[
+							f.ids.anchor,
+							{
+								jwks: {
+									keys: bothPinned
+										? [f.keys.anchor.publicKey, f.keys.b.publicKey]
+										: [f.keys.anchor.publicKey],
+								},
+							},
+						],
+					]);
+					const result = await validateTrustChain(chain, anchors, f.options);
+					t.false(result.valid, `${publication}, both pinned: ${bothPinned}`);
+					t.deepEqual(
+						result.errors.map(({ code, statementIndex, field, checkNumber }) => ({
+							code,
+							statementIndex,
+							field,
+							checkNumber,
+						})),
+						[
+							{
+								code: InternalErrorCode.SignatureInvalid,
+								statementIndex: 2,
+								field: "jwks",
+								checkNumber: 15,
+							},
+						],
+					);
+					const quiet = await validateTrustChain(chain, anchors, {
+						...f.options,
+						verboseErrors: false,
+					});
+					t.deepEqual(quiet.errors, [
+						{ code: InternalErrorCode.TrustChainInvalid, message: "Trust chain validation failed" },
+					]);
+				}
+			}
+		});
+		test("rejects inconsistent anchors across collection, prepared and registration validation", async (t) => {
+			const f = await anchorKeyPaths();
+			for (const publication of ["overlap", "missing-signer", "wrong-material"] as const) {
+				const chain = await f.anchorKeyChain(publication);
+				const expected = publication === "overlap";
+				t.equal((await validateTrustChainStructure(chain, f.anchors, f.options)).valid, expected);
+				const prepared = await CorePublic.prepareTrustChainValidation(chain, f.anchors, {
+					...f.options,
+					deferredClaims: [],
+				});
+				t.equal(prepared.ok, expected);
+				if (prepared.ok) t.true((await CorePublic.completeTrustChainValidation(prepared.value)).ok);
+				else t.true(prepared.error.description.includes("TA EC self-signature invalid"));
+				const request = await f.sign("subject", "subject", {
+					authority_hints: [f.ids.anchor],
+					aud: "https://op.example",
+				});
+				const registered = await validateTrustChain(chain, f.anchors, {
+					...f.options,
+					explicitRegistrationRequest: { jwt: request, audience: "https://op.example" },
+				});
+				t.equal(registered.valid, expected);
+				if (!expected)
+					t.true(registered.errors.some((e) => e.field === "jwks" && e.statementIndex === 2));
+			}
+		});
+		test("preserves rollover overlap, direct anchors and anchors with superiors", async (t) => {
+			const f = await anchorKeyPaths();
+			for (const claims of [
+				{},
+				{
+					authority_hints: ["https://superior.example"],
+					trust_anchor_hints: ["https://superior.example"],
+				},
+			]) {
+				const chain = await f.anchorKeyChain("overlap", {}, claims);
+				for (const path of [chain, [chain[2]!]]) {
+					const result = await validateTrustChain(path, f.anchors, f.options);
+					t.true(result.valid, JSON.stringify(result.errors));
+				}
+			}
+			const inconsistent = await f.anchorKeyChain("missing-signer");
+			t.false((await validateTrustChain([inconsistent[2]!], f.anchors, f.options)).valid);
+		});
+		test("retains configured-key checks and omitted anchor EC validation", async (t) => {
+			const f = await anchorKeyPaths();
+			const ordinary = await f.chain(["subject", "anchor"]);
+			const untrusted = new Map([[f.ids.anchor, { jwks: { keys: [f.keys.b.publicKey] } }]]);
+			for (const chain of [ordinary, ordinary.slice(0, -1)]) {
+				t.true((await validateTrustChain(chain, f.anchors, f.options)).valid);
+				const rejected = await validateTrustChain(chain, untrusted, f.options);
+				t.false(rejected.valid);
+				t.true(
+					rejected.errors.some((e) => e.message.startsWith("TA signature verification failed")),
+				);
+			}
+		});
+	});
 	module("core / chain loops", () => {
 		test("rejects repeated Entities with and without a trailing anchor EC", async (t) => {
 			const f = await trustChainPaths();

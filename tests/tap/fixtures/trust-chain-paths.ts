@@ -76,3 +76,44 @@ export async function trustChainPaths(
 		},
 	};
 }
+
+/** The configured key signs the anchor EC; a second published key signs its SS. */
+export async function anchorKeyPaths(metadata: Record<string, Record<string, unknown>> = {}) {
+	const f = await trustChainPaths(metadata);
+	const chain = async (
+		publication: "overlap" | "missing-signer" | "wrong-material",
+		subjectClaims: Record<string, unknown> = {},
+		anchorClaims: Record<string, unknown> = {},
+	) => {
+		const replacement = {
+			publicKey: { ...f.keys.b.publicKey },
+			privateKey: { ...f.keys.b.privateKey },
+		};
+		if (publication === "wrong-material") {
+			replacement.publicKey.kid = f.keys.anchor.publicKey.kid;
+			replacement.privateKey.kid = f.keys.anchor.privateKey.kid;
+		}
+		const result = await f.chain(["subject", "anchor"], { subjectClaims });
+		result[1] = await signEntityStatement(
+			{
+				iss: f.ids.anchor,
+				sub: f.ids.subject,
+				iat: 1000,
+				exp: 5000,
+				jwks: { keys: [f.keys.subject.publicKey] },
+			},
+			new JwkSigner(replacement.privateKey),
+		);
+		result[2] = await f.sign("anchor", "anchor", {
+			...anchorClaims,
+			jwks: {
+				keys:
+					publication === "overlap"
+						? [f.keys.anchor.publicKey, replacement.publicKey]
+						: [replacement.publicKey],
+			},
+		});
+		return result;
+	};
+	return { ...f, anchorKeyChain: chain };
+}

@@ -11,7 +11,7 @@ import {
 	type PreparedAuthorizationRequest,
 	WalletProviderRole,
 } from "../../../packages/wallet/src/index.js";
-import { trustChainPaths } from "../fixtures/trust-chain-paths.js";
+import { anchorKeyPaths, trustChainPaths } from "../fixtures/trust-chain-paths.js";
 import { walletFederation, walletQuery } from "../fixtures/wallet.js";
 
 async function token(
@@ -42,6 +42,39 @@ const proof = (f: Fixture) => ({
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("wallet / anchor self-signature", () => {
+		test("rejects inconsistent anchor keys before attestation verification", async (t) => {
+			const protocol = await generateSigningKey();
+			const f = await anchorKeyPaths({
+				openid_wallet_provider: {
+					vp_formats_supported: { "dc+sd-jwt": {} },
+					jwks: { keys: [protocol.publicKey] },
+				},
+			});
+			for (const publication of ["overlap", "missing-signer", "wrong-material"] as const) {
+				let calls = 0;
+				const trustChain = await f.anchorKeyChain(publication);
+				const result = await CredentialIssuerRole.verifyProviderAttestation(
+					"custom",
+					f.ids.subject,
+					f.anchors,
+					{
+						...f.options,
+						trustChain,
+						offline: true,
+						verifyAttestation: () => {
+							calls++;
+							return true;
+						},
+					},
+				);
+				const valid = publication === "overlap";
+				t.equal(result.ok, valid);
+				t.equal(calls, valid ? 1 : 0);
+				if (!result.ok) t.true(result.error.description.includes("TA EC self-signature invalid"));
+			}
+		});
+	});
 	module("wallet / chain loops", () => {
 		test("rejects cyclic provider evidence before attestation verification", async (t) => {
 			const protocol = await generateSigningKey();

@@ -1085,6 +1085,24 @@ async function authenticateChainStatements(
 		}
 	}
 
+	// Federation §§3.2 and 4 also require the anchor EC's signature to verify
+	// with its own published key. A single-statement chain was checked at index 0.
+	if (hasTrailingTrustAnchorEc && lastIdx > 0) {
+		const selfVerify = await verifyEntityStatement(
+			chain[lastIdx] as string,
+			last.payload.jwks as JWKSet,
+			verifyOptions,
+		);
+		if (!selfVerify.ok) {
+			addError(
+				errors,
+				InternalErrorCode.SignatureInvalid,
+				`TA EC self-signature invalid: ${selfVerify.error.description}`,
+				{ statementIndex: lastIdx, field: "jwks", checkNumber: 15 },
+			);
+		}
+	}
+
 	// Federation §4.1 permits a configured anchor to have superiors. Its signed
 	// authority_hints declare those relationships; configured trust ends this chain.
 	if (hasTrailingTrustAnchorEc && trustAnchors.has(lastIss as EntityId)) {
