@@ -96,15 +96,29 @@ export function createTrustMarkIssuanceHandler(
 			);
 		}
 
-		if (ctx.trustMarkIssuers) {
+		if (ctx.trustMarkIssuers && Object.hasOwn(ctx.trustMarkIssuers, trustMarkType)) {
 			const authorizedIssuers = ctx.trustMarkIssuers[trustMarkType];
-			if (authorizedIssuers && !authorizedIssuers.includes(ctx.entityId)) {
+			if (
+				!Array.isArray(authorizedIssuers) ||
+				!authorizedIssuers.every((issuer) => typeof issuer === "string")
+			) {
+				return errorResponse(500, "server_error", "Invalid Trust Mark issuer configuration");
+			}
+			if (!authorizedIssuers.includes(ctx.entityId)) {
 				return errorResponse(
 					403,
 					"unauthorized_issuer",
 					`Not authorized to issue trust mark '${trustMarkType}'`,
 				);
 			}
+		}
+
+		if (
+			ctx.trustMarkDelegations &&
+			Object.hasOwn(ctx.trustMarkDelegations, trustMarkType) &&
+			typeof ctx.trustMarkDelegations[trustMarkType] !== "string"
+		) {
+			return errorResponse(500, "server_error", "Invalid Trust Mark delegation configuration");
 		}
 
 		try {
@@ -158,7 +172,11 @@ async function buildTrustMark(
 		exp: now + ttl,
 	};
 
-	if (ctx.trustMarkDelegations?.[trustMarkType]) {
+	if (
+		ctx.trustMarkDelegations &&
+		Object.hasOwn(ctx.trustMarkDelegations, trustMarkType) &&
+		ctx.trustMarkDelegations[trustMarkType]
+	) {
 		payload.delegation = ctx.trustMarkDelegations[trustMarkType];
 	}
 

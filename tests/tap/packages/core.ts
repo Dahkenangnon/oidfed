@@ -16183,4 +16183,221 @@ export default (QUnit: QUnit) => {
 			}
 		});
 	});
+
+	module("core / Trust Mark registry properties", () => {
+		const types = [
+			"toString",
+			"valueOf",
+			"__proto__",
+			"constructor",
+			"hasOwnProperty",
+			"https://marks.example/custom",
+		];
+		async function markFixture(type: string) {
+			const fed = await createMockFederation();
+			const now = Math.floor(Date.now() / 1000);
+			const jwt = await signEntityStatement(
+				{ iss: LEAF_ID, sub: LEAF_ID, trust_mark_type: type, iat: now, exp: now + 300 },
+				new JwkSigner(fed.leafSigningKey),
+				{ typ: JwtTyp.TrustMark },
+			);
+			return { fed, jwt, keys: { keys: [fed.leafPublicKey] } };
+		}
+		for (const type of types) {
+			test(`registry properties: ${type} requires an explicit issuer entry`, async (t) => {
+				const { jwt, keys } = await markFixture(type);
+				for (const registry of [{}, Object.create(null), Object.create({ [type]: [] })]) {
+					const result = await validateTrustMark(jwt, registry, keys);
+					t.false(result.ok, "inherited and missing entries confer no authorization");
+					if (!result.ok) t.equal(result.error.description, "Trust mark type not recognized");
+				}
+				for (const issuers of [[], [LEAF_ID], [TA_ID]]) {
+					const registry = Object.fromEntries([[type, issuers]]);
+					const result = await validateTrustMark(jwt, registry, keys);
+					t.equal(result.ok, issuers.length === 0 || issuers.includes(LEAF_ID));
+				}
+			});
+			test(`registry properties: signed chain rejects undeclared ${type}`, async (t) => {
+				const { fed, jwt } = await markFixture(type);
+				const decoded = decodeEntityStatement(fed.leafEcJwt);
+				if (!decoded.ok) throw new Error(decoded.error.description);
+				const ec = await signEntityStatement(
+					{ ...decoded.value.payload, trust_marks: [{ trust_mark_type: type, trust_mark: jwt }] },
+					new JwkSigner(fed.leafSigningKey),
+				);
+				const result = await validateTrustChain(
+					[ec, fed.taSubStatementForLeaf, fed.taEcJwt],
+					fed.trustAnchors,
+					{ verboseErrors: true },
+				);
+				t.false(result.valid);
+				if (!result.valid)
+					t.true(result.errors.some((e) => e.message.includes("type not recognized")));
+			});
+		}
+		test("registry properties: malformed issuer entries return validation errors", async (t) => {
+			const type = "https://marks.example/custom";
+			const { jwt, keys } = await markFixture(type);
+			for (const value of [null, undefined, false, LEAF_ID, {}, { length: 0 }, [7], () => {}]) {
+				const result = await validateTrustMark(
+					jwt,
+					{ [type]: value } as unknown as Record<string, string[]>,
+					keys,
+				);
+				t.false(result.ok, String(value));
+				if (!result.ok) t.equal(result.error.code, InternalErrorCode.TrustMarkInvalid);
+			}
+		});
+		test("registry properties: only explicit valid owners require delegation", async (t) => {
+			for (const type of ["toString", "__proto__", "https://marks.example/custom"]) {
+				const { jwt, keys, fed } = await markFixture(type);
+				const ownerKeys = await generateSigningKey("ES256");
+				const owner = { sub: TA_ID, jwks: { keys: [ownerKeys.publicKey] } };
+				for (const owners of [{}, Object.create(null), Object.create({ [type]: owner })]) {
+					t.true(
+						(await validateTrustMark(jwt, { [type]: [] }, keys, { trustMarkOwners: owners })).ok,
+					);
+				}
+				const owners = Object.fromEntries([[type, owner]]);
+				t.false(
+					(await validateTrustMark(jwt, { [type]: [] }, keys, { trustMarkOwners: owners })).ok,
+				);
+				const delegation = await signTrustMarkDelegation({
+					issuer: TA_ID,
+					subject: LEAF_ID,
+					trustMarkType: type,
+					signer: new JwkSigner(ownerKeys.privateKey),
+				});
+				const parsed = decodeEntityStatement(jwt);
+				if (!parsed.ok) throw new Error(parsed.error.description);
+				const delegated = await signEntityStatement(
+					{ ...parsed.value.payload, delegation },
+					new JwkSigner(fed.leafSigningKey),
+					{ typ: JwtTyp.TrustMark },
+				);
+				t.true(
+					(await validateTrustMark(delegated, { [type]: [] }, keys, { trustMarkOwners: owners }))
+						.ok,
+				);
+				t.false(
+					(
+						await validateTrustMark(delegated, { [type]: [] }, keys, {
+							trustMarkOwners: Object.create({ [type]: owner }),
+						})
+					).ok,
+				);
+				for (const value of [
+					null,
+					undefined,
+					false,
+					{},
+					{ sub: TA_ID },
+					{ sub: TA_ID, jwks: null },
+				]) {
+					const result = await validateTrustMark(delegated, { [type]: [] }, keys, {
+						trustMarkOwners: { [type]: value } as unknown as Record<
+							string,
+							CorePublic.TrustMarkOwner
+						>,
+					});
+					t.false(result.ok);
+				}
+			}
+		});
+		test("registry properties: builders and chains preserve explicit __proto__ entries", async (t) => {
+			const { fed, jwt, keys } = await markFixture("__proto__");
+			const issuers = Object.fromEntries([["__proto__", [LEAF_ID]]]);
+			const payload = CorePublic.buildEntityConfigurationPayload({
+				entityId: TA_ID,
+				jwks: { keys: [fed.taPublicKey] },
+				metadata: { federation_entity: {} },
+				trustMarkIssuers: issuers,
+			});
+			const registry = payload.trust_mark_issuers as Record<string, string[]>;
+			t.true(Object.hasOwn(registry, "__proto__"));
+			t.strictEqual(Object.getPrototypeOf(registry), Object.prototype);
+			t.deepEqual(JSON.parse(JSON.stringify(registry)), issuers);
+			const anchor = await signEntityStatement(payload, new JwkSigner(fed.taSigningKey));
+			const leaf = decodeEntityStatement(fed.leafEcJwt);
+			if (!leaf.ok) throw new Error(leaf.error.description);
+			const ec = await signEntityStatement(
+				{ ...leaf.value.payload, trust_marks: [{ trust_mark_type: "__proto__", trust_mark: jwt }] },
+				new JwkSigner(fed.leafSigningKey),
+			);
+			const result = await validateTrustChain(
+				[ec, fed.taSubStatementForLeaf, anchor],
+				fed.trustAnchors,
+				{ verboseErrors: true },
+			);
+			t.true(result.valid, JSON.stringify(result.errors));
+			if (result.valid) t.equal(result.chain.trustMarks.length, 1);
+			const rejectedAnchor = await signEntityStatement(
+				{ ...payload, trust_mark_issuers: Object.fromEntries([["__proto__", [TA_ID]]]) },
+				new JwkSigner(fed.taSigningKey),
+			);
+			t.false(
+				(
+					await validateTrustChain(
+						[ec, fed.taSubStatementForLeaf, rejectedAnchor],
+						fed.trustAnchors,
+					)
+				).valid,
+			);
+			t.true((await validateTrustMark(jwt, issuers, keys)).ok);
+		});
+		test("registry properties: collection ignores inherited marks without issuer discovery", async (t) => {
+			const graph = await createCollectionFederation({
+				edges: [{ issuer: "ta", subject: "leaf" }],
+			});
+			const types = ["toString", "constructor", "__proto__"];
+			const refs = await Promise.all(
+				types.map(async (type) => ({
+					trust_mark_type: type,
+					trust_mark: await signEntityStatement(
+						{
+							iss: "https://unlisted.example",
+							sub: graph.id("leaf"),
+							iat: 1000,
+							exp: 4000,
+							trust_mark_type: type,
+						},
+						new JwkSigner(graph.keys.get("leaf")!.privateKey),
+						{ typ: JwtTyp.TrustMark },
+					),
+				})),
+			);
+			const parsed = decodeEntityStatement(graph.configurations.get("leaf")!);
+			if (!parsed.ok) throw new Error(parsed.error.description);
+			const jwt = await signEntityStatement(
+				{ ...parsed.value.payload, trust_marks: refs },
+				new JwkSigner(graph.keys.get("leaf")!.privateKey),
+			);
+			graph.routes.set(
+				`${graph.id("leaf")}/.well-known/openid-federation`,
+				() => new Response(jwt, { headers: { "Content-Type": MediaType.EntityStatement } }),
+			);
+			const anchor = decodeEntityStatement(graph.configurations.get("ta")!);
+			if (!anchor.ok) throw new Error(anchor.error.description);
+			const root = await signEntityStatement(
+				{ ...anchor.value.payload, trust_mark_issuers: {} },
+				new JwkSigner(graph.keys.get("ta")!.privateKey),
+			);
+			graph.routes.set(
+				`${graph.id("ta")}/.well-known/openid-federation`,
+				() => new Response(root, { headers: { "Content-Type": MediaType.EntityStatement } }),
+			);
+			const service = new EntityCollectionService({
+				trustAnchors: graph.trustAnchors,
+				options: { clock: { now: () => 1500 }, httpClient: graph.httpClient },
+			});
+			const refreshed = await service.refresh(graph.id("ta"));
+			t.true(refreshed.ok, JSON.stringify(refreshed));
+			t.false(graph.requests.some((url) => new URL(url).origin === "https://unlisted.example"));
+			for (const type of types) {
+				const result = await service.query({ trustAnchor: graph.id("ta"), trustMarkType: [type] });
+				t.true(result.ok);
+				if (result.ok) t.equal(result.value.entities.length, 0);
+			}
+		});
+	});
 };

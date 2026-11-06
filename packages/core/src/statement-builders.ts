@@ -254,11 +254,12 @@ function copyEntityIdArray(
 function copyTrustMarkIssuers(
 	issuers: Readonly<Record<string, readonly (EntityId | string)[]>>,
 ): Record<string, string[]> {
-	const result: Record<string, string[]> = {};
-	for (const [trustMarkType, values] of Object.entries(issuers)) {
-		result[trustMarkType] = values.map((value) => entityId(String(value)));
-	}
-	return result;
+	return Object.fromEntries(
+		Object.entries(issuers).map(([type, values]) => [
+			type,
+			values.map((value) => entityId(String(value))),
+		]),
+	);
 }
 
 function forbidClaims(

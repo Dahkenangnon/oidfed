@@ -1238,7 +1238,7 @@ async function validateTrustChainImpl(
 		| undefined;
 
 	if (verifyMarks && leafTrustMarks && leafTrustMarks.length > 0) {
-		const trustMarkIssuers: Record<string, string[]> = {};
+		let trustMarkIssuers: Record<string, string[]> = {};
 		let trustMarkOwners: Record<string, unknown> | undefined;
 		const entityJwks: Record<string, JWKSet> = {};
 		const taStatement = parsed[lastIdx] as ParsedEntityStatement;
@@ -1249,9 +1249,7 @@ async function validateTrustChainImpl(
 		if (taPayloadRec.iss === taPayloadRec.sub) {
 			const issuers = taPayloadRec.trust_mark_issuers as Record<string, string[]> | undefined;
 			if (issuers) {
-				for (const [tmType, tmIssuers] of Object.entries(issuers)) {
-					trustMarkIssuers[tmType] = tmIssuers;
-				}
+				trustMarkIssuers = Object.fromEntries(Object.entries(issuers));
 			}
 			const owners = taPayloadRec.trust_mark_owners as Record<string, unknown> | undefined;
 			if (owners) {

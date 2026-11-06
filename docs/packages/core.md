@@ -294,6 +294,8 @@ const cached = await cache.get<string>(key);
 
 Validate the Trust Mark signature, issuer authorization, subject, expiry, and any delegation first. Status is a separate request to the issuer's advertised status endpoint. The example assumes `issuerJwks`, `trustMarkIssuers`, `trustMarkOwners`, and `statusEndpoint` came from trusted federation processing.
 
+Issuer and owner registries use explicitly declared JSON members. In `validateTrustMark()`, an explicit empty issuer array permits any issuer for that type; a nonempty array restricts issuance to its listed Entity Identifiers ([Federation §3.1.2](https://openid.net/specs/openid-federation-1_0.html#section-3.1.2)). An explicit owner entry requires a valid delegation under [§7.3](https://openid.net/specs/openid-federation-1_0.html#section-7.3). Malformed entries return validation errors.
+
 ```ts
 import { validateTrustMark, fetchTrustMarkStatus } from "@oidfed/core";
 

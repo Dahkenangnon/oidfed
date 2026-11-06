@@ -8141,4 +8141,48 @@ export default (QUnit: QUnit) => {
 			);
 		});
 	}
+
+	module("authority / Trust Mark registry properties", () => {
+		const subject = entityId("https://subject.example");
+		const request = (type: string) =>
+			new Request(
+				`${ENTITY_ID}/issue?sub=${encodeURIComponent(subject)}&trust_mark_type=${encodeURIComponent(type)}`,
+			);
+		test("registry properties: inherited issuer and delegation entries are absent", async (t) => {
+			for (const type of ["toString", "constructor", "__proto__", "https://marks.example/custom"]) {
+				const { ctx } = await createTestContext({
+					trustMarkIssuers: Object.create({ [type]: ["https://other.example"] }),
+					trustMarkDelegations: Object.create({ [type]: "inherited.jwt.token" }),
+				});
+				const response = await createTrustMarkIssuanceHandler(ctx)(request(type));
+				t.equal(response.status, 200);
+				const parsed = decodeEntityStatement(await response.text());
+				t.true(parsed.ok);
+				if (parsed.ok) t.false(Object.hasOwn(parsed.value.payload, "delegation"));
+			}
+		});
+		test("registry properties: malformed configuration fails before key or storage access", async (t) => {
+			const type = "https://marks.example/custom";
+			for (const field of ["trustMarkIssuers", "trustMarkDelegations"] as const) {
+				for (const value of [null, undefined, false, {}, 7]) {
+					const { ctx } = await createTestContext({
+						[field]: { [type]: value },
+					} as unknown as TestContextOverrides);
+					let accesses = 0;
+					ctx.keyProvider.getFederationKeySet = async () => {
+						accesses++;
+						throw new Error("Unexpected key access");
+					};
+					ctx.storage.trustMarks!.getValid = async () => {
+						accesses++;
+						throw new Error("Unexpected storage access");
+					};
+					const response = await createTrustMarkIssuanceHandler(ctx)(request(type));
+					t.equal(response.status, 500);
+					t.equal(accesses, 0);
+					t.equal(((await response.json()) as { error: string }).error, "server_error");
+				}
+			}
+		});
+	});
 };

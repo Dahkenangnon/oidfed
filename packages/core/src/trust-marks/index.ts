@@ -13,6 +13,7 @@ import type { JWKSet } from "../schemas/jwk.js";
 import {
 	TrustMarkDelegationPayloadSchema,
 	type TrustMarkOwner,
+	TrustMarkOwnerSchema,
 	TrustMarkPayloadSchema,
 } from "../schemas/trust-mark.js";
 import type {
@@ -113,9 +114,16 @@ export async function validateTrustMark(
 		return err(tmError("Trust mark sub does not match expected entity"));
 	}
 
-	const allowedIssuers = trustMarkIssuers[trustMarkType];
-	if (allowedIssuers === undefined) {
+	// Federation §3.1.2 assigns authorization to explicit JSON members.
+	if (!Object.hasOwn(trustMarkIssuers, trustMarkType)) {
 		return err(tmError("Trust mark type not recognized"));
+	}
+	const allowedIssuers = trustMarkIssuers[trustMarkType];
+	if (
+		!Array.isArray(allowedIssuers) ||
+		!allowedIssuers.every((issuer) => typeof issuer === "string")
+	) {
+		return err(tmError("Trust mark issuer entry must be an array of Entity Identifiers"));
 	}
 	// Empty array = anyone may issue
 	if (allowedIssuers.length > 0 && !allowedIssuers.includes(iss)) {
@@ -143,7 +151,9 @@ export async function validateTrustMark(
 
 	// Delegation is mandatory when the TA lists this type in trust_mark_owners
 	const delegationJwt = p.delegation;
-	if (options?.trustMarkOwners?.[trustMarkType] && !delegationJwt) {
+	const owner = trustMarkOwner(options?.trustMarkOwners, trustMarkType);
+	if (!owner.ok) return owner;
+	if (owner.value !== undefined && !delegationJwt) {
 		return err(
 			tmError(
 				`Trust mark type '${trustMarkType}' requires delegation (in trust_mark_owners) but none provided`,
@@ -233,12 +243,13 @@ async function validateDelegation(
 		);
 	}
 
-	const owners = options?.trustMarkOwners;
-	if (!owners?.[trustMarkType]) {
+	const configuredOwner = trustMarkOwner(options?.trustMarkOwners, trustMarkType);
+	if (!configuredOwner.ok) return configuredOwner;
+	if (configuredOwner.value === undefined) {
 		return err(tmError(`No trust_mark_owners configured for type '${trustMarkType}'`));
 	}
 
-	const owner = owners[trustMarkType] as TrustMarkOwner;
+	const owner = configuredOwner.value;
 
 	if (dIss !== owner.sub) {
 		return err(
@@ -275,6 +286,16 @@ async function validateDelegation(
 		...(dExp !== undefined ? { expiresAt: dExp } : {}),
 	};
 	return ok(validatedDelegation);
+}
+
+function trustMarkOwner(
+	owners: Record<string, TrustMarkOwner> | undefined,
+	type: string,
+): Result<TrustMarkOwner | undefined, FederationError> {
+	if (!owners || !Object.hasOwn(owners, type)) return ok(undefined);
+	const parsed = TrustMarkOwnerSchema.safeParse(owners[type]);
+	if (!parsed.success) return err(tmError(`Invalid trust_mark_owners entry for type '${type}'`));
+	return ok(parsed.data);
 }
 
 export {

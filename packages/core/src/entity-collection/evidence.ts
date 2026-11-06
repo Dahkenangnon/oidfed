@@ -144,8 +144,15 @@ export function createCollectionEvidence(
 				)
 			)
 				continue;
-			const authorized = trustedRoot.value.payload.trust_mark_issuers?.[ref.trust_mark_type];
-			if (!authorized || (authorized.length === 0) !== openOnly) continue;
+			const issuers = trustedRoot.value.payload.trust_mark_issuers;
+			if (!issuers || !Object.hasOwn(issuers, ref.trust_mark_type)) continue;
+			const authorized = issuers[ref.trust_mark_type];
+			if (
+				!Array.isArray(authorized) ||
+				!authorized.every((issuer) => typeof issuer === "string") ||
+				(authorized.length === 0) !== openOnly
+			)
+				continue;
 			const mark = decodeEntityStatement(ref.trust_mark);
 			if (!mark.ok || !isValidEntityId(mark.value.payload.iss)) continue;
 			if (authorized.length && !authorized.includes(mark.value.payload.iss)) continue;
