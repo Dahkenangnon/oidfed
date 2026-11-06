@@ -330,6 +330,8 @@ export async function completeRequest(
 	// Only the superior-metadata case mandates ignoring the requested query (Wallet §7.1.1).
 	if (superiorQueries !== undefined) {
 		delete safeRequest.dcql_query;
+		// Remove the plural request field too, so consumers cannot reuse it after the override.
+		delete safeRequest.dcql_queries;
 		delete safeRequest.scope;
 	}
 	const publishedQueries =

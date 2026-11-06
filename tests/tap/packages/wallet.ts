@@ -2561,6 +2561,156 @@ export default (QUnit: QUnit) => {
 			t.true(checked.ok, JSON.stringify(checked));
 			if (checked.ok) t.deepEqual(checked.value.effectiveQueries, [walletQuery]);
 		});
+		test("superior overrides remove request query lists from callbacks and results", async (t) => {
+			const f = await walletFederation({ verifierOverride: { dcql_queries: [walletQuery] } });
+			const conflicting = [
+				{
+					credentials: [
+						{
+							id: "medical",
+							format: "dc+sd-jwt",
+							meta: { vct_values: ["https://example.com/medical"] },
+						},
+					],
+				},
+			];
+			let calls = 0;
+			const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
+				{ client_id: f.requestPayload.client_id },
+				f.anchors,
+				{
+					...f.options,
+					queryPolicy: ({ request, queries }) => {
+						calls++;
+						for (const field of ["dcql_query", "dcql_queries", "scope", "client_metadata"])
+							t.false(Object.hasOwn(request, field), `callback omits ${field}`);
+						t.deepEqual(queries, [walletQuery]);
+						t.equal(request.example_extension, "retained");
+						return true;
+					},
+				},
+			);
+			t.true(prepared.ok);
+			if (!prepared.ok) return;
+			for (const scoped of [false, true]) {
+				for (const plural of [conflicting, "not-a-query-list", null, []]) {
+					const jwt = await token(
+						{
+							...f.requestPayload,
+							...(scoped ? { dcql_query: undefined, scope: "overridden_scope" } : {}),
+							dcql_queries: plural,
+							example_extension: "retained",
+							client_metadata: { dcql_queries: conflicting },
+						},
+						f.protocol.verifier.privateKey,
+						"oauth-authz-req+jwt",
+					);
+					const checked = await CredentialVerifierRole.completeAuthorizationRequest(
+						prepared.value,
+						jwt,
+					);
+					t.true(checked.ok, JSON.stringify(checked));
+					if (!checked.ok) continue;
+					t.equal(checked.value.querySource, "superior_metadata");
+					t.deepEqual(checked.value.effectiveQueries, [walletQuery]);
+					for (const field of ["dcql_query", "dcql_queries", "scope", "client_metadata"])
+						t.false(Object.hasOwn(checked.value.request, field), `result omits ${field}`);
+					t.equal(checked.value.request.example_extension, "retained");
+				}
+			}
+			t.equal(calls, 8);
+		});
+		test("request query lists stay uninterpreted without a superior override", async (t) => {
+			const conflicting = [
+				{
+					credentials: [
+						{
+							id: "medical",
+							format: "dc+sd-jwt",
+							meta: { vct_values: ["https://example.com/medical"] },
+						},
+					],
+				},
+			];
+			for (const source of ["request", "verifier_metadata", "metadata_policy"] as const) {
+				const f = await walletFederation(
+					source === "request"
+						? {}
+						: source === "verifier_metadata"
+							? { verifierMetadata: { dcql_queries: [walletQuery] } }
+							: { policy: { dcql_queries: { value: [walletQuery] } } },
+				);
+				for (const plural of [conflicting, "not-a-query-list", null, []]) {
+					let calls = 0;
+					const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
+						{ client_id: f.requestPayload.client_id },
+						f.anchors,
+						{
+							...f.options,
+							queryPolicy: ({ request, queries }) => {
+								calls++;
+								t.deepEqual(request.dcql_queries, plural);
+								t.deepEqual(request.dcql_query, walletQuery);
+								t.deepEqual(queries, [walletQuery]);
+								return true;
+							},
+						},
+					);
+					t.true(prepared.ok);
+					if (!prepared.ok) continue;
+					const jwt = await token(
+						{ ...f.requestPayload, dcql_queries: plural },
+						f.protocol.verifier.privateKey,
+						"oauth-authz-req+jwt",
+					);
+					const checked = await CredentialVerifierRole.completeAuthorizationRequest(
+						prepared.value,
+						jwt,
+					);
+					t.true(checked.ok, JSON.stringify(checked));
+					if (!checked.ok) continue;
+					t.equal(checked.value.querySource, source);
+					t.deepEqual(checked.value.effectiveQueries, [walletQuery]);
+					t.deepEqual(checked.value.request.dcql_queries, plural);
+					t.deepEqual(checked.value.request.dcql_query, walletQuery);
+					t.equal(calls, 1);
+				}
+			}
+		});
+		test("a plural query list cannot replace dcql_query or scope", async (t) => {
+			for (const override of [false, true]) {
+				const f = await walletFederation(
+					override ? { verifierOverride: { dcql_queries: [walletQuery] } } : {},
+				);
+				let calls = 0;
+				const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
+					{ client_id: f.requestPayload.client_id },
+					f.anchors,
+					{
+						...f.options,
+						queryPolicy: () => {
+							calls++;
+							return true;
+						},
+					},
+				);
+				t.true(prepared.ok);
+				if (!prepared.ok) continue;
+				const jwt = await token(
+					{ ...f.requestPayload, dcql_query: undefined, dcql_queries: [walletQuery] },
+					f.protocol.verifier.privateKey,
+					"oauth-authz-req+jwt",
+				);
+				const checked = await CredentialVerifierRole.completeAuthorizationRequest(
+					prepared.value,
+					jwt,
+				);
+				t.false(checked.ok);
+				if (!checked.ok)
+					t.equal(checked.error.description, "Exactly one DCQL query or scope is required");
+				t.equal(calls, 0);
+			}
+		});
 		test("superior DCQL metadata overrides even malformed request queries", async (t) => {
 			const f = await walletFederation({ verifierOverride: { dcql_queries: [walletQuery] } });
 			const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
@@ -2607,15 +2757,22 @@ export default (QUnit: QUnit) => {
 				options,
 			);
 			t.true(prepared.ok, JSON.stringify(prepared));
-			if (prepared.ok)
-				t.false(
-					(
-						await CredentialVerifierRole.completeAuthorizationRequest(
-							prepared.value,
-							await token(f.requestPayload, f.protocol.verifier.privateKey, "oauth-authz-req+jwt"),
-						)
-					).ok,
+			if (prepared.ok) {
+				const checked = await CredentialVerifierRole.completeAuthorizationRequest(
+					prepared.value,
+					await token(
+						{ ...f.requestPayload, dcql_queries: [walletQuery] },
+						f.protocol.verifier.privateKey,
+						"oauth-authz-req+jwt",
+					),
 				);
+				t.false(checked.ok);
+				if (!checked.ok)
+					t.equal(
+						checked.error.description,
+						"Superior DCQL metadata did not produce an effective query",
+					);
+			}
 			const retained = await walletFederation({
 				verifierOverride: { dcql_queries: [walletQuery] },
 			});
