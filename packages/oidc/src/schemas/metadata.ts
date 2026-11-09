@@ -101,6 +101,7 @@ const OpenIDRelyingPartyMetadataShape = {
 	// Federation-specific (OpenID Federation 1.0 Section 5.1/5.2)
 	client_registration_types: z.array(z.string()).optional(),
 	signed_jwks_uri: httpsUrlNoFragment.optional(),
+	// Optional organization identifier extension supplied by the deployment.
 	organization_identifier: z.string().optional(),
 	scope: z.string().optional(),
 };
@@ -207,6 +208,7 @@ export const OpenIDProviderMetadataSchema = z
 		client_registration_types_supported: z.array(z.string()).optional(),
 		federation_registration_endpoint: httpsUrlNoFragment.optional(),
 		signed_jwks_uri: httpsUrlNoFragment.optional(),
+		// Optional organization identifier extension supplied by the deployment.
 		organization_identifier: z.string().optional(),
 	})
 	.superRefine((meta, ctx) => {
@@ -267,7 +269,7 @@ export type OpenIDProviderMetadata = z.infer<typeof OpenIDProviderMetadataSchema
  * Typed OAuth 2.0 Authorization Server metadata schema.
  * Validates parameters from RFC 8414 (Section 2), extension RFCs
  * (RFC 7636 PKCE, RFC 8628 Device Auth, RFC 9126 PAR, RFC 9207 Issuer ID,
- * RFC 9449 DPoP), and OpenID Federation 1.0 Section 5.1.3 extensions.
+ * RFC 9449 DPoP), and OpenID Federation 1.0 Section 5.1.4 extensions.
  */
 export const OAuthAuthorizationServerMetadataSchema = z
 	.looseObject({
@@ -307,10 +309,11 @@ export const OAuthAuthorizationServerMetadataSchema = z
 		// Issuer Identification (RFC 9207)
 		authorization_response_iss_parameter_supported: z.boolean().optional(),
 		...CommonInformationalMetadataShape,
-		// Federation-specific (OpenID Federation 1.0 Section 5.1.3)
+		// Federation-specific (OpenID Federation 1.0 Section 5.1.4)
 		client_registration_types_supported: z.array(z.string()).optional(),
 		federation_registration_endpoint: httpsUrlNoFragment.optional(),
 		signed_jwks_uri: httpsUrlNoFragment.optional(),
+		// Optional organization identifier extension supplied by the deployment.
 		organization_identifier: z.string().optional(),
 	})
 	.superRefine((meta, ctx) => {
@@ -362,7 +365,7 @@ export type OAuthAuthorizationServerMetadata = z.infer<
 /**
  * Typed OAuth 2.0 Client metadata schema.
  * Validates parameters from RFC 7591 (OAuth 2.0 Dynamic Client Registration)
- * and OpenID Federation 1.0 Section 5.1.4 extensions.
+ * and OpenID Federation 1.0 Section 5.1.5 extensions.
  */
 export const OAuthClientMetadataSchema = z.looseObject({
 	redirect_uris: z.array(z.string().url()).optional(),
@@ -379,9 +382,10 @@ export const OAuthClientMetadataSchema = z.looseObject({
 	jwks: MetadataJWKSetSchema.optional(),
 	software_id: z.string().optional(),
 	software_version: z.string().optional(),
-	// Federation-specific (OpenID Federation 1.0 Section 5.1.4)
+	// Federation-specific (OpenID Federation 1.0 Section 5.1.5)
 	client_registration_types: z.array(z.string()).optional(),
 	signed_jwks_uri: httpsUrlNoFragment.optional(),
+	// Optional organization identifier extension supplied by the deployment.
 	organization_identifier: z.string().optional(),
 });
 
@@ -394,7 +398,7 @@ export type OAuthClientMetadata = z.infer<typeof OAuthClientMetadataSchema>;
 /**
  * Typed OAuth 2.0 Protected Resource metadata schema.
  * Validates parameters from RFC 9728 (OAuth 2.0 Protected Resource Metadata)
- * and OpenID Federation 1.0 Section 5.1.5 extensions.
+ * and OpenID Federation 1.0 Section 5.1.6 extensions.
  */
 export const OAuthResourceMetadataSchema = z.looseObject({
 	resource: z.string().url(),
@@ -408,6 +412,7 @@ export const OAuthResourceMetadataSchema = z.looseObject({
 	...CommonInformationalMetadataShape,
 	// Federation-specific (OpenID Federation 1.0 Section 5.2)
 	signed_jwks_uri: httpsUrlNoFragment.optional(),
+	// Optional organization identifier extension supplied by the deployment.
 	organization_identifier: z.string().optional(),
 });
 
