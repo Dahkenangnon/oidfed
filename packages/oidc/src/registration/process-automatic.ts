@@ -9,6 +9,7 @@ import {
 	InternalErrorCode,
 	ok,
 	type ReplayStore,
+	type ResolvedEntityKeys,
 	type Result,
 	resolveEntityKeys,
 	type TrustAnchorSet,
@@ -37,6 +38,11 @@ export interface ProcessedRegistration {
 	readonly peerResolvedOpMetadata?: Readonly<Record<string, unknown>>;
 }
 
+/** Automatic registration retains the protocol keys used to verify its Request Object. */
+export interface ProcessedAutomaticRegistration extends ProcessedRegistration {
+	readonly protocolKeys: ResolvedEntityKeys;
+}
+
 export interface ProcessAutomaticRegistrationOptions extends FederationOptions {
 	/** The OP's own Entity Identifier — REQUIRED to prevent cross-OP replay via `aud` validation. */
 	opEntityId: EntityId;
@@ -54,7 +60,7 @@ export async function processAutomaticRegistration(
 	requestObjectJwt: string,
 	trustAnchors: TrustAnchorSet | undefined,
 	options: ProcessAutomaticRegistrationOptions,
-): Promise<Result<ProcessedRegistration, FederationError>> {
+): Promise<Result<ProcessedAutomaticRegistration, FederationError>> {
 	const trustAnchorsResult = requireNonEmptyTrustAnchors(trustAnchors);
 	if (!trustAnchorsResult.ok) return trustAnchorsResult;
 	const configuredTrustAnchors = trustAnchorsResult.value;
@@ -177,6 +183,7 @@ export async function processAutomaticRegistration(
 	}
 
 	return ok({
+		protocolKeys: protocolKeysResult.value,
 		rpEntityId,
 		resolvedRpMetadata,
 		trustChain: bestChain,

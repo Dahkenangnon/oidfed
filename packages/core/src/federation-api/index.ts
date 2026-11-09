@@ -167,6 +167,8 @@ const SECURITY_REVOCATION_REASONS = new Set(["compromised", "keyCompromise", "ke
 export interface SelectHistoricalVerificationKeyOptions {
 	readonly kid: string;
 	readonly validAt: number;
+	/** Additional security-revocation reasons defined by the federation (§8.7.3), matched exactly. */
+	readonly securityRevocationReasons?: readonly string[];
 }
 
 /** Select a historical key usable for verifying material issued at the supplied NumericDate. */
@@ -181,7 +183,12 @@ export function selectHistoricalVerificationKey(
 
 	for (const key of matchingKeys) {
 		const revoked = key.revoked;
-		if (revoked?.reason && SECURITY_REVOCATION_REASONS.has(revoked.reason)) {
+		// Additional reasons extend the existing protection, including pre-revocation signatures (§8.7).
+		if (
+			revoked?.reason &&
+			(SECURITY_REVOCATION_REASONS.has(revoked.reason) ||
+				options.securityRevocationReasons?.includes(revoked.reason))
+		) {
 			continue;
 		}
 		if (revoked?.revoked_at !== undefined && options.validAt >= revoked.revoked_at) {

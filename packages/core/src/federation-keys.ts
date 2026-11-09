@@ -25,7 +25,10 @@ export interface FederationKeyLifecycleProvider extends FederationKeyProvider {
 	getHistoricalFederationKeys(): Promise<HistoricalKeyEntry[]>;
 	/** Publish a next key without changing the signer (Federation §11.2). */
 	publishKey(key: FederationSigningKey): Promise<void>;
-	/** Switch after the application's publication/propagation interval has elapsed. */
+	/**
+	 * Switch after the application's publication/propagation interval has elapsed.
+	 * A published replacement can also restore signing after all active keys are revoked.
+	 */
 	switchActiveKey(kid: string, options?: SwitchActiveFederationKeyOptions): Promise<void>;
 	/** Apply local revocation policy; this does not invalidate remote cached statements. */
 	revokeKey(kid: string, reason: string): Promise<void>;
@@ -172,8 +175,10 @@ export class MemoryFederationKeyProvider implements FederationKeyLifecycleProvid
 		}
 
 		// Keep the state check and transition in one synchronous operation.
-		const current = this.currentKeySet();
-		const previousKid = current.signer.kid;
+		// Recovery after revocation can start with no active signer (§11.4).
+		// Only the explicitly selected published key becomes active; revoked keys stay revoked.
+		const hasActive = Array.from(this.keys.values()).some((key) => key.state === "active");
+		const previousKid = hasActive ? this.currentKeySet().signer.kid : undefined;
 		const now = this.nowMs();
 		const interval = options.retirePreviousAfterMs ?? DEFAULT_KEY_RETIRE_AFTER_MS;
 		const expiresAt = now + interval;
@@ -189,7 +194,7 @@ export class MemoryFederationKeyProvider implements FederationKeyLifecycleProvid
 			activationOrder: this.activationOrder++,
 		});
 
-		if (previousKid !== kid) {
+		if (previousKid !== undefined && previousKid !== kid) {
 			const previous = this.getEntry(previousKid);
 			if (previous.state === "active") {
 				// This overlap starts at signer switch, after the separate propagation interval.

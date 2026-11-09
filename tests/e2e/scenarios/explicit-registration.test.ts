@@ -50,7 +50,7 @@ describe("Explicit registration", () => {
 					headers: { "Content-Type": MediaType.EntityStatement },
 					body: jwt,
 				});
-				expect(response.status).toBe(supplied ? 400 : 403);
+				expect(response.status).toBe(400);
 				expect(await response.json()).toMatchObject({ error: "invalid_trust_chain" });
 			}
 		});

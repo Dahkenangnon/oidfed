@@ -130,33 +130,21 @@ export function parseQueryParams(request: Request): URLSearchParams {
 
 /** Returns a 405 response if the request method does not match, or null if it does. */
 export function requireMethod(request: Request, method: string): Response | null {
-	if (request.method.toUpperCase() !== method.toUpperCase()) {
-		return new Response(JSON.stringify({ error: "method_not_allowed" }), {
-			status: 405,
-			headers: {
-				...SECURITY_HEADERS,
-				Allow: method,
-				"Content-Type": "application/json",
-			},
-		});
-	}
-	return null;
+	return requireMethods(request, [method]);
 }
 
 /** Returns a 405 response if the request method is not in the allowed list, or null if it is. */
 export function requireMethods(request: Request, methods: string[]): Response | null {
 	const upper = request.method.toUpperCase();
-	if (methods.some((m) => m.toUpperCase() === upper)) {
-		return null;
-	}
-	return new Response(JSON.stringify({ error: "method_not_allowed" }), {
-		status: 405,
-		headers: {
-			...SECURITY_HEADERS,
-			Allow: methods.join(", "),
-			"Content-Type": "application/json",
-		},
-	});
+	if (methods.some((m) => m.toUpperCase() === upper)) return null;
+	// Keep the method-specific extension code and §8.9's descriptive JSON format.
+	const response = errorResponse(
+		405,
+		"method_not_allowed",
+		`Allowed request methods: ${methods.join(", ")}`,
+	);
+	response.headers.set("Allow", methods.join(", "));
+	return response;
 }
 
 export interface ExtractedRequestParams {

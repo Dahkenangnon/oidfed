@@ -73,7 +73,11 @@ For automatic registration, RPs sign authorization requests as Request Objects u
 
 RP and OP protocol metadata accept public keys with optional `kid` values, as defined by [Federation §5.2.1](https://openid.net/specs/openid-federation-1_0.html#section-5.2.1). During automatic registration, a Request Object can omit its header `kid` when the resolved protocol key set contains exactly one key. Multiple-key sets require the header identifier ([OIDC Core §10.1](https://openid.net/specs/openid-connect-core-1_0.html#Signing)); when supplied, it must identify a matching client key ([RFC 9101 §6.2](https://www.rfc-editor.org/rfc/rfc9101.html#section-6.2)). Explicit registration keeps the federation key requirements for the request Entity Configuration while accepting optional identifiers in its protocol metadata. The built-in signers include their key identifiers in generated JWTs.
 
-When `requestDelivery: "par"` is used, the role posts the signed Request Object with `private_key_jwt` client authentication. Both the Request Object signer and client-assertion signer must be published in the RP protocol metadata through `jwks`, `jwks_uri`, or `signed_jwks_uri`. The current API does not configure mutual-TLS/self-signed TLS client authentication for PAR.
+With `requestDelivery: "par"`, the role posts the signed Request Object as proof under [Federation §12.1.1.2](https://openid.net/specs/openid-federation-1_0.html#section-12.1.1.2). It adds a `private_key_jwt` assertion when the selected chains' effective RP and OP metadata both advertise that method, as required by [§12.1.4](https://openid.net/specs/openid-federation-1_0.html#section-12.1.4). The RP can advertise a supported-method list or a single method. When both are supplied, the single value must belong to the list ([RP Metadata Choices §2](https://openid.net/specs/openid-connect-rp-metadata-choices-1_0.html#section-2)).
+
+When mutual support for JWT authentication is absent, the request uses its signed Request Object alone. Contradictory method declarations return `invalid_metadata`. Each signer used must be published in the RP protocol metadata through `jwks`, `jwks_uri`, or `signed_jwks_uri`. The assertion audience is the OP Entity Identifier.
+
+`OAuthClientRole` reads the client's authentication methods from `oauth_client` metadata. `RelyingPartyRole` reads them from `openid_relying_party`, including when the entity hosts both roles ([Federation §12.1.5](https://openid.net/specs/openid-federation-1_0.html#section-12.1.5)).
 
 When `requestDelivery: "request_uri"` is used, OP metadata that explicitly sets `request_uri_parameter_supported: false` blocks delivery before an authorization URL is produced.
 
@@ -237,6 +241,10 @@ Configuration parameters used to instantiate `OidcProviderRole` and `OAuthAuthor
 | `onRegistrationInvalidation` | `(sub: EntityId) => Promise<void>`| No | Late pre-commit hook called after validation and response preparation, immediately before `onRegistration`. |
 
 `OidcProviderRoleConfig` additionally accepts `replayStore` and `onRegistration`. `replayStore` is required when calling `processAutomaticRegistration()`; it is not inherited from the parent storage automatically. `onRegistration(sub, clientMetadata, clientSecret?)` lets you persist the accepted registration. The OAuth authorization-server role exposes the explicit-registration route and does not expose the OP's automatic-registration method or these two hooks.
+
+Automatic processing returns `ProcessedAutomaticRegistration`, including `protocolKeys: { keys, source }` from the Request Object verification. The `onRegistration` callback receives a detached metadata copy with those keys in `jwks`, including when they were resolved through `jwks_uri` or `signed_jwks_uri`. Resolution keeps the precedence in [Federation §5.2.1](https://openid.net/specs/openid-federation-1_0.html#section-5.2.1). Explicit registration retains its existing result and metadata handling.
+
+Explicit-registration processing errors use the [§8.9](https://openid.net/specs/openid-federation-1_0.html#section-8.9) status mappings referenced by [§12.2.4](https://openid.net/specs/openid-federation-1_0.html#section-12.2.4): `invalid_trust_chain` returns 400, and `invalid_trust_anchor` returns 404. An invalid request signature returns 400 `invalid_request`; internal failures receive a sanitized server error.
 
 ### `OAuthResourceRoleConfig`
 

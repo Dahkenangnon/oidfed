@@ -2,12 +2,12 @@
 import {
 	DEFAULT_ENTITY_STATEMENT_TTL_SECONDS,
 	DEFAULT_MAX_REQUEST_BODY_BYTES,
-	decodeEntityStatement,
 	type EntityId,
 	errorResponse,
 	FederationErrorCode,
 	type FederationKeyProvider,
 	type FederationOptions,
+	InternalErrorCode,
 	isExactContentType,
 	jwtResponse,
 	MediaType,
@@ -16,6 +16,7 @@ import {
 	requireMethod,
 	signEntityStatement,
 	type TrustAnchorSet,
+	toPublicError,
 } from "@oidfed/core";
 import {
 	OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE,
@@ -100,16 +101,16 @@ export function createExplicitRegistrationHandler(
 			opEntityId: config.opEntityId,
 		});
 		if (!processed.ok) {
-			const decoded = isEntityStatementBody ? decodeEntityStatement(body) : undefined;
-			const discoveryFailure =
-				processed.error.code === FederationErrorCode.InvalidTrustChain &&
-				decoded?.ok &&
-				decoded.value.header.trust_chain === undefined;
-			return errorResponse(
-				discoveryFailure ? 403 : 400,
-				processed.error.code,
-				processed.error.description,
+			// A bad request signature is a client error; retain 400 while using a public code.
+			const error = toPublicError(
+				processed.error.code === InternalErrorCode.SignatureInvalid
+					? {
+							code: FederationErrorCode.InvalidRequest,
+							description: "RP Entity Configuration self-signature is invalid",
+						}
+					: processed.error,
 			);
+			return errorResponse(error.status, error.code, error.description);
 		}
 		const {
 			requestPayload: reqPayload,

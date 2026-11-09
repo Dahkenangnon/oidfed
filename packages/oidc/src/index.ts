@@ -36,6 +36,7 @@ export type {
 export type { ExplicitRegistrationHandlerConfig } from "./registration/handler.js";
 export type {
 	ProcessAutomaticRegistrationOptions,
+	ProcessedAutomaticRegistration,
 	ProcessedRegistration,
 } from "./registration/process-automatic.js";
 export type { ProcessExplicitRegistrationOptions } from "./registration/process-explicit.js";

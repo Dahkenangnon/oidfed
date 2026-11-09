@@ -12,8 +12,9 @@ import {
 import { err, type FederationError, ok, type Result } from "../errors.js";
 import { isExactContentType, parseContentTypeHeader } from "../http.js";
 import { readResponseBody } from "../http-response.js";
+import { decodeEntityStatement } from "../jose/verify.js";
 import type { EntityId, FederationOptions } from "../types.js";
-import { entityId, isValidEntityId } from "../types.js";
+import { entityId, isValidEntityId, nowSeconds } from "../types.js";
 
 // --- IANA Special-Use IP Detection ---
 
@@ -408,6 +409,28 @@ export async function performFetch(
 	}
 }
 
+/** Decode only for cache lifetime (§10.2); callers still validate signatures and claims. */
+function statementCacheTtl(jwt: string, options?: FederationOptions): number {
+	const decoded = decodeEntityStatement(jwt);
+	const exp = decoded.ok ? decoded.value.payload.exp : undefined;
+	if (typeof exp !== "number" || !Number.isFinite(exp)) return 0;
+	const remaining = exp - nowSeconds(options?.clock);
+	const ttl = Math.min(remaining, options?.cacheMaxTtlSeconds ?? DEFAULT_CACHE_TTL_SECONDS);
+	return Number.isFinite(ttl) && ttl > 0 ? ttl : 0;
+}
+
+async function cachedStatement(
+	key: string,
+	options?: FederationOptions,
+): Promise<string | undefined> {
+	if (!options?.cache) return undefined;
+	const cached = await options.cache.get<string>(key);
+	if (cached === undefined) return undefined;
+	if (statementCacheTtl(cached, options) > 0) return cached;
+	await options.cache.delete(key);
+	return undefined;
+}
+
 /** Fetch an Entity Configuration using §9.1 GET discovery, without a Federation client assertion. */
 export async function fetchEntityConfiguration(
 	entityId: EntityId,
@@ -418,7 +441,7 @@ export async function fetchEntityConfiguration(
 
 	if (options?.cache) {
 		const cacheKey = await ecCacheKey(entityId);
-		const cached = await options.cache.get<string>(cacheKey);
+		const cached = await cachedStatement(cacheKey, options);
 		if (cached !== undefined) {
 			options?.logger?.debug("Cache hit for entity configuration", { entityId });
 			return ok(cached);
@@ -430,8 +453,8 @@ export async function fetchEntityConfiguration(
 
 	if (result.ok && options?.cache) {
 		const cacheKey = await ecCacheKey(entityId);
-		const ttl = options.cacheMaxTtlSeconds ?? DEFAULT_CACHE_TTL_SECONDS;
-		await options.cache.set(cacheKey, result.value, ttl);
+		const ttl = statementCacheTtl(result.value, options);
+		if (ttl > 0) await options.cache.set(cacheKey, result.value, ttl);
 	}
 
 	return result;
@@ -448,14 +471,23 @@ export async function fetchSubordinateStatement(
 	subject: EntityId,
 	options?: FetchSubordinateStatementOptions,
 ): Promise<Result<string, FederationError>> {
-	const url = new URL(fetchEndpoint);
+	let url: URL;
+	try {
+		url = new URL(fetchEndpoint);
+	} catch (cause) {
+		return err({
+			code: InternalErrorCode.Network,
+			description: `Invalid URL: ${fetchEndpoint}`,
+			cause,
+		});
+	}
 	url.searchParams.set("sub", subject);
 	const urlStr = url.toString();
 
 	if (options?.cache) {
-		const issuer = options.issuer ?? (new URL(fetchEndpoint).origin as EntityId);
+		const issuer = options.issuer ?? (url.origin as EntityId);
 		const cacheKey = await esCacheKey(issuer, subject);
-		const cached = await options.cache.get<string>(cacheKey);
+		const cached = await cachedStatement(cacheKey, options);
 		if (cached !== undefined) {
 			options?.logger?.debug("Cache hit for subordinate statement", { subject });
 			return ok(cached);
@@ -466,10 +498,10 @@ export async function fetchSubordinateStatement(
 	const result = await performFetch(urlStr, options);
 
 	if (result.ok && options?.cache) {
-		const issuer = options.issuer ?? (new URL(fetchEndpoint).origin as EntityId);
+		const issuer = options.issuer ?? (url.origin as EntityId);
 		const cacheKey = await esCacheKey(issuer, subject);
-		const ttl = options.cacheMaxTtlSeconds ?? DEFAULT_CACHE_TTL_SECONDS;
-		await options.cache.set(cacheKey, result.value, ttl);
+		const ttl = statementCacheTtl(result.value, options);
+		if (ttl > 0) await options.cache.set(cacheKey, result.value, ttl);
 	}
 
 	return result;

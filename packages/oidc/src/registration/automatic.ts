@@ -321,37 +321,56 @@ export async function automaticRegistration(
 				);
 			}
 			const httpClient = options?.httpClient ?? fetch;
-			const clientAssertionSigner = rpConfig.protocolKeyProvider.getClientAssertionSigner
-				? await rpConfig.protocolKeyProvider.getClientAssertionSigner()
-				: requestObjectSigner;
-
-			const assertAssertionSignerResult = assertOidcSignerPublished(
-				rpConfig.metadata,
-				clientAssertionSigner,
-				"client assertion",
+			// Use the calling role's metadata even when the entity hosts both client types.
+			const clientType = rpConfig.metadata.openid_relying_party
+				? "openid_relying_party"
+				: "oauth_client";
+			const authMethod = parJwtAuthentication(
+				sharedChains.value.rpChain.resolvedMetadata[clientType] ?? {},
+				opMeta ?? {},
 			);
-			if (!assertAssertionSignerResult.ok) {
-				return err(assertAssertionSignerResult.error);
+			if (!authMethod.ok) return authMethod;
+			const form = new URLSearchParams({ request: requestObjectJwt, client_id: clientIdStr });
+			// §12.1.1.2 permits the signed Request Object itself as PAR proof.
+			// An additional assertion must use a mutually supported method (§12.1.4).
+			if (authMethod.value) {
+				try {
+					const clientAssertionSigner = rpConfig.protocolKeyProvider.getClientAssertionSigner
+						? await rpConfig.protocolKeyProvider.getClientAssertionSigner()
+						: requestObjectSigner;
+
+					const assertAssertionSignerResult = assertOidcSignerPublished(
+						rpConfig.metadata,
+						clientAssertionSigner,
+						"client assertion",
+					);
+					if (!assertAssertionSignerResult.ok) {
+						return err(assertAssertionSignerResult.error);
+					}
+
+					// Federation §12.1.1.2 requires the OP Entity Identifier as the assertion audience.
+					const clientAssertion = await createClientAssertion(
+						rpConfig.entityId as string,
+						discovery.entityId as string,
+						clientAssertionSigner,
+						{
+							expiresInSeconds: 60,
+							...(options?.clock ? { clock: options.clock } : {}),
+						},
+					);
+					form.set("client_assertion_type", CLIENT_ASSERTION_TYPE);
+					form.set("client_assertion", clientAssertion);
+				} catch (cause) {
+					return err(
+						federationError(
+							FederationErrorCode.ServerError,
+							"Failed to create PAR client assertion",
+							cause,
+						),
+					);
+				}
 			}
-
-			// Client assertion audience is the OP's Entity Identifier under the
-			// federation profile of PAR + automatic registration — not the PAR
-			// endpoint URL.
-			const clientAssertion = await createClientAssertion(
-				rpConfig.entityId as string,
-				discovery.entityId as string,
-				clientAssertionSigner,
-				{
-					expiresInSeconds: 60,
-					...(options?.clock ? { clock: options.clock } : {}),
-				},
-			);
-			const formBody = new URLSearchParams({
-				request: requestObjectJwt,
-				client_id: clientIdStr,
-				client_assertion_type: CLIENT_ASSERTION_TYPE,
-				client_assertion: clientAssertion,
-			}).toString();
+			const formBody = form.toString();
 			const response = await httpClient(parEndpoint, {
 				method: "POST",
 				headers: {
@@ -402,6 +421,50 @@ function buildAuthorizationUrl(endpoint: string, params: Record<string, string>)
 		url.searchParams.set(key, value);
 	}
 	return url.toString();
+}
+
+/** Use the selected federation metadata to choose optional PAR JWT authentication. */
+function parJwtAuthentication(
+	rp: Record<string, unknown>,
+	op: Record<string, unknown>,
+): Result<boolean> {
+	const methods = rp.token_endpoint_auth_methods_supported;
+	const method = rp.token_endpoint_auth_method;
+	const opMethods = op.token_endpoint_auth_methods_supported;
+	for (const list of [methods, opMethods]) {
+		if (
+			list !== undefined &&
+			(!Array.isArray(list) || !list.every((value) => typeof value === "string"))
+		) {
+			return err(
+				federationError(
+					FederationErrorCode.InvalidMetadata,
+					"Authentication methods must be arrays of strings",
+				),
+			);
+		}
+	}
+	if (method !== undefined && typeof method !== "string") {
+		return err(
+			federationError(
+				FederationErrorCode.InvalidMetadata,
+				"Client authentication method must be a string",
+			),
+		);
+	}
+	// RP Metadata Choices §2 requires the singular preference to belong to the list.
+	if (Array.isArray(methods) && method !== undefined && !methods.includes(method)) {
+		return err(
+			federationError(
+				FederationErrorCode.InvalidMetadata,
+				"Client authentication method must belong to its supported methods",
+			),
+		);
+	}
+	const rpSupports = Array.isArray(methods)
+		? methods.includes("private_key_jwt")
+		: method === "private_key_jwt";
+	return ok(rpSupports && Array.isArray(opMethods) && opMethods.includes("private_key_jwt"));
 }
 
 function assertOidcSignerPublished(

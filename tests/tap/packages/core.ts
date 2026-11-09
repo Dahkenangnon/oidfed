@@ -11460,10 +11460,16 @@ export default (QUnit: QUnit) => {
 		});
 		test("returns cached result on cache hit", async (t) => {
 			const cache = new MemoryCache();
+			const keys = await generateSigningKey("ES256");
+			const jwt = await signEntityStatement(
+				{ exp: Math.floor(Date.now() / 1000) + 60 },
+				new JwkSigner(keys.privateKey),
+				{ typ: JwtTyp.EntityStatement },
+			);
 			let callCount = 0;
 			const mockFetch = async () => {
 				callCount++;
-				return new Response("jwt", {
+				return new Response(jwt, {
 					status: 200,
 					headers: { "Content-Type": "application/entity-statement+jwt" },
 				});
@@ -17026,17 +17032,24 @@ export default (QUnit: QUnit) => {
 				async (assert) => {
 					const cache = new MemoryCache({ clock });
 					const subject = entityId("https://client.example");
-					await cache.set(await esCacheKey(anchor, subject), "cached statement", 1000);
+					const keys = await generateSigningKey("ES256");
+					const jwt = await signEntityStatement(
+						{ exp: clock.now() + 1000 },
+						new JwkSigner(keys.privateKey),
+						{ typ: JwtTyp.EntityStatement },
+					);
+					await cache.set(await esCacheKey(anchor, subject), jwt, 1000);
 					let requests = 0;
 					const result = await fetchSubordinateStatement(`${anchor}/fetch`, subject, {
 						cache,
+						clock,
 						httpClient: async () => {
 							requests++;
 							throw new Error("Unexpected fetch");
 						},
 					});
 					assert.true(result.ok);
-					if (result.ok) assert.equal(result.value, "cached statement");
+					if (result.ok) assert.equal(result.value, jwt);
 					assert.equal(requests, 0);
 				},
 			);
@@ -19977,6 +19990,270 @@ export default (QUnit: QUnit) => {
 					).ok,
 				);
 				t.equal(redirects, 1);
+			}
+		});
+	});
+	module("core / fetch and key lifecycle safeguards", () => {
+		test("malformed subordinate endpoints return errors without fetching", async (t) => {
+			let calls = 0;
+			const result = await fetchSubordinateStatement("not a URL", entityId("https://rp.example"), {
+				httpClient: async () => {
+					calls++;
+					return new Response();
+				},
+			});
+			t.false(result.ok);
+			t.equal(calls, 0);
+			let requested = "";
+			await fetchSubordinateStatement(
+				"https://ta.example/fetch?issuer=one&sub=old",
+				entityId("https://rp.example"),
+				{
+					httpClient: async (input) => {
+						requested = String(input);
+						return new Response("jwt", { headers: { "Content-Type": MediaType.EntityStatement } });
+					},
+				},
+			);
+			t.equal(new URL(requested).searchParams.get("issuer"), "one");
+			t.equal(new URL(requested).searchParams.get("sub"), "https://rp.example");
+		});
+		test("method errors describe the failure and preserve Allow", async (t) => {
+			for (const response of [
+				requireMethod(new Request("https://a.example", { method: "DELETE" }), "GET"),
+				requireMethods(new Request("https://a.example", { method: "DELETE" }), ["GET", "POST"]),
+			]) {
+				t.equal(response?.status, 405);
+				t.ok(response?.headers.get("Allow")?.includes("GET"));
+				const body = (await response?.json()) as Record<string, unknown>;
+				t.equal(body.error, "method_not_allowed");
+				t.equal(typeof body.error_description, "string");
+				t.ok(body.error_description);
+			}
+			t.strictEqual(requireMethod(new Request("https://a.example"), "GET"), null);
+			t.strictEqual(requireMethods(new Request("https://a.example"), ["POST", "GET"]), null);
+		});
+		test("statement caches refetch at expiry and honor shorter TTLs", async (t) => {
+			const firstKey = await generateSigningKey("ES256");
+			const nextKey = await generateSigningKey("ES256");
+			for (const subordinate of [false, true])
+				for (const ttl of [3600, 2]) {
+					let now = 1000;
+					const clock = { now: () => now };
+					const cache = new MemoryCache({ clock });
+					let calls = 0;
+					const first = await signEntityStatement(
+						{
+							iss: "https://ta.example",
+							sub: "https://ta.example",
+							iat: now,
+							exp: 1010.25,
+							jwks: { keys: [firstKey.publicKey] },
+						},
+						new JwkSigner(firstKey.privateKey),
+						{ typ: JwtTyp.EntityStatement },
+					);
+					const next = await signEntityStatement(
+						{
+							iss: "https://ta.example",
+							sub: "https://ta.example",
+							iat: now,
+							exp: 2000,
+							jwks: { keys: [nextKey.publicKey] },
+						},
+						new JwkSigner(nextKey.privateKey),
+						{ typ: JwtTyp.EntityStatement },
+					);
+					const options = {
+						clock,
+						cache,
+						cacheMaxTtlSeconds: ttl,
+						httpClient: async () =>
+							new Response(++calls === 1 ? first : next, {
+								headers: { "Content-Type": MediaType.EntityStatement },
+							}),
+					};
+					const get = () =>
+						subordinate
+							? fetchSubordinateStatement(
+									"https://ta.example/fetch",
+									entityId("https://rp.example"),
+									options,
+								)
+							: fetchEntityConfiguration(entityId("https://ta.example"), options);
+					t.deepEqual(await get(), ok(first));
+					now = 1000 + Math.min(ttl, 10.25) - 0.001;
+					t.deepEqual(await get(), ok(first));
+					t.equal(calls, 1);
+					now += 0.001;
+					t.deepEqual(await get(), ok(next));
+					t.equal(calls, 2);
+				}
+		});
+		test("invalid cached expiries are discarded without changing raw fetch results", async (t) => {
+			const key = await generateSigningKey("ES256");
+			for (const subordinate of [false, true])
+				for (const expiry of [undefined, "2000", 1000, -0.5]) {
+					const clock = { now: () => 1000 };
+					const cache = new MemoryCache({ clock });
+					const token = await signEntityStatement(
+						{
+							iss: "https://ta.example",
+							sub: "https://ta.example",
+							...(expiry !== undefined ? { exp: expiry } : {}),
+						} as Record<string, unknown>,
+						new JwkSigner(key.privateKey),
+						{ typ: JwtTyp.EntityStatement },
+					);
+					const cacheKey = subordinate
+						? await esCacheKey(entityId("https://ta.example"), entityId("https://rp.example"))
+						: await ecCacheKey(entityId("https://ta.example"));
+					await cache.set(cacheKey, "malformed.cached.jwt", 3600);
+					let calls = 0;
+					const options = {
+						clock,
+						cache,
+						httpClient: async () => {
+							calls++;
+							return new Response(token, {
+								headers: { "Content-Type": MediaType.EntityStatement },
+							});
+						},
+					};
+					const get = () =>
+						subordinate
+							? fetchSubordinateStatement(
+									"https://ta.example/fetch",
+									entityId("https://rp.example"),
+									options,
+								)
+							: fetchEntityConfiguration(entityId("https://ta.example"), options);
+					t.deepEqual(await get(), ok(token));
+					t.deepEqual(await get(), ok(token));
+					t.equal(calls, 2);
+					t.strictEqual(await cache.get(cacheKey), undefined);
+				}
+		});
+		test("stale custom-cache entries are refetched at the exact expiry", async (t) => {
+			const key = await generateSigningKey("ES256");
+			for (const subordinate of [false, true]) {
+				const clock = { now: () => -0.5 };
+				const cache = new MemoryCache({ clock });
+				const old = await signEntityStatement({ exp: -0.5 }, new JwkSigner(key.privateKey), {
+					typ: JwtTyp.EntityStatement,
+				});
+				const fresh = await signEntityStatement({ exp: -0.25 }, new JwkSigner(key.privateKey), {
+					typ: JwtTyp.EntityStatement,
+				});
+				const cacheKey = subordinate
+					? await esCacheKey(entityId("https://ta.example"), entityId("https://rp.example"))
+					: await ecCacheKey(entityId("https://ta.example"));
+				await cache.set(cacheKey, old, 3600);
+				let calls = 0;
+				const options = {
+					cache,
+					clock,
+					httpClient: async () => {
+						calls++;
+						return new Response(fresh, { headers: { "Content-Type": MediaType.EntityStatement } });
+					},
+				};
+				const get = () =>
+					subordinate
+						? fetchSubordinateStatement(
+								"https://ta.example/fetch",
+								entityId("https://rp.example"),
+								options,
+							)
+						: fetchEntityConfiguration(entityId("https://ta.example"), options);
+				t.deepEqual(await get(), ok(fresh));
+				t.deepEqual(await get(), ok(fresh));
+				t.equal(calls, 1, "future negative NumericDates remain cacheable");
+			}
+		});
+		test("a published replacement can recover after the last active key is revoked", async (t) => {
+			for (const publishFirst of [false, true]) {
+				const old = await generateSigningKey("ES256"),
+					next = await generateSigningKey("ES256");
+				const provider = CorePublic.MemoryFederationKeyProvider.fromJWK(old.privateKey, {
+					nowMs: () => 1000250,
+				});
+				if (publishFirst)
+					await provider.publishKey(CorePublic.createFederationSigningKey(next.privateKey));
+				await provider.revokeKey(old.privateKey.kid!, "compromised");
+				const before = await provider.getHistoricalFederationKeys();
+				await t.rejects(provider.getFederationKeySet(), /No active/);
+				if (!publishFirst)
+					await provider.publishKey(CorePublic.createFederationSigningKey(next.privateKey));
+				await t.rejects(
+					provider.switchActiveKey(next.privateKey.kid!, { retirePreviousAfterMs: -1 }),
+				);
+				await provider.switchActiveKey(next.privateKey.kid!);
+				t.equal((await provider.getFederationKeySet()).signer.kid, next.privateKey.kid);
+				t.deepEqual(await provider.getHistoricalFederationKeys(), before);
+				await t.rejects(provider.switchActiveKey(old.privateKey.kid!), /revoked/);
+			}
+		});
+		test("comparison cannot report agreement after dropping ambiguous keys", async (t) => {
+			const a = await generateSigningKey("ES256"),
+				b = await generateSigningKey("ES256");
+			const noKid = (key: JWK) => {
+				const result = { ...key };
+				delete result.kid;
+				return result;
+			};
+			for (const [left, right] of [
+				[{ keys: [noKid(a.publicKey)] }, { keys: [noKid(b.publicKey)] }],
+				[
+					{ keys: [{ ...b.publicKey, kid: a.publicKey.kid }, a.publicKey] },
+					{ keys: [a.publicKey] },
+				],
+				[{ keys: [] }, { keys: [] }],
+				[{ keys: [{ kty: "future", kid: "x" }] }, { keys: [{ kty: "future", kid: "x" }] }],
+				[{ keys: [{ kty: "RSA", kid: "x" }] }, { keys: [{ kty: "RSA", kid: "x" }] }],
+			] as const) {
+				const result = await compareTrustAnchorKeys(
+					{ keys: [...left.keys] },
+					{ keys: [...right.keys] },
+					entityId("https://ta.example"),
+				);
+				t.false(result.match);
+				t.ok(
+					"inputErrors" in result &&
+						Array.isArray(result.inputErrors) &&
+						result.inputErrors.length > 0,
+				);
+			}
+		});
+		test("custom security reasons add to built-in revocation protection", async (t) => {
+			const key = await generateSigningKey("ES256");
+			for (const reason of [
+				"compromised",
+				"keyCompromise",
+				"key_compromise",
+				"incident",
+				"superseded",
+			]) {
+				const keys = [
+					{
+						...key.publicKey,
+						kid: key.publicKey.kid!,
+						iat: 1000,
+						exp: 2000,
+						revoked: { revoked_at: 1500, reason },
+					},
+				];
+				const options = {
+					kid: key.publicKey.kid!,
+					validAt: 1200,
+					securityRevocationReasons: ["incident"],
+				};
+				t.equal(selectHistoricalVerificationKey(keys, options).ok, reason === "superseded");
+				t.equal(
+					selectHistoricalVerificationKey(keys, { ...options, securityRevocationReasons: [] }).ok,
+					["incident", "superseded"].includes(reason),
+				);
+				t.false(selectHistoricalVerificationKey(keys, { ...options, validAt: 1500 }).ok);
 			}
 		});
 	});

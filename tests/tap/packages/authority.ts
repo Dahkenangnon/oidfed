@@ -4559,6 +4559,31 @@ export default (QUnit: QUnit) => {
 	// endpoints/historical-keys
 	// -------------------------------------------------------------------------
 	module("authority / createHistoricalKeysHandler", () => {
+		test("publishes revocation history after explicit recovery with a replacement", async (t) => {
+			const { ctx, keyProvider } = await createTestContext();
+			await keyProvider.revokeKey("test-key-1", "compromised");
+			const handler = createHistoricalKeysHandler(ctx);
+			t.equal((await handler(new Request(`${ENTITY_ID}/federation_historical_keys`))).status, 500);
+			for (const kid of ["replacement", "spare"]) {
+				const key = await generateSigningKey("ES256");
+				await keyProvider.publishKey(createFederationSigningKey({ ...key.privateKey, kid }));
+			}
+			await keyProvider.switchActiveKey("replacement");
+			const response = await handler(new Request(`${ENTITY_ID}/federation_historical_keys`));
+			t.equal(response.status, 200);
+			const keys = await keyProvider.getFederationKeySet();
+			t.equal(keys.signer.kid, "replacement");
+			const verified = await verifyHistoricalKeysResponse(await response.text(), keys.jwks, {
+				expectedIssuer: ENTITY_ID,
+			});
+			t.true(verified.ok);
+			if (verified.ok) {
+				t.equal(verified.value.keys.length, 1);
+				t.equal(verified.value.keys[0]?.kid, "test-key-1");
+				t.equal(verified.value.keys[0]?.revoked?.reason, "compromised");
+			}
+		});
+
 		test("returns signed JWT with jwk-set+jwt content type", async (t) => {
 			const { ctx } = await createTestContext();
 			const handler = createHistoricalKeysHandler(ctx);
@@ -8859,7 +8884,10 @@ export default (QUnit: QUnit) => {
 						new Request(`${issuer}/list`, { method: "PUT" }),
 					);
 					assert.strictEqual(legacy.status, 405);
-					assert.deepEqual(await legacy.json(), { error: "method_not_allowed" });
+					assert.deepEqual(await legacy.json(), {
+						error: "method_not_allowed",
+						error_description: "Allowed request methods: GET",
+					});
 				}
 			});
 		});

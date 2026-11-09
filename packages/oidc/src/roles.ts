@@ -25,7 +25,7 @@ import { createExplicitRegistrationHandler } from "./registration/handler.js";
 import { assertNonEmptyTrustAnchors } from "./registration/helpers.js";
 import {
 	type ProcessAutomaticRegistrationOptions,
-	type ProcessedRegistration,
+	type ProcessedAutomaticRegistration,
 	processAutomaticRegistration,
 } from "./registration/process-automatic.js";
 
@@ -327,7 +327,7 @@ export class OidcProviderRole implements EntityRole {
 	async processAutomaticRegistration(
 		requestObjectJwt: string,
 		options?: Omit<ProcessAutomaticRegistrationOptions, "opEntityId" | "replayStore">,
-	): Promise<Result<ProcessedRegistration, FederationError>> {
+	): Promise<Result<ProcessedAutomaticRegistration, FederationError>> {
 		if (!this.context) {
 			throw new Error("Provider role is not initialized.");
 		}
@@ -359,12 +359,14 @@ export class OidcProviderRole implements EntityRole {
 		}
 
 		if (this.config.onRegistration) {
-			const federationJwks = result.value.trustChain.statements[0]?.payload.jwks;
-			const jwks = result.value.resolvedRpMetadata.jwks ?? federationJwks ?? { keys: [] };
-			await this.config.onRegistration(result.value.rpEntityId, {
-				...result.value.resolvedRpMetadata,
-				jwks,
-			});
+			// Persist the protocol keys actually used for §12.1.1.1.2 verification.
+			await this.config.onRegistration(
+				result.value.rpEntityId,
+				structuredClone({
+					...result.value.resolvedRpMetadata,
+					jwks: { keys: result.value.protocolKeys.keys },
+				}),
+			);
 		}
 
 		return result;

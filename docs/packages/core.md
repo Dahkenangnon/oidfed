@@ -78,6 +78,10 @@ if (ecResult.ok) {
 }
 ```
 
+EC and Subordinate Statement caches expire at the earlier of the statement's `exp` and `cacheMaxTtlSeconds` (3600 seconds by default). Fetchers discard stale cache entries and refetch, following [Federation §10.2](https://openid.net/specs/openid-federation-1_0.html#section-10.2). Decoding `exp` determines cache lifetime only; callers still verify the returned JWT. A fetched statement without a usable future expiry is returned for validation and left uncached. Malformed fetch endpoint URLs return an error `Result`.
+
+The HTTP method helpers return 405 with `Allow` and the `method_not_allowed` extension code. Their JSON body includes `error_description`, following the error format in [§8.9](https://openid.net/specs/openid-federation-1_0.html#section-8.9).
+
 ### Verifying Resolve Responses
 
 Use `verifyResolveResponse` with the resolver's trusted public keys, its Entity Identifier, and the requested subject. For an authenticated request, supply your application's Entity Identifier as `expectedAudience`:
@@ -305,6 +309,12 @@ The retirement interval must be finite and nonnegative, and the resulting deadli
 Revocation is a local provider operation, with historical key status defined by [§8.7.2](https://openid.net/specs/openid-federation-1_0.html#section-8.7.2). It does not notify other participants or invalidate their cached statements; [§11.4](https://openid.net/specs/openid-federation-1_0.html#section-11.4) leaves that process to the federation. Occurrence timestamps remain stable on later history reads, including epoch zero.
 
 The memory provider preserves a key's recorded expiry when revoking it. For a key with no recorded expiry, the first revocation sets its validity cutoff. Repeating `revokeKey()` updates the reason while preserving both expiry and the first `revoked_at`. This also preserves the original expiry when a compromise is discovered after retirement, as described in [§8.7](https://openid.net/specs/openid-federation-1_0.html#section-8.7).
+
+After the last active key is revoked, signing stops until the application publishes a replacement and explicitly activates it with `switchActiveKey(kid)`. A replacement published before revocation can also be selected. Historical revocation records remain intact. The application manages trusted distribution of the replacement according to its [§11.4 revocation policy](https://openid.net/specs/openid-federation-1_0.html#section-11.4).
+
+`selectHistoricalVerificationKey(keys, { kid, validAt, securityRevocationReasons })` accepts additional security-revocation reasons defined by the federation under [§8.7.3](https://openid.net/specs/openid-federation-1_0.html#section-8.7.3). These strings are matched exactly and extend the built-in reasons `compromised`, `keyCompromise`, and `key_compromise`. Security-revoked keys are rejected even for signatures predating revocation. Other reasons retain the normal validity and revocation-time checks; configure any custom security reasons used by your federation.
+
+`compareTrustAnchorKeys(ecJwks, independentJwks, entityId)` compares identifiers and public-key thumbprints for [§11.3](https://openid.net/specs/openid-federation-1_0.html#section-11.3). Both sets must be nonempty and contain public keys with distinct, nonempty identifiers. Invalid or uncomparable sets produce `match: false` with `inputErrors` identifying the affected source and reason. Valid sets retain the missing-key and mismatched-material diagnostics. An unsupported key type makes the comparison inconclusive; ordinary verification keeps its separate key-selection rules.
 
 ### Replay protection (`ReplayStore`)
 

@@ -2090,10 +2090,16 @@ export default (QUnit: QUnit) => {
 		test("par: POSTs request + client_id + client_assertion to PAR endpoint and returns urn-style authorizationUrl", async (t) => {
 			const now = Math.floor(Date.now() / 1000) + 30;
 			const parEndpoint = `${OP_ID}/request`;
+			const { config } = await createRpConfig({
+				requestDelivery: "par",
+			});
+			config.metadata.openid_relying_party!.token_endpoint_auth_method = "private_key_jwt";
 			const fed = await createMockFederation({
+				leafMetadata: config.metadata,
 				opMetadata: {
 					openid_provider: {
 						issuer: OP_ID,
+						token_endpoint_auth_methods_supported: ["private_key_jwt"],
 						authorization_endpoint: `${OP_ID}/authorize`,
 						token_endpoint: `${OP_ID}/token`,
 						pushed_authorization_request_endpoint: parEndpoint,
@@ -2105,9 +2111,6 @@ export default (QUnit: QUnit) => {
 				},
 			});
 			const discovery = await createMockDiscovery(OP_ID, fed);
-			const { config } = await createRpConfig({
-				requestDelivery: "par",
-			});
 
 			// Intercept only the PAR endpoint; all federation discovery requests
 			// continue through the regular mock HTTP client.
@@ -2176,21 +2179,6 @@ export default (QUnit: QUnit) => {
 
 		test("par: rejects unpublished client assertion signer before POST", async (t) => {
 			const parEndpoint = `${OP_ID}/request`;
-			const fed = await createMockFederation({
-				opMetadata: {
-					openid_provider: {
-						issuer: OP_ID,
-						authorization_endpoint: `${OP_ID}/authorize`,
-						token_endpoint: `${OP_ID}/token`,
-						pushed_authorization_request_endpoint: parEndpoint,
-						response_types_supported: ["code"],
-						subject_types_supported: ["public"],
-						id_token_signing_alg_values_supported: ["ES256"],
-						client_registration_types_supported: ["automatic", "explicit"],
-					},
-				},
-			});
-			const discovery = await createMockDiscovery(OP_ID, fed);
 			const requestKeys = await generateSigningKey("ES256");
 			const assertionKeys = await generateSigningKey("ES256");
 			const { config } = await createRpConfig({
@@ -2208,6 +2196,24 @@ export default (QUnit: QUnit) => {
 					},
 				},
 			});
+			config.metadata.openid_relying_party!.token_endpoint_auth_method = "private_key_jwt";
+			const fed = await createMockFederation({
+				leafMetadata: config.metadata,
+				opMetadata: {
+					openid_provider: {
+						issuer: OP_ID,
+						token_endpoint_auth_methods_supported: ["private_key_jwt"],
+						authorization_endpoint: `${OP_ID}/authorize`,
+						token_endpoint: `${OP_ID}/token`,
+						pushed_authorization_request_endpoint: parEndpoint,
+						response_types_supported: ["code"],
+						subject_types_supported: ["public"],
+						id_token_signing_alg_values_supported: ["ES256"],
+						client_registration_types_supported: ["automatic", "explicit"],
+					},
+				},
+			});
+			const discovery = await createMockDiscovery(OP_ID, fed);
 
 			let parPosts = 0;
 			const httpClient: HttpClient = async (input, init) => {
@@ -6162,7 +6168,7 @@ export default (QUnit: QUnit) => {
 				t.true(exp > iat);
 			});
 
-			test("returns 403 when no valid chain can be resolved for RP", async (t) => {
+			test("returns 400 when no valid chain can be resolved for RP", async (t) => {
 				const fed = await createMockFederation();
 				const config = await createHandlerConfig({
 					trustAnchors: fed.trustAnchors,
@@ -6184,7 +6190,7 @@ export default (QUnit: QUnit) => {
 						body: jwt,
 					}),
 				);
-				t.equal(res.status, 403);
+				t.equal(res.status, 400);
 				t.equal(
 					((await res.json()) as Record<string, string>).error,
 					FederationErrorCode.InvalidTrustChain,
@@ -7255,7 +7261,7 @@ export default (QUnit: QUnit) => {
 								"https://rp.example.com/tailored",
 							]);
 					} else {
-						t.equal(res.status, mode === "discovery" ? 403 : 400);
+						t.equal(res.status, 400);
 						t.equal(
 							((await res.json()) as { error: string }).error,
 							FederationErrorCode.InvalidTrustChain,
@@ -8092,6 +8098,329 @@ export default (QUnit: QUnit) => {
 			});
 			t.true(result.ok, JSON.stringify(result));
 			if (result.ok) t.equal(result.value.expiresAt, now + 600);
+		});
+	});
+	module("oidc / registration key and authentication selection", () => {
+		test("automatic registration callbacks receive the verified protocol keys", async (t) => {
+			for (const source of ["jwks", "jwks_uri", "signed_jwks_uri"] as const) {
+				const keys = await generateSigningKey("ES256");
+				const decoy = await generateSigningKey("ES256");
+				const metadata = {
+					openid_relying_party: {
+						redirect_uris: [`${LEAF_ID}/callback`],
+						response_types: ["code"],
+						client_registration_types: ["automatic"],
+						...(source === "jwks"
+							? { jwks: { keys: [keys.publicKey] } }
+							: { [source]: `${LEAF_ID}/keys` }),
+						...(source === "signed_jwks_uri" ? { jwks: { keys: [decoy.publicKey] } } : {}),
+					},
+				};
+				const fed = await createMockFederation({ leafMetadata: metadata });
+				const now = Math.floor(Date.now() / 1000);
+				const signedKeys = await signEntityStatement(
+					{ iss: LEAF_ID, sub: LEAF_ID, iat: now, exp: now + 300, keys: [keys.publicKey] },
+					new JwkSigner(fed.leafSigningKey),
+					{ typ: "jwk-set+jwt" },
+				);
+				let reads = 0,
+					callbacks = 0;
+				const options = {
+					...fed.options,
+					httpClient: async (input: string | URL | Request, init?: RequestInit) => {
+						const url =
+							typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+						if (url === `${LEAF_ID}/keys`) {
+							reads++;
+							return source === "signed_jwks_uri"
+								? new Response(signedKeys, {
+										headers: { "Content-Type": "application/jwk-set+jwt" },
+									})
+								: Response.json({ keys: [keys.publicKey] });
+						}
+						return fed.httpClient(input, init);
+					},
+				};
+				const role = new OidcProviderRole({
+					replayStore: new MemoryReplayStore(),
+					onRegistration: async (_id, value) => {
+						callbacks++;
+						t.deepEqual(value.jwks, { keys: [keys.publicKey] }, source);
+						(value.jwks as { keys: JWK[] }).keys.length = 0;
+					},
+				});
+				role.initialize({
+					entityId: OP_ID,
+					keyProvider: MemoryFederationKeyProvider.fromJWK(fed.opSigningKey),
+					trustAnchors: fed.trustAnchors,
+					options,
+				});
+				const payload = {
+					iss: LEAF_ID,
+					client_id: LEAF_ID,
+					aud: OP_ID,
+					iat: now,
+					exp: now + 60,
+					jti: crypto.randomUUID(),
+					response_type: "code",
+					scope: "openid",
+					redirect_uri: `${LEAF_ID}/callback`,
+				};
+				const request = await signEntityStatement(payload, new JwkSigner(keys.privateKey), {
+					typ: RequestObjectTyp,
+				});
+				const result = await role.processAutomaticRegistration(request);
+				t.true(result.ok, result.ok ? source : result.error.description);
+				if (result.ok) {
+					t.deepEqual(result.value.protocolKeys, { keys: [keys.publicKey], source });
+					t.deepEqual(
+						result.value.resolvedRpMetadata,
+						metadata.openid_relying_party,
+						"callback mutation is detached",
+					);
+				}
+				t.equal(reads, source === "jwks" ? 0 : 1);
+				const invalid = await signEntityStatement(
+					{ ...payload, jti: crypto.randomUUID() },
+					new JwkSigner(decoy.privateKey),
+					{ typ: RequestObjectTyp },
+				);
+				t.false((await role.processAutomaticRegistration(invalid)).ok);
+				t.equal(callbacks, 1);
+			}
+		});
+		test("OAuth PAR selects the calling role's authenticated metadata", async (t) => {
+			for (const scenario of [
+				{ method: "private_key_jwt", rpMethod: undefined, assertion: true },
+				{ method: "private_key_jwt", rpMethod: "custom", assertion: true },
+				{ method: "custom", rpMethod: "private_key_jwt", assertion: false },
+			]) {
+				const key = await generateSigningKey("ES256");
+				const clientMetadata = {
+					redirect_uris: [`${LEAF_ID}/callback`],
+					response_types: ["code"],
+					client_registration_types: ["automatic"],
+					jwks: { keys: [key.publicKey] },
+					token_endpoint_auth_method: scenario.method,
+				};
+				const fed = await createMockFederation({
+					leafMetadata: {
+						oauth_client: clientMetadata,
+						...(scenario.rpMethod
+							? {
+									openid_relying_party: {
+										...clientMetadata,
+										token_endpoint_auth_method: scenario.rpMethod,
+									},
+								}
+							: {}),
+					},
+					opMetadata: {
+						openid_provider: {
+							issuer: OP_ID,
+							authorization_endpoint: `${OP_ID}/authorize`,
+							token_endpoint: `${OP_ID}/token`,
+							pushed_authorization_request_endpoint: `${OP_ID}/par`,
+							response_types_supported: ["code"],
+							subject_types_supported: ["public"],
+							id_token_signing_alg_values_supported: ["ES256"],
+							client_registration_types_supported: ["automatic"],
+							token_endpoint_auth_methods_supported: ["private_key_jwt"],
+						},
+					},
+				});
+				const role = new OAuthClientRole({
+					metadata: clientMetadata,
+					protocolKeyProvider: new StaticProtocolSigningKeyProvider({
+						requestObjectSigner: new JwkSigner(key.privateKey),
+					}),
+					requestDelivery: "par",
+				});
+				role.initialize({
+					entityId: LEAF_ID,
+					keyProvider: MemoryFederationKeyProvider.fromJWK(fed.leafSigningKey),
+					authorityHints: [TA_ID],
+					options: fed.options,
+				});
+				let posts = 0;
+				const result = await role.createAuthorizationRequest(
+					await createMockDiscovery(OP_ID, fed),
+					{ response_type: "code", redirect_uri: `${LEAF_ID}/callback` },
+					fed.trustAnchors,
+					{
+						httpClient: async (input, init) => {
+							const url =
+								typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+							if (url !== `${OP_ID}/par`) return fed.httpClient(input, init);
+							posts++;
+							const body = new URLSearchParams(init?.body as string);
+							t.equal(body.has("client_assertion"), scenario.assertion, JSON.stringify(scenario));
+							t.equal(body.has("client_assertion_type"), scenario.assertion);
+							t.ok(body.get("request"));
+							return Response.json(
+								{ request_uri: "urn:example:oauth", expires_in: 60 },
+								{ status: 201 },
+							);
+						},
+					},
+				);
+				t.true(result.ok, result.ok ? "OAuth PAR succeeds" : result.error.description);
+				t.equal(posts, 1);
+			}
+		});
+		test("PAR uses Request Object proof unless private_key_jwt is mutually supported", async (t) => {
+			for (const scenario of [
+				{ rp: {}, op: undefined, assertion: false },
+				{
+					rp: { token_endpoint_auth_method: "private_key_jwt" },
+					op: ["private_key_jwt"],
+					assertion: false,
+					policyMethod: "custom",
+				},
+				{
+					rp: { token_endpoint_auth_method: "custom" },
+					op: ["private_key_jwt"],
+					assertion: true,
+					policyMethod: "private_key_jwt",
+				},
+				{
+					rp: { token_endpoint_auth_method: "private_key_jwt" },
+					op: ["private_key_jwt"],
+					assertion: true,
+					signerFails: true,
+				},
+				{
+					rp: { token_endpoint_auth_method: "private_key_jwt" },
+					op: ["self_signed_tls_client_auth"],
+					assertion: false,
+				},
+				{ rp: { token_endpoint_auth_method: "custom" }, op: ["private_key_jwt"], assertion: false },
+				{
+					rp: { token_endpoint_auth_method: "private_key_jwt" },
+					op: ["private_key_jwt"],
+					assertion: true,
+				},
+				{
+					rp: {
+						token_endpoint_auth_methods_supported: ["private_key_jwt", "custom"],
+						token_endpoint_auth_method: "custom",
+					},
+					op: ["private_key_jwt"],
+					assertion: true,
+				},
+				{
+					rp: {
+						token_endpoint_auth_methods_supported: ["custom"],
+						token_endpoint_auth_method: "private_key_jwt",
+					},
+					op: ["private_key_jwt"],
+					assertion: false,
+					invalid: true,
+				},
+			]) {
+				const keys = await generateSigningKey("ES256");
+				const metadata = {
+					openid_relying_party: {
+						redirect_uris: [`${LEAF_ID}/callback`],
+						response_types: ["code"],
+						client_registration_types: ["automatic"],
+						jwks: { keys: [keys.publicKey] },
+						...scenario.rp,
+					},
+				};
+				const fed = await createMockFederation({
+					leafMetadata: metadata,
+					opMetadata: {
+						openid_provider: {
+							issuer: OP_ID,
+							authorization_endpoint: `${OP_ID}/authorize`,
+							token_endpoint: `${OP_ID}/token`,
+							pushed_authorization_request_endpoint: `${OP_ID}/par`,
+							response_types_supported: ["code"],
+							subject_types_supported: ["public"],
+							id_token_signing_alg_values_supported: ["ES256"],
+							client_registration_types_supported: ["automatic"],
+							...(scenario.op ? { token_endpoint_auth_methods_supported: scenario.op } : {}),
+						},
+					},
+				});
+				if (scenario.policyMethod) {
+					const decoded = decodeEntityStatement(fed.taSubStatementForLeaf);
+					if (!decoded.ok) throw new Error("Invalid fixture");
+					const jwt = await signEntityStatement(
+						{
+							...decoded.value.payload,
+							metadata_policy: {
+								openid_relying_party: {
+									token_endpoint_auth_method: { value: scenario.policyMethod },
+								},
+							},
+						},
+						new JwkSigner(fed.taSigningKey),
+						{ typ: JwtTyp.EntityStatement },
+					);
+					const original = fed.httpClient;
+					fed.httpClient = async (input, init) => {
+						const url = new URL(
+							typeof input === "string" ? input : input instanceof URL ? input.href : input.url,
+						);
+						if (
+							url.origin === TA_ID &&
+							url.pathname === "/federation_fetch" &&
+							url.searchParams.get("sub") === LEAF_ID
+						)
+							return new Response(jwt, { headers: { "Content-Type": MediaType.EntityStatement } });
+						return original(input, init);
+					};
+					fed.options.httpClient = fed.httpClient;
+				}
+				const discovery = await createMockDiscovery(OP_ID, fed);
+				let posts = 0,
+					signerCalls = 0;
+				const result = await automaticRegistration(
+					discovery,
+					{
+						entityId: LEAF_ID,
+						authorityHints: [TA_ID],
+						metadata,
+						requestDelivery: "par",
+						protocolKeyProvider: {
+							getRequestObjectSigner: async () => new JwkSigner(keys.privateKey),
+							getClientAssertionSigner: async () => {
+								signerCalls++;
+								if (scenario.signerFails) throw new Error("signer unavailable");
+								return new JwkSigner(keys.privateKey);
+							},
+						},
+					},
+					{ response_type: "code", scope: "openid", redirect_uri: `${LEAF_ID}/callback` },
+					fed.trustAnchors,
+					{
+						...fed.options,
+						httpClient: async (input, init) => {
+							const url =
+								typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+							if (url !== `${OP_ID}/par`) return fed.httpClient(input, init);
+							posts++;
+							const body = new URLSearchParams(init?.body as string);
+							t.ok(body.get("request"));
+							t.equal(body.has("client_assertion"), scenario.assertion);
+							t.equal(body.has("client_assertion_type"), scenario.assertion);
+							return Response.json(
+								{ request_uri: "urn:example:par", expires_in: 60 },
+								{ status: 201 },
+							);
+						},
+					},
+				);
+				t.equal(result.ok, !scenario.invalid && !scenario.signerFails, JSON.stringify(scenario));
+				if (scenario.invalid && !result.ok)
+					t.equal(result.error.code, FederationErrorCode.InvalidMetadata);
+				t.equal(posts, scenario.invalid || scenario.signerFails ? 0 : 1);
+				if (scenario.signerFails && !result.ok)
+					t.equal(result.error.code, FederationErrorCode.ServerError);
+				t.equal(signerCalls, scenario.assertion ? 1 : 0);
+			}
 		});
 	});
 };

@@ -1,5 +1,6 @@
 import { jwkThumbprint } from "../jose/keys.js";
-import type { JWK, JWKSet } from "../schemas/jwk.js";
+import { preparePublicJwkSet } from "../jwks/public-material.js";
+import type { JWKSet } from "../schemas/jwk.js";
 import type { EntityId } from "../types.js";
 
 /** Result of comparing Trust Anchor keys from two sources. */
@@ -9,6 +10,11 @@ export interface TrustAnchorKeyComparisonResult {
 	missingInEntityConfiguration: string[];
 	missingInIndependentSource: string[];
 	mismatchedKeyMaterial: string[];
+	/** Sources whose complete public key sets could not be compared. */
+	inputErrors?: readonly {
+		source: "entity_configuration" | "independent_source";
+		reason: string;
+	}[];
 }
 
 /**
@@ -20,8 +26,29 @@ export async function compareTrustAnchorKeys(
 	independentJwks: Pick<JWKSet, "keys">,
 	entityId: EntityId,
 ): Promise<TrustAnchorKeyComparisonResult> {
-	const ecKeys = keysByKid(ecJwks.keys);
-	const independentKeys = keysByKid(independentJwks.keys);
+	const inputErrors: NonNullable<TrustAnchorKeyComparisonResult["inputErrors"]>[number][] = [];
+	// §11.3 compares complete sets. Silently skipping a key can create false agreement.
+	const index = async (
+		jwks: Pick<JWKSet, "keys">,
+		source: "entity_configuration" | "independent_source",
+	) => {
+		const keys = new Map<string, string>();
+		const prepared = preparePublicJwkSet(jwks);
+		if (!prepared.ok) {
+			inputErrors.push({ source, reason: prepared.error.description });
+			return keys;
+		}
+		for (const key of prepared.value.keys) {
+			try {
+				keys.set(key.kid as string, await jwkThumbprint(key));
+			} catch {
+				inputErrors.push({ source, reason: "Could not compute a public key thumbprint" });
+			}
+		}
+		return keys;
+	};
+	const ecKeys = await index(ecJwks, "entity_configuration");
+	const independentKeys = await index(independentJwks, "independent_source");
 	const ecKids = [...ecKeys.keys()].sort();
 	const independentKids = [...independentKeys.keys()].sort();
 
@@ -36,17 +63,14 @@ export async function compareTrustAnchorKeys(
 		const ecKey = ecKeys.get(kid);
 		const independentKey = independentKeys.get(kid);
 		if (!ecKey || !independentKey) continue;
-		const [ecThumbprint, independentThumbprint] = await Promise.all([
-			jwkThumbprint(ecKey),
-			jwkThumbprint(independentKey),
-		]);
-		if (ecThumbprint !== independentThumbprint) {
+		if (ecKey !== independentKey) {
 			mismatchedKeyMaterial.push(kid);
 		}
 	}
 
 	return {
 		match:
+			inputErrors.length === 0 &&
 			missingInEntityConfiguration.length === 0 &&
 			missingInIndependentSource.length === 0 &&
 			mismatchedKeyMaterial.length === 0,
@@ -54,15 +78,6 @@ export async function compareTrustAnchorKeys(
 		missingInEntityConfiguration,
 		missingInIndependentSource,
 		mismatchedKeyMaterial,
+		...(inputErrors.length > 0 ? { inputErrors } : {}),
 	};
-}
-
-function keysByKid(keys: readonly JWK[]): Map<string, JWK> {
-	const byKid = new Map<string, JWK>();
-	for (const key of keys) {
-		if (typeof key.kid === "string" && key.kid.length > 0) {
-			byKid.set(key.kid, key);
-		}
-	}
-	return byKid;
 }
