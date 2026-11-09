@@ -202,6 +202,7 @@ export async function authenticateWallet(
 		"oauth-client-attestation-pop+jwt",
 		options,
 		options.audience,
+		true,
 	);
 	if (!checked.ok) return checked;
 	const accepted = await invokePolicy(options.acceptWallet, verified.value, options);

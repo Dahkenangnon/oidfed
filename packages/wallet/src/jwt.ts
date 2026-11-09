@@ -46,6 +46,7 @@ export async function verifyToken(
 	typ: string,
 	options: WalletTrustOptions,
 	audience?: string,
+	confirmationKey = false,
 ): Promise<Result<jose.JWTPayload>> {
 	const decoded = decodeToken(jwt, options);
 	if (!decoded.ok) return decoded;
@@ -61,7 +62,19 @@ export async function verifyToken(
 	for (const key of keys.keys) {
 		if (!JWKSchema.safeParse(key).success || (key.key_ops && !key.key_ops.includes("verify")))
 			continue;
-		if (header.kid !== undefined && header.kid !== key.kid) continue;
+		// ACA §5.2 designates cnf.jwk itself; an absent key identifier is not a mismatch.
+		// A supplied hint still needs the string syntax defined by RFC 7515 §4.1.4.
+		if (
+			header.kid !== undefined &&
+			header.kid !== key.kid &&
+			!(
+				confirmationKey &&
+				typeof header.kid === "string" &&
+				keys.keys.length === 1 &&
+				key.kid === undefined
+			)
+		)
+			continue;
 		if (
 			!selectVerificationKey(
 				{ alg: header.alg, ...(key.kid ? { kid: key.kid } : {}) },

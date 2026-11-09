@@ -49,6 +49,65 @@ const proof = (f: Fixture) => ({
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	test("a PoP kid hint can accompany a kid-less confirmation key", async (t) => {
+		const f = await walletFederation();
+		const { kid: _kid, ...publicKey } = f.protocol.issuer.publicKey;
+		const jwt = await token(
+			{ ...attestation(f), cnf: { jwk: publicKey } },
+			f.protocol.provider.privateKey,
+			"oauth-client-attestation+jwt",
+		);
+		const pop = await token(
+			proof(f),
+			f.protocol.issuer.privateKey,
+			"oauth-client-attestation-pop+jwt",
+			{ kid: "hint" },
+		);
+		t.true(
+			(
+				await CredentialIssuerRole.authenticateWallet(jwt, pop, f.anchors, {
+					...f.options,
+					audience: f.ids.server,
+					replayStore: new MemoryReplayStore({ clock: f.options.clock }),
+					acceptWallet: () => true,
+				})
+			).ok,
+		);
+		const mismatched = await token(
+			{ ...attestation(f), cnf: { jwk: { ...publicKey, kid: "other" } } },
+			f.protocol.provider.privateKey,
+			"oauth-client-attestation+jwt",
+		);
+		t.false(
+			(
+				await CredentialIssuerRole.authenticateWallet(mismatched, pop, f.anchors, {
+					...f.options,
+					audience: f.ids.server,
+					replayStore: new MemoryReplayStore({ clock: f.options.clock }),
+					acceptWallet: () => true,
+				})
+			).ok,
+		);
+		for (const kid of [42, null, {}, []]) {
+			const invalid = await token(
+				proof(f),
+				f.protocol.issuer.privateKey,
+				"oauth-client-attestation-pop+jwt",
+				{ kid },
+			);
+			t.false(
+				(
+					await CredentialIssuerRole.authenticateWallet(jwt, invalid, f.anchors, {
+						...f.options,
+						audience: f.ids.server,
+						replayStore: new MemoryReplayStore({ clock: f.options.clock }),
+						acceptWallet: () => true,
+					})
+				).ok,
+				"a PoP key hint must be a string",
+			);
+		}
+	});
 	module("wallet / publication and protocol boundaries", () => {
 		test("publication permits superior-completed metadata while discovery requires completeness", async (t) => {
 			const f = await walletFederation({ issuerMetadata: { credential_endpoint: undefined } });
