@@ -1,12 +1,14 @@
 import {
+	DEFAULT_CACHE_TTL_SECONDS,
+	decodeEntityStatement,
 	type EntityId,
-	type EntityType,
 	FederationErrorCode,
 	fetchTrustMarkStatus,
 	isValidEntityId,
 	type JWKSet,
 	JwtTyp,
 	MediaType,
+	MemoryCache,
 	nowSeconds,
 	type ParsedEntityStatement,
 	resolveTrustChains,
@@ -27,9 +29,26 @@ interface ActiveResolveTrustMark {
 	mark: ValidatedTrustMark;
 }
 
-/** Handles resolve endpoint requests to produce a signed resolve response. */
-export function createResolveHandler(ctx: HandlerContext): (request: Request) => Promise<Response> {
-	return async (request: Request) => {
+/** A completed assessment with a fixed reuse deadline and no requester identity. */
+interface ResolutionSnapshot {
+	payload: Record<string, unknown>;
+	headers: Record<string, unknown>;
+	reuseUntil: number;
+}
+
+/** HTTP callers use the cache policy; local server calls may explicitly perform discovery. */
+export function createResolveHandler(
+	ctx: HandlerContext,
+): (request: Request, local?: boolean) => Promise<Response> {
+	const cache =
+		ctx.storage.cache ??
+		new MemoryCache({
+			maxEntries: 1000,
+			...(ctx.options?.clock ? { clock: ctx.options.clock } : {}),
+		});
+	// Instance isolation prevents reuse across different authority policies and restarts.
+	const namespace = `resolve:${crypto.randomUUID()}:`;
+	return async (request: Request, local = false) => {
 		const methodError = requireMethod(request, "GET");
 		if (methodError) return methodError;
 
@@ -82,31 +101,52 @@ export function createResolveHandler(ctx: HandlerContext): (request: Request) =>
 			return errorResponse(404, FederationErrorCode.InvalidTrustAnchor, "Unknown trust anchor");
 		}
 
-		// Cache-first short-circuit: if a previously vetted Resolve Response is
-		// available for this (sub, trustAnchors, entityTypes) tuple, serve it
-		// directly without invoking fresh trust-chain resolution.
-		if (ctx.cachedResolutionLookup) {
-			const cached = await ctx.cachedResolutionLookup(
-				sub as EntityId,
-				usableTrustAnchors,
-				entityTypeParam as EntityType[],
-			);
-			if (cached !== undefined) {
-				return jwtResponse(cached, MediaType.ResolveResponse);
-			}
-			if (!isAuthenticated && ctx.requireAuthForFreshResolution) {
+		const nowForCache = nowSeconds(ctx.options?.clock);
+		const cacheKey =
+			namespace +
+			JSON.stringify([
+				ctx.entityId,
+				sub,
+				usableTrustAnchors.map((id) => [id, ctx.trustAnchors?.get(id)?.jwks]),
+				entityTypeParam,
+			]);
+		if (!local && !isAuthenticated && ctx.requireAuthForFreshResolution !== false) {
+			try {
+				const cached = await cache.get<ResolutionSnapshot>(cacheKey);
+				if (!cached || !Number.isFinite(cached.reuseUntil) || cached.reuseUntil <= nowForCache) {
+					return errorResponse(
+						404,
+						FederationErrorCode.NotFound,
+						"No cached resolution available; fresh resolution requires authentication",
+					);
+				}
+				const snapshot = structuredClone(cached);
+				// §8.3.2 binds aud to this request. Stored assessments never carry a recipient.
+				delete snapshot.payload.aud;
+				// The optional issuer chain may describe a previous signing key. Cache hits
+				// omit it rather than performing discovery to refresh that header (§8.3.2).
+				delete snapshot.headers.trust_chain;
+				const keySet = await ctx.keyProvider.getFederationKeySet();
+				// Cache and key-provider reads may be asynchronous; recheck the fixed deadline.
+				const issuedAt = nowSeconds(ctx.options?.clock);
+				if (snapshot.reuseUntil <= issuedAt)
+					return errorResponse(404, FederationErrorCode.NotFound, "Cached resolution has expired");
+				// §8.3.2 derives exp from the subject's chain and included Trust Marks.
+				// The local reuse deadline controls cache access; preserve the assessed exp.
+				const jwt = await signEntityStatement(
+					{ ...snapshot.payload, iat: issuedAt },
+					keySet.signer,
+					{ typ: JwtTyp.ResolveResponse, extraHeaders: snapshot.headers },
+				);
+				return jwtResponse(jwt, MediaType.ResolveResponse);
+			} catch (error) {
+				ctx.options?.logger?.error("Failed to read cached resolution", { error });
 				return errorResponse(
-					404,
-					FederationErrorCode.NotFound,
-					"No cached resolution available; fresh resolution requires authentication",
+					500,
+					FederationErrorCode.ServerError,
+					"Failed to read cached resolution",
 				);
 			}
-		} else if (!isAuthenticated && ctx.requireAuthForFreshResolution) {
-			return errorResponse(
-				404,
-				FederationErrorCode.NotFound,
-				"Fresh resolution requires authentication",
-			);
 		}
 
 		try {
@@ -216,6 +256,42 @@ export function createResolveHandler(ctx: HandlerContext): (request: Request) =>
 				extraHeaders,
 			});
 
+			// §18.1 permits anonymous callers to reuse completed assessments. Cap reuse
+			// by both the configured TTL and every included piece of expiring evidence.
+			let cacheExpiry = Math.min(
+				resolveExp,
+				now + (ctx.options?.cacheMaxTtlSeconds ?? DEFAULT_CACHE_TTL_SECONDS),
+			);
+			for (const { mark } of activeTrustMarks) {
+				// Delegation validation is part of Trust Mark validity (§7.3).
+				if (mark.delegation?.expiresAt !== undefined)
+					cacheExpiry = Math.min(cacheExpiry, mark.delegation.expiresAt);
+			}
+			if (Array.isArray(extraHeaders.trust_chain)) {
+				for (const statement of extraHeaders.trust_chain) {
+					const decoded = decodeEntityStatement(statement);
+					if (decoded.ok && typeof decoded.value.payload.exp === "number")
+						cacheExpiry = Math.min(cacheExpiry, decoded.value.payload.exp);
+				}
+			}
+			if (Number.isFinite(cacheExpiry) && cacheExpiry > nowSeconds(ctx.options?.clock)) {
+				const cachedPayload = { ...payload };
+				delete cachedPayload.aud;
+				try {
+					await cache.set(
+						cacheKey,
+						structuredClone({
+							payload: cachedPayload,
+							headers: extraHeaders,
+							reuseUntil: cacheExpiry,
+						}),
+						cacheExpiry - nowSeconds(ctx.options?.clock),
+					);
+				} catch (error) {
+					ctx.options?.logger?.debug("Could not cache successful resolution", { error });
+				}
+			}
+
 			return jwtResponse(jwt, MediaType.ResolveResponse);
 		} catch (error) {
 			ctx.options?.logger?.error("Failed to resolve entity", { error });
@@ -286,12 +362,10 @@ async function isTrustMarkActiveForResolve(
 	if (typeof statusEndpoint !== "string" || !issuerJwks) return false;
 
 	try {
-		const status = await fetchTrustMarkStatus(
-			statusEndpoint,
-			ref.trust_mark,
-			issuerJwks,
-			ctx.options,
-		);
+		const status = await fetchTrustMarkStatus(statusEndpoint, ref.trust_mark, issuerJwks, {
+			...ctx.options,
+			expectedIssuer: mark.issuer,
+		});
 		return (
 			status.ok &&
 			status.value.status === TrustMarkStatus.Active &&

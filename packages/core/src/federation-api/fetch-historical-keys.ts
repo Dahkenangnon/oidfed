@@ -10,9 +10,13 @@ import type { HistoricalKeysPayload } from "../schemas/entity-statement.js";
 import type { JWKSet } from "../schemas/jwk.js";
 import { performFetch } from "../trust-chain/fetch.js";
 import type { Clock, FederationOptions } from "../types.js";
-import { verifyHistoricalKeysResponse } from "./index.js";
+import {
+	type VerifyOptions,
+	validateExpectedIssuer,
+	verifyHistoricalKeysResponse,
+} from "./index.js";
 
-export interface FetchHistoricalKeysOptions extends FederationOptions {
+export interface FetchHistoricalKeysOptions extends FederationOptions, VerifyOptions {
 	clockSkewSeconds?: number;
 	clock?: Clock;
 }
@@ -21,8 +25,10 @@ export interface FetchHistoricalKeysOptions extends FederationOptions {
 export async function fetchHistoricalKeys(
 	endpoint: string,
 	signerJwks: JWKSet,
-	options?: FetchHistoricalKeysOptions,
+	options: FetchHistoricalKeysOptions,
 ): Promise<Result<HistoricalKeysPayload, FederationError>> {
+	const expectation = validateExpectedIssuer(options);
+	if (!expectation.ok) return expectation;
 	let parsed: URL;
 	try {
 		parsed = new URL(endpoint);
@@ -50,9 +56,5 @@ export async function fetchHistoricalKeys(
 	});
 	if (!fetched.ok) return fetched;
 
-	const verifyOpts: { clockSkewSeconds?: number; clock?: Clock } = {};
-	if (options?.clockSkewSeconds !== undefined)
-		verifyOpts.clockSkewSeconds = options.clockSkewSeconds;
-	if (options?.clock !== undefined) verifyOpts.clock = options.clock;
-	return verifyHistoricalKeysResponse(fetched.value, signerJwks, verifyOpts);
+	return verifyHistoricalKeysResponse(fetched.value, signerJwks, options);
 }

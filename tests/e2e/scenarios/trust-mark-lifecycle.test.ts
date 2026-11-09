@@ -44,6 +44,7 @@ describe("Trust mark lifecycle", () => {
 				trustMarkJwt,
 				{ [trustMarkType(port)]: [taId] },
 				{ keys: [taInstance.keys.public] },
+				{ expectedSubject: rpId },
 			);
 			expect(isOk(validationResult)).toBe(true);
 
@@ -78,6 +79,7 @@ describe("Trust mark lifecycle", () => {
 				trustMarkJwt,
 				{ [trustMarkType(port)]: [taId] },
 				{ keys: [taInstance.keys.public] },
+				{ expectedSubject: rpId },
 			);
 
 			// validateTrustMark only checks JWT structure/sig, not status endpoint.
@@ -159,6 +161,7 @@ describe("Trust mark lifecycle", () => {
 				trustMarkJwt,
 				{ [trustMarkType(port)]: [taId] },
 				{ keys: [taInstance.keys.public] },
+				{ expectedSubject: opUniId },
 			);
 			expect(isOk(validationResult)).toBe(true);
 		});

@@ -108,15 +108,23 @@ function EntityInfoBanner({ fedEntity }: { readonly fedEntity: Record<string, un
 }
 
 function SignedJwksCard({
+	entityId,
 	entityType,
 	uri,
 	issuerJwks,
 }: {
+	readonly entityId: string;
 	readonly entityType: string;
 	readonly uri: string;
 	readonly issuerJwks: { keys: readonly Record<string, unknown>[] };
 }) {
-	const { keys, loading, error, signatureValid, fetch: fetchKeys } = useSignedJwks(uri, issuerJwks);
+	const {
+		keys,
+		loading,
+		error,
+		signatureValid,
+		fetch: fetchKeys,
+	} = useSignedJwks(uri, issuerJwks, entityId);
 
 	return (
 		<Card>
@@ -249,6 +257,7 @@ export function EntityInspectorPage() {
 							)}
 							{Array.isArray(data.payload.trust_marks) && (
 								<TrustMarksPanel
+									entityId={entityId ?? ""}
 									trustMarks={
 										data.payload.trust_marks as Array<{
 											trust_mark_type: string;
@@ -268,6 +277,7 @@ export function EntityInspectorPage() {
 								}
 							/>
 							<HistoricalKeys
+								entityId={entityId ?? ""}
 								endpoint={
 									metadata?.federation_entity?.federation_historical_keys_endpoint as
 										| string
@@ -300,6 +310,7 @@ export function EntityInspectorPage() {
 									if (signedJwksUris.length === 0 || !jwks) return null;
 									return signedJwksUris.map(({ entityType, uri }) => (
 										<SignedJwksCard
+											entityId={entityId ?? ""}
 											key={`${entityType}-${uri}`}
 											entityType={entityType}
 											uri={uri}

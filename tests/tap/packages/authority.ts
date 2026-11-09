@@ -91,6 +91,7 @@ import {
 	decodeEntityStatement,
 	type EntityId,
 	EntityType,
+	type ExtendedListResponse,
 	entityId,
 	FederationEndpoint,
 	FederationErrorCode,
@@ -106,6 +107,7 @@ import {
 	signTrustMarkDelegation,
 	stripPrivateFields,
 	type TrustAnchorSet,
+	TrustMarkRefSchema,
 	TrustMarkStatus,
 	validateTrustMark,
 	verifyEntityStatement,
@@ -155,6 +157,8 @@ async function createTestContext(overrides?: TestContextOverrides): Promise<{
 	const trustMarks = storage.trustMarks!;
 
 	const ctx: HandlerContext = {
+		// Existing endpoint fixtures explicitly exercise fresh anonymous resolution.
+		requireAuthForFreshResolution: false,
 		entityId: ENTITY_ID,
 		keyProvider,
 		storage,
@@ -179,6 +183,397 @@ async function createTestContext(overrides?: TestContextOverrides): Promise<{
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+
+	module("authority / trust mark publication and eligibility", () => {
+		const subject = entityId("https://member.example");
+		const type = "https://marks.example/accreditation";
+		const options = { clock: { now: () => 1000 }, clockSkewSeconds: 60 };
+		const request = (query: string) => new Request(`${ENTITY_ID}/extended?${query}`);
+		async function fixture() {
+			const f = await createTestContext({ options });
+			await f.subordinates.add({
+				entityId: subject,
+				jwks: { keys: [f.publicKey] },
+				createdAt: 100,
+				updatedAt: 900,
+			});
+			const make = async (
+				issuedAt: number,
+				expiresAt?: number,
+				changes: Record<string, unknown> = {},
+			): Promise<TrustMarkRecord> => ({
+				trustMarkType: type,
+				subject,
+				issuedAt,
+				...(expiresAt === undefined ? {} : { expiresAt }),
+				active: true,
+				jwt: await signEntityStatement(
+					{
+						iss: ENTITY_ID,
+						sub: subject,
+						trust_mark_type: type,
+						iat: issuedAt,
+						...(expiresAt === undefined ? {} : { exp: expiresAt }),
+						...changes,
+					},
+					new JwkSigner(f.signingKey),
+					{ typ: JwtTyp.TrustMark },
+				),
+			});
+			return { ...f, make };
+		}
+		test("publishes standard references separately from signed subordinate statements", async (t) => {
+			const f = await fixture();
+			const mark = await f.make(900, 2000);
+			await f.trustMarks.issue(mark);
+			const response = await createExtendedListHandler(f.ctx)(
+				request("claims=trust_marks,subordinate_statement"),
+			);
+			t.equal(response.status, 200);
+			const entry = ((await response.json()) as ExtendedListResponse)
+				.immediate_subordinate_entities[0]!;
+			t.equal(entry.id, subject);
+			t.deepEqual(entry.trust_marks, [{ trust_mark_type: type, trust_mark: mark.jwt }]);
+			t.true(TrustMarkRefSchema.array().safeParse(entry.trust_marks).success);
+			const statement = await verifyEntityStatement(
+				entry.subordinate_statement!,
+				{ keys: [f.publicKey] },
+				options,
+			);
+			t.true(statement.ok);
+			if (statement.ok) t.false("trust_marks" in statement.value.payload);
+		});
+		for (const invalid of [
+			"type",
+			"jwt-subject",
+			"record-subject",
+			"typ",
+			"undecodable",
+			"reference",
+		] as const) {
+			test(`rejects inconsistent requested Trust Marks: ${invalid}`, async (t) => {
+				const f = await fixture();
+				let mark = await f.make(
+					900,
+					2000,
+					invalid === "jwt-subject" ? { sub: "https://other.example" } : {},
+				);
+				if (invalid === "type") mark = { ...mark, trustMarkType: `${type}/other` };
+				if (invalid === "record-subject")
+					mark = { ...mark, subject: entityId("https://other.example") };
+				if (invalid === "undecodable") mark = { ...mark, jwt: "private-invalid-token-sentinel" };
+				if (invalid === "reference") mark = { ...mark, trustMarkType: 42 as unknown as string };
+				if (invalid === "typ")
+					mark = {
+						...mark,
+						jwt: await signEntityStatement(
+							{ iss: ENTITY_ID, sub: subject, trust_mark_type: type, iat: 900 },
+							new JwkSigner(f.signingKey),
+						),
+					};
+				const logs: string[] = [];
+				const ctx: HandlerContext = {
+					...f.ctx,
+					storage: new Proxy(f.storage, {
+						get(target, property) {
+							if (property === "trustMarks")
+								return new Proxy(f.trustMarks, {
+									get(store, field) {
+										if (field === "listValidForSubject") return async () => [mark];
+										const value = Reflect.get(store, field);
+										return typeof value === "function" ? value.bind(store) : value;
+									},
+								});
+							const value = Reflect.get(target, property);
+							return typeof value === "function" ? value.bind(target) : value;
+						},
+					}),
+					options: {
+						...options,
+						logger: {
+							debug() {},
+							info() {},
+							warn() {},
+							error(message, context) {
+								logs.push(
+									message,
+									JSON.stringify(context, (_key, value) =>
+										value instanceof Error ? value.message : value,
+									),
+								);
+							},
+						},
+					},
+				};
+				const handler = createExtendedListHandler(ctx);
+				const response = await handler(request("claims=trust_marks"));
+				t.equal(response.status, 500);
+				const body = (await response.json()) as { error: string };
+				t.equal(body.error, FederationErrorCode.ServerError);
+				t.false(JSON.stringify(body).includes(mark.jwt));
+				t.false(logs.join(" ").includes(mark.jwt));
+				t.equal(
+					(await handler(request("claims="))).status,
+					200,
+					"unrequested claims are not extracted",
+				);
+			});
+		}
+		test("applies issuance eligibility to every storage query and transaction", async (t) => {
+			const f = await fixture();
+			const current = await f.make(900, 1500);
+			const future = await f.make(1100, 2000);
+			await f.trustMarks.issue(current);
+			await f.trustMarks.issue(future);
+			async function check(store: TrustMarkStorage) {
+				for (const [time, expected] of [
+					[899, undefined],
+					[900, current],
+					[1000, current],
+					[1100, future],
+					[2000, undefined],
+				] as const) {
+					t.deepEqual(await store.getValid(type, subject, time), expected);
+					t.deepEqual(
+						(await store.listValid(type, time, { limit: 10 })).items,
+						expected ? [expected] : [],
+					);
+					t.deepEqual(await store.listValidForSubject(subject, time), expected ? [expected] : []);
+					t.equal(await store.hasAnyValid(subject, time), expected !== undefined);
+				}
+				t.deepEqual(await store.getByJwt(future.jwt), future, "future marks remain in history");
+			}
+			await check(f.trustMarks);
+			await f.storage.transaction(async (tx) => check(tx.trustMarks!));
+		});
+		for (const issuedAt of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+			test(`rejects nonfinite stored issuance time ${issuedAt}`, async (t) => {
+				const f = await fixture();
+				const mark = { ...(await f.make(900)), issuedAt };
+				await f.trustMarks.issue(mark);
+				t.strictEqual(await f.trustMarks.getValid(type, subject, 1000), undefined);
+				t.deepEqual((await f.trustMarks.listValid(type, 1000, { limit: 10 })).items, []);
+				t.deepEqual(await f.trustMarks.listValidForSubject(subject, 1000), []);
+				t.false(await f.trustMarks.hasAnyValid(subject, 1000));
+			});
+		}
+		test("listing and retrieval exclude future marks and issuance creates a usable replacement", async (t) => {
+			const f = await fixture();
+			const future = await f.make(1001, 2000);
+			await f.trustMarks.issue(future);
+			const query = new URLSearchParams({ trust_mark_type: type, sub: subject });
+			for (const filter of ["trust_marked=true", `trust_mark_type=${encodeURIComponent(type)}`]) {
+				t.deepEqual(await (await createListHandler(f.ctx)(request(filter))).json(), []);
+				t.deepEqual(
+					await (await createExtendedListHandler(f.ctx)(request(`claims=&${filter}`))).json(),
+					{ immediate_subordinate_entities: [] },
+				);
+			}
+			const unfiltered = (await (
+				await createExtendedListHandler(f.ctx)(request("claims=trust_marks"))
+			).json()) as ExtendedListResponse;
+			t.deepEqual(unfiltered.immediate_subordinate_entities[0]!.trust_marks, []);
+			t.deepEqual(
+				await (await createTrustMarkListHandler(f.ctx)(request(query.toString()))).json(),
+				[],
+			);
+			t.equal((await createTrustMarkHandler(f.ctx)(request(query.toString()))).status, 404);
+			const issued = await createTrustMarkIssuanceHandler(f.ctx)(request(query.toString()));
+			t.equal(issued.status, 200);
+			const jwt = await issued.text();
+			t.notEqual(jwt, future.jwt);
+			const checked = await validateTrustMark(
+				jwt,
+				{ [type]: [ENTITY_ID] },
+				{ keys: [f.publicKey] },
+				{ ...options, clockSkewSeconds: 0, expectedSubject: subject },
+			);
+			t.true(checked.ok);
+			t.equal((await f.trustMarks.getValid(type, subject, 1000))?.jwt, jwt);
+			t.equal(await (await createTrustMarkHandler(f.ctx)(request(query.toString()))).text(), jwt);
+			t.equal(
+				await (await createTrustMarkIssuanceHandler(f.ctx)(request(query.toString()))).text(),
+				jwt,
+			);
+		});
+		test("status uses signed issuance time and preserves active, expired and revoked results", async (t) => {
+			const f = await fixture();
+			for (const [iat, exp, active, expected] of [
+				[900, undefined, true, "active"],
+				[1000, 2000, true, "active"],
+				[1001, 2000, true, "invalid"],
+				[undefined, 2000, true, "invalid"],
+				[null, 2000, true, "invalid"],
+				["900", 2000, true, "invalid"],
+				[900, 1000, true, "expired"],
+				[900, 2000, false, "revoked"],
+			] as const) {
+				// Keep the stored timestamp plausible: status must inspect the signed JWT itself.
+				const mark = { ...(await f.make(900, exp, { iat })), active };
+				await f.trustMarks.issue(mark);
+				const res = await createTrustMarkStatusHandler(f.ctx)(
+					new Request(`${ENTITY_ID}/status`, {
+						method: "POST",
+						body: new URLSearchParams({ trust_mark: mark.jwt }),
+					}),
+				);
+				t.equal(res.status, 200);
+				const checked = await verifyEntityStatement(
+					await res.text(),
+					{ keys: [f.publicKey] },
+					{ ...options, expectedTyp: JwtTyp.TrustMarkStatusResponse },
+				);
+				t.true(checked.ok);
+				if (checked.ok) t.equal(checked.value.payload.status, expected);
+			}
+		});
+	});
+
+	module("authority / extended listing sparse pages", () => {
+		async function fixture(makeList: (records: SubordinateRecord[]) => SubordinateStorage["list"]) {
+			const f = await createTestContext();
+			const records: SubordinateRecord[] = Array.from({ length: 6 }, (_, i) => ({
+				entityId: entityId(`https://member${i}.example`),
+				jwks: { keys: [f.publicKey] },
+				createdAt: 100,
+				updatedAt: i === 5 ? 2000 : 500,
+			}));
+			for (const record of records) await f.subordinates.add(record);
+			const list = makeList(records);
+			let calls = 0;
+			const subordinates = new Proxy(f.subordinates, {
+				get(target, property) {
+					if (property === "list")
+						return (...args: Parameters<SubordinateStorage["list"]>) => {
+							calls++;
+							return list(...args);
+						};
+					const value = Reflect.get(target, property);
+					return typeof value === "function" ? value.bind(target) : value;
+				},
+			});
+			const storage = new Proxy(f.storage, {
+				get(target, property) {
+					if (property === "subordinates") return subordinates;
+					const value = Reflect.get(target, property);
+					return typeof value === "function" ? value.bind(target) : value;
+				},
+			});
+			return { ctx: { ...f.ctx, storage }, records, calls: () => calls };
+		}
+		for (const cap of [1, 2, 16]) {
+			test(`traverses empty first, middle and final pages with a ${cap}-page scan cap`, async (t) => {
+				for (const matches of [[], [5], [0, 5], [0]]) {
+					const f = await fixture((records) => async (_filter, options) => {
+						const remaining = records.filter(
+							(record) => options?.cursor === undefined || record.entityId >= options.cursor,
+						);
+						const size = options?.limit ?? 2;
+						const scanned = remaining.slice(0, size);
+						const items = scanned.filter((record) => matches.includes(records.indexOf(record)));
+						const next = remaining[size];
+						return { items, ...(next ? { nextCursor: next.entityId } : {}) };
+					});
+					const handler = createExtendedListHandler(f.ctx, {
+						defaultPageSize: 10,
+						storeBatchSize: 2,
+						maxStorePagesPerRequest: cap,
+					});
+					const found: string[] = [];
+					let cursor: string | undefined;
+					let completed = false;
+					for (let requestNumber = 0; requestNumber < 5; requestNumber++) {
+						const before = f.calls();
+						const params = new URLSearchParams({ claims: "" });
+						if (cursor !== undefined) params.set("from", cursor);
+						const response = await handler(new Request(`${ENTITY_ID}/extended?${params}`));
+						t.equal(response.status, 200);
+						const body = (await response.json()) as ExtendedListResponse;
+						found.push(
+							...body.immediate_subordinate_entities.map((entry: { id: string }) => entry.id),
+						);
+						t.true(f.calls() - before <= cap, "scan respects the per-request work cap");
+						if (body.next === undefined) {
+							completed = true;
+							break;
+						}
+						t.true(cursor === undefined || body.next > cursor);
+						cursor = body.next;
+					}
+					t.true(completed);
+					t.equal(f.calls(), 3, "all internal pages were scanned, including empty pages");
+					t.deepEqual(
+						found,
+						matches.map((index) => f.records[index]!.entityId),
+					);
+				}
+			});
+		}
+		test("time filtering resumes inclusively after an empty page at the work cap", async (t) => {
+			const f = await fixture((records) => async (_filter, options) => {
+				const remaining = records.filter(
+					(record) => options?.cursor === undefined || record.entityId >= options.cursor,
+				);
+				const size = options?.limit ?? 2;
+				return {
+					items: remaining
+						.slice(0, size)
+						.filter((record) => record.updatedAt >= (options?.updatedAfter ?? 0)),
+					...(remaining[size] ? { nextCursor: remaining[size].entityId } : {}),
+				};
+			});
+			const handler = createExtendedListHandler(f.ctx, {
+				storeBatchSize: 2,
+				maxStorePagesPerRequest: 1,
+			});
+			const first = (await (
+				await handler(new Request(`${ENTITY_ID}/extended?claims=&updated_after=1000`))
+			).json()) as ExtendedListResponse;
+			t.deepEqual(first, { immediate_subordinate_entities: [], next: f.records[2]!.entityId });
+			const second = (await (
+				await handler(
+					new Request(
+						`${ENTITY_ID}/extended?claims=&updated_after=1000&from=${encodeURIComponent(first.next!)}`,
+					),
+				)
+			).json()) as ExtendedListResponse;
+			t.deepEqual(second, { immediate_subordinate_entities: [], next: f.records[4]!.entityId });
+			const third = await (
+				await handler(
+					new Request(
+						`${ENTITY_ID}/extended?claims=&updated_after=1000&from=${encodeURIComponent(second.next!)}`,
+					),
+				)
+			).json();
+			t.deepEqual(third, {
+				immediate_subordinate_entities: [
+					{ id: f.records[5]!.entityId, registered: 100, updated: 2000 },
+				],
+			});
+		});
+		for (const scenario of ["repeated", "backward", "last-returned"] as const) {
+			test(`rejects a ${scenario} storage continuation`, async (t) => {
+				const f = await fixture((records) => async (_filter, options) => {
+					if (scenario === "last-returned")
+						return { items: [records[0]!], nextCursor: records[0]!.entityId };
+					if (!options?.cursor) return { items: [], nextCursor: records[2]!.entityId };
+					return {
+						items: [],
+						nextCursor: scenario === "repeated" ? options.cursor : records[0]!.entityId,
+					};
+				});
+				const response = await createExtendedListHandler(f.ctx)(
+					new Request(`${ENTITY_ID}/extended?claims=`),
+				);
+				t.equal(response.status, 500);
+				t.equal(
+					((await response.json()) as { error: string }).error,
+					FederationErrorCode.ServerError,
+				);
+				t.equal(f.calls(), scenario === "last-returned" ? 1 : 2);
+			});
+		}
+	});
 
 	module("authority / listing filter semantics", () => {
 		test("false adds no mark restriction across storage, HTTP and both authority classes", async (t) => {
@@ -688,7 +1083,7 @@ export default (QUnit: QUnit) => {
 				trustMarkType: type,
 				subject,
 				jwt: `jwt.for.${type}.${subject}`,
-				issuedAt: Math.floor(Date.now() / 1000),
+				issuedAt: 0,
 				active: true,
 				...overrides,
 			};
@@ -730,7 +1125,7 @@ export default (QUnit: QUnit) => {
 				test("selects deterministically when issue times are equal", async (t) => {
 					await store.issue(makeTmRecord(TYPE_A, TM_SUB1, { jwt: "a.jwt", issuedAt: 1 }));
 					await store.issue(makeTmRecord(TYPE_A, TM_SUB1, { jwt: "b.jwt", issuedAt: 1 }));
-					t.equal((await store.getValid(TYPE_A, TM_SUB1, 0))?.jwt, "b.jwt");
+					t.equal((await store.getValid(TYPE_A, TM_SUB1, 1))?.jwt, "b.jwt");
 				});
 			});
 
@@ -2723,12 +3118,22 @@ export default (QUnit: QUnit) => {
 			});
 
 			test("claims=trust_marks attaches active trust marks per entity", async (t) => {
-				const { ctx, subordinates, trustMarks } = await createTestContext();
+				const { ctx, subordinates, trustMarks, signingKey } = await createTestContext();
 				await subordinates.add(makeXListRecord(XLIST_SUB_A));
+				const jwt = await signEntityStatement(
+					{
+						iss: ENTITY_ID,
+						sub: XLIST_SUB_A,
+						trust_mark_type: "https://trust.example.com/mark",
+						iat: Math.floor(Date.now() / 1000),
+					},
+					new JwkSigner(signingKey),
+					{ typ: JwtTyp.TrustMark },
+				);
 				await trustMarks.issue({
 					trustMarkType: "https://trust.example.com/mark",
 					subject: XLIST_SUB_A,
-					jwt: "test.tm.jwt",
+					jwt,
 					issuedAt: Math.floor(Date.now() / 1000),
 					active: true,
 				});
@@ -2737,14 +3142,14 @@ export default (QUnit: QUnit) => {
 				const body = (await res.json()) as {
 					immediate_subordinate_entities: Array<{
 						id: string;
-						trust_marks?: Array<{ id: string; trust_mark: string }>;
+						trust_marks?: Array<{ trust_mark_type: string; trust_mark: string }>;
 					}>;
 				};
 				const entry = body.immediate_subordinate_entities[0]!;
 				t.ok(Array.isArray(entry.trust_marks), "trust_marks array present");
 				t.equal(entry.trust_marks!.length, 1);
-				t.equal(entry.trust_marks![0]!.id, "https://trust.example.com/mark");
-				t.equal(entry.trust_marks![0]!.trust_mark, "test.tm.jwt");
+				t.equal(entry.trust_marks![0]!.trust_mark_type, "https://trust.example.com/mark");
+				t.equal(entry.trust_marks![0]!.trust_mark, jwt);
 			});
 
 			test("claims=trust_marks returns empty array when subject has no active marks", async (t) => {
@@ -3268,6 +3673,7 @@ export default (QUnit: QUnit) => {
 			readonly resolverEntityId?: EntityId;
 			readonly useLocalTrustMarkStore?: boolean;
 			readonly trustMarkExpiresAt?: number;
+			readonly delegationExpiresAt?: number;
 		}): Promise<{
 			ctx: HandlerContext;
 			chainExp: number;
@@ -3292,6 +3698,18 @@ export default (QUnit: QUnit) => {
 			const leafSigningKey = { ...leafPrivateKey, kid: "resolve-leaf-key-1" };
 			const leafPublicKey = { ...leafRawPublicKey, kid: "resolve-leaf-key-1" };
 
+			const delegation =
+				options?.delegationExpiresAt === undefined
+					? undefined
+					: await signTrustMarkDelegation({
+							issuer: TA_ID,
+							subject: TA_ID,
+							trustMarkType,
+							signer: new JwkSigner(taSigningKey),
+							clock: { now: () => now },
+							ttlSeconds: options.delegationExpiresAt - now,
+						});
+
 			const trustMarkJwt = await signEntityStatement(
 				{
 					iss: TA_ID,
@@ -3299,6 +3717,7 @@ export default (QUnit: QUnit) => {
 					trust_mark_type: trustMarkType,
 					iat: now,
 					exp: trustMarkExpiresAt,
+					...(delegation ? { delegation } : {}),
 				},
 				new JwkSigner(taSigningKey),
 				{ typ: JwtTyp.TrustMark },
@@ -3312,6 +3731,13 @@ export default (QUnit: QUnit) => {
 					exp: chainExp,
 					jwks: { keys: [taPublicKey] },
 					trust_mark_issuers: { [trustMarkType]: [TA_ID] },
+					...(delegation
+						? {
+								trust_mark_owners: {
+									[trustMarkType]: { sub: TA_ID, jwks: { keys: [taPublicKey] } },
+								},
+							}
+						: {}),
 					metadata: {
 						federation_entity: {
 							federation_fetch_endpoint: `${TA_ID}${FederationEndpoint.Fetch}`,
@@ -3456,6 +3882,29 @@ export default (QUnit: QUnit) => {
 				trustMarkExpiresAt,
 			};
 		}
+
+		test("cached Resolve assessments expire with an included mark's delegation", async (t) => {
+			const deadline = 1_700_000_010;
+			const fixture = await createResolveTrustMarkFixture({ delegationExpiresAt: deadline });
+			let now = 1_700_000_000;
+			const handler = createResolveHandler({
+				...fixture.ctx,
+				requireAuthForFreshResolution: true,
+				options: { ...fixture.ctx.options, clock: { now: () => now } },
+			});
+			t.equal((await handler(new Request(fixture.requestUrl), true)).status, 200);
+			const response = await handler(new Request(fixture.requestUrl));
+			t.equal(response.status, 200);
+			const decoded = decodeEntityStatement(await response.text());
+			t.true(decoded.ok);
+			if (decoded.ok) {
+				t.equal(decoded.value.payload.exp, fixture.trustMarkExpiresAt);
+				t.true(fixture.trustMarkExpiresAt > deadline, "cache reuse ends before JWT expiration");
+				t.equal((decoded.value.payload.trust_marks as unknown[]).length, 1);
+			}
+			now = deadline;
+			t.equal((await handler(new Request(fixture.requestUrl))).status, 404);
+		});
 
 		test("resolve returns the exact verified mark when an expired mark shares its type", async (t) => {
 			for (const expiredMarkPosition of ["before", "after"] as const) {
@@ -3701,13 +4150,25 @@ export default (QUnit: QUnit) => {
 			if (!decoded.ok) return;
 			const payload = decoded.value.payload as Record<string, unknown>;
 			t.notOk("aud" in payload);
-			t.true((await verifyResolveResponse(jwt, { keys: [publicKey] })).ok);
 			t.true(
 				(
 					await verifyResolveResponse(
 						jwt,
 						{ keys: [publicKey] },
-						{ expectedAudience: "https://client.example.com" },
+						{ expectedIssuer: "https://authority.example.com", expectedSubject: LEAF_ID },
+					)
+				).ok,
+			);
+			t.true(
+				(
+					await verifyResolveResponse(
+						jwt,
+						{ keys: [publicKey] },
+						{
+							expectedIssuer: "https://authority.example.com",
+							expectedSubject: LEAF_ID,
+							expectedAudience: "https://client.example.com",
+						},
 					)
 				).ok,
 			);
@@ -4030,31 +4491,26 @@ export default (QUnit: QUnit) => {
 			t.equal(body.error, "server_error");
 		});
 
-		test("cachedResolutionLookup short-circuits fresh trust-chain resolution", async (t) => {
-			let fetchCallCount = 0;
-			const sentinelJwt = "header.payload.sentinel-cache-hit";
+		test("anonymous resolve defaults to a cache miss without discovery", async (t) => {
+			let calls = 0;
+			const fed = await createMockFederation();
 			const { ctx } = await createTestContext({
-				trustAnchors: new Map([
-					[entityId(TA_ID), { jwks: { keys: [testPublicJwk("cached-ta-key-1")] } }],
-				]),
+				trustAnchors: fed.trustAnchors,
+				requireAuthForFreshResolution: true,
 				options: {
 					httpClient: async () => {
-						fetchCallCount++;
-						return new Response("should not be called", { status: 500 });
+						calls++;
+						throw new Error("Unexpected discovery");
 					},
 				},
-				cachedResolutionLookup: async () => sentinelJwt,
 			});
-			const handler = createResolveHandler(ctx);
-			const res = await handler(
+			const response = await createResolveHandler(ctx)(
 				new Request(
 					`https://authority.example.com/federation_resolve?sub=${encodeURIComponent(LEAF_ID)}&trust_anchor=${encodeURIComponent(TA_ID)}`,
 				),
 			);
-			t.equal(res.status, 200);
-			t.equal(res.headers.get("Content-Type"), MediaType.ResolveResponse);
-			t.equal(await res.text(), sentinelJwt);
-			t.equal(fetchCallCount, 0);
+			t.equal(response.status, 404);
+			t.equal(calls, 0);
 		});
 
 		test("unauthenticated cache miss returns 404 when requireAuthForFreshResolution is true", async (t) => {
@@ -4067,7 +4523,6 @@ export default (QUnit: QUnit) => {
 			const { ctx } = await createTestContext({
 				trustAnchors: fed.trustAnchors,
 				options: { ...fed.options, httpClient: wrappedHttpClient },
-				cachedResolutionLookup: async () => undefined,
 				requireAuthForFreshResolution: true,
 			});
 			const handler = createResolveHandler(ctx);
@@ -4086,7 +4541,6 @@ export default (QUnit: QUnit) => {
 			const { ctx } = await createTestContext({
 				trustAnchors: fed.trustAnchors,
 				options: fed.options,
-				cachedResolutionLookup: async () => undefined,
 				requireAuthForFreshResolution: true,
 			});
 			const handler = createResolveHandler(ctx);
@@ -4146,6 +4600,7 @@ export default (QUnit: QUnit) => {
 			const verified = await verifyHistoricalKeysResponse(
 				await response.text(),
 				(await keyProvider.getFederationKeySet()).jwks,
+				{ expectedIssuer: "https://authority.example.com" },
 			);
 			t.true(verified.ok);
 			if (verified.ok) t.deepEqual(verified.value.keys, []);
@@ -4195,7 +4650,7 @@ export default (QUnit: QUnit) => {
 				const verified = await verifyHistoricalKeysResponse(
 					await response.text(),
 					(await keyProvider.getFederationKeySet()).jwks,
-					options,
+					{ expectedIssuer: "https://authority.example.com", ...options },
 				);
 				t.true(verified.ok);
 				if (!verified.ok) continue;
@@ -4226,6 +4681,7 @@ export default (QUnit: QUnit) => {
 			const verified = await verifyHistoricalKeysResponse(
 				await response.text(),
 				(await keyProvider.getFederationKeySet()).jwks,
+				{ expectedIssuer: "https://authority.example.com" },
 			);
 			t.true(verified.ok);
 			if (!verified.ok) return;
@@ -4255,7 +4711,7 @@ export default (QUnit: QUnit) => {
 			const verified = await verifyHistoricalKeysResponse(
 				await response.text(),
 				(await keyProvider.getFederationKeySet()).jwks,
-				ctx.options,
+				{ expectedIssuer: "https://authority.example.com", ...ctx.options },
 			);
 			t.true(verified.ok);
 			if (verified.ok) t.deepEqual(verified.value.keys, [historical]);
@@ -4736,7 +5192,7 @@ export default (QUnit: QUnit) => {
 				t.equal(res.status, 413);
 			});
 
-			test("returns Invalid for trust_mark_type that is not a URL", async (t) => {
+			test("returns not_found for an unissued custom Trust Mark type", async (t) => {
 				const { ctx, signingKey } = await createTestContext();
 				const now = Math.floor(Date.now() / 1000);
 				const jwt = await signEntityStatement(
@@ -4752,8 +5208,8 @@ export default (QUnit: QUnit) => {
 				);
 				const handler = createTrustMarkStatusHandler(ctx);
 				const res = await handler(postRequest(`trust_mark=${encodeURIComponent(jwt)}`));
-				t.equal(res.status, 200);
-				t.equal((await decodeStatusResponse(res)).status, TrustMarkStatus.Invalid);
+				t.equal(res.status, 404);
+				t.equal(((await res.json()) as { error: string }).error, "not_found");
 			});
 
 			test("returns expired for trust mark with exp: 0 (epoch)", async (t) => {
@@ -5132,6 +5588,7 @@ export default (QUnit: QUnit) => {
 					{ [TM_MARK_TYPE]: [ENTITY_ID] },
 					{ keys: [publicKey] },
 					{
+						expectedSubject: TM_SUB1,
 						trustMarkOwners: {
 							[TM_MARK_TYPE]: {
 								sub: "https://owner.example.com",
@@ -6807,15 +7264,32 @@ export default (QUnit: QUnit) => {
 					const payload = decoded.value.payload as Record<string, unknown>;
 					t.equal(payload.aud, CLIENT_ID);
 					const { jwks } = await authConfig.keyProvider.getFederationKeySet();
-					t.true((await verifyResolveResponse(jwt, jwks, { expectedAudience: CLIENT_ID })).ok);
+					t.true(
+						(
+							await verifyResolveResponse(jwt, jwks, {
+								expectedIssuer: SERVER_AUTHORITY_ID,
+								expectedSubject: LEAF_ID,
+								expectedAudience: CLIENT_ID,
+							})
+						).ok,
+					);
 					t.false(
 						(
 							await verifyResolveResponse(jwt, jwks, {
+								expectedIssuer: SERVER_AUTHORITY_ID,
+								expectedSubject: LEAF_ID,
 								expectedAudience: "https://other.example.com",
 							})
 						).ok,
 					);
-					t.false((await verifyResolveResponse(jwt, jwks)).ok);
+					t.false(
+						(
+							await verifyResolveResponse(jwt, jwks, {
+								expectedIssuer: SERVER_AUTHORITY_ID,
+								expectedSubject: LEAF_ID,
+							})
+						).ok,
+					);
 				});
 
 				test("server with private_key_jwt accepts custom provider with empty client storage", async (t) => {
@@ -8489,6 +8963,240 @@ export default (QUnit: QUnit) => {
 					t.equal(((await response.json()) as { error: string }).error, "server_error");
 				}
 			}
+		});
+	});
+	module("authority / bounded Resolve assessments and retired Trust Mark keys", () => {
+		test("public Resolve defaults to cache-only, local warming is audience-free, and expiry cannot trigger discovery", async (t) => {
+			const fed = await createMockFederation();
+			let calls = 0;
+			let now = Math.floor(Date.now() / 1000);
+			const { keyProvider } = await createTestContext();
+			const storage = new MemoryStorageAdapter();
+			const server = new TrustAnchor({
+				entityId: ENTITY_ID,
+				keyProvider,
+				storage,
+				trustAnchors: fed.trustAnchors,
+				metadata: {
+					federation_entity: {
+						federation_fetch_endpoint: `${ENTITY_ID}/fetch`,
+						federation_list_endpoint: `${ENTITY_ID}/list`,
+						federation_resolve_endpoint: `${ENTITY_ID}/resolve`,
+					},
+				},
+				options: {
+					...fed.options,
+					clock: { now: () => now },
+					cacheMaxTtlSeconds: 10,
+					httpClient: async (url, init) => {
+						calls++;
+						return fed.options.httpClient!(url, init);
+					},
+				},
+			});
+			const request = () =>
+				new Request(
+					`${ENTITY_ID}/resolve?sub=${encodeURIComponent(LEAF_ID)}&trust_anchor=${encodeURIComponent(TA_ID)}`,
+					{ headers: { "X-Authenticated-Entity": "https://spoof.example" } },
+				);
+			t.equal((await server.handleRequest(request())).status, 404);
+			t.equal(calls, 0);
+			const local = decodeEntityStatement(
+				await server.resolveEntity(entityId(LEAF_ID), entityId(TA_ID)),
+			);
+			t.true(local.ok);
+			if (local.ok) t.equal(local.value.payload.aud, undefined);
+			const warmedCalls = calls;
+			t.true(warmedCalls > 0);
+			const first = await server.handleRequest(request());
+			t.equal(first.status, 200);
+			const decoded = decodeEntityStatement(await first.text());
+			t.true(decoded.ok);
+			if (decoded.ok) {
+				t.equal(decoded.value.payload.aud, undefined);
+				if (local.ok) t.equal(decoded.value.payload.exp, local.value.payload.exp);
+				t.true(decoded.value.payload.exp > now + 10, "cache TTL does not replace evidence expiry");
+			}
+			t.equal(calls, warmedCalls);
+			const next = await generateSigningKey();
+			await keyProvider.publishKey(createFederationSigningKey(next.privateKey));
+			await keyProvider.switchActiveKey(next.privateKey.kid!, { retirePreviousAfterMs: 0 });
+			const rotated = decodeEntityStatement(await (await server.handleRequest(request())).text());
+			t.true(rotated.ok);
+			if (rotated.ok) {
+				t.equal(rotated.value.header.kid, next.privateKey.kid);
+				if (local.ok) t.equal(rotated.value.payload.exp, local.value.payload.exp);
+			}
+			t.equal(calls, warmedCalls);
+			const currentKeys = keyProvider.getFederationKeySet.bind(keyProvider);
+			keyProvider.getFederationKeySet = async () => {
+				now += 10;
+				return currentKeys();
+			};
+			t.equal(
+				(await server.handleRequest(request())).status,
+				404,
+				"expiry during key lookup cannot renew the assessment",
+			);
+			t.equal(calls, warmedCalls);
+		});
+		test("authenticated assessments never leak audience to anonymous cache hits and query changes miss", async (t) => {
+			const fed = await createMockFederation();
+			let calls = 0;
+			const { ctx } = await createTestContext({
+				requireAuthForFreshResolution: true,
+				trustAnchors: fed.trustAnchors,
+				options: {
+					...fed.options,
+					httpClient: async (url, init) => {
+						calls++;
+						return fed.options.httpClient!(url, init);
+					},
+				},
+			});
+			const handler = createResolveHandler(ctx);
+			const url = `${ENTITY_ID}/resolve?sub=${encodeURIComponent(LEAF_ID)}&trust_anchor=${encodeURIComponent(TA_ID)}`;
+			for (const caller of ["https://client-a.example", "https://client-b.example"]) {
+				const response = await handler(
+					new Request(url, { headers: { "X-Authenticated-Entity": caller } }),
+				);
+				t.equal(response.status, 200);
+				const decoded = decodeEntityStatement(await response.text());
+				t.true(decoded.ok);
+				if (decoded.ok) t.equal(decoded.value.payload.aud, caller);
+			}
+			const previousCalls = calls;
+			const anonymous = decodeEntityStatement(await (await handler(new Request(url))).text());
+			t.true(anonymous.ok);
+			if (anonymous.ok) t.equal(anonymous.value.payload.aud, undefined);
+			t.equal((await handler(new Request(`${url}&entity_type=openid_provider`))).status, 404);
+			t.equal(calls, previousCalls);
+			const old = fed.trustAnchors.get(entityId(TA_ID))!;
+			(fed.trustAnchors as Map<EntityId, { jwks: { keys: JWK[] } }>).set(entityId(TA_ID), {
+				jwks: { keys: [{ ...old.jwks.keys[0]!, kid: "changed-pin" }] },
+			});
+			t.equal((await handler(new Request(url))).status, 404);
+			t.equal(calls, previousCalls);
+		});
+		test("cache read failure fails closed while an explicit anonymous discovery opt-in works", async (t) => {
+			const fed = await createMockFederation();
+			let calls = 0;
+			const { ctx } = await createTestContext({
+				requireAuthForFreshResolution: true,
+				trustAnchors: fed.trustAnchors,
+				options: {
+					...fed.options,
+					httpClient: async (url, init) => {
+						calls++;
+						return fed.options.httpClient!(url, init);
+					},
+				},
+			});
+			const url = `${ENTITY_ID}/resolve?sub=${encodeURIComponent(LEAF_ID)}&trust_anchor=${encodeURIComponent(TA_ID)}`;
+			const broken = {
+				...ctx,
+				storage: {
+					...ctx.storage,
+					subordinates: ctx.storage.subordinates,
+					cache: {
+						get: async () => {
+							throw new Error("cache unavailable");
+						},
+						set: async () => {
+							throw new Error("write unavailable");
+						},
+						delete: async () => {},
+						clear: async () => {},
+						[Symbol.asyncDispose]: async () => {},
+					},
+				},
+			};
+			t.equal((await createResolveHandler(broken)(new Request(url))).status, 500);
+			t.equal(calls, 0);
+			t.equal(
+				(
+					await createResolveHandler({ ...broken, requireAuthForFreshResolution: false })(
+						new Request(url),
+					)
+				).status,
+				200,
+			);
+			t.true(calls > 0);
+		});
+		test("normal retirement preserves status for custom types; revoked keys and invalid historical lifetimes fail", async (t) => {
+			let now = 1000;
+			const initial = await generateSigningKey();
+			const next = await generateSigningKey();
+			const provider = MemoryFederationKeyProvider.fromJWK(initial.privateKey, {
+				nowMs: () => now * 1000,
+			});
+			const { ctx, trustMarks } = await createTestContext({
+				keyProvider: provider,
+				options: { clock: { now: () => now }, clockSkewSeconds: 0 },
+			});
+			const tokens: string[] = [];
+			for (const type of [
+				"urn:example:accreditation",
+				"https://marks.example/type?v=1",
+				"https://marks.example/type#fragment",
+				"custom-type",
+			]) {
+				const jwt = await signEntityStatement(
+					{ iss: ENTITY_ID, sub: LEAF_ID, trust_mark_type: type, iat: now, exp: now + 100 },
+					new JwkSigner(initial.privateKey),
+					{ typ: JwtTyp.TrustMark },
+				);
+				await trustMarks.issue({
+					trustMarkType: type,
+					subject: entityId(LEAF_ID),
+					jwt,
+					issuedAt: now,
+					expiresAt: now + 100,
+					active: true,
+				});
+				tokens.push(jwt);
+			}
+			const status = async (jwt: string) => {
+				const response = await createTrustMarkStatusHandler(ctx)(
+					new Request(`${ENTITY_ID}/status`, {
+						method: "POST",
+						body: new URLSearchParams({ trust_mark: jwt }),
+					}),
+				);
+				t.equal(response.status, 200);
+				const decoded = decodeEntityStatement(await response.text());
+				if (!decoded.ok) throw new Error(decoded.error.description);
+				return decoded.value.payload.status;
+			};
+			for (const jwt of tokens) t.equal(await status(jwt), "active");
+			now++;
+			await provider.publishKey(createFederationSigningKey(next.privateKey));
+			await provider.switchActiveKey(next.privateKey.kid!, { retirePreviousAfterMs: 0 });
+			for (const jwt of tokens) t.equal(await status(jwt), "active");
+			for (const [iat, key] of [
+				[999, initial.privateKey],
+				[1001, initial.privateKey],
+				[1000, next.privateKey],
+			] as const) {
+				const jwt = await signEntityStatement(
+					{ iss: ENTITY_ID, sub: LEAF_ID, trust_mark_type: "urn:example:bad", iat, exp: 1100 },
+					new JwkSigner(key),
+					{ typ: JwtTyp.TrustMark, extraHeaders: { kid: initial.privateKey.kid } },
+				);
+				await trustMarks.issue({
+					trustMarkType: "urn:example:bad",
+					subject: entityId(LEAF_ID),
+					jwt,
+					issuedAt: iat,
+					expiresAt: 1100,
+					active: true,
+				});
+				t.equal(await status(jwt), "invalid");
+			}
+			await provider.revokeKey(initial.privateKey.kid!, "keyCompromise");
+			for (const jwt of tokens) t.equal(await status(jwt), "invalid");
+			now = 1100;
+			for (const jwt of tokens) t.equal(await status(jwt), "expired");
 		});
 	});
 };

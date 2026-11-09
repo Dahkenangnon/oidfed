@@ -262,9 +262,15 @@ export function createExtendedListHandler(
 				if (storeCursor !== undefined) opts.cursor = storeCursor;
 				const page = await ctx.storage.subordinates.list(filter, opts);
 				pagesFetched += 1;
-				if (page.items.length === 0) {
-					storeExhausted = true;
-					break;
+				// Empty filtered pages can still have a continuation. Require progress
+				// so bounded scans cannot hand the client a repeating or backward cursor.
+				const lastStoreRecord = page.items[page.items.length - 1];
+				if (
+					page.nextCursor !== undefined &&
+					((storeCursor !== undefined && page.nextCursor <= storeCursor) ||
+						(lastStoreRecord !== undefined && page.nextCursor <= lastStoreRecord.entityId))
+				) {
+					throw new Error("Subordinate storage returned a nonadvancing cursor");
 				}
 
 				for (const record of page.items) {

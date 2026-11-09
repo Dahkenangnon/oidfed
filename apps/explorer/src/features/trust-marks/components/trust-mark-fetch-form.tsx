@@ -1,11 +1,11 @@
 import { Button, Label, Textarea } from "@oidfed/ui";
 import { Download } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useLocalStorage } from "@/hooks/use-local-storage";
 import { useTrustMarkFetch } from "../hooks/use-trust-mark-fetch";
 
 interface TrustMarkFetchFormProps {
-	readonly onFetched: (jwt: string) => void;
+	readonly onFetched: (jwt: string, expectedSubject: string) => void;
 	readonly initialIssuer?: string | undefined;
 	readonly initialTrustMarkType?: string | undefined;
 	readonly initialSub?: string | undefined;
@@ -26,6 +26,7 @@ export function TrustMarkFetchForm({
 		initialTrustMarkType ?? "",
 	);
 	const [sub, setSub] = useLocalStorage("oidfed-explorer-trust-mark-fetch-sub", initialSub ?? "");
+	const submittedSubject = useRef("");
 	const { jwt, loading, error, fetchTrustMark } = useTrustMarkFetch();
 
 	const isValid =
@@ -34,13 +35,14 @@ export function TrustMarkFetchForm({
 	function handleSubmit(e: React.FormEvent) {
 		e.preventDefault();
 		if (!isValid) return;
+		submittedSubject.current = sub.trim();
 		fetchTrustMark(issuer.trim(), trustMarkType.trim(), sub.trim());
 	}
 
 	// Feed fetched JWT to parent via effect to avoid setState during render
 	useEffect(() => {
 		if (jwt) {
-			onFetched(jwt);
+			onFetched(jwt, submittedSubject.current);
 		}
 	}, [jwt, onFetched]);
 

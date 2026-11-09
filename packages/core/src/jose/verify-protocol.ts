@@ -68,7 +68,10 @@ export async function verifyProtocolJwt(
 			clockTolerance: options.clockSkewSeconds ?? DEFAULT_CLOCK_SKEW_SECONDS,
 			...(options.clock ? { currentDate: new Date(options.clock.now() * 1_000) } : {}),
 		};
-		const keys = jose.createLocalJWKSet(parsed.data as jose.JSONWebKeySet);
+		// Filter only after the published cardinality check; omitted kid must not become valid.
+		const keys = jose.createLocalJWKSet({
+			keys: parsed.data.keys.filter((key) => ["RSA", "EC", "OKP"].includes(key.kty)),
+		} as jose.JSONWebKeySet);
 		try {
 			const verified = await jose.jwtVerify(jwt, keys, verificationOptions);
 			return ok({ header: verified.protectedHeader, payload: verified.payload });

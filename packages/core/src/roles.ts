@@ -1,3 +1,4 @@
+import { validatePublishedMetadataKeys } from "./schemas/jwk.js";
 import type { EntityContext, EntityRole } from "./types.js";
 
 /** Validate detached metadata after all roles and host metadata have been composed. */
@@ -6,6 +7,7 @@ export function validateRoleMetadata(
 	metadata: Readonly<Record<string, unknown>>,
 	context: EntityContext,
 ): void {
+	validatePublishedMetadataKeys(metadata);
 	for (const role of roles ?? []) {
 		if (role.validateMetadata) {
 			const block = metadata[role.type];

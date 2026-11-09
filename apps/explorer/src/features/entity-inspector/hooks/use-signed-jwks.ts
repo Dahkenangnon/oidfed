@@ -1,5 +1,5 @@
 import type { JWKSet } from "@oidfed/core";
-import { verifyHistoricalKeysResponse } from "@oidfed/core";
+import { verifySignedJwkSet } from "@oidfed/core";
 import { useCallback, useRef, useState } from "react";
 
 interface UseSignedJwksResult {
@@ -13,6 +13,7 @@ interface UseSignedJwksResult {
 export function useSignedJwks(
 	uri: string | undefined,
 	issuerJwks: { keys: readonly Record<string, unknown>[] } | undefined,
+	expectedIssuer: string,
 ): UseSignedJwksResult {
 	const [keys, setKeys] = useState<readonly Record<string, unknown>[] | null>(null);
 	const [loading, setLoading] = useState(false);
@@ -38,9 +39,13 @@ export function useSignedJwks(
 			.then(async (res) => {
 				if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
 				const jwt = await res.text();
-				const result = await verifyHistoricalKeysResponse(jwt, {
-					keys: issuerJwks.keys as JWKSet["keys"],
-				});
+				const result = await verifySignedJwkSet(
+					jwt,
+					{
+						keys: issuerJwks.keys as JWKSet["keys"],
+					},
+					{ expectedIssuer, expectedOwner: expectedIssuer },
+				);
 				if (controller.signal.aborted) return;
 				if (result.ok) {
 					setKeys(result.value.keys as unknown as Record<string, unknown>[]);
@@ -58,7 +63,7 @@ export function useSignedJwks(
 			.finally(() => {
 				if (!controller.signal.aborted) setLoading(false);
 			});
-	}, [uri, issuerJwks]);
+	}, [uri, issuerJwks, expectedIssuer]);
 
 	return { keys, loading, error, signatureValid, fetch: fetchKeys };
 }

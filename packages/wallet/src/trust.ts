@@ -179,7 +179,13 @@ export async function protocolKeys(
 		return failure("Offline verification requires locally available protocol keys");
 	const federationKeys = entity.trustChain.statements[0]?.payload.jwks;
 	if (!federationKeys) return failure("Missing authenticated federation keys");
-	const resolved = await resolveEntityKeys(selected, federationKeys, options);
+	const owner = entity.trustChain.statements[0]?.payload.sub;
+	if (!owner) return failure("Missing authenticated key owner");
+	const resolved = await resolveEntityKeys(selected, federationKeys, {
+		...options,
+		expectedIssuer: owner,
+		expectedOwner: owner,
+	});
 	if (!resolved.ok) return resolved;
 	const keys = { keys: resolved.value.keys };
 	// Wallet Federation §6.3.1 requires unique identifiers for verifier keys,

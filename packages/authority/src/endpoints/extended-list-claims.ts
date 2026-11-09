@@ -11,8 +11,11 @@
  */
 import {
 	DEFAULT_ENTITY_STATEMENT_TTL_SECONDS,
+	decodeEntityStatement,
 	ExtendedListClaim,
+	JwtTyp,
 	preparePublicJwkSet,
+	TrustMarkRefSchema,
 } from "@oidfed/core";
 import type { SubordinateRecord } from "../storage/types.js";
 import type { HandlerContext } from "./context.js";
@@ -54,7 +57,26 @@ export const EXTENDED_LIST_CLAIM_EXTRACTORS: Readonly<Record<string, ClaimExtrac
 	[ExtendedListClaim.TrustMarks]: async (record, ctx, now) => {
 		if (!ctx.storage.trustMarks) return [];
 		const marks = await ctx.storage.trustMarks.listValidForSubject(record.entityId, now);
-		return marks.map((m) => ({ id: m.trustMarkType, trust_mark: m.jwt }));
+		return marks.map((mark) => {
+			// Federation §3.1.2 binds the reference type to the enclosed Trust Mark.
+			// This checks stored data consistency; ingestion establishes signature trust.
+			const ref = TrustMarkRefSchema.safeParse({
+				trust_mark_type: mark.trustMarkType,
+				trust_mark: mark.jwt,
+			});
+			const decoded = ref.success ? decodeEntityStatement(ref.data.trust_mark) : undefined;
+			if (
+				!ref.success ||
+				!decoded?.ok ||
+				decoded.value.header.typ !== JwtTyp.TrustMark ||
+				decoded.value.payload.trust_mark_type !== ref.data.trust_mark_type ||
+				(decoded.value.payload.sub as string) !== mark.subject ||
+				mark.subject !== record.entityId
+			) {
+				throw new Error("Invalid stored Trust Mark reference");
+			}
+			return ref.data;
+		});
 	},
 };
 

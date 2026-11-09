@@ -40,7 +40,9 @@ export function isExactContentType(
 ): boolean {
 	const parsed = parseContentTypeHeader(value);
 	return (
-		parsed !== undefined && parsed.parameters.length === 0 && parsed.mediaType === expectedMediaType
+		parsed !== undefined &&
+		parsed.parameters.length === 0 &&
+		parsed.mediaType.toLowerCase() === expectedMediaType.toLowerCase()
 	);
 }
 

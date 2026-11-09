@@ -22,17 +22,17 @@ export function TrustMarkViewerPage() {
 	const { result, loading, error, inspect } = useTrustMarkInspect();
 
 	const handleSubmit = useCallback(
-		(jwt: string) => {
+		(jwt: string, expectedSubject: string) => {
 			setActiveJwt(jwt);
-			inspect(jwt);
+			inspect(jwt, expectedSubject);
 		},
 		[inspect],
 	);
 
 	const handleFetched = useCallback(
-		(jwt: string) => {
+		(jwt: string, expectedSubject: string) => {
 			setActiveJwt(jwt);
-			inspect(jwt);
+			inspect(jwt, expectedSubject);
 		},
 		[inspect],
 	);

@@ -44,7 +44,9 @@ const fed = (id: string) => ({
 	federation_list_endpoint: `${id}/list`,
 	federation_resolve_endpoint: `${id}/resolve`,
 });
+// Disposable suite authorities deliberately allow fresh anonymous Resolve requests.
 const ta = new TrustAnchor({
+	requireAuthForFreshResolution: false,
 	entityId: base("ta"),
 	metadata: { federation_entity: fed(base("ta")) },
 	storage: new MemoryStorageAdapter(),
@@ -52,6 +54,7 @@ const ta = new TrustAnchor({
 	trustAnchors: anchors,
 });
 const ia = new Intermediate({
+	requireAuthForFreshResolution: false,
 	entityId: base("ia"),
 	authorityHints: [base("ta")],
 	metadata: { federation_entity: fed(base("ia")) },
@@ -153,7 +156,10 @@ rpApp.get("/login", async (_req, res) => {
 	const metadata = discovered.value.resolvedMetadata.openid_provider;
 	const federationKeys = discovered.value.trustChain.statements[0]?.payload.jwks;
 	if (!metadata || !federationKeys) throw new Error("Missing trusted OP metadata");
-	const keys = await resolveEntityKeys(metadata, federationKeys);
+	const keys = await resolveEntityKeys(metadata, federationKeys, {
+		expectedIssuer: issuer,
+		expectedOwner: issuer,
+	});
 	if (!keys.ok) throw new Error("Protocol key resolution failed");
 	// Supply the authenticated key material, including inline/superior replacements,
 	// through the protocol engine's JWKS transport. No second discovery is performed.

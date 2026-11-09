@@ -109,6 +109,12 @@ function assertTrustAnchorHintsConfig(config: AuthorityConfig, isTrustAnchor: bo
 }
 
 export interface AuthorityConfig {
+	/**
+	 * Require authentication for fresh HTTP Resolve discovery (default: true).
+	 * Anonymous requests use cached assessments, per Federation §18.1.
+	 * Local resolveEntity() calls can discover and warm the cache.
+	 */
+	requireAuthForFreshResolution?: boolean;
 	/** Optional shared collection service; snapshots are independent of registrations. */
 	collection?: EntityCollectionIntegration;
 	/** The entity identifier (URL) for this authority. */
@@ -288,6 +294,7 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 			: undefined;
 	const ctx: HandlerContext = Object.assign(
 		base,
+		{ requireAuthForFreshResolution: config.requireAuthForFreshResolution ?? true },
 		...[
 			config.authorityHints && { authorityHints: config.authorityHints },
 			config.trustAnchorHints && { trustAnchorHints: config.trustAnchorHints },
@@ -586,7 +593,7 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 			url.searchParams.set("sub", sub);
 			if (_ta) url.searchParams.set("trust_anchor", _ta);
 			const req = new Request(url.toString());
-			const res = await resolveHandler(req);
+			const res = await resolveHandler(req, true);
 			if (res.status !== 200) {
 				const body = (await res.json()) as { error: string; error_description?: string };
 				throw new Error(body.error_description ?? body.error);

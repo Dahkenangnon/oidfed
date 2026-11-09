@@ -88,7 +88,11 @@ export async function processAutomaticRegistration(
 	const federationJwks = leafStatement.payload.jwks;
 
 	const resolvedRpMetadata = bestChain.resolvedMetadata.openid_relying_party ?? {};
-	const protocolKeysResult = await resolveEntityKeys(resolvedRpMetadata, federationJwks, options);
+	const protocolKeysResult = await resolveEntityKeys(resolvedRpMetadata, federationJwks, {
+		...options,
+		expectedIssuer: rpEntityId,
+		expectedOwner: rpEntityId,
+	});
 	if (!protocolKeysResult.ok) return protocolKeysResult;
 
 	const verifyResult = await verifyProtocolJwt(

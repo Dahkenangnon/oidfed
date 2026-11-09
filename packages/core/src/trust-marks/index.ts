@@ -9,6 +9,7 @@ import { isValidAlgorithm } from "../jose/keys.js";
 import { signEntityStatement } from "../jose/sign.js";
 import type { JwtSigner } from "../jose/signer.js";
 import { decodeEntityStatement, verifyEntityStatement } from "../jose/verify.js";
+import { EntityIdSchema } from "../schemas/entity-id.js";
 import type { JWKSet } from "../schemas/jwk.js";
 import {
 	TrustMarkDelegationPayloadSchema,
@@ -48,9 +49,10 @@ export async function signTrustMarkDelegation(params: {
 	});
 }
 
-interface TrustMarkValidationOptions extends FederationOptions {
+export interface TrustMarkValidationOptions extends FederationOptions {
 	trustMarkOwners?: Record<string, TrustMarkOwner>;
-	expectedSubject?: string;
+	/** Entity whose configuration contains this mark; supply independently of the JWT (§7.3). */
+	expectedSubject: string;
 }
 
 function tmError(description: string): FederationError {
@@ -72,8 +74,10 @@ export async function validateTrustMark(
 	trustMarkJwt: string,
 	trustMarkIssuers: Record<string, string[]>,
 	issuerJwks: JWKSet,
-	options?: TrustMarkValidationOptions,
+	options: TrustMarkValidationOptions,
 ): Promise<Result<ValidatedTrustMark, FederationError>> {
+	if (!EntityIdSchema.safeParse(options?.expectedSubject).success)
+		return err(tmError("A valid expectedSubject is required"));
 	const clockSkew = options?.clockSkewSeconds ?? DEFAULT_CLOCK_SKEW_SECONDS;
 	const now = nowSeconds(options?.clock);
 
@@ -110,7 +114,7 @@ export async function validateTrustMark(
 	const trustMarkType = p.trust_mark_type;
 	const iat = p.iat;
 
-	if (options?.expectedSubject && sub !== options.expectedSubject) {
+	if (sub !== options.expectedSubject) {
 		return err(tmError("Trust mark sub does not match expected entity"));
 	}
 

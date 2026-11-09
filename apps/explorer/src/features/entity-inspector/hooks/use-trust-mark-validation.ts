@@ -31,7 +31,10 @@ function decodeTrustMarkPayloadUnsafe(jwt: string): Record<string, unknown> | nu
 	}
 }
 
-export function useTrustMarkValidation(trustMarkJwt: string): UseTrustMarkValidationResult {
+export function useTrustMarkValidation(
+	trustMarkJwt: string,
+	expectedSubject: string,
+): UseTrustMarkValidationResult {
 	const [status, setStatus] = useState<ValidationStatus>("idle");
 	const [details, setDetails] = useState<ValidatedTrustMark | null>(null);
 	const [error, setError] = useState<string | null>(null);
@@ -108,13 +111,15 @@ export function useTrustMarkValidation(trustMarkJwt: string): UseTrustMarkValida
 			}
 
 			// If no TAs configured, allow any issuer for the trust mark type
-			const trustMarkType = payload.id as string | undefined;
+			const trustMarkType = payload.trust_mark_type as string | undefined;
 			if (Object.keys(trustMarkIssuers).length === 0 && trustMarkType) {
 				trustMarkIssuers = { [trustMarkType]: [payload.iss] };
 			}
 
 			// 4. Validate
-			const result = await validateTrustMark(trustMarkJwt, trustMarkIssuers, issuerJwks as JWKSet);
+			const result = await validateTrustMark(trustMarkJwt, trustMarkIssuers, issuerJwks as JWKSet, {
+				expectedSubject,
+			});
 			if (result.ok) {
 				setDetails(result.value);
 				// Check if expired
@@ -141,7 +146,7 @@ export function useTrustMarkValidation(trustMarkJwt: string): UseTrustMarkValida
 			setStatus("error");
 			setError(err instanceof Error ? err.message : "Unknown error");
 		});
-	}, [trustMarkJwt, settings.trustAnchors, settings.httpTimeoutMs]);
+	}, [trustMarkJwt, settings.trustAnchors, settings.httpTimeoutMs, expectedSubject]);
 
 	return { status, details, error, verify };
 }

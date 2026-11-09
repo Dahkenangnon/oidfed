@@ -20,6 +20,7 @@ interface TrustMark {
 }
 
 interface TrustMarksPanelProps {
+	readonly entityId: string;
 	readonly trustMarks: readonly TrustMark[];
 }
 
@@ -50,9 +51,9 @@ const statusBadgeMap = {
 	verifying: { label: "Verifying…", variant: "outline" as const },
 } as const;
 
-function TrustMarkItem({ tm }: { readonly tm: TrustMark }) {
+function TrustMarkItem({ tm, entityId }: { readonly tm: TrustMark; readonly entityId: string }) {
 	const payload = decodeTrustMarkPayload(tm.trust_mark);
-	const { status, details, error, verify } = useTrustMarkValidation(tm.trust_mark);
+	const { status, details, error, verify } = useTrustMarkValidation(tm.trust_mark, entityId);
 	const badge = statusBadgeMap[status];
 
 	return (
@@ -129,7 +130,7 @@ function TrustMarkItem({ tm }: { readonly tm: TrustMark }) {
 	);
 }
 
-export function TrustMarksPanel({ trustMarks }: TrustMarksPanelProps) {
+export function TrustMarksPanel({ trustMarks, entityId }: TrustMarksPanelProps) {
 	if (trustMarks.length === 0) {
 		return <p className="text-sm text-muted-foreground">No trust marks present.</p>;
 	}
@@ -145,7 +146,7 @@ export function TrustMarksPanel({ trustMarks }: TrustMarksPanelProps) {
 			<CardContent>
 				<Accordion>
 					{trustMarks.map((tm, i) => (
-						<TrustMarkItem key={tm.trust_mark_type ?? i} tm={tm} />
+						<TrustMarkItem key={tm.trust_mark_type ?? i} tm={tm} entityId={entityId} />
 					))}
 				</Accordion>
 			</CardContent>

@@ -7376,11 +7376,13 @@ export default (QUnit: QUnit) => {
 
 		for (const mode of ["header", "discovery", "body"]) {
 			test(`${mode} enforces request iat and crit`, async (t) => {
-				const fx = await fixture();
+				// Pin the skew boundary while asynchronous signing and discovery run.
+				const now = Math.floor(Date.now() / 1000);
+				const fx = await fixture({ clock: { now: () => now } });
 				const headers = mode === "header" ? { trust_chain: fx.chain } : {};
 				for (const overrides of [
-					{ iat: fx.now + 61 },
-					{ exp: fx.now - 61, iat: fx.now - 600 },
+					{ iat: now + 61 },
+					{ exp: now - 61, iat: now - 600 },
 					{ crit: ["extension"], extension: true },
 					{ crit: ["iss"] },
 					{ crit: ["extension", "extension"], extension: true },

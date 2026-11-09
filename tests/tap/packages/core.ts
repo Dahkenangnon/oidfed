@@ -266,6 +266,8 @@ export default (QUnit: QUnit) => {
 						{ [source]: source === "jwks" ? { keys } : `${LEAF_ID}/keys` },
 						{ keys: [federation.publicKey] },
 						{
+							expectedIssuer: LEAF_ID,
+							expectedOwner: LEAF_ID,
 							httpClient: async () =>
 								new Response(source === "signed_jwks_uri" ? jwt : JSON.stringify({ keys }), {
 									headers: {
@@ -292,7 +294,13 @@ export default (QUnit: QUnit) => {
 					},
 				);
 				t.false(
-					(await CorePublic.verifySignedJwkSet(jwt, { keys: [federation.publicKey] })).ok,
+					(
+						await CorePublic.verifySignedJwkSet(
+							jwt,
+							{ keys: [federation.publicKey] },
+							{ expectedIssuer: LEAF_ID, expectedOwner: LEAF_ID },
+						)
+					).ok,
 					"signed metadata still needs its federation envelope identifier and signature",
 				);
 			}
@@ -2052,7 +2060,7 @@ export default (QUnit: QUnit) => {
 		test("requires exact registered media type after trimming outer whitespace", (t) => {
 			t.true(isExactContentType(" application/entity-statement+jwt ", MediaType.EntityStatement));
 			t.false(isExactContentType(null, MediaType.EntityStatement));
-			t.false(isExactContentType("Application/Entity-Statement+Jwt", MediaType.EntityStatement));
+			t.true(isExactContentType("Application/Entity-Statement+Jwt", MediaType.EntityStatement));
 			t.false(
 				isExactContentType(
 					"text/plain; note=application/entity-statement+jwt",
@@ -2344,8 +2352,8 @@ export default (QUnit: QUnit) => {
 			t.true(JWKSchema.safeParse({ kty: "OKP", crv: "Ed25519", x: "abc" }).success);
 		});
 
-		test("rejects invalid kty", (t) => {
-			t.false(JWKSchema.safeParse({ kty: "oct" }).success);
+		test("retains an unknown received kty for verification selection", (t) => {
+			t.true(JWKSchema.safeParse({ kty: "oct" }).success);
 		});
 
 		test("rejects missing kty", (t) => {
@@ -7194,7 +7202,10 @@ export default (QUnit: QUnit) => {
 					signer,
 					{ typ: JwtTyp.ResolveResponse },
 				);
-				const result = await verifyResolveResponse(jwt, jwks);
+				const result = await verifyResolveResponse(jwt, jwks, {
+					expectedIssuer: "https://authority.example.com",
+					expectedSubject: "https://leaf.example.com",
+				});
 				t.true(result.ok);
 				if (result.ok) {
 					t.equal(result.value.sub, "https://leaf.example.com");
@@ -7214,7 +7225,14 @@ export default (QUnit: QUnit) => {
 					signer,
 					{ typ: JwtTyp.EntityStatement },
 				);
-				t.false((await verifyResolveResponse(jwt, jwks)).ok);
+				t.false(
+					(
+						await verifyResolveResponse(jwt, jwks, {
+							expectedIssuer: "https://authority.example.com",
+							expectedSubject: "https://leaf.example.com",
+						})
+					).ok,
+				);
 			});
 			async function audienceFixture(overrides: Record<string, unknown> = {}) {
 				const { signer, jwks } = await setupFAKeys();
@@ -7237,7 +7255,11 @@ export default (QUnit: QUnit) => {
 				const recipient = "https://client.example.com";
 				for (const aud of [recipient, [recipient], [recipient, recipient]]) {
 					const { jwt, jwks } = await audienceFixture({ aud });
-					const result = await verifyResolveResponse(jwt, jwks, { expectedAudience: recipient });
+					const result = await verifyResolveResponse(jwt, jwks, {
+						expectedIssuer: "https://authority.example.com",
+						expectedSubject: "https://leaf.example.com",
+						expectedAudience: recipient,
+					});
 					t.true(result.ok, JSON.stringify(result));
 					if (result.ok) t.deepEqual(result.value.aud, aud);
 				}
@@ -7251,7 +7273,11 @@ export default (QUnit: QUnit) => {
 						{ expectedAudience: "https://client.example.com/" },
 						{ expectedAudience: "https://CLIENT.example.com" },
 					]) {
-						const result = await verifyResolveResponse(jwt, jwks, options);
+						const result = await verifyResolveResponse(jwt, jwks, {
+							expectedIssuer: "https://authority.example.com",
+							expectedSubject: "https://leaf.example.com",
+							...options,
+						});
 						t.false(result.ok, JSON.stringify({ aud, options }));
 						if (!result.ok) {
 							t.equal(result.error.code, InternalErrorCode.SignatureInvalid);
@@ -7263,7 +7289,11 @@ export default (QUnit: QUnit) => {
 			test("audience binding preserves audience-free responses with or without caller identity", async (t) => {
 				const { jwt, jwks } = await audienceFixture();
 				for (const options of [undefined, { expectedAudience: "https://client.example.com" }]) {
-					const result = await verifyResolveResponse(jwt, jwks, options);
+					const result = await verifyResolveResponse(jwt, jwks, {
+						expectedIssuer: "https://authority.example.com",
+						expectedSubject: "https://leaf.example.com",
+						...options,
+					});
 					t.true(result.ok);
 					if (result.ok) t.equal(result.value.aud, undefined);
 				}
@@ -7283,6 +7313,8 @@ export default (QUnit: QUnit) => {
 				]) {
 					const { jwt, jwks } = await audienceFixture({ aud });
 					const result = await verifyResolveResponse(jwt, jwks, {
+						expectedIssuer: "https://authority.example.com",
+						expectedSubject: "https://leaf.example.com",
 						expectedAudience: "https://client.example.com",
 					});
 					t.false(result.ok, JSON.stringify(aud));
@@ -7298,7 +7330,11 @@ export default (QUnit: QUnit) => {
 					"https://client.example.com?query=1",
 					"https://user@client.example.com",
 				]) {
-					const result = await verifyResolveResponse(jwt, jwks, { expectedAudience });
+					const result = await verifyResolveResponse(jwt, jwks, {
+						expectedIssuer: "https://authority.example.com",
+						expectedSubject: "https://leaf.example.com",
+						expectedAudience,
+					});
 					t.false(result.ok, expectedAudience);
 					if (!result.ok) t.equal(result.error.code, InternalErrorCode.SignatureInvalid);
 				}
@@ -7309,6 +7345,8 @@ export default (QUnit: QUnit) => {
 				t.false(
 					(
 						await verifyResolveResponse(jwt, jwks, {
+							expectedIssuer: "https://authority.example.com",
+							expectedSubject: "https://leaf.example.com",
 							expectedAudience,
 							clock: { now: () => fa_now + 10 },
 							clockSkewSeconds: 0,
@@ -7318,6 +7356,8 @@ export default (QUnit: QUnit) => {
 				t.true(
 					(
 						await verifyResolveResponse(jwt, jwks, {
+							expectedIssuer: "https://authority.example.com",
+							expectedSubject: "https://leaf.example.com",
 							expectedAudience,
 							clock: { now: () => fa_now + 10 },
 							clockSkewSeconds: 1,
@@ -7325,7 +7365,15 @@ export default (QUnit: QUnit) => {
 					).ok,
 				);
 				const wrongKeys = await setupFAKeys();
-				t.false((await verifyResolveResponse(jwt, wrongKeys.jwks, { expectedAudience })).ok);
+				t.false(
+					(
+						await verifyResolveResponse(jwt, wrongKeys.jwks, {
+							expectedIssuer: "https://authority.example.com",
+							expectedSubject: "https://leaf.example.com",
+							expectedAudience,
+						})
+					).ok,
+				);
 			});
 			test("accepts resolve response with additional claims", async (t) => {
 				const { signer, jwks } = await setupFAKeys();
@@ -7342,7 +7390,14 @@ export default (QUnit: QUnit) => {
 					signer,
 					{ typ: JwtTyp.ResolveResponse },
 				);
-				t.true((await verifyResolveResponse(jwt, jwks)).ok);
+				t.true(
+					(
+						await verifyResolveResponse(jwt, jwks, {
+							expectedIssuer: "https://authority.example.com",
+							expectedSubject: "https://leaf.example.com",
+						})
+					).ok,
+				);
 			});
 			test("rejects invalid signature", async (t) => {
 				const { signer, kid } = await setupFAKeys();
@@ -7360,7 +7415,14 @@ export default (QUnit: QUnit) => {
 					signer,
 					{ typ: JwtTyp.ResolveResponse },
 				);
-				t.false((await verifyResolveResponse(jwt, otherJwks)).ok);
+				t.false(
+					(
+						await verifyResolveResponse(jwt, otherJwks, {
+							expectedIssuer: "https://authority.example.com",
+							expectedSubject: "https://leaf.example.com",
+						})
+					).ok,
+				);
 			});
 		});
 
@@ -7377,7 +7439,10 @@ export default (QUnit: QUnit) => {
 					signer,
 					{ typ: JwtTyp.TrustMarkStatusResponse },
 				);
-				const result = await verifyTrustMarkStatusResponse(jwt, jwks);
+				const result = await verifyTrustMarkStatusResponse(jwt, jwks, {
+					expectedIssuer: "https://authority.example.com",
+					expectedTrustMark: "some.jwt.token",
+				});
 				t.true(result.ok);
 				if (result.ok) {
 					t.equal(result.value.status, "active");
@@ -7395,7 +7460,14 @@ export default (QUnit: QUnit) => {
 					signer,
 					{ typ: JwtTyp.EntityStatement },
 				);
-				t.false((await verifyTrustMarkStatusResponse(jwt, jwks)).ok);
+				t.false(
+					(
+						await verifyTrustMarkStatusResponse(jwt, jwks, {
+							expectedIssuer: "https://authority.example.com",
+							expectedTrustMark: "some.jwt.token",
+						})
+					).ok,
+				);
 			});
 			test("accepts additional status values", async (t) => {
 				const { signer, jwks } = await setupFAKeys();
@@ -7409,7 +7481,10 @@ export default (QUnit: QUnit) => {
 					signer,
 					{ typ: JwtTyp.TrustMarkStatusResponse },
 				);
-				const result = await verifyTrustMarkStatusResponse(jwt, jwks);
+				const result = await verifyTrustMarkStatusResponse(jwt, jwks, {
+					expectedIssuer: "https://authority.example.com",
+					expectedTrustMark: "some.jwt.token",
+				});
 				t.true(result.ok);
 				if (result.ok) {
 					t.equal(result.value.status, "suspended");
@@ -7428,7 +7503,14 @@ export default (QUnit: QUnit) => {
 					signer,
 					{ typ: JwtTyp.TrustMarkStatusResponse },
 				);
-				t.true((await verifyTrustMarkStatusResponse(jwt, jwks)).ok);
+				t.true(
+					(
+						await verifyTrustMarkStatusResponse(jwt, jwks, {
+							expectedIssuer: "https://authority.example.com",
+							expectedTrustMark: "some.jwt.token",
+						})
+					).ok,
+				);
 			});
 		});
 
@@ -7444,7 +7526,9 @@ export default (QUnit: QUnit) => {
 					signer,
 					{ typ: JwtTyp.JwkSet },
 				);
-				const result = await verifyHistoricalKeysResponse(jwt, jwks);
+				const result = await verifyHistoricalKeysResponse(jwt, jwks, {
+					expectedIssuer: "https://authority.example.com",
+				});
 				t.true(result.ok);
 				if (result.ok) {
 					t.equal(result.value.keys.length, 1);
@@ -7461,7 +7545,13 @@ export default (QUnit: QUnit) => {
 					signer,
 					{ typ: JwtTyp.EntityStatement },
 				);
-				t.false((await verifyHistoricalKeysResponse(jwt, jwks)).ok);
+				t.false(
+					(
+						await verifyHistoricalKeysResponse(jwt, jwks, {
+							expectedIssuer: "https://authority.example.com",
+						})
+					).ok,
+				);
 			});
 			test("rejects keys without kid", async (t) => {
 				const { signer, jwks } = await setupFAKeys();
@@ -7470,7 +7560,13 @@ export default (QUnit: QUnit) => {
 					signer,
 					{ typ: JwtTyp.JwkSet },
 				);
-				t.false((await verifyHistoricalKeysResponse(jwt, jwks)).ok);
+				t.false(
+					(
+						await verifyHistoricalKeysResponse(jwt, jwks, {
+							expectedIssuer: "https://authority.example.com",
+						})
+					).ok,
+				);
 			});
 		});
 
@@ -7566,7 +7662,10 @@ export default (QUnit: QUnit) => {
 					signer,
 					{ typ: JwtTyp.JwkSet },
 				);
-				const result = await verifySignedJwkSet(jwt, jwks);
+				const result = await verifySignedJwkSet(jwt, jwks, {
+					expectedIssuer: "https://entity.example.com",
+					expectedOwner: "https://entity.example.com",
+				});
 				t.true(result.ok);
 				if (result.ok) {
 					t.equal(result.value.iss, "https://entity.example.com");
@@ -7587,7 +7686,14 @@ export default (QUnit: QUnit) => {
 					signer,
 					{ typ: JwtTyp.EntityStatement },
 				);
-				t.false((await verifySignedJwkSet(jwt, jwks)).ok);
+				t.false(
+					(
+						await verifySignedJwkSet(jwt, jwks, {
+							expectedIssuer: "https://entity.example.com",
+							expectedOwner: "https://entity.example.com",
+						})
+					).ok,
+				);
 			});
 			test("rejects missing keys in payload", async (t) => {
 				const { signer, jwks } = await setupFAKeys();
@@ -7596,7 +7702,14 @@ export default (QUnit: QUnit) => {
 					signer,
 					{ typ: JwtTyp.JwkSet },
 				);
-				t.false((await verifySignedJwkSet(jwt, jwks)).ok);
+				t.false(
+					(
+						await verifySignedJwkSet(jwt, jwks, {
+							expectedIssuer: "https://entity.example.com",
+							expectedOwner: "https://entity.example.com",
+						})
+					).ok,
+				);
 			});
 			test("rejects missing iss in payload", async (t) => {
 				const { signer, pub, jwks } = await setupFAKeys();
@@ -7607,7 +7720,14 @@ export default (QUnit: QUnit) => {
 					signer,
 					{ typ: JwtTyp.JwkSet },
 				);
-				t.false((await verifySignedJwkSet(jwt, jwks)).ok);
+				t.false(
+					(
+						await verifySignedJwkSet(jwt, jwks, {
+							expectedIssuer: "https://entity.example.com",
+							expectedOwner: "https://entity.example.com",
+						})
+					).ok,
+				);
 			});
 			test("rejects missing sub in payload", async (t) => {
 				const { signer, pub, jwks } = await setupFAKeys();
@@ -7618,7 +7738,14 @@ export default (QUnit: QUnit) => {
 					signer,
 					{ typ: JwtTyp.JwkSet },
 				);
-				t.false((await verifySignedJwkSet(jwt, jwks)).ok);
+				t.false(
+					(
+						await verifySignedJwkSet(jwt, jwks, {
+							expectedIssuer: "https://entity.example.com",
+							expectedOwner: "https://entity.example.com",
+						})
+					).ok,
+				);
 			});
 			test("rejects invalid signature (wrong key)", async (t) => {
 				const { pub } = await setupFAKeys();
@@ -7635,7 +7762,14 @@ export default (QUnit: QUnit) => {
 					new JwkSigner(signerPriv),
 					{ typ: JwtTyp.JwkSet },
 				);
-				t.false((await verifySignedJwkSet(jwt, wrongJwks)).ok);
+				t.false(
+					(
+						await verifySignedJwkSet(jwt, wrongJwks, {
+							expectedIssuer: "https://entity.example.com",
+							expectedOwner: "https://entity.example.com",
+						})
+					).ok,
+				);
 			});
 			test("rejects mixed signing and encryption keys without use", async (t) => {
 				const { signer, pub, jwks } = await setupFAKeys();
@@ -7649,7 +7783,10 @@ export default (QUnit: QUnit) => {
 					signer,
 					{ typ: JwtTyp.JwkSet },
 				);
-				const result = await verifySignedJwkSet(jwt, jwks);
+				const result = await verifySignedJwkSet(jwt, jwks, {
+					expectedIssuer: "https://entity.example.com",
+					expectedOwner: "https://entity.example.com",
+				});
 				t.false(result.ok);
 				if (result.ok) return;
 				t.equal(result.error.code, FederationErrorCode.InvalidMetadata);
@@ -7667,7 +7804,10 @@ export default (QUnit: QUnit) => {
 				} as unknown as JWTPayload)
 					.setProtectedHeader({ alg: "ES256", typ: JwtTyp.JwkSet } as JWTHeaderParameters)
 					.sign(cryptoKey as Parameters<SignJWT["sign"]>[0]);
-				const result = await verifySignedJwkSet(jwt, jwks);
+				const result = await verifySignedJwkSet(jwt, jwks, {
+					expectedIssuer: "https://entity.example.com",
+					expectedOwner: "https://entity.example.com",
+				});
 				t.false(result.ok);
 			});
 		});
@@ -7696,6 +7836,8 @@ export default (QUnit: QUnit) => {
 						headers: { "Content-Type": "application/jwk-set+jwt" },
 					});
 				const result = await fetchSignedJwkSet("https://entity.example.com/jwks.jose", jwks, {
+					expectedIssuer: "https://entity.example.com",
+					expectedOwner: "https://entity.example.com",
 					httpClient,
 				});
 				t.true(result.ok);
@@ -7706,15 +7848,21 @@ export default (QUnit: QUnit) => {
 
 			test("rejects http:// URL", async (t) => {
 				const { jwks } = await setupFAKeys();
-				const result = await fetchSignedJwkSet("http://entity.example.com/jwks.jose", jwks);
+				const result = await fetchSignedJwkSet("http://entity.example.com/jwks.jose", jwks, {
+					expectedIssuer: "https://entity.example.com",
+					expectedOwner: "https://entity.example.com",
+				});
 				t.false(result.ok);
 				if (result.ok) return;
-				t.ok(result.error.description.includes("https"));
+				t.ok(result.error.description.toLowerCase().includes("https"));
 			});
 
 			test("rejects URL with fragment", async (t) => {
 				const { jwks } = await setupFAKeys();
-				const result = await fetchSignedJwkSet("https://entity.example.com/jwks.jose#frag", jwks);
+				const result = await fetchSignedJwkSet("https://entity.example.com/jwks.jose#frag", jwks, {
+					expectedIssuer: "https://entity.example.com",
+					expectedOwner: "https://entity.example.com",
+				});
 				t.false(result.ok);
 				if (result.ok) return;
 				t.ok(result.error.description.includes("fragment"));
@@ -7728,6 +7876,8 @@ export default (QUnit: QUnit) => {
 						headers: { "Content-Type": "application/jwk-set+jwt" },
 					});
 				const result = await fetchSignedJwkSet("https://entity.example.com/jwks.jose", jwks, {
+					expectedIssuer: "https://entity.example.com",
+					expectedOwner: "https://entity.example.com",
 					httpClient,
 				});
 				t.false(result.ok);
@@ -7741,6 +7891,8 @@ export default (QUnit: QUnit) => {
 						headers: { "Content-Type": "application/json" },
 					});
 				const result = await fetchSignedJwkSet("https://entity.example.com/jwks.jose", jwks, {
+					expectedIssuer: "https://entity.example.com",
+					expectedOwner: "https://entity.example.com",
 					httpClient,
 				});
 				t.false(result.ok);
@@ -7756,6 +7908,8 @@ export default (QUnit: QUnit) => {
 						headers: { "Content-Type": "application/jwk-set+jwt; charset=utf-8" },
 					});
 				const result = await fetchSignedJwkSet("https://entity.example.com/jwks.jose", jwks, {
+					expectedIssuer: "https://entity.example.com",
+					expectedOwner: "https://entity.example.com",
 					httpClient,
 				});
 				t.false(result.ok);
@@ -7770,6 +7924,8 @@ export default (QUnit: QUnit) => {
 						headers: { "Content-Type": "application/jwk-set+jwt" },
 					});
 				const result = await fetchSignedJwkSet("https://entity.example.com/jwks.jose", jwks, {
+					expectedIssuer: "https://entity.example.com",
+					expectedOwner: "https://entity.example.com",
 					httpClient,
 				});
 				t.false(result.ok);
@@ -7796,6 +7952,8 @@ export default (QUnit: QUnit) => {
 						headers: { "Content-Type": "application/jwk-set+jwt" },
 					});
 				const result = await fetchSignedJwkSet("https://entity.example.com/jwks.jose", jwks, {
+					expectedIssuer: "https://entity.example.com",
+					expectedOwner: "https://entity.example.com",
 					httpClient,
 				});
 				t.false(result.ok);
@@ -7826,7 +7984,7 @@ export default (QUnit: QUnit) => {
 				const result = await fetchJwkSet("http://entity.example.com/jwks.json");
 				t.false(result.ok);
 				if (result.ok) return;
-				t.ok(result.error.description.includes("https"));
+				t.ok(result.error.description.toLowerCase().includes("https"));
 			});
 
 			test("rejects URL with fragment", async (t) => {
@@ -7934,7 +8092,11 @@ export default (QUnit: QUnit) => {
 						jwks_uri: "https://entity.example.com/jwks.json",
 					},
 					jwks,
-					{ httpClient },
+					{
+						expectedIssuer: "https://entity.example.com",
+						expectedOwner: "https://entity.example.com",
+						httpClient,
+					},
 				);
 				t.true(result.ok);
 				if (!result.ok) return;
@@ -7949,6 +8111,10 @@ export default (QUnit: QUnit) => {
 						jwks_uri: "https://entity.example.com/jwks.json",
 					},
 					jwks,
+					{
+						expectedIssuer: "https://entity.example.com",
+						expectedOwner: "https://entity.example.com",
+					},
 				);
 				t.true(result.ok);
 				if (!result.ok) return;
@@ -7966,7 +8132,11 @@ export default (QUnit: QUnit) => {
 				const result = await resolveEntityKeys(
 					{ jwks_uri: "https://entity.example.com/jwks.json" },
 					jwks,
-					{ httpClient },
+					{
+						expectedIssuer: "https://entity.example.com",
+						expectedOwner: "https://entity.example.com",
+						httpClient,
+					},
 				);
 				t.true(result.ok);
 				if (!result.ok) return;
@@ -7975,7 +8145,10 @@ export default (QUnit: QUnit) => {
 
 			test("returns InvalidMetadata when no representation is present", async (t) => {
 				const { jwks } = await setupFAKeys();
-				const result = await resolveEntityKeys({ issuer: "https://entity.example.com" }, jwks);
+				const result = await resolveEntityKeys({ issuer: "https://entity.example.com" }, jwks, {
+					expectedIssuer: "https://entity.example.com",
+					expectedOwner: "https://entity.example.com",
+				});
 				t.false(result.ok);
 				if (result.ok) return;
 				t.equal(result.error.code, FederationErrorCode.InvalidMetadata);
@@ -8003,7 +8176,11 @@ export default (QUnit: QUnit) => {
 						jwks_uri: "https://entity.example.com/jwks.json",
 					},
 					jwks,
-					{ httpClient },
+					{
+						expectedIssuer: "https://entity.example.com",
+						expectedOwner: "https://entity.example.com",
+						httpClient,
+					},
 				);
 				t.false(result.ok);
 			});
@@ -8012,7 +8189,10 @@ export default (QUnit: QUnit) => {
 				const { jwks } = await setupFAKeys();
 				const sig = { kty: "EC", kid: "sig-1", crv: "P-256", x: "x1", y: "y1", alg: "ES256" };
 				const enc = { kty: "RSA", kid: "enc-1", n: "n1", e: "AQAB", alg: "RSA-OAEP-256" };
-				const result = await resolveEntityKeys({ jwks: { keys: [sig, enc] } }, jwks);
+				const result = await resolveEntityKeys({ jwks: { keys: [sig, enc] } }, jwks, {
+					expectedIssuer: "https://entity.example.com",
+					expectedOwner: "https://entity.example.com",
+				});
 				t.false(result.ok);
 				if (result.ok) return;
 				t.ok(result.error.description.includes("'use'"));
@@ -8031,7 +8211,12 @@ export default (QUnit: QUnit) => {
 						jwks: { keys: [inlineKey()] },
 					},
 					jwks,
-					{ httpClient, allowFallback: true },
+					{
+						expectedIssuer: "https://entity.example.com",
+						expectedOwner: "https://entity.example.com",
+						httpClient,
+						allowFallback: true,
+					},
 				);
 				t.true(result.ok);
 				if (!result.ok) return;
@@ -8051,7 +8236,12 @@ export default (QUnit: QUnit) => {
 						jwks_uri: "https://entity.example.com/jwks.json",
 					},
 					jwks,
-					{ httpClient, allowFallback: true },
+					{
+						expectedIssuer: "https://entity.example.com",
+						expectedOwner: "https://entity.example.com",
+						httpClient,
+						allowFallback: true,
+					},
 				);
 				t.false(result.ok);
 				if (result.ok) return;
@@ -8129,7 +8319,10 @@ export default (QUnit: QUnit) => {
 					signer,
 					{ typ: JwtTyp.JwkSet },
 				);
-				const result = await verifySignedJwkSet(jwt, jwks);
+				const result = await verifySignedJwkSet(jwt, jwks, {
+					expectedIssuer: ENTITY,
+					expectedOwner: "https://other-owner.example.com",
+				});
 				t.true(
 					result.ok,
 					"verifySignedJwkSet must accept sub !== iss; that constraint is opt-in via validateSignedJwkSetSpecHygiene",
@@ -8220,7 +8413,7 @@ export default (QUnit: QUnit) => {
 				const result = await fetchHistoricalKeys(
 					"https://ta.example.com/federation_historical_keys",
 					jwks,
-					{ httpClient },
+					{ expectedIssuer: "https://authority.example.com", httpClient },
 				);
 				t.true(isOk(result));
 				if (isOk(result)) t.equal(result.value.keys.length, 1);
@@ -8231,6 +8424,7 @@ export default (QUnit: QUnit) => {
 				const result = await fetchHistoricalKeys(
 					"http://ta.example.com/federation_historical_keys",
 					jwks,
+					{ expectedIssuer: "https://authority.example.com" },
 				);
 				t.true(isErr(result));
 				if (isErr(result)) t.true(result.error.description.toLowerCase().includes("https"));
@@ -8246,7 +8440,7 @@ export default (QUnit: QUnit) => {
 				const result = await fetchHistoricalKeys(
 					"https://ta.example.com/federation_historical_keys",
 					jwks,
-					{ httpClient },
+					{ expectedIssuer: "https://authority.example.com", httpClient },
 				);
 				t.true(isErr(result));
 			});
@@ -8270,7 +8464,7 @@ export default (QUnit: QUnit) => {
 				const result = await fetchHistoricalKeys(
 					"https://ta.example.com/federation_historical_keys",
 					jwks,
-					{ httpClient },
+					{ expectedIssuer: "https://authority.example.com", httpClient },
 				);
 				t.true(isErr(result));
 				if (isErr(result)) t.true(result.error.description.toLowerCase().includes("content-type"));
@@ -8295,7 +8489,7 @@ export default (QUnit: QUnit) => {
 				const result = await fetchHistoricalKeys(
 					"https://ta.example.com/federation_historical_keys",
 					jwks,
-					{ httpClient },
+					{ expectedIssuer: "https://authority.example.com", httpClient },
 				);
 				t.true(isErr(result));
 				if (isErr(result)) t.true(result.error.description.toLowerCase().includes("content-type"));
@@ -8320,7 +8514,7 @@ export default (QUnit: QUnit) => {
 				const result = await fetchHistoricalKeys(
 					"https://ta.example.com/federation_historical_keys",
 					jwks,
-					{ httpClient },
+					{ expectedIssuer: "https://authority.example.com", httpClient },
 				);
 				t.true(isErr(result));
 			});
@@ -8385,10 +8579,10 @@ export default (QUnit: QUnit) => {
 				if (isErr(result)) t.true(result.error.description.includes("trust_mark_type"));
 			});
 
-			test("rejects missing or parameterized Content-Type", async (t) => {
+			test("rejects missing or incorrect Content-Type", async (t) => {
 				const cases: Array<[string, Record<string, string> | undefined]> = [
 					["missing", undefined],
-					["parameterized", { "Content-Type": "application/json; charset=utf-8" }],
+					["incorrect", { "Content-Type": "text/plain" }],
 				];
 
 				for (const [name, headers] of cases) {
@@ -8454,7 +8648,10 @@ export default (QUnit: QUnit) => {
 				);
 				t.true(fetchResult.ok);
 				if (!fetchResult.ok) return;
-				const verifyResult = await verifyResolveResponse(fetchResult.value, jwks);
+				const verifyResult = await verifyResolveResponse(fetchResult.value, jwks, {
+					expectedIssuer: "https://resolver.example.com",
+					expectedSubject: "https://leaf.example.com",
+				});
 				t.true(verifyResult.ok);
 				if (verifyResult.ok) {
 					t.equal(verifyResult.value.sub, "https://leaf.example.com");
@@ -8793,6 +8990,7 @@ export default (QUnit: QUnit) => {
 					jwt,
 					{ "https://example.com/trust-mark/certified": ["https://issuer.example.com"] },
 					{ keys: [issuerKeys.publicKey] },
+					{ expectedSubject: "https://subject.example.com" },
 				);
 				t.true(isOk(result));
 				if (isOk(result)) {
@@ -8818,6 +9016,7 @@ export default (QUnit: QUnit) => {
 					jwt,
 					{ "https://example.com/tm": ["https://issuer.example.com"] },
 					{ keys: [issuerKeys.publicKey] },
+					{ expectedSubject: "https://subject.example.com" },
 				);
 				t.true(isErr(result));
 				if (isErr(result)) t.equal(result.error.code, "ERR_TRUST_MARK_INVALID");
@@ -8837,6 +9036,7 @@ export default (QUnit: QUnit) => {
 					jwt,
 					{ "https://example.com/tm": ["https://issuer.example.com"] },
 					{ keys: [issuerKeys.publicKey] },
+					{ expectedSubject: "https://subject.example.com" },
 				);
 				t.true(isErr(result));
 				if (isErr(result)) t.equal(result.error.code, "ERR_TRUST_MARK_INVALID");
@@ -8857,6 +9057,7 @@ export default (QUnit: QUnit) => {
 					jwt,
 					{ "https://example.com/tm": ["https://issuer.example.com"] },
 					{ keys: [issuerKeys.publicKey] },
+					{ expectedSubject: "https://subject.example.com" },
 				);
 				t.true(isErr(result));
 				if (isErr(result)) t.equal(result.error.code, "ERR_TRUST_MARK_INVALID");
@@ -8867,7 +9068,12 @@ export default (QUnit: QUnit) => {
 					{ iss: "https://issuer.example.com", sub: "https://subject.example.com", iat: tm_now },
 					issuerKeys.privateKey,
 				);
-				const result = await validateTrustMark(jwt, {}, { keys: [issuerKeys.publicKey] });
+				const result = await validateTrustMark(
+					jwt,
+					{},
+					{ keys: [issuerKeys.publicKey] },
+					{ expectedSubject: "https://subject.example.com" },
+				);
 				t.true(isErr(result));
 				if (isErr(result)) t.equal(result.error.code, "ERR_TRUST_MARK_INVALID");
 			});
@@ -8898,6 +9104,7 @@ export default (QUnit: QUnit) => {
 						jwt,
 						{ "https://example.com/tm": ["https://issuer.example.com"] },
 						{ keys: [issuerKeys.publicKey] },
+						{ expectedSubject: "https://subject.example.com" },
 					);
 					t.true(isErr(result), invalidCase.name);
 					if (isErr(result)) {
@@ -8922,6 +9129,7 @@ export default (QUnit: QUnit) => {
 					jwt,
 					{ "https://example.com/tm": ["https://issuer.example.com"] },
 					{ keys: [issuerKeys.publicKey] },
+					{ expectedSubject: "https://subject.example.com" },
 				);
 				t.true(isOk(result));
 				if (isOk(result)) t.equal(result.value.expiresAt, tm_now + 3600);
@@ -8942,6 +9150,7 @@ export default (QUnit: QUnit) => {
 					jwt,
 					{ "https://example.com/tm": ["https://issuer.example.com"] },
 					{ keys: [issuerKeys.publicKey] },
+					{ expectedSubject: "https://subject.example.com" },
 				);
 				t.true(isErr(result));
 			});
@@ -8961,6 +9170,7 @@ export default (QUnit: QUnit) => {
 					jwt,
 					{ "https://example.com/tm": ["https://issuer.example.com"] },
 					{ keys: [otherKeys.publicKey] },
+					{ expectedSubject: "https://subject.example.com" },
 				);
 				t.true(isErr(result));
 				if (isErr(result))
@@ -8995,6 +9205,7 @@ export default (QUnit: QUnit) => {
 					{ "https://example.com/tm": ["https://issuer.example.com"] },
 					{ keys: [issuerKeys.publicKey] },
 					{
+						expectedSubject: "https://subject.example.com",
 						trustMarkOwners: {
 							"https://example.com/tm": {
 								sub: "https://owner.example.com",
@@ -9047,6 +9258,7 @@ export default (QUnit: QUnit) => {
 						{ "https://example.com/tm": ["https://issuer.example.com"] },
 						{ keys: [issuerKeys.publicKey] },
 						{
+							expectedSubject: "https://subject.example.com",
 							trustMarkOwners: {
 								"https://example.com/tm": {
 									sub: "https://owner.example.com",
@@ -9091,6 +9303,7 @@ export default (QUnit: QUnit) => {
 					{ "https://example.com/tm": ["https://issuer.example.com"] },
 					{ keys: [issuerKeys.publicKey] },
 					{
+						expectedSubject: "https://subject.example.com",
 						trustMarkOwners: {
 							"https://example.com/tm": {
 								sub: "https://owner.example.com",
@@ -9133,6 +9346,7 @@ export default (QUnit: QUnit) => {
 					{ "https://example.com/tm": ["https://issuer.example.com"] },
 					taJwks,
 					{
+						expectedSubject: "https://subject.example.com",
 						trustMarkOwners: {
 							"https://example.com/tm": {
 								sub: "https://owner.example.com",
@@ -9167,6 +9381,7 @@ export default (QUnit: QUnit) => {
 					jwt,
 					{ "https://example.com/tm": ["https://issuer.example.com"] },
 					{ keys: [issuerKeys.publicKey] },
+					{ expectedSubject: "https://subject.example.com" },
 				);
 				t.true(isErr(result));
 				if (isErr(result)) t.true(result.error.description.includes("kid"));
@@ -9228,6 +9443,7 @@ export default (QUnit: QUnit) => {
 					{ "https://example.com/tm": ["https://issuer.example.com"] },
 					{ keys: [issuerKeys.publicKey] },
 					{
+						expectedSubject: "https://subject.example.com",
 						trustMarkOwners: {
 							"https://example.com/tm": {
 								sub: "https://owner.example.com",
@@ -9274,6 +9490,7 @@ export default (QUnit: QUnit) => {
 					{ "https://example.com/tm": ["https://issuer.example.com"] },
 					{ keys: [issuerKeys.publicKey] },
 					{
+						expectedSubject: "https://subject.example.com",
 						trustMarkOwners: {
 							"https://example.com/tm": {
 								sub: "https://owner.example.com",
@@ -9300,6 +9517,7 @@ export default (QUnit: QUnit) => {
 					jwt,
 					{ "https://example.com/tm": [] },
 					{ keys: [issuerKeys.publicKey] },
+					{ expectedSubject: "https://subject.example.com" },
 				);
 				t.true(isOk(result));
 			});
@@ -9318,6 +9536,7 @@ export default (QUnit: QUnit) => {
 					jwt,
 					{ "https://example.com/tm": ["https://issuer.example.com"] },
 					{ keys: [issuerKeys.publicKey] },
+					{ expectedSubject: "https://subject.example.com" },
 				);
 				t.true(isErr(result));
 				if (isErr(result)) t.equal(result.error.description, "Trust mark type not recognized");
@@ -9383,6 +9602,7 @@ export default (QUnit: QUnit) => {
 					{ "https://example.com/tm": ["https://issuer.example.com"] },
 					{ keys: [issuerKeys.publicKey] },
 					{
+						expectedSubject: "https://subject.example.com",
 						trustMarkOwners: {
 							"https://example.com/tm": {
 								sub: "https://owner.example.com",
@@ -9420,6 +9640,7 @@ export default (QUnit: QUnit) => {
 					{ "https://example.com/tm": ["https://issuer.example.com"] },
 					{ keys: [issuerKeys.publicKey] },
 					{
+						expectedSubject: "https://subject.example.com",
 						trustMarkOwners: {
 							"https://example.com/tm": {
 								sub: "https://owner.example.com",
@@ -9462,6 +9683,7 @@ export default (QUnit: QUnit) => {
 					{ "https://example.com/tm": ["https://issuer.example.com"] },
 					{ keys: [issuerKeys.publicKey] },
 					{
+						expectedSubject: "https://subject.example.com",
 						trustMarkOwners: {
 							"https://example.com/tm": {
 								sub: "https://owner.example.com",
@@ -9506,6 +9728,7 @@ export default (QUnit: QUnit) => {
 					{ "https://example.com/tm": ["https://issuer.example.com"] },
 					{ keys: [issuerKeys.publicKey] },
 					{
+						expectedSubject: "https://subject.example.com",
 						trustMarkOwners: {
 							"https://example.com/tm": {
 								sub: "https://owner.example.com",
@@ -9564,6 +9787,7 @@ export default (QUnit: QUnit) => {
 					{ "https://example.com/tm": ["https://issuer.example.com"] },
 					{ keys: [issuerKeys.publicKey] },
 					{
+						expectedSubject: "https://subject.example.com",
 						trustMarkOwners: {
 							"https://example.com/tm": {
 								sub: "https://owner.example.com",
@@ -9691,7 +9915,7 @@ export default (QUnit: QUnit) => {
 					sub: "https://leaf.example.com" as EntityId,
 				});
 				t.true(isErr(result));
-				if (isErr(result)) t.true(result.error.description.includes("https"));
+				if (isErr(result)) t.true(result.error.description.toLowerCase().includes("https"));
 			});
 
 			test("rejects 404", async (t) => {
@@ -9791,7 +10015,7 @@ export default (QUnit: QUnit) => {
 					"https://ta.example.com/federation_trust_mark_status",
 					"eyJ.original.jwt",
 					{ keys: [signerKeys.publicKey] },
-					{ httpClient },
+					{ expectedIssuer: "https://ta.example.com", httpClient },
 				);
 				t.true(isOk(result));
 				if (isOk(result)) {
@@ -9812,7 +10036,7 @@ export default (QUnit: QUnit) => {
 					"https://ta.example.com/federation_trust_mark_status",
 					"eyJ.original.jwt",
 					{ keys: [signerKeys.publicKey] },
-					{ httpClient },
+					{ expectedIssuer: "https://ta.example.com", httpClient },
 				);
 				t.true(isOk(result));
 				if (isOk(result)) t.equal(result.value.status, "expired");
@@ -9830,7 +10054,7 @@ export default (QUnit: QUnit) => {
 					"https://ta.example.com/federation_trust_mark_status",
 					"eyJ.original.jwt",
 					{ keys: [signerKeys.publicKey] },
-					{ httpClient },
+					{ expectedIssuer: "https://ta.example.com", httpClient },
 				);
 				t.true(isErr(result));
 				if (isErr(result)) t.true(result.error.description.includes("Content-Type"));
@@ -9854,7 +10078,7 @@ export default (QUnit: QUnit) => {
 						"https://ta.example.com/federation_trust_mark_status",
 						"eyJ.original.jwt",
 						{ keys: [signerKeys.publicKey] },
-						{ httpClient },
+						{ expectedIssuer: "https://ta.example.com", httpClient },
 					);
 					t.true(isErr(result), name);
 					if (isErr(result)) t.true(result.error.description.includes("Content-Type"), name);
@@ -9874,7 +10098,7 @@ export default (QUnit: QUnit) => {
 					"https://ta.example.com/federation_trust_mark_status",
 					"eyJ.original.jwt",
 					{ keys: [wrongKeys.publicKey] },
-					{ httpClient },
+					{ expectedIssuer: "https://ta.example.com", httpClient },
 				);
 				t.true(isErr(result));
 			});
@@ -9885,9 +10109,10 @@ export default (QUnit: QUnit) => {
 					"http://ta.example.com/federation_trust_mark_status",
 					"eyJ.original.jwt",
 					{ keys: [signerKeys.publicKey] },
+					{ expectedIssuer: "https://ta.example.com" },
 				);
 				t.true(isErr(result));
-				if (isErr(result)) t.true(result.error.description.includes("https"));
+				if (isErr(result)) t.true(result.error.description.toLowerCase().includes("https"));
 			});
 		});
 	}
@@ -17091,7 +17316,7 @@ export default (QUnit: QUnit) => {
 			);
 
 			QUnit.test(
-				"JSON charset policy is collection-specific for success and error bodies",
+				"JSON charset parameters work for collection and shared fetch responses",
 				async (assert) => {
 					for (const contentType of [
 						"application/json; charset=utf-8",
@@ -17100,9 +17325,9 @@ export default (QUnit: QUnit) => {
 						const httpClient: HttpClient = async () =>
 							new Response('{"entities":[]}', { headers: { "content-type": contentType } });
 						assert.true((await fetchEntityCollection(endpoint, {}, { httpClient })).ok);
-						assert.false(
+						assert.true(
 							(await performFetch(endpoint, { httpClient, accept: "application/json" })).ok,
-							"legacy exact matching remains the default",
+							"JSON parameters do not change the representation",
 						);
 						const error = await fetchEntityCollection(
 							endpoint,
@@ -18810,13 +19035,13 @@ export default (QUnit: QUnit) => {
 			test(`registry properties: ${type} requires an explicit issuer entry`, async (t) => {
 				const { jwt, keys } = await markFixture(type);
 				for (const registry of [{}, Object.create(null), Object.create({ [type]: [] })]) {
-					const result = await validateTrustMark(jwt, registry, keys);
+					const result = await validateTrustMark(jwt, registry, keys, { expectedSubject: LEAF_ID });
 					t.false(result.ok, "inherited and missing entries confer no authorization");
 					if (!result.ok) t.equal(result.error.description, "Trust mark type not recognized");
 				}
 				for (const issuers of [[], [LEAF_ID], [TA_ID]]) {
 					const registry = Object.fromEntries([[type, issuers]]);
-					const result = await validateTrustMark(jwt, registry, keys);
+					const result = await validateTrustMark(jwt, registry, keys, { expectedSubject: LEAF_ID });
 					t.equal(result.ok, issuers.length === 0 || issuers.includes(LEAF_ID));
 				}
 			});
@@ -18851,6 +19076,7 @@ export default (QUnit: QUnit) => {
 					jwt,
 					{ [type]: value } as unknown as Record<string, string[]>,
 					keys,
+					{ expectedSubject: LEAF_ID },
 				);
 				t.false(result.ok, String(value));
 				if (!result.ok) t.equal(result.error.code, InternalErrorCode.TrustMarkInvalid);
@@ -18863,12 +19089,22 @@ export default (QUnit: QUnit) => {
 				const owner = { sub: TA_ID, jwks: { keys: [ownerKeys.publicKey] } };
 				for (const owners of [{}, Object.create(null), Object.create({ [type]: owner })]) {
 					t.true(
-						(await validateTrustMark(jwt, { [type]: [] }, keys, { trustMarkOwners: owners })).ok,
+						(
+							await validateTrustMark(jwt, { [type]: [] }, keys, {
+								expectedSubject: LEAF_ID,
+								trustMarkOwners: owners,
+							})
+						).ok,
 					);
 				}
 				const owners = Object.fromEntries([[type, owner]]);
 				t.false(
-					(await validateTrustMark(jwt, { [type]: [] }, keys, { trustMarkOwners: owners })).ok,
+					(
+						await validateTrustMark(jwt, { [type]: [] }, keys, {
+							expectedSubject: LEAF_ID,
+							trustMarkOwners: owners,
+						})
+					).ok,
 				);
 				const delegation = await signTrustMarkDelegation({
 					issuer: TA_ID,
@@ -18884,12 +19120,17 @@ export default (QUnit: QUnit) => {
 					{ typ: JwtTyp.TrustMark },
 				);
 				t.true(
-					(await validateTrustMark(delegated, { [type]: [] }, keys, { trustMarkOwners: owners }))
-						.ok,
+					(
+						await validateTrustMark(delegated, { [type]: [] }, keys, {
+							expectedSubject: LEAF_ID,
+							trustMarkOwners: owners,
+						})
+					).ok,
 				);
 				t.false(
 					(
 						await validateTrustMark(delegated, { [type]: [] }, keys, {
+							expectedSubject: LEAF_ID,
 							trustMarkOwners: Object.create({ [type]: owner }),
 						})
 					).ok,
@@ -18903,6 +19144,7 @@ export default (QUnit: QUnit) => {
 					{ sub: TA_ID, jwks: null },
 				]) {
 					const result = await validateTrustMark(delegated, { [type]: [] }, keys, {
+						expectedSubject: LEAF_ID,
 						trustMarkOwners: { [type]: value } as unknown as Record<
 							string,
 							CorePublic.TrustMarkOwner
@@ -18953,7 +19195,7 @@ export default (QUnit: QUnit) => {
 				t.equal(rejected.chain.trustMarkEvaluations[0]?.status, "invalid");
 			}
 
-			t.true((await validateTrustMark(jwt, issuers, keys)).ok);
+			t.true((await validateTrustMark(jwt, issuers, keys, { expectedSubject: LEAF_ID })).ok);
 		});
 		test("registry properties: collection ignores inherited marks without issuer discovery", async (t) => {
 			const graph = await createCollectionFederation({
@@ -19395,6 +19637,347 @@ export default (QUnit: QUnit) => {
 					)
 				).valid,
 			);
+		});
+	});
+	module("core / contextual response validation and received keys", () => {
+		const issuer = "https://issuer.example";
+		const subject = "https://subject.example";
+		async function signed(payload: Record<string, unknown>, typ: string) {
+			const pair = await generateSigningKey();
+			const jwt = await signEntityStatement(payload, new JwkSigner(pair.privateKey), { typ });
+			return { jwt, keys: { keys: [pair.publicKey] }, pair };
+		}
+		test("status responses bind issuer and exact submitted token while permitting extension statuses and NumericDates", async (t) => {
+			for (const iat of [-0.5, 1500.5]) {
+				const f = await signed(
+					{ iss: issuer, iat, trust_mark: "submitted.jwt.bytes", status: "suspended" },
+					JwtTyp.TrustMarkStatusResponse,
+				);
+				const options = { expectedIssuer: issuer, expectedTrustMark: "submitted.jwt.bytes" };
+				t.true((await verifyTrustMarkStatusResponse(f.jwt, f.keys, options)).ok);
+				for (const wrong of [
+					{ ...options, expectedIssuer: subject },
+					{ ...options, expectedTrustMark: "other.jwt.bytes" },
+				]) {
+					const result = await verifyTrustMarkStatusResponse(f.jwt, f.keys, wrong);
+					t.false(result.ok);
+					if (!result.ok) t.true(result.error.description.includes("does not match"));
+				}
+			}
+			for (const payload of [
+				{ iss: issuer, iat: 1, status: "active" },
+				{ iss: issuer, iat: "1", status: "active", trust_mark: "submitted.jwt.bytes" },
+			]) {
+				const f = await signed(payload, JwtTyp.TrustMarkStatusResponse);
+				t.false(
+					(
+						await verifyTrustMarkStatusResponse(f.jwt, f.keys, {
+							expectedIssuer: issuer,
+							expectedTrustMark: "submitted.jwt.bytes",
+						})
+					).ok,
+				);
+			}
+		});
+		test("signed key and Resolve responses reject a different identity even with the same trusted signing key", async (t) => {
+			const now = Math.floor(Date.now() / 1000);
+			const pair = await generateSigningKey();
+			const keys = { keys: [pair.publicKey] };
+			const signer = new JwkSigner(pair.privateKey);
+			const jwksJwt = await signEntityStatement(
+				{ iss: issuer, sub: subject, keys: keys.keys },
+				signer,
+				{ typ: JwtTyp.JwkSet },
+			);
+			for (const [expectedIssuer, expectedOwner, valid] of [
+				[issuer, subject, true],
+				[subject, subject, false],
+				[issuer, issuer, false],
+			] as const) {
+				t.equal(
+					(await verifySignedJwkSet(jwksJwt, keys, { expectedIssuer, expectedOwner })).ok,
+					valid,
+				);
+			}
+			const history = await signEntityStatement(
+				{ iss: issuer, iat: now, keys: [{ ...pair.publicKey, exp: now - 1 }] },
+				signer,
+				{ typ: JwtTyp.JwkSet },
+			);
+			t.true((await verifyHistoricalKeysResponse(history, keys, { expectedIssuer: issuer })).ok);
+			t.false((await verifyHistoricalKeysResponse(history, keys, { expectedIssuer: subject })).ok);
+			const resolve = await signEntityStatement(
+				{
+					iss: issuer,
+					sub: subject,
+					iat: now,
+					exp: now + 300,
+					metadata: { federation_entity: {} },
+					trust_chain: ["evidence"],
+				},
+				signer,
+				{ typ: JwtTyp.ResolveResponse },
+			);
+			t.true(
+				(
+					await verifyResolveResponse(resolve, keys, {
+						expectedIssuer: issuer,
+						expectedSubject: subject,
+					})
+				).ok,
+			);
+			t.false(
+				(
+					await verifyResolveResponse(resolve, keys, {
+						expectedIssuer: subject,
+						expectedSubject: subject,
+					})
+				).ok,
+			);
+			t.false(
+				(
+					await verifyResolveResponse(resolve, keys, {
+						expectedIssuer: issuer,
+						expectedSubject: issuer,
+					})
+				).ok,
+			);
+		});
+		test("missing runtime expectations fail without throwing or performing HTTP requests", async (t) => {
+			const options = undefined as unknown as Parameters<typeof verifyResolveResponse>[2];
+			t.false((await verifyResolveResponse("bad", { keys: [] }, options)).ok);
+			t.false(
+				(
+					await validateTrustMark(
+						"bad",
+						{},
+						{ keys: [] },
+						undefined as unknown as Parameters<typeof validateTrustMark>[3],
+					)
+				).ok,
+			);
+			let calls = 0;
+			t.false(
+				(
+					await fetchTrustMarkStatus(
+						"https://issuer.example/status",
+						"mark",
+						{ keys: [] },
+						{
+							expectedIssuer: "",
+							httpClient: async () => {
+								calls++;
+								throw new Error("unexpected");
+							},
+						},
+					)
+				).ok,
+			);
+			t.equal(calls, 0);
+		});
+		test("Trust Mark validation requires the independently expected subject", async (t) => {
+			const f = await signed(
+				{ iss: issuer, sub: subject, iat: 1, trust_mark_type: "urn:example:mark" },
+				JwtTyp.TrustMark,
+			);
+			t.true(
+				(
+					await validateTrustMark(f.jwt, { "urn:example:mark": [issuer] }, f.keys, {
+						expectedSubject: subject,
+					})
+				).ok,
+			);
+			t.false(
+				(
+					await validateTrustMark(f.jwt, { "urn:example:mark": [issuer] }, f.keys, {
+						expectedSubject: issuer,
+					})
+				).ok,
+			);
+		});
+		test("unsupported received key types do not poison valid verification or relax the published kid rule", async (t) => {
+			const f = await signed({ iss: issuer, sub: subject, iat: 1 }, JwtTyp.EntityStatement);
+			const unknown = { kty: "FutureKey", kid: "future", future_public: "opaque" };
+			const mixed = { keys: [unknown, ...f.keys.keys] };
+			t.true(CorePublic.JWKSetSchema.safeParse(mixed).success);
+			t.true((await CorePublic.verifyEntityStatement(f.jwt, mixed)).ok);
+			t.false((await CorePublic.verifyEntityStatement(f.jwt, { keys: [unknown] })).ok);
+			t.false(CorePublic.preparePublicJwkSet(mixed).ok);
+			t.throws(
+				() =>
+					CorePublic.buildEntityConfigurationPayload({
+						entityId: issuer,
+						jwks: f.keys,
+						metadata: { federation_entity: {} },
+						trustMarkOwners: { "urn:example:mark": { sub: subject, jwks: mixed } },
+					}),
+				/supported public JWKs/,
+			);
+
+			t.false(
+				CorePublic.JWKSetSchema.safeParse({
+					keys: [{ ...unknown, kid: f.pair.publicKey.kid }, ...f.keys.keys],
+				}).success,
+			);
+			t.false(
+				CorePublic.JWKSetSchema.safeParse({ keys: [{ ...unknown, d: "secret" }, ...f.keys.keys] })
+					.success,
+			);
+			const noKid = await signEntityStatement({ iss: issuer }, new JwkSigner(f.pair.privateKey), {
+				typ: "oauth-authz-req+jwt",
+				extraHeaders: { kid: undefined },
+			});
+			t.true(
+				(
+					await CorePublic.verifyProtocolJwt(noKid, f.keys, {
+						expectedTyp: "oauth-authz-req+jwt",
+						keyIdPolicy: "single-key",
+					})
+				).ok,
+			);
+			t.false(
+				(
+					await CorePublic.verifyProtocolJwt(noKid, mixed, {
+						expectedTyp: "oauth-authz-req+jwt",
+						keyIdPolicy: "single-key",
+					})
+				).ok,
+			);
+			for (const source of ["jwks", "jwks_uri", "signed_jwks_uri"] as const) {
+				const jwt = await signEntityStatement(
+					{ iss: issuer, sub: subject, keys: mixed.keys },
+					new JwkSigner(f.pair.privateKey),
+					{ typ: JwtTyp.JwkSet },
+				);
+				const resolved = await resolveEntityKeys(
+					{ [source]: source === "jwks" ? mixed : `${issuer}/keys` },
+					f.keys,
+					{
+						expectedIssuer: issuer,
+						expectedOwner: subject,
+						httpClient: async () =>
+							new Response(source === "signed_jwks_uri" ? jwt : JSON.stringify(mixed), {
+								headers: {
+									"Content-Type": source === "signed_jwks_uri" ? MediaType.JwkSet : MediaType.Json,
+								},
+							}),
+					},
+				);
+				t.true(resolved.ok, source);
+				if (resolved.ok) t.deepEqual(resolved.value.keys, mixed.keys);
+			}
+		});
+		test("unknown keys survive received chain parsing while supported signatures still validate", async (t) => {
+			const fed = await createMockFederation();
+			const chain: string[] = [];
+			for (const [jwt, privateKey] of [
+				[fed.leafEcJwt, fed.leafSigningKey],
+				[fed.taSubStatementForLeaf, fed.taSigningKey],
+				[fed.taEcJwt, fed.taSigningKey],
+			] as const) {
+				const decoded = decodeEntityStatement(jwt);
+				if (!decoded.ok) throw new Error(decoded.error.description);
+				const jwks = decoded.value.payload.jwks!;
+				chain.push(
+					await signEntityStatement(
+						{
+							...decoded.value.payload,
+							jwks: { keys: [...jwks.keys, { kty: "FutureKey", kid: "future-key" }] },
+						},
+						new JwkSigner(privateKey),
+					),
+				);
+			}
+			const checked = await validateTrustChain(chain, fed.trustAnchors);
+			t.true(checked.valid, JSON.stringify(checked.errors));
+			if (checked.valid) t.equal(checked.chain.statements[0]?.payload.jwks?.keys.length, 2);
+		});
+
+		test("List validates identifiers while retaining exact valid values and JSON media-type parameters", async (t) => {
+			for (const body of [
+				[],
+				["https://host.example:8443/path", "https://host.example:8443/path"],
+				["garbage"],
+				["http://host.example"],
+				["https://host.example?q=1"],
+				[issuer, 12],
+			]) {
+				const result = await fetchListSubordinates(`${issuer}/list`, undefined, {
+					httpClient: async () =>
+						new Response(JSON.stringify(body), {
+							headers: { "Content-Type": "Application/JSON; charset=utf-8" },
+						}),
+				});
+				const valid = body.every(
+					(value) => typeof value === "string" && CorePublic.isValidEntityId(value),
+				);
+				t.equal(result.ok, valid, JSON.stringify(body));
+				if (result.ok) t.deepEqual(result.value, body);
+			}
+		});
+		test("status HTTP requests honor network policy, cancellation, limits, and redirect rejection", async (t) => {
+			const f = await signed(
+				{ iss: issuer, iat: 1, trust_mark: "mark", status: "active" },
+				JwtTyp.TrustMarkStatusResponse,
+			);
+			let calls = 0;
+			const httpClient: HttpClient = async (_input, init) => {
+				calls++;
+				t.equal(init?.redirect, "error");
+				t.equal(init?.body, "trust_mark=mark");
+				return new Response(f.jwt, {
+					headers: { "Content-Type": MediaType.TrustMarkStatusResponse },
+				});
+			};
+			const base = { expectedIssuer: issuer, httpClient };
+			for (const [url, extra] of [
+				["https://127.0.0.1/status", {}],
+				[`${issuer}/status`, { allowedHosts: ["other.example"] }],
+				["https://8.8.8.8/status", { blockedCIDRs: ["8.8.8.0/24"] }],
+				[`${issuer}/status`, { signal: AbortSignal.abort() }],
+			] satisfies Array<[string, Partial<CorePublic.FederationOptions>]>) {
+				t.false((await fetchTrustMarkStatus(url, "mark", f.keys, { ...base, ...extra })).ok);
+			}
+			t.equal(calls, 0);
+			t.true((await fetchTrustMarkStatus(`${issuer}/status`, "mark", f.keys, base)).ok);
+			t.false(
+				(
+					await fetchTrustMarkStatus(`${issuer}/status`, "mark", f.keys, {
+						...base,
+						maxResponseBytes: 10,
+					})
+				).ok,
+			);
+			t.equal(calls, 2);
+			t.false(
+				(
+					await fetchTrustMarkStatus(`${issuer}/status`, "mark", f.keys, {
+						expectedIssuer: issuer,
+						httpClient: async () => {
+							throw new Error("network unavailable");
+						},
+					})
+				).ok,
+			);
+			for (const status of [301, 302, 303, 307, 308]) {
+				let redirects = 0;
+				t.false(
+					(
+						await fetchTrustMarkStatus(`${issuer}/status`, "mark", f.keys, {
+							expectedIssuer: issuer,
+							httpClient: async (_input, init) => {
+								redirects++;
+								t.equal(init?.redirect, "error");
+								return new Response(null, {
+									status,
+									headers: { Location: "https://other.example/status" },
+								});
+							},
+						})
+					).ok,
+				);
+				t.equal(redirects, 1);
+			}
 		});
 	});
 };

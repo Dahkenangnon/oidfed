@@ -68,7 +68,14 @@ export function validateSubordinateRecord(record: SubordinateRecord): void {
 }
 
 function isValidTrustMark(record: TrustMarkRecord, validAt: number): boolean {
-	return record.active && (record.expiresAt === undefined || record.expiresAt > validAt);
+	// Federation §7.3: select currently eligible marks before choosing the newest.
+	// Authority storage uses its exact clock, including same-second issuance.
+	return (
+		record.active &&
+		Number.isFinite(record.issuedAt) &&
+		record.issuedAt <= validAt &&
+		(record.expiresAt === undefined || record.expiresAt > validAt)
+	);
 }
 
 function compareStrings(left: string, right: string): number {

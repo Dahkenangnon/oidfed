@@ -3,7 +3,6 @@ import type {
 	EntityId,
 	EntityRole,
 	EntityStatementMetadata,
-	EntityType,
 	FederationEntityMetadata,
 	FederationKeyLifecycleProvider,
 	FederationOptions,
@@ -55,22 +54,6 @@ export interface HandlerContext {
 	readonly subordinateStatementTtlSeconds?: number;
 	/** TTL in seconds for issued trust mark JWTs. */
 	readonly trustMarkTtlSeconds?: number;
-	/**
-	 * Optional callback returning a previously signed Resolve Response JWT for the
-	 * given subject + trust anchors + entity types. When supplied and a JWT is
-	 * returned, the resolve handler serves it directly without invoking fresh
-	 * trust-chain resolution. Returning `undefined` indicates a cache miss.
-	 */
-	readonly cachedResolutionLookup?: (
-		sub: EntityId,
-		trustAnchors: readonly EntityId[],
-		entityTypes: readonly EntityType[],
-	) => Promise<string | undefined>;
-	/**
-	 * When true, unauthenticated callers (those whose request lacks a valid
-	 * `X-Authenticated-Entity` header) cannot trigger fresh trust-chain
-	 * resolution after a cache miss; the resolve handler returns a `not_found`
-	 * response instead. Authenticated callers are unaffected. Default: false.
-	 */
+	/** Anonymous HTTP callers use cached assessments unless explicitly disabled. */
 	readonly requireAuthForFreshResolution?: boolean;
 }

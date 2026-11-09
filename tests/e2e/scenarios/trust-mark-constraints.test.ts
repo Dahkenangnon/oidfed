@@ -58,6 +58,7 @@ describe("Trust mark issuer constraints", () => {
 			trustMarkJwt,
 			{ [trustMarkType(port)]: [taId] },
 			{ keys: [taInstance.keys.public] },
+			{ expectedSubject: rpId },
 		);
 
 		expect(isOk(result)).toBe(true);
@@ -79,6 +80,7 @@ describe("Trust mark issuer constraints", () => {
 			trustMarkJwt,
 			{ [trustMarkType(port)]: ["https://other-ta.ofed.test:9999"] },
 			{ keys: [taInstance.keys.public] },
+			{ expectedSubject: rpId },
 		);
 
 		expect(isOk(result)).toBe(false);

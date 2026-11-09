@@ -60,7 +60,7 @@ if (isValidEntityId("https://client.example.com?query=true")) {
 
 ### HTTP discovery and fetching
 
-Fetch Entity Configurations and Subordinate Statements over HTTPS. The URL checks reject special-use IP literals and support host allowlists and additional blocked IPv4 ranges. DNS resolution and redirect policy belong to the HTTP transport: configure your injected `httpClient` and network access controls for the deployment. Federation response checks require the exact registered media type without parameters. Entity Configuration discovery uses GET under [§9.1](https://openid.net/specs/openid-federation-1_0.html#section-9.1), without a Federation client assertion. The advertised `*_auth_methods` settings cover other federation endpoints. Profile-specific discovery access controls require a suitably configured HTTP transport.
+Fetch Entity Configurations and Subordinate Statements over HTTPS. The URL checks reject special-use IP literals and support host allowlists and additional blocked IPv4 ranges. DNS resolution and redirect policy belong to the HTTP transport: configure your injected `httpClient` and network access controls for the deployment. HTTP media-type names are compared case-insensitively. JSON responses accept parameters such as `charset=utf-8` ([RFC 8259 §11](https://www.rfc-editor.org/rfc/rfc8259.html#section-11)); registered Federation types, including `application/trust-chain+json`, require no parameters under [§15](https://openid.net/specs/openid-federation-1_0.html#section-15). Entity Configuration discovery uses GET under [§9.1](https://openid.net/specs/openid-federation-1_0.html#section-9.1), without a Federation client assertion. The advertised `*_auth_methods` settings cover other federation endpoints. Profile-specific discovery access controls require a suitably configured HTTP transport.
 
 ```ts
 import { fetchEntityConfiguration, fetchSubordinateStatement, entityId } from "@oidfed/core";
@@ -80,19 +80,21 @@ if (ecResult.ok) {
 
 ### Verifying Resolve Responses
 
-Use `verifyResolveResponse` with the resolver's trusted public keys. For an authenticated request, supply your application's Entity Identifier as `expectedAudience`:
+Use `verifyResolveResponse` with the resolver's trusted public keys, its Entity Identifier, and the requested subject. For an authenticated request, supply your application's Entity Identifier as `expectedAudience`:
 
 ```ts
 import { verifyResolveResponse } from "@oidfed/core";
 
 const result = await verifyResolveResponse(responseJwt, resolverJwks, {
+  expectedIssuer: "https://resolver.example.com",
+  expectedSubject: "https://leaf.example.com",
   expectedAudience: "https://client.example.com",
 });
 ```
 
 Under [Federation §8.3.2](https://openid.net/specs/openid-federation-1_0.html#section-8.3.2), `aud` is optional and identifies only the requesting party when present. The helper accepts a string or a nonempty array containing only that same identifier, following [RFC 7519 §4.1.3](https://www.rfc-editor.org/rfc/rfc7519.html#section-4.1.3). Each value must match `expectedAudience` exactly. A response containing `aud` fails verification if the caller omits `expectedAudience`. Responses without `aud` remain valid with or without a configured audience; any supplied `expectedAudience` must be a valid Entity Identifier.
 
-The helper checks the JWT signature, type, time claims, payload shape, and audience. The application chooses the trusted resolver keys and checks that the returned subject and trust chain satisfy its request and trust policy.
+The helper checks the JWT signature, type, time claims, payload shape, issuer, subject, and audience. Supply expected identities from your request or trusted configuration, as required for contextual JWT validation by [RFC 8725 §3.8](https://www.rfc-editor.org/rfc/rfc8725.html#section-3.8). The application chooses trusted resolver keys and assesses the returned chain against its trust policy.
 
 ### Building and signing Entity Statements
 
@@ -284,9 +286,11 @@ Publication uses a detached JSON snapshot of the supplied set. Validation checks
 
 The check covers required RSA, EC and OKP parameters, base64url encoding, minimal RSA integer encoding, and public-parameter lengths for P-256, P-384, P-521, Ed25519, Ed448, X25519 and X448. These representations are defined by [RFC 7518 §6](https://www.rfc-editor.org/rfc/rfc7518.html#section-6) and [RFC 8037 §2](https://www.rfc-editor.org/rfc/rfc8037.html#section-2). Other curve identifiers receive the generic parameter and encoding checks; their curve-specific representation and cryptographic usability remain the responsibility of the backend.
 
-`JWKSchema` and `JWKSetSchema` provide structural parsing. Received sets retain their keys, and verification checks the selected key. An incomplete, unselected key can coexist with a valid signing key, consistent with [RFC 7517 §5](https://www.rfc-editor.org/rfc/rfc7517.html#section-5). The publication check applies to the top-level federation `jwks`; protocol metadata and generic JWT signing keep their separate validation contracts.
+`JWKSchema` and `JWKSetSchema` provide structural parsing. Received sets retain unknown `kty` values; verification skips unsupported key types. Mandatory key-set rules still apply, and protocol `kid` omission depends on the original published key count. An incomplete, unselected key can coexist with a valid signing key, consistent with [RFC 7517 §5](https://www.rfc-editor.org/rfc/rfc7517.html#section-5). Federation publication checks apply to the top-level `jwks`. Composed hosts and statement builders also require supported public key types in inline protocol metadata. Generic JWT signing remains a lower-level operation.
 
 `MetadataJWKSetSchema` parses public protocol keys under [Federation §5.2.1](https://openid.net/specs/openid-federation-1_0.html#section-5.2.1). A key can omit `kid`, and different keys can share an identifier where the protocol permits it ([RFC 7517 §4.5](https://www.rfc-editor.org/rfc/rfc7517.html#section-4.5)). `resolveEntityKeys()` applies this schema to inline `jwks` and HTTPS `jwks_uri` responses; signed JWK Set payloads use the same key schema. The signed envelope uses federation keys and requires its own header `kid`.
+
+`resolveEntityKeys()`, `fetchSignedJwkSet()`, and `verifySignedJwkSet()` require `expectedIssuer` and `expectedOwner`. Supply both from authenticated entity context. [§5.2.1](https://openid.net/specs/openid-federation-1_0.html#section-5.2.1) recommends that issuer and owner match; explicitly expected distinct identities are accepted. Historical-key fetch and verification helpers require `expectedIssuer`.
 
 `verifyProtocolJwt(jwt, jwks, options)` verifies protocol JWTs against authenticated metadata keys. Set `expectedTyp` to the protocol's required type. The default `keyIdPolicy: "required"` requires a header `kid`; `"single-key"` permits omission when the supplied set contains exactly one key, following [OIDC Core §10.1](https://openid.net/specs/openid-connect-core-1_0.html#Signing). A supplied identifier must match. Candidate selection checks the signing algorithm, key type, curve and usage before signature verification. The helper checks JWT time claims using `clock` and `clockSkewSeconds`; callers bind the keys to the expected entity and validate protocol claims, including issuer and audience. `verifyEntityStatement()` retains the federation header requirements.
 
@@ -385,11 +389,18 @@ const validation = await validateTrustMark(rawTrustMarkJwt, trustMarkIssuers, is
 
 if (validation.ok) {
   const status = await fetchTrustMarkStatus(
-    statusEndpoint, rawTrustMarkJwt, issuerJwks, { httpClient: fetch },
+    statusEndpoint, rawTrustMarkJwt, issuerJwks, {
+      expectedIssuer: validation.value.issuer,
+      httpClient: fetch,
+    },
   );
   console.log("Trust Mark Status:", status);
 }
 ```
+
+`validateTrustMark()` requires `expectedSubject`, the entity whose configuration contains the mark ([§7.3](https://openid.net/specs/openid-federation-1_0.html#section-7.3)). Establish trust in the issuer and its keys before calling it.
+
+`fetchTrustMarkStatus()` binds the signed response to `expectedIssuer` and the exact submitted JWT. It applies the shared URL, cancellation, timeout, and response-size limits and rejects redirects. Direct `verifyTrustMarkStatusResponse()` calls require `expectedIssuer` and `expectedTrustMark`. Additional status strings are preserved under [§8.4.2](https://openid.net/specs/openid-federation-1_0.html#section-8.4.2); only `active` denotes an active mark. Response `iat` accepts finite NumericDates.
 
 ## Subordinate Events Endpoint
 

@@ -57,6 +57,7 @@ describe("Trust marks in entity configurations", () => {
 			trustMarkJwt,
 			{ [trustMarkType(port)]: [taId] },
 			{ keys: [taInstance.keys.public] },
+			{ expectedSubject: opId },
 		);
 
 		expect(isOk(result)).toBe(true);

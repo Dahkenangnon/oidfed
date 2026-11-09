@@ -98,6 +98,10 @@ export async function createAttestation(
 	});
 	if (!parsed.success || parsed.data.exp <= nowSeconds(options.clock))
 		return failure("Invalid Wallet Attestation claims or expiration");
+	// ACA Draft 07 §5.2 requires an asymmetric PoP. Creation accepts the supported
+	// public key types; the received-key schema remains open for JWK Set processing.
+	if (!["RSA", "EC", "OKP"].includes(parsed.data.cnf.jwk.kty))
+		return failure("Wallet Attestation confirmation key must use a supported asymmetric key type");
 	return signToken(
 		parsed.data,
 		"oauth-client-attestation+jwt",

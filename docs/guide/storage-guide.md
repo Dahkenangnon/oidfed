@@ -47,6 +47,7 @@ Replay and cache are excluded from `StorageTransaction`: replay claiming is inde
 - Duplicate `add` and update/remove of unknown entities throw.
 - Returned values are detached; mutation does not persist data.
 - Listing is lexicographic by `entityId` with an inclusive first-unreturned cursor.
+- A page may contain no matching records and still provide `nextCursor`. Continue scanning from that position; absence of `nextCursor` means exhaustion. Continuations must advance beyond the incoming cursor and all records in the returned page. Calls without pagination options return all matches.
 - Trust-mark filters include `validAt` and are evaluated by the adapter, allowing one database query instead of endpoint-level N+1 checks.
 - `createdAt` and `updatedAt` are NumericDates.
 
@@ -68,7 +69,8 @@ interface TrustMarkStorage {
 }
 ```
 
-- A record is valid when it is active and either has no expiry or has `expiresAt > validAt`.
+- A record is currently valid when it is active, has a finite `issuedAt <= validAt`, and either has no expiry or has `expiresAt > validAt`. Apply these checks before selecting the newest mark so a future-dated replacement does not hide a currently valid mark. This implements [Federation §7.3](https://openid.net/specs/openid-federation-1_0.html#section-7.3)'s time checks using the authority's exact clock, with same-second issuance accepted. Consumer verification has its own clock-skew tolerance.
+- Stored type, subject, issuance time, and optional expiration must match the signed JWT. Ingestion establishes signature validity and issuer trust; decoding a stored JWT only checks its contents. Extended Listing checks the reference's type and subject against the JWT before publishing it, following [Federation §3.1.2](https://openid.net/specs/openid-federation-1_0.html#section-3.1.2).
 - Every issued JWT is preserved. Reissuance must not overwrite historical records.
 - `getByJwt` identifies the exact issued token used by status responses.
 - Issuing the same JWT is idempotent.
@@ -98,9 +100,9 @@ Use a unique database key on `(issuer, audience, jti)`, or an equivalent Redis k
 
 ## Cache
 
-`storage.cache` implements the existing `CacheProvider`. It is optional and non-authoritative. Authorities use it for federation fetch and trust-chain caching; it never participates in transactions.
+`storage.cache` implements the existing `CacheProvider`. It is optional and non-authoritative. Authorities use it for federation fetch caching and validated Resolve snapshots; it never participates in transactions. Protect the cache against unauthorized writes: Resolve signs responses from these stored assessments.
 
-Use a shared cache when processes should reuse remote Entity Configurations or statements. Cache loss must affect performance only, never correctness.
+Use a shared cache when processes should reuse remote Entity Configurations or statements. Resolve snapshots are isolated to each authority instance. After cache loss or restart, authenticated requests or local `resolveEntity()` calls can warm them; anonymous requests return `not_found` until a matching assessment is available. See [Resolve discovery and caching](../packages/authority.md#resolve-discovery-and-caching).
 
 Cache TTLs are durations in seconds. `Clock.now()` returns NumericDate seconds since the Unix epoch, as do replay expiry, subordinate timestamps, and trust-mark timestamps.
 

@@ -1,3 +1,4 @@
+import { validateTrustMark } from "@oidfed/core";
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useTrustMarkValidation } from "@/features/entity-inspector/hooks/use-trust-mark-validation";
@@ -53,27 +54,39 @@ describe("useTrustMarkValidation", () => {
 	});
 
 	it("starts in idle status", () => {
-		const jwt = fakeJwt({ iss: "https://ta.test", id: "https://ta.test/tm/certified" });
-		const { result } = renderHook(() => useTrustMarkValidation(jwt));
+		const jwt = fakeJwt({
+			iss: "https://ta.test",
+			trust_mark_type: "https://ta.test/tm/certified",
+		});
+		const { result } = renderHook(() => useTrustMarkValidation(jwt, "https://rp.test"));
 		expect(result.current.status).toBe("idle");
 		expect(result.current.details).toBeNull();
 	});
 
 	it("validates a trust mark successfully", async () => {
-		const jwt = fakeJwt({ iss: "https://ta.test", id: "https://ta.test/tm/certified" });
-		const { result } = renderHook(() => useTrustMarkValidation(jwt));
+		const jwt = fakeJwt({
+			iss: "https://ta.test",
+			trust_mark_type: "https://ta.test/tm/certified",
+		});
+		const { result } = renderHook(() => useTrustMarkValidation(jwt, "https://rp.test"));
 
 		await act(async () => {
 			result.current.verify();
 		});
 
 		expect(result.current.status).toBe("valid");
+		expect(validateTrustMark).toHaveBeenCalledWith(
+			jwt,
+			{ "https://ta.test/tm/certified": ["https://ta.test"] },
+			expect.any(Object),
+			{ expectedSubject: "https://rp.test" },
+		);
 		expect(result.current.details?.issuer).toBe("https://ta.test");
 	});
 
 	it("handles missing iss claim", async () => {
-		const jwt = fakeJwt({ id: "some-type" });
-		const { result } = renderHook(() => useTrustMarkValidation(jwt));
+		const jwt = fakeJwt({ trust_mark_type: "some-type" });
+		const { result } = renderHook(() => useTrustMarkValidation(jwt, "https://rp.test"));
 
 		await act(async () => {
 			result.current.verify();
@@ -84,7 +97,7 @@ describe("useTrustMarkValidation", () => {
 	});
 
 	it("handles malformed JWT", async () => {
-		const { result } = renderHook(() => useTrustMarkValidation("not.a.jwt"));
+		const { result } = renderHook(() => useTrustMarkValidation("not.a.jwt", "https://rp.test"));
 
 		await act(async () => {
 			result.current.verify();

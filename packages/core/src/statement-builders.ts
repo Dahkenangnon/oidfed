@@ -20,6 +20,7 @@ import {
 	SubordinateStatementSchema,
 } from "./schemas/entity-statement.js";
 import type { JWKSet } from "./schemas/jwk.js";
+import { validatePublishedMetadataKeys } from "./schemas/jwk.js";
 import type { FederationMetadataPolicy } from "./schemas/metadata-policy.js";
 import type { TrustMarkOwner, TrustMarkRef } from "./schemas/trust-mark.js";
 import { type Clock, type EntityId, entityId, nowSeconds } from "./types.js";
@@ -223,6 +224,12 @@ function assertValidEntityStatementClaims(
 	if (!result.ok) {
 		throw new Error(result.error.description);
 	}
+	// Publication uses supported key types; generic claim validation also serves
+	// received statements and keeps RFC 7517 §5's open key-type space.
+	if (payload.metadata !== undefined)
+		validatePublishedMetadataKeys(payload.metadata as Record<string, unknown>);
+	if (payload.trust_mark_owners !== undefined)
+		validatePublishedMetadataKeys(payload.trust_mark_owners as Record<string, unknown>);
 }
 
 function copyPublicJwkSet(jwks: JWKSet): JWKSet {

@@ -1,9 +1,10 @@
+import { verifySignedJwkSet } from "@oidfed/core";
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useSignedJwks } from "@/features/entity-inspector/hooks/use-signed-jwks";
 
 vi.mock("@oidfed/core", () => ({
-	verifyHistoricalKeysResponse: vi.fn().mockResolvedValue({
+	verifySignedJwkSet: vi.fn().mockResolvedValue({
 		ok: true,
 		value: {
 			iss: "https://op.test",
@@ -21,7 +22,9 @@ describe("useSignedJwks", () => {
 	});
 
 	it("returns null keys initially", () => {
-		const { result } = renderHook(() => useSignedJwks("https://op.test/signed_jwks", { keys: [] }));
+		const { result } = renderHook(() =>
+			useSignedJwks("https://op.test/signed_jwks", { keys: [] }, "https://op.test"),
+		);
 		expect(result.current.keys).toBeNull();
 		expect(result.current.signatureValid).toBeNull();
 	});
@@ -30,7 +33,7 @@ describe("useSignedJwks", () => {
 		fetchSpy = vi
 			.spyOn(globalThis, "fetch")
 			.mockResolvedValue(new Response("mock", { status: 200 }));
-		const { result } = renderHook(() => useSignedJwks(undefined, { keys: [] }));
+		const { result } = renderHook(() => useSignedJwks(undefined, { keys: [] }, "https://op.test"));
 		act(() => result.current.fetch());
 		expect(globalThis.fetch).not.toHaveBeenCalled();
 	});
@@ -40,7 +43,7 @@ describe("useSignedJwks", () => {
 			.spyOn(globalThis, "fetch")
 			.mockResolvedValue(new Response("signed.jwt.token", { status: 200 }));
 		const { result } = renderHook(() =>
-			useSignedJwks("https://op.test/signed_jwks", { keys: [{ kty: "EC" }] }),
+			useSignedJwks("https://op.test/signed_jwks", { keys: [{ kty: "EC" }] }, "https://op.test"),
 		);
 
 		await act(async () => {
@@ -49,6 +52,11 @@ describe("useSignedJwks", () => {
 
 		expect(result.current.keys).toHaveLength(1);
 		expect(result.current.signatureValid).toBe(true);
+		expect(verifySignedJwkSet).toHaveBeenCalledWith(
+			expect.any(String),
+			{ keys: [{ kty: "EC" }] },
+			{ expectedIssuer: "https://op.test", expectedOwner: "https://op.test" },
+		);
 	});
 
 	it("handles HTTP errors", async () => {
@@ -56,7 +64,9 @@ describe("useSignedJwks", () => {
 			.spyOn(globalThis, "fetch")
 			.mockResolvedValue(new Response("Not Found", { status: 404, statusText: "Not Found" }));
 
-		const { result } = renderHook(() => useSignedJwks("https://op.test/signed_jwks", { keys: [] }));
+		const { result } = renderHook(() =>
+			useSignedJwks("https://op.test/signed_jwks", { keys: [] }, "https://op.test"),
+		);
 
 		await act(async () => {
 			result.current.fetch();

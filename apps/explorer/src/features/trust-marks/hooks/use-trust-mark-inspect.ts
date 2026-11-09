@@ -37,7 +37,7 @@ interface UseTrustMarkInspectResult {
 	readonly result: TrustMarkInspectResult | null;
 	readonly loading: boolean;
 	readonly error: string | null;
-	readonly inspect: (jwt: string) => void;
+	readonly inspect: (jwt: string, expectedSubject: string) => void;
 }
 
 export function useTrustMarkInspect(): UseTrustMarkInspectResult {
@@ -47,7 +47,7 @@ export function useTrustMarkInspect(): UseTrustMarkInspectResult {
 	const [error, setError] = useState<string | null>(null);
 
 	const inspect = useCallback(
-		(jwt: string) => {
+		(jwt: string, expectedSubject: string) => {
 			setLoading(true);
 			setError(null);
 			setResult(null);
@@ -103,7 +103,9 @@ export function useTrustMarkInspect(): UseTrustMarkInspectResult {
 					[payload.trust_mark_type]: [],
 				};
 
-				const validationResult = await validateTrustMark(normalized, trustMarkIssuers, issuerJwks);
+				const validationResult = await validateTrustMark(normalized, trustMarkIssuers, issuerJwks, {
+					expectedSubject,
+				});
 
 				let validatedMark: ValidatedTrustMark | null = null;
 				let validationError: string | null = null;

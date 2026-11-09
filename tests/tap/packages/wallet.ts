@@ -1640,6 +1640,45 @@ export default (QUnit: QUnit) => {
 				);
 			}
 		});
+		test("attestation creation rejects unsupported confirmation key types before signing", async (t) => {
+			const pair = await generateSigningKey();
+			const delegate = new JwkSigner(pair.privateKey);
+			let signatures = 0;
+			const signer: JwtSigner = {
+				alg: delegate.alg,
+				kid: delegate.kid,
+				signJwt: async (payload, header) => {
+					signatures++;
+					return delegate.signJwt(payload, header);
+				},
+			};
+			for (const confirmationKey of [
+				{ kty: "oct" },
+				{ kty: "oct", k: "secret" },
+				{ kty: "FutureKey", future_public: "opaque" },
+				pair.privateKey,
+			]) {
+				const result = await WalletProviderRole.createWalletAttestation(
+					"https://provider.example",
+					{ subject: "wallet", confirmationKey, expiresAt: 4000 },
+					signer,
+					{ clock: { now: () => 1500 } },
+				);
+				t.false(result.ok, JSON.stringify(confirmationKey.kty));
+			}
+			t.equal(signatures, 0, "invalid keys never reach the signer");
+			const confirmationKey = { ...pair.publicKey };
+			delete confirmationKey.kid;
+			const valid = await WalletProviderRole.createWalletAttestation(
+				"https://provider.example",
+				{ subject: "wallet", confirmationKey, expiresAt: 4000 },
+				signer,
+				{ clock: { now: () => 1500 } },
+			);
+			t.true(valid.ok);
+			t.equal(signatures, 1);
+			if (valid.ok) t.deepEqual(decodeJwt(valid.value).cnf, { jwk: confirmationKey });
+		});
 		test("validates chains when attaching them and rejects invalid signing inputs", async (t) => {
 			const f = await walletFederation();
 			const signer = new JwkSigner(f.protocol.provider.privateKey);

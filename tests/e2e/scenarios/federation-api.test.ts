@@ -15,9 +15,13 @@ describe("Federation API endpoints", () => {
 	const getTestBed = useFederation(singleAnchorTopology);
 
 	it("GET /federation_resolve returns resolved chain JWT", async () => {
-		const { server } = getTestBed();
+		const { server, entities } = getTestBed();
 		const port = server.port;
 
+		await getAuthorityEntity(entities, "https://ta.ofed.test").server.resolveEntity(
+			`https://rp.ofed.test:${port}` as import("@oidfed/core").EntityId,
+			`https://ta.ofed.test:${port}` as import("@oidfed/core").EntityId,
+		);
 		const response = await fetch(
 			`https://ta.ofed.test:${port}/federation_resolve?sub=${encodeURIComponent(`https://rp.ofed.test:${port}`)}&trust_anchor=${encodeURIComponent(`https://ta.ofed.test:${port}`)}`,
 		);
@@ -112,6 +116,7 @@ describe("Federation API endpoints", () => {
 		const verified = await verifyHistoricalKeysResponse(
 			await response.text(),
 			(await keyProvider.getFederationKeySet()).jwks,
+			{ expectedIssuer: `https://ta.ofed.test:${server.port}` },
 		);
 		expect(verified.ok).toBe(true);
 		if (verified.ok) expect(verified.value.keys.map((key) => key.kid)).toEqual([originalKid]);

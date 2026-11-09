@@ -19,6 +19,7 @@ import { Download, Key, ShieldCheck, ShieldX } from "lucide-react";
 import { useHistoricalKeys } from "../hooks/use-historical-keys";
 
 interface HistoricalKeysProps {
+	readonly entityId: string;
 	readonly endpoint?: string | undefined;
 	readonly issuerJwks?: { keys: readonly Record<string, unknown>[] } | undefined;
 }
@@ -39,14 +40,14 @@ function getKeyStatus(key: {
 	return { label: "Active", variant: "success" };
 }
 
-export function HistoricalKeys({ endpoint, issuerJwks }: HistoricalKeysProps) {
+export function HistoricalKeys({ endpoint, issuerJwks, entityId }: HistoricalKeysProps) {
 	const {
 		keys,
 		loading,
 		error,
 		signatureValid,
 		fetch: fetchKeys,
-	} = useHistoricalKeys(endpoint, issuerJwks);
+	} = useHistoricalKeys(endpoint, issuerJwks, entityId);
 
 	if (!endpoint) return null;
 

@@ -28,7 +28,10 @@ export interface StorageTransaction {
 
 export interface SubordinateStorage {
 	get(entityId: EntityId): Promise<SubordinateRecord | undefined>;
-	/** Records are ordered lexicographically by entityId; cursors are inclusive. */
+	/**
+	 * Return matching records ordered lexicographically by entityId; cursors are inclusive.
+	 * A filtered page may be empty with a continuation. Without options, return all matches.
+	 */
 	list(filter?: ListFilter, options?: ListPageOptions): Promise<ListPage>;
 	add(record: SubordinateRecord): Promise<void>;
 	update(entityId: EntityId, updates: SubordinateRecordUpdate): Promise<void>;
@@ -45,6 +48,10 @@ export interface ListPageOptions {
 
 export interface ListPage {
 	readonly items: SubordinateRecord[];
+	/**
+	 * First unreturned position, strictly after the incoming cursor and returned records.
+	 * May accompany an empty page. Omission means the scan is exhausted.
+	 */
 	readonly nextCursor?: EntityId;
 }
 
@@ -103,6 +110,11 @@ export interface TrustMarkListPage {
 	readonly nextCursor?: EntityId;
 }
 
+/**
+ * Current-validity queries require active marks with finite issuedAt <= validAt
+ * and either no expiration or expiresAt > validAt. Apply this eligibility before
+ * selecting the newest mark, using exact authority time without added clock leeway.
+ */
 export interface TrustMarkStorage {
 	getValid(
 		trustMarkType: string,
@@ -121,6 +133,10 @@ export interface TrustMarkStorage {
 	revoke(trustMarkType: string, subject: EntityId, revokedAt: number): Promise<void>;
 }
 
+/**
+ * Stored fields mirror the signed JWT's type, subject, iat, and optional exp.
+ * Ingestion establishes the JWT's signature and issuer trust before storing it.
+ */
 export interface TrustMarkRecord {
 	readonly trustMarkType: string;
 	readonly subject: EntityId;

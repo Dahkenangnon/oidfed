@@ -146,7 +146,7 @@ export const ResolveResponsePayloadSchema = z.looseObject({
 /** Trust Mark Status Response payload. */
 export const TrustMarkStatusResponsePayloadSchema = z.looseObject({
 	iss: EntityIdSchema,
-	iat: z.number().int().positive(),
+	iat: z.number().finite(),
 	trust_mark: z.string(),
 	status: z.string(),
 });

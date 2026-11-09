@@ -89,6 +89,7 @@ export async function handler(
 			args.trustMark as string,
 			jwksResult.value,
 			{
+				expectedIssuer: eidResult.value,
 				httpClient: deps.httpClient,
 			},
 		);

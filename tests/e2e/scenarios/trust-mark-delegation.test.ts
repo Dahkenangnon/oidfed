@@ -88,6 +88,7 @@ describe("Trust mark delegation", () => {
 			trustMarkJwt,
 			{ [trustMarkType(port)]: [taId] },
 			{ keys: [taInstance.keys.public] },
+			{ expectedSubject: rpId },
 		);
 
 		expect(isOk(result)).toBe(true);

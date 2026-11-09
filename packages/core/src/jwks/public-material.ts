@@ -1,6 +1,6 @@
 import { FederationErrorCode } from "../constants.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
-import { type JWK, type JWKSet, JWKSetSchema } from "../schemas/jwk.js";
+import { type JWK, type JWKSet, JWKSetSchema, PublicationJWKSchema } from "../schemas/jwk.js";
 
 const BASE64URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 const EC_LENGTHS = new Map([
@@ -48,6 +48,8 @@ export function preparePublicJwkSet(value: unknown): Result<JWKSet, FederationEr
 		return invalid(path || "jwks", "invalid public JWK Set structure");
 	}
 	for (const [index, key] of parsed.data.keys.entries()) {
+		if (!PublicationJWKSchema.safeParse(key).success)
+			return invalid(`keys[${index}].kty`, "unsupported public key type");
 		const check = validateMaterial(key, `keys[${index}]`);
 		if (!check.ok) return check;
 	}

@@ -5,7 +5,8 @@ const PRIVATE_KEY_FIELDS = ["d", "p", "q", "dp", "dq", "qi", "oth", "k"] as cons
 
 export const JWKSchema = z
 	.looseObject({
-		kty: z.enum(["RSA", "EC", "OKP"]),
+		// RFC 7517 §5: received sets may include key types this implementation cannot use.
+		kty: z.string().min(1),
 		kid: z.string().min(1).optional(),
 		use: z.enum(["sig", "enc"]).optional(),
 		alg: z.string().optional(),
@@ -65,3 +66,24 @@ export const JWKSetSchema = MetadataJWKSetSchema.refine(
 
 export type JWK = z.infer<typeof JWKSchema>;
 export type JWKSet = z.infer<typeof JWKSetSchema>;
+
+/** Supported publication shape; received sets retain unknown key types for selection. */
+export const PublicationJWKSchema = JWKSchema.refine(
+	(key) => ["RSA", "EC", "OKP"].includes(key.kty),
+	{ message: "Unsupported public key type for publication" },
+);
+
+/** Validate inline protocol sets before publishing composed host metadata. */
+export function validatePublishedMetadataKeys(metadata: Readonly<Record<string, unknown>>): void {
+	for (const block of Object.values(metadata)) {
+		if (!block || typeof block !== "object" || Array.isArray(block)) continue;
+		const jwks = (block as Record<string, unknown>).jwks;
+		if (jwks === undefined) continue;
+		const parsed = MetadataJWKSetSchema.safeParse(jwks);
+		if (
+			!parsed.success ||
+			!parsed.data.keys.every((key) => PublicationJWKSchema.safeParse(key).success)
+		)
+			throw new Error("Published metadata must contain supported public JWKs");
+	}
+}

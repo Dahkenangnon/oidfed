@@ -1,10 +1,10 @@
 import {
 	decodeEntityStatement,
 	fetchEntityConfiguration,
+	fetchTrustMarkStatus,
 	type JWKSet,
 	JWKSetSchema,
 	validateEntityId,
-	verifyTrustMarkStatusResponse,
 } from "@oidfed/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSettings } from "@/hooks/use-settings";
@@ -82,28 +82,14 @@ export function useTrustMarkStatus(): UseTrustMarkStatusResult {
 					throw new Error("Issuer does not advertise federation_trust_mark_status_endpoint");
 				}
 
-				const body = new URLSearchParams();
-				body.set("trust_mark", trustMarkJwt);
-
-				const response = await fetch(statusEndpoint, {
-					method: "POST",
-					headers: { "Content-Type": "application/x-www-form-urlencoded" },
-					body: body.toString(),
+				const verified = await fetchTrustMarkStatus(statusEndpoint, trustMarkJwt, issuerJwks, {
+					expectedIssuer: issuerEntityId,
+					httpTimeoutMs,
 					signal: controller.signal,
 				});
-
-				if (!response.ok) {
-					throw new Error(`Status endpoint returned ${response.status}`);
-				}
-
-				if (controller.signal.aborted) return;
-
-				const jwt = await response.text();
-				const verified = await verifyTrustMarkStatusResponse(jwt, issuerJwks);
-				if (!verified.ok) {
+				if (!verified.ok)
 					throw new Error(`Failed to verify status response: ${verified.error.description}`);
-				}
-				const payload = verified.value;
+				const payload = { status: verified.value.status, iss: verified.value.issuer };
 
 				if (controller.signal.aborted) return;
 

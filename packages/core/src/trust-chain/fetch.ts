@@ -262,7 +262,7 @@ export function validateEntityId(value: string): Result<EntityId, FederationErro
 }
 
 export interface PerformFetchOptions extends FederationOptions {
-	/** Opt-in media-type matching; existing callers retain exact matching. */
+	/** Matching override. JSON accepts parameters; Federation registered media types default to none. */
 	contentTypePolicy?: "exact" | "media-type";
 	/** Accept header to send. Defaults to application/entity-statement+jwt. */
 	accept?: string;
@@ -295,7 +295,8 @@ export async function performFetch(
 	const expectedContentType =
 		options?.expectedContentType !== undefined ? options.expectedContentType : accept;
 	const matchesContentType = (actual: string | null, expected: string) =>
-		options?.contentTypePolicy === "media-type"
+		(options?.contentTypePolicy ??
+			(expected.toLowerCase() === MediaType.Json ? "media-type" : "exact")) === "media-type"
 			? parseContentTypeHeader(actual)?.mediaType.toLowerCase() === expected.toLowerCase()
 			: isExactContentType(actual, expected);
 

@@ -140,6 +140,14 @@ Production key providers must preserve lifecycle state across restarts and coord
 
 `revokeKey(kid, reason)` applies the provider's local revocation policy. It excludes the key from current publication and signer selection and retains historical revocation information under [§8.7.2](https://openid.net/specs/openid-federation-1_0.html#section-8.7.2). It does not invalidate statements already held by other participants. [§11.4](https://openid.net/specs/openid-federation-1_0.html#section-11.4) leaves the federation-wide revocation process to the trust framework.
 
+### Resolve discovery and caching
+
+Anonymous HTTP Resolve requests use cached assessments by default, following the denial-of-service guidance in [Federation §18.1](https://openid.net/specs/openid-federation-1_0.html#section-18.1). A cold or expired cache returns `404 not_found` without discovery. Authenticated requests and local `resolveEntity(subject, anchor)` calls can perform discovery and populate the cache. Set `requireAuthForFreshResolution: false` to allow fresh anonymous discovery with the configured network limits.
+
+The authority stores audience-neutral snapshots in `storage.cache`, or a bounded in-memory cache when none is provided. Snapshots are isolated to the authority instance and expire at the earliest of `options.cacheMaxTtlSeconds` (default 3,600 seconds), chain expiry, and included evidence expiry. Restarting an instance requires warming its Resolve cache again, even when its storage cache is shared.
+
+Each response is signed with the current key. Its `exp` remains the minimum expiry of the subject's Trust Chain and included Trust Marks, as required by [§8.3.2](https://openid.net/specs/openid-federation-1_0.html#section-8.3.2). The cache reuse deadline controls how long the authority serves that assessment. Cached responses omit the optional issuer-chain header, which may describe an older signing key. Only authenticated responses carry the current caller's `aud`. Cache failures never enable anonymous discovery.
+
 ### Resolving Trust Marks
 
 Resolve validates the chain and evaluates published marks separately. An expired or unverifiable mark is excluded from the response. The resolver checks active status before including a verified mark, as required by [Federation §8.3](https://openid.net/specs/openid-federation-1_0.html#section-8.3), and caps response expiry to the chain and included marks. Applications enforce required accreditations using the [core requirement helper](core.md#trust-marks).
@@ -147,6 +155,12 @@ Resolve validates the chain and evaluates published marks separately. An expired
 ### Issuing and revoking Trust Marks
 
 Authorities with `storage.trustMarks` can issue and track Trust Marks. Trust Anchors declare authorized issuers and owners for the trust-mark types recognized by their federation.
+
+Current-validity queries use the authority's exact clock: a mark must be active, issued by the query time, and unexpired if it has an expiration. A future-dated replacement leaves an older valid mark usable. Before returning active or revoked status, the endpoint checks the signed `iat` and reports `invalid` for a missing, malformed, or future issuance time. Same-second issuance is accepted. See [Federation §7.3](https://openid.net/specs/openid-federation-1_0.html#section-7.3) and the [storage contract](../guide/storage-guide.md#trust-marks).
+
+Trust Mark types are nonempty strings; URL form is recommended by [§7.1](https://openid.net/specs/openid-federation-1_0.html#section-7.1). Issuance and status checks also accept URNs and URLs containing query parameters or fragments.
+
+Status checks prefer current issuer keys. After normal retirement, they can verify an exact stored mark using an unrevoked historical key whose recorded lifetime covers the mark's issuance time ([§8.7.2](https://openid.net/specs/openid-federation-1_0.html#section-8.7.2)). This verifies historical issuance; the stored record and the mark's dates determine current status. Historical keys with revocation information are excluded. Custom key providers must retain the public material and accurate lifetimes needed for these checks.
 
 ```ts
 import { entityId } from "@oidfed/core";
@@ -224,6 +238,8 @@ The endpoint implements Draft 03. Advertise `federation_extended_list_endpoint` 
 
 Read `next` from each response and pass it unchanged as `from` to resume from that entry, inclusive. Treat it as an opaque string; its encoding is chosen by the server. Unknown cursors return HTTP 404 with the JSON error `page_not_found`.
 
+Continue while `next` is present, including after an empty response page. The handler scans through empty storage pages until it fills the response, exhausts storage, or reaches `maxStorePagesPerRequest`. At that work limit it returns the continuation, as required when more results remain by [Extended Listing §3.3](https://openid.net/specs/openid-federation-extended-listing-1_0.html#section-3.3). Repeated or backward storage cursors return `server_error`.
+
 ```typescript
 const first = await ta.listSubordinatesExtended({ limit: 50, claims: [] });
 if (first.ok && first.value.next !== undefined) {
@@ -231,7 +247,7 @@ if (first.ok && first.value.next !== undefined) {
 }
 ```
 
-The same parameters are supported by `fetchExtendedSubordinatesList` in `@oidfed/core`. `trustMarkType` accepts a string or an array of strings. An entity matches if the authority has issued a still-valid mark of any requested type. On the wire, send one `trust_mark_type` parameter per type. Custom storage adapters must handle the array form of `ListFilter.trustMarkType` with the same OR semantics before paginating results.
+The same parameters are supported by `fetchExtendedSubordinatesList` in `@oidfed/core`. `trustMarkType` accepts a string or an array of strings. An entity matches if the authority has issued a still-valid mark of any requested type. On the wire, send one `trust_mark_type` parameter per type. Custom storage adapters must apply the same OR semantics to `ListFilter.trustMarkType`; adapters that filter scanned batches follow the [storage continuation rules](../guide/storage-guide.md#subordinates).
 
 Repeated `entity_type` values filter with union semantics: an entity matches when it has any of the requested types. Federation §8.2.1's "include all specified Entity Types" wording condenses an explicitly-OR drafting history (openid/federation commits ee7a372f → 49d194e3), and Entity Collection Draft 01 clarifies the same inherited sentence to "any of". Entity Type Identifier values are open-ended (Federation §5.1 permits additional identifiers and no registry exists): both listing endpoints accept any non-empty identifier and return an empty result when no subordinate carries it, rather than rejecting unknown values. Custom storage adapters must apply the same union, open-value semantics to `ListFilter.entityTypes`.
 
@@ -240,6 +256,8 @@ Both listing endpoints treat `trust_marked=true` as requiring a valid issued mar
 Extended Listing time filters and audit timestamps use NumericDate seconds. Fractional and negative values are accepted, and `updated_after` and `updated_before` include records exactly at the boundary. Query values also accept decimal exponent notation. Values must be finite numbers.
 
 Omitting `claims` uses `defaultClaims`. An explicit `claims: []` sends `claims=` and suppresses the default statements. If a claim selection is present, `subordinate_statement` is returned only when requested; other requested statement claims are included when available.
+
+`claims=trust_marks` returns references with `trust_mark_type` and the original `trust_mark` JWT, following [Federation §3.1.2](https://openid.net/specs/openid-federation-1_0.html#section-3.1.2). An undecodable JWT, wrong Trust Mark `typ`, or inconsistent reference type or subject produces `server_error`. These references appear in the listing JSON; the embedded signed Subordinate Statement retains Federation's claim restrictions. Subjects with no currently valid marks have an empty `trust_marks` array.
 
 Requested `jwks` values pass the same public-key publication checks as signed Subordinate Statements. This follows [Draft 03 §3.2](https://openid.net/specs/openid-federation-extended-listing-1_0.html#section-3.2) and [Federation §3.1.1](https://openid.net/specs/openid-federation-1_0.html#section-3.1.1). If a stored set contains private material or fails validation, the whole request returns HTTP 500 with a generic JSON `server_error`; `listSubordinatesExtended()` returns an error `Result`. This handling of invalid server data uses [Federation §8.9](https://openid.net/specs/openid-federation-1_0.html#section-8.9). Validation preserves stored records and publishes a detached snapshot of valid keys, including their JSON extension members.
 

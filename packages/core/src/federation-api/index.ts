@@ -22,14 +22,36 @@ function apiError(description: string): FederationError {
 	return { code: InternalErrorCode.SignatureInvalid, description };
 }
 
-interface VerifyOptions {
+export interface VerifyOptions {
+	/** Expected signer identity from trusted configuration or validated federation evidence. */
+	expectedIssuer: string;
 	clockSkewSeconds?: number;
 	clock?: Clock;
 }
 
 export interface VerifyResolveResponseOptions extends VerifyOptions {
+	expectedSubject: string;
 	/** Requesting party's Entity Identifier; required to accept a response containing aud. */
 	expectedAudience?: string;
+}
+
+export interface VerifyTrustMarkStatusOptions extends VerifyOptions {
+	/** The exact JWT submitted to the status endpoint (Federation §8.4.2). */
+	expectedTrustMark: string;
+}
+
+export interface VerifySignedJwkSetOptions extends VerifyOptions {
+	/** Key owner from trusted context; §5.2.1 permits an owner distinct from the issuer. */
+	expectedOwner: string;
+}
+
+/** Validate caller context before accepting any signed response (RFC 8725 §3.8). */
+export function validateExpectedIssuer(
+	options: VerifyOptions | undefined,
+): Result<void, FederationError> {
+	return EntityIdSchema.safeParse(options?.expectedIssuer).success
+		? ok(undefined)
+		: err(apiError("A valid expectedIssuer is required"));
 }
 
 function buildVerifyOpts(expectedTyp: string, options?: VerifyOptions) {
@@ -46,8 +68,12 @@ function buildVerifyOpts(expectedTyp: string, options?: VerifyOptions) {
 export async function verifyResolveResponse(
 	jwt: string,
 	issuerJwks: JWKSet,
-	options?: VerifyResolveResponseOptions,
+	options: VerifyResolveResponseOptions,
 ): Promise<Result<ResolveResponsePayload, FederationError>> {
+	const expectation = validateExpectedIssuer(options);
+	if (!expectation.ok) return expectation;
+	if (!EntityIdSchema.safeParse(options?.expectedSubject).success)
+		return err(apiError("A valid expectedSubject is required"));
 	const expectedAudience = options?.expectedAudience;
 	if (expectedAudience !== undefined && !EntityIdSchema.safeParse(expectedAudience).success) {
 		return err(apiError("Expected resolve response audience must be a valid Entity Identifier"));
@@ -73,6 +99,10 @@ export async function verifyResolveResponse(
 			return err(apiError("Resolve response audience does not match the requesting party"));
 		}
 	}
+	if (parsed.data.iss !== options.expectedIssuer)
+		return err(apiError("Response issuer does not match expectedIssuer"));
+	if (parsed.data.sub !== options.expectedSubject)
+		return err(apiError("Resolve response subject does not match expectedSubject"));
 	return { ok: true, value: parsed.data };
 }
 
@@ -82,8 +112,12 @@ export async function verifyResolveResponse(
 export async function verifyTrustMarkStatusResponse(
 	jwt: string,
 	issuerJwks: JWKSet,
-	options?: VerifyOptions,
+	options: VerifyTrustMarkStatusOptions,
 ): Promise<Result<TrustMarkStatusResponsePayload, FederationError>> {
+	const expectation = validateExpectedIssuer(options);
+	if (!expectation.ok) return expectation;
+	if (typeof options?.expectedTrustMark !== "string" || !options.expectedTrustMark)
+		return err(apiError("A nonempty expectedTrustMark is required"));
 	const result = await verifyEntityStatement(
 		jwt,
 		issuerJwks,
@@ -95,6 +129,10 @@ export async function verifyTrustMarkStatusResponse(
 	if (!parsed.success) {
 		return err(apiError(`Invalid trust mark status response payload: ${parsed.error.message}`));
 	}
+	if (parsed.data.iss !== options.expectedIssuer)
+		return err(apiError("Response issuer does not match expectedIssuer"));
+	if (parsed.data.trust_mark !== options.expectedTrustMark)
+		return err(apiError("Status response does not match the submitted Trust Mark"));
 	return { ok: true, value: parsed.data };
 }
 
@@ -104,8 +142,10 @@ export async function verifyTrustMarkStatusResponse(
 export async function verifyHistoricalKeysResponse(
 	jwt: string,
 	issuerJwks: JWKSet,
-	options?: VerifyOptions,
+	options: VerifyOptions,
 ): Promise<Result<HistoricalKeysPayload, FederationError>> {
+	const expectation = validateExpectedIssuer(options);
+	if (!expectation.ok) return expectation;
 	const result = await verifyEntityStatement(
 		jwt,
 		issuerJwks,
@@ -117,6 +157,8 @@ export async function verifyHistoricalKeysResponse(
 	if (!parsed.success) {
 		return err(apiError(`Invalid historical keys response payload: ${parsed.error.message}`));
 	}
+	if (parsed.data.iss !== options.expectedIssuer)
+		return err(apiError("Response issuer does not match expectedIssuer"));
 	return { ok: true, value: parsed.data };
 }
 
@@ -164,8 +206,12 @@ export function selectHistoricalVerificationKey(
 export async function verifySignedJwkSet(
 	jwt: string,
 	signerJwks: JWKSet,
-	options?: VerifyOptions,
+	options: VerifySignedJwkSetOptions,
 ): Promise<Result<SignedJwkSetPayload, FederationError>> {
+	const expectation = validateExpectedIssuer(options);
+	if (!expectation.ok) return expectation;
+	if (!EntityIdSchema.safeParse(options?.expectedOwner).success)
+		return err(apiError("A valid expectedOwner is required"));
 	const result = await verifyEntityStatement(
 		jwt,
 		signerJwks,
@@ -179,6 +225,10 @@ export async function verifySignedJwkSet(
 	}
 	const useResult = validateJwkSetUseRequirement(parsed.data.keys);
 	if (!useResult.ok) return useResult;
+	if (parsed.data.iss !== options.expectedIssuer)
+		return err(apiError("Response issuer does not match expectedIssuer"));
+	if (parsed.data.sub !== options.expectedOwner)
+		return err(apiError("Signed JWK Set owner does not match expectedOwner"));
 	return { ok: true, value: parsed.data };
 }
 
@@ -238,10 +288,10 @@ export async function fetchListSubordinates(
 			cause,
 		});
 	}
-	if (!Array.isArray(parsed) || !parsed.every((v): v is string => typeof v === "string")) {
+	if (!Array.isArray(parsed) || !parsed.every((v) => EntityIdSchema.safeParse(v).success)) {
 		return err({
 			code: InternalErrorCode.Network,
-			description: `List endpoint did not return a JSON array of strings: ${listEndpoint}`,
+			description: `List endpoint did not return a JSON array of Entity Identifiers: ${listEndpoint}`,
 		});
 	}
 	return ok(parsed as EntityId[]);

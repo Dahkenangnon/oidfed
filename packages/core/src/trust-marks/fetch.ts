@@ -4,13 +4,13 @@
  * mirror the symmetry of the JWK-Set fetchers so integrators do not have to
  * re-implement HTTP / Content-Type discipline.
  */
-import { FederationErrorCode, JwtTyp, MediaType, type TrustMarkStatus } from "../constants.js";
+import { FederationErrorCode, MediaType } from "../constants.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
-import { isExactContentType } from "../http.js";
-import { verifyEntityStatement } from "../jose/verify.js";
+import { validateExpectedIssuer, verifyTrustMarkStatusResponse } from "../federation-api/index.js";
 import type { JWKSet } from "../schemas/jwk.js";
 import { performFetch } from "../trust-chain/fetch.js";
 import type { Clock, EntityId, FederationOptions } from "../types.js";
+import { entityId } from "../types.js";
 
 export interface FetchTrustMarkParams {
 	trustMarkType: string;
@@ -67,12 +67,14 @@ export async function fetchTrustMark(
 }
 
 export interface FetchTrustMarkStatusOptions extends FederationOptions {
+	expectedIssuer: string;
 	clockSkewSeconds?: number;
 	clock?: Clock;
 }
 
 export interface TrustMarkStatusResult {
-	status: TrustMarkStatus;
+	/** Additional status strings are permitted by Federation §8.4.2. */
+	status: string;
 	issuer: EntityId;
 	issuedAt: number;
 }
@@ -82,85 +84,38 @@ export async function fetchTrustMarkStatus(
 	endpoint: string,
 	trustMarkJwt: string,
 	signerJwks: JWKSet,
-	options?: FetchTrustMarkStatusOptions,
+	options: FetchTrustMarkStatusOptions,
 ): Promise<Result<TrustMarkStatusResult, FederationError>> {
-	let parsed: URL;
+	const expectation = validateExpectedIssuer(options);
+	if (!expectation.ok) return expectation;
+	if (typeof trustMarkJwt !== "string" || !trustMarkJwt)
+		return err(federationError(FederationErrorCode.InvalidRequest, "Missing trust_mark"));
 	try {
-		parsed = new URL(endpoint);
+		if (new URL(endpoint).hash)
+			return err(
+				federationError(
+					FederationErrorCode.InvalidRequest,
+					"Endpoint URL must not contain a fragment",
+				),
+			);
 	} catch {
-		return err(
-			federationError(FederationErrorCode.InvalidRequest, `Invalid endpoint URL: ${endpoint}`),
-		);
+		return err(federationError(FederationErrorCode.InvalidRequest, "Invalid endpoint URL"));
 	}
-	if (parsed.protocol !== "https:") {
-		return err(
-			federationError(
-				FederationErrorCode.InvalidRequest,
-				`Endpoint URL must use https scheme: ${endpoint}`,
-			),
-		);
-	}
-	if (parsed.hash) {
-		return err(
-			federationError(
-				FederationErrorCode.InvalidRequest,
-				`Endpoint URL must not contain a fragment: ${endpoint}`,
-			),
-		);
-	}
-
-	const fetchFn = options?.httpClient ?? fetch;
-	const body = new URLSearchParams({ trust_mark: trustMarkJwt }).toString();
-	const response = await fetchFn(endpoint, {
+	// Use the shared fetch boundary and keep the submitted JWT at its intended endpoint.
+	const fetched = await performFetch(endpoint, {
+		...options,
 		method: "POST",
-		headers: {
-			"Content-Type": "application/x-www-form-urlencoded",
-			Accept: MediaType.TrustMarkStatusResponse,
-		},
-		body,
+		body: new URLSearchParams({ trust_mark: trustMarkJwt }),
+		redirect: "error",
+		expectedStatus: 200,
+		accept: MediaType.TrustMarkStatusResponse,
 	});
-	if (!response.ok) {
-		return err(
-			federationError(
-				FederationErrorCode.InvalidRequest,
-				`HTTP ${response.status} from trust mark status endpoint`,
-			),
-		);
-	}
-	const contentType = response.headers.get("content-type");
-	if (!isExactContentType(contentType, MediaType.TrustMarkStatusResponse)) {
-		const actual = contentType?.trim() || "<missing>";
-		return err(
-			federationError(
-				FederationErrorCode.InvalidRequest,
-				`Unexpected Content-Type '${actual}', expected '${MediaType.TrustMarkStatusResponse}'`,
-			),
-		);
-	}
-	const jwt = await response.text();
-
-	const verifyOpts: { expectedTyp: string; clockSkewSeconds?: number; clock?: Clock } = {
-		expectedTyp: JwtTyp.TrustMarkStatusResponse,
-	};
-	if (options?.clockSkewSeconds !== undefined)
-		verifyOpts.clockSkewSeconds = options.clockSkewSeconds;
-	if (options?.clock !== undefined) verifyOpts.clock = options.clock;
-	const verifyResult = await verifyEntityStatement(jwt, signerJwks, verifyOpts);
-	if (!verifyResult.ok) return verifyResult;
-
-	const payload = verifyResult.value.payload as Record<string, unknown>;
-	const status = payload.status as TrustMarkStatus | undefined;
-	const issuer = payload.iss as EntityId | undefined;
-	const iat = payload.iat as number | undefined;
-
-	if (!status || !issuer || iat === undefined) {
-		return err(
-			federationError(
-				FederationErrorCode.InvalidRequest,
-				"Trust mark status response missing required claims",
-			),
-		);
-	}
-
-	return ok({ status, issuer, issuedAt: iat });
+	if (!fetched.ok) return fetched;
+	const verified = await verifyTrustMarkStatusResponse(fetched.value, signerJwks, {
+		...options,
+		expectedTrustMark: trustMarkJwt,
+	});
+	if (!verified.ok) return verified;
+	const { status, iss, iat } = verified.value;
+	return ok({ status, issuer: entityId(iss), issuedAt: iat });
 }

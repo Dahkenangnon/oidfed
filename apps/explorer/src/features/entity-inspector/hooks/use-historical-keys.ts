@@ -13,6 +13,7 @@ interface UseHistoricalKeysResult {
 export function useHistoricalKeys(
 	endpoint: string | undefined,
 	issuerJwks: { keys: readonly Record<string, unknown>[] } | undefined,
+	expectedIssuer: string,
 ): UseHistoricalKeysResult {
 	const [keys, setKeys] = useState<readonly HistoricalKeyEntry[] | null>(null);
 	const [loading, setLoading] = useState(false);
@@ -38,9 +39,13 @@ export function useHistoricalKeys(
 			.then(async (res) => {
 				if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
 				const jwt = await res.text();
-				const result = await verifyHistoricalKeysResponse(jwt, {
-					keys: issuerJwks.keys as JWKSet["keys"],
-				});
+				const result = await verifyHistoricalKeysResponse(
+					jwt,
+					{
+						keys: issuerJwks.keys as JWKSet["keys"],
+					},
+					{ expectedIssuer },
+				);
 				if (controller.signal.aborted) return;
 				if (result.ok) {
 					setKeys(result.value.keys);
@@ -58,7 +63,7 @@ export function useHistoricalKeys(
 			.finally(() => {
 				if (!controller.signal.aborted) setLoading(false);
 			});
-	}, [endpoint, issuerJwks]);
+	}, [endpoint, issuerJwks, expectedIssuer]);
 
 	return { keys, loading, error, signatureValid, fetch: fetchKeys };
 }

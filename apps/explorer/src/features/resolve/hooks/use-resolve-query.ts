@@ -120,7 +120,10 @@ export function useResolveQuery(): UseResolveQueryResult {
 						}
 
 						const jwt = await resp.text();
-						const verifyResult = await verifyResolveResponse(jwt, resolverJwks);
+						const verifyResult = await verifyResolveResponse(jwt, resolverJwks, {
+							expectedIssuer: params.resolverEntityId,
+							expectedSubject: params.subject,
+						});
 						if (isErr(verifyResult)) {
 							return {
 								trustAnchorId: ta,

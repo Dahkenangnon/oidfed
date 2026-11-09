@@ -1,11 +1,12 @@
-import { Button, Label, Textarea } from "@oidfed/ui";
+import { isValidEntityId } from "@oidfed/core";
+import { Button, Input, Label, Textarea } from "@oidfed/ui";
 import { RefreshCw, Search, X } from "lucide-react";
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { useLocalStorage } from "@/hooks/use-local-storage";
 
 interface TrustMarkInputProps {
 	readonly loading?: boolean;
-	readonly onSubmit: (jwt: string) => void;
+	readonly onSubmit: (jwt: string, expectedSubject: string) => void;
 }
 
 function normalizeJwt(value: string): string {
@@ -18,6 +19,8 @@ function isJwtLike(value: string): boolean {
 
 export function TrustMarkInput({ loading, onSubmit }: TrustMarkInputProps) {
 	const [value, setValue] = useLocalStorage("oidfed-explorer-trust-mark-input-value", "");
+	const [subject, setSubject] = useState("");
+	const subjectValid = isValidEntityId(subject);
 	const normalized = normalizeJwt(value);
 	const hasContent = normalized.length > 0;
 	const isValid = isJwtLike(normalized);
@@ -25,13 +28,28 @@ export function TrustMarkInput({ loading, onSubmit }: TrustMarkInputProps) {
 	const handleSubmit = useCallback(
 		(e: React.FormEvent) => {
 			e.preventDefault();
-			if (isValid) onSubmit(normalized);
+			if (isValid && subjectValid) onSubmit(normalized, subject);
 		},
-		[normalized, isValid, onSubmit],
+		[normalized, isValid, subjectValid, subject, onSubmit],
 	);
 
 	return (
 		<form onSubmit={handleSubmit} className="space-y-3">
+			<div className="space-y-2">
+				<Label htmlFor="trust-mark-subject">Expected subject Entity ID</Label>
+				<Input
+					id="trust-mark-subject"
+					type="url"
+					required
+					value={subject}
+					onChange={(e) => setSubject(e.target.value)}
+					placeholder="https://member.example.com"
+					aria-describedby="trust-mark-subject-help"
+				/>
+				<p id="trust-mark-subject-help" className="text-xs text-muted-foreground">
+					Enter the entity whose Trust Mark you want to verify.
+				</p>
+			</div>
 			<div className="space-y-2">
 				<Label htmlFor="trust-mark-jwt">Trust Mark JWT</Label>
 				<div className="relative">
@@ -60,7 +78,7 @@ export function TrustMarkInput({ loading, onSubmit }: TrustMarkInputProps) {
 				)}
 			</div>
 
-			<Button type="submit" disabled={!isValid || loading}>
+			<Button type="submit" disabled={!isValid || !subjectValid || loading}>
 				{loading ? (
 					<RefreshCw className="mr-2 size-4 animate-spin" />
 				) : (

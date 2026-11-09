@@ -1,3 +1,4 @@
+import { verifyHistoricalKeysResponse } from "@oidfed/core";
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useHistoricalKeys } from "@/features/entity-inspector/hooks/use-historical-keys";
@@ -24,7 +25,9 @@ describe("useHistoricalKeys", () => {
 	});
 
 	it("returns null keys initially", () => {
-		const { result } = renderHook(() => useHistoricalKeys("https://ta.test/keys", { keys: [] }));
+		const { result } = renderHook(() =>
+			useHistoricalKeys("https://ta.test/keys", { keys: [] }, "https://ta.test"),
+		);
 		expect(result.current.keys).toBeNull();
 		expect(result.current.loading).toBe(false);
 		expect(result.current.signatureValid).toBeNull();
@@ -34,7 +37,9 @@ describe("useHistoricalKeys", () => {
 		fetchSpy = vi
 			.spyOn(globalThis, "fetch")
 			.mockResolvedValue(new Response("mock", { status: 200 }));
-		const { result } = renderHook(() => useHistoricalKeys(undefined, { keys: [] }));
+		const { result } = renderHook(() =>
+			useHistoricalKeys(undefined, { keys: [] }, "https://ta.test"),
+		);
 		act(() => result.current.fetch());
 		expect(globalThis.fetch).not.toHaveBeenCalled();
 	});
@@ -44,7 +49,7 @@ describe("useHistoricalKeys", () => {
 			.spyOn(globalThis, "fetch")
 			.mockResolvedValue(new Response("mock.jwt.token", { status: 200 }));
 		const { result } = renderHook(() =>
-			useHistoricalKeys("https://ta.test/keys", { keys: [{ kty: "EC" }] }),
+			useHistoricalKeys("https://ta.test/keys", { keys: [{ kty: "EC" }] }, "https://ta.test"),
 		);
 
 		await act(async () => {
@@ -59,13 +64,20 @@ describe("useHistoricalKeys", () => {
 		);
 		expect(result.current.keys).toHaveLength(2);
 		expect(result.current.signatureValid).toBe(true);
+		expect(verifyHistoricalKeysResponse).toHaveBeenCalledWith(
+			expect.any(String),
+			{ keys: [{ kty: "EC" }] },
+			{ expectedIssuer: "https://ta.test" },
+		);
 		expect(result.current.loading).toBe(false);
 	});
 
 	it("handles fetch errors", async () => {
 		fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Network failure"));
 
-		const { result } = renderHook(() => useHistoricalKeys("https://ta.test/keys", { keys: [] }));
+		const { result } = renderHook(() =>
+			useHistoricalKeys("https://ta.test/keys", { keys: [] }, "https://ta.test"),
+		);
 
 		await act(async () => {
 			result.current.fetch();

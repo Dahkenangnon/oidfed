@@ -39,6 +39,7 @@ describe("trust-mark-status handler", () => {
 				iat: 1000,
 				exp: 9_999_999_999,
 				status: "active",
+				trust_mark: "eyJ.test.jwt",
 			},
 			new JwkSigner(key.privateKey),
 			{ typ: "trust-mark-status-response+jwt" },

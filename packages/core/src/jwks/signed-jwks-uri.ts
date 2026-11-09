@@ -5,13 +5,18 @@
  */
 import { FederationErrorCode, MediaType } from "../constants.js";
 import { err, type FederationError, federationError, type Result } from "../errors.js";
-import { verifySignedJwkSet } from "../federation-api/index.js";
+import {
+	type VerifySignedJwkSetOptions,
+	validateExpectedIssuer,
+	verifySignedJwkSet,
+} from "../federation-api/index.js";
+import { EntityIdSchema } from "../schemas/entity-id.js";
 import type { SignedJwkSetPayload } from "../schemas/entity-statement.js";
 import type { JWKSet } from "../schemas/jwk.js";
 import { performFetch } from "../trust-chain/fetch.js";
 import type { Clock, FederationOptions } from "../types.js";
 
-export interface FetchSignedJwkSetOptions extends FederationOptions {
+export interface FetchSignedJwkSetOptions extends FederationOptions, VerifySignedJwkSetOptions {
 	clockSkewSeconds?: number;
 	clock?: Clock;
 }
@@ -27,8 +32,14 @@ export interface FetchSignedJwkSetOptions extends FederationOptions {
 export async function fetchSignedJwkSet(
 	url: string,
 	signerJwks: JWKSet,
-	options?: FetchSignedJwkSetOptions,
+	options: FetchSignedJwkSetOptions,
 ): Promise<Result<SignedJwkSetPayload, FederationError>> {
+	const expectation = validateExpectedIssuer(options);
+	if (!expectation.ok) return expectation;
+	if (!EntityIdSchema.safeParse(options?.expectedOwner).success)
+		return err(
+			federationError(FederationErrorCode.InvalidMetadata, "A valid expectedOwner is required"),
+		);
 	let parsed: URL;
 	try {
 		parsed = new URL(url);
@@ -56,9 +67,5 @@ export async function fetchSignedJwkSet(
 	});
 	if (!fetched.ok) return fetched;
 
-	const verifyOpts: { clockSkewSeconds?: number; clock?: Clock } = {};
-	if (options?.clockSkewSeconds !== undefined)
-		verifyOpts.clockSkewSeconds = options.clockSkewSeconds;
-	if (options?.clock !== undefined) verifyOpts.clock = options.clock;
-	return verifySignedJwkSet(fetched.value, signerJwks, verifyOpts);
+	return verifySignedJwkSet(fetched.value, signerJwks, options);
 }

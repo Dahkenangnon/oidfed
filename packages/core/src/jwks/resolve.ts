@@ -14,8 +14,11 @@
  * after all present branches fail does the resolver return an aggregated
  * error.
  */
+
 import { FederationErrorCode } from "../constants.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
+import { type VerifySignedJwkSetOptions, validateExpectedIssuer } from "../federation-api/index.js";
+import { EntityIdSchema } from "../schemas/entity-id.js";
 import { type JWK, type JWKSet, MetadataJWKSetSchema } from "../schemas/jwk.js";
 import type { Clock, FederationOptions } from "../types.js";
 import { fetchJwkSet } from "./jwks-uri.js";
@@ -24,7 +27,7 @@ import { validateJwkSetUseRequirement } from "./use-requirement.js";
 
 export type EntityKeysSource = "jwks" | "jwks_uri" | "signed_jwks_uri";
 
-export interface ResolveEntityKeysOptions extends FederationOptions {
+export interface ResolveEntityKeysOptions extends FederationOptions, VerifySignedJwkSetOptions {
 	clockSkewSeconds?: number;
 	clock?: Clock;
 	/** When true, falls through to the next-priority representation on failure. Default: false. */
@@ -40,8 +43,14 @@ export interface ResolvedEntityKeys {
 export async function resolveEntityKeys(
 	entityMetadata: Record<string, unknown>,
 	federationEntityKeys: JWKSet,
-	options?: ResolveEntityKeysOptions,
+	options: ResolveEntityKeysOptions,
 ): Promise<Result<ResolvedEntityKeys, FederationError>> {
+	const expectation = validateExpectedIssuer(options);
+	if (!expectation.ok) return expectation;
+	if (!EntityIdSchema.safeParse(options?.expectedOwner).success)
+		return err(
+			federationError(FederationErrorCode.InvalidMetadata, "A valid expectedOwner is required"),
+		);
 	const signedUri =
 		typeof entityMetadata.signed_jwks_uri === "string" ? entityMetadata.signed_jwks_uri : undefined;
 	const inlineJwks = entityMetadata.jwks;
@@ -70,7 +79,7 @@ export async function resolveEntityKeys(
 			inlineJwks,
 			plainUri,
 			federationEntityKeys,
-			...(options !== undefined ? { options } : {}),
+			options,
 		});
 		if (attempt.ok) {
 			return ok({ keys: attempt.value, source });
@@ -97,7 +106,7 @@ async function tryResolveSource(
 		inlineJwks: unknown;
 		plainUri: string | undefined;
 		federationEntityKeys: JWKSet;
-		options?: ResolveEntityKeysOptions;
+		options: ResolveEntityKeysOptions;
 	},
 ): Promise<Result<JWK[], FederationError>> {
 	switch (source) {

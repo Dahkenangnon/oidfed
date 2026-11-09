@@ -2,7 +2,7 @@
  * Opt-in helper enforcing the recommended hygiene rules on a Signed JWK Set
  * payload that the default verification path does NOT enforce.
  *
- * The default `verifySignedJwkSet` enforces only the MUSTs (typ, kid,
+ * `verifySignedJwkSet` checks caller-supplied issuer/owner identities and MUSTs (typ, kid,
  * signature, REQUIRED claims). This helper additionally checks the
  * recommendations:
  *   - `sub` SHOULD equal `iss`
