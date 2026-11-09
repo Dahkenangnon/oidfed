@@ -241,6 +241,23 @@ export default (QUnit: QUnit) => {
 			}),
 		);
 	});
+	test("confirmation keys are usable and contain one key representation", async (t) => {
+		const f = await walletFederation();
+		for (const key of [
+			{ ...f.protocol.issuer.publicKey, use: "enc" },
+			{ ...f.protocol.issuer.publicKey, key_ops: ["sign"] },
+			{ ...f.protocol.issuer.publicKey, alg: "ES384" },
+			{ kty: "RSA", n: "AQAB" },
+		]) {
+			const result = await WalletProviderRole.createWalletAttestation(
+				f.ids.provider,
+				{ subject: "wallet", confirmationKey: key, expiresAt: 4000 },
+				new JwkSigner(f.protocol.provider.privateKey),
+				f.options,
+			);
+			t.false(result.ok);
+		}
+	});
 	test("partial issuer discovery returns diagnostics without hiding global limits", async (t) => {
 		const f = await walletFederation({
 			issuerMetadata: {

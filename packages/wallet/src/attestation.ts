@@ -6,10 +6,13 @@ import {
 	type JwtSigner,
 	nowSeconds,
 	ok,
+	preparePublicJwkSet,
 	type ReplayStore,
 	type Result,
+	SUPPORTED_ALGORITHMS,
 	type TrustAnchorSet,
 } from "@oidfed/core";
+import * as jose from "jose";
 import { z } from "zod";
 import { decodeToken, signToken, verifyToken } from "./jwt.js";
 import { runOperation } from "./operation.js";
@@ -110,10 +113,8 @@ export async function createAttestation(
 		(parsed.data.nbf !== undefined && parsed.data.nbf >= parsed.data.exp)
 	)
 		return failure("Invalid Wallet Attestation claims or expiration");
-	// ACA Draft 07 §5.2 requires an asymmetric PoP. Creation accepts the supported
-	// public key types; the received-key schema remains open for JWK Set processing.
-	if (!["RSA", "EC", "OKP"].includes(parsed.data.cnf.jwk.kty))
-		return failure("Wallet Attestation confirmation key must use a supported asymmetric key type");
+	const key = await validateConfirmationKey(parsed.data.cnf.jwk);
+	if (!key.ok) return key;
 	return signToken(
 		parsed.data,
 		"oauth-client-attestation+jwt",
@@ -246,4 +247,36 @@ export async function authenticateWallet(
 	if (!fresh() || options.signal?.aborted)
 		return failure("Wallet authentication expired or was cancelled");
 	return verified;
+}
+
+/** Validate the designated PoP key, without tightening received federation JWK Sets. */
+async function validateConfirmationKey(key: JWK): Promise<Result<true>> {
+	// The set helper checks public material. This local identifier does not alter cnf.jwk.
+	const material = preparePublicJwkSet({ keys: [{ ...key, kid: key.kid ?? "confirmation" }] });
+	if (!material.ok) return failure("Invalid Wallet Attestation confirmation key material");
+	if (
+		(key.use !== undefined && key.use !== "sig") ||
+		(key.key_ops !== undefined && !key.key_ops.includes("verify"))
+	)
+		return failure("Wallet Attestation confirmation key must permit signature verification");
+	for (const alg of SUPPORTED_ALGORITHMS) {
+		if (key.alg !== undefined && key.alg !== alg) continue;
+		const curves: Readonly<Record<string, string>> = {
+			ES256: "P-256",
+			ES384: "P-384",
+			ES512: "P-521",
+		};
+		const curve = curves[alg];
+		if (curve ? key.kty !== "EC" || key.crv !== curve : key.kty !== "RSA") continue;
+		try {
+			const imported = await jose.importJWK(key as jose.JWK, alg);
+			if (imported instanceof Uint8Array) continue;
+			if ("modulusLength" in imported.algorithm && Number(imported.algorithm.modulusLength) < 2048)
+				continue;
+			return ok(true);
+		} catch {
+			/* Try another compatible supported algorithm. */
+		}
+	}
+	return failure("Wallet Attestation confirmation key has no usable signing algorithm");
 }

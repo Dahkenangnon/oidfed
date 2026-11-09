@@ -98,7 +98,7 @@ const verified = await CredentialIssuerRole.verifyWalletAttestation(
 
 The built-in JWT format follows OpenID4VCI 1.0 Appendix E and its referenced OAuth Attestation Client Authentication Draft 07. Provider trust is checked before the attestation signature. `verifyWalletAttestation` checks trust and cryptographic validity; application-specific acceptance remains a separate decision.
 
-Attestation creation accepts public RSA, EC, and OKP confirmation keys. The confirmation key binds the instance's asymmetric proof of possession under [ACA Draft 07 §§5.1–5.2](https://www.ietf.org/archive/id/draft-ietf-oauth-attestation-based-client-auth-07.html#section-5); its `kid` is optional. Unsupported key types and private key material return an error before signing.
+Attestation creation accepts public RSA and EC confirmation keys compatible with a supported signature algorithm. The confirmation key binds the instance's asymmetric proof of possession under [ACA Draft 07 §§5.1–5.2](https://www.ietf.org/archive/id/draft-ietf-oauth-attestation-based-client-auth-07.html#section-5); its `kid` is optional. Unsupported key types and private key material return an error before signing.
 
 Protocol operations use a core `JwtSigner`. Their remote keys come from the effective role metadata through core's key resolver. Effective inline `jwks` takes precedence over URI representations so a superior's replacement set cannot be bypassed. Top-level federation keys are not substituted automatically. Wallet Draft 05 does not define a provider attestation-key field; publishing provider protocol keys as `jwks`, `jwks_uri`, or `signed_jwks_uri` is this integration's convention and must match the deployed framework.
 
@@ -127,6 +127,8 @@ const authenticated = await CredentialIssuerRole.authenticateWallet(
 The attestation and PoP have distinct JWT types and signing keys. PoP verification uses the public `cnf.jwk` inside the attestation. The PoP issuer must match the attestation subject and any supplied request client identifier. The audience is the authorization server's issuer identifier, including when the authorization server is separate from the Credential Issuer.
 
 A supplied `expectedChallenge` must be nonblank and matches the proof exactly. The application generates, binds, and retains the server challenge. Freshness uses the PoP’s `iat`; server-timestamp-based challenge freshness, permitted by [ACA §12.1](https://www.ietf.org/archive/id/draft-ietf-oauth-attestation-based-client-auth-07.html#section-12.1), remains an optional capability outside this API.
+
+Attestation creation requires a usable public confirmation key with signature-verification usage.
 
 The default PoP freshness window is 300 seconds, configurable through `maxProofAgeSeconds`. Core's clock-skew tolerance also applies. This duration and the required caller-supplied `ReplayStore` are library policies. The store must claim identifiers atomically and retain them through the acceptance window. Authentication rejects replay-store failures; `MemoryReplayStore` is available for development.
 
