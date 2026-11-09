@@ -18,6 +18,7 @@ import {
 	TrustMarkRefSchema,
 } from "@oidfed/core";
 import type { SubordinateRecord } from "../storage/types.js";
+import { subordinatePublicationClaim } from "../utils/subordinate-publication.js";
 import type { HandlerContext } from "./context.js";
 import { buildSubordinateStatement } from "./fetch.js";
 
@@ -44,9 +45,12 @@ export const EXTENDED_LIST_CLAIM_EXTRACTORS: Readonly<Record<string, ClaimExtrac
 		if (!prepared.ok) throw new Error(prepared.error.description);
 		return prepared.value;
 	},
-	[ExtendedListClaim.Metadata]: (record) => record.metadata,
-	[ExtendedListClaim.MetadataPolicy]: (record) => record.metadataPolicy,
-	[ExtendedListClaim.Constraints]: (record) => record.constraints,
+	[ExtendedListClaim.Metadata]: (record, ctx) =>
+		subordinatePublicationClaim(record, "metadata", ctx),
+	[ExtendedListClaim.MetadataPolicy]: (record, ctx) =>
+		subordinatePublicationClaim(record, "metadata_policy", ctx),
+	[ExtendedListClaim.Constraints]: (record, ctx) =>
+		subordinatePublicationClaim(record, "constraints", ctx),
 	[ExtendedListClaim.Crit]: (record) =>
 		record.crit && record.crit.length > 0 ? [...record.crit] : undefined,
 	[ExtendedListClaim.MetadataPolicyCrit]: (record) =>

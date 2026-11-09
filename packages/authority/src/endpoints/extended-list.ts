@@ -225,7 +225,7 @@ export function createExtendedListHandler(
 			return errorResponse(
 				400,
 				FederationErrorCode.UnsupportedParameter,
-				"audit_timestamps is not supported by this endpoint",
+				"Explicit audit_timestamps=true requests are not supported by this endpoint",
 			);
 		}
 

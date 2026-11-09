@@ -185,6 +185,49 @@ async function createTestContext(overrides?: TestContextOverrides): Promise<{
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	test("unsigned selected claims follow subordinate publication rules", async (t) => {
+		const { extractClaims } = await import(
+			"../../../packages/authority/src/endpoints/extended-list-claims.js"
+		);
+		const { ctx, publicKey } = await createTestContext();
+		const record = {
+			entityId: entityId("https://member.example"),
+			jwks: { keys: [publicKey] },
+			createdAt: 1,
+			updatedAt: 1,
+			metadata: {
+				federation_entity: {
+					organization_name: "Member",
+					federation_resolve_endpoint: "https://member.example/resolve",
+				},
+			},
+		};
+		t.deepEqual(await extractClaims(record, ctx, ["metadata"], 1), {
+			metadata: { federation_entity: { organization_name: "Member" } },
+		});
+		await t.rejects(
+			extractClaims(
+				{ ...record, metadata: { openid_provider: { issuer: "https://wrong.example" } } },
+				ctx,
+				["metadata"],
+				1,
+			),
+		);
+		await t.rejects(
+			extractClaims(
+				{ ...record, metadataPolicy: { openid_provider: { claim: 7 } } },
+				ctx,
+				["metadata_policy"],
+				1,
+			),
+		);
+		await t.rejects(
+			extractClaims({ ...record, constraints: { max_path_length: -1 } }, ctx, ["constraints"], 1),
+		);
+		t.deepEqual(await extractClaims({ ...record, jwks: { keys: [] } }, ctx, ["metadata"], 1), {
+			metadata: { federation_entity: { organization_name: "Member" } },
+		});
+	});
 	module("authority / bounded publication", () => {
 		test("lifecycle events compare public extensions and ignore key ordering", async (t) => {
 			const f = await SubordinateEventsFixture.fixture();

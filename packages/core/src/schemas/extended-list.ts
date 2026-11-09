@@ -68,7 +68,7 @@ export const ExtendedListEntitySchema = z.looseObject({
 });
 
 /** Top-level response shape. */
-export const ExtendedListResponseSchema = z.object({
+export const ExtendedListResponseSchema = z.looseObject({
 	immediate_subordinate_entities: z.array(ExtendedListEntitySchema),
 	next: z.string().optional(),
 });

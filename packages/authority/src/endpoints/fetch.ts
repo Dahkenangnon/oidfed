@@ -11,7 +11,7 @@ import {
 	signEntityStatement,
 } from "@oidfed/core";
 import type { SubordinateRecord } from "../storage/types.js";
-import { sanitizeSubordinateMetadata } from "../utils/subordinate-statement-shape.js";
+import { subordinatePublicationClaim } from "../utils/subordinate-publication.js";
 import type { HandlerContext } from "./context.js";
 import { errorResponse, jwtResponse, parseQueryParams, requireMethod } from "./helpers.js";
 
@@ -70,10 +70,11 @@ export async function buildSubordinateStatement(
 	const keySet = await ctx.keyProvider.getFederationKeySet();
 	const iat = now ?? nowSeconds(ctx.options?.clock);
 
-	// Strip operational federation_entity fields (endpoint URLs, _auth_methods,
-	// endpoint_auth_signing_alg_values_supported) — those belong only in the
-	// subordinate's own Entity Configuration, not in this Subordinate Statement.
-	const sanitized = sanitizeSubordinateMetadata(record.metadata);
+	// Operational fields are published through the subordinate's own Entity Configuration.
+	// The sanitizer documents the specification restrictions and additional host policy.
+	const sanitized = subordinatePublicationClaim(record, "metadata", ctx);
+	subordinatePublicationClaim(record, "metadata_policy", ctx);
+	subordinatePublicationClaim(record, "constraints", ctx);
 	const payload = buildSubordinateStatementPayload({
 		issuer: ctx.entityId,
 		subject: record.entityId,

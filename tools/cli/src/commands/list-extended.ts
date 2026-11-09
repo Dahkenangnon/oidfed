@@ -28,7 +28,7 @@ export interface ListExtendedArgs {
 	readonly updatedBefore?: number | undefined;
 	readonly auditTimestamps?: boolean | undefined;
 	readonly claims?: ReadonlyArray<string> | undefined;
-	readonly entityType?: string | undefined;
+	readonly entityType?: string | ReadonlyArray<string> | undefined;
 	readonly trustMarked?: boolean | undefined;
 	readonly trustMarkType?: string | ReadonlyArray<string> | undefined;
 	readonly intermediate?: boolean | undefined;
@@ -118,7 +118,11 @@ export function register(program: Command, deps: ListExtendedDeps): void {
 			"Repeatable: request a top-level Entity Statement claim per entity (e.g. subordinate_statement, trust_marks, metadata)",
 			(value: string, previous: string[] | undefined) => [...(previous ?? []), value],
 		)
-		.option("--entity-type <type>", "Inherited base filter: only this entity type")
+		.option(
+			"--entity-type <type>",
+			"Repeatable: match any of these entity types",
+			(value: string, previous: string[] | undefined) => [...(previous ?? []), value],
+		)
 		.option("--trust-marked", "Inherited base filter: only entities with a recognised Trust Mark")
 		.option(
 			"--trust-mark-type <id>",
@@ -140,7 +144,7 @@ export function register(program: Command, deps: ListExtendedDeps): void {
 					updatedBefore?: number;
 					auditTimestamps?: boolean;
 					claims?: string[];
-					entityType?: string;
+					entityType?: string[];
 					trustMarked?: boolean;
 					trustMarkType?: string[];
 					intermediate?: boolean;

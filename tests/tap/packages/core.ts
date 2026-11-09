@@ -236,6 +236,11 @@ import { walletFederation, walletQuery } from "../fixtures/wallet.js";
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	test("extended list envelopes preserve deployment extensions", async (t) => {
+		const { ExtendedListResponseSchema } = await import("../../../packages/core/src/index.js");
+		const response = { immediate_subordinate_entities: [], example: { version: 3 } };
+		t.deepEqual(ExtendedListResponseSchema.parse(response), response);
+	});
 	test("supplied chains have a configurable early statement budget", async (t) => {
 		const {
 			validateTrustChain,

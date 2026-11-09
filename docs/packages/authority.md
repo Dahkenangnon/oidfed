@@ -277,6 +277,8 @@ The `extendedListing` object supports:
 
 All five numeric limits must be positive safe integers. An explicit `defaultPageSize` must not exceed `maxPageSize`. Invalid configuration fails when the handler is created.
 
+Extended Listing accepts repeated `entity_type` filters. The CLI mirrors this with repeated `--entity-type` options. Use `--claims ""` for identifier-only entries. `supportAuditTimestamps` controls explicit timestamp requests; time filters can also include timestamps unless the caller sends `audit_timestamps=false`. Disable both timestamp requests and time filters when neither facility should disclose dates.
+
 ## Common questions
 
 ### What is the difference between `TrustAnchor` and `Intermediate`?

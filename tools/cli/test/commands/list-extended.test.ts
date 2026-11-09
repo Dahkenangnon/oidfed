@@ -54,6 +54,43 @@ function routedClient(
 }
 
 describe("list-extended handler", () => {
+	it("preserves repeated entity filters and an explicit empty claim selection", async () => {
+		const captures: { extendedUrl?: string } = {};
+		const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+		try {
+			const program = new Command().exitOverride();
+			register(program, {
+				httpClient: routedClient(
+					await buildAuthorityEc(),
+					JSON.stringify({ immediate_subordinate_entities: [] }),
+					captures,
+				),
+				formatter: new JsonFormatter(),
+				logger,
+			});
+			await program.parseAsync(
+				[
+					"list-extended",
+					AUTHORITY,
+					"--entity-type",
+					"custom-one",
+					"--entity-type",
+					"custom-two",
+					"--claims",
+					"",
+				],
+				{ from: "user" },
+			);
+			expect(captures.extendedUrl).toBeDefined();
+			const params = new URL(captures.extendedUrl ?? "").searchParams;
+			expect(params.getAll("entity_type")).toEqual(["custom-one", "custom-two"]);
+			expect(params.has("claims")).toBe(true);
+			expect(params.get("claims")).toBe("");
+		} finally {
+			output.mockRestore();
+		}
+	});
+
 	it("parses fractional, negative and exponent NumericDates through the command", async () => {
 		const ec = await buildAuthorityEc();
 		const body = {
