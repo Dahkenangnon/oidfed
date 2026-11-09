@@ -5,6 +5,8 @@ export type FederationError = {
 	readonly code: FederationErrorCode | InternalErrorCode;
 	readonly description: string;
 	readonly cause?: unknown;
+	/** Untrusted responder details; code remains a typed local classification. */
+	readonly remoteError?: { readonly code: string; readonly status: number };
 };
 
 /** Construct a FederationError value. */

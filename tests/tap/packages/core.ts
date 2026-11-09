@@ -236,6 +236,31 @@ import { walletFederation, walletQuery } from "../fixtures/wallet.js";
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	test("remote OAuth errors keep their classification and safe public boundary", async (t) => {
+		const { toPublicError } = await import("../../../packages/core/src/http.js");
+		const { fetchEntityCollection } = await import("../../../packages/core/src/index.js");
+		for (const code of ["access_denied", "slow_down", "ERR_SIGNATURE_INVALID", "invalid_request"]) {
+			const result = await fetchEntityCollection(
+				"https://collection.example",
+				{},
+				{
+					httpClient: async () =>
+						new Response(JSON.stringify({ error: code, error_description: "Remote explanation" }), {
+							status: 400,
+							headers: { "content-type": "application/json" },
+						}),
+				},
+			);
+			t.false(result.ok);
+			if (!result.ok) {
+				t.equal(result.error.code, code === "invalid_request" ? code : "ERR_REMOTE_RESPONSE");
+				if (code === "invalid_request") t.strictEqual(result.error.remoteError, undefined);
+				else t.deepEqual(result.error.remoteError, { code, status: 400 });
+				t.equal(result.error.description, "Remote explanation");
+				if (code !== "invalid_request") t.equal(toPublicError(result.error).code, "server_error");
+			}
+		}
+	});
 
 	test("superior metadata outputs do not share mutable objects with callers", (t) => {
 		const override = { custom: { settings: { selected: ["a"] } } };
@@ -2406,8 +2431,8 @@ export default (QUnit: QUnit) => {
 			t.equal(FederationErrorCode.PageNotFound, "page_not_found");
 		});
 
-		test("InternalErrorCode has 13 codes", (t) => {
-			t.equal(Object.keys(InternalErrorCode).length, 13);
+		test("InternalErrorCode has 14 codes", (t) => {
+			t.equal(Object.keys(InternalErrorCode).length, 14);
 			t.equal(InternalErrorCode.TrustChainInvalid, "ERR_TRUST_CHAIN_INVALID");
 			t.equal(InternalErrorCode.LoopDetected, "ERR_LOOP_DETECTED");
 		});

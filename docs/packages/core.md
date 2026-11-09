@@ -468,3 +468,7 @@ Entity Identifiers reject query and fragment delimiters, including empty trailin
 `EntityRole.validateMetadata(metadata, context)` is an optional synchronous hook. Hosts invoke it on detached composed role metadata before publication. Existing roles can omit it.
 
 `findInvalidMetadataNullPaths(metadata)` returns the paths of forbidden null values. Statement builders, chain validation, and authority publication share this check. It permits null wildcard components only in the wallet specifications' issuer claim-description and verifier DCQL path arrays; other null metadata values remain invalid. Wallet roles validate the paths' format-specific syntax.
+
+### Remote protocol errors
+
+Federation clients preserve recognized error codes. An unfamiliar syntactically valid OAuth error produces `ERR_REMOTE_RESPONSE`, with the responder's explanation in `description` and its code and HTTP status in `remoteError`. Treat those fields as remote input. Server-side public-error conversion maps this internal classification to a generic server error. [Entity Collection §3.4.2](https://openid.net/specs/openid-federation-entity-collection-1_0-01.html#section-3.4.2) permits OAuth registry errors beyond the draft's named codes.

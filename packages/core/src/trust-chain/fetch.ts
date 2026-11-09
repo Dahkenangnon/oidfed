@@ -339,10 +339,15 @@ export async function performFetch(
 					const parsed = JSON.parse(body) as { error?: unknown; error_description?: unknown };
 					if (
 						typeof parsed?.error === "string" &&
-						Object.values(FederationErrorCode).includes(parsed.error as FederationErrorCode)
+						/^[\x20-\x21\x23-\x5B\x5D-\x7E]+$/.test(parsed.error)
 					) {
 						return err({
-							code: parsed.error as FederationErrorCode,
+							code: Object.values(FederationErrorCode).includes(parsed.error as FederationErrorCode)
+								? (parsed.error as FederationErrorCode)
+								: InternalErrorCode.RemoteResponse,
+							...(!Object.values(FederationErrorCode).includes(parsed.error as FederationErrorCode)
+								? { remoteError: { code: parsed.error, status: response.status } }
+								: {}),
 							description:
 								typeof parsed.error_description === "string"
 									? parsed.error_description
