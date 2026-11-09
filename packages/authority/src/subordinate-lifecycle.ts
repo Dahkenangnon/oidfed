@@ -1,5 +1,6 @@
 import {
 	type EntityId,
+	entityId,
 	nowSeconds,
 	preparePublicJwkSet,
 	type SubordinateEvent,
@@ -91,6 +92,7 @@ export function createSubordinateLifecycle(ctx: HandlerContext) {
 			record: Omit<SubordinateRecord, "createdAt" | "updatedAt">,
 			annotations?: SubordinateEventAnnotations,
 		): Promise<void> {
+			entityId(record.entityId);
 			const fields = annotationFields(annotations);
 			const normalized = sanitize(structuredClone(record));
 			await ctx.storage.transaction(async (tx) => {

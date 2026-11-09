@@ -71,7 +71,7 @@ const intermediate = new Intermediate({
 
 ### Enrolling and managing subordinates
 
-Use `ta.registerSubordinate(record)` or `intermediate.registerSubordinate(record)` to sanitize metadata and add timestamps. Direct adapter writes are also supported, as shown below. In that case, remove operational fields from `metadata.federation_entity` before writing the record; these fields belong in the subordinate's own Entity Configuration.
+Use `ta.registerSubordinate(record)` or `intermediate.registerSubordinate(record)` to validate the Entity Identifier, sanitize metadata, and add timestamps. The memory store also checks identifiers on direct writes. Listing endpoints return a server error if a custom adapter supplies invalid identifiers; adapters must store and return valid Entity Identifiers. Direct adapter writes are also supported, as shown below. In that case, remove operational fields from `metadata.federation_entity` before writing the record; these fields belong in the subordinate's own Entity Configuration.
 
 ```ts
 import { TrustAnchor } from "@oidfed/authority";

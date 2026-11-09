@@ -185,6 +185,29 @@ async function createTestContext(overrides?: TestContextOverrides): Promise<{
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	test("subordinate identifiers are guarded at storage and listing boundaries", async (t) => {
+		const { ctx, storage, publicKey } = await createTestContext();
+		const bad = {
+			entityId: "https://bad.example/#fragment" as EntityId,
+			jwks: { keys: [publicKey] },
+			createdAt: 1000,
+			updatedAt: 1000,
+		};
+		await t.rejects(storage.subordinates.add(bad));
+		storage.subordinates.list = async () => ({ items: [bad] });
+		const extended = await createExtendedListHandler(ctx)(
+			new Request("https://authority.example/list?claims="),
+		);
+		t.equal(extended.status, 500);
+		const basic = await createListHandler(ctx)(new Request("https://authority.example/list"));
+		t.equal(basic.status, 500);
+		storage.subordinates.list = async () => ({ items: [], nextCursor: bad.entityId });
+		t.equal(
+			(await createExtendedListHandler(ctx)(new Request("https://authority.example/list?claims=")))
+				.status,
+			500,
+		);
+	});
 
 	test("fixed-query routing preserves a double slash in an endpoint path", async (t) => {
 		const { ctx } = await createTestContext();

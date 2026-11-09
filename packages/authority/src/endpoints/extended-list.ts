@@ -10,6 +10,7 @@ import {
 	type EntityId,
 	ExtendedListQuerySchema,
 	FederationErrorCode,
+	isValidEntityId,
 	nowSeconds,
 } from "@oidfed/core";
 import type { ListFilter, ListPageOptions, SubordinateRecord } from "../storage/types.js";
@@ -270,6 +271,11 @@ export function createExtendedListHandler(
 				if (storeCursor !== undefined) opts.cursor = storeCursor;
 				const page = await ctx.storage.subordinates.list(filter, opts);
 				pagesFetched += 1;
+				if (
+					page.items.some((record) => !isValidEntityId(record.entityId)) ||
+					(page.nextCursor !== undefined && !isValidEntityId(page.nextCursor))
+				)
+					throw new Error("Invalid subordinate identifier from storage");
 				// Empty filtered pages can still have a continuation. Require progress
 				// so bounded scans cannot hand the client a repeating or backward cursor.
 				const lastStoreRecord = page.items[page.items.length - 1];

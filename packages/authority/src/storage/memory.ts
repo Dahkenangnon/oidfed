@@ -2,6 +2,7 @@ import {
 	type Clock,
 	type EntityCollectionStore,
 	type EntityId,
+	isValidEntityId,
 	MemoryCache,
 	MemoryEntityCollectionStore,
 	MemoryReplayStore,
@@ -43,6 +44,8 @@ type StateMutation = <T>(operation: (state: MemoryState) => T | Promise<T>) => P
 const detached = <T>(value: T): T => structuredClone(value);
 
 export function validateSubordinateRecord(record: SubordinateRecord): void {
+	if (!isValidEntityId(record.entityId))
+		throw new InvalidSubordinateRecord("Subordinate entityId must be a valid Entity Identifier");
 	const metadata = record.metadata;
 	if (!metadata) return;
 	const fed = (metadata as Record<string, unknown>).federation_entity;
