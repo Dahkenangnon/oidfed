@@ -104,7 +104,7 @@ export function createTrustMarkIssuanceHandler(
 			) {
 				return errorResponse(500, "server_error", "Invalid Trust Mark issuer configuration");
 			}
-			if (!authorizedIssuers.includes(ctx.entityId)) {
+			if (authorizedIssuers.length > 0 && !authorizedIssuers.includes(ctx.entityId)) {
 				return errorResponse(
 					403,
 					"unauthorized_issuer",

@@ -185,6 +185,25 @@ async function createTestContext(overrides?: TestContextOverrides): Promise<{
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	test("an open Trust Mark issuer list allows administrative issuance", async (t) => {
+		const { createTrustMarkIssuanceHandler } = await import(
+			"../../../packages/authority/src/endpoints/trust-mark.js"
+		);
+		const { ctx } = await createTestContext({ trustMarkIssuers: { "https://mark.example": [] } });
+		const request = () =>
+			new Request(
+				`${ctx.entityId}/issue?sub=https://member.example&trust_mark_type=https://mark.example`,
+			);
+		const open = await createTrustMarkIssuanceHandler(ctx)(request());
+		t.equal(open.status, 200);
+		await open.body?.cancel();
+		const restricted = await createTrustMarkIssuanceHandler({
+			...ctx,
+			trustMarkIssuers: { "https://mark.example": ["https://other.example"] },
+		})(request());
+		t.equal(restricted.status, 403);
+		await restricted.body?.cancel();
+	});
 	test("unsigned selected claims follow subordinate publication rules", async (t) => {
 		const { extractClaims } = await import(
 			"../../../packages/authority/src/endpoints/extended-list-claims.js"
