@@ -42,20 +42,20 @@ export function failure(description: string): Result<never> {
 }
 
 /** Keep one fetch budget across discovery, external AS discovery, and protocol-key lookups. */
-export function operationOptions(options: WalletTrustOptions = {}): WalletTrustOptions {
+export function operationOptions<T extends WalletTrustOptions>(options: T): Result<T> {
 	let remaining = options.maxTotalFetches ?? 50;
 	if (!Number.isSafeInteger(remaining) || remaining <= 0)
-		throw new TypeError("maxTotalFetches must be a positive safe integer");
+		return failure("maxTotalFetches must be a positive safe integer");
 	const client = options.httpClient ?? fetch;
-	return {
+	return ok({
 		...options,
-		httpClient: async (input, init) => {
+		httpClient: async (input: string | URL | Request, init?: RequestInit) => {
 			if (options.offline) throw new Error("Offline operation cannot access the network");
 			if (options.signal?.aborted) throw options.signal.reason ?? new Error("Operation cancelled");
 			if (remaining-- <= 0) throw new Error("Wallet operation fetch budget exhausted");
 			return client(input, init);
 		},
-	};
+	});
 }
 
 export async function candidates(

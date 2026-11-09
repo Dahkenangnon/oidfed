@@ -49,6 +49,31 @@ const proof = (f: Fixture) => ({
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	test("invalid wallet fetch budgets return failure promises consistently", async (t) => {
+		for (const maxTotalFetches of [0, -1, NaN, Infinity, 1.5]) {
+			const options = { maxTotalFetches };
+			const anchors = new Map();
+			const calls = [
+				() => WalletProviderRole.discover("https://p.example", anchors, options),
+				() => CredentialIssuerRole.discover("https://i.example", anchors, options),
+				() => CredentialVerifierRole.discover("https://v.example", anchors, options),
+				() => CredentialIssuerRole.verifyWalletAttestation("bad", anchors, options),
+				() =>
+					CredentialVerifierRole.prepareAuthorizationRequest(
+						{ client_id: "openid_federation:https://v.example", request: "bad" },
+						anchors,
+						options,
+					),
+			];
+			for (const call of calls) {
+				const promise = call();
+				t.ok(promise instanceof Promise);
+				const result = await promise;
+				t.false(result.ok);
+				if (!result.ok) t.true(result.error.description.includes("maxTotalFetches"));
+			}
+		}
+	});
 	test("JSON credential description paths start at an object and retain nested wildcards", async (t) => {
 		const f = await walletFederation();
 		const issuer = await CredentialIssuerRole.discover(f.ids.issuer, f.anchors, f.options);
@@ -2217,14 +2242,12 @@ export default (QUnit: QUnit) => {
 					})
 				).ok,
 			);
-			t.throws(
-				() =>
-					WalletProviderRole.discover(f.ids.provider, f.anchors, {
-						...f.options,
-						maxTotalFetches: 0,
-					}),
-				/positive safe integer/,
-			);
+			const budget = await WalletProviderRole.discover(f.ids.provider, f.anchors, {
+				...f.options,
+				maxTotalFetches: 0,
+			});
+			t.false(budget.ok);
+			if (!budget.ok) t.true(budget.error.description.includes("positive safe integer"));
 		});
 		test("resolves URI protocol keys through core with the shared fetch budget", async (t) => {
 			const f = await walletFederation({

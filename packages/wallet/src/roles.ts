@@ -117,7 +117,9 @@ abstract class AttestationConsumer extends WalletRole {
 		anchors: TrustAnchorSet,
 		options: AttestationVerificationOptions,
 	): Promise<Result<TrustedWalletEntity>> {
-		const scoped = operationOptions(options);
+		const scope = operationOptions(options);
+		if (!scope.ok) return scope;
+		const scoped = scope.value;
 		const provider = await trustedEntity("openid_wallet_provider", providerId, anchors, scoped);
 		if (!provider.ok) return provider;
 		// Wallet §8.5 requires attestation verification with federation-provided material.
@@ -139,7 +141,8 @@ abstract class AttestationConsumer extends WalletRole {
 		anchors: TrustAnchorSet,
 		options: WalletAttestationVerificationOptions = {},
 	): Promise<Result<VerifiedWalletAttestation>> {
-		return verifyAttestation(jwt, anchors, operationOptions(options));
+		const scope = operationOptions(options);
+		return scope.ok ? verifyAttestation(jwt, anchors, scope.value) : scope;
 	}
 	static async authenticateWallet(
 		attestation: string,
@@ -147,10 +150,8 @@ abstract class AttestationConsumer extends WalletRole {
 		anchors: TrustAnchorSet,
 		options: AuthenticateWalletOptions,
 	): Promise<Result<VerifiedWalletAttestation>> {
-		return authenticateWallet(attestation, proof, anchors, {
-			...options,
-			...operationOptions(options),
-		});
+		const scope = operationOptions(options);
+		return scope.ok ? authenticateWallet(attestation, proof, anchors, scope.value) : scope;
 	}
 	verifyWalletAttestation(jwt: string, options: WalletAttestationVerificationOptions = {}) {
 		return AttestationConsumer.verifyWalletAttestation(
@@ -206,8 +207,9 @@ export class WalletProviderRole extends WalletRole {
 	static parseMetadata(metadata: unknown) {
 		return roleSchemas.openid_wallet_provider.safeParse(metadata);
 	}
-	static discover(id: string, anchors: TrustAnchorSet, options: WalletTrustOptions = {}) {
-		return trustedEntity("openid_wallet_provider", id, anchors, operationOptions(options));
+	static async discover(id: string, anchors: TrustAnchorSet, options: WalletTrustOptions = {}) {
+		const scope = operationOptions(options);
+		return scope.ok ? trustedEntity("openid_wallet_provider", id, anchors, scope.value) : scope;
 	}
 	static async createWalletAttestation(
 		id: string,
@@ -247,7 +249,9 @@ export class CredentialIssuerRole extends AttestationConsumer {
 		anchors: TrustAnchorSet,
 		options: WalletTrustOptions = {},
 	): Promise<Result<DiscoveredCredentialIssuer>> {
-		const scoped = operationOptions(options);
+		const scope = operationOptions(options);
+		if (!scope.ok) return scope;
+		const scoped = scope.value;
 		const issuer = await trustedEntity("openid_credential_issuer", id, anchors, scoped);
 		if (!issuer.ok) return issuer;
 		const servers = (issuer.value.metadata.authorization_servers ?? [id]) as string[];
@@ -320,15 +324,17 @@ export class CredentialVerifierRole extends AttestationConsumer {
 	static parseMetadata(metadata: unknown) {
 		return roleSchemas.openid_credential_verifier.safeParse(metadata);
 	}
-	static discover(id: string, anchors: TrustAnchorSet, options: WalletTrustOptions = {}) {
-		return trustedEntity("openid_credential_verifier", id, anchors, operationOptions(options));
+	static async discover(id: string, anchors: TrustAnchorSet, options: WalletTrustOptions = {}) {
+		const scope = operationOptions(options);
+		return scope.ok ? trustedEntity("openid_credential_verifier", id, anchors, scope.value) : scope;
 	}
-	static prepareAuthorizationRequest(
+	static async prepareAuthorizationRequest(
 		outer: WalletAuthorizationRequest,
 		anchors: TrustAnchorSet,
 		options: AuthorizationRequestOptions = {},
 	): Promise<Result<PreparedAuthorizationRequest>> {
-		return prepareRequest(outer, anchors, operationOptions(options) as AuthorizationRequestOptions);
+		const scope = operationOptions(options);
+		return scope.ok ? prepareRequest(outer, anchors, scope.value) : scope;
 	}
 	static completeAuthorizationRequest(
 		prepared: PreparedAuthorizationRequest,
@@ -359,7 +365,9 @@ export class CredentialVerifierRole extends AttestationConsumer {
 		anchors: TrustAnchorSet,
 		options: CredentialVerificationOptions,
 	): Promise<Result<TrustedWalletEntity>> {
-		const scoped = operationOptions(options);
+		const scope = operationOptions(options);
+		if (!scope.ok) return scope;
+		const scoped = scope.value;
 		const issuer = await trustedEntity("openid_credential_issuer", issuerId, anchors, scoped);
 		if (!issuer.ok) return issuer;
 		const keys = await adapterKeys(issuer.value, "openid_credential_issuer", scoped);
