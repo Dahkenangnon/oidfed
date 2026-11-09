@@ -272,6 +272,7 @@ export default (QUnit: QUnit) => {
 			trustAnchors: f.anchors,
 			options: { clock: f.clock },
 			infoClaims,
+			defaultInfoClaims: ["display_name#v2"],
 			collector: async () =>
 				ok([
 					{
@@ -290,7 +291,7 @@ export default (QUnit: QUnit) => {
 				]),
 		});
 		t.true((await svc.refresh(f.ids.anchor)).ok);
-		const page = await svc.query({ trustAnchor: f.ids.anchor, infoClaims: ["display_name#v2"] });
+		const page = await svc.query({ trustAnchor: f.ids.anchor });
 		t.true(page.ok);
 		if (page.ok) {
 			t.deepEqual(page.value.entities[0]?.entity_infos?.openid_credential_issuer, {
@@ -323,6 +324,13 @@ export default (QUnit: QUnit) => {
 		t.true(empty.ok);
 		if (empty.ok)
 			t.deepEqual(empty.value.entities, [{ entity_id: EntityIdSchema.parse(f.ids.issuer) }]);
+		t.throws(
+			() =>
+				new EntityCollectionService({
+					trustAnchors: f.anchors,
+					defaultInfoClaims: ["unsupported"],
+				}),
+		);
 		const bad = new EntityCollectionService({
 			trustAnchors: f.anchors,
 			options: { clock: f.clock },

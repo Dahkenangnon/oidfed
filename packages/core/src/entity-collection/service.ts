@@ -42,6 +42,44 @@ export class EntityCollectionService {
 	private readonly config: EntityCollectionConfig;
 	private readonly refreshes = new Map<string, Promise<Result<CollectionRefreshResult>>>();
 	constructor(config: EntityCollectionConfig) {
+		for (const values of [
+			config.entityClaims,
+			config.infoClaims,
+			config.defaultEntityClaims,
+			config.defaultInfoClaims,
+		])
+			if (
+				values !== undefined &&
+				(!Array.isArray(values) ||
+					!values.every((value) => typeof value === "string" && value.length > 0))
+			)
+				throw new Error("Collection claim declarations must be nonempty strings");
+		const infoNames = new Set<string>([...COLLECTION_INFO_CLAIMS, ...(config.infoClaims ?? [])]);
+		const entityNames = new Set([
+			"entity_id",
+			"entity_types",
+			"entity_infos",
+			"trust_marks",
+			...(config.entityClaims ?? []),
+		]);
+		if (
+			config.defaultEntityClaims?.some((name) => !entityNames.has(name)) ||
+			config.defaultInfoClaims?.some((name) => {
+				const parsed = splitInformationalClaim(name, infoNames);
+				return parsed.malformed || !infoNames.has(parsed.base);
+			})
+		)
+			throw new Error("Default collection selectors must name supported claims");
+		config = {
+			...config,
+			...(config.entityClaims ? { entityClaims: [...config.entityClaims] } : {}),
+			...(config.infoClaims ? { infoClaims: [...config.infoClaims] } : {}),
+			...(config.defaultEntityClaims
+				? { defaultEntityClaims: [...config.defaultEntityClaims] }
+				: {}),
+			...(config.defaultInfoClaims ? { defaultInfoClaims: [...config.defaultInfoClaims] } : {}),
+		};
+
 		for (const value of [
 			config.maxPageSize ?? 100,
 			config.cursorTtlSeconds ?? 900,
@@ -166,7 +204,15 @@ export class EntityCollectionService {
 				code: FederationErrorCode.InvalidRequest,
 				description: "Invalid collection request parameters",
 			});
-		const request = parsed.data;
+		const request = {
+			...parsed.data,
+			...(parsed.data.entityClaims === undefined && this.config.defaultEntityClaims !== undefined
+				? { entityClaims: [...this.config.defaultEntityClaims] }
+				: {}),
+			...(parsed.data.infoClaims === undefined && this.config.defaultInfoClaims !== undefined
+				? { infoClaims: [...this.config.defaultInfoClaims] }
+				: {}),
+		};
 		const supportedInfoClaims = new Set<string>([
 			...COLLECTION_INFO_CLAIMS,
 			...(this.config.infoClaims ?? []),

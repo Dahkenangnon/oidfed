@@ -91,6 +91,9 @@ export interface EntityCollectionConfig {
 	/** Additional claims supported by a custom snapshot producer. */
 	entityClaims?: readonly string[];
 	infoClaims?: readonly string[];
+	/** Defaults used only when the request omits the corresponding selector. */
+	defaultEntityClaims?: readonly string[];
+	defaultInfoClaims?: readonly string[];
 }
 export interface CollectionRefreshOptions {
 	signal?: AbortSignal;
