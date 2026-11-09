@@ -30,7 +30,12 @@ export function checkNamingConstraints(
 	namingConstraints: { permitted?: string[] | undefined; excluded?: string[] | undefined },
 	entityId: EntityId,
 ): boolean {
-	const hostname = new URL(entityId).hostname;
+	let hostname: string;
+	try {
+		hostname = new URL(entityId).hostname;
+	} catch {
+		return false;
+	}
 
 	if (namingConstraints.excluded) {
 		for (const pattern of namingConstraints.excluded) {

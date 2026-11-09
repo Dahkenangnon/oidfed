@@ -42,7 +42,7 @@ export function applyMetadataPolicy(
 			if (!Object.hasOwn(result, entityType)) continue;
 			const entityResult = result[entityType];
 			for (const [param, value] of Object.entries(params as Record<string, unknown>)) {
-				if (entityResult) entityResult[param] = value;
+				if (entityResult) entityResult[param] = structuredClone(value);
 			}
 		}
 	}
@@ -85,7 +85,7 @@ export function applyMetadataPolicy(
 						description: `Policy violation for ${entityType}.${paramName} (operator '${opName}'): operator output must not be null`,
 					});
 				} else {
-					entityMetadata[paramName] = applyResult.value;
+					entityMetadata[paramName] = structuredClone(applyResult.value);
 				}
 			}
 

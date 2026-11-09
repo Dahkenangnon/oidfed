@@ -236,6 +236,26 @@ import { walletFederation, walletQuery } from "../fixtures/wallet.js";
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+
+	test("superior metadata outputs do not share mutable objects with callers", (t) => {
+		const override = { custom: { settings: { selected: ["a"] } } };
+		const result = applyMetadataPolicy({ custom: {} }, {}, override);
+		t.true(result.ok);
+		if (result.ok) (result.value.custom as typeof override.custom).settings.selected.push("b");
+		t.deepEqual(override.custom.settings.selected, ["a"]);
+	});
+
+	test("resolved policy arrays are detached from reusable policy inputs", (t) => {
+		const policy = { openid_provider: { claims_supported: { value: ["name"] } } };
+		const result = applyMetadataPolicy({ openid_provider: {} }, policy);
+		t.true(result.ok);
+		if (result.ok) (result.value.openid_provider!.claims_supported as string[]).push("email");
+		t.deepEqual(policy.openid_provider.claims_supported.value, ["name"]);
+		const second = applyMetadataPolicy({ openid_provider: {} }, policy);
+		t.true(second.ok);
+		if (second.ok) t.deepEqual(second.value.openid_provider!.claims_supported, ["name"]);
+		t.false(checkNamingConstraints({}, "not a URL" as EntityId));
+	});
 	test("extended list envelopes preserve deployment extensions", async (t) => {
 		const { ExtendedListResponseSchema } = await import("../../../packages/core/src/index.js");
 		const response = { immediate_subordinate_entities: [], example: { version: 3 } };
