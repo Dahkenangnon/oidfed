@@ -107,6 +107,7 @@ export interface ListFilter {
 	trustMarked?: boolean;
 	/** Match any of the supplied Trust Mark types. */
 	trustMarkType?: string | ReadonlyArray<string>;
+	/** True selects intermediates; false selects non-intermediates; omission selects both. */
 	intermediate?: boolean;
 	/** Required when trustMarked is true or trustMarkType is provided. */
 	validAt?: number;
