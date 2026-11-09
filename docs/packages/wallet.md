@@ -64,7 +64,7 @@ if (!provider.ok) throw new Error(provider.error.description);
 
 Discovery returns effective role metadata and a validated trust chain. Issuer discovery also validates the federation identities of the listed authorization servers. When `authorization_servers` is absent, it uses the issuer itself and requires its `oauth_authorization_server` metadata. If any credential configuration omits `scope`, at least one discovered server must advertise `openid_credential` in `authorization_details_types_supported`, following [OpenID4VCI §12.2.4](https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html#section-12.2.4).
 
-The application dispatches supported client identifier prefixes and keeps its wallet metadata consistent with that support. [OpenID4VP §10.1](https://openid.net/specs/openid-4-verifiable-presentations-1_0.html#section-10.1) defines `client_id_prefixes_supported`; omission advertises `pre-registered`. Include `openid_federation` when offering the federation request flow.
+The application dispatches supported client identifier prefixes and keeps its wallet metadata consistent with that support. [OpenID4VP §10.1](https://openid.net/specs/openid-4-verifiable-presentations-1_0.html#section-10.1) defines `client_id_prefixes_supported`; omission advertises `pre-registered`. Include `openid_federation` when offering the federation request flow. Unknown metadata remains available for application-defined extensions; the schemas validate recognized fields in their specified locations.
 
 Use existing List or Entity Collection APIs to find candidates, then discover each selected issuer independently. Collection data is informational. Applications choose when to repeat provider discovery to check current federation standing.
 
