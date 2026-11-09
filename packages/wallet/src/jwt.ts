@@ -8,6 +8,7 @@ import {
 	nowSeconds,
 	ok,
 	type Result,
+	SUPPORTED_ALGORITHMS,
 	selectVerificationKey,
 } from "@oidfed/core";
 import * as jose from "jose";
@@ -40,6 +41,26 @@ export function matchesJwtType(actual: unknown, expected: string): boolean {
 	return mediaType(actual) === mediaType(expected);
 }
 
+/** ACA §9 allows applications to narrow the backend's supported algorithms. */
+export function checkProtocolHeader(
+	header: jose.ProtectedHeaderParameters,
+	typ: string,
+	allowed?: readonly string[],
+): Result<string> {
+	if (
+		allowed !== undefined &&
+		(!Array.isArray(allowed) || !allowed.length || !allowed.every(isValidAlgorithm))
+	)
+		return failure("Invalid allowed signing algorithms");
+	if (
+		!matchesJwtType(header.typ, typ) ||
+		!isValidAlgorithm(header.alg) ||
+		!(allowed ?? (SUPPORTED_ALGORITHMS as readonly string[])).includes(header.alg)
+	)
+		return failure("Invalid JWT type or unsupported signing algorithm");
+	return ok(header.alg as string);
+}
+
 export async function verifyToken(
 	jwt: string,
 	keys: JWKSet,
@@ -47,6 +68,7 @@ export async function verifyToken(
 	options: WalletTrustOptions,
 	audience?: string,
 	confirmationKey = false,
+	allowedAlgorithms?: readonly string[],
 ): Promise<Result<jose.JWTPayload>> {
 	const decoded = decodeToken(jwt, options);
 	if (!decoded.ok) return decoded;
@@ -56,8 +78,9 @@ export async function verifyToken(
 		if (value !== undefined && (typeof value !== "number" || !Number.isFinite(value)))
 			return failure("JWT dates must be finite NumericDates");
 	}
-	if (!matchesJwtType(header.typ, typ) || !isValidAlgorithm(header.alg))
-		return failure("Invalid JWT type or unsupported signing algorithm");
+	const headerCheck = checkProtocolHeader(header, typ, allowedAlgorithms);
+	if (!headerCheck.ok) return headerCheck;
+	const alg = headerCheck.value;
 	if (options.signal?.aborted) return failure("Operation cancelled");
 	for (const key of keys.keys) {
 		if (!JWKSchema.safeParse(key).success || (key.key_ops && !key.key_ops.includes("verify")))
@@ -75,17 +98,12 @@ export async function verifyToken(
 			)
 		)
 			continue;
-		if (
-			!selectVerificationKey(
-				{ alg: header.alg, ...(key.kid ? { kid: key.kid } : {}) },
-				{ keys: [key] },
-			)
-		)
+		if (!selectVerificationKey({ alg, ...(key.kid ? { kid: key.kid } : {}) }, { keys: [key] }))
 			continue;
 		try {
-			const imported = await jose.importJWK(key as jose.JWK, header.alg);
+			const imported = await jose.importJWK(key as jose.JWK, alg);
 			const checked = await jose.jwtVerify(jwt, imported, {
-				algorithms: [header.alg],
+				algorithms: [alg],
 				typ,
 				currentDate: new Date(nowSeconds(options.clock) * 1000),
 				clockTolerance: options.clockSkewSeconds ?? DEFAULT_CLOCK_SKEW_SECONDS,

@@ -14,7 +14,7 @@ import {
 } from "@oidfed/core";
 import * as jose from "jose";
 import { z } from "zod";
-import { decodeToken, signToken, verifyToken } from "./jwt.js";
+import { checkProtocolHeader, decodeToken, signToken, verifyToken } from "./jwt.js";
 import { runOperation } from "./operation.js";
 import {
 	failure,
@@ -63,8 +63,11 @@ export interface CreateWalletAttestationParams {
 /** Receiver binding for an attestation that supplies aud (RFC 7519 §4.1.3). */
 export interface WalletAttestationVerificationOptions extends WalletTrustOptions {
 	readonly expectedAudience?: string;
+	readonly allowedAttestationAlgorithms?: readonly string[];
 }
-export interface AuthenticateWalletOptions extends WalletTrustOptions {
+export interface AuthenticateWalletOptions
+	extends Omit<WalletAttestationVerificationOptions, "expectedAudience"> {
+	readonly allowedProofAlgorithms?: readonly string[];
 	readonly audience: string;
 	readonly clientId?: string;
 	readonly expectedChallenge?: string;
@@ -136,6 +139,12 @@ export async function verifyAttestation(
 ): Promise<Result<VerifiedWalletAttestation>> {
 	const decoded = decodeToken(jwt, options);
 	if (!decoded.ok) return decoded;
+	const header = checkProtocolHeader(
+		decoded.value.header,
+		"oauth-client-attestation+jwt",
+		options.allowedAttestationAlgorithms,
+	);
+	if (!header.ok) return header;
 	const input = AttestationSchema.safeParse(decoded.value.payload);
 	if (!input.success) return failure("Invalid Wallet Attestation claims");
 	const confirmation = await validateConfirmationKey(input.data.cnf.jwk);
@@ -168,7 +177,15 @@ export async function verifyAttestation(
 	if (!provider.ok) return provider;
 	const keys = await protocolKeys(provider.value, "openid_wallet_provider", options);
 	if (!keys.ok) return keys;
-	const checked = await verifyToken(jwt, keys.value, "oauth-client-attestation+jwt", options);
+	const checked = await verifyToken(
+		jwt,
+		keys.value,
+		"oauth-client-attestation+jwt",
+		options,
+		audience === undefined ? undefined : options.expectedAudience,
+		false,
+		options.allowedAttestationAlgorithms,
+	);
 	if (!checked.ok) return checked;
 	return ok({ attestation: input.data, provider: provider.value });
 }
@@ -230,6 +247,7 @@ export async function authenticateWallet(
 		options,
 		options.audience,
 		true,
+		options.allowedProofAlgorithms,
 	);
 	if (!checked.ok) return checked;
 	const accepted = await invokePolicy(options.acceptWallet, verified.value, options);

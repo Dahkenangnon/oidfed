@@ -278,6 +278,52 @@ export default (QUnit: QUnit) => {
 		);
 		t.true((await CredentialIssuerRole.verifyWalletAttestation(jwt, f.anchors, f.options)).ok);
 	});
+	test("authentication rejects local failures before discovery and respects both algorithm policies", async (t) => {
+		const f = await walletFederation();
+		const jwt = await token(
+			attestation(f),
+			f.protocol.provider.privateKey,
+			"oauth-client-attestation+jwt",
+		);
+		const opts = {
+			clock: f.clock,
+			clockSkewSeconds: 0,
+			httpClient: f.httpClient,
+			audience: f.ids.server,
+			replayStore: new MemoryReplayStore({ clock: f.clock }),
+			acceptWallet: () => true,
+		};
+		const pop = await token(
+			proof(f),
+			f.protocol.issuer.privateKey,
+			"oauth-client-attestation-pop+jwt",
+		);
+		t.false(
+			(
+				await CredentialIssuerRole.authenticateWallet(jwt, pop, f.anchors, {
+					...opts,
+					allowedProofAlgorithms: ["RS256"],
+				})
+			).ok,
+		);
+		t.false(
+			(
+				await CredentialIssuerRole.authenticateWallet(jwt, pop, f.anchors, {
+					...opts,
+					allowedAttestationAlgorithms: ["RS256"],
+				})
+			).ok,
+		);
+		t.true(
+			(
+				await CredentialIssuerRole.authenticateWallet(jwt, pop, f.anchors, {
+					...opts,
+					allowedProofAlgorithms: ["ES256"],
+					allowedAttestationAlgorithms: ["ES256"],
+				})
+			).ok,
+		);
+	});
 	test("partial issuer discovery returns diagnostics without hiding global limits", async (t) => {
 		const f = await walletFederation({
 			issuerMetadata: {
