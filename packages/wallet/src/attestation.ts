@@ -149,6 +149,15 @@ export async function verifyAttestation(
 	if (!input.success) return failure("Invalid Wallet Attestation claims");
 	const confirmation = await validateConfirmationKey(input.data.cnf.jwk);
 	if (!confirmation.ok) return confirmation;
+	const now = nowSeconds(options.clock);
+	const skew = options.clockSkewSeconds ?? DEFAULT_CLOCK_SKEW_SECONDS;
+	if (
+		!Number.isFinite(skew) ||
+		skew < 0 ||
+		input.data.exp + skew <= now ||
+		(input.data.nbf !== undefined && input.data.nbf > now + skew)
+	)
+		return failure("Wallet Attestation is outside its validity interval");
 	const audience = decoded.value.payload.aud;
 	if (
 		audience !== undefined &&
@@ -216,17 +225,24 @@ export async function authenticateWallet(
 				options.expectedChallenge.trim().length === 0))
 	)
 		return failure("Invalid wallet authentication configuration");
-	const verified = await verifyAttestation(attestationJwt, anchors, {
-		...options,
-		expectedAudience: options.audience,
-	});
-	if (!verified.ok) return verified;
+
 	const parsed = decodeToken(popJwt, options);
 	if (!parsed.ok) return parsed;
+	const header = checkProtocolHeader(
+		parsed.value.header,
+		"oauth-client-attestation-pop+jwt",
+		options.allowedProofAlgorithms,
+	);
+	if (!header.ok) return header;
 	const proof = PopSchema.safeParse(parsed.value.payload);
 	if (!proof.success) return failure("Invalid attestation proof claims");
 	const claims = proof.data;
-	const attestation = verified.value.attestation;
+	// These unverified fields may reject a request early; acceptance still requires both signatures.
+	const decodedAttestation = decodeToken(attestationJwt, options);
+	if (!decodedAttestation.ok) return decodedAttestation;
+	const attestationInput = AttestationSchema.safeParse(decodedAttestation.value.payload);
+	if (!attestationInput.success) return failure("Invalid Wallet Attestation claims");
+	const attestation = attestationInput.data;
 	if (
 		claims.iss !== attestation.sub ||
 		(options.clientId !== undefined && options.clientId !== claims.iss)
@@ -235,6 +251,19 @@ export async function authenticateWallet(
 	if (options.expectedChallenge !== undefined && claims.challenge !== options.expectedChallenge)
 		return failure("Wallet challenge does not match");
 	const expiresAt = Math.min(claims.iat + maxAge, claims.exp ?? Infinity, attestation.exp) + skew;
+	const audiences = typeof claims.aud === "string" ? [claims.aud] : claims.aud;
+	if (
+		!audiences.includes(options.audience) ||
+		claims.iat > nowSeconds(options.clock) + skew ||
+		expiresAt <= nowSeconds(options.clock) ||
+		(claims.nbf !== undefined && claims.nbf > nowSeconds(options.clock) + skew)
+	)
+		return failure("Attestation proof audience or freshness check failed");
+	const verified = await verifyAttestation(attestationJwt, anchors, {
+		...options,
+		expectedAudience: options.audience,
+	});
+	if (!verified.ok) return verified;
 	const fresh = () =>
 		claims.iat <= nowSeconds(options.clock) + skew &&
 		expiresAt > nowSeconds(options.clock) &&

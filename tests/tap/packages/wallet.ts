@@ -293,6 +293,19 @@ export default (QUnit: QUnit) => {
 			replayStore: new MemoryReplayStore({ clock: f.clock }),
 			acceptWallet: () => true,
 		};
+		for (const body of [
+			{ ...proof(f), aud: "https://wrong.example" },
+			{ ...proof(f), iat: 1 },
+			{ ...proof(f), iss: "wrong" },
+		]) {
+			const pop = await token(
+				body,
+				f.protocol.issuer.privateKey,
+				"oauth-client-attestation-pop+jwt",
+			);
+			t.false((await CredentialIssuerRole.authenticateWallet(jwt, pop, f.anchors, opts)).ok);
+		}
+		t.false((await CredentialIssuerRole.authenticateWallet(jwt, "garbage", f.anchors, opts)).ok);
 		const pop = await token(
 			proof(f),
 			f.protocol.issuer.privateKey,
@@ -314,6 +327,7 @@ export default (QUnit: QUnit) => {
 				})
 			).ok,
 		);
+		t.equal(f.requests.length, 0);
 		t.true(
 			(
 				await CredentialIssuerRole.authenticateWallet(jwt, pop, f.anchors, {
