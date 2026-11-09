@@ -35,7 +35,7 @@ export async function refreshTrustChain(
 		);
 	}
 
-	// Validate the best chain (shortest)
+	// Use the first valid candidate in resolver order (§10.3 permits local selection policy).
 	for (const candidate of resolveResult.chains) {
 		const result = await validateTrustChain(
 			candidate.statements as string[],
