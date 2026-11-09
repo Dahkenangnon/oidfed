@@ -122,7 +122,13 @@ export function roleMetadata(
 		return failure("Trust chain subject does not match the requested entity");
 	const parsed = effectiveRoleSchemas[type].safeParse(chain.resolvedMetadata[type]);
 	if (!parsed.success)
-		return err({ code: FederationErrorCode.InvalidMetadata, description: parsed.error.message });
+		return err({
+			code: FederationErrorCode.InvalidMetadata,
+			description:
+				chain.resolvedMetadata[type] === undefined
+					? `Entity ${id} publishes no ${type} metadata`
+					: `Invalid ${type} metadata for ${id}: ${parsed.error.issues.map((issue) => `${issue.path.join(".") || type}: ${issue.message}`).join(", ")}`,
+		});
 	if (type === "openid_credential_issuer" && parsed.data.credential_issuer !== id)
 		return failure("credential_issuer must equal the federation entity identifier");
 	return ok(parsed.data);
