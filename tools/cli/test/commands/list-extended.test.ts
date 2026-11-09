@@ -54,6 +54,44 @@ function routedClient(
 }
 
 describe("list-extended handler", () => {
+	it("keeps omitted and explicit false filters distinct and rejects conflicts", async () => {
+		const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+		try {
+			for (const flags of [
+				[],
+				["--no-audit-timestamps", "--no-trust-marked", "--no-intermediate"],
+			]) {
+				const captures: { extendedUrl?: string } = {};
+				const program = new Command().exitOverride();
+				register(program, {
+					httpClient: routedClient(
+						await buildAuthorityEc(),
+						JSON.stringify({ immediate_subordinate_entities: [] }),
+						captures,
+					),
+					formatter: new JsonFormatter(),
+					logger,
+				});
+				await program.parseAsync(["list-extended", AUTHORITY, ...flags], { from: "user" });
+				const params = new URL(captures.extendedUrl ?? "").searchParams;
+				for (const name of ["audit_timestamps", "trust_marked", "intermediate"])
+					expect(params.get(name)).toBe(flags.length ? "false" : null);
+			}
+			for (const name of ["audit-timestamps", "trust-marked", "intermediate"]) {
+				const program = new Command().exitOverride().configureOutput({ writeErr: () => {} });
+				const httpClient = vi.fn();
+				register(program, { httpClient, formatter: new JsonFormatter(), logger });
+				await expect(
+					program.parseAsync(["list-extended", AUTHORITY, `--${name}`, `--no-${name}`], {
+						from: "user",
+					}),
+				).rejects.toThrow("Conflicting");
+				expect(httpClient).not.toHaveBeenCalled();
+			}
+		} finally {
+			output.mockRestore();
+		}
+	});
 	it("preserves repeated entity filters and an explicit empty claim selection", async () => {
 		const captures: { extendedUrl?: string } = {};
 		const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);

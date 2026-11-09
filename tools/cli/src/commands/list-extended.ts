@@ -94,6 +94,10 @@ function parseNumericDateOption(raw: string): number {
 }
 
 export function register(program: Command, deps: ListExtendedDeps): void {
+	const supplied = new Set<string>();
+	program.hook("preSubcommand", () => {
+		supplied.clear();
+	});
 	program
 		.command("list-extended")
 		.description(
@@ -113,6 +117,7 @@ export function register(program: Command, deps: ListExtendedDeps): void {
 			parseNumericDateOption,
 		)
 		.option("--audit-timestamps", "Include 'registered' and 'updated' fields per entity")
+		.option("--no-audit-timestamps", "Omit audit timestamps, including with time filters")
 		.option(
 			"--claims <name>",
 			"Repeatable: request a top-level Entity Statement claim per entity (e.g. subordinate_statement, trust_marks, metadata)",
@@ -124,16 +129,29 @@ export function register(program: Command, deps: ListExtendedDeps): void {
 			(value: string, previous: string[] | undefined) => [...(previous ?? []), value],
 		)
 		.option("--trust-marked", "Inherited base filter: only entities with a recognised Trust Mark")
+		.option("--no-trust-marked", "Send trust_marked=false")
 		.option(
 			"--trust-mark-type <id>",
 			"Repeatable: match any of these trust mark type identifiers",
 			(value: string, previous: string[] | undefined) => [...(previous ?? []), value],
 		)
 		.option("--intermediate", "Inherited base filter: only intermediate authorities")
+		.option("--no-intermediate", "Select non-intermediates")
 		.option(
 			"--extended-list-endpoint <url>",
 			"Override federation_extended_list_endpoint discovery (advanced)",
 		)
+		.on("option:audit-timestamps", () => supplied.add("audit-timestamps"))
+		.on("option:no-audit-timestamps", () => supplied.add("no-audit-timestamps"))
+		.on("option:trust-marked", () => supplied.add("trust-marked"))
+		.on("option:no-trust-marked", () => supplied.add("no-trust-marked"))
+		.on("option:intermediate", () => supplied.add("intermediate"))
+		.on("option:no-intermediate", () => supplied.add("no-intermediate"))
+		.hook("preAction", (_command, action) => {
+			for (const name of ["audit-timestamps", "trust-marked", "intermediate"])
+				if (supplied.has(name) && supplied.has(`no-${name}`))
+					action.error(`Conflicting --${name} and --no-${name} options`);
+		})
 		.action(
 			async (
 				entityIdArg: string,

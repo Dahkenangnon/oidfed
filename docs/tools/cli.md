@@ -43,7 +43,7 @@ The workspace shortcuts `pnpm oidfed` and `pnpm cli` disable TLS certificate ver
 | `list-extended <entity-id>` | Paginated subordinate listing with audit timestamps and bulk claim retrieval (`/federation_extended_list`) |
 | `resolve <entity-id>` | Resolve trust chains for an entity |
 
-For `list-extended`, `--updated-after` and `--updated-before` accept finite NumericDate seconds, including fractional, negative, and decimal exponent values. Both time boundaries are inclusive.
+For `list-extended`, `--updated-after` and `--updated-before` accept finite NumericDate seconds, including fractional, negative, and decimal exponent values. Both time boundaries are inclusive. `--no-audit-timestamps` suppresses timestamps even with time filters. `--no-intermediate` selects non-intermediates, and `--no-trust-marked` sends an explicit false value without adding a mark restriction. Omitted boolean options remain omitted on the wire; supplying both positive and negative forms is an error.
 
 ### Trust
 
