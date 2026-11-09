@@ -49,6 +49,25 @@ const proof = (f: Fixture) => ({
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	test("JSON credential description paths start at an object and retain nested wildcards", async (t) => {
+		const f = await walletFederation();
+		const issuer = await CredentialIssuerRole.discover(f.ids.issuer, f.anchors, f.options);
+		t.true(issuer.ok);
+		if (!issuer.ok) return;
+		for (const path of [[0], [null], ["names", null, "given"], ["names", 0, "given"]]) {
+			const parsed = CredentialIssuerRole.parseMetadata({
+				...issuer.value.metadata,
+				credential_configurations_supported: {
+					identity: {
+						format: "dc+sd-jwt",
+						vct: "https://example.com/identity",
+						credential_metadata: { claims: [{ path }] },
+					},
+				},
+			});
+			t.equal(parsed.success, typeof path[0] === "string");
+		}
+	});
 	test("present attestation audiences require an explicit recipient", async (t) => {
 		const f = await walletFederation();
 		for (const aud of [undefined, f.ids.server, [f.ids.server], "https://other.example", []]) {

@@ -275,9 +275,15 @@ function validateClaimDescriptions(
 	claims: readonly z.infer<typeof claimDescriptions>[number][],
 	ctx: z.RefinementCtx,
 	mdoc: boolean,
+	jsonRoot: boolean,
 ): void {
 	const root: ClaimPathNode = { children: new Map() };
 	for (const claim of claims) {
+		if (jsonRoot && typeof claim.path[0] !== "string")
+			ctx.addIssue({
+				code: "custom",
+				message: "JSON credential claim paths must start with an object member",
+			});
 		if (
 			mdoc
 				? claim.path.length < 2 ||
@@ -364,6 +370,7 @@ const credentialConfiguration = z
 			configuration.credential_metadata?.claims ?? [],
 			ctx,
 			configuration.format === "mso_mdoc",
+			["dc+sd-jwt", "jwt_vc_json", "jwt_vc_json-ld", "ldp_vc"].includes(configuration.format),
 		);
 		if (
 			(configuration.cryptographic_binding_methods_supported !== undefined) !==
