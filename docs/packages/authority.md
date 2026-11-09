@@ -185,6 +185,8 @@ await storage.trustMarks?.revoke(
 
 Use the [Express adapter in the wiring guide](../guide/wiring-guide.md#5-adapt-the-web-api-handler-to-express). It preserves request bytes and response content types and handles POST bodies without passing a Node stream directly to `Request`.
 
+Advertised endpoint URLs may share a path when fixed query selectors distinguish them, for example `/api?kind=events` and `/api?kind=list`. Requests must include the advertised selector values exactly, including repeated values. Other query parameters remain available to the endpoint. Construction rejects overlapping selectors, including a path-only route sharing a path with a query-specific route.
+
 ## Configuration
 
 When constructing a `TrustAnchor` or `Intermediate`, you pass an `AuthorityConfig` configuration object.

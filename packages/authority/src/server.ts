@@ -499,9 +499,13 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 		const url = new URL(sanitizedRequest.url);
 		const pathname = url.pathname;
 
-		const handler = routeMap.get(pathname);
-		if (handler) {
-			return handler(sanitizedRequest);
+		for (const [route, handler] of routeMap) {
+			const expected = new URL(`https://routing.invalid${route}`);
+			if (
+				expected.pathname === pathname &&
+				fixedQueryMatches(expected.searchParams, url.searchParams)
+			)
+				return handler(sanitizedRequest);
 		}
 
 		return new Response(
@@ -730,7 +734,20 @@ function advertisedEndpointPath(endpointName: string, endpoint: unknown): string
 			`metadata.federation_entity.${endpointName} must be an HTTPS URL without fragment.`,
 		);
 	}
-	return url.pathname;
+	return url.pathname + url.search;
+}
+
+function sameQueryValues(left: string[], right: string[]): boolean {
+	if (left.length !== right.length) return false;
+	const sortedRight = [...right].sort();
+	return [...left].sort().every((value, index) => value === sortedRight[index]);
+}
+
+/** Fixed endpoint selectors are distinct from request parameters (Events §2.1). */
+function fixedQueryMatches(expected: URLSearchParams, actual: URLSearchParams): boolean {
+	return [...new Set(expected.keys())].every((name) =>
+		sameQueryValues(expected.getAll(name), actual.getAll(name)),
+	);
 }
 
 function addAuthorityRoute(
@@ -740,11 +757,20 @@ function addAuthorityRoute(
 	path: string,
 	handler: (request: Request) => Promise<Response>,
 ): void {
-	const existingEndpoint = routeNames.get(path);
-	if (existingEndpoint !== undefined) {
-		throw new InvalidAuthorityConfig(
-			`Authority endpoint route path '${path}' is used by both ${existingEndpoint} and ${endpointName}. Advertise distinct endpoint URLs.`,
+	const incoming = new URL(`https://routing.invalid${path}`);
+	for (const [existingPath, existingEndpoint] of routeNames) {
+		const existing = new URL(`https://routing.invalid${existingPath}`);
+		if (existing.pathname !== incoming.pathname) continue;
+		// Two selectors overlap unless a shared fixed name requires different values.
+		const disjoint = [...new Set(incoming.searchParams.keys())].some(
+			(name) =>
+				existing.searchParams.has(name) &&
+				!sameQueryValues(incoming.searchParams.getAll(name), existing.searchParams.getAll(name)),
 		);
+		if (!disjoint)
+			throw new InvalidAuthorityConfig(
+				`Authority endpoint route path '${incoming.pathname}' is used by both ${existingEndpoint} and ${endpointName} with overlapping query selectors.`,
+			);
 	}
 	routeNames.set(path, endpointName);
 	routeMap.set(path, handler);

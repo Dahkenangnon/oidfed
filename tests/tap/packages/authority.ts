@@ -185,6 +185,28 @@ async function createTestContext(overrides?: TestContextOverrides): Promise<{
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+
+	test("fixed-query routing preserves a double slash in an endpoint path", async (t) => {
+		const { ctx } = await createTestContext();
+		const authority = new TrustAnchor({
+			entityId: ctx.entityId,
+			keyProvider: ctx.keyProvider,
+			storage: ctx.storage,
+			metadata: {
+				federation_entity: {
+					federation_fetch_endpoint: `${ctx.entityId}/fetch`,
+					federation_list_endpoint: `${ctx.entityId}//api?kind=list`,
+				},
+			},
+		});
+		const response = await authority.handleRequest(new Request(`${ctx.entityId}//api?kind=list`));
+		t.equal(response.status, 200);
+		t.deepEqual(await response.json(), []);
+		const absent = await authority.handleRequest(new Request(`${ctx.entityId}//api`));
+		t.equal(absent.status, 404);
+		await absent.body?.cancel();
+	});
+
 	test("event readers use readSnapshot with a transaction fallback", async (t) => {
 		const { buildSubordinateEvents } = await import(
 			"../../../packages/authority/src/endpoints/subordinate-events.js"
@@ -293,6 +315,49 @@ export default (QUnit: QUnit) => {
 		t.strictEqual(await withoutEvents.subordinates.get(subject), undefined);
 	});
 
+	test("authority routes distinguish fixed query selectors and reject overlaps", async (t) => {
+		const { ctx } = await createTestContext();
+		const storage = new MemoryStorageAdapter({ subordinateEvents: true });
+		const config = {
+			entityId: ctx.entityId,
+			keyProvider: ctx.keyProvider,
+			storage,
+			metadata: {
+				federation_entity: {
+					...ctx.metadata.federation_entity,
+					federation_subordinate_events_endpoint: `${ctx.entityId}/api?kind=events`,
+					federation_extended_list_endpoint: `${ctx.entityId}/api?kind=list`,
+				},
+			},
+		};
+		const authority = new TrustAnchor(config);
+		const subject = entityId("https://member.example");
+		await authority.registerSubordinate({ entityId: subject, jwks: { keys: [testPublicJwk()] } });
+		for (const [query, status] of [
+			["kind=events&sub=https://member.example", 200],
+			["kind=list&claims=", 200],
+			["sub=https://member.example", 404],
+			["kind=wrong", 404],
+			["kind=events&kind=list", 404],
+		] as const) {
+			const response = await authority.handleRequest(new Request(`${ctx.entityId}/api?${query}`));
+			t.equal(response.status, status);
+			await response.body?.cancel();
+		}
+		t.throws(
+			() =>
+				new TrustAnchor({
+					...config,
+					metadata: {
+						federation_entity: {
+							...config.metadata.federation_entity,
+							federation_extended_list_endpoint: `${ctx.entityId}/api?tenant=a`,
+						},
+					},
+				}),
+			/overlapping/,
+		);
+	});
 	test("lifecycle annotations share the transaction and cannot forge event fields", async (t) => {
 		const { createSubordinateLifecycle } = await import(
 			"../../../packages/authority/src/subordinate-lifecycle.js"
