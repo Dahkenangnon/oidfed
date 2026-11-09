@@ -195,7 +195,9 @@ export async function prepareRequest(
 		if (!matchesJwtType(decoded.value.header.typ, "oauth-authz-req+jwt"))
 			return failure("Invalid Request Object type");
 
-		const supplied = decoded.value.header.trust_chain;
+		const supplied = decoded.value.header.trust_chain ?? decoded.value.payload.trust_chain;
+		if (decoded.value.header.trust_chain === null)
+			return failure("Invalid Request Object trust_chain");
 		if (supplied !== undefined) {
 			if (!Array.isArray(supplied) || !supplied.every((item) => typeof item === "string"))
 				return failure("Invalid Request Object trust_chain");
@@ -418,6 +420,7 @@ export async function completeRequest(
 	if (request.dcql_query !== undefined && requested) safeRequest.dcql_query = requested[0];
 	delete safeRequest.client_metadata;
 	delete safeRequest.iss;
+	delete safeRequest.trust_chain;
 	// Only the superior-metadata case mandates ignoring the requested query (Wallet §7.1.1).
 	if (superiorOverridesQuery) {
 		delete safeRequest.dcql_query;

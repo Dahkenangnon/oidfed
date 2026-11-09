@@ -49,6 +49,48 @@ const proof = (f: Fixture) => ({
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	test("request chain carriers preserve precedence and offline validation", async (t) => {
+		const f = await walletFederation();
+		const chain = f.chains.get(f.ids.verifier);
+		for (const carrier of ["header", "payload"]) {
+			const jwt = await token(
+				{ ...f.requestPayload, ...(carrier === "payload" ? { trust_chain: chain } : {}) },
+				f.protocol.verifier.privateKey,
+				"oauth-authz-req+jwt",
+				carrier === "header" ? { trust_chain: chain } : {},
+			);
+			const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
+				{ client_id: f.requestPayload.client_id, request: jwt },
+				f.anchors,
+				{ clock: f.clock, offline: true },
+			);
+			t.true(prepared.ok, carrier);
+			if (prepared.ok) {
+				const result = await CredentialVerifierRole.completeAuthorizationRequest(
+					prepared.value,
+					jwt,
+				);
+				t.true(result.ok);
+				if (result.ok) t.false(Object.hasOwn(result.value.request, "trust_chain"));
+			}
+		}
+		const malformed = await token(
+			{ ...f.requestPayload, trust_chain: chain },
+			f.protocol.verifier.privateKey,
+			"oauth-authz-req+jwt",
+			{ trust_chain: null },
+		);
+		t.false(
+			(
+				await CredentialVerifierRole.prepareAuthorizationRequest(
+					{ client_id: f.requestPayload.client_id, request: malformed },
+					f.anchors,
+					f.options,
+				)
+			).ok,
+		);
+	});
+
 	test("object-valued wallet policy crosses an intermediate without merging key sets", async (t) => {
 		const { validateTrustChain } = await import("../../../packages/core/src/index.js");
 		const f = await trustChainPaths({
