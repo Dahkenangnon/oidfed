@@ -1,4 +1,5 @@
 import {
+	DEFAULT_MAX_CHAIN_LENGTH,
 	DEFAULT_MAX_RESPONSE_BYTES,
 	entityId,
 	err,
@@ -71,6 +72,9 @@ export async function candidates(
 	if (options.signal?.aborted) return failure("Operation cancelled");
 	const supplied = options.trustChain ?? options.entityChains?.get(id);
 	if (supplied) {
+		const maxLength = options.maxChainLength ?? DEFAULT_MAX_CHAIN_LENGTH;
+		if (!Number.isSafeInteger(maxLength) || maxLength <= 0 || supplied.length > maxLength)
+			return failure("Invalid or exceeded maxChainLength");
 		const bytes = supplied.reduce((total, jwt) => total + jwt.length, 0);
 		if (
 			!supplied.length ||
@@ -124,6 +128,11 @@ async function* candidateAttempts(
 	headerChain?: readonly string[],
 ): AsyncGenerator<Result<readonly (readonly string[])[]>> {
 	if (headerChain !== undefined) {
+		const maxLength = options.maxChainLength ?? DEFAULT_MAX_CHAIN_LENGTH;
+		if (!Number.isSafeInteger(maxLength) || maxLength <= 0 || headerChain.length > maxLength) {
+			yield failure("Invalid or exceeded maxChainLength");
+			return;
+		}
 		if (
 			!headerChain.length ||
 			headerChain.length > (options.maxChainDepth ?? 8) + 2 ||

@@ -82,6 +82,8 @@ export interface FederationOptions {
 	httpTimeoutMs?: number;
 	clockSkewSeconds?: number;
 	maxChainDepth?: number;
+	/** Maximum statements in a validated chain, including both ECs. Default: 100; resource policy, not a protocol limit. */
+	maxChainLength?: number;
 	/** Maximum eligible branch expansions per resolution, including reused statements. Default: 1000. */
 	maxResolutionSteps?: number;
 	maxAuthorityHints?: number;

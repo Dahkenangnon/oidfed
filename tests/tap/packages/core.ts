@@ -236,6 +236,75 @@ import { walletFederation, walletQuery } from "../fixtures/wallet.js";
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	test("supplied chains have a configurable early statement budget", async (t) => {
+		const {
+			validateTrustChain,
+			prepareTrustChainValidation,
+			generateSigningKey,
+			JwkSigner,
+			signEntityStatement,
+			entityId,
+			createTrustAnchorSet,
+		} = await import("../../../packages/core/src/index.js");
+		const { validateTrustChainStructure } = await import(
+			"../../../packages/core/src/trust-chain/validate.js"
+		);
+		const overflow = new Array<string>(101).fill("malformed");
+		for (const validate of [validateTrustChain, validateTrustChainStructure]) {
+			const result = await validate(overflow, new Map());
+			t.false(result.valid);
+			if (!result.valid) t.true(result.errors[0]!.message.includes("maxChainLength"));
+		}
+		t.false((await prepareTrustChainValidation(overflow, new Map(), { deferredClaims: [] })).ok);
+		for (const maxChainLength of [0, -1, 1.5, NaN, Infinity]) {
+			const result = await validateTrustChain(["malformed"], new Map(), { maxChainLength });
+			t.false(result.valid);
+			if (!result.valid) t.true(result.errors[0]!.message.includes("maxChainLength"));
+		}
+		const key = await generateSigningKey();
+		const signer = new JwkSigner(key.privateKey);
+		for (const length of [99, 100, 101]) {
+			const ids = Array.from({ length: length - 1 }, (_, i) =>
+				entityId(`https://chain-${i}.example`),
+			);
+			const anchor = ids[ids.length - 1]!;
+			const jwks = { keys: [key.publicKey] };
+			const statements: string[] = [];
+			const sign = (iss: string, sub: string, rest: Record<string, unknown> = {}) =>
+				signEntityStatement({ iss, sub, iat: 1, exp: 1000, jwks, ...rest }, signer);
+			statements.push(
+				await sign(ids[0]!, ids[0]!, {
+					authority_hints: [ids[1]],
+					metadata: { federation_entity: { organization_name: "Member" } },
+				}),
+			);
+			for (let i = 1; i < ids.length; i++) statements.push(await sign(ids[i]!, ids[i - 1]!));
+			statements.push(
+				await sign(anchor, anchor, {
+					metadata: {
+						federation_entity: {
+							federation_fetch_endpoint: `${anchor}/fetch`,
+							federation_list_endpoint: `${anchor}/list`,
+						},
+					},
+				}),
+			);
+			const anchors = createTrustAnchorSet([{ entityId: anchor, jwks }]);
+			t.equal(
+				(await validateTrustChain(statements, anchors, { clock: { now: () => 100 } })).valid,
+				length <= 100,
+			);
+			if (length === 101)
+				t.true(
+					(
+						await validateTrustChain(statements, anchors, {
+							clock: { now: () => 100 },
+							maxChainLength: 101,
+						})
+					).valid,
+				);
+		}
+	});
 	test("combined statement schemas require keys without restricting generic JWT decoding", async (t) => {
 		const { BaseEntityStatementSchema, EntityStatementPayloadSchema } = await import(
 			"../../../packages/core/src/schemas/entity-statement.js"

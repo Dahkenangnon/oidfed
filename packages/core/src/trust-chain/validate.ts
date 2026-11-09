@@ -1,6 +1,7 @@
 /** Trust chain validation: verifies signatures, expiry, issuer-subject chaining, and metadata policy along the chain. */
 import {
 	DEFAULT_CLOCK_SKEW_SECONDS,
+	DEFAULT_MAX_CHAIN_LENGTH,
 	InternalErrorCode,
 	JwtTyp,
 	PolicyOperator,
@@ -407,12 +408,30 @@ interface TrustChainValidationOptions extends FederationOptions {
 	trustMarkIssuerKeys?: ReadonlyMap<string, JWKSet>;
 }
 
+/** Bound supplied work before copying statements or decoding JWTs (Federation §18.1). */
+function chainLengthError(
+	chain: readonly string[],
+	options?: FederationOptions,
+): string | undefined {
+	const maximum = options?.maxChainLength ?? DEFAULT_MAX_CHAIN_LENGTH;
+	if (!Number.isSafeInteger(maximum) || maximum <= 0)
+		return "maxChainLength must be a positive safe integer";
+	if (chain.length > maximum) return `Trust chain exceeds maxChainLength (${maximum})`;
+	return undefined;
+}
+
 /** Validate a chain and report its published Trust Marks independently (Federation §§3.2, 7.3). */
 export async function validateTrustChain(
 	chain: ReadonlyArray<string>,
 	trustAnchors: TrustAnchorSet,
 	options?: TrustChainValidationOptions,
 ): Promise<ValidationResult> {
+	const limitError = chainLengthError(chain, options);
+	if (limitError)
+		return {
+			valid: false,
+			errors: [{ code: InternalErrorCode.TrustChainInvalid, message: limitError }],
+		};
 	const request = options?.explicitRegistrationRequest;
 	if (!request) return validateTrustChainImpl(chain, trustAnchors, options, true);
 	const fail = (message: string): ValidationResult => ({
@@ -522,6 +541,9 @@ export async function prepareTrustChainValidation(
 		return validationFailure([
 			{ code: InternalErrorCode.TrustChainInvalid, message: "Validation was cancelled" },
 		]);
+	const limitError = chainLengthError(chain, options);
+	if (limitError)
+		return validationFailure([{ code: InternalErrorCode.TrustChainInvalid, message: limitError }]);
 	const savedChain = [...chain];
 	const savedAnchors = new Map([...anchors].map(([id, anchor]) => [id, structuredClone(anchor)]));
 	const { deferredClaims, ...validationOptions } = options;
@@ -653,6 +675,12 @@ async function authenticateChainStatements(
 	options?: TrustChainValidationOptions,
 	publicationOnly = false,
 ): Promise<AuthenticatedStatements> {
+	const limitError = chainLengthError(chain, options);
+	if (limitError)
+		return {
+			valid: false,
+			errors: [{ code: InternalErrorCode.TrustChainInvalid, message: limitError }],
+		};
 	const errors: ValidationError[] = [];
 	const clockSkew = options?.clockSkewSeconds ?? DEFAULT_CLOCK_SKEW_SECONDS;
 	const verifyOptions = {

@@ -211,6 +211,8 @@ for (const chain of resolution.chains) {
 }
 ```
 
+Supplied chains are limited to 100 statements by default, including their Entity Configurations. Set `maxChainLength` to a positive safe integer for deployments requiring longer chains. This resource budget follows [Federation §18.1](https://openid.net/specs/openid-federation-1_0.html#section-18.1); `maxChainDepth` separately limits discovery traversal.
+
 ### Metadata policy resolution
 
 Resolve policies from the chain, then apply the combined policy to metadata. The standard operators in [Federation §6.1.3](https://openid.net/specs/openid-federation-1_0.html#section-6.1.3) are `value`, `default`, `one_of`, `subset_of`, `superset_of`, `add`, and `essential`.
