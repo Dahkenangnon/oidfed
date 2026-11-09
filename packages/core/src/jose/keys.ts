@@ -53,7 +53,11 @@ export function selectVerificationKey(
 	jwks: JWKSet,
 ): JWK | undefined {
 	// Keep the original set intact; unsupported types are ineligible candidates (RFC 7517 §5).
-	const keys = jwks.keys.filter((key) => ["RSA", "EC", "OKP"].includes(key.kty));
+	const keys = jwks.keys.filter(
+		(key) =>
+			["RSA", "EC", "OKP"].includes(key.kty) &&
+			(key.key_ops === undefined || key.key_ops.includes("verify")),
+	);
 
 	if (header.kid) {
 		const byKid = keys.find((k) => k.kid === header.kid && (!k.use || k.use === "sig"));

@@ -245,6 +245,26 @@ export default (QUnit: QUnit) => {
 		t.deepEqual(override.custom.settings.selected, ["a"]);
 	});
 
+	test("JWK registry extensions remain ineligible without verification permission", async (t) => {
+		const { JWKSchema, generateSigningKey, selectVerificationKey } = await import(
+			"../../../packages/core/src/index.js"
+		);
+		const key = (await generateSigningKey()).publicKey;
+		for (const extension of [{ use: "custom-use" }, { key_ops: ["custom-op"] }]) {
+			const candidate = { ...key, ...extension };
+			t.true(JWKSchema.safeParse(candidate).success);
+			t.strictEqual(
+				selectVerificationKey({ kid: key.kid!, alg: "ES256" }, { keys: [candidate] }),
+				undefined,
+			);
+		}
+		t.ok(
+			selectVerificationKey(
+				{ kid: key.kid!, alg: "ES256" },
+				{ keys: [{ ...key, key_ops: ["verify", "custom-op"] }] },
+			),
+		);
+	});
 	test("entity type enumeration preserves framework extensions", async (t) => {
 		const { getEntityTypes } = await import("../../../packages/core/src/index.js");
 		t.deepEqual(getEntityTypes({ federation_entity: {}, "https://example.com/role": {} }), [
@@ -2797,8 +2817,8 @@ export default (QUnit: QUnit) => {
 			t.true(JWKSchema.safeParse({ kty: "EC", use: "enc" }).success);
 		});
 
-		test("rejects invalid use values", (t) => {
-			t.false(JWKSchema.safeParse({ kty: "EC", use: "other" }).success);
+		test("accepts extension use values", (t) => {
+			t.true(JWKSchema.safeParse({ kty: "EC", use: "other" }).success);
 		});
 
 		test("rejects EC key with private key field 'd'", (t) => {

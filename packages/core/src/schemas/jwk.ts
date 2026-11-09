@@ -8,22 +8,9 @@ export const JWKSchema = z
 		// RFC 7517 §5: received sets may include key types this implementation cannot use.
 		kty: z.string().min(1),
 		kid: z.string().min(1).optional(),
-		use: z.enum(["sig", "enc"]).optional(),
+		use: z.string().optional(),
 		alg: z.string().optional(),
-		key_ops: z
-			.array(
-				z.enum([
-					"sign",
-					"verify",
-					"encrypt",
-					"decrypt",
-					"wrapKey",
-					"unwrapKey",
-					"deriveKey",
-					"deriveBits",
-				]),
-			)
-			.optional(),
+		key_ops: z.array(z.string()).optional(),
 		// RSA public parameters
 		n: z.string().optional(),
 		e: z.string().optional(),
