@@ -315,6 +315,33 @@ export default (QUnit: QUnit) => {
 		t.strictEqual(await withoutEvents.subordinates.get(subject), undefined);
 	});
 
+	test("orphan endpoint authentication companions fail host construction", async (t) => {
+		const { ctx } = await createTestContext();
+		for (const endpoint of [
+			"subordinate_events",
+			"resolve",
+			"historical_keys",
+			"trust_mark",
+			"trust_mark_list",
+			"trust_mark_status",
+		]) {
+			t.throws(
+				() =>
+					new TrustAnchor({
+						entityId: ctx.entityId,
+						keyProvider: ctx.keyProvider,
+						storage: ctx.storage,
+						metadata: {
+							federation_entity: {
+								...ctx.metadata.federation_entity,
+								[`federation_${endpoint}_endpoint_auth_methods`]: ["none"],
+							},
+						},
+					}),
+				/requires/,
+			);
+		}
+	});
 	test("authority routes distinguish fixed query selectors and reject overlaps", async (t) => {
 		const { ctx } = await createTestContext();
 		const storage = new MemoryStorageAdapter({ subordinateEvents: true });

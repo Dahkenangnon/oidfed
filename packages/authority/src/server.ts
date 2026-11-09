@@ -366,6 +366,8 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 			})
 		: undefined;
 
+	validateEndpointCompanions(meta);
+
 	function withAuth(
 		handler: (req: Request) => Promise<Response>,
 		authMethods: string[] | undefined,
@@ -689,6 +691,25 @@ function normalizeAuthorityEntityId(value: EntityId | string): EntityId {
 		throw new Error("entityId MUST be a valid HTTPS URL without query or fragment");
 	}
 	return normalized as EntityId;
+}
+
+function validateEndpointCompanions(metadata: Record<string, unknown>): void {
+	for (const endpoint of [
+		"fetch",
+		"list",
+		"extended_list",
+		"subordinate_events",
+		"resolve",
+		"collection",
+		"trust_mark",
+		"trust_mark_status",
+		"trust_mark_list",
+		"historical_keys",
+	]) {
+		const name = `federation_${endpoint}_endpoint`;
+		if (metadata[`${name}_auth_methods`] !== undefined && metadata[name] === undefined)
+			throw new InvalidAuthorityConfig(`${name}_auth_methods requires ${name}`);
+	}
 }
 
 function wellKnownPathForEntityId(value: EntityId): string {
