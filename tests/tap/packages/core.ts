@@ -245,6 +245,13 @@ export default (QUnit: QUnit) => {
 		t.deepEqual(override.custom.settings.selected, ["a"]);
 	});
 
+	test("entity type enumeration preserves framework extensions", async (t) => {
+		const { getEntityTypes } = await import("../../../packages/core/src/index.js");
+		t.deepEqual(getEntityTypes({ federation_entity: {}, "https://example.com/role": {} }), [
+			"federation_entity",
+			"https://example.com/role",
+		]);
+	});
 	test("historical keys retain extensions and reject private material", async (t) => {
 		const { HistoricalKeysPayloadSchema } = await import(
 			"../../../packages/core/src/schemas/entity-statement.js"

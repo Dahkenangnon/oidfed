@@ -1,6 +1,6 @@
 /** Zod schemas for federation entity metadata types (openid_provider, openid_relying_party, etc.). */
 import { z } from "zod";
-import { EntityType } from "../constants.js";
+import { EntityType, type EntityTypeIdentifier } from "../constants.js";
 
 const nonEmptyStringArray = z.array(z.string()).min(1);
 
@@ -113,18 +113,9 @@ export type OpenIDRelyingPartyMetadata = Record<string, unknown>;
 export type OpenIDProviderMetadata = Record<string, unknown>;
 export type FederationMetadata = z.infer<typeof FederationMetadataSchema>;
 
-export function getEntityTypes(metadata: FederationMetadata): ReadonlyArray<EntityType> {
-	const types: EntityType[] = [];
-	if (metadata.federation_entity) types.push(EntityType.FederationEntity);
-	if (metadata.openid_relying_party) types.push(EntityType.OpenIDRelyingParty);
-	if (metadata.openid_provider) types.push(EntityType.OpenIDProvider);
-	if (metadata.oauth_authorization_server) types.push(EntityType.OAuthAuthorizationServer);
-	if (metadata.oauth_client) types.push(EntityType.OAuthClient);
-	if (metadata.oauth_resource) types.push(EntityType.OAuthResource);
-	if (metadata.openid_wallet_provider) types.push(EntityType.OpenIDWalletProvider);
-	if (metadata.openid_credential_issuer) types.push(EntityType.OpenIDCredentialIssuer);
-	if (metadata.openid_credential_verifier) types.push(EntityType.OpenIDCredentialVerifier);
-	return types;
+/** Federation §5.1 allows framework-defined entity type identifiers. */
+export function getEntityTypes(metadata: FederationMetadata): ReadonlyArray<EntityTypeIdentifier> {
+	return Object.keys(metadata).filter((type) => metadata[type] !== undefined);
 }
 
 export type EntityTypeMetadataMap = {
