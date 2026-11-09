@@ -14,7 +14,7 @@ const BaseEntityStatementFields = {
 	sub: EntityIdSchema,
 	iat: z.number().finite(),
 	exp: z.number().finite(),
-	jwks: JWKSetSchema.optional(),
+	jwks: JWKSetSchema,
 	metadata: z.record(z.string(), z.record(z.string(), z.unknown())).optional(),
 	metadata_policy: z.record(z.string(), z.record(z.string(), z.unknown())).optional(),
 	constraints: TrustChainConstraintsSchema.optional(),
@@ -67,19 +67,25 @@ export const SubordinateStatementSchema = z
 		message: "Subordinate Statement iss must differ from sub",
 	});
 
+/** Fields recognized before the token profile is established. */
+const CombinedEntityStatementFields = {
+	...BaseEntityStatementFields,
+	authority_hints: z.array(EntityIdSchema).min(1).optional(),
+	trust_anchor_hints: z.array(EntityIdSchema).min(1).optional(),
+	source_endpoint: z.string().url().optional(),
+	trust_anchor: z.string().url().optional(),
+};
+const DecodedFederationJwtPayloadSchema = z.looseObject({
+	...CombinedEntityStatementFields,
+	jwks: JWKSetSchema.optional(),
+});
+/** Decoded federation tokens still need profile-specific claim validation. */
+export type DecodedFederationJwtPayload = z.infer<typeof DecodedFederationJwtPayloadSchema>;
+
 /** Combined Entity Statement schema accepting both ECs and SSs. */
 export const EntityStatementPayloadSchema = z
-	.looseObject({
-		...BaseEntityStatementFields,
-		authority_hints: z.array(EntityIdSchema).min(1).optional(),
-		trust_anchor_hints: z.array(EntityIdSchema).min(1).optional(),
-		source_endpoint: z.string().url().optional(),
-		trust_anchor: z.string().url().optional(),
-	})
-	.refine((obj) => obj.exp > obj.iat, {
-		message: "exp must be after iat",
-		path: ["exp"],
-	});
+	.looseObject(CombinedEntityStatementFields)
+	.refine((obj) => obj.exp > obj.iat, { message: "exp must be after iat", path: ["exp"] });
 
 /** Historical key entry for the federation_historical_keys endpoint. */
 export const HistoricalKeyEntrySchema = z.looseObject({

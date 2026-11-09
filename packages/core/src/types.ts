@@ -2,7 +2,9 @@
 import type { InternalErrorCode } from "./constants.js";
 import type { FederationError } from "./errors.js";
 import type { FederationKeyProvider } from "./federation-keys.js";
-import type { EntityStatementPayload, JWKSet } from "./schemas/index.js";
+import type { DecodedFederationJwtPayload, JWKSet } from "./schemas/index.js";
+
+export type { DecodedFederationJwtPayload } from "./schemas/index.js";
 
 declare const EntityIdBrand: unique symbol;
 export type EntityId = string & { readonly [EntityIdBrand]: true };
@@ -36,11 +38,11 @@ export function isValidEntityId(value: string): value is EntityId {
 }
 
 declare const Unverified: unique symbol;
-export type ParsedEntityStatement<Payload = EntityStatementPayload> = {
+export type ParsedEntityStatement<Payload = DecodedFederationJwtPayload> = {
 	readonly header: Record<string, unknown>;
 	readonly payload: Payload;
 };
-export type UnverifiedEntityStatement<Payload = EntityStatementPayload> =
+export type UnverifiedEntityStatement<Payload = DecodedFederationJwtPayload> =
 	ParsedEntityStatement<Payload> & {
 		readonly [Unverified]: true;
 	};

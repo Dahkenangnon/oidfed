@@ -265,6 +265,7 @@ export {
 	type ChainSelectionStrategy,
 	type Clock,
 	createTrustAnchorSet,
+	type DecodedFederationJwtPayload,
 	type DiscoveryResult,
 	type EntityContext,
 	type EntityId,

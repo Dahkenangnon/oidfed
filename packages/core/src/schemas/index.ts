@@ -7,6 +7,7 @@ export {
 export * from "./entity-collection.js";
 export {
 	BaseEntityStatementSchema,
+	type DecodedFederationJwtPayload,
 	type EntityConfigurationPayload,
 	EntityConfigurationSchema,
 	EntityIdSchema,

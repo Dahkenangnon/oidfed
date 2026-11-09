@@ -236,6 +236,25 @@ import { walletFederation, walletQuery } from "../fixtures/wallet.js";
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	test("combined statement schemas require keys without restricting generic JWT decoding", async (t) => {
+		const { BaseEntityStatementSchema, EntityStatementPayloadSchema } = await import(
+			"../../../packages/core/src/schemas/entity-statement.js"
+		);
+		const { generateSigningKey, JwkSigner, signEntityStatement, decodeEntityStatement } =
+			await import("../../../packages/core/src/index.js");
+		const key = await generateSigningKey();
+		const claims = { iss: "https://a.example", sub: "https://a.example", iat: 1, exp: 2 };
+		for (const schema of [BaseEntityStatementSchema, EntityStatementPayloadSchema]) {
+			t.false(schema.safeParse(claims).success);
+			t.true(schema.safeParse({ ...claims, jwks: { keys: [key.publicKey] } }).success);
+		}
+		const jwt = await signEntityStatement(
+			{ iss: claims.iss, iat: 1, keys: [] },
+			new JwkSigner(key.privateKey),
+			{ typ: "jwk-set+jwt" },
+		);
+		t.true(decodeEntityStatement(jwt).ok);
+	});
 	test("signing reserves algorithm, key and type headers", async (t) => {
 		const { generateSigningKey, JwkSigner, signEntityStatement } = await import(
 			"../../../packages/core/src/index.js"
@@ -3750,6 +3769,7 @@ export default (QUnit: QUnit) => {
 						sub: "https://subject.example.com",
 						iat: es_now,
 						exp: es_now + 3600,
+						jwks: validBase.jwks,
 					}).success,
 				);
 			});
@@ -3768,6 +3788,7 @@ export default (QUnit: QUnit) => {
 						sub: "https://subject.example.com",
 						iat: es_now,
 						exp: es_now + 3600,
+						jwks: validBase.jwks,
 						metadata_policy_crit: [],
 					}).success,
 				);
@@ -3779,6 +3800,7 @@ export default (QUnit: QUnit) => {
 						sub: "https://subject.example.com",
 						iat: es_now,
 						exp: es_now + 3600,
+						jwks: validBase.jwks,
 						metadata_policy_crit: ["custom_operator"],
 					}).success,
 				);
@@ -3790,6 +3812,7 @@ export default (QUnit: QUnit) => {
 						sub: "https://subject.example.com",
 						iat: es_now,
 						exp: es_now + 3600,
+						jwks: validBase.jwks,
 						crit: [],
 					}).success,
 				);
@@ -3801,6 +3824,7 @@ export default (QUnit: QUnit) => {
 						sub: "https://subject.example.com",
 						iat: es_now,
 						exp: es_now + 3600,
+						jwks: validBase.jwks,
 						crit: ["x_custom"],
 					}).success,
 				);
