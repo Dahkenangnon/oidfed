@@ -161,7 +161,12 @@ export interface TrustMarkRecord {
 	readonly revokedAt?: number;
 }
 
-/** History remains independent of the current registration record. */
+/**
+ * Scope history by issuer and subject. Preserve append order, including equal
+ * timestamps and duplicate events; imported timestamps need not be increasing.
+ * Clone values on append and list. Removing a registration retains its history.
+ * Transaction-bound repositories commit registration changes and events together.
+ */
 export interface SubordinateEventStorage {
 	append(issuer: EntityId, subject: EntityId, events: readonly SubordinateEvent[]): Promise<void>;
 	list(issuer: EntityId, subject: EntityId): Promise<readonly SubordinateEvent[]>;

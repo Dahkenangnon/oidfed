@@ -160,6 +160,8 @@ Only record `revocation` when the removal represents an actual revocation. Techn
 
 Adapters may implement `readSnapshot(callback)` to provide a consistent read-only view of subordinate records and event history. The Events endpoint uses it when available and otherwise uses `transaction`. Read methods return detached values. Callbacks use the supplied view; calling a write method on the adapter from inside the callback can deadlock a serialized implementation. The memory adapter serializes reads with writes and copies only the requested records.
 
+Automatic capture follows the Draft 01 event definitions literally: `metadata_policy_update` tracks `metadata_policy`. Changes solely to `metadata_policy_crit` or `constraints` generate no standard event. A framework can record a custom event for those changes under [Subordinate Events §2.3.3](https://openid.net/specs/openid-federation-subordinate-events-1_0-01.html#section-2.3.3).
+
 ## Collection snapshots
 
 Entity Collection stores snapshots separately from subordinate registration records, using the core `EntityCollectionStore` contract. The service uses `collection.store` when supplied, then `storage.collections`, then its own memory store. Enable the storage capability with `MemoryStorageAdapter({ collections: true })`.
