@@ -1,5 +1,6 @@
 import {
 	completeTrustChainValidation,
+	DEFAULT_CLOCK_SKEW_SECONDS,
 	type JWKSet,
 	type JwtSigner,
 	nowSeconds,
@@ -39,6 +40,8 @@ export interface AuthorizationRequestOptions extends WalletTrustOptions {
 	/** Wallet metadata issuer when dynamic discovery is used; absent means static discovery. */
 	readonly walletIssuer?: string;
 	readonly walletNonce?: string;
+	/** Optional local freshness policy; requires iat when configured. */
+	readonly maxRequestAgeSeconds?: number;
 	/**
 	 * Apply framework matching or refinement rules to the active request and effective queries.
 	 * Wallet §6.3.1 leaves this profile choice open; contextual policy input alone
@@ -192,6 +195,7 @@ export async function prepareRequest(
 		return failure(
 			`Invalid authorization request parameter: ${String(parsed.error.issues[0]?.path[0] ?? "request")}`,
 		);
+	if (!validRequestAgePolicy(options)) return failure("Invalid maxRequestAgeSeconds or clock skew");
 	if (!outer.client_id.startsWith("openid_federation:"))
 		return failure("A supported federation client identifier is required");
 	if (
@@ -208,6 +212,7 @@ export async function prepareRequest(
 		if (!matchesJwtType(decoded.value.header.typ, "oauth-authz-req+jwt"))
 			return failure("Invalid Request Object type");
 
+		// VP §5.9.3 also permits the legacy payload hint (Federation §12.1.1.1).
 		const supplied = decoded.value.header.trust_chain ?? decoded.value.payload.trust_chain;
 		if (decoded.value.header.trust_chain === null)
 			return failure("Invalid Request Object trust_chain");
@@ -363,6 +368,8 @@ export async function completeRequest(
 		saved.options.walletIssuer ?? "https://self-issued.me/v2",
 	);
 	if (!verified.ok) return verified;
+	const deadline = requestDeadline(verified.value, saved.options);
+	if (!deadline.ok) return deadline;
 	const parsed = requestSchema.safeParse(verified.value);
 	if (!parsed.success) return failure("Invalid OpenID4VP Request Object parameters");
 	const request = parsed.data;
@@ -458,7 +465,10 @@ export async function completeRequest(
 		);
 		if (!accepted.ok) return accepted;
 	}
-	if (saved.options.signal?.aborted || completed.value.expiresAt <= nowSeconds(saved.options.clock))
+	if (
+		saved.options.signal?.aborted ||
+		Math.min(completed.value.expiresAt, deadline.value) <= nowSeconds(saved.options.clock)
+	)
 		return failure("Request validation expired or was cancelled");
 	const result: ValidatedWalletRequest = {
 		request: safeRequest,
@@ -472,10 +482,50 @@ export async function completeRequest(
 	};
 	validatedRequests.set(result, {
 		metadata: structuredClone(metadata.value),
-		expiresAt: completed.value.expiresAt,
+		expiresAt: Math.min(completed.value.expiresAt, deadline.value),
 		options: saved.options,
 	});
 	return ok(result);
+}
+
+function validRequestAgePolicy(options: AuthorizationRequestOptions): boolean {
+	const age = options.maxRequestAgeSeconds;
+	const skew = options.clockSkewSeconds ?? DEFAULT_CLOCK_SKEW_SECONDS;
+	return (
+		(age === undefined || (Number.isFinite(age) && age > 0)) && Number.isFinite(skew) && skew >= 0
+	);
+}
+
+/** JWT dates retain RFC 7519 semantics; a maximum age is an explicit wallet policy. */
+function requestDeadline(
+	payload: Record<string, unknown>,
+	options: AuthorizationRequestOptions,
+	creating = false,
+): Result<number> {
+	if (!validRequestAgePolicy(options)) return failure("Invalid maxRequestAgeSeconds or clock skew");
+	for (const name of ["iat", "exp", "nbf"]) {
+		if (
+			payload[name] !== undefined &&
+			(typeof payload[name] !== "number" || !Number.isFinite(payload[name]))
+		)
+			return failure("Request Object dates must be finite NumericDates");
+	}
+	const now = nowSeconds(options.clock);
+	const skew = creating ? 0 : (options.clockSkewSeconds ?? DEFAULT_CLOCK_SKEW_SECONDS);
+	const exp = payload.exp as number | undefined;
+	const nbf = payload.nbf as number | undefined;
+	if (creating && nbf !== undefined && exp !== undefined && nbf >= exp)
+		return failure("Request Object has an empty validity interval");
+	let deadline = exp === undefined ? Infinity : exp + skew;
+	if (options.maxRequestAgeSeconds !== undefined) {
+		const iat = payload.iat as number | undefined;
+		if (iat === undefined || iat > now + skew)
+			return failure("Request age policy requires an applicable iat");
+		deadline = Math.min(deadline, iat + options.maxRequestAgeSeconds + skew);
+	}
+	return deadline > now
+		? ok(deadline)
+		: failure("Request Object is outside the allowed freshness window");
 }
 
 export async function createRequest(
@@ -490,6 +540,8 @@ export async function createRequest(
 		aud: options.walletIssuer ?? "https://self-issued.me/v2",
 		...(options.walletNonce !== undefined ? { wallet_nonce: options.walletNonce } : {}),
 	};
+	const deadline = requestDeadline(payload, options, true);
+	if (!deadline.ok) return deadline;
 	const parsed = requestSchema.safeParse(payload);
 	if (!parsed.success) return failure("Invalid OpenID4VP Request Object parameters");
 	const responseParameters = validateResponseParameters(parsed.data);
@@ -567,5 +619,15 @@ export async function createRequest(
 	)
 		return failure("state is required when requesting presentations without holder binding");
 
-	return signToken(payload, "oauth-authz-req+jwt", signer, options, options.trustChain);
+	const signed = await signToken(
+		payload,
+		"oauth-authz-req+jwt",
+		signer,
+		options,
+		options.trustChain,
+	);
+	if (!signed.ok) return signed;
+	// Trust resolution and an external signer can outlast the requested validity window.
+	const currentDeadline = requestDeadline(payload, options, true);
+	return currentDeadline.ok ? signed : currentDeadline;
 }

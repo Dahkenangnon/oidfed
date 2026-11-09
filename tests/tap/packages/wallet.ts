@@ -107,6 +107,70 @@ export default (QUnit: QUnit) => {
 		}
 		t.equal(f.requests.length, 0);
 	});
+	test("request freshness is optional and checked after application callbacks", async (t) => {
+		const f = await walletFederation();
+		const withoutDates = { ...f.requestPayload } as Record<string, unknown>;
+		delete withoutDates.exp;
+		delete withoutDates.iat;
+		const run = async (payload: Record<string, unknown>, options: Record<string, unknown> = {}) => {
+			const jwt = await token(payload, f.protocol.verifier.privateKey, "oauth-authz-req+jwt");
+			const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
+				{ client_id: f.requestPayload.client_id, request: jwt },
+				f.anchors,
+				{ ...f.options, ...options },
+			);
+			return prepared.ok
+				? CredentialVerifierRole.completeAuthorizationRequest(prepared.value, jwt)
+				: prepared;
+		};
+		t.true((await run(withoutDates)).ok);
+		t.false((await run(withoutDates, { maxRequestAgeSeconds: 100 })).ok);
+		t.true((await run({ ...f.requestPayload, iat: 1499 }, { maxRequestAgeSeconds: 10 })).ok);
+		t.false((await run({ ...f.requestPayload, iat: 1400 }, { maxRequestAgeSeconds: 10 })).ok);
+		t.false((await run({ ...f.requestPayload, iat: 1600 }, { maxRequestAgeSeconds: 10 })).ok);
+		t.false(
+			(
+				await CredentialVerifierRole.createAuthorizationRequest(
+					f.ids.verifier,
+					{ ...f.requestPayload, exp: 1 },
+					new JwkSigner(f.protocol.verifier.privateKey),
+					f.options,
+				)
+			).ok,
+		);
+		const delayed = await run(
+			{ ...f.requestPayload, exp: 1501 },
+			{
+				queryPolicy: () => {
+					f.setTime(1502);
+					return true;
+				},
+			},
+		);
+		t.false(delayed.ok);
+		f.setTime(1500);
+		const signer = new JwkSigner(f.protocol.verifier.privateKey);
+		const slowSigner: JwtSigner = {
+			alg: signer.alg,
+			kid: signer.kid,
+			async signJwt(payload, header) {
+				const jwt = await signer.signJwt(payload, header);
+				f.setTime(1502);
+				return jwt;
+			},
+		};
+		t.false(
+			(
+				await CredentialVerifierRole.createAuthorizationRequest(
+					f.ids.verifier,
+					{ ...f.requestPayload, exp: 1501 },
+					slowSigner,
+					f.options,
+				)
+			).ok,
+			"a signer cannot return a request whose validity window has elapsed",
+		);
+	});
 
 	test("object-valued wallet policy crosses an intermediate without merging key sets", async (t) => {
 		const { validateTrustChain } = await import("../../../packages/core/src/index.js");

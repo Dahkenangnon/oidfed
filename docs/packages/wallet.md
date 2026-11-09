@@ -207,6 +207,8 @@ await vpEngine.processFederatedRequest(
 );
 ```
 
+`maxRequestAgeSeconds` is an optional wallet freshness policy. When set, completion requires `iat` within the configured window and clock-skew tolerance. Supplied expiry and activation claims retain [RFC 7519 semantics](https://www.rfc-editor.org/rfc/rfc7519.html#section-4.1.4). Request creation rejects invalid dates, expired output, and an empty `nbf`/`exp` interval. Completion rechecks expiry after callbacks; retained redirect validation also observes the request's applicable expiry and age limit.
+
 Preparation checks the federation chain, effective signing keys, and registered Request Object endpoint. It returns an opaque preparation handle, not a fully validated chain. Completion checks the signed object, its type, the full prefixed client identifier, applicable wallet nonce, audience, endpoints, and pending DCQL policies. It rejects expired or cancelled preparation.
 
 By default, the expected Request Object audience is `https://self-issued.me/v2` for static wallet discovery. Set `walletIssuer` for dynamic discovery. An optional Request Object `iss` is ignored according to OpenID4VP. Protocol parameters come from the signed object; outer request parameters cannot override them. For inline delivery, supply `request` during preparation and complete with that same JWT. Preparation rejects an incorrect JWT type before using its discovery hints.
