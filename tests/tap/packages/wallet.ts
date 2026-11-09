@@ -197,6 +197,49 @@ export default (QUnit: QUnit) => {
 			).success,
 		);
 		t.false(DcqlQuerySchema.safeParse(query("dc+sd-jwt", { vct_values: [""] }, true)).success);
+		const f = await walletFederation();
+		const parse = (configuration: Record<string, unknown>) =>
+			CredentialIssuerRole.parseMetadata({
+				...f.metadata.issuer.openid_credential_issuer,
+				credential_configurations_supported: { identity: configuration },
+			}).success;
+		const bound = {
+			format: "dc+sd-jwt",
+			vct: "https://example.com/type",
+			proof_types_supported: { jwt: { proof_signing_alg_values_supported: ["ES256"] } },
+		};
+		t.false(parse({ ...bound, cryptographic_binding_methods_supported: ["did:web:example.com"] }));
+		t.true(
+			parse({ ...bound, cryptographic_binding_methods_supported: ["did:web", "custom-method"] }),
+		);
+		t.false(parse({ format: "ldp_vc", credential_definition: { type: [], "@context": [] } }));
+		for (const context of [[], "extension-context", { extension: true }]) {
+			t.true(
+				parse({
+					format: "jwt_vc_json",
+					credential_definition: { type: ["VerifiableCredential"], "@context": context },
+				}),
+			);
+			for (const format of ["ldp_vc", "jwt_vc_json-ld"])
+				t.false(
+					parse({
+						format,
+						credential_definition: { type: ["VerifiableCredential"], "@context": context },
+					}),
+				);
+		}
+		t.true(
+			parse({
+				format: "ldp_vc",
+				credential_definition: {
+					type: ["VerifiableCredential", "Example"],
+					"@context": [
+						"https://www.w3.org/2018/credentials/v1",
+						{ Example: "https://example.com/type" },
+					],
+				},
+			}),
+		);
 	});
 
 	test("object-valued wallet policy crosses an intermediate without merging key sets", async (t) => {

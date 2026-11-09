@@ -388,17 +388,34 @@ const credentialConfiguration = z
 			(configuration.proof_types_supported !== undefined)
 		)
 			fail("Binding methods and proof types must be provided together");
-		if (configuration.format === "mso_mdoc" && typeof configuration.doctype !== "string")
+		if (
+			configuration.cryptographic_binding_methods_supported?.some(
+				(method) => method.startsWith("did:") && !/^did:[a-z0-9]+$/.test(method),
+			)
+		)
+			fail("DID binding methods must contain only did: and the method name");
+		if (configuration.format === "mso_mdoc" && !nonblank.safeParse(configuration.doctype).success)
 			fail("mdoc configuration requires doctype");
-		if (configuration.format === "dc+sd-jwt" && typeof configuration.vct !== "string")
+		if (configuration.format === "dc+sd-jwt" && !nonblank.safeParse(configuration.vct).success)
 			fail("SD-JWT configuration requires vct");
 		if (["jwt_vc_json", "jwt_vc_json-ld", "ldp_vc"].includes(configuration.format)) {
 			const definition = z
-				.looseObject({ type: z.array(z.string()), "@context": z.array(z.unknown()).optional() })
+				.looseObject({
+					type: z.array(nonblank).min(1),
+				})
 				.safeParse(configuration.credential_definition);
+			// VCI Appendix A.1.1.2 defines only type for jwt_vc_json; other members remain extensions.
+			const context =
+				configuration.format !== "jwt_vc_json" && definition.success
+					? z
+							.array(z.union([nonblank, object]))
+							.min(1)
+							.safeParse(definition.data["@context"])
+					: undefined;
 			if (
 				!definition.success ||
-				(configuration.format !== "jwt_vc_json" && !definition.data["@context"])
+				(context !== undefined &&
+					(!context.success || context.data[0] !== "https://www.w3.org/2018/credentials/v1"))
 			)
 				fail("W3C configuration requires credential_definition with type and applicable @context");
 		}
