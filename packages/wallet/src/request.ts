@@ -113,7 +113,16 @@ export function validateResponseRedirect(
 }
 const outerSchema = z.object({
 	client_id: z.string().min(1),
-	request_uri: z.url().optional(),
+	request_uri: z
+		.url()
+		.refine((value) => {
+			const url = new URL(value);
+			const authority = value.replace(/[\t\r\n]/g, "").match(/^[^:]*:[/\\]*([^/\\?#]*)/)?.[1];
+			return (
+				url.protocol === "https:" && !url.username && !url.password && !authority?.includes("@")
+			);
+		}, "Request URI must use HTTPS without userinfo")
+		.optional(),
 	request_uri_method: z.enum(["get", "post"]).optional(),
 	request: z.string().optional(),
 });
@@ -179,7 +188,11 @@ export async function prepareRequest(
 	options: AuthorizationRequestOptions,
 ): Promise<Result<PreparedAuthorizationRequest>> {
 	const parsed = outerSchema.safeParse(outer);
-	if (!parsed.success || !outer.client_id.startsWith("openid_federation:"))
+	if (!parsed.success)
+		return failure(
+			`Invalid authorization request parameter: ${String(parsed.error.issues[0]?.path[0] ?? "request")}`,
+		);
+	if (!outer.client_id.startsWith("openid_federation:"))
 		return failure("A supported federation client identifier is required");
 	if (
 		(outer.request && outer.request_uri) ||

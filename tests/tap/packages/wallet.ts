@@ -90,6 +90,23 @@ export default (QUnit: QUnit) => {
 			).ok,
 		);
 	});
+	test("outer request failures identify parameters before federation discovery", async (t) => {
+		const f = await walletFederation();
+		for (const request of [
+			{ request_uri: "http://verifier.example/request" },
+			{ request_uri: "https://user@verifier.example/request" },
+			{ request_uri: `${f.ids.verifier}/request`, request_uri_method: "POST" },
+		]) {
+			const result = await CredentialVerifierRole.prepareAuthorizationRequest(
+				{ client_id: f.requestPayload.client_id, ...request } as never,
+				f.anchors,
+				{ clock: f.clock, httpClient: f.httpClient },
+			);
+			t.false(result.ok);
+			if (!result.ok) t.true(result.error.description.includes("request_uri"));
+		}
+		t.equal(f.requests.length, 0);
+	});
 
 	test("object-valued wallet policy crosses an intermediate without merging key sets", async (t) => {
 		const { validateTrustChain } = await import("../../../packages/core/src/index.js");
