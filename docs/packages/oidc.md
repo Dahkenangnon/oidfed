@@ -70,6 +70,8 @@ An `OidcProviderRole` or `OAuthAuthorizationServerRole` installs an explicit-reg
 
 When publishing OP or AS metadata, a supplied `issuer` must exactly match the host’s Entity Identifier ([§5.1.3](https://openid.net/specs/openid-federation-1_0.html#section-5.1.3), [§5.1.4](https://openid.net/specs/openid-federation-1_0.html#section-5.1.4)). Before sending explicit registration, the RP also checks that the discovered registration endpoint uses HTTPS and has no fragment, including a bare trailing `#`. Invalid endpoints return `invalid_metadata` without a POST. Query strings and explicit ports remain supported.
 
+`OIDCFederationPublicationMetadata` describes metadata published before superior completion under [Federation §5](https://openid.net/specs/openid-federation-1_0.html#section-5). Its protocol blocks may omit fields supplied by superiors. `OIDCFederationMetadata` and the protocol-specific metadata types describe effective metadata; registration still validates the fields needed for its flow.
+
 ### Client-side automatic registration
 
 This fragment uses an `rpRole` already composed into a parent, a pinned `taKey`, and fresh `sessionState` / `sessionNonce` values bound to the login session.

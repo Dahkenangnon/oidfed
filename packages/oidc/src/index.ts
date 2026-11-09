@@ -71,6 +71,7 @@ export type {
 	OAuthClientMetadata,
 	OAuthResourceMetadata,
 	OIDCFederationMetadata,
+	OIDCFederationPublicationMetadata,
 	OpenIDProviderMetadata,
 	OpenIDRelyingPartyMetadata,
 	OpenIDRelyingPartyRegistrationResponseMetadata,

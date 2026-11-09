@@ -418,9 +418,8 @@ export type OAuthResourceMetadata = z.infer<typeof OAuthResourceMetadataSchema>;
 // ---------------------------------------------------------------------------
 
 /**
- * Extended federation metadata schema with strict validation for all entity types.
- * Ensures that each metadata block conforms to its authoritative specification
- * (not just `z.record()`).
+ * Effective federation metadata after superior completion. Use publication types
+ * for individual Entity Configurations whose protocol fields are still incomplete.
  */
 export const OIDCFederationMetadataSchema = FederationMetadataSchema.pipe(
 	z.looseObject({
@@ -433,6 +432,7 @@ export const OIDCFederationMetadataSchema = FederationMetadataSchema.pipe(
 	}),
 );
 
+/** Effective metadata, after federation processing and protocol validation. */
 export type OIDCFederationMetadata = FederationMetadata & {
 	readonly federation_entity?: z.infer<typeof FederationEntityMetadataSchema>;
 	readonly openid_relying_party?: OpenIDRelyingPartyMetadata;
@@ -448,3 +448,12 @@ export type OIDCFederationMetadata = FederationMetadata & {
 export function validateOIDCMetadata(raw: unknown): OIDCFederationMetadata {
 	return OIDCFederationMetadataSchema.parse(raw) as OIDCFederationMetadata;
 }
+
+/** Publication can omit protocol fields completed by superiors (Federation §5). */
+export type OIDCFederationPublicationMetadata = FederationMetadata & {
+	readonly openid_relying_party?: Partial<OpenIDRelyingPartyMetadata>;
+	readonly openid_provider?: Partial<OpenIDProviderMetadata>;
+	readonly oauth_authorization_server?: Partial<OAuthAuthorizationServerMetadata>;
+	readonly oauth_client?: Partial<OAuthClientMetadata>;
+	readonly oauth_resource?: Partial<OAuthResourceMetadata>;
+};

@@ -311,6 +311,15 @@ async function createDualAnchorRegistrationFixture() {
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	test("publication types allow superior completion without relaxing effective schemas", (t) => {
+		const publication: OidcPublic.OIDCFederationPublicationMetadata = {
+			openid_provider: {},
+			oauth_authorization_server: {},
+			oauth_resource: {},
+		};
+		t.false(OIDCFederationMetadataSchema.safeParse(publication).success);
+		t.deepEqual(publication.openid_provider, {});
+	});
 	module("oidc / publication and endpoint validation", () => {
 		test("installed registration handlers require an explicit capability in composed metadata", (t) => {
 			for (const role of [new OidcProviderRole({}), new OAuthAuthorizationServerRole({})]) {
