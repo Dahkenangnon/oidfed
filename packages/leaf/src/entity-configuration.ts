@@ -186,6 +186,14 @@ export class Leaf {
 
 		const fedEntity = this.metadata.federation_entity;
 		if (fedEntity) {
+			for (const endpoint of [
+				"federation_fetch_endpoint",
+				"federation_list_endpoint",
+				"federation_extended_list_endpoint",
+			]) {
+				if (`${endpoint}_auth_methods` in fedEntity)
+					throw new Error(`Leaf entities cannot publish ${endpoint}_auth_methods`);
+			}
 			if ("federation_fetch_endpoint" in fedEntity) {
 				throw new Error("Leaf entities MUST NOT publish federation_fetch_endpoint");
 			}

@@ -72,6 +72,21 @@ function mockFn<A extends unknown[]>() {
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	test("leaf rejects authentication companions for forbidden endpoints", async (t) => {
+		const { config } = await createLeafConfig();
+		for (const endpoint of ["fetch", "list", "extended_list"]) {
+			t.throws(
+				() =>
+					new Leaf({
+						...config,
+						metadata: {
+							federation_entity: { [`federation_${endpoint}_endpoint_auth_methods`]: ["none"] },
+						},
+					}),
+				/cannot publish/,
+			);
+		}
+	});
 
 	module("leaf / public root exports", () => {
 		test("exports only the leaf class as a runtime entrypoint", (t) => {
