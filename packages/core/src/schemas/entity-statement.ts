@@ -2,7 +2,7 @@
 import { z } from "zod";
 import { TrustChainConstraintsSchema } from "./constraints.js";
 import { EntityIdSchema } from "./entity-id.js";
-import { JWKSetSchema, MetadataJWKSetSchema } from "./jwk.js";
+import { JWKSchema, JWKSetSchema, MetadataJWKSetSchema } from "./jwk.js";
 import { FederationMetadataSchema, FederationMetadataValuesSchema } from "./metadata.js";
 import { TrustMarkOwnerSchema, TrustMarkRefSchema } from "./trust-mark.js";
 
@@ -88,12 +88,8 @@ export const EntityStatementPayloadSchema = z
 	.refine((obj) => obj.exp > obj.iat, { message: "exp must be after iat", path: ["exp"] });
 
 /** Historical key entry for the federation_historical_keys endpoint. */
-export const HistoricalKeyEntrySchema = z.looseObject({
-	kty: z.string(),
+export const HistoricalKeyEntrySchema = JWKSchema.safeExtend({
 	kid: z.string(),
-	use: z.string().optional(),
-	alg: z.string().optional(),
-	key_ops: z.array(z.string()).optional(),
 	exp: z.number().finite(),
 	iat: z.number().finite().optional(),
 	nbf: z.number().finite().optional(),
@@ -105,7 +101,7 @@ export const HistoricalKeyEntrySchema = z.looseObject({
 		.optional(),
 });
 
-export const HistoricalKeysPayloadSchema = z.object({
+export const HistoricalKeysPayloadSchema = z.looseObject({
 	iss: EntityIdSchema,
 	iat: z.number().finite(),
 	keys: z.array(HistoricalKeyEntrySchema),

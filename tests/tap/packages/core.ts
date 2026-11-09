@@ -245,6 +245,30 @@ export default (QUnit: QUnit) => {
 		t.deepEqual(override.custom.settings.selected, ["a"]);
 	});
 
+	test("historical keys retain extensions and reject private material", async (t) => {
+		const { HistoricalKeysPayloadSchema } = await import(
+			"../../../packages/core/src/schemas/entity-statement.js"
+		);
+		const { generateSigningKey } = await import("../../../packages/core/src/index.js");
+		const key = await generateSigningKey();
+		const payload = {
+			iss: "https://a.example",
+			iat: 0,
+			keys: [{ ...key.publicKey, exp: -0.5 }],
+			extra: { reason: "archive" },
+		};
+		t.deepEqual(HistoricalKeysPayloadSchema.parse(payload) as unknown, payload);
+		t.false(
+			HistoricalKeysPayloadSchema.safeParse({ ...payload, keys: [{ ...key.privateKey, exp: 0 }] })
+				.success,
+		);
+		t.true(
+			HistoricalKeysPayloadSchema.safeParse({
+				...payload,
+				keys: [{ kty: "future-key", kid: "future", exp: 0 }],
+			}).success,
+		);
+	});
 	test("resolved policy arrays are detached from reusable policy inputs", (t) => {
 		const policy = { openid_provider: { claims_supported: { value: ["name"] } } };
 		const result = applyMetadataPolicy({ openid_provider: {} }, policy);
