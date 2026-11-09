@@ -97,6 +97,8 @@ export function createAuthenticatedHandler(
 
 		function forward(authenticatedEntity?: string): Promise<Response> {
 			const url = new URL(request.url);
+			url.searchParams.delete("client_assertion");
+			url.searchParams.delete("client_assertion_type");
 			const headers = new Headers(request.headers);
 			headers.delete("X-Authenticated-Entity");
 			// Extraction changes the body length; do not forward a stale transport length.
@@ -113,7 +115,26 @@ export function createAuthenticatedHandler(
 					}),
 				);
 			}
-			url.search = params.toString();
+			for (const name of new Set(params.keys())) {
+				if (url.searchParams.has(name)) {
+					const fixed = url.searchParams.getAll(name);
+					const supplied = params.getAll(name);
+					if (
+						fixed.length !== supplied.length ||
+						fixed.some((value, index) => value !== supplied[index])
+					) {
+						return Promise.resolve(
+							errorResponse(
+								400,
+								FederationErrorCode.InvalidRequest,
+								"Body parameters conflict with endpoint query parameters",
+							),
+						);
+					}
+				} else {
+					for (const value of params.getAll(name)) url.searchParams.append(name, value);
+				}
+			}
 			headers.delete("Content-Type");
 			return innerHandler(new Request(url, { method: "GET", headers, signal: request.signal }));
 		}

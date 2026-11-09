@@ -6018,6 +6018,34 @@ export default (QUnit: QUnit) => {
 		}
 
 		module("authority / createAuthenticatedHandler", () => {
+			test("authenticated forwarding preserves fixed selectors and repeated filters", async (t) => {
+				const { ctx, createClientAssertionJwt } = await setupClientAuthContext();
+				let forwarded: URL | undefined;
+				const handler = createAuthenticatedHandler(
+					ctx,
+					async (request) => {
+						forwarded = new URL(request.url);
+						t.strictEqual(request.headers.get("X-Authenticated-Entity"), CA_CLIENT_ID);
+						return new Response("ok");
+					},
+					["private_key_jwt"],
+				);
+				const request = async (extra: string) =>
+					new Request(`${CA_AUTHORITY_ID}/api?tenant=alpha`, {
+						method: "POST",
+						body: `client_assertion=${encodeURIComponent(await createClientAssertionJwt())}&client_assertion_type=${encodeURIComponent(JWT_BEARER_TYPE)}&entity_type=one&entity_type=two${extra}`,
+					});
+				const response = await handler(await request(""));
+				t.equal(response.status, 200);
+				await response.body?.cancel();
+				t.equal(forwarded?.searchParams.get("tenant"), "alpha");
+				t.deepEqual(forwarded?.searchParams.getAll("entity_type"), ["one", "two"]);
+				t.false(forwarded?.searchParams.has("client_assertion"));
+				const conflict = await handler(await request("&tenant=beta"));
+				t.equal(conflict.status, 400);
+				await conflict.body?.cancel();
+			});
+
 			test("optional Trust Mark Status and required fetch leave discovery public", async (t) => {
 				const { ctx, createClientAssertionJwt } = await setupClientAuthContext();
 				const config: AuthorityConfig = {
