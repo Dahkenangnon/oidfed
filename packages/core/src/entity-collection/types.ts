@@ -26,7 +26,12 @@ export interface EntityCollectionCursor {
 	index: number;
 	expiresAt: number;
 }
-/** Implementations must atomically publish snapshots and return detached values. */
+/**
+ * Atomically publish snapshots and return detached values. Keep entries in their
+ * published Entity Identifier order (§3.1.1). Snapshot identifiers name immutable
+ * contents; getCurrent is isolated by anchor. A cursor retains its snapshot identity
+ * and position. Expired or unavailable snapshots must not resolve to newer contents.
+ */
 export interface EntityCollectionStore {
 	publish(snapshot: EntityCollectionSnapshot): Promise<void>;
 	getCurrent(trustAnchor: EntityId): Promise<EntityCollectionSnapshot | undefined>;
