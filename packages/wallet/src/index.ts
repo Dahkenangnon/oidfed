@@ -12,6 +12,7 @@ export type {
 } from "./metadata.js";
 export type {
 	AuthorizationRequestContext,
+	AuthorizationRequestCreationOptions,
 	AuthorizationRequestOptions,
 	PreparedAuthorizationRequest,
 	ValidatedWalletRequest,

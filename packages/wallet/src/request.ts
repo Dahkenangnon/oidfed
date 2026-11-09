@@ -40,12 +40,27 @@ export interface AuthorizationRequestOptions extends WalletTrustOptions {
 		},
 		signal?: AbortSignal,
 	) => boolean | Promise<boolean>;
-	/** Receives active presentation queries after any superior metadata override. */
+	/**
+	 * Approve transaction types and contents after request-level checks pass.
+	 * Receives decoded data and active queries after any superior metadata override.
+	 * Invoked during completion; the protocol engine handles presentation verification.
+	 */
 	readonly verifyTransactionData?: (
 		context: { data: readonly Record<string, unknown>[]; queries: readonly DcqlQuery[] },
 		signal?: AbortSignal,
 	) => boolean | Promise<boolean>;
 }
+
+/** Local validation inputs for signing an OpenID4VP Authorization Request. */
+export interface AuthorizationRequestCreationOptions extends AuthorizationRequestOptions {
+	/**
+	 * Application mapping for the signed scope. Required for transaction validation
+	 * when scope selects the query and a validated superior override supplies none.
+	 * Used locally; the Request Object retains its original scope parameter.
+	 */
+	readonly scopeQuery?: DcqlQuery;
+}
+
 declare const requestPreparationBrand: unique symbol;
 export interface PreparedAuthorizationRequest {
 	readonly [requestPreparationBrand]: true;
@@ -203,6 +218,80 @@ export interface AuthorizationRequestContext {
 	readonly scopeQuery?: DcqlQuery;
 }
 
+/** Wallet Draft 05 §7.1.1 gives superior metadata priority over request queries. */
+function hasSuperiorQueryOverride(chain: PreparedTrustChain): boolean {
+	const superior = chain.statements[1]?.payload;
+	return (
+		superior?.iss !== superior?.sub &&
+		superior?.metadata?.openid_credential_verifier?.dcql_queries !== undefined
+	);
+}
+
+function requestedQueries(
+	request: Record<string, unknown>,
+	scopeQuery: DcqlQuery | undefined,
+): Result<DcqlQuery[]> {
+	const query = DcqlQuerySchema.safeParse(
+		request.dcql_query !== undefined ? request.dcql_query : scopeQuery,
+	);
+	if (!query.success)
+		return failure(
+			request.dcql_query !== undefined
+				? "Invalid DCQL query"
+				: "Scope-to-DCQL mapping must be provided by the application",
+		);
+	return ok([query.data]);
+}
+
+/**
+ * Check transaction structure and references (OpenID4VP §5.1), then enforce
+ * the SD-JWT holder-binding requirement (Appendix B.3.3) for referenced queries.
+ * The application still validates transaction types and actual presentations.
+ * Decode only for inspection: Appendix B.3.3.1 hashes the original encoded
+ * strings, so callers retain those strings in signed and validated requests.
+ */
+function validateTransactionData(
+	value: unknown,
+	queries: readonly DcqlQuery[],
+): Result<Record<string, unknown>[]> {
+	if (!Array.isArray(value) || !value.length) return failure("Unsupported transaction_data");
+	const credentials = queries.flatMap((query) => query.credentials);
+	const ids = new Set(credentials.map((credential) => credential.id));
+	// IDs are unique within a query, but separate superior scenarios can reuse them.
+	// Inspect every occurrence so metadata order cannot hide a binding-disabled query.
+	const bindingDisabledIds = new Set(
+		credentials
+			.filter(
+				(credential) =>
+					credential.format === "dc+sd-jwt" &&
+					credential.require_cryptographic_holder_binding === false,
+			)
+			.map((credential) => credential.id),
+	);
+	try {
+		// Validate every slot, including sparse holes, before decoding or signing (§5.1).
+		const encodedData = z.array(z.string()).parse(value);
+		const data = encodedData.map((encoded) => {
+			return z
+				.looseObject({
+					type: z.string(),
+					credential_ids: z
+						.array(z.string())
+						.min(1)
+						.refine((values) => values.every((id) => ids.has(id))),
+				})
+				.parse(JSON.parse(new TextDecoder().decode(base64url.decode(encoded))));
+		});
+		if (data.some((entry) => entry.credential_ids.some((id) => bindingDisabledIds.has(id))))
+			return failure(
+				"Transaction data requires cryptographic holder binding for SD-JWT credentials",
+			);
+		return ok(data);
+	} catch {
+		return failure("Malformed or unbound transaction data");
+	}
+}
+
 export async function completeRequest(
 	prepared: PreparedAuthorizationRequest,
 	jwt: string,
@@ -265,70 +354,32 @@ export async function completeRequest(
 			if (!allowed.ok) return allowed;
 		}
 	}
-	const superior = saved.chain.statements[1]?.payload;
-	const superiorQueries =
-		superior?.iss !== superior?.sub
-			? superior?.metadata?.openid_credential_verifier?.dcql_queries
-			: undefined;
-	const requestedQueries = (): Result<DcqlQuery[]> => {
-		const query = DcqlQuerySchema.safeParse(
-			request.dcql_query !== undefined ? request.dcql_query : context.scopeQuery,
-		);
-		if (!query.success)
-			return failure(
-				request.dcql_query !== undefined
-					? "Invalid DCQL query"
-					: "Scope-to-DCQL mapping must be provided by the application",
-			);
-		return ok([query.data]);
-	};
+	const superiorOverridesQuery = hasSuperiorQueryOverride(saved.chain);
 	let requested: DcqlQuery[] | undefined;
-	if (superiorQueries === undefined) {
-		const active = requestedQueries();
+	if (!superiorOverridesQuery) {
+		const active = requestedQueries(request, context.scopeQuery);
 		if (!active.ok) return active;
 		requested = active.value;
 	}
 	const queries = (metadata.value.dcql_queries as DcqlQuery[] | undefined) ?? requested;
 	if (!queries) return failure("Superior DCQL metadata did not produce an effective query");
 	if (request.transaction_data !== undefined) {
-		if (
-			!Array.isArray(request.transaction_data) ||
-			!request.transaction_data.length ||
-			!saved.options.verifyTransactionData
-		)
-			return failure("Unsupported transaction_data");
+		if (!saved.options.verifyTransactionData) return failure("Unsupported transaction_data");
 		const transactionQueries = requested ?? queries;
-		try {
-			const ids = new Set(
-				transactionQueries.flatMap((query) => query.credentials.map((credential) => credential.id)),
-			);
-			const data = request.transaction_data.map((encoded: unknown) => {
-				if (typeof encoded !== "string") throw new Error("Invalid transaction data encoding");
-				return z
-					.looseObject({
-						type: z.string(),
-						credential_ids: z
-							.array(z.string())
-							.min(1)
-							.refine((values) => values.every((id) => ids.has(id))),
-					})
-					.parse(JSON.parse(new TextDecoder().decode(base64url.decode(encoded))));
-			});
-			const accepted = await invokePolicy(
-				saved.options.verifyTransactionData,
-				{ data, queries: transactionQueries },
-				saved.options,
-			);
-			if (!accepted.ok) return accepted;
-		} catch {
-			return failure("Malformed or unbound transaction data");
-		}
+		const data = validateTransactionData(request.transaction_data, transactionQueries);
+		if (!data.ok) return data;
+		const accepted = await invokePolicy(
+			saved.options.verifyTransactionData,
+			{ data: data.value, queries: transactionQueries },
+			saved.options,
+		);
+		if (!accepted.ok) return accepted;
 	}
 	const safeRequest: Record<string, unknown> = { ...request };
 	delete safeRequest.client_metadata;
 	delete safeRequest.iss;
 	// Only the superior-metadata case mandates ignoring the requested query (Wallet §7.1.1).
-	if (superiorQueries !== undefined) {
+	if (superiorOverridesQuery) {
 		delete safeRequest.dcql_query;
 		// Remove the plural request field too, so consumers cannot reuse it after the override.
 		delete safeRequest.dcql_queries;
@@ -336,14 +387,13 @@ export async function completeRequest(
 	}
 	const publishedQueries =
 		saved.chain.statements[0]?.payload.metadata?.openid_credential_verifier?.dcql_queries;
-	const querySource =
-		superiorQueries !== undefined
-			? "superior_metadata"
-			: metadata.value.dcql_queries !== undefined
-				? publishedQueries !== undefined
-					? "verifier_metadata"
-					: "metadata_policy"
-				: "request";
+	const querySource = superiorOverridesQuery
+		? "superior_metadata"
+		: metadata.value.dcql_queries !== undefined
+			? publishedQueries !== undefined
+				? "verifier_metadata"
+				: "metadata_policy"
+			: "request";
 	if (saved.options.queryPolicy) {
 		const accepted = await invokePolicy(
 			saved.options.queryPolicy,
@@ -373,7 +423,7 @@ export async function createRequest(
 	id: string,
 	request: Readonly<Record<string, unknown>>,
 	signer: JwtSigner,
-	options: AuthorizationRequestOptions,
+	options: AuthorizationRequestCreationOptions,
 ): Promise<Result<string>> {
 	const payload = {
 		...request,
@@ -388,10 +438,12 @@ export async function createRequest(
 	if ((parsed.data.scope === undefined) === (parsed.data.dcql_query === undefined))
 		return failure("Exactly one DCQL query or scope is required");
 	if (
+		parsed.data.transaction_data === undefined &&
 		parsed.data.dcql_query !== undefined &&
 		!DcqlQuerySchema.safeParse(parsed.data.dcql_query).success
 	)
 		return failure("Invalid DCQL query");
+	let transactionQueries: DcqlQuery[] | undefined;
 	if (options.trustChain) {
 		if (!options.trustAnchors?.size)
 			return failure("Attaching a trust chain requires pinned anchors");
@@ -408,6 +460,26 @@ export async function createRequest(
 		}
 		const completed = await completeTrustChainValidation(prepared.value, context);
 		if (!completed.ok) return completed;
+		if (parsed.data.transaction_data !== undefined && hasSuperiorQueryOverride(prepared.value)) {
+			// The validated statement establishes the override; completed metadata supplies
+			// its policy-processed value. Ignored request queries cannot override it.
+			const metadata = roleMetadata("openid_credential_verifier", id, completed.value);
+			if (!metadata.ok) return metadata;
+			transactionQueries = metadata.value.dcql_queries as DcqlQuery[] | undefined;
+			if (!transactionQueries)
+				return failure("Superior DCQL metadata did not produce an effective query");
+		}
+	}
+	if (parsed.data.transaction_data !== undefined) {
+		if (!transactionQueries) {
+			const active = requestedQueries(parsed.data, options.scopeQuery);
+			if (!active.ok) return active;
+			transactionQueries = active.value;
+		}
+		// Creation checks the request before signing; transaction-type approval and
+		// presentation verification remain with the receiving wallet's application.
+		const data = validateTransactionData(parsed.data.transaction_data, transactionQueries);
+		if (!data.ok) return data;
 	}
 	return signToken(payload, "oauth-authz-req+jwt", signer, options, options.trustChain);
 }

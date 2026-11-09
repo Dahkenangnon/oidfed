@@ -1,14 +1,19 @@
+import { base64url, decodeJwt } from "jose";
 import type QUnit from "qunit";
 import {
 	generateSigningKey,
 	type JWK,
 	JwkSigner,
+	type JwtSigner,
+	MemoryFederationKeyProvider,
 	MemoryReplayStore,
 } from "../../../packages/core/src/index.js";
 import {
 	type AttestationVerificationOptions,
+	type AuthorizationRequestCreationOptions,
 	CredentialIssuerRole,
 	CredentialVerifierRole,
+	type DcqlQuery,
 	type PreparedAuthorizationRequest,
 	WalletProviderRole,
 } from "../../../packages/wallet/src/index.js";
@@ -43,6 +48,326 @@ const proof = (f: Fixture) => ({
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("wallet / transaction holder binding", () => {
+		const bindingError =
+			"Transaction data requires cryptographic holder binding for SD-JWT credentials";
+		const query = (binding?: boolean, id = "identity"): DcqlQuery => ({
+			credentials: [
+				{
+					...walletQuery.credentials[0]!,
+					id,
+					...(binding === undefined ? {} : { require_cryptographic_holder_binding: binding }),
+				},
+			],
+		});
+		const transaction = (...ids: string[]) =>
+			base64url.encode(JSON.stringify({ type: "payment", credential_ids: ids }));
+
+		async function check(
+			t: Assert,
+			f: Fixture,
+			changes: Record<string, unknown>,
+			valid: boolean,
+			config: {
+				scopeQuery?: DcqlQuery;
+				withChain?: boolean;
+				instance?: boolean;
+				error?: string;
+			} = {},
+		) {
+			const payload: Record<string, unknown> = {
+				...f.requestPayload,
+				transaction_data: [transaction("identity")],
+				...changes,
+			};
+			const original = structuredClone(payload);
+			let transactionCalls = 0;
+			let policyCalls = 0;
+			const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
+				{ client_id: f.requestPayload.client_id },
+				f.anchors,
+				{
+					...f.options,
+					verifyTransactionData: () => {
+						transactionCalls++;
+						return true;
+					},
+					queryPolicy: () => {
+						policyCalls++;
+						return true;
+					},
+				},
+			);
+			t.true(prepared.ok, JSON.stringify(prepared));
+			if (!prepared.ok) return;
+			// Sign independently so a producer-side rejection cannot hide a consumer defect.
+			const jwt = await token(payload, f.protocol.verifier.privateKey, "oauth-authz-req+jwt");
+			const checked = await CredentialVerifierRole.completeAuthorizationRequest(
+				prepared.value,
+				jwt,
+				{
+					scopeQuery: config.scopeQuery,
+				},
+			);
+			t.equal(checked.ok, valid, JSON.stringify(checked));
+			t.equal(transactionCalls, valid && payload.transaction_data !== undefined ? 1 : 0);
+			t.equal(policyCalls, valid ? 1 : 0);
+			if (checked.ok) t.deepEqual(checked.value.request.transaction_data, payload.transaction_data);
+			else {
+				t.equal(checked.error.code, "invalid_request");
+				if (config.error) t.equal(checked.error.description, config.error);
+			}
+			const signer = new JwkSigner(f.protocol.verifier.privateKey);
+			let signatures = 0;
+			let creationCallbacks = 0;
+			const countingSigner: JwtSigner = {
+				alg: signer.alg,
+				kid: signer.kid,
+				signJwt: (...args) => {
+					signatures++;
+					return signer.signJwt(...args);
+				},
+			};
+			const options: AuthorizationRequestCreationOptions = {
+				...f.options,
+				scopeQuery: config.scopeQuery,
+				...(config.withChain
+					? { trustChain: f.chains.get(f.ids.verifier)!, trustAnchors: f.anchors }
+					: {}),
+				httpClient: async () => {
+					throw new Error("Creation must use local inputs and supplied evidence");
+				},
+				verifyTransactionData: () => {
+					creationCallbacks++;
+					return false;
+				},
+				queryPolicy: () => {
+					creationCallbacks++;
+					return false;
+				},
+			};
+			const instance = new CredentialVerifierRole({
+				trustAnchors: f.anchors,
+			});
+			instance.initialize({
+				entityId: f.ids.verifier,
+				keyProvider: MemoryFederationKeyProvider.fromJWK(f.keys.verifier.privateKey),
+			});
+			const created = config.instance
+				? await instance.createAuthorizationRequest(payload, countingSigner, options)
+				: await CredentialVerifierRole.createAuthorizationRequest(
+						f.ids.verifier,
+						payload,
+						countingSigner,
+						options,
+					);
+			t.equal(created.ok, valid, JSON.stringify(created));
+			t.equal(signatures, valid ? 1 : 0, "Rejected requests never reach the signer");
+			t.equal(creationCallbacks, 0, "Creation leaves application checks to the receiving wallet");
+			if (created.ok) {
+				const decoded = decodeJwt(created.value);
+				t.deepEqual(decoded.transaction_data, payload.transaction_data);
+				t.deepEqual(decoded.dcql_query, payload.dcql_query);
+				t.equal(decoded.scope, payload.scope);
+				t.false(Object.hasOwn(decoded, "scopeQuery"), "Local scope mapping is not serialized");
+			} else {
+				t.equal(created.error.code, "invalid_request");
+				if (config.error) t.equal(created.error.description, config.error);
+			}
+			t.deepEqual(payload, original, "Validation preserves the caller's payload");
+		}
+
+		test("rejects referenced SD-JWT binding opt-outs and preserves valid boundaries", async (t) => {
+			const f = await walletFederation();
+			await check(t, f, { dcql_query: query(false) }, false, { error: bindingError });
+			for (const binding of [true, undefined])
+				await check(t, f, { dcql_query: query(binding) }, true);
+			await check(t, f, { dcql_query: query(false), transaction_data: undefined }, true);
+			await check(
+				t,
+				f,
+				{
+					dcql_query: {
+						credentials: [...query(true).credentials, ...query(false, "unrelated").credentials],
+					},
+				},
+				true,
+			);
+			await check(
+				t,
+				f,
+				{
+					dcql_query: {
+						credentials: [
+							{
+								id: "identity",
+								format: "application_format",
+								meta: {},
+								require_cryptographic_holder_binding: false,
+							},
+						],
+					},
+				},
+				true,
+			);
+		});
+
+		test("checks every transaction and credential reference", async (t) => {
+			const f = await walletFederation();
+			const dcql_query = {
+				credentials: [...query(true).credentials, ...query(false, "second").credentials],
+			};
+			for (const transaction_data of [
+				[transaction("identity"), transaction("second")],
+				[transaction("identity", "second")],
+			])
+				await check(t, f, { dcql_query, transaction_data }, false, { error: bindingError });
+		});
+
+		test("uses effective superior queries before inspecting overridden request queries", async (t) => {
+			for (const binding of [true, false]) {
+				const f = await walletFederation({ verifierOverride: { dcql_queries: [query(binding)] } });
+				for (const dcql_query of [query(!binding), { invalid: "ignored query" }]) {
+					await check(t, f, { dcql_query }, binding, {
+						withChain: true,
+						error: binding ? undefined : bindingError,
+					});
+				}
+				await check(t, f, { dcql_query: undefined, scope: "identity_scope" }, binding, {
+					withChain: true,
+					instance: true,
+					error: binding ? undefined : bindingError,
+				});
+			}
+		});
+
+		test("keeps selected request queries separate from published scenarios", async (t) => {
+			for (const binding of [true, false]) {
+				const f = await walletFederation({ verifierMetadata: { dcql_queries: [query(!binding)] } });
+				await check(t, f, { dcql_query: query(binding) }, binding, {
+					withChain: true,
+					error: binding ? undefined : bindingError,
+				});
+			}
+		});
+
+		test("checks all superior scenarios sharing a credential ID regardless of order", async (t) => {
+			for (const dcql_queries of [
+				[query(true), query(false)],
+				[query(false), query(true)],
+			]) {
+				const f = await walletFederation({ verifierOverride: { dcql_queries } });
+				await check(t, f, {}, false, { withChain: true, error: bindingError });
+			}
+			const f = await walletFederation({
+				verifierOverride: { dcql_queries: [query(true), query(false, "unrelated")] },
+			});
+			await check(t, f, {}, true, { withChain: true });
+		});
+
+		test("validates scope mappings for static and instance transaction creation", async (t) => {
+			const f = await walletFederation();
+			const scoped = { dcql_query: undefined, scope: "identity_scope" };
+			for (const instance of [false, true]) {
+				for (const binding of [false, true, undefined]) {
+					await check(t, f, scoped, binding !== false, {
+						scopeQuery: query(binding),
+						instance,
+						error: binding === false ? bindingError : undefined,
+					});
+				}
+				for (const scopeQuery of [undefined, {} as DcqlQuery]) {
+					await check(t, f, scoped, false, {
+						scopeQuery,
+						instance,
+						error: "Scope-to-DCQL mapping must be provided by the application",
+					});
+				}
+			}
+			await check(t, f, { dcql_query: query(false) }, false, {
+				scopeQuery: query(true),
+				error: bindingError,
+			});
+			await check(t, f, { dcql_query: query(true) }, true, { scopeQuery: query(false) });
+			const created = await CredentialVerifierRole.createAuthorizationRequest(
+				f.ids.verifier,
+				{ ...f.requestPayload, ...scoped },
+				new JwkSigner(f.protocol.verifier.privateKey),
+				f.options,
+			);
+			t.true(created.ok, "Scope creation without transactions needs no local mapping");
+		});
+
+		test("rejects malformed transaction data and unbound IDs before signing", async (t) => {
+			const f = await walletFederation();
+			for (const transaction_data of [
+				null,
+				[],
+				{},
+				[123],
+				["bad"],
+				[transaction("unknown")],
+				...[
+					{},
+					{ type: "payment" },
+					{ type: "payment", credential_ids: [] },
+					{ type: 123, credential_ids: ["identity"] },
+				].map((data) => [base64url.encode(JSON.stringify(data))]),
+			]) {
+				await check(t, f, { transaction_data }, false, {
+					error:
+						!Array.isArray(transaction_data) || !transaction_data.length
+							? "Unsupported transaction_data"
+							: "Malformed or unbound transaction data",
+				});
+			}
+		});
+
+		test("rejects sparse transaction arrays before signing", async (t) => {
+			const f = await walletFederation();
+			const encoded = transaction("identity");
+			for (const transaction_data of [
+				new Array<string>(1),
+				Object.assign(new Array<string>(2), { 0: encoded }),
+				Object.assign(new Array<string>(2), { 1: encoded }),
+			]) {
+				await check(t, f, { transaction_data }, false, {
+					error: "Malformed or unbound transaction data",
+				});
+			}
+		});
+
+		test("preserves encoded transaction strings and extension fields", async (t) => {
+			const f = await walletFederation();
+			const encoded = base64url.encode(
+				'{ "custom": { "amount": 12 }, "credential_ids": ["identity"], "type": "application_payment" }',
+			);
+			await check(t, f, { transaction_data: [encoded] }, true);
+			let received: unknown;
+			const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
+				{ client_id: f.requestPayload.client_id },
+				f.anchors,
+				{
+					...f.options,
+					verifyTransactionData: ({ data }) => {
+						received = data;
+						return true;
+					},
+				},
+			);
+			t.true(prepared.ok);
+			if (!prepared.ok) return;
+			const jwt = await token(
+				{ ...f.requestPayload, transaction_data: [encoded] },
+				f.protocol.verifier.privateKey,
+				"oauth-authz-req+jwt",
+			);
+			t.true((await CredentialVerifierRole.completeAuthorizationRequest(prepared.value, jwt)).ok);
+			t.deepEqual(received, [
+				{ custom: { amount: 12 }, credential_ids: ["identity"], type: "application_payment" },
+			]);
+		});
+	});
 	module("wallet / provider attestation keys", () => {
 		for (const source of ["jwks", "jwks_uri", "signed_jwks_uri"] as const) {
 			test(`verifies attestation signatures with resolved ${source} keys`, async (t) => {

@@ -22,6 +22,7 @@ import {
 import { roleSchemas, type WalletRoleType } from "./metadata.js";
 import {
 	type AuthorizationRequestContext,
+	type AuthorizationRequestCreationOptions,
 	type AuthorizationRequestOptions,
 	completeRequest,
 	createRequest,
@@ -310,7 +311,7 @@ export class CredentialVerifierRole extends AttestationConsumer {
 		id: string,
 		request: Readonly<Record<string, unknown>>,
 		signer: JwtSigner,
-		options: AuthorizationRequestOptions = {},
+		options: AuthorizationRequestCreationOptions = {},
 	) {
 		try {
 			entityId(id);
@@ -366,7 +367,7 @@ export class CredentialVerifierRole extends AttestationConsumer {
 	createAuthorizationRequest(
 		request: Readonly<Record<string, unknown>>,
 		signer: JwtSigner,
-		options: AuthorizationRequestOptions = {},
+		options: AuthorizationRequestCreationOptions = {},
 	) {
 		return CredentialVerifierRole.createAuthorizationRequest(
 			this.identity().entityId,
