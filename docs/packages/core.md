@@ -82,6 +82,8 @@ EC and Subordinate Statement caches expire at the earlier of the statement's `ex
 
 The HTTP method helpers return 405 with `Allow` and the `method_not_allowed` extension code. Their JSON body includes `error_description`, following the error format in [§8.9](https://openid.net/specs/openid-federation-1_0.html#section-8.9).
 
+`maxTotalFetches` counts calls to the configured HTTP client. Redirects followed inside that client can make additional network exchanges. Deployments needing a limit on every exchange should enforce it in their HTTP client; endpoints that reject redirects retain that restriction.
+
 ### Verifying Resolve Responses
 
 Use `verifyResolveResponse` with the resolver's trusted public keys, its Entity Identifier, and the requested subject. For an authenticated request, supply your application's Entity Identifier as `expectedAudience`:
