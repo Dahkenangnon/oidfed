@@ -21,6 +21,8 @@ export async function walletFederation(
 		verifierOverride?: Record<string, unknown>;
 		issuerMetadata?: Record<string, unknown>;
 		providerMetadata?: Record<string, unknown>;
+		issuerServerMetadata?: Record<string, unknown>;
+		serverMetadata?: Record<string, unknown>;
 	} = {},
 ) {
 	let time = 1500;
@@ -82,7 +84,11 @@ export async function walletFederation(
 				jwks: { keys: [protocol.issuer.publicKey] },
 				...config.issuerMetadata,
 			},
-			oauth_authorization_server: { issuer: ids.issuer },
+			oauth_authorization_server: {
+				issuer: ids.issuer,
+				authorization_details_types_supported: ["openid_credential"],
+				...config.issuerServerMetadata,
+			},
 		},
 		verifier: {
 			openid_credential_verifier: {
@@ -94,7 +100,13 @@ export async function walletFederation(
 				...config.verifierMetadata,
 			},
 		},
-		server: { oauth_authorization_server: { issuer: ids.server } },
+		server: {
+			oauth_authorization_server: {
+				issuer: ids.server,
+				authorization_details_types_supported: ["openid_credential"],
+				...config.serverMetadata,
+			},
+		},
 	};
 	const chains = new Map<string, readonly string[]>();
 	const routes = new Map<string, () => Response>();

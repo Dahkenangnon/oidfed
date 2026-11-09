@@ -12,9 +12,11 @@ import { splitInformationalClaim } from "../language-tags.js";
 import { MemoryReplayStore } from "../memory-replay-store.js";
 import {
 	COLLECTION_INFO_CLAIMS,
+	EntityCollectionEntitySchema,
 	type EntityCollectionRequestParams,
 	EntityCollectionRequestSchema,
 	type EntityCollectionResponse,
+	EntityCollectionResponseSchema,
 } from "../schemas/entity-collection.js";
 import { type EntityId, entityId, isValidEntityId, nowSeconds } from "../types.js";
 import { authenticateCollectionRequest } from "./auth.js";
@@ -143,6 +145,10 @@ export class EntityCollectionService {
 				entityCount: built.value.entries.length,
 			});
 		} catch (cause) {
+			this.config.options?.logger?.error("Collection snapshot publication failed", {
+				trustAnchor: anchor,
+				cause,
+			});
 			return err({
 				code: FederationErrorCode.ServerError,
 				description: "Collection publication failed",
@@ -238,6 +244,15 @@ export class EntityCollectionService {
 					code: FederationErrorCode.ServerError,
 					description: "Invalid collection storage namespace",
 				});
+			// Custom stores share the wire contract. Check envelope data before any
+			// cursor allocation; each projected entity is checked before entering the page.
+			if (
+				!EntityCollectionResponseSchema.safeParse({
+					entities: [],
+					last_updated: snapshot.lastUpdated,
+				}).success
+			)
+				throw new Error("Invalid collection snapshot timestamp");
 			let validUntil = now + (this.config.cursorTtlSeconds ?? 900);
 			const entries = snapshot.entries.filter((entry) => {
 				if (entry.expiresAt <= now || (entry.chainExpiresAt ?? Infinity) <= now) return false;
@@ -287,6 +302,8 @@ export class EntityCollectionService {
 				});
 			for (const entry of entries.slice(start, start + limit)) {
 				const projected = projectCollectionEntity(entry.entity, request, supportedInfoClaims);
+				if (!EntityCollectionEntitySchema.safeParse(projected).success)
+					throw new Error("Invalid projected collection entity");
 				const size = encoder.encode(JSON.stringify(projected)).byteLength + (page.length ? 1 : 0);
 				if (bytes + size > maxBytes) {
 					if (!page.length)

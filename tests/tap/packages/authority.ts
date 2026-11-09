@@ -95,6 +95,7 @@ import {
 	entityId,
 	FederationEndpoint,
 	FederationErrorCode,
+	fetchExtendedSubordinatesList,
 	generateSigningKey,
 	InternalErrorCode,
 	isOk,
@@ -183,6 +184,159 @@ async function createTestContext(overrides?: TestContextOverrides): Promise<{
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("authority / bounded publication", () => {
+		test("lifecycle events compare public extensions and ignore key ordering", async (t) => {
+			const f = await SubordinateEventsFixture.fixture();
+			await f.authority.registerSubordinate(f.record);
+			let key = { ...f.clientKey.publicKey };
+			for (const update of [
+				{ exp: 3000 },
+				{ nbf: 1000 },
+				{ revoked: 1600 },
+				{ extension: { version: 1 } },
+			]) {
+				key = { ...key, ...update };
+				await f.authority.updateSubordinate(SubordinateEventsFixture.subject, {
+					jwks: { keys: [key] },
+				});
+			}
+			const history = await f.authority.getSubordinateEvents(SubordinateEventsFixture.subject);
+			const decoded = decodeEntityStatement(history);
+			if (!decoded.ok) throw new Error(decoded.error.description);
+			t.deepEqual(
+				(decoded.value.payload.federation_registration_events as { event: string }[]).map(
+					(event) => event.event,
+				),
+				["registration", "jwks_update", "jwks_update", "jwks_update", "jwks_update"],
+			);
+			const second = { ...key, kid: "second-key" };
+			await f.authority.updateSubordinate(SubordinateEventsFixture.subject, {
+				jwks: { keys: [key, second] },
+			});
+			const readHistory = async () => {
+				const parsed = decodeEntityStatement(
+					await f.authority.getSubordinateEvents(SubordinateEventsFixture.subject),
+				);
+				if (!parsed.ok) throw new Error(parsed.error.description);
+				return parsed.value.payload;
+			};
+			const before = await readHistory();
+			await f.authority.updateSubordinate(SubordinateEventsFixture.subject, {
+				jwks: { keys: [second, key] },
+			});
+			t.deepEqual(await readHistory(), before);
+			await t.rejects(
+				f.authority.updateSubordinate(SubordinateEventsFixture.subject, {
+					jwks: { keys: [{ ...key, d: "private" }] },
+				}),
+			);
+			t.deepEqual((await f.storage.subordinates.get(SubordinateEventsFixture.subject))?.jwks.keys, [
+				second,
+				key,
+			]);
+			t.deepEqual(await readHistory(), before, "rejected update preserves history");
+			await f.storage.subordinates.update(SubordinateEventsFixture.subject, {
+				jwks: { keys: [{ ...key, d: "legacy" }] },
+			});
+			await f.authority.updateSubordinate(SubordinateEventsFixture.subject, {
+				jwks: { keys: [key] },
+			});
+			t.deepEqual((await f.storage.subordinates.get(SubordinateEventsFixture.subject))?.jwks.keys, [
+				key,
+			]);
+		});
+		test("byte-limited pages preserve every record and include actual cursor overhead", async (t) => {
+			const { ctx, storage, publicKey } = await createTestContext({
+				options: { clock: { now: () => 1500 } },
+			});
+			const ids = Array.from({ length: 6 }, (_, i) =>
+				entityId(`https://member.example/${i}-${"long".repeat(i)}`),
+			);
+			for (const id of ids)
+				await storage.subordinates.add({
+					entityId: id,
+					jwks: { keys: [publicKey] },
+					metadata: { openid_relying_party: { organization_name: "é🙂".repeat(8) } },
+					createdAt: -0.5,
+					updatedAt: 1500.5,
+				});
+			const unrestricted = createExtendedListHandler(ctx);
+			const first = await (
+				await unrestricted(
+					new Request(
+						"https://authority.example/list?claims=metadata&audit_timestamps=true&limit=1",
+					),
+				)
+			).text();
+			const budget = new TextEncoder().encode(first).byteLength + 80;
+			const handler = createExtendedListHandler(ctx, {
+				maxResponseBytes: budget,
+				storeBatchSize: 4,
+			});
+			const seen: string[] = [];
+			let cursor: string | undefined;
+			for (let page = 0; page < ids.length + 1; page++) {
+				const url = new URL("https://authority.example/list?claims=metadata&audit_timestamps=true");
+				if (cursor !== undefined) url.searchParams.set("from", cursor);
+				const response = await handler(new Request(url));
+				t.equal(response.status, 200);
+				const text = await response.text();
+				t.ok(new TextEncoder().encode(text).byteLength <= budget);
+				const body = JSON.parse(text);
+				seen.push(...body.immediate_subordinate_entities.map((entry: { id: string }) => entry.id));
+				for (const entry of body.immediate_subordinate_entities) {
+					t.equal(entry.registered, -0.5);
+					t.ok(entry.metadata);
+				}
+				if (body.next === undefined) break;
+				t.notEqual(body.next, cursor);
+				cursor = body.next;
+			}
+			t.deepEqual(seen, ids);
+			const exact = createExtendedListHandler(ctx, {
+				maxResponseBytes: new TextEncoder().encode(first).byteLength,
+			});
+			t.equal(
+				(
+					await exact(
+						new Request(
+							"https://authority.example/list?claims=metadata&audit_timestamps=true&limit=1",
+						),
+					)
+				).status,
+				200,
+			);
+			const tooSmall = createExtendedListHandler(ctx, { maxResponseBytes: 50 });
+			t.equal(
+				(await tooSmall(new Request("https://authority.example/list?claims=metadata"))).status,
+				500,
+			);
+		});
+		test("default byte budget interoperates with the default client for signed statements", async (t) => {
+			const { ctx, storage, publicKey } = await createTestContext();
+			for (let i = 0; i < 100; i++)
+				await storage.subordinates.add({
+					entityId: entityId(`https://member.example/${String(i).padStart(3, "0")}`),
+					jwks: { keys: [publicKey] },
+					metadata: { openid_relying_party: { organization_name: "x".repeat(5000) } },
+					createdAt: 1500,
+					updatedAt: 1500,
+				});
+			const handler = createExtendedListHandler(ctx);
+			const result = await fetchExtendedSubordinatesList(
+				"https://authority.example/list",
+				undefined,
+				{ httpClient: (input, init) => handler(new Request(String(input), init)) },
+			);
+			t.true(result.ok);
+			if (result.ok) {
+				t.ok(result.value.next);
+				t.ok(result.value.immediate_subordinate_entities.length < 100);
+				t.ok(result.value.immediate_subordinate_entities[0]?.subordinate_statement);
+			}
+		});
+	});
+
 	module("authority / listing limits and event publication", () => {
 		test("invalid listing configuration fails before serving a page", async (t) => {
 			const { ctx } = await createTestContext();
@@ -190,6 +344,7 @@ export default (QUnit: QUnit) => {
 				"maxPageSize",
 				"defaultPageSize",
 				"maxStorePagesPerRequest",
+				"maxResponseBytes",
 				"storeBatchSize",
 			])
 				for (const value of [0, -1, NaN, Infinity, 1.5, Number.MAX_SAFE_INTEGER + 1])

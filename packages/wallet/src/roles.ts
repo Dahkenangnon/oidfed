@@ -2,6 +2,8 @@ import {
 	type EntityContext,
 	type EntityRole,
 	entityId,
+	err,
+	FederationErrorCode,
 	type JWKSet,
 	type JwtSigner,
 	nowSeconds,
@@ -19,7 +21,12 @@ import {
 	type VerifiedWalletAttestation,
 	verifyAttestation,
 } from "./attestation.js";
-import { effectiveRoleSchemas, roleSchemas, type WalletRoleType } from "./metadata.js";
+import {
+	effectiveRoleSchemas,
+	publicationRoleSchemas,
+	roleSchemas,
+	type WalletRoleType,
+} from "./metadata.js";
 import {
 	type AuthorizationRequestContext,
 	type AuthorizationRequestCreationOptions,
@@ -60,11 +67,12 @@ abstract class WalletRole implements EntityRole {
 		this.context = context;
 	}
 	validateMetadata(metadata: Readonly<Record<string, unknown>>, context: EntityContext): void {
-		const parsed = roleSchemas[this.type].safeParse(metadata);
+		const parsed = publicationRoleSchemas[this.type].safeParse(metadata);
 		if (!parsed.success)
 			throw new TypeError(`Invalid ${this.type} metadata: ${parsed.error.message}`);
 		if (
 			this.type === "openid_credential_issuer" &&
+			parsed.data.credential_issuer !== undefined &&
 			parsed.data.credential_issuer !== context.entityId
 		)
 			throw new TypeError("credential_issuer must equal the host entity identifier");
@@ -271,6 +279,27 @@ export class CredentialIssuerRole extends AttestationConsumer {
 			if (!found) return failure("Authorization server lacks valid federation metadata");
 			authorizationServers.push(found);
 		}
+		// OpenID4VCI §12.2.4 applies this condition to each configuration without scope.
+		const configurations = issuer.value.metadata.credential_configurations_supported as Record<
+			string,
+			{ scope?: string }
+		>;
+		if (
+			Object.values(configurations).some((configuration) => configuration.scope === undefined) &&
+			!authorizationServers.some((server) => {
+				const supported = server.metadata.authorization_details_types_supported;
+				return (
+					Array.isArray(supported) &&
+					supported.every((value) => typeof value === "string") &&
+					supported.includes("openid_credential")
+				);
+			})
+		)
+			return err({
+				code: FederationErrorCode.InvalidMetadata,
+				description:
+					"Scopeless credential configurations require an authorization server supporting openid_credential authorization details",
+			});
 		return ok({ ...issuer.value, authorizationServers });
 	}
 	discover(id: string, options: WalletTrustOptions = {}) {

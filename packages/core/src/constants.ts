@@ -114,6 +114,7 @@ export const InternalErrorCode = {
 	MetadataPolicyViolation: "ERR_METADATA_POLICY_VIOLATION",
 	ConstraintViolation: "ERR_CONSTRAINT_VIOLATION",
 	Network: "ERR_NETWORK",
+	InvalidResponse: "ERR_INVALID_RESPONSE",
 	TrustAnchorUnknown: "ERR_TRUST_ANCHOR_UNKNOWN",
 	Timeout: "ERR_TIMEOUT",
 	UnsupportedAlg: "ERR_UNSUPPORTED_ALG",

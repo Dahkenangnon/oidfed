@@ -74,7 +74,7 @@ export async function fetchEntityCollection(
 		/* Return a protocol failure for invalid JSON. */
 	}
 	return err({
-		code: InternalErrorCode.Network,
+		code: InternalErrorCode.InvalidResponse,
 		description: "Invalid entity collection response",
 	});
 }

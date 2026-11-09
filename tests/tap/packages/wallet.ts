@@ -49,6 +49,484 @@ const proof = (f: Fixture) => ({
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("wallet / publication and protocol boundaries", () => {
+		test("publication permits superior-completed metadata while discovery requires completeness", async (t) => {
+			const f = await walletFederation({ issuerMetadata: { credential_endpoint: undefined } });
+			for (const Role of [WalletProviderRole, CredentialIssuerRole, CredentialVerifierRole]) {
+				const role = new Role({ metadata: {} });
+				role.validateMetadata(
+					{},
+					{
+						entityId: f.ids.issuer,
+						keyProvider: MemoryFederationKeyProvider.fromJWK(f.keys.issuer.privateKey),
+					},
+				);
+				t.false(Role.parseMetadata({}).success, "effective metadata still requires its fields");
+			}
+			const role = new CredentialIssuerRole({});
+			const context = {
+				entityId: f.ids.issuer,
+				keyProvider: MemoryFederationKeyProvider.fromJWK(f.keys.issuer.privateKey),
+			};
+			t.throws(() =>
+				role.validateMetadata({ credential_endpoint: "http://insecure.example" }, context),
+			);
+			t.throws(() => role.validateMetadata({ credential_issuer: f.ids.provider }, context));
+			t.false((await CredentialIssuerRole.discover(f.ids.issuer, f.anchors, f.options)).ok);
+			const chain = f.chains.get(f.ids.issuer)!;
+			const ss = await signEntityStatement(
+				{
+					...decodeJwt(chain[1]!),
+					metadata: {
+						openid_credential_issuer: { credential_endpoint: `${f.ids.issuer}/credentials` },
+					},
+				},
+				new JwkSigner(f.keys.anchor.privateKey),
+			);
+			f.chains.set(f.ids.issuer, [chain[0]!, ss, chain[2]!]);
+			t.true((await CredentialIssuerRole.discover(f.ids.issuer, f.anchors, f.options)).ok);
+		});
+		test("request scope and credential scope use their respective OAuth grammars", async (t) => {
+			const f = await walletFederation();
+			const { dcql_query: _, ...request } = f.requestPayload;
+			for (const value of ["", " ", 'a"b', "a\\b", "é", "a  b", " a"]) {
+				t.false(
+					(
+						await CredentialVerifierRole.createAuthorizationRequest(
+							f.ids.verifier,
+							{ ...request, scope: value },
+							new JwkSigner(f.protocol.verifier.privateKey),
+							f.options,
+						)
+					).ok,
+					JSON.stringify(value),
+				);
+			}
+			for (const scope of ["identity", "identity address", "https://example.com/scope"])
+				t.true(
+					(
+						await CredentialVerifierRole.createAuthorizationRequest(
+							f.ids.verifier,
+							{ ...request, scope },
+							new JwkSigner(f.protocol.verifier.privateKey),
+							f.options,
+						)
+					).ok,
+				);
+			for (const scope of ["", "cred openid", "é", 'a"b', "identity"]) {
+				const metadata = {
+					...f.metadata.issuer.openid_credential_issuer,
+					credential_configurations_supported: {
+						identity: { format: "dc+sd-jwt", vct: "test", scope },
+					},
+				};
+				t.equal(CredentialIssuerRole.parseMetadata(metadata).success, scope === "identity");
+			}
+			const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
+				{ client_id: request.client_id },
+				f.anchors,
+				f.options,
+			);
+			if (!prepared.ok) throw new Error(prepared.error.description);
+			for (const scope of ["", 'a"b']) {
+				const jwt = await token(
+					{ ...request, scope },
+					f.protocol.verifier.privateKey,
+					"oauth-authz-req+jwt",
+				);
+				t.false(
+					(
+						await CredentialVerifierRole.completeAuthorizationRequest(prepared.value, jwt, {
+							scopeQuery: walletQuery,
+						})
+					).ok,
+				);
+			}
+		});
+		test("known authority identifiers and nonblank mode and format names retain extensions", async (t) => {
+			const f = await walletFederation();
+			for (const [type, values, expected] of [
+				["openid_federation", [f.ids.anchor], true],
+				["openid_federation", ["http://bad.example"], false],
+				["aki", ["AQI"], true],
+				["aki", ["%%%"], false],
+				["aki", ["AB"], false],
+				["custom", ["opaque"], true],
+				["etsi_tl", ["opaque-list-id"], true],
+				["", ["value"], false],
+			] as const) {
+				const query = {
+					credentials: [
+						{
+							...walletQuery.credentials[0]!,
+							trusted_authorities: [{ type, values: [...values] }],
+						},
+					],
+				};
+				t.equal(
+					CredentialVerifierRole.parseMetadata({
+						vp_formats_supported: { "dc+sd-jwt": {} },
+						dcql_queries: [query],
+					}).success,
+					expected,
+					type + values.join(),
+				);
+			}
+			for (const name of ["", " ", "future_format"])
+				t.equal(
+					CredentialVerifierRole.parseMetadata({
+						vp_formats_supported: { [name]: { extension: true } },
+					}).success,
+					name === "future_format",
+				);
+			for (const response_mode of ["", " ", "extension_mode"])
+				t.equal(
+					(
+						await CredentialVerifierRole.createAuthorizationRequest(
+							f.ids.verifier,
+							{ ...f.requestPayload, response_mode },
+							new JwkSigner(f.protocol.verifier.privateKey),
+							f.options,
+						)
+					).ok,
+					response_mode === "extension_mode",
+				);
+		});
+		test("active formats must be advertised when effective metadata is available", async (t) => {
+			const f = await walletFederation();
+			const query = {
+				credentials: [{ id: "mdoc", format: "mso_mdoc", meta: { doctype_value: "test" } }],
+			};
+			const payload = { ...f.requestPayload, dcql_query: query };
+			const jwt = await token(payload, f.protocol.verifier.privateKey, "oauth-authz-req+jwt");
+			const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
+				{ client_id: payload.client_id },
+				f.anchors,
+				f.options,
+			);
+			if (!prepared.ok) throw new Error(prepared.error.description);
+			t.false((await CredentialVerifierRole.completeAuthorizationRequest(prepared.value, jwt)).ok);
+			t.false(
+				(
+					await CredentialVerifierRole.createAuthorizationRequest(
+						f.ids.verifier,
+						payload,
+						new JwkSigner(f.protocol.verifier.privateKey),
+						{ ...f.options, trustChain: f.chains.get(f.ids.verifier), trustAnchors: f.anchors },
+					)
+				).ok,
+			);
+			const overridden = await walletFederation({
+				verifierOverride: { dcql_queries: [walletQuery] },
+			});
+			const prep = await CredentialVerifierRole.prepareAuthorizationRequest(
+				{ client_id: payload.client_id },
+				overridden.anchors,
+				overridden.options,
+			);
+			if (!prep.ok) throw new Error(prep.error.description);
+			const ignored = await token(
+				payload,
+				overridden.protocol.verifier.privateKey,
+				"oauth-authz-req+jwt",
+			);
+			t.true(
+				(await CredentialVerifierRole.completeAuthorizationRequest(prep.value, ignored)).ok,
+				"superior override supplies the active format",
+			);
+		});
+		test("encryption eligibility considers usage and algorithms on the same key", async (t) => {
+			const f = await walletFederation();
+			for (const [changes, expected] of [
+				[{ alg: "ECDH-ES", use: "sig" }, false],
+				[{ alg: "ECDH-ES", key_ops: ["verify"] }, false],
+				[{ alg: "ES256" }, false],
+				[{ alg: "EdDSA", use: "enc" }, false],
+				[{ alg: "HS256", use: "enc" }, false],
+				[{ alg: "none" }, false],
+				[{ alg: "ECDH-ES", use: "enc", key_ops: ["deriveBits"] }, true],
+				[{ alg: "future-encryption", use: "enc" }, true],
+			] as const) {
+				const key = { ...f.protocol.issuer.publicKey, ...changes };
+				t.equal(
+					CredentialIssuerRole.parseMetadata({
+						...f.metadata.issuer.openid_credential_issuer,
+						credential_request_encryption: {
+							jwks: { keys: [key] },
+							enc_values_supported: ["A256GCM"],
+							encryption_required: true,
+						},
+					}).success,
+					expected,
+					JSON.stringify(changes),
+				);
+			}
+		});
+		test("each scopeless configuration needs a capable discovered authorization server", async (t) => {
+			for (const supported of [undefined, [], ["other"], ["openid_credential"]]) {
+				const f = await walletFederation({
+					issuerMetadata: {
+						authorization_servers: ["https://issuer.example", "https://server.example"],
+					},
+					issuerServerMetadata: { authorization_details_types_supported: [] },
+					serverMetadata: { authorization_details_types_supported: supported },
+				});
+				const result = await CredentialIssuerRole.discover(f.ids.issuer, f.anchors, f.options);
+				t.equal(result.ok, supported?.includes("openid_credential") ?? false);
+				if (!result.ok) t.equal(result.error.code, "invalid_metadata");
+			}
+			const scoped = { format: "dc+sd-jwt", vct: "test", scope: "credential" };
+			for (const mixed of [false, true]) {
+				const f = await walletFederation({
+					issuerServerMetadata: { authorization_details_types_supported: undefined },
+					issuerMetadata: {
+						credential_configurations_supported: {
+							scoped,
+							...(mixed ? { unscoped: { format: "dc+sd-jwt", vct: "other" } } : {}),
+						},
+					},
+				});
+				t.equal(
+					(await CredentialIssuerRole.discover(f.ids.issuer, f.anchors, f.options)).ok,
+					!mixed,
+				);
+			}
+		});
+		test("expired embedded chains recover online while caller evidence and offline limits remain authoritative", async (t) => {
+			const f = await walletFederation();
+			const oldProvider = f.chains.get(f.ids.provider)!;
+			const oldVerifier = f.chains.get(f.ids.verifier)!;
+			const fresh = async (chain: readonly string[], name: "provider" | "verifier") =>
+				Promise.all(
+					chain.map((jwt) => {
+						const payload = decodeJwt(jwt);
+						return signEntityStatement(
+							{ ...payload, iat: 5500, exp: 10000 },
+							new JwkSigner(
+								payload.iss === f.ids[name] ? f.keys[name].privateKey : f.keys.anchor.privateKey,
+							),
+						);
+					}),
+				);
+			const freshProvider = await fresh(oldProvider, "provider");
+			const freshVerifier = await fresh(oldVerifier, "verifier");
+			for (const [name, chain] of [
+				["provider", freshProvider],
+				["verifier", freshVerifier],
+			] as const) {
+				f.routes.set(
+					`${f.ids[name]}/.well-known/openid-federation`,
+					() =>
+						new Response(chain[0], {
+							headers: { "content-type": "application/entity-statement+jwt" },
+						}),
+				);
+				f.routes.set(
+					`${f.ids.anchor}/fetch?sub=${encodeURIComponent(f.ids[name])}`,
+					() =>
+						new Response(chain[1], {
+							headers: { "content-type": "application/entity-statement+jwt" },
+						}),
+				);
+			}
+			f.routes.set(
+				`${f.ids.anchor}/.well-known/openid-federation`,
+				() =>
+					new Response(freshProvider[2], {
+						headers: { "content-type": "application/entity-statement+jwt" },
+					}),
+			);
+			const att = await token(
+				{ ...attestation(f), exp: 9000 },
+				f.protocol.provider.privateKey,
+				"oauth-client-attestation+jwt",
+				{ trust_chain: oldProvider },
+			);
+			f.setTime(6000);
+			const { entityChains: _, ...online } = f.options;
+			const verify = (
+				options: import("../../../packages/wallet/src/index.js").WalletTrustOptions = online,
+			) => CredentialIssuerRole.verifyWalletAttestation(att, f.anchors, options);
+			t.true((await verify()).ok);
+			t.ok(f.requests.length > 0, "expired hint leads to fresh discovery");
+			f.requests.length = 0;
+			t.true((await verify({ ...online, trustChain: freshProvider, offline: true })).ok);
+			t.true(
+				(
+					await verify({
+						...online,
+						entityChains: new Map([[f.ids.provider, freshProvider]]),
+						offline: true,
+					})
+				).ok,
+			);
+			t.false((await verify({ ...online, offline: true })).ok);
+			t.false((await verify({ ...online, trustChain: oldProvider })).ok);
+			t.equal(
+				f.requests.length,
+				0,
+				"caller-supplied and offline failures do not trigger discovery",
+			);
+			t.false((await verify({ ...online, maxTotalFetches: 1 })).ok);
+			const controller = new AbortController();
+			controller.abort();
+			f.requests.length = 0;
+			t.false((await verify({ ...online, signal: controller.signal })).ok);
+			t.equal(f.requests.length, 0);
+			const malformed = await token(
+				{ ...attestation(f), exp: 9000 },
+				f.protocol.provider.privateKey,
+				"oauth-client-attestation+jwt",
+				{ trust_chain: [] },
+			);
+			t.false(
+				(await CredentialIssuerRole.verifyWalletAttestation(malformed, f.anchors, online)).ok,
+			);
+			t.false((await verify({ ...online, maxChainDepth: 0 })).ok);
+			t.equal(f.requests.length, 0, "malformed and oversized evidence is rejected before fetching");
+			const wrongSignature = await token(
+				{ ...attestation(f), exp: 9000 },
+				f.protocol.issuer.privateKey,
+				"oauth-client-attestation+jwt",
+				{ trust_chain: freshProvider },
+			);
+			t.false(
+				(await CredentialIssuerRole.verifyWalletAttestation(wrongSignature, f.anchors, online)).ok,
+			);
+			t.equal(f.requests.length, 0, "signature rejection does not cause fresh discovery");
+			const malformedStatements = await token(
+				{ ...attestation(f), exp: 9000 },
+				f.protocol.provider.privateKey,
+				"oauth-client-attestation+jwt",
+				{ trust_chain: ["not-a-jwt"] },
+			);
+			t.true(
+				(await CredentialIssuerRole.verifyWalletAttestation(malformedStatements, f.anchors, online))
+					.ok,
+				"unusable statements in a correctly shaped hint allow fresh discovery",
+			);
+			t.ok(f.requests.length > 0);
+			f.requests.length = 0;
+			const jwt = await token(
+				{ ...f.requestPayload, iat: 5800, exp: 9000 },
+				f.protocol.verifier.privateKey,
+				"oauth-authz-req+jwt",
+				{ trust_chain: oldVerifier },
+			);
+			const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
+				{ client_id: f.requestPayload.client_id, request: jwt },
+				f.anchors,
+				online,
+			);
+			t.true(prepared.ok);
+			if (prepared.ok)
+				t.true((await CredentialVerifierRole.completeAuthorizationRequest(prepared.value, jwt)).ok);
+			f.requests.length = 0;
+			t.true(
+				(
+					await CredentialVerifierRole.prepareAuthorizationRequest(
+						{ client_id: f.requestPayload.client_id, request: jwt },
+						f.anchors,
+						{ ...online, trustChain: freshVerifier, offline: true },
+					)
+				).ok,
+			);
+			t.equal(f.requests.length, 0);
+		});
+
+		test("attestation creation preserves historical dates and valid delayed activation", async (t) => {
+			const f = await walletFederation();
+			for (const [claims, expected] of [
+				[{}, true],
+				[{ iat: -0.5 }, true],
+				[{ iat: 1500 }, true],
+				[{ iat: 1501 }, false],
+				[{ nbf: 1800 }, true],
+				[{ nbf: 4000 }, false],
+				[{ nbf: 5000 }, false],
+			] as const) {
+				const result = await WalletProviderRole.createWalletAttestation(
+					f.ids.provider,
+					{
+						subject: "wallet",
+						confirmationKey: f.protocol.issuer.publicKey,
+						expiresAt: 4000,
+						claims,
+					},
+					new JwkSigner(f.protocol.provider.privateKey),
+					f.options,
+				);
+				t.equal(result.ok, expected, JSON.stringify(claims));
+				if (result.ok)
+					t.equal(decodeJwt(result.value).iat, "iat" in claims ? claims.iat : undefined);
+			}
+		});
+		test("media type equivalents work across attestations, proofs, and inline requests", async (t) => {
+			const f = await walletFederation();
+			for (const prefix of ["", "application/"]) {
+				const att = await token(
+					attestation(f),
+					f.protocol.provider.privateKey,
+					`${prefix}OAUTH-CLIENT-ATTESTATION+JWT`,
+				);
+				const pop = await token(
+					proof(f),
+					f.protocol.issuer.privateKey,
+					`${prefix}OAUTH-CLIENT-ATTESTATION-POP+JWT`,
+				);
+				const auth = await CredentialIssuerRole.authenticateWallet(att, pop, f.anchors, {
+					...f.options,
+					audience: f.ids.server,
+					replayStore: new MemoryReplayStore({ clock: f.clock }),
+					acceptWallet: () => true,
+				});
+				t.true(auth.ok);
+				const jwt = await token(
+					f.requestPayload,
+					f.protocol.verifier.privateKey,
+					`${prefix}OAUTH-AUTHZ-REQ+JWT`,
+				);
+				const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
+					{ client_id: f.requestPayload.client_id, request: jwt },
+					f.anchors,
+					f.options,
+				);
+				t.true(prepared.ok);
+				if (prepared.ok)
+					t.true(
+						(await CredentialVerifierRole.completeAuthorizationRequest(prepared.value, jwt)).ok,
+					);
+			}
+			for (const challenge of ["", " ", "challenge"]) {
+				const att = await token(
+					attestation(f),
+					f.protocol.provider.privateKey,
+					"oauth-client-attestation+jwt",
+				);
+				const pop = await token(
+					{ ...proof(f), challenge },
+					f.protocol.issuer.privateKey,
+					"oauth-client-attestation-pop+jwt",
+				);
+				const options = {
+					...f.options,
+					audience: f.ids.server,
+					expectedChallenge: challenge,
+					replayStore: new MemoryReplayStore({ clock: f.clock }),
+					acceptWallet: () => true,
+				};
+				t.equal(
+					(await CredentialIssuerRole.authenticateWallet(att, pop, f.anchors, options)).ok,
+					challenge === "challenge",
+				);
+				t.false(
+					(await CredentialIssuerRole.authenticateWallet(att, pop, f.anchors, options)).ok,
+					"replay stays rejected",
+				);
+			}
+		});
+	});
+
 	module("wallet / request and effective metadata safeguards", () => {
 		test("wrong inline typ is rejected before discovery", async (t) => {
 			const f = await walletFederation();
@@ -172,7 +650,7 @@ export default (QUnit: QUnit) => {
 			);
 			const supported = {
 				...encryption,
-				jwks: { keys: [noAlg, { ...noAlg, kid: "encryption", alg: "ECDH-ES" }] },
+				jwks: { keys: [noAlg, { ...noAlg, kid: "encryption", alg: "ECDH-ES", use: "enc" }] },
 				encryption_required: false,
 			};
 			t.true(
@@ -444,7 +922,9 @@ export default (QUnit: QUnit) => {
 		}
 
 		test("rejects referenced SD-JWT binding opt-outs and preserves valid boundaries", async (t) => {
-			const f = await walletFederation();
+			const f = await walletFederation({
+				verifierMetadata: { vp_formats_supported: { "dc+sd-jwt": {}, application_format: {} } },
+			});
 			await check(t, f, { dcql_query: query(false) }, false, { error: bindingError });
 			for (const binding of [true, undefined])
 				await check(t, f, { dcql_query: query(binding) }, true);
@@ -1053,7 +1533,7 @@ export default (QUnit: QUnit) => {
 					CredentialIssuerRole.parseMetadata({
 						...f.metadata.issuer.openid_credential_issuer,
 						credential_request_encryption: {
-							jwks: { keys },
+							jwks: { keys: keys.map((key) => ({ ...key, use: "enc", alg: "ECDH-ES" })) },
 							enc_values_supported: ["A256GCM"],
 							encryption_required: false,
 						},

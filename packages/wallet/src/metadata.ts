@@ -1,7 +1,59 @@
-import { isLanguageTag, JWKSetSchema, MetadataJWKSetSchema } from "@oidfed/core";
+import {
+	isLanguageTag,
+	isValidAlgorithm,
+	isValidEntityId,
+	JWKSetSchema,
+	MetadataJWKSetSchema,
+} from "@oidfed/core";
+import { base64url } from "jose";
 import { z } from "zod";
 
+// These registered signing/MAC algorithms are unsuitable for JWE even when the
+// current signing backend does not support them. Encryption extensions stay open.
+const otherSignatureAlgorithms = new Set([
+	"HS256",
+	"HS384",
+	"HS512",
+	"RS384",
+	"RS512",
+	"ES256K",
+	"EdDSA",
+	"Ed25519",
+	"Ed448",
+	"ESP256",
+	"ESP384",
+	"ESP512",
+]);
 const strings = z.array(z.string()).min(1);
+// RFC 6749 §3.3: a metadata scope is one token; an authorization scope is a token list.
+const scopeToken = z.string().regex(/^[\x21\x23-\x5B\x5D-\x7E]+$/);
+export const requestScopeSchema = z
+	.string()
+	.regex(/^[\x21\x23-\x5B\x5D-\x7E]+(?: [\x21\x23-\x5B\x5D-\x7E]+)*$/);
+const nonblank = z
+	.string()
+	.refine((value) => value.trim().length > 0, "Identifier must not be blank");
+const trustedAuthority = z
+	.looseObject({ type: nonblank, values: strings })
+	.superRefine((authority, ctx) => {
+		for (const [index, value] of authority.values.entries()) {
+			let valid = true;
+			if (authority.type === "openid_federation") valid = isValidEntityId(value);
+			if (authority.type === "aki") {
+				try {
+					valid = value.length > 0 && base64url.encode(base64url.decode(value)) === value;
+				} catch {
+					valid = false;
+				}
+			}
+			if (!valid)
+				ctx.addIssue({
+					code: "custom",
+					path: ["values", index],
+					message: "Invalid trusted authority identifier",
+				});
+		}
+	});
 const object = z.record(z.string(), z.unknown());
 const identifier = z.string().regex(/^[A-Za-z0-9_-]+$/);
 const https = z.url().pipe(
@@ -43,10 +95,7 @@ const credentialQuery = (allowDuplicatePaths: boolean) =>
 			format: z.string(),
 			meta: object,
 			multiple: z.boolean().optional(),
-			trusted_authorities: z
-				.array(z.looseObject({ type: z.string(), values: strings }))
-				.min(1)
-				.optional(),
+			trusted_authorities: z.array(trustedAuthority).min(1).optional(),
 			require_cryptographic_holder_binding: z.boolean().optional(),
 			claims: z.array(claimQuery).min(1).optional(),
 			claim_sets: z.array(z.array(identifier)).min(1).optional(),
@@ -143,7 +192,7 @@ export function normalizeReceivedDcqlQuery(query: DcqlQuery): DcqlQuery {
 }
 
 const formatCapabilities = z.record(
-	z.string(),
+	nonblank,
 	z.looseObject({
 		alg_values: strings.optional(),
 		proof_type_values: strings.optional(),
@@ -298,7 +347,7 @@ const proofMetadata = z.looseObject({
 const credentialConfiguration = z
 	.looseObject({
 		format: z.string(),
-		scope: z.string().optional(),
+		scope: scopeToken.optional(),
 		credential_signing_alg_values_supported: z.array(algorithm).min(1).optional(),
 		cryptographic_binding_methods_supported: strings.optional(),
 		proof_types_supported: z.record(z.string(), proofMetadata).optional(),
@@ -374,12 +423,25 @@ const effectiveCredentialIssuerMetadata = CredentialIssuerMetadataSchema.superRe
 		const encryption = metadata.credential_request_encryption;
 		if (
 			encryption &&
-			!encryption.jwks.keys.some((key) => typeof key.alg === "string" && key.alg.length > 0)
+			!encryption.jwks.keys.some(
+				(key) =>
+					typeof key.alg === "string" &&
+					key.alg.length > 0 &&
+					key.alg !== "none" &&
+					!isValidAlgorithm(key.alg) &&
+					!otherSignatureAlgorithms.has(key.alg) &&
+					(key.use === undefined || key.use === "enc") &&
+					(key.key_ops === undefined ||
+						key.key_ops.some((op) =>
+							["encrypt", "wrapKey", "deriveKey", "deriveBits"].includes(op),
+						)),
+			)
 		)
 			ctx.addIssue({
 				code: "custom",
 				path: ["credential_request_encryption", "jwks"],
-				message: "Request encryption requires a key with an alg value (OpenID4VCI §10)",
+				message:
+					"Request encryption requires an alg-bearing key that permits encryption or key agreement (OpenID4VCI §10)",
 			});
 		if (metadata.credential_response_encryption?.encryption_required && !encryption)
 			ctx.addIssue({
@@ -402,5 +464,11 @@ export const roleSchemas = {
 	openid_wallet_provider: WalletProviderMetadataSchema,
 	openid_credential_issuer: CredentialIssuerMetadataSchema,
 	openid_credential_verifier: CredentialVerifierMetadataSchema,
+} as const;
+/** Federation §5 permits superiors to complete top-level role metadata. */
+export const publicationRoleSchemas = {
+	openid_wallet_provider: WalletProviderMetadataSchema.partial(),
+	openid_credential_issuer: CredentialIssuerMetadataSchema.partial(),
+	openid_credential_verifier: CredentialVerifierMetadataSchema.partial(),
 } as const;
 export type WalletRoleType = keyof typeof roleSchemas;

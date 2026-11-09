@@ -1,9 +1,9 @@
 import {
 	type EntityId,
 	nowSeconds,
+	preparePublicJwkSet,
 	type SubordinateEvent,
 	SubordinateEventType,
-	stripPrivateFields,
 } from "@oidfed/core";
 import type { HandlerContext } from "./endpoints/context.js";
 import type {
@@ -27,7 +27,11 @@ function canonical(value: unknown): string {
 }
 
 function publicKeys(record: SubordinateRecord): string {
-	return canonical(record.jwks.keys.map((key) => canonical(stripPrivateFields(key))).sort());
+	const prepared = preparePublicJwkSet(record.jwks);
+	if (!prepared.ok) throw new Error(prepared.error.description);
+	// Compare the published JSON, including lifecycle and extension members. Only
+	// key order is immaterial; Federation §8.7 dates can change without new key material.
+	return canonical({ ...prepared.value, keys: prepared.value.keys.map(canonical).sort() });
 }
 
 function sanitize<T extends SubordinateRecordUpdate>(record: T): T {
@@ -75,6 +79,17 @@ export function createSubordinateLifecycle(ctx: HandlerContext) {
 				requireTransactionEvents(tx);
 				const before = await tx.subordinates.get(subject);
 				if (!before) throw new Error(`Subordinate '${subject}' not found`);
+				let beforeKeys: string | undefined;
+				if (normalized.jwks !== undefined) {
+					// Reject invalid replacements within the transaction, while allowing repair
+					// of a legacy record whose keys could not have been published.
+					publicKeys({ ...before, jwks: normalized.jwks });
+					try {
+						beforeKeys = publicKeys(before);
+					} catch {
+						/* Legacy invalid keys count as changed. */
+					}
+				}
 				await tx.subordinates.update(subject, normalized);
 				const after = await tx.subordinates.get(subject);
 				if (!after) throw new Error(`Subordinate '${subject}' disappeared during update`);
@@ -86,7 +101,7 @@ export function createSubordinateLifecycle(ctx: HandlerContext) {
 					eventTypes.push(SubordinateEventType.MetadataUpdate);
 				if (canonical(before.metadataPolicy) !== canonical(after.metadataPolicy))
 					eventTypes.push(SubordinateEventType.MetadataPolicyUpdate);
-				if (publicKeys(before) !== publicKeys(after))
+				if (normalized.jwks !== undefined && beforeKeys !== publicKeys(after))
 					eventTypes.push(SubordinateEventType.JwksUpdate);
 				const iat = nowSeconds(ctx.options?.clock);
 				if (eventTypes.length)

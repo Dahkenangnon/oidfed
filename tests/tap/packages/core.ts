@@ -2192,8 +2192,8 @@ export default (QUnit: QUnit) => {
 			t.equal(FederationErrorCode.PageNotFound, "page_not_found");
 		});
 
-		test("InternalErrorCode has 12 codes", (t) => {
-			t.equal(Object.keys(InternalErrorCode).length, 12);
+		test("InternalErrorCode has 13 codes", (t) => {
+			t.equal(Object.keys(InternalErrorCode).length, 13);
 			t.equal(InternalErrorCode.TrustChainInvalid, "ERR_TRUST_CHAIN_INVALID");
 			t.equal(InternalErrorCode.LoopDetected, "ERR_LOOP_DETECTED");
 		});
@@ -16527,6 +16527,94 @@ export default (QUnit: QUnit) => {
 		const { anchor, other, leafId, endpoint, now, seed, query, federation } =
 			EntityCollectionFixture;
 		QUnit.module("Entity Collection Draft 01", () => {
+			QUnit.test(
+				"invalid stored output fails before cursor allocation and clients report protocol errors",
+				async (assert) => {
+					for (const invalid of ["claim", "timestamp"]) {
+						const f = await seed();
+						const snapshot = structuredClone(f.snapshot);
+						snapshot.id = `invalid-${invalid}`;
+						if (invalid === "claim")
+							(
+								snapshot.entries[0]!.entity.entity_infos!.openid_provider as Record<string, unknown>
+							).display_name = 17;
+						else snapshot.lastUpdated = NaN;
+						await f.store.publish(snapshot);
+						let cursors = 0;
+						const allocate = f.store.putCursor.bind(f.store);
+						f.store.putCursor = async (...args) => {
+							cursors++;
+							return allocate(...args);
+						};
+						const result = await f.service.query({ limit: 1 });
+						assert.false(result.ok);
+						if (!result.ok) assert.equal(result.error.code, "server_error");
+						assert.equal(cursors, 0);
+						if (invalid === "claim")
+							assert.true(
+								(await f.service.query({ entityClaims: [] })).ok,
+								"unselected malformed optional data does not prevent valid output",
+							);
+					}
+					for (const body of [
+						"not-json",
+						JSON.stringify({
+							entities: [
+								{
+									entity_id: "https://entity.example",
+									entity_infos: { federation_entity: { display_name: 17 } },
+								},
+							],
+							next: "next-page",
+						}),
+					]) {
+						const result = await fetchEntityCollection(
+							endpoint,
+							{},
+							{
+								httpClient: async () =>
+									new Response(body, { headers: { "content-type": "application/json" } }),
+							},
+						);
+						assert.false(result.ok);
+						if (!result.ok) assert.equal(result.error.code, InternalErrorCode.InvalidResponse);
+					}
+					const transport = await fetchEntityCollection(
+						endpoint,
+						{},
+						{
+							httpClient: async () => {
+								throw new Error("offline");
+							},
+						},
+					);
+					assert.false(transport.ok);
+					if (!transport.ok) assert.equal(transport.error.code, InternalErrorCode.Network);
+					const extension = {
+						entities: [{ entity_id: "https://entity.example", custom: { value: 1 } }],
+						custom_envelope: true,
+					};
+					const result = await fetchEntityCollection(
+						endpoint,
+						{},
+						{ httpClient: async () => Response.json(extension) },
+					);
+					assert.true(result.ok);
+					if (result.ok)
+						assert.deepEqual(result.value, EntityCollectionResponseSchema.parse(extension));
+				},
+			);
+			QUnit.test("snapshot capacity errors identify the current-anchor budget", async (assert) => {
+				const f = await seed();
+				const store = new MemoryEntityCollectionStore({ maxSnapshots: 1, clock: f.clock });
+				await store.publish(f.snapshot);
+				await assert.rejects(
+					store.publish({ ...f.snapshot, id: "other", trustAnchor: other }),
+					/capacity 1.*current anchors.*maxSnapshots/,
+				);
+				assert.ok(await store.getCurrent(anchor));
+			});
+
 			QUnit.test("metadata and extensible schemas enforce wire types", (assert) => {
 				assert.true(
 					FederationEntityMetadataSchema.safeParse({ federation_collection_endpoint: endpoint })

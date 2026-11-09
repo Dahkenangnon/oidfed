@@ -19,6 +19,46 @@ import { walletFederation } from "../fixtures/wallet.js";
 
 export default (QUnit: QUnit) => {
 	QUnit.module("Wallet role composition", () => {
+		QUnit.test(
+			"every host publishes empty wallet role blocks for superior completion",
+			async (t) => {
+				const f = await walletFederation();
+				for (const Role of [WalletProviderRole, CredentialIssuerRole, CredentialVerifierRole]) {
+					for (const host of ["leaf", "intermediate", "anchor"]) {
+						const role = new Role({ metadata: {} });
+						const config = {
+							entityId: f.ids.issuer,
+							keyProvider: MemoryFederationKeyProvider.fromJWK(f.keys.issuer.privateKey),
+							roles: [role],
+							options: f.options,
+							metadata: {
+								federation_entity:
+									host === "leaf"
+										? {}
+										: {
+												federation_fetch_endpoint: `${f.ids.issuer}/fetch`,
+												federation_list_endpoint: `${f.ids.issuer}/list`,
+											},
+							},
+						};
+						const entity =
+							host === "leaf"
+								? new Leaf({ ...config, authorityHints: [f.ids.anchor] })
+								: host === "anchor"
+									? new TrustAnchor({ ...config, storage: new MemoryStorageAdapter() })
+									: new Intermediate({
+											...config,
+											storage: new MemoryStorageAdapter(),
+											authorityHints: [f.ids.anchor],
+										});
+						const decoded = decodeEntityStatement(await entity.getEntityConfiguration());
+						t.true(decoded.ok, `${host} ${role.type}`);
+						if (decoded.ok) t.deepEqual(decoded.value.payload.metadata?.[role.type], {});
+					}
+				}
+			},
+		);
+
 		QUnit.test("instance attestation verification requires provider protocol keys", async (t) => {
 			for (const published of [false, true]) {
 				const f = await walletFederation(

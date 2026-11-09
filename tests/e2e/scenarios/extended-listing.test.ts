@@ -7,6 +7,41 @@ import { singleAnchorTopology } from "../topologies/single-anchor.js";
 describe("Extended Subordinate Listing endpoint", () => {
 	const getTestBed = useFederation(singleAnchorTopology);
 
+	it("serves large signed listings within the default client byte budget", async () => {
+		const { server, entities } = getTestBed();
+		const authority = getAuthorityEntity(entities, "https://ta.ofed.test");
+		const endpoint = `https://ta.ofed.test:${server.port}/federation_extended_list`;
+		const ids = Array.from({ length: 100 }, (_, i) =>
+			entityId(`https://bulk.ofed.test/${String(i).padStart(3, "0")}`),
+		);
+		try {
+			for (const id of ids)
+				await authority.server.registerSubordinate({
+					entityId: id,
+					entityTypes: ["bulk_test"],
+					jwks: { keys: [authority.keys.public] },
+					metadata: { bulk_test: { display_name: "é".repeat(5000) } },
+				});
+			const received: string[] = [];
+			let from: string | undefined;
+			for (let page = 0; page < 10; page++) {
+				const result = await fetchExtendedSubordinatesList(endpoint, {
+					entityType: "bulk_test",
+					...(from ? { from } : {}),
+				});
+				expect(result.ok).toBe(true);
+				if (!result.ok) throw new Error(result.error.description);
+				received.push(...result.value.immediate_subordinate_entities.map((entry) => entry.id));
+				if (!result.value.next) break;
+				expect(result.value.next).not.toBe(from);
+				from = result.value.next;
+			}
+			expect(received).toEqual(ids);
+		} finally {
+			for (const id of ids) await authority.storage?.subordinates.remove(id);
+		}
+	});
+
 	it("core client follows opaque cursors and preserves empty claims over HTTPS", async () => {
 		const { server } = getTestBed();
 		const endpoint = `https://ta.ofed.test:${server.port}/federation_extended_list`;

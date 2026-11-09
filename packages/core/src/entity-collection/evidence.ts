@@ -145,7 +145,14 @@ export function createCollectionEvidence(
 			)
 				continue;
 			const issuers = trustedRoot.value.payload.trust_mark_issuers;
-			if (!issuers || !Object.hasOwn(issuers, ref.trust_mark_type)) continue;
+			if (!issuers || !Object.hasOwn(issuers, ref.trust_mark_type)) {
+				if (!openOnly)
+					options.logger?.debug("Collection Trust Mark type is not recognized by the anchor", {
+						entityId: entry.entity.entity_id,
+						trustMarkType: ref.trust_mark_type,
+					});
+				continue;
+			}
 			const authorized = issuers[ref.trust_mark_type];
 			if (
 				!Array.isArray(authorized) ||

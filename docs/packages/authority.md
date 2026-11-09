@@ -267,6 +267,7 @@ The `extendedListing` object supports:
 
 - `enabled` (`boolean`): Whether the advertised endpoint accepts requests. Defaults to `true`.
 - `maxPageSize` (`number`): Upper limit on page sizes. Defaults to `500`.
+- `maxResponseBytes` (`number`): UTF-8 JSON success-response limit, including `next`. Defaults to `524288` (512 KiB).
 - `defaultPageSize` (`number`): Default page size if the client omits `limit`. Defaults to the smaller of `100` and `maxPageSize`.
 - `supportTimeFilters` (`boolean`): Whether to honor `updated_after` and `updated_before` queries. Defaults to `true`.
 - `supportAuditTimestamps` (`boolean`): Whether to honor `audit_timestamps` query. Defaults to `true`.
@@ -274,7 +275,7 @@ The `extendedListing` object supports:
 - `maxStorePagesPerRequest` (`number`): Maximum index page lookups allowed per request to protect performance. Defaults to `16`.
 - `storeBatchSize` (`number`): Page batch sizes retrieved during filtering. Defaults to `defaultPageSize`.
 
-All four numeric limits must be positive safe integers. An explicit `defaultPageSize` must not exceed `maxPageSize`. Invalid configuration fails when the handler is created.
+All five numeric limits must be positive safe integers. An explicit `defaultPageSize` must not exceed `maxPageSize`. Invalid configuration fails when the handler is created.
 
 ## Common questions
 
@@ -294,7 +295,11 @@ A subordinate's metadata block in the storage record must not carry operational 
 
 Compose an `OidcProviderRole` from `@oidfed/oidc` into the entity's `roles`. The parent initializes its registration handler and dispatches matching requests through `handleRequest()`. Connect registration hooks to your OP's client store. Automatic registration still needs a call from the OP's authorization or PAR flow.
 
+Extended Listing bounds the UTF-8 JSON success response, including its continuation cursor, through `extendedListing.maxResponseBytes` (default: 512 KiB). This complements the count and scan limits and follows [Draft 03 §3.1.2](https://openid.net/specs/openid-federation-extended-listing-1_0-03.html#section-3.1.2). A full byte budget produces a shorter page with `next` pointing to the first omitted entity. An entry that cannot fit alone returns `server_error`; reduce the requested claims or increase the server and client byte budgets. The endpoint preserves the requested claims and stops building further entries when the page is full.
+
 ## Subordinate event history
+
+Automatic `jwks_update` capture compares the published public JWK Set, including lifecycle dates and extension members. Reordering keys alone creates no event. Invalid replacement keys fail within the transaction, preserving both the record and its history.
 
 The optional [Subordinate Events Endpoint, Draft 01](https://openid.net/specs/openid-federation-subordinate-events-1_0.html) publishes an authority's recorded history about its Immediate Subordinates. Both `TrustAnchor` and `Intermediate` support it. Enable event storage and advertise `federation_subordinate_events_endpoint` in the authority's own metadata:
 

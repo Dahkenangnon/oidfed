@@ -96,7 +96,15 @@ export async function createAttestation(
 		exp: params.expiresAt,
 		cnf: { jwk: params.confirmationKey },
 	});
-	if (!parsed.success || parsed.data.exp <= nowSeconds(options.clock))
+	const now = nowSeconds(options.clock);
+	// ACA §5.1 allows historical issuance and delayed activation; these intervals
+	// must still be usable. Callers own the accuracy of an explicit historical iat.
+	if (
+		!parsed.success ||
+		parsed.data.exp <= now ||
+		(parsed.data.iat !== undefined && parsed.data.iat > now) ||
+		(parsed.data.nbf !== undefined && parsed.data.nbf >= parsed.data.exp)
+	)
 		return failure("Invalid Wallet Attestation claims or expiration");
 	// ACA Draft 07 §5.2 requires an asymmetric PoP. Creation accepts the supported
 	// public key types; the received-key schema remains open for JWK Set processing.
@@ -126,10 +134,13 @@ export async function verifyAttestation(
 		(!Array.isArray(headerChain) || !headerChain.every((item) => typeof item === "string"))
 	)
 		return failure("Invalid trust_chain header");
-	const provider = await trustedEntity("openid_wallet_provider", input.data.iss, anchors, {
-		...options,
-		...(headerChain ? { trustChain: headerChain as string[] } : {}),
-	});
+	const provider = await trustedEntity(
+		"openid_wallet_provider",
+		input.data.iss,
+		anchors,
+		options,
+		headerChain as readonly string[] | undefined,
+	);
 	if (!provider.ok) return provider;
 	const keys = await protocolKeys(provider.value, "openid_wallet_provider", options);
 	if (!keys.ok) return keys;
@@ -158,7 +169,10 @@ export async function authenticateWallet(
 		skew < 0 ||
 		!options.replayStore ||
 		typeof options.acceptWallet !== "function" ||
-		!options.audience
+		!options.audience ||
+		(options.expectedChallenge !== undefined &&
+			(typeof options.expectedChallenge !== "string" ||
+				options.expectedChallenge.trim().length === 0))
 	)
 		return failure("Invalid wallet authentication configuration");
 	const verified = await verifyAttestation(attestationJwt, anchors, options);

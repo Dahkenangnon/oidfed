@@ -112,28 +112,64 @@ export function roleMetadata(
 	return ok(parsed.data);
 }
 
+/**
+ * Wallet §9 defines embedded chains as hints. Explicit caller evidence stays
+ * authoritative; an unusable hint can be replaced through bounded online discovery.
+ * Discovery starts only after the consumer has tried the hinted chain.
+ */
+async function* candidateAttempts(
+	id: string,
+	anchors: TrustAnchorSet,
+	options: WalletTrustOptions,
+	headerChain?: readonly string[],
+): AsyncGenerator<Result<readonly (readonly string[])[]>> {
+	if (headerChain !== undefined) {
+		if (
+			!headerChain.length ||
+			headerChain.length > (options.maxChainDepth ?? 8) + 2 ||
+			headerChain.reduce((total, jwt) => total + jwt.length, 0) >
+				(options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES)
+		) {
+			yield failure("Embedded chain exceeds configured limits");
+			return;
+		}
+	}
+	if (options.trustChain !== undefined || options.entityChains?.has(id)) {
+		yield await candidates(id, anchors, options);
+		return;
+	}
+	if (headerChain !== undefined) {
+		// candidates also checks the subject identifier, anchor configuration and cancellation.
+		yield await candidates(id, anchors, { ...options, trustChain: headerChain });
+		if (options.offline) return;
+	}
+	yield await candidates(id, anchors, options);
+}
+
 export async function trustedEntity(
 	type: WalletRoleType,
 	id: string,
 	anchors: TrustAnchorSet,
 	options: WalletTrustOptions,
+	headerChain?: readonly string[],
 ): Promise<Result<TrustedWalletEntity>> {
-	const paths = await candidates(id, anchors, options);
-	if (!paths.ok) return paths;
 	let last = "No valid wallet trust chain";
-	for (const path of paths.value) {
-		const checked = await validateTrustChain(path, anchors, { ...options, verboseErrors: true });
-		if (!checked.valid) {
-			last = checked.errors.map((error) => error.message).join("; ");
-			continue;
+	for await (const paths of candidateAttempts(id, anchors, options, headerChain)) {
+		if (!paths.ok) return paths;
+		for (const path of paths.value) {
+			const checked = await validateTrustChain(path, anchors, { ...options, verboseErrors: true });
+			if (!checked.valid) {
+				last = checked.errors.map((error) => error.message).join("; ");
+				continue;
+			}
+			const metadata = roleMetadata(type, id, checked.chain);
+			if (!metadata.ok) {
+				last = metadata.error.description;
+				continue;
+			}
+			if (options.signal?.aborted) return failure("Operation cancelled");
+			return ok({ entityId: id, metadata: metadata.value, trustChain: checked.chain });
 		}
-		const metadata = roleMetadata(type, id, checked.chain);
-		if (!metadata.ok) {
-			last = metadata.error.description;
-			continue;
-		}
-		if (options.signal?.aborted) return failure("Operation cancelled");
-		return ok({ entityId: id, metadata: metadata.value, trustChain: checked.chain });
 	}
 	return err({ code: InternalErrorCode.TrustChainInvalid, description: last });
 }
@@ -142,23 +178,25 @@ export async function prepareVerifier(
 	id: string,
 	anchors: TrustAnchorSet,
 	options: WalletTrustOptions,
+	headerChain?: readonly string[],
 ): Promise<Result<PreparedTrustChain>> {
-	const paths = await candidates(id, anchors, options);
-	if (!paths.ok) return paths;
 	let last = "No valid verifier chain";
-	for (const path of paths.value) {
-		const checked = await prepareTrustChainValidation(path, anchors, {
-			...options,
-			verboseErrors: true,
-			deferredClaims: [{ entityType: "openid_credential_verifier", parameter: "dcql_queries" }],
-		});
-		if (!checked.ok) {
-			last = checked.error.description;
-			continue;
+	for await (const paths of candidateAttempts(id, anchors, options, headerChain)) {
+		if (!paths.ok) return paths;
+		for (const path of paths.value) {
+			const checked = await prepareTrustChainValidation(path, anchors, {
+				...options,
+				verboseErrors: true,
+				deferredClaims: [{ entityType: "openid_credential_verifier", parameter: "dcql_queries" }],
+			});
+			if (!checked.ok) {
+				last = checked.error.description;
+				continue;
+			}
+			const metadata = roleMetadata("openid_credential_verifier", id, checked.value);
+			if (metadata.ok) return checked;
+			last = metadata.error.description;
 		}
-		const metadata = roleMetadata("openid_credential_verifier", id, checked.value);
-		if (metadata.ok) return checked;
-		last = metadata.error.description;
 	}
 	return err({ code: InternalErrorCode.TrustChainInvalid, description: last });
 }

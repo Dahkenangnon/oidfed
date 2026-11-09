@@ -30,6 +30,16 @@ export function decodeToken(
 	}
 }
 
+/** RFC 7515 §4.1.9 treats typ as a media type, with an optional application/ prefix. */
+export function matchesJwtType(actual: unknown, expected: string): boolean {
+	if (typeof actual !== "string") return false;
+	const mediaType = (value: string) => {
+		const lower = value.toLowerCase();
+		return lower.includes("/") ? lower : `application/${lower}`;
+	};
+	return mediaType(actual) === mediaType(expected);
+}
+
 export async function verifyToken(
 	jwt: string,
 	keys: JWKSet,
@@ -45,7 +55,7 @@ export async function verifyToken(
 		if (value !== undefined && (typeof value !== "number" || !Number.isFinite(value)))
 			return failure("JWT dates must be finite NumericDates");
 	}
-	if (header.typ !== typ || !isValidAlgorithm(header.alg))
+	if (!matchesJwtType(header.typ, typ) || !isValidAlgorithm(header.alg))
 		return failure("Invalid JWT type or unsupported signing algorithm");
 	if (options.signal?.aborted) return failure("Operation cancelled");
 	for (const key of keys.keys) {

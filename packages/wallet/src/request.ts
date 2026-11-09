@@ -12,13 +12,14 @@ import {
 import { base64url } from "jose";
 import { z } from "zod";
 import { invokePolicy } from "./attestation.js";
-import { decodeToken, signToken, verifyToken } from "./jwt.js";
+import { decodeToken, matchesJwtType, signToken, verifyToken } from "./jwt.js";
 import {
 	CredentialVerifierMetadataSchema,
 	type DcqlQuery,
 	DcqlQuerySchema,
 	normalizeReceivedDcqlQuery,
 	ReceivedDcqlQuerySchema,
+	requestScopeSchema,
 } from "./metadata.js";
 import {
 	failure,
@@ -119,7 +120,9 @@ const outerSchema = z.object({
 const requestSchema = z.looseObject({
 	client_id: z.string().min(1),
 	response_type: z.string().refine((value) => value.split(" ").includes("vp_token")),
-	response_mode: z.string(),
+	response_mode: z
+		.string()
+		.refine((value) => value.trim().length > 0, "Response mode must not be blank"),
 	nonce: z.string().regex(/^[A-Za-z0-9._~-]+$/),
 	state: z
 		.string()
@@ -129,7 +132,7 @@ const requestSchema = z.looseObject({
 	redirect_uri: z.string().optional(),
 	response_uri: z.string().optional(),
 	dcql_query: z.unknown().optional(),
-	scope: z.string().optional(),
+	scope: requestScopeSchema.optional(),
 	client_metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
@@ -184,22 +187,22 @@ export async function prepareRequest(
 	)
 		return failure("Invalid request delivery parameters");
 	const id = outer.client_id.slice("openid_federation:".length);
-	let effectiveOptions = options;
+	let headerChain: readonly string[] | undefined;
 	if (outer.request) {
 		const decoded = decodeToken(outer.request, options);
 		if (!decoded.ok) return decoded;
 		// OpenID4VP §5: reject the wrong object type before consuming discovery hints.
-		if (decoded.value.header.typ !== "oauth-authz-req+jwt")
+		if (!matchesJwtType(decoded.value.header.typ, "oauth-authz-req+jwt"))
 			return failure("Invalid Request Object type");
 
 		const supplied = decoded.value.header.trust_chain;
 		if (supplied !== undefined) {
 			if (!Array.isArray(supplied) || !supplied.every((item) => typeof item === "string"))
 				return failure("Invalid Request Object trust_chain");
-			effectiveOptions = { ...options, trustChain: supplied as string[] };
+			headerChain = supplied as string[];
 		}
 	}
-	const chain = await prepareVerifier(id, anchors, effectiveOptions);
+	const chain = await prepareVerifier(id, anchors, options, headerChain);
 	if (!chain.ok) return chain;
 	const metadata = roleMetadata("openid_credential_verifier", id, chain.value);
 	if (!metadata.ok) return metadata;
@@ -210,7 +213,7 @@ export async function prepareRequest(
 	const keys = await protocolKeys(
 		{ metadata: metadata.value, trustChain: chain.value },
 		"openid_credential_verifier",
-		effectiveOptions,
+		options,
 	);
 	if (!keys.ok) return keys;
 	const prepared = Object.freeze({
@@ -222,7 +225,7 @@ export async function prepareRequest(
 		chain: chain.value,
 		keys: structuredClone(keys.value),
 		outer: structuredClone(outer),
-		options: { ...effectiveOptions },
+		options: { ...options },
 	});
 	return ok(prepared);
 }
@@ -308,6 +311,21 @@ function validateTransactionData(
 	}
 }
 
+/** Check only the queries used in this exchange, after superior overrides (VP Appendix B). */
+function checkQueryFormats(
+	queries: readonly DcqlQuery[],
+	metadata: Record<string, unknown>,
+): Result<true> {
+	const formats = metadata.vp_formats_supported as Record<string, unknown>;
+	if (
+		queries.some((query) =>
+			query.credentials.some((credential) => !Object.hasOwn(formats, credential.format)),
+		)
+	)
+		return failure("Active query requests a format absent from effective verifier metadata");
+	return ok(true);
+}
+
 export async function completeRequest(
 	prepared: PreparedAuthorizationRequest,
 	jwt: string,
@@ -381,6 +399,8 @@ export async function completeRequest(
 		(metadata.value.dcql_queries as DcqlQuery[] | undefined)?.map(normalizeReceivedDcqlQuery) ??
 		requested;
 	if (!queries) return failure("Superior DCQL metadata did not produce an effective query");
+	const supported = checkQueryFormats(requested ?? queries, metadata.value);
+	if (!supported.ok) return supported;
 	if (request.transaction_data !== undefined) {
 		if (!saved.options.verifyTransactionData) return failure("Unsupported transaction_data");
 		const transactionQueries = requested ?? queries;
@@ -467,6 +487,7 @@ export async function createRequest(
 	)
 		return failure("Invalid DCQL query");
 	let transactionQueries: DcqlQuery[] | undefined;
+	let effectiveMetadata: Record<string, unknown> | undefined;
 	if (options.trustChain) {
 		if (!options.trustAnchors?.size)
 			return failure("Attaching a trust chain requires pinned anchors");
@@ -483,11 +504,12 @@ export async function createRequest(
 		}
 		const completed = await completeTrustChainValidation(prepared.value, context);
 		if (!completed.ok) return completed;
+		const metadata = roleMetadata("openid_credential_verifier", id, completed.value);
+		if (!metadata.ok) return metadata;
+		effectiveMetadata = metadata.value;
 		if (hasSuperiorQueryOverride(prepared.value)) {
 			// The validated statement establishes the override; completed metadata supplies
 			// its policy-processed value. Ignored request queries cannot override it.
-			const metadata = roleMetadata("openid_credential_verifier", id, completed.value);
-			if (!metadata.ok) return metadata;
 			transactionQueries = metadata.value.dcql_queries as DcqlQuery[] | undefined;
 			if (!transactionQueries)
 				return failure("Superior DCQL metadata did not produce an effective query");
@@ -513,6 +535,10 @@ export async function createRequest(
 		// presentation verification remain with the receiving wallet's application.
 		const data = validateTransactionData(parsed.data.transaction_data, transactionQueries);
 		if (!data.ok) return data;
+	}
+	if (effectiveMetadata && transactionQueries) {
+		const supported = checkQueryFormats(transactionQueries, effectiveMetadata);
+		if (!supported.ok) return supported;
 	}
 	if (
 		parsed.data.state === undefined &&

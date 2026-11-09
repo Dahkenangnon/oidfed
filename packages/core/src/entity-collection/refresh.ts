@@ -286,11 +286,28 @@ export async function buildCollectionSnapshot(
 				const decoded = decodeEntityConfiguration(node.chain[0] ?? "");
 				if (!decoded.ok) throw new Error("Invalid authority configuration");
 				const meta = decoded.value.payload.metadata?.federation_entity;
-				if (!meta?.federation_list_endpoint) continue;
-				if (!meta.federation_fetch_endpoint)
+				if (!meta?.federation_list_endpoint) {
+					if (meta?.federation_fetch_endpoint || node.id === anchor)
+						options.logger?.warn(
+							"Collection traversal stopped at an authority without a list endpoint",
+							{ entityId: node.id },
+						);
+					continue;
+				}
+				if (!meta.federation_fetch_endpoint) {
+					options.logger?.warn("Collection authority lacks a fetch endpoint", {
+						entityId: node.id,
+					});
 					throw new Error("Authority does not publish a fetch endpoint");
+				}
 				const list = await listing(node.id, meta.federation_list_endpoint);
-				if (!list.ok) return list;
+				if (!list.ok) {
+					options.logger?.warn("Collection authority listing failed", {
+						entityId: node.id,
+						code: list.error.code,
+					});
+					return list;
+				}
 				for (const id of new Set(list.value)) {
 					if (!isValidEntityId(id)) throw new Error("Invalid subordinate identifier in listing");
 					if (node.path.includes(id)) continue;
@@ -385,6 +402,10 @@ export async function buildCollectionSnapshot(
 			),
 		});
 	} catch (cause) {
+		options.logger?.warn("Collection refresh could not be completed", {
+			trustAnchor: anchor,
+			cause,
+		});
 		return err({
 			code: FederationErrorCode.TemporarilyUnavailable,
 			description: "Collection refresh could not be completed",

@@ -50,7 +50,9 @@ export class MemoryEntityCollectionStore implements EntityCollectionStore {
 			);
 			if (candidate) this.snapshots.delete(candidate[0]);
 			else if (!this.current.has(copy.trustAnchor))
-				throw new Error("Collection snapshot capacity exhausted");
+				throw new Error(
+					`Collection snapshot capacity ${max} is occupied by current anchors; increase maxSnapshots to publish another anchor`,
+				);
 			else this.snapshots.delete(this.current.get(copy.trustAnchor) as string);
 		}
 		const previous = this.snapshots.get(this.current.get(copy.trustAnchor) ?? "");

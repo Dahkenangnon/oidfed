@@ -6,6 +6,7 @@
  * the Extended Subordinate Listing specification.
  */
 import {
+	DEFAULT_MAX_RESPONSE_BYTES,
 	type EntityId,
 	ExtendedListQuerySchema,
 	FederationErrorCode,
@@ -18,6 +19,8 @@ import { errorResponse, jsonResponse, parseQueryParams, requireMethod } from "./
 
 /** Configuration controlling Extended Listing; numeric limits must be positive safe integers. */
 export interface ExtendedListingConfig {
+	/** Maximum UTF-8 JSON success-response bytes, including next; defaults to 512 KiB. */
+	maxResponseBytes?: number;
 	/** Whether the endpoint is wired in at all. When false, handler returns 404. */
 	enabled?: boolean;
 	/** Hard cap applied to the per-page result size; client `limit` is clamped to this. */
@@ -98,6 +101,7 @@ export function createExtendedListHandler(
 ): (request: Request) => Promise<Response> {
 	const enabled = config?.enabled ?? true;
 	const maxPageSize = config?.maxPageSize ?? DEFAULT_MAX_PAGE_SIZE;
+	const maxResponseBytes = config?.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
 	const defaultPageSize = config?.defaultPageSize ?? Math.min(DEFAULT_PAGE_SIZE, maxPageSize);
 	const supportTimeFilters = config?.supportTimeFilters ?? true;
 	const supportAuditTimestamps = config?.supportAuditTimestamps ?? true;
@@ -107,6 +111,7 @@ export function createExtendedListHandler(
 
 	// Invalid deployment limits must fail before they can imitate an empty collection.
 	for (const [name, value] of Object.entries({
+		maxResponseBytes,
 		maxPageSize,
 		defaultPageSize,
 		maxStorePagesPerRequest: maxStorePages,
@@ -320,7 +325,18 @@ export function createExtendedListHandler(
 				(auditTimestamps === null && (updatedAfterParam !== null || updatedBeforeParam !== null));
 
 			const entries: Array<Record<string, unknown>> = [];
-			for (const record of accumulated) {
+			const encoder = new TextEncoder();
+			let entryBytes = 0;
+			const responseBytes = (count: number, bytes: number, next?: EntityId) =>
+				encoder.encode(
+					JSON.stringify({
+						immediate_subordinate_entities: [],
+						...(next !== undefined ? { next } : {}),
+					}),
+				).byteLength +
+				bytes +
+				Math.max(0, count - 1);
+			for (const [index, record] of accumulated.entries()) {
 				const entry: Record<string, unknown> = { id: record.entityId };
 
 				if (effectiveAuditTimestamps) {
@@ -335,8 +351,24 @@ export function createExtendedListHandler(
 					}
 				}
 
-				entries.push(entry);
+				const serialized = JSON.stringify(entry);
+				const bytes = encoder.encode(serialized).byteLength;
+				const following = accumulated[index + 1]?.entityId ?? nextEntityId;
+				// Draft 03 §3.1.2: account for selected claims and the actual next cursor.
+				// The preceding accepted entry already reserved space for this record's cursor.
+				if (responseBytes(entries.length + 1, entryBytes + bytes, following) > maxResponseBytes) {
+					if (!entries.length)
+						throw new Error("A subordinate entry exceeds the response size limit");
+					nextEntityId = record.entityId;
+					break;
+				}
+				// Retain the measured JSON so custom store objects cannot change between
+				// measurement and response serialization while later entries are awaited.
+				entries.push(JSON.parse(serialized) as Record<string, unknown>);
+				entryBytes += bytes;
 			}
+			if (responseBytes(entries.length, entryBytes, nextEntityId) > maxResponseBytes)
+				throw new Error("Extended listing envelope exceeds the response size limit");
 
 			const body: Record<string, unknown> = { immediate_subordinate_entities: entries };
 			if (nextEntityId !== undefined) body.next = nextEntityId;
