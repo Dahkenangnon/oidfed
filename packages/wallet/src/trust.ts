@@ -47,15 +47,27 @@ export function operationOptions<T extends WalletTrustOptions>(options: T): Resu
 	if (!Number.isSafeInteger(remaining) || remaining <= 0)
 		return failure("maxTotalFetches must be a positive safe integer");
 	const client = options.httpClient ?? fetch;
-	return ok({
+	const state = { exhausted: false };
+	const scoped = {
 		...options,
 		httpClient: async (input: string | URL | Request, init?: RequestInit) => {
 			if (options.offline) throw new Error("Offline operation cannot access the network");
 			if (options.signal?.aborted) throw options.signal.reason ?? new Error("Operation cancelled");
-			if (remaining-- <= 0) throw new Error("Wallet operation fetch budget exhausted");
+			if (remaining-- <= 0) {
+				state.exhausted = true;
+				throw new Error("Wallet operation fetch budget exhausted");
+			}
 			return client(input, init);
 		},
-	});
+	};
+	operationStates.set(scoped, state);
+	return ok(scoped);
+}
+
+const operationStates = new WeakMap<object, { exhausted: boolean }>();
+/** Partial discovery must never turn a shared resource limit into success. */
+export function operationExhausted(options: WalletTrustOptions): boolean {
+	return operationStates.get(options)?.exhausted ?? false;
 }
 
 export async function candidates(

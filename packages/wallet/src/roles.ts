@@ -3,6 +3,7 @@ import {
 	type EntityRole,
 	entityId,
 	err,
+	type FederationError,
 	FederationErrorCode,
 	type JWKSet,
 	type JwtSigner,
@@ -43,6 +44,7 @@ import {
 import {
 	candidates,
 	failure,
+	operationExhausted,
 	operationOptions,
 	protocolKeys,
 	type TrustedWalletEntity,
@@ -235,7 +237,13 @@ export class WalletProviderRole extends WalletRole {
 	}
 }
 
+export interface CredentialIssuerDiscoveryOptions extends WalletTrustOptions {
+	/** VCI §12.2.4 permits server selection; all preserves strict discovery. */
+	readonly authorizationServerPolicy?: "all" | "available";
+}
+
 export interface DiscoveredCredentialIssuer extends TrustedWalletEntity {
+	readonly authorizationServerErrors: readonly { entityId: string; error: FederationError }[];
 	readonly authorizationServers: readonly TrustedWalletEntity[];
 }
 
@@ -247,8 +255,13 @@ export class CredentialIssuerRole extends AttestationConsumer {
 	static async discover(
 		id: string,
 		anchors: TrustAnchorSet,
-		options: WalletTrustOptions = {},
+		options: CredentialIssuerDiscoveryOptions = {},
 	): Promise<Result<DiscoveredCredentialIssuer>> {
+		if (
+			options.authorizationServerPolicy !== undefined &&
+			!["all", "available"].includes(options.authorizationServerPolicy)
+		)
+			return failure("Invalid authorizationServerPolicy");
 		const scope = operationOptions(options);
 		if (!scope.ok) return scope;
 		const scoped = scope.value;
@@ -256,13 +269,23 @@ export class CredentialIssuerRole extends AttestationConsumer {
 		if (!issuer.ok) return issuer;
 		const servers = (issuer.value.metadata.authorization_servers ?? [id]) as string[];
 		const authorizationServers: TrustedWalletEntity[] = [];
-		for (const server of servers) {
+		const authorizationServerErrors: { entityId: string; error: FederationError }[] = [];
+		for (const server of new Set(servers)) {
 			const { trustChain: _, ...nestedOptions } = scoped;
 			const paths =
 				server === id
 					? ok([options.trustChain ?? options.entityChains?.get(id)])
 					: await candidates(server, anchors, nestedOptions);
-			if (!paths.ok) return paths;
+			if (!paths.ok) {
+				if (
+					options.authorizationServerPolicy !== "available" ||
+					scoped.signal?.aborted ||
+					operationExhausted(scoped)
+				)
+					return paths;
+				authorizationServerErrors.push({ entityId: server, error: paths.error });
+				continue;
+			}
 			let found: TrustedWalletEntity | undefined;
 			if (server === id) {
 				const metadata = issuer.value.trustChain.resolvedMetadata.oauth_authorization_server;
@@ -281,9 +304,22 @@ export class CredentialIssuerRole extends AttestationConsumer {
 					}
 				}
 			}
-			if (!found) return failure("Authorization server lacks valid federation metadata");
+			if (scoped.signal?.aborted || operationExhausted(scoped))
+				return failure(
+					"Authorization server discovery was cancelled or exhausted its fetch budget",
+				);
+			if (!found) {
+				const rejected = {
+					code: FederationErrorCode.InvalidMetadata,
+					description: `Authorization server ${server} lacks valid federation metadata`,
+				};
+				if (options.authorizationServerPolicy !== "available") return err(rejected);
+				authorizationServerErrors.push({ entityId: server, error: rejected });
+				continue;
+			}
 			authorizationServers.push(found);
 		}
+		if (!authorizationServers.length) return failure("No usable authorization server remains");
 		// OpenID4VCI §12.2.4 applies this condition to each configuration without scope.
 		const configurations = issuer.value.metadata.credential_configurations_supported as Record<
 			string,
@@ -305,9 +341,16 @@ export class CredentialIssuerRole extends AttestationConsumer {
 				description:
 					"Scopeless credential configurations require an authorization server supporting openid_credential authorization details",
 			});
-		return ok({ ...issuer.value, authorizationServers });
+		if (
+			scoped.signal?.aborted ||
+			operationExhausted(scoped) ||
+			issuer.value.trustChain.expiresAt <= nowSeconds(scoped.clock) ||
+			authorizationServers.some((server) => server.trustChain.expiresAt <= nowSeconds(scoped.clock))
+		)
+			return failure("Issuer discovery evidence expired or operation stopped");
+		return ok({ ...issuer.value, authorizationServers, authorizationServerErrors });
 	}
-	discover(id: string, options: WalletTrustOptions = {}) {
+	discover(id: string, options: CredentialIssuerDiscoveryOptions = {}) {
 		return CredentialIssuerRole.discover(id, this.anchors(options), this.options(options));
 	}
 }

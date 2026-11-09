@@ -21,6 +21,7 @@ export type {
 } from "./request.js";
 export type {
 	AttestationVerificationOptions,
+	CredentialIssuerDiscoveryOptions,
 	CredentialVerificationOptions,
 	DiscoveredCredentialIssuer,
 	WalletRoleConfig,

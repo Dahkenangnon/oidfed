@@ -241,6 +241,45 @@ export default (QUnit: QUnit) => {
 			}),
 		);
 	});
+	test("partial issuer discovery returns diagnostics without hiding global limits", async (t) => {
+		const f = await walletFederation({
+			issuerMetadata: {
+				authorization_servers: [
+					"https://server.example",
+					"https://missing.example",
+					"https://server.example",
+				],
+			},
+		});
+		t.false((await CredentialIssuerRole.discover(f.ids.issuer, f.anchors, f.options)).ok);
+		const result = await CredentialIssuerRole.discover(f.ids.issuer, f.anchors, {
+			...f.options,
+			authorizationServerPolicy: "available",
+		});
+		t.true(result.ok);
+		if (result.ok) {
+			t.equal(result.value.authorizationServers.length, 1);
+			t.equal(result.value.authorizationServerErrors[0]?.entityId, "https://missing.example");
+		}
+		const limited = await CredentialIssuerRole.discover(f.ids.issuer, f.anchors, {
+			clock: f.clock,
+			httpClient: f.httpClient,
+			maxTotalFetches: 3,
+			authorizationServerPolicy: "available",
+		});
+		t.false(limited.ok);
+		const none = await walletFederation({
+			issuerMetadata: { authorization_servers: ["https://missing.example"] },
+		});
+		t.false(
+			(
+				await CredentialIssuerRole.discover(none.ids.issuer, none.anchors, {
+					...none.options,
+					authorizationServerPolicy: "available",
+				})
+			).ok,
+		);
+	});
 
 	test("object-valued wallet policy crosses an intermediate without merging key sets", async (t) => {
 		const { validateTrustChain } = await import("../../../packages/core/src/index.js");
