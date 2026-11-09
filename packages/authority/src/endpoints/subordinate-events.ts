@@ -8,6 +8,7 @@ import {
 	SubordinateEventsResponseSchema,
 	signEntityStatement,
 } from "@oidfed/core";
+import type { StorageReadSnapshot } from "../storage/types.js";
 import { parsePublishedSubordinateEvent } from "../utils/subordinate-event.js";
 import type { HandlerContext } from "./context.js";
 import { errorResponse, jwtResponse, parseQueryParams, requireMethod } from "./helpers.js";
@@ -38,13 +39,16 @@ export async function buildSubordinateEvents(
 ): Promise<string | undefined> {
 	if (!ctx.storage.subordinateEvents)
 		throw new Error("Subordinate event storage is not configured");
-	const events = await ctx.storage.transaction(async (tx) => {
+	const read = async (tx: StorageReadSnapshot) => {
 		if (!tx.subordinateEvents)
 			throw new Error("Transaction-bound subordinateEvents is unavailable");
 		const history = await tx.subordinateEvents.list(ctx.entityId, subject);
 		if (history.length === 0 && !(await tx.subordinates.get(subject))) return undefined;
 		return history;
-	});
+	};
+	const events = ctx.storage.readSnapshot
+		? await ctx.storage.readSnapshot(read)
+		: await ctx.storage.transaction(read);
 	if (events === undefined) return undefined;
 	const payload = SubordinateEventsResponseSchema.parse({
 		iss: ctx.entityId,

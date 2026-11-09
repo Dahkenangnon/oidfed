@@ -185,6 +185,90 @@ async function createTestContext(overrides?: TestContextOverrides): Promise<{
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	test("event readers use readSnapshot with a transaction fallback", async (t) => {
+		const { buildSubordinateEvents } = await import(
+			"../../../packages/authority/src/endpoints/subordinate-events.js"
+		);
+		const backing = new MemoryStorageAdapter({ subordinateEvents: true });
+		const subject = entityId("https://member.example");
+		await backing.subordinates.add({
+			entityId: subject,
+			jwks: { keys: [testPublicJwk()] },
+			createdAt: 1,
+			updatedAt: 1,
+		});
+		const { ctx } = await createTestContext({ storage: backing });
+		for (const withSnapshot of [true, false]) {
+			let snapshots = 0;
+			let transactions = 0;
+			const storage: StorageAdapter = {
+				subordinates: backing.subordinates,
+				subordinateEvents: backing.subordinateEvents!,
+				transaction: async (operation) => {
+					transactions++;
+					return backing.transaction(operation);
+				},
+				...(withSnapshot
+					? {
+							readSnapshot: async <T>(
+								operation: (snapshot: AuthorityPublic.StorageReadSnapshot) => Promise<T>,
+							) => {
+								snapshots++;
+								return backing.readSnapshot(operation);
+							},
+						}
+					: {}),
+			};
+			const jwt = await buildSubordinateEvents({ ...ctx, storage }, subject);
+			t.ok(jwt);
+			if (jwt) {
+				const decoded = decodeEntityStatement(jwt);
+				t.true(decoded.ok);
+				if (decoded.ok) t.deepEqual(decoded.value.payload.federation_registration_events, []);
+			}
+			t.equal(snapshots, withSnapshot ? 1 : 0);
+			t.equal(transactions, withSnapshot ? 0 : 1);
+		}
+	});
+	test("memory read snapshots detach data and serialize against lifecycle writes", async (t) => {
+		const storage = new MemoryStorageAdapter({ subordinateEvents: true });
+		const subject = entityId("https://member.example");
+		await storage.subordinates.add({
+			entityId: subject,
+			jwks: { keys: [testPublicJwk()] },
+			createdAt: 1,
+			updatedAt: 1,
+		});
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		let entered!: () => void;
+		const ready = new Promise<void>((resolve) => {
+			entered = resolve;
+		});
+		const reading = storage.readSnapshot(async (snapshot) => {
+			t.false("remove" in snapshot.subordinates);
+			const record = await snapshot.subordinates.get(subject);
+			record!.jwks.keys.length = 0;
+			entered();
+			await gate;
+			t.ok(await snapshot.subordinates.get(subject));
+		});
+		await ready;
+		const removal = storage.subordinates.remove(subject);
+		release();
+		await reading;
+		await removal;
+		t.strictEqual(await storage.subordinates.get(subject), undefined);
+		await t.rejects(
+			storage.readSnapshot(async () => {
+				throw new Error("read failed");
+			}),
+			/read failed/,
+		);
+		t.equal(await storage.readSnapshot(async () => 42), 42, "queue released after failure");
+	});
 	test("an open Trust Mark issuer list allows administrative issuance", async (t) => {
 		const { createTrustMarkIssuanceHandler } = await import(
 			"../../../packages/authority/src/endpoints/trust-mark.js"

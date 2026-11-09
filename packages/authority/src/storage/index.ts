@@ -8,6 +8,7 @@ export type {
 	ListPage,
 	ListPageOptions,
 	StorageAdapter,
+	StorageReadSnapshot,
 	StorageTransaction,
 	SubordinateEventStorage,
 	SubordinateRecord,

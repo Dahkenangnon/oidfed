@@ -18,6 +18,14 @@ export interface StorageAdapter {
 	readonly replay?: ReplayStore;
 	readonly cache?: CacheProvider;
 	transaction<T>(operation: (tx: StorageTransaction) => Promise<T>): Promise<T>;
+	/** Read one consistent view. Use only the supplied repositories inside the callback. */
+	readSnapshot?<T>(operation: (snapshot: StorageReadSnapshot) => Promise<T>): Promise<T>;
+}
+
+/** Read-only views return detached records and expose no mutation methods. */
+export interface StorageReadSnapshot {
+	readonly subordinates: Pick<SubordinateStorage, "get" | "list">;
+	readonly subordinateEvents?: Pick<SubordinateEventStorage, "list">;
 }
 
 export interface StorageTransaction {

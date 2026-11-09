@@ -19,6 +19,7 @@ import type {
 	ListPage,
 	ListPageOptions,
 	StorageAdapter,
+	StorageReadSnapshot,
 	StorageTransaction,
 	SubordinateEventStorage,
 	SubordinateRecord,
@@ -380,6 +381,26 @@ export class MemoryStorageAdapter implements StorageAdapter {
 			...(options?.clock ? { clock: options.clock } : {}),
 			...(options?.maxCacheEntries !== undefined ? { maxEntries: options.maxCacheEntries } : {}),
 		});
+	}
+
+	/** Serialize the read with writes; clone only the requested records. */
+	async readSnapshot<T>(operation: (snapshot: StorageReadSnapshot) => Promise<T>): Promise<T> {
+		const events = this.subordinateEvents;
+		return this.runExclusive(() =>
+			operation({
+				subordinates: {
+					get: (id) => this.subordinates.get(id),
+					list: (filter, options) => this.subordinates.list(filter, options),
+				},
+				...(events
+					? {
+							subordinateEvents: {
+								list: (issuer: EntityId, subject: EntityId) => events.list(issuer, subject),
+							},
+						}
+					: {}),
+			}),
+		);
 	}
 
 	async transaction<T>(operation: (tx: StorageTransaction) => Promise<T>): Promise<T> {

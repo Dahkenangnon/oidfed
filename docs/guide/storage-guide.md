@@ -158,6 +158,8 @@ await storage.transaction(async (tx) => {
 
 Only record `revocation` when the removal represents an actual revocation. Technical cleanup alone does not establish that meaning. The transaction callback may run again after a conflict; keep signing and network operations outside it.
 
+Adapters may implement `readSnapshot(callback)` to provide a consistent read-only view of subordinate records and event history. The Events endpoint uses it when available and otherwise uses `transaction`. Read methods return detached values. Callbacks use the supplied view; calling a write method on the adapter from inside the callback can deadlock a serialized implementation. The memory adapter serializes reads with writes and copies only the requested records.
+
 ## Collection snapshots
 
 Entity Collection stores snapshots separately from subordinate registration records, using the core `EntityCollectionStore` contract. The service uses `collection.store` when supplied, then `storage.collections`, then its own memory store. Enable the storage capability with `MemoryStorageAdapter({ collections: true })`.
