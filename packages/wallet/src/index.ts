@@ -3,6 +3,7 @@ export type {
 	CreateWalletAttestationParams,
 	VerifiedWalletAttestation,
 	WalletAttestation,
+	WalletAttestationVerificationOptions,
 } from "./attestation.js";
 export type {
 	CredentialIssuerMetadata,

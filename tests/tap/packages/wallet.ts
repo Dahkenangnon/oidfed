@@ -49,6 +49,28 @@ const proof = (f: Fixture) => ({
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	test("present attestation audiences require an explicit recipient", async (t) => {
+		const f = await walletFederation();
+		for (const aud of [undefined, f.ids.server, [f.ids.server], "https://other.example", []]) {
+			const jwt = await token(
+				{ ...attestation(f), ...(aud === undefined ? {} : { aud }) },
+				f.protocol.provider.privateKey,
+				"oauth-client-attestation+jwt",
+			);
+			const result = await CredentialIssuerRole.verifyWalletAttestation(jwt, f.anchors, {
+				...f.options,
+				expectedAudience: f.ids.server,
+			});
+			t.equal(
+				result.ok,
+				aud === undefined ||
+					aud === f.ids.server ||
+					(Array.isArray(aud) && aud.includes(f.ids.server)),
+			);
+			if (aud !== undefined)
+				t.false((await CredentialIssuerRole.verifyWalletAttestation(jwt, f.anchors, f.options)).ok);
+		}
+	});
 	test("a PoP kid hint can accompany a kid-less confirmation key", async (t) => {
 		const f = await walletFederation();
 		const { kid: _kid, ...publicKey } = f.protocol.issuer.publicKey;

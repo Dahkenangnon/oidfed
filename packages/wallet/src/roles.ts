@@ -20,6 +20,7 @@ import {
 	invokePolicy,
 	type VerifiedWalletAttestation,
 	verifyAttestation,
+	type WalletAttestationVerificationOptions,
 } from "./attestation.js";
 import {
 	effectiveRoleSchemas,
@@ -136,7 +137,7 @@ abstract class AttestationConsumer extends WalletRole {
 	static async verifyWalletAttestation(
 		jwt: string,
 		anchors: TrustAnchorSet,
-		options: WalletTrustOptions = {},
+		options: WalletAttestationVerificationOptions = {},
 	): Promise<Result<VerifiedWalletAttestation>> {
 		return verifyAttestation(jwt, anchors, operationOptions(options));
 	}
@@ -151,7 +152,7 @@ abstract class AttestationConsumer extends WalletRole {
 			...operationOptions(options),
 		});
 	}
-	verifyWalletAttestation(jwt: string, options: WalletTrustOptions = {}) {
+	verifyWalletAttestation(jwt: string, options: WalletAttestationVerificationOptions = {}) {
 		return AttestationConsumer.verifyWalletAttestation(
 			jwt,
 			this.anchors(options),

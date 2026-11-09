@@ -52,6 +52,10 @@ export interface CreateWalletAttestationParams {
 	readonly expiresAt: number;
 	readonly claims?: Readonly<Record<string, unknown>>;
 }
+/** Receiver binding for an attestation that supplies aud (RFC 7519 §4.1.3). */
+export interface WalletAttestationVerificationOptions extends WalletTrustOptions {
+	readonly expectedAudience?: string;
+}
 export interface AuthenticateWalletOptions extends WalletTrustOptions {
 	readonly audience: string;
 	readonly clientId?: string;
@@ -122,12 +126,24 @@ export async function createAttestation(
 export async function verifyAttestation(
 	jwt: string,
 	anchors: TrustAnchorSet,
-	options: WalletTrustOptions,
+	options: WalletAttestationVerificationOptions,
 ): Promise<Result<VerifiedWalletAttestation>> {
 	const decoded = decodeToken(jwt, options);
 	if (!decoded.ok) return decoded;
 	const input = AttestationSchema.safeParse(decoded.value.payload);
 	if (!input.success) return failure("Invalid Wallet Attestation claims");
+	const audience = decoded.value.payload.aud;
+	if (
+		audience !== undefined &&
+		(!options.expectedAudience ||
+			!(typeof audience === "string"
+				? audience === options.expectedAudience
+				: Array.isArray(audience) &&
+					audience.every((item) => typeof item === "string") &&
+					audience.includes(options.expectedAudience)))
+	) {
+		return failure("Wallet Attestation audience requires a matching expectedAudience");
+	}
 	const headerChain = decoded.value.header.trust_chain;
 	if (
 		headerChain !== undefined &&
@@ -175,7 +191,10 @@ export async function authenticateWallet(
 				options.expectedChallenge.trim().length === 0))
 	)
 		return failure("Invalid wallet authentication configuration");
-	const verified = await verifyAttestation(attestationJwt, anchors, options);
+	const verified = await verifyAttestation(attestationJwt, anchors, {
+		...options,
+		expectedAudience: options.audience,
+	});
 	if (!verified.ok) return verified;
 	const parsed = decodeToken(popJwt, options);
 	if (!parsed.ok) return parsed;

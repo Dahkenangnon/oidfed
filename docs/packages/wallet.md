@@ -136,6 +136,8 @@ Applications displaying `wallet_name` or `wallet_link` choose safe text renderin
 
 The application parses any authentication headers. OAuth Draft 07 requires exactly one attestation field and one PoP field, each containing one well-formed JWT. Pass that validated pair to the authentication operation.
 
+For standalone Wallet Attestation verification, supply `expectedAudience` when the token contains `aud`. Authentication uses its configured authorization-server audience for this check. An attestation without `aud` remains usable under ACA; the PoP always binds the recipient. The `acceptWallet` callback applies the framework's attestation status and acceptance policy.
+
 ## Create a signed presentation request
 
 Request scopes follow [RFC 6749 §3.3](https://www.rfc-editor.org/rfc/rfc6749.html#section-3.3): a request may contain space-separated tokens, while a credential configuration advertises one token. Recognized DCQL authority constraints validate Federation Entity Identifiers and base64url `aki` values; custom authority types remain open.
