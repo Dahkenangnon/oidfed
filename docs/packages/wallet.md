@@ -94,6 +94,10 @@ The built-in JWT format follows OpenID4VCI 1.0 Appendix E and its referenced OAu
 
 Protocol operations use a core `JwtSigner`. Their remote keys come from the effective role metadata through core's key resolver. Effective inline `jwks` takes precedence over URI representations so a superior's replacement set cannot be bypassed. Top-level federation keys are not substituted automatically. Wallet Draft 05 does not define a provider attestation-key field; publishing provider protocol keys as `jwks`, `jwks_uri`, or `signed_jwks_uri` is this integration's convention and must match the deployed framework.
 
+Issuer protocol keys follow [Wallet Draft 05 §6.2.1](https://openid.net/specs/openid-federation-wallet-1_0-05.html#section-6.2.1) and [Federation §5.2.1](https://openid.net/specs/openid-federation-1_0.html#section-5.2.1): `kid` is optional. The provider integration convention accepts the same key representation. Distinct identifiers are recommended by [RFC 7517 §4.5](https://www.rfc-editor.org/rfc/rfc7517.html#section-4.5); these sets can also contain keys sharing an identifier. When a set contains both signing and encryption keys, every key must declare `use`.
+
+Verifier keys require unique, nonempty identifiers under [Wallet Draft 05 §6.3.1](https://openid.net/specs/openid-federation-wallet-1_0-05.html#section-6.3.1), including keys obtained through URI references. The same requirement applies to `credential_request_encryption.jwks` under [OpenID4VCI §12.2.4](https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html#section-12.2.4) and to top-level federation signing keys under [Federation §3.1.1](https://openid.net/specs/openid-federation-1_0.html#section-3.1.1).
+
 For authentication, also verify proof of possession and use a shared replay store:
 
 ```ts

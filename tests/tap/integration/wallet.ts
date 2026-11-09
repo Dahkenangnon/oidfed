@@ -159,6 +159,58 @@ export default (QUnit: QUnit) => {
 			t.throws(() => new WalletProviderRole().discover(f.ids.provider), /Pinned trust anchors/);
 		});
 		for (const host of ["leaf", "intermediate", "anchor"] as const) {
+			QUnit.test(
+				`${host} publishes issuer and provider protocol keys without identifiers`,
+				async (t) => {
+					const f = await walletFederation();
+					for (const [Role, name] of [
+						[CredentialIssuerRole, "issuer"],
+						[WalletProviderRole, "provider"],
+					] as const) {
+						const id = f.ids[name];
+						const role = new Role();
+						const publicKey = { ...f.protocol[name].publicKey };
+						delete publicKey.kid;
+						const metadata = { ...f.metadata[name][role.type], jwks: { keys: [publicKey] } };
+						const config = {
+							entityId: id,
+							metadata: {
+								...f.metadata[name],
+								[role.type]: metadata,
+								federation_entity:
+									host === "leaf"
+										? {}
+										: {
+												federation_fetch_endpoint: `${id}/fetch`,
+												federation_list_endpoint: `${id}/list`,
+											},
+							},
+							keyProvider: MemoryFederationKeyProvider.fromJWK(f.keys[name].privateKey),
+							roles: [role],
+							options: f.options,
+						};
+						const entity =
+							host === "leaf"
+								? new Leaf({ ...config, authorityHints: [f.ids.anchor] })
+								: host === "anchor"
+									? new TrustAnchor({ ...config, storage: new MemoryStorageAdapter() })
+									: new Intermediate({
+											...config,
+											storage: new MemoryStorageAdapter(),
+											authorityHints: [f.ids.anchor],
+										});
+						const decoded = decodeEntityStatement(await entity.getEntityConfiguration());
+						t.true(decoded.ok);
+						if (!decoded.ok) continue;
+						t.deepEqual(decoded.value.payload.metadata?.[role.type], metadata);
+						t.deepEqual(
+							decoded.value.payload.jwks,
+							{ keys: [f.keys[name].publicKey] },
+							"federation key identifiers remain intact",
+						);
+					}
+				},
+			);
 			for (const [Role, name] of [
 				[WalletProviderRole, "provider"],
 				[CredentialIssuerRole, "issuer"],

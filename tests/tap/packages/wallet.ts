@@ -602,6 +602,170 @@ export default (QUnit: QUnit) => {
 		});
 	});
 	module("wallet / protocol key identifiers", () => {
+		test("accepts optional and shared identifiers for issuer and provider protocol keys", async (t) => {
+			const ec = await generateSigningKey();
+			const rsa = await generateSigningKey("RS256");
+			const anonymous = { ...ec.publicKey };
+			delete anonymous.kid;
+			for (const keys of [
+				[anonymous],
+				[ec.publicKey],
+				[ec.publicKey, { ...rsa.publicKey, kid: ec.publicKey.kid }],
+			]) {
+				const f = await walletFederation({
+					issuerMetadata: { jwks: { keys } },
+					providerMetadata: { jwks: { keys } },
+				});
+				for (const [Role, name] of [
+					[CredentialIssuerRole, "issuer"],
+					[WalletProviderRole, "provider"],
+				] as const) {
+					t.true(Role.parseMetadata(f.metadata[name][new Role().type]).success);
+					const result = await Role.discover(f.ids[name], f.anchors, {
+						...f.options,
+						offline: true,
+					});
+					t.true(result.ok, JSON.stringify(result));
+					if (result.ok) t.deepEqual(result.value.metadata.jwks, { keys });
+				}
+				const jwt = await token(
+					attestation(f),
+					ec.privateKey,
+					"oauth-client-attestation+jwt",
+					keys[0]?.kid ? { kid: keys[0].kid } : {},
+				);
+				const verified = await CredentialIssuerRole.verifyWalletAttestation(jwt, f.anchors, {
+					...f.options,
+					offline: true,
+				});
+				t.true(verified.ok, JSON.stringify(verified));
+			}
+		});
+		test("rejects empty sets and private material in issuer and provider metadata", async (t) => {
+			const f = await walletFederation();
+			for (const keys of [[], [f.protocol.issuer.privateKey]]) {
+				t.false(
+					CredentialIssuerRole.parseMetadata({
+						...f.metadata.issuer.openid_credential_issuer,
+						jwks: { keys },
+					}).success,
+				);
+				t.false(
+					WalletProviderRole.parseMetadata({
+						...f.metadata.provider.openid_wallet_provider,
+						jwks: { keys },
+					}).success,
+				);
+			}
+		});
+		for (const source of ["jwks", "jwks_uri", "signed_jwks_uri"] as const) {
+			test(`uses protocol keys without identifiers from ${source}`, async (t) => {
+				const signing = await generateSigningKey();
+				const anonymous = { ...signing.publicKey };
+				delete anonymous.kid;
+				const keys = { keys: [anonymous] };
+				const uri = "https://keys.example/protocol";
+				const metadata = source === "jwks" ? { jwks: keys } : { jwks: undefined, [source]: uri };
+				const f = await walletFederation({ issuerMetadata: metadata, providerMetadata: metadata });
+				for (const name of ["issuer", "provider"] as const) {
+					const signed = await token(
+						{ iss: f.ids[name], sub: f.ids[name], ...keys },
+						f.keys[name].privateKey,
+						"jwk-set+jwt",
+						{ kid: f.keys[name].publicKey.kid },
+					);
+					f.routes.set(uri, () =>
+						source === "signed_jwks_uri"
+							? new Response(signed, { headers: { "content-type": "application/jwk-set+jwt" } })
+							: Response.json(keys),
+					);
+					if (name === "issuer") {
+						let calls = 0;
+						const result = await CredentialVerifierRole.verifyCredential(
+							"credential",
+							f.ids.issuer,
+							f.anchors,
+							{
+								...f.options,
+								offline: source === "jwks",
+								verifyCredential: ({ issuer, keys: resolved }) => {
+									calls++;
+									t.equal(issuer.entityId, f.ids.issuer);
+									t.deepEqual(resolved, keys);
+									return true;
+								},
+							},
+						);
+						t.true(result.ok, JSON.stringify(result));
+						t.equal(calls, 1);
+					} else {
+						for (const valid of [true, false]) {
+							// The external provider omits kid in both the public JWK and JWT header.
+							const jwt = await token(
+								attestation(f),
+								valid ? signing.privateKey : f.protocol.provider.privateKey,
+								"oauth-client-attestation+jwt",
+							);
+							const result = await CredentialIssuerRole.verifyWalletAttestation(jwt, f.anchors, {
+								...f.options,
+								offline: source === "jwks",
+							});
+							t.equal(result.ok, valid, JSON.stringify(result));
+							if (!result.ok) t.true(result.error.description.includes("JWT signature or claims"));
+						}
+					}
+				}
+			});
+		}
+		test("retains the use requirement for mixed issuer and provider protocol keys", async (t) => {
+			const signing = await generateSigningKey();
+			const publicKey = { ...signing.publicKey };
+			delete publicKey.kid;
+			delete publicKey.use;
+			for (const valid of [true, false]) {
+				const keys = [
+					{ ...publicKey, ...(valid ? { use: "sig" } : {}) },
+					{ ...publicKey, alg: "ECDH-ES", use: "enc" },
+				];
+				const f = await walletFederation({
+					issuerMetadata: { jwks: { keys } },
+					providerMetadata: { jwks: { keys } },
+				});
+				for (const [Role, name] of [
+					[CredentialIssuerRole, "issuer"],
+					[WalletProviderRole, "provider"],
+				] as const) {
+					const result = await Role.discover(f.ids[name], f.anchors, {
+						...f.options,
+						offline: true,
+					});
+					t.equal(result.ok, valid, JSON.stringify(result));
+					if (!result.ok) t.true(result.error.description.includes("use"));
+				}
+				const uri = "https://issuer.example/keys";
+				const remote = await walletFederation({
+					issuerMetadata: { jwks: undefined, jwks_uri: uri },
+				});
+				remote.routes.set(uri, () => Response.json({ keys }));
+				let calls = 0;
+				const result = await CredentialVerifierRole.verifyCredential(
+					"credential",
+					remote.ids.issuer,
+					remote.anchors,
+					{
+						...remote.options,
+						verifyCredential: ({ keys: resolved }) => {
+							calls++;
+							t.deepEqual(resolved, { keys });
+							return true;
+						},
+					},
+				);
+				t.equal(result.ok, valid, JSON.stringify(result));
+				t.equal(calls, valid ? 1 : 0);
+				if (!result.ok) t.true(result.error.description.includes("use"));
+			}
+		});
 		test("retains verifier and credential encryption identifier requirements", async (t) => {
 			const f = await walletFederation();
 			const anonymous = { ...f.protocol.verifier.publicKey };

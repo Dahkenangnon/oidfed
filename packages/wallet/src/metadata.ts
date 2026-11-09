@@ -1,4 +1,4 @@
-import { isLanguageTag, JWKSetSchema } from "@oidfed/core";
+import { isLanguageTag, JWKSetSchema, MetadataJWKSetSchema } from "@oidfed/core";
 import { z } from "zod";
 
 const strings = z.array(z.string()).min(1);
@@ -120,7 +120,9 @@ const formatCapabilities = z.record(
 );
 
 const keyReferences = {
-	jwks: JWKSetSchema.optional(),
+	// Wallet §6.2.1 uses Federation §5.2.1 protocol keys, where kid is optional.
+	// The provider integration convention uses the same public-key representation.
+	jwks: MetadataJWKSetSchema.optional(),
 	jwks_uri: https.optional(),
 	signed_jwks_uri: https.optional(),
 };
@@ -136,6 +138,8 @@ export type WalletProviderMetadata = z.infer<typeof WalletProviderMetadataSchema
 export const CredentialVerifierMetadataSchema = z.looseObject({
 	vp_formats_supported: formatCapabilities,
 	...keyReferences,
+	// Wallet §6.3.1 requires a unique identifier on every verifier key.
+	jwks: JWKSetSchema.optional(),
 	request_uris: z.array(https).min(1).optional(),
 	response_uris: z.array(responseEndpoint).min(1).optional(),
 	redirect_uris: z.array(https).min(1).optional(),
@@ -306,6 +310,7 @@ export const CredentialIssuerMetadataSchema = z.looseObject({
 	notification_endpoint: https.optional(),
 	credential_request_encryption: z
 		.looseObject({
+			// OpenID4VCI §12.2.4 requires unique identifiers for request encryption keys.
 			jwks: JWKSetSchema,
 			enc_values_supported: strings,
 			encryption_required: z.boolean(),
