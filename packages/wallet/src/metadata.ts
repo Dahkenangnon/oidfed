@@ -116,8 +116,16 @@ const credentialQuery = (allowDuplicatePaths: boolean) =>
 			)
 				fail("Claim sets must reference named claims");
 			if (query.format === "mso_mdoc") {
-				if (typeof query.meta.doctype_value !== "string")
+				if (!nonblank.safeParse(query.meta.doctype_value).success)
 					fail("mdoc queries require doctype_value");
+				// VP Appendix B.2.4 defines this recognized mdoc field as a boolean.
+				if (
+					query.claims?.some(
+						(claim) =>
+							claim.intent_to_retain !== undefined && typeof claim.intent_to_retain !== "boolean",
+					)
+				)
+					fail("mdoc intent_to_retain must be boolean");
 				if (
 					query.claims?.some(
 						(claim) =>
@@ -126,7 +134,10 @@ const credentialQuery = (allowDuplicatePaths: boolean) =>
 				)
 					fail("mdoc claim paths must contain two strings");
 			}
-			if (query.format === "dc+sd-jwt" && !strings.safeParse(query.meta.vct_values).success)
+			if (
+				query.format === "dc+sd-jwt" &&
+				!z.array(nonblank).min(1).safeParse(query.meta.vct_values).success
+			)
 				fail("SD-JWT queries require vct_values");
 			if (
 				["jwt_vc_json", "jwt_vc_json-ld", "ldp_vc"].includes(query.format) &&

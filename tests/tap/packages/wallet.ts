@@ -171,6 +171,33 @@ export default (QUnit: QUnit) => {
 			"a signer cannot return a request whose validity window has elapsed",
 		);
 	});
+	test("format-specific validation keeps extension fields and context objects", async (t) => {
+		const { DcqlQuerySchema } = await import("../../../packages/wallet/src/metadata.js");
+		const query = (format: string, meta: Record<string, unknown>, value: unknown) => ({
+			credentials: [
+				{
+					id: "identity",
+					format,
+					meta,
+					claims: [
+						{ path: format === "mso_mdoc" ? ["ns", "name"] : ["name"], intent_to_retain: value },
+					],
+				},
+			],
+		});
+		t.false(
+			DcqlQuerySchema.safeParse(query("mso_mdoc", { doctype_value: "org.example" }, "yes")).success,
+		);
+		t.true(
+			DcqlQuerySchema.safeParse(query("mso_mdoc", { doctype_value: "org.example" }, false)).success,
+		);
+		t.true(
+			DcqlQuerySchema.safeParse(
+				query("dc+sd-jwt", { vct_values: ["https://example.com/type"] }, "extension"),
+			).success,
+		);
+		t.false(DcqlQuerySchema.safeParse(query("dc+sd-jwt", { vct_values: [""] }, true)).success);
+	});
 
 	test("object-valued wallet policy crosses an intermediate without merging key sets", async (t) => {
 		const { validateTrustChain } = await import("../../../packages/core/src/index.js");
