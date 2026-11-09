@@ -29,7 +29,12 @@ export const AttestationSchema = z.looseObject({
 	iss: nonempty,
 	sub: nonempty,
 	exp: z.number(),
-	cnf: z.looseObject({ jwk: JWKSchema }),
+	cnf: z
+		.looseObject({ jwk: JWKSchema })
+		.refine(
+			(cnf) => !Object.hasOwn(cnf, "jwe") && !Object.hasOwn(cnf, "jku"),
+			"RFC 7800 permits only one key representation",
+		),
 	iat: z.number().optional(),
 	nbf: z.number().optional(),
 	wallet_name: z.string().optional(),
@@ -133,6 +138,8 @@ export async function verifyAttestation(
 	if (!decoded.ok) return decoded;
 	const input = AttestationSchema.safeParse(decoded.value.payload);
 	if (!input.success) return failure("Invalid Wallet Attestation claims");
+	const confirmation = await validateConfirmationKey(input.data.cnf.jwk);
+	if (!confirmation.ok) return confirmation;
 	const audience = decoded.value.payload.aud;
 	if (
 		audience !== undefined &&

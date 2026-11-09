@@ -128,7 +128,7 @@ The attestation and PoP have distinct JWT types and signing keys. PoP verificati
 
 A supplied `expectedChallenge` must be nonblank and matches the proof exactly. The application generates, binds, and retains the server challenge. Freshness uses the PoP’s `iat`; server-timestamp-based challenge freshness, permitted by [ACA §12.1](https://www.ietf.org/archive/id/draft-ietf-oauth-attestation-based-client-auth-07.html#section-12.1), remains an optional capability outside this API.
 
-Attestation creation requires a usable public confirmation key with signature-verification usage.
+Attestation creation and verification require a usable public confirmation key with signature-verification usage. The `cnf` object uses `jwk` alone among the `jwk`, `jwe`, and `jku` representations, following [RFC 7800 §§3.1–3.2](https://www.rfc-editor.org/rfc/rfc7800.html#section-3.1). Unknown confirmation extensions remain uninterpreted.
 
 The default PoP freshness window is 300 seconds, configurable through `maxProofAgeSeconds`. Core's clock-skew tolerance also applies. This duration and the required caller-supplied `ReplayStore` are library policies. The store must claim identifiers atomically and retain them through the acceptance window. Authentication rejects replay-store failures; `MemoryReplayStore` is available for development.
 

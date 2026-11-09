@@ -256,7 +256,27 @@ export default (QUnit: QUnit) => {
 				f.options,
 			);
 			t.false(result.ok);
+			const jwt = await token(
+				{ ...attestation(f), cnf: { jwk: key } },
+				f.protocol.provider.privateKey,
+				"oauth-client-attestation+jwt",
+			);
+			t.false((await CredentialIssuerRole.verifyWalletAttestation(jwt, f.anchors, f.options)).ok);
 		}
+		for (const extra of [{ jku: "https://other.example/keys" }, { jwe: "encrypted" }]) {
+			const jwt = await token(
+				{ ...attestation(f), cnf: { jwk: f.protocol.issuer.publicKey, ...extra } },
+				f.protocol.provider.privateKey,
+				"oauth-client-attestation+jwt",
+			);
+			t.false((await CredentialIssuerRole.verifyWalletAttestation(jwt, f.anchors, f.options)).ok);
+		}
+		const jwt = await token(
+			{ ...attestation(f), cnf: { jwk: f.protocol.issuer.publicKey, extension: { opaque: true } } },
+			f.protocol.provider.privateKey,
+			"oauth-client-attestation+jwt",
+		);
+		t.true((await CredentialIssuerRole.verifyWalletAttestation(jwt, f.anchors, f.options)).ok);
 	});
 	test("partial issuer discovery returns diagnostics without hiding global limits", async (t) => {
 		const f = await walletFederation({
