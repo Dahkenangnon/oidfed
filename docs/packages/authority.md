@@ -291,6 +291,8 @@ Use `await ta.registerSubordinate(record)` to sanitize metadata and add timestam
 
 A subordinate's metadata block in the storage record must not carry operational fields (such as `federation_fetch_endpoint` or `federation_list_endpoint`) inside `metadata.federation_entity`. Use `TrustAnchor.sanitizeSubordinateMetadata(metadata)` or `Intermediate.sanitizeSubordinateMetadata(metadata)` to strip these fields before calling `.add()` or `.update()`.
 
+Subordinate metadata excludes operational endpoint fields. Federation §§8.1, 8.2, and 8.4 require Entity Configuration publication for fetch, list, and Trust Mark Status endpoints; Extended Listing §4 imports the list restriction. oidfed also reserves the other operational endpoint fields and authentication companions to the host's Entity Configuration as a library policy.
+
 ### Is explicit client registration handled automatically?
 
 Compose an `OidcProviderRole` from `@oidfed/oidc` into the entity's `roles`. The parent initializes its registration handler and dispatches matching requests through `handleRequest()`. Connect registration hooks to your OP's client store. Automatic registration still needs a call from the OP's authorization or PAR flow.

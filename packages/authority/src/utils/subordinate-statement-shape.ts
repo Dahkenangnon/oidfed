@@ -16,8 +16,10 @@ const STANDARD_POLICY_OPERATORS: readonly string[] = Object.values(PolicyOperato
 
 /**
  * Operational fields that an Authority publishes in its own
- * `metadata.federation_entity` block and that MUST NOT appear in a
- * Subordinate Statement (the subordinate owns its own operational discovery).
+ * `metadata.federation_entity` block. Federation §§8.1, 8.2 and 8.4 reserve
+ * fetch, list and mark-status publication to the Entity Configuration; Extended
+ * Listing §4 imports the list restriction. The remaining exclusions are oidfed's
+ * host-owned discovery policy, applied consistently to signed and unsigned views.
  *
  * Set is the canonical source — keep alphabetically grouped (URL claims first,
  * then `_auth_methods` companions, then the signing-alg list).
