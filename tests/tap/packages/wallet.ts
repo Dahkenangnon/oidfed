@@ -377,6 +377,33 @@ export default (QUnit: QUnit) => {
 			).ok,
 		);
 	});
+	test("concatenated attestation syntax consumes the complete input", async (t) => {
+		const { parseConcatenatedWalletAttestation } = await import(
+			"../../../packages/wallet/src/index.js"
+		);
+		const f = await walletFederation();
+		const jwt = await token(
+				attestation(f),
+				f.protocol.provider.privateKey,
+				"oauth-client-attestation+jwt",
+			),
+			pop = await token(proof(f), f.protocol.issuer.privateKey, "oauth-client-attestation-pop+jwt");
+		const result = parseConcatenatedWalletAttestation(`${jwt}~${pop}`);
+		t.true(result.ok);
+		if (result.ok) t.deepEqual(result.value, { attestationJwt: jwt, popJwt: pop });
+		for (const value of [
+			jwt,
+			`${jwt}~`,
+			`~${pop}`,
+			`${jwt}~${pop}~${jwt}`,
+			`${jwt}~bad`,
+			`${jwt}~${pop} `,
+			`${jwt.slice(0, jwt.lastIndexOf(".") + 1)}A~${pop}`,
+			`${jwt}~${pop.slice(0, pop.lastIndexOf(".") + 1)}AAAAA`,
+		])
+			t.false(parseConcatenatedWalletAttestation(value).ok);
+		t.false(parseConcatenatedWalletAttestation(`${jwt}~${pop}`, { maxResponseBytes: 10 }).ok);
+	});
 
 	test("object-valued wallet policy crosses an intermediate without merging key sets", async (t) => {
 		const { validateTrustChain } = await import("../../../packages/core/src/index.js");

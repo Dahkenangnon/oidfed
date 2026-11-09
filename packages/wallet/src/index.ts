@@ -5,6 +5,7 @@ export type {
 	WalletAttestation,
 	WalletAttestationVerificationOptions,
 } from "./attestation.js";
+export { parseConcatenatedWalletAttestation } from "./attestation.js";
 export type {
 	CredentialIssuerMetadata,
 	CredentialVerifierMetadata,

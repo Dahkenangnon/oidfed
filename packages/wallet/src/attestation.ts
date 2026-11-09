@@ -1,5 +1,6 @@
 import {
 	DEFAULT_CLOCK_SKEW_SECONDS,
+	DEFAULT_MAX_RESPONSE_BYTES,
 	entityId,
 	type JWK,
 	JWKSchema,
@@ -333,4 +334,34 @@ async function validateConfirmationKey(key: JWK): Promise<Result<true>> {
 		}
 	}
 	return failure("Wallet Attestation confirmation key has no usable signing algorithm");
+}
+
+/** ACA §7.2 syntax parsing; authenticate the returned pair before accepting its claims. */
+export function parseConcatenatedWalletAttestation(
+	value: string,
+	options: Pick<WalletTrustOptions, "maxResponseBytes"> = {},
+): Result<{ attestationJwt: string; popJwt: string }> {
+	const limit = options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
+	if (
+		!Number.isSafeInteger(limit) ||
+		limit <= 0 ||
+		typeof value !== "string" ||
+		value.length > limit
+	)
+		return failure("Invalid or oversized concatenated attestation");
+	const parts = value.split("~");
+	if (parts.length !== 2) return failure("Concatenated attestation requires exactly two JWTs");
+	const [attestationJwt, popJwt] = parts;
+	if (!attestationJwt || !popJwt)
+		return failure("Concatenated attestation requires two nonempty JWTs");
+	for (const jwt of parts) {
+		if (
+			!/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(jwt) ||
+			// RFC 7515 Appendix C: a base64url length modulo four of one is malformed.
+			jwt.split(".").some((segment) => segment.length % 4 === 1) ||
+			!decodeToken(jwt, options).ok
+		)
+			return failure("Concatenated attestation contains a malformed JWT");
+	}
+	return ok({ attestationJwt, popJwt });
 }

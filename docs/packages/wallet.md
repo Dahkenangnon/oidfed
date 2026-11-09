@@ -142,6 +142,8 @@ JWT type checks accept media-type case variants and the optional `application/` 
 
 Applications displaying `wallet_name` or `wallet_link` choose safe text rendering and navigable URL schemes; successful signature verification establishes the claims’ origin.
 
+For [ACA §7 concatenated serialization](https://www.ietf.org/archive/id/draft-ietf-oauth-attestation-based-client-auth-07.html#section-7), `parseConcatenatedWalletAttestation(value, options)` returns `{ attestationJwt, popJwt }` in a `Result`. It requires exactly two nonempty compact JWTs separated by one `~` and applies `maxResponseBytes` to the complete value. Pass the pair to `authenticateWallet` for trust, signature, and claim verification.
+
 The application parses any authentication headers. OAuth Draft 07 requires exactly one attestation field and one PoP field, each containing one well-formed JWT. Pass that validated pair to the authentication operation.
 
 For standalone Wallet Attestation verification, supply `expectedAudience` when the token contains `aud`. Authentication uses its configured authorization-server audience for this check. An attestation without `aud` remains usable under ACA; the PoP always binds the recipient. The `acceptWallet` callback applies the framework's attestation status and acceptance policy.
