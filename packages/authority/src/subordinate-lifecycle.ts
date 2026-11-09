@@ -2,7 +2,6 @@ import {
 	type EntityId,
 	nowSeconds,
 	type SubordinateEvent,
-	SubordinateEventSchema,
 	SubordinateEventType,
 	stripPrivateFields,
 } from "@oidfed/core";
@@ -12,6 +11,7 @@ import type {
 	SubordinateRecord,
 	SubordinateRecordUpdate,
 } from "./storage/types.js";
+import { parsePublishedSubordinateEvent } from "./utils/subordinate-event.js";
 import { sanitizeSubordinateMetadata } from "./utils/subordinate-statement-shape.js";
 
 function canonical(value: unknown): string {
@@ -112,7 +112,7 @@ export function createSubordinateLifecycle(ctx: HandlerContext) {
 		): Promise<void> {
 			if (!ctx.storage.subordinateEvents)
 				throw new Error("Subordinate event storage is not configured");
-			const parsed = events.map((event) => SubordinateEventSchema.parse(event));
+			const parsed = events.map(parsePublishedSubordinateEvent);
 			await ctx.storage.transaction(async (tx) => {
 				requireTransactionEvents(tx);
 				await append(tx, subject, parsed);

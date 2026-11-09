@@ -235,6 +235,255 @@ import { walletFederation, walletQuery } from "../fixtures/wallet.js";
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("core / publication and collection safeguards", () => {
+		test("fragment-free fetchers reject a bare delimiter before requesting", async (t) => {
+			let calls = 0;
+			const id = entityId("https://entity.example");
+			const options = {
+				expectedIssuer: id,
+				expectedOwner: id,
+				httpClient: async () => {
+					calls++;
+					return new Response("{}", { headers: { "content-type": "application/json" } });
+				},
+			};
+			const url = "https://entity.example/endpoint#";
+			const keys = { keys: [] };
+			const results = await Promise.all([
+				CorePublic.fetchJwkSet(url, options),
+				CorePublic.fetchSignedJwkSet(url, keys, options),
+				CorePublic.fetchHistoricalKeys(url, keys, options),
+				CorePublic.fetchTrustMarkList(url, { trustMarkType: "custom" }, options),
+				CorePublic.fetchTrustMark(url, { trustMarkType: "custom", sub: id }, options),
+				CorePublic.fetchTrustMarkStatus(url, "signed-trust-mark", keys, options),
+			]);
+			for (const result of results) {
+				t.false(result.ok);
+				if (!result.ok) t.true(result.error.description.includes("fragment"));
+			}
+			t.equal(calls, 0);
+		});
+
+		test("event information URLs remain data and trigger no additional retrieval", async (t) => {
+			const f = await SubordinateEventsFixture.fixture();
+			for (const uri of [
+				"https://info.example/",
+				"http://info.example/",
+				"data:text/plain,event",
+				"javascript:alert(1)",
+			]) {
+				const jwt = await signEntityStatement(
+					{
+						iss: SubordinateEventsFixture.issuer,
+						sub: SubordinateEventsFixture.subject,
+						iat: 1500,
+						federation_registration_events: [{ iat: 1400, event: "", information_uri: uri }],
+					},
+					new JwkSigner(f.key.privateKey),
+					{ typ: JwtTyp.EntityEventsStatement },
+				);
+				let calls = 0;
+				const result = await fetchSubordinateEvents(
+					SubordinateEventsFixture.endpoint,
+					SubordinateEventsFixture.subject,
+					{
+						...f.options,
+						httpClient: async () => {
+							calls++;
+							return new Response(jwt, {
+								headers: { "content-type": "application/entity-events-statement+jwt" },
+							});
+						},
+					},
+				);
+				t.true(result.ok, uri);
+				t.equal(calls, 1, "only the history endpoint is fetched");
+			}
+		});
+
+		test("publication rejects conflicting identities and protocol keys on federation metadata", async (t) => {
+			const key = await generateSigningKey("ES256");
+			const base = {
+				entityId: entityId("https://entity.example"),
+				jwks: { keys: [key.publicKey] },
+				issuedAt: 1500,
+			};
+			for (const type of ["openid_provider", "oauth_authorization_server"])
+				t.throws(
+					() =>
+						CorePublic.buildEntityConfigurationPayload({
+							...base,
+							metadata: { [type]: { issuer: "https://other.example" } },
+						}),
+					/issuer/,
+				);
+			for (const field of ["jwks", "jwks_uri", "signed_jwks_uri"])
+				t.throws(
+					() =>
+						CorePublic.buildEntityConfigurationPayload({
+							...base,
+							metadata: {
+								federation_entity: {
+									[field]: field === "jwks" ? base.jwks : "https://entity.example/keys",
+								},
+							},
+						}),
+					/federation_entity/,
+				);
+			t.ok(
+				CorePublic.buildEntityConfigurationPayload({ ...base, metadata: { openid_provider: {} } }),
+			);
+			t.ok(
+				CorePublic.buildSubordinateStatementPayload({
+					issuer: base.entityId,
+					subject: entityId("https://child.example"),
+					jwks: base.jwks,
+					metadata: { openid_provider: { issuer: "https://child.example" } },
+					issuedAt: 1500,
+				}),
+			);
+		});
+		test("identifier delimiters are rejected while encoded delimiters retain exact identity", (t) => {
+			for (const suffix of ["?", "#", "?a=1", "#fragment"]) {
+				const id = `https://entity.example/${suffix}`;
+				t.false(CorePublic.isValidEntityId(id));
+				t.false(CorePublic.EntityIdSchema.safeParse(id).success);
+				t.throws(() => entityId(id));
+			}
+			const id = "https://entity.example:8443/path%23part%3F";
+			t.equal(entityId(id), id);
+			t.true(CorePublic.EntityIdSchema.safeParse(id).success);
+		});
+		test("optional policy checks preserve absent properties", (t) => {
+			for (const operator of [{ essential: false }, { subset_of: ["x"] }, { one_of: ["x"] }]) {
+				const result = CorePublic.applyMetadataPolicy(
+					{ openid_relying_party: {} },
+					{ openid_relying_party: { optional: operator } },
+				);
+				t.true(result.ok);
+				if (result.ok) {
+					t.false(Object.hasOwn(result.value.openid_relying_party!, "optional"));
+					t.deepEqual(Object.keys(result.value.openid_relying_party!), []);
+					t.equal(JSON.stringify(result.value), '{"openid_relying_party":{}}');
+				}
+			}
+		});
+		test("malformed display claims do not hide entities or their descendants", async (t) => {
+			const f = await walletFederation({
+				verifierMetadata: {
+					logo_uri: "relative",
+					"display_name#en#fr": "bad",
+					display_name: "Verifier",
+					keywords: [],
+				},
+			});
+			// The verifier also publishes authority endpoints for this traversal fixture.
+			const decoded = CorePublic.decodeEntityStatement(f.chains.get(f.ids.verifier)![0]!);
+			if (!decoded.ok) throw new Error("fixture");
+			const payload = decoded.value.payload;
+			const jwt = await signEntityStatement(
+				{
+					...payload,
+					metadata: {
+						...payload.metadata,
+						federation_entity: {
+							federation_fetch_endpoint: `${f.ids.verifier}/fetch`,
+							federation_list_endpoint: `${f.ids.verifier}/list`,
+						},
+					},
+				},
+				new JwkSigner(f.keys.verifier.privateKey),
+			);
+			f.routes.set(
+				`${f.ids.verifier}/.well-known/openid-federation`,
+				() => new Response(jwt, { headers: { "Content-Type": MediaType.EntityStatement } }),
+			);
+			f.routes.set(`${f.ids.anchor}/list`, () => Response.json([f.ids.verifier]));
+			f.routes.set(`${f.ids.verifier}/list`, () => Response.json([f.ids.provider]));
+			const childEc = CorePublic.decodeEntityStatement(f.chains.get(f.ids.provider)![0]!);
+			if (!childEc.ok) throw new Error("fixture");
+			const child = await signEntityStatement(
+				{ ...childEc.value.payload, authority_hints: [f.ids.verifier] },
+				new JwkSigner(f.keys.provider.privateKey),
+			);
+			f.routes.set(
+				`${f.ids.provider}/.well-known/openid-federation`,
+				() => new Response(child, { headers: { "Content-Type": MediaType.EntityStatement } }),
+			);
+			const childSs = await signEntityStatement(
+				{
+					iss: f.ids.verifier,
+					sub: f.ids.provider,
+					iat: 1000,
+					exp: 5000,
+					jwks: { keys: [f.keys.provider.publicKey] },
+				},
+				new JwkSigner(f.keys.verifier.privateKey),
+			);
+			f.routes.set(
+				`${f.ids.verifier}/fetch?sub=${encodeURIComponent(f.ids.provider)}`,
+				() => new Response(childSs, { headers: { "Content-Type": MediaType.EntityStatement } }),
+			);
+			const result = await buildCollectionSnapshot(f.ids.anchor, {
+				trustAnchors: f.anchors,
+				options: f.options,
+			});
+			t.true(result.ok);
+			if (result.ok) {
+				t.equal(result.value.entries.length, 2);
+				const info = result.value.entries.find(
+					(e) => String(e.entity.entity_id) === String(f.ids.verifier),
+				)?.entity.entity_infos?.openid_credential_verifier;
+				t.deepEqual(info, { display_name: "Verifier" });
+			}
+		});
+		test("cursor pressure preserves continuations and reports temporary capacity errors", async (t) => {
+			const f = await walletFederation();
+			const store = new MemoryEntityCollectionStore({ maxCursors: 2, clock: f.clock });
+			await store.publish({
+				id: "test",
+				trustAnchor: f.ids.anchor,
+				lastUpdated: 1500,
+				entries: [f.ids.provider, f.ids.verifier].map((entity_id) => ({
+					entity: CorePublic.EntityCollectionEntitySchema.parse({ entity_id }),
+					expiresAt: 5000,
+					verifiedMarks: [],
+				})),
+			});
+			const service = new EntityCollectionService({
+				trustAnchors: f.anchors,
+				store,
+				options: { clock: f.clock },
+				cursorTtlSeconds: 10,
+			});
+			const first = await service.query({ trustAnchor: f.ids.anchor, limit: 1 });
+			if (!first.ok || !first.value.next) throw new Error("fixture");
+			const from = first.value.next;
+			const before = await store.getCursor(from);
+			for (let i = 0; i < 4; i++) {
+				const empty = await service.query({ trustAnchor: f.ids.anchor, limit: 0, from });
+				t.true(empty.ok);
+				if (empty.ok) t.equal(empty.value.next, from);
+			}
+			t.deepEqual(await store.getCursor(from), before);
+			t.true((await service.query({ trustAnchor: f.ids.anchor, limit: 0 })).ok);
+			const full = await service.handleRequest(
+				new Request(`https://collection.example?trust_anchor=${f.ids.anchor}&limit=0`),
+			);
+			t.equal(full.status, 503);
+			const resumed = await service.query({ trustAnchor: f.ids.anchor, limit: 1, from });
+			t.true(resumed.ok);
+			if (resumed.ok) t.equal(resumed.value.entities[0]?.entity_id, f.ids.verifier);
+			t.false(
+				(await service.query({ trustAnchor: f.ids.anchor, limit: 0, from, query: "changed" })).ok,
+			);
+			f.setTime(1510);
+			t.true((await service.query({ trustAnchor: f.ids.anchor, limit: 0 })).ok);
+			const expired = await service.query({ trustAnchor: f.ids.anchor, from });
+			t.false(expired.ok);
+		});
+	});
+
 	module("core / protocol key identifiers", () => {
 		test("separates protocol metadata keys from federation keys", async (t) => {
 			const { publicKey } = await generateSigningKey();

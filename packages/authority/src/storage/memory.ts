@@ -7,9 +7,9 @@ import {
 	MemoryReplayStore,
 	nowSeconds,
 	type SubordinateEvent,
-	SubordinateEventSchema,
 } from "@oidfed/core";
 import { InvalidMetadata, InvalidSubordinateRecord } from "../errors.js";
+import { parsePublishedSubordinateEvent } from "../utils/subordinate-event.js";
 import {
 	assertMetadataValuesNotNull,
 	isFederationEntityOperationalField,
@@ -316,7 +316,7 @@ class MemorySubordinateEventStorage implements SubordinateEventStorage {
 		subject: EntityId,
 		events: readonly SubordinateEvent[],
 	): Promise<void> {
-		const parsed = events.map((event) => SubordinateEventSchema.parse(event));
+		const parsed = events.map(parsePublishedSubordinateEvent);
 		await this.mutate((state) => {
 			const history = state.subordinateEvents;
 			if (!history) throw new Error("Subordinate event storage is not enabled");

@@ -51,7 +51,7 @@ export async function fetchSignedJwkSet(
 			federationError(FederationErrorCode.InvalidMetadata, `URL must use https scheme: ${url}`),
 		);
 	}
-	if (parsed.hash) {
+	if (parsed.href.includes("#")) {
 		return err(
 			federationError(
 				FederationErrorCode.InvalidMetadata,

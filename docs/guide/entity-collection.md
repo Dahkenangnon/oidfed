@@ -42,7 +42,7 @@ if (!page.ok) throw new Error(page.error.description);
 
 Route Web-standard `Request` objects to `collection.handleRequest(request)` and return its `Response`. The application handles routing for an independent provider. Set `endpoint` to identify fixed query components such as `version=1`.
 
-To request another page, repeat the filters and selectors and pass the returned `next` as `from`. You may change the page size. Cursors are opaque and can expire or be evicted. An unavailable cursor returns `page_not_found`.
+To request another page, repeat the filters and selectors and pass the returned `next` as `from`. You may change the page size. Cursors are opaque and expire; removal of a referenced snapshot also makes them unavailable. An unavailable cursor returns `page_not_found`.
 
 ## Federation entity integration
 
@@ -156,9 +156,9 @@ Refresh checks alternate valid paths through shared intermediates and returns ea
 
 To fit the byte cap, a response may contain fewer entities than requested. Each included entity keeps all requested claims that are available. If a single entry cannot fit, the query returns an availability error. Setting `limit=0` returns no entities, with a continuation value if results remain.
 
-The default memory store retains superseded snapshots for 900 seconds. It holds up to 100 snapshots and 10,000 cursors; eviction at capacity can invalidate cursors sooner. Current snapshots remain available until replaced; queries exclude entries whose eligibility or applicable chain evidence has expired. Each process has its own memory store, which is lost on restart.
+The default memory store retains superseded snapshots for 900 seconds and holds up to 100 snapshots. Snapshot eviction can invalidate referencing cursors sooner. The store holds up to 10,000 cursors and preserves unexpired cursors when that limit is reached: a query needing a new cursor returns HTTP 503 `temporarily_unavailable`. A `limit=0` continuation reuses its cursor without extending its lifetime. Initial requests still need a cursor when results remain; applications control request rates. Current snapshots remain available until replaced; queries exclude entries whose eligibility or applicable chain evidence has expired. Each process has its own memory store, which is lost on restart.
 
-Implement `EntityCollectionStore` for durable or shared storage. Its `publish` operation must atomically select the new snapshot for the anchor. Return detached values from reads, retain referenced snapshots and cursors, enforce expiry, and isolate anchors. Keep entries ordered by Entity Identifier. A `CollectionEntry` stores public `entity` data, an `expiresAt` eligibility deadline, optional `chainExpiresAt` evidence, and `verifiedMarks`. The default collector sets eligibility to its verified chain expiry. Custom collectors supply an eligibility deadline without claiming that a chain was validated. Core derives verified mark evidence during refresh; unsigned collection responses cannot supply it.
+Implement `EntityCollectionStore` for durable or shared storage. An adapter can throw `EntityCollectionCursorCapacityError` to report cursor exhaustion as `temporarily_unavailable`; other storage failures remain `server_error`. Its `publish` operation must atomically select the new snapshot for the anchor. Return detached values from reads, retain referenced snapshots and cursors, enforce expiry, and isolate anchors. Keep entries ordered by Entity Identifier. A `CollectionEntry` stores public `entity` data, an `expiresAt` eligibility deadline, optional `chainExpiresAt` evidence, and `verifiedMarks`. The default collector sets eligibility to its verified chain expiry. Custom collectors supply an eligibility deadline without claiming that a chain was validated. Core derives verified mark evidence during refresh; unsigned collection responses cannot supply it.
 
 Authorities can supply the store through `storage.collections`, or enable the core memory store with `MemoryStorageAdapter({ collections: true })`. An explicit `collection.store` takes precedence. If neither is supplied, the service creates its own memory store. Publishing a snapshot runs separately from subordinate registration transactions and leaves registration records unchanged.
 
@@ -170,6 +170,8 @@ Authorities can supply the store through `storage.collections`, or enable the co
 - When included, `entity_types` contains all known types. An `entity_type` filter limits `entity_infos` to the requested types, plus the permitted `federation_entity` entry.
 - Informational fields include organization and display names, descriptions, keywords, contacts, and informational URLs. When `display_name` is missing, the collector uses `client_name` for RP/client types and `resource_name` for resource types. These fallbacks also apply to language variants.
 - Without `locale`, selected claims keep all available languages. With locales, the service uses case-insensitive RFC 4647 basic filtering to keep matching variants and selected untagged values. Claim selection applies before language filtering, so filtering cannot restore an excluded claim.
+
+The built-in collector omits malformed optional informational claims individually and logs their names. It keeps the valid entity and continues traversal. This also applies to display-name fallbacks. Custom collectors remain responsible for supplying valid entries; an invalid custom refresh fails and retains the previous snapshot.
 
 Declare additional claims for custom snapshot producers in the `entityClaims` and `infoClaims` configuration lists. The service checks exact declared names before interpreting language suffixes, including URI names containing `#`. To name a language variant, append `#` and the tag to the complete declared name. Response schemas preserve extension fields and custom Entity Type Identifiers. The service and client do not fetch informational URLs automatically.
 

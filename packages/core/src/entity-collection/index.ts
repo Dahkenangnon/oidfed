@@ -1,5 +1,5 @@
 export { EntityCollectionService } from "./service.js";
-export { MemoryEntityCollectionStore } from "./store.js";
+export { EntityCollectionCursorCapacityError, MemoryEntityCollectionStore } from "./store.js";
 export type {
 	CollectionAuthentication,
 	CollectionEntry,

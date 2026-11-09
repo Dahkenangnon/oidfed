@@ -19,7 +19,7 @@ import {
 	type VerifiedWalletAttestation,
 	verifyAttestation,
 } from "./attestation.js";
-import { roleSchemas, type WalletRoleType } from "./metadata.js";
+import { effectiveRoleSchemas, roleSchemas, type WalletRoleType } from "./metadata.js";
 import {
 	type AuthorizationRequestContext,
 	type AuthorizationRequestCreationOptions,
@@ -231,7 +231,7 @@ export interface DiscoveredCredentialIssuer extends TrustedWalletEntity {
 export class CredentialIssuerRole extends AttestationConsumer {
 	readonly type = "openid_credential_issuer";
 	static parseMetadata(metadata: unknown) {
-		return roleSchemas.openid_credential_issuer.safeParse(metadata);
+		return effectiveRoleSchemas.openid_credential_issuer.safeParse(metadata);
 	}
 	static async discover(
 		id: string,

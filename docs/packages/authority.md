@@ -257,7 +257,7 @@ Extended Listing time filters and audit timestamps use NumericDate seconds. Frac
 
 Omitting `claims` uses `defaultClaims`. An explicit `claims: []` sends `claims=` and suppresses the default statements. If a claim selection is present, `subordinate_statement` is returned only when requested; other requested statement claims are included when available.
 
-`claims=trust_marks` returns references with `trust_mark_type` and the original `trust_mark` JWT, following [Federation §3.1.2](https://openid.net/specs/openid-federation-1_0.html#section-3.1.2). An undecodable JWT, wrong Trust Mark `typ`, or inconsistent reference type or subject produces `server_error`. These references appear in the listing JSON; the embedded signed Subordinate Statement retains Federation's claim restrictions. Subjects with no currently valid marks have an empty `trust_marks` array.
+`claims=trust_marks` returns references with `trust_mark_type` and the original `trust_mark` JWT, following [Federation §3.1.2](https://openid.net/specs/openid-federation-1_0.html#section-3.1.2). An undecodable JWT, wrong Trust Mark `typ`, or inconsistent reference type or subject produces `server_error`. These references appear in the listing JSON; the embedded signed Subordinate Statement retains Federation's claim restrictions. Subjects with no currently valid marks have an empty `trust_marks` array. The same empty array is returned when no Trust Mark store is configured. Trust Mark filters still require that store and otherwise return `unsupported_parameter`.
 
 Requested `jwks` values pass the same public-key publication checks as signed Subordinate Statements. This follows [Draft 03 §3.2](https://openid.net/specs/openid-federation-extended-listing-1_0.html#section-3.2) and [Federation §3.1.1](https://openid.net/specs/openid-federation-1_0.html#section-3.1.1). If a stored set contains private material or fails validation, the whole request returns HTTP 500 with a generic JSON `server_error`; `listSubordinatesExtended()` returns an error `Result`. This handling of invalid server data uses [Federation §8.9](https://openid.net/specs/openid-federation-1_0.html#section-8.9). Validation preserves stored records and publishes a detached snapshot of valid keys, including their JSON extension members.
 
@@ -267,12 +267,14 @@ The `extendedListing` object supports:
 
 - `enabled` (`boolean`): Whether the advertised endpoint accepts requests. Defaults to `true`.
 - `maxPageSize` (`number`): Upper limit on page sizes. Defaults to `500`.
-- `defaultPageSize` (`number`): Default page size if client omits the `limit` query. Defaults to `100`.
+- `defaultPageSize` (`number`): Default page size if the client omits `limit`. Defaults to the smaller of `100` and `maxPageSize`.
 - `supportTimeFilters` (`boolean`): Whether to honor `updated_after` and `updated_before` queries. Defaults to `true`.
 - `supportAuditTimestamps` (`boolean`): Whether to honor `audit_timestamps` query. Defaults to `true`.
 - `defaultClaims` (`ReadonlyArray<string>`): Claims fetched when the client sends no `claims` query. Defaults to `["subordinate_statement"]`.
 - `maxStorePagesPerRequest` (`number`): Maximum index page lookups allowed per request to protect performance. Defaults to `16`.
 - `storeBatchSize` (`number`): Page batch sizes retrieved during filtering. Defaults to `defaultPageSize`.
+
+All four numeric limits must be positive safe integers. An explicit `defaultPageSize` must not exceed `maxPageSize`. Invalid configuration fails when the handler is created.
 
 ## Common questions
 
@@ -326,6 +328,10 @@ Unsupported methods receive HTTP 405 with `Allow` and a Federation JSON error co
 Successful responses are compact JWTs with media type `application/entity-events-statement+jwt` and JWT type `entity-events-statement+jwt`, signed with the authority's Federation Entity Key. They contain `iss`, `sub`, a fresh response `iat`, and `federation_registration_events`. The authority omits the optional `exp`; event occurrence times remain unchanged when a new response is issued.
 
 A current subordinate with no recorded events receives a signed empty history. Retained history remains available after removal and re-registration. A subject with neither a current record nor history receives HTTP 404 JSON `not_found`. Storage failures produce a server error, not empty history. These lookup and retention rules are oidfed policies; the draft does not prescribe them.
+
+Published events require a nonempty name; custom names and empty descriptions are supported. This publication check applies to lifecycle imports, memory-store appends, and histories returned by custom adapters. Received event names retain the draft’s open string format.
+
+`information_uri` is descriptive data. [Draft 01 §2.3.2.1](https://openid.net/specs/openid-federation-subordinate-events-1_0-01.html#section-2.3.2.1) recommends HTTPS. The library preserves URL schemes and does not fetch these links. Applications should allow only suitable navigation schemes, such as HTTPS, before rendering a clickable link; a valid signature does not make a URL safe to open.
 
 History contains the authority's recorded observations and may be incomplete. A suspension event does not enforce suspension, and event history alone does not prove past trust-chain validity. The endpoint provides no pagination or notifications.
 

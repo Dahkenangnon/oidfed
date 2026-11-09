@@ -13,7 +13,13 @@ import { base64url } from "jose";
 import { z } from "zod";
 import { invokePolicy } from "./attestation.js";
 import { decodeToken, signToken, verifyToken } from "./jwt.js";
-import { CredentialVerifierMetadataSchema, type DcqlQuery, DcqlQuerySchema } from "./metadata.js";
+import {
+	CredentialVerifierMetadataSchema,
+	type DcqlQuery,
+	DcqlQuerySchema,
+	normalizeReceivedDcqlQuery,
+	ReceivedDcqlQuerySchema,
+} from "./metadata.js";
 import {
 	failure,
 	prepareVerifier,
@@ -32,6 +38,11 @@ export interface AuthorizationRequestOptions extends WalletTrustOptions {
 	/** Wallet metadata issuer when dynamic discovery is used; absent means static discovery. */
 	readonly walletIssuer?: string;
 	readonly walletNonce?: string;
+	/**
+	 * Apply framework matching or refinement rules to the active request and effective queries.
+	 * Wallet §6.3.1 leaves this profile choice open; contextual policy input alone
+	 * does not authorize a different active query.
+	 */
 	readonly queryPolicy?: (
 		context: {
 			queries: readonly DcqlQuery[];
@@ -177,6 +188,10 @@ export async function prepareRequest(
 	if (outer.request) {
 		const decoded = decodeToken(outer.request, options);
 		if (!decoded.ok) return decoded;
+		// OpenID4VP §5: reject the wrong object type before consuming discovery hints.
+		if (decoded.value.header.typ !== "oauth-authz-req+jwt")
+			return failure("Invalid Request Object type");
+
 		const supplied = decoded.value.header.trust_chain;
 		if (supplied !== undefined) {
 			if (!Array.isArray(supplied) || !supplied.every((item) => typeof item === "string"))
@@ -230,8 +245,9 @@ function hasSuperiorQueryOverride(chain: PreparedTrustChain): boolean {
 function requestedQueries(
 	request: Record<string, unknown>,
 	scopeQuery: DcqlQuery | undefined,
+	received = false,
 ): Result<DcqlQuery[]> {
-	const query = DcqlQuerySchema.safeParse(
+	const query = (received ? ReceivedDcqlQuerySchema : DcqlQuerySchema).safeParse(
 		request.dcql_query !== undefined ? request.dcql_query : scopeQuery,
 	);
 	if (!query.success)
@@ -240,7 +256,7 @@ function requestedQueries(
 				? "Invalid DCQL query"
 				: "Scope-to-DCQL mapping must be provided by the application",
 		);
-	return ok([query.data]);
+	return ok([received ? normalizeReceivedDcqlQuery(query.data) : query.data]);
 }
 
 /**
@@ -334,7 +350,7 @@ export async function completeRequest(
 		return failure("Exactly one DCQL query or scope is required");
 	const contextual: Record<string, Record<string, unknown>> = {};
 	if (saved.chain.pendingClaims.length && request.client_metadata?.dcql_query !== undefined) {
-		const query = DcqlQuerySchema.safeParse(request.client_metadata.dcql_query);
+		const query = ReceivedDcqlQuerySchema.safeParse(request.client_metadata.dcql_query);
 		if (!query.success) return failure("Invalid contextual DCQL query");
 		// Wallet Draft 05 explicitly supplies this one field as policy input.
 		contextual.openid_credential_verifier = { dcql_queries: [query.data] };
@@ -357,11 +373,13 @@ export async function completeRequest(
 	const superiorOverridesQuery = hasSuperiorQueryOverride(saved.chain);
 	let requested: DcqlQuery[] | undefined;
 	if (!superiorOverridesQuery) {
-		const active = requestedQueries(request, context.scopeQuery);
+		const active = requestedQueries(request, context.scopeQuery, true);
 		if (!active.ok) return active;
 		requested = active.value;
 	}
-	const queries = (metadata.value.dcql_queries as DcqlQuery[] | undefined) ?? requested;
+	const queries =
+		(metadata.value.dcql_queries as DcqlQuery[] | undefined)?.map(normalizeReceivedDcqlQuery) ??
+		requested;
 	if (!queries) return failure("Superior DCQL metadata did not produce an effective query");
 	if (request.transaction_data !== undefined) {
 		if (!saved.options.verifyTransactionData) return failure("Unsupported transaction_data");
@@ -376,6 +394,8 @@ export async function completeRequest(
 		if (!accepted.ok) return accepted;
 	}
 	const safeRequest: Record<string, unknown> = { ...request };
+	// Applications receive the same normalized active query used by transaction checks.
+	if (request.dcql_query !== undefined && requested) safeRequest.dcql_query = requested[0];
 	delete safeRequest.client_metadata;
 	delete safeRequest.iss;
 	// Only the superior-metadata case mandates ignoring the requested query (Wallet §7.1.1).
@@ -408,7 +428,10 @@ export async function completeRequest(
 		request: safeRequest,
 		effectiveQueries: queries,
 		querySource,
-		verifierMetadata: metadata.value,
+		verifierMetadata: {
+			...metadata.value,
+			...(metadata.value.dcql_queries !== undefined ? { dcql_queries: queries } : {}),
+		},
 		trustChain: completed.value,
 	};
 	validatedRequests.set(result, {
@@ -460,7 +483,7 @@ export async function createRequest(
 		}
 		const completed = await completeTrustChainValidation(prepared.value, context);
 		if (!completed.ok) return completed;
-		if (parsed.data.transaction_data !== undefined && hasSuperiorQueryOverride(prepared.value)) {
+		if (hasSuperiorQueryOverride(prepared.value)) {
 			// The validated statement establishes the override; completed metadata supplies
 			// its policy-processed value. Ignored request queries cannot override it.
 			const metadata = roleMetadata("openid_credential_verifier", id, completed.value);
@@ -469,6 +492,16 @@ export async function createRequest(
 			if (!transactionQueries)
 				return failure("Superior DCQL metadata did not produce an effective query");
 		}
+	}
+	// OpenID4VP §5.3 requires state for non-holder-bound presentations outside the DC API.
+	// Opaque scopes without a local mapping remain the protocol engine's responsibility.
+	if (
+		!transactionQueries &&
+		(parsed.data.dcql_query !== undefined || options.scopeQuery !== undefined)
+	) {
+		const active = requestedQueries(parsed.data, options.scopeQuery);
+		if (!active.ok) return active;
+		transactionQueries = active.value;
 	}
 	if (parsed.data.transaction_data !== undefined) {
 		if (!transactionQueries) {
@@ -481,5 +514,16 @@ export async function createRequest(
 		const data = validateTransactionData(parsed.data.transaction_data, transactionQueries);
 		if (!data.ok) return data;
 	}
+	if (
+		parsed.data.state === undefined &&
+		!["dc_api", "dc_api.jwt"].includes(parsed.data.response_mode) &&
+		transactionQueries?.some((query) =>
+			query.credentials.some(
+				(credential) => credential.require_cryptographic_holder_binding === false,
+			),
+		)
+	)
+		return failure("state is required when requesting presentations without holder binding");
+
 	return signToken(payload, "oauth-authz-req+jwt", signer, options, options.trustChain);
 }

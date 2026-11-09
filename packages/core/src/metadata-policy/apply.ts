@@ -77,7 +77,7 @@ export function applyMetadataPolicy(
 					});
 				}
 
-				if (applyResult.removed) {
+				if (applyResult.removed || applyResult.value === undefined) {
 					delete entityMetadata[paramName];
 				} else if (applyResult.value === null) {
 					return err({

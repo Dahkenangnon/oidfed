@@ -13,7 +13,7 @@ export function entityId(value: string): EntityId {
 	const url = new URL(value);
 	if (url.protocol !== "https:") throw new TypeError("Entity ID must be HTTPS");
 	if (url.username || url.password) throw new TypeError("Entity ID must not contain credentials");
-	if (url.search || url.hash)
+	if (url.href.includes("?") || url.href.includes("#"))
 		throw new TypeError("Entity ID must not contain query parameters or fragments");
 	return value as EntityId;
 }
@@ -23,7 +23,13 @@ export function isValidEntityId(value: string): value is EntityId {
 	if (value.length > 2048) return false;
 	try {
 		const url = new URL(value);
-		return url.protocol === "https:" && !url.username && !url.password && !url.search && !url.hash;
+		return (
+			url.protocol === "https:" &&
+			!url.username &&
+			!url.password &&
+			!url.href.includes("?") &&
+			!url.href.includes("#")
+		);
 	} catch {
 		return false;
 	}

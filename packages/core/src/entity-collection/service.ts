@@ -26,7 +26,7 @@ import {
 	projectCollectionEntity,
 } from "./protocol.js";
 import { buildCollectionSnapshot } from "./refresh.js";
-import { MemoryEntityCollectionStore } from "./store.js";
+import { EntityCollectionCursorCapacityError, MemoryEntityCollectionStore } from "./store.js";
 import type {
 	CollectionRefreshOptions,
 	CollectionRefreshResult,
@@ -272,10 +272,19 @@ export class EntityCollectionService {
 				JSON.stringify({
 					entities: [],
 					last_updated: snapshot.lastUpdated,
-					next: "00000000-0000-0000-0000-000000000000",
+					...(start < entries.length
+						? {
+								next: limit === 0 && cursor ? request.from : "00000000-0000-0000-0000-000000000000",
+							}
+						: {}),
 				}),
 			).byteLength;
 			const maxBytes = this.config.options?.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
+			if (bytes > maxBytes)
+				return err({
+					code: FederationErrorCode.TemporarilyUnavailable,
+					description: "Collection response exceeds the response size limit",
+				});
 			for (const entry of entries.slice(start, start + limit)) {
 				const projected = projectCollectionEntity(entry.entity, request, supportedInfoClaims);
 				const size = encoder.encode(JSON.stringify(projected)).byteLength + (page.length ? 1 : 0);
@@ -292,20 +301,30 @@ export class EntityCollectionService {
 			}
 			let next: string | undefined;
 			if (start + page.length < entries.length) {
-				next = crypto.randomUUID();
-				await this.store.putCursor(next, {
-					snapshotId: snapshot.id,
-					trustAnchor: anchor,
-					context,
-					index: start + page.length,
-					expiresAt: Math.min(validUntil, cursor?.expiresAt ?? Infinity),
-				});
+				// A zero-result continuation can reuse its validated cursor without extending its lifetime.
+				if (cursor && page.length === 0) next = request.from;
+				else {
+					next = crypto.randomUUID();
+					await this.store.putCursor(next, {
+						snapshotId: snapshot.id,
+						trustAnchor: anchor,
+						context,
+						index: start + page.length,
+						expiresAt: Math.min(validUntil, cursor?.expiresAt ?? Infinity),
+					});
+				}
 			}
 			return ok({ entities: page, last_updated: snapshot.lastUpdated, ...(next ? { next } : {}) });
 		} catch (cause) {
 			return err({
-				code: FederationErrorCode.ServerError,
-				description: "Collection query failed",
+				code:
+					cause instanceof EntityCollectionCursorCapacityError
+						? FederationErrorCode.TemporarilyUnavailable
+						: FederationErrorCode.ServerError,
+				description:
+					cause instanceof EntityCollectionCursorCapacityError
+						? "Collection cursor capacity exhausted"
+						: "Collection query failed",
 				cause,
 			});
 		}

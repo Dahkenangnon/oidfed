@@ -48,7 +48,7 @@ export async function fetchTrustMark(
 			),
 		);
 	}
-	if (parsed.hash) {
+	if (parsed.href.includes("#")) {
 		return err(
 			federationError(
 				FederationErrorCode.InvalidRequest,
@@ -91,7 +91,7 @@ export async function fetchTrustMarkStatus(
 	if (typeof trustMarkJwt !== "string" || !trustMarkJwt)
 		return err(federationError(FederationErrorCode.InvalidRequest, "Missing trust_mark"));
 	try {
-		if (new URL(endpoint).hash)
+		if (new URL(endpoint).href.includes("#"))
 			return err(
 				federationError(
 					FederationErrorCode.InvalidRequest,

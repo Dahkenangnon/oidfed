@@ -26,7 +26,7 @@ const httpsUrlNoFragment = z.url().refine(
 	(val) => {
 		try {
 			const u = new URL(val);
-			return u.protocol === "https:" && !u.hash;
+			return u.protocol === "https:" && !u.href.includes("#");
 		} catch {
 			return false;
 		}

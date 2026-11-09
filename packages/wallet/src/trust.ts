@@ -17,7 +17,7 @@ import {
 	type ValidatedTrustChain,
 	validateTrustChain,
 } from "@oidfed/core";
-import { roleSchemas, type WalletRoleType } from "./metadata.js";
+import { effectiveRoleSchemas, type WalletRoleType } from "./metadata.js";
 
 export interface WalletTrustOptions extends FederationOptions {
 	/** Local anchor configuration for signed-object creation and role defaults. */
@@ -104,7 +104,7 @@ export function roleMetadata(
 ): Result<Record<string, unknown>> {
 	if (chain.entityId !== id)
 		return failure("Trust chain subject does not match the requested entity");
-	const parsed = roleSchemas[type].safeParse(chain.resolvedMetadata[type]);
+	const parsed = effectiveRoleSchemas[type].safeParse(chain.resolvedMetadata[type]);
 	if (!parsed.success)
 		return err({ code: FederationErrorCode.InvalidMetadata, description: parsed.error.message });
 	if (type === "openid_credential_issuer" && parsed.data.credential_issuer !== id)

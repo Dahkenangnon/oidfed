@@ -40,7 +40,7 @@ export async function fetchHistoricalKeys(
 			federationError(FederationErrorCode.InvalidRequest, `URL must use https scheme: ${endpoint}`),
 		);
 	}
-	if (parsed.hash) {
+	if (parsed.href.includes("#")) {
 		return err(
 			federationError(
 				FederationErrorCode.InvalidRequest,

@@ -10,6 +10,7 @@ import {
 	federationError,
 	generateSigningKey,
 	type HttpClient,
+	InternalErrorCode,
 	isErr,
 	isOk,
 	type JWK,
@@ -310,6 +311,83 @@ async function createDualAnchorRegistrationFixture() {
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("oidc / publication and endpoint validation", () => {
+		test("installed registration handlers require an explicit capability in composed metadata", (t) => {
+			for (const role of [new OidcProviderRole({}), new OAuthAuthorizationServerRole({})]) {
+				for (const methods of [undefined, [], ["automatic"], ["explicit", 1]])
+					t.throws(
+						() => role.validateMetadata({ client_registration_types_supported: methods }),
+						/explicit/,
+					);
+				const metadata = {
+					client_registration_types_supported: ["automatic", "custom", "explicit"],
+				};
+				role.validateMetadata(metadata);
+				t.deepEqual(metadata.client_registration_types_supported, [
+					"automatic",
+					"custom",
+					"explicit",
+				]);
+			}
+		});
+		test("explicit registration rejects invalid effective endpoints before posting", async (t) => {
+			for (const endpoint of [
+				"http://op.example/register",
+				"https://op.example/register#",
+				"https://op.example/register#part",
+				"not a URL",
+				"https://op.example:8443/register?tenant=one",
+			]) {
+				const fed = await createMockFederation({
+					opMetadata: {
+						openid_provider: {
+							issuer: OP_ID,
+							authorization_endpoint: `${OP_ID}/authorize`,
+							response_types_supported: ["code"],
+							subject_types_supported: ["public"],
+							id_token_signing_alg_values_supported: ["ES256"],
+							client_registration_types_supported: ["explicit"],
+							federation_registration_endpoint: endpoint,
+						},
+					},
+				});
+				const leaf = decodeEntityStatement(fed.leafEcJwt);
+				if (!leaf.ok) throw new Error("fixture");
+				let posts = 0;
+				const result = await explicitRegistration(
+					await createMockDiscovery(OP_ID, fed),
+					{
+						entityId: LEAF_ID,
+						keyProvider: MemoryFederationKeyProvider.fromJWK(fed.leafSigningKey),
+						authorityHints: [TA_ID],
+						metadata: leaf.value.payload.metadata!,
+					},
+					fed.trustAnchors,
+					{
+						...fed.options,
+						httpClient: async (input, init) => {
+							if (input instanceof Request && input.method === "POST") {
+								posts++;
+								t.equal(input.url, endpoint);
+								return new Response("", { status: 400 });
+							}
+							return fed.httpClient(input, init);
+						},
+					},
+				);
+				t.false(result.ok);
+				if (!result.ok)
+					t.equal(
+						result.error.code,
+						endpoint.includes("tenant=")
+							? InternalErrorCode.Network
+							: FederationErrorCode.InvalidMetadata,
+					);
+				t.equal(posts, endpoint.includes("tenant=") ? 1 : 0);
+			}
+		});
+	});
+
 	module("oidc / protocol key identifiers", () => {
 		test("accepts optional identifiers in OIDC and OAuth metadata", async (t) => {
 			const pair = await generateSigningKey();

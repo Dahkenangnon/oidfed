@@ -455,6 +455,10 @@ The returned `PreparedTrustChain` is an opaque handle with pending claims and pr
 
 `validateTrustChain` keeps its existing strict behavior and never defers required inputs. Wallet roles use the staged APIs for request-dependent DCQL checks; see the [wallet guide](wallet.md).
 
+Composed hosts and Entity Statement builders check supplied OP/AS `issuer` values against the statement subject and prohibit `jwks`, `jwks_uri`, and `signed_jwks_uri` inside `federation_entity` metadata ([Federation §§5.1.3–5.2.1](https://openid.net/specs/openid-federation-1_0.html#section-5.1.3)). These checks allow partial metadata for superiors to complete. Federation Entity Keys belong in the statement’s top-level `jwks`.
+
+Entity Identifiers reject query and fragment delimiters, including empty trailing `?` and `#`, under [Federation §1.2](https://openid.net/specs/openid-federation-1_0.html#section-1.2). Percent-encoded characters remain part of the identifier. Key URL helpers also enforce their fragment-free URL contract, including an empty `#`; that URL policy is separate from the Entity Identifier rules.
+
 `EntityRole.validateMetadata(metadata, context)` is an optional synchronous hook. Hosts invoke it on detached composed role metadata before publication. Existing roles can omit it.
 
 `findInvalidMetadataNullPaths(metadata)` returns the paths of forbidden null values. Statement builders, chain validation, and authority publication share this check. It permits null wildcard components only in the wallet specifications' issuer claim-description and verifier DCQL path arrays; other null metadata values remain invalid. Wallet roles validate the paths' format-specific syntax.

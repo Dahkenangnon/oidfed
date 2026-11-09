@@ -66,6 +66,10 @@ const leaf = new Leaf({
 
 Each stateful role instance belongs to one host. Create a separate instance for another Entity Identifier. Request construction uses the final composed local metadata, including fields supplied by the host. Per-call options override supplied fields while retaining the host’s other federation options, including its HTTP client and clock.
 
+An `OidcProviderRole` or `OAuthAuthorizationServerRole` installs an explicit-registration handler. Its final composed metadata must include `"explicit"` in `client_registration_types_supported`, as required by [Federation §12.2](https://openid.net/specs/openid-federation-1_0.html#section-12.2). Supply that capability through the role or host metadata. Missing or incompatible configuration fails before publication. RP registration-method choices remain application configuration.
+
+When publishing OP or AS metadata, a supplied `issuer` must exactly match the host’s Entity Identifier ([§5.1.3](https://openid.net/specs/openid-federation-1_0.html#section-5.1.3), [§5.1.4](https://openid.net/specs/openid-federation-1_0.html#section-5.1.4)). Before sending explicit registration, the RP also checks that the discovered registration endpoint uses HTTPS and has no fragment, including a bare trailing `#`. Invalid endpoints return `invalid_metadata` without a POST. Query strings and explicit ports remain supported.
+
 ### Client-side automatic registration
 
 This fragment uses an `rpRole` already composed into a parent, a pinned `taKey`, and fresh `sessionState` / `sessionNonce` values bound to the login session.

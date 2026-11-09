@@ -183,6 +183,87 @@ async function createTestContext(overrides?: TestContextOverrides): Promise<{
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("authority / listing limits and event publication", () => {
+		test("invalid listing configuration fails before serving a page", async (t) => {
+			const { ctx } = await createTestContext();
+			for (const name of [
+				"maxPageSize",
+				"defaultPageSize",
+				"maxStorePagesPerRequest",
+				"storeBatchSize",
+			])
+				for (const value of [0, -1, NaN, Infinity, 1.5, Number.MAX_SAFE_INTEGER + 1])
+					t.throws(
+						() => createExtendedListHandler(ctx, { [name]: value }),
+						/positive safe integer/,
+					);
+			t.throws(
+				() => createExtendedListHandler(ctx, { maxPageSize: 2, defaultPageSize: 3 }),
+				/defaultPageSize/,
+			);
+			const handler = createExtendedListHandler(ctx, { maxPageSize: 1, storeBatchSize: 2 });
+			t.equal((await handler(new Request("https://authority.example/list?claims="))).status, 200);
+		});
+		test("custom event history is checked before signing", async (t) => {
+			const f = await SubordinateEventsFixture.fixture();
+			const storage: StorageAdapter = {
+				subordinates: f.storage.subordinates,
+				subordinateEvents: f.storage.subordinateEvents,
+				transaction: (operation) =>
+					f.storage.transaction((tx) =>
+						operation({
+							...tx,
+							subordinateEvents: {
+								append: async () => {},
+								list: async () => [{ iat: 1500, event: "" }],
+							},
+						}),
+					),
+			};
+			const authority = new TrustAnchor({ ...f.config, storage });
+			await t.rejects(authority.getSubordinateEvents(SubordinateEventsFixture.subject), /empty/);
+			const response = await authority.handleRequest(
+				new Request(
+					`${SubordinateEventsFixture.endpoint}&sub=${encodeURIComponent(SubordinateEventsFixture.subject)}`,
+				),
+			);
+			t.equal(response.status, 500);
+		});
+		test("empty event names are rejected before storage or signing", async (t) => {
+			const f = await SubordinateEventsFixture.fixture();
+			await t.rejects(
+				f.authority.recordSubordinateEvents(SubordinateEventsFixture.subject, [
+					{ iat: 1500, event: "" },
+				]),
+				/empty/,
+			);
+			await t.rejects(
+				f.storage.subordinateEvents!.append(
+					SubordinateEventsFixture.issuer,
+					SubordinateEventsFixture.subject,
+					[{ iat: 1500, event: "" }],
+				),
+				/empty/,
+			);
+			await f.authority.recordSubordinateEvents(SubordinateEventsFixture.subject, [
+				{
+					iat: 1500,
+					event: "custom",
+					event_description: "",
+					information_uri: "http://docs.example/#event",
+				},
+			]);
+			t.equal(
+				(
+					await f.storage.subordinateEvents!.list(
+						SubordinateEventsFixture.issuer,
+						SubordinateEventsFixture.subject,
+					)
+				).length,
+				1,
+			);
+		});
+	});
 
 	module("authority / trust mark publication and eligibility", () => {
 		const subject = entityId("https://member.example");
@@ -3168,16 +3249,18 @@ export default (QUnit: QUnit) => {
 				t.deepEqual(entry.trust_marks, []);
 			});
 
-			test("claims=trust_marks returns 400 when trust mark capability is absent", async (t) => {
+			test("claims=trust_marks returns an empty selection when trust mark capability is absent", async (t) => {
 				const storage = new MemoryStorageAdapter();
-				const { ctx, subordinates } = await createTestContext({ storage });
-				await subordinates.add(makeXListRecord(XLIST_SUB_A));
+				const { ctx } = await createTestContext({ storage });
+				await storage.subordinates.add(makeXListRecord(XLIST_SUB_A));
 				const handler = createExtendedListHandler(ctx);
 				const res = await handler(new Request(`${XLIST_BASE_URL}?claims=trust_marks`));
-				t.equal(res.status, 400);
+				t.equal(res.status, 200);
 				t.equal(res.headers.get("Content-Type"), "application/json");
-				const body = (await res.json()) as Record<string, string>;
-				t.equal(body.error, "unsupported_parameter");
+				const body = (await res.json()) as {
+					immediate_subordinate_entities: Array<{ trust_marks: unknown[] }>;
+				};
+				t.deepEqual(body.immediate_subordinate_entities[0]?.trust_marks, []);
 			});
 
 			test("claims=metadata attaches subordinate metadata", async (t) => {

@@ -31,6 +31,7 @@ export interface EntityCollectionStore {
 	publish(snapshot: EntityCollectionSnapshot): Promise<void>;
 	getCurrent(trustAnchor: EntityId): Promise<EntityCollectionSnapshot | undefined>;
 	getSnapshot(id: string): Promise<EntityCollectionSnapshot | undefined>;
+	/** May throw EntityCollectionCursorCapacityError to report temporary capacity exhaustion. */
 	putCursor(id: string, cursor: EntityCollectionCursor): Promise<void>;
 	getCursor(id: string): Promise<EntityCollectionCursor | undefined>;
 }

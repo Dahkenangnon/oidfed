@@ -30,7 +30,7 @@ export const EntityIdSchema = z
 		(url) => {
 			try {
 				const u = new URL(url);
-				return !u.search && !u.hash;
+				return !u.href.includes("?") && !u.href.includes("#");
 			} catch {
 				return false;
 			}

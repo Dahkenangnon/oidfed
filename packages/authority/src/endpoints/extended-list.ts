@@ -7,7 +7,6 @@
  */
 import {
 	type EntityId,
-	ExtendedListClaim,
 	ExtendedListQuerySchema,
 	FederationErrorCode,
 	nowSeconds,
@@ -17,13 +16,13 @@ import type { HandlerContext } from "./context.js";
 import { extractClaims } from "./extended-list-claims.js";
 import { errorResponse, jsonResponse, parseQueryParams, requireMethod } from "./helpers.js";
 
-/** Configuration controlling the Extended Subordinate Listing endpoint. */
+/** Configuration controlling Extended Listing; numeric limits must be positive safe integers. */
 export interface ExtendedListingConfig {
 	/** Whether the endpoint is wired in at all. When false, handler returns 404. */
 	enabled?: boolean;
 	/** Hard cap applied to the per-page result size; client `limit` is clamped to this. */
 	maxPageSize?: number;
-	/** Default page size when the client omits `limit`. */
+	/** Page size when `limit` is omitted; defaults to min(100, maxPageSize). */
 	defaultPageSize?: number;
 	/** Whether to honour `updated_after` / `updated_before`. Defaults to true. */
 	supportTimeFilters?: boolean;
@@ -99,12 +98,24 @@ export function createExtendedListHandler(
 ): (request: Request) => Promise<Response> {
 	const enabled = config?.enabled ?? true;
 	const maxPageSize = config?.maxPageSize ?? DEFAULT_MAX_PAGE_SIZE;
-	const defaultPageSize = config?.defaultPageSize ?? DEFAULT_PAGE_SIZE;
+	const defaultPageSize = config?.defaultPageSize ?? Math.min(DEFAULT_PAGE_SIZE, maxPageSize);
 	const supportTimeFilters = config?.supportTimeFilters ?? true;
 	const supportAuditTimestamps = config?.supportAuditTimestamps ?? true;
 	const defaultClaims = config?.defaultClaims ?? DEFAULT_CLAIMS;
 	const maxStorePages = config?.maxStorePagesPerRequest ?? DEFAULT_MAX_STORE_PAGES;
 	const storeBatchSize = config?.storeBatchSize ?? defaultPageSize;
+
+	// Invalid deployment limits must fail before they can imitate an empty collection.
+	for (const [name, value] of Object.entries({
+		maxPageSize,
+		defaultPageSize,
+		maxStorePagesPerRequest: maxStorePages,
+		storeBatchSize,
+	}))
+		if (!Number.isSafeInteger(value) || value <= 0)
+			throw new TypeError(`${name} must be a positive safe integer`);
+	if (defaultPageSize > maxPageSize)
+		throw new TypeError("defaultPageSize must not exceed maxPageSize");
 
 	return async (request: Request) => {
 		if (!enabled) {
@@ -217,14 +228,6 @@ export function createExtendedListHandler(
 		// parameter at all. If `claims=` is present (even empty), the user's value
 		// wins so the MUST-NOT on subordinate_statement is honoured.
 		const requestedClaims = params.has("claims") ? parseClaimsParam(params) : [...defaultClaims];
-
-		if (requestedClaims.includes(ExtendedListClaim.TrustMarks) && !ctx.storage.trustMarks) {
-			return errorResponse(
-				400,
-				FederationErrorCode.UnsupportedParameter,
-				"claims=trust_marks is not supported by this deployment",
-			);
-		}
 
 		// The wire cursor is opaque to callers; this implementation uses the store bookmark.
 		if (from !== null) {

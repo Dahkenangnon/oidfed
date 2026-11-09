@@ -12,6 +12,7 @@ import { signEntityStatement } from "./jose/sign.js";
 import type { JwtSigner } from "./jose/signer.js";
 import { preparePublicJwkSet } from "./jwks/public-material.js";
 import { findInvalidMetadataNullPaths } from "./metadata-values.js";
+import { validatePublishedMetadata } from "./roles.js";
 import type { TrustChainConstraints } from "./schemas/constraints.js";
 import {
 	type EntityConfigurationPayload,
@@ -227,7 +228,7 @@ function assertValidEntityStatementClaims(
 	// Publication uses supported key types; generic claim validation also serves
 	// received statements and keeps RFC 7517 §5's open key-type space.
 	if (payload.metadata !== undefined)
-		validatePublishedMetadataKeys(payload.metadata as Record<string, unknown>);
+		validatePublishedMetadata(payload.metadata as Record<string, unknown>, payload.sub as string);
 	if (payload.trust_mark_owners !== undefined)
 		validatePublishedMetadataKeys(payload.trust_mark_owners as Record<string, unknown>);
 }

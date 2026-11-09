@@ -288,6 +288,19 @@ export class OidcProviderRole implements EntityRole {
 		this.metadata = config.metadata ?? {};
 	}
 
+	validateMetadata(metadata: Readonly<Record<string, unknown>>): void {
+		// Federation §12.2 requires both the endpoint and its explicit capability.
+		const methods = metadata.client_registration_types_supported;
+		if (
+			!Array.isArray(methods) ||
+			!methods.every((method) => typeof method === "string") ||
+			!methods.includes("explicit")
+		)
+			throw new TypeError(
+				"An installed registration endpoint requires client_registration_types_supported to include explicit",
+			);
+	}
+
 	initialize(context: EntityContext): void {
 		assertRoleOwner(this.context, context);
 		this.context = context;
@@ -467,6 +480,19 @@ export class OAuthAuthorizationServerRole implements EntityRole {
 
 	constructor(public readonly config: OAuthAuthorizationServerRoleConfig) {
 		this.metadata = config.metadata ?? {};
+	}
+
+	validateMetadata(metadata: Readonly<Record<string, unknown>>): void {
+		// Federation §12.2 requires both the endpoint and its explicit capability.
+		const methods = metadata.client_registration_types_supported;
+		if (
+			!Array.isArray(methods) ||
+			!methods.every((method) => typeof method === "string") ||
+			!methods.includes("explicit")
+		)
+			throw new TypeError(
+				"An installed registration endpoint requires client_registration_types_supported to include explicit",
+			);
 	}
 
 	initialize(context: EntityContext): void {

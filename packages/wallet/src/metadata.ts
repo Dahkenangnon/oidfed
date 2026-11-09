@@ -36,75 +36,111 @@ const claimQuery = z.looseObject({
 		.optional(),
 });
 
-const credentialQuery = z
-	.looseObject({
-		id: identifier,
-		format: z.string(),
-		meta: object,
-		multiple: z.boolean().optional(),
-		trusted_authorities: z
-			.array(z.looseObject({ type: z.string(), values: strings }))
-			.min(1)
-			.optional(),
-		require_cryptographic_holder_binding: z.boolean().optional(),
-		claims: z.array(claimQuery).min(1).optional(),
-		claim_sets: z.array(z.array(identifier)).min(1).optional(),
-	})
-	.superRefine((query, ctx) => {
-		const fail = (message: string) => ctx.addIssue({ code: "custom", message });
-		const ids = query.claims?.flatMap((claim) => (claim.id === undefined ? [] : [claim.id])) ?? [];
-		if (new Set(ids).size !== ids.length) fail("Claim identifiers must be unique");
-		const claimPaths = query.claims?.map((claim) => JSON.stringify(claim.path)) ?? [];
-		if (new Set(claimPaths).size !== claimPaths.length)
-			fail("Claim queries must not repeat a path");
-		if (
-			query.claim_sets &&
-			(!query.claims ||
-				query.claims.some((claim) => claim.id === undefined) ||
-				query.claim_sets.some((set) => set.some((id) => !ids.includes(id))))
-		)
-			fail("Claim sets must reference named claims");
-		if (query.format === "mso_mdoc") {
-			if (typeof query.meta.doctype_value !== "string") fail("mdoc queries require doctype_value");
+const credentialQuery = (allowDuplicatePaths: boolean) =>
+	z
+		.looseObject({
+			id: identifier,
+			format: z.string(),
+			meta: object,
+			multiple: z.boolean().optional(),
+			trusted_authorities: z
+				.array(z.looseObject({ type: z.string(), values: strings }))
+				.min(1)
+				.optional(),
+			require_cryptographic_holder_binding: z.boolean().optional(),
+			claims: z.array(claimQuery).min(1).optional(),
+			claim_sets: z.array(z.array(identifier)).min(1).optional(),
+		})
+		.superRefine((query, ctx) => {
+			const fail = (message: string) => ctx.addIssue({ code: "custom", message });
+			const ids =
+				query.claims?.flatMap((claim) => (claim.id === undefined ? [] : [claim.id])) ?? [];
+			if (new Set(ids).size !== ids.length) fail("Claim identifiers must be unique");
+			const claimPaths = query.claims?.map((claim) => JSON.stringify(claim.path)) ?? [];
+			if (!allowDuplicatePaths && new Set(claimPaths).size !== claimPaths.length)
+				fail("Claim queries must not repeat a path");
 			if (
-				query.claims?.some(
-					(claim) => claim.path.length !== 2 || claim.path.some((part) => typeof part !== "string"),
+				query.claim_sets &&
+				(!query.claims ||
+					query.claims.some((claim) => claim.id === undefined) ||
+					query.claim_sets.some((set) => set.some((id) => !ids.includes(id))))
+			)
+				fail("Claim sets must reference named claims");
+			if (query.format === "mso_mdoc") {
+				if (typeof query.meta.doctype_value !== "string")
+					fail("mdoc queries require doctype_value");
+				if (
+					query.claims?.some(
+						(claim) =>
+							claim.path.length !== 2 || claim.path.some((part) => typeof part !== "string"),
+					)
+				)
+					fail("mdoc claim paths must contain two strings");
+			}
+			if (query.format === "dc+sd-jwt" && !strings.safeParse(query.meta.vct_values).success)
+				fail("SD-JWT queries require vct_values");
+			if (
+				["jwt_vc_json", "jwt_vc_json-ld", "ldp_vc"].includes(query.format) &&
+				!z.array(strings).min(1).safeParse(query.meta.type_values).success
+			)
+				fail("W3C queries require type_values");
+		});
+
+const dcqlQuerySchema = (allowDuplicatePaths: boolean) =>
+	z
+		.looseObject({
+			credentials: z.array(credentialQuery(allowDuplicatePaths)).min(1),
+			credential_sets: z
+				.array(
+					z.looseObject({ options: z.array(strings).min(1), required: z.boolean().optional() }),
+				)
+				.min(1)
+				.optional(),
+		})
+		.superRefine((query, ctx) => {
+			const ids = query.credentials.map((credential) => credential.id);
+			if (new Set(ids).size !== ids.length)
+				ctx.addIssue({ code: "custom", message: "Credential identifiers must be unique" });
+			if (
+				query.credential_sets?.some((set) =>
+					set.options.some((option) => option.some((id) => !ids.includes(id))),
 				)
 			)
-				fail("mdoc claim paths must contain two strings");
-		}
-		if (query.format === "dc+sd-jwt" && !strings.safeParse(query.meta.vct_values).success)
-			fail("SD-JWT queries require vct_values");
-		if (
-			["jwt_vc_json", "jwt_vc_json-ld", "ldp_vc"].includes(query.format) &&
-			!z.array(strings).min(1).safeParse(query.meta.type_values).success
-		)
-			fail("W3C queries require type_values");
-	});
-
-export const DcqlQuerySchema = z
-	.looseObject({
-		credentials: z.array(credentialQuery).min(1),
-		credential_sets: z
-			.array(z.looseObject({ options: z.array(strings).min(1), required: z.boolean().optional() }))
-			.min(1)
-			.optional(),
-	})
-	.superRefine((query, ctx) => {
-		const ids = query.credentials.map((credential) => credential.id);
-		if (new Set(ids).size !== ids.length)
-			ctx.addIssue({ code: "custom", message: "Credential identifiers must be unique" });
-		if (
-			query.credential_sets?.some((set) =>
-				set.options.some((option) => option.some((id) => !ids.includes(id))),
-			)
-		)
-			ctx.addIssue({
-				code: "custom",
-				message: "Credential sets must reference defined credentials",
-			});
-	});
+				ctx.addIssue({
+					code: "custom",
+					message: "Credential sets must reference defined credentials",
+				});
+		});
+export const DcqlQuerySchema = dcqlQuerySchema(false);
+/** Inbound duplicates are normalized after federation policy evaluation (§6.1). */
+export const ReceivedDcqlQuerySchema = dcqlQuerySchema(true);
 export type DcqlQuery = z.infer<typeof DcqlQuerySchema>;
+
+/** Ignore later repeated paths, preserving references to their first occurrence. */
+export function normalizeReceivedDcqlQuery(query: DcqlQuery): DcqlQuery {
+	const copy = structuredClone(query);
+	for (const credential of copy.credentials) {
+		if (!credential.claims) continue;
+		const paths = new Map<string, (typeof credential.claims)[number]>();
+		const aliases = new Map<string, string>();
+		credential.claims = credential.claims.filter((claim) => {
+			const path = JSON.stringify(claim.path);
+			const first = paths.get(path);
+			if (!first) {
+				paths.set(path, claim);
+				return true;
+			}
+			// Structural validation already requires identifiers when claim_sets is present.
+			if (claim.id !== undefined && first.id !== undefined) aliases.set(claim.id, first.id);
+			return false;
+		});
+		if (credential.claim_sets)
+			credential.claim_sets = credential.claim_sets.map((set) => [
+				...new Set(set.map((id) => aliases.get(id) ?? id)),
+			]);
+	}
+	return copy;
+}
 
 const formatCapabilities = z.record(
 	z.string(),
@@ -331,6 +367,36 @@ export const CredentialIssuerMetadataSchema = z.looseObject({
 	...keyReferences,
 });
 export type CredentialIssuerMetadata = z.infer<typeof CredentialIssuerMetadataSchema>;
+
+/** Cross-field checks apply after superior metadata has completed the issuer's configuration. */
+const effectiveCredentialIssuerMetadata = CredentialIssuerMetadataSchema.superRefine(
+	(metadata, ctx) => {
+		const encryption = metadata.credential_request_encryption;
+		if (
+			encryption &&
+			!encryption.jwks.keys.some((key) => typeof key.alg === "string" && key.alg.length > 0)
+		)
+			ctx.addIssue({
+				code: "custom",
+				path: ["credential_request_encryption", "jwks"],
+				message: "Request encryption requires a key with an alg value (OpenID4VCI §10)",
+			});
+		if (metadata.credential_response_encryption?.encryption_required && !encryption)
+			ctx.addIssue({
+				code: "custom",
+				path: ["credential_request_encryption"],
+				message: "Required response encryption needs request encryption support (OpenID4VCI §8.2)",
+			});
+	},
+);
+
+export const effectiveRoleSchemas = {
+	openid_wallet_provider: WalletProviderMetadataSchema,
+	openid_credential_issuer: effectiveCredentialIssuerMetadata,
+	openid_credential_verifier: CredentialVerifierMetadataSchema.extend({
+		dcql_queries: z.array(ReceivedDcqlQuerySchema).min(1).optional(),
+	}),
+} as const;
 
 export const roleSchemas = {
 	openid_wallet_provider: WalletProviderMetadataSchema,

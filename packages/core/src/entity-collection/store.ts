@@ -7,6 +7,14 @@ import type {
 	MemoryEntityCollectionStoreOptions,
 } from "./types.js";
 
+/** Cursor allocation exceeded capacity after expired cursors were removed. */
+export class EntityCollectionCursorCapacityError extends Error {
+	constructor(readonly maxCursors: number) {
+		super("Collection cursor capacity exhausted");
+		this.name = "EntityCollectionCursorCapacityError";
+	}
+}
+
 /** Bounded in-memory snapshots and opaque cursors; no background cleanup timer. */
 export class MemoryEntityCollectionStore implements EntityCollectionStore {
 	private readonly snapshots = new Map<
@@ -62,8 +70,8 @@ export class MemoryEntityCollectionStore implements EntityCollectionStore {
 	}
 	async putCursor(id: string, cursor: EntityCollectionCursor): Promise<void> {
 		this.prune();
-		if (this.cursors.size >= (this.options.maxCursors ?? 10000))
-			this.cursors.delete(this.cursors.keys().next().value as string);
+		if (!this.cursors.has(id) && this.cursors.size >= (this.options.maxCursors ?? 10000))
+			throw new EntityCollectionCursorCapacityError(this.options.maxCursors ?? 10000);
 		this.cursors.set(id, structuredClone(cursor));
 	}
 	async getCursor(id: string): Promise<EntityCollectionCursor | undefined> {

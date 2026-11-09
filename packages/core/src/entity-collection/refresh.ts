@@ -8,6 +8,7 @@ import {
 	COLLECTION_INFO_CLAIMS,
 	EntityCollectionEntitySchema,
 	type EntityTypeInfo,
+	EntityTypeInfoSchema,
 } from "../schemas/entity-collection.js";
 import type { EntityConfigurationPayload } from "../schemas/entity-statement.js";
 import { fetchEntityConfiguration, fetchSubordinateStatement } from "../trust-chain/fetch.js";
@@ -34,6 +35,8 @@ const MAX_OPEN_ISSUER_TOTAL_FETCHES = 100;
 
 function informationalMetadata(
 	metadata: Record<string, Record<string, unknown>>,
+	entityId: string,
+	options: FederationOptions,
 ): Record<string, EntityTypeInfo> {
 	return Object.fromEntries(
 		Object.entries(metadata).map(([type, values]) => {
@@ -42,6 +45,19 @@ function informationalMetadata(
 					(COLLECTION_INFO_CLAIMS as readonly string[]).includes(name.split("#")[0] ?? ""),
 				),
 			);
+			const sanitize = () => {
+				for (const [name, value] of Object.entries(info))
+					if (!EntityTypeInfoSchema.safeParse({ [name]: value }).success) {
+						delete info[name];
+						options.logger?.warn("Omitted invalid collection informational claim", {
+							entityId,
+							entityType: type,
+							claim: name,
+						});
+					}
+			};
+			sanitize();
+
 			const fallback =
 				type === "openid_relying_party" || type === "oauth_client"
 					? "client_name"
@@ -54,6 +70,7 @@ function informationalMetadata(
 					const target = `display_name${name.slice(fallback.length)}`;
 					if (!Object.hasOwn(info, target)) info[target] = value;
 				}
+			sanitize();
 			return [type, info];
 		}),
 	);
@@ -299,7 +316,7 @@ export async function buildCollectionSnapshot(
 					const entity = EntityCollectionEntitySchema.safeParse({
 						entity_id: id,
 						entity_types: Object.keys(metadata),
-						entity_infos: informationalMetadata(metadata),
+						entity_infos: informationalMetadata(metadata, id, options),
 						...(payload.trust_marks ? { trust_marks: payload.trust_marks } : {}),
 					});
 					if (!entity.success) {

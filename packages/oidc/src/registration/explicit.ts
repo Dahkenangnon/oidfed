@@ -152,6 +152,19 @@ export async function explicitRegistration(
 		);
 	}
 
+	// Federation §5.1.3 applies to the effective endpoint, before any POST.
+	try {
+		const endpoint = new URL(registrationEndpoint);
+		if (endpoint.protocol !== "https:" || endpoint.href.includes("#")) throw new Error();
+	} catch {
+		return err(
+			federationError(
+				FederationErrorCode.InvalidMetadata,
+				"federation_registration_endpoint must be an HTTPS URL without a fragment",
+			),
+		);
+	}
+
 	const selectedTrustAnchorId = sharedChains.value.trustAnchorId;
 	// Federation §12.2.1 permits selecting a single shared-anchor path.
 	const authorityHints = [sharedChains.value.rpChain.statements[1]?.payload.iss as string];

@@ -8,6 +8,7 @@ import {
 	SubordinateEventsResponseSchema,
 	signEntityStatement,
 } from "@oidfed/core";
+import { parsePublishedSubordinateEvent } from "../utils/subordinate-event.js";
 import type { HandlerContext } from "./context.js";
 import { errorResponse, jwtResponse, parseQueryParams, requireMethod } from "./helpers.js";
 
@@ -49,7 +50,7 @@ export async function buildSubordinateEvents(
 		iss: ctx.entityId,
 		sub: subject,
 		iat: nowSeconds(ctx.options?.clock),
-		federation_registration_events: events,
+		federation_registration_events: events.map(parsePublishedSubordinateEvent),
 	});
 	const keys = await ctx.keyProvider.getFederationKeySet();
 	return signEntityStatement(payload, keys.signer, { typ: JwtTyp.EntityEventsStatement });

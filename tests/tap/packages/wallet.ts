@@ -7,6 +7,7 @@ import {
 	type JwtSigner,
 	MemoryFederationKeyProvider,
 	MemoryReplayStore,
+	signEntityStatement,
 } from "../../../packages/core/src/index.js";
 import {
 	type AttestationVerificationOptions,
@@ -48,6 +49,270 @@ const proof = (f: Fixture) => ({
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("wallet / request and effective metadata safeguards", () => {
+		test("wrong inline typ is rejected before discovery", async (t) => {
+			const f = await walletFederation();
+			const jwt = await token(f.requestPayload, f.protocol.verifier.privateKey, "JWT");
+			const result = await CredentialVerifierRole.prepareAuthorizationRequest(
+				{ client_id: f.requestPayload.client_id, request: jwt },
+				f.anchors,
+				{ clock: f.clock, httpClient: f.httpClient },
+			);
+			t.false(result.ok);
+			t.equal(f.requests.length, 0);
+		});
+		test("received duplicate paths preserve claim-set references and strict outbound checks", async (t) => {
+			const f = await walletFederation();
+			const query = {
+				credentials: [
+					{
+						...walletQuery.credentials[0]!,
+						claims: [
+							{ id: "first", path: ["name"], values: ["Alice"] },
+							{ id: "later", path: ["name"], values: ["Bob"] },
+							{ id: "age", path: ["age"] },
+						],
+						claim_sets: [["later", "first", "age"], []],
+					},
+				],
+			};
+			const original = structuredClone(query);
+			const jwt = await token(
+				{ ...f.requestPayload, dcql_query: query },
+				f.protocol.verifier.privateKey,
+				"oauth-authz-req+jwt",
+			);
+			const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
+				{ client_id: f.requestPayload.client_id },
+				f.anchors,
+				f.options,
+			);
+			if (!prepared.ok) throw new Error(prepared.error.description);
+			const result = await CredentialVerifierRole.completeAuthorizationRequest(prepared.value, jwt);
+			t.true(result.ok);
+			if (result.ok) {
+				t.equal(result.value.effectiveQueries[0]?.credentials[0]?.claims?.length, 2);
+				t.deepEqual(result.value.effectiveQueries[0]?.credentials[0]?.claims?.[0]?.values, [
+					"Alice",
+				]);
+				t.deepEqual(result.value.effectiveQueries[0]?.credentials[0]?.claim_sets, [
+					["first", "age"],
+					[],
+				]);
+				t.deepEqual(result.value.request.dcql_query, result.value.effectiveQueries[0]);
+			}
+			t.deepEqual(query, original);
+			const created = await CredentialVerifierRole.createAuthorizationRequest(
+				f.ids.verifier,
+				{ ...f.requestPayload, dcql_query: query },
+				new JwkSigner(f.protocol.verifier.privateKey),
+				f.options,
+			);
+			t.false(created.ok);
+		});
+		test("received duplicate paths are normalized only after contextual policy checks", async (t) => {
+			const first = { id: "first", path: ["name"] };
+			const duplicate = {
+				...walletQuery,
+				credentials: [
+					{ ...walletQuery.credentials[0]!, claims: [first, { id: "later", path: ["name"] }] },
+				],
+			};
+			const normalized = {
+				...walletQuery,
+				credentials: [{ ...walletQuery.credentials[0]!, claims: [first] }],
+			};
+			for (const allowed of [duplicate, normalized]) {
+				const f = await walletFederation({ policy: { dcql_queries: { subset_of: [allowed] } } });
+				const jwt = await token(
+					{
+						...f.requestPayload,
+						dcql_query: duplicate,
+						client_metadata: { dcql_query: duplicate },
+					},
+					f.protocol.verifier.privateKey,
+					"oauth-authz-req+jwt",
+				);
+				const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
+					{ client_id: f.requestPayload.client_id },
+					f.anchors,
+					f.options,
+				);
+				if (!prepared.ok) throw new Error(prepared.error.description);
+				const result = await CredentialVerifierRole.completeAuthorizationRequest(
+					prepared.value,
+					jwt,
+				);
+				t.equal(result.ok, allowed === duplicate, "policy evaluates the original contextual query");
+				if (result.ok) t.deepEqual(result.value.effectiveQueries, [normalized]);
+			}
+		});
+		test("effective issuer encryption checks allow mixed sets and superior completion", async (t) => {
+			const f = await walletFederation();
+			const noAlg = { ...f.protocol.issuer.publicKey };
+			delete noAlg.alg;
+			const encryption = {
+				jwks: { keys: [noAlg] },
+				enc_values_supported: ["A256GCM"],
+				encryption_required: true,
+			};
+			const response = {
+				alg_values_supported: ["ECDH-ES"],
+				enc_values_supported: ["A256GCM"],
+				encryption_required: true,
+			};
+			const base = f.metadata.issuer.openid_credential_issuer!;
+			t.false(
+				CredentialIssuerRole.parseMetadata({ ...base, credential_request_encryption: encryption })
+					.success,
+			);
+			t.false(
+				CredentialIssuerRole.parseMetadata({ ...base, credential_response_encryption: response })
+					.success,
+			);
+			const supported = {
+				...encryption,
+				jwks: { keys: [noAlg, { ...noAlg, kid: "encryption", alg: "ECDH-ES" }] },
+				encryption_required: false,
+			};
+			t.true(
+				CredentialIssuerRole.parseMetadata({
+					...base,
+					credential_request_encryption: supported,
+					credential_response_encryption: response,
+				}).success,
+			);
+			// Publication permits a superior to supply the request-encryption member.
+			const role = new CredentialIssuerRole({
+				metadata: { ...base, credential_response_encryption: response },
+			});
+			role.validateMetadata(role.metadata, {
+				entityId: f.ids.issuer,
+				keyProvider: MemoryFederationKeyProvider.fromJWK(f.keys.issuer.privateKey),
+			});
+			t.ok(true, "partial publication is accepted");
+			const partial = await walletFederation({
+				issuerMetadata: { credential_response_encryption: response },
+			});
+			const before = await CredentialIssuerRole.discover(
+				partial.ids.issuer,
+				partial.anchors,
+				partial.options,
+			);
+			t.false(before.ok, "incomplete effective encryption metadata is rejected");
+			const chain = partial.chains.get(partial.ids.issuer)!;
+			const ss = decodeJwt(chain[1]!);
+			const completedStatement = await signEntityStatement(
+				{
+					...ss,
+					metadata: { openid_credential_issuer: { credential_request_encryption: supported } },
+				},
+				new JwkSigner(partial.keys.anchor.privateKey),
+			);
+			partial.chains.set(partial.ids.issuer, [chain[0]!, completedStatement, chain[2]!]);
+			const after = await CredentialIssuerRole.discover(
+				partial.ids.issuer,
+				partial.anchors,
+				partial.options,
+			);
+			t.true(after.ok, "superior-supplied request encryption completes effective metadata");
+		});
+		test("state is required only for known non-holder-bound requests outside the DC API", async (t) => {
+			const f = await walletFederation();
+			const query = {
+				credentials: [
+					{ ...walletQuery.credentials[0]!, require_cryptographic_holder_binding: false },
+				],
+			};
+			for (const mode of ["direct_post", "dc_api", "dc_api.jwt"])
+				for (const state of [undefined, "random-session-state"]) {
+					const result = await CredentialVerifierRole.createAuthorizationRequest(
+						f.ids.verifier,
+						{
+							...f.requestPayload,
+							response_mode: mode,
+							dcql_query: query,
+							...(state ? { state } : {}),
+						},
+						new JwkSigner(f.protocol.verifier.privateKey),
+						f.options,
+					);
+					t.equal(result.ok, mode !== "direct_post" || state !== undefined);
+				}
+			const { dcql_query: _, ...scopeRequest } = f.requestPayload;
+			t.false(
+				(
+					await CredentialVerifierRole.createAuthorizationRequest(
+						f.ids.verifier,
+						{ ...scopeRequest, scope: "identity" },
+						new JwkSigner(f.protocol.verifier.privateKey),
+						{ ...f.options, scopeQuery: query },
+					)
+				).ok,
+			);
+			t.true(
+				(
+					await CredentialVerifierRole.createAuthorizationRequest(
+						f.ids.verifier,
+						{ ...scopeRequest, scope: "identity" },
+						new JwkSigner(f.protocol.verifier.privateKey),
+						f.options,
+					)
+				).ok,
+				"opaque scope remains an application contract",
+			);
+			t.true(
+				(
+					await CredentialVerifierRole.createAuthorizationRequest(
+						f.ids.verifier,
+						f.requestPayload,
+						new JwkSigner(f.protocol.verifier.privateKey),
+						f.options,
+					)
+				).ok,
+				"holder-bound requests keep state optional",
+			);
+		});
+		test("queryPolicy can reject a contextual mismatch or approve a profile refinement", async (t) => {
+			const f = await walletFederation({ policy: { dcql_queries: { subset_of: [walletQuery] } } });
+			const requested = {
+				credentials: [{ ...walletQuery.credentials[0]!, claims: [{ path: ["name"] }] }],
+			};
+			const jwt = await token(
+				{
+					...f.requestPayload,
+					dcql_query: requested,
+					client_metadata: { dcql_query: walletQuery },
+				},
+				f.protocol.verifier.privateKey,
+				"oauth-authz-req+jwt",
+			);
+			for (const accept of [false, true]) {
+				let calls = 0;
+				const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
+					{ client_id: f.requestPayload.client_id },
+					f.anchors,
+					{
+						...f.options,
+						queryPolicy: ({ queries, request }) => {
+							calls++;
+							t.deepEqual(queries, [walletQuery]);
+							t.deepEqual(request.dcql_query, requested);
+							return accept;
+						},
+					},
+				);
+				if (!prepared.ok) throw new Error(prepared.error.description);
+				const result = await CredentialVerifierRole.completeAuthorizationRequest(
+					prepared.value,
+					jwt,
+				);
+				t.equal(result.ok, accept);
+				t.equal(calls, 1);
+			}
+		});
+	});
+
 	module("wallet / transaction holder binding", () => {
 		const bindingError =
 			"Transaction data requires cryptographic holder binding for SD-JWT credentials";
@@ -77,6 +342,7 @@ export default (QUnit: QUnit) => {
 		) {
 			const payload: Record<string, unknown> = {
 				...f.requestPayload,
+				state: "transaction-session-state",
 				transaction_data: [transaction("identity")],
 				...changes,
 			};
