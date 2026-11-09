@@ -16,6 +16,12 @@ export async function signEntityStatement(
 	options?: SignEntityStatementOptions,
 ): Promise<string> {
 	validateSigner(signer);
+	// These fields bind the signature to its algorithm, key, and token profile (§3).
+	for (const name of ["alg", "kid", "typ"]) {
+		if (options?.extraHeaders && Object.hasOwn(options.extraHeaders, name)) {
+			throw new TypeError(`extraHeaders must not override '${name}'`);
+		}
+	}
 
 	const alg = options?.alg ?? signer.alg;
 	if (!SUPPORTED_ALGORITHMS.includes(alg)) {

@@ -74,6 +74,7 @@ import {
 	validateOIDCMetadata,
 } from "../../../packages/oidc/src/schemas/metadata.js";
 import { createMockFederation, LEAF_ID, OP_ID, TA_ID } from "../fixtures/index.js";
+import { signProtocolFixture } from "../fixtures/protocol-jwt.js";
 import { anchorKeyPaths, trustChainPaths } from "../fixtures/trust-chain-paths.js";
 
 // ---------------------------------------------------------------------------
@@ -468,7 +469,7 @@ export default (QUnit: QUnit) => {
 					},
 				};
 				const now = Math.floor(Date.now() / 1000);
-				const request = await signEntityStatement(
+				const request = await signProtocolFixture(
 					{
 						iss: LEAF_ID,
 						client_id: LEAF_ID,

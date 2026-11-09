@@ -42,6 +42,7 @@ import {
 	type StorageAdapter,
 	TrustAnchor,
 } from "../../../packages/authority/src/index.js";
+import { signProtocolFixture } from "../fixtures/protocol-jwt.js";
 import * as SubordinateEventsFixture from "../fixtures/subordinate-events.js";
 
 function createAuthorityServer(config: AuthorityConfig): AuthorityServer {
@@ -9444,7 +9445,7 @@ export default (QUnit: QUnit) => {
 				[1001, initial.privateKey],
 				[1000, next.privateKey],
 			] as const) {
-				const jwt = await signEntityStatement(
+				const jwt = await signProtocolFixture(
 					{ iss: ENTITY_ID, sub: LEAF_ID, trust_mark_type: "urn:example:bad", iat, exp: 1100 },
 					new JwkSigner(key),
 					{ typ: JwtTyp.TrustMark, extraHeaders: { kid: initial.privateKey.kid } },

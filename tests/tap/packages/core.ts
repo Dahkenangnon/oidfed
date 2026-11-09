@@ -229,12 +229,37 @@ import {
 import * as EntityCollectionFixture from "../fixtures/entity-collection.js";
 import { createMockFederation, LEAF_ID, OP_ID, TA_ID } from "../fixtures/index.js";
 import { MockFederationBuilder } from "../fixtures/mock-federation.js";
+import { signProtocolFixture } from "../fixtures/protocol-jwt.js";
 import * as SubordinateEventsFixture from "../fixtures/subordinate-events.js";
 import { anchorKeyPaths, trustChainPaths } from "../fixtures/trust-chain-paths.js";
 import { walletFederation, walletQuery } from "../fixtures/wallet.js";
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	test("signing reserves algorithm, key and type headers", async (t) => {
+		const { generateSigningKey, JwkSigner, signEntityStatement } = await import(
+			"../../../packages/core/src/index.js"
+		);
+		const { decodeEntityStatement } = await import("../../../packages/core/src/index.js");
+		const key = await generateSigningKey();
+		const signer = new JwkSigner(key.privateKey);
+		for (const name of ["alg", "kid", "typ"]) {
+			await t.rejects(
+				signEntityStatement({}, signer, { extraHeaders: { [name]: undefined } }),
+				/must not override/,
+			);
+		}
+		const jwt = await signEntityStatement({}, signer, {
+			typ: "example+jwt",
+			extraHeaders: { example: true },
+		});
+		const header = decodeEntityStatement(jwt);
+		t.true(header.ok);
+		if (header.ok) {
+			t.equal(header.value.header.typ, "example+jwt");
+			t.equal(header.value.header.example, true);
+		}
+	});
 	module("core / publication and collection safeguards", () => {
 		test("fragment-free fetchers reject a bare delimiter before requesting", async (t) => {
 			let calls = 0;
@@ -534,7 +559,7 @@ export default (QUnit: QUnit) => {
 				}
 			}
 			for (const signer of [federation.privateKey, protocol.privateKey]) {
-				const jwt = await signEntityStatement(
+				const jwt = await signProtocolFixture(
 					{ iss: LEAF_ID, sub: LEAF_ID, keys: [anonymous] },
 					new JwkSigner(signer),
 					{
@@ -560,7 +585,7 @@ export default (QUnit: QUnit) => {
 			const other = await generateSigningKey();
 			const anonymous = { ...pair.publicKey };
 			delete anonymous.kid;
-			const jwt = await signEntityStatement(
+			const jwt = await signProtocolFixture(
 				{ iss: LEAF_ID, exp: 2000 },
 				new JwkSigner(pair.privateKey),
 				{
@@ -699,7 +724,7 @@ export default (QUnit: QUnit) => {
 			])
 				t.false((await CorePublic.verifyProtocolJwt(jwt, { keys: [key] }, options)).ok);
 			for (const header of [{ kid: "unknown" }, { kid: 42 }, { kid: "" }, { typ: "JWT" }]) {
-				const invalid = await signEntityStatement(
+				const invalid = await signProtocolFixture(
 					{ iss: LEAF_ID, exp: 2000 },
 					new JwkSigner(pair.privateKey),
 					{ typ: options.expectedTyp, extraHeaders: header },
@@ -20173,7 +20198,7 @@ export default (QUnit: QUnit) => {
 				CorePublic.JWKSetSchema.safeParse({ keys: [{ ...unknown, d: "secret" }, ...f.keys.keys] })
 					.success,
 			);
-			const noKid = await signEntityStatement({ iss: issuer }, new JwkSigner(f.pair.privateKey), {
+			const noKid = await signProtocolFixture({ iss: issuer }, new JwkSigner(f.pair.privateKey), {
 				typ: "oauth-authz-req+jwt",
 				extraHeaders: { kid: undefined },
 			});
