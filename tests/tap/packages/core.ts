@@ -236,6 +236,25 @@ import { walletFederation, walletQuery } from "../fixtures/wallet.js";
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	test("replay records have bounded keys and claim identifiers atomically", async (t) => {
+		const { MemoryReplayStore } = await import("../../../packages/core/src/index.js");
+		let time = 100;
+		const store = new MemoryReplayStore({ clock: { now: () => time }, maxEntries: 2 });
+		const claim = {
+			issuer: "https://issuer.example",
+			audience: "https://aud.example",
+			jti: "x".repeat(380000),
+			expiresAt: 110,
+		};
+		const results = await Promise.all([store.useJti(claim), store.useJti(claim)]);
+		t.equal(results.filter(Boolean).length, 1);
+		const keys = [...(store as unknown as { entries: Map<string, number> }).entries.keys()];
+		t.equal(keys[0]?.length, 64);
+		t.true(await store.useJti({ ...claim, audience: "https://other.example" }));
+		await t.rejects(store.useJti({ ...claim, jti: "new" }));
+		time = 111;
+		t.true(await store.useJti({ ...claim, expiresAt: 120 }));
+	});
 	test("remote OAuth errors keep their classification and safe public boundary", async (t) => {
 		const { toPublicError } = await import("../../../packages/core/src/http.js");
 		const { fetchEntityCollection } = await import("../../../packages/core/src/index.js");
@@ -2583,6 +2602,19 @@ export default (QUnit: QUnit) => {
 			const store = new MemoryReplayStore({ clock: { now: () => 1_000 } });
 			const results = await Promise.all(Array.from({ length: 10 }, () => store.useJti(claim())));
 			t.equal(results.filter(Boolean).length, 1);
+		});
+
+		test("rejects concurrent claims crossing expiry during hashing", async (t) => {
+			let now = 1_000;
+			const store = new MemoryReplayStore({ clock: { now: () => now }, maxEntries: 1 });
+			const pending = [
+				store.useJti(claim({ expiresAt: 1_001 })),
+				store.useJti(claim({ expiresAt: 1_001 })),
+			];
+			// Both calls have started hashing; neither has reached its atomic claim yet.
+			now = 1_001;
+			t.deepEqual(await Promise.all(pending), [false, false]);
+			t.true(await store.useJti(claim({ jti: "live", expiresAt: 2_000 })));
 		});
 
 		test("namespaces the same JTI by issuer and audience", async (t) => {
@@ -5553,6 +5585,30 @@ export default (QUnit: QUnit) => {
 		}
 
 		module("core / verifyClientAssertion", () => {
+			test("rechecks expiry after asynchronous replay storage with clock skew", async (t) => {
+				const start = Math.floor(Date.now() / 1000);
+				const exp = start + 60;
+				const { jwt, keys } = await createClientAssertion({ exp });
+				for (const offset of [4, 5]) {
+					let now = start;
+					let calls = 0;
+					const result = await verifyClientAssertion(jwt, { keys: [keys.publicKey] }, CA_AUDIENCE, {
+						clock: { now: () => now },
+						clockSkewSeconds: 5,
+						replayStore: {
+							async useJti(claim) {
+								calls++;
+								t.equal(claim.expiresAt, exp + 5);
+								now = exp + offset;
+								return true;
+							},
+						},
+					});
+					t.equal(calls, 1);
+					t.equal(result.ok, offset < 5);
+					if (!result.ok) t.equal(result.error.code, "invalid_client");
+				}
+			});
 			test("verifies a valid assertion and returns correct fields", async (t) => {
 				const { jwt, keys } = await createClientAssertion();
 				const result = await verifyClientAssertion(jwt, { keys: [keys.publicKey] }, CA_AUDIENCE);

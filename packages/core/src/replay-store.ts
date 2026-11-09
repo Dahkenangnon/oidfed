@@ -9,6 +9,6 @@ export interface JtiReplayClaim {
 
 /** Atomic replay protection for one-time JWT processing. */
 export interface ReplayStore {
-	/** Returns true when claimed, or false when the claim was already used. */
+	/** Returns true when claimed, or false when the claim was already used or has expired. */
 	useJti(claim: JtiReplayClaim): Promise<boolean>;
 }

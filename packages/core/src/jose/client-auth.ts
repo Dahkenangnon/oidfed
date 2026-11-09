@@ -149,6 +149,12 @@ export async function verifyClientAssertion(
 			});
 		}
 	}
+	// OIDC Core §9: acceptance must remain within exp, including time spent in replay storage.
+	if (payload.exp + skew <= nowSeconds(options?.clock))
+		return err({
+			code: "invalid_client",
+			description: "Client assertion expired during verification",
+		});
 	return ok({
 		clientId: payload.iss,
 		...(payload.iat !== undefined ? { issuedAt: payload.iat } : {}),

@@ -94,9 +94,9 @@ interface ReplayStore {
 }
 ```
 
-`useJti` returns `true` only for a newly accepted tuple and `false` for replay. The operation must be atomic across every process serving the same receiver, including Federation Entities and OPs. Authority endpoint authentication middleware requires `storage.replay` when `private_key_jwt` is configured; anonymous endpoints do not. The shared Collection service accepts its own replay store, uses authority replay storage when available, or falls back to memory. Production instances must share the configured replay state. Replay records remain live through the accepted clock-skew window.
+`useJti` returns `true` only for a newly accepted tuple and `false` for replay or an expired claim. The operation must be atomic across every process serving the same receiver, including Federation Entities and OPs. Authority endpoint authentication middleware requires `storage.replay` when `private_key_jwt` is configured; anonymous endpoints do not. The shared Collection service accepts its own replay store, uses authority replay storage when available, or falls back to memory. Production instances must share the configured replay state. Replay records remain live through the accepted clock-skew window.
 
-Use a unique database key on `(issuer, audience, jti)`, or an equivalent Redis key. Redis implementations should use one atomic `SET key 1 NX EX ttl` operation. Backend failures must fail closed; never evict unexpired claims to make capacity.
+Use a unique database or Redis key derived from the complete `(issuer, audience, jti)` tuple. A full SHA-256 digest of its JSON array encoding bounds key size while preserving tuple separation; `MemoryReplayStore` uses this representation. Store the digest and expiry atomically, retaining every unexpired claim. Redis implementations should use one atomic `SET key 1 NX EX ttl` operation. Backend failures must fail closed; never evict unexpired claims to make capacity.
 
 ## Cache
 

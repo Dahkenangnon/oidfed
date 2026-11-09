@@ -324,9 +324,11 @@ After the last active key is revoked, signing stops until the application publis
 
 ### Replay protection (`ReplayStore`)
 
-`verifyClientAssertion()` requires `exp` and a non-empty `jti`; `iat` is optional. It checks the signature, issuer/subject equality, exact audience, expiry, and any supplied issuance time. Pass `replayStore` to atomically claim a verified assertion. Without it, the function verifies the JWT without recording its use. Authentication handlers must provide replay storage. These claims follow [OIDC Core §9](https://openid.net/specs/openid-connect-core-1_0.html#ClientAuthentication), referenced by [Federation §8.8](https://openid.net/specs/openid-federation-1_0.html#section-8.8).
+`verifyClientAssertion()` requires `exp` and a non-empty `jti`; `iat` is optional. It checks the signature, issuer/subject equality, exact audience, expiry, and any supplied issuance time. Pass `replayStore` to atomically claim a verified assertion. Expiry is checked again after replay storage completes. Without it, the function verifies the JWT without recording its use. Authentication handlers must provide replay storage. These claims follow [OIDC Core §9](https://openid.net/specs/openid-connect-core-1_0.html#ClientAuthentication), referenced by [Federation §8.8](https://openid.net/specs/openid-federation-1_0.html#section-8.8).
 
 A `ReplayStore` claims an `(issuer, audience, jti)` tuple until expiry. Claims must be atomic across the processes serving one tenant. The in-memory implementation is for development and tests.
+
+`MemoryReplayStore` retains the full SHA-256 digest of the JSON tuple `[issuer, audience, jti]`. Stored keys have a fixed size even when valid identifiers are long. Claims that expire during hashing are rejected. It retains the existing entry-count limit and expires records through the accepted validity window.
 
 ```ts
 import { MemoryReplayStore } from "@oidfed/core";

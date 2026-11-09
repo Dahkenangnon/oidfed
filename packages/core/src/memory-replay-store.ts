@@ -31,16 +31,25 @@ export class MemoryReplayStore implements ReplayStore {
 
 	async useJti(claim: JtiReplayClaim): Promise<boolean> {
 		this.validateClaim(claim);
+		const expiresAt = claim.expiresAt;
+		// Hash the complete tuple before the atomic lookup/insert. Long protocol IDs
+		// retain their identity without consuming proportional persistent memory.
+		const bytes = new TextEncoder().encode(
+			JSON.stringify([claim.issuer, claim.audience, claim.jti]),
+		);
+		const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+		const key = Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
 		const now = nowSeconds(this.clock);
 		this.removeExpired(now);
+		// Hashing can cross the deadline. Expired claims cannot acquire a replay slot.
+		if (expiresAt <= now) return false;
 
-		const key = JSON.stringify([claim.issuer, claim.audience, claim.jti]);
 		if (this.entries.has(key)) return false;
 		if (this.entries.size >= this.maxEntries) {
 			throw new ReplayStoreCapacityError(this.maxEntries);
 		}
 
-		this.entries.set(key, claim.expiresAt);
+		this.entries.set(key, expiresAt);
 		return true;
 	}
 
