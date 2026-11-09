@@ -236,6 +236,8 @@ if (policyResult.ok) {
 }
 ```
 
+Metadata policy `value` and `default` operators support JSON objects under [Federation §6.1.3.1.8](https://openid.net/specs/openid-federation-1_0.html#section-6.1.3.1.8). Merging compares complete values structurally: object member order is immaterial, array order is significant, and conflicting values fail. Nested objects are not recursively combined. Resolved values are detached from the supplied policy.
+
 ### Checking constraints
 
 Check maximum path length and permitted/excluded names against a parsed chain. `validateTrustChain()` runs the chain-level constraint checks and applies `allowed_entity_types` when resolving metadata.

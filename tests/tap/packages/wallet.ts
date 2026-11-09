@@ -49,6 +49,51 @@ const proof = (f: Fixture) => ({
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	test("object-valued wallet policy crosses an intermediate without merging key sets", async (t) => {
+		const { validateTrustChain } = await import("../../../packages/core/src/index.js");
+		const f = await trustChainPaths({
+			openid_credential_verifier: { vp_formats_supported: { "dc+sd-jwt": {} } },
+		});
+		const governedKeys = { keys: [f.keys.b.publicKey] };
+		const chain = await f.chain(["subject", "a", "anchor"]);
+		chain[2] = await f.sign("anchor", "a", {
+			metadata_policy: { openid_credential_verifier: { jwks: { value: governedKeys } } },
+		});
+		const valid = await validateTrustChain(chain, f.anchors, f.options);
+		t.true(
+			(
+				await CredentialVerifierRole.discover(f.ids.subject, f.anchors, {
+					...f.options,
+					trustChain: chain,
+					offline: true,
+				})
+			).ok,
+		);
+		t.true(valid.valid, JSON.stringify(valid.errors));
+		if (valid.valid)
+			t.deepEqual(valid.chain.resolvedMetadata.openid_credential_verifier?.jwks, governedKeys);
+		chain[1] = await f.sign("a", "subject", {
+			metadata_policy: {
+				openid_credential_verifier: { jwks: { value: { keys: [f.keys.subject.publicKey] } } },
+			},
+		});
+		const conflict = await validateTrustChain(chain, f.anchors, f.options);
+		t.false(conflict.valid, "conflicting complete objects invalidate the policy");
+		chain[1] = await f.sign("a", "subject");
+		chain[2] = await f.sign("anchor", "a", {
+			metadata_policy: { openid_credential_verifier: { jwks: { value: { keys: [] } } } },
+		});
+		t.false(
+			(
+				await CredentialVerifierRole.discover(f.ids.subject, f.anchors, {
+					...f.options,
+					trustChain: chain,
+					offline: true,
+				})
+			).ok,
+			"wallet effective key validation still rejects empty keys",
+		);
+	});
 	test("invalid wallet fetch budgets return failure promises consistently", async (t) => {
 		for (const maxTotalFetches of [0, -1, NaN, Infinity, 1.5]) {
 			const options = { maxTotalFetches };

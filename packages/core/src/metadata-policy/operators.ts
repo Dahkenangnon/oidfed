@@ -21,8 +21,10 @@ function deepEqual(a: unknown, b: unknown): boolean {
 		const keysA = Object.keys(a as Record<string, unknown>);
 		const keysB = Object.keys(b as Record<string, unknown>);
 		if (keysA.length !== keysB.length) return false;
-		return keysA.every((key) =>
-			deepEqual((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key]),
+		return keysA.every(
+			(key) =>
+				Object.hasOwn(b, key) &&
+				deepEqual((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key]),
 		);
 	}
 
@@ -63,12 +65,25 @@ function valueType(value: unknown): string {
 	return typeof value;
 }
 
-function isScalar(value: unknown): value is string | number | boolean {
-	return typeof value === "string" || typeof value === "number" || typeof value === "boolean";
-}
-
+/** JSON objects are supported for value/default under Federation §6.1.3.1.8. */
 function isValueOrDefaultMetadataValue(value: unknown): boolean {
-	return isScalar(value) || Array.isArray(value);
+	const ancestors = new Set<object>();
+	function json(input: unknown): boolean {
+		if (input === null || typeof input === "string" || typeof input === "boolean") return true;
+		if (typeof input === "number") return Number.isFinite(input);
+		if (typeof input !== "object" || !input || ancestors.has(input)) return false;
+		if (
+			!Array.isArray(input) &&
+			Object.getPrototypeOf(input) !== Object.prototype &&
+			Object.getPrototypeOf(input) !== null
+		)
+			return false;
+		ancestors.add(input);
+		const valid = Object.values(input).every(json);
+		ancestors.delete(input);
+		return valid;
+	}
+	return value !== null && json(value);
 }
 
 function isComparableElement(value: unknown): boolean {
@@ -105,13 +120,17 @@ export function validateStandardPolicyOperatorConfiguration(
 				? undefined
 				: invalidOperatorValue(
 						operatorName,
-						"a string, number, boolean, array, or null",
+						"a string, number, boolean, object, array, or null",
 						operatorValue,
 					);
 		case PolicyOperator.Default:
 			return isValueOrDefaultMetadataValue(operatorValue)
 				? undefined
-				: invalidOperatorValue(operatorName, "a string, number, boolean, or array", operatorValue);
+				: invalidOperatorValue(
+						operatorName,
+						"a string, number, boolean, object, or array",
+						operatorValue,
+					);
 		case PolicyOperator.Add:
 		case PolicyOperator.SubsetOf:
 		case PolicyOperator.SupersetOf:
@@ -195,7 +214,7 @@ const valueOperator: PolicyOperatorDefinition = {
 				ok: false,
 				error: invalidMetadataValue(
 					PolicyOperator.Value,
-					"a string, number, boolean, or array",
+					"a string, number, boolean, object, or array",
 					parameterValue,
 				),
 			};
@@ -294,7 +313,7 @@ const defaultOperator: PolicyOperatorDefinition = {
 				ok: false,
 				error: invalidMetadataValue(
 					PolicyOperator.Default,
-					"a string, number, boolean, or array",
+					"a string, number, boolean, object, or array",
 					parameterValue,
 				),
 			};

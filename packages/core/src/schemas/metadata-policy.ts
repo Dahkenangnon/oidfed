@@ -2,7 +2,13 @@
 import { z } from "zod";
 
 const jsonObject = z.record(z.string(), z.unknown());
-const metadataValue = z.union([z.string(), z.number(), z.boolean(), z.array(z.unknown())]);
+const metadataValue = z.union([
+	z.string(),
+	z.number(),
+	z.boolean(),
+	z.array(z.unknown()),
+	jsonObject,
+]);
 const comparableValue = z.union([z.string(), z.number(), jsonObject]);
 const comparableArray = z.array(comparableValue);
 

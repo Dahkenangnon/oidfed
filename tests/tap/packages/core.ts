@@ -245,6 +245,31 @@ export default (QUnit: QUnit) => {
 		t.deepEqual(override.custom.settings.selected, ["a"]);
 	});
 
+	test("object value and default policies compare complete JSON values", async (t) => {
+		const { operators } = await import("../../../packages/core/src/metadata-policy/operators.js");
+		const { FederationMetadataPolicySchema } = await import("../../../packages/core/src/index.js");
+		for (const name of ["value", "default"]) {
+			const object = { keys: [{ kty: "example", kid: "1" }], nested: { x: 1, y: true } };
+			const policy = { custom: { settings: { [name]: object } } };
+			t.true(FederationMetadataPolicySchema.safeParse(policy).success);
+			const result = applyMetadataPolicy({ custom: {} as Record<string, unknown> }, policy);
+			t.true(result.ok);
+			if (result.ok) {
+				t.deepEqual((result.value.custom as Record<string, unknown>).settings, object);
+				((result.value.custom as Record<string, unknown>).settings as typeof object).nested.x = 9;
+			}
+			t.equal(object.nested.x, 1);
+			t.true(operators[name]!.merge({ a: 1, b: { x: 2 } }, { b: { x: 2 }, a: 1 }).ok);
+			t.false(operators[name]!.merge({ a: 1 }, { a: 2 }).ok);
+			t.false(operators[name]!.apply(undefined, { value: Infinity }).ok);
+		}
+		const removal = applyMetadataPolicy(
+			{ custom: { settings: { a: 1 } } },
+			{ custom: { settings: { value: null } } },
+		);
+		t.true(removal.ok);
+		if (removal.ok) t.deepEqual(removal.value.custom, {});
+	});
 	test("JWK registry extensions remain ineligible without verification permission", async (t) => {
 		const { JWKSchema, generateSigningKey, selectVerificationKey } = await import(
 			"../../../packages/core/src/index.js"
@@ -6144,16 +6169,16 @@ export default (QUnit: QUnit) => {
 				policy: Parameters<typeof applyMetadataPolicy>[1];
 			}> = [
 				{
-					name: "value with object metadata",
+					name: "value with non-JSON metadata",
 					metadata: {
-						openid_relying_party: { client_name: { localized: "Leaf RP" } },
+						openid_relying_party: { client_name: new Date(0) },
 					} as unknown as FederationMetadata,
 					policy: { openid_relying_party: { client_name: { value: "Forced RP" } } },
 				},
 				{
-					name: "default with object metadata",
+					name: "default with non-JSON metadata",
 					metadata: {
-						openid_relying_party: { client_name: { localized: "Leaf RP" } },
+						openid_relying_party: { client_name: new Date(0) },
 					} as unknown as FederationMetadata,
 					policy: { openid_relying_party: { client_name: { default: "Fallback RP" } } },
 				},
@@ -6548,8 +6573,8 @@ export default (QUnit: QUnit) => {
 					[statement({ value: null }), statement({ default: "Fallback" })],
 					[statement({ default: "Fallback" }), statement({ value: null })],
 					[statement({ value: "Pinned", default: null })],
-					[statement({ value: {}, default: "Fallback" })],
-					[statement({ value: "Pinned", default: {} })],
+					[statement({ value: { invalid: undefined }, default: "Fallback" })],
+					[statement({ value: "Pinned", default: { invalid: undefined } })],
 					[statement({ value: "Pinned" }), statement({ value: "Other" })],
 					[statement({ default: "Fallback" }), statement({ default: "Other" })],
 				]) {
