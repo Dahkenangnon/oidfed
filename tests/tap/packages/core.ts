@@ -261,6 +261,84 @@ export default (QUnit: QUnit) => {
 			}
 		}
 	});
+	test("collection custom names survive refresh projection and client parsing", async (t) => {
+		const { EntityCollectionService, fetchEntityCollection, ok, EntityIdSchema } = await import(
+			"../../../packages/core/src/index.js"
+		);
+		const { walletFederation } = await import("../fixtures/wallet.js");
+		const f = await walletFederation();
+		const infoClaims = ["display_name#v2", "description#long"];
+		const svc = new EntityCollectionService({
+			trustAnchors: f.anchors,
+			options: { clock: f.clock },
+			infoClaims,
+			collector: async () =>
+				ok([
+					{
+						entity: {
+							entity_id: EntityIdSchema.parse(f.ids.issuer),
+							entity_infos: {
+								openid_credential_issuer: {
+									"display_name#v2": "Label",
+									"description#long#de": "Beschreibung",
+									contacts: ["contact@example.com"],
+								},
+							},
+						},
+						expiresAt: 2000,
+					},
+				]),
+		});
+		t.true((await svc.refresh(f.ids.anchor)).ok);
+		const page = await svc.query({ trustAnchor: f.ids.anchor, infoClaims: ["display_name#v2"] });
+		t.true(page.ok);
+		if (page.ok) {
+			t.deepEqual(page.value.entities[0]?.entity_infos?.openid_credential_issuer, {
+				"display_name#v2": "Label",
+			});
+			const parsed = await fetchEntityCollection(
+				"https://collection.example",
+				{},
+				{
+					infoClaims,
+					httpClient: async () =>
+						new Response(JSON.stringify(page.value), {
+							headers: { "content-type": "application/json" },
+						}),
+				},
+			);
+			t.true(parsed.ok);
+		}
+		const selected = await svc.query({
+			trustAnchor: f.ids.anchor,
+			infoClaims: ["description#long"],
+			locale: ["de"],
+		});
+		t.true(selected.ok);
+		if (selected.ok)
+			t.deepEqual(selected.value.entities[0]?.entity_infos?.openid_credential_issuer, {
+				"description#long#de": "Beschreibung",
+			});
+		const empty = await svc.query({ trustAnchor: f.ids.anchor, entityClaims: [] });
+		t.true(empty.ok);
+		if (empty.ok)
+			t.deepEqual(empty.value.entities, [{ entity_id: EntityIdSchema.parse(f.ids.issuer) }]);
+		const bad = new EntityCollectionService({
+			trustAnchors: f.anchors,
+			options: { clock: f.clock },
+			collector: async () =>
+				ok([
+					{
+						entity: {
+							entity_id: EntityIdSchema.parse(f.ids.issuer),
+							entity_infos: { openid_credential_issuer: { "display_name#de_DE": "bad" } },
+						},
+						expiresAt: 2000,
+					},
+				]),
+		});
+		t.false((await bad.refresh(f.ids.anchor)).ok);
+	});
 
 	test("superior metadata outputs do not share mutable objects with callers", (t) => {
 		const override = { custom: { settings: { selected: ["a"] } } };

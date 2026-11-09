@@ -7,10 +7,10 @@ import {
 import { COLLECTION_PARAMETERS, serializeCollectionParams } from "../entity-collection/protocol.js";
 import { err, ok, type Result } from "../errors.js";
 import {
+	createCollectionSchemas,
 	type EntityCollectionRequestParams,
 	EntityCollectionRequestSchema,
 	type EntityCollectionResponse,
-	EntityCollectionResponseSchema,
 } from "../schemas/entity-collection.js";
 import { performFetch, validateFetchUrl } from "../trust-chain/fetch.js";
 import type { FederationOptions } from "../types.js";
@@ -18,6 +18,8 @@ import type { FederationOptions } from "../types.js";
 export interface FetchEntityCollectionOptions extends FederationOptions {
 	method?: "GET" | "POST";
 	clientAssertion?: string;
+	/** Additional exact informational names understood by this consumer. */
+	infoClaims?: readonly string[];
 }
 
 /** Fetch informational collection data; no trust validation is implied. */
@@ -26,6 +28,15 @@ export async function fetchEntityCollection(
 	params: EntityCollectionRequestParams = {},
 	options?: FetchEntityCollectionOptions,
 ): Promise<Result<EntityCollectionResponse>> {
+	if (
+		options?.infoClaims !== undefined &&
+		(!Array.isArray(options.infoClaims) ||
+			!options.infoClaims.every((name) => typeof name === "string" && name.length > 0))
+	)
+		return err({
+			code: FederationErrorCode.InvalidRequest,
+			description: "Invalid informational claim declarations",
+		});
 	const checked = validateFetchUrl(endpoint, options);
 	if (!checked.ok) return checked;
 	if (checked.value.href.includes("#"))
@@ -68,7 +79,9 @@ export async function fetchEntityCollection(
 	});
 	if (!result.ok) return result;
 	try {
-		const response = EntityCollectionResponseSchema.safeParse(JSON.parse(result.value));
+		const response = createCollectionSchemas(options?.infoClaims).response.safeParse(
+			JSON.parse(result.value),
+		);
 		if (response.success) return ok(response.data);
 	} catch {
 		/* Return a protocol failure for invalid JSON. */

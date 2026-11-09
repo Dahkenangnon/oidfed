@@ -6,6 +6,7 @@ import { decodeEntityConfiguration } from "../jose/verify.js";
 import { splitInformationalClaim } from "../language-tags.js";
 import {
 	COLLECTION_INFO_CLAIMS,
+	createCollectionSchemas,
 	EntityCollectionEntitySchema,
 	type EntityTypeInfo,
 	EntityTypeInfoSchema,
@@ -110,11 +111,6 @@ function callback<T>(run: () => T | Promise<T>, signal: AbortSignal): Promise<T>
 			);
 	});
 }
-
-const candidateSchema = z.strictObject({
-	entity: EntityCollectionEntitySchema,
-	expiresAt: z.number().finite(),
-});
 
 /** Build outside storage, then let the caller publish the complete result atomically. */
 export async function buildCollectionSnapshot(
@@ -253,6 +249,10 @@ export async function buildCollectionSnapshot(
 			if (!Array.isArray(supplied.value) || supplied.value.length > (config.maxEntities ?? 10000))
 				throw new Error("Invalid or oversized collection candidate set");
 			const infoClaims = new Set<string>([...COLLECTION_INFO_CLAIMS, ...(config.infoClaims ?? [])]);
+			const candidateSchema = z.strictObject({
+				entity: createCollectionSchemas(config.infoClaims).entity,
+				expiresAt: z.number().finite(),
+			});
 			for (const input of supplied.value) {
 				const candidate = candidateSchema.parse(input);
 				// Draft 01 §4 defines BCP 47 suffixes; oidfed rejects malformed declared variants.

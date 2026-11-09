@@ -12,7 +12,7 @@ import { splitInformationalClaim } from "../language-tags.js";
 import { MemoryReplayStore } from "../memory-replay-store.js";
 import {
 	COLLECTION_INFO_CLAIMS,
-	EntityCollectionEntitySchema,
+	createCollectionSchemas,
 	type EntityCollectionRequestParams,
 	EntityCollectionRequestSchema,
 	type EntityCollectionResponse,
@@ -300,9 +300,10 @@ export class EntityCollectionService {
 					code: FederationErrorCode.TemporarilyUnavailable,
 					description: "Collection response exceeds the response size limit",
 				});
+			const entitySchema = createCollectionSchemas(this.config.infoClaims).entity;
 			for (const entry of entries.slice(start, start + limit)) {
 				const projected = projectCollectionEntity(entry.entity, request, supportedInfoClaims);
-				if (!EntityCollectionEntitySchema.safeParse(projected).success)
+				if (!entitySchema.safeParse(projected).success)
 					throw new Error("Invalid projected collection entity");
 				const size = encoder.encode(JSON.stringify(projected)).byteLength + (page.length ? 1 : 0);
 				if (bytes + size > maxBytes) {
