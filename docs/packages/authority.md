@@ -344,6 +344,8 @@ Published events require a nonempty name; custom names and empty descriptions ar
 
 History contains the authority's recorded observations and may be incomplete. A suspension event does not enforce suspension, and event history alone does not prove past trust-chain validity. The endpoint provides no pagination or notifications.
 
+Lifecycle methods accept optional event annotations: `registerSubordinate(record, annotations)`, `updateSubordinate(subject, updates, annotations)`, and `revokeSubordinate(subject, annotations)`. Use `{ eventDescription, informationUri }` for the optional fields in [Subordinate Events §2.3.2.1](https://openid.net/specs/openid-federation-subordinate-events-1_0-01.html#section-2.3.2.1). Event storage is required when annotations are supplied. Updates apply the annotations to each generated event; a no-op update produces no event. Validation and event writes share the lifecycle operation's failure boundary.
+
 ## Entity Collection
 
 To serve the optional Draft 01 endpoint from a Trust Anchor or Intermediate, supply `collection` configuration and publish `federation_collection_endpoint`. Use the `collection` property to refresh snapshots and query the shared core service in process. Snapshots use `storage.collections` or `collection.store`, separately from registration records. See the [Entity Collection guide](../guide/entity-collection.md).

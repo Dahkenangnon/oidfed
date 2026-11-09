@@ -82,6 +82,12 @@ export interface SubordinateRecord {
 	readonly updatedAt: number;
 }
 
+/** Annotations applied to each event captured by one lifecycle operation. */
+export interface SubordinateEventAnnotations {
+	readonly eventDescription?: string;
+	readonly informationUri?: string;
+}
+
 export type SubordinateRecordUpdate = Partial<
 	Omit<SubordinateRecord, "entityId" | "createdAt" | "updatedAt">
 >;

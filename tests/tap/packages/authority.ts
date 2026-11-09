@@ -230,6 +230,96 @@ export default (QUnit: QUnit) => {
 			t.equal(transactions, withSnapshot ? 0 : 1);
 		}
 	});
+	test("annotations cover every update event and failed appends roll back state", async (t) => {
+		const { createSubordinateLifecycle } = await import(
+			"../../../packages/authority/src/subordinate-lifecycle.js"
+		);
+		const backing = new MemoryStorageAdapter({ subordinateEvents: true });
+		const { ctx } = await createTestContext({ storage: backing });
+		const lifecycle = createSubordinateLifecycle(ctx);
+		const subject = entityId("https://member.example");
+		await lifecycle.registerSubordinate({ entityId: subject, jwks: { keys: [testPublicJwk()] } });
+		const updates = {
+			jwks: { keys: [(await generateSigningKey()).publicKey] },
+			metadata: { federation_entity: { organization_name: "Updated" } },
+			metadataPolicy: { openid_relying_party: { scope: { default: "openid" } } },
+		};
+		await lifecycle.updateSubordinate(subject, updates, {
+			eventDescription: "Reviewed update",
+			informationUri: "https://example.com/review",
+		});
+		const events = await backing.subordinateEvents!.list(ctx.entityId, subject);
+		t.deepEqual(
+			events.slice(1).map((event) => event.event),
+			["metadata_update", "metadata_policy_update", "jwks_update"],
+		);
+		for (const event of events.slice(1)) {
+			t.equal(event.event_description, "Reviewed update");
+			t.equal(event.information_uri, "https://example.com/review");
+		}
+		const before = await backing.subordinates.get(subject);
+		const failing: StorageAdapter = {
+			subordinates: backing.subordinates,
+			subordinateEvents: backing.subordinateEvents!,
+			transaction: (operation) =>
+				backing.transaction((tx) =>
+					operation({
+						...tx,
+						subordinateEvents: {
+							list: tx.subordinateEvents!.list.bind(tx.subordinateEvents),
+							append: async () => {
+								throw new Error("append failed");
+							},
+						},
+					}),
+				),
+		};
+		await t.rejects(
+			createSubordinateLifecycle({ ...ctx, storage: failing }).revokeSubordinate(subject, {
+				eventDescription: "Rollback",
+			}),
+			/append failed/,
+		);
+		t.deepEqual(await backing.subordinates.get(subject), before);
+		t.deepEqual(await backing.subordinateEvents!.list(ctx.entityId, subject), events);
+		const withoutEvents = new MemoryStorageAdapter();
+		await t.rejects(
+			createSubordinateLifecycle({ ...ctx, storage: withoutEvents }).registerSubordinate(
+				{ entityId: subject, jwks: updates.jwks },
+				{},
+			),
+			/require subordinate event storage/,
+		);
+		t.strictEqual(await withoutEvents.subordinates.get(subject), undefined);
+	});
+
+	test("lifecycle annotations share the transaction and cannot forge event fields", async (t) => {
+		const { createSubordinateLifecycle } = await import(
+			"../../../packages/authority/src/subordinate-lifecycle.js"
+		);
+		const storage = new MemoryStorageAdapter({ subordinateEvents: true });
+		const { ctx } = await createTestContext({ storage, options: { clock: { now: () => 100 } } });
+		const lifecycle = createSubordinateLifecycle(ctx);
+		const subject = entityId("https://member.example");
+		await lifecycle.registerSubordinate(
+			{ entityId: subject, jwks: { keys: [testPublicJwk()] } },
+			{ eventDescription: "Approved", informationUri: "https://example.com/approval" },
+		);
+		await lifecycle.updateSubordinate(subject, {}, { eventDescription: "No changes" });
+		await t.rejects(lifecycle.revokeSubordinate(subject, { informationUri: "bad" }));
+		t.ok(await storage.subordinates.get(subject));
+		await lifecycle.revokeSubordinate(subject, { eventDescription: "Contract ended" });
+		const events = await storage.subordinateEvents!.list(ctx.entityId, subject);
+		t.deepEqual(
+			events.map((e) => [e.event, e.event_description]),
+			[
+				["registration", "Approved"],
+				["revocation", "Contract ended"],
+			],
+		);
+		t.equal(events[0]!.information_uri, "https://example.com/approval");
+		t.equal(events[1]!.iat, 100);
+	});
 	test("memory read snapshots detach data and serialize against lifecycle writes", async (t) => {
 		const storage = new MemoryStorageAdapter({ subordinateEvents: true });
 		const subject = entityId("https://member.example");

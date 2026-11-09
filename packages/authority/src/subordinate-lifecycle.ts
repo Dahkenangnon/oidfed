@@ -8,6 +8,7 @@ import {
 import type { HandlerContext } from "./endpoints/context.js";
 import type {
 	StorageTransaction,
+	SubordinateEventAnnotations,
 	SubordinateRecord,
 	SubordinateRecordUpdate,
 } from "./storage/types.js";
@@ -43,6 +44,32 @@ function sanitize<T extends SubordinateRecordUpdate>(record: T): T {
 
 /** One capture boundary for both authority classes; raw adapter writes remain untracked. */
 export function createSubordinateLifecycle(ctx: HandlerContext) {
+	function annotationFields(
+		annotations?: SubordinateEventAnnotations,
+	): Pick<SubordinateEvent, "event_description" | "information_uri"> {
+		if (annotations === undefined) return {};
+		if (!ctx.storage.subordinateEvents)
+			throw new Error("Event annotations require subordinate event storage");
+		if (
+			!annotations ||
+			typeof annotations !== "object" ||
+			Array.isArray(annotations) ||
+			Object.keys(annotations).some((key) => key !== "eventDescription" && key !== "informationUri")
+		)
+			throw new TypeError("Invalid event annotations");
+		const event = parsePublishedSubordinateEvent({
+			iat: 0,
+			event: "registration",
+			...(annotations.eventDescription !== undefined
+				? { event_description: annotations.eventDescription }
+				: {}),
+			...(annotations.informationUri !== undefined
+				? { information_uri: annotations.informationUri }
+				: {}),
+		});
+		const { iat: _iat, event: _event, ...fields } = event;
+		return fields;
+	}
 	function requireTransactionEvents(tx: StorageTransaction): void {
 		if (ctx.storage.subordinateEvents && !tx.subordinateEvents) {
 			throw new Error("Event-enabled storage requires transaction-bound subordinateEvents");
@@ -62,7 +89,9 @@ export function createSubordinateLifecycle(ctx: HandlerContext) {
 	return {
 		async registerSubordinate(
 			record: Omit<SubordinateRecord, "createdAt" | "updatedAt">,
+			annotations?: SubordinateEventAnnotations,
 		): Promise<void> {
+			const fields = annotationFields(annotations);
 			const normalized = sanitize(structuredClone(record));
 			await ctx.storage.transaction(async (tx) => {
 				requireTransactionEvents(tx);
@@ -70,10 +99,17 @@ export function createSubordinateLifecycle(ctx: HandlerContext) {
 				await tx.subordinates.add({ ...normalized, createdAt: iat, updatedAt: iat });
 				// Draft 01 §2.3.3: registration covers the operation's initial metadata and keys.
 				// Later operations remain distinct even when their NumericDates are equal.
-				await append(tx, normalized.entityId, [{ iat, event: SubordinateEventType.Registration }]);
+				await append(tx, normalized.entityId, [
+					{ ...fields, iat, event: SubordinateEventType.Registration },
+				]);
 			});
 		},
-		async updateSubordinate(subject: EntityId, updates: SubordinateRecordUpdate): Promise<void> {
+		async updateSubordinate(
+			subject: EntityId,
+			updates: SubordinateRecordUpdate,
+			annotations?: SubordinateEventAnnotations,
+		): Promise<void> {
+			const fields = annotationFields(annotations);
 			const normalized = sanitize(structuredClone(updates));
 			await ctx.storage.transaction(async (tx) => {
 				requireTransactionEvents(tx);
@@ -108,16 +144,24 @@ export function createSubordinateLifecycle(ctx: HandlerContext) {
 					await append(
 						tx,
 						subject,
-						eventTypes.map((event) => ({ iat, event })),
+						eventTypes.map((event) => ({ ...fields, iat, event })),
 					);
 			});
 		},
-		async revokeSubordinate(subject: EntityId): Promise<void> {
+		async revokeSubordinate(
+			subject: EntityId,
+			annotations?: SubordinateEventAnnotations,
+		): Promise<void> {
+			const fields = annotationFields(annotations);
 			await ctx.storage.transaction(async (tx) => {
 				requireTransactionEvents(tx);
 				await tx.subordinates.remove(subject);
 				await append(tx, subject, [
-					{ iat: nowSeconds(ctx.options?.clock), event: SubordinateEventType.Revocation },
+					{
+						...fields,
+						iat: nowSeconds(ctx.options?.clock),
+						event: SubordinateEventType.Revocation,
+					},
 				]);
 			});
 		},

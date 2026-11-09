@@ -58,6 +58,7 @@ import { InvalidAuthorityConfig } from "./errors.js";
 import type {
 	ListFilter,
 	StorageAdapter,
+	SubordinateEventAnnotations,
 	SubordinateRecord,
 	SubordinateRecordUpdate,
 } from "./storage/types.js";
@@ -168,9 +169,16 @@ export interface AuthorityConfig {
 
 export interface AuthorityServer {
 	readonly collection?: EntityCollectionService;
-	registerSubordinate(record: Omit<SubordinateRecord, "createdAt" | "updatedAt">): Promise<void>;
-	updateSubordinate(subject: EntityId, updates: SubordinateRecordUpdate): Promise<void>;
-	revokeSubordinate(subject: EntityId): Promise<void>;
+	registerSubordinate(
+		record: Omit<SubordinateRecord, "createdAt" | "updatedAt">,
+		annotations?: SubordinateEventAnnotations,
+	): Promise<void>;
+	updateSubordinate(
+		subject: EntityId,
+		updates: SubordinateRecordUpdate,
+		annotations?: SubordinateEventAnnotations,
+	): Promise<void>;
+	revokeSubordinate(subject: EntityId, annotations?: SubordinateEventAnnotations): Promise<void>;
 	recordSubordinateEvents(subject: EntityId, events: readonly SubordinateEvent[]): Promise<void>;
 	getSubordinateEvents(subject: EntityId): Promise<string>;
 
@@ -859,14 +867,22 @@ export class TrustAnchor {
 
 	async registerSubordinate(
 		record: Omit<SubordinateRecord, "createdAt" | "updatedAt">,
+		annotations?: SubordinateEventAnnotations,
 	): Promise<void> {
-		return this.server.registerSubordinate(record);
+		return this.server.registerSubordinate(record, annotations);
 	}
-	async updateSubordinate(subject: EntityId, updates: SubordinateRecordUpdate): Promise<void> {
-		return this.server.updateSubordinate(subject, updates);
+	async updateSubordinate(
+		subject: EntityId,
+		updates: SubordinateRecordUpdate,
+		annotations?: SubordinateEventAnnotations,
+	): Promise<void> {
+		return this.server.updateSubordinate(subject, updates, annotations);
 	}
-	async revokeSubordinate(subject: EntityId): Promise<void> {
-		return this.server.revokeSubordinate(subject);
+	async revokeSubordinate(
+		subject: EntityId,
+		annotations?: SubordinateEventAnnotations,
+	): Promise<void> {
+		return this.server.revokeSubordinate(subject, annotations);
 	}
 	async recordSubordinateEvents(
 		subject: EntityId,
@@ -986,14 +1002,22 @@ export class Intermediate {
 
 	async registerSubordinate(
 		record: Omit<SubordinateRecord, "createdAt" | "updatedAt">,
+		annotations?: SubordinateEventAnnotations,
 	): Promise<void> {
-		return this.server.registerSubordinate(record);
+		return this.server.registerSubordinate(record, annotations);
 	}
-	async updateSubordinate(subject: EntityId, updates: SubordinateRecordUpdate): Promise<void> {
-		return this.server.updateSubordinate(subject, updates);
+	async updateSubordinate(
+		subject: EntityId,
+		updates: SubordinateRecordUpdate,
+		annotations?: SubordinateEventAnnotations,
+	): Promise<void> {
+		return this.server.updateSubordinate(subject, updates, annotations);
 	}
-	async revokeSubordinate(subject: EntityId): Promise<void> {
-		return this.server.revokeSubordinate(subject);
+	async revokeSubordinate(
+		subject: EntityId,
+		annotations?: SubordinateEventAnnotations,
+	): Promise<void> {
+		return this.server.revokeSubordinate(subject, annotations);
 	}
 	async recordSubordinateEvents(
 		subject: EntityId,

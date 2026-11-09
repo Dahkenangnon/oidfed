@@ -26,6 +26,7 @@ export {
 	type StorageAdapter,
 	type StorageReadSnapshot,
 	type StorageTransaction,
+	type SubordinateEventAnnotations,
 	type SubordinateEventStorage,
 	type SubordinateRecord,
 	type SubordinateRecordUpdate,
