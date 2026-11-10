@@ -95,6 +95,7 @@ export async function resolveTrustChains(
 	// Share statement retrievals within this resolution (Federation §10.1).
 	// Each candidate retains its own visited Entities; HTTP and traversal limits are separate.
 	const configurations = new Map<string, Promise<Result<string>>>();
+	const configurationJwts = new Map<string, string>();
 	const statements = new Map<string, Promise<Result<string>>>();
 	const budgetExhausted = new Error("Fetch budget exhausted");
 	const transport = options?.httpClient ?? fetch;
@@ -141,8 +142,13 @@ export async function resolveTrustChains(
 		}
 		return pending;
 	}
-	const configuration = (id: string) =>
-		retrieve(configurations, id, () => fetchEntityConfiguration(id as EntityId, fetchOptions));
+	const configuration = async (id: string) => {
+		const result = await retrieve(configurations, id, () =>
+			fetchEntityConfiguration(id as EntityId, fetchOptions),
+		);
+		if (result.ok) configurationJwts.set(id, result.value);
+		return result;
+	};
 	const statement = (issuer: string, subject: string, endpoint: string) =>
 		retrieve(statements, JSON.stringify([issuer, subject]), () =>
 			fetchSubordinateStatement(endpoint, subject as EntityId, {
@@ -184,6 +190,7 @@ export async function resolveTrustChains(
 
 	if (options?.entityConfigurationJwt !== undefined)
 		configurations.set(entityId, Promise.resolve(ok(leafEcJwt)));
+	configurationJwts.set(entityId, leafEcJwt);
 
 	const hints = (leafPayload as Record<string, unknown>).authority_hints as string[] | undefined;
 
@@ -192,6 +199,7 @@ export async function resolveTrustChains(
 		// candidate and keep exploring hints for paths to other configured anchors.
 		chains.push({
 			statements: [leafEcJwt],
+			entityConfigurations: new Map(configurationJwts),
 			entityId,
 			trustAnchorId: entityId,
 			expiresAt: calculateChainExpiration([leafDecoded.value]),
@@ -329,6 +337,7 @@ export async function resolveTrustChains(
 					if (parsed.every((p) => p !== null)) {
 						chains.push({
 							statements: fullChain,
+							entityConfigurations: new Map(configurationJwts),
 							entityId,
 							trustAnchorId: hint as EntityId,
 							expiresAt: calculateChainExpiration(parsed as NonNullable<(typeof parsed)[0]>[]),

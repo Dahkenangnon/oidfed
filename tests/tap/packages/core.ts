@@ -501,6 +501,7 @@ export default (QUnit: QUnit) => {
 			const anchor = ids[ids.length - 1]!;
 			const jwks = { keys: [key.publicKey] };
 			const statements: string[] = [];
+			const entityConfigurations = new Map<string, string>();
 			const sign = (iss: string, sub: string, rest: Record<string, unknown> = {}) =>
 				signEntityStatement({ iss, sub, iat: 1, exp: 1000, jwks, ...rest }, signer);
 			statements.push(
@@ -509,7 +510,14 @@ export default (QUnit: QUnit) => {
 					metadata: { federation_entity: { organization_name: "Member" } },
 				}),
 			);
-			for (let i = 1; i < ids.length; i++) statements.push(await sign(ids[i]!, ids[i - 1]!));
+			for (let i = 1; i < ids.length; i++) {
+				statements.push(await sign(ids[i]!, ids[i - 1]!));
+				if (i < ids.length - 1)
+					entityConfigurations.set(
+						ids[i]!,
+						await sign(ids[i]!, ids[i]!, { authority_hints: [ids[i + 1]] }),
+					);
+			}
 			statements.push(
 				await sign(anchor, anchor, {
 					metadata: {
@@ -522,7 +530,13 @@ export default (QUnit: QUnit) => {
 			);
 			const anchors = createTrustAnchorSet([{ entityId: anchor, jwks }]);
 			t.equal(
-				(await validateTrustChain(statements, anchors, { clock: { now: () => 100 } })).valid,
+				(
+					await validateTrustChain(statements, anchors, {
+						clock: { now: () => 100 },
+						entityConfigurations,
+						maxTotalFetches: 0,
+					})
+				).valid,
 				length <= 100,
 			);
 			if (length === 101)
@@ -531,6 +545,8 @@ export default (QUnit: QUnit) => {
 						await validateTrustChain(statements, anchors, {
 							clock: { now: () => 100 },
 							maxChainLength: 101,
+							entityConfigurations,
+							maxTotalFetches: 0,
 						})
 					).valid,
 				);
@@ -1195,7 +1211,15 @@ export default (QUnit: QUnit) => {
 						);
 						for (const chain of result.chains)
 							t.true(
-								(await validateTrustChain(chain.statements, graph.trustAnchors, options)).valid,
+								(
+									await validateTrustChain(chain.statements, graph.trustAnchors, {
+										...options,
+										entityConfigurations: chain.entityConfigurations,
+										httpClient: async () => {
+											throw new Error("Resolved ECs must be reused");
+										},
+									})
+								).valid,
 							);
 					}
 		});
@@ -1297,8 +1321,12 @@ export default (QUnit: QUnit) => {
 			t.true(seen.includes(`${graph.id("a")}|${new URL(graph.id("shared")).href}`));
 			t.true(seen.includes(`${graph.id("b")}|${new URL(graph.id("shared")).href}`));
 			t.true(
-				(await validateTrustChain(result.chains[0]!.statements, graph.trustAnchors, { clock }))
-					.valid,
+				(
+					await validateTrustChain(result.chains[0]!.statements, graph.trustAnchors, {
+						clock,
+						entityConfigurations: result.chains[0]!.entityConfigurations,
+					})
+				).valid,
 			);
 			t.equal(new Set(graph.requests).size, graph.requests.length);
 		});
@@ -1701,6 +1729,323 @@ export default (QUnit: QUnit) => {
 			const forged = await validateTrustChain(chain, f.anchors, f.options);
 			t.false(forged.valid);
 			t.true(forged.errors.some((e) => e.code === InternalErrorCode.SignatureInvalid));
+		});
+	});
+	module("core / subordinate relationships", () => {
+		async function fixture() {
+			const f = await trustChainPaths({ federation_entity: {} });
+			const configurations = new Map([
+				[f.ids.a, await f.sign("a", "a", { authority_hints: [f.ids.b] })],
+				[f.ids.b, await f.sign("b", "b", { authority_hints: [f.ids.anchor] })],
+			]);
+			return { ...f, configurations };
+		}
+
+		test("rejects a superior not declared by an intermediate across validation entry points", async (t) => {
+			const f = await fixture();
+			f.configurations.set(f.ids.a, await f.sign("a", "a", { authority_hints: [f.ids.anchor] }));
+			const chain = await f.chain(["subject", "a", "b", "anchor"]);
+			const options = { ...f.options, entityConfigurations: f.configurations };
+			for (const validate of [validateTrustChain, validateTrustChainStructure]) {
+				const checked = await validate(chain, f.anchors, options);
+				t.false(checked.valid);
+				t.true(checked.errors.some((e) => e.statementIndex === 2 && e.field === "authority_hints"));
+			}
+			t.false(
+				(
+					await CorePublic.prepareTrustChainValidation(chain, f.anchors, {
+						...options,
+						deferredClaims: [],
+					})
+				).ok,
+			);
+			const audience = entityId("https://op.example");
+			const request = await f.sign("subject", "subject", {
+				authority_hints: [f.ids.a],
+				aud: audience,
+			});
+			t.false(
+				(
+					await validateTrustChain(chain, f.anchors, {
+						...options,
+						explicitRegistrationRequest: { jwt: request, audience },
+					})
+				).valid,
+			);
+			const quiet = await validateTrustChain(chain, f.anchors, {
+				...options,
+				verboseErrors: false,
+			});
+			t.deepEqual(quiet.errors, [
+				{ code: InternalErrorCode.TrustChainInvalid, message: "Trust chain validation failed" },
+			]);
+		});
+
+		test("validates multi-hop chains offline with supplied ECs and either anchor representation", async (t) => {
+			const f = await fixture();
+			for (const includeAnchorEc of [true, false]) {
+				const chain = await f.chain(["subject", "a", "b", "anchor"], { includeAnchorEc });
+				const options = {
+					...f.options,
+					entityConfigurations: f.configurations,
+					maxTotalFetches: 0,
+				};
+				const checked = await validateTrustChain(chain, f.anchors, options);
+				t.true(checked.valid, JSON.stringify(checked.errors));
+				const prepared = await CorePublic.prepareTrustChainValidation(chain, f.anchors, {
+					...options,
+					deferredClaims: [],
+				});
+				t.true(prepared.ok);
+				if (prepared.ok) t.true((await CorePublic.completeTrustChainValidation(prepared.value)).ok);
+			}
+		});
+
+		test("checks a later intermediate's superior using its fetched EC", async (t) => {
+			const f = await fixture();
+			f.configurations.set(f.ids.b, await f.sign("b", "b", { authority_hints: [f.ids.a] }));
+			const requests: string[] = [];
+			const chain = await f.chain(["subject", "a", "b", "anchor"]);
+			const checked = await validateTrustChain(chain, f.anchors, {
+				...f.options,
+				entityConfigurations: undefined,
+				httpClient: async (input) => {
+					const id = String(input).replace("/.well-known/openid-federation", "");
+					requests.push(id);
+					return new Response(f.configurations.get(entityId(id)), {
+						headers: { "content-type": "application/entity-statement+jwt" },
+					});
+				},
+			});
+			t.false(checked.valid);
+			t.true(checked.errors.some((e) => e.statementIndex === 3 && e.field === "authority_hints"));
+			t.deepEqual(requests, [f.ids.a, f.ids.b]);
+		});
+
+		test("reuses partial EC context, enforces the fetch budget and stops after cancellation", async (t) => {
+			const f = await fixture();
+			const chain = await f.chain(["subject", "a", "b", "anchor"]);
+			const requests: string[] = [];
+			const httpClient: HttpClient = async (input) => {
+				const id = String(input).replace("/.well-known/openid-federation", "");
+				requests.push(id);
+				return new Response(f.configurations.get(entityId(id)), {
+					headers: { "content-type": "application/entity-statement+jwt" },
+				});
+			};
+			const options = { ...f.options, httpClient, maxTotalFetches: 1 };
+			const partial = new Map([[f.ids.a, f.configurations.get(f.ids.a)!]]);
+			t.true(
+				(await validateTrustChain(chain, f.anchors, { ...options, entityConfigurations: partial }))
+					.valid,
+			);
+			t.deepEqual(requests, [f.ids.b]);
+			requests.length = 0;
+			const exhausted = await validateTrustChain(chain, f.anchors, {
+				...options,
+				entityConfigurations: undefined,
+			});
+			t.false(exhausted.valid);
+			t.true(exhausted.errors.some((e) => e.message.includes("fetch budget exhausted")));
+			t.deepEqual(requests, [f.ids.a]);
+			requests.length = 0;
+			const controller = new AbortController();
+			const cancelled = await validateTrustChain(chain, f.anchors, {
+				...options,
+				entityConfigurations: undefined,
+				signal: controller.signal,
+				httpClient: async (input, init) => {
+					const response = await httpClient(input, init);
+					controller.abort();
+					return response;
+				},
+			});
+			t.false(cancelled.valid);
+			t.deepEqual(requests, [f.ids.a]);
+		});
+
+		test("retains fetched ECs for prepared completion and tailored registration", async (t) => {
+			const f = await fixture();
+			const chain = await f.chain(["subject", "a", "b", "anchor"]);
+			let requests = 0;
+			const options = {
+				...f.options,
+				entityConfigurations: undefined,
+				httpClient: async (input: string | URL | Request) => {
+					requests++;
+					const id = entityId(String(input).replace("/.well-known/openid-federation", ""));
+					return new Response(f.configurations.get(id), {
+						headers: { "content-type": "application/entity-statement+jwt" },
+					});
+				},
+			};
+			const audience = entityId("https://op.example");
+			const request = await f.sign("subject", "subject", {
+				authority_hints: [f.ids.a],
+				aud: audience,
+			});
+			const registration = await validateTrustChain(chain, f.anchors, {
+				...options,
+				explicitRegistrationRequest: { jwt: request, audience },
+			});
+			t.true(registration.valid, JSON.stringify(registration.errors));
+			t.equal(requests, 2, "the evidence and tailored request share EC retrievals");
+			requests = 0;
+			const prepared = await CorePublic.prepareTrustChainValidation(chain, f.anchors, {
+				...options,
+				deferredClaims: [],
+			});
+			t.true(prepared.ok);
+			t.equal(requests, 2);
+			f.configurations.clear();
+			if (prepared.ok) t.true((await CorePublic.completeTrustChainValidation(prepared.value)).ok);
+			t.equal(requests, 2, "completion rechecks the original signed ECs without refetching");
+		});
+
+		test("fetches only missing intermediate ECs and reuses the HTTP cache", async (t) => {
+			const f = await fixture();
+			const requests: string[] = [];
+			const options = {
+				...f.options,
+				entityConfigurations: undefined,
+				cache: new MemoryCache({ clock: f.options.clock }),
+				httpClient: async (input: string | URL | Request) => {
+					const url = String(input);
+					requests.push(url);
+					const jwt = [...f.configurations].find(
+						([id]) => `${id}/.well-known/openid-federation` === url,
+					)?.[1];
+					return new Response(jwt ?? "", {
+						status: jwt ? 200 : 404,
+						headers: { "content-type": "application/entity-statement+jwt" },
+					});
+				},
+			};
+			const chain = await f.chain(["subject", "a", "b", "anchor"]);
+			t.true((await validateTrustChain(chain, f.anchors, options)).valid);
+			t.deepEqual(
+				requests,
+				[f.ids.a, f.ids.b].map((id) => `${id}/.well-known/openid-federation`),
+			);
+			requests.length = 0;
+			t.true(
+				(await validateTrustChain(chain, f.anchors, { ...options, maxTotalFetches: 0 })).valid,
+			);
+			t.equal(requests.length, 0);
+		});
+
+		test("rejects missing, invalid and unauthenticated subject ECs", async (t) => {
+			const f = await fixture();
+			const chain = await f.chain(["subject", "a", "b", "anchor"]);
+			const cases: Record<string, unknown>[] = [
+				{ authority_hints: undefined },
+				{ authority_hints: [] },
+				{ authority_hints: [f.ids.anchor] },
+				{ authority_hints: [`${f.ids.b}/`] },
+				{ exp: 1400 },
+				{ iat: 1600 },
+				{ iss: f.ids.b, sub: f.ids.b },
+				{ sub: f.ids.subject },
+				{ crit: ["unknown"], unknown: true },
+				{ jwks: { keys: [f.keys.b.publicKey] } },
+			];
+			for (const claims of cases) {
+				const jwt = await f.sign("a", "a", { authority_hints: [f.ids.b], ...claims });
+				const configurations = new Map(f.configurations).set(f.ids.a, jwt);
+				const checked = await validateTrustChain(chain, f.anchors, {
+					...f.options,
+					entityConfigurations: configurations,
+				});
+				t.false(checked.valid, JSON.stringify(claims));
+			}
+			// A valid self-signature alone must not authenticate unrelated key material.
+			const unrelated = await f.sign("b", "b", {
+				iss: f.ids.a,
+				sub: f.ids.a,
+				authority_hints: [f.ids.b],
+			});
+			const checked = await validateTrustChain(chain, f.anchors, {
+				...f.options,
+				entityConfigurations: new Map(f.configurations).set(f.ids.a, unrelated),
+			});
+			t.false(checked.valid);
+		});
+
+		test("fails closed on unavailable ECs, exhausted budgets and cancellation", async (t) => {
+			const f = await fixture();
+			const chain = await f.chain(["subject", "a", "b", "anchor"]);
+			let requests = 0;
+			const options = {
+				...f.options,
+				entityConfigurations: undefined,
+				httpClient: async () => {
+					requests++;
+					return new Response("", { status: 404 });
+				},
+			};
+			t.false((await validateTrustChain(chain, f.anchors, options)).valid);
+			t.equal(requests, 1);
+			requests = 0;
+			t.false(
+				(await validateTrustChain(chain, f.anchors, { ...options, maxTotalFetches: 0 })).valid,
+			);
+			t.equal(requests, 0);
+			const controller = new AbortController();
+			controller.abort();
+			t.false(
+				(await validateTrustChain(chain, f.anchors, { ...options, signal: controller.signal }))
+					.valid,
+			);
+			t.equal(requests, 0);
+		});
+
+		test("does not fetch ECs for an unauthenticated chain", async (t) => {
+			const f = await fixture();
+			const chain = await f.chain(["subject", "a", "b", "anchor"]);
+			let requests = 0;
+			const options = {
+				...f.options,
+				entityConfigurations: undefined,
+				httpClient: async () => {
+					requests++;
+					throw new Error("Unexpected retrieval");
+				},
+			};
+			t.false((await validateTrustChain(chain, new Map(), options)).valid);
+			const decoded = decodeEntityStatement(chain[1]!);
+			if (!decoded.ok) throw new Error("Invalid fixture");
+			chain[1] = await f.sign("b", "subject", { ...decoded.value.payload });
+			t.false((await validateTrustChain(chain, f.anchors, options)).valid);
+			t.equal(requests, 0);
+		});
+
+		test("limits validation reuse to supporting EC expiry and snapshots prepared ECs", async (t) => {
+			const f = await fixture();
+			f.configurations.set(
+				f.ids.a,
+				await f.sign("a", "a", { authority_hints: [f.ids.b], exp: 1600 }),
+			);
+			let now = 1500;
+			const options = {
+				...f.options,
+				clock: { now: () => now },
+				entityConfigurations: f.configurations,
+			};
+			const chain = await f.chain(["subject", "a", "b", "anchor"]);
+			const checked = await validateTrustChain(chain, f.anchors, options);
+			t.true(checked.valid);
+			if (checked.valid) t.equal(checked.chain.expiresAt, 1600);
+			const prepared = await CorePublic.prepareTrustChainValidation(chain, f.anchors, {
+				...options,
+				deferredClaims: [],
+			});
+			t.true(prepared.ok);
+			f.configurations.set(f.ids.a, await f.sign("a", "a", { authority_hints: [f.ids.anchor] }));
+			if (prepared.ok) {
+				t.true((await CorePublic.completeTrustChainValidation(prepared.value)).ok);
+				now = 1600;
+				t.false((await CorePublic.completeTrustChainValidation(prepared.value)).ok);
+			}
 		});
 	});
 	module("core / contextual chain validation", () => {
@@ -9454,7 +9799,9 @@ export default (QUnit: QUnit) => {
 			t.equal(chain.entityId, "https://leaf.example.com");
 			t.equal(chain.trustAnchorId, "https://ta.example.com");
 			t.equal(chain.statements.length, 3);
-			const validateResult = await validateTrustChain(chain.statements as string[], trustAnchors);
+			const validateResult = await validateTrustChain(chain.statements as string[], trustAnchors, {
+				entityConfigurations: chain.entityConfigurations,
+			});
 			t.true(validateResult.valid);
 			if (validateResult.valid) {
 				t.equal(validateResult.chain.entityId, "https://leaf.example.com");
@@ -9477,7 +9824,9 @@ export default (QUnit: QUnit) => {
 			t.equal(resolveResult.chains.length, 1);
 			const chain = resolveResult.chains[0] as (typeof resolveResult.chains)[number];
 			t.equal(chain.statements.length, 4);
-			const validateResult = await validateTrustChain(chain.statements as string[], trustAnchors);
+			const validateResult = await validateTrustChain(chain.statements as string[], trustAnchors, {
+				entityConfigurations: chain.entityConfigurations,
+			});
 			t.true(validateResult.valid);
 		});
 		test("resolves and validates a 4-entity chain (leaf → int1 → int2 → TA)", async (t) => {
@@ -9506,7 +9855,9 @@ export default (QUnit: QUnit) => {
 			t.equal(resolveResult.chains.length, 1);
 			const chain = resolveResult.chains[0] as (typeof resolveResult.chains)[number];
 			t.equal(chain.statements.length, 5);
-			const validateResult = await validateTrustChain(chain.statements as string[], trustAnchors);
+			const validateResult = await validateTrustChain(chain.statements as string[], trustAnchors, {
+				entityConfigurations: chain.entityConfigurations,
+			});
 			t.true(validateResult.valid);
 			if (validateResult.valid) {
 				t.equal(validateResult.chain.entityId, "https://op.umu.example.com");
@@ -9542,6 +9893,7 @@ export default (QUnit: QUnit) => {
 			const validateResult = await validateTrustChain(
 				resolveResult.chains[0]?.statements as string[],
 				trustAnchors,
+				{ entityConfigurations: resolveResult.chains[0]?.entityConfigurations },
 			);
 			t.true(validateResult.valid);
 			if (validateResult.valid) {
@@ -9570,6 +9922,7 @@ export default (QUnit: QUnit) => {
 			const validateResult = await validateTrustChain(
 				resolveResult.chains[0]?.statements as string[],
 				trustAnchors,
+				{ entityConfigurations: resolveResult.chains[0]?.entityConfigurations },
 			);
 			t.true(validateResult.valid);
 		});
@@ -9592,7 +9945,10 @@ export default (QUnit: QUnit) => {
 			const validateResult = await validateTrustChain(
 				resolveResult.chains[0]?.statements as string[],
 				trustAnchors,
-				{ verboseErrors: true },
+				{
+					verboseErrors: true,
+					entityConfigurations: resolveResult.chains[0]?.entityConfigurations,
+				},
 			);
 			t.false(validateResult.valid);
 			t.true(validateResult.errors.some((e) => e.code === "ERR_CONSTRAINT_VIOLATION"));
@@ -12799,6 +13155,14 @@ export default (QUnit: QUnit) => {
 					const id = (i: number) => ids[i]!;
 					const key = (i: number) => keys[i]!;
 					const last = ids.length - 1;
+					const entityConfigurations = new Map<string, string>();
+					for (let i = 1; i < last; i++)
+						entityConfigurations.set(
+							id(i),
+							await vt_signEC(id(i), key(i).privateKey, key(i).publicKey, {
+								authority_hints: [id(i + 1)],
+							}),
+						);
 					const chain = [
 						await vt_signEC(id(0), key(0).privateKey, key(0).publicKey, {
 							authority_hints: [id(1)],
@@ -12811,7 +13175,12 @@ export default (QUnit: QUnit) => {
 						[id(last) as EntityId, { jwks: { keys: [key(last).publicKey] } }],
 					]);
 					t.true(
-						(await validateTrustChain([...chain, anchorEc], anchors)).valid,
+						(
+							await validateTrustChain([...chain, anchorEc], anchors, {
+								entityConfigurations,
+								maxTotalFetches: 0,
+							})
+						).valid,
 						"unconstrained chain is valid",
 					);
 					const naming = {
@@ -12836,7 +13205,7 @@ export default (QUnit: QUnit) => {
 						const result = await validateTrustChain(
 							includeAnchor ? [...chain, anchorEc] : chain,
 							anchors,
-							{ verboseErrors: true },
+							{ verboseErrors: true, entityConfigurations, maxTotalFetches: 0 },
 						);
 						t.equal(result.valid, !scenario.violates, `trailing anchor EC: ${includeAnchor}`);
 						if (scenario.violates) {
@@ -13904,6 +14273,14 @@ export default (QUnit: QUnit) => {
 			test("applies superior metadata override from immediate superior (first SS, not last)", async (t) => {
 				const taKeys = await generateSigningKey("ES256");
 				const intKeys = await generateSigningKey("ES256");
+				const entityConfigurations = new Map([
+					[
+						"https://int.example.com",
+						await vt_signEC("https://int.example.com", intKeys.privateKey, intKeys.publicKey, {
+							authority_hints: ["https://ta.example.com"],
+						}),
+					],
+				]);
 				const leafKeys = await generateSigningKey("ES256");
 				const leafEc = await vt_signEC(
 					"https://leaf.example.com",
@@ -13941,6 +14318,8 @@ export default (QUnit: QUnit) => {
 				]);
 				const result = await validateTrustChain([leafEc, ssIntLeaf, ssTaInt, taEc], taSet, {
 					verboseErrors: true,
+					entityConfigurations,
+					maxTotalFetches: 0,
 				});
 				t.true(result.valid);
 				if (result.valid)
@@ -14408,6 +14787,14 @@ export default (QUnit: QUnit) => {
 			test("reports an unauthorized published mark independently of chain validity", async (t) => {
 				const taKeys = await generateSigningKey("ES256");
 				const intKeys = await generateSigningKey("ES256");
+				const entityConfigurations = new Map([
+					[
+						"https://int.example.com",
+						await vt_signEC("https://int.example.com", intKeys.privateKey, intKeys.publicKey, {
+							authority_hints: ["https://ta.example.com"],
+						}),
+					],
+				]);
 				const leafKeys = await generateSigningKey("ES256");
 				const tmIssuerKeys = await generateSigningKey("ES256");
 				const trustMarkJwt = await signEntityStatement(
@@ -14459,6 +14846,8 @@ export default (QUnit: QUnit) => {
 				]);
 				const result = await validateTrustChain([leafEc, ssIntLeaf, ssTaInt, taEc], taSet, {
 					verboseErrors: true,
+					entityConfigurations,
+					maxTotalFetches: 0,
 				});
 				t.true(result.valid);
 				if (result.valid) {
@@ -15126,6 +15515,17 @@ export default (QUnit: QUnit) => {
 			test("value + default: validates signed policies within and across superiors", async (t) => {
 				const { chain, taSet, taKeys, leafKeys } = await vt_buildSimple();
 				const intermediateKeys = await generateSigningKey("ES256");
+				const entityConfigurations = new Map([
+					[
+						"https://intermediate.example.com",
+						await vt_signEC(
+							"https://intermediate.example.com",
+							intermediateKeys.privateKey,
+							intermediateKeys.publicKey,
+							{ authority_hints: ["https://ta.example.com"] },
+						),
+					],
+				]);
 				const leafEc = await vt_signEC(
 					"https://leaf.example.com",
 					leafKeys.privateKey,
@@ -15161,7 +15561,7 @@ export default (QUnit: QUnit) => {
 						const result = await validateTrustChain(
 							[leafEc, leafSs, intermediateSs, chain[2] as string],
 							taSet,
-							{ verboseErrors: true },
+							{ verboseErrors: true, entityConfigurations, maxTotalFetches: 0 },
 						);
 						t.equal(result.valid, value !== null, JSON.stringify(result.errors));
 						if (value === null)
@@ -15196,6 +15596,17 @@ export default (QUnit: QUnit) => {
 			test("enforces max_path_length against the actual intermediates in a signed chain", async (t) => {
 				const { chain, taSet, taKeys, leafKeys } = await vt_buildSimple();
 				const intermediateKeys = await generateSigningKey("ES256");
+				const entityConfigurations = new Map([
+					[
+						"https://intermediate.example.com",
+						await vt_signEC(
+							"https://intermediate.example.com",
+							intermediateKeys.privateKey,
+							intermediateKeys.publicKey,
+							{ authority_hints: ["https://ta.example.com"] },
+						),
+					],
+				]);
 				const leafEc = await vt_signEC(
 					"https://leaf.example.com",
 					leafKeys.privateKey,
@@ -15219,7 +15630,7 @@ export default (QUnit: QUnit) => {
 					const result = await validateTrustChain(
 						[leafEc, leafSs, intermediateSs, chain[2] as string],
 						taSet,
-						{ verboseErrors: true },
+						{ verboseErrors: true, entityConfigurations, maxTotalFetches: 0 },
 					);
 					t.equal(result.valid, maxPathLength === 1, `one intermediate, max=${maxPathLength}`);
 					if (maxPathLength === 0) {

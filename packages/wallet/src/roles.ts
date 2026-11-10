@@ -106,8 +106,18 @@ async function signingEvidence(id: string, options: WalletTrustOptions): Promise
 		return failure("Attaching a trust chain requires pinned anchors");
 	const paths = await candidates(id, options.trustAnchors, options);
 	if (!paths.ok) return paths;
-	const checked = await validateTrustChain(options.trustChain, options.trustAnchors, options);
-	return checked.valid && checked.chain.entityId === id
+	const candidate = paths.value[0];
+	if (!candidate) return failure("No attached signing chain");
+	const checked = await validateTrustChain(candidate.statements, options.trustAnchors, {
+		...options,
+		entityConfigurations: candidate.entityConfigurations,
+		verboseErrors: true,
+	});
+	if (!checked.valid)
+		return failure(
+			`Attached signing chain is invalid: ${checked.errors.map((error) => error.message).join("; ")}`,
+		);
+	return checked.chain.entityId === id
 		? ok(true)
 		: failure("Attached signing chain is invalid or belongs to another entity");
 }
@@ -219,8 +229,10 @@ export class WalletProviderRole extends WalletRole {
 		signer: JwtSigner,
 		options: WalletTrustOptions = {},
 	): Promise<Result<string>> {
-		const evidence = await signingEvidence(id, options);
-		return evidence.ok ? createAttestation(id, params, signer, options) : evidence;
+		const scope = operationOptions(options);
+		if (!scope.ok) return scope;
+		const evidence = await signingEvidence(id, scope.value);
+		return evidence.ok ? createAttestation(id, params, signer, scope.value) : evidence;
 	}
 	discover(id: string, options: WalletTrustOptions = {}) {
 		return WalletProviderRole.discover(id, this.anchors(options), this.options(options));
@@ -272,10 +284,7 @@ export class CredentialIssuerRole extends AttestationConsumer {
 		const authorizationServerErrors: { entityId: string; error: FederationError }[] = [];
 		for (const server of new Set(servers)) {
 			const { trustChain: _, ...nestedOptions } = scoped;
-			const paths =
-				server === id
-					? ok([options.trustChain ?? options.entityChains?.get(id)])
-					: await candidates(server, anchors, nestedOptions);
+			const paths = server === id ? ok([]) : await candidates(server, anchors, nestedOptions);
 			if (!paths.ok) {
 				if (
 					options.authorizationServerPolicy !== "available" ||
@@ -293,8 +302,10 @@ export class CredentialIssuerRole extends AttestationConsumer {
 					found = { entityId: server, metadata, trustChain: issuer.value.trustChain };
 			} else {
 				for (const path of paths.value) {
-					if (!path) continue;
-					const checked = await validateTrustChain(path, anchors, scoped);
+					const checked = await validateTrustChain(path.statements, anchors, {
+						...scoped,
+						entityConfigurations: path.entityConfigurations,
+					});
 					const metadata = checked.valid
 						? checked.chain.resolvedMetadata.oauth_authorization_server
 						: undefined;
@@ -397,7 +408,8 @@ export class CredentialVerifierRole extends AttestationConsumer {
 		} catch {
 			return failure("Invalid signing entity identifier");
 		}
-		return createRequest(id, request, signer, options);
+		const scope = operationOptions(options);
+		return scope.ok ? createRequest(id, request, signer, scope.value) : scope;
 	}
 	static validateResponseRedirect(result: ValidatedWalletRequest, uri: string): Result<true> {
 		return validateResponseRedirect(result, uri);

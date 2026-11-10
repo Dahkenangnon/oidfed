@@ -37,6 +37,7 @@ import {
 	type ValidationError,
 	type ValidationResult,
 } from "../types.js";
+import { fetchEntityConfiguration } from "./fetch.js";
 
 const defaultClock: Clock = {
 	now: () => nowSeconds(),
@@ -453,6 +454,7 @@ export async function validateTrustChain(
 	}
 	if (decoded.value.payload.aud !== request.audience)
 		return fail("Registration aud must match the OP");
+	let entityConfigurations = options?.entityConfigurations;
 	if (chain[0] !== request.jwt) {
 		const { explicitRegistrationRequest: _request, ...evidenceOptions } = options ?? {};
 		const evidence = await authenticateChainStatements(chain, trustAnchors, {
@@ -460,6 +462,7 @@ export async function validateTrustChain(
 			explicitRegistrationAudience: request.audience,
 		});
 		if (!evidence.valid) return evidence;
+		entityConfigurations = evidence.entityConfigurations;
 		if (String(evidence.statements[0]?.payload.iss) !== String(decoded.value.payload.iss)) {
 			return fail("Registration request does not match the supplied chain subject");
 		}
@@ -470,6 +473,7 @@ export async function validateTrustChain(
 		trustAnchors,
 		{
 			...options,
+			entityConfigurations,
 			explicitRegistrationAudience: request.audience,
 		},
 		true,
@@ -504,6 +508,7 @@ interface MetadataStage {
 	deferred?: readonly ContextualMetadataClaim[];
 	context?: Readonly<Record<string, Record<string, unknown>>>;
 	pending: ContextualMetadataClaim[];
+	entityConfigurations?: ReadonlyMap<string, string>;
 }
 
 const preparations = new WeakMap<
@@ -549,6 +554,9 @@ export async function prepareTrustChainValidation(
 	const { deferredClaims, ...validationOptions } = options;
 	const savedOptions = {
 		...validationOptions,
+		...(options.entityConfigurations
+			? { entityConfigurations: new Map(options.entityConfigurations) }
+			: {}),
 		...(options.trustMarkIssuerKeys
 			? {
 					trustMarkIssuerKeys: new Map(
@@ -560,6 +568,8 @@ export async function prepareTrustChainValidation(
 	const stage: MetadataStage = { deferred: structuredClone(deferredClaims), pending: [] };
 	const result = await validateTrustChainImpl(savedChain, savedAnchors, savedOptions, true, stage);
 	if (!result.valid) return validationFailure(result.errors);
+	// Completion rechecks the same signed ECs, including ones fetched during preparation.
+	savedOptions.entityConfigurations = new Map(stage.entityConfigurations);
 	if (options.signal?.aborted)
 		return validationFailure([
 			{ code: InternalErrorCode.TrustChainInvalid, message: "Validation was cancelled" },
@@ -666,7 +676,12 @@ export async function validateEntityConfigurationPublication(
 // Authentication is private: a path becomes a ValidatedTrustChain only after
 // its subject's metadata and constraints have been processed.
 type AuthenticatedStatements =
-	| { valid: true; statements: ParsedEntityStatement[] }
+	| {
+			valid: true;
+			statements: ParsedEntityStatement[];
+			expiresAt: number;
+			entityConfigurations: ReadonlyMap<string, string>;
+	  }
 	| { valid: false; errors: readonly ValidationError[] };
 
 async function authenticateChainStatements(
@@ -682,6 +697,7 @@ async function authenticateChainStatements(
 			errors: [{ code: InternalErrorCode.TrustChainInvalid, message: limitError }],
 		};
 	const errors: ValidationError[] = [];
+	const configurationJwts = new Map(options?.entityConfigurations);
 	const clockSkew = options?.clockSkewSeconds ?? DEFAULT_CLOCK_SKEW_SECONDS;
 	const verifyOptions = {
 		clockSkewSeconds: clockSkew,
@@ -1012,7 +1028,14 @@ async function authenticateChainStatements(
 	}
 
 	if (publicationOnly)
-		return errors.length ? { valid: false, errors } : { valid: true, statements: parsed };
+		return errors.length
+			? { valid: false, errors }
+			: {
+					valid: true,
+					statements: parsed,
+					expiresAt: calculateChainExpiration(parsed),
+					entityConfigurations: configurationJwts,
+				};
 
 	// Federation §§10.1 and 17.1 require each path to be loop-free. The closing
 	// anchor EC describes the anchor already introduced by its Subordinate Statement.
@@ -1163,25 +1186,113 @@ async function authenticateChainStatements(
 		}
 	}
 
-	// For each SS, verify iss appears in subject's authority_hints
-	for (let j = 1; j < parsed.length; j++) {
-		const ss = parsed[j] as ParsedEntityStatement;
-		const ssPayload = ss.payload as Record<string, unknown>;
-		if (ssPayload.iss === ssPayload.sub) continue;
-		const subject = parsed[j - 1] as ParsedEntityStatement;
-		const subjectPayload = subject.payload as Record<string, unknown>;
-		const subjectHints = subjectPayload.authority_hints as string[] | undefined;
-		if (subjectPayload.iss === subjectPayload.sub && subjectHints) {
-			if (!subjectHints.includes(ssPayload.iss as string)) {
+	// Intermediate ECs are auxiliary evidence, not entries in the serialized chain.
+	// Authenticate the supplied path before following any of its identifiers online.
+	let expiresAt = calculateChainExpiration(parsed);
+	if (errors.length === 0) {
+		let remainingFetches = options?.maxTotalFetches ?? 50;
+		if (!Number.isSafeInteger(remainingFetches) || remainingFetches < 0) {
+			addError(
+				errors,
+				InternalErrorCode.TrustChainInvalid,
+				"maxTotalFetches must be a non-negative safe integer",
+			);
+		}
+		const transport = options?.httpClient ?? fetch;
+		const fetchOptions: FederationOptions = {
+			...options,
+			httpClient: async (input, init) => {
+				if (options?.signal?.aborted || init?.signal?.aborted)
+					throw new DOMException("Validation was cancelled", "AbortError");
+				if (remainingFetches <= 0) throw new Error("Subject EC fetch budget exhausted");
+				remainingFetches--;
+				return transport(input, init);
+			},
+		};
+		// Serial retrieval bounds concurrency to one and stops on the first invalid edge.
+		for (let j = 1; j < parsed.length && errors.length === 0; j++) {
+			if (options?.signal?.aborted) {
+				addError(errors, InternalErrorCode.Timeout, "Validation was cancelled");
+				break;
+			}
+			const ss = (parsed[j] as ParsedEntityStatement).payload;
+			if (ss.iss === ss.sub) continue;
+			let subject = leaf;
+			if (ss.sub !== leaf.payload.sub) {
+				let jwt = configurationJwts.get(ss.sub);
+				if (jwt === undefined) {
+					try {
+						const fetched = await fetchEntityConfiguration(
+							ss.sub as unknown as EntityId,
+							fetchOptions,
+						);
+						if (!fetched.ok) {
+							addError(
+								errors,
+								fetched.error.code,
+								`Unable to obtain subject EC '${ss.sub}': ${fetched.error.description}`,
+								{ statementIndex: j, field: "authority_hints", checkNumber: 6 },
+							);
+							break;
+						}
+						jwt = fetched.value;
+						configurationJwts.set(ss.sub, jwt);
+					} catch (cause) {
+						addError(
+							errors,
+							InternalErrorCode.Network,
+							`Unable to obtain subject EC '${ss.sub}': ${cause instanceof Error ? cause.message : "Retrieval failed"}`,
+							{ statementIndex: j, field: "authority_hints", checkNumber: 6 },
+						);
+						break;
+					}
+				}
+				const publication = await validateEntityConfigurationPublication(jwt, options);
+				if (!publication.valid) {
+					for (const error of publication.errors)
+						addError(errors, error.code, `Invalid subject EC '${ss.sub}': ${error.message}`, {
+							statementIndex: j,
+							field: error.field ?? "authority_hints",
+							checkNumber: error.checkNumber ?? 6,
+						});
+					break;
+				}
+				subject = publication.statement;
+				if (subject.payload.iss !== ss.sub || subject.payload.sub !== ss.sub) {
+					addError(
+						errors,
+						InternalErrorCode.TrustChainInvalid,
+						`Subject EC identity does not match '${ss.sub}'`,
+						{ statementIndex: j, field: "sub", checkNumber: 6 },
+					);
+					break;
+				}
+				// Bind the self-published EC to the keys attested by this authenticated SS.
+				const bound = await verifyEntityStatement(jwt, ss.jwks as JWKSet, verifyOptions);
+				if (!bound.ok) {
+					addError(
+						errors,
+						InternalErrorCode.SignatureInvalid,
+						`Subject EC '${ss.sub}' does not verify with the chain's subject keys: ${bound.error.description}`,
+						{ statementIndex: j, field: "jwks", checkNumber: 6 },
+					);
+					break;
+				}
+				expiresAt = Math.min(expiresAt, subject.payload.exp);
+			}
+			const subjectHints = subject.payload.authority_hints;
+			if (!subjectHints?.includes(ss.iss)) {
 				addError(
 					errors,
 					InternalErrorCode.TrustChainInvalid,
-					`SS issuer '${ssPayload.iss}' not found in subject's authority_hints at statement ${j}`,
+					`SS issuer '${ss.iss}' not found in subject's authority_hints at statement ${j}`,
 					{ statementIndex: j, field: "authority_hints", checkNumber: 6 },
 				);
 			}
 		}
 	}
+	if (options?.signal?.aborted && errors.length === 0)
+		addError(errors, InternalErrorCode.Timeout, "Validation was cancelled");
 
 	if (errors.length > 0) {
 		if (options?.verboseErrors) {
@@ -1198,7 +1309,7 @@ async function authenticateChainStatements(
 		};
 	}
 
-	return { valid: true, statements: parsed };
+	return { valid: true, statements: parsed, expiresAt, entityConfigurations: configurationJwts };
 }
 
 async function validateTrustChainImpl(
@@ -1210,6 +1321,7 @@ async function validateTrustChainImpl(
 ): Promise<ValidationResult> {
 	const authenticated = await authenticateChainStatements(chain, trustAnchors, options);
 	if (!authenticated.valid) return authenticated;
+	if (stage) stage.entityConfigurations = authenticated.entityConfigurations;
 	const parsed = authenticated.statements;
 	const errors: ValidationError[] = [];
 	const leafPayload = (parsed[0] as ParsedEntityStatement).payload as Record<string, unknown>;
@@ -1351,7 +1463,7 @@ async function validateTrustChainImpl(
 		result.status === "verified" ? [result.mark] : [],
 	);
 
-	const expiresAt = calculateChainExpiration(parsed);
+	const expiresAt = authenticated.expiresAt;
 
 	if (errors.length > 0) {
 		if (options?.verboseErrors) {

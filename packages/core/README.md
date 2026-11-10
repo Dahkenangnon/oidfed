@@ -72,7 +72,9 @@ const result = await resolveTrustChains(
 );
 
 for (const chain of result.chains) {
-  const validated = await validateTrustChain(chain.statements, trustAnchors);
+  const validated = await validateTrustChain(chain.statements, trustAnchors, {
+    entityConfigurations: chain.entityConfigurations,
+  });
   if (validated.valid) {
     console.log(validated.chain.resolvedMetadata);
   }

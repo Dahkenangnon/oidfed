@@ -76,6 +76,8 @@ export interface Logger {
 
 export interface FederationOptions {
 	httpClient?: HttpClient;
+	/** Signed subject ECs for trust-chain validation, keyed by exact Entity Identifier. Still validated against the chain. */
+	entityConfigurations?: ReadonlyMap<string, string> | undefined;
 	clock?: Clock;
 	cache?: CacheProvider;
 	logger?: Logger;
@@ -96,7 +98,7 @@ export interface FederationOptions {
 	allowedHosts?: string[];
 	authorityHintFilter?: (hint: URL, subject: EntityId) => boolean;
 	understoodCriticalClaims?: ReadonlySet<string>;
-	/** Maximum HTTP client calls per resolution; cached and supplied statements use no allowance. Default: 50. */
+	/** Maximum HTTP client calls per resolution or subject-EC validation; cached and supplied statements use no allowance. Default: 50. */
 	maxTotalFetches?: number;
 	/**
 	 * Federation-defined policy operators in addition to the seven standard ones.
@@ -117,6 +119,8 @@ export function createTrustAnchorSet(
 
 export interface TrustChain {
 	readonly statements: ReadonlyArray<string>;
+	/** ECs retrieved while resolving this candidate; pass as validation options to avoid refetching. */
+	readonly entityConfigurations?: ReadonlyMap<string, string>;
 	readonly entityId: EntityId;
 	readonly trustAnchorId: EntityId;
 	readonly expiresAt: number;

@@ -40,7 +40,10 @@ export async function discoverEntity(
 	const validationErrors: string[] = [];
 
 	for (const chain of chainResult.chains) {
-		const result = await validateTrustChain(chain.statements, trustAnchors, options);
+		const result = await validateTrustChain(chain.statements, trustAnchors, {
+			...options,
+			entityConfigurations: chain.entityConfigurations,
+		});
 		if (result.valid) {
 			validChains.push(result.chain);
 		} else {

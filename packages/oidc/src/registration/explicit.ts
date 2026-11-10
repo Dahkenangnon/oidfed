@@ -100,9 +100,9 @@ export async function explicitRegistration(
 		discovery.trustChain,
 		trustAnchors,
 		options,
-		async (statements) => {
+		async (statements, validationOptions) => {
 			const validation = await validateTrustChain(statements, trustAnchors, {
-				...options,
+				...validationOptions,
 				explicitRegistrationRequest: { jwt: candidateRequest, audience: discovery.entityId },
 			});
 			if (!validation.valid) return validation;

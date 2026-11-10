@@ -70,9 +70,25 @@ The application dispatches supported client identifier prefixes and keeps its wa
 
 Use existing List or Entity Collection APIs to find candidates, then discover each selected issuer independently. Collection data is informational. Applications choose when to repeat provider discovery to check current federation standing.
 
-Discovery and verification accept core's HTTP client, clock, cancellation signal, cache, timeout, response-size limit, and fetch limits. Each operation shares its fetch budget across participant discovery, authorization-server discovery, and protocol-key retrieval. The default is 50 network calls.
+Discovery, verification, and signed-object creation accept core's HTTP client, clock, cancellation signal, cache, timeout, response-size limit, and fetch limits. Each operation shares its fetch budget across participant discovery, authorization-server discovery, and protocol-key retrieval. The default is 50 network calls.
 
-`trustChain` supplies a preconstructed chain for the target. `entityChains` supplies additional chains keyed by subject. Every supplied chain is checked against the caller's pinned anchors. Explicit `trustChain` takes precedence over the matching `entityChains` entry; either is authoritative for that operation. Inline Request Objects use the header chain when present, otherwise the payload `trust_chain` permitted by [OpenID4VP §5.9.3](https://openid.net/specs/openid-4-verifiable-presentations-1_0.html#section-5.9.3). Completion removes this discovery hint from `request` and returns validated evidence through `trustChain`. Embedded attestation and inline Request Object chains are [hints](https://openid.net/specs/openid-federation-wallet-1_0-05.html#section-9): when caller evidence is absent, the library tries the hint, then uses bounded online discovery if it cannot establish trust. Invalid header shapes, empty chains, and chains exceeding configured limits fail before discovery. Chains containing malformed statements can fall back to online discovery. A failed object signature does not trigger another discovery attempt. `offline: true` blocks library network requests. Supply the chains and protocol keys needed by the selected operation, and keep application verification callbacks offline too.
+`trustChain` supplies a preconstructed chain for the target. `entityChains` supplies additional chains keyed by subject. Every supplied chain is checked against the caller's pinned anchors. Explicit `trustChain` takes precedence over the matching `entityChains` entry; either is authoritative for that operation. Inline Request Objects use the header chain when present, otherwise the payload `trust_chain` permitted by [OpenID4VP §5.9.3](https://openid.net/specs/openid-4-verifiable-presentations-1_0.html#section-5.9.3). Completion removes this discovery hint from `request` and returns validated evidence through `trustChain`. Embedded attestation and inline Request Object chains are [hints](https://openid.net/specs/openid-federation-wallet-1_0-05.html#section-9): when caller evidence is absent, the library tries the hint, then uses bounded online discovery if it cannot establish trust. Invalid header shapes, empty chains, and chains exceeding configured limits fail before discovery. Chains containing malformed statements can fall back to online discovery. A failed object signature does not trigger another discovery attempt. `offline: true` blocks library network requests during discovery, verification, and creation of Wallet Attestations and Request Objects. Keep application verification callbacks and custom signers offline too.
+
+For multi-hop chains, validation also needs each intermediate's signed Entity Configuration to check its `authority_hints`. Discovery retains these ECs with each candidate, so validation reuses them even when the configured cache does not retain entries. For supplied chains, pass `entityConfigurations`, a map from exact Entity Identifier to signed EC JWT, or preload the ECs in the configured core cache. These inputs still undergo identity, signature, and claim validation.
+
+Existing offline multi-hop integrations must supply this additional EC evidence: `trustChain` and `entityChains` contain the serialized statements, which omit intermediate ECs. A supplied chain without the required local ECs fails validation without making HTTP calls. Supply the protocol keys needed by the selected operation as well. These options also apply to external authorization-server chains.
+
+```ts
+const provider = await WalletProviderRole.discover(providerId, trustAnchors, {
+  offline: true,
+  trustChain: providerTrustChain,
+  entityConfigurations: new Map([
+    [intermediateId, intermediateEcJwt],
+  ]),
+});
+```
+
+When set, `maxTotalFetches` must be a positive safe integer, including for offline operations; the network guard still prevents requests when `offline: true`.
 
 ## Sign and verify Wallet Attestations
 

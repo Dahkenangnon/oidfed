@@ -37,11 +37,10 @@ export async function refreshTrustChain(
 
 	// Use the first valid candidate in resolver order (§10.3 permits local selection policy).
 	for (const candidate of resolveResult.chains) {
-		const result = await validateTrustChain(
-			candidate.statements as string[],
-			trustAnchors,
-			options,
-		);
+		const result = await validateTrustChain(candidate.statements as string[], trustAnchors, {
+			...options,
+			entityConfigurations: candidate.entityConfigurations,
+		});
 		if (result.valid) {
 			return ok(result.chain);
 		}

@@ -244,19 +244,20 @@ export async function processExplicitRegistration(
 
 	const candidates =
 		suppliedTrustChain !== undefined
-			? [suppliedTrustChain]
+			? [{ statements: suppliedTrustChain, entityConfigurations: options.entityConfigurations }]
 			: (
 					await resolveTrustChains(rpEntityId, configuredTrustAnchors, {
 						...options,
 						entityConfigurationJwt: rpEcJwt,
 					})
-				).chains.map((chain) => chain.statements);
+				).chains;
 	const validChains: ValidatedTrustChain[] = [];
 	let reason = "No valid trust chains found for RP";
 	let failureCode: FederationErrorCode = FederationErrorCode.InvalidTrustChain;
 	for (const candidate of candidates) {
-		const validation = await validateTrustChain(candidate, configuredTrustAnchors, {
+		const validation = await validateTrustChain(candidate.statements, configuredTrustAnchors, {
 			...options,
+			entityConfigurations: candidate.entityConfigurations,
 			verboseErrors: true,
 			explicitRegistrationRequest: { jwt: rpEcJwt, audience: options.opEntityId },
 		});

@@ -8,6 +8,7 @@ import {
 	InternalErrorCode,
 	type JWKSet,
 	JWKSetSchema,
+	MemoryCache,
 	ok,
 	type PreparedTrustChain,
 	prepareTrustChainValidation,
@@ -27,6 +28,7 @@ export interface WalletTrustOptions extends FederationOptions {
 	readonly trustChain?: readonly string[];
 	/** Additional supplied chains, keyed by their subjects, for offline integrations. */
 	readonly entityChains?: ReadonlyMap<string, readonly string[]>;
+	/** Block library network calls. Multi-hop chains also need intermediate ECs in entityConfigurations or a preloaded cache. */
 	readonly offline?: boolean;
 	readonly trustMarkIssuerKeys?: ReadonlyMap<string, JWKSet>;
 }
@@ -50,6 +52,7 @@ export function operationOptions<T extends WalletTrustOptions>(options: T): Resu
 	const state = { exhausted: false };
 	const scoped = {
 		...options,
+		cache: options.cache ?? new MemoryCache(options.clock ? { clock: options.clock } : undefined),
 		httpClient: async (input: string | URL | Request, init?: RequestInit) => {
 			if (options.offline) throw new Error("Offline operation cannot access the network");
 			if (options.signal?.aborted) throw options.signal.reason ?? new Error("Operation cancelled");
@@ -70,11 +73,16 @@ export function operationExhausted(options: WalletTrustOptions): boolean {
 	return operationStates.get(options)?.exhausted ?? false;
 }
 
+interface ChainCandidate {
+	readonly statements: readonly string[];
+	readonly entityConfigurations: FederationOptions["entityConfigurations"];
+}
+
 export async function candidates(
 	id: string,
 	anchors: TrustAnchorSet,
 	options: WalletTrustOptions,
-): Promise<Result<readonly (readonly string[])[]>> {
+): Promise<Result<readonly ChainCandidate[]>> {
 	try {
 		entityId(id);
 	} catch {
@@ -94,7 +102,7 @@ export async function candidates(
 			bytes > (options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES)
 		)
 			return failure("Supplied chain exceeds configured limits");
-		return ok([supplied]);
+		return ok([{ statements: supplied, entityConfigurations: options.entityConfigurations }]);
 	}
 	if (options.offline) return failure("Offline operation requires a supplied trust chain");
 	const resolved = await resolveTrustChains(entityId(id), anchors, options);
@@ -109,7 +117,10 @@ export async function candidates(
 	return ok(
 		[...resolved.chains]
 			.sort((a, b) => a.statements.length - b.statements.length)
-			.map((chain) => chain.statements),
+			.map((chain) => ({
+				statements: chain.statements,
+				entityConfigurations: chain.entityConfigurations ?? options.entityConfigurations,
+			})),
 	);
 }
 
@@ -144,7 +155,7 @@ async function* candidateAttempts(
 	anchors: TrustAnchorSet,
 	options: WalletTrustOptions,
 	headerChain?: readonly string[],
-): AsyncGenerator<Result<readonly (readonly string[])[]>> {
+): AsyncGenerator<Result<readonly ChainCandidate[]>> {
 	if (headerChain !== undefined) {
 		const maxLength = options.maxChainLength ?? DEFAULT_MAX_CHAIN_LENGTH;
 		if (!Number.isSafeInteger(maxLength) || maxLength <= 0 || headerChain.length > maxLength) {
@@ -184,7 +195,11 @@ export async function trustedEntity(
 	for await (const paths of candidateAttempts(id, anchors, options, headerChain)) {
 		if (!paths.ok) return paths;
 		for (const path of paths.value) {
-			const checked = await validateTrustChain(path, anchors, { ...options, verboseErrors: true });
+			const checked = await validateTrustChain(path.statements, anchors, {
+				...options,
+				entityConfigurations: path.entityConfigurations,
+				verboseErrors: true,
+			});
 			if (!checked.valid) {
 				last = checked.errors.map((error) => error.message).join("; ");
 				continue;
@@ -211,8 +226,9 @@ export async function prepareVerifier(
 	for await (const paths of candidateAttempts(id, anchors, options, headerChain)) {
 		if (!paths.ok) return paths;
 		for (const path of paths.value) {
-			const checked = await prepareTrustChainValidation(path, anchors, {
+			const checked = await prepareTrustChainValidation(path.statements, anchors, {
 				...options,
+				entityConfigurations: path.entityConfigurations,
 				verboseErrors: true,
 				deferredClaims: [{ entityType: "openid_credential_verifier", parameter: "dcql_queries" }],
 			});

@@ -1,10 +1,12 @@
 import { base64url, decodeJwt } from "jose";
 import type QUnit from "qunit";
 import {
+	ecCacheKey,
 	generateSigningKey,
 	type JWK,
 	JwkSigner,
 	type JwtSigner,
+	MemoryCache,
 	MemoryFederationKeyProvider,
 	MemoryReplayStore,
 	signEntityStatement,
@@ -19,7 +21,7 @@ import {
 	WalletProviderRole,
 } from "../../../packages/wallet/src/index.js";
 import { anchorKeyPaths, trustChainPaths } from "../fixtures/trust-chain-paths.js";
-import { walletFederation, walletQuery } from "../fixtures/wallet.js";
+import { hierarchicalWalletFederation, walletFederation, walletQuery } from "../fixtures/wallet.js";
 
 async function token(
 	payload: Record<string, unknown>,
@@ -49,6 +51,193 @@ const proof = (f: Fixture) => ({
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("wallet / intermediate EC evidence", () => {
+		test("online discovery retains ECs with disabled or evicting caches", async (t) => {
+			const f = await hierarchicalWalletFederation();
+			for (const [Role, name] of [
+				[WalletProviderRole, "provider"],
+				[CredentialIssuerRole, "issuer"],
+				[CredentialVerifierRole, "verifier"],
+			] as const) {
+				for (const mode of ["default", "ttl-zero", "one-entry"] as const) {
+					f.requests.length = 0;
+					const result = await Role.discover(f.ids[name], f.anchors, {
+						clock: f.clock,
+						httpClient: f.httpClient,
+						maxTotalFetches: 5,
+						...(mode === "ttl-zero" ? { cacheMaxTtlSeconds: 0 } : {}),
+						...(mode === "one-entry"
+							? { cache: new MemoryCache({ clock: f.clock, maxEntries: 1 }) }
+							: {}),
+					});
+					t.true(result.ok, `${name}, ${mode}: ${JSON.stringify(result)}`);
+					t.equal(f.requests.length, 5);
+					t.equal(
+						f.requests.filter((url) => url === `${f.intermediate.id}/.well-known/openid-federation`)
+							.length,
+						1,
+					);
+				}
+			}
+		});
+		test("external authorization-server discovery retains its intermediate EC evidence", async (t) => {
+			const f = await hierarchicalWalletFederation({
+				issuerMetadata: { authorization_servers: ["https://server.example"] },
+			});
+			const result = await CredentialIssuerRole.discover(f.ids.issuer, f.anchors, {
+				clock: f.clock,
+				httpClient: f.httpClient,
+				maxTotalFetches: 10,
+				cacheMaxTtlSeconds: 0,
+			});
+			t.true(result.ok, JSON.stringify(result));
+			if (result.ok) t.equal(result.value.authorizationServers[0]?.entityId, f.ids.server);
+			t.equal(f.requests.length, 10);
+		});
+		test("prepared request validation reuses discovered ECs without a retaining cache", async (t) => {
+			const f = await hierarchicalWalletFederation();
+			const jwt = await token(
+				f.requestPayload,
+				f.protocol.verifier.privateKey,
+				"oauth-authz-req+jwt",
+			);
+			const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
+				{ client_id: f.requestPayload.client_id, request: jwt },
+				f.anchors,
+				{
+					clock: f.clock,
+					httpClient: f.httpClient,
+					maxTotalFetches: 5,
+					cacheMaxTtlSeconds: 0,
+				},
+			);
+			t.true(prepared.ok, JSON.stringify(prepared));
+			if (prepared.ok)
+				t.true((await CredentialVerifierRole.completeAuthorizationRequest(prepared.value, jwt)).ok);
+			t.equal(f.requests.length, 5);
+		});
+		test("offline multi-hop discovery requires local EC evidence and makes no HTTP calls", async (t) => {
+			const f = await hierarchicalWalletFederation();
+			for (const [Role, name] of [
+				[WalletProviderRole, "provider"],
+				[CredentialIssuerRole, "issuer"],
+				[CredentialVerifierRole, "verifier"],
+			] as const) {
+				const options = { ...f.options, offline: true };
+				const missing = await Role.discover(f.ids[name], f.anchors, options);
+				t.false(missing.ok);
+				if (!missing.ok) t.true(missing.error.description.includes("Offline operation"));
+				t.true(
+					(
+						await Role.discover(f.ids[name], f.anchors, {
+							...options,
+							entityConfigurations: f.entityConfigurations,
+						})
+					).ok,
+				);
+				const cache = new MemoryCache({ clock: f.clock });
+				await cache.set(
+					await ecCacheKey(f.intermediate.id),
+					f.entityConfigurations.get(f.intermediate.id)!,
+					1000,
+				);
+				t.true((await Role.discover(f.ids[name], f.anchors, { ...options, cache })).ok);
+			}
+			t.equal(f.requests.length, 0);
+		});
+		test("offline creation rejects missing intermediate ECs before fetching or signing", async (t) => {
+			const f = await hierarchicalWalletFederation();
+			let signatures = 0;
+			const signer: JwtSigner = {
+				alg: "ES256",
+				kid: "unused",
+				signJwt: async () => {
+					signatures++;
+					throw new Error("Unexpected signing");
+				},
+			};
+			const options = { ...f.options, trustAnchors: f.anchors, offline: true };
+			const attestation = await WalletProviderRole.createWalletAttestation(
+				f.ids.provider,
+				{ subject: "wallet-client", confirmationKey: f.protocol.issuer.publicKey, expiresAt: 4000 },
+				signer,
+				{ ...options, trustChain: f.chains.get(f.ids.provider)! },
+			);
+			t.false(attestation.ok);
+			const request = await CredentialVerifierRole.createAuthorizationRequest(
+				f.ids.verifier,
+				f.requestPayload,
+				signer,
+				{ ...options, trustChain: f.chains.get(f.ids.verifier)! },
+			);
+			t.false(request.ok);
+			t.equal(f.requests.length, 0);
+			t.equal(signatures, 0);
+		});
+		test("offline creation accepts locally supplied or cached intermediate ECs", async (t) => {
+			const f = await hierarchicalWalletFederation();
+			const cache = new MemoryCache({ clock: f.clock });
+			await cache.set(
+				await ecCacheKey(f.intermediate.id),
+				f.entityConfigurations.get(f.intermediate.id)!,
+				1000,
+			);
+			for (const evidence of [{ entityConfigurations: f.entityConfigurations }, { cache }]) {
+				const options = { ...f.options, trustAnchors: f.anchors, offline: true, ...evidence };
+				const attestation = await WalletProviderRole.createWalletAttestation(
+					f.ids.provider,
+					{
+						subject: "wallet-client",
+						confirmationKey: f.protocol.issuer.publicKey,
+						expiresAt: 4000,
+					},
+					new JwkSigner(f.protocol.provider.privateKey),
+					{ ...options, trustChain: f.chains.get(f.ids.provider)! },
+				);
+				t.true(attestation.ok, JSON.stringify(attestation));
+				const request = await CredentialVerifierRole.createAuthorizationRequest(
+					f.ids.verifier,
+					f.requestPayload,
+					new JwkSigner(f.protocol.verifier.privateKey),
+					{ ...options, trustChain: f.chains.get(f.ids.verifier)! },
+				);
+				t.true(request.ok, JSON.stringify(request));
+			}
+			t.equal(f.requests.length, 0);
+		});
+		test("creation uses the wallet operation's fetch budget validation", async (t) => {
+			const f = await hierarchicalWalletFederation();
+			for (const maxTotalFetches of [0, -1, NaN, Infinity, 1.5]) {
+				const options = {
+					...f.options,
+					maxTotalFetches,
+					entityConfigurations: f.entityConfigurations,
+					trustAnchors: f.anchors,
+				};
+				const attestation = await WalletProviderRole.createWalletAttestation(
+					f.ids.provider,
+					{
+						subject: "wallet-client",
+						confirmationKey: f.protocol.issuer.publicKey,
+						expiresAt: 4000,
+					},
+					new JwkSigner(f.protocol.provider.privateKey),
+					{ ...options, trustChain: f.chains.get(f.ids.provider)! },
+				);
+				t.false(attestation.ok);
+				if (!attestation.ok) t.true(attestation.error.description.includes("maxTotalFetches"));
+				const request = await CredentialVerifierRole.createAuthorizationRequest(
+					f.ids.verifier,
+					f.requestPayload,
+					new JwkSigner(f.protocol.verifier.privateKey),
+					{ ...options, trustChain: f.chains.get(f.ids.verifier)! },
+				);
+				t.false(request.ok);
+				if (!request.ok) t.true(request.error.description.includes("maxTotalFetches"));
+			}
+			t.equal(f.requests.length, 0);
+		});
+	});
 	test("request chain carriers preserve precedence and offline validation", async (t) => {
 		const f = await walletFederation();
 		const chain = f.chains.get(f.ids.verifier);

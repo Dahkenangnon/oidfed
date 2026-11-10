@@ -160,7 +160,10 @@ async function resolveValidRegistrationChains(
 	trustAnchors: TrustAnchorSet,
 	options: FederationOptions | undefined,
 	label: string,
-	validateCandidate?: (statements: readonly string[]) => Promise<ValidationResult>,
+	validateCandidate?: (
+		statements: readonly string[],
+		validationOptions: FederationOptions,
+	) => Promise<ValidationResult>,
 ): Promise<Result<readonly ValidRegistrationChain[], FederationError>> {
 	const chainResult = await resolveTrustChains(subject, trustAnchors, options);
 
@@ -177,8 +180,14 @@ async function resolveValidRegistrationChains(
 	const validChains: ValidRegistrationChain[] = [];
 	for (const chain of chainResult.chains) {
 		const validation = validateCandidate
-			? await validateCandidate(chain.statements)
-			: await validateTrustChain(chain.statements, trustAnchors, options);
+			? await validateCandidate(chain.statements, {
+					...options,
+					entityConfigurations: chain.entityConfigurations,
+				})
+			: await validateTrustChain(chain.statements, trustAnchors, {
+					...options,
+					entityConfigurations: chain.entityConfigurations,
+				});
 		if (validation.valid) {
 			validChains.push({ statements: chain.statements, chain: validation.chain });
 		}
@@ -202,7 +211,10 @@ export async function selectSharedRegistrationTrustChains(
 	preferredOpChain: ValidatedTrustChain,
 	trustAnchors: TrustAnchorSet,
 	options?: FederationOptions,
-	validateRpCandidate?: (statements: readonly string[]) => Promise<ValidationResult>,
+	validateRpCandidate?: (
+		statements: readonly string[],
+		validationOptions: FederationOptions,
+	) => Promise<ValidationResult>,
 ): Promise<Result<SharedRegistrationTrustChains, FederationError>> {
 	const rpChainsResult = await resolveValidRegistrationChains(
 		rpEntityId,
@@ -282,7 +294,10 @@ export async function resolveAndValidateBestChain(
 
 	const validChains: ValidatedTrustChain[] = [];
 	for (const chain of chainResult.chains) {
-		const result = await validateTrustChain(chain.statements, trustAnchors, options);
+		const result = await validateTrustChain(chain.statements, trustAnchors, {
+			...options,
+			entityConfigurations: chain.entityConfigurations,
+		});
 		if (result.valid) {
 			validChains.push(result.chain);
 		}

@@ -171,6 +171,12 @@ Validation rejects a path that visits an Entity more than once, as required by [
 
 When the chain includes the Trust Anchor's Entity Configuration, its signature must verify against both the configured anchor keys and its own `jwks` ([Federation §3.2](https://openid.net/specs/openid-federation-1_0.html#section-3.2), [§4](https://openid.net/specs/openid-federation-1_0.html#section-4)). The configured keys establish trust; the self-signature check confirms that the EC's published key matches its signature. During rollover, the EC can publish additional keys while retaining the key that signs it, following [§11.2](https://openid.net/specs/openid-federation-1_0.html#section-11.2).
 
+Every Subordinate Statement must name an issuer listed in its subject's Entity Configuration `authority_hints` ([§3.2(6)](https://openid.net/specs/openid-federation-1_0.html#section-3.2)). Validation reuses the chain's subject EC and looks up the intermediate ECs by exact Entity Identifier. Each resolved candidate exposes `entityConfigurations`; pass this map in the validation options to reuse discovery's ECs. These are auxiliary inputs and do not change the serialized `statements` array.
+
+For independently supplied chains, provide signed intermediate EC JWTs through `entityConfigurations: ReadonlyMap<string, string>`, or allow validation to retrieve missing ECs using the configured HTTP client and cache. Each EC's identity, claims, time limits, self-signature, and signature against the subject keys attested in the chain are checked before its hints are used. Missing, invalid, or unavailable evidence fails validation. A fully local validation can use `maxTotalFetches: 0`; missing evidence then fails without network access. Additional retrievals are serial, cancellable, and bounded by `maxTotalFetches`, including failed HTTP calls. Invalid chain signatures are rejected before additional EC retrievals.
+
+The returned validated chain's `expiresAt` is capped by the ECs supporting these relationship checks, so consumers refresh before any supporting evidence expires. Prepared validation retains the supporting signed ECs for completion and rechecks their validity.
+
 To start discovery from a supplied signed Entity Configuration, pass `entityConfigurationJwt` in `ResolveTrustChainsOptions`. The resolver checks its identity and follows its authority hints using the configured traversal and HTTP limits. It leaves the cached published EC unchanged. Discovery produces candidates; it does not authenticate the supplied JWT.
 
 During each `resolveTrustChains()` call, candidate paths share pending and completed statement retrievals, following [Federation §10.1](https://openid.net/specs/openid-federation-1_0.html#section-10.1). Entity Configurations are identified by their exact Entity Identifier; Subordinate Statements by their issuer and subject. A failed retrieval is shared for that call and can be retried by a later call. Repeated values in each authority-hint list are collapsed after the raw hint-count limit is applied. Each path keeps its own loop checks, so converging paths remain available.
@@ -205,7 +211,9 @@ const resolution = await resolveTrustChains(
 
 // 2. Validate chain signature continuity and resolve policy
 for (const chain of resolution.chains) {
-  const validation = await validateTrustChain(chain.statements, trustAnchors);
+  const validation = await validateTrustChain(chain.statements, trustAnchors, {
+    entityConfigurations: chain.entityConfigurations
+  });
   if (validation.valid) {
     console.log("Validated Metadata:", validation.chain.resolvedMetadata);
     console.log("Chain Expiry:", new Date(validation.chain.expiresAt * 1000));

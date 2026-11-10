@@ -50,11 +50,10 @@ export async function resolveTrustChainForAnchor(
 	}
 
 	for (const candidate of candidates) {
-		const validation = await validateTrustChain(
-			candidate.statements as string[],
-			trustAnchors,
-			options,
-		);
+		const validation = await validateTrustChain(candidate.statements as string[], trustAnchors, {
+			...options,
+			entityConfigurations: candidate.entityConfigurations,
+		});
 		if (validation.valid) {
 			return ok(candidate.statements as readonly string[]);
 		}

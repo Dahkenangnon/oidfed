@@ -176,7 +176,7 @@ export function createResolveHandler(
 			const validation = await validateTrustChain(
 				[...chain.statements],
 				requestedAnchors as TrustAnchorSet,
-				ctx.options,
+				{ ...ctx.options, entityConfigurations: chain.entityConfigurations },
 			);
 
 			if (!validation.valid) {

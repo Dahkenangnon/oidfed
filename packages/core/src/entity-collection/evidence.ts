@@ -35,9 +35,13 @@ export function createCollectionEvidence(
 	const resolutions = new Map<string, Promise<IssuerResolution>>();
 	let rootPending: Promise<Result<Root>> | undefined;
 
-	async function validatePath(chain: readonly string[]): Promise<ValidatedTrustChain | undefined> {
+	async function validatePath(
+		chain: readonly string[],
+		entityConfigurations = options.entityConfigurations,
+	): Promise<ValidatedTrustChain | undefined> {
 		const checked = await validateTrustChainStructure(chain, anchors, {
 			...options,
+			entityConfigurations,
 			verboseErrors: true,
 		});
 		if (!checked.valid) {
@@ -92,7 +96,8 @@ export function createCollectionEvidence(
 							error.code === InternalErrorCode.Network || error.code === InternalErrorCode.Timeout,
 					);
 				if (!incomplete) {
-					for (const path of paths.chains) await validatePath(path.statements);
+					for (const path of paths.chains)
+						await validatePath(path.statements, path.entityConfigurations);
 				}
 				return { incomplete, proof: incomplete ? undefined : proofs.get(issuer) };
 			})();

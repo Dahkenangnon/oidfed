@@ -1,5 +1,6 @@
 import {
 	createTrustAnchorSet,
+	decodeEntityStatement,
 	entityId,
 	generateSigningKey,
 	type HttpClient,
@@ -180,4 +181,59 @@ export async function walletFederation(
 			exp: 2000,
 		},
 	};
+}
+
+/** The same wallet roles below one intermediate, with separately supplied EC evidence. */
+export async function hierarchicalWalletFederation(
+	config?: Parameters<typeof walletFederation>[0],
+) {
+	const f = await walletFederation(config);
+	const intermediate = {
+		id: entityId("https://intermediate.example"),
+		keys: await generateSigningKey(),
+	};
+	const sign = (payload: Record<string, unknown>) =>
+		signEntityStatement(
+			{ iat: 1000, exp: 5000, ...payload },
+			new JwkSigner(intermediate.keys.privateKey),
+		);
+	const response = (jwt: string) => () =>
+		new Response(jwt, { headers: { "content-type": "application/entity-statement+jwt" } });
+	const ec = await sign({
+		iss: intermediate.id,
+		sub: intermediate.id,
+		jwks: { keys: [intermediate.keys.publicKey] },
+		authority_hints: [f.ids.anchor],
+		metadata: { federation_entity: { federation_fetch_endpoint: `${intermediate.id}/fetch` } },
+	});
+	const ss = await signEntityStatement(
+		{
+			iss: f.ids.anchor,
+			sub: intermediate.id,
+			iat: 1000,
+			exp: 5000,
+			jwks: { keys: [intermediate.keys.publicKey] },
+		},
+		new JwkSigner(f.keys.anchor.privateKey),
+	);
+	f.routes.set(`${intermediate.id}/.well-known/openid-federation`, response(ec));
+	f.routes.set(`${f.ids.anchor}/fetch?sub=${encodeURIComponent(intermediate.id)}`, response(ss));
+	for (const name of ["provider", "issuer", "verifier", "server"] as const) {
+		const chain = f.chains.get(f.ids[name])!;
+		const leaf = decodeEntityStatement(chain[0]!);
+		const statement = decodeEntityStatement(chain[1]!);
+		if (!leaf.ok || !statement.ok) throw new Error("Invalid wallet fixture");
+		const leafEc = await signEntityStatement(
+			{ ...leaf.value.payload, authority_hints: [intermediate.id] },
+			new JwkSigner(f.keys[name].privateKey),
+		);
+		const leafSs = await sign({ ...statement.value.payload, iss: intermediate.id });
+		f.chains.set(f.ids[name], [leafEc, leafSs, ss, chain[2]!]);
+		f.routes.set(`${f.ids[name]}/.well-known/openid-federation`, response(leafEc));
+		f.routes.set(
+			`${intermediate.id}/fetch?sub=${encodeURIComponent(f.ids[name])}`,
+			response(leafSs),
+		);
+	}
+	return { ...f, intermediate, entityConfigurations: new Map([[intermediate.id, ec]]) };
 }

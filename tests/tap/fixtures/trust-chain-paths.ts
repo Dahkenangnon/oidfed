@@ -37,6 +37,7 @@ export async function trustChainPaths(
 			},
 			new JwkSigner(keys[issuer].privateKey),
 		);
+	const entityConfigurations = new Map<string, string>();
 	const chain = async (
 		path: readonly [Name, ...Name[]],
 		config: {
@@ -45,6 +46,15 @@ export async function trustChainPaths(
 			anchorClaims?: Record<string, unknown>;
 		} = {},
 	) => {
+		for (let i = 1; i < path.length - 1; i++) {
+			const name = path[i] as Name;
+			entityConfigurations.set(
+				ids[name],
+				await sign(name, name, {
+					authority_hints: [ids[path[i + 1] as Name]],
+				}),
+			);
+		}
 		const result = [
 			await sign(path[0], path[0], {
 				...(Object.keys(metadata).length ? { metadata } : {}),
@@ -67,6 +77,7 @@ export async function trustChainPaths(
 		chain,
 		anchors: createMockTrustAnchors(ids.anchor, keys.anchor.publicKey),
 		options: {
+			entityConfigurations,
 			clock: { now: () => 1500 },
 			clockSkewSeconds: 0,
 			verboseErrors: true,
