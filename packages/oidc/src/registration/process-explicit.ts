@@ -249,6 +249,7 @@ export async function processExplicitRegistration(
 					await resolveTrustChains(rpEntityId, configuredTrustAnchors, {
 						...options,
 						entityConfigurationJwt: rpEcJwt,
+						explicitRegistrationAudience: options.opEntityId,
 					})
 				).chains;
 	const validChains: ValidatedTrustChain[] = [];

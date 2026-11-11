@@ -4138,7 +4138,7 @@ export default (QUnit: QUnit) => {
 			t.false(result.ok);
 		});
 
-		test("returns err during trust-chain validation if RP EC has no federation jwks", async (t) => {
+		test("rejects an RP EC without federation jwks before following its hints", async (t) => {
 			const fed = await createMockFederation();
 			const now = Math.floor(Date.now() / 1000);
 			const badLeafEcPayload = {
@@ -4161,6 +4161,7 @@ export default (QUnit: QUnit) => {
 				new JwkSigner(fed.leafSigningKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
+			const requests: string[] = [];
 			const httpClient: HttpClient = async (input, init) => {
 				const url =
 					typeof input === "string"
@@ -4168,6 +4169,7 @@ export default (QUnit: QUnit) => {
 						: input instanceof URL
 							? input.toString()
 							: (input as Request).url;
+				requests.push(url);
 				const parsed = new URL(url);
 				if (parsed.pathname === "/.well-known/openid-federation" && parsed.origin === LEAF_ID) {
 					return new Response(badLeafEcJwt, {
@@ -4185,7 +4187,8 @@ export default (QUnit: QUnit) => {
 			t.false(result.ok);
 			if (result.ok) return;
 			t.equal(result.error.code, FederationErrorCode.InvalidTrustChain);
-			t.ok(result.error.description.includes("No valid trust chains found for RP"));
+			t.ok(result.error.description.includes("Failed to resolve trust chain for RP"));
+			t.false(requests.some((url) => new URL(url).searchParams.get("sub") === LEAF_ID));
 		});
 
 		test("returns err if RP metadata does not comply with schema", async (t) => {

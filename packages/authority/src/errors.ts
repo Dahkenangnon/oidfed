@@ -30,7 +30,7 @@ export class InvalidSubordinateStatementShape extends Error {
 export class InvalidMetadata extends Error {
 	constructor(public readonly path: string) {
 		super(
-			`metadata values must not be null; null found at path "${path}". Omit the field instead.`,
+			`metadata entity-type blocks and direct parameter values must not be null; null found at path "${path}". Omit the field instead.`,
 		);
 		this.name = "InvalidMetadata";
 	}

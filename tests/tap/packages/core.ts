@@ -1171,6 +1171,250 @@ export default (QUnit: QUnit) => {
 			});
 		}
 	});
+	module("core / authenticated resolution", () => {
+		const clock = { now: () => 1500 };
+		const edges = [
+			{ issuer: "ta", subject: "middle" },
+			{ issuer: "middle", subject: "leaf" },
+		];
+		for (const position of ["supplied", "leaf", "middle", "ta"] as const)
+			test(`rejects invalid ${position} ECs before following their hints or endpoints`, async (t) => {
+				const graph = await createCollectionFederation({ edges });
+				const name = position === "supplied" ? "leaf" : position;
+				const decoded = decodeEntityStatement(graph.configurations.get(name)!);
+				if (!decoded.ok) throw new Error(decoded.error.description);
+				const original = decoded.value.payload;
+				const other = name === "ta" ? "leaf" : "ta";
+				const cases: {
+					name: string;
+					payload?: Record<string, unknown>;
+					options?: SignEntityStatementOptions;
+					wrongKey?: boolean;
+				}[] = [
+					{ name: "wrong identity", payload: { iss: graph.id(other), sub: graph.id(other) } },
+					{ name: "subordinate statement", payload: { iss: graph.id(other) } },
+					{ name: "wrong signature", wrongKey: true },
+					{ name: "expired", payload: { exp: 1400 } },
+					{ name: "future", payload: { iat: 1600 } },
+					{ name: "wrong type", options: { typ: JwtTyp.TrustMark } },
+					{ name: "missing keys", payload: { jwks: null } },
+					{ name: "malformed metadata", payload: { metadata: "bad" } },
+					{ name: "critical claim", payload: { crit: ["unknown_claim"], unknown_claim: true } },
+					{ name: "registration audience", payload: { aud: graph.id(other) } },
+					{ name: "trust chain header", options: { extraHeaders: { trust_chain: [] } } },
+					{ name: "peer trust chain header", options: { extraHeaders: { peer_trust_chain: [] } } },
+				];
+				for (const invalid of cases) {
+					graph.requests.length = 0;
+					const key = graph.keys.get(invalid.wrongKey ? other : name)!.privateKey;
+					const jwt = await signEntityStatement(
+						{ ...original, ...invalid.payload },
+						new JwkSigner({ ...key, kid: graph.keys.get(name)!.publicKey.kid }),
+						invalid.options,
+					);
+					if (position !== "supplied")
+						graph.routes.set(
+							`${graph.id(name)}/.well-known/openid-federation`,
+							() => new Response(jwt, { headers: { "content-type": MediaType.EntityStatement } }),
+						);
+					const result = await resolveTrustChains(graph.id("leaf"), graph.trustAnchors, {
+						clock,
+						clockSkewSeconds: 0,
+						httpClient: graph.httpClient,
+						...(position === "supplied" ? { entityConfigurationJwt: jwt } : {}),
+					});
+					t.equal(result.chains.length, 0, invalid.name);
+					t.true(
+						result.errors.some(
+							(error) =>
+								error.description.includes("Invalid EC") ||
+								error.description.includes("identity mismatch"),
+						),
+						invalid.name,
+					);
+					t.notOk(result.incomplete, invalid.name);
+					t.equal(
+						graph.requests.length,
+						position === "supplied" ? 0 : position === "leaf" ? 1 : position === "middle" ? 2 : 4,
+						invalid.name,
+					);
+					t.false(
+						graph.requests.some((url) => url.startsWith(`${graph.id(name)}/fetch`)),
+						invalid.name,
+					);
+				}
+			});
+		test("does not fetch a statement from an intermediate without superiors", async (t) => {
+			const graph = await createCollectionFederation({ edges });
+			const parsed = decodeEntityStatement(graph.configurations.get("middle")!);
+			if (!parsed.ok) throw new Error(parsed.error.description);
+			const { authority_hints: _hints, ...payload } = parsed.value.payload;
+			const jwt = await signEntityStatement(
+				payload,
+				new JwkSigner(graph.keys.get("middle")!.privateKey),
+			);
+			graph.routes.set(
+				`${graph.id("middle")}/.well-known/openid-federation`,
+				() => new Response(jwt, { headers: { "content-type": MediaType.EntityStatement } }),
+			);
+			const result = await resolveTrustChains(graph.id("leaf"), graph.trustAnchors, {
+				clock,
+				httpClient: graph.httpClient,
+			});
+			t.equal(result.chains.length, 0);
+			t.equal(graph.requests.length, 2);
+			t.true(result.errors.some((error) => error.description.includes("no authority_hints")));
+		});
+		test("shares invalid ECs within a call, retries later, and preserves valid sibling paths", async (t) => {
+			const graph = await createCollectionFederation({
+				edges: [
+					{ issuer: "ta", subject: "shared" },
+					{ issuer: "shared", subject: "a" },
+					{ issuer: "shared", subject: "b" },
+					{ issuer: "a", subject: "leaf" },
+					{ issuer: "b", subject: "leaf" },
+					{ issuer: "ta", subject: "leaf" },
+				],
+			});
+			const route = `${graph.id("shared")}/.well-known/openid-federation`;
+			const original = graph.routes.get(route)!;
+			const parsed = decodeEntityStatement(graph.configurations.get("shared")!);
+			if (!parsed.ok) throw new Error(parsed.error.description);
+			const expired = await signEntityStatement(
+				{ ...parsed.value.payload, exp: 1400 },
+				new JwkSigner(graph.keys.get("shared")!.privateKey),
+			);
+			graph.routes.set(
+				route,
+				() => new Response(expired, { headers: { "content-type": MediaType.EntityStatement } }),
+			);
+			const first = await resolveTrustChains(graph.id("leaf"), graph.trustAnchors, {
+				clock,
+				httpClient: graph.httpClient,
+			});
+			t.equal(first.chains.length, 1);
+			t.equal(graph.requests.filter((url) => url === route).length, 1);
+			t.false(first.chains[0]!.entityConfigurations?.has(graph.id("shared")));
+			graph.routes.set(route, original);
+			const second = await resolveTrustChains(graph.id("leaf"), graph.trustAnchors, {
+				clock,
+				httpClient: graph.httpClient,
+			});
+			t.equal(second.chains.length, 3);
+			t.equal(graph.requests.filter((url) => url === route).length, 2);
+		});
+		test("rechecks shared EC expiry before following it on a later branch", async (t) => {
+			const graph = await createCollectionFederation({
+				edges: [
+					{ issuer: "ta", subject: "shared" },
+					{ issuer: "shared", subject: "a" },
+					{ issuer: "shared", subject: "b" },
+					{ issuer: "a", subject: "leaf" },
+					{ issuer: "b", subject: "leaf" },
+				],
+			});
+			const parsed = decodeEntityStatement(graph.configurations.get("shared")!);
+			if (!parsed.ok) throw new Error(parsed.error.description);
+			const jwt = await signEntityStatement(
+				{ ...parsed.value.payload, exp: 1800 },
+				new JwkSigner(graph.keys.get("shared")!.privateKey),
+			);
+			const route = `${graph.id("shared")}/.well-known/openid-federation`;
+			graph.routes.set(
+				route,
+				() => new Response(jwt, { headers: { "content-type": MediaType.EntityStatement } }),
+			);
+			let now = 1500;
+			let releaseB: () => void = () => {};
+			const firstShared = new Promise<void>((resolve) => {
+				releaseB = resolve;
+			});
+			const httpClient: HttpClient = async (input, init) => {
+				const url = new URL(String(input));
+				if (url.origin === graph.id("b") && url.pathname === "/fetch") await firstShared;
+				const response = await graph.httpClient(input, init);
+				if (url.origin === graph.id("shared") && url.pathname === "/fetch") {
+					now = 2000;
+					releaseB();
+				}
+				return response;
+			};
+			const result = await resolveTrustChains(graph.id("leaf"), graph.trustAnchors, {
+				clock: { now: () => now },
+				clockSkewSeconds: 0,
+				httpClient,
+			});
+			t.equal(result.chains.length, 1);
+			t.true(result.errors.some((error) => error.code === InternalErrorCode.Expired));
+			t.equal(graph.requests.filter((url) => url === route).length, 1);
+			t.equal(
+				graph.requests.filter((url) => url.startsWith(`${graph.id("shared")}/fetch`)).length,
+				1,
+			);
+		});
+		test("restricts registration exceptions to a supplied request with the expected audience", async (t) => {
+			const graph = await createCollectionFederation({
+				edges: [{ issuer: "ta", subject: "leaf" }],
+			});
+			const parsed = decodeEntityStatement(graph.configurations.get("leaf")!);
+			if (!parsed.ok) throw new Error(parsed.error.description);
+			const request = await signEntityStatement(
+				{ ...parsed.value.payload, aud: OP_ID },
+				new JwkSigner(graph.keys.get("leaf")!.privateKey),
+				{ extraHeaders: { trust_chain: [graph.configurations.get("leaf")!] } },
+			);
+			const options = { clock, httpClient: graph.httpClient };
+			for (const extra of [
+				{ entityConfigurationJwt: request },
+				{ entityConfigurationJwt: request, explicitRegistrationAudience: graph.id("ta") },
+				{
+					entityConfigurationJwt: graph.configurations.get("leaf")!,
+					explicitRegistrationAudience: OP_ID,
+				},
+				{ explicitRegistrationAudience: OP_ID },
+			]) {
+				const result = await resolveTrustChains(graph.id("leaf"), graph.trustAnchors, {
+					...options,
+					...extra,
+				});
+				t.equal(result.chains.length, 0);
+				t.true(result.errors.length > 0);
+				t.equal(graph.requests.length, 0);
+			}
+			const valid = await resolveTrustChains(graph.id("leaf"), graph.trustAnchors, {
+				...options,
+				entityConfigurationJwt: request,
+				explicitRegistrationAudience: OP_ID,
+			});
+			t.equal(valid.chains.length, 1, JSON.stringify(valid.errors));
+			t.equal(valid.chains[0]?.statements[0], request);
+			const anchor = decodeEntityStatement(graph.configurations.get("ta")!);
+			if (!anchor.ok) throw new Error(anchor.error.description);
+			const anchorWithAudience = await signEntityStatement(
+				{ ...anchor.value.payload, aud: OP_ID },
+				new JwkSigner(graph.keys.get("ta")!.privateKey),
+			);
+			graph.routes.set(
+				`${graph.id("ta")}/.well-known/openid-federation`,
+				() =>
+					new Response(anchorWithAudience, {
+						headers: { "content-type": MediaType.EntityStatement },
+					}),
+			);
+			graph.requests.length = 0;
+			const invalid = await resolveTrustChains(graph.id("leaf"), graph.trustAnchors, {
+				...options,
+				entityConfigurationJwt: request,
+				explicitRegistrationAudience: OP_ID,
+			});
+			t.equal(invalid.chains.length, 0);
+			t.equal(
+				graph.requests.length,
+				1,
+				"fetched EC cannot inherit the starting request's audience exception",
+			);
+		});
+	});
 	module("core / resolution sharing", () => {
 		const clock = { now: () => 1500 };
 		const converging = [
@@ -13423,7 +13667,7 @@ export default (QUnit: QUnit) => {
 					{ name: "entity metadata null", metadata: { openid_relying_party: null } },
 					{ name: "entity metadata scalar", metadata: { openid_relying_party: "bad" } },
 					{ name: "entity metadata array", metadata: { openid_relying_party: [] } },
-					{ name: "nested null", metadata: { custom_entity: { nested: { value: null } } } },
+					{ name: "direct null", metadata: { custom_entity: { nested: null } } },
 				];
 				for (const invalidCase of invalidMetadataCases) {
 					const leafEc = await vt_signEC(
@@ -13444,6 +13688,39 @@ export default (QUnit: QUnit) => {
 						invalidCase.name,
 					);
 				}
+			});
+			test("preserves nulls inside metadata parameter objects and arrays", async (t) => {
+				const { chain, taSet, leafKeys } = await vt_buildSimple();
+				const metadata = {
+					custom_entity: {
+						display: [{ name: "Acme", logo: null }, null],
+						nested: { value: null },
+					},
+				};
+				const leafEc = await vt_signEC(
+					"https://leaf.example.com",
+					leafKeys.privateKey,
+					leafKeys.publicKey,
+					{ authority_hints: ["https://ta.example.com"], metadata },
+				);
+				const result = await validateTrustChain([leafEc, ...chain.slice(1)], taSet);
+				t.true(result.valid, JSON.stringify(result.errors));
+				if (result.valid)
+					t.deepEqual(result.chain.resolvedMetadata.custom_entity, metadata.custom_entity);
+				const payload = CorePublic.buildEntityConfigurationPayload({
+					entityId: entityId("https://leaf.example.com"),
+					jwks: { keys: [leafKeys.publicKey] },
+					metadata,
+					authorityHints: [entityId("https://ta.example.com")],
+				});
+				t.deepEqual(payload.metadata, metadata);
+				t.deepEqual(CorePublic.findInvalidMetadataNullPaths(metadata), []);
+				for (const [value, paths] of [
+					[null, [[]]],
+					[{ custom_entity: null }, [["custom_entity"]]],
+					[{ custom_entity: { display: null } }, [["custom_entity", "display"]]],
+				] as const)
+					t.deepEqual(CorePublic.findInvalidMetadataNullPaths(value), paths);
 			});
 			test("accepts empty entity metadata objects in raw statements", async (t) => {
 				const { chain, taSet, leafKeys } = await vt_buildSimple();
@@ -19981,6 +20258,7 @@ export default (QUnit: QUnit) => {
 				...fed.options,
 				cache,
 				entityConfigurationJwt: submitted,
+				explicitRegistrationAudience: OP_ID,
 				maxTotalFetches: 2,
 				httpClient: (async (input, init) => {
 					calls++;

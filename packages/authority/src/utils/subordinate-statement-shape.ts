@@ -236,7 +236,7 @@ export function assertMetadataPolicyShape(payload: Record<string, unknown>): voi
 }
 
 /**
- * Reject null metadata values, allowing wildcard components in wallet claim paths.
+ * Reject null entity-type blocks and direct metadata parameter values (Federation §5).
  */
 export function assertMetadataValuesNotNull(
 	metadata: Readonly<Record<string, unknown>> | undefined,

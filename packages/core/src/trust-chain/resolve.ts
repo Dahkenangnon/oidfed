@@ -7,15 +7,17 @@ import {
 } from "../constants.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
 import { decodeEntityStatement } from "../jose/verify.js";
+import { validateEntityStatementTimeClaims } from "../statement-validation.js";
 import type {
 	EntityId,
 	FederationOptions,
+	ParsedEntityStatement,
 	TrustAnchorSet,
 	TrustChain,
 	TrustChainResult,
 } from "../types.js";
 import { fetchEntityConfiguration, fetchSubordinateStatement } from "./fetch.js";
-import { calculateChainExpiration } from "./validate.js";
+import { calculateChainExpiration, validateEntityConfigurationPublication } from "./validate.js";
 
 /** Create a concurrency limiter that allows at most `maxConcurrent` parallel executions. */
 export function createConcurrencyLimiter(
@@ -62,6 +64,8 @@ export function createConcurrencyLimiter(
 export interface ResolveTrustChainsOptions extends FederationOptions {
 	/** Start with this signed EC; its hints are traversed without fetching or caching a replacement. */
 	readonly entityConfigurationJwt?: string;
+	/** Expected OP audience for a supplied explicit-registration request. */
+	readonly explicitRegistrationAudience?: EntityId;
 }
 
 /** Resolve all possible trust chains for an entity against a set of trust anchors. */
@@ -77,6 +81,19 @@ export async function resolveTrustChains(
 			incomplete: true,
 		};
 	}
+	if (
+		options?.explicitRegistrationAudience !== undefined &&
+		options.entityConfigurationJwt === undefined
+	)
+		return {
+			chains: [],
+			errors: [
+				federationError(
+					InternalErrorCode.TrustChainInvalid,
+					"Registration audience requires a supplied Entity Configuration",
+				),
+			],
+		};
 	const maxDepth = options?.maxChainDepth ?? DEFAULT_MAX_CHAIN_DEPTH;
 	const maxHints = options?.maxAuthorityHints ?? DEFAULT_MAX_AUTHORITY_HINTS;
 	const maxSteps = options?.maxResolutionSteps ?? DEFAULT_MAX_RESOLUTION_STEPS;
@@ -95,6 +112,8 @@ export async function resolveTrustChains(
 	// Share statement retrievals within this resolution (Federation §10.1).
 	// Each candidate retains its own visited Entities; HTTP and traversal limits are separate.
 	const configurations = new Map<string, Promise<Result<string>>>();
+	type Configuration = { jwt: string; statement: ParsedEntityStatement };
+	const authenticatedConfigurations = new Map<string, Promise<Result<Configuration>>>();
 	const configurationJwts = new Map<string, string>();
 	const statements = new Map<string, Promise<Result<string>>>();
 	const budgetExhausted = new Error("Fetch budget exhausted");
@@ -142,11 +161,54 @@ export async function resolveTrustChains(
 		}
 		return pending;
 	}
-	const configuration = async (id: string) => {
-		const result = await retrieve(configurations, id, () =>
-			fetchEntityConfiguration(id as EntityId, fetchOptions),
-		);
-		if (result.ok) configurationJwts.set(id, result.value);
+	const configuration = async (id: string): Promise<Result<Configuration>> => {
+		let pending = authenticatedConfigurations.get(id);
+		if (!pending) {
+			pending = (async (): Promise<Result<Configuration>> => {
+				const fetched = await retrieve(configurations, id, () =>
+					fetchEntityConfiguration(id as EntityId, fetchOptions),
+				);
+				if (!fetched.ok) return fetched;
+				const registration =
+					id === entityId &&
+					options?.entityConfigurationJwt !== undefined &&
+					options.explicitRegistrationAudience !== undefined
+						? { audience: options.explicitRegistrationAudience }
+						: undefined;
+				const checked = await validateEntityConfigurationPublication(
+					fetched.value,
+					options,
+					registration,
+				);
+				if (!checked.valid)
+					return err(
+						federationError(
+							checked.errors[0]?.code ?? InternalErrorCode.TrustChainInvalid,
+							`Invalid EC '${id}': ${checked.errors.map((error) => error.message).join("; ")}`,
+						),
+					);
+				if (checked.statement.payload.iss !== id || checked.statement.payload.sub !== id)
+					return err(
+						federationError(
+							InternalErrorCode.TrustChainInvalid,
+							`EC identity mismatch: expected '${id}'`,
+						),
+					);
+				return ok({ jwt: fetched.value, statement: checked.statement });
+			})();
+			authenticatedConfigurations.set(id, pending);
+		}
+		const result = await pending;
+		if (options?.signal?.aborted) {
+			incomplete = true;
+			return err(federationError(InternalErrorCode.Timeout, "Resolution aborted"));
+		}
+		if (result.ok) {
+			// Shared authentication does not extend an EC's lifetime during traversal.
+			const time = validateEntityStatementTimeClaims(result.value.statement.payload, options);
+			if (!time.ok) return time;
+			configurationJwts.set(id, result.value.jwt);
+		}
 		return result;
 	};
 	const statement = (issuer: string, subject: string, endpoint: string) =>
@@ -157,40 +219,18 @@ export async function resolveTrustChains(
 			}),
 		);
 
-	let leafEcJwt = options?.entityConfigurationJwt;
-	if (leafEcJwt === undefined) {
-		const leafEcResult = await configuration(entityId);
-		if (!leafEcResult.ok) {
-			return {
-				chains: [],
-				errors: [leafEcResult.error],
-				...(incomplete || options?.signal?.aborted ? { incomplete: true as const } : {}),
-			};
-		}
-		leafEcJwt = leafEcResult.value;
-	}
-
-	const leafDecoded = decodeEntityStatement(leafEcJwt);
-	if (!leafDecoded.ok) {
-		return { chains: [], errors: [leafDecoded.error] };
-	}
-
-	const leafPayload = leafDecoded.value.payload;
-	if (leafPayload.iss !== leafPayload.sub || (leafPayload.iss as string) !== (entityId as string)) {
+	if (options?.entityConfigurationJwt !== undefined)
+		configurations.set(entityId, Promise.resolve(ok(options.entityConfigurationJwt)));
+	const leafEcResult = await configuration(entityId);
+	if (!leafEcResult.ok) {
 		return {
 			chains: [],
-			errors: [
-				federationError(
-					InternalErrorCode.TrustChainInvalid,
-					`Leaf EC identity mismatch: iss=${leafPayload.iss}, sub=${leafPayload.sub}, expected=${entityId}`,
-				),
-			],
+			errors: [leafEcResult.error],
+			...(incomplete || options?.signal?.aborted ? { incomplete: true as const } : {}),
 		};
 	}
-
-	if (options?.entityConfigurationJwt !== undefined)
-		configurations.set(entityId, Promise.resolve(ok(leafEcJwt)));
-	configurationJwts.set(entityId, leafEcJwt);
+	const { jwt: leafEcJwt, statement: leafStatement } = leafEcResult.value;
+	const leafPayload = leafStatement.payload;
 
 	const hints = (leafPayload as Record<string, unknown>).authority_hints as string[] | undefined;
 
@@ -202,7 +242,7 @@ export async function resolveTrustChains(
 			entityConfigurations: new Map(configurationJwts),
 			entityId,
 			trustAnchorId: entityId,
-			expiresAt: calculateChainExpiration([leafDecoded.value]),
+			expiresAt: calculateChainExpiration([leafStatement]),
 		});
 		if (!hints || hints.length === 0) return { chains, errors };
 	}
@@ -300,13 +340,18 @@ export async function resolveTrustChains(
 					return;
 				}
 
-				const hintDecoded = decodeEntityStatement(hintEcResult.value);
-				if (!hintDecoded.ok) {
-					errors.push(hintDecoded.error);
+				const hintPayload = hintEcResult.value.statement.payload;
+				const hintHints = hintPayload.authority_hints;
+				if (!trustAnchors.has(hint as EntityId) && (!hintHints || hintHints.length === 0)) {
+					errors.push(
+						federationError(
+							InternalErrorCode.TrustChainInvalid,
+							`Entity '${hint}' has no authority_hints and is not a trust anchor`,
+						),
+					);
 					return;
 				}
-
-				const hintMeta = hintDecoded.value.payload.metadata as
+				const hintMeta = hintPayload.metadata as
 					| Record<string, Record<string, unknown>>
 					| undefined;
 				const fedEntity = hintMeta?.federation_entity;
@@ -329,7 +374,7 @@ export async function resolveTrustChains(
 				}
 
 				if (trustAnchors.has(hint as EntityId)) {
-					const fullChain = [...chainSoFar, ssResult.value, hintEcResult.value];
+					const fullChain = [...chainSoFar, ssResult.value, hintEcResult.value.jwt];
 					const parsed = fullChain.map((jwt) => {
 						const d = decodeEntityStatement(jwt);
 						return d.ok ? d.value : null;
@@ -346,22 +391,9 @@ export async function resolveTrustChains(
 					return;
 				}
 
-				const hintHints = (hintDecoded.value.payload as Record<string, unknown>).authority_hints as
-					| string[]
-					| undefined;
-				if (!hintHints || hintHints.length === 0) {
-					errors.push(
-						federationError(
-							InternalErrorCode.TrustChainInvalid,
-							`Entity '${hint}' has no authority_hints and is not a trust anchor`,
-						),
-					);
-					return;
-				}
-
 				await buildChains(
 					hint,
-					hintHints,
+					hintHints ?? [],
 					[...chainSoFar, ssResult.value],
 					branchVisited,
 					depth + 1,

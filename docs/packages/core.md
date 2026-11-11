@@ -177,7 +177,7 @@ For independently supplied chains, provide signed intermediate EC JWTs through `
 
 The returned validated chain's `expiresAt` is capped by the ECs supporting these relationship checks, so consumers refresh before any supporting evidence expires. Prepared validation retains the supporting signed ECs for completion and rechecks their validity.
 
-To start discovery from a supplied signed Entity Configuration, pass `entityConfigurationJwt` in `ResolveTrustChainsOptions`. The resolver checks its identity and follows its authority hints using the configured traversal and HTTP limits. It leaves the cached published EC unchanged. Discovery produces candidates; it does not authenticate the supplied JWT.
+To start discovery from a supplied signed Entity Configuration, pass `entityConfigurationJwt` in `ResolveTrustChainsOptions`. The resolver validates the identity, structure, time claims, and self-signature of the supplied EC and every fetched EC before following its authority hints or endpoints. It leaves the cached published EC unchanged. For a supplied explicit-registration request, also pass `explicitRegistrationAudience` with the expected OP Entity Identifier; its `aud` must match. This context applies only to the supplied JWT; fetched ECs follow ordinary publication rules. An audience without a supplied JWT is rejected. Discovery still produces candidate paths that require final validation against configured Trust Anchors.
 
 During each `resolveTrustChains()` call, candidate paths share pending and completed statement retrievals, following [Federation §10.1](https://openid.net/specs/openid-federation-1_0.html#section-10.1). Entity Configurations are identified by their exact Entity Identifier; Subordinate Statements by their issuer and subject. A failed retrieval is shared for that call and can be retried by a later call. Repeated values in each authority-hint list are collapsed after the raw hint-count limit is applied. Each path keeps its own loop checks, so converging paths remain available.
 
@@ -477,7 +477,7 @@ Entity Identifiers reject query and fragment delimiters, including empty trailin
 
 `EntityRole.validateMetadata(metadata, context)` is an optional synchronous hook. Hosts invoke it on detached composed role metadata before publication. Existing roles can omit it.
 
-`findInvalidMetadataNullPaths(metadata)` returns the paths of forbidden null values. Statement builders, chain validation, and authority publication share this check. It permits null wildcard components only in the wallet specifications' issuer claim-description and verifier DCQL path arrays; other null metadata values remain invalid. Wallet roles validate the paths' format-specific syntax.
+`findInvalidMetadataNullPaths(metadata)` returns the paths of forbidden null values. Statement builders, chain validation, and authority publication share this check. It rejects null entity-type blocks and direct metadata parameter values, following Federation §5. Nested objects and arrays may contain null; protocol-specific schemas, including wallet claim-path syntax, can impose additional restrictions.
 
 ### Remote protocol errors
 

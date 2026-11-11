@@ -666,11 +666,41 @@ type PublicationValidationResult =
 export async function validateEntityConfigurationPublication(
 	jwt: string,
 	options?: FederationOptions,
+	registration?: { readonly audience: EntityId },
 ): Promise<PublicationValidationResult> {
-	const result = await authenticateChainStatements([jwt], new Map(), options, true);
-	return result.valid
-		? { valid: true, statement: result.statements[0] as ParsedEntityStatement, errors: [] }
-		: result;
+	// Publication checks must not inherit registration exceptions from chain validation.
+	const {
+		explicitRegistrationAudience: _audience,
+		explicitRegistrationRequest: _request,
+		...publicationOptions
+	} = (options ?? {}) as TrustChainValidationOptions;
+	const result = await authenticateChainStatements(
+		[jwt],
+		new Map(),
+		{
+			...publicationOptions,
+			...(registration
+				? {
+						explicitRegistrationAudience: registration.audience,
+						explicitRegistrationRequest: { jwt, audience: registration.audience },
+					}
+				: {}),
+		},
+		true,
+	);
+	if (!result.valid) return result;
+	const statement = result.statements[0] as ParsedEntityStatement;
+	if (registration && statement.payload.aud !== registration.audience)
+		return {
+			valid: false,
+			errors: [
+				{
+					code: InternalErrorCode.TrustChainInvalid,
+					message: "Registration aud must match the OP",
+				},
+			],
+		};
+	return { valid: true, statement, errors: [] };
 }
 
 // Authentication is private: a path becomes a ValidatedTrustChain only after

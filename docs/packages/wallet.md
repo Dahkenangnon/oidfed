@@ -46,7 +46,7 @@ Issuer discovery and `CredentialIssuerRole.parseMetadata()` validate completed e
 
 Issuer claim descriptions follow the credential format. [OpenID4VCI mdoc paths](https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html#appendix-C.2) start with namespace and data-element strings and can continue into CBOR maps, including integer keys, or arrays. JSON paths use nonnegative array indices. [OpenID4VP mdoc query paths](https://openid.net/specs/openid-4-verifiable-presentations-1_0.html#section-7.2) contain exactly the namespace and data-element strings.
 
-Claim-path wildcards are preserved when hosts publish metadata and when core validates the signed statements. Null metadata fields outside those path arrays remain invalid.
+Claim-path wildcards are preserved when hosts publish metadata and when core validates the signed statements. Federation rejects null direct metadata parameter values; nested null values are governed by the relevant protocol schema, including claim-path syntax.
 
 ## Discover a trusted participant
 

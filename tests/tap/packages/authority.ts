@@ -8607,7 +8607,7 @@ export default (QUnit: QUnit) => {
 	});
 
 	module("authority / assertMetadataValuesNotNull", () => {
-		test("allows only recognized wallet claim-path wildcard positions", (t) => {
+		test("leaves nested values to protocol-specific validation", (t) => {
 			assertMetadataValuesNotNull({
 				openid_credential_issuer: {
 					credential_configurations_supported: {
@@ -8653,11 +8653,8 @@ export default (QUnit: QUnit) => {
 					},
 				},
 			])
-				t.throws(
-					() => assertMetadataValuesNotNull(metadata),
-					InvalidMetadata,
-					JSON.stringify(metadata),
-				);
+				assertMetadataValuesNotNull(metadata);
+			t.ok(true, "nested nulls do not violate the generic Federation rule");
 		});
 		test("accepts undefined", (t) => {
 			assertMetadataValuesNotNull(undefined);
@@ -8676,14 +8673,14 @@ export default (QUnit: QUnit) => {
 				InvalidMetadata,
 			);
 		});
-		test("throws on a null leaf nested in an array element", (t) => {
-			t.throws(
-				() =>
-					assertMetadataValuesNotNull({
-						openid_provider: { response_types_supported: ["code", null] },
-					}),
-				InvalidMetadata,
-			);
+		test("accepts nulls nested in metadata parameter arrays and objects", (t) => {
+			assertMetadataValuesNotNull({
+				custom_entity: { display: [{ name: "Acme", logo: null }, null], nested: { value: null } },
+			});
+			t.ok(true);
+		});
+		test("rejects null entity-type blocks", (t) => {
+			t.throws(() => assertMetadataValuesNotNull({ custom_entity: null }), InvalidMetadata);
 		});
 		test("error carries the dotted path to the null leaf", (t) => {
 			try {
@@ -8729,6 +8726,20 @@ export default (QUnit: QUnit) => {
 			const cfg = await baseConfig();
 			const s = createAuthorityServer(cfg);
 			t.ok(s);
+		});
+
+		test("preserves nested extension nulls in published configurations", async (t) => {
+			const extension = { display: [{ name: "Acme", logo: null }, null] };
+			const cfg = await baseConfig();
+			const server = createAuthorityServer({
+				...cfg,
+				metadata: { federation_entity: { ...cfg.metadata.federation_entity, ...extension } },
+			});
+			const jwt = await server.getEntityConfiguration();
+			const parsed = decodeEntityStatement(jwt);
+			t.true(parsed.ok);
+			if (parsed.ok)
+				t.deepEqual(parsed.value.payload.metadata?.federation_entity?.display, extension.display);
 		});
 
 		test("accepts a minimal Intermediate config (non-empty authorityHints)", async (t) => {
@@ -9122,6 +9133,14 @@ export default (QUnit: QUnit) => {
 				openid_provider: { issuer: null as unknown as string },
 			});
 			await t.rejects(store.add(rec), InvalidSubordinateRecord);
+		});
+
+		test("preserves nested nulls through subordinate storage", async (t) => {
+			const store = new MemoryStorageAdapter().subordinates;
+			const metadata = { custom_entity: { display: [{ name: "Acme", logo: null }, null] } };
+			const rec = await aRecord(metadata);
+			await store.add(rec);
+			t.deepEqual((await store.get(SUB_ID))?.metadata, metadata);
 		});
 
 		test("accepts clean records (organization_name only)", async (t) => {

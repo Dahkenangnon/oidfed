@@ -64,7 +64,7 @@ export function validateSubordinateRecord(record: SubordinateRecord): void {
 	} catch (error) {
 		if (error instanceof InvalidMetadata) {
 			throw new InvalidSubordinateRecord(
-				`SubordinateRecord.metadata has a null leaf value: ${error.message}`,
+				`SubordinateRecord.metadata has a forbidden null value: ${error.message}`,
 			);
 		}
 		throw error;
