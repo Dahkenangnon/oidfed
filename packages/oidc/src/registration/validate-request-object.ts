@@ -149,8 +149,25 @@ export function validateAutomaticRegistrationRequest(
 		);
 	}
 
-	const trustChainHeader = header.trust_chain as string[] | undefined;
-	if (trustChainHeader && trustChainHeader.length > 0) {
+	for (const name of ["trust_chain", "peer_trust_chain"] as const) {
+		const value = header[name];
+		if (
+			value !== undefined &&
+			(!Array.isArray(value) ||
+				value.length === 0 ||
+				!value.every((entry) => typeof entry === "string" && entry.length > 0))
+		) {
+			return err(
+				federationError(
+					FederationErrorCode.InvalidTrustChain,
+					`${name} must be a non-empty array of JWT strings`,
+				),
+			);
+		}
+	}
+
+	const trustChainHeader = header.trust_chain as readonly string[] | undefined;
+	if (trustChainHeader !== undefined) {
 		const firstEntry = trustChainHeader[0] as string;
 		const firstDecoded = decodeEntityStatement(firstEntry);
 		if (!firstDecoded.ok) {
@@ -172,8 +189,8 @@ export function validateAutomaticRegistrationRequest(
 		}
 	}
 
-	const peerTrustChainHeader = header.peer_trust_chain as string[] | undefined;
-	if (peerTrustChainHeader && peerTrustChainHeader.length > 0) {
+	const peerTrustChainHeader = header.peer_trust_chain as readonly string[] | undefined;
+	if (peerTrustChainHeader !== undefined) {
 		const peerFirstEntry = peerTrustChainHeader[0] as string;
 		const peerFirstDecoded = decodeEntityStatement(peerFirstEntry);
 		if (!peerFirstDecoded.ok) {
@@ -198,7 +215,7 @@ export function validateAutomaticRegistrationRequest(
 		}
 
 		// Same-Trust-Anchor invariant when both chains are present.
-		if (trustChainHeader && trustChainHeader.length > 0) {
+		if (trustChainHeader !== undefined) {
 			const rpLastEntry = trustChainHeader[trustChainHeader.length - 1] as string;
 			const peerLastEntry = peerTrustChainHeader[peerTrustChainHeader.length - 1] as string;
 			const rpLastDecoded = decodeEntityStatement(rpLastEntry);
@@ -231,8 +248,8 @@ export function validateAutomaticRegistrationRequest(
 		jti,
 		...(claims.iat !== undefined ? { iat: claims.iat as number } : {}),
 		claims,
-		...(trustChainHeader ? { trustChainHeader } : {}),
-		...(peerTrustChainHeader ? { peerTrustChainHeader } : {}),
+		...(trustChainHeader !== undefined ? { trustChainHeader } : {}),
+		...(peerTrustChainHeader !== undefined ? { peerTrustChainHeader } : {}),
 	};
 
 	return ok(validated);

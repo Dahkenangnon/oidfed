@@ -1,7 +1,9 @@
-import { base64url, decodeJwt } from "jose";
+import { base64url, decodeJwt, decodeProtectedHeader } from "jose";
 import type QUnit from "qunit";
 import {
+	decodeEntityStatement,
 	ecCacheKey,
+	entityId,
 	generateSigningKey,
 	type JWK,
 	JwkSigner,
@@ -10,6 +12,7 @@ import {
 	MemoryFederationKeyProvider,
 	MemoryReplayStore,
 	signEntityStatement,
+	validateTrustChain,
 } from "../../../packages/core/src/index.js";
 import {
 	type AttestationVerificationOptions,
@@ -3823,6 +3826,146 @@ export default (QUnit: QUnit) => {
 			t.equal(checked.value.querySource, "verifier_metadata");
 			t.deepEqual(checked.value.request.dcql_query, selected);
 			t.deepEqual(checked.value.effectiveQueries, [walletQuery, selected]);
+		});
+		test("restricts attached request chains to the target Wallet's shared anchors before signing", async (t) => {
+			const f = await walletFederation();
+			const original = f.chains.get(f.ids.verifier);
+			if (!original) throw new Error("Missing verifier fixture chain");
+			const leaf = decodeEntityStatement(original[0]!);
+			if (!leaf.ok) throw new Error(leaf.error.description);
+			const anchorB = entityId("https://wallet-anchor-b.example");
+			const keyB = await generateSigningKey();
+			const leafEc = await signEntityStatement(
+				{ ...leaf.value.payload, authority_hints: [f.ids.anchor, anchorB] },
+				new JwkSigner(f.keys.verifier.privateKey),
+			);
+			const statementB = await signEntityStatement(
+				{
+					iss: anchorB,
+					sub: f.ids.verifier,
+					iat: 1000,
+					exp: 5000,
+					jwks: { keys: [f.keys.verifier.publicKey] },
+				},
+				new JwkSigner(keyB.privateKey),
+			);
+			const configurationB = await signEntityStatement(
+				{
+					iss: anchorB,
+					sub: anchorB,
+					iat: 1000,
+					exp: 5000,
+					jwks: { keys: [keyB.publicKey] },
+					metadata: { federation_entity: { federation_fetch_endpoint: `${anchorB}/fetch` } },
+				},
+				new JwkSigner(keyB.privateKey),
+			);
+			const chainA = [leafEc, ...original.slice(1)];
+			const chainB = [leafEc, statementB, configurationB];
+			const localPins = new Map(f.anchors);
+			localPins.set(anchorB, { jwks: { keys: [keyB.publicKey] } });
+			const walletAcceptedAnchorIds = new Set<string>([anchorB]);
+			const sharedPins = new Map([...localPins].filter(([id]) => walletAcceptedAnchorIds.has(id)));
+			const emptyPins: typeof sharedPins = new Map();
+			t.equal(sharedPins.size, 1);
+			t.equal(
+				localPins.size,
+				2,
+				"restricting this request preserves the verifier's other local pins",
+			);
+			let requests = 0;
+			const localOptions = {
+				clock: f.clock,
+				clockSkewSeconds: 0,
+				offline: true,
+				httpClient: async () => {
+					requests++;
+					throw new Error("Supplied direct chains must validate offline");
+				},
+			};
+			for (const chain of [chainA, chainB]) {
+				const validated = await validateTrustChain(chain, localPins, localOptions);
+				t.true(validated.valid, JSON.stringify(validated.errors));
+			}
+			const instance = new CredentialVerifierRole({ trustAnchors: localPins });
+			instance.initialize({
+				entityId: f.ids.verifier,
+				keyProvider: MemoryFederationKeyProvider.fromJWK(f.keys.verifier.privateKey),
+			});
+			const signer = new JwkSigner(f.protocol.verifier.privateKey);
+			let signatures = 0;
+			const countingSigner: JwtSigner = {
+				alg: signer.alg,
+				kid: signer.kid,
+				signJwt: (...args) => {
+					signatures++;
+					return signer.signJwt(...args);
+				},
+			};
+			for (const useInstance of [false, true]) {
+				for (const scenario of [
+					{
+						chain: chainA,
+						pins: sharedPins,
+						accepted: false,
+						name: "chain A outside the Wallet's anchors",
+					},
+					{
+						chain: chainB,
+						pins: sharedPins,
+						accepted: true,
+						name: "chain B shared with the Wallet",
+					},
+					{ chain: chainB, pins: emptyPins, accepted: false, name: "no shared anchor" },
+				]) {
+					signatures = 0;
+					const options = {
+						...localOptions,
+						trustChain: scenario.chain,
+						trustAnchors: scenario.pins,
+					};
+					if (useInstance && !scenario.pins.size) {
+						// Instance methods reject missing anchor configuration synchronously.
+						t.throws(
+							() => instance.createAuthorizationRequest(f.requestPayload, countingSigner, options),
+							/Pinned trust anchors are required/,
+						);
+						t.equal(signatures, 0);
+						continue;
+					}
+					const created = useInstance
+						? await instance.createAuthorizationRequest(f.requestPayload, countingSigner, options)
+						: await CredentialVerifierRole.createAuthorizationRequest(
+								f.ids.verifier,
+								f.requestPayload,
+								countingSigner,
+								options,
+							);
+					t.equal(
+						created.ok,
+						scenario.accepted,
+						`${useInstance ? "instance" : "static"}: ${scenario.name}: ${JSON.stringify(created)}`,
+					);
+					t.equal(signatures, scenario.accepted ? 1 : 0);
+					if (!created.ok) continue;
+					t.deepEqual(decodeProtectedHeader(created.value).trust_chain, chainB);
+					// No caller-provided chain or entityChains may replace the embedded evidence.
+					const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
+						{ client_id: f.requestPayload.client_id, request: created.value },
+						sharedPins,
+						localOptions,
+					);
+					t.true(prepared.ok, JSON.stringify(prepared));
+					if (!prepared.ok) continue;
+					const completed = await CredentialVerifierRole.completeAuthorizationRequest(
+						prepared.value,
+						created.value,
+					);
+					t.true(completed.ok, JSON.stringify(completed));
+					if (completed.ok) t.equal(completed.value.trustChain.trustAnchorId, anchorB);
+				}
+			}
+			t.equal(requests, 0, "creation and receiver validation use only supplied evidence");
 		});
 		test("creates chain-carrying requests with contextual policy without weakening chain validation", async (t) => {
 			const f = await walletFederation({ policy: { dcql_queries: { essential: true } } });

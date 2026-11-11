@@ -137,7 +137,7 @@ export async function processAutomaticRegistration(
 
 	let peerResolvedOpMetadata: Readonly<Record<string, unknown>> | undefined;
 	const peerHeader = validated.value.peerTrustChainHeader;
-	if (peerHeader && peerHeader.length > 0) {
+	if (peerHeader !== undefined) {
 		const peerValidation = await validateSuppliedTrustChain(peerHeader, configuredTrustAnchors, {
 			...options,
 			expectedSubject: options.opEntityId,
@@ -146,7 +146,10 @@ export async function processAutomaticRegistration(
 		if (!peerValidation.ok) {
 			return err(peerValidation.error);
 		}
-		if (peerValidation.value.trustAnchorId !== bestChain.trustAnchorId) {
+		if (
+			validated.value.trustChainHeader !== undefined &&
+			peerValidation.value.trustAnchorId !== bestChain.trustAnchorId
+		) {
 			return err(
 				federationError(
 					FederationErrorCode.InvalidTrustChain,

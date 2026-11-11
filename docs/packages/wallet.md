@@ -190,6 +190,32 @@ The helper sets the `openid_federation:` client identifier and wallet audience, 
 
 Supplied response and redirect URIs must be HTTPS URLs, matching [Wallet Draft 05 §6.3.1](https://openid.net/specs/openid-federation-wallet-1_0-05.html#section-6.3.1). Invalid response parameters return `invalid_request` before signing or trust-chain preparation. Without a supplied `trustChain`, creation needs no discovery; with one, provide pinned `trustAnchors` for its validation. Endpoint authorization is checked by the receiving wallet against the effective federation metadata during completion ([§7.1.1](https://openid.net/specs/openid-federation-wallet-1_0-05.html#section-7.1.1)). The application's OpenID4VP engine handles request delivery and response processing, including encryption for `direct_post.jwt`.
 
+For the shared-anchor flow described in [Wallet Draft 05 §9](https://openid.net/specs/openid-federation-wallet-1_0-05.html#section-9), the application selects a verifier chain ending at an anchor accepted by the target Wallet. Obtain the Wallet's accepted anchor identifiers through the deployment's metadata or configuration mechanism: [OpenID4VP §10.2](https://openid.net/specs/openid-4-verifiable-presentations-1_0.html#section-10.2) permits dynamic, out-of-band, and static metadata. Request URI POST and metadata acquisition belong to the application's protocol engine.
+
+Restrict the verifier's locally pinned anchors to that intersection before signing. In this example, `locallyPinnedAnchors` is a `TrustAnchorSet`, `walletAcceptedAnchorIds` is an application-provided `ReadonlySet<string>`, and `selectedVerifierChain` contains the signed statements already selected for this Wallet. These variable names do not define new `wallet_metadata` parameters. Retain the locally configured keys; Wallet-advertised identifiers constrain which local pins may be used.
+
+```ts
+const sharedTrustAnchors = new Map(
+  [...locallyPinnedAnchors].filter(([id]) => walletAcceptedAnchorIds.has(id)),
+);
+if (sharedTrustAnchors.size === 0) {
+  throw new Error("No shared Trust Anchor with the target Wallet");
+}
+
+const createdForWallet = await CredentialVerifierRole.createAuthorizationRequest(
+  verifierEntityId,
+  presentationRequest,
+  protocolSigner,
+  {
+    trustChain: selectedVerifierChain,
+    trustAnchors: sharedTrustAnchors,
+  },
+);
+if (!createdForWallet.ok) throw new Error(createdForWallet.error.description);
+```
+
+The restricted pins enforce the selection: a supplied chain ending at any other anchor is rejected before the signer is invoked. The helper does not automatically choose a replacement chain. The application must select a compatible chain or stop when no shared anchor exists.
+
 When `transaction_data` is present, creation checks its structure, credential references, and the SD-JWT holder-binding requirement before signing. `AuthorizationRequestCreationOptions.scopeQuery` supplies the application's DCQL mapping for a signed `scope`. This mapping is required for scope-based transaction requests unless a validated supplied chain provides a superior query override. Inline `dcql_query` takes precedence over this local mapping. The mapping stays local; the signed request retains its `scope` and original encoded transaction strings. Scope-based creation without transaction data needs no mapping.
 
 Creation requires `state` when a known active query sets `require_cryptographic_holder_binding: false`, except for `dc_api` and `dc_api.jwt` ([OpenID4VP §5.3](https://openid.net/specs/openid-4-verifiable-presentations-1_0.html#section-5.3)). It checks the superior override, inline query, or supplied scope mapping. For an opaque scope without a mapping, the application must enforce this condition. The application generates fresh state with at least 128 bits of entropy, binds it to the session, and checks the returned value.

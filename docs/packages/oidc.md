@@ -283,9 +283,10 @@ As defined in **Section 4.4** of the OpenID Federation specification, the `peer_
 
 The processing rules are:
 
-- It allows the RP to supply the OP's trust chain as resolved/chosen by the RP, so both entities establish trust under a common selected Trust Anchor. This binds the two views to the same federation.
+- It allows the RP to supply the OP's trust chain as resolved/chosen by the RP. Supplying both chains binds the two views to the same federation.
 - If both `trust_chain` (describing the RP's own chain) and `peer_trust_chain` are present, the Trust Anchor at the root of both chains **MUST** be the same.
-- OP-side processing validates supplied `trust_chain` and `peer_trust_chain` values as full Trust Chains. Invalid supplied chains are rejected instead of being ignored in favor of live discovery.
+- In automatic registration, `peer_trust_chain` can be supplied independently. Without `trust_chain`, the OP discovers and validates the RP's chain normally; its selected Trust Anchor need not match the peer chain's anchor. The peer chain is still fully validated against configured Trust Anchors, and its resolved OP metadata is returned in `peerResolvedOpMetadata` for the integrator to use.
+- OP-side processing validates supplied `trust_chain` and `peer_trust_chain` values as full Trust Chains. Each header must be a nonempty array of JWT strings. Malformed values, including empty arrays and `null`, are rejected before automatic-registration discovery or replay storage. Invalid supplied chains are rejected instead of being ignored in favor of live discovery.
 - According to **Section 12.2.1**, the `peer_trust_chain` header parameter **MUST NOT** be used when the request body itself is a Trust Chain (`application/trust-chain+json`); it is only permitted when the request body is the Entity Configuration of the RP (`application/entity-statement+jwt`).
 - It **MUST NOT** be included inside Entity Configurations or Subordinate Statements themselves.
 
