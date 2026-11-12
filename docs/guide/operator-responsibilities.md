@@ -8,7 +8,7 @@ oidfed validates federation evidence and provides [composable entity roles](../R
 | Application integrator | HTTP serving, protocol engines, sessions, registration expiry, verification callbacks, and scheduled work. |
 | Storage or key adapter implementer | Persistence, namespace isolation, atomic operations, transaction guarantees, and key custody behind the injected contracts. |
 
-One team may fill several roles. When oidfed delegates a required check to your application, you still need to implement it. The keywords **MUST**, **SHOULD**, **RECOMMENDED**, and **MAY** retain their specification meanings. Library contracts and deployment advice are labelled separately.
+One team may fill several roles. Implement the required checks delegated to your application. The keywords **MUST**, **SHOULD**, **RECOMMENDED**, and **MAY** retain their specification meanings; the guide identifies library contracts and deployment advice separately. A [host-supplied logger](../packages/core.md#host-supplied-logging) reports observable problems at library boundaries. It cannot establish whether an external scheduler, protocol engine, or successful verification callback fulfills these duties.
 
 Federation section numbers refer to [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html). The two split 1.1 specifications cover the same functionality, as explained in [§17.6](https://openid.net/specs/openid-federation-1_0.html#section-17.6). See the [support table](../../README.md#implemented-specifications-and-features) for implemented specifications and drafts.
 

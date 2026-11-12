@@ -4,6 +4,7 @@ import { err, ok, type Result } from "../errors.js";
 import { fetchListSubordinates } from "../federation-api/index.js";
 import { decodeEntityConfiguration } from "../jose/verify.js";
 import { splitInformationalClaim } from "../language-tags.js";
+import { safeLogger } from "./../logging.js";
 import {
 	COLLECTION_INFO_CLAIMS,
 	createCollectionSchemas,
@@ -36,7 +37,7 @@ const MAX_OPEN_ISSUER_TOTAL_FETCHES = 100;
 
 function informationalMetadata(
 	metadata: Record<string, Record<string, unknown>>,
-	entityId: string,
+	_entityId: string,
 	options: FederationOptions,
 ): Record<string, EntityTypeInfo> {
 	return Object.fromEntries(
@@ -50,11 +51,7 @@ function informationalMetadata(
 				for (const [name, value] of Object.entries(info))
 					if (!EntityTypeInfoSchema.safeParse({ [name]: value }).success) {
 						delete info[name];
-						options.logger?.warn("Omitted invalid collection informational claim", {
-							entityId,
-							entityType: type,
-							claim: name,
-						});
+						safeLogger(options.logger)?.warn("Omitted invalid collection informational claim");
 					}
 			};
 			sanitize();
@@ -288,24 +285,18 @@ export async function buildCollectionSnapshot(
 				const meta = decoded.value.payload.metadata?.federation_entity;
 				if (!meta?.federation_list_endpoint) {
 					if (meta?.federation_fetch_endpoint || node.id === anchor)
-						options.logger?.warn(
+						safeLogger(options.logger)?.warn(
 							"Collection traversal stopped at an authority without a list endpoint",
-							{ entityId: node.id },
 						);
 					continue;
 				}
 				if (!meta.federation_fetch_endpoint) {
-					options.logger?.warn("Collection authority lacks a fetch endpoint", {
-						entityId: node.id,
-					});
+					safeLogger(options.logger)?.warn("Collection authority lacks a fetch endpoint");
 					throw new Error("Authority does not publish a fetch endpoint");
 				}
 				const list = await listing(node.id, meta.federation_list_endpoint);
 				if (!list.ok) {
-					options.logger?.warn("Collection authority listing failed", {
-						entityId: node.id,
-						code: list.error.code,
-					});
+					safeLogger(options.logger)?.warn("Collection authority listing failed");
 					return list;
 				}
 				for (const id of new Set(list.value)) {
@@ -337,11 +328,8 @@ export async function buildCollectionSnapshot(
 						...(payload.trust_marks ? { trust_marks: payload.trust_marks } : {}),
 					});
 					if (!entity.success) {
-						options.logger?.debug(
+						safeLogger(options.logger)?.debug(
 							"Excluded collection entity with invalid informational metadata",
-							{
-								entityId: id,
-							},
 						);
 						continue;
 					}
@@ -402,10 +390,7 @@ export async function buildCollectionSnapshot(
 			),
 		});
 	} catch (cause) {
-		options.logger?.warn("Collection refresh could not be completed", {
-			trustAnchor: anchor,
-			cause,
-		});
+		safeLogger(options.logger)?.warn("Collection refresh could not be completed");
 		return err({
 			code: FederationErrorCode.TemporarilyUnavailable,
 			description: "Collection refresh could not be completed",

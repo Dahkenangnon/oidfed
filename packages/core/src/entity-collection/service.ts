@@ -9,6 +9,7 @@ import { err, ok, type Result } from "../errors.js";
 import { errorResponse, jsonResponse, parseContentTypeHeader, toPublicError } from "../http.js";
 import { readResponseBody } from "../http-response.js";
 import { splitInformationalClaim } from "../language-tags.js";
+import { safeLogger } from "./../logging.js";
 import { MemoryReplayStore } from "../memory-replay-store.js";
 import {
 	COLLECTION_INFO_CLAIMS,
@@ -183,10 +184,7 @@ export class EntityCollectionService {
 				entityCount: built.value.entries.length,
 			});
 		} catch (cause) {
-			this.config.options?.logger?.error("Collection snapshot publication failed", {
-				trustAnchor: anchor,
-				cause,
-			});
+			safeLogger(this.config.options?.logger)?.error("Collection snapshot publication failed");
 			return err({
 				code: FederationErrorCode.ServerError,
 				description: "Collection publication failed",
@@ -479,8 +477,8 @@ export class EntityCollectionService {
 			if (!params.ok) return failure(params.error);
 			const result = await this.query(params.value);
 			return result.ok ? jsonResponse(result.value) : failure(result.error);
-		} catch (error) {
-			this.config.options?.logger?.error("Collection request failed", { error });
+		} catch {
+			safeLogger(this.config.options?.logger)?.error("Collection request failed");
 			return errorResponse(500, "server_error", "Collection request failed");
 		}
 	}

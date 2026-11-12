@@ -1,6 +1,7 @@
 /** Trust chain discovery: resolves and validates chains, returning a branded DiscoveryResult. */
 import { InternalErrorCode } from "../constants.js";
 import { err, federationError, ok, type Result } from "../errors.js";
+import { safeLogger } from "./../logging.js";
 import type {
 	DiscoveryResult,
 	EntityId,
@@ -22,6 +23,8 @@ export async function discoverEntity(
 	trustAnchors: TrustAnchorSet,
 	options?: FederationOptions,
 ): Promise<Result<DiscoveryResult>> {
+	safeLogger(options?.logger)?.debug("Starting discover entity");
+
 	const chainResult = await resolveTrustChains(entityId, trustAnchors, options);
 
 	if (chainResult.chains.length === 0) {

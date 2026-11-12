@@ -41,6 +41,29 @@ if (res.ok) {
 }
 ```
 
+### Host-supplied logging
+
+Pass your logger in `FederationOptions.logger` to receive messages from core, authority, leaf, OIDC, and wallet operations. Logging is silent until you supply one. Each call passes a single message. Messages exclude JWTs, credentials, private keys, callback inputs, and raw exceptions. Synchronous exceptions and rejected promises from the logger are contained, leaving the operation's result, exception, or HTTP response unchanged.
+
+Synchronous and asynchronous loggers are supported. The library handles returned promises without awaiting them, so a pending remote sink does not hold up protocol processing. Synchronous work inside your logger still runs inline.
+
+Messages omit entity identifiers and structured context. In a collection traversal, a warning therefore does not identify the individual entity that triggered it. Use your application's operation correlation where needed.
+
+The levels have these meanings:
+
+- `debug`: processing steps, cache decisions, candidate paths, and cancellation.
+- `info`: completed operations and observable departures from applicable SHOULD or RECOMMENDED guidance.
+- `warn`: rejected input or configuration that needs attention. Applicable MUST violations still cause normal rejection.
+- `error`: unexpected service, storage, or application-callback failures, including verification timeouts.
+
+Messages use the specification's terms where they apply. For example, a collection publisher without a Resolve endpoint receives one info notice after successful Entity Configuration signing: “Federation Entities publishing a federation_collection_endpoint SHOULD also publish a federation_resolve_endpoint.” Non-HTTPS Subordinate Event documentation produces a recommendation notice after its transaction commits. Omitting a MAY/OPTIONAL feature stays quiet.
+
+Callback failures name the application integration, such as `onRegistration` or Wallet acceptance. Cache errors identify whether the read, write, or expired-entry deletion failed. Authority lifecycle completion messages follow successful commit. Continue handling returned errors and exceptions; a log message does not replace rejection or confirm that your callback performed every required check.
+
+The specification determines which requirements apply; oidfed chooses these log levels, following node-oidc-provider's distinction between SHOULD notices and MUST warnings. Configure filtering and output in your host logger.
+
+Logging cannot check application duties such as obtaining consent or scheduling trust refreshes. See [operator and application responsibilities](../guide/operator-responsibilities.md).
+
 ### Entity Identifiers (`EntityId`)
 
 Validates that strings conform to OpenID Federation rules: must be valid URLs using the `https` scheme, without credentials, fragment, or query components, and at most 2048 characters. Per Section 3.1.2 of the OpenID Federation 1.0 specification, the `authority_hints` list of immediate superiors must not be empty `[]` and must not be present in the configurations of Trust Anchors with no superiors.

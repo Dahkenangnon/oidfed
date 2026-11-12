@@ -6,6 +6,7 @@
  */
 import { FederationErrorCode, MediaType } from "../constants.js";
 import { err, type FederationError, federationError, type Result } from "../errors.js";
+import { safeLogger } from "./../logging.js";
 import type { HistoricalKeysPayload } from "../schemas/entity-statement.js";
 import type { JWKSet } from "../schemas/jwk.js";
 import { performFetch } from "../trust-chain/fetch.js";
@@ -27,6 +28,8 @@ export async function fetchHistoricalKeys(
 	signerJwks: JWKSet,
 	options: FetchHistoricalKeysOptions,
 ): Promise<Result<HistoricalKeysPayload, FederationError>> {
+	safeLogger(options?.logger)?.debug("Starting fetch historical keys");
+
 	const expectation = validateExpectedIssuer(options);
 	if (!expectation.ok) return expectation;
 	let parsed: URL;

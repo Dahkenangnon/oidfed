@@ -7,6 +7,7 @@
 import { FederationErrorCode, MediaType } from "../constants.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
 import { validateExpectedIssuer, verifyTrustMarkStatusResponse } from "../federation-api/index.js";
+import { safeLogger } from "./../logging.js";
 import type { JWKSet } from "../schemas/jwk.js";
 import { performFetch } from "../trust-chain/fetch.js";
 import type { Clock, EntityId, FederationOptions } from "../types.js";
@@ -23,6 +24,8 @@ export async function fetchTrustMark(
 	params: FetchTrustMarkParams,
 	options?: FederationOptions,
 ): Promise<Result<string, FederationError>> {
+	safeLogger(options?.logger)?.debug("Starting fetch trust mark");
+
 	if (!params.trustMarkType) {
 		return err(
 			federationError(FederationErrorCode.InvalidRequest, "Missing trust_mark_type parameter"),
@@ -86,6 +89,8 @@ export async function fetchTrustMarkStatus(
 	signerJwks: JWKSet,
 	options: FetchTrustMarkStatusOptions,
 ): Promise<Result<TrustMarkStatusResult, FederationError>> {
+	safeLogger(options?.logger)?.debug("Starting fetch trust mark status");
+
 	const expectation = validateExpectedIssuer(options);
 	if (!expectation.ok) return expectation;
 	if (typeof trustMarkJwt !== "string" || !trustMarkJwt)

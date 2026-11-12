@@ -67,6 +67,7 @@ export interface CacheProvider {
 	[Symbol.asyncDispose](): Promise<void>;
 }
 
+/** Host logger. Returned promises are handled without awaiting them; sink failures are ignored. */
 export interface Logger {
 	debug(msg: string, context?: Record<string, unknown>): void;
 	info(msg: string, context?: Record<string, unknown>): void;

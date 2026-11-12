@@ -174,6 +174,7 @@ export { type FetchSignedJwkSetOptions, fetchSignedJwkSet } from "./jwks/signed-
 export { validateSignedJwkSetSpecHygiene } from "./jwks/spec-hygiene.js";
 export { validateJwkSetUseRequirement } from "./jwks/use-requirement.js";
 export { isLanguageTag } from "./language-tags.js";
+export { safeLogger } from "./logging.js";
 // Metadata Policy
 export {
 	applyMetadataPolicy,

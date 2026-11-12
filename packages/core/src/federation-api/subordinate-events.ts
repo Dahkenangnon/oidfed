@@ -6,6 +6,7 @@ import {
 } from "../constants.js";
 import { err, type FederationError, ok, type Result } from "../errors.js";
 import { verifyEntityStatement } from "../jose/verify.js";
+import { safeLogger } from "./../logging.js";
 import type { JWKSet } from "../schemas/jwk.js";
 import {
 	type SubordinateEventsResponse,
@@ -68,6 +69,8 @@ export async function fetchSubordinateEvents(
 	subject: EntityId,
 	options: FetchSubordinateEventsOptions,
 ): Promise<Result<SubordinateEventsResponse, FederationError>> {
+	safeLogger(options?.logger)?.debug("Starting fetch subordinate events");
+
 	const checked = validateFetchUrl(endpoint, options);
 	if (!checked.ok) return checked;
 	const url = checked.value;

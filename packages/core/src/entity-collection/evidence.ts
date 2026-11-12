@@ -1,6 +1,7 @@
 import { FederationErrorCode, InternalErrorCode } from "../constants.js";
 import { err, ok, type Result } from "../errors.js";
 import { decodeEntityConfiguration, decodeEntityStatement } from "../jose/verify.js";
+import { safeLogger } from "./../logging.js";
 import type { EntityConfigurationPayload } from "../schemas/entity-statement.js";
 import type { JWKSet } from "../schemas/jwk.js";
 import type { fetchEntityConfiguration } from "../trust-chain/fetch.js";
@@ -45,9 +46,7 @@ export function createCollectionEvidence(
 			verboseErrors: true,
 		});
 		if (!checked.valid) {
-			options.logger?.debug("Excluded collection entity with an invalid chain", {
-				errors: checked.errors,
-			});
+			safeLogger(options.logger)?.debug("Excluded collection entity with an invalid chain");
 			return undefined;
 		}
 		const ec = decodeEntityConfiguration(chain[0] ?? "");
@@ -107,7 +106,7 @@ export function createCollectionEvidence(
 		if (options.signal?.aborted) throw new DOMException("Refresh aborted", "AbortError");
 		if (resolved.incomplete) {
 			if (explicitlyListed) throw new Error("Unable to resolve Trust Mark issuer");
-			options.logger?.debug("Skipped Trust Mark from an unresolved open issuer", { issuer });
+			safeLogger(options.logger)?.debug("Skipped Trust Mark from an unresolved open issuer");
 			return undefined;
 		}
 		return resolved.proof;
@@ -152,10 +151,9 @@ export function createCollectionEvidence(
 			const issuers = trustedRoot.value.payload.trust_mark_issuers;
 			if (!issuers || !Object.hasOwn(issuers, ref.trust_mark_type)) {
 				if (!openOnly)
-					options.logger?.debug("Collection Trust Mark type is not recognized by the anchor", {
-						entityId: entry.entity.entity_id,
-						trustMarkType: ref.trust_mark_type,
-					});
+					safeLogger(options.logger)?.debug(
+						"Collection Trust Mark type is not recognized by the anchor",
+					);
 				continue;
 			}
 			const authorized = issuers[ref.trust_mark_type];

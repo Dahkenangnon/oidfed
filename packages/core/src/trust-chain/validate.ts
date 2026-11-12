@@ -11,6 +11,7 @@ import { applyAllowedEntityTypes, checkConstraints } from "../constraints/index.
 import { err, ok, type Result } from "../errors.js";
 import { decodeEntityStatement, verifyEntityStatement } from "../jose/verify.js";
 import { validateJwkSetUseRequirement } from "../jwks/use-requirement.js";
+import { safeLogger } from "./../logging.js";
 import { applyMetadataPolicy } from "../metadata-policy/apply.js";
 import { resolveMetadataPolicy } from "../metadata-policy/merge.js";
 import { findInvalidMetadataNullPaths } from "../metadata-values.js";
@@ -427,6 +428,8 @@ export async function validateTrustChain(
 	trustAnchors: TrustAnchorSet,
 	options?: TrustChainValidationOptions,
 ): Promise<ValidationResult> {
+	safeLogger(options?.logger)?.debug("Starting validate trust chain");
+
 	const limitError = chainLengthError(chain, options);
 	if (limitError)
 		return {
@@ -619,6 +622,8 @@ export async function prepareTrustChainValidation(
 	anchors: TrustAnchorSet,
 	options: PrepareTrustChainOptions,
 ): Promise<Result<PreparedTrustChain>> {
+	safeLogger(options?.logger)?.debug("Starting prepare trust chain validation");
+
 	if (options.signal?.aborted)
 		return validationFailure([
 			{ code: InternalErrorCode.TrustChainInvalid, message: "Validation was cancelled" },
@@ -675,10 +680,17 @@ export async function completeTrustChainValidation(
 	prepared: PreparedTrustChain,
 	context: Readonly<Record<string, Record<string, unknown>>> = {},
 ): Promise<Result<ValidatedTrustChain>> {
+	safeLogger(preparations.get(prepared)?.options.logger)?.debug(
+		"Starting complete trust chain validation",
+	);
+
 	const saved = preparations.get(prepared);
 	if (!isJsonObject(context))
 		return validationFailure([
-			{ code: InternalErrorCode.TrustChainInvalid, message: "Context must be a metadata object" },
+			{
+				code: InternalErrorCode.TrustChainInvalid,
+				message: "Context must be a metadata object",
+			},
 		]);
 	if (
 		!saved ||
@@ -732,6 +744,8 @@ export function validateTrustChainStructure(
 	trustAnchors: TrustAnchorSet,
 	options?: TrustChainValidationOptions,
 ): Promise<ValidationResult> {
+	safeLogger(options?.logger)?.debug("Starting validate trust chain structure");
+
 	return validateTrustChainImpl(chain, trustAnchors, options, false);
 }
 
@@ -1402,6 +1416,7 @@ async function authenticateChainStatements(
 		addError(errors, InternalErrorCode.Timeout, "Validation was cancelled");
 
 	if (errors.length > 0) {
+		safeLogger(options?.logger)?.warn("Trust chain validation failed");
 		if (options?.verboseErrors) {
 			return { valid: false, errors };
 		}
@@ -1431,6 +1446,7 @@ async function validateTrustChainImpl(
 	if (stage) stage.entityConfigurations = authenticated.entityConfigurations;
 	const parsed = authenticated.statements;
 	const errors: ValidationError[] = [];
+	let failureMessage: string | undefined;
 	const leafPayload = (parsed[0] as ParsedEntityStatement).payload as Record<string, unknown>;
 	const lastIdx = parsed.length - 1;
 	const lastPayload = (parsed[lastIdx] as ParsedEntityStatement).payload;
@@ -1473,6 +1489,7 @@ async function validateTrustChainImpl(
 				parsed,
 			);
 			if (!constraintsResult.ok) {
+				failureMessage ??= "Trust Chain constraints validation failed";
 				addError(
 					errors,
 					InternalErrorCode.ConstraintViolation,
@@ -1498,6 +1515,7 @@ async function validateTrustChainImpl(
 			: undefined;
 		const policyResult = resolveMetadataPolicy(subordinateStatements, policyOptions);
 		if (!policyResult.ok) {
+			failureMessage ??= "Metadata Policy resolution failed";
 			addError(errors, InternalErrorCode.MetadataPolicyError, policyResult.error.description, {
 				checkNumber: 19,
 			});
@@ -1535,6 +1553,7 @@ async function validateTrustChainImpl(
 				policyOptions,
 			);
 			if (!applyResult.ok) {
+				failureMessage ??= "Metadata Policy application failed";
 				addError(errors, InternalErrorCode.MetadataPolicyViolation, applyResult.error.description, {
 					checkNumber: 24,
 				});
@@ -1548,6 +1567,7 @@ async function validateTrustChainImpl(
 	// chains resolved through superior overrides without a metadata policy.
 	if (errors.length === 0) {
 		validateResolvedMetadata(errors, resolvedMetadata, leafPayload.iss as string, stage?.pending);
+		if (errors.length > 0) failureMessage = "Resolved metadata validation failed";
 	}
 
 	// Federation §§3.2 and 7.3 distinguish reference syntax from trust in a mark.
@@ -1562,6 +1582,7 @@ async function validateTrustChainImpl(
 	const expiresAt = authenticated.expiresAt;
 
 	if (errors.length > 0) {
+		safeLogger(options?.logger)?.warn(failureMessage ?? "Trust chain validation failed");
 		if (options?.verboseErrors) {
 			return { valid: false, errors };
 		}
@@ -1589,6 +1610,7 @@ async function validateTrustChainImpl(
 		trustMarkEvaluations,
 	};
 
+	if (!stage?.deferred) safeLogger(options?.logger)?.info("Trust chain validated");
 	return { valid: true, chain: validatedChain, errors };
 }
 

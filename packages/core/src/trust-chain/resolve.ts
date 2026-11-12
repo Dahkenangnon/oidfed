@@ -7,6 +7,7 @@ import {
 } from "../constants.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
 import { decodeEntityStatement } from "../jose/verify.js";
+import { safeLogger } from "./../logging.js";
 import { validateEntityStatementTimeClaims } from "../statement-validation.js";
 import type {
 	EntityId,
@@ -74,6 +75,8 @@ export async function resolveTrustChains(
 	trustAnchors: TrustAnchorSet,
 	options?: ResolveTrustChainsOptions,
 ): Promise<TrustChainResult> {
+	safeLogger(options?.logger)?.debug("Starting resolve trust chains");
+
 	if (options?.signal?.aborted) {
 		return {
 			chains: [],
@@ -421,5 +424,7 @@ export async function resolveTrustChains(
 	await buildChains(entityId, hints, [leafEcJwt], initialVisited, 1);
 
 	if (options?.signal?.aborted) incomplete = true;
+	if (chains.length > 0) safeLogger(options?.logger)?.info("Trust chains resolved");
+	else safeLogger(options?.logger)?.warn("No trust chain could be resolved");
 	return { chains, errors, ...(incomplete ? { incomplete: true as const } : {}) };
 }

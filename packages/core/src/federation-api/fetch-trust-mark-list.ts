@@ -5,6 +5,7 @@
  */
 import { FederationErrorCode, InternalErrorCode, MediaType } from "../constants.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
+import { safeLogger } from "./../logging.js";
 import { performFetch } from "../trust-chain/fetch.js";
 import { type EntityId, entityId, type FederationOptions, isValidEntityId } from "../types.js";
 
@@ -19,6 +20,8 @@ export async function fetchTrustMarkList(
 	params: FetchTrustMarkListParams,
 	options?: FederationOptions,
 ): Promise<Result<EntityId[], FederationError>> {
+	safeLogger(options?.logger)?.debug("Starting fetch trust mark list");
+
 	if (!params.trustMarkType) {
 		return err(
 			federationError(FederationErrorCode.InvalidRequest, "Missing trust_mark_type parameter"),

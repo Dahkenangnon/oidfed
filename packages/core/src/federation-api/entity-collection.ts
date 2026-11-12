@@ -6,6 +6,7 @@ import {
 } from "../constants.js";
 import { COLLECTION_PARAMETERS, serializeCollectionParams } from "../entity-collection/protocol.js";
 import { err, ok, type Result } from "../errors.js";
+import { safeLogger } from "./../logging.js";
 import {
 	createCollectionSchemas,
 	type EntityCollectionRequestParams,
@@ -28,6 +29,8 @@ export async function fetchEntityCollection(
 	params: EntityCollectionRequestParams = {},
 	options?: FetchEntityCollectionOptions,
 ): Promise<Result<EntityCollectionResponse>> {
+	safeLogger(options?.logger)?.debug("Starting fetch entity collection");
+
 	if (
 		options?.infoClaims !== undefined &&
 		(!Array.isArray(options.infoClaims) ||

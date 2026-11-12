@@ -2,6 +2,7 @@ import { type EntityTypeIdentifier, InternalErrorCode, JwtTyp, MediaType } from 
 import { err, type FederationError, ok, type Result } from "../errors.js";
 import { verifyEntityStatement } from "../jose/verify.js";
 import { validateJwkSetUseRequirement } from "../jwks/use-requirement.js";
+import { safeLogger } from "./../logging.js";
 import { EntityIdSchema } from "../schemas/entity-id.js";
 import {
 	type HistoricalKeyEntry,
@@ -254,6 +255,8 @@ export async function fetchListSubordinates(
 	filter?: ListSubordinatesFilter,
 	options?: FederationOptions,
 ): Promise<Result<EntityId[], FederationError>> {
+	safeLogger(options?.logger)?.debug("Starting fetch list subordinates");
+
 	let url: URL;
 	try {
 		url = new URL(listEndpoint);
@@ -318,6 +321,8 @@ export async function fetchResolveResponse(
 	params: ResolveRequestParams,
 	options?: FederationOptions,
 ): Promise<Result<string, FederationError>> {
+	safeLogger(options?.logger)?.debug("Starting fetch resolve response");
+
 	let url: URL;
 	try {
 		url = new URL(resolveEndpoint);

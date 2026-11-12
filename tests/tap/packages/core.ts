@@ -236,6 +236,298 @@ import { walletFederation, walletQuery } from "../fixtures/wallet.js";
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("core / independent collection logging", () => {
+		test("an independent collection service does not receive Federation Entity publication recommendations", async (t) => {
+			const notices: string[] = [];
+			const service = new CorePublic.EntityCollectionService({
+				trustAnchors: new Map(),
+				options: {
+					logger: {
+						debug() {},
+						warn() {},
+						error() {},
+						info: (message) => {
+							notices.push(message);
+						},
+					},
+				},
+			});
+			const response = await service.handleRequest(
+				new Request("https://collection.example/collect"),
+			);
+			t.equal(response.status, 400);
+			t.false(notices.some((message) => message.includes("SHOULD also publish")));
+		});
+	});
+	module("core / cache failure logging", () => {
+		test("cache failures identify the operation and preserve the original exception", async (t) => {
+			const f = await createMockFederation();
+			const expired = await signEntityStatement(
+				{ iss: TA_ID, sub: TA_ID, iat: 1, exp: 2, jwks: { keys: [f.taPublicKey] } },
+				new JwkSigner(f.taSigningKey),
+			);
+			for (const statement of [false, true])
+				for (const operation of ["get", "set", "delete"] as const)
+					for (const throwingLogger of [false, true]) {
+						const clock = { now: () => 1500 };
+						const base = new MemoryCache({ clock });
+						const key = statement ? await esCacheKey(TA_ID, OP_ID) : await ecCacheKey(TA_ID);
+						if (operation === "delete") await base.set(key, expired, 3600);
+						const original = new Error("private-cache-data");
+						let failing = true;
+						const cache = new Proxy(base, {
+							get(target, property) {
+								if (property === operation && failing)
+									return async () => {
+										throw original;
+									};
+								const value = Reflect.get(target, property);
+								return typeof value === "function" ? value.bind(target) : value;
+							},
+						});
+						const errors: unknown[][] = [];
+						const logger = {
+							debug() {},
+							info() {},
+							warn() {},
+							error: (...args: unknown[]) => {
+								errors.push(args);
+								if (throwingLogger) throw new Error("Logger failed");
+							},
+						};
+						const options = {
+							clock,
+							cache,
+							logger,
+							issuer: TA_ID,
+							httpClient: async () =>
+								new Response(statement ? f.taSubStatementForOp : f.taEcJwt, {
+									headers: { "content-type": MediaType.EntityStatement },
+								}),
+						};
+						const fetch = () =>
+							statement
+								? CorePublic.fetchSubordinateStatement(`${TA_ID}/fetch`, OP_ID, options)
+								: CorePublic.fetchEntityConfiguration(TA_ID, options);
+						await t.rejects(fetch(), (error: unknown) => error === original);
+						t.deepEqual(errors, [
+							[
+								operation === "get"
+									? "Failed to read the federation cache"
+									: operation === "set"
+										? "Failed to write the federation cache"
+										: "Failed to delete an expired federation cache entry",
+							],
+						]);
+						failing = false;
+						t.true((await fetch()).ok, `${operation}: recovery remains possible`);
+						t.false(JSON.stringify(errors).includes("private-cache-data"));
+						t.false(JSON.stringify(errors).includes(key));
+					}
+		});
+	});
+	module("core / injected logging and key retrieval", () => {
+		test("sync, async and thenable sinks cannot escape logger protection", async (t) => {
+			for (const behavior of [
+				"sync",
+				"throw",
+				"resolve",
+				"reject",
+				"thenable-resolve",
+				"thenable-reject",
+			] as const) {
+				function emit(this: { calls: string[] }, message: string) {
+					this.calls.push(message);
+					if (behavior === "throw") throw new Error("Private sink error");
+					if (behavior === "resolve") return Promise.resolve();
+					if (behavior === "reject") return Promise.reject(new Error("Private sink error"));
+					if (behavior === "thenable-resolve" || behavior === "thenable-reject")
+						return {
+							// biome-ignore lint/suspicious/noThenProperty: Exercise logger sinks returning thenables.
+							then(resolve: () => void, reject: (reason: Error) => void) {
+								if (behavior === "thenable-reject") reject(new Error("Private sink error"));
+								else resolve();
+							},
+						};
+				}
+				const sink = { calls: [] as string[], debug: emit, info: emit, warn: emit, error: emit };
+				const guarded = CorePublic.safeLogger(sink)!;
+				for (const level of ["debug", "info", "warn", "error"] as const)
+					t.strictEqual(guarded[level](level), undefined);
+				await new Promise((resolve) => setTimeout(resolve, 0));
+				t.deepEqual(
+					sink.calls,
+					["debug", "info", "warn", "error"],
+					`${behavior}: receiver preserved and each method called once`,
+				);
+				t.strictEqual(CorePublic.safeLogger(sink), guarded);
+			}
+		});
+		test("pending async logging does not delay validation or change rejection", async (t) => {
+			const f = await createMockFederation();
+			for (const rejecting of [false, true]) {
+				let finish!: () => void;
+				let sinkSettled = false;
+				let calls = 0;
+				const pending = new Promise<void>((resolve, reject) => {
+					finish = () => {
+						sinkSettled = true;
+						if (rejecting) reject(new Error("Private sink error"));
+						else resolve();
+					};
+				});
+				const emit = async () => {
+					calls++;
+					await pending;
+				};
+				const logger: CorePublic.Logger = { debug: emit, info: emit, warn: emit, error: emit };
+				let timeout: ReturnType<typeof setTimeout> | undefined;
+				try {
+					const operation = Promise.all([
+						validateTrustChain([f.opEcJwt, f.taSubStatementForOp, f.taEcJwt], f.trustAnchors, {
+							...f.options,
+							logger,
+						}),
+						validateTrustChain(["malformed"], f.trustAnchors, { ...f.options, logger }),
+					]);
+					const results = await Promise.race([
+						operation,
+						new Promise<never>((_, reject) => {
+							timeout = setTimeout(
+								() => reject(new Error("Validation waited for the logger")),
+								1000,
+							);
+						}),
+					]);
+					t.true(results[0].valid);
+					t.false(results[1].valid);
+					t.true(calls > 0);
+					t.false(sinkSettled, "both protocol outcomes settle while the logger is still pending");
+				} finally {
+					if (timeout !== undefined) clearTimeout(timeout);
+					finish();
+				}
+				await new Promise((resolve) => setTimeout(resolve, 0));
+			}
+		});
+		test("warnings identify the failed constraints or metadata stage", async (t) => {
+			const f = await createMockFederation();
+			const original = decodeEntityStatement(f.taSubStatementForOp);
+			if (!original.ok) throw new Error("fixture");
+			const scenarios = [
+				{
+					name: "constraints",
+					claims: { constraints: { naming_constraints: { excluded: [".example.com"] } } },
+					message: "Trust Chain constraints validation failed",
+					code: InternalErrorCode.ConstraintViolation,
+				},
+				{
+					name: "policy-resolution",
+					claims: {
+						metadata_policy: { openid_provider: { issuer: { value: OP_ID, subset_of: [OP_ID] } } },
+					},
+					message: "Metadata Policy resolution failed",
+					code: InternalErrorCode.MetadataPolicyError,
+				},
+				{
+					name: "policy-application",
+					claims: { metadata_policy: { openid_provider: { issuer: { one_of: [TA_ID] } } } },
+					message: "Metadata Policy application failed",
+					code: InternalErrorCode.MetadataPolicyViolation,
+				},
+				{
+					name: "resolved-metadata",
+					claims: { metadata_policy: { openid_provider: { issuer: { value: TA_ID } } } },
+					message: "Resolved metadata validation failed",
+					code: InternalErrorCode.MetadataPolicyViolation,
+				},
+				{
+					name: "first-stage",
+					claims: {
+						constraints: { naming_constraints: { excluded: [".example.com"] } },
+						metadata_policy: { openid_provider: { issuer: { value: OP_ID, subset_of: [OP_ID] } } },
+					},
+					message: "Trust Chain constraints validation failed",
+					code: InternalErrorCode.ConstraintViolation,
+				},
+			];
+			for (const scenario of scenarios)
+				for (const throwingLogger of [false, true]) {
+					const warnings: unknown[][] = [];
+					const statement = await signEntityStatement(
+						{ ...original.value.payload, ...scenario.claims },
+						new JwkSigner(f.taSigningKey),
+					);
+					const chain = [f.opEcJwt, statement, f.taEcJwt];
+					const expected = await validateTrustChain(chain, f.trustAnchors, {
+						...f.options,
+						verboseErrors: true,
+					});
+					const result = await validateTrustChain(chain, f.trustAnchors, {
+						...f.options,
+						verboseErrors: true,
+						logger: {
+							debug() {},
+							info() {},
+							error() {},
+							warn: (...args: unknown[]) => {
+								warnings.push(args);
+								if (throwingLogger) throw new Error("Private sink error");
+							},
+						},
+					});
+					t.false(result.valid, scenario.name);
+					t.deepEqual(result, expected);
+					t.true(
+						result.errors.some((error) => error.code === scenario.code),
+						scenario.name,
+					);
+					t.deepEqual(warnings, [[scenario.message]], scenario.name);
+					if (scenario.name === "first-stage")
+						t.true(
+							result.errors.some((error) => error.code === InternalErrorCode.MetadataPolicyError),
+							"later errors remain in the result",
+						);
+				}
+		});
+		test("logging uses messages only and cannot change operation results", async (t) => {
+			const messages: unknown[][] = [];
+			const logger: CorePublic.Logger = {
+				debug: (...args) => {
+					messages.push(args);
+				},
+				info: (...args) => {
+					messages.push(args);
+				},
+				warn: (...args) => {
+					messages.push(args);
+				},
+				error: (...args) => {
+					messages.push(args);
+				},
+			};
+			for (const level of ["debug", "info", "warn", "error"] as const)
+				CorePublic.safeLogger(logger)?.[level]("A useful message");
+			t.deepEqual(
+				messages,
+				Array.from({ length: 4 }, () => ["A useful message"]),
+			);
+			t.strictEqual(CorePublic.safeLogger(logger), CorePublic.safeLogger(logger));
+			t.strictEqual(CorePublic.safeLogger(undefined), undefined);
+			const fail = () => {
+				throw new Error("Host logger failed");
+			};
+			const throwing = { debug: fail, info: fail, warn: fail, error: fail };
+			const f = await createMockFederation();
+			const chain = [f.opEcJwt, f.taSubStatementForOp, f.taEcJwt];
+			t.true(
+				(await validateTrustChain(chain, f.trustAnchors, { ...f.options, logger: throwing })).valid,
+			);
+			t.false(
+				(await validateTrustChain(["malformed"], f.trustAnchors, { logger: throwing })).valid,
+			);
+		});
+	});
 	test("replay records have bounded keys and claim identifiers atomically", async (t) => {
 		const { MemoryReplayStore } = await import("../../../packages/core/src/index.js");
 		let time = 100;

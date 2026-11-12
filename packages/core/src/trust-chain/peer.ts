@@ -1,6 +1,7 @@
 /** Peer-chain helper: build a Trust Chain ending at a specific Trust Anchor. */
 import { InternalErrorCode } from "../constants.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
+import { safeLogger } from "./../logging.js";
 import type { EntityId, FederationOptions, TrustAnchorSet } from "../types.js";
 import { resolveTrustChains } from "./resolve.js";
 import { validateTrustChain } from "./validate.js";
@@ -18,6 +19,8 @@ export async function resolveTrustChainForAnchor(
 	trustAnchors: TrustAnchorSet,
 	options?: FederationOptions,
 ): Promise<Result<readonly string[], FederationError>> {
+	safeLogger(options?.logger)?.debug("Starting resolve trust chain for anchor");
+
 	if (!trustAnchors.has(trustAnchorId)) {
 		return err(
 			federationError(

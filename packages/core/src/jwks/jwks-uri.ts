@@ -4,6 +4,7 @@
  */
 import { FederationErrorCode } from "../constants.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
+import { safeLogger } from "./../logging.js";
 import { type JWKSet, MetadataJWKSetSchema } from "../schemas/jwk.js";
 import { performFetch } from "../trust-chain/fetch.js";
 import type { FederationOptions } from "../types.js";
@@ -22,6 +23,8 @@ export async function fetchJwkSet(
 	url: string,
 	options?: FederationOptions,
 ): Promise<Result<JWKSet, FederationError>> {
+	safeLogger(options?.logger)?.debug("Starting fetch jwk set");
+
 	let parsed: URL;
 	try {
 		parsed = new URL(url);

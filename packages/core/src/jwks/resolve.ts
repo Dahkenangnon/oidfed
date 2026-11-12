@@ -1,3 +1,4 @@
+import { safeLogger } from "./../logging.js";
 /**
  * Unified entity-key resolver. Picks among the three JWK Set representations
  * (`signed_jwks_uri`, `jwks`, `jwks_uri`) defined in entity-type metadata
@@ -45,6 +46,8 @@ export async function resolveEntityKeys(
 	federationEntityKeys: JWKSet,
 	options: ResolveEntityKeysOptions,
 ): Promise<Result<ResolvedEntityKeys, FederationError>> {
+	safeLogger(options?.logger)?.debug("Starting resolve entity keys");
+
 	const expectation = validateExpectedIssuer(options);
 	if (!expectation.ok) return expectation;
 	if (!EntityIdSchema.safeParse(options?.expectedOwner).success)
@@ -82,10 +85,12 @@ export async function resolveEntityKeys(
 			options,
 		});
 		if (attempt.ok) {
+			safeLogger(options.logger)?.info("Entity protocol keys resolved");
 			return ok({ keys: attempt.value, source });
 		}
 		errors.push({ source, error: attempt.error });
 		if (!options?.allowFallback) {
+			safeLogger(options.logger)?.warn("Entity protocol key resolution failed");
 			return err(attempt.error);
 		}
 	}

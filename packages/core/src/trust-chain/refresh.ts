@@ -1,5 +1,6 @@
 import { InternalErrorCode } from "../constants.js";
 import { err, federationError, ok, type Result } from "../errors.js";
+import { safeLogger } from "./../logging.js";
 import type { Clock, FederationOptions, TrustAnchorSet, ValidatedTrustChain } from "../types.js";
 import { resolveTrustChains } from "./resolve.js";
 import { isChainExpired, validateTrustChain } from "./validate.js";
@@ -18,6 +19,8 @@ export async function refreshTrustChain(
 	options?: RefreshOptions,
 	clock?: Clock,
 ): Promise<Result<ValidatedTrustChain>> {
+	safeLogger(options?.logger)?.debug("Starting refresh trust chain");
+
 	if (!options?.forceRefresh && !isChainExpired(chain, clock)) {
 		return ok(chain);
 	}

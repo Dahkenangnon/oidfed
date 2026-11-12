@@ -10,6 +10,7 @@ import {
 	validateExpectedIssuer,
 	verifySignedJwkSet,
 } from "../federation-api/index.js";
+import { safeLogger } from "./../logging.js";
 import { EntityIdSchema } from "../schemas/entity-id.js";
 import type { SignedJwkSetPayload } from "../schemas/entity-statement.js";
 import type { JWKSet } from "../schemas/jwk.js";
@@ -34,6 +35,8 @@ export async function fetchSignedJwkSet(
 	signerJwks: JWKSet,
 	options: FetchSignedJwkSetOptions,
 ): Promise<Result<SignedJwkSetPayload, FederationError>> {
+	safeLogger(options?.logger)?.debug("Starting fetch signed jwk set");
+
 	const expectation = validateExpectedIssuer(options);
 	if (!expectation.ok) return expectation;
 	if (!EntityIdSchema.safeParse(options?.expectedOwner).success)
@@ -67,5 +70,7 @@ export async function fetchSignedJwkSet(
 	});
 	if (!fetched.ok) return fetched;
 
-	return verifySignedJwkSet(fetched.value, signerJwks, options);
+	const verified = await verifySignedJwkSet(fetched.value, signerJwks, options);
+	if (!verified.ok) safeLogger(options.logger)?.warn("Signed JWK Set validation failed");
+	return verified;
 }

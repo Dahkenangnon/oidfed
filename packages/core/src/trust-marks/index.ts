@@ -9,6 +9,7 @@ import { isValidAlgorithm } from "../jose/keys.js";
 import { signEntityStatement } from "../jose/sign.js";
 import type { JwtSigner } from "../jose/signer.js";
 import { decodeEntityStatement, verifyEntityStatement } from "../jose/verify.js";
+import { safeLogger } from "./../logging.js";
 import { EntityIdSchema } from "../schemas/entity-id.js";
 import type { JWKSet } from "../schemas/jwk.js";
 import {
@@ -76,6 +77,8 @@ export async function validateTrustMark(
 	issuerJwks: JWKSet,
 	options: TrustMarkValidationOptions,
 ): Promise<Result<ValidatedTrustMark, FederationError>> {
+	safeLogger(options?.logger)?.debug("Starting validate trust mark");
+
 	if (!EntityIdSchema.safeParse(options?.expectedSubject).success)
 		return err(tmError("A valid expectedSubject is required"));
 	const clockSkew = options?.clockSkewSeconds ?? DEFAULT_CLOCK_SKEW_SECONDS;

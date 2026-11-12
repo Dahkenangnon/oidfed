@@ -13,6 +13,7 @@ import {
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
 import { isExactContentType } from "../http.js";
 import { readResponseBody } from "../http-response.js";
+import { safeLogger } from "./../logging.js";
 import {
 	type ExtendedListRequestParams,
 	type ExtendedListResponse,
@@ -98,6 +99,8 @@ export async function fetchExtendedSubordinatesList(
 	params?: ExtendedListRequestParams,
 	options?: FederationOptions,
 ): Promise<Result<ExtendedListResponse, FederationError>> {
+	safeLogger(options?.logger)?.debug("Starting fetch extended subordinates list");
+
 	const urlResult = buildUrl(endpoint, params);
 	if (!urlResult.ok) return urlResult;
 	const url = urlResult.value.toString();
@@ -130,7 +133,10 @@ export async function fetchExtendedSubordinatesList(
 			if (isExactContentType(contentType, MediaType.Json)) {
 				const body = await readResponseBody(response, maxBytes, controller.signal);
 				try {
-					const parsedBody = JSON.parse(body) as { error?: unknown; error_description?: unknown };
+					const parsedBody = JSON.parse(body) as {
+						error?: unknown;
+						error_description?: unknown;
+					};
 					if (typeof parsedBody.error === "string") code = parsedBody.error;
 					if (typeof parsedBody.error_description === "string") {
 						description = parsedBody.error_description;

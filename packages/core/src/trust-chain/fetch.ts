@@ -13,6 +13,7 @@ import { err, type FederationError, ok, type Result } from "../errors.js";
 import { isExactContentType, parseContentTypeHeader } from "../http.js";
 import { readResponseBody } from "../http-response.js";
 import { decodeEntityStatement } from "../jose/verify.js";
+import { safeLogger } from "./../logging.js";
 import type { EntityId, FederationOptions } from "../types.js";
 import { entityId, isValidEntityId, nowSeconds } from "../types.js";
 
@@ -429,10 +430,21 @@ async function cachedStatement(
 	options?: FederationOptions,
 ): Promise<string | undefined> {
 	if (!options?.cache) return undefined;
-	const cached = await options.cache.get<string>(key);
+	let cached: string | undefined;
+	try {
+		cached = await options.cache.get<string>(key);
+	} catch (error) {
+		safeLogger(options.logger)?.error("Failed to read the federation cache");
+		throw error;
+	}
 	if (cached === undefined) return undefined;
 	if (statementCacheTtl(cached, options) > 0) return cached;
-	await options.cache.delete(key);
+	try {
+		await options.cache.delete(key);
+	} catch (error) {
+		safeLogger(options.logger)?.error("Failed to delete an expired federation cache entry");
+		throw error;
+	}
 	return undefined;
 }
 
@@ -448,18 +460,25 @@ export async function fetchEntityConfiguration(
 		const cacheKey = await ecCacheKey(entityId);
 		const cached = await cachedStatement(cacheKey, options);
 		if (cached !== undefined) {
-			options?.logger?.debug("Cache hit for entity configuration", { entityId });
+			safeLogger(options?.logger)?.debug("Cache hit for entity configuration");
 			return ok(cached);
 		}
 	}
 
-	options?.logger?.debug("Fetching entity configuration", { entityId, url });
+	safeLogger(options?.logger)?.debug("Fetching entity configuration");
 	const result = await performFetch(url, options);
 
 	if (result.ok && options?.cache) {
 		const cacheKey = await ecCacheKey(entityId);
 		const ttl = statementCacheTtl(result.value, options);
-		if (ttl > 0) await options.cache.set(cacheKey, result.value, ttl);
+		if (ttl > 0) {
+			try {
+				await options.cache.set(cacheKey, result.value, ttl);
+			} catch (error) {
+				safeLogger(options.logger)?.error("Failed to write the federation cache");
+				throw error;
+			}
+		}
 	}
 
 	return result;
@@ -494,19 +513,26 @@ export async function fetchSubordinateStatement(
 		const cacheKey = await esCacheKey(issuer, subject);
 		const cached = await cachedStatement(cacheKey, options);
 		if (cached !== undefined) {
-			options?.logger?.debug("Cache hit for subordinate statement", { subject });
+			safeLogger(options?.logger)?.debug("Cache hit for subordinate statement");
 			return ok(cached);
 		}
 	}
 
-	options?.logger?.debug("Fetching subordinate statement", { fetchEndpoint, subject });
+	safeLogger(options?.logger)?.debug("Fetching subordinate statement");
 	const result = await performFetch(urlStr, options);
 
 	if (result.ok && options?.cache) {
 		const issuer = options.issuer ?? (url.origin as EntityId);
 		const cacheKey = await esCacheKey(issuer, subject);
 		const ttl = statementCacheTtl(result.value, options);
-		if (ttl > 0) await options.cache.set(cacheKey, result.value, ttl);
+		if (ttl > 0) {
+			try {
+				await options.cache.set(cacheKey, result.value, ttl);
+			} catch (error) {
+				safeLogger(options.logger)?.error("Failed to write the federation cache");
+				throw error;
+			}
+		}
 	}
 
 	return result;
