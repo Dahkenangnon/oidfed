@@ -11,6 +11,7 @@ import {
 	type ReplayStore,
 	type Result,
 	SUPPORTED_ALGORITHMS,
+	safeLogger,
 	type TrustAnchorSet,
 } from "@oidfed/core";
 import * as jose from "jose";
@@ -85,16 +86,28 @@ export async function invokePolicy<T>(
 	policy: (context: T, signal?: AbortSignal) => boolean | Promise<boolean>,
 	context: T,
 	options: WalletTrustOptions,
+	operation = "Application verification",
 ): Promise<Result<true>> {
-	if (typeof policy !== "function" || options.signal?.aborted)
+	const logger = safeLogger(options.logger);
+	if (options.signal?.aborted) {
+		logger?.debug(`${operation} cancelled`);
 		return failure("Required verification policy is missing or cancelled");
+	}
+	if (typeof policy !== "function") {
+		logger?.warn(`${operation} callback is required`);
+		return failure("Required verification policy is missing or cancelled");
+	}
 	try {
 		const accepted = await runOperation(
 			(signal) => policy(structuredClone(context), signal),
 			options,
 		);
-		return accepted === true ? ok(true) : failure("Verification policy rejected the input");
+		if (accepted === true) return ok(true);
+		logger?.warn(`${operation} rejected the input`);
+		return failure("Verification policy rejected the input");
 	} catch {
+		if (options.signal?.aborted) logger?.debug(`${operation} cancelled`);
+		else logger?.error(`${operation} failed or timed out`);
 		return failure("Verification policy failed, timed out, or was cancelled");
 	}
 }
@@ -105,6 +118,8 @@ export async function createAttestation(
 	signer: JwtSigner,
 	options: WalletTrustOptions,
 ): Promise<Result<string>> {
+	safeLogger(options?.logger)?.debug("Creating a Wallet Attestation");
+
 	const parsed = AttestationSchema.safeParse({
 		...params.claims,
 		iss: issuer,
@@ -138,6 +153,8 @@ export async function verifyAttestation(
 	anchors: TrustAnchorSet,
 	options: WalletAttestationVerificationOptions,
 ): Promise<Result<VerifiedWalletAttestation>> {
+	safeLogger(options?.logger)?.debug("Verifying a Wallet Attestation");
+
 	const decoded = decodeToken(jwt, options);
 	if (!decoded.ok) return decoded;
 	const header = checkProtocolHeader(
@@ -169,6 +186,9 @@ export async function verifyAttestation(
 					audience.every((item) => typeof item === "string") &&
 					audience.includes(options.expectedAudience)))
 	) {
+		safeLogger(options?.logger)?.warn(
+			"Wallet Attestation aud requires a matching expectedAudience",
+		);
 		return failure("Wallet Attestation audience requires a matching expectedAudience");
 	}
 	const headerChain = decoded.value.header.trust_chain;
@@ -197,6 +217,7 @@ export async function verifyAttestation(
 		options.allowedAttestationAlgorithms,
 	);
 	if (!checked.ok) return checked;
+	safeLogger(options?.logger)?.info("Wallet Attestation verification completed");
 	return ok({ attestation: input.data, provider: provider.value });
 }
 
@@ -206,13 +227,24 @@ export async function authenticateWallet(
 	anchors: TrustAnchorSet,
 	options: AuthenticateWalletOptions,
 ): Promise<Result<VerifiedWalletAttestation>> {
+	safeLogger(options?.logger)?.debug("Authenticating a Wallet with Client Attestation PoP");
+
 	const maxAge = options.maxProofAgeSeconds ?? 300;
 	const skew = options.clockSkewSeconds ?? DEFAULT_CLOCK_SKEW_SECONDS;
 	try {
 		entityId(options.audience);
 	} catch {
+		safeLogger(options?.logger)?.warn(
+			"Client Attestation PoP requires a valid authorization server audience",
+		);
 		return failure("Expected authorization server audience must be a valid issuer identifier");
 	}
+	if (!options.replayStore)
+		safeLogger(options.logger)?.warn(
+			"Provide a replayStore for Client Attestation PoP replay protection",
+		);
+	if (typeof options.acceptWallet !== "function")
+		safeLogger(options.logger)?.warn("Provide acceptWallet to decide whether to accept the Wallet");
 	if (
 		!Number.isFinite(maxAge) ||
 		maxAge <= 0 ||
@@ -280,7 +312,12 @@ export async function authenticateWallet(
 		options.allowedProofAlgorithms,
 	);
 	if (!checked.ok) return checked;
-	const accepted = await invokePolicy(options.acceptWallet, verified.value, options);
+	const accepted = await invokePolicy(
+		options.acceptWallet,
+		verified.value,
+		options,
+		"Wallet acceptance",
+	);
 	if (!accepted.ok) return accepted;
 	if (!fresh() || options.signal?.aborted)
 		return failure("Wallet authentication expired or was cancelled");
@@ -294,6 +331,7 @@ export async function authenticateWallet(
 			}),
 		undefined,
 		options,
+		"Client Attestation PoP replay protection",
 	);
 	if (!replay.ok)
 		return failure(

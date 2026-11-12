@@ -54,6 +54,400 @@ const proof = (f: Fixture) => ({
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+
+	module("wallet / application logging", () => {
+		test("endpoint rejections name the effective metadata field without logging the URL", async (t) => {
+			const f = await walletFederation();
+			const warnings: unknown[][] = [];
+			const options = {
+				...f.options,
+				logger: {
+					debug() {},
+					info() {},
+					error() {},
+					warn: (...args: unknown[]) => {
+						warnings.push(args);
+						throw new Error("Logger failed");
+					},
+				},
+			};
+			const outer = await CredentialVerifierRole.prepareAuthorizationRequest(
+				{
+					client_id: f.requestPayload.client_id,
+					request_uri: "https://unregistered.example/private-request",
+				},
+				f.anchors,
+				options,
+			);
+			t.false(outer.ok);
+			t.deepEqual(warnings, [
+				["request_uri MUST match the effective Credential Verifier request_uris metadata"],
+			]);
+			for (const redirect of [false, true]) {
+				warnings.length = 0;
+				const payload = {
+					...f.requestPayload,
+					...(redirect
+						? {
+								response_mode: "fragment",
+								response_uri: undefined,
+								redirect_uri: "https://unregistered.example/private-redirect",
+							}
+						: { response_uri: "https://unregistered.example/private-response" }),
+				};
+				const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
+					{ client_id: payload.client_id },
+					f.anchors,
+					options,
+				);
+				if (!prepared.ok) throw new Error(JSON.stringify(prepared));
+				const result = await CredentialVerifierRole.completeAuthorizationRequest(
+					prepared.value,
+					await token(payload, f.protocol.verifier.privateKey, "oauth-authz-req+jwt"),
+				);
+				t.false(result.ok);
+				t.deepEqual(warnings, [
+					[
+						redirect
+							? "redirect_uri MUST match the effective Credential Verifier redirect_uris metadata"
+							: "response_uri MUST match the effective Credential Verifier response_uris metadata",
+					],
+				]);
+			}
+			warnings.length = 0;
+			const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
+				{ client_id: f.requestPayload.client_id },
+				f.anchors,
+				options,
+			);
+			if (!prepared.ok) throw new Error(JSON.stringify(prepared));
+			const valid = await CredentialVerifierRole.completeAuthorizationRequest(
+				prepared.value,
+				await token(f.requestPayload, f.protocol.verifier.privateKey, "oauth-authz-req+jwt"),
+			);
+			if (!valid.ok) throw new Error(JSON.stringify(valid));
+			t.false(
+				CredentialVerifierRole.validateResponseRedirect(
+					valid.value,
+					"https://unregistered.example/private-redirect",
+				).ok,
+			);
+			t.deepEqual(warnings, [
+				["redirect_uri MUST match the effective Credential Verifier redirect_uris metadata"],
+			]);
+		});
+		test("missing wallet acceptance and replay configuration leaves authentication rejected", async (t) => {
+			const f = await walletFederation();
+			for (const field of ["acceptWallet", "replayStore"] as const) {
+				const warnings: string[] = [];
+				const options = {
+					...f.options,
+					audience: f.ids.server,
+					acceptWallet: () => true,
+					replayStore: new MemoryReplayStore(),
+					[field]: undefined,
+					logger: {
+						debug() {},
+						info() {},
+						error() {},
+						warn: (message: string) => {
+							warnings.push(message);
+							throw new Error("Logger failed");
+						},
+					},
+				};
+				const result = await CredentialIssuerRole.authenticateWallet(
+					"unused",
+					"unused",
+					f.anchors,
+					options as unknown as Parameters<typeof CredentialIssuerRole.authenticateWallet>[3],
+				);
+				t.false(result.ok);
+				if (!result.ok)
+					t.equal(result.error.description, "Invalid wallet authentication configuration");
+				t.deepEqual(warnings, [
+					field === "acceptWallet"
+						? "Provide acceptWallet to decide whether to accept the Wallet"
+						: "Provide a replayStore for Client Attestation PoP replay protection",
+				]);
+			}
+		});
+
+		test("named verification failures preserve results, cancellation, deadlines, and call counts", async (t) => {
+			const f = await walletFederation();
+			const att = await token(
+				attestation(f),
+				f.protocol.provider.privateKey,
+				"oauth-client-attestation+jwt",
+			);
+			const pop = await token(
+				proof(f),
+				f.protocol.issuer.privateKey,
+				"oauth-client-attestation-pop+jwt",
+			);
+			for (const operation of [
+				"credential",
+				"attestation",
+				"acceptance",
+				"replay",
+				"query",
+				"transaction",
+			] as const)
+				for (const outcome of ["accept", "reject", "throw", "cancel", "timeout"] as const)
+					for (const throwingLogger of [false, true]) {
+						const messages: [string, unknown[]][] = [];
+						const controller = new AbortController();
+						let calls = 0;
+						const record =
+							(level: string) =>
+							(...args: unknown[]) => {
+								messages.push([level, args]);
+								if (throwingLogger) throw new Error("Logger failed");
+							};
+						const policy = () => {
+							calls++;
+							if (outcome === "reject") return false;
+							if (outcome === "throw") throw new Error("private-callback-error");
+							if (outcome === "cancel") controller.abort();
+							if (outcome === "timeout") return new Promise<boolean>(() => {});
+							return true;
+						};
+						const options = {
+							...f.options,
+							httpTimeoutMs: 25,
+							signal: controller.signal,
+							logger: {
+								debug: record("debug"),
+								info: record("info"),
+								warn: record("warn"),
+								error: record("error"),
+							},
+						};
+						let result: { readonly ok: boolean };
+						if (operation === "credential")
+							result = await CredentialVerifierRole.verifyCredential(
+								"private-credential",
+								f.ids.issuer,
+								f.anchors,
+								{ ...options, verifyCredential: policy },
+							);
+						else if (operation === "attestation")
+							result = await CredentialIssuerRole.verifyProviderAttestation(
+								"private-attestation",
+								f.ids.provider,
+								f.anchors,
+								{ ...options, verifyAttestation: policy },
+							);
+						else if (operation === "acceptance" || operation === "replay")
+							result = await CredentialIssuerRole.authenticateWallet(att, pop, f.anchors, {
+								...options,
+								audience: f.ids.server,
+								acceptWallet: operation === "acceptance" ? policy : () => true,
+								replayStore: {
+									useJti: operation === "replay" ? async () => policy() : async () => true,
+								},
+							});
+						else {
+							const payload = {
+								...f.requestPayload,
+								...(operation === "transaction"
+									? {
+											transaction_data: [
+												base64url.encode(
+													JSON.stringify({
+														type: "payment",
+														credential_ids: [walletQuery.credentials[0]!.id],
+													}),
+												),
+											],
+										}
+									: {}),
+							};
+							const jwt = await token(
+								payload,
+								f.protocol.verifier.privateKey,
+								"oauth-authz-req+jwt",
+							);
+							const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
+								{ client_id: payload.client_id },
+								f.anchors,
+								{
+									...options,
+									...(operation === "query"
+										? { queryPolicy: policy }
+										: { verifyTransactionData: policy }),
+								},
+							);
+							if (!prepared.ok) throw new Error(JSON.stringify(prepared));
+							result = await CredentialVerifierRole.completeAuthorizationRequest(
+								prepared.value,
+								jwt,
+							);
+						}
+						t.equal(result.ok, outcome === "accept", `${operation}/${outcome}`);
+						t.equal(calls, 1);
+						const label = {
+							credential: "Digital Credential verification",
+							attestation: "Wallet Attestation verification",
+							acceptance: "Wallet acceptance",
+							replay: "Client Attestation PoP replay protection",
+							query: "OpenID4VP presentation query policy",
+							transaction: "Transaction Data verification",
+						}[operation];
+						const expected =
+							outcome === "accept"
+								? undefined
+								: `${label} ${outcome === "reject" ? "rejected the input" : outcome === "cancel" ? "cancelled" : "failed or timed out"}`;
+						if (expected)
+							t.deepEqual(
+								messages.filter(([, args]) => args[0] === expected),
+								[
+									[
+										outcome === "reject" ? "warn" : outcome === "cancel" ? "debug" : "error",
+										[expected],
+									],
+								],
+							);
+						else t.false(messages.some(([level]) => level === "error" || level === "warn"));
+						t.true(messages.every(([, args]) => args.length === 1));
+						t.false(JSON.stringify(messages).includes("private-"));
+					}
+		});
+		test("missing application query and transaction verifiers have actionable messages", async (t) => {
+			const f = await walletFederation();
+			for (const scope of [false, true]) {
+				const warnings: string[] = [];
+				const options = {
+					...f.options,
+					logger: {
+						debug() {},
+						info() {},
+						error() {},
+						warn: (message: string) => {
+							warnings.push(message);
+							throw new Error("Logger failed");
+						},
+					},
+				};
+				const payload = scope
+					? { ...f.requestPayload, dcql_query: undefined, scope: "identity" }
+					: {
+							...f.requestPayload,
+							transaction_data: [
+								base64url.encode(
+									JSON.stringify({
+										type: "payment",
+										credential_ids: [walletQuery.credentials[0]!.id],
+									}),
+								),
+							],
+						};
+				const jwt = await token(payload, f.protocol.verifier.privateKey, "oauth-authz-req+jwt");
+				const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
+					{ client_id: payload.client_id },
+					f.anchors,
+					options,
+				);
+				if (!prepared.ok) throw new Error(JSON.stringify(prepared));
+				t.false(
+					(await CredentialVerifierRole.completeAuthorizationRequest(prepared.value, jwt)).ok,
+				);
+				t.deepEqual(warnings, [
+					scope
+						? "Provide a scopeQuery mapping for the OpenID4VP scope"
+						: "Provide verifyTransactionData to verify transaction_data",
+				]);
+				warnings.length = 0;
+				const ready = await CredentialVerifierRole.prepareAuthorizationRequest(
+					{ client_id: payload.client_id },
+					f.anchors,
+					{ ...options, verifyTransactionData: () => true },
+				);
+				if (!ready.ok) throw new Error(JSON.stringify(ready));
+				t.true(
+					(
+						await CredentialVerifierRole.completeAuthorizationRequest(ready.value, jwt, {
+							scopeQuery: walletQuery,
+						})
+					).ok,
+				);
+				t.deepEqual(warnings, []);
+			}
+		});
+		test("offline notices identify missing evidence and stay quiet when evidence is supplied", async (t) => {
+			const f = await hierarchicalWalletFederation();
+			const warnings: string[] = [];
+			const options = {
+				...f.options,
+				offline: true,
+				logger: {
+					debug() {},
+					info() {},
+					error() {},
+					warn: (message: string) => {
+						warnings.push(message);
+					},
+				},
+			};
+			t.false((await WalletProviderRole.discover(f.ids.provider, f.anchors, options)).ok);
+			t.true(
+				warnings.includes(
+					"Supply the missing federation evidence or protocol keys for offline trust evaluation",
+				),
+			);
+			warnings.length = 0;
+			t.true(
+				(
+					await WalletProviderRole.discover(f.ids.provider, f.anchors, {
+						...options,
+						entityConfigurations: f.entityConfigurations,
+					})
+				).ok,
+			);
+			t.deepEqual(warnings, []);
+			t.false(
+				(
+					await WalletProviderRole.discover(f.ids.provider, f.anchors, {
+						...options,
+						entityChains: new Map(),
+					})
+				).ok,
+			);
+			t.deepEqual(warnings, ["Supply a trust chain for offline trust evaluation"]);
+			t.equal(f.requests.length, 0);
+		});
+	});
+
+	module("wallet / injected logging", () => {
+		test("wallet operations use message-only host logging and tolerate sink failures", async (t) => {
+			const f = await walletFederation();
+			const messages: unknown[][] = [];
+			const record = (...args: unknown[]) => {
+				messages.push(args);
+			};
+			const logger = { debug: record, info: record, warn: record, error: record };
+			const options = { ...f.options, logger };
+			const discovery = await WalletProviderRole.discover(f.ids.provider, f.anchors, options);
+			t.true(discovery.ok, JSON.stringify(discovery));
+			t.true(messages.some((args) => String(args[0]).includes("trusted entity")));
+			t.true(messages.every((args) => args.length === 1));
+			const fail = () => {
+				throw new Error("Logger failed");
+			};
+			const throwing = {
+				...f.options,
+				logger: { debug: fail, info: fail, warn: fail, error: fail },
+			};
+			t.true((await WalletProviderRole.discover(f.ids.provider, f.anchors, throwing)).ok);
+			const invalid = await WalletProviderRole.discover(
+				"http://invalid.example",
+				f.anchors,
+				throwing,
+			);
+			t.false(invalid.ok);
+		});
+	});
+
 	module("wallet / intermediate EC evidence", () => {
 		test("online discovery retains ECs with disabled or evicting caches", async (t) => {
 			const f = await hierarchicalWalletFederation();

@@ -15,6 +15,7 @@ import {
 	type Result,
 	resolveEntityKeys,
 	resolveTrustChains,
+	safeLogger,
 	type TrustAnchorSet,
 	type ValidatedTrustChain,
 	validateTrustChain,
@@ -54,7 +55,12 @@ export function operationOptions<T extends WalletTrustOptions>(options: T): Resu
 		...options,
 		cache: options.cache ?? new MemoryCache(options.clock ? { clock: options.clock } : undefined),
 		httpClient: async (input: string | URL | Request, init?: RequestInit) => {
-			if (options.offline) throw new Error("Offline operation cannot access the network");
+			if (options.offline) {
+				safeLogger(options.logger)?.warn(
+					"Supply the missing federation evidence or protocol keys for offline trust evaluation",
+				);
+				throw new Error("Offline operation cannot access the network");
+			}
 			if (options.signal?.aborted) throw options.signal.reason ?? new Error("Operation cancelled");
 			if (remaining-- <= 0) {
 				state.exhausted = true;
@@ -104,7 +110,10 @@ export async function candidates(
 			return failure("Supplied chain exceeds configured limits");
 		return ok([{ statements: supplied, entityConfigurations: options.entityConfigurations }]);
 	}
-	if (options.offline) return failure("Offline operation requires a supplied trust chain");
+	if (options.offline) {
+		safeLogger(options.logger)?.warn("Supply a trust chain for offline trust evaluation");
+		return failure("Offline operation requires a supplied trust chain");
+	}
 	const resolved = await resolveTrustChains(entityId(id), anchors, options);
 	if (options.signal?.aborted) return failure("Operation cancelled");
 	if (!resolved.chains.length)
@@ -191,6 +200,8 @@ export async function trustedEntity(
 	options: WalletTrustOptions,
 	headerChain?: readonly string[],
 ): Promise<Result<TrustedWalletEntity>> {
+	safeLogger(options?.logger)?.debug("Validating wallet federation trusted entity evidence");
+
 	let last = "No valid wallet trust chain";
 	for await (const paths of candidateAttempts(id, anchors, options, headerChain)) {
 		if (!paths.ok) return paths;
@@ -210,9 +221,11 @@ export async function trustedEntity(
 				continue;
 			}
 			if (options.signal?.aborted) return failure("Operation cancelled");
+			safeLogger(options?.logger)?.info("Wallet entity trust validation completed");
 			return ok({ entityId: id, metadata: metadata.value, trustChain: checked.chain });
 		}
 	}
+	safeLogger(options?.logger)?.warn("Wallet entity trust validation rejected");
 	return err({ code: InternalErrorCode.TrustChainInvalid, description: last });
 }
 
@@ -222,6 +235,8 @@ export async function prepareVerifier(
 	options: WalletTrustOptions,
 	headerChain?: readonly string[],
 ): Promise<Result<PreparedTrustChain>> {
+	safeLogger(options?.logger)?.debug("Preparing Credential Verifier Trust Chain validation");
+
 	let last = "No valid verifier chain";
 	for await (const paths of candidateAttempts(id, anchors, options, headerChain)) {
 		if (!paths.ok) return paths;
@@ -241,6 +256,7 @@ export async function prepareVerifier(
 			last = metadata.error.description;
 		}
 	}
+	safeLogger(options?.logger)?.warn("Verifier trust preparation rejected");
 	return err({ code: InternalErrorCode.TrustChainInvalid, description: last });
 }
 

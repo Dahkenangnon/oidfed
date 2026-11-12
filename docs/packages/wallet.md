@@ -6,6 +6,10 @@ The package validates federation evidence and applies the wallet profile's metad
 
 See [wallet federation responsibilities](../guide/operator-responsibilities.md#wallet-federation-draft-05) for verification callbacks, protocol keys, replay storage, provider revalidation, and offline evidence lifetimes.
 
+Supply `options.logger` for [host-supplied logging](core.md#host-supplied-logging). Verification messages identify the callback or decision: Digital Credential verification, Wallet Attestation verification, Wallet acceptance, Client Attestation PoP replay protection, presentation-query policy, or Transaction Data verification. A negative decision logs at warn, an exception or timeout at error, and cancellation at debug. Each still prevents acceptance.
+
+Missing `scopeQuery`, `verifyTransactionData`, or local offline evidence produces a message identifying what to supply. Logging does not include credentials, attestations, proofs, or callback inputs. Offline mode itself produces no recommendation notice; provide the required local evidence and keep callbacks offline too.
+
 Wallet trust results expose the chain's verified marks and individual mark outcomes. Apply application accreditation requirements with [`checkTrustMarkRequirements()`](core.md#trust-marks) before using an entity for an operation that requires those marks. Federation chain validation alone establishes no required accreditation.
 
 ## Compose roles into a host

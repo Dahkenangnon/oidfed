@@ -7,6 +7,7 @@ import {
 	ok,
 	type PreparedTrustChain,
 	type Result,
+	safeLogger,
 	type TrustAnchorSet,
 	type ValidatedTrustChain,
 } from "@oidfed/core";
@@ -112,7 +113,12 @@ export function validateResponseRedirect(
 	const saved = validatedRequests.get(result);
 	if (!saved || saved.expiresAt <= nowSeconds(saved.options.clock) || saved.options.signal?.aborted)
 		return failure("Unknown, expired, or cancelled verifier evidence");
-	return checkEndpoint(saved.metadata, "redirect_uris", uri);
+	const checked = checkEndpoint(saved.metadata, "redirect_uris", uri);
+	if (!checked.ok)
+		safeLogger(saved.options.logger)?.warn(
+			"redirect_uri MUST match the effective Credential Verifier redirect_uris metadata",
+		);
+	return checked;
 }
 const outerSchema = z.object({
 	client_id: z.string().min(1),
@@ -190,6 +196,10 @@ export async function prepareRequest(
 	anchors: TrustAnchorSet,
 	options: AuthorizationRequestOptions,
 ): Promise<Result<PreparedAuthorizationRequest>> {
+	safeLogger(options?.logger)?.debug(
+		"Preparing federation validation of an OpenID4VP Authorization Request",
+	);
+
 	const parsed = outerSchema.safeParse(outer);
 	if (!parsed.success)
 		return failure(
@@ -228,7 +238,12 @@ export async function prepareRequest(
 	if (!metadata.ok) return metadata;
 	if (outer.request_uri) {
 		const endpoint = checkEndpoint(metadata.value, "request_uris", outer.request_uri);
-		if (!endpoint.ok) return endpoint;
+		if (!endpoint.ok) {
+			safeLogger(options.logger)?.warn(
+				"request_uri MUST match the effective Credential Verifier request_uris metadata",
+			);
+			return endpoint;
+		}
 	}
 	const keys = await protocolKeys(
 		{ metadata: metadata.value, trustChain: chain.value },
@@ -247,6 +262,7 @@ export async function prepareRequest(
 		outer: structuredClone(outer),
 		options: { ...options },
 	});
+	safeLogger(options?.logger)?.info("Wallet request preparation completed");
 	return ok(prepared);
 }
 
@@ -351,6 +367,10 @@ export async function completeRequest(
 	jwt: string,
 	context: AuthorizationRequestContext = {},
 ): Promise<Result<ValidatedWalletRequest>> {
+	safeLogger(preparations.get(prepared)?.options.logger)?.debug(
+		"Completing federation validation of an OpenID4VP Authorization Request",
+	);
+
 	const saved = preparations.get(prepared);
 	if (
 		!saved ||
@@ -407,14 +427,29 @@ export async function completeRequest(
 	] as const) {
 		if (value !== undefined) {
 			const allowed = checkEndpoint(metadata.value, field, value);
-			if (!allowed.ok) return allowed;
+			if (!allowed.ok) {
+				safeLogger(saved.options.logger)?.warn(
+					`${field === "request_uris" ? "request_uri" : field === "response_uris" ? "response_uri" : "redirect_uri"} MUST match the effective Credential Verifier ${field} metadata`,
+				);
+				return allowed;
+			}
 		}
 	}
 	const superiorOverridesQuery = hasSuperiorQueryOverride(saved.chain);
 	let requested: DcqlQuery[] | undefined;
 	if (!superiorOverridesQuery) {
 		const active = requestedQueries(request, context.scopeQuery, true);
-		if (!active.ok) return active;
+		if (!active.ok) {
+			if (
+				request.scope !== undefined &&
+				context.scopeQuery === undefined &&
+				request.dcql_query === undefined
+			)
+				safeLogger(saved.options.logger)?.warn(
+					"Provide a scopeQuery mapping for the OpenID4VP scope",
+				);
+			return active;
+		}
 		requested = active.value;
 	}
 	const queries =
@@ -424,7 +459,12 @@ export async function completeRequest(
 	const supported = checkQueryFormats(requested ?? queries, metadata.value);
 	if (!supported.ok) return supported;
 	if (request.transaction_data !== undefined) {
-		if (!saved.options.verifyTransactionData) return failure("Unsupported transaction_data");
+		if (!saved.options.verifyTransactionData) {
+			safeLogger(saved.options.logger)?.warn(
+				"Provide verifyTransactionData to verify transaction_data",
+			);
+			return failure("Unsupported transaction_data");
+		}
 		const transactionQueries = requested ?? queries;
 		const data = validateTransactionData(request.transaction_data, transactionQueries);
 		if (!data.ok) return data;
@@ -432,6 +472,7 @@ export async function completeRequest(
 			saved.options.verifyTransactionData,
 			{ data: data.value, queries: transactionQueries },
 			saved.options,
+			"Transaction Data verification",
 		);
 		if (!accepted.ok) return accepted;
 	}
@@ -462,6 +503,7 @@ export async function completeRequest(
 			saved.options.queryPolicy,
 			{ queries, request: safeRequest, chain: completed.value },
 			saved.options,
+			"OpenID4VP presentation query policy",
 		);
 		if (!accepted.ok) return accepted;
 	}
@@ -485,6 +527,9 @@ export async function completeRequest(
 		expiresAt: Math.min(completed.value.expiresAt, deadline.value),
 		options: saved.options,
 	});
+	safeLogger(preparations.get(prepared)?.options.logger)?.info(
+		"Wallet request validation completed",
+	);
 	return ok(result);
 }
 
@@ -534,6 +579,8 @@ export async function createRequest(
 	signer: JwtSigner,
 	options: AuthorizationRequestCreationOptions,
 ): Promise<Result<string>> {
+	safeLogger(options?.logger)?.debug("Creating a signed OpenID4VP Authorization Request");
+
 	const payload = {
 		...request,
 		client_id: `openid_federation:${id}`,

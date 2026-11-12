@@ -141,6 +141,7 @@ abstract class AttestationConsumer extends WalletRole {
 			options.verifyAttestation,
 			{ attestation, provider: provider.value, keys: keys.value },
 			scoped,
+			"Wallet Attestation verification",
 		);
 		if (!accepted.ok) return accepted;
 		return provider.value.trustChain.expiresAt > nowSeconds(options.clock) &&
@@ -431,6 +432,7 @@ export class CredentialVerifierRole extends AttestationConsumer {
 			options.verifyCredential,
 			{ credential, issuer: issuer.value, keys: keys.value },
 			scoped,
+			"Digital Credential verification",
 		);
 		if (!accepted.ok) return accepted;
 		if (issuer.value.trustChain.expiresAt <= nowSeconds(options.clock) || options.signal?.aborted)

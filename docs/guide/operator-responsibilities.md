@@ -156,7 +156,7 @@ For scope-based queries, supply oidfed's `scopeQuery` mapping using the alias ru
 
 [Wallet §8.2](https://openid.net/specs/openid-federation-wallet-1_0-05.html#section-8.2) says wallets **SHOULD** periodically reestablish trust with their providers. Your application chooses and runs that schedule.
 
-For offline flows, [§9](https://openid.net/specs/openid-federation-wallet-1_0-05.html#section-9) explains how to validate supplied chains with anchor keys and relates chain lifetimes to framework revocation requirements. Its 24-hour example is not a fixed limit. The operator sets acceptable evidence lifetimes. Your application supplies pinned keys, chains, intermediate Entity Configurations through `entityConfigurations` or a preloaded core cache, and protocol keys. oidfed's [`offline: true`](../../packages/wallet/src/trust.ts) blocks library network calls; your callbacks must also work offline. Offline validation does not prove that federation standing is still current.
+For offline flows, [§9](https://openid.net/specs/openid-federation-wallet-1_0-05.html#section-9) relates chain lifetimes to framework revocation requirements and describes validation with supplied anchor keys. The operator sets acceptable evidence lifetimes; the 24-hour example is not a fixed limit. Supply pinned keys, chains, intermediate Entity Configurations through `entityConfigurations` or a preloaded core cache, and protocol keys. oidfed's [`offline: true`](../../packages/wallet/src/trust.ts) blocks library network calls, so callbacks must also work offline. A missing-evidence message helps identify incomplete local inputs. Successful offline validation does not prove that federation standing is still current.
 
 ## Deployment operations
 
