@@ -16,6 +16,8 @@ Credential-issuer discovery validates each authorization server's effective OAut
 
 For independent AS checks, use core's `parseOAuthAuthorizationServerMetadata()` or `parseOAuthAuthorizationServerPublicationMetadata()`. The publication parser allows missing fields that a Superior can supply. The effective parser applies grant-dependent endpoint requirements, so a pre-authorized-only AS does not need an authorization endpoint.
 
+The federation option `customConstraintChecks` registers synchronous checks for additional constraints in authenticated Trust Chains. Failed checks reject the operation; unknown constraints remain ignored. See [custom constraints](core.md#custom-constraints) for the API and callback context.
+
 ## Compose roles into a host
 
 ```ts

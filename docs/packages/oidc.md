@@ -17,6 +17,8 @@ Supply `options.logger` for [host-supplied logging](core.md#host-supplied-loggin
 
 “Client Registration Request validated” means protocol validation succeeded. “Client Registration completed” follows the configured registration callbacks. Your application still owns persistence and registration expiry.
 
+The federation option `customConstraintChecks` registers synchronous checks for additional constraints in authenticated Trust Chains. Failed checks reject the operation; unknown constraints remain ignored. See [custom constraints](core.md#custom-constraints) for the API and callback context.
+
 ## Usage
 
 ### Composing roles with parent entities

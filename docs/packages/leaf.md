@@ -143,6 +143,8 @@ A leaf can serve the optional Draft 01 collection endpoint while keeping its lea
 
 Use `collection.collector` for an application-owned inventory or `collection.filter` for an additional restriction. These callbacks run during explicit refresh, through the same core service used by authorities and independent providers. See [collection policy](../guide/entity-collection.md#collection-policy).
 
+The federation option `customConstraintChecks` registers synchronous checks for additional constraints in authenticated Trust Chains. Failed checks reject the operation; unknown constraints remain ignored. See [custom constraints](core.md#custom-constraints) for the API and callback context.
+
 ## Protocol metadata validation
 
 Attached OIDC/OAuth and wallet roles validate their composed publication metadata through the existing role hook. Missing top-level fields may be supplied by a Superior; supplied fields must pass the role's publication checks. Without a matching role, the host applies federation checks only.

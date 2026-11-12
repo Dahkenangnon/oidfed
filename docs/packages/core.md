@@ -271,6 +271,10 @@ if (policyResult.ok) {
 
 Metadata policy `value` and `default` operators support JSON objects under [Federation §6.1.3.1.8](https://openid.net/specs/openid-federation-1_0.html#section-6.1.3.1.8). Merging compares complete values structurally: object member order is immaterial, array order is significant, and conflicting values fail. Nested objects are not recursively combined. Resolved values are detached from the supplied policy.
 
+`validateMetadataPolicy(policy, { customOperators })` checks a policy declaration without applying it to metadata. It checks supported operator values and combinations, while preserving unknown extension operators. Statement builders also reject invalid standard declarations before signing. Custom operator callbacks are synchronous: thrown exceptions, malformed results, and promises become policy errors. Operator order must be finite and respect the standard `value` and `essential` boundaries.
+
+`validateSubordinateStatementPublicationClaims(claims, { customOperators })` checks supplied publication claims, including critical-claim declarations and constraints, without requiring issuer, key, or time claims. It does not authenticate a statement or resolve a Trust Chain.
+
 ### Checking constraints
 
 Check maximum path length and permitted/excluded names against a parsed chain. `validateTrustChain()` runs the chain-level constraint checks and applies `allowed_entity_types` when resolving metadata.
@@ -297,6 +301,50 @@ if (constraintsResult.ok) {
   // Satisfies all path and domain restrictions
 }
 ```
+
+Naming patterns are DNS host/domain names. Matching ignores DNS case and a terminal root dot. `host.example.com` matches that host; `.example.com` matches its subdomains and excludes the domain itself. URL strings, IP literals, paths, ports, whitespace, and wildcard patterns are rejected.
+
+### Custom constraints
+
+Federation §6.2 permits additional constraint parameters. Register checks in `FederationOptions.customConstraintChecks` to enforce the constraints your federation understands. Other extension constraints are ignored.
+
+```ts
+import {
+  err,
+  ok,
+  InternalErrorCode,
+  validateTrustChain,
+  type ConstraintCheckDefinition,
+} from "@oidfed/core";
+
+const allowedTrustAnchors: ConstraintCheckDefinition = {
+  name: "allowed_trust_anchors",
+  check(value, context) {
+    if (!Array.isArray(value) || !value.every(item => typeof item === "string")) {
+      return err({
+        code: InternalErrorCode.ConstraintViolation,
+        description: "allowed_trust_anchors must be an array of strings",
+      });
+    }
+    return value.includes(context.trustAnchorId)
+      ? ok(undefined)
+      : err({
+          code: InternalErrorCode.ConstraintViolation,
+          description: "Trust Anchor is not permitted by allowed_trust_anchors",
+        });
+  },
+};
+
+const result = await validateTrustChain(statements, trustAnchors, {
+  customConstraintChecks: [allowedTrustAnchors],
+});
+```
+
+`ConstraintCheckContext` provides `issuerId` and `subjectId` for the carrying Subordinate Statement, `trustChainSubjectId`, `trustAnchorId`, its leaf-first `position`, and detached, deeply frozen `statements`. The constraint value is also detached and frozen. Inspect the affected subordinate path through this evidence; checking the supplied chain directly does not authenticate it.
+
+Checks run after authentication, once for each carrying statement, in leaf-first order after its standard constraints. A failed check, exception, malformed result, or promise rejects validation with a constraint error. Duplicate registrations and attempts to replace standard constraints are rejected. There is no critical-constraint parameter.
+
+Callbacks must return synchronously. Obtain external information before validation and capture it in the checker. Prepared validation captures the registered names and functions and runs the checks again during completion, so callbacks should be deterministic and safe to repeat. OIDC, wallet, Leaf, and Authority APIs forward these checks through their federation options. `resolveTrustChains()` only assembles candidates and does not execute them.
 
 ### Federation key providers
 

@@ -356,6 +356,24 @@ To serve the optional Draft 01 endpoint from a Trust Anchor or Intermediate, sup
 
 The `collection.collector` and `collection.filter` callbacks configure the shared service's collection policy. Authorities can use application inventories or additional restrictions while keeping registration records separate. See [collection policy](../guide/entity-collection.md#collection-policy).
 
+## Subordinate policies and constraints
+
+`registerSubordinate()` and `updateSubordinate()` validate supplied publication claims before writing the resulting record. Invalid critical claims, malformed constraints, and incompatible standard policy operators produce configuration errors. Updates fail before persistence or lifecycle-event creation, including with custom storage adapters. Publication checks remain in place for records loaded from existing stores and for Extended Listing.
+
+Policies are validated as declarations; missing subordinate metadata may still be supplied by a Superior. The host may reuse a policy across registrations or provide a different `metadataPolicy` per subordinate. Custom constraints remain in the published statement:
+
+```ts
+await authority.registerSubordinate({
+  entityId: subordinateId,
+  jwks: subordinateKeys,
+  constraints: {
+    allowed_trust_anchors: ["https://anchor.example"],
+  },
+});
+```
+
+Set `options.customConstraintChecks` on an authority to enforce registered constraints when it validates received chains, including Resolve requests. Publication preserves extension constraints without running chain-dependent checks. See [custom constraints](core.md#custom-constraints) for the receiving application’s checker.
+
 ## Protocol metadata validation
 
 Attached OIDC/OAuth and wallet roles validate their composed publication metadata through the existing role hook. Missing top-level fields may be supplied by a Superior; supplied fields must pass the role's publication checks. Without a matching role, the host applies federation checks only.
