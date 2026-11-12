@@ -19,6 +19,7 @@ import {
 	MediaType,
 	nowSeconds,
 	requireMethod,
+	safeLogger,
 	signEntityStatement,
 	type TrustAnchorSet,
 	type TrustMarkRef,
@@ -68,6 +69,7 @@ export class Leaf {
 	private cachedExp: number | null = null;
 	private inflight: Promise<string> | null = null;
 	private generation = 0;
+	private collectionNoticeEmitted = false;
 
 	constructor(config: LeafConfig) {
 		const rawEntityId = (
@@ -243,10 +245,23 @@ export class Leaf {
 			this.cachedJwt = jwt;
 			this.cachedExp = payload.exp;
 		}
+		if (
+			this.metadata.federation_entity?.federation_collection_endpoint &&
+			!this.metadata.federation_entity.federation_resolve_endpoint &&
+			!this.collectionNoticeEmitted
+		) {
+			this.collectionNoticeEmitted = true;
+			safeLogger(this.config.options?.logger)?.info(
+				"Federation Entities publishing a federation_collection_endpoint SHOULD also publish a federation_resolve_endpoint",
+			);
+		}
+		safeLogger(this.config.options?.logger)?.info("Entity Configuration generated");
 		return jwt;
 	}
 
 	async getEntityConfiguration(): Promise<string> {
+		safeLogger(this.config.options?.logger)?.debug("Starting get entity configuration");
+
 		if (this.cachedJwt && !this.isEntityConfigurationExpired()) {
 			return this.cachedJwt;
 		}
@@ -265,6 +280,8 @@ export class Leaf {
 	}
 
 	async refreshEntityConfiguration(): Promise<string> {
+		safeLogger(this.config.options?.logger)?.debug("Starting refresh entity configuration");
+
 		const generation = ++this.generation;
 		this.cachedJwt = null;
 		this.cachedExp = null;
@@ -275,6 +292,8 @@ export class Leaf {
 	}
 
 	async handleRequest(request: Request): Promise<Response> {
+		safeLogger(this.config.options?.logger)?.debug("Starting handle request");
+
 		const url = new URL(request.url);
 		const pathname = url.pathname;
 
@@ -294,8 +313,8 @@ export class Leaf {
 			try {
 				const jwt = await this.getEntityConfiguration();
 				return jwtResponse(jwt, MediaType.EntityStatement);
-			} catch (error) {
-				this.config.options?.logger?.error("Failed to serve entity configuration", { error });
+			} catch {
+				safeLogger(this.config.options?.logger)?.error("Failed to serve entity configuration");
 				return errorResponse(500, "server_error", "An internal error occurred");
 			}
 		}

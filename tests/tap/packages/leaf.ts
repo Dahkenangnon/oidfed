@@ -72,6 +72,214 @@ function mockFn<A extends unknown[]>() {
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+
+	module("leaf / collection recommendation", () => {
+		test("the Resolve recommendation follows successful composed publication and appears once", async (t) => {
+			for (const resolve of [false, true])
+				for (const throughRole of [false, true]) {
+					const { config } = await createLeafConfig();
+					const messages: string[] = [];
+					let failing = true;
+					const metadata = {
+						federation_collection_endpoint: `${LEAF_ID}/collect`,
+						...(resolve ? { federation_resolve_endpoint: `${LEAF_ID}/resolve` } : {}),
+					};
+					const leaf = new Leaf({
+						...config,
+						collection: { trustAnchors: new Map() },
+						metadata: {
+							...config.metadata,
+							...(!throughRole ? { federation_entity: metadata } : {}),
+						},
+						...(throughRole ? { roles: [{ type: "federation_entity", metadata }] } : {}),
+						keyProvider: {
+							getFederationKeySet: async () => {
+								if (failing) throw new Error("signing failed");
+								return config.keyProvider.getFederationKeySet();
+							},
+						},
+						options: {
+							logger: {
+								debug() {},
+								warn() {},
+								error() {},
+								info: (message) => {
+									messages.push(message);
+									throw new Error("Logger failed");
+								},
+							},
+						},
+					});
+					t.deepEqual(messages, []);
+					await t.rejects(leaf.getEntityConfiguration());
+					t.deepEqual(messages, []);
+					failing = false;
+					await leaf.getEntityConfiguration();
+					await leaf.refreshEntityConfiguration();
+					t.equal(
+						messages.filter((message) => message.includes("SHOULD also publish")).length,
+						resolve ? 0 : 1,
+					);
+				}
+		});
+	});
+
+	module("leaf / injected logging", () => {
+		test("concurrent generations report returned results while only the newest updates the cache", async (t) => {
+			function gate() {
+				let release!: () => void;
+				const promise = new Promise<void>((resolve) => {
+					release = resolve;
+				});
+				return { promise, release };
+			}
+			const { config } = await createLeafConfig();
+			const firstKeys = await config.keyProvider.getFederationKeySet();
+			const replacement = await generateSigningKey("ES256");
+			const secondKeys = await MemoryFederationKeyProvider.fromJWK(
+				replacement.privateKey,
+			).getFederationKeySet();
+			for (const newestFirst of [false, true])
+				for (const throwingLogger of [false, true]) {
+					const ready = [gate(), gate()];
+					const finish = [gate(), gate()];
+					const messages: unknown[][] = [];
+					let calls = 0;
+					const leaf = new Leaf({
+						...config,
+						collection: { trustAnchors: new Map() },
+						metadata: {
+							...config.metadata,
+							federation_entity: { federation_collection_endpoint: `${LEAF_ID}/collect` },
+						},
+						keyProvider: {
+							getFederationKeySet: async () => {
+								const index = calls++;
+								const keys = index === 0 ? firstKeys : secondKeys;
+								return {
+									...keys,
+									signer: {
+										alg: keys.signer.alg,
+										kid: keys.signer.kid,
+										signJwt: async (...args: Parameters<typeof keys.signer.signJwt>) => {
+											const jwt = await keys.signer.signJwt(...args);
+											ready[index]!.release();
+											await finish[index]!.promise;
+											return jwt;
+										},
+									},
+								};
+							},
+						},
+						options: {
+							logger: {
+								debug() {},
+								warn() {},
+								error() {},
+								info: (...args: unknown[]) => {
+									messages.push(args);
+									if (throwingLogger) throw new Error("Private sink error");
+								},
+							},
+						},
+					});
+					try {
+						const older = leaf.handleRequest(
+							new Request(`${LEAF_ID}${WELL_KNOWN_OPENID_FEDERATION}`),
+						);
+						await ready[0]!.promise;
+						const newer = leaf.refreshEntityConfiguration();
+						await ready[1]!.promise;
+						let oldResponse: Response;
+						let current: string;
+						if (newestFirst) {
+							finish[1]!.release();
+							current = await newer;
+							t.equal(
+								messages.filter((args) => args[0] === "Entity Configuration generated").length,
+								1,
+							);
+							finish[0]!.release();
+							oldResponse = await older;
+						} else {
+							finish[0]!.release();
+							oldResponse = await older;
+							t.equal(
+								messages.filter((args) => args[0] === "Entity Configuration generated").length,
+								1,
+							);
+							finish[1]!.release();
+							current = await newer;
+						}
+						t.equal(oldResponse.status, 200);
+						const previous = await oldResponse.text();
+						t.notEqual(
+							previous,
+							current,
+							"the older caller receives its own generated configuration",
+						);
+						t.equal(
+							await leaf.getEntityConfiguration(),
+							current,
+							"only the latest generation is cached",
+						);
+						t.equal(calls, 2);
+						t.equal(
+							messages.filter((args) => args[0] === "Entity Configuration generated").length,
+							2,
+						);
+						t.equal(
+							messages.filter((args) => String(args[0]).includes("SHOULD also publish")).length,
+							1,
+						);
+						t.true(messages.every((args) => args.length === 1));
+					} finally {
+						for (const pending of finish) pending.release();
+					}
+				}
+		});
+
+		test("publication logs messages and a throwing logger cannot change HTTP responses", async (t) => {
+			const messages: unknown[][] = [];
+			const record = (...args: unknown[]) => {
+				messages.push(args);
+			};
+			const logger = { debug: record, info: record, warn: record, error: record };
+			const { config } = await createLeafConfig({ options: { logger } });
+			const leaf = new Leaf(config);
+			t.equal(
+				(await leaf.handleRequest(new Request(`${LEAF_ID}${WELL_KNOWN_OPENID_FEDERATION}`))).status,
+				200,
+			);
+			t.true(messages.some((args) => args[0] === "Entity Configuration generated"));
+			t.true(messages.every((args) => args.length === 1));
+			const fail = () => {
+				throw new Error("Logger failed");
+			};
+			const options = { logger: { debug: fail, info: fail, warn: fail, error: fail } };
+			const healthy = new Leaf({ ...config, options });
+			t.equal(
+				(await healthy.handleRequest(new Request(`${LEAF_ID}${WELL_KNOWN_OPENID_FEDERATION}`)))
+					.status,
+				200,
+			);
+			const broken = new Leaf({
+				...config,
+				options,
+				keyProvider: {
+					getFederationKeySet: async () => {
+						throw new Error("Private signing error");
+					},
+				},
+			});
+			const response = await broken.handleRequest(
+				new Request(`${LEAF_ID}${WELL_KNOWN_OPENID_FEDERATION}`),
+			);
+			t.equal(response.status, 500);
+			t.false((await response.text()).includes("Private signing error"));
+		});
+	});
+
 	test("leaf rejects authentication companions for forbidden endpoints", async (t) => {
 		const { config } = await createLeafConfig();
 		for (const endpoint of ["fetch", "list", "extended_list"]) {
@@ -892,7 +1100,7 @@ export default (QUnit: QUnit) => {
 			t.notOk(text.includes(secretMessage), "secret not in response");
 		});
 
-		test("logger error() is called with original error on 500", async (t) => {
+		test("logs a safe error message on 500", async (t) => {
 			const originalError = new Error("signing failure");
 			const errorFn = mockFn<[string, Record<string, unknown>]>();
 			const { config } = await createLeafConfig({
@@ -915,7 +1123,7 @@ export default (QUnit: QUnit) => {
 			t.equal(errorFn.callCount(), 1);
 			const [msg, ctx] = errorFn.lastCall();
 			t.equal(msg, "Failed to serve entity configuration");
-			t.equal((ctx as Record<string, unknown>).error, originalError);
+			t.equal(ctx, undefined, "error objects are not logged");
 		});
 
 		test("404 response has error and error_description fields", async (t) => {

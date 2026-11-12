@@ -11,6 +11,8 @@
 
 See [operator and application responsibilities](../guide/operator-responsibilities.md) for key publication, configuration refresh, and the application state required by composed roles.
 
+Supply `options.logger` for [host-supplied logging](core.md#host-supplied-logging), including publication and serving failures. If the composed metadata advertises a collection endpoint without a Resolve endpoint, the Leaf emits one info notice after successful Entity Configuration signing. The SHOULD recommendation does not prevent publication.
+
 ## Usage
 
 ### Creating a leaf entity
@@ -128,6 +130,8 @@ Leaf entities are client or provider endpoints at the edge of the trust tree and
 A key provider can publish a new key while retaining the old signer, then switch signers and retire the previous key. The Leaf cache does not track those provider transitions automatically. Call `refreshEntityConfiguration()` after publication, signer switch, and retirement when the served configuration must reflect a change before expiry. The application chooses propagation and overlap intervals; see the [rollover stages](authority.md#federation-key-rotation).
 
 The Leaf class signs and caches the Entity Configuration JWT internally. When `getEntityConfiguration()` is called, it returns the cached JWT if it has not expired yet. If it has expired or if `refreshEntityConfiguration()` is called, it re-queries the `keyProvider` for keys and generates a new signature.
+
+During concurrent refreshes, only the newest generation updates the cache. A caller already waiting on an earlier build can still receive that JWT. The "Entity Configuration generated" message confirms that signing finished; it does not mean that result became the cached configuration.
 
 ### What is `DiscoveryResult` and how is it used?
 

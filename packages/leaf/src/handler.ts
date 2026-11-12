@@ -4,6 +4,7 @@ import {
 	jwtResponse,
 	MediaType,
 	requireMethod,
+	safeLogger,
 	WELL_KNOWN_OPENID_FEDERATION,
 } from "@oidfed/core";
 import type { Leaf } from "./entity-configuration.js";
@@ -25,8 +26,8 @@ export function createLeafHandler(entity: Leaf, options?: FederationOptions): Fe
 			try {
 				const jwt = await entity.getEntityConfiguration();
 				return jwtResponse(jwt, MediaType.EntityStatement);
-			} catch (error) {
-				options?.logger?.error("Failed to serve entity configuration", { error });
+			} catch {
+				safeLogger(options?.logger)?.error("Failed to serve entity configuration");
 				return errorResponse(500, "server_error", "An internal error occurred");
 			}
 		}
