@@ -1,6 +1,6 @@
 import { InternalErrorCode } from "../constants.js";
 import { err, type FederationError, ok, type Result } from "../errors.js";
-import type { TrustChainConstraints } from "../schemas/constraints.js";
+import { isDomainConstraint, type TrustChainConstraints } from "../schemas/constraints.js";
 import type { EntityId, ParsedEntityStatement } from "../types.js";
 
 /**
@@ -16,6 +16,9 @@ export function checkMaxPathLength(
 }
 
 function matchesDomainPattern(hostname: string, pattern: string): boolean {
+	if (!isDomainConstraint(pattern)) return false;
+	hostname = hostname.toLowerCase().replace(/\.$/, "");
+	pattern = pattern.toLowerCase().replace(/\.$/, "");
 	if (pattern.startsWith(".")) {
 		return hostname.endsWith(pattern);
 	}

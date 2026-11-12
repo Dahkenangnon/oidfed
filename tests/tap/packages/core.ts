@@ -373,6 +373,52 @@ export default (QUnit: QUnit) => {
 			}
 			await Promise.resolve();
 		});
+		test("DNS constraints validate domain syntax and compare case-insensitively", async (t) => {
+			for (const pattern of [
+				"https://example.com",
+				"example.com/path",
+				"example.com:443",
+				".",
+				"a b.example",
+				"*.example",
+				"?",
+				"127.0.0.1",
+				"[::1]",
+				"-host.example",
+				"host-.example",
+				`${"a".repeat(64)}.example`,
+			])
+				t.false(
+					TrustChainConstraintsSchema.safeParse({ naming_constraints: { excluded: [pattern] } })
+						.success,
+					pattern,
+				);
+			for (const pattern of [".EXAMPLE.COM", "host.example.com.", "xn--bcher-kva.example"])
+				t.true(
+					TrustChainConstraintsSchema.safeParse({ naming_constraints: { permitted: [pattern] } })
+						.success,
+					pattern,
+				);
+			t.true(
+				checkNamingConstraints({ permitted: [".EXAMPLE.COM."] }, entityId("https://a.example.com")),
+			);
+			t.false(
+				checkNamingConstraints({ permitted: [".example.com"] }, entityId("https://example.com")),
+			);
+			t.false(
+				checkNamingConstraints({ permitted: ["example.com"] }, entityId("https://badexample.com")),
+			);
+			t.false(
+				checkNamingConstraints(
+					{ permitted: [".EXAMPLE.COM"], excluded: ["A.example.COM"] },
+					entityId("https://a.example.com"),
+				),
+			);
+			const { f, chain } = await chainWith({
+				constraints: { naming_constraints: { excluded: [".EXAMPLE.COM"] } },
+			});
+			t.false((await validateTrustChain(chain, f.trustAnchors)).valid);
+		});
 	});
 
 	module("core / shared authorization server metadata", () => {

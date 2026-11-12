@@ -1,12 +1,19 @@
 /** Zod schema for naming_constraints: allowed/denied entity ID patterns for subordinate statements. */
 import { z } from "zod";
 
-const domainPattern = z
-	.string()
-	.min(1)
-	.refine((val) => !val.includes("*") && !val.includes("?"), {
-		message: 'Wildcard patterns not allowed; use ".example.com" for subdomain matching',
-	});
+/** RFC 5280 URI constraints use DNS host/domain names, never URL or IP patterns. */
+export function isDomainConstraint(value: string): boolean {
+	const domain = value.replace(/^\./, "").replace(/\.$/, "");
+	if (!domain || domain.length > 253 || /^[0-9.]+$/.test(domain)) return false;
+	return domain
+		.split(".")
+		.every((label) => label.length <= 63 && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(label));
+}
+
+const domainPattern = z.string().refine(isDomainConstraint, {
+	message:
+		'Naming constraints must be DNS host names or domains; use ".example.com" for subdomains',
+});
 
 export const NamingConstraintsSchema = z.object({
 	permitted: z.array(domainPattern).optional(),
