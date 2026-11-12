@@ -240,6 +240,160 @@ import { walletFederation, walletQuery } from "../fixtures/wallet.js";
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("core / shared authorization server metadata", () => {
+		const valid = {
+			issuer: "https://as.example",
+			authorization_endpoint: "https://as.example/authorize",
+			token_endpoint: "https://as.example/token",
+			response_types_supported: ["code"],
+		};
+		test("independent parsers preserve extensions and do not insert defaults", (t) => {
+			const input = {
+				...valid,
+				custom: { future: [1, 2] },
+				require_signed_request_object: true,
+				mtls_endpoint_aliases: { token_endpoint: "https://as.example/mtls/token" },
+				authorization_details_types_supported: ["openid_credential"],
+			};
+			const parsed = CorePublic.parseOAuthAuthorizationServerMetadata(input);
+			t.true(parsed.success);
+			if (parsed.success) t.deepEqual(parsed.data, input);
+			t.true(CorePublic.parseOAuthAuthorizationServerPublicationMetadata({}).success);
+			t.false(CorePublic.parseOAuthAuthorizationServerMetadata({}).success);
+			t.false(
+				CorePublic.parseOAuthAuthorizationServerPublicationMetadata({
+					mtls_endpoint_aliases: { token_endpoint: 17 },
+				}).success,
+			);
+		});
+		test("required endpoints follow grants including implicit and pre-authorized flows", (t) => {
+			t.true(CorePublic.parseOAuthAuthorizationServerMetadata(valid).success);
+			const { authorization_endpoint: _authorization, token_endpoint: _token, ...base } = valid;
+			t.false(CorePublic.parseOAuthAuthorizationServerMetadata(base).success);
+			t.true(
+				CorePublic.parseOAuthAuthorizationServerMetadata({
+					...base,
+					grant_types_supported: ["implicit"],
+					authorization_endpoint: valid.authorization_endpoint,
+				}).success,
+			);
+			t.false(
+				CorePublic.parseOAuthAuthorizationServerMetadata({
+					...base,
+					grant_types_supported: ["implicit"],
+				}).success,
+			);
+			t.true(
+				CorePublic.parseOAuthAuthorizationServerMetadata({
+					...base,
+					grant_types_supported: ["urn:ietf:params:oauth:grant-type:pre-authorized_code"],
+					token_endpoint: valid.token_endpoint,
+				}).success,
+			);
+			t.false(
+				CorePublic.parseOAuthAuthorizationServerMetadata({
+					...base,
+					grant_types_supported: ["client_credentials"],
+				}).success,
+			);
+		});
+		test("known malformed fields are rejected without throwing and optional extensions remain optional", (t) => {
+			for (const patch of [
+				{ issuer: "bad" },
+				{ issuer: "https://as.example?" },
+				{ issuer: "https://as.example#" },
+				{ token_endpoint: 17 },
+				{ token_endpoint: "http://as.example/token" },
+				{ require_signed_request_object: 1 },
+				{ authorization_details_types_supported: 42 },
+				{ introspection_signing_alg_values_supported: ["none"] },
+				{ tls_client_certificate_bound_access_tokens: "yes" },
+			])
+				t.false(
+					CorePublic.parseOAuthAuthorizationServerMetadata({ ...valid, ...patch }).success,
+					JSON.stringify(patch),
+				);
+			t.true(
+				CorePublic.parseOAuthAuthorizationServerMetadata({
+					...valid,
+					client_registration_types_supported: ["automatic", "future"],
+					federation_registration_endpoint: "http://as.example/unused#fragment",
+				}).success,
+			);
+			t.false(
+				CorePublic.parseOAuthAuthorizationServerMetadata({
+					...valid,
+					client_registration_types_supported: ["explicit"],
+				}).success,
+			);
+			t.true(
+				CorePublic.parseOAuthAuthorizationServerPublicationMetadata({
+					client_registration_types_supported: ["explicit"],
+				}).success,
+			);
+			t.false(
+				CorePublic.parseOAuthAuthorizationServerPublicationMetadata({
+					client_registration_types_supported: ["explicit"],
+					federation_registration_endpoint: "http://as.example/register",
+				}).success,
+			);
+		});
+		test("CIBA metadata checks declared delivery modes and DPoP excludes MAC algorithms", (t) => {
+			const ciba = {
+				...valid,
+				grant_types_supported: ["urn:openid:params:grant-type:ciba"],
+				backchannel_token_delivery_modes_supported: ["poll"],
+				backchannel_authentication_endpoint: "https://as.example/backchannel",
+			};
+			t.true(CorePublic.parseOAuthAuthorizationServerMetadata(ciba).success);
+			for (const patch of [
+				{ backchannel_token_delivery_modes_supported: undefined },
+				{ backchannel_token_delivery_modes_supported: ["unknown"] },
+				{ backchannel_authentication_endpoint: undefined },
+				{ grant_types_supported: ["authorization_code"] },
+			])
+				t.false(
+					CorePublic.parseOAuthAuthorizationServerMetadata({ ...ciba, ...patch }).success,
+					JSON.stringify(patch),
+				);
+			t.true(
+				CorePublic.parseOAuthAuthorizationServerPublicationMetadata({
+					backchannel_token_delivery_modes_supported: ["poll"],
+				}).success,
+			);
+			for (const alg of ["none", "HS256", "HS384", "HS512"])
+				t.false(
+					CorePublic.parseOAuthAuthorizationServerMetadata({
+						...valid,
+						dpop_signing_alg_values_supported: [alg],
+					}).success,
+					alg,
+				);
+			t.true(
+				CorePublic.parseOAuthAuthorizationServerMetadata({
+					...valid,
+					dpop_signing_alg_values_supported: ["ES256", "future-asymmetric-alg"],
+				}).success,
+			);
+		});
+
+		test("both independent parsers check mixed inline key usage", (t) => {
+			const jwks = {
+				keys: [
+					{ kty: "RSA", alg: "RS256" },
+					{ kty: "RSA", alg: "RSA-OAEP" },
+				],
+			};
+			t.false(CorePublic.parseOAuthAuthorizationServerMetadata({ ...valid, jwks }).success);
+			t.false(CorePublic.parseOAuthAuthorizationServerPublicationMetadata({ jwks }).success);
+			t.true(
+				CorePublic.parseOAuthAuthorizationServerPublicationMetadata({
+					jwks: { keys: jwks.keys.map((key, i) => ({ ...key, use: i ? "enc" : "sig" })) },
+				}).success,
+			);
+		});
+	});
+
 	module("core / independent collection logging", () => {
 		test("an independent collection service does not receive Federation Entity publication recommendations", async (t) => {
 			const notices: string[] = [];

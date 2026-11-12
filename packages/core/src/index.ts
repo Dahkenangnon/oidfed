@@ -5,6 +5,12 @@ export {
 	type MemoryReplayStoreOptions,
 	ReplayStoreCapacityError,
 } from "./memory-replay-store.js";
+export {
+	type OAuthAuthorizationServerMetadata,
+	type OAuthAuthorizationServerPublicationMetadata,
+	parseOAuthAuthorizationServerMetadata,
+	parseOAuthAuthorizationServerPublicationMetadata,
+} from "./oauth-metadata.js";
 export type { JtiReplayClaim, ReplayStore } from "./replay-store.js";
 
 // Constants
