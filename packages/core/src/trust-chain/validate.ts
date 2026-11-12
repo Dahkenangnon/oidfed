@@ -1574,18 +1574,26 @@ async function validateTrustChainImpl(
 			});
 		} else if (Object.keys(policyResult.value).length > 0) {
 			for (const [type, values] of Object.entries(stage?.context ?? {})) {
+				if (!Object.hasOwn(metadata, type)) continue;
+				const entityMetadata = metadata[type];
 				for (const [parameter, value] of Object.entries(values)) {
-					if (metadata[type]?.[parameter] === undefined && metadata[type]) {
-						metadata[type][parameter] = value;
+					if (entityMetadata && !Object.hasOwn(entityMetadata, parameter)) {
+						setOwn(entityMetadata, parameter, value);
 					}
 				}
 			}
 			for (const claim of stage?.deferred ?? []) {
-				const policies = policyResult.value[claim.entityType];
+				const entityMetadata = Object.hasOwn(metadata, claim.entityType)
+					? metadata[claim.entityType]
+					: undefined;
+				const policies = Object.hasOwn(policyResult.value, claim.entityType)
+					? policyResult.value[claim.entityType]
+					: undefined;
 				if (
-					metadata[claim.entityType] &&
-					metadata[claim.entityType]?.[claim.parameter] === undefined &&
-					policies?.[claim.parameter] !== undefined
+					entityMetadata &&
+					!Object.hasOwn(entityMetadata, claim.parameter) &&
+					policies &&
+					Object.hasOwn(policies, claim.parameter)
 				) {
 					delete policies[claim.parameter];
 					stage?.pending.push({ ...claim });

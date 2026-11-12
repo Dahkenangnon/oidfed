@@ -626,6 +626,118 @@ export default (QUnit: QUnit) => {
 			]);
 		});
 
+		test("deferred extension parameters use own metadata and policy members", async (t) => {
+			for (const parameter of [
+				"deferred_parameter",
+				"constructor",
+				"toString",
+				"__proto__",
+				"hasOwnProperty",
+			]) {
+				const { f, chain } = await chainWith({
+					metadata_policy: { openid_relying_party: { [parameter]: { essential: true } } },
+				});
+				const claim = { entityType: "openid_relying_party", parameter };
+				const prepared = await CorePublic.prepareTrustChainValidation(chain, f.trustAnchors, {
+					deferredClaims: [claim],
+				});
+				t.true(prepared.ok, parameter);
+				if (prepared.ok) {
+					t.deepEqual(prepared.value.pendingClaims, [claim], parameter);
+					t.false((await CorePublic.completeTrustChainValidation(prepared.value)).ok, parameter);
+					const context = { openid_relying_party: { [parameter]: "context value" } };
+					const saved = JSON.stringify(context);
+					const completed = await CorePublic.completeTrustChainValidation(prepared.value, context);
+					t.true(completed.ok, parameter);
+					if (completed.ok) {
+						const metadata = completed.value.resolvedMetadata.openid_relying_party;
+						t.true(!!metadata && Object.hasOwn(metadata, parameter), parameter);
+						t.equal(metadata?.[parameter], "context value", parameter);
+						t.strictEqual(Object.getPrototypeOf(metadata), Object.prototype, parameter);
+					}
+					t.equal(JSON.stringify(context), saved, "completion preserves its input");
+				}
+
+				const unrelated = await chainWith({
+					metadata_policy: { openid_relying_party: { other_parameter: { default: "kept" } } },
+				});
+				const withoutPolicy = await CorePublic.prepareTrustChainValidation(
+					unrelated.chain,
+					unrelated.f.trustAnchors,
+					{
+						deferredClaims: [claim],
+					},
+				);
+				t.true(withoutPolicy.ok, parameter);
+				if (withoutPolicy.ok) {
+					t.deepEqual(withoutPolicy.value.pendingClaims, [], parameter);
+					t.true(
+						(await CorePublic.completeTrustChainValidation(withoutPolicy.value)).ok,
+						parameter,
+					);
+					t.false(
+						(
+							await CorePublic.completeTrustChainValidation(withoutPolicy.value, {
+								openid_relying_party: { [parameter]: "unreserved value" },
+							})
+						).ok,
+						parameter,
+					);
+				}
+			}
+		});
+		test("published extension parameters cannot be replaced through deferred completion", async (t) => {
+			for (const parameter of [
+				"deferred_parameter",
+				"constructor",
+				"toString",
+				"__proto__",
+				"hasOwnProperty",
+			]) {
+				for (const source of ["leaf", "superior"]) {
+					const { f, chain } = await chainWith({
+						metadata_policy: { openid_relying_party: { [parameter]: { essential: true } } },
+						...(source === "superior"
+							? { metadata: { openid_relying_party: { [parameter]: "published value" } } }
+							: {}),
+					});
+					if (source === "leaf") {
+						const decoded = decodeEntityStatement(chain[0] as string);
+						if (!decoded.ok) throw new Error("fixture decode failed");
+						chain[0] = await signEntityStatement(
+							{
+								...decoded.value.payload,
+								metadata: { openid_relying_party: { [parameter]: "published value" } },
+							},
+							new JwkSigner(f.leafSigningKey),
+							{ typ: JwtTyp.EntityStatement },
+						);
+					}
+					const prepared = await CorePublic.prepareTrustChainValidation(chain, f.trustAnchors, {
+						deferredClaims: [{ entityType: "openid_relying_party", parameter }],
+					});
+					t.true(prepared.ok, `${source}: ${parameter}`);
+					if (!prepared.ok) continue;
+					t.deepEqual(prepared.value.pendingClaims, [], parameter);
+					const completed = await CorePublic.completeTrustChainValidation(prepared.value);
+					t.true(completed.ok, parameter);
+					if (completed.ok)
+						t.equal(
+							completed.value.resolvedMetadata.openid_relying_party?.[parameter],
+							"published value",
+							parameter,
+						);
+					t.false(
+						(
+							await CorePublic.completeTrustChainValidation(prepared.value, {
+								openid_relying_party: { [parameter]: "replacement" },
+							})
+						).ok,
+						parameter,
+					);
+				}
+			}
+		});
 		test("standalone constraint checks preserve unknown names and support registered names", (t) => {
 			const chain = [
 				{ payload: { iss: LEAF_ID, sub: LEAF_ID } },
