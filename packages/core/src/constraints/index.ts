@@ -68,7 +68,12 @@ export function applyAllowedEntityTypes(
 		if (allowed.has(key)) {
 			const value = metadata[key];
 			if (value !== undefined) {
-				result[key] = value;
+				Object.defineProperty(result, key, {
+					value,
+					writable: true,
+					enumerable: true,
+					configurable: true,
+				});
 			}
 		}
 	}

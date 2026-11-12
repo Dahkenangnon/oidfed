@@ -1,3 +1,4 @@
+import { callSynchronous, setOwn } from "../callbacks.js";
 import { EntityType, InternalErrorCode } from "../constants.js";
 import { err, type FederationError, ok, type Result } from "../errors.js";
 import { type FederationMetadata, FederationMetadataValuesSchema } from "../schemas/metadata.js";
@@ -7,6 +8,7 @@ import {
 	type MetadataPolicyOptions,
 	validateCustomOperators,
 } from "./custom-operators.js";
+import { isPolicyResult } from "./validate.js";
 
 export type { MetadataPolicyOptions };
 
@@ -17,10 +19,8 @@ export function applyMetadataPolicy(
 	superiorMetadataOverride?: FederationMetadata,
 	options?: MetadataPolicyOptions,
 ): Result<FederationMetadata, FederationError> {
-	if (options?.customOperators && options.customOperators.length > 0) {
-		const customCheck = validateCustomOperators(options.customOperators);
-		if (!customCheck.ok) return customCheck;
-	}
+	const customCheck = validateCustomOperators(options?.customOperators ?? []);
+	if (!customCheck.ok) return customCheck;
 	const lookup: Record<string, PolicyOperatorDefinition> = buildOperatorLookup(
 		options?.customOperators,
 	);
@@ -42,7 +42,7 @@ export function applyMetadataPolicy(
 			if (!Object.hasOwn(result, entityType)) continue;
 			const entityResult = result[entityType];
 			for (const [param, value] of Object.entries(params as Record<string, unknown>)) {
-				if (entityResult) entityResult[param] = structuredClone(value);
+				if (entityResult) setOwn(entityResult, param, structuredClone(value));
 			}
 		}
 	}
@@ -54,7 +54,7 @@ export function applyMetadataPolicy(
 
 		for (const [paramName, opEntries] of Object.entries(paramPolicies)) {
 			const sortedOps = Object.entries(opEntries as Record<string, unknown>)
-				.filter(([opName]) => lookup[opName] !== undefined)
+				.filter(([opName]) => Object.hasOwn(lookup, opName))
 				.sort(([a], [b]) => (lookup[a]?.order ?? 0) - (lookup[b]?.order ?? 0));
 
 			// Federation §6.1.3.1.8 applies to the OAuth client scope parameter.
@@ -67,8 +67,16 @@ export function applyMetadataPolicy(
 
 			for (const [opName, opValue] of sortedOps) {
 				const opDef = lookup[opName] as PolicyOperatorDefinition;
-				const currentValue = entityMetadata[paramName];
-				const applyResult = opDef.apply(currentValue, opValue);
+				const currentValue = Object.hasOwn(entityMetadata, paramName)
+					? entityMetadata[paramName]
+					: undefined;
+				const callback = callSynchronous(() => opDef.apply(currentValue, opValue), isPolicyResult);
+				if (!callback.ok)
+					return err({
+						code: InternalErrorCode.MetadataPolicyViolation,
+						description: `Policy callback for ${entityType}.${paramName} (operator '${opName}'): ${callback.error}`,
+					});
+				const applyResult = callback.value;
 
 				if (!applyResult.ok) {
 					return err({
@@ -85,12 +93,21 @@ export function applyMetadataPolicy(
 						description: `Policy violation for ${entityType}.${paramName} (operator '${opName}'): operator output must not be null`,
 					});
 				} else {
-					entityMetadata[paramName] = structuredClone(applyResult.value);
+					try {
+						setOwn(entityMetadata, paramName, structuredClone(applyResult.value));
+					} catch {
+						return err({
+							code: InternalErrorCode.MetadataPolicyViolation,
+							description: `Invalid operator output for ${entityType}.${paramName}`,
+						});
+					}
 				}
 			}
 
 			// Federation §6.1.3.1.8: policy-generated scopes also resolve to a string.
-			const scopeValues = entityMetadata[paramName];
+			const scopeValues = Object.hasOwn(entityMetadata, paramName)
+				? entityMetadata[paramName]
+				: undefined;
 			if (isScope && Array.isArray(scopeValues)) {
 				for (const value of scopeValues) {
 					if (typeof value !== "string") {

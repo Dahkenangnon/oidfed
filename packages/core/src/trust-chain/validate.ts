@@ -1,4 +1,5 @@
 /** Trust chain validation: verifies signatures, expiry, issuer-subject chaining, and metadata policy along the chain. */
+import { setOwn } from "../callbacks.js";
 import {
 	DEFAULT_CLOCK_SKEW_SECONDS,
 	DEFAULT_MAX_CHAIN_LENGTH,
@@ -1485,9 +1486,10 @@ async function validateTrustChainImpl(
 			| undefined;
 		if (immSupMeta) {
 			for (const [entityType, params] of Object.entries(immSupMeta)) {
+				if (!Object.hasOwn(metadata, entityType)) continue;
 				const existingMetadata = metadata[entityType];
 				if (!existingMetadata) continue;
-				Object.assign(existingMetadata, params as Record<string, unknown>);
+				for (const [name, value] of Object.entries(params)) setOwn(existingMetadata, name, value);
 			}
 		}
 	}

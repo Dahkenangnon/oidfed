@@ -316,7 +316,7 @@ function validateCrit(payload: Readonly<Record<string, unknown>>, errors: string
 			errors.push(`crit cannot list standard Entity Statement claim '${claim}'`);
 			continue;
 		}
-		if (payload[claim] === undefined) {
+		if (!Object.hasOwn(payload, claim) || payload[claim] === undefined) {
 			errors.push(`crit references missing claim '${claim}'`);
 		}
 	}

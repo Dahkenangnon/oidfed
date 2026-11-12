@@ -61,7 +61,9 @@ export function validateRegistrationMetadataPolicy(
 				equalJson(candidate[parameter], baseline[parameter])
 			)
 				continue;
-			const parameterPolicy = policy.value[type]?.[parameter] ?? {};
+			const typePolicy = Object.hasOwn(policy.value, type) ? policy.value[type] : undefined;
+			const parameterPolicy =
+				typePolicy && Object.hasOwn(typePolicy, parameter) ? (typePolicy[parameter] ?? {}) : {};
 			// A custom transformation can be non-idempotent (§6.1.3.2). Its
 			// already-resolved output remains authoritative for registration.
 			if (Object.keys(parameterPolicy).some((name) => modifiers.has(name))) {
@@ -70,7 +72,7 @@ export function validateRegistrationMetadataPolicy(
 				);
 			}
 			const input = { [type]: present ? { [parameter]: candidate[parameter] } : {} };
-			const superior = overrides?.[type];
+			const superior = overrides && Object.hasOwn(overrides, type) ? overrides[type] : undefined;
 			const applied = applyMetadataPolicy(
 				input as FederationMetadata,
 				{ [type]: { [parameter]: parameterPolicy } },

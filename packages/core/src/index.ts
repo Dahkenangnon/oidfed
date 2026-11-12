@@ -187,6 +187,7 @@ export {
 	type MetadataPolicyOptions,
 	resolveMetadataPolicy,
 	validateCustomOperators,
+	validateMetadataPolicy,
 } from "./metadata-policy/index.js";
 export { operators } from "./metadata-policy/operators.js";
 export { findInvalidMetadataNullPaths } from "./metadata-values.js";

@@ -23,7 +23,7 @@ export interface MetadataPolicyOptions {
 	 * names colliding with standard operators, duplicate names within the
 	 * supplied set, or invalid order/action combinations are rejected.
 	 */
-	customOperators?: readonly PolicyOperatorDefinition[];
+	customOperators?: readonly PolicyOperatorDefinition[] | undefined;
 }
 
 /**
@@ -34,11 +34,11 @@ export interface MetadataPolicyOptions {
 export function buildOperatorLookup(
 	customOperators: readonly PolicyOperatorDefinition[] | undefined,
 ): Record<string, PolicyOperatorDefinition> {
-	if (!customOperators || customOperators.length === 0) {
-		return operators;
-	}
-	const merged: Record<string, PolicyOperatorDefinition> = { ...operators };
-	for (const op of customOperators) {
+	const merged: Record<string, PolicyOperatorDefinition> = Object.assign(
+		Object.create(null),
+		operators,
+	);
+	for (const op of customOperators ?? []) {
 		merged[op.name] = op;
 	}
 	return merged;
@@ -70,7 +70,29 @@ export function validateCustomOperators(
 	operators: readonly PolicyOperatorDefinition[],
 ): Result<void, FederationError> {
 	const seen = new Set<string>();
+	if (!Array.isArray(operators))
+		return err(
+			federationError(
+				InternalErrorCode.MetadataPolicyError,
+				"Custom policy operators must be an array",
+			),
+		);
 	for (const op of operators) {
+		if (
+			!op ||
+			typeof op.name !== "string" ||
+			!Number.isFinite(op.order) ||
+			!["check", "modify", "both"].includes(op.action) ||
+			typeof op.apply !== "function" ||
+			typeof op.merge !== "function" ||
+			typeof op.canCombineWith !== "function"
+		)
+			return err(
+				federationError(
+					InternalErrorCode.MetadataPolicyError,
+					"Custom policy operators require a name, finite order, supported action, and callable apply, merge, and canCombineWith methods",
+				),
+			);
 		if (STANDARD_OPERATOR_NAMES.has(op.name)) {
 			return err(
 				federationError(

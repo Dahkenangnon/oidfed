@@ -240,6 +240,141 @@ import { walletFederation, walletQuery } from "../fixtures/wallet.js";
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("core / policy dictionaries and custom constraints", () => {
+		const statement = (policy: unknown) =>
+			({ payload: { metadata_policy: policy } }) as unknown as ParsedEntityStatement;
+		const extension = (name = "custom"): PolicyOperatorDefinition => ({
+			name,
+			order: 4.5,
+			action: "check",
+			apply: (value) => ({ ok: true, value }),
+			merge: (value) => ({ ok: true, value }),
+			canCombineWith: () => true,
+		});
+		async function chainWith(extra: Record<string, unknown> = {}) {
+			const f = await createMockFederation();
+			const original = decodeEntityStatement(f.taSubStatementForLeaf);
+			if (!original.ok) throw new Error("fixture decode failed");
+			const ss = await signEntityStatement(
+				{ ...original.value.payload, ...extra },
+				new JwkSigner(f.taSigningKey),
+				{ typ: JwtTyp.EntityStatement },
+			);
+			return { f, chain: [f.leafEcJwt, ss, f.taEcJwt] };
+		}
+		test("JSON member names never mutate prototypes at any policy level", (t) => {
+			const prototype = Object.getOwnPropertyDescriptors(Object.prototype);
+			for (const name of ["__proto__", "constructor", "toString", "hasOwnProperty"]) {
+				for (const raw of [
+					{ [name]: { section6Probe: { default: "injected" } } },
+					{ openid_relying_party: { [name]: { default: "injected" } } },
+					{ openid_relying_party: { client_name: { [name]: true } } },
+				]) {
+					const policy = JSON.parse(JSON.stringify(raw));
+					const saved = structuredClone(policy);
+					const resolved = resolveMetadataPolicy([statement(policy)]);
+					t.true(resolved.ok, name);
+					if (resolved.ok) {
+						const metadata = Object.fromEntries(Object.keys(raw).map((type) => [type, {}]));
+						t.true(applyMetadataPolicy(metadata, resolved.value).ok, name);
+						t.equal(
+							JSON.stringify(JSON.parse(JSON.stringify(resolved.value))),
+							JSON.stringify(resolved.value),
+						);
+					}
+					t.equal(JSON.stringify(policy), JSON.stringify(saved));
+					t.deepEqual(Object.getOwnPropertyNames(Object.prototype), Object.keys(prototype));
+					for (const [key, saved] of Object.entries(prototype)) {
+						const current = Object.getOwnPropertyDescriptor(Object.prototype, key);
+						for (const attribute of [
+							"value",
+							"get",
+							"set",
+							"writable",
+							"enumerable",
+							"configurable",
+						] as const)
+							t.strictEqual(current?.[attribute], saved[attribute], `${key}.${attribute}`);
+					}
+				}
+			}
+		});
+		test("signed chains distinguish own registered operators from inherited properties", async (t) => {
+			for (const name of ["__proto__", "constructor", "toString", "hasOwnProperty", "unknown"]) {
+				const { f, chain } = await chainWith({ metadata_policy_crit: [name] });
+				t.false((await validateTrustChain(chain, f.trustAnchors)).valid, name);
+				t.true(
+					(
+						await validateTrustChain(chain, f.trustAnchors, {
+							customPolicyOperators: [extension(name)],
+						})
+					).valid,
+					name,
+				);
+				const ignored = await chainWith({
+					metadata_policy: { openid_relying_party: { client_name: { [name]: true } } },
+				});
+				t.true((await validateTrustChain(ignored.chain, ignored.f.trustAnchors)).valid, name);
+			}
+			const { f, chain } = await chainWith({
+				metadata_policy: JSON.parse('{"__proto__":{"section6Probe":{"default":"injected"}}}'),
+			});
+			t.true((await validateTrustChain(chain, f.trustAnchors)).valid);
+			t.false(Object.hasOwn(Object.prototype, "section6Probe"));
+		});
+		test("custom operator definitions and every callback fail as results", async (t) => {
+			for (const patch of [
+				{ order: NaN },
+				{ order: Infinity },
+				{ action: "unknown" },
+				{ merge: null },
+				{ apply: null },
+				{ canCombineWith: null },
+			])
+				t.false(
+					validateCustomOperators([
+						{ ...extension(), ...patch } as unknown as PolicyOperatorDefinition,
+					]).ok,
+				);
+			for (const bad of [
+				() => {
+					throw Error("callback");
+				},
+				() => undefined,
+				() => ({ ok: true }),
+				() => Promise.reject(Error("async")),
+			]) {
+				const op = { ...extension(), apply: bad } as unknown as PolicyOperatorDefinition;
+				t.false(
+					applyMetadataPolicy(
+						{ openid_relying_party: { client_name: "Acme" } },
+						{ openid_relying_party: { client_name: { custom: true } } },
+						undefined,
+						{ customOperators: [op] },
+					).ok,
+				);
+				t.false(
+					resolveMetadataPolicy(
+						[statement({ x: { p: { custom: true } } }), statement({ x: { p: { custom: true } } })],
+						{
+							customOperators: [
+								{ ...extension(), merge: bad } as unknown as PolicyOperatorDefinition,
+							],
+						},
+					).ok,
+				);
+				t.false(
+					resolveMetadataPolicy([statement({ x: { p: { custom: true, essential: true } } })], {
+						customOperators: [
+							{ ...extension(), canCombineWith: bad } as unknown as PolicyOperatorDefinition,
+						],
+					}).ok,
+				);
+			}
+			await Promise.resolve();
+		});
+	});
+
 	module("core / shared authorization server metadata", () => {
 		const valid = {
 			issuer: "https://as.example",
