@@ -27,6 +27,7 @@ import {
 	isOk,
 	isValidEntityId,
 	ok,
+	safeLogger,
 	signTrustMarkDelegation,
 	validateRoleMetadata,
 	WELL_KNOWN_OPENID_FEDERATION,
@@ -249,6 +250,8 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 	// and a list endpoint in its own Entity Configuration. Refuse to start an
 	// authority that doesn't advertise either.
 	const fedEntity = config.metadata.federation_entity as FederationEntityMetadata | undefined;
+	if (!fedEntity?.federation_fetch_endpoint || !fedEntity?.federation_list_endpoint)
+		safeLogger(config.options?.logger)?.warn("Authorities MUST publish fetch and list endpoints");
 	if (!fedEntity) {
 		throw new InvalidAuthorityConfig(
 			"metadata.federation_entity.federation_fetch_endpoint is required for an Authority. Set it to the URL where this server serves the fetch endpoint.",
@@ -526,15 +529,21 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 		...lifecycle,
 		...(collection ? { collection } : {}),
 		async getSubordinateEvents(subject: EntityId): Promise<string> {
+			safeLogger(config.options?.logger)?.debug("Starting get subordinate events");
+
 			const jwt = await buildSubordinateEvents(ctx, subject);
 			if (jwt === undefined) throw new Error(`Subordinate history '${subject}' not found`);
 			return jwt;
 		},
 		async getEntityConfiguration(): Promise<string> {
+			safeLogger(config.options?.logger)?.debug("Starting get entity configuration");
+
 			return buildEntityConfiguration(ctx);
 		},
 
 		async getSubordinateStatement(sub: EntityId): Promise<string> {
+			safeLogger(config.options?.logger)?.debug("Starting get subordinate statement");
+
 			const record = await config.storage.subordinates.get(sub);
 			if (!record) {
 				throw new Error(`Subordinate '${sub}' not found`);
@@ -543,6 +552,8 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 		},
 
 		async listSubordinates(filter?: ListFilter): Promise<EntityId[]> {
+			safeLogger(config.options?.logger)?.debug("Starting list subordinates");
+
 			const page = await config.storage.subordinates.list(filter);
 			return page.items.map((r) => r.entityId);
 		},
@@ -550,6 +561,8 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 		async listSubordinatesExtended(
 			params?: ExtendedSubordinateListingParams,
 		): Promise<Result<ExtendedSubordinateListingResult, FederationError>> {
+			safeLogger(config.options?.logger)?.debug("Starting list subordinates extended");
+
 			const url = new URL(FederationEndpoint.ExtendedList, normalizedEntityId);
 			if (params?.from !== undefined) {
 				url.searchParams.set("from", params.from);
@@ -602,6 +615,8 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 		},
 
 		async resolveEntity(sub: EntityId, _ta?: EntityId): Promise<string> {
+			safeLogger(config.options?.logger)?.debug("Starting resolve entity");
+
 			const baseUrl = normalizedEntityId;
 			const url = new URL(FederationEndpoint.Resolve, baseUrl);
 			url.searchParams.set("sub", sub);
@@ -616,6 +631,8 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 		},
 
 		async getTrustMarkStatus(trustMark: string): Promise<TrustMarkStatusResponsePayload> {
+			safeLogger(config.options?.logger)?.debug("Starting get trust mark status");
+
 			const req = new Request(
 				new URL(FederationEndpoint.TrustMarkStatus, normalizedEntityId).toString(),
 				{
@@ -638,6 +655,8 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 		},
 
 		async listTrustMarkedEntities(trustMarkType: string): Promise<string[]> {
+			safeLogger(config.options?.logger)?.debug("Starting list trust marked entities");
+
 			const url = new URL(FederationEndpoint.TrustMarkList, normalizedEntityId);
 			url.searchParams.set("trust_mark_type", trustMarkType);
 			const req = new Request(url.toString());
@@ -646,6 +665,8 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 		},
 
 		async issueTrustMark(sub: string, trustMarkType: string): Promise<string> {
+			safeLogger(config.options?.logger)?.debug("Starting issue trust mark");
+
 			const url = new URL(FederationEndpoint.TrustMark, normalizedEntityId);
 			url.searchParams.set("trust_mark_type", trustMarkType);
 			url.searchParams.set("sub", sub);
@@ -659,6 +680,8 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 		},
 
 		async issueTrustMarkDelegation(subject: string, trustMarkType: string): Promise<string> {
+			safeLogger(config.options?.logger)?.debug("Starting issue trust mark delegation");
+
 			const keySet = await ctx.keyProvider.getFederationKeySet();
 			const params: Parameters<typeof signTrustMarkDelegation>[0] = {
 				issuer: normalizedEntityId,
@@ -676,6 +699,8 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 		},
 
 		async getHistoricalKeys(): Promise<string> {
+			safeLogger(config.options?.logger)?.debug("Starting get historical keys");
+
 			return buildHistoricalKeys(ctx);
 		},
 

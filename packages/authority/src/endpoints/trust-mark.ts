@@ -6,6 +6,7 @@ import {
 	JwtTyp,
 	MediaType,
 	nowSeconds,
+	safeLogger,
 	signEntityStatement,
 } from "@oidfed/core";
 import type { HandlerContext } from "./context.js";
@@ -54,8 +55,8 @@ export function createTrustMarkHandler(
 			}
 
 			return errorResponse(404, FederationErrorCode.NotFound, "Trust mark not found");
-		} catch (error) {
-			ctx.options?.logger?.error("Failed to retrieve trust mark", { error });
+		} catch {
+			safeLogger(ctx.options?.logger)?.error("Failed to retrieve trust mark");
 			return errorResponse(500, "server_error", "Failed to retrieve trust mark");
 		}
 	};
@@ -68,6 +69,15 @@ export function createTrustMarkHandler(
 export function createTrustMarkIssuanceHandler(
 	ctx: HandlerContext,
 ): (request: Request) => Promise<Response> {
+	let statusNoticeEmitted = false;
+	const noteStatusRecommendation = () => {
+		if (statusNoticeEmitted || ctx.metadata.federation_entity.federation_trust_mark_status_endpoint)
+			return;
+		statusNoticeEmitted = true;
+		safeLogger(ctx.options?.logger)?.info(
+			"Trust Mark Issuers SHOULD publish a federation_trust_mark_status_endpoint",
+		);
+	};
 	return async (request: Request) => {
 		const methodError = requireMethod(request, "GET");
 		if (methodError) return methodError;
@@ -126,6 +136,7 @@ export function createTrustMarkIssuanceHandler(
 			const now = nowSeconds(ctx.options?.clock);
 			const existing = await ctx.storage.trustMarks.getValid(trustMarkType, subject, now);
 			if (existing) {
+				noteStatusRecommendation();
 				return jwtResponse(existing.jwt, MediaType.TrustMark);
 			}
 
@@ -147,9 +158,10 @@ export function createTrustMarkIssuanceHandler(
 				return candidate;
 			});
 
+			noteStatusRecommendation();
 			return jwtResponse(selected.jwt, MediaType.TrustMark);
-		} catch (error) {
-			ctx.options?.logger?.error("Failed to issue trust mark", { error });
+		} catch {
+			safeLogger(ctx.options?.logger)?.error("Failed to issue trust mark");
 			return errorResponse(500, "server_error", "Failed to issue trust mark");
 		}
 	};

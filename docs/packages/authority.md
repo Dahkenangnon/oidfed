@@ -11,6 +11,8 @@
 
 See [operator and application responsibilities](../guide/operator-responsibilities.md) for authentication policy, key rollover, and the storage and capture contracts of optional endpoints.
 
+Supply `options.logger` for [host-supplied logging](core.md#host-supplied-logging). Registration, update, revocation, and event-recording failures identify the operation; completion messages follow a successful transaction commit. Logging leaves rollback and exception handling unchanged. A committed event with a non-HTTPS `information_uri` produces an info notice because HTTPS is RECOMMENDED. No-op updates produce no event recommendation notice.
+
 ## Usage
 
 Later fragments reuse `ta`, `storage`, and `keyProvider` from the first example. Supply the subordinate's public federation key as `subordinatePublicKey` when enrolling it.

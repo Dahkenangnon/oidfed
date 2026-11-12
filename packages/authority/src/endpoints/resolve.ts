@@ -12,6 +12,7 @@ import {
 	nowSeconds,
 	type ParsedEntityStatement,
 	resolveTrustChains,
+	safeLogger,
 	signEntityStatement,
 	type TrustAnchorSet,
 	type TrustMarkEvaluation,
@@ -139,8 +140,8 @@ export function createResolveHandler(
 					{ typ: JwtTyp.ResolveResponse, extraHeaders: snapshot.headers },
 				);
 				return jwtResponse(jwt, MediaType.ResolveResponse);
-			} catch (error) {
-				ctx.options?.logger?.error("Failed to read cached resolution", { error });
+			} catch {
+				safeLogger(ctx.options?.logger)?.error("Failed to read cached resolution");
 				return errorResponse(
 					500,
 					FederationErrorCode.ServerError,
@@ -287,14 +288,14 @@ export function createResolveHandler(
 						}),
 						cacheExpiry - nowSeconds(ctx.options?.clock),
 					);
-				} catch (error) {
-					ctx.options?.logger?.debug("Could not cache successful resolution", { error });
+				} catch {
+					safeLogger(ctx.options?.logger)?.debug("Could not cache successful resolution");
 				}
 			}
 
 			return jwtResponse(jwt, MediaType.ResolveResponse);
-		} catch (error) {
-			ctx.options?.logger?.error("Failed to resolve entity", { error });
+		} catch {
+			safeLogger(ctx.options?.logger)?.error("Failed to resolve entity");
 			return errorResponse(500, "server_error", "Failed to resolve entity");
 		}
 	};
@@ -345,8 +346,8 @@ async function isTrustMarkActiveForResolve(
 				record.subject === mark.subject &&
 				(record.expiresAt === undefined || record.expiresAt > now)
 			);
-		} catch (error) {
-			ctx.options?.logger?.debug("Failed to read local trust mark status", { error });
+		} catch {
+			safeLogger(ctx.options?.logger)?.debug("Failed to read local trust mark status");
 			return false;
 		}
 	}
@@ -371,8 +372,8 @@ async function isTrustMarkActiveForResolve(
 			status.value.status === TrustMarkStatus.Active &&
 			status.value.issuer === mark.issuer
 		);
-	} catch (error) {
-		ctx.options?.logger?.debug("Failed to verify remote trust mark status", { error });
+	} catch {
+		safeLogger(ctx.options?.logger)?.debug("Failed to verify remote trust mark status");
 		return false;
 	}
 }

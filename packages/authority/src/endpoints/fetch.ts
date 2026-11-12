@@ -8,6 +8,7 @@ import {
 	JwtTyp,
 	MediaType,
 	nowSeconds,
+	safeLogger,
 	signEntityStatement,
 } from "@oidfed/core";
 import type { SubordinateRecord } from "../storage/types.js";
@@ -48,8 +49,8 @@ export function createFetchHandler(ctx: HandlerContext): (request: Request) => P
 
 			const jwt = await buildSubordinateStatement(ctx, record);
 			return jwtResponse(jwt, MediaType.EntityStatement);
-		} catch (error) {
-			ctx.options?.logger?.error("Failed to build subordinate statement", { error });
+		} catch {
+			safeLogger(ctx.options?.logger)?.error("Failed to build subordinate statement");
 			return errorResponse(500, "server_error", "Failed to build statement");
 		}
 	};

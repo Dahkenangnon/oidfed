@@ -4,11 +4,14 @@ import {
 	JwtTyp,
 	MediaType,
 	nowSeconds,
+	safeLogger,
 	signEntityStatement,
 	validateRoleMetadata,
 } from "@oidfed/core";
 import type { HandlerContext } from "./context.js";
 import { errorResponse, jwtResponse, requireMethod } from "./helpers.js";
+
+const collectionNotices = new WeakSet<HandlerContext>();
 
 /** Returns the authority's Entity Configuration as a signed JWT. */
 export function createEntityConfigurationHandler(
@@ -21,8 +24,8 @@ export function createEntityConfigurationHandler(
 		try {
 			const jwt = await buildEntityConfiguration(ctx);
 			return jwtResponse(jwt, MediaType.EntityStatement);
-		} catch (error) {
-			ctx.options?.logger?.error("Failed to build entity configuration", { error });
+		} catch {
+			safeLogger(ctx.options?.logger)?.error("Failed to build entity configuration");
 			return errorResponse(500, "server_error", "Failed to build entity configuration");
 		}
 	};
@@ -61,7 +64,18 @@ export async function buildEntityConfiguration(ctx: HandlerContext): Promise<str
 		...(isTrustAnchor && ctx.trustMarkOwners ? { trustMarkOwners: ctx.trustMarkOwners } : {}),
 	});
 
-	return signEntityStatement(payload, keySet.signer, {
+	const jwt = await signEntityStatement(payload, keySet.signer, {
 		typ: JwtTyp.EntityStatement,
 	});
+	if (
+		ctx.metadata.federation_entity.federation_collection_endpoint &&
+		!ctx.metadata.federation_entity.federation_resolve_endpoint &&
+		!collectionNotices.has(ctx)
+	) {
+		collectionNotices.add(ctx);
+		safeLogger(ctx.options?.logger)?.info(
+			"Federation Entities publishing a federation_collection_endpoint SHOULD also publish a federation_resolve_endpoint",
+		);
+	}
+	return jwt;
 }

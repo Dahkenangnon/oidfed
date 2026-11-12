@@ -185,6 +185,269 @@ async function createTestContext(overrides?: TestContextOverrides): Promise<{
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+
+	module("authority / lifecycle logging", () => {
+		test("write failures preserve rollback and success notices follow commit", async (t) => {
+			for (const operation of ["registration", "update", "revocation", "recording"] as const)
+				for (const throwingLogger of [false, true]) {
+					const f = await SubordinateEventsFixture.fixture();
+					const messages: [string, unknown[]][] = [];
+					const record =
+						(level: string) =>
+						(...args: unknown[]) => {
+							messages.push([level, args]);
+							if (throwingLogger) throw new Error("Logger failed");
+						};
+					const authority = new TrustAnchor({
+						...f.config,
+						options: {
+							...f.config.options,
+							logger: {
+								debug: record("debug"),
+								info: record("info"),
+								warn: record("warn"),
+								error: record("error"),
+							},
+						},
+					});
+					if (operation !== "registration") await authority.registerSubordinate(f.record);
+					messages.length = 0;
+					const before = await f.storage.subordinates.get(SubordinateEventsFixture.subject);
+					const eventsBefore = await f.storage.subordinateEvents!.list(
+						SubordinateEventsFixture.issuer,
+						SubordinateEventsFixture.subject,
+					);
+					const original = new Error("private-storage-error");
+					let failing = true;
+					const transaction = f.storage.transaction.bind(f.storage);
+					f.storage.transaction = (run) =>
+						transaction(async (tx) => {
+							const value = await run(tx);
+							if (failing) throw original;
+							return value;
+						});
+					const annotations = { informationUri: "http://docs.example/private-event" };
+					const perform = () =>
+						operation === "registration"
+							? authority.registerSubordinate(f.record, annotations)
+							: operation === "update"
+								? authority.updateSubordinate(
+										SubordinateEventsFixture.subject,
+										{
+											metadata: { openid_relying_party: { organization_name: "Changed" } },
+											metadataPolicy: {
+												openid_relying_party: { application_type: { value: "web" } },
+											},
+										},
+										annotations,
+									)
+								: operation === "revocation"
+									? authority.revokeSubordinate(SubordinateEventsFixture.subject, annotations)
+									: authority.recordSubordinateEvents(SubordinateEventsFixture.subject, [
+											{
+												event: "custom-event",
+												iat: 1500,
+												information_uri: annotations.informationUri,
+											},
+											{
+												event: "another-event",
+												iat: 1500,
+												information_uri: annotations.informationUri,
+											},
+										]);
+					const label =
+						operation === "recording"
+							? "Subordinate Event recording"
+							: `Immediate Subordinate ${operation}`;
+					await t.rejects(perform(), (error: unknown) => error === original);
+					t.deepEqual(messages, [["error", [`${label} failed`]]]);
+					t.deepEqual(await f.storage.subordinates.get(SubordinateEventsFixture.subject), before);
+					t.deepEqual(
+						await f.storage.subordinateEvents!.list(
+							SubordinateEventsFixture.issuer,
+							SubordinateEventsFixture.subject,
+						),
+						eventsBefore,
+					);
+					messages.length = 0;
+					failing = false;
+					await perform();
+					t.deepEqual(messages, [
+						["info", [`${label} completed`]],
+						["info", ["HTTPS is RECOMMENDED for Subordinate Event information_uri"]],
+					]);
+					t.false(JSON.stringify(messages).includes("private-"));
+					if (operation === "update") {
+						messages.length = 0;
+						await authority.updateSubordinate(SubordinateEventsFixture.subject, {}, annotations);
+						t.deepEqual(
+							messages,
+							[["info", ["Immediate Subordinate update completed"]]],
+							"a no-op records no event recommendation",
+						);
+					}
+				}
+		});
+		test("HTTPS and omitted event documentation produce no recommendation notice", async (t) => {
+			const f = await SubordinateEventsFixture.fixture();
+			const messages: string[] = [];
+			const authority = new TrustAnchor({
+				...f.config,
+				options: {
+					logger: {
+						debug() {},
+						warn() {},
+						error() {},
+						info: (message) => {
+							messages.push(message);
+						},
+					},
+				},
+			});
+			await authority.registerSubordinate(f.record);
+			await authority.recordSubordinateEvents(SubordinateEventsFixture.subject, [
+				{ event: "custom", iat: 1500, information_uri: "https://docs.example/event" },
+			]);
+			t.false(messages.some((message) => message.includes("RECOMMENDED")));
+		});
+	});
+	module("authority / collection recommendation", () => {
+		test("only successful publication emits the companion Resolve endpoint notice, once", async (t) => {
+			for (const resolve of [false, true])
+				for (const throughRole of [false, true]) {
+					const f = await SubordinateEventsFixture.fixture();
+					const messages: string[] = [];
+					const collectionMetadata = {
+						federation_collection_endpoint: `${SubordinateEventsFixture.issuer}/collect`,
+						...(resolve
+							? { federation_resolve_endpoint: `${SubordinateEventsFixture.issuer}/resolve` }
+							: {}),
+					};
+					let failing = true;
+					const getKeys = f.keyProvider.getFederationKeySet.bind(f.keyProvider);
+					f.keyProvider.getFederationKeySet = async () => {
+						if (failing) throw new Error("signing failed");
+						return getKeys();
+					};
+					const authority = new TrustAnchor({
+						...f.config,
+						collection: { trustAnchors: new Map() },
+						metadata: {
+							...f.config.metadata,
+							federation_entity: {
+								...f.config.metadata!.federation_entity,
+								...(!throughRole ? collectionMetadata : {}),
+							},
+						},
+						...(throughRole
+							? { roles: [{ type: "federation_entity", metadata: collectionMetadata }] }
+							: {}),
+						options: {
+							logger: {
+								debug() {},
+								warn() {},
+								error() {},
+								info: (message) => {
+									messages.push(message);
+									throw new Error("Logger failed");
+								},
+							},
+						},
+					});
+					t.deepEqual(messages, []);
+					await t.rejects(authority.getEntityConfiguration());
+					t.deepEqual(messages, []);
+					failing = false;
+					await authority.getEntityConfiguration();
+					await authority.getEntityConfiguration();
+					t.equal(
+						messages.filter((message) => message.includes("SHOULD also publish")).length,
+						resolve ? 0 : 1,
+					);
+				}
+		});
+	});
+
+	module("authority / injected logging", () => {
+		test("a missing recommended status endpoint produces one notice without rejecting issuance", async (t) => {
+			const f = await createMockFederation();
+			for (const advertised of [false, true]) {
+				const notices: unknown[][] = [];
+				const warnings: unknown[][] = [];
+				const authority = new TrustAnchor({
+					entityId: TA_ID,
+					keyProvider: MemoryFederationKeyProvider.fromJWK(f.taSigningKey),
+					storage: new MemoryStorageAdapter({ trustMarks: true }),
+					metadata: {
+						federation_entity: {
+							federation_fetch_endpoint: `${TA_ID}/fetch`,
+							federation_list_endpoint: `${TA_ID}/list`,
+							...(advertised ? { federation_trust_mark_status_endpoint: `${TA_ID}/status` } : {}),
+						},
+					},
+					options: {
+						logger: {
+							debug() {},
+							error() {},
+							info: (...args) => {
+								notices.push(args);
+							},
+							warn: (...args) => {
+								warnings.push(args);
+							},
+						},
+					},
+				});
+				for (let i = 0; i < 2; i++)
+					t.true(
+						decodeEntityStatement(
+							await authority.issueTrustMark(OP_ID, "https://marks.example/type"),
+						).ok,
+					);
+				t.equal(
+					notices.filter((args) => String(args[0]).includes("SHOULD publish")).length,
+					advertised ? 0 : 1,
+				);
+				t.true(notices.every((args) => args.length === 1));
+				t.equal(
+					warnings.length,
+					0,
+					"omitted optional features and the SHOULD departure are not warnings",
+				);
+			}
+			const fail = () => {
+				throw new Error("Logger failed");
+			};
+			const authority = new TrustAnchor({
+				entityId: TA_ID,
+				keyProvider: MemoryFederationKeyProvider.fromJWK(f.taSigningKey),
+				storage: new MemoryStorageAdapter({ trustMarks: true }),
+				metadata: {
+					federation_entity: {
+						federation_fetch_endpoint: `${TA_ID}/fetch`,
+						federation_list_endpoint: `${TA_ID}/list`,
+					},
+				},
+				options: { logger: { debug: fail, info: fail, warn: fail, error: fail } },
+			});
+			t.true(
+				decodeEntityStatement(await authority.issueTrustMark(OP_ID, "https://marks.example/type"))
+					.ok,
+			);
+			t.throws(
+				() =>
+					new TrustAnchor({
+						entityId: TA_ID,
+						keyProvider: MemoryFederationKeyProvider.fromJWK(f.taSigningKey),
+						storage: new MemoryStorageAdapter(),
+						metadata: { federation_entity: {} },
+						options: { logger: { debug: fail, info: fail, warn: fail, error: fail } },
+					}),
+				/fetch_endpoint/,
+			);
+		});
+	});
+
 	test("subordinate identifiers are guarded at storage and listing boundaries", async (t) => {
 		const { ctx, storage, publicKey } = await createTestContext();
 		const bad = {

@@ -1,4 +1,4 @@
-import { JwtTyp, MediaType, nowSeconds, signEntityStatement } from "@oidfed/core";
+import { JwtTyp, MediaType, nowSeconds, safeLogger, signEntityStatement } from "@oidfed/core";
 import type { HandlerContext } from "./context.js";
 import { errorResponse, jwtResponse, requireMethod } from "./helpers.js";
 
@@ -13,8 +13,8 @@ export function createHistoricalKeysHandler(
 		try {
 			const jwt = await buildHistoricalKeys(ctx);
 			return jwtResponse(jwt, MediaType.JwkSet);
-		} catch (error) {
-			ctx.options?.logger?.error("Failed to build historical keys", { error });
+		} catch {
+			safeLogger(ctx.options?.logger)?.error("Failed to build historical keys");
 			return errorResponse(500, "server_error", "Failed to build historical keys");
 		}
 	};

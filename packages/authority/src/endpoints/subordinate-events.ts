@@ -6,6 +6,7 @@ import {
 	MediaType,
 	nowSeconds,
 	SubordinateEventsResponseSchema,
+	safeLogger,
 	signEntityStatement,
 } from "@oidfed/core";
 import type { StorageReadSnapshot } from "../storage/types.js";
@@ -80,8 +81,8 @@ export function createSubordinateEventsHandler(
 			if (jwt === undefined)
 				return errorResponse(404, FederationErrorCode.NotFound, "Entity history not found");
 			return jwtResponse(jwt, MediaType.EntityEventsStatement);
-		} catch (error) {
-			ctx.options?.logger?.error("Failed to build subordinate events response", { error });
+		} catch {
+			safeLogger(ctx.options?.logger)?.error("Failed to build subordinate events response");
 			return errorResponse(
 				500,
 				FederationErrorCode.ServerError,

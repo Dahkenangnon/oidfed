@@ -1,4 +1,4 @@
-import { FederationErrorCode, isValidEntityId, nowSeconds } from "@oidfed/core";
+import { FederationErrorCode, isValidEntityId, nowSeconds, safeLogger } from "@oidfed/core";
 import type { ListFilter } from "../storage/types.js";
 import type { HandlerContext } from "./context.js";
 import { errorResponse, jsonResponse, parseQueryParams, requireMethod } from "./helpers.js";
@@ -79,8 +79,8 @@ export function createListHandler(ctx: HandlerContext): (request: Request) => Pr
 			)
 				throw new Error("Invalid subordinate identifier from storage");
 			return jsonResponse(entityIds);
-		} catch (error) {
-			ctx.options?.logger?.error("Failed to list subordinates", { error });
+		} catch {
+			safeLogger(ctx.options?.logger)?.error("Failed to list subordinates");
 			return errorResponse(500, "server_error", "Failed to list subordinates");
 		}
 	};

@@ -12,6 +12,7 @@ import {
 	FederationErrorCode,
 	isValidEntityId,
 	nowSeconds,
+	safeLogger,
 } from "@oidfed/core";
 import type { ListFilter, ListPageOptions, SubordinateRecord } from "../storage/types.js";
 import type { HandlerContext } from "./context.js";
@@ -380,8 +381,8 @@ export function createExtendedListHandler(
 			if (nextEntityId !== undefined) body.next = nextEntityId;
 
 			return jsonResponse(body);
-		} catch (error) {
-			ctx.options?.logger?.error("Failed to build extended subordinate listing", { error });
+		} catch {
+			safeLogger(ctx.options?.logger)?.error("Failed to build extended subordinate listing");
 			return errorResponse(
 				500,
 				FederationErrorCode.ServerError,

@@ -1,4 +1,10 @@
-import { type EntityId, FederationErrorCode, isValidEntityId, nowSeconds } from "@oidfed/core";
+import {
+	type EntityId,
+	FederationErrorCode,
+	isValidEntityId,
+	nowSeconds,
+	safeLogger,
+} from "@oidfed/core";
 import type { HandlerContext } from "./context.js";
 import { errorResponse, jsonResponse, parseQueryParams, requireMethod } from "./helpers.js";
 
@@ -51,8 +57,8 @@ export function createTrustMarkListHandler(
 			} while (cursor);
 
 			return jsonResponse(entityIds);
-		} catch (error) {
-			ctx.options?.logger?.error("Failed to list trust marks", { error });
+		} catch {
+			safeLogger(ctx.options?.logger)?.error("Failed to list trust marks");
 			return errorResponse(500, "server_error", "Failed to list trust marks");
 		}
 	};
