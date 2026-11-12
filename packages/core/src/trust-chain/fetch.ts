@@ -16,6 +16,7 @@ import { decodeEntityStatement } from "../jose/verify.js";
 import { safeLogger } from "./../logging.js";
 import type { EntityId, FederationOptions } from "../types.js";
 import { entityId, isValidEntityId, nowSeconds } from "../types.js";
+import { fetchFailure } from "./fetch-failure.js";
 
 // --- IANA Special-Use IP Detection ---
 
@@ -303,7 +304,12 @@ export async function performFetch(
 			: isExactContentType(actual, expected);
 
 	const controller = new AbortController();
-	const timer = setTimeout(() => controller.abort(), timeoutMs);
+	let timedOut = false;
+	let receivedResponse = false;
+	const timer = setTimeout(() => {
+		timedOut = true;
+		controller.abort();
+	}, timeoutMs);
 
 	const onAbort = () => controller.abort();
 	options?.signal?.addEventListener("abort", onAbort, { once: true });
@@ -321,6 +327,7 @@ export async function performFetch(
 				...(options?.body ? { "Content-Type": "application/x-www-form-urlencoded" } : {}),
 			},
 		});
+		receivedResponse = true;
 
 		if (
 			!response.ok ||
@@ -342,18 +349,27 @@ export async function performFetch(
 						typeof parsed?.error === "string" &&
 						/^[\x20-\x21\x23-\x5B\x5D-\x7E]+$/.test(parsed.error)
 					) {
-						return err({
-							code: Object.values(FederationErrorCode).includes(parsed.error as FederationErrorCode)
-								? (parsed.error as FederationErrorCode)
-								: InternalErrorCode.RemoteResponse,
-							...(!Object.values(FederationErrorCode).includes(parsed.error as FederationErrorCode)
-								? { remoteError: { code: parsed.error, status: response.status } }
-								: {}),
-							description:
-								typeof parsed.error_description === "string"
-									? parsed.error_description
-									: `HTTP ${response.status} from ${url}`,
-						});
+						return err(
+							fetchFailure(
+								{
+									code: Object.values(FederationErrorCode).includes(
+										parsed.error as FederationErrorCode,
+									)
+										? (parsed.error as FederationErrorCode)
+										: InternalErrorCode.RemoteResponse,
+									...(!Object.values(FederationErrorCode).includes(
+										parsed.error as FederationErrorCode,
+									)
+										? { remoteError: { code: parsed.error, status: response.status } }
+										: {}),
+									description:
+										typeof parsed.error_description === "string"
+											? parsed.error_description
+											: `HTTP ${response.status} from ${url}`,
+								},
+								{ kind: "http", status: response.status },
+							),
+						);
 					}
 				} catch {
 					/* Fall back to the HTTP error for malformed JSON. */
@@ -361,27 +377,42 @@ export async function performFetch(
 			} else {
 				void response.body?.cancel().catch(() => {});
 			}
-			return err({
-				code: InternalErrorCode.Network,
-				description: `HTTP ${response.status} from ${url}`,
-			});
+			return err(
+				fetchFailure(
+					{
+						code: InternalErrorCode.Network,
+						description: `HTTP ${response.status} from ${url}`,
+					},
+					{ kind: "http", status: response.status },
+				),
+			);
 		}
 
 		const contentType = response.headers.get("content-type");
 		if (expectedContentType !== null && !matchesContentType(contentType, expectedContentType)) {
 			void response.body?.cancel().catch(() => {});
 			const actual = contentType?.trim() || "<missing>";
-			return err({
-				code: InternalErrorCode.Network,
-				description: `Unexpected Content-Type '${actual}' from ${url}, expected '${expectedContentType}'`,
-			});
+			return err(
+				fetchFailure(
+					{
+						code: InternalErrorCode.Network,
+						description: `Unexpected Content-Type '${actual}' from ${url}, expected '${expectedContentType}'`,
+					},
+					{ kind: "response" },
+				),
+			);
 		}
 
 		if (!response.body)
-			return err({
-				code: InternalErrorCode.Network,
-				description: `Empty response body from ${url}`,
-			});
+			return err(
+				fetchFailure(
+					{
+						code: InternalErrorCode.Network,
+						description: `Empty response body from ${url}`,
+					},
+					{ kind: "response" },
+				),
+			);
 		const body = await readResponseBody(
 			response,
 			options?.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES,
@@ -393,22 +424,32 @@ export async function performFetch(
 			controller.signal.aborted ||
 			(cause instanceof DOMException && cause.name === "AbortError")
 		) {
-			return err({
-				code: InternalErrorCode.Timeout,
-				description: `Request aborted or timed out: ${url}`,
-				cause,
-			});
+			return err(
+				fetchFailure(
+					{
+						code: InternalErrorCode.Timeout,
+						description: `Request aborted or timed out: ${url}`,
+						cause,
+					},
+					{ kind: timedOut && !options?.signal?.aborted ? "timeout" : "cancelled" },
+				),
+			);
 		}
-		return err({
-			code: InternalErrorCode.Network,
-			description:
-				cause instanceof RangeError
-					? `Response too large from ${url}`
-					: cause instanceof Error
-						? cause.message
-						: `Network error fetching ${url}`,
-			cause,
-		});
+		return err(
+			fetchFailure(
+				{
+					code: InternalErrorCode.Network,
+					description:
+						cause instanceof RangeError
+							? `Response too large from ${url}`
+							: cause instanceof Error
+								? cause.message
+								: `Network error fetching ${url}`,
+					cause,
+				},
+				{ kind: receivedResponse ? "response" : "transport" },
+			),
+		);
 	} finally {
 		clearTimeout(timer);
 		options?.signal?.removeEventListener("abort", onAbort);

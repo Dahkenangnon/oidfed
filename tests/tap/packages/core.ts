@@ -187,6 +187,10 @@ import {
 	validateEntityId,
 	validateFetchUrl,
 } from "../../../packages/core/src/trust-chain/fetch.js";
+import {
+	fetchFailure,
+	isAvailabilityFailure,
+} from "../../../packages/core/src/trust-chain/fetch-failure.js";
 import { resolveTrustChainForAnchor } from "../../../packages/core/src/trust-chain/peer.js";
 import { refreshTrustChain } from "../../../packages/core/src/trust-chain/refresh.js";
 import {
@@ -568,6 +572,29 @@ export default (QUnit: QUnit) => {
 						);
 				}
 		});
+		test("copied or unclassified fetch errors cannot enable fallback", (t) => {
+			for (const classification of [
+				{ kind: "transport" },
+				{ kind: "timeout" },
+				{ kind: "http", status: 503 },
+			] as const) {
+				const original = fetchFailure(
+					federationError(InternalErrorCode.Network, "Unavailable"),
+					classification,
+				);
+				t.true(isAvailabilityFailure(original));
+				t.false(isAvailabilityFailure({ ...original }));
+				t.false(isAvailabilityFailure(structuredClone(original)));
+				t.false(isAvailabilityFailure(JSON.parse(JSON.stringify(original))));
+			}
+			t.false(isAvailabilityFailure(federationError(InternalErrorCode.Network, "Unclassified")));
+			for (const kind of ["response", "cancelled"] as const)
+				t.false(
+					isAvailabilityFailure(
+						fetchFailure(federationError(InternalErrorCode.Network, "Rejected"), { kind }),
+					),
+				);
+		});
 
 		test("logging uses messages only and cannot change operation results", async (t) => {
 			const messages: unknown[][] = [];
@@ -689,6 +716,153 @@ export default (QUnit: QUnit) => {
 					(error) => error.field === "metadata.federation_entity.federation_list_endpoint",
 				),
 			);
+		});
+
+		test("signed JWK Set success requires exactly HTTP 200", async (t) => {
+			const f = await createMockFederation();
+			const jwt = await signEntityStatement(
+				{ iss: OP_ID, sub: OP_ID, keys: [f.opPublicKey] },
+				new JwkSigner(f.opSigningKey),
+				{ typ: JwtTyp.JwkSet },
+			);
+			for (const status of [200, 201, 202, 206]) {
+				const result = await fetchSignedJwkSet(
+					`${OP_ID}/keys`,
+					{ keys: [f.opPublicKey] },
+					{
+						expectedIssuer: OP_ID,
+						expectedOwner: OP_ID,
+						httpClient: async () =>
+							new Response(jwt, { status, headers: { "content-type": MediaType.JwkSet } }),
+					},
+				);
+				t.equal(result.ok, status === 200, `HTTP ${status}`);
+			}
+		});
+
+		test("key fallback is limited to availability failures", async (t) => {
+			const f = await createMockFederation();
+			const signer = new JwkSigner(f.opSigningKey);
+			const payload = { iss: OP_ID, sub: OP_ID, keys: [f.opPublicKey] };
+			const signed = await signEntityStatement(payload, signer, { typ: JwtTyp.JwkSet });
+			const rogue = await generateSigningKey();
+			const forged = await signEntityStatement(
+				payload,
+				new JwkSigner({ ...rogue.privateKey, kid: f.opPublicKey.kid }),
+				{ typ: JwtTyp.JwkSet },
+			);
+			const badOwner = await signEntityStatement({ ...payload, sub: TA_ID }, signer, {
+				typ: JwtTyp.JwkSet,
+			});
+			const badShape = await signEntityStatement({ iss: OP_ID, sub: OP_ID }, signer, {
+				typ: JwtTyp.JwkSet,
+			});
+			const badTyp = await signEntityStatement(payload, signer);
+			for (const scenario of [
+				...[404, 410, 500, 502, 503, 504].map((status) => ({
+					name: `HTTP ${status}`,
+					status,
+					fallback: true,
+				})),
+				...[201, 206, 401, 403, 501].map((status) => ({
+					name: `HTTP ${status}`,
+					status,
+					fallback: false,
+				})),
+				{ name: "transport", fallback: true },
+				{ name: "timeout", fallback: true },
+				{ name: "cancelled", fallback: false },
+				{ name: "signature", body: forged, fallback: false },
+				{ name: "owner", body: badOwner, fallback: false },
+				{ name: "schema", body: badShape, fallback: false },
+				{ name: "type", body: badTyp, fallback: false },
+				{ name: "content-type", fallback: false },
+				{ name: "no-body", body: null, fallback: false },
+				{ name: "empty-content", body: "", fallback: false },
+				{ name: "oversized", fallback: false },
+				{ name: "body-error", fallback: false },
+			]) {
+				let calls = 0;
+				const controller = new AbortController();
+				const result = await CorePublic.resolveEntityKeys(
+					{ signed_jwks_uri: `${OP_ID}/signed`, jwks_uri: `${OP_ID}/plain` },
+					{ keys: [f.opPublicKey] },
+					{
+						expectedIssuer: OP_ID,
+						expectedOwner: OP_ID,
+						allowFallback: true,
+						signal: controller.signal,
+						httpTimeoutMs: 10,
+						...(scenario.name === "oversized" ? { maxResponseBytes: 10 } : {}),
+						httpClient: async (input, init) => {
+							calls++;
+							if (String(input).endsWith("/plain"))
+								return new Response(JSON.stringify({ keys: [f.opPublicKey] }), {
+									headers: { "content-type": "application/json" },
+								});
+							if (scenario.name === "transport") throw new TypeError("Network failed");
+							if (scenario.name === "cancelled") {
+								controller.abort();
+								throw new DOMException("Cancelled", "AbortError");
+							}
+							if (scenario.name === "timeout")
+								return new Promise((_, reject) =>
+									init?.signal?.addEventListener(
+										"abort",
+										() => reject(new DOMException("Timed out", "AbortError")),
+										{ once: true },
+									),
+								);
+							const body =
+								scenario.name === "body-error"
+									? new ReadableStream({
+											start(c) {
+												c.error(new Error("Body failed"));
+											},
+										})
+									: "body" in scenario
+										? scenario.body
+										: signed;
+							return new Response(body, {
+								status: "status" in scenario ? scenario.status : 200,
+								headers: {
+									"content-type":
+										scenario.name === "content-type"
+											? `${MediaType.JwkSet}; charset=utf-8`
+											: MediaType.JwkSet,
+								},
+							});
+						},
+					},
+				);
+				t.equal(result.ok, scenario.fallback, scenario.name);
+				t.equal(
+					calls,
+					scenario.fallback ? 2 : 1,
+					`${scenario.name}: lower source fetched only when allowed`,
+				);
+			}
+			for (const metadata of [
+				{ signed_jwks_uri: "http://op.example/keys", jwks_uri: `${OP_ID}/plain` },
+				{ jwks: { keys: [null] }, jwks_uri: `${OP_ID}/plain` },
+			]) {
+				let calls = 0;
+				const result = await CorePublic.resolveEntityKeys(
+					metadata,
+					{ keys: [f.opPublicKey] },
+					{
+						expectedIssuer: OP_ID,
+						expectedOwner: OP_ID,
+						allowFallback: true,
+						httpClient: async () => {
+							calls++;
+							throw new Error("Unexpected fetch");
+						},
+					},
+				);
+				t.false(result.ok);
+				t.equal(calls, 0);
+			}
 		});
 	});
 

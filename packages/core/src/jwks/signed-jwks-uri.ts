@@ -65,6 +65,7 @@ export async function fetchSignedJwkSet(
 
 	const fetched = await performFetch(url, {
 		...options,
+		expectedStatus: 200,
 		accept: MediaType.JwkSet,
 		expectedContentType: MediaType.JwkSet,
 	});

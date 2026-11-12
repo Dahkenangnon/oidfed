@@ -10,10 +10,8 @@ import { safeLogger } from "./../logging.js";
  *   3. `jwks_uri` — plain HTTPS fetch, no per-key signing.
  *
  * Strict mode (default) returns the first error encountered. With
- * `allowFallback: true`, a failure on a higher-priority representation
- * cascades to the next-priority representation that is present, and only
- * after all present branches fail does the resolver return an aggregated
- * error.
+ * `allowFallback: true`, availability failures can advance to the next source.
+ * Invalid signatures, identities, payloads, and response formats always stop resolution.
  */
 
 import { FederationErrorCode } from "../constants.js";
@@ -21,6 +19,7 @@ import { err, type FederationError, federationError, ok, type Result } from "../
 import { type VerifySignedJwkSetOptions, validateExpectedIssuer } from "../federation-api/index.js";
 import { EntityIdSchema } from "../schemas/entity-id.js";
 import { type JWK, type JWKSet, MetadataJWKSetSchema } from "../schemas/jwk.js";
+import { isAvailabilityFailure } from "../trust-chain/fetch-failure.js";
 import type { Clock, FederationOptions } from "../types.js";
 import { fetchJwkSet } from "./jwks-uri.js";
 import { fetchSignedJwkSet } from "./signed-jwks-uri.js";
@@ -31,7 +30,7 @@ export type EntityKeysSource = "jwks" | "jwks_uri" | "signed_jwks_uri";
 export interface ResolveEntityKeysOptions extends FederationOptions, VerifySignedJwkSetOptions {
 	clockSkewSeconds?: number;
 	clock?: Clock;
-	/** When true, falls through to the next-priority representation on failure. Default: false. */
+	/** Try the next source after transport/timeouts, HTTP 404/410 or transient 5xx; never after integrity failures. Default: false. */
 	allowFallback?: boolean;
 }
 
@@ -89,10 +88,18 @@ export async function resolveEntityKeys(
 			return ok({ keys: attempt.value, source });
 		}
 		errors.push({ source, error: attempt.error });
-		if (!options?.allowFallback) {
+		if (
+			!options?.allowFallback ||
+			options.signal?.aborted ||
+			!isAvailabilityFailure(attempt.error)
+		) {
 			safeLogger(options.logger)?.warn("Entity protocol key resolution failed");
 			return err(attempt.error);
 		}
+		if (source !== present.at(-1))
+			safeLogger(options.logger)?.info(
+				"Trying another key representation after an availability failure",
+			);
 	}
 
 	const summary = errors.map((e) => `[${e.source}] ${e.error.description}`).join("; ");
