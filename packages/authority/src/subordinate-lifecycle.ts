@@ -15,6 +15,7 @@ import type {
 	SubordinateRecordUpdate,
 } from "./storage/types.js";
 import { parsePublishedSubordinateEvent } from "./utils/subordinate-event.js";
+import { assertSubordinatePublicationClaims } from "./utils/subordinate-publication.js";
 import { sanitizeSubordinateMetadata } from "./utils/subordinate-statement-shape.js";
 
 function canonical(value: unknown): string {
@@ -106,6 +107,9 @@ export function createSubordinateLifecycle(ctx: HandlerContext) {
 				await ctx.storage.transaction(async (tx) => {
 					requireTransactionEvents(tx);
 					const iat = nowSeconds(ctx.options?.clock);
+					assertSubordinatePublicationClaims(normalized, {
+						customOperators: ctx.options?.customPolicyOperators,
+					});
 					await tx.subordinates.add({ ...normalized, createdAt: iat, updatedAt: iat });
 					// Draft 01 §2.3.3: registration covers the operation's initial metadata and keys.
 					// Later operations remain distinct even when their NumericDates are equal.
@@ -133,6 +137,10 @@ export function createSubordinateLifecycle(ctx: HandlerContext) {
 					requireTransactionEvents(tx);
 					const before = await tx.subordinates.get(subject);
 					if (!before) throw new Error(`Subordinate '${subject}' not found`);
+					assertSubordinatePublicationClaims(
+						{ ...before, ...normalized },
+						{ customOperators: ctx.options?.customPolicyOperators },
+					);
 					let beforeKeys: string | undefined;
 					if (normalized.jwks !== undefined) {
 						// Reject invalid replacements within the transaction, while allowing repair

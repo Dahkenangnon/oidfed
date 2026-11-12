@@ -1,10 +1,43 @@
-import { SubordinateStatementSchema, validateRoleMetadata } from "@oidfed/core";
+import {
+	type MetadataPolicyOptions,
+	validateRoleMetadata,
+	validateSubordinateStatementPublicationClaims,
+} from "@oidfed/core";
 import type { HandlerContext } from "../endpoints/context.js";
 import type { SubordinateRecord } from "../storage/types.js";
 import {
 	assertMetadataValuesNotNull,
 	sanitizeSubordinateMetadata,
 } from "./subordinate-statement-shape.js";
+
+/** The record projection is also used before lifecycle writes and direct memory-store writes. */
+export function assertSubordinatePublicationClaims(
+	record: {
+		[K in keyof Pick<
+			SubordinateRecord,
+			| "metadata"
+			| "metadataPolicy"
+			| "constraints"
+			| "sourceEndpoint"
+			| "crit"
+			| "metadataPolicyCrit"
+		>]: SubordinateRecord[K] | undefined;
+	},
+	options?: MetadataPolicyOptions,
+): void {
+	const payload = Object.fromEntries(
+		[
+			["metadata", record.metadata],
+			["metadata_policy", record.metadataPolicy],
+			["constraints", record.constraints],
+			["source_endpoint", record.sourceEndpoint],
+			["crit", record.crit],
+			["metadata_policy_crit", record.metadataPolicyCrit],
+		].filter(([, value]) => value !== undefined),
+	);
+	const valid = validateSubordinateStatementPublicationClaims(payload, options);
+	if (!valid.ok) throw new TypeError(valid.error.description);
+}
 
 /** Validate only the selected public claim, shared by signed fetch and Extended Listing §3.2. */
 export function subordinatePublicationClaim(
@@ -19,7 +52,11 @@ export function subordinatePublicationClaim(
 				? record.metadataPolicy
 				: record.constraints;
 	if (value === undefined) return undefined;
-	SubordinateStatementSchema.shape[claim].parse(value);
+	const valid = validateSubordinateStatementPublicationClaims(
+		{ [claim]: value },
+		{ customOperators: ctx.options?.customPolicyOperators },
+	);
+	if (!valid.ok) throw new TypeError(valid.error.description);
 	if (claim === "metadata") {
 		const metadata = value as Record<string, unknown>;
 		assertMetadataValuesNotNull(metadata);
@@ -27,14 +64,6 @@ export function subordinatePublicationClaim(
 			entityId: record.entityId,
 			keyProvider: ctx.keyProvider,
 		});
-	}
-	if (claim === "metadata_policy") {
-		for (const parameters of Object.values(value as Record<string, Record<string, unknown>>)) {
-			for (const operators of Object.values(parameters)) {
-				if (!operators || typeof operators !== "object" || Array.isArray(operators))
-					throw new TypeError("Metadata policy operators must be objects");
-			}
-		}
 	}
 	return structuredClone(value);
 }

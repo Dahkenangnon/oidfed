@@ -11,6 +11,7 @@ import {
 } from "@oidfed/core";
 import { InvalidMetadata, InvalidSubordinateRecord } from "../errors.js";
 import { parsePublishedSubordinateEvent } from "../utils/subordinate-event.js";
+import { assertSubordinatePublicationClaims } from "../utils/subordinate-publication.js";
 import {
 	assertMetadataValuesNotNull,
 	isFederationEntityOperationalField,
@@ -46,6 +47,13 @@ const detached = <T>(value: T): T => structuredClone(value);
 export function validateSubordinateRecord(record: SubordinateRecord): void {
 	if (!isValidEntityId(record.entityId))
 		throw new InvalidSubordinateRecord("Subordinate entityId must be a valid Entity Identifier");
+	try {
+		assertSubordinatePublicationClaims(record);
+	} catch (error) {
+		throw new InvalidSubordinateRecord(
+			error instanceof Error ? error.message : "Invalid Subordinate Statement claims",
+		);
+	}
 	const metadata = record.metadata;
 	if (!metadata) return;
 	const fed = (metadata as Record<string, unknown>).federation_entity;

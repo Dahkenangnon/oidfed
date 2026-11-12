@@ -11,6 +11,7 @@ import { err, type FederationError, federationError, ok, type Result } from "./e
 import { signEntityStatement } from "./jose/sign.js";
 import type { JwtSigner } from "./jose/signer.js";
 import { preparePublicJwkSet } from "./jwks/public-material.js";
+import { type MetadataPolicyOptions, validateMetadataPolicy } from "./metadata-policy/index.js";
 import { findInvalidMetadataNullPaths } from "./metadata-values.js";
 import { validatePublishedMetadata } from "./roles.js";
 import type { TrustChainConstraints } from "./schemas/constraints.js";
@@ -217,6 +218,40 @@ export function validateEntityStatementClaims(
 	return ok(undefined);
 }
 
+/** Validate supplied publication claims without inventing required issuer, key, or time claims. */
+export function validateSubordinateStatementPublicationClaims(
+	payload: Readonly<Record<string, unknown>>,
+	options?: MetadataPolicyOptions,
+): Result<void, FederationError> {
+	const errors: string[] = [];
+	forbidClaims(payload, EC_ONLY_CLAIMS, errors, "Subordinate Statement");
+	forbidClaims(payload, NORMAL_STATEMENT_FORBIDDEN_CLAIMS, errors, "normal Entity Statement");
+	for (const name of [
+		"metadata",
+		"metadata_policy",
+		"constraints",
+		"source_endpoint",
+		"crit",
+		"metadata_policy_crit",
+	] as const) {
+		if (!Object.hasOwn(payload, name)) continue;
+		const parsed = SubordinateStatementSchema.shape[name].safeParse(payload[name]);
+		if (!parsed.success) errors.push(`${name}: ${parsed.error.message}`);
+	}
+	validateCrit(payload, errors);
+	validateMetadataPolicyCrit(payload, errors);
+	validateMetadataPolicyShape(payload, errors, options);
+	validateMetadataValues(payload.metadata, errors);
+	return errors.length
+		? err(
+				federationError(
+					InternalErrorCode.TrustChainInvalid,
+					`Invalid Subordinate Statement claims: ${errors.join("; ")}`,
+				),
+			)
+		: ok(undefined);
+}
+
 function assertValidEntityStatementClaims(
 	payload: Readonly<Record<string, unknown>>,
 	kind: EntityStatementKind,
@@ -350,23 +385,14 @@ function validateMetadataPolicyCrit(payload: Readonly<Record<string, unknown>>, 
 	}
 }
 
-function validateMetadataPolicyShape(payload: Readonly<Record<string, unknown>>, errors: string[]) {
+function validateMetadataPolicyShape(
+	payload: Readonly<Record<string, unknown>>,
+	errors: string[],
+	options?: MetadataPolicyOptions,
+) {
 	if (payload.metadata_policy === undefined) return;
-	if (!isJsonObject(payload.metadata_policy)) {
-		errors.push("metadata_policy must be a JSON object");
-		return;
-	}
-	for (const [entityType, parameterPolicies] of Object.entries(payload.metadata_policy)) {
-		if (!isJsonObject(parameterPolicies)) {
-			errors.push(`metadata_policy.${entityType} must be a JSON object`);
-			continue;
-		}
-		for (const [parameter, operatorPolicy] of Object.entries(parameterPolicies)) {
-			if (!isJsonObject(operatorPolicy)) {
-				errors.push(`metadata_policy.${entityType}.${parameter} must be a JSON object`);
-			}
-		}
-	}
+	const valid = validateMetadataPolicy(payload.metadata_policy, options);
+	if (!valid.ok) errors.push(valid.error.description);
 }
 
 function validateMetadataValues(value: unknown, errors: string[]) {

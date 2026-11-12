@@ -31,7 +31,6 @@ import {
 	InvalidAuthorityConfig,
 	InvalidMetadata,
 	InvalidSubordinateRecord,
-	InvalidSubordinateStatementShape,
 } from "../../../packages/authority/src/errors.js";
 import { compose, type Middleware } from "../../../packages/authority/src/handler.js";
 import * as AuthorityPublic from "../../../packages/authority/src/index.js";
@@ -42,6 +41,8 @@ import {
 	type StorageAdapter,
 	TrustAnchor,
 } from "../../../packages/authority/src/index.js";
+import { createSubordinateLifecycle } from "../../../packages/authority/src/subordinate-lifecycle.js";
+import * as CorePublic from "../../../packages/core/src/index.js";
 import { signProtocolFixture } from "../fixtures/protocol-jwt.js";
 import * as SubordinateEventsFixture from "../fixtures/subordinate-events.js";
 
@@ -73,16 +74,13 @@ function createAuthorityServer(config: AuthorityConfig): AuthorityServer {
 import { MemoryStorageAdapter } from "../../../packages/authority/src/storage/memory.js";
 import type {
 	SubordinateRecord,
+	SubordinateRecordUpdate,
 	SubordinateStorage,
 	TrustMarkRecord,
 	TrustMarkStorage,
 } from "../../../packages/authority/src/storage/types.js";
 import {
-	assertCritShape,
-	assertMetadataPolicyCritShape,
-	assertMetadataPolicyShape,
 	assertMetadataValuesNotNull,
-	assertSubordinateStatementShape,
 	isFederationEntityOperationalField,
 	sanitizeSubordinateMetadata,
 } from "../../../packages/authority/src/utils/subordinate-statement-shape.js";
@@ -98,6 +96,7 @@ import {
 	FederationErrorCode,
 	fetchExtendedSubordinatesList,
 	generateSigningKey,
+	type HttpClient,
 	InternalErrorCode,
 	isOk,
 	type JWK,
@@ -185,6 +184,206 @@ async function createTestContext(overrides?: TestContextOverrides): Promise<{
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+
+	module("authority / subordinate publication validation", () => {
+		const invalid = [
+			{ metadataPolicyCrit: ["one_of"] },
+			{ crit: ["iss"] },
+			{ crit: ["missing"] },
+			{
+				metadataPolicy: {
+					openid_relying_party: { client_name: { one_of: ["a"], subset_of: ["a"] } },
+				},
+			},
+			{ metadataPolicy: { openid_relying_party: { client_name: 42 } } },
+			{ constraints: { naming_constraints: { excluded: ["https://example.com"] } } },
+		];
+		test("direct store writes reject invalid declarations and preserve existing records", async (t) => {
+			const f = await createTestContext();
+			const record: SubordinateRecord = {
+				entityId: LEAF_ID,
+				jwks: { keys: [f.publicKey] },
+				createdAt: 1,
+				updatedAt: 1,
+			};
+			for (const patch of invalid)
+				await t.rejects(
+					f.storage.subordinates.add({ ...record, ...patch } as SubordinateRecord),
+					/Invalid Subordinate Statement/,
+				);
+			t.strictEqual(await f.storage.subordinates.get(LEAF_ID), undefined);
+			await f.storage.subordinates.add(record);
+			for (const patch of invalid)
+				await t.rejects(
+					f.storage.subordinates.update(LEAF_ID, patch as SubordinateRecordUpdate),
+					/Invalid Subordinate Statement/,
+				);
+			t.deepEqual(await f.storage.subordinates.get(LEAF_ID), record);
+		});
+		test("authority lifecycle checks precede custom adapter writes and event creation", async (t) => {
+			const f = await createTestContext();
+			const backing = new MemoryStorageAdapter({ subordinateEvents: true });
+			let adds = 0,
+				updates = 0;
+			const tracked = (repo: SubordinateStorage): SubordinateStorage => ({
+				get: (id) => repo.get(id),
+				list: (filter, options) => repo.list(filter, options),
+				remove: (id) => repo.remove(id),
+				async add(record) {
+					adds++;
+					await repo.add(record);
+				},
+				async update(id, patch) {
+					updates++;
+					await repo.update(id, patch);
+				},
+			});
+			const storage: StorageAdapter = {
+				subordinates: tracked(backing.subordinates),
+				subordinateEvents: backing.subordinateEvents,
+				transaction: (operation) =>
+					backing.transaction((tx) => operation({ ...tx, subordinates: tracked(tx.subordinates) })),
+			};
+			const lifecycle = createSubordinateLifecycle({ ...f.ctx, storage });
+			const record = { entityId: LEAF_ID, jwks: { keys: [f.publicKey] } };
+			for (const patch of invalid)
+				await t.rejects(
+					lifecycle.registerSubordinate({ ...record, ...patch } as typeof record),
+					/Invalid Subordinate Statement/,
+				);
+			t.equal(adds, 0);
+			t.deepEqual(await backing.subordinateEvents!.list(f.ctx.entityId, LEAF_ID), []);
+			await lifecycle.registerSubordinate(record);
+			const saved = await backing.subordinates.get(LEAF_ID);
+			for (const patch of invalid)
+				await t.rejects(
+					lifecycle.updateSubordinate(LEAF_ID, patch as SubordinateRecordUpdate),
+					/Invalid Subordinate Statement/,
+				);
+			t.equal(adds, 1);
+			t.equal(updates, 0);
+			t.deepEqual(await backing.subordinates.get(LEAF_ID), saved);
+			t.equal((await backing.subordinateEvents!.list(f.ctx.entityId, LEAF_ID)).length, 1);
+		});
+		test("legacy records are rejected by signed fetch and selected policy publication", async (t) => {
+			const f = await createTestContext();
+			for (const patch of invalid.slice(0, 5)) {
+				const record = {
+					entityId: LEAF_ID,
+					jwks: { keys: [f.publicKey] },
+					createdAt: 1,
+					updatedAt: 1,
+					...patch,
+				} as SubordinateRecord;
+				const storage: StorageAdapter = {
+					subordinates: {
+						get: async () => record,
+						list: async () => ({ items: [record] }),
+						add: async () => {},
+						update: async () => {},
+						remove: async () => {},
+					},
+					transaction: f.storage.transaction.bind(f.storage),
+				};
+				const ctx = { ...f.ctx, storage };
+				t.equal(
+					(
+						await createFetchHandler(ctx)(
+							new Request(`${ENTITY_ID}/fetch?sub=${encodeURIComponent(LEAF_ID)}`),
+						)
+					).status,
+					500,
+				);
+				const claim = patch.metadataPolicy
+					? "metadata_policy"
+					: patch.crit
+						? "crit"
+						: "metadata_policy_crit";
+				t.equal(
+					(await createExtendedListHandler(ctx)(new Request(`${ENTITY_ID}/list?claims=${claim}`)))
+						.status,
+					500,
+				);
+			}
+		});
+		test("legal policies preserve partial metadata and unknown extension constraints", async (t) => {
+			const f = await createTestContext();
+			const lifecycle = createSubordinateLifecycle(f.ctx);
+			await lifecycle.registerSubordinate({
+				entityId: LEAF_ID,
+				jwks: { keys: [f.publicKey] },
+				metadata: { openid_relying_party: {} },
+				metadataPolicy: {
+					openid_relying_party: {
+						client_name: { essential: true, custom_extension: "configured" },
+					},
+				},
+				metadataPolicyCrit: ["custom_extension"],
+				constraints: { custom_constraint: { rule: "extension" } },
+			});
+			const response = await createFetchHandler(f.ctx)(
+				new Request(`${ENTITY_ID}/fetch?sub=${encodeURIComponent(LEAF_ID)}`),
+			);
+			t.equal(response.status, 200);
+			const decoded = decodeEntityStatement(await response.text());
+			t.true(decoded.ok);
+			if (decoded.ok) {
+				t.deepEqual(decoded.value.payload.metadata_policy_crit, ["custom_extension"]);
+				t.deepEqual(decoded.value.payload.constraints, {
+					custom_constraint: { rule: "extension" },
+				});
+			}
+		});
+		test("resolve endpoint forwards registered custom constraints", async (t) => {
+			const f = await createTestContext();
+			const fed = await createMockFederation();
+			const decoded = decodeEntityStatement(fed.taSubStatementForOp);
+			if (!decoded.ok) throw Error("fixture");
+			const ss = await signEntityStatement(
+				{ ...decoded.value.payload, constraints: { custom: true } },
+				new JwkSigner(fed.taSigningKey),
+				{ typ: JwtTyp.EntityStatement },
+			);
+			const httpClient: HttpClient = async (input, init) => {
+				const url = new URL(String(input));
+				return url.origin === TA_ID && url.searchParams.get("sub") === OP_ID
+					? new Response(ss, { headers: { "content-type": MediaType.EntityStatement } })
+					: fed.httpClient(input, init);
+			};
+			for (const accepted of [true, false]) {
+				let calls = 0;
+				const ctx = {
+					...f.ctx,
+					trustAnchors: fed.trustAnchors,
+					options: {
+						...fed.options,
+						httpClient,
+						customConstraintChecks: [
+							{
+								name: "custom",
+								check() {
+									calls++;
+									return accepted
+										? CorePublic.ok(undefined)
+										: CorePublic.err({
+												code: CorePublic.InternalErrorCode.ConstraintViolation,
+												description: "denied",
+											});
+								},
+							},
+						],
+					},
+				};
+				const response = await createResolveHandler(ctx)(
+					new Request(
+						`${ENTITY_ID}/resolve?sub=${encodeURIComponent(OP_ID)}&trust_anchor=${encodeURIComponent(TA_ID)}`,
+					),
+				);
+				t.equal(response.status, accepted ? 200 : 404);
+				t.true(calls > 0);
+			}
+		});
+	});
 
 	module("authority / lifecycle logging", () => {
 		test("write failures preserve rollback and success notices follow commit", async (t) => {
@@ -4129,11 +4328,10 @@ export default (QUnit: QUnit) => {
 				t.notOk("not_a_real_claim" in body.immediate_subordinate_entities[0]!);
 			});
 
-			test("claims=crit,metadata_policy_crit returns per-record critical extension lists", async (t) => {
+			test("critical operator lists are published while absent crit remains omitted", async (t) => {
 				const { ctx, subordinates } = await createTestContext();
 				await subordinates.add(
 					makeXListRecord(XLIST_SUB_A, {
-						crit: ["custom-ext"],
 						metadataPolicyCrit: ["custom-policy-op"],
 					}),
 				);
@@ -4149,7 +4347,7 @@ export default (QUnit: QUnit) => {
 					}>;
 				};
 				const entry = body.immediate_subordinate_entities[0]!;
-				t.deepEqual(entry.crit, ["custom-ext"]);
+				t.strictEqual(entry.crit, undefined);
 				t.deepEqual(entry.metadata_policy_crit, ["custom-policy-op"]);
 			});
 
@@ -8742,197 +8940,6 @@ export default (QUnit: QUnit) => {
 			t.ok(isFederationEntityOperationalField("endpoint_auth_signing_alg_values_supported"));
 			t.notOk(isFederationEntityOperationalField("organization_name"));
 			t.notOk(isFederationEntityOperationalField("federation_registration_endpoint"));
-		});
-	});
-
-	module("authority / assertSubordinateStatementShape", () => {
-		test("throws on authority_hints", (t) => {
-			t.throws(
-				() => assertSubordinateStatementShape({ authority_hints: ["https://parent.example"] }),
-				InvalidSubordinateStatementShape,
-			);
-		});
-		test("throws on trust_anchor_hints", (t) => {
-			t.throws(
-				() => assertSubordinateStatementShape({ trust_anchor_hints: ["https://ta.example"] }),
-				InvalidSubordinateStatementShape,
-			);
-		});
-		test("throws on trust_marks", (t) => {
-			t.throws(
-				() => assertSubordinateStatementShape({ trust_marks: [] }),
-				InvalidSubordinateStatementShape,
-			);
-		});
-		test("throws on trust_mark_issuers", (t) => {
-			t.throws(
-				() => assertSubordinateStatementShape({ trust_mark_issuers: {} }),
-				InvalidSubordinateStatementShape,
-			);
-		});
-		test("throws on trust_mark_owners", (t) => {
-			t.throws(
-				() => assertSubordinateStatementShape({ trust_mark_owners: {} }),
-				InvalidSubordinateStatementShape,
-			);
-		});
-		test("throws on aud", (t) => {
-			t.throws(
-				() => assertSubordinateStatementShape({ aud: "https://op.example" }),
-				InvalidSubordinateStatementShape,
-			);
-		});
-		test("throws on trust_anchor", (t) => {
-			t.throws(
-				() => assertSubordinateStatementShape({ trust_anchor: "https://ta.example" }),
-				InvalidSubordinateStatementShape,
-			);
-		});
-		test("accepts a clean payload", (t) => {
-			assertSubordinateStatementShape({
-				iss: "https://parent.example",
-				sub: "https://child.example",
-				iat: 1,
-				exp: 2,
-				jwks: { keys: [] },
-				metadata_policy: {},
-				constraints: { max_path_length: 1 },
-			});
-			t.ok(true);
-		});
-		test("error carries the list of offending claim names", (t) => {
-			try {
-				assertSubordinateStatementShape({
-					authority_hints: [],
-					trust_marks: [],
-				});
-				t.notOk(true, "expected throw");
-			} catch (err) {
-				if (err instanceof InvalidSubordinateStatementShape) {
-					t.deepEqual([...err.forbiddenClaims].sort(), ["authority_hints", "trust_marks"]);
-				} else {
-					t.notOk(true, "wrong error type");
-				}
-			}
-		});
-	});
-
-	module("authority / assertCritShape", () => {
-		test("accepts payload without crit", (t) => {
-			assertCritShape({ iss: "x", sub: "y" });
-			t.ok(true);
-		});
-		test("throws on empty crit array", (t) => {
-			t.throws(() => assertCritShape({ crit: [], jti: "abc" }), InvalidSubordinateStatementShape);
-		});
-		test("throws when crit is not an array", (t) => {
-			t.throws(
-				() => assertCritShape({ crit: "jti" } as unknown as Record<string, unknown>),
-				InvalidSubordinateStatementShape,
-			);
-		});
-		test("throws when crit lists a spec-defined claim", (t) => {
-			t.throws(
-				() => assertCritShape({ crit: ["iss"], iss: "x" }),
-				InvalidSubordinateStatementShape,
-			);
-		});
-		test("throws when crit lists a name absent from the payload", (t) => {
-			t.throws(() => assertCritShape({ crit: ["jti"] }), InvalidSubordinateStatementShape);
-		});
-		test("throws on duplicate names in crit", (t) => {
-			t.throws(
-				() => assertCritShape({ crit: ["jti", "jti"], jti: "abc" }),
-				InvalidSubordinateStatementShape,
-			);
-		});
-		test("accepts a crit listing an extension claim that exists in the payload", (t) => {
-			assertCritShape({ crit: ["jti"], jti: "abc" });
-			t.ok(true);
-		});
-	});
-
-	module("authority / assertMetadataPolicyCritShape", () => {
-		test("accepts payload without metadata_policy_crit", (t) => {
-			assertMetadataPolicyCritShape({});
-			t.ok(true);
-		});
-		test("throws on empty metadata_policy_crit array", (t) => {
-			t.throws(
-				() => assertMetadataPolicyCritShape({ metadata_policy_crit: [] }),
-				InvalidSubordinateStatementShape,
-			);
-		});
-		test("throws when metadata_policy_crit lists a standard operator", (t) => {
-			t.throws(
-				() => assertMetadataPolicyCritShape({ metadata_policy_crit: ["one_of"] }),
-				InvalidSubordinateStatementShape,
-			);
-		});
-		test("throws on every standard operator name", (t) => {
-			for (const op of [
-				"value",
-				"add",
-				"default",
-				"one_of",
-				"subset_of",
-				"superset_of",
-				"essential",
-			]) {
-				t.throws(
-					() => assertMetadataPolicyCritShape({ metadata_policy_crit: [op] }),
-					InvalidSubordinateStatementShape,
-					`operator ${op} must be rejected`,
-				);
-			}
-		});
-		test("throws on duplicate entries", (t) => {
-			t.throws(
-				() => assertMetadataPolicyCritShape({ metadata_policy_crit: ["regexp", "regexp"] }),
-				InvalidSubordinateStatementShape,
-			);
-		});
-		test("throws when entry is not a string", (t) => {
-			t.throws(
-				() =>
-					assertMetadataPolicyCritShape({
-						metadata_policy_crit: [42] as unknown as string[],
-					}),
-				InvalidSubordinateStatementShape,
-			);
-		});
-		test("accepts a non-standard operator name", (t) => {
-			assertMetadataPolicyCritShape({ metadata_policy_crit: ["regexp"] });
-			t.ok(true);
-		});
-	});
-
-	module("authority / assertMetadataPolicyShape", () => {
-		test("accepts payload without metadata_policy", (t) => {
-			assertMetadataPolicyShape({ iss: "x" });
-			t.ok(true);
-		});
-		test("accepts metadata_policy that is a JSON object", (t) => {
-			assertMetadataPolicyShape({ metadata_policy: { openid_provider: {} } });
-			t.ok(true);
-		});
-		test("throws when metadata_policy is an array", (t) => {
-			t.throws(
-				() => assertMetadataPolicyShape({ metadata_policy: [] }),
-				InvalidSubordinateStatementShape,
-			);
-		});
-		test("throws when metadata_policy is null", (t) => {
-			t.throws(
-				() => assertMetadataPolicyShape({ metadata_policy: null }),
-				InvalidSubordinateStatementShape,
-			);
-		});
-		test("throws when metadata_policy is a string", (t) => {
-			t.throws(
-				() => assertMetadataPolicyShape({ metadata_policy: "x" }),
-				InvalidSubordinateStatementShape,
-			);
 		});
 	});
 

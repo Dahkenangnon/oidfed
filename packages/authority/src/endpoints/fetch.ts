@@ -12,7 +12,10 @@ import {
 	signEntityStatement,
 } from "@oidfed/core";
 import type { SubordinateRecord } from "../storage/types.js";
-import { subordinatePublicationClaim } from "../utils/subordinate-publication.js";
+import {
+	assertSubordinatePublicationClaims,
+	subordinatePublicationClaim,
+} from "../utils/subordinate-publication.js";
 import type { HandlerContext } from "./context.js";
 import { errorResponse, jwtResponse, parseQueryParams, requireMethod } from "./helpers.js";
 
@@ -68,6 +71,10 @@ export async function buildSubordinateStatement(
 	record: SubordinateRecord,
 	now?: number,
 ): Promise<string> {
+	assertSubordinatePublicationClaims(
+		{ ...record, metadata: undefined },
+		{ customOperators: ctx.options?.customPolicyOperators },
+	);
 	const keySet = await ctx.keyProvider.getFederationKeySet();
 	const iat = now ?? nowSeconds(ctx.options?.clock);
 

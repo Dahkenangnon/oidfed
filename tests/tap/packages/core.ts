@@ -322,6 +322,57 @@ export default (QUnit: QUnit) => {
 			t.true((await validateTrustChain(chain, f.trustAnchors)).valid);
 			t.false(Object.hasOwn(Object.prototype, "section6Probe"));
 		});
+		test("publication validates declarations without requiring complete metadata or extension support", (t) => {
+			for (const bad of [
+				null,
+				[],
+				42,
+				{ x: { p: 42 } },
+				{ x: { p: { one_of: ["a"], subset_of: ["a"] } } },
+				{ x: { p: { essential: "yes" } } },
+			])
+				t.false(CorePublic.validateMetadataPolicy(bad).ok);
+			t.true(
+				CorePublic.validateMetadataPolicy({ x: { p: { essential: true, custom: "extension" } } })
+					.ok,
+			);
+			const badClaims: Record<string, unknown>[] = [
+				...[
+					"authority_hints",
+					"trust_anchor_hints",
+					"trust_marks",
+					"trust_mark_issuers",
+					"trust_mark_owners",
+					"aud",
+					"trust_anchor",
+				].map((name) => ({ [name]: [] })),
+				{ crit: [] },
+				{ crit: "x" },
+				{ crit: [42] },
+				{ crit: ["iss"] },
+				{ crit: ["x"] },
+				{ crit: ["x", "x"], x: true },
+				{ metadata_policy_crit: [] },
+				{ metadata_policy_crit: [42] },
+				{ metadata_policy_crit: ["x", "x"] },
+				...Object.values(PolicyOperator).map((name) => ({ metadata_policy_crit: [name] })),
+				{ metadata_policy: null },
+				{ metadata_policy: [] },
+				{ metadata_policy: "x" },
+			];
+			for (const claims of badClaims)
+				t.false(
+					CorePublic.validateSubordinateStatementPublicationClaims(claims).ok,
+					JSON.stringify(claims),
+				);
+			t.true(
+				CorePublic.validateSubordinateStatementPublicationClaims({
+					crit: ["x"],
+					x: true,
+					metadata_policy_crit: ["extension"],
+				}).ok,
+			);
+		});
 		test("custom operator definitions and every callback fail as results", async (t) => {
 			for (const patch of [
 				{ order: NaN },

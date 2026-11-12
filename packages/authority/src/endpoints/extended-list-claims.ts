@@ -18,7 +18,10 @@ import {
 	TrustMarkRefSchema,
 } from "@oidfed/core";
 import type { SubordinateRecord } from "../storage/types.js";
-import { subordinatePublicationClaim } from "../utils/subordinate-publication.js";
+import {
+	assertSubordinatePublicationClaims,
+	subordinatePublicationClaim,
+} from "../utils/subordinate-publication.js";
 import type { HandlerContext } from "./context.js";
 import { buildSubordinateStatement } from "./fetch.js";
 
@@ -98,6 +101,12 @@ export async function extractClaims(
 ): Promise<Record<string, unknown>> {
 	const out: Record<string, unknown> = {};
 	for (const claim of requestedClaims) {
+		if (!Object.hasOwn(EXTENDED_LIST_CLAIM_EXTRACTORS, claim)) continue;
+		if (claim === ExtendedListClaim.Crit || claim === ExtendedListClaim.MetadataPolicyCrit)
+			assertSubordinatePublicationClaims({
+				crit: record.crit,
+				metadataPolicyCrit: record.metadataPolicyCrit,
+			});
 		const extractor = EXTENDED_LIST_CLAIM_EXTRACTORS[claim];
 		if (!extractor) continue;
 		const value = await extractor(record, ctx, now);

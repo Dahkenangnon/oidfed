@@ -208,6 +208,7 @@ export {
 	signSubordinateStatement,
 	type ValidateEntityStatementClaimsOptions,
 	validateEntityStatementClaims,
+	validateSubordinateStatementPublicationClaims,
 } from "./statement-builders.js";
 export {
 	validateCriticalClaims,
