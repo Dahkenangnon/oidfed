@@ -4,13 +4,16 @@ import {
 	decodeEntityStatement,
 	ecCacheKey,
 	entityId,
+	err,
 	generateSigningKey,
+	InternalErrorCode,
 	type JWK,
 	JwkSigner,
 	type JwtSigner,
 	MemoryCache,
 	MemoryFederationKeyProvider,
 	MemoryReplayStore,
+	ok,
 	signEntityStatement,
 	validateTrustChain,
 } from "../../../packages/core/src/index.js";
@@ -57,6 +60,41 @@ const proof = (f: Fixture) => ({
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+
+	module("wallet / custom constraints", () => {
+		test("role discovery applies checks to supplied offline chains", async (t) => {
+			const f = await walletFederation();
+			const original = f.chains.get(f.ids.verifier)!;
+			const decoded = decodeEntityStatement(original[1]!);
+			if (!decoded.ok) throw Error("fixture");
+			const ss = await signEntityStatement(
+				{ ...decoded.value.payload, constraints: { custom: true } },
+				new JwkSigner(f.keys.anchor.privateKey),
+			);
+			const chain = [original[0]!, ss, ...original.slice(2)];
+			for (const accepted of [true, false]) {
+				let calls = 0;
+				const result = await CredentialVerifierRole.discover(f.ids.verifier, f.anchors, {
+					...f.options,
+					offline: true,
+					trustChain: chain,
+					customConstraintChecks: [
+						{
+							name: "custom",
+							check() {
+								calls++;
+								return accepted
+									? ok(undefined)
+									: err({ code: InternalErrorCode.ConstraintViolation, description: "denied" });
+							},
+						},
+					],
+				});
+				t.equal(result.ok, accepted);
+				t.true(calls > 0);
+			}
+		});
+	});
 
 	module("wallet / authorization server metadata conformance", () => {
 		test("both colocated and separate server paths reject malformed effective metadata", async (t) => {

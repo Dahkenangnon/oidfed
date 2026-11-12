@@ -1,6 +1,6 @@
 /** Branded types for compile-time safety: EntityId, DiscoveryResult, and Result/Err helpers. */
 import type { InternalErrorCode } from "./constants.js";
-import type { FederationError } from "./errors.js";
+import type { FederationError, Result } from "./errors.js";
 import type { FederationKeyProvider } from "./federation-keys.js";
 import type { DecodedFederationJwtPayload, JWKSet } from "./schemas/index.js";
 
@@ -107,6 +107,8 @@ export interface FederationOptions {
 	 * trust-chain validation.
 	 */
 	customPolicyOperators?: readonly PolicyOperatorDefinition[];
+	/** Federation-defined constraints checked against authenticated chains. Unknown names are ignored. */
+	customConstraintChecks?: readonly ConstraintCheckDefinition[];
 }
 
 export type TrustAnchorSet = ReadonlyMap<string, Readonly<{ jwks: JWKSet }>>;
@@ -196,6 +198,26 @@ export interface ValidatedTrustMarkDelegation {
 	readonly trustMarkType: string;
 	readonly issuedAt: number;
 	readonly expiresAt?: number;
+}
+
+type ConstraintReadonly<T> = T extends object
+	? { readonly [K in keyof T]: ConstraintReadonly<T[K]> }
+	: T;
+
+/** Detached, recursively frozen evidence. Position uses leaf-first chain indexing. */
+export interface ConstraintCheckContext {
+	readonly issuerId: EntityId;
+	readonly subjectId: EntityId;
+	readonly trustChainSubjectId: EntityId;
+	readonly trustAnchorId: EntityId;
+	readonly position: number;
+	readonly statements: ConstraintReadonly<readonly ParsedEntityStatement[]>;
+}
+
+/** Synchronous checks may run again when prepared validation is completed. */
+export interface ConstraintCheckDefinition {
+	readonly name: string;
+	check(value: unknown, context: ConstraintCheckContext): Result<void, FederationError>;
 }
 
 export interface PolicyOperatorDefinition {

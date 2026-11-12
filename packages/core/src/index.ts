@@ -273,6 +273,8 @@ export {
 	type CacheProvider,
 	type ChainSelectionStrategy,
 	type Clock,
+	type ConstraintCheckContext,
+	type ConstraintCheckDefinition,
 	createTrustAnchorSet,
 	type DecodedFederationJwtPayload,
 	type DiscoveryResult,

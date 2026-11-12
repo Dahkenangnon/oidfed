@@ -1,4 +1,5 @@
 import type QUnit from "qunit";
+import * as CorePublic from "../../../packages/core/src/index.js";
 import * as CoreVerify from "../../../packages/core/src/index.js";
 import {
 	type DiscoveryResult,
@@ -353,6 +354,66 @@ async function createDualAnchorRegistrationFixture(invalidPreferredProvider = fa
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("oidc / custom constraints", () => {
+		test("registration applies checks supplied through federation options", async (t) => {
+			const f = await createMockFederation();
+			const decoded = decodeEntityStatement(f.taSubStatementForOp);
+			if (!decoded.ok) throw Error("fixture");
+			const ss = await signEntityStatement(
+				{ ...decoded.value.payload, constraints: { custom: true } },
+				new JwkSigner(f.taSigningKey),
+			);
+			const httpClient: typeof f.httpClient = async (input, init) => {
+				const url = new URL(String(input));
+				return url.origin === TA_ID && url.searchParams.get("sub") === OP_ID
+					? new Response(ss, { headers: { "content-type": MediaType.EntityStatement } })
+					: f.httpClient(input, init);
+			};
+			for (const accepted of [true, false]) {
+				let calls = 0;
+				const role = new OidcRelyingPartyRole({
+					protocolKeyProvider: new StaticProtocolSigningKeyProvider({
+						requestObjectSigner: new JwkSigner(f.leafProtocolSigningKey),
+					}),
+					metadata: {
+						redirect_uris: [`${LEAF_ID}/callback`],
+						jwks: { keys: [f.leafProtocolPublicKey] },
+					},
+				});
+				role.initialize({
+					entityId: LEAF_ID,
+					authorityHints: [TA_ID],
+					trustAnchors: f.trustAnchors,
+					keyProvider: MemoryFederationKeyProvider.fromJWK(f.leafSigningKey),
+					options: {
+						...f.options,
+						httpClient,
+						customConstraintChecks: [
+							{
+								name: "custom",
+								check() {
+									calls++;
+									return accepted
+										? CorePublic.ok(undefined)
+										: CorePublic.err({
+												code: CorePublic.InternalErrorCode.ConstraintViolation,
+												description: "denied",
+											});
+								},
+							},
+						],
+					},
+				});
+				const result = await role.automaticallyRegister({
+					opEntityId: OP_ID,
+					redirect_uri: `${LEAF_ID}/callback`,
+				});
+				t.equal(result.ok, accepted);
+				t.true(calls > 0);
+			}
+		});
+	});
+
 	module("oidc / protocol metadata boundaries", () => {
 		test("role parsers distinguish effective metadata from partial publications", (t) => {
 			for (const Role of [

@@ -1,4 +1,5 @@
 /** Trust chain validation: verifies signatures, expiry, issuer-subject chaining, and metadata policy along the chain. */
+
 import { setOwn } from "../callbacks.js";
 import {
 	DEFAULT_CLOCK_SKEW_SECONDS,
@@ -8,6 +9,10 @@ import {
 	PolicyOperator,
 	SUPPORTED_ALGORITHMS,
 } from "../constants.js";
+import {
+	createCustomConstraintRunner,
+	validateCustomConstraintChecks,
+} from "../constraints/custom.js";
 import { applyAllowedEntityTypes, checkConstraints } from "../constraints/index.js";
 import { err, ok, type Result } from "../errors.js";
 import { decodeEntityStatement, verifyEntityStatement } from "../jose/verify.js";
@@ -625,6 +630,8 @@ export async function prepareTrustChainValidation(
 	options: PrepareTrustChainOptions,
 ): Promise<Result<PreparedTrustChain>> {
 	safeLogger(options?.logger)?.debug("Starting prepare trust chain validation");
+	const definitions = validateCustomConstraintChecks(options?.customConstraintChecks ?? []);
+	if (!definitions.ok) return err(definitions.error);
 
 	if (options.signal?.aborted)
 		return validationFailure([
@@ -638,6 +645,14 @@ export async function prepareTrustChainValidation(
 	const { deferredClaims, ...validationOptions } = options;
 	const savedOptions = {
 		...validationOptions,
+		...(options.customConstraintChecks
+			? {
+					customConstraintChecks: options.customConstraintChecks.map(({ name, check }) => ({
+						name,
+						check,
+					})),
+				}
+			: {}),
 		...(options.entityConfigurations
 			? { entityConfigurations: new Map(options.entityConfigurations) }
 			: {}),
@@ -1458,10 +1473,29 @@ async function validateTrustChainImpl(
 	verifyMarks: boolean,
 	stage?: MetadataStage,
 ): Promise<ValidationResult> {
+	const checks = validateCustomConstraintChecks(options?.customConstraintChecks ?? []);
+	if (!checks.ok)
+		return {
+			valid: false,
+			errors: [{ code: InternalErrorCode.ConstraintViolation, message: checks.error.description }],
+		};
+	const capturedChecks =
+		options?.customConstraintChecks?.map(({ name, check }) => ({ name, check })) ?? [];
 	const authenticated = await authenticateChainStatements(chain, trustAnchors, options);
 	if (!authenticated.valid) return authenticated;
 	if (stage) stage.entityConfigurations = authenticated.entityConfigurations;
 	const parsed = authenticated.statements;
+	const customConstraints = createCustomConstraintRunner(capturedChecks, parsed);
+	if (!customConstraints.ok)
+		return {
+			valid: false,
+			errors: [
+				{
+					code: InternalErrorCode.ConstraintViolation,
+					message: customConstraints.error.description,
+				},
+			],
+		};
 	const errors: ValidationError[] = [];
 	let failureMessage: string | undefined;
 	const leafPayload = (parsed[0] as ParsedEntityStatement).payload as Record<string, unknown>;
@@ -1501,11 +1535,12 @@ async function validateTrustChainImpl(
 			| undefined;
 
 		if (constraints) {
-			const constraintsResult = checkConstraints(
+			let constraintsResult = checkConstraints(
 				constraints as Parameters<typeof checkConstraints>[0],
 				j,
 				parsed,
 			);
+			if (constraintsResult.ok) constraintsResult = customConstraints.value(constraints, j);
 			if (!constraintsResult.ok) {
 				failureMessage ??= "Trust Chain constraints validation failed";
 				addError(

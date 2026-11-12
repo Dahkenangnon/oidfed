@@ -419,6 +419,181 @@ export default (QUnit: QUnit) => {
 			});
 			t.false((await validateTrustChain(chain, f.trustAnchors)).valid);
 		});
+		test("custom constraints receive frozen authenticated context for either chain ending", async (t) => {
+			const { f, chain } = await chainWith({
+				constraints: { allowed_trust_anchors: [TA_ID], unknown: "ignored" },
+			});
+			let calls = 0;
+			const check: CorePublic.ConstraintCheckDefinition = {
+				name: "allowed_trust_anchors",
+				check(value, context) {
+					calls++;
+					t.equal(context.issuerId, TA_ID);
+					t.equal(context.subjectId, LEAF_ID);
+					t.equal(context.trustChainSubjectId, LEAF_ID);
+					t.equal(context.trustAnchorId, TA_ID);
+					t.equal(context.position, 1);
+					t.true(Object.isFrozen(context.statements[0]?.payload));
+					t.true(Object.isFrozen(value));
+					return Array.isArray(value) && value.includes(context.trustAnchorId)
+						? ok(undefined)
+						: err({
+								code: InternalErrorCode.ConstraintViolation,
+								description: "anchor not allowed",
+							});
+				},
+			};
+			for (const candidate of [chain, chain.slice(0, -1)])
+				t.true(
+					(await validateTrustChain(candidate, f.trustAnchors, { customConstraintChecks: [check] }))
+						.valid,
+				);
+			t.equal(calls, 2);
+			t.true((await validateTrustChain(chain, f.trustAnchors)).valid);
+			const absent = await chainWith();
+			t.true(
+				(
+					await validateTrustChain(absent.chain, absent.f.trustAnchors, {
+						customConstraintChecks: [check],
+					})
+				).valid,
+			);
+			t.equal(calls, 2);
+			const invalid = [chain[0]!, chain[0]!, chain[2]!];
+			t.false(
+				(await validateTrustChain(invalid, f.trustAnchors, { customConstraintChecks: [check] }))
+					.valid,
+			);
+			t.equal(calls, 2);
+		});
+		test("custom checker failures and invalid registrations reject without escaping", async (t) => {
+			const { f, chain } = await chainWith({ constraints: { custom: { nested: true } } });
+			for (const bad of [
+				() => err({ code: InternalErrorCode.ConstraintViolation, description: "denied" }),
+				() => {
+					throw Error("bad");
+				},
+				() => undefined,
+				() => ({ ok: true }),
+				() => ({ ok: false, error: {} }),
+				() => Promise.reject(Error("async")),
+				(_v: unknown, ctx: { statements: { payload: { sub: string } }[] }) => {
+					(ctx.statements[0] as { payload: { sub: string } }).payload.sub =
+						"https://changed.example";
+					return ok(undefined);
+				},
+			]) {
+				const checked = await validateTrustChain(chain, f.trustAnchors, {
+					customConstraintChecks: [
+						{ name: "custom", check: bad } as unknown as CorePublic.ConstraintCheckDefinition,
+					],
+				});
+				t.false(checked.valid);
+			}
+			for (const checks of [
+				[{ name: "max_path_length", check: () => ok(undefined) }],
+				[{ name: "allowed_entity_types", check: () => ok(undefined) }],
+				[{ name: "naming_constraints", check: () => ok(undefined) }],
+				[
+					{ name: "x", check: () => ok(undefined) },
+					{ name: "x", check: () => ok(undefined) },
+				],
+				[{ name: "x", check: null }],
+			])
+				t.false(
+					(
+						await validateTrustChain(chain, f.trustAnchors, {
+							customConstraintChecks: checks as unknown as CorePublic.ConstraintCheckDefinition[],
+						})
+					).valid,
+				);
+			t.true((await validateTrustChain(chain, f.trustAnchors)).valid);
+			await Promise.resolve();
+		});
+		test("constraint registrations are snapshotted and rechecked at completion", async (t) => {
+			const { f, chain } = await chainWith({ constraints: { custom: true } });
+			let calls = 0;
+			const checks: CorePublic.ConstraintCheckDefinition[] = [
+				{
+					name: "custom",
+					check() {
+						calls++;
+						return ok(undefined);
+					},
+				},
+			];
+			const prepared = await CorePublic.prepareTrustChainValidation(chain, f.trustAnchors, {
+				deferredClaims: [],
+				customConstraintChecks: checks,
+			});
+			t.true(prepared.ok);
+			checks[0] = {
+				name: "custom",
+				check: () => err({ code: InternalErrorCode.ConstraintViolation, description: "changed" }),
+			};
+			if (prepared.ok) t.true((await CorePublic.completeTrustChainValidation(prepared.value)).ok);
+			t.equal(calls, 2);
+		});
+		test("every carrying subordinate statement is checked in leaf-first order", async (t) => {
+			const builder = new MockFederationBuilder();
+			await builder.addTrustAnchor(TA_ID);
+			await builder.addIntermediate(OP_ID, TA_ID, { constraints: { custom: { level: "upper" } } });
+			await builder.addLeaf(LEAF_ID, OP_ID, { metadata: { openid_relying_party: {} } });
+			const f = builder.build();
+			const leaf = f.entities.get(LEAF_ID)!;
+			const middle = f.entities.get(OP_ID)!;
+			const anchor = f.entities.get(TA_ID)!;
+			const decoded = decodeEntityStatement(leaf.ssJwt!);
+			if (!decoded.ok) throw Error("fixture");
+			const lower = await signEntityStatement(
+				{ ...decoded.value.payload, constraints: { custom: { level: "lower" } } },
+				new JwkSigner(middle.privateKey),
+				{ typ: JwtTyp.EntityStatement },
+			);
+			const chain = [leaf.ecJwt, lower, middle.ssJwt!, anchor.ecJwt];
+			const seen: unknown[] = [];
+			const checks: CorePublic.ConstraintCheckDefinition[] = [
+				{
+					name: "custom",
+					check(value, context) {
+						seen.push([value, context.position, context.issuerId, context.subjectId]);
+						return ok(undefined);
+					},
+				},
+			];
+			t.true(
+				(
+					await validateTrustChain(chain, f.trustAnchors, {
+						httpClient: f.httpClient,
+						customConstraintChecks: checks,
+					})
+				).valid,
+			);
+			t.deepEqual(seen, [
+				[{ level: "lower" }, 1, OP_ID, LEAF_ID],
+				[{ level: "upper" }, 2, TA_ID, OP_ID],
+			]);
+		});
+
+		test("standalone constraint checks preserve unknown names and support registered names", (t) => {
+			const chain = [
+				{ payload: { iss: LEAF_ID, sub: LEAF_ID } },
+				{ payload: { iss: TA_ID, sub: LEAF_ID } },
+			] as unknown as ParsedEntityStatement[];
+			for (const name of ["__proto__", "constructor", "toString", "custom"]) {
+				const constraints = { [name]: true };
+				t.true(checkConstraints(constraints, 1, chain).ok);
+				t.false(
+					checkConstraints(constraints, 1, chain, [
+						{
+							name,
+							check: () =>
+								err({ code: InternalErrorCode.ConstraintViolation, description: "denied" }),
+						},
+					]).ok,
+				);
+			}
+		});
 	});
 
 	module("core / shared authorization server metadata", () => {

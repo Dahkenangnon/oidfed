@@ -5,7 +5,9 @@ import {
 	type EntityId,
 	type EntityStatementMetadata,
 	entityId,
+	err,
 	generateSigningKey,
+	InternalErrorCode,
 	isErr,
 	isOk,
 	type JWK,
@@ -13,6 +15,8 @@ import {
 	JwtTyp,
 	MediaType,
 	MemoryFederationKeyProvider,
+	ok,
+	signEntityStatement,
 	stripPrivateFields,
 	verifyEntityStatement,
 	WELL_KNOWN_OPENID_FEDERATION,
@@ -72,6 +76,45 @@ function mockFn<A extends unknown[]>() {
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+
+	module("leaf / custom constraints", () => {
+		test("discovery applies host-supplied constraint checks", async (t) => {
+			const f = await createMockFederation();
+			const decoded = decodeEntityStatement(f.taSubStatementForOp);
+			if (!decoded.ok) throw Error("fixture");
+			const ss = await signEntityStatement(
+				{ ...decoded.value.payload, constraints: { custom: true } },
+				new JwkSigner(f.taSigningKey),
+				{ typ: JwtTyp.EntityStatement },
+			);
+			const httpClient: typeof f.httpClient = async (input, init) => {
+				const url = new URL(String(input));
+				return url.origin === TA_ID && url.searchParams.get("sub") === OP_ID
+					? new Response(ss, { headers: { "content-type": MediaType.EntityStatement } })
+					: f.httpClient(input, init);
+			};
+			for (const accepted of [true, false]) {
+				let calls = 0;
+				const result = await Leaf.discoverEntity(OP_ID, f.trustAnchors, {
+					...f.options,
+					httpClient,
+					customConstraintChecks: [
+						{
+							name: "custom",
+							check() {
+								calls++;
+								return accepted
+									? ok(undefined)
+									: err({ code: InternalErrorCode.ConstraintViolation, description: "denied" });
+							},
+						},
+					],
+				});
+				t.equal(result.ok, accepted);
+				t.true(calls > 0);
+			}
+		});
+	});
 
 	module("leaf / collection recommendation", () => {
 		test("the Resolve recommendation follows successful composed publication and appears once", async (t) => {

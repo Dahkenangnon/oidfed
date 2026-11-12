@@ -1,7 +1,8 @@
 import { InternalErrorCode } from "../constants.js";
 import { err, type FederationError, ok, type Result } from "../errors.js";
 import { isDomainConstraint, type TrustChainConstraints } from "../schemas/constraints.js";
-import type { EntityId, ParsedEntityStatement } from "../types.js";
+import type { ConstraintCheckDefinition, EntityId, ParsedEntityStatement } from "../types.js";
+import { createCustomConstraintRunner } from "./custom.js";
 
 /**
  * Check whether the chain path length satisfies max_path_length.
@@ -93,6 +94,7 @@ export function checkConstraints(
 	constraints: TrustChainConstraints,
 	position: number,
 	chain: ParsedEntityStatement[],
+	customChecks?: readonly ConstraintCheckDefinition[],
 ): Result<void, FederationError> {
 	if (constraints.max_path_length !== undefined) {
 		if (!checkMaxPathLength(constraints.max_path_length, position, chain.length)) {
@@ -116,5 +118,10 @@ export function checkConstraints(
 		}
 	}
 
+	if (customChecks) {
+		const runner = createCustomConstraintRunner(customChecks, chain);
+		if (!runner.ok) return runner;
+		return runner.value(constraints, position);
+	}
 	return ok(undefined);
 }
