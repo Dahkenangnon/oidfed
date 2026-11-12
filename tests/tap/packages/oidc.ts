@@ -173,6 +173,7 @@ async function createDualAnchorRegistrationFixture() {
 	const taMetadata = (ta: EntityId) => ({
 		federation_entity: {
 			federation_fetch_endpoint: `${ta}/federation_fetch`,
+			federation_list_endpoint: `${ta}/federation_fetch`,
 		},
 	});
 	const opMetadata = {
@@ -330,6 +331,7 @@ async function createDualAnchorRegistrationFixture() {
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+
 	test("publication types allow superior completion without relaxing effective schemas", (t) => {
 		const publication: OidcPublic.OIDCFederationPublicationMetadata = {
 			openid_provider: {},
@@ -4407,7 +4409,12 @@ export default (QUnit: QUnit) => {
 					iss: b,
 					sub: b,
 					jwks: { keys: [bKeys.publicKey] },
-					metadata: { federation_entity: { federation_fetch_endpoint: `${b}/federation_fetch` } },
+					metadata: {
+						federation_entity: {
+							federation_fetch_endpoint: `${b}/federation_fetch`,
+							federation_list_endpoint: `${b}/federation_fetch`,
+						},
+					},
 				},
 				bKeys.privateKey,
 			);
@@ -4418,7 +4425,10 @@ export default (QUnit: QUnit) => {
 					jwks: { keys: [middleKeys.publicKey] },
 					authority_hints: [b],
 					metadata: {
-						federation_entity: { federation_fetch_endpoint: `${middle}/federation_fetch` },
+						federation_entity: {
+							federation_fetch_endpoint: `${middle}/federation_fetch`,
+							federation_list_endpoint: `${middle}/federation_fetch`,
+						},
 					},
 				},
 				middleKeys.privateKey,
@@ -7358,6 +7368,7 @@ export default (QUnit: QUnit) => {
 			t.false(attemptedUrls.some((url) => url === `${OP_ID}/request`));
 		});
 	});
+
 	module("oidc / role operation context", () => {
 		test("rejects policy-rebound OP issuers before Request Object signing or registration POSTs", async (t) => {
 			const fed = await createMockFederation();
@@ -8014,10 +8025,10 @@ export default (QUnit: QUnit) => {
 				httpClient,
 				maxConcurrentFetches: 1,
 			});
-			t.equal(
-				ordered.chains[0]?.trustAnchorId,
-				TA_ID,
-				"the first candidate attests only the previous key",
+			t.deepEqual(
+				new Set(ordered.chains.map((chain) => chain.trustAnchorId)),
+				new Set([TA_ID, ta2]),
+				"both candidates are available regardless of concurrent completion order",
 			);
 			const handler = createExplicitRegistrationHandler({
 				...fx.config,
@@ -8028,6 +8039,24 @@ export default (QUnit: QUnit) => {
 				{ authority_hints: [TA_ID, ta2], jwks: { keys: [nextKey.publicKey] } },
 				nextKey.privateKey,
 			);
+			const oldAnchorOnly = createExplicitRegistrationHandler({
+				...fx.config,
+				trustAnchors: fx.fed.trustAnchors,
+				options: { httpClient, maxConcurrentFetches: 1 },
+			});
+			const rejectedOldPath = await oldAnchorOnly(
+				new Request(`${OP_ID}/federation_registration`, {
+					method: "POST",
+					headers: { "Content-Type": MediaType.EntityStatement },
+					body: jwt,
+				}),
+			);
+			t.notEqual(
+				rejectedOldPath.status,
+				200,
+				"the previous-key-only path cannot authenticate the current request",
+			);
+
 			const res = await handler(
 				new Request(`${OP_ID}/federation_registration`, {
 					method: "POST",

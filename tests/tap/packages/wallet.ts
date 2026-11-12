@@ -3856,7 +3856,12 @@ export default (QUnit: QUnit) => {
 					iat: 1000,
 					exp: 5000,
 					jwks: { keys: [keyB.publicKey] },
-					metadata: { federation_entity: { federation_fetch_endpoint: `${anchorB}/fetch` } },
+					metadata: {
+						federation_entity: {
+							federation_fetch_endpoint: `${anchorB}/fetch`,
+							federation_list_endpoint: `${anchorB}/list`,
+						},
+					},
 				},
 				new JwkSigner(keyB.privateKey),
 			);

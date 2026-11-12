@@ -18,7 +18,7 @@ Later fragments reuse `ta`, `storage`, and `keyProvider` from the first example.
 ### Creating a Trust Anchor or Intermediate
 
 This development example creates two authorities. Enrollment and HTTP serving are separate steps; see the [wiring guide](../guide/wiring-guide.md).
-A Trust Anchor has no superior authorities. An Intermediate lists at least one superior in `authorityHints`. Both must advertise federation fetch and list endpoints.
+A Trust Anchor has no superior authorities. An Intermediate lists at least one superior in `authorityHints`. Both must advertise federation fetch and list endpoints. Construction rejects missing required endpoints. Core trust validation also rejects checked Entity Configurations missing those endpoints when the entity is known to be an authority. These validation checks apply whether or not a logger is supplied.
 
 ```ts
 import { TrustAnchor, Intermediate, MemoryStorageAdapter } from "@oidfed/authority";

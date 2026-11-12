@@ -25,8 +25,22 @@ export async function trustChainPaths(
 	};
 	if (sharedIntermediateKey) keys.b = keys.a;
 	type Name = keyof typeof ids;
-	const sign = (issuer: Name, subject: Name, claims: Record<string, unknown> = {}) =>
-		signEntityStatement(
+	const sign = (issuer: Name, subject: Name, claims: Record<string, unknown> = {}) => {
+		const supplied = claims.metadata as Record<string, Record<string, unknown>> | undefined;
+		const authorityMetadata =
+			issuer === subject && subject !== "subject"
+				? {
+						metadata: {
+							...supplied,
+							federation_entity: {
+								federation_fetch_endpoint: `${ids[subject]}/fetch`,
+								federation_list_endpoint: `${ids[subject]}/list`,
+								...supplied?.federation_entity,
+							},
+						},
+					}
+				: {};
+		return signEntityStatement(
 			{
 				iss: ids[issuer],
 				sub: ids[subject],
@@ -34,9 +48,11 @@ export async function trustChainPaths(
 				exp: 5000,
 				jwks: { keys: [keys[subject].publicKey] },
 				...claims,
+				...authorityMetadata,
 			},
 			new JwkSigner(keys[issuer].privateKey),
 		);
+	};
 	const entityConfigurations = new Map<string, string>();
 	const chain = async (
 		path: readonly [Name, ...Name[]],

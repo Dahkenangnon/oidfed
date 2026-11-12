@@ -41,13 +41,16 @@ export class MockFederationBuilder {
 		if (options?.metadata) payload.metadata = options.metadata;
 		if (options?.trustMarkIssuers) payload.trust_mark_issuers = options.trustMarkIssuers;
 
-		// Add default federation_entity metadata with fetch endpoint
+		// Add required authority endpoint metadata
 		if (!payload.metadata) {
 			payload.metadata = {};
 		}
 		const md = payload.metadata as Record<string, Record<string, unknown>>;
 		if (!md.federation_entity) {
 			md.federation_entity = {};
+		}
+		if (!md.federation_entity.federation_list_endpoint) {
+			md.federation_entity.federation_list_endpoint = `${entityId}/federation_list`;
 		}
 		if (!md.federation_entity.federation_fetch_endpoint) {
 			md.federation_entity.federation_fetch_endpoint = `${entityId}/federation_fetch`;
@@ -95,6 +98,7 @@ export class MockFederationBuilder {
 			metadata: {
 				federation_entity: {
 					federation_fetch_endpoint: `${entityId}/federation_fetch`,
+					federation_list_endpoint: `${entityId}/federation_fetch`,
 				},
 				...(options?.metadata ?? {}),
 			},

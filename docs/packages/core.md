@@ -64,6 +64,8 @@ The specification determines which requirements apply; oidfed chooses these log 
 
 Logging cannot check application duties such as obtaining consent or scheduling trust refreshes. See [operator and application responsibilities](../guide/operator-responsibilities.md).
 
+Core validation rejects a known Intermediate Entity or Trust Anchor whose checked Entity Configuration lacks `federation_fetch_endpoint` or `federation_list_endpoint`, following Federation §5.1.1. This is validation behavior even when no logger is supplied. Endpoint checks use the Entity Configurations available for validation; they do not require a trailing Trust Anchor Entity Configuration in a chain that otherwise permits its omission. Repeated paths to the same invalid authority produce one endpoint warning per resolution operation while retaining their individual errors. A later operation can report the problem again.
+
 ### Entity Identifiers (`EntityId`)
 
 Validates that strings conform to OpenID Federation rules: must be valid URLs using the `https` scheme, without credentials, fragment, or query components, and at most 2048 characters. Per Section 3.1.2 of the OpenID Federation 1.0 specification, the `authority_hints` list of immediate superiors must not be empty `[]` and must not be present in the configurations of Trust Anchors with no superiors.

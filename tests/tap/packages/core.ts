@@ -326,6 +326,7 @@ export default (QUnit: QUnit) => {
 					}
 		});
 	});
+
 	module("core / injected logging and key retrieval", () => {
 		test("sync, async and thenable sinks cannot escape logger protection", async (t) => {
 			for (const behavior of [
@@ -410,6 +411,83 @@ export default (QUnit: QUnit) => {
 				await new Promise((resolve) => setTimeout(resolve, 0));
 			}
 		});
+		test("a shared invalid authority warns once per resolution and retains every path error", async (t) => {
+			const f = await trustChainPaths();
+			const subject = await f.sign("subject", "subject", { authority_hints: [f.ids.a, f.ids.b] });
+			const a = await f.sign("a", "a", { authority_hints: [f.ids.anchor] });
+			const b = await f.sign("b", "b", { authority_hints: [f.ids.anchor] });
+			const anchor = await f.sign("anchor", "anchor", {
+				metadata: { federation_entity: { federation_list_endpoint: undefined } },
+			});
+			const documents = new Map([
+				[`${f.ids.subject}/.well-known/openid-federation`, subject],
+				[`${f.ids.a}/.well-known/openid-federation`, a],
+				[`${f.ids.b}/.well-known/openid-federation`, b],
+				[`${f.ids.anchor}/.well-known/openid-federation`, anchor],
+				[`${f.ids.a}/fetch?sub=${encodeURIComponent(f.ids.subject)}`, await f.sign("a", "subject")],
+				[`${f.ids.b}/fetch?sub=${encodeURIComponent(f.ids.subject)}`, await f.sign("b", "subject")],
+			]);
+			const warnings: unknown[][] = [];
+			const options = {
+				...f.options,
+				logger: {
+					debug() {},
+					info() {},
+					error() {},
+					warn: (...args: unknown[]) => {
+						warnings.push(args);
+					},
+				},
+				httpClient: async (input: string | URL | Request) =>
+					new Response(documents.get(String(input)) ?? "Not found", {
+						status: documents.has(String(input)) ? 200 : 404,
+						headers: { "content-type": MediaType.EntityStatement },
+					}),
+			};
+			for (let run = 0; run < 2; run++) {
+				warnings.length = 0;
+				const resolved = await resolveTrustChains(f.ids.subject, f.anchors, options);
+				t.equal(resolved.chains.length, 0);
+				t.equal(
+					resolved.errors.filter((error) =>
+						error.description.includes("MUST publish federation_list_endpoint"),
+					).length,
+					2,
+					"both candidate paths retain rejection errors",
+				);
+				t.deepEqual(
+					warnings.filter(
+						(args) =>
+							args[0] === "Trust Anchors and Intermediates MUST publish fetch and list endpoints",
+					),
+					[["Trust Anchors and Intermediates MUST publish fetch and list endpoints"]],
+				);
+				t.true(warnings.every((args) => args.length === 1));
+			}
+			const directSubject = await f.sign("subject", "subject", { authority_hints: [f.ids.anchor] });
+			for (let run = 0; run < 2; run++) {
+				warnings.length = 0;
+				const result = await validateTrustChain(
+					[directSubject, await f.sign("anchor", "subject"), anchor],
+					f.anchors,
+					{ ...f.options, logger: options.logger },
+				);
+				t.false(result.valid);
+				t.equal(
+					result.errors.filter(
+						(error) => error.field === "metadata.federation_entity.federation_list_endpoint",
+					).length,
+					1,
+				);
+				t.equal(
+					warnings.filter(
+						(args) =>
+							args[0] === "Trust Anchors and Intermediates MUST publish fetch and list endpoints",
+					).length,
+					1,
+				);
+			}
+		});
 		test("warnings identify the failed constraints or metadata stage", async (t) => {
 			const f = await createMockFederation();
 			const original = decodeEntityStatement(f.taSubStatementForOp);
@@ -490,6 +568,7 @@ export default (QUnit: QUnit) => {
 						);
 				}
 		});
+
 		test("logging uses messages only and cannot change operation results", async (t) => {
 			const messages: unknown[][] = [];
 			const logger: CorePublic.Logger = {
@@ -527,7 +606,92 @@ export default (QUnit: QUnit) => {
 				(await validateTrustChain(["malformed"], f.trustAnchors, { logger: throwing })).valid,
 			);
 		});
+
+		test("known authorities require both endpoints without requiring an anchor EC", async (t) => {
+			const f = await createMockFederation();
+			const decoded = decodeEntityStatement(f.taEcJwt);
+			if (!decoded.ok) throw new Error("fixture");
+			for (const missing of [
+				["federation_fetch_endpoint"],
+				["federation_list_endpoint"],
+				["federation_fetch_endpoint", "federation_list_endpoint"],
+			]) {
+				const metadata = structuredClone(decoded.value.payload.metadata!);
+				for (const field of missing) delete metadata.federation_entity![field];
+				const jwt = await signEntityStatement(
+					{ ...decoded.value.payload, metadata },
+					new JwkSigner(f.taSigningKey),
+				);
+				for (const chain of [[jwt], [f.opEcJwt, f.taSubStatementForOp, jwt]]) {
+					for (const validate of [validateTrustChain, validateTrustChainStructure]) {
+						const result = await validate(chain, f.trustAnchors, {
+							...f.options,
+							verboseErrors: true,
+						});
+						t.false(result.valid);
+						for (const field of missing)
+							t.true(
+								result.errors.some(
+									(error) => error.field === `metadata.federation_entity.${field}`,
+								),
+							);
+					}
+					t.false(
+						(
+							await CorePublic.prepareTrustChainValidation(chain, f.trustAnchors, {
+								...f.options,
+								deferredClaims: [],
+							})
+						).ok,
+					);
+				}
+				const warnings: unknown[][] = [];
+				const resolved = await resolveTrustChains(OP_ID, f.trustAnchors, {
+					...f.options,
+					logger: {
+						debug() {},
+						info() {},
+						error() {},
+						warn: (...args) => {
+							warnings.push(args);
+						},
+					},
+					httpClient: async (input, init) =>
+						String(input).startsWith(TA_ID) && String(input).includes(".well-known")
+							? new Response(jwt, { headers: { "content-type": MediaType.EntityStatement } })
+							: f.httpClient(input, init),
+				});
+				t.equal(resolved.chains.length, 0);
+				t.true(warnings.some((args) => String(args[0]).includes("MUST publish")));
+				t.true(warnings.every((args) => args.length === 1));
+			}
+			t.true(
+				(await validateTrustChain([f.opEcJwt, f.taSubStatementForOp], f.trustAnchors, f.options))
+					.valid,
+			);
+			const paths = await trustChainPaths();
+			const chain = await paths.chain(["subject", "a", "anchor"]);
+			const middle = decodeEntityStatement(paths.options.entityConfigurations.get(paths.ids.a)!);
+			if (!middle.ok) throw new Error("fixture");
+			const metadata = structuredClone(middle.value.payload.metadata!);
+			delete metadata.federation_entity!.federation_list_endpoint;
+			paths.options.entityConfigurations.set(
+				paths.ids.a,
+				await signEntityStatement(
+					{ ...middle.value.payload, metadata },
+					new JwkSigner(paths.keys.a.privateKey),
+				),
+			);
+			const result = await validateTrustChain(chain, paths.anchors, paths.options);
+			t.false(result.valid);
+			t.true(
+				result.errors.some(
+					(error) => error.field === "metadata.federation_entity.federation_list_endpoint",
+				),
+			);
+		});
 	});
+
 	test("replay records have bounded keys and claim identifiers atomically", async (t) => {
 		const { MemoryReplayStore } = await import("../../../packages/core/src/index.js");
 		let time = 100;
@@ -807,7 +971,15 @@ export default (QUnit: QUnit) => {
 				if (i < ids.length - 1)
 					entityConfigurations.set(
 						ids[i]!,
-						await sign(ids[i]!, ids[i]!, { authority_hints: [ids[i + 1]] }),
+						await sign(ids[i]!, ids[i]!, {
+							authority_hints: [ids[i + 1]],
+							metadata: {
+								federation_entity: {
+									federation_fetch_endpoint: `${ids[i]}/fetch`,
+									federation_list_endpoint: `${ids[i]}/list`,
+								},
+							},
+						}),
 					);
 			}
 			statements.push(
@@ -12152,7 +12324,10 @@ export default (QUnit: QUnit) => {
 					taKeys.publicKey,
 					{
 						metadata: {
-							federation_entity: { federation_fetch_endpoint: "https://ta.example.com/fetch" },
+							federation_entity: {
+								federation_fetch_endpoint: "https://ta.example.com/fetch",
+								federation_list_endpoint: "https://ta.example.com/fetch",
+							},
 						},
 					},
 				);
@@ -12220,7 +12395,10 @@ export default (QUnit: QUnit) => {
 					taKeys.publicKey,
 					{
 						metadata: {
-							federation_entity: { federation_fetch_endpoint: "https://ta.example.com/fetch" },
+							federation_entity: {
+								federation_fetch_endpoint: "https://ta.example.com/fetch",
+								federation_list_endpoint: "https://ta.example.com/fetch",
+							},
 						},
 					},
 				);
@@ -12363,10 +12541,20 @@ export default (QUnit: QUnit) => {
 				const anchorEc = await rs_signEC(anchor, anchorKeys.privateKey, {
 					authority_hints: [superior],
 					trust_anchor_hints: [superior],
-					metadata: { federation_entity: { federation_fetch_endpoint: `${anchor}/fetch` } },
+					metadata: {
+						federation_entity: {
+							federation_fetch_endpoint: `${anchor}/fetch`,
+							federation_list_endpoint: `${anchor}/fetch`,
+						},
+					},
 				});
 				const superiorEc = await rs_signEC(superior, superiorKeys.privateKey, {
-					metadata: { federation_entity: { federation_fetch_endpoint: `${superior}/fetch` } },
+					metadata: {
+						federation_entity: {
+							federation_fetch_endpoint: `${superior}/fetch`,
+							federation_list_endpoint: `${superior}/fetch`,
+						},
+					},
 				});
 				const leafEc = await rs_signEC(leaf, leafKeys.privateKey, { authority_hints: [anchor] });
 				const anchorSs = await rs_signSS(superior, anchor, superiorKeys.privateKey, {
@@ -12478,6 +12666,7 @@ export default (QUnit: QUnit) => {
 					metadata: {
 						federation_entity: {
 							federation_fetch_endpoint: "https://ta.example.com/federation_fetch",
+							federation_list_endpoint: "https://ta.example.com/federation_fetch",
 						},
 					},
 				});
@@ -12527,6 +12716,7 @@ export default (QUnit: QUnit) => {
 					metadata: {
 						federation_entity: {
 							federation_fetch_endpoint: "https://ta.example.com/federation_fetch",
+							federation_list_endpoint: "https://ta.example.com/federation_fetch",
 						},
 					},
 				});
@@ -12536,6 +12726,7 @@ export default (QUnit: QUnit) => {
 					metadata: {
 						federation_entity: {
 							federation_fetch_endpoint: "https://int1.example.com/federation_fetch",
+							federation_list_endpoint: "https://int1.example.com/federation_fetch",
 						},
 					},
 				});
@@ -12545,6 +12736,7 @@ export default (QUnit: QUnit) => {
 					metadata: {
 						federation_entity: {
 							federation_fetch_endpoint: "https://int2.example.com/federation_fetch",
+							federation_list_endpoint: "https://int2.example.com/federation_fetch",
 						},
 					},
 				});
@@ -12614,6 +12806,7 @@ export default (QUnit: QUnit) => {
 					metadata: {
 						federation_entity: {
 							federation_fetch_endpoint: "https://a.example.com/federation_fetch",
+							federation_list_endpoint: "https://a.example.com/federation_fetch",
 						},
 					},
 				});
@@ -12623,6 +12816,7 @@ export default (QUnit: QUnit) => {
 					metadata: {
 						federation_entity: {
 							federation_fetch_endpoint: "https://b.example.com/federation_fetch",
+							federation_list_endpoint: "https://b.example.com/federation_fetch",
 						},
 					},
 				});
@@ -12668,6 +12862,7 @@ export default (QUnit: QUnit) => {
 					metadata: {
 						federation_entity: {
 							federation_fetch_endpoint: "https://ta.example.com/federation_fetch",
+							federation_list_endpoint: "https://ta.example.com/federation_fetch",
 						},
 					},
 				});
@@ -12712,6 +12907,7 @@ export default (QUnit: QUnit) => {
 					metadata: {
 						federation_entity: {
 							federation_fetch_endpoint: "https://ta.example.com/federation_fetch",
+							federation_list_endpoint: "https://ta.example.com/federation_fetch",
 						},
 					},
 				});
@@ -12867,6 +13063,7 @@ export default (QUnit: QUnit) => {
 					metadata: {
 						federation_entity: {
 							federation_fetch_endpoint: "https://ta.example.com/federation_fetch",
+							federation_list_endpoint: "https://ta.example.com/federation_fetch",
 						},
 					},
 				});
@@ -12876,6 +13073,7 @@ export default (QUnit: QUnit) => {
 					metadata: {
 						federation_entity: {
 							federation_fetch_endpoint: "https://int.example.com/federation_fetch",
+							federation_list_endpoint: "https://int.example.com/federation_fetch",
 						},
 					},
 				});
@@ -12930,6 +13128,7 @@ export default (QUnit: QUnit) => {
 					metadata: {
 						federation_entity: {
 							federation_fetch_endpoint: "https://ta.example.com/federation_fetch",
+							federation_list_endpoint: "https://ta.example.com/federation_fetch",
 						},
 					},
 				});
@@ -12939,6 +13138,7 @@ export default (QUnit: QUnit) => {
 					metadata: {
 						federation_entity: {
 							federation_fetch_endpoint: "https://int.example.com/federation_fetch",
+							federation_list_endpoint: "https://int.example.com/federation_fetch",
 						},
 					},
 				});
@@ -12948,6 +13148,7 @@ export default (QUnit: QUnit) => {
 					metadata: {
 						federation_entity: {
 							federation_fetch_endpoint: "https://loop.example.com/federation_fetch",
+							federation_list_endpoint: "https://loop.example.com/federation_fetch",
 						},
 					},
 				});
@@ -13012,6 +13213,7 @@ export default (QUnit: QUnit) => {
 					metadata: {
 						federation_entity: {
 							federation_fetch_endpoint: "https://ta.example.com/federation_fetch",
+							federation_list_endpoint: "https://ta.example.com/federation_fetch",
 						},
 					},
 				});
@@ -13021,6 +13223,7 @@ export default (QUnit: QUnit) => {
 					metadata: {
 						federation_entity: {
 							federation_fetch_endpoint: "https://int.example.com/federation_fetch",
+							federation_list_endpoint: "https://int.example.com/federation_fetch",
 						},
 					},
 				});
@@ -13032,6 +13235,7 @@ export default (QUnit: QUnit) => {
 						metadata: {
 							federation_entity: {
 								federation_fetch_endpoint: "https://untrusted.example.com/federation_fetch",
+								federation_list_endpoint: "https://untrusted.example.com/federation_fetch",
 							},
 						},
 					},
@@ -13098,6 +13302,7 @@ export default (QUnit: QUnit) => {
 					metadata: {
 						federation_entity: {
 							federation_fetch_endpoint: "https://ta.example.com/federation_fetch",
+							federation_list_endpoint: "https://ta.example.com/federation_fetch",
 						},
 					},
 				});
@@ -13149,6 +13354,7 @@ export default (QUnit: QUnit) => {
 					metadata: {
 						federation_entity: {
 							federation_fetch_endpoint: "https://ta.example.com/federation_fetch",
+							federation_list_endpoint: "https://ta.example.com/federation_fetch",
 						},
 					},
 				});
@@ -13202,6 +13408,7 @@ export default (QUnit: QUnit) => {
 					metadata: {
 						federation_entity: {
 							federation_fetch_endpoint: "https://ta.example.com/federation_fetch",
+							federation_list_endpoint: "https://ta.example.com/federation_fetch",
 						},
 					},
 				});
@@ -13968,6 +14175,12 @@ export default (QUnit: QUnit) => {
 					iat: vt_now,
 					exp: vt_now + 3600,
 					jwks: { keys: [publicKey] },
+					metadata: {
+						federation_entity: {
+							federation_fetch_endpoint: `${eid}/fetch`,
+							federation_list_endpoint: `${eid}/list`,
+						},
+					},
 					...overrides,
 				},
 				new JwkSigner(privateKey),
@@ -14120,6 +14333,12 @@ export default (QUnit: QUnit) => {
 							id(i),
 							await vt_signEC(id(i), key(i).privateKey, key(i).publicKey, {
 								authority_hints: [id(i + 1)],
+								metadata: {
+									federation_entity: {
+										federation_fetch_endpoint: `${id(i)}/fetch`,
+										federation_list_endpoint: `${id(i)}/list`,
+									},
+								},
 							}),
 						);
 					const chain = [
@@ -20299,7 +20518,10 @@ export default (QUnit: QUnit) => {
 														`https://issuer-${graphId}-${Number(depth) + 1}-${Number(index) * 5 + i}.example`,
 												),
 												metadata: {
-													federation_entity: { federation_fetch_endpoint: `${identity}/fetch` },
+													federation_entity: {
+														federation_fetch_endpoint: `${identity}/fetch`,
+														federation_list_endpoint: `${identity}/fetch`,
+													},
 												},
 											}),
 								},
@@ -21300,7 +21522,12 @@ export default (QUnit: QUnit) => {
 			const payload = CorePublic.buildEntityConfigurationPayload({
 				entityId: TA_ID,
 				jwks: { keys: [fed.taPublicKey] },
-				metadata: { federation_entity: {} },
+				metadata: {
+					federation_entity: {
+						federation_fetch_endpoint: `${TA_ID}/fetch`,
+						federation_list_endpoint: `${TA_ID}/list`,
+					},
+				},
 				trustMarkIssuers: issuers,
 			});
 			const registry = payload.trust_mark_issuers as Record<string, string[]>;

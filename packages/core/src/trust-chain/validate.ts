@@ -38,6 +38,7 @@ import {
 	type ValidationError,
 	type ValidationResult,
 } from "../types.js";
+import { authorityMetadataErrors } from "./authority-metadata.js";
 import { fetchEntityConfiguration } from "./fetch.js";
 
 const defaultClock: Clock = {
@@ -819,6 +820,17 @@ async function authenticateChainStatements(
 		};
 	const errors: ValidationError[] = [];
 	const configurationJwts = new Map(options?.entityConfigurations);
+	const reportedAuthorities = new Set<string>();
+	function checkAuthorityMetadata(statement: ParsedEntityStatement, statementIndex: number): void {
+		const authorityErrors = authorityMetadataErrors(statement);
+		if (authorityErrors.length && !reportedAuthorities.has(statement.payload.sub)) {
+			reportedAuthorities.add(statement.payload.sub);
+			safeLogger(options?.logger)?.warn(
+				"Trust Anchors and Intermediates MUST publish fetch and list endpoints",
+			);
+		}
+		for (const error of authorityErrors) errors.push({ ...error, statementIndex });
+	}
 	const clockSkew = options?.clockSkewSeconds ?? DEFAULT_CLOCK_SKEW_SECONDS;
 	const verifyOptions = {
 		clockSkewSeconds: clockSkew,
@@ -1278,6 +1290,9 @@ async function authenticateChainStatements(
 	// Federation §4.1 permits a configured anchor to have superiors. Its signed
 	// authority_hints declare those relationships; configured trust ends this chain.
 	if (hasTrailingTrustAnchorEc && trustAnchors.has(lastIss as EntityId)) {
+		if (errors.length === 0) {
+			checkAuthorityMetadata(last, lastIdx);
+		}
 		const hasSuperiors =
 			Array.isArray(lastPayload.authority_hints) && lastPayload.authority_hints.length > 0;
 		// Section 3.1.2 forbids trust_anchor_hints on anchors with no superiors.
@@ -1400,6 +1415,7 @@ async function authenticateChainStatements(
 					break;
 				}
 				expiresAt = Math.min(expiresAt, subject.payload.exp);
+				checkAuthorityMetadata(subject, j);
 			}
 			const subjectHints = subject.payload.authority_hints;
 			if (!subjectHints?.includes(ss.iss)) {

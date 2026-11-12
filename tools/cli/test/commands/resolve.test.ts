@@ -53,6 +53,7 @@ describe("resolve handler", () => {
 				metadata: {
 					federation_entity: {
 						federation_fetch_endpoint: "https://ta.example.com/federation/fetch",
+						federation_list_endpoint: "https://ta.example.com/federation/list",
 					},
 				},
 			},

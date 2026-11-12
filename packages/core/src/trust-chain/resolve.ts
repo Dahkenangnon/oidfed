@@ -17,6 +17,7 @@ import type {
 	TrustChain,
 	TrustChainResult,
 } from "../types.js";
+import { authorityMetadataErrors } from "./authority-metadata.js";
 import { fetchEntityConfiguration, fetchSubordinateStatement } from "./fetch.js";
 import { calculateChainExpiration, validateEntityConfigurationPublication } from "./validate.js";
 
@@ -110,6 +111,7 @@ export async function resolveTrustChains(
 
 	const chains: TrustChain[] = [];
 	const errors: FederationError[] = [];
+	const reportedAuthorities = new Set<string>();
 	let incomplete = false;
 
 	// Share statement retrievals within this resolution (Federation §10.1).
@@ -344,6 +346,22 @@ export async function resolveTrustChains(
 				}
 
 				const hintPayload = hintEcResult.value.statement.payload;
+				const authorityErrors = authorityMetadataErrors(hintEcResult.value.statement);
+				if (authorityErrors.length) {
+					if (!reportedAuthorities.has(hint)) {
+						reportedAuthorities.add(hint);
+						safeLogger(options?.logger)?.warn(
+							"Trust Anchors and Intermediates MUST publish fetch and list endpoints",
+						);
+					}
+					errors.push(
+						federationError(
+							InternalErrorCode.TrustChainInvalid,
+							authorityErrors.map((error) => error.message).join("; "),
+						),
+					);
+					return;
+				}
 				const hintHints = hintPayload.authority_hints;
 				if (!trustAnchors.has(hint as EntityId) && (!hintHints || hintHints.length === 0)) {
 					errors.push(

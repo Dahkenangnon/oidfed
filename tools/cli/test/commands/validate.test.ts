@@ -132,6 +132,12 @@ describe("validate handler", () => {
 				iat: now,
 				exp: now + 3600,
 				jwks: { keys: [key.publicKey] },
+				metadata: {
+					federation_entity: {
+						federation_fetch_endpoint: `${id}/fetch`,
+						federation_list_endpoint: `${id}/list`,
+					},
+				},
 				trust_mark_issuers: { [type]: [id] },
 				trust_marks: [{ trust_mark_type: type, trust_mark: mark }],
 			},

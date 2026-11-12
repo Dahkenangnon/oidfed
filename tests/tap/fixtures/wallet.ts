@@ -204,7 +204,12 @@ export async function hierarchicalWalletFederation(
 		sub: intermediate.id,
 		jwks: { keys: [intermediate.keys.publicKey] },
 		authority_hints: [f.ids.anchor],
-		metadata: { federation_entity: { federation_fetch_endpoint: `${intermediate.id}/fetch` } },
+		metadata: {
+			federation_entity: {
+				federation_fetch_endpoint: `${intermediate.id}/fetch`,
+				federation_list_endpoint: `${intermediate.id}/fetch`,
+			},
+		},
 	});
 	const ss = await signEntityStatement(
 		{
