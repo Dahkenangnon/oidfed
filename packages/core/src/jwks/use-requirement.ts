@@ -85,7 +85,8 @@ function isLikelyEncryption(jwk: JWK): boolean {
  * Returns ok if the JWK Set satisfies the `use` conditional REQUIRED rule.
  *
  * Returns InvalidMetadata when both a signing-capable and an encryption-capable
- * key are present in the set, but at least one key is missing the `use` member.
+ * key are present in the set, but at least one key has no nonempty `use` value.
+ * RFC 7517 permits extension values in addition to sig and enc.
  */
 export function validateJwkSetUseRequirement(jwks: readonly JWK[]): Result<void, FederationError> {
 	if (jwks.length === 0) return ok(undefined);
@@ -98,12 +99,12 @@ export function validateJwkSetUseRequirement(jwks: readonly JWK[]): Result<void,
 	}
 
 	for (const jwk of jwks) {
-		if (jwk.use !== "sig" && jwk.use !== "enc") {
+		if (typeof jwk.use !== "string" || jwk.use.length === 0) {
 			const kid = jwk.kid ?? "<no kid>";
 			return err(
 				federationError(
 					FederationErrorCode.InvalidMetadata,
-					`JWK Set contains both signing and encryption keys; every key MUST carry the 'use' parameter (key '${kid}' is missing 'use')`,
+					`JWK Set contains both signing and encryption keys; every key MUST carry the 'use' parameter (key '${kid}' has no nonempty 'use' value)`,
 				),
 			);
 		}

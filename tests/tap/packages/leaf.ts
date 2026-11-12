@@ -88,6 +88,60 @@ export default (QUnit: QUnit) => {
 		}
 	});
 
+	module("leaf / inline metadata key publication", () => {
+		test("requires use only for mixed signing and encryption sets and preserves extensions", async (t) => {
+			const { config, publicKey } = await createLeafConfig();
+			const other = await generateSigningKey("ES256");
+			const { use: _sigUse, ...sig } = publicKey;
+			const { use: _encUse, ...enc } = other.publicKey;
+			const signing = { ...sig, alg: "ES256", key_ops: ["verify"] };
+			const encryption = { ...enc, alg: "ECDH-ES", key_ops: ["deriveKey"] };
+			const labelled = [
+				{ ...signing, use: "sig" },
+				{ ...encryption, use: "enc" },
+			];
+			for (const scenario of [
+				{ keys: [signing, encryption], valid: false },
+				{ keys: [{ ...signing, use: "sig" }, encryption], valid: false },
+				{
+					keys: [
+						{ ...signing, use: "" },
+						{ ...encryption, use: "enc" },
+					],
+					valid: false,
+				},
+				{ keys: labelled, valid: true },
+				{
+					keys: [...labelled, { ...signing, kid: "extra", use: "urn:example:other-use" }],
+					valid: true,
+				},
+				{ keys: [signing], valid: true },
+				{ keys: [encryption], valid: true },
+			]) {
+				const jwks = { keys: scenario.keys };
+				const configured = { ...config, metadata: { openid_relying_party: { jwks } } };
+				if (!scenario.valid) {
+					t.throws(() => new Leaf(configured), /'use'/);
+					continue;
+				}
+				const leaf = new Leaf(configured);
+				const published = decodeEntityStatement(await leaf.getEntityConfiguration());
+				t.true(published.ok);
+				if (published.ok)
+					t.deepEqual(published.value.payload.metadata?.openid_relying_party?.jwks, jwks);
+			}
+		});
+		test("allows superiors to complete an explicit-registration endpoint", async (t) => {
+			const { config } = await createLeafConfig();
+			const metadata = {
+				openid_provider: { issuer: LEAF_ID, client_registration_types_supported: ["explicit"] },
+			};
+			const leaf = new Leaf({ ...config, metadata });
+			const published = decodeEntityStatement(await leaf.getEntityConfiguration());
+			t.true(published.ok);
+			if (published.ok) t.deepEqual(published.value.payload.metadata, metadata);
+		});
+	});
 	module("leaf / public root exports", () => {
 		test("exports only the leaf class as a runtime entrypoint", (t) => {
 			t.equal(LeafPublic.Leaf, Leaf);

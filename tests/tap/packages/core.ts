@@ -2292,6 +2292,410 @@ export default (QUnit: QUnit) => {
 			}
 		});
 	});
+	module("core / resolved metadata invariants", () => {
+		async function fixture() {
+			const fed = await createMockFederation();
+			const leaf = decodeEntityStatement(fed.opEcJwt);
+			const superior = decodeEntityStatement(fed.taSubStatementForOp);
+			if (!leaf.ok || !superior.ok) throw new Error("Invalid fixture statements");
+			const chain = async (
+				metadata: Record<string, Record<string, unknown>>,
+				claims: Record<string, unknown> = {},
+			) => [
+				await signEntityStatement(
+					{ ...leaf.value.payload, metadata },
+					new JwkSigner(fed.opSigningKey),
+				),
+				await signEntityStatement(
+					{ ...superior.value.payload, ...claims },
+					new JwkSigner(fed.taSigningKey),
+				),
+				fed.taEcJwt,
+			];
+			return { ...fed, chain };
+		}
+		for (const type of ["openid_provider", "oauth_authorization_server"] as const)
+			test(`binds policy-derived ${type}.issuer to the subject across validation paths`, async (t) => {
+				const f = await fixture();
+				for (const operator of ["value", "default"]) {
+					const metadata = { [type]: operator === "value" ? { issuer: OP_ID } : {} };
+					const invalid = await f.chain(metadata, {
+						metadata_policy: { [type]: { issuer: { [operator]: "https://other.example" } } },
+					});
+					for (const withAnchor of [true, false]) {
+						const statements = withAnchor ? invalid : invalid.slice(0, -1);
+						for (const validate of [validateTrustChain, validateTrustChainStructure]) {
+							const result = await validate(statements, f.trustAnchors, { verboseErrors: true });
+							t.false(result.valid, `${operator}, anchor EC: ${withAnchor}`);
+							t.true(
+								result.errors.some(
+									(error) =>
+										error.code === InternalErrorCode.MetadataPolicyViolation &&
+										error.field === `metadata.${type}.issuer`,
+								),
+							);
+						}
+						t.false(
+							(
+								await CorePublic.prepareTrustChainValidation(statements, f.trustAnchors, {
+									deferredClaims: [],
+								})
+							).ok,
+						);
+					}
+					const valid = await f.chain(metadata, {
+						metadata_policy: { [type]: { issuer: { [operator]: OP_ID } } },
+					});
+					const result = await validateTrustChain(valid, f.trustAnchors);
+					t.true(result.valid, JSON.stringify(result.errors));
+					if (result.valid) t.equal(result.chain.resolvedMetadata[type]?.issuer, OP_ID);
+					const prepared = await CorePublic.prepareTrustChainValidation(valid, f.trustAnchors, {
+						deferredClaims: [],
+					});
+					t.true(prepared.ok);
+					if (prepared.ok)
+						t.true((await CorePublic.completeTrustChainValidation(prepared.value)).ok);
+				}
+				const supplied = await f.chain({ [type]: {} }, { metadata: { [type]: { issuer: OP_ID } } });
+				t.true(
+					(await validateTrustChain(supplied, f.trustAnchors)).valid,
+					"a superior may supply a missing issuer",
+				);
+			});
+
+		test("requires an explicit-registration endpoint only on the resolved OP metadata", async (t) => {
+			const f = await fixture();
+			const endpoint = `${OP_ID}/register?tenant=one`;
+			const metadata = {
+				openid_provider: { issuer: OP_ID, client_registration_types_supported: ["explicit"] },
+			};
+			const cases = [
+				{ name: "missing", claims: {}, valid: false },
+				{
+					name: "superior completion",
+					claims: { metadata: { openid_provider: { federation_registration_endpoint: endpoint } } },
+					valid: true,
+				},
+				...[
+					endpoint,
+					"http://op.example/register",
+					"https://op.example/register#",
+					"https://op.example/register#fragment",
+					"",
+					42,
+				].map((value) => ({
+					name: `policy endpoint ${JSON.stringify(value)}`,
+					claims: {
+						metadata_policy: { openid_provider: { federation_registration_endpoint: { value } } },
+					},
+					valid: value === endpoint,
+				})),
+			];
+			for (const config of cases) {
+				const chain = await f.chain(metadata, config.claims);
+				for (const validate of [validateTrustChain, validateTrustChainStructure]) {
+					const result = await validate(chain, f.trustAnchors, { verboseErrors: true });
+					t.equal(result.valid, config.valid, config.name);
+					if (!config.valid)
+						t.true(
+							result.errors.some(
+								(error) =>
+									error.field === "metadata.openid_provider.federation_registration_endpoint",
+							),
+							JSON.stringify(result.errors),
+						);
+				}
+				const prepared = await CorePublic.prepareTrustChainValidation(chain, f.trustAnchors, {
+					deferredClaims: [],
+				});
+				t.equal(prepared.ok, config.valid, config.name);
+				if (prepared.ok) t.true((await CorePublic.completeTrustChainValidation(prepared.value)).ok);
+			}
+			for (const methods of [["automatic"], ["custom_registration"]]) {
+				const chain = await f.chain({
+					openid_provider: { issuer: OP_ID, client_registration_types_supported: methods },
+				});
+				t.true((await validateTrustChain(chain, f.trustAnchors)).valid);
+				const policy = await f.chain(
+					{ openid_provider: { issuer: OP_ID } },
+					{
+						metadata_policy: {
+							openid_provider: { client_registration_types_supported: { value: methods } },
+						},
+					},
+				);
+				t.true((await validateTrustChain(policy, f.trustAnchors)).valid);
+			}
+			const introduced = await f.chain(
+				{ openid_provider: { issuer: OP_ID } },
+				{
+					metadata_policy: {
+						openid_provider: { client_registration_types_supported: { value: ["explicit"] } },
+					},
+				},
+			);
+			t.false(
+				(await validateTrustChain(introduced, f.trustAnchors)).valid,
+				"policy cannot introduce explicit support without an endpoint",
+			);
+		});
+
+		test("validates supplied registration endpoint URL shape without explicit support", async (t) => {
+			const f = await fixture();
+			const claim = {
+				entityType: "openid_provider",
+				parameter: "federation_registration_endpoint",
+			};
+			for (const methods of [["automatic"], ["custom_registration"], undefined]) {
+				const base = {
+					issuer: OP_ID,
+					...(methods ? { client_registration_types_supported: methods } : {}),
+				};
+				for (const endpoint of [
+					undefined,
+					42,
+					{},
+					"",
+					"not a URL",
+					"/relative",
+					`${OP_ID}/register?tenant=one`,
+					"http://op.example/register#fragment",
+				]) {
+					const valid =
+						endpoint === undefined || (typeof endpoint === "string" && endpoint.startsWith("http"));
+					const value =
+						endpoint === undefined ? {} : { federation_registration_endpoint: endpoint };
+					for (const source of ["raw", "superior", "value", "default"]) {
+						const metadata = { openid_provider: { ...base, ...(source === "raw" ? value : {}) } };
+						const claims =
+							source === "superior"
+								? { metadata: { openid_provider: value } }
+								: source !== "raw" && endpoint !== undefined
+									? {
+											metadata_policy: {
+												openid_provider: {
+													federation_registration_endpoint: { [source]: endpoint },
+												},
+											},
+										}
+									: {};
+						const chain = await f.chain(metadata, claims);
+						const label = `${methods ?? "omitted types"}: ${source} ${JSON.stringify(endpoint)}`;
+						for (const validate of [validateTrustChain, validateTrustChainStructure]) {
+							const result = await validate(chain, f.trustAnchors, { verboseErrors: true });
+							t.equal(result.valid, valid, label);
+							if (!valid)
+								t.true(
+									result.errors.some(
+										(error) =>
+											error.code === InternalErrorCode.MetadataPolicyViolation &&
+											error.field === "metadata.openid_provider.federation_registration_endpoint",
+									),
+									JSON.stringify(result.errors),
+								);
+						}
+						const prepared = await CorePublic.prepareTrustChainValidation(chain, f.trustAnchors, {
+							deferredClaims: source === "raw" || source === "superior" ? [claim] : [],
+						});
+						t.equal(prepared.ok, valid, label);
+						if (prepared.ok)
+							t.true((await CorePublic.completeTrustChainValidation(prepared.value)).ok, label);
+					}
+				}
+			}
+			const chain = await f.chain(
+				{ openid_provider: { issuer: OP_ID, client_registration_types_supported: ["automatic"] } },
+				{
+					metadata_policy: {
+						openid_provider: { federation_registration_endpoint: { essential: true } },
+					},
+				},
+			);
+			const prepared = await CorePublic.prepareTrustChainValidation(chain, f.trustAnchors, {
+				deferredClaims: [claim],
+			});
+			t.true(prepared.ok);
+			if (prepared.ok) {
+				t.deepEqual(prepared.value.pendingClaims, [claim]);
+				t.false((await CorePublic.completeTrustChainValidation(prepared.value)).ok);
+				for (const endpoint of [42, "not a URL", "http://op.example/register#fragment"]) {
+					const completed = await CorePublic.completeTrustChainValidation(prepared.value, {
+						openid_provider: { federation_registration_endpoint: endpoint },
+					});
+					t.equal(completed.ok, typeof endpoint === "string" && endpoint.startsWith("http"));
+				}
+			}
+		});
+
+		test("checks deferred endpoint and issuer values when completing metadata", async (t) => {
+			const f = await fixture();
+			const claim = {
+				entityType: "openid_provider",
+				parameter: "federation_registration_endpoint",
+			};
+			const metadata = {
+				openid_provider: { issuer: OP_ID, client_registration_types_supported: ["explicit"] },
+			};
+			const policy = {
+				metadata_policy: {
+					openid_provider: { federation_registration_endpoint: { essential: true } },
+				},
+			};
+			const chain = await f.chain(metadata, policy);
+			const prepared = await CorePublic.prepareTrustChainValidation(chain, f.trustAnchors, {
+				deferredClaims: [claim],
+			});
+			t.true(prepared.ok, JSON.stringify(prepared));
+			if (!prepared.ok) return;
+			t.deepEqual(prepared.value.pendingClaims, [claim]);
+			t.false((await CorePublic.completeTrustChainValidation(prepared.value)).ok);
+			for (const endpoint of [
+				"http://op.example/register",
+				"https://op.example/register#bad",
+				"",
+			]) {
+				t.false(
+					(
+						await CorePublic.completeTrustChainValidation(prepared.value, {
+							openid_provider: { federation_registration_endpoint: endpoint },
+						})
+					).ok,
+				);
+				const supplied = await f.chain(
+					{
+						openid_provider: {
+							...metadata.openid_provider,
+							federation_registration_endpoint: endpoint,
+						},
+					},
+					policy,
+				);
+				t.false(
+					(
+						await CorePublic.prepareTrustChainValidation(supplied, f.trustAnchors, {
+							deferredClaims: [claim],
+						})
+					).ok,
+					"an invalid supplied value cannot be deferred",
+				);
+			}
+			t.true(
+				(
+					await CorePublic.completeTrustChainValidation(prepared.value, {
+						openid_provider: { federation_registration_endpoint: `${OP_ID}/register` },
+					})
+				).ok,
+			);
+			const issuerChain = await f.chain(
+				{ openid_provider: {} },
+				{ metadata_policy: { openid_provider: { issuer: { essential: true } } } },
+			);
+			const issuer = await CorePublic.prepareTrustChainValidation(issuerChain, f.trustAnchors, {
+				deferredClaims: [{ entityType: "openid_provider", parameter: "issuer" }],
+			});
+			t.true(issuer.ok);
+			if (issuer.ok) {
+				t.false(
+					(
+						await CorePublic.completeTrustChainValidation(issuer.value, {
+							openid_provider: { issuer: "https://other.example" },
+						})
+					).ok,
+				);
+				t.true(
+					(
+						await CorePublic.completeTrustChainValidation(issuer.value, {
+							openid_provider: { issuer: OP_ID },
+						})
+					).ok,
+				);
+			}
+		});
+
+		test("validates policy-derived inline key sets while preserving received extensions", async (t) => {
+			const f = await fixture();
+			const { use: _sigUse, ...sig } = f.leafProtocolPublicKey;
+			const { use: _encUse, ...enc } = f.opPublicKey;
+			const signing = { ...sig, alg: "ES256", key_ops: ["verify"] };
+			const encryption = { ...enc, alg: "ECDH-ES", key_ops: ["deriveKey"] };
+			const labelled = [
+				{ ...signing, use: "sig" },
+				{ ...encryption, use: "enc" },
+			];
+			const cases = [
+				{ name: "missing use", jwks: { keys: [signing, encryption] }, valid: false },
+				{
+					name: "empty use",
+					jwks: {
+						keys: [
+							{ ...signing, use: "" },
+							{ ...encryption, use: "enc" },
+						],
+					},
+					valid: false,
+				},
+				{ name: "labelled", jwks: { keys: labelled }, valid: true },
+				{
+					name: "unknown type and use",
+					jwks: {
+						keys: [...labelled, { kty: "FUTURE", kid: "extension", use: "urn:example:other-use" }],
+					},
+					valid: true,
+				},
+				{ name: "signing only", jwks: { keys: [signing] }, valid: true },
+				{ name: "encryption only", jwks: { keys: [encryption] }, valid: true },
+				{ name: "malformed key", jwks: { keys: [null] }, valid: false },
+				{ name: "empty set", jwks: { keys: [] }, valid: false },
+				{ name: "private key", jwks: { keys: [f.leafProtocolSigningKey] }, valid: false },
+			];
+			for (const config of cases) {
+				const chain = await f.chain(
+					{ openid_relying_party: {} },
+					{ metadata_policy: { openid_relying_party: { jwks: { value: config.jwks } } } },
+				);
+				for (const validate of [validateTrustChain, validateTrustChainStructure]) {
+					const result = await validate(chain, f.trustAnchors, { verboseErrors: true });
+					t.equal(result.valid, config.valid, config.name);
+					if (!config.valid)
+						t.true(
+							result.errors.some((error) =>
+								error.field?.startsWith("metadata.openid_relying_party.jwks"),
+							),
+							JSON.stringify(result.errors),
+						);
+				}
+				const prepared = await CorePublic.prepareTrustChainValidation(chain, f.trustAnchors, {
+					deferredClaims: [],
+				});
+				t.equal(prepared.ok, config.valid, config.name);
+				if (prepared.ok) t.true((await CorePublic.completeTrustChainValidation(prepared.value)).ok);
+			}
+			const deferredChain = await f.chain(
+				{ openid_relying_party: {} },
+				{ metadata_policy: { openid_relying_party: { jwks: { essential: true } } } },
+			);
+			const deferred = await CorePublic.prepareTrustChainValidation(deferredChain, f.trustAnchors, {
+				deferredClaims: [{ entityType: "openid_relying_party", parameter: "jwks" }],
+			});
+			t.true(deferred.ok);
+			if (deferred.ok) {
+				t.false(
+					(
+						await CorePublic.completeTrustChainValidation(deferred.value, {
+							openid_relying_party: { jwks: { keys: [signing, encryption] } },
+						})
+					).ok,
+				);
+				t.true(
+					(
+						await CorePublic.completeTrustChainValidation(deferred.value, {
+							openid_relying_party: { jwks: { keys: labelled } },
+						})
+					).ok,
+				);
+			}
+		});
+	});
 	module("core / contextual chain validation", () => {
 		test("preserves wallet claim-path wildcards in statement builders and chain validation", async (t) => {
 			const f = await walletFederation({
@@ -4318,6 +4722,25 @@ export default (QUnit: QUnit) => {
 			t.ok(result.error.description.includes("enc1"));
 		});
 
+		test("accepts extension use values and rejects missing or empty use in mixed sets", (t) => {
+			const sig = { kty: "EC", kid: "sig", use: "sig" };
+			const enc = { kty: "EC", kid: "enc", use: "enc" };
+			t.true(
+				validateJwkSetUseRequirement([
+					sig,
+					enc,
+					{ kty: "FUTURE", kid: "extra", use: "urn:example:other-use" },
+				]).ok,
+			);
+			for (const use of [undefined, ""])
+				t.false(
+					validateJwkSetUseRequirement([
+						sig,
+						enc,
+						{ kty: "EC", kid: "extra", ...(use !== undefined ? { use } : {}) },
+					]).ok,
+				);
+		});
 		test("accepts a JWK Set of only encryption-capable keys without 'use'", (t) => {
 			const result = validateJwkSetUseRequirement([
 				{ kty: "RSA", kid: "enc1", n: "n1", e: "AQAB", alg: "RSA-OAEP-256" },

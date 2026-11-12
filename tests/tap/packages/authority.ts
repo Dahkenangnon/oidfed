@@ -536,6 +536,73 @@ export default (QUnit: QUnit) => {
 			metadata: { federation_entity: { organization_name: "Member" } },
 		});
 	});
+	module("authority / inline metadata key publication", () => {
+		test("checks mixed-key use in Authority ECs and subordinate statements", async (t) => {
+			const f = await SubordinateEventsFixture.fixture();
+			const { use: _sigUse, ...sig } = f.key.publicKey;
+			const { use: _encUse, ...enc } = f.clientKey.publicKey;
+			const signing = { ...sig, alg: "ES256", key_ops: ["verify"] };
+			const encryption = { ...enc, alg: "ECDH-ES", key_ops: ["deriveKey"] };
+			const labelled = [
+				{ ...signing, use: "sig" },
+				{ ...encryption, use: "enc" },
+			];
+			for (const scenario of [
+				{ keys: [signing, encryption], valid: false },
+				{ keys: [{ ...signing, use: "sig" }, encryption], valid: false },
+				{
+					keys: [
+						{ ...signing, use: "" },
+						{ ...encryption, use: "enc" },
+					],
+					valid: false,
+				},
+				{ keys: labelled, valid: true },
+				{
+					keys: [...labelled, { ...signing, kid: "extra", use: "urn:example:other-use" }],
+					valid: true,
+				},
+				{ keys: [signing], valid: true },
+				{ keys: [encryption], valid: true },
+			]) {
+				const metadata = { openid_relying_party: { jwks: { keys: scenario.keys } } };
+				const config = {
+					...f.config,
+					storage: new MemoryStorageAdapter({ clock: f.clock, subordinateEvents: true }),
+					metadata: { ...f.config.metadata, ...metadata },
+				};
+				if (!scenario.valid) t.throws(() => new TrustAnchor(config), /'use'/);
+				else {
+					const authority = new TrustAnchor(config);
+					const published = decodeEntityStatement(await authority.getEntityConfiguration());
+					t.true(published.ok);
+					if (published.ok)
+						t.deepEqual(
+							published.value.payload.metadata?.openid_relying_party,
+							metadata.openid_relying_party,
+						);
+				}
+				const authority = new TrustAnchor({
+					...f.config,
+					storage: new MemoryStorageAdapter({ clock: f.clock, subordinateEvents: true }),
+				});
+				const publish = async () => {
+					await authority.registerSubordinate({ ...f.record, metadata });
+					return authority.getSubordinateStatement(SubordinateEventsFixture.subject);
+				};
+				if (!scenario.valid) await t.rejects(publish(), /'use'/);
+				else {
+					const published = decodeEntityStatement(await publish());
+					t.true(published.ok);
+					if (published.ok)
+						t.deepEqual(
+							published.value.payload.metadata?.openid_relying_party,
+							metadata.openid_relying_party,
+						);
+				}
+			}
+		});
+	});
 	module("authority / bounded publication", () => {
 		test("lifecycle events compare public extensions and ignore key ordering", async (t) => {
 			const f = await SubordinateEventsFixture.fixture();

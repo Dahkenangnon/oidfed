@@ -15,6 +15,7 @@ import {
 	isOk,
 	type JWK,
 	JwkSigner,
+	type JwtSigner,
 	JwtTyp,
 	MediaType,
 	MemoryFederationKeyProvider,
@@ -365,24 +366,27 @@ export default (QUnit: QUnit) => {
 				"not a URL",
 				"https://op.example:8443/register?tenant=one",
 			]) {
-				const fed = await createMockFederation({
-					opMetadata: {
-						openid_provider: {
-							issuer: OP_ID,
-							authorization_endpoint: `${OP_ID}/authorize`,
-							response_types_supported: ["code"],
-							subject_types_supported: ["public"],
-							id_token_signing_alg_values_supported: ["ES256"],
-							client_registration_types_supported: ["explicit"],
-							federation_registration_endpoint: endpoint,
+				const fed = await createMockFederation();
+				const discovery = await createMockDiscovery(OP_ID, fed);
+				// Exercise the registration helper's defensive endpoint guard independently of discovery.
+				const suppliedDiscovery = {
+					...discovery,
+					trustChain: {
+						...discovery.trustChain,
+						resolvedMetadata: {
+							...discovery.trustChain.resolvedMetadata,
+							openid_provider: {
+								...discovery.trustChain.resolvedMetadata.openid_provider,
+								federation_registration_endpoint: endpoint,
+							},
 						},
 					},
-				});
+				};
 				const leaf = decodeEntityStatement(fed.leafEcJwt);
 				if (!leaf.ok) throw new Error("fixture");
 				let posts = 0;
 				const result = await explicitRegistration(
-					await createMockDiscovery(OP_ID, fed),
+					suppliedDiscovery,
 					{
 						entityId: LEAF_ID,
 						keyProvider: MemoryFederationKeyProvider.fromJWK(fed.leafSigningKey),
@@ -2212,6 +2216,7 @@ export default (QUnit: QUnit) => {
 						subject_types_supported: ["public"],
 						id_token_signing_alg_values_supported: ["ES256"],
 						client_registration_types_supported: ["automatic", "explicit"],
+						federation_registration_endpoint: `${OP_ID}/federation_registration`,
 					},
 				},
 			});
@@ -2315,6 +2320,7 @@ export default (QUnit: QUnit) => {
 						subject_types_supported: ["public"],
 						id_token_signing_alg_values_supported: ["ES256"],
 						client_registration_types_supported: ["automatic", "explicit"],
+						federation_registration_endpoint: `${OP_ID}/federation_registration`,
 					},
 				},
 			});
@@ -2765,30 +2771,36 @@ export default (QUnit: QUnit) => {
 			}
 		});
 
-		test("fails if OP has no federation_registration_endpoint", async (t) => {
-			const fed = await createMockFederation({
-				opMetadata: {
-					openid_provider: {
-						issuer: OP_ID,
-						authorization_endpoint: `${OP_ID}/authorize`,
-						client_registration_types_supported: ["explicit"],
-					},
-				},
-			});
+		test("rejects supplied discovery metadata without a registration endpoint before posting", async (t) => {
+			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
+			const { federation_registration_endpoint: _endpoint, ...metadata } =
+				discovery.trustChain.resolvedMetadata.openid_provider!;
+			const suppliedDiscovery = {
+				...discovery,
+				trustChain: {
+					...discovery.trustChain,
+					resolvedMetadata: { ...discovery.trustChain.resolvedMetadata, openid_provider: metadata },
+				},
+			};
 			const { config } = await createRpConfig({
 				keyProvider: new MemoryFederationKeyProvider(
 					createFederationSigningKey(fed.leafSigningKey),
 				),
 			});
-			const result = await explicitRegistration(discovery, config, fed.trustAnchors, fed.options);
+			let posts = 0;
+			const httpClient: HttpClient = async (input, init) => {
+				if (init?.method === "POST" || (input instanceof Request && input.method === "POST"))
+					posts++;
+				return fed.httpClient(input, init);
+			};
+			const result = await explicitRegistration(suppliedDiscovery, config, fed.trustAnchors, {
+				...fed.options,
+				httpClient,
+			});
 			t.true(isErr(result));
-			if (isErr(result)) {
-				t.ok(
-					result.error.description.includes("federation_registration_endpoint"),
-					result.error.description,
-				);
-			}
+			if (isErr(result)) t.equal(result.error.code, FederationErrorCode.InvalidMetadata);
+			t.equal(posts, 0);
 		});
 
 		test("response has registrationStatement with correct typ", async (t) => {
@@ -7347,6 +7359,83 @@ export default (QUnit: QUnit) => {
 		});
 	});
 	module("oidc / role operation context", () => {
+		test("rejects policy-rebound OP issuers before Request Object signing or registration POSTs", async (t) => {
+			const fed = await createMockFederation();
+			const superior = decodeEntityStatement(fed.taSubStatementForOp);
+			const leaf = decodeEntityStatement(fed.leafEcJwt);
+			if (!superior.ok || !leaf.ok) throw new Error("Invalid fixture statements");
+			const bad = await signEntityStatement(
+				{
+					...superior.value.payload,
+					metadata_policy: { openid_provider: { issuer: { value: "https://other.example" } } },
+				},
+				new JwkSigner(fed.taSigningKey),
+			);
+			let hostilePolicy = true;
+			let posts = 0;
+			const httpClient: HttpClient = async (input, init) => {
+				const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+				if (method.toUpperCase() === "POST") {
+					posts++;
+					return new Response("", { status: 400 });
+				}
+				const url = new URL(
+					typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url,
+				);
+				if (hostilePolicy && url.origin === TA_ID && url.searchParams.get("sub") === OP_ID)
+					return new Response(bad, { headers: { "content-type": MediaType.EntityStatement } });
+				return fed.httpClient(input, init);
+			};
+			const protocolSigner = new JwkSigner(fed.leafProtocolSigningKey);
+			let requestObjectSignatures = 0;
+			const signer: JwtSigner = {
+				alg: protocolSigner.alg,
+				kid: protocolSigner.kid,
+				signJwt: (...args) => {
+					requestObjectSignatures++;
+					return protocolSigner.signJwt(...args);
+				},
+			};
+			const role = new OidcRelyingPartyRole({
+				protocolKeyProvider: new StaticProtocolSigningKeyProvider({ requestObjectSigner: signer }),
+				metadata: leaf.value.payload.metadata?.openid_relying_party,
+			});
+			role.initialize({
+				entityId: LEAF_ID,
+				authorityHints: [TA_ID],
+				trustAnchors: fed.trustAnchors,
+				keyProvider: MemoryFederationKeyProvider.fromJWK(fed.leafSigningKey),
+				options: { ...fed.options, httpClient },
+			});
+			const params = {
+				opEntityId: OP_ID,
+				redirect_uri: "https://rp.example.com/callback",
+				scope: "openid",
+			};
+			t.false((await role.automaticallyRegister(params)).ok);
+			t.equal(posts, 0, "automatic registration rejects before any POST");
+			t.false((await role.explicitlyRegister(OP_ID)).ok);
+			t.equal(requestObjectSignatures, 0);
+			t.equal(posts, 0, "explicit registration rejects before any POST");
+			hostilePolicy = false;
+			const valid = await role.automaticallyRegister(params);
+			t.true(valid.ok, JSON.stringify(valid));
+			t.equal(
+				requestObjectSignatures,
+				1,
+				"the same configuration signs when the issuer remains bound",
+			);
+			const explicit = await role.explicitlyRegister(OP_ID);
+			t.false(explicit.ok, "the mock registration endpoint returns HTTP 400");
+			if (!explicit.ok) {
+				t.equal(explicit.error.code, InternalErrorCode.Network);
+				t.ok(explicit.error.description.includes("HTTP 400"), explicit.error.description);
+			}
+			t.equal(posts, 1, "the observer counts the actual explicit-registration Request POST");
+			t.equal(requestObjectSignatures, 1, "explicit registration does not sign a Request Object");
+			await httpClient(`${OP_ID}/federation_registration`, { method: "post" });
+			t.equal(posts, 2, "the observer also counts POSTs supplied through init.method");
+		});
 		test("honors authorization overrides while retaining host HTTP and clock options", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);

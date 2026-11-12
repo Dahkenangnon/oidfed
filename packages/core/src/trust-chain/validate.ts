@@ -18,7 +18,7 @@ import {
 	EntityConfigurationSchema,
 	SubordinateStatementSchema,
 } from "../schemas/entity-statement.js";
-import type { JWK, JWKSet } from "../schemas/jwk.js";
+import { type JWK, type JWKSet, MetadataJWKSetSchema } from "../schemas/jwk.js";
 import { type FederationMetadata, FederationMetadataValuesSchema } from "../schemas/metadata.js";
 import {
 	validateCriticalClaims,
@@ -509,6 +509,83 @@ interface MetadataStage {
 	context?: Readonly<Record<string, Record<string, unknown>>>;
 	pending: ContextualMetadataClaim[];
 	entityConfigurations?: ReadonlyMap<string, string>;
+}
+
+/** Federation invariants apply after superior overrides and policies, including contextual completion. */
+function validateResolvedMetadata(
+	errors: ValidationError[],
+	metadata: Record<string, Record<string, unknown>>,
+	subject: string,
+	pending: readonly ContextualMetadataClaim[] = [],
+): void {
+	const fail = (field: string, message: string) =>
+		addError(
+			errors,
+			InternalErrorCode.MetadataPolicyViolation,
+			`Invalid resolved metadata at ${field}: ${message}`,
+			{
+				field: `metadata.${field}`,
+				checkNumber: 24,
+			},
+		);
+	const shape = FederationMetadataValuesSchema.safeParse(metadata);
+	if (!shape.success) {
+		for (const issue of shape.error.issues) fail(issue.path.map(String).join("."), issue.message);
+		return;
+	}
+	for (const type of ["openid_provider", "oauth_authorization_server"] as const) {
+		const issuer = metadata[type]?.issuer;
+		if (issuer !== undefined && issuer !== subject)
+			fail(`${type}.issuer`, `issuer MUST match Entity Identifier '${subject}'`);
+	}
+	const op = metadata.openid_provider;
+	const endpoint = op?.federation_registration_endpoint;
+	let endpointUrl: URL | undefined;
+	// The parameter is defined as a URL whenever supplied, even without explicit support.
+	if (endpoint !== undefined) {
+		if (typeof endpoint === "string" && endpoint.length > 0) {
+			try {
+				endpointUrl = new URL(endpoint);
+			} catch {
+				/* Report malformed URL values through the metadata validation result. */
+			}
+		}
+		if (!endpointUrl)
+			fail("openid_provider.federation_registration_endpoint", "endpoint MUST be a URL string");
+	}
+	if (
+		Array.isArray(op?.client_registration_types_supported) &&
+		op.client_registration_types_supported.includes("explicit")
+	) {
+		const deferred =
+			endpoint === undefined &&
+			pending.some(
+				(claim) =>
+					claim.entityType === "openid_provider" &&
+					claim.parameter === "federation_registration_endpoint",
+			);
+		if (
+			(endpoint === undefined && !deferred) ||
+			(endpointUrl && (endpointUrl.protocol !== "https:" || endpointUrl.href.includes("#")))
+		)
+			fail(
+				"openid_provider.federation_registration_endpoint",
+				"explicit registration requires an HTTPS endpoint without a fragment",
+			);
+	}
+	for (const [type, block] of Object.entries(metadata)) {
+		if (block.jwks === undefined) continue;
+		const jwks = MetadataJWKSetSchema.safeParse(block.jwks);
+		if (!jwks.success) {
+			for (const issue of jwks.error.issues) {
+				const path = [type, "jwks", ...issue.path].map(String).join(".");
+				fail(path, issue.message);
+			}
+			continue;
+		}
+		const use = validateJwkSetUseRequirement(jwks.data.keys);
+		if (!use.ok) fail(`${type}.jwks`, use.error.description);
+	}
 }
 
 const preparations = new WeakMap<
@@ -1467,21 +1544,10 @@ async function validateTrustChainImpl(
 		}
 	}
 
-	// Federation §§5.1.1 and 6.1.4.2 apply to the final metadata, including
+	// Federation §§5 and 6.1.4.2 apply to the final metadata, including
 	// chains resolved through superior overrides without a metadata policy.
 	if (errors.length === 0) {
-		const checkedMetadata = FederationMetadataValuesSchema.safeParse(resolvedMetadata);
-		if (!checkedMetadata.success) {
-			for (const issue of checkedMetadata.error.issues) {
-				const field = issue.path.map(String).join(".");
-				addError(
-					errors,
-					InternalErrorCode.MetadataPolicyViolation,
-					`Invalid resolved metadata at ${field}: ${issue.message}`,
-					{ field: `metadata.${field}`, checkNumber: 24 },
-				);
-			}
-		}
+		validateResolvedMetadata(errors, resolvedMetadata, leafPayload.iss as string, stage?.pending);
 	}
 
 	// Federation §§3.2 and 7.3 distinguish reference syntax from trust in a mark.

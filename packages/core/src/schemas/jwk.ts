@@ -1,5 +1,6 @@
 /** Structural schemas for public JSON Web Keys and federation JWK Sets. */
 import { z } from "zod";
+import { validateJwkSetUseRequirement } from "../jwks/use-requirement.js";
 
 const PRIVATE_KEY_FIELDS = ["d", "p", "q", "dp", "dq", "qi", "oth", "k"] as const;
 
@@ -72,5 +73,7 @@ export function validatePublishedMetadataKeys(metadata: Readonly<Record<string, 
 			!parsed.data.keys.every((key) => PublicationJWKSchema.safeParse(key).success)
 		)
 			throw new Error("Published metadata must contain supported public JWKs");
+		const use = validateJwkSetUseRequirement(parsed.data.keys);
+		if (!use.ok) throw new Error(use.error.description);
 	}
 }
