@@ -87,6 +87,9 @@ export async function walletFederation(
 			},
 			oauth_authorization_server: {
 				issuer: ids.issuer,
+				authorization_endpoint: `${ids.issuer}/authorize`,
+				token_endpoint: `${ids.issuer}/token`,
+				response_types_supported: ["code"],
 				authorization_details_types_supported: ["openid_credential"],
 				...config.issuerServerMetadata,
 			},
@@ -104,6 +107,9 @@ export async function walletFederation(
 		server: {
 			oauth_authorization_server: {
 				issuer: ids.server,
+				authorization_endpoint: `${ids.server}/authorize`,
+				token_endpoint: `${ids.server}/token`,
+				response_types_supported: ["code"],
 				authorization_details_types_supported: ["openid_credential"],
 				...config.serverMetadata,
 			},

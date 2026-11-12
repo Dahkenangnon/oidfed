@@ -8,9 +8,12 @@ export type {
 export { parseConcatenatedWalletAttestation } from "./attestation.js";
 export type {
 	CredentialIssuerMetadata,
+	CredentialIssuerPublicationMetadata,
 	CredentialVerifierMetadata,
+	CredentialVerifierPublicationMetadata,
 	DcqlQuery,
 	WalletProviderMetadata,
+	WalletProviderPublicationMetadata,
 } from "./metadata.js";
 export type {
 	AuthorizationRequestContext,

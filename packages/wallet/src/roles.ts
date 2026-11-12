@@ -9,6 +9,7 @@ import {
 	type JwtSigner,
 	nowSeconds,
 	ok,
+	parseOAuthAuthorizationServerMetadata,
 	type Result,
 	type TrustAnchorSet,
 	validateTrustChain,
@@ -23,12 +24,7 @@ import {
 	verifyAttestation,
 	type WalletAttestationVerificationOptions,
 } from "./attestation.js";
-import {
-	effectiveRoleSchemas,
-	publicationRoleSchemas,
-	roleSchemas,
-	type WalletRoleType,
-} from "./metadata.js";
+import { effectiveRoleSchemas, publicationRoleSchemas, type WalletRoleType } from "./metadata.js";
 import {
 	type AuthorizationRequestContext,
 	type AuthorizationRequestCreationOptions,
@@ -218,7 +214,10 @@ async function adapterKeys(
 export class WalletProviderRole extends WalletRole {
 	readonly type = "openid_wallet_provider";
 	static parseMetadata(metadata: unknown) {
-		return roleSchemas.openid_wallet_provider.safeParse(metadata);
+		return effectiveRoleSchemas.openid_wallet_provider.safeParse(metadata);
+	}
+	static parsePublicationMetadata(metadata: unknown) {
+		return publicationRoleSchemas.openid_wallet_provider.safeParse(metadata);
 	}
 	static async discover(id: string, anchors: TrustAnchorSet, options: WalletTrustOptions = {}) {
 		const scope = operationOptions(options);
@@ -265,6 +264,9 @@ export class CredentialIssuerRole extends AttestationConsumer {
 	static parseMetadata(metadata: unknown) {
 		return effectiveRoleSchemas.openid_credential_issuer.safeParse(metadata);
 	}
+	static parsePublicationMetadata(metadata: unknown) {
+		return publicationRoleSchemas.openid_credential_issuer.safeParse(metadata);
+	}
 	static async discover(
 		id: string,
 		anchors: TrustAnchorSet,
@@ -299,8 +301,9 @@ export class CredentialIssuerRole extends AttestationConsumer {
 			let found: TrustedWalletEntity | undefined;
 			if (server === id) {
 				const metadata = issuer.value.trustChain.resolvedMetadata.oauth_authorization_server;
-				if (metadata?.issuer === server)
-					found = { entityId: server, metadata, trustChain: issuer.value.trustChain };
+				const parsed = parseOAuthAuthorizationServerMetadata(metadata);
+				if (parsed.success && parsed.data.issuer === server)
+					found = { entityId: server, metadata: parsed.data, trustChain: issuer.value.trustChain };
 			} else {
 				for (const path of paths.value) {
 					const checked = await validateTrustChain(path.statements, anchors, {
@@ -310,8 +313,14 @@ export class CredentialIssuerRole extends AttestationConsumer {
 					const metadata = checked.valid
 						? checked.chain.resolvedMetadata.oauth_authorization_server
 						: undefined;
-					if (checked.valid && checked.chain.entityId === server && metadata?.issuer === server) {
-						found = { entityId: server, metadata, trustChain: checked.chain };
+					const parsed = parseOAuthAuthorizationServerMetadata(metadata);
+					if (
+						checked.valid &&
+						checked.chain.entityId === server &&
+						parsed.success &&
+						parsed.data.issuer === server
+					) {
+						found = { entityId: server, metadata: parsed.data, trustChain: checked.chain };
 						break;
 					}
 				}
@@ -377,7 +386,10 @@ export interface CredentialVerificationOptions extends WalletTrustOptions {
 export class CredentialVerifierRole extends AttestationConsumer {
 	readonly type = "openid_credential_verifier";
 	static parseMetadata(metadata: unknown) {
-		return roleSchemas.openid_credential_verifier.safeParse(metadata);
+		return effectiveRoleSchemas.openid_credential_verifier.safeParse(metadata);
+	}
+	static parsePublicationMetadata(metadata: unknown) {
+		return publicationRoleSchemas.openid_credential_verifier.safeParse(metadata);
 	}
 	static async discover(id: string, anchors: TrustAnchorSet, options: WalletTrustOptions = {}) {
 		const scope = operationOptions(options);

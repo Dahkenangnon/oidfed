@@ -506,4 +506,15 @@ export const publicationRoleSchemas = {
 	openid_credential_issuer: CredentialIssuerMetadataSchema.partial(),
 	openid_credential_verifier: CredentialVerifierMetadataSchema.partial(),
 } as const;
+
+/** Supplied publication fields; Superiors may complete missing top-level metadata. */
+export type WalletProviderPublicationMetadata = z.infer<
+	typeof publicationRoleSchemas.openid_wallet_provider
+>;
+export type CredentialIssuerPublicationMetadata = z.infer<
+	typeof publicationRoleSchemas.openid_credential_issuer
+>;
+export type CredentialVerifierPublicationMetadata = z.infer<
+	typeof publicationRoleSchemas.openid_credential_verifier
+>;
 export type WalletRoleType = keyof typeof roleSchemas;

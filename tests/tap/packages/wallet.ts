@@ -17,10 +17,13 @@ import {
 import {
 	type AttestationVerificationOptions,
 	type AuthorizationRequestCreationOptions,
+	type CredentialIssuerPublicationMetadata,
 	CredentialIssuerRole,
+	type CredentialVerifierPublicationMetadata,
 	CredentialVerifierRole,
 	type DcqlQuery,
 	type PreparedAuthorizationRequest,
+	type WalletProviderPublicationMetadata,
 	WalletProviderRole,
 } from "../../../packages/wallet/src/index.js";
 import { anchorKeyPaths, trustChainPaths } from "../fixtures/trust-chain-paths.js";
@@ -54,6 +57,59 @@ const proof = (f: Fixture) => ({
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+
+	module("wallet / authorization server metadata conformance", () => {
+		test("both colocated and separate server paths reject malformed effective metadata", async (t) => {
+			for (const separate of [false, true]) {
+				for (const malformed of [
+					{ token_endpoint: 17 },
+					{ response_types_supported: 42 },
+					{ token_endpoint: undefined },
+					{ require_signed_request_object: 1 },
+					{ mtls_endpoint_aliases: { token_endpoint: 17 } },
+				]) {
+					const f = await walletFederation({
+						issuerMetadata: separate ? { authorization_servers: ["https://server.example"] } : {},
+						...(separate ? { serverMetadata: malformed } : { issuerServerMetadata: malformed }),
+					});
+					const result = await CredentialIssuerRole.discover(f.ids.issuer, f.anchors, f.options);
+					t.false(result.ok, `${separate}: ${JSON.stringify(malformed)}`);
+					if (!result.ok) t.equal(result.error.code, "invalid_metadata");
+				}
+				const f = await walletFederation({
+					issuerMetadata: separate ? { authorization_servers: ["https://server.example"] } : {},
+				});
+				const result = await CredentialIssuerRole.discover(f.ids.issuer, f.anchors, f.options);
+				t.true(result.ok);
+			}
+		});
+		test("available policy can skip a malformed server and pre-authorized-only AS metadata does not require an authorization endpoint", async (t) => {
+			const f = await walletFederation({
+				issuerMetadata: {
+					authorization_servers: ["https://issuer.example", "https://server.example"],
+				},
+				issuerServerMetadata: { token_endpoint: 17 },
+				serverMetadata: {
+					grant_types_supported: ["urn:ietf:params:oauth:grant-type:pre-authorized_code"],
+					authorization_endpoint: undefined,
+				},
+			});
+			const strict = await CredentialIssuerRole.discover(f.ids.issuer, f.anchors, f.options);
+			t.false(strict.ok);
+			const result = await CredentialIssuerRole.discover(f.ids.issuer, f.anchors, {
+				...f.options,
+				authorizationServerPolicy: "available",
+			});
+			t.true(result.ok, JSON.stringify(result));
+			if (result.ok) {
+				t.deepEqual(
+					result.value.authorizationServers.map((server) => server.entityId),
+					[f.ids.server],
+				);
+				t.equal(result.value.authorizationServerErrors.length, 1);
+			}
+		});
+	});
 
 	module("wallet / application logging", () => {
 		test("endpoint rejections name the effective metadata field without logging the URL", async (t) => {
@@ -1162,6 +1218,129 @@ export default (QUnit: QUnit) => {
 		}
 	});
 	module("wallet / publication and protocol boundaries", () => {
+		test("public publication parsers allow partial fields and validate supplied nested values", (t) => {
+			const partial = { custom_extension: { retained: ["one", "two"] } };
+			for (const [Role, invalid, invalidNested] of [
+				[
+					WalletProviderRole,
+					{ vp_formats_supported: 42 },
+					{ vp_formats_supported: { "dc+sd-jwt": { alg_values: 42 } } },
+				],
+				[
+					CredentialIssuerRole,
+					{ credential_configurations_supported: 42 },
+					{ credential_configurations_supported: { broken: { format: 42 } } },
+				],
+				[
+					CredentialVerifierRole,
+					{ vp_formats_supported: 42 },
+					{ vp_formats_supported: { "dc+sd-jwt": { alg_values: 42 } } },
+				],
+			] as const) {
+				t.true(Role.parsePublicationMetadata({}).success, Role.name);
+				t.false(Role.parseMetadata({}).success, Role.name);
+				const parsed = Role.parsePublicationMetadata(partial);
+				t.true(parsed.success, Role.name);
+				if (parsed.success) t.deepEqual(parsed.data.custom_extension, partial.custom_extension);
+				t.false(Role.parsePublicationMetadata(invalid).success, Role.name);
+				t.false(Role.parsePublicationMetadata(invalidNested).success, Role.name);
+			}
+			t.false(
+				CredentialIssuerRole.parsePublicationMetadata({
+					credential_endpoint: "http://issuer.example/credential",
+				}).success,
+			);
+			t.false(
+				CredentialVerifierRole.parsePublicationMetadata({
+					response_uris: ["http://verifier.example/response"],
+				}).success,
+			);
+			t.deepEqual(partial, { custom_extension: { retained: ["one", "two"] } });
+		});
+
+		test("public publication types describe incomplete blocks without weakening known field types", (t) => {
+			const provider: WalletProviderPublicationMetadata = {};
+			const issuer: CredentialIssuerPublicationMetadata = {
+				credential_issuer: "https://issuer.example",
+			};
+			const verifier: CredentialVerifierPublicationMetadata = {
+				response_uris: ["https://verifier.example/response"],
+			};
+			t.true(WalletProviderRole.parsePublicationMetadata(provider).success);
+			t.true(CredentialIssuerRole.parsePublicationMetadata(issuer).success);
+			t.true(CredentialVerifierRole.parsePublicationMetadata(verifier).success);
+			// @ts-expect-error A supplied publication endpoint is still a string.
+			const invalid: CredentialIssuerPublicationMetadata = { credential_endpoint: 42 };
+			t.false(CredentialIssuerRole.parsePublicationMetadata(invalid).success);
+		});
+
+		test("independent verifier parsing agrees with discovery without weakening outbound duplicate-path rules", async (t) => {
+			const query = {
+				credentials: [
+					{
+						...walletQuery.credentials[0]!,
+						claims: [
+							{ id: "first", path: ["name"], values: ["Alice"] },
+							{ id: "later", path: ["name"], values: ["Bob"] },
+						],
+						claim_sets: [["first", "later"]],
+					},
+				],
+			};
+			const f = await walletFederation({ verifierMetadata: { dcql_queries: [query] } });
+			const metadata = f.metadata.verifier.openid_credential_verifier!;
+			const original = structuredClone(metadata);
+			const parsed = CredentialVerifierRole.parseMetadata(metadata);
+			t.true(parsed.success);
+			const discovered = await CredentialVerifierRole.discover(
+				f.ids.verifier,
+				f.anchors,
+				f.options,
+			);
+			t.true(discovered.ok);
+			if (parsed.success && discovered.ok) t.deepEqual(parsed.data, discovered.value.metadata);
+			if (parsed.success)
+				t.deepEqual(
+					parsed.data.dcql_queries,
+					[query],
+					"parsing leaves received queries intact for policy evaluation",
+				);
+			t.false(CredentialVerifierRole.parsePublicationMetadata(metadata).success);
+			const role = new CredentialVerifierRole();
+			t.throws(
+				() =>
+					role.validateMetadata(metadata, {
+						entityId: f.ids.verifier,
+						keyProvider: MemoryFederationKeyProvider.fromJWK(f.keys.verifier.privateKey),
+					}),
+				/repeat a path/,
+			);
+			const created = await CredentialVerifierRole.createAuthorizationRequest(
+				f.ids.verifier,
+				{ ...f.requestPayload, dcql_query: query },
+				new JwkSigner(f.protocol.verifier.privateKey),
+				f.options,
+			);
+			t.false(created.ok);
+			t.deepEqual(metadata, original);
+			const unique = {
+				...metadata,
+				dcql_queries: [
+					{
+						credentials: [
+							{
+								...query.credentials[0]!,
+								claims: [query.credentials[0]!.claims[0]!],
+								claim_sets: [["first"]],
+							},
+						],
+					},
+				],
+			};
+			t.true(CredentialVerifierRole.parseMetadata(unique).success);
+			t.true(CredentialVerifierRole.parsePublicationMetadata(unique).success);
+		});
+
 		test("publication permits superior-completed metadata while discovery requires completeness", async (t) => {
 			const f = await walletFederation({ issuerMetadata: { credential_endpoint: undefined } });
 			for (const Role of [WalletProviderRole, CredentialIssuerRole, CredentialVerifierRole]) {
