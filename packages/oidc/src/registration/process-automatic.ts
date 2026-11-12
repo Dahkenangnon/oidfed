@@ -12,6 +12,7 @@ import {
 	type ResolvedEntityKeys,
 	type Result,
 	resolveEntityKeys,
+	safeLogger,
 	type TrustAnchorSet,
 	type ValidatedTrustChain,
 	verifyProtocolJwt,
@@ -61,6 +62,8 @@ export async function processAutomaticRegistration(
 	trustAnchors: TrustAnchorSet | undefined,
 	options: ProcessAutomaticRegistrationOptions,
 ): Promise<Result<ProcessedAutomaticRegistration, FederationError>> {
+	safeLogger(options?.logger)?.debug("Validating an Automatic Client Registration Request Object");
+
 	const trustAnchorsResult = requireNonEmptyTrustAnchors(trustAnchors);
 	if (!trustAnchorsResult.ok) return trustAnchorsResult;
 	const configuredTrustAnchors = trustAnchorsResult.value;
@@ -114,6 +117,9 @@ export async function processAutomaticRegistration(
 		},
 	);
 	if (!verifyResult.ok) {
+		safeLogger(options?.logger)?.warn(
+			"Automatic Client Registration Request Object signature verification failed",
+		);
 		return err(
 			federationError(
 				InternalErrorCode.SignatureInvalid,
@@ -126,6 +132,9 @@ export async function processAutomaticRegistration(
 		const { OpenIDRelyingPartyMetadataSchema } = await import("../schemas/metadata.js");
 		const metaParsed = OpenIDRelyingPartyMetadataSchema.safeParse(resolvedRpMetadata);
 		if (!metaParsed.success) {
+			safeLogger(options?.logger)?.warn(
+				"RP metadata does not comply with the OpenID Connect Relying Party metadata schema",
+			);
 			return err(
 				federationError(
 					FederationErrorCode.InvalidMetadata,
@@ -144,12 +153,18 @@ export async function processAutomaticRegistration(
 			label: "peer_trust_chain",
 		});
 		if (!peerValidation.ok) {
+			safeLogger(options?.logger)?.warn(
+				"Automatic Client Registration peer_trust_chain validation failed",
+			);
 			return err(peerValidation.error);
 		}
 		if (
 			validated.value.trustChainHeader !== undefined &&
 			peerValidation.value.trustAnchorId !== bestChain.trustAnchorId
 		) {
+			safeLogger(options?.logger)?.warn(
+				"trust_chain and peer_trust_chain MUST select the same Trust Anchor",
+			);
 			return err(
 				federationError(
 					FederationErrorCode.InvalidTrustChain,
@@ -168,6 +183,9 @@ export async function processAutomaticRegistration(
 			expiresAt: validated.value.exp + (options?.clockSkewSeconds ?? DEFAULT_CLOCK_SKEW_SECONDS),
 		});
 		if (!accepted) {
+			safeLogger(options?.logger)?.warn(
+				"Automatic Client Registration Request Object jti has already been used",
+			);
 			return err(
 				federationError(
 					FederationErrorCode.InvalidRequest,
@@ -175,8 +193,8 @@ export async function processAutomaticRegistration(
 				),
 			);
 		}
-	} catch (error) {
-		options.logger?.error("Failed to claim Request Object JTI", { error });
+	} catch {
+		safeLogger(options.logger)?.error("Failed to claim Request Object JTI");
 		return err(
 			federationError(
 				FederationErrorCode.ServerError,
@@ -185,6 +203,7 @@ export async function processAutomaticRegistration(
 		);
 	}
 
+	safeLogger(options?.logger)?.info("Automatic Client Registration Request validated");
 	return ok({
 		protocolKeys: protocolKeysResult.value,
 		rpEntityId,

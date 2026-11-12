@@ -13,6 +13,7 @@ import {
 	ok,
 	type Result,
 	resolveTrustChainForAnchor,
+	safeLogger,
 	signEntityStatement,
 	type TrustAnchorSet,
 	type ValidatedTrustChain,
@@ -129,6 +130,8 @@ export async function automaticRegistration(
 	trustAnchors: TrustAnchorSet,
 	options?: FederationOptions,
 ): Promise<Result<AutomaticRegistrationResult>> {
+	safeLogger(options?.logger)?.debug("Creating an Automatic Client Registration Request");
+
 	const sharedChains = await selectSharedRegistrationTrustChains(
 		rpConfig.entityId,
 		discovery.entityId as EntityId,
@@ -143,6 +146,7 @@ export async function automaticRegistration(
 		| undefined;
 	const registrationTypes = getRegistrationTypes(opMeta);
 	if (!registrationTypes.includes(ClientRegistrationType.Automatic)) {
+		safeLogger(options?.logger)?.warn("OP does not support Automatic Client Registration");
 		return err(
 			federationError(
 				FederationErrorCode.InvalidRequest,
@@ -153,6 +157,7 @@ export async function automaticRegistration(
 
 	const authorizationEndpoint = opMeta?.authorization_endpoint as string | undefined;
 	if (!authorizationEndpoint) {
+		safeLogger(options?.logger)?.warn("OP metadata is missing authorization_endpoint");
 		return err(
 			federationError(
 				FederationErrorCode.InvalidMetadata,
@@ -201,6 +206,9 @@ export async function automaticRegistration(
 
 	if (rpConfig.includePeerTrustChain) {
 		if (!selectedTrustAnchorId) {
+			safeLogger(options?.logger)?.warn(
+				"includePeerTrustChain requires a selected RP Trust Anchor",
+			);
 			return err(
 				federationError(
 					InternalErrorCode.TrustAnchorUnknown,
@@ -215,6 +223,9 @@ export async function automaticRegistration(
 			options,
 		);
 		if (!peerChainResult.ok) {
+			safeLogger(options?.logger)?.warn(
+				"Cannot build peer_trust_chain to the selected Trust Anchor",
+			);
 			return err(
 				federationError(
 					InternalErrorCode.TrustChainInvalid,
@@ -274,6 +285,7 @@ export async function automaticRegistration(
 
 		case "request_uri": {
 			if (opMeta?.request_uri_parameter_supported === false) {
+				safeLogger(options?.logger)?.warn("OP does not support the request_uri parameter");
 				return err(
 					federationError(
 						FederationErrorCode.InvalidRequest,
@@ -283,6 +295,7 @@ export async function automaticRegistration(
 			}
 			const hostedUri = rpConfig.requestUri;
 			if (!hostedUri) {
+				safeLogger(options?.logger)?.warn("Provide requestUri to host the Request Object");
 				return err(
 					federationError(
 						FederationErrorCode.InvalidRequest,
@@ -291,6 +304,7 @@ export async function automaticRegistration(
 				);
 			}
 			if (!hostedUri.startsWith("https://")) {
+				safeLogger(options?.logger)?.warn("Request Object request_uri must use HTTPS");
 				return err(
 					federationError(
 						FederationErrorCode.InvalidRequest,
@@ -298,6 +312,7 @@ export async function automaticRegistration(
 					),
 				);
 			}
+			safeLogger(options?.logger)?.info("Automatic registration completed");
 			return ok({
 				...base,
 				delivery: "request_uri",
@@ -313,6 +328,9 @@ export async function automaticRegistration(
 		case "par": {
 			const parEndpoint = opMeta?.pushed_authorization_request_endpoint as string | undefined;
 			if (!parEndpoint) {
+				safeLogger(options?.logger)?.warn(
+					"PAR requires pushed_authorization_request_endpoint in OP metadata",
+				);
 				return err(
 					federationError(
 						FederationErrorCode.InvalidRequest,
@@ -345,6 +363,9 @@ export async function automaticRegistration(
 						"client assertion",
 					);
 					if (!assertAssertionSignerResult.ok) {
+						safeLogger(options?.logger)?.warn(
+							"PAR client assertion signer does not match the RP protocol keys",
+						);
 						return err(assertAssertionSignerResult.error);
 					}
 
@@ -361,6 +382,7 @@ export async function automaticRegistration(
 					form.set("client_assertion_type", CLIENT_ASSERTION_TYPE);
 					form.set("client_assertion", clientAssertion);
 				} catch (cause) {
+					safeLogger(options?.logger)?.error("Failed to create the PAR client assertion");
 					return err(
 						federationError(
 							FederationErrorCode.ServerError,
@@ -380,6 +402,7 @@ export async function automaticRegistration(
 				body: formBody,
 			});
 			if (response.status !== 201 && response.status !== 200) {
+				safeLogger(options?.logger)?.warn("PAR endpoint returned an unsuccessful HTTP status");
 				return err(
 					federationError(
 						InternalErrorCode.Network,
@@ -391,15 +414,18 @@ export async function automaticRegistration(
 			const parRequestUri = parPayload.request_uri;
 			const expiresIn = parPayload.expires_in;
 			if (typeof parRequestUri !== "string" || !parRequestUri.startsWith("urn:")) {
+				safeLogger(options?.logger)?.warn("PAR response request_uri is missing or invalid");
 				return err(
 					federationError(InternalErrorCode.Network, "PAR response missing or invalid request_uri"),
 				);
 			}
 			if (typeof expiresIn !== "number" || expiresIn <= 0) {
+				safeLogger(options?.logger)?.warn("PAR response expires_in is missing or invalid");
 				return err(
 					federationError(InternalErrorCode.Network, "PAR response missing or invalid expires_in"),
 				);
 			}
+			safeLogger(options?.logger)?.info("Automatic registration completed");
 			return ok({
 				...base,
 				delivery: "par",

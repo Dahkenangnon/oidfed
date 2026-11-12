@@ -331,6 +331,49 @@ async function createDualAnchorRegistrationFixture() {
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("oidc / injected logging", () => {
+		test("registration uses message-only host logging and tolerates sink failures", async (t) => {
+			const f = await createMockFederation();
+			const leaf = decodeEntityStatement(f.leafEcJwt);
+			if (!leaf.ok) throw new Error("fixture");
+			const messages: unknown[][] = [];
+			const record = (...args: unknown[]) => {
+				messages.push(args);
+			};
+			const logger = { debug: record, info: record, warn: record, error: record };
+			const role = new OidcRelyingPartyRole({
+				protocolKeyProvider: new StaticProtocolSigningKeyProvider({
+					requestObjectSigner: new JwkSigner(f.leafProtocolSigningKey),
+				}),
+				metadata: leaf.value.payload.metadata?.openid_relying_party,
+			});
+			role.initialize({
+				entityId: LEAF_ID,
+				authorityHints: [TA_ID],
+				trustAnchors: f.trustAnchors,
+				keyProvider: MemoryFederationKeyProvider.fromJWK(f.leafSigningKey),
+				options: { ...f.options, logger },
+			});
+			const params = {
+				opEntityId: OP_ID,
+				redirect_uri: "https://rp.example.com/callback",
+				scope: "openid",
+			};
+			t.true((await role.automaticallyRegister(params)).ok);
+			t.true(messages.some((args) => String(args[0]).includes("Automatic Client Registration")));
+			t.true(messages.every((args) => args.length === 1));
+			const fail = () => {
+				throw new Error("Logger failed");
+			};
+			t.true(
+				(
+					await role.automaticallyRegister(params, {
+						logger: { debug: fail, info: fail, warn: fail, error: fail },
+					})
+				).ok,
+			);
+		});
+	});
 
 	test("publication types allow superior completion without relaxing effective schemas", (t) => {
 		const publication: OidcPublic.OIDCFederationPublicationMetadata = {
@@ -7369,6 +7412,117 @@ export default (QUnit: QUnit) => {
 		});
 	});
 
+	module("oidc / automatic registration integration logging", () => {
+		test("provider callback failures name the integration and preserve exceptions or rejection", async (t) => {
+			const fed = await createMockFederation();
+			const leaf = decodeEntityStatement(fed.leafEcJwt);
+			if (!leaf.ok) throw new Error("fixture");
+			const rp = new OidcRelyingPartyRole({
+				protocolKeyProvider: new StaticProtocolSigningKeyProvider({
+					requestObjectSigner: new JwkSigner(fed.leafProtocolSigningKey),
+				}),
+				metadata: leaf.value.payload.metadata?.openid_relying_party,
+			});
+			rp.initialize({
+				entityId: LEAF_ID,
+				authorityHints: [TA_ID],
+				trustAnchors: fed.trustAnchors,
+				keyProvider: MemoryFederationKeyProvider.fromJWK(fed.leafSigningKey),
+				options: fed.options,
+			});
+			const request = await rp.automaticallyRegister({
+				opEntityId: OP_ID,
+				redirect_uri: `${LEAF_ID}/callback`,
+				scope: "openid",
+			});
+			if (!request.ok) throw new Error(JSON.stringify(request));
+			for (const failure of ["validate", "reject", "persist", "none"] as const)
+				for (const throwingLogger of [false, true]) {
+					const original = new Error("private-callback-error");
+					const messages: [string, unknown[]][] = [];
+					const calls: string[] = [];
+					const record =
+						(level: string) =>
+						(...args: unknown[]) => {
+							messages.push([level, args]);
+							if (throwingLogger) throw new Error("Logger failed");
+						};
+					const provider = new OidcProviderRole({
+						replayStore: new MemoryReplayStore(),
+						registrationProtocolAdapter: {
+							validateClientMetadata: (metadata) => {
+								calls.push("validate");
+								if (failure === "validate") throw original;
+								return failure === "reject"
+									? {
+											ok: false,
+											error: { code: FederationErrorCode.InvalidMetadata, description: "Rejected" },
+										}
+									: { ok: true, value: metadata };
+							},
+							enrichResponseMetadata: (metadata) => metadata,
+						},
+						onRegistration: async () => {
+							calls.push("persist");
+							if (failure === "persist") throw original;
+						},
+					});
+					provider.initialize({
+						entityId: OP_ID,
+						trustAnchors: fed.trustAnchors,
+						keyProvider: MemoryFederationKeyProvider.fromJWK(fed.opSigningKey),
+						options: {
+							...fed.options,
+							logger: {
+								debug() {},
+								info() {},
+								warn() {},
+								error() {
+									throw new Error("Must use the operation logger");
+								},
+							},
+						},
+					});
+					const run = () =>
+						provider.processAutomaticRegistration(request.value.requestObjectJwt, {
+							logger: {
+								debug: record("debug"),
+								info: record("info"),
+								warn: record("warn"),
+								error: record("error"),
+							},
+						});
+					if (failure === "validate" || failure === "persist")
+						await t.rejects(run(), (error: unknown) => error === original);
+					else t.equal((await run()).ok, failure === "none");
+					const expected = {
+						validate: "RP metadata validation failed in registrationProtocolAdapter",
+						reject: "RP metadata was rejected by registrationProtocolAdapter",
+						persist: "Automatic Client Registration failed in onRegistration",
+						none: "Automatic Client Registration completed",
+					}[failure];
+					t.true(
+						messages.some(
+							([level, args]) =>
+								level === (failure === "none" ? "info" : failure === "reject" ? "warn" : "error") &&
+								args[0] === expected,
+						),
+					);
+					t.equal(
+						messages.filter(([, args]) => args[0] === "Automatic Client Registration completed")
+							.length,
+						failure === "none" ? 1 : 0,
+					);
+					t.deepEqual(
+						calls,
+						failure === "none" || failure === "persist" ? ["validate", "persist"] : ["validate"],
+					);
+					t.true(messages.every(([, args]) => args.length === 1));
+					t.false(JSON.stringify(messages).includes("private-"));
+				}
+		});
+	});
+
 	module("oidc / role operation context", () => {
 		test("rejects policy-rebound OP issuers before Request Object signing or registration POSTs", async (t) => {
 			const fed = await createMockFederation();
@@ -7646,6 +7800,115 @@ export default (QUnit: QUnit) => {
 				);
 			return { fed, config, now, events, payload, chain, sign, post };
 		}
+
+		test("explicit registration logs the failing integration without changing its outcome", async (t) => {
+			for (const failure of [
+				"validate",
+				"reject",
+				"enrich",
+				"secret",
+				"invalidate",
+				"persist",
+				"none",
+			] as const)
+				for (const throwingLogger of [false, true]) {
+					const messages: [string, unknown[]][] = [];
+					const calls: string[] = [];
+					const original = new Error("private-callback-error");
+					const record =
+						(level: string) =>
+						(...args: unknown[]) => {
+							messages.push([level, args]);
+							if (throwingLogger) throw new Error("Logger failed");
+						};
+					const fx = await fixture({
+						logger: {
+							debug: record("debug"),
+							info: record("info"),
+							warn: record("warn"),
+							error: record("error"),
+						},
+					});
+					const handler = createExplicitRegistrationHandler({
+						...fx.config,
+						registrationProtocolAdapter: {
+							validateClientMetadata: (metadata) => {
+								calls.push("validate");
+								if (failure === "validate") throw original;
+								return failure === "reject"
+									? {
+											ok: false,
+											error: { code: FederationErrorCode.InvalidMetadata, description: "Rejected" },
+										}
+									: { ok: true, value: metadata };
+							},
+							enrichResponseMetadata: (metadata) => {
+								calls.push("enrich");
+								if (failure === "enrich") throw original;
+								return metadata;
+							},
+						},
+						generateClientSecret: async () => {
+							calls.push("secret");
+							if (failure === "secret") throw original;
+							return "private-client-secret";
+						},
+						onRegistrationInvalidation: async () => {
+							calls.push("invalidate");
+							if (failure === "invalidate") throw original;
+						},
+						onRegistration: async () => {
+							calls.push("persist");
+							if (failure === "persist") throw original;
+						},
+					});
+					const request = new Request(`${OP_ID}/federation_registration`, {
+						method: "POST",
+						headers: { "content-type": MediaType.EntityStatement },
+						body: await fx.sign(),
+					});
+					if (["validate", "enrich", "secret"].includes(failure))
+						await t.rejects(handler(request), (error: unknown) => error === original);
+					else {
+						const response = await handler(request);
+						t.equal(
+							response.status,
+							failure === "none" ? 200 : failure === "reject" ? 400 : 500,
+							failure,
+						);
+					}
+					const expected = {
+						validate: "RP metadata validation failed in registrationProtocolAdapter",
+						reject: "RP metadata was rejected by registrationProtocolAdapter",
+						enrich:
+							"Explicit Client Registration response metadata preparation failed in registrationProtocolAdapter",
+						secret:
+							"Explicit Client Registration client_secret generation failed in generateClientSecret",
+						invalidate:
+							"Existing client registration invalidation failed in onRegistrationInvalidation",
+						persist: "Explicit Client Registration failed in onRegistration",
+						none: "Explicit Client Registration completed",
+					}[failure];
+					t.true(
+						messages.some(
+							([level, args]) =>
+								level === (failure === "none" ? "info" : failure === "reject" ? "warn" : "error") &&
+								args[0] === expected,
+						),
+						failure,
+					);
+					t.equal(
+						messages.filter(([, args]) => args[0] === "Explicit Client Registration completed")
+							.length,
+						failure === "none" ? 1 : 0,
+					);
+					t.equal(new Set(calls).size, calls.length, "each hook is called once");
+					t.true(messages.every(([, args]) => args.length === 1));
+					t.false(JSON.stringify(messages).includes("private-"));
+					if (failure === "none")
+						t.deepEqual(calls, ["validate", "enrich", "secret", "invalidate", "persist"]);
+				}
+		});
 
 		for (const mode of ["header", "discovery", "body"]) {
 			for (const keyKind of ["federation", "attacker", "same-kid", "protocol"]) {

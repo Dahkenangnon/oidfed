@@ -14,6 +14,7 @@ import {
 	nowSeconds,
 	readBodyWithLimit,
 	requireMethod,
+	safeLogger,
 	signEntityStatement,
 	type TrustAnchorSet,
 	toPublicError,
@@ -77,6 +78,7 @@ export function createExplicitRegistrationHandler(
 	const trustAnchors = assertNonEmptyTrustAnchors(config.trustAnchors);
 
 	return async (request: Request) => {
+		const logger = safeLogger(config.options?.logger);
 		const methodError = requireMethod(request, "POST");
 		if (methodError) return methodError;
 
@@ -127,11 +129,18 @@ export function createExplicitRegistrationHandler(
 		let validatedMetadata: Record<string, unknown> | undefined;
 		if (config.registrationProtocolAdapter) {
 			const metadataRecord = structuredClone(bestChain.resolvedMetadata);
-			const adapterResult = config.registrationProtocolAdapter.validateClientMetadata(
-				metadataRecord,
-				adapterContext,
-			);
+			let adapterResult: ReturnType<RegistrationProtocolAdapter["validateClientMetadata"]>;
+			try {
+				adapterResult = config.registrationProtocolAdapter.validateClientMetadata(
+					metadataRecord,
+					adapterContext,
+				);
+			} catch (error) {
+				logger?.error("RP metadata validation failed in registrationProtocolAdapter");
+				throw error;
+			}
 			if (!adapterResult.ok) {
+				logger?.warn("RP metadata was rejected by registrationProtocolAdapter");
 				return errorResponse(400, adapterResult.error.code, adapterResult.error.description);
 			}
 			validatedMetadata = adapterResult.value;
@@ -182,11 +191,18 @@ export function createExplicitRegistrationHandler(
 			const sourceRpMeta = (responseMetadata.openid_relying_party ?? {}) as Record<string, unknown>;
 			let rpMeta: Record<string, unknown>;
 			if (config.registrationProtocolAdapter && bestChain) {
-				rpMeta = config.registrationProtocolAdapter.enrichResponseMetadata(
-					sourceRpMeta,
-					structuredClone(bestChain),
-					adapterContext,
-				);
+				try {
+					rpMeta = config.registrationProtocolAdapter.enrichResponseMetadata(
+						sourceRpMeta,
+						structuredClone(bestChain),
+						adapterContext,
+					);
+				} catch (error) {
+					logger?.error(
+						"Explicit Client Registration response metadata preparation failed in registrationProtocolAdapter",
+					);
+					throw error;
+				}
 			} else {
 				rpMeta = { ...sourceRpMeta };
 			}
@@ -237,7 +253,15 @@ export function createExplicitRegistrationHandler(
 		}
 
 		if (config.generateClientSecret) {
-			const clientSecret = await config.generateClientSecret(rpEntityId);
+			let clientSecret: string | undefined;
+			try {
+				clientSecret = await config.generateClientSecret(rpEntityId);
+			} catch (error) {
+				logger?.error(
+					"Explicit Client Registration client_secret generation failed in generateClientSecret",
+				);
+				throw error;
+			}
 			if (clientSecret) {
 				const metadataRecord = responsePayload.metadata as Record<string, unknown>;
 				const rpMeta = (metadataRecord.openid_relying_party ?? {}) as Record<string, unknown>;
@@ -276,6 +300,9 @@ export function createExplicitRegistrationHandler(
 			try {
 				await config.onRegistrationInvalidation(rpEntityId);
 			} catch {
+				logger?.error(
+					"Existing client registration invalidation failed in onRegistrationInvalidation",
+				);
 				return errorResponse(500, FederationErrorCode.ServerError, "Registration hook failed");
 			}
 		}
@@ -291,10 +318,12 @@ export function createExplicitRegistrationHandler(
 			try {
 				await config.onRegistration(rpEntityId, clientMetadata, clientSecret);
 			} catch {
+				logger?.error("Explicit Client Registration failed in onRegistration");
 				return errorResponse(500, FederationErrorCode.ServerError, "Registration hook failed");
 			}
 		}
 
+		logger?.info("Explicit Client Registration completed");
 		return jwtResponse(responseJwt, OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE);
 	};
 }

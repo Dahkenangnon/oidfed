@@ -12,6 +12,7 @@ import {
 	ok,
 	type Result,
 	resolveTrustChains,
+	safeLogger,
 	shortestChain,
 	type TrustAnchorSet,
 	type ValidatedTrustChain,
@@ -55,11 +56,16 @@ export async function processExplicitRegistration(
 	trustAnchors: TrustAnchorSet | undefined,
 	options: ProcessExplicitRegistrationOptions,
 ): Promise<Result<ProcessedExplicitRegistration, FederationError>> {
+	safeLogger(options?.logger)?.debug("Validating an Explicit Client Registration Request");
+
 	const trustAnchorsResult = requireNonEmptyTrustAnchors(trustAnchors);
 	if (!trustAnchorsResult.ok) return trustAnchorsResult;
 	const configuredTrustAnchors = trustAnchorsResult.value;
 
 	if (contentType !== MediaType.EntityStatement && contentType !== MediaType.TrustChain) {
+		safeLogger(options?.logger)?.warn(
+			"Explicit Client Registration Request requires application/entity-statement+jwt or application/trust-chain+json",
+		);
 		return err(
 			federationError(
 				FederationErrorCode.InvalidRequest,
@@ -86,6 +92,7 @@ export async function processExplicitRegistration(
 
 	const decoded = decodeEntityStatement(rpEcJwt);
 	if (!decoded.ok) {
+		safeLogger(options?.logger)?.warn("Failed to decode the RP Entity Configuration");
 		return err(
 			federationError(
 				FederationErrorCode.InvalidRequest,
@@ -98,6 +105,7 @@ export async function processExplicitRegistration(
 
 	const rpEntityId = payload.iss as string as EntityId;
 	if (!rpEntityId) {
+		safeLogger(options?.logger)?.warn("RP Entity Configuration is missing iss");
 		return err(federationError(FederationErrorCode.InvalidRequest, "RP EC missing 'iss' claim"));
 	}
 
@@ -106,6 +114,7 @@ export async function processExplicitRegistration(
 		return err(federationError(FederationErrorCode.InvalidRequest, timeClaims.error.description));
 
 	if (payload.sub !== payload.iss) {
+		safeLogger(options?.logger)?.warn("RP Entity Configuration iss MUST equal sub");
 		return err(
 			federationError(
 				FederationErrorCode.InvalidRequest,
@@ -117,11 +126,15 @@ export async function processExplicitRegistration(
 	// aud is REQUIRED and MUST match OP Entity Identifier
 	const aud = payload.aud;
 	if (!aud) {
+		safeLogger(options?.logger)?.warn("Explicit Client Registration Request is missing aud");
 		return err(
 			federationError(FederationErrorCode.InvalidRequest, "RP EC missing required 'aud' claim"),
 		);
 	}
 	if (aud !== (options.opEntityId as string)) {
+		safeLogger(options?.logger)?.warn(
+			"Explicit Client Registration Request aud does not match the OP Entity Identifier",
+		);
 		return err(
 			federationError(
 				FederationErrorCode.InvalidRequest,
@@ -137,6 +150,9 @@ export async function processExplicitRegistration(
 		authorityHints.length === 0 ||
 		!authorityHints.every((h) => typeof h === "string")
 	) {
+		safeLogger(options?.logger)?.warn(
+			"Explicit Client Registration Request authority_hints MUST be a non-empty array of strings",
+		);
 		return err(
 			federationError(
 				FederationErrorCode.InvalidRequest,
@@ -148,6 +164,9 @@ export async function processExplicitRegistration(
 	// metadata containing openid_relying_party is REQUIRED
 	const metadata = payload.metadata as Record<string, unknown> | undefined;
 	if (!metadata || typeof metadata !== "object" || !metadata.openid_relying_party) {
+		safeLogger(options?.logger)?.warn(
+			"Explicit Client Registration Request MUST contain metadata.openid_relying_party",
+		);
 		return err(
 			federationError(
 				FederationErrorCode.InvalidRequest,
@@ -158,6 +177,9 @@ export async function processExplicitRegistration(
 
 	const requestShape = ExplicitRegistrationRequestPayloadSchema.safeParse(payload);
 	if (!requestShape.success) {
+		safeLogger(options?.logger)?.warn(
+			"Explicit Client Registration Request payload has invalid claims",
+		);
 		return err(
 			federationError(
 				FederationErrorCode.InvalidRequest,
@@ -174,6 +196,9 @@ export async function processExplicitRegistration(
 			options.trustChainHeader !== undefined &&
 			JSON.stringify(options.trustChainHeader) !== JSON.stringify(header.trust_chain)
 		) {
+			safeLogger(options?.logger)?.warn(
+				"Explicit Client Registration Request has conflicting trust_chain headers",
+			);
 			return err(
 				federationError(FederationErrorCode.InvalidTrustChain, "Conflicting trust_chain headers"),
 			);
@@ -187,6 +212,7 @@ export async function processExplicitRegistration(
 			suppliedTrustChain.length === 0 ||
 			!suppliedTrustChain.every((s) => typeof s === "string"))
 	) {
+		safeLogger(options?.logger)?.warn("trust_chain must be a non-empty array of JWT strings");
 		return err(
 			federationError(
 				FederationErrorCode.InvalidTrustChain,
@@ -198,6 +224,9 @@ export async function processExplicitRegistration(
 		contentType === MediaType.TrustChain &&
 		(header.peer_trust_chain !== undefined || header.trust_chain !== undefined)
 	) {
+		safeLogger(options?.logger)?.warn(
+			"trust_chain and peer_trust_chain MUST NOT be used when the request body is a Trust Chain",
+		);
 		return err(
 			federationError(
 				FederationErrorCode.InvalidRequest,
@@ -206,6 +235,9 @@ export async function processExplicitRegistration(
 		);
 	}
 	if (header.peer_trust_chain !== undefined && suppliedTrustChain === undefined) {
+		safeLogger(options?.logger)?.warn(
+			"Explicit Client Registration peer_trust_chain requires trust_chain",
+		);
 		return err(
 			federationError(FederationErrorCode.InvalidRequest, "peer_trust_chain requires trust_chain"),
 		);
@@ -214,6 +246,9 @@ export async function processExplicitRegistration(
 	// Self-signature verification: the RP EC must be signed by a key in its own JWKS
 	const rpJwks = payload.jwks as { keys: Array<Record<string, unknown>> } | undefined;
 	if (!rpJwks) {
+		safeLogger(options?.logger)?.warn(
+			"RP Entity Configuration MUST contain jwks for self-signature verification",
+		);
 		return err(
 			federationError(
 				FederationErrorCode.InvalidRequest,
@@ -234,6 +269,7 @@ export async function processExplicitRegistration(
 		},
 	);
 	if (!selfVerify.ok) {
+		safeLogger(options?.logger)?.warn("RP Entity Configuration self-signature verification failed");
 		return err(
 			federationError(
 				InternalErrorCode.SignatureInvalid,
@@ -278,6 +314,9 @@ export async function processExplicitRegistration(
 		} else reason = validation.errors[0]?.message ?? reason;
 	}
 	if (!validChains.length) {
+		safeLogger(options?.logger)?.warn(
+			"No RP Trust Chain satisfies Explicit Client Registration validation",
+		);
 		return err(
 			federationError(
 				failureCode,
@@ -300,6 +339,9 @@ export async function processExplicitRegistration(
 		);
 		if (!peer.ok) return peer;
 		if (peer.value.trustAnchorId !== bestChain.trustAnchorId) {
+			safeLogger(options?.logger)?.warn(
+				"peer_trust_chain Trust Anchor does not match the selected RP Trust Anchor",
+			);
 			return err(
 				federationError(
 					FederationErrorCode.InvalidTrustChain,
@@ -309,6 +351,7 @@ export async function processExplicitRegistration(
 		}
 		peerResolvedOpMetadata = peer.value.resolvedMetadata.openid_provider ?? {};
 	}
+	safeLogger(options?.logger)?.info("Explicit Client Registration Request validated");
 	return ok({
 		rpEntityId,
 		resolvedRpMetadata: resolvedRpMetadata ?? {},

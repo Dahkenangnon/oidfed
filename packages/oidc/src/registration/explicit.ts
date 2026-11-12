@@ -17,6 +17,7 @@ import {
 	type ParsedEntityStatement,
 	type Result,
 	resolveTrustChainForAnchor,
+	safeLogger,
 	signEntityStatement,
 	type TrustAnchorSet,
 	validateCriticalClaims,
@@ -75,6 +76,8 @@ export async function explicitRegistration(
 	trustAnchors: TrustAnchorSet,
 	options?: FederationOptions,
 ): Promise<Result<ExplicitRegistrationResult>> {
+	safeLogger(options?.logger)?.debug("Creating an Explicit Client Registration Request");
+
 	const keySet = await rpConfig.keyProvider.getFederationKeySet();
 	validateFederationKeySet(keySet);
 	const now = nowSeconds(options?.clock);
@@ -134,6 +137,7 @@ export async function explicitRegistration(
 		| undefined;
 	const registrationTypes = getRegistrationTypes(opMeta);
 	if (!registrationTypes.includes(ClientRegistrationType.Explicit)) {
+		safeLogger(options?.logger)?.warn("OP does not support Explicit Client Registration");
 		return err(
 			federationError(
 				FederationErrorCode.InvalidRequest,
@@ -144,6 +148,7 @@ export async function explicitRegistration(
 
 	const registrationEndpoint = opMeta?.federation_registration_endpoint as string | undefined;
 	if (!registrationEndpoint) {
+		safeLogger(options?.logger)?.warn("OP metadata is missing federation_registration_endpoint");
 		return err(
 			federationError(
 				FederationErrorCode.InvalidMetadata,
@@ -157,6 +162,9 @@ export async function explicitRegistration(
 		const endpoint = new URL(registrationEndpoint);
 		if (endpoint.protocol !== "https:" || endpoint.href.includes("#")) throw new Error();
 	} catch {
+		safeLogger(options?.logger)?.warn(
+			"federation_registration_endpoint must use HTTPS without a fragment",
+		);
 		return err(
 			federationError(
 				FederationErrorCode.InvalidMetadata,
@@ -192,6 +200,9 @@ export async function explicitRegistration(
 
 	if (rpConfig.includePeerTrustChain) {
 		if (!selectedTrustAnchorId) {
+			safeLogger(options?.logger)?.warn(
+				"includePeerTrustChain requires a selected RP Trust Anchor",
+			);
 			return err(
 				federationError(
 					InternalErrorCode.TrustAnchorUnknown,
@@ -206,6 +217,9 @@ export async function explicitRegistration(
 			options,
 		);
 		if (!peerChainResult.ok) {
+			safeLogger(options?.logger)?.warn(
+				"Cannot build peer_trust_chain to the selected Trust Anchor",
+			);
 			return err(
 				federationError(
 					InternalErrorCode.TrustChainInvalid,
@@ -233,6 +247,7 @@ export async function explicitRegistration(
 	const response = await httpClient(request);
 	if (response.status !== 200) {
 		// Intentionally omit response body to avoid leaking OP internals
+		safeLogger(options?.logger)?.warn("Explicit Client Registration response must use HTTP 200");
 		return err(
 			federationError(
 				InternalErrorCode.Network,
@@ -243,6 +258,9 @@ export async function explicitRegistration(
 
 	const responseContentType = response.headers.get("Content-Type");
 	if (!isExactContentType(responseContentType, OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE)) {
+		safeLogger(options?.logger)?.warn(
+			"Explicit Client Registration response Content-Type must be application/explicit-registration-response+jwt",
+		);
 		return err(
 			federationError(
 				FederationErrorCode.InvalidRequest,
@@ -266,6 +284,9 @@ export async function explicitRegistration(
 	const opJwks = subordinateStmt.payload.jwks;
 
 	if (!opJwks) {
+		safeLogger(options?.logger)?.warn(
+			"OP Trust Chain has no keys to verify the Explicit Client Registration response",
+		);
 		return err(
 			federationError(
 				InternalErrorCode.TrustChainInvalid,
@@ -282,6 +303,9 @@ export async function explicitRegistration(
 			: {}),
 	});
 	if (!verifyResult.ok) {
+		safeLogger(options?.logger)?.warn(
+			"Explicit Client Registration response signature verification failed",
+		);
 		return err(
 			federationError(
 				InternalErrorCode.SignatureInvalid,
@@ -292,6 +316,7 @@ export async function explicitRegistration(
 
 	const decoded = decodeEntityStatement(responseJwt);
 	if (!decoded.ok) {
+		safeLogger(options?.logger)?.warn("Failed to decode the Explicit Client Registration response");
 		return err(
 			federationError(
 				InternalErrorCode.TrustChainInvalid,
@@ -301,6 +326,9 @@ export async function explicitRegistration(
 	}
 
 	if (decoded.value.header.typ !== OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE) {
+		safeLogger(options?.logger)?.warn(
+			"Explicit Client Registration response typ must be explicit-registration-response+jwt",
+		);
 		return err(
 			federationError(
 				FederationErrorCode.InvalidRequest,
@@ -314,12 +342,16 @@ export async function explicitRegistration(
 	if (!criticalClaims.ok) return criticalClaims;
 
 	if (responsePayload.iss !== (discovery.entityId as string)) {
+		safeLogger(options?.logger)?.warn(
+			"Explicit Client Registration response iss does not match the OP Entity Identifier",
+		);
 		return err(
 			federationError(FederationErrorCode.InvalidIssuer, "Response iss does not match OP"),
 		);
 	}
 
 	if (responsePayload.sub === undefined) {
+		safeLogger(options?.logger)?.warn("Explicit Client Registration response is missing sub");
 		return err(
 			federationError(
 				FederationErrorCode.InvalidSubject,
@@ -329,12 +361,18 @@ export async function explicitRegistration(
 	}
 
 	if (responsePayload.sub !== (rpConfig.entityId as string)) {
+		safeLogger(options?.logger)?.warn(
+			"Explicit Client Registration response sub does not match the RP Entity Identifier",
+		);
 		return err(
 			federationError(FederationErrorCode.InvalidSubject, "Response sub does not match RP"),
 		);
 	}
 
 	if (responsePayload.aud !== (rpConfig.entityId as string)) {
+		safeLogger(options?.logger)?.warn(
+			"Explicit Client Registration response aud does not match the RP Entity Identifier",
+		);
 		return err(
 			federationError(FederationErrorCode.InvalidSubject, "Response aud does not match RP"),
 		);
@@ -343,6 +381,7 @@ export async function explicitRegistration(
 	// iat and exp are REQUIRED in the registration response
 	const responseExp = responsePayload.exp as number | undefined;
 	if (responseExp === undefined) {
+		safeLogger(options?.logger)?.warn("Explicit Client Registration response is missing exp");
 		return err(
 			federationError(
 				FederationErrorCode.InvalidRequest,
@@ -352,11 +391,13 @@ export async function explicitRegistration(
 	}
 	const responseNow = nowSeconds(options?.clock);
 	if (responseNow >= responseExp) {
+		safeLogger(options?.logger)?.warn("Explicit Client Registration response has expired");
 		return err(federationError(InternalErrorCode.Expired, "Registration response has expired"));
 	}
 
 	const responseIat = responsePayload.iat as number | undefined;
 	if (responseIat === undefined) {
+		safeLogger(options?.logger)?.warn("Explicit Client Registration response is missing iat");
 		return err(
 			federationError(
 				FederationErrorCode.InvalidRequest,
@@ -376,6 +417,9 @@ export async function explicitRegistration(
 
 	const trustAnchor = responsePayload.trust_anchor as string | undefined;
 	if (!trustAnchor || !trustAnchors.has(trustAnchor as EntityId)) {
+		safeLogger(options?.logger)?.warn(
+			"Explicit Client Registration response trust_anchor is not a configured Trust Anchor",
+		);
 		return err(
 			federationError(
 				FederationErrorCode.InvalidTrustAnchor,
@@ -385,6 +429,9 @@ export async function explicitRegistration(
 	}
 
 	if (trustAnchor !== (selectedTrustAnchorId as string)) {
+		safeLogger(options?.logger)?.warn(
+			"Explicit Client Registration response trust_anchor does not match the selected Trust Anchor",
+		);
 		return err(
 			federationError(
 				FederationErrorCode.InvalidTrustAnchor,
@@ -397,6 +444,9 @@ export async function explicitRegistration(
 
 	const responseAuthorityHints = responsePayload.authority_hints as string[] | undefined;
 	if (!Array.isArray(responseAuthorityHints) || responseAuthorityHints.length !== 1) {
+		safeLogger(options?.logger)?.warn(
+			"Explicit Client Registration response authority_hints MUST be a single-element array",
+		);
 		return err(
 			federationError(
 				FederationErrorCode.InvalidMetadata,
@@ -406,6 +456,9 @@ export async function explicitRegistration(
 	}
 	for (const hint of responseAuthorityHints) {
 		if (typeof hint !== "string") {
+			safeLogger(options?.logger)?.warn(
+				"Explicit Client Registration response authority_hints contains a non-string value",
+			);
 			return err(
 				federationError(
 					FederationErrorCode.InvalidMetadata,
@@ -419,6 +472,9 @@ export async function explicitRegistration(
 		selectedTrustAnchorId,
 	);
 	if (responseAuthorityHints[0] !== expectedAuthorityHint) {
+		safeLogger(options?.logger)?.warn(
+			"Explicit Client Registration response authority_hints does not match the selected RP Trust Chain",
+		);
 		return err(
 			federationError(
 				FederationErrorCode.InvalidMetadata,
@@ -428,6 +484,9 @@ export async function explicitRegistration(
 	}
 
 	if (responseExp > sharedChains.value.rpChain.expiresAt) {
+		safeLogger(options?.logger)?.warn(
+			"Explicit Client Registration response exp exceeds the selected RP Trust Chain expiry",
+		);
 		return err(
 			federationError(
 				FederationErrorCode.InvalidRequest,
@@ -440,6 +499,7 @@ export async function explicitRegistration(
 		| Record<string, Record<string, unknown>>
 		| undefined;
 	if (!responseMeta || typeof responseMeta !== "object") {
+		safeLogger(options?.logger)?.warn("Explicit Client Registration response is missing metadata");
 		return err(
 			federationError(
 				FederationErrorCode.InvalidMetadata,
@@ -451,6 +511,9 @@ export async function explicitRegistration(
 	const responseTypes = new Set(Object.keys(responseMeta));
 	for (const requestedType of requestedTypes) {
 		if (!responseTypes.has(requestedType)) {
+			safeLogger(options?.logger)?.warn(
+				"Explicit Client Registration response metadata is missing a requested Entity Type",
+			);
 			return err(
 				federationError(
 					FederationErrorCode.InvalidMetadata,
@@ -461,6 +524,9 @@ export async function explicitRegistration(
 	}
 	for (const responseType of responseTypes) {
 		if (!requestedTypes.has(responseType)) {
+			safeLogger(options?.logger)?.warn(
+				"Explicit Client Registration response metadata contains an unrequested Entity Type",
+			);
 			return err(
 				federationError(
 					FederationErrorCode.InvalidMetadata,
@@ -471,6 +537,9 @@ export async function explicitRegistration(
 	}
 
 	if (responsePayload.client_secret !== undefined) {
+		safeLogger(options?.logger)?.warn(
+			"Explicit Client Registration response client_secret MUST be under metadata.openid_relying_party",
+		);
 		return err(
 			federationError(
 				FederationErrorCode.InvalidMetadata,
@@ -485,6 +554,9 @@ export async function explicitRegistration(
 		typeof registeredMetadata !== "object" ||
 		Array.isArray(registeredMetadata)
 	) {
+		safeLogger(options?.logger)?.warn(
+			"Explicit Client Registration response metadata MUST contain openid_relying_party",
+		);
 		return err(
 			federationError(
 				FederationErrorCode.InvalidMetadata,
@@ -498,6 +570,9 @@ export async function explicitRegistration(
 	if (!registeredMetadataResult.success) {
 		const issuePaths = registeredMetadataResult.error.issues.map((issue) => issue.path.join("."));
 		if (issuePaths.some((path) => path === "client_id")) {
+			safeLogger(options?.logger)?.warn(
+				"Explicit Client Registration response metadata.openid_relying_party.client_id is required",
+			);
 			return err(
 				federationError(
 					FederationErrorCode.InvalidMetadata,
@@ -506,6 +581,9 @@ export async function explicitRegistration(
 			);
 		}
 		if (issuePaths.some((path) => path === "client_secret")) {
+			safeLogger(options?.logger)?.warn(
+				"Explicit Client Registration response metadata.openid_relying_party.client_secret MUST be a string",
+			);
 			return err(
 				federationError(
 					FederationErrorCode.InvalidMetadata,
@@ -513,6 +591,9 @@ export async function explicitRegistration(
 				),
 			);
 		}
+		safeLogger(options?.logger)?.warn(
+			"Explicit Client Registration response metadata.openid_relying_party is invalid",
+		);
 		return err(
 			federationError(
 				FederationErrorCode.InvalidMetadata,
@@ -526,6 +607,9 @@ export async function explicitRegistration(
 	const clientSecretExpiresAt = registeredMetadataResult.data.client_secret_expires_at;
 	if (clientSecret !== undefined && clientSecretExpiresAt !== undefined) {
 		if (clientSecretExpiresAt < responseExp) {
+			safeLogger(options?.logger)?.warn(
+				"Explicit Client Registration response client_secret_expires_at is earlier than exp",
+			);
 			return err(
 				federationError(
 					FederationErrorCode.InvalidMetadata,
@@ -539,6 +623,9 @@ export async function explicitRegistration(
 		responsePayload.jwks !== undefined &&
 		JSON.stringify(responsePayload.jwks) !== JSON.stringify(keySet.jwks)
 	) {
+		safeLogger(options?.logger)?.warn(
+			"Explicit Client Registration response jwks MUST be a verbatim copy of the RP Entity Configuration jwks",
+		);
 		return err(
 			federationError(
 				FederationErrorCode.InvalidMetadata,
@@ -565,8 +652,10 @@ export async function explicitRegistration(
 		trustChainExpiresAt,
 	};
 	if (clientSecret !== undefined) {
+		safeLogger(options?.logger)?.info("Explicit registration completed");
 		return ok({ ...result, clientSecret });
 	}
+	safeLogger(options?.logger)?.info("Explicit registration completed");
 	return ok(result);
 }
 

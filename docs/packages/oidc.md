@@ -13,6 +13,10 @@ See [OIDC federation responsibilities](../guide/operator-responsibilities.md#oid
 
 OIDC federation registration validates chains independently of published Trust Mark acceptance. Applications that require an accreditation must check it before accepting the registration, using core's [`checkTrustMarkRequirements()`](core.md#trust-marks) with the validated chain supplied to their registration integration.
 
+Supply `options.logger` for [host-supplied logging](core.md#host-supplied-logging). Registration messages name failures in `registrationProtocolAdapter`, `generateClientSecret`, `onRegistrationInvalidation`, or `onRegistration`. A callback rejecting metadata logs at warn; an unexpected callback failure logs at error. The handler retains its existing error response or exception, even if the logger throws. Client metadata, secrets, and callback errors are excluded from messages.
+
+“Client Registration Request validated” means protocol validation succeeded. “Client Registration completed” follows the configured registration callbacks. Your application still owns persistence and registration expiry.
+
 ## Usage
 
 ### Composing roles with parent entities

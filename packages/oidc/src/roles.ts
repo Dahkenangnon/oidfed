@@ -10,7 +10,13 @@ import type {
 	Result,
 	TrustAnchorSet,
 } from "@oidfed/core";
-import { discoverEntity, err, FederationErrorCode, federationError } from "@oidfed/core";
+import {
+	discoverEntity,
+	err,
+	FederationErrorCode,
+	federationError,
+	safeLogger,
+} from "@oidfed/core";
 import type { ClientAssertionOptions } from "./client-auth/assertion.js";
 import { createClientAssertion } from "./client-auth/assertion.js";
 import type { ProtocolSigningKeyProvider } from "./protocol-keys.js";
@@ -351,20 +357,30 @@ export class OidcProviderRole implements EntityRole {
 		const trustAnchors = assertNonEmptyTrustAnchors(
 			this.config.trustAnchors ?? this.context.trustAnchors,
 		);
+		const effectiveOptions = { ...this.context.options, ...options };
 		const result = await processAutomaticRegistration(requestObjectJwt, trustAnchors, {
-			...this.context.options,
-			...options,
+			...effectiveOptions,
 			opEntityId: this.context.entityId as EntityId,
 			replayStore,
 		});
 
 		if (!result.ok) return result;
 
+		const logger = safeLogger(effectiveOptions.logger);
 		if (this.config.registrationProtocolAdapter?.validateClientMetadata) {
-			const validationResult = await this.config.registrationProtocolAdapter.validateClientMetadata(
-				result.value.resolvedRpMetadata,
-			);
+			let validationResult: Awaited<
+				ReturnType<RegistrationProtocolAdapter["validateClientMetadata"]>
+			>;
+			try {
+				validationResult = await this.config.registrationProtocolAdapter.validateClientMetadata(
+					result.value.resolvedRpMetadata,
+				);
+			} catch (error) {
+				logger?.error("RP metadata validation failed in registrationProtocolAdapter");
+				throw error;
+			}
 			if (!validationResult.ok) {
+				logger?.warn("RP metadata was rejected by registrationProtocolAdapter");
 				return err(
 					federationError(FederationErrorCode.InvalidMetadata, validationResult.error.description),
 				);
@@ -373,15 +389,21 @@ export class OidcProviderRole implements EntityRole {
 
 		if (this.config.onRegistration) {
 			// Persist the protocol keys actually used for §12.1.1.1.2 verification.
-			await this.config.onRegistration(
-				result.value.rpEntityId,
-				structuredClone({
-					...result.value.resolvedRpMetadata,
-					jwks: { keys: result.value.protocolKeys.keys },
-				}),
-			);
+			try {
+				await this.config.onRegistration(
+					result.value.rpEntityId,
+					structuredClone({
+						...result.value.resolvedRpMetadata,
+						jwks: { keys: result.value.protocolKeys.keys },
+					}),
+				);
+			} catch (error) {
+				logger?.error("Automatic Client Registration failed in onRegistration");
+				throw error;
+			}
 		}
 
+		logger?.info("Automatic Client Registration completed");
 		return result;
 	}
 
