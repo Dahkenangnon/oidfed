@@ -16,6 +16,7 @@ export interface OpenIDProviderAppConfig {
 	federationKeyProvider: FederationKeyProvider;
 	/** OP protocol signing key for oidc-provider tokens in the test bed. */
 	oidcSigningKey: JWK;
+	additionalSigningKeys?: readonly JWK[];
 	/**
 	 * Hostnames the OP is willing to fetch a by-reference Request Object from.
 	 * Constructed by the launcher from topology RP entity URLs — server-side
@@ -102,7 +103,7 @@ export function createOpenIDProviderApp(config: OpenIDProviderAppConfig): expres
 
 	const oidc = new Provider(entityId, {
 		adapter: Adapter,
-		jwks: { keys: [oidcSigningKey] },
+		jwks: { keys: [oidcSigningKey, ...(config.additionalSigningKeys ?? [])] },
 		claims: { openid: ["sub"] },
 		scopes: ["openid"],
 		responseTypes: ["code"],

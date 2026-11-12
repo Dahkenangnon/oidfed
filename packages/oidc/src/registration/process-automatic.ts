@@ -18,6 +18,7 @@ import {
 	verifyProtocolJwt,
 } from "@oidfed/core";
 import { RequestObjectTyp } from "../constants.js";
+import { effectiveMetadata } from "../metadata.js";
 import {
 	requireNonEmptyTrustAnchors,
 	resolveAndValidateBestChain,
@@ -128,7 +129,7 @@ export async function processAutomaticRegistration(
 		);
 	}
 
-	if (Object.keys(resolvedRpMetadata).length > 0) {
+	{
 		const { OpenIDRelyingPartyMetadataSchema } = await import("../schemas/metadata.js");
 		const metaParsed = OpenIDRelyingPartyMetadataSchema.safeParse(resolvedRpMetadata);
 		if (!metaParsed.success) {
@@ -172,7 +173,13 @@ export async function processAutomaticRegistration(
 				),
 			);
 		}
-		peerResolvedOpMetadata = peerValidation.value.resolvedMetadata.openid_provider ?? {};
+		const peerMetadata = effectiveMetadata(
+			"openid_provider",
+			peerValidation.value.resolvedMetadata.openid_provider,
+			options.opEntityId,
+		);
+		if (!peerMetadata.ok) return peerMetadata;
+		peerResolvedOpMetadata = peerMetadata.value;
 	}
 
 	try {

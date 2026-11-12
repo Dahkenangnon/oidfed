@@ -68,11 +68,16 @@ export type {
 } from "./schemas/explicit-registration.js";
 export type {
 	OAuthAuthorizationServerMetadata,
+	OAuthAuthorizationServerPublicationMetadata,
 	OAuthClientMetadata,
+	OAuthClientPublicationMetadata,
 	OAuthResourceMetadata,
+	OAuthResourcePublicationMetadata,
 	OIDCFederationMetadata,
 	OIDCFederationPublicationMetadata,
 	OpenIDProviderMetadata,
+	OpenIDProviderPublicationMetadata,
 	OpenIDRelyingPartyMetadata,
+	OpenIDRelyingPartyPublicationMetadata,
 	OpenIDRelyingPartyRegistrationResponseMetadata,
 } from "./schemas/metadata.js";

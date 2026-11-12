@@ -129,8 +129,16 @@ export async function automaticRegistration(
 	authzRequestParams: Record<string, string>,
 	trustAnchors: TrustAnchorSet,
 	options?: FederationOptions,
+	providerDiscovery: "supplied" | "resolved" = "supplied",
 ): Promise<Result<AutomaticRegistrationResult>> {
 	safeLogger(options?.logger)?.debug("Creating an Automatic Client Registration Request");
+	if (!rpConfig.metadata.openid_relying_party && !rpConfig.metadata.oauth_client)
+		return err(
+			federationError(
+				FederationErrorCode.InvalidMetadata,
+				"openid_relying_party or oauth_client metadata is required for automatic registration",
+			),
+		);
 
 	const sharedChains = await selectSharedRegistrationTrustChains(
 		rpConfig.entityId,
@@ -138,6 +146,13 @@ export async function automaticRegistration(
 		discovery.trustChain,
 		trustAnchors,
 		options,
+		{
+			allowAlternativeProvider: providerDiscovery === "resolved",
+			clientType:
+				rpConfig.metadata.openid_relying_party !== undefined
+					? "openid_relying_party"
+					: "oauth_client",
+		},
 	);
 	if (!sharedChains.ok) return err(sharedChains.error);
 

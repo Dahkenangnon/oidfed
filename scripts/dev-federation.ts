@@ -116,7 +116,7 @@ function opMetadata(hostname: string): Record<string, unknown> {
 		jwks_uri: `${base}/jwks`,
 		response_types_supported: ["code"],
 		subject_types_supported: ["public"],
-		id_token_signing_alg_values_supported: ["ES256"],
+		id_token_signing_alg_values_supported: ["RS256", "ES256"],
 		client_registration_types_supported: ["automatic", "explicit"],
 		federation_registration_endpoint: `${base}/federation_registration`,
 	};
@@ -930,16 +930,24 @@ async function bootstrapTopology(
 	// 1. Generate keys. Federation keys and OIDC protocol keys are distinct.
 	const entityKeys = new Map<
 		string,
-		{ signing: JWK; public: JWK; protocolSigning: JWK; protocolPublic: JWK }
+		{
+			signing: JWK;
+			public: JWK;
+			protocolSigning: JWK;
+			protocolPublic: JWK;
+			additionalProtocolSigning: JWK[];
+		}
 	>();
 	for (const entity of topology.entities) {
 		const key = await generateSigningKey("ES256");
 		const protocolKey = await generateSigningKey("ES256");
+		const additional = entity.protocolRole === "op" ? [await generateSigningKey("RS256")] : [];
 		entityKeys.set(entity.id, {
 			signing: key.privateKey as JWK,
 			public: key.publicKey as JWK,
 			protocolSigning: protocolKey.privateKey as JWK,
 			protocolPublic: protocolKey.publicKey as JWK,
+			additionalProtocolSigning: additional.map((key) => key.privateKey as JWK),
 		});
 	}
 	const getKeys = (id: string) => {
@@ -1092,6 +1100,7 @@ async function bootstrapTopology(
 				trustAnchors,
 				federationKeyProvider: keyProvider,
 				oidcSigningKey: keys.protocolSigning,
+				additionalSigningKeys: keys.additionalProtocolSigning,
 				allowedRequestUriHosts,
 			}),
 		);

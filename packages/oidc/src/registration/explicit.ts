@@ -31,6 +31,7 @@ import {
 	OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE,
 	OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE,
 } from "../constants.js";
+import { registrationResponseChoices } from "../metadata.js";
 import {
 	OpenIDRelyingPartyMetadataSchema,
 	OpenIDRelyingPartyRegistrationResponseMetadataSchema,
@@ -75,6 +76,7 @@ export async function explicitRegistration(
 	rpConfig: ExplicitRegistrationConfig,
 	trustAnchors: TrustAnchorSet,
 	options?: FederationOptions,
+	providerDiscovery: "supplied" | "resolved" = "supplied",
 ): Promise<Result<ExplicitRegistrationResult>> {
 	safeLogger(options?.logger)?.debug("Creating an Explicit Client Registration Request");
 
@@ -82,52 +84,58 @@ export async function explicitRegistration(
 	validateFederationKeySet(keySet);
 	const now = nowSeconds(options?.clock);
 	const ttl = rpConfig.entityConfigurationTtlSeconds ?? DEFAULT_ENTITY_STATEMENT_TTL_SECONDS;
-	const candidateRequest = await signEntityStatement(
-		{
-			iss: rpConfig.entityId,
-			sub: rpConfig.entityId,
-			aud: discovery.entityId,
-			iat: now,
-			exp: now + ttl,
-			jwks: keySet.jwks,
-			authority_hints: rpConfig.authorityHints,
-			metadata: rpConfig.metadata,
-			...(rpConfig.trustMarks?.length ? { trust_marks: rpConfig.trustMarks } : {}),
-		},
-		keySet.signer,
-		{ typ: JwtTyp.EntityStatement },
-	);
+	let candidateRequest: string | undefined;
+	const makeCandidateRequest = () =>
+		signEntityStatement(
+			{
+				iss: rpConfig.entityId,
+				sub: rpConfig.entityId,
+				aud: discovery.entityId,
+				iat: now,
+				exp: now + ttl,
+				jwks: keySet.jwks,
+				authority_hints: rpConfig.authorityHints,
+				metadata: rpConfig.metadata,
+				...(rpConfig.trustMarks?.length ? { trust_marks: rpConfig.trustMarks } : {}),
+			},
+			keySet.signer,
+			{ typ: JwtTyp.EntityStatement },
+		);
 	const sharedChains = await selectSharedRegistrationTrustChains(
 		rpConfig.entityId,
 		discovery.entityId as EntityId,
 		discovery.trustChain,
 		trustAnchors,
 		options,
-		async (statements, validationOptions) => {
-			const validation = await validateTrustChain(statements, trustAnchors, {
-				...validationOptions,
-				explicitRegistrationRequest: { jwt: candidateRequest, audience: discovery.entityId },
-			});
-			if (!validation.valid) return validation;
-			const superior = validation.chain.statements[1]?.payload.iss;
-			const resolved = validation.chain.resolvedMetadata;
-			if (
-				!rpConfig.authorityHints.some((hint) => String(hint) === String(superior)) ||
-				!OpenIDRelyingPartyMetadataSchema.safeParse(resolved.openid_relying_party).success ||
-				Object.keys(resolved).length !== Object.keys(rpConfig.metadata).length ||
-				!Object.keys(rpConfig.metadata).every((type) => Object.hasOwn(resolved, type))
-			) {
-				return {
-					valid: false,
-					errors: [
-						{
-							code: InternalErrorCode.MetadataPolicyViolation,
-							message: "RP path is incompatible with the registration request",
-						},
-					],
-				} as const;
-			}
-			return validation;
+		{
+			validateRpCandidate: async (statements, validationOptions) => {
+				candidateRequest ??= await makeCandidateRequest();
+				const validation = await validateTrustChain(statements, trustAnchors, {
+					...validationOptions,
+					explicitRegistrationRequest: { jwt: candidateRequest, audience: discovery.entityId },
+				});
+				if (!validation.valid) return validation;
+				const superior = validation.chain.statements[1]?.payload.iss;
+				const resolved = validation.chain.resolvedMetadata;
+				if (
+					!rpConfig.authorityHints.some((hint) => String(hint) === String(superior)) ||
+					!OpenIDRelyingPartyMetadataSchema.safeParse(resolved.openid_relying_party).success ||
+					Object.keys(resolved).length !== Object.keys(rpConfig.metadata).length ||
+					!Object.keys(rpConfig.metadata).every((type) => Object.hasOwn(resolved, type))
+				) {
+					return {
+						valid: false,
+						errors: [
+							{
+								code: InternalErrorCode.MetadataPolicyViolation,
+								message: "RP path is incompatible with the registration request",
+							},
+						],
+					} as const;
+				}
+				return validation;
+			},
+			allowAlternativeProvider: providerDiscovery === "resolved",
 		},
 	);
 	if (!sharedChains.ok) return err(sharedChains.error);
@@ -635,6 +643,11 @@ export async function explicitRegistration(
 	}
 
 	// RP must not use the registration past trust chain expiry
+	const choiceCheck = registrationResponseChoices(
+		registeredMetadata,
+		sharedChains.value.rpChain.resolvedMetadata.openid_relying_party ?? {},
+	);
+	if (!choiceCheck.ok) return choiceCheck;
 	const policyCheck = validateRegistrationMetadataPolicy(
 		responseMeta,
 		sharedChains.value.rpChain,

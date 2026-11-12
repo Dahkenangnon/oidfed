@@ -15,6 +15,7 @@ import {
 	type ValidationResult,
 	validateTrustChain,
 } from "@oidfed/core";
+import { effectiveMetadata } from "../metadata.js";
 
 /** Extracts `client_registration_types_supported` from OP metadata. */
 export function getRegistrationTypes(opMeta: Record<string, unknown> | undefined): string[] {
@@ -164,6 +165,7 @@ async function resolveValidRegistrationChains(
 		statements: readonly string[],
 		validationOptions: FederationOptions,
 	) => Promise<ValidationResult>,
+	clientType: "openid_relying_party" | "oauth_client" = "openid_relying_party",
 ): Promise<Result<readonly ValidRegistrationChain[], FederationError>> {
 	const chainResult = await resolveTrustChains(subject, trustAnchors, options);
 
@@ -178,6 +180,7 @@ async function resolveValidRegistrationChains(
 	}
 
 	const validChains: ValidRegistrationChain[] = [];
+	let metadataError: FederationError | undefined;
 	for (const chain of chainResult.chains) {
 		const validation = validateCandidate
 			? await validateCandidate(chain.statements, {
@@ -189,11 +192,22 @@ async function resolveValidRegistrationChains(
 					entityConfigurations: chain.entityConfigurations,
 				});
 		if (validation.valid) {
+			const type = label === "OP" ? "openid_provider" : clientType;
+			const parsed = effectiveMetadata(
+				type,
+				validation.chain.resolvedMetadata[type],
+				validation.chain.entityId,
+			);
+			if (!parsed.ok) {
+				metadataError ??= parsed.error;
+				continue;
+			}
 			validChains.push({ statements: chain.statements, chain: validation.chain });
 		}
 	}
 
 	if (validChains.length === 0) {
+		if (metadataError) return err(metadataError);
 		return err(
 			federationError(
 				FederationErrorCode.InvalidTrustChain,
@@ -211,17 +225,34 @@ export async function selectSharedRegistrationTrustChains(
 	preferredOpChain: ValidatedTrustChain,
 	trustAnchors: TrustAnchorSet,
 	options?: FederationOptions,
-	validateRpCandidate?: (
-		statements: readonly string[],
-		validationOptions: FederationOptions,
-	) => Promise<ValidationResult>,
+	selection: {
+		readonly validateRpCandidate?: (
+			statements: readonly string[],
+			validationOptions: FederationOptions,
+		) => Promise<ValidationResult>;
+		readonly allowAlternativeProvider?: boolean;
+		readonly clientType?: "openid_relying_party" | "oauth_client";
+	} = {},
 ): Promise<Result<SharedRegistrationTrustChains, FederationError>> {
+	// Check the provider before invoking callbacks that may sign registration requests.
+	const preferredMetadata = effectiveMetadata(
+		"openid_provider",
+		preferredOpChain.resolvedMetadata.openid_provider,
+		opEntityId,
+	);
+	if (!preferredMetadata.ok && !selection.allowAlternativeProvider) return preferredMetadata;
+	const alternatives = !preferredMetadata.ok
+		? await resolveValidRegistrationChains(opEntityId, trustAnchors, options, "OP")
+		: undefined;
+	if (alternatives && !alternatives.ok)
+		return err(preferredMetadata.ok ? alternatives.error : preferredMetadata.error);
 	const rpChainsResult = await resolveValidRegistrationChains(
 		rpEntityId,
 		trustAnchors,
 		options,
 		"RP",
-		validateRpCandidate,
+		selection.validateRpCandidate,
+		selection.clientType,
 	);
 	if (!rpChainsResult.ok) return rpChainsResult;
 	const rpChains = rpChainsResult.value;
@@ -229,7 +260,7 @@ export async function selectSharedRegistrationTrustChains(
 	const preferredRpChains = rpChains.filter(
 		(candidate) => candidate.chain.trustAnchorId === preferredOpChain.trustAnchorId,
 	);
-	if (preferredRpChains.length > 0) {
+	if (preferredMetadata.ok && preferredRpChains.length > 0) {
 		const rpChain = shortestRegistrationChain(preferredRpChains);
 		return ok({
 			rpChainStatements: rpChain.statements,
@@ -239,12 +270,8 @@ export async function selectSharedRegistrationTrustChains(
 		});
 	}
 
-	const opChainsResult = await resolveValidRegistrationChains(
-		opEntityId,
-		trustAnchors,
-		options,
-		"OP",
-	);
+	const opChainsResult =
+		alternatives ?? (await resolveValidRegistrationChains(opEntityId, trustAnchors, options, "OP"));
 	if (!opChainsResult.ok) return opChainsResult;
 
 	for (const rpChain of rpChains) {
@@ -293,17 +320,27 @@ export async function resolveAndValidateBestChain(
 	}
 
 	const validChains: ValidatedTrustChain[] = [];
+	let metadataError: FederationError | undefined;
 	for (const chain of chainResult.chains) {
 		const result = await validateTrustChain(chain.statements, trustAnchors, {
 			...options,
 			entityConfigurations: chain.entityConfigurations,
 		});
 		if (result.valid) {
+			const parsed = effectiveMetadata(
+				"openid_relying_party",
+				result.chain.resolvedMetadata.openid_relying_party,
+			);
+			if (!parsed.ok) {
+				metadataError ??= parsed.error;
+				continue;
+			}
 			validChains.push(result.chain);
 		}
 	}
 
 	if (validChains.length === 0) {
+		if (metadataError) return err(metadataError);
 		return err(
 			federationError(FederationErrorCode.InvalidTrustChain, "No valid trust chains found for RP"),
 		);

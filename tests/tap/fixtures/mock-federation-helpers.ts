@@ -15,7 +15,10 @@ function signOpts(): { typ: string } {
 	return { typ: JwtTyp.EntityStatement };
 }
 
+let opProtocolKeys: Promise<Awaited<ReturnType<typeof generateSigningKey>>[]> | undefined;
+
 export interface MockFederation {
+	opProtocolSigningKeys: readonly JWK[];
 	taSigningKey: JWK;
 	taPublicKey: JWK;
 	opSigningKey: JWK;
@@ -38,6 +41,7 @@ export interface MockFederation {
 export async function createMockFederation(overrides?: {
 	opMetadata?: Record<string, Record<string, unknown>>;
 	leafMetadata?: Record<string, Record<string, unknown>>;
+	includeOAuthClient?: boolean;
 }): Promise<MockFederation> {
 	const { privateKey: taSigningKey, publicKey: taPublicKey } = await generateSigningKey("ES256");
 	const { privateKey: opSigningKey, publicKey: opPublicKey } = await generateSigningKey("ES256");
@@ -46,6 +50,8 @@ export async function createMockFederation(overrides?: {
 	const { privateKey: leafProtocolSigningKey, publicKey: leafProtocolPublicKey } =
 		await generateSigningKey("ES256");
 
+	opProtocolKeys ??= Promise.all([generateSigningKey("RS256"), generateSigningKey("ES256")]);
+	const protocolKeys = await opProtocolKeys;
 	const now = Math.floor(Date.now() / 1000);
 	const exp = now + 86400;
 
@@ -74,7 +80,8 @@ export async function createMockFederation(overrides?: {
 			federation_registration_endpoint: `${OP_ID}/federation_registration`,
 			response_types_supported: ["code"],
 			subject_types_supported: ["public"],
-			id_token_signing_alg_values_supported: ["ES256"],
+			id_token_signing_alg_values_supported: ["RS256", "ES256"],
+			jwks_uri: `${OP_ID}/jwks`,
 			client_registration_types_supported: ["automatic", "explicit"],
 		},
 	};
@@ -98,6 +105,8 @@ export async function createMockFederation(overrides?: {
 			jwks: { keys: [leafProtocolPublicKey] },
 		},
 	};
+	if (overrides?.includeOAuthClient)
+		leafMetadata.oauth_client = { ...leafMetadata.openid_relying_party };
 	const leafEcPayload = {
 		iss: LEAF_ID,
 		sub: LEAF_ID,
@@ -147,6 +156,9 @@ export async function createMockFederation(overrides?: {
 			typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
 		const parsed = new URL(url);
 
+		if (url === `${OP_ID}/jwks`)
+			return Response.json({ keys: protocolKeys.map((key) => key.publicKey) });
+
 		// Entity Configuration requests
 		if (parsed.pathname === WELL_KNOWN_OPENID_FEDERATION) {
 			const origin = parsed.origin;
@@ -194,6 +206,7 @@ export async function createMockFederation(overrides?: {
 	const options: FederationOptions = { httpClient };
 
 	return {
+		opProtocolSigningKeys: protocolKeys.map((key) => key.privateKey),
 		taSigningKey,
 		taPublicKey,
 		opSigningKey,

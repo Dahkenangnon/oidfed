@@ -10,6 +10,7 @@ import {
 	resolveMetadataPolicy,
 	type ValidatedTrustChain,
 } from "@oidfed/core";
+import { rpMetadataChoices } from "../schemas/metadata.js";
 
 /** Check that final registration metadata still satisfies its federation policy (§§12.2.2 and 12.2.5). */
 export function validateRegistrationMetadataPolicy(
@@ -47,6 +48,13 @@ export function validateRegistrationMetadataPolicy(
 			return fail(`Registration metadata for ${type} must be an object`);
 		}
 		for (const parameter of new Set([...Object.keys(baseline), ...Object.keys(candidate)])) {
+			// RP Metadata Choices are federation inputs, never registration response members.
+			if (
+				type === "openid_relying_party" &&
+				Object.hasOwn(rpMetadataChoices, parameter) &&
+				!Object.hasOwn(candidate, parameter)
+			)
+				continue;
 			const present = Object.hasOwn(candidate, parameter);
 			if (
 				present === Object.hasOwn(baseline, parameter) &&

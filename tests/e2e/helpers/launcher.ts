@@ -46,6 +46,8 @@ export interface EntityInstance {
 		public: JWK;
 		protocolSigning: JWK;
 		protocolPublic: JWK;
+		additionalProtocolSigning: JWK[];
+		additionalProtocolPublic: JWK[];
 	};
 	keyProvider: FederationKeyProvider;
 	oidcProtocolKeyProvider: ProtocolSigningKeyProvider;
@@ -109,16 +111,26 @@ export async function launchFederation(
 	// 1. Generate keys for all entities. Federation and OIDC protocol keys are distinct.
 	const entityKeys = new Map<
 		string,
-		{ signing: JWK; public: JWK; protocolSigning: JWK; protocolPublic: JWK }
+		{
+			signing: JWK;
+			public: JWK;
+			protocolSigning: JWK;
+			protocolPublic: JWK;
+			additionalProtocolSigning: JWK[];
+			additionalProtocolPublic: JWK[];
+		}
 	>();
 	for (const entity of topology.entities) {
 		const key = await generateSigningKey("ES256");
 		const protocolKey = await generateSigningKey("ES256");
+		const additional = entity.protocolRole === "op" ? [await generateSigningKey("RS256")] : [];
 		entityKeys.set(entity.id, {
 			signing: key.privateKey as JWK,
 			public: key.publicKey as JWK,
 			protocolSigning: protocolKey.privateKey as JWK,
 			protocolPublic: protocolKey.publicKey as JWK,
+			additionalProtocolSigning: additional.map((key) => key.privateKey as JWK),
+			additionalProtocolPublic: additional.map((key) => key.publicKey as JWK),
 		});
 	}
 
@@ -133,6 +145,17 @@ export async function launchFederation(
 		metadata: Record<string, Record<string, unknown>>,
 		keys: ReturnType<typeof getKeys>,
 	): Record<string, Record<string, unknown>> => {
+		if (entity.protocolRole === "op" && metadata.openid_provider) {
+			const opMetadata = metadata.openid_provider;
+			if (opMetadata.jwks || opMetadata.jwks_uri || opMetadata.signed_jwks_uri) return metadata;
+			return {
+				...metadata,
+				openid_provider: {
+					...opMetadata,
+					jwks: { keys: [keys.protocolPublic, ...keys.additionalProtocolPublic] },
+				},
+			};
+		}
 		if (entity.protocolRole !== "rp") return metadata;
 		const rpMetadata = metadata.openid_relying_party;
 		if (!rpMetadata) return metadata;
@@ -294,6 +317,7 @@ export async function launchFederation(
 					trustAnchors,
 					federationKeyProvider: keyProvider,
 					oidcSigningKey: keys.protocolSigning,
+					additionalSigningKeys: keys.additionalProtocolSigning,
 					allowedRequestUriHosts,
 				}),
 			);

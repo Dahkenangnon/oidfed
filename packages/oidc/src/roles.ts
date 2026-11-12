@@ -19,6 +19,7 @@ import {
 } from "@oidfed/core";
 import type { ClientAssertionOptions } from "./client-auth/assertion.js";
 import { createClientAssertion } from "./client-auth/assertion.js";
+import { assertPublicationMetadata } from "./metadata.js";
 import type { ProtocolSigningKeyProvider } from "./protocol-keys.js";
 import type { RegistrationProtocolAdapter } from "./registration/adapter-types.js";
 import {
@@ -34,6 +35,11 @@ import {
 	type ProcessedAutomaticRegistration,
 	processAutomaticRegistration,
 } from "./registration/process-automatic.js";
+import {
+	effectiveRoleSchemas,
+	OAuthResourceDocumentMetadataSchema,
+	publicationRoleSchemas,
+} from "./schemas/metadata.js";
 
 export interface OidcRelyingPartyRoleConfig {
 	readonly protocolKeyProvider: ProtocolSigningKeyProvider;
@@ -55,6 +61,13 @@ export interface CreateAuthorizationRequestOptions extends FederationOptions {
 }
 
 export class OidcRelyingPartyRole implements EntityRole {
+	static parseMetadata(metadata: unknown) {
+		return effectiveRoleSchemas.openid_relying_party.safeParse(metadata);
+	}
+	static parsePublicationMetadata(metadata: unknown) {
+		return publicationRoleSchemas.openid_relying_party.safeParse(metadata);
+	}
+
 	static createClientAssertion = createClientAssertion;
 
 	public readonly type = "openid_relying_party";
@@ -67,6 +80,7 @@ export class OidcRelyingPartyRole implements EntityRole {
 	}
 
 	validateMetadata(metadata: Readonly<Record<string, unknown>>): void {
+		assertPublicationMetadata(this.type, metadata);
 		this.composedMetadata = structuredClone(metadata);
 	}
 
@@ -170,6 +184,7 @@ export class OidcRelyingPartyRole implements EntityRole {
 			authzRequestParams,
 			trustAnchors,
 			{ ...this.context.options, ...options },
+			"resolved",
 		);
 	}
 
@@ -209,10 +224,16 @@ export class OidcRelyingPartyRole implements EntityRole {
 				: {}),
 		};
 
-		return explicitRegistration(discoveryResult.value, rpConfig, trustAnchors, {
-			...this.context.options,
-			...options,
-		});
+		return explicitRegistration(
+			discoveryResult.value,
+			rpConfig,
+			trustAnchors,
+			{
+				...this.context.options,
+				...options,
+			},
+			"resolved",
+		);
 	}
 
 	async createAuthorizationRequest(
@@ -285,6 +306,13 @@ export interface OidcProviderRoleConfig {
 }
 
 export class OidcProviderRole implements EntityRole {
+	static parseMetadata(metadata: unknown) {
+		return effectiveRoleSchemas.openid_provider.safeParse(metadata);
+	}
+	static parsePublicationMetadata(metadata: unknown) {
+		return publicationRoleSchemas.openid_provider.safeParse(metadata);
+	}
+
 	public readonly type = "openid_provider";
 	public readonly metadata: Record<string, unknown> = {};
 	public readonly routes = new Map<string, (request: Request) => Promise<Response>>();
@@ -305,6 +333,7 @@ export class OidcProviderRole implements EntityRole {
 			throw new TypeError(
 				"An installed registration endpoint requires client_registration_types_supported to include explicit",
 			);
+		assertPublicationMetadata(this.type, metadata);
 	}
 
 	initialize(context: EntityContext): void {
@@ -320,6 +349,7 @@ export class OidcProviderRole implements EntityRole {
 
 		const handler = createExplicitRegistrationHandler({
 			opEntityId: context.entityId as EntityId,
+			providerMetadataType: this.type,
 			keyProvider: context.keyProvider,
 			trustAnchors,
 			...(this.config.registrationResponseTtlSeconds !== undefined
@@ -427,6 +457,13 @@ export interface OAuthClientRoleConfig {
 }
 
 export class OAuthClientRole implements EntityRole {
+	static parseMetadata(metadata: unknown) {
+		return effectiveRoleSchemas.oauth_client.safeParse(metadata);
+	}
+	static parsePublicationMetadata(metadata: unknown) {
+		return publicationRoleSchemas.oauth_client.safeParse(metadata);
+	}
+
 	static createClientAssertion = createClientAssertion;
 
 	public readonly type = "oauth_client";
@@ -439,6 +476,7 @@ export class OAuthClientRole implements EntityRole {
 	}
 
 	validateMetadata(metadata: Readonly<Record<string, unknown>>): void {
+		assertPublicationMetadata(this.type, metadata);
 		this.composedMetadata = structuredClone(metadata);
 	}
 
@@ -495,6 +533,13 @@ export interface OAuthAuthorizationServerRoleConfig {
 }
 
 export class OAuthAuthorizationServerRole implements EntityRole {
+	static parseMetadata(metadata: unknown) {
+		return effectiveRoleSchemas.oauth_authorization_server.safeParse(metadata);
+	}
+	static parsePublicationMetadata(metadata: unknown) {
+		return publicationRoleSchemas.oauth_authorization_server.safeParse(metadata);
+	}
+
 	public readonly type = "oauth_authorization_server";
 	public readonly metadata: Record<string, unknown> = {};
 	public readonly routes = new Map<string, (request: Request) => Promise<Response>>();
@@ -515,6 +560,7 @@ export class OAuthAuthorizationServerRole implements EntityRole {
 			throw new TypeError(
 				"An installed registration endpoint requires client_registration_types_supported to include explicit",
 			);
+		assertPublicationMetadata(this.type, metadata);
 	}
 
 	initialize(context: EntityContext): void {
@@ -530,6 +576,7 @@ export class OAuthAuthorizationServerRole implements EntityRole {
 
 		const handler = createExplicitRegistrationHandler({
 			opEntityId: context.entityId as EntityId,
+			providerMetadataType: this.type,
 			keyProvider: context.keyProvider,
 			trustAnchors,
 			...(this.config.registrationResponseTtlSeconds !== undefined
@@ -557,6 +604,20 @@ export interface OAuthResourceRoleConfig {
 }
 
 export class OAuthResourceRole implements EntityRole {
+	static parseMetadata(metadata: unknown, options: { profile?: "federation" | "rfc9728" } = {}) {
+		return (
+			options.profile === "rfc9728"
+				? OAuthResourceDocumentMetadataSchema
+				: effectiveRoleSchemas.oauth_resource
+		).safeParse(metadata);
+	}
+	static parsePublicationMetadata(metadata: unknown) {
+		return publicationRoleSchemas.oauth_resource.safeParse(metadata);
+	}
+	validateMetadata(metadata: Readonly<Record<string, unknown>>): void {
+		assertPublicationMetadata(this.type, metadata);
+	}
+
 	public readonly type = "oauth_resource";
 	public readonly metadata: Record<string, unknown> = {};
 	public readonly routes = new Map<string, (request: Request) => Promise<Response>>();

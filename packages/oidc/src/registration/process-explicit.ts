@@ -21,6 +21,7 @@ import {
 	validateTrustChain,
 	verifyEntityStatement,
 } from "@oidfed/core";
+import { effectiveMetadata } from "../metadata.js";
 import { ExplicitRegistrationRequestPayloadSchema } from "../schemas/explicit-registration.js";
 import { OpenIDRelyingPartyMetadataSchema } from "../schemas/metadata.js";
 import {
@@ -38,6 +39,8 @@ export interface ProcessedExplicitRegistration extends ProcessedRegistration {
 export interface ProcessExplicitRegistrationOptions extends FederationOptions {
 	/** The OP's own Entity Identifier — REQUIRED for `aud` validation. */
 	opEntityId: EntityId;
+	/** Protocol role of the local server whose peer metadata is consumed. Defaults to OP. */
+	providerMetadataType?: "openid_provider" | "oauth_authorization_server";
 	/** Optional `trust_chain` JWS header value supplied with an entity-statement body. */
 	trustChainHeader?: readonly string[];
 }
@@ -349,7 +352,13 @@ export async function processExplicitRegistration(
 				),
 			);
 		}
-		peerResolvedOpMetadata = peer.value.resolvedMetadata.openid_provider ?? {};
+		const peerMetadata = effectiveMetadata(
+			options.providerMetadataType ?? "openid_provider",
+			peer.value.resolvedMetadata[options.providerMetadataType ?? "openid_provider"],
+			options.opEntityId,
+		);
+		if (!peerMetadata.ok) return peerMetadata;
+		peerResolvedOpMetadata = peerMetadata.value;
 	}
 	safeLogger(options?.logger)?.info("Explicit Client Registration Request validated");
 	return ok({

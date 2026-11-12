@@ -23,6 +23,7 @@ import {
 	OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE,
 	OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE,
 } from "../constants.js";
+import { registrationResponseChoices, withoutRegistrationChoices } from "../metadata.js";
 import { ExplicitRegistrationResponsePayloadSchema } from "../schemas/explicit-registration.js";
 import type { RegistrationProtocolAdapter } from "./adapter-types.js";
 import { assertNonEmptyTrustAnchors } from "./helpers.js";
@@ -43,6 +44,8 @@ const REGISTRATION_MANAGEMENT_METADATA_FIELDS = [
 export interface ExplicitRegistrationHandlerConfig {
 	/** The OP's Entity Identifier — used as the aud check target and as the issuer of the response. */
 	readonly opEntityId: EntityId;
+	/** Protocol role used to check the server's peer metadata. Defaults to OP. */
+	readonly providerMetadataType?: "openid_provider" | "oauth_authorization_server";
 	/** Federation-only signing key provider used for the signed registration response. */
 	readonly keyProvider: FederationKeyProvider;
 	/** Non-empty trust anchors required for RP trust chain resolution. */
@@ -101,6 +104,7 @@ export function createExplicitRegistrationHandler(
 		const processed = await processExplicitRegistration(body, contentType as string, trustAnchors, {
 			...config.options,
 			opEntityId: config.opEntityId,
+			...(config.providerMetadataType ? { providerMetadataType: config.providerMetadataType } : {}),
 		});
 		if (!processed.ok) {
 			// A bad request signature is a client error; retain 400 while using a public code.
@@ -236,6 +240,16 @@ export function createExplicitRegistrationHandler(
 			};
 		}
 
+		const outputMetadata = responsePayload.metadata as Record<string, Record<string, unknown>>;
+		const choiceCheck = registrationResponseChoices(
+			outputMetadata.openid_relying_party ?? {},
+			bestChain.resolvedMetadata.openid_relying_party ?? {},
+		);
+		if (!choiceCheck.ok)
+			return errorResponse(400, choiceCheck.error.code, choiceCheck.error.description);
+		outputMetadata.openid_relying_party = withoutRegistrationChoices(
+			outputMetadata.openid_relying_party ?? {},
+		);
 		const policyCheck = validateRegistrationMetadataPolicy(
 			responsePayload.metadata as Record<string, Record<string, unknown>>,
 			policyChain,

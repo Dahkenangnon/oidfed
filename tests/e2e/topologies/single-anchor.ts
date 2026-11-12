@@ -38,7 +38,7 @@ export const singleAnchorTopology: TopologyDefinition = {
 					federation_registration_endpoint: "https://op.ofed.test/federation_registration",
 					response_types_supported: ["code"],
 					subject_types_supported: ["public"],
-					id_token_signing_alg_values_supported: ["ES256"],
+					id_token_signing_alg_values_supported: ["RS256", "ES256"],
 					client_registration_types_supported: ["automatic", "explicit"],
 					token_endpoint_auth_methods_supported: ["private_key_jwt"],
 					token_endpoint_auth_signing_alg_values_supported: ["ES256"],

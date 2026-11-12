@@ -1,4 +1,5 @@
 import type QUnit from "qunit";
+import * as CoreVerify from "../../../packages/core/src/index.js";
 import {
 	type DiscoveryResult,
 	decodeEntityStatement,
@@ -30,6 +31,7 @@ import {
 	validateTrustChain,
 	WELL_KNOWN_OPENID_FEDERATION,
 } from "../../../packages/core/src/index.js";
+import { Leaf } from "../../../packages/leaf/src/index.js";
 import { createClientAssertion } from "../../../packages/oidc/src/client-auth/assertion.js";
 import {
 	ClientRegistrationType,
@@ -156,7 +158,17 @@ async function createMockDiscovery(
 	} as DiscoveryResult;
 }
 
-async function createDualAnchorRegistrationFixture() {
+const validProviderMetadata = {
+	issuer: OP_ID,
+	authorization_endpoint: `${OP_ID}/authorize`,
+	token_endpoint: `${OP_ID}/token`,
+	response_types_supported: ["code"],
+	subject_types_supported: ["public"] as ("public" | "pairwise")[],
+	id_token_signing_alg_values_supported: ["RS256", "ES256"],
+	jwks_uri: `${OP_ID}/jwks`,
+};
+
+async function createDualAnchorRegistrationFixture(invalidPreferredProvider = false) {
 	const taA = entityId("https://ta-a.example.com");
 	const taB = entityId("https://ta-b.example.com");
 	const { privateKey: taASigningKey, publicKey: taAPublicKey } = await generateSigningKey("ES256");
@@ -178,6 +190,7 @@ async function createDualAnchorRegistrationFixture() {
 	});
 	const opMetadata = {
 		openid_provider: {
+			...validProviderMetadata,
 			issuer: OP_ID,
 			authorization_endpoint: `${OP_ID}/authorize`,
 			token_endpoint: `${OP_ID}/token`,
@@ -242,7 +255,16 @@ async function createDualAnchorRegistrationFixture() {
 		leafSigningKey,
 	);
 	const taASubStatementForOp = await signStatement(
-		{ iss: taA, sub: OP_ID, iat: now, exp, jwks: { keys: [opPublicKey] } },
+		{
+			iss: taA,
+			sub: OP_ID,
+			iat: now,
+			exp,
+			jwks: { keys: [opPublicKey] },
+			...(invalidPreferredProvider
+				? { metadata: { openid_provider: { response_types_supported: 42 } } }
+				: {}),
+		},
 		taASigningKey,
 	);
 	const taBSubStatementForOp = await signStatement(
@@ -331,6 +353,613 @@ async function createDualAnchorRegistrationFixture() {
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("oidc / protocol metadata boundaries", () => {
+		test("role parsers distinguish effective metadata from partial publications", (t) => {
+			for (const Role of [
+				OidcRelyingPartyRole,
+				OidcProviderRole,
+				OAuthAuthorizationServerRole,
+				OAuthClientRole,
+			]) {
+				t.true(Role.parsePublicationMetadata({}).success, Role.name);
+				t.false(Role.parseMetadata({}).success, Role.name);
+			}
+			t.true(OAuthResourceRole.parseMetadata({ organization_name: "Example" }).success);
+			t.false(OAuthResourceRole.parseMetadata({}, { profile: "rfc9728" }).success);
+			t.true(
+				OAuthResourceRole.parseMetadata(
+					{ resource: "https://resource.example?tenant=one" },
+					{ profile: "rfc9728" },
+				).success,
+			);
+			for (const resource of ["http://resource.example", "https://resource.example#", "not a URL"])
+				t.false(OAuthResourceRole.parseMetadata({ resource }).success, resource);
+			t.false(
+				OAuthResourceRole.parseMetadata({ resource_signing_alg_values_supported: ["none"] })
+					.success,
+			);
+			t.true(OAuthResourceRole.parsePublicationMetadata({}).success);
+			const partialNative = {
+				redirect_uris: ["com.example:/callback"],
+				response_types: ["id_token"],
+			};
+			t.true(OidcRelyingPartyRole.parsePublicationMetadata(partialNative).success);
+			t.true(
+				OidcRelyingPartyRole.parseMetadata({
+					...partialNative,
+					application_type: "native",
+					grant_types: ["implicit"],
+				}).success,
+			);
+		});
+
+		test("publication can defer a required capability and effective RP relationships are enforced", (t) => {
+			t.true(
+				OidcProviderRole.parsePublicationMetadata({
+					id_token_signing_alg_values_supported: ["ES256"],
+				}).success,
+			);
+			t.false(
+				OidcProviderRole.parseMetadata({
+					...validProviderMetadata,
+					id_token_signing_alg_values_supported: ["ES256"],
+				}).success,
+			);
+			const base = { redirect_uris: [`${LEAF_ID}/callback`] };
+			for (const [plural, singular, values, choice] of [
+				["subject_types_supported", "subject_type", ["pairwise"], "public"],
+				[
+					"id_token_signing_alg_values_supported",
+					"id_token_signed_response_alg",
+					["ES256"],
+					"RS256",
+				],
+				[
+					"token_endpoint_auth_methods_supported",
+					"token_endpoint_auth_method",
+					["private_key_jwt"],
+					"none",
+				],
+				[
+					"authorization_signing_alg_values_supported",
+					"authorization_signed_response_alg",
+					["ES256"],
+					"RS256",
+				],
+				[
+					"introspection_signing_alg_values_supported",
+					"introspection_signed_response_alg",
+					["ES256"],
+					"RS256",
+				],
+			] as const) {
+				t.false(
+					OidcRelyingPartyRole.parseMetadata({ ...base, [plural]: [...values], [singular]: choice })
+						.success,
+					plural,
+				);
+				t.true(
+					OidcRelyingPartyRole.parseMetadata({
+						...base,
+						[plural]: [...values],
+						[singular]: values[0],
+					}).success,
+					plural,
+				);
+			}
+			t.false(
+				OidcRelyingPartyRole.parseMetadata({ ...base, id_token_encrypted_response_enc: "A256GCM" })
+					.success,
+			);
+			t.true(
+				OidcRelyingPartyRole.parsePublicationMetadata({
+					id_token_encrypted_response_enc: "A256GCM",
+				}).success,
+			);
+			t.false(
+				OidcRelyingPartyRole.parseMetadata({
+					...base,
+					grant_types: ["implicit"],
+					response_types: ["code"],
+				}).success,
+			);
+			t.true(
+				OidcRelyingPartyRole.parseMetadata({
+					grant_types: ["urn:openid:params:grant-type:ciba"],
+					response_types: [],
+					backchannel_token_delivery_mode: "poll",
+				}).success,
+			);
+			t.false(
+				OAuthClientRole.parseMetadata({ ...base, token_endpoint_auth_method: "tls_client_auth" })
+					.success,
+			);
+			t.true(
+				OAuthClientRole.parseMetadata({
+					...base,
+					token_endpoint_auth_method: "tls_client_auth",
+					tls_client_auth_subject_dn: "CN=client",
+				}).success,
+			);
+			const response = { ...base, client_id: LEAF_ID, subject_types_supported: ["public"] };
+			t.false(
+				OpenIDRelyingPartyRegistrationResponseMetadataSchema.safeParse(response).success,
+				"RP choices are inputs only",
+			);
+			const jwks = { keys: [{ kty: "RSA", alg: "RS256" }], future: { retained: true } };
+			const parsed = OAuthClientRole.parseMetadata({ ...base, jwks });
+			t.true(parsed.success);
+			if (parsed.success) t.deepEqual(parsed.data.jwks, jwks);
+		});
+
+		test("URL and CIBA requirements follow the metadata field's own rules", (t) => {
+			t.true(
+				OidcProviderRole.parseMetadata({
+					...validProviderMetadata,
+					userinfo_endpoint: `${OP_ID}/userinfo#view`,
+					check_session_iframe: `${OP_ID}/session#frame`,
+					end_session_endpoint: `${OP_ID}/logout#view`,
+				}).success,
+			);
+			const base = { redirect_uris: [`${LEAF_ID}/callback`] };
+			t.true(
+				OidcRelyingPartyRole.parseMetadata({ ...base, initiate_login_uri: `${LEAF_ID}/login#view` })
+					.success,
+			);
+			t.false(
+				OidcRelyingPartyRole.parseMetadata({
+					...base,
+					initiate_login_uri: `http://rp.example/login`,
+				}).success,
+			);
+			t.true(
+				OidcRelyingPartyRole.parsePublicationMetadata({ backchannel_token_delivery_mode: "ping" })
+					.success,
+			);
+			const ciba = {
+				grant_types: ["urn:openid:params:grant-type:ciba"],
+				response_types: [],
+				backchannel_token_delivery_mode: "ping",
+				backchannel_client_notification_endpoint: `${LEAF_ID}/notify`,
+			};
+			t.true(OidcRelyingPartyRole.parseMetadata(ciba).success);
+			for (const patch of [
+				{ backchannel_token_delivery_mode: undefined },
+				{ backchannel_token_delivery_mode: "unknown" },
+				{ backchannel_client_notification_endpoint: undefined },
+				{ backchannel_client_notification_endpoint: `http://rp.example/notify` },
+			])
+				t.false(
+					OidcRelyingPartyRole.parseMetadata({ ...ciba, ...patch }).success,
+					JSON.stringify(patch),
+				);
+			t.true(
+				OidcRelyingPartyRole.parseMetadata({
+					grant_types: [],
+					response_types: [],
+					backchannel_token_delivery_mode: "push",
+					backchannel_client_notification_endpoint: `${LEAF_ID}/notify`,
+				}).success,
+			);
+		});
+
+		test("known extension fields are checked while unknown metadata and extension values survive", (t) => {
+			const extension = { nested: ["retained", { future: true }] };
+			const metadata = {
+				...validProviderMetadata,
+				future_extension: extension,
+				client_registration_types_supported: ["automatic", "urn:example:registration"],
+				require_signed_request_object: true,
+				require_pushed_authorization_requests: true,
+				authorization_details_types_supported: ["openid_credential"],
+				mtls_endpoint_aliases: {
+					token_endpoint: `${OP_ID}/mtls/token`,
+					future: { retained: true },
+				},
+				introspection_signing_alg_values_supported: ["RS256"],
+				check_session_iframe: `${OP_ID}/session`,
+			};
+			const parsed = OidcProviderRole.parseMetadata(metadata);
+			t.true(parsed.success);
+			if (parsed.success) {
+				t.deepEqual(parsed.data.future_extension, extension);
+				t.deepEqual(parsed.data, metadata);
+			}
+			for (const patch of [
+				{ require_signed_request_object: 1 },
+				{ require_pushed_authorization_requests: "true" },
+				{ authorization_details_types_supported: 42 },
+				{ mtls_endpoint_aliases: { token_endpoint: 17 } },
+				{ introspection_signing_alg_values_supported: ["none"] },
+				{ check_session_iframe: false },
+				{ authorization_endpoint: "http://op.example/auth" },
+				{ token_endpoint: 17 },
+			])
+				t.false(
+					OidcProviderRole.parseMetadata({ ...metadata, ...patch }).success,
+					JSON.stringify(patch),
+				);
+			for (const Role of [OidcRelyingPartyRole, OAuthClientRole]) {
+				const client = {
+					redirect_uris: [`${LEAF_ID}/callback`],
+					software_statement: "signed-software-statement",
+					future_extension: extension,
+					dpop_bound_access_tokens: true,
+				};
+				t.true(Role.parseMetadata(client).success);
+				for (const patch of [
+					{ software_statement: 1 },
+					{ dpop_bound_access_tokens: "true" },
+					{ frontchannel_logout_uri: 42 },
+					{ authorization_details_types: 17 },
+				])
+					t.false(
+						Role.parsePublicationMetadata({ ...client, ...patch }).success,
+						`${Role.name}: ${JSON.stringify(patch)}`,
+					);
+				for (const field of [
+					"registration_access_token",
+					"registration_client_uri",
+					"client_secret",
+					"client_id",
+				])
+					t.false(
+						Role.parsePublicationMetadata({ ...client, [field]: "response-only" }).success,
+						field,
+					);
+			}
+		});
+
+		test("roles reject malformed composed publication while bare federation hosts stay protocol-neutral", async (t) => {
+			const f = await createMockFederation();
+			const provider = new StaticProtocolSigningKeyProvider({
+				requestObjectSigner: new JwkSigner(f.leafProtocolSigningKey),
+			});
+			const roles = [
+				new OidcRelyingPartyRole({
+					protocolKeyProvider: provider,
+					metadata: { redirect_uris: 42 },
+				}),
+				new OidcProviderRole({
+					metadata: {
+						response_types_supported: 42,
+						client_registration_types_supported: ["explicit"],
+					},
+				}),
+				new OAuthAuthorizationServerRole({
+					metadata: {
+						response_types_supported: 42,
+						client_registration_types_supported: ["explicit"],
+					},
+				}),
+				new OAuthClientRole({ protocolKeyProvider: provider, metadata: { redirect_uris: 42 } }),
+				new OAuthResourceRole({ metadata: { resource: 42 } }),
+			];
+			const config = {
+				entityId: LEAF_ID,
+				authorityHints: [TA_ID],
+				trustAnchors: f.trustAnchors,
+				keyProvider: MemoryFederationKeyProvider.fromJWK(f.leafSigningKey),
+			};
+			for (const role of roles)
+				t.throws(
+					() => new Leaf({ ...config, metadata: { [role.type]: {} }, roles: [role] }),
+					/metadata/i,
+					role.type,
+				);
+			t.ok(
+				new Leaf({ ...config, metadata: { openid_provider: { response_types_supported: 42 } } }),
+			);
+			const role = new OidcRelyingPartyRole({ protocolKeyProvider: provider });
+			t.throws(
+				() =>
+					new Leaf({
+						...config,
+						metadata: { openid_relying_party: { redirect_uris: 42 } },
+						roles: [role],
+					}),
+				/metadata/i,
+			);
+			t.ok(
+				new Leaf({
+					...config,
+					metadata: { openid_relying_party: {} },
+					roles: [new OidcRelyingPartyRole({ protocolKeyProvider: provider })],
+				}),
+			);
+		});
+
+		test("malformed effective OP metadata stops both registration flows before signing or POSTs", async (t) => {
+			for (const patch of [
+				{ response_types_supported: 42 },
+				{ subject_types_supported: undefined },
+				{ id_token_signing_alg_values_supported: undefined },
+				{ authorization_endpoint: "http://op.example/auth" },
+			]) {
+				const metadata = {
+					...validProviderMetadata,
+					client_registration_types_supported: ["automatic", "explicit"],
+					federation_registration_endpoint: `${OP_ID}/federation_registration`,
+					...patch,
+				};
+				const f = await createMockFederation({ opMetadata: { openid_provider: metadata } });
+				const discovery = await createMockDiscovery(OP_ID, f);
+				t.true(
+					(
+						await validateTrustChain(
+							[f.opEcJwt, f.taSubStatementForOp, f.taEcJwt],
+							f.trustAnchors,
+							f.options,
+						)
+					).valid,
+					"generic federation validation does not replace protocol validation",
+				);
+				let signatures = 0,
+					posts = 0;
+				const counted = (key: JWK): JwtSigner => {
+					const signer = new JwkSigner(key);
+					return {
+						alg: signer.alg,
+						kid: signer.kid,
+						signJwt: (...args) => {
+							signatures++;
+							return signer.signJwt(...args);
+						},
+					};
+				};
+				const config: RpConfig = {
+					entityId: LEAF_ID,
+					authorityHints: [TA_ID],
+					keyProvider: new MemoryFederationKeyProvider({
+						signer: counted(f.leafSigningKey),
+						publicJwk: f.leafPublicKey,
+					}),
+					protocolKeyProvider: new StaticProtocolSigningKeyProvider({
+						requestObjectSigner: counted(f.leafProtocolSigningKey),
+					}),
+					metadata: {
+						openid_relying_party: {
+							redirect_uris: [`${LEAF_ID}/callback`],
+							jwks: { keys: [f.leafProtocolPublicKey] },
+						},
+					},
+				};
+				const options = {
+					...f.options,
+					httpClient: (async (input, init) => {
+						if ((init?.method ?? (input instanceof Request ? input.method : "GET")) === "POST")
+							posts++;
+						return f.httpClient(input, init);
+					}) as HttpClient,
+				};
+				for (const result of [
+					await automaticRegistration(
+						discovery,
+						config,
+						{ response_type: "code" },
+						f.trustAnchors,
+						options,
+					),
+					await explicitRegistration(discovery, config, f.trustAnchors, options),
+				]) {
+					t.false(result.ok, JSON.stringify(patch));
+					if (!result.ok) t.equal(result.error.code, FederationErrorCode.InvalidMetadata);
+				}
+				t.equal(signatures, 0);
+				t.equal(posts, 0);
+			}
+		});
+
+		test("a Superior can complete missing OP requirements through metadata or policy before use", async (t) => {
+			for (const mode of ["metadata", "metadata_policy"] as const) {
+				const f = await createMockFederation({
+					opMetadata: {
+						openid_provider: { issuer: OP_ID, client_registration_types_supported: ["automatic"] },
+					},
+				});
+				const superior = decodeEntityStatement(f.taSubStatementForOp);
+				if (!superior.ok) throw new Error("fixture");
+				const completion = Object.fromEntries(
+					Object.entries(validProviderMetadata)
+						.filter(([key]) => key !== "issuer")
+						.map(([key, value]) => [key, mode === "metadata_policy" ? { value } : value]),
+				);
+				const statement = await signEntityStatement(
+					{ ...superior.value.payload, [mode]: { openid_provider: completion } },
+					new JwkSigner(f.taSigningKey),
+				);
+				const httpClient: HttpClient = async (input, init) => {
+					const url = new URL(input instanceof Request ? input.url : String(input));
+					if (url.origin === TA_ID && url.searchParams.get("sub") === OP_ID)
+						return new Response(statement, {
+							headers: { "content-type": MediaType.EntityStatement },
+						});
+					return f.httpClient(input, init);
+				};
+				const role = new OidcRelyingPartyRole({
+					protocolKeyProvider: new StaticProtocolSigningKeyProvider({
+						requestObjectSigner: new JwkSigner(f.leafProtocolSigningKey),
+					}),
+					metadata: {
+						redirect_uris: [`${LEAF_ID}/callback`],
+						jwks: { keys: [f.leafProtocolPublicKey] },
+					},
+				});
+				role.initialize({
+					entityId: LEAF_ID,
+					authorityHints: [TA_ID],
+					trustAnchors: f.trustAnchors,
+					keyProvider: MemoryFederationKeyProvider.fromJWK(f.leafSigningKey),
+					options: { httpClient },
+				});
+				const result = await role.automaticallyRegister({
+					opEntityId: OP_ID,
+					redirect_uri: `${LEAF_ID}/callback`,
+				});
+				t.true(result.ok, JSON.stringify(result));
+			}
+		});
+
+		test("explicit registration checks peer metadata against the local provider role", async (t) => {
+			const valid = {
+				issuer: OP_ID,
+				authorization_endpoint: `${OP_ID}/authorize`,
+				token_endpoint: `${OP_ID}/token`,
+				response_types_supported: ["code"],
+				client_registration_types_supported: ["explicit"],
+				federation_registration_endpoint: `${OP_ID}/registration`,
+			};
+			for (const malformed of [false, true]) {
+				const f = await createMockFederation({
+					opMetadata: {
+						oauth_authorization_server: {
+							...valid,
+							...(malformed ? { response_types_supported: 42 } : {}),
+						},
+					},
+				});
+				const leaf = decodeEntityStatement(f.leafEcJwt);
+				if (!leaf.ok) throw new Error("fixture");
+				const request = await signEntityStatement(
+					{ ...leaf.value.payload, aud: OP_ID },
+					new JwkSigner(f.leafSigningKey),
+					{
+						extraHeaders: {
+							trust_chain: [f.leafEcJwt, f.taSubStatementForLeaf, f.taEcJwt],
+							peer_trust_chain: [f.opEcJwt, f.taSubStatementForOp, f.taEcJwt],
+						},
+					},
+				);
+				for (const Role of [OAuthAuthorizationServerRole, OidcProviderRole]) {
+					const role = new Role({ metadata: valid });
+					role.initialize({
+						entityId: OP_ID,
+						keyProvider: MemoryFederationKeyProvider.fromJWK(f.opSigningKey),
+						trustAnchors: f.trustAnchors,
+						options: f.options,
+					});
+					const res = await role.routes.get("/registration")!(
+						new Request(`${OP_ID}/registration`, {
+							method: "POST",
+							headers: { "content-type": MediaType.EntityStatement },
+							body: request,
+						}),
+					);
+					t.equal(
+						res.status,
+						Role === OAuthAuthorizationServerRole && !malformed ? 200 : 400,
+						`${Role.name}: ${malformed}: ${await res.clone().text()}`,
+					);
+				}
+			}
+		});
+
+		test("the OP fixture serves keys that can sign with every advertised ID Token algorithm", async (t) => {
+			const f = await createMockFederation();
+			const ec = decodeEntityStatement(f.opEcJwt);
+			if (!ec.ok) throw new Error("fixture");
+			const metadata = ec.value.payload.metadata!.openid_provider!;
+			const response = await f.httpClient(metadata.jwks_uri as string);
+			t.equal(response.status, 200);
+			const keys = (await response.json()) as { keys: JWK[] };
+			for (const alg of metadata.id_token_signing_alg_values_supported as string[]) {
+				const key = f.opProtocolSigningKeys.find((key) => key.alg === alg)!;
+				const jwt = await signEntityStatement(
+					{ iss: OP_ID, sub: "test-subject" },
+					new JwkSigner(key),
+				);
+				const checked = await CoreVerify.verifyEntityStatement(jwt, { keys: keys.keys });
+				t.true(checked.ok, alg);
+			}
+		});
+	});
+
+	test("role-driven discovery selects a conformant alternative while supplied invalid discovery remains an error", async (t) => {
+		const f = await createDualAnchorRegistrationFixture(true);
+		const role = new OidcRelyingPartyRole({
+			protocolKeyProvider: f.rpConfig.protocolKeyProvider,
+			metadata: f.rpConfig.metadata.openid_relying_party,
+		});
+		role.initialize({
+			entityId: LEAF_ID,
+			authorityHints: [f.taB],
+			trustAnchors: f.trustAnchors,
+			keyProvider: f.rpConfig.keyProvider,
+			options: { httpClient: f.httpClient },
+		});
+		const supplied = await role.createAuthorizationRequest(
+			f.discovery,
+			{ response_type: "code", redirect_uri: `${LEAF_ID}/callback` },
+			f.trustAnchors,
+		);
+		t.false(supplied.ok);
+		if (!supplied.ok) t.equal(supplied.error.code, FederationErrorCode.InvalidMetadata);
+		const result = await role.automaticallyRegister({
+			opEntityId: OP_ID,
+			redirect_uri: `${LEAF_ID}/callback`,
+		});
+		t.true(result.ok, JSON.stringify(result));
+		if (result.ok) t.equal(result.value.trustChain.trustAnchorId, f.taB);
+	});
+
+	test("required fields supplied by a Superior are checked after resolution for each client and server type", async (t) => {
+		const cases = [
+			{
+				type: "openid_provider",
+				Role: OidcProviderRole,
+				complete: { ...validProviderMetadata, issuer: LEAF_ID },
+			},
+			{
+				type: "oauth_authorization_server",
+				Role: OAuthAuthorizationServerRole,
+				complete: {
+					issuer: LEAF_ID,
+					response_types_supported: ["code"],
+					authorization_endpoint: `${LEAF_ID}/authorize`,
+					token_endpoint: `${LEAF_ID}/token`,
+				},
+			},
+			{
+				type: "openid_relying_party",
+				Role: OidcRelyingPartyRole,
+				complete: { redirect_uris: [`${LEAF_ID}/callback`] },
+			},
+			{
+				type: "oauth_client",
+				Role: OAuthClientRole,
+				complete: { redirect_uris: [`${LEAF_ID}/callback`] },
+			},
+		];
+		for (const { type, Role, complete } of cases) {
+			const f = await createMockFederation({ leafMetadata: { [type]: {} } });
+			t.true(Role.parsePublicationMetadata({}).success);
+			t.false(Role.parseMetadata({}).success);
+			const superior = decodeEntityStatement(f.taSubStatementForLeaf);
+			if (!superior.ok) throw new Error("fixture");
+			for (const mode of ["metadata", "metadata_policy"] as const) {
+				const supplied =
+					mode === "metadata"
+						? complete
+						: Object.fromEntries(Object.entries(complete).map(([key, value]) => [key, { value }]));
+				const ss = await signEntityStatement(
+					{ ...superior.value.payload, [mode]: { [type]: supplied } },
+					new JwkSigner(f.taSigningKey),
+				);
+				const result = await validateTrustChain(
+					[f.leafEcJwt, ss, f.taEcJwt],
+					f.trustAnchors,
+					f.options,
+				);
+				t.true(result.valid, `${type}: ${mode}`);
+				if (result.valid)
+					t.true(
+						Role.parseMetadata(result.chain.resolvedMetadata[type]).success,
+						`${type}: ${mode}`,
+					);
+			}
+		}
+	});
+
 	module("oidc / injected logging", () => {
 		test("registration uses message-only host logging and tolerates sink failures", async (t) => {
 			const f = await createMockFederation();
@@ -373,6 +1002,39 @@ export default (QUnit: QUnit) => {
 				).ok,
 			);
 		});
+	});
+
+	test("named OIDC and OAuth publication types share the public parser contract", (t) => {
+		const rp: OidcPublic.OpenIDRelyingPartyPublicationMetadata = {};
+		const op: OidcPublic.OpenIDProviderPublicationMetadata = {
+			client_registration_types_supported: ["explicit"],
+		};
+		const server: OidcPublic.OAuthAuthorizationServerPublicationMetadata = {};
+		const client: OidcPublic.OAuthClientPublicationMetadata = { client_name: "Example" };
+		const resource: OidcPublic.OAuthResourcePublicationMetadata = { organization_name: "Example" };
+		t.true(OidcRelyingPartyRole.parsePublicationMetadata(rp).success);
+		t.true(OidcProviderRole.parsePublicationMetadata(op).success);
+		t.true(OAuthAuthorizationServerRole.parsePublicationMetadata(server).success);
+		t.true(OAuthClientRole.parsePublicationMetadata(client).success);
+		t.true(OAuthResourceRole.parsePublicationMetadata(resource).success);
+		const shared: CoreVerify.OAuthAuthorizationServerPublicationMetadata = server;
+		t.true(CoreVerify.parseOAuthAuthorizationServerPublicationMetadata(shared).success);
+		const publication: OidcPublic.OIDCFederationPublicationMetadata = {
+			openid_relying_party: rp,
+			openid_provider: op,
+			oauth_authorization_server: server,
+			oauth_client: client,
+			oauth_resource: resource,
+		};
+		t.equal(Object.keys(publication).length, 5);
+		// @ts-expect-error A supplied publication issuer is still a string.
+		const invalid: OidcPublic.OpenIDProviderPublicationMetadata = { issuer: 42 };
+		t.false(OidcProviderRole.parsePublicationMetadata(invalid).success);
+		const credentials: OidcPublic.OpenIDRelyingPartyPublicationMetadata = {
+			// @ts-expect-error Registration credentials do not belong in an RP publication.
+			client_id: "response-only",
+		};
+		t.false(OidcRelyingPartyRole.parsePublicationMetadata(credentials).success);
 	});
 
 	test("publication types allow superior completion without relaxing effective schemas", (t) => {
@@ -421,6 +1083,7 @@ export default (QUnit: QUnit) => {
 						resolvedMetadata: {
 							...discovery.trustChain.resolvedMetadata,
 							openid_provider: {
+								...validProviderMetadata,
 								...discovery.trustChain.resolvedMetadata.openid_provider,
 								federation_registration_endpoint: endpoint,
 							},
@@ -479,22 +1142,28 @@ export default (QUnit: QUnit) => {
 				);
 				t.true(
 					OpenIDProviderMetadataSchema.safeParse({
+						...validProviderMetadata,
 						issuer: OP_ID,
 						authorization_endpoint: `${OP_ID}/authorize`,
 						response_types_supported: ["code"],
 						subject_types_supported: ["public"],
-						id_token_signing_alg_values_supported: ["ES256"],
+						id_token_signing_alg_values_supported: ["RS256", "ES256"],
 						jwks,
 					}).success,
 				);
 				t.true(
 					OAuthAuthorizationServerMetadataSchema.safeParse({
+						authorization_endpoint: `${OP_ID}/authorize`,
+						token_endpoint: `${OP_ID}/token`,
 						issuer: OP_ID,
 						response_types_supported: ["code"],
 						jwks,
 					}).success,
 				);
-				t.true(OAuthClientMetadataSchema.safeParse({ jwks }).success);
+				t.true(
+					OAuthClientMetadataSchema.safeParse({ jwks, redirect_uris: [`${LEAF_ID}/callback`] })
+						.success,
+				);
 				t.true(OAuthResourceMetadataSchema.safeParse({ resource: LEAF_ID, jwks }).success);
 			}
 		});
@@ -842,12 +1511,13 @@ export default (QUnit: QUnit) => {
 		test("validates metadata with valid openid_provider fields", (t) => {
 			const result = OIDCFederationMetadataSchema.safeParse({
 				openid_provider: {
+					...validProviderMetadata,
 					issuer: "https://op.example.com",
 					authorization_endpoint: "https://op.example.com/authorize",
 					token_endpoint: "https://op.example.com/token",
 					response_types_supported: ["code"],
 					subject_types_supported: ["public"],
-					id_token_signing_alg_values_supported: ["ES256"],
+					id_token_signing_alg_values_supported: ["RS256", "ES256"],
 				},
 			});
 			t.true(result.success);
@@ -922,12 +1592,13 @@ export default (QUnit: QUnit) => {
 		test("rejects OP metadata with invalid issuer URL", (t) => {
 			const result = OIDCFederationMetadataSchema.safeParse({
 				openid_provider: {
+					...validProviderMetadata,
 					issuer: "not-a-url",
 					authorization_endpoint: "https://op.example.com/authorize",
 					token_endpoint: "https://op.example.com/token",
 					response_types_supported: ["code"],
 					subject_types_supported: ["public"],
-					id_token_signing_alg_values_supported: ["ES256"],
+					id_token_signing_alg_values_supported: ["RS256", "ES256"],
 				},
 			});
 			t.false(result.success);
@@ -959,6 +1630,7 @@ export default (QUnit: QUnit) => {
 		};
 
 		const validProvider = {
+			...validProviderMetadata,
 			issuer: "https://op.example.com",
 			authorization_endpoint: "https://op.example.com/auth",
 			token_endpoint: "https://op.example.com/token",
@@ -967,6 +1639,8 @@ export default (QUnit: QUnit) => {
 			id_token_signing_alg_values_supported: ["RS256"],
 		};
 		const validAuthorizationServer = {
+			authorization_endpoint: "https://as.example.com/authorize",
+			token_endpoint: "https://as.example.com/token",
 			issuer: "https://as.example.com",
 			response_types_supported: ["code"],
 		};
@@ -1034,6 +1708,7 @@ export default (QUnit: QUnit) => {
 
 	module("oidc / OpenIDProviderMetadataSchema — URL validation", () => {
 		const validOP = {
+			...validProviderMetadata,
 			issuer: "https://op.example.com",
 			authorization_endpoint: "https://op.example.com/auth",
 			token_endpoint: "https://op.example.com/token",
@@ -1046,6 +1721,7 @@ export default (QUnit: QUnit) => {
 			t.false(
 				OpenIDProviderMetadataSchema.safeParse({
 					...validOP,
+					client_registration_types_supported: ["explicit"],
 					federation_registration_endpoint: "http://op.example.com/register",
 				}).success,
 			);
@@ -1055,6 +1731,7 @@ export default (QUnit: QUnit) => {
 			t.false(
 				OpenIDProviderMetadataSchema.safeParse({
 					...validOP,
+					client_registration_types_supported: ["explicit"],
 					federation_registration_endpoint: "https://op.example.com/register#frag",
 				}).success,
 			);
@@ -1064,6 +1741,7 @@ export default (QUnit: QUnit) => {
 			t.false(
 				OpenIDProviderMetadataSchema.safeParse({
 					...validOP,
+					client_registration_types_supported: ["explicit"],
 					signed_jwks_uri: "http://op.example.com/jwks",
 				}).success,
 			);
@@ -1073,6 +1751,7 @@ export default (QUnit: QUnit) => {
 			t.false(
 				OpenIDProviderMetadataSchema.safeParse({
 					...validOP,
+					client_registration_types_supported: ["explicit"],
 					jwks_uri: "http://op.example.com/jwks",
 				}).success,
 			);
@@ -1081,6 +1760,7 @@ export default (QUnit: QUnit) => {
 
 	module("oidc / OpenIDProviderMetadataSchema — explicit registration coherence", () => {
 		const validOP = {
+			...validProviderMetadata,
 			issuer: "https://op.example.com",
 			authorization_endpoint: "https://op.example.com/auth",
 			token_endpoint: "https://op.example.com/token",
@@ -1156,6 +1836,8 @@ export default (QUnit: QUnit) => {
 
 	module("oidc / OAuth metadata schemas", () => {
 		const validAuthorizationServer = {
+			authorization_endpoint: "https://as.example.com/authorize",
+			token_endpoint: "https://as.example.com/token",
 			issuer: "https://as.example.com",
 			response_types_supported: ["code"],
 		};
@@ -1216,7 +1898,11 @@ export default (QUnit: QUnit) => {
 				{
 					name: "client",
 					host: "client.example.com",
-					parse: (field, value) => OAuthClientMetadataSchema.safeParse({ [field]: value }).success,
+					parse: (field, value) =>
+						OAuthClientMetadataSchema.safeParse({
+							redirect_uris: ["https://client.example.com/callback"],
+							[field]: value,
+						}).success,
 				},
 				{
 					name: "resource",
@@ -1238,8 +1924,8 @@ export default (QUnit: QUnit) => {
 			}
 		});
 
-		test("OAuth Resource requires a resource URL", (t) => {
-			t.false(OAuthResourceMetadataSchema.safeParse({}).success);
+		test("Federation resource metadata permits informational metadata and validates supplied URLs", (t) => {
+			t.true(OAuthResourceMetadataSchema.safeParse({}).success);
 			t.false(OAuthResourceMetadataSchema.safeParse({ resource: "not-a-url" }).success);
 			t.true(
 				OAuthResourceMetadataSchema.safeParse({
@@ -1266,7 +1952,7 @@ export default (QUnit: QUnit) => {
 					},
 				}).success,
 			);
-			t.false(
+			t.true(
 				OIDCFederationMetadataSchema.safeParse({
 					oauth_resource: { keywords: ["missing resource"] },
 				}).success,
@@ -1278,12 +1964,13 @@ export default (QUnit: QUnit) => {
 		test("returns parsed metadata for valid input", (t) => {
 			const result = validateOIDCMetadata({
 				openid_provider: {
+					...validProviderMetadata,
 					issuer: "https://op.example.com",
 					authorization_endpoint: "https://op.example.com/authorize",
 					token_endpoint: "https://op.example.com/token",
 					response_types_supported: ["code"],
 					subject_types_supported: ["public"],
-					id_token_signing_alg_values_supported: ["ES256"],
+					id_token_signing_alg_values_supported: ["RS256", "ES256"],
 				},
 			});
 			t.equal(result.openid_provider?.issuer, "https://op.example.com");
@@ -1379,6 +2066,7 @@ export default (QUnit: QUnit) => {
 				metadata: {
 					openid_relying_party: {
 						client_id: "client-123",
+						redirect_uris: [`${LEAF_ID}/callback`],
 					},
 				},
 			};
@@ -1404,6 +2092,7 @@ export default (QUnit: QUnit) => {
 						metadata: {
 							openid_relying_party: {
 								client_id: "client-123",
+								redirect_uris: [`${LEAF_ID}/callback`],
 								client_secret: "secret123",
 							},
 						},
@@ -1417,6 +2106,7 @@ export default (QUnit: QUnit) => {
 						metadata: {
 							openid_relying_party: {
 								client_id: "client-123",
+								redirect_uris: [`${LEAF_ID}/callback`],
 								client_secret: "secret123",
 								client_secret_expires_at: validResp.exp - 1,
 							},
@@ -1431,6 +2121,7 @@ export default (QUnit: QUnit) => {
 						metadata: {
 							openid_relying_party: {
 								client_id: "client-123",
+								redirect_uris: [`${LEAF_ID}/callback`],
 								client_id_issued_at: 1,
 								client_secret_expires_at: 2,
 							},
@@ -1441,11 +2132,24 @@ export default (QUnit: QUnit) => {
 			test("rejects invalid response credential types", (t) => {
 				const invalidMetadata = [
 					{ openid_relying_party: { client_id: 123 } },
-					{ openid_relying_party: { client_id: "client-123", client_secret: 123 } },
-					{ openid_relying_party: { client_id: "client-123", client_id_issued_at: -1 } },
 					{
 						openid_relying_party: {
 							client_id: "client-123",
+							redirect_uris: [`${LEAF_ID}/callback`],
+							client_secret: 123,
+						},
+					},
+					{
+						openid_relying_party: {
+							client_id: "client-123",
+							redirect_uris: [`${LEAF_ID}/callback`],
+							client_id_issued_at: -1,
+						},
+					},
+					{
+						openid_relying_party: {
+							client_id: "client-123",
+							redirect_uris: [`${LEAF_ID}/callback`],
 							client_secret_expires_at: -1,
 						},
 					},
@@ -1578,14 +2282,14 @@ export default (QUnit: QUnit) => {
 			t.equal(result.error.code, "invalid_metadata");
 		});
 
-		test("accepts openid_relying_party with only optional fields", (t) => {
-			t.true(
+		test("rejects incomplete effective relying party metadata", (t) => {
+			t.false(
 				adapter.validateClientMetadata({ openid_relying_party: { client_name: "Test RP" } }).ok,
 			);
 		});
 
-		test("accepts empty openid_relying_party object", (t) => {
-			t.true(adapter.validateClientMetadata({ openid_relying_party: {} }).ok);
+		test("rejects empty effective relying party metadata for default flows", (t) => {
+			t.false(adapter.validateClientMetadata({ openid_relying_party: {} }).ok);
 		});
 	});
 
@@ -1867,13 +2571,14 @@ export default (QUnit: QUnit) => {
 			const fed = await createMockFederation({
 				opMetadata: {
 					openid_provider: {
+						...validProviderMetadata,
 						issuer: OP_ID,
 						authorization_endpoint: `${OP_ID}/authorize`,
 						token_endpoint: `${OP_ID}/token`,
 						federation_registration_endpoint: `${OP_ID}/federation_registration`,
 						response_types_supported: ["code"],
 						subject_types_supported: ["public"],
-						id_token_signing_alg_values_supported: ["ES256"],
+						id_token_signing_alg_values_supported: ["RS256", "ES256"],
 						client_registration_types_supported: ["explicit"],
 					},
 				},
@@ -2092,7 +2797,7 @@ export default (QUnit: QUnit) => {
 		});
 
 		test("OAuth-only Request Object transports retain their existing parameters", async (t) => {
-			const fed = await createMockFederation();
+			const fed = await createMockFederation({ includeOAuthClient: true });
 			const discovery = await createMockDiscovery(OP_ID, fed);
 			for (const delivery of ["query", "form_post", "request_uri"] as const) {
 				const { config } = await createRpConfig({
@@ -2193,12 +2898,13 @@ export default (QUnit: QUnit) => {
 			const fed = await createMockFederation({
 				opMetadata: {
 					openid_provider: {
+						...validProviderMetadata,
 						issuer: OP_ID,
 						authorization_endpoint: `${OP_ID}/authorize`,
 						token_endpoint: `${OP_ID}/token`,
 						response_types_supported: ["code"],
 						subject_types_supported: ["public"],
-						id_token_signing_alg_values_supported: ["ES256"],
+						id_token_signing_alg_values_supported: ["RS256", "ES256"],
 						client_registration_types_supported: ["automatic"],
 						request_uri_parameter_supported: false,
 					},
@@ -2252,6 +2958,7 @@ export default (QUnit: QUnit) => {
 				leafMetadata: config.metadata,
 				opMetadata: {
 					openid_provider: {
+						...validProviderMetadata,
 						issuer: OP_ID,
 						token_endpoint_auth_methods_supported: ["private_key_jwt"],
 						authorization_endpoint: `${OP_ID}/authorize`,
@@ -2259,7 +2966,7 @@ export default (QUnit: QUnit) => {
 						pushed_authorization_request_endpoint: parEndpoint,
 						response_types_supported: ["code"],
 						subject_types_supported: ["public"],
-						id_token_signing_alg_values_supported: ["ES256"],
+						id_token_signing_alg_values_supported: ["RS256", "ES256"],
 						client_registration_types_supported: ["automatic", "explicit"],
 						federation_registration_endpoint: `${OP_ID}/federation_registration`,
 					},
@@ -2356,6 +3063,7 @@ export default (QUnit: QUnit) => {
 				leafMetadata: config.metadata,
 				opMetadata: {
 					openid_provider: {
+						...validProviderMetadata,
 						issuer: OP_ID,
 						token_endpoint_auth_methods_supported: ["private_key_jwt"],
 						authorization_endpoint: `${OP_ID}/authorize`,
@@ -2363,7 +3071,7 @@ export default (QUnit: QUnit) => {
 						pushed_authorization_request_endpoint: parEndpoint,
 						response_types_supported: ["code"],
 						subject_types_supported: ["public"],
-						id_token_signing_alg_values_supported: ["ES256"],
+						id_token_signing_alg_values_supported: ["RS256", "ES256"],
 						client_registration_types_supported: ["automatic", "explicit"],
 						federation_registration_endpoint: `${OP_ID}/federation_registration`,
 					},
@@ -2550,7 +3258,12 @@ export default (QUnit: QUnit) => {
 				exp: now + 3600,
 				authority_hints: [TA_ID],
 				trust_anchor: TA_ID,
-				metadata: { openid_relying_party: { client_id: LEAF_ID } },
+				metadata: {
+					openid_relying_party: {
+						client_id: LEAF_ID,
+						redirect_uris: ["https://rp.example.com/callback"],
+					},
+				},
 				...overrides,
 			};
 		}
@@ -2700,7 +3413,12 @@ export default (QUnit: QUnit) => {
 							exp: fx.now + 3600,
 							authority_hints: [fx.taB],
 							trust_anchor: fx.taB,
-							metadata: { openid_relying_party: { client_id: LEAF_ID } },
+							metadata: {
+								openid_relying_party: {
+									client_id: LEAF_ID,
+									redirect_uris: ["https://rp.example.com/callback"],
+								},
+							},
 						},
 						new JwkSigner(fx.opSigningKey),
 						{ typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
@@ -2869,13 +3587,14 @@ export default (QUnit: QUnit) => {
 			const fed = await createMockFederation({
 				opMetadata: {
 					openid_provider: {
+						...validProviderMetadata,
 						issuer: OP_ID,
 						authorization_endpoint: `${OP_ID}/authorize`,
 						token_endpoint: `${OP_ID}/token`,
 						federation_registration_endpoint: `${OP_ID}/federation_registration`,
 						response_types_supported: ["code"],
 						subject_types_supported: ["public"],
-						id_token_signing_alg_values_supported: ["ES256"],
+						id_token_signing_alg_values_supported: ["RS256", "ES256"],
 						client_registration_types_supported: ["automatic"],
 					},
 				},
@@ -2964,7 +3683,12 @@ export default (QUnit: QUnit) => {
 					exp: now + 86400,
 					authority_hints: [TA_ID],
 					trust_anchor: "https://wrong-ta.example.com",
-					metadata: { openid_relying_party: { client_id: LEAF_ID } },
+					metadata: {
+						openid_relying_party: {
+							client_id: LEAF_ID,
+							redirect_uris: ["https://rp.example.com/callback"],
+						},
+					},
 				},
 				new JwkSigner(fed.opSigningKey),
 				{ typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
@@ -3115,7 +3839,12 @@ export default (QUnit: QUnit) => {
 					exp: discovery.trustChain.expiresAt + 1,
 					authority_hints: [TA_ID],
 					trust_anchor: TA_ID,
-					metadata: { openid_relying_party: { client_id: LEAF_ID } },
+					metadata: {
+						openid_relying_party: {
+							client_id: LEAF_ID,
+							redirect_uris: ["https://rp.example.com/callback"],
+						},
+					},
 				},
 				new JwkSigner(fed.opSigningKey),
 				{ typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
@@ -3217,7 +3946,12 @@ export default (QUnit: QUnit) => {
 					iat: past - 86400,
 					exp: past,
 					trust_anchor: TA_ID,
-					metadata: { openid_relying_party: { client_id: LEAF_ID } },
+					metadata: {
+						openid_relying_party: {
+							client_id: LEAF_ID,
+							redirect_uris: ["https://rp.example.com/callback"],
+						},
+					},
 				},
 				new JwkSigner(fed.opSigningKey),
 				{ typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
@@ -3264,7 +3998,12 @@ export default (QUnit: QUnit) => {
 					aud: LEAF_ID,
 					iat: now,
 					trust_anchor: TA_ID,
-					metadata: { openid_relying_party: { client_id: LEAF_ID } },
+					metadata: {
+						openid_relying_party: {
+							client_id: LEAF_ID,
+							redirect_uris: ["https://rp.example.com/callback"],
+						},
+					},
 				},
 				new JwkSigner(fed.opSigningKey),
 				{ typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
@@ -3343,7 +4082,12 @@ export default (QUnit: QUnit) => {
 					iat: now,
 					exp: now + 86400,
 					trust_anchor: TA_ID,
-					metadata: { openid_relying_party: { client_id: LEAF_ID } },
+					metadata: {
+						openid_relying_party: {
+							client_id: LEAF_ID,
+							redirect_uris: ["https://rp.example.com/callback"],
+						},
+					},
 				},
 				new JwkSigner(fed.opSigningKey),
 				{ typ: "invalid-typ" },
@@ -3391,7 +4135,12 @@ export default (QUnit: QUnit) => {
 					iat: now,
 					exp: now + 86400,
 					trust_anchor: TA_ID,
-					metadata: { openid_relying_party: { client_id: LEAF_ID } },
+					metadata: {
+						openid_relying_party: {
+							client_id: LEAF_ID,
+							redirect_uris: ["https://rp.example.com/callback"],
+						},
+					},
 				},
 				new JwkSigner(fed.opSigningKey),
 				{ typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
@@ -3455,7 +4204,12 @@ export default (QUnit: QUnit) => {
 					iat: now,
 					exp: now + 86400,
 					trust_anchor: TA_ID,
-					metadata: { openid_relying_party: { client_id: LEAF_ID } },
+					metadata: {
+						openid_relying_party: {
+							client_id: LEAF_ID,
+							redirect_uris: ["https://rp.example.com/callback"],
+						},
+					},
 				},
 				new JwkSigner(fed.opSigningKey),
 				{ typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
@@ -3540,7 +4294,12 @@ export default (QUnit: QUnit) => {
 					aud: LEAF_ID,
 					exp: now + 86400,
 					trust_anchor: TA_ID,
-					metadata: { openid_relying_party: { client_id: LEAF_ID } },
+					metadata: {
+						openid_relying_party: {
+							client_id: LEAF_ID,
+							redirect_uris: ["https://rp.example.com/callback"],
+						},
+					},
 				},
 				new JwkSigner(fed.opSigningKey),
 				{ typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
@@ -3585,7 +4344,12 @@ export default (QUnit: QUnit) => {
 					iat: now,
 					exp: now + 86400,
 					trust_anchor: "https://unknown-ta.example.com",
-					metadata: { openid_relying_party: { client_id: LEAF_ID } },
+					metadata: {
+						openid_relying_party: {
+							client_id: LEAF_ID,
+							redirect_uris: ["https://rp.example.com/callback"],
+						},
+					},
 				},
 				new JwkSigner(fed.opSigningKey),
 				{ typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
@@ -3631,7 +4395,12 @@ export default (QUnit: QUnit) => {
 					exp: now + 86400,
 					trust_anchor: TA_ID,
 					authority_hints: ["not-a-string-hint", 123],
-					metadata: { openid_relying_party: { client_id: LEAF_ID } },
+					metadata: {
+						openid_relying_party: {
+							client_id: LEAF_ID,
+							redirect_uris: ["https://rp.example.com/callback"],
+						},
+					},
 				},
 				new JwkSigner(fed.opSigningKey),
 				{ typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
@@ -3666,6 +4435,7 @@ export default (QUnit: QUnit) => {
 						openid_relying_party: {
 							client_id: LEAF_ID,
 							client_secret: "super-secret-123",
+							redirect_uris: ["https://rp.example.com/callback"],
 						},
 					},
 				}),
@@ -3686,6 +4456,7 @@ export default (QUnit: QUnit) => {
 						openid_relying_party: {
 							client_id: LEAF_ID,
 							client_secret: "super-secret-123",
+							redirect_uris: ["https://rp.example.com/callback"],
 							client_secret_expires_at: now + 3599,
 						},
 					},
@@ -4344,7 +5115,7 @@ export default (QUnit: QUnit) => {
 			t.false(result.ok);
 			if (result.ok) return;
 			t.ok(
-				result.error.description.includes("Relying Party metadata schema"),
+				result.error.description.includes("openid_relying_party metadata"),
 				result.error.description,
 			);
 		});
@@ -4603,6 +5374,7 @@ export default (QUnit: QUnit) => {
 					authority_hints: [otherTaId],
 					metadata: {
 						openid_provider: {
+							...validProviderMetadata,
 							issuer: OP_ID,
 							authorization_endpoint: `${OP_ID}/authorize`,
 							token_endpoint: `${OP_ID}/token`,
@@ -7328,7 +8100,7 @@ export default (QUnit: QUnit) => {
 				},
 			});
 
-			const fed = await createMockFederation();
+			const fed = await createMockFederation({ includeOAuthClient: true });
 			const discovery = await createMockDiscovery(OP_ID, fed);
 
 			const context = {
@@ -7663,7 +8435,7 @@ export default (QUnit: QUnit) => {
 			);
 		});
 		test("uses detached composed RP and OAuth client metadata for requests", async (t) => {
-			const fed = await createMockFederation();
+			const fed = await createMockFederation({ includeOAuthClient: true });
 			const discovery = await createMockDiscovery(OP_ID, fed);
 			for (const Role of [OidcRelyingPartyRole, OAuthClientRole]) {
 				const role = new Role({
@@ -7800,6 +8572,75 @@ export default (QUnit: QUnit) => {
 				);
 			return { fed, config, now, events, payload, chain, sign, post };
 		}
+
+		test("registration responses omit RP choice inputs and reject incompatible engine selections before side effects", async (t) => {
+			for (const selected of ["private_key_jwt", "client_secret_basic"] as const) {
+				const fx = await fixture(undefined, {
+					metadata: {
+						openid_relying_party: { token_endpoint_auth_methods_supported: ["private_key_jwt"] },
+					},
+				});
+				let responseSignatures = 0;
+				const original = await fx.config.keyProvider.getFederationKeySet();
+				const handler = createExplicitRegistrationHandler({
+					...fx.config,
+					keyProvider: new MemoryFederationKeyProvider({
+						publicJwk: original.jwks.keys[0]!,
+						signer: {
+							alg: original.signer.alg,
+							kid: original.signer.kid,
+							signJwt: (...args) => {
+								responseSignatures++;
+								return original.signer.signJwt(...args);
+							},
+						},
+					}),
+					registrationProtocolAdapter: {
+						validateClientMetadata: (metadata) => ({ ok: true, value: metadata }),
+						enrichResponseMetadata: (metadata) => ({
+							...metadata,
+							token_endpoint_auth_method: selected,
+						}),
+					},
+				});
+				const res = await handler(
+					new Request(`${OP_ID}/federation_registration`, {
+						method: "POST",
+						headers: { "content-type": MediaType.EntityStatement },
+						body: await fx.sign(),
+					}),
+				);
+				if (selected === "client_secret_basic") {
+					t.equal(res.status, 400);
+					t.deepEqual(fx.events, []);
+					t.equal(responseSignatures, 0);
+				} else {
+					t.equal(res.status, 200, await res.clone().text());
+					const decoded = decodeEntityStatement(await res.text());
+					t.true(decoded.ok);
+					if (decoded.ok) {
+						const metadata = decoded.value.payload.metadata!.openid_relying_party!;
+						t.equal(metadata.token_endpoint_auth_method, "private_key_jwt");
+						t.false(Object.hasOwn(metadata, "token_endpoint_auth_methods_supported"));
+					}
+					t.equal(responseSignatures, 1);
+					t.deepEqual(fx.events, ["secret", "invalidate", "register"]);
+				}
+			}
+		});
+
+		test("an incompatible default cannot escape RP choices through a registration response", async (t) => {
+			const fx = await fixture(undefined, {
+				metadata_policy: {
+					openid_relying_party: {
+						token_endpoint_auth_methods_supported: { value: ["private_key_jwt"] },
+					},
+				},
+			});
+			const res = await fx.post(await fx.sign());
+			t.equal(res.status, 400);
+			t.deepEqual(fx.events, []);
+		});
 
 		test("explicit registration logs the failing integration without changing its outcome", async (t) => {
 			for (const failure of [
@@ -8913,13 +9754,14 @@ export default (QUnit: QUnit) => {
 					},
 					opMetadata: {
 						openid_provider: {
+							...validProviderMetadata,
 							issuer: OP_ID,
 							authorization_endpoint: `${OP_ID}/authorize`,
 							token_endpoint: `${OP_ID}/token`,
 							pushed_authorization_request_endpoint: `${OP_ID}/par`,
 							response_types_supported: ["code"],
 							subject_types_supported: ["public"],
-							id_token_signing_alg_values_supported: ["ES256"],
+							id_token_signing_alg_values_supported: ["RS256", "ES256"],
 							client_registration_types_supported: ["automatic"],
 							token_endpoint_auth_methods_supported: ["private_key_jwt"],
 						},
@@ -9028,13 +9870,14 @@ export default (QUnit: QUnit) => {
 					leafMetadata: metadata,
 					opMetadata: {
 						openid_provider: {
+							...validProviderMetadata,
 							issuer: OP_ID,
 							authorization_endpoint: `${OP_ID}/authorize`,
 							token_endpoint: `${OP_ID}/token`,
 							pushed_authorization_request_endpoint: `${OP_ID}/par`,
 							response_types_supported: ["code"],
 							subject_types_supported: ["public"],
-							id_token_signing_alg_values_supported: ["ES256"],
+							id_token_signing_alg_values_supported: ["RS256", "ES256"],
 							client_registration_types_supported: ["automatic"],
 							...(scenario.op ? { token_endpoint_auth_methods_supported: scenario.op } : {}),
 						},
