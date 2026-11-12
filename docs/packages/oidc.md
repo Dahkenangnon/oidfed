@@ -74,7 +74,35 @@ An `OidcProviderRole` or `OAuthAuthorizationServerRole` installs an explicit-reg
 
 When publishing OP or AS metadata, a supplied `issuer` must exactly match the host’s Entity Identifier ([§5.1.3](https://openid.net/specs/openid-federation-1_0.html#section-5.1.3), [§5.1.4](https://openid.net/specs/openid-federation-1_0.html#section-5.1.4)). Before sending explicit registration, the RP also checks that the discovered registration endpoint uses HTTPS and has no fragment, including a bare trailing `#`. Invalid endpoints return `invalid_metadata` without a POST. Query strings and explicit ports remain supported.
 
-`OIDCFederationPublicationMetadata` describes metadata published before superior completion under [Federation §5](https://openid.net/specs/openid-federation-1_0.html#section-5). Its protocol blocks may omit fields supplied by superiors. `OIDCFederationMetadata` and the protocol-specific metadata types describe effective metadata; registration still validates the fields needed for its flow.
+`OIDCFederationPublicationMetadata` describes metadata published before superior completion under [Federation §5](https://openid.net/specs/openid-federation-1_0.html#section-5). Its protocol blocks may omit fields supplied by superiors. `OIDCFederationMetadata` and the protocol-specific metadata types describe effective metadata; protocol APIs validate the effective metadata before consuming it.
+
+### Validate metadata independently
+
+Each OIDC/OAuth role has two static parsers: `parseMetadata(raw)` for effective metadata and `parsePublicationMetadata(raw)` for a publication that Superiors may complete. Both return `{ success: true, data }` or `{ success: false, error }` without making network requests.
+
+```ts
+import {
+  OidcProviderRole,
+  type OpenIDProviderPublicationMetadata,
+} from "@oidfed/oidc";
+
+const draft: OpenIDProviderPublicationMetadata = {
+  client_registration_types_supported: ["explicit"],
+};
+const publication = OidcProviderRole.parsePublicationMetadata(draft);
+const effective = OidcProviderRole.parseMetadata(resolvedMetadata.openid_provider);
+if (!effective.success) {
+  // Inspect effective.error.issues before using any endpoints or capabilities.
+}
+```
+
+The same methods exist on `OidcRelyingPartyRole`, `OAuthAuthorizationServerRole`, `OAuthClientRole`, and `OAuthResourceRole`. Each role also has a corresponding exported `*PublicationMetadata` type, inferred from its publication schema: `OpenIDRelyingPartyPublicationMetadata`, `OpenIDProviderPublicationMetadata`, `OAuthAuthorizationServerPublicationMetadata`, `OAuthClientPublicationMetadata`, and `OAuthResourcePublicationMetadata`. `OIDCFederationPublicationMetadata` uses these types for its blocks. The AS publication type matches the shared core definition. Resource metadata defaults to the federation profile, which permits common informational fields without a `resource` parameter. Use `OAuthResourceRole.parseMetadata(raw, { profile: "rfc9728" })` to require a complete RFC 9728 resource document.
+
+Attaching a role to a Leaf or Authority checks its composed publication automatically. Missing protocol fields can be completed by a Superior; malformed supplied fields are rejected. Registration checks effective metadata after Superior overrides and policy application, before using endpoints or signing requests. Role-driven discovery can select another conformant path; malformed caller-supplied discovery results and invalid supplied chains are errors.
+
+Unknown extension fields are preserved. Registered fields are checked against their protocol definitions, and federation registration-type arrays remain open to extension values. Explicit-registration responses use single-valued selections in place of RP Metadata Choices inputs; selections and protocol defaults must satisfy the RP's advertised choices.
+
+These checks reject malformed metadata that earlier releases could accept. They establish metadata conformance, not issuer trust, endpoint availability, or the validity of embedded `signed_metadata` or `software_statement` JWTs. Continue to authenticate federation evidence before using parsed metadata. Bare Leaf/Authority hosts without a matching protocol role perform federation validation only; applications can call these parsers explicitly.
 
 ### Client-side automatic registration
 
@@ -127,7 +155,7 @@ if (isOk(authzResult) && authzResult.value.delivery === "query") {
 
 ### Provider-side explicit registration
 
-The example assumes pinned `taPublicKey` and an `opProtocolPublicKey` used by the existing OP. Compose `opRole` into the parent entity to initialize and route it. If confidential clients need secrets, provide `generateClientSecret` backed by your credential store and a cryptographically secure generator.
+The example assumes pinned `taPublicKey` and an RSA `opProtocolPublicKey` used by the existing OP for RS256 signatures. Compose `opRole` into the parent entity to initialize and route it. If confidential clients need secrets, provide `generateClientSecret` backed by your credential store and a cryptographically secure generator.
 For explicit registration, OPs serve a `/registration` endpoint. RPs post their self-signed Entity Configuration or trust chains, and OPs reply with a signed explicit registration response whose `sub` is the RP Entity Identifier and whose registered client credentials are under `metadata.openid_relying_party`.
 
 The OP validates a supplied `trust_chain` header or `application/trust-chain+json` body. Without a supplied chain, it starts discovery from the submitted Entity Configuration and its authority hints. Each candidate must authenticate that request with the RP federation keys attested by its Immediate Superior before the OP selects a path. Invalid supplied chains fail registration. Request media types are parameter-free and matched exactly. See [Federation §12.2.2](https://openid.net/specs/openid-federation-1_0.html#section-12.2.2).
@@ -172,6 +200,9 @@ const opRole = new OidcProviderRole({
     authorization_endpoint: "https://op.example.com/auth",
     token_endpoint: "https://op.example.com/token",
     client_registration_types_supported: ["automatic", "explicit"],
+    response_types_supported: ["code"],
+    subject_types_supported: ["public"],
+    id_token_signing_alg_values_supported: ["RS256"],
     jwks: { keys: [opProtocolPublicKey] }
   }
 });

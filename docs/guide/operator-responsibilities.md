@@ -30,6 +30,12 @@ oidfed provides separate federation key providers and protocol signers. Your app
 
 ## OpenID Federation
 
+### Protocol metadata
+
+[Federation §6.1](https://openid.net/specs/openid-federation-1_0.html#section-6.1) places protocol type checks after metadata resolution. Attach the matching OIDC/OAuth or wallet role to check composed publication metadata, and use its protocol APIs to validate effective metadata before consumption. A partial publication can omit fields supplied by a Superior; the resolved result must satisfy the protocol's requirements.
+
+If you use bare Leaf/Authority metadata or consume `validateTrustChain()` results directly, invoke the matching [OIDC/OAuth role parser](../packages/oidc.md#validate-metadata-independently) or wallet parser yourself. OAuth AS validation is [shared through core](../packages/core.md#shared-oauth-authorization-server-metadata) so wallet and OIDC need no dependency on each other. Keep application-specific extension validation and embedded signed-metadata processing in your application.
+
 ### Trusted anchors and independent key retrieval
 
 [Federation §10](https://openid.net/specs/openid-federation-1_0.html#section-10) requires the target's identifier, trusted anchor identifiers, and the anchors' public signing keys before establishing trust. [§10.2](https://openid.net/specs/openid-federation-1_0.html#section-10.2) requires validation against the anchor's public key. The operator supplies these inputs through [`TrustAnchorSet`](../../packages/core/src/types.ts). Discovery and collection results do not add anchors to that set.

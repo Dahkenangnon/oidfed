@@ -490,6 +490,14 @@ When cancellation or a work limit stops resolution, `resolveTrustChains` reports
 
 Collection configuration accepts an optional `collector` for application inventories and a `filter` for additional restrictions. Core validates collector output and verifies the marks used for filtering. `EntityCollectionCandidate` contains informational entity data and an eligibility deadline; `CollectionEntry` adds optional chain evidence and core-verified mark evidence. The [collection policy examples](../guide/entity-collection.md#collection-policy) cover independent sources and snapshot-time filters. Chain validation and Trust Mark evaluation have separate results, as described [above](#trust-marks).
 
+## Shared OAuth authorization-server metadata
+
+`parseOAuthAuthorizationServerMetadata(raw)` checks effective OAuth AS metadata against RFC 8414 and the supported registered extensions. `parseOAuthAuthorizationServerPublicationMetadata(raw)` checks supplied publication fields while allowing missing fields that a Superior can complete. Both return a synchronous success/error result and preserve unknown extension members.
+
+This shared validator lives in core because both OIDC registration and wallet credential-issuer discovery consume OAuth AS metadata. The protocol packages call it at their own boundaries; generic `validateTrustChain()` and `discoverEntity()` do not automatically apply protocol schemas. Hosts can call the parser independently after resolving metadata. Endpoint requirements account for grant types, including implicit-only and pre-authorized-only servers, without adding default values to the returned object.
+
+Parsing neither authenticates an issuer nor verifies `signed_metadata`. It also makes no endpoint requests. Use the protocol roles for automatic validation during publication and protocol operations.
+
 ## Contextual metadata validation
 
 `prepareTrustChainValidation(statements, trustAnchors, options)` authenticates chain evidence while reserving explicitly named policy inputs that are absent from published metadata. Specify them through `deferredClaims`, an array of `{ entityType, parameter }` pairs. Unrelated policies and policies for published values must pass during preparation.

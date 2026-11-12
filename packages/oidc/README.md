@@ -97,6 +97,9 @@ const rpEntity = new Leaf({
 
 ### OP Composition Example
 
+
+This example assumes `opProtocolPublicKeys` contains the OP’s RSA and EC protocol public keys, matching its RS256 and ES256 support. Keep these separate from its Federation Entity Keys.
+
 ```ts
 import { TrustAnchor, MemoryStorageAdapter } from "@oidfed/authority";
 import { OidcProviderRole } from "@oidfed/oidc";
@@ -127,9 +130,9 @@ const opEntity = new TrustAnchor({
         token_endpoint: "https://op.example.com/token",
         response_types_supported: ["code"],
         subject_types_supported: ["public"],
-        id_token_signing_alg_values_supported: ["ES256"],
+        id_token_signing_alg_values_supported: ["RS256", "ES256"],
         client_registration_types_supported: ["automatic", "explicit"],
-        jwks: { keys: [protocolPublicKey] },
+        jwks: { keys: opProtocolPublicKeys },
       },
     })
   ]

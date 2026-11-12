@@ -356,6 +356,12 @@ To serve the optional Draft 01 endpoint from a Trust Anchor or Intermediate, sup
 
 The `collection.collector` and `collection.filter` callbacks configure the shared service's collection policy. Authorities can use application inventories or additional restrictions while keeping registration records separate. See [collection policy](../guide/entity-collection.md#collection-policy).
 
+## Protocol metadata validation
+
+Attached OIDC/OAuth and wallet roles validate their composed publication metadata through the existing role hook. Missing top-level fields may be supplied by a Superior; supplied fields must pass the role's publication checks. Without a matching role, the host applies federation checks only.
+
+For independent checks, use the matching role's `parsePublicationMetadata()` before publication and `parseMetadata()` on completed effective metadata. The protocol packages also export named publication types. See the [OIDC/OAuth parser examples](oidc.md#validate-metadata-independently) and [wallet metadata guidance](wallet.md).
+
 ## Wallet roles
 
 Attach `WalletProviderRole`, `CredentialIssuerRole`, or `CredentialVerifierRole` from `@oidfed/wallet` through `roles`. Hosts validate the final composed role metadata before publication. Wallet capabilities remain separate from the host's position in the federation. See the [wallet guide](wallet.md) for configuration and protocol integration.

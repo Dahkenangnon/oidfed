@@ -12,6 +12,10 @@ Missing `scopeQuery`, `verifyTransactionData`, or local offline evidence produce
 
 Wallet trust results expose the chain's verified marks and individual mark outcomes. Apply application accreditation requirements with [`checkTrustMarkRequirements()`](core.md#trust-marks) before using an entity for an operation that requires those marks. Federation chain validation alone establishes no required accreditation.
 
+Credential-issuer discovery validates each authorization server's effective OAuth metadata with the shared core validator, whether the AS is the issuer itself or a separate entity. It still checks the issuer identifier against the discovered server. The default `authorizationServerPolicy: "all"` rejects an invalid server; `"available"` can skip one if another usable server remains. Cancellation and exhausted fetch budgets still stop discovery.
+
+For independent AS checks, use core's `parseOAuthAuthorizationServerMetadata()` or `parseOAuthAuthorizationServerPublicationMetadata()`. The publication parser allows missing fields that a Superior can supply. The effective parser applies grant-dependent endpoint requirements, so a pre-authorized-only AS does not need an authorization endpoint.
+
 ## Compose roles into a host
 
 ```ts
@@ -44,7 +48,27 @@ const response = await host.handleRequest(request);
 
 Hosts compose role metadata with their own metadata, then call the optional `EntityRole.validateMetadata` hook before publication. Role configuration takes precedence over fields supplied by the host. Wallet roles validate supplied fields, including exact equality between a supplied `credential_issuer` and the host's Entity Identifier. Publication accepts partial or empty blocks so a superior can complete them, as allowed by [Federation §5](https://openid.net/specs/openid-federation-1_0.html#section-5) and [Wallet §7.1](https://openid.net/specs/openid-federation-wallet-1_0-05.html#section-7.1).
 
-Effective provider and verifier metadata require `vp_formats_supported`. Issuers require `credential_issuer`, `credential_endpoint`, and `credential_configurations_supported`, with the nested requirements from OpenID4VCI. Metadata extensions are preserved. The three roles expose `parseMetadata(value)` to validate complete effective metadata without a host.
+Effective provider and verifier metadata require `vp_formats_supported`. Issuers require `credential_issuer`, `credential_endpoint`, and `credential_configurations_supported`, with the nested requirements from OpenID4VCI. Metadata extensions are preserved. Each role exposes `parseMetadata(value)` for completed effective metadata and `parsePublicationMetadata(value)` for a partial publication. Both return a synchronous `{ success, data }` or `{ success: false, error }` result without a host or network calls. Publication parsing checks supplied fields and nested objects while allowing missing top-level fields that a Superior can complete.
+
+The package exports `WalletProviderPublicationMetadata`, `CredentialIssuerPublicationMetadata`, and `CredentialVerifierPublicationMetadata`, inferred from the same schemas used by the publication hooks:
+
+```ts
+import {
+  CredentialIssuerRole,
+  type CredentialIssuerPublicationMetadata,
+} from "@oidfed/wallet";
+
+const draft: CredentialIssuerPublicationMetadata = {
+  credential_issuer: "https://issuer.example",
+};
+const result = CredentialIssuerRole.parsePublicationMetadata(draft);
+if (!result.success) {
+  // Each issue has a path and message for the supplied metadata block.
+  const issues = result.error.issues;
+}
+```
+
+The verifier's `parseMetadata()` uses the same received-metadata rules as discovery, including acceptance of repeated DCQL claim paths. `parsePublicationMetadata()` and outbound Request Object creation reject repeated paths. Parsing leaves received queries intact; request processing normalizes them after federation policy evaluation. A parser result does not authenticate the entity or establish trust.
 
 Issuer discovery and `CredentialIssuerRole.parseMetadata()` validate completed encryption metadata. An advertised `credential_request_encryption.jwks` needs at least one key with a nonempty encryption `alg` whose declared `use` and `key_ops` permit encryption or key agreement, as required for key selection by [OpenID4VCI §10](https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html#section-10). Mixed sets are accepted. Known signing algorithms and `none` cannot satisfy this check; extension algorithms remain available to the application’s crypto implementation. Required response encryption also needs request-encryption support, since [§8.2](https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html#section-8.2) requires encrypted transport of the response-encryption parameters. Publication allows a superior to supply these missing encryption fields. The application chooses a usable algorithm and performs encryption.
 
