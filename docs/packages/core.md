@@ -473,35 +473,76 @@ if (!accreditation.ok) throw new Error(accreditation.error.description);
 
 Each required type needs at least one verified mark whose dates remain valid. Set `requireAllPublished: true` to require every published mark to pass as an additional application policy; an empty publication satisfies that option, so use `requiredTypes` when a mark must exist. Both checks apply when combined. The helper rejects expired chain evidence and rechecks mark and delegation dates using the supplied clock and clock skew. The helper uses the supplied evidence. Obtain fresh issuer evidence and check active status when your policy requires it.
 
-Chain validation uses the included anchor Entity Configuration's issuer and owner declarations. An omitted anchor configuration or undeclared type leaves the mark unevaluated. For issuers outside the supplied chain, `trustMarkIssuerKeys` accepts keys whose federation trust the caller has independently established under [§7.3](https://openid.net/specs/openid-federation-1_0.html#section-7.3). Supply the necessary anchor configuration when evaluating its mark policy. Fetching an issuer's self-published keys alone does not establish that trust.
+By default, chain validation uses the included anchor EC's issuer and owner declarations and independently trusted keys already available to it. An omitted anchor EC or undeclared type leaves the mark unevaluated. To discover issuer trust automatically, pass `trustMarkVerification: { mode: "resolve" }`. Supply a separate `trustAnchors` map inside that option when the accreditation framework differs from the holder's federation. Discovery shares the operation's fetch budget, cache, cancellation, and offline controls.
 
-
-Validate the Trust Mark signature, issuer authorization, subject, expiry, and any delegation first. Status is a separate request to the issuer's advertised status endpoint. The example assumes `issuerJwks`, `trustMarkIssuers`, `trustMarkOwners`, and `statusEndpoint` came from trusted federation processing.
-
-Issuer and owner registries use explicitly declared JSON members. In `validateTrustMark()`, an explicit empty issuer array permits any issuer for that type; a nonempty array restricts issuance to its listed Entity Identifiers ([Federation §3.1.2](https://openid.net/specs/openid-federation-1_0.html#section-3.1.2)). An explicit owner entry requires a valid delegation under [§7.3](https://openid.net/specs/openid-federation-1_0.html#section-7.3). Malformed entries return validation errors.
+For a received JWT, establish issuer trust explicitly before using its claims:
 
 ```ts
-import { validateTrustMark, fetchTrustMarkStatus } from "@oidfed/core";
+import { establishTrustMarkIssuerTrust, validateTrustMarkWithIssuer } from "@oidfed/core";
 
-const validation = await validateTrustMark(rawTrustMarkJwt, trustMarkIssuers, issuerJwks, {
-  expectedSubject: "https://leaf.example.com",
-  trustMarkOwners // Optional dictionary mapping trust mark types to owners for delegation checks
+const issuerResult = await establishTrustMarkIssuerTrust({
+  issuer: "https://auditor.example",
+  trustMarkType: "https://market.example/marks/member-data",
+  trustAnchors,
+  options: { httpClient: fetch },
 });
+if (!issuerResult.ok) throw new Error(issuerResult.error.description);
 
-if (validation.ok) {
-  const status = await fetchTrustMarkStatus(
-    statusEndpoint, rawTrustMarkJwt, issuerJwks, {
-      expectedIssuer: validation.value.issuer,
-      httpClient: fetch,
-    },
-  );
-  console.log("Trust Mark Status:", status);
-}
+const result = await validateTrustMarkWithIssuer(rawTrustMarkJwt, issuerResult.value, {
+  expectedSubject: "https://cornershop.example",
+  expectedTrustMarkType: "https://market.example/marks/member-data",
+});
+if (!result.ok) throw new Error(result.error.description);
+const { jwt, claims, verificationExpiresAt } = result.value;
 ```
 
-`validateTrustMark()` requires `expectedSubject`, the entity whose configuration contains the mark ([§7.3](https://openid.net/specs/openid-federation-1_0.html#section-7.3)). Establish trust in the issuer and its keys before calling it.
+`FederationTrustMarkIssuerEvidence` retains authenticated chain statements, intermediate ECs, issuer policy, owner keys, and the proof's expiry. Its provenance is checked in memory. To restore serialized evidence, call `establishTrustMarkIssuerTrust()` again with `trustChain`, `entityConfigurations: new Map(Object.entries(saved.entityConfigurations))`, and the configured anchors. With complete evidence this works with `options.offline: true`. A plain object labelled `kind: "federation"` is insufficient. Marks verified through this API retain their `issuerEvidence` for later status checks. `trustMarkIssuerContext(context, type, options)` checks that context and returns detached keys, owner policy, endpoint metadata, and any issuer-proof expiry in a `Result`; it does not validate a mark or establish new trust.
 
-`fetchTrustMarkStatus()` binds the signed response to `expectedIssuer` and the exact submitted JWT. It applies the shared URL, cancellation, timeout, and response-size limits and rejects redirects. Direct `verifyTrustMarkStatusResponse()` calls require `expectedIssuer` and `expectedTrustMark`. Additional status strings are preserved under [§8.4.2](https://openid.net/specs/openid-federation-1_0.html#section-8.4.2); only `active` denotes an active mark. Response `iat` accepts finite NumericDates.
+For accreditation established outside Federation, pass an explicit `{ kind: "out-of-band", issuer, allowedTrustMarkTypes, keys, trustMarkOwners?, metadata? }` context to `validateTrustMarkWithIssuer()`. The application owns those trust inputs under [§17.5](https://openid.net/specs/openid-federation-1_0.html#section-17.5). Signature, subject, type, time, and owner delegation checks still apply. Never construct this context from unverified JWT claims or self-published keys alone.
+
+An owner declaration requires a valid owner-signed delegation even when owner and issuer identify the same entity. An explicit empty issuer array permits any independently trusted issuer for that type; a nonempty array restricts it to the listed identifiers. These rules come from [§3.1.2](https://openid.net/specs/openid-federation-1_0.html#section-3.1.2) and [§7.3](https://openid.net/specs/openid-federation-1_0.html#section-7.3).
+
+### Choosing a freshness check
+
+The object overload of `fetchTrustMarkStatus()` uses a trusted issuer context and binds the signed response to the exact JWT. It supports the signed-status verification alternative in §7.3, so it does not require the caller to verify that JWT's signature locally first.
+
+```ts
+import { fetchTrustMarkStatus } from "@oidfed/core";
+
+const status = await fetchTrustMarkStatus({
+  jwt: rawTrustMarkJwt,
+  issuerEvidence: issuerResult.value,
+  expectedSubject: "https://cornershop.example",
+  expectedTrustMarkType: "https://market.example/marks/member-data",
+  freshness: { maxAgeSeconds: 60 }, // Application policy, not a specification default.
+});
+if (!status.ok) throw new Error(status.error.description);
+if (status.value.status !== "active") throw new Error("Accreditation is not active");
+```
+
+Omitting `freshness` imposes no maximum response age. The object overload still rejects future `iat` values beyond the configured clock tolerance, but an old signed `active` response does not establish recent status. Choose `freshness.maxAgeSeconds` when your application needs that guarantee; Federation defines no universal age limit.
+
+Additional status strings and claims are preserved; treat only `active` as active. Future-issued responses are rejected with the configured clock tolerance. A selected maximum age and any issuer-proof or response expiry bound `verificationExpiresAt`. Re-reading a result does not renew that deadline. The existing positional `fetchTrustMarkStatus(endpoint, jwt, keys, options)` overload remains available.
+
+Status queries reveal the exact JWT being checked. `fetchTrustMarkList(endpoint, { trustMarkType })` omits the subject and lets the application test membership locally; `{ trustMarkType, sub }` narrows the response but discloses the subject. Listing membership does not prove that a particular JWT remains active. These are the privacy choices described in [§19.2](https://openid.net/specs/openid-federation-1_0.html#section-19.2).
+
+### Historical keys and profiles
+
+`validateTrustMarkWithIssuer()` accepts `historicalKeys: { mode: "on-missing-kid", maxAgeSeconds }`. It consults the trusted issuer's Historical Keys endpoint only when the current keys lack the JWT's `kid`. A failed signature using a current key never triggers fallback. For offline verification, use `mode: "supplied-only"` with `responses: [historyJwt]`.
+
+History must be signed with currently trusted issuer keys and meet the selected age limit. Selection checks key issuance/activation and expiry at the mark's `iat`, rejects ambiguous keys, and rejects revoked keys by default. `allowedRevocationReasons` permits an explicitly named non-security reason only for signatures made before revocation. Compromise reasons, including configured `securityRevocationReasons`, always reject. Historical evidence cannot extend the lifetime of a mark, delegation, or issuer proof. It does not establish current active status. Within one chain-validation operation, marks using the same issuer endpoint and request credentials share the historical-response fetch. Each mark still receives its own signature, freshness, lifetime, and revocation checks. Separate operations fetch independently.
+
+`trustMarkProfiles` registers `{ typ, trustMarkTypes, validateClaims? }` entries for explicitly recognized frameworks. Claims callbacks receive frozen authenticated claims and may return a `Result` synchronously or asynchronously. Unknown `typ` values fail; delegation `typ` remains fixed. Endpoint media types remain those defined by Federation.
+
+### Signing, hosting, and authenticated clients
+
+`signTrustMark()` and `signTrustMarkDelegation()` accept an issuer, subject, type, `JwtSigner`, optional clock, and either `ttlSeconds` or `noExpiry: true`. Mark signing also accepts `logoUri`, `ref`, `delegation`, `additionalClaims`, and recognized profile options. Delegation signing accepts `ref` and additional claims. Reserved claim collisions are rejected. JSON extension names are preserved safely, including language-tagged names. Standalone signing does not establish accreditation or persist a record.
+
+`TrustMarkIssuerService` supplies shared managed issuance for Leaf and Authority hosts. `MemoryTrustMarkStore` provides process-local transactions for a standalone issuer; production adapters implement `TrustMarkStore`. See the [storage contract](../guide/storage-guide.md#trust-marks) before upgrading an adapter. `assessTrustMarkStatus(jwt)` returns an unsigned status payload and, for active marks, an optional `verificationExpiresAt`; an unknown instance returns `undefined`. `statusResponse(jwt)` signs that assessment. Both apply the configured status policy. Active assessments are rechecked after asynchronous work; a response that expires during signing is discarded and the operation fails. Neither result should be treated as fresh indefinitely.
+
+Trust Mark retrieval, listing, status, and historical-key clients accept `authentication`. Built-in `private_key_jwt` requires `{ method: "private_key_jwt", clientId, audience, signer }`; `audience` is the responder's Entity Identifier. Custom methods provide `{ method, audience, prepare }`, returning form parameters and/or headers. Authenticated requests use POST and reject redirects. `additionalParameters` supports extension strings or arrays while preventing replacement of protocol selectors and credentials. Fixed endpoint query parameters must agree with supplied values.
+
+Server integrations share `EndpointAuthentication`: register credential parameter/header names and an `authenticate` callback returning `Result<{ entityId }>`. Optional synchronous `detect` handles transport-specific credentials. `transportEvidence` may return verified transport facts directly or asynchronously. The verifier awaits it, then copies and freezes the evidence. A throw, rejected promise, or value that cannot be copied rejects authentication before the endpoint runs. Identity headers from the caller are not proof. Use `authenticatedEndpointCaller(request)` in a wrapped handler to retrieve the verified identity. Supplied credentials never silently fall back to anonymous access.
 
 ## Subordinate Events Endpoint
 

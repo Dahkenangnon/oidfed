@@ -11,7 +11,7 @@
 
 See [OIDC federation responsibilities](../guide/operator-responsibilities.md#oidc-federation) for registration lifetime enforcement, persistence, protocol keys, and replay storage.
 
-OIDC federation registration validates chains independently of published Trust Mark acceptance. Applications that require an accreditation must check it before accepting the registration, using core's [`checkTrustMarkRequirements()`](core.md#trust-marks) with the validated chain supplied to their registration integration.
+OIDC federation registration validates chains independently of published Trust Mark acceptance. Configure `trustMarkRequirements` on the provider role to require accreditation before registration side effects. Core's [`checkTrustMarkRequirements()`](core.md#trust-marks) is also available for independent application checks.
 
 Supply `options.logger` for [host-supplied logging](core.md#host-supplied-logging). Registration messages name failures in `registrationProtocolAdapter`, `generateClientSecret`, `onRegistrationInvalidation`, or `onRegistration`. A callback rejecting metadata logs at warn; an unexpected callback failure logs at error. The handler retains its existing error response or exception, even if the logger throws. Client metadata, secrets, and callback errors are excluded from messages.
 
@@ -330,3 +330,19 @@ The processing rules are:
 ### How do OPs prevent Request Object replay attacks?
 
 Every Request Object needs a `jti` and `exp`. OP-side processing checks expiry and claims the `(issuer, audience, jti)` tuple through the configured `ReplayStore`. The claim is retained until `exp + clockSkewSeconds`, covering the full acceptance window required by [Federation §12.1.1.1](https://openid.net/specs/openid-federation-1_0.html#section-12.1.1.1). Use a shared atomic implementation across instances; the OP role requires this store for automatic registration.
+
+## Accreditation before registration
+
+`OidcProviderRole` supports `trustMarkRequirements` and `beforeRegistration` for automatic and explicit registration. `OAuthAuthorizationServerRole` exposes the same policy for its explicit flow. Either option can stand alone. When both are set, requirements run first; the callback runs only if they pass, and both must accept.
+
+```ts
+const provider = new OidcProviderRole({
+  ...providerConfig,
+  trustMarkRequirements: { requiredTypes: ["https://campus.example/marks/research-service"] },
+  beforeRegistration: async ({ chain, registrationType }) => {
+    return applicationAccreditationPolicy(chain, registrationType); // Result<void>
+  },
+});
+```
+
+The callback receives frozen authenticated chain evidence. Rejection, an exception, or a malformed result stops registration before persistence, response signing, or replay consumption. Requirements recheck mark, delegation, issuer-proof, and historical-evidence deadlines. Use the shared `options.trustMarkVerification` configuration to establish the required issuer evidence; a valid RP chain alone does not guarantee verified accreditation. A fresh Status request remains a separate application policy choice.

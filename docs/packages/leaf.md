@@ -154,3 +154,38 @@ For independent checks, use the matching role's `parsePublicationMetadata()` bef
 ## Wallet roles
 
 Attach `WalletProviderRole`, `CredentialIssuerRole`, or `CredentialVerifierRole` from `@oidfed/wallet` through `roles`. Hosts validate the final composed role metadata before publication. Wallet capabilities remain separate from the host's position in the federation. See the [wallet guide](wallet.md) for configuration and protocol integration.
+
+## Hosting and publishing Trust Marks
+
+A Leaf can issue Trust Marks without serving authority fetch/list endpoints. Configure `trustMarkIssuer` with a `TrustMarkStore`, and publish whichever Trust Mark endpoints the host serves:
+
+```ts
+import { Leaf } from "@oidfed/leaf";
+import { MemoryTrustMarkStore } from "@oidfed/core";
+
+const auditor = new Leaf({
+  entityId: "https://auditor.example",
+  authorityHints: ["https://market.example"],
+  keyProvider,
+  metadata: { federation_entity: {
+    federation_trust_mark_endpoint: "https://auditor.example/marks",
+    federation_trust_mark_status_endpoint: "https://auditor.example/mark-status",
+    federation_trust_mark_list_endpoint: "https://auditor.example/mark-list",
+  } },
+  trustMarkIssuer: {
+    storage: new MemoryTrustMarkStore(),
+    trustMarkDefaults: { "https://market.example/marks/member-data": { ttlSeconds: 600 } },
+    // Supply issuerEvidence and delegations when the framework declares an owner.
+  },
+});
+const jwt = await auditor.issueTrustMark(subject, type);
+await auditor.revokeTrustMark(type, subject);
+```
+
+`issueTrustMark`, `listTrustMarksForSubject`, `listTrustMarkedEntities`, `revokeTrustMark`, and `setTrustMarkDelegations` use the same lifecycle service as Authority. Nested configuration also supports signer selection, profiles through `options.trustMarkProfiles`, status policy, endpoint request extensions, and `authentication`. Production hosts need durable transactional storage; the memory store is process-local.
+
+A Leaf that receives accreditation uses `attachTrustMark(jwt, { issuerEvidence, expectedTrustMarkType })`. It checks the mark for the Leaf's Entity Identifier before signing a replacement EC. Duplicate JWT attachment is idempotent; `replacement: "same-issuer-and-type"` removes the pair's other marks even when the replacement JWT is already attached. Unrelated marks stay published. `fetchAndAttachTrustMark({ issuer, trustMarkType, trustAnchors, options })` establishes trust, fetches, validates, and publishes in one operation. A failed signer leaves the previous publication/cache intact.
+
+`getTrustMarks()` returns detached references. `removeTrustMark({ jwt })` can remove an expired or invalid publication without fetching anything. It does not revoke the issuer's stored accreditation.
+
+For Leaf-hosted Trust Mark endpoints, `endpoint_auth_signing_alg_values_supported` limits the algorithms accepted for `private_key_jwt`. If `trustMarkIssuer.authentication.allowedAlgorithms` is also set, both restrictions apply. A configuration with no common algorithm fails at construction. Omitting the metadata field does not select an implicit algorithm.

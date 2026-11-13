@@ -345,3 +345,9 @@ For both credential and attestation callbacks, missing callbacks, rejection, exc
 VCI protocol endpoints and optional signed issuer metadata/proofs retain their own processing rules. In particular, a VCI JWT proof using `trust_chain` for signature verification requires `kid`, unlike a generic attestation PoP JWT. Passing federation validation does not establish that a presentation, proof, or credential is valid.
 
 Offline validation depends on the age of the supplied evidence. It does not prove current non-revocation after that evidence was issued. Frameworks choose chain lifetimes and revalidation schedules; the draft's 24-hour example is not a fixed library limit.
+
+## Trust Mark evidence in wallet operations
+
+Wallet role discovery forwards the shared `FederationOptions`, including `trustMarkVerification`, `trustMarkProfiles`, and offline controls. Use `trustMarkVerification: { mode: "resolve", trustAnchors: accreditationAnchors }` when the issuer's accreditation framework has its own anchors, or supply authenticated issuer evidence for offline operation.
+
+Apply `checkTrustMarkRequirements()` to the operation's validated chain when your application requires accreditation. Signature verification and current revocation status are separate decisions. [Wallet §7.4](https://openid.net/specs/openid-federation-wallet-1_0-05.html#section-7.4) describes Status checks; offline operation cannot promise a live revocation answer. Choose an evidence lifetime or fetch a signed Status response before acting when your policy requires it. Type-only listing reduces disclosure of which subject is being checked, with the membership-versus-exact-JWT distinction described in [core](core.md#choosing-a-freshness-check).

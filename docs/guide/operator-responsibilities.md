@@ -178,3 +178,13 @@ The following are deployment recommendations. The linked sections explain the pr
 ## Federation-defined constraints
 
 Register `customConstraintChecks` in the federation options when your deployment understands an additional constraint. An unregistered extension is ignored under Federation §6.2; publishing it does not make other deployments enforce it. Checkers must be synchronous and may run again when prepared validation completes. Use authenticated statement snapshots to enforce the extension’s scope, and obtain any external information before validation. See the [core example](../packages/core.md#custom-constraints).
+
+## Operating accreditation through Trust Marks
+
+The framework decides what accreditation means and who may issue it. Configure issuer acceptance and owner keys from trusted sources. A declared owner supplies a signed delegation to the issuer outside Federation; the same requirement applies when owner and issuer are the same entity. Assessment, approval, delegation delivery, and operator authorization for administrative APIs belong to the host. A dashboard can accept a delivered JWT, but it must validate it before publishing or relying on it.
+
+Choose whether to verify issuer trust through Federation anchors or explicit out-of-band accreditation. Preserve the original mark and authenticated claims for decisions, and honor `verificationExpiresAt` when reusing evidence. Key rotation may require authenticated historical keys; it does not justify accepting compromised keys or extending a mark's validity.
+
+Decide how quickly revocation must become visible. Status checks disclose the exact JWT to its issuer. Type-only listing avoids sending the subject, while a filtered listing is smaller and discloses it. Listing membership can survive replacement of an individual JWT. Short-lived marks are another choice in Federation §19.2. No API can erase evidence already cached remotely before its applicable deadline.
+
+Protect issuance, renewal, revocation, and policy-update methods as administrative operations. The Trust Mark retrieval endpoint only retrieves eligible stored accreditation; a public request does not authorize new issuance. Use durable transactions and consistent reads for multi-process issuers, and supply verified transport facts when implementing a custom client-authentication method.

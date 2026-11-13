@@ -148,46 +148,42 @@ Anonymous HTTP Resolve requests use cached assessments by default, following the
 
 The authority stores audience-neutral snapshots in `storage.cache`, or a bounded in-memory cache when none is provided. Snapshots are isolated to the authority instance and expire at the earliest of `options.cacheMaxTtlSeconds` (default 3,600 seconds), chain expiry, and included evidence expiry. Restarting an instance requires warming its Resolve cache again, even when its storage cache is shared.
 
-Each response is signed with the current key. Its `exp` remains the minimum expiry of the subject's Trust Chain and included Trust Marks, as required by [§8.3.2](https://openid.net/specs/openid-federation-1_0.html#section-8.3.2). The cache reuse deadline controls how long the authority serves that assessment. Cached responses omit the optional issuer-chain header, which may describe an older signing key. Only authenticated responses carry the current caller's `aud`. Cache failures never enable anonymous discovery.
+Each response is signed with the current key. Its `exp` remains the minimum expiry of the subject's Trust Chain and included Trust Marks, as required by [§8.3.2](https://openid.net/specs/openid-federation-1_0.html#section-8.3.2). Delegation and issuer/history evidence expiry also cap the usable assessment. The cache reuse deadline controls how long the authority serves that assessment. Cached responses omit the optional issuer-chain header, which may describe an older signing key. Only authenticated responses carry the current caller's `aud`. Cache failures never enable anonymous discovery.
 
 ### Resolving Trust Marks
 
-Resolve validates the chain and evaluates published marks separately. An expired or unverifiable mark is excluded from the response. The resolver checks active status before including a verified mark, as required by [Federation §8.3](https://openid.net/specs/openid-federation-1_0.html#section-8.3), and caps response expiry to the chain and included marks. Applications enforce required accreditations using the [core requirement helper](core.md#trust-marks).
+Resolve includes only marks authorized by the selected Trust Anchor, as required by [Federation §8.3.2](https://openid.net/specs/openid-federation-1_0.html#section-8.3.2). Independently established or out-of-band issuer evidence cannot replace that anchor's issuer and owner/delegation policy. An expired, unauthorized, or unverifiable mark is omitted while an otherwise valid holder chain can still resolve.
+
+The resolver also checks active status before inclusion. For locally issued marks it uses the same assessment as the Status endpoint, including a configured `trustMarkStatusPolicy`; a `suspended` result is not active. For external issuers it uses authenticated issuer evidence to locate and verify the Status response, even when the issuer is absent from the holder's chain. Response and cache lifetimes remain bounded by all included evidence. Applications enforce required accreditations using the [core requirement helper](core.md#trust-marks).
 
 ### Issuing and revoking Trust Marks
 
-Authorities with `storage.trustMarks` can issue and track Trust Marks. Trust Anchors declare authorized issuers and owners for the trust-mark types recognized by their federation.
-
-Current-validity queries use the authority's exact clock: a mark must be active, issued by the query time, and unexpired if it has an expiration. A future-dated replacement leaves an older valid mark usable. Before returning active or revoked status, the endpoint checks the signed `iat` and reports `invalid` for a missing, malformed, or future issuance time. Same-second issuance is accepted. See [Federation §7.3](https://openid.net/specs/openid-federation-1_0.html#section-7.3) and the [storage contract](../guide/storage-guide.md#trust-marks).
-
-Trust Mark types are nonempty strings; URL form is recommended by [§7.1](https://openid.net/specs/openid-federation-1_0.html#section-7.1). Issuance and status checks also accept URNs and URLs containing query parameters or fragments.
-
-Status checks prefer current issuer keys. After normal retirement, they can verify an exact stored mark using an unrevoked historical key whose recorded lifetime covers the mark's issuance time ([§8.7.2](https://openid.net/specs/openid-federation-1_0.html#section-8.7.2)). This verifies historical issuance; the stored record and the mark's dates determine current status. Historical keys with revocation information are excluded. Custom key providers must retain the public material and accurate lifetimes needed for these checks.
+Authorities with `storage.trustMarks` use the shared issuer service for issuance, status, retrieval, and listing. A Trust Anchor can declare accepted issuers and owners; an Intermediate can issue marks without becoming a Trust Anchor.
 
 ```ts
-import { entityId } from "@oidfed/core";
-
-// 1. Issue a trust mark
-const trustMarkJwt = await ta.issueTrustMark(
-  "https://leaf.example.com",
-  "https://profile.example.org/bronze"
-);
-
-// 2. Revoke an issued trust mark via the storage adapter reference
-await storage.trustMarks?.revoke(
-  "https://profile.example.org/bronze",
-  entityId("https://leaf.example.com"),
-  Math.floor(Date.now() / 1000)
-);
+const jwt = await ta.issueTrustMark(subject, type, {
+  ttlSeconds: 600,
+  renewal: "renew",
+  logoUri: "https://auditor.example/logo.png",
+  additionalClaims: { "organization_name#fr": "CornerShop" },
+});
+await ta.revokeTrustMark(type, subject);
+const remaining = await ta.listTrustMarksForSubject(subject);
 ```
 
-### HTTP routing
+Default `renewal: "reuse"` returns an eligible stored JWT. Explicit options that conflict with that JWT fail; use `renewal: "renew"` to request new issuance. Renewal preserves earlier records and does not promise different JWT bytes within one clock tick. Revocation covers every active record issued by this authority for the type and subject. Listing and retrieval consider all candidates before selecting the newest eligible mark, so an expired delegation in a newer record cannot hide an older valid one. Selection uses exact issuer time and includes signature, profile, and delegation validity.
 
-`TrustAnchor.handleRequest()` and `Intermediate.handleRequest()` accept a Web API `Request` and return a `Promise<Response>`. They dispatch composed role routes, including OIDC explicit registration, before federation routes.
+Lifetime precedence is per-call, per-type `trustMarkDefaults`, global `trustMarkTtlSeconds`, then the library default. `noExpiry: true` is an explicit alternative to a TTL. Changing defaults affects new issuance. `trustMarkSigner` can select a compatible signer, but the resulting mark must verify against the issuer's currently published Federation Entity Keys before storage.
 
-Use the [Express adapter in the wiring guide](../guide/wiring-guide.md#5-adapt-the-web-api-handler-to-express). It preserves request bytes and response content types and handles POST bodies without passing a Node stream directly to `Request`.
+Use `trustMarkIssuer.issuerEvidence` to supply independently trusted owner policy for delegated issuance. Configure delegation JWTs with `trustMarkDelegations`, or replace them through `setTrustMarkDelegations()`. Owner approval and delivery happen outside Federation; listing an issuer in anchor policy does not replace a required owner delegation. `issueTrustMarkDelegation(subject, type, options)` supports explicit lifetime, reference, and extension claims.
 
-Advertised endpoint URLs may share a path when fixed query selectors distinguish them, for example `/api?kind=events` and `/api?kind=list`. Requests must include the advertised selector values exactly, including repeated values. Other query parameters remain available to the endpoint. Construction rejects overlapping selectors, including a path-only route sharing a path with a query-specific route.
+`setTrustMarkIssuers()` and `setTrustMarkOwners()` are Trust Anchor operations. They validate and sign a prospective EC before replacing owned configuration. Inputs are copied, including nested owner keys. Local changes do not invalidate already cached evidence at other entities.
+
+As holders, both authority classes expose `getTrustMarks()`, `attachTrustMark()`, `fetchAndAttachTrustMark()`, and `removeTrustMark()`. Attachment verifies the subject and issuer evidence before publishing. Removal changes the EC and does not revoke the issuer's record.
+
+`trustMarkStatusPolicy` receives frozen `{ baseStatus, record }` and may return a custom status and additional claims. It cannot revive an inactive mark or replace reserved response claims. `trustMarkRequestExtensions` registers per-parameter validation callbacks for the three endpoints; unknown parameters remain ignored. Callback failures produce controlled errors.
+
+For shared advanced configuration, `trustMarkIssuer` accepts `defaults`, `trustMarkDefaults`, `issuerEvidence`, `trustMarkSigner`, `trustMarkStatusPolicy`, and `trustMarkRequestExtensions`. When both are supplied, the top-level authority option overrides its nested equivalent. Prefer one location for each setting.
 
 ## Configuration
 
@@ -383,3 +379,7 @@ For independent checks, use the matching role's `parsePublicationMetadata()` bef
 ## Wallet roles
 
 Attach `WalletProviderRole`, `CredentialIssuerRole`, or `CredentialVerifierRole` from `@oidfed/wallet` through `roles`. Hosts validate the final composed role metadata before publication. Wallet capabilities remain separate from the host's position in the federation. See the [wallet guide](wallet.md) for configuration and protocol integration.
+
+### Additional endpoint authentication methods
+
+Pass `endpointAuthentication: { methods: { [methodName]: implementation }, transportEvidence? }` and advertise the method in the endpoint's `*_auth_methods` metadata. The shared core verifier authenticates credentials before endpoint extensions run. `none` and `private_key_jwt` retain their built-in behavior; unsupported advertised methods fail at construction. See [core authentication](core.md#signing-hosting-and-authenticated-clients) for the callback contract. Collection uses the same verifier through `collection.authentication.extensions`.
