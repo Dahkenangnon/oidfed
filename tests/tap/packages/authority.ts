@@ -1,3 +1,4 @@
+import { authenticatedEndpointCaller } from "@oidfed/core";
 import type QUnit from "qunit";
 import { createAuthenticatedHandler } from "../../../packages/authority/src/endpoints/client-auth.js";
 import type { HandlerContext } from "../../../packages/authority/src/endpoints/context.js";
@@ -64,7 +65,16 @@ function createAuthorityServer(config: AuthorityConfig): AuthorityServer {
 		resolveEntity: (sub, ta) => server.resolveEntity(sub, ta),
 		getTrustMarkStatus: (tm) => server.getTrustMarkStatus(tm),
 		listTrustMarkedEntities: (type) => server.listTrustMarkedEntities(type),
-		issueTrustMark: (sub, type) => server.issueTrustMark(sub, type),
+		issueTrustMark: (sub, type, options) => server.issueTrustMark(sub, type, options),
+		revokeTrustMark: (sub, type) => server.revokeTrustMark(sub, type),
+		listTrustMarksForSubject: (sub) => server.listTrustMarksForSubject(sub),
+		getTrustMarks: () => server.getTrustMarks(),
+		attachTrustMark: (jwt, options) => server.attachTrustMark(jwt, options),
+		fetchAndAttachTrustMark: (options) => server.fetchAndAttachTrustMark(options),
+		removeTrustMark: (selector) => server.removeTrustMark(selector),
+		setTrustMarkIssuers: (issuers) => server.setTrustMarkIssuers(issuers),
+		setTrustMarkOwners: (owners) => server.setTrustMarkOwners(owners),
+		setTrustMarkDelegations: (delegations) => server.setTrustMarkDelegations(delegations),
 		issueTrustMarkDelegation: (sub, type) => server.issueTrustMarkDelegation(sub, type),
 		getHistoricalKeys: () => server.getHistoricalKeys(),
 		handler: () => (request: Request) => server.handleRequest(request),
@@ -180,10 +190,289 @@ async function createTestContext(overrides?: TestContextOverrides): Promise<{
 	return { ctx, signingKey, publicKey, keyProvider, storage, subordinates, trustMarks };
 }
 
+async function putTestMark(ctx: HandlerContext, record: TrustMarkRecord): Promise<string> {
+	const keySet = await ctx.keyProvider.getFederationKeySet();
+	const jwt = await signEntityStatement(
+		{
+			iss: ctx.entityId,
+			sub: record.subject,
+			trust_mark_type: record.trustMarkType,
+			iat: record.issuedAt,
+			...(record.expiresAt !== undefined ? { exp: record.expiresAt } : {}),
+		},
+		keySet.signer,
+		{ typ: JwtTyp.TrustMark },
+	);
+	await ctx.storage.trustMarks!.issue({ ...record, jwt });
+	return jwt;
+}
+async function resolveAsClient(
+	ctx: HandlerContext,
+	request: Request,
+	client = "https://client.example.com",
+	handler = createResolveHandler(ctx),
+): Promise<Response> {
+	const key = await generateSigningKey("ES256"),
+		now = ctx.options?.clock?.now() ?? Math.floor(Date.now() / 1000);
+	const jwt = await signEntityStatement(
+		{
+			iss: client,
+			sub: client,
+			aud: ctx.entityId,
+			iat: now,
+			exp: now + 60,
+			jti: crypto.randomUUID(),
+		},
+		new JwkSigner(key.privateKey),
+		{ typ: "JWT" },
+	);
+	const url = new URL(request.url),
+		form = new URLSearchParams(url.searchParams);
+	url.search = "";
+	form.set("client_assertion", jwt);
+	form.set("client_assertion_type", CorePublic.JWT_BEARER_CLIENT_ASSERTION_TYPE);
+	return createAuthenticatedHandler(
+		{
+			...ctx,
+			clientKeyProvider: { getClientFederationJwks: async () => ({ keys: [key.publicKey] }) },
+		},
+		handler,
+		["private_key_jwt"],
+	)(new Request(url, { method: "POST", body: form }));
+}
+
 // ---------------------------------------------------------------------------
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("authority / Resolve Trust Mark policy", () => {
+		const c = CorePublic;
+		async function fixture() {
+			const issuer = "https://issuer.example",
+				subject = "https://holder.example",
+				type = "type",
+				external = "https://external.example";
+			const key = await c.generateSigningKey("ES256"),
+				leaf = await c.generateSigningKey("ES256"),
+				ext = await c.generateSigningKey("ES256");
+			const provider = c.MemoryFederationKeyProvider.fromJWK(key.privateKey),
+				clock = { now: () => 1000 };
+			const anchors = c.createTrustAnchorSet([
+				{ entityId: issuer, jwks: { keys: [key.publicKey] } },
+			]);
+			let holderEc = "",
+				status = "active",
+				statusCalls = 0;
+			const storage = new AuthorityPublic.MemoryStorageAdapter({ trustMarks: true, clock });
+			const metadata = {
+				federation_entity: {
+					federation_fetch_endpoint: `${issuer}/fetch`,
+					federation_list_endpoint: `${issuer}/list`,
+					federation_resolve_endpoint: `${issuer}/resolve`,
+					federation_trust_mark_status_endpoint: `${issuer}/status`,
+				},
+			};
+			let anchor: TrustAnchor;
+			let externalJwt = "";
+			const httpClient: CorePublic.HttpClient = async (input, init) => {
+				const request = new Request(input, init);
+				if (request.url === `${subject}/.well-known/openid-federation`)
+					return new Response(holderEc, {
+						headers: { "content-type": c.MediaType.EntityStatement },
+					});
+				if (request.url === `${external}/status`) {
+					statusCalls++;
+					return new Response(
+						await c.signEntityStatement(
+							{ iss: external, iat: 1000, trust_mark: externalJwt, status },
+							new c.JwkSigner(ext.privateKey),
+							{ typ: c.JwtTyp.TrustMarkStatusResponse },
+						),
+						{ headers: { "content-type": c.MediaType.TrustMarkStatusResponse } },
+					);
+				}
+				return anchor.handleRequest(request);
+			};
+			anchor = new TrustAnchor({
+				entityId: issuer,
+				keyProvider: provider,
+				storage,
+				trustAnchors: anchors,
+				metadata,
+				options: { clock, httpClient },
+				trustMarkIssuers: { [type]: [issuer, external] },
+				trustMarkStatusPolicy: () => ({ status }),
+			});
+			await anchor.registerSubordinate({
+				entityId: c.entityId(subject),
+				jwks: { keys: [leaf.publicKey] },
+			});
+			await anchor.registerSubordinate({
+				entityId: c.entityId(external),
+				jwks: { keys: [ext.publicKey] },
+			});
+			const local = await anchor.issueTrustMark(subject, type);
+			externalJwt = await c.signTrustMark({
+				issuer: external,
+				subject,
+				trustMarkType: type,
+				signer: new c.JwkSigner(ext.privateKey),
+				clock,
+				ttlSeconds: 200,
+			});
+			const externalEc = await c.signEntityStatement(
+				{
+					iss: external,
+					sub: external,
+					iat: 900,
+					exp: 5000,
+					jwks: { keys: [ext.publicKey] },
+					authority_hints: [issuer],
+					metadata: {
+						federation_entity: { federation_trust_mark_status_endpoint: `${external}/status` },
+					},
+				},
+				new c.JwkSigner(ext.privateKey),
+			);
+			const proof = await c.establishTrustMarkIssuerTrust({
+				issuer: external,
+				trustMarkType: type,
+				trustAnchors: anchors,
+				trustChain: [
+					externalEc,
+					await anchor.getSubordinateStatement(c.entityId(external)),
+					await anchor.getEntityConfiguration(),
+				],
+				options: { clock, offline: true },
+			});
+			if (!proof.ok) throw Error(proof.error.description);
+			const publish = async (jwt: string) => {
+				holderEc = await c.signEntityStatement(
+					{
+						iss: subject,
+						sub: subject,
+						iat: 900,
+						exp: 5000,
+						jwks: { keys: [leaf.publicKey] },
+						authority_hints: [issuer],
+						metadata: { federation_entity: {} },
+						trust_marks: [{ trust_mark_type: type, trust_mark: jwt }],
+					},
+					new c.JwkSigner(leaf.privateKey),
+				);
+			};
+			const resolve = async (issuerEvidence?: CorePublic.TrustMarkIssuerContext[]) => {
+				const root = c.decodeEntityStatement(await anchor.getEntityConfiguration());
+				if (!root.ok) throw Error(root.error.description);
+				const ctx: HandlerContext = {
+					...(root.value.payload.trust_mark_owners
+						? { trustMarkOwners: root.value.payload.trust_mark_owners }
+						: {}),
+					entityId: c.entityId(issuer),
+					keyProvider: provider,
+					storage,
+					trustAnchors: anchors,
+					clientKeyProvider: { getClientFederationJwks: async () => undefined },
+					metadata,
+					trustMarkStatusPolicy: () => ({ status }),
+					options: {
+						clock,
+						httpClient,
+						...(issuerEvidence ? { trustMarkVerification: { issuerEvidence } } : {}),
+					},
+				};
+				const response = await createResolveHandler(ctx)(
+					new Request(
+						issuer +
+							"/resolve?sub=" +
+							encodeURIComponent(subject) +
+							"&trust_anchor=" +
+							encodeURIComponent(issuer),
+					),
+					true,
+				);
+				if (response.status !== 200) throw Error(await response.text());
+				const decoded = c.decodeEntityStatement(await response.text());
+				if (!decoded.ok) throw Error(decoded.error.description);
+				return decoded.value.payload;
+			};
+			return {
+				issuer,
+				subject,
+				external,
+				type,
+				key,
+				anchor,
+				proof: proof.value,
+				local,
+				externalJwt,
+				publish,
+				resolve,
+				statusCalls: () => statusCalls,
+				setStatus: (value: string) => {
+					status = value;
+				},
+			};
+		}
+		test("local Resolve includes active marks and excludes custom suspended status", async (t) => {
+			const f = await fixture();
+			await f.publish(f.local);
+			t.equal((await f.resolve()).trust_marks?.length, 1);
+			f.setStatus("suspended");
+			t.equal((await f.anchor.getTrustMarkStatus(f.local)).status, "suspended");
+			t.strictEqual((await f.resolve()).trust_marks, undefined);
+		});
+		test("external issuer evidence supplies status keys and endpoints without entering the holder chain", async (t) => {
+			const f = await fixture();
+			await f.publish(f.externalJwt);
+			const payload = await f.resolve([f.proof]);
+			t.equal(payload.trust_marks?.length, 1);
+			t.equal(f.statusCalls(), 1);
+			t.equal(payload.exp, 1200);
+			f.setStatus("revoked");
+			t.strictEqual((await f.resolve([f.proof])).trust_marks, undefined);
+		});
+		test("out-of-band evidence cannot bypass selected-anchor authorization or delegation", async (t) => {
+			const f = await fixture();
+			await f.publish(f.local);
+			const context: CorePublic.TrustMarkIssuerContext = {
+				kind: "out-of-band",
+				issuer: f.issuer,
+				allowedTrustMarkTypes: [f.type],
+				keys: { keys: [f.key.publicKey] },
+			};
+			await f.anchor.setTrustMarkIssuers({ [f.type]: [f.external] });
+			t.strictEqual((await f.resolve([context])).trust_marks, undefined);
+			await f.anchor.setTrustMarkIssuers({});
+			t.strictEqual((await f.resolve([context])).trust_marks, undefined);
+			await f.anchor.setTrustMarkIssuers({ [f.type]: [] });
+			t.equal((await f.resolve([context])).trust_marks?.length, 1, "open issuer list still works");
+			await f.anchor.setTrustMarkOwners({
+				[f.type]: { sub: f.issuer, jwks: { keys: [f.key.publicKey] } },
+			});
+			t.strictEqual(
+				(await f.resolve([context])).trust_marks,
+				undefined,
+				"selected owner requires delegation",
+			);
+			const delegation = await f.anchor.issueTrustMarkDelegation(f.issuer, f.type);
+			await f.anchor.setTrustMarkDelegations({ [f.type]: delegation });
+			const delegated = await f.anchor.issueTrustMark(f.subject, f.type, { renewal: "renew" });
+			await f.publish(delegated);
+			t.equal(
+				(
+					await f.resolve([
+						{
+							...context,
+							trustMarkOwners: { [f.type]: { sub: f.issuer, jwks: { keys: [f.key.publicKey] } } },
+						},
+					])
+				).trust_marks?.length,
+				1,
+				"valid selected-owner delegation is accepted",
+			);
+		});
+	});
 
 	module("authority / subordinate publication validation", () => {
 		const invalid = [
@@ -5016,8 +5305,11 @@ export default (QUnit: QUnit) => {
 			const decoded = decodeEntityStatement(await response.text());
 			t.true(decoded.ok);
 			if (decoded.ok) {
-				t.equal(decoded.value.payload.exp, fixture.trustMarkExpiresAt);
-				t.true(fixture.trustMarkExpiresAt > deadline, "cache reuse ends before JWT expiration");
+				t.equal(decoded.value.payload.exp, deadline);
+				t.true(
+					fixture.trustMarkExpiresAt > deadline,
+					"delegation limits the assessment as well as its cache lifetime",
+				);
 				t.equal((decoded.value.payload.trust_marks as unknown[]).length, 1);
 			}
 			now = deadline;
@@ -5148,7 +5440,7 @@ export default (QUnit: QUnit) => {
 			t.equal(((await res.json()) as Record<string, string>).error, "invalid_trust_anchor");
 		});
 
-		test("returns 400 for invalid X-Authenticated-Entity header value", async (t) => {
+		test("ignores an untrusted identity header rather than treating it as authentication", async (t) => {
 			const { ctx } = await createTestContext();
 			const handler = createResolveHandler(ctx);
 			const res = await handler(
@@ -5157,8 +5449,8 @@ export default (QUnit: QUnit) => {
 					{ headers: { "X-Authenticated-Entity": "not-a-url" } },
 				),
 			);
-			t.equal(res.status, 400);
-			t.equal(((await res.json()) as Record<string, string>).error, "invalid_request");
+			t.equal(res.status, 404);
+			t.equal(((await res.json()) as Record<string, string>).error, "invalid_trust_anchor");
 		});
 
 		test("accepts a valid X-Authenticated-Entity header and proceeds to trust chain resolution", async (t) => {
@@ -5470,15 +5762,16 @@ export default (QUnit: QUnit) => {
 			t.equal(body.error, FederationErrorCode.NotFound);
 		});
 
-		test("includes aud in payload when X-Authenticated-Entity is provided", async (t) => {
+		test("includes aud after verified client authentication", async (t) => {
 			const fed = await createMockFederation();
 			const { ctx } = await createTestContext({
 				trustAnchors: fed.trustAnchors,
 				options: fed.options,
 			});
-			const handler = createResolveHandler(ctx);
+			const _handler = createResolveHandler(ctx);
 			const client = "https://client.example.com";
-			const res = await handler(
+			const res = await resolveAsClient(
+				ctx,
 				new Request(
 					`https://authority.example.com/federation_resolve?sub=${encodeURIComponent(LEAF_ID)}&trust_anchor=${encodeURIComponent(TA_ID)}`,
 					{ headers: { "X-Authenticated-Entity": client } },
@@ -5661,8 +5954,9 @@ export default (QUnit: QUnit) => {
 				options: fed.options,
 				requireAuthForFreshResolution: true,
 			});
-			const handler = createResolveHandler(ctx);
-			const res = await handler(
+			const _handler = createResolveHandler(ctx);
+			const res = await resolveAsClient(
+				ctx,
 				new Request(
 					`https://authority.example.com/federation_resolve?sub=${encodeURIComponent(LEAF_ID)}&trust_anchor=${encodeURIComponent(TA_ID)}`,
 					{ headers: { "X-Authenticated-Entity": "https://client.example.com" } },
@@ -5890,15 +6184,15 @@ export default (QUnit: QUnit) => {
 
 		module("authority / createTrustMarkListHandler", () => {
 			test("returns entity IDs of active trust marks", async (t) => {
-				const { ctx, trustMarks } = await createTestContext();
-				await trustMarks.issue({
+				const { ctx } = await createTestContext();
+				await putTestMark(ctx, {
 					trustMarkType: TML_MARK_TYPE,
 					subject: TML_SUB1,
 					jwt: "jwt1",
 					issuedAt: Math.floor(Date.now() / 1000),
 					active: true,
 				});
-				await trustMarks.issue({
+				await putTestMark(ctx, {
 					trustMarkType: TML_MARK_TYPE,
 					subject: TML_SUB2,
 					jwt: "jwt2",
@@ -5918,11 +6212,11 @@ export default (QUnit: QUnit) => {
 				t.true(body.includes(TML_SUB2));
 			});
 
-			test("exhausts every storage page instead of truncating at the batch size", async (t) => {
-				const { ctx, trustMarks } = await createTestContext();
+			test("includes every eligible candidate instead of truncating at a batch size", async (t) => {
+				const { ctx } = await createTestContext();
 				for (let index = 0; index < 501; index += 1) {
 					const subject = entityId(`https://subject-${String(index).padStart(3, "0")}.example.com`);
-					await trustMarks.issue({
+					await putTestMark(ctx, {
 						trustMarkType: TML_MARK_TYPE,
 						subject,
 						jwt: `jwt-${index}`,
@@ -5940,43 +6234,27 @@ export default (QUnit: QUnit) => {
 				t.equal(body.length, 501);
 			});
 
-			test("rejects a repeated storage cursor", async (t) => {
-				const { ctx, storage, trustMarks } = await createTestContext();
-				const repeatingTrustMarks = new Proxy(trustMarks, {
-					get(target, property, receiver) {
-						if (property === "listValid") {
-							return async () => ({ items: [], nextCursor: TML_SUB1 });
-						}
-						const value = Reflect.get(target, property, receiver) as unknown;
-						return typeof value === "function" ? value.bind(target) : value;
-					},
-				});
-				const repeatingStorage = new Proxy(storage, {
-					get(target, property, receiver) {
-						if (property === "trustMarks") return repeatingTrustMarks;
-						const value = Reflect.get(target, property, receiver) as unknown;
-						return typeof value === "function" ? value.bind(target) : value;
-					},
-				});
-				const handler = createTrustMarkListHandler({ ...ctx, storage: repeatingStorage });
-				const res = await handler(
-					new Request(
-						`https://authority.example.com/federation_trust_mark_list?trust_mark_type=${encodeURIComponent(TML_MARK_TYPE)}`,
-					),
+			test("storage snapshot failures do not become an empty successful listing", async (t) => {
+				const { ctx, storage } = await createTestContext();
+				storage.readSnapshot = async () => {
+					throw new Error("Store unavailable");
+				};
+				const response = await createTrustMarkListHandler(ctx)(
+					new Request(`${ENTITY_ID}/marks?trust_mark_type=${encodeURIComponent(TML_MARK_TYPE)}`),
 				);
-				t.equal(res.status, 500);
+				t.equal(response.status, 500);
 			});
 
 			test("filters by sub", async (t) => {
-				const { ctx, trustMarks } = await createTestContext();
-				await trustMarks.issue({
+				const { ctx } = await createTestContext();
+				await putTestMark(ctx, {
 					trustMarkType: TML_MARK_TYPE,
 					subject: TML_SUB1,
 					jwt: "jwt1",
 					issuedAt: Math.floor(Date.now() / 1000),
 					active: true,
 				});
-				await trustMarks.issue({
+				await putTestMark(ctx, {
 					trustMarkType: TML_MARK_TYPE,
 					subject: TML_SUB2,
 					jwt: "jwt2",
@@ -5993,8 +6271,8 @@ export default (QUnit: QUnit) => {
 			});
 
 			test("ignores unknown query parameters on trust mark list", async (t) => {
-				const { ctx, trustMarks } = await createTestContext();
-				await trustMarks.issue({
+				const { ctx } = await createTestContext();
+				await putTestMark(ctx, {
 					trustMarkType: TML_MARK_TYPE,
 					subject: TML_SUB1,
 					jwt: "jwt1",
@@ -6013,14 +6291,14 @@ export default (QUnit: QUnit) => {
 
 			test("excludes revoked trust marks", async (t) => {
 				const { ctx, trustMarks } = await createTestContext();
-				await trustMarks.issue({
+				await putTestMark(ctx, {
 					trustMarkType: TML_MARK_TYPE,
 					subject: TML_SUB1,
 					jwt: "jwt1",
 					issuedAt: Math.floor(Date.now() / 1000),
 					active: true,
 				});
-				await trustMarks.issue({
+				await putTestMark(ctx, {
 					trustMarkType: TML_MARK_TYPE,
 					subject: TML_SUB2,
 					jwt: "jwt2",
@@ -6438,8 +6716,8 @@ export default (QUnit: QUnit) => {
 
 		module("authority / createTrustMarkHandler (retrieval)", () => {
 			test("returns existing active trust mark", async (t) => {
-				const { ctx, trustMarks } = await createTestContext();
-				await trustMarks.issue({
+				const { ctx } = await createTestContext();
+				const storedJwt = await putTestMark(ctx, {
 					trustMarkType: TM_MARK_TYPE,
 					subject: TM_SUB1,
 					jwt: "existing.jwt.token",
@@ -6454,12 +6732,12 @@ export default (QUnit: QUnit) => {
 				);
 				t.equal(res.status, 200);
 				t.equal(res.headers.get("Content-Type"), "application/trust-mark+jwt");
-				t.equal(await res.text(), "existing.jwt.token");
+				t.equal(await res.text(), storedJwt);
 			});
 
 			test("ignores unknown query parameters on trust mark retrieval", async (t) => {
-				const { ctx, trustMarks } = await createTestContext();
-				await trustMarks.issue({
+				const { ctx } = await createTestContext();
+				const storedJwt = await putTestMark(ctx, {
 					trustMarkType: TM_MARK_TYPE,
 					subject: TM_SUB1,
 					jwt: "existing.jwt.token",
@@ -6473,13 +6751,13 @@ export default (QUnit: QUnit) => {
 					),
 				);
 				t.equal(res.status, 200);
-				t.equal(await res.text(), "existing.jwt.token");
+				t.equal(await res.text(), storedJwt);
 			});
 
 			test("returns 404 when trust mark is expired", async (t) => {
-				const { ctx, trustMarks } = await createTestContext();
+				const { ctx } = await createTestContext();
 				const now = Math.floor(Date.now() / 1000);
-				await trustMarks.issue({
+				const _storedJwt = await putTestMark(ctx, {
 					trustMarkType: TM_MARK_TYPE,
 					subject: TM_SUB1,
 					jwt: "expired.jwt.token",
@@ -6510,7 +6788,7 @@ export default (QUnit: QUnit) => {
 
 			test("returns 404 when trust mark is revoked", async (t) => {
 				const { ctx, trustMarks } = await createTestContext();
-				await trustMarks.issue({
+				const _storedJwt = await putTestMark(ctx, {
 					trustMarkType: TM_MARK_TYPE,
 					subject: TM_SUB1,
 					jwt: "revoked.jwt.token",
@@ -6617,10 +6895,10 @@ export default (QUnit: QUnit) => {
 			});
 
 			test("returns existing active trust mark", async (t) => {
-				const { ctx, trustMarks } = await createTestContext({
+				const { ctx } = await createTestContext({
 					trustMarkIssuers: { [TM_MARK_TYPE]: [ENTITY_ID] },
 				});
-				await trustMarks.issue({
+				const storedJwt = await putTestMark(ctx, {
 					trustMarkType: TM_MARK_TYPE,
 					subject: TM_SUB1,
 					jwt: "existing.jwt.token",
@@ -6633,7 +6911,7 @@ export default (QUnit: QUnit) => {
 						`https://authority.example.com/federation_trust_mark?trust_mark_type=${encodeURIComponent(TM_MARK_TYPE)}&sub=${encodeURIComponent(TM_SUB1)}`,
 					),
 				);
-				t.equal(await res.text(), "existing.jwt.token");
+				t.equal(await res.text(), storedJwt);
 			});
 
 			test("returns 403 when authority is not in the authorized issuers list", async (t) => {
@@ -6674,6 +6952,12 @@ export default (QUnit: QUnit) => {
 				const { ctx } = await createTestContext({
 					trustMarkIssuers: { [TM_MARK_TYPE]: [ENTITY_ID] },
 					trustMarkDelegations: { [TM_MARK_TYPE]: delegationJwt },
+					trustMarkOwners: {
+						[TM_MARK_TYPE]: {
+							sub: "https://owner.example.com",
+							jwks: { keys: [ownerKeys.publicKey] },
+						},
+					},
 				});
 				const handler = createTrustMarkIssuanceHandler(ctx);
 				const res = await handler(
@@ -6718,6 +7002,12 @@ export default (QUnit: QUnit) => {
 				const { ctx, publicKey } = await createTestContext({
 					trustMarkIssuers: { [TM_MARK_TYPE]: [ENTITY_ID] },
 					trustMarkDelegations: { [TM_MARK_TYPE]: delegationJwt },
+					trustMarkOwners: {
+						[TM_MARK_TYPE]: {
+							sub: "https://owner.example.com",
+							jwks: { keys: [ownerKeys.publicKey] },
+						},
+					},
 				});
 				const handler = createTrustMarkIssuanceHandler(ctx);
 				const res = await handler(
@@ -6861,7 +7151,8 @@ export default (QUnit: QUnit) => {
 					ctx,
 					async (request) => {
 						forwarded = new URL(request.url);
-						t.strictEqual(request.headers.get("X-Authenticated-Entity"), CA_CLIENT_ID);
+						t.strictEqual(authenticatedEndpointCaller(request), CA_CLIENT_ID);
+						t.strictEqual(request.headers.get("X-Authenticated-Entity"), null);
 						return new Response("ok");
 					},
 					["private_key_jwt"],
@@ -6869,6 +7160,7 @@ export default (QUnit: QUnit) => {
 				const request = async (extra: string) =>
 					new Request(`${CA_AUTHORITY_ID}/api?tenant=alpha`, {
 						method: "POST",
+						headers: { "Content-Type": "application/x-www-form-urlencoded" },
 						body: `client_assertion=${encodeURIComponent(await createClientAssertionJwt())}&client_assertion_type=${encodeURIComponent(JWT_BEARER_TYPE)}&entity_type=one&entity_type=two${extra}`,
 					});
 				const response = await handler(await request(""));
@@ -6903,6 +7195,7 @@ export default (QUnit: QUnit) => {
 					new TrustAnchor(configForHost()),
 					new Intermediate({ ...configForHost(), authorityHints: [TA_ID] }),
 				]) {
+					const statusJwt = await authority.issueTrustMark(CA_CLIENT_ID, "auth-test");
 					const discovery = await authority.handleRequest(
 						new Request(`${CA_AUTHORITY_ID}/.well-known/openid-federation`),
 					);
@@ -6928,7 +7221,8 @@ export default (QUnit: QUnit) => {
 					const anonymous = await authority.handleRequest(
 						new Request(`${CA_AUTHORITY_ID}/status`, {
 							method: "POST",
-							body: new URLSearchParams({ trust_mark: "invalid" }),
+							headers: { "Content-Type": "application/x-www-form-urlencoded" },
+							body: new URLSearchParams({ trust_mark: statusJwt }),
 						}),
 					);
 					t.equal(anonymous.status, 200);
@@ -6938,12 +7232,13 @@ export default (QUnit: QUnit) => {
 						{ expectedTyp: JwtTyp.TrustMarkStatusResponse },
 					);
 					t.true(checked.ok);
-					if (checked.ok) t.equal(checked.value.payload.status, "invalid");
+					if (checked.ok) t.equal(checked.value.payload.status, "active");
 					const authenticated = await authority.handleRequest(
 						new Request(`${CA_AUTHORITY_ID}/status`, {
 							method: "POST",
+							headers: { "Content-Type": "application/x-www-form-urlencoded" },
 							body: new URLSearchParams({
-								trust_mark: "invalid",
+								trust_mark: statusJwt,
 								client_assertion: await createClientAssertionJwt(),
 								client_assertion_type: JWT_BEARER_TYPE,
 							}),
@@ -7008,7 +7303,7 @@ export default (QUnit: QUnit) => {
 					return jsonResponse({
 						method: request.method,
 						marks: form.getAll("trust_mark"),
-						authenticated: request.headers.get("X-Authenticated-Entity"),
+						authenticated: authenticatedEndpointCaller(request) ?? null,
 						contentLength: request.headers.get("Content-Length"),
 						hasCredentials: form.has("client_assertion") || form.has("client_assertion_type"),
 					});
@@ -7043,6 +7338,7 @@ export default (QUnit: QUnit) => {
 				const authenticated = await handler(
 					new Request(`${CA_AUTHORITY_ID}/status`, {
 						method: "POST",
+						headers: { "Content-Type": "application/x-www-form-urlencoded" },
 						body: new URLSearchParams({
 							trust_mark: "mark",
 							client_assertion: assertion,
@@ -7095,6 +7391,7 @@ export default (QUnit: QUnit) => {
 								await handler(
 									new Request(`${CA_AUTHORITY_ID}/endpoint`, {
 										method: "POST",
+										headers: { "Content-Type": "application/x-www-form-urlencoded" },
 										body: `trust_mark=mark&${credentials}`,
 									}),
 								)
@@ -7108,6 +7405,7 @@ export default (QUnit: QUnit) => {
 						handler(
 							new Request(`${CA_AUTHORITY_ID}/endpoint`, {
 								method: "POST",
+								headers: { "Content-Type": "application/x-www-form-urlencoded" },
 								body: new URLSearchParams({
 									trust_mark: "mark",
 									client_assertion: valid,
@@ -7138,6 +7436,7 @@ export default (QUnit: QUnit) => {
 							await handler(
 								new Request(`${CA_AUTHORITY_ID}/endpoint`, {
 									method: "POST",
+									headers: { "Content-Type": "application/x-www-form-urlencoded" },
 									body: `trust_mark=${"a".repeat(DEFAULT_MAX_REQUEST_BODY_BYTES + 1)}`,
 								}),
 							)
@@ -7159,12 +7458,12 @@ export default (QUnit: QUnit) => {
 					transaction: (operation) => ctx.storage.transaction(operation),
 				};
 				t.equal(
-					createAuthenticatedHandler({ ...ctx, storage }, echoHandler, ["none"]),
-					echoHandler,
+					typeof createAuthenticatedHandler({ ...ctx, storage }, echoHandler, ["none"]),
+					"function",
 				);
 				t.throws(
 					() => createAuthenticatedHandler({ ...ctx, storage }, echoHandler, ["private_key_jwt"]),
-					/storage.replay/,
+					/replay storage/,
 				);
 			});
 			test("rejects concurrent reuse across endpoint handlers and fails closed on store errors", async (t) => {
@@ -7205,13 +7504,13 @@ export default (QUnit: QUnit) => {
 				test("omitted endpoint auth metadata defaults to ['none']", async (t) => {
 					const { ctx } = await setupClientAuthContext();
 					const handler = createAuthenticatedHandler(ctx, echoHandler, undefined);
-					t.equal(handler, echoHandler);
+					t.equal(typeof handler, "function");
 				});
 
 				test("returns inner handler unchanged when authMethods is ['none']", async (t) => {
 					const { ctx } = await setupClientAuthContext();
 					const handler = createAuthenticatedHandler(ctx, echoHandler, ["none"]);
-					t.equal(handler, echoHandler);
+					t.equal(typeof handler, "function");
 				});
 
 				test("rejects explicit empty auth methods", async (t) => {
@@ -8106,11 +8405,12 @@ export default (QUnit: QUnit) => {
 				test("routes to trust mark status endpoint", async (t) => {
 					const server = createAuthorityServer(withOptionalServerEndpoints(srvConfig));
 					const handler = server.handler();
+					const statusJwt = await server.issueTrustMark(SERVER_SUB1, SERVER_MARK_TYPE);
 					const res = await handler(
 						new Request(`${SERVER_AUTHORITY_ID}${FederationEndpoint.TrustMarkStatus}`, {
 							method: "POST",
 							headers: { "Content-Type": "application/x-www-form-urlencoded" },
-							body: "trust_mark=invalid",
+							body: new URLSearchParams({ trust_mark: statusJwt }),
 						}),
 					);
 					t.equal(res.status, 200);
@@ -8606,6 +8906,14 @@ export default (QUnit: QUnit) => {
 					storage: intStorage,
 					keyProvider: intKeyProvider,
 					trustMarkIssuers: { [INT_MARK_TYPE]: [INT_AUTHORITY_ID] },
+					trustMarkDelegations: {
+						[INT_MARK_TYPE]: await signTrustMarkDelegation({
+							issuer: INT_AUTHORITY_ID,
+							subject: INT_AUTHORITY_ID,
+							trustMarkType: INT_MARK_TYPE,
+							signer: new JwkSigner({ ...privateKey, kid: "trust-owner-key-1" }),
+						}),
+					},
 					trustMarkOwners: {
 						[INT_MARK_TYPE]: {
 							sub: INT_AUTHORITY_ID,
@@ -10059,9 +10367,7 @@ export default (QUnit: QUnit) => {
 			const handler = createResolveHandler(ctx);
 			const url = `${ENTITY_ID}/resolve?sub=${encodeURIComponent(LEAF_ID)}&trust_anchor=${encodeURIComponent(TA_ID)}`;
 			for (const caller of ["https://client-a.example", "https://client-b.example"]) {
-				const response = await handler(
-					new Request(url, { headers: { "X-Authenticated-Entity": caller } }),
-				);
+				const response = await resolveAsClient(ctx, new Request(url), caller, handler);
 				t.equal(response.status, 200);
 				const decoded = decodeEntityStatement(await response.text());
 				t.true(decoded.ok);

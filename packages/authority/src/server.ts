@@ -1,5 +1,7 @@
 /** Federation Authority server: wires endpoint handlers, key management, and subordinate storage into an HTTP server. */
 import type {
+	AttachTrustMarkOptions,
+	EndpointAuthentication,
 	EntityCollectionIntegration,
 	EntityContext,
 	EntityId,
@@ -10,10 +12,16 @@ import type {
 	FederationError,
 	FederationKeyLifecycleProvider,
 	FederationOptions,
+	FetchAndAttachTrustMarkOptions,
+	RemoveTrustMarkSelector,
 	Result,
 	SubordinateEvent,
 	TrustAnchorSet,
+	TrustMarkDelegationIssuanceOptions,
+	TrustMarkIssuanceOptions,
+	TrustMarkIssuerConfig,
 	TrustMarkOwner,
+	TrustMarkRecord,
 	TrustMarkRef,
 	TrustMarkStatusResponsePayload,
 } from "@oidfed/core";
@@ -29,6 +37,7 @@ import {
 	ok,
 	safeLogger,
 	signTrustMarkDelegation,
+	TrustMarkHolder,
 	validateRoleMetadata,
 	WELL_KNOWN_OPENID_FEDERATION,
 } from "@oidfed/core";
@@ -52,8 +61,9 @@ import {
 	createSubordinateEventsHandler,
 	withSubordinateEventsMethodErrors,
 } from "./endpoints/subordinate-events.js";
-import { createTrustMarkHandler, createTrustMarkIssuanceHandler } from "./endpoints/trust-mark.js";
+import { createTrustMarkHandler } from "./endpoints/trust-mark.js";
 import { createTrustMarkListHandler } from "./endpoints/trust-mark-list.js";
+import { trustMarkService, updateTrustMarkServicePolicy } from "./endpoints/trust-mark-service.js";
 import { createTrustMarkStatusHandler } from "./endpoints/trust-mark-status.js";
 import { InvalidAuthorityConfig } from "./errors.js";
 import type {
@@ -111,6 +121,12 @@ function assertTrustAnchorHintsConfig(config: AuthorityConfig, isTrustAnchor: bo
 }
 
 export interface AuthorityConfig {
+	trustMarkDefaults?: TrustMarkIssuerConfig["trustMarkDefaults"];
+	trustMarkSigner?: TrustMarkIssuerConfig["trustMarkSigner"];
+	trustMarkStatusPolicy?: TrustMarkIssuerConfig["trustMarkStatusPolicy"];
+	trustMarkRequestExtensions?: TrustMarkIssuerConfig["trustMarkRequestExtensions"];
+	endpointAuthentication?: EndpointAuthentication;
+	trustMarkIssuer?: Omit<TrustMarkIssuerConfig, "storage">;
 	/**
 	 * Require authentication for fresh HTTP Resolve discovery (default: true).
 	 * Anonymous requests use cached assessments, per Federation §18.1.
@@ -197,8 +213,25 @@ export interface AuthorityServer {
 	resolveEntity(sub: EntityId, ta?: EntityId): Promise<string>;
 	getTrustMarkStatus(trustMark: string): Promise<TrustMarkStatusResponsePayload>;
 	listTrustMarkedEntities(trustMarkType: string): Promise<string[]>;
-	issueTrustMark(sub: string, trustMarkType: string): Promise<string>;
-	issueTrustMarkDelegation(subject: string, trustMarkType: string): Promise<string>;
+	revokeTrustMark(type: string, subject: string): Promise<void>;
+	listTrustMarksForSubject(subject: string): Promise<TrustMarkRecord[]>;
+	getTrustMarks(): TrustMarkRef[];
+	attachTrustMark(jwt: string, options: AttachTrustMarkOptions): Promise<void>;
+	fetchAndAttachTrustMark(options: FetchAndAttachTrustMarkOptions): Promise<void>;
+	removeTrustMark(selector: RemoveTrustMarkSelector): Promise<void>;
+	setTrustMarkIssuers(issuers: Record<string, string[]>): Promise<void>;
+	setTrustMarkOwners(owners: Record<string, TrustMarkOwner>): Promise<void>;
+	setTrustMarkDelegations(delegations: Record<string, string>): Promise<void>;
+	issueTrustMark(
+		sub: string,
+		trustMarkType: string,
+		options?: TrustMarkIssuanceOptions,
+	): Promise<string>;
+	issueTrustMarkDelegation(
+		subject: string,
+		trustMarkType: string,
+		options?: TrustMarkDelegationIssuanceOptions,
+	): Promise<string>;
 	getHistoricalKeys(): Promise<string>;
 	handler(): (request: Request) => Promise<Response>;
 }
@@ -309,10 +342,20 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 		...[
 			config.authorityHints && { authorityHints: config.authorityHints },
 			config.trustAnchorHints && { trustAnchorHints: config.trustAnchorHints },
-			config.trustMarks && { trustMarks: config.trustMarks },
-			config.trustMarkIssuers && { trustMarkIssuers: config.trustMarkIssuers },
-			config.trustMarkOwners && { trustMarkOwners: config.trustMarkOwners },
-			config.trustMarkDelegations && { trustMarkDelegations: config.trustMarkDelegations },
+			config.endpointAuthentication && { endpointAuthentication: config.endpointAuthentication },
+			config.trustMarkDefaults && { trustMarkDefaults: structuredClone(config.trustMarkDefaults) },
+			config.trustMarkSigner && { trustMarkSigner: config.trustMarkSigner },
+			config.trustMarkStatusPolicy && { trustMarkStatusPolicy: config.trustMarkStatusPolicy },
+			config.trustMarkRequestExtensions && {
+				trustMarkRequestExtensions: { ...config.trustMarkRequestExtensions },
+			},
+			config.trustMarkIssuer && { trustMarkIssuer: config.trustMarkIssuer },
+			config.trustMarks && { trustMarks: structuredClone(config.trustMarks) },
+			config.trustMarkIssuers && { trustMarkIssuers: structuredClone(config.trustMarkIssuers) },
+			config.trustMarkOwners && { trustMarkOwners: structuredClone(config.trustMarkOwners) },
+			config.trustMarkDelegations && {
+				trustMarkDelegations: structuredClone(config.trustMarkDelegations),
+			},
 			config.trustAnchors && { trustAnchors: config.trustAnchors },
 			config.entityConfigurationTtlSeconds !== undefined && {
 				entityConfigurationTtlSeconds: config.entityConfigurationTtlSeconds,
@@ -328,6 +371,7 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 	);
 
 	validateRoleMetadata(config.roles, config.metadata, ctx);
+	if (ctx.storage.trustMarks) trustMarkService(ctx);
 	const lifecycle = createSubordinateLifecycle(ctx);
 	const meta = config.metadata.federation_entity;
 	const collectionMethods = meta.federation_collection_endpoint_auth_methods ?? ["none"];
@@ -385,6 +429,14 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 	}
 
 	const subordinateEventsHandler = createSubordinateEventsHandler(ctx);
+	const holder = new TrustMarkHolder(ctx.entityId, ctx.trustMarks ?? [], async (refs) => {
+		await buildEntityConfiguration({ ...ctx, trustMarks: refs });
+		Object.defineProperty(ctx, "trustMarks", {
+			value: structuredClone(refs),
+			enumerable: true,
+			configurable: true,
+		});
+	});
 	const ecHandler = createEntityConfigurationHandler(ctx);
 	const fetchHandler = createFetchHandler(ctx);
 	const listHandler = createListHandler(ctx);
@@ -393,7 +445,7 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 	const trustMarkStatusHandler = createTrustMarkStatusHandler(ctx);
 	const trustMarkListHandler = createTrustMarkListHandler(ctx);
 	const trustMarkHandler = createTrustMarkHandler(ctx);
-	const trustMarkIssuanceHandler = createTrustMarkIssuanceHandler(ctx);
+
 	const resolveHandler = createResolveHandler(ctx);
 
 	const routeMap = new Map<string, (request: Request) => Promise<Response>>();
@@ -487,7 +539,7 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 		);
 
 	const router = async (request: Request): Promise<Response> => {
-		// Strip X-Authenticated-Entity to prevent spoofing — the auth wrapper re-adds it after verification
+		// Remove legacy identity headers; authentication context is carried separately.
 		const headers = new Headers(request.headers);
 		headers.delete("X-Authenticated-Entity");
 		const init: RequestInit = {
@@ -656,30 +708,67 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 
 		async listTrustMarkedEntities(trustMarkType: string): Promise<string[]> {
 			safeLogger(config.options?.logger)?.debug("Starting list trust marked entities");
-
-			const url = new URL(FederationEndpoint.TrustMarkList, normalizedEntityId);
-			url.searchParams.set("trust_mark_type", trustMarkType);
-			const req = new Request(url.toString());
-			const res = await trustMarkListHandler(req);
-			return res.json() as Promise<string[]>;
+			return trustMarkService(ctx).listTrustMarkedEntities(trustMarkType);
 		},
 
-		async issueTrustMark(sub: string, trustMarkType: string): Promise<string> {
+		getTrustMarks: () => holder.getTrustMarks(),
+		attachTrustMark: (jwt, options) => holder.attachTrustMark(jwt, options),
+		fetchAndAttachTrustMark: (options) => holder.fetchAndAttachTrustMark(options),
+		removeTrustMark: (selector) => holder.removeTrustMark(selector),
+		async setTrustMarkIssuers(issuers) {
+			if (ctx.authorityHints?.length)
+				throw new Error("Only Trust Anchors publish trust_mark_issuers");
+			const owned = structuredClone(issuers);
+			await holder.updatePublication(async () => {
+				await buildEntityConfiguration({ ...ctx, trustMarkIssuers: owned });
+				Object.defineProperty(ctx, "trustMarkIssuers", {
+					value: owned,
+					enumerable: true,
+					configurable: true,
+				});
+				updateTrustMarkServicePolicy(ctx);
+			});
+		},
+		async setTrustMarkOwners(owners) {
+			if (ctx.authorityHints?.length)
+				throw new Error("Only Trust Anchors publish trust_mark_owners");
+			const owned = structuredClone(owners);
+			await holder.updatePublication(async () => {
+				await buildEntityConfiguration({ ...ctx, trustMarkOwners: owned });
+				Object.defineProperty(ctx, "trustMarkOwners", {
+					value: owned,
+					enumerable: true,
+					configurable: true,
+				});
+				updateTrustMarkServicePolicy(ctx);
+			});
+		},
+		async setTrustMarkDelegations(delegations) {
+			await trustMarkService(ctx).setDelegations(delegations);
+		},
+
+		async revokeTrustMark(type: string, subject: string) {
+			return trustMarkService(ctx).revokeTrustMark(type, subject);
+		},
+		async listTrustMarksForSubject(subject: string) {
+			return trustMarkService(ctx).listTrustMarksForSubject(subject);
+		},
+
+		async issueTrustMark(
+			sub: string,
+			trustMarkType: string,
+			options?: TrustMarkIssuanceOptions,
+		): Promise<string> {
 			safeLogger(config.options?.logger)?.debug("Starting issue trust mark");
 
-			const url = new URL(FederationEndpoint.TrustMark, normalizedEntityId);
-			url.searchParams.set("trust_mark_type", trustMarkType);
-			url.searchParams.set("sub", sub);
-			const req = new Request(url.toString());
-			const res = await trustMarkIssuanceHandler(req);
-			if (res.status !== 200) {
-				const body = (await res.json()) as { error: string; error_description?: string };
-				throw new Error(body.error_description ?? body.error);
-			}
-			return res.text();
+			return trustMarkService(ctx).issueTrustMark(sub, trustMarkType, options);
 		},
 
-		async issueTrustMarkDelegation(subject: string, trustMarkType: string): Promise<string> {
+		async issueTrustMarkDelegation(
+			subject: string,
+			trustMarkType: string,
+			options?: TrustMarkDelegationIssuanceOptions,
+		): Promise<string> {
 			safeLogger(config.options?.logger)?.debug("Starting issue trust mark delegation");
 
 			const keySet = await ctx.keyProvider.getFederationKeySet();
@@ -688,9 +777,12 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 				subject,
 				trustMarkType,
 				signer: keySet.signer,
-				...(config.trustMarkTtlSeconds !== undefined
-					? { ttlSeconds: config.trustMarkTtlSeconds }
-					: {}),
+				...(options?.noExpiry
+					? {}
+					: config.trustMarkTtlSeconds !== undefined
+						? { ttlSeconds: config.trustMarkTtlSeconds }
+						: {}),
+				...options,
 				...(config.options?.clock ? { clock: config.options.clock } : {}),
 			};
 			return signTrustMarkDelegation(params);
@@ -923,12 +1015,47 @@ export class TrustAnchor {
 		return this.server.listTrustMarkedEntities(trustMarkType);
 	}
 
-	async issueTrustMark(sub: string, trustMarkType: string): Promise<string> {
-		return this.server.issueTrustMark(sub, trustMarkType);
+	getTrustMarks() {
+		return this.server.getTrustMarks();
+	}
+	async attachTrustMark(jwt: string, options: AttachTrustMarkOptions) {
+		return this.server.attachTrustMark(jwt, options);
+	}
+	async fetchAndAttachTrustMark(options: FetchAndAttachTrustMarkOptions) {
+		return this.server.fetchAndAttachTrustMark(options);
+	}
+	async removeTrustMark(selector: RemoveTrustMarkSelector) {
+		return this.server.removeTrustMark(selector);
+	}
+	async setTrustMarkIssuers(issuers: Record<string, string[]>) {
+		return this.server.setTrustMarkIssuers(issuers);
+	}
+	async setTrustMarkOwners(owners: Record<string, TrustMarkOwner>) {
+		return this.server.setTrustMarkOwners(owners);
+	}
+	async setTrustMarkDelegations(delegations: Record<string, string>) {
+		return this.server.setTrustMarkDelegations(delegations);
+	}
+	async revokeTrustMark(type: string, subject: string) {
+		return this.server.revokeTrustMark(type, subject);
+	}
+	async listTrustMarksForSubject(subject: string) {
+		return this.server.listTrustMarksForSubject(subject);
+	}
+	async issueTrustMark(
+		sub: string,
+		trustMarkType: string,
+		options?: TrustMarkIssuanceOptions,
+	): Promise<string> {
+		return this.server.issueTrustMark(sub, trustMarkType, options);
 	}
 
-	async issueTrustMarkDelegation(subject: string, trustMarkType: string): Promise<string> {
-		return this.server.issueTrustMarkDelegation(subject, trustMarkType);
+	async issueTrustMarkDelegation(
+		subject: string,
+		trustMarkType: string,
+		options?: TrustMarkDelegationIssuanceOptions,
+	): Promise<string> {
+		return this.server.issueTrustMarkDelegation(subject, trustMarkType, options);
 	}
 
 	async getHistoricalKeys(): Promise<string> {
@@ -1058,12 +1185,47 @@ export class Intermediate {
 		return this.server.listTrustMarkedEntities(trustMarkType);
 	}
 
-	async issueTrustMark(sub: string, trustMarkType: string): Promise<string> {
-		return this.server.issueTrustMark(sub, trustMarkType);
+	getTrustMarks() {
+		return this.server.getTrustMarks();
+	}
+	async attachTrustMark(jwt: string, options: AttachTrustMarkOptions) {
+		return this.server.attachTrustMark(jwt, options);
+	}
+	async fetchAndAttachTrustMark(options: FetchAndAttachTrustMarkOptions) {
+		return this.server.fetchAndAttachTrustMark(options);
+	}
+	async removeTrustMark(selector: RemoveTrustMarkSelector) {
+		return this.server.removeTrustMark(selector);
+	}
+	async setTrustMarkIssuers(issuers: Record<string, string[]>) {
+		return this.server.setTrustMarkIssuers(issuers);
+	}
+	async setTrustMarkOwners(owners: Record<string, TrustMarkOwner>) {
+		return this.server.setTrustMarkOwners(owners);
+	}
+	async setTrustMarkDelegations(delegations: Record<string, string>) {
+		return this.server.setTrustMarkDelegations(delegations);
+	}
+	async revokeTrustMark(type: string, subject: string) {
+		return this.server.revokeTrustMark(type, subject);
+	}
+	async listTrustMarksForSubject(subject: string) {
+		return this.server.listTrustMarksForSubject(subject);
+	}
+	async issueTrustMark(
+		sub: string,
+		trustMarkType: string,
+		options?: TrustMarkIssuanceOptions,
+	): Promise<string> {
+		return this.server.issueTrustMark(sub, trustMarkType, options);
 	}
 
-	async issueTrustMarkDelegation(subject: string, trustMarkType: string): Promise<string> {
-		return this.server.issueTrustMarkDelegation(subject, trustMarkType);
+	async issueTrustMarkDelegation(
+		subject: string,
+		trustMarkType: string,
+		options?: TrustMarkDelegationIssuanceOptions,
+	): Promise<string> {
+		return this.server.issueTrustMarkDelegation(subject, trustMarkType, options);
 	}
 
 	async getHistoricalKeys(): Promise<string> {

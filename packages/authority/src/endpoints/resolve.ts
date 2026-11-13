@@ -1,4 +1,5 @@
 import {
+	authenticatedEndpointCaller,
 	DEFAULT_CACHE_TTL_SECONDS,
 	decodeEntityStatement,
 	type EntityId,
@@ -16,12 +17,17 @@ import {
 	signEntityStatement,
 	type TrustAnchorSet,
 	type TrustMarkEvaluation,
+	type TrustMarkEvidence,
+	type TrustMarkIssuerContext,
 	TrustMarkStatus,
+	trustMarkIssuerContext,
 	type ValidatedTrustMark,
 	validateTrustChain,
+	validateTrustMarkWithIssuer,
 } from "@oidfed/core";
 import type { HandlerContext } from "./context.js";
 import { errorResponse, jwtResponse, parseQueryParams, requireMethod } from "./helpers.js";
+import { trustMarkService } from "./trust-mark-service.js";
 
 type ResolveTrustMarkRef = { trust_mark_type: string; trust_mark: string };
 
@@ -74,11 +80,8 @@ export function createResolveHandler(
 			);
 		}
 
-		// Validate X-Authenticated-Entity header before trust chain resolution
-		const rawEntity = request.headers.get("X-Authenticated-Entity");
-		if (rawEntity && !isValidEntityId(rawEntity)) {
-			return errorResponse(400, "invalid_request", "Invalid X-Authenticated-Entity header value");
-		}
+		// Authentication evidence belongs to the verified Request instance.
+		const rawEntity = authenticatedEndpointCaller(request);
 		const isAuthenticated = Boolean(rawEntity);
 
 		if (!ctx.trustAnchors) {
@@ -139,6 +142,12 @@ export function createResolveHandler(
 					keySet.signer,
 					{ typ: JwtTyp.ResolveResponse, extraHeaders: snapshot.headers },
 				);
+				if (snapshot.reuseUntil <= nowSeconds(ctx.options?.clock))
+					return errorResponse(
+						404,
+						FederationErrorCode.NotFound,
+						"Cached resolution expired during signing",
+					);
 				return jwtResponse(jwt, MediaType.ResolveResponse);
 			} catch {
 				safeLogger(ctx.options?.logger)?.error("Failed to read cached resolution");
@@ -212,6 +221,11 @@ export function createResolveHandler(
 			// Exp is capped to the earliest expiry across the chain and trust marks
 			let resolveExp = chain.expiresAt;
 			for (const { mark } of activeTrustMarks) {
+				resolveExp = Math.min(
+					resolveExp,
+					mark.verificationExpiresAt ?? Infinity,
+					mark.delegation?.expiresAt ?? Infinity,
+				);
 				if (mark.expiresAt !== undefined && mark.expiresAt < resolveExp) {
 					resolveExp = mark.expiresAt;
 				}
@@ -257,6 +271,9 @@ export function createResolveHandler(
 				extraHeaders,
 			});
 
+			if (resolveExp <= nowSeconds(ctx.options?.clock))
+				return errorResponse(500, "server_error", "Resolution evidence expired during signing");
+
 			// §18.1 permits anonymous callers to reuse completed assessments. Cap reuse
 			// by both the configured TTL and every included piece of expiring evidence.
 			let cacheExpiry = Math.min(
@@ -265,6 +282,8 @@ export function createResolveHandler(
 			);
 			for (const { mark } of activeTrustMarks) {
 				// Delegation validation is part of Trust Mark validity (§7.3).
+				if (mark.verificationExpiresAt !== undefined)
+					cacheExpiry = Math.min(cacheExpiry, mark.verificationExpiresAt);
 				if (mark.delegation?.expiresAt !== undefined)
 					cacheExpiry = Math.min(cacheExpiry, mark.delegation.expiresAt);
 			}
@@ -323,57 +342,103 @@ async function resolveActiveTrustMarks(
 		if (!ref || ref.trust_mark_type !== evaluation.trustMarkType) continue;
 		const mark = evaluation.mark;
 
-		if (await isTrustMarkActiveForResolve(ctx, statements, ref, mark, now)) {
-			active.push({ ref, mark });
-		}
+		const assessed = await activeTrustMarkForResolve(ctx, statements, ref, mark, now);
+		if (assessed) active.push({ ref, mark: assessed });
 	}
 	return active;
 }
 
-async function isTrustMarkActiveForResolve(
+async function activeTrustMarkForResolve(
 	ctx: HandlerContext,
 	statements: ReadonlyArray<ParsedEntityStatement>,
 	ref: ResolveTrustMarkRef,
 	mark: ValidatedTrustMark,
 	now: number,
-): Promise<boolean> {
-	if (mark.issuer === ctx.entityId && ctx.storage.trustMarks) {
-		try {
-			const record = await ctx.storage.trustMarks.getByJwt(ref.trust_mark);
-			return (
-				record?.active === true &&
-				record.trustMarkType === ref.trust_mark_type &&
-				record.subject === mark.subject &&
-				(record.expiresAt === undefined || record.expiresAt > now)
-			);
-		} catch {
-			safeLogger(ctx.options?.logger)?.debug("Failed to read local trust mark status");
-			return false;
-		}
-	}
-
-	const issuerStatement = statements.find(
-		(statement) => statement.payload.iss === mark.issuer && statement.payload.sub === mark.issuer,
-	);
-	const issuerPayload = issuerStatement?.payload as Record<string, unknown> | undefined;
-	const issuerJwks = issuerPayload?.jwks as JWKSet | undefined;
-	const metadata = issuerPayload?.metadata as Record<string, unknown> | undefined;
-	const federationMetadata = metadata?.federation_entity as Record<string, unknown> | undefined;
-	const statusEndpoint = federationMetadata?.federation_trust_mark_status_endpoint;
-	if (typeof statusEndpoint !== "string" || !issuerJwks) return false;
-
+): Promise<ValidatedTrustMark | undefined> {
 	try {
-		const status = await fetchTrustMarkStatus(statusEndpoint, ref.trust_mark, issuerJwks, {
+		// Resolve vouches for the selected anchor's policy, not a caller's unrelated accreditation.
+		const root = statements.at(-1)?.payload;
+		const issuers = root?.iss === root?.sub ? root?.trust_mark_issuers : undefined;
+		if (!issuers || !Object.hasOwn(issuers, ref.trust_mark_type)) return undefined;
+		const allowed = issuers[ref.trust_mark_type];
+		if (
+			!Array.isArray(allowed) ||
+			(allowed.length && !allowed.some((issuer) => issuer === mark.issuer))
+		)
+			return undefined;
+		let context: TrustMarkIssuerContext | undefined = mark.issuerEvidence;
+		if (!context) {
+			const issuer = statements.find(
+				(statement) =>
+					statement.payload.iss === mark.issuer && statement.payload.sub === mark.issuer,
+			)?.payload;
+			if (!issuer?.jwks) return undefined;
+			context = {
+				kind: "out-of-band",
+				issuer: mark.issuer,
+				allowedTrustMarkTypes: [ref.trust_mark_type],
+				keys: issuer.jwks,
+				...(issuer.metadata?.federation_entity
+					? { metadata: issuer.metadata.federation_entity }
+					: {}),
+			};
+		}
+		const trusted = trustMarkIssuerContext(context, ref.trust_mark_type, ctx.options);
+		if (!trusted.ok) return undefined;
+		// The original context has already authenticated the issuer. Apply the resolver's anchor policy independently.
+		const selected: TrustMarkIssuerContext = {
+			kind: "out-of-band",
+			issuer: trusted.value.issuer,
+			keys: trusted.value.keys,
+			allowedTrustMarkTypes: [ref.trust_mark_type],
+			trustMarkOwners: root?.trust_mark_owners ?? {},
+			...(trusted.value.metadata ? { metadata: trusted.value.metadata } : {}),
+		};
+		const history = ctx.options?.trustMarkVerification?.historicalKeys;
+		const historyResponse = (mark as Partial<TrustMarkEvidence>).verificationKey?.responseJwt;
+		const checked = await validateTrustMarkWithIssuer(ref.trust_mark, selected, {
 			...ctx.options,
-			expectedIssuer: mark.issuer,
+			expectedSubject: mark.subject,
+			expectedTrustMarkType: ref.trust_mark_type,
+			...(history
+				? {
+						historicalKeys: {
+							...history,
+							...(historyResponse
+								? { mode: "supplied-only" as const, responses: [historyResponse] }
+								: {}),
+						},
+					}
+				: {}),
 		});
-		return (
-			status.ok &&
-			status.value.status === TrustMarkStatus.Active &&
-			status.value.issuer === mark.issuer
+		if (!checked.ok) return undefined;
+		let statusDeadline = Infinity;
+		if (mark.issuer === ctx.entityId && ctx.storage.trustMarks) {
+			const assessment = await trustMarkService(ctx).assessTrustMarkStatus(ref.trust_mark);
+			if (assessment?.payload.status !== TrustMarkStatus.Active) return undefined;
+			statusDeadline = assessment.verificationExpiresAt ?? Infinity;
+		} else {
+			const status = await fetchTrustMarkStatus({
+				...ctx.options,
+				jwt: ref.trust_mark,
+				issuerEvidence: context,
+				expectedSubject: mark.subject,
+				expectedTrustMarkType: ref.trust_mark_type,
+			});
+			if (!status.ok || status.value.status !== TrustMarkStatus.Active) return undefined;
+			statusDeadline = status.value.verificationExpiresAt ?? Infinity;
+		}
+		const deadline = Math.min(
+			mark.verificationExpiresAt ?? Infinity,
+			checked.value.verificationExpiresAt ?? Infinity,
+			trusted.value.expiresAt ?? Infinity,
+			statusDeadline,
 		);
+		if (deadline <= Math.max(now, nowSeconds(ctx.options?.clock)) || ctx.options?.signal?.aborted)
+			return undefined;
+		return { ...mark, ...(Number.isFinite(deadline) ? { verificationExpiresAt: deadline } : {}) };
 	} catch {
-		safeLogger(ctx.options?.logger)?.debug("Failed to verify remote trust mark status");
-		return false;
+		safeLogger(ctx.options?.logger)?.debug("Failed to verify trust mark status for resolution");
+		return undefined;
 	}
 }

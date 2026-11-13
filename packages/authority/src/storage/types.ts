@@ -8,6 +8,7 @@ import type {
 	ReplayStore,
 	SubordinateEvent,
 	TrustChainConstraints,
+	TrustMarkStorage,
 } from "@oidfed/core";
 
 export interface StorageAdapter {
@@ -24,6 +25,7 @@ export interface StorageAdapter {
 
 /** Read-only views return detached records and expose no mutation methods. */
 export interface StorageReadSnapshot {
+	readonly trustMarks?: Pick<TrustMarkStorage, "listCandidates" | "getByJwt">;
 	readonly subordinates: Pick<SubordinateStorage, "get" | "list">;
 	readonly subordinateEvents?: Pick<SubordinateEventStorage, "list">;
 }
@@ -113,54 +115,12 @@ export interface ListFilter {
 	validAt?: number;
 }
 
-export interface TrustMarkListOptions {
-	readonly subject?: EntityId;
-	/** Subject of the first unreturned record; inclusive. */
-	readonly cursor?: EntityId;
-	readonly limit: number;
-}
-
-export interface TrustMarkListPage {
-	readonly items: TrustMarkRecord[];
-	readonly nextCursor?: EntityId;
-}
-
-/**
- * Current-validity queries require active marks with finite issuedAt <= validAt
- * and either no expiration or expiresAt > validAt. Apply this eligibility before
- * selecting the newest mark, using exact authority time without added clock leeway.
- */
-export interface TrustMarkStorage {
-	getValid(
-		trustMarkType: string,
-		subject: EntityId,
-		validAt: number,
-	): Promise<TrustMarkRecord | undefined>;
-	getByJwt(jwt: string): Promise<TrustMarkRecord | undefined>;
-	listValid(
-		trustMarkType: string,
-		validAt: number,
-		options: TrustMarkListOptions,
-	): Promise<TrustMarkListPage>;
-	listValidForSubject(subject: EntityId, validAt: number): Promise<TrustMarkRecord[]>;
-	hasAnyValid(subject: EntityId, validAt: number): Promise<boolean>;
-	issue(record: TrustMarkRecord): Promise<void>;
-	revoke(trustMarkType: string, subject: EntityId, revokedAt: number): Promise<void>;
-}
-
-/**
- * Stored fields mirror the signed JWT's type, subject, iat, and optional exp.
- * Ingestion establishes the JWT's signature and issuer trust before storing it.
- */
-export interface TrustMarkRecord {
-	readonly trustMarkType: string;
-	readonly subject: EntityId;
-	readonly jwt: string;
-	readonly issuedAt: number;
-	readonly expiresAt?: number;
-	readonly active: boolean;
-	readonly revokedAt?: number;
-}
+export type {
+	TrustMarkListOptions,
+	TrustMarkListPage,
+	TrustMarkRecord,
+	TrustMarkStorage,
+} from "@oidfed/core";
 
 /**
  * Scope history by issuer and subject. Preserve append order, including equal

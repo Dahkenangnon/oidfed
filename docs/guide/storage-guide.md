@@ -59,13 +59,14 @@ Trust-mark storage is optional. If an authority advertises a trust-mark endpoint
 
 ```ts
 interface TrustMarkStorage {
+  listCandidates(filter: { issuer: string; trustMarkType?: string; subject?: EntityId }): Promise<TrustMarkRecord[]>;
   getValid(type: string, subject: EntityId, validAt: number): Promise<TrustMarkRecord | undefined>;
   getByJwt(jwt: string): Promise<TrustMarkRecord | undefined>;
   listValid(type: string, validAt: number, options: TrustMarkListOptions): Promise<TrustMarkListPage>;
   listValidForSubject(subject: EntityId, validAt: number): Promise<TrustMarkRecord[]>;
   hasAnyValid(subject: EntityId, validAt: number): Promise<boolean>;
   issue(record: TrustMarkRecord): Promise<void>;
-  revoke(type: string, subject: EntityId, revokedAt: number): Promise<void>;
+  revoke(type: string, subject: EntityId, revokedAt: number, issuer?: string): Promise<void>;
 }
 ```
 
@@ -80,6 +81,16 @@ interface TrustMarkStorage {
 Suggested relational columns: `authority_id TEXT`, `jwt_hash BYTEA`, `PRIMARY KEY (authority_id, jwt_hash)`, `jwt TEXT NOT NULL`, `trust_mark_type TEXT`, `subject TEXT`, `issued_at DOUBLE PRECISION`, `expires_at DOUBLE PRECISION`, `active BOOLEAN`, `revoked_at DOUBLE PRECISION`. Prefix trust-mark indexes with `authority_id`, for example `(authority_id, trust_mark_type, subject, active, expires_at)` and `(authority_id, subject, active, expires_at)`.
 
 Hashing the JWT for indexing is acceptable, but `getByJwt` must compare the exact token and handle hash collisions safely.
+
+### Adapter migration for managed issuance
+
+`listCandidates()` is required. Return every matching record, including revoked and expired records, from one consistent view. Return detached copies. Do not deduplicate subjects or discard older candidates: the shared issuer service must check signatures, profile rules, and delegation dates before selecting a current record. Eligible records sort by descending `issuedAt`, then descending JWT string for ties. `getByJwt()` must still find revoked records for exact-token Status queries.
+
+An Authority adapter's `readSnapshot()` must expose `trustMarks.listCandidates` and `trustMarks.getByJwt`. A standalone or Leaf issuer uses `TrustMarkStore` with `trustMarks`, `transaction(callback)`, and `readSnapshot(callback)`. The memory adapters implement both contracts.
+
+Reuse selection and insertion happen in serializable transactions. The service signs outside the transaction, then rechecks candidates and policy generation before insertion. An adapter shared across processes must serialize competing issuances itself; an in-process queue provides no distributed guarantee. Revocation's optional issuer selector must restrict updates when supplied. The managed service always supplies it so one issuer cannot revoke another issuer's records in a shared store.
+
+Keep every issued JWT, including superseded and revoked records. Exact duplicate insertion must not reactivate a revoked record. Failed reads or incomplete candidate enumeration must fail the operation rather than produce a successful partial listing.
 
 ## Replay protection
 

@@ -1,5 +1,6 @@
 /** Shared handler context: signing keys, stores, and configuration for all endpoints. */
 import type {
+	EndpointAuthentication,
 	EntityId,
 	EntityRole,
 	EntityStatementMetadata,
@@ -8,6 +9,7 @@ import type {
 	FederationOptions,
 	JWKSet,
 	TrustAnchorSet,
+	TrustMarkIssuerConfig,
 	TrustMarkOwner,
 	TrustMarkRef,
 } from "@oidfed/core";
@@ -19,6 +21,12 @@ export interface AuthorityClientKeyProvider {
 }
 
 export interface HandlerContext {
+	trustMarkDefaults?: TrustMarkIssuerConfig["trustMarkDefaults"];
+	trustMarkSigner?: TrustMarkIssuerConfig["trustMarkSigner"];
+	trustMarkStatusPolicy?: TrustMarkIssuerConfig["trustMarkStatusPolicy"];
+	trustMarkRequestExtensions?: TrustMarkIssuerConfig["trustMarkRequestExtensions"];
+	endpointAuthentication?: EndpointAuthentication;
+	readonly trustMarkIssuer?: Omit<TrustMarkIssuerConfig, "storage">;
 	readonly roles?: readonly EntityRole[];
 	/** The entity identifier (URL) for this authority. */
 	readonly entityId: EntityId;
