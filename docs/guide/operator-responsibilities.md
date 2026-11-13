@@ -44,6 +44,59 @@ If you use bare Leaf/Authority metadata or consume `validateTrustChain()` result
 
 Core's [`compareTrustAnchorKeys(ecJwks, independentJwks, entityId)`](../../packages/core/src/trust-chain/anchor-keys.ts) compares supplied key identifiers and JWK thumbprints. Check `match` and any `inputErrors`; malformed or uncomparable sets require investigation before relying on agreement. The operator chooses the independent source and mismatch policy under [§11.3](https://openid.net/specs/openid-federation-1_0.html#section-11.3). Your application retrieves the keys and runs the comparisons; the function makes no network requests or automatic corrections. The specification sets no fixed comparison schedule.
 
+### Compare and retrieve again on a key mismatch
+
+**ResearchHub** checks **Campus Alliance** through two channels: its EC endpoint and the independent key source approved by the federation operator. [§11.3](https://openid.net/specs/openid-federation-1_0.html#section-11.3) says the keys **SHOULD** be compared and, on disagreement, both **SHOULD** be retrieved again. The example makes at most two comparisons and leaves remediation to the application.
+
+The independent retrieval callback must authenticate its source and retrieve again on each invocation. The EC request omits oidfed's statement cache; the host must also arrange appropriate freshness in its HTTP transport and independent channel. An EC's self-published keys alone cannot establish the independent source's authenticity.
+
+```ts
+import {
+  compareTrustAnchorKeys, createTrustAnchorSet, decodeEntityConfiguration,
+  entityId, err, fetchEntityConfiguration, InternalErrorCode, ok, validateTrustChain,
+  type FederationOptions, type JWKSet, type Result, type TrustAnchorKeyComparisonResult,
+} from "@oidfed/core";
+
+export async function checkCampusKeys(
+  // Fetch again on each call through the operator's independently authenticated channel.
+  retrieveIndependentKeys: () => Promise<Result<JWKSet>>,
+  options: FederationOptions = {},
+): Promise<Result<TrustAnchorKeyComparisonResult>> {
+  const anchor = entityId("https://campus.example");
+  const { cache: _cache, ...freshOptions } = options;
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const fetched = await fetchEntityConfiguration(anchor, freshOptions);
+    if (!fetched.ok) return fetched;
+    const independent = await retrieveIndependentKeys();
+    if (!independent.ok) return independent;
+    const decoded = decodeEntityConfiguration(fetched.value);
+    if (!decoded.ok) return decoded;
+    if (String(decoded.value.payload.iss) !== anchor || String(decoded.value.payload.sub) !== anchor) {
+      return err({ code: InternalErrorCode.TrustChainInvalid, description: "Unexpected anchor identity" });
+    }
+
+    const comparison = await compareTrustAnchorKeys(decoded.value.payload.jwks, independent.value, anchor);
+    if (!comparison.match) {
+      if (attempt === 0) continue; // Retrieve BOTH sources again, without the statement cache.
+      return ok(comparison); // A persistent mismatch is a report, never permission to trust new keys.
+    }
+
+    // Decoding and comparing alone do not authenticate the EC. Verify it against the independent keys.
+    const verified = await validateTrustChain([fetched.value], createTrustAnchorSet([
+      { entityId: anchor, jwks: independent.value },
+    ]), freshOptions);
+    if (!verified.valid) {
+      return err({ code: InternalErrorCode.TrustChainInvalid, description: "Anchor configuration failed validation" });
+    }
+    return ok(comparison);
+  }
+  throw new Error("Unreachable comparison state");
+}
+```
+
+Handle a failed `Result` as unavailable or invalid evidence. On success, inspect `result.value.match` and `inputErrors`: a persistent mismatch still requires the operator's investigation and remediation policy. Agreement and EC validation do not update the application's existing anchor configuration. Adoption of replacement keys remains a separate, authorized decision. No library timer runs this comparison for you.
+
 ### Rollover, freshness, and revocation
 
 Use oidfed's [federation key contracts](../packages/core.md#federation-key-providers) to publish keys, switch signers, retire keys, and retrieve historical keys. For a Trust Anchor, the application drives the four stages in [§11.2](https://openid.net/specs/openid-federation-1_0.html#section-11.2):
@@ -59,9 +112,9 @@ More generally, [§11.1](https://openid.net/specs/openid-federation-1_0.html#sec
 
 A Leaf [caches its Entity Configuration](../packages/leaf.md#how-does-the-entity-configuration-caching-work). Call `refreshEntityConfiguration()` when changed keys or a new signer need to be published before the cached JWT expires. As deployment guidance, account for proxy caches when choosing publication timing.
 
-[§11](https://openid.net/specs/openid-federation-1_0.html#section-11) requires participants to support refreshing expired Trust Chains. A chain expires with its earliest-expiring statement under [§10.4](https://openid.net/specs/openid-federation-1_0.html#section-10.4), and [§10.2](https://openid.net/specs/openid-federation-1_0.html#section-10.2) requires checking statement times. Core checks these times during [chain validation](../packages/core.md#trust-chain-discovery-and-validation). Your application must reevaluate trust before continuing to rely on expired evidence. oidfed does not schedule reevaluation of trust decisions retained by applications.
+[§11](https://openid.net/specs/openid-federation-1_0.html#section-11) requires participants to support refreshing expired Trust Chains. A chain expires with its earliest-expiring statement under [§10.4](https://openid.net/specs/openid-federation-1_0.html#section-10.4), and [§10.2](https://openid.net/specs/openid-federation-1_0.html#section-10.2) requires checking statement times. Core checks these times during [chain validation](../packages/core.md#trust-chain-discovery-and-validation). Your application must reevaluate trust before continuing to rely on expired evidence. oidfed does not schedule reevaluation of trust decisions retained by applications. Use `refreshTrustChain()` for replacement evidence; `forceRefresh: true` bypasses pre-existing statement-cache entries when an earlier change check is needed. See [refresh behavior and clocks](../packages/core.md#refreshing-trust-chains).
 
-[§11.4](https://openid.net/specs/openid-federation-1_0.html#section-11.4) defines no federation-wide revocation process; a federation **MAY** define its own. In oidfed, [`revokeKey()`](../../packages/core/src/federation-keys.ts) changes local provider state and historical records. [`revokeSubordinate()`](../../packages/authority/src/subordinate-lifecycle.ts) removes the current registration. Neither invalidates statements cached elsewhere, and [§10.2](https://openid.net/specs/openid-federation-1_0.html#section-10.2) permits caching until expiry.
+[§11.4](https://openid.net/specs/openid-federation-1_0.html#section-11.4) defines no federation-wide revocation process; a federation **MAY** define its own. In oidfed, [`revokeKey()`](../../packages/core/src/federation-keys.ts) changes local provider state and historical records. [`revokeSubordinate()`](../../packages/authority/src/subordinate-lifecycle.ts) removes the current registration. Neither invalidates statements cached elsewhere, and [§10.2](https://openid.net/specs/openid-federation-1_0.html#section-10.2) permits caching until expiry. A chain refresh can therefore succeed after subordinate removal if it reuses a still-valid cached Subordinate Statement. Subordinate Events can help applications learn about changes when they query the endpoint; it is not a push notification service. Use `revokeSubordinate()` for the administrative removal and its event recording, rather than bypassing that lifecycle through storage directly.
 
 After revoking the last active signing key, explicitly activate a published replacement to restore signing. Arrange trusted distribution of that replacement under your incident-response policy. For historical verification, pass your federation's additional security reasons through `selectHistoricalVerificationKey`'s `securityRevocationReasons` option. [§8.7.3](https://openid.net/specs/openid-federation-1_0.html#section-8.7.3) allows custom reasons; oidfed preserves its built-in reasons and treats other unclassified reasons using the normal validity and revocation-time checks.
 
