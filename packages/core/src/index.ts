@@ -280,7 +280,12 @@ export {
 	type ValidateTrustMarkWithIssuerOptions,
 	validateTrustMarkWithIssuer,
 } from "./trust-marks/evidence.js";
-
+export {
+	type AttachTrustMarkOptions,
+	type FetchAndAttachTrustMarkOptions,
+	type RemoveTrustMarkSelector,
+	TrustMarkHolder,
+} from "./trust-marks/holder.js";
 export {
 	type FetchTrustMarkParams,
 	type FetchTrustMarkStatusInput,
@@ -300,13 +305,32 @@ export {
 	validateTrustMarkLogo,
 } from "./trust-marks/index.js";
 
+export {
+	type TrustMarkIssuanceOptions,
+	type TrustMarkIssuerConfig,
+	TrustMarkIssuerService,
+	type TrustMarkIssuerServiceOptions,
+	type TrustMarkRequestContext,
+	type TrustMarkRequestExtension,
+	type TrustMarkStatusAssessment,
+	type TrustMarkStatusPolicy,
+	type TrustMarkStatusPolicyContext,
+} from "./trust-marks/issuer.js";
+
+export { MemoryTrustMarkStorage, MemoryTrustMarkStore } from "./trust-marks/memory.js";
 // Trust Marks
 export {
 	checkTrustMarkRequirements,
 	type TrustMarkRequirements,
 } from "./trust-marks/requirements.js";
 export type { TrustMarkDelegationIssuanceOptions } from "./trust-marks/sign.js";
-
+export type {
+	TrustMarkListOptions,
+	TrustMarkListPage,
+	TrustMarkRecord,
+	TrustMarkStorage,
+	TrustMarkStore,
+} from "./trust-marks/storage.js";
 // Types
 export {
 	type CacheProvider,

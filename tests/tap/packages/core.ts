@@ -244,7 +244,9 @@ export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
 	module("core / Trust Mark operation boundaries", () => {
 		const c = CorePublic;
-		const issuer = "https://issuer.example";
+		const issuer = "https://issuer.example",
+			subject = "https://holder.example",
+			type = "type";
 		test("transport evidence supports sync, async and thenable results and contains failures", async (t) => {
 			for (const transportEvidence of [
 				() => ({ peer: issuer }),
@@ -291,7 +293,301 @@ export default (QUnit: QUnit) => {
 			}
 			await new Promise((resolve) => setTimeout(resolve, 0));
 		});
+		for (const phase of ["callback", "keys", "signing", "revocation", "policy"] as const) {
+			for (const delegated of [false, true]) {
+				test(`${delegated ? "delegation" : "mark"} validity is preserved across status ${phase}`, async (t) => {
+					const key = await c.generateSigningKey("ES256"),
+						signer = new c.JwkSigner(key.privateKey);
+					let now = 1000,
+						pending = false,
+						policyCalls = 0;
+					const clock = { now: () => now },
+						storage = new c.MemoryTrustMarkStore();
+					const delegation = delegated
+						? await c.signTrustMarkDelegation({
+								issuer,
+								subject: issuer,
+								trustMarkType: type,
+								signer,
+								clock,
+								ttlSeconds: 10,
+							})
+						: undefined;
+					const service = new c.TrustMarkIssuerService({
+						issuer,
+						storage,
+						options: { clock },
+						...(delegation
+							? {
+									trustMarkOwners: { [type]: { sub: issuer, jwks: { keys: [key.publicKey] } } },
+									delegations: { [type]: delegation },
+								}
+							: {}),
+						keyProvider: {
+							getFederationKeySet: async () => {
+								if (pending && phase === "keys") now = 1011;
+								return {
+									jwks: { keys: [key.publicKey] },
+									signer: {
+										kid: signer.kid,
+										alg: signer.alg,
+										signJwt: async (payload, header) => {
+											const jwt = await signer.signJwt(payload, header);
+											if (pending && phase === "signing") now = 1011;
+											return jwt;
+										},
+									},
+								};
+							},
+						},
+						trustMarkStatusPolicy: async ({ baseStatus }) => {
+							policyCalls++;
+							if (pending && phase === "callback") now = 1011;
+							if (pending && phase === "revocation") await service.revokeTrustMark(type, subject);
+							if (pending && phase === "policy") service.updatePolicy({});
+							return { status: baseStatus };
+						},
+					});
+					const jwt = await service.issueTrustMark(subject, type, {
+						ttlSeconds: delegated ? 100 : 10,
+					});
+					const before = c.decodeEntityStatement((await service.statusResponse(jwt))!);
+					t.true(before.ok && before.value.payload.status === "active");
+					pending = true;
+					policyCalls = 0;
+					try {
+						const after = c.decodeEntityStatement((await service.statusResponse(jwt))!);
+						t.true(
+							after.ok && after.value.payload.status !== "active",
+							"no stale active response escapes",
+						);
+					} catch (error) {
+						t.true(error instanceof Error, "stale assessment rejected");
+					}
+					t.true(policyCalls <= 1, "host policy is not retried");
+				});
+			}
+		}
+		test("replacing an already attached mark removes its older siblings and rolls back publication failure", async (t) => {
+			const key = await c.generateSigningKey("ES256"),
+				signer = new c.JwkSigner(key.privateKey);
+			const sign = (iat: number, trustMarkType = type) =>
+				c.signTrustMark({ issuer, subject, trustMarkType, signer, clock: { now: () => iat } });
+			const old = await sign(1000),
+				latest = await sign(1001),
+				unrelated = await sign(1000, "other");
+			let publications = 0,
+				fail = true;
+			const holder = new c.TrustMarkHolder(
+				subject,
+				[
+					{ trust_mark: old, trust_mark_type: type },
+					{ trust_mark: unrelated, trust_mark_type: "other" },
+					{ trust_mark: latest, trust_mark_type: type },
+				],
+				async () => {
+					if (fail) throw Error("publication failed");
+					publications++;
+				},
+			);
+			const options: CorePublic.AttachTrustMarkOptions = {
+				issuerEvidence: {
+					kind: "out-of-band",
+					issuer,
+					allowedTrustMarkTypes: [type],
+					keys: { keys: [key.publicKey] },
+				},
+				expectedTrustMarkType: type,
+				clock: { now: () => 1002 },
+				replacement: "same-issuer-and-type",
+			};
+			await t.rejects(holder.attachTrustMark(latest, options));
+			t.equal(holder.getTrustMarks().length, 3);
+			fail = false;
+			await holder.attachTrustMark(latest, options);
+			t.deepEqual(
+				holder.getTrustMarks().map((r) => r.trust_mark),
+				[unrelated, latest],
+			);
+			await holder.attachTrustMark(latest, options);
+			t.equal(publications, 1);
+		});
+		test("status cannot remain active when issuer keys change during assessment", async (t) => {
+			const key = await c.generateSigningKey("ES256"),
+				replacement = await c.generateSigningKey("ES256");
+			let pending = false,
+				reads = 0;
+			const service = new c.TrustMarkIssuerService({
+				issuer,
+				storage: new c.MemoryTrustMarkStore(),
+				options: { clock: { now: () => 1000 } },
+				keyProvider: {
+					getFederationKeySet: async () => {
+						const selected = pending && ++reads >= 3 ? replacement : key;
+						return {
+							jwks: { keys: [selected.publicKey] },
+							signer: new c.JwkSigner(selected.privateKey),
+						};
+					},
+				},
+			});
+			const jwt = await service.issueTrustMark(subject, type);
+			t.ok(await service.statusResponse(jwt));
+			pending = true;
+			await t.rejects(service.statusResponse(jwt), /no longer active/);
+		});
+		test("historical request sharing isolates credentials and extension parameters", async (t) => {
+			const { trustMarkOperation, fetchTrustMarkHistoricalResponse } = await import(
+				"../../../packages/core/src/trust-marks/operation.js"
+			);
+			let calls = 0;
+			const scoped = trustMarkOperation({
+				maxTotalFetches: 4,
+				httpClient: async () => {
+					calls++;
+					return new Response("signed-history", {
+						headers: { "content-type": c.MediaType.JwkSet },
+					});
+				},
+			});
+			const authA = {
+				method: "example",
+				audience: issuer,
+				prepare: async () => ({ headers: { authorization: "A" } }),
+			};
+			const authB = {
+				method: "example",
+				audience: issuer,
+				prepare: async () => ({ headers: { authorization: "B" } }),
+			};
+			const fetchA = () =>
+				fetchTrustMarkHistoricalResponse(`${issuer}/history`, issuer, {
+					...scoped,
+					authentication: authA,
+				});
+			const results = await Promise.all([fetchA(), fetchA()]);
+			t.true(results.every((r) => r.ok));
+			t.equal(calls, 1, "concurrent consumers share the pending request");
+			t.true(
+				(
+					await fetchTrustMarkHistoricalResponse(`${issuer}/history`, issuer, {
+						...scoped,
+						authentication: authB,
+					})
+				).ok,
+			);
+			t.equal(calls, 2, "different credentials require their own response");
+			t.true(
+				(
+					await fetchTrustMarkHistoricalResponse(`${issuer}/history`, issuer, {
+						...scoped,
+						authentication: authA,
+						additionalParameters: { view: "other" },
+					})
+				).ok,
+			);
+			t.equal(calls, 3, "different extension selectors require their own response");
+		});
+		test("historical evidence shares one fetch within a chain but not across operations", async (t) => {
+			const old = await c.generateSigningKey("ES256"),
+				key = await c.generateSigningKey("ES256"),
+				leaf = await c.generateSigningKey("ES256");
+			const signer = new c.JwkSigner(key.privateKey),
+				clock = { now: () => 1050 };
+			const marks = await Promise.all(
+				[1000, 1001].map((iat) =>
+					c.signTrustMark({
+						issuer,
+						subject,
+						trustMarkType: type,
+						signer: new c.JwkSigner(old.privateKey),
+						clock: { now: () => iat },
+						ttlSeconds: 200,
+					}),
+				),
+			);
+			const history = await c.signEntityStatement(
+				{ iss: issuer, iat: 1040, keys: [{ ...old.publicKey, iat: 900, exp: 1020 }] },
+				signer,
+				{ typ: c.JwtTyp.JwkSet },
+			);
+			const chain = [
+				await c.signEntityStatement(
+					{
+						iss: subject,
+						sub: subject,
+						iat: 1000,
+						exp: 2000,
+						jwks: { keys: [leaf.publicKey] },
+						authority_hints: [issuer],
+						metadata: { federation_entity: {} },
+						trust_marks: marks.map((jwt) => ({ trust_mark: jwt, trust_mark_type: type })),
+					},
+					new c.JwkSigner(leaf.privateKey),
+				),
+				await c.signEntityStatement(
+					{ iss: issuer, sub: subject, iat: 1000, exp: 2000, jwks: { keys: [leaf.publicKey] } },
+					signer,
+				),
+				await c.signEntityStatement(
+					{
+						iss: issuer,
+						sub: issuer,
+						iat: 1000,
+						exp: 2000,
+						jwks: { keys: [key.publicKey] },
+						trust_mark_issuers: { [type]: [issuer] },
+						metadata: {
+							federation_entity: {
+								federation_fetch_endpoint: `${issuer}/fetch`,
+								federation_list_endpoint: `${issuer}/list`,
+							},
+						},
+					},
+					signer,
+				),
+			];
+			const anchors = c.createTrustAnchorSet([
+				{ entityId: issuer, jwks: { keys: [key.publicKey] } },
+			]);
+			let calls = 0;
+			const options: CorePublic.FederationOptions = {
+				clock,
+				maxTotalFetches: 1,
+				httpClient: async () => {
+					calls++;
+					return new Response(history, { headers: { "content-type": c.MediaType.JwkSet } });
+				},
+				trustMarkVerification: {
+					issuerEvidence: [
+						{
+							kind: "out-of-band",
+							issuer,
+							allowedTrustMarkTypes: [type],
+							keys: { keys: [key.publicKey] },
+							metadata: { federation_historical_keys_endpoint: `${issuer}/history` },
+						},
+					],
+					historicalKeys: { mode: "on-missing-kid", maxAgeSeconds: 30 },
+				},
+			};
+			for (let run = 1; run <= 2; run++) {
+				const result = await c.validateTrustChain(chain, anchors, options);
+				t.true(result.valid);
+				if (result.valid) t.equal(result.chain.trustMarks.length, 2);
+				t.equal(calls, run);
+			}
+			const stale = await c.validateTrustChain(chain, anchors, {
+				...options,
+				clock: { now: () => 1071 },
+			});
+			t.true(
+				stale.valid && stale.chain.trustMarks.length === 0,
+				"shared transport never bypasses freshness",
+			);
+		});
 	});
+
 	module("core / shared endpoint authentication", () => {
 		test("contains asynchronous detectors and rejects protocol-selector credentials", async (t) => {
 			t.throws(
@@ -353,6 +649,141 @@ export default (QUnit: QUnit) => {
 				).status,
 				401,
 			);
+		});
+	});
+	module("core / managed Trust Mark lifecycle", () => {
+		test("concurrent reuse, renewal, revocation and detached records share one eligibility service", async (t) => {
+			let now = 1000;
+			const key = await generateSigningKey("ES256");
+			const storage = new CorePublic.MemoryTrustMarkStore();
+			const service = new CorePublic.TrustMarkIssuerService({
+				issuer: "https://issuer.example",
+				storage,
+				keyProvider: new CorePublic.StaticFederationKeyProvider({
+					signer: new JwkSigner(key.privateKey),
+					jwks: { keys: [key.publicKey] },
+				}),
+				options: { clock: { now: () => now } },
+				trustMarkDefaults: { type: { ttlSeconds: 100 } },
+			});
+			const subject = "https://holder.example";
+			const tokens = await Promise.all(
+				Array.from({ length: 5 }, () => service.issueTrustMark(subject, "type")),
+			);
+			t.equal(new Set(tokens).size, 1);
+			await t.rejects(service.issueTrustMark(subject, "type", { ttlSeconds: 200 }), /conflict/);
+			await t.rejects(
+				service.issueTrustMark(subject, "type", {
+					additionalClaims: { iss: "https://issuer.example" },
+				}),
+				/Reserved/,
+			);
+			now++;
+			const replacement = await service.issueTrustMark(subject, "type", {
+				renewal: "renew",
+				noExpiry: true,
+			});
+			t.notEqual(replacement, tokens[0]);
+			t.equal((await service.listTrustMarksForSubject(subject)).length, 2);
+			const detached = await service.listTrustMarksForSubject(subject);
+			detached.pop();
+			t.equal((await service.listTrustMarksForSubject(subject)).length, 2);
+			await service.revokeTrustMark("type", subject);
+			t.deepEqual(await service.listTrustMarksForSubject(subject), []);
+			for (const jwt of [tokens[0]!, replacement]) {
+				const status = decodeEntityStatement((await service.statusResponse(jwt))!);
+				t.true(status.ok);
+				if (status.ok) t.equal(status.value.payload.status, "revoked");
+			}
+		});
+		test("expired delegation excludes the newest token while an older eligible token keeps its holder listed", async (t) => {
+			let now = 1000;
+			const clock = { now: () => now },
+				issuer = "https://issuer.example",
+				owner = "https://owner.example",
+				subject = "https://holder.example",
+				type = "type";
+			const ownerKey = await generateSigningKey("ES256"),
+				issuerKey = await generateSigningKey("ES256");
+			const delegation = (ttlSeconds: number) =>
+				signTrustMarkDelegation({
+					issuer: owner,
+					subject: issuer,
+					trustMarkType: type,
+					signer: new JwkSigner(ownerKey.privateKey),
+					clock,
+					ttlSeconds,
+				});
+			const long = await delegation(100),
+				storage = new CorePublic.MemoryTrustMarkStore();
+			const service = new CorePublic.TrustMarkIssuerService({
+				issuer,
+				storage,
+				options: { clock },
+				keyProvider: new CorePublic.StaticFederationKeyProvider({
+					signer: new JwkSigner(issuerKey.privateKey),
+					jwks: { keys: [issuerKey.publicKey] },
+				}),
+				trustMarkOwners: { [type]: { sub: owner, jwks: { keys: [ownerKey.publicKey] } } },
+				delegations: { [type]: long },
+			});
+			const older = await service.issueTrustMark(subject, type);
+			now++;
+			await service.setDelegations({ [type]: await delegation(5) });
+			const newer = await service.issueTrustMark(subject, type, { renewal: "renew" });
+			now = 1006;
+			t.equal(await service.getTrustMark(subject, type), older);
+			t.deepEqual(await service.listTrustMarkedEntities(type), [subject]);
+			const status = decodeEntityStatement((await service.statusResponse(newer))!);
+			t.true(status.ok);
+			if (status.ok) t.equal(status.value.payload.status, "invalid");
+			now = 1100;
+			t.deepEqual(await service.listTrustMarkedEntities(type), []);
+		});
+		test("failed signer, status hooks and unregistered profile cannot create valid records", async (t) => {
+			const key = await generateSigningKey("ES256"),
+				wrong = await generateSigningKey("ES256");
+			const storage = new CorePublic.MemoryTrustMarkStore(),
+				issuer = "https://issuer.example",
+				subject = "https://holder.example";
+			const base = {
+				issuer,
+				storage,
+				keyProvider: new CorePublic.StaticFederationKeyProvider({
+					signer: new JwkSigner(key.privateKey),
+					jwks: { keys: [key.publicKey] },
+				}),
+			};
+			const wrongSigner = new CorePublic.TrustMarkIssuerService({
+				...base,
+				trustMarkSigner: async () => new JwkSigner(wrong.privateKey),
+			});
+			await t.rejects(wrongSigner.issueTrustMark(subject, "type"));
+			t.equal((await storage.trustMarks.listCandidates({ issuer })).length, 0);
+			const profiles: CorePublic.TrustMarkProfile[] = [
+				{
+					typ: "example-mark+jwt",
+					trustMarkTypes: ["type"],
+					validateClaims: (claims: Readonly<Record<string, unknown>>) =>
+						claims.approved === true
+							? ok(undefined)
+							: err({ code: "invalid_request", description: "missing approval" }),
+				},
+			];
+			const service = new CorePublic.TrustMarkIssuerService({
+				...base,
+				options: { trustMarkProfiles: profiles },
+				trustMarkStatusPolicy: () => ({ status: "active" }),
+			});
+			await t.rejects(service.issueTrustMark(subject, "type", { typ: "unknown+jwt" }));
+			const jwt = await service.issueTrustMark(subject, "type", {
+				typ: "example-mark+jwt",
+				additionalClaims: { approved: true },
+			});
+			t.equal(await service.getTrustMark(subject, "type"), jwt);
+			await service.revokeTrustMark("type", subject);
+			await t.rejects(service.statusResponse(jwt), /status policy/);
+			t.strictEqual(await service.statusResponse("unknown.jwt.value"), undefined);
 		});
 	});
 	module("core / Trust Mark evidence workflows", () => {
