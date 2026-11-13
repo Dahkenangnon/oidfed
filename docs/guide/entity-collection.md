@@ -208,7 +208,9 @@ const result = await fetchEntityCollection(
 );
 ```
 
-Use `method: "POST"` for anonymous POST. Supplying `clientAssertion` selects authenticated POST and puts credentials in the body.
+Use `method: "POST"` for anonymous POST. The shared `authentication` option generates a `private_key_jwt` assertion or invokes your custom authentication method. A caller-created `clientAssertion` remains supported; choose one authentication input, not both. Authenticated requests always use form POST.
+
+Set `endpoint` on the service when its URL includes fixed protocol selectors. These selectors apply to GET and POST alike. For `entity_type`, `trust_mark_type`, `entity_claims`, `info_claims`, and `locale`, matching sets are accepted regardless of value order or identical repetitions. Different sets return `invalid_request`, and arbitrary protocol selectors in a POST query string are rejected. Unrelated fixed routing parameters remain in the URL.
 
 Malformed JSON or schema-invalid successful responses return `ERR_INVALID_RESPONSE`; the client rejects the page as a whole. Transport failures retain their transport error codes.
 
@@ -228,3 +230,57 @@ oidfed collection https://directory.example/collect \
 ```
 
 You can repeat `--trust-mark-type`, `--entity-claims`, `--info-claims`, and `--locale`. Use `--from` for the next page, `--post` for anonymous POST, or `--client-assertion-file` for authenticated POST. The endpoint can belong to an independent provider. The command does not require Entity Configuration discovery.
+
+When traversal uses client authentication, `authentication.audience` must match the authority whose Listing endpoint is being called. The collector checks this before preparing credentials or sending that request. The endpoint can be hosted on a different origin; its origin does not replace the authority's Entity Identifier.
+
+### Credentials for each authority
+
+A collection crawl can visit several authorities, each accepting a different credential. Supply `options.getEndpointAuthentication` on the service or refresh operation to choose credentials for each request. Static `options.authentication` remains useful when every authenticated request targets the same entity.
+
+For example, **ResearchHub** can use its Federation Entity Key at **Campus Alliance**, then a different registered credential at **Harbor University**. Keep a configured list of the endpoints allowed to receive each credential:
+
+```ts
+import type { EndpointClientAuthentication, FederationOptions, JwtSigner } from "@oidfed/core";
+
+export function directoryAccess(campusSigner: JwtSigner, harborSigner: JwtSigner): FederationOptions {
+  const credentialsByEndpoint = new Map<string, EndpointClientAuthentication>();
+  for (const authority of [
+    {
+      entityId: "https://campus.example",
+      directory: "https://directory.campus.example",
+      signer: campusSigner,
+    },
+    {
+      entityId: "https://harbor.example",
+      directory: "https://directory.harbor.example",
+      signer: harborSigner,
+    },
+  ]) {
+    const authentication: EndpointClientAuthentication = {
+      method: "private_key_jwt",
+      clientId: "https://researchhub.example",
+      audience: authority.entityId,
+      signer: authority.signer,
+    };
+    credentialsByEndpoint.set(`${authority.directory}/list`, authentication);
+    credentialsByEndpoint.set(`${authority.directory}/fetch`, authentication);
+  }
+  const publicEndpoints = new Set(["https://public-directory.example/list"]);
+
+  return {
+    getEndpointAuthentication({ endpoint }) {
+      const authentication = credentialsByEndpoint.get(endpoint);
+      if (authentication) return authentication;
+      if (publicEndpoints.has(endpoint)) return undefined;
+      throw new Error("No access policy configured for this endpoint");
+    },
+  };
+}
+```
+
+
+Use the actual advertised endpoint URLs in this mapping, including any fixed query parameters. In this example, both signing keys are Federation Entity Keys of **ResearchHub**; each authority must accept the selected key under its authentication policy.
+
+Set each authentication object's `audience` to that authority's Entity Identifier. The collector supplies this identifier for Listing and Fetch requests, even when the endpoint lives on another origin. A mismatch fails before signing or preparing credentials. An async callback can load credentials from a host-managed store and receives the operation's `signal` for cancellation.
+
+Choose either static `authentication` or `getEndpointAuthentication`. Returning `undefined` requests anonymous access; a callback error stops the request rather than trying anonymously. Entity Configuration discovery always uses anonymous GET. Existing operation caches can reuse a response without asking for credentials again.

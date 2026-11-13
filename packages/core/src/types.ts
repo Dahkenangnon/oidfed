@@ -2,6 +2,7 @@
 import type { InternalErrorCode } from "./constants.js";
 import type {
 	EndpointAdditionalParameters,
+	EndpointAuthenticationProvider,
 	EndpointClientAuthentication,
 } from "./endpoint-client.js";
 import type { FederationError, Result } from "./errors.js";
@@ -83,6 +84,8 @@ export interface Logger {
 
 export interface FederationOptions {
 	authentication?: EndpointClientAuthentication;
+	/** Select authentication for each outgoing federation endpoint request. Mutually exclusive with authentication. */
+	getEndpointAuthentication?: EndpointAuthenticationProvider;
 	additionalParameters?: EndpointAdditionalParameters;
 	trustMarkVerification?: TrustMarkVerificationOptions;
 	trustMarkIssuerKeys?: ReadonlyMap<string, JWKSet>;

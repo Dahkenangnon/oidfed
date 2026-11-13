@@ -77,6 +77,8 @@ export {
 export type {
 	CustomEndpointClientAuthentication,
 	EndpointAdditionalParameters,
+	EndpointAuthenticationContext,
+	EndpointAuthenticationProvider,
 	EndpointClientAuthentication,
 	PrivateKeyJwtEndpointAuthentication,
 } from "./endpoint-client.js";

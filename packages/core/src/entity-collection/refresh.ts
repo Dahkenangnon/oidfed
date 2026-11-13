@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { DEFAULT_MAX_CHAIN_DEPTH, FederationErrorCode } from "../constants.js";
 import { err, ok, type Result } from "../errors.js";
-import { fetchListSubordinates } from "../federation-api/index.js";
+import { fetchListSubordinatesForIssuer } from "../federation-api/index.js";
 import { decodeEntityConfiguration } from "../jose/verify.js";
 import { splitInformationalClaim } from "../language-tags.js";
 import { safeLogger } from "./../logging.js";
@@ -198,7 +198,7 @@ export async function buildCollectionSnapshot(
 	};
 	const configurations = new Map<EntityId, ReturnType<typeof fetchEntityConfiguration>>();
 	const statements = new Map<string, ReturnType<typeof fetchSubordinateStatement>>();
-	const listings = new Map<string, ReturnType<typeof fetchListSubordinates>>();
+	const listings = new Map<string, ReturnType<typeof fetchListSubordinatesForIssuer>>();
 	function configuration(id: EntityId) {
 		let pending = configurations.get(id);
 		if (!pending) {
@@ -220,7 +220,7 @@ export async function buildCollectionSnapshot(
 		const key = JSON.stringify([issuer, endpoint]);
 		let pending = listings.get(key);
 		if (!pending) {
-			pending = fetchListSubordinates(endpoint, undefined, options);
+			pending = fetchListSubordinatesForIssuer(endpoint, issuer, options);
 			listings.set(key, pending);
 		}
 		return pending;

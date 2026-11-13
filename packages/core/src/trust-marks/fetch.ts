@@ -24,11 +24,36 @@ export interface FetchTrustMarkParams {
 	sub: EntityId;
 }
 
-/** Fetch a Trust Mark JWT from a federation Trust Mark endpoint. */
+/**
+ * Fetch a Trust Mark JWT; validate it before relying on it.
+ * Configure the endpoint and authentication together from trusted configuration or validated metadata.
+ * This standalone client uses authentication.audience without an independent responder identity;
+ * getEndpointAuthentication receives no responder. Authenticated requests use POST and never retry anonymously.
+ * TrustMarkHolder.fetchAndAttachTrustMark supplies its verified issuer identity for an additional audience check.
+ */
 export async function fetchTrustMark(
 	endpoint: string,
 	params: FetchTrustMarkParams,
 	options?: FederationOptions,
+): Promise<Result<string, FederationError>> {
+	return requestTrustMark(endpoint, params, options);
+}
+
+/** Internal holder entry point carrying the verified issuer identity. */
+export function fetchTrustMarkForIssuer(
+	endpoint: string,
+	params: FetchTrustMarkParams,
+	issuer: string,
+	options?: FederationOptions,
+): Promise<Result<string, FederationError>> {
+	return requestTrustMark(endpoint, params, options, issuer);
+}
+
+async function requestTrustMark(
+	endpoint: string,
+	params: FetchTrustMarkParams,
+	options?: FederationOptions,
+	issuer?: string,
 ): Promise<Result<string, FederationError>> {
 	safeLogger(options?.logger)?.debug("Starting fetch trust mark");
 
@@ -67,12 +92,17 @@ export async function fetchTrustMark(
 	}
 	const selectors = new URLSearchParams({ trust_mark_type: params.trustMarkType, sub: params.sub });
 
-	return fetchFederationEndpoint(parsed.toString(), selectors, {
-		...options,
-		expectedStatus: 200,
-		accept: MediaType.TrustMark,
-		expectedContentType: MediaType.TrustMark,
-	});
+	return fetchFederationEndpoint(
+		parsed.toString(),
+		selectors,
+		{
+			...options,
+			expectedStatus: 200,
+			accept: MediaType.TrustMark,
+			expectedContentType: MediaType.TrustMark,
+		},
+		issuer,
+	);
 }
 
 export interface FetchTrustMarkStatusOptions extends FederationOptions {

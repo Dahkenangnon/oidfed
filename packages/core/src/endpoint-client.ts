@@ -1,10 +1,14 @@
-import { FederationErrorCode, JWT_BEARER_CLIENT_ASSERTION_TYPE } from "./constants.js";
+import {
+	FederationErrorCode,
+	InternalErrorCode,
+	JWT_BEARER_CLIENT_ASSERTION_TYPE,
+} from "./constants.js";
 import { endpointParameterValuesMatch } from "./endpoint-parameters.js";
 import { err, type Result } from "./errors.js";
 import { signEntityStatement } from "./jose/sign.js";
 import type { JwtSigner } from "./jose/signer.js";
-import { type PerformFetchOptions, performFetch } from "./trust-chain/fetch.js";
-import { entityId, nowSeconds } from "./types.js";
+import { type PerformFetchOptions, performFetch, validateFetchUrl } from "./trust-chain/fetch.js";
+import { type EntityId, entityId, nowSeconds } from "./types.js";
 
 export interface PrivateKeyJwtEndpointAuthentication {
 	readonly method: "private_key_jwt";
@@ -30,6 +34,52 @@ export interface CustomEndpointClientAuthentication {
 export type EndpointClientAuthentication =
 	| PrivateKeyJwtEndpointAuthentication
 	| CustomEndpointClientAuthentication;
+/** Request context from traversal; standalone clients may not know the responder identity. */
+export interface EndpointAuthenticationContext {
+	readonly endpoint: string;
+	/** Entity Identifier from the calling operation, never inferred from the endpoint origin. */
+	readonly responder?: EntityId;
+	readonly signal?: AbortSignal;
+}
+/** Return undefined to request anonymous access. Failure never falls back to anonymous access. */
+export type EndpointAuthenticationProvider = (
+	context: Readonly<EndpointAuthenticationContext>,
+) => EndpointClientAuthentication | undefined | Promise<EndpointClientAuthentication | undefined>;
+
+/** Stop waiting on a host callback when its operation is cancelled; observe late rejections. */
+function selectAuthentication(
+	provider: EndpointAuthenticationProvider,
+	context: EndpointAuthenticationContext,
+): Promise<EndpointClientAuthentication | undefined> {
+	const signal = context.signal;
+	return new Promise((resolve, reject) => {
+		const abort = () => {
+			signal?.removeEventListener("abort", abort);
+			reject(new DOMException("Operation aborted", "AbortError"));
+		};
+		if (signal?.aborted) {
+			abort();
+			return;
+		}
+		signal?.addEventListener("abort", abort, { once: true });
+		Promise.resolve()
+			.then(() => {
+				if (signal?.aborted) throw new DOMException("Operation aborted", "AbortError");
+				return provider(Object.freeze(context));
+			})
+			.then(
+				(value) => {
+					signal?.removeEventListener("abort", abort);
+					resolve(value);
+				},
+				(cause) => {
+					signal?.removeEventListener("abort", abort);
+					reject(cause);
+				},
+			);
+	});
+}
+
 export type EndpointAdditionalParameters = Readonly<Record<string, string | readonly string[]>>;
 const credentials = new Set([
 	"client_id",
@@ -81,7 +131,12 @@ export async function fetchFederationEndpoint(
 		const form = new URLSearchParams(selectors);
 		if ([...credentials].some((name) => url.searchParams.has(name) || form.has(name)))
 			throw new Error("Endpoint selectors cannot contain credentials");
-		if (options.authentication !== undefined && options.clientAssertion !== undefined)
+		if (options.authentication !== undefined && options.getEndpointAuthentication !== undefined)
+			throw new Error("Static and selected authentication cannot be combined");
+		if (
+			(options.authentication !== undefined || options.getEndpointAuthentication !== undefined) &&
+			options.clientAssertion !== undefined
+		)
 			throw new Error("Authentication and clientAssertion cannot be combined");
 		for (const [name, value] of Object.entries(options.additionalParameters ?? {})) {
 			if (reserved.has(name) || form.has(name) || url.searchParams.has(name))
@@ -101,7 +156,23 @@ export async function fetchFederationEndpoint(
 			form.delete(name);
 			for (const value of fixed) form.append(name, value);
 		}
-		const auth = options.authentication;
+		if (options.signal?.aborted) throw new DOMException("Operation aborted", "AbortError");
+		let auth = options.authentication;
+		if (options.getEndpointAuthentication !== undefined) {
+			if (typeof options.getEndpointAuthentication !== "function")
+				throw new Error("Invalid authentication provider");
+			if (options.offline) throw new Error("Offline operation cannot access the network");
+			const permitted = validateFetchUrl(url.href, options);
+			if (!permitted.ok) return permitted;
+			auth = await selectAuthentication(options.getEndpointAuthentication, {
+				endpoint: url.href,
+				...(expectedAudience !== undefined ? { responder: entityId(expectedAudience) } : {}),
+				...(options.signal ? { signal: options.signal } : {}),
+			});
+			if (auth !== undefined && (!auth || typeof auth !== "object" || Array.isArray(auth)))
+				throw new Error("Invalid authentication selection");
+			if (options.signal?.aborted) throw new DOMException("Operation aborted", "AbortError");
+		}
 		const headers = new Headers(options.headers);
 		if (auth) {
 			const audience = entityId(auth.audience);
@@ -178,6 +249,11 @@ export async function fetchFederationEndpoint(
 			redirect: options.redirect === "error" ? "error" : "manual",
 		});
 	} catch {
+		if (options.signal?.aborted)
+			return err({
+				code: InternalErrorCode.Timeout,
+				description: "Federation endpoint request was cancelled",
+			});
 		return err({
 			code: FederationErrorCode.InvalidRequest,
 			description: "Invalid federation endpoint request or authentication configuration",

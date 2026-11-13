@@ -8,7 +8,7 @@ import {
 	type ValidateTrustMarkWithIssuerOptions,
 	validateTrustMarkWithIssuer,
 } from "./evidence.js";
-import { fetchTrustMark } from "./fetch.js";
+import { fetchTrustMarkForIssuer } from "./fetch.js";
 import { trustMarkOperation } from "./operation.js";
 
 export interface AttachTrustMarkOptions
@@ -101,9 +101,10 @@ export class TrustMarkHolder {
 		if (!trusted.ok) throw new Error(trusted.error.description);
 		const endpoint = trusted.value.metadata?.federation_trust_mark_endpoint;
 		if (!endpoint) throw new Error("Issuer does not publish a Trust Mark endpoint");
-		const jwt = await fetchTrustMark(
+		const jwt = await fetchTrustMarkForIssuer(
 			endpoint,
 			{ trustMarkType: input.trustMarkType, sub: entityId(this.subject) },
+			trusted.value.issuer,
 			options,
 		);
 		if (!jwt.ok) throw new Error(jwt.error.description);

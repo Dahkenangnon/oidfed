@@ -384,6 +384,8 @@ Attach `WalletProviderRole`, `CredentialIssuerRole`, or `CredentialVerifierRole`
 
 Pass `endpointAuthentication: { methods: { [methodName]: implementation }, transportEvidence? }` and advertise the method in the endpoint's `*_auth_methods` metadata. The shared core verifier authenticates credentials before endpoint extensions run. `none` and `private_key_jwt` retain their built-in behavior; unsupported advertised methods fail at construction. See [core authentication](core.md#signing-hosting-and-authenticated-clients) for the callback contract. Collection uses the same verifier through `collection.authentication.extensions`.
 
+Outgoing federation requests use the shared `options.getEndpointAuthentication` callback when credentials differ by responder. This applies to Resolve discovery and Collection refresh as well as Trust Mark operations. It is separate from the server's `endpointAuthentication` configuration, which authenticates incoming callers. See [credentials for each authority](../guide/entity-collection.md#credentials-for-each-authority).
+
 ## Resolve results and their lifetime
 
 Resolve tries discovered candidate chains until one validates. A bad path does not hide a valid path to another requested anchor. Discovery and validation attempts share the request's fetch budget and cancellation signal.

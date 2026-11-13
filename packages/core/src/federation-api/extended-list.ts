@@ -88,7 +88,12 @@ function buildSelectors(
 	return ok(selectors);
 }
 
-/** Fetch the Extended Subordinate Listing endpoint and return the parsed response. */
+/**
+ * Fetch an Extended Subordinate Listing and return the parsed response.
+ * Configure the endpoint and authentication together from trusted configuration or validated metadata.
+ * This standalone client uses authentication.audience without an independent responder identity;
+ * getEndpointAuthentication receives no responder. Authenticated requests use POST and never retry anonymously.
+ */
 export async function fetchExtendedSubordinatesList(
 	endpoint: string,
 	params?: ExtendedListRequestParams,

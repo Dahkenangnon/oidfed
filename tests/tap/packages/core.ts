@@ -303,9 +303,638 @@ export default (QUnit: QUnit) => {
 			t.equal(handled, 3, "conflicts never reach the endpoint");
 			t.true(Object.isFrozen(c.LIST_UNORDERED_PARAMETERS));
 		});
+		test("known responders reject mismatched audiences before preparing credentials or fetching the endpoint", async (t) => {
+			const c = CorePublic,
+				issuer = c.entityId("https://issuer.example"),
+				subject = c.entityId("https://holder.example"),
+				type = "urn:example:mark";
+			const key = await c.generateSigningKey("ES256"),
+				signer = new c.JwkSigner(key.privateKey);
+			const clock = { now: () => 1000 };
+			const anchors = c.createTrustAnchorSet([
+				{ entityId: issuer, jwks: { keys: [key.publicKey] } },
+			]);
+			const ec = await c.signEntityStatement(
+				{
+					iss: issuer,
+					sub: issuer,
+					iat: 1000,
+					exp: 2000,
+					jwks: { keys: [key.publicKey] },
+					trust_mark_issuers: { [type]: [issuer] },
+					metadata: {
+						federation_entity: {
+							federation_fetch_endpoint: "https://transport.example/fetch",
+							federation_list_endpoint: "https://transport.example/list",
+							federation_trust_mark_endpoint: "https://transport.example/marks",
+						},
+					},
+				},
+				signer,
+			);
+			const mark = await c.signTrustMark({
+				issuer,
+				subject,
+				trustMarkType: type,
+				signer,
+				clock,
+				ttlSeconds: 100,
+			});
+			for (const operation of ["collection", "holder"] as const)
+				for (const method of ["custom", "private_key_jwt"] as const)
+					for (const matches of [false, true])
+						for (const selected of [false, true]) {
+							let prepared = 0,
+								signatures = 0,
+								requests = 0;
+							const audience = matches ? issuer : "https://wrong.example";
+							const authentication: CorePublic.EndpointClientAuthentication =
+								method === "custom"
+									? {
+											method: "example_auth",
+											audience,
+											prepare: () => {
+												prepared++;
+												return { parameters: { proof: "ok" } };
+											},
+										}
+									: {
+											method: "private_key_jwt",
+											audience,
+											clientId: subject,
+											signer: {
+												kid: signer.kid,
+												alg: signer.alg,
+												signJwt: (payload, header) => {
+													signatures++;
+													return signer.signJwt(payload, header);
+												},
+											},
+										};
+							const options: CorePublic.FederationOptions = {
+								clock,
+								...(selected
+									? {
+											getEndpointAuthentication: (
+												context: CorePublic.EndpointAuthenticationContext,
+											) => {
+												t.equal(context.responder, issuer);
+												t.true(Object.isFrozen(context));
+												return authentication;
+											},
+										}
+									: { authentication }),
+								httpClient: async (input, init) => {
+									if (String(input) === `${issuer}/.well-known/openid-federation`)
+										return new Response(ec, {
+											headers: { "content-type": MediaType.EntityStatement },
+										});
+									requests++;
+									t.equal(init?.method, "POST");
+									if (method === "private_key_jwt") {
+										const jwt = new URLSearchParams(String(init?.body)).get("client_assertion")!;
+										const decoded = c.decodeEntityStatement(jwt);
+										t.true(decoded.ok && decoded.value.payload.aud === issuer);
+									}
+									return operation === "collection"
+										? Response.json([])
+										: new Response(mark, { headers: { "content-type": MediaType.TrustMark } });
+								},
+							};
+							if (operation === "collection") {
+								const result = await buildCollectionSnapshot(issuer, {
+									trustAnchors: anchors,
+									options,
+								});
+								t.equal(result.ok, matches);
+								if (!result.ok) t.equal(result.error.code, FederationErrorCode.InvalidRequest);
+							} else {
+								const holder = new c.TrustMarkHolder(subject, [], async () => {});
+								const run = holder.fetchAndAttachTrustMark({
+									issuer,
+									trustMarkType: type,
+									trustAnchors: anchors,
+									options,
+								});
+								if (matches) {
+									await run;
+									t.equal(holder.getTrustMarks().length, 1);
+								} else {
+									await t.rejects(run, /audience/);
+									t.equal(holder.getTrustMarks().length, 0);
+								}
+							}
+							t.equal(requests, matches ? 1 : 0);
+							t.equal(prepared, matches && method === "custom" ? 1 : 0);
+							t.equal(signatures, matches && method === "private_key_jwt" ? 1 : 0);
+						}
+		});
+	});
+
+	module("core / per-responder authentication", () => {
+		test("collection traversal selects credentials per authority and can request an endpoint anonymously", async (t) => {
+			const c = CorePublic,
+				a = c.entityId("https://anchor.example"),
+				m = c.entityId("https://intermediate.example"),
+				leaf = c.entityId("https://member.example"),
+				client = c.entityId("https://crawler.example");
+			const ak = await c.generateSigningKey("ES256"),
+				mk = await c.generateSigningKey("ES256"),
+				lk = await c.generateSigningKey("ES256");
+			const ca = await c.generateSigningKey("ES256"),
+				cm = await c.generateSigningKey("ES256");
+			const clock = { now: () => 1000 };
+			const root = "https://directory.example/root",
+				middle = "https://directory.example/middle";
+			const sign = (payload: Record<string, unknown>, key: JWK) =>
+				c.signEntityStatement({ iat: 1000, exp: 2000, ...payload }, new c.JwkSigner(key));
+			const fed = (base: string) => ({
+				federation_entity: {
+					federation_fetch_endpoint: `${base}/fetch`,
+					federation_list_endpoint: `${base}/list`,
+				},
+			});
+			const docs = new Map([
+				[
+					`${a}/.well-known/openid-federation`,
+					await sign(
+						{ iss: a, sub: a, jwks: { keys: [ak.publicKey] }, metadata: fed(root) },
+						ak.privateKey,
+					),
+				],
+				[
+					`${m}/.well-known/openid-federation`,
+					await sign(
+						{
+							iss: m,
+							sub: m,
+							jwks: { keys: [mk.publicKey] },
+							metadata: fed(middle),
+							authority_hints: [a],
+						},
+						mk.privateKey,
+					),
+				],
+				[
+					`${leaf}/.well-known/openid-federation`,
+					await sign(
+						{
+							iss: leaf,
+							sub: leaf,
+							jwks: { keys: [lk.publicKey] },
+							metadata: { openid_provider: { issuer: leaf } },
+							authority_hints: [m],
+						},
+						lk.privateKey,
+					),
+				],
+			]);
+			const rootSS = await sign({ iss: a, sub: m, jwks: { keys: [mk.publicKey] } }, ak.privateKey);
+			const midSS = await sign(
+				{ iss: m, sub: leaf, jwks: { keys: [lk.publicKey] } },
+				mk.privateKey,
+			);
+			const anchors = c.createTrustAnchorSet([{ entityId: a, jwks: { keys: [ak.publicKey] } }]);
+			for (const customMiddle of [false, true]) {
+				const selections: [string, string | undefined][] = [];
+				const getEndpointAuthentication: CorePublic.EndpointAuthenticationProvider = async (
+					context,
+				) => {
+					t.true(Object.isFrozen(context));
+					t.ok(context.signal);
+					selections.push([context.endpoint, context.responder]);
+					await Promise.resolve();
+					if (context.endpoint === `${middle}/fetch`) return undefined;
+					if (context.responder === m && customMiddle)
+						return {
+							method: "example_auth",
+							audience: m,
+							prepare: () => ({ parameters: { proof: "middle-credential" } }),
+						};
+					t.ok(context.responder === a || context.responder === m);
+					return {
+						method: "private_key_jwt",
+						clientId: client,
+						audience: context.responder!,
+						signer: new c.JwkSigner(context.responder === a ? ca.privateKey : cm.privateKey),
+					};
+				};
+				let requests = 0;
+				const result = await buildCollectionSnapshot(a, {
+					trustAnchors: anchors,
+					options: {
+						clock,
+						getEndpointAuthentication,
+						httpClient: async (input, init) => {
+							requests++;
+							const url = new URL(String(input)),
+								ec = docs.get(url.href);
+							if (ec) {
+								t.equal(init?.method, "GET");
+								return new Response(ec, { headers: { "content-type": MediaType.EntityStatement } });
+							}
+							const base = url.pathname.startsWith("/root/") ? root : middle;
+							const responder = base === root ? a : m;
+							const anonymous = base === middle && url.pathname.endsWith("/fetch");
+							t.equal(init?.method, anonymous ? "GET" : "POST");
+							const params =
+								init?.method === "POST" ? new URLSearchParams(String(init.body)) : url.searchParams;
+							t.false(url.searchParams.has("client_assertion"));
+							if (anonymous) t.false(params.has("client_assertion"));
+							else if (customMiddle && responder === m)
+								t.equal(params.get("proof"), "middle-credential");
+							else {
+								const verified = await c.verifyClientAssertion(
+									params.get("client_assertion")!,
+									{ keys: [responder === a ? ca.publicKey : cm.publicKey] },
+									responder,
+									{ clock },
+								);
+								t.true(
+									verified.ok,
+									"assertion matches this responder and its selected signing key",
+								);
+							}
+							if (url.pathname.endsWith("/list"))
+								return Response.json([responder === a ? m : leaf]);
+							t.equal(params.get("sub"), responder === a ? m : leaf);
+							return new Response(responder === a ? rootSS : midSS, {
+								headers: { "content-type": MediaType.EntityStatement },
+							});
+						},
+					},
+				});
+				t.true(result.ok);
+				if (result.ok)
+					t.deepEqual(
+						result.value.entries.map((entry) => String(entry.entity.entity_id)).sort(),
+						[String(m), String(leaf)].sort(),
+					);
+				t.equal(requests, 7);
+				t.deepEqual(selections, [
+					[`${root}/list`, a],
+					[`${root}/fetch`, a],
+					[`${middle}/list`, m],
+					[`${middle}/fetch`, m],
+				]);
+			}
+		});
+		test("standalone clients do not infer a responder from an endpoint origin or a requested anchor", async (t) => {
+			const c = CorePublic,
+				anchor = c.entityId("https://anchor.example"),
+				subject = c.entityId("https://member.example"),
+				responder = "https://resolver.example";
+			let selected = 0;
+			const options: CorePublic.FederationOptions = {
+				getEndpointAuthentication: (context) => {
+					selected++;
+					t.strictEqual(context.responder, undefined);
+					t.equal(context.endpoint, "https://transport.example/resolve");
+					return {
+						method: "example_auth",
+						audience: responder,
+						prepare: (input) => {
+							t.equal(input.audience, responder);
+							return { parameters: { proof: "ok" } };
+						},
+					};
+				},
+				httpClient: async (_input, init) => {
+					t.equal(init?.method, "POST");
+					return new Response("jwt", { headers: { "content-type": MediaType.ResolveResponse } });
+				},
+			};
+			t.true(
+				(
+					await c.fetchResolveResponse(
+						"https://transport.example/resolve",
+						{ sub: subject, trustAnchor: anchor },
+						options,
+					)
+				).ok,
+			);
+			t.equal(selected, 1);
+			for (const call of [
+				(o: CorePublic.FederationOptions) =>
+					c.fetchListSubordinates("https://transport.example/list", undefined, o),
+				(o: CorePublic.FederationOptions) =>
+					c.fetchTrustMark(
+						"https://transport.example/marks",
+						{ sub: subject, trustMarkType: "type" },
+						o,
+					),
+			]) {
+				const result = await call({
+					getEndpointAuthentication: (context) => {
+						t.strictEqual(context.responder, undefined);
+						return undefined;
+					},
+					httpClient: async (input, init) => {
+						t.equal(init?.method, "GET");
+						return String(input).includes("/list")
+							? Response.json([])
+							: new Response("jwt", { headers: { "content-type": MediaType.TrustMark } });
+					},
+				});
+				t.true(result.ok);
+			}
+		});
+		test("invalid selections and conflicting authentication never reach preparation or transport", async (t) => {
+			const c = CorePublic,
+				issuer = c.entityId("https://issuer.example"),
+				sub = c.entityId("https://subject.example");
+			let prepared = 0,
+				requests = 0,
+				selections = 0;
+			const authentication = {
+				method: "example_auth",
+				audience: issuer,
+				prepare: () => {
+					prepared++;
+					return { parameters: { proof: "ok" } };
+				},
+			};
+			const providers: CorePublic.EndpointAuthenticationProvider[] = [
+				() => {
+					throw new Error("private callback detail");
+				},
+				async () => {
+					throw new Error("private callback detail");
+				},
+				(() => null) as unknown as CorePublic.EndpointAuthenticationProvider,
+				(() => false) as unknown as CorePublic.EndpointAuthenticationProvider,
+				() => ({ ...authentication, audience: "https://wrong.example" }),
+			];
+			for (const getEndpointAuthentication of providers) {
+				const result = await c.fetchSubordinateStatement("https://transport.example/fetch", sub, {
+					issuer,
+					getEndpointAuthentication,
+					httpClient: async () => {
+						requests++;
+						return new Response("jwt");
+					},
+				});
+				t.false(result.ok);
+				if (!result.ok) t.false(result.error.description.includes("private callback detail"));
+			}
+			const getEndpointAuthentication: CorePublic.EndpointAuthenticationProvider = () => {
+				selections++;
+				return authentication;
+			};
+			t.false(
+				(
+					await c.fetchSubordinateStatement("https://transport.example/fetch", sub, {
+						issuer,
+						authentication,
+						getEndpointAuthentication,
+					})
+				).ok,
+			);
+			t.false(
+				(
+					await c.fetchEntityCollection(
+						"https://transport.example/collection",
+						{},
+						{ getEndpointAuthentication, clientAssertion: "jwt" },
+					)
+				).ok,
+			);
+			t.false(
+				(
+					await c.fetchSubordinateStatement("https://transport.example/fetch", sub, {
+						issuer,
+						getEndpointAuthentication,
+						offline: true,
+					})
+				).ok,
+			);
+			t.false(
+				(
+					await c.fetchSubordinateStatement("https://127.0.0.1/fetch", sub, {
+						issuer,
+						getEndpointAuthentication,
+					})
+				).ok,
+			);
+			t.equal(selections, 0);
+			t.equal(prepared, 0);
+			t.equal(requests, 0);
+		});
+		test("cancellation settles a pending authentication selector and observes its late rejection", async (t) => {
+			const c = CorePublic,
+				issuer = c.entityId("https://issuer.example"),
+				sub = c.entityId("https://subject.example");
+			const controller = new AbortController();
+			let started!: () => void,
+				rejectSelection!: (cause: Error) => void,
+				requests = 0;
+			const ready = new Promise<void>((resolve) => {
+				started = resolve;
+			});
+			const pending = c.fetchSubordinateStatement("https://transport.example/fetch", sub, {
+				issuer,
+				signal: controller.signal,
+				getEndpointAuthentication: (context) => {
+					t.equal(context.signal, controller.signal);
+					started();
+					return new Promise((_resolve, reject) => {
+						rejectSelection = reject;
+					});
+				},
+				httpClient: async () => {
+					requests++;
+					return new Response("jwt");
+				},
+			});
+			await ready;
+			controller.abort();
+			const result = await pending;
+			t.false(result.ok);
+			if (!result.ok) t.equal(result.error.code, InternalErrorCode.Timeout);
+			rejectSelection(new Error("late private callback detail"));
+			await Promise.resolve();
+			t.equal(requests, 0);
+			t.false(
+				(
+					await c.fetchSubordinateStatement("https://transport.example/fetch", sub, {
+						issuer,
+						signal: AbortSignal.abort(),
+						getEndpointAuthentication: () => {
+							throw new Error("must not be called");
+						},
+					})
+				).ok,
+			);
+		});
+		test("concurrent requests select authentication independently without changing shared options", async (t) => {
+			const c = CorePublic,
+				a = c.entityId("https://a.example"),
+				b = c.entityId("https://b.example"),
+				sub = c.entityId("https://subject.example");
+			const audiences: string[] = [];
+			const options: CorePublic.FederationOptions = {
+				getEndpointAuthentication: async ({ responder }) => {
+					await Promise.resolve();
+					return {
+						method: "example_auth",
+						audience: responder!,
+						prepare: ({ audience }) => ({ parameters: { proof: audience } }),
+					};
+				},
+				httpClient: async (input, init) => {
+					const proof = new URLSearchParams(String(init?.body)).get("proof")!;
+					t.equal(proof, new URL(String(input)).origin);
+					audiences.push(proof);
+					return new Response("jwt", { headers: { "content-type": MediaType.EntityStatement } });
+				},
+			};
+			const results = await Promise.all(
+				[a, b].map((issuer) =>
+					c.fetchSubordinateStatement(`${issuer}/fetch`, sub, { ...options, issuer }),
+				),
+			);
+			t.true(results.every((result) => result.ok));
+			t.deepEqual(audiences.sort(), [a, b].sort());
+			t.strictEqual(options.authentication, undefined);
+		});
 	});
 
 	module("core / endpoint client authentication", () => {
+		test("standalone clients use the configured audience and never retry authentication failures anonymously", async (t) => {
+			const c = CorePublic,
+				endpoint = "https://directory.example/api",
+				responder = c.entityId("https://campus.example"),
+				clientId = c.entityId("https://researchhub.example"),
+				anchor = c.entityId("https://other-anchor.example");
+			const key = await c.generateSigningKey("ES256"),
+				signer = new c.JwkSigner(key.privateKey),
+				clock = { now: () => 1000 };
+			const clients: {
+				name: string;
+				media: string;
+				body: string;
+				selector: readonly [string, string];
+				call: (options: CorePublic.FederationOptions) => Promise<CorePublic.Result<unknown>>;
+			}[] = [
+				{
+					name: "list",
+					media: MediaType.Json,
+					body: "[]",
+					selector: ["entity_type", "openid_provider"],
+					call: (o) => c.fetchListSubordinates(endpoint, { entityType: "openid_provider" }, o),
+				},
+				{
+					name: "trust mark",
+					media: MediaType.TrustMark,
+					body: "jwt",
+					selector: ["trust_mark_type", "urn:example:mark"],
+					call: (o) =>
+						c.fetchTrustMark(endpoint, { sub: clientId, trustMarkType: "urn:example:mark" }, o),
+				},
+				{
+					name: "resolve",
+					media: MediaType.ResolveResponse,
+					body: "jwt",
+					selector: ["trust_anchor", anchor],
+					call: (o) => c.fetchResolveResponse(endpoint, { sub: clientId, trustAnchor: anchor }, o),
+				},
+				{
+					name: "extended list",
+					media: MediaType.Json,
+					body: '{"immediate_subordinate_entities":[]}',
+					selector: ["entity_type", "openid_provider"],
+					call: (o) =>
+						c.fetchExtendedSubordinatesList(endpoint, { entityType: "openid_provider" }, o),
+				},
+				{
+					name: "collection",
+					media: MediaType.Json,
+					body: '{"entities":[]}',
+					selector: ["trust_anchor", anchor],
+					call: (o) => c.fetchEntityCollection(endpoint, { trustAnchor: anchor }, o),
+				},
+			];
+			for (const client of clients) {
+				for (const selected of [false, true]) {
+					for (const outcome of ["success", "rejected", "signer failure"] as const) {
+						let requests = 0,
+							selections = 0,
+							signatures = 0;
+						const authentication: CorePublic.EndpointClientAuthentication = {
+							method: "private_key_jwt",
+							audience: responder,
+							clientId,
+							signer: {
+								kid: signer.kid,
+								alg: signer.alg,
+								signJwt: async (payload, header) => {
+									signatures++;
+									if (outcome === "signer failure")
+										throw new Error("Private signer failure details");
+									return signer.signJwt(payload, header);
+								},
+							},
+						};
+						const result = await client.call({
+							clock,
+							...(selected
+								? {
+										getEndpointAuthentication: async (
+											context: CorePublic.EndpointAuthenticationContext,
+										) => {
+											selections++;
+											t.strictEqual(context.responder, undefined, client.name);
+											t.equal(context.endpoint, endpoint);
+											return authentication;
+										},
+									}
+								: { authentication }),
+							httpClient: async (input, init) => {
+								requests++;
+								t.equal(init?.method, "POST", client.name);
+								t.false(new URL(String(input)).searchParams.has("client_assertion"));
+								const form = new URLSearchParams(String(init?.body));
+								t.equal(form.get(client.selector[0]), client.selector[1]);
+								const verified = await c.verifyClientAssertion(
+									form.get("client_assertion")!,
+									{ keys: [key.publicKey] },
+									responder,
+									{ clock },
+								);
+								t.true(verified.ok, `${client.name}: signature and configured audience verified`);
+								if (outcome === "rejected" && requests === 1)
+									return Response.json({ error: "invalid_client" }, { status: 401 });
+								return new Response(client.body, { headers: { "content-type": client.media } });
+							},
+						});
+						t.equal(result.ok, outcome === "success", `${client.name}: ${outcome}`);
+						t.equal(requests, outcome === "signer failure" ? 0 : 1, "no anonymous retry");
+						t.equal(signatures, 1);
+						t.equal(selections, selected ? 1 : 0);
+					}
+				}
+				for (const failure of ["selector", "custom preparation"] as const) {
+					let requests = 0;
+					const fail = async () => {
+						throw new Error("Private credential failure details");
+					};
+					const result = await client.call({
+						...(failure === "selector"
+							? { getEndpointAuthentication: fail }
+							: {
+									authentication: { method: "example_auth", audience: responder, prepare: fail },
+								}),
+						httpClient: async () => {
+							requests++;
+							return new Response(client.body, { headers: { "content-type": client.media } });
+						},
+					});
+					t.false(result.ok, `${client.name}: ${failure}`);
+					if (!result.ok) t.false(result.error.description.includes("Private credential"));
+					t.equal(requests, 0, "failed credential callbacks never become anonymous requests");
+				}
+			}
+		});
 		test("all endpoint clients compose anonymous, signed, and custom authenticated requests", async (t) => {
 			const c = CorePublic;
 			const f = await SubordinateEventsFixture.fixture();
@@ -1174,7 +1803,7 @@ export default (QUnit: QUnit) => {
 			);
 			let calls = 0;
 			const scoped = trustMarkOperation({
-				maxTotalFetches: 4,
+				maxTotalFetches: 6,
 				httpClient: async () => {
 					calls++;
 					return new Response("signed-history", {
@@ -1219,6 +1848,29 @@ export default (QUnit: QUnit) => {
 				).ok,
 			);
 			t.equal(calls, 3, "different extension selectors require their own response");
+			for (const auth of [authA, authB]) {
+				const getEndpointAuthentication: CorePublic.EndpointAuthenticationProvider = () => auth;
+				const results = await Promise.all(
+					[1, 2].map(() =>
+						fetchTrustMarkHistoricalResponse(`${issuer}/history`, issuer, {
+							...scoped,
+							getEndpointAuthentication,
+						}),
+					),
+				);
+				t.true(results.every((result) => result.ok));
+				t.false(
+					(
+						await fetchTrustMarkHistoricalResponse(`${issuer}/history`, issuer, {
+							...scoped,
+							getEndpointAuthentication,
+							authentication: auth,
+						})
+					).ok,
+					"a shared response cannot hide conflicting authentication inputs",
+				);
+			}
+			t.equal(calls, 5, "different selectors cannot share authenticated historical responses");
 		});
 		test("historical evidence shares one fetch within a chain but not across operations", async (t) => {
 			const old = await c.generateSigningKey("ES256"),

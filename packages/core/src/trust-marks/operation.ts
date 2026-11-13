@@ -1,14 +1,17 @@
 import { MemoryCache } from "../cache/index.js";
-import { MediaType } from "../constants.js";
+import { FederationErrorCode, MediaType } from "../constants.js";
 import { fetchFederationEndpoint } from "../endpoint-client.js";
-import type { Result } from "../errors.js";
+import { err, type Result } from "../errors.js";
 import type { PerformFetchOptions } from "../trust-chain/fetch.js";
 import type { FederationOptions, HttpClient } from "../types.js";
 
 const scopedClients = new WeakSet<HttpClient>();
 const historicalRequests = new WeakMap<
 	HttpClient,
-	Map<FederationOptions["authentication"], Map<string, Promise<Result<string>>>>
+	Map<
+		FederationOptions["authentication"] | FederationOptions["getEndpointAuthentication"],
+		Map<string, Promise<Result<string>>>
+	>
 >();
 /** One HTTP allowance shared by discovery, validation, and historical evidence. */
 export function trustMarkOperation<T extends FederationOptions>(options: T): T {
@@ -37,6 +40,13 @@ export function fetchTrustMarkHistoricalResponse(
 	issuer: string,
 	options: PerformFetchOptions,
 ): Promise<Result<string>> {
+	if (options.authentication !== undefined && options.getEndpointAuthentication !== undefined)
+		return Promise.resolve(
+			err({
+				code: FederationErrorCode.InvalidRequest,
+				description: "Static and selected authentication cannot be combined",
+			}),
+		);
 	const scoped = trustMarkOperation(options);
 	const client = scoped.httpClient;
 	if (!client) throw new Error("Trust Mark operation requires an HTTP client");
@@ -45,10 +55,11 @@ export function fetchTrustMarkHistoricalResponse(
 		requests = new Map();
 		historicalRequests.set(client, requests);
 	}
-	let authenticated = requests.get(scoped.authentication);
+	const authenticationScope = scoped.getEndpointAuthentication ?? scoped.authentication;
+	let authenticated = requests.get(authenticationScope);
 	if (!authenticated) {
 		authenticated = new Map();
-		requests.set(scoped.authentication, authenticated);
+		requests.set(authenticationScope, authenticated);
 	}
 	const key = JSON.stringify([
 		issuer,

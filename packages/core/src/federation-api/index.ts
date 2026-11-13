@@ -277,11 +277,35 @@ export interface ListSubordinatesFilter {
 	intermediate?: boolean;
 }
 
-/** Fetch the subordinate-listing endpoint of an authority and return the array of Entity Identifiers. */
+/**
+ * Fetch an authority's subordinate listing and return its Entity Identifiers.
+ * Configure the endpoint and authentication together from trusted configuration or validated metadata.
+ * This standalone client uses authentication.audience without an independent responder identity;
+ * getEndpointAuthentication receives no responder. Authenticated requests use POST and never retry anonymously.
+ * Collection traversal supplies its known authority identity for an additional audience check.
+ */
 export async function fetchListSubordinates(
 	listEndpoint: string,
 	filter?: ListSubordinatesFilter,
 	options?: FederationOptions,
+): Promise<Result<EntityId[], FederationError>> {
+	return requestListSubordinates(listEndpoint, filter, options);
+}
+
+/** Internal traversal entry point with an independently known endpoint owner. */
+export function fetchListSubordinatesForIssuer(
+	listEndpoint: string,
+	issuer: EntityId,
+	options?: FederationOptions,
+): Promise<Result<EntityId[], FederationError>> {
+	return requestListSubordinates(listEndpoint, undefined, options, issuer);
+}
+
+async function requestListSubordinates(
+	listEndpoint: string,
+	filter?: ListSubordinatesFilter,
+	options?: FederationOptions,
+	issuer?: EntityId,
 ): Promise<Result<EntityId[], FederationError>> {
 	safeLogger(options?.logger)?.debug("Starting fetch list subordinates");
 
@@ -321,7 +345,7 @@ export async function fetchListSubordinates(
 			federationErrors: true,
 			accept: MediaType.Json,
 		},
-		undefined,
+		issuer,
 		LIST_UNORDERED_PARAMETERS,
 	);
 	if (!result.ok) return result;
@@ -353,7 +377,12 @@ export interface ResolveRequestParams {
 	entityType?: EntityTypeIdentifier | EntityTypeIdentifier[];
 }
 
-/** Fetch a Resolve Response JWT from a remote resolver. The verifier checks Content-Type and typ. */
+/**
+ * Fetch a Resolve Response JWT; use verifyResolveResponse to authenticate the returned statement.
+ * Configure authentication.audience with the resolver's Entity Identifier. Neither the endpoint origin
+ * nor a requested Trust Anchor establishes that identity. getEndpointAuthentication receives no responder.
+ * Authenticated requests use POST and never retry anonymously after authentication failure.
+ */
 export async function fetchResolveResponse(
 	resolveEndpoint: string,
 	params: ResolveRequestParams,

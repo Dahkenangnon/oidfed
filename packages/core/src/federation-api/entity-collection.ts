@@ -20,7 +20,12 @@ export interface FetchEntityCollectionOptions extends FederationOptions {
 	infoClaims?: readonly string[];
 }
 
-/** Fetch informational collection data; no trust validation is implied. */
+/**
+ * Fetch informational collection data; no trust validation is implied.
+ * Configure authentication.audience with the collection provider's Entity Identifier. Neither the endpoint
+ * origin nor a requested Trust Anchor establishes that identity. getEndpointAuthentication receives no responder.
+ * Authenticated requests use POST and never retry anonymously after authentication failure.
+ */
 export async function fetchEntityCollection(
 	endpoint: string,
 	params: EntityCollectionRequestParams = {},

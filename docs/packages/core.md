@@ -631,7 +631,46 @@ export async function fetchHarborStatement(signer: JwtSigner) {
 }
 ```
 
-The assertion audience is the responder's Entity Identifier, which can differ from its endpoint origin. Keep `authentication.audience` as the audience input; no separate responder parameter is needed. Fetch and Events cross-check it against their existing issuer input when available. A mismatch stops the request before credentials are prepared or signed. Standalone Listing, Resolve, Collection, and Extended Listing clients use the audience you supply; a requested Trust Anchor is not necessarily the resolver or collection provider. The receiver checks that the assertion targets its own Entity Identifier. Setting this value does not by itself establish ownership of the endpoint. Collection and Events still accept a caller-created `clientAssertion`; its audience and signature remain the caller's responsibility and are checked by the receiving endpoint. Supplying both `clientAssertion` and `authentication` returns an error.
+The assertion audience is the responder's Entity Identifier, which can differ from its endpoint origin. Keep `authentication.audience` as the audience input; no separate responder parameter is needed. Fetch and Events cross-check it against their existing issuer input when available. Collection traversal also checks the authority identity before requesting its Listing endpoint, and `fetchAndAttachTrustMark()` checks the verified issuer before requesting its Trust Mark endpoint. A mismatch stops the request before credentials are prepared or signed. Standalone Listing, Resolve, Collection, and Extended Listing clients use the audience you supply; a requested Trust Anchor is not necessarily the resolver or collection provider. The receiver checks that the assertion targets its own Entity Identifier. Setting this value does not by itself establish ownership of the endpoint. Collection and Events still accept a caller-created `clientAssertion`; its audience and signature remain the caller's responsibility and are checked by the receiving endpoint. Supplying both `clientAssertion` and `authentication` returns an error.
+
+For a standalone client, keep the endpoint and its authentication in one application configuration. **ResearchHub** might have this entry for **Campus Alliance**, whose directory lives on another origin:
+
+```ts
+import {
+  fetchListSubordinates,
+  type EndpointClientAuthentication,
+  type JwtSigner,
+} from "@oidfed/core";
+
+export async function listCampusProviders(signer: JwtSigner) {
+  // Use trusted application configuration or validated federation metadata.
+  const campus = {
+    endpoint: "https://directory.campus.example/list",
+    authentication: {
+      method: "private_key_jwt",
+      clientId: "https://researchhub.example",
+      audience: "https://campus.example",
+      signer,
+    } satisfies EndpointClientAuthentication,
+  };
+
+  return fetchListSubordinates(
+    campus.endpoint,
+    { entityType: "openid_provider" },
+    { authentication: campus.authentication },
+  ); // Result: the host handles success or failure as usual.
+}
+```
+
+Here the host establishes the endpoint/identity pairing. The client signs the configured audience, and the receiving endpoint checks it against its own Entity Identifier. Supplying that audience does not independently verify the pairing. Standalone Trust Mark retrieval, Resolve, Extended Listing, and Collection follow the same rule. The client does not retry anonymously when signing, credential preparation, or endpoint authentication fails.
+
+For requests that visit several authorities, use `getEndpointAuthentication` instead of static `authentication`. The callback receives `{ endpoint, responder?, signal? }` and may return credentials synchronously or asynchronously. Returning `undefined` selects anonymous access; throwing or rejecting stops that request. It cannot be combined with `authentication` or a prebuilt `clientAssertion`.
+
+`responder` is supplied when the calling operation knows the Entity Identifier, including Collection traversal, Fetch, Events with an issuer input, and evidence-aware Trust Mark operations. Standalone clients without that context leave it undefined. The library never derives it from the endpoint origin or a requested Trust Anchor. Selected credentials go through the same audience check and POST composition as static credentials, before signing or preparing them.
+
+Use your own configured endpoint and entity allowlist when selecting credentials. The context identifies the request being made; it does not establish trust in an endpoint discovered through a remote graph. Check both values before releasing credentials. See the [Collection traversal example](../guide/entity-collection.md#credentials-for-each-authority).
+
+The callback runs when a federation endpoint request is prepared. Entity Configuration discovery remains anonymous GET and never calls it; cached responses and requests shared within an operation can avoid a new call. Cancelling `signal` stops waiting for a pending callback. Callback errors become a failed `Result` without exposing their text or retrying anonymously. The exported `EndpointAuthenticationProvider` and `EndpointAuthenticationContext` types describe this contract.
 
 Fixed endpoint selectors retain their meaning for GET and POST. For repeatable selectors defined by membership, such as `entity_type`, the same values in a different order or with identical repetitions agree with the fixed filter. The client preserves the advertised query and uses its value order in a matching POST body. Server routing and authentication wrappers accept the same equivalent filters from other clients. Different sets fail before sending a request. Scalar and unknown extension parameters keep their existing exact comparison rules. Additional parameters and authentication callbacks cannot replace protocol selectors or inject credentials into the URL. These six clients reject redirects and require HTTP `200`; generic `performFetch()` retains its configurable transport behavior. EC discovery stays an unauthenticated GET and also requires `200`. A missing EC or Subordinate Statement reported with HTTP `404` returns `not_found`.
 
