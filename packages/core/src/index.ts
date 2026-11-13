@@ -80,6 +80,13 @@ export type {
 	EndpointClientAuthentication,
 	PrivateKeyJwtEndpointAuthentication,
 } from "./endpoint-client.js";
+export {
+	COLLECTION_UNORDERED_PARAMETERS,
+	EXTENDED_LIST_UNORDERED_PARAMETERS,
+	endpointParameterValuesMatch,
+	LIST_UNORDERED_PARAMETERS,
+	RESOLVE_UNORDERED_PARAMETERS,
+} from "./endpoint-parameters.js";
 export * from "./entity-collection/index.js";
 // Errors & Result
 export {

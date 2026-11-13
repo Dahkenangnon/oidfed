@@ -7,6 +7,7 @@ export function createAuthenticatedHandler(
 	methods: string[] | undefined,
 	options?: {
 		nativeMethod?: "GET" | "POST" | undefined;
+		unorderedParameters?: readonly string[] | undefined;
 		allowedAlgorithms?: readonly string[] | undefined;
 	},
 ): (request: Request) => Promise<Response> {
@@ -23,6 +24,7 @@ export function createAuthenticatedHandler(
 			inner,
 			ctx.options,
 			options?.nativeMethod,
+			options?.unorderedParameters,
 		);
 	} catch (cause) {
 		throw new InvalidAuthorityConfig(

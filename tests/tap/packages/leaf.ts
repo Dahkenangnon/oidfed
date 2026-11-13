@@ -266,6 +266,33 @@ export default (QUnit: QUnit) => {
 				);
 			}
 		});
+
+		test("Trust Mark route selectors preserve exact extension ordering", async (t) => {
+			const { config } = await createLeafConfig();
+			const leaf = new Leaf({
+				...config,
+				metadata: {
+					federation_entity: {
+						federation_trust_mark_list_endpoint: `${config.entityId}/mark-list?extension=a&extension=b`,
+					},
+				},
+				trustMarkIssuer: { storage: new CorePublic.MemoryTrustMarkStore() },
+			});
+			const type = "urn:example:mark";
+			for (const [query, expected] of [
+				["extension=a&extension=b", 200],
+				["extension=b&extension=a", 404],
+				["extension=a&extension=b&extension=a", 404],
+			] as const) {
+				const response = await leaf.handleRequest(
+					new Request(
+						`${config.entityId}/mark-list?${query}&trust_mark_type=${encodeURIComponent(type)}`,
+					),
+				);
+				t.equal(response.status, expected);
+				await response.body?.cancel();
+			}
+		});
 		test("holder attachment is validated, detached, deduplicated and rolls back when publication fails", async (t) => {
 			const { config } = await createLeafConfig();
 			let fail = false;

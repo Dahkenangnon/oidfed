@@ -1159,6 +1159,79 @@ export default (QUnit: QUnit) => {
 			/overlapping/,
 		);
 	});
+
+	test("authority routes and authentication agree on repeated filters and route overlap", async (t) => {
+		const c = CorePublic,
+			{ ctx } = await createTestContext();
+		const config = {
+			entityId: ctx.entityId,
+			keyProvider: ctx.keyProvider,
+			storage: new MemoryStorageAdapter(),
+			endpointAuthentication: {
+				methods: {
+					example_auth: {
+						parameters: ["proof"],
+						authenticate: () => c.ok({ entityId: "https://client.example" }),
+					},
+				},
+			},
+			metadata: {
+				federation_entity: {
+					...ctx.metadata.federation_entity,
+					federation_list_endpoint: `${ctx.entityId}/filtered?entity_type=openid_provider&entity_type=openid_relying_party`,
+					federation_list_endpoint_auth_methods: ["none", "example_auth"],
+				},
+			},
+		};
+		const authority = new TrustAnchor(config);
+		for (const query of [
+			"entity_type=openid_relying_party&entity_type=openid_provider",
+			"entity_type=openid_provider&entity_type=openid_relying_party&entity_type=openid_provider",
+		]) {
+			for (const method of ["GET", "POST"]) {
+				const response = await authority.handleRequest(
+					new Request(
+						`${ctx.entityId}/filtered?${query}`,
+						method === "GET"
+							? {}
+							: {
+									method,
+									body: new URLSearchParams(
+										"entity_type=openid_relying_party&entity_type=openid_provider&proof=ok",
+									),
+								},
+					),
+				);
+				t.equal(response.status, 200);
+				await response.body?.cancel();
+			}
+		}
+		for (const [listQuery, otherQuery, overlaps] of [
+			["entity_type=a&entity_type=b", "entity_type=b&entity_type=a&entity_type=a", true],
+			["entity_type=a&entity_type=b", "entity_type=c", false],
+			["extension=a&extension=b", "extension=b&extension=a", false],
+		] as const) {
+			// Fetch uses exact matching; Listing uses membership. Check both route insertion orders.
+			for (const reverse of [false, true]) {
+				const metadata = {
+					federation_entity: {
+						...config.metadata.federation_entity,
+						federation_fetch_endpoint: `${ctx.entityId}/shared?${reverse ? listQuery : otherQuery}`,
+						federation_list_endpoint: `${ctx.entityId}/shared?${reverse ? otherQuery : listQuery}`,
+					},
+				};
+				if (overlaps) t.throws(() => new TrustAnchor({ ...config, metadata }), /overlapping/);
+				else {
+					const routed = new TrustAnchor({ ...config, metadata });
+					const response = await routed.handleRequest(
+						new Request(`${ctx.entityId}/shared?${reverse ? otherQuery : listQuery}`),
+					);
+					t.notEqual(response.status, 404);
+					await response.body?.cancel();
+				}
+			}
+		}
+	});
 	test("lifecycle annotations share the transaction and cannot forge event fields", async (t) => {
 		const { createSubordinateLifecycle } = await import(
 			"../../../packages/authority/src/subordinate-lifecycle.js"
@@ -10506,5 +10579,45 @@ export default (QUnit: QUnit) => {
 			now = 1100;
 			for (const jwt of tokens) t.equal(await status(jwt), "expired");
 		});
+	});
+
+	test("unsupported explicit timestamps do not disable time-filter recommendations", async (t) => {
+		const f = await SubordinateEventsFixture.fixture();
+		await f.authority.registerSubordinate(f.record);
+		const handler = createExtendedListHandler(
+			{
+				entityId: SubordinateEventsFixture.issuer,
+				keyProvider: f.keyProvider,
+				storage: f.storage,
+				metadata: {
+					federation_entity: {
+						federation_fetch_endpoint: `${SubordinateEventsFixture.issuer}/fetch`,
+						federation_list_endpoint: `${SubordinateEventsFixture.issuer}/list`,
+					},
+				},
+				options: { clock: f.clock },
+				clientKeyProvider: { getClientFederationJwks: async () => undefined },
+			},
+			{ supportAuditTimestamps: false, defaultClaims: [] },
+		);
+		for (const filter of ["updated_after=0", "updated_before=2000"]) {
+			const response = await handler(new Request(`${f.config.entityId}/list?${filter}`));
+			t.equal(response.status, 200);
+			const body = (await response.json()) as {
+				immediate_subordinate_entities: Record<string, unknown>[];
+			};
+			t.equal(body.immediate_subordinate_entities[0]?.registered, 1500);
+			const suppressed = await handler(
+				new Request(`${f.config.entityId}/list?${filter}&audit_timestamps=false`),
+			);
+			const omitted = (await suppressed.json()) as {
+				immediate_subordinate_entities: Record<string, unknown>[];
+			};
+			t.notOk(Object.hasOwn(omitted.immediate_subordinate_entities[0]!, "registered"));
+		}
+		t.equal(
+			(await handler(new Request(`${f.config.entityId}/list?audit_timestamps=true`))).status,
+			400,
+		);
 	});
 };

@@ -1,4 +1,5 @@
 import { FederationErrorCode } from "../constants.js";
+import { COLLECTION_UNORDERED_PARAMETERS } from "../endpoint-parameters.js";
 import { err, ok, type Result } from "../errors.js";
 import { splitInformationalClaim } from "../language-tags.js";
 import {
@@ -19,13 +20,7 @@ export const COLLECTION_PARAMETERS = {
 	info_claims: "infoClaims",
 	locale: "locale",
 } as const;
-const repeated = new Set([
-	"entity_type",
-	"trust_mark_type",
-	"entity_claims",
-	"info_claims",
-	"locale",
-]);
+const repeated: ReadonlySet<string> = new Set(COLLECTION_UNORDERED_PARAMETERS);
 
 export function parseCollectionParams(
 	form: URLSearchParams,

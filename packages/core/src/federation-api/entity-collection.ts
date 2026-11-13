@@ -1,5 +1,6 @@
 import { FederationErrorCode, InternalErrorCode, MediaType } from "../constants.js";
 import { fetchFederationEndpoint } from "../endpoint-client.js";
+import { COLLECTION_UNORDERED_PARAMETERS } from "../endpoint-parameters.js";
 import { serializeCollectionParams } from "../entity-collection/protocol.js";
 import { err, ok, type Result } from "../errors.js";
 import { safeLogger } from "./../logging.js";
@@ -56,13 +57,19 @@ export async function fetchEntityCollection(
 		});
 	const url = checked.value;
 	const form = serializeCollectionParams(parsed.data);
-	const result = await fetchFederationEndpoint(url.toString(), form, {
-		...options,
-		accept: MediaType.Json,
-		expectedStatus: 200,
-		federationErrors: true,
-		contentTypePolicy: "media-type",
-	});
+	const result = await fetchFederationEndpoint(
+		url.toString(),
+		form,
+		{
+			...options,
+			accept: MediaType.Json,
+			expectedStatus: 200,
+			federationErrors: true,
+			contentTypePolicy: "media-type",
+		},
+		undefined,
+		COLLECTION_UNORDERED_PARAMETERS,
+	);
 	if (!result.ok) return result;
 	try {
 		const response = createCollectionSchemas(options?.infoClaims).response.safeParse(

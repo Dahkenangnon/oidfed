@@ -5,6 +5,7 @@
  */
 import { FederationErrorCode, InternalErrorCode, MediaType } from "../constants.js";
 import { fetchFederationEndpoint } from "../endpoint-client.js";
+import { EXTENDED_LIST_UNORDERED_PARAMETERS } from "../endpoint-parameters.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
 import { safeLogger } from "./../logging.js";
 import {
@@ -97,14 +98,20 @@ export async function fetchExtendedSubordinatesList(
 
 	const selectors = buildSelectors(endpoint, params);
 	if (!selectors.ok) return selectors;
-	const result = await fetchFederationEndpoint(endpoint, selectors.value, {
-		...options,
-		method: "GET",
-		accept: MediaType.Json,
-		expectedStatus: 200,
-		contentTypePolicy: "exact",
-		federationErrors: [400, 401, 404],
-	});
+	const result = await fetchFederationEndpoint(
+		endpoint,
+		selectors.value,
+		{
+			...options,
+			method: "GET",
+			accept: MediaType.Json,
+			expectedStatus: 200,
+			contentTypePolicy: "exact",
+			federationErrors: [400, 401, 404],
+		},
+		undefined,
+		EXTENDED_LIST_UNORDERED_PARAMETERS,
+	);
 	if (!result.ok) {
 		const status = httpFailureStatus(result.error);
 		if (status === 404 && result.error.code !== FederationErrorCode.PageNotFound)

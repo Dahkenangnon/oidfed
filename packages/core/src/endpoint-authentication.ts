@@ -4,6 +4,7 @@ import {
 	FederationErrorCode,
 	JWT_BEARER_CLIENT_ASSERTION_TYPE,
 } from "./constants.js";
+import { endpointParameterValuesMatch } from "./endpoint-parameters.js";
 import { err, ok, type Result } from "./errors.js";
 import { errorResponse, readBodyWithLimit, requireMethods } from "./http.js";
 import { verifyClientAssertion } from "./jose/client-auth.js";
@@ -213,9 +214,20 @@ export function createEndpointAuthenticatedHandler(
 	inner: (request: Request) => Promise<Response>,
 	options?: FederationOptions,
 	nativeMethod: "GET" | "POST" = "GET",
+	unorderedParameters: readonly string[] = [],
 ): (request: Request) => Promise<Response> {
 	const captured = validateEndpointAuthentication(config);
 	const allowsNone = captured.methods.includes("none");
+	const credentials = new Set([
+		"client_id",
+		"client_secret",
+		"client_assertion",
+		"client_assertion_type",
+		...Object.values(captured.extensions?.methods ?? {}).flatMap(
+			(method) => method.parameters ?? [],
+		),
+	]);
+	const unordered = [...unorderedParameters].filter((name) => !credentials.has(name));
 	return async (request) => {
 		const methods = captured.methods.every((method) => method === "none")
 			? [nativeMethod]
@@ -253,10 +265,7 @@ export function createEndpointAuthenticatedHandler(
 				for (const name of new Set(posted.keys())) {
 					const values = posted.getAll(name),
 						fixed = query.getAll(name);
-					if (
-						query.has(name) &&
-						(fixed.length !== values.length || fixed.some((value, i) => value !== values[i]))
-					)
+					if (query.has(name) && !endpointParameterValuesMatch(name, fixed, values, unordered))
 						return errorResponse(
 							400,
 							"invalid_request",

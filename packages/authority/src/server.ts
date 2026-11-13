@@ -26,15 +26,20 @@ import type {
 	TrustMarkStatusResponsePayload,
 } from "@oidfed/core";
 import {
+	COLLECTION_UNORDERED_PARAMETERS,
 	decodeEntityStatement,
 	EntityCollectionService,
+	EXTENDED_LIST_UNORDERED_PARAMETERS,
+	endpointParameterValuesMatch,
 	err,
 	FederationEndpoint,
 	FederationErrorCode,
 	federationError,
 	isOk,
 	isValidEntityId,
+	LIST_UNORDERED_PARAMETERS,
 	ok,
+	RESOLVE_UNORDERED_PARAMETERS,
 	safeLogger,
 	signTrustMarkDelegation,
 	TrustMarkHolder,
@@ -419,9 +424,11 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 		handler: (req: Request) => Promise<Response>,
 		authMethods: string[] | undefined,
 		nativeMethod?: "GET" | "POST",
+		unorderedParameters?: readonly string[],
 	): (req: Request) => Promise<Response> {
 		return createAuthenticatedHandler(ctx, handler, authMethods, {
 			...(nativeMethod !== undefined ? { nativeMethod } : {}),
+			...(unorderedParameters ? { unorderedParameters } : {}),
 			...(meta.endpoint_auth_signing_alg_values_supported !== undefined
 				? { allowedAlgorithms: meta.endpoint_auth_signing_alg_values_supported }
 				: {}),
@@ -470,14 +477,24 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 		routeNames,
 		"federation_list_endpoint",
 		listEndpointPath,
-		withAuth(listHandler, meta.federation_list_endpoint_auth_methods),
+		withAuth(
+			listHandler,
+			meta.federation_list_endpoint_auth_methods,
+			undefined,
+			LIST_UNORDERED_PARAMETERS,
+		),
 	);
 	addOptionalAuthorityRoute(
 		routeMap,
 		routeNames,
 		"federation_extended_list_endpoint",
 		meta.federation_extended_list_endpoint,
-		withAuth(extendedListHandler, meta.federation_extended_list_endpoint_auth_methods),
+		withAuth(
+			extendedListHandler,
+			meta.federation_extended_list_endpoint_auth_methods,
+			undefined,
+			EXTENDED_LIST_UNORDERED_PARAMETERS,
+		),
 	);
 	addOptionalAuthorityRoute(
 		routeMap,
@@ -516,7 +533,12 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 		routeNames,
 		"federation_resolve_endpoint",
 		meta.federation_resolve_endpoint,
-		withAuth(resolveHandler, meta.federation_resolve_endpoint_auth_methods),
+		withAuth(
+			resolveHandler,
+			meta.federation_resolve_endpoint_auth_methods,
+			undefined,
+			RESOLVE_UNORDERED_PARAMETERS,
+		),
 	);
 
 	addOptionalAuthorityRoute(
@@ -560,7 +582,7 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 			const expected = new URL(`https://routing.invalid${route}`);
 			if (
 				expected.pathname === pathname &&
-				fixedQueryMatches(expected.searchParams, url.searchParams)
+				fixedQueryMatches(expected.searchParams, url.searchParams, routeNames.get(route))
 			)
 				return handler(sanitizedRequest);
 		}
@@ -873,16 +895,30 @@ function advertisedEndpointPath(endpointName: string, endpoint: unknown): string
 	return url.pathname + url.search;
 }
 
-function sameQueryValues(left: string[], right: string[]): boolean {
-	if (left.length !== right.length) return false;
-	const sortedRight = [...right].sort();
-	return [...left].sort().every((value, index) => value === sortedRight[index]);
+function unorderedEndpointParameters(endpointName: string | undefined): readonly string[] {
+	switch (endpointName) {
+		case "federation_list_endpoint":
+			return LIST_UNORDERED_PARAMETERS;
+		case "federation_extended_list_endpoint":
+			return EXTENDED_LIST_UNORDERED_PARAMETERS;
+		case "federation_resolve_endpoint":
+			return RESOLVE_UNORDERED_PARAMETERS;
+		case "federation_collection_endpoint":
+			return COLLECTION_UNORDERED_PARAMETERS;
+		default:
+			return [];
+	}
 }
 
-/** Fixed endpoint selectors are distinct from request parameters (Events §2.1). */
-function fixedQueryMatches(expected: URLSearchParams, actual: URLSearchParams): boolean {
+/** Match fixed selectors using the same semantics as the endpoint's request parameters. */
+function fixedQueryMatches(
+	expected: URLSearchParams,
+	actual: URLSearchParams,
+	endpointName: string | undefined,
+): boolean {
+	const unordered = unorderedEndpointParameters(endpointName);
 	return [...new Set(expected.keys())].every((name) =>
-		sameQueryValues(expected.getAll(name), actual.getAll(name)),
+		endpointParameterValuesMatch(name, expected.getAll(name), actual.getAll(name), unordered),
 	);
 }
 
@@ -901,7 +937,17 @@ function addAuthorityRoute(
 		const disjoint = [...new Set(incoming.searchParams.keys())].some(
 			(name) =>
 				existing.searchParams.has(name) &&
-				!sameQueryValues(incoming.searchParams.getAll(name), existing.searchParams.getAll(name)),
+				!endpointParameterValuesMatch(
+					name,
+					incoming.searchParams.getAll(name),
+					existing.searchParams.getAll(name),
+					// If either route uses membership, its accepted representations can overlap
+					// the other route's exact sequence. Otherwise both sequences must be identical.
+					[
+						...unorderedEndpointParameters(endpointName),
+						...unorderedEndpointParameters(existingEndpoint),
+					],
+				),
 		);
 		if (!disjoint)
 			throw new InvalidAuthorityConfig(

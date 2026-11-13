@@ -32,6 +32,7 @@ import {
 	checkMaxPathLength,
 	checkNamingConstraints,
 } from "../../../packages/core/src/constraints/index.js";
+import { fetchFederationEndpoint } from "../../../packages/core/src/endpoint-client.js";
 import { buildCollectionSnapshot } from "../../../packages/core/src/entity-collection/refresh.js";
 import {
 	err,
@@ -242,6 +243,67 @@ import { walletFederation, walletQuery } from "../fixtures/wallet.js";
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("core / endpoint request boundaries", () => {
+		test("direct POST selectors use membership while credentials and extensions remain exact", async (t) => {
+			const c = CorePublic;
+			const unordered = ["entity_type", "proof"];
+			let handled = 0;
+			const gate = c.createEndpointAuthenticatedHandler(
+				{
+					receiverEntityId: "https://authority.example",
+					methods: ["example_auth"],
+					extensions: {
+						methods: {
+							example_auth: {
+								parameters: ["proof"],
+								authenticate: () => c.ok({ entityId: "https://client.example" }),
+							},
+						},
+					},
+				},
+				async () => {
+					handled++;
+					return new Response("ok");
+				},
+				undefined,
+				"GET",
+				unordered,
+			);
+			unordered.length = 0;
+			for (const values of [
+				["a", "b"],
+				["b", "a"],
+				["a", "b", "a"],
+			]) {
+				const response = await gate(
+					new Request("https://authority.example/list?entity_type=a&entity_type=b", {
+						method: "POST",
+						body: new URLSearchParams([
+							["proof", "ok"],
+							...values.map((v): [string, string] => ["entity_type", v]),
+						]),
+					}),
+				);
+				t.equal(response.status, 200);
+			}
+			for (const [query, posted, expected] of [
+				["entity_type=a&entity_type=b", "entity_type=a&entity_type=c&proof=ok", 400],
+				["extension=a&extension=b", "extension=b&extension=a&proof=ok", 400],
+				["sub=a", "sub=b&proof=ok", 400],
+				["proof=a&proof=b", "proof=b&proof=a", 401],
+			] as const) {
+				const response = await gate(
+					new Request(`https://authority.example/list?${query}`, {
+						method: "POST",
+						body: new URLSearchParams(posted),
+					}),
+				);
+				t.equal(response.status, expected);
+			}
+			t.equal(handled, 3, "conflicts never reach the endpoint");
+			t.true(Object.isFrozen(c.LIST_UNORDERED_PARAMETERS));
+		});
+	});
 
 	module("core / endpoint client authentication", () => {
 		test("all endpoint clients compose anonymous, signed, and custom authenticated requests", async (t) => {
@@ -518,7 +580,233 @@ export default (QUnit: QUnit) => {
 				t.equal(signatures, 0, "issuer mismatch is rejected before signing");
 			}
 		});
-
+		test("fixed unordered selectors accept equivalent sets through authenticated endpoint handlers", async (t) => {
+			const c = CorePublic;
+			const f = await SubordinateEventsFixture.fixture();
+			const issuer = SubordinateEventsFixture.issuer;
+			const pairs = ["https://a.example", "https://b.example"];
+			type Call = (
+				url: string,
+				values: string[],
+				options: CorePublic.FederationOptions,
+			) => Promise<CorePublic.Result<unknown>>;
+			const clients: {
+				name: string;
+				call: Call;
+				body: string;
+				media: string;
+				values?: string[];
+			}[] = [
+				{
+					name: "entity_type",
+					call: (u, v, o) => c.fetchListSubordinates(u, { entityType: v }, o),
+					body: "[]",
+					media: MediaType.Json,
+				},
+				{
+					name: "entity_type",
+					call: (u, v, o) => c.fetchExtendedSubordinatesList(u, { entityType: v }, o),
+					body: '{"immediate_subordinate_entities":[]}',
+					media: MediaType.Json,
+				},
+				{
+					name: "trust_mark_type",
+					call: (u, v, o) => c.fetchExtendedSubordinatesList(u, { trustMarkType: v }, o),
+					body: '{"immediate_subordinate_entities":[]}',
+					media: MediaType.Json,
+				},
+				{
+					name: "trust_anchor",
+					call: (u, v, o) =>
+						c.fetchResolveResponse(u, { sub: issuer, trustAnchor: v.map(c.entityId) }, o),
+					body: "jwt",
+					media: MediaType.ResolveResponse,
+				},
+				{
+					name: "entity_type",
+					call: (u, v, o) =>
+						c.fetchResolveResponse(u, { sub: issuer, trustAnchor: issuer, entityType: v }, o),
+					body: "jwt",
+					media: MediaType.ResolveResponse,
+				},
+				...(
+					[
+						["entity_type", "entityType"],
+						["trust_mark_type", "trustMarkType"],
+						["entity_claims", "entityClaims"],
+						["info_claims", "infoClaims"],
+						["locale", "locale"],
+					] as const
+				).map(([name, key]) => ({
+					name,
+					call: ((u, v, o) => c.fetchEntityCollection(u, { [key]: v }, o)) as Call,
+					body: '{"entities":[]}',
+					media: MediaType.Json,
+					...(name === "locale" ? { values: ["en", "fr"] } : {}),
+				})),
+			];
+			for (const client of clients) {
+				const values = client.values ?? pairs;
+				const fixed = [values[0]!, values[1]!, values[0]!];
+				const query = new URLSearchParams(fixed.map((v) => [client.name, v] as [string, string]));
+				const url = `https://transport.example/api?${query}`;
+				let calls = 0;
+				const handler = c.createEndpointAuthenticatedHandler(
+					{
+						receiverEntityId: issuer,
+						methods: ["none", "private_key_jwt"],
+						replayStore: new c.MemoryReplayStore({ clock: f.clock }),
+						getClientFederationJwks: async () => ({ keys: [f.clientKey.publicKey] }),
+					},
+					async (request) => {
+						t.deepEqual(new URL(request.url).searchParams.getAll(client.name), fixed);
+						return new Response(client.body, { headers: { "content-type": client.media } });
+					},
+					{ clock: f.clock },
+				);
+				const base: CorePublic.FederationOptions = {
+					clock: f.clock,
+					httpClient: async (input, init) => {
+						calls++;
+						t.true(String(input).startsWith(url), "advertised query retains its representation");
+						if (init?.method === "POST") {
+							const form = new URLSearchParams(String(init.body));
+							t.deepEqual(form.getAll(client.name), fixed);
+							const assertion = c.decodeEntityStatement(form.get("client_assertion")!);
+							t.true(assertion.ok);
+							if (assertion.ok)
+								t.equal(
+									assertion.value.payload.aud,
+									issuer,
+									"audience is independent of transport origin",
+								);
+						}
+						return handler(new Request(String(input), init));
+					},
+				};
+				const authentication: CorePublic.EndpointClientAuthentication = {
+					method: "private_key_jwt",
+					audience: issuer,
+					clientId: SubordinateEventsFixture.subject,
+					signer: new c.JwkSigner(f.clientKey.privateKey),
+				};
+				for (const options of [base, { ...base, authentication }]) {
+					for (const supplied of [[...values].reverse(), [values[1]!, values[1]!, values[0]!]]) {
+						const result = await client.call(url, supplied, options);
+						t.true(result.ok, `${client.name}: reordered and repeated selections agree`);
+					}
+					const before = calls;
+					for (const supplied of [
+						[values[0]!],
+						[...values, client.name === "locale" ? "de" : "https://extra.example"],
+					])
+						t.false((await client.call(url, supplied, options)).ok);
+					t.equal(calls, before, "different sets fail before HTTP");
+				}
+			}
+		});
+		test("scalar and extension selectors keep exact comparison rules", async (t) => {
+			for (const name of ["sub", "extension", "constructor", "__proto__", "trust_mark_type"]) {
+				let calls = 0;
+				const endpoint = `https://transport.example/api?${new URLSearchParams([
+					[name, "a"],
+					[name, "b"],
+				])}`;
+				for (const values of [
+					["a", "b"],
+					["b", "a"],
+					["a", "b", "a"],
+				]) {
+					const result = await fetchFederationEndpoint(
+						endpoint,
+						new URLSearchParams(values.map((value) => [name, value] as [string, string])),
+						{
+							httpClient: async () => {
+								calls++;
+								return new Response("jwt", {
+									headers: { "content-type": MediaType.EntityStatement },
+								});
+							},
+						},
+					);
+					t.equal(result.ok, values.join() === "a,b");
+				}
+				t.equal(calls, 1, "unknown and scalar parameters do not gain set semantics");
+			}
+		});
+		test("Collection accepts equivalent fixed selector sets on direct GET and POST", async (t) => {
+			const c = CorePublic,
+				f = await EntityCollectionFixture.seed();
+			for (const [name, values] of [
+				["entity_type", ["openid_provider", "custom_type"]],
+				["trust_mark_type", ["urn:mark:a", "urn:mark:b"]],
+				["entity_claims", ["entity_types", "entity_infos"]],
+				["info_claims", ["display_name", "logo_uri"]],
+				["locale", ["en", "fr"]],
+			] as const) {
+				const fixed = new URLSearchParams(values.map((value) => [name, value] as [string, string]));
+				const endpoint = `https://collection.example/collect?${fixed}`;
+				const service = new c.EntityCollectionService({
+					trustAnchors: f.trustAnchors,
+					store: f.store,
+					endpoint,
+					options: { clock: f.clock },
+					responder: { entityId: EntityCollectionFixture.anchor, isTrustAnchor: true },
+				});
+				for (const method of ["GET", "POST"] as const) {
+					const baseline = await service.handleRequest(
+						new Request(endpoint, { method, ...(method === "POST" ? { body: fixed } : {}) }),
+					);
+					t.equal(baseline.status, 200, name);
+					const expected = await baseline.json();
+					for (const supplied of [
+						[values[1], values[0]],
+						[values[1], values[0], values[1]],
+					]) {
+						const form = new URLSearchParams(
+							supplied.map((value) => [name, value] as [string, string]),
+						);
+						const response = await service.handleRequest(
+							new Request(`https://collection.example/collect?${form}`, {
+								method,
+								...(method === "POST" ? { body: form } : {}),
+							}),
+						);
+						t.equal(response.status, 200, `${method}: ${name}`);
+						t.deepEqual(await response.json(), expected);
+					}
+					for (const supplied of [[values[0]], [...values, "extra"]]) {
+						const form = new URLSearchParams(
+							supplied.map((value) => [name, value] as [string, string]),
+						);
+						const response = await service.handleRequest(
+							new Request(`https://collection.example/collect?${form}`, {
+								method,
+								...(method === "POST" ? { body: form } : {}),
+							}),
+						);
+						t.equal(response.status, 400, "different set is still rejected");
+					}
+				}
+			}
+			const service = new c.EntityCollectionService({
+				trustAnchors: f.trustAnchors,
+				store: f.store,
+				endpoint: "https://collection.example/collect?limit=10",
+				options: { clock: f.clock },
+				responder: { entityId: EntityCollectionFixture.anchor, isTrustAnchor: true },
+			});
+			for (const method of ["GET", "POST"] as const) {
+				const form = new URLSearchParams("limit=10&limit=10");
+				const response = await service.handleRequest(
+					new Request(`https://collection.example/collect?${form}`, {
+						method,
+						...(method === "POST" ? { body: form } : {}),
+					}),
+				);
+				t.equal(response.status, 400, "duplicate scalar remains invalid");
+			}
+		});
 		test("chain discovery authenticates Fetch requests to an authority requiring private_key_jwt", async (t) => {
 			const c = CorePublic,
 				f = await SubordinateEventsFixture.fixture();
@@ -634,6 +922,55 @@ export default (QUnit: QUnit) => {
 				).ok,
 			);
 			t.equal(calls, 1);
+		});
+		test("Collection fixed selectors apply equally to GET and POST and cannot be overridden", async (t) => {
+			const c = CorePublic,
+				f = await EntityCollectionFixture.seed();
+			const endpoint = "https://collection.example/collect?tenant=academic&entity_type=custom_type";
+			const service = new c.EntityCollectionService({
+				trustAnchors: f.trustAnchors,
+				store: f.store,
+				endpoint,
+				options: { clock: f.clock },
+				responder: { entityId: EntityCollectionFixture.anchor, isTrustAnchor: true },
+			});
+			const httpClient: HttpClient = async (url, init) =>
+				service.handleRequest(new Request(String(url), init));
+			for (const method of ["GET", "POST"] as const) {
+				for (const params of [{}, { entityType: ["custom_type"] }]) {
+					const result = await c.fetchEntityCollection(endpoint, params, { method, httpClient });
+					t.true(result.ok);
+					if (result.ok)
+						t.deepEqual(
+							result.value.entities.map((e) => e.entity_id),
+							["https://b.example"],
+						);
+				}
+				t.false(
+					(
+						await c.fetchEntityCollection(
+							endpoint,
+							{ entityType: ["openid_provider"] },
+							{ method, httpClient },
+						)
+					).ok,
+				);
+			}
+			t.equal(
+				(await service.handleRequest(new Request(`${endpoint}&entity_type=openid_provider`)))
+					.status,
+				400,
+			);
+			for (const [url, body] of [
+				[endpoint, "entity_type=openid_provider"],
+				[`${endpoint}&locale=en`, ""],
+				[`${endpoint}&client_assertion=secret`, ""],
+			]) {
+				const response = await service.handleRequest(
+					new Request(url!, { method: "POST", body: new URLSearchParams(body) }),
+				);
+				t.equal(response.status, 400);
+			}
 		});
 	});
 

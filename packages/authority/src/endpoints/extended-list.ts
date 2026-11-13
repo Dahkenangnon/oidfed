@@ -31,7 +31,7 @@ export interface ExtendedListingConfig {
 	defaultPageSize?: number;
 	/** Whether to honour `updated_after` / `updated_before`. Defaults to true. */
 	supportTimeFilters?: boolean;
-	/** Whether to honour `audit_timestamps`. Defaults to true. */
+	/** Support explicit `audit_timestamps=true` requests. Time filters independently recommend timestamps. Defaults to true. */
 	supportAuditTimestamps?: boolean;
 	/**
 	 * Claims substituted per-entity when the client does NOT send the `claims`

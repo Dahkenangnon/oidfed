@@ -7,6 +7,7 @@ import {
 	MediaType,
 } from "../constants.js";
 import { fetchFederationEndpoint } from "../endpoint-client.js";
+import { LIST_UNORDERED_PARAMETERS, RESOLVE_UNORDERED_PARAMETERS } from "../endpoint-parameters.js";
 import { err, type FederationError, ok, type Result } from "../errors.js";
 import { verifyEntityStatement } from "../jose/verify.js";
 import { validateJwkSetUseRequirement } from "../jwks/use-requirement.js";
@@ -310,13 +311,19 @@ export async function fetchListSubordinates(
 		selectors.set("intermediate", filter.intermediate ? "true" : "false");
 	}
 
-	const result = await fetchFederationEndpoint(url.toString(), selectors, {
-		...(options ?? {}),
-		method: "GET",
-		expectedStatus: 200,
-		federationErrors: true,
-		accept: MediaType.Json,
-	});
+	const result = await fetchFederationEndpoint(
+		url.toString(),
+		selectors,
+		{
+			...(options ?? {}),
+			method: "GET",
+			expectedStatus: 200,
+			federationErrors: true,
+			accept: MediaType.Json,
+		},
+		undefined,
+		LIST_UNORDERED_PARAMETERS,
+	);
 	if (!result.ok) return result;
 
 	let parsed: unknown;
@@ -383,14 +390,20 @@ export async function fetchResolveResponse(
 		for (const t of types) selectors.append("entity_type", t);
 	}
 
-	return fetchFederationEndpoint(url.toString(), selectors, {
-		...(options ?? {}),
-		method: "GET",
-		expectedStatus: 200,
-		federationErrors: true,
-		accept: MediaType.ResolveResponse,
-		expectedContentType: MediaType.ResolveResponse,
-	});
+	return fetchFederationEndpoint(
+		url.toString(),
+		selectors,
+		{
+			...(options ?? {}),
+			method: "GET",
+			expectedStatus: 200,
+			federationErrors: true,
+			accept: MediaType.ResolveResponse,
+			expectedContentType: MediaType.ResolveResponse,
+		},
+		undefined,
+		RESOLVE_UNORDERED_PARAMETERS,
+	);
 }
 
 export { fetchExtendedSubordinatesList } from "./extended-list.js";

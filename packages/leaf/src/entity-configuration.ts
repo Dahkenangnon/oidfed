@@ -12,6 +12,7 @@ import {
 	type EntityId,
 	type EntityRole,
 	type EntityStatementMetadata,
+	endpointParameterValuesMatch,
 	entityId,
 	errorResponse,
 	type FederationKeyProvider,
@@ -273,10 +274,7 @@ export class Leaf {
 				for (const name of new Set(url.searchParams.keys())) {
 					const expected = url.searchParams.getAll(name),
 						actual = incoming.getAll(name);
-					if (
-						expected.length !== actual.length ||
-						expected.some((value, index) => value !== actual[index])
-					)
+					if (!endpointParameterValuesMatch(name, expected, actual, []))
 						return Promise.resolve(errorResponse(404, "not_found", "Unknown endpoint"));
 				}
 				return authenticated(request);
@@ -446,8 +444,7 @@ export class Leaf {
 		}
 
 		// Standard GET discovery (§9.1) is separate from the optional Collection authentication.
-		const basePath = new URL(this.entityId).pathname.replace(/\/$/, "");
-		const wellKnownPath = `${basePath}/.well-known/openid-federation`;
+		const wellKnownPath = `${new URL(this.entityId).pathname.replace(/\/$/, "")}/.well-known/openid-federation`;
 		if (pathname === wellKnownPath) {
 			const methodError = requireMethod(request, "GET");
 			if (methodError) return methodError;

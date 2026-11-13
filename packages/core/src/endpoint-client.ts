@@ -1,4 +1,5 @@
 import { FederationErrorCode, JWT_BEARER_CLIENT_ASSERTION_TYPE } from "./constants.js";
+import { endpointParameterValuesMatch } from "./endpoint-parameters.js";
 import { err, type Result } from "./errors.js";
 import { signEntityStatement } from "./jose/sign.js";
 import type { JwtSigner } from "./jose/signer.js";
@@ -66,6 +67,7 @@ export async function fetchFederationEndpoint(
 	selectors: URLSearchParams,
 	options: PerformFetchOptions & { readonly clientAssertion?: string },
 	expectedAudience?: string,
+	unorderedParameters: readonly string[] = [],
 ): Promise<Result<string>> {
 	try {
 		const url = new URL(endpoint);
@@ -93,8 +95,11 @@ export async function fetchFederationEndpoint(
 			if (!url.searchParams.has(name)) continue;
 			const fixed = url.searchParams.getAll(name),
 				supplied = form.getAll(name);
-			if (fixed.length !== supplied.length || fixed.some((v, i) => v !== supplied[i]))
+			if (!endpointParameterValuesMatch(name, fixed, supplied, unorderedParameters))
 				throw new Error("Parameters conflict with endpoint fixed query");
+			// Match the advertised query representation for authenticated POST wrappers too.
+			form.delete(name);
+			for (const value of fixed) form.append(name, value);
 		}
 		const auth = options.authentication;
 		const headers = new Headers(options.headers);

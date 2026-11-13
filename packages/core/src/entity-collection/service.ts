@@ -6,6 +6,10 @@ import {
 	FederationErrorCode,
 } from "../constants.js";
 import { validateEndpointAuthentication } from "../endpoint-authentication.js";
+import {
+	COLLECTION_UNORDERED_PARAMETERS,
+	endpointParameterValuesMatch,
+} from "../endpoint-parameters.js";
 import { err, ok, type Result } from "../errors.js";
 import { errorResponse, jsonResponse, parseContentTypeHeader, toPublicError } from "../http.js";
 import { readResponseBody } from "../http-response.js";
@@ -470,6 +474,22 @@ export class EntityCollectionService {
 					clearTimeout(timer);
 					request.signal.removeEventListener("abort", abort);
 				}
+				const fixed = new URLSearchParams(
+					this.config.endpoint ? new URL(this.config.endpoint).search : "",
+				);
+				for (const name of new Set(query.keys())) {
+					if (!Object.hasOwn(COLLECTION_PARAMETERS, name)) continue;
+					const values = query.getAll(name),
+						configured = fixed.getAll(name);
+					if (
+						!endpointParameterValuesMatch(name, configured, values, COLLECTION_UNORDERED_PARAMETERS)
+					)
+						return errorResponse(
+							400,
+							"invalid_request",
+							"POST query selectors must match the configured endpoint",
+						);
+				}
 			} else {
 				if (new URL(request.url).search.length > DEFAULT_MAX_REQUEST_BODY_BYTES)
 					return errorResponse(
@@ -478,6 +498,7 @@ export class EntityCollectionService {
 						"Collection query exceeds the request size limit",
 					);
 				form = new URL(request.url).searchParams;
+
 				if (this.config.endpoint)
 					for (const [key, value] of new URL(this.config.endpoint).searchParams) {
 						if (!Object.hasOwn(COLLECTION_PARAMETERS, key)) {
@@ -488,6 +509,29 @@ export class EntityCollectionService {
 							for (const item of remaining) form.append(key, item);
 						}
 					}
+			}
+			if (this.config.endpoint) {
+				const fixed = new URL(this.config.endpoint).searchParams;
+				for (const name of new Set(fixed.keys())) {
+					if (!Object.hasOwn(COLLECTION_PARAMETERS, name)) continue;
+					const configured = fixed.getAll(name),
+						supplied = form.getAll(name);
+					if (
+						form.has(name) &&
+						!endpointParameterValuesMatch(
+							name,
+							configured,
+							supplied,
+							COLLECTION_UNORDERED_PARAMETERS,
+						)
+					)
+						return errorResponse(
+							400,
+							"invalid_request",
+							"Request parameters conflict with endpoint fixed selectors",
+						);
+					if (!form.has(name)) for (const value of configured) form.append(name, value);
+				}
 			}
 			const authenticated = await authenticateCollectionRequest(
 				form,
