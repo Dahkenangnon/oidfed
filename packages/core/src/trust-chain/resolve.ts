@@ -416,7 +416,9 @@ export async function resolveTrustChains(
 							),
 						);
 					}
-					return;
+					// An anchor can also be an Intermediate in another federation (§4.1).
+					// Retain this candidate even if its superior paths fail or exhaust the budget.
+					if (!hintHints?.length) return;
 				}
 
 				await buildChains(

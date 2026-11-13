@@ -15669,6 +15669,7 @@ export default (QUnit: QUnit) => {
 					leafEc,
 					leafSs,
 					superiorKeys,
+					anchorKeys,
 					responses,
 					requests,
 					httpClient,
@@ -15715,10 +15716,145 @@ export default (QUnit: QUnit) => {
 				const discovery = await discoverEntity(f.leaf, f.anchors, { httpClient: f.httpClient });
 				t.true(discovery.ok);
 				if (discovery.ok) t.equal(discovery.value.trustChain.trustAnchorId, f.anchor);
-				t.false(
+				t.true(
 					f.requests.some((url) => url.startsWith(f.superior)),
-					"stops this path at the configured anchor",
+					"explores the superior without discarding the usable nearer chain",
 				);
+			});
+			test("a subordinate resolves to both configured ancestor anchors", async (t) => {
+				const f = await setup();
+				f.anchors.set(f.superior, { jwks: { keys: [f.superiorKeys.publicKey] } });
+				const options = { httpClient: f.httpClient };
+				const result = await resolveTrustChains(f.leaf, f.anchors, options);
+				t.deepEqual(
+					result.chains.map((chain) => chain.statements),
+					[
+						[f.leafEc, f.leafSs, f.anchorEc],
+						[f.leafEc, f.leafSs, f.anchorSs, f.superiorEc],
+					],
+				);
+				t.deepEqual(result.errors, []);
+				for (const chain of result.chains) {
+					const checked = await validateTrustChain(chain.statements, f.anchors, {
+						...options,
+						entityConfigurations: chain.entityConfigurations,
+					});
+					t.true(checked.valid);
+					t.equal(chain.entityConfigurations?.get(f.anchor), f.anchorEc);
+					const selected = await resolveTrustChainForAnchor(
+						f.leaf,
+						chain.trustAnchorId,
+						f.anchors,
+						options,
+					);
+					t.true(selected.ok);
+					if (selected.ok) t.deepEqual(selected.value, chain.statements);
+				}
+			});
+			test("a higher anchor remains reachable through an unconfigured intermediate", async (t) => {
+				const f = await setup(),
+					middle = entityId("https://middle.example.com");
+				const middleKeys = await generateSigningKey("ES256");
+				f.anchors.set(f.superior, { jwks: { keys: [f.superiorKeys.publicKey] } });
+				const metadata = (id: string) => ({
+					federation_entity: {
+						federation_fetch_endpoint: `${id}/fetch`,
+						federation_list_endpoint: `${id}/list`,
+					},
+				});
+				const anchorEc = await rs_signEC(f.anchor, f.anchorKeys.privateKey, {
+					authority_hints: [middle],
+					metadata: metadata(f.anchor),
+				});
+				const middleEc = await rs_signEC(middle, middleKeys.privateKey, {
+					authority_hints: [f.superior],
+					metadata: metadata(middle),
+				});
+				const middleSs = await rs_signSS(middle, f.anchor, middleKeys.privateKey, {
+					jwks: { keys: [f.anchorKeys.publicKey] },
+				});
+				const superiorSs = await rs_signSS(f.superior, middle, f.superiorKeys.privateKey, {
+					jwks: { keys: [middleKeys.publicKey] },
+				});
+				f.responses.set(`${f.anchor}${WELL_KNOWN_OPENID_FEDERATION}`, anchorEc);
+				f.responses.set(`${middle}${WELL_KNOWN_OPENID_FEDERATION}`, middleEc);
+				f.responses.set(`${middle}/fetch?sub=${encodeURIComponent(f.anchor)}`, middleSs);
+				f.responses.set(`${f.superior}/fetch?sub=${encodeURIComponent(middle)}`, superiorSs);
+				const result = await resolveTrustChains(f.leaf, f.anchors, { httpClient: f.httpClient });
+				t.deepEqual(
+					result.chains.map((chain) => chain.trustAnchorId),
+					[f.anchor, f.superior],
+				);
+				t.deepEqual(result.errors, []);
+				const higher = result.chains[1];
+				if (!higher) return;
+				t.deepEqual(higher.statements, [f.leafEc, f.leafSs, middleSs, superiorSs, f.superiorEc]);
+				t.true(
+					(
+						await validateTrustChain(higher.statements, f.anchors, {
+							httpClient: f.httpClient,
+							entityConfigurations: higher.entityConfigurations,
+						})
+					).valid,
+				);
+			});
+			test("stale nearer-anchor pins do not hide a chain authenticated by the higher anchor", async (t) => {
+				const f = await setup(),
+					stale = await generateSigningKey("ES256");
+				f.anchors.set(f.anchor, { jwks: { keys: [stale.publicKey] } });
+				f.anchors.set(f.superior, { jwks: { keys: [f.superiorKeys.publicKey] } });
+				const result = await discoverEntity(f.leaf, f.anchors, { httpClient: f.httpClient });
+				t.true(result.ok);
+				if (result.ok) t.equal(result.value.trustChain.trustAnchorId, f.superior);
+			});
+			test("superior failures, limits and loops retain completed subordinate chains", async (t) => {
+				for (const failure of [
+					"missing",
+					"fetch budget",
+					"depth",
+					"steps",
+					"cancelled",
+					"loop",
+				] as const) {
+					const f = await setup(),
+						controller = new AbortController();
+					f.anchors.set(f.superior, { jwks: { keys: [f.superiorKeys.publicKey] } });
+					if (failure === "missing")
+						f.responses.delete(`${f.superior}${WELL_KNOWN_OPENID_FEDERATION}`);
+					if (failure === "loop") {
+						const ec = await rs_signEC(f.superior, f.superiorKeys.privateKey, {
+							authority_hints: [f.anchor],
+							metadata: {
+								federation_entity: {
+									federation_fetch_endpoint: `${f.superior}/fetch`,
+									federation_list_endpoint: `${f.superior}/list`,
+								},
+							},
+						});
+						f.responses.set(`${f.superior}${WELL_KNOWN_OPENID_FEDERATION}`, ec);
+					}
+					const options: CorePublic.FederationOptions = {
+						signal: controller.signal,
+						...(failure === "fetch budget" ? { maxTotalFetches: 3 } : {}),
+						...(failure === "depth" ? { maxChainDepth: 1 } : {}),
+						...(failure === "steps" ? { maxResolutionSteps: 1 } : {}),
+						httpClient: async (input, init) => {
+							if (failure === "cancelled" && String(input).startsWith(f.superior))
+								controller.abort();
+							return f.httpClient(input, init);
+						},
+					};
+					const result = await resolveTrustChains(f.leaf, f.anchors, options);
+					t.deepEqual(result.chains[0]?.statements, [f.leafEc, f.leafSs, f.anchorEc], failure);
+					t.equal(result.chains.length, failure === "loop" ? 2 : 1);
+					t.ok(result.errors.length > 0 || result.incomplete);
+					if (["fetch budget", "depth", "steps", "cancelled"].includes(failure))
+						t.true(result.incomplete);
+					if (failure === "fetch budget") t.equal(f.requests.length, 3);
+					if (failure === "loop")
+						t.true(result.errors.some((error) => error.code === InternalErrorCode.LoopDetected));
+					t.equal(new Set(f.requests).size, f.requests.length, "no repeated transport fetches");
+				}
 			});
 			test("retains the direct candidate when the upward fetch budget runs out", async (t) => {
 				const f = await setup();

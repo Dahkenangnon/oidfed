@@ -216,7 +216,11 @@ Entity Statement and explicit-registration timestamps accept finite NumericDates
 
 A configured Trust Anchor can also have superiors, as described in [Federation §4.1](https://openid.net/specs/openid-federation-1_0.html#section-4.1). Its signed `authority_hints` declares those relationships; the configured anchor keys establish trust for your application. An anchor with superiors may also publish `trust_anchor_hints`. An anchor without superiors must omit both claims, and either array must be nonempty when present ([§3.1.2](https://openid.net/specs/openid-federation-1_0.html#section-3.1.2)).
 
-When the requested entity is a configured anchor, `resolveTrustChains()` includes its own Entity Configuration as a direct candidate and follows any authority hints for additional paths. Each candidate still needs validation against the configured keys. Errors or work limits on a superior path remain visible in `errors` and, when applicable, `incomplete`, even when a direct candidate is available.
+When the requested entity is a configured anchor, `resolveTrustChains()` includes its own Entity Configuration as a direct candidate. When traversal reaches a configured anchor from a subordinate, it likewise records that candidate and continues through any superior hints. For example, a university under a national anchor can produce a second chain to a regional anchor when both anchors are trusted. Unconfigured intermediates can connect those anchors; only the final anchor must belong to the configured trust set.
+
+The longer chain contains the linking Subordinate Statements; the national anchor's EC is supporting evidence, not an extra self-signed statement in its middle. Each candidate still needs validation against its selected anchor's keys. This lets `resolveTrustChainForAnchor()` select the higher anchor, including when the nearer anchor's pinned keys are stale but the higher chain validates independently.
+
+Following higher paths can require more requests. Existing fetch, depth, step, and cancellation limits still apply. Errors or work limits on a superior path remain visible in `errors` and, when applicable, `incomplete`; they do not discard completed candidates. The application decides whether an available validated chain is sufficient or it needs more complete discovery.
 
 ```ts
 import { resolveTrustChains, validateTrustChain, createTrustAnchorSet, entityId } from "@oidfed/core";
