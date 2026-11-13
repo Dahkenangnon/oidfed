@@ -2,6 +2,7 @@
 set -e
 ./node_modules/.bin/esbuild \
   --log-level=warning \
+  --tsconfig=tests/tap/tsconfig.json \
   --format=esm \
   --bundle \
   --minify \

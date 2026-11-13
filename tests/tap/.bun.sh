@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
 set -e
-bun run tests/tap/run-bun.ts
+bun run --tsconfig-override "$(pwd)/tests/tap/tsconfig.json" tests/tap/run-bun.ts

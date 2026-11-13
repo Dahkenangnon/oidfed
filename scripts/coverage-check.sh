@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 # Run the TAP Node suite under c8 to produce per-package coverage data.
-npx c8 tsx tests/tap/run-node.ts
+npx c8 tsx --tsconfig tests/tap/tsconfig.json tests/tap/run-node.ts
 
 # Enforce per-package thresholds against the collected data.
 # core, authority, leaf: 90 statements / 85 branches / 90 functions / 90 lines

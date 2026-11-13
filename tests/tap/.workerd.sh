@@ -5,6 +5,7 @@ COMPATIBILITY_DATE=$(node -p "new Date().toISOString().slice(0,10)")
 
 ./node_modules/.bin/esbuild \
   --log-level=warning \
+  --tsconfig=tests/tap/tsconfig.json \
   --format=esm \
   --bundle \
   --target=esnext \

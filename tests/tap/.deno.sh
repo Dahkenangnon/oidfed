@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
 set -e
-deno run --allow-read --allow-env --unstable-sloppy-imports tests/tap/run-deno.ts
+deno run --import-map=tests/tap/.deno-imports.json --allow-read --allow-env --unstable-sloppy-imports tests/tap/run-deno.ts

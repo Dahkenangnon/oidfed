@@ -120,7 +120,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
-      - run: pnpm exec tsx tests/tap/run-node.ts
+      - run: pnpm exec tsx --tsconfig tests/tap/tsconfig.json tests/tap/run-node.ts
 
   bun:
     name: Bun
