@@ -8,12 +8,13 @@ import { entityId, nowSeconds } from "./types.js";
 export interface PrivateKeyJwtEndpointAuthentication {
 	readonly method: "private_key_jwt";
 	readonly clientId: string;
+	/** Entity Identifier of the responder, which may differ from the endpoint origin (§8.8). */
 	readonly audience: string;
 	readonly signer: JwtSigner;
 }
 export interface CustomEndpointClientAuthentication {
 	readonly method: string;
-	/** Explicit responder identity for any credential audience binding. */
+	/** Responder Entity Identifier for credential audience binding; do not infer it from the URL origin. */
 	readonly audience: string;
 	readonly prepare: (input: Readonly<{ endpoint: string; audience: string }>) =>
 		| {
@@ -29,7 +30,27 @@ export type EndpointClientAuthentication =
 	| PrivateKeyJwtEndpointAuthentication
 	| CustomEndpointClientAuthentication;
 export type EndpointAdditionalParameters = Readonly<Record<string, string | readonly string[]>>;
+const credentials = new Set([
+	"client_id",
+	"client_assertion",
+	"client_assertion_type",
+	"client_secret",
+]);
 const reserved = new Set([
+	"entity_type",
+	"trust_anchor",
+	"trust_marked",
+	"intermediate",
+	"from",
+	"limit",
+	"updated_after",
+	"updated_before",
+	"audit_timestamps",
+	"claims",
+	"query",
+	"entity_claims",
+	"info_claims",
+	"locale",
 	"trust_mark_type",
 	"sub",
 	"trust_mark",
@@ -43,7 +64,7 @@ const reserved = new Set([
 export async function fetchFederationEndpoint(
 	endpoint: string,
 	selectors: URLSearchParams,
-	options: PerformFetchOptions,
+	options: PerformFetchOptions & { readonly clientAssertion?: string },
 	expectedAudience?: string,
 ): Promise<Result<string>> {
 	try {
@@ -56,8 +77,12 @@ export async function fetchFederationEndpoint(
 		if (url.href.includes("#") || url.username || url.password)
 			throw new Error("Invalid endpoint URL");
 		const form = new URLSearchParams(selectors);
+		if ([...credentials].some((name) => url.searchParams.has(name) || form.has(name)))
+			throw new Error("Endpoint selectors cannot contain credentials");
+		if (options.authentication !== undefined && options.clientAssertion !== undefined)
+			throw new Error("Authentication and clientAssertion cannot be combined");
 		for (const [name, value] of Object.entries(options.additionalParameters ?? {})) {
-			if (reserved.has(name))
+			if (reserved.has(name) || form.has(name) || url.searchParams.has(name))
 				throw new Error("Additional parameters cannot replace protocol selectors or credentials");
 			const values = typeof value === "string" ? [value] : value;
 			if (!Array.isArray(values) || values.some((v) => typeof v !== "string"))
@@ -72,11 +97,14 @@ export async function fetchFederationEndpoint(
 				throw new Error("Parameters conflict with endpoint fixed query");
 		}
 		const auth = options.authentication;
-		const headers = new Headers();
+		const headers = new Headers(options.headers);
 		if (auth) {
 			const audience = entityId(auth.audience);
 			if (expectedAudience !== undefined && audience !== expectedAudience)
-				throw new Error("Authentication audience must match the responder Entity Identifier");
+				return err({
+					code: FederationErrorCode.InvalidRequest,
+					description: "Authentication audience must match the responder Entity Identifier",
+				});
 			if (auth.method === "private_key_jwt" && "signer" in auth) {
 				const clientId = entityId(auth.clientId),
 					now = nowSeconds(options.clock);
@@ -107,7 +135,7 @@ export async function fetchFederationEndpoint(
 					if (
 						form.has(name) ||
 						url.searchParams.has(name) ||
-						["trust_mark", "trust_mark_type", "sub"].includes(name) ||
+						(reserved.has(name) && !credentials.has(name)) ||
 						typeof value !== "string"
 					)
 						throw new Error("Authentication cannot override request selectors");
@@ -122,15 +150,16 @@ export async function fetchFederationEndpoint(
 					headers.set(name, value);
 				}
 			} else throw new Error("Unsupported client authentication");
-			// Never send credentials already embedded in an advertised endpoint query.
-			if (
-				["client_assertion", "client_assertion_type", "client_secret"].some((name) =>
-					url.searchParams.has(name),
-				)
-			)
-				throw new Error("Endpoint query contains credentials");
 		}
-		const method = auth ? "POST" : (options.method ?? "GET");
+		if (options.clientAssertion !== undefined) {
+			if (typeof options.clientAssertion !== "string" || !options.clientAssertion)
+				throw new Error("Invalid client assertion");
+
+			form.set("client_assertion_type", JWT_BEARER_CLIENT_ASSERTION_TYPE);
+			form.set("client_assertion", options.clientAssertion);
+		}
+		const method =
+			auth || options.clientAssertion !== undefined ? "POST" : (options.method ?? "GET");
 		if (method === "GET")
 			for (const name of new Set(form.keys()))
 				if (!url.searchParams.has(name))
@@ -140,7 +169,8 @@ export async function fetchFederationEndpoint(
 			method,
 			...(method === "POST" ? { body: form } : {}),
 			headers,
-			redirect: "error",
+			// Manual redirects also work in runtimes that do not support redirect: "error".
+			redirect: options.redirect === "error" ? "error" : "manual",
 		});
 	} catch {
 		return err({

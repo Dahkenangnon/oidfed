@@ -43,7 +43,7 @@ const topology = {
 
 describe("Subordinate Events over HTTPS", () => {
 	const bed = useFederation(topology);
-	it("blocks redirect destinations and assertion forwarding without changing legacy GET redirects", async () => {
+	it("blocks redirect destinations and assertion forwarding across endpoint clients", async () => {
 		const { entities, server } = bed();
 		const authority = getAuthorityEntity(entities, "https://ta.ofed.test");
 		const issuer = entityId(`https://ta.ofed.test:${server.port}`);
@@ -124,14 +124,21 @@ describe("Subordinate Events over HTTPS", () => {
 				}
 			}
 			const listing = await fetchExtendedSubordinatesList(`${redirectOrigin}/legacy-list`);
-			expect(listing.ok, listing.ok ? "verified listing" : listing.error.description).toBe(true);
-			if (listing.ok)
-				expect(listing.value.immediate_subordinate_entities).toEqual([{ id: subject }]);
+			expect(listing).toMatchObject({
+				ok: false,
+				error: {
+					code: InternalErrorCode.Network,
+					description: expect.stringContaining("HTTP 307"),
+				},
+			});
 			const statement = await fetchSubordinateStatement(`${redirectOrigin}/legacy-fetch`, subject);
-			expect(statement.ok, statement.ok ? "fetched statement" : statement.error.description).toBe(
-				true,
-			);
-			if (statement.ok) expect(statement.value.split(".")).toHaveLength(3);
+			expect(statement).toMatchObject({
+				ok: false,
+				error: {
+					code: InternalErrorCode.Network,
+					description: expect.stringContaining("HTTP 308"),
+				},
+			});
 		} finally {
 			await new Promise<void>((resolve, reject) =>
 				httpTarget.close((error) => (error ? reject(error) : resolve())),

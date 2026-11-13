@@ -606,3 +606,33 @@ Entity Identifiers reject query and fragment delimiters, including empty trailin
 ### Remote protocol errors
 
 Federation clients preserve recognized error codes. An unfamiliar syntactically valid OAuth error produces `ERR_REMOTE_RESPONSE`, with the responder's explanation in `description` and its code and HTTP status in `remoteError`. Treat those fields as remote input. Server-side public-error conversion maps this internal classification to a generic server error. [Entity Collection §3.4.2](https://openid.net/specs/openid-federation-entity-collection-1_0-01.html#section-3.4.2) permits OAuth registry errors beyond the draft's named codes.
+
+## Authenticated federation endpoint requests
+
+Pass `authentication` in the client options for Fetch, Listing, Extended Listing, Resolve, Entity Collection, or Subordinate Events. The client sends `private_key_jwt` or your configured authentication method in a form POST. Without authentication, these clients use GET; Collection also accepts an explicit `method: "POST"` for anonymous requests.
+
+```ts
+import { entityId, fetchSubordinateStatement, type JwtSigner } from "@oidfed/core";
+
+export async function fetchHarborStatement(signer: JwtSigner) {
+  return fetchSubordinateStatement(
+    "https://directory.campus.example/fetch?tenant=academic",
+    entityId("https://harbor.example"),
+    {
+      issuer: entityId("https://campus.example"),
+      authentication: {
+        method: "private_key_jwt",
+        clientId: "https://researchhub.example",
+        audience: "https://campus.example",
+        signer,
+      },
+    },
+  );
+}
+```
+
+The assertion audience is the responder's Entity Identifier, which can differ from its endpoint origin. Keep `authentication.audience` as the audience input; no separate responder parameter is needed. Fetch and Events cross-check it against their existing issuer input when available. A mismatch stops the request before credentials are prepared or signed. Standalone Listing, Resolve, Collection, and Extended Listing clients use the audience you supply; a requested Trust Anchor is not necessarily the resolver or collection provider. The receiver checks that the assertion targets its own Entity Identifier. Setting this value does not by itself establish ownership of the endpoint. Collection and Events still accept a caller-created `clientAssertion`; its audience and signature remain the caller's responsibility and are checked by the receiving endpoint. Supplying both `clientAssertion` and `authentication` returns an error.
+
+Fixed endpoint query parameters must agree with supplied selectors. Additional parameters and authentication callbacks cannot replace protocol selectors or inject credentials into the URL. These six clients reject redirects and require HTTP `200`; generic `performFetch()` retains its configurable transport behavior. EC discovery stays an unauthenticated GET and also requires `200`. A missing EC or Subordinate Statement reported with HTTP `404` returns `not_found`.
+
+These request rules follow [Federation §§8.1–8.9](https://openid.net/specs/openid-federation-1_0.html#section-8) and [Entity Collection §3.3.1](https://openid.net/specs/openid-federation-entity-collection-1_0-01.html#section-3.3.1). Fetching an artifact still does not establish trust in it; use the corresponding verification API.

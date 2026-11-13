@@ -1,9 +1,5 @@
-import {
-	InternalErrorCode,
-	JWT_BEARER_CLIENT_ASSERTION_TYPE,
-	JwtTyp,
-	MediaType,
-} from "../constants.js";
+import { InternalErrorCode, JwtTyp, MediaType } from "../constants.js";
+import { fetchFederationEndpoint } from "../endpoint-client.js";
 import { err, type FederationError, ok, type Result } from "../errors.js";
 import { verifyEntityStatement } from "../jose/verify.js";
 import { safeLogger } from "./../logging.js";
@@ -12,7 +8,7 @@ import {
 	type SubordinateEventsResponse,
 	SubordinateEventsResponseSchema,
 } from "../schemas/subordinate-events.js";
-import { performFetch, validateFetchUrl } from "../trust-chain/fetch.js";
+import { validateFetchUrl } from "../trust-chain/fetch.js";
 import { type EntityId, type FederationOptions, isValidEntityId } from "../types.js";
 
 export interface VerifySubordinateEventsOptions {
@@ -81,22 +77,18 @@ export async function fetchSubordinateEvents(
 		});
 	}
 	const form = new URLSearchParams({ sub: subject });
-	if (options.clientAssertion !== undefined) {
-		form.set("client_assertion", options.clientAssertion);
-		form.set("client_assertion_type", JWT_BEARER_CLIENT_ASSERTION_TYPE);
-	} else {
-		url.searchParams.set("sub", subject);
-	}
-	const fetched = await performFetch(url.toString(), {
-		...options,
-		accept: MediaType.EntityEventsStatement,
-		expectedStatus: 200,
-		federationErrors: true,
-		// Manual redirects plus exact status checking prevent forwarding assertions.
-		// workerd supports "manual" but rejects Fetch's "error" redirect mode.
-		redirect: "manual",
-		...(options.clientAssertion !== undefined ? { method: "POST", body: form } : {}),
-	});
+	const fetched = await fetchFederationEndpoint(
+		url.toString(),
+		form,
+		{
+			...options,
+			method: "GET",
+			accept: MediaType.EntityEventsStatement,
+			expectedStatus: 200,
+			federationErrors: true,
+		},
+		options.issuer,
+	);
 	if (!fetched.ok) return fetched;
 	return verifySubordinateEventsResponse(fetched.value, options.issuerJwks, {
 		issuer: options.issuer,

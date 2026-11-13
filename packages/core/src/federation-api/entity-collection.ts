@@ -1,10 +1,6 @@
-import {
-	FederationErrorCode,
-	InternalErrorCode,
-	JWT_BEARER_CLIENT_ASSERTION_TYPE,
-	MediaType,
-} from "../constants.js";
-import { COLLECTION_PARAMETERS, serializeCollectionParams } from "../entity-collection/protocol.js";
+import { FederationErrorCode, InternalErrorCode, MediaType } from "../constants.js";
+import { fetchFederationEndpoint } from "../endpoint-client.js";
+import { serializeCollectionParams } from "../entity-collection/protocol.js";
 import { err, ok, type Result } from "../errors.js";
 import { safeLogger } from "./../logging.js";
 import {
@@ -13,7 +9,7 @@ import {
 	EntityCollectionRequestSchema,
 	type EntityCollectionResponse,
 } from "../schemas/entity-collection.js";
-import { performFetch, validateFetchUrl } from "../trust-chain/fetch.js";
+import { validateFetchUrl } from "../trust-chain/fetch.js";
 import type { FederationOptions } from "../types.js";
 
 export interface FetchEntityCollectionOptions extends FederationOptions {
@@ -60,25 +56,12 @@ export async function fetchEntityCollection(
 		});
 	const url = checked.value;
 	const form = serializeCollectionParams(parsed.data);
-	const method = options?.clientAssertion !== undefined ? "POST" : (options?.method ?? "GET");
-	if (options?.clientAssertion !== undefined) {
-		form.set("client_assertion", options.clientAssertion);
-		form.set("client_assertion_type", JWT_BEARER_CLIENT_ASSERTION_TYPE);
-	}
-	if (method === "GET") {
-		for (const name of Object.keys(COLLECTION_PARAMETERS))
-			if (form.has(name)) url.searchParams.delete(name);
-		for (const [name, value] of form) url.searchParams.append(name, value);
-	}
-	const result = await performFetch(url.toString(), {
+	const result = await fetchFederationEndpoint(url.toString(), form, {
 		...options,
-		method,
-		...(method === "POST" ? { body: form } : {}),
 		accept: MediaType.Json,
 		expectedStatus: 200,
 		federationErrors: true,
 		contentTypePolicy: "media-type",
-		redirect: "manual",
 	});
 	if (!result.ok) return result;
 	try {

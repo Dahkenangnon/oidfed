@@ -20,3 +20,9 @@ export function isAvailabilityFailure(error: FederationError): boolean {
 		(failure?.kind === "http" && [404, 410, 500, 502, 503, 504].includes(failure.status))
 	);
 }
+
+/** Internal transport classification; copied or unclassified errors have no HTTP status. */
+export function httpFailureStatus(error: FederationError): number | undefined {
+	const failure = failures.get(error);
+	return failure?.kind === "http" ? failure.status : undefined;
+}

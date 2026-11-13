@@ -6,6 +6,7 @@ import {
 	JwtTyp,
 	MediaType,
 } from "../constants.js";
+import { fetchFederationEndpoint } from "../endpoint-client.js";
 import { err, type FederationError, ok, type Result } from "../errors.js";
 import { verifyEntityStatement } from "../jose/verify.js";
 import { validateJwkSetUseRequirement } from "../jwks/use-requirement.js";
@@ -23,7 +24,6 @@ import {
 	TrustMarkStatusResponsePayloadSchema,
 } from "../schemas/entity-statement.js";
 import type { JWKSet } from "../schemas/jwk.js";
-import { performFetch } from "../trust-chain/fetch.js";
 import { type Clock, type EntityId, type FederationOptions, nowSeconds } from "../types.js";
 
 function apiError(description: string): FederationError {
@@ -295,22 +295,26 @@ export async function fetchListSubordinates(
 		});
 	}
 
+	const selectors = new URLSearchParams();
 	if (filter?.entityType !== undefined) {
 		const types = Array.isArray(filter.entityType) ? filter.entityType : [filter.entityType];
-		for (const t of types) url.searchParams.append("entity_type", t);
+		for (const t of types) selectors.append("entity_type", t);
 	}
 	if (filter?.trustMarked !== undefined) {
-		url.searchParams.set("trust_marked", filter.trustMarked ? "true" : "false");
+		selectors.set("trust_marked", filter.trustMarked ? "true" : "false");
 	}
 	if (filter?.trustMarkType !== undefined) {
-		url.searchParams.set("trust_mark_type", filter.trustMarkType);
+		selectors.set("trust_mark_type", filter.trustMarkType);
 	}
 	if (filter?.intermediate !== undefined) {
-		url.searchParams.set("intermediate", filter.intermediate ? "true" : "false");
+		selectors.set("intermediate", filter.intermediate ? "true" : "false");
 	}
 
-	const result = await performFetch(url.toString(), {
+	const result = await fetchFederationEndpoint(url.toString(), selectors, {
 		...(options ?? {}),
+		method: "GET",
+		expectedStatus: 200,
+		federationErrors: true,
 		accept: MediaType.Json,
 	});
 	if (!result.ok) return result;
@@ -361,7 +365,7 @@ export async function fetchResolveResponse(
 		});
 	}
 
-	url.searchParams.set("sub", params.sub);
+	const selectors = new URLSearchParams({ sub: params.sub });
 
 	const trustAnchors = Array.isArray(params.trustAnchor)
 		? params.trustAnchor
@@ -372,15 +376,18 @@ export async function fetchResolveResponse(
 			description: "fetchResolveResponse requires at least one trustAnchor",
 		});
 	}
-	for (const ta of trustAnchors) url.searchParams.append("trust_anchor", ta);
+	for (const ta of trustAnchors) selectors.append("trust_anchor", ta);
 
 	if (params.entityType !== undefined) {
 		const types = Array.isArray(params.entityType) ? params.entityType : [params.entityType];
-		for (const t of types) url.searchParams.append("entity_type", t);
+		for (const t of types) selectors.append("entity_type", t);
 	}
 
-	return performFetch(url.toString(), {
+	return fetchFederationEndpoint(url.toString(), selectors, {
 		...(options ?? {}),
+		method: "GET",
+		expectedStatus: 200,
+		federationErrors: true,
 		accept: MediaType.ResolveResponse,
 		expectedContentType: MediaType.ResolveResponse,
 	});

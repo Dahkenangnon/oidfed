@@ -188,3 +188,9 @@ Choose whether to verify issuer trust through Federation anchors or explicit out
 Decide how quickly revocation must become visible. Status checks disclose the exact JWT to its issuer. Type-only listing avoids sending the subject, while a filtered listing is smaller and discloses it. Listing membership can survive replacement of an individual JWT. Short-lived marks are another choice in Federation §19.2. No API can erase evidence already cached remotely before its applicable deadline.
 
 Protect issuance, renewal, revocation, and policy-update methods as administrative operations. The Trust Mark retrieval endpoint only retrieves eligible stored accreditation; a public request does not authorize new issuance. Use durable transactions and consistent reads for multi-process issuers, and supply verified transport facts when implementing a custom client-authentication method.
+
+### Choose the responder identity when authenticating endpoint requests
+
+Set `authentication.audience` to the responder's Entity Identifier, including when another host serves its endpoint. For example, an endpoint at `https://directory.campus.example/list` can belong to `https://campus.example`; the assertion audience is then `https://campus.example`. Keep the identifier and endpoint together in trusted application configuration or obtain them from validated federation metadata. The audience value alone does not prove endpoint ownership. The endpoint clients support the shared `authentication` option; they do not choose credentials from advertised metadata on your behalf. Existing Collection and Events integrations may continue supplying `clientAssertion`, but must not combine it with `authentication`.
+
+Keep fixed routing and filter parameters in the advertised endpoint URL consistent with caller-supplied selectors. Conflicts are rejected. The endpoint clients require successful responses to use HTTP `200` and do not follow redirects; use the final advertised URL.

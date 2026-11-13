@@ -9,6 +9,7 @@ import {
 	MediaType,
 	WELL_KNOWN_OPENID_FEDERATION,
 } from "../constants.js";
+import { fetchFederationEndpoint } from "../endpoint-client.js";
 import { err, type FederationError, ok, type Result } from "../errors.js";
 import { isExactContentType, parseContentTypeHeader } from "../http.js";
 import { readResponseBody } from "../http-response.js";
@@ -16,7 +17,7 @@ import { decodeEntityStatement } from "../jose/verify.js";
 import { safeLogger } from "./../logging.js";
 import type { EntityId, FederationOptions } from "../types.js";
 import { entityId, isValidEntityId, nowSeconds } from "../types.js";
-import { fetchFailure } from "./fetch-failure.js";
+import { fetchFailure, httpFailureStatus } from "./fetch-failure.js";
 
 // --- IANA Special-Use IP Detection ---
 
@@ -283,7 +284,7 @@ export interface PerformFetchOptions extends FederationOptions {
 	body?: URLSearchParams;
 	expectedStatus?: number;
 	/** Decode Federation JSON errors without changing legacy callers. */
-	federationErrors?: boolean;
+	federationErrors?: boolean | readonly number[];
 }
 
 export async function performFetch(
@@ -345,7 +346,9 @@ export async function performFetch(
 			(options?.expectedStatus !== undefined && response.status !== options.expectedStatus)
 		) {
 			if (
-				options?.federationErrors &&
+				(options?.federationErrors === true ||
+					(Array.isArray(options?.federationErrors) &&
+						options.federationErrors.includes(response.status))) &&
 				!response.ok &&
 				matchesContentType(response.headers.get("content-type"), MediaType.Json)
 			) {
@@ -518,7 +521,24 @@ export async function fetchEntityConfiguration(
 	}
 
 	safeLogger(options?.logger)?.debug("Fetching entity configuration");
-	const result = await performFetch(url, options);
+	const result = await performFetch(url, {
+		...options,
+		method: "GET",
+		expectedStatus: 200,
+		federationErrors: true,
+	});
+
+	if (
+		!result.ok &&
+		result.error.code === InternalErrorCode.Network &&
+		httpFailureStatus(result.error) === 404
+	)
+		return err(
+			fetchFailure(
+				{ code: FederationErrorCode.NotFound, description: "Entity Configuration not found" },
+				{ kind: "http", status: 404 },
+			),
+		);
 
 	if (result.ok && options?.cache) {
 		const cacheKey = await ecCacheKey(entityId);
@@ -557,8 +577,6 @@ export async function fetchSubordinateStatement(
 			cause,
 		});
 	}
-	url.searchParams.set("sub", subject);
-	const urlStr = url.toString();
 
 	if (options?.cache) {
 		const issuer = options.issuer ?? (url.origin as EntityId);
@@ -571,7 +589,29 @@ export async function fetchSubordinateStatement(
 	}
 
 	safeLogger(options?.logger)?.debug("Fetching subordinate statement");
-	const result = await performFetch(urlStr, options);
+	const result = await fetchFederationEndpoint(
+		url.toString(),
+		new URLSearchParams({ sub: subject }),
+		{
+			...options,
+			method: "GET",
+			expectedStatus: 200,
+			federationErrors: true,
+		},
+		options?.issuer,
+	);
+
+	if (
+		!result.ok &&
+		result.error.code === InternalErrorCode.Network &&
+		httpFailureStatus(result.error) === 404
+	)
+		return err(
+			fetchFailure(
+				{ code: FederationErrorCode.NotFound, description: "Subordinate Statement not found" },
+				{ kind: "http", status: 404 },
+			),
+		);
 
 	if (result.ok && options?.cache) {
 		const issuer = options.issuer ?? (url.origin as EntityId);

@@ -242,6 +242,401 @@ import { walletFederation, walletQuery } from "../fixtures/wallet.js";
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+
+	module("core / endpoint client authentication", () => {
+		test("all endpoint clients compose anonymous, signed, and custom authenticated requests", async (t) => {
+			const c = CorePublic;
+			const f = await SubordinateEventsFixture.fixture();
+			await f.authority.registerSubordinate(f.record);
+			const events = await f.authority.getSubordinateEvents(SubordinateEventsFixture.subject);
+			const endpoint = "https://transport.example/api?tenant=academic";
+			const issuer = SubordinateEventsFixture.issuer,
+				subject = SubordinateEventsFixture.subject;
+			type Options = CorePublic.FederationOptions & {
+				method?: "GET" | "POST";
+				clientAssertion?: string;
+			};
+			const clients: {
+				name: string;
+				body: string;
+				media: string;
+				call: (options: Options, url?: string) => Promise<CorePublic.Result<unknown>>;
+			}[] = [
+				{
+					name: "fetch",
+					body: "jwt",
+					media: MediaType.EntityStatement,
+					call: (o, url = endpoint) => c.fetchSubordinateStatement(url, subject, { ...o, issuer }),
+				},
+				{
+					name: "list",
+					body: "[]",
+					media: MediaType.Json,
+					call: (o, url = endpoint) =>
+						c.fetchListSubordinates(
+							url,
+							{ entityType: ["openid_provider", "openid_relying_party"] },
+							o,
+						),
+				},
+				{
+					name: "extended",
+					body: '{"immediate_subordinate_entities":[]}',
+					media: MediaType.Json,
+					call: (o, url = endpoint) =>
+						c.fetchExtendedSubordinatesList(
+							url,
+							{ claims: [], entityType: ["openid_provider", "openid_relying_party"] },
+							o,
+						),
+				},
+				{
+					name: "resolve",
+					body: "jwt",
+					media: MediaType.ResolveResponse,
+					call: (o, url = endpoint) =>
+						c.fetchResolveResponse(
+							url,
+							{ sub: subject, trustAnchor: [issuer, c.entityId("https://other.example")] },
+							o,
+						),
+				},
+				{
+					name: "collection",
+					body: '{"entities":[]}',
+					media: MediaType.Json,
+					call: (o, url = endpoint) =>
+						c.fetchEntityCollection(
+							url,
+							{ entityType: ["openid_provider", "openid_relying_party"] },
+							o,
+						),
+				},
+				{
+					name: "events",
+					body: events,
+					media: MediaType.EntityEventsStatement,
+					call: (o, url = endpoint) =>
+						c.fetchSubordinateEvents(url, subject, {
+							...o,
+							issuer,
+							issuerJwks: { keys: [f.key.publicKey] },
+						}),
+				},
+			];
+			const auth: CorePublic.EndpointClientAuthentication = {
+				method: "private_key_jwt",
+				audience: issuer,
+				clientId: subject,
+				signer: new c.JwkSigner(f.clientKey.privateKey),
+			};
+			for (const client of clients) {
+				for (const mode of ["anonymous", "signed", "custom"] as const) {
+					let calls = 0;
+					const result = await client.call({
+						clock: f.clock,
+						...(mode === "signed"
+							? { authentication: auth }
+							: mode === "custom"
+								? {
+										authentication: {
+											method: "example_auth",
+											audience: issuer,
+											prepare: () => ({
+												headers: { Authorization: "Example token" },
+												parameters: { example_token: "token" },
+											}),
+										},
+									}
+								: {}),
+						httpClient: async (input, init) => {
+							calls++;
+							const url = new URL(String(input));
+							t.equal(url.searchParams.get("tenant"), "academic");
+							t.equal(init?.method, mode === "anonymous" ? "GET" : "POST", client.name);
+							t.equal(init?.redirect, "manual");
+							t.false(url.searchParams.has("client_assertion"));
+							const form =
+								mode === "anonymous" ? url.searchParams : new URLSearchParams(String(init?.body));
+							if (["list", "extended", "collection"].includes(client.name))
+								t.deepEqual(form.getAll("entity_type"), [
+									"openid_provider",
+									"openid_relying_party",
+								]);
+							if (client.name === "extended") t.equal(form.get("claims"), "");
+							if (client.name === "resolve") t.equal(form.getAll("trust_anchor").length, 2);
+							if (mode === "signed") {
+								t.equal(
+									new Headers(init?.headers).get("content-type"),
+									"application/x-www-form-urlencoded",
+								);
+								const signed = await c.verifyEntityStatement(
+									form.get("client_assertion")!,
+									{ keys: [f.clientKey.publicKey] },
+									{ expectedTyp: "JWT", clock: f.clock },
+								);
+								t.true(signed.ok);
+								if (signed.ok) {
+									t.equal(signed.value.payload.aud, issuer);
+									t.equal(signed.value.payload.iss, subject);
+									t.ok(signed.value.payload.jti);
+								}
+							}
+							if (mode === "custom") {
+								t.equal(new Headers(init?.headers).get("authorization"), "Example token");
+								t.equal(form.get("example_token"), "token");
+							}
+							return new Response(client.body, { headers: { "content-type": client.media } });
+						},
+					});
+					t.true(result.ok, `${client.name}: ${mode}`);
+					t.equal(calls, 1);
+				}
+				const rejected = await client.call({
+					clock: f.clock,
+					httpClient: async () =>
+						new Response(
+							JSON.stringify({
+								error: "invalid_client",
+								error_description: "Authentication required",
+							}),
+							{ status: 401, headers: { "content-type": MediaType.Json } },
+						),
+				});
+				t.false(rejected.ok);
+				if (!rejected.ok) t.equal(rejected.error.code, FederationErrorCode.InvalidClient);
+				for (const status of [201, 206, 307]) {
+					t.false(
+						(
+							await client.call({
+								clock: f.clock,
+								httpClient: async () =>
+									new Response(client.body, {
+										status,
+										headers: {
+											"content-type": client.media,
+											location: "https://elsewhere.example",
+										},
+									}),
+							})
+						).ok,
+						`${client.name} rejects ${status}`,
+					);
+				}
+				for (const extra of [
+					{ offline: true },
+					{ signal: AbortSignal.abort() },
+					{ additionalParameters: { entity_type: "override" } },
+					{
+						authentication: {
+							method: "example_auth",
+							audience: issuer,
+							prepare: () => ({ parameters: { entity_type: "override" } }),
+						},
+					},
+				] satisfies Options[]) {
+					let calls = 0;
+					t.false(
+						(
+							await client.call({
+								...extra,
+								clock: f.clock,
+								httpClient: async () => {
+									calls++;
+									throw new Error("Must not fetch");
+								},
+							})
+						).ok,
+					);
+					t.equal(calls, 0);
+				}
+				let calls = 0;
+				t.false(
+					(
+						await client.call(
+							{
+								authentication: auth,
+								httpClient: async () => {
+									calls++;
+									throw new Error("Must not fetch");
+								},
+							},
+							`${endpoint}&client_assertion=secret`,
+						)
+					).ok,
+				);
+				t.equal(calls, 0);
+			}
+			for (const client of clients.filter((client) =>
+				["collection", "events"].includes(client.name),
+			)) {
+				let calls = 0;
+				const options: Options = {
+					clock: f.clock,
+					clientAssertion: "caller-signed-assertion",
+					httpClient: async (_url, init) => {
+						calls++;
+						t.equal(init?.method, "POST");
+						t.equal(
+							new URLSearchParams(String(init?.body)).get("client_assertion"),
+							"caller-signed-assertion",
+						);
+						return new Response(client.body, { headers: { "content-type": client.media } });
+					},
+				};
+				t.true((await client.call(options)).ok);
+				t.equal(calls, 1);
+				t.false((await client.call({ ...options, authentication: auth })).ok);
+				t.equal(calls, 1, "conflicting authentication fails locally");
+			}
+			for (const client of clients.filter((client) => ["fetch", "events"].includes(client.name))) {
+				let calls = 0;
+				let signatures = 0;
+				t.false(
+					(
+						await client.call({
+							authentication: {
+								...auth,
+								audience: "https://wrong.example",
+								signer: {
+									kid: "unused",
+									alg: "ES256",
+									signJwt: async () => {
+										signatures++;
+										throw new Error("Must not sign");
+									},
+								},
+							},
+							httpClient: async () => {
+								calls++;
+								throw new Error("Must not fetch");
+							},
+						})
+					).ok,
+				);
+				t.equal(calls, 0, "known issuer binds authentication audience");
+				t.equal(signatures, 0, "issuer mismatch is rejected before signing");
+			}
+		});
+
+		test("chain discovery authenticates Fetch requests to an authority requiring private_key_jwt", async (t) => {
+			const c = CorePublic,
+				f = await SubordinateEventsFixture.fixture();
+			const { TrustAnchor } = await import("../../../packages/authority/src/index.js");
+			const authority = new TrustAnchor({
+				...f.config,
+				metadata: {
+					federation_entity: {
+						...f.config.metadata?.federation_entity,
+						federation_fetch_endpoint: `${SubordinateEventsFixture.issuer}/fetch`,
+						federation_list_endpoint: `${SubordinateEventsFixture.issuer}/list`,
+						federation_fetch_endpoint_auth_methods: ["private_key_jwt"],
+					},
+				},
+			});
+			await authority.registerSubordinate(f.record);
+			const leaf = await c.signEntityStatement(
+				{
+					iss: SubordinateEventsFixture.subject,
+					sub: SubordinateEventsFixture.subject,
+					iat: 1500,
+					exp: 2500,
+					jwks: { keys: [f.clientKey.publicKey] },
+					authority_hints: [SubordinateEventsFixture.issuer],
+				},
+				new c.JwkSigner(f.clientKey.privateKey),
+			);
+			const anchors = c.createTrustAnchorSet([
+				{ entityId: SubordinateEventsFixture.issuer, jwks: { keys: [f.key.publicKey] } },
+			]);
+			const requests: string[] = [];
+			const options = {
+				clock: f.clock,
+				authentication: {
+					method: "private_key_jwt" as const,
+					clientId: SubordinateEventsFixture.subject,
+					audience: SubordinateEventsFixture.issuer,
+					signer: new c.JwkSigner(f.clientKey.privateKey),
+				},
+				httpClient: async (url: string | URL | Request, init?: RequestInit) => {
+					requests.push(`${init?.method} ${new URL(String(url)).pathname}`);
+					return authority.handleRequest(new Request(String(url), init));
+				},
+			};
+			const result = await c.resolveTrustChains(SubordinateEventsFixture.subject, anchors, {
+				...options,
+				entityConfigurationJwt: leaf,
+			});
+			t.equal(result.chains.length, 1);
+			t.true(requests.some((request) => request === "POST /tenant/fetch"));
+			t.true(requests.some((request) => request === "GET /tenant/.well-known/openid-federation"));
+			if (result.chains[0])
+				t.true(
+					(
+						await c.validateTrustChain(result.chains[0].statements, anchors, {
+							...options,
+							entityConfigurations: result.chains[0].entityConfigurations,
+						})
+					).valid,
+				);
+		});
+
+		test("EC discovery stays GET and strict status checks do not replace cache reuse", async (t) => {
+			const c = CorePublic,
+				f = await SubordinateEventsFixture.fixture();
+			const jwt = await f.authority.getEntityConfiguration();
+			for (const status of [200, 201, 206]) {
+				const result = await c.fetchEntityConfiguration(SubordinateEventsFixture.issuer, {
+					authentication: {
+						method: "private_key_jwt",
+						audience: SubordinateEventsFixture.issuer,
+						clientId: SubordinateEventsFixture.subject,
+						signer: new c.JwkSigner(f.clientKey.privateKey),
+					},
+					httpClient: async (_url, init) => {
+						t.equal(init?.method, "GET");
+						t.notOk(init?.body);
+						return new Response(jwt, {
+							status,
+							headers: { "content-type": MediaType.EntityStatement },
+						});
+					},
+				});
+				t.equal(result.ok, status === 200);
+			}
+			const cache = new c.MemoryCache({ clock: f.clock });
+			let calls = 0;
+			const options = {
+				cache,
+				issuer: SubordinateEventsFixture.issuer,
+				clock: f.clock,
+				httpClient: async () => {
+					calls++;
+					return new Response(jwt, { headers: { "content-type": MediaType.EntityStatement } });
+				},
+			};
+			t.true(
+				(
+					await c.fetchSubordinateStatement(
+						"https://a.example/fetch",
+						SubordinateEventsFixture.subject,
+						options,
+					)
+				).ok,
+			);
+			t.true(
+				(
+					await c.fetchSubordinateStatement(
+						"https://a.example/fetch",
+						SubordinateEventsFixture.subject,
+						{ ...options, offline: true },
+					)
+				).ok,
+			);
+			t.equal(calls, 1);
+		});
+	});
+
 	module("core / Trust Mark operation boundaries", () => {
 		const c = CorePublic;
 		const issuer = "https://issuer.example",
@@ -15344,7 +15739,7 @@ export default (QUnit: QUnit) => {
 				httpClient: mockFetch,
 			});
 			t.true(isErr(result));
-			if (isErr(result)) t.equal(result.error.code, "ERR_NETWORK");
+			if (isErr(result)) t.equal(result.error.code, FederationErrorCode.NotFound);
 		});
 		test("rejects response with wrong Content-Type", async (t) => {
 			const mockFetch = async () =>
@@ -20117,7 +20512,7 @@ export default (QUnit: QUnit) => {
 			);
 
 			QUnit.test(
-				"events set a redirect rejection policy without changing existing fetch clients",
+				"endpoint clients reject redirects without changing the generic transport default",
 				async (assert) => {
 					const f = await fixture();
 					for (const clientAssertion of [undefined, "synthetic-assertion"]) {
@@ -20149,8 +20544,8 @@ export default (QUnit: QUnit) => {
 					assert.true(
 						(
 							await fetchExtendedSubordinatesList(endpoint, undefined, {
-								httpClient: async (url, init) => {
-									await httpClient(url, init);
+								httpClient: async (_url, init) => {
+									assert.strictEqual(init?.redirect, "manual");
 									return new Response('{"immediate_subordinate_entities":[]}', {
 										headers: { "content-type": MediaType.Json },
 									});
@@ -24053,7 +24448,7 @@ export default (QUnit: QUnit) => {
 			t.false(result.ok);
 			t.equal(calls, 0);
 			let requested = "";
-			await fetchSubordinateStatement(
+			const conflict = await fetchSubordinateStatement(
 				"https://ta.example/fetch?issuer=one&sub=old",
 				entityId("https://rp.example"),
 				{
@@ -24063,8 +24458,8 @@ export default (QUnit: QUnit) => {
 					},
 				},
 			);
-			t.equal(new URL(requested).searchParams.get("issuer"), "one");
-			t.equal(new URL(requested).searchParams.get("sub"), "https://rp.example");
+			t.false(conflict.ok);
+			t.equal(requested, "", "a fixed subject cannot be overwritten");
 		});
 		test("method errors describe the failure and preserve Allow", async (t) => {
 			for (const response of [
