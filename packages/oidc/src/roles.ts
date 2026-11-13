@@ -21,6 +21,7 @@ import type { ClientAssertionOptions } from "./client-auth/assertion.js";
 import { createClientAssertion } from "./client-auth/assertion.js";
 import { assertPublicationMetadata } from "./metadata.js";
 import type { ProtocolSigningKeyProvider } from "./protocol-keys.js";
+import type { RegistrationAccreditationPolicy } from "./registration/accreditation.js";
 import type { RegistrationProtocolAdapter } from "./registration/adapter-types.js";
 import {
 	type AutomaticRegistrationResult,
@@ -288,7 +289,7 @@ export class OidcRelyingPartyRole implements EntityRole {
 	}
 }
 
-export interface OidcProviderRoleConfig {
+export interface OidcProviderRoleConfig extends RegistrationAccreditationPolicy {
 	readonly registrationPath?: string;
 	readonly metadata?: Record<string, unknown>;
 	readonly trustAnchors?: TrustAnchorSet;
@@ -349,6 +350,12 @@ export class OidcProviderRole implements EntityRole {
 
 		const handler = createExplicitRegistrationHandler({
 			opEntityId: context.entityId as EntityId,
+			...(this.config.trustMarkRequirements
+				? { trustMarkRequirements: structuredClone(this.config.trustMarkRequirements) }
+				: {}),
+			...(this.config.beforeRegistration
+				? { beforeRegistration: this.config.beforeRegistration }
+				: {}),
 			providerMetadataType: this.type,
 			keyProvider: context.keyProvider,
 			trustAnchors,
@@ -390,6 +397,12 @@ export class OidcProviderRole implements EntityRole {
 		const effectiveOptions = { ...this.context.options, ...options };
 		const result = await processAutomaticRegistration(requestObjectJwt, trustAnchors, {
 			...effectiveOptions,
+			...(this.config.trustMarkRequirements
+				? { trustMarkRequirements: structuredClone(this.config.trustMarkRequirements) }
+				: {}),
+			...(this.config.beforeRegistration
+				? { beforeRegistration: this.config.beforeRegistration }
+				: {}),
 			opEntityId: this.context.entityId as EntityId,
 			replayStore,
 		});
@@ -521,7 +534,7 @@ export class OAuthClientRole implements EntityRole {
 	}
 }
 
-export interface OAuthAuthorizationServerRoleConfig {
+export interface OAuthAuthorizationServerRoleConfig extends RegistrationAccreditationPolicy {
 	readonly registrationPath?: string;
 	readonly metadata?: Record<string, unknown>;
 	readonly trustAnchors?: TrustAnchorSet;
@@ -576,6 +589,12 @@ export class OAuthAuthorizationServerRole implements EntityRole {
 
 		const handler = createExplicitRegistrationHandler({
 			opEntityId: context.entityId as EntityId,
+			...(this.config.trustMarkRequirements
+				? { trustMarkRequirements: structuredClone(this.config.trustMarkRequirements) }
+				: {}),
+			...(this.config.beforeRegistration
+				? { beforeRegistration: this.config.beforeRegistration }
+				: {}),
 			providerMetadataType: this.type,
 			keyProvider: context.keyProvider,
 			trustAnchors,

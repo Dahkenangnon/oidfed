@@ -20,6 +20,10 @@ import {
 import { RequestObjectTyp } from "../constants.js";
 import { effectiveMetadata } from "../metadata.js";
 import {
+	checkRegistrationAccreditation,
+	type RegistrationAccreditationPolicy,
+} from "./accreditation.js";
+import {
 	requireNonEmptyTrustAnchors,
 	resolveAndValidateBestChain,
 	validateSuppliedTrustChain,
@@ -45,7 +49,9 @@ export interface ProcessedAutomaticRegistration extends ProcessedRegistration {
 	readonly protocolKeys: ResolvedEntityKeys;
 }
 
-export interface ProcessAutomaticRegistrationOptions extends FederationOptions {
+export interface ProcessAutomaticRegistrationOptions
+	extends FederationOptions,
+		RegistrationAccreditationPolicy {
 	/** The OP's own Entity Identifier — REQUIRED to prevent cross-OP replay via `aud` validation. */
 	opEntityId: EntityId;
 	/** Atomic replay protection required for one-time Request Object processing. */
@@ -181,6 +187,14 @@ export async function processAutomaticRegistration(
 		if (!peerMetadata.ok) return peerMetadata;
 		peerResolvedOpMetadata = peerMetadata.value;
 	}
+
+	const accreditation = await checkRegistrationAccreditation(
+		bestChain,
+		"automatic",
+		options,
+		options,
+	);
+	if (!accreditation.ok) return accreditation;
 
 	try {
 		const accepted = await options.replayStore.useJti({

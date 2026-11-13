@@ -25,6 +25,7 @@ import {
 } from "../constants.js";
 import { registrationResponseChoices, withoutRegistrationChoices } from "../metadata.js";
 import { ExplicitRegistrationResponsePayloadSchema } from "../schemas/explicit-registration.js";
+import type { RegistrationAccreditationPolicy } from "./accreditation.js";
 import type { RegistrationProtocolAdapter } from "./adapter-types.js";
 import { assertNonEmptyTrustAnchors } from "./helpers.js";
 import { validateRegistrationMetadataPolicy } from "./metadata-policy.js";
@@ -41,7 +42,7 @@ const REGISTRATION_MANAGEMENT_METADATA_FIELDS = [
 	"registration_client_uri",
 ] as const;
 
-export interface ExplicitRegistrationHandlerConfig {
+export interface ExplicitRegistrationHandlerConfig extends RegistrationAccreditationPolicy {
 	/** The OP's Entity Identifier — used as the aud check target and as the issuer of the response. */
 	readonly opEntityId: EntityId;
 	/** Protocol role used to check the server's peer metadata. Defaults to OP. */
@@ -103,6 +104,10 @@ export function createExplicitRegistrationHandler(
 
 		const processed = await processExplicitRegistration(body, contentType as string, trustAnchors, {
 			...config.options,
+			...(config.trustMarkRequirements
+				? { trustMarkRequirements: config.trustMarkRequirements }
+				: {}),
+			...(config.beforeRegistration ? { beforeRegistration: config.beforeRegistration } : {}),
 			opEntityId: config.opEntityId,
 			...(config.providerMetadataType ? { providerMetadataType: config.providerMetadataType } : {}),
 		});

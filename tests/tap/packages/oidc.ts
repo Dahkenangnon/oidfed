@@ -1303,6 +1303,155 @@ export default (QUnit: QUnit) => {
 			});
 		}
 	});
+	module("oidc / Trust Mark accreditation gates", () => {
+		test("automatic rejection leaves replay evidence available for an accepted request", async (t) => {
+			const protocol = await generateSigningKey();
+			const f = await createMockFederation({
+				leafMetadata: {
+					openid_relying_party: {
+						redirect_uris: [`${LEAF_ID}/callback`],
+						response_types: ["code"],
+						jwks: { keys: [protocol.publicKey] },
+					},
+				},
+			});
+			const now = Math.floor(Date.now() / 1000);
+			const request = await signProtocolFixture(
+				{
+					iss: LEAF_ID,
+					client_id: LEAF_ID,
+					aud: OP_ID,
+					iat: now,
+					exp: now + 300,
+					jti: "accreditation-gate",
+					scope: "openid",
+					response_type: "code",
+					redirect_uri: `${LEAF_ID}/callback`,
+				},
+				new JwkSigner(protocol.privateKey),
+				{ typ: RequestObjectTyp },
+			);
+			const options = { ...f.options, opEntityId: OP_ID, replayStore: new MemoryReplayStore() };
+			let callbacks = 0;
+			const denied = await processAutomaticRegistration(request, f.trustAnchors, {
+				...options,
+				trustMarkRequirements: { requiredTypes: ["missing"] },
+				beforeRegistration: () => {
+					callbacks++;
+					return CorePublic.ok(undefined);
+				},
+			});
+			t.false(denied.ok);
+			t.equal(callbacks, 0);
+			const accepted = await processAutomaticRegistration(request, f.trustAnchors, {
+				...options,
+				beforeRegistration: () => {
+					callbacks++;
+					return CorePublic.ok(undefined);
+				},
+			});
+			t.true(accepted.ok, accepted.ok ? "accepted" : accepted.error.description);
+			t.equal(callbacks, 1);
+			t.false((await processAutomaticRegistration(request, f.trustAnchors, options)).ok);
+		});
+
+		test("an asynchronous accreditation callback cannot extend expired chain evidence", async (t) => {
+			const f = await anchorKeyPaths({
+				openid_relying_party: {
+					redirect_uris: ["https://subject.example/callback"],
+					response_types: ["code"],
+					token_endpoint_auth_method: "none",
+				},
+			});
+			const chain = await f.anchorKeyChain("overlap", { aud: OP_ID });
+			let now = 1500,
+				saves = 0;
+			const handler = createExplicitRegistrationHandler({
+				opEntityId: OP_ID,
+				trustAnchors: f.anchors,
+				keyProvider: MemoryFederationKeyProvider.fromJWK(f.keys.anchor.privateKey),
+				options: { ...f.options, clock: { now: () => now } },
+				beforeRegistration: async () => {
+					now = 6000;
+					return CorePublic.ok(undefined);
+				},
+				onRegistration: async () => {
+					saves++;
+				},
+			});
+			const result = await handler(
+				new Request(`${OP_ID}/register`, {
+					method: "POST",
+					headers: { "Content-Type": MediaType.TrustChain },
+					body: JSON.stringify(chain),
+				}),
+			);
+			t.equal(result.status, 400);
+			t.equal(saves, 0);
+		});
+		test("explicit registration rejects before signing or persistence and requirements precede callbacks", async (t) => {
+			const f = await anchorKeyPaths({
+				openid_relying_party: {
+					redirect_uris: ["https://subject.example/callback"],
+					response_types: ["code"],
+					token_endpoint_auth_method: "none",
+				},
+			});
+			const chain = await f.anchorKeyChain("overlap", { aud: OP_ID });
+			for (const mode of ["required", "reject", "throw", "accept"] as const) {
+				let callbacks = 0,
+					saves = 0,
+					signatures = 0;
+				const keys = MemoryFederationKeyProvider.fromJWK(f.keys.anchor.privateKey);
+				const handler = createExplicitRegistrationHandler({
+					opEntityId: OP_ID,
+					trustAnchors: f.anchors,
+					options: f.options,
+					keyProvider: {
+						getFederationKeySet: async () => {
+							const keySet = await keys.getFederationKeySet();
+							return {
+								...keySet,
+								signer: {
+									...keySet.signer,
+									signJwt: async (data, header) => {
+										signatures++;
+										return keySet.signer.signJwt(data, header);
+									},
+								},
+							};
+						},
+					},
+					...(mode === "required" ? { trustMarkRequirements: { requiredTypes: ["missing"] } } : {}),
+					beforeRegistration: async (context) => {
+						callbacks++;
+						t.true(Object.isFrozen(context.chain.statements));
+						if (mode === "throw") throw new Error("policy failure");
+						return mode === "accept"
+							? CorePublic.ok(undefined)
+							: CorePublic.err({
+									code: FederationErrorCode.InvalidTrustChain,
+									description: "denied",
+								});
+					},
+					onRegistration: async () => {
+						saves++;
+					},
+				});
+				const response = await handler(
+					new Request(`${OP_ID}/register`, {
+						method: "POST",
+						headers: { "Content-Type": MediaType.TrustChain },
+						body: JSON.stringify(chain),
+					}),
+				);
+				t.equal(response.status, mode === "accept" ? 200 : 400, mode);
+				t.equal(callbacks, mode === "required" ? 0 : 1);
+				t.equal(saves, mode === "accept" ? 1 : 0);
+				t.equal(signatures, mode === "accept" ? 1 : 0);
+			}
+		});
+	});
 	module("oidc / anchor self-signature", () => {
 		test("rejects inconsistent anchor keys before persisting registration", async (t) => {
 			const f = await anchorKeyPaths({

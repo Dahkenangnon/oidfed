@@ -25,6 +25,10 @@ import { effectiveMetadata } from "../metadata.js";
 import { ExplicitRegistrationRequestPayloadSchema } from "../schemas/explicit-registration.js";
 import { OpenIDRelyingPartyMetadataSchema } from "../schemas/metadata.js";
 import {
+	checkRegistrationAccreditation,
+	type RegistrationAccreditationPolicy,
+} from "./accreditation.js";
+import {
 	parseTrustChainJsonBody,
 	requireNonEmptyTrustAnchors,
 	validateSuppliedTrustChain,
@@ -36,7 +40,9 @@ export interface ProcessedExplicitRegistration extends ProcessedRegistration {
 	readonly peerResolvedOpMetadata?: Readonly<Record<string, unknown>>;
 }
 
-export interface ProcessExplicitRegistrationOptions extends FederationOptions {
+export interface ProcessExplicitRegistrationOptions
+	extends FederationOptions,
+		RegistrationAccreditationPolicy {
 	/** The OP's own Entity Identifier — REQUIRED for `aud` validation. */
 	opEntityId: EntityId;
 	/** Protocol role of the local server whose peer metadata is consumed. Defaults to OP. */
@@ -360,6 +366,14 @@ export async function processExplicitRegistration(
 		if (!peerMetadata.ok) return peerMetadata;
 		peerResolvedOpMetadata = peerMetadata.value;
 	}
+	const accreditation = await checkRegistrationAccreditation(
+		bestChain,
+		"explicit",
+		options,
+		options,
+	);
+	if (!accreditation.ok) return accreditation;
+
 	safeLogger(options?.logger)?.info("Explicit Client Registration Request validated");
 	return ok({
 		rpEntityId,

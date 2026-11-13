@@ -17,7 +17,10 @@ export {
 	type ProtocolSigningKeyProvider,
 	StaticProtocolSigningKeyProvider,
 } from "./protocol-keys.js";
-
+export type {
+	RegistrationAccreditationContext,
+	RegistrationAccreditationPolicy,
+} from "./registration/accreditation.js";
 // Registration types
 export { OIDCRegistrationAdapter } from "./registration/adapter.js";
 export type {
@@ -45,7 +48,6 @@ export type {
 	ValidatedRequestObject,
 	ValidatedRequestObjectResult,
 } from "./registration/types.js";
-
 // Roles composition
 export {
 	type CreateAuthorizationRequestOptions,
@@ -60,7 +62,6 @@ export {
 	OidcRelyingPartyRole,
 	type OidcRelyingPartyRoleConfig,
 } from "./roles.js";
-
 // Schemas & Types
 export type {
 	ExplicitRegistrationRequestPayload,
