@@ -265,6 +265,7 @@ export function validateEntityId(value: string): Result<EntityId, FederationErro
 }
 
 export interface PerformFetchOptions extends FederationOptions {
+	headers?: RequestInit["headers"];
 	/** Matching override. JSON accepts parameters; Federation registered media types default to none. */
 	contentTypePolicy?: "exact" | "media-type";
 	/** Accept header to send. Defaults to application/entity-statement+jwt. */
@@ -289,6 +290,15 @@ export async function performFetch(
 	url: string,
 	options?: PerformFetchOptions,
 ): Promise<Result<string, FederationError>> {
+	if (options?.offline) {
+		safeLogger(options.logger)?.warn(
+			"Supply the missing federation evidence or protocol keys for offline trust evaluation",
+		);
+		return err({
+			code: InternalErrorCode.Network,
+			description: "Offline operation cannot access the network",
+		});
+	}
 	const urlValidation = validateFetchUrl(url, options);
 	if (!urlValidation.ok) return urlValidation;
 
@@ -323,6 +333,7 @@ export async function performFetch(
 			method: options?.method ?? "GET",
 			...(options?.body ? { body: options.body.toString() } : {}),
 			headers: {
+				...Object.fromEntries(new Headers(options?.headers).entries()),
 				Accept: accept,
 				...(options?.body ? { "Content-Type": "application/x-www-form-urlencoded" } : {}),
 			},

@@ -64,6 +64,22 @@ export {
 	checkMaxPathLength,
 	checkNamingConstraints,
 } from "./constraints/index.js";
+export {
+	authenticatedEndpointCaller,
+	authenticateEndpointRequest,
+	createEndpointAuthenticatedHandler,
+	type EndpointAuthentication,
+	type EndpointAuthenticationConfig,
+	type EndpointAuthenticationInput,
+	type EndpointAuthenticationMethod,
+	validateEndpointAuthentication,
+} from "./endpoint-authentication.js";
+export type {
+	CustomEndpointClientAuthentication,
+	EndpointAdditionalParameters,
+	EndpointClientAuthentication,
+	PrivateKeyJwtEndpointAuthentication,
+} from "./endpoint-client.js";
 export * from "./entity-collection/index.js";
 // Errors & Result
 export {

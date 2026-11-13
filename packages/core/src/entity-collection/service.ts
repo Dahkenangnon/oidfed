@@ -5,6 +5,7 @@ import {
 	DEFAULT_MAX_RESPONSE_BYTES,
 	FederationErrorCode,
 } from "../constants.js";
+import { validateEndpointAuthentication } from "../endpoint-authentication.js";
 import { err, ok, type Result } from "../errors.js";
 import { errorResponse, jsonResponse, parseContentTypeHeader, toPublicError } from "../http.js";
 import { readResponseBody } from "../http-response.js";
@@ -111,7 +112,12 @@ export class EntityCollectionService {
 		if (
 			auth &&
 			(!auth.methods.length ||
-				auth.methods.some((method) => method !== "none" && method !== "private_key_jwt"))
+				auth.methods.some(
+					(method) =>
+						method !== "none" &&
+						method !== "private_key_jwt" &&
+						!Object.hasOwn(auth.extensions?.methods ?? {}, method),
+				))
 		)
 			throw new Error("Unsupported collection authentication method");
 		if (
@@ -123,6 +129,11 @@ export class EntityCollectionService {
 			throw new Error(
 				"Collection authentication needs a receiver identity and trusted client key provider",
 			);
+		if (
+			auth?.methods.some((method) => method !== "none") &&
+			(!auth.receiverEntityId || !isValidEntityId(auth.receiverEntityId))
+		)
+			throw new Error("Collection authentication requires a receiver Entity Identifier");
 		this.config = {
 			...config,
 			...(!config.responder && auth?.receiverEntityId
@@ -142,6 +153,18 @@ export class EntityCollectionService {
 					}
 				: {}),
 		};
+		if (this.config.authentication) {
+			const configured = this.config.authentication;
+			const captured = validateEndpointAuthentication({
+				...configured,
+				receiverEntityId: configured.receiverEntityId ?? "https://collection.invalid",
+			});
+			this.config.authentication = {
+				...configured,
+				...(captured.extensions ? { extensions: captured.extensions } : {}),
+				methods: captured.methods,
+			};
+		}
 		this.store =
 			config.store ??
 			new MemoryEntityCollectionStore({
@@ -471,6 +494,7 @@ export class EntityCollectionService {
 				request.method,
 				this.config.authentication,
 				this.config.options,
+				request,
 			);
 			if (!authenticated.ok) return failure(authenticated.error);
 			const params = parseCollectionParams(form);

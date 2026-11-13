@@ -240,6 +240,119 @@ import { walletFederation, walletQuery } from "../fixtures/wallet.js";
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("core / Trust Mark operation boundaries", () => {
+		const c = CorePublic;
+		const issuer = "https://issuer.example";
+		test("transport evidence supports sync, async and thenable results and contains failures", async (t) => {
+			for (const transportEvidence of [
+				() => ({ peer: issuer }),
+				async () => ({ peer: issuer }),
+				() => ({
+					// biome-ignore lint/suspicious/noThenProperty: exercise host-provided thenables
+					then: (resolve: (v: unknown) => void) => resolve({ peer: issuer }),
+				}),
+			]) {
+				let calls = 0;
+				const handler = c.createEndpointAuthenticatedHandler(
+					{ receiverEntityId: issuer, methods: ["none"], extensions: { transportEvidence } },
+					async () => {
+						calls++;
+						return new Response("ok");
+					},
+				);
+				t.equal((await handler(new Request(issuer))).status, 200);
+				t.equal(calls, 1);
+			}
+			for (const transportEvidence of [
+				() => {
+					throw Error("sync");
+				},
+				async () => {
+					throw Error("async");
+				},
+				() => ({
+					// biome-ignore lint/suspicious/noThenProperty: exercise rejecting host-provided thenables
+					then: (_resolve: unknown, reject: (e: Error) => void) => reject(Error("thenable")),
+				}),
+				() => () => undefined,
+			]) {
+				let calls = 0;
+				const handler = c.createEndpointAuthenticatedHandler(
+					{ receiverEntityId: issuer, methods: ["none"], extensions: { transportEvidence } },
+					async () => {
+						calls++;
+						return new Response("unexpected");
+					},
+				);
+				t.equal((await handler(new Request(issuer))).status, 401);
+				t.equal(calls, 0);
+			}
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		});
+	});
+	module("core / shared endpoint authentication", () => {
+		test("contains asynchronous detectors and rejects protocol-selector credentials", async (t) => {
+			t.throws(
+				() =>
+					CorePublic.validateEndpointAuthentication({
+						receiverEntityId: "https://issuer.example",
+						methods: ["custom"],
+						extensions: {
+							methods: {
+								custom: {
+									parameters: ["sub"],
+									authenticate: () => CorePublic.ok({ entityId: "https://client.example" }),
+								},
+							},
+						},
+					}),
+				/selectors/,
+			);
+			let accepted = 0;
+			const handler = CorePublic.createEndpointAuthenticatedHandler(
+				{
+					receiverEntityId: "https://issuer.example",
+					methods: ["none", "custom"],
+					extensions: {
+						methods: {
+							custom: {
+								detect: (() => Promise.reject(new Error("sink"))) as unknown as () => boolean,
+								authenticate: () => {
+									accepted++;
+									return CorePublic.ok({ entityId: "https://client.example" });
+								},
+							},
+						},
+					},
+				},
+				async () => new Response("accepted"),
+			);
+			const result = await handler(new Request("https://issuer.example/list"));
+			t.equal(result.status, 401);
+			t.equal(accepted, 0);
+			await Promise.resolve();
+		});
+		test("inherited names cannot select authentication or request extensions", async (t) => {
+			const handler = CorePublic.createEndpointAuthenticatedHandler(
+				{ receiverEntityId: "https://issuer.example", methods: ["none"] },
+				async () => new Response("accepted"),
+			);
+			t.equal(
+				(await handler(new Request("https://issuer.example/list?constructor=x&toString=y"))).status,
+				200,
+			);
+			t.equal(
+				(
+					await handler(
+						new Request("https://issuer.example/list", {
+							headers: { authorization: "Bearer unrecognized" },
+						}),
+					)
+				).status,
+				401,
+			);
+		});
+	});
 	module("core / policy dictionaries and custom constraints", () => {
 		const statement = (policy: unknown) =>
 			({ payload: { metadata_policy: policy } }) as unknown as ParsedEntityStatement;

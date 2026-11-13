@@ -1,3 +1,4 @@
+import type { EndpointAuthentication } from "../endpoint-authentication.js";
 import type { Result } from "../errors.js";
 import type { ReplayStore } from "../replay-store.js";
 import type { EntityCollectionEntity } from "../schemas/entity-collection.js";
@@ -41,8 +42,9 @@ export interface EntityCollectionStore {
 	getCursor(id: string): Promise<EntityCollectionCursor | undefined>;
 }
 export interface CollectionAuthentication {
+	extensions?: EndpointAuthentication;
 	replayStore?: ReplayStore;
-	methods: readonly ("none" | "private_key_jwt")[];
+	methods: readonly string[];
 	/** Receiver identity used as assertion audience, including standalone providers. */
 	receiverEntityId?: EntityId;
 	getClientFederationJwks?: (client: EntityId) => Promise<JWKSet | undefined>;

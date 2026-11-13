@@ -1,5 +1,9 @@
 /** Branded types for compile-time safety: EntityId, DiscoveryResult, and Result/Err helpers. */
 import type { InternalErrorCode } from "./constants.js";
+import type {
+	EndpointAdditionalParameters,
+	EndpointClientAuthentication,
+} from "./endpoint-client.js";
 import type { FederationError, Result } from "./errors.js";
 import type { FederationKeyProvider } from "./federation-keys.js";
 import type { DecodedFederationJwtPayload, JWKSet } from "./schemas/index.js";
@@ -76,6 +80,10 @@ export interface Logger {
 }
 
 export interface FederationOptions {
+	authentication?: EndpointClientAuthentication;
+	additionalParameters?: EndpointAdditionalParameters;
+	/** Disallow network access when only supplied evidence is permitted. */
+	offline?: boolean;
 	httpClient?: HttpClient;
 	/** Signed subject ECs for trust-chain validation, keyed by exact Entity Identifier. Still validated against the chain. */
 	entityConfigurations?: ReadonlyMap<string, string> | undefined;
