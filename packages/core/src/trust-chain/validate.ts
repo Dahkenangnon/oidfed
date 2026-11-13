@@ -57,7 +57,7 @@ const STANDARD_METADATA_POLICY_OPERATORS: ReadonlySet<string> = new Set(
 );
 
 /** Calculate the earliest expiration across all statements in a chain. */
-export function calculateChainExpiration(chain: ParsedEntityStatement[]): number {
+export function calculateChainExpiration(chain: readonly ParsedEntityStatement[]): number {
 	return Math.min(...chain.map((es) => es.payload.exp));
 }
 

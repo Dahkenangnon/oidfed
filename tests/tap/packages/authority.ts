@@ -668,7 +668,7 @@ export default (QUnit: QUnit) => {
 						`${ENTITY_ID}/resolve?sub=${encodeURIComponent(OP_ID)}&trust_anchor=${encodeURIComponent(TA_ID)}`,
 					),
 				);
-				t.equal(response.status, accepted ? 200 : 404);
+				t.equal(response.status, accepted ? 200 : 400);
 				t.true(calls > 0);
 			}
 		});
@@ -5378,15 +5378,43 @@ export default (QUnit: QUnit) => {
 			const decoded = decodeEntityStatement(await response.text());
 			t.true(decoded.ok);
 			if (decoded.ok) {
-				t.equal(decoded.value.payload.exp, deadline);
+				t.equal(decoded.value.payload.exp, Math.min(fixture.chainExp, fixture.trustMarkExpiresAt));
 				t.true(
 					fixture.trustMarkExpiresAt > deadline,
-					"delegation limits the assessment as well as its cache lifetime",
+					"delegation limits cache reuse independently of the wire expiry",
 				);
 				t.equal((decoded.value.payload.trust_marks as unknown[]).length, 1);
 			}
 			now = deadline;
 			t.equal((await handler(new Request(fixture.requestUrl))).status, 404);
+		});
+
+		test("Resolve refuses evidence that expires while the response is being signed", async (t) => {
+			const deadline = 1_700_000_010;
+			const fixture = await createResolveTrustMarkFixture({ delegationExpiresAt: deadline });
+			let now = 1_700_000_000;
+			const provider = fixture.ctx.keyProvider;
+			const original = provider.getFederationKeySet.bind(provider);
+			provider.getFederationKeySet = async () => {
+				const keys = await original();
+				return {
+					...keys,
+					signer: {
+						kid: keys.signer.kid,
+						alg: keys.signer.alg,
+						signJwt: async (payload, header) => {
+							const jwt = await keys.signer.signJwt(payload, header);
+							if (header.typ === JwtTyp.ResolveResponse) now = deadline;
+							return jwt;
+						},
+					},
+				};
+			};
+			const handler = createResolveHandler({
+				...fixture.ctx,
+				options: { ...fixture.ctx.options, clock: { now: () => now } },
+			});
+			t.equal((await handler(new Request(fixture.requestUrl))).status, 503);
 		});
 
 		test("resolve returns the exact verified mark when an expired mark shares its type", async (t) => {
@@ -5584,8 +5612,8 @@ export default (QUnit: QUnit) => {
 					`https://authority.example.com/federation_resolve?sub=${encodeURIComponent(LEAF_ID)}&trust_anchor=${encodeURIComponent(TA_ID)}`,
 				),
 			);
-			t.equal(response.status, 404);
-			t.equal(((await response.json()) as { error: string }).error, "not_found");
+			t.equal(response.status, 400);
+			t.equal(((await response.json()) as { error: string }).error, "invalid_metadata");
 		});
 
 		test("resolves successfully and returns signed JWT with expected payload", async (t) => {
@@ -10580,44 +10608,459 @@ export default (QUnit: QUnit) => {
 			for (const jwt of tokens) t.equal(await status(jwt), "expired");
 		});
 	});
+	module("authority / Resolve candidate selection", () => {
+		async function graph(
+			first: "valid" | "signature" | "metadata",
+			second: "valid" | "signature" | "metadata",
+		) {
+			const c = CorePublic,
+				clock = { now: () => 1500 };
+			const f = await createTestContext({ options: { clock } });
+			const a = f.ctx.entityId,
+				b = c.entityId("https://second.example"),
+				leaf = c.entityId("https://subject.example");
+			const bKey = await c.generateSigningKey("ES256"),
+				leafKey = await c.generateSigningKey("ES256");
+			const sign = (payload: Record<string, unknown>, key: JWK) =>
+				c.signEntityStatement({ iat: 1500, exp: 2500, ...payload }, new c.JwkSigner(key));
+			const leafEC = await sign(
+				{
+					iss: leaf,
+					sub: leaf,
+					jwks: { keys: [leafKey.publicKey] },
+					authority_hints: [a, b],
+					metadata: { openid_provider: { issuer: leaf } },
+				},
+				leafKey.privateKey,
+			);
+			const docs = new Map<string, string>([[`${leaf}/.well-known/openid-federation`, leafEC]]);
+			for (const [id, key, pub, mode] of [
+				[a, f.signingKey, f.publicKey, first],
+				[b, bKey.privateKey, bKey.publicKey, second],
+			] as const) {
+				docs.set(
+					`${id}/.well-known/openid-federation`,
+					await sign(
+						{
+							iss: id,
+							sub: id,
+							jwks: { keys: [pub] },
+							metadata: {
+								federation_entity: {
+									federation_fetch_endpoint: `${id}/fetch`,
+									federation_list_endpoint: `${id}/list`,
+								},
+							},
+						},
+						key,
+					),
+				);
+				docs.set(
+					`${id}/fetch?sub=${encodeURIComponent(leaf)}`,
+					await sign(
+						{
+							iss: id,
+							sub: leaf,
+							jwks: { keys: [leafKey.publicKey] },
+							...(mode === "metadata"
+								? {
+										metadata_policy: {
+											openid_provider: { issuer: { value: "https://different.example" } },
+										},
+									}
+								: {}),
+						},
+						mode === "signature" ? leafKey.privateKey : key,
+					),
+				);
+			}
+			const anchors = c.createTrustAnchorSet([
+				{ entityId: a, jwks: { keys: [f.publicKey] } },
+				{ entityId: b, jwks: { keys: [bKey.publicKey] } },
+			]);
+			let calls = 0;
+			const httpClient: HttpClient = async (input) => {
+				calls++;
+				const jwt = docs.get(String(input));
+				return new Response(jwt ?? "missing", {
+					status: jwt ? 200 : 404,
+					headers: { "content-type": jwt ? MediaType.EntityStatement : "text/plain" },
+				});
+			};
+			const ctx: HandlerContext = {
+				...f.ctx,
+				trustAnchors: anchors,
+				options: { clock, httpClient, maxConcurrentFetches: 1 },
+			};
+			const url = `${a}/resolve?${new URLSearchParams([
+				["sub", leaf],
+				["trust_anchor", a],
+				["trust_anchor", b],
+			])}`;
+			return { ctx, url, docs, leaf, b, calls: () => calls };
+		}
+		test("a later valid candidate succeeds and the response and cache use that chain", async (t) => {
+			const f = await graph("signature", "valid");
+			const handler = createResolveHandler({ ...f.ctx, requireAuthForFreshResolution: true });
+			const response = await handler(new Request(f.url), true);
+			t.equal(response.status, 200);
+			const decoded = decodeEntityStatement(await response.text());
+			t.true(decoded.ok);
+			if (decoded.ok) {
+				const chain = decoded.value.payload.trust_chain as string[];
+				const anchor = decodeEntityStatement(chain.at(-1)!);
+				t.true(anchor.ok);
+				if (anchor.ok) t.equal(anchor.value.payload.iss, f.b);
+				t.equal(decoded.value.payload.exp, 2500);
+			}
+			const count = f.calls();
+			t.equal((await handler(new Request(f.url))).status, 200);
+			t.equal(f.calls(), count, "cache reuses the selected candidate without discovery");
+		});
+		test("failed candidates distinguish chain failures from metadata-only failures", async (t) => {
+			for (const [a, b, code] of [
+				["signature", "signature", "invalid_trust_chain"],
+				["metadata", "metadata", "invalid_metadata"],
+				["metadata", "signature", "invalid_trust_chain"],
+			] as const) {
+				const f = await graph(a, b);
+				const response = await createResolveHandler(f.ctx)(new Request(f.url));
+				t.equal(response.status, 400);
+				t.equal(((await response.json()) as { error: string }).error, code);
+			}
+		});
+		test("discovery distinguishes missing subjects, invalid evidence and unavailable upstreams", async (t) => {
+			for (const status of [404, 503, 201]) {
+				const f = await graph("valid", "valid");
+				const ctx = {
+					...f.ctx,
+					options: {
+						...f.ctx.options,
+						httpClient: async () => new Response("unavailable", { status }),
+					},
+				};
+				const response = await createResolveHandler(ctx)(new Request(f.url));
+				t.equal(response.status, status === 404 ? 404 : 503);
+				t.equal(
+					((await response.json()) as { error: string }).error,
+					status === 404 ? "not_found" : "temporarily_unavailable",
+				);
+			}
+			const broken = await graph("valid", "valid");
+			for (const url of broken.docs.keys())
+				if (url.includes("/fetch?")) broken.docs.set(url, "undecodable.statement");
+			const failed = await createResolveHandler(broken.ctx)(new Request(broken.url));
+			t.equal(failed.status, 400);
+			t.equal(((await failed.json()) as { error: string }).error, "invalid_trust_chain");
+			const f = await graph("valid", "valid");
+			f.docs.set(`${f.leaf}/.well-known/openid-federation`, "malformed.jwt.document");
+			const response = await createResolveHandler(f.ctx)(new Request(f.url));
+			t.equal(response.status, 400);
+			t.equal(((await response.json()) as { error: string }).error, "invalid_trust_chain");
+		});
 
-	test("unsupported explicit timestamps do not disable time-filter recommendations", async (t) => {
-		const f = await SubordinateEventsFixture.fixture();
-		await f.authority.registerSubordinate(f.record);
-		const handler = createExtendedListHandler(
-			{
-				entityId: SubordinateEventsFixture.issuer,
-				keyProvider: f.keyProvider,
-				storage: f.storage,
-				metadata: {
-					federation_entity: {
-						federation_fetch_endpoint: `${SubordinateEventsFixture.issuer}/fetch`,
-						federation_list_endpoint: `${SubordinateEventsFixture.issuer}/list`,
+		test("failed candidates retain unavailable discovery branches without hiding a later success", async (t) => {
+			for (const candidate of ["signature", "metadata", "valid"] as const) {
+				const f = await graph(candidate, "valid");
+				const transport = f.ctx.options!.httpClient!;
+				const response = await createResolveHandler({
+					...f.ctx,
+					options: {
+						...f.ctx.options,
+						httpClient: (input, init) =>
+							String(input).startsWith(`${f.b}/`)
+								? Promise.resolve(new Response("unavailable", { status: 503 }))
+								: transport(input, init),
+					},
+				})(new Request(f.url));
+				t.equal(response.status, candidate === "valid" ? 200 : 503);
+				if (response.status !== 200)
+					t.equal(((await response.json()) as { error: string }).error, "temporarily_unavailable");
+				else await response.body?.cancel();
+			}
+		});
+		test("Resolve filters only own entity types without mutating object prototypes", async (t) => {
+			const f = await graph("valid", "valid");
+			const before = Object.getOwnPropertyDescriptors(Object.prototype);
+			for (const name of ["toString", "constructor", "__proto__"]) {
+				const response = await createResolveHandler(f.ctx)(
+					new Request(`${f.url}&entity_type=${name}`),
+				);
+				t.equal(response.status, 404);
+			}
+			const response = await createResolveHandler(f.ctx)(
+				new Request(
+					`${f.url}&entity_type=toString&entity_type=openid_provider&entity_type=openid_provider`,
+				),
+			);
+			t.equal(response.status, 200);
+			const decoded = decodeEntityStatement(await response.text());
+			t.true(decoded.ok);
+			if (decoded.ok)
+				t.deepEqual(Object.keys(decoded.value.payload.metadata!), ["openid_provider"]);
+			t.deepEqual(Object.getOwnPropertyNames(Object.prototype), Object.keys(before));
+			for (const [name, saved] of Object.entries(before)) {
+				const current = Object.getOwnPropertyDescriptor(Object.prototype, name);
+				for (const attribute of [
+					"value",
+					"get",
+					"set",
+					"writable",
+					"enumerable",
+					"configurable",
+				] as const)
+					t.strictEqual(current?.[attribute], saved[attribute], `${name}.${attribute}`);
+			}
+		});
+		test("Resolve rechecks freshness and cancellation after successful or failed cache writes", async (t) => {
+			const f = await graph("valid", "valid");
+			for (const outcome of ["valid", "expired", "cancelled"] as const) {
+				for (const fails of [false, true]) {
+					let now = 1500,
+						writes = 0;
+					const controller = new AbortController();
+					const handler = createResolveHandler({
+						...f.ctx,
+						options: { ...f.ctx.options, clock: { now: () => now } },
+						storage: {
+							...f.ctx.storage,
+							cache: {
+								get: async () => undefined,
+								delete: async () => {},
+								clear: async () => {},
+								[Symbol.asyncDispose]: async () => {},
+								set: async () => {
+									writes++;
+									await Promise.resolve();
+									now = outcome === "expired" ? 2500 : 1550;
+									if (outcome === "cancelled") controller.abort();
+									if (fails) throw new Error("Cache write failed");
+								},
+							},
+						},
+					});
+					const response = await handler(new Request(f.url, { signal: controller.signal }), true);
+					t.equal(writes, 1);
+					t.equal(
+						response.status,
+						outcome === "valid" ? 200 : 503,
+						`${outcome}, cache failure: ${fails}`,
+					);
+					if (outcome === "valid") {
+						const decoded = decodeEntityStatement(await response.text());
+						t.true(decoded.ok);
+						if (decoded.ok) t.equal(decoded.value.payload.exp, 2500);
+					} else {
+						const body = (await response.json()) as { error: string };
+						t.equal(body.error, "temporarily_unavailable");
+					}
+				}
+			}
+		});
+		test("auxiliary EC expiry bounds cache reuse without shortening the returned chain expiry", async (t) => {
+			const c = CorePublic;
+			let now = 1500,
+				ecExpiry = 1600,
+				calls = 0;
+			const clock = { now: () => now },
+				f = await createTestContext({ options: { clock } });
+			const anchor = f.ctx.entityId,
+				mid = c.entityId("https://intermediate.example"),
+				leaf = c.entityId("https://subject.example");
+			const mk = await c.generateSigningKey("ES256"),
+				lk = await c.generateSigningKey("ES256");
+			const fed = (id: string) => ({
+				federation_entity: {
+					federation_fetch_endpoint: `${id}/fetch`,
+					federation_list_endpoint: `${id}/list`,
+				},
+			});
+			const sign = (payload: Record<string, unknown>, key: JWK) =>
+				c.signEntityStatement({ iat: 1500, exp: 2500, ...payload }, new c.JwkSigner(key));
+			const docs = new Map<string, string>([
+				[
+					`${anchor}/.well-known/openid-federation`,
+					await sign(
+						{ iss: anchor, sub: anchor, jwks: { keys: [f.publicKey] }, metadata: fed(anchor) },
+						f.signingKey,
+					),
+				],
+				[
+					`${leaf}/.well-known/openid-federation`,
+					await sign(
+						{
+							iss: leaf,
+							sub: leaf,
+							jwks: { keys: [lk.publicKey] },
+							authority_hints: [mid],
+							metadata: { openid_provider: { issuer: leaf } },
+						},
+						lk.privateKey,
+					),
+				],
+				[
+					`${mid}/fetch?sub=${encodeURIComponent(leaf)}`,
+					await sign({ iss: mid, sub: leaf, jwks: { keys: [lk.publicKey] } }, mk.privateKey),
+				],
+				[
+					`${anchor}/fetch?sub=${encodeURIComponent(mid)}`,
+					await sign({ iss: anchor, sub: mid, jwks: { keys: [mk.publicKey] } }, f.signingKey),
+				],
+			]);
+			const context: HandlerContext = {
+				...f.ctx,
+				requireAuthForFreshResolution: true,
+				trustAnchors: c.createTrustAnchorSet([{ entityId: anchor, jwks: { keys: [f.publicKey] } }]),
+				options: {
+					clock,
+					cacheMaxTtlSeconds: 1000,
+					clockSkewSeconds: 0,
+					httpClient: async (input) => {
+						calls++;
+						const jwt =
+							String(input) === `${mid}/.well-known/openid-federation`
+								? await sign(
+										{
+											iss: mid,
+											sub: mid,
+											exp: ecExpiry,
+											jwks: { keys: [mk.publicKey] },
+											authority_hints: [anchor],
+											metadata: fed(mid),
+										},
+										mk.privateKey,
+									)
+								: docs.get(String(input));
+						return new Response(jwt ?? "missing", {
+							status: jwt ? 200 : 404,
+							headers: { "content-type": MediaType.EntityStatement },
+						});
 					},
 				},
-				options: { clock: f.clock },
-				clientKeyProvider: { getClientFederationJwks: async () => undefined },
-			},
-			{ supportAuditTimestamps: false, defaultClaims: [] },
-		);
-		for (const filter of ["updated_after=0", "updated_before=2000"]) {
-			const response = await handler(new Request(`${f.config.entityId}/list?${filter}`));
+			};
+			const handler = createResolveHandler(context);
+			const request = () =>
+				new Request(
+					`${anchor}/resolve?${new URLSearchParams({ sub: leaf, trust_anchor: anchor })}`,
+				);
+			const response = await handler(request(), true);
 			t.equal(response.status, 200);
-			const body = (await response.json()) as {
-				immediate_subordinate_entities: Record<string, unknown>[];
-			};
-			t.equal(body.immediate_subordinate_entities[0]?.registered, 1500);
-			const suppressed = await handler(
-				new Request(`${f.config.entityId}/list?${filter}&audit_timestamps=false`),
+			const decoded = decodeEntityStatement(await response.text());
+			t.true(decoded.ok);
+			if (decoded.ok) t.equal(decoded.value.payload.exp, 2500);
+			const count = calls;
+			now = 1599;
+			t.equal((await handler(request())).status, 200);
+			t.equal(calls, count);
+			now = 1600;
+			t.equal(
+				(await handler(request())).status,
+				404,
+				"expired auxiliary evidence cannot be served from cache",
 			);
-			const omitted = (await suppressed.json()) as {
-				immediate_subordinate_entities: Record<string, unknown>[];
-			};
-			t.notOk(Object.hasOwn(omitted.immediate_subordinate_entities[0]!, "registered"));
-		}
-		t.equal(
-			(await handler(new Request(`${f.config.entityId}/list?audit_timestamps=true`))).status,
-			400,
-		);
+			ecExpiry = 2200;
+			t.equal((await handler(request(), true)).status, 200);
+			t.true(calls > count, "fresh local resolution obtains new evidence");
+			for (const expires of [false, true])
+				for (const fails of [false, true]) {
+					now = 1500;
+					ecExpiry = 1600;
+					let writes = 0;
+					const slowCacheHandler = createResolveHandler({
+						...context,
+						storage: {
+							...context.storage,
+							cache: {
+								get: async () => undefined,
+								delete: async () => {},
+								clear: async () => {},
+								[Symbol.asyncDispose]: async () => {},
+								set: async () => {
+									writes++;
+									await Promise.resolve();
+									now = expires ? 1600 : 1599;
+									if (fails) throw new Error("Cache write failed");
+								},
+							},
+						},
+					});
+					const response = await slowCacheHandler(request(), true);
+					t.equal(writes, 1);
+					t.equal(
+						response.status,
+						expires ? 503 : 200,
+						`auxiliary expiry: ${expires}, cache failure: ${fails}`,
+					);
+					if (expires)
+						t.equal(
+							((await response.json()) as { error: string }).error,
+							"temporarily_unavailable",
+						);
+					else {
+						const decoded = decodeEntityStatement(await response.text());
+						t.true(decoded.ok);
+						if (decoded.ok) t.equal(decoded.value.payload.exp, 2500);
+					}
+				}
+		});
+		test("candidate attempts share fetch limits and respect cancellation", async (t) => {
+			// Either branch may finish first; neither can supply a valid chain within the budget.
+			const f = await graph("signature", "signature");
+			const response = await createResolveHandler({
+				...f.ctx,
+				options: { ...f.ctx.options, maxTotalFetches: 4 },
+			})(new Request(f.url));
+			t.equal(response.status, 503);
+			t.equal(f.calls(), 4);
+			const aborted = await graph("signature", "valid");
+			t.equal(
+				(
+					await createResolveHandler(aborted.ctx)(
+						new Request(aborted.url, { signal: AbortSignal.abort() }),
+					)
+				).status,
+				503,
+			);
+			t.equal(aborted.calls(), 0);
+		});
+		test("unsupported explicit timestamps do not disable time-filter recommendations", async (t) => {
+			const f = await SubordinateEventsFixture.fixture();
+			await f.authority.registerSubordinate(f.record);
+			const handler = createExtendedListHandler(
+				{
+					entityId: SubordinateEventsFixture.issuer,
+					keyProvider: f.keyProvider,
+					storage: f.storage,
+					metadata: {
+						federation_entity: {
+							federation_fetch_endpoint: `${SubordinateEventsFixture.issuer}/fetch`,
+							federation_list_endpoint: `${SubordinateEventsFixture.issuer}/list`,
+						},
+					},
+					options: { clock: f.clock },
+					clientKeyProvider: { getClientFederationJwks: async () => undefined },
+				},
+				{ supportAuditTimestamps: false, defaultClaims: [] },
+			);
+			for (const filter of ["updated_after=0", "updated_before=2000"]) {
+				const response = await handler(new Request(`${f.config.entityId}/list?${filter}`));
+				t.equal(response.status, 200);
+				const body = (await response.json()) as {
+					immediate_subordinate_entities: Record<string, unknown>[];
+				};
+				t.equal(body.immediate_subordinate_entities[0]?.registered, 1500);
+				const suppressed = await handler(
+					new Request(`${f.config.entityId}/list?${filter}&audit_timestamps=false`),
+				);
+				const omitted = (await suppressed.json()) as {
+					immediate_subordinate_entities: Record<string, unknown>[];
+				};
+				t.notOk(Object.hasOwn(omitted.immediate_subordinate_entities[0]!, "registered"));
+			}
+			t.equal(
+				(await handler(new Request(`${f.config.entityId}/list?audit_timestamps=true`))).status,
+				400,
+			);
+		});
 	});
 };

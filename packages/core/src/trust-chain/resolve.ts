@@ -408,6 +408,13 @@ export async function resolveTrustChains(
 							trustAnchorId: hint as EntityId,
 							expiresAt: calculateChainExpiration(parsed as NonNullable<(typeof parsed)[0]>[]),
 						});
+					} else {
+						errors.push(
+							federationError(
+								InternalErrorCode.TrustChainInvalid,
+								"Discovered chain contains an undecodable Entity Statement",
+							),
+						);
 					}
 					return;
 				}

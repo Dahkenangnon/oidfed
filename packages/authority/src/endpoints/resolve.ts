@@ -1,10 +1,14 @@
 import {
 	authenticatedEndpointCaller,
+	calculateChainExpiration,
 	DEFAULT_CACHE_TTL_SECONDS,
 	decodeEntityStatement,
 	type EntityId,
+	type FederationError,
 	FederationErrorCode,
+	type FederationOptions,
 	fetchTrustMarkStatus,
+	InternalErrorCode,
 	isValidEntityId,
 	type JWKSet,
 	JwtTyp,
@@ -16,11 +20,13 @@ import {
 	safeLogger,
 	signEntityStatement,
 	type TrustAnchorSet,
+	type TrustChain,
 	type TrustMarkEvaluation,
 	type TrustMarkEvidence,
 	type TrustMarkIssuerContext,
 	TrustMarkStatus,
 	trustMarkIssuerContext,
+	type ValidatedTrustChain,
 	type ValidatedTrustMark,
 	validateTrustChain,
 	validateTrustMarkWithIssuer,
@@ -41,6 +47,71 @@ interface ResolutionSnapshot {
 	payload: Record<string, unknown>;
 	headers: Record<string, unknown>;
 	reuseUntil: number;
+}
+
+const metadataFailures = new Set<string>([
+	InternalErrorCode.MetadataPolicyError,
+	InternalErrorCode.MetadataPolicyViolation,
+	FederationErrorCode.InvalidMetadata,
+]);
+
+/** Classify discovery outcomes without exposing upstream diagnostics or statements. */
+function discoveryFailure(errors: readonly FederationError[], incomplete: boolean): Response {
+	if (
+		incomplete ||
+		errors.some((error) =>
+			[
+				InternalErrorCode.Network,
+				InternalErrorCode.Timeout,
+				FederationErrorCode.TemporarilyUnavailable,
+				FederationErrorCode.ServerError,
+			].some((code) => code === error.code),
+		)
+	)
+		return errorResponse(
+			503,
+			FederationErrorCode.TemporarilyUnavailable,
+			"Trust chain discovery could not be completed",
+		);
+	const failures = errors.filter(
+		(error) =>
+			![
+				FederationErrorCode.NotFound,
+				FederationErrorCode.InvalidSubject,
+				FederationErrorCode.InvalidIssuer,
+			].some((code) => code === error.code),
+	);
+	if (!failures.length)
+		return errorResponse(404, FederationErrorCode.NotFound, "No trust chain found");
+	if (failures.every((error) => metadataFailures.has(error.code)))
+		return errorResponse(
+			400,
+			FederationErrorCode.InvalidMetadata,
+			"Metadata or Metadata Policy could not be validated",
+		);
+	if (
+		failures.every(
+			(error) =>
+				metadataFailures.has(error.code) ||
+				[
+					InternalErrorCode.TrustChainInvalid,
+					InternalErrorCode.SignatureInvalid,
+					InternalErrorCode.Expired,
+					InternalErrorCode.LoopDetected,
+					InternalErrorCode.ConstraintViolation,
+					InternalErrorCode.UnsupportedAlg,
+					InternalErrorCode.TrustAnchorUnknown,
+					FederationErrorCode.InvalidTrustChain,
+					FederationErrorCode.InvalidTrustAnchor,
+				].some((code) => code === error.code),
+		)
+	)
+		return errorResponse(
+			400,
+			FederationErrorCode.InvalidTrustChain,
+			"Trust chain could not be validated",
+		);
+	return errorResponse(500, FederationErrorCode.ServerError, "Trust chain discovery failed");
 }
 
 /** HTTP callers use the cache policy; local server calls may explicitly perform discovery. */
@@ -168,39 +239,67 @@ export function createResolveHandler(
 				}
 			}
 
-			const result = await resolveTrustChains(
-				sub as EntityId,
-				requestedAnchors as TrustAnchorSet,
-				ctx.options,
-			);
+			// All candidate attempts and their evidence checks share one network budget.
+			let remainingFetches = ctx.options?.maxTotalFetches ?? 50;
+			let budgetExhausted = false;
+			const transport = ctx.options?.httpClient ?? fetch;
+			const signal = ctx.options?.signal
+				? AbortSignal.any([request.signal, ctx.options.signal])
+				: request.signal;
+			const options: FederationOptions = {
+				...ctx.options,
+				signal,
+				httpClient: async (input, init) => {
+					if (signal.aborted) throw new DOMException("Operation aborted", "AbortError");
+					if (remainingFetches <= 0) {
+						budgetExhausted = true;
+						throw new Error("Fetch budget exhausted");
+					}
+					remainingFetches--;
+					return transport(input, init);
+				},
+			};
+			const operationContext = { ...ctx, options };
+			const result = await resolveTrustChains(sub as EntityId, requestedAnchors, options);
+			if (!result.chains.length)
+				return discoveryFailure(
+					result.errors,
+					Boolean(result.incomplete || budgetExhausted || signal.aborted),
+				);
 
-			if (result.chains.length === 0) {
-				return errorResponse(404, FederationErrorCode.NotFound, "No valid trust chain found");
+			let selected: { chain: TrustChain; validated: ValidatedTrustChain } | undefined;
+			const failures: FederationError[] = [...result.errors];
+			for (const candidate of result.chains) {
+				if (signal.aborted || budgetExhausted) break;
+				const validation = await validateTrustChain(candidate.statements, requestedAnchors, {
+					...options,
+					entityConfigurations: candidate.entityConfigurations,
+					verboseErrors: true,
+				});
+				if (validation.valid) {
+					selected = { chain: candidate, validated: validation.chain };
+					break;
+				}
+				failures.push(
+					...validation.errors.map((error) => ({ code: error.code, description: error.message })),
+				);
 			}
+			if (signal.aborted || budgetExhausted || (!selected && result.incomplete))
+				return discoveryFailure([], true);
+			if (!selected) return discoveryFailure(failures, false);
+			const { chain, validated } = selected;
 
-			const chain = result.chains[0];
-			if (!chain) {
-				return errorResponse(404, FederationErrorCode.NotFound, "No valid trust chain found");
-			}
-
-			const validation = await validateTrustChain(
-				[...chain.statements],
-				requestedAnchors as TrustAnchorSet,
-				{ ...ctx.options, entityConfigurations: chain.entityConfigurations },
-			);
-
-			if (!validation.valid) {
-				return errorResponse(404, FederationErrorCode.NotFound, "No valid trust chain found");
-			}
-
-			let resolvedMetadata = validation.chain.resolvedMetadata as
-				| Record<string, unknown>
-				| undefined;
+			let resolvedMetadata = validated.resolvedMetadata as Record<string, unknown> | undefined;
 			if (entityTypeParam.length > 0 && resolvedMetadata) {
 				const filtered: Record<string, unknown> = {};
 				for (const et of entityTypeParam) {
-					if (et in resolvedMetadata) {
-						filtered[et] = resolvedMetadata[et];
+					if (Object.hasOwn(resolvedMetadata, et)) {
+						Object.defineProperty(filtered, et, {
+							value: resolvedMetadata[et],
+							enumerable: true,
+							configurable: true,
+							writable: true,
+						});
 					}
 				}
 				if (Object.keys(filtered).length === 0) {
@@ -212,17 +311,18 @@ export function createResolveHandler(
 			const keySet = await ctx.keyProvider.getFederationKeySet();
 			const now = nowSeconds(ctx.options?.clock);
 			const activeTrustMarks = await resolveActiveTrustMarks(
-				ctx,
-				validation.chain.statements,
-				validation.chain.trustMarkEvaluations,
+				operationContext,
+				validated.statements,
+				validated.trustMarkEvaluations,
 				now,
 			);
 
 			// Exp is capped to the earliest expiry across the chain and trust marks
-			let resolveExp = chain.expiresAt;
+			let resolveExp = calculateChainExpiration(validated.statements);
+			let evidenceDeadline = validated.expiresAt;
 			for (const { mark } of activeTrustMarks) {
-				resolveExp = Math.min(
-					resolveExp,
+				evidenceDeadline = Math.min(
+					evidenceDeadline,
 					mark.verificationExpiresAt ?? Infinity,
 					mark.delegation?.expiresAt ?? Infinity,
 				);
@@ -255,7 +355,7 @@ export function createResolveHandler(
 					const issuerResult = await resolveTrustChains(
 						ctx.entityId as EntityId,
 						requestedAnchors as TrustAnchorSet,
-						ctx.options,
+						options,
 					);
 					const firstChain = issuerResult.chains[0];
 					if (firstChain) {
@@ -266,18 +366,35 @@ export function createResolveHandler(
 				}
 			}
 
+			if (
+				signal.aborted ||
+				Math.min(resolveExp, evidenceDeadline) <= nowSeconds(ctx.options?.clock)
+			)
+				return errorResponse(
+					503,
+					FederationErrorCode.TemporarilyUnavailable,
+					"Resolution evidence has expired or the operation was cancelled",
+				);
 			const jwt = await signEntityStatement(payload, keySet.signer, {
 				typ: JwtTyp.ResolveResponse,
 				extraHeaders,
 			});
 
-			if (resolveExp <= nowSeconds(ctx.options?.clock))
-				return errorResponse(500, "server_error", "Resolution evidence expired during signing");
+			if (
+				signal.aborted ||
+				Math.min(resolveExp, evidenceDeadline) <= nowSeconds(ctx.options?.clock)
+			)
+				return errorResponse(
+					503,
+					FederationErrorCode.TemporarilyUnavailable,
+					"Resolution evidence expired during signing",
+				);
 
 			// §18.1 permits anonymous callers to reuse completed assessments. Cap reuse
 			// by both the configured TTL and every included piece of expiring evidence.
 			let cacheExpiry = Math.min(
 				resolveExp,
+				evidenceDeadline,
 				now + (ctx.options?.cacheMaxTtlSeconds ?? DEFAULT_CACHE_TTL_SECONDS),
 			);
 			for (const { mark } of activeTrustMarks) {
@@ -311,6 +428,17 @@ export function createResolveHandler(
 					safeLogger(ctx.options?.logger)?.debug("Could not cache successful resolution");
 				}
 			}
+
+			// Cache storage is asynchronous, even when it eventually rejects the write.
+			if (
+				signal.aborted ||
+				Math.min(resolveExp, evidenceDeadline) <= nowSeconds(ctx.options?.clock)
+			)
+				return errorResponse(
+					503,
+					FederationErrorCode.TemporarilyUnavailable,
+					"Resolution evidence expired or the operation was cancelled before delivery",
+				);
 
 			return jwtResponse(jwt, MediaType.ResolveResponse);
 		} catch {

@@ -154,7 +154,7 @@ Each response is signed with the current key. Its `exp` remains the minimum expi
 
 Resolve includes only marks authorized by the selected Trust Anchor, as required by [Federation §8.3.2](https://openid.net/specs/openid-federation-1_0.html#section-8.3.2). Independently established or out-of-band issuer evidence cannot replace that anchor's issuer and owner/delegation policy. An expired, unauthorized, or unverifiable mark is omitted while an otherwise valid holder chain can still resolve.
 
-The resolver also checks active status before inclusion. For locally issued marks it uses the same assessment as the Status endpoint, including a configured `trustMarkStatusPolicy`; a `suspended` result is not active. For external issuers it uses authenticated issuer evidence to locate and verify the Status response, even when the issuer is absent from the holder's chain. Response and cache lifetimes remain bounded by all included evidence. Applications enforce required accreditations using the [core requirement helper](core.md#trust-marks).
+The resolver also checks active status before inclusion. For locally issued marks it uses the same assessment as the Status endpoint, including a configured `trustMarkStatusPolicy`; a `suspended` result is not active. For external issuers it uses authenticated issuer evidence to locate and verify the Status response, even when the issuer is absent from the holder's chain. The response expiration follows the chain and included marks; cache reuse also stops at earlier evidence deadlines. Applications enforce required accreditations using the [core requirement helper](core.md#trust-marks).
 
 ### Issuing and revoking Trust Marks
 
@@ -383,3 +383,13 @@ Attach `WalletProviderRole`, `CredentialIssuerRole`, or `CredentialVerifierRole`
 ### Additional endpoint authentication methods
 
 Pass `endpointAuthentication: { methods: { [methodName]: implementation }, transportEvidence? }` and advertise the method in the endpoint's `*_auth_methods` metadata. The shared core verifier authenticates credentials before endpoint extensions run. `none` and `private_key_jwt` retain their built-in behavior; unsupported advertised methods fail at construction. See [core authentication](core.md#signing-hosting-and-authenticated-clients) for the callback contract. Collection uses the same verifier through `collection.authentication.extensions`.
+
+## Resolve results and their lifetime
+
+Resolve tries discovered candidate chains until one validates. A bad path does not hide a valid path to another requested anchor. Discovery and validation attempts share the request's fetch budget and cancellation signal.
+
+A missing subject or absent chain returns `404 not_found`. When discovery has no outstanding operational failures, discovered chains that all fail validation return `400 invalid_trust_chain`; metadata-only failures return `400 invalid_metadata`. When no valid candidate is available, incomplete discovery caused by temporary upstream failures or exhausted limits returns `503 temporarily_unavailable`. Unexpected internal failures return `500 server_error`. Responses contain generic descriptions rather than validation details or signed evidence.
+
+The response's `exp` is the minimum expiration of the selected chain and the included Trust Marks, as [§8.3.2](https://openid.net/specs/openid-federation-1_0.html#section-8.3.2) specifies. Auxiliary intermediate Entity Configurations, delegations, and other issuer evidence must still be valid when the response is produced. These auxiliary documents do not shorten the expiration calculated from statements in the returned chain. Their earlier deadlines limit cache reuse independently of the wire `exp`: an anonymous request can therefore encounter a cache miss before a previously issued response expires. Fresh resolution reassesses the evidence and omits marks that can no longer be verified as active.
+
+Fixed routing selectors use the endpoint's parameter rules. Known membership filters accept reordered or repeated identical values; scalar selectors and unknown extensions keep exact comparison. Authority construction rejects overlapping routes under those same rules, including routes whose parameter rules differ.
