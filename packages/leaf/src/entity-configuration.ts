@@ -1,7 +1,10 @@
 /** Leaf entity class: Entity Configuration serving with caching and trust chain discovery. */
 import {
+	type AttachTrustMarkOptions,
 	buildEntityConfigurationPayload,
+	createEndpointAuthenticatedHandler,
 	DEFAULT_ENTITY_STATEMENT_TTL_SECONDS,
+	decodeEntityStatement,
 	discoverEntity as discoverEntityThroughTrustChain,
 	type EntityCollectionIntegration,
 	EntityCollectionService,
@@ -13,21 +16,28 @@ import {
 	errorResponse,
 	type FederationKeyProvider,
 	type FederationOptions,
+	type FetchAndAttachTrustMarkOptions,
 	isValidEntityId,
 	JwtTyp,
 	jwtResponse,
 	MediaType,
 	nowSeconds,
+	type RemoveTrustMarkSelector,
 	requireMethod,
 	safeLogger,
 	signEntityStatement,
 	type TrustAnchorSet,
+	TrustMarkHolder,
+	type TrustMarkIssuanceOptions,
+	type TrustMarkIssuerConfig,
+	TrustMarkIssuerService,
 	type TrustMarkRef,
 	validateFederationKeySet,
 	validateRoleMetadata,
 } from "@oidfed/core";
 
 export interface LeafConfig {
+	trustMarkIssuer?: TrustMarkIssuerConfig;
 	collection?: EntityCollectionIntegration;
 	entityId: EntityId | string;
 	authorityHints: readonly (EntityId | string)[];
@@ -51,6 +61,8 @@ function cloneMetadata(metadata: EntityStatementMetadata): Record<string, Record
 
 export class Leaf {
 	readonly collection?: EntityCollectionService;
+	private readonly issuerService?: TrustMarkIssuerService;
+	private readonly holder: TrustMarkHolder;
 	static discoverEntity(
 		targetEntityId: EntityId | string,
 		trustAnchors: TrustAnchorSet,
@@ -80,7 +92,21 @@ export class Leaf {
 			throw new Error("entityId MUST be a valid HTTPS URL without query or fragment");
 		}
 		this.entityId = rawEntityId;
-		this.config = config;
+		this.config = {
+			...config,
+			authorityHints: [...config.authorityHints],
+			...(config.trustMarks ? { trustMarks: structuredClone(config.trustMarks) } : {}),
+		};
+		this.holder = new TrustMarkHolder(this.entityId, config.trustMarks ?? [], async (refs) => {
+			const jwt = await this.buildEntityConfiguration(this.generation, refs, false);
+			const parsed = decodeEntityStatement(jwt);
+			if (!parsed.ok) throw new Error("Unable to publish Entity Configuration");
+			this.config.trustMarks = structuredClone([...refs]);
+			this.generation++;
+			this.cachedJwt = jwt;
+			this.cachedExp = parsed.value.payload.exp;
+			this.inflight = null;
+		});
 
 		if (!config.keyProvider) {
 			throw new Error("keyProvider MUST be provided");
@@ -182,6 +208,81 @@ export class Leaf {
 			}
 		}
 
+		const markEndpoints = [
+			["federation_trust_mark_status_endpoint", "status"],
+			["federation_trust_mark_list_endpoint", "list"],
+			["federation_trust_mark_endpoint", "retrieval"],
+		] as const;
+		if (config.trustMarkIssuer)
+			this.issuerService = new TrustMarkIssuerService({
+				...config.trustMarkIssuer,
+				issuer: this.entityId,
+				keyProvider: config.keyProvider,
+				statusEndpointPublished:
+					!!metadata.federation_entity?.federation_trust_mark_status_endpoint,
+				...(config.options ? { options: config.options } : {}),
+			});
+		for (const [field, kind] of markEndpoints) {
+			const endpoint = metadata.federation_entity?.[field];
+			if (endpoint === undefined) continue;
+			if (typeof endpoint !== "string" || !this.issuerService)
+				throw new Error("Trust Mark endpoints require trustMarkIssuer configuration");
+			const url = new URL(endpoint);
+			if (url.protocol !== "https:" || url.hash || url.href.includes("#"))
+				throw new Error("Trust Mark endpoint must use HTTPS without a fragment");
+			const wellKnown = `${new URL(this.entityId).pathname.replace(/\/$/, "")}/.well-known/openid-federation`;
+			if (this.routes.has(url.pathname) || url.pathname === wellKnown)
+				throw new Error("Trust Mark endpoint conflicts with an existing route");
+			const service = this.issuerService;
+			const declared = metadata.federation_entity?.[`${field}_auth_methods`];
+			if (
+				declared !== undefined &&
+				(!Array.isArray(declared) || !declared.every((value) => typeof value === "string"))
+			)
+				throw new Error("Invalid endpoint authentication methods");
+			const advertisedAlgorithms =
+				metadata.federation_entity?.endpoint_auth_signing_alg_values_supported;
+			if (
+				advertisedAlgorithms !== undefined &&
+				(!Array.isArray(advertisedAlgorithms) ||
+					!advertisedAlgorithms.every((value) => typeof value === "string"))
+			)
+				throw new Error("Invalid endpoint authentication algorithms");
+			const configuredAlgorithms = config.trustMarkIssuer?.authentication?.allowedAlgorithms;
+			const allowedAlgorithms =
+				advertisedAlgorithms === undefined
+					? configuredAlgorithms
+					: (advertisedAlgorithms as string[]).filter(
+							(algorithm) => !configuredAlgorithms || configuredAlgorithms.includes(algorithm),
+						);
+			if (declared?.includes("private_key_jwt") && allowedAlgorithms?.length === 0)
+				throw new Error("Endpoint authentication algorithms have no permitted intersection");
+			const authenticated = createEndpointAuthenticatedHandler(
+				{
+					...config.trustMarkIssuer?.authentication,
+					...(allowedAlgorithms ? { allowedAlgorithms } : {}),
+					receiverEntityId: this.entityId,
+					methods: (declared as string[] | undefined) ?? ["none"],
+				},
+				(request) => service.handleRequest(kind, request),
+				config.options,
+				kind === "status" ? "POST" : "GET",
+			);
+			this.routes.set(url.pathname, (request) => {
+				const incoming = new URL(request.url).searchParams;
+				for (const name of new Set(url.searchParams.keys())) {
+					const expected = url.searchParams.getAll(name),
+						actual = incoming.getAll(name);
+					if (
+						expected.length !== actual.length ||
+						expected.some((value, index) => value !== actual[index])
+					)
+						return Promise.resolve(errorResponse(404, "not_found", "Unknown endpoint"));
+				}
+				return authenticated(request);
+			});
+		}
+
 		if (Object.keys(this.metadata).length === 0) {
 			throw new Error("metadata MUST contain at least one Entity Type Identifier");
 		}
@@ -219,7 +320,11 @@ export class Leaf {
 		}
 	}
 
-	private async buildEntityConfiguration(generation: number): Promise<string> {
+	private async buildEntityConfiguration(
+		generation: number,
+		refs: readonly TrustMarkRef[] | undefined = this.config.trustMarks,
+		publish = true,
+	): Promise<string> {
 		validateRoleMetadata(this.config.roles, this.metadata, this.roleContext);
 		const keySet = await this.config.keyProvider.getFederationKeySet();
 		validateFederationKeySet(keySet);
@@ -232,7 +337,7 @@ export class Leaf {
 			metadata: this.metadata,
 			authorityHints: this.config.authorityHints,
 			...(this.config.trustAnchorHints ? { trustAnchorHints: this.config.trustAnchorHints } : {}),
-			...(this.config.trustMarks ? { trustMarks: this.config.trustMarks } : {}),
+			...(refs ? { trustMarks: refs } : {}),
 			issuedAt: now,
 			ttlSeconds,
 		});
@@ -241,7 +346,7 @@ export class Leaf {
 			typ: JwtTyp.EntityStatement,
 		});
 
-		if (generation === this.generation) {
+		if (publish && generation === this.generation) {
 			this.cachedJwt = jwt;
 			this.cachedExp = payload.exp;
 		}
@@ -289,6 +394,43 @@ export class Leaf {
 			if (generation === this.generation) this.inflight = null;
 		});
 		return this.inflight;
+	}
+
+	getTrustMarks() {
+		return this.holder.getTrustMarks();
+	}
+	async attachTrustMark(jwt: string, options: AttachTrustMarkOptions) {
+		return this.holder.attachTrustMark(jwt, options);
+	}
+	async fetchAndAttachTrustMark(options: FetchAndAttachTrustMarkOptions) {
+		return this.holder.fetchAndAttachTrustMark(options);
+	}
+	async removeTrustMark(selector: RemoveTrustMarkSelector) {
+		return this.holder.removeTrustMark(selector);
+	}
+
+	private requireIssuer(): TrustMarkIssuerService {
+		if (!this.issuerService) throw new Error("Trust Mark issuer is not configured");
+		return this.issuerService;
+	}
+	async issueTrustMark(
+		subject: string,
+		type: string,
+		options?: TrustMarkIssuanceOptions,
+	): Promise<string> {
+		return this.requireIssuer().issueTrustMark(subject, type, options);
+	}
+	async revokeTrustMark(type: string, subject: string): Promise<void> {
+		return this.requireIssuer().revokeTrustMark(type, subject);
+	}
+	async listTrustMarksForSubject(subject: string) {
+		return this.requireIssuer().listTrustMarksForSubject(subject);
+	}
+	async listTrustMarkedEntities(type: string, subject?: string) {
+		return this.requireIssuer().listTrustMarkedEntities(type, subject);
+	}
+	async setTrustMarkDelegations(delegations: Readonly<Record<string, string>>): Promise<void> {
+		return this.requireIssuer().setDelegations(delegations);
 	}
 
 	async handleRequest(request: Request): Promise<Response> {

@@ -1,4 +1,5 @@
 import type QUnit from "qunit";
+import * as CorePublic from "../../../packages/core/src/index.js";
 import {
 	decodeEntityStatement,
 	discoverEntity,
@@ -76,6 +77,251 @@ function mockFn<A extends unknown[]>() {
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("leaf / managed Trust Mark lifecycle", () => {
+		test("Trust Mark endpoints enforce advertised and locally restricted authentication algorithms", async (t) => {
+			const { config } = await createLeafConfig();
+			const issuer = String(config.entityId),
+				subject = entityId("https://member.example"),
+				type = "type";
+			const client = await generateSigningKey("ES256"),
+				signer = new JwkSigner(client.privateKey);
+			for (const advertised of [["RS256"], ["RS256", "ES256"], undefined]) {
+				const leaf = new Leaf({
+					...config,
+					metadata: {
+						federation_entity: {
+							federation_trust_mark_endpoint: `${issuer}/marks`,
+							federation_trust_mark_endpoint_auth_methods: ["private_key_jwt"],
+							federation_trust_mark_status_endpoint: `${issuer}/status`,
+							federation_trust_mark_status_endpoint_auth_methods: ["private_key_jwt"],
+							federation_trust_mark_list_endpoint: `${issuer}/list`,
+							federation_trust_mark_list_endpoint_auth_methods: ["private_key_jwt"],
+							...(advertised ? { endpoint_auth_signing_alg_values_supported: advertised } : {}),
+						},
+					},
+					trustMarkIssuer: {
+						storage: new CorePublic.MemoryTrustMarkStore(),
+						authentication: {
+							replayStore: new CorePublic.MemoryReplayStore(),
+							getClientFederationJwks: async () => ({ keys: [client.publicKey] }),
+						},
+					},
+				});
+				const jwt = await leaf.issueTrustMark(subject, type);
+				const options = {
+					httpClient: async (input: string | URL | Request, init?: RequestInit) =>
+						leaf.handleRequest(new Request(input, init)),
+					authentication: {
+						method: "private_key_jwt" as const,
+						audience: issuer,
+						clientId: subject,
+						signer,
+					},
+				};
+				const fetched = await CorePublic.fetchTrustMark(
+					`${issuer}/marks`,
+					{ sub: subject, trustMarkType: type },
+					options,
+				);
+				const listed = await CorePublic.fetchTrustMarkList(
+					`${issuer}/list`,
+					{ trustMarkType: type },
+					options,
+				);
+				const keys = await config.keyProvider.getFederationKeySet();
+				const status = await CorePublic.fetchTrustMarkStatus(`${issuer}/status`, jwt, keys.jwks, {
+					...options,
+					expectedIssuer: issuer,
+				});
+				for (const result of [fetched, listed, status])
+					t.equal(result.ok, advertised?.includes("ES256") ?? true);
+			}
+			const build = (allowedAlgorithms: readonly string[]) =>
+				new Leaf({
+					...config,
+					metadata: {
+						federation_entity: {
+							federation_trust_mark_endpoint: `${issuer}/marks`,
+							federation_trust_mark_endpoint_auth_methods: ["private_key_jwt"],
+							endpoint_auth_signing_alg_values_supported: ["ES256", "RS256"],
+						},
+					},
+					trustMarkIssuer: {
+						storage: new CorePublic.MemoryTrustMarkStore(),
+						authentication: {
+							allowedAlgorithms,
+							replayStore: new CorePublic.MemoryReplayStore(),
+							getClientFederationJwks: async () => ({ keys: [client.publicKey] }),
+						},
+					},
+				});
+			t.throws(() => build(["PS256"]), /intersection/);
+			const restricted = build(["RS256"]);
+			await restricted.issueTrustMark(subject, type);
+			const response = await CorePublic.fetchTrustMark(
+				`${issuer}/marks`,
+				{ sub: subject, trustMarkType: type },
+				{
+					httpClient: async (input, init) => restricted.handleRequest(new Request(input, init)),
+					authentication: {
+						method: "private_key_jwt",
+						audience: issuer,
+						clientId: subject,
+						signer,
+					},
+				},
+			);
+			t.false(response.ok, "the local restriction is not broadened by metadata");
+		});
+
+		test("Leaf hosts issuer endpoints and authenticated retrieval without authority endpoints", async (t) => {
+			const { config, publicKey } = await createLeafConfig();
+			const issuer = String(config.entityId),
+				subject = entityId("https://member.example"),
+				type = "type";
+			const leaf = new Leaf({
+				...config,
+				metadata: {
+					federation_entity: {
+						federation_trust_mark_endpoint: `${issuer}/marks`,
+						federation_trust_mark_endpoint_auth_methods: ["example-auth"],
+						federation_trust_mark_list_endpoint: `${issuer}/mark-list`,
+						federation_trust_mark_status_endpoint: `${issuer}/mark-status`,
+					},
+				},
+				trustMarkIssuer: {
+					storage: new CorePublic.MemoryTrustMarkStore(),
+					authentication: {
+						extensions: {
+							methods: {
+								"example-auth": {
+									parameters: ["proof"],
+									authenticate: (input) =>
+										input.parameters.proof?.[0] === "valid"
+											? ok({ entityId: "https://caller.example" })
+											: err({ code: "invalid_client", description: "invalid" }),
+								},
+							},
+						},
+					},
+				},
+			});
+			const jwt = await leaf.issueTrustMark(subject, type, { noExpiry: true });
+			const httpClient: CorePublic.HttpClient = async (url, init) =>
+				leaf.handleRequest(new Request(url, init));
+			const missing = await CorePublic.fetchTrustMark(
+				`${issuer}/marks`,
+				{ sub: subject, trustMarkType: type },
+				{ httpClient },
+			);
+			t.false(missing.ok);
+			const fetched = await CorePublic.fetchTrustMark(
+				`${issuer}/marks`,
+				{ sub: subject, trustMarkType: type },
+				{
+					httpClient,
+					authentication: {
+						method: "example-auth",
+						audience: issuer,
+						prepare: async () => ({ parameters: { proof: "valid" } }),
+					},
+				},
+			);
+			t.true(fetched.ok);
+			if (fetched.ok) t.equal(fetched.value, jwt);
+			const listed = await CorePublic.fetchTrustMarkList(
+				`${issuer}/mark-list`,
+				{ trustMarkType: type },
+				{ httpClient },
+			);
+			t.true(listed.ok);
+			if (listed.ok) t.deepEqual(listed.value, [subject]);
+			const checked = await CorePublic.fetchTrustMarkStatus(
+				`${issuer}/mark-status`,
+				jwt,
+				{ keys: [publicKey] },
+				{ expectedIssuer: issuer, httpClient },
+			);
+			t.true(checked.ok);
+			if (checked.ok) t.equal(checked.value.status, "active");
+			await leaf.revokeTrustMark(type, subject);
+			const revoked = await CorePublic.fetchTrustMarkStatus(
+				`${issuer}/mark-status`,
+				jwt,
+				{ keys: [publicKey] },
+				{ expectedIssuer: issuer, httpClient },
+			);
+			t.true(revoked.ok);
+			if (revoked.ok) t.equal(revoked.value.status, "revoked");
+			const ec = decodeEntityStatement(await leaf.getEntityConfiguration());
+			t.true(ec.ok);
+			if (ec.ok) {
+				t.strictEqual(
+					ec.value.payload.metadata?.federation_entity?.federation_fetch_endpoint,
+					undefined,
+				);
+				t.strictEqual(
+					ec.value.payload.metadata?.federation_entity?.federation_list_endpoint,
+					undefined,
+				);
+			}
+		});
+		test("holder attachment is validated, detached, deduplicated and rolls back when publication fails", async (t) => {
+			const { config } = await createLeafConfig();
+			let fail = false;
+			const leaf = new Leaf({
+				...config,
+				keyProvider: {
+					getFederationKeySet: async () => {
+						if (fail) throw new Error("signer unavailable");
+						return config.keyProvider.getFederationKeySet();
+					},
+				},
+			});
+			const key = await generateSigningKey("ES256"),
+				issuer = "https://accreditor.example",
+				type = "type";
+			const issuerEvidence = {
+				kind: "out-of-band" as const,
+				issuer,
+				allowedTrustMarkTypes: [type],
+				keys: { keys: [key.publicKey] },
+			};
+			const jwt = await CorePublic.signTrustMark({
+				issuer,
+				subject: leaf.entityId,
+				trustMarkType: type,
+				signer: new JwkSigner(key.privateKey),
+			});
+			const before = await leaf.getEntityConfiguration();
+			fail = true;
+			await t.rejects(leaf.attachTrustMark(jwt, { issuerEvidence, expectedTrustMarkType: type }));
+			t.deepEqual(leaf.getTrustMarks(), []);
+			t.equal(await leaf.getEntityConfiguration(), before);
+			fail = false;
+			await leaf.attachTrustMark(jwt, {
+				issuerEvidence,
+				expectedTrustMarkType: type,
+				offline: true,
+			});
+			await leaf.attachTrustMark(jwt, {
+				issuerEvidence,
+				expectedTrustMarkType: type,
+				offline: true,
+			});
+			t.equal(leaf.getTrustMarks().length, 1);
+			leaf.getTrustMarks().pop();
+			t.equal(leaf.getTrustMarks().length, 1);
+			const updated = await leaf.getEntityConfiguration();
+			fail = true;
+			await t.rejects(leaf.removeTrustMark({ jwt }));
+			t.equal(leaf.getTrustMarks().length, 1);
+			t.equal(await leaf.getEntityConfiguration(), updated);
+			fail = false;
+			await leaf.removeTrustMark({ issuer, trustMarkType: type });
+			t.deepEqual(leaf.getTrustMarks(), []);
+		});
+	});
 
 	module("leaf / custom constraints", () => {
 		test("discovery applies host-supplied constraint checks", async (t) => {
