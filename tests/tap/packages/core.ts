@@ -15363,6 +15363,271 @@ export default (QUnit: QUnit) => {
 			};
 		}
 		module("core / refreshTrustChain", () => {
+			async function refreshFixture(start = rf_now) {
+				let now = start;
+				const clock = { now: () => now };
+				const anchor = entityId("https://refresh-anchor.example");
+				const leaf = entityId("https://refresh-leaf.example");
+				const anchorKeys = await generateSigningKey("ES256");
+				let leafKeys = await generateSigningKey("ES256");
+				const anchors = CorePublic.createTrustAnchorSet([
+					{ entityId: anchor, jwks: { keys: [anchorKeys.publicKey] } },
+				]);
+				const documents = new Map<string, string>();
+				const requests: string[] = [];
+				const reads: string[] = [];
+				const writes: { key: string; ttl: number }[] = [];
+				let clears = 0,
+					disposals = 0;
+				class RefreshCache extends MemoryCache {
+					override async get<T>(key: string) {
+						reads.push(key);
+						return super.get<T>(key);
+					}
+					override async set<T>(key: string, value: T, ttl: number) {
+						writes.push({ key, ttl });
+						return super.set(key, value, ttl);
+					}
+					override async clear() {
+						clears++;
+						await super.clear();
+					}
+					override async [Symbol.asyncDispose]() {
+						disposals++;
+						await super[Symbol.asyncDispose]();
+					}
+				}
+				const cache = new RefreshCache({ clock });
+				const leafUrl = `${leaf}${WELL_KNOWN_OPENID_FEDERATION}`;
+				const anchorUrl = `${anchor}${WELL_KNOWN_OPENID_FEDERATION}`;
+				const fetchUrl = `${anchor}/fetch?sub=${encodeURIComponent(leaf)}`;
+				async function publish(name: string, lifetime = 600, rotate = false) {
+					if (rotate) leafKeys = await generateSigningKey("ES256");
+					documents.set(
+						leafUrl,
+						await signEntityStatement(
+							{
+								iss: leaf,
+								sub: leaf,
+								iat: now,
+								exp: now + lifetime,
+								jwks: { keys: [leafKeys.publicKey] },
+								authority_hints: [anchor],
+								metadata: { openid_relying_party: { client_name: name } },
+							},
+							new JwkSigner(leafKeys.privateKey),
+							{ typ: JwtTyp.EntityStatement },
+						),
+					);
+					documents.set(
+						anchorUrl,
+						await signEntityStatement(
+							{
+								iss: anchor,
+								sub: anchor,
+								iat: now,
+								exp: now + 600,
+								jwks: { keys: [anchorKeys.publicKey] },
+								metadata: {
+									federation_entity: {
+										federation_fetch_endpoint: `${anchor}/fetch`,
+										federation_list_endpoint: `${anchor}/list`,
+									},
+								},
+							},
+							new JwkSigner(anchorKeys.privateKey),
+							{ typ: JwtTyp.EntityStatement },
+						),
+					);
+					documents.set(
+						fetchUrl,
+						await signEntityStatement(
+							{
+								iss: anchor,
+								sub: leaf,
+								iat: now,
+								exp: now + 600,
+								jwks: { keys: [leafKeys.publicKey] },
+							},
+							new JwkSigner(anchorKeys.privateKey),
+							{ typ: JwtTyp.EntityStatement },
+						),
+					);
+				}
+				const options: CorePublic.FederationOptions = {
+					clock,
+					cache,
+					clockSkewSeconds: 0,
+					httpClient: async (input) => {
+						const url = String(input);
+						requests.push(url);
+						const jwt = documents.get(url);
+						return jwt === undefined
+							? new Response("Not Found", { status: 404 })
+							: new Response(jwt, {
+									headers: { "content-type": MediaType.EntityStatement },
+								});
+					},
+				};
+				await publish("Before", 10);
+				const resolved = await resolveTrustChains(leaf, anchors, options);
+				const candidate = resolved.chains[0];
+				if (!candidate) throw new Error("Fixture chain was not resolved");
+				const validated = await validateTrustChain(candidate.statements, anchors, {
+					...options,
+					entityConfigurations: candidate.entityConfigurations,
+				});
+				if (!validated.valid) throw new Error("Fixture chain was not validated");
+				requests.length = 0;
+				reads.length = 0;
+				writes.length = 0;
+				return {
+					clock,
+					options,
+					cache,
+					anchors,
+					chain: validated.chain,
+					documents,
+					requests,
+					reads,
+					writes,
+					leaf,
+					leafUrl,
+					fetchUrl,
+					anchorUrl,
+					publish,
+					advance: (seconds: number) => {
+						now += seconds;
+					},
+					lifecycle: () => ({ clears, disposals }),
+				};
+			}
+			test("uses options.clock for expiry and replacement validation, including exact expiry", async (t) => {
+				// Deliberately far from wall time so silently using Date.now cannot pass.
+				const f = await refreshFixture(rf_now + 86400);
+				const fresh = await refreshTrustChain(f.chain, f.anchors, f.options);
+				t.true(fresh.ok && fresh.value === f.chain);
+				t.equal(f.requests.length, 0);
+				f.advance(10);
+				await f.publish("After");
+				const refreshed = await refreshTrustChain(f.chain, f.anchors, f.options);
+				t.true(refreshed.ok);
+				if (refreshed.ok)
+					t.deepEqual(refreshed.value.resolvedMetadata.openid_relying_party, {
+						client_name: "After",
+					});
+				t.deepEqual(f.requests, [f.leafUrl], "unexpired superior statements remain reusable");
+				t.deepEqual(
+					f.writes.map(({ ttl }) => ttl),
+					[600],
+					"cache TTL uses the same clock",
+				);
+			});
+			test("the explicit clock takes precedence throughout refresh without changing caller options", async (t) => {
+				for (const conflicting of [false, true]) {
+					const f = await refreshFixture(rf_now + 86400);
+					f.advance(10);
+					await f.publish("After");
+					const { clock: _clock, ...withoutClock } = f.options;
+					const options = Object.freeze({
+						...withoutClock,
+						...(conflicting ? { clock: { now: () => rf_now } } : {}),
+					});
+					const result = await refreshTrustChain(f.chain, f.anchors, options, f.clock);
+					t.true(
+						result.ok,
+						conflicting
+							? "explicit clock overrides options.clock"
+							: "legacy clock reaches validation",
+					);
+					t.deepEqual(
+						f.writes.map(({ ttl }) => ttl),
+						[600],
+					);
+					t.equal(options.clock?.now(), conflicting ? rf_now : undefined);
+					t.equal(options.cache, f.cache);
+				}
+			});
+			test("forced refresh retrieves changed metadata and rollover keys through a warm cache", async (t) => {
+				const f = await refreshFixture();
+				await f.cache.set("application:unrelated", "keep", 500);
+				await f.cache.set("ec:unrelated", "keep too", 500);
+				f.reads.length = 0;
+				f.writes.length = 0;
+				await f.publish("After", 600, true);
+				const options = Object.freeze({ ...f.options, forceRefresh: true });
+				const result = await refreshTrustChain(f.chain, f.anchors, options);
+				t.true(result.ok);
+				if (result.ok) {
+					t.deepEqual(result.value.resolvedMetadata.openid_relying_party, { client_name: "After" });
+					t.notEqual(result.value.statements[0]?.header.kid, f.chain.statements[0]?.header.kid);
+				}
+				t.deepEqual([...f.requests].sort(), [f.leafUrl, f.anchorUrl, f.fetchUrl].sort());
+				t.deepEqual(f.reads, [], "no pre-existing statement reads reach the host cache");
+				t.equal(f.writes.length, 3, "fresh statements write through once");
+				t.true(f.writes.every(({ ttl }) => ttl === 600));
+				t.deepEqual(f.lifecycle(), { clears: 0, disposals: 0 });
+				t.equal(await f.cache.get("application:unrelated"), "keep");
+				t.equal(await f.cache.get("ec:unrelated"), "keep too");
+				f.requests.length = 0;
+				const cached = await fetchEntityConfiguration(f.leaf, f.options);
+				t.true(cached.ok && cached.value === f.documents.get(f.leafUrl));
+				t.equal(f.requests.length, 0, "later operations can reuse the refreshed entry");
+				t.equal(options.cache, f.cache);
+			});
+			test("forced operations each retrieve their own statements even with a shared cache", async (t) => {
+				const f = await refreshFixture();
+				await f.publish("After");
+				const results = await Promise.all(
+					[0, 1].map(() =>
+						refreshTrustChain(f.chain, f.anchors, { ...f.options, forceRefresh: true }),
+					),
+				);
+				t.true(results.every((result) => result.ok));
+				for (const url of [f.leafUrl, f.anchorUrl, f.fetchUrl])
+					t.equal(f.requests.filter((request) => request === url).length, 2);
+			});
+			test("forced refresh fails without stale fallback on unavailable, invalid, cancelled or offline evidence", async (t) => {
+				for (const mode of [
+					"missing",
+					"signature",
+					"expired",
+					"cancelled",
+					"offline",
+					"budget",
+				] as const) {
+					const f = await refreshFixture();
+					if (mode === "missing") f.documents.delete(f.leafUrl);
+					if (mode === "signature")
+						f.documents.set(f.leafUrl, f.documents.get(f.leafUrl)!.replace(/\.[^.]+$/, ".AAAA"));
+					if (mode === "expired") await f.publish("Expired", 0);
+					const result = await refreshTrustChain(f.chain, f.anchors, {
+						...f.options,
+						forceRefresh: true,
+						...(mode === "cancelled" ? { signal: AbortSignal.abort() } : {}),
+						...(mode === "offline" ? { offline: true } : {}),
+						...(mode === "budget" ? { maxTotalFetches: 1 } : {}),
+					});
+					t.false(result.ok, mode);
+					if (mode === "offline" || mode === "cancelled") t.equal(f.requests.length, 0, mode);
+					if (mode === "budget") t.equal(f.requests.length, 1);
+					t.deepEqual(f.lifecycle(), { clears: 0, disposals: 0 });
+				}
+			});
+			test("ordinary refresh may reuse an unexpired attestation after the authority removes its subject", async (t) => {
+				const f = await refreshFixture();
+				f.advance(10);
+				await f.publish("After");
+				f.documents.delete(f.fetchUrl);
+				const ordinary = await refreshTrustChain(f.chain, f.anchors, f.options);
+				t.true(ordinary.ok);
+				t.deepEqual(f.requests, [f.leafUrl]);
+				const forced = await refreshTrustChain(f.chain, f.anchors, {
+					...f.options,
+					forceRefresh: true,
+				});
+				t.false(forced.ok, "fresh retrieval detects the missing attestation");
+			});
 			test("returns the same chain if not expired", async (t) => {
 				const chain = rf_makeChain({ expiresAt: rf_now + 3600 });
 				const trustAnchors: TrustAnchorSet = new Map();

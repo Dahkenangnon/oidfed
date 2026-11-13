@@ -409,6 +409,18 @@ After the last active key is revoked, signing stops until the application publis
 
 `compareTrustAnchorKeys(ecJwks, independentJwks, entityId)` compares identifiers and public-key thumbprints for [§11.3](https://openid.net/specs/openid-federation-1_0.html#section-11.3). Both sets must be nonempty and contain public keys with distinct, nonempty identifiers. Invalid or uncomparable sets produce `match: false` with `inputErrors` identifying the affected source and reason. Valid sets retain the missing-key and mismatched-material diagnostics. An unsupported key type makes the comparison inconclusive; ordinary verification keeps its separate key-selection rules.
 
+### Refreshing Trust Chains
+
+`refreshTrustChain(chain, trustAnchors, options)` returns the same chain while it remains unexpired. Once it expires, it resolves and validates replacement evidence. Unexpired Entity Statements can still come from the cache, as [§10.2](https://openid.net/specs/openid-federation-1_0.html#section-10.2) permits; a refresh does not necessarily contact every authority.
+
+Use `{ forceRefresh: true }` when you want to check for changes before expiry. This bypasses pre-existing Entity Configuration and Subordinate Statement entries for that operation. Statements fetched during the operation can be reused and are written back with their normal TTLs. The shared cache is neither cleared nor disposed. This is the library's refresh contract, not a specification requirement to bypass valid caches. Your injected HTTP transport and upstream proxies can have their own caches.
+
+`options.clock` governs the expiry decision, statement validation, and calculation of cache TTLs. The existing fourth `clock` argument remains supported and takes precedence when both are supplied. A host-provided cache still owns its own expiration scheduling; use compatible clocks in tests.
+
+Failed fresh retrieval or validation returns an error; it does not return the previous chain as a successful refresh. Forced refresh respects cancellation, fetch limits, authentication, and offline restrictions. In particular, `offline: true` cannot satisfy a forced retrieval from old statement-cache entries. Your application decides when to call refresh and how to handle unavailable evidence.
+
+Refreshing an anchor's EC does not replace the caller's `TrustAnchorSet`. Independently establish which new keys to trust before changing that configuration. See the [independent comparison example](../guide/operator-responsibilities.md#compare-and-retrieve-again-on-a-key-mismatch).
+
 ### Replay protection (`ReplayStore`)
 
 `verifyClientAssertion()` requires `exp` and a non-empty `jti`; `iat` is optional. It checks the signature, issuer/subject equality, exact audience, expiry, and any supplied issuance time. Pass `replayStore` to atomically claim a verified assertion. Expiry is checked again after replay storage completes. Without it, the function verifies the JWT without recording its use. Authentication handlers must provide replay storage. These claims follow [OIDC Core §9](https://openid.net/specs/openid-connect-core-1_0.html#ClientAuthentication), referenced by [Federation §8.8](https://openid.net/specs/openid-federation-1_0.html#section-8.8).
