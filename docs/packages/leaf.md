@@ -71,6 +71,8 @@ const leaf = new Leaf({
 
 `getEntityConfiguration()` reuses the cached JWT until expiry. A Leaf removes one trailing `/` from its configured identifier once. Its `entityId`, role context, and EC `iss`/`sub` all use that published identifier. Discovery then follows §9's URL rule: remove one trailing `/` from the published identifier and append `/.well-known/openid-federation`. Use `leaf.entityId` when configuring another participant to discover it; repeated slashes and encoded path components are otherwise preserved.
 
+Construction rejects a role route that replaces the discovery endpoint or another role's route. Collection and hosted Trust Mark endpoints also reject conflicting role paths. Keep application routes on separate paths so discovery and endpoint authentication remain available.
+
 Call `refreshEntityConfiguration()` after a key change when you need a new configuration before the cached token expires. A refresh supersedes earlier builds: their results cannot replace the refreshed cache, and concurrent reads reuse the current build.
 
 ### Discovering entities and trust chains

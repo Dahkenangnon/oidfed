@@ -78,6 +78,44 @@ function mockFn<A extends unknown[]>() {
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
 	module("leaf / configuration route boundaries", () => {
+		test("role routes cannot replace discovery or another role", async (t) => {
+			const { config } = await createLeafConfig({ entityId: "https://leaf.example/tenant" });
+			const role = (path: string): CorePublic.EntityRole => ({
+				type: "example_protocol",
+				metadata: {},
+				routes: new Map([[path, async () => new Response("role")]]),
+			});
+			for (const path of [
+				"/tenant/.well-known/openid-federation",
+				"https://leaf.example/tenant/.well-known/openid-federation",
+			])
+				t.throws(() => new Leaf({ ...config, roles: [role(path)] }), /Role route.*conflicts/);
+			t.throws(
+				() =>
+					new Leaf({
+						...config,
+						roles: [role("/register"), role("https://leaf.example/register")],
+					}),
+				/Role route.*conflicts/,
+			);
+			const leaf = new Leaf({ ...config, roles: [role("/tenant//register")] });
+			t.equal(
+				await (
+					await leaf.handleRequest(new Request("https://leaf.example/tenant//register"))
+				).text(),
+				"role",
+			);
+			t.equal(
+				(
+					await leaf.handleRequest(
+						new Request("https://leaf.example/tenant/.well-known/openid-federation", {
+							method: "POST",
+						}),
+					)
+				).status,
+				405,
+			);
+		});
 		test("published leaf identity stays consistent across roles, claims and discovery", async (t) => {
 			const { config } = await createLeafConfig();
 			for (const prefix of ["https://leaf.example", "https://leaf.example:8443/tenant%2Fname"])

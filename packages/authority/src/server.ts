@@ -252,6 +252,7 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 /** Build around the established published identity without normalizing it again. */
 function createAuthorityServerWithIdentity(
 	config: AuthorityConfig & { entityId: EntityId },
+	roleRoutes: ReadonlyMap<string, (request: Request) => Promise<Response>> = new Map(),
 ): AuthorityServer {
 	const normalizedEntityId = config.entityId;
 
@@ -570,6 +571,14 @@ function createAuthorityServerWithIdentity(
 			(request) => collection.handleRequest(request),
 		);
 
+	// Role routes match the whole pathname, including requests with fixed selectors.
+	// Compare against the registered endpoints after metadata composition.
+	for (const [path, name] of routeNames) {
+		const pathname = new URL(`https://routing.invalid${path}`).pathname;
+		if (roleRoutes.has(pathname))
+			throw new InvalidAuthorityConfig(`Role route '${pathname}' conflicts with ${name}`);
+	}
+
 	const router = async (request: Request): Promise<Response> => {
 		// Remove legacy identity headers; authentication context is carried separately.
 		const headers = new Headers(request.headers);
@@ -865,6 +874,21 @@ function wellKnownPathForEntityId(value: EntityId): string {
 	return new URL(`${base}${WELL_KNOWN_OPENID_FEDERATION}`).pathname;
 }
 
+function addRoleRoutes(
+	routes: Map<string, (request: Request) => Promise<Response>>,
+	role: EntityRole,
+	entityId: EntityId,
+): void {
+	for (const [path, handler] of role.routes ?? []) {
+		const resolvedPath = path.startsWith("http") ? new URL(path).pathname : path;
+		if (routes.has(resolvedPath) || resolvedPath === wellKnownPathForEntityId(entityId))
+			throw new InvalidAuthorityConfig(
+				`Role route '${resolvedPath}' conflicts with an existing route`,
+			);
+		routes.set(resolvedPath, handler);
+	}
+}
+
 function requireAdvertisedEndpointPath(endpointName: string, endpoint: unknown): string {
 	if (typeof endpoint !== "string") {
 		throw new InvalidAuthorityConfig(
@@ -1030,16 +1054,11 @@ export class TrustAnchor {
 					...(metadataRecord[role.type] as Record<string, unknown>),
 					...role.metadata,
 				};
-				if (role.routes) {
-					for (const [path, handler] of role.routes.entries()) {
-						const resolvedPath = path.startsWith("http") ? new URL(path).pathname : path;
-						this.routes.set(resolvedPath, handler);
-					}
-				}
+				addRoleRoutes(this.routes, role, this.entityId);
 			}
 		}
 
-		this.server = createAuthorityServerWithIdentity(normalizedConfig);
+		this.server = createAuthorityServerWithIdentity(normalizedConfig, this.routes);
 	}
 
 	async getEntityConfiguration(): Promise<string> {
@@ -1200,16 +1219,11 @@ export class Intermediate {
 					...(metadataRecord[role.type] as Record<string, unknown>),
 					...role.metadata,
 				};
-				if (role.routes) {
-					for (const [path, handler] of role.routes.entries()) {
-						const resolvedPath = path.startsWith("http") ? new URL(path).pathname : path;
-						this.routes.set(resolvedPath, handler);
-					}
-				}
+				addRoleRoutes(this.routes, role, this.entityId);
 			}
 		}
 
-		this.server = createAuthorityServerWithIdentity(normalizedConfig);
+		this.server = createAuthorityServerWithIdentity(normalizedConfig, this.routes);
 	}
 
 	async getEntityConfiguration(): Promise<string> {

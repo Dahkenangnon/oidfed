@@ -260,6 +260,93 @@ export default (QUnit: QUnit) => {
 				},
 			};
 		}
+		const handler = async () => new Response("role");
+		const role = (path: string): CorePublic.EntityRole => ({
+			type: "example_protocol",
+			metadata: {},
+			routes: new Map([[path, handler]]),
+		});
+		test("role routes cannot replace discovery, built-in endpoints or another role", async (t) => {
+			const base = await config();
+			for (const Host of [TrustAnchor, Intermediate]) {
+				const make = (overrides: Partial<AuthorityConfig> = {}) =>
+					new Host({
+						...base,
+						metadata: structuredClone(base.metadata),
+						...(Host === Intermediate ? { authorityHints: [TA_ID] } : {}),
+						...overrides,
+					});
+				for (const path of [
+					"/tenant/.well-known/openid-federation",
+					"https://authority.example/tenant/.well-known/openid-federation",
+					"/fetch",
+					"/list",
+				])
+					t.throws(() => make({ roles: [role(path)] }), /conflict/, `${Host.name}: ${path}`);
+				t.throws(
+					() => make({ roles: [role("/register"), role("https://authority.example/register")] }),
+					/conflict/,
+				);
+				for (const field of [
+					"extended_list",
+					"historical_keys",
+					"trust_mark_status",
+					"trust_mark_list",
+					"trust_mark",
+					"resolve",
+					"subordinate_events",
+					"collection",
+				] as const) {
+					const endpoint = `https://authority.example/${field}?tenant=academic`;
+					t.throws(
+						() =>
+							make({
+								metadata: {
+									federation_entity: {
+										...base.metadata.federation_entity,
+										[`federation_${field}_endpoint`]: endpoint,
+									},
+								},
+								...(field === "collection" ? { collection: { trustAnchors: new Map() } } : {}),
+								roles: [role(`/${field}`)],
+							}),
+						/Role route.*conflicts/,
+						`${Host.name}: ${field}`,
+					);
+				}
+				// The reserved path comes from composed metadata, not just the original config.
+				t.throws(
+					() =>
+						make({
+							roles: [
+								{
+									type: "federation_entity",
+									metadata: { federation_fetch_endpoint: "https://authority.example/composed" },
+								},
+								role("/composed"),
+							],
+						}),
+					/Role route.*conflicts/,
+				);
+				const host = make({ roles: [role("/tenant//register")] });
+				t.equal(
+					await (
+						await host.handleRequest(new Request("https://authority.example/tenant//register"))
+					).text(),
+					"role",
+				);
+				t.equal(
+					(
+						await host.handleRequest(
+							new Request("https://authority.example/tenant/.well-known/openid-federation", {
+								method: "POST",
+							}),
+						)
+					).status,
+					405,
+				);
+			}
+		});
 		test("published authority identity stays consistent across roles, claims and discovery", async (t) => {
 			const base = await config();
 			const { createAuthorityServer: createRawAuthorityServer } = await import(

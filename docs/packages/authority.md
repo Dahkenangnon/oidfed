@@ -232,6 +232,8 @@ Authorities remove one trailing `/` from their own configured `entityId` at cons
 
 Discovery URL construction is a separate step: remove one trailing `/` from the published identifier, then append `/.well-known/openid-federation`, as §9 specifies. For example, configuring `https://ta.example.org/tenant///` publishes the identifier `https://ta.example.org/tenant//`, whose discovery URL is `https://ta.example.org/tenant//.well-known/openid-federation`. Use the host's published `entityId` when configuring other participants. Port numbers and encoded path components are preserved.
 
+Role routes cannot replace Entity Configuration discovery, another role's route, or a registered federation endpoint. Construction fails with the conflicting path. Because role routes dispatch by pathname, a role also conflicts with an endpoint on that pathname when the endpoint has fixed query selectors. Choose a separate path for the role's handler.
+
 Federation endpoint HTTP routes are derived from the paths advertised in `metadata.federation_entity`, not from fixed defaults. For example, advertising `federation_fetch_endpoint: "https://ta.example.org/custom/fetch"` mounts fetch handling at `/custom/fetch`. Optional endpoints are mounted only when their corresponding endpoint URL is advertised. Endpoint URLs must use HTTPS, must not contain fragments, and their route paths must be distinct.
 
 ### Extended subordinate listing

@@ -163,6 +163,11 @@ export class Leaf {
 				if (role.routes) {
 					for (const [path, handler] of role.routes.entries()) {
 						const resolvedPath = path.startsWith("http") ? new URL(path).pathname : path;
+						if (
+							this.routes.has(resolvedPath) ||
+							resolvedPath === wellKnownPathForEntityId(this.entityId)
+						)
+							throw new Error(`Role route '${resolvedPath}' conflicts with an existing route`);
 						this.routes.set(resolvedPath, handler);
 					}
 				}
