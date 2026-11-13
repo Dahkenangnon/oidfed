@@ -243,7 +243,17 @@ export interface AuthorityServer {
 
 /** Creates a federation authority server with all spec-defined endpoints. */
 export function createAuthorityServer(config: AuthorityConfig): AuthorityServer {
-	const normalizedEntityId = normalizeAuthorityEntityId(config.entityId);
+	return createAuthorityServerWithIdentity({
+		...config,
+		entityId: normalizeAuthorityEntityId(config.entityId),
+	});
+}
+
+/** Build around the established published identity without normalizing it again. */
+function createAuthorityServerWithIdentity(
+	config: AuthorityConfig & { entityId: EntityId },
+): AuthorityServer {
+	const normalizedEntityId = config.entityId;
 
 	const ttlFields = [
 		["entityConfigurationTtlSeconds", config.entityConfigurationTtlSeconds],
@@ -850,8 +860,9 @@ function validateEndpointCompanions(metadata: Record<string, unknown>): void {
 }
 
 function wellKnownPathForEntityId(value: EntityId): string {
-	const basePath = new URL(value).pathname.replace(/\/$/, "");
-	return `${basePath}${WELL_KNOWN_OPENID_FEDERATION}`;
+	// Section 9 constructs the URL from the published identifier, independently of host normalization.
+	const base = value.endsWith("/") ? value.slice(0, -1) : value;
+	return new URL(`${base}${WELL_KNOWN_OPENID_FEDERATION}`).pathname;
 }
 
 function requireAdvertisedEndpointPath(endpointName: string, endpoint: unknown): string {
@@ -996,7 +1007,7 @@ export class TrustAnchor {
 			throw new Error("Trust Anchor MUST NOT have authorityHints");
 		}
 		assertTrustAnchorHintsConfig(config, true);
-		const normalizedConfig: AuthorityConfig = {
+		const normalizedConfig: AuthorityConfig & { entityId: EntityId } = {
 			...config,
 			entityId: normalizeAuthorityEntityId(config.entityId),
 		};
@@ -1028,7 +1039,7 @@ export class TrustAnchor {
 			}
 		}
 
-		this.server = createAuthorityServer(normalizedConfig);
+		this.server = createAuthorityServerWithIdentity(normalizedConfig);
 	}
 
 	async getEntityConfiguration(): Promise<string> {
@@ -1163,7 +1174,7 @@ export class Intermediate {
 			throw new Error("Intermediate MUST have at least one authorityHint");
 		}
 		assertTrustAnchorHintsConfig(config, false);
-		const normalizedConfig: AuthorityConfig = {
+		const normalizedConfig: AuthorityConfig & { entityId: EntityId } = {
 			...config,
 			entityId: normalizeAuthorityEntityId(config.entityId),
 		};
@@ -1198,7 +1209,7 @@ export class Intermediate {
 			}
 		}
 
-		this.server = createAuthorityServer(normalizedConfig);
+		this.server = createAuthorityServerWithIdentity(normalizedConfig);
 	}
 
 	async getEntityConfiguration(): Promise<string> {

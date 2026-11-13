@@ -69,7 +69,9 @@ const leaf = new Leaf({
 
 `leaf.handleRequest(request)` serves `GET /.well-known/openid-federation` and dispatches any composed role routes. Built-in Entity Configuration discovery remains anonymous independently of Collection authentication; [Federation §9.1](https://openid.net/specs/openid-federation-1_0.html#section-9.1) defines its GET request without a client-assertion authentication flow. For an Entity Identifier with a path, the well-known suffix is appended to that path. Use the [Express adapter](../guide/wiring-guide.md#5-adapt-the-web-api-handler-to-express) to serve it in a Node application.
 
-`getEntityConfiguration()` reuses the cached JWT until expiry. Call `refreshEntityConfiguration()` after a key change when you need a new configuration before the cached token expires. A refresh supersedes earlier builds: their results cannot replace the refreshed cache, and concurrent reads reuse the current build.
+`getEntityConfiguration()` reuses the cached JWT until expiry. A Leaf removes one trailing `/` from its configured identifier once. Its `entityId`, role context, and EC `iss`/`sub` all use that published identifier. Discovery then follows §9's URL rule: remove one trailing `/` from the published identifier and append `/.well-known/openid-federation`. Use `leaf.entityId` when configuring another participant to discover it; repeated slashes and encoded path components are otherwise preserved.
+
+Call `refreshEntityConfiguration()` after a key change when you need a new configuration before the cached token expires. A refresh supersedes earlier builds: their results cannot replace the refreshed cache, and concurrent reads reuse the current build.
 
 ### Discovering entities and trust chains
 

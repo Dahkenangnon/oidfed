@@ -245,6 +245,79 @@ async function resolveAsClient(
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("authority / configuration route boundaries", () => {
+		async function config(id = "https://authority.example/tenant"): Promise<AuthorityConfig> {
+			const key = await generateSigningKey("ES256");
+			return {
+				entityId: id,
+				keyProvider: new MemoryFederationKeyProvider(createFederationSigningKey(key.privateKey)),
+				storage: new MemoryStorageAdapter({ trustMarks: true, subordinateEvents: true }),
+				metadata: {
+					federation_entity: {
+						federation_fetch_endpoint: "https://authority.example/fetch?tenant=academic",
+						federation_list_endpoint: "https://authority.example/list",
+					},
+				},
+			};
+		}
+		test("published authority identity stays consistent across roles, claims and discovery", async (t) => {
+			const base = await config();
+			const { createAuthorityServer: createRawAuthorityServer } = await import(
+				"../../../packages/authority/src/server.js"
+			);
+			for (const prefix of [
+				"https://authority.example",
+				"https://authority.example:8443/tenant%2Fname",
+			])
+				for (const trailing of [0, 1, 2, 3]) {
+					const raw = prefix + "/".repeat(trailing),
+						expected = raw.endsWith("/") ? raw.slice(0, -1) : raw;
+					for (const Host of [TrustAnchor, Intermediate]) {
+						let roleId: string | undefined;
+						const host = new Host({
+							...base,
+							entityId: raw,
+							metadata: structuredClone(base.metadata),
+							...(Host === Intermediate ? { authorityHints: [TA_ID] } : {}),
+							roles: [
+								{
+									type: "example_protocol",
+									metadata: {},
+									initialize: (context) => {
+										roleId = context.entityId;
+									},
+								},
+							],
+						});
+						t.equal(host.entityId, expected);
+						t.equal(roleId, expected);
+						const ec = decodeEntityStatement(await host.getEntityConfiguration());
+						t.true(ec.ok);
+						if (ec.ok) {
+							t.equal(ec.value.payload.iss, expected);
+							t.equal(ec.value.payload.sub, expected);
+						}
+						const result = await CorePublic.fetchEntityConfiguration(host.entityId, {
+							httpClient: async (input) => host.handleRequest(new Request(String(input))),
+						});
+						t.true(result.ok, `${Host.name}: ${raw}`);
+					}
+					const server = createRawAuthorityServer({
+						...base,
+						entityId: raw,
+						metadata: structuredClone(base.metadata),
+					});
+					const result = await CorePublic.fetchEntityConfiguration(entityId(expected), {
+						httpClient: async (input) => server.handler()(new Request(String(input))),
+					});
+					t.true(result.ok, `direct server: ${raw}`);
+					if (result.ok) {
+						const ec = decodeEntityStatement(result.value);
+						t.true(ec.ok && ec.value.payload.iss === expected && ec.value.payload.sub === expected);
+					}
+				}
+		});
+	});
 	module("authority / Resolve Trust Mark policy", () => {
 		const c = CorePublic;
 		async function fixture() {

@@ -35,6 +35,7 @@ import {
 	type TrustMarkRef,
 	validateFederationKeySet,
 	validateRoleMetadata,
+	WELL_KNOWN_OPENID_FEDERATION,
 } from "@oidfed/core";
 
 export interface LeafConfig {
@@ -58,6 +59,11 @@ function cloneMetadata(metadata: EntityStatementMetadata): Record<string, Record
 		cloned[entityType] = { ...entityMetadata };
 	}
 	return cloned;
+}
+
+function wellKnownPathForEntityId(value: EntityId): string {
+	const base = value.endsWith("/") ? value.slice(0, -1) : value;
+	return new URL(`${base}${WELL_KNOWN_OPENID_FEDERATION}`).pathname;
 }
 
 export class Leaf {
@@ -201,7 +207,7 @@ export class Leaf {
 			});
 			if (endpoint) {
 				const path = new URL(endpoint).pathname;
-				const wellKnownPath = `${new URL(this.entityId).pathname.replace(/\/$/, "")}/.well-known/openid-federation`;
+				const wellKnownPath = wellKnownPathForEntityId(this.entityId);
 				if (this.routes.has(path) || path === wellKnownPath)
 					throw new Error("Collection endpoint conflicts with an existing route");
 				const collection = this.collection;
@@ -231,7 +237,7 @@ export class Leaf {
 			const url = new URL(endpoint);
 			if (url.protocol !== "https:" || url.hash || url.href.includes("#"))
 				throw new Error("Trust Mark endpoint must use HTTPS without a fragment");
-			const wellKnown = `${new URL(this.entityId).pathname.replace(/\/$/, "")}/.well-known/openid-federation`;
+			const wellKnown = wellKnownPathForEntityId(this.entityId);
 			if (this.routes.has(url.pathname) || url.pathname === wellKnown)
 				throw new Error("Trust Mark endpoint conflicts with an existing route");
 			const service = this.issuerService;
@@ -444,7 +450,7 @@ export class Leaf {
 		}
 
 		// Standard GET discovery (§9.1) is separate from the optional Collection authentication.
-		const wellKnownPath = `${new URL(this.entityId).pathname.replace(/\/$/, "")}/.well-known/openid-federation`;
+		const wellKnownPath = wellKnownPathForEntityId(this.entityId);
 		if (pathname === wellKnownPath) {
 			const methodError = requireMethod(request, "GET");
 			if (methodError) return methodError;

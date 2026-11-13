@@ -228,7 +228,9 @@ Authority endpoints using this middleware require `storage.replay` when `private
 
 Entity Configuration discovery uses unauthenticated GET independently of these settings, following [§9.1](https://openid.net/specs/openid-federation-1_0.html#section-9.1). Federation defines no discovery auth-method parameter or client-assertion flow for it. The specification does not explicitly prohibit profile-specific network or TLS access controls; deployments using them need matching client transport support.
 
-Authorities normalize only their own configured `entityId` by removing a trailing `/`. The Entity Configuration HTTP route is then derived from that normalized Entity Identifier path: `https://ta.example.org/tenant` serves `https://ta.example.org/tenant/.well-known/openid-federation`, while `https://ta.example.org` serves `https://ta.example.org/.well-known/openid-federation`.
+Authorities remove one trailing `/` from their own configured `entityId` at construction. The resulting published identifier is used consistently by the public `entityId` property, composed roles, Entity Configuration claims, and hosted services. Remote identifiers and authority hints are kept unchanged.
+
+Discovery URL construction is a separate step: remove one trailing `/` from the published identifier, then append `/.well-known/openid-federation`, as §9 specifies. For example, configuring `https://ta.example.org/tenant///` publishes the identifier `https://ta.example.org/tenant//`, whose discovery URL is `https://ta.example.org/tenant//.well-known/openid-federation`. Use the host's published `entityId` when configuring other participants. Port numbers and encoded path components are preserved.
 
 Federation endpoint HTTP routes are derived from the paths advertised in `metadata.federation_entity`, not from fixed defaults. For example, advertising `federation_fetch_endpoint: "https://ta.example.org/custom/fetch"` mounts fetch handling at `/custom/fetch`. Optional endpoints are mounted only when their corresponding endpoint URL is advertised. Endpoint URLs must use HTTPS, must not contain fragments, and their route paths must be distinct.
 

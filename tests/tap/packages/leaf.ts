@@ -77,6 +77,40 @@ function mockFn<A extends unknown[]>() {
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("leaf / configuration route boundaries", () => {
+		test("published leaf identity stays consistent across roles, claims and discovery", async (t) => {
+			const { config } = await createLeafConfig();
+			for (const prefix of ["https://leaf.example", "https://leaf.example:8443/tenant%2Fname"])
+				for (const trailing of [0, 1, 2, 3]) {
+					const raw = prefix + "/".repeat(trailing),
+						expected = raw.endsWith("/") ? raw.slice(0, -1) : raw;
+					let roleId: string | undefined;
+					const leaf = new Leaf({
+						...config,
+						entityId: raw,
+						roles: [
+							{
+								type: "example_protocol",
+								metadata: {},
+								initialize: (context) => {
+									roleId = context.entityId;
+								},
+							},
+						],
+					});
+					t.equal(leaf.entityId, expected);
+					t.equal(roleId, expected);
+					const result = await CorePublic.fetchEntityConfiguration(leaf.entityId, {
+						httpClient: async (input) => leaf.handleRequest(new Request(String(input))),
+					});
+					t.true(result.ok, raw);
+					if (result.ok) {
+						const ec = decodeEntityStatement(result.value);
+						t.true(ec.ok && ec.value.payload.iss === expected && ec.value.payload.sub === expected);
+					}
+				}
+		});
+	});
 	module("leaf / managed Trust Mark lifecycle", () => {
 		test("Trust Mark endpoints enforce advertised and locally restricted authentication algorithms", async (t) => {
 			const { config } = await createLeafConfig();
