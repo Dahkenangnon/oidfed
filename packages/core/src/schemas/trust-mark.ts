@@ -18,8 +18,8 @@ export const TrustMarkPayloadSchema = z.looseObject({
 	iss: EntityIdSchema,
 	sub: EntityIdSchema,
 	trust_mark_type: z.string(),
-	iat: z.number().int().positive(),
-	exp: z.number().int().positive().optional(),
+	iat: z.number().finite(),
+	exp: z.number().finite().optional(),
 	logo_uri: z.string().url().optional(),
 	ref: z.string().url().optional(),
 	delegation: z.string().optional(),
@@ -29,8 +29,8 @@ export const TrustMarkDelegationPayloadSchema = z.looseObject({
 	iss: EntityIdSchema,
 	sub: EntityIdSchema,
 	trust_mark_type: z.string(),
-	iat: z.number().int().positive(),
-	exp: z.number().int().positive().optional(),
+	iat: z.number().finite(),
+	exp: z.number().finite().optional(),
 	ref: z.string().url().optional(),
 });
 

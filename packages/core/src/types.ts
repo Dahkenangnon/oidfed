@@ -7,6 +7,8 @@ import type {
 import type { FederationError, Result } from "./errors.js";
 import type { FederationKeyProvider } from "./federation-keys.js";
 import type { DecodedFederationJwtPayload, JWKSet } from "./schemas/index.js";
+import type { TrustMarkVerificationOptions } from "./trust-marks/evidence.js";
+import type { TrustMarkProfile } from "./trust-marks/profiles.js";
 
 export type { DecodedFederationJwtPayload } from "./schemas/index.js";
 
@@ -82,6 +84,9 @@ export interface Logger {
 export interface FederationOptions {
 	authentication?: EndpointClientAuthentication;
 	additionalParameters?: EndpointAdditionalParameters;
+	trustMarkVerification?: TrustMarkVerificationOptions;
+	trustMarkIssuerKeys?: ReadonlyMap<string, JWKSet>;
+	trustMarkProfiles?: readonly TrustMarkProfile[];
 	/** Disallow network access when only supplied evidence is permitted. */
 	offline?: boolean;
 	httpClient?: HttpClient;
@@ -191,7 +196,24 @@ export type TrustMarkEvaluation = Readonly<{
 		  }>
 	);
 
+export interface TrustMarkEvidence extends ValidatedTrustMark {
+	readonly jwt: string;
+	readonly claims: Readonly<Record<string, unknown>>;
+	readonly verificationKey: Readonly<{
+		source: "current" | "historical";
+		kid: string;
+		responseJwt?: string;
+	}>;
+}
+
 export interface ValidatedTrustMark {
+	/** Authenticated issuer context retained for subsequent status checks; federation provenance is runtime-bound. */
+	readonly issuerEvidence?: import("./trust-marks/evidence.js").TrustMarkIssuerContext;
+	/** Present on marks validated by current core APIs; optional for older host-created records. */
+	readonly jwt?: string;
+	readonly claims?: Readonly<Record<string, unknown>>;
+	/** Expiry of the evidence supporting this assessment; distinct from the token expiry. */
+	readonly verificationExpiresAt?: number;
 	readonly trustMarkType: string;
 	readonly issuer: string;
 	readonly subject: string;

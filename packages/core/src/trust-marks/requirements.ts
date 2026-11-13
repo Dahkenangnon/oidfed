@@ -33,6 +33,7 @@ export function checkTrustMarkRequirements(
 		});
 	}
 	const current = (mark: ValidatedTrustMark) =>
+		(mark.verificationExpiresAt === undefined || mark.verificationExpiresAt > now) &&
 		mark.issuedAt <= now + skew &&
 		(mark.expiresAt === undefined || mark.expiresAt > now - skew) &&
 		(!mark.delegation ||

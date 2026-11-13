@@ -1,4 +1,11 @@
-import { type EntityTypeIdentifier, InternalErrorCode, JwtTyp, MediaType } from "../constants.js";
+import { setOwn } from "../callbacks.js";
+import {
+	DEFAULT_CLOCK_SKEW_SECONDS,
+	type EntityTypeIdentifier,
+	InternalErrorCode,
+	JwtTyp,
+	MediaType,
+} from "../constants.js";
 import { err, type FederationError, ok, type Result } from "../errors.js";
 import { verifyEntityStatement } from "../jose/verify.js";
 import { validateJwkSetUseRequirement } from "../jwks/use-requirement.js";
@@ -17,7 +24,7 @@ import {
 } from "../schemas/entity-statement.js";
 import type { JWKSet } from "../schemas/jwk.js";
 import { performFetch } from "../trust-chain/fetch.js";
-import type { Clock, EntityId, FederationOptions } from "../types.js";
+import { type Clock, type EntityId, type FederationOptions, nowSeconds } from "../types.js";
 
 function apiError(description: string): FederationError {
 	return { code: InternalErrorCode.SignatureInvalid, description };
@@ -39,6 +46,10 @@ export interface VerifyResolveResponseOptions extends VerifyOptions {
 export interface VerifyTrustMarkStatusOptions extends VerifyOptions {
 	/** The exact JWT submitted to the status endpoint (Federation §8.4.2). */
 	expectedTrustMark: string;
+	/** Host-selected maximum age; the specification supplies no universal limit. */
+	maxAgeSeconds?: number;
+	/** Enable future-iat rejection without selecting a maximum age. */
+	checkIssuedAt?: boolean;
 }
 
 export interface VerifySignedJwkSetOptions extends VerifyOptions {
@@ -130,10 +141,24 @@ export async function verifyTrustMarkStatusResponse(
 	if (!parsed.success) {
 		return err(apiError(`Invalid trust mark status response payload: ${parsed.error.message}`));
 	}
+	for (const [name, value] of Object.entries(result.value.payload))
+		if (!Object.hasOwn(parsed.data, name)) setOwn(parsed.data, name, value);
 	if (parsed.data.iss !== options.expectedIssuer)
 		return err(apiError("Response issuer does not match expectedIssuer"));
 	if (parsed.data.trust_mark !== options.expectedTrustMark)
 		return err(apiError("Status response does not match the submitted Trust Mark"));
+	if (options.checkIssuedAt || options.maxAgeSeconds !== undefined) {
+		const now = nowSeconds(options.clock);
+		if (parsed.data.iat > now + (options.clockSkewSeconds ?? DEFAULT_CLOCK_SKEW_SECONDS))
+			return err(apiError("Trust Mark Status Response was issued in the future"));
+		if (
+			options.maxAgeSeconds !== undefined &&
+			(!Number.isFinite(options.maxAgeSeconds) ||
+				options.maxAgeSeconds <= 0 ||
+				now >= parsed.data.iat + options.maxAgeSeconds)
+		)
+			return err(apiError("Trust Mark Status Response exceeds the selected maximum age"));
+	}
 	return { ok: true, value: parsed.data };
 }
 
@@ -170,6 +195,8 @@ export interface SelectHistoricalVerificationKeyOptions {
 	readonly validAt: number;
 	/** Additional security-revocation reasons defined by the federation (§8.7.3), matched exactly. */
 	readonly securityRevocationReasons?: readonly string[];
+	/** Explicit non-security reasons allowing signatures strictly before revocation. Default rejects all revoked keys. */
+	readonly allowedRevocationReasons?: readonly string[];
 }
 
 /** Select a historical key usable for verifying material issued at the supplied NumericDate. */
@@ -177,34 +204,34 @@ export function selectHistoricalVerificationKey(
 	keys: readonly HistoricalKeyEntry[],
 	options: SelectHistoricalVerificationKeyOptions,
 ): Result<HistoricalKeyEntry, FederationError> {
+	if (!Number.isFinite(options.validAt) || !options.kid)
+		return err(apiError("Historical key selection requires a finite time and kid"));
 	const matchingKeys = keys.filter((key) => key.kid === options.kid);
-	if (matchingKeys.length === 0) {
-		return err(apiError(`No historical key found for kid '${options.kid}'`));
-	}
-
-	for (const key of matchingKeys) {
-		const revoked = key.revoked;
-		// Additional reasons extend the existing protection, including pre-revocation signatures (§8.7).
+	if (matchingKeys.length !== 1) return err(apiError("Historical key is missing or ambiguous"));
+	const key = matchingKeys[0];
+	if (!key) return err(apiError("Historical key is missing"));
+	if (
+		!Number.isFinite(key.exp) ||
+		options.validAt >= key.exp ||
+		(key.iat !== undefined && (!Number.isFinite(key.iat) || options.validAt < key.iat)) ||
+		(key.nbf !== undefined && (!Number.isFinite(key.nbf) || options.validAt < key.nbf))
+	)
+		return err(apiError("Historical key was not eligible at signing time"));
+	const revoked = key.revoked;
+	if (revoked) {
+		const reason = revoked.reason;
 		if (
-			revoked?.reason &&
-			(SECURITY_REVOCATION_REASONS.has(revoked.reason) ||
-				options.securityRevocationReasons?.includes(revoked.reason))
-		) {
-			continue;
-		}
-		if (revoked?.revoked_at !== undefined && options.validAt >= revoked.revoked_at) {
-			continue;
-		}
-		if (key.nbf !== undefined && options.validAt < key.nbf) {
-			continue;
-		}
-		if (options.validAt >= key.exp) {
-			continue;
-		}
-		return ok(key);
+			!Number.isFinite(revoked.revoked_at) ||
+			options.validAt >= revoked.revoked_at ||
+			!reason ||
+			reason === "unspecified" ||
+			SECURITY_REVOCATION_REASONS.has(reason) ||
+			options.securityRevocationReasons?.includes(reason) ||
+			!options.allowedRevocationReasons?.includes(reason)
+		)
+			return err(apiError("Historical key is revoked"));
 	}
-
-	return err(apiError(`Historical key '${options.kid}' is not valid at ${options.validAt}`));
+	return ok(structuredClone(key));
 }
 
 /**

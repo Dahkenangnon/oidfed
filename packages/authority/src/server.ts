@@ -683,18 +683,16 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 			safeLogger(config.options?.logger)?.debug("Starting issue trust mark delegation");
 
 			const keySet = await ctx.keyProvider.getFederationKeySet();
-			const params: Parameters<typeof signTrustMarkDelegation>[0] = {
+			const params = {
 				issuer: normalizedEntityId,
 				subject,
 				trustMarkType,
 				signer: keySet.signer,
+				...(config.trustMarkTtlSeconds !== undefined
+					? { ttlSeconds: config.trustMarkTtlSeconds }
+					: {}),
+				...(config.options?.clock ? { clock: config.options.clock } : {}),
 			};
-			if (config.trustMarkTtlSeconds !== undefined) {
-				params.ttlSeconds = config.trustMarkTtlSeconds;
-			}
-			if (config.options?.clock !== undefined) {
-				params.clock = config.options.clock;
-			}
 			return signTrustMarkDelegation(params);
 		},
 

@@ -4,13 +4,14 @@ import { decodeEntityConfiguration, decodeEntityStatement } from "../jose/verify
 import { safeLogger } from "./../logging.js";
 import type { EntityConfigurationPayload } from "../schemas/entity-statement.js";
 import type { JWKSet } from "../schemas/jwk.js";
+import type { FederationEntityMetadata } from "../schemas/metadata.js";
 import type { fetchEntityConfiguration } from "../trust-chain/fetch.js";
 import { resolveTrustChains } from "../trust-chain/resolve.js";
 import {
 	validateEntityConfigurationPublication,
 	validateTrustChainStructure,
 } from "../trust-chain/validate.js";
-import { validateTrustMark } from "../trust-marks/index.js";
+import { validateTrustMarkWithIssuer } from "../trust-marks/evidence.js";
 import {
 	type EntityId,
 	type FederationOptions,
@@ -21,7 +22,7 @@ import {
 import type { CollectionEntry } from "./types.js";
 
 type Root = { jwt: string; payload: EntityConfigurationPayload; expiresAt: number };
-type IssuerProof = { keys: JWKSet; expiresAt: number };
+type IssuerProof = { keys: JWKSet; expiresAt: number; metadata?: FederationEntityMetadata };
 type IssuerResolution = { incomplete: boolean; proof: IssuerProof | undefined };
 
 /** Refresh-local chain and mark evidence; self-published keys never become issuer proofs. */
@@ -54,6 +55,9 @@ export function createCollectionEvidence(
 		const id = checked.chain.entityId;
 		proofs.set(id, {
 			keys: ec.value.payload.jwks,
+			...(ec.value.payload.metadata?.federation_entity
+				? { metadata: ec.value.payload.metadata.federation_entity }
+				: {}),
 			expiresAt: Math.max(proofs.get(id)?.expiresAt ?? -Infinity, checked.chain.expiresAt),
 		});
 		return checked.chain;
@@ -168,13 +172,25 @@ export function createCollectionEvidence(
 			if (authorized.length && !authorized.includes(mark.value.payload.iss)) continue;
 			const proof = await issuerProof(mark.value.payload.iss, authorized.length > 0);
 			if (!proof) continue;
-			const checked = await validateTrustMark(
+			const checked = await validateTrustMarkWithIssuer(
 				ref.trust_mark,
-				trustedRoot.value.payload.trust_mark_issuers ?? {},
-				proof.keys,
+				{
+					kind: "out-of-band",
+					issuer: mark.value.payload.iss,
+					allowedTrustMarkTypes: [ref.trust_mark_type],
+					keys: proof.keys,
+					...(proof.metadata ? { metadata: proof.metadata } : {}),
+					...(trustedRoot.value.payload.trust_mark_owners
+						? { trustMarkOwners: trustedRoot.value.payload.trust_mark_owners }
+						: {}),
+				},
 				{
 					...options,
 					expectedSubject: entry.entity.entity_id,
+					expectedTrustMarkType: ref.trust_mark_type,
+					...(options.trustMarkVerification?.historicalKeys
+						? { historicalKeys: options.trustMarkVerification.historicalKeys }
+						: {}),
 					...(trustedRoot.value.payload.trust_mark_owners
 						? { trustMarkOwners: trustedRoot.value.payload.trust_mark_owners }
 						: {}),
@@ -192,6 +208,7 @@ export function createCollectionEvidence(
 						trustedRoot.value.expiresAt,
 						proof.expiresAt,
 						checked.value.expiresAt ?? Infinity,
+						checked.value.verificationExpiresAt ?? Infinity,
 						checked.value.delegation?.expiresAt ?? Infinity,
 					),
 				},

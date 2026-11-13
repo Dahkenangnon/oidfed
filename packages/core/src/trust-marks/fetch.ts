@@ -1,3 +1,4 @@
+import { freezeSnapshot } from "../callbacks.js";
 /**
  * Client-side helpers for the federation Trust Mark and Trust Mark Status
  * endpoints. The library already provides server-side handlers; these helpers
@@ -5,13 +6,18 @@
  * re-implement HTTP / Content-Type discipline.
  */
 import { FederationErrorCode, MediaType } from "../constants.js";
+import { fetchFederationEndpoint } from "../endpoint-client.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
 import { validateExpectedIssuer, verifyTrustMarkStatusResponse } from "../federation-api/index.js";
+import { decodeEntityStatement } from "../jose/verify.js";
 import { safeLogger } from "./../logging.js";
 import type { JWKSet } from "../schemas/jwk.js";
-import { performFetch } from "../trust-chain/fetch.js";
+import { TrustMarkPayloadSchema } from "../schemas/trust-mark.js";
 import type { Clock, EntityId, FederationOptions } from "../types.js";
-import { entityId } from "../types.js";
+import { entityId, nowSeconds } from "../types.js";
+import { type TrustMarkIssuerContext, trustMarkIssuerContext } from "./evidence.js";
+import { trustMarkOperation } from "./operation.js";
+import { checkTrustMarkProfile } from "./profiles.js";
 
 export interface FetchTrustMarkParams {
 	trustMarkType: string;
@@ -59,11 +65,11 @@ export async function fetchTrustMark(
 			),
 		);
 	}
-	parsed.searchParams.set("trust_mark_type", params.trustMarkType);
-	parsed.searchParams.set("sub", params.sub);
+	const selectors = new URLSearchParams({ trust_mark_type: params.trustMarkType, sub: params.sub });
 
-	return performFetch(parsed.toString(), {
+	return fetchFederationEndpoint(parsed.toString(), selectors, {
 		...options,
+		expectedStatus: 200,
 		accept: MediaType.TrustMark,
 		expectedContentType: MediaType.TrustMark,
 	});
@@ -75,7 +81,18 @@ export interface FetchTrustMarkStatusOptions extends FederationOptions {
 	clock?: Clock;
 }
 
+export interface FetchTrustMarkStatusInput extends FederationOptions {
+	jwt: string;
+	issuerEvidence: TrustMarkIssuerContext;
+	expectedSubject: string;
+	expectedTrustMarkType: string;
+	freshness?: { maxAgeSeconds: number };
+}
+
 export interface TrustMarkStatusResult {
+	jwt: string;
+	claims: Readonly<Record<string, unknown>>;
+	verificationExpiresAt?: number;
 	/** Additional status strings are permitted by Federation §8.4.2. */
 	status: string;
 	issuer: EntityId;
@@ -83,11 +100,116 @@ export interface TrustMarkStatusResult {
 }
 
 /** POST a Trust Mark JWT to a Trust Mark Status endpoint and verify the response. */
-export async function fetchTrustMarkStatus(
+export function fetchTrustMarkStatus(
+	input: FetchTrustMarkStatusInput,
+): Promise<Result<TrustMarkStatusResult, FederationError>>;
+export function fetchTrustMarkStatus(
 	endpoint: string,
 	trustMarkJwt: string,
 	signerJwks: JWKSet,
 	options: FetchTrustMarkStatusOptions,
+): Promise<Result<TrustMarkStatusResult, FederationError>>;
+export async function fetchTrustMarkStatus(
+	endpointOrInput: string | FetchTrustMarkStatusInput,
+	trustMarkJwt?: string,
+	signerJwks?: JWKSet,
+	suppliedOptions?: FetchTrustMarkStatusOptions,
+): Promise<Result<TrustMarkStatusResult, FederationError>> {
+	if (typeof endpointOrInput !== "string") return fetchTrustedStatus(endpointOrInput);
+	if (!trustMarkJwt || !signerJwks || !suppliedOptions)
+		return err(
+			federationError(FederationErrorCode.InvalidRequest, "Missing status verification context"),
+		);
+	return fetchStatus(endpointOrInput, trustMarkJwt, signerJwks, suppliedOptions);
+}
+
+async function fetchTrustedStatus(
+	input: FetchTrustMarkStatusInput,
+): Promise<Result<TrustMarkStatusResult, FederationError>> {
+	try {
+		const options = trustMarkOperation(input);
+		const trusted = trustMarkIssuerContext(
+			input.issuerEvidence,
+			input.expectedTrustMarkType,
+			options,
+		);
+		if (!trusted.ok) return trusted;
+		const decoded = decodeEntityStatement(input.jwt);
+		if (!decoded.ok) return decoded;
+		const mark = TrustMarkPayloadSchema.safeParse(decoded.value.payload);
+		if (
+			!mark.success ||
+			mark.data.iss !== trusted.value.issuer ||
+			mark.data.sub !== input.expectedSubject ||
+			mark.data.trust_mark_type !== input.expectedTrustMarkType
+		)
+			return err(
+				federationError(
+					FederationErrorCode.InvalidRequest,
+					"Trust Mark does not match the expected issuer, subject, and type",
+				),
+			);
+		const profile = await checkTrustMarkProfile(
+			decoded.value.header.typ,
+			decoded.value.payload,
+			input.trustMarkProfiles,
+			false,
+		);
+		if (!profile.ok) return profile;
+		const endpoint = trusted.value.metadata?.federation_trust_mark_status_endpoint;
+		if (!endpoint)
+			return err(
+				federationError(
+					FederationErrorCode.InvalidRequest,
+					"Issuer does not publish a Trust Mark Status endpoint",
+				),
+			);
+		const checked = await fetchStatus(
+			endpoint,
+			input.jwt,
+			trusted.value.keys,
+			{ ...options, expectedIssuer: trusted.value.issuer },
+			input.freshness?.maxAgeSeconds,
+			true,
+		);
+		if (!checked.ok) return checked;
+		const claims = await checkTrustMarkProfile(
+			decoded.value.header.typ,
+			decoded.value.payload,
+			input.trustMarkProfiles,
+		);
+		if (!claims.ok) return claims;
+		const deadline = Math.min(
+			trusted.value.expiresAt ?? Infinity,
+			checked.value.verificationExpiresAt ?? Infinity,
+		);
+		if (deadline <= nowSeconds(options.clock) || options.signal?.aborted)
+			return err(
+				federationError(
+					FederationErrorCode.InvalidRequest,
+					"Trust Mark status evidence expired or was cancelled",
+				),
+			);
+		return ok(
+			freezeSnapshot({
+				...checked.value,
+				...(Number.isFinite(deadline) ? { verificationExpiresAt: deadline } : {}),
+			}),
+		);
+	} catch {
+		return err(
+			federationError(FederationErrorCode.InvalidRequest, "Unable to verify Trust Mark status"),
+		);
+	}
+}
+
+async function fetchStatus(
+	endpoint: string,
+	trustMarkJwt: string,
+	signerJwks: JWKSet,
+	options: FetchTrustMarkStatusOptions,
+	maxAgeSeconds?: number,
+	checkIssuedAt = false,
 ): Promise<Result<TrustMarkStatusResult, FederationError>> {
 	safeLogger(options?.logger)?.debug("Starting fetch trust mark status");
 
@@ -107,20 +229,41 @@ export async function fetchTrustMarkStatus(
 		return err(federationError(FederationErrorCode.InvalidRequest, "Invalid endpoint URL"));
 	}
 	// Use the shared fetch boundary and keep the submitted JWT at its intended endpoint.
-	const fetched = await performFetch(endpoint, {
-		...options,
-		method: "POST",
-		body: new URLSearchParams({ trust_mark: trustMarkJwt }),
-		redirect: "error",
-		expectedStatus: 200,
-		accept: MediaType.TrustMarkStatusResponse,
-	});
+	const fetched = await fetchFederationEndpoint(
+		endpoint,
+		new URLSearchParams({ trust_mark: trustMarkJwt }),
+		{
+			...options,
+			method: "POST",
+			body: new URLSearchParams({ trust_mark: trustMarkJwt }),
+			redirect: "error",
+			expectedStatus: 200,
+			accept: MediaType.TrustMarkStatusResponse,
+		},
+		options.expectedIssuer,
+	);
 	if (!fetched.ok) return fetched;
 	const verified = await verifyTrustMarkStatusResponse(fetched.value, signerJwks, {
 		...options,
 		expectedTrustMark: trustMarkJwt,
+		checkIssuedAt,
+		...(maxAgeSeconds !== undefined ? { maxAgeSeconds } : {}),
 	});
 	if (!verified.ok) return verified;
 	const { status, iss, iat } = verified.value;
-	return ok({ status, issuer: entityId(iss), issuedAt: iat });
+	const exp = verified.value.exp;
+	const deadline = Math.min(
+		typeof exp === "number" ? exp : Infinity,
+		maxAgeSeconds === undefined ? Infinity : iat + maxAgeSeconds,
+	);
+	return ok(
+		freezeSnapshot({
+			status,
+			issuer: entityId(iss),
+			issuedAt: iat,
+			jwt: fetched.value,
+			claims: structuredClone(verified.value),
+			...(Number.isFinite(deadline) ? { verificationExpiresAt: deadline } : {}),
+		}),
+	);
 }

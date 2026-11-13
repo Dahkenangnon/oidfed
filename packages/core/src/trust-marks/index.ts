@@ -1,13 +1,7 @@
-import {
-	DEFAULT_CLOCK_SKEW_SECONDS,
-	DEFAULT_DELEGATION_TTL_SECONDS,
-	InternalErrorCode,
-	JwtTyp,
-} from "../constants.js";
+import { freezeSnapshot } from "../callbacks.js";
+import { DEFAULT_CLOCK_SKEW_SECONDS, InternalErrorCode, JwtTyp } from "../constants.js";
 import { err, type FederationError, ok, type Result } from "../errors.js";
 import { isValidAlgorithm } from "../jose/keys.js";
-import { signEntityStatement } from "../jose/sign.js";
-import type { JwtSigner } from "../jose/signer.js";
 import { decodeEntityStatement, verifyEntityStatement } from "../jose/verify.js";
 import { safeLogger } from "./../logging.js";
 import { EntityIdSchema } from "../schemas/entity-id.js";
@@ -21,39 +15,17 @@ import {
 import type {
 	Clock,
 	FederationOptions,
-	ValidatedTrustMark,
+	TrustMarkEvidence,
 	ValidatedTrustMarkDelegation,
 } from "../types.js";
 import { nowSeconds } from "../types.js";
-
-export async function signTrustMarkDelegation(params: {
-	issuer: string;
-	subject: string;
-	trustMarkType: string;
-	signer: JwtSigner;
-	ttlSeconds?: number;
-	clock?: Clock;
-}): Promise<string> {
-	const now = nowSeconds(params.clock);
-	const ttl = params.ttlSeconds ?? DEFAULT_DELEGATION_TTL_SECONDS;
-
-	const payload: Record<string, unknown> = {
-		iss: params.issuer,
-		sub: params.subject,
-		trust_mark_type: params.trustMarkType,
-		iat: now,
-		exp: now + ttl,
-	};
-
-	return signEntityStatement(payload, params.signer, {
-		typ: JwtTyp.TrustMarkDelegation,
-	});
-}
+import { checkTrustMarkProfile } from "./profiles.js";
 
 export interface TrustMarkValidationOptions extends FederationOptions {
 	trustMarkOwners?: Record<string, TrustMarkOwner>;
 	/** Entity whose configuration contains this mark; supply independently of the JWT (§7.3). */
 	expectedSubject: string;
+	expectedTrustMarkType?: string;
 }
 
 function tmError(description: string): FederationError {
@@ -76,7 +48,7 @@ export async function validateTrustMark(
 	trustMarkIssuers: Record<string, string[]>,
 	issuerJwks: JWKSet,
 	options: TrustMarkValidationOptions,
-): Promise<Result<ValidatedTrustMark, FederationError>> {
+): Promise<Result<TrustMarkEvidence, FederationError>> {
 	safeLogger(options?.logger)?.debug("Starting validate trust mark");
 
 	if (!EntityIdSchema.safeParse(options?.expectedSubject).success)
@@ -89,12 +61,6 @@ export async function validateTrustMark(
 		return err(tmError(`Failed to decode trust mark JWT: ${decoded.error.description}`));
 
 	const { header, payload } = decoded.value;
-
-	if (header.typ !== JwtTyp.TrustMark) {
-		return err(
-			tmError(`Invalid typ header: expected '${JwtTyp.TrustMark}', got '${String(header.typ)}'`),
-		);
-	}
 
 	const alg = header.alg as string | undefined;
 	if (!isValidAlgorithm(alg)) {
@@ -116,6 +82,18 @@ export async function validateTrustMark(
 	const sub = p.sub;
 	const trustMarkType = p.trust_mark_type;
 	const iat = p.iat;
+	if (
+		options.expectedTrustMarkType !== undefined &&
+		trustMarkType !== options.expectedTrustMarkType
+	)
+		return err(tmError("Trust Mark type does not match expectation"));
+	const profile = await checkTrustMarkProfile(
+		header.typ,
+		payload,
+		options.trustMarkProfiles,
+		false,
+	);
+	if (!profile.ok) return profile;
 
 	if (sub !== options.expectedSubject) {
 		return err(tmError("Trust mark sub does not match expected entity"));
@@ -139,7 +117,7 @@ export async function validateTrustMark(
 
 	const verifyOpts: { clockSkewSeconds: number; expectedTyp: string; clock?: Clock } = {
 		clockSkewSeconds: clockSkew,
-		expectedTyp: JwtTyp.TrustMark,
+		expectedTyp: header.typ as string,
 	};
 	if (options?.clock) verifyOpts.clock = options.clock;
 	const verifyResult = await verifyEntityStatement(trustMarkJwt, issuerJwks, verifyOpts);
@@ -152,7 +130,7 @@ export async function validateTrustMark(
 	}
 
 	const exp = p.exp;
-	if (exp !== undefined && exp < now - clockSkew) {
+	if (exp !== undefined && exp <= now - clockSkew) {
 		return err(tmError(`Trust mark has expired: exp=${exp}`));
 	}
 
@@ -182,7 +160,14 @@ export async function validateTrustMark(
 		delegation = delegationResult.value;
 	}
 
-	const validated: ValidatedTrustMark = {
+	const profileClaims = await checkTrustMarkProfile(header.typ, payload, options.trustMarkProfiles);
+	if (!profileClaims.ok) return profileClaims;
+	const deadline = Math.min(exp ?? Infinity, delegation?.expiresAt ?? Infinity);
+	const validated: TrustMarkEvidence = {
+		jwt: trustMarkJwt,
+		claims: freezeSnapshot(structuredClone(payload)),
+		verificationKey: { source: "current", kid: header.kid as string },
+		...(Number.isFinite(deadline) ? { verificationExpiresAt: deadline } : {}),
 		trustMarkType,
 		issuer: iss,
 		subject: sub,
@@ -190,7 +175,7 @@ export async function validateTrustMark(
 		...(exp !== undefined ? { expiresAt: exp } : {}),
 		...(delegation !== undefined ? { delegation } : {}),
 	};
-	return ok(validated);
+	return ok(freezeSnapshot(validated));
 }
 
 async function validateDelegation(
@@ -281,7 +266,7 @@ async function validateDelegation(
 	}
 
 	const dExp = dp.exp;
-	if (dExp !== undefined && dExp < now - clockSkew) {
+	if (dExp !== undefined && dExp <= now - clockSkew) {
 		return err(tmError(`Delegation has expired: exp=${dExp}`));
 	}
 
@@ -307,9 +292,18 @@ function trustMarkOwner(
 
 export {
 	type FetchTrustMarkParams,
+	type FetchTrustMarkStatusInput,
 	type FetchTrustMarkStatusOptions,
 	fetchTrustMark,
 	fetchTrustMarkStatus,
 	type TrustMarkStatusResult,
 } from "./fetch.js";
 export { type ValidateTrustMarkLogoOptions, validateTrustMarkLogo } from "./logo.js";
+export type { TrustMarkProfile } from "./profiles.js";
+export {
+	type SignTrustMarkDelegationOptions,
+	type SignTrustMarkOptions,
+	signTrustMark,
+	signTrustMarkDelegation,
+	type TrustMarkLifetime,
+} from "./sign.js";

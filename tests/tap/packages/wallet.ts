@@ -15,6 +15,7 @@ import {
 	MemoryReplayStore,
 	ok,
 	signEntityStatement,
+	signTrustMark,
 	validateTrustChain,
 } from "../../../packages/core/src/index.js";
 import {
@@ -61,6 +62,59 @@ const proof = (f: Fixture) => ({
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
 
+	module("wallet / supplied accreditation evidence", () => {
+		test("offline discovery carries profile checks and original JWT evidence", async (t) => {
+			const f = await walletFederation();
+			const type = "https://framework.example/merchant";
+			let checks = 0;
+			const profiles = [
+				{
+					typ: "merchant+jwt",
+					trustMarkTypes: [type],
+					validateClaims: () => {
+						checks++;
+						return ok(undefined);
+					},
+				},
+			];
+			const jwt = await signTrustMark({
+				issuer: f.ids.issuer,
+				subject: f.ids.verifier,
+				trustMarkType: type,
+				signer: new JwkSigner(f.keys.issuer.privateKey),
+				clock: f.clock,
+				typ: "merchant+jwt",
+				trustMarkProfiles: profiles,
+			});
+			const original = f.chains.get(f.ids.verifier)!;
+			const decoded = decodeEntityStatement(original[0]!);
+			if (!decoded.ok) throw new Error(decoded.error.description);
+			const ec = await signEntityStatement(
+				{ ...decoded.value.payload, trust_marks: [{ trust_mark_type: type, trust_mark: jwt }] },
+				new JwkSigner(f.keys.verifier.privateKey),
+			);
+			checks = 0;
+			const result = await CredentialVerifierRole.discover(f.ids.verifier, f.anchors, {
+				...f.options,
+				offline: true,
+				trustChain: [ec, ...original.slice(1)],
+				trustMarkProfiles: profiles,
+				trustMarkVerification: {
+					issuerEvidence: [
+						{
+							kind: "out-of-band",
+							issuer: f.ids.issuer,
+							allowedTrustMarkTypes: [type],
+							keys: { keys: [f.keys.issuer.publicKey] },
+						},
+					],
+				},
+			});
+			t.true(result.ok, result.ok ? "accepted" : result.error.description);
+			t.true(checks > 0, "profile callback reached through role discovery");
+			if (result.ok) t.equal(result.value.trustChain.trustMarks[0]?.jwt, jwt);
+		});
+	});
 	module("wallet / custom constraints", () => {
 		test("role discovery applies checks to supplied offline chains", async (t) => {
 			const f = await walletFederation();

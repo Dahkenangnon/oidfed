@@ -5,11 +5,11 @@
  * `verifyHistoricalKeysResponse`.
  */
 import { FederationErrorCode, MediaType } from "../constants.js";
+import { fetchFederationEndpoint } from "../endpoint-client.js";
 import { err, type FederationError, federationError, type Result } from "../errors.js";
 import { safeLogger } from "./../logging.js";
 import type { HistoricalKeysPayload } from "../schemas/entity-statement.js";
 import type { JWKSet } from "../schemas/jwk.js";
-import { performFetch } from "../trust-chain/fetch.js";
 import type { Clock, FederationOptions } from "../types.js";
 import {
 	type VerifyOptions,
@@ -52,11 +52,17 @@ export async function fetchHistoricalKeys(
 		);
 	}
 
-	const fetched = await performFetch(endpoint, {
-		...options,
-		accept: MediaType.JwkSet,
-		expectedContentType: MediaType.JwkSet,
-	});
+	const fetched = await fetchFederationEndpoint(
+		endpoint,
+		new URLSearchParams(),
+		{
+			...options,
+			expectedStatus: 200,
+			accept: MediaType.JwkSet,
+			expectedContentType: MediaType.JwkSet,
+		},
+		options.expectedIssuer,
+	);
 	if (!fetched.ok) return fetched;
 
 	return verifyHistoricalKeysResponse(fetched.value, signerJwks, options);

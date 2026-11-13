@@ -1,3 +1,4 @@
+import { trustMarkOperation } from "../trust-marks/operation.js";
 /** Trust chain validation: verifies signatures, expiry, issuer-subject chaining, and metadata policy along the chain. */
 
 import { setOwn } from "../callbacks.js";
@@ -1473,6 +1474,7 @@ async function validateTrustChainImpl(
 	verifyMarks: boolean,
 	stage?: MetadataStage,
 ): Promise<ValidationResult> {
+	if (options?.trustMarkVerification) options = trustMarkOperation(options);
 	const checks = validateCustomConstraintChecks(options?.customConstraintChecks ?? []);
 	if (!checks.ok)
 		return {

@@ -209,9 +209,11 @@ import {
 	validateTrustChain,
 	validateTrustChainStructure,
 } from "../../../packages/core/src/trust-chain/validate.js";
+import { validateTrustMarkWithIssuer } from "../../../packages/core/src/trust-marks/evidence.js";
 import {
 	fetchTrustMark,
 	fetchTrustMarkStatus,
+	signTrustMark,
 	signTrustMarkDelegation,
 	validateTrustMark,
 	validateTrustMarkLogo,
@@ -351,6 +353,307 @@ export default (QUnit: QUnit) => {
 				).status,
 				401,
 			);
+		});
+	});
+	module("core / Trust Mark evidence workflows", () => {
+		const issuer = "https://accreditor.example";
+		const subject = "https://member.example";
+		const trustMarkType = "https://accreditor.example/type";
+		test("issuer proof authenticates a separate chain and can be restored offline from evidence", async (t) => {
+			const f = await trustChainPaths();
+			const type = "https://framework.example/accreditation";
+			const statements = await f.chain(["subject", "a", "anchor"], {
+				anchorClaims: { trust_mark_issuers: { [type]: [f.ids.subject] } },
+			});
+			const established = await CorePublic.establishTrustMarkIssuerTrust({
+				issuer: f.ids.subject,
+				trustMarkType: type,
+				trustAnchors: f.anchors,
+				trustChain: statements,
+				entityConfigurations: f.options.entityConfigurations,
+				options: { ...f.options, offline: true },
+			});
+			t.true(
+				established.ok,
+				established.ok ? "independent issuer chain accepted" : established.error.description,
+			);
+			if (!established.ok) return;
+			const jwt = await CorePublic.signTrustMark({
+				issuer: f.ids.subject,
+				subject: "https://holder.example",
+				trustMarkType: type,
+				signer: new JwkSigner(f.keys.subject.privateKey),
+				clock: f.options.clock,
+			});
+			const opts = {
+				...f.options,
+				expectedSubject: "https://holder.example",
+				expectedTrustMarkType: type,
+				offline: true,
+			};
+			t.true((await CorePublic.validateTrustMarkWithIssuer(jwt, established.value, opts)).ok);
+			const serialized = JSON.parse(JSON.stringify(established.value)) as typeof established.value;
+			t.false(
+				(await CorePublic.validateTrustMarkWithIssuer(jwt, serialized, opts)).ok,
+				"serialized evidence must be authenticated again",
+			);
+			const restored = await CorePublic.establishTrustMarkIssuerTrust({
+				issuer: serialized.issuer,
+				trustMarkType: type,
+				trustAnchors: f.anchors,
+				trustChain: serialized.statements,
+				entityConfigurations: new Map(Object.entries(serialized.entityConfigurations)),
+				options: { ...f.options, offline: true },
+			});
+			t.true(restored.ok);
+			t.false(
+				(
+					await CorePublic.validateTrustMarkWithIssuer(jwt, established.value, {
+						...opts,
+						clock: { now: () => 5000 },
+					})
+				).ok,
+				"issuer proof cannot outlive its chain",
+			);
+		});
+		test("standalone signing retains fractional dates, extension claims and explicit no-expiry", async (t) => {
+			const key = await generateSigningKey("ES256");
+			const signer = new JwkSigner(key.privateKey);
+			const clock = { now: () => 1000.5 };
+			const jwt = await signTrustMark({
+				issuer,
+				subject,
+				trustMarkType,
+				signer,
+				clock,
+				noExpiry: true,
+				additionalClaims: JSON.parse('{"constructor":"extension","__proto__":{"safe":true}}'),
+			});
+			const checked = await validateTrustMarkWithIssuer(
+				jwt,
+				{
+					kind: "out-of-band",
+					issuer,
+					allowedTrustMarkTypes: [trustMarkType],
+					keys: { keys: [key.publicKey] },
+				},
+				{ clock, expectedSubject: subject, expectedTrustMarkType: trustMarkType },
+			);
+			t.true(checked.ok);
+			if (checked.ok) {
+				t.equal(checked.value.jwt, jwt);
+				t.equal(checked.value.issuedAt, 1000.5);
+				t.strictEqual(checked.value.expiresAt, undefined);
+				t.true(Object.hasOwn(checked.value.claims, "__proto__"));
+				t.true(Object.isFrozen(checked.value.claims));
+			}
+			t.false(Object.hasOwn(Object.prototype, "safe"));
+			await t.rejects(
+				signTrustMark({
+					issuer,
+					subject,
+					trustMarkType,
+					signer,
+					additionalClaims: { iss: issuer },
+				}),
+			);
+			await t.rejects(
+				signTrustMark({ issuer, subject, trustMarkType, signer, noExpiry: true, ttlSeconds: 60 }),
+			);
+		});
+		test("historical proof is authenticated, fresh, and rejects conflicting revocation evidence", async (t) => {
+			const old = await generateSigningKey("ES256"),
+				current = await generateSigningKey("ES256");
+			const clock = { now: () => 1050 };
+			const jwt = await signTrustMark({
+				issuer,
+				subject,
+				trustMarkType,
+				signer: new JwkSigner(old.privateKey),
+				clock: { now: () => 1000 },
+				ttlSeconds: 200,
+			});
+			const context = {
+				kind: "out-of-band" as const,
+				issuer,
+				allowedTrustMarkTypes: [trustMarkType],
+				keys: { keys: [current.publicKey] },
+			};
+			const history = async (revoked = false) =>
+				signEntityStatement(
+					{
+						iss: issuer,
+						iat: 1040,
+						keys: [
+							{
+								...old.publicKey,
+								exp: 1020,
+								...(revoked ? { revoked: { revoked_at: 1010, reason: "compromised" } } : {}),
+							},
+						],
+					},
+					new JwkSigner(current.privateKey),
+					{ typ: JwtTyp.JwkSet },
+				);
+			const response = await history();
+			const options = {
+				clock,
+				expectedSubject: subject,
+				expectedTrustMarkType: trustMarkType,
+				offline: true,
+				historicalKeys: {
+					mode: "supplied-only" as const,
+					responses: [response],
+					maxAgeSeconds: 30,
+				},
+			};
+			const result = await validateTrustMarkWithIssuer(jwt, context, options);
+			t.true(result.ok);
+			if (result.ok) {
+				t.equal(result.value.verificationExpiresAt, 1070);
+				t.equal(result.value.verificationKey.source, "historical");
+			}
+			t.false(
+				(
+					await validateTrustMarkWithIssuer(jwt, context, {
+						...options,
+						clock: { now: () => 1070 },
+					})
+				).ok,
+			);
+			t.false(
+				(
+					await validateTrustMarkWithIssuer(jwt, context, {
+						...options,
+						historicalKeys: {
+							...options.historicalKeys,
+							responses: [response, await history(true)],
+						},
+					})
+				).ok,
+			);
+			const forged = {
+				...context,
+				kind: "federation" as const,
+				trustMarkType,
+				expiresAt: 2000,
+				trustAnchorId: issuer,
+				statements: [],
+				entityConfigurations: {},
+				trustMarkIssuers: {},
+				trustMarkOwners: {},
+			};
+			t.false((await validateTrustMarkWithIssuer(jwt, forged, options)).ok);
+		});
+		test("status rejects future issuance without requiring a maximum age policy", async (t) => {
+			const key = await generateSigningKey("ES256"),
+				signer = new JwkSigner(key.privateKey);
+			const jwt = await signTrustMark({
+				issuer,
+				subject,
+				trustMarkType,
+				signer,
+				clock: { now: () => 0 },
+			});
+			let iat = 1001;
+			const options = {
+				jwt,
+				issuerEvidence: {
+					kind: "out-of-band" as const,
+					issuer,
+					allowedTrustMarkTypes: [trustMarkType],
+					keys: { keys: [key.publicKey] },
+					metadata: { federation_trust_mark_status_endpoint: `${issuer}/status` },
+				},
+				expectedSubject: subject,
+				expectedTrustMarkType: trustMarkType,
+				clock: { now: () => 1000 },
+				clockSkewSeconds: 0,
+				httpClient: async () =>
+					new Response(
+						await signEntityStatement(
+							{ iss: issuer, iat, trust_mark: jwt, status: "active" },
+							signer,
+							{ typ: JwtTyp.TrustMarkStatusResponse },
+						),
+						{ headers: { "content-type": MediaType.TrustMarkStatusResponse } },
+					),
+			};
+			const future = await fetchTrustMarkStatus(options);
+			t.false(future.ok, "future issuance is rejected without freshness");
+			if (!future.ok) t.true(future.error.description.includes("future"));
+			iat = 1005;
+			t.true(
+				(await fetchTrustMarkStatus({ ...options, clockSkewSeconds: 5 })).ok,
+				"clock tolerance includes its boundary",
+			);
+			iat = 1006;
+			t.false((await fetchTrustMarkStatus({ ...options, clockSkewSeconds: 5 })).ok);
+			iat = 10;
+			const old = await fetchTrustMarkStatus(options);
+			t.true(old.ok, "omitting freshness does not impose a maximum age");
+			if (old.ok) t.strictEqual(old.value.verificationExpiresAt, undefined);
+			t.false(
+				(await fetchTrustMarkStatus({ ...options, freshness: { maxAgeSeconds: 60 } })).ok,
+				"the explicit age policy rejects the same old response",
+			);
+			iat = 990;
+			t.true((await fetchTrustMarkStatus({ ...options, freshness: { maxAgeSeconds: 60 } })).ok);
+		});
+		test("status alternative preserves custom status and binds response age, issuer, subject and token", async (t) => {
+			const key = await generateSigningKey("ES256");
+			const signer = new JwkSigner(key.privateKey),
+				clock = { now: () => 1000 };
+			const jwt = await signTrustMark({ issuer, subject, trustMarkType, signer, clock });
+			const context = {
+				kind: "out-of-band" as const,
+				issuer,
+				allowedTrustMarkTypes: [trustMarkType],
+				keys: { keys: [key.publicKey] },
+				metadata: { federation_trust_mark_status_endpoint: `${issuer}/status` },
+			};
+			let iat = 990,
+				token = jwt,
+				requests = 0;
+			const httpClient: HttpClient = async () => {
+				requests++;
+				return new Response(
+					await signEntityStatement(
+						{ iss: issuer, iat, trust_mark: token, status: "suspended", detail: "review" },
+						signer,
+						{ typ: JwtTyp.TrustMarkStatusResponse },
+					),
+					{ headers: { "content-type": MediaType.TrustMarkStatusResponse } },
+				);
+			};
+			const options = {
+				jwt,
+				issuerEvidence: context,
+				expectedSubject: subject,
+				expectedTrustMarkType: trustMarkType,
+				freshness: { maxAgeSeconds: 20 },
+				clockSkewSeconds: 0,
+				clock,
+				httpClient,
+			};
+			const checked = await fetchTrustMarkStatus(options);
+			t.true(checked.ok);
+			if (checked.ok) {
+				t.equal(checked.value.status, "suspended");
+				t.equal(checked.value.claims.detail, "review");
+				t.equal(checked.value.verificationExpiresAt, 1010);
+			}
+			iat = 980;
+			t.false((await fetchTrustMarkStatus(options)).ok);
+			iat = 1001;
+			t.false((await fetchTrustMarkStatus(options)).ok);
+			iat = 990;
+			token = "different";
+			t.false((await fetchTrustMarkStatus(options)).ok);
+			const before = requests;
+			t.false((await fetchTrustMarkStatus({ ...options, expectedSubject: issuer })).ok);
+			t.false((await fetchTrustMarkStatus({ ...options, offline: true })).ok);
+			t.equal(requests, before);
 		});
 	});
 	module("core / policy dictionaries and custom constraints", () => {
@@ -12165,10 +12468,10 @@ export default (QUnit: QUnit) => {
 					{ name: "invalid subject", overrides: { sub: "http://subject.example.com" } },
 					{ name: "invalid logo URI", overrides: { logo_uri: "not-a-url" } },
 					{ name: "invalid reference URI", overrides: { ref: "not-a-url" } },
-					{ name: "non-integer issued-at", overrides: { iat: tm_now + 0.5 } },
-					{ name: "non-positive issued-at", overrides: { iat: 0 } },
-					{ name: "non-integer expiration", overrides: { exp: tm_now + 0.5 } },
-					{ name: "non-positive expiration", overrides: { exp: 0 } },
+					{ name: "non-number issued-at", overrides: { iat: "1000" } },
+					{ name: "null issued-at", overrides: { iat: null } },
+					{ name: "non-number expiration", overrides: { exp: "1000" } },
+					{ name: "null expiration", overrides: { exp: null } },
 					{ name: "non-string delegation", overrides: { delegation: { jwt: "not-a-jwt" } } },
 				];
 
@@ -12305,10 +12608,10 @@ export default (QUnit: QUnit) => {
 					{ name: "invalid issuer", overrides: { iss: "http://owner.example.com" } },
 					{ name: "invalid subject", overrides: { sub: "http://issuer.example.com" } },
 					{ name: "invalid reference URI", overrides: { ref: "not-a-url" } },
-					{ name: "non-integer issued-at", overrides: { iat: tm_now + 0.5 } },
-					{ name: "non-positive issued-at", overrides: { iat: 0 } },
-					{ name: "non-integer expiration", overrides: { exp: tm_now + 0.5 } },
-					{ name: "non-positive expiration", overrides: { exp: 0 } },
+					{ name: "non-number issued-at", overrides: { iat: "1000" } },
+					{ name: "null issued-at", overrides: { iat: null } },
+					{ name: "non-number expiration", overrides: { exp: "1000" } },
+					{ name: "null expiration", overrides: { exp: null } },
 				];
 
 				for (const invalidCase of invalidCases) {
@@ -23561,6 +23864,7 @@ export default (QUnit: QUnit) => {
 					kid: key.publicKey.kid!,
 					validAt: 1200,
 					securityRevocationReasons: ["incident"],
+					allowedRevocationReasons: ["incident", "superseded"],
 				};
 				t.equal(selectHistoricalVerificationKey(keys, options).ok, reason === "superseded");
 				t.equal(

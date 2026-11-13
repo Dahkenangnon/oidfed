@@ -4,9 +4,9 @@
  * parses the JSON array of Entity Identifiers.
  */
 import { FederationErrorCode, InternalErrorCode, MediaType } from "../constants.js";
+import { fetchFederationEndpoint } from "../endpoint-client.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
 import { safeLogger } from "./../logging.js";
-import { performFetch } from "../trust-chain/fetch.js";
 import { type EntityId, entityId, type FederationOptions, isValidEntityId } from "../types.js";
 
 export interface FetchTrustMarkListParams {
@@ -48,11 +48,12 @@ export async function fetchTrustMarkList(
 		);
 	}
 
-	parsed.searchParams.set("trust_mark_type", params.trustMarkType);
-	if (params.sub) parsed.searchParams.set("sub", params.sub);
+	const selectors = new URLSearchParams({ trust_mark_type: params.trustMarkType });
+	if (params.sub) selectors.set("sub", params.sub);
 
-	const fetched = await performFetch(parsed.toString(), {
+	const fetched = await fetchFederationEndpoint(parsed.toString(), selectors, {
 		...options,
+		expectedStatus: 200,
 		accept: MediaType.Json,
 		expectedContentType: MediaType.Json,
 	});

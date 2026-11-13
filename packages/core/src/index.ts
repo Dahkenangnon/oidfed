@@ -269,22 +269,44 @@ export {
 	validateTrustChain,
 } from "./trust-chain/validate.js";
 export {
+	type EstablishTrustMarkIssuerOptions,
+	establishTrustMarkIssuerTrust,
+	type FederationTrustMarkIssuerEvidence,
+	type HistoricalTrustMarkOptions,
+	type OutOfBandTrustMarkIssuer,
+	type TrustMarkIssuerContext,
+	type TrustMarkVerificationOptions,
+	trustMarkIssuerContext,
+	type ValidateTrustMarkWithIssuerOptions,
+	validateTrustMarkWithIssuer,
+} from "./trust-marks/evidence.js";
+
+export {
 	type FetchTrustMarkParams,
+	type FetchTrustMarkStatusInput,
 	type FetchTrustMarkStatusOptions,
 	fetchTrustMark,
 	fetchTrustMarkStatus,
+	type SignTrustMarkDelegationOptions,
+	type SignTrustMarkOptions,
+	signTrustMark,
 	signTrustMarkDelegation,
+	type TrustMarkLifetime,
+	type TrustMarkProfile,
 	type TrustMarkStatusResult,
 	type TrustMarkValidationOptions,
 	type ValidateTrustMarkLogoOptions,
 	validateTrustMark,
 	validateTrustMarkLogo,
 } from "./trust-marks/index.js";
+
 // Trust Marks
 export {
 	checkTrustMarkRequirements,
 	type TrustMarkRequirements,
 } from "./trust-marks/requirements.js";
+export type { TrustMarkDelegationIssuanceOptions } from "./trust-marks/sign.js";
+
 // Types
 export {
 	type CacheProvider,
@@ -313,6 +335,7 @@ export {
 	type TrustChain,
 	type TrustChainResult,
 	type TrustMarkEvaluation,
+	type TrustMarkEvidence,
 	type UnverifiedEntityStatement,
 	type ValidatedTrustChain,
 	type ValidatedTrustMark,
