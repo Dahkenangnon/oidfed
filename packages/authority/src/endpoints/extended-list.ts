@@ -13,6 +13,7 @@ import {
 	isValidEntityId,
 	nowSeconds,
 	safeLogger,
+	setOwn,
 	waitForOperation,
 } from "@oidfed/core";
 import type { ListFilter, ListPageOptions, SubordinateRecord } from "../storage/types.js";
@@ -365,7 +366,7 @@ export function createExtendedListHandler(
 					if (requestedClaims.length > 0) {
 						const extracted = await extractClaims(record, ctx, requestedClaims, now);
 						for (const key of Object.keys(extracted)) {
-							entry[key] = extracted[key];
+							setOwn(entry, key, extracted[key]);
 						}
 					}
 

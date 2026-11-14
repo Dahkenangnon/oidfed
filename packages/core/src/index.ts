@@ -5,7 +5,7 @@ export {
 	fetchAttestationChallenge,
 	readAttestationChallenge,
 } from "./attestation-challenge.js";
-export { isJsonData } from "./callbacks.js";
+export { isJsonData, setOwn } from "./callbacks.js";
 export {
 	type AuthenticateClientAttestationOptions,
 	authenticateClientAttestation,

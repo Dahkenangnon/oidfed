@@ -305,6 +305,12 @@ Compose an `OidcProviderRole` from `@oidfed/oidc` into the entity's `roles`. The
 
 Extended Listing bounds the UTF-8 JSON success response, including its continuation cursor, through `extendedListing.maxResponseBytes` (default: 512 KiB). This complements the count and scan limits and follows [Draft 03 §3.1.2](https://openid.net/specs/openid-federation-extended-listing-1_0-03.html#section-3.1.2). A full byte budget produces a shorter page with `next` pointing to the first omitted entity. An entry that cannot fit alone returns `server_error`; reduce the requested claims or increase the server and client byte budgets. The endpoint preserves the requested claims and stops building further entries when the page is full.
 
+### Select stored extension claims
+
+A subordinate's `additionalClaims` can be requested directly, without downloading its signed statement. For example, after registering a subordinate with `additionalClaims: { campus: "north" }`, request `claims: ["campus"]`. The field also remains inside `subordinate_statement` when that statement is requested.
+
+Only selected fields are projected. Missing claims are omitted, and `claims: []` still gives identifier-only entries. Standard listing fields keep their meanings: an extension named `id`, `registered`, `updated`, or `subordinate_statement` cannot replace the listing's own field. Such extensions remain available in the signed statement where permitted. All projected values count toward the response byte limit. This uses the extension allowance in [Extended Listing §3.2–3.3](https://openid.net/specs/openid-federation-extended-listing-1_0-03.html#section-3.2); it does not introduce another metadata store.
+
 An unknown `from` value returns `page_not_found`. A failed storage lookup instead returns `server_error`, including through the local Result API; a database outage is not evidence that a cursor is unknown.
 
 ## Subordinate event history

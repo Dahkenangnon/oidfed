@@ -14,7 +14,9 @@ import {
 	decodeEntityStatement,
 	ExtendedListClaim,
 	JwtTyp,
+	prepareEntityStatementExtensions,
 	preparePublicJwkSet,
+	setOwn,
 	TrustMarkRefSchema,
 } from "@oidfed/core";
 import type { SubordinateRecord } from "../storage/types.js";
@@ -100,8 +102,17 @@ export async function extractClaims(
 	now: number,
 ): Promise<Record<string, unknown>> {
 	const out: Record<string, unknown> = {};
+	let extensions: ReturnType<typeof prepareEntityStatementExtensions> | undefined;
 	for (const claim of requestedClaims) {
-		if (!Object.hasOwn(EXTENDED_LIST_CLAIM_EXTRACTORS, claim)) continue;
+		if (!Object.hasOwn(EXTENDED_LIST_CLAIM_EXTRACTORS, claim)) {
+			// Listing fields retain their own meaning even when an SS extension uses that name.
+			if (["id", "registered", "updated"].includes(claim)) continue;
+			if (!record.additionalClaims || !Object.hasOwn(record.additionalClaims, claim)) continue;
+			extensions ??= prepareEntityStatementExtensions(record);
+			if (extensions.additionalClaims && Object.hasOwn(extensions.additionalClaims, claim))
+				setOwn(out, claim, extensions.additionalClaims[claim]);
+			continue;
+		}
 		if (claim === ExtendedListClaim.Crit || claim === ExtendedListClaim.MetadataPolicyCrit)
 			assertSubordinatePublicationClaims({
 				additionalClaims: record.additionalClaims,
@@ -111,7 +122,7 @@ export async function extractClaims(
 		const extractor = EXTENDED_LIST_CLAIM_EXTRACTORS[claim];
 		if (!extractor) continue;
 		const value = await extractor(record, ctx, now);
-		if (value !== undefined) out[claim] = value;
+		if (value !== undefined) setOwn(out, claim, value);
 	}
 	return out;
 }

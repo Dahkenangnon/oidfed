@@ -2229,6 +2229,79 @@ export default (QUnit: QUnit) => {
 			});
 			t.false(credentials.ok);
 		});
+		test("selected stored claims preserve JSON names and cannot replace listing fields", async (t) => {
+			const before = Object.getOwnPropertyDescriptors(Object.prototype);
+			const f = await fixture({ defaultClaims: ["x_access"] });
+			const extensions = JSON.parse(
+				'{"x_access":{"roles":["student"]},"__proto__":{"polluted":true},"constructor":"safe","toString":"data","id":"wrong","registered":-1,"updated":-1}',
+			);
+			await f.authority.registerSubordinate({
+				entityId: LEAF_ID,
+				jwks: { keys: [f.publicKey] },
+				additionalClaims: extensions,
+			});
+			extensions.x_access.roles.push("mutated");
+			const result = await f.authority.listSubordinatesExtended({
+				claims: [...Object.keys(extensions), "subordinate_statement", "missing"],
+				auditTimestamps: true,
+			});
+			t.true(result.ok);
+			if (result.ok) {
+				const row = result.value.immediate_subordinate_entities[0]!;
+				t.equal(row.id, LEAF_ID);
+				t.notEqual(row.registered, -1);
+				t.notEqual(row.updated, -1);
+				t.deepEqual(row.x_access, { roles: ["student"] });
+				t.true(Object.hasOwn(row, "__proto__"));
+				t.deepEqual(Object.getOwnPropertyDescriptor(row, "__proto__")?.value, { polluted: true });
+				t.equal(row.constructor as unknown, "safe");
+				t.equal(row.toString as unknown, "data");
+				t.false(Object.hasOwn(row, "missing"));
+				const jwt = decodeEntityStatement(row.subordinate_statement as string);
+				t.true(jwt.ok);
+				if (jwt.ok) t.equal(jwt.value.payload.id, "wrong", "SS extension remains intact");
+			}
+			const defaults = await f.authority.listSubordinatesExtended();
+			if (defaults.ok)
+				t.deepEqual(defaults.value.immediate_subordinate_entities, [
+					{ id: LEAF_ID, x_access: { roles: ["student"] } },
+				]);
+			const minimal = await f.authority.listSubordinatesExtended({ claims: [] });
+			if (minimal.ok) t.deepEqual(minimal.value.immediate_subordinate_entities, [{ id: LEAF_ID }]);
+			t.deepEqual(
+				Object.entries(Object.getOwnPropertyDescriptors(Object.prototype)),
+				Object.entries(before),
+			);
+		});
+		test("stored extension claims count against the byte limit across pages", async (t) => {
+			const f = await fixture({ maxResponseBytes: 700 });
+			for (let i = 0; i < 3; i++)
+				await f.authority.registerSubordinate({
+					entityId: entityId(`https://member${i}.example`),
+					jwks: { keys: [f.publicKey] },
+					additionalClaims: { detail: "é".repeat(200) },
+				});
+			const ids: string[] = [];
+			let from: string | undefined;
+			for (let i = 0; i < 4; i++) {
+				const response = await f.authority.handleRequest(
+					new Request(
+						`${ENTITY_ID}/extended?claims=detail${from ? `&from=${encodeURIComponent(from)}` : ""}`,
+					),
+				);
+				t.equal(response.status, 200);
+				const text = await response.text();
+				t.true(new TextEncoder().encode(text).length <= 700);
+				const page = JSON.parse(text) as ExtendedListResponse;
+				ids.push(...page.immediate_subordinate_entities.map((r) => r.id));
+				from = page.next;
+				if (!from) break;
+			}
+			t.deepEqual(
+				ids,
+				[0, 1, 2].map((i) => `https://member${i}.example`),
+			);
+		});
 		test("local cancellation releases a pending cursor lookup without a custom filter", async (t) => {
 			const f = await fixture();
 			let entered!: () => void;
