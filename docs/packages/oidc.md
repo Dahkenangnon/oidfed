@@ -346,3 +346,13 @@ const provider = new OidcProviderRole({
 ```
 
 The callback receives frozen authenticated chain evidence. Rejection, an exception, or a malformed result stops registration before persistence, response signing, or replay consumption. Requirements recheck mark, delegation, issuer-proof, and historical-evidence deadlines. Use the shared `options.trustMarkVerification` configuration to establish the required issuer evidence; a valid RP chain alone does not guarantee verified accreditation. A fresh Status request remains a separate application policy choice.
+
+## Choosing how trust is established
+
+Role configuration accepts `options` for federation defaults, including `chainSelection` and `trustResolution`. Per-call options override role options, which override host options. Existing calls keep their default behavior when these settings are omitted.
+
+Each role exposes static and instance `assessEntity(target, entityType, ...)` methods. Static calls take explicit anchors before options; instance calls use configured anchors or `options.trustAnchors`. The role validates metadata for the requested entity type. Local assessments select only among chains with usable protocol metadata. The protocol filter applies to the requested subject. Nested Trust Mark issuer discovery uses the issuer's accreditation rules, without requiring it to publish the subject's protocol metadata. If supplied, your `chainSelection` callback also receives eligible issuer chains, so it should handle each candidate's `entityId`. See [Federation §17.5](https://openid.net/specs/openid-federation-1_0.html#section-17.5). Explicit resolver assessments authenticate the resolver's assertion and keep that provenance separate from local chain validation.
+
+Both automatic and explicit registration filter out malformed effective OP metadata before calling the selector. OIDC registration continues to validate every required statement, retain RP/OP shared-anchor rules, and verify protocol metadata before signing or sending registration requests. Existing APIs consuming `DiscoveryResult` can use core's `discoverEntityFromChain` for supplied evidence. Resolver-only assessments cannot substitute for that type.
+
+See [core trust establishment](core.md#trust-establishment-options) for configuration examples and the distinction between resolver acquisition and delegation.

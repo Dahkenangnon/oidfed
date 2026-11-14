@@ -8,6 +8,7 @@ import {
 	type PreparedTrustChain,
 	type Result,
 	safeLogger,
+	selectTrustChain,
 	type TrustAnchorSet,
 	type ValidatedTrustChain,
 } from "@oidfed/core";
@@ -26,6 +27,7 @@ import {
 import {
 	failure,
 	prepareVerifier,
+	prepareVerifierCandidates,
 	protocolKeys,
 	roleMetadata,
 	type WalletTrustOptions,
@@ -232,9 +234,41 @@ export async function prepareRequest(
 			headerChain = supplied as string[];
 		}
 	}
-	const chain = await prepareVerifier(id, anchors, options, headerChain);
-	if (!chain.ok) return chain;
-	const metadata = roleMetadata("openid_credential_verifier", id, chain.value);
+	const chains = await prepareVerifierCandidates(id, anchors, options, headerChain);
+	if (!chains.ok) return chains;
+	const eligible: PreparedAuthorizationRequest[] = [];
+	let rejected: Result<PreparedAuthorizationRequest> = failure("No eligible verifier chain");
+	for (const chain of chains.value) {
+		const prepared = await prepareRequestEvidence(outer, id, chain, options);
+		if (prepared.ok) eligible.push(prepared.value);
+		else rejected = prepared;
+	}
+	if (!eligible.length) return rejected;
+	const first = eligible[0];
+	if (!first) return rejected;
+	if (eligible.length === 1) return ok(first);
+	const prepared = Object.freeze({
+		...first,
+		expiresAt: Math.max(...eligible.map((item) => item.expiresAt)),
+	}) as PreparedAuthorizationRequest;
+	const saved = preparations.get(first);
+	if (!saved) return failure("Missing request preparation");
+	preparations.set(prepared, saved);
+	preparationAlternatives.set(prepared, eligible);
+	return ok(prepared);
+}
+
+const preparationAlternatives = new WeakMap<
+	PreparedAuthorizationRequest,
+	readonly PreparedAuthorizationRequest[]
+>();
+async function prepareRequestEvidence(
+	outer: WalletAuthorizationRequest,
+	id: string,
+	chain: PreparedTrustChain,
+	options: AuthorizationRequestOptions,
+): Promise<Result<PreparedAuthorizationRequest>> {
+	const metadata = roleMetadata("openid_credential_verifier", id, chain);
 	if (!metadata.ok) return metadata;
 	if (outer.request_uri) {
 		const endpoint = checkEndpoint(metadata.value, "request_uris", outer.request_uri);
@@ -246,18 +280,18 @@ export async function prepareRequest(
 		}
 	}
 	const keys = await protocolKeys(
-		{ metadata: metadata.value, trustChain: chain.value },
+		{ metadata: metadata.value, trustChain: chain },
 		"openid_credential_verifier",
 		options,
 	);
 	if (!keys.ok) return keys;
 	const prepared = Object.freeze({
 		verifierId: id,
-		expiresAt: chain.value.expiresAt,
+		expiresAt: chain.expiresAt,
 		...(outer.request_uri ? { requestUri: outer.request_uri } : {}),
 	}) as PreparedAuthorizationRequest;
 	preparations.set(prepared, {
-		chain: chain.value,
+		chain: chain,
 		keys: structuredClone(keys.value),
 		outer: structuredClone(outer),
 		options: { ...options },
@@ -363,6 +397,31 @@ function checkQueryFormats(
 }
 
 export async function completeRequest(
+	prepared: PreparedAuthorizationRequest,
+	jwt: string,
+	context: AuthorizationRequestContext = {},
+): Promise<Result<ValidatedWalletRequest>> {
+	const options = preparations.get(prepared)?.options;
+	const alternatives = preparationAlternatives.get(prepared) ?? [prepared];
+	if (!options?.chainSelection) return completeRequestCandidate(prepared, jwt, context);
+	const eligible: ValidatedWalletRequest[] = [];
+	let rejected: Result<ValidatedWalletRequest> = failure("No eligible verifier chain");
+	for (const candidate of alternatives) {
+		const completed = await completeRequestCandidate(candidate, jwt, context);
+		if (completed.ok) eligible.push(completed.value);
+		else rejected = completed;
+	}
+	if (!eligible.length) return rejected;
+	const selected = selectTrustChain(
+		eligible.map((result) => result.trustChain),
+		options,
+	);
+	if (!selected.ok) return selected;
+	const result = eligible.find((result) => result.trustChain === selected.value);
+	return result ? ok(result) : failure("Selected request chain is unavailable");
+}
+
+async function completeRequestCandidate(
 	prepared: PreparedAuthorizationRequest,
 	jwt: string,
 	context: AuthorizationRequestContext = {},

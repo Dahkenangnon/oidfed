@@ -11,15 +11,23 @@ import type {
 	TrustAnchorSet,
 } from "@oidfed/core";
 import {
+	assessEntity,
 	discoverEntity,
+	type EntityAssessmentOptions,
+	entityId,
 	err,
 	FederationErrorCode,
 	federationError,
 	safeLogger,
+	shortestChain,
 } from "@oidfed/core";
 import type { ClientAssertionOptions } from "./client-auth/assertion.js";
 import { createClientAssertion } from "./client-auth/assertion.js";
-import { assertPublicationMetadata } from "./metadata.js";
+import {
+	assertPublicationMetadata,
+	effectiveMetadata,
+	type ProtocolEntityType,
+} from "./metadata.js";
 import type { ProtocolSigningKeyProvider } from "./protocol-keys.js";
 import type { RegistrationAccreditationPolicy } from "./registration/accreditation.js";
 import type { RegistrationProtocolAdapter } from "./registration/adapter-types.js";
@@ -43,6 +51,7 @@ import {
 } from "./schemas/metadata.js";
 
 export interface OidcRelyingPartyRoleConfig {
+	readonly options?: FederationOptions;
 	readonly protocolKeyProvider: ProtocolSigningKeyProvider;
 	readonly metadata?: Record<string, unknown>;
 	readonly requestObjectTtlSeconds?: number;
@@ -62,6 +71,20 @@ export interface CreateAuthorizationRequestOptions extends FederationOptions {
 }
 
 export class OidcRelyingPartyRole implements EntityRole {
+	static assessEntity = assessProtocolEntity;
+	assessEntity(
+		target: string,
+		type: ProtocolEntityType,
+		options: EntityAssessmentOptions & { trustAnchors?: TrustAnchorSet } = {},
+	) {
+		return assessProtocolEntity(
+			target,
+			type,
+			options.trustAnchors ?? this.config.trustAnchors ?? this.context?.trustAnchors ?? new Map(),
+			{ ...this.context?.options, ...this.config.options, ...options },
+		);
+	}
+
 	static parseMetadata(metadata: unknown) {
 		return effectiveRoleSchemas.openid_relying_party.safeParse(metadata);
 	}
@@ -100,6 +123,7 @@ export class OidcRelyingPartyRole implements EntityRole {
 
 		return createClientAssertion(this.context.entityId as EntityId, audience, signer, {
 			...this.context.options,
+			...this.config.options,
 			...options,
 		});
 	}
@@ -127,10 +151,15 @@ export class OidcRelyingPartyRole implements EntityRole {
 			throw new Error("No trustAnchors configured. Set them in config, options, or context.");
 		}
 		const opEntityId = params.opEntityId as EntityId;
-		const discoveryResult = await discoverEntity(opEntityId, trustAnchors, {
-			...this.context.options,
-			...options,
-		});
+		const discoveryResult = await discoverEntity(
+			opEntityId,
+			trustAnchors,
+			protocolDiscoveryOptions("openid_provider", opEntityId, {
+				...this.context.options,
+				...this.config.options,
+				...options,
+			}),
+		);
 		if (!discoveryResult.ok) {
 			return err(discoveryResult.error);
 		}
@@ -184,7 +213,7 @@ export class OidcRelyingPartyRole implements EntityRole {
 			rpConfig,
 			authzRequestParams,
 			trustAnchors,
-			{ ...this.context.options, ...options },
+			{ ...this.context.options, ...this.config.options, ...options },
 			"resolved",
 		);
 	}
@@ -203,10 +232,15 @@ export class OidcRelyingPartyRole implements EntityRole {
 		if (!trustAnchors) {
 			throw new Error("No trustAnchors configured. Set them in config, options, or context.");
 		}
-		const discoveryResult = await discoverEntity(opEntityId as EntityId, trustAnchors, {
-			...this.context.options,
-			...options,
-		});
+		const discoveryResult = await discoverEntity(
+			opEntityId as EntityId,
+			trustAnchors,
+			protocolDiscoveryOptions("openid_provider", opEntityId, {
+				...this.context.options,
+				...this.config.options,
+				...options,
+			}),
+		);
 		if (!discoveryResult.ok) {
 			return err(discoveryResult.error);
 		}
@@ -231,6 +265,7 @@ export class OidcRelyingPartyRole implements EntityRole {
 			trustAnchors,
 			{
 				...this.context.options,
+				...this.config.options,
 				...options,
 			},
 			"resolved",
@@ -284,12 +319,13 @@ export class OidcRelyingPartyRole implements EntityRole {
 			rpConfig,
 			authzRequestParams,
 			options?.trustAnchors ?? trustAnchors,
-			{ ...this.context.options, ...options },
+			{ ...this.context.options, ...this.config.options, ...options },
 		);
 	}
 }
 
 export interface OidcProviderRoleConfig extends RegistrationAccreditationPolicy {
+	readonly options?: FederationOptions;
 	readonly registrationPath?: string;
 	readonly metadata?: Record<string, unknown>;
 	readonly trustAnchors?: TrustAnchorSet;
@@ -307,6 +343,20 @@ export interface OidcProviderRoleConfig extends RegistrationAccreditationPolicy 
 }
 
 export class OidcProviderRole implements EntityRole {
+	static assessEntity = assessProtocolEntity;
+	assessEntity(
+		target: string,
+		type: ProtocolEntityType,
+		options: EntityAssessmentOptions & { trustAnchors?: TrustAnchorSet } = {},
+	) {
+		return assessProtocolEntity(
+			target,
+			type,
+			options.trustAnchors ?? this.config.trustAnchors ?? this.context?.trustAnchors ?? new Map(),
+			{ ...this.context?.options, ...this.config.options, ...options },
+		);
+	}
+
 	static parseMetadata(metadata: unknown) {
 		return effectiveRoleSchemas.openid_provider.safeParse(metadata);
 	}
@@ -374,7 +424,7 @@ export class OidcProviderRole implements EntityRole {
 			...(this.config.onRegistration !== undefined
 				? { onRegistration: this.config.onRegistration }
 				: {}),
-			...(context.options !== undefined ? { options: context.options } : {}),
+			options: { ...context.options, ...this.config.options },
 		});
 
 		this.routes.set(registrationPath, handler);
@@ -394,7 +444,7 @@ export class OidcProviderRole implements EntityRole {
 		const trustAnchors = assertNonEmptyTrustAnchors(
 			this.config.trustAnchors ?? this.context.trustAnchors,
 		);
-		const effectiveOptions = { ...this.context.options, ...options };
+		const effectiveOptions = { ...this.context.options, ...this.config.options, ...options };
 		const result = await processAutomaticRegistration(requestObjectJwt, trustAnchors, {
 			...effectiveOptions,
 			...(this.config.trustMarkRequirements
@@ -461,6 +511,8 @@ export class OidcProviderRole implements EntityRole {
 }
 
 export interface OAuthClientRoleConfig {
+	readonly trustAnchors?: TrustAnchorSet;
+	readonly options?: FederationOptions;
 	readonly protocolKeyProvider: ProtocolSigningKeyProvider;
 	readonly metadata?: Record<string, unknown>;
 	readonly requestObjectTtlSeconds?: number;
@@ -470,6 +522,20 @@ export interface OAuthClientRoleConfig {
 }
 
 export class OAuthClientRole implements EntityRole {
+	static assessEntity = assessProtocolEntity;
+	assessEntity(
+		target: string,
+		type: ProtocolEntityType,
+		options: EntityAssessmentOptions & { trustAnchors?: TrustAnchorSet } = {},
+	) {
+		return assessProtocolEntity(
+			target,
+			type,
+			options.trustAnchors ?? this.config.trustAnchors ?? this.context?.trustAnchors ?? new Map(),
+			{ ...this.context?.options, ...this.config.options, ...options },
+		);
+	}
+
 	static parseMetadata(metadata: unknown) {
 		return effectiveRoleSchemas.oauth_client.safeParse(metadata);
 	}
@@ -529,12 +595,14 @@ export class OAuthClientRole implements EntityRole {
 		};
 		return automaticRegistration(discovery, rpConfig, authzRequestParams, trustAnchors, {
 			...this.context.options,
+			...this.config.options,
 			...options,
 		});
 	}
 }
 
 export interface OAuthAuthorizationServerRoleConfig extends RegistrationAccreditationPolicy {
+	readonly options?: FederationOptions;
 	readonly registrationPath?: string;
 	readonly metadata?: Record<string, unknown>;
 	readonly trustAnchors?: TrustAnchorSet;
@@ -546,6 +614,20 @@ export interface OAuthAuthorizationServerRoleConfig extends RegistrationAccredit
 }
 
 export class OAuthAuthorizationServerRole implements EntityRole {
+	static assessEntity = assessProtocolEntity;
+	assessEntity(
+		target: string,
+		type: ProtocolEntityType,
+		options: EntityAssessmentOptions & { trustAnchors?: TrustAnchorSet } = {},
+	) {
+		return assessProtocolEntity(
+			target,
+			type,
+			options.trustAnchors ?? this.config.trustAnchors ?? this.context?.trustAnchors ?? new Map(),
+			{ ...this.context?.options, ...this.config.options, ...options },
+		);
+	}
+
 	static parseMetadata(metadata: unknown) {
 		return effectiveRoleSchemas.oauth_authorization_server.safeParse(metadata);
 	}
@@ -610,7 +692,7 @@ export class OAuthAuthorizationServerRole implements EntityRole {
 			...(this.config.onRegistrationInvalidation !== undefined
 				? { onRegistrationInvalidation: this.config.onRegistrationInvalidation }
 				: {}),
-			...(context.options !== undefined ? { options: context.options } : {}),
+			options: { ...context.options, ...this.config.options },
 		});
 
 		this.routes.set(registrationPath, handler);
@@ -618,11 +700,27 @@ export class OAuthAuthorizationServerRole implements EntityRole {
 }
 
 export interface OAuthResourceRoleConfig {
+	readonly trustAnchors?: TrustAnchorSet;
+	readonly options?: FederationOptions;
 	readonly metadata?: Record<string, unknown>;
 	readonly jwks?: JWKSet;
 }
 
 export class OAuthResourceRole implements EntityRole {
+	static assessEntity = assessProtocolEntity;
+	assessEntity(
+		target: string,
+		type: ProtocolEntityType,
+		options: EntityAssessmentOptions & { trustAnchors?: TrustAnchorSet } = {},
+	) {
+		return assessProtocolEntity(
+			target,
+			type,
+			options.trustAnchors ?? this.config.trustAnchors ?? this.context?.trustAnchors ?? new Map(),
+			{ ...this.context?.options, ...this.config.options, ...options },
+		);
+	}
+
 	static parseMetadata(metadata: unknown, options: { profile?: "federation" | "rfc9728" } = {}) {
 		return (
 			options.profile === "rfc9728"
@@ -648,10 +746,52 @@ export class OAuthResourceRole implements EntityRole {
 		}
 	}
 
-	initialize(_context: EntityContext): void {}
+	private context?: EntityContext;
+	initialize(context: EntityContext): void {
+		assertRoleOwner(this.context, context);
+		this.context = context;
+	}
 }
 
 function assertRoleOwner(current: EntityContext | undefined, context: EntityContext): void {
 	if (current && current !== context)
 		throw new Error("Create a separate OIDC/OAuth role instance for each host");
+}
+
+async function assessProtocolEntity(
+	target: string,
+	type: ProtocolEntityType,
+	anchors: TrustAnchorSet,
+	options: EntityAssessmentOptions = {},
+) {
+	const assessed = await assessEntity(
+		entityId(target),
+		anchors,
+		options.mode === "resolver"
+			? options
+			: { ...options, ...protocolDiscoveryOptions(type, target, options) },
+	);
+	if (!assessed.ok) return assessed;
+	const metadata = effectiveMetadata(type, assessed.value.resolvedMetadata[type], target);
+	return metadata.ok ? assessed : metadata;
+}
+
+function protocolDiscoveryOptions(
+	type: ProtocolEntityType,
+	target: string,
+	options: FederationOptions,
+): FederationOptions {
+	return {
+		...options,
+		chainSelection: (chains) => {
+			// Accreditation issuers need not implement the subject's application protocol (§17.5).
+			const eligible = chains.filter(
+				(chain) =>
+					chain.entityId !== target ||
+					effectiveMetadata(type, chain.resolvedMetadata[type], target).ok,
+			);
+			if (!eligible.length) throw new Error("No chain supplies valid protocol metadata");
+			return (options.chainSelection ?? shortestChain)(eligible);
+		},
+	};
 }

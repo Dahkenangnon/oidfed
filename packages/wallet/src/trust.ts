@@ -16,6 +16,7 @@ import {
 	resolveEntityKeys,
 	resolveTrustChains,
 	safeLogger,
+	selectTrustChain,
 	type TrustAnchorSet,
 	type ValidatedTrustChain,
 	validateTrustChain,
@@ -136,7 +137,10 @@ export async function candidates(
 export function roleMetadata(
 	type: WalletRoleType,
 	id: string,
-	chain: Pick<ValidatedTrustChain, "entityId" | "resolvedMetadata">,
+	chain: {
+		readonly entityId: string;
+		readonly resolvedMetadata: Readonly<Record<string, unknown>>;
+	},
 ): Result<Record<string, unknown>> {
 	if (chain.entityId !== id)
 		return failure("Trust chain subject does not match the requested entity");
@@ -205,6 +209,7 @@ export async function trustedEntity(
 	let last = "No valid wallet trust chain";
 	for await (const paths of candidateAttempts(id, anchors, options, headerChain)) {
 		if (!paths.ok) return paths;
+		const eligible: TrustedWalletEntity[] = [];
 		for (const path of paths.value) {
 			const checked = await validateTrustChain(path.statements, anchors, {
 				...options,
@@ -222,24 +227,36 @@ export async function trustedEntity(
 			}
 			if (options.signal?.aborted) return failure("Operation cancelled");
 			safeLogger(options?.logger)?.info("Wallet entity trust validation completed");
-			return ok({ entityId: id, metadata: metadata.value, trustChain: checked.chain });
+			const entity = { entityId: id, metadata: metadata.value, trustChain: checked.chain };
+			if (!options.chainSelection) return ok(entity);
+			eligible.push(entity);
+		}
+		if (eligible.length) {
+			const selected = selectTrustChain(
+				eligible.map((entity) => entity.trustChain),
+				options,
+			);
+			if (!selected.ok) return selected;
+			const chosen = eligible.find((entity) => entity.trustChain === selected.value);
+			return chosen ? ok(chosen) : failure("Selected wallet chain is unavailable");
 		}
 	}
 	safeLogger(options?.logger)?.warn("Wallet entity trust validation rejected");
 	return err({ code: InternalErrorCode.TrustChainInvalid, description: last });
 }
 
-export async function prepareVerifier(
+export async function prepareVerifierCandidates(
 	id: string,
 	anchors: TrustAnchorSet,
 	options: WalletTrustOptions,
 	headerChain?: readonly string[],
-): Promise<Result<PreparedTrustChain>> {
+): Promise<Result<readonly PreparedTrustChain[]>> {
 	safeLogger(options?.logger)?.debug("Preparing Credential Verifier Trust Chain validation");
 
 	let last = "No valid verifier chain";
 	for await (const paths of candidateAttempts(id, anchors, options, headerChain)) {
 		if (!paths.ok) return paths;
+		const eligible: PreparedTrustChain[] = [];
 		for (const path of paths.value) {
 			const checked = await prepareTrustChainValidation(path.statements, anchors, {
 				...options,
@@ -252,12 +269,27 @@ export async function prepareVerifier(
 				continue;
 			}
 			const metadata = roleMetadata("openid_credential_verifier", id, checked.value);
-			if (metadata.ok) return checked;
-			last = metadata.error.description;
+			if (metadata.ok) {
+				eligible.push(checked.value);
+				if (!options.chainSelection) return ok(eligible);
+			} else last = metadata.error.description;
 		}
+		if (eligible.length) return ok(eligible);
 	}
 	safeLogger(options?.logger)?.warn("Verifier trust preparation rejected");
 	return err({ code: InternalErrorCode.TrustChainInvalid, description: last });
+}
+
+export async function prepareVerifier(
+	id: string,
+	anchors: TrustAnchorSet,
+	options: WalletTrustOptions,
+	headerChain?: readonly string[],
+): Promise<Result<PreparedTrustChain>> {
+	const candidates = await prepareVerifierCandidates(id, anchors, options, headerChain);
+	if (!candidates.ok) return candidates;
+	const first = candidates.value[0];
+	return first ? ok(first) : failure("No verifier chain available");
 }
 
 export async function protocolKeys(

@@ -1,4 +1,6 @@
 import {
+	assessEntity,
+	type EntityAssessmentOptions,
 	type EntityContext,
 	type EntityRole,
 	entityId,
@@ -11,6 +13,8 @@ import {
 	ok,
 	parseOAuthAuthorizationServerMetadata,
 	type Result,
+	selectTrustChain,
+	shortestChain,
 	type TrustAnchorSet,
 	validateTrustChain,
 } from "@oidfed/core";
@@ -43,17 +47,59 @@ import {
 	operationExhausted,
 	operationOptions,
 	protocolKeys,
+	roleMetadata,
 	type TrustedWalletEntity,
 	trustedEntity,
 	type WalletTrustOptions,
 } from "./trust.js";
 
 export interface WalletRoleConfig {
+	readonly options?: WalletTrustOptions;
 	readonly metadata?: Readonly<Record<string, unknown>>;
 	readonly trustAnchors?: TrustAnchorSet;
 }
 
 abstract class WalletRole implements EntityRole {
+	static async assessEntity(
+		target: string,
+		type: WalletRoleType,
+		anchors: TrustAnchorSet,
+		options: EntityAssessmentOptions & WalletTrustOptions = {},
+	) {
+		const supplied = options.trustChain ?? options.entityChains?.get(target);
+		if (supplied) options = { ...options, trustChain: supplied };
+		const assessed = await assessEntity(
+			entityId(target),
+			anchors,
+			options.mode === "resolver"
+				? options
+				: {
+						...options,
+						chainSelection: (chains) => {
+							// Issuer accreditation is independent of the subject's wallet role (§17.5).
+							const eligible = chains.filter(
+								(chain) => chain.entityId !== target || roleMetadata(type, target, chain).ok,
+							);
+							if (!eligible.length) throw new Error("No chain supplies valid wallet metadata");
+							return (options.chainSelection ?? shortestChain)(eligible);
+						},
+					},
+		);
+		if (!assessed.ok) return assessed;
+		const metadata = roleMetadata(type, target, assessed.value);
+		return metadata.ok ? assessed : metadata;
+	}
+	assessEntity(
+		target: string,
+		type: WalletRoleType,
+		options: EntityAssessmentOptions & WalletTrustOptions = {},
+	) {
+		return WalletRole.assessEntity(target, type, this.anchors(options), {
+			...this.context?.options,
+			...this.config.options,
+			...options,
+		});
+	}
 	abstract readonly type: WalletRoleType;
 	readonly metadata: Record<string, unknown>;
 	protected context?: EntityContext;
@@ -87,7 +133,7 @@ abstract class WalletRole implements EntityRole {
 		return anchors;
 	}
 	protected options<T extends WalletTrustOptions>(options: T): T {
-		return { ...this.context?.options, ...options };
+		return { ...this.context?.options, ...this.config.options, ...options };
 	}
 }
 
@@ -305,6 +351,7 @@ export class CredentialIssuerRole extends AttestationConsumer {
 				if (parsed.success && parsed.data.issuer === server)
 					found = { entityId: server, metadata: parsed.data, trustChain: issuer.value.trustChain };
 			} else {
+				const eligible: TrustedWalletEntity[] = [];
 				for (const path of paths.value) {
 					const checked = await validateTrustChain(path.statements, anchors, {
 						...scoped,
@@ -321,8 +368,17 @@ export class CredentialIssuerRole extends AttestationConsumer {
 						parsed.data.issuer === server
 					) {
 						found = { entityId: server, metadata: parsed.data, trustChain: checked.chain };
-						break;
+						eligible.push(found);
+						if (!scoped.chainSelection) break;
 					}
+				}
+				if (scoped.chainSelection && eligible.length) {
+					const selected = selectTrustChain(
+						eligible.map((entity) => entity.trustChain),
+						scoped,
+					);
+					if (!selected.ok) return selected;
+					found = eligible.find((entity) => entity.trustChain === selected.value);
 				}
 			}
 			if (scoped.signal?.aborted || operationExhausted(scoped))

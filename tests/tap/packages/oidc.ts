@@ -354,6 +354,247 @@ async function createDualAnchorRegistrationFixture(invalidPreferredProvider = fa
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("oidc / configurable trust establishment", () => {
+		test("protocol assessments keep Trust Mark issuer selection independent", async (t) => {
+			const f = await createMockFederation();
+			const type = "https://marks.example/accreditation";
+			const anchor = decodeEntityStatement(f.taEcJwt);
+			const op = decodeEntityStatement(f.opEcJwt);
+			if (!anchor.ok || !op.ok) throw new Error("Invalid fixture");
+			const jwt = await CorePublic.signTrustMark({
+				issuer: TA_ID,
+				subject: OP_ID,
+				trustMarkType: type,
+				signer: new JwkSigner(f.taSigningKey),
+			});
+			const ec = await signEntityStatement(
+				{ ...op.value.payload, trust_marks: [{ trust_mark_type: type, trust_mark: jwt }] },
+				new JwkSigner(f.opSigningKey),
+			);
+			for (const authorized of [true, false]) {
+				const root = await signEntityStatement(
+					{
+						...anchor.value.payload,
+						trust_mark_issuers: { [type]: [authorized ? TA_ID : LEAF_ID] },
+					},
+					new JwkSigner(f.taSigningKey),
+				);
+				for (const custom of [false, true]) {
+					const subjects: string[] = [];
+					const result = await OidcProviderRole.assessEntity(
+						OP_ID,
+						"openid_provider",
+						f.trustAnchors,
+						{
+							...f.options,
+							trustChain: [ec, f.taSubStatementForOp, root],
+							trustMarkVerification: { mode: "resolve" },
+							httpClient: async () =>
+								new Response(root, { headers: { "content-type": MediaType.EntityStatement } }),
+							...(custom
+								? {
+										chainSelection: (chains: ValidatedTrustChain[]) => {
+											subjects.push(chains[0]!.entityId);
+											return chains[0]!;
+										},
+									}
+								: {}),
+						},
+					);
+					t.true(result.ok, JSON.stringify(result));
+					if (!result.ok || result.value.kind !== "local") continue;
+					t.strictEqual(
+						result.value.discovery.trustChain.trustMarkEvaluations[0]?.status,
+						authorized ? "verified" : "invalid",
+					);
+					if (custom) {
+						t.true(subjects.includes(OP_ID), "host selects the application path");
+						t.strictEqual(
+							subjects.includes(TA_ID),
+							authorized,
+							"only authorized issuer paths reach the host selector",
+						);
+					}
+				}
+			}
+		});
+		test("automatic and explicit registration filter malformed OP candidates before selection", async (t) => {
+			const f = await trustChainPaths();
+			const metadata = {
+				openid_provider: {
+					issuer: f.ids.subject,
+					authorization_endpoint: `${f.ids.subject}/authorize`,
+					token_endpoint: `${f.ids.subject}/token`,
+					jwks_uri: `${f.ids.subject}/jwks`,
+					response_types_supported: ["code"],
+					subject_types_supported: ["public"],
+					id_token_signing_alg_values_supported: ["RS256"],
+					client_registration_types_supported: ["automatic", "explicit"],
+					federation_registration_endpoint: `${f.ids.subject}/register`,
+				},
+			};
+			const a = await f.chain(["subject", "a", "anchor"]);
+			const b = await f.chain(["subject", "b", "anchor"]);
+			const leaf = await f.sign("subject", "subject", {
+				authority_hints: [f.ids.a, f.ids.b],
+				metadata,
+			});
+			const invalid = await f.sign("a", "subject", {
+				metadata: { openid_provider: { response_types_supported: 42 } },
+			});
+			const documents = new Map<string, string>([
+				[`${f.ids.subject}/.well-known/openid-federation`, leaf],
+				[`${f.ids.a}/.well-known/openid-federation`, f.options.entityConfigurations.get(f.ids.a)!],
+				[`${f.ids.b}/.well-known/openid-federation`, f.options.entityConfigurations.get(f.ids.b)!],
+				[`${f.ids.anchor}/.well-known/openid-federation`, a[3]!],
+				[`${f.ids.a}/fetch?sub=${encodeURIComponent(f.ids.subject)}`, invalid],
+				[`${f.ids.b}/fetch?sub=${encodeURIComponent(f.ids.subject)}`, b[1]!],
+				[`${f.ids.anchor}/fetch?sub=${encodeURIComponent(f.ids.a)}`, a[2]!],
+				[`${f.ids.anchor}/fetch?sub=${encodeURIComponent(f.ids.b)}`, b[2]!],
+			]);
+			let posts = 0,
+				signatures = 0;
+			const role = new OidcRelyingPartyRole({
+				trustAnchors: f.anchors,
+				protocolKeyProvider: {
+					getRequestObjectSigner: async () => {
+						signatures++;
+						throw new Error("Must not sign");
+					},
+				},
+			});
+			role.initialize({
+				entityId: f.ids.b,
+				keyProvider: {
+					getFederationKeySet: async () => {
+						signatures++;
+						throw new Error("Must not sign");
+					},
+				},
+				options: {
+					...f.options,
+					httpClient: async (input, init) => {
+						if (init?.method === "POST") posts++;
+						const url = new URL(input instanceof Request ? input.url : input.toString());
+						url.searchParams.delete("iss");
+						const jwt = documents.get(url.toString());
+						return new Response(jwt ?? "missing", {
+							status: jwt ? 200 : 404,
+							headers: { "content-type": MediaType.EntityStatement },
+						});
+					},
+				},
+			});
+			for (const allInvalid of [false, true]) {
+				if (allInvalid)
+					documents.set(
+						`${f.ids.b}/fetch?sub=${encodeURIComponent(f.ids.subject)}`,
+						await f.sign("b", "subject", {
+							metadata: { openid_provider: { response_types_supported: 42 } },
+						}),
+					);
+				for (const explicit of [false, true]) {
+					let selections = 0;
+					const options = {
+						chainSelection: (chains: ValidatedTrustChain[]) => {
+							selections++;
+							t.strictEqual(chains.length, 1);
+							t.true(
+								OidcProviderRole.parseMetadata(chains[0]!.resolvedMetadata.openid_provider).success,
+							);
+							throw new Error("Host declines registration after inspecting eligible paths");
+						},
+					};
+					const result = explicit
+						? await role.explicitlyRegister(f.ids.subject, options)
+						: await role.automaticallyRegister(
+								{ opEntityId: f.ids.subject, redirect_uri: `${f.ids.b}/callback` },
+								options,
+							);
+					t.false(result.ok);
+					t.strictEqual(selections, allInvalid ? 0 : 1);
+				}
+			}
+			t.strictEqual(signatures, 0);
+			t.strictEqual(posts, 0);
+		});
+		test("role defaults and per-call options select locally validated protocol metadata", async (t) => {
+			const f = await createMockFederation();
+			let hostCalls = 0,
+				roleCalls = 0,
+				callCalls = 0;
+			const role = new OidcRelyingPartyRole({
+				metadata: {
+					redirect_uris: ["https://rp.example.com/callback"],
+					response_types: ["code"],
+					client_registration_types: ["automatic"],
+					jwks: { keys: [f.leafProtocolPublicKey] },
+				},
+				authorityHints: [TA_ID],
+				protocolKeyProvider: {
+					getRequestObjectSigner: async () => new JwkSigner(f.leafProtocolSigningKey),
+				},
+				trustAnchors: f.trustAnchors,
+				options: {
+					chainSelection: (chains) => {
+						roleCalls++;
+						return chains[0] as ValidatedTrustChain;
+					},
+				},
+			});
+			role.initialize({
+				entityId: LEAF_ID,
+				keyProvider: {
+					getFederationKeySet: async () => ({
+						jwks: { keys: [f.leafPublicKey] },
+						signer: new JwkSigner(f.leafSigningKey),
+					}),
+				},
+				options: {
+					...f.options,
+					chainSelection: (chains) => {
+						hostCalls++;
+						return chains[0] as ValidatedTrustChain;
+					},
+				},
+			});
+			t.true((await role.assessEntity(OP_ID, "openid_provider")).ok);
+			t.strictEqual(roleCalls, 1);
+			t.strictEqual(hostCalls, 0);
+			t.true(
+				(
+					await role.assessEntity(OP_ID, "openid_provider", {
+						chainSelection: (chains) => {
+							callCalls++;
+							return chains[0] as ValidatedTrustChain;
+						},
+					})
+				).ok,
+			);
+			t.strictEqual(callCalls, 1);
+			t.strictEqual(roleCalls, 1);
+			const request = await role.automaticallyRegister({
+				opEntityId: OP_ID,
+				redirect_uri: "https://rp.example.com/callback",
+			});
+			t.true(request.ok, JSON.stringify(request));
+			t.ok(roleCalls > 1, "registration also inherits the role strategy");
+			const malformed = await createMockFederation({
+				opMetadata: { openid_provider: { issuer: OP_ID, response_types_supported: 42 } },
+			});
+			t.false(
+				(
+					await OidcProviderRole.assessEntity(
+						OP_ID,
+						"openid_provider",
+						malformed.trustAnchors,
+						malformed.options,
+					)
+				).ok,
+			);
+		});
+	});
+
 	module("oidc / custom constraints", () => {
 		test("registration applies checks supplied through federation options", async (t) => {
 			const f = await createMockFederation();

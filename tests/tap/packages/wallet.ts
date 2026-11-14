@@ -61,6 +61,156 @@ const proof = (f: Fixture) => ({
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("wallet / configurable trust establishment", () => {
+		test("wallet assessments do not impose wallet metadata on accreditation issuers", async (t) => {
+			const f = await walletFederation();
+			const type = "https://marks.example/accreditation";
+			const original = f.chains.get(f.ids.provider)!;
+			const provider = decodeEntityStatement(original[0]!);
+			const anchor = decodeEntityStatement(original[2]!);
+			if (!provider.ok || !anchor.ok) throw new Error("Invalid fixture");
+			const jwt = await signTrustMark({
+				issuer: f.ids.anchor,
+				subject: f.ids.provider,
+				trustMarkType: type,
+				signer: new JwkSigner(f.keys.anchor.privateKey),
+				clock: f.clock,
+			});
+			const ec = await signEntityStatement(
+				{ ...provider.value.payload, trust_marks: [{ trust_mark_type: type, trust_mark: jwt }] },
+				new JwkSigner(f.keys.provider.privateKey),
+			);
+			for (const authorized of [true, false]) {
+				const root = await signEntityStatement(
+					{
+						...anchor.value.payload,
+						trust_mark_issuers: { [type]: [authorized ? f.ids.anchor : f.ids.issuer] },
+					},
+					new JwkSigner(f.keys.anchor.privateKey),
+				);
+				for (const custom of [false, true]) {
+					const subjects: string[] = [];
+					const result = await WalletProviderRole.assessEntity(
+						f.ids.provider,
+						"openid_wallet_provider",
+						f.anchors,
+						{
+							...f.options,
+							trustChain: [ec, original[1]!, root],
+							trustMarkVerification: { mode: "resolve" },
+							httpClient: async () =>
+								new Response(root, {
+									headers: { "content-type": "application/entity-statement+jwt" },
+								}),
+							...(custom
+								? {
+										chainSelection: (chains: import("@oidfed/core").ValidatedTrustChain[]) => {
+											subjects.push(chains[0]!.entityId);
+											return chains[0]!;
+										},
+									}
+								: {}),
+						},
+					);
+					t.true(result.ok, JSON.stringify(result));
+					if (!result.ok || result.value.kind !== "local") continue;
+					t.strictEqual(
+						result.value.discovery.trustChain.trustMarkEvaluations[0]?.status,
+						authorized ? "verified" : "invalid",
+					);
+					if (custom) {
+						t.true(subjects.includes(f.ids.provider));
+						t.strictEqual(subjects.includes(f.ids.anchor), authorized);
+					}
+				}
+			}
+		});
+		test("request selection runs only after signature and effective endpoint policy checks", async (t) => {
+			const wallet = await walletFederation();
+			const f = await trustChainPaths(wallet.metadata.verifier);
+			const a = await f.chain(["subject", "a", "anchor"]);
+			const b = await f.chain(["subject", "b", "anchor"]);
+			const leaf = await f.sign("subject", "subject", {
+				authority_hints: [f.ids.a, f.ids.b],
+				metadata: wallet.metadata.verifier,
+			});
+			a[0] = leaf;
+			b[0] = leaf;
+			a[1] = await f.sign("a", "subject", {
+				metadata: {
+					openid_credential_verifier: { response_uris: ["https://blocked.example/response"] },
+				},
+			});
+			const documents = new Map([
+				[`${f.ids.subject}/.well-known/openid-federation`, leaf],
+				[
+					`${f.ids.a}/.well-known/openid-federation`,
+					f.options.entityConfigurations.get(f.ids.a) as string,
+				],
+				[
+					`${f.ids.b}/.well-known/openid-federation`,
+					f.options.entityConfigurations.get(f.ids.b) as string,
+				],
+				[`${f.ids.anchor}/.well-known/openid-federation`, a[3] as string],
+				[`${f.ids.a}/fetch?sub=${encodeURIComponent(f.ids.subject)}`, a[1] as string],
+				[`${f.ids.b}/fetch?sub=${encodeURIComponent(f.ids.subject)}`, b[1] as string],
+				[`${f.ids.anchor}/fetch?sub=${encodeURIComponent(f.ids.a)}`, a[2] as string],
+				[`${f.ids.anchor}/fetch?sub=${encodeURIComponent(f.ids.b)}`, b[2] as string],
+			]);
+			let selections = 0;
+			const options = {
+				...f.options,
+				chainSelection: (chains: import("@oidfed/core").ValidatedTrustChain[]) => {
+					selections++;
+					t.strictEqual(chains.length, 1, "ineligible request paths cannot be selected");
+					return chains[0] as import("@oidfed/core").ValidatedTrustChain;
+				},
+				httpClient: async (input: string | URL | Request) => {
+					const url = new URL(input instanceof Request ? input.url : input.toString());
+					url.searchParams.delete("iss");
+					const jwt = documents.get(url.toString());
+					return new Response(jwt ?? "missing", {
+						status: jwt ? 200 : 404,
+						headers: { "content-type": "application/entity-statement+jwt" },
+					});
+				},
+			};
+			const payload = { ...wallet.requestPayload, client_id: `openid_federation:${f.ids.subject}` };
+			const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
+				{ client_id: payload.client_id },
+				f.anchors,
+				options,
+			);
+			t.true(prepared.ok, JSON.stringify(prepared));
+			t.strictEqual(selections, 0, "selection waits for the signed request");
+			if (!prepared.ok) return;
+			const result = await CredentialVerifierRole.completeAuthorizationRequest(
+				prepared.value,
+				await token(payload, wallet.protocol.verifier.privateKey, "oauth-authz-req+jwt"),
+			);
+			t.true(result.ok, JSON.stringify(result));
+			t.strictEqual(selections, 1);
+			if (result.ok)
+				t.strictEqual(String(result.value.trustChain.statements[1]?.payload.iss), String(f.ids.b));
+		});
+		test("role assessments apply protocol metadata validation and role defaults", async (t) => {
+			const f = await walletFederation();
+			let selected = 0;
+			const role = new WalletProviderRole({
+				trustAnchors: f.anchors,
+				options: {
+					...f.options,
+					chainSelection: (chains) => {
+						selected++;
+						return chains[0] as import("@oidfed/core").ValidatedTrustChain;
+					},
+				},
+			});
+			t.true((await role.assessEntity(f.ids.provider, "openid_wallet_provider")).ok);
+			t.strictEqual(selected, 1);
+			t.false((await role.assessEntity(f.ids.provider, "openid_credential_verifier")).ok);
+		});
+	});
 
 	module("wallet / supplied accreditation evidence", () => {
 		test("offline discovery carries profile checks and original JWT evidence", async (t) => {

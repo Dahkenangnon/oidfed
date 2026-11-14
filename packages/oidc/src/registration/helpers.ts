@@ -1,4 +1,5 @@
 import {
+	createTrustChainOperation,
 	type EntityId,
 	entityId,
 	err,
@@ -9,6 +10,7 @@ import {
 	ok,
 	type Result,
 	resolveTrustChains,
+	selectTrustChain,
 	shortestChain,
 	type TrustAnchorSet,
 	type ValidatedTrustChain,
@@ -146,16 +148,6 @@ export interface SharedRegistrationTrustChains {
 	readonly trustAnchorId: EntityId;
 }
 
-function shortestRegistrationChain(
-	chains: readonly ValidRegistrationChain[],
-): ValidRegistrationChain {
-	const selected = chains
-		.slice()
-		.sort((a, b) => a.chain.statements.length - b.chain.statements.length)[0];
-	if (!selected) throw new Error("No registration trust chains available");
-	return selected;
-}
-
 async function resolveValidRegistrationChains(
 	subject: EntityId,
 	trustAnchors: TrustAnchorSet,
@@ -167,6 +159,9 @@ async function resolveValidRegistrationChains(
 	) => Promise<ValidationResult>,
 	clientType: "openid_relying_party" | "oauth_client" = "openid_relying_party",
 ): Promise<Result<readonly ValidRegistrationChain[], FederationError>> {
+	const operation = createTrustChainOperation(options);
+	if (!operation.ok) return operation;
+	options = operation.value.options;
 	const chainResult = await resolveTrustChains(subject, trustAnchors, options);
 
 	if (chainResult.chains.length === 0) {
@@ -206,6 +201,13 @@ async function resolveValidRegistrationChains(
 		}
 	}
 
+	if (operation.value.exhausted() || (options?.chainSelection && chainResult.incomplete))
+		return err(
+			federationError(
+				FederationErrorCode.InvalidTrustChain,
+				"Trust chain discovery was incomplete",
+			),
+		);
 	if (validChains.length === 0) {
 		if (metadataError) return err(metadataError);
 		return err(
@@ -261,7 +263,17 @@ export async function selectSharedRegistrationTrustChains(
 		(candidate) => candidate.chain.trustAnchorId === preferredOpChain.trustAnchorId,
 	);
 	if (preferredMetadata.ok && preferredRpChains.length > 0) {
-		const rpChain = shortestRegistrationChain(preferredRpChains);
+		const selected = selectTrustChain(
+			preferredRpChains.map((candidate) => candidate.chain),
+			options,
+			shortestChain,
+		);
+		if (!selected.ok) return selected;
+		const rpChain = preferredRpChains.find((candidate) => candidate.chain === selected.value);
+		if (!rpChain)
+			return err(
+				federationError(FederationErrorCode.InvalidTrustChain, "Selected RP chain is unavailable"),
+			);
 		return ok({
 			rpChainStatements: rpChain.statements,
 			rpChain: rpChain.chain,
@@ -274,12 +286,37 @@ export async function selectSharedRegistrationTrustChains(
 		alternatives ?? (await resolveValidRegistrationChains(opEntityId, trustAnchors, options, "OP"));
 	if (!opChainsResult.ok) return opChainsResult;
 
-	for (const rpChain of rpChains) {
+	const eligibleRp = rpChains.filter((rp) =>
+		opChainsResult.value.some((op) => op.chain.trustAnchorId === rp.chain.trustAnchorId),
+	);
+	if (options?.chainSelection && eligibleRp.length) {
+		const selected = selectTrustChain(
+			eligibleRp.map((candidate) => candidate.chain),
+			options,
+		);
+		if (!selected.ok) return selected;
+		const index = eligibleRp.findIndex((candidate) => candidate.chain === selected.value);
+		eligibleRp.unshift(...eligibleRp.splice(index, 1));
+	}
+	for (const rpChain of eligibleRp) {
 		const matchingOpChains = opChainsResult.value.filter(
 			(candidate) => candidate.chain.trustAnchorId === rpChain.chain.trustAnchorId,
 		);
 		if (matchingOpChains.length > 0) {
-			const opChain = shortestRegistrationChain(matchingOpChains);
+			const selected = selectTrustChain(
+				matchingOpChains.map((candidate) => candidate.chain),
+				options,
+				shortestChain,
+			);
+			if (!selected.ok) return selected;
+			const opChain = matchingOpChains.find((candidate) => candidate.chain === selected.value);
+			if (!opChain)
+				return err(
+					federationError(
+						FederationErrorCode.InvalidTrustChain,
+						"Selected OP chain is unavailable",
+					),
+				);
 			return ok({
 				rpChainStatements: rpChain.statements,
 				rpChain: rpChain.chain,
@@ -307,6 +344,9 @@ export async function resolveAndValidateBestChain(
 	trustAnchors: TrustAnchorSet,
 	options: FederationOptions,
 ): Promise<Result<ValidatedTrustChain, FederationError>> {
+	const operation = createTrustChainOperation(options);
+	if (!operation.ok) return operation;
+	options = operation.value.options;
 	const chainResult = await resolveTrustChains(rpEntityId, trustAnchors, options);
 
 	if (chainResult.chains.length === 0) {
@@ -339,6 +379,13 @@ export async function resolveAndValidateBestChain(
 		}
 	}
 
+	if (operation.value.exhausted() || (options?.chainSelection && chainResult.incomplete))
+		return err(
+			federationError(
+				FederationErrorCode.InvalidTrustChain,
+				"Trust chain discovery was incomplete",
+			),
+		);
 	if (validChains.length === 0) {
 		if (metadataError) return err(metadataError);
 		return err(
@@ -346,5 +393,5 @@ export async function resolveAndValidateBestChain(
 		);
 	}
 
-	return ok(shortestChain(validChains));
+	return selectTrustChain(validChains, options, shortestChain);
 }
