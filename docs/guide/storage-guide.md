@@ -150,7 +150,7 @@ interface SubordinateEventStorage {
 }
 ```
 
-`SubordinateEvent` comes from `@oidfed/core`. Events use numeric epoch seconds in `iat`, an extensible `event` string, and optional `event_description` and `information_uri`. Preserve supplied occurrence times and append order, including ties and repeated event types. Return detached values. A caller must not be able to mutate persisted events through input objects or returned values.
+`SubordinateEvent` comes from `@oidfed/core`. Events use numeric epoch seconds in `iat`, an extensible `event` string, and optional `event_description` and `information_uri`. Preserve supplied occurrence times and append order, including ties and repeated event types. Return detached values. Capture nested event values before the first asynchronous wait, including before a queued transaction begins. A caller must not be able to mutate persisted events through input objects or returned values. The memory adapter and authority manual-recording API both take this snapshot.
 
 Keep history independent of the current subordinate row. Removing that row must not delete events, and re-registration extends its existing history. Do not backfill from `createdAt` or `updatedAt`, silently prune records, or truncate responses. Durable retention and issuer/subject isolation are responsibilities of the production adapter.
 

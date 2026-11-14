@@ -10837,6 +10837,38 @@ export default (QUnit: QUnit) => {
 		QUnit.module("Subordinate Events Draft 01", () => {
 			for (const intermediate of [false, true]) {
 				QUnit.test(
+					`${intermediate ? "Intermediate" : "TrustAnchor"} snapshots manually recorded nested events before queuing`,
+					async (assert) => {
+						for (const direct of [false, true]) {
+							const f = await fixture(intermediate);
+							let release!: () => void;
+							const gate = new Promise<void>((resolve) => {
+								release = resolve;
+							});
+							const blocker = f.storage.transaction(async () => gate);
+							const input = {
+								iat: 1,
+								event: "operator.review",
+								details: { decisions: ["original"] },
+							};
+							const expected = structuredClone(input);
+							const pending = direct
+								? f.storage.subordinateEvents!.append(issuer, subject, [input])
+								: f.authority.recordSubordinateEvents(subject, [input]);
+							input.details.decisions[0] = "changed";
+							release();
+							await blocker;
+							await pending;
+							const jwt = decodeEntityStatement(await f.authority.getSubordinateEvents(subject));
+							assert.true(jwt.ok);
+							if (jwt.ok)
+								assert.deepEqual(jwt.value.payload.federation_registration_events, [expected]);
+						}
+					},
+				);
+			}
+			for (const intermediate of [false, true]) {
+				QUnit.test(
 					`${intermediate ? "Intermediate" : "TrustAnchor"} snapshots queued updates and their events`,
 					async (assert) => {
 						const f = await fixture(intermediate);

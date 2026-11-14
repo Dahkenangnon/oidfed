@@ -397,6 +397,8 @@ Use the authority instance's lifecycle methods to record changes automatically:
 
 State changes and generated events commit in one transaction. Registration and updates copy their inputs before asynchronous work, so later changes to the caller’s object cannot alter the stored record or its events. No-op updates, reordered object properties, reordered key sets, and authority signing-key rotation do not produce subordinate update events. Initial registration produces only its registration event. Draft 01 §2.3.3's "at the same time" exclusion is interpreted as applying to initial updates within the registration operation; a later change retains its event even if the clock gives it the same timestamp.
 
+Manual event recording also copies nested extension values before waiting for storage, so changing an input object after calling `recordSubordinateEvents()` cannot change the recorded observation.
+
 Direct `storage.subordinates` writes remain supported and do not automatically record events. Enabling event storage does not reconstruct past history from record timestamps. See the [storage contract](../guide/storage-guide.md#subordinate-events) for explicit transactional appends.
 
 The endpoint accepts GET with a required `sub` Entity Identifier. If authentication is configured through `federation_subordinate_events_endpoint_auth_methods`, it uses the existing federation client-authentication middleware and authenticated form POST. A `private_key_jwt` assertion names the authority's Entity Identifier as its audience, which can differ from the endpoint URL. The authenticated client and requested subject need not be identical.
