@@ -137,8 +137,8 @@ const ResolveResponseAudienceSchema = z.union([
 export const ResolveResponsePayloadSchema = z.looseObject({
 	iss: EntityIdSchema,
 	sub: EntityIdSchema,
-	iat: z.number().int().positive(),
-	exp: z.number().int().positive(),
+	iat: z.number().finite(),
+	exp: z.number().finite(),
 	metadata: FederationMetadataSchema,
 	trust_marks: z.array(TrustMarkRefSchema).optional(),
 	trust_chain: z.array(z.string()),

@@ -523,7 +523,7 @@ interface MetadataStage {
 }
 
 /** Federation invariants apply after superior overrides and policies, including contextual completion. */
-function validateResolvedMetadata(
+export function validateResolvedMetadata(
 	errors: ValidationError[],
 	metadata: Record<string, Record<string, unknown>>,
 	subject: string,

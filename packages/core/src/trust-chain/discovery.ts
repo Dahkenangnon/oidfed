@@ -85,3 +85,38 @@ export async function discoverEntity(
 		trustMarks: bestChain.trustMarks,
 	} as DiscoveryResult);
 }
+
+/** Validate supplied statements before exposing them to protocol operations. */
+export async function discoverEntityFromChain(
+	entityId: EntityId,
+	statements: readonly string[],
+	trustAnchors: TrustAnchorSet,
+	options?: FederationOptions,
+): Promise<Result<DiscoveryResult>> {
+	const operation = createTrustChainOperation(options);
+	if (!operation.ok) return operation;
+	options = operation.value.options;
+	const checked = await validateTrustChain(statements, trustAnchors, options);
+	if (!checked.valid)
+		return err(
+			federationError(
+				InternalErrorCode.TrustChainInvalid,
+				checked.errors.map((error) => error.message).join("; "),
+			),
+		);
+	if (checked.chain.entityId !== entityId)
+		return err(
+			federationError(
+				InternalErrorCode.TrustChainInvalid,
+				"Trust chain subject does not match the requested entity",
+			),
+		);
+	const selected = selectTrustChain([checked.chain], options);
+	if (!selected.ok) return selected;
+	return ok({
+		entityId,
+		resolvedMetadata: checked.chain.resolvedMetadata,
+		trustChain: checked.chain,
+		trustMarks: checked.chain.trustMarks,
+	} as DiscoveryResult);
+}

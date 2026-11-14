@@ -83,6 +83,8 @@ export interface Logger {
 }
 
 export interface FederationOptions {
+	/** Acquisition source; protocol consumers still validate the returned subject chain. */
+	trustResolution?: import("./trust-chain/assessment.js").TrustResolutionSource;
 	/** Select among validated candidates eligible for the current operation. */
 	chainSelection?: ChainSelectionStrategy;
 	authentication?: EndpointClientAuthentication;
@@ -280,7 +282,7 @@ declare const _discoveryBrand: unique symbol;
  * Result of entity discovery through the federation.
  *
  * Branded to prevent callers from constructing unchecked inputs —
- * only `discoverEntity()` (in `@oidfed/leaf`) produces this type.
+ * `discoverEntity()` and `discoverEntityFromChain()` in core produce this type after validation.
  */
 export type DiscoveryResult = {
 	readonly [_discoveryBrand]: true;

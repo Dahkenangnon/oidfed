@@ -77,6 +77,10 @@ export async function resolveTrustChains(
 	options?: ResolveTrustChainsOptions,
 ): Promise<TrustChainResult> {
 	safeLogger(options?.logger)?.debug("Starting resolve trust chains");
+	if (options?.trustResolution?.kind === "resolver" && !options.entityConfigurationJwt) {
+		const { resolveThroughTrustedResolver } = await import("./assessment.js");
+		return resolveThroughTrustedResolver(entityId, trustAnchors, options);
+	}
 
 	if (options?.signal?.aborted) {
 		return {

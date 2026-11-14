@@ -277,6 +277,67 @@ export default (QUnit: QUnit) => {
 			};
 			return { ...f, a, b, options: { ...f.options, httpClient } };
 		}
+		test("zero fetch budgets accept cached and supplied evidence without transport", async (t) => {
+			const f = await paths();
+			const cache = new MemoryCache({ clock: f.options.clock });
+			t.true(
+				(await CorePublic.discoverEntity(f.ids.subject, f.anchors, { ...f.options, cache })).ok,
+			);
+			let requests = 0;
+			const options = {
+				...f.options,
+				maxTotalFetches: 0,
+				httpClient: async () => {
+					requests++;
+					throw new Error("Network access must not occur");
+				},
+			};
+			t.true((await CorePublic.discoverEntity(f.ids.subject, f.anchors, { ...options, cache })).ok);
+			const supplied = await CorePublic.discoverEntityFromChain(
+				f.ids.subject,
+				f.a,
+				f.anchors,
+				options,
+			);
+			t.true(supplied.ok, JSON.stringify(supplied));
+			if (supplied.ok) {
+				t.true(
+					(await CorePublic.refreshTrustChain(supplied.value.trustChain, f.anchors, options)).ok,
+					"fresh evidence needs no refresh fetch",
+				);
+				t.false(
+					(
+						await CorePublic.refreshTrustChain(supplied.value.trustChain, f.anchors, {
+							...options,
+							forceRefresh: true,
+						})
+					).ok,
+					"forced refresh cannot fetch new evidence with a zero allowance",
+				);
+			}
+			t.true(
+				(
+					await CorePublic.resolveTrustChainForAnchor(f.ids.subject, f.ids.anchor, f.anchors, {
+						...options,
+						cache,
+					})
+				).ok,
+			);
+			t.false(
+				(
+					await CorePublic.discoverEntityFromChain(f.ids.subject, f.a, f.anchors, {
+						...options,
+						entityConfigurations: new Map(),
+					})
+				).ok,
+				"missing intermediate evidence fails",
+			);
+			t.false((await CorePublic.discoverEntity(f.ids.subject, f.anchors, options)).ok);
+			for (const budget of [-1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+				t.false(CorePublic.createTrustChainOperation({ maxTotalFetches: budget }).ok);
+			}
+			t.strictEqual(requests, 0);
+		});
 		test("selection uses validated candidates and protects their evidence", async (t) => {
 			const f = await paths();
 			const chosen = await CorePublic.discoverEntity(f.ids.subject, f.anchors, {
@@ -306,12 +367,295 @@ export default (QUnit: QUnit) => {
 					}).ok,
 				);
 			t.strictEqual(JSON.stringify(chosen.value.trustChain), snapshot);
+			const supplied = await CorePublic.discoverEntityFromChain(f.ids.subject, f.b, f.anchors, {
+				...f.options,
+				offline: true,
+			});
+			t.true(supplied.ok);
+			t.false((await CorePublic.discoverEntityFromChain(f.ids.a, f.b, f.anchors, f.options)).ok);
 			const budget = await CorePublic.discoverEntity(f.ids.subject, f.anchors, {
 				...f.options,
 				maxTotalFetches: 1,
 				chainSelection: CorePublic.longestExpiry,
 			});
 			t.false(budget.ok);
+		});
+		test("refresh, peer paths and issuer evidence honor selection without changing fresh caches", async (t) => {
+			const f = await paths();
+			let selections = 0;
+			const options = {
+				...f.options,
+				chainSelection: (chains: ValidatedTrustChain[]) => {
+					selections++;
+					return chains.find(
+						(chain) => chain.resolvedMetadata.example?.route === "b",
+					) as ValidatedTrustChain;
+				},
+			};
+			const discovery = await CorePublic.discoverEntityFromChain(
+				f.ids.subject,
+				f.a,
+				f.anchors,
+				f.options,
+			);
+			if (!discovery.ok) throw new Error(discovery.error.description);
+			const fresh = await CorePublic.refreshTrustChain(
+				discovery.value.trustChain,
+				f.anchors,
+				options,
+			);
+			t.true(fresh.ok);
+			t.strictEqual(selections, 0);
+			const refreshed = await CorePublic.refreshTrustChain(discovery.value.trustChain, f.anchors, {
+				...options,
+				forceRefresh: true,
+			});
+			t.true(refreshed.ok, JSON.stringify(refreshed));
+			if (refreshed.ok) t.strictEqual(refreshed.value.resolvedMetadata.example?.route, "b");
+			const peer = await CorePublic.resolveTrustChainForAnchor(
+				f.ids.subject,
+				f.ids.anchor,
+				f.anchors,
+				options,
+			);
+			t.true(peer.ok);
+			if (peer.ok) t.strictEqual(peer.value[1], f.b[1]);
+			const type = "https://example.org/accreditation";
+			const root = await f.sign("anchor", "anchor", {
+				trust_mark_issuers: { [type]: [f.ids.subject] },
+			});
+			const issuer = await CorePublic.establishTrustMarkIssuerTrust({
+				issuer: f.ids.subject,
+				trustMarkType: type,
+				trustAnchors: f.anchors,
+				options: {
+					...options,
+					httpClient: async (input, init) =>
+						String(input) === `${f.ids.anchor}/.well-known/openid-federation`
+							? new Response(root, { headers: { "content-type": MediaType.EntityStatement } })
+							: f.options.httpClient(input, init),
+				},
+			});
+			t.true(issuer.ok, JSON.stringify(issuer));
+			if (issuer.ok) t.strictEqual(issuer.value.statements[1], f.b[1]);
+			let fetches = 0;
+			const offline = await CorePublic.discoverEntityFromChain(f.ids.subject, f.a, f.anchors, {
+				clock: f.options.clock,
+				offline: true,
+				httpClient: async () => {
+					fetches++;
+					throw new Error("must not fetch");
+				},
+			});
+			t.false(offline.ok, "missing intermediate EC cannot trigger offline network access");
+			t.strictEqual(fetches, 0);
+		});
+		test("resolver trust is independent, recipient bound, and never falls back after authentication failure", async (t) => {
+			const f = await paths();
+			const responder = f.ids.a;
+			const payload = {
+				iss: responder,
+				sub: f.ids.subject,
+				iat: 1400,
+				exp: 4000,
+				trust_chain: f.b,
+				metadata: { example: { route: "b" } },
+				aud: f.ids.subject,
+			};
+			const response = await CorePublic.signEntityStatement(
+				payload,
+				new CorePublic.JwkSigner(f.keys.a.privateKey),
+				{ typ: JwtTyp.ResolveResponse },
+			);
+			let calls = 0;
+			const resolution: CorePublic.TrustResolutionSource = {
+				kind: "resolver",
+				resolver: {
+					entityId: responder,
+					endpoint: `${responder}/resolve`,
+					trust: { kind: "federation", trustAnchors: f.anchors },
+					requester: f.ids.subject,
+				},
+			};
+			const options: CorePublic.EntityAssessmentOptions = {
+				...f.options,
+				mode: "resolver",
+				trustResolution: resolution,
+				getEndpointAuthentication: (context) => {
+					if (context.responder !== responder) return undefined;
+					return {
+						method: "example_auth",
+						audience: responder,
+						prepare: () => ({ parameters: { credential: "test" } }),
+					};
+				},
+				httpClient: async (input, init) => {
+					if (new URL(String(input)).pathname !== "/resolve")
+						return f.options.httpClient(input, init);
+					calls++;
+					t.strictEqual(init?.method, "POST");
+					return new Response(response, { headers: { "content-type": MediaType.ResolveResponse } });
+				},
+			};
+			const accepted = await CorePublic.assessEntity(f.ids.subject, f.anchors, options);
+			t.true(accepted.ok, JSON.stringify(accepted));
+			t.strictEqual(calls, 1);
+			const mismatched = await CorePublic.assessEntity(f.ids.subject, f.anchors, {
+				...options,
+				trustResolution: {
+					kind: "resolver",
+					resolver: {
+						...resolution.resolver,
+						trust: { kind: "pinned", jwks: { keys: [f.keys.a.publicKey] } },
+					},
+				},
+				getEndpointAuthentication: () => ({
+					method: "example_auth",
+					audience: f.ids.b,
+					prepare: () => ({}),
+				}),
+			});
+			t.false(mismatched.ok);
+			t.strictEqual(calls, 1, "mismatched credentials never reach transport");
+			const forged = await CorePublic.assessEntity(f.ids.subject, f.anchors, {
+				...options,
+				trustResolution: {
+					kind: "resolver",
+					resolver: {
+						...resolution.resolver,
+						trust: { kind: "pinned", jwks: { keys: [f.keys.b.publicKey] } },
+					},
+				},
+			});
+			t.false(forged.ok);
+		});
+		test("delegation remains an assertion and never becomes a locally validated chain", async (t) => {
+			const f = await paths();
+			const decoded = CorePublic.decodeEntityStatement(f.a[1] as string);
+			if (!decoded.ok) throw new Error(decoded.error.description);
+			const wrongSignature = await CorePublic.signEntityStatement(
+				decoded.value.payload,
+				new CorePublic.JwkSigner(f.keys.b.privateKey),
+			);
+			let chain = [f.a[0] as string, wrongSignature, ...f.a.slice(2)];
+			let marks: { trust_mark_type: string; trust_mark: string }[] = [];
+			const options: CorePublic.EntityAssessmentOptions = {
+				...f.options,
+				mode: "resolver",
+				trustResolution: {
+					kind: "resolver",
+					resolver: {
+						entityId: f.ids.anchor,
+						endpoint: `${f.ids.anchor}/resolve`,
+						trust: { kind: "pinned", jwks: { keys: [f.keys.anchor.publicKey] } },
+					},
+				},
+				httpClient: async () =>
+					new Response(
+						await CorePublic.signEntityStatement(
+							{
+								iss: f.ids.anchor,
+								sub: f.ids.subject,
+								iat: 1400,
+								exp: 4000,
+								trust_chain: chain,
+								metadata: { example: {} },
+								trust_marks: marks,
+							},
+							new CorePublic.JwkSigner(f.keys.anchor.privateKey),
+							{ typ: JwtTyp.ResolveResponse },
+						),
+						{ headers: { "content-type": MediaType.ResolveResponse } },
+					),
+			};
+			t.true(
+				(await CorePublic.assessEntity(f.ids.subject, f.anchors, options)).ok,
+				"an explicitly trusted resolver attests the subject chain",
+			);
+			t.false(
+				(await CorePublic.assessEntity(f.ids.subject, f.anchors, { ...options, mode: "local" })).ok,
+				"local mode independently rejects the invalid subject signature",
+			);
+			chain = f.a;
+			const type = "https://example.org/accreditation";
+			const delegation = await CorePublic.signEntityStatement(
+				{ iss: f.ids.anchor, sub: f.ids.a, trust_mark_type: type, iat: 1000, exp: 1600 },
+				new CorePublic.JwkSigner(f.keys.anchor.privateKey),
+				{ typ: JwtTyp.TrustMarkDelegation },
+			);
+			const mark = await CorePublic.signEntityStatement(
+				{
+					iss: f.ids.a,
+					sub: f.ids.subject,
+					trust_mark_type: type,
+					iat: 1000,
+					exp: 4500,
+					delegation,
+				},
+				new CorePublic.JwkSigner(f.keys.a.privateKey),
+				{ typ: JwtTyp.TrustMark },
+			);
+			marks = [{ trust_mark_type: type, trust_mark: mark }];
+			const assessed = await CorePublic.assessEntity(f.ids.subject, f.anchors, options);
+			t.true(assessed.ok, JSON.stringify(assessed));
+			if (assessed.ok) {
+				t.strictEqual(assessed.value.expiresAt, 1600, "included delegation caps assessment reuse");
+				t.strictEqual(assessed.value.kind, "resolver");
+			}
+		});
+		test("resolver assessment binds response identity, anchors, audience and lifetime", async (t) => {
+			const f = await paths();
+			const base = {
+				iss: f.ids.anchor,
+				sub: f.ids.subject,
+				iat: 1400.5,
+				exp: 4000.5,
+				trust_chain: f.a,
+				metadata: { example: {} },
+			};
+			let response = await CorePublic.signEntityStatement(
+				base,
+				new CorePublic.JwkSigner(f.keys.anchor.privateKey),
+				{ typ: JwtTyp.ResolveResponse },
+			);
+			const options: CorePublic.EntityAssessmentOptions = {
+				...f.options,
+				mode: "resolver",
+				trustResolution: {
+					kind: "resolver",
+					resolver: {
+						entityId: f.ids.anchor,
+						endpoint: `${f.ids.anchor}/resolve`,
+						trust: { kind: "pinned", jwks: { keys: [f.keys.anchor.publicKey] } },
+					},
+				},
+				httpClient: async () =>
+					new Response(response, { headers: { "content-type": MediaType.ResolveResponse } }),
+			};
+			t.true(
+				(await CorePublic.assessEntity(f.ids.subject, f.anchors, options)).ok,
+				"fractional NumericDates are permitted",
+			);
+			for (const patch of [
+				{ iss: f.ids.a },
+				{ sub: f.ids.a },
+				{ aud: f.ids.a },
+				{ iat: 1600 },
+				{ exp: 1400 },
+				{ trust_chain: [] },
+				{ trust_chain: [f.a[0]] },
+				{ trust_chain: [f.a[0], f.a[2]] },
+			]) {
+				response = await CorePublic.signEntityStatement(
+					{ ...base, ...patch },
+					new CorePublic.JwkSigner(f.keys.anchor.privateKey),
+					{ typ: JwtTyp.ResolveResponse },
+				);
+				t.false(
+					(await CorePublic.assessEntity(f.ids.subject, f.anchors, options)).ok,
+					JSON.stringify(patch),
+				);
+			}
 		});
 	});
 

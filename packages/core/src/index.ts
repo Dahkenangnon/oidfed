@@ -245,8 +245,16 @@ export {
 	compareTrustAnchorKeys,
 	type TrustAnchorKeyComparisonResult,
 } from "./trust-chain/anchor-keys.js";
+export {
+	assessEntity,
+	type EntityAssessment,
+	type EntityAssessmentOptions,
+	isEntityAssessment,
+	type TrustedResolverConfig,
+	type TrustResolutionSource,
+} from "./trust-chain/assessment.js";
 // Trust Chain
-export { discoverEntity } from "./trust-chain/discovery.js";
+export { discoverEntity, discoverEntityFromChain } from "./trust-chain/discovery.js";
 export {
 	type FetchSubordinateStatementOptions,
 	fetchEntityConfiguration,

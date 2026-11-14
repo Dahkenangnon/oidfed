@@ -737,3 +737,41 @@ You can also supply `shortestChain`, `longestExpiry`, or a synchronous callback.
 The option reaches discovery, refresh, peer-chain selection, issuer discovery, Resolve hosting, and protocol operations. Protocol consumers first apply their metadata, shared-anchor, and request requirements. Wallet request selection waits for contextual policy completion. Fresh cached chains keep their existing assessment until refresh is requested or required. Discovery and candidate validation share one HTTP allowance. The default `maxTotalFetches: 50` covers the combined work; it is not renewed for each phase or candidate. If a deployment previously relied on separate allowances, it may need a larger configured limit. Cached and supplied evidence consume no allowance. Core discovery, supplied-chain discovery, refresh, and peer-chain helpers accept `maxTotalFetches: 0`: they can use available evidence, but a missing document fails before transport is called.
 
 A custom selector only runs after discovery completes within the configured limits. If a limit truncates discovery, the operation returns an error rather than asking the callback to rank a partial candidate set. Resolve hosting returns HTTP `503` with `temporarily_unavailable` and does not cache a successful assessment. This is oidfed's selection contract; [Federation §10.3](https://openid.net/specs/openid-federation-1_0.html#section-10.3) permits local selection policy without requiring exhaustive discovery.
+
+### Supplied evidence
+
+`discoverEntityFromChain(subject, statements, anchors, options)` validates a supplied chain and returns the same `DiscoveryResult` used by existing protocol APIs. Supply intermediate ECs through `entityConfigurations` for offline multi-hop validation. This method checks the subject identity and does not bless an arbitrary object as validated evidence.
+
+### Resolver acquisition and delegated assessments
+
+A resolver is an explicitly trusted service. Configure its Entity Identifier and endpoint, then either pin its verification keys or validate its own chain against independently configured anchors:
+
+```ts
+import { assessEntity, entityId, type TrustResolutionSource } from "@oidfed/core";
+
+const trustResolution: TrustResolutionSource = {
+  kind: "resolver",
+  resolver: {
+    entityId: "https://campus.example",
+    endpoint: "https://campus.example/resolve",
+    trust: { kind: "pinned", jwks: resolverKeys },
+  },
+};
+const result = await assessEntity(entityId("https://harbor.example"), anchors, {
+  trustResolution,
+  mode: "resolver",
+});
+if (!result.ok) throw new Error(result.error.description);
+if (result.value.kind === "resolver") {
+  const metadata = result.value.resolvedMetadata;
+  // reportedTrustMarks records the resolver's assertions, not local mark verification.
+}
+```
+
+Use `trust: { kind: "federation", trustAnchors: resolverAnchors }` to authenticate the configured resolver through its own chain. This validation uses bottom-up discovery and cannot recursively delegate back to the resolver. Its trust configuration is separate from the subject's accepted anchors.
+
+Omitting `mode`, or using `mode: "local"`, locally validates the subject chain. For supplied evidence, pass `trustChain` and any supporting `entityConfigurations`; this also works offline. `discoverEntity` and protocol operations also perform local validation when `trustResolution` selects a resolver. A resolver response carries the subject chain in its payload; a resolver chain in the protected header is a separate, optional artifact.
+
+Delegated assessments authenticate the response, bind identities and the requested anchor, and limit their lifetime by the response and included evidence. They have a distinct result type and runtime provenance (`isEntityAssessment`). Copying or deserializing an assessment does not preserve that provenance. Local selection and custom policy/constraint callbacks require local mode. A remote resolver returns its chosen path; a client callback cannot rank paths the service did not return.
+
+Existing endpoint authentication options apply. The known resolver identity is checked against the configured authentication audience. For `private_key_jwt`, the response recipient is inferred from `clientId`; custom authentication can provide the recipient with `resolver.requester`. A response containing `aud` requires a known matching recipient. Failed authentication never falls back to anonymous access. Offline operations require locally supplied evidence.
