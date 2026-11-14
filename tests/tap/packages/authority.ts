@@ -9734,6 +9734,13 @@ export default (QUnit: QUnit) => {
 				String(SPEC_ENTITY),
 			]);
 			t.deepEqual(decoded.value.payload.trust_mark_owners?.[type]?.jwks, keys.jwks);
+			const anchors = CorePublic.createTrustAnchorSet([{ entityId: SPEC_ENTITY, jwks: keys.jwks }]);
+			const validated = await anchor.discoverEntityFromChain(
+				SPEC_ENTITY,
+				[await anchor.getEntityConfiguration()],
+				{ trustAnchors: anchors, offline: true },
+			);
+			t.true(validated.ok, JSON.stringify(validated));
 		});
 
 		test("accepts a minimal TA config (no authorityHints, both required endpoints)", async (t) => {

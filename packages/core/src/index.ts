@@ -216,6 +216,11 @@ export {
 } from "./metadata-policy/index.js";
 export { operators } from "./metadata-policy/operators.js";
 export { findInvalidMetadataNullPaths } from "./metadata-values.js";
+export {
+	type FederationResolverConfig,
+	type FederationResolverIntegration,
+	FederationResolverService,
+} from "./resolver/service.js";
 export { validateRoleMetadata } from "./roles.js";
 // Schemas
 export * from "./schemas/index.js";

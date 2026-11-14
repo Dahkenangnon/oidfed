@@ -212,3 +212,26 @@ A Leaf that receives accreditation uses `attachTrustMark(jwt, { issuerEvidence, 
 `getTrustMarks()` returns detached references. `removeTrustMark({ jwt })` can remove an expired or invalid publication without fetching anything. It does not revoke the issuer's stored accreditation.
 
 For Leaf-hosted Trust Mark endpoints, `endpoint_auth_signing_alg_values_supported` limits the algorithms accepted for `private_key_jwt`. If `trustMarkIssuer.authentication.allowedAlgorithms` is also set, both restrictions apply. A configuration with no common algorithm fails at construction. Omitting the metadata field does not select an implicit algorithm.
+
+## Trust establishment and Resolve hosting
+
+Set `options.chainSelection` or `options.trustResolution` on `LeafConfig` to provide defaults for attached roles and the Leaf's own trust operations. Instance methods `discoverEntity`, `discoverEntityFromChain`, and `assessEntity` inherit the host's anchors and options; per-call values override them. Static methods accept explicit anchors and options.
+
+A Leaf can host a Resolve endpoint without becoming an Authority:
+
+```ts
+const leaf = new Leaf({
+  entityId: "https://resolver.example",
+  authorityHints: ["https://campus.example"],
+  keyProvider,
+  trustAnchors: anchors,
+  metadata: {
+    federation_entity: { federation_resolve_endpoint: "https://resolver.example/resolve" },
+  },
+  resolver: {},
+});
+```
+
+`resolver.options` overrides host options for this service. Its authentication methods must match the published metadata. Resolve routes cannot replace another route or the Entity Configuration endpoint. The `resolver` property exposes the service for trusted in-process resolution; anonymous HTTP discovery remains cache-only by default. Advertising an externally hosted Resolve endpoint does not require local hosting configuration.
+
+See [core trust establishment](core.md#trust-establishment-options) for supplied-chain and delegated-assessment examples.

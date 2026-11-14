@@ -27,8 +27,12 @@ import type {
 	TrustMarkStatusResponsePayload,
 } from "@oidfed/core";
 import {
+	assessEntity,
 	COLLECTION_UNORDERED_PARAMETERS,
 	decodeEntityStatement,
+	discoverEntity,
+	discoverEntityFromChain,
+	type EntityAssessmentOptions,
 	EntityCollectionService,
 	EXTENDED_LIST_UNORDERED_PARAMETERS,
 	endpointParameterValuesMatch,
@@ -217,7 +221,7 @@ export interface AuthorityServer {
 	listSubordinatesExtended(
 		params?: ExtendedSubordinateListingParams,
 	): Promise<Result<ExtendedSubordinateListingResult, FederationError>>;
-	resolveEntity(sub: EntityId, ta?: EntityId): Promise<string>;
+	resolveEntity(sub: EntityId, ta?: EntityId, options?: FederationOptions): Promise<string>;
 	getTrustMarkStatus(trustMark: string): Promise<TrustMarkStatusResponsePayload>;
 	listTrustMarkedEntities(trustMarkType: string): Promise<string[]>;
 	revokeTrustMark(type: string, subject: string): Promise<void>;
@@ -709,7 +713,11 @@ function createAuthorityServerWithIdentity(
 			return ok((await res.json()) as ExtendedSubordinateListingResult);
 		},
 
-		async resolveEntity(sub: EntityId, _ta?: EntityId): Promise<string> {
+		async resolveEntity(
+			sub: EntityId,
+			_ta?: EntityId,
+			options?: FederationOptions,
+		): Promise<string> {
 			safeLogger(config.options?.logger)?.debug("Starting resolve entity");
 
 			const baseUrl = normalizedEntityId;
@@ -717,7 +725,7 @@ function createAuthorityServerWithIdentity(
 			url.searchParams.set("sub", sub);
 			if (_ta) url.searchParams.set("trust_anchor", _ta);
 			const req = new Request(url.toString());
-			const res = await resolveHandler(req, true);
+			const res = await resolveHandler(req, true, options);
 			if (res.status !== 200) {
 				const body = (await res.json()) as { error: string; error_description?: string };
 				throw new Error(body.error_description ?? body.error);
@@ -1017,6 +1025,43 @@ function createStorageBackedClientKeyProvider(storage: StorageAdapter): Authorit
 }
 
 export class TrustAnchor {
+	static assessEntity = assessEntity;
+	static discoverEntity = discoverEntity;
+	static discoverEntityFromChain = discoverEntityFromChain;
+	private readonly trustContext: EntityContext;
+	assessEntity(
+		target: EntityId,
+		options: EntityAssessmentOptions & { trustAnchors?: TrustAnchorSet } = {},
+	) {
+		return assessEntity(
+			target,
+			options.trustAnchors ?? this.trustContext.trustAnchors ?? new Map(),
+			{ ...this.trustContext.options, ...options },
+		);
+	}
+	discoverEntity(
+		target: EntityId,
+		options: FederationOptions & { trustAnchors?: TrustAnchorSet } = {},
+	) {
+		return discoverEntity(
+			target,
+			options.trustAnchors ?? this.trustContext.trustAnchors ?? new Map(),
+			{ ...this.trustContext.options, ...options },
+		);
+	}
+	discoverEntityFromChain(
+		target: EntityId,
+		statements: readonly string[],
+		options: FederationOptions & { trustAnchors?: TrustAnchorSet } = {},
+	) {
+		return discoverEntityFromChain(
+			target,
+			statements,
+			options.trustAnchors ?? this.trustContext.trustAnchors ?? new Map(),
+			{ ...this.trustContext.options, ...options },
+		);
+	}
+
 	get collection(): EntityCollectionService | undefined {
 		return this.server.collection;
 	}
@@ -1044,6 +1089,7 @@ export class TrustAnchor {
 			...(normalizedConfig.trustAnchors ? { trustAnchors: normalizedConfig.trustAnchors } : {}),
 		};
 
+		this.trustContext = context;
 		if (normalizedConfig.roles) {
 			for (const role of normalizedConfig.roles) {
 				if (role.initialize) {
@@ -1079,8 +1125,8 @@ export class TrustAnchor {
 		return this.server.listSubordinatesExtended(params);
 	}
 
-	async resolveEntity(sub: EntityId, ta?: EntityId): Promise<string> {
-		return this.server.resolveEntity(sub, ta);
+	async resolveEntity(sub: EntityId, ta?: EntityId, options?: FederationOptions): Promise<string> {
+		return this.server.resolveEntity(sub, ta, options);
 	}
 
 	async getTrustMarkStatus(trustMark: string): Promise<TrustMarkStatusResponsePayload> {
@@ -1179,6 +1225,43 @@ export class TrustAnchor {
 }
 
 export class Intermediate {
+	static assessEntity = assessEntity;
+	static discoverEntity = discoverEntity;
+	static discoverEntityFromChain = discoverEntityFromChain;
+	private readonly trustContext: EntityContext;
+	assessEntity(
+		target: EntityId,
+		options: EntityAssessmentOptions & { trustAnchors?: TrustAnchorSet } = {},
+	) {
+		return assessEntity(
+			target,
+			options.trustAnchors ?? this.trustContext.trustAnchors ?? new Map(),
+			{ ...this.trustContext.options, ...options },
+		);
+	}
+	discoverEntity(
+		target: EntityId,
+		options: FederationOptions & { trustAnchors?: TrustAnchorSet } = {},
+	) {
+		return discoverEntity(
+			target,
+			options.trustAnchors ?? this.trustContext.trustAnchors ?? new Map(),
+			{ ...this.trustContext.options, ...options },
+		);
+	}
+	discoverEntityFromChain(
+		target: EntityId,
+		statements: readonly string[],
+		options: FederationOptions & { trustAnchors?: TrustAnchorSet } = {},
+	) {
+		return discoverEntityFromChain(
+			target,
+			statements,
+			options.trustAnchors ?? this.trustContext.trustAnchors ?? new Map(),
+			{ ...this.trustContext.options, ...options },
+		);
+	}
+
 	get collection(): EntityCollectionService | undefined {
 		return this.server.collection;
 	}
@@ -1209,6 +1292,7 @@ export class Intermediate {
 				: {}),
 		};
 
+		this.trustContext = context;
 		if (normalizedConfig.roles) {
 			for (const role of normalizedConfig.roles) {
 				if (role.initialize) {
@@ -1244,8 +1328,8 @@ export class Intermediate {
 		return this.server.listSubordinatesExtended(params);
 	}
 
-	async resolveEntity(sub: EntityId, ta?: EntityId): Promise<string> {
-		return this.server.resolveEntity(sub, ta);
+	async resolveEntity(sub: EntityId, ta?: EntityId, options?: FederationOptions): Promise<string> {
+		return this.server.resolveEntity(sub, ta, options);
 	}
 
 	async getTrustMarkStatus(trustMark: string): Promise<TrustMarkStatusResponsePayload> {

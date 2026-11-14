@@ -77,6 +77,87 @@ function mockFn<A extends unknown[]>() {
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("leaf / configurable trust establishment", () => {
+		test("Leaf hosts Resolve independently and forwards selection defaults", async (t) => {
+			const f = await createMockFederation();
+			let calls = 0;
+			const { config } = await createLeafConfig({
+				metadata: {
+					federation_entity: { federation_resolve_endpoint: `${LEAF_ID}/resolve?tenant=academic` },
+				},
+				trustAnchors: f.trustAnchors,
+				options: {
+					httpClient: f.httpClient,
+					chainSelection: (chains) => {
+						calls++;
+						return chains[0]!;
+					},
+				},
+				resolver: { requireAuthForFreshResolution: false },
+			});
+			const leaf = new Leaf(config);
+			const assessment = await leaf.assessEntity(OP_ID);
+			t.true(assessment.ok, JSON.stringify(assessment));
+			t.ok(calls > 0);
+			calls = 0;
+			const discovered = await leaf.discoverEntity(OP_ID, {
+				chainSelection: (chains) => chains[0]!,
+			});
+			t.true(discovered.ok);
+			t.strictEqual(calls, 0, "per-call selection overrides host defaults");
+			const response = await leaf.handleRequest(
+				new Request(
+					`${LEAF_ID}/resolve?tenant=academic&sub=${encodeURIComponent(OP_ID)}&trust_anchor=${encodeURIComponent(TA_ID)}`,
+				),
+			);
+			t.strictEqual(response.status, 200, await response.clone().text());
+			t.strictEqual(
+				(await leaf.handleRequest(new Request(`${LEAF_ID}/resolve?tenant=other`))).status,
+				404,
+				"fixed route selectors are enforced",
+			);
+			const ec = decodeEntityStatement(await leaf.getEntityConfiguration());
+			t.true(ec.ok);
+			if (ec.ok)
+				t.strictEqual(
+					ec.value.payload.metadata?.federation_entity?.federation_fetch_endpoint,
+					undefined,
+				);
+			const collision = {
+				...config,
+				metadata: {
+					federation_entity: {
+						federation_resolve_endpoint: `${LEAF_ID}/.well-known/openid-federation`,
+					},
+				},
+			};
+			t.throws(() => new Leaf(collision), /conflicts/);
+			t.throws(
+				() =>
+					new Leaf({
+						...config,
+						metadata: {
+							federation_entity: {
+								federation_resolve_endpoint: `${LEAF_ID}/resolve`,
+								federation_resolve_endpoint_auth_methods: ["private_key_jwt"],
+								endpoint_auth_signing_alg_values_supported: ["ES256"],
+							},
+						},
+						resolver: {
+							authentication: {
+								methods: ["private_key_jwt"],
+								allowedAlgorithms: ["RS256"],
+								replayStore: new CorePublic.MemoryReplayStore(),
+								getClientFederationJwks: async () => ({ keys: [f.leafPublicKey] }),
+							},
+						},
+					}),
+				/no permitted intersection/,
+				"published signing algorithms cannot be bypassed by service configuration",
+			);
+		});
+	});
+
 	module("leaf / critical extension publication", () => {
 		test("configured extensions are detached and survive EC refresh", async (t) => {
 			const additionalClaims = { x_rules: { versions: [1] } };

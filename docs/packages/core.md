@@ -775,3 +775,24 @@ Omitting `mode`, or using `mode: "local"`, locally validates the subject chain. 
 Delegated assessments authenticate the response, bind identities and the requested anchor, and limit their lifetime by the response and included evidence. They have a distinct result type and runtime provenance (`isEntityAssessment`). Copying or deserializing an assessment does not preserve that provenance. Local selection and custom policy/constraint callbacks require local mode. A remote resolver returns its chosen path; a client callback cannot rank paths the service did not return.
 
 Existing endpoint authentication options apply. The known resolver identity is checked against the configured authentication audience. For `private_key_jwt`, the response recipient is inferred from `clientId`; custom authentication can provide the recipient with `resolver.requester`. A response containing `aud` requires a known matching recipient. Failed authentication never falls back to anonymous access. Offline operations require locally supplied evidence.
+
+### Hosting Resolve independently
+
+```ts
+import { FederationResolverService, longestExpiry } from "@oidfed/core";
+
+const resolver = new FederationResolverService({
+  entityId: "https://campus.example",
+  keyProvider,
+  trustAnchors: anchors,
+  options: { chainSelection: longestExpiry, maxTotalFetches: 50 },
+});
+// Mount on the advertised federation_resolve_endpoint:
+const response = await resolver.handleRequest(request);
+```
+
+Supply `authentication` to configure supported methods, replay protection, and client-key lookup. Anonymous HTTP requests use cached assessments by default. Trusted in-process callers can use `resolver.resolve(request)` to populate that cache. Per-call resolution options are supported and get an isolated cache namespace. Set `requireAuthForFreshResolution: false` only when the deployment intentionally allows anonymous discovery.
+
+The service requires no subordinate store. `assessLocalTrustMarkStatus` optionally connects marks issued by this resolver to its own status service; otherwise normal issuer-status verification is used. Authority hosts reuse this implementation. A Leaf can host it through `LeafConfig.resolver` while publishing the Resolve endpoint in its metadata.
+
+These APIs implement the choices in [Federation §17](https://openid.net/specs/openid-federation-1_0.html#section-17). They do not relax OIDC or Wallet profile requirements for chain verification or contextual policy processing.

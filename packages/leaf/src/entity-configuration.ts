@@ -1,11 +1,14 @@
 /** Leaf entity class: Entity Configuration serving with caching and trust chain discovery. */
 import {
 	type AttachTrustMarkOptions,
+	assessEntity,
 	buildEntityConfigurationPayload,
 	createEndpointAuthenticatedHandler,
 	DEFAULT_ENTITY_STATEMENT_TTL_SECONDS,
 	decodeEntityStatement,
+	discoverEntityFromChain,
 	discoverEntity as discoverEntityThroughTrustChain,
+	type EntityAssessmentOptions,
 	type EntityCollectionIntegration,
 	EntityCollectionService,
 	type EntityContext,
@@ -18,6 +21,8 @@ import {
 	errorResponse,
 	type FederationKeyProvider,
 	type FederationOptions,
+	type FederationResolverIntegration,
+	FederationResolverService,
 	type FetchAndAttachTrustMarkOptions,
 	isValidEntityId,
 	JwtTyp,
@@ -25,6 +30,7 @@ import {
 	MediaType,
 	nowSeconds,
 	prepareEntityStatementExtensions,
+	RESOLVE_UNORDERED_PARAMETERS,
 	type RemoveTrustMarkSelector,
 	requireMethod,
 	safeLogger,
@@ -41,6 +47,7 @@ import {
 } from "@oidfed/core";
 
 export interface LeafConfig extends EntityStatementExtensions {
+	resolver?: FederationResolverIntegration;
 	trustMarkIssuer?: TrustMarkIssuerConfig;
 	collection?: EntityCollectionIntegration;
 	entityId: EntityId | string;
@@ -69,6 +76,40 @@ function wellKnownPathForEntityId(value: EntityId): string {
 }
 
 export class Leaf {
+	readonly resolver?: FederationResolverService;
+	static assessEntity = assessEntity;
+	static discoverEntityFromChain = discoverEntityFromChain;
+	assessEntity(
+		target: EntityId,
+		options: EntityAssessmentOptions & { trustAnchors?: TrustAnchorSet } = {},
+	) {
+		return assessEntity(target, options.trustAnchors ?? this.config.trustAnchors ?? new Map(), {
+			...this.config.options,
+			...options,
+		});
+	}
+	discoverEntity(
+		target: EntityId,
+		options: FederationOptions & { trustAnchors?: TrustAnchorSet } = {},
+	) {
+		return discoverEntityThroughTrustChain(
+			target,
+			options.trustAnchors ?? this.config.trustAnchors ?? new Map(),
+			{ ...this.config.options, ...options },
+		);
+	}
+	discoverEntityFromChain(
+		target: EntityId,
+		statements: readonly string[],
+		options: FederationOptions & { trustAnchors?: TrustAnchorSet } = {},
+	) {
+		return discoverEntityFromChain(
+			target,
+			statements,
+			options.trustAnchors ?? this.config.trustAnchors ?? new Map(),
+			{ ...this.config.options, ...options },
+		);
+	}
 	readonly collection?: EntityCollectionService;
 	private readonly issuerService?: TrustMarkIssuerService;
 	private readonly holder: TrustMarkHolder;
@@ -220,6 +261,71 @@ export class Leaf {
 					throw new Error("Collection endpoint conflicts with an existing route");
 				const collection = this.collection;
 				this.routes.set(path, (request) => collection.handleRequest(request));
+			}
+		}
+
+		const resolveEndpoint = metadata.federation_entity?.federation_resolve_endpoint;
+		if (config.resolver) {
+			const methods = metadata.federation_entity?.federation_resolve_endpoint_auth_methods ?? [
+				"none",
+			];
+			if (!Array.isArray(methods) || !methods.every((method) => typeof method === "string"))
+				throw new Error("Invalid resolver authentication methods");
+			if (
+				config.resolver.authentication &&
+				JSON.stringify([...new Set(config.resolver.authentication.methods)].sort()) !==
+					JSON.stringify([...new Set(methods)].sort())
+			)
+				throw new Error("Resolver authentication must match published metadata");
+			const publishedAlgorithms =
+				metadata.federation_entity?.endpoint_auth_signing_alg_values_supported;
+			const configuredAlgorithms = config.resolver.authentication?.allowedAlgorithms;
+			const allowedAlgorithms = Array.isArray(publishedAlgorithms)
+				? (publishedAlgorithms as string[]).filter(
+						(algorithm) => !configuredAlgorithms || configuredAlgorithms.includes(algorithm),
+					)
+				: configuredAlgorithms;
+			if (methods.includes("private_key_jwt") && allowedAlgorithms?.length === 0)
+				throw new Error("Endpoint authentication algorithms have no permitted intersection");
+			this.resolver = new FederationResolverService({
+				...config.resolver,
+				entityId: this.entityId,
+				keyProvider: config.keyProvider,
+				...(config.trustAnchors ? { trustAnchors: config.trustAnchors } : {}),
+				...(config.resolver.trustAnchors ? { trustAnchors: config.resolver.trustAnchors } : {}),
+				options: { ...config.options, ...config.resolver.options },
+				authentication: {
+					...config.resolver.authentication,
+					...(allowedAlgorithms ? { allowedAlgorithms } : {}),
+					methods,
+				},
+			});
+			if (resolveEndpoint !== undefined) {
+				if (
+					typeof resolveEndpoint !== "string" ||
+					!isValidEntityId(resolveEndpoint.split("?")[0] ?? "")
+				)
+					throw new Error("Invalid Resolve endpoint URL");
+				const path = new URL(resolveEndpoint).pathname;
+				if (this.routes.has(path) || path === wellKnownPathForEntityId(this.entityId))
+					throw new Error("Resolve endpoint conflicts with an existing route");
+				const resolver = this.resolver;
+				const advertised = new URL(resolveEndpoint);
+				this.routes.set(path, (request) => {
+					const incoming = new URL(request.url).searchParams;
+					for (const name of new Set(advertised.searchParams.keys())) {
+						if (
+							!endpointParameterValuesMatch(
+								name,
+								advertised.searchParams.getAll(name),
+								incoming.getAll(name),
+								RESOLVE_UNORDERED_PARAMETERS,
+							)
+						)
+							return Promise.resolve(errorResponse(404, "not_found", "Unknown endpoint"));
+					}
+					return resolver.handleRequest(request);
+				});
 			}
 		}
 

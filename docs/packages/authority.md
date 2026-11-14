@@ -418,3 +418,11 @@ A missing subject or absent chain returns `404 not_found`. When discovery has no
 The response's `exp` is the minimum expiration of the selected chain and the included Trust Marks, as [§8.3.2](https://openid.net/specs/openid-federation-1_0.html#section-8.3.2) specifies. Auxiliary intermediate Entity Configurations, delegations, and other issuer evidence must still be valid when the response is produced. These auxiliary documents do not shorten the expiration calculated from statements in the returned chain. Their earlier deadlines limit cache reuse independently of the wire `exp`: an anonymous request can therefore encounter a cache miss before a previously issued response expires. Fresh resolution reassesses the evidence and omits marks that can no longer be verified as active.
 
 Fixed routing selectors use the endpoint's parameter rules. Known membership filters accept reordered or repeated identical values; scalar selectors and unknown extensions keep exact comparison. Authority construction rejects overlapping routes under those same rules, including routes whose parameter rules differ.
+
+### Choosing paths and using a resolver
+
+Set `options.chainSelection` on either authority class to choose among eligible chains. `shortestChain`, `longestExpiry`, and `preferTrustAnchor` are available from core. Without this option, each operation retains its existing selection rule. `resolveEntity(subject, anchor, options)` accepts per-call overrides; assessments produced with overrides use an isolated cache namespace.
+
+Both classes also expose `discoverEntity`, `discoverEntityFromChain`, and `assessEntity` as instance and static methods. Instance methods inherit the host's anchors and options; per-call values take precedence. A configured resolver changes where chains are acquired. These discovery methods still validate the subject's chain locally. Only `assessEntity` with explicit `mode: "resolver"` delegates that assessment.
+
+For a service that only resolves trust, use core's `FederationResolverService`, or attach it to a Leaf. Such a service does not need subordinate storage. Actual Authority hosts continue requiring Fetch and Listing endpoints. See [core assessment and resolver hosting](core.md#trust-establishment-options).

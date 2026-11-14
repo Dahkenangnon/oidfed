@@ -251,3 +251,13 @@ Set `authentication.audience` to the responder's Entity Identifier, including wh
 Keep fixed routing and filter parameters in the advertised endpoint URL consistent with caller-supplied selectors. Conflicts are rejected. The endpoint clients require successful responses to use HTTP `200` and do not follow redirects; use the final advertised URL.
 
 For Resolve, distinguish the signed response lifetime from the resolver's local cache lifetime. Delegation or issuer-evidence expiry can end cache reuse before the response's `exp`. Consumers still need their own trust and freshness policy for resolver assertions. See the [Authority guide](../packages/authority.md#resolve-results-and-their-lifetime).
+
+## Multiple paths and trusted resolvers
+
+Decide which anchors an operation accepts before choosing a path. A selection strategy ranks eligible chains; it does not expand that trust set. Different paths can produce different metadata, so choose a strategy that suits the federation's policies and recipient requirements. [Federation §17.1](https://openid.net/specs/openid-federation-1_0.html#section-17.1) assigns that topology decision to federation architects.
+
+Size the fetch allowance for discovery and candidate validation together. Core helpers share a default allowance of 50 HTTP client calls across those stages. Custom selection fails if discovery is truncated by a resource limit; a Resolve service returns `temporarily_unavailable` in that case. Adjust limits for the expected topology without removing the bounds that protect the service.
+
+Explicitly authorize each resolver and configure how its keys become trusted. Use local assessment when your application needs its own custom policy or constraint checks, or when its protocol requires chain validation. Delegated assessments report what the trusted resolver asserts, including reported marks; they do not create locally verified mark evidence. Keep both provenance and expiry with any application decision.
+
+A catalog built with Listing or Entity Collection can contain identifiers and informational metadata without establishing application trust. Establish that trust when using the selected entity. A standalone resolver can share the same core Resolve service as Authority hosts without acquiring subordinate-management duties. See [trust establishment options](../packages/core.md#trust-establishment-options).

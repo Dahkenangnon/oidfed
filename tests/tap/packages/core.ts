@@ -338,6 +338,78 @@ export default (QUnit: QUnit) => {
 			}
 			t.strictEqual(requests, 0);
 		});
+		test("resolver selection rejects truncated discovery without signing or caching it", async (t) => {
+			const f = await paths();
+			let selected = 0,
+				signed = 0,
+				writes = 0;
+			const signer = new JwkSigner(f.keys.anchor.privateKey);
+			const keyProvider = {
+				getFederationKeySet: async () => ({
+					jwks: { keys: [f.keys.anchor.publicKey] },
+					signer: {
+						kid: signer.kid,
+						alg: signer.alg,
+						signJwt: async (...args: Parameters<JwtSigner["signJwt"]>) => {
+							signed++;
+							return signer.signJwt(...args);
+						},
+					},
+				}),
+			};
+			const cache = new MemoryCache({ clock: f.options.clock });
+			const originalSet = cache.set.bind(cache);
+			cache.set = async (key, value, ttl) => {
+				writes++;
+				return originalSet(key, value, ttl);
+			};
+			const config = {
+				entityId: f.ids.anchor,
+				trustAnchors: f.anchors,
+				keyProvider,
+				cache,
+				options: {
+					...f.options,
+					maxAuthorityHints: 1,
+					chainSelection: (chains: ValidatedTrustChain[]) => {
+						selected++;
+						return chains[0]!;
+					},
+				},
+			};
+			const service = new CorePublic.FederationResolverService(config);
+			const url = `${f.ids.anchor}/resolve?sub=${f.ids.subject}&trust_anchor=${f.ids.anchor}`;
+			const rejected = await service.resolve(new Request(url));
+			t.strictEqual(rejected.status, 503);
+			t.strictEqual(
+				((await rejected.json()) as { error: string }).error,
+				FederationErrorCode.TemporarilyUnavailable,
+			);
+			t.strictEqual(selected, 0);
+			t.strictEqual(signed, 0);
+			t.strictEqual(writes, 0);
+			t.strictEqual(
+				(await service.handleRequest(new Request(url))).status,
+				404,
+				"no successful cached assessment",
+			);
+			const complete = new CorePublic.FederationResolverService({
+				...config,
+				options: { ...config.options, maxAuthorityHints: 2 },
+			});
+			t.strictEqual((await complete.resolve(new Request(url))).status, 200);
+			t.strictEqual(selected, 1);
+			t.strictEqual(signed, 1);
+			const defaultSelection = new CorePublic.FederationResolverService({
+				...config,
+				options: { ...f.options, maxAuthorityHints: 1 },
+			});
+			t.strictEqual(
+				(await defaultSelection.resolve(new Request(url))).status,
+				200,
+				"default selection retains valid partial-path behavior",
+			);
+		});
 		test("selection uses validated candidates and protects their evidence", async (t) => {
 			const f = await paths();
 			const chosen = await CorePublic.discoverEntity(f.ids.subject, f.anchors, {
@@ -379,6 +451,101 @@ export default (QUnit: QUnit) => {
 				chainSelection: CorePublic.longestExpiry,
 			});
 			t.false(budget.ok);
+		});
+		test("standalone resolver selects paths and supports local and delegated assessments", async (t) => {
+			const f = await paths();
+			const service = new CorePublic.FederationResolverService({
+				entityId: f.ids.anchor,
+				keyProvider: {
+					getFederationKeySet: async () => ({
+						jwks: { keys: [f.keys.anchor.publicKey] },
+						signer: new CorePublic.JwkSigner(f.keys.anchor.privateKey),
+					}),
+				},
+				trustAnchors: f.anchors,
+				requireAuthForFreshResolution: false,
+				options: {
+					...f.options,
+					chainSelection: (chains) =>
+						chains.find((chain) => chain.resolvedMetadata.example?.route === "b")!,
+				},
+			});
+			const source: CorePublic.TrustResolutionSource = {
+				kind: "resolver",
+				resolver: {
+					entityId: f.ids.anchor,
+					endpoint: `${f.ids.anchor}/resolve`,
+					trust: { kind: "pinned", jwks: { keys: [f.keys.anchor.publicKey] } },
+				},
+			};
+			const options = {
+				...f.options,
+				trustResolution: source,
+				httpClient: async (input: string | URL | Request, init?: RequestInit) =>
+					new URL(input instanceof Request ? input.url : input.toString()).pathname === "/resolve"
+						? service.handleRequest(new Request(input, init))
+						: f.options.httpClient(input, init),
+			};
+			const delegated = await CorePublic.assessEntity(f.ids.subject, f.anchors, {
+				...options,
+				mode: "resolver",
+			});
+			t.true(delegated.ok, JSON.stringify(delegated));
+			if (!delegated.ok) return;
+			t.strictEqual(delegated.value.kind, "resolver");
+			t.strictEqual(
+				delegated.value.resolvedMetadata.example &&
+					(delegated.value.resolvedMetadata.example as Record<string, unknown>).route,
+				"b",
+			);
+			t.true(CorePublic.isEntityAssessment(delegated.value));
+			t.false(CorePublic.isEntityAssessment(structuredClone(delegated.value)));
+			const local = await CorePublic.assessEntity(f.ids.subject, f.anchors, options);
+			t.true(local.ok, JSON.stringify(local));
+			if (local.ok) t.strictEqual(local.value.kind, "local");
+			t.false(
+				(
+					await CorePublic.assessEntity(f.ids.subject, f.anchors, {
+						...options,
+						mode: "resolver",
+						chainSelection: CorePublic.shortestChain,
+					})
+				).ok,
+			);
+			t.false(
+				(
+					await CorePublic.assessEntity(f.ids.subject, f.anchors, {
+						...options,
+						offline: true,
+						mode: "resolver",
+					})
+				).ok,
+			);
+			const anonymous = new CorePublic.FederationResolverService({
+				entityId: f.ids.anchor,
+				keyProvider: {
+					getFederationKeySet: async () => ({
+						jwks: { keys: [f.keys.anchor.publicKey] },
+						signer: new CorePublic.JwkSigner(f.keys.anchor.privateKey),
+					}),
+				},
+				trustAnchors: f.anchors,
+				options: f.options,
+			});
+			const request = new Request(
+				`${f.ids.anchor}/resolve?sub=${encodeURIComponent(f.ids.subject)}&trust_anchor=${encodeURIComponent(f.ids.anchor)}`,
+			);
+			t.notEqual(
+				(await anonymous.handleRequest(request)).status,
+				200,
+				"anonymous requests cannot trigger discovery by default",
+			);
+			t.strictEqual((await anonymous.resolve(request)).status, 200);
+			t.strictEqual(
+				(await anonymous.handleRequest(request)).status,
+				200,
+				"local resolution populates reusable cache",
+			);
 		});
 		test("refresh, peer paths and issuer evidence honor selection without changing fresh caches", async (t) => {
 			const f = await paths();
