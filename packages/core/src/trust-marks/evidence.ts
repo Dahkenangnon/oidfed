@@ -1,5 +1,9 @@
 import { freezeSnapshot } from "../callbacks.js";
-import { DEFAULT_CLOCK_SKEW_SECONDS, InternalErrorCode } from "../constants.js";
+import {
+	DEFAULT_CLOCK_SKEW_SECONDS,
+	FederationErrorCode,
+	InternalErrorCode,
+} from "../constants.js";
 import { err, ok, type Result } from "../errors.js";
 import {
 	selectHistoricalVerificationKey,
@@ -74,6 +78,12 @@ const issuedEvidence = new WeakSet<object>();
 function failure(description: string) {
 	return err({ code: InternalErrorCode.TrustMarkInvalid, description });
 }
+function unavailableIssuer() {
+	return err({
+		code: FederationErrorCode.TemporarilyUnavailable,
+		description: "Issuer discovery was incomplete",
+	});
+}
 
 /** Validate supplied proofs or discover an eligible issuer chain without recursive mark evaluation. */
 export async function establishTrustMarkIssuerTrust(
@@ -102,6 +112,7 @@ export async function establishTrustMarkIssuerTrust(
 			statements: readonly string[];
 			entityConfigurations?: ReadonlyMap<string, string>;
 		}[];
+		let discoveryUnavailable = false;
 		if (input.trustChain)
 			candidates = [
 				{
@@ -118,7 +129,11 @@ export async function establishTrustMarkIssuerTrust(
 				input.trustAnchors,
 				options,
 			);
-			if (resolved.incomplete) return failure("Issuer discovery was incomplete");
+			if (resolved.incomplete) return unavailableIssuer();
+			discoveryUnavailable = resolved.errors.some(
+				(error) =>
+					error.code === InternalErrorCode.Network || error.code === InternalErrorCode.Timeout,
+			);
 			candidates = resolved.chains;
 		}
 		const eligible: { chain: ValidatedTrustChain; evidence: FederationTrustMarkIssuerEvidence }[] =
@@ -182,7 +197,9 @@ export async function establishTrustMarkIssuerTrust(
 			issuedEvidence.add(evidence);
 			return ok(evidence);
 		}
-		return failure("No valid issuer chain authorizes this Trust Mark type");
+		return discoveryUnavailable
+			? unavailableIssuer()
+			: failure("No valid issuer chain authorizes this Trust Mark type");
 	} catch {
 		return failure("Unable to establish Trust Mark issuer trust");
 	}

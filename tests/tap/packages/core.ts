@@ -24452,6 +24452,303 @@ export default (QUnit: QUnit) => {
 		});
 	}
 
+	QUnit.module("Collection configured accreditation", () => {
+		async function fixture() {
+			const graph = await createCollectionFederation({
+				edges: [
+					{ issuer: "ta", subject: "leaf" },
+					{ issuer: "accreditor", subject: "issuer" },
+				],
+				marked: true,
+			});
+			for (const name of ["ta", "accreditor"]) {
+				const decoded = decodeEntityStatement(graph.configurations.get(name)!);
+				if (!decoded.ok) throw new Error("Invalid fixture");
+				const { authority_hints: _hints, ...claims } = decoded.value.payload;
+				const payload = {
+					...claims,
+					trust_mark_issuers: name === "ta" ? {} : { one: [graph.id("issuer")] },
+					...(name === "accreditor" ? { exp: 2100 } : {}),
+				};
+				const jwt = await signEntityStatement(
+					payload,
+					new JwkSigner(graph.keys.get(name)!.privateKey),
+				);
+				graph.configurations.set(name, jwt);
+				graph.routes.set(
+					`${graph.id(name)}/.well-known/openid-federation`,
+					() => new Response(jwt, { headers: { "content-type": MediaType.EntityStatement } }),
+				);
+			}
+			const accreditationAnchors = new Map([
+				[graph.id("accreditor"), { jwks: { keys: [graph.keys.get("accreditor")!.publicKey] } }],
+			]);
+			const options = { clock: { now: () => 1500 }, httpClient: graph.httpClient };
+			const established = await CorePublic.establishTrustMarkIssuerTrust({
+				issuer: graph.id("issuer"),
+				trustMarkType: "one",
+				trustAnchors: accreditationAnchors,
+				options,
+			});
+			if (!established.ok) throw new Error(established.error.description);
+			const oob: CorePublic.OutOfBandTrustMarkIssuer = {
+				kind: "out-of-band",
+				issuer: graph.id("issuer"),
+				allowedTrustMarkTypes: ["one"],
+				keys: { keys: [graph.keys.get("issuer")!.publicKey] },
+			};
+			graph.requests.length = 0;
+			return { graph, options, accreditationAnchors, evidence: established.value, oob };
+		}
+
+		QUnit.test("same-anchor defaults and explicit issuer trust remain distinct", async (assert) => {
+			const f = await fixture();
+			const cases: [string, CorePublic.TrustMarkVerificationOptions | undefined, number][] = [
+				["default", undefined, 0],
+				["history alone", { historicalKeys: { mode: "supplied-only", maxAgeSeconds: 60 } }, 0],
+				["provided OOB", { mode: "provided", issuerEvidence: [f.oob] }, 1],
+				["provided federation", { mode: "provided", issuerEvidence: [f.evidence] }, 1],
+				["resolve independent", { mode: "resolve", trustAnchors: f.accreditationAnchors }, 1],
+				["provided missing", { mode: "provided", trustAnchors: f.accreditationAnchors }, 0],
+				["resolved untrusted", { mode: "resolve", trustAnchors: f.graph.trustAnchors }, 0],
+				[
+					"wrong issuer",
+					{ mode: "provided", issuerEvidence: [{ ...f.oob, issuer: "https://wrong.example" }] },
+					0,
+				],
+				[
+					"wrong type",
+					{ mode: "provided", issuerEvidence: [{ ...f.oob, allowedTrustMarkTypes: ["other"] }] },
+					0,
+				],
+				[
+					"forged federation",
+					{ mode: "provided", issuerEvidence: [structuredClone(f.evidence)] },
+					0,
+				],
+			];
+			for (const [name, verification, count] of cases) {
+				f.graph.requests.length = 0;
+				const service = new EntityCollectionService({
+					trustAnchors: f.graph.trustAnchors,
+					options: {
+						...f.options,
+						...(verification ? { trustMarkVerification: verification } : {}),
+					},
+				});
+				const refreshed = await service.refresh(f.graph.id("ta"));
+				assert.true(refreshed.ok, `${name}: ${JSON.stringify(refreshed)}`);
+				const result = await service.query({
+					trustAnchor: f.graph.id("ta"),
+					trustMarkType: ["one"],
+				});
+				assert.true(result.ok);
+				if (result.ok) assert.equal(result.value.entities.length, count, name);
+				if (verification?.mode === "provided")
+					assert.false(
+						f.graph.requests.some(
+							(url) =>
+								url.startsWith(f.graph.id("issuer")) || url.startsWith(f.graph.id("accreditor")),
+						),
+						"provided mode never discovers missing issuer evidence",
+					);
+				if (name === "provided federation" || name === "resolve independent")
+					assert.equal(
+						(await service.store.getCurrent(f.graph.id("ta")))?.entries.find(
+							(e) => e.entity.entity_id === String(f.graph.id("leaf")),
+						)?.verifiedMarks[0]?.expiresAt,
+						2100,
+						"accreditation deadline bounds mark eligibility",
+					);
+			}
+		});
+
+		QUnit.test(
+			"an unavailable alternative does not discard an independently valid accreditation chain",
+			async (assert) => {
+				const f = await fixture();
+				const decoded = decodeEntityConfiguration(f.graph.configurations.get("issuer")!);
+				if (!decoded.ok) throw new Error("Invalid fixture");
+				const issuerJwt = await signEntityStatement(
+					{
+						...decoded.value.payload,
+						authority_hints: [f.graph.id("accreditor"), "https://unavailable.example"],
+					},
+					new JwkSigner(f.graph.keys.get("issuer")!.privateKey),
+				);
+				f.graph.routes.set(
+					`${f.graph.id("issuer")}/.well-known/openid-federation`,
+					() => new Response(issuerJwt, { headers: { "content-type": MediaType.EntityStatement } }),
+				);
+				const options = {
+					...f.options,
+					httpClient: (async (url, init) => {
+						if (String(url).startsWith("https://unavailable.example"))
+							throw new Error("Unavailable alternative");
+						return f.graph.httpClient(url, init);
+					}) satisfies HttpClient,
+				};
+				const proof = await CorePublic.establishTrustMarkIssuerTrust({
+					issuer: f.graph.id("issuer"),
+					trustMarkType: "one",
+					trustAnchors: f.accreditationAnchors,
+					options,
+				});
+				assert.true(proof.ok, JSON.stringify(proof));
+				const service = new EntityCollectionService({
+					trustAnchors: f.graph.trustAnchors,
+					options: {
+						...options,
+						trustMarkVerification: { mode: "resolve", trustAnchors: f.accreditationAnchors },
+					},
+				});
+				assert.true((await service.refresh(f.graph.id("ta"))).ok);
+				const result = await service.query({
+					trustAnchor: f.graph.id("ta"),
+					trustMarkType: ["one"],
+				});
+				assert.true(result.ok && result.value.entities.length === 1);
+			},
+		);
+
+		QUnit.test(
+			"configured evidence still requires holder publication, valid signatures and delegation",
+			async (assert) => {
+				for (const variant of [
+					"valid",
+					"unpublished",
+					"bad-signature",
+					"delegation-required",
+					"expired-evidence",
+				]) {
+					const f = await fixture();
+					const decoded = decodeEntityConfiguration(f.graph.configurations.get("leaf")!);
+					if (!decoded.ok) throw new Error("Invalid fixture");
+					const refs = decoded.value.payload.trust_marks;
+					if (variant === "unpublished") {
+						const jwt = await signEntityStatement(
+							{ ...decoded.value.payload, trust_marks: [] },
+							new JwkSigner(f.graph.keys.get("leaf")!.privateKey),
+						);
+						f.graph.routes.set(
+							`${f.graph.id("leaf")}/.well-known/openid-federation`,
+							() => new Response(jwt, { headers: { "content-type": MediaType.EntityStatement } }),
+						);
+					}
+					const context =
+						variant === "expired-evidence"
+							? f.evidence
+							: {
+									...f.oob,
+									...(variant === "bad-signature"
+										? { keys: { keys: [f.graph.keys.get("ta")!.publicKey] } }
+										: {}),
+									...(variant === "delegation-required"
+										? {
+												trustMarkOwners: {
+													one: {
+														sub: "https://owner.example",
+														jwks: { keys: [f.graph.keys.get("ta")!.publicKey] },
+													},
+												},
+											}
+										: {}),
+								};
+					const service = new EntityCollectionService({
+						trustAnchors: f.graph.trustAnchors,
+						options: {
+							...f.options,
+							clock: { now: () => (variant === "expired-evidence" ? 2100 : 1500) },
+							trustMarkVerification: { mode: "provided", issuerEvidence: [context] },
+						},
+						collector: async () =>
+							ok([
+								{
+									entity: EntityCollectionEntitySchema.parse({
+										entity_id: f.graph.id("leaf"),
+										trust_marks: refs,
+									}),
+									expiresAt: 5000,
+								},
+							]),
+					});
+					assert.true((await service.refresh(f.graph.id("ta"))).ok, variant);
+					const result = await service.query({
+						trustAnchor: f.graph.id("ta"),
+						trustMarkType: ["one"],
+					});
+					assert.true(result.ok);
+					if (result.ok)
+						assert.equal(result.value.entities.length, variant === "valid" ? 1 : 0, variant);
+				}
+			},
+		);
+
+		QUnit.test(
+			"incomplete configured issuer resolution preserves the preceding snapshot within the shared budget",
+			async (assert) => {
+				const f = await fixture();
+				let fail = false;
+				let calls = 0;
+				const service = new EntityCollectionService({
+					trustAnchors: f.graph.trustAnchors,
+					options: {
+						...f.options,
+						maxTotalFetches: 20,
+						httpClient: async (url, init) => {
+							calls++;
+							if (fail && String(url).startsWith(f.graph.id("issuer")))
+								throw new Error("Unavailable");
+							return f.graph.httpClient(url, init);
+						},
+						trustMarkVerification: { mode: "resolve", trustAnchors: f.accreditationAnchors },
+					},
+				});
+				assert.true((await service.refresh(f.graph.id("ta"))).ok);
+				const prior = await service.store.getCurrent(f.graph.id("ta"));
+				fail = true;
+				calls = 0;
+				assert.false((await service.refresh(f.graph.id("ta"))).ok);
+				assert.ok(calls <= 20);
+				assert.deepEqual(await service.store.getCurrent(f.graph.id("ta")), prior);
+			},
+		);
+
+		QUnit.test(
+			"configured collection evidence reuses supplied historical keys and their freshness deadline",
+			async (assert) => {
+				const f = await fixture();
+				const current = await generateSigningKey("ES256");
+				const response = await signEntityStatement(
+					{
+						iss: f.graph.id("issuer"),
+						iat: 1490,
+						keys: [{ ...f.graph.keys.get("issuer")!.publicKey, iat: 900, exp: 1200 }],
+					},
+					new JwkSigner(current.privateKey),
+					{ typ: JwtTyp.JwkSet },
+				);
+				const service = new EntityCollectionService({
+					trustAnchors: f.graph.trustAnchors,
+					options: {
+						...f.options,
+						trustMarkVerification: {
+							mode: "provided",
+							issuerEvidence: [{ ...f.oob, keys: { keys: [current.publicKey] } }],
+							historicalKeys: { mode: "supplied-only", maxAgeSeconds: 30, responses: [response] },
+						},
+					},
+				});
+				assert.true((await service.refresh(f.graph.id("ta"))).ok);
+				const entry = (await service.store.getCurrent(f.graph.id("ta")))?.entries.find(
+					(e) => e.entity.entity_id === String(f.graph.id("leaf")),
+				);
+				assert.equal(entry?.verifiedMarks.length, 1);
+				assert.equal(entry?.verifiedMarks[0]?.expiresAt, 1520);
+			},
+		);
+	});
+
 	QUnit.module("Collection extension consistency", () => {
 		const anchor = entityId("https://ta.example");
 		const anchors = new Map([[anchor, { jwks: { keys: [] } }]]);

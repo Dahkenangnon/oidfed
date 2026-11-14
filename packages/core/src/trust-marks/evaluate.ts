@@ -1,6 +1,4 @@
 import { InternalErrorCode } from "../constants.js";
-import type { Result } from "../errors.js";
-import { ok } from "../errors.js";
 import { decodeEntityStatement } from "../jose/verify.js";
 import type { JWKSet } from "../schemas/jwk.js";
 import type { TrustMarkOwner } from "../schemas/trust-mark.js";
@@ -10,12 +8,9 @@ import type {
 	TrustAnchorSet,
 	TrustMarkEvaluation,
 } from "../types.js";
-import {
-	establishTrustMarkIssuerTrust,
-	type TrustMarkIssuerContext,
-	validateTrustMarkWithIssuer,
-} from "./evidence.js";
+import { validateTrustMarkWithIssuer } from "./evidence.js";
 import { validateTrustMark } from "./index.js";
+import { createConfiguredTrustMarkIssuerResolver } from "./issuer-selection.js";
 
 /** Evaluate subject marks using evidence already authenticated by chain validation or the caller. */
 export async function evaluatePublishedTrustMarks(
@@ -39,7 +34,7 @@ export async function evaluatePublishedTrustMarks(
 		}
 	}
 	const results: TrustMarkEvaluation[] = [];
-	const evidence = new Map<string, Promise<Result<TrustMarkIssuerContext>>>();
+	const resolveIssuer = createConfiguredTrustMarkIssuerResolver(anchors, options);
 	for (const [referenceIndex, ref] of refs.entries()) {
 		const reference = { referenceIndex, trustMarkType: ref.trust_mark_type };
 		const invalid = (description: string): TrustMarkEvaluation => ({
@@ -64,23 +59,7 @@ export async function evaluatePublishedTrustMarks(
 			}
 			const issuer = decoded.value.payload.iss;
 			const config = options.trustMarkVerification;
-			const matching = config.issuerEvidence?.find(
-				(context) =>
-					context.issuer === issuer &&
-					(context.kind === "federation"
-						? context.trustMarkType === ref.trust_mark_type
-						: context.allowedTrustMarkTypes.includes(ref.trust_mark_type)),
-			);
-			const identity = JSON.stringify([issuer, ref.trust_mark_type]);
-			let proof = evidence.get(identity);
-			if (!proof && matching) proof = Promise.resolve(ok(matching));
-			if (!proof && config.mode === "resolve")
-				proof = establishTrustMarkIssuerTrust({
-					issuer,
-					trustMarkType: ref.trust_mark_type,
-					trustAnchors: config.trustAnchors ?? anchors,
-					options,
-				});
+			const proof = resolveIssuer(issuer, ref.trust_mark_type);
 			if (!proof) {
 				results.push({
 					...reference,
@@ -90,7 +69,6 @@ export async function evaluatePublishedTrustMarks(
 				});
 				continue;
 			}
-			evidence.set(identity, proof);
 			const established = await proof;
 			if (!established.ok) {
 				results.push(invalid(established.error.description));

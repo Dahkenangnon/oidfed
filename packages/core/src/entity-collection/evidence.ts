@@ -12,6 +12,7 @@ import {
 	validateTrustChainStructure,
 } from "../trust-chain/validate.js";
 import { validateTrustMarkWithIssuer } from "../trust-marks/evidence.js";
+import { createConfiguredTrustMarkIssuerResolver } from "../trust-marks/issuer-selection.js";
 import {
 	type EntityId,
 	type FederationOptions,
@@ -36,6 +37,14 @@ export function createCollectionEvidence(
 	const proofs = new Map<string, IssuerProof>();
 	const resolutions = new Map<string, Promise<IssuerResolution>>();
 	let rootPending: Promise<Result<Root>> | undefined;
+	const verification = options.trustMarkVerification;
+	// A historical-key preference alone does not replace Collection's same-anchor default.
+	const configuredIssuerTrust =
+		verification !== undefined &&
+		(verification.mode !== undefined ||
+			verification.issuerEvidence !== undefined ||
+			verification.trustAnchors !== undefined);
+	const resolveConfiguredIssuer = createConfiguredTrustMarkIssuerResolver(anchors, options);
 
 	async function validatePath(
 		chain: readonly string[],
@@ -121,9 +130,9 @@ export function createCollectionEvidence(
 		publication?: EntityConfigurationPayload,
 		openOnly = false,
 	) {
-		if (!entry.entity.trust_marks?.length) return;
-		const trustedRoot = await root();
-		if (!trustedRoot.ok) throw new Error(trustedRoot.error.description);
+		if (!entry.entity.trust_marks?.length || (configuredIssuerTrust && openOnly)) return;
+		const trustedRoot = configuredIssuerTrust ? undefined : await root();
+		if (trustedRoot && !trustedRoot.ok) throw new Error(trustedRoot.error.description);
 		let publicationExpiresAt = entry.chainExpiresAt ?? Infinity;
 		if (!publication) {
 			const id = entry.entity.entity_id as unknown as EntityId;
@@ -152,6 +161,43 @@ export function createCollectionEvidence(
 				)
 			)
 				continue;
+			if (configuredIssuerTrust) {
+				const decoded = decodeEntityStatement(ref.trust_mark);
+				if (!decoded.ok || !isValidEntityId(decoded.value.payload.iss)) continue;
+				const pending = resolveConfiguredIssuer(decoded.value.payload.iss, ref.trust_mark_type);
+				if (!pending) continue;
+				const established = await pending;
+				if (!established.ok) {
+					// Incomplete work must not replace a snapshot; a conclusively untrusted issuer
+					// simply cannot qualify this mark, just as in the same-anchor path.
+					if (established.error.code === FederationErrorCode.TemporarilyUnavailable)
+						throw new Error(established.error.description);
+					continue;
+				}
+				const checked = await validateTrustMarkWithIssuer(ref.trust_mark, established.value, {
+					...options,
+					expectedSubject: entry.entity.entity_id,
+					expectedTrustMarkType: ref.trust_mark_type,
+					...(verification?.historicalKeys ? { historicalKeys: verification.historicalKeys } : {}),
+				});
+				if (checked.ok)
+					entry.verifiedMarks = [
+						...entry.verifiedMarks,
+						{
+							type: ref.trust_mark_type,
+							expiresAt: Math.min(
+								entry.expiresAt,
+								entry.chainExpiresAt ?? Infinity,
+								publicationExpiresAt,
+								checked.value.expiresAt ?? Infinity,
+								checked.value.verificationExpiresAt ?? Infinity,
+								checked.value.delegation?.expiresAt ?? Infinity,
+							),
+						},
+					];
+				continue;
+			}
+			if (!trustedRoot?.ok) continue;
 			const issuers = trustedRoot.value.payload.trust_mark_issuers;
 			if (!issuers || !Object.hasOwn(issuers, ref.trust_mark_type)) {
 				if (!openOnly)

@@ -108,7 +108,7 @@ const directory = new EntityCollectionService({
 
 The callback receives the selected `trustAnchor`, its pinned `trustAnchorJwks`, effective `options`, and a cancellation `signal`. Use this context to select entities associated with the requested anchor; the inventory source is responsible for that association. Network calls through the supplied options share the refresh budget and redirect policy. Core rejects unsupported anchors before invoking the callback.
 
-Custom entries do not gain chain evidence. If they include Trust Marks, core confirms publication in the entity's self-signed Entity Configuration and verifies each qualifying mark using trusted issuer keys in the selected anchor context. The publication check alone does not establish a chain for the entry. Collectors cannot supply `verifiedMarks` or `chainExpiresAt` as proof. Verification happens during refresh; queries never fetch or verify marks on demand.
+Custom entries do not gain chain evidence. If they include Trust Marks, core confirms publication in the entity's self-signed Entity Configuration and verifies each qualifying mark using trusted issuer keys. By default, it uses the selected collection anchor; explicit accreditation settings are described below. The publication check alone does not establish a chain for the entry. Collectors cannot supply `verifiedMarks` or `chainExpiresAt` as proof. Verification happens during refresh; queries never fetch or verify marks on demand.
 
 Use `filter` for an additional application restriction. It runs once per eligible entry after mark verification, with a detached, frozen entry and the same anchor context. Return `false` to exclude an entry, `true` to retain it, or `{ expiresAt }` to shorten its eligibility. Filtering an intermediate does not prevent collection of its descendants.
 
@@ -131,6 +131,30 @@ const curated = new EntityCollectionService({
 Filters may be asynchronous, so an application can consult its Resolve service or other policy data using the refresh context. Results are stored in the snapshot. If the policy depends on evidence that expires, return its expiry; the filter cannot extend the candidate's deadline. Filters and collectors never run while serving pages.
 
 A callback failure or cancellation prevents publication. Cancellation releases the refresh queue even if a callback has not settled. Callbacks are trusted application code and must use the supplied signal to stop their own I/O. Shorten entry lifetimes or refresh explicitly when inventory or policy changes.
+
+## Accreditation for Trust Mark filters
+
+The default is to verify marks under the collection's Trust Anchor, following the SHOULD in [§3.3.1](https://openid.net/specs/openid-federation-entity-collection-1_0-01.html#section-3.3.1). Some directories recognize a separate accreditation federation. For example, **Campus Alliance** might list university services while trusting a separate accessibility accreditor to certify them:
+
+```ts
+const directory = new EntityCollectionService({
+  trustAnchors: campusAnchors,
+  options: {
+    trustMarkVerification: {
+      mode: "resolve",
+      trustAnchors: accessibilityAccreditationAnchors,
+    },
+  },
+});
+```
+
+Collection now uses the same configured issuer-evidence selection as ordinary chain validation. In `resolve` mode, matching supplied `issuerEvidence` takes precedence; missing evidence is resolved against the configured accreditation anchors, or the collection anchor when no alternative is supplied. Resolution shares the refresh's network budget and cancellation signal. An incomplete issuer discovery preserves the previous snapshot. A completed check that finds an untrusted issuer leaves its mark unverified.
+
+For an offline accreditation relationship, use `mode: "provided"` with `issuerEvidence` obtained through `establishTrustMarkIssuerTrust`, or an explicitly trusted `kind: "out-of-band"` issuer context. Provided mode never discovers missing issuer evidence. Collection traversal and holder-publication checks may still fetch; this setting controls issuer trust, not the whole operation's network access. A federation evidence object must be the original verified object; copying or deserializing it does not preserve its provenance. Out-of-band accreditation is a host trust decision permitted by [Federation §17.5](https://openid.net/specs/openid-federation-1_0.html#section-17.5), not something inferred from a JWT's self-published keys.
+
+These explicit settings use the accreditation context's issuer and owner policy. They do not additionally require the collection anchor to recognize the mark type. The holder must still publish the exact mark in its authenticated Entity Configuration, and core verifies the signature, subject, type, validity, and any required owner delegation. Historical-key settings remain available; configuring only `historicalKeys` keeps Collection's default same-anchor policy. Supplying only an accreditation anchor set does not enable discovery: set `mode: "resolve"` explicitly.
+
+The stored verification deadline cannot exceed any applicable publication, chain, accreditation, mark, delegation, or historical-response deadline. Verification for filtering does not make the unsigned response trustworthy to its recipient: clients must still perform their own federation verification.
 
 ## Refresh and storage
 
