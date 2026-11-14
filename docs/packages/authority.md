@@ -399,6 +399,8 @@ State changes and generated events commit in one transaction. Registration and u
 
 Manual event recording also copies nested extension values before waiting for storage, so changing an input object after calling `recordSubordinateEvents()` cannot change the recorded observation.
 
+An aborted Events request stops waiting for storage or key lookup and does not start signing after that wait. The handler returns a Federation JSON server error. An already-running storage operation or signing operation may finish independently; cancellation does not roll back committed history. The configured `options.signal` also applies to local `getSubordinateEvents()` calls, which reject on cancellation.
+
 Direct `storage.subordinates` writes remain supported and do not automatically record events. Enabling event storage does not reconstruct past history from record timestamps. See the [storage contract](../guide/storage-guide.md#subordinate-events) for explicit transactional appends.
 
 The endpoint accepts GET with a required `sub` Entity Identifier. If authentication is configured through `federation_subordinate_events_endpoint_auth_methods`, it uses the existing federation client-authentication middleware and authenticated form POST. A `private_key_jwt` assertion names the authority's Entity Identifier as its audience, which can differ from the endpoint URL. The authenticated client and requested subject need not be identical.

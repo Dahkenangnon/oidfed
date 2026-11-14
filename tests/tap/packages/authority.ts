@@ -10867,6 +10867,142 @@ export default (QUnit: QUnit) => {
 					},
 				);
 			}
+			QUnit.test(
+				"already cancelled history calls do not read storage or retrieve keys",
+				async (assert) => {
+					const f = await fixture();
+					const controller = new AbortController();
+					let reads = 0;
+					let keys = 0;
+					const read = f.storage.readSnapshot.bind(f.storage);
+					f.storage.readSnapshot = async (operation) => {
+						reads++;
+						return read(operation);
+					};
+					const getKeys = f.keyProvider.getFederationKeySet.bind(f.keyProvider);
+					f.keyProvider.getFederationKeySet = async () => {
+						keys++;
+						return getKeys();
+					};
+					const authority = new TrustAnchor({
+						...f.config,
+						options: { ...f.config.options, signal: controller.signal },
+					});
+					controller.abort();
+					await assert.rejects(authority.getSubordinateEvents(subject), /abort/i);
+					for (const [host, signal] of [
+						[authority, undefined],
+						[f.authority, controller.signal],
+					] as const) {
+						const response = await host.handleRequest(
+							new Request(`${endpoint}&sub=${encodeURIComponent(subject)}`, { signal }),
+						);
+						assert.strictEqual(response.status, 500);
+					}
+					assert.strictEqual(reads, 0);
+					assert.strictEqual(keys, 0);
+				},
+			);
+			for (const stage of ["storage", "keys", "signing"] as const) {
+				QUnit.test(
+					`cancellation releases an events request waiting for ${stage} without returning success`,
+					async (assert) => {
+						const f = await fixture();
+						await f.authority.registerSubordinate(f.record);
+						let release!: () => void;
+						let entered!: () => void;
+						const started = new Promise<void>((resolve) => {
+							entered = resolve;
+						});
+						const gate = new Promise<void>((resolve) => {
+							release = resolve;
+						});
+						const originalKeys = f.keyProvider.getFederationKeySet.bind(f.keyProvider);
+						let signatures = 0;
+						f.keyProvider.getFederationKeySet = async () => {
+							if (stage === "keys") {
+								entered();
+								await gate;
+							}
+							const keys = await originalKeys();
+							return {
+								...keys,
+								signer: {
+									...keys.signer,
+									alg: keys.signer.alg,
+									kid: keys.signer.kid,
+									signJwt: async (data, header) => {
+										signatures++;
+										if (stage === "signing") {
+											entered();
+											await gate;
+										}
+										return keys.signer.signJwt(data, header);
+									},
+								},
+							};
+						};
+						if (stage === "storage") {
+							const read = f.storage.readSnapshot.bind(f.storage);
+							f.storage.readSnapshot = async (operation) => {
+								entered();
+								await gate;
+								return read(operation);
+							};
+						}
+						const controller = new AbortController();
+						const pending = f.authority.handleRequest(
+							new Request(`${endpoint}&sub=${encodeURIComponent(subject)}`, {
+								signal: controller.signal,
+							}),
+						);
+						await started;
+						controller.abort();
+						let timer: ReturnType<typeof setTimeout> | undefined;
+						try {
+							const response = await Promise.race([
+								pending,
+								new Promise<never>((_, reject) => {
+									timer = setTimeout(
+										() => reject(new Error("Cancellation did not release the request")),
+										1000,
+									);
+								}),
+							]);
+							assert.strictEqual(response.status, 500);
+							assert.strictEqual(response.headers.get("content-type"), MediaType.Json);
+							assert.strictEqual(
+								((await response.json()) as { error: string }).error,
+								"server_error",
+							);
+						} finally {
+							clearTimeout(timer);
+							release();
+						}
+						await new Promise((resolve) => setTimeout(resolve, 0));
+						assert.strictEqual(
+							signatures,
+							stage === "signing" ? 1 : 0,
+							"cancellation never starts another signature",
+						);
+						assert.strictEqual(
+							(await f.storage.subordinateEvents!.list(issuer, subject)).length,
+							1,
+							"cancellation preserves committed history",
+						);
+						assert.strictEqual(
+							(
+								await f.authority.handleRequest(
+									new Request(`${endpoint}&sub=${encodeURIComponent(subject)}`),
+								)
+							).status,
+							200,
+							"a subsequent request still succeeds",
+						);
+					},
+				);
+			}
+
 			for (const intermediate of [false, true]) {
 				QUnit.test(
 					`${intermediate ? "Intermediate" : "TrustAnchor"} snapshots queued updates and their events`,

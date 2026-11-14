@@ -8,6 +8,7 @@ import {
 	SubordinateEventsResponseSchema,
 	safeLogger,
 	signEntityStatement,
+	waitForOperation,
 } from "@oidfed/core";
 import type { StorageReadSnapshot } from "../storage/types.js";
 import { parsePublishedSubordinateEvent } from "../utils/subordinate-event.js";
@@ -37,28 +38,44 @@ export function withSubordinateEventsMethodErrors(
 export async function buildSubordinateEvents(
 	ctx: HandlerContext,
 	subject: EntityId,
+	requestSignal?: AbortSignal,
 ): Promise<string | undefined> {
+	const signal = AbortSignal.any(
+		[requestSignal, ctx.options?.signal].filter(
+			(value): value is AbortSignal => value !== undefined,
+		),
+	);
+	signal.throwIfAborted();
 	if (!ctx.storage.subordinateEvents)
 		throw new Error("Subordinate event storage is not configured");
 	const read = async (tx: StorageReadSnapshot) => {
+		signal.throwIfAborted();
 		if (!tx.subordinateEvents)
 			throw new Error("Transaction-bound subordinateEvents is unavailable");
 		const history = await tx.subordinateEvents.list(ctx.entityId, subject);
+		signal.throwIfAborted();
 		if (history.length === 0 && !(await tx.subordinates.get(subject))) return undefined;
 		return history;
 	};
-	const events = ctx.storage.readSnapshot
-		? await ctx.storage.readSnapshot(read)
-		: await ctx.storage.transaction(read);
+	const events = await waitForOperation(
+		ctx.storage.readSnapshot ? ctx.storage.readSnapshot(read) : ctx.storage.transaction(read),
+		[signal],
+	);
 	if (events === undefined) return undefined;
+	const history = events.map(parsePublishedSubordinateEvent);
+	const keys = await waitForOperation(ctx.keyProvider.getFederationKeySet(), [signal]);
+	const iat = nowSeconds(ctx.options?.clock);
 	const payload = SubordinateEventsResponseSchema.parse({
 		iss: ctx.entityId,
 		sub: subject,
-		iat: nowSeconds(ctx.options?.clock),
-		federation_registration_events: events.map(parsePublishedSubordinateEvent),
+		iat,
+		federation_registration_events: history,
 	});
-	const keys = await ctx.keyProvider.getFederationKeySet();
-	return signEntityStatement(payload, keys.signer, { typ: JwtTyp.EntityEventsStatement });
+	signal.throwIfAborted();
+	return waitForOperation(
+		signEntityStatement(payload, keys.signer, { typ: JwtTyp.EntityEventsStatement }),
+		[signal],
+	);
 }
 
 export function createSubordinateEventsHandler(
@@ -77,7 +94,7 @@ export function createSubordinateEventsHandler(
 			);
 		}
 		try {
-			const jwt = await buildSubordinateEvents(ctx, subject as EntityId);
+			const jwt = await buildSubordinateEvents(ctx, subject as EntityId, request.signal);
 			if (jwt === undefined)
 				return errorResponse(404, FederationErrorCode.NotFound, "Entity history not found");
 			return jwtResponse(jwt, MediaType.EntityEventsStatement);
