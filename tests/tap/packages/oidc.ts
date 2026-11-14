@@ -112,10 +112,14 @@ function createFederationSigningKey(signingKey: JWK) {
 
 async function createRpConfig(
 	overrides?: Partial<RpConfig>,
+	federation?: Awaited<ReturnType<typeof createMockFederation>>,
 ): Promise<{ config: RpConfig; signingKey: JWK; publicKey: JWK }> {
-	const { privateKey, publicKey } = await generateSigningKey("ES256");
-	const { privateKey: protocolPrivateKey, publicKey: protocolPublicKey } =
-		await generateSigningKey("ES256");
+	const { privateKey, publicKey } = federation
+		? { privateKey: federation.leafSigningKey, publicKey: federation.leafPublicKey }
+		: await generateSigningKey("ES256");
+	const { privateKey: protocolPrivateKey, publicKey: protocolPublicKey } = federation
+		? { privateKey: federation.leafProtocolSigningKey, publicKey: federation.leafProtocolPublicKey }
+		: await generateSigningKey("ES256");
 	const config: RpConfig = {
 		entityId: LEAF_ID,
 		keyProvider: new MemoryFederationKeyProvider(createFederationSigningKey(privateKey)),
@@ -356,6 +360,165 @@ async function createDualAnchorRegistrationFixture(invalidPreferredProvider = fa
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("oidc / effective registration signing keys", () => {
+		for (const type of ["openid_relying_party", "oauth_client"] as const) {
+			test(`${type}: Request Objects use completed and replaced protocol keys`, async (t) => {
+				for (const mode of ["completed", "replaced", "policy", "stale"] as const) {
+					const f = await signingFixture(type, mode);
+					const result = await f.client.createAuthorizationRequest(
+						f.discovery,
+						{ response_type: "code", redirect_uri: `${f.ids.subject}/cb` },
+						f.anchors,
+					);
+					t.equal(
+						result.ok,
+						mode !== "stale",
+						`${mode}: ${result.ok ? "created" : result.error.description}`,
+					);
+					t.equal(f.signs(), mode === "stale" ? 0 : 1);
+					if (result.ok) {
+						const verified = await CorePublic.verifyProtocolJwt(
+							result.value.requestObjectJwt,
+							{ keys: [f.keys.b.publicKey] },
+							{ expectedTyp: RequestObjectTyp, ...f.options },
+						);
+						t.true(verified.ok, "request verifies with the resolved key");
+					}
+				}
+			});
+			test(`${type}: PAR checks the assertion signer against effective keys before sending`, async (t) => {
+				for (const stale of [false, true]) {
+					const f = await signingFixture(type, "replaced", stale);
+					const result = await f.client.createAuthorizationRequest(
+						f.discovery,
+						{ response_type: "code", redirect_uri: `${f.ids.subject}/cb` },
+						f.anchors,
+						{ requestDelivery: "par" },
+					);
+					t.equal(result.ok, !stale, result.ok ? "PAR created" : result.error.description);
+					t.equal(
+						f.assertions.length,
+						stale ? 0 : 1,
+						"stale assertion signer never reaches transport",
+					);
+					if (!stale) {
+						const verified = await CorePublic.verifyProtocolJwt(
+							f.assertions[0]!,
+							{ keys: [f.keys.b.publicKey] },
+							{ expectedTyp: "JWT", ...f.options },
+						);
+						t.true(verified.ok, "assertion verifies with the resolved key");
+					}
+				}
+			});
+		}
+		async function signingFixture(
+			type: "openid_relying_party" | "oauth_client",
+			mode: "completed" | "replaced" | "policy" | "stale",
+			staleAssertion = false,
+		) {
+			const f = await trustChainPaths();
+			const serverType = type === "oauth_client" ? "oauth_authorization_server" : "openid_provider";
+			const metadata = {
+				redirect_uris: [`${f.ids.subject}/cb`],
+				client_registration_types: ["automatic"],
+				token_endpoint_auth_method: "private_key_jwt",
+				...(mode === "completed" ? {} : { jwks: { keys: [f.keys.subject.publicKey] } }),
+			};
+			const chain = await f.chain(["subject", "anchor"], {
+				subjectClaims: { metadata: { [type]: metadata } },
+			});
+			chain[1] = await f.sign(
+				"anchor",
+				"subject",
+				mode === "policy"
+					? { metadata_policy: { [type]: { jwks: { value: { keys: [f.keys.b.publicKey] } } } } }
+					: { metadata: { [type]: { jwks: { keys: [f.keys.b.publicKey] } } } },
+			);
+			const serverChain = await f.chain(["a", "anchor"], {
+				subjectClaims: {
+					metadata: {
+						[serverType]: {
+							issuer: f.ids.a,
+							authorization_endpoint: `${f.ids.a}/authorize`,
+							token_endpoint: `${f.ids.a}/token`,
+							jwks: { keys: [f.keys.a.publicKey] },
+							response_types_supported: ["code"],
+							subject_types_supported: ["public"],
+							id_token_signing_alg_values_supported: ["RS256", "ES256"],
+							client_registration_types_supported: ["automatic"],
+							pushed_authorization_request_endpoint: `${f.ids.a}/par`,
+							token_endpoint_auth_methods_supported: ["private_key_jwt"],
+						},
+					},
+				},
+			});
+			const documents = new Map([
+				[`${f.ids.subject}/.well-known/openid-federation`, chain[0]!],
+				[`${f.ids.anchor}/.well-known/openid-federation`, chain[2]!],
+				[`${f.ids.anchor}/fetch?sub=${encodeURIComponent(f.ids.subject)}`, chain[1]!],
+			]);
+			const assertions: string[] = [];
+			const options: FederationOptions = {
+				...f.options,
+				httpClient: async (input, init) => {
+					const request = input instanceof Request ? input : new Request(input, init);
+					const url = new URL(request.url);
+					url.searchParams.delete("iss");
+					if (url.pathname === "/par") {
+						assertions.push(
+							new URLSearchParams(await request.text()).get("client_assertion") ?? "",
+						);
+						return Response.json(
+							{ request_uri: "urn:example:par", expires_in: 60 },
+							{ status: 201 },
+						);
+					}
+					const document = documents.get(url.toString());
+					return new Response(document ?? "missing", {
+						status: document ? 200 : 404,
+						headers: { "content-type": MediaType.EntityStatement },
+					});
+				},
+			};
+			const discovered = await CorePublic.discoverEntityFromChain(
+				f.ids.a,
+				serverChain,
+				f.anchors,
+				options,
+			);
+			if (!discovered.ok) throw new Error(discovered.error.description);
+			const signer = new JwkSigner(
+				mode === "stale" ? f.keys.subject.privateKey : f.keys.b.privateKey,
+			);
+			let signs = 0;
+			const counted: JwtSigner = {
+				alg: signer.alg,
+				kid: signer.kid,
+				signJwt: (...args) => {
+					signs++;
+					return signer.signJwt(...args);
+				},
+			};
+			const Role = type === "oauth_client" ? OAuthClientRole : OidcRelyingPartyRole;
+			const client = new Role({
+				metadata,
+				protocolKeyProvider: new StaticProtocolSigningKeyProvider({
+					requestObjectSigner: counted,
+					clientAssertionSigner: new JwkSigner(
+						staleAssertion ? f.keys.subject.privateKey : f.keys.b.privateKey,
+					),
+				}),
+			});
+			client.initialize({
+				entityId: f.ids.subject,
+				authorityHints: [f.ids.anchor],
+				keyProvider: MemoryFederationKeyProvider.fromJWK(f.keys.subject.privateKey),
+				options,
+			});
+			return { ...f, client, options, discovery: discovered.value, assertions, signs: () => signs };
+		}
+	});
 	module("oidc / OAuth registration profiles", () => {
 		async function fixture(completeAtSuperior = false) {
 			const f = await trustChainPaths();
@@ -3349,7 +3512,7 @@ export default (QUnit: QUnit) => {
 		test("returns valid Request Object JWT with correct typ", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
-			const { config } = await createRpConfig({});
+			const { config } = await createRpConfig({}, fed);
 			const result = await automaticRegistration(
 				discovery,
 				config,
@@ -3368,7 +3531,7 @@ export default (QUnit: QUnit) => {
 		test("has correct JWT claims: iss, client_id, aud, jti, exp", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
-			const { config } = await createRpConfig({});
+			const { config } = await createRpConfig({}, fed);
 			const result = await automaticRegistration(
 				discovery,
 				config,
@@ -3392,7 +3555,7 @@ export default (QUnit: QUnit) => {
 		test("uses options.clock for Request Object timestamps", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
-			const { config } = await createRpConfig({});
+			const { config } = await createRpConfig({}, fed);
 			const fixedNow = Math.floor(Date.now() / 1000);
 			const result = await automaticRegistration(discovery, config, authzParams, fed.trustAnchors, {
 				...fed.options,
@@ -3410,7 +3573,7 @@ export default (QUnit: QUnit) => {
 		test("does NOT include sub claim", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
-			const { config } = await createRpConfig({});
+			const { config } = await createRpConfig({}, fed);
 			const result = await automaticRegistration(
 				discovery,
 				config,
@@ -3429,7 +3592,7 @@ export default (QUnit: QUnit) => {
 		test("includes trust_chain as JWS header parameter", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
-			const { config } = await createRpConfig({});
+			const { config } = await createRpConfig({}, fed);
 			const result = await automaticRegistration(
 				discovery,
 				config,
@@ -3475,9 +3638,12 @@ export default (QUnit: QUnit) => {
 		test("attaches peer_trust_chain when includePeerTrustChain is true", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
-			const { config } = await createRpConfig({
-				includePeerTrustChain: true,
-			});
+			const { config } = await createRpConfig(
+				{
+					includePeerTrustChain: true,
+				},
+				fed,
+			);
 			const result = await automaticRegistration(
 				discovery,
 				config,
@@ -3525,9 +3691,12 @@ export default (QUnit: QUnit) => {
 				}
 				return fed.options.httpClient!(input);
 			};
-			const { config } = await createRpConfig({
-				includePeerTrustChain: true,
-			});
+			const { config } = await createRpConfig(
+				{
+					includePeerTrustChain: true,
+				},
+				fed,
+			);
 			const result = await automaticRegistration(discovery, config, authzParams, fed.trustAnchors, {
 				...fed.options,
 				httpClient: blockingHttpClient,
@@ -3541,7 +3710,7 @@ export default (QUnit: QUnit) => {
 		test("includes authzRequestParams in JWT payload", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
-			const { config } = await createRpConfig({});
+			const { config } = await createRpConfig({}, fed);
 			const params = { ...authzParams, nonce: "test-nonce" };
 			const result = await automaticRegistration(
 				discovery,
@@ -3564,9 +3733,12 @@ export default (QUnit: QUnit) => {
 		test("query mode returns well-formed authorizationUrl with request + client_id", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
-			const { config } = await createRpConfig({
-				requestDelivery: "query",
-			});
+			const { config } = await createRpConfig(
+				{
+					requestDelivery: "query",
+				},
+				fed,
+			);
 			const result = await automaticRegistration(
 				discovery,
 				config,
@@ -3586,7 +3758,7 @@ export default (QUnit: QUnit) => {
 		test("does not allow authzRequestParams to overwrite required claims", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
-			const { config } = await createRpConfig({});
+			const { config } = await createRpConfig({}, fed);
 			const result = await automaticRegistration(
 				discovery,
 				config,
@@ -3627,7 +3799,7 @@ export default (QUnit: QUnit) => {
 				},
 			});
 			const discovery = await createMockDiscovery(OP_ID, fed);
-			const { config } = await createRpConfig({});
+			const { config } = await createRpConfig({}, fed);
 			const result = await automaticRegistration(
 				discovery,
 				config,
@@ -3644,7 +3816,7 @@ export default (QUnit: QUnit) => {
 		test("does not include registration param in JWT payload", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
-			const { config } = await createRpConfig({});
+			const { config } = await createRpConfig({}, fed);
 			const result = await automaticRegistration(
 				discovery,
 				config,
@@ -3663,7 +3835,7 @@ export default (QUnit: QUnit) => {
 		test("includes trustChainExpiresAt matching trust chain expiry", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
-			const { config } = await createRpConfig({});
+			const { config } = await createRpConfig({}, fed);
 			const result = await automaticRegistration(
 				discovery,
 				config,
@@ -3680,7 +3852,7 @@ export default (QUnit: QUnit) => {
 		test("uses JWK allowlist for public keys (no private fields leak)", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
-			const { config } = await createRpConfig({});
+			const { config } = await createRpConfig({}, fed);
 			const result = await automaticRegistration(
 				discovery,
 				config,
@@ -3696,9 +3868,12 @@ export default (QUnit: QUnit) => {
 		test("fails when openid_relying_party and oauth_client are missing", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
-			const { config } = await createRpConfig({
-				metadata: {},
-			});
+			const { config } = await createRpConfig(
+				{
+					metadata: {},
+				},
+				fed,
+			);
 			const result = await automaticRegistration(
 				discovery,
 				config,
@@ -3713,16 +3888,27 @@ export default (QUnit: QUnit) => {
 		});
 
 		test("fails when jwks is not a JWK Set", async (t) => {
-			const fed = await createMockFederation();
-			const discovery = await createMockDiscovery(OP_ID, fed);
-			const { config } = await createRpConfig({
-				metadata: {
+			const fed = await createMockFederation({
+				leafMetadata: {
 					openid_relying_party: {
-						// biome-ignore lint/suspicious/noExplicitAny: test
-						jwks: "not-a-jwk-set" as any,
+						redirect_uris: ["https://rp.example.com/callback"],
+						client_registration_types: ["automatic"],
+						jwks: "not-a-jwk-set",
 					},
 				},
 			});
+			const discovery = await createMockDiscovery(OP_ID, fed);
+			const { config } = await createRpConfig(
+				{
+					metadata: {
+						openid_relying_party: {
+							// biome-ignore lint/suspicious/noExplicitAny: test
+							jwks: "not-a-jwk-set" as any,
+						},
+					},
+				},
+				fed,
+			);
 			const result = await automaticRegistration(
 				discovery,
 				config,
@@ -3732,20 +3918,31 @@ export default (QUnit: QUnit) => {
 			);
 			t.true(isErr(result));
 			if (isErr(result)) {
-				t.true(result.error.description.includes("must be a JWK Set"));
+				t.equal(result.error.code, CorePublic.FederationErrorCode.InvalidTrustChain);
 			}
 		});
 
 		test("fails when signer kid is not published in jwks", async (t) => {
-			const fed = await createMockFederation();
-			const discovery = await createMockDiscovery(OP_ID, fed);
-			const { config } = await createRpConfig({
-				metadata: {
+			const fed = await createMockFederation({
+				leafMetadata: {
 					openid_relying_party: {
+						redirect_uris: ["https://rp.example.com/callback"],
+						client_registration_types: ["automatic"],
 						jwks: { keys: [] },
 					},
 				},
 			});
+			const discovery = await createMockDiscovery(OP_ID, fed);
+			const { config } = await createRpConfig(
+				{
+					metadata: {
+						openid_relying_party: {
+							jwks: { keys: [] },
+						},
+					},
+				},
+				fed,
+			);
 			const result = await automaticRegistration(
 				discovery,
 				config,
@@ -3760,15 +3957,25 @@ export default (QUnit: QUnit) => {
 		});
 
 		test("fails when OIDC protocol keys are not published", async (t) => {
-			const fed = await createMockFederation();
-			const discovery = await createMockDiscovery(OP_ID, fed);
-			const { config } = await createRpConfig({
-				metadata: {
+			const fed = await createMockFederation({
+				leafMetadata: {
 					openid_relying_party: {
-						client_name: "test",
+						redirect_uris: ["https://rp.example.com/callback"],
+						client_registration_types: ["automatic"],
 					},
 				},
 			});
+			const discovery = await createMockDiscovery(OP_ID, fed);
+			const { config } = await createRpConfig(
+				{
+					metadata: {
+						openid_relying_party: {
+							client_name: "test",
+						},
+					},
+				},
+				fed,
+			);
 			const result = await automaticRegistration(
 				discovery,
 				config,
@@ -3798,10 +4005,13 @@ export default (QUnit: QUnit) => {
 			const discovery = await createMockDiscovery(OP_ID, fed);
 			const params = { ...authzParams, scope: "openid email", client_id: "untrusted-client" };
 			for (const delivery of ["query", "form_post", "request_uri"] as const) {
-				const { config } = await createRpConfig({
-					requestDelivery: delivery,
-					requestUri: "https://rp.example.com/request-object/test",
-				});
+				const { config } = await createRpConfig(
+					{
+						requestDelivery: delivery,
+						requestUri: "https://rp.example.com/request-object/test",
+					},
+					fed,
+				);
 				const result = await automaticRegistration(
 					discovery,
 					config,
@@ -3843,10 +4053,13 @@ export default (QUnit: QUnit) => {
 			const fed = await createMockFederation({ includeOAuthClient: true });
 			const discovery = await createMockDiscovery(OP_ID, fed);
 			for (const delivery of ["query", "form_post", "request_uri"] as const) {
-				const { config } = await createRpConfig({
-					requestDelivery: delivery,
-					requestUri: "https://rp.example.com/request-object/test",
-				});
+				const { config } = await createRpConfig(
+					{
+						requestDelivery: delivery,
+						requestUri: "https://rp.example.com/request-object/test",
+					},
+					fed,
+				);
 				const rpMetadata = config.metadata.openid_relying_party;
 				if (!rpMetadata) throw new Error("Expected fixture protocol metadata");
 				const result = await automaticRegistration(
@@ -3875,7 +4088,7 @@ export default (QUnit: QUnit) => {
 		test("defaults to form_post when requestDelivery is omitted", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
-			const { config } = await createRpConfig({});
+			const { config } = await createRpConfig({}, fed);
 			const result = await automaticRegistration(
 				discovery,
 				config,
@@ -3895,9 +4108,12 @@ export default (QUnit: QUnit) => {
 		test("form_post: authorizationEndpoint matches OP authorization_endpoint metadata", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
-			const { config } = await createRpConfig({
-				requestDelivery: "form_post",
-			});
+			const { config } = await createRpConfig(
+				{
+					requestDelivery: "form_post",
+				},
+				fed,
+			);
 			const result = await automaticRegistration(
 				discovery,
 				config,
@@ -3917,10 +4133,13 @@ export default (QUnit: QUnit) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
 			const hostedUri = "https://rp.example.com/request-object/xyz";
-			const { config } = await createRpConfig({
-				requestDelivery: "request_uri",
-				requestUri: hostedUri,
-			});
+			const { config } = await createRpConfig(
+				{
+					requestDelivery: "request_uri",
+					requestUri: hostedUri,
+				},
+				fed,
+			);
 			const result = await automaticRegistration(
 				discovery,
 				config,
@@ -3956,10 +4175,13 @@ export default (QUnit: QUnit) => {
 				},
 			});
 			const discovery = await createMockDiscovery(OP_ID, fed);
-			const { config } = await createRpConfig({
-				requestDelivery: "request_uri",
-				requestUri: "https://rp.example.com/request-object/xyz",
-			});
+			const { config } = await createRpConfig(
+				{
+					requestDelivery: "request_uri",
+					requestUri: "https://rp.example.com/request-object/xyz",
+				},
+				fed,
+			);
 			const result = await automaticRegistration(
 				discovery,
 				config,
@@ -3976,9 +4198,12 @@ export default (QUnit: QUnit) => {
 		test("request_uri: fails when requestUri is missing", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
-			const { config } = await createRpConfig({
-				requestDelivery: "request_uri",
-			});
+			const { config } = await createRpConfig(
+				{
+					requestDelivery: "request_uri",
+				},
+				fed,
+			);
 			const result = await automaticRegistration(
 				discovery,
 				config,
@@ -4156,9 +4381,12 @@ export default (QUnit: QUnit) => {
 		test("par: fails when OP advertises no pushed_authorization_request_endpoint", async (t) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
-			const { config } = await createRpConfig({
-				requestDelivery: "par",
-			});
+			const { config } = await createRpConfig(
+				{
+					requestDelivery: "par",
+				},
+				fed,
+			);
 			const result = await automaticRegistration(
 				discovery,
 				config,
@@ -9394,7 +9622,8 @@ export default (QUnit: QUnit) => {
 		});
 
 		test("OidcRelyingPartyRole and OAuthClientRole createAuthorizationRequest", async (t) => {
-			const { privateKey } = await generateSigningKey("ES256");
+			const fed = await createMockFederation({ includeOAuthClient: true });
+			const privateKey = fed.leafProtocolSigningKey;
 			const protocolKeyProvider = new StaticProtocolSigningKeyProvider({
 				requestObjectSigner: new JwkSigner(privateKey),
 			});
@@ -9419,7 +9648,6 @@ export default (QUnit: QUnit) => {
 				},
 			});
 
-			const fed = await createMockFederation({ includeOAuthClient: true });
 			const discovery = await createMockDiscovery(OP_ID, fed);
 
 			const context = {

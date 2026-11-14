@@ -181,8 +181,9 @@ export async function automaticRegistration(
 	}
 
 	const requestObjectSigner = await rpConfig.protocolKeyProvider.getRequestObjectSigner();
+	// The receiver verifies against resolved metadata, including Superior overrides (§3.1.1).
 	const assertSignerResult = assertProtocolSignerPublished(
-		rpConfig.metadata,
+		sharedChains.value.rpChain.resolvedMetadata,
 		requestObjectSigner,
 		"Request Object",
 		profile.clientType,
@@ -371,7 +372,7 @@ export async function automaticRegistration(
 						: requestObjectSigner;
 
 					const assertAssertionSignerResult = assertProtocolSignerPublished(
-						rpConfig.metadata,
+						sharedChains.value.rpChain.resolvedMetadata,
 						clientAssertionSigner,
 						"client assertion",
 						profile.clientType,
