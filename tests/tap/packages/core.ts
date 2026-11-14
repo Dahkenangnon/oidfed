@@ -24452,6 +24452,72 @@ export default (QUnit: QUnit) => {
 		});
 	}
 
+	QUnit.module("Collection extension consistency", () => {
+		const anchor = entityId("https://ta.example");
+		const anchors = new Map([[anchor, { jwks: { keys: [] } }]]);
+		const clock = { now: () => 1500 };
+		const candidate = (name: string): EntityCollectionCandidate => ({
+			entity: EntityCollectionEntitySchema.parse({
+				entity_id: `https://${name}.example`,
+				entity_infos: { openid_provider: { display_name: name } },
+			}),
+			expiresAt: 3000,
+		});
+
+		QUnit.test(
+			"custom collector types are reconciled before filtering and projection",
+			async (assert) => {
+				const first = candidate("first");
+				first.entity.entity_types = ["federation_entity", "federation_entity", "custom"];
+				const second = candidate("second");
+				const third = candidate("third");
+				delete third.entity.entity_infos;
+				const fourth = candidate("fourth");
+				fourth.entity.entity_infos = JSON.parse(
+					'{"__proto__":{"display_name":"Extension"},"constructor":{}}',
+				);
+				const inputs = [first, second, third, fourth];
+				const original = JSON.stringify(inputs);
+				const service = new EntityCollectionService({
+					trustAnchors: anchors,
+					options: { clock },
+					collector: async () => ok(inputs),
+					filter: (entry) => {
+						if (entry.entity.entity_id === first.entity.entity_id)
+							assert.deepEqual(entry.entity.entity_types, [
+								"federation_entity",
+								"custom",
+								"openid_provider",
+							]);
+						return true;
+					},
+				});
+				assert.true((await service.refresh(anchor)).ok);
+				assert.equal(JSON.stringify(inputs), original, "does not mutate application inventory");
+				const result = await service.query({
+					trustAnchor: anchor,
+					entityType: ["openid_provider"],
+					entityClaims: ["entity_id"],
+				});
+				assert.true(result.ok);
+				if (result.ok)
+					assert.deepEqual(result.value.entities, [
+						{ entity_id: first.entity.entity_id },
+						{ entity_id: second.entity.entity_id },
+					]);
+				const snapshot = await service.store.getCurrent(anchor);
+				assert.strictEqual(
+					snapshot?.entries.find((e) => e.entity.entity_id === third.entity.entity_id)?.entity
+						.entity_types,
+					undefined,
+				);
+				const extension = await service.query({ trustAnchor: anchor, entityType: ["__proto__"] });
+				assert.true(extension.ok && extension.value.entities.length === 1);
+				assert.strictEqual(Object.getPrototypeOf({}), Object.prototype);
+			},
+		);
+	});
+
 	{
 		const anchor = entityId("https://ta.example");
 		const candidate = (

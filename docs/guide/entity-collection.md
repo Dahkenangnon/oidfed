@@ -70,6 +70,8 @@ The default collector walks the federation and requires valid chains. You can re
 
 A custom collector returns `Result<readonly EntityCollectionCandidate[]>`. Each candidate contains an `entity` object and a finite `expiresAt` value in seconds since the epoch. Core supplies the snapshot identifier and refresh timestamp, validates the output, sorts by Entity Identifier, and publishes it atomically. Duplicate identifiers, malformed entries, unsupported evidence fields, and candidate sets above `maxEntities` fail refresh and preserve the previous snapshot.
 
+Before storing an inventory, core combines each entry's `entity_types` with the type names in `entity_infos`, removing duplicates. It preserves supplied types and adds any missing known types, even when the collector omitted `entity_types`. This follows [§3.4.1.1](https://openid.net/specs/openid-federation-entity-collection-1_0-01.html#section-3.4.1.1): a published type summary must include every type the responder knows about. The collector's objects are left unchanged. Requesting only `entity_id` still returns only that claim.
+
 For example, an independent application can publish an inventory without collecting trust chains for its entries:
 
 ```ts
@@ -181,7 +183,7 @@ Authorities can supply the store through `storage.collections`, or enable the co
 - Informational fields include organization and display names, descriptions, keywords, contacts, and informational URLs. When `display_name` is missing, the collector uses `client_name` for RP/client types and `resource_name` for resource types. These fallbacks also apply to language variants.
 - Without `locale`, selected claims keep all available languages. With locales, the service uses case-insensitive RFC 4647 basic filtering to keep matching variants and selected untagged values. Claim selection applies before language filtering, so filtering cannot restore an excluded claim.
 
-The built-in collector omits malformed optional informational claims individually and logs their names. It keeps the valid entity and continues traversal. This also applies to display-name fallbacks. Custom collectors remain responsible for supplying valid entries; an invalid custom refresh fails and retains the previous snapshot.
+The built-in collector omits malformed optional informational claims individually and emits a message-only warning. The warning does not identify the entity or claim. It keeps the valid entity and continues traversal. This also applies to display-name fallbacks. Custom collectors remain responsible for supplying valid entries; an invalid custom refresh fails and retains the previous snapshot.
 
 Declare additional claims for custom snapshot producers in the `entityClaims` and `infoClaims` configuration lists. The service checks exact declared names before interpreting language suffixes, including URI names containing `#`. To name a language variant, append `#` and the tag to the complete declared name. Pass the same `infoClaims` declarations in `fetchEntityCollection` options when consuming these names. This gives refresh, projection, and client validation the same interpretation of names such as `display_name#v2` and localized variants such as `description#long#de`. The exported default schemas interpret standard claim names; configured service and client validation also understand the supplied declarations. Response schemas preserve extension fields and custom Entity Type Identifiers. The service and client do not fetch informational URLs automatically.
 

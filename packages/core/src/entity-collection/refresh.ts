@@ -255,6 +255,13 @@ export async function buildCollectionSnapshot(
 			});
 			for (const input of supplied.value) {
 				const candidate = candidateSchema.parse(input);
+				// §3.4.1.1: a published summary includes every type known to the responder.
+				const types = new Set([
+					...(candidate.entity.entity_types ?? []),
+					...Object.keys(input.entity.entity_infos ?? {}),
+				]);
+				if (candidate.entity.entity_types !== undefined || types.size > 0)
+					candidate.entity.entity_types = [...types];
 				// Draft 01 §4 defines BCP 47 suffixes; oidfed rejects malformed declared variants.
 				for (const info of Object.values(candidate.entity.entity_infos ?? {}))
 					for (const name of Object.keys(info))
