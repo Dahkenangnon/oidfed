@@ -47,6 +47,7 @@ import {
 	type ProcessedAutomaticRegistration,
 	processAutomaticRegistration,
 } from "./registration/process-automatic.js";
+import { registrationProfile } from "./registration/profile.js";
 import {
 	effectiveRoleSchemas,
 	OAuthResourceDocumentMetadataSchema,
@@ -73,7 +74,7 @@ export interface CreateAuthorizationRequestOptions extends FederationOptions {
 	readonly trustAnchors?: TrustAnchorSet;
 }
 
-export class OidcRelyingPartyRole implements EntityRole {
+abstract class ClientRole implements EntityRole {
 	static assessEntity = assessProtocolEntity;
 	assessEntity(
 		target: string,
@@ -88,16 +89,14 @@ export class OidcRelyingPartyRole implements EntityRole {
 		);
 	}
 
-	static parseMetadata(metadata: unknown) {
-		return effectiveRoleSchemas.openid_relying_party.safeParse(metadata);
-	}
-	static parsePublicationMetadata(metadata: unknown) {
-		return publicationRoleSchemas.openid_relying_party.safeParse(metadata);
-	}
-
 	static createClientAssertion = createClientAssertion;
 
-	public readonly type = "openid_relying_party";
+	abstract readonly type: "openid_relying_party" | "oauth_client";
+	private get profile() {
+		return registrationProfile(
+			this.type === "oauth_client" ? "oauth_authorization_server" : "openid_provider",
+		);
+	}
 	public readonly metadata: Record<string, unknown>;
 	private context?: EntityContext;
 	private composedMetadata?: Record<string, unknown>;
@@ -131,9 +130,9 @@ export class OidcRelyingPartyRole implements EntityRole {
 		});
 	}
 
-	async automaticallyRegister(
+	protected async registerAutomatically(
 		params: {
-			readonly opEntityId: string;
+			readonly serverEntityId: string;
 			readonly redirect_uri: string;
 			readonly scope?: string;
 			readonly state?: string;
@@ -153,11 +152,11 @@ export class OidcRelyingPartyRole implements EntityRole {
 		if (!trustAnchors) {
 			throw new Error("No trustAnchors configured. Set them in config, options, or context.");
 		}
-		const opEntityId = params.opEntityId as EntityId;
+		const opEntityId = params.serverEntityId as EntityId;
 		const discoveryResult = await discoverEntity(
 			opEntityId,
 			trustAnchors,
-			protocolDiscoveryOptions("openid_provider", opEntityId, {
+			protocolDiscoveryOptions(this.profile.providerType, opEntityId, {
 				...this.context.options,
 				...this.config.options,
 				...options,
@@ -218,6 +217,7 @@ export class OidcRelyingPartyRole implements EntityRole {
 			trustAnchors,
 			{ ...this.context.options, ...this.config.options, ...options },
 			"resolved",
+			this.profile,
 		);
 	}
 
@@ -238,7 +238,7 @@ export class OidcRelyingPartyRole implements EntityRole {
 		const discoveryResult = await discoverEntity(
 			opEntityId as EntityId,
 			trustAnchors,
-			protocolDiscoveryOptions("openid_provider", opEntityId, {
+			protocolDiscoveryOptions(this.profile.providerType, opEntityId, {
 				...this.context.options,
 				...this.config.options,
 				...options,
@@ -272,6 +272,7 @@ export class OidcRelyingPartyRole implements EntityRole {
 				...options,
 			},
 			"resolved",
+			this.profile,
 		);
 	}
 
@@ -323,7 +324,33 @@ export class OidcRelyingPartyRole implements EntityRole {
 			authzRequestParams,
 			options?.trustAnchors ?? trustAnchors,
 			{ ...this.context.options, ...this.config.options, ...options },
+			"supplied",
+			this.profile,
 		);
+	}
+}
+
+export class OidcRelyingPartyRole extends ClientRole {
+	readonly type = "openid_relying_party";
+	static parseMetadata(metadata: unknown) {
+		return effectiveRoleSchemas.openid_relying_party.safeParse(metadata);
+	}
+	static parsePublicationMetadata(metadata: unknown) {
+		return publicationRoleSchemas.openid_relying_party.safeParse(metadata);
+	}
+	automaticallyRegister(
+		params: {
+			readonly opEntityId: string;
+			readonly redirect_uri: string;
+			readonly scope?: string;
+			readonly state?: string;
+			readonly nonce?: string;
+			readonly requestDelivery?: RequestDelivery;
+			readonly requestUri?: string;
+		},
+		options?: CreateAuthorizationRequestOptions,
+	): Promise<Result<AutomaticRegistrationResult>> {
+		return this.registerAutomatically({ ...params, serverEntityId: params.opEntityId }, options);
 	}
 }
 
@@ -347,7 +374,7 @@ export interface OidcProviderRoleConfig extends RegistrationAccreditationPolicy 
 	) => Promise<void>;
 }
 
-export class OidcProviderRole implements EntityRole {
+abstract class ProviderRole implements EntityRole {
 	static assessEntity = assessProtocolEntity;
 	assessEntity(
 		target: string,
@@ -362,14 +389,7 @@ export class OidcProviderRole implements EntityRole {
 		);
 	}
 
-	static parseMetadata(metadata: unknown) {
-		return effectiveRoleSchemas.openid_provider.safeParse(metadata);
-	}
-	static parsePublicationMetadata(metadata: unknown) {
-		return publicationRoleSchemas.openid_provider.safeParse(metadata);
-	}
-
-	public readonly type = "openid_provider";
+	abstract readonly type: "openid_provider" | "oauth_authorization_server";
 	public readonly metadata: Record<string, unknown> = {};
 	public readonly routes = new Map<string, (request: Request) => Promise<Response>>();
 	private context?: EntityContext;
@@ -440,7 +460,10 @@ export class OidcProviderRole implements EntityRole {
 
 	async processAutomaticRegistration(
 		requestObjectJwt: string,
-		options?: Omit<ProcessAutomaticRegistrationOptions, "opEntityId" | "replayStore">,
+		options?: Omit<
+			ProcessAutomaticRegistrationOptions,
+			"opEntityId" | "replayStore" | "providerMetadataType"
+		>,
 	): Promise<Result<ProcessedAutomaticRegistration, FederationError>> {
 		if (!this.context) {
 			throw new Error("Provider role is not initialized.");
@@ -463,6 +486,7 @@ export class OidcProviderRole implements EntityRole {
 				: {}),
 			opEntityId: this.context.entityId as EntityId,
 			replayStore,
+			providerMetadataType: this.type,
 		});
 
 		if (!result.ok) return result;
@@ -518,197 +542,52 @@ export class OidcProviderRole implements EntityRole {
 	}
 }
 
-export interface OAuthClientRoleConfig {
-	readonly trustAnchors?: TrustAnchorSet;
-	readonly options?: FederationOptions;
-	readonly protocolKeyProvider: ProtocolSigningKeyProvider;
-	readonly metadata?: Record<string, unknown>;
-	readonly requestObjectTtlSeconds?: number;
-	readonly includePeerTrustChain?: boolean;
-	readonly requestDelivery?: RequestDelivery;
-	readonly requestUri?: string;
+export class OidcProviderRole extends ProviderRole {
+	readonly type = "openid_provider";
+	static parseMetadata(metadata: unknown) {
+		return effectiveRoleSchemas.openid_provider.safeParse(metadata);
+	}
+	static parsePublicationMetadata(metadata: unknown) {
+		return publicationRoleSchemas.openid_provider.safeParse(metadata);
+	}
 }
 
-export class OAuthClientRole implements EntityRole {
-	static assessEntity = assessProtocolEntity;
-	assessEntity(
-		target: string,
-		type: ProtocolEntityType,
-		options: EntityAssessmentOptions & { trustAnchors?: TrustAnchorSet } = {},
-	) {
-		return assessProtocolEntity(
-			target,
-			type,
-			options.trustAnchors ?? this.config.trustAnchors ?? this.context?.trustAnchors ?? new Map(),
-			{ ...this.context?.options, ...this.config.options, ...options },
-		);
-	}
-
+export type OAuthClientRoleConfig = OidcRelyingPartyRoleConfig;
+export class OAuthClientRole extends ClientRole {
+	readonly type = "oauth_client";
 	static parseMetadata(metadata: unknown) {
 		return effectiveRoleSchemas.oauth_client.safeParse(metadata);
 	}
 	static parsePublicationMetadata(metadata: unknown) {
 		return publicationRoleSchemas.oauth_client.safeParse(metadata);
 	}
-
-	static createClientAssertion = createClientAssertion;
-
-	public readonly type = "oauth_client";
-	public readonly metadata: Record<string, unknown>;
-	private context?: EntityContext;
-	private composedMetadata?: Record<string, unknown>;
-
-	constructor(public readonly config: OAuthClientRoleConfig) {
-		this.metadata = config.metadata ?? {};
-	}
-
-	validateMetadata(metadata: Readonly<Record<string, unknown>>): void {
-		assertPublicationMetadata(this.type, metadata);
-		this.composedMetadata = structuredClone(metadata);
-	}
-
-	initialize(context: EntityContext): void {
-		assertRoleOwner(this.context, context);
-		this.context = context;
-	}
-
-	async createAuthorizationRequest(
-		discovery: DiscoveryResult,
-		authzRequestParams: Record<string, string>,
-		trustAnchors: TrustAnchorSet,
-		options?: FederationOptions,
+	automaticallyRegister(
+		params: {
+			readonly authorizationServerEntityId: string;
+			readonly redirect_uri: string;
+			readonly scope?: string;
+			readonly state?: string;
+			readonly nonce?: string;
+			readonly requestDelivery?: RequestDelivery;
+			readonly requestUri?: string;
+		},
+		options?: CreateAuthorizationRequestOptions,
 	): Promise<Result<AutomaticRegistrationResult>> {
-		if (!this.context) {
-			throw new Error(
-				"Role has not been initialized. Ensure it is passed to an Entity constructor.",
-			);
-		}
-		const rpConfig = {
-			entityId: this.context.entityId as EntityId,
-			protocolKeyProvider: this.config.protocolKeyProvider,
-			authorityHints: (this.context.authorityHints ?? []) as readonly [EntityId, ...EntityId[]],
-			metadata: {
-				[this.type]: this.composedMetadata ?? this.metadata,
-			},
-			...(this.config.requestObjectTtlSeconds !== undefined
-				? { requestObjectTtlSeconds: this.config.requestObjectTtlSeconds }
-				: {}),
-			...(this.config.includePeerTrustChain !== undefined
-				? { includePeerTrustChain: this.config.includePeerTrustChain }
-				: {}),
-			...(this.config.requestDelivery !== undefined
-				? { requestDelivery: this.config.requestDelivery }
-				: {}),
-			...(this.config.requestUri !== undefined ? { requestUri: this.config.requestUri } : {}),
-		};
-		return automaticRegistration(discovery, rpConfig, authzRequestParams, trustAnchors, {
-			...this.context.options,
-			...this.config.options,
-			...options,
-		});
-	}
-}
-
-export interface OAuthAuthorizationServerRoleConfig extends RegistrationAccreditationPolicy {
-	/** Opt in to adapter-issued read-only registration access; the host enforces token permissions. Default disabled. */
-	readonly registrationManagement?: ExplicitRegistrationHandlerConfig["registrationManagement"];
-	readonly options?: FederationOptions;
-	readonly registrationPath?: string;
-	readonly metadata?: Record<string, unknown>;
-	readonly trustAnchors?: TrustAnchorSet;
-	readonly registrationResponseTtlSeconds?: number;
-	readonly registrationProtocolAdapter?: RegistrationProtocolAdapter;
-	readonly generateClientSecret?: (sub: EntityId) => Promise<string | undefined>;
-	/** Late pre-commit hook called after validation and response preparation. */
-	readonly onRegistrationInvalidation?: (sub: EntityId) => Promise<void>;
-}
-
-export class OAuthAuthorizationServerRole implements EntityRole {
-	static assessEntity = assessProtocolEntity;
-	assessEntity(
-		target: string,
-		type: ProtocolEntityType,
-		options: EntityAssessmentOptions & { trustAnchors?: TrustAnchorSet } = {},
-	) {
-		return assessProtocolEntity(
-			target,
-			type,
-			options.trustAnchors ?? this.config.trustAnchors ?? this.context?.trustAnchors ?? new Map(),
-			{ ...this.context?.options, ...this.config.options, ...options },
+		return this.registerAutomatically(
+			{ ...params, serverEntityId: params.authorizationServerEntityId },
+			options,
 		);
 	}
+}
 
+export type OAuthAuthorizationServerRoleConfig = OidcProviderRoleConfig;
+export class OAuthAuthorizationServerRole extends ProviderRole {
+	readonly type = "oauth_authorization_server";
 	static parseMetadata(metadata: unknown) {
 		return effectiveRoleSchemas.oauth_authorization_server.safeParse(metadata);
 	}
 	static parsePublicationMetadata(metadata: unknown) {
 		return publicationRoleSchemas.oauth_authorization_server.safeParse(metadata);
-	}
-
-	public readonly type = "oauth_authorization_server";
-	public readonly metadata: Record<string, unknown> = {};
-	public readonly routes = new Map<string, (request: Request) => Promise<Response>>();
-	private context?: EntityContext;
-
-	constructor(public readonly config: OAuthAuthorizationServerRoleConfig) {
-		this.metadata = config.metadata ?? {};
-	}
-
-	validateMetadata(metadata: Readonly<Record<string, unknown>>): void {
-		// Federation §12.2 requires both the endpoint and its explicit capability.
-		const methods = metadata.client_registration_types_supported;
-		if (
-			!Array.isArray(methods) ||
-			!methods.every((method) => typeof method === "string") ||
-			!methods.includes("explicit")
-		)
-			throw new TypeError(
-				"An installed registration endpoint requires client_registration_types_supported to include explicit",
-			);
-		assertPublicationMetadata(this.type, metadata);
-	}
-
-	initialize(context: EntityContext): void {
-		assertRoleOwner(this.context, context);
-		this.context = context;
-		const registrationPath = this.config.registrationPath ?? "/registration";
-		const registrationUrl = new URL(registrationPath, context.entityId).toString();
-		const trustAnchors = assertNonEmptyTrustAnchors(
-			this.config.trustAnchors ?? context.trustAnchors,
-		);
-
-		this.metadata.federation_registration_endpoint = registrationUrl;
-
-		const handler = createExplicitRegistrationHandler({
-			opEntityId: context.entityId as EntityId,
-			...(this.config.trustMarkRequirements
-				? { trustMarkRequirements: structuredClone(this.config.trustMarkRequirements) }
-				: {}),
-			...(this.config.beforeRegistration
-				? { beforeRegistration: this.config.beforeRegistration }
-				: {}),
-			providerMetadataType: this.type,
-			...(this.config.registrationManagement !== undefined
-				? { registrationManagement: this.config.registrationManagement }
-				: {}),
-			keyProvider: context.keyProvider,
-			trustAnchors,
-			...(this.config.registrationResponseTtlSeconds !== undefined
-				? { registrationResponseTtlSeconds: this.config.registrationResponseTtlSeconds }
-				: {}),
-			...(this.config.registrationProtocolAdapter !== undefined
-				? { registrationProtocolAdapter: this.config.registrationProtocolAdapter }
-				: {}),
-			...(this.config.generateClientSecret !== undefined
-				? { generateClientSecret: this.config.generateClientSecret }
-				: {}),
-			...(this.config.onRegistrationInvalidation !== undefined
-				? { onRegistrationInvalidation: this.config.onRegistrationInvalidation }
-				: {}),
-			options: { ...context.options, ...this.config.options },
-		});
-
-		this.routes.set(registrationPath, handler);
 	}
 }
 

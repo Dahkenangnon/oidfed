@@ -22,6 +22,7 @@ import { createClientAssertion } from "../client-auth/assertion.js";
 import { ClientRegistrationType, RequestObjectTyp } from "../constants.js";
 import type { ProtocolSigningKeyProvider } from "../protocol-keys.js";
 import { getRegistrationTypes, selectSharedRegistrationTrustChains } from "./helpers.js";
+import { oidcRegistrationProfile, type RegistrationProfile } from "./profile.js";
 
 const CLIENT_ASSERTION_TYPE = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
 
@@ -130,9 +131,10 @@ export async function automaticRegistration(
 	trustAnchors: TrustAnchorSet,
 	options?: FederationOptions,
 	providerDiscovery: "supplied" | "resolved" = "supplied",
+	profile: RegistrationProfile = oidcRegistrationProfile,
 ): Promise<Result<AutomaticRegistrationResult>> {
 	safeLogger(options?.logger)?.debug("Creating an Automatic Client Registration Request");
-	if (!rpConfig.metadata.openid_relying_party && !rpConfig.metadata.oauth_client)
+	if (!rpConfig.metadata[profile.clientType])
 		return err(
 			federationError(
 				FederationErrorCode.InvalidMetadata,
@@ -148,15 +150,12 @@ export async function automaticRegistration(
 		options,
 		{
 			allowAlternativeProvider: providerDiscovery === "resolved",
-			clientType:
-				rpConfig.metadata.openid_relying_party !== undefined
-					? "openid_relying_party"
-					: "oauth_client",
+			profile,
 		},
 	);
 	if (!sharedChains.ok) return err(sharedChains.error);
 
-	const opMeta = sharedChains.value.opChain.resolvedMetadata.openid_provider as
+	const opMeta = sharedChains.value.opChain.resolvedMetadata[profile.providerType] as
 		| Record<string, unknown>
 		| undefined;
 	const registrationTypes = getRegistrationTypes(opMeta);
@@ -176,16 +175,17 @@ export async function automaticRegistration(
 		return err(
 			federationError(
 				FederationErrorCode.InvalidMetadata,
-				"OP has no authorization_endpoint in openid_provider metadata",
+				`OP has no authorization_endpoint in ${profile.providerType} metadata`,
 			),
 		);
 	}
 
 	const requestObjectSigner = await rpConfig.protocolKeyProvider.getRequestObjectSigner();
-	const assertSignerResult = assertOidcSignerPublished(
+	const assertSignerResult = assertProtocolSignerPublished(
 		rpConfig.metadata,
 		requestObjectSigner,
 		"Request Object",
+		profile.clientType,
 	);
 	if (!assertSignerResult.ok) {
 		return assertSignerResult;
@@ -267,7 +267,7 @@ export async function automaticRegistration(
 	// OIDC Core §§6.1–6.2 require these outer parameters; RFC 9101 §5
 	// permits matching duplicates. Copy the signed values to prevent divergence.
 	const oidcParams: Record<string, string> = {};
-	if (rpConfig.metadata.openid_relying_party !== undefined) {
+	if (profile.oidc) {
 		for (const name of ["scope", "response_type"]) {
 			const value = payload[name];
 			if (typeof value === "string") oidcParams[name] = value;
@@ -349,15 +349,13 @@ export async function automaticRegistration(
 				return err(
 					federationError(
 						FederationErrorCode.InvalidRequest,
-						"requestDelivery 'par' requires the OP to advertise pushed_authorization_request_endpoint in its openid_provider metadata",
+						`requestDelivery 'par' requires the OP to advertise pushed_authorization_request_endpoint in its ${profile.providerType} metadata`,
 					),
 				);
 			}
 			const httpClient = options?.httpClient ?? fetch;
 			// Use the calling role's metadata even when the entity hosts both client types.
-			const clientType = rpConfig.metadata.openid_relying_party
-				? "openid_relying_party"
-				: "oauth_client";
+			const clientType = profile.clientType;
 			const authMethod = parJwtAuthentication(
 				sharedChains.value.rpChain.resolvedMetadata[clientType] ?? {},
 				opMeta ?? {},
@@ -372,10 +370,11 @@ export async function automaticRegistration(
 						? await rpConfig.protocolKeyProvider.getClientAssertionSigner()
 						: requestObjectSigner;
 
-					const assertAssertionSignerResult = assertOidcSignerPublished(
+					const assertAssertionSignerResult = assertProtocolSignerPublished(
 						rpConfig.metadata,
 						clientAssertionSigner,
 						"client assertion",
+						profile.clientType,
 					);
 					if (!assertAssertionSignerResult.ok) {
 						safeLogger(options?.logger)?.warn(
@@ -508,12 +507,12 @@ function parJwtAuthentication(
 	return ok(rpSupports && Array.isArray(opMethods) && opMethods.includes("private_key_jwt"));
 }
 
-function assertOidcSignerPublished(
+function assertProtocolSignerPublished(
 	metadata: Record<string, Record<string, unknown>>,
 	signer: JwtSigner,
 	purpose: string,
+	type: RegistrationProfile["clientType"],
 ): Result<void> {
-	const type = metadata.openid_relying_party ? "openid_relying_party" : "oauth_client";
 	const rpMetadata = metadata[type];
 	if (!rpMetadata) {
 		return err(

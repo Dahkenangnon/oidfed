@@ -24,8 +24,6 @@ import {
 	verifyEntityStatement,
 } from "@oidfed/core";
 import { effectiveMetadata } from "../metadata.js";
-import { ExplicitRegistrationRequestPayloadSchema } from "../schemas/explicit-registration.js";
-import { OpenIDRelyingPartyMetadataSchema } from "../schemas/metadata.js";
 import {
 	checkRegistrationAccreditation,
 	type RegistrationAccreditationPolicy,
@@ -36,6 +34,7 @@ import {
 	validateSuppliedTrustChain,
 } from "./helpers.js";
 import type { ProcessedRegistration } from "./process-automatic.js";
+import { registrationProfile } from "./profile.js";
 
 export interface ProcessedExplicitRegistration extends ProcessedRegistration {
 	readonly requestPayload: Record<string, unknown>;
@@ -67,6 +66,7 @@ export async function processExplicitRegistration(
 	trustAnchors: TrustAnchorSet | undefined,
 	options: ProcessExplicitRegistrationOptions,
 ): Promise<Result<ProcessedExplicitRegistration, FederationError>> {
+	const profile = registrationProfile(options.providerMetadataType);
 	safeLogger(options?.logger)?.debug("Validating an Explicit Client Registration Request");
 
 	const trustAnchorsResult = requireNonEmptyTrustAnchors(trustAnchors);
@@ -175,21 +175,21 @@ export async function processExplicitRegistration(
 		);
 	}
 
-	// metadata containing openid_relying_party is REQUIRED
+	// The selected profile's client metadata is REQUIRED.
 	const metadata = payload.metadata as Record<string, unknown> | undefined;
-	if (!metadata || typeof metadata !== "object" || !metadata.openid_relying_party) {
+	if (!metadata || typeof metadata !== "object" || !metadata[profile.clientType]) {
 		safeLogger(options?.logger)?.warn(
-			"Explicit Client Registration Request MUST contain metadata.openid_relying_party",
+			`Explicit Client Registration Request MUST contain metadata.${profile.clientType}`,
 		);
 		return err(
 			federationError(
 				FederationErrorCode.InvalidRequest,
-				"RP EC MUST contain 'metadata' with 'openid_relying_party'",
+				`Client EC MUST contain metadata.${profile.clientType}`,
 			),
 		);
 	}
 
-	const requestShape = ExplicitRegistrationRequestPayloadSchema.safeParse(payload);
+	const requestShape = profile.request.safeParse(payload);
 	if (!requestShape.success) {
 		safeLogger(options?.logger)?.warn(
 			"Explicit Client Registration Request payload has invalid claims",
@@ -318,13 +318,12 @@ export async function processExplicitRegistration(
 		if (validation.valid) {
 			const metadata = validation.chain.resolvedMetadata;
 			if (
-				!OpenIDRelyingPartyMetadataSchema.safeParse(metadata.openid_relying_party).success ||
+				!profile.clientSchema.safeParse(metadata[profile.clientType]).success ||
 				Object.keys(metadata).length !== Object.keys(payload.metadata as object).length ||
 				Object.keys(payload.metadata as object).some((type) => !Object.hasOwn(metadata, type))
 			) {
 				failureCode = FederationErrorCode.InvalidMetadata;
-				reason =
-					"Resolved metadata must retain the requested entity types and comply with the OpenID Connect Relying Party metadata schema";
+				reason = `Resolved metadata must retain the requested entity types and comply with the ${profile.clientType} metadata schema`;
 				continue;
 			}
 			validChains.push(validation.chain);
@@ -351,7 +350,7 @@ export async function processExplicitRegistration(
 	const selection = selectTrustChain(validChains, options, shortestChain);
 	if (!selection.ok) return selection;
 	const bestChain = selection.value;
-	const resolvedRpMetadata = bestChain.resolvedMetadata.openid_relying_party;
+	const resolvedRpMetadata = bestChain.resolvedMetadata[profile.clientType];
 	let peerResolvedOpMetadata: Readonly<Record<string, unknown>> | undefined;
 	if (header.peer_trust_chain !== undefined) {
 		const peer = await validateSuppliedTrustChain(
@@ -376,8 +375,8 @@ export async function processExplicitRegistration(
 			);
 		}
 		const peerMetadata = effectiveMetadata(
-			options.providerMetadataType ?? "openid_provider",
-			peer.value.resolvedMetadata[options.providerMetadataType ?? "openid_provider"],
+			profile.providerType,
+			peer.value.resolvedMetadata[profile.providerType],
 			options.opEntityId,
 		);
 		if (!peerMetadata.ok) return peerMetadata;

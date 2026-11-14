@@ -32,12 +32,9 @@ import {
 	OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE,
 } from "../constants.js";
 import { registrationResponseChoices } from "../metadata.js";
-import {
-	OpenIDRelyingPartyMetadataSchema,
-	OpenIDRelyingPartyRegistrationResponseMetadataSchema,
-} from "../schemas/metadata.js";
 import { getRegistrationTypes, selectSharedRegistrationTrustChains } from "./helpers.js";
 import { validateRegistrationMetadataPolicy } from "./metadata-policy.js";
+import { oidcRegistrationProfile, type RegistrationProfile } from "./profile.js";
 
 export interface ExplicitRegistrationConfig {
 	readonly entityId: EntityId;
@@ -77,6 +74,7 @@ export async function explicitRegistration(
 	trustAnchors: TrustAnchorSet,
 	options?: FederationOptions,
 	providerDiscovery: "supplied" | "resolved" = "supplied",
+	profile: RegistrationProfile = oidcRegistrationProfile,
 ): Promise<Result<ExplicitRegistrationResult>> {
 	safeLogger(options?.logger)?.debug("Creating an Explicit Client Registration Request");
 
@@ -119,7 +117,7 @@ export async function explicitRegistration(
 				const resolved = validation.chain.resolvedMetadata;
 				if (
 					!rpConfig.authorityHints.some((hint) => String(hint) === String(superior)) ||
-					!OpenIDRelyingPartyMetadataSchema.safeParse(resolved.openid_relying_party).success ||
+					!profile.clientSchema.safeParse(resolved[profile.clientType]).success ||
 					Object.keys(resolved).length !== Object.keys(rpConfig.metadata).length ||
 					!Object.keys(rpConfig.metadata).every((type) => Object.hasOwn(resolved, type))
 				) {
@@ -136,11 +134,12 @@ export async function explicitRegistration(
 				return validation;
 			},
 			allowAlternativeProvider: providerDiscovery === "resolved",
+			profile,
 		},
 	);
 	if (!sharedChains.ok) return err(sharedChains.error);
 
-	const opMeta = sharedChains.value.opChain.resolvedMetadata.openid_provider as
+	const opMeta = sharedChains.value.opChain.resolvedMetadata[profile.providerType] as
 		| Record<string, unknown>
 		| undefined;
 	const registrationTypes = getRegistrationTypes(opMeta);
@@ -160,7 +159,7 @@ export async function explicitRegistration(
 		return err(
 			federationError(
 				FederationErrorCode.InvalidMetadata,
-				"OP has no federation_registration_endpoint in openid_provider metadata",
+				`OP has no federation_registration_endpoint in ${profile.providerType} metadata`,
 			),
 		);
 	}
@@ -546,66 +545,65 @@ export async function explicitRegistration(
 
 	if (responsePayload.client_secret !== undefined) {
 		safeLogger(options?.logger)?.warn(
-			"Explicit Client Registration response client_secret MUST be under metadata.openid_relying_party",
+			`Explicit Client Registration response client_secret MUST be under metadata.${profile.clientType}`,
 		);
 		return err(
 			federationError(
 				FederationErrorCode.InvalidMetadata,
-				"Registration response client_secret MUST be under metadata.openid_relying_party",
+				`Registration response client_secret MUST be under metadata.${profile.clientType}`,
 			),
 		);
 	}
 
-	const registeredMetadata = responseMeta.openid_relying_party;
+	const registeredMetadata = responseMeta[profile.clientType];
 	if (
 		!registeredMetadata ||
 		typeof registeredMetadata !== "object" ||
 		Array.isArray(registeredMetadata)
 	) {
 		safeLogger(options?.logger)?.warn(
-			"Explicit Client Registration response metadata MUST contain openid_relying_party",
+			`Explicit Client Registration response metadata MUST contain ${profile.clientType}`,
 		);
 		return err(
 			federationError(
 				FederationErrorCode.InvalidMetadata,
-				"Registration response metadata MUST contain openid_relying_party",
+				`Registration response metadata MUST contain ${profile.clientType}`,
 			),
 		);
 	}
 
-	const registeredMetadataResult =
-		OpenIDRelyingPartyRegistrationResponseMetadataSchema.safeParse(registeredMetadata);
+	const registeredMetadataResult = profile.responseMetadataSchema.safeParse(registeredMetadata);
 	if (!registeredMetadataResult.success) {
 		const issuePaths = registeredMetadataResult.error.issues.map((issue) => issue.path.join("."));
 		if (issuePaths.some((path) => path === "client_id")) {
 			safeLogger(options?.logger)?.warn(
-				"Explicit Client Registration response metadata.openid_relying_party.client_id is required",
+				`Explicit Client Registration response metadata.${profile.clientType}.client_id is required`,
 			);
 			return err(
 				federationError(
 					FederationErrorCode.InvalidMetadata,
-					"Registration response metadata.openid_relying_party.client_id is required",
+					`Registration response metadata.${profile.clientType}.client_id is required`,
 				),
 			);
 		}
 		if (issuePaths.some((path) => path === "client_secret")) {
 			safeLogger(options?.logger)?.warn(
-				"Explicit Client Registration response metadata.openid_relying_party.client_secret MUST be a string",
+				`Explicit Client Registration response metadata.${profile.clientType}.client_secret MUST be a string`,
 			);
 			return err(
 				federationError(
 					FederationErrorCode.InvalidMetadata,
-					"Registration response metadata.openid_relying_party.client_secret MUST be a string",
+					`Registration response metadata.${profile.clientType}.client_secret MUST be a string`,
 				),
 			);
 		}
 		safeLogger(options?.logger)?.warn(
-			"Explicit Client Registration response metadata.openid_relying_party is invalid",
+			`Explicit Client Registration response metadata.${profile.clientType} is invalid`,
 		);
 		return err(
 			federationError(
 				FederationErrorCode.InvalidMetadata,
-				"Registration response metadata.openid_relying_party is invalid",
+				`Registration response metadata.${profile.clientType} is invalid`,
 			),
 		);
 	}
@@ -643,10 +641,12 @@ export async function explicitRegistration(
 	}
 
 	// RP must not use the registration past trust chain expiry
-	const choiceCheck = registrationResponseChoices(
-		registeredMetadata,
-		sharedChains.value.rpChain.resolvedMetadata.openid_relying_party ?? {},
-	);
+	const choiceCheck = profile.oidc
+		? registrationResponseChoices(
+				registeredMetadata,
+				sharedChains.value.rpChain.resolvedMetadata[profile.clientType] ?? {},
+			)
+		: ok(undefined);
 	if (!choiceCheck.ok) return choiceCheck;
 	const policyCheck = validateRegistrationMetadataPolicy(
 		responseMeta,

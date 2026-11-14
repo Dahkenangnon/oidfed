@@ -24,12 +24,12 @@ import {
 	OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE,
 } from "../constants.js";
 import { registrationResponseChoices, withoutRegistrationChoices } from "../metadata.js";
-import { ExplicitRegistrationResponsePayloadSchema } from "../schemas/explicit-registration.js";
 import type { RegistrationAccreditationPolicy } from "./accreditation.js";
 import type { RegistrationProtocolAdapter } from "./adapter-types.js";
 import { assertNonEmptyTrustAnchors } from "./helpers.js";
 import { validateRegistrationMetadataPolicy } from "./metadata-policy.js";
 import { processExplicitRegistration } from "./process-explicit.js";
+import { registrationProfile } from "./profile.js";
 
 /** OIDC default values applied when the RP omits standard fields. */
 const OIDC_METADATA_DEFAULTS: Record<string, unknown> = {
@@ -81,6 +81,7 @@ export interface ExplicitRegistrationHandlerConfig extends RegistrationAccredita
 export function createExplicitRegistrationHandler(
 	config: ExplicitRegistrationHandlerConfig,
 ): (request: Request) => Promise<Response> {
+	const profile = registrationProfile(config.providerMetadataType);
 	const trustAnchors = assertNonEmptyTrustAnchors(config.trustAnchors);
 	const registrationManagement = config.registrationManagement ?? "disabled";
 	if (registrationManagement !== "disabled" && registrationManagement !== "read-only")
@@ -202,7 +203,7 @@ export function createExplicitRegistrationHandler(
 		const metadataForResponse = validatedMetadata ?? bestChain.resolvedMetadata;
 		if (metadataForResponse) {
 			const responseMetadata = structuredClone(metadataForResponse) as Record<string, unknown>;
-			const sourceRpMeta = (responseMetadata.openid_relying_party ?? {}) as Record<string, unknown>;
+			const sourceRpMeta = (responseMetadata[profile.clientType] ?? {}) as Record<string, unknown>;
 			let rpMeta: Record<string, unknown>;
 			if (config.registrationProtocolAdapter && bestChain) {
 				try {
@@ -229,7 +230,7 @@ export function createExplicitRegistrationHandler(
 				if (!(key in rpMeta)) {
 					const candidate = {
 						...responseMetadata,
-						openid_relying_party: { ...rpMeta, [key]: defaultValue },
+						[profile.clientType]: { ...rpMeta, [key]: defaultValue },
 					} as Record<string, Record<string, unknown>>;
 					// Defaults are recommended (§12.2.3); federation policy can
 					// require their omission or a different value (§6.1.3.1.1).
@@ -239,11 +240,11 @@ export function createExplicitRegistrationHandler(
 				}
 			}
 
-			responseMetadata.openid_relying_party = rpMeta;
+			responseMetadata[profile.clientType] = rpMeta;
 			responsePayload.metadata = responseMetadata;
 		} else {
 			responsePayload.metadata = {
-				openid_relying_party: {
+				[profile.clientType]: {
 					client_id: reqPayload.sub,
 					...OIDC_METADATA_DEFAULTS,
 				},
@@ -252,18 +253,21 @@ export function createExplicitRegistrationHandler(
 
 		const outputMetadata = responsePayload.metadata as Record<string, Record<string, unknown>>;
 		if (registrationManagement === "disabled")
-			outputMetadata.openid_relying_party = stripRegistrationManagementFields(
-				outputMetadata.openid_relying_party ?? {},
+			outputMetadata[profile.clientType] = stripRegistrationManagementFields(
+				outputMetadata[profile.clientType] ?? {},
 			);
-		const choiceCheck = registrationResponseChoices(
-			outputMetadata.openid_relying_party ?? {},
-			bestChain.resolvedMetadata.openid_relying_party ?? {},
-		);
+		const choiceCheck = profile.oidc
+			? registrationResponseChoices(
+					outputMetadata[profile.clientType] ?? {},
+					bestChain.resolvedMetadata[profile.clientType] ?? {},
+				)
+			: { ok: true as const };
 		if (!choiceCheck.ok)
 			return errorResponse(400, choiceCheck.error.code, choiceCheck.error.description);
-		outputMetadata.openid_relying_party = withoutRegistrationChoices(
-			outputMetadata.openid_relying_party ?? {},
-		);
+		if (profile.oidc)
+			outputMetadata[profile.clientType] = withoutRegistrationChoices(
+				outputMetadata[profile.clientType] ?? {},
+			);
 		const policyCheck = validateRegistrationMetadataPolicy(
 			responsePayload.metadata as Record<string, Record<string, unknown>>,
 			policyChain,
@@ -271,7 +275,7 @@ export function createExplicitRegistrationHandler(
 		);
 		if (!policyCheck.ok)
 			return errorResponse(400, policyCheck.error.code, policyCheck.error.description);
-		const preparedResponse = ExplicitRegistrationResponsePayloadSchema.safeParse(responsePayload);
+		const preparedResponse = profile.response.safeParse(responsePayload);
 		if (!preparedResponse.success) {
 			return errorResponse(
 				500,
@@ -292,13 +296,13 @@ export function createExplicitRegistrationHandler(
 			}
 			if (clientSecret) {
 				const metadataRecord = responsePayload.metadata as Record<string, unknown>;
-				const rpMeta = (metadataRecord.openid_relying_party ?? {}) as Record<string, unknown>;
+				const rpMeta = (metadataRecord[profile.clientType] ?? {}) as Record<string, unknown>;
 				rpMeta.client_secret = clientSecret;
-				metadataRecord.openid_relying_party = rpMeta;
+				metadataRecord[profile.clientType] = rpMeta;
 				responsePayload.metadata = metadataRecord;
 			}
 		}
-		const responseValidation = ExplicitRegistrationResponsePayloadSchema.safeParse(responsePayload);
+		const responseValidation = profile.response.safeParse(responsePayload);
 		if (!responseValidation.success) {
 			return errorResponse(
 				500,
@@ -332,7 +336,7 @@ export function createExplicitRegistrationHandler(
 
 		if (config.onRegistration) {
 			const metadataRecord = responsePayload.metadata as Record<string, unknown>;
-			const clientMetadata = (metadataRecord?.openid_relying_party ?? {}) as Record<
+			const clientMetadata = (metadataRecord?.[profile.clientType] ?? {}) as Record<
 				string,
 				unknown
 			>;

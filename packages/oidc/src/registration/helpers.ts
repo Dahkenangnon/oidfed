@@ -18,6 +18,7 @@ import {
 	validateTrustChain,
 } from "@oidfed/core";
 import { effectiveMetadata } from "../metadata.js";
+import { oidcRegistrationProfile, type RegistrationProfile } from "./profile.js";
 
 /** Extracts `client_registration_types_supported` from OP metadata. */
 export function getRegistrationTypes(opMeta: Record<string, unknown> | undefined): string[] {
@@ -157,7 +158,7 @@ async function resolveValidRegistrationChains(
 		statements: readonly string[],
 		validationOptions: FederationOptions,
 	) => Promise<ValidationResult>,
-	clientType: "openid_relying_party" | "oauth_client" = "openid_relying_party",
+	profile: RegistrationProfile = oidcRegistrationProfile,
 ): Promise<Result<readonly ValidRegistrationChain[], FederationError>> {
 	const operation = createTrustChainOperation(options);
 	if (!operation.ok) return operation;
@@ -187,7 +188,7 @@ async function resolveValidRegistrationChains(
 					entityConfigurations: chain.entityConfigurations,
 				});
 		if (validation.valid) {
-			const type = label === "OP" ? "openid_provider" : clientType;
+			const type = label === "OP" ? profile.providerType : profile.clientType;
 			const parsed = effectiveMetadata(
 				type,
 				validation.chain.resolvedMetadata[type],
@@ -233,18 +234,26 @@ export async function selectSharedRegistrationTrustChains(
 			validationOptions: FederationOptions,
 		) => Promise<ValidationResult>;
 		readonly allowAlternativeProvider?: boolean;
-		readonly clientType?: "openid_relying_party" | "oauth_client";
+		readonly profile?: RegistrationProfile;
 	} = {},
 ): Promise<Result<SharedRegistrationTrustChains, FederationError>> {
+	const profile = selection.profile ?? oidcRegistrationProfile;
 	// Check the provider before invoking callbacks that may sign registration requests.
 	const preferredMetadata = effectiveMetadata(
-		"openid_provider",
-		preferredOpChain.resolvedMetadata.openid_provider,
+		profile.providerType,
+		preferredOpChain.resolvedMetadata[profile.providerType],
 		opEntityId,
 	);
 	if (!preferredMetadata.ok && !selection.allowAlternativeProvider) return preferredMetadata;
 	const alternatives = !preferredMetadata.ok
-		? await resolveValidRegistrationChains(opEntityId, trustAnchors, options, "OP")
+		? await resolveValidRegistrationChains(
+				opEntityId,
+				trustAnchors,
+				options,
+				"OP",
+				undefined,
+				profile,
+			)
 		: undefined;
 	if (alternatives && !alternatives.ok)
 		return err(preferredMetadata.ok ? alternatives.error : preferredMetadata.error);
@@ -254,7 +263,7 @@ export async function selectSharedRegistrationTrustChains(
 		options,
 		"RP",
 		selection.validateRpCandidate,
-		selection.clientType,
+		profile,
 	);
 	if (!rpChainsResult.ok) return rpChainsResult;
 	const rpChains = rpChainsResult.value;
@@ -283,7 +292,15 @@ export async function selectSharedRegistrationTrustChains(
 	}
 
 	const opChainsResult =
-		alternatives ?? (await resolveValidRegistrationChains(opEntityId, trustAnchors, options, "OP"));
+		alternatives ??
+		(await resolveValidRegistrationChains(
+			opEntityId,
+			trustAnchors,
+			options,
+			"OP",
+			undefined,
+			profile,
+		));
 	if (!opChainsResult.ok) return opChainsResult;
 
 	const eligibleRp = rpChains.filter((rp) =>
@@ -343,6 +360,7 @@ export async function resolveAndValidateBestChain(
 	rpEntityId: EntityId,
 	trustAnchors: TrustAnchorSet,
 	options: FederationOptions,
+	profile: RegistrationProfile = oidcRegistrationProfile,
 ): Promise<Result<ValidatedTrustChain, FederationError>> {
 	const operation = createTrustChainOperation(options);
 	if (!operation.ok) return operation;
@@ -368,8 +386,8 @@ export async function resolveAndValidateBestChain(
 		});
 		if (result.valid) {
 			const parsed = effectiveMetadata(
-				"openid_relying_party",
-				result.chain.resolvedMetadata.openid_relying_party,
+				profile.clientType,
+				result.chain.resolvedMetadata[profile.clientType],
 			);
 			if (!parsed.ok) {
 				metadataError ??= parsed.error;

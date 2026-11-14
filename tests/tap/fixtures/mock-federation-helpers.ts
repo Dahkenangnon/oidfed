@@ -94,6 +94,8 @@ export async function createMockFederation(overrides?: {
 		authority_hints: [TA_ID],
 		metadata: opMetadata,
 	};
+	if (overrides?.includeOAuthClient && !overrides.opMetadata)
+		opMetadata.oauth_authorization_server = { ...opMetadata.openid_provider };
 	const opEcJwt = await signEntityStatement(opEcPayload, new JwkSigner(opSigningKey), signOpts());
 
 	// Leaf Entity Configuration (self-signed)

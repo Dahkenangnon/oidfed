@@ -72,6 +72,7 @@ export type {
 	OAuthAuthorizationServerPublicationMetadata,
 	OAuthClientMetadata,
 	OAuthClientPublicationMetadata,
+	OAuthClientRegistrationResponseMetadata,
 	OAuthResourceMetadata,
 	OAuthResourcePublicationMetadata,
 	OIDCFederationMetadata,

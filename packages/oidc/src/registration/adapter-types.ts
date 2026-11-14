@@ -19,7 +19,7 @@ export interface RegistrationProtocolAdapterContext {
 /**
  * Protocol-specific adapter for the federation registration endpoint.
  *
- * The handler validates resolved OIDC RP metadata. An adapter adds profile
+ * The handler validates resolved metadata for the selected OIDC or OAuth client role. An adapter adds profile
  * checks and response fields; its output must satisfy the federation policy.
  * Values governed by custom modifying operators retain their resolved value
  * or omission, so transformations are applied once.

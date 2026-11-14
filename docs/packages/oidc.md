@@ -117,7 +117,36 @@ With `requestDelivery: "par"`, the role posts the signed Request Object as proof
 
 When mutual support for JWT authentication is absent, the request uses its signed Request Object alone. Contradictory method declarations return `invalid_metadata`. Each signer used must be published in the RP protocol metadata through `jwks`, `jwks_uri`, or `signed_jwks_uri`. The assertion audience is the OP Entity Identifier.
 
-`OAuthClientRole` reads the client's authentication methods from `oauth_client` metadata. `RelyingPartyRole` reads them from `openid_relying_party`, including when the entity hosts both roles ([Federation §12.1.5](https://openid.net/specs/openid-federation-1_0.html#section-12.1.5)).
+`OAuthClientRole` reads the client's authentication methods from `oauth_client` metadata. Its provider counterpart is `oauth_authorization_server`; co-published OIDC metadata does not change that selection. `RelyingPartyRole` reads them from `openid_relying_party`, including when the entity hosts both roles ([Federation §12.1.5](https://openid.net/specs/openid-federation-1_0.html#section-12.1.5)).
+
+### OAuth registration
+
+[Federation §12](https://openid.net/specs/openid-federation-1_0.html#section-12) permits both registration methods for OAuth profiles. `OAuthClientRole` offers `automaticallyRegister()`, `explicitlyRegister()`, `createAuthorizationRequest()`, and instance `createClientAssertion()` alongside its metadata parsers. `OAuthAuthorizationServerRole` offers `processAutomaticRegistration()` and `processExplicitRegistration()` with the same replay-store, accreditation, adapter, and persistence hooks as the OIDC provider role.
+
+For roles already attached to federation hosts:
+
+```ts
+import type { OAuthClientRole, OAuthAuthorizationServerRole } from "@oidfed/oidc";
+
+async function registerOAuthClient(client: OAuthClientRole, server: OAuthAuthorizationServerRole) {
+  const request = await client.automaticallyRegister({
+    authorizationServerEntityId: "https://auth.research.example",
+    redirect_uri: "https://research.example/callback",
+    scope: "datasets.read",
+  });
+  if (!request.ok) return request;
+  // At the authorization server, after receiving the Request Object:
+  return server.processAutomaticRegistration(request.value.requestObjectJwt);
+}
+
+async function registerInAdvance(client: OAuthClientRole) {
+  return client.explicitlyRegister("https://auth.research.example");
+}
+```
+
+Each flow validates `oauth_client` and `oauth_authorization_server` after Superior metadata and policies have completed them. It uses OAuth protocol keys for Request Objects and Federation keys for explicit-registration statements. It does not require OpenID scopes, ID Token algorithms, or OIDC subject metadata. Explicit responses carry credentials under `metadata.oauth_client`; `OAuthClientRegistrationResponseMetadata` describes that block. Existing result names such as `resolvedRpMetadata` and `rpEntityId` also represent the OAuth client in this flow.
+
+Configure the AS role's `replayStore` for automatic registration. Both profiles honor host chain selection and shared fetch budgets, validate peer chains against the matching provider type, and run accreditation before registration side effects. Registration-management credentials remain disabled unless the host enables read-only registration access. The host still implements authorization, tokens, consent, and storage.
 
 When `requestDelivery: "request_uri"` is used, OP metadata that explicitly sets `request_uri_parameter_supported: false` blocks delivery before an authorization URL is produced.
 

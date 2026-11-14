@@ -62,6 +62,7 @@ import {
 } from "../../../packages/oidc/src/registration/handler.js";
 import { processAutomaticRegistration } from "../../../packages/oidc/src/registration/process-automatic.js";
 import { processExplicitRegistration } from "../../../packages/oidc/src/registration/process-explicit.js";
+import { oauthRegistrationProfile } from "../../../packages/oidc/src/registration/profile.js";
 import type { AutomaticRegistrationContext } from "../../../packages/oidc/src/registration/types.js";
 import { validateAutomaticRegistrationRequest } from "../../../packages/oidc/src/registration/validate-request-object.js";
 import {
@@ -355,10 +356,237 @@ async function createDualAnchorRegistrationFixture(invalidPreferredProvider = fa
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("oidc / OAuth registration profiles", () => {
+		async function fixture(completeAtSuperior = false) {
+			const f = await trustChainPaths();
+			const clientMetadata = {
+				redirect_uris: [`${f.ids.subject}/callback`],
+				client_registration_types: ["automatic", "explicit"],
+				jwks: { keys: [f.keys.b.publicKey] },
+				token_endpoint_auth_method: "private_key_jwt",
+			};
+			const serverMetadata = {
+				issuer: f.ids.a,
+				authorization_endpoint: `${f.ids.a}/authorize`,
+				token_endpoint: `${f.ids.a}/token`,
+				response_types_supported: ["code"],
+				client_registration_types_supported: ["automatic", "explicit"],
+				federation_registration_endpoint: `${f.ids.a}/registration`,
+			};
+			const clientChain = await f.chain(["subject", "anchor"], {
+				subjectClaims: {
+					metadata: {
+						oauth_client: completeAtSuperior
+							? { ...clientMetadata, redirect_uris: undefined }
+							: clientMetadata,
+					},
+				},
+			});
+			if (completeAtSuperior)
+				clientChain[1] = await f.sign("anchor", "subject", {
+					metadata: { oauth_client: { redirect_uris: clientMetadata.redirect_uris } },
+					metadata_policy: { oauth_client: { client_name: { value: "Alliance client" } } },
+				});
+			const serverChain = await f.chain(["a", "anchor"], {
+				subjectClaims: { metadata: { oauth_authorization_server: serverMetadata } },
+			});
+			const documents = new Map<string, string>([
+				[`${f.ids.subject}/.well-known/openid-federation`, clientChain[0]!],
+				[`${f.ids.a}/.well-known/openid-federation`, serverChain[0]!],
+				[`${f.ids.anchor}/.well-known/openid-federation`, clientChain[2]!],
+				[`${f.ids.anchor}/fetch?sub=${encodeURIComponent(f.ids.subject)}`, clientChain[1]!],
+				[`${f.ids.anchor}/fetch?sub=${encodeURIComponent(f.ids.a)}`, serverChain[1]!],
+			]);
+			let registrations = 0;
+			let selections = 0;
+			let posts = 0;
+			let allow = true;
+			const persisted: Record<string, unknown>[] = [];
+			const options: FederationOptions = {
+				...f.options,
+				chainSelection: (chains) => {
+					selections++;
+					return chains[0]!;
+				},
+				httpClient: async (input, init) => {
+					const request = input instanceof Request ? input : new Request(input, init);
+					const url = new URL(request.url);
+					url.searchParams.delete("iss");
+					if (url.pathname === "/registration") {
+						posts++;
+						return server.processExplicitRegistration(request);
+					}
+					const document = documents.get(url.toString());
+					return document
+						? new Response(document, { headers: { "content-type": MediaType.EntityStatement } })
+						: new Response("missing", { status: 404 });
+				},
+			};
+			const server = new OAuthAuthorizationServerRole({
+				metadata: serverMetadata,
+				replayStore: new MemoryReplayStore({ clock: f.options.clock }),
+				registrationManagement: "read-only",
+				beforeRegistration: () =>
+					allow
+						? ok(undefined)
+						: err(federationError(FederationErrorCode.InvalidRequest, "Accreditation denied")),
+				onRegistration: async (_id, metadata) => {
+					registrations++;
+					persisted.push(metadata);
+				},
+				registrationProtocolAdapter: {
+					validateClientMetadata: (metadata) => ok(metadata),
+					enrichResponseMetadata: (metadata) => ({
+						...metadata,
+						registration_access_token: "read-only",
+						registration_client_uri: `${f.ids.a}/client`,
+					}),
+				},
+			});
+			server.initialize({
+				entityId: f.ids.a,
+				keyProvider: MemoryFederationKeyProvider.fromJWK(f.keys.a.privateKey),
+				trustAnchors: f.anchors,
+				options,
+			});
+			const client = new OAuthClientRole({
+				metadata: completeAtSuperior
+					? { ...clientMetadata, redirect_uris: undefined }
+					: clientMetadata,
+				protocolKeyProvider: new StaticProtocolSigningKeyProvider({
+					requestObjectSigner: new JwkSigner(f.keys.b.privateKey),
+				}),
+				includePeerTrustChain: true,
+			});
+			client.initialize({
+				entityId: f.ids.subject,
+				authorityHints: [f.ids.anchor],
+				keyProvider: MemoryFederationKeyProvider.fromJWK(f.keys.subject.privateKey),
+				trustAnchors: f.anchors,
+				options,
+			});
+			return {
+				...f,
+				options,
+				client,
+				server,
+				clientChain,
+				serverChain,
+				clientMetadata,
+				documents,
+				persisted,
+				count: () => ({ registrations, selections, posts }),
+				allow: (value: boolean) => {
+					allow = value;
+				},
+			};
+		}
+		test("OAuth-only roles perform automatic and explicit registration, including peer chains and superior completion", async (t) => {
+			for (const completed of [false, true]) {
+				const f = await fixture(completed);
+				const automatic = await f.client.automaticallyRegister({
+					authorizationServerEntityId: f.ids.a,
+					redirect_uri: `${f.ids.subject}/callback`,
+					scope: "accounts.read",
+				});
+				t.true(automatic.ok, JSON.stringify(automatic));
+				if (!automatic.ok) continue;
+				const processed = await f.server.processAutomaticRegistration(
+					automatic.value.requestObjectJwt,
+				);
+				t.true(processed.ok, JSON.stringify(processed));
+				if (processed.ok) {
+					t.strictEqual(
+						processed.value.resolvedRpMetadata.subject_type,
+						undefined,
+						"no OIDC subject default",
+					);
+					t.deepEqual(
+						processed.value.protocolKeys.keys,
+						[f.keys.b.publicKey],
+						"uses OAuth protocol keys",
+					);
+				}
+				t.false(
+					(await f.server.processAutomaticRegistration(automatic.value.requestObjectJwt)).ok,
+					"replay rejected",
+				);
+				const explicit = await f.client.explicitlyRegister(f.ids.a);
+				t.true(explicit.ok, JSON.stringify(explicit));
+				if (explicit.ok) {
+					t.equal(explicit.value.clientId, f.ids.subject);
+					t.equal(explicit.value.registeredMetadata.registration_access_token, "read-only");
+					t.strictEqual(
+						explicit.value.registrationStatement.payload.metadata?.openid_relying_party,
+						undefined,
+					);
+					if (completed) t.equal(explicit.value.registeredMetadata.client_name, "Alliance client");
+				}
+				t.equal(f.count().registrations, 2);
+				t.true(f.count().selections > 0, "host selection participates");
+				const assertion = decodeEntityStatement(await f.client.createClientAssertion(f.ids.a));
+				t.true(assertion.ok);
+				if (assertion.ok) t.equal(assertion.value.payload.aud, f.ids.a);
+			}
+		});
+		test("OAuth accreditation rejects before replay consumption and explicit persistence", async (t) => {
+			const f = await fixture();
+			const request = await f.client.automaticallyRegister({
+				authorizationServerEntityId: f.ids.a,
+				redirect_uri: `${f.ids.subject}/callback`,
+			});
+			t.true(request.ok);
+			if (!request.ok) return;
+			f.allow(false);
+			t.false((await f.server.processAutomaticRegistration(request.value.requestObjectJwt)).ok);
+			t.false((await f.client.explicitlyRegister(f.ids.a)).ok);
+			t.equal(f.count().registrations, 0);
+			f.allow(true);
+			t.true((await f.server.processAutomaticRegistration(request.value.requestObjectJwt)).ok);
+		});
+		test("OAuth providers reject OIDC-only clients and malformed OAuth metadata", async (t) => {
+			const f = await fixture();
+			for (const metadata of [
+				{ openid_relying_party: f.clientMetadata },
+				{ oauth_client: { ...f.clientMetadata, redirect_uris: 42 } },
+			]) {
+				const jwt = await f.sign("subject", "subject", {
+					aud: f.ids.a,
+					authority_hints: [f.ids.anchor],
+					metadata,
+				});
+				const response = await f.server.processExplicitRegistration(
+					new Request(`${f.ids.a}/registration`, {
+						method: "POST",
+						headers: { "content-type": MediaType.EntityStatement },
+						body: jwt,
+					}),
+				);
+				t.equal(response.status, 400);
+			}
+			t.equal(f.count().registrations, 0);
+			const badServer = await f.sign("a", "a", {
+				authority_hints: [f.ids.anchor],
+				metadata: { oauth_authorization_server: { issuer: f.ids.a, response_types_supported: 42 } },
+			});
+			f.documents.set(`${f.ids.a}/.well-known/openid-federation`, badServer);
+			t.false(
+				(
+					await f.client.automaticallyRegister({
+						authorizationServerEntityId: f.ids.a,
+						redirect_uri: `${f.ids.subject}/callback`,
+					})
+				).ok,
+			);
+			t.false((await f.client.explicitlyRegister(f.ids.a)).ok);
+			t.equal(f.count().posts, 0, "invalid AS rejected before registration POST");
+		});
+	});
+
 	module("oidc / explicit registration selection and accreditation", () => {
-		async function fixture() {
+		async function fixture(clientType = "openid_relying_party") {
 			const metadata = {
-				openid_relying_party: {
+				[clientType]: {
 					redirect_uris: ["https://subject.example/cb"],
 					response_types: ["code"],
 				},
@@ -374,10 +602,10 @@ export default (QUnit: QUnit) => {
 			a[0] = request;
 			b[0] = request;
 			a[1] = await f.sign("a", "subject", {
-				metadata: { openid_relying_party: { client_name: "a" } },
+				metadata: { [clientType]: { client_name: "a" } },
 			});
 			b[1] = await f.sign("b", "subject", {
-				metadata: { openid_relying_party: { client_name: "b" } },
+				metadata: { [clientType]: { client_name: "b" } },
 			});
 			const aFetch = `${f.ids.a}/fetch?sub=${encodeURIComponent(f.ids.subject)}`;
 			const documents = new Map<string, string>([
@@ -662,8 +890,9 @@ export default (QUnit: QUnit) => {
 			}
 		});
 		test("both provider roles forward read-only management and host chain selection", async (t) => {
-			const f = await fixture();
 			for (const Role of [OidcProviderRole, OAuthAuthorizationServerRole]) {
+				const clientType = Role === OidcProviderRole ? "openid_relying_party" : "oauth_client";
+				const f = await fixture(clientType);
 				let calls = 0;
 				const role = new Role({
 					metadata: { client_registration_types_supported: ["explicit"] },
@@ -690,9 +919,7 @@ export default (QUnit: QUnit) => {
 						...f.options,
 						chainSelection: (chains) => {
 							calls++;
-							return chains.find(
-								(c) => c.resolvedMetadata.openid_relying_party?.client_name === "b",
-							)!;
+							return chains.find((c) => c.resolvedMetadata[clientType]?.client_name === "b")!;
 						},
 					},
 				});
@@ -710,7 +937,7 @@ export default (QUnit: QUnit) => {
 				if (parsed.ok) {
 					t.deepEqual(parsed.value.payload.authority_hints?.map(String), [String(f.ids.b)]);
 					t.equal(
-						parsed.value.payload.metadata?.openid_relying_party?.registration_access_token,
+						parsed.value.payload.metadata?.[clientType]?.registration_access_token,
 						"read-token",
 					);
 				}
@@ -1477,6 +1704,7 @@ export default (QUnit: QUnit) => {
 			};
 			for (const malformed of [false, true]) {
 				const f = await createMockFederation({
+					includeOAuthClient: true,
 					opMetadata: {
 						oauth_authorization_server: {
 							...valid,
@@ -3627,6 +3855,8 @@ export default (QUnit: QUnit) => {
 					{ ...authzParams, scope: "accounts.read" },
 					fed.trustAnchors,
 					fed.options,
+					"supplied",
+					oauthRegistrationProfile,
 				);
 				t.true(isOk(result));
 				if (!isOk(result)) continue;
@@ -5567,7 +5797,7 @@ export default (QUnit: QUnit) => {
 			t.false(result.ok);
 			if (result.ok) return;
 			t.equal(result.error.code, FederationErrorCode.InvalidMetadata);
-			t.ok(result.error.description.includes("Relying Party metadata"));
+			t.ok(result.error.description.includes("openid_relying_party metadata"));
 		});
 
 		test("uses valid trust_chain header without discovery fetch", async (t) => {
@@ -6451,7 +6681,7 @@ export default (QUnit: QUnit) => {
 			t.false(result.ok);
 			if (result.ok) return;
 			t.equal(result.error.code, FederationErrorCode.InvalidMetadata);
-			t.ok(result.error.description.includes("Relying Party metadata"));
+			t.ok(result.error.description.includes("openid_relying_party metadata"));
 		});
 
 		test("returns err for unknown Content-Type", async (t) => {
@@ -10842,7 +11072,7 @@ export default (QUnit: QUnit) => {
 							: {}),
 					},
 					opMetadata: {
-						openid_provider: {
+						oauth_authorization_server: {
 							...validProviderMetadata,
 							issuer: OP_ID,
 							authorization_endpoint: `${OP_ID}/authorize`,

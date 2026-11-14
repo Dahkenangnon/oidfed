@@ -28,6 +28,7 @@ import {
 	resolveAndValidateBestChain,
 	validateSuppliedTrustChain,
 } from "./helpers.js";
+import { registrationProfile } from "./profile.js";
 import { validateAutomaticRegistrationRequest } from "./validate-request-object.js";
 
 export interface ProcessedRegistration {
@@ -54,6 +55,8 @@ export interface ProcessAutomaticRegistrationOptions
 		RegistrationAccreditationPolicy {
 	/** The OP's own Entity Identifier — REQUIRED to prevent cross-OP replay via `aud` validation. */
 	opEntityId: EntityId;
+	/** Server role selecting the registration protocol. Defaults to OIDC. */
+	providerMetadataType?: "openid_provider" | "oauth_authorization_server";
 	/** Atomic replay protection required for one-time Request Object processing. */
 	replayStore: ReplayStore;
 }
@@ -69,6 +72,7 @@ export async function processAutomaticRegistration(
 	trustAnchors: TrustAnchorSet | undefined,
 	options: ProcessAutomaticRegistrationOptions,
 ): Promise<Result<ProcessedAutomaticRegistration, FederationError>> {
+	const profile = registrationProfile(options.providerMetadataType);
 	safeLogger(options?.logger)?.debug("Validating an Automatic Client Registration Request Object");
 
 	const trustAnchorsResult = requireNonEmptyTrustAnchors(trustAnchors);
@@ -92,7 +96,7 @@ export async function processAutomaticRegistration(
 					expectedSubject: rpEntityId,
 					label: "trust_chain",
 				})
-			: await resolveAndValidateBestChain(rpEntityId, configuredTrustAnchors, options);
+			: await resolveAndValidateBestChain(rpEntityId, configuredTrustAnchors, options, profile);
 	if (!bestChainResult.ok) return bestChainResult;
 	const bestChain = bestChainResult.value;
 
@@ -103,7 +107,9 @@ export async function processAutomaticRegistration(
 	};
 	const federationJwks = leafStatement.payload.jwks;
 
-	const resolvedRpMetadata = bestChain.resolvedMetadata.openid_relying_party ?? {};
+	const resolvedRpMetadata = bestChain.resolvedMetadata[profile.clientType] ?? {};
+	const clientMetadata = effectiveMetadata(profile.clientType, resolvedRpMetadata);
+	if (!clientMetadata.ok) return clientMetadata;
 	const protocolKeysResult = await resolveEntityKeys(resolvedRpMetadata, federationJwks, {
 		...options,
 		expectedIssuer: rpEntityId,
@@ -135,22 +141,6 @@ export async function processAutomaticRegistration(
 		);
 	}
 
-	{
-		const { OpenIDRelyingPartyMetadataSchema } = await import("../schemas/metadata.js");
-		const metaParsed = OpenIDRelyingPartyMetadataSchema.safeParse(resolvedRpMetadata);
-		if (!metaParsed.success) {
-			safeLogger(options?.logger)?.warn(
-				"RP metadata does not comply with the OpenID Connect Relying Party metadata schema",
-			);
-			return err(
-				federationError(
-					FederationErrorCode.InvalidMetadata,
-					"RP metadata does not comply with the OpenID Connect Relying Party metadata schema",
-				),
-			);
-		}
-	}
-
 	let peerResolvedOpMetadata: Readonly<Record<string, unknown>> | undefined;
 	const peerHeader = validated.value.peerTrustChainHeader;
 	if (peerHeader !== undefined) {
@@ -180,8 +170,8 @@ export async function processAutomaticRegistration(
 			);
 		}
 		const peerMetadata = effectiveMetadata(
-			"openid_provider",
-			peerValidation.value.resolvedMetadata.openid_provider,
+			profile.providerType,
+			peerValidation.value.resolvedMetadata[profile.providerType],
 			options.opEntityId,
 		);
 		if (!peerMetadata.ok) return peerMetadata;

@@ -363,39 +363,47 @@ export const OpenIDRelyingPartyPublicationMetadataSchema = z
  * Includes registration-response credential fields that are not valid in Entity
  * Configuration or Subordinate Statement metadata.
  */
+const RegistrationCredentialShape = {
+	client_id: z.string(),
+	client_secret: z.string().optional(),
+	client_id_issued_at: z.number().int().nonnegative().optional(),
+	client_secret_expires_at: z.number().int().nonnegative().optional(),
+	registration_access_token: z.string().min(1).optional(),
+	registration_client_uri: httpsUrlNoFragment.optional(),
+};
+function registrationResponseRequirements(
+	meta: Record<string, unknown>,
+	ctx: z.RefinementCtx,
+	oidc: boolean,
+) {
+	clientRequirements(meta, ctx, false, oidc);
+	if (
+		(meta.registration_access_token !== undefined) !==
+		(meta.registration_client_uri !== undefined)
+	)
+		ctx.addIssue({
+			code: "custom",
+			path: [
+				meta.registration_access_token === undefined
+					? "registration_access_token"
+					: "registration_client_uri",
+			],
+			message: "registration_access_token and registration_client_uri MUST be returned together",
+		});
+	for (const field of oidc ? Object.keys(rpMetadataChoices) : [])
+		if (Object.hasOwn(meta, field))
+			ctx.addIssue({
+				code: "custom",
+				path: [field],
+				message: `${field} MUST only be used as a registration input`,
+			});
+}
 export const OpenIDRelyingPartyRegistrationResponseMetadataSchema = z
 	.looseObject({
 		...OpenIDRelyingPartyMetadataShape,
-		client_id: z.string(),
-		client_secret: z.string().optional(),
-		client_id_issued_at: z.number().int().nonnegative().optional(),
-		client_secret_expires_at: z.number().int().nonnegative().optional(),
-		registration_access_token: z.string().min(1).optional(),
-		registration_client_uri: httpsUrlNoFragment.optional(),
+		...RegistrationCredentialShape,
 	})
-	.superRefine((meta, ctx) => {
-		clientRequirements(meta, ctx, false, true);
-		if (
-			(meta.registration_access_token !== undefined) !==
-			(meta.registration_client_uri !== undefined)
-		)
-			ctx.addIssue({
-				code: "custom",
-				path: [
-					meta.registration_access_token === undefined
-						? "registration_access_token"
-						: "registration_client_uri",
-				],
-				message: "registration_access_token and registration_client_uri MUST be returned together",
-			});
-		for (const field of Object.keys(rpMetadataChoices))
-			if (Object.hasOwn(meta, field))
-				ctx.addIssue({
-					code: "custom",
-					path: [field],
-					message: `${field} MUST only be used as a registration input`,
-				});
-	});
+	.superRefine((meta, ctx) => registrationResponseRequirements(meta, ctx, true));
 
 // ---------------------------------------------------------------------------
 // 2. OpenID Connect Provider (OIDC Discovery 1.0 + Federation 1.0)
@@ -588,6 +596,17 @@ export const OAuthClientMetadataSchema = z
 export const OAuthClientPublicationMetadataSchema = z
 	.looseObject(OAuthClientMetadataShape)
 	.superRefine((meta, ctx) => oauthClientRequirements(meta, ctx, true));
+
+/** OAuth client credentials belong in registration responses, never publication metadata. */
+export const OAuthClientRegistrationResponseMetadataSchema = z
+	.looseObject({
+		...OAuthClientMetadataShape,
+		...RegistrationCredentialShape,
+	})
+	.superRefine((meta, ctx) => registrationResponseRequirements(meta, ctx, false));
+export type OAuthClientRegistrationResponseMetadata = z.infer<
+	typeof OAuthClientRegistrationResponseMetadataSchema
+>;
 
 export type OAuthClientMetadata = z.infer<typeof OAuthClientMetadataSchema>;
 
