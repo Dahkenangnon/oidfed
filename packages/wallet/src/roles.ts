@@ -1,5 +1,9 @@
 import {
 	assessEntity,
+	type ClientAttestationError,
+	clientAttestationHeaders,
+	createAttestationChallengeHandler,
+	createClientAttestationProof,
 	type EntityAssessmentOptions,
 	type EntityContext,
 	type EntityRole,
@@ -7,13 +11,16 @@ import {
 	err,
 	type FederationError,
 	FederationErrorCode,
+	fetchAttestationChallenge,
 	type JWKSet,
 	type JwtSigner,
 	nowSeconds,
 	ok,
 	parseOAuthAuthorizationServerMetadata,
 	type Result,
+	readAttestationChallenge,
 	selectTrustChain,
+	serializeClientAttestation,
 	shortestChain,
 	type TrustAnchorSet,
 	validateTrustChain,
@@ -60,6 +67,13 @@ export interface WalletRoleConfig {
 }
 
 abstract class WalletRole implements EntityRole {
+	static createClientAttestationProof = createClientAttestationProof;
+	static clientAttestationHeaders = clientAttestationHeaders;
+	static serializeClientAttestation = serializeClientAttestation;
+	static fetchAttestationChallenge = fetchAttestationChallenge;
+	static readAttestationChallenge = readAttestationChallenge;
+	static createAttestationChallengeHandler = createAttestationChallengeHandler;
+
 	static async assessEntity(
 		target: string,
 		type: WalletRoleType,
@@ -195,7 +209,7 @@ abstract class AttestationConsumer extends WalletRole {
 		jwt: string,
 		anchors: TrustAnchorSet,
 		options: WalletAttestationVerificationOptions = {},
-	): Promise<Result<VerifiedWalletAttestation>> {
+	): Promise<Result<VerifiedWalletAttestation, ClientAttestationError>> {
 		const scope = operationOptions(options);
 		return scope.ok ? verifyAttestation(jwt, anchors, scope.value) : scope;
 	}
@@ -204,7 +218,7 @@ abstract class AttestationConsumer extends WalletRole {
 		proof: string,
 		anchors: TrustAnchorSet,
 		options: AuthenticateWalletOptions,
-	): Promise<Result<VerifiedWalletAttestation>> {
+	): Promise<Result<VerifiedWalletAttestation, ClientAttestationError>> {
 		const scope = operationOptions(options);
 		return scope.ok ? authenticateWallet(attestation, proof, anchors, scope.value) : scope;
 	}

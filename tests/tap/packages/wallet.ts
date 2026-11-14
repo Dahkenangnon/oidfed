@@ -61,6 +61,67 @@ const proof = (f: Fixture) => ({
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("wallet / attester trust expiry", () => {
+		test("wallet adapters preserve actionable attestation errors", async (t) => {
+			const f = await walletFederation();
+			const a = await token(
+				attestation(f),
+				f.protocol.provider.privateKey,
+				"oauth-client-attestation+jwt",
+			);
+			const p = await token(
+				{ ...proof(f), challenge: "old" },
+				f.protocol.issuer.privateKey,
+				"oauth-client-attestation-pop+jwt",
+			);
+			const mismatch = await CredentialIssuerRole.authenticateWallet(a, p, f.anchors, {
+				...f.options,
+				audience: f.ids.server,
+				expectedChallenge: "new",
+				replayStore: new MemoryReplayStore({ clock: f.clock }),
+				acceptWallet: () => true,
+			});
+			t.false(mismatch.ok);
+			if (!mismatch.ok) t.equal(mismatch.error.attestationError, "use_attestation_challenge");
+			const expired = await token(
+				{ ...attestation(f), exp: 1000 },
+				f.protocol.provider.privateKey,
+				"oauth-client-attestation+jwt",
+			);
+			const stale = await CredentialIssuerRole.verifyWalletAttestation(
+				expired,
+				f.anchors,
+				f.options,
+			);
+			t.false(stale.ok);
+			if (!stale.ok) t.equal(stale.error.attestationError, "use_fresh_attestation");
+		});
+
+		test("standalone verification rechecks provider trust after protocol key retrieval", async (t) => {
+			const f = await walletFederation({
+				providerMetadata: { jwks: undefined, jwks_uri: "https://provider.example/keys" },
+			});
+			const jwt = await token(
+				{ ...attestation(f), exp: 9000 },
+				f.protocol.provider.privateKey,
+				"oauth-client-attestation+jwt",
+			);
+			for (const time of [1501, 5001]) {
+				f.setTime(1500);
+				f.routes.set("https://provider.example/keys", () => {
+					f.setTime(time);
+					return Response.json({ keys: [f.protocol.provider.publicKey] });
+				});
+				const result = await CredentialIssuerRole.verifyWalletAttestation(
+					jwt,
+					f.anchors,
+					f.options,
+				);
+				t.equal(result.ok, time < 5000, JSON.stringify(result));
+			}
+		});
+	});
+
 	module("wallet / configurable trust establishment", () => {
 		test("wallet assessments do not impose wallet metadata on accreditation issuers", async (t) => {
 			const f = await walletFederation();
@@ -309,6 +370,10 @@ export default (QUnit: QUnit) => {
 					{ token_endpoint: undefined },
 					{ require_signed_request_object: 1 },
 					{ mtls_endpoint_aliases: { token_endpoint: 17 } },
+					{ token_endpoint_auth_methods_supported: ["attest_jwt_client_auth"] },
+					{ client_attestation_signing_alg_values_supported: 42 },
+					{ client_attestation_pop_signing_alg_values_supported: false },
+					{ challenge_endpoint: 42 },
 				]) {
 					const f = await walletFederation({
 						issuerMetadata: separate ? { authorization_servers: ["https://server.example"] } : {},
@@ -587,7 +652,7 @@ export default (QUnit: QUnit) => {
 						const label = {
 							credential: "Digital Credential verification",
 							attestation: "Wallet Attestation verification",
-							acceptance: "Wallet acceptance",
+							acceptance: "Client acceptance",
 							replay: "Client Attestation PoP replay protection",
 							query: "OpenID4VP presentation query policy",
 							transaction: "Transaction Data verification",

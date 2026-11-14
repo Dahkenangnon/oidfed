@@ -363,3 +363,38 @@ Each role exposes static and instance `assessEntity(target, entityType, ...)` me
 Wallet discovery, attestation verification, and presentation processing retain their profile-required chain and key checks. A resolver can supply the chain, but it cannot skip those checks. Presentation-request selection occurs after signature, endpoint, and contextual DCQL policy validation; an ineligible path is never offered to the selector. Supplied chains and offline supporting ECs keep their existing precedence.
 
 See [core trust establishment](core.md#trust-establishment-options) for configuration examples and the distinction between resolver acquisition and delegation.
+
+### Attestation trust and shared authentication
+
+Wallet roles use core's Client Attestation draft-07 implementation. The Wallet
+profile still supplies its own trust decision: a **Loyalty Credential Issuer**
+must establish Federation trust in the **Wallet Provider** before accepting its
+attestation. A generic out-of-band attester callback cannot replace that step in
+`verifyWalletAttestation` or `authenticateWallet`.
+
+Standalone verification now rechecks the Wallet Provider's trust expiration after
+protocol-key retrieval and signature verification. An attestation may outlive the
+current Trust Chain; the verifier needs fresh provider trust when it uses it.
+Existing supplied-chain and offline workflows remain available.
+
+Wallet roles expose static `createClientAttestationProof`,
+`clientAttestationHeaders`, `serializeClientAttestation`,
+`fetchAttestationChallenge`, and `readAttestationChallenge` methods. Reuse an
+attestation while it is valid, but create a fresh PoP for each request. If the
+server supplies a replacement challenge, use it in the next PoP.
+
+`AuthenticateWalletOptions` retains `acceptWallet`, the default PoP age check,
+and JTI replay storage. It also accepts core's explicit `freshness` and `replay`
+choices for server-managed challenge deployments. A freshness-only choice must be
+explicit; it permits reuse within the freshness window. Acceptance-policy
+failures use the shared message prefix `Client acceptance`.
+
+See [core's challenge guidance](core.md#challenges-freshness-and-replay) for the
+host callbacks and their responsibilities. Shared helpers do not install a
+challenge endpoint or publish its metadata automatically.
+
+Wallet attestation verification and authentication preserve core's
+`ClientAttestationError.attestationError` distinctions. A host can request a new
+challenge or a fresh attestation without matching error-description strings;
+see [returning attestation errors](core.md#returning-attestation-errors-to-the-client).
+These error hints do not replace Wallet Provider Federation trust validation.
