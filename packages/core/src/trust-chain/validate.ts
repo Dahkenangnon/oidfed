@@ -1,7 +1,7 @@
 import { trustMarkOperation } from "../trust-marks/operation.js";
 /** Trust chain validation: verifies signatures, expiry, issuer-subject chaining, and metadata policy along the chain. */
 
-import { setOwn } from "../callbacks.js";
+import { freezeSnapshot, setOwn } from "../callbacks.js";
 import {
 	DEFAULT_CLOCK_SKEW_SECONDS,
 	DEFAULT_MAX_CHAIN_LENGTH,
@@ -94,116 +94,89 @@ function decodeJwtPayloadJson(jwt: string): string | undefined {
 	}
 }
 
-function findDuplicateMetadataPolicyMembers(json: string): string[] {
+/** Inspect raw member names before JSON's last-member-wins decoding loses duplicates. */
+function findDuplicateMetadataPolicyMembers(json: string): Result<string[], string> {
 	const duplicates: string[] = [];
+	type Frame = {
+		object: boolean;
+		path?: string[];
+		seen: Set<string>;
+		state: "first" | "next" | "end";
+	};
+	const stack: Frame[] = [];
 	let index = 0;
-
-	function skipWhitespace() {
-		while (/\s/.test(json[index] ?? "")) index++;
-	}
-
-	function parseString(): string {
-		const start = index;
-		index++;
+	const whitespace = () => {
+		while (/[ \t\r\n]/.test(json[index] ?? "")) index++;
+	};
+	function string(): string {
+		const start = index++;
 		while (index < json.length) {
-			const char = json[index];
-			if (char === "\\") {
-				index += 2;
-				continue;
-			}
-			if (char === '"') {
-				index++;
-				return JSON.parse(json.slice(start, index)) as string;
-			}
-			index++;
+			const char = json[index++];
+			if (char === "\\") index++;
+			else if (char === '"') return JSON.parse(json.slice(start, index)) as string;
 		}
 		throw new Error("Unterminated JSON string");
 	}
-
-	function parsePrimitive() {
-		while (index < json.length && !/[\s,\]}]/.test(json[index] ?? "")) index++;
-	}
-
-	function shouldCheckObject(path: readonly string[]): boolean {
-		return path[0] === "metadata_policy" && path.length >= 1 && path.length <= 3;
-	}
-
-	function duplicatePath(path: readonly string[], key: string): string {
-		return [...path, key].join(".");
-	}
-
-	function parseArray(path: string[]) {
-		index++;
-		skipWhitespace();
-		if (json[index] === "]") {
-			index++;
-			return;
-		}
-		while (index < json.length) {
-			parseValue(path);
-			skipWhitespace();
-			if (json[index] === "]") {
-				index++;
-				return;
-			}
-			if (json[index] !== ",") throw new Error("Expected comma in JSON array");
-			index++;
-			skipWhitespace();
-		}
-	}
-
-	function parseObject(path: string[]) {
-		const checkDuplicates = shouldCheckObject(path);
-		const seen = new Set<string>();
-		index++;
-		skipWhitespace();
-		if (json[index] === "}") {
-			index++;
-			return;
-		}
-		while (index < json.length) {
-			if (json[index] !== '"') throw new Error("Expected JSON object member name");
-			const key = parseString();
-			if (checkDuplicates) {
-				if (seen.has(key)) duplicates.push(duplicatePath(path, key));
-				seen.add(key);
-			}
-			skipWhitespace();
-			if (json[index] !== ":") throw new Error("Expected JSON object colon");
-			index++;
-			skipWhitespace();
-			parseValue([...path, key]);
-			skipWhitespace();
-			if (json[index] === "}") {
-				index++;
-				return;
-			}
-			if (json[index] !== ",") throw new Error("Expected comma in JSON object");
-			index++;
-			skipWhitespace();
-		}
-	}
-
-	function parseValue(path: string[]) {
-		skipWhitespace();
+	function value(path?: string[]) {
+		whitespace();
 		const char = json[index];
-		if (char === "{") {
-			parseObject(path);
-		} else if (char === "[") {
-			parseArray(path);
-		} else if (char === '"') {
-			parseString();
-		} else {
-			parsePrimitive();
+		if (char === "{" || char === "[") {
+			index++;
+			stack.push({
+				object: char === "{",
+				...(path ? { path } : {}),
+				seen: new Set(),
+				state: "first",
+			});
+		} else if (char === '"') string();
+		else {
+			const start = index;
+			while (index < json.length && !/[ \t\r\n,\]}]/.test(json[index] as string)) index++;
+			JSON.parse(json.slice(start, index));
 		}
 	}
-
 	try {
-		parseValue([]);
+		value([]);
+		while (stack.length) {
+			const frame = stack[stack.length - 1] as Frame;
+			whitespace();
+			const close = frame.object ? "}" : "]";
+			if (json[index] === close && frame.state !== "next") {
+				index++;
+				stack.pop();
+				continue;
+			}
+			if (frame.state === "end") {
+				if (json[index++] !== ",") throw new Error("Expected comma");
+				frame.state = "next";
+				continue;
+			}
+			frame.state = "end";
+			let path: string[] | undefined;
+			if (frame.object) {
+				if (json[index] !== '"') throw new Error("Expected member name");
+				const key = string();
+				if (frame.path?.[0] === "metadata_policy") {
+					if (frame.seen.has(key)) duplicates.push([...frame.path, key].join("."));
+					frame.seen.add(key);
+				}
+				if (
+					frame.path &&
+					frame.path.length < 3 &&
+					(frame.path.length > 0 || key === "metadata_policy")
+				)
+					path = [...frame.path, key];
+				whitespace();
+				if (json[index++] !== ":") throw new Error("Expected colon");
+			}
+			value(path);
+		}
+		whitespace();
+		if (index !== json.length) throw new Error("Unexpected JSON suffix");
+		return ok(duplicates);
 	} catch {
-		return [];
+		return err("Could not inspect metadata_policy member names");
 	}
-	return duplicates;
 }
 
 function addMetadataPolicyDuplicateMemberErrors(
@@ -212,8 +185,15 @@ function addMetadataPolicyDuplicateMemberErrors(
 	statementIndex: number,
 ) {
 	const payloadJson = decodeJwtPayloadJson(jwt);
-	if (!payloadJson) return;
-	for (const duplicate of findDuplicateMetadataPolicyMembers(payloadJson)) {
+	const inspected =
+		payloadJson === undefined
+			? err("Could not decode Entity Statement JSON")
+			: findDuplicateMetadataPolicyMembers(payloadJson);
+	if (!inspected.ok) {
+		addError(errors, InternalErrorCode.TrustChainInvalid, inspected.error, { statementIndex });
+		return;
+	}
+	for (const duplicate of inspected.value) {
 		addError(
 			errors,
 			InternalErrorCode.TrustChainInvalid,
@@ -609,14 +589,6 @@ const preparations = new WeakMap<
 	}
 >();
 
-function freezeEvidence<T>(value: T): T {
-	if (value && typeof value === "object") {
-		for (const nested of Object.values(value)) freezeEvidence(nested);
-		Object.freeze(value);
-	}
-	return value;
-}
-
 function validationFailure(errors: readonly ValidationError[]) {
 	return err({
 		code: InternalErrorCode.TrustChainInvalid,
@@ -630,67 +602,84 @@ export async function prepareTrustChainValidation(
 	anchors: TrustAnchorSet,
 	options: PrepareTrustChainOptions,
 ): Promise<Result<PreparedTrustChain>> {
-	safeLogger(options?.logger)?.debug("Starting prepare trust chain validation");
-	const definitions = validateCustomConstraintChecks(options?.customConstraintChecks ?? []);
-	if (!definitions.ok) return err(definitions.error);
+	try {
+		safeLogger(options?.logger)?.debug("Starting prepare trust chain validation");
+		const definitions = validateCustomConstraintChecks(options?.customConstraintChecks ?? []);
+		if (!definitions.ok) return err(definitions.error);
 
-	if (options.signal?.aborted)
+		if (options.signal?.aborted)
+			return validationFailure([
+				{ code: InternalErrorCode.TrustChainInvalid, message: "Validation was cancelled" },
+			]);
+		const limitError = chainLengthError(chain, options);
+		if (limitError)
+			return validationFailure([
+				{ code: InternalErrorCode.TrustChainInvalid, message: limitError },
+			]);
+		const savedChain = [...chain];
+		const savedAnchors = new Map([...anchors].map(([id, anchor]) => [id, structuredClone(anchor)]));
+		const { deferredClaims, ...validationOptions } = options;
+		const savedOptions = {
+			...validationOptions,
+			...(options.customConstraintChecks
+				? {
+						customConstraintChecks: options.customConstraintChecks.map(({ name, check }) => ({
+							name,
+							check,
+						})),
+					}
+				: {}),
+			...(options.entityConfigurations
+				? { entityConfigurations: new Map(options.entityConfigurations) }
+				: {}),
+			...(options.trustMarkIssuerKeys
+				? {
+						trustMarkIssuerKeys: new Map(
+							[...options.trustMarkIssuerKeys].map(([id, keys]) => [id, structuredClone(keys)]),
+						),
+					}
+				: {}),
+		};
+		const stage: MetadataStage = { deferred: structuredClone(deferredClaims), pending: [] };
+		const result = await validateTrustChainImpl(
+			savedChain,
+			savedAnchors,
+			savedOptions,
+			true,
+			stage,
+		);
+		if (!result.valid) return validationFailure(result.errors);
+		// Completion rechecks the same signed ECs, including ones fetched during preparation.
+		savedOptions.entityConfigurations = new Map(stage.entityConfigurations);
+		if (options.signal?.aborted)
+			return validationFailure([
+				{ code: InternalErrorCode.TrustChainInvalid, message: "Validation was cancelled" },
+			]);
+		const prepared = freezeSnapshot(
+			structuredClone({
+				entityId: result.chain.entityId,
+				trustAnchorId: result.chain.trustAnchorId,
+				expiresAt: result.chain.expiresAt,
+				resolvedMetadata: result.chain.resolvedMetadata,
+				statements: result.chain.statements,
+				pendingClaims: stage.pending,
+			}),
+		) as unknown as PreparedTrustChain;
+		preparations.set(prepared, {
+			chain: savedChain,
+			anchors: savedAnchors,
+			options: savedOptions,
+			pending: stage.pending,
+		});
+		return ok(prepared);
+	} catch {
 		return validationFailure([
-			{ code: InternalErrorCode.TrustChainInvalid, message: "Validation was cancelled" },
+			{
+				code: InternalErrorCode.TrustChainInvalid,
+				message: "Trust Chain evidence could not be processed safely",
+			},
 		]);
-	const limitError = chainLengthError(chain, options);
-	if (limitError)
-		return validationFailure([{ code: InternalErrorCode.TrustChainInvalid, message: limitError }]);
-	const savedChain = [...chain];
-	const savedAnchors = new Map([...anchors].map(([id, anchor]) => [id, structuredClone(anchor)]));
-	const { deferredClaims, ...validationOptions } = options;
-	const savedOptions = {
-		...validationOptions,
-		...(options.customConstraintChecks
-			? {
-					customConstraintChecks: options.customConstraintChecks.map(({ name, check }) => ({
-						name,
-						check,
-					})),
-				}
-			: {}),
-		...(options.entityConfigurations
-			? { entityConfigurations: new Map(options.entityConfigurations) }
-			: {}),
-		...(options.trustMarkIssuerKeys
-			? {
-					trustMarkIssuerKeys: new Map(
-						[...options.trustMarkIssuerKeys].map(([id, keys]) => [id, structuredClone(keys)]),
-					),
-				}
-			: {}),
-	};
-	const stage: MetadataStage = { deferred: structuredClone(deferredClaims), pending: [] };
-	const result = await validateTrustChainImpl(savedChain, savedAnchors, savedOptions, true, stage);
-	if (!result.valid) return validationFailure(result.errors);
-	// Completion rechecks the same signed ECs, including ones fetched during preparation.
-	savedOptions.entityConfigurations = new Map(stage.entityConfigurations);
-	if (options.signal?.aborted)
-		return validationFailure([
-			{ code: InternalErrorCode.TrustChainInvalid, message: "Validation was cancelled" },
-		]);
-	const prepared = freezeEvidence(
-		structuredClone({
-			entityId: result.chain.entityId,
-			trustAnchorId: result.chain.trustAnchorId,
-			expiresAt: result.chain.expiresAt,
-			resolvedMetadata: result.chain.resolvedMetadata,
-			statements: result.chain.statements,
-			pendingClaims: stage.pending,
-		}),
-	) as unknown as PreparedTrustChain;
-	preparations.set(prepared, {
-		chain: savedChain,
-		anchors: savedAnchors,
-		options: savedOptions,
-		pending: stage.pending,
-	});
-	return ok(prepared);
+	}
 }
 
 /** Finish the original chain's policies; contextual values cannot replace published metadata. */
@@ -698,62 +687,71 @@ export async function completeTrustChainValidation(
 	prepared: PreparedTrustChain,
 	context: Readonly<Record<string, Record<string, unknown>>> = {},
 ): Promise<Result<ValidatedTrustChain>> {
-	safeLogger(preparations.get(prepared)?.options.logger)?.debug(
-		"Starting complete trust chain validation",
-	);
+	try {
+		safeLogger(preparations.get(prepared)?.options.logger)?.debug(
+			"Starting complete trust chain validation",
+		);
 
-	const saved = preparations.get(prepared);
-	if (!isJsonObject(context))
-		return validationFailure([
-			{
-				code: InternalErrorCode.TrustChainInvalid,
-				message: "Context must be a metadata object",
-			},
-		]);
-	if (
-		!saved ||
-		saved.options.signal?.aborted ||
-		prepared.expiresAt <= (saved.options.clock ?? defaultClock).now()
-	) {
-		return validationFailure([
-			{
-				code: InternalErrorCode.TrustChainInvalid,
-				message: "Unknown, expired, or cancelled preparation",
-			},
-		]);
-	}
-	for (const [type, parameters] of Object.entries(context)) {
+		const saved = preparations.get(prepared);
+		if (!isJsonObject(context))
+			return validationFailure([
+				{
+					code: InternalErrorCode.TrustChainInvalid,
+					message: "Context must be a metadata object",
+				},
+			]);
 		if (
-			!isJsonObject(parameters) ||
-			Object.keys(parameters).some(
-				(parameter) =>
-					!saved.pending.some(
-						(claim) => claim.entityType === type && claim.parameter === parameter,
-					),
-			)
+			!saved ||
+			saved.options.signal?.aborted ||
+			prepared.expiresAt <= (saved.options.clock ?? defaultClock).now()
 		) {
 			return validationFailure([
 				{
 					code: InternalErrorCode.TrustChainInvalid,
-					message: "Context contains an unreserved metadata field",
+					message: "Unknown, expired, or cancelled preparation",
 				},
 			]);
 		}
-	}
-	const stage: MetadataStage = { context: structuredClone(context), pending: [] };
-	const result = await validateTrustChainImpl(
-		saved.chain,
-		saved.anchors,
-		saved.options,
-		true,
-		stage,
-	);
-	if (!result.valid) return validationFailure(result.errors);
-	if (saved.options.signal?.aborted)
+		for (const [type, parameters] of Object.entries(context)) {
+			if (
+				!isJsonObject(parameters) ||
+				Object.keys(parameters).some(
+					(parameter) =>
+						!saved.pending.some(
+							(claim) => claim.entityType === type && claim.parameter === parameter,
+						),
+				)
+			) {
+				return validationFailure([
+					{
+						code: InternalErrorCode.TrustChainInvalid,
+						message: "Context contains an unreserved metadata field",
+					},
+				]);
+			}
+		}
+		const stage: MetadataStage = { context: structuredClone(context), pending: [] };
+		const result = await validateTrustChainImpl(
+			saved.chain,
+			saved.anchors,
+			saved.options,
+			true,
+			stage,
+		);
+		if (!result.valid) return validationFailure(result.errors);
+		if (saved.options.signal?.aborted)
+			return validationFailure([
+				{ code: InternalErrorCode.TrustChainInvalid, message: "Validation was cancelled" },
+			]);
+		return ok(result.chain);
+	} catch {
 		return validationFailure([
-			{ code: InternalErrorCode.TrustChainInvalid, message: "Validation was cancelled" },
+			{
+				code: InternalErrorCode.TrustChainInvalid,
+				message: "Trust Chain evidence could not be processed safely",
+			},
 		]);
-	return ok(result.chain);
+	}
 }
 
 /** Internal collection primitive: mark syntax is mandatory; mark trust is evaluated separately. */
@@ -829,642 +827,657 @@ async function authenticateChainStatements(
 	options?: TrustChainValidationOptions,
 	publicationOnly = false,
 ): Promise<AuthenticatedStatements> {
-	const limitError = chainLengthError(chain, options);
-	if (limitError)
-		return {
-			valid: false,
-			errors: [{ code: InternalErrorCode.TrustChainInvalid, message: limitError }],
-		};
-	const errors: ValidationError[] = [];
-	const configurationJwts = new Map(options?.entityConfigurations);
-	const reportedAuthorities = new Set<string>();
-	function checkAuthorityMetadata(statement: ParsedEntityStatement, statementIndex: number): void {
-		const authorityErrors = authorityMetadataErrors(statement);
-		if (authorityErrors.length && !reportedAuthorities.has(statement.payload.sub)) {
-			reportedAuthorities.add(statement.payload.sub);
-			safeLogger(options?.logger)?.warn(
-				"Trust Anchors and Intermediates MUST publish fetch and list endpoints",
-			);
+	try {
+		const limitError = chainLengthError(chain, options);
+		if (limitError)
+			return {
+				valid: false,
+				errors: [{ code: InternalErrorCode.TrustChainInvalid, message: limitError }],
+			};
+		const errors: ValidationError[] = [];
+		const configurationJwts = new Map(options?.entityConfigurations);
+		const reportedAuthorities = new Set<string>();
+		function checkAuthorityMetadata(
+			statement: ParsedEntityStatement,
+			statementIndex: number,
+		): void {
+			const authorityErrors = authorityMetadataErrors(statement);
+			if (authorityErrors.length && !reportedAuthorities.has(statement.payload.sub)) {
+				reportedAuthorities.add(statement.payload.sub);
+				safeLogger(options?.logger)?.warn(
+					"Trust Anchors and Intermediates MUST publish fetch and list endpoints",
+				);
+			}
+			for (const error of authorityErrors) errors.push({ ...error, statementIndex });
 		}
-		for (const error of authorityErrors) errors.push({ ...error, statementIndex });
-	}
-	const clockSkew = options?.clockSkewSeconds ?? DEFAULT_CLOCK_SKEW_SECONDS;
-	const verifyOptions = {
-		clockSkewSeconds: clockSkew,
-		...(options?.clock ? { clock: options.clock } : {}),
-	};
+		const clockSkew = options?.clockSkewSeconds ?? DEFAULT_CLOCK_SKEW_SECONDS;
+		const verifyOptions = {
+			clockSkewSeconds: clockSkew,
+			...(options?.clock ? { clock: options.clock } : {}),
+		};
 
-	if (chain.length === 0) {
-		addError(errors, InternalErrorCode.TrustChainInvalid, "Trust chain MUST NOT be empty", {
-			checkNumber: 1,
-		});
-		return { valid: false, errors };
-	}
-
-	const parsed: ParsedEntityStatement[] = [];
-	for (let j = 0; j < chain.length; j++) {
-		const decodeResult = decodeEntityStatement(chain[j] as string);
-		if (!decodeResult.ok) {
-			addError(
-				errors,
-				InternalErrorCode.TrustChainInvalid,
-				`Failed to decode statement at index ${j}: ${decodeResult.error.description}`,
-				{
-					statementIndex: j,
-					checkNumber: 1,
-				},
-			);
+		if (chain.length === 0) {
+			addError(errors, InternalErrorCode.TrustChainInvalid, "Trust chain MUST NOT be empty", {
+				checkNumber: 1,
+			});
 			return { valid: false, errors };
 		}
-		addMetadataPolicyDuplicateMemberErrors(errors, chain[j] as string, j);
-		parsed.push(decodeResult.value);
-	}
 
-	const lastStatementIndex = parsed.length - 1;
-	for (let j = 0; j < parsed.length; j++) {
-		const es = parsed[j] as ParsedEntityStatement;
-		const p = es.payload as Record<string, unknown>;
-		const h = es.header;
-
-		validateRawStatementShape(errors, es, j, lastStatementIndex);
-
-		if (!p.iss)
-			addError(errors, InternalErrorCode.TrustChainInvalid, `Missing 'iss' at statement ${j}`, {
-				statementIndex: j,
-				field: "iss",
-				checkNumber: 1,
-			});
-		if (!p.sub)
-			addError(errors, InternalErrorCode.TrustChainInvalid, `Missing 'sub' at statement ${j}`, {
-				statementIndex: j,
-				field: "sub",
-				checkNumber: 1,
-			});
-		if (p.iat === undefined)
-			addError(errors, InternalErrorCode.TrustChainInvalid, `Missing 'iat' at statement ${j}`, {
-				statementIndex: j,
-				field: "iat",
-				checkNumber: 1,
-			});
-		if (p.exp === undefined)
-			addError(errors, InternalErrorCode.TrustChainInvalid, `Missing 'exp' at statement ${j}`, {
-				statementIndex: j,
-				field: "exp",
-				checkNumber: 1,
-			});
-
-		const timeClaims = validateEntityStatementTimeClaims(p, options);
-		if (!timeClaims.ok) {
-			addError(errors, timeClaims.error.code, timeClaims.error.description, {
-				statementIndex: j,
-				field: timeClaims.error.field,
-				checkNumber: timeClaims.error.field === "iat" ? 4 : 5,
-			});
+		const parsed: ParsedEntityStatement[] = [];
+		for (let j = 0; j < chain.length; j++) {
+			const decodeResult = decodeEntityStatement(chain[j] as string);
+			if (!decodeResult.ok) {
+				addError(
+					errors,
+					InternalErrorCode.TrustChainInvalid,
+					`Failed to decode statement at index ${j}: ${decodeResult.error.description}`,
+					{
+						statementIndex: j,
+						checkNumber: 1,
+					},
+				);
+				return { valid: false, errors };
+			}
+			addMetadataPolicyDuplicateMemberErrors(errors, chain[j] as string, j);
+			parsed.push(decodeResult.value);
 		}
 
-		if (h.typ !== JwtTyp.EntityStatement) {
-			addError(
-				errors,
-				InternalErrorCode.TrustChainInvalid,
-				`Invalid typ header at statement ${j}: '${String(h.typ)}'`,
-				{ statementIndex: j, field: "typ", checkNumber: 7 },
-			);
-		}
+		const lastStatementIndex = parsed.length - 1;
+		for (let j = 0; j < parsed.length; j++) {
+			const es = parsed[j] as ParsedEntityStatement;
+			const p = es.payload as Record<string, unknown>;
+			const h = es.header;
 
-		const alg = h.alg as string | undefined;
-		if (!alg || alg === "none" || !(SUPPORTED_ALGORITHMS as readonly string[]).includes(alg)) {
-			addError(
-				errors,
-				InternalErrorCode.UnsupportedAlg,
-				`Unsupported algorithm at statement ${j}: '${String(alg)}'`,
-				{ statementIndex: j, field: "alg", checkNumber: 7 },
-			);
-		}
+			validateRawStatementShape(errors, es, j, lastStatementIndex);
 
-		if (!p.jwks) {
-			addError(errors, InternalErrorCode.TrustChainInvalid, `Missing 'jwks' at statement ${j}`, {
-				statementIndex: j,
-				field: "jwks",
-				checkNumber: 9,
-			});
-		}
+			if (!p.iss)
+				addError(errors, InternalErrorCode.TrustChainInvalid, `Missing 'iss' at statement ${j}`, {
+					statementIndex: j,
+					field: "iss",
+					checkNumber: 1,
+				});
+			if (!p.sub)
+				addError(errors, InternalErrorCode.TrustChainInvalid, `Missing 'sub' at statement ${j}`, {
+					statementIndex: j,
+					field: "sub",
+					checkNumber: 1,
+				});
+			if (p.iat === undefined)
+				addError(errors, InternalErrorCode.TrustChainInvalid, `Missing 'iat' at statement ${j}`, {
+					statementIndex: j,
+					field: "iat",
+					checkNumber: 1,
+				});
+			if (p.exp === undefined)
+				addError(errors, InternalErrorCode.TrustChainInvalid, `Missing 'exp' at statement ${j}`, {
+					statementIndex: j,
+					field: "exp",
+					checkNumber: 1,
+				});
 
-		if (p.metadata && typeof p.metadata === "object") {
-			for (const [entityType, metaObj] of Object.entries(p.metadata as Record<string, unknown>)) {
-				if (metaObj && typeof metaObj === "object") {
-					for (const [key, val] of Object.entries(metaObj as Record<string, unknown>)) {
-						if (val === null) {
+			const timeClaims = validateEntityStatementTimeClaims(p, options);
+			if (!timeClaims.ok) {
+				addError(errors, timeClaims.error.code, timeClaims.error.description, {
+					statementIndex: j,
+					field: timeClaims.error.field,
+					checkNumber: timeClaims.error.field === "iat" ? 4 : 5,
+				});
+			}
+
+			if (h.typ !== JwtTyp.EntityStatement) {
+				addError(
+					errors,
+					InternalErrorCode.TrustChainInvalid,
+					`Invalid typ header at statement ${j}: '${String(h.typ)}'`,
+					{ statementIndex: j, field: "typ", checkNumber: 7 },
+				);
+			}
+
+			const alg = h.alg as string | undefined;
+			if (!alg || alg === "none" || !(SUPPORTED_ALGORITHMS as readonly string[]).includes(alg)) {
+				addError(
+					errors,
+					InternalErrorCode.UnsupportedAlg,
+					`Unsupported algorithm at statement ${j}: '${String(alg)}'`,
+					{ statementIndex: j, field: "alg", checkNumber: 7 },
+				);
+			}
+
+			if (!p.jwks) {
+				addError(errors, InternalErrorCode.TrustChainInvalid, `Missing 'jwks' at statement ${j}`, {
+					statementIndex: j,
+					field: "jwks",
+					checkNumber: 9,
+				});
+			}
+
+			if (p.metadata && typeof p.metadata === "object") {
+				for (const [entityType, metaObj] of Object.entries(p.metadata as Record<string, unknown>)) {
+					if (metaObj && typeof metaObj === "object") {
+						for (const [key, val] of Object.entries(metaObj as Record<string, unknown>)) {
+							if (val === null) {
+								addError(
+									errors,
+									InternalErrorCode.TrustChainInvalid,
+									`Metadata value '${entityType}.${key}' MUST NOT be null at statement ${j}`,
+									{ statementIndex: j, field: "metadata", checkNumber: 16 },
+								);
+							}
+						}
+					}
+				}
+			}
+
+			// JWK Set params MUST NOT appear in federation_entity metadata
+			if (p.metadata && typeof p.metadata === "object") {
+				const meta = p.metadata as Record<string, Record<string, unknown>>;
+				const fedEntity = meta.federation_entity;
+				if (fedEntity && typeof fedEntity === "object") {
+					for (const forbidden of ["jwks", "jwks_uri", "signed_jwks_uri"] as const) {
+						if (forbidden in fedEntity) {
 							addError(
 								errors,
 								InternalErrorCode.TrustChainInvalid,
-								`Metadata value '${entityType}.${key}' MUST NOT be null at statement ${j}`,
+								`'${forbidden}' MUST NOT be used in federation_entity metadata at statement ${j}`,
 								{ statementIndex: j, field: "metadata", checkNumber: 16 },
 							);
 						}
 					}
 				}
-			}
-		}
 
-		// JWK Set params MUST NOT appear in federation_entity metadata
-		if (p.metadata && typeof p.metadata === "object") {
-			const meta = p.metadata as Record<string, Record<string, unknown>>;
-			const fedEntity = meta.federation_entity;
-			if (fedEntity && typeof fedEntity === "object") {
-				for (const forbidden of ["jwks", "jwks_uri", "signed_jwks_uri"] as const) {
-					if (forbidden in fedEntity) {
-						addError(
-							errors,
-							InternalErrorCode.TrustChainInvalid,
-							`'${forbidden}' MUST NOT be used in federation_entity metadata at statement ${j}`,
-							{ statementIndex: j, field: "metadata", checkNumber: 16 },
-						);
+				// openid_provider.issuer MUST match entity identifier
+				const subjectEntityId = p.sub as string;
+				const op = meta.openid_provider;
+				if (op && typeof op === "object" && "issuer" in op && op.issuer !== subjectEntityId) {
+					addError(
+						errors,
+						InternalErrorCode.TrustChainInvalid,
+						`openid_provider.issuer '${String(op.issuer)}' MUST match entity identifier '${subjectEntityId}' at statement ${j}`,
+						{ statementIndex: j, field: "metadata", checkNumber: 16 },
+					);
+				}
+
+				// oauth_authorization_server.issuer MUST match entity identifier
+				const oas = meta.oauth_authorization_server;
+				if (oas && typeof oas === "object" && "issuer" in oas && oas.issuer !== subjectEntityId) {
+					addError(
+						errors,
+						InternalErrorCode.TrustChainInvalid,
+						`oauth_authorization_server.issuer '${String(oas.issuer)}' MUST match entity identifier '${subjectEntityId}' at statement ${j}`,
+						{ statementIndex: j, field: "metadata", checkNumber: 16 },
+					);
+				}
+
+				// Inline `jwks` per entity type: enforce the conditional `use` REQUIRED rule.
+				// Skips federation_entity (jwks already rejected there above).
+				for (const [entityType, metaObj] of Object.entries(meta)) {
+					if (entityType === "federation_entity") continue;
+					if (!metaObj || typeof metaObj !== "object") continue;
+					const jwks = (metaObj as { jwks?: unknown }).jwks;
+					if (!jwks || typeof jwks !== "object") continue;
+					const keys = (jwks as { keys?: unknown }).keys;
+					if (!Array.isArray(keys)) continue;
+					const useResult = validateJwkSetUseRequirement(keys as JWK[]);
+					if (!useResult.ok) {
+						addError(errors, InternalErrorCode.TrustChainInvalid, useResult.error.description, {
+							statementIndex: j,
+							field: "metadata",
+							checkNumber: 16,
+						});
 					}
 				}
 			}
 
-			// openid_provider.issuer MUST match entity identifier
-			const subjectEntityId = p.sub as string;
-			const op = meta.openid_provider;
-			if (op && typeof op === "object" && "issuer" in op && op.issuer !== subjectEntityId) {
+			const criticalClaims = validateCriticalClaims(p, options?.understoodCriticalClaims);
+			if (!criticalClaims.ok) {
+				addError(errors, InternalErrorCode.TrustChainInvalid, criticalClaims.error.description, {
+					statementIndex: j,
+					field: "crit",
+					checkNumber: 13,
+				});
+			}
+
+			const isEC = p.iss === p.sub;
+			const ecOnlyClaims = [
+				"authority_hints",
+				"trust_anchor_hints",
+				"trust_marks",
+				"trust_mark_issuers",
+				"trust_mark_owners",
+			] as const;
+			const ssOnlyClaims = [
+				"metadata_policy",
+				"metadata_policy_crit",
+				"constraints",
+				"source_endpoint",
+			] as const;
+
+			for (const claim of ecOnlyClaims) {
+				if (p[claim] !== undefined && !isEC) {
+					addError(
+						errors,
+						InternalErrorCode.TrustChainInvalid,
+						`'${claim}' MUST only appear in Entity Configurations (iss===sub) at statement ${j}`,
+						{ statementIndex: j, field: claim, checkNumber: 14 },
+					);
+				}
+			}
+			for (const claim of ssOnlyClaims) {
+				if (p[claim] !== undefined && isEC) {
+					addError(
+						errors,
+						InternalErrorCode.TrustChainInvalid,
+						`'${claim}' MUST only appear in Subordinate Statements at statement ${j}`,
+						{ statementIndex: j, field: claim, checkNumber: 17 },
+					);
+				}
+			}
+
+			const authorityHints = p.authority_hints as string[] | undefined;
+			if (Array.isArray(authorityHints) && authorityHints.length === 0) {
 				addError(
 					errors,
 					InternalErrorCode.TrustChainInvalid,
-					`openid_provider.issuer '${String(op.issuer)}' MUST match entity identifier '${subjectEntityId}' at statement ${j}`,
-					{ statementIndex: j, field: "metadata", checkNumber: 16 },
+					`'authority_hints' MUST NOT be empty array at statement ${j}`,
+					{ statementIndex: j, field: "authority_hints", checkNumber: 14 },
 				);
 			}
 
-			// oauth_authorization_server.issuer MUST match entity identifier
-			const oas = meta.oauth_authorization_server;
-			if (oas && typeof oas === "object" && "issuer" in oas && oas.issuer !== subjectEntityId) {
+			const allowedExplicitRegistrationAudience =
+				j === 0 &&
+				options?.explicitRegistrationAudience !== undefined &&
+				p.aud === options.explicitRegistrationAudience;
+			if (p.aud !== undefined && !allowedExplicitRegistrationAudience) {
 				addError(
 					errors,
 					InternalErrorCode.TrustChainInvalid,
-					`oauth_authorization_server.issuer '${String(oas.issuer)}' MUST match entity identifier '${subjectEntityId}' at statement ${j}`,
-					{ statementIndex: j, field: "metadata", checkNumber: 16 },
+					`'aud' MUST NOT appear in non-registration entity statements at statement ${j}`,
+					{ statementIndex: j, field: "aud", checkNumber: 26 },
+				);
+			}
+			if (p.trust_anchor !== undefined) {
+				addError(
+					errors,
+					InternalErrorCode.TrustChainInvalid,
+					`'trust_anchor' MUST NOT appear in non-registration entity statements at statement ${j}`,
+					{ statementIndex: j, field: "trust_anchor", checkNumber: 27 },
 				);
 			}
 
-			// Inline `jwks` per entity type: enforce the conditional `use` REQUIRED rule.
-			// Skips federation_entity (jwks already rejected there above).
-			for (const [entityType, metaObj] of Object.entries(meta)) {
-				if (entityType === "federation_entity") continue;
-				if (!metaObj || typeof metaObj !== "object") continue;
-				const jwks = (metaObj as { jwks?: unknown }).jwks;
-				if (!jwks || typeof jwks !== "object") continue;
-				const keys = (jwks as { keys?: unknown }).keys;
-				if (!Array.isArray(keys)) continue;
-				const useResult = validateJwkSetUseRequirement(keys as JWK[]);
-				if (!useResult.ok) {
-					addError(errors, InternalErrorCode.TrustChainInvalid, useResult.error.description, {
-						statementIndex: j,
-						field: "metadata",
-						checkNumber: 16,
-					});
+			if (h.trust_chain !== undefined && !(j === 0 && options?.explicitRegistrationRequest)) {
+				addError(
+					errors,
+					InternalErrorCode.TrustChainInvalid,
+					`Entity Statements MUST NOT contain trust_chain header at statement ${j}`,
+					{ statementIndex: j, field: "trust_chain", checkNumber: 24 },
+				);
+			}
+			if (h.peer_trust_chain !== undefined && !(j === 0 && options?.explicitRegistrationRequest)) {
+				addError(
+					errors,
+					InternalErrorCode.TrustChainInvalid,
+					`Entity Statements MUST NOT contain peer_trust_chain header at statement ${j}`,
+					{ statementIndex: j, field: "peer_trust_chain", checkNumber: 25 },
+				);
+			}
+
+			if (!h.kid || typeof h.kid !== "string") {
+				addError(
+					errors,
+					InternalErrorCode.TrustChainInvalid,
+					`Missing or invalid 'kid' header at statement ${j}`,
+					{ statementIndex: j, field: "kid", checkNumber: 8 },
+				);
+			}
+		}
+
+		if (errors.length > 0) {
+			if (options?.verboseErrors) {
+				return { valid: false, errors };
+			}
+			return {
+				valid: false,
+				errors: [
+					{
+						code: InternalErrorCode.TrustChainInvalid,
+						message: "Trust chain validation failed",
+					},
+				],
+			};
+		}
+
+		const leaf = parsed[0] as ParsedEntityStatement;
+		const leafPayload = leaf.payload as Record<string, unknown>;
+
+		if (leafPayload.iss !== leafPayload.sub) {
+			addError(errors, InternalErrorCode.TrustChainInvalid, `Leaf EC iss !== sub`, {
+				statementIndex: 0,
+				checkNumber: 9,
+			});
+		}
+
+		if (leaf.payload.jwks) {
+			const selfVerify = await verifyEntityStatement(
+				chain[0] as string,
+				leaf.payload.jwks,
+				verifyOptions,
+			);
+			if (!selfVerify.ok) {
+				addError(
+					errors,
+					InternalErrorCode.SignatureInvalid,
+					`Leaf EC self-signature invalid: ${selfVerify.error.description}`,
+					{ statementIndex: 0, checkNumber: 10 },
+				);
+			}
+		} else {
+			addError(
+				errors,
+				InternalErrorCode.TrustChainInvalid,
+				`Leaf EC missing jwks for self-verification`,
+				{ statementIndex: 0, checkNumber: 10 },
+			);
+		}
+
+		if (publicationOnly)
+			return errors.length
+				? { valid: false, errors }
+				: {
+						valid: true,
+						statements: parsed,
+						expiresAt: calculateChainExpiration(parsed),
+						entityConfigurations: configurationJwts,
+					};
+
+		// Federation §§10.1 and 17.1 require each path to be loop-free. The closing
+		// anchor EC describes the anchor already introduced by its Subordinate Statement.
+		const seenEntities = new Set([leafPayload.sub as string]);
+		for (let j = 1; j < parsed.length; j++) {
+			const payload = (parsed[j] as ParsedEntityStatement).payload;
+			const previous = (parsed[j - 1] as ParsedEntityStatement).payload;
+			if (
+				j === parsed.length - 1 &&
+				payload.iss === payload.sub &&
+				previous.iss !== previous.sub &&
+				previous.iss === payload.sub
+			)
+				continue;
+			if (seenEntities.has(payload.iss)) {
+				addError(
+					errors,
+					InternalErrorCode.LoopDetected,
+					`Loop detected at statement ${j}: Entity '${payload.iss}' occurs more than once`,
+					{ statementIndex: j, field: "iss" },
+				);
+				return {
+					valid: false,
+					errors: options?.verboseErrors
+						? errors
+						: [
+								{
+									code: InternalErrorCode.TrustChainInvalid,
+									message: "Trust chain validation failed",
+								},
+							],
+				};
+			}
+			seenEntities.add(payload.iss);
+		}
+
+		for (let j = 0; j < parsed.length - 1; j++) {
+			const current = parsed[j] as ParsedEntityStatement;
+			const next = parsed[j + 1] as ParsedEntityStatement;
+
+			const currentIss = (current.payload as Record<string, unknown>).iss as string;
+			const nextSub = (next.payload as Record<string, unknown>).sub as string;
+			if (currentIss !== nextSub) {
+				addError(
+					errors,
+					InternalErrorCode.TrustChainInvalid,
+					`Chain continuity broken at statement ${j}: iss '${currentIss}' !== next sub '${nextSub}'`,
+					{ statementIndex: j, checkNumber: 12 },
+				);
+			}
+
+			if (next.payload.jwks) {
+				const sigResult = await verifyEntityStatement(
+					chain[j] as string,
+					next.payload.jwks,
+					verifyOptions,
+				);
+				if (!sigResult.ok) {
+					addError(
+						errors,
+						InternalErrorCode.SignatureInvalid,
+						`Signature invalid at statement ${j}: ${sigResult.error.description}`,
+						{ statementIndex: j, checkNumber: 13 },
+					);
 				}
 			}
 		}
 
-		const criticalClaims = validateCriticalClaims(p, options?.understoodCriticalClaims);
-		if (!criticalClaims.ok) {
-			addError(errors, InternalErrorCode.TrustChainInvalid, criticalClaims.error.description, {
-				statementIndex: j,
-				field: "crit",
-				checkNumber: 13,
-			});
-		}
+		const lastIdx = parsed.length - 1;
+		const last = parsed[lastIdx] as ParsedEntityStatement;
+		const lastPayload = last.payload as Record<string, unknown>;
+		const lastIss = lastPayload.iss as string;
+		const hasTrailingTrustAnchorEc = lastPayload.iss === lastPayload.sub;
 
-		const isEC = p.iss === p.sub;
-		const ecOnlyClaims = [
-			"authority_hints",
-			"trust_anchor_hints",
-			"trust_marks",
-			"trust_mark_issuers",
-			"trust_mark_owners",
-		] as const;
-		const ssOnlyClaims = [
-			"metadata_policy",
-			"metadata_policy_crit",
-			"constraints",
-			"source_endpoint",
-		] as const;
-
-		for (const claim of ecOnlyClaims) {
-			if (p[claim] !== undefined && !isEC) {
-				addError(
-					errors,
-					InternalErrorCode.TrustChainInvalid,
-					`'${claim}' MUST only appear in Entity Configurations (iss===sub) at statement ${j}`,
-					{ statementIndex: j, field: claim, checkNumber: 14 },
-				);
-			}
-		}
-		for (const claim of ssOnlyClaims) {
-			if (p[claim] !== undefined && isEC) {
-				addError(
-					errors,
-					InternalErrorCode.TrustChainInvalid,
-					`'${claim}' MUST only appear in Subordinate Statements at statement ${j}`,
-					{ statementIndex: j, field: claim, checkNumber: 17 },
-				);
-			}
-		}
-
-		const authorityHints = p.authority_hints as string[] | undefined;
-		if (Array.isArray(authorityHints) && authorityHints.length === 0) {
+		if (!trustAnchors.has(lastIss as EntityId)) {
 			addError(
 				errors,
-				InternalErrorCode.TrustChainInvalid,
-				`'authority_hints' MUST NOT be empty array at statement ${j}`,
-				{ statementIndex: j, field: "authority_hints", checkNumber: 14 },
+				InternalErrorCode.TrustAnchorUnknown,
+				`Trust anchor '${lastIss}' is not in configured trust anchors`,
+				{ statementIndex: lastIdx, checkNumber: 14 },
 			);
 		}
 
-		const allowedExplicitRegistrationAudience =
-			j === 0 &&
-			options?.explicitRegistrationAudience !== undefined &&
-			p.aud === options.explicitRegistrationAudience;
-		if (p.aud !== undefined && !allowedExplicitRegistrationAudience) {
-			addError(
-				errors,
-				InternalErrorCode.TrustChainInvalid,
-				`'aud' MUST NOT appear in non-registration entity statements at statement ${j}`,
-				{ statementIndex: j, field: "aud", checkNumber: 26 },
-			);
-		}
-		if (p.trust_anchor !== undefined) {
-			addError(
-				errors,
-				InternalErrorCode.TrustChainInvalid,
-				`'trust_anchor' MUST NOT appear in non-registration entity statements at statement ${j}`,
-				{ statementIndex: j, field: "trust_anchor", checkNumber: 27 },
-			);
-		}
-
-		if (h.trust_chain !== undefined && !(j === 0 && options?.explicitRegistrationRequest)) {
-			addError(
-				errors,
-				InternalErrorCode.TrustChainInvalid,
-				`Entity Statements MUST NOT contain trust_chain header at statement ${j}`,
-				{ statementIndex: j, field: "trust_chain", checkNumber: 24 },
-			);
-		}
-		if (h.peer_trust_chain !== undefined && !(j === 0 && options?.explicitRegistrationRequest)) {
-			addError(
-				errors,
-				InternalErrorCode.TrustChainInvalid,
-				`Entity Statements MUST NOT contain peer_trust_chain header at statement ${j}`,
-				{ statementIndex: j, field: "peer_trust_chain", checkNumber: 25 },
-			);
-		}
-
-		if (!h.kid || typeof h.kid !== "string") {
-			addError(
-				errors,
-				InternalErrorCode.TrustChainInvalid,
-				`Missing or invalid 'kid' header at statement ${j}`,
-				{ statementIndex: j, field: "kid", checkNumber: 8 },
-			);
-		}
-	}
-
-	if (errors.length > 0) {
-		if (options?.verboseErrors) {
-			return { valid: false, errors };
-		}
-		return {
-			valid: false,
-			errors: [
-				{
-					code: InternalErrorCode.TrustChainInvalid,
-					message: "Trust chain validation failed",
-				},
-			],
-		};
-	}
-
-	const leaf = parsed[0] as ParsedEntityStatement;
-	const leafPayload = leaf.payload as Record<string, unknown>;
-
-	if (leafPayload.iss !== leafPayload.sub) {
-		addError(errors, InternalErrorCode.TrustChainInvalid, `Leaf EC iss !== sub`, {
-			statementIndex: 0,
-			checkNumber: 9,
-		});
-	}
-
-	if (leaf.payload.jwks) {
-		const selfVerify = await verifyEntityStatement(
-			chain[0] as string,
-			leaf.payload.jwks,
-			verifyOptions,
-		);
-		if (!selfVerify.ok) {
-			addError(
-				errors,
-				InternalErrorCode.SignatureInvalid,
-				`Leaf EC self-signature invalid: ${selfVerify.error.description}`,
-				{ statementIndex: 0, checkNumber: 10 },
-			);
-		}
-	} else {
-		addError(
-			errors,
-			InternalErrorCode.TrustChainInvalid,
-			`Leaf EC missing jwks for self-verification`,
-			{ statementIndex: 0, checkNumber: 10 },
-		);
-	}
-
-	if (publicationOnly)
-		return errors.length
-			? { valid: false, errors }
-			: {
-					valid: true,
-					statements: parsed,
-					expiresAt: calculateChainExpiration(parsed),
-					entityConfigurations: configurationJwts,
-				};
-
-	// Federation §§10.1 and 17.1 require each path to be loop-free. The closing
-	// anchor EC describes the anchor already introduced by its Subordinate Statement.
-	const seenEntities = new Set([leafPayload.sub as string]);
-	for (let j = 1; j < parsed.length; j++) {
-		const payload = (parsed[j] as ParsedEntityStatement).payload;
-		const previous = (parsed[j - 1] as ParsedEntityStatement).payload;
-		if (
-			j === parsed.length - 1 &&
-			payload.iss === payload.sub &&
-			previous.iss !== previous.sub &&
-			previous.iss === payload.sub
-		)
-			continue;
-		if (seenEntities.has(payload.iss)) {
-			addError(
-				errors,
-				InternalErrorCode.LoopDetected,
-				`Loop detected at statement ${j}: Entity '${payload.iss}' occurs more than once`,
-				{ statementIndex: j, field: "iss" },
-			);
-			return {
-				valid: false,
-				errors: options?.verboseErrors
-					? errors
-					: [
-							{
-								code: InternalErrorCode.TrustChainInvalid,
-								message: "Trust chain validation failed",
-							},
-						],
-			};
-		}
-		seenEntities.add(payload.iss);
-	}
-
-	for (let j = 0; j < parsed.length - 1; j++) {
-		const current = parsed[j] as ParsedEntityStatement;
-		const next = parsed[j + 1] as ParsedEntityStatement;
-
-		const currentIss = (current.payload as Record<string, unknown>).iss as string;
-		const nextSub = (next.payload as Record<string, unknown>).sub as string;
-		if (currentIss !== nextSub) {
-			addError(
-				errors,
-				InternalErrorCode.TrustChainInvalid,
-				`Chain continuity broken at statement ${j}: iss '${currentIss}' !== next sub '${nextSub}'`,
-				{ statementIndex: j, checkNumber: 12 },
-			);
-		}
-
-		if (next.payload.jwks) {
-			const sigResult = await verifyEntityStatement(
-				chain[j] as string,
-				next.payload.jwks,
+		const taConfig = trustAnchors.get(lastIss as EntityId);
+		if (taConfig) {
+			const taVerify = await verifyEntityStatement(
+				chain[lastIdx] as string,
+				taConfig.jwks,
 				verifyOptions,
 			);
-			if (!sigResult.ok) {
+			if (!taVerify.ok) {
 				addError(
 					errors,
 					InternalErrorCode.SignatureInvalid,
-					`Signature invalid at statement ${j}: ${sigResult.error.description}`,
-					{ statementIndex: j, checkNumber: 13 },
+					`TA signature verification failed: ${taVerify.error.description}`,
+					{ statementIndex: lastIdx, checkNumber: 15 },
 				);
 			}
 		}
-	}
 
-	const lastIdx = parsed.length - 1;
-	const last = parsed[lastIdx] as ParsedEntityStatement;
-	const lastPayload = last.payload as Record<string, unknown>;
-	const lastIss = lastPayload.iss as string;
-	const hasTrailingTrustAnchorEc = lastPayload.iss === lastPayload.sub;
-
-	if (!trustAnchors.has(lastIss as EntityId)) {
-		addError(
-			errors,
-			InternalErrorCode.TrustAnchorUnknown,
-			`Trust anchor '${lastIss}' is not in configured trust anchors`,
-			{ statementIndex: lastIdx, checkNumber: 14 },
-		);
-	}
-
-	const taConfig = trustAnchors.get(lastIss as EntityId);
-	if (taConfig) {
-		const taVerify = await verifyEntityStatement(
-			chain[lastIdx] as string,
-			taConfig.jwks,
-			verifyOptions,
-		);
-		if (!taVerify.ok) {
-			addError(
-				errors,
-				InternalErrorCode.SignatureInvalid,
-				`TA signature verification failed: ${taVerify.error.description}`,
-				{ statementIndex: lastIdx, checkNumber: 15 },
+		// Federation §§3.2 and 4 also require the anchor EC's signature to verify
+		// with its own published key. A single-statement chain was checked at index 0.
+		if (hasTrailingTrustAnchorEc && lastIdx > 0) {
+			const selfVerify = await verifyEntityStatement(
+				chain[lastIdx] as string,
+				last.payload.jwks as JWKSet,
+				verifyOptions,
 			);
-		}
-	}
-
-	// Federation §§3.2 and 4 also require the anchor EC's signature to verify
-	// with its own published key. A single-statement chain was checked at index 0.
-	if (hasTrailingTrustAnchorEc && lastIdx > 0) {
-		const selfVerify = await verifyEntityStatement(
-			chain[lastIdx] as string,
-			last.payload.jwks as JWKSet,
-			verifyOptions,
-		);
-		if (!selfVerify.ok) {
-			addError(
-				errors,
-				InternalErrorCode.SignatureInvalid,
-				`TA EC self-signature invalid: ${selfVerify.error.description}`,
-				{ statementIndex: lastIdx, field: "jwks", checkNumber: 15 },
-			);
-		}
-	}
-
-	// Federation §4.1 permits a configured anchor to have superiors. Its signed
-	// authority_hints declare those relationships; configured trust ends this chain.
-	if (hasTrailingTrustAnchorEc && trustAnchors.has(lastIss as EntityId)) {
-		if (errors.length === 0) {
-			checkAuthorityMetadata(last, lastIdx);
-		}
-		const hasSuperiors =
-			Array.isArray(lastPayload.authority_hints) && lastPayload.authority_hints.length > 0;
-		// Section 3.1.2 forbids trust_anchor_hints on anchors with no superiors.
-		if (!hasSuperiors && lastPayload.trust_anchor_hints !== undefined) {
-			addError(
-				errors,
-				InternalErrorCode.TrustChainInvalid,
-				`Trust Anchor EC with no superiors MUST NOT contain trust_anchor_hints`,
-				{ statementIndex: lastIdx, field: "trust_anchor_hints", checkNumber: 15 },
-			);
-		}
-	}
-
-	// Non-TA Entity Configurations MUST have authority_hints
-	for (let j = 0; j < parsed.length; j++) {
-		const stmt = parsed[j] as ParsedEntityStatement;
-		const sp = stmt.payload as Record<string, unknown>;
-		const isEC = sp.iss === sp.sub;
-		const isTrustAnchor = j === lastIdx && trustAnchors.has(sp.iss as EntityId);
-		if (isEC && !isTrustAnchor && sp.authority_hints === undefined) {
-			addError(
-				errors,
-				InternalErrorCode.TrustChainInvalid,
-				`Entity Configuration at statement ${j} MUST contain authority_hints (non-TA entity)`,
-				{ statementIndex: j, field: "authority_hints", checkNumber: 14 },
-			);
-		}
-	}
-
-	// Intermediate ECs are auxiliary evidence, not entries in the serialized chain.
-	// Authenticate the supplied path before following any of its identifiers online.
-	let expiresAt = calculateChainExpiration(parsed);
-	if (errors.length === 0) {
-		let remainingFetches = options?.maxTotalFetches ?? 50;
-		if (!Number.isSafeInteger(remainingFetches) || remainingFetches < 0) {
-			addError(
-				errors,
-				InternalErrorCode.TrustChainInvalid,
-				"maxTotalFetches must be a non-negative safe integer",
-			);
-		}
-		const transport = options?.httpClient ?? fetch;
-		const fetchOptions: FederationOptions = {
-			...options,
-			httpClient: async (input, init) => {
-				if (options?.signal?.aborted || init?.signal?.aborted)
-					throw new DOMException("Validation was cancelled", "AbortError");
-				if (remainingFetches <= 0) throw new Error("Subject EC fetch budget exhausted");
-				remainingFetches--;
-				return transport(input, init);
-			},
-		};
-		// Serial retrieval bounds concurrency to one and stops on the first invalid edge.
-		for (let j = 1; j < parsed.length && errors.length === 0; j++) {
-			if (options?.signal?.aborted) {
-				addError(errors, InternalErrorCode.Timeout, "Validation was cancelled");
-				break;
+			if (!selfVerify.ok) {
+				addError(
+					errors,
+					InternalErrorCode.SignatureInvalid,
+					`TA EC self-signature invalid: ${selfVerify.error.description}`,
+					{ statementIndex: lastIdx, field: "jwks", checkNumber: 15 },
+				);
 			}
-			const ss = (parsed[j] as ParsedEntityStatement).payload;
-			if (ss.iss === ss.sub) continue;
-			let subject = leaf;
-			if (ss.sub !== leaf.payload.sub) {
-				let jwt = configurationJwts.get(ss.sub);
-				if (jwt === undefined) {
-					try {
-						const fetched = await fetchEntityConfiguration(
-							ss.sub as unknown as EntityId,
-							fetchOptions,
-						);
-						if (!fetched.ok) {
+		}
+
+		// Federation §4.1 permits a configured anchor to have superiors. Its signed
+		// authority_hints declare those relationships; configured trust ends this chain.
+		if (hasTrailingTrustAnchorEc && trustAnchors.has(lastIss as EntityId)) {
+			if (errors.length === 0) {
+				checkAuthorityMetadata(last, lastIdx);
+			}
+			const hasSuperiors =
+				Array.isArray(lastPayload.authority_hints) && lastPayload.authority_hints.length > 0;
+			// Section 3.1.2 forbids trust_anchor_hints on anchors with no superiors.
+			if (!hasSuperiors && lastPayload.trust_anchor_hints !== undefined) {
+				addError(
+					errors,
+					InternalErrorCode.TrustChainInvalid,
+					`Trust Anchor EC with no superiors MUST NOT contain trust_anchor_hints`,
+					{ statementIndex: lastIdx, field: "trust_anchor_hints", checkNumber: 15 },
+				);
+			}
+		}
+
+		// Non-TA Entity Configurations MUST have authority_hints
+		for (let j = 0; j < parsed.length; j++) {
+			const stmt = parsed[j] as ParsedEntityStatement;
+			const sp = stmt.payload as Record<string, unknown>;
+			const isEC = sp.iss === sp.sub;
+			const isTrustAnchor = j === lastIdx && trustAnchors.has(sp.iss as EntityId);
+			if (isEC && !isTrustAnchor && sp.authority_hints === undefined) {
+				addError(
+					errors,
+					InternalErrorCode.TrustChainInvalid,
+					`Entity Configuration at statement ${j} MUST contain authority_hints (non-TA entity)`,
+					{ statementIndex: j, field: "authority_hints", checkNumber: 14 },
+				);
+			}
+		}
+
+		// Intermediate ECs are auxiliary evidence, not entries in the serialized chain.
+		// Authenticate the supplied path before following any of its identifiers online.
+		let expiresAt = calculateChainExpiration(parsed);
+		if (errors.length === 0) {
+			let remainingFetches = options?.maxTotalFetches ?? 50;
+			if (!Number.isSafeInteger(remainingFetches) || remainingFetches < 0) {
+				addError(
+					errors,
+					InternalErrorCode.TrustChainInvalid,
+					"maxTotalFetches must be a non-negative safe integer",
+				);
+			}
+			const transport = options?.httpClient ?? fetch;
+			const fetchOptions: FederationOptions = {
+				...options,
+				httpClient: async (input, init) => {
+					if (options?.signal?.aborted || init?.signal?.aborted)
+						throw new DOMException("Validation was cancelled", "AbortError");
+					if (remainingFetches <= 0) throw new Error("Subject EC fetch budget exhausted");
+					remainingFetches--;
+					return transport(input, init);
+				},
+			};
+			// Serial retrieval bounds concurrency to one and stops on the first invalid edge.
+			for (let j = 1; j < parsed.length && errors.length === 0; j++) {
+				if (options?.signal?.aborted) {
+					addError(errors, InternalErrorCode.Timeout, "Validation was cancelled");
+					break;
+				}
+				const ss = (parsed[j] as ParsedEntityStatement).payload;
+				if (ss.iss === ss.sub) continue;
+				let subject = leaf;
+				if (ss.sub !== leaf.payload.sub) {
+					let jwt = configurationJwts.get(ss.sub);
+					if (jwt === undefined) {
+						try {
+							const fetched = await fetchEntityConfiguration(
+								ss.sub as unknown as EntityId,
+								fetchOptions,
+							);
+							if (!fetched.ok) {
+								addError(
+									errors,
+									fetched.error.code,
+									`Unable to obtain subject EC '${ss.sub}': ${fetched.error.description}`,
+									{ statementIndex: j, field: "authority_hints", checkNumber: 6 },
+								);
+								break;
+							}
+							jwt = fetched.value;
+							configurationJwts.set(ss.sub, jwt);
+						} catch (cause) {
 							addError(
 								errors,
-								fetched.error.code,
-								`Unable to obtain subject EC '${ss.sub}': ${fetched.error.description}`,
+								InternalErrorCode.Network,
+								`Unable to obtain subject EC '${ss.sub}': ${cause instanceof Error ? cause.message : "Retrieval failed"}`,
 								{ statementIndex: j, field: "authority_hints", checkNumber: 6 },
 							);
 							break;
 						}
-						jwt = fetched.value;
-						configurationJwts.set(ss.sub, jwt);
-					} catch (cause) {
+					}
+					const publication = await validateEntityConfigurationPublication(jwt, options);
+					if (!publication.valid) {
+						for (const error of publication.errors)
+							addError(errors, error.code, `Invalid subject EC '${ss.sub}': ${error.message}`, {
+								statementIndex: j,
+								field: error.field ?? "authority_hints",
+								checkNumber: error.checkNumber ?? 6,
+							});
+						break;
+					}
+					subject = publication.statement;
+					if (subject.payload.iss !== ss.sub || subject.payload.sub !== ss.sub) {
 						addError(
 							errors,
-							InternalErrorCode.Network,
-							`Unable to obtain subject EC '${ss.sub}': ${cause instanceof Error ? cause.message : "Retrieval failed"}`,
-							{ statementIndex: j, field: "authority_hints", checkNumber: 6 },
+							InternalErrorCode.TrustChainInvalid,
+							`Subject EC identity does not match '${ss.sub}'`,
+							{ statementIndex: j, field: "sub", checkNumber: 6 },
 						);
 						break;
 					}
+					// Bind the self-published EC to the keys attested by this authenticated SS.
+					const bound = await verifyEntityStatement(jwt, ss.jwks as JWKSet, verifyOptions);
+					if (!bound.ok) {
+						addError(
+							errors,
+							InternalErrorCode.SignatureInvalid,
+							`Subject EC '${ss.sub}' does not verify with the chain's subject keys: ${bound.error.description}`,
+							{ statementIndex: j, field: "jwks", checkNumber: 6 },
+						);
+						break;
+					}
+					expiresAt = Math.min(expiresAt, subject.payload.exp);
+					checkAuthorityMetadata(subject, j);
 				}
-				const publication = await validateEntityConfigurationPublication(jwt, options);
-				if (!publication.valid) {
-					for (const error of publication.errors)
-						addError(errors, error.code, `Invalid subject EC '${ss.sub}': ${error.message}`, {
-							statementIndex: j,
-							field: error.field ?? "authority_hints",
-							checkNumber: error.checkNumber ?? 6,
-						});
-					break;
-				}
-				subject = publication.statement;
-				if (subject.payload.iss !== ss.sub || subject.payload.sub !== ss.sub) {
+				const subjectHints = subject.payload.authority_hints;
+				if (!subjectHints?.includes(ss.iss)) {
 					addError(
 						errors,
 						InternalErrorCode.TrustChainInvalid,
-						`Subject EC identity does not match '${ss.sub}'`,
-						{ statementIndex: j, field: "sub", checkNumber: 6 },
+						`SS issuer '${ss.iss}' not found in subject's authority_hints at statement ${j}`,
+						{ statementIndex: j, field: "authority_hints", checkNumber: 6 },
 					);
-					break;
 				}
-				// Bind the self-published EC to the keys attested by this authenticated SS.
-				const bound = await verifyEntityStatement(jwt, ss.jwks as JWKSet, verifyOptions);
-				if (!bound.ok) {
-					addError(
-						errors,
-						InternalErrorCode.SignatureInvalid,
-						`Subject EC '${ss.sub}' does not verify with the chain's subject keys: ${bound.error.description}`,
-						{ statementIndex: j, field: "jwks", checkNumber: 6 },
-					);
-					break;
-				}
-				expiresAt = Math.min(expiresAt, subject.payload.exp);
-				checkAuthorityMetadata(subject, j);
-			}
-			const subjectHints = subject.payload.authority_hints;
-			if (!subjectHints?.includes(ss.iss)) {
-				addError(
-					errors,
-					InternalErrorCode.TrustChainInvalid,
-					`SS issuer '${ss.iss}' not found in subject's authority_hints at statement ${j}`,
-					{ statementIndex: j, field: "authority_hints", checkNumber: 6 },
-				);
 			}
 		}
-	}
-	if (options?.signal?.aborted && errors.length === 0)
-		addError(errors, InternalErrorCode.Timeout, "Validation was cancelled");
+		if (options?.signal?.aborted && errors.length === 0)
+			addError(errors, InternalErrorCode.Timeout, "Validation was cancelled");
 
-	if (errors.length > 0) {
-		safeLogger(options?.logger)?.warn("Trust chain validation failed");
-		if (options?.verboseErrors) {
-			return { valid: false, errors };
+		if (errors.length > 0) {
+			safeLogger(options?.logger)?.warn("Trust chain validation failed");
+			if (options?.verboseErrors) {
+				return { valid: false, errors };
+			}
+			return {
+				valid: false,
+				errors: [
+					{
+						code: InternalErrorCode.TrustChainInvalid,
+						message: "Trust chain validation failed",
+					},
+				],
+			};
 		}
+
+		return { valid: true, statements: parsed, expiresAt, entityConfigurations: configurationJwts };
+	} catch {
 		return {
 			valid: false,
 			errors: [
 				{
 					code: InternalErrorCode.TrustChainInvalid,
-					message: "Trust chain validation failed",
+					message: "Entity Statement data could not be processed safely",
 				},
 			],
 		};
 	}
-
-	return { valid: true, statements: parsed, expiresAt, entityConfigurations: configurationJwts };
 }
 
 async function validateTrustChainImpl(
@@ -1474,207 +1487,226 @@ async function validateTrustChainImpl(
 	verifyMarks: boolean,
 	stage?: MetadataStage,
 ): Promise<ValidationResult> {
-	if (options?.trustMarkVerification) options = trustMarkOperation(options);
-	const checks = validateCustomConstraintChecks(options?.customConstraintChecks ?? []);
-	if (!checks.ok)
-		return {
-			valid: false,
-			errors: [{ code: InternalErrorCode.ConstraintViolation, message: checks.error.description }],
-		};
-	const capturedChecks =
-		options?.customConstraintChecks?.map(({ name, check }) => ({ name, check })) ?? [];
-	const authenticated = await authenticateChainStatements(chain, trustAnchors, options);
-	if (!authenticated.valid) return authenticated;
-	if (stage) stage.entityConfigurations = authenticated.entityConfigurations;
-	const parsed = authenticated.statements;
-	const customConstraints = createCustomConstraintRunner(capturedChecks, parsed);
-	if (!customConstraints.ok)
-		return {
-			valid: false,
-			errors: [
-				{
-					code: InternalErrorCode.ConstraintViolation,
-					message: customConstraints.error.description,
-				},
-			],
-		};
-	const errors: ValidationError[] = [];
-	let failureMessage: string | undefined;
-	const leafPayload = (parsed[0] as ParsedEntityStatement).payload as Record<string, unknown>;
-	const lastIdx = parsed.length - 1;
-	const lastPayload = (parsed[lastIdx] as ParsedEntityStatement).payload;
-	const lastIss = lastPayload.iss as string;
-	const hasTrailingTrustAnchorEc = lastPayload.iss === lastPayload.sub;
+	try {
+		if (options?.trustMarkVerification) options = trustMarkOperation(options);
+		const checks = validateCustomConstraintChecks(options?.customConstraintChecks ?? []);
+		if (!checks.ok)
+			return {
+				valid: false,
+				errors: [
+					{ code: InternalErrorCode.ConstraintViolation, message: checks.error.description },
+				],
+			};
+		const capturedChecks =
+			options?.customConstraintChecks?.map(({ name, check }) => ({ name, check })) ?? [];
+		const authenticated = await authenticateChainStatements(chain, trustAnchors, options);
+		if (!authenticated.valid) return authenticated;
+		if (stage) stage.entityConfigurations = authenticated.entityConfigurations;
+		const parsed = authenticated.statements;
+		const customConstraints = createCustomConstraintRunner(capturedChecks, parsed);
+		if (!customConstraints.ok)
+			return {
+				valid: false,
+				errors: [
+					{
+						code: InternalErrorCode.ConstraintViolation,
+						message: customConstraints.error.description,
+					},
+				],
+			};
+		const errors: ValidationError[] = [];
+		let failureMessage: string | undefined;
+		const leafPayload = (parsed[0] as ParsedEntityStatement).payload as Record<string, unknown>;
+		const lastIdx = parsed.length - 1;
+		const lastPayload = (parsed[lastIdx] as ParsedEntityStatement).payload;
+		const lastIss = lastPayload.iss as string;
+		const hasTrailingTrustAnchorEc = lastPayload.iss === lastPayload.sub;
 
-	const subordinateStatements = hasTrailingTrustAnchorEc ? parsed.slice(1, -1) : parsed.slice(1);
+		const subordinateStatements = hasTrailingTrustAnchorEc ? parsed.slice(1, -1) : parsed.slice(1);
 
-	let metadata = structuredClone(leafPayload.metadata ?? {}) as Record<
-		string,
-		Record<string, unknown>
-	>;
+		let metadata = structuredClone(leafPayload.metadata ?? {}) as Record<
+			string,
+			Record<string, unknown>
+		>;
 
-	// Merge Immediate Superior's SS metadata before applying allowed_entity_types constraints,
-	// so the filter sees the fully merged metadata as required by the spec.
-	const immediateSuperior = subordinateStatements[0];
-	if (immediateSuperior) {
-		const immSupMeta = (immediateSuperior.payload as Record<string, unknown>).metadata as
-			| Record<string, Record<string, unknown>>
-			| undefined;
-		if (immSupMeta) {
-			for (const [entityType, params] of Object.entries(immSupMeta)) {
-				if (!Object.hasOwn(metadata, entityType)) continue;
-				const existingMetadata = metadata[entityType];
-				if (!existingMetadata) continue;
-				for (const [name, value] of Object.entries(params)) setOwn(existingMetadata, name, value);
-			}
-		}
-	}
-
-	for (let j = 1; j < parsed.length; j++) {
-		const stmt = parsed[j] as ParsedEntityStatement;
-		const constraints = (stmt.payload as Record<string, unknown>).constraints as
-			| Record<string, unknown>
-			| undefined;
-
-		if (constraints) {
-			let constraintsResult = checkConstraints(
-				constraints as Parameters<typeof checkConstraints>[0],
-				j,
-				parsed,
-			);
-			if (constraintsResult.ok) constraintsResult = customConstraints.value(constraints, j);
-			if (!constraintsResult.ok) {
-				failureMessage ??= "Trust Chain constraints validation failed";
-				addError(
-					errors,
-					InternalErrorCode.ConstraintViolation,
-					constraintsResult.error.description,
-					{ statementIndex: j, checkNumber: 16 },
-				);
-			}
-
-			const allowedTypes = (constraints as Record<string, unknown>).allowed_entity_types as
-				| string[]
+		// Merge Immediate Superior's SS metadata before applying allowed_entity_types constraints,
+		// so the filter sees the fully merged metadata as required by the spec.
+		const immediateSuperior = subordinateStatements[0];
+		if (immediateSuperior) {
+			const immSupMeta = (immediateSuperior.payload as Record<string, unknown>).metadata as
+				| Record<string, Record<string, unknown>>
 				| undefined;
-			if (allowedTypes) {
-				metadata = applyAllowedEntityTypes(allowedTypes, metadata);
+			if (immSupMeta) {
+				for (const [entityType, params] of Object.entries(immSupMeta)) {
+					if (!Object.hasOwn(metadata, entityType)) continue;
+					const existingMetadata = metadata[entityType];
+					if (!existingMetadata) continue;
+					for (const [name, value] of Object.entries(params)) setOwn(existingMetadata, name, value);
+				}
 			}
 		}
-	}
 
-	let resolvedMetadata: Record<string, Record<string, unknown>> = metadata;
+		for (let j = 1; j < parsed.length; j++) {
+			const stmt = parsed[j] as ParsedEntityStatement;
+			const constraints = (stmt.payload as Record<string, unknown>).constraints as
+				| Record<string, unknown>
+				| undefined;
 
-	if (subordinateStatements.length > 0) {
-		const policyOptions = options?.customPolicyOperators
-			? { customOperators: options.customPolicyOperators }
-			: undefined;
-		const policyResult = resolveMetadataPolicy(subordinateStatements, policyOptions);
-		if (!policyResult.ok) {
-			failureMessage ??= "Metadata Policy resolution failed";
-			addError(errors, InternalErrorCode.MetadataPolicyError, policyResult.error.description, {
-				checkNumber: 19,
-			});
-		} else if (Object.keys(policyResult.value).length > 0) {
-			for (const [type, values] of Object.entries(stage?.context ?? {})) {
-				if (!Object.hasOwn(metadata, type)) continue;
-				const entityMetadata = metadata[type];
-				for (const [parameter, value] of Object.entries(values)) {
-					if (entityMetadata && !Object.hasOwn(entityMetadata, parameter)) {
-						setOwn(entityMetadata, parameter, value);
+			if (constraints) {
+				let constraintsResult = checkConstraints(
+					constraints as Parameters<typeof checkConstraints>[0],
+					j,
+					parsed,
+				);
+				if (constraintsResult.ok) constraintsResult = customConstraints.value(constraints, j);
+				if (!constraintsResult.ok) {
+					failureMessage ??= "Trust Chain constraints validation failed";
+					addError(
+						errors,
+						InternalErrorCode.ConstraintViolation,
+						constraintsResult.error.description,
+						{ statementIndex: j, checkNumber: 16 },
+					);
+				}
+
+				const allowedTypes = (constraints as Record<string, unknown>).allowed_entity_types as
+					| string[]
+					| undefined;
+				if (allowedTypes) {
+					metadata = applyAllowedEntityTypes(allowedTypes, metadata);
+				}
+			}
+		}
+
+		let resolvedMetadata: Record<string, Record<string, unknown>> = metadata;
+
+		if (subordinateStatements.length > 0) {
+			const policyOptions = options?.customPolicyOperators
+				? { customOperators: options.customPolicyOperators }
+				: undefined;
+			const policyResult = resolveMetadataPolicy(subordinateStatements, policyOptions);
+			if (!policyResult.ok) {
+				failureMessage ??= "Metadata Policy resolution failed";
+				addError(errors, InternalErrorCode.MetadataPolicyError, policyResult.error.description, {
+					checkNumber: 19,
+				});
+			} else if (Object.keys(policyResult.value).length > 0) {
+				for (const [type, values] of Object.entries(stage?.context ?? {})) {
+					if (!Object.hasOwn(metadata, type)) continue;
+					const entityMetadata = metadata[type];
+					for (const [parameter, value] of Object.entries(values)) {
+						if (entityMetadata && !Object.hasOwn(entityMetadata, parameter)) {
+							setOwn(entityMetadata, parameter, value);
+						}
 					}
 				}
-			}
-			for (const claim of stage?.deferred ?? []) {
-				const entityMetadata = Object.hasOwn(metadata, claim.entityType)
-					? metadata[claim.entityType]
-					: undefined;
-				const policies = Object.hasOwn(policyResult.value, claim.entityType)
-					? policyResult.value[claim.entityType]
-					: undefined;
-				if (
-					entityMetadata &&
-					!Object.hasOwn(entityMetadata, claim.parameter) &&
-					policies &&
-					Object.hasOwn(policies, claim.parameter)
-				) {
-					delete policies[claim.parameter];
-					stage?.pending.push({ ...claim });
+				for (const claim of stage?.deferred ?? []) {
+					const entityMetadata = Object.hasOwn(metadata, claim.entityType)
+						? metadata[claim.entityType]
+						: undefined;
+					const policies = Object.hasOwn(policyResult.value, claim.entityType)
+						? policyResult.value[claim.entityType]
+						: undefined;
+					if (
+						entityMetadata &&
+						!Object.hasOwn(entityMetadata, claim.parameter) &&
+						policies &&
+						Object.hasOwn(policies, claim.parameter)
+					) {
+						delete policies[claim.parameter];
+						stage?.pending.push({ ...claim });
+					}
+				}
+				// Registration retains the request's Entity Types (§12.2.5). A policy
+				// for another role does not declare that role on the RP's behalf.
+				const applicablePolicy = options?.explicitRegistrationRequest
+					? Object.fromEntries(
+							Object.entries(policyResult.value).filter(([type]) => Object.hasOwn(metadata, type)),
+						)
+					: policyResult.value;
+				// Superior metadata already merged above; pass only leaf metadata + policy here.
+				const applyResult = applyMetadataPolicy(
+					metadata as FederationMetadata,
+					applicablePolicy,
+					undefined,
+					policyOptions,
+				);
+				if (!applyResult.ok) {
+					failureMessage ??= "Metadata Policy application failed";
+					addError(
+						errors,
+						InternalErrorCode.MetadataPolicyViolation,
+						applyResult.error.description,
+						{
+							checkNumber: 24,
+						},
+					);
+				} else {
+					resolvedMetadata = applyResult.value as Record<string, Record<string, unknown>>;
 				}
 			}
-			// Registration retains the request's Entity Types (§12.2.5). A policy
-			// for another role does not declare that role on the RP's behalf.
-			const applicablePolicy = options?.explicitRegistrationRequest
-				? Object.fromEntries(
-						Object.entries(policyResult.value).filter(([type]) => Object.hasOwn(metadata, type)),
-					)
-				: policyResult.value;
-			// Superior metadata already merged above; pass only leaf metadata + policy here.
-			const applyResult = applyMetadataPolicy(
-				metadata as FederationMetadata,
-				applicablePolicy,
-				undefined,
-				policyOptions,
-			);
-			if (!applyResult.ok) {
-				failureMessage ??= "Metadata Policy application failed";
-				addError(errors, InternalErrorCode.MetadataPolicyViolation, applyResult.error.description, {
-					checkNumber: 24,
-				});
-			} else {
-				resolvedMetadata = applyResult.value as Record<string, Record<string, unknown>>;
+		}
+
+		// Federation §§5 and 6.1.4.2 apply to the final metadata, including
+		// chains resolved through superior overrides without a metadata policy.
+		if (errors.length === 0) {
+			validateResolvedMetadata(errors, resolvedMetadata, leafPayload.iss as string, stage?.pending);
+			if (errors.length > 0) failureMessage = "Resolved metadata validation failed";
+		}
+
+		// Federation §§3.2 and 7.3 distinguish reference syntax from trust in a mark.
+		const trustMarkEvaluations =
+			errors.length === 0
+				? await evaluatePublishedTrustMarks(parsed, trustAnchors, options, verifyMarks)
+				: [];
+		const trustMarks = trustMarkEvaluations.flatMap((result) =>
+			result.status === "verified" ? [result.mark] : [],
+		);
+
+		const expiresAt = authenticated.expiresAt;
+
+		if (errors.length > 0) {
+			safeLogger(options?.logger)?.warn(failureMessage ?? "Trust chain validation failed");
+			if (options?.verboseErrors) {
+				return { valid: false, errors };
 			}
+			return {
+				valid: false,
+				errors: [
+					{
+						code: InternalErrorCode.TrustChainInvalid,
+						message: "Trust chain validation failed",
+					},
+				],
+			};
 		}
-	}
 
-	// Federation §§5 and 6.1.4.2 apply to the final metadata, including
-	// chains resolved through superior overrides without a metadata policy.
-	if (errors.length === 0) {
-		validateResolvedMetadata(errors, resolvedMetadata, leafPayload.iss as string, stage?.pending);
-		if (errors.length > 0) failureMessage = "Resolved metadata validation failed";
-	}
+		const entityIdStr = leafPayload.iss as unknown as EntityId;
+		const trustAnchorId = lastIss as unknown as EntityId;
 
-	// Federation §§3.2 and 7.3 distinguish reference syntax from trust in a mark.
-	const trustMarkEvaluations =
-		errors.length === 0
-			? await evaluatePublishedTrustMarks(parsed, trustAnchors, options, verifyMarks)
-			: [];
-	const trustMarks = trustMarkEvaluations.flatMap((result) =>
-		result.status === "verified" ? [result.mark] : [],
-	);
+		const validatedChain: ValidatedTrustChain = {
+			statements: parsed,
+			entityId: entityIdStr,
+			trustAnchorId,
+			expiresAt,
+			resolvedMetadata,
+			trustMarks,
+			trustMarkEvaluations,
+		};
 
-	const expiresAt = authenticated.expiresAt;
-
-	if (errors.length > 0) {
-		safeLogger(options?.logger)?.warn(failureMessage ?? "Trust chain validation failed");
-		if (options?.verboseErrors) {
-			return { valid: false, errors };
-		}
+		if (!stage?.deferred) safeLogger(options?.logger)?.info("Trust chain validated");
+		return { valid: true, chain: validatedChain, errors };
+	} catch {
 		return {
 			valid: false,
 			errors: [
 				{
 					code: InternalErrorCode.TrustChainInvalid,
-					message: "Trust chain validation failed",
+					message: "Entity Statement data could not be processed safely",
 				},
 			],
 		};
 	}
-
-	const entityIdStr = leafPayload.iss as unknown as EntityId;
-	const trustAnchorId = lastIss as unknown as EntityId;
-
-	const validatedChain: ValidatedTrustChain = {
-		statements: parsed,
-		entityId: entityIdStr,
-		trustAnchorId,
-		expiresAt,
-		resolvedMetadata,
-		trustMarks,
-		trustMarkEvaluations,
-	};
-
-	if (!stage?.deferred) safeLogger(options?.logger)?.info("Trust chain validated");
-	return { valid: true, chain: validatedChain, errors };
 }
 
 /** Check if a validated trust chain has expired. */

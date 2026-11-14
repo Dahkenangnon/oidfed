@@ -190,6 +190,8 @@ const result = await verifyEntityStatement(entityConfigurationJwt, {
 
 ### Trust-chain discovery and validation
 
+Duplicate policy members are checked in the original JWT JSON using an iterative scanner. Deep extension data cannot erase a detected duplicate. If metadata cannot be processed safely, chain validation and its prepare/complete APIs return their normal failure result; callers do not receive a stack-overflow exception.
+
 `resolveTrustChains()` builds candidate paths. Pass each candidate to `validateTrustChain()` to check signatures, expiry, constraints, and metadata policy. Use `discoverEntity()` when you want a validated, selected chain in one call.
 
 Validation rejects a path that visits an Entity more than once, as required by [Federation §17.1](https://openid.net/specs/openid-federation-1_0.html#section-17.1) and [§10.1](https://openid.net/specs/openid-federation-1_0.html#section-10.1). The optional closing Trust Anchor Entity Configuration describes the final Entity in that path. Separate candidate paths may share Entities.
@@ -299,7 +301,7 @@ if (policyResult.ok) {
 
 Metadata policy `value` and `default` operators support JSON objects under [Federation §6.1.3.1.8](https://openid.net/specs/openid-federation-1_0.html#section-6.1.3.1.8). Merging compares complete values structurally: object member order is immaterial, array order is significant, and conflicting values fail. Nested objects are not recursively combined. Resolved values are detached from the supplied policy.
 
-`validateMetadataPolicy(policy, { customOperators })` checks a policy declaration without applying it to metadata. It checks supported operator values and combinations, while preserving unknown extension operators. Statement builders also reject invalid standard declarations before signing. Custom operator callbacks are synchronous: thrown exceptions, malformed results, and promises become policy errors. Operator order must be finite and respect the standard `value` and `essential` boundaries.
+`validateMetadataPolicy(policy, { customOperators })` checks a policy declaration without applying it to metadata. It checks supported operator values and combinations, while preserving unknown extension operators. The standalone policy and Subordinate Statement publication validators traverse `value` and `default` data iteratively, so deeply nested JSON does not overflow the call stack. Cycles and values that cannot be represented as JSON are rejected. Statement builders also reject invalid standard declarations before signing. Custom operator callbacks are synchronous: thrown exceptions, malformed results, and promises become policy errors. Operator order must be finite and respect the standard `value` and `essential` boundaries.
 
 `validateSubordinateStatementPublicationClaims(claims, { customOperators })` checks supplied publication claims, including critical-claim declarations and constraints, without requiring issuer, key, or time claims. It does not authenticate a statement or resolve a Trust Chain.
 

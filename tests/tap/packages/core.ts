@@ -243,6 +243,125 @@ import { walletFederation, walletQuery } from "../fixtures/wallet.js";
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("core / policy and signed metadata validation", () => {
+		test("deep extensions cannot hide duplicate policy members", async (t) => {
+			const f = await trustChainPaths();
+			const chain = await f.chain(["subject", "anchor"]);
+			const { CompactSign, importJWK } = await import("jose");
+			const key = await importJWK(f.keys.anchor.privateKey, "ES256");
+			const statement = CorePublic.decodeEntityStatement(chain[1]!);
+			if (!statement.ok) throw new Error(statement.error.description);
+			const prefix = JSON.stringify(statement.value.payload).slice(0, -1);
+			const nested = `${"[".repeat(12000)}0${"]".repeat(12000)}`;
+			for (const declaration of [
+				'"role":{"x":{"value":1}},"role":{"x":{"value":2}}',
+				'"role":{"x":{"value":1},"x":{"value":2}}',
+				'"role":{"x":{"value":1,"val\\u0075e":2}}',
+			]) {
+				const raw = `${prefix},"metadata_policy":{${declaration}},"extension":${nested}}`;
+				chain[1] = await new CompactSign(new TextEncoder().encode(raw))
+					.setProtectedHeader({
+						typ: "entity-statement+jwt",
+						alg: "ES256",
+						kid: f.keys.anchor.publicKey.kid!,
+					})
+					.sign(key);
+				const result = await CorePublic.validateTrustChain(chain, f.anchors, f.options);
+				t.false(result.valid);
+				t.true(
+					result.errors.some((error) => error.message.includes("Duplicate metadata_policy")),
+					"retains the actual duplicate error despite later deep data",
+				);
+			}
+		});
+		test("deep metadata and policy processing preserve result contracts", async (t) => {
+			const f = await trustChainPaths();
+			const chain = await f.chain(["subject", "anchor"]);
+			const { CompactSign, importJWK } = await import("jose");
+			const decoded = CorePublic.decodeEntityStatement(chain[0]!);
+			if (!decoded.ok) throw new Error(decoded.error.description);
+			const nested = `${"[".repeat(12000)}0${"]".repeat(12000)}`;
+			const value: unknown = JSON.parse(nested);
+			const raw = `${JSON.stringify(decoded.value.payload).slice(0, -1)},"metadata":{"example":{"nested":${nested}}}}`;
+			chain[0] = await new CompactSign(new TextEncoder().encode(raw))
+				.setProtectedHeader({
+					typ: "entity-statement+jwt",
+					alg: "ES256",
+					kid: f.keys.subject.publicKey.kid!,
+				})
+				.sign(await importJWK(f.keys.subject.privateKey, "ES256"));
+			for (const validate of [CorePublic.validateTrustChain, validateTrustChainStructure]) {
+				const result = await validate(chain, f.anchors, f.options);
+				t.equal(typeof result.valid, "boolean", "returns validation outcome instead of rejecting");
+			}
+			const prepared = await CorePublic.prepareTrustChainValidation(chain, f.anchors, {
+				...f.options,
+				deferredClaims: [],
+			});
+			t.equal(typeof prepared.ok, "boolean");
+			const clean = await f.chain(["subject", "anchor"], {
+				subjectClaims: { metadata: { example: {} } },
+			});
+			clean[1] = await f.sign("anchor", "subject", {
+				metadata_policy: { example: { nested: { essential: true } } },
+			});
+			const deferred = await CorePublic.prepareTrustChainValidation(clean, f.anchors, {
+				...f.options,
+				deferredClaims: [{ entityType: "example", parameter: "nested" }],
+			});
+			t.true(deferred.ok);
+			if (deferred.ok)
+				t.equal(
+					typeof (
+						await CorePublic.completeTrustChainValidation(deferred.value, {
+							example: { nested: value },
+						})
+					).ok,
+					"boolean",
+				);
+			t.equal(
+				typeof CorePublic.applyMetadataPolicy({ example: { nested: value } }, {}).ok,
+				"boolean",
+			);
+			const statement = CorePublic.decodeEntityStatement(clean[1]!);
+			if (!statement.ok) throw new Error(statement.error.description);
+			statement.value.payload.metadata_policy = { example: { nested: { value } } };
+			t.equal(typeof CorePublic.resolveMetadataPolicy([statement.value]).ok, "boolean");
+		});
+		test("standalone policy validators accept deep JSON and reject invalid operator data", (t) => {
+			const deep = JSON.parse(`${"[".repeat(12000)}0${"]".repeat(12000)}`);
+			const cycle: Record<string, unknown> = {};
+			cycle.self = cycle;
+			for (const operator of ["value", "default"]) {
+				for (const value of [deep, { first: deep, second: deep }]) {
+					const policy = { example: { field: { [operator]: value } } };
+					t.true(CorePublic.validateMetadataPolicy(policy).ok, `${operator}: deep JSON is valid`);
+					t.true(
+						CorePublic.validateSubordinateStatementPublicationClaims({ metadata_policy: policy })
+							.ok,
+						`${operator}: publication returns a Result`,
+					);
+				}
+				for (const value of [cycle, Number.POSITIVE_INFINITY, undefined, () => true]) {
+					const policy = { example: { field: { [operator]: value } } };
+					t.false(CorePublic.validateMetadataPolicy(policy).ok);
+					t.false(
+						CorePublic.validateSubordinateStatementPublicationClaims({ metadata_policy: policy })
+							.ok,
+					);
+				}
+			}
+			t.true(
+				CorePublic.validateMetadataPolicy({ example: { field: { value: null } } }).ok,
+				"value null removes metadata",
+			);
+			t.false(
+				CorePublic.validateMetadataPolicy({ example: { field: { default: null } } }).ok,
+				"default cannot introduce null",
+			);
+		});
+	});
+
 	module("core / configurable trust establishment", () => {
 		async function paths() {
 			const f = await trustChainPaths({ example: { route: "leaf" } });

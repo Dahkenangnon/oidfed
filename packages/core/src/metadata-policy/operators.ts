@@ -1,4 +1,5 @@
 /** Metadata policy operators (add, default, one_of, subset_of, superset_of, essential, value). */
+import { isJsonData } from "../callbacks.js";
 import { PolicyOperator } from "../constants.js";
 import type {
 	PolicyMergeResult,
@@ -67,23 +68,7 @@ function valueType(value: unknown): string {
 
 /** JSON objects are supported for value/default under Federation §6.1.3.1.8. */
 function isValueOrDefaultMetadataValue(value: unknown): boolean {
-	const ancestors = new Set<object>();
-	function json(input: unknown): boolean {
-		if (input === null || typeof input === "string" || typeof input === "boolean") return true;
-		if (typeof input === "number") return Number.isFinite(input);
-		if (typeof input !== "object" || !input || ancestors.has(input)) return false;
-		if (
-			!Array.isArray(input) &&
-			Object.getPrototypeOf(input) !== Object.prototype &&
-			Object.getPrototypeOf(input) !== null
-		)
-			return false;
-		ancestors.add(input);
-		const valid = Object.values(input).every(json);
-		ancestors.delete(input);
-		return valid;
-	}
-	return value !== null && json(value);
+	return value !== null && isJsonData(value);
 }
 
 function isComparableElement(value: unknown): boolean {

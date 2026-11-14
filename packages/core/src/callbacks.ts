@@ -37,26 +37,44 @@ export function setOwn(object: object, name: string, value: unknown): void {
 }
 
 export function freezeSnapshot<T>(value: T): T {
-	if (value && typeof value === "object") {
-		for (const nested of Object.values(value)) freezeSnapshot(nested);
-		Object.freeze(value);
+	const pending: unknown[] = [value];
+	const seen = new Set<object>();
+	while (pending.length) {
+		const current = pending.pop();
+		if (!current || typeof current !== "object" || seen.has(current)) continue;
+		seen.add(current);
+		for (const nested of Object.values(current)) pending.push(nested);
+		Object.freeze(current);
 	}
 	return value;
 }
 
-/** Callback outputs must remain representable as JSON. */
-export function isJsonData(value: unknown, ancestors = new Set<object>()): boolean {
-	if (value === null || typeof value === "string" || typeof value === "boolean") return true;
-	if (typeof value === "number") return Number.isFinite(value);
-	if (!value || typeof value !== "object" || ancestors.has(value)) return false;
-	if (
-		!Array.isArray(value) &&
-		Object.getPrototypeOf(value) !== Object.prototype &&
-		Object.getPrototypeOf(value) !== null
-	)
-		return false;
-	ancestors.add(value);
-	const valid = Object.values(value).every((item) => isJsonData(item, ancestors));
-	ancestors.delete(value);
-	return valid;
+/** Callback outputs must remain representable as JSON; shared objects are allowed, cycles are not. */
+export function isJsonData(value: unknown): boolean {
+	const ancestors = new Set<object>();
+	const pending: { value: unknown; leaving?: boolean }[] = [{ value }];
+	while (pending.length) {
+		const entry = pending.pop() as { value: unknown; leaving?: boolean };
+		const current = entry.value;
+		if (entry.leaving) {
+			ancestors.delete(current as object);
+			continue;
+		}
+		if (current === null || typeof current === "string" || typeof current === "boolean") continue;
+		if (typeof current === "number") {
+			if (!Number.isFinite(current)) return false;
+			continue;
+		}
+		if (!current || typeof current !== "object" || ancestors.has(current)) return false;
+		if (
+			!Array.isArray(current) &&
+			Object.getPrototypeOf(current) !== Object.prototype &&
+			Object.getPrototypeOf(current) !== null
+		)
+			return false;
+		ancestors.add(current);
+		pending.push({ value: current, leaving: true });
+		for (const nested of Object.values(current)) pending.push({ value: nested });
+	}
+	return true;
 }
