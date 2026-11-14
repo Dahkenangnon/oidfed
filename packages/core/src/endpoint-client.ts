@@ -245,8 +245,9 @@ export async function fetchFederationEndpoint(
 			method,
 			...(method === "POST" ? { body: form } : {}),
 			headers,
-			// Manual redirects also work in runtimes that do not support redirect: "error".
-			redirect: options.redirect === "error" ? "error" : "manual",
+			// Edge runtimes may reject "error". Manual mode keeps credentials at this
+			// endpoint; performFetch rejects every non-success status, including 3xx.
+			redirect: "manual",
 		});
 	} catch {
 		if (options.signal?.aborted)

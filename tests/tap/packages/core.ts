@@ -1383,6 +1383,59 @@ export default (QUnit: QUnit) => {
 	});
 
 	module("core / endpoint client authentication", () => {
+		test("POST endpoint clients use portable redirect rejection without forwarding credentials", async (t) => {
+			const endpoint = "https://issuer.example/status";
+			const key = await generateSigningKey("ES256");
+			for (const authenticated of [false, true]) {
+				for (const status of [200, 301, 302, 303, 307, 308]) {
+					let calls = 0;
+					const result = await fetchFederationEndpoint(
+						endpoint,
+						new URLSearchParams({ trust_mark: "opaque-mark" }),
+						{
+							method: "POST",
+							redirect: "error",
+							expectedStatus: 200,
+							accept: MediaType.TrustMarkStatusResponse,
+							...(authenticated
+								? {
+										authentication: {
+											method: "private_key_jwt" as const,
+											audience: "https://issuer.example",
+											clientId: "https://holder.example",
+											signer: new JwkSigner(key.privateKey),
+										},
+									}
+								: {}),
+							httpClient: async (input, init) => {
+								calls++;
+								t.strictEqual(
+									init?.redirect,
+									"manual",
+									"edge runtimes need manual mode to reject redirects",
+								);
+								const request = new Request(input, init);
+								t.strictEqual(request.url, endpoint);
+								t.strictEqual(request.method, "POST");
+								const body = new URLSearchParams(await request.text());
+								t.strictEqual(body.get("trust_mark"), "opaque-mark");
+								t.strictEqual(body.has("client_assertion"), authenticated);
+								return new Response(status === 200 ? "signed-response" : null, {
+									status,
+									headers: {
+										"content-type": MediaType.TrustMarkStatusResponse,
+										...(status !== 200 ? { location: "https://other.example/status" } : {}),
+									},
+								});
+							},
+						},
+						"https://issuer.example",
+					);
+					t.strictEqual(result.ok, status === 200);
+					t.strictEqual(calls, 1, "no redirect follow-up or anonymous retry");
+				}
+			}
+		});
 		test("standalone clients use the configured audience and never retry authentication failures anonymously", async (t) => {
 			const c = CorePublic,
 				endpoint = "https://directory.example/api",
@@ -26487,7 +26540,7 @@ export default (QUnit: QUnit) => {
 			let calls = 0;
 			const httpClient: HttpClient = async (_input, init) => {
 				calls++;
-				t.equal(init?.redirect, "error");
+				t.equal(init?.redirect, "manual");
 				t.equal(init?.body, "trust_mark=mark");
 				return new Response(f.jwt, {
 					headers: { "Content-Type": MediaType.TrustMarkStatusResponse },
@@ -26531,7 +26584,7 @@ export default (QUnit: QUnit) => {
 							expectedIssuer: issuer,
 							httpClient: async (_input, init) => {
 								redirects++;
-								t.equal(init?.redirect, "error");
+								t.equal(init?.redirect, "manual");
 								return new Response(null, {
 									status,
 									headers: { Location: "https://other.example/status" },

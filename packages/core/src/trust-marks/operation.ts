@@ -74,7 +74,7 @@ export function fetchTrustMarkHistoricalResponse(
 		response = fetchFederationEndpoint(
 			endpoint,
 			new URLSearchParams(),
-			{ ...scoped, expectedStatus: 200, accept: MediaType.JwkSet, redirect: "error" },
+			{ ...scoped, expectedStatus: 200, accept: MediaType.JwkSet, redirect: "manual" },
 			issuer,
 		);
 		authenticated.set(key, response);

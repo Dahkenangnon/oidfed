@@ -266,7 +266,7 @@ async function fetchStatus(
 			...options,
 			method: "POST",
 			body: new URLSearchParams({ trust_mark: trustMarkJwt }),
-			redirect: "error",
+			redirect: "manual",
 			expectedStatus: 200,
 			accept: MediaType.TrustMarkStatusResponse,
 		},
