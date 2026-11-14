@@ -6515,6 +6515,141 @@ export default (QUnit: QUnit) => {
 	});
 
 	module("core / statement builders", () => {
+		test("critical extensions survive signing and require explicit consumer support", async (t) => {
+			const c = CorePublic;
+			const keys = await generateSigningKey("ES256");
+			const jwks = { keys: [keys.publicKey] };
+			const signer = new JwkSigner(keys.privateKey);
+			const anchor = entityId("https://anchor.example");
+			const subject = entityId("https://leaf.example");
+			const common = { jwks, signer, issuedAt: 1000, ttlSeconds: 600 };
+			const ec = await c.signEntityConfiguration({
+				...common,
+				entityId: subject,
+				metadata: { federation_entity: {} },
+				authorityHints: [anchor],
+				additionalClaims: { x_ec: { required: true } },
+				crit: ["x_ec"],
+			});
+			const ss = await c.signSubordinateStatement({
+				...common,
+				issuer: anchor,
+				subject,
+				additionalClaims: { x_ss: false },
+				crit: ["x_ss"],
+			});
+			const ta = await c.signEntityConfiguration({
+				...common,
+				entityId: anchor,
+				metadata: {
+					federation_entity: {
+						federation_fetch_endpoint: `${anchor}/fetch`,
+						federation_list_endpoint: `${anchor}/list`,
+					},
+				},
+			});
+			const anchors = c.createTrustAnchorSet([{ entityId: anchor, jwks }]);
+			const options = { clock: { now: () => 1100 }, clockSkewSeconds: 0 };
+			for (const understood of [[], ["x_ec"], ["x_ss"], ["x_ec", "x_ss"]]) {
+				const result = await c.validateTrustChain([ec, ss, ta], anchors, {
+					...options,
+					understoodCriticalClaims: new Set(understood),
+				});
+				t.equal(result.valid, understood.length === 2, JSON.stringify(result.errors));
+			}
+			for (const jwt of [ec, ss]) {
+				const result = await verifyEntityStatement(jwt, jwks, options);
+				t.true(result.ok, "extensions are covered by the signature");
+			}
+			const decoded = decodeEntityStatement(ss);
+			t.true(decoded.ok);
+			if (decoded.ok) t.strictEqual(decoded.value.payload.x_ss, false);
+		});
+
+		test("publication extensions cannot override standard claims or disappear on serialization", async (t) => {
+			const { publicKey } = await generateSigningKey("ES256");
+			const build = (extensions: CorePublic.EntityStatementExtensions) => [
+				() =>
+					CorePublic.buildEntityConfigurationPayload({
+						entityId: "https://a.example",
+						jwks: { keys: [publicKey] },
+						metadata: { federation_entity: {} },
+						...extensions,
+					}),
+				() =>
+					CorePublic.buildSubordinateStatementPayload({
+						issuer: "https://a.example",
+						subject: "https://b.example",
+						jwks: { keys: [publicKey] },
+						...extensions,
+					}),
+			];
+			for (const name of CorePublic.STANDARD_ENTITY_STATEMENT_CLAIMS) {
+				for (const fn of build({ additionalClaims: { [name]: "override" } }))
+					t.throws(fn, /reserved/, name);
+			}
+			const circular: Record<string, unknown> = {};
+			circular.self = circular;
+			for (const value of [
+				undefined,
+				() => true,
+				Symbol("x"),
+				1n,
+				NaN,
+				Infinity,
+				new Date(),
+				circular,
+				{ toJSON: () => undefined },
+			]) {
+				for (const fn of build({ additionalClaims: { x: value }, crit: ["x"] }))
+					t.throws(fn, /JSON object data/);
+			}
+			for (const crit of [[], ["missing"], ["x", "x"], ["iss"], ["toString"]]) {
+				for (const fn of build({ additionalClaims: { x: true }, crit })) t.throws(fn, /crit/);
+			}
+		});
+
+		test("extension snapshots preserve unusual JSON names without aliases or prototype writes", async (t) => {
+			const { publicKey } = await generateSigningKey("ES256");
+			const before = Object.getOwnPropertyDescriptors(Object.prototype);
+			const additionalClaims = JSON.parse(
+				'{"__proto__":{"injected":[true]},"constructor":false,"toString":null,"toJSON":"data"}',
+			) as Record<string, unknown>;
+			const crit = Object.keys(additionalClaims);
+			const payload = CorePublic.buildEntityConfigurationPayload({
+				entityId: "https://a.example",
+				jwks: { keys: [publicKey] },
+				metadata: { federation_entity: {} },
+				additionalClaims,
+				crit,
+			});
+			const original = JSON.stringify(additionalClaims);
+			(
+				Object.getOwnPropertyDescriptor(additionalClaims, "__proto__")!.value as {
+					injected: boolean[];
+				}
+			).injected.push(false);
+			crit.push("missing");
+			const wire = JSON.parse(JSON.stringify(payload));
+			for (const [name, value] of Object.entries(JSON.parse(original))) {
+				t.true(Object.hasOwn(wire, name));
+				t.deepEqual(wire[name], value);
+			}
+			t.deepEqual(wire.crit, ["__proto__", "constructor", "toString", "toJSON"]);
+			t.deepEqual(Object.getOwnPropertyNames(Object.prototype), Object.keys(before));
+			for (const [name, saved] of Object.entries(before)) {
+				const current = Object.getOwnPropertyDescriptor(Object.prototype, name);
+				for (const attribute of [
+					"value",
+					"get",
+					"set",
+					"writable",
+					"enumerable",
+					"configurable",
+				] as const)
+					t.strictEqual(current?.[attribute], saved[attribute], `${name}.${attribute}`);
+			}
+		});
 		test("builds Entity Configuration payloads with optional federation claims", async (t) => {
 			const { publicKey } = await generateSigningKey("ES256");
 			const payload = CorePublic.buildEntityConfigurationPayload({

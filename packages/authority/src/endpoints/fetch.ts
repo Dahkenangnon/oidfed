@@ -84,6 +84,7 @@ export async function buildSubordinateStatement(
 	subordinatePublicationClaim(record, "metadata_policy", ctx);
 	subordinatePublicationClaim(record, "constraints", ctx);
 	const payload = buildSubordinateStatementPayload({
+		...(record.additionalClaims !== undefined ? { additionalClaims: record.additionalClaims } : {}),
 		issuer: ctx.entityId,
 		subject: record.entityId,
 		jwks: record.jwks,

@@ -77,6 +77,37 @@ function mockFn<A extends unknown[]>() {
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("leaf / critical extension publication", () => {
+		test("configured extensions are detached and survive EC refresh", async (t) => {
+			const additionalClaims = { x_rules: { versions: [1] } };
+			const crit = ["x_rules"];
+			const { config } = await createLeafConfig({ additionalClaims, crit });
+			const leaf = new Leaf(config);
+			additionalClaims.x_rules.versions.push(2);
+			crit.push("absent");
+			for (const jwt of [
+				await leaf.getEntityConfiguration(),
+				await leaf.refreshEntityConfiguration(),
+			]) {
+				const result = decodeEntityStatement(jwt);
+				t.true(result.ok);
+				if (result.ok) {
+					t.deepEqual(result.value.payload.x_rules, { versions: [1] });
+					t.deepEqual(result.value.payload.crit, ["x_rules"]);
+				}
+			}
+			for (const patch of [
+				{ additionalClaims: { iss: "override" } },
+				{ crit: ["missing"] },
+				{ crit: [] },
+			]) {
+				t.throws(
+					() => new Leaf({ ...config, additionalClaims: {}, crit: undefined, ...patch }),
+					/reserved|crit/,
+				);
+			}
+		});
+	});
 	module("leaf / configuration route boundaries", () => {
 		test("role routes cannot replace discovery or another role", async (t) => {
 			const { config } = await createLeafConfig({ entityId: "https://leaf.example/tenant" });

@@ -3,6 +3,7 @@ import type {
 	CacheProvider,
 	EntityCollectionStore,
 	EntityId,
+	EntityStatementExtensions,
 	EntityTypeIdentifier,
 	JWKSet,
 	ReplayStore,
@@ -65,7 +66,7 @@ export interface ListPage {
 	readonly nextCursor?: EntityId;
 }
 
-export interface SubordinateRecord {
+export interface SubordinateRecord extends EntityStatementExtensions {
 	/** Immutable entity identifier. */
 	readonly entityId: EntityId;
 	readonly jwks: JWKSet;
@@ -76,7 +77,6 @@ export interface SubordinateRecord {
 	readonly entityTypes?: ReadonlyArray<EntityTypeIdentifier>;
 	readonly isIntermediate?: boolean;
 	readonly sourceEndpoint?: string;
-	readonly crit?: ReadonlyArray<string>;
 	readonly metadataPolicyCrit?: ReadonlyArray<string>;
 	/** Adapter-managed creation NumericDate. */
 	readonly createdAt: number;

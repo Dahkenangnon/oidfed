@@ -11,6 +11,7 @@ import {
 	type EntityContext,
 	type EntityId,
 	type EntityRole,
+	type EntityStatementExtensions,
 	type EntityStatementMetadata,
 	endpointParameterValuesMatch,
 	entityId,
@@ -23,6 +24,7 @@ import {
 	jwtResponse,
 	MediaType,
 	nowSeconds,
+	prepareEntityStatementExtensions,
 	type RemoveTrustMarkSelector,
 	requireMethod,
 	safeLogger,
@@ -38,7 +40,7 @@ import {
 	WELL_KNOWN_OPENID_FEDERATION,
 } from "@oidfed/core";
 
-export interface LeafConfig {
+export interface LeafConfig extends EntityStatementExtensions {
 	trustMarkIssuer?: TrustMarkIssuerConfig;
 	collection?: EntityCollectionIntegration;
 	entityId: EntityId | string;
@@ -101,6 +103,7 @@ export class Leaf {
 		this.entityId = rawEntityId;
 		this.config = {
 			...config,
+			...prepareEntityStatementExtensions(config),
 			authorityHints: [...config.authorityHints],
 			...(config.trustMarks ? { trustMarks: structuredClone(config.trustMarks) } : {}),
 		};
@@ -341,6 +344,8 @@ export class Leaf {
 		const ttlSeconds =
 			this.config.entityConfigurationTtlSeconds ?? DEFAULT_ENTITY_STATEMENT_TTL_SECONDS;
 		const payload = buildEntityConfigurationPayload({
+			additionalClaims: this.config.additionalClaims,
+			crit: this.config.crit,
 			entityId: this.entityId,
 			jwks: keySet.jwks,
 			metadata: this.metadata,

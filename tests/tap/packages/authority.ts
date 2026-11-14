@@ -634,11 +634,94 @@ export default (QUnit: QUnit) => {
 		});
 	});
 
+	module("authority / critical extension publication", () => {
+		test("both authority hosts detach their own EC extensions at construction", async (t) => {
+			const f = await createTestContext();
+			for (const intermediate of [false, true]) {
+				const additionalClaims = { x_authority: { versions: [1] } };
+				const crit = ["x_authority"];
+				const config: AuthorityConfig = {
+					entityId: f.ctx.entityId,
+					keyProvider: f.keyProvider,
+					storage: f.storage,
+					metadata: f.ctx.metadata,
+					additionalClaims,
+					crit,
+					...(intermediate ? { authorityHints: ["https://superior.example"] } : {}),
+				};
+				const authority = createAuthorityServer(config);
+				additionalClaims.x_authority.versions.push(2);
+				crit.push("missing");
+				const result = decodeEntityStatement(await authority.getEntityConfiguration());
+				t.true(result.ok);
+				if (result.ok) {
+					t.deepEqual(result.value.payload.x_authority, { versions: [1] });
+					t.deepEqual(result.value.payload.crit, ["x_authority"]);
+				}
+				t.throws(
+					() => createAuthorityServer({ ...config, additionalClaims: { exp: 1 } }),
+					/reserved/,
+				);
+				t.throws(() => createAuthorityServer({ ...config, crit: [] }), /crit/);
+			}
+		});
+		test("subordinate extensions survive registration, updates, Fetch and Extended Listing", async (t) => {
+			const f = await createTestContext();
+			const authority = new TrustAnchor({
+				entityId: f.ctx.entityId,
+				keyProvider: f.keyProvider,
+				storage: f.storage,
+				metadata: f.ctx.metadata,
+			});
+			const additionalClaims = { x_rules: { versions: [1] } };
+			await authority.registerSubordinate({
+				entityId: LEAF_ID,
+				jwks: { keys: [f.publicKey] },
+				additionalClaims,
+				crit: ["x_rules"],
+			});
+			additionalClaims.x_rules.versions.push(99);
+			const initial = decodeEntityStatement(await authority.getSubordinateStatement(LEAF_ID));
+			t.true(initial.ok);
+			if (initial.ok) t.deepEqual(initial.value.payload.x_rules, { versions: [1] });
+			await t.rejects(
+				authority.updateSubordinate(LEAF_ID, { additionalClaims: { x_other: true } }),
+				/missing/,
+			);
+			await t.rejects(
+				authority.updateSubordinate(LEAF_ID, { additionalClaims: { iss: "override" } }),
+				/reserved/,
+			);
+			await authority.updateSubordinate(LEAF_ID, {
+				additionalClaims: { x_rules: { versions: [2] } },
+			});
+			const listing = await authority.listSubordinatesExtended({
+				claims: ["crit", "subordinate_statement"],
+			});
+			t.true(listing.ok);
+			if (listing.ok) {
+				const row = listing.value.immediate_subordinate_entities[0]!;
+				t.deepEqual(row.crit, ["x_rules"]);
+				const statement = decodeEntityStatement(row.subordinate_statement as string);
+				t.true(statement.ok);
+				if (statement.ok) t.deepEqual(statement.value.payload.x_rules, { versions: [2] });
+			}
+			await authority.updateSubordinate(LEAF_ID, { additionalClaims: {}, crit: undefined });
+			const cleared = decodeEntityStatement(await authority.getSubordinateStatement(LEAF_ID));
+			t.true(cleared.ok);
+			if (cleared.ok) {
+				t.false(Object.hasOwn(cleared.value.payload, "crit"));
+				t.false(Object.hasOwn(cleared.value.payload, "x_rules"));
+			}
+		});
+	});
 	module("authority / subordinate publication validation", () => {
 		const invalid = [
 			{ metadataPolicyCrit: ["one_of"] },
 			{ crit: ["iss"] },
 			{ crit: ["missing"] },
+			{ additionalClaims: { iss: "override" } },
+			{ additionalClaims: { x_rules: undefined }, crit: ["x_rules"] },
 			{
 				metadataPolicy: {
 					openid_relying_party: { client_name: { one_of: ["a"], subset_of: ["a"] } },
@@ -716,7 +799,7 @@ export default (QUnit: QUnit) => {
 		});
 		test("legacy records are rejected by signed fetch and selected policy publication", async (t) => {
 			const f = await createTestContext();
-			for (const patch of invalid.slice(0, 5)) {
+			for (const patch of invalid.filter((entry) => !entry.constraints)) {
 				const record = {
 					entityId: LEAF_ID,
 					jwks: { keys: [f.publicKey] },

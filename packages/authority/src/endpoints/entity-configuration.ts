@@ -53,6 +53,8 @@ export async function buildEntityConfiguration(ctx: HandlerContext): Promise<str
 	const isTrustAnchor = (ctx.authorityHints?.length ?? 0) === 0;
 	const payload = buildEntityConfigurationPayload({
 		...payloadOptions,
+		additionalClaims: ctx.additionalClaims,
+		crit: ctx.crit,
 		...(ctx.authorityHints && ctx.authorityHints.length > 0
 			? { authorityHints: ctx.authorityHints }
 			: {}),

@@ -104,6 +104,7 @@ export async function extractClaims(
 		if (!Object.hasOwn(EXTENDED_LIST_CLAIM_EXTRACTORS, claim)) continue;
 		if (claim === ExtendedListClaim.Crit || claim === ExtendedListClaim.MetadataPolicyCrit)
 			assertSubordinatePublicationClaims({
+				additionalClaims: record.additionalClaims,
 				crit: record.crit,
 				metadataPolicyCrit: record.metadataPolicyCrit,
 			});

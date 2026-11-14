@@ -3,6 +3,7 @@ import type {
 	EndpointAuthentication,
 	EntityId,
 	EntityRole,
+	EntityStatementExtensions,
 	EntityStatementMetadata,
 	FederationEntityMetadata,
 	FederationKeyLifecycleProvider,
@@ -20,7 +21,7 @@ export interface AuthorityClientKeyProvider {
 	getClientFederationJwks(entityId: EntityId): Promise<JWKSet | undefined>;
 }
 
-export interface HandlerContext {
+export interface HandlerContext extends EntityStatementExtensions {
 	trustMarkDefaults?: TrustMarkIssuerConfig["trustMarkDefaults"];
 	trustMarkSigner?: TrustMarkIssuerConfig["trustMarkSigner"];
 	trustMarkStatusPolicy?: TrustMarkIssuerConfig["trustMarkStatusPolicy"];

@@ -1,5 +1,7 @@
 import {
+	type EntityStatementExtensions,
 	type MetadataPolicyOptions,
+	prepareEntityStatementExtensions,
 	validateRoleMetadata,
 	validateSubordinateStatementPublicationClaims,
 } from "@oidfed/core";
@@ -19,22 +21,34 @@ export function assertSubordinatePublicationClaims(
 			| "metadataPolicy"
 			| "constraints"
 			| "sourceEndpoint"
+			| "additionalClaims"
 			| "crit"
 			| "metadataPolicyCrit"
 		>]: SubordinateRecord[K] | undefined;
 	},
 	options?: MetadataPolicyOptions,
 ): void {
-	const payload = Object.fromEntries(
-		[
-			["metadata", record.metadata],
-			["metadata_policy", record.metadataPolicy],
-			["constraints", record.constraints],
-			["source_endpoint", record.sourceEndpoint],
-			["crit", record.crit],
-			["metadata_policy_crit", record.metadataPolicyCrit],
-		].filter(([, value]) => value !== undefined),
-	);
+	let extensions: EntityStatementExtensions;
+	try {
+		extensions = prepareEntityStatementExtensions(record);
+	} catch (error) {
+		throw new TypeError(
+			`Invalid Subordinate Statement: ${error instanceof Error ? error.message : "invalid extensions"}`,
+		);
+	}
+	const payload = {
+		...extensions.additionalClaims,
+		...Object.fromEntries(
+			[
+				["metadata", record.metadata],
+				["metadata_policy", record.metadataPolicy],
+				["constraints", record.constraints],
+				["source_endpoint", record.sourceEndpoint],
+				["crit", extensions.crit],
+				["metadata_policy_crit", record.metadataPolicyCrit],
+			].filter(([, value]) => value !== undefined),
+		),
+	};
 	const valid = validateSubordinateStatementPublicationClaims(payload, options);
 	if (!valid.ok) throw new TypeError(valid.error.description);
 }

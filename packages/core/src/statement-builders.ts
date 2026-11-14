@@ -1,4 +1,5 @@
 /** Stable builders for normal Entity Configuration and Subordinate Statement payloads. */
+import { isJsonData, isObject } from "./callbacks.js";
 import {
 	DEFAULT_ENTITY_STATEMENT_TTL_SECONDS,
 	InternalErrorCode,
@@ -41,7 +42,42 @@ interface StatementTimeOptions {
 	readonly ttlSeconds?: number;
 }
 
-export interface BuildEntityConfigurationPayloadOptions extends StatementTimeOptions {
+export interface EntityStatementExtensions {
+	/** Custom top-level claims; standard Entity Statement claims cannot be overridden. */
+	readonly additionalClaims?: Readonly<Record<string, unknown>> | undefined;
+	/** Extension claims recipients MUST understand and process (Federation §13.4). */
+	readonly crit?: readonly string[] | undefined;
+}
+
+/** Validate and detach publication extensions. Throws before retaining or signing invalid data. */
+export function prepareEntityStatementExtensions(
+	options: EntityStatementExtensions,
+): EntityStatementExtensions {
+	let additionalClaims: Record<string, unknown> | undefined;
+	if (options.additionalClaims !== undefined) {
+		if (!isObject(options.additionalClaims) || !isJsonData(options.additionalClaims))
+			throw new TypeError("Additional claims must be JSON object data");
+		additionalClaims = structuredClone(options.additionalClaims);
+		if (!isJsonData(additionalClaims))
+			throw new TypeError("Additional claims must be JSON object data");
+		for (const name of Object.keys(additionalClaims)) {
+			if (STANDARD_ENTITY_STATEMENT_CLAIMS.has(name))
+				throw new TypeError(`Additional claim '${name}' is reserved`);
+		}
+	}
+	const crit = options.crit === undefined ? undefined : structuredClone(options.crit);
+	const errors: string[] = [];
+	validateCrit({ ...additionalClaims, ...(crit !== undefined ? { crit } : {}) }, errors);
+	if (errors.length > 0) throw new TypeError(errors.join("; "));
+	return {
+		...(additionalClaims !== undefined ? { additionalClaims } : {}),
+		...(crit !== undefined ? { crit } : {}),
+	};
+}
+
+export interface BuildEntityConfigurationPayloadOptions
+	extends StatementTimeOptions,
+		EntityStatementExtensions {
 	readonly entityId: EntityId | string;
 	readonly jwks: JWKSet;
 	readonly metadata: EntityStatementMetadata;
@@ -52,7 +88,9 @@ export interface BuildEntityConfigurationPayloadOptions extends StatementTimeOpt
 	readonly trustMarkOwners?: Readonly<Record<string, TrustMarkOwner>>;
 }
 
-export interface BuildSubordinateStatementPayloadOptions extends StatementTimeOptions {
+export interface BuildSubordinateStatementPayloadOptions
+	extends StatementTimeOptions,
+		EntityStatementExtensions {
 	readonly issuer: EntityId | string;
 	readonly subject: EntityId | string;
 	readonly jwks: JWKSet;
@@ -60,7 +98,6 @@ export interface BuildSubordinateStatementPayloadOptions extends StatementTimeOp
 	readonly metadataPolicy?: FederationMetadataPolicy | Readonly<Record<string, unknown>>;
 	readonly constraints?: TrustChainConstraints;
 	readonly sourceEndpoint?: string;
-	readonly crit?: readonly string[];
 	readonly metadataPolicyCrit?: readonly string[];
 }
 
@@ -100,7 +137,10 @@ export function buildEntityConfigurationPayload(
 ): EntityConfigurationPayload {
 	const eid = entityId(String(options.entityId));
 	const { iat, exp } = resolveStatementTime(options);
+	const extensions = prepareEntityStatementExtensions(options);
 	const payload: Record<string, unknown> = {
+		...extensions.additionalClaims,
+		...(extensions.crit !== undefined ? { crit: extensions.crit } : {}),
 		iss: eid,
 		sub: eid,
 		iat,
@@ -145,7 +185,10 @@ export function buildSubordinateStatementPayload(
 	const issuer = entityId(String(options.issuer));
 	const subject = entityId(String(options.subject));
 	const { iat, exp } = resolveStatementTime(options);
+	const extensions = prepareEntityStatementExtensions(options);
 	const payload: Record<string, unknown> = {
+		...extensions.additionalClaims,
+		...(extensions.crit !== undefined ? { crit: extensions.crit } : {}),
 		iss: issuer,
 		sub: subject,
 		iat,
@@ -157,7 +200,6 @@ export function buildSubordinateStatementPayload(
 	if (options.metadataPolicy !== undefined) payload.metadata_policy = options.metadataPolicy;
 	if (options.constraints !== undefined) payload.constraints = options.constraints;
 	if (options.sourceEndpoint !== undefined) payload.source_endpoint = options.sourceEndpoint;
-	if (options.crit && options.crit.length > 0) payload.crit = [...options.crit];
 	if (options.metadataPolicyCrit && options.metadataPolicyCrit.length > 0) {
 		payload.metadata_policy_crit = [...options.metadataPolicyCrit];
 	}

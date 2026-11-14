@@ -6,6 +6,7 @@ import type {
 	EntityContext,
 	EntityId,
 	EntityRole,
+	EntityStatementExtensions,
 	EntityType,
 	EntityTypeMetadataMap,
 	FederationEntityMetadata,
@@ -39,6 +40,7 @@ import {
 	isValidEntityId,
 	LIST_UNORDERED_PARAMETERS,
 	ok,
+	prepareEntityStatementExtensions,
 	RESOLVE_UNORDERED_PARAMETERS,
 	safeLogger,
 	signTrustMarkDelegation,
@@ -125,7 +127,7 @@ function assertTrustAnchorHintsConfig(config: AuthorityConfig, isTrustAnchor: bo
 	}
 }
 
-export interface AuthorityConfig {
+export interface AuthorityConfig extends EntityStatementExtensions {
 	trustMarkDefaults?: TrustMarkIssuerConfig["trustMarkDefaults"];
 	trustMarkSigner?: TrustMarkIssuerConfig["trustMarkSigner"];
 	trustMarkStatusPolicy?: TrustMarkIssuerConfig["trustMarkStatusPolicy"];
@@ -341,6 +343,7 @@ function createAuthorityServerWithIdentity(
 		config.clientKeyProvider ?? createStorageBackedClientKeyProvider(config.storage);
 
 	const base: HandlerContext = {
+		...prepareEntityStatementExtensions(config),
 		...(config.roles ? { roles: config.roles } : {}),
 		entityId: normalizedEntityId,
 		keyProvider: config.keyProvider,
