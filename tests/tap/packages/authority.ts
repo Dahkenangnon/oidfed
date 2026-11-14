@@ -9711,6 +9711,31 @@ export default (QUnit: QUnit) => {
 			} as AuthorityConfig;
 		}
 
+		test("an anchor with Superiors publishes and updates anchor policy", async (t) => {
+			const type = "https://example.org/accreditation";
+			const cfg = await baseConfig({
+				authorityHints: [PARENT],
+				trustAnchorHints: [PARENT],
+				trustMarkIssuers: { [type]: [] },
+			});
+			const anchor = new TrustAnchor(cfg);
+			let decoded = decodeEntityStatement(await anchor.getEntityConfiguration());
+			t.true(decoded.ok);
+			if (!decoded.ok) return;
+			t.deepEqual(decoded.value.payload.authority_hints?.map(String), [String(PARENT)]);
+			t.deepEqual(decoded.value.payload.trust_anchor_hints?.map(String), [String(PARENT)]);
+			t.deepEqual(decoded.value.payload.trust_mark_issuers, { [type]: [] });
+			await anchor.setTrustMarkIssuers({ [type]: [SPEC_ENTITY] });
+			const keys = await cfg.keyProvider.getFederationKeySet();
+			await anchor.setTrustMarkOwners({ [type]: { sub: SPEC_ENTITY, jwks: keys.jwks } });
+			decoded = decodeEntityStatement(await anchor.getEntityConfiguration());
+			if (!decoded.ok) return t.true(false);
+			t.deepEqual(decoded.value.payload.trust_mark_issuers?.[type]?.map(String), [
+				String(SPEC_ENTITY),
+			]);
+			t.deepEqual(decoded.value.payload.trust_mark_owners?.[type]?.jwks, keys.jwks);
+		});
+
 		test("accepts a minimal TA config (no authorityHints, both required endpoints)", async (t) => {
 			const cfg = await baseConfig();
 			const s = createAuthorityServer(cfg);

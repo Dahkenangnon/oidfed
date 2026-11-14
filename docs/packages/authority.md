@@ -20,7 +20,7 @@ Later fragments reuse `ta`, `storage`, and `keyProvider` from the first example.
 ### Creating a Trust Anchor or Intermediate
 
 This development example creates two authorities. Enrollment and HTTP serving are separate steps; see the [wiring guide](../guide/wiring-guide.md).
-A Trust Anchor has no superior authorities. An Intermediate lists at least one superior in `authorityHints`. Both must advertise federation fetch and list endpoints. Construction rejects missing required endpoints. Core trust validation also rejects checked Entity Configurations missing those endpoints when the entity is known to be an authority. These validation checks apply whether or not a logger is supplied.
+A Trust Anchor can have Superiors when it also participates as an Intermediate in another federation. An Intermediate lists at least one superior in `authorityHints`. Both must advertise federation fetch and list endpoints. Construction rejects missing required endpoints. Core trust validation also rejects checked Entity Configurations missing those endpoints when the entity is known to be an authority. These validation checks apply whether or not a logger is supplied.
 
 ```ts
 import { TrustAnchor, Intermediate, MemoryStorageAdapter } from "@oidfed/authority";
@@ -196,8 +196,8 @@ When constructing a `TrustAnchor` or `Intermediate`, you pass an `AuthorityConfi
 | `storage` | `StorageAdapter` | **Yes** | Persistence adapter for subordinates, trust marks, cache, and replays. |
 | `keyProvider` | `FederationKeyLifecycleProvider`| **Yes** | Key provider exposing active federation signing keys, rollover lifecycle, and historical keys (e.g., `MemoryFederationKeyProvider` implements `FederationKeyLifecycleProvider`). |
 | `clientKeyProvider` | `AuthorityClientKeyProvider` | No | Resolves public Federation Entity Keys for `private_key_jwt` federation endpoint callers. Defaults to `storage.subordinates.get(entityId)?.jwks`. |
-| `authorityHints` | `readonly (EntityId \| string)[]` | *Conditional* | List of superior authorities this entity is subordinate to. Must be `undefined` or omitted for a `TrustAnchor`. Must be a non-empty array for an `Intermediate`. |
-| `trustAnchorHints` | `readonly (EntityId \| string)[]` | No | Optional non-empty list of preferred trust anchors to publish as `trust_anchor_hints` for an `Intermediate`. Rejected on `TrustAnchor` configurations. |
+| `authorityHints` | `readonly (EntityId \| string)[]` | *Conditional* | List of superior authorities this entity is subordinate to. Omit when the Trust Anchor has no Superiors. Otherwise supply a non-empty array; required for an `Intermediate`. |
+| `trustAnchorHints` | `readonly (EntityId \| string)[]` | No | Optional non-empty list of preferred anchors. Available to entities with Superiors, including a `TrustAnchor`; rejected for anchors without Superiors. |
 | `roles` | `EntityRole[]` | No | Optional composition roles (like OIDC Provider or Relying Party roles) bound to this entity context. |
 | `trustMarks` | `TrustMarkRef[]` | No | Trust marks this authority claims about itself in its Entity Configuration. |
 | `trustMarkIssuers` | `Record<string, string[]>` | No | Mapping of trust mark type URLs to authorized issuer entity IDs. Trust Anchors only; the Intermediate constructor rejects this field. |
@@ -287,7 +287,7 @@ Extended Listing accepts repeated `entity_type` filters. The CLI mirrors this wi
 
 ### What is the difference between `TrustAnchor` and `Intermediate`?
 
-A `TrustAnchor` represents a root of trust and cannot specify `authorityHints`. An `Intermediate` is a subordinate authority that must list at least one superior authority in `authorityHints`. Intermediates also cannot carry `trustMarkIssuers` or `trustMarkOwners` metadata block configurations since those claims are reserved for Trust Anchors.
+A `TrustAnchor` represents a root of trust for its participants and can also specify `authorityHints` to participate under another federation. Its Trust Mark issuer/owner policy remains available in this configuration. An `Intermediate` is a subordinate authority that must list at least one superior authority in `authorityHints`. Intermediates also cannot carry `trustMarkIssuers` or `trustMarkOwners` metadata block configurations since those claims are reserved for Trust Anchors.
 
 ### How do I enroll a subordinate entity?
 

@@ -120,9 +120,9 @@ function assertTrustAnchorHintsConfig(config: AuthorityConfig, isTrustAnchor: bo
 			);
 		}
 	}
-	if (isTrustAnchor && config.trustAnchorHints !== undefined) {
+	if (isTrustAnchor && !config.authorityHints?.length && config.trustAnchorHints !== undefined) {
 		throw new InvalidAuthorityConfig(
-			"trustAnchorHints is only meaningful for an Intermediate Authority; Trust Anchor Entity Configurations must not contain trust_anchor_hints.",
+			"Trust Anchors without Superiors MUST NOT publish trust_anchor_hints.",
 		);
 	}
 }
@@ -255,6 +255,7 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 function createAuthorityServerWithIdentity(
 	config: AuthorityConfig & { entityId: EntityId },
 	roleRoutes: ReadonlyMap<string, (request: Request) => Promise<Response>> = new Map(),
+	isTrustAnchor = !config.authorityHints?.length,
 ): AuthorityServer {
 	const normalizedEntityId = config.entityId;
 
@@ -269,16 +270,14 @@ function createAuthorityServerWithIdentity(
 		}
 	}
 
-	// authorityHints: must be undefined (Trust Anchor) or a non-empty array (Intermediate).
-	// An explicit empty array would advertise "I am an Intermediate but I have no superiors",
-	// which is contradictory and never valid.
+	// Superior hints describe topology independently of the authority role.
+	// Entities without Superiors omit the claim; an explicit empty array is invalid.
 	if (config.authorityHints !== undefined && config.authorityHints.length === 0) {
 		throw new InvalidAuthorityConfig(
-			"authorityHints must be undefined (Trust Anchor) or a non-empty array of superior Entity Identifiers (Intermediate); an empty array is not allowed.",
+			"authorityHints must be omitted without Superiors or contain a non-empty array of superior Entity Identifiers; an empty array is not allowed.",
 		);
 	}
 
-	const isTrustAnchor = (config.authorityHints?.length ?? 0) === 0;
 	assertTrustAnchorHintsConfig(config, isTrustAnchor);
 
 	// trust_mark_issuers / trust_mark_owners only have effect on a Trust Anchor's
@@ -287,12 +286,12 @@ function createAuthorityServerWithIdentity(
 	if (!isTrustAnchor) {
 		if (config.trustMarkIssuers !== undefined) {
 			throw new InvalidAuthorityConfig(
-				"trustMarkIssuers is only meaningful for a Trust Anchor (an authority with no authorityHints). Remove it from the Intermediate's config.",
+				"trustMarkIssuers is only meaningful for a Trust Anchor (including an anchor with Superiors). Remove it from the Intermediate's config.",
 			);
 		}
 		if (config.trustMarkOwners !== undefined) {
 			throw new InvalidAuthorityConfig(
-				"trustMarkOwners is only meaningful for a Trust Anchor (an authority with no authorityHints). Remove it from the Intermediate's config.",
+				"trustMarkOwners is only meaningful for a Trust Anchor (including an anchor with Superiors). Remove it from the Intermediate's config.",
 			);
 		}
 	}
@@ -357,7 +356,7 @@ function createAuthorityServerWithIdentity(
 			: undefined;
 	const ctx: HandlerContext = Object.assign(
 		base,
-		{ requireAuthForFreshResolution: config.requireAuthForFreshResolution ?? true },
+		{ isTrustAnchor, requireAuthForFreshResolution: config.requireAuthForFreshResolution ?? true },
 		...[
 			config.authorityHints && { authorityHints: config.authorityHints },
 			config.trustAnchorHints && { trustAnchorHints: config.trustAnchorHints },
@@ -760,8 +759,7 @@ function createAuthorityServerWithIdentity(
 		fetchAndAttachTrustMark: (options) => holder.fetchAndAttachTrustMark(options),
 		removeTrustMark: (selector) => holder.removeTrustMark(selector),
 		async setTrustMarkIssuers(issuers) {
-			if (ctx.authorityHints?.length)
-				throw new Error("Only Trust Anchors publish trust_mark_issuers");
+			if (!ctx.isTrustAnchor) throw new Error("Only Trust Anchors publish trust_mark_issuers");
 			const owned = structuredClone(issuers);
 			await holder.updatePublication(async () => {
 				await buildEntityConfiguration({ ...ctx, trustMarkIssuers: owned });
@@ -774,8 +772,7 @@ function createAuthorityServerWithIdentity(
 			});
 		},
 		async setTrustMarkOwners(owners) {
-			if (ctx.authorityHints?.length)
-				throw new Error("Only Trust Anchors publish trust_mark_owners");
+			if (!ctx.isTrustAnchor) throw new Error("Only Trust Anchors publish trust_mark_owners");
 			const owned = structuredClone(owners);
 			await holder.updatePublication(async () => {
 				await buildEntityConfiguration({ ...ctx, trustMarkOwners: owned });
@@ -1030,9 +1027,6 @@ export class TrustAnchor {
 	private readonly server: AuthorityServer;
 
 	constructor(config: AuthorityConfig) {
-		if (config.authorityHints !== undefined && config.authorityHints.length > 0) {
-			throw new Error("Trust Anchor MUST NOT have authorityHints");
-		}
 		assertTrustAnchorHintsConfig(config, true);
 		const normalizedConfig: AuthorityConfig & { entityId: EntityId } = {
 			...config,
@@ -1043,6 +1037,9 @@ export class TrustAnchor {
 		const context: EntityContext = {
 			entityId: this.entityId,
 			keyProvider: normalizedConfig.keyProvider,
+			...(normalizedConfig.authorityHints
+				? { authorityHints: normalizedConfig.authorityHints as readonly EntityId[] }
+				: {}),
 			options: normalizedConfig.options,
 			...(normalizedConfig.trustAnchors ? { trustAnchors: normalizedConfig.trustAnchors } : {}),
 		};
@@ -1061,7 +1058,7 @@ export class TrustAnchor {
 			}
 		}
 
-		this.server = createAuthorityServerWithIdentity(normalizedConfig, this.routes);
+		this.server = createAuthorityServerWithIdentity(normalizedConfig, this.routes, true);
 	}
 
 	async getEntityConfiguration(): Promise<string> {

@@ -22,6 +22,8 @@ export interface AuthorityClientKeyProvider {
 }
 
 export interface HandlerContext extends EntityStatementExtensions {
+	/** Anchor role is independent of having Superiors. */
+	readonly isTrustAnchor?: boolean;
 	trustMarkDefaults?: TrustMarkIssuerConfig["trustMarkDefaults"];
 	trustMarkSigner?: TrustMarkIssuerConfig["trustMarkSigner"];
 	trustMarkStatusPolicy?: TrustMarkIssuerConfig["trustMarkStatusPolicy"];

@@ -50,7 +50,7 @@ export async function buildEntityConfiguration(ctx: HandlerContext): Promise<str
 	// Anchor's Entity Configuration; readers ignore them on Intermediates. The
 	// server constructor refuses to accept these fields on a non-TA config, so
 	// the inline check below is belt-and-suspenders.
-	const isTrustAnchor = (ctx.authorityHints?.length ?? 0) === 0;
+	const isTrustAnchor = ctx.isTrustAnchor ?? !ctx.authorityHints?.length;
 	const payload = buildEntityConfigurationPayload({
 		...payloadOptions,
 		additionalClaims: ctx.additionalClaims,
