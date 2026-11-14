@@ -438,6 +438,21 @@ export async function completeRequest(
 	jwt: string,
 	context: AuthorizationRequestContext = {},
 ): Promise<Result<ValidatedWalletRequest>> {
+	try {
+		return await completeRequestImpl(prepared, jwt, context);
+	} catch {
+		safeLogger(preparations.get(prepared)?.options.logger)?.warn(
+			"Wallet request completion failed",
+		);
+		return failure("Wallet request completion failed");
+	}
+}
+
+async function completeRequestImpl(
+	prepared: PreparedAuthorizationRequest,
+	jwt: string,
+	context: AuthorizationRequestContext,
+): Promise<Result<ValidatedWalletRequest>> {
 	const options = preparations.get(prepared)?.options;
 	if (!options || prepared.expiresAt <= nowSeconds(options.clock) || operationExhausted(options))
 		return failure("Unknown, expired, or cancelled request preparation");

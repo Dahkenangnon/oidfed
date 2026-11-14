@@ -178,7 +178,12 @@ export type DcqlQuery = z.infer<typeof DcqlQuerySchema>;
 
 /** Ignore later repeated paths, preserving references to their first occurrence. */
 export function normalizeReceivedDcqlQuery(query: DcqlQuery): DcqlQuery {
-	const copy = structuredClone(query);
+	// Copy only the containers changed below. Unknown extension values are opaque
+	// (OpenID4VP §6): do not recursively traverse or mutate their contents.
+	const copy = {
+		...query,
+		credentials: query.credentials.map((credential) => ({ ...credential })),
+	};
 	for (const credential of copy.credentials) {
 		if (!credential.claims) continue;
 		const paths = new Map<string, (typeof credential.claims)[number]>();

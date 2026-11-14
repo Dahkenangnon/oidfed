@@ -5085,6 +5085,99 @@ export default (QUnit: QUnit) => {
 		});
 	});
 	module("wallet / federation-backed requests", () => {
+		test("normalizes requests with deeply nested DCQL extensions without traversing them", async (t) => {
+			const f = await walletFederation();
+			const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
+				{ client_id: f.requestPayload.client_id },
+				f.anchors,
+				f.options,
+			);
+			t.true(prepared.ok);
+			if (!prepared.ok) return;
+			for (const depth of [8, 12000]) {
+				const queryJson = JSON.stringify({
+					credentials: [
+						{
+							...walletQuery.credentials[0],
+							claims: [
+								{ id: "first", path: ["name"] },
+								{ id: "alias", path: ["name"] },
+							],
+							claim_sets: [["alias"]],
+						},
+					],
+					extension: "DEEP_EXTENSION",
+				}).replace('"DEEP_EXTENSION"', `${"[".repeat(depth)}0${"]".repeat(depth)}`);
+				for (const scoped of [false, true]) {
+					const original = JSON.parse(queryJson) as DcqlQuery;
+					const payload = scoped
+						? JSON.stringify({ ...f.requestPayload, dcql_query: undefined, scope: "identity" })
+						: JSON.stringify({ ...f.requestPayload, dcql_query: "SIGNED_QUERY" }).replace(
+								'"SIGNED_QUERY"',
+								queryJson,
+							);
+					const signer = new JwkSigner(f.protocol.verifier.privateKey);
+					const jwt = await signer.signJwt(new TextEncoder().encode(payload), {
+						alg: signer.alg,
+						kid: signer.kid,
+						typ: "oauth-authz-req+jwt",
+					});
+					const result = await CredentialVerifierRole.completeAuthorizationRequest(
+						prepared.value,
+						jwt,
+						scoped ? { scopeQuery: original } : {},
+					);
+					t.true(result.ok, `depth ${depth}, scope ${scoped}`);
+					if (!result.ok) continue;
+					const query = result.value.effectiveQueries[0]!;
+					t.equal(query.credentials[0]?.claims?.length, 1, "duplicate paths are still normalized");
+					t.deepEqual(query.credentials[0]?.claim_sets, [["first"]]);
+					let extension: unknown = query.extension;
+					for (let i = 0; i < depth; i++) {
+						if (!Array.isArray(extension)) break;
+						extension = extension[0];
+					}
+					t.strictEqual(extension, 0, "opaque extension content is preserved");
+					t.equal(original.credentials[0]?.claims?.length, 2, "scope input is unchanged");
+					t.deepEqual(original.credentials[0]?.claim_sets, [["alias"]]);
+				}
+			}
+		});
+		test("request completion contains unexpected processing exceptions", async (t) => {
+			const f = await walletFederation();
+			const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
+				{ client_id: f.requestPayload.client_id },
+				f.anchors,
+				f.options,
+			);
+			t.true(prepared.ok);
+			if (!prepared.ok) return;
+			const jwt = await token(
+				{ ...f.requestPayload, dcql_query: undefined, scope: "identity" },
+				f.protocol.verifier.privateKey,
+				"oauth-authz-req+jwt",
+			);
+			const result = await CredentialVerifierRole.completeAuthorizationRequest(
+				prepared.value,
+				jwt,
+				{
+					get scopeQuery(): DcqlQuery {
+						throw new Error("private application details");
+					},
+				},
+			);
+			t.false(result.ok);
+			if (!result.ok) t.equal(result.error.description, "Wallet request completion failed");
+			t.true(
+				(
+					await CredentialVerifierRole.completeAuthorizationRequest(prepared.value, jwt, {
+						scopeQuery: walletQuery,
+					})
+				).ok,
+				"failed completion does not corrupt the preparation",
+			);
+		});
+
 		test("validates selected queries and scope mappings even when metadata supplies scenarios", async (t) => {
 			for (const config of [
 				{ verifierMetadata: { dcql_queries: [walletQuery] } },
