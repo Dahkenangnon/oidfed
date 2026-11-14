@@ -1,3 +1,42 @@
+export { runAsyncOperation } from "./async-operation.js";
+export {
+	createAttestationChallengeHandler,
+	createAttestationChallengeResponse,
+	fetchAttestationChallenge,
+	readAttestationChallenge,
+} from "./attestation-challenge.js";
+export { isJsonData } from "./callbacks.js";
+export {
+	type AuthenticateClientAttestationOptions,
+	authenticateClientAttestation,
+	type ClientAttestation,
+	type ClientAttestationError,
+	type ClientAttestationFreshness,
+	type ClientAttestationOptions,
+	type ClientAttestationReplay,
+	type ClientAttestationVerificationOptions,
+	type CreateClientAttestationParams,
+	type CreateClientAttestationProofParams,
+	clientAttestationHeaders,
+	createClientAttestation,
+	createClientAttestationProof,
+	invokeVerificationPolicy,
+	parseClientAttestationHeaders,
+	parseConcatenatedClientAttestation,
+	serializeClientAttestation,
+	type TrustedClientAttester,
+	type VerifiedAttestationChallenge,
+	type VerifiedClientAttestation,
+	verifyClientAttestation,
+} from "./client-attestation.js";
+export {
+	checkApplicationJwtHeader,
+	decodeApplicationJwt,
+	matchesJwtType,
+	signApplicationJwt,
+	verifyApplicationJwt,
+} from "./jose/application-jwt.js";
+export { type ClientAssertionOptions, createClientAssertion } from "./jose/client-assertion.js";
 // Replay protection
 
 export {
@@ -70,8 +109,10 @@ export {
 	createEndpointAuthenticatedHandler,
 	type EndpointAuthentication,
 	type EndpointAuthenticationConfig,
+	type EndpointAuthenticationError,
 	type EndpointAuthenticationInput,
 	type EndpointAuthenticationMethod,
+	endpointAuthenticationErrorResponse,
 	validateEndpointAuthentication,
 } from "./endpoint-authentication.js";
 export type {

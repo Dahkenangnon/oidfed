@@ -240,9 +240,11 @@ import { signProtocolFixture } from "../fixtures/protocol-jwt.js";
 import * as SubordinateEventsFixture from "../fixtures/subordinate-events.js";
 import { anchorKeyPaths, trustChainPaths } from "../fixtures/trust-chain-paths.js";
 import { walletFederation, walletQuery } from "../fixtures/wallet.js";
+import clientAuthenticationTests from "./core/client-auth.js";
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	clientAuthenticationTests(QUnit);
 	module("core / policy and signed metadata validation", () => {
 		test("deep extensions cannot hide duplicate policy members", async (t) => {
 			const f = await trustChainPaths();

@@ -7,6 +7,8 @@ import { isValidAlgorithm } from "./keys.js";
 
 export interface VerifyProtocolJwtOptions {
 	expectedTyp: string;
+	/** Application policy, in addition to supported asymmetric algorithms. */
+	allowedAlgorithms?: readonly string[];
 	/** Require kid by default; single-key permits omission for a set containing one key. */
 	keyIdPolicy?: "required" | "single-key";
 	clockSkewSeconds?: number;
@@ -36,7 +38,10 @@ export async function verifyProtocolJwt(
 				description: `Invalid typ header: expected '${options.expectedTyp}'`,
 			});
 		}
-		if (!isValidAlgorithm(header.alg)) {
+		if (
+			!isValidAlgorithm(header.alg) ||
+			(options.allowedAlgorithms !== undefined && !options.allowedAlgorithms.includes(header.alg))
+		) {
 			return err({
 				code: InternalErrorCode.UnsupportedAlg,
 				description: "Unsupported protocol JWT signing algorithm",

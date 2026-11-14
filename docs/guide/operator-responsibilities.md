@@ -263,3 +263,27 @@ Size the fetch allowance for discovery and candidate validation together. Core h
 Explicitly authorize each resolver and configure how its keys become trusted. Use local assessment when your application needs its own custom policy or constraint checks, or when its protocol requires chain validation. Delegated assessments report what the trusted resolver asserts, including reported marks; they do not create locally verified mark evidence. Keep both provenance and expiry with any application decision.
 
 A catalog built with Listing or Entity Collection can contain identifiers and informational metadata without establishing application trust. Establish that trust when using the selected entity. A standalone resolver can share the same core Resolve service as Authority hosts without acquiring subordinate-management duties. See [trust establishment options](../packages/core.md#trust-establishment-options).
+
+### Client Attestation deployments
+
+The protocol profile determines how an attester becomes trusted. For federated
+Wallets, validate the Wallet Provider through Federation as Wallet §§8.4–8.5
+require. Generic OAuth deployments may configure another attester trust mechanism;
+that does not relax the Wallet profile.
+
+When offering draft-07's challenge endpoint, publish its URL, issue unpredictable
+or authenticated opaque challenges, and verify their origin and validity. Choose
+whether freshness alone is sufficient or whether each proof must also be
+single-use. Multi-replica deployments need shared atomic replay storage when
+single-use protection is required. The library's in-memory store is local to one
+process.
+
+The host authorization server must bind refresh tokens to the authenticated
+client instance **and its confirmation key**, as draft-07 §10.3 requires. A
+refresh request must prove possession of that same key. These helpers do not
+store or redeem refresh tokens. Changing the client instance key requires a new
+attestation; it cannot rewrite an existing attestation's `cnf` claim.
+
+Consider separate client-instance keys for different authorization servers to
+reduce correlation. Configure HTTP header-size limits to accommodate the two
+JWTs. Do not log attestation JWTs, PoPs, credentials, or refresh tokens.

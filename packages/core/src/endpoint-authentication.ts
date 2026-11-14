@@ -1,3 +1,4 @@
+import { runAsyncOperation } from "./async-operation.js";
 import { callSynchronous, freezeSnapshot } from "./callbacks.js";
 import {
 	DEFAULT_MAX_REQUEST_BODY_BYTES,
@@ -5,7 +6,7 @@ import {
 	JWT_BEARER_CLIENT_ASSERTION_TYPE,
 } from "./constants.js";
 import { endpointParameterValuesMatch } from "./endpoint-parameters.js";
-import { err, ok, type Result } from "./errors.js";
+import { err, type FederationError, ok, type Result } from "./errors.js";
 import { errorResponse, readBodyWithLimit, requireMethods } from "./http.js";
 import { verifyClientAssertion } from "./jose/client-auth.js";
 import { decodeEntityStatement } from "./jose/verify.js";
@@ -13,15 +14,78 @@ import type { ReplayStore } from "./replay-store.js";
 import type { JWKSet } from "./schemas/jwk.js";
 import { type EntityId, entityId, type FederationOptions } from "./types.js";
 
+/** Controlled protocol response from a host authentication verifier. */
+export interface EndpointAuthenticationError extends FederationError {
+	readonly authenticationResponse?: {
+		readonly error:
+			| "invalid_client"
+			| "invalid_client_attestation"
+			| "use_attestation_challenge"
+			| "use_fresh_attestation";
+		readonly status?: 400 | 401;
+		readonly headers?: Readonly<Record<string, string>>;
+	};
+}
+
+/** Render only approved authentication headers; arbitrary host errors remain private. */
+export function endpointAuthenticationErrorResponse(error: EndpointAuthenticationError): Response {
+	try {
+		const protocol = error.authenticationResponse;
+		if (!protocol)
+			return errorResponse(
+				error.code === "server_error" ? 500 : 401,
+				error.code,
+				error.description,
+			);
+		if (
+			![
+				"invalid_client",
+				"invalid_client_attestation",
+				"use_attestation_challenge",
+				"use_fresh_attestation",
+			].includes(protocol.error) ||
+			(protocol.status !== undefined && protocol.status !== 400 && protocol.status !== 401)
+		)
+			throw new Error();
+		const headers = new Headers();
+		for (const [name, value] of Object.entries(protocol.headers ?? {})) {
+			if (
+				!["oauth-client-attestation-challenge", "www-authenticate"].includes(name.toLowerCase()) ||
+				typeof value !== "string"
+			)
+				throw new Error();
+			headers.set(name, value);
+		}
+		if (
+			protocol.error === "use_attestation_challenge" &&
+			!headers.get("OAuth-Client-Attestation-Challenge")
+		)
+			throw new Error();
+		const response = errorResponse(
+			protocol.status ?? (protocol.error === "invalid_client" ? 401 : 400),
+			protocol.error,
+			"Client authentication failed",
+		);
+		for (const [name, value] of headers) response.headers.set(name, value);
+		response.headers.set("Cache-Control", "no-store");
+		return response;
+	} catch {
+		return errorResponse(401, "invalid_client", "Client authentication failed");
+	}
+}
+
 export interface EndpointAuthenticationMethod {
 	readonly parameters?: readonly string[];
 	readonly headers?: readonly string[];
 	readonly detect?: (input: EndpointAuthenticationInput) => boolean;
 	readonly authenticate: (
 		input: EndpointAuthenticationInput,
-	) => Result<{ entityId: string }> | Promise<Result<{ entityId: string }>>;
+	) =>
+		| Result<{ entityId: string }, EndpointAuthenticationError>
+		| Promise<Result<{ entityId: string }, EndpointAuthenticationError>>;
 }
 export interface EndpointAuthenticationInput {
+	readonly signal?: AbortSignal;
 	readonly receiverEntityId: string;
 	readonly parameters: Readonly<Record<string, readonly string[]>>;
 	readonly headers: Readonly<Record<string, string>>;
@@ -70,16 +134,9 @@ export function validateEndpointAuthentication(
 				throw new TypeError("Invalid credential names");
 		if (
 			definition.parameters?.some((name) =>
-				[
-					"trust_mark",
-					"trust_mark_type",
-					"sub",
-					"client_assertion",
-					"client_assertion_type",
-					"trust_anchor",
-					"entity_type",
-					"iss",
-				].includes(name),
+				["trust_mark", "trust_mark_type", "sub", "trust_anchor", "entity_type", "iss"].includes(
+					name,
+				),
 			)
 		)
 			throw new TypeError("Authentication credentials cannot replace protocol selectors");
@@ -92,6 +149,15 @@ export function validateEndpointAuthentication(
 			}),
 		] as const;
 	});
+	for (const [, definition] of entries) {
+		if (
+			definition.parameters.some(
+				(name) => name === "client_assertion" || name === "client_assertion_type",
+			) &&
+			!definition.detect
+		)
+			throw new TypeError("Shared assertion credentials require an explicit detector");
+	}
 	const methods = Object.fromEntries(entries);
 	for (const name of config.methods)
 		if (name !== "none" && name !== "private_key_jwt" && !Object.hasOwn(methods, name))
@@ -110,7 +176,7 @@ export async function authenticateEndpointRequest(
 	form: URLSearchParams,
 	config: EndpointAuthenticationConfig,
 	options?: FederationOptions,
-): Promise<Result<string | undefined>> {
+): Promise<Result<string | undefined, EndpointAuthenticationError>> {
 	try {
 		const registry = new Map(Object.entries(config.extensions?.methods ?? {}));
 		const input: EndpointAuthenticationInput = freezeSnapshot({
@@ -120,11 +186,20 @@ export async function authenticateEndpointRequest(
 			),
 			headers: Object.fromEntries(request.headers.entries()),
 			...(config.extensions?.transportEvidence
-				? { transport: structuredClone(await config.extensions.transportEvidence(request)) }
+				? {
+						transport: structuredClone(
+							await runAsyncOperation(() => config.extensions?.transportEvidence?.(request), {
+								...options,
+								signal: options?.signal ?? request.signal,
+							}),
+						),
+					}
 				: {}),
 		});
 		const assertion = form.has("client_assertion") || form.has("client_assertion_type");
-		const selected: string[] = assertion ? ["private_key_jwt"] : [];
+		const selected: string[] = [];
+		let credentialsPresent =
+			assertion || request.headers.has("authorization") || form.has("client_secret");
 		for (const [name, plugin] of registry) {
 			const detected = plugin.detect
 				? callSynchronous(
@@ -133,13 +208,19 @@ export async function authenticateEndpointRequest(
 					)
 				: { ok: true as const, value: false };
 			if (!detected.ok) return invalid("Authentication detection failed");
-			if (
+			const present =
 				plugin.parameters?.some((name) => form.has(name)) ||
-				plugin.headers?.some((name) => request.headers.has(name)) ||
-				detected.value
-			)
-				selected.push(name);
+				plugin.headers?.some((name) => request.headers.has(name));
+			credentialsPresent ||= present === true || detected.value;
+			if (plugin.detect ? detected.value : present) selected.push(name);
 		}
+		// An explicit extension detector can own the assertion carrier; otherwise it is private_key_jwt.
+		if (
+			assertion &&
+			!selected.some((name) => registry.get(name)?.parameters?.includes("client_assertion"))
+		)
+			selected.push("private_key_jwt");
+
 		// Unclaimed Authorization is still supplied credentials, never anonymous access.
 		if (
 			request.headers.has("authorization") &&
@@ -149,7 +230,7 @@ export async function authenticateEndpointRequest(
 		)
 			return invalid("Unsupported authentication credentials");
 		if (!selected.length)
-			return config.methods.includes("none")
+			return !credentialsPresent && config.methods.includes("none")
 				? ok(undefined)
 				: invalid("Client authentication is required");
 		const selectedMethod = selected[0];
@@ -172,11 +253,20 @@ export async function authenticateEndpointRequest(
 				decoded = decodeEntityStatement(jwt);
 			if (!decoded.ok) return invalid("Invalid client assertion");
 			const issuer = entityId(decoded.value.payload.iss);
+			if (
+				form.getAll("client_id").length > 1 ||
+				(form.has("client_id") && form.get("client_id") !== issuer)
+			)
+				return invalid("client_id must match the client assertion issuer");
 			if (!config.getClientFederationJwks || !config.replayStore)
 				return invalid("Client authentication is not configured");
+			const getKeys = config.getClientFederationJwks;
 			let keys: JWKSet | undefined;
 			try {
-				keys = await config.getClientFederationJwks(issuer);
+				keys = await runAsyncOperation(() => getKeys(issuer), {
+					...options,
+					signal: options?.signal ?? request.signal,
+				});
 			} catch {
 				return err({
 					code: FederationErrorCode.ServerError,
@@ -195,10 +285,18 @@ export async function authenticateEndpointRequest(
 					: invalid(checked.error.description);
 			identity = issuer;
 		} else {
-			const result = await registry.get(selectedMethod)?.authenticate(input);
+			const plugin = registry.get(selectedMethod);
+			if (!plugin) return invalid("Unsupported authentication method");
+			const result = await runAsyncOperation(
+				(signal) => plugin.authenticate(Object.freeze({ ...input, signal })),
+				{ ...options, signal: options?.signal ?? request.signal },
+			);
+			if (result?.ok === false && result.error?.authenticationResponse) return err(result.error);
 			if (result?.ok !== true || !result.value) return invalid("Client authentication failed");
 			identity = entityId(result.value.entityId);
 		}
+		if ((options?.signal ?? request.signal).aborted)
+			return invalid("Client authentication was cancelled");
 		form.delete("client_assertion");
 		form.delete("client_assertion_type");
 		for (const plugin of registry.values())
@@ -275,12 +373,7 @@ export function createEndpointAuthenticatedHandler(
 				}
 			}
 			const checked = await authenticateEndpointRequest(request, form, captured, options);
-			if (!checked.ok)
-				return errorResponse(
-					checked.error.code === "server_error" ? 500 : 401,
-					checked.error.code,
-					checked.error.description,
-				);
+			if (!checked.ok) return endpointAuthenticationErrorResponse(checked.error);
 			if (request.method === "POST" && nativeMethod === "GET" && checked.value === undefined)
 				return errorResponse(401, "invalid_client", "Authenticated POST required");
 			const headers = new Headers(request.headers);

@@ -798,3 +798,163 @@ Supply `authentication` to configure supported methods, replay protection, and c
 The service requires no subordinate store. `assessLocalTrustMarkStatus` optionally connects marks issued by this resolver to its own status service; otherwise normal issuer-status verification is used. Authority hosts reuse this implementation. A Leaf can host it through `LeafConfig.resolver` while publishing the Resolve endpoint in its metadata.
 
 These APIs implement the choices in [Federation §17](https://openid.net/specs/openid-federation-1_0.html#section-17). They do not relax OIDC or Wallet profile requirements for chain verification or contextual policy processing.
+
+### Shared client authentication
+
+Core supplies the authentication primitives used by the protocol packages. The
+calling profile still decides which keys and trust rules apply. For example,
+Federation endpoint assertions use **Federation Entity Keys**; PAR assertions use
+the RP's **protocol keys**. Both use `createClientAssertion`, with a 60-second
+default lifetime and a fresh `jti`. Invalid or non-finite lifetimes fail before
+signing. Fractional NumericDates are supported.
+
+`runAsyncOperation` bounds asynchronous host work using `signal` and
+`httpTimeoutMs`. A cancelled operation stops waiting, observes late promise
+rejections, and cannot report authentication success. Host callbacks should also
+honor the signal to stop their own work; cancellation cannot undo a remote side
+effect that has already happened.
+
+Custom Federation authentication methods can share a credential carrier, such as
+`Authorization`. Set `detect` to identify the method that actually applies. When
+present, its result takes precedence over the presence of a registered header or
+parameter. A method sharing `client_assertion` must provide a detector. Detection
+only selects a verifier: it never authenticates the request. Ambiguous or
+unsupported credentials fail, including when anonymous access is allowed.
+
+A verifier may return an `EndpointAuthenticationError` with an
+`authenticationResponse`. This carries a controlled OAuth error, HTTP 400 or 401,
+and the `OAuth-Client-Attestation-Challenge` or `WWW-Authenticate` headers.
+`endpointAuthenticationErrorResponse` validates that response before rendering it;
+other headers and unexpected exceptions are not exposed. A
+`use_attestation_challenge` response must include its challenge header.
+
+Federation §8.8 still governs Federation endpoints: authentication uses POST,
+with endpoint and authentication parameters in the body. The generic Client
+Attestation header format is not automatically installed as a Federation
+endpoint method. A federation choosing an additional method must define its
+integration with those requirements.
+
+### Client Attestation primitives
+
+The shared implementation follows **Client Attestation draft-07**, §§5–10.
+`createClientAttestation` creates an attester-signed JWT;
+`createClientAttestationProof` creates a fresh proof signed by the client instance.
+`clientAttestationHeaders` and `serializeClientAttestation` encode the pair.
+`parseClientAttestationHeaders` and `parseConcatenatedClientAttestation` only parse
+it; parsing does not establish trust.
+
+For example, **Market Alliance** can accept an attestation from a loyalty
+application attester it has configured independently:
+
+```ts
+import {
+  authenticateClientAttestation,
+  MemoryReplayStore,
+} from "@oidfed/core";
+
+const replayStore = new MemoryReplayStore(); // Use shared durable storage across replicas.
+const result = await authenticateClientAttestation(attestationJwt, popJwt, {
+  audience: "https://loyalty.example",
+  clientId: requestClientId,
+  replayStore,
+  getAttester: async (issuer, _header, signal) => {
+    // Lookup input is unverified. Resolve it against your own trusted configuration.
+    return trustedAttesters.lookup(issuer, signal);
+  },
+  acceptClient: async ({ attestation }, signal) =>
+    membershipPolicy.accepts(attestation, signal),
+});
+
+if (!result.ok) {
+  // Reject the authentication request using the host's error-response policy.
+} else {
+  // result.value.attestation.sub identifies the authenticated client instance.
+  // expiresAt includes the current attester-trust and proof-freshness deadlines.
+}
+```
+
+`getAttester` returns a `Result<TrustedClientAttester>` containing trusted `jwks`
+and, when applicable, the trust evidence's `expiresAt`. It must not trust keys
+provided by the incoming JWT. Federation Wallet users should use the Wallet role
+methods instead: those methods establish the required Wallet Provider trust.
+
+The engine checks signatures, public confirmation-key material, identity and
+audience binding, and validity intervals. Both signing algorithms must be
+supported asymmetric algorithms permitted by local policy. Additional claims
+are retained; creation rejects attempts to replace reserved identity or key
+claims. Missing, duplicated, or malformed attestation headers fail validation.
+
+### Challenges, freshness, and replay
+
+Use `fetchAttestationChallenge` to POST to an advertised `challenge_endpoint`.
+Use `readAttestationChallenge` on responses to obtain a replacement challenge for
+the next proof. The host controls the request lifecycle; these helpers do not
+retry a token or PAR request automatically.
+
+`createAttestationChallengeHandler(issue, options)` supplies the POST endpoint
+plumbing. The host's `issue` callback creates the opaque challenge. Successful
+responses use HTTP 200, JSON, and `Cache-Control: no-store`. The host must publish
+`challenge_endpoint` in its AS metadata when offering this endpoint.
+
+Authentication supports two freshness choices:
+
+- The default checks PoP `iat`, with `maxProofAgeSeconds` defaulting to 300.
+- `freshness: { mode: "challenge", verify }` checks a host-verified challenge's
+  `issuedAt` and `expiresAt`. The verifier must validate the challenge's origin,
+  intended use, and validity. Client-supplied timestamps are not server evidence.
+
+Replay protection is a separate choice:
+
+- Supply the existing `replayStore`, or `replay: { mode: "jti", store }`.
+- Use `replay: { mode: "challenge", consume }` for atomic single-use challenges.
+- Explicitly choose `replay: { mode: "freshness-only" }` where the deployment
+  accepts draft-07 §12.1's freshness-only model. Reuse within the freshness window
+  is then possible.
+
+Do not combine the legacy replay option with `replay`, or the legacy age option
+with `freshness`. No replay protection is silently disabled. Signatures and
+acceptance policy are checked before replay state is consumed. Time and trust
+expiry are checked again after asynchronous work.
+
+The shared AS metadata parsers validate the attestation algorithm lists and
+`challenge_endpoint`. Effective metadata advertising `attest_jwt_client_auth`
+must include both algorithm lists. Publication parsing allows a Superior to
+supply missing fields later.
+
+### Returning attestation errors to the client
+
+Attestation verification returns `Result` errors as before. A
+`ClientAttestationError` can also carry `attestationError`, a stable reason for
+the host's HTTP response: `use_attestation_challenge`, `use_fresh_attestation`, or
+`invalid_client_attestation`. An expired attestation is distinguished from an
+expired proof. Trust lookup and storage failures are not evidence that the client
+needs a new attestation.
+
+The host issues any replacement challenge and passes the response through the
+existing renderer. For example, inside your endpoint handler:
+
+```ts
+if (!result.ok && result.error.attestationError) {
+  const code = result.error.attestationError;
+  const headers = code === "use_attestation_challenge"
+    ? { "OAuth-Client-Attestation-Challenge": await challenges.issue() }
+    : undefined;
+
+  return endpointAuthenticationErrorResponse({
+    ...result.error,
+    authenticationResponse: { error: code, ...(headers ? { headers } : {}) },
+  });
+}
+// Handle other failures through your endpoint's ordinary error policy.
+```
+
+Draft-07 §6.2 requires the challenge header with `use_attestation_challenge`.
+If challenge issuance fails, return a server error rather than sending that code
+without its header. A host applying its own attestation-age policy must likewise
+use `use_fresh_attestation` when that policy requires a fresh attestation. The
+library never retries the protected operation automatically.
+
+`verifyProtocolJwt` accepts an optional `allowedAlgorithms` list for application
+policy. It always also applies its supported-algorithm and signature checks.
+An explicitly empty list accepts no algorithm; omission retains the supported
+algorithms. OIDC/OAuth roles derive this restriction from their protocol metadata.

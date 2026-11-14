@@ -5,7 +5,10 @@ import {
 	DEFAULT_MAX_RESPONSE_BYTES,
 	FederationErrorCode,
 } from "../constants.js";
-import { validateEndpointAuthentication } from "../endpoint-authentication.js";
+import {
+	endpointAuthenticationErrorResponse,
+	validateEndpointAuthentication,
+} from "../endpoint-authentication.js";
 import {
 	COLLECTION_UNORDERED_PARAMETERS,
 	endpointParameterValuesMatch,
@@ -540,7 +543,7 @@ export class EntityCollectionService {
 				this.config.options,
 				request,
 			);
-			if (!authenticated.ok) return failure(authenticated.error);
+			if (!authenticated.ok) return endpointAuthenticationErrorResponse(authenticated.error);
 			const params = parseCollectionParams(form);
 			if (!params.ok) return failure(params.error);
 			const result = await this.query(params.value);

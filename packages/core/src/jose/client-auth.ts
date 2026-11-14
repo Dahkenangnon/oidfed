@@ -1,4 +1,5 @@
 import * as jose from "jose";
+import { runAsyncOperation } from "../async-operation.js";
 import { DEFAULT_CLOCK_SKEW_SECONDS } from "../constants.js";
 import { err, type FederationError, ok, type Result } from "../errors.js";
 import type { ReplayStore } from "../replay-store.js";
@@ -23,6 +24,8 @@ export async function verifyClientAssertion(
 		clock?: Clock;
 		allowedAlgorithms?: readonly string[];
 		replayStore?: ReplayStore;
+		signal?: AbortSignal;
+		httpTimeoutMs?: number;
 	},
 ): Promise<Result<VerifiedClientAssertion, FederationError>> {
 	let header: jose.ProtectedHeaderParameters;
@@ -133,12 +136,14 @@ export async function verifyClientAssertion(
 	}
 	if (options?.replayStore) {
 		try {
-			const claimed = await options.replayStore.useJti({
+			const replayStore = options.replayStore;
+			const claim = {
 				issuer: payload.iss,
 				audience: expectedAudience,
 				jti: payload.jti,
 				expiresAt: payload.exp + skew,
-			});
+			};
+			const claimed = await runAsyncOperation(() => replayStore.useJti(claim), options);
 			if (!claimed)
 				return err({ code: "invalid_client", description: "Client assertion was already used" });
 		} catch (cause) {
@@ -150,7 +155,7 @@ export async function verifyClientAssertion(
 		}
 	}
 	// OIDC Core §9: acceptance must remain within exp, including time spent in replay storage.
-	if (payload.exp + skew <= nowSeconds(options?.clock))
+	if (options?.signal?.aborted || payload.exp + skew <= nowSeconds(options?.clock))
 		return err({
 			code: "invalid_client",
 			description: "Client assertion expired during verification",

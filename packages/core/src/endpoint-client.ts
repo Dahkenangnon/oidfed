@@ -1,3 +1,4 @@
+import { runAsyncOperation } from "./async-operation.js";
 import {
 	FederationErrorCode,
 	InternalErrorCode,
@@ -5,10 +6,10 @@ import {
 } from "./constants.js";
 import { endpointParameterValuesMatch } from "./endpoint-parameters.js";
 import { err, type Result } from "./errors.js";
-import { signEntityStatement } from "./jose/sign.js";
+import { createClientAssertion } from "./jose/client-assertion.js";
 import type { JwtSigner } from "./jose/signer.js";
 import { type PerformFetchOptions, performFetch, validateFetchUrl } from "./trust-chain/fetch.js";
-import { type EntityId, entityId, nowSeconds } from "./types.js";
+import { type EntityId, entityId } from "./types.js";
 
 export interface PrivateKeyJwtEndpointAuthentication {
 	readonly method: "private_key_jwt";
@@ -21,7 +22,9 @@ export interface CustomEndpointClientAuthentication {
 	readonly method: string;
 	/** Responder Entity Identifier for credential audience binding; do not infer it from the URL origin. */
 	readonly audience: string;
-	readonly prepare: (input: Readonly<{ endpoint: string; audience: string }>) =>
+	readonly prepare: (
+		input: Readonly<{ endpoint: string; audience: string; signal: AbortSignal }>,
+	) =>
 		| {
 				readonly parameters?: Readonly<Record<string, string>>;
 				readonly headers?: Readonly<Record<string, string>>;
@@ -45,40 +48,6 @@ export interface EndpointAuthenticationContext {
 export type EndpointAuthenticationProvider = (
 	context: Readonly<EndpointAuthenticationContext>,
 ) => EndpointClientAuthentication | undefined | Promise<EndpointClientAuthentication | undefined>;
-
-/** Stop waiting on a host callback when its operation is cancelled; observe late rejections. */
-function selectAuthentication(
-	provider: EndpointAuthenticationProvider,
-	context: EndpointAuthenticationContext,
-): Promise<EndpointClientAuthentication | undefined> {
-	const signal = context.signal;
-	return new Promise((resolve, reject) => {
-		const abort = () => {
-			signal?.removeEventListener("abort", abort);
-			reject(new DOMException("Operation aborted", "AbortError"));
-		};
-		if (signal?.aborted) {
-			abort();
-			return;
-		}
-		signal?.addEventListener("abort", abort, { once: true });
-		Promise.resolve()
-			.then(() => {
-				if (signal?.aborted) throw new DOMException("Operation aborted", "AbortError");
-				return provider(Object.freeze(context));
-			})
-			.then(
-				(value) => {
-					signal?.removeEventListener("abort", abort);
-					resolve(value);
-				},
-				(cause) => {
-					signal?.removeEventListener("abort", abort);
-					reject(cause);
-				},
-			);
-	});
-}
 
 export type EndpointAdditionalParameters = Readonly<Record<string, string | readonly string[]>>;
 const credentials = new Set([
@@ -164,11 +133,18 @@ export async function fetchFederationEndpoint(
 			if (options.offline) throw new Error("Offline operation cannot access the network");
 			const permitted = validateFetchUrl(url.href, options);
 			if (!permitted.ok) return permitted;
-			auth = await selectAuthentication(options.getEndpointAuthentication, {
-				endpoint: url.href,
-				...(expectedAudience !== undefined ? { responder: entityId(expectedAudience) } : {}),
-				...(options.signal ? { signal: options.signal } : {}),
-			});
+			const provider = options.getEndpointAuthentication;
+			auth = await runAsyncOperation(
+				(signal) =>
+					provider(
+						Object.freeze({
+							endpoint: url.href,
+							...(expectedAudience !== undefined ? { responder: entityId(expectedAudience) } : {}),
+							signal: options.signal ?? signal,
+						}),
+					),
+				options,
+			);
 			if (auth !== undefined && (!auth || typeof auth !== "object" || Array.isArray(auth)))
 				throw new Error("Invalid authentication selection");
 			if (options.signal?.aborted) throw new DOMException("Operation aborted", "AbortError");
@@ -182,19 +158,11 @@ export async function fetchFederationEndpoint(
 					description: "Authentication audience must match the responder Entity Identifier",
 				});
 			if (auth.method === "private_key_jwt" && "signer" in auth) {
-				const clientId = entityId(auth.clientId),
-					now = nowSeconds(options.clock);
-				const assertion = await signEntityStatement(
-					{
-						iss: clientId,
-						sub: clientId,
-						aud: audience,
-						iat: now,
-						exp: now + 60,
-						jti: crypto.randomUUID(),
-					},
+				const assertion = await createClientAssertion(
+					entityId(auth.clientId),
+					audience,
 					auth.signer,
-					{ typ: "JWT" },
+					options,
 				);
 				form.set("client_assertion_type", JWT_BEARER_CLIENT_ASSERTION_TYPE);
 				form.set("client_assertion", assertion);
@@ -204,7 +172,10 @@ export async function fetchFederationEndpoint(
 				auth.method !== "none" &&
 				auth.method !== "private_key_jwt"
 			) {
-				const prepared = await auth.prepare(Object.freeze({ endpoint: url.href, audience }));
+				const prepared = await runAsyncOperation(
+					(signal) => auth.prepare(Object.freeze({ endpoint: url.href, audience, signal })),
+					options,
+				);
 				if (!prepared || typeof prepared !== "object")
 					throw new Error("Invalid authentication output");
 				for (const [name, value] of Object.entries(prepared.parameters ?? {})) {
@@ -249,11 +220,11 @@ export async function fetchFederationEndpoint(
 			// endpoint; performFetch rejects every non-success status, including 3xx.
 			redirect: "manual",
 		});
-	} catch {
-		if (options.signal?.aborted)
+	} catch (cause) {
+		if (options.signal?.aborted || (cause instanceof DOMException && cause.name === "TimeoutError"))
 			return err({
 				code: InternalErrorCode.Timeout,
-				description: "Federation endpoint request was cancelled",
+				description: "Federation endpoint authentication timed out or was cancelled",
 			});
 		return err({
 			code: FederationErrorCode.InvalidRequest,

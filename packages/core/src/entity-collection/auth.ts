@@ -1,4 +1,7 @@
-import { authenticateEndpointRequest } from "../endpoint-authentication.js";
+import {
+	authenticateEndpointRequest,
+	type EndpointAuthenticationError,
+} from "../endpoint-authentication.js";
 import { ok, type Result } from "../errors.js";
 import type { FederationOptions } from "../types.js";
 import type { CollectionAuthentication } from "./types.js";
@@ -9,7 +12,7 @@ export async function authenticateCollectionRequest(
 	auth: CollectionAuthentication | undefined,
 	options?: FederationOptions,
 	request?: Request,
-): Promise<Result<void>> {
+): Promise<Result<void, EndpointAuthenticationError>> {
 	const checked = await authenticateEndpointRequest(
 		request ?? new Request("https://collection.invalid", { method }),
 		form,

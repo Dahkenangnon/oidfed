@@ -33,6 +33,9 @@ const shape = {
 	jwks: z.looseObject(MetadataJWKSetSchema.shape).optional(),
 	registration_endpoint: endpoint.optional(),
 	token_endpoint_auth_methods_supported: strings.optional(),
+	client_attestation_signing_alg_values_supported: signingAlgorithms.optional(),
+	client_attestation_pop_signing_alg_values_supported: signingAlgorithms.optional(),
+	challenge_endpoint: z.url().optional(),
 	token_endpoint_auth_signing_alg_values_supported: signingAlgorithms.optional(),
 	revocation_endpoint: endpoint.optional(),
 	revocation_endpoint_auth_methods_supported: strings.optional(),
@@ -139,6 +142,17 @@ function requirements(meta: Record<string, unknown>, ctx: z.RefinementCtx, publi
 		if (!publication && meta[field] === undefined)
 			ctx.addIssue({ code: "custom", path: [field], message });
 	};
+	if (
+		(meta.token_endpoint_auth_methods_supported as string[] | undefined)?.includes(
+			"attest_jwt_client_auth",
+		)
+	) {
+		for (const field of [
+			"client_attestation_signing_alg_values_supported",
+			"client_attestation_pop_signing_alg_values_supported",
+		])
+			requireField(field, `${field} is REQUIRED for attest_jwt_client_auth`);
+	}
 	const grants = (meta.grant_types_supported as string[] | undefined) ?? [
 		"authorization_code",
 		"implicit",
