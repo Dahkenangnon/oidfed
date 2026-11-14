@@ -55,6 +55,8 @@ export interface ExplicitRegistrationHandlerConfig extends RegistrationAccredita
 	readonly registrationResponseTtlSeconds?: number;
 	/** Optional protocol-specific adapter for metadata validation/enrichment. */
 	readonly registrationProtocolAdapter?: RegistrationProtocolAdapter;
+	/** Default disabled. In read-only mode the host MUST prevent the adapter-issued token from modifying registration. */
+	readonly registrationManagement?: "disabled" | "read-only";
 	/** Optional generator producing a client_secret embedded in the response. Returning undefined omits the field. */
 	readonly generateClientSecret?: (sub: EntityId) => Promise<string | undefined>;
 	/** Optional late pre-commit hook fired after response preparation and before `onRegistration`. */
@@ -80,6 +82,9 @@ export function createExplicitRegistrationHandler(
 	config: ExplicitRegistrationHandlerConfig,
 ): (request: Request) => Promise<Response> {
 	const trustAnchors = assertNonEmptyTrustAnchors(config.trustAnchors);
+	const registrationManagement = config.registrationManagement ?? "disabled";
+	if (registrationManagement !== "disabled" && registrationManagement !== "read-only")
+		throw new TypeError("registrationManagement must be disabled or read-only");
 
 	return async (request: Request) => {
 		const logger = safeLogger(config.options?.logger);
@@ -246,6 +251,10 @@ export function createExplicitRegistrationHandler(
 		}
 
 		const outputMetadata = responsePayload.metadata as Record<string, Record<string, unknown>>;
+		if (registrationManagement === "disabled")
+			outputMetadata.openid_relying_party = stripRegistrationManagementFields(
+				outputMetadata.openid_relying_party ?? {},
+			);
 		const choiceCheck = registrationResponseChoices(
 			outputMetadata.openid_relying_party ?? {},
 			bestChain.resolvedMetadata.openid_relying_party ?? {},
@@ -289,11 +298,6 @@ export function createExplicitRegistrationHandler(
 				responsePayload.metadata = metadataRecord;
 			}
 		}
-		const metadataRecord = responsePayload.metadata as Record<string, unknown>;
-		const rpMeta = (metadataRecord.openid_relying_party ?? {}) as Record<string, unknown>;
-		metadataRecord.openid_relying_party = stripRegistrationManagementFields(rpMeta);
-		responsePayload.metadata = metadataRecord;
-
 		const responseValidation = ExplicitRegistrationResponsePayloadSchema.safeParse(responsePayload);
 		if (!responseValidation.success) {
 			return errorResponse(

@@ -162,3 +162,17 @@ if (decodedSubordinateStatement.ok) {
 	void issuer;
 	void subject;
 }
+
+const readOnlyRegistration = {
+	registrationManagement: "read-only",
+} satisfies OidcProviderRoleConfig;
+const disabledRegistration = {
+	registrationManagement: "disabled",
+} satisfies OAuthAuthorizationServerRoleConfig;
+void readOnlyRegistration;
+void disabledRegistration;
+const writableRegistration = {
+	// @ts-expect-error Federation registration access cannot enable modification.
+	registrationManagement: "writable",
+} satisfies OidcProviderRoleConfig;
+void writableRegistration;

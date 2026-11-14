@@ -22,6 +22,7 @@ import {
 	MediaType,
 	MemoryFederationKeyProvider,
 	MemoryReplayStore,
+	ok,
 	type PolicyOperatorDefinition,
 	type ReplayStore,
 	resolveTrustChains,
@@ -656,6 +657,61 @@ export default (QUnit: QUnit) => {
 						f.requests.length,
 						7,
 						"issuer discovery cannot replenish the transport allowance",
+					);
+				}
+			}
+		});
+		test("both provider roles forward read-only management and host chain selection", async (t) => {
+			const f = await fixture();
+			for (const Role of [OidcProviderRole, OAuthAuthorizationServerRole]) {
+				let calls = 0;
+				const role = new Role({
+					metadata: { client_registration_types_supported: ["explicit"] },
+					registrationManagement: "read-only",
+					registrationProtocolAdapter: {
+						validateClientMetadata: (m) => CorePublic.ok(m),
+						enrichResponseMetadata: (m) => ({
+							...m,
+							registration_access_token: "read-token",
+							registration_client_uri: `${f.ids.anchor}/client`,
+						}),
+					},
+				});
+				role.initialize({
+					entityId: f.ids.anchor,
+					keyProvider: {
+						getFederationKeySet: async () => ({
+							jwks: { keys: [f.keys.anchor.publicKey] },
+							signer: new JwkSigner(f.keys.anchor.privateKey),
+						}),
+					},
+					trustAnchors: f.anchors,
+					options: {
+						...f.options,
+						chainSelection: (chains) => {
+							calls++;
+							return chains.find(
+								(c) => c.resolvedMetadata.openid_relying_party?.client_name === "b",
+							)!;
+						},
+					},
+				});
+				const response = await role.routes.get("/registration")!(
+					new Request(`${f.ids.anchor}/registration`, {
+						method: "POST",
+						headers: { "content-type": MediaType.EntityStatement },
+						body: f.request,
+					}),
+				);
+				t.equal(response.status, 200, await response.clone().text());
+				t.equal(calls, 1);
+				const parsed = decodeEntityStatement(await response.text());
+				t.true(parsed.ok);
+				if (parsed.ok) {
+					t.deepEqual(parsed.value.payload.authority_hints?.map(String), [String(f.ids.b)]);
+					t.equal(
+						parsed.value.payload.metadata?.openid_relying_party?.registration_access_token,
+						"read-token",
 					);
 				}
 			}
@@ -4027,6 +4083,55 @@ export default (QUnit: QUnit) => {
 			};
 		}
 
+		test("read-only registration credentials round-trip through the OP and RP", async (t) => {
+			const mock = await createMockOpWithRegistration();
+			const access = {
+				registration_access_token: "read-only-test-token",
+				registration_client_uri: "https://op.example.com/registered/library",
+			};
+			const handler = createExplicitRegistrationHandler({
+				opEntityId: OP_ID,
+				keyProvider: new MemoryFederationKeyProvider(createFederationSigningKey(mock.opSigningKey)),
+				trustAnchors: mock.trustAnchors,
+				options: { httpClient: mock.httpClient },
+				registrationManagement: "read-only",
+				registrationProtocolAdapter: {
+					validateClientMetadata: (metadata) => ok(metadata),
+					enrichResponseMetadata: (metadata) => ({
+						...metadata,
+						...access,
+						client_secret_expires_at: 0,
+					}),
+				},
+				generateClientSecret: async () => "test-client-secret",
+			});
+			let posts = 0;
+			const httpClient: HttpClient = async (input, init) => {
+				const request = new Request(input, init);
+				if (new URL(request.url).pathname === "/federation_registration") {
+					posts++;
+					return handler(request);
+				}
+				return mock.httpClient(input, init);
+			};
+			const result = await explicitRegistration(mock.discovery, mock.config, mock.trustAnchors, {
+				httpClient,
+			});
+			t.true(result.ok, result.ok ? "registered" : result.error.description);
+			t.equal(posts, 1);
+			if (!result.ok) return;
+			t.equal(result.value.clientSecret, "test-client-secret");
+			t.equal(result.value.registeredMetadata.client_secret_expires_at, 0);
+			t.equal(
+				result.value.registeredMetadata.registration_access_token,
+				access.registration_access_token,
+			);
+			t.equal(
+				result.value.registeredMetadata.registration_client_uri,
+				access.registration_client_uri,
+			);
+		});
+
 		test("POSTs EC JWT to correct endpoint", async (t) => {
 			const mock = await createMockOpWithRegistration();
 			let capturedUrl = "";
@@ -5205,7 +5310,7 @@ export default (QUnit: QUnit) => {
 			}
 		});
 
-		test("RP accepts non-expiring secrets", async (t) => {
+		test("RP accepts non-expiring secrets and validates supplied registration-access pairs", async (t) => {
 			const exp = Math.floor(Date.now() / 1000) + 3600;
 			for (const expiry of [undefined, 0, exp - 1, exp, exp + 1, -1, "0", Infinity]) {
 				const payload = explicitRegistrationResponseBase({
@@ -5228,6 +5333,36 @@ export default (QUnit: QUnit) => {
 				);
 				const response = await explicitRegistrationWithResponse(payload);
 				t.equal(response.ok, expected, `RP: ${expiry}: ${JSON.stringify(response)}`);
+			}
+			const pair = {
+				registration_access_token: "read-token",
+				registration_client_uri: `${OP_ID}/client`,
+			};
+			for (const fields of [
+				{},
+				pair,
+				{ registration_access_token: pair.registration_access_token },
+				{ registration_client_uri: pair.registration_client_uri },
+				{ ...pair, registration_access_token: "" },
+			]) {
+				const result = await explicitRegistrationWithResponse(
+					explicitRegistrationResponseBase({
+						metadata: {
+							openid_relying_party: {
+								client_id: LEAF_ID,
+								redirect_uris: ["https://rp.example.com/callback"],
+								...fields,
+							},
+						},
+					}),
+				);
+				const expected = !Object.keys(fields).length || fields === pair;
+				t.equal(result.ok, expected, JSON.stringify(result));
+				if (result.ok && fields === pair)
+					t.equal(
+						result.value.registeredMetadata.registration_access_token,
+						pair.registration_access_token,
+					);
 			}
 		});
 
@@ -7471,6 +7606,175 @@ export default (QUnit: QUnit) => {
 				t.deepEqual(rpMeta.response_types, ["code"]);
 				t.deepEqual(rpMeta.grant_types, ["authorization_code"]);
 				t.equal(rpMeta.token_endpoint_auth_method, "client_secret_basic");
+			});
+
+			test("read-only registration access is opt-in and validated before signing or hooks", async (t) => {
+				const { config, fed } = await createFederatedHandlerFixture({});
+				const requestJwt = await buildRegistrationRequest(
+					LEAF_ID,
+					HANDLER_ENTITY_ID,
+					fed.leafSigningKey,
+					fed.leafPublicKey,
+				);
+				const valid = {
+					registration_access_token: "read-token",
+					registration_client_uri: `${HANDLER_ENTITY_ID}/client`,
+				};
+				const malformed: Record<string, unknown>[] = [
+					{ registration_access_token: "read-token" },
+					{ registration_client_uri: valid.registration_client_uri },
+					{ ...valid, registration_access_token: "" },
+					{ ...valid, registration_access_token: 42 },
+					{ ...valid, registration_client_uri: "http://op.example/client" },
+					{ ...valid, registration_client_uri: `${HANDLER_ENTITY_ID}/client#fragment` },
+				];
+				for (const mode of [undefined, "disabled", "read-only"] as const) {
+					for (const fields of [{}, valid, ...malformed]) {
+						let signatures = 0,
+							secrets = 0,
+							invalidations = 0;
+						let saved: Record<string, unknown> | undefined;
+						const signer = new JwkSigner(fed.opSigningKey);
+						const handler = createExplicitRegistrationHandler({
+							...config,
+							...(mode !== undefined ? { registrationManagement: mode } : {}),
+							keyProvider: {
+								getFederationKeySet: async () => ({
+									jwks: { keys: [fed.opPublicKey] },
+									signer: {
+										kid: signer.kid,
+										alg: signer.alg,
+										signJwt: async (...args: Parameters<JwtSigner["signJwt"]>) => {
+											signatures++;
+											return signer.signJwt(...args);
+										},
+									},
+								}),
+							},
+							registrationProtocolAdapter: {
+								validateClientMetadata: (m) => CorePublic.ok(m),
+								enrichResponseMetadata: (m) => ({ ...m, ...fields }),
+							},
+							generateClientSecret: async () => {
+								secrets++;
+								return "secret";
+							},
+							onRegistrationInvalidation: async () => {
+								invalidations++;
+							},
+							onRegistration: async (_sub, m) => {
+								saved = m;
+							},
+						});
+						const response = await handler(
+							new Request(`${HANDLER_ENTITY_ID}/registration`, {
+								method: "POST",
+								headers: { "content-type": MediaType.EntityStatement },
+								body: requestJwt,
+							}),
+						);
+						const success = mode !== "read-only" || !malformed.includes(fields);
+						t.equal(response.status, success ? 200 : 500, `${mode}: ${JSON.stringify(fields)}`);
+						t.deepEqual([signatures, secrets, invalidations], success ? [1, 1, 1] : [0, 0, 0]);
+						if (!success) {
+							t.equal(saved, undefined);
+							continue;
+						}
+						const decoded = decodeEntityStatement(await response.text());
+						t.true(decoded.ok);
+						if (decoded.ok) {
+							const rp = decoded.value.payload.metadata?.openid_relying_party;
+							t.equal(
+								rp?.registration_access_token,
+								mode === "read-only" ? fields.registration_access_token : undefined,
+							);
+							t.equal(
+								rp?.registration_client_uri,
+								mode === "read-only" ? fields.registration_client_uri : undefined,
+							);
+							t.deepEqual(saved, rp, "persistence receives the signed metadata");
+						}
+					}
+				}
+				t.throws(
+					() =>
+						createExplicitRegistrationHandler({
+							...config,
+							registrationManagement: "writable" as "read-only",
+						}),
+					/registrationManagement/,
+				);
+			});
+			test("read-only registration output must still satisfy federation policy", async (t) => {
+				const { config, fed } = await createFederatedHandlerFixture({});
+				const original = decodeEntityStatement(fed.taSubStatementForLeaf);
+				if (!original.ok) throw new Error("Invalid fixture");
+				const policy = await signEntityStatement(
+					{
+						...original.value.payload,
+						metadata_policy: {
+							openid_relying_party: { registration_access_token: { value: null } },
+						},
+					},
+					new JwkSigner(fed.taSigningKey),
+				);
+				let signed = 0,
+					persisted = 0;
+				const signer = new JwkSigner(fed.opSigningKey);
+				const handler = createExplicitRegistrationHandler({
+					...config,
+					registrationManagement: "read-only",
+					options: {
+						...fed.options,
+						httpClient: async (input, init) => {
+							const url = new URL(input instanceof Request ? input.url : String(input));
+							if (url.pathname === "/federation_fetch" && url.searchParams.get("sub") === LEAF_ID)
+								return new Response(policy, {
+									headers: { "content-type": MediaType.EntityStatement },
+								});
+							return fed.httpClient(input, init);
+						},
+					},
+					keyProvider: {
+						getFederationKeySet: async () => ({
+							jwks: { keys: [fed.opPublicKey] },
+							signer: {
+								kid: signer.kid,
+								alg: signer.alg,
+								signJwt: async (...args: Parameters<JwtSigner["signJwt"]>) => {
+									signed++;
+									return signer.signJwt(...args);
+								},
+							},
+						}),
+					},
+					registrationProtocolAdapter: {
+						validateClientMetadata: (m) => CorePublic.ok(m),
+						enrichResponseMetadata: (m) => ({
+							...m,
+							registration_access_token: "read-token",
+							registration_client_uri: `${HANDLER_ENTITY_ID}/client`,
+						}),
+					},
+					onRegistration: async () => {
+						persisted++;
+					},
+				});
+				const request = await buildRegistrationRequest(
+					LEAF_ID,
+					HANDLER_ENTITY_ID,
+					fed.leafSigningKey,
+					fed.leafPublicKey,
+				);
+				const response = await handler(
+					new Request(`${HANDLER_ENTITY_ID}/registration`, {
+						method: "POST",
+						headers: { "content-type": MediaType.EntityStatement },
+						body: request,
+					}),
+				);
+				t.equal(response.status, 400, await response.clone().text());
+				t.deepEqual([signed, persisted], [0, 0]);
 			});
 
 			test("removes registration management fields from response metadata", async (t) => {

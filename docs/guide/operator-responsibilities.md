@@ -140,6 +140,8 @@ Applications choose which verified marks an entity must hold under [§17.5](http
 
 `@oidfed/oidc` creates and validates the federation registration artifacts defined in [Federation §12.1](https://openid.net/specs/openid-federation-1_0.html#section-12.1) and [§12.2](https://openid.net/specs/openid-federation-1_0.html#section-12.2). Under oidfed's [integration boundary](../packages/oidc.md), your OP/RP implementation handles authentication, tokens, sessions, registration persistence, and client-secret custody. Role hooks pass accepted registrations to that implementation. Authority storage does not provide an OIDC client database.
 
+Explicit registration omits registration-management credentials by default. If you enable `registrationManagement: "read-only"`, your adapter may return `registration_access_token` together with `registration_client_uri`. The host issues and stores the token, serves the URI, and manages revocation. Under [§12.2.2](https://openid.net/specs/openid-federation-1_0.html#section-12.2.2), this token **MUST NOT** allow client metadata changes. Enforce that restriction at your endpoint; the library can validate the response fields but cannot determine a token's permissions. A `client_secret_expires_at` of `0` means no secret expiry, not an exemption from registration renewal.
+
 [Federation §12.3](https://openid.net/specs/openid-federation-1_0.html#section-12.3) sets two lifetime limits:
 
 - An OP registration **MUST NOT** outlive the RP Trust Chain used to establish it. The OP may expire it earlier or reevaluate it periodically.

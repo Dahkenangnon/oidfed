@@ -176,7 +176,11 @@ RP Entity Configuration metadata under `metadata.openid_relying_party` must not 
 
 RP-side explicit registration accepts only HTTP `200` responses with exact `Content-Type: application/explicit-registration-response+jwt`. The RP rejects a response whose `iat` is later than its current time plus `clockSkewSeconds` (60 seconds by default), as required by [Federation §12.2.5](https://openid.net/specs/openid-federation-1_0.html#section-12.2.5) and [§3.2](https://openid.net/specs/openid-federation-1_0.html#section-3.2). The response must name the selected Trust Anchor, use the authority hint from the selected RP trust chain, and expire no later than that selected RP trust chain. It returns `clientId` from `metadata.openid_relying_party.client_id` and `clientSecret` from `metadata.openid_relying_party.client_secret` when the OP provisions one. If the OP also sends `client_secret_expires_at`, a positive value must not be earlier than the signed response expiry. The value `0` means the secret does not expire, as defined by [OpenID Connect Registration §3.2](https://openid.net/specs/openid-connect-registration-1_0.html#RegistrationResponse). It does not extend the registration lifetime.
 
-OP-side explicit registration does not publish registration-management tokens in the signed response metadata. Adapter-enriched `registration_access_token` and `registration_client_uri` values are removed before signing and before registration hooks are called.
+By default, OP-side explicit registration removes adapter-enriched `registration_access_token` and `registration_client_uri` before response validation, signing, and persistence hooks. [Federation §12.2.2](https://openid.net/specs/openid-federation-1_0.html#section-12.2.2) says OPs **SHOULD NOT** provide them, but allows a token for reading registered metadata.
+
+To use that exception, set `registrationManagement: "read-only"` on `OidcProviderRole` or `OAuthAuthorizationServerRole`. Your existing `registrationProtocolAdapter.enrichResponseMetadata()` can supply the pair. Both fields must be present together: a non-empty token and an HTTPS URI without a fragment. They must also satisfy the selected federation policy. The RP checks the pair and exposes it in `registeredMetadata`.
+
+The option preserves those response fields; your application issues and stores the token, serves the registration URI, and handles revocation. That endpoint **MUST NOT** let the token modify client metadata. Enable the option only when your endpoint enforces read-only access; oidfed does not create a management endpoint or infer token permissions.
 
 ```ts
 import { OidcProviderRole, OIDCRegistrationAdapter } from "@oidfed/oidc";
@@ -280,6 +284,7 @@ Configuration parameters used to instantiate `OidcProviderRole` and `OAuthAuthor
 | `trustAnchors` | `TrustAnchorSet` | Yes, via role config or parent context | Non-empty trust anchors required for OP-side automatic and explicit registration processing. |
 | `registrationResponseTtlSeconds`| `number` | No | TTL in seconds for signed explicit registration responses. Capped by RP trust chain validity. |
 | `registrationProtocolAdapter` | `RegistrationProtocolAdapter`| No | Pluggable adapter to customize metadata schema validations and response enrichments. |
+| `registrationManagement` | `"disabled" \| "read-only"` | No | Defaults to `"disabled"`. Opt in to returning adapter-issued read-only registration access credentials. The host enforces the token's permissions. |
 | `generateClientSecret` | `(sub: EntityId) => Promise<string \| undefined>`| No | Hook called to issue a client secret for confidential Relying Parties. Returned values are embedded under `metadata.openid_relying_party.client_secret`. |
 | `onRegistrationInvalidation` | `(sub: EntityId) => Promise<void>`| No | Late pre-commit hook called after validation and response preparation, immediately before `onRegistration`. |
 

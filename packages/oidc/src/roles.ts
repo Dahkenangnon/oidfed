@@ -37,7 +37,10 @@ import {
 	type RequestDelivery,
 } from "./registration/automatic.js";
 import { type ExplicitRegistrationResult, explicitRegistration } from "./registration/explicit.js";
-import { createExplicitRegistrationHandler } from "./registration/handler.js";
+import {
+	createExplicitRegistrationHandler,
+	type ExplicitRegistrationHandlerConfig,
+} from "./registration/handler.js";
 import { assertNonEmptyTrustAnchors } from "./registration/helpers.js";
 import {
 	type ProcessAutomaticRegistrationOptions,
@@ -325,6 +328,8 @@ export class OidcRelyingPartyRole implements EntityRole {
 }
 
 export interface OidcProviderRoleConfig extends RegistrationAccreditationPolicy {
+	/** Opt in to adapter-issued read-only registration access; the host enforces token permissions. Default disabled. */
+	readonly registrationManagement?: ExplicitRegistrationHandlerConfig["registrationManagement"];
 	readonly options?: FederationOptions;
 	readonly registrationPath?: string;
 	readonly metadata?: Record<string, unknown>;
@@ -407,6 +412,9 @@ export class OidcProviderRole implements EntityRole {
 				? { beforeRegistration: this.config.beforeRegistration }
 				: {}),
 			providerMetadataType: this.type,
+			...(this.config.registrationManagement !== undefined
+				? { registrationManagement: this.config.registrationManagement }
+				: {}),
 			keyProvider: context.keyProvider,
 			trustAnchors,
 			...(this.config.registrationResponseTtlSeconds !== undefined
@@ -602,6 +610,8 @@ export class OAuthClientRole implements EntityRole {
 }
 
 export interface OAuthAuthorizationServerRoleConfig extends RegistrationAccreditationPolicy {
+	/** Opt in to adapter-issued read-only registration access; the host enforces token permissions. Default disabled. */
+	readonly registrationManagement?: ExplicitRegistrationHandlerConfig["registrationManagement"];
 	readonly options?: FederationOptions;
 	readonly registrationPath?: string;
 	readonly metadata?: Record<string, unknown>;
@@ -678,6 +688,9 @@ export class OAuthAuthorizationServerRole implements EntityRole {
 				? { beforeRegistration: this.config.beforeRegistration }
 				: {}),
 			providerMetadataType: this.type,
+			...(this.config.registrationManagement !== undefined
+				? { registrationManagement: this.config.registrationManagement }
+				: {}),
 			keyProvider: context.keyProvider,
 			trustAnchors,
 			...(this.config.registrationResponseTtlSeconds !== undefined

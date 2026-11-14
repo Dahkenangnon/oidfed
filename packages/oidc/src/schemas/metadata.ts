@@ -370,11 +370,24 @@ export const OpenIDRelyingPartyRegistrationResponseMetadataSchema = z
 		client_secret: z.string().optional(),
 		client_id_issued_at: z.number().int().nonnegative().optional(),
 		client_secret_expires_at: z.number().int().nonnegative().optional(),
-		registration_access_token: z.string().optional(),
+		registration_access_token: z.string().min(1).optional(),
 		registration_client_uri: httpsUrlNoFragment.optional(),
 	})
 	.superRefine((meta, ctx) => {
 		clientRequirements(meta, ctx, false, true);
+		if (
+			(meta.registration_access_token !== undefined) !==
+			(meta.registration_client_uri !== undefined)
+		)
+			ctx.addIssue({
+				code: "custom",
+				path: [
+					meta.registration_access_token === undefined
+						? "registration_access_token"
+						: "registration_client_uri",
+				],
+				message: "registration_access_token and registration_client_uri MUST be returned together",
+			});
 		for (const field of Object.keys(rpMetadataChoices))
 			if (Object.hasOwn(meta, field))
 				ctx.addIssue({
