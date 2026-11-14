@@ -360,6 +360,25 @@ The `collection.collector` and `collection.filter` callbacks configure the share
 
 `registerSubordinate()` and `updateSubordinate()` validate supplied publication claims before writing the resulting record. Invalid critical claims, malformed constraints, and incompatible standard policy operators produce configuration errors. Updates fail before persistence or lifecycle-event creation, including with custom storage adapters. Publication checks remain in place for records loaded from existing stores and for Extended Listing.
 
+`TrustAnchor` and `Intermediate` configurations also accept `additionalClaims` and `crit` for their **own EC**. Construction validates and deeply copies them. Subordinate extensions belong to each registration record instead:
+
+```ts
+await authority.registerSubordinate({
+  entityId: subordinateId,
+  jwks: subordinateKeys,
+  additionalClaims: { "https://campus.example/claims/access-profile": "research-v1" },
+  crit: ["https://campus.example/claims/access-profile"],
+});
+
+await authority.updateSubordinate(subordinateId, {
+  additionalClaims: { "https://campus.example/claims/access-profile": "research-v2" },
+});
+```
+
+An update replaces the supplied `additionalClaims` map; it does not merge individual extension values. The resulting record must still contain every claim named in its `crit`. If you remove an extension, update `crit` in the same call (omit it from new records, or set it to `undefined` in an update when none remain). Empty `crit` arrays are rejected. Custom storage adapters must persist both fields unchanged. Signed Fetch responses and the `subordinate_statement` returned by Extended Listing carry the extensions.
+
+These publication checks protect the statement's shape. They do not decide your extension's meaning. Recipients still need to implement it before declaring it understood, as [Federation §13.4](https://openid.net/specs/openid-federation-1_0.html#section-13.4) requires. See [core's extension API](core.md#publishing-extension-claims).
+
 Policies are validated as declarations; missing subordinate metadata may still be supplied by a Superior. The host may reuse a policy across registrations or provide a different `metadataPolicy` per subordinate. Custom constraints remain in the published statement:
 
 ```ts

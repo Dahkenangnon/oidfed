@@ -75,6 +75,25 @@ Construction rejects a role route that replaces the discovery endpoint or anothe
 
 Call `refreshEntityConfiguration()` after a key change when you need a new configuration before the cached token expires. A refresh supersedes earlier builds: their results cannot replace the refreshed cache, and concurrent reads reuse the current build.
 
+### Publishing federation extensions
+
+Set `additionalClaims` and, when needed, `crit` on `LeafConfig` to include custom top-level claims in the EC:
+
+```ts
+const leaf = new Leaf({
+  entityId: "https://researchhub.example",
+  authorityHints: ["https://campus.example"],
+  metadata: { federation_entity: { organization_name: "ResearchHub" } },
+  keyProvider: federationKeys,
+  additionalClaims: { "https://campus.example/claims/access-profile": "research-v1" },
+  crit: ["https://campus.example/claims/access-profile"],
+});
+```
+
+The Leaf validates and copies these options at construction. Editing the original object later does not change subsequent ECs, including refreshed ones. To change this configuration, construct a new Leaf with the replacement values. Standard Entity Statement claims cannot be supplied through `additionalClaims`; use their dedicated options. Omit `crit` when understanding the extension is optional.
+
+Recipients must understand and process every listed claim ([Federation §13.4](https://openid.net/specs/openid-federation-1_0.html#section-13.4)). See [extension publication and consumer responsibilities](core.md#publishing-extension-claims).
+
 ### Discovering entities and trust chains
 
 The following fragment assumes `taPublicKey` is the public federation key pinned for that Trust Anchor.

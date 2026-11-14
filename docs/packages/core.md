@@ -212,6 +212,30 @@ For explicit registration, `validateTrustChain()` accepts `explicitRegistrationR
 
 `validateCriticalClaims(payload, understoodClaims?)` checks the payload `crit` rules in [§3.1.1](https://openid.net/specs/openid-federation-1_0.html#section-3.1.1). `validateEntityStatementTimeClaims(payload, options?)` checks required statement timestamps against the configured clock and skew. Both helpers return a `Result`; use them alongside signature and profile validation.
 
+### Publishing extension claims
+
+A federation can define extra top-level Entity Statement claims. Pass them as `additionalClaims` to `buildEntityConfigurationPayload()`, `signEntityConfiguration()`, `buildSubordinateStatementPayload()`, or `signSubordinateStatement()`. Use `crit` when recipients must understand **and process** an extension, as required by [Federation §13.4](https://openid.net/specs/openid-federation-1_0.html#section-13.4).
+
+```ts
+import { signSubordinateStatement } from "@oidfed/core";
+
+const jwt = await signSubordinateStatement({
+  issuer: authorityId,
+  subject: subordinateId,
+  jwks: subordinateKeys,
+  signer: federationSigner,
+  additionalClaims: { "https://campus.example/claims/access-profile": "research-v1" },
+  crit: ["https://campus.example/claims/access-profile"],
+});
+```
+
+The extra claims must be JSON object data. They are copied deeply and cannot replace standard claims, including optional ones such as `metadata` or `authority_hints`. Use the dedicated options for those fields. An explicitly empty `crit`, repeated names, standard names, and names absent from `additionalClaims` fail before signing. Omit `crit` for extensions that recipients may ignore. JSON member names such as `__proto__` remain ordinary own properties; they do not change object prototypes.
+
+`prepareEntityStatementExtensions({ additionalClaims, crit })` exposes the same validation and detached copy for custom publishers. It returns an `EntityStatementExtensions` options object and throws for invalid input. `Leaf`, `TrustAnchor`, and `Intermediate` use it when accepting their own EC configuration; Authority also validates extensions before writing subordinate records.
+
+On receipt, `options.understoodCriticalClaims` declares which extensions your application implements. It does not install a handler or enforce their meaning. Process each authenticated statement's extension according to your federation's rules before relying on the result. Leaving a name out rejects a statement that lists it in `crit`.
+
+
 Entity Statement and explicit-registration timestamps accept finite NumericDates, including fractions and dates at or before the Unix epoch, as defined in [RFC 7519 §2](https://www.rfc-editor.org/rfc/rfc7519#section-2). Time validation still enforces issuance and expiry against the configured clock. Entity Statement builders preserve the supplied `issuedAt` and require a positive integer `ttlSeconds`.
 
 A configured Trust Anchor can also have superiors, as described in [Federation §4.1](https://openid.net/specs/openid-federation-1_0.html#section-4.1). Its signed `authority_hints` declares those relationships; the configured anchor keys establish trust for your application. An anchor with superiors may also publish `trust_anchor_hints`. An anchor without superiors must omit both claims, and either array must be nonempty when present ([§3.1.2](https://openid.net/specs/openid-federation-1_0.html#section-3.1.2)).
