@@ -24815,6 +24815,111 @@ export default (QUnit: QUnit) => {
 		);
 
 		QUnit.test(
+			"query matchers use frozen snapshots and preserve pagination and eligibility",
+			async (assert) => {
+				let calls = 0;
+				const items = [
+					candidate("alpha"),
+					candidate("beta"),
+					candidate("gamma"),
+					{ ...candidate("expired"), expiresAt: 1000 },
+				];
+				const service = new EntityCollectionService({
+					trustAnchors: anchors,
+					options: { clock },
+					maxPageSize: 1,
+					collector: async () => ok(items),
+					queryMatcher: (query, entity) => {
+						calls++;
+						assert.true(Object.isFrozen(entity.entity_infos?.openid_provider));
+						assert.false(Reflect.set(entity, "entity_id", "https://mutated.example"));
+						return query === "" || entity.entity_id.includes(query);
+					},
+				});
+				assert.true((await service.refresh(anchor)).ok);
+				assert.true((await service.query({ trustAnchor: anchor })).ok);
+				assert.equal(calls, 0, "omitted query does not call matcher");
+				const ids: string[] = [];
+				let from: string | undefined;
+				do {
+					const page = await service.query({
+						trustAnchor: anchor,
+						query: "",
+						entityClaims: ["entity_id"],
+						...(from ? { from } : {}),
+					});
+					assert.true(page.ok);
+					if (!page.ok) break;
+					ids.push(...page.value.entities.map((e) => e.entity_id));
+					from = page.value.next;
+				} while (from);
+				assert.deepEqual(ids, [
+					"https://alpha.example",
+					"https://beta.example",
+					"https://gamma.example",
+				]);
+				const before = calls;
+				const excluded = await service.query({
+					trustAnchor: anchor,
+					query: "",
+					trustMarkType: ["missing"],
+				});
+				assert.true(excluded.ok && excluded.value.entities.length === 0);
+				assert.equal(calls, before, "matcher cannot restore an ineligible mark");
+				const defaults = new EntityCollectionService({
+					trustAnchors: anchors,
+					options: { clock },
+					store: service.store,
+				});
+				const page = await defaults.query({ trustAnchor: anchor, query: "ALPHA" });
+				assert.true(
+					page.ok && page.value.entities.length === 1,
+					"default remains case insensitive",
+				);
+			},
+		);
+
+		QUnit.test(
+			"query callback errors cannot allocate cursors or escape as rejections",
+			async (assert) => {
+				for (const matcher of [
+					() => {
+						throw new Error("bad matcher");
+					},
+					() => Promise.resolve(true),
+					() => Promise.reject(new Error("late rejection")),
+					() => ({
+						// biome-ignore lint/suspicious/noThenProperty: exercise accidental thenable callbacks.
+						then: (_: unknown, reject: (e: Error) => void) => reject(new Error("thenable")),
+					}),
+					() => "yes",
+				]) {
+					const store = new MemoryEntityCollectionStore({ clock });
+					let cursors = 0;
+					store.putCursor = async () => {
+						cursors++;
+					};
+					const service = new EntityCollectionService({
+						trustAnchors: anchors,
+						options: { clock },
+						store,
+						collector: async () => ok([candidate("alpha"), candidate("beta")]),
+						maxPageSize: 1,
+						queryMatcher: matcher as unknown as CorePublic.EntityCollectionQueryMatcher,
+					});
+					assert.true((await service.refresh(anchor)).ok);
+					const page = await service.query({ trustAnchor: anchor, query: "alpha" });
+					assert.false(page.ok);
+					assert.equal(cursors, 0);
+					assert.equal(
+						(await store.getCurrent(anchor))?.entries[0]?.entity.entity_id,
+						"https://alpha.example",
+					);
+				}
+			},
+		);
+
+		QUnit.test(
 			"cancelling a queued refresh settles its caller without releasing the serialization barrier",
 			async (assert) => {
 				let release: () => void = () => {};

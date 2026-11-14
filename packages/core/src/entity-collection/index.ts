@@ -12,6 +12,7 @@ export type {
 	EntityCollectionCursor,
 	EntityCollectionFilter,
 	EntityCollectionIntegration,
+	EntityCollectionQueryMatcher,
 	EntityCollectionSnapshot,
 	EntityCollectionStore,
 	MemoryEntityCollectionStoreOptions,

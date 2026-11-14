@@ -164,7 +164,7 @@ During concurrent refreshes, only the newest generation updates the cache. A cal
 
 A leaf can serve the optional Draft 01 collection endpoint while keeping its leaf role. Configure `collection` and publish `federation_collection_endpoint`. Requests through `Leaf.handleRequest` use the core service. Requests that omit `trust_anchor` receive an empty collection; an explicit supported anchor selects that collection. See the [Entity Collection guide](../guide/entity-collection.md).
 
-Use `collection.collector` for an application-owned inventory or `collection.filter` for an additional restriction. These callbacks run during explicit refresh, through the same core service used by authorities and independent providers. See [collection policy](../guide/entity-collection.md#collection-policy).
+Use `collection.collector` for an application-owned inventory or `collection.filter` for an additional restriction. These callbacks run during explicit refresh, through the same core service used by authorities and independent providers. See [collection policy](../guide/entity-collection.md#collection-policy). Use `collection.queryMatcher` for synchronous search, and `collection.options.trustMarkVerification` for explicit accreditation policy. These options use the same core implementation as an independent collection provider.
 
 The federation option `customConstraintChecks` registers synchronous checks for additional constraints in authenticated Trust Chains. Failed checks reject the operation; unknown constraints remain ignored. See [custom constraints](core.md#custom-constraints) for the API and callback context.
 

@@ -75,12 +75,20 @@ export type EntityCollectionFilter = (
 	context: EntityCollectionCollectorContext,
 ) => boolean | { expiresAt: number } | Promise<boolean | { expiresAt: number }>;
 
+/** Local, synchronous search. Return the same decision for a fixed query and snapshot. */
+export type EntityCollectionQueryMatcher = (
+	query: string,
+	entity: Readonly<EntityCollectionEntity>,
+) => boolean;
+
 export interface EntityCollectionConfig {
 	trustAnchors: TrustAnchorSet;
 	/** Defaults to core's validated federation traversal. */
 	collector?: EntityCollectionCollector;
 	/** Additional snapshot-time restriction, applied after mark verification. */
 	filter?: EntityCollectionFilter;
+	/** Defaults to case-insensitive substring matching. Receives deeply frozen, detached data. */
+	queryMatcher?: EntityCollectionQueryMatcher;
 	/** Optional serving URL, including fixed query components. */
 	endpoint?: string;
 	store?: EntityCollectionStore;

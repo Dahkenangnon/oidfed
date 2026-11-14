@@ -1,4 +1,5 @@
 import { waitForOperation } from "../async-operation.js";
+import { callSynchronous, freezeSnapshot } from "../callbacks.js";
 import {
 	DEFAULT_HTTP_TIMEOUT_MS,
 	DEFAULT_MAX_REQUEST_BODY_BYTES,
@@ -53,6 +54,8 @@ export class EntityCollectionService {
 	private readonly config: EntityCollectionConfig;
 	private readonly refreshes = new Map<string, Promise<Result<CollectionRefreshResult>>>();
 	constructor(config: EntityCollectionConfig) {
+		if (config.queryMatcher !== undefined && typeof config.queryMatcher !== "function")
+			throw new TypeError("Collection queryMatcher must be a function");
 		for (const values of [
 			config.entityClaims,
 			config.infoClaims,
@@ -355,12 +358,22 @@ export class EntityCollectionService {
 					!request.entityType.some((type) => entry.entity.entity_types?.includes(type))
 				)
 					return false;
-				if (request.query && !collectionText(entry.entity).includes(request.query.toLowerCase()))
-					return false;
 				const marks = (request.trustMarkType ?? []).map((type) =>
 					entry.verifiedMarks.filter((mark) => mark.type === type && mark.expiresAt > now),
 				);
 				if (marks.some((matches) => !matches.length)) return false;
+				const query = request.query;
+				if (query !== undefined) {
+					const matcher = this.config.queryMatcher;
+					if (matcher) {
+						const matched = callSynchronous(
+							() => matcher(query, freezeSnapshot(structuredClone(entry.entity))),
+							(value): value is boolean => typeof value === "boolean",
+						);
+						if (!matched.ok) throw new Error(`Collection query matcher failed: ${matched.error}`);
+						if (!matched.value) return false;
+					} else if (!collectionText(entry.entity).includes(query.toLowerCase())) return false;
+				}
 				validUntil = Math.min(
 					validUntil,
 					entry.expiresAt,

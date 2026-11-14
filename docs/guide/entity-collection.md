@@ -132,6 +132,25 @@ Filters may be asynchronous, so an application can consult its Resolve service o
 
 A callback failure or cancellation before publication prevents a new snapshot from being stored. Cancellation settles the caller promptly, including while its refresh is queued. A cancelled queued refresh never runs its collector, and later refreshes still wait for the active predecessor. An active refresh can abandon a callback that ignores cancellation, but that callback can no longer publish a snapshot through the service. Cancellation cannot roll back a store publication already in progress; that write stays ahead of later refreshes in the queue. Callbacks are trusted application code and must use the supplied signal to stop their own I/O. Shorten entry lifetimes or refresh explicitly when inventory or policy changes.
 
+## Search behavior
+
+By default, `query` matches a case-insensitive substring of the Entity Identifier or collected informational text. [§3.3.1](https://openid.net/specs/openid-federation-entity-collection-1_0-01.html#section-3.3.1) leaves the matching rule to the responder. Use `queryMatcher` when your directory needs a different rule:
+
+```ts
+const directory = new EntityCollectionService({
+  trustAnchors,
+  queryMatcher(query, entity) {
+    const name = entity.entity_infos?.openid_provider?.display_name;
+    return typeof name === "string" &&
+      name.toLowerCase().startsWith(query.toLowerCase());
+  },
+});
+```
+
+This example lets **Campus Alliance** offer prefix search for identity provider names. The callback receives the original query and detached, deeply frozen entity data before claim projection. It runs only when a query is supplied, including an empty string, and must return a boolean synchronously. Errors, promises, and other return values fail the query without creating a cursor.
+
+Keep the decision deterministic for a fixed query and snapshot so that pagination stays consistent. Load external data during collection; a matcher should only examine the collected data. It can narrow results, but cannot restore expired entries or bypass the entity-type and Trust Mark filters. It does not change the ordering. Authority and Leaf configurations expose the same option as `collection.queryMatcher`.
+
 ## Accreditation for Trust Mark filters
 
 The default is to verify marks under the collection's Trust Anchor, following the SHOULD in [§3.3.1](https://openid.net/specs/openid-federation-entity-collection-1_0-01.html#section-3.3.1). Some directories recognize a separate accreditation federation. For example, **Campus Alliance** might list university services while trusting a separate accessibility accreditor to certify them:

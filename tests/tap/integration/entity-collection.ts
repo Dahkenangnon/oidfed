@@ -2,10 +2,13 @@ import type QUnit from "qunit";
 import { MemoryStorageAdapter, TrustAnchor } from "../../../packages/authority/src/index.js";
 import {
 	decodeEntityStatement,
+	EntityCollectionEntitySchema,
+	EntityCollectionResponseSchema,
 	entityId,
 	generateSigningKey,
 	JwkSigner,
 	MemoryFederationKeyProvider,
+	ok,
 } from "../../../packages/core/src/index.js";
 import { createLeafHandler } from "../../../packages/leaf/src/handler.js";
 import { Leaf } from "../../../packages/leaf/src/index.js";
@@ -62,6 +65,86 @@ export default function integrationTests(QUnit: QUnit): void {
 	{
 		const anchor = entityId("https://ta.example");
 		QUnit.module("Collection regressions", () => {
+			QUnit.test(
+				"Authority and Leaf forward custom collection search and normalized inventory",
+				async (assert) => {
+					const key = await generateSigningKey("ES256");
+					const keyProvider = new MemoryFederationKeyProvider({
+						signer: new JwkSigner(key.privateKey),
+						publicJwk: key.publicKey,
+					});
+					const trustAnchors = new Map([[anchor, { jwks: { keys: [key.publicKey] } }]]);
+					for (const kind of ["authority", "leaf"]) {
+						let searches = 0;
+						const config = {
+							entityId: anchor,
+							keyProvider,
+							metadata: {
+								federation_entity: {
+									federation_collection_endpoint: `${anchor}/collect`,
+									...(kind === "authority"
+										? {
+												federation_fetch_endpoint: `${anchor}/fetch`,
+												federation_list_endpoint: `${anchor}/list`,
+											}
+										: {}),
+								},
+							},
+							collection: {
+								trustAnchors,
+								options: { clock: { now: () => 1500 } },
+								collector: async () =>
+									ok([
+										{
+											entity: EntityCollectionEntitySchema.parse({
+												entity_id: "https://op.example",
+												entity_infos: { openid_provider: { display_name: "Campus" } },
+											}),
+											expiresAt: 3000,
+										},
+									]),
+								queryMatcher: (query: string) => {
+									searches++;
+									return query === "academic";
+								},
+							},
+						};
+						const host =
+							kind === "authority"
+								? new TrustAnchor({ ...config, storage: new MemoryStorageAdapter() })
+								: new Leaf({ ...config, authorityHints: [entityId("https://superior.example")] });
+						assert.true((await host.collection!.refresh(anchor)).ok);
+						for (const method of ["GET", "POST"]) {
+							const params = new URLSearchParams({
+								query: "academic",
+								entity_type: "openid_provider",
+								trust_anchor: anchor,
+								entity_claims: "entity_id",
+							});
+							const request = new Request(
+								`${anchor}/collect${method === "GET" ? `?${params}` : ""}`,
+								{
+									method,
+									...(method === "POST"
+										? {
+												headers: { "content-type": "application/x-www-form-urlencoded" },
+												body: params,
+											}
+										: {}),
+								},
+							);
+							const response = await host.handleRequest(request);
+							assert.equal(response.status, 200);
+							assert.deepEqual(
+								EntityCollectionResponseSchema.parse(await response.json()).entities,
+								[EntityCollectionEntitySchema.parse({ entity_id: "https://op.example" })],
+							);
+						}
+						assert.equal(searches, 2);
+					}
+				},
+			);
+
 			QUnit.test("hosted authentication cannot disagree with its metadata", async (assert) => {
 				const key = await generateSigningKey("ES256");
 				const keyProvider = new MemoryFederationKeyProvider({
