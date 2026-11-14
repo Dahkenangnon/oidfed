@@ -354,6 +354,314 @@ async function createDualAnchorRegistrationFixture(invalidPreferredProvider = fa
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("oidc / explicit registration selection and accreditation", () => {
+		async function fixture() {
+			const metadata = {
+				openid_relying_party: {
+					redirect_uris: ["https://subject.example/cb"],
+					response_types: ["code"],
+				},
+			};
+			const f = await trustChainPaths(metadata);
+			const a = await f.chain(["subject", "a", "anchor"]);
+			const b = await f.chain(["subject", "b", "anchor"]);
+			const request = await f.sign("subject", "subject", {
+				aud: f.ids.anchor,
+				authority_hints: [f.ids.a, f.ids.b],
+				metadata,
+			});
+			a[0] = request;
+			b[0] = request;
+			a[1] = await f.sign("a", "subject", {
+				metadata: { openid_relying_party: { client_name: "a" } },
+			});
+			b[1] = await f.sign("b", "subject", {
+				metadata: { openid_relying_party: { client_name: "b" } },
+			});
+			const aFetch = `${f.ids.a}/fetch?sub=${encodeURIComponent(f.ids.subject)}`;
+			const documents = new Map<string, string>([
+				[`${f.ids.anchor}/.well-known/openid-federation`, a[3]!],
+				[`${f.ids.a}/.well-known/openid-federation`, f.options.entityConfigurations.get(f.ids.a)!],
+				[`${f.ids.b}/.well-known/openid-federation`, f.options.entityConfigurations.get(f.ids.b)!],
+				[aFetch, a[1]!],
+				[`${f.ids.b}/fetch?sub=${encodeURIComponent(f.ids.subject)}`, b[1]!],
+				[`${f.ids.anchor}/fetch?sub=${encodeURIComponent(f.ids.a)}`, a[2]!],
+				[`${f.ids.anchor}/fetch?sub=${encodeURIComponent(f.ids.b)}`, b[2]!],
+			]);
+			const requests: string[] = [];
+			const options = {
+				...f.options,
+				opEntityId: f.ids.anchor,
+				httpClient: (async (input) => {
+					const url = new URL(input instanceof Request ? input.url : String(input));
+					url.searchParams.delete("iss");
+					requests.push(url.toString());
+					const body = documents.get(url.toString());
+					return new Response(body ?? "missing", {
+						status: body ? 200 : 404,
+						headers: { "content-type": MediaType.EntityStatement },
+					});
+				}) satisfies HttpClient,
+			};
+			return { ...f, metadata, a, b, request, documents, requests, options, aFetch };
+		}
+		test("explicit processing selects only valid RP paths and contains selector failures", async (t) => {
+			const f = await fixture();
+			const initial = await processExplicitRegistration(
+				f.request,
+				MediaType.EntityStatement,
+				f.anchors,
+				f.options,
+			);
+			t.true(initial.ok, JSON.stringify(initial));
+			if (!initial.ok) return;
+			// Equal-length paths may finish discovery in either order.
+			t.true(["a", "b"].includes(initial.value.resolvedRpMetadata.client_name as string));
+			t.equal(initial.value.trustChain.statements.length, Math.min(f.a.length, f.b.length));
+			let calls = 0;
+			const result = await processExplicitRegistration(
+				f.request,
+				MediaType.EntityStatement,
+				f.anchors,
+				{
+					...f.options,
+					chainSelection: (chains) => {
+						calls++;
+						return chains.find(
+							(c) => c.resolvedMetadata.openid_relying_party?.client_name === "b",
+						)!;
+					},
+				},
+			);
+			t.true(result.ok, JSON.stringify(result));
+			if (result.ok) t.equal(result.value.resolvedRpMetadata.client_name, "b");
+			t.equal(calls, 1);
+			for (const strategy of [
+				() => {
+					throw new Error("selector failure");
+				},
+				() => Promise.reject(new Error("async selector failure")),
+				(chains: ValidatedTrustChain[]) => structuredClone(chains[0]),
+				(chains: ValidatedTrustChain[]) => {
+					chains[0]!.resolvedMetadata.openid_relying_party!.client_name = "changed";
+					return chains[0];
+				},
+			]) {
+				const rejected = await processExplicitRegistration(
+					f.request,
+					MediaType.EntityStatement,
+					f.anchors,
+					{ ...f.options, chainSelection: strategy as CorePublic.ChainSelectionStrategy },
+				);
+				t.false(rejected.ok);
+			}
+			f.documents.set(
+				f.aFetch,
+				await f.sign("a", "subject", {
+					metadata: { openid_relying_party: { response_types: 42 } },
+				}),
+			);
+			const filtered = await processExplicitRegistration(
+				f.request,
+				MediaType.EntityStatement,
+				f.anchors,
+				{
+					...f.options,
+					chainSelection: (chains) => {
+						t.equal(chains.length, 1);
+						return chains[0]!;
+					},
+				},
+			);
+			t.true(filtered.ok, JSON.stringify(filtered));
+			if (filtered.ok) t.equal(filtered.value.resolvedRpMetadata.client_name, "b");
+		});
+		test("incomplete explicit discovery stops selection and registration side effects", async (t) => {
+			const f = await fixture();
+			let selections = 0,
+				signatures = 0,
+				secrets = 0,
+				hooks = 0;
+			const signer = new JwkSigner(f.keys.anchor.privateKey);
+			for (const limits of [{ maxAuthorityHints: 1 }, { maxTotalFetches: 4 }]) {
+				const handler = createExplicitRegistrationHandler({
+					opEntityId: f.ids.anchor,
+					trustAnchors: f.anchors,
+					keyProvider: {
+						getFederationKeySet: async () => ({
+							jwks: { keys: [f.keys.anchor.publicKey] },
+							signer: {
+								kid: signer.kid,
+								alg: signer.alg,
+								signJwt: async (...args: Parameters<JwtSigner["signJwt"]>) => {
+									signatures++;
+									return signer.signJwt(...args);
+								},
+							},
+						}),
+					},
+					options: {
+						...f.options,
+						...limits,
+						chainSelection: (chains) => {
+							selections++;
+							return chains[0]!;
+						},
+					},
+					generateClientSecret: async () => {
+						secrets++;
+						return "secret";
+					},
+					beforeRegistration: () => {
+						hooks++;
+						return CorePublic.ok(undefined);
+					},
+					onRegistration: async () => {
+						hooks++;
+					},
+					onRegistrationInvalidation: async () => {
+						hooks++;
+					},
+				});
+				const response = await handler(
+					new Request(`${f.ids.anchor}/register`, {
+						method: "POST",
+						headers: { "content-type": MediaType.EntityStatement },
+						body: f.request,
+					}),
+				);
+				t.equal(response.status, 400);
+			}
+			t.deepEqual([selections, signatures, secrets, hooks], [0, 0, 0, 0]);
+			f.requests.length = 0;
+			const supplied = await processExplicitRegistration(
+				JSON.stringify(f.a),
+				MediaType.TrustChain,
+				f.anchors,
+				{ ...f.options, maxTotalFetches: 0 },
+			);
+			t.true(supplied.ok, JSON.stringify(supplied));
+			t.equal(f.requests.length, 0);
+			const missing = await processExplicitRegistration(
+				JSON.stringify(f.a),
+				MediaType.TrustChain,
+				f.anchors,
+				{ ...f.options, maxTotalFetches: 0, entityConfigurations: new Map() },
+			);
+			t.false(missing.ok);
+			t.equal(f.requests.length, 0);
+		});
+		test("explicit accreditation isolates issuer context and shares the operation budget", async (t) => {
+			const f = await fixture();
+			const issuer = entityId("https://issuer.example"),
+				type = "https://marks.example/type";
+			const issuerKey = new JwkSigner(f.keys.a.privateKey);
+			const issuerEc = await signEntityStatement(
+				{
+					iss: issuer,
+					sub: issuer,
+					iat: 1000,
+					exp: 5000,
+					jwks: { keys: [f.keys.a.publicKey] },
+					authority_hints: [f.ids.anchor],
+				},
+				issuerKey,
+			);
+			f.documents.set(`${issuer}/.well-known/openid-federation`, issuerEc);
+			f.documents.set(
+				`${f.ids.anchor}/fetch?sub=${encodeURIComponent(issuer)}`,
+				await signEntityStatement(
+					{
+						iss: f.ids.anchor,
+						sub: issuer,
+						iat: 1000,
+						exp: 5000,
+						jwks: { keys: [f.keys.a.publicKey] },
+					},
+					new JwkSigner(f.keys.anchor.privateKey),
+				),
+			);
+			for (const scenario of [
+				"valid",
+				"unauthorized",
+				"wrong-key",
+				"expired-delegation",
+			] as const) {
+				f.documents.set(
+					`${f.ids.anchor}/.well-known/openid-federation`,
+					await f.sign("anchor", "anchor", {
+						trust_mark_issuers: { [type]: [scenario === "unauthorized" ? f.ids.b : issuer] },
+						...(scenario === "expired-delegation"
+							? {
+									trust_mark_owners: {
+										[type]: { sub: f.ids.anchor, jwks: { keys: [f.keys.anchor.publicKey] } },
+									},
+								}
+							: {}),
+					}),
+				);
+				const delegation =
+					scenario === "expired-delegation"
+						? await CorePublic.signTrustMarkDelegation({
+								issuer: f.ids.anchor,
+								subject: issuer,
+								trustMarkType: type,
+								signer: new JwkSigner(f.keys.anchor.privateKey),
+								clock: { now: () => 1000 },
+								ttlSeconds: 100,
+							})
+						: undefined;
+				const mark = await CorePublic.signTrustMark({
+					issuer,
+					subject: f.ids.subject,
+					trustMarkType: type,
+					signer: scenario === "wrong-key" ? new JwkSigner(f.keys.b.privateKey) : issuerKey,
+					clock: f.options.clock,
+					...(delegation ? { delegation } : {}),
+				});
+				const request = await f.sign("subject", "subject", {
+					aud: f.ids.anchor,
+					authority_hints: [f.ids.a, f.ids.b],
+					metadata: f.metadata,
+					trust_marks: [{ trust_mark_type: type, trust_mark: mark }],
+				});
+				let accredited = 0;
+				const opts = {
+					...f.options,
+					trustMarkVerification: { mode: "resolve" as const },
+					trustMarkRequirements: { requiredTypes: [type] },
+					beforeRegistration: () => {
+						accredited++;
+						return CorePublic.ok(undefined);
+					},
+				};
+				const checked = await processExplicitRegistration(
+					request,
+					MediaType.EntityStatement,
+					f.anchors,
+					opts,
+				);
+				t.equal(checked.ok, scenario === "valid", `${scenario}: ${JSON.stringify(checked)}`);
+				t.equal(accredited, scenario === "valid" ? 1 : 0);
+				if (scenario === "valid") {
+					f.requests.length = 0;
+					const limited = await processExplicitRegistration(
+						request,
+						MediaType.EntityStatement,
+						f.anchors,
+						{ ...opts, maxTotalFetches: 7 },
+					);
+					t.false(limited.ok);
+					t.equal(
+						f.requests.length,
+						7,
+						"issuer discovery cannot replenish the transport allowance",
+					);
+				}
+			}
+		});
+	});
+
 	module("oidc / configurable trust establishment", () => {
 		test("protocol assessments keep Trust Mark issuer selection independent", async (t) => {
 			const f = await createMockFederation();

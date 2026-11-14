@@ -1,4 +1,5 @@
 import {
+	createTrustChainOperation,
 	decodeEntityStatement,
 	type EntityId,
 	err,
@@ -13,6 +14,7 @@ import {
 	type Result,
 	resolveTrustChains,
 	safeLogger,
+	selectTrustChain,
 	shortestChain,
 	type TrustAnchorSet,
 	type ValidatedTrustChain,
@@ -70,6 +72,9 @@ export async function processExplicitRegistration(
 	const trustAnchorsResult = requireNonEmptyTrustAnchors(trustAnchors);
 	if (!trustAnchorsResult.ok) return trustAnchorsResult;
 	const configuredTrustAnchors = trustAnchorsResult.value;
+	const operation = createTrustChainOperation(options);
+	if (!operation.ok) return operation;
+	options = { ...options, ...operation.value.options };
 
 	if (contentType !== MediaType.EntityStatement && contentType !== MediaType.TrustChain) {
 		safeLogger(options?.logger)?.warn(
@@ -287,20 +292,23 @@ export async function processExplicitRegistration(
 		);
 	}
 
+	const discovery =
+		suppliedTrustChain !== undefined
+			? undefined
+			: await resolveTrustChains(rpEntityId, configuredTrustAnchors, {
+					...options,
+					entityConfigurationJwt: rpEcJwt,
+					explicitRegistrationAudience: options.opEntityId,
+				});
 	const candidates =
 		suppliedTrustChain !== undefined
 			? [{ statements: suppliedTrustChain, entityConfigurations: options.entityConfigurations }]
-			: (
-					await resolveTrustChains(rpEntityId, configuredTrustAnchors, {
-						...options,
-						entityConfigurationJwt: rpEcJwt,
-						explicitRegistrationAudience: options.opEntityId,
-					})
-				).chains;
+			: (discovery?.chains ?? []);
 	const validChains: ValidatedTrustChain[] = [];
 	let reason = "No valid trust chains found for RP";
 	let failureCode: FederationErrorCode = FederationErrorCode.InvalidTrustChain;
 	for (const candidate of candidates) {
+		if (operation.value.exhausted()) break;
 		const validation = await validateTrustChain(candidate.statements, configuredTrustAnchors, {
 			...options,
 			entityConfigurations: candidate.entityConfigurations,
@@ -322,6 +330,13 @@ export async function processExplicitRegistration(
 			validChains.push(validation.chain);
 		} else reason = validation.errors[0]?.message ?? reason;
 	}
+	if (operation.value.exhausted() || (options.chainSelection && discovery?.incomplete))
+		return err(
+			federationError(
+				FederationErrorCode.InvalidTrustChain,
+				"Trust chain discovery was incomplete",
+			),
+		);
 	if (!validChains.length) {
 		safeLogger(options?.logger)?.warn(
 			"No RP Trust Chain satisfies Explicit Client Registration validation",
@@ -333,7 +348,9 @@ export async function processExplicitRegistration(
 			),
 		);
 	}
-	const bestChain = shortestChain(validChains);
+	const selection = selectTrustChain(validChains, options, shortestChain);
+	if (!selection.ok) return selection;
+	const bestChain = selection.value;
 	const resolvedRpMetadata = bestChain.resolvedMetadata.openid_relying_party;
 	let peerResolvedOpMetadata: Readonly<Record<string, unknown>> | undefined;
 	if (header.peer_trust_chain !== undefined) {
@@ -366,6 +383,10 @@ export async function processExplicitRegistration(
 		if (!peerMetadata.ok) return peerMetadata;
 		peerResolvedOpMetadata = peerMetadata.value;
 	}
+	if (operation.value.exhausted())
+		return err(
+			federationError(FederationErrorCode.InvalidTrustChain, "Trust chain operation exhausted"),
+		);
 	const accreditation = await checkRegistrationAccreditation(
 		bestChain,
 		"explicit",
