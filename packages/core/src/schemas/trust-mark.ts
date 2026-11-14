@@ -22,7 +22,7 @@ export const TrustMarkPayloadSchema = z.looseObject({
 	exp: z.number().finite().optional(),
 	logo_uri: z.string().url().optional(),
 	ref: z.string().url().optional(),
-	delegation: z.string().optional(),
+	delegation: z.string().min(1).optional(),
 });
 
 export const TrustMarkDelegationPayloadSchema = z.looseObject({

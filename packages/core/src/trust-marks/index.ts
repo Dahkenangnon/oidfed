@@ -138,7 +138,7 @@ export async function validateTrustMark(
 	const delegationJwt = p.delegation;
 	const owner = trustMarkOwner(options?.trustMarkOwners, trustMarkType);
 	if (!owner.ok) return owner;
-	if (owner.value !== undefined && !delegationJwt) {
+	if (owner.value !== undefined && delegationJwt === undefined) {
 		return err(
 			tmError(
 				`Trust mark type '${trustMarkType}' requires delegation (in trust_mark_owners) but none provided`,
@@ -147,7 +147,7 @@ export async function validateTrustMark(
 	}
 
 	let delegation: ValidatedTrustMarkDelegation | undefined;
-	if (delegationJwt) {
+	if (delegationJwt !== undefined) {
 		const delegationResult = await validateDelegation(
 			delegationJwt,
 			iss,

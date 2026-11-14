@@ -380,6 +380,30 @@ export default (QUnit: QUnit) => {
 			t.true(result.valid);
 			if (result.valid) t.equal(result.chain.resolvedMetadata.example?.x, "unchanged");
 		});
+		test("a present empty delegation is invalid even without an owner declaration", async (t) => {
+			const f = await trustChainPaths();
+			for (const present of [false, true]) {
+				const jwt = await CorePublic.signEntityStatement(
+					{
+						iss: f.ids.anchor,
+						sub: f.ids.subject,
+						iat: 1000,
+						exp: 5000,
+						trust_mark_type: "https://marks.example/member",
+						...(present ? { delegation: "" } : {}),
+					},
+					new CorePublic.JwkSigner(f.keys.anchor.privateKey),
+					{ typ: "trust-mark+jwt" },
+				);
+				const result = await CorePublic.validateTrustMark(
+					jwt,
+					{ "https://marks.example/member": [f.ids.anchor] },
+					{ keys: [f.keys.anchor.publicKey] },
+					{ ...f.options, expectedSubject: f.ids.subject },
+				);
+				t.equal(result.ok, !present);
+			}
+		});
 	});
 
 	module("core / configurable trust establishment", () => {
