@@ -24902,6 +24902,75 @@ export default (QUnit: QUnit) => {
 				assert.strictEqual(await service.store.getCurrent(anchor), undefined);
 			},
 		);
+
+		QUnit.test(
+			"custom authentication credentials in URLs never fall back to anonymous Collection access",
+			async (assert) => {
+				const f = await EntityCollectionFixture.seed();
+				for (const methods of [["none", "api_key"], ["api_key"]]) {
+					let verified = 0;
+					const service = new EntityCollectionService({
+						trustAnchors: f.trustAnchors,
+						store: f.store,
+						options: { clock },
+						responder: { entityId: EntityCollectionFixture.anchor, isTrustAnchor: true },
+						authentication: {
+							methods,
+							receiverEntityId: EntityCollectionFixture.anchor,
+							extensions: {
+								methods: {
+									api_key: {
+										parameters: ["api_key"],
+										authenticate: async (input) => {
+											verified++;
+											return input.parameters.api_key?.[0] === "valid"
+												? ok({ entityId: entityId("https://client.example") })
+												: err({
+														code: FederationErrorCode.InvalidClient,
+														description: "Bad credential",
+													});
+										},
+									},
+								},
+							},
+						},
+					});
+					for (const method of ["GET", "POST"]) {
+						const response = await service.handleRequest(
+							new Request("https://collection.example?api_key=invalid", {
+								method,
+								...(method === "POST"
+									? { headers: { "content-type": "application/x-www-form-urlencoded" }, body: "" }
+									: {}),
+							}),
+						);
+						assert.equal(response.status, method === "POST" ? 400 : 401);
+					}
+					assert.equal(verified, 0, "URL credential rejected before verifier");
+					for (const key of ["invalid", "valid"]) {
+						const response = await service.handleRequest(
+							new Request("https://collection.example", {
+								method: "POST",
+								headers: { "content-type": "application/x-www-form-urlencoded" },
+								body: `api_key=${key}`,
+							}),
+						);
+						assert.equal(response.status, key === "valid" ? 200 : 401);
+					}
+					for (const method of ["GET", "POST"]) {
+						const response = await service.handleRequest(
+							new Request("https://collection.example?unrecognized=value", {
+								method,
+								...(method === "POST"
+									? { headers: { "content-type": "application/x-www-form-urlencoded" }, body: "" }
+									: {}),
+							}),
+						);
+						assert.equal(response.status, methods.includes("none") ? 200 : 401);
+					}
+				}
+			},
+		);
 	});
 
 	{

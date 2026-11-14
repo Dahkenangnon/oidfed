@@ -307,6 +307,17 @@ export async function authenticateEndpointRequest(
 	}
 }
 
+/** Credentials declared by authentication methods belong in the POST form, never the URL. */
+export function endpointCredentialParameterNames(
+	extensions?: EndpointAuthentication,
+): ReadonlySet<string> {
+	return new Set([
+		"client_assertion",
+		"client_assertion_type",
+		...Object.values(extensions?.methods ?? {}).flatMap((method) => method.parameters ?? []),
+	]);
+}
+
 export function createEndpointAuthenticatedHandler(
 	config: EndpointAuthenticationConfig,
 	inner: (request: Request) => Promise<Response>,
@@ -316,15 +327,8 @@ export function createEndpointAuthenticatedHandler(
 ): (request: Request) => Promise<Response> {
 	const captured = validateEndpointAuthentication(config);
 	const allowsNone = captured.methods.includes("none");
-	const credentials = new Set([
-		"client_id",
-		"client_secret",
-		"client_assertion",
-		"client_assertion_type",
-		...Object.values(captured.extensions?.methods ?? {}).flatMap(
-			(method) => method.parameters ?? [],
-		),
-	]);
+	const credentialNames = endpointCredentialParameterNames(captured.extensions);
+	const credentials = new Set(["client_id", "client_secret", ...credentialNames]);
 	const unordered = [...unorderedParameters].filter((name) => !credentials.has(name));
 	return async (request) => {
 		const methods = captured.methods.every((method) => method === "none")
@@ -337,13 +341,6 @@ export function createEndpointAuthenticatedHandler(
 		try {
 			const url = new URL(request.url);
 			const query = url.searchParams;
-			const credentialNames = new Set([
-				"client_assertion",
-				"client_assertion_type",
-				...Object.values(captured.extensions?.methods ?? {}).flatMap((method) => [
-					...(method.parameters ?? []),
-				]),
-			]);
 			if ([...credentialNames].some((name) => query.has(name)))
 				return errorResponse(401, "invalid_client", "Credentials require the POST form");
 			const form = new URLSearchParams(query);

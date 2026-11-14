@@ -219,6 +219,8 @@ Queries exclude entries with an expired eligibility deadline or expired chain ev
 
 ## Authentication and HTTP clients
 
+Authentication credentials belong in the POST body. The service rejects assertion parameters and registered custom credential parameters in the URL before trying authentication or anonymous access. This applies even when `none` is permitted. Anonymous GET and form POST remain supported, and unrelated unknown extension parameters remain ignored.
+
 The service accepts anonymous GET and form POST. Authenticated requests use POST with `private_key_jwt`. For a Federation Entity, `federation_collection_endpoint_auth_methods` declares the accepted methods and defaults to `["none"]`. If the hosted collection configuration also lists methods, they must match the metadata; conflicting settings fail construction. Independent providers configure methods directly on the service. Using `["none", "private_key_jwt"]` allows anonymous POST as well as authenticated requests. Supplied invalid credentials always produce an error.
 
 Independent providers and leaves use `authentication.getClientFederationJwks` to supply trusted client keys. On an independent provider, set `authentication.receiverEntityId` to its identifier and assertion audience. This gives it an identified non-anchor responder, so requests that omit `trust_anchor` receive an empty collection. Hosted entities use their own identifier. Authorities use their existing `clientKeyProvider`.

@@ -8,6 +8,7 @@ import {
 } from "../constants.js";
 import {
 	endpointAuthenticationErrorResponse,
+	endpointCredentialParameterNames,
 	validateEndpointAuthentication,
 } from "../endpoint-authentication.js";
 import {
@@ -456,14 +457,19 @@ export class EntityCollectionService {
 		}
 		try {
 			let form: URLSearchParams;
+			const query = new URL(request.url).searchParams;
+			const credentialNames = endpointCredentialParameterNames(
+				this.config.authentication?.extensions,
+			);
+			if ([...credentialNames].some((name) => query.has(name)))
+				return request.method === "POST"
+					? errorResponse(
+							400,
+							"invalid_request",
+							"Authentication parameters must be in the POST body",
+						)
+					: errorResponse(401, "invalid_client", "Credentials require the POST form");
 			if (request.method === "POST") {
-				const query = new URL(request.url).searchParams;
-				if (query.has("client_assertion") || query.has("client_assertion_type"))
-					return errorResponse(
-						400,
-						"invalid_request",
-						"Client assertion parameters must be in the POST body",
-					);
 				if (
 					parseContentTypeHeader(request.headers.get("content-type"))?.mediaType.toLowerCase() !==
 					"application/x-www-form-urlencoded"
