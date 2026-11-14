@@ -1,4 +1,5 @@
 import {
+	createTrustChainOperation,
 	DEFAULT_MAX_CHAIN_LENGTH,
 	DEFAULT_MAX_RESPONSE_BYTES,
 	decodeEntityStatement,
@@ -49,11 +50,11 @@ export function failure(description: string): Result<never> {
 
 /** Keep one fetch budget across discovery, external AS discovery, and protocol-key lookups. */
 export function operationOptions<T extends WalletTrustOptions>(options: T): Result<T> {
-	let remaining = options.maxTotalFetches ?? 50;
-	if (!Number.isSafeInteger(remaining) || remaining <= 0)
-		return failure("maxTotalFetches must be a positive safe integer");
-	const client = options.httpClient ?? fetch;
-	const state = { exhausted: false };
+	if (options.httpClient && operationStates.has(options.httpClient)) return ok(options);
+	const operation = createTrustChainOperation(options);
+	if (!operation.ok) return operation;
+	const client = operation.value.options.httpClient;
+	if (!client) return failure("Missing operation transport");
 	const scoped = {
 		...options,
 		cache: options.cache ?? new MemoryCache(options.clock ? { clock: options.clock } : undefined),
@@ -62,24 +63,22 @@ export function operationOptions<T extends WalletTrustOptions>(options: T): Resu
 				safeLogger(options.logger)?.warn(
 					"Supply the missing federation evidence or protocol keys for offline trust evaluation",
 				);
-				throw new Error("Offline operation cannot access the network");
-			}
-			if (options.signal?.aborted) throw options.signal.reason ?? new Error("Operation cancelled");
-			if (remaining-- <= 0) {
-				state.exhausted = true;
-				throw new Error("Wallet operation fetch budget exhausted");
 			}
 			return client(input, init);
 		},
 	};
-	operationStates.set(scoped, state);
+	operationStates.set(scoped.httpClient, operation.value.exhausted);
 	return ok(scoped);
 }
 
-const operationStates = new WeakMap<object, { exhausted: boolean }>();
+// Options are copied for nested discoveries; the shared transport retains its budget identity.
+const operationStates = new WeakMap<object, () => boolean>();
 /** Partial discovery must never turn a shared resource limit into success. */
 export function operationExhausted(options: WalletTrustOptions): boolean {
-	return operationStates.get(options)?.exhausted ?? false;
+	return (
+		options.signal?.aborted === true ||
+		(options.httpClient ? (operationStates.get(options.httpClient)?.() ?? false) : false)
+	);
 }
 
 interface ChainCandidate {
@@ -87,11 +86,17 @@ interface ChainCandidate {
 	readonly entityConfigurations: FederationOptions["entityConfigurations"];
 }
 
+interface ChainCandidates {
+	readonly chains: readonly ChainCandidate[];
+	readonly incomplete: boolean;
+	readonly source: "supplied" | "hint" | "discovery";
+}
+
 export async function candidates(
 	id: string,
 	anchors: TrustAnchorSet,
 	options: WalletTrustOptions,
-): Promise<Result<readonly ChainCandidate[]>> {
+): Promise<Result<ChainCandidates>> {
 	try {
 		entityId(id);
 	} catch {
@@ -111,7 +116,11 @@ export async function candidates(
 			bytes > (options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES)
 		)
 			return failure("Supplied chain exceeds configured limits");
-		return ok([{ statements: supplied, entityConfigurations: options.entityConfigurations }]);
+		return ok({
+			chains: [{ statements: supplied, entityConfigurations: options.entityConfigurations }],
+			incomplete: false,
+			source: "supplied",
+		});
 	}
 	if (options.offline) {
 		safeLogger(options.logger)?.warn("Supply a trust chain for offline trust evaluation");
@@ -119,6 +128,8 @@ export async function candidates(
 	}
 	const resolved = await resolveTrustChains(entityId(id), anchors, options);
 	if (options.signal?.aborted) return failure("Operation cancelled");
+	if (operationExhausted(options) || (resolved.incomplete && options.chainSelection))
+		return failure("Trust chain discovery was incomplete");
 	if (!resolved.chains.length)
 		return err(
 			resolved.errors[0] ?? {
@@ -126,14 +137,16 @@ export async function candidates(
 				description: "No trust chain found",
 			},
 		);
-	return ok(
-		[...resolved.chains]
+	return ok({
+		incomplete: resolved.incomplete === true,
+		source: "discovery",
+		chains: [...resolved.chains]
 			.sort((a, b) => a.statements.length - b.statements.length)
 			.map((chain) => ({
 				statements: chain.statements,
 				entityConfigurations: chain.entityConfigurations ?? options.entityConfigurations,
 			})),
-	);
+	});
 }
 
 export function roleMetadata(
@@ -189,7 +202,7 @@ async function* candidateAttempts(
 	anchors: TrustAnchorSet,
 	options: WalletTrustOptions,
 	headerChain?: readonly string[],
-): AsyncGenerator<Result<readonly ChainCandidate[]>> {
+): AsyncGenerator<Result<ChainCandidates>> {
 	if (headerChain !== undefined) {
 		const maxLength = options.maxChainLength ?? DEFAULT_MAX_CHAIN_LENGTH;
 		if (!Number.isSafeInteger(maxLength) || maxLength <= 0 || headerChain.length > maxLength) {
@@ -212,7 +225,8 @@ async function* candidateAttempts(
 	}
 	if (headerChain !== undefined) {
 		// candidates also checks the subject identifier, anchor configuration and cancellation.
-		yield await candidates(id, anchors, { ...options, trustChain: headerChain });
+		const hinted = await candidates(id, anchors, { ...options, trustChain: headerChain });
+		yield hinted.ok ? ok({ ...hinted.value, source: "hint" }) : hinted;
 		if (options.offline) return;
 	}
 	yield await candidates(id, anchors, options);
@@ -231,7 +245,7 @@ export async function trustedEntity(
 	for await (const paths of candidateAttempts(id, anchors, options, headerChain)) {
 		if (!paths.ok) return paths;
 		const eligible: TrustedWalletEntity[] = [];
-		for (const path of paths.value) {
+		for (const path of paths.value.chains) {
 			const checked = await validateTrustChain(path.statements, anchors, {
 				...options,
 				entityConfigurations: path.entityConfigurations,
@@ -246,12 +260,15 @@ export async function trustedEntity(
 				last = metadata.error.description;
 				continue;
 			}
-			if (options.signal?.aborted) return failure("Operation cancelled");
+			if (operationExhausted(options))
+				return failure("Wallet operation cancelled or exhausted its fetch budget");
 			safeLogger(options?.logger)?.info("Wallet entity trust validation completed");
 			const entity = { entityId: id, metadata: metadata.value, trustChain: checked.chain };
 			if (!options.chainSelection) return ok(entity);
 			eligible.push(entity);
 		}
+		if (operationExhausted(options))
+			return failure("Wallet operation cancelled or exhausted its fetch budget");
 		if (eligible.length) {
 			const selected = selectTrustChain(
 				eligible.map((entity) => entity.trustChain),
@@ -271,14 +288,19 @@ export async function prepareVerifierCandidates(
 	anchors: TrustAnchorSet,
 	options: WalletTrustOptions,
 	headerChain?: readonly string[],
-): Promise<Result<readonly PreparedTrustChain[]>> {
+): Promise<
+	Result<{
+		readonly chains: readonly PreparedTrustChain[];
+		readonly source: ChainCandidates["source"];
+	}>
+> {
 	safeLogger(options?.logger)?.debug("Preparing Credential Verifier Trust Chain validation");
 
 	let last = "No valid verifier chain";
 	for await (const paths of candidateAttempts(id, anchors, options, headerChain)) {
 		if (!paths.ok) return paths;
 		const eligible: PreparedTrustChain[] = [];
-		for (const path of paths.value) {
+		for (const path of paths.value.chains) {
 			const checked = await prepareTrustChainValidation(path.statements, anchors, {
 				...options,
 				entityConfigurations: path.entityConfigurations,
@@ -292,10 +314,11 @@ export async function prepareVerifierCandidates(
 			const metadata = roleMetadata("openid_credential_verifier", id, checked.value);
 			if (metadata.ok) {
 				eligible.push(checked.value);
-				if (!options.chainSelection) return ok(eligible);
 			} else last = metadata.error.description;
 		}
-		if (eligible.length) return ok(eligible);
+		if (operationExhausted(options))
+			return failure("Wallet operation cancelled or exhausted its fetch budget");
+		if (eligible.length) return ok({ chains: eligible, source: paths.value.source });
 	}
 	safeLogger(options?.logger)?.warn("Verifier trust preparation rejected");
 	return err({ code: InternalErrorCode.TrustChainInvalid, description: last });
@@ -309,7 +332,7 @@ export async function prepareVerifier(
 ): Promise<Result<PreparedTrustChain>> {
 	const candidates = await prepareVerifierCandidates(id, anchors, options, headerChain);
 	if (!candidates.ok) return candidates;
-	const first = candidates.value[0];
+	const first = candidates.value.chains[0];
 	return first ? ok(first) : failure("No verifier chain available");
 }
 

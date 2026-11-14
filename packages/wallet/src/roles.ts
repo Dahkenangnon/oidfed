@@ -166,7 +166,7 @@ async function signingEvidence(id: string, options: WalletTrustOptions): Promise
 		return failure("Attaching a trust chain requires pinned anchors");
 	const paths = await candidates(id, options.trustAnchors, options);
 	if (!paths.ok) return paths;
-	const candidate = paths.value[0];
+	const candidate = paths.value.chains[0];
 	if (!candidate) return failure("No attached signing chain");
 	const checked = await validateTrustChain(candidate.statements, options.trustAnchors, {
 		...options,
@@ -352,7 +352,8 @@ export class CredentialIssuerRole extends AttestationConsumer {
 		const authorizationServerErrors: { entityId: string; error: FederationError }[] = [];
 		for (const server of new Set(servers)) {
 			const { trustChain: _, ...nestedOptions } = scoped;
-			const paths = server === id ? ok([]) : await candidates(server, anchors, nestedOptions);
+			const paths =
+				server === id ? ok({ chains: [] }) : await candidates(server, anchors, nestedOptions);
 			if (!paths.ok) {
 				if (
 					options.authorizationServerPolicy !== "available" ||
@@ -371,7 +372,7 @@ export class CredentialIssuerRole extends AttestationConsumer {
 					found = { entityId: server, metadata: parsed.data, trustChain: issuer.value.trustChain };
 			} else {
 				const eligible: TrustedWalletEntity[] = [];
-				for (const path of paths.value) {
+				for (const path of paths.value.chains) {
 					const checked = await validateTrustChain(path.statements, anchors, {
 						...scoped,
 						entityConfigurations: path.entityConfigurations,

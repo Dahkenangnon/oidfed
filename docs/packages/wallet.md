@@ -122,7 +122,7 @@ const provider = await WalletProviderRole.discover(providerId, trustAnchors, {
 });
 ```
 
-When set, `maxTotalFetches` must be a positive safe integer, including for offline operations; the network guard still prevents requests when `offline: true`.
+`maxTotalFetches` accepts non-negative safe integers. Set it to `0` to use supplied or cached evidence without transport; missing evidence produces an error. Discovery, candidate validation, external AS discovery, and protocol-key retrieval share one allowance. `offline: true` also blocks network calls.
 
 Instance signing methods use an attached chain from the merged host, role, and per-call options. Anchor precedence is per-call `trustAnchors`, the role's dedicated `trustAnchors`, `role.options.trustAnchors`, then the host's anchors. You do not need to repeat a role-configured chain in each signing call.
 
@@ -299,9 +299,13 @@ await vpEngine.processFederatedRequest(
 
 Preparation checks the federation chain, effective signing keys, and registered Request Object endpoint. It returns an opaque preparation handle, not a fully validated chain. Completion checks the signed object, its type, the full prefixed client identifier, applicable wallet nonce, audience, endpoints, and pending DCQL policies. It rejects expired or cancelled preparation.
 
+When discovery returns several paths, completion selects the shortest path that passes those checks. A custom `chainSelection` receives only eligible paths; incomplete discovery rejects before that selector runs. Explicitly supplied chains remain authoritative. An embedded chain is tried first; if it fails the request's federation checks, online operation can discover another path within the same budget. Keys and permissions from different paths are never combined. Policy callbacks may run for more than one candidate.
+
 By default, the expected Request Object audience is `https://self-issued.me/v2` for static wallet discovery. Set `walletIssuer` for dynamic discovery. An optional Request Object `iss` is ignored according to OpenID4VP. Protocol parameters come from the signed object; outer request parameters cannot override them. For inline delivery, supply `request` during preparation and complete with that same JWT. Preparation rejects an incorrect JWT type before using its discovery hints.
 
 The application's transport must enforce OpenID4VP's GET/POST rules, response media type, and HTTP-error handling. It must perform session binding and any remaining protocol checks. Requests with transaction data require a `verifyTransactionData` callback to validate the transaction type and its contents after the library's request checks pass. Credential selection, selective disclosure, presentation verification, and actual Holder Binding remain protocol-engine responsibilities.
+
+Federation acceptance does not establish complete OpenID4VP protocol validity. In particular, your protocol engine handles the `state` requirements for presentations without holder binding: generation, entropy, freshness, session storage, and matching the returned value. The existing request-creation helper checks for missing `state` where it can determine that requirement; completion is not a substitute for the engine's session checks.
 
 Before invoking `verifyTransactionData`, the library checks that every [transaction credential ID](https://openid.net/specs/openid-4-verifiable-presentations-1_0.html#section-5.1) belongs to the active presentation query. The callback's `queries` contains the signed request query or the application's `scopeQuery` mapping; when superior metadata overrides the request, it contains that effective list. The published authorization list remains available through `effectiveQueries` and `queryPolicy`. DCQL [claim sets](https://openid.net/specs/openid-4-verifiable-presentations-1_0.html#section-6.1) may include an empty alternative to request no selectively disclosable claims.
 

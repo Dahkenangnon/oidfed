@@ -9,6 +9,7 @@ import {
 	type Result,
 	safeLogger,
 	selectTrustChain,
+	shortestChain,
 	type TrustAnchorSet,
 	type ValidatedTrustChain,
 } from "@oidfed/core";
@@ -26,6 +27,7 @@ import {
 } from "./metadata.js";
 import {
 	failure,
+	operationExhausted,
 	prepareVerifier,
 	prepareVerifierCandidates,
 	protocolKeys,
@@ -108,12 +110,19 @@ const validatedRequests = new WeakMap<
 	{ metadata: Record<string, unknown>; expiresAt: number; options: WalletTrustOptions }
 >();
 
+function requestEvidenceIsCurrent(result: ValidatedWalletRequest): boolean {
+	const saved = validatedRequests.get(result);
+	return (
+		!!saved && saved.expiresAt > nowSeconds(saved.options.clock) && !saved.options.signal?.aborted
+	);
+}
+
 export function validateResponseRedirect(
 	result: ValidatedWalletRequest,
 	uri: string,
 ): Result<true> {
 	const saved = validatedRequests.get(result);
-	if (!saved || saved.expiresAt <= nowSeconds(saved.options.clock) || saved.options.signal?.aborted)
+	if (!saved || !requestEvidenceIsCurrent(result))
 		return failure("Unknown, expired, or cancelled verifier evidence");
 	const checked = checkEndpoint(saved.metadata, "redirect_uris", uri);
 	if (!checked.ok)
@@ -197,6 +206,7 @@ export async function prepareRequest(
 	outer: WalletAuthorizationRequest,
 	anchors: TrustAnchorSet,
 	options: AuthorizationRequestOptions,
+	ignoreEmbeddedHint = false,
 ): Promise<Result<PreparedAuthorizationRequest>> {
 	safeLogger(options?.logger)?.debug(
 		"Preparing federation validation of an OpenID4VP Authorization Request",
@@ -234,33 +244,60 @@ export async function prepareRequest(
 			headerChain = supplied as string[];
 		}
 	}
-	const chains = await prepareVerifierCandidates(id, anchors, options, headerChain);
+	const chains = await prepareVerifierCandidates(
+		id,
+		anchors,
+		options,
+		ignoreEmbeddedHint ? undefined : headerChain,
+	);
 	if (!chains.ok) return chains;
 	const eligible: PreparedAuthorizationRequest[] = [];
 	let rejected: Result<PreparedAuthorizationRequest> = failure("No eligible verifier chain");
-	for (const chain of chains.value) {
+	for (const chain of chains.value.chains) {
 		const prepared = await prepareRequestEvidence(outer, id, chain, options);
 		if (prepared.ok) eligible.push(prepared.value);
 		else rejected = prepared;
 	}
-	if (!eligible.length) return rejected;
+	if (operationExhausted(options))
+		return failure("Wallet operation cancelled or exhausted its fetch budget");
+	const canDiscover = chains.value.source === "hint" && !options.offline;
+	if (!eligible.length)
+		return canDiscover ? prepareRequest(outer, anchors, options, true) : rejected;
 	const first = eligible[0];
 	if (!first) return rejected;
-	if (eligible.length === 1) return ok(first);
-	const prepared = Object.freeze({
-		...first,
-		expiresAt: Math.max(...eligible.map((item) => item.expiresAt)),
-	}) as PreparedAuthorizationRequest;
+	const prepared =
+		eligible.length === 1
+			? first
+			: (Object.freeze({
+					...first,
+					expiresAt: Math.max(...eligible.map((item) => item.expiresAt)),
+				}) as PreparedAuthorizationRequest);
 	const saved = preparations.get(first);
 	if (!saved) return failure("Missing request preparation");
 	preparations.set(prepared, saved);
 	preparationAlternatives.set(prepared, eligible);
+	if (canDiscover) {
+		// Retry an unusable hint only after request-context validation, using the same budget.
+		preparationFallbacks.set(prepared, {
+			outer: structuredClone(outer),
+			anchors: new Map([...anchors].map(([id, keys]) => [id, structuredClone(keys)])),
+			options: { ...options },
+		});
+	}
 	return ok(prepared);
 }
 
 const preparationAlternatives = new WeakMap<
 	PreparedAuthorizationRequest,
 	readonly PreparedAuthorizationRequest[]
+>();
+const preparationFallbacks = new WeakMap<
+	PreparedAuthorizationRequest,
+	{
+		outer: WalletAuthorizationRequest;
+		anchors: TrustAnchorSet;
+		options: AuthorizationRequestOptions;
+	}
 >();
 async function prepareRequestEvidence(
 	outer: WalletAuthorizationRequest,
@@ -402,8 +439,12 @@ export async function completeRequest(
 	context: AuthorizationRequestContext = {},
 ): Promise<Result<ValidatedWalletRequest>> {
 	const options = preparations.get(prepared)?.options;
+	if (!options || prepared.expiresAt <= nowSeconds(options.clock) || operationExhausted(options))
+		return failure("Unknown, expired, or cancelled request preparation");
+	const outer = preparations.get(prepared)?.outer;
+	if (outer?.request && outer.request !== jwt)
+		return failure("Request Object differs from the inline prepared request");
 	const alternatives = preparationAlternatives.get(prepared) ?? [prepared];
-	if (!options?.chainSelection) return completeRequestCandidate(prepared, jwt, context);
 	const eligible: ValidatedWalletRequest[] = [];
 	let rejected: Result<ValidatedWalletRequest> = failure("No eligible verifier chain");
 	for (const candidate of alternatives) {
@@ -411,14 +452,34 @@ export async function completeRequest(
 		if (completed.ok) eligible.push(completed.value);
 		else rejected = completed;
 	}
-	if (!eligible.length) return rejected;
+	if (operationExhausted(options))
+		return failure("Wallet operation cancelled or exhausted its fetch budget");
+	if (!eligible.length) {
+		const fallback = preparationFallbacks.get(prepared);
+		if (!fallback) return rejected;
+		const discovered = await prepareRequest(
+			fallback.outer,
+			fallback.anchors,
+			fallback.options,
+			true,
+		);
+		return discovered.ok ? completeRequest(discovered.value, jwt, context) : discovered;
+	}
+	// Later candidates can outlast an earlier result's Request Object or policy deadline.
+	const current = eligible.filter(requestEvidenceIsCurrent);
+	if (!current.length) return failure("Request validation expired or was cancelled");
 	const selected = selectTrustChain(
-		eligible.map((result) => result.trustChain),
+		current.map((result) => result.trustChain),
 		options,
+		shortestChain,
 	);
 	if (!selected.ok) return selected;
-	const result = eligible.find((result) => result.trustChain === selected.value);
-	return result ? ok(result) : failure("Selected request chain is unavailable");
+	const result = current.find((result) => result.trustChain === selected.value);
+	if (!result) return failure("Selected request chain is unavailable");
+	// The selector checks chain expiry; request-specific freshness must also still hold.
+	return requestEvidenceIsCurrent(result)
+		? ok(result)
+		: failure("Request validation expired or was cancelled");
 }
 
 async function completeRequestCandidate(

@@ -161,6 +161,56 @@ export default (QUnit: QUnit) => {
 					t.strictEqual(assessed.value.kind, "resolver", "preserves delegated trust mode");
 			}
 		});
+		test("zero transport budget supports supplied and cached evidence", async (t) => {
+			const f = await walletFederation();
+			let fetches = 0;
+			const httpClient = async () => {
+				fetches++;
+				throw new Error("Unexpected transport");
+			};
+			for (const Role of [WalletProviderRole, CredentialIssuerRole, CredentialVerifierRole]) {
+				const id =
+					Role === WalletProviderRole
+						? f.ids.provider
+						: Role === CredentialIssuerRole
+							? f.ids.issuer
+							: f.ids.verifier;
+				t.true(
+					(
+						await Role.discover(id, f.anchors, {
+							...f.options,
+							httpClient,
+							maxTotalFetches: 0,
+							offline: true,
+						})
+					).ok,
+				);
+			}
+			const cache = new MemoryCache({ clock: f.clock });
+			const online = { ...f.options, entityChains: undefined, cache };
+			t.true((await WalletProviderRole.discover(f.ids.provider, f.anchors, online)).ok);
+			t.true(
+				(
+					await WalletProviderRole.discover(f.ids.provider, f.anchors, {
+						...online,
+						httpClient,
+						maxTotalFetches: 0,
+					})
+				).ok,
+				"cached discovery needs no transport",
+			);
+			t.false(
+				(
+					await WalletProviderRole.discover(f.ids.provider, f.anchors, {
+						...online,
+						cache: new MemoryCache(),
+						httpClient,
+						maxTotalFetches: 0,
+					})
+				).ok,
+			);
+			t.strictEqual(fetches, 0);
+		});
 		test("pre-authorized-only AS omission is accepted only in the VCI metadata profile", async (t) => {
 			const grant = "urn:ietf:params:oauth:grant-type:pre-authorized_code";
 			const base = {
@@ -294,6 +344,7 @@ export default (QUnit: QUnit) => {
 					const options = {
 						...f.options,
 						trustChain: f.chains.get(f.ids[kind]),
+						maxTotalFetches: 0,
 						offline: true,
 						...(source === "options" ? { trustAnchors: f.anchors } : {}),
 					};
@@ -551,6 +602,159 @@ export default (QUnit: QUnit) => {
 			t.strictEqual(selections, 1);
 			if (result.ok)
 				t.strictEqual(String(result.value.trustChain.statements[1]?.payload.iss), String(f.ids.b));
+			const { chainSelection: _, ...defaults } = options;
+			for (const hinted of [false, true]) {
+				const jwt = await token(
+					payload,
+					wallet.protocol.verifier.privateKey,
+					"oauth-authz-req+jwt",
+					hinted ? { trust_chain: a } : {},
+				);
+				const prep = await CredentialVerifierRole.prepareAuthorizationRequest(
+					{ client_id: payload.client_id, request: jwt },
+					f.anchors,
+					defaults,
+				);
+				t.true(prep.ok, JSON.stringify(prep));
+				if (!prep.ok) continue;
+				const checked = await CredentialVerifierRole.completeAuthorizationRequest(prep.value, jwt);
+				t.true(checked.ok, `default selection, hinted=${hinted}: ${JSON.stringify(checked)}`);
+				if (checked.ok)
+					t.strictEqual(
+						String(checked.value.trustChain.statements[1]?.payload.iss),
+						String(f.ids.b),
+					);
+			}
+			for (const hint of [a, b]) {
+				const jwt = await token(
+					payload,
+					wallet.protocol.verifier.privateKey,
+					"oauth-authz-req+jwt",
+					{ trust_chain: hint },
+				);
+				let fetches = 0;
+				const offline = {
+					...defaults,
+					offline: true,
+					maxTotalFetches: 0,
+					httpClient: async () => {
+						fetches++;
+						throw new Error("No transport");
+					},
+				};
+				const prep = await CredentialVerifierRole.prepareAuthorizationRequest(
+					{ client_id: payload.client_id, request: jwt },
+					f.anchors,
+					offline,
+				);
+				t.true(prep.ok, JSON.stringify(prep));
+				if (prep.ok)
+					t.strictEqual(
+						(await CredentialVerifierRole.completeAuthorizationRequest(prep.value, jwt)).ok,
+						hint === b,
+						"offline hint uses only its own permissions",
+					);
+				t.strictEqual(fetches, 0);
+				if (hint === a) {
+					const supplied = await CredentialVerifierRole.prepareAuthorizationRequest(
+						{ client_id: payload.client_id, request: jwt },
+						f.anchors,
+						{ ...defaults, trustChain: a },
+					);
+					t.true(supplied.ok);
+					if (supplied.ok)
+						t.false(
+							(await CredentialVerifierRole.completeAuthorizationRequest(supplied.value, jwt)).ok,
+							"explicit evidence never falls back to another path",
+						);
+				}
+			}
+			const partial = { ...options, maxAuthorityHints: 1 };
+			t.false((await CredentialVerifierRole.discover(f.ids.subject, f.anchors, partial)).ok);
+			t.false(
+				(
+					await CredentialVerifierRole.prepareAuthorizationRequest(
+						{ client_id: payload.client_id },
+						f.anchors,
+						partial,
+					)
+				).ok,
+			);
+			t.strictEqual(selections, 1, "incomplete discovery never invokes custom selection");
+			const issuer = await walletFederation({
+				issuerMetadata: { authorization_servers: [f.ids.subject] },
+			});
+			let serverSelections = 0;
+			const asLeaf = await f.sign("subject", "subject", {
+				authority_hints: [f.ids.a, f.ids.b],
+				metadata: {
+					oauth_authorization_server: {
+						issuer: f.ids.subject,
+						token_endpoint: `${f.ids.subject}/token`,
+						response_types_supported: [],
+						grant_types_supported: ["client_credentials"],
+						authorization_details_types_supported: ["openid_credential"],
+					},
+				},
+			});
+			documents.set(`${f.ids.subject}/.well-known/openid-federation`, asLeaf);
+			const asResult = await CredentialIssuerRole.discover(
+				issuer.ids.issuer,
+				new Map([...f.anchors, ...issuer.anchors]),
+				{
+					...partial,
+					entityChains: new Map([[issuer.ids.issuer, issuer.chains.get(issuer.ids.issuer)!]]),
+					chainSelection: (chains) => {
+						if (chains[0]?.entityId === f.ids.subject) serverSelections++;
+						return chains[0]!;
+					},
+				},
+			);
+			t.false(asResult.ok, "external AS discovery preserves incompleteness");
+			t.strictEqual(serverSelections, 0);
+			documents.set(`${f.ids.subject}/.well-known/openid-federation`, leaf);
+			const hintJwt = await token(
+				payload,
+				wallet.protocol.verifier.privateKey,
+				"oauth-authz-req+jwt",
+				{ trust_chain: a },
+			);
+			let transport = 0;
+			const limited = await CredentialVerifierRole.prepareAuthorizationRequest(
+				{ client_id: payload.client_id, request: hintJwt },
+				f.anchors,
+				{
+					...defaults,
+					maxTotalFetches: 1,
+					httpClient: async (input) => {
+						transport++;
+						return defaults.httpClient(input);
+					},
+				},
+			);
+			t.true(limited.ok, "preparing the hint needs no transport");
+			if (limited.ok)
+				t.false(
+					(await CredentialVerifierRole.completeAuthorizationRequest(limited.value, hintJwt)).ok,
+					"fallback cannot escape the shared budget",
+				);
+			t.strictEqual(transport, 1);
+			const controller = new AbortController();
+			const cancellable = await CredentialVerifierRole.prepareAuthorizationRequest(
+				{ client_id: payload.client_id },
+				f.anchors,
+				{ ...defaults, signal: controller.signal },
+			);
+			controller.abort();
+			if (cancellable.ok)
+				t.false(
+					(
+						await CredentialVerifierRole.completeAuthorizationRequest(
+							cancellable.value,
+							await token(payload, wallet.protocol.verifier.privateKey, "oauth-authz-req+jwt"),
+						)
+					).ok,
+				);
 		});
 		test("role assessments apply protocol metadata validation and role defaults", async (t) => {
 			const f = await walletFederation();
@@ -1265,7 +1469,7 @@ export default (QUnit: QUnit) => {
 		});
 		test("creation uses the wallet operation's fetch budget validation", async (t) => {
 			const f = await hierarchicalWalletFederation();
-			for (const maxTotalFetches of [0, -1, NaN, Infinity, 1.5]) {
+			for (const maxTotalFetches of [-1, NaN, Infinity, 1.5]) {
 				const options = {
 					...f.options,
 					maxTotalFetches,
@@ -1418,6 +1622,98 @@ export default (QUnit: QUnit) => {
 			"a signer cannot return a request whose validity window has elapsed",
 		);
 	});
+	for (const stage of [
+		"later candidate",
+		"later candidate with custom selection",
+		"selection",
+	] as const) {
+		test(`request freshness is rechecked after ${stage}`, async (t) => {
+			const wallet = await walletFederation();
+			const f = await trustChainPaths(wallet.metadata.verifier);
+			const a = await f.chain(["subject", "a", "anchor"]);
+			const b = await f.chain(["subject", "b", "anchor"]);
+			const leaf = await f.sign("subject", "subject", {
+				authority_hints: [f.ids.a, f.ids.b],
+				metadata: wallet.metadata.verifier,
+			});
+			const documents = new Map([
+				[`${f.ids.subject}/.well-known/openid-federation`, leaf],
+				[`${f.ids.a}/.well-known/openid-federation`, f.options.entityConfigurations.get(f.ids.a)!],
+				[`${f.ids.b}/.well-known/openid-federation`, f.options.entityConfigurations.get(f.ids.b)!],
+				[`${f.ids.anchor}/.well-known/openid-federation`, a[3]!],
+				[`${f.ids.a}/fetch?sub=${encodeURIComponent(f.ids.subject)}`, a[1]!],
+				[`${f.ids.b}/fetch?sub=${encodeURIComponent(f.ids.subject)}`, b[1]!],
+				[`${f.ids.anchor}/fetch?sub=${encodeURIComponent(f.ids.a)}`, a[2]!],
+				[`${f.ids.anchor}/fetch?sub=${encodeURIComponent(f.ids.b)}`, b[2]!],
+			]);
+			for (const limit of ["exp", "maximum age", "chain"] as const) {
+				const deadline = limit === "exp" ? 2000 : limit === "maximum age" ? 1600 : 5000;
+				for (const offset of [-1, 0, 1]) {
+					let now = 1500;
+					let policies = 0;
+					let selections = 0;
+					const payload = {
+						...wallet.requestPayload,
+						client_id: `openid_federation:${f.ids.subject}`,
+						exp: limit === "chain" ? 6000 : 2000,
+					};
+					const jwt = await token(
+						payload,
+						wallet.protocol.verifier.privateKey,
+						"oauth-authz-req+jwt",
+					);
+					const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
+						{ client_id: payload.client_id },
+						f.anchors,
+						{
+							...f.options,
+							clock: { now: () => now },
+							...(limit === "maximum age" ? { maxRequestAgeSeconds: 200 } : {}),
+							httpClient: async (input) => {
+								const url = new URL(input instanceof Request ? input.url : String(input));
+								url.searchParams.delete("iss");
+								const statement = documents.get(url.toString());
+								return new Response(statement ?? "missing", {
+									status: statement ? 200 : 404,
+									headers: { "content-type": "application/entity-statement+jwt" },
+								});
+							},
+							queryPolicy: async () => {
+								policies++;
+								if (policies === 2 && stage !== "selection") now = deadline + offset;
+								return true;
+							},
+							...(stage !== "later candidate"
+								? {
+										chainSelection: (chains: import("@oidfed/core").ValidatedTrustChain[]) => {
+											selections++;
+											if (stage === "selection") now = deadline + offset;
+											return chains[0]!;
+										},
+									}
+								: {}),
+						},
+					);
+					t.true(prepared.ok, JSON.stringify(prepared));
+					if (!prepared.ok) continue;
+					const result = await CredentialVerifierRole.completeAuthorizationRequest(
+						prepared.value,
+						jwt,
+					);
+					t.equal(policies, 2, "both paths reach contextual validation");
+					t.strictEqual(
+						result.ok,
+						offset < 0,
+						`${limit}, offset ${offset}: ${JSON.stringify(result.ok ? "accepted" : result.error)}`,
+					);
+					if (stage === "selection") t.equal(selections, 1);
+					if (stage === "later candidate with custom selection")
+						t.equal(selections, offset < 0 ? 1 : 0, "expired evidence never reaches selection");
+					if (!result.ok) t.true(result.error.description.toLowerCase().includes("expired"));
+				}
+			}
+		});
+	}
 	test("format-specific validation keeps extension fields and context objects", async (t) => {
 		const { DcqlQuerySchema } = await import("../../../packages/wallet/src/metadata.js");
 		const query = (format: string, meta: Record<string, unknown>, value: unknown) => ({
@@ -1698,7 +1994,7 @@ export default (QUnit: QUnit) => {
 		);
 	});
 	test("invalid wallet fetch budgets return failure promises consistently", async (t) => {
-		for (const maxTotalFetches of [0, -1, NaN, Infinity, 1.5]) {
+		for (const maxTotalFetches of [-1, NaN, Infinity, 1.5]) {
 			const options = { maxTotalFetches };
 			const anchors = new Map();
 			const calls = [
@@ -4026,8 +4322,7 @@ export default (QUnit: QUnit) => {
 				...f.options,
 				maxTotalFetches: 0,
 			});
-			t.false(budget.ok);
-			if (!budget.ok) t.true(budget.error.description.includes("positive safe integer"));
+			t.true(budget.ok, "supplied evidence permits a zero transport budget");
 		});
 		test("resolves URI protocol keys through core with the shared fetch budget", async (t) => {
 			const f = await walletFederation({
