@@ -254,6 +254,7 @@ export {
 	validateEntityId,
 	validateFetchUrl,
 } from "./trust-chain/fetch.js";
+export { createTrustChainOperation } from "./trust-chain/operation.js";
 export { resolveTrustChainForAnchor } from "./trust-chain/peer.js";
 export {
 	type RefreshOptions,
@@ -264,6 +265,7 @@ export {
 	type ResolveTrustChainsOptions,
 	resolveTrustChains,
 } from "./trust-chain/resolve.js";
+export { selectTrustChain } from "./trust-chain/selection.js";
 export {
 	type ContextualMetadataClaim,
 	calculateChainExpiration,
@@ -315,7 +317,6 @@ export {
 	validateTrustMark,
 	validateTrustMarkLogo,
 } from "./trust-marks/index.js";
-
 export {
 	type TrustMarkIssuanceOptions,
 	type TrustMarkIssuerConfig,
@@ -327,7 +328,6 @@ export {
 	type TrustMarkStatusPolicy,
 	type TrustMarkStatusPolicyContext,
 } from "./trust-marks/issuer.js";
-
 export { MemoryTrustMarkStorage, MemoryTrustMarkStore } from "./trust-marks/memory.js";
 // Trust Marks
 export {

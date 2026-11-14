@@ -2,8 +2,10 @@
 import { InternalErrorCode } from "../constants.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
 import { safeLogger } from "./../logging.js";
-import type { EntityId, FederationOptions, TrustAnchorSet } from "../types.js";
+import type { EntityId, FederationOptions, TrustAnchorSet, ValidatedTrustChain } from "../types.js";
+import { createTrustChainOperation } from "./operation.js";
 import { resolveTrustChains } from "./resolve.js";
+import { selectTrustChain } from "./selection.js";
 import { validateTrustChain } from "./validate.js";
 
 /**
@@ -30,6 +32,9 @@ export async function resolveTrustChainForAnchor(
 		);
 	}
 
+	const operation = createTrustChainOperation(options);
+	if (!operation.ok) return operation;
+	options = operation.value.options;
 	const chainResult = await resolveTrustChains(subject, trustAnchors, options);
 	if (chainResult.chains.length === 0) {
 		const firstError = chainResult.errors[0];
@@ -52,16 +57,34 @@ export async function resolveTrustChainForAnchor(
 		);
 	}
 
+	const eligible: ValidatedTrustChain[] = [];
+	const raw = new Map<ValidatedTrustChain, readonly string[]>();
 	for (const candidate of candidates) {
 		const validation = await validateTrustChain(candidate.statements as string[], trustAnchors, {
 			...options,
 			entityConfigurations: candidate.entityConfigurations,
 		});
+		if (operation.value.exhausted())
+			return err(
+				federationError(InternalErrorCode.TrustChainInvalid, "Trust chain operation exhausted"),
+			);
 		if (validation.valid) {
-			return ok(candidate.statements as readonly string[]);
+			if (!options?.chainSelection) return ok(candidate.statements as readonly string[]);
+			eligible.push(validation.chain);
+			raw.set(validation.chain, candidate.statements);
 		}
 	}
 
+	if (options?.chainSelection && chainResult.incomplete)
+		return err(
+			federationError(InternalErrorCode.TrustChainInvalid, "Trust chain discovery was incomplete"),
+		);
+	if (eligible.length) {
+		const selected = selectTrustChain(eligible, options);
+		if (!selected.ok) return selected;
+		const statements = raw.get(selected.value);
+		if (statements) return ok(statements);
+	}
 	return err(
 		federationError(
 			InternalErrorCode.TrustChainInvalid,

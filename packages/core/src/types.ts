@@ -83,6 +83,8 @@ export interface Logger {
 }
 
 export interface FederationOptions {
+	/** Select among validated candidates eligible for the current operation. */
+	chainSelection?: ChainSelectionStrategy;
 	authentication?: EndpointClientAuthentication;
 	/** Select authentication for each outgoing federation endpoint request. Mutually exclusive with authentication. */
 	getEndpointAuthentication?: EndpointAuthenticationProvider;
@@ -115,7 +117,7 @@ export interface FederationOptions {
 	allowedHosts?: string[];
 	authorityHintFilter?: (hint: URL, subject: EntityId) => boolean;
 	understoodCriticalClaims?: ReadonlySet<string>;
-	/** Maximum HTTP client calls per resolution or subject-EC validation; cached and supplied statements use no allowance. Default: 50. */
+	/** Maximum HTTP client calls; discovery helpers share the allowance across discovery and candidate validation. Cached and supplied statements use no allowance. Core accepts zero. Default: 50. */
 	maxTotalFetches?: number;
 	/**
 	 * Federation-defined policy operators in addition to the seven standard ones.

@@ -15,7 +15,9 @@ import {
 import type { EntityConfigurationPayload } from "../schemas/entity-statement.js";
 import { fetchEntityConfiguration, fetchSubordinateStatement } from "../trust-chain/fetch.js";
 import { createConcurrencyLimiter } from "../trust-chain/resolve.js";
+import { selectTrustChain } from "../trust-chain/selection.js";
 import { validateTrustMarkReferenceSyntax } from "../trust-chain/validate.js";
+import type { ValidatedTrustChain } from "../types.js";
 import {
 	type CacheProvider,
 	type EntityId,
@@ -237,6 +239,7 @@ export async function buildCollectionSnapshot(
 		signal: controller.signal,
 	});
 	try {
+		const candidates = new Map<string, ValidatedTrustChain[]>();
 		const entries = new Map<string, CollectionEntry>();
 		const publications = new Map<string, EntityConfigurationPayload>();
 		const collector = config.collector;
@@ -317,6 +320,7 @@ export async function buildCollectionSnapshot(
 					];
 					const verified = await evidence.validatePath(chain);
 					if (!verified) continue;
+					if (options.chainSelection) candidates.set(id, [...(candidates.get(id) ?? []), verified]);
 					const child = decodeEntityConfiguration(childEc.value);
 					if (!child.ok || (child.value.payload.sub as string) !== (id as string)) continue;
 					const payload = child.value.payload;
@@ -346,6 +350,13 @@ export async function buildCollectionSnapshot(
 			}
 		}
 		for (const [id, entry] of entries) {
+			const paths = candidates.get(id);
+			if (options.chainSelection && paths?.length) {
+				const selected = selectTrustChain(paths, options);
+				if (!selected.ok) return selected;
+				entry.expiresAt = selected.value.expiresAt;
+				entry.chainExpiresAt = selected.value.expiresAt;
+			}
 			if (entry.expiresAt <= nowSeconds(options.clock)) {
 				entries.delete(id);
 				continue;

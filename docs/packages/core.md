@@ -717,3 +717,23 @@ Fixed endpoint selectors retain their meaning for GET and POST. For repeatable s
 These request rules follow [Federation §§8.1–8.9](https://openid.net/specs/openid-federation-1_0.html#section-8) and [Entity Collection §3.3.1](https://openid.net/specs/openid-federation-entity-collection-1_0-01.html#section-3.3.1). Fetching an artifact still does not establish trust in it; use the corresponding verification API.
 
 For a custom endpoint handler, `createEndpointAuthenticatedHandler(config, handler, options, nativeMethod, unorderedParameters)` accepts an optional final list of parameters whose repeated values express membership. The default is exact comparison. Core exports `endpointParameterValuesMatch` and the frozen `LIST_UNORDERED_PARAMETERS`, `EXTENDED_LIST_UNORDERED_PARAMETERS`, `RESOLVE_UNORDERED_PARAMETERS`, and `COLLECTION_UNORDERED_PARAMETERS` lists for integrations that need the same rules. The handler captures a copy of its list; authentication credentials always retain exact handling.
+
+## Trust establishment options
+
+A federation can offer several paths to the same entity. Those paths may produce different metadata. `chainSelection` lets the application choose among chains that passed the operation's validation:
+
+```ts
+import { discoverEntity, entityId, preferTrustAnchor } from "@oidfed/core";
+
+const result = await discoverEntity(entityId("https://harbor.example"), anchors, {
+  chainSelection: preferTrustAnchor("https://campus.example"),
+});
+if (!result.ok) throw new Error(result.error.description);
+const metadata = result.value.resolvedMetadata;
+```
+
+You can also supply `shortestChain`, `longestExpiry`, or a synchronous callback. Return one of the candidates received by that callback. Candidate contents are detached and frozen; sorting the callback's array is allowed. Throws, asynchronous returns, and foreign results produce errors. `preferTrustAnchor` is a preference with a fallback, not an anchor allowlist: restrict `anchors` when an anchor is mandatory.
+
+The option reaches discovery, refresh, peer-chain selection, issuer discovery, Resolve hosting, and protocol operations. Protocol consumers first apply their metadata, shared-anchor, and request requirements. Wallet request selection waits for contextual policy completion. Fresh cached chains keep their existing assessment until refresh is requested or required. Discovery and candidate validation share one HTTP allowance. The default `maxTotalFetches: 50` covers the combined work; it is not renewed for each phase or candidate. If a deployment previously relied on separate allowances, it may need a larger configured limit. Cached and supplied evidence consume no allowance. Core discovery, supplied-chain discovery, refresh, and peer-chain helpers accept `maxTotalFetches: 0`: they can use available evidence, but a missing document fails before transport is called.
+
+A custom selector only runs after discovery completes within the configured limits. If a limit truncates discovery, the operation returns an error rather than asking the callback to rank a partial candidate set. Resolve hosting returns HTTP `503` with `temporarily_unavailable` and does not cache a successful assessment. This is oidfed's selection contract; [Federation §10.3](https://openid.net/specs/openid-federation-1_0.html#section-10.3) permits local selection policy without requiring exhaustive discovery.

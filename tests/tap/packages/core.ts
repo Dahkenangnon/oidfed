@@ -243,6 +243,78 @@ import { walletFederation, walletQuery } from "../fixtures/wallet.js";
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("core / configurable trust establishment", () => {
+		async function paths() {
+			const f = await trustChainPaths({ example: { route: "leaf" } });
+			const a = await f.chain(["subject", "a", "anchor"]);
+			const b = await f.chain(["subject", "b", "anchor"]);
+			const leaf = await f.sign("subject", "subject", {
+				authority_hints: [f.ids.a, f.ids.b],
+				metadata: { example: { route: "leaf" } },
+			});
+			a[0] = leaf;
+			b[0] = leaf;
+			a[1] = await f.sign("a", "subject", { metadata: { example: { route: "a" } } });
+			b[1] = await f.sign("b", "subject", { metadata: { example: { route: "b" } } });
+			const documents = new Map<string, string>([
+				[`${f.ids.subject}/.well-known/openid-federation`, leaf],
+				[`${f.ids.anchor}/.well-known/openid-federation`, a[3]!],
+				[`${f.ids.a}/.well-known/openid-federation`, f.options.entityConfigurations.get(f.ids.a)!],
+				[`${f.ids.b}/.well-known/openid-federation`, f.options.entityConfigurations.get(f.ids.b)!],
+				[`${f.ids.a}/fetch?sub=${encodeURIComponent(f.ids.subject)}`, a[1]!],
+				[`${f.ids.b}/fetch?sub=${encodeURIComponent(f.ids.subject)}`, b[1]!],
+				[`${f.ids.anchor}/fetch?sub=${encodeURIComponent(f.ids.a)}`, a[2]!],
+				[`${f.ids.anchor}/fetch?sub=${encodeURIComponent(f.ids.b)}`, b[2]!],
+			]);
+			const httpClient: HttpClient = async (input) => {
+				const url = new URL(input instanceof Request ? input.url : input.toString());
+				url.searchParams.delete("iss");
+				const jwt = documents.get(url.toString());
+				return new Response(jwt ?? "missing", {
+					status: jwt ? 200 : 404,
+					headers: { "content-type": MediaType.EntityStatement },
+				});
+			};
+			return { ...f, a, b, options: { ...f.options, httpClient } };
+		}
+		test("selection uses validated candidates and protects their evidence", async (t) => {
+			const f = await paths();
+			const chosen = await CorePublic.discoverEntity(f.ids.subject, f.anchors, {
+				...f.options,
+				chainSelection: (chains) =>
+					chains.find((chain) => chain.resolvedMetadata.example?.route === "b")!,
+			});
+			t.true(chosen.ok, JSON.stringify(chosen));
+			if (!chosen.ok) return;
+			t.strictEqual(chosen.value.resolvedMetadata.example?.route, "b");
+			const snapshot = JSON.stringify(chosen.value.trustChain);
+			for (const strategy of [
+				() => {
+					throw new Error("host failed");
+				},
+				() => Promise.reject(new Error("async failed")),
+				(chains: ValidatedTrustChain[]) => structuredClone(chains[0]),
+				(chains: ValidatedTrustChain[]) => {
+					(chains[0]!.resolvedMetadata.example as Record<string, unknown>).route = "forged";
+					return chains[0];
+				},
+			])
+				t.false(
+					CorePublic.selectTrustChain([chosen.value.trustChain], {
+						...f.options,
+						chainSelection: strategy as CorePublic.ChainSelectionStrategy,
+					}).ok,
+				);
+			t.strictEqual(JSON.stringify(chosen.value.trustChain), snapshot);
+			const budget = await CorePublic.discoverEntity(f.ids.subject, f.anchors, {
+				...f.options,
+				maxTotalFetches: 1,
+				chainSelection: CorePublic.longestExpiry,
+			});
+			t.false(budget.ok);
+		});
+	});
+
 	module("core / endpoint request boundaries", () => {
 		test("direct POST selectors use membership while credentials and extensions remain exact", async (t) => {
 			const c = CorePublic;

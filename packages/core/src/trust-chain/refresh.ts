@@ -10,7 +10,9 @@ import {
 	type TrustAnchorSet,
 	type ValidatedTrustChain,
 } from "../types.js";
+import { createTrustChainOperation } from "./operation.js";
 import { resolveTrustChains } from "./resolve.js";
+import { selectTrustChain } from "./selection.js";
 import { isChainExpired, validateTrustChain } from "./validate.js";
 
 export interface RefreshOptions extends FederationOptions {
@@ -57,8 +59,10 @@ export async function refreshTrustChain(
 		return ok(chain);
 	}
 
+	const operation = createTrustChainOperation(options);
+	if (!operation.ok) return operation;
 	const operationOptions: FederationOptions = {
-		...options,
+		...operation.value.options,
 		clock: effectiveClock,
 		...(options?.forceRefresh ? { cache: freshStatementCache(options.cache, effectiveClock) } : {}),
 	};
@@ -75,17 +79,28 @@ export async function refreshTrustChain(
 		);
 	}
 
+	const eligible: ValidatedTrustChain[] = [];
 	// Use the first valid candidate in resolver order (§10.3 permits local selection policy).
 	for (const candidate of resolveResult.chains) {
 		const result = await validateTrustChain(candidate.statements as string[], trustAnchors, {
 			...operationOptions,
 			entityConfigurations: candidate.entityConfigurations,
 		});
+		if (operation.value.exhausted())
+			return err(
+				federationError(InternalErrorCode.TrustChainInvalid, "Trust chain operation exhausted"),
+			);
 		if (result.valid) {
-			return ok(result.chain);
+			if (!options?.chainSelection) return ok(result.chain);
+			eligible.push(result.chain);
 		}
 	}
 
+	if (options?.chainSelection && resolveResult.incomplete)
+		return err(
+			federationError(InternalErrorCode.TrustChainInvalid, "Trust chain discovery was incomplete"),
+		);
+	if (eligible.length) return selectTrustChain(eligible, operationOptions);
 	return err(
 		federationError(
 			InternalErrorCode.TrustChainInvalid,

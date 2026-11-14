@@ -13,7 +13,9 @@ import {
 } from "../schemas/metadata.js";
 import { type TrustMarkOwner, TrustMarkOwnerSchema } from "../schemas/trust-mark.js";
 import { resolveTrustChains } from "../trust-chain/resolve.js";
+import { selectTrustChain } from "../trust-chain/selection.js";
 import { validateTrustChainStructure } from "../trust-chain/validate.js";
+import type { ValidatedTrustChain } from "../types.js";
 import {
 	entityId,
 	type FederationOptions,
@@ -108,6 +110,8 @@ export async function establishTrustMarkIssuerTrust(
 			if (resolved.incomplete) return failure("Issuer discovery was incomplete");
 			candidates = resolved.chains;
 		}
+		const eligible: { chain: ValidatedTrustChain; evidence: FederationTrustMarkIssuerEvidence }[] =
+			[];
 		for (const candidate of [...candidates].sort(
 			(a, b) => a.statements.length - b.statements.length,
 		)) {
@@ -150,6 +154,20 @@ export async function establishTrustMarkIssuerTrust(
 				}),
 			);
 			if (options.signal?.aborted) return failure("Operation cancelled");
+			if (!options.chainSelection) {
+				issuedEvidence.add(evidence);
+				return ok(evidence);
+			}
+			eligible.push({ chain: checked.chain, evidence });
+		}
+		if (eligible.length) {
+			const selected = selectTrustChain(
+				eligible.map((item) => item.chain),
+				options,
+			);
+			if (!selected.ok) return selected;
+			const evidence = eligible.find((item) => item.chain === selected.value)?.evidence;
+			if (!evidence) return failure("Selected issuer evidence is unavailable");
 			issuedEvidence.add(evidence);
 			return ok(evidence);
 		}

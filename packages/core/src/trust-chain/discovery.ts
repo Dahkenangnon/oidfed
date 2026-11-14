@@ -9,7 +9,9 @@ import type {
 	TrustAnchorSet,
 	ValidatedTrustChain,
 } from "../types.js";
+import { createTrustChainOperation } from "./operation.js";
 import { resolveTrustChains } from "./resolve.js";
+import { selectTrustChain } from "./selection.js";
 import { shortestChain, validateTrustChain } from "./validate.js";
 
 /**
@@ -25,6 +27,9 @@ export async function discoverEntity(
 ): Promise<Result<DiscoveryResult>> {
 	safeLogger(options?.logger)?.debug("Starting discover entity");
 
+	const operation = createTrustChainOperation(options);
+	if (!operation.ok) return operation;
+	options = operation.value.options;
 	const chainResult = await resolveTrustChains(entityId, trustAnchors, options);
 
 	if (chainResult.chains.length === 0) {
@@ -64,9 +69,15 @@ export async function discoverEntity(
 		);
 	}
 
-	const bestChain = shortestChain(validChains);
+	if (operation.value.exhausted() || (options?.chainSelection && chainResult.incomplete))
+		return err(
+			federationError(InternalErrorCode.TrustChainInvalid, "Trust chain discovery was incomplete"),
+		);
+	const selected = selectTrustChain(validChains, options, shortestChain);
+	if (!selected.ok) return selected;
+	const bestChain = selected.value;
 
-	// Brand applied here; leaf/core is the sole authorised DiscoveryResult producer.
+	// Core creates discovery results only after validating their evidence.
 	return ok({
 		entityId,
 		resolvedMetadata: bestChain.resolvedMetadata,
