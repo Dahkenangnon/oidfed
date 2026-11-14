@@ -1,6 +1,27 @@
 import { DEFAULT_HTTP_TIMEOUT_MS } from "./constants.js";
 import type { FederationOptions } from "./types.js";
 
+/** Release a waiting caller on cancellation without cancelling an independently owned operation. */
+export async function waitForOperation<T>(
+	pending: Promise<T>,
+	signals: readonly (AbortSignal | undefined)[],
+): Promise<T> {
+	let abort: () => void = () => {};
+	const stopped = new Promise<never>((_, reject) => {
+		abort = () => reject(new DOMException("Operation cancelled", "AbortError"));
+		for (const signal of signals) signal?.addEventListener("abort", abort, { once: true });
+		if (signals.some((signal) => signal?.aborted)) abort();
+	});
+	try {
+		const result = await Promise.race([pending, stopped]);
+		if (signals.some((signal) => signal?.aborted))
+			throw new DOMException("Operation cancelled", "AbortError");
+		return result;
+	} finally {
+		for (const signal of signals) signal?.removeEventListener("abort", abort);
+	}
+}
+
 /** Bound application-controlled async work without retaining abort listeners afterward. */
 export async function runAsyncOperation<T>(
 	operation: (signal: AbortSignal) => T | Promise<T>,

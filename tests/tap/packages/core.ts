@@ -24813,6 +24813,95 @@ export default (QUnit: QUnit) => {
 				assert.strictEqual(Object.getPrototypeOf({}), Object.prototype);
 			},
 		);
+
+		QUnit.test(
+			"cancelling a queued refresh settles its caller without releasing the serialization barrier",
+			async (assert) => {
+				let release: () => void = () => {};
+				let started: () => void = () => {};
+				const active = new Promise<void>((resolve) => {
+					started = resolve;
+				});
+				const held = new Promise<void>((resolve) => {
+					release = resolve;
+				});
+				let calls = 0;
+				const service = new EntityCollectionService({
+					trustAnchors: anchors,
+					options: { clock },
+					collector: async () => {
+						calls++;
+						if (calls === 1) {
+							started();
+							await held;
+						}
+						return ok([candidate(calls === 1 ? "first" : "third")]);
+					},
+				});
+				const first = service.refresh(anchor);
+				await active;
+				const cancellation = new AbortController();
+				const second = service.refresh(anchor, { signal: cancellation.signal });
+				cancellation.abort();
+				let timer: ReturnType<typeof setTimeout> | undefined;
+				const settled = await Promise.race([
+					second,
+					new Promise<undefined>((resolve) => {
+						timer = setTimeout(() => resolve(undefined), 500);
+					}),
+				]);
+				clearTimeout(timer);
+				assert.ok(settled && !settled.ok, "cancelled caller returns while predecessor is held");
+				const third = service.refresh(anchor);
+				await Promise.resolve();
+				await Promise.resolve();
+				assert.equal(calls, 1, "later refresh has not overtaken held predecessor");
+				release();
+				assert.true((await first).ok);
+				assert.false((await second).ok);
+				assert.true((await third).ok);
+				assert.equal(calls, 2, "cancelled collector never runs");
+				assert.equal(
+					(await service.store.getCurrent(anchor))?.entries[0]?.entity.entity_id,
+					"https://third.example",
+				);
+			},
+		);
+
+		QUnit.test(
+			"service cancellation releases active and queued callers and contains late callback failure",
+			async (assert) => {
+				const cancellation = new AbortController();
+				let started: () => void = () => {};
+				let reject: (e: Error) => void = () => {};
+				const active = new Promise<void>((resolve) => {
+					started = resolve;
+				});
+				let calls = 0;
+				const service = new EntityCollectionService({
+					trustAnchors: anchors,
+					options: { clock, signal: cancellation.signal },
+					collector: async () => {
+						calls++;
+						started();
+						return new Promise((_, fail) => {
+							reject = fail;
+						});
+					},
+				});
+				const first = service.refresh(anchor);
+				await active;
+				const second = service.refresh(anchor);
+				cancellation.abort();
+				assert.false((await first).ok);
+				assert.false((await second).ok);
+				assert.false((await service.refresh(anchor)).ok);
+				reject(new Error("late collector rejection"));
+				await Promise.resolve();
+				assert.equal(calls, 1);
+				assert.strictEqual(await service.store.getCurrent(anchor), undefined);
+			},
+		);
 	});
 
 	{

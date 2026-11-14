@@ -1,3 +1,4 @@
+import { waitForOperation } from "../async-operation.js";
 import {
 	DEFAULT_HTTP_TIMEOUT_MS,
 	DEFAULT_MAX_REQUEST_BODY_BYTES,
@@ -183,16 +184,34 @@ export class EntityCollectionService {
 		anchor: EntityId,
 		options?: CollectionRefreshOptions,
 	): Promise<Result<CollectionRefreshResult>> {
+		const signals = [options?.signal, this.config.options?.signal];
+		const cancelled = () =>
+			err({
+				code: FederationErrorCode.TemporarilyUnavailable,
+				description: "Collection refresh cancelled",
+			});
+		if (signals.some((signal) => signal?.aborted)) return cancelled();
 		const previous = this.refreshes.get(anchor);
 		const run = (async () => {
 			if (previous) await previous;
+			if (signals.some((signal) => signal?.aborted)) return cancelled();
 			return this.performRefresh(anchor, options);
-		})();
+		})().catch((cause) =>
+			err({
+				code: FederationErrorCode.TemporarilyUnavailable,
+				description: "Collection refresh could not be completed",
+				cause,
+			}),
+		);
 		this.refreshes.set(anchor, run);
-		try {
-			return await run;
-		} finally {
+		// A cancelled caller must not remove the serialization barrier for later refreshes.
+		void run.then(() => {
 			if (this.refreshes.get(anchor) === run) this.refreshes.delete(anchor);
+		});
+		try {
+			return await waitForOperation(run, signals);
+		} catch {
+			return cancelled();
 		}
 	}
 	private async performRefresh(

@@ -130,7 +130,7 @@ const curated = new EntityCollectionService({
 
 Filters may be asynchronous, so an application can consult its Resolve service or other policy data using the refresh context. Results are stored in the snapshot. If the policy depends on evidence that expires, return its expiry; the filter cannot extend the candidate's deadline. Filters and collectors never run while serving pages.
 
-A callback failure or cancellation prevents publication. Cancellation releases the refresh queue even if a callback has not settled. Callbacks are trusted application code and must use the supplied signal to stop their own I/O. Shorten entry lifetimes or refresh explicitly when inventory or policy changes.
+A callback failure or cancellation before publication prevents a new snapshot from being stored. Cancellation settles the caller promptly, including while its refresh is queued. A cancelled queued refresh never runs its collector, and later refreshes still wait for the active predecessor. An active refresh can abandon a callback that ignores cancellation, but that callback can no longer publish a snapshot through the service. Cancellation cannot roll back a store publication already in progress; that write stays ahead of later refreshes in the queue. Callbacks are trusted application code and must use the supplied signal to stop their own I/O. Shorten entry lifetimes or refresh explicitly when inventory or policy changes.
 
 ## Accreditation for Trust Mark filters
 

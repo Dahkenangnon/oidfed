@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { waitForOperation } from "../async-operation.js";
 import { DEFAULT_MAX_CHAIN_DEPTH, FederationErrorCode } from "../constants.js";
 import { err, ok, type Result } from "../errors.js";
 import { fetchListSubordinatesForIssuer } from "../federation-api/index.js";
@@ -86,29 +87,13 @@ function freeze<T>(value: T): T {
 
 /** Settle cancellation independently of application callbacks that ignore their signal. */
 function callback<T>(run: () => T | Promise<T>, signal: AbortSignal): Promise<T> {
-	return new Promise((resolve, reject) => {
-		const abort = () => {
-			signal.removeEventListener("abort", abort);
-			reject(new DOMException("Refresh aborted", "AbortError"));
-		};
-		if (signal.aborted) return abort();
-		signal.addEventListener("abort", abort, { once: true });
-		Promise.resolve()
-			.then(() => {
-				if (signal.aborted) throw new DOMException("Refresh aborted", "AbortError");
-				return run();
-			})
-			.then(
-				(value) => {
-					signal.removeEventListener("abort", abort);
-					resolve(value);
-				},
-				(error) => {
-					signal.removeEventListener("abort", abort);
-					reject(error);
-				},
-			);
-	});
+	return waitForOperation(
+		Promise.resolve().then(() => {
+			if (signal.aborted) throw new DOMException("Refresh aborted", "AbortError");
+			return run();
+		}),
+		[signal],
+	);
 }
 
 /** Build outside storage, then let the caller publish the complete result atomically. */
