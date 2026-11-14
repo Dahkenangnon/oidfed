@@ -377,6 +377,33 @@ const credentialConfiguration = z
 	})
 	.superRefine((configuration, ctx) => {
 		const fail = (message: string) => ctx.addIssue({ code: "custom", message });
+		// Wallet §6.2.1 imports VCI Appendix A/F metadata types, not proof processing.
+		const stringAlgorithms = ["dc+sd-jwt", "jwt_vc_json", "jwt_vc_json-ld", "ldp_vc"].includes(
+			configuration.format,
+		);
+		if (
+			configuration.credential_signing_alg_values_supported?.some((value) =>
+				stringAlgorithms
+					? typeof value !== "string"
+					: configuration.format === "mso_mdoc" && typeof value !== "number",
+			)
+		)
+			ctx.addIssue({
+				code: "custom",
+				path: ["credential_signing_alg_values_supported"],
+				message: "Algorithm identifier types must match the credential format",
+			});
+		for (const [type, proof] of Object.entries(configuration.proof_types_supported ?? {})) {
+			if (
+				["jwt", "di_vp", "attestation"].includes(type) &&
+				proof.proof_signing_alg_values_supported.some((value) => typeof value !== "string")
+			)
+				ctx.addIssue({
+					code: "custom",
+					path: ["proof_types_supported", type, "proof_signing_alg_values_supported"],
+					message: "This proof type requires string algorithm identifiers",
+				});
+		}
 		validateClaimDescriptions(
 			configuration.credential_metadata?.claims ?? [],
 			ctx,

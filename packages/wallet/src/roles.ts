@@ -361,7 +361,7 @@ export class CredentialIssuerRole extends AttestationConsumer {
 			let found: TrustedWalletEntity | undefined;
 			if (server === id) {
 				const metadata = issuer.value.trustChain.resolvedMetadata.oauth_authorization_server;
-				const parsed = parseOAuthAuthorizationServerMetadata(metadata);
+				const parsed = parseOAuthAuthorizationServerMetadata(metadata, { profile: "openid4vci" });
 				if (parsed.success && parsed.data.issuer === server)
 					found = { entityId: server, metadata: parsed.data, trustChain: issuer.value.trustChain };
 			} else {
@@ -374,7 +374,7 @@ export class CredentialIssuerRole extends AttestationConsumer {
 					const metadata = checked.valid
 						? checked.chain.resolvedMetadata.oauth_authorization_server
 						: undefined;
-					const parsed = parseOAuthAuthorizationServerMetadata(metadata);
+					const parsed = parseOAuthAuthorizationServerMetadata(metadata, { profile: "openid4vci" });
 					if (
 						checked.valid &&
 						checked.chain.entityId === server &&

@@ -1,6 +1,7 @@
 import {
 	DEFAULT_MAX_CHAIN_LENGTH,
 	DEFAULT_MAX_RESPONSE_BYTES,
+	decodeEntityStatement,
 	entityId,
 	err,
 	FederationErrorCode,
@@ -10,6 +11,7 @@ import {
 	JWKSetSchema,
 	MemoryCache,
 	ok,
+	type ParsedEntityStatement,
 	type PreparedTrustChain,
 	prepareTrustChainValidation,
 	type Result,
@@ -140,10 +142,29 @@ export function roleMetadata(
 	chain: {
 		readonly entityId: string;
 		readonly resolvedMetadata: Readonly<Record<string, unknown>>;
+		readonly statements?: readonly (ParsedEntityStatement | string)[];
+		readonly discovery?: { readonly trustChain: ValidatedTrustChain };
 	},
 ): Result<Record<string, unknown>> {
 	if (chain.entityId !== id)
 		return failure("Trust chain subject does not match the requested entity");
+	if (type === "openid_credential_issuer") {
+		// Wallet §6.2.1 binds each supplied declaration, not just the final policy output.
+		// Resolver assessments authenticate these statements through the resolver response.
+		for (const statement of chain.statements ?? chain.discovery?.trustChain.statements ?? []) {
+			const decoded =
+				typeof statement === "string" ? decodeEntityStatement(statement) : ok(statement);
+			if (!decoded.ok) return failure("Invalid Credential Issuer statement evidence");
+			const payload = decoded.value.payload;
+			const metadata = payload.metadata?.openid_credential_issuer;
+			if (
+				metadata &&
+				Object.hasOwn(metadata, "credential_issuer") &&
+				metadata.credential_issuer !== payload.sub
+			)
+				return failure("credential_issuer must equal the Entity Statement subject");
+		}
+	}
 	const parsed = effectiveRoleSchemas[type].safeParse(chain.resolvedMetadata[type]);
 	if (!parsed.success)
 		return err({

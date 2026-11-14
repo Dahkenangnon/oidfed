@@ -211,6 +211,26 @@ function requirements(meta: Record<string, unknown>, ctx: z.RefinementCtx, publi
 }
 
 const effective = z.looseObject(shape).superRefine((meta, ctx) => requirements(meta, ctx, false));
+// Wallet Federation imports OpenID4VCI §12.2.4's pre-authorized-only AS exception.
+const vciEffective = z
+	.looseObject({ ...shape, response_types_supported: strings.optional() })
+	.superRefine((meta, ctx) => {
+		requirements(meta, ctx, false);
+		const grants = meta.grant_types_supported;
+		if (
+			meta.response_types_supported === undefined &&
+			!(
+				grants?.length &&
+				grants.every((grant) => grant === "urn:ietf:params:oauth:grant-type:pre-authorized_code")
+			)
+		)
+			ctx.addIssue({
+				code: "custom",
+				path: ["response_types_supported"],
+				message:
+					"response_types_supported is REQUIRED unless only the pre-authorized-code grant is supported",
+			});
+	});
 const publication = z
 	.looseObject(shape)
 	.partial()
@@ -220,8 +240,25 @@ export type OAuthAuthorizationServerMetadata = z.infer<typeof effective>;
 export type OAuthAuthorizationServerPublicationMetadata = z.infer<typeof publication>;
 
 /** Parse effective protocol metadata. This does not authenticate its issuer or signed_metadata. */
-export function parseOAuthAuthorizationServerMetadata(metadata: unknown) {
-	return effective.safeParse(metadata);
+export function parseOAuthAuthorizationServerMetadata(
+	metadata: unknown,
+	options?: { profile?: "oauth" },
+): ReturnType<typeof effective.safeParse>;
+export function parseOAuthAuthorizationServerMetadata(
+	metadata: unknown,
+	options: { profile: "openid4vci" },
+): ReturnType<typeof vciEffective.safeParse>;
+export function parseOAuthAuthorizationServerMetadata(
+	metadata: unknown,
+	options: { profile?: "oauth" | "openid4vci" },
+): ReturnType<typeof effective.safeParse> | ReturnType<typeof vciEffective.safeParse>;
+export function parseOAuthAuthorizationServerMetadata(
+	metadata: unknown,
+	options: { profile?: "oauth" | "openid4vci" } = {},
+) {
+	return options.profile === "openid4vci"
+		? vciEffective.safeParse(metadata)
+		: effective.safeParse(metadata);
 }
 
 /** Check supplied publication fields while allowing a Superior to complete missing fields. */

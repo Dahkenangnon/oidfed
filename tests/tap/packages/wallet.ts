@@ -14,6 +14,7 @@ import {
 	MemoryFederationKeyProvider,
 	MemoryReplayStore,
 	ok,
+	parseOAuthAuthorizationServerMetadata,
 	signEntityStatement,
 	signTrustMark,
 	validateTrustChain,
@@ -61,6 +62,231 @@ const proof = (f: Fixture) => ({
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("wallet / federation profile regressions", () => {
+		test("issuer identity cannot be repaired by superior metadata or policy", async (t) => {
+			const f = await walletFederation();
+			const original = f.chains.get(f.ids.issuer)!;
+			const ec = decodeEntityStatement(original[0]!);
+			const ss = decodeEntityStatement(original[1]!);
+			if (!ec.ok || !ss.ok) throw new Error("Invalid fixture");
+			for (const mode of ["wrong-ec", "wrong-ss", "omitted", "correct"] as const) {
+				const metadata = { ...f.metadata.issuer.openid_credential_issuer };
+				if (mode === "wrong-ec") metadata.credential_issuer = "https://wrong.example";
+				if (mode === "omitted") delete metadata.credential_issuer;
+				const leaf = await signEntityStatement(
+					{
+						...ec.value.payload,
+						metadata: { ...ec.value.payload.metadata, openid_credential_issuer: metadata },
+					},
+					new JwkSigner(f.keys.issuer.privateKey),
+				);
+				const superior = await signEntityStatement(
+					{
+						...ss.value.payload,
+						metadata: {
+							openid_credential_issuer: {
+								credential_issuer: mode === "wrong-ss" ? "https://wrong.example" : f.ids.issuer,
+							},
+						},
+						...(mode === "wrong-ss"
+							? {
+									metadata_policy: {
+										openid_credential_issuer: { credential_issuer: { value: f.ids.issuer } },
+									},
+								}
+							: {}),
+					},
+					new JwkSigner(f.keys.anchor.privateKey),
+				);
+				const options = { ...f.options, offline: true, trustChain: [leaf, superior, original[2]!] };
+				const expected = mode === "omitted" || mode === "correct";
+				t.strictEqual(
+					(await CredentialIssuerRole.discover(f.ids.issuer, f.anchors, options)).ok,
+					expected,
+					mode,
+				);
+				t.strictEqual(
+					(
+						await CredentialIssuerRole.assessEntity(
+							f.ids.issuer,
+							"openid_credential_issuer",
+							f.anchors,
+							options,
+						)
+					).ok,
+					expected,
+					`assessment ${mode}`,
+				);
+				const response = await signEntityStatement(
+					{
+						iss: f.ids.anchor,
+						sub: f.ids.issuer,
+						iat: 1400,
+						exp: 4000,
+						trust_chain: options.trustChain,
+						metadata: f.metadata.issuer,
+					},
+					new JwkSigner(f.keys.anchor.privateKey),
+					{ typ: "resolve-response+jwt" },
+				);
+				const assessed = await CredentialIssuerRole.assessEntity(
+					f.ids.issuer,
+					"openid_credential_issuer",
+					f.anchors,
+					{
+						clock: f.clock,
+						clockSkewSeconds: 0,
+						mode: "resolver",
+						trustResolution: {
+							kind: "resolver",
+							resolver: {
+								entityId: f.ids.anchor,
+								endpoint: `${f.ids.anchor}/resolve`,
+								trust: { kind: "pinned", jwks: { keys: [f.keys.anchor.publicKey] } },
+							},
+						},
+						httpClient: async () =>
+							new Response(response, {
+								headers: { "content-type": "application/resolve-response+jwt" },
+							}),
+					},
+				);
+				t.strictEqual(
+					assessed.ok,
+					expected,
+					`resolver assessment ${mode}: ${JSON.stringify(assessed)}`,
+				);
+				if (assessed.ok)
+					t.strictEqual(assessed.value.kind, "resolver", "preserves delegated trust mode");
+			}
+		});
+		test("pre-authorized-only AS omission is accepted only in the VCI metadata profile", async (t) => {
+			const grant = "urn:ietf:params:oauth:grant-type:pre-authorized_code";
+			const base = {
+				issuer: "https://issuer.example",
+				token_endpoint: "https://issuer.example/token",
+				grant_types_supported: [grant],
+			};
+			t.false(parseOAuthAuthorizationServerMetadata(base).success, "ordinary OAuth stays strict");
+			t.true(parseOAuthAuthorizationServerMetadata(base, { profile: "openid4vci" }).success);
+			for (const grants of [undefined, [], [grant, "authorization_code"], ["client_credentials"]])
+				t.false(
+					parseOAuthAuthorizationServerMetadata(
+						{ ...base, grant_types_supported: grants },
+						{ profile: "openid4vci" },
+					).success,
+				);
+			t.false(
+				parseOAuthAuthorizationServerMetadata(
+					{ ...base, token_endpoint: undefined },
+					{ profile: "openid4vci" },
+				).success,
+			);
+			for (const external of [false, true]) {
+				const server = {
+					grant_types_supported: [grant],
+					response_types_supported: undefined,
+					authorization_endpoint: undefined,
+				};
+				const f = await walletFederation(
+					external
+						? {
+								issuerMetadata: { authorization_servers: ["https://server.example"] },
+								serverMetadata: server,
+							}
+						: { issuerServerMetadata: server },
+				);
+				const found = await CredentialIssuerRole.discover(f.ids.issuer, f.anchors, {
+					...f.options,
+					offline: true,
+				});
+				t.true(found.ok, JSON.stringify(found));
+				if (found.ok)
+					t.false(
+						Object.hasOwn(
+							found.value.authorizationServers[0]!.metadata,
+							"response_types_supported",
+						),
+						"no fabricated response types",
+					);
+			}
+		});
+		test("known credential and proof formats use their own algorithm identifier types", async (t) => {
+			const f = await walletFederation();
+			const configurations: [Record<string, unknown>, boolean][] = [
+				[
+					{
+						format: "dc+sd-jwt",
+						vct: "https://example.com/type",
+						credential_signing_alg_values_supported: [-7],
+					},
+					false,
+				],
+				[
+					{
+						format: "dc+sd-jwt",
+						vct: "https://example.com/type",
+						credential_signing_alg_values_supported: ["ES256", "future-alg"],
+					},
+					true,
+				],
+				[
+					{
+						format: "mso_mdoc",
+						doctype: "example",
+						credential_signing_alg_values_supported: ["ES256"],
+					},
+					false,
+				],
+				[
+					{ format: "mso_mdoc", doctype: "example", credential_signing_alg_values_supported: [-7] },
+					true,
+				],
+				[
+					{
+						format: "future-format",
+						credential_signing_alg_values_supported: ["future-alg", -999],
+					},
+					true,
+				],
+			];
+			for (const proof of ["jwt", "di_vp", "attestation", "future-proof"])
+				for (const algorithm of [-7, "future-alg"])
+					configurations.push([
+						{
+							format: "dc+sd-jwt",
+							vct: "https://example.com/type",
+							cryptographic_binding_methods_supported: ["jwk"],
+							proof_types_supported: {
+								[proof]: { proof_signing_alg_values_supported: [algorithm] },
+							},
+						},
+						proof === "future-proof" || typeof algorithm === "string",
+					]);
+			for (const [configuration, expected] of configurations) {
+				const metadata = {
+					...f.metadata.issuer.openid_credential_issuer,
+					credential_configurations_supported: { identity: configuration },
+				};
+				t.strictEqual(
+					CredentialIssuerRole.parsePublicationMetadata(metadata).success,
+					expected,
+					JSON.stringify(configuration),
+				);
+				t.strictEqual(CredentialIssuerRole.parseMetadata(metadata).success, expected);
+				const actual = await walletFederation({ issuerMetadata: metadata });
+				t.strictEqual(
+					(
+						await CredentialIssuerRole.discover(actual.ids.issuer, actual.anchors, {
+							...actual.options,
+							offline: true,
+						})
+					).ok,
+					expected,
+				);
+			}
+		});
+	});
 	module("wallet / attester trust expiry", () => {
 		test("wallet adapters preserve actionable attestation errors", async (t) => {
 			const f = await walletFederation();

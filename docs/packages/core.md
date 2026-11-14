@@ -625,6 +625,8 @@ Collection configuration accepts an optional `collector` for application invento
 
 `parseOAuthAuthorizationServerMetadata(raw)` checks effective OAuth AS metadata against RFC 8414 and the supported registered extensions. `parseOAuthAuthorizationServerPublicationMetadata(raw)` checks supplied publication fields while allowing missing fields that a Superior can complete. Both return a synchronous success/error result and preserve unknown extension members.
 
+For Wallet federation metadata, pass `{ profile: "openid4vci" }` as the effective parser's second argument. OpenID4VCI §12.2.4 allows an AS that advertises only the pre-authorized-code grant to omit `response_types_supported`. The VCI result type reflects that optional field. The default `"oauth"` profile keeps the ordinary requirement, and neither profile inserts a replacement value. This option validates metadata only; it does not implement a grant flow.
+
 This shared validator lives in core because both OIDC registration and wallet credential-issuer discovery consume OAuth AS metadata. The protocol packages call it at their own boundaries; generic `validateTrustChain()` and `discoverEntity()` do not automatically apply protocol schemas. Hosts can call the parser independently after resolving metadata. Endpoint requirements account for grant types, including implicit-only and pre-authorized-only servers, without adding default values to the returned object.
 
 Parsing neither authenticates an issuer nor verifies `signed_metadata`. It also makes no endpoint requests. Use the protocol roles for automatic validation during publication and protocol operations.

@@ -14,7 +14,9 @@ Wallet trust results expose the chain's verified marks and individual mark outco
 
 Credential-issuer discovery validates each authorization server's effective OAuth metadata with the shared core validator, whether the AS is the issuer itself or a separate entity. It still checks the issuer identifier against the discovered server. The default `authorizationServerPolicy: "all"` rejects an invalid server; `"available"` can skip one if another usable server remains. Cancellation and exhausted fetch budgets still stop discovery.
 
-For independent AS checks, use core's `parseOAuthAuthorizationServerMetadata()` or `parseOAuthAuthorizationServerPublicationMetadata()`. The publication parser allows missing fields that a Superior can supply. The effective parser applies grant-dependent endpoint requirements, so a pre-authorized-only AS does not need an authorization endpoint.
+For independent AS checks, use core's `parseOAuthAuthorizationServerMetadata(raw, { profile: "openid4vci" })` or `parseOAuthAuthorizationServerPublicationMetadata(raw)`. The publication parser allows missing fields that a Superior can supply. Wallet discovery uses the VCI profile automatically: an AS advertising only the pre-authorized-code grant may omit both its authorization endpoint and `response_types_supported`, as permitted by VCI §12.2.4. The parser does not insert missing values or perform an issuance exchange.
+
+Issuer discovery checks each available authenticated statement's supplied `credential_issuer` against its subject, as well as the final resolved value. A superior cannot hide an incorrect declaration by replacing it. Omitted fields can still be completed by superior metadata. Known credential and proof formats use their specified algorithm identifier types; extension formats and algorithm names remain open.
 
 The federation option `customConstraintChecks` registers synchronous checks for additional constraints in authenticated Trust Chains. Failed checks reject the operation; unknown constraints remain ignored. See [custom constraints](core.md#custom-constraints) for the API and callback context.
 
