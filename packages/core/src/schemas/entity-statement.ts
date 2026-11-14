@@ -112,8 +112,8 @@ export const SignedJwkSetPayloadSchema = z.looseObject({
 	iss: EntityIdSchema,
 	sub: EntityIdSchema,
 	keys: MetadataJWKSetSchema.shape.keys,
-	iat: z.number().int().positive().optional(),
-	exp: z.number().int().positive().optional(),
+	iat: z.number().finite().optional(),
+	exp: z.number().finite().optional(),
 });
 export type SignedJwkSetPayload = z.infer<typeof SignedJwkSetPayloadSchema>;
 

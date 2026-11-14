@@ -78,6 +78,8 @@ Issuer claim descriptions follow the credential format. [OpenID4VCI mdoc paths](
 
 Claim-path wildcards are preserved when hosts publish metadata and when core validates the signed statements. Federation rejects null direct metadata parameter values; nested null values are governed by the relevant protocol schema, including claim-path syntax.
 
+Protocol metadata can publish an empty JWK Set. Verification needs usable protocol keys, so an empty resolved set returns an error before credential or attestation verification callbacks run. It does not cause a fallback to another key source.
+
 ## Discover a trusted participant
 
 Wallet applications can use static methods without a federation identity:

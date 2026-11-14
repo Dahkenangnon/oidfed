@@ -404,6 +404,59 @@ export default (QUnit: QUnit) => {
 				t.equal(result.ok, !present);
 			}
 		});
+		test("signed protocol key sets accept NumericDates and empty keys without fallback", async (t) => {
+			const f = await trustChainPaths();
+			t.true(CorePublic.MetadataJWKSetSchema.safeParse({ keys: [] }).success);
+			t.false(CorePublic.JWKSetSchema.safeParse({ keys: [] }).success);
+			for (const iat of [0, -1, 1000.5]) {
+				const jwt = await CorePublic.signEntityStatement(
+					{ iss: f.ids.subject, sub: f.ids.subject, iat, exp: 5000.5, keys: [] },
+					new CorePublic.JwkSigner(f.keys.subject.privateKey),
+					{ typ: "jwk-set+jwt" },
+				);
+				let fetches = 0;
+				const result = await CorePublic.resolveEntityKeys(
+					{ signed_jwks_uri: `${f.ids.subject}/signed`, jwks_uri: `${f.ids.subject}/unsigned` },
+					{ keys: [f.keys.subject.publicKey] },
+					{
+						...f.options,
+						expectedIssuer: f.ids.subject,
+						expectedOwner: f.ids.subject,
+						allowFallback: true,
+						httpClient: async () => {
+							fetches++;
+							return new Response(jwt, { headers: { "content-type": "application/jwk-set+jwt" } });
+						},
+					},
+				);
+				t.true(result.ok, result.ok ? "accepted" : result.error.description);
+				if (result.ok) t.deepEqual(result.value.keys, []);
+				t.equal(fetches, 1, "empty signed set is authoritative");
+				t.false(
+					(
+						await CorePublic.verifyProtocolJwt(
+							jwt,
+							{ keys: [] },
+							{ expectedTyp: "jwk-set+jwt", ...f.options },
+						)
+					).ok,
+					"an empty set cannot verify a signature",
+				);
+			}
+			for (const source of ["jwks", "jwks_uri"] as const) {
+				const result = await CorePublic.resolveEntityKeys(
+					{ [source]: source === "jwks" ? { keys: [] } : `${f.ids.subject}/keys` },
+					{ keys: [f.keys.subject.publicKey] },
+					{
+						...f.options,
+						expectedIssuer: f.ids.subject,
+						expectedOwner: f.ids.subject,
+						httpClient: async () => Response.json({ keys: [] }),
+					},
+				);
+				t.true(result.ok);
+			}
+		});
 	});
 
 	module("core / configurable trust establishment", () => {
@@ -5237,7 +5290,7 @@ export default (QUnit: QUnit) => {
 				t.false(CorePublic.JWKSetSchema.safeParse({ keys }).success);
 				t.false(CorePublic.validatePublicJwkSet({ keys }).ok);
 			}
-			for (const keys of [[], [{ ...anonymous, d: "secret" }], [{ kty: "oct", k: "secret" }]]) {
+			for (const keys of [[{ ...anonymous, d: "secret" }], [{ kty: "oct", k: "secret" }]]) {
 				t.false(CorePublic.MetadataJWKSetSchema.safeParse({ keys }).success);
 			}
 		});
@@ -7028,7 +7081,7 @@ export default (QUnit: QUnit) => {
 				{ name: "signing only", jwks: { keys: [signing] }, valid: true },
 				{ name: "encryption only", jwks: { keys: [encryption] }, valid: true },
 				{ name: "malformed key", jwks: { keys: [null] }, valid: false },
-				{ name: "empty set", jwks: { keys: [] }, valid: false },
+				{ name: "empty set", jwks: { keys: [] }, valid: true },
 				{ name: "private key", jwks: { keys: [f.leafProtocolSigningKey] }, valid: false },
 			];
 			for (const config of cases) {

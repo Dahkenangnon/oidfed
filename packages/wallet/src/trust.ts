@@ -317,6 +317,7 @@ export async function protocolKeys(
 	});
 	if (!resolved.ok) return resolved;
 	const keys = { keys: resolved.value.keys };
+	if (keys.keys.length === 0) return failure("Verification requires usable protocol keys");
 	// Wallet Federation §6.3.1 requires unique identifiers for verifier keys,
 	// including keys obtained through the shared protocol-key resolver.
 	if (type === "openid_credential_verifier" && !JWKSetSchema.safeParse(keys).success) {

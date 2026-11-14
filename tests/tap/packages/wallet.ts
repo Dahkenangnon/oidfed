@@ -2702,11 +2702,18 @@ export default (QUnit: QUnit) => {
 			});
 		}
 		test("key resolution failures prevent format callbacks", async (t) => {
-			for (const scenario of ["unavailable", "malformed", "bad-signature", "offline"] as const) {
+			for (const scenario of [
+				"unavailable",
+				"malformed",
+				"empty",
+				"bad-signature",
+				"offline",
+			] as const) {
 				const source = scenario === "bad-signature" ? "signed_jwks_uri" : "jwks_uri";
 				const uri = "https://provider.example/keys";
 				const f = await walletFederation({ providerMetadata: { jwks: undefined, [source]: uri } });
-				if (scenario === "malformed") f.routes.set(uri, () => Response.json({ keys: [] }));
+				if (scenario === "malformed") f.routes.set(uri, () => Response.json({ keys: [null] }));
+				if (scenario === "empty") f.routes.set(uri, () => Response.json({ keys: [] }));
 				if (scenario === "bad-signature") {
 					const signed = await token(
 						{ iss: f.ids.provider, sub: f.ids.provider, keys: [f.protocol.provider.publicKey] },
@@ -2920,20 +2927,22 @@ export default (QUnit: QUnit) => {
 				t.true(verified.ok, JSON.stringify(verified));
 			}
 		});
-		test("rejects empty sets and private material in issuer and provider metadata", async (t) => {
+		test("allows empty protocol sets but rejects private material", async (t) => {
 			const f = await walletFederation();
 			for (const keys of [[], [f.protocol.issuer.privateKey]]) {
-				t.false(
+				t.equal(
 					CredentialIssuerRole.parseMetadata({
 						...f.metadata.issuer.openid_credential_issuer,
 						jwks: { keys },
 					}).success,
+					keys.length === 0,
 				);
-				t.false(
+				t.equal(
 					WalletProviderRole.parseMetadata({
 						...f.metadata.provider.openid_wallet_provider,
 						jwks: { keys },
 					}).success,
+					keys.length === 0,
 				);
 			}
 		});
