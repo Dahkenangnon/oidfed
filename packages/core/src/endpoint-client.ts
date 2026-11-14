@@ -4,7 +4,11 @@ import {
 	InternalErrorCode,
 	JWT_BEARER_CLIENT_ASSERTION_TYPE,
 } from "./constants.js";
-import { endpointParameterValuesMatch } from "./endpoint-parameters.js";
+import {
+	endpointParameterValuesMatch,
+	isReservedEndpointParameter,
+	prepareEndpointParameters,
+} from "./endpoint-parameters.js";
 import { err, type Result } from "./errors.js";
 import { createClientAssertion } from "./jose/client-assertion.js";
 import type { JwtSigner } from "./jose/signer.js";
@@ -49,31 +53,9 @@ export type EndpointAuthenticationProvider = (
 	context: Readonly<EndpointAuthenticationContext>,
 ) => EndpointClientAuthentication | undefined | Promise<EndpointClientAuthentication | undefined>;
 
-export type EndpointAdditionalParameters = Readonly<Record<string, string | readonly string[]>>;
+export type { EndpointAdditionalParameters } from "./endpoint-parameters.js";
+
 const credentials = new Set([
-	"client_id",
-	"client_assertion",
-	"client_assertion_type",
-	"client_secret",
-]);
-const reserved = new Set([
-	"entity_type",
-	"trust_anchor",
-	"trust_marked",
-	"intermediate",
-	"from",
-	"limit",
-	"updated_after",
-	"updated_before",
-	"audit_timestamps",
-	"claims",
-	"query",
-	"entity_claims",
-	"info_claims",
-	"locale",
-	"trust_mark_type",
-	"sub",
-	"trust_mark",
 	"client_id",
 	"client_assertion",
 	"client_assertion_type",
@@ -97,7 +79,11 @@ export async function fetchFederationEndpoint(
 			});
 		if (url.href.includes("#") || url.username || url.password)
 			throw new Error("Invalid endpoint URL");
-		const form = new URLSearchParams(selectors);
+		const form = prepareEndpointParameters(
+			selectors,
+			options.additionalParameters,
+			url.searchParams,
+		);
 		if ([...credentials].some((name) => url.searchParams.has(name) || form.has(name)))
 			throw new Error("Endpoint selectors cannot contain credentials");
 		if (options.authentication !== undefined && options.getEndpointAuthentication !== undefined)
@@ -107,14 +93,6 @@ export async function fetchFederationEndpoint(
 			options.clientAssertion !== undefined
 		)
 			throw new Error("Authentication and clientAssertion cannot be combined");
-		for (const [name, value] of Object.entries(options.additionalParameters ?? {})) {
-			if (reserved.has(name) || form.has(name) || url.searchParams.has(name))
-				throw new Error("Additional parameters cannot replace protocol selectors or credentials");
-			const values = typeof value === "string" ? [value] : value;
-			if (!Array.isArray(values) || values.some((v) => typeof v !== "string"))
-				throw new Error("Invalid additional parameter values");
-			for (const item of values) form.append(name, item);
-		}
 		for (const name of new Set(form.keys())) {
 			if (!url.searchParams.has(name)) continue;
 			const fixed = url.searchParams.getAll(name),
@@ -182,7 +160,7 @@ export async function fetchFederationEndpoint(
 					if (
 						form.has(name) ||
 						url.searchParams.has(name) ||
-						(reserved.has(name) && !credentials.has(name)) ||
+						(isReservedEndpointParameter(name) && !credentials.has(name)) ||
 						typeof value !== "string"
 					)
 						throw new Error("Authentication cannot override request selectors");

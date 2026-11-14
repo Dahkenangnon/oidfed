@@ -435,7 +435,10 @@ export async function fetchResolveResponse(
 	);
 }
 
-export { fetchExtendedSubordinatesList } from "./extended-list.js";
+export {
+	buildExtendedListRequestParameters,
+	fetchExtendedSubordinatesList,
+} from "./extended-list.js";
 export {
 	type FetchHistoricalKeysOptions,
 	fetchHistoricalKeys,

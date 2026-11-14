@@ -16,7 +16,8 @@ import {
 import { httpFailureStatus } from "../trust-chain/fetch-failure.js";
 import type { FederationOptions } from "../types.js";
 
-function buildSelectors(
+/** Build standard Extended Listing selectors for HTTP clients and local authority calls. */
+export function buildExtendedListRequestParameters(
 	endpoint: string,
 	params?: ExtendedListRequestParams,
 ): Result<URLSearchParams, FederationError> {
@@ -101,7 +102,7 @@ export async function fetchExtendedSubordinatesList(
 ): Promise<Result<ExtendedListResponse, FederationError>> {
 	safeLogger(options?.logger)?.debug("Starting fetch extended subordinates list");
 
-	const selectors = buildSelectors(endpoint, params);
+	const selectors = buildExtendedListRequestParameters(endpoint, params);
 	if (!selectors.ok) return selectors;
 	const result = await fetchFederationEndpoint(
 		endpoint,

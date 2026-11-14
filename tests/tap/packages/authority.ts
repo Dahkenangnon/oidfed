@@ -2151,6 +2151,59 @@ export default (QUnit: QUnit) => {
 		});
 	});
 
+	module("authority / extended listing extensions", () => {
+		async function fixture(extendedListing?: ExtendedListingConfig) {
+			const f = await createTestContext();
+			const config = {
+				entityId: f.ctx.entityId,
+				keyProvider: f.keyProvider,
+				storage: f.storage,
+				metadata: {
+					federation_entity: {
+						...f.ctx.metadata.federation_entity,
+						federation_extended_list_endpoint: `${ENTITY_ID}/extended`,
+					},
+				},
+				extendedListing,
+			};
+			return { ...f, config, authority: new TrustAnchor(config) };
+		}
+		test("local and HTTP calls accept extension entity types and shared parameters", async (t) => {
+			const f = await fixture();
+			for (const [n, location] of ["north", "south"].entries())
+				await f.authority.registerSubordinate({
+					entityId: entityId(`https://member${n}.example`),
+					jwks: { keys: [f.publicKey] },
+					entityTypes: ["custom_protocol"],
+					additionalClaims: { campus: location },
+				});
+			const params = { entityType: "custom_protocol", claims: [] };
+			const options = { additionalParameters: { campus: ["north", "west"] } };
+			const local = await f.authority.listSubordinatesExtended(params, options);
+			t.true(local.ok);
+			if (local.ok)
+				t.deepEqual(local.value.immediate_subordinate_entities, [
+					{ id: "https://member0.example" },
+					{ id: "https://member1.example" },
+				]);
+			const remote = await fetchExtendedSubordinatesList(`${ENTITY_ID}/extended`, params, {
+				...options,
+				httpClient: async (url, init) => f.authority.handleRequest(new Request(url, init)),
+			});
+			t.deepEqual(remote, local);
+			const intermediate = new Intermediate({ ...f.config, authorityHints: [TA_ID] });
+			t.deepEqual(await intermediate.listSubordinatesExtended(params, options), local);
+			const conflict = await f.authority.listSubordinatesExtended(params, {
+				additionalParameters: { entity_type: "other" },
+			});
+			t.false(conflict.ok);
+			const credentials = await f.authority.listSubordinatesExtended(params, {
+				additionalParameters: { client_secret: "secret" },
+			});
+			t.false(credentials.ok);
+		});
+	});
+
 	module("authority / extended listing sparse pages", () => {
 		async function fixture(makeList: (records: SubordinateRecord[]) => SubordinateStorage["list"]) {
 			const f = await createTestContext();

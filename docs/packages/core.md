@@ -958,3 +958,7 @@ library never retries the protected operation automatically.
 policy. It always also applies its supported-algorithm and signature checks.
 An explicitly empty list accepts no algorithm; omission retains the supported
 algorithms. OIDC/OAuth roles derive this restriction from their protocol metadata.
+
+### Shared Extended Listing request utilities
+
+`fetchExtendedSubordinatesList` accepts extension Entity Type identifiers and sends custom selectors through `options.additionalParameters`. The authority API uses the same `ExtendedListRequestParams` type and serializer. `buildExtendedListRequestParameters(endpoint, params)` returns standard selectors as a `Result<URLSearchParams>`; `prepareEndpointParameters(selectors, additional, fixed)` copies selectors and adds extensions, throwing on reserved names or conflicts. These are the shared utilities used by the existing endpoint client and local authority calls; applications normally use the higher-level APIs.

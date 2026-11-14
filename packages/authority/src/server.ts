@@ -9,6 +9,7 @@ import type {
 	EntityStatementExtensions,
 	EntityType,
 	EntityTypeMetadataMap,
+	ExtendedListRequestParams,
 	FederationEntityMetadata,
 	FederationError,
 	FederationKeyLifecycleProvider,
@@ -28,6 +29,7 @@ import type {
 } from "@oidfed/core";
 import {
 	assessEntity,
+	buildExtendedListRequestParameters,
 	COLLECTION_UNORDERED_PARAMETERS,
 	decodeEntityStatement,
 	discoverEntity,
@@ -44,6 +46,7 @@ import {
 	isValidEntityId,
 	LIST_UNORDERED_PARAMETERS,
 	ok,
+	prepareEndpointParameters,
 	prepareEntityStatementExtensions,
 	RESOLVE_UNORDERED_PARAMETERS,
 	safeLogger,
@@ -93,19 +96,13 @@ import {
 export type { AuthorityClientKeyProvider } from "./endpoints/context.js";
 
 /** Parameters accepted by {@link AuthorityServer.listSubordinatesExtended}. */
-export interface ExtendedSubordinateListingParams {
-	/** Opaque continuation value returned as `next` by the server. */
-	from?: string;
-	limit?: number;
-	updatedAfter?: number;
-	updatedBefore?: number;
-	auditTimestamps?: boolean;
-	claims?: ReadonlyArray<string>;
-	entityType?: EntityType | ReadonlyArray<EntityType>;
-	trustMarked?: boolean;
-	trustMarkType?: string | ReadonlyArray<string>;
-	intermediate?: boolean;
-}
+export type ExtendedSubordinateListingParams = ExtendedListRequestParams;
+
+/** In-process extension selectors and cancellation; no HTTP authentication is performed. */
+export type ExtendedSubordinateListingOptions = Pick<
+	FederationOptions,
+	"additionalParameters" | "signal"
+>;
 
 /** Decoded body returned by {@link AuthorityServer.listSubordinatesExtended}. */
 export interface ExtendedSubordinateListingResult {
@@ -220,6 +217,7 @@ export interface AuthorityServer {
 	 */
 	listSubordinatesExtended(
 		params?: ExtendedSubordinateListingParams,
+		options?: ExtendedSubordinateListingOptions,
 	): Promise<Result<ExtendedSubordinateListingResult, FederationError>>;
 	resolveEntity(sub: EntityId, ta?: EntityId, options?: FederationOptions): Promise<string>;
 	getTrustMarkStatus(trustMark: string): Promise<TrustMarkStatusResponsePayload>;
@@ -659,47 +657,28 @@ function createAuthorityServerWithIdentity(
 
 		async listSubordinatesExtended(
 			params?: ExtendedSubordinateListingParams,
+			options?: ExtendedSubordinateListingOptions,
 		): Promise<Result<ExtendedSubordinateListingResult, FederationError>> {
 			safeLogger(config.options?.logger)?.debug("Starting list subordinates extended");
 
 			const url = new URL(FederationEndpoint.ExtendedList, normalizedEntityId);
-			if (params?.from !== undefined) {
-				url.searchParams.set("from", params.from);
+			const selectors = buildExtendedListRequestParameters(url.href, params);
+			if (!selectors.ok) return selectors;
+			let req: Request;
+			try {
+				url.search = prepareEndpointParameters(
+					selectors.value,
+					options?.additionalParameters,
+				).toString();
+				req = new Request(url, options?.signal ? { signal: options.signal } : undefined);
+			} catch {
+				return err(
+					federationError(
+						FederationErrorCode.InvalidRequest,
+						"Invalid extended listing parameters",
+					),
+				);
 			}
-			if (params?.limit !== undefined) {
-				url.searchParams.set("limit", String(params.limit));
-			}
-			if (params?.updatedAfter !== undefined) {
-				url.searchParams.set("updated_after", String(params.updatedAfter));
-			}
-			if (params?.updatedBefore !== undefined) {
-				url.searchParams.set("updated_before", String(params.updatedBefore));
-			}
-			if (params?.auditTimestamps !== undefined) {
-				url.searchParams.set("audit_timestamps", params.auditTimestamps ? "true" : "false");
-			}
-			if (params?.claims !== undefined) {
-				const joined = Array.from(params.claims)
-					.filter((c) => c.length > 0)
-					.join(",");
-				url.searchParams.set("claims", joined);
-			}
-			if (params?.entityType !== undefined) {
-				const types = Array.isArray(params.entityType) ? params.entityType : [params.entityType];
-				for (const t of types) url.searchParams.append("entity_type", t as string);
-			}
-			if (params?.trustMarked !== undefined) {
-				url.searchParams.set("trust_marked", params.trustMarked ? "true" : "false");
-			}
-			if (params?.trustMarkType !== undefined) {
-				const types =
-					typeof params.trustMarkType === "string" ? [params.trustMarkType] : params.trustMarkType;
-				for (const type of types) url.searchParams.append("trust_mark_type", type);
-			}
-			if (params?.intermediate !== undefined) {
-				url.searchParams.set("intermediate", params.intermediate ? "true" : "false");
-			}
-			const req = new Request(url.toString());
 			const res = await extendedListHandler(req);
 			if (res.status !== 200) {
 				const body = (await res.json()) as { error?: string; error_description?: string };
@@ -1121,8 +1100,9 @@ export class TrustAnchor {
 
 	async listSubordinatesExtended(
 		params?: ExtendedSubordinateListingParams,
+		options?: ExtendedSubordinateListingOptions,
 	): Promise<Result<ExtendedSubordinateListingResult, FederationError>> {
-		return this.server.listSubordinatesExtended(params);
+		return this.server.listSubordinatesExtended(params, options);
 	}
 
 	async resolveEntity(sub: EntityId, ta?: EntityId, options?: FederationOptions): Promise<string> {
@@ -1324,8 +1304,9 @@ export class Intermediate {
 
 	async listSubordinatesExtended(
 		params?: ExtendedSubordinateListingParams,
+		options?: ExtendedSubordinateListingOptions,
 	): Promise<Result<ExtendedSubordinateListingResult, FederationError>> {
-		return this.server.listSubordinatesExtended(params);
+		return this.server.listSubordinatesExtended(params, options);
 	}
 
 	async resolveEntity(sub: EntityId, ta?: EntityId, options?: FederationOptions): Promise<string> {

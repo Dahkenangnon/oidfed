@@ -127,7 +127,9 @@ export {
 	COLLECTION_UNORDERED_PARAMETERS,
 	EXTENDED_LIST_UNORDERED_PARAMETERS,
 	endpointParameterValuesMatch,
+	isReservedEndpointParameter,
 	LIST_UNORDERED_PARAMETERS,
+	prepareEndpointParameters,
 	RESOLVE_UNORDERED_PARAMETERS,
 } from "./endpoint-parameters.js";
 export * from "./entity-collection/index.js";
@@ -151,6 +153,7 @@ export {
 } from "./federation-api/entity-collection.js";
 // Federation API verification + remote-endpoint clients
 export {
+	buildExtendedListRequestParameters,
 	type FetchHistoricalKeysOptions,
 	type FetchTrustMarkListParams,
 	fetchExtendedSubordinatesList,

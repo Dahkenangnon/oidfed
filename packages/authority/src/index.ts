@@ -12,6 +12,7 @@ export {
 	type AuthorityClientKeyProvider,
 	type AuthorityConfig,
 	type AuthorityServer,
+	type ExtendedSubordinateListingOptions,
 	type ExtendedSubordinateListingParams,
 	type ExtendedSubordinateListingResult,
 	Intermediate,
