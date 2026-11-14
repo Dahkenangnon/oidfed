@@ -962,3 +962,5 @@ algorithms. OIDC/OAuth roles derive this restriction from their protocol metadat
 ### Shared Extended Listing request utilities
 
 `fetchExtendedSubordinatesList` accepts extension Entity Type identifiers and sends custom selectors through `options.additionalParameters`. The authority API uses the same `ExtendedListRequestParams` type and serializer. `buildExtendedListRequestParameters(endpoint, params)` returns standard selectors as a `Result<URLSearchParams>`; `prepareEndpointParameters(selectors, additional, fixed)` copies selectors and adds extensions, throwing on reserved names or conflicts. These are the shared utilities used by the existing endpoint client and local authority calls; applications normally use the higher-level APIs.
+
+`waitForOperation(pending, signals)` releases a caller when a supplied signal aborts without imposing a timeout or cancelling an independently owned operation. It observes the pending promise even after cancellation. Extended Listing uses it for storage waits.

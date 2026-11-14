@@ -13,6 +13,7 @@ import {
 	isValidEntityId,
 	nowSeconds,
 	safeLogger,
+	waitForOperation,
 } from "@oidfed/core";
 import type { ListFilter, ListPageOptions, SubordinateRecord } from "../storage/types.js";
 import type { HandlerContext } from "./context.js";
@@ -236,14 +237,6 @@ export function createExtendedListHandler(
 		// wins so the MUST-NOT on subordinate_statement is honoured.
 		const requestedClaims = params.has("claims") ? parseClaimsParam(params) : [...defaultClaims];
 
-		// The wire cursor is opaque to callers; this implementation uses the store bookmark.
-		if (from !== null) {
-			const cursorRecord = await ctx.storage.subordinates.get(from as EntityId);
-			if (!cursorRecord) {
-				return errorResponse(404, FederationErrorCode.PageNotFound, "Unknown continuation cursor");
-			}
-		}
-
 		// ── Build store filter + page options
 		const filter: ListFilter = {};
 		if (rawEntityTypes.length > 0) filter.entityTypes = rawEntityTypes;
@@ -261,126 +254,150 @@ export function createExtendedListHandler(
 		if (updatedBeforeParam !== null) baseOpts.updatedBefore = updatedBeforeParam;
 
 		try {
-			const accumulated: SubordinateRecord[] = [];
-			let storeCursor: EntityId | undefined = from !== null ? (from as EntityId) : undefined;
-			let nextEntityId: EntityId | undefined;
-			let pagesFetched = 0;
-			let storeExhausted = false;
-
-			while (accumulated.length < effectiveLimit && pagesFetched < maxStorePages) {
-				const opts: ListPageOptions = { limit: storeBatchSize, ...baseOpts };
-				if (storeCursor !== undefined) opts.cursor = storeCursor;
-				const page = await ctx.storage.subordinates.list(filter, opts);
-				pagesFetched += 1;
-				if (
-					page.items.some((record) => !isValidEntityId(record.entityId)) ||
-					(page.nextCursor !== undefined && !isValidEntityId(page.nextCursor))
-				)
-					throw new Error("Invalid subordinate identifier from storage");
-				// Empty filtered pages can still have a continuation. Require progress
-				// so bounded scans cannot hand the client a repeating or backward cursor.
-				const lastStoreRecord = page.items[page.items.length - 1];
-				if (
-					page.nextCursor !== undefined &&
-					((storeCursor !== undefined && page.nextCursor <= storeCursor) ||
-						(lastStoreRecord !== undefined && page.nextCursor <= lastStoreRecord.entityId))
-				) {
-					throw new Error("Subordinate storage returned a nonadvancing cursor");
+			const build = async (signal: AbortSignal): Promise<Response> => {
+				if (signal.aborted) throw new Error("Extended listing cancelled");
+				// The wire cursor is opaque to callers; this implementation uses the store bookmark.
+				if (from !== null) {
+					const cursorRecord = await ctx.storage.subordinates.get(from as EntityId);
+					if (!cursorRecord) {
+						return errorResponse(
+							404,
+							FederationErrorCode.PageNotFound,
+							"Unknown continuation cursor",
+						);
+					}
 				}
 
-				for (const record of page.items) {
-					if (accumulated.length >= effectiveLimit) break;
-					accumulated.push(record);
-				}
+				const accumulated: SubordinateRecord[] = [];
+				let storeCursor: EntityId | undefined = from !== null ? (from as EntityId) : undefined;
+				let nextEntityId: EntityId | undefined;
+				let pagesFetched = 0;
+				let storeExhausted = false;
 
-				if (accumulated.length >= effectiveLimit) {
-					// Page filled. The store already applied every filter, so the first
-					// following record is the resume cursor.
-					const lastRecord = accumulated[accumulated.length - 1];
-					if (lastRecord === undefined) break;
-					const lastId = lastRecord.entityId;
-					let foundInPage: EntityId | undefined;
+				while (accumulated.length < effectiveLimit && pagesFetched < maxStorePages) {
+					const opts: ListPageOptions = { limit: storeBatchSize, ...baseOpts };
+					if (storeCursor !== undefined) opts.cursor = storeCursor;
+					const page = await ctx.storage.subordinates.list(filter, opts);
+					pagesFetched += 1;
+					if (
+						page.items.some((record) => !isValidEntityId(record.entityId)) ||
+						(page.nextCursor !== undefined && !isValidEntityId(page.nextCursor))
+					)
+						throw new Error("Invalid subordinate identifier from storage");
+					// Empty filtered pages can still have a continuation. Require progress
+					// so bounded scans cannot hand the client a repeating or backward cursor.
+					const lastStoreRecord = page.items[page.items.length - 1];
+					if (
+						page.nextCursor !== undefined &&
+						((storeCursor !== undefined && page.nextCursor <= storeCursor) ||
+							(lastStoreRecord !== undefined && page.nextCursor <= lastStoreRecord.entityId))
+					) {
+						throw new Error("Subordinate storage returned a nonadvancing cursor");
+					}
+
 					for (const record of page.items) {
-						if (record.entityId > lastId) {
-							foundInPage = record.entityId;
-							break;
+						if (accumulated.length >= effectiveLimit) break;
+						if (signal.aborted) throw new Error("Extended listing cancelled");
+						accumulated.push(record);
+					}
+
+					if (accumulated.length >= effectiveLimit) {
+						// Resume at the first unreturned record.
+						const lastRecord = accumulated[accumulated.length - 1];
+						if (lastRecord === undefined) break;
+						const lastId = lastRecord.entityId;
+						let foundInPage: EntityId | undefined;
+						for (const record of page.items) {
+							if (record.entityId > lastId) {
+								foundInPage = record.entityId;
+								break;
+							}
+						}
+						nextEntityId = foundInPage ?? page.nextCursor;
+						break;
+					}
+
+					// Not yet full: advance.
+					if (page.nextCursor === undefined) {
+						storeExhausted = true;
+						break;
+					}
+					storeCursor = page.nextCursor;
+				}
+
+				if (
+					accumulated.length < effectiveLimit &&
+					pagesFetched >= maxStorePages &&
+					!storeExhausted
+				) {
+					// Cap fired before fill or exhaustion — surface the store cursor for resume.
+					nextEntityId = storeCursor;
+				}
+
+				// When updated_after / updated_before are used and the client did not
+				// explicitly set audit_timestamps=false, include the audit timestamps
+				// alongside each entry. parseBooleanQuery returns null when the param
+				// is absent (and true/false when present).
+				const effectiveAuditTimestamps =
+					auditTimestamps === true ||
+					(auditTimestamps === null && (updatedAfterParam !== null || updatedBeforeParam !== null));
+
+				const entries: Array<Record<string, unknown>> = [];
+				const encoder = new TextEncoder();
+				let entryBytes = 0;
+				const responseBytes = (count: number, bytes: number, next?: EntityId) =>
+					encoder.encode(
+						JSON.stringify({
+							immediate_subordinate_entities: [],
+							...(next !== undefined ? { next } : {}),
+						}),
+					).byteLength +
+					bytes +
+					Math.max(0, count - 1);
+				for (const [index, record] of accumulated.entries()) {
+					const entry: Record<string, unknown> = { id: record.entityId };
+
+					if (effectiveAuditTimestamps) {
+						entry.registered = record.createdAt;
+						entry.updated = record.updatedAt;
+					}
+
+					if (requestedClaims.length > 0) {
+						const extracted = await extractClaims(record, ctx, requestedClaims, now);
+						for (const key of Object.keys(extracted)) {
+							entry[key] = extracted[key];
 						}
 					}
-					nextEntityId = foundInPage ?? page.nextCursor;
-					break;
-				}
 
-				// Not yet full: advance.
-				if (page.nextCursor === undefined) {
-					storeExhausted = true;
-					break;
-				}
-				storeCursor = page.nextCursor;
-			}
-
-			if (accumulated.length < effectiveLimit && pagesFetched >= maxStorePages && !storeExhausted) {
-				// Cap fired before fill or exhaustion — surface the store cursor for resume.
-				nextEntityId = storeCursor;
-			}
-
-			// When updated_after / updated_before are used and the client did not
-			// explicitly set audit_timestamps=false, include the audit timestamps
-			// alongside each entry. parseBooleanQuery returns null when the param
-			// is absent (and true/false when present).
-			const effectiveAuditTimestamps =
-				auditTimestamps === true ||
-				(auditTimestamps === null && (updatedAfterParam !== null || updatedBeforeParam !== null));
-
-			const entries: Array<Record<string, unknown>> = [];
-			const encoder = new TextEncoder();
-			let entryBytes = 0;
-			const responseBytes = (count: number, bytes: number, next?: EntityId) =>
-				encoder.encode(
-					JSON.stringify({
-						immediate_subordinate_entities: [],
-						...(next !== undefined ? { next } : {}),
-					}),
-				).byteLength +
-				bytes +
-				Math.max(0, count - 1);
-			for (const [index, record] of accumulated.entries()) {
-				const entry: Record<string, unknown> = { id: record.entityId };
-
-				if (effectiveAuditTimestamps) {
-					entry.registered = record.createdAt;
-					entry.updated = record.updatedAt;
-				}
-
-				if (requestedClaims.length > 0) {
-					const extracted = await extractClaims(record, ctx, requestedClaims, now);
-					for (const key of Object.keys(extracted)) {
-						entry[key] = extracted[key];
+					const serialized = JSON.stringify(entry);
+					const bytes = encoder.encode(serialized).byteLength;
+					const following = accumulated[index + 1]?.entityId ?? nextEntityId;
+					// Draft 03 §3.1.2: account for selected claims and the actual next cursor.
+					// The preceding accepted entry already reserved space for this record's cursor.
+					if (responseBytes(entries.length + 1, entryBytes + bytes, following) > maxResponseBytes) {
+						if (!entries.length)
+							throw new Error("A subordinate entry exceeds the response size limit");
+						nextEntityId = record.entityId;
+						break;
 					}
+					// Retain the measured JSON so custom store objects cannot change between
+					// measurement and response serialization while later entries are awaited.
+					entries.push(JSON.parse(serialized) as Record<string, unknown>);
+					entryBytes += bytes;
 				}
+				if (responseBytes(entries.length, entryBytes, nextEntityId) > maxResponseBytes)
+					throw new Error("Extended listing envelope exceeds the response size limit");
 
-				const serialized = JSON.stringify(entry);
-				const bytes = encoder.encode(serialized).byteLength;
-				const following = accumulated[index + 1]?.entityId ?? nextEntityId;
-				// Draft 03 §3.1.2: account for selected claims and the actual next cursor.
-				// The preceding accepted entry already reserved space for this record's cursor.
-				if (responseBytes(entries.length + 1, entryBytes + bytes, following) > maxResponseBytes) {
-					if (!entries.length)
-						throw new Error("A subordinate entry exceeds the response size limit");
-					nextEntityId = record.entityId;
-					break;
-				}
-				// Retain the measured JSON so custom store objects cannot change between
-				// measurement and response serialization while later entries are awaited.
-				entries.push(JSON.parse(serialized) as Record<string, unknown>);
-				entryBytes += bytes;
-			}
-			if (responseBytes(entries.length, entryBytes, nextEntityId) > maxResponseBytes)
-				throw new Error("Extended listing envelope exceeds the response size limit");
+				const body: Record<string, unknown> = { immediate_subordinate_entities: entries };
+				if (nextEntityId !== undefined) body.next = nextEntityId;
 
-			const body: Record<string, unknown> = { immediate_subordinate_entities: entries };
-			if (nextEntityId !== undefined) body.next = nextEntityId;
-
-			return jsonResponse(body);
+				if (signal.aborted) throw new Error("Extended listing cancelled");
+				return jsonResponse(body);
+			};
+			const signal = ctx.options?.signal
+				? AbortSignal.any([request.signal, ctx.options.signal])
+				: request.signal;
+			return await waitForOperation(build(signal), [signal]);
 		} catch {
 			safeLogger(ctx.options?.logger)?.error("Failed to build extended subordinate listing");
 			return errorResponse(

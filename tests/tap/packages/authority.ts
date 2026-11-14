@@ -2168,6 +2168,33 @@ export default (QUnit: QUnit) => {
 			};
 			return { ...f, config, authority: new TrustAnchor(config) };
 		}
+		test("cursor storage failures return errors through HTTP and both authority APIs", async (t) => {
+			const f = await fixture();
+			await f.authority.registerSubordinate({ entityId: LEAF_ID, jwks: { keys: [f.publicKey] } });
+			const intermediate = new Intermediate({ ...f.config, authorityHints: [TA_ID] });
+			t.true((await f.authority.listSubordinatesExtended({ from: LEAF_ID, claims: [] })).ok);
+			const missing = await f.authority.handleRequest(
+				new Request(`${ENTITY_ID}/extended?from=unknown`),
+			);
+			t.equal(missing.status, 404);
+			t.equal(((await missing.json()) as { error: string }).error, "page_not_found");
+			f.subordinates.get = async () => {
+				throw new Error("private database details");
+			};
+			for (const authority of [f.authority, intermediate]) {
+				const result = await authority.listSubordinatesExtended({ from: LEAF_ID, claims: [] });
+				t.false(result.ok);
+				if (!result.ok) {
+					t.equal(result.error.code, "server_error");
+					t.false(result.error.description.includes("database"));
+				}
+				const response = await authority.handleRequest(
+					new Request(`${ENTITY_ID}/extended?from=${encodeURIComponent(LEAF_ID)}`),
+				);
+				t.equal(response.status, 500);
+				t.equal(((await response.json()) as { error: string }).error, "server_error");
+			}
+		});
 		test("local and HTTP calls accept extension entity types and shared parameters", async (t) => {
 			const f = await fixture();
 			for (const [n, location] of ["north", "south"].entries())
@@ -2201,6 +2228,36 @@ export default (QUnit: QUnit) => {
 				additionalParameters: { client_secret: "secret" },
 			});
 			t.false(credentials.ok);
+		});
+		test("local cancellation releases a pending cursor lookup without a custom filter", async (t) => {
+			const f = await fixture();
+			let entered!: () => void;
+			const started = new Promise<void>((resolve) => {
+				entered = resolve;
+			});
+			let finish!: (record: SubordinateRecord | undefined) => void;
+			f.subordinates.get = () => {
+				entered();
+				return new Promise((resolve) => {
+					finish = resolve;
+				});
+			};
+			const controller = new AbortController();
+			const result = f.authority.listSubordinatesExtended(
+				{ from: LEAF_ID, claims: [] },
+				{ signal: controller.signal },
+			);
+			await started;
+			controller.abort();
+			const cancelled = await result;
+			t.false(cancelled.ok);
+			if (!cancelled.ok) t.equal(cancelled.error.code, "server_error");
+			finish(undefined);
+			const preAborted = await f.authority.listSubordinatesExtended(
+				{ claims: [] },
+				{ signal: controller.signal },
+			);
+			t.false(preAborted.ok);
 		});
 	});
 

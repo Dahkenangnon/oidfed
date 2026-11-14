@@ -1,4 +1,4 @@
-export { runAsyncOperation } from "./async-operation.js";
+export { runAsyncOperation, waitForOperation } from "./async-operation.js";
 export {
 	createAttestationChallengeHandler,
 	createAttestationChallengeResponse,
