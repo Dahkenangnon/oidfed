@@ -1,4 +1,4 @@
-import { authenticatedEndpointCaller } from "@oidfed/core";
+import { authenticatedEndpointCaller, fetchSubordinateEvents } from "@oidfed/core";
 import type QUnit from "qunit";
 import { createAuthenticatedHandler } from "../../../packages/authority/src/endpoints/client-auth.js";
 import type { HandlerContext } from "../../../packages/authority/src/endpoints/context.js";
@@ -10863,6 +10863,50 @@ export default (QUnit: QUnit) => {
 							assert.true(jwt.ok);
 							if (jwt.ok)
 								assert.deepEqual(jwt.value.payload.federation_registration_events, [expected]);
+						}
+					},
+				);
+				QUnit.test(
+					`${intermediate ? "Intermediate" : "TrustAnchor"} supports optional response expiration independently of occurrence times`,
+					async (assert) => {
+						const f = await fixture(intermediate);
+						const Authority = intermediate ? Intermediate : TrustAnchor;
+						for (const ttl of [0, -1, NaN, Infinity, -Infinity]) {
+							assert.throws(
+								() => new Authority({ ...f.config, subordinateEventsTtlSeconds: ttl }),
+								/positive and finite/,
+							);
+						}
+						const authority = new Authority({ ...f.config, subordinateEventsTtlSeconds: 60.5 });
+						await authority.recordSubordinateEvents(subject, [
+							{ iat: -0.5, event: "operator.review" },
+						]);
+						for (const now of [1500, 1600.25]) {
+							f.setNow(now);
+							const response = await authority.handleRequest(
+								new Request(`${endpoint}&sub=${encodeURIComponent(subject)}`),
+							);
+							assert.strictEqual(response.status, 200);
+							const jwt = await response.text();
+							const decoded = decodeEntityStatement(jwt);
+							assert.true(decoded.ok);
+							if (decoded.ok) {
+								assert.strictEqual(decoded.value.payload.iat, now);
+								assert.strictEqual(decoded.value.payload.exp, now + 60.5);
+								assert.deepEqual(decoded.value.payload.federation_registration_events, [
+									{ iat: -0.5, event: "operator.review" },
+								]);
+							}
+							const fetched = await fetchSubordinateEvents(endpoint, subject, {
+								...f.options,
+								clockSkewSeconds: 0,
+								clock: { now: () => now + 61 },
+								httpClient: async () =>
+									new Response(jwt, {
+										headers: { "content-type": MediaType.EntityEventsStatement },
+									}),
+							});
+							assert.false(fetched.ok, "a response past its configured expiration is rejected");
 						}
 					},
 				);

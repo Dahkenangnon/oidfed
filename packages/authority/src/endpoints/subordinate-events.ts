@@ -69,6 +69,9 @@ export async function buildSubordinateEvents(
 		iss: ctx.entityId,
 		sub: subject,
 		iat,
+		...(ctx.subordinateEventsTtlSeconds !== undefined
+			? { exp: iat + ctx.subordinateEventsTtlSeconds }
+			: {}),
 		federation_registration_events: history,
 	});
 	signal.throwIfAborted();

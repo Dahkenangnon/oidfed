@@ -63,6 +63,8 @@ export interface HandlerContext extends EntityStatementExtensions {
 	readonly entityConfigurationTtlSeconds?: number;
 	/** TTL in seconds for subordinate statement JWTs. */
 	readonly subordinateStatementTtlSeconds?: number;
+	/** Optional lifetime of a signed subordinate events response. */
+	readonly subordinateEventsTtlSeconds?: number;
 	/** TTL in seconds for issued trust mark JWTs. */
 	readonly trustMarkTtlSeconds?: number;
 	/** Anonymous HTTP callers use cached assessments unless explicitly disabled. */

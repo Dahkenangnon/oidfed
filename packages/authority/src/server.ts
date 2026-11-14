@@ -178,6 +178,8 @@ export interface AuthorityConfig extends EntityStatementExtensions {
 	entityConfigurationTtlSeconds?: number;
 	/** TTL in seconds for subordinate statement JWTs. */
 	subordinateStatementTtlSeconds?: number;
+	/** Optional positive, finite history-response TTL; omission leaves exp absent. */
+	subordinateEventsTtlSeconds?: number;
 	/** TTL in seconds for issued trust mark JWTs. */
 	trustMarkTtlSeconds?: number;
 	/** Federation-wide options (httpClient, clock, etc.). */
@@ -260,6 +262,14 @@ function createAuthorityServerWithIdentity(
 	isTrustAnchor = !config.authorityHints?.length,
 ): AuthorityServer {
 	const normalizedEntityId = config.entityId;
+
+	if (
+		config.subordinateEventsTtlSeconds !== undefined &&
+		(!Number.isFinite(config.subordinateEventsTtlSeconds) ||
+			config.subordinateEventsTtlSeconds <= 0)
+	) {
+		throw new Error("subordinateEventsTtlSeconds must be positive and finite");
+	}
 
 	const ttlFields = [
 		["entityConfigurationTtlSeconds", config.entityConfigurationTtlSeconds],
@@ -382,6 +392,9 @@ function createAuthorityServerWithIdentity(
 			},
 			config.subordinateStatementTtlSeconds !== undefined && {
 				subordinateStatementTtlSeconds: config.subordinateStatementTtlSeconds,
+			},
+			config.subordinateEventsTtlSeconds !== undefined && {
+				subordinateEventsTtlSeconds: config.subordinateEventsTtlSeconds,
 			},
 			config.trustMarkTtlSeconds !== undefined && {
 				trustMarkTtlSeconds: config.trustMarkTtlSeconds,
