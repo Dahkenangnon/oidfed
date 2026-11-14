@@ -614,7 +614,7 @@ export async function explicitRegistration(
 	const clientSecret = registeredMetadataResult.data.client_secret;
 	const clientSecretExpiresAt = registeredMetadataResult.data.client_secret_expires_at;
 	if (clientSecret !== undefined && clientSecretExpiresAt !== undefined) {
-		if (clientSecretExpiresAt < responseExp) {
+		if (clientSecretExpiresAt !== 0 && clientSecretExpiresAt < responseExp) {
 			safeLogger(options?.logger)?.warn(
 				"Explicit Client Registration response client_secret_expires_at is earlier than exp",
 			);

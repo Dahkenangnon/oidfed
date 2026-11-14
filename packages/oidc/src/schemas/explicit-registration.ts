@@ -79,6 +79,7 @@ export const ExplicitRegistrationResponsePayloadSchema = z
 		if (
 			typeof rpMetadata?.client_secret === "string" &&
 			typeof rpMetadata.client_secret_expires_at === "number" &&
+			rpMetadata.client_secret_expires_at !== 0 &&
 			rpMetadata.client_secret_expires_at < obj.exp
 		) {
 			ctx.addIssue({

@@ -5205,6 +5205,32 @@ export default (QUnit: QUnit) => {
 			}
 		});
 
+		test("RP accepts non-expiring secrets", async (t) => {
+			const exp = Math.floor(Date.now() / 1000) + 3600;
+			for (const expiry of [undefined, 0, exp - 1, exp, exp + 1, -1, "0", Infinity]) {
+				const payload = explicitRegistrationResponseBase({
+					exp,
+					metadata: {
+						openid_relying_party: {
+							client_id: LEAF_ID,
+							redirect_uris: ["https://rp.example.com/callback"],
+							client_secret: "secret",
+							...(expiry !== undefined ? { client_secret_expires_at: expiry } : {}),
+						},
+					},
+				});
+				const expected =
+					expiry === undefined || expiry === 0 || expiry === exp || expiry === exp + 1;
+				t.equal(
+					ExplicitRegistrationResponsePayloadSchema.safeParse(payload).success,
+					expected,
+					`schema: ${expiry}`,
+				);
+				const response = await explicitRegistrationWithResponse(payload);
+				t.equal(response.ok, expected, `RP: ${expiry}: ${JSON.stringify(response)}`);
+			}
+		});
+
 		test("fails if nested client_secret expires before the response", async (t) => {
 			const now = Math.floor(Date.now() / 1000);
 			const result = await explicitRegistrationWithResponse(
