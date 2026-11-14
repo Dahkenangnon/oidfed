@@ -82,6 +82,7 @@ import {
 import { createMockFederation, LEAF_ID, OP_ID, TA_ID } from "../fixtures/index.js";
 import { signProtocolFixture } from "../fixtures/protocol-jwt.js";
 import { anchorKeyPaths, trustChainPaths } from "../fixtures/trust-chain-paths.js";
+import pushedAuthorizationTests from "./oidc/pushed.js";
 
 // ---------------------------------------------------------------------------
 // Shared helpers (mirrors oidc/test/test-helpers.ts)
@@ -360,6 +361,7 @@ async function createDualAnchorRegistrationFixture(invalidPreferredProvider = fa
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	pushedAuthorizationTests(QUnit);
 	module("oidc / effective registration signing keys", () => {
 		for (const type of ["openid_relying_party", "oauth_client"] as const) {
 			test(`${type}: Request Objects use completed and replaced protocol keys`, async (t) => {

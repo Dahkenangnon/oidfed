@@ -13,6 +13,7 @@ import {
 	ok,
 	type Result,
 	resolveTrustChainForAnchor,
+	runAsyncOperation,
 	safeLogger,
 	signEntityStatement,
 	type TrustAnchorSet,
@@ -21,8 +22,14 @@ import {
 import { createClientAssertion } from "../client-auth/assertion.js";
 import { ClientRegistrationType, RequestObjectTyp } from "../constants.js";
 import type { ProtocolSigningKeyProvider } from "../protocol-keys.js";
-import { getRegistrationTypes, selectSharedRegistrationTrustChains } from "./helpers.js";
+import {
+	getRegistrationTypes,
+	type SharedRegistrationTrustChains,
+	selectSharedRegistrationTrustChains,
+} from "./helpers.js";
 import { oidcRegistrationProfile, type RegistrationProfile } from "./profile.js";
+
+import { authorizationParameters, requestObjectAlgorithms } from "./request-policy.js";
 
 const CLIENT_ASSERTION_TYPE = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
 
@@ -127,12 +134,16 @@ export type AutomaticRegistrationResult =
 export async function automaticRegistration(
 	discovery: DiscoveryResult,
 	rpConfig: AutomaticRegistrationConfig,
-	authzRequestParams: Record<string, string>,
+	authzRequestParams: Readonly<Record<string, unknown>>,
 	trustAnchors: TrustAnchorSet,
 	options?: FederationOptions,
 	providerDiscovery: "supplied" | "resolved" = "supplied",
 	profile: RegistrationProfile = oidcRegistrationProfile,
+	selected?: SharedRegistrationTrustChains,
 ): Promise<Result<AutomaticRegistrationResult>> {
+	const parameters = authorizationParameters(authzRequestParams);
+	if (!parameters.ok) return parameters;
+	authzRequestParams = parameters.value;
 	safeLogger(options?.logger)?.debug("Creating an Automatic Client Registration Request");
 	if (!rpConfig.metadata[profile.clientType])
 		return err(
@@ -142,17 +153,19 @@ export async function automaticRegistration(
 			),
 		);
 
-	const sharedChains = await selectSharedRegistrationTrustChains(
-		rpConfig.entityId,
-		discovery.entityId as EntityId,
-		discovery.trustChain,
-		trustAnchors,
-		options,
-		{
-			allowAlternativeProvider: providerDiscovery === "resolved",
-			profile,
-		},
-	);
+	const sharedChains = selected
+		? ok(selected)
+		: await selectSharedRegistrationTrustChains(
+				rpConfig.entityId,
+				discovery.entityId as EntityId,
+				discovery.trustChain,
+				trustAnchors,
+				options,
+				{
+					allowAlternativeProvider: providerDiscovery === "resolved",
+					profile,
+				},
+			);
 	if (!sharedChains.ok) return err(sharedChains.error);
 
 	const opMeta = sharedChains.value.opChain.resolvedMetadata[profile.providerType] as
@@ -180,7 +193,22 @@ export async function automaticRegistration(
 		);
 	}
 
-	const requestObjectSigner = await rpConfig.protocolKeyProvider.getRequestObjectSigner();
+	const requestObjectSigner = await runAsyncOperation(
+		() => rpConfig.protocolKeyProvider.getRequestObjectSigner(),
+		options ?? {},
+	);
+	const algorithms = requestObjectAlgorithms(
+		sharedChains.value.rpChain.resolvedMetadata[profile.clientType] ?? {},
+		opMeta ?? {},
+	);
+	if (!algorithms.ok) return algorithms;
+	if (!algorithms.value.includes(requestObjectSigner.alg))
+		return err(
+			federationError(
+				FederationErrorCode.InvalidRequest,
+				"Request Object signer must satisfy effective algorithm metadata",
+			),
+		);
 	// The receiver verifies against resolved metadata, including Superior overrides (§3.1.1).
 	const assertSignerResult = assertProtocolSignerPublished(
 		sharedChains.value.rpChain.resolvedMetadata,
@@ -197,10 +225,15 @@ export async function automaticRegistration(
 	const selectedTrustAnchorId = sharedChains.value.trustAnchorId;
 
 	// Reserved claims must not be overwritten by caller-supplied params
-	const filteredParams: Record<string, string> = {};
+	const filteredParams: Record<string, unknown> = {};
 	for (const [key, value] of Object.entries(authzRequestParams)) {
 		if (!RESERVED_REQUEST_OBJECT_CLAIMS.has(key)) {
-			filteredParams[key] = value;
+			Object.defineProperty(filteredParams, key, {
+				value,
+				enumerable: true,
+				configurable: true,
+				writable: true,
+			});
 		}
 	}
 
@@ -252,10 +285,14 @@ export async function automaticRegistration(
 		extraHeaders.peer_trust_chain = peerChainResult.value;
 	}
 
-	const requestObjectJwt = await signEntityStatement(payload, requestObjectSigner, {
-		typ: RequestObjectTyp,
-		...(Object.keys(extraHeaders).length > 0 ? { extraHeaders } : {}),
-	});
+	const requestObjectJwt = await runAsyncOperation(
+		() =>
+			signEntityStatement(payload, requestObjectSigner, {
+				typ: RequestObjectTyp,
+				...(Object.keys(extraHeaders).length > 0 ? { extraHeaders } : {}),
+			}),
+		options ?? {},
+	);
 
 	const base: AutomaticRegistrationResultBase = {
 		requestObjectJwt,
@@ -390,7 +427,6 @@ export async function automaticRegistration(
 						discovery.entityId as string,
 						clientAssertionSigner,
 						{
-							expiresInSeconds: 60,
 							...(options?.clock ? { clock: options.clock } : {}),
 						},
 					);
@@ -508,7 +544,7 @@ function parJwtAuthentication(
 	return ok(rpSupports && Array.isArray(opMethods) && opMethods.includes("private_key_jwt"));
 }
 
-function assertProtocolSignerPublished(
+export function assertProtocolSignerPublished(
 	metadata: Record<string, Record<string, unknown>>,
 	signer: JwtSigner,
 	purpose: string,

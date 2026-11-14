@@ -48,6 +48,13 @@ export function validateAutomaticRegistrationRequest(
 	}
 
 	const { header, payload } = decoded.value;
+	if (Object.hasOwn(payload, "request") || Object.hasOwn(payload, "request_uri"))
+		return err(
+			federationError(
+				FederationErrorCode.InvalidRequest,
+				"Request Objects MUST NOT contain request or request_uri",
+			),
+		);
 	const claims = payload as Record<string, unknown>;
 
 	if (header.typ !== RequestObjectTyp) {
@@ -116,7 +123,7 @@ export function validateAutomaticRegistrationRequest(
 	}
 
 	const exp = claims.exp as number | undefined;
-	if (exp === undefined) {
+	if (typeof exp !== "number" || !Number.isFinite(exp)) {
 		return err(
 			federationError(
 				FederationErrorCode.InvalidRequest,
@@ -131,7 +138,7 @@ export function validateAutomaticRegistrationRequest(
 	}
 
 	const jti = claims.jti as string | undefined;
-	if (!jti) {
+	if (typeof jti !== "string" || !jti) {
 		return err(
 			federationError(
 				FederationErrorCode.InvalidRequest,

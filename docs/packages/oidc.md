@@ -390,3 +390,128 @@ Each role exposes static and instance `assessEntity(target, entityType, ...)` me
 Both automatic and explicit registration filter out malformed effective OP metadata before calling the selector. OIDC registration continues to validate every required statement, retain RP/OP shared-anchor rules, and verify protocol metadata before signing or sending registration requests. Existing APIs consuming `DiscoveryResult` can use core's `discoverEntityFromChain` for supplied evidence. Resolver-only assessments cannot substitute for that type.
 
 See [core trust establishment](core.md#trust-establishment-options) for configuration examples and the distinction between resolver acquisition and delegation.
+
+### Preparing and processing PAR with different proofs
+
+`OidcRelyingPartyRole` and `OAuthClientRole` expose
+`createPushedAuthorizationRequest(discovery, parameters, proof, options)`.
+It prepares a form-encoded POST and returns its endpoint, parameters, headers,
+and server trust chain. **The host sends the request** and handles the returned
+`request_uri`. Existing automatic-registration methods keep their current return
+shapes and behavior.
+
+In the academic federation, a **Campus Portal** can prepare a request using its
+protocol signing key without a Request Object:
+
+```ts
+const prepared = await portalRole.createPushedAuthorizationRequest(
+  universityDiscovery,
+  { response_type: "code", scope: "openid", redirect_uri: callbackUrl },
+  { mode: "private_key_jwt" },
+);
+
+if (prepared.ok) {
+  const { endpoint, parameters, headers } = prepared.value;
+  const response = await applicationHttpClient(endpoint, {
+    method: "POST",
+    headers,
+    body: parameters,
+    redirect: "manual",
+  });
+  // Check the PAR response and retain its request_uri for the authorization flow.
+}
+```
+
+The proof modes are:
+
+| Mode | What is sent |
+| --- | --- |
+| `request_object` | A signed Request Object carrying the selected Trust Chain |
+| `private_key_jwt` | Authorization parameters and an RP protocol-key assertion |
+| `self_signed_tls_client_auth` | Authorization parameters; the host presents the configured TLS certificate |
+| `attest_jwt_client_auth` | Client Attestation headers **and** a signed Request Object |
+
+For TLS, supply `certificate` as the base64 DER certificate from the RP protocol
+JWK's `x5c`. The host must actually present and prove possession of that
+certificate during TLS. The library does not configure a runtime-specific TLS
+agent. Remote protocol JWK Sets are supported as well as inline keys.
+
+For attestation, supply `attestationJwt` and `popJwt`. Retrieve and include the
+server's challenge when it advertises `challenge_endpoint`. The role checks the
+client, audience, and advertised algorithms before preparing the request; the
+server still performs full authentication. Attestation alone does not replace
+the RP-key proof required by Federation §12.1.1.2.
+
+`OidcProviderRole` and `OAuthAuthorizationServerRole` expose
+`processPushedAuthorizationRequest(request, options)`. They verify the request,
+apply registration policy and the configured registration adapter, and return
+verified authorization parameters and client registration information. The host
+then issues and stores the single-use PAR `request_uri`; this method is not a
+complete authorization server.
+
+Pass effective `providerMetadata` if Superior metadata or policy completes the
+provider's publication. Authentication methods must be mutually supported by the
+resolved client and provider metadata. A signed Request Object does not excuse
+an invalid additional authentication proof.
+
+For self-signed TLS, configure `clientCertificate(request, signal)` to return the
+certificate authenticated by the transport. Do not extract it from an
+untrusted forwarding header. Federation requires matching the certificate to the
+RP protocol JWK Set and omitting certificate-chain validation for this method.
+The transport must still verify possession of the certificate's private key.
+
+For attestation, configure `clientAttestation` with trusted-attester resolution,
+acceptance policy, freshness, and replay handling. Local algorithm restrictions
+are intersected with effective server metadata. When the server advertises a
+challenge endpoint, it must also provide challenge verification for these requests.
+
+The client roles expose static proof, header, serialization, and challenge helpers.
+The provider roles expose static attestation verification, authentication, and
+challenge-handler methods. Their implementation is shared through core.
+
+### PAR parameters and acceptance
+
+`PreparedPushedAuthorizationRequest.parameters` is a `URLSearchParams`, ready to
+use as the POST body. This preserves repeated `resource` parameters. Use
+`parameters.getAll("resource")` when inspecting them. The host still decides
+which resources a client may access.
+
+Request Object creation accepts JSON values. For example, `max_age: 0`, an OIDC
+`claims` object, and an `authorization_details` array remain numbers, objects,
+and arrays in the signed JWT and in the processed result. For an unsigned form,
+structured parameters are JSON-encoded; repeated resources are individual form
+entries. Processing a form retains its string values and returns repeated
+resources as an array. Unknown extension fields are preserved for the host to
+interpret. Invalid JSON inputs and nested `request` or `request_uri` are rejected.
+
+With a Request Object, authorization parameters belong inside the JWT. Only
+`request`, `client_id`, and the applicable authentication parameters belong in the
+PAR form. This restriction does not change the outer parameters used by ordinary
+OIDC authorization-endpoint requests.
+
+If effective client or server metadata sets `require_signed_request_object: true`,
+select a proof mode that includes a signed Request Object. Assertion-only and
+TLS-only PAR then fail before acceptance. Request Object signers and verification
+also follow the effective `request_object_signing_alg` and
+`request_object_signing_alg_values_supported` declarations. An omitted optional
+declaration adds no restriction. Supply effective `providerMetadata` to either
+provider processing method when Superiors complete or override its publication.
+
+Successful automatic-registration and PAR results include
+`authenticationExpiresAt`. It is the earliest applicable authentication or trust
+deadline; JWT clock tolerance does not extend the Trust Chain. The library checks
+this deadline after asynchronous verification and again after adapter validation,
+before entering `onRegistration`. Starting that callback is the persistence
+acceptance boundary. The host owns transaction semantics and should cap any PAR
+request URI lifetime appropriately.
+
+Replay, policy, and adapter work use the existing per-operation `httpTimeoutMs`
+and cancellation settings. A timeout cannot undo work already performed by a
+host callback. Automatic registration retains its existing exception behavior
+for adapter and persistence failures; the PAR method returns an error result.
+After a persistence timeout, reconcile the storage outcome before retrying.
+
+These rules implement [PAR §§2.3 and 3](https://www.rfc-editor.org/rfc/rfc9126.html),
+[JAR §§4 and 6](https://www.rfc-editor.org/rfc/rfc9101.html), and
+[Resource Indicators §2](https://www.rfc-editor.org/rfc/rfc8707.html#section-2).
+Callback timeouts are library availability controls, not a protocol-defined duration.

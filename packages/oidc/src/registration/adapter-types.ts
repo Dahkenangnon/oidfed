@@ -14,6 +14,8 @@ export interface RegistrationProtocolAdapterContext {
 	 * absent, no peer chain was supplied. Invalid peer chains fail registration.
 	 */
 	readonly peerResolvedOpMetadata?: Readonly<Record<string, unknown>>;
+	/** Cancellation for asynchronous host integrations, when supplied by the caller. */
+	readonly signal?: AbortSignal;
 }
 
 /**

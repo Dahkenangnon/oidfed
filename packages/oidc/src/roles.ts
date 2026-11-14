@@ -3,7 +3,6 @@ import type {
 	EntityContext,
 	EntityId,
 	EntityRole,
-	FederationError,
 	FederationOptions,
 	JWKSet,
 	ReplayStore,
@@ -12,14 +11,24 @@ import type {
 } from "@oidfed/core";
 import {
 	assessEntity,
+	authenticateClientAttestation,
+	type ClientAttestationError,
+	clientAttestationHeaders,
+	createAttestationChallengeHandler,
+	createClientAttestationProof,
 	discoverEntity,
 	type EntityAssessmentOptions,
 	entityId,
 	err,
 	FederationErrorCode,
 	federationError,
+	fetchAttestationChallenge,
+	readAttestationChallenge,
+	runAsyncOperation,
 	safeLogger,
+	serializeClientAttestation,
 	shortestChain,
+	verifyClientAttestation,
 } from "@oidfed/core";
 import type { ClientAssertionOptions } from "./client-auth/assertion.js";
 import { createClientAssertion } from "./client-auth/assertion.js";
@@ -43,11 +52,20 @@ import {
 } from "./registration/handler.js";
 import { assertNonEmptyTrustAnchors } from "./registration/helpers.js";
 import {
+	checkRegistrationAuthentication,
 	type ProcessAutomaticRegistrationOptions,
 	type ProcessedAutomaticRegistration,
 	processAutomaticRegistration,
 } from "./registration/process-automatic.js";
 import { registrationProfile } from "./registration/profile.js";
+import {
+	createPushedAuthorizationRequest,
+	type PreparedPushedAuthorizationRequest,
+	type ProcessedPushedAuthorizationRequest,
+	type ProcessPushedAuthorizationRequestOptions,
+	type PushedAuthorizationProof,
+	processPushedAuthorizationRequest,
+} from "./registration/pushed.js";
 import {
 	effectiveRoleSchemas,
 	OAuthResourceDocumentMetadataSchema,
@@ -75,6 +93,45 @@ export interface CreateAuthorizationRequestOptions extends FederationOptions {
 }
 
 abstract class ClientRole implements EntityRole {
+	static createClientAttestationProof = createClientAttestationProof;
+	static clientAttestationHeaders = clientAttestationHeaders;
+	static serializeClientAttestation = serializeClientAttestation;
+	static fetchAttestationChallenge = fetchAttestationChallenge;
+	static readAttestationChallenge = readAttestationChallenge;
+	async createPushedAuthorizationRequest(
+		discovery: DiscoveryResult,
+		parameters: Readonly<Record<string, unknown>>,
+		proof: PushedAuthorizationProof,
+		options: FederationOptions & { trustAnchors?: TrustAnchorSet } = {},
+	): Promise<Result<PreparedPushedAuthorizationRequest>> {
+		if (!this.context) throw new Error("Role has not been initialized.");
+		const anchors = assertNonEmptyTrustAnchors(
+			options.trustAnchors ?? this.config.trustAnchors ?? this.context.trustAnchors,
+		);
+		return createPushedAuthorizationRequest(
+			discovery,
+			{
+				entityId: this.context.entityId as EntityId,
+				protocolKeyProvider: this.config.protocolKeyProvider,
+				authorityHints: (this.context.authorityHints ??
+					this.config.authorityHints ??
+					[]) as readonly [EntityId, ...EntityId[]],
+				metadata: { [this.type]: this.composedMetadata ?? this.metadata },
+				...(this.config.requestObjectTtlSeconds !== undefined
+					? { requestObjectTtlSeconds: this.config.requestObjectTtlSeconds }
+					: {}),
+				...(this.config.includePeerTrustChain !== undefined
+					? { includePeerTrustChain: this.config.includePeerTrustChain }
+					: {}),
+			},
+			parameters,
+			anchors,
+			proof,
+			{ ...this.context.options, ...this.config.options, ...options },
+			this.profile,
+		);
+	}
+
 	static assessEntity = assessProtocolEntity;
 	assessEntity(
 		target: string,
@@ -278,7 +335,7 @@ abstract class ClientRole implements EntityRole {
 
 	async createAuthorizationRequest(
 		discovery: DiscoveryResult,
-		authzRequestParams: Record<string, string>,
+		authzRequestParams: Readonly<Record<string, unknown>>,
 		trustAnchors: TrustAnchorSet,
 		options?: CreateAuthorizationRequestOptions,
 	): Promise<Result<AutomaticRegistrationResult>> {
@@ -375,6 +432,46 @@ export interface OidcProviderRoleConfig extends RegistrationAccreditationPolicy 
 }
 
 abstract class ProviderRole implements EntityRole {
+	static verifyClientAttestation = verifyClientAttestation;
+	static authenticateClientAttestation = authenticateClientAttestation;
+	static createAttestationChallengeHandler = createAttestationChallengeHandler;
+	async processPushedAuthorizationRequest(
+		request: Request,
+		options: Omit<
+			ProcessPushedAuthorizationRequestOptions,
+			"opEntityId" | "replayStore" | "providerMetadataType" | "providerMetadata"
+		> & { readonly providerMetadata?: Readonly<Record<string, unknown>> } = {},
+	): Promise<Result<ProcessedPushedAuthorizationRequest, ClientAttestationError>> {
+		if (!this.context || !this.config.replayStore)
+			throw new Error("Initialize the provider role with a replayStore.");
+		const effectiveOptions = { ...this.context.options, ...this.config.options, ...options };
+		effectiveOptions.signal ??= request.signal;
+		const result = await processPushedAuthorizationRequest(
+			request,
+			assertNonEmptyTrustAnchors(this.config.trustAnchors ?? this.context.trustAnchors),
+			{
+				...effectiveOptions,
+				opEntityId: this.context.entityId as EntityId,
+				replayStore: this.config.replayStore,
+				providerMetadataType: this.type,
+				providerMetadata: options.providerMetadata ?? this.metadata,
+				...(this.config.trustMarkRequirements
+					? { trustMarkRequirements: structuredClone(this.config.trustMarkRequirements) }
+					: {}),
+				...(this.config.beforeRegistration
+					? { beforeRegistration: this.config.beforeRegistration }
+					: {}),
+			},
+		);
+		try {
+			return await this.persistAutomaticRegistration(result, effectiveOptions);
+		} catch {
+			return err(
+				federationError(FederationErrorCode.ServerError, "PAR registration persistence failed"),
+			);
+		}
+	}
+
 	static assessEntity = assessProtocolEntity;
 	assessEntity(
 		target: string,
@@ -464,7 +561,7 @@ abstract class ProviderRole implements EntityRole {
 			ProcessAutomaticRegistrationOptions,
 			"opEntityId" | "replayStore" | "providerMetadataType"
 		>,
-	): Promise<Result<ProcessedAutomaticRegistration, FederationError>> {
+	): Promise<Result<ProcessedAutomaticRegistration, ClientAttestationError>> {
 		if (!this.context) {
 			throw new Error("Provider role is not initialized.");
 		}
@@ -487,8 +584,15 @@ abstract class ProviderRole implements EntityRole {
 			opEntityId: this.context.entityId as EntityId,
 			replayStore,
 			providerMetadataType: this.type,
+			providerMetadata: options?.providerMetadata ?? this.metadata,
 		});
 
+		return this.persistAutomaticRegistration(result, effectiveOptions);
+	}
+	private async persistAutomaticRegistration<T extends ProcessedAutomaticRegistration>(
+		result: Result<T, ClientAttestationError>,
+		effectiveOptions: FederationOptions,
+	): Promise<Result<T, ClientAttestationError>> {
 		if (!result.ok) return result;
 
 		const logger = safeLogger(effectiveOptions.logger);
@@ -497,8 +601,13 @@ abstract class ProviderRole implements EntityRole {
 				ReturnType<RegistrationProtocolAdapter["validateClientMetadata"]>
 			>;
 			try {
-				validationResult = await this.config.registrationProtocolAdapter.validateClientMetadata(
-					result.value.resolvedRpMetadata,
+				const adapter = this.config.registrationProtocolAdapter;
+				validationResult = await runAsyncOperation(
+					(signal) =>
+						adapter.validateClientMetadata(structuredClone(result.value.resolvedRpMetadata), {
+							signal,
+						}),
+					effectiveOptions,
 				);
 			} catch (error) {
 				logger?.error("RP metadata validation failed in registrationProtocolAdapter");
@@ -512,15 +621,22 @@ abstract class ProviderRole implements EntityRole {
 			}
 		}
 
+		const current = checkRegistrationAuthentication(result.value, effectiveOptions);
+		if (!current.ok) return current;
 		if (this.config.onRegistration) {
 			// Persist the protocol keys actually used for §12.1.1.1.2 verification.
 			try {
-				await this.config.onRegistration(
-					result.value.rpEntityId,
-					structuredClone({
-						...result.value.resolvedRpMetadata,
-						jwks: { keys: result.value.protocolKeys.keys },
-					}),
+				const onRegistration = this.config.onRegistration;
+				await runAsyncOperation(
+					() =>
+						onRegistration(
+							result.value.rpEntityId,
+							structuredClone({
+								...result.value.resolvedRpMetadata,
+								jwks: { keys: result.value.protocolKeys.keys },
+							}),
+						),
+					effectiveOptions,
 				);
 			} catch (error) {
 				logger?.error("Automatic Client Registration failed in onRegistration");

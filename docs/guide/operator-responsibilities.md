@@ -287,3 +287,30 @@ attestation; it cannot rewrite an existing attestation's `cnf` claim.
 Consider separate client-instance keys for different authorization servers to
 reduce correlation. Configure HTTP header-size limits to accommodate the two
 JWTs. Do not log attestation JWTs, PoPs, credentials, or refresh tokens.
+
+For self-signed mTLS at PAR, the host supplies authenticated transport evidence
+and proves client-key possession during the TLS handshake. Forwarding headers
+are not transport evidence unless a trusted deployment component authenticates
+and protects them. The library compares the resulting certificate with the RP's
+resolved protocol JWK Set; it does not run a TLS server or validate a PKI chain
+for this authentication method.
+
+### PAR acceptance and authentication failures
+
+Use effective client and server metadata when deciding whether a Request Object
+is required and which signing algorithms are allowed. Provider role methods
+apply these declarations; pass completed `providerMetadata` when publication is
+only partial. Preserve the returned authorization parameter values, including
+JSON objects and repeated resources, for your authorization policy checks.
+
+`authenticationExpiresAt` records the current deadline for registration/PAR
+authentication. The library checks it before starting registration persistence.
+Your application owns the transaction and the single-use PAR request URI.
+Cancellation or a timeout stops waiting; it does not roll back a callback's
+external effects. Check the storage outcome before retrying an uncertain write.
+
+For Client Attestation, use the typed failure reason to produce the required
+protocol response. A challenge error needs a fresh host-issued challenge in
+`OAuth-Client-Attestation-Challenge`; an attestation-age rejection needs
+`use_fresh_attestation`. Handle infrastructure failures separately. The library's
+callback timeout is an operational limit, not a specification-mandated duration.

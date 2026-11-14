@@ -5,6 +5,7 @@ import {
 	type FederationOptions,
 	ok,
 	type Result,
+	runAsyncOperation,
 	type TrustMarkRequirements,
 	type ValidatedTrustChain,
 } from "@oidfed/core";
@@ -17,6 +18,7 @@ export interface RegistrationAccreditationPolicy {
 	readonly trustMarkRequirements?: TrustMarkRequirements;
 	readonly beforeRegistration?: (
 		context: Readonly<RegistrationAccreditationContext>,
+		signal?: AbortSignal,
 	) => Result<void> | Promise<Result<void>>;
 }
 function freeze<T>(value: T): T {
@@ -42,8 +44,10 @@ export async function checkRegistrationAccreditation(
 	}
 	if (!policy.beforeRegistration) return ok(undefined);
 	try {
-		const checked = await policy.beforeRegistration(
-			freeze({ chain: structuredClone(chain), registrationType }),
+		const callback = policy.beforeRegistration;
+		const checked = await runAsyncOperation(
+			(signal) => callback(freeze({ chain: structuredClone(chain), registrationType }), signal),
+			options ?? {},
 		);
 		if (checked?.ok !== true)
 			return err({
