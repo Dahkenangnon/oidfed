@@ -39,16 +39,18 @@ export function validateMetadataPolicy(
 export function validatePolicyDeclaration(
 	policy: unknown,
 	lookup: Record<string, PolicyOperatorDefinition>,
+	resolved = false,
 ): Result<void, FederationError> {
 	const fail = (description: string) =>
 		err({ code: InternalErrorCode.MetadataPolicyError, description });
-	if (!isObject(policy) || !isJsonData(policy))
-		return fail("metadata_policy must be a JSON object");
+	if (!isObject(policy) || !isJsonData(policy) || (!resolved && !Object.keys(policy).length))
+		return fail("metadata_policy must be a non-empty JSON object");
 	for (const [type, parameters] of Object.entries(policy)) {
-		if (!isObject(parameters)) return fail(`metadata_policy.${type} must be a JSON object`);
+		if (!isObject(parameters) || (!resolved && !Object.keys(parameters).length))
+			return fail(`metadata_policy.${type} must be a non-empty JSON object`);
 		for (const [parameter, entries] of Object.entries(parameters)) {
-			if (!isObject(entries))
-				return fail(`metadata_policy.${type}.${parameter} must be a JSON object`);
+			if (!isObject(entries) || (!resolved && !Object.keys(entries).length))
+				return fail(`metadata_policy.${type}.${parameter} must be a non-empty JSON object`);
 			const names = Object.keys(entries).filter((name) => Object.hasOwn(lookup, name));
 			for (const name of names) {
 				const error = validateStandardPolicyOperatorConfiguration(name, entries[name]);

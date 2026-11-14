@@ -121,6 +121,7 @@ export function resolveMetadataPolicy(
 					const combined = validatePolicyDeclaration(
 						{ [entityType]: { [paramName]: mergedParam } },
 						lookup,
+						true,
 					);
 					if (!combined.ok) return combined;
 				}

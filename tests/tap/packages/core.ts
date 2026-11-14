@@ -360,6 +360,26 @@ export default (QUnit: QUnit) => {
 				"default cannot introduce null",
 			);
 		});
+		test("raw policies require members at each level; unknown operators still disappear", async (t) => {
+			const f = await trustChainPaths({ example: { x: "unchanged" } });
+			for (const policy of [{}, { example: {} }, { example: { x: {} } }]) {
+				t.false(CorePublic.validateMetadataPolicy(policy).ok);
+				t.false(
+					CorePublic.validateSubordinateStatementPublicationClaims({ metadata_policy: policy }).ok,
+					"publication rejects the same empty declaration",
+				);
+				const chain = await f.chain(["subject", "anchor"]);
+				chain[1] = await f.sign("anchor", "subject", { metadata_policy: policy });
+				t.false((await CorePublic.validateTrustChain(chain, f.anchors, f.options)).valid);
+			}
+			const chain = await f.chain(["subject", "anchor"]);
+			chain[1] = await f.sign("anchor", "subject", {
+				metadata_policy: { example: { x: { future_operator: true } } },
+			});
+			const result = await CorePublic.validateTrustChain(chain, f.anchors, f.options);
+			t.true(result.valid);
+			if (result.valid) t.equal(result.chain.resolvedMetadata.example?.x, "unchanged");
+		});
 	});
 
 	module("core / configurable trust establishment", () => {
