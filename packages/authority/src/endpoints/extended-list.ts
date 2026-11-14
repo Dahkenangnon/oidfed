@@ -12,6 +12,7 @@ import {
 	FederationErrorCode,
 	isValidEntityId,
 	nowSeconds,
+	runAsyncOperation,
 	safeLogger,
 	setOwn,
 	waitForOperation,
@@ -19,10 +20,16 @@ import {
 import type { ListFilter, ListPageOptions, SubordinateRecord } from "../storage/types.js";
 import type { HandlerContext } from "./context.js";
 import { extractClaims } from "./extended-list-claims.js";
+import {
+	createExtendedListFilters,
+	type ExtendedListingRequestFilter,
+} from "./extended-list-filters.js";
 import { errorResponse, jsonResponse, parseQueryParams, requireMethod } from "./helpers.js";
 
 /** Configuration controlling Extended Listing; numeric limits must be positive safe integers. */
 export interface ExtendedListingConfig {
+	/** Optional request selectors, parsed once and applied before page limits. Unknown selectors are ignored. */
+	requestFilters?: Readonly<Record<string, ExtendedListingRequestFilter>>;
 	/** Maximum UTF-8 JSON success-response bytes, including next; defaults to 512 KiB. */
 	maxResponseBytes?: number;
 	/** Whether the endpoint is wired in at all. When false, handler returns 404. */
@@ -103,6 +110,7 @@ export function createExtendedListHandler(
 	ctx: HandlerContext,
 	config?: ExtendedListingConfig,
 ): (request: Request) => Promise<Response> {
+	const requestFilters = createExtendedListFilters(config?.requestFilters, ctx);
 	const enabled = config?.enabled ?? true;
 	const maxPageSize = config?.maxPageSize ?? DEFAULT_MAX_PAGE_SIZE;
 	const maxResponseBytes = config?.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
@@ -257,6 +265,13 @@ export function createExtendedListHandler(
 		try {
 			const build = async (signal: AbortSignal): Promise<Response> => {
 				if (signal.aborted) throw new Error("Extended listing cancelled");
+				const parsedFilters = await requestFilters.prepare(params, signal);
+				if (!parsedFilters.ok)
+					return errorResponse(
+						400,
+						FederationErrorCode.InvalidRequest,
+						parsedFilters.error.description,
+					);
 				// The wire cursor is opaque to callers; this implementation uses the store bookmark.
 				if (from !== null) {
 					const cursorRecord = await ctx.storage.subordinates.get(from as EntityId);
@@ -299,11 +314,12 @@ export function createExtendedListHandler(
 					for (const record of page.items) {
 						if (accumulated.length >= effectiveLimit) break;
 						if (signal.aborted) throw new Error("Extended listing cancelled");
-						accumulated.push(record);
+						if (await parsedFilters.value(record)) accumulated.push(record);
 					}
 
 					if (accumulated.length >= effectiveLimit) {
-						// Resume at the first unreturned record.
+						// Resume at the first unexamined record; custom filters run on it
+						// in the next request, without skipping any possible matches.
 						const lastRecord = accumulated[accumulated.length - 1];
 						if (lastRecord === undefined) break;
 						const lastId = lastRecord.entityId;
@@ -395,10 +411,16 @@ export function createExtendedListHandler(
 				if (signal.aborted) throw new Error("Extended listing cancelled");
 				return jsonResponse(body);
 			};
+			// One deadline covers parsing and the entire custom-filter scan, not one timeout per record.
 			const signal = ctx.options?.signal
 				? AbortSignal.any([request.signal, ctx.options.signal])
 				: request.signal;
-			return await waitForOperation(build(signal), [signal]);
+			return await waitForOperation(
+				requestFilters.present(params)
+					? runAsyncOperation(build, { ...ctx.options, signal })
+					: build(signal),
+				[signal],
+			);
 		} catch {
 			safeLogger(ctx.options?.logger)?.error("Failed to build extended subordinate listing");
 			return errorResponse(

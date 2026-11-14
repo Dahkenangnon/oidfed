@@ -1,11 +1,104 @@
-import { decodeEntityStatement, entityId, fetchExtendedSubordinatesList, isOk } from "@oidfed/core";
+import { MemoryStorageAdapter, TrustAnchor } from "@oidfed/authority";
+import {
+	decodeEntityStatement,
+	entityId,
+	err,
+	FederationErrorCode,
+	federationError,
+	fetchExtendedSubordinatesList,
+	isOk,
+	ok,
+} from "@oidfed/core";
 import { describe, expect, it } from "vitest";
 import { getAuthorityEntity } from "../helpers/launcher.js";
 import { useFederation } from "../helpers/lifecycle.js";
+import { createAuthorityApp } from "../participants/authority-app.js";
 import { singleAnchorTopology } from "../topologies/single-anchor.js";
 
 describe("Extended Subordinate Listing endpoint", () => {
 	const getTestBed = useFederation(singleAnchorTopology);
+
+	it("projects extension claims and filters registrations over HTTPS GET and authenticated POST", async () => {
+		const { server, entities } = getTestBed();
+		const original = getAuthorityEntity(entities, "https://ta.ofed.test");
+		const id = entityId(`https://ta.ofed.test:${server.port}`);
+		const authority = new TrustAnchor({
+			entityId: id,
+			keyProvider: original.keyProvider as import("@oidfed/core").FederationKeyLifecycleProvider,
+			storage: new MemoryStorageAdapter(),
+			metadata: {
+				federation_entity: {
+					federation_fetch_endpoint: `${id}/fetch`,
+					federation_list_endpoint: `${id}/list`,
+					federation_extended_list_endpoint: `${id}/extended`,
+					federation_extended_list_endpoint_auth_methods: ["none", "example"],
+				},
+			},
+			endpointAuthentication: {
+				methods: {
+					example: {
+						parameters: ["proof"],
+						authenticate: (input) =>
+							input.parameters.proof?.[0] === "valid"
+								? ok({ entityId: "https://caller.example" })
+								: err(federationError(FederationErrorCode.InvalidClient, "Invalid proof")),
+					},
+				},
+			},
+			extendedListing: {
+				storeBatchSize: 1,
+				requestFilters: {
+					campus: {
+						parse: (values) => ok([...values]),
+						matches: (record, value) =>
+							Array.isArray(value) && value.includes(record.additionalClaims?.campus),
+					},
+				},
+			},
+		});
+		for (const [index, campus] of ["south", "north", "south", "north"].entries())
+			await authority.registerSubordinate({
+				entityId: entityId(`https://member${index}.example`),
+				jwks: { keys: [original.keys.public] },
+				additionalClaims: { campus },
+			});
+		server.addEntity(id, createAuthorityApp(authority, id));
+		try {
+			for (const authenticated of [false, true]) {
+				const ids: string[] = [];
+				let from: string | undefined;
+				for (let page = 0; page < 5; page++) {
+					const result = await fetchExtendedSubordinatesList(
+						`${id}/extended`,
+						{ claims: ["campus"], limit: 1, ...(from ? { from } : {}) },
+						{
+							additionalParameters: { campus: "north" },
+							...(authenticated
+								? {
+										authentication: {
+											method: "example",
+											audience: id,
+											prepare: () => ({ parameters: { proof: "valid" } }),
+										},
+									}
+								: {}),
+						},
+					);
+					expect(result.ok).toBe(true);
+					if (!result.ok) throw Error(result.error.description);
+					for (const row of result.value.immediate_subordinate_entities) {
+						expect(row.campus).toBe("north");
+						ids.push(row.id);
+					}
+					from = result.value.next;
+					if (!from) break;
+				}
+				expect(ids).toEqual(["https://member1.example", "https://member3.example"]);
+			}
+		} finally {
+			server.addEntity(id, createAuthorityApp(original.server, id));
+		}
+	});
 
 	it("serves large signed listings within the default client byte budget", async () => {
 		const { server, entities } = getTestBed();

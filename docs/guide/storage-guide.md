@@ -50,6 +50,7 @@ Replay and cache are excluded from `StorageTransaction`: replay claiming is inde
 - A page may contain no matching records and still provide `nextCursor`. Continue scanning from that position; absence of `nextCursor` means exhaustion. Continuations must advance beyond the incoming cursor and all records in the returned page. Calls without pagination options return all matches.
 - Trust-mark filters include `validAt` and are evaluated by the adapter, allowing one database query instead of endpoint-level N+1 checks.
 - `createdAt` and `updatedAt` are NumericDates.
+- Extended Listing custom request filters run in the handler after these standard storage filters. Keep returning ordered pages and valid continuations; do not apply the custom predicates in the adapter. The handler counts matching records toward its response limit and preserves a continuation when its scan budget is exhausted. No adapter migration is needed.
 
 Suggested relational columns: `authority_id TEXT`, `entity_id TEXT`, `PRIMARY KEY (authority_id, entity_id)`, `jwks JSONB`, `metadata JSONB`, `metadata_policy JSONB`, `constraints JSONB`, `entity_types TEXT[]`, `is_intermediate BOOLEAN`, `source_endpoint TEXT`, `created_at DOUBLE PRECISION`, `updated_at DOUBLE PRECISION`.
 

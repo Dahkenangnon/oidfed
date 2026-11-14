@@ -2152,6 +2152,7 @@ export default (QUnit: QUnit) => {
 	});
 
 	module("authority / extended listing extensions", () => {
+		const c = CorePublic;
 		async function fixture(extendedListing?: ExtendedListingConfig) {
 			const f = await createTestContext();
 			const config = {
@@ -2195,8 +2196,13 @@ export default (QUnit: QUnit) => {
 				t.equal(((await response.json()) as { error: string }).error, "server_error");
 			}
 		});
-		test("local and HTTP calls accept extension entity types and shared parameters", async (t) => {
-			const f = await fixture();
+		test("local and HTTP calls accept extension entity types and repeated custom filters", async (t) => {
+			const campus: AuthorityPublic.ExtendedListingRequestFilter = {
+				parse: (values) => c.ok([...values]),
+				matches: (record, value) =>
+					Array.isArray(value) && value.includes(record.additionalClaims?.campus),
+			};
+			const f = await fixture({ requestFilters: { campus } });
 			for (const [n, location] of ["north", "south"].entries())
 				await f.authority.registerSubordinate({
 					entityId: entityId(`https://member${n}.example`),
@@ -2204,14 +2210,13 @@ export default (QUnit: QUnit) => {
 					entityTypes: ["custom_protocol"],
 					additionalClaims: { campus: location },
 				});
-			const params = { entityType: "custom_protocol", claims: [] };
+			const params = { entityType: "custom_protocol", claims: ["campus"] };
 			const options = { additionalParameters: { campus: ["north", "west"] } };
 			const local = await f.authority.listSubordinatesExtended(params, options);
 			t.true(local.ok);
 			if (local.ok)
 				t.deepEqual(local.value.immediate_subordinate_entities, [
-					{ id: "https://member0.example" },
-					{ id: "https://member1.example" },
+					{ id: "https://member0.example", campus: "north" },
 				]);
 			const remote = await fetchExtendedSubordinatesList(`${ENTITY_ID}/extended`, params, {
 				...options,
@@ -2302,6 +2307,252 @@ export default (QUnit: QUnit) => {
 				[0, 1, 2].map((i) => `https://member${i}.example`),
 			);
 		});
+		test("custom filters preserve sparse inclusive pagination and the scan budget", async (t) => {
+			for (const cap of [1, 2, 16]) {
+				let parsed = 0;
+				const f = await fixture({
+					defaultPageSize: 1,
+					storeBatchSize: 2,
+					maxStorePagesPerRequest: cap,
+					requestFilters: {
+						campus: {
+							parse: (values) => {
+								parsed++;
+								return c.ok([...values]);
+							},
+							matches: (r, v) => Array.isArray(v) && v.includes(r.additionalClaims?.campus),
+						},
+						enrolled: {
+							parse: () => c.ok(true),
+							matches: (r) => r.additionalClaims?.enrolled === true,
+						},
+					},
+				});
+				for (let i = 0; i < 8; i++)
+					await f.authority.registerSubordinate({
+						entityId: entityId(`https://member${i}.example`),
+						jwks: { keys: [f.publicKey] },
+						additionalClaims: { campus: i % 2 ? "north" : "south", enrolled: i > 2 },
+					});
+				let calls = 0;
+				const original = f.subordinates.list.bind(f.subordinates);
+				f.subordinates.list = async (...args) => {
+					calls++;
+					return original(...args);
+				};
+				const ids: string[] = [];
+				let from: string | undefined;
+				let pages = 0;
+				for (; pages < 10; ) {
+					const before = calls;
+					const result = await f.authority.listSubordinatesExtended(
+						{ from, claims: [] },
+						{ additionalParameters: { campus: "north", enrolled: "yes" } },
+					);
+					pages++;
+					t.true(result.ok);
+					if (!result.ok) break;
+					t.true(calls - before <= cap);
+					t.true(result.value.immediate_subordinate_entities.length <= 1);
+					ids.push(...result.value.immediate_subordinate_entities.map((r) => r.id));
+					t.notEqual(result.value.next, from === undefined ? "not-a-cursor" : from);
+					from = result.value.next;
+					if (!from) break;
+				}
+				t.deepEqual(
+					ids,
+					[3, 5, 7].map((i) => `https://member${i}.example`),
+				);
+				t.equal(parsed, pages, "parse once per request, including empty scan pages");
+			}
+		});
+		test("filters validate empty requests, contain callback failures and protect snapshots", async (t) => {
+			const f = await fixture();
+			let reads = 0;
+			const list = f.subordinates.list.bind(f.subordinates);
+			f.subordinates.list = async (...args) => {
+				reads++;
+				return list(...args);
+			};
+			const request = () => new Request(`${ENTITY_ID}/extended?campus=north&claims=`);
+			const invalid = createExtendedListHandler(f.ctx, {
+				requestFilters: {
+					campus: {
+						parse: () =>
+							c.err(c.federationError(FederationErrorCode.InvalidRequest, "Unknown campus")),
+						matches: () => true,
+					},
+				},
+			});
+			t.equal((await invalid(request())).status, 400);
+			t.equal(reads, 0);
+			await f.authority.registerSubordinate({
+				entityId: LEAF_ID,
+				jwks: { keys: [f.publicKey] },
+				additionalClaims: { campus: "north" },
+			});
+			for (const parse of [
+				() => {
+					throw Error("secret");
+				},
+				async () => {
+					throw Error("secret");
+				},
+				() => ({ ok: true }),
+			]) {
+				const handler = createExtendedListHandler(f.ctx, {
+					requestFilters: {
+						campus: {
+							parse: parse as AuthorityPublic.ExtendedListingRequestFilter["parse"],
+							matches: () => true,
+						},
+					},
+				});
+				const response = await handler(request());
+				t.equal(response.status, 500);
+				t.false((await response.text()).includes("secret"));
+			}
+			const external = { choices: ["north"] };
+			const config: ExtendedListingConfig = {
+				requestFilters: {
+					campus: {
+						parse: () => c.ok(external),
+						matches: (record, value) => {
+							external.choices.push("south");
+							t.true(Object.isFrozen(record.jwks.keys));
+							t.true(Object.isFrozen((value as typeof external).choices));
+							t.deepEqual(value, { choices: ["north"] });
+							return true;
+						},
+					},
+				},
+			};
+			const captured = createExtendedListHandler(f.ctx, config);
+			config.requestFilters = {
+				campus: {
+					parse: () => {
+						throw Error("changed");
+					},
+					matches: () => false,
+				},
+			};
+			t.equal((await captured(request())).status, 200);
+			for (const matches of [
+				() => {
+					throw Error("secret");
+				},
+				async () => {
+					throw Error("secret");
+				},
+				() => "yes",
+			]) {
+				const handler = createExtendedListHandler(f.ctx, {
+					requestFilters: {
+						campus: {
+							parse: () => c.ok(null),
+							matches: matches as AuthorityPublic.ExtendedListingRequestFilter["matches"],
+						},
+					},
+				});
+				t.equal((await handler(request())).status, 500);
+			}
+		});
+		test("filter registries reject selector and credential collisions, but allow own JSON names", async (t) => {
+			const f = await fixture();
+			const definition: AuthorityPublic.ExtendedListingRequestFilter = {
+				parse: () => c.ok(true),
+				matches: () => true,
+			};
+			const ctx = {
+				...f.ctx,
+				endpointAuthentication: {
+					methods: {
+						custom: { parameters: ["proof"], authenticate: () => c.ok({ entityId: LEAF_ID }) },
+					},
+				},
+			};
+			for (const name of [
+				"limit",
+				"claims",
+				"from",
+				"entity_type",
+				"client_id",
+				"client_secret",
+				"proof",
+			])
+				t.throws(
+					() => createExtendedListHandler(ctx, { requestFilters: { [name]: definition } }),
+					/cannot replace/,
+				);
+			for (const name of ["__proto__", "constructor", "toString"]) {
+				let calls = 0;
+				const handler = createExtendedListHandler(ctx, {
+					requestFilters: Object.fromEntries([
+						[
+							name,
+							{
+								...definition,
+								parse: () => {
+									calls++;
+									return c.ok(true);
+								},
+							},
+						],
+					]),
+				});
+				t.equal(
+					(await handler(new Request(`${ENTITY_ID}/extended?${name}=yes&claims=`))).status,
+					200,
+				);
+				t.equal(calls, 1);
+			}
+			t.equal(
+				(
+					await createExtendedListHandler(ctx)(
+						new Request(`${ENTITY_ID}/extended?toString=ignored&claims=`),
+					)
+				).status,
+				200,
+			);
+		});
+		test("one request deadline and abort release callers waiting for filter callbacks", async (t) => {
+			const f = await fixture();
+			for (const phase of ["parse", "matches"] as const) {
+				await f.storage.subordinates.remove(LEAF_ID).catch(() => {});
+				await f.authority.registerSubordinate({ entityId: LEAF_ID, jwks: { keys: [f.publicKey] } });
+				for (const timeout of [false, true]) {
+					let entered!: () => void;
+					const started = new Promise<void>((r) => {
+						entered = r;
+					});
+					const never = () => {
+						entered();
+						return new Promise<never>(() => {});
+					};
+					const handler = createExtendedListHandler(
+						{ ...f.ctx, options: { httpTimeoutMs: timeout ? 20 : 1000 } },
+						{
+							requestFilters: {
+								campus: {
+									parse: phase === "parse" ? never : () => c.ok(true),
+									matches: phase === "matches" ? never : () => true,
+								},
+							},
+						},
+					);
+					const controller = new AbortController();
+					const result = handler(
+						new Request(`${ENTITY_ID}/extended?campus=north&claims=`, {
+							signal: controller.signal,
+						}),
+					);
+					await started;
+					if (!timeout) controller.abort();
+					t.equal((await result).status, 500);
+				}
+			}
+		});
+
 		test("local cancellation releases a pending cursor lookup without a custom filter", async (t) => {
 			const f = await fixture();
 			let entered!: () => void;
@@ -2331,6 +2582,69 @@ export default (QUnit: QUnit) => {
 				{ signal: controller.signal },
 			);
 			t.false(preAborted.ok);
+		});
+		test("custom filters use the shared authenticated POST and fixed-query rules", async (t) => {
+			const f = await fixture();
+			let authCalls = 0;
+			let parseCalls = 0;
+			const authority = new TrustAnchor({
+				...f.config,
+				endpointAuthentication: {
+					methods: {
+						custom: {
+							parameters: ["proof"],
+							authenticate: (input) => {
+								authCalls++;
+								return input.parameters.proof?.[0] === "valid"
+									? c.ok({ entityId: LEAF_ID })
+									: c.err({
+											code: FederationErrorCode.InvalidClient,
+											description: "Invalid proof",
+										});
+							},
+						},
+					},
+				},
+				metadata: {
+					federation_entity: {
+						...f.config.metadata.federation_entity,
+						federation_extended_list_endpoint: `${ENTITY_ID}/extended?campus=north`,
+						federation_extended_list_endpoint_auth_methods: ["none", "custom"],
+					},
+				},
+				extendedListing: {
+					requestFilters: {
+						campus: {
+							parse: (v) => {
+								parseCalls++;
+								return c.ok([...v]);
+							},
+							matches: () => true,
+						},
+					},
+				},
+			});
+			const get = await authority.handleRequest(
+				new Request(`${ENTITY_ID}/extended?campus=north&claims=`),
+			);
+			t.equal(get.status, 200);
+			const post = await authority.handleRequest(
+				new Request(`${ENTITY_ID}/extended?campus=north`, {
+					method: "POST",
+					body: new URLSearchParams({ campus: "north", proof: "valid", claims: "" }),
+				}),
+			);
+			t.equal(post.status, 200);
+			t.equal(authCalls, 1);
+			t.equal(parseCalls, 2);
+			const conflict = await authority.handleRequest(
+				new Request(`${ENTITY_ID}/extended?campus=north`, {
+					method: "POST",
+					body: new URLSearchParams({ campus: "south", proof: "valid" }),
+				}),
+			);
+			t.equal(conflict.status, 400);
+			t.equal(parseCalls, 2);
 		});
 	});
 

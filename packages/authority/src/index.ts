@@ -1,3 +1,8 @@
+export type { ExtendedListingConfig } from "./endpoints/extended-list.js";
+export type {
+	ExtendedListingFilterContext,
+	ExtendedListingRequestFilter,
+} from "./endpoints/extended-list-filters.js";
 export {
 	InvalidAuthorityConfig,
 	InvalidMetadata,

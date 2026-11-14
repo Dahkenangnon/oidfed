@@ -311,6 +311,63 @@ A subordinate's `additionalClaims` can be requested directly, without downloadin
 
 Only selected fields are projected. Missing claims are omitted, and `claims: []` still gives identifier-only entries. Standard listing fields keep their meanings: an extension named `id`, `registered`, `updated`, or `subordinate_statement` cannot replace the listing's own field. Such extensions remain available in the signed statement where permitted. All projected values count toward the response byte limit. This uses the extension allowance in [Extended Listing §3.2–3.3](https://openid.net/specs/openid-federation-extended-listing-1_0-03.html#section-3.2); it does not introduce another metadata store.
 
+### Filter by your federation's own fields
+
+**Campus Alliance** can let callers ask for registrations from a particular campus. Configure the filter on `TrustAnchor` or `Intermediate` through `extendedListing.requestFilters`:
+
+```ts
+import type { ExtendedListingConfig } from "@oidfed/authority";
+import { err, federationError, FederationErrorCode, fetchExtendedSubordinatesList, ok } from "@oidfed/core";
+
+const extendedListing: ExtendedListingConfig = {
+  requestFilters: {
+    campus: {
+      parse(values) {
+        if (!values.length || values.some(value => !["north", "south"].includes(value))) {
+          return err(federationError(FederationErrorCode.InvalidRequest, "Unknown campus"));
+        }
+        return ok([...values]);
+      },
+      matches(record, campuses) {
+        return Array.isArray(campuses) && campuses.includes(record.additionalClaims?.campus);
+      },
+    },
+  },
+};
+// Pass extendedListing alongside the authority's other construction options.
+```
+
+The library parses each present registered parameter once, even when there are no registrations. The parser returns a `Result`; an error becomes HTTP 400 `invalid_request`. The parsed value must be JSON data, or `undefined` for a flag. A predicate returns a boolean. Both callbacks may be asynchronous and receive a second/third `context` argument containing an `AbortSignal`.
+
+Filters see frozen copies of records and parsed values. Honor the signal when doing asynchronous work. One `options.httpTimeoutMs` deadline covers the whole custom-filter operation; cancellation releases the caller even when a callback does not settle. Exceptions, rejected promises, and malformed callback results produce generic `server_error` responses.
+
+Different custom filters are combined with AND, alongside the standard filters. Each parser decides how repeated values of its own parameter work; the example treats campuses as alternatives. This is an oidfed extension convention, not a new specification rule. Unknown, unregistered parameters remain ignored. Filter names cannot replace standard protocol selectors or registered authentication credentials.
+
+For an HTTP client, use the existing `additionalParameters` option:
+
+```ts
+const page = await fetchExtendedSubordinatesList(endpoint, {
+  entityType: "custom_academic_service",
+  claims: ["campus"],
+  limit: 25,
+}, {
+  additionalParameters: { campus: ["north", "south"] },
+});
+if (!page.ok) throw new Error(page.error.description);
+```
+
+For a local call, use the optional second argument:
+
+```ts
+const page = await authority.listSubordinatesExtended(
+  { claims: ["campus"], limit: 25 },
+  { additionalParameters: { campus: "north" }, signal },
+);
+if (!page.ok) throw new Error(page.error.description);
+```
+
+Keep the same filters when following `next`. Custom predicates run before counting matches toward the page limit, but scanning remains bounded by `maxStorePagesPerRequest`. A sparse page can be empty and still have `next`; continue until `next` is absent. Storage adapters need no new methods, and still apply the standard filters. For large datasets, account for the cost of examining records that custom predicates exclude.
+
 An unknown `from` value returns `page_not_found`. A failed storage lookup instead returns `server_error`, including through the local Result API; a database outage is not evidence that a cursor is unknown.
 
 ## Subordinate event history

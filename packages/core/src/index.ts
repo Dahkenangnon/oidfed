@@ -5,7 +5,7 @@ export {
 	fetchAttestationChallenge,
 	readAttestationChallenge,
 } from "./attestation-challenge.js";
-export { isJsonData, setOwn } from "./callbacks.js";
+export { freezeSnapshot, isJsonData, setOwn } from "./callbacks.js";
 export {
 	type AuthenticateClientAttestationOptions,
 	authenticateClientAttestation,
@@ -113,6 +113,7 @@ export {
 	type EndpointAuthenticationInput,
 	type EndpointAuthenticationMethod,
 	endpointAuthenticationErrorResponse,
+	endpointCredentialParameterNames,
 	validateEndpointAuthentication,
 } from "./endpoint-authentication.js";
 export type {
