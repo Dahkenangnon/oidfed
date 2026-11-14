@@ -124,6 +124,8 @@ const provider = await WalletProviderRole.discover(providerId, trustAnchors, {
 
 When set, `maxTotalFetches` must be a positive safe integer, including for offline operations; the network guard still prevents requests when `offline: true`.
 
+Instance signing methods use an attached chain from the merged host, role, and per-call options. Anchor precedence is per-call `trustAnchors`, the role's dedicated `trustAnchors`, `role.options.trustAnchors`, then the host's anchors. You do not need to repeat a role-configured chain in each signing call.
+
 ## Sign and verify Wallet Attestations
 
 ```ts

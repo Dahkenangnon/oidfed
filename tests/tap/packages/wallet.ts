@@ -19,6 +19,7 @@ import {
 	signTrustMark,
 	validateTrustChain,
 } from "../../../packages/core/src/index.js";
+import { Leaf } from "../../../packages/leaf/src/index.js";
 import {
 	type AttestationVerificationOptions,
 	type AuthorizationRequestCreationOptions,
@@ -284,6 +285,77 @@ export default (QUnit: QUnit) => {
 					).ok,
 					expected,
 				);
+			}
+		});
+		test("instance signers inherit role chains and role or host anchors", async (t) => {
+			const f = await walletFederation();
+			for (const source of ["role", "options", "host"] as const) {
+				for (const kind of ["provider", "verifier"] as const) {
+					const options = {
+						...f.options,
+						trustChain: f.chains.get(f.ids[kind]),
+						offline: true,
+						...(source === "options" ? { trustAnchors: f.anchors } : {}),
+					};
+					const config = {
+						metadata:
+							f.metadata[kind][
+								kind === "provider" ? "openid_wallet_provider" : "openid_credential_verifier"
+							],
+						options,
+						...(source === "role" ? { trustAnchors: f.anchors } : {}),
+					};
+					const role =
+						kind === "provider"
+							? new WalletProviderRole(config)
+							: new CredentialVerifierRole(config);
+					new Leaf({
+						entityId: f.ids[kind],
+						authorityHints: [f.ids.anchor],
+						metadata: { federation_entity: {} },
+						roles: [role],
+						...(source === "host" ? { trustAnchors: f.anchors } : {}),
+						keyProvider: new MemoryFederationKeyProvider({
+							signer: new JwkSigner(f.keys[kind].privateKey),
+							publicJwk: f.keys[kind].publicKey,
+						}),
+					});
+					const result =
+						role instanceof WalletProviderRole
+							? await role.createWalletAttestation(
+									{
+										subject: "instance",
+										expiresAt: 4000,
+										confirmationKey: f.protocol.issuer.publicKey,
+									},
+									new JwkSigner(f.protocol.provider.privateKey),
+								)
+							: await role.createAuthorizationRequest(
+									f.requestPayload,
+									new JwkSigner(f.protocol.verifier.privateKey),
+								);
+					t.true(result.ok, `${source}/${kind}: ${JSON.stringify(result)}`);
+					t.throws(
+						() =>
+							role instanceof WalletProviderRole
+								? role.createWalletAttestation(
+										{
+											subject: "instance",
+											expiresAt: 4000,
+											confirmationKey: f.protocol.issuer.publicKey,
+										},
+										new JwkSigner(f.protocol.provider.privateKey),
+										{ trustAnchors: new Map() },
+									)
+								: role.createAuthorizationRequest(
+										f.requestPayload,
+										new JwkSigner(f.protocol.verifier.privateKey),
+										{ trustAnchors: new Map() },
+									),
+						/Pinned trust anchors/,
+						"explicit empty anchors cannot fall back",
+					);
+				}
 			}
 		});
 	});

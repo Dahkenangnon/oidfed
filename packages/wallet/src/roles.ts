@@ -142,7 +142,11 @@ abstract class WalletRole implements EntityRole {
 		return this.context;
 	}
 	protected anchors(options?: WalletTrustOptions): TrustAnchorSet {
-		const anchors = options?.trustAnchors ?? this.config.trustAnchors ?? this.context?.trustAnchors;
+		const anchors =
+			options?.trustAnchors ??
+			this.config.trustAnchors ??
+			this.config.options?.trustAnchors ??
+			this.context?.trustAnchors;
 		if (!anchors?.size) throw new Error("Pinned trust anchors are required");
 		return anchors;
 	}
@@ -302,9 +306,10 @@ export class WalletProviderRole extends WalletRole {
 		signer: JwtSigner,
 		options: WalletTrustOptions = {},
 	) {
+		const effective = this.options(options);
 		return WalletProviderRole.createWalletAttestation(this.identity().entityId, params, signer, {
-			...this.options(options),
-			...(options.trustChain ? { trustAnchors: this.anchors(options) } : {}),
+			...effective,
+			...(effective.trustChain ? { trustAnchors: this.anchors(options) } : {}),
 		});
 	}
 }
@@ -546,13 +551,14 @@ export class CredentialVerifierRole extends AttestationConsumer {
 		signer: JwtSigner,
 		options: AuthorizationRequestCreationOptions = {},
 	) {
+		const effective = this.options(options);
 		return CredentialVerifierRole.createAuthorizationRequest(
 			this.identity().entityId,
 			request,
 			signer,
 			{
-				...this.options(options),
-				...(options.trustChain ? { trustAnchors: this.anchors(options) } : {}),
+				...effective,
+				...(effective.trustChain ? { trustAnchors: this.anchors(options) } : {}),
 			},
 		);
 	}
