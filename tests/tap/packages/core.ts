@@ -2807,6 +2807,48 @@ export default (QUnit: QUnit) => {
 		});
 	});
 	module("core / Trust Mark evidence workflows", () => {
+		test("issuer evidence ignores foreign registration context without weakening issuer statements", async (t) => {
+			const f = await trustChainPaths();
+			const type = "https://marks.example/approved";
+			const ec = await f.sign("anchor", "anchor", {
+				trust_mark_issuers: { [type]: [f.ids.anchor] },
+			});
+			let calls = 0;
+			const options = {
+				...f.options,
+				explicitRegistrationAudience: f.ids.a,
+				explicitRegistrationRequest: { jwt: "foreign-request", audience: f.ids.a },
+				entityConfigurationJwt: "foreign-configuration",
+				httpClient: (async (input) => {
+					calls++;
+					t.equal(String(input), `${f.ids.anchor}/.well-known/openid-federation`);
+					return new Response(ec, { headers: { "content-type": MediaType.EntityStatement } });
+				}) satisfies HttpClient,
+			};
+			const proof = await CorePublic.establishTrustMarkIssuerTrust({
+				issuer: f.ids.anchor,
+				trustMarkType: type,
+				trustAnchors: f.anchors,
+				options,
+			});
+			t.true(proof.ok, JSON.stringify(proof));
+			t.equal(calls, 1);
+			t.equal(options.entityConfigurationJwt, "foreign-configuration");
+			t.equal(options.explicitRegistrationRequest.jwt, "foreign-request");
+			t.equal(options.explicitRegistrationAudience, f.ids.a);
+			const invalidEc = await f.sign("anchor", "anchor", {
+				aud: f.ids.a,
+				trust_mark_issuers: { [type]: [f.ids.anchor] },
+			});
+			const invalid = await CorePublic.establishTrustMarkIssuerTrust({
+				issuer: f.ids.anchor,
+				trustMarkType: type,
+				trustAnchors: f.anchors,
+				trustChain: [invalidEc],
+				options,
+			});
+			t.false(invalid.ok, "issuer ECs do not inherit a registration audience exception");
+		});
 		const issuer = "https://accreditor.example";
 		const subject = "https://member.example";
 		const trustMarkType = "https://accreditor.example/type";

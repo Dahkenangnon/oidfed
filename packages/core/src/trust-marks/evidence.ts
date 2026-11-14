@@ -82,8 +82,19 @@ export async function establishTrustMarkIssuerTrust(
 	try {
 		entityId(input.issuer);
 		if (!input.trustMarkType) return failure("A Trust Mark type is required");
+		// A subject's registration request is not evidence about its accreditation issuer.
+		const {
+			explicitRegistrationAudience: _audience,
+			explicitRegistrationRequest: _request,
+			entityConfigurationJwt: _configuration,
+			...issuerOptions
+		} = (input.options ?? {}) as FederationOptions & {
+			explicitRegistrationAudience?: unknown;
+			explicitRegistrationRequest?: unknown;
+			entityConfigurationJwt?: unknown;
+		};
 		const options = trustMarkOperation({
-			...input.options,
+			...issuerOptions,
 			...(input.entityConfigurations ? { entityConfigurations: input.entityConfigurations } : {}),
 		});
 		if (options.signal?.aborted) return failure("Operation cancelled");
