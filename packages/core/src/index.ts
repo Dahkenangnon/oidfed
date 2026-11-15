@@ -266,7 +266,7 @@ export {
 	type FederationResolverIntegration,
 	FederationResolverService,
 } from "./resolver/service.js";
-export { validateRoleMetadata } from "./roles.js";
+export { composeEntityMetadata, validateRoleMetadata } from "./roles.js";
 // Schemas
 export * from "./schemas/index.js";
 // Statement builders

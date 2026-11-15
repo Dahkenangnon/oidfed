@@ -3,6 +3,7 @@ import {
 	type AttachTrustMarkOptions,
 	assessEntity,
 	buildEntityConfigurationPayload,
+	composeEntityMetadata,
 	createEndpointAuthenticatedHandler,
 	DEFAULT_ENTITY_STATEMENT_TTL_SECONDS,
 	decodeEntityStatement,
@@ -60,14 +61,6 @@ export interface LeafConfig extends EntityStatementExtensions {
 	trustAnchorHints?: readonly (EntityId | string)[];
 	entityConfigurationTtlSeconds?: number;
 	trustAnchors?: TrustAnchorSet;
-}
-
-function cloneMetadata(metadata: EntityStatementMetadata): Record<string, Record<string, unknown>> {
-	const cloned: Record<string, Record<string, unknown>> = {};
-	for (const [entityType, entityMetadata] of Object.entries(metadata)) {
-		cloned[entityType] = { ...entityMetadata };
-	}
-	return cloned;
 }
 
 function wellKnownPathForEntityId(value: EntityId): string {
@@ -185,7 +178,7 @@ export class Leaf {
 		}
 
 		// Initialize roles & merge metadata/routes
-		const metadata = cloneMetadata(config.metadata);
+		let metadata = composeEntityMetadata(config.metadata);
 		const context: EntityContext = {
 			entityId: this.entityId,
 			keyProvider: config.keyProvider,
@@ -200,10 +193,7 @@ export class Leaf {
 				if (role.initialize) {
 					role.initialize(context);
 				}
-				metadata[role.type] = {
-					...(metadata[role.type] ?? {}),
-					...role.metadata,
-				};
+				metadata = composeEntityMetadata(metadata, { [role.type]: role.metadata });
 				if (role.routes) {
 					for (const [path, handler] of role.routes.entries()) {
 						const resolvedPath = path.startsWith("http") ? new URL(path).pathname : path;
@@ -219,6 +209,7 @@ export class Leaf {
 		}
 		validateRoleMetadata(config.roles, metadata, context);
 		this.metadata = metadata;
+		this.config.metadata = metadata;
 		const collectionEndpoint = metadata.federation_entity?.federation_collection_endpoint;
 		if (collectionEndpoint !== undefined && typeof collectionEndpoint !== "string")
 			throw new Error("Collection endpoint must be an HTTPS URL");

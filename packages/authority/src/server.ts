@@ -31,6 +31,7 @@ import {
 	assessEntity,
 	buildExtendedListRequestParameters,
 	COLLECTION_UNORDERED_PARAMETERS,
+	composeEntityMetadata,
 	decodeEntityStatement,
 	discoverEntity,
 	discoverEntityFromChain,
@@ -252,6 +253,7 @@ export function createAuthorityServer(config: AuthorityConfig): AuthorityServer 
 	return createAuthorityServerWithIdentity({
 		...config,
 		entityId: normalizeAuthorityEntityId(config.entityId),
+		metadata: composeEntityMetadata(config.metadata) as AuthorityConfig["metadata"],
 	});
 }
 
@@ -1016,6 +1018,39 @@ function createStorageBackedClientKeyProvider(storage: StorageAdapter): Authorit
 	};
 }
 
+/** Compose owned metadata after each role initializes its generated fields. */
+function prepareAuthorityHost(
+	config: AuthorityConfig,
+	routes: Map<string, (request: Request) => Promise<Response>>,
+	isTrustAnchor: boolean,
+): { config: AuthorityConfig & { entityId: EntityId }; context: EntityContext } {
+	if (!isTrustAnchor && !config.authorityHints?.length)
+		throw new Error("Intermediate MUST have at least one authorityHint");
+	assertTrustAnchorHintsConfig(config, isTrustAnchor);
+	const normalized: AuthorityConfig & { entityId: EntityId } = {
+		...config,
+		entityId: normalizeAuthorityEntityId(config.entityId),
+		metadata: composeEntityMetadata(config.metadata) as AuthorityConfig["metadata"],
+	};
+	const context: EntityContext = {
+		entityId: normalized.entityId,
+		keyProvider: normalized.keyProvider,
+		options: normalized.options,
+		...(normalized.authorityHints
+			? { authorityHints: normalized.authorityHints as readonly EntityId[] }
+			: {}),
+		...(normalized.trustAnchors ? { trustAnchors: normalized.trustAnchors } : {}),
+	};
+	for (const role of normalized.roles ?? []) {
+		role.initialize?.(context);
+		normalized.metadata = composeEntityMetadata(normalized.metadata, {
+			[role.type]: role.metadata,
+		}) as AuthorityConfig["metadata"];
+		addRoleRoutes(routes, role, normalized.entityId);
+	}
+	return { config: normalized, context };
+}
+
 export class TrustAnchor {
 	static assessEntity = assessEntity;
 	static discoverEntity = discoverEntity;
@@ -1064,39 +1099,10 @@ export class TrustAnchor {
 	private readonly server: AuthorityServer;
 
 	constructor(config: AuthorityConfig) {
-		assertTrustAnchorHintsConfig(config, true);
-		const normalizedConfig: AuthorityConfig & { entityId: EntityId } = {
-			...config,
-			entityId: normalizeAuthorityEntityId(config.entityId),
-		};
-		this.entityId = normalizedConfig.entityId as EntityId;
-
-		const context: EntityContext = {
-			entityId: this.entityId,
-			keyProvider: normalizedConfig.keyProvider,
-			...(normalizedConfig.authorityHints
-				? { authorityHints: normalizedConfig.authorityHints as readonly EntityId[] }
-				: {}),
-			options: normalizedConfig.options,
-			...(normalizedConfig.trustAnchors ? { trustAnchors: normalizedConfig.trustAnchors } : {}),
-		};
-
-		this.trustContext = context;
-		if (normalizedConfig.roles) {
-			for (const role of normalizedConfig.roles) {
-				if (role.initialize) {
-					role.initialize(context);
-				}
-				const metadataRecord = normalizedConfig.metadata as Record<string, unknown>;
-				metadataRecord[role.type] = {
-					...(metadataRecord[role.type] as Record<string, unknown>),
-					...role.metadata,
-				};
-				addRoleRoutes(this.routes, role, this.entityId);
-			}
-		}
-
-		this.server = createAuthorityServerWithIdentity(normalizedConfig, this.routes, true);
+		const prepared = prepareAuthorityHost(config, this.routes, true);
+		this.entityId = prepared.config.entityId;
+		this.trustContext = prepared.context;
+		this.server = createAuthorityServerWithIdentity(prepared.config, this.routes, true);
 	}
 
 	async getEntityConfiguration(): Promise<string> {
@@ -1265,42 +1271,10 @@ export class Intermediate {
 	private readonly server: AuthorityServer;
 
 	constructor(config: AuthorityConfig) {
-		if (config.authorityHints === undefined || config.authorityHints.length === 0) {
-			throw new Error("Intermediate MUST have at least one authorityHint");
-		}
-		assertTrustAnchorHintsConfig(config, false);
-		const normalizedConfig: AuthorityConfig & { entityId: EntityId } = {
-			...config,
-			entityId: normalizeAuthorityEntityId(config.entityId),
-		};
-		this.entityId = normalizedConfig.entityId as EntityId;
-
-		const context: EntityContext = {
-			entityId: this.entityId,
-			keyProvider: normalizedConfig.keyProvider,
-			options: normalizedConfig.options,
-			...(normalizedConfig.trustAnchors ? { trustAnchors: normalizedConfig.trustAnchors } : {}),
-			...(normalizedConfig.authorityHints
-				? { authorityHints: normalizedConfig.authorityHints as readonly EntityId[] }
-				: {}),
-		};
-
-		this.trustContext = context;
-		if (normalizedConfig.roles) {
-			for (const role of normalizedConfig.roles) {
-				if (role.initialize) {
-					role.initialize(context);
-				}
-				const metadataRecord = normalizedConfig.metadata as Record<string, unknown>;
-				metadataRecord[role.type] = {
-					...(metadataRecord[role.type] as Record<string, unknown>),
-					...role.metadata,
-				};
-				addRoleRoutes(this.routes, role, this.entityId);
-			}
-		}
-
-		this.server = createAuthorityServerWithIdentity(normalizedConfig, this.routes);
+		const prepared = prepareAuthorityHost(config, this.routes, false);
+		this.entityId = prepared.config.entityId;
+		this.trustContext = prepared.context;
+		this.server = createAuthorityServerWithIdentity(prepared.config, this.routes, false);
 	}
 
 	async getEntityConfiguration(): Promise<string> {

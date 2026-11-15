@@ -159,7 +159,7 @@ abstract class ClientRole implements EntityRole {
 	private composedMetadata?: Record<string, unknown>;
 
 	constructor(public readonly config: OidcRelyingPartyRoleConfig) {
-		this.metadata = config.metadata ?? {};
+		this.metadata = structuredClone(config.metadata ?? {});
 	}
 
 	validateMetadata(metadata: Readonly<Record<string, unknown>>): void {
@@ -492,7 +492,7 @@ abstract class ProviderRole implements EntityRole {
 	private context?: EntityContext;
 
 	constructor(public readonly config: OidcProviderRoleConfig) {
-		this.metadata = config.metadata ?? {};
+		this.metadata = structuredClone(config.metadata ?? {});
 	}
 
 	validateMetadata(metadata: Readonly<Record<string, unknown>>): void {
@@ -748,9 +748,9 @@ export class OAuthResourceRole implements EntityRole {
 	public readonly routes = new Map<string, (request: Request) => Promise<Response>>();
 
 	constructor(public readonly config: OAuthResourceRoleConfig) {
-		this.metadata = config.metadata ?? {};
+		this.metadata = structuredClone(config.metadata ?? {});
 		if (config.jwks) {
-			this.metadata.jwks = config.jwks;
+			this.metadata.jwks = structuredClone(config.jwks);
 		}
 	}
 
