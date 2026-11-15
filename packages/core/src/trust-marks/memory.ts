@@ -157,9 +157,11 @@ export class MemoryTrustMarkStorage implements TrustMarkStorage {
 	}
 
 	async issue(record: TrustMarkRecord): Promise<void> {
+		// The caller may reuse its input while this write waits for a transaction.
+		const captured = detached(record);
 		await this.mutate((records) => {
 			if (!records) throw new Error("Trust mark storage is not enabled");
-			if (!records.has(record.jwt)) records.set(record.jwt, detached(record));
+			if (!records.has(captured.jwt)) records.set(captured.jwt, captured);
 		});
 	}
 

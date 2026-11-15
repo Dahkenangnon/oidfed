@@ -175,22 +175,25 @@ class MemorySubordinateStorage implements SubordinateStorage {
 	}
 
 	async add(record: SubordinateRecord): Promise<void> {
-		validateSubordinateRecord(record);
+		// Capture before waiting for a preceding transaction; validate what is stored.
+		const captured = detached(record);
+		validateSubordinateRecord(captured);
 		await this.mutate((state) => {
-			if (state.subordinates.has(record.entityId)) {
-				throw new Error(`Subordinate '${record.entityId}' already exists`);
+			if (state.subordinates.has(captured.entityId)) {
+				throw new Error(`Subordinate '${captured.entityId}' already exists`);
 			}
-			state.subordinates.set(record.entityId, detached(record));
+			state.subordinates.set(captured.entityId, captured);
 		});
 	}
 
 	async update(entityId: EntityId, updates: SubordinateRecordUpdate): Promise<void> {
+		const captured = detached(updates);
 		await this.mutate((state) => {
 			const existing = state.subordinates.get(entityId);
 			if (!existing) throw new Error(`Subordinate '${entityId}' not found`);
 			const updated = {
 				...existing,
-				...detached(updates),
+				...captured,
 				entityId: existing.entityId,
 				createdAt: existing.createdAt,
 				updatedAt: nowSeconds(this.clock),
