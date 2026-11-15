@@ -1,5 +1,6 @@
 import { decodeEntityStatement } from "../jose/verify.js";
 import type { EntityId } from "../types.js";
+import { isStoredTrustMarkEligible } from "./eligibility.js";
 import type {
 	TrustMarkListOptions,
 	TrustMarkListPage,
@@ -9,27 +10,6 @@ import type {
 } from "./storage.js";
 
 const detached = <T>(value: T): T => structuredClone(value);
-function isValidTrustMark(record: TrustMarkRecord, validAt: number): boolean {
-	const decoded = decodeEntityStatement(record.jwt);
-	if (decoded.ok && decoded.value.payload.delegation !== undefined) {
-		const delegation = decodeEntityStatement(decoded.value.payload.delegation as string);
-		if (
-			!delegation.ok ||
-			!Number.isFinite(delegation.value.payload.iat) ||
-			delegation.value.payload.iat > validAt ||
-			(delegation.value.payload.exp !== undefined && delegation.value.payload.exp <= validAt)
-		)
-			return false;
-	}
-	// Federation §7.3: select currently eligible marks before choosing the newest.
-	// Authority storage uses its exact clock, including same-second issuance.
-	return (
-		record.active &&
-		Number.isFinite(record.issuedAt) &&
-		record.issuedAt <= validAt &&
-		(record.expiresAt === undefined || record.expiresAt > validAt)
-	);
-}
 
 function compareStrings(left: string, right: string): number {
 	return left < right ? -1 : left > right ? 1 : 0;
@@ -93,7 +73,7 @@ export class MemoryTrustMarkStorage implements TrustMarkStorage {
 				(record) =>
 					record.trustMarkType === trustMarkType &&
 					record.subject === subject &&
-					isValidTrustMark(record, validAt),
+					isStoredTrustMarkEligible(record, validAt),
 			)
 			.sort((a, b) =>
 				a.issuedAt === b.issuedAt ? compareStrings(b.jwt, a.jwt) : b.issuedAt - a.issuedAt,
@@ -119,7 +99,7 @@ export class MemoryTrustMarkStorage implements TrustMarkStorage {
 				(record) =>
 					record.trustMarkType === trustMarkType &&
 					(options.subject === undefined || record.subject === options.subject) &&
-					isValidTrustMark(record, validAt),
+					isStoredTrustMarkEligible(record, validAt),
 			),
 		).sort((a, b) => compareStrings(a.subject, b.subject));
 		if (options.cursor !== undefined) {
@@ -136,7 +116,7 @@ export class MemoryTrustMarkStorage implements TrustMarkStorage {
 
 	async listValidForSubject(subject: EntityId, validAt: number): Promise<TrustMarkRecord[]> {
 		const records = [...this.records().values()].filter(
-			(record) => record.subject === subject && isValidTrustMark(record, validAt),
+			(record) => record.subject === subject && isStoredTrustMarkEligible(record, validAt),
 		);
 		const latest = new Map<string, TrustMarkRecord>();
 		for (const record of records) {
@@ -152,7 +132,7 @@ export class MemoryTrustMarkStorage implements TrustMarkStorage {
 
 	async hasAnyValid(subject: EntityId, validAt: number): Promise<boolean> {
 		return [...this.records().values()].some(
-			(record) => record.subject === subject && isValidTrustMark(record, validAt),
+			(record) => record.subject === subject && isStoredTrustMarkEligible(record, validAt),
 		);
 	}
 

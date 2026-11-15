@@ -13,10 +13,13 @@ import {
 	type EntityRole,
 	entityId,
 	generateSigningKey,
+	isStoredTrustMarkEligible,
 	JwkSigner,
 	MemoryFederationKeyProvider,
 	MemoryTrustMarkStore,
 	signTrustMark,
+	signTrustMarkDelegation,
+	type TrustMarkRecord,
 } from "../../../packages/core/src/index.js";
 import { Leaf } from "../../../packages/leaf/src/index.js";
 import {
@@ -344,6 +347,90 @@ export default (q: QUnit) => {
 						}),
 					/expiration/,
 				);
+			},
+		);
+
+		q.test(
+			"core and authority storage agree on delegation eligibility before newest selection",
+			async (t) => {
+				const { signer, publicJwk } = await signing();
+				const authority = new MemoryStorageAdapter({ trustMarks: true });
+				const standalone = new MemoryTrustMarkStore();
+				await authority.subordinates.add({
+					entityId: subject,
+					jwks: { keys: [publicJwk] },
+					createdAt: 1,
+					updatedAt: 1,
+				});
+				const delegation = await signTrustMarkDelegation({
+					issuer: anchor,
+					subject: anchor,
+					trustMarkType: "example",
+					signer,
+					clock: { now: () => 2 },
+					ttlSeconds: 8,
+				});
+				const oldJwt = await signTrustMark({
+					issuer: anchor,
+					subject,
+					trustMarkType: "example",
+					signer,
+					clock: { now: () => 1 },
+					ttlSeconds: 100,
+				});
+				const newJwt = await signTrustMark({
+					issuer: anchor,
+					subject,
+					trustMarkType: "example",
+					signer,
+					clock: { now: () => 2 },
+					ttlSeconds: 100,
+					delegation,
+				});
+				const old: TrustMarkRecord = {
+					jwt: oldJwt,
+					issuedAt: 1,
+					expiresAt: 101,
+					active: true,
+					subject,
+					trustMarkType: "example",
+				};
+				const replacement: TrustMarkRecord = { ...old, jwt: newJwt, issuedAt: 2, expiresAt: 102 };
+				for (const store of [standalone.trustMarks, authority.trustMarks!]) {
+					await store.issue(old);
+					await store.issue(replacement);
+				}
+				for (const [at, expected] of [
+					[0, false],
+					[1, true],
+					[2, true],
+					[10, true],
+					[101, false],
+				] as const) {
+					t.equal(await standalone.trustMarks.hasAnyValid(subject, at), expected);
+					t.equal(
+						(await authority.subordinates.list({ trustMarked: true, validAt: at })).items.length >
+							0,
+						expected,
+					);
+				}
+				t.false(
+					isStoredTrustMarkEligible(replacement, 1.5),
+					"future issuance/delegation is ineligible",
+				);
+				t.false(isStoredTrustMarkEligible({ ...old, active: false }, 10));
+				for (const store of [standalone.trustMarks, authority.trustMarks!]) {
+					t.equal(
+						(await store.getValid("example", subject, 2))?.jwt,
+						newJwt,
+						"eligible newer mark is selected",
+					);
+					t.equal(
+						(await store.getValid("example", subject, 10))?.jwt,
+						oldJwt,
+						"expired newer delegation does not hide the older mark",
+					);
+				}
 			},
 		);
 	});

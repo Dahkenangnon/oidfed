@@ -339,6 +339,7 @@ export {
 	shortestChain,
 	validateTrustChain,
 } from "./trust-chain/validate.js";
+export { isStoredTrustMarkEligible } from "./trust-marks/eligibility.js";
 export {
 	type EstablishTrustMarkIssuerOptions,
 	establishTrustMarkIssuerTrust,

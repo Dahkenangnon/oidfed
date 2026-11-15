@@ -1,8 +1,8 @@
 import {
 	type Clock,
-	decodeEntityStatement,
 	type EntityCollectionStore,
 	type EntityId,
+	isStoredTrustMarkEligible,
 	isValidEntityId,
 	MemoryCache,
 	MemoryEntityCollectionStore,
@@ -79,28 +79,6 @@ export function validateSubordinateRecord(record: SubordinateRecord): void {
 	}
 }
 
-function isValidTrustMark(record: TrustMarkRecord, validAt: number): boolean {
-	const decoded = decodeEntityStatement(record.jwt);
-	if (decoded.ok && decoded.value.payload.delegation !== undefined) {
-		const delegation = decodeEntityStatement(decoded.value.payload.delegation as string);
-		if (
-			!delegation.ok ||
-			!Number.isFinite(delegation.value.payload.iat) ||
-			delegation.value.payload.iat > validAt ||
-			(delegation.value.payload.exp !== undefined && delegation.value.payload.exp <= validAt)
-		)
-			return false;
-	}
-	// Federation §7.3: select currently eligible marks before choosing the newest.
-	// Authority storage uses its exact clock, including same-second issuance.
-	return (
-		record.active &&
-		Number.isFinite(record.issuedAt) &&
-		record.issuedAt <= validAt &&
-		(record.expiresAt === undefined || record.expiresAt > validAt)
-	);
-}
-
 function compareStrings(left: string, right: string): number {
 	return left < right ? -1 : left > right ? 1 : 0;
 }
@@ -149,7 +127,7 @@ class MemorySubordinateStorage implements SubordinateStorage {
 					(mark) =>
 						mark.subject === record.entityId &&
 						(requestedTypes === undefined || requestedTypes.includes(mark.trustMarkType)) &&
-						isValidTrustMark(mark, filter.validAt as number),
+						isStoredTrustMarkEligible(mark, filter.validAt as number),
 				);
 				return valid;
 			});
