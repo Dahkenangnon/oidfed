@@ -3,6 +3,7 @@ import { DEFAULT_DELEGATION_TTL_SECONDS, JwtTyp } from "../constants.js";
 import { signEntityStatement } from "../jose/sign.js";
 import type { JwtSigner } from "../jose/signer.js";
 import { TrustMarkDelegationPayloadSchema, TrustMarkPayloadSchema } from "../schemas/trust-mark.js";
+import { assertPositiveTtlSeconds } from "../ttl.js";
 import { type Clock, nowSeconds } from "../types.js";
 import { checkTrustMarkProfile, type TrustMarkProfile } from "./profiles.js";
 
@@ -35,8 +36,8 @@ function payloadFor(options: SignTrustMarkDelegationOptions): Record<string, unk
 	if (options.noExpiry && options.ttlSeconds !== undefined)
 		throw new TypeError("noExpiry and ttlSeconds conflict");
 	const ttl = options.ttlSeconds ?? DEFAULT_DELEGATION_TTL_SECONDS;
-	if (!Number.isFinite(ttl) || ttl <= 0 || !Number.isFinite(iat + ttl))
-		throw new TypeError("ttlSeconds must be positive and finite");
+	assertPositiveTtlSeconds(ttl, "ttlSeconds", "finite");
+	if (!Number.isFinite(iat + ttl)) throw new TypeError("ttlSeconds must be positive and finite");
 	const payload: Record<string, unknown> = {
 		iss: options.issuer,
 		sub: options.subject,

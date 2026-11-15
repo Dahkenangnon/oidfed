@@ -6,6 +6,8 @@ import {
 	TrustAnchor,
 } from "../../../packages/authority/src/index.js";
 import {
+	assertPositiveTtlSeconds,
+	buildEntityConfigurationPayload,
 	composeEntityMetadata,
 	decodeEntityStatement,
 	type EntityRole,
@@ -267,5 +269,82 @@ export default (q: QUnit) => {
 				`${subject}/registration`,
 			);
 		});
+
+		q.test(
+			"statement TTLs fail at construction while finite fractional lifetimes remain available",
+			async (t) => {
+				const { keyProvider, publicJwk, signer } = await signing();
+				for (const value of [0, -1, NaN, Infinity, -Infinity, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
+					t.throws(
+						() =>
+							new Leaf({
+								entityId: subject,
+								authorityHints: [anchor],
+								keyProvider,
+								metadata: { example: {} },
+								entityConfigurationTtlSeconds: value,
+							}),
+						/positive.*safe integer/,
+					);
+					for (const field of ["entityConfigurationTtlSeconds", "subordinateStatementTtlSeconds"])
+						t.throws(
+							() =>
+								new TrustAnchor({
+									entityId: anchor,
+									keyProvider,
+									storage: new MemoryStorageAdapter(),
+									metadata: metadata(),
+									[field]: value,
+								}),
+							/positive.*safe integer/,
+						);
+				}
+				for (const value of [0, -1, NaN, Infinity, -Infinity]) {
+					for (const field of ["trustMarkTtlSeconds", "subordinateEventsTtlSeconds"])
+						t.throws(
+							() =>
+								new TrustAnchor({
+									entityId: anchor,
+									keyProvider,
+									storage: new MemoryStorageAdapter(),
+									metadata: metadata(),
+									[field]: value,
+								}),
+							/positive and finite/,
+						);
+				}
+				assertPositiveTtlSeconds(0.5, "ttl", "finite");
+				new TrustAnchor({
+					entityId: anchor,
+					keyProvider,
+					storage: new MemoryStorageAdapter(),
+					metadata: metadata(),
+					trustMarkTtlSeconds: 0.5,
+					subordinateEventsTtlSeconds: 0.5,
+				});
+				const jwt = await signTrustMark({
+					issuer: anchor,
+					subject,
+					trustMarkType: "example",
+					signer,
+					ttlSeconds: 0.5,
+					clock: { now: () => 1 },
+				});
+				const decoded = decodeEntityStatement(jwt);
+				if (!decoded.ok) throw new Error(decoded.error.description);
+				t.equal(decoded.value.payload.exp, 1.5);
+				t.throws(
+					() =>
+						buildEntityConfigurationPayload({
+							entityId: subject,
+							metadata: {},
+							jwks: { keys: [publicJwk] },
+							issuedAt: Number.MAX_VALUE,
+							ttlSeconds: 1,
+						}),
+					/expiration/,
+				);
+			},
+		);
 	});
 };

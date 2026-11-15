@@ -24,6 +24,7 @@ import { safeLogger } from "../logging.js";
 import { EntityIdSchema } from "../schemas/entity-id.js";
 import type { TrustMarkStatusResponsePayload } from "../schemas/entity-statement.js";
 import type { TrustMarkOwner } from "../schemas/trust-mark.js";
+import { assertPositiveTtlSeconds } from "../ttl.js";
 import { type EntityId, entityId, type FederationOptions, nowSeconds } from "../types.js";
 import { type TrustMarkIssuerContext, trustMarkIssuerContext } from "./evidence.js";
 import { validateTrustMark } from "./index.js";
@@ -90,11 +91,8 @@ function validateIssuanceOptions(options: TrustMarkIssuanceOptions): void {
 		throw new TypeError("Issuance options must be JSON object data");
 	if (options.noExpiry !== undefined && typeof options.noExpiry !== "boolean")
 		throw new TypeError("noExpiry must be a boolean");
-	if (
-		options.ttlSeconds !== undefined &&
-		(!Number.isFinite(options.ttlSeconds) || options.ttlSeconds <= 0)
-	)
-		throw new TypeError("ttlSeconds must be positive and finite");
+	if (options.ttlSeconds !== undefined)
+		assertPositiveTtlSeconds(options.ttlSeconds, "ttlSeconds", "finite");
 	if (options.noExpiry && options.ttlSeconds !== undefined)
 		throw new TypeError("noExpiry and ttlSeconds conflict");
 	if (options.renewal !== undefined && options.renewal !== "reuse" && options.renewal !== "renew")

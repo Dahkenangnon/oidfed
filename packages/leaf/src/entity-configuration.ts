@@ -1,6 +1,7 @@
 /** Leaf entity class: Entity Configuration serving with caching and trust chain discovery. */
 import {
 	type AttachTrustMarkOptions,
+	assertPositiveTtlSeconds,
 	assessEntity,
 	buildEntityConfigurationPayload,
 	composeEntityMetadata,
@@ -424,9 +425,7 @@ export class Leaf {
 		}
 
 		const ttlSeconds = config.entityConfigurationTtlSeconds ?? DEFAULT_ENTITY_STATEMENT_TTL_SECONDS;
-		if (ttlSeconds <= 0) {
-			throw new Error("entityConfigurationTtlSeconds must be positive");
-		}
+		assertPositiveTtlSeconds(ttlSeconds, "entityConfigurationTtlSeconds", "safe-integer");
 	}
 
 	private async buildEntityConfiguration(

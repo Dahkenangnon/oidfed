@@ -26,6 +26,7 @@ import type { JWKSet } from "./schemas/jwk.js";
 import { validatePublishedMetadataKeys } from "./schemas/jwk.js";
 import type { FederationMetadataPolicy } from "./schemas/metadata-policy.js";
 import type { TrustMarkOwner, TrustMarkRef } from "./schemas/trust-mark.js";
+import { assertPositiveTtlSeconds } from "./ttl.js";
 import { type Clock, type EntityId, entityId, nowSeconds } from "./types.js";
 
 export type EntityStatementKind = "entity-configuration" | "subordinate-statement";
@@ -322,9 +323,7 @@ function resolveStatementTime(options: StatementTimeOptions): { iat: number; exp
 	if (!Number.isFinite(iat)) {
 		throw new TypeError("issuedAt must be a finite NumericDate");
 	}
-	if (!Number.isSafeInteger(ttlSeconds) || ttlSeconds <= 0) {
-		throw new TypeError("ttlSeconds must be a positive safe integer");
-	}
+	assertPositiveTtlSeconds(ttlSeconds, "ttlSeconds", "safe-integer");
 	const exp = iat + ttlSeconds;
 	if (!Number.isFinite(exp) || exp <= iat) {
 		throw new TypeError("expiration must be after issued-at");

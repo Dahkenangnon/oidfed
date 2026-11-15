@@ -28,6 +28,7 @@ import type {
 	TrustMarkStatusResponsePayload,
 } from "@oidfed/core";
 import {
+	assertPositiveTtlSeconds,
 	assessEntity,
 	buildExtendedListRequestParameters,
 	COLLECTION_UNORDERED_PARAMETERS,
@@ -265,23 +266,14 @@ function createAuthorityServerWithIdentity(
 ): AuthorityServer {
 	const normalizedEntityId = config.entityId;
 
-	if (
-		config.subordinateEventsTtlSeconds !== undefined &&
-		(!Number.isFinite(config.subordinateEventsTtlSeconds) ||
-			config.subordinateEventsTtlSeconds <= 0)
-	) {
-		throw new Error("subordinateEventsTtlSeconds must be positive and finite");
-	}
-
 	const ttlFields = [
-		["entityConfigurationTtlSeconds", config.entityConfigurationTtlSeconds],
-		["subordinateStatementTtlSeconds", config.subordinateStatementTtlSeconds],
-		["trustMarkTtlSeconds", config.trustMarkTtlSeconds],
+		["entityConfigurationTtlSeconds", config.entityConfigurationTtlSeconds, "safe-integer"],
+		["subordinateStatementTtlSeconds", config.subordinateStatementTtlSeconds, "safe-integer"],
+		["trustMarkTtlSeconds", config.trustMarkTtlSeconds, "finite"],
+		["subordinateEventsTtlSeconds", config.subordinateEventsTtlSeconds, "finite"],
 	] as const;
-	for (const [name, value] of ttlFields) {
-		if (value !== undefined && value <= 0) {
-			throw new Error(`${name} must be positive`);
-		}
+	for (const [name, value, mode] of ttlFields) {
+		if (value !== undefined) assertPositiveTtlSeconds(value, name, mode);
 	}
 
 	// Superior hints describe topology independently of the authority role.

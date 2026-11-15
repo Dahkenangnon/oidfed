@@ -400,6 +400,8 @@ export type {
 	TrustMarkStorage,
 	TrustMarkStore,
 } from "./trust-marks/storage.js";
+
+export { assertPositiveTtlSeconds } from "./ttl.js";
 // Types
 export {
 	type CacheProvider,
