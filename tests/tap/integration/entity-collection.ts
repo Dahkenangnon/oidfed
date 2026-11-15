@@ -10,7 +10,6 @@ import {
 	MemoryFederationKeyProvider,
 	ok,
 } from "../../../packages/core/src/index.js";
-import { createLeafHandler } from "../../../packages/leaf/src/handler.js";
 import { Leaf } from "../../../packages/leaf/src/index.js";
 import * as EntityCollectionFixture from "../fixtures/entity-collection.js";
 
@@ -48,7 +47,7 @@ export default function integrationTests(QUnit: QUnit): void {
 					const request = new Request(
 						`${leafId}/collect?trust_anchor=${encodeURIComponent(anchor)}`,
 					);
-					assert.equal((await createLeafHandler(f.leaf)(request)).status, 200);
+					assert.equal((await f.leaf.handleRequest(request)).status, 200);
 					const ec = decodeEntityStatement(await f.leaf.getEntityConfiguration());
 					assert.true(ec.ok);
 					if (ec.ok)
