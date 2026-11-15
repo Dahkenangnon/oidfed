@@ -60,6 +60,7 @@ import {
 	type WalletTrustOptions,
 } from "./trust.js";
 
+/** Metadata is copied at construction. Instance operations combine host, role, then per-call options; attach the role before operations needing its signing identity. */
 export interface WalletRoleConfig {
 	readonly options?: WalletTrustOptions;
 	readonly metadata?: Readonly<Record<string, unknown>>;
@@ -277,9 +278,11 @@ async function adapterKeys(
 
 export class WalletProviderRole extends WalletRole {
 	readonly type = "openid_wallet_provider";
+	/** Validate effective protocol metadata. Returns a parse result; success does not establish federation trust. */
 	static parseMetadata(metadata: unknown) {
 		return effectiveRoleSchemas.openid_wallet_provider.safeParse(metadata);
 	}
+	/** Validate supplied publication fields, allowing a Superior to complete omitted requirements. Returns a parse result without establishing trust. */
 	static parsePublicationMetadata(metadata: unknown) {
 		return publicationRoleSchemas.openid_wallet_provider.safeParse(metadata);
 	}
@@ -326,9 +329,11 @@ export interface DiscoveredCredentialIssuer extends TrustedWalletEntity {
 
 export class CredentialIssuerRole extends AttestationConsumer {
 	readonly type = "openid_credential_issuer";
+	/** Validate effective protocol metadata. Returns a parse result; success does not establish federation trust. */
 	static parseMetadata(metadata: unknown) {
 		return effectiveRoleSchemas.openid_credential_issuer.safeParse(metadata);
 	}
+	/** Validate supplied publication fields, allowing a Superior to complete omitted requirements. Returns a parse result without establishing trust. */
 	static parsePublicationMetadata(metadata: unknown) {
 		return publicationRoleSchemas.openid_credential_issuer.safeParse(metadata);
 	}
@@ -461,9 +466,11 @@ export interface CredentialVerificationOptions extends WalletTrustOptions {
 
 export class CredentialVerifierRole extends AttestationConsumer {
 	readonly type = "openid_credential_verifier";
+	/** Validate effective protocol metadata. Returns a parse result; success does not establish federation trust. */
 	static parseMetadata(metadata: unknown) {
 		return effectiveRoleSchemas.openid_credential_verifier.safeParse(metadata);
 	}
+	/** Validate supplied publication fields, allowing a Superior to complete omitted requirements. Returns a parse result without establishing trust. */
 	static parsePublicationMetadata(metadata: unknown) {
 		return publicationRoleSchemas.openid_credential_verifier.safeParse(metadata);
 	}
@@ -471,6 +478,7 @@ export class CredentialVerifierRole extends AttestationConsumer {
 		const scope = operationOptions(options);
 		return scope.ok ? trustedEntity("openid_credential_verifier", id, anchors, scope.value) : scope;
 	}
+	/** Establish candidate federation evidence. Returns a process-local handle; completion still validates the signed request and contextual policies. */
 	static async prepareAuthorizationRequest(
 		outer: WalletAuthorizationRequest,
 		anchors: TrustAnchorSet,
@@ -479,6 +487,7 @@ export class CredentialVerifierRole extends AttestationConsumer {
 		const scope = operationOptions(options);
 		return scope.ok ? prepareRequest(outer, anchors, scope.value) : scope;
 	}
+	/** Complete the original, unexpired preparation handle with its signed JWT. Returns a Result; copied or deserialized handles are rejected. */
 	static completeAuthorizationRequest(
 		prepared: PreparedAuthorizationRequest,
 		jwt: string,
@@ -503,6 +512,7 @@ export class CredentialVerifierRole extends AttestationConsumer {
 	static validateResponseRedirect(result: ValidatedWalletRequest, uri: string): Result<true> {
 		return validateResponseRedirect(result, uri);
 	}
+	/** Establish issuer trust and invoke the host verifier. The host owns credential format, proof, and status checks; this returns trusted issuer evidence on success. */
 	static async verifyCredential(
 		credential: unknown,
 		issuerId: string,
@@ -530,6 +540,7 @@ export class CredentialVerifierRole extends AttestationConsumer {
 	discover(id: string, options: WalletTrustOptions = {}) {
 		return CredentialVerifierRole.discover(id, this.anchors(options), this.options(options));
 	}
+	/** Prepare using configured anchors and merged options. Keep the returned handle for completeAuthorizationRequest; preparation is not acceptance. */
 	prepareAuthorizationRequest(
 		outer: WalletAuthorizationRequest,
 		options: AuthorizationRequestOptions = {},
@@ -540,6 +551,7 @@ export class CredentialVerifierRole extends AttestationConsumer {
 			this.options(options),
 		);
 	}
+	/** Complete an original preparation handle before expiry. The returned Result covers federation checks, not presentation processing. */
 	completeAuthorizationRequest(
 		prepared: PreparedAuthorizationRequest,
 		jwt: string,

@@ -48,6 +48,12 @@ import {
 	WELL_KNOWN_OPENID_FEDERATION,
 } from "@oidfed/core";
 
+/**
+ * Construction configuration. Metadata is copied; services such as key providers
+ * and storage retain their identity. Roles contribute metadata after initialization,
+ * overriding host parameters in role order. Re-create the host to change general
+ * metadata; refreshing its EC re-reads keys, not the original metadata object.
+ */
 export interface LeafConfig extends EntityStatementExtensions {
 	resolver?: FederationResolverIntegration;
 	trustMarkIssuer?: TrustMarkIssuerConfig;
@@ -60,6 +66,7 @@ export interface LeafConfig extends EntityStatementExtensions {
 	options?: FederationOptions;
 	trustMarks?: TrustMarkRef[];
 	trustAnchorHints?: readonly (EntityId | string)[];
+	/** Positive safe-integer EC lifetime in seconds; omission uses the core default. */
 	entityConfigurationTtlSeconds?: number;
 	trustAnchors?: TrustAnchorSet;
 }
@@ -73,6 +80,7 @@ export class Leaf {
 	readonly resolver?: FederationResolverService;
 	static assessEntity = assessEntity;
 	static discoverEntityFromChain = discoverEntityFromChain;
+	/** Per-call options override host options; explicit anchors override configured anchors. Returns an assessment Result, not protocol authorization. */
 	assessEntity(
 		target: EntityId,
 		options: EntityAssessmentOptions & { trustAnchors?: TrustAnchorSet } = {},

@@ -14,8 +14,11 @@ export interface TrustMarkListPage {
 
 /**
  * Current-validity queries require active marks with finite issuedAt <= validAt
- * and either no expiration or expiresAt > validAt. Apply this eligibility before
- * selecting the newest mark, using exact authority time without added clock leeway.
+ * and either no expiration or expiresAt > validAt. An embedded delegation must
+ * also be decodable, have finite iat <= validAt, and have no exp or exp > validAt.
+ * Apply this eligibility before selecting the newest mark, using exact issuer time
+ * without added clock leeway. See isStoredTrustMarkEligible for the shared predicate.
+ * Ingestion, not this time filter, establishes signature and issuer trust.
  */
 export interface TrustMarkStorage {
 	/** Return every candidate, including revoked records, before service-level eligibility and newest-record selection. Return detached records from one consistent view. */
@@ -29,6 +32,7 @@ export interface TrustMarkStorage {
 		subject: EntityId,
 		validAt: number,
 	): Promise<TrustMarkRecord | undefined>;
+	/** Return a detached record, including revoked or expired records when present. */
 	getByJwt(jwt: string): Promise<TrustMarkRecord | undefined>;
 	listValid(
 		trustMarkType: string,
@@ -37,6 +41,7 @@ export interface TrustMarkStorage {
 	): Promise<TrustMarkListPage>;
 	listValidForSubject(subject: EntityId, validAt: number): Promise<TrustMarkRecord[]>;
 	hasAnyValid(subject: EntityId, validAt: number): Promise<boolean>;
+	/** Capture input before asynchronous work. Reissuing the same JWT must not replace its record. */
 	issue(record: TrustMarkRecord): Promise<void>;
 	revoke(
 		trustMarkType: string,
@@ -63,6 +68,7 @@ export interface TrustMarkRecord {
 /** Atomic write and consistent read boundary shared by Leaf and Authority issuers. */
 export interface TrustMarkStore {
 	readonly trustMarks: TrustMarkStorage;
+	/** Commit all callback writes together, or roll them back on failure. Use tx repositories only; awaiting parent queued writes inside the callback can deadlock. */
 	transaction<T>(
 		operation: (tx: { readonly trustMarks: TrustMarkStorage }) => Promise<T>,
 	): Promise<T>;

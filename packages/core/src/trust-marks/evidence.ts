@@ -30,6 +30,12 @@ import {
 import { type TrustMarkValidationOptions, validateTrustMark } from "./index.js";
 import { fetchTrustMarkHistoricalResponse, trustMarkOperation } from "./operation.js";
 
+/**
+ * Evidence issued by establishTrustMarkIssuerTrust after federation validation.
+ * Consumers check its process-local object identity as well as expiry. A spread,
+ * structured clone, or JSON round trip does not retain that provenance; establish
+ * fresh evidence from signed statements when crossing a process boundary.
+ */
 export interface FederationTrustMarkIssuerEvidence {
 	readonly kind: "federation";
 	readonly issuer: string;
@@ -43,6 +49,7 @@ export interface FederationTrustMarkIssuerEvidence {
 	readonly trustMarkIssuers: Readonly<Record<string, readonly string[]>>;
 	readonly trustMarkOwners: Readonly<Record<string, TrustMarkOwner>>;
 }
+/** Independently trusted issuer configuration supplied by the host, not discovered from an unverified mark. */
 export interface OutOfBandTrustMarkIssuer {
 	readonly kind: "out-of-band";
 	readonly issuer: string;

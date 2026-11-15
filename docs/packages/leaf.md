@@ -13,6 +13,15 @@ See [operator and application responsibilities](../guide/operator-responsibiliti
 
 Supply `options.logger` for [host-supplied logging](core.md#host-supplied-logging), including publication and serving failures. If the composed metadata advertises a collection endpoint without a Resolve endpoint, the Leaf emits one info notice after successful Entity Configuration signing. The SHOULD recommendation does not prevent publication.
 
+## Configuration ownership
+
+A Leaf captures its metadata at construction, including nested values. Roles initialize before their metadata is composed; their parameters override host values in role order. Later changes to the original metadata or a role's metadata do not update the Leaf. Construct a replacement Leaf to change general metadata.
+
+`refreshEntityConfiguration()` refreshes the signed configuration and reads the current key provider. It does not reload the original metadata object. Dedicated Trust Mark operations still publish their changes through their existing methods.
+
+`entityConfigurationTtlSeconds` must be a positive safe integer and is checked at construction. Key providers, storage, and callbacks remain live service references. Discovery and assessment methods apply per-call options over host options, and explicitly supplied trust anchors override host anchors.
+
+
 ## Usage
 
 ### Creating a leaf entity

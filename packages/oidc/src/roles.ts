@@ -72,6 +72,7 @@ import {
 	publicationRoleSchemas,
 } from "./schemas/metadata.js";
 
+/** Metadata is copied at construction. Instance operations require host initialization; per-call options override role options, which override host options. */
 export interface OidcRelyingPartyRoleConfig {
 	readonly options?: FederationOptions;
 	readonly protocolKeyProvider: ProtocolSigningKeyProvider;
@@ -98,6 +99,7 @@ abstract class ClientRole implements EntityRole {
 	static serializeClientAttestation = serializeClientAttestation;
 	static fetchAttestationChallenge = fetchAttestationChallenge;
 	static readAttestationChallenge = readAttestationChallenge;
+	/** Prepare PAR using validated discovery. Returns a Result; throws if this role is not attached or has no configured anchors. */
 	async createPushedAuthorizationRequest(
 		discovery: DiscoveryResult,
 		parameters: Readonly<Record<string, unknown>>,
@@ -389,9 +391,11 @@ abstract class ClientRole implements EntityRole {
 
 export class OidcRelyingPartyRole extends ClientRole {
 	readonly type = "openid_relying_party";
+	/** Validate effective protocol metadata. Returns a parse result; success does not establish federation trust. */
 	static parseMetadata(metadata: unknown) {
 		return effectiveRoleSchemas.openid_relying_party.safeParse(metadata);
 	}
+	/** Validate supplied publication fields, allowing a Superior to complete omitted requirements. Returns a parse result without establishing trust. */
 	static parsePublicationMetadata(metadata: unknown) {
 		return publicationRoleSchemas.openid_relying_party.safeParse(metadata);
 	}
@@ -411,6 +415,7 @@ export class OidcRelyingPartyRole extends ClientRole {
 	}
 }
 
+/** Metadata is copied; initialize attaches registration routes to a host. Configuration errors throw; protocol processing reports failures through its Result or HTTP response. */
 export interface OidcProviderRoleConfig extends RegistrationAccreditationPolicy {
 	/** Opt in to adapter-issued read-only registration access; the host enforces token permissions. Default disabled. */
 	readonly registrationManagement?: ExplicitRegistrationHandlerConfig["registrationManagement"];
@@ -660,9 +665,11 @@ abstract class ProviderRole implements EntityRole {
 
 export class OidcProviderRole extends ProviderRole {
 	readonly type = "openid_provider";
+	/** Validate effective protocol metadata. Returns a parse result; success does not establish federation trust. */
 	static parseMetadata(metadata: unknown) {
 		return effectiveRoleSchemas.openid_provider.safeParse(metadata);
 	}
+	/** Validate supplied publication fields, allowing a Superior to complete omitted requirements. Returns a parse result without establishing trust. */
 	static parsePublicationMetadata(metadata: unknown) {
 		return publicationRoleSchemas.openid_provider.safeParse(metadata);
 	}
@@ -671,9 +678,11 @@ export class OidcProviderRole extends ProviderRole {
 export type OAuthClientRoleConfig = OidcRelyingPartyRoleConfig;
 export class OAuthClientRole extends ClientRole {
 	readonly type = "oauth_client";
+	/** Validate effective protocol metadata. Returns a parse result; success does not establish federation trust. */
 	static parseMetadata(metadata: unknown) {
 		return effectiveRoleSchemas.oauth_client.safeParse(metadata);
 	}
+	/** Validate supplied publication fields, allowing a Superior to complete omitted requirements. Returns a parse result without establishing trust. */
 	static parsePublicationMetadata(metadata: unknown) {
 		return publicationRoleSchemas.oauth_client.safeParse(metadata);
 	}
@@ -699,9 +708,11 @@ export class OAuthClientRole extends ClientRole {
 export type OAuthAuthorizationServerRoleConfig = OidcProviderRoleConfig;
 export class OAuthAuthorizationServerRole extends ProviderRole {
 	readonly type = "oauth_authorization_server";
+	/** Validate effective protocol metadata. Returns a parse result; success does not establish federation trust. */
 	static parseMetadata(metadata: unknown) {
 		return effectiveRoleSchemas.oauth_authorization_server.safeParse(metadata);
 	}
+	/** Validate supplied publication fields, allowing a Superior to complete omitted requirements. Returns a parse result without establishing trust. */
 	static parsePublicationMetadata(metadata: unknown) {
 		return publicationRoleSchemas.oauth_authorization_server.safeParse(metadata);
 	}
@@ -729,6 +740,7 @@ export class OAuthResourceRole implements EntityRole {
 		);
 	}
 
+	/** Validate effective protocol metadata. Returns a parse result; success does not establish federation trust. */
 	static parseMetadata(metadata: unknown, options: { profile?: "federation" | "rfc9728" } = {}) {
 		return (
 			options.profile === "rfc9728"
@@ -736,6 +748,7 @@ export class OAuthResourceRole implements EntityRole {
 				: effectiveRoleSchemas.oauth_resource
 		).safeParse(metadata);
 	}
+	/** Validate supplied publication fields, allowing a Superior to complete omitted requirements. Returns a parse result without establishing trust. */
 	static parsePublicationMetadata(metadata: unknown) {
 		return publicationRoleSchemas.oauth_resource.safeParse(metadata);
 	}

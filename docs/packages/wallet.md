@@ -20,6 +20,17 @@ Issuer discovery checks each available authenticated statement's supplied `crede
 
 The federation option `customConstraintChecks` registers synchronous checks for additional constraints in authenticated Trust Chains. Failed checks reject the operation; unknown constraints remain ignored. See [custom constraints](core.md#custom-constraints) for the API and callback context.
 
+## Metadata ownership and request handles
+
+Wallet roles copy constructor metadata. A host captures a separate copy after the role initializes, so changing the original configuration afterward does not change what that host publishes. Construct a replacement host to change general metadata. Per-call options override role options, which override host options; explicit trust anchors take precedence over configured defaults.
+
+`parsePublicationMetadata()` checks supplied fields while allowing Superior completion. `parseMetadata()` checks effective protocol metadata. Neither establishes federation trust on its own.
+
+Keep the original handle returned by `prepareAuthorizationRequest()` and pass it to `completeAuthorizationRequest()` before it expires. The handle refers to evidence held in the current process; a clone or JSON round trip cannot restore it. Preparation alone does not accept the request. Completion checks the signed JWT and contextual policies using the retained evidence, and returns a `Result`.
+
+Credential and presentation processing remain application responsibilities. For example, `verifyCredential()` establishes issuer trust and invokes the verifier supplied by the host; the host implements credential-format, proof, and status checks.
+
+
 ## Compose roles into a host
 
 ```ts

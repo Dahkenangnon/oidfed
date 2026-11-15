@@ -13,6 +13,28 @@ Use the functions here when you need direct control over federation processing. 
 
 See [operator and application responsibilities](../guide/operator-responsibilities.md#openid-federation) for anchor provisioning, independent key comparisons, trust reevaluation, and production key and storage contracts.
 
+## Composing metadata and validating lifetimes
+
+`composeEntityMetadata(...sources)` makes an owned copy of metadata. Supply host metadata first and role metadata afterward. A later source replaces each conflicting parameter's whole value, so arrays and nested objects are not recursively merged. Open entity-type and parameter names remain ordinary own properties, including names such as `__proto__`. The helper rejects non-object entity-type blocks and propagates cloning errors; protocol conformance is checked separately by the relevant role.
+
+```ts
+import { composeEntityMetadata, assertPositiveTtlSeconds } from "@oidfed/core";
+
+const metadata = composeEntityMetadata(
+  { openid_relying_party: { redirect_uris: ["https://library.example/callback"] } },
+  { openid_relying_party: { client_registration_types: ["automatic"] } },
+);
+assertPositiveTtlSeconds(3600, "entityConfigurationTtlSeconds", "safe-integer");
+assertPositiveTtlSeconds(60.5, "trustMarkTtlSeconds", "finite");
+```
+
+Entity Statement builders use positive safe-integer TTLs. Trust Marks and Subordinate Events responses accept positive finite TTLs, including fractions. `assertPositiveTtlSeconds` throws `TypeError` for an invalid duration. Publication still checks the resulting expiration against its issuance time.
+
+`isStoredTrustMarkEligible(record, validAt)` shares the memory stores' active-state and mark/delegation time checks with adapter authors. Call it before selecting the newest record. It assumes ingestion already verified the JWT, its issuer, and the record's matching fields; it is not a signature or trust validator. See the [storage contract](../guide/storage-guide.md#trust-marks).
+
+Federation issuer evidence returned by `establishTrustMarkIssuerTrust` also carries process-local provenance. Keep the original object while it remains valid. Copying it, including through JSON or `structuredClone`, does not preserve that provenance. Across a process boundary, transfer signed statements and establish evidence again.
+
+
 ## Usage
 
 Examples with names such as `taPublicKey`, `rawMetadata`, and `parsedStatements` assume application-supplied values of the corresponding public API types. They are integration fragments. `subordinateStatements` is a `ParsedEntityStatement[]` in leaf-to-TA order; use verified inputs when applying policy to a trust decision.

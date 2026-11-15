@@ -13,6 +13,17 @@ See [operator and application responsibilities](../guide/operator-responsibiliti
 
 Supply `options.logger` for [host-supplied logging](core.md#host-supplied-logging). Registration, update, revocation, and event-recording failures identify the operation; completion messages follow a successful transaction commit. Logging leaves rollback and exception handling unchanged. A committed event with a non-HTTPS `information_uri` produces an info notice because HTTPS is RECOMMENDED. No-op updates produce no event recommendation notice.
 
+## Configuration ownership
+
+A `TrustAnchor` or `Intermediate` copies its metadata at construction. Each role initializes once, then contributes its metadata in configuration order. Role parameters replace matching host parameters, and later roles win conflicts. Neither composition nor later changes to the caller's object modify another host's metadata.
+
+To change general metadata, construct a replacement host with the new configuration. Existing methods for Trust Marks, anchor policy, and subordinate records remain the supported ways to update those specific resources. Key providers and storage adapters retain their identity, so their normal lifecycle operations continue to work.
+
+Entity Configuration and Subordinate Statement TTLs must be positive safe integers. Trust Mark and Subordinate Events response TTLs must be positive finite numbers and may contain fractions. Invalid configured values fail during construction, before an endpoint needs to sign a response.
+
+When implementing storage, follow the [transaction and snapshot contract](../guide/storage-guide.md). Use the repositories supplied to a transaction callback; awaiting a write through the parent adapter inside that callback can wait on the transaction itself.
+
+
 ## Usage
 
 Later fragments reuse `ta`, `storage`, and `keyProvider` from the first example. Supply the subordinate's public federation key as `subordinatePublicKey` when enrolling it.

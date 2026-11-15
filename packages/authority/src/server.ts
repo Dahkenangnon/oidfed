@@ -147,7 +147,7 @@ export interface AuthorityConfig extends EntityStatementExtensions {
 	collection?: EntityCollectionIntegration;
 	/** The entity identifier (URL) for this authority. */
 	entityId: EntityId | string;
-	/** Metadata published in this authority's Entity Configuration. Must include `federation_entity`. */
+	/** Copied at construction; must include federation_entity. Initialized roles override parameters in role order. Re-create the host to change general metadata. */
 	metadata: { federation_entity: FederationEntityMetadata } & Partial<{
 		[K in EntityType]: EntityTypeMetadataMap[K];
 	}>;
@@ -176,13 +176,13 @@ export interface AuthorityConfig extends EntityStatementExtensions {
 	trustAnchorHints?: readonly (EntityId | string)[];
 	/** Trust anchors used for trust chain resolution (e.g., during registration). */
 	trustAnchors?: TrustAnchorSet;
-	/** TTL in seconds for the Entity Configuration JWT. */
+	/** Positive safe-integer TTL in seconds for the Entity Configuration JWT. */
 	entityConfigurationTtlSeconds?: number;
-	/** TTL in seconds for subordinate statement JWTs. */
+	/** Positive safe-integer TTL in seconds for subordinate statement JWTs. */
 	subordinateStatementTtlSeconds?: number;
 	/** Optional positive, finite history-response TTL; omission leaves exp absent. */
 	subordinateEventsTtlSeconds?: number;
-	/** TTL in seconds for issued trust mark JWTs. */
+	/** Positive finite TTL in seconds for issued Trust Marks; fractional values are allowed. */
 	trustMarkTtlSeconds?: number;
 	/** Federation-wide options (httpClient, clock, etc.). */
 	options?: Omit<FederationOptions, "cache">;

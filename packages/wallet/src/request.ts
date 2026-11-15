@@ -82,6 +82,11 @@ export interface AuthorizationRequestCreationOptions extends AuthorizationReques
 }
 
 declare const requestPreparationBrand: unique symbol;
+/**
+ * Process-local handle returned by prepareAuthorizationRequest. Keep the original
+ * object for completion before expiresAt; copying or serializing it loses the
+ * retained evidence. Preparation alone does not authorize the request.
+ */
 export interface PreparedAuthorizationRequest {
 	readonly [requestPreparationBrand]: true;
 	readonly verifierId: string;

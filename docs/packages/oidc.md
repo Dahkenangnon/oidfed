@@ -19,6 +19,15 @@ Supply `options.logger` for [host-supplied logging](core.md#host-supplied-loggin
 
 The federation option `customConstraintChecks` registers synchronous checks for additional constraints in authenticated Trust Chains. Failed checks reject the operation; unknown constraints remain ignored. See [custom constraints](core.md#custom-constraints) for the API and callback context.
 
+## Metadata ownership and validation results
+
+OIDC and OAuth roles copy constructor metadata, including nested values. `OAuthResourceRole` also copies separately supplied `jwks`. Attaching a role can generate fields such as the registration endpoint without writing them back into the caller's configuration. A host takes its own metadata snapshot after role initialization.
+
+Use `parsePublicationMetadata()` while preparing metadata that a Superior may complete later. Use `parseMetadata()` for the effective protocol metadata you intend to consume. Both return parse results; a successful parse establishes neither signatures nor federation trust. For OAuth Resource metadata, the existing document mode also checks the requirements of a protected-resource metadata document.
+
+Instance operations that need a host identity require an initialized role. Configuration and missing-initialization errors can throw; protocol operations otherwise retain their documented `Result` or HTTP error responses. Per-call federation options override role options, which override host options. Explicit trust-anchor arguments take precedence over role and host defaults.
+
+
 ## Usage
 
 ### Composing roles with parent entities

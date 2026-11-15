@@ -19,8 +19,9 @@ export interface StorageAdapter {
 	readonly trustMarks?: TrustMarkStorage;
 	readonly replay?: ReplayStore;
 	readonly cache?: CacheProvider;
+	/** Commit callback writes atomically, or roll them back on failure. Use only tx repositories: awaiting a parent queued mutation inside the callback can deadlock. */
 	transaction<T>(operation: (tx: StorageTransaction) => Promise<T>): Promise<T>;
-	/** Read one consistent view. Use only the supplied repositories inside the callback. */
+	/** Read one consistent, detached view. Use only supplied repositories; do not await parent writes from inside the callback. */
 	readSnapshot?<T>(operation: (snapshot: StorageReadSnapshot) => Promise<T>): Promise<T>;
 }
 
@@ -38,13 +39,16 @@ export interface StorageTransaction {
 }
 
 export interface SubordinateStorage {
+	/** Return a detached record; changing it does not update storage. */
 	get(entityId: EntityId): Promise<SubordinateRecord | undefined>;
 	/**
 	 * Return matching records ordered lexicographically by entityId; cursors are inclusive.
 	 * A filtered page may be empty with a continuation. Without options, return all matches.
 	 */
 	list(filter?: ListFilter, options?: ListPageOptions): Promise<ListPage>;
+	/** Capture and validate input before queuing. Reject duplicate identifiers. */
 	add(record: SubordinateRecord): Promise<void>;
+	/** Capture changes before queuing, then merge and validate against the current record inside the write transaction. Reject unknown identifiers. */
 	update(entityId: EntityId, updates: SubordinateRecordUpdate): Promise<void>;
 	remove(entityId: EntityId): Promise<void>;
 }

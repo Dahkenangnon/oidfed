@@ -45,6 +45,7 @@ Replay and cache are excluded from `StorageTransaction`: replay claiming is inde
 
 - `entityId` is immutable; adapters preserve `createdAt` and manage `updatedAt` on updates. All three fields are excluded from `SubordinateRecordUpdate`. Direct `add()` calls supply a complete record, including timestamps; `registerSubordinate()` supplies those timestamps for you.
 - Duplicate `add` and update/remove of unknown entities throw.
+- Inputs to `add`, `update`, and Trust Mark `issue` are captured before asynchronous work. Later caller mutations must not alter a queued write. Validate the captured input; for updates, merge with the current stored record inside the transaction and validate that result.
 - Returned values are detached; mutation does not persist data.
 - Listing is lexicographic by `entityId` with an inclusive first-unreturned cursor.
 - A page may contain no matching records and still provide `nextCursor`. Continue scanning from that position; absence of `nextCursor` means exhaustion. Continuations must advance beyond the incoming cursor and all records in the returned page. Calls without pagination options return all matches.
@@ -71,7 +72,7 @@ interface TrustMarkStorage {
 }
 ```
 
-- A record is currently valid when it is active, has a finite `issuedAt <= validAt`, and either has no expiry or has `expiresAt > validAt`. Apply these checks before selecting the newest mark so a future-dated replacement does not hide a currently valid mark. This implements [Federation §7.3](https://openid.net/specs/openid-federation-1_0.html#section-7.3)'s time checks using the authority's exact clock, with same-second issuance accepted. Consumer verification has its own clock-skew tolerance.
+- A record is currently eligible when it is active, has a finite `issuedAt <= validAt`, and either has no expiry or has `expiresAt > validAt`. An embedded delegation must also decode successfully, have finite `iat <= validAt`, and have no `exp` or `exp > validAt`. The shared core predicate `isStoredTrustMarkEligible(record, validAt)` implements these time and active-state checks for records verified at ingestion. Apply these checks before selecting the newest mark so a future-dated replacement does not hide a currently valid mark. This implements [Federation §7.3](https://openid.net/specs/openid-federation-1_0.html#section-7.3)'s time checks using the authority's exact clock, with same-second issuance accepted. Consumer verification has its own clock-skew tolerance.
 - Stored type, subject, issuance time, and optional expiration must match the signed JWT. Ingestion establishes signature validity and issuer trust; decoding a stored JWT only checks its contents. Extended Listing checks the reference's type and subject against the JWT before publishing it, following [Federation §3.1.2](https://openid.net/specs/openid-federation-1_0.html#section-3.1.2).
 - Every issued JWT is preserved. Reissuance must not overwrite historical records.
 - `getByJwt` identifies the exact issued token used by status responses.
@@ -181,3 +182,11 @@ Entity Collection stores snapshots separately from subordinate registration reco
 The service publishes each snapshot atomically after collection, outside registration transactions. A store shared across instances must isolate anchors, retain snapshots and opaque cursors, enforce expiry, and return detached values. See [Entity Collection](entity-collection.md#refresh-and-storage).
 
 Collection entries have an `expiresAt` eligibility deadline and may also carry `chainExpiresAt` evidence. Custom collectors do not need to provide chain evidence. Core derives the mark evidence used for filtering during refresh. Keep these internal fields separate from the public entity data when persisting snapshots.
+
+### Transaction callbacks and snapshots
+
+Commit all writes made through the supplied transaction repositories together, or roll them all back when the callback fails. Use only those repositories inside the callback. Calling a queued parent mutation and awaiting it there can deadlock: the parent write waits for the transaction that is waiting for that write.
+
+A read snapshot must give the callback one consistent view and return detached records. Its callback must not await writes through the parent adapter either. Implementations may hold a read boundary for the callback or provide an independent snapshot; applications should not depend on one particular locking mechanism.
+
+`listCandidates()` intentionally includes revoked and expired records. Current-validity queries apply eligibility before choosing the newest record, so a newer mark with an expired delegation cannot hide an older eligible one. Full signature, profile, and issuer verification remain separate checks.
