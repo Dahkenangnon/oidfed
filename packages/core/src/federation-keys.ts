@@ -21,6 +21,13 @@ export interface FederationSigningKey {
 	readonly publicJwk: JWK;
 }
 
+/** Preserve readonly element types when normalizing the initial signing keys. */
+function isSigningKeyList(
+	value: FederationSigningKey | readonly [FederationSigningKey, ...FederationSigningKey[]],
+): value is readonly [FederationSigningKey, ...FederationSigningKey[]] {
+	return Array.isArray(value);
+}
+
 export interface FederationKeyLifecycleProvider extends FederationKeyProvider {
 	/** Return historical public keys with recorded lifetimes (Federation §8.7.2). */
 	getHistoricalFederationKeys(): Promise<HistoricalKeyEntry[]>;
@@ -102,7 +109,7 @@ export class MemoryFederationKeyProvider implements FederationKeyLifecycleProvid
 		options?: MemoryFederationKeyProviderOptions,
 	) {
 		this.nowMs = options?.nowMs ?? Date.now;
-		const keys = Array.isArray(initial) ? initial : [initial];
+		const keys = isSigningKeyList(initial) ? initial : [initial];
 		if (keys.length === 0) {
 			throw new Error("MemoryFederationKeyProvider requires at least one initial federation key");
 		}

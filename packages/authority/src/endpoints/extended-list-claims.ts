@@ -28,7 +28,7 @@ import {
 import type { HandlerContext } from "./context.js";
 import { buildSubordinateStatement } from "./fetch.js";
 
-export type ClaimExtractor = (
+type ClaimExtractor = (
 	record: SubordinateRecord,
 	ctx: HandlerContext,
 	now: number,
@@ -38,7 +38,7 @@ function statementExp(ctx: HandlerContext, now: number): number {
 	return now + (ctx.subordinateStatementTtlSeconds ?? DEFAULT_ENTITY_STATEMENT_TTL_SECONDS);
 }
 
-export const EXTENDED_LIST_CLAIM_EXTRACTORS: Readonly<Record<string, ClaimExtractor>> = {
+const EXTENDED_LIST_CLAIM_EXTRACTORS: Readonly<Record<string, ClaimExtractor>> = {
 	[ExtendedListClaim.SubordinateStatement]: async (record, ctx, now) =>
 		buildSubordinateStatement(ctx, record, now),
 	[ExtendedListClaim.Iss]: (_record, ctx) => ctx.entityId,

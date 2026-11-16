@@ -247,20 +247,11 @@ export interface AuthorityServer {
 	handler(): (request: Request) => Promise<Response>;
 }
 
-/** Creates a federation authority server with all spec-defined endpoints. */
-export function createAuthorityServer(config: AuthorityConfig): AuthorityServer {
-	return createAuthorityServerWithIdentity({
-		...config,
-		entityId: normalizeAuthorityEntityId(config.entityId),
-		metadata: composeEntityMetadata(config.metadata) as AuthorityConfig["metadata"],
-	});
-}
-
 /** Build around the established published identity without normalizing it again. */
 function createAuthorityServerWithIdentity(
 	config: AuthorityConfig & { entityId: EntityId },
-	roleRoutes: ReadonlyMap<string, (request: Request) => Promise<Response>> = new Map(),
-	isTrustAnchor = !config.authorityHints?.length,
+	roleRoutes: ReadonlyMap<string, (request: Request) => Promise<Response>>,
+	isTrustAnchor: boolean,
 ): AuthorityServer {
 	const normalizedEntityId = config.entityId;
 
@@ -358,6 +349,8 @@ function createAuthorityServerWithIdentity(
 		config.options || config.storage.cache
 			? { ...config.options, ...(config.storage.cache ? { cache: config.storage.cache } : {}) }
 			: undefined;
+	// Object.assign loses its result type for the conditional list of typed config fragments.
+	// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
 	const ctx: HandlerContext = Object.assign(
 		base,
 		{ isTrustAnchor, requireAuthForFreshResolution: config.requireAuthForFreshResolution ?? true },
@@ -923,6 +916,7 @@ function advertisedEndpointPath(endpointName: string, endpoint: unknown): string
 }
 
 function unorderedEndpointParameters(endpointName: string | undefined): readonly string[] {
+	if (endpointName === undefined) return [];
 	switch (endpointName) {
 		case "federation_list_endpoint":
 			return LIST_UNORDERED_PARAMETERS;
@@ -1041,14 +1035,8 @@ function prepareAuthorityHost(
 	return { config: normalized, context };
 }
 
-/** Federation authority acting as a local policy anchor, optionally with Superiors of its own. */
-export class TrustAnchor {
-	/** Assess a target with explicitly supplied anchors and options. */
-	static assessEntity = assessEntity;
-	/** Resolve, validate, and select a target chain with explicitly supplied anchors and options. */
-	static discoverEntity = discoverEntity;
-	/** Validate supplied target statements with explicitly supplied anchors and options. */
-	static discoverEntityFromChain = discoverEntityFromChain;
+/** Shared authority host lifecycle, storage forwarding, and request dispatch. */
+abstract class AuthorityHost {
 	private readonly trustContext: EntityContext;
 	/** Assess a target using configured anchors and options, overridden by per-call settings. */
 	assessEntity(
@@ -1092,7 +1080,6 @@ export class TrustAnchor {
 	get collection(): EntityCollectionService | undefined {
 		return this.server.collection;
 	}
-	static sanitizeSubordinateMetadata = sanitizeSubordinateMetadata;
 
 	public readonly entityId: EntityId;
 	private readonly routes = new Map<string, (request: Request) => Promise<Response>>();
@@ -1102,11 +1089,11 @@ export class TrustAnchor {
 	 * Validate and compose host and role configuration; storage and key providers retain their
 	 * identity.
 	 */
-	constructor(config: AuthorityConfig) {
-		const prepared = prepareAuthorityHost(config, this.routes, true);
+	protected constructor(config: AuthorityConfig, isTrustAnchor: boolean) {
+		const prepared = prepareAuthorityHost(config, this.routes, isTrustAnchor);
 		this.entityId = prepared.config.entityId;
 		this.trustContext = prepared.context;
-		this.server = createAuthorityServerWithIdentity(prepared.config, this.routes, true);
+		this.server = createAuthorityServerWithIdentity(prepared.config, this.routes, isTrustAnchor);
 	}
 
 	/** Build and sign this authority's Entity Configuration using the current key provider. */
@@ -1258,219 +1245,38 @@ export class TrustAnchor {
 	}
 }
 
-/** Federation authority with at least one configured Superior. */
-export class Intermediate {
+/** Federation authority acting as a local policy anchor, optionally with Superiors of its own. */
+export class TrustAnchor extends AuthorityHost {
 	/** Assess a target with explicitly supplied anchors and options. */
 	static assessEntity = assessEntity;
 	/** Resolve, validate, and select a target chain with explicitly supplied anchors and options. */
 	static discoverEntity = discoverEntity;
 	/** Validate supplied target statements with explicitly supplied anchors and options. */
 	static discoverEntityFromChain = discoverEntityFromChain;
-	private readonly trustContext: EntityContext;
-	/** Assess a target using configured anchors and options, overridden by per-call settings. */
-	assessEntity(
-		target: EntityId,
-		options: EntityAssessmentOptions & { trustAnchors?: TrustAnchorSet } = {},
-	) {
-		return assessEntity(
-			target,
-			options.trustAnchors ?? this.trustContext.trustAnchors ?? new Map(),
-			{ ...this.trustContext.options, ...options },
-		);
-	}
-	/**
-	 * Resolve, validate, and select a target chain using configured anchors and per-call overrides.
-	 */
-	discoverEntity(
-		target: EntityId,
-		options: FederationOptions & { trustAnchors?: TrustAnchorSet } = {},
-	) {
-		return discoverEntity(
-			target,
-			options.trustAnchors ?? this.trustContext.trustAnchors ?? new Map(),
-			{ ...this.trustContext.options, ...options },
-		);
-	}
-	/** Validate supplied target statements and return discovery evidence using configured anchors. */
-	discoverEntityFromChain(
-		target: EntityId,
-		statements: readonly string[],
-		options: FederationOptions & { trustAnchors?: TrustAnchorSet } = {},
-	) {
-		return discoverEntityFromChain(
-			target,
-			statements,
-			options.trustAnchors ?? this.trustContext.trustAnchors ?? new Map(),
-			{ ...this.trustContext.options, ...options },
-		);
-	}
-
-	/** Access the configured collection service, when this host has one. */
-	get collection(): EntityCollectionService | undefined {
-		return this.server.collection;
-	}
+	/** Remove operational federation metadata before storing a subordinate enrollment. */
 	static sanitizeSubordinateMetadata = sanitizeSubordinateMetadata;
+	declare private readonly trustAnchorBrand: undefined;
 
-	public readonly entityId: EntityId;
-	private readonly routes = new Map<string, (request: Request) => Promise<Response>>();
-	private readonly server: AuthorityServer;
-
-	/**
-	 * Validate and compose host and role configuration; storage and key providers retain their
-	 * identity.
-	 */
+	/** Validate host and role configuration, retaining storage and key provider identity. */
 	constructor(config: AuthorityConfig) {
-		const prepared = prepareAuthorityHost(config, this.routes, false);
-		this.entityId = prepared.config.entityId;
-		this.trustContext = prepared.context;
-		this.server = createAuthorityServerWithIdentity(prepared.config, this.routes, false);
+		super(config, true);
 	}
+}
 
-	/** Build and sign this authority's Entity Configuration using the current key provider. */
-	async getEntityConfiguration(): Promise<string> {
-		return this.server.getEntityConfiguration();
-	}
+/** Federation authority with at least one configured Superior. */
+export class Intermediate extends AuthorityHost {
+	/** Assess a target with explicitly supplied anchors and options. */
+	static assessEntity = assessEntity;
+	/** Resolve, validate, and select a target chain with explicitly supplied anchors and options. */
+	static discoverEntity = discoverEntity;
+	/** Validate supplied target statements with explicitly supplied anchors and options. */
+	static discoverEntityFromChain = discoverEntityFromChain;
+	/** Remove operational federation metadata before storing a subordinate enrollment. */
+	static sanitizeSubordinateMetadata = sanitizeSubordinateMetadata;
+	declare private readonly intermediateBrand: undefined;
 
-	/** Sign the stored enrollment for a direct subordinate; reject when no record exists. */
-	async getSubordinateStatement(sub: EntityId): Promise<string> {
-		return this.server.getSubordinateStatement(sub);
-	}
-
-	/** Return identifiers from the local subordinate storage listing with the supplied filter. */
-	async listSubordinates(filter?: ListFilter): Promise<EntityId[]> {
-		return this.server.listSubordinates(filter);
-	}
-
-	/** Run local Extended Listing with filtering and pagination, returning a Result. */
-	async listSubordinatesExtended(
-		params?: ExtendedSubordinateListingParams,
-		options?: ExtendedSubordinateListingOptions,
-	): Promise<Result<ExtendedSubordinateListingResult, FederationError>> {
-		return this.server.listSubordinatesExtended(params, options);
-	}
-
-	/** Build a local signed Resolve response; per-call federation options override host defaults. */
-	async resolveEntity(sub: EntityId, ta?: EntityId, options?: FederationOptions): Promise<string> {
-		return this.server.resolveEntity(sub, ta, options);
-	}
-
-	/** Obtain this issuer's local status assessment; this is not a remote issuer lookup. */
-	async getTrustMarkStatus(trustMark: string): Promise<TrustMarkStatusResponsePayload> {
-		return this.server.getTrustMarkStatus(trustMark);
-	}
-
-	/** List eligible local subjects for a Trust Mark type. */
-	async listTrustMarkedEntities(trustMarkType: string): Promise<string[]> {
-		return this.server.listTrustMarkedEntities(trustMarkType);
-	}
-
-	/** Return a detached copy of this host's published Trust Mark references. */
-	getTrustMarks() {
-		return this.server.getTrustMarks();
-	}
-	/**
-	 * Validate a mark for this host and publish it; failed validation leaves prior references intact.
-	 */
-	async attachTrustMark(jwt: string, options: AttachTrustMarkOptions) {
-		return this.server.attachTrustMark(jwt, options);
-	}
-	/** Establish issuer trust and retrieve a mark for this host before validated publication. */
-	async fetchAndAttachTrustMark(options: FetchAndAttachTrustMarkOptions) {
-		return this.server.fetchAndAttachTrustMark(options);
-	}
-	/** Remove matching references from this host's publication; this does not revoke issuance. */
-	async removeTrustMark(selector: RemoveTrustMarkSelector) {
-		return this.server.removeTrustMark(selector);
-	}
-	/** Replace the anchor's detached issuer declarations after validating the new publication. */
-	async setTrustMarkIssuers(issuers: Record<string, string[]>) {
-		return this.server.setTrustMarkIssuers(issuers);
-	}
-	/** Replace the anchor's detached owner declarations after validating the new publication. */
-	async setTrustMarkOwners(owners: Record<string, TrustMarkOwner>) {
-		return this.server.setTrustMarkOwners(owners);
-	}
-	/** Replace owner-delegation JWTs used by this host's managed issuer service. */
-	async setTrustMarkDelegations(delegations: Record<string, string>) {
-		return this.server.setTrustMarkDelegations(delegations);
-	}
-	/** Revoke this issuer's matching local records for the type and subject. */
-	async revokeTrustMark(type: string, subject: string) {
-		return this.server.revokeTrustMark(type, subject);
-	}
-	/** Return detached, eligible local issuance records for the subject. */
-	async listTrustMarksForSubject(subject: string) {
-		return this.server.listTrustMarksForSubject(subject);
-	}
-	/** Issue or reuse a managed Trust Mark for a subject under the configured issuer policy. */
-	async issueTrustMark(
-		sub: string,
-		trustMarkType: string,
-		options?: TrustMarkIssuanceOptions,
-	): Promise<string> {
-		return this.server.issueTrustMark(sub, trustMarkType, options);
-	}
-
-	/** Sign an owner-to-issuer delegation; the host supplies the authority to make that delegation. */
-	async issueTrustMarkDelegation(
-		subject: string,
-		trustMarkType: string,
-		options?: TrustMarkDelegationIssuanceOptions,
-	): Promise<string> {
-		return this.server.issueTrustMarkDelegation(subject, trustMarkType, options);
-	}
-
-	/** Sign the configured key provider's historical-key response. */
-	async getHistoricalKeys(): Promise<string> {
-		return this.server.getHistoricalKeys();
-	}
-
-	/** Validate and persist an enrollment, recording lifecycle events when supported by storage. */
-	async registerSubordinate(
-		record: Omit<SubordinateRecord, "createdAt" | "updatedAt">,
-		annotations?: SubordinateEventAnnotations,
-	): Promise<void> {
-		return this.server.registerSubordinate(record, annotations);
-	}
-	/**
-	 * Validate and persist enrollment changes, recording supported lifecycle events transactionally.
-	 */
-	async updateSubordinate(
-		subject: EntityId,
-		updates: SubordinateRecordUpdate,
-		annotations?: SubordinateEventAnnotations,
-	): Promise<void> {
-		return this.server.updateSubordinate(subject, updates, annotations);
-	}
-	/** Remove an enrollment and record revocation when event storage is available. */
-	async revokeSubordinate(
-		subject: EntityId,
-		annotations?: SubordinateEventAnnotations,
-	): Promise<void> {
-		return this.server.revokeSubordinate(subject, annotations);
-	}
-	/**
-	 * Validate and detach manually supplied events before queuing their transactional storage write.
-	 */
-	async recordSubordinateEvents(
-		subject: EntityId,
-		events: readonly SubordinateEvent[],
-	): Promise<void> {
-		return this.server.recordSubordinateEvents(subject, events);
-	}
-	/** Sign stored history for the subject; reject when no history exists. */
-	async getSubordinateEvents(subject: EntityId): Promise<string> {
-		return this.server.getSubordinateEvents(subject);
-	}
-
-	/** Dispatch role routes and federation endpoints, including configured endpoint authentication. */
-	async handleRequest(request: Request): Promise<Response> {
-		const url = new URL(request.url);
-		const pathname = url.pathname;
-		const roleHandler = this.routes.get(pathname);
-		if (roleHandler) {
-			return roleHandler(request);
-		}
-		return this.server.handler()(request);
+	/** Validate host and role configuration, retaining storage and key provider identity. */
+	constructor(config: AuthorityConfig) {
+		super(config, false);
 	}
 }

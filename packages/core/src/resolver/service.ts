@@ -501,7 +501,9 @@ function createResolveHandler(
 					cacheExpiry = Math.min(cacheExpiry, mark.delegation.expiresAt);
 			}
 			if (Array.isArray(extraHeaders.trust_chain)) {
-				for (const statement of extraHeaders.trust_chain) {
+				const statements: readonly unknown[] = extraHeaders.trust_chain;
+				for (const statement of statements) {
+					if (typeof statement !== "string") continue;
 					const decoded = decodeEntityStatement(statement);
 					if (decoded.ok && typeof decoded.value.payload.exp === "number")
 						cacheExpiry = Math.min(cacheExpiry, decoded.value.payload.exp);

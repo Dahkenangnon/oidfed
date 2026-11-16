@@ -9,9 +9,12 @@ import {
 	FederationErrorCode,
 	type FederationOptions,
 	federationError,
+	InternalErrorCode,
 	ok,
 	type Result,
+	resolveTrustChainForAnchor,
 	resolveTrustChains,
+	safeLogger,
 	selectTrustChain,
 	shortestChain,
 	type TrustAnchorSet,
@@ -362,7 +365,7 @@ export async function selectSharedRegistrationTrustChains(
 }
 
 /**
- * Resolve trust chains for an entity and return the shortest valid chain.
+ * Resolve client chains and select one using the configured strategy.
  *
  * Resolves the client chain for automatic registration.
  */
@@ -372,54 +375,67 @@ export async function resolveAndValidateBestChain(
 	options: FederationOptions,
 	profile: RegistrationProfile = oidcRegistrationProfile,
 ): Promise<Result<ValidatedTrustChain, FederationError>> {
-	const operation = createTrustChainOperation(options);
-	if (!operation.ok) return operation;
-	options = operation.value.options;
-	const chainResult = await resolveTrustChains(rpEntityId, trustAnchors, options);
+	const candidates = await resolveValidRegistrationChains(
+		rpEntityId,
+		trustAnchors,
+		options,
+		"RP",
+		undefined,
+		profile,
+	);
+	if (!candidates.ok) return candidates;
+	return selectTrustChain(
+		candidates.value.map((candidate) => candidate.chain),
+		options,
+		shortestChain,
+	);
+}
 
-	if (chainResult.chains.length === 0) {
-		const errorMsgs = chainResult.errors.map((e) => e.description).join("; ");
-		return err(
-			federationError(
-				FederationErrorCode.InvalidTrustChain,
-				`Failed to resolve trust chain for RP: ${errorMsgs || "no chains found"}`,
-			),
-		);
+/** Build matching trust_chain and optional peer_trust_chain headers before signing. */
+export async function registrationChainHeaders(
+	selectedChain: readonly string[],
+	selectedTrustAnchorId: EntityId | undefined,
+	providerEntityId: EntityId,
+	includePeerTrustChain: boolean | undefined,
+	trustAnchors: TrustAnchorSet,
+	options?: FederationOptions,
+): Promise<Result<Record<string, unknown>>> {
+	const extraHeaders: Record<string, unknown> = {};
+	if (selectedChain.length > 0) {
+		extraHeaders.trust_chain = selectedChain;
 	}
 
-	const validChains: ValidatedTrustChain[] = [];
-	let metadataError: FederationError | undefined;
-	for (const chain of chainResult.chains) {
-		const result = await validateTrustChain(chain.statements, trustAnchors, {
-			...options,
-			entityConfigurations: chain.entityConfigurations,
-		});
-		if (result.valid) {
-			const parsed = effectiveMetadata(
-				profile.clientType,
-				result.chain.resolvedMetadata[profile.clientType],
+	if (includePeerTrustChain) {
+		if (!selectedTrustAnchorId) {
+			safeLogger(options?.logger)?.warn(
+				"includePeerTrustChain requires a selected RP Trust Anchor",
 			);
-			if (!parsed.ok) {
-				metadataError ??= parsed.error;
-				continue;
-			}
-			validChains.push(result.chain);
+			return err(
+				federationError(
+					InternalErrorCode.TrustAnchorUnknown,
+					"includePeerTrustChain requires a selected RP Trust Anchor; no valid RP chain was built",
+				),
+			);
 		}
+		const peerChainResult = await resolveTrustChainForAnchor(
+			providerEntityId,
+			selectedTrustAnchorId,
+			trustAnchors,
+			options,
+		);
+		if (!peerChainResult.ok) {
+			safeLogger(options?.logger)?.warn(
+				"Cannot build peer_trust_chain to the selected Trust Anchor",
+			);
+			return err(
+				federationError(
+					InternalErrorCode.TrustChainInvalid,
+					`includePeerTrustChain: cannot build peer Trust Chain for ${providerEntityId} ending at ${selectedTrustAnchorId}: ${peerChainResult.error.description}`,
+				),
+			);
+		}
+		extraHeaders.peer_trust_chain = peerChainResult.value;
 	}
 
-	if (operation.value.exhausted() || (options?.chainSelection && chainResult.incomplete))
-		return err(
-			federationError(
-				FederationErrorCode.InvalidTrustChain,
-				"Trust chain discovery was incomplete",
-			),
-		);
-	if (validChains.length === 0) {
-		if (metadataError) return err(metadataError);
-		return err(
-			federationError(FederationErrorCode.InvalidTrustChain, "No valid trust chains found for RP"),
-		);
-	}
-
-	return selectTrustChain(validChains, options, shortestChain);
+	return ok(extraHeaders);
 }

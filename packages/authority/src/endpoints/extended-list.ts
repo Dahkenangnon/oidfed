@@ -26,6 +26,7 @@ import {
 	type ExtendedListingRequestFilter,
 } from "./extended-list-filters.js";
 import { errorResponse, jsonResponse, parseQueryParams, requireMethod } from "./helpers.js";
+import { parseBooleanQuery, validateEntityTypes } from "./list-parameters.js";
 
 /** Configuration controlling Extended Listing; numeric limits must be positive safe integers. */
 export interface ExtendedListingConfig {
@@ -81,13 +82,6 @@ function parseNumericDate(value: string | null): number | null {
 	if (value === null) return null;
 	const parsed = ExtendedListQuerySchema.shape.updated_after.safeParse(value);
 	return parsed.success ? (parsed.data ?? Number.NaN) : Number.NaN;
-}
-
-function parseBooleanQuery(value: string | null): boolean | null | undefined {
-	if (value === null) return null;
-	if (value === "true") return true;
-	if (value === "false") return false;
-	return undefined;
 }
 
 /**
@@ -150,15 +144,8 @@ export function createExtendedListHandler(
 		// Federation §5.1 keeps its value space open (no registry): filter, never
 		// reject unknown values; an unmatched identifier yields an empty page.
 		const rawEntityTypes = params.getAll("entity_type");
-		for (const et of rawEntityTypes) {
-			if (et.length === 0) {
-				return errorResponse(
-					400,
-					FederationErrorCode.InvalidRequest,
-					"entity_type must not be empty",
-				);
-			}
-		}
+		const entityTypeError = validateEntityTypes(rawEntityTypes);
+		if (entityTypeError) return entityTypeError;
 
 		const trustMarkedRaw = params.get("trust_marked");
 		const trustMarked = parseBooleanQuery(trustMarkedRaw);

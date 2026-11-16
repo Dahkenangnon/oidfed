@@ -207,10 +207,10 @@ export class EntityCollectionService {
 		if (signals.some((signal) => signal?.aborted)) return cancelled();
 		const previous = this.refreshes.get(anchor);
 		const run = (async () => {
-			if (previous) await previous;
+			if (previous !== undefined) await previous;
 			if (signals.some((signal) => signal?.aborted)) return cancelled();
 			return this.performRefresh(anchor, options);
-		})().catch((cause) =>
+		})().catch((cause: unknown) =>
 			err({
 				code: FederationErrorCode.TemporarilyUnavailable,
 				description: "Collection refresh could not be completed",

@@ -2,6 +2,7 @@
 
 import {
 	type Clock,
+	createConcurrencyLimiter,
 	type EntityCollectionStore,
 	type EntityId,
 	isStoredTrustMarkEligible,
@@ -49,7 +50,7 @@ const detached = <T>(value: T): T => structuredClone(value);
 /**
  * Validate stored subordinate shape and publication claims. Invalid records throw.
  */
-export function validateSubordinateRecord(record: SubordinateRecord): void {
+function validateSubordinateRecord(record: SubordinateRecord): void {
 	if (!isValidEntityId(record.entityId))
 		throw new InvalidSubordinateRecord("Subordinate entityId must be a valid Entity Identifier");
 	try {
@@ -235,7 +236,7 @@ export interface MemoryStorageAdapterOptions {
 export class MemoryStorageAdapter implements StorageAdapter {
 	readonly collections?: EntityCollectionStore;
 	private state: MemoryState;
-	private tail: Promise<void> = Promise.resolve();
+	private readonly serialize = createConcurrencyLimiter(1);
 	private readonly clock: Clock | undefined;
 	readonly subordinates: SubordinateStorage;
 	readonly trustMarks?: TrustMarkStorage;
@@ -331,16 +332,6 @@ export class MemoryStorageAdapter implements StorageAdapter {
 	}
 
 	private async runExclusive<T>(operation: () => Promise<T> | T): Promise<T> {
-		const previous = this.tail;
-		let release!: () => void;
-		this.tail = new Promise<void>((resolve) => {
-			release = resolve;
-		});
-		await previous;
-		try {
-			return await operation();
-		} finally {
-			release();
-		}
+		return this.serialize(async () => operation());
 	}
 }

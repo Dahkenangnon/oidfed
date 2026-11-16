@@ -62,3 +62,45 @@ export async function runAsyncOperation<T>(
 		if (onAbort) options.signal?.removeEventListener("abort", onAbort);
 	}
 }
+
+/** Create a concurrency limiter that allows at most `maxConcurrent` parallel executions. */
+export function createConcurrencyLimiter(
+	maxConcurrent: number,
+	signal?: AbortSignal,
+): <T>(fn: () => Promise<T>) => Promise<T> {
+	if (!Number.isSafeInteger(maxConcurrent) || maxConcurrent <= 0)
+		throw new RangeError("maxConcurrent must be a positive safe integer");
+	let active = 0;
+	const queue: Array<{ resolve: () => void; reject: (reason: unknown) => void }> = [];
+	const aborted = () => new DOMException("Operation aborted", "AbortError");
+	const onAbort = () => {
+		for (const pending of queue.splice(0)) pending.reject(aborted());
+		signal?.removeEventListener("abort", onAbort);
+	};
+	async function acquire(): Promise<void> {
+		if (signal?.aborted) throw aborted();
+		if (active < maxConcurrent) {
+			active++;
+			return;
+		}
+		await new Promise<void>((resolve, reject) => {
+			queue.push({ resolve, reject });
+			if (queue.length === 1) signal?.addEventListener("abort", onAbort, { once: true });
+			if (signal?.aborted) onAbort();
+		});
+	}
+
+	return async <T>(fn: () => Promise<T>): Promise<T> => {
+		await acquire();
+		try {
+			if (signal?.aborted) throw aborted();
+			return await fn();
+		} finally {
+			const next = queue.shift();
+			if (!queue.length) signal?.removeEventListener("abort", onAbort);
+			// Transfer the occupied slot directly to a waiter before admitting new work.
+			if (next) next.resolve();
+			else active--;
+		}
+	};
+}

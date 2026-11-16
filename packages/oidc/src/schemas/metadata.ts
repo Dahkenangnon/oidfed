@@ -10,19 +10,14 @@
  */
 
 import {
-	FederationEntityMetadataSchema,
+	type FederationEntityMetadataSchema,
 	type FederationMetadata,
-	FederationMetadataSchema,
 	MetadataJWKSetSchema,
 	parseOAuthAuthorizationServerMetadata,
 	parseOAuthAuthorizationServerPublicationMetadata,
 	validateJwkSetUseRequirement,
 } from "@oidfed/core";
 import { z } from "zod";
-
-export type { FederationMetadata };
-// Re-export core schemas for consumers that need OIDC-strict + base schemas together
-export { FederationEntityMetadataSchema, FederationMetadataSchema };
 
 const httpsUrl = z
 	.url()
@@ -354,7 +349,7 @@ function relyingPartyRequirements(
 export const OpenIDRelyingPartyMetadataSchema = z
 	.looseObject(OpenIDRelyingPartyMetadataShape)
 	.superRefine((meta, ctx) => relyingPartyRequirements(meta, ctx, false));
-export const OpenIDRelyingPartyPublicationMetadataSchema = z
+const OpenIDRelyingPartyPublicationMetadataSchema = z
 	.looseObject(OpenIDRelyingPartyMetadataShape)
 	.superRefine((meta, ctx) => relyingPartyRequirements(meta, ctx, true));
 
@@ -427,7 +422,7 @@ export const OAuthAuthorizationServerMetadataSchema = z
 		}
 		return parsed.data;
 	});
-export const OAuthAuthorizationServerPublicationMetadataSchema = z
+const OAuthAuthorizationServerPublicationMetadataSchema = z
 	.record(z.string(), z.unknown())
 	.transform((raw, ctx) => {
 		const parsed = parseOAuthAuthorizationServerPublicationMetadata(raw);
@@ -529,7 +524,7 @@ export const OpenIDProviderMetadataSchema = z
 	.looseObject(OpenIDProviderMetadataShape)
 	.superRefine((meta, ctx) => providerRequirements(meta, ctx, false))
 	.and(OAuthAuthorizationServerMetadataSchema);
-export const OpenIDProviderPublicationMetadataSchema = z
+const OpenIDProviderPublicationMetadataSchema = z
 	.looseObject(OpenIDProviderMetadataShape)
 	.partial()
 	.superRefine((meta, ctx) => providerRequirements(meta, ctx, true))
@@ -593,7 +588,7 @@ function oauthClientRequirements(
 export const OAuthClientMetadataSchema = z
 	.looseObject(OAuthClientMetadataShape)
 	.superRefine((meta, ctx) => oauthClientRequirements(meta, ctx, false));
-export const OAuthClientPublicationMetadataSchema = z
+const OAuthClientPublicationMetadataSchema = z
 	.looseObject(OAuthClientMetadataShape)
 	.superRefine((meta, ctx) => oauthClientRequirements(meta, ctx, true));
 
@@ -695,25 +690,6 @@ export type OAuthResourcePublicationMetadata = z.infer<
 	typeof publicationRoleSchemas.oauth_resource
 >;
 
-// ---------------------------------------------------------------------------
-// Combined Federation OIDC Metadata Schema
-// ---------------------------------------------------------------------------
-
-/**
- * Effective federation metadata after superior completion. Use publication types
- * for individual Entity Configurations whose protocol fields are still incomplete.
- */
-export const OIDCFederationMetadataSchema = FederationMetadataSchema.pipe(
-	z.looseObject({
-		federation_entity: FederationEntityMetadataSchema.optional(),
-		openid_relying_party: OpenIDRelyingPartyMetadataSchema.optional(),
-		openid_provider: OpenIDProviderMetadataSchema.optional(),
-		oauth_authorization_server: OAuthAuthorizationServerMetadataSchema.optional(),
-		oauth_client: OAuthClientMetadataSchema.optional(),
-		oauth_resource: OAuthResourceMetadataSchema.optional(),
-	}),
-);
-
 /** Effective metadata, after federation processing and protocol validation. */
 export type OIDCFederationMetadata = FederationMetadata & {
 	readonly federation_entity?: z.infer<typeof FederationEntityMetadataSchema>;
@@ -723,13 +699,6 @@ export type OIDCFederationMetadata = FederationMetadata & {
 	readonly oauth_client?: OAuthClientMetadata;
 	readonly oauth_resource?: OAuthResourceMetadata;
 };
-
-/**
- * Parse and validate metadata with OIDC-strict validation.
- */
-export function validateOIDCMetadata(raw: unknown): OIDCFederationMetadata {
-	return OIDCFederationMetadataSchema.parse(raw) as OIDCFederationMetadata;
-}
 
 /** Publication can omit protocol fields completed by superiors (Federation §5). */
 export type OIDCFederationPublicationMetadata = FederationMetadata & {

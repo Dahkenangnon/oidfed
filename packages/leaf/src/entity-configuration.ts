@@ -504,7 +504,7 @@ export class Leaf {
 		if (this.cachedJwt && !this.isEntityConfigurationExpired()) {
 			return this.cachedJwt;
 		}
-		if (this.inflight) return this.inflight;
+		if (this.inflight !== null) return this.inflight;
 		const generation = this.generation;
 		this.inflight = this.buildEntityConfiguration(generation).finally(() => {
 			if (generation === this.generation) this.inflight = null;

@@ -1,4 +1,8 @@
-export { runAsyncOperation, waitForOperation } from "./async-operation.js";
+export {
+	createConcurrencyLimiter,
+	runAsyncOperation,
+	waitForOperation,
+} from "./async-operation.js";
 export {
 	createAttestationChallengeHandler,
 	createAttestationChallengeResponse,
@@ -319,7 +323,6 @@ export {
 	refreshTrustChain,
 } from "./trust-chain/refresh.js";
 export {
-	createConcurrencyLimiter,
 	type ResolveTrustChainsOptions,
 	resolveTrustChains,
 } from "./trust-chain/resolve.js";

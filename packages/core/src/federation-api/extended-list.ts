@@ -72,7 +72,7 @@ export function buildExtendedListRequestParameters(
 		selectors.set("claims", joined);
 	}
 	if (params.entityType !== undefined) {
-		const types = Array.isArray(params.entityType) ? params.entityType : [params.entityType];
+		const types = typeof params.entityType === "string" ? [params.entityType] : params.entityType;
 		for (const t of types) selectors.append("entity_type", t);
 	}
 	if (params.trustMarked !== undefined) {

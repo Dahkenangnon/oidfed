@@ -65,19 +65,14 @@ import { processExplicitRegistration } from "../../../packages/oidc/src/registra
 import { oauthRegistrationProfile } from "../../../packages/oidc/src/registration/profile.js";
 import type { AutomaticRegistrationContext } from "../../../packages/oidc/src/registration/types.js";
 import { validateAutomaticRegistrationRequest } from "../../../packages/oidc/src/registration/validate-request-object.js";
-import {
-	ExplicitRegistrationRequestPayloadSchema,
-	ExplicitRegistrationResponsePayloadSchema,
-} from "../../../packages/oidc/src/schemas/explicit-registration.js";
+import { oidcRegistrationSchemas } from "../../../packages/oidc/src/schemas/explicit-registration.js";
 import {
 	OAuthAuthorizationServerMetadataSchema,
 	OAuthClientMetadataSchema,
 	OAuthResourceMetadataSchema,
-	OIDCFederationMetadataSchema,
 	OpenIDProviderMetadataSchema,
 	OpenIDRelyingPartyMetadataSchema,
 	OpenIDRelyingPartyRegistrationResponseMetadataSchema,
-	validateOIDCMetadata,
 } from "../../../packages/oidc/src/schemas/metadata.js";
 import { createMockFederation, LEAF_ID, OP_ID, TA_ID } from "../fixtures/index.js";
 import { signProtocolFixture } from "../fixtures/protocol-jwt.js";
@@ -2102,7 +2097,7 @@ export default (QUnit: QUnit) => {
 			oauth_authorization_server: {},
 			oauth_resource: {},
 		};
-		t.false(OIDCFederationMetadataSchema.safeParse(publication).success);
+		t.false(OidcProviderRole.parseMetadata(publication.openid_provider).success);
 		t.deepEqual(publication.openid_provider, {});
 	});
 	module("oidc / publication and endpoint validation", () => {
@@ -2715,46 +2710,40 @@ export default (QUnit: QUnit) => {
 	// -------------------------------------------------------------------------
 	// schemas/metadata
 	// -------------------------------------------------------------------------
-	module("oidc / OIDCFederationMetadataSchema", () => {
+	module("oidc / public role metadata parsers", () => {
 		test("validates metadata with valid openid_provider fields", (t) => {
-			const result = OIDCFederationMetadataSchema.safeParse({
-				openid_provider: {
-					...validProviderMetadata,
-					issuer: "https://op.example.com",
-					authorization_endpoint: "https://op.example.com/authorize",
-					token_endpoint: "https://op.example.com/token",
-					response_types_supported: ["code"],
-					subject_types_supported: ["public"],
-					id_token_signing_alg_values_supported: ["RS256", "ES256"],
-				},
+			const result = OidcProviderRole.parseMetadata({
+				...validProviderMetadata,
+				issuer: "https://op.example.com",
+				authorization_endpoint: "https://op.example.com/authorize",
+				token_endpoint: "https://op.example.com/token",
+				response_types_supported: ["code"],
+				subject_types_supported: ["public"],
+				id_token_signing_alg_values_supported: ["RS256", "ES256"],
 			});
 			t.true(result.success);
 		});
 
 		test("validates metadata with valid openid_relying_party fields", (t) => {
-			const result = OIDCFederationMetadataSchema.safeParse({
-				openid_relying_party: {
-					redirect_uris: ["https://rp.example.com/callback"],
-					response_types: ["code"],
-					client_registration_types: ["automatic"],
-				},
+			const result = OidcRelyingPartyRole.parseMetadata({
+				redirect_uris: ["https://rp.example.com/callback"],
+				response_types: ["code"],
+				client_registration_types: ["automatic"],
 			});
 			t.true(result.success);
 		});
 
 		test("preserves language-tagged relying party metadata names", (t) => {
-			const result = OIDCFederationMetadataSchema.safeParse({
-				openid_relying_party: {
-					redirect_uris: ["https://rp.example.com/callback"],
-					response_types: ["code"],
-					client_registration_types: ["automatic"],
-					client_name: "Example RP",
-					"client_name#de": "Beispiel RP",
-				},
+			const result = OidcRelyingPartyRole.parseMetadata({
+				redirect_uris: ["https://rp.example.com/callback"],
+				response_types: ["code"],
+				client_registration_types: ["automatic"],
+				client_name: "Example RP",
+				"client_name#de": "Beispiel RP",
 			});
 			t.true(result.success);
 			if (!result.success) return;
-			const metadata = result.data.openid_relying_party as Record<string, unknown>;
+			const metadata = result.data as Record<string, unknown>;
 			t.equal(metadata.client_name, "Example RP");
 			t.equal(metadata["client_name#de"], "Beispiel RP");
 		});
@@ -2775,11 +2764,9 @@ export default (QUnit: QUnit) => {
 					field,
 				);
 				t.false(
-					OIDCFederationMetadataSchema.safeParse({
-						openid_relying_party: {
-							redirect_uris: ["https://rp.example.com/callback"],
-							[field]: value,
-						},
+					OidcRelyingPartyRole.parseMetadata({
+						redirect_uris: ["https://rp.example.com/callback"],
+						[field]: value,
 					}).success,
 					field,
 				);
@@ -2798,29 +2785,25 @@ export default (QUnit: QUnit) => {
 		});
 
 		test("rejects OP metadata with invalid issuer URL", (t) => {
-			const result = OIDCFederationMetadataSchema.safeParse({
-				openid_provider: {
-					...validProviderMetadata,
-					issuer: "not-a-url",
-					authorization_endpoint: "https://op.example.com/authorize",
-					token_endpoint: "https://op.example.com/token",
-					response_types_supported: ["code"],
-					subject_types_supported: ["public"],
-					id_token_signing_alg_values_supported: ["RS256", "ES256"],
-				},
+			const result = OidcProviderRole.parseMetadata({
+				...validProviderMetadata,
+				issuer: "not-a-url",
+				authorization_endpoint: "https://op.example.com/authorize",
+				token_endpoint: "https://op.example.com/token",
+				response_types_supported: ["code"],
+				subject_types_supported: ["public"],
+				id_token_signing_alg_values_supported: ["RS256", "ES256"],
 			});
 			t.false(result.success);
 		});
 
 		test("rejects RP metadata with invalid redirect_uris", (t) => {
-			const result = OIDCFederationMetadataSchema.safeParse({
-				openid_relying_party: { redirect_uris: ["not-a-url"] },
-			});
+			const result = OidcRelyingPartyRole.parseMetadata({ redirect_uris: ["not-a-url"] });
 			t.false(result.success);
 		});
 
 		test("requires at least one entity type", (t) => {
-			t.false(OIDCFederationMetadataSchema.safeParse({}).success);
+			t.false(CoreVerify.FederationMetadataSchema.safeParse({}).success);
 		});
 	});
 
@@ -3145,51 +3128,48 @@ export default (QUnit: QUnit) => {
 
 		test("combined federation metadata validates OAuth entity metadata", (t) => {
 			t.true(
-				OIDCFederationMetadataSchema.safeParse({
-					oauth_authorization_server: {
-						...validAuthorizationServer,
-						signed_jwks_uri: "https://as.example.com/jwks.jose",
-					},
-					oauth_client: {
-						redirect_uris: ["https://client.example.com/callback"],
-						contacts: ["Client Operations"],
-					},
-					oauth_resource: {
-						resource: "https://resource.example.com",
-						keywords: ["resource"],
-					},
-				}).success,
+				{
+					success: [
+						OAuthAuthorizationServerRole.parseMetadata({
+							...validAuthorizationServer,
+							signed_jwks_uri: "https://as.example.com/jwks.jose",
+						}).success,
+						OAuthClientRole.parseMetadata({
+							redirect_uris: ["https://client.example.com/callback"],
+							contacts: ["Client Operations"],
+						}).success,
+						OAuthResourceRole.parseMetadata({
+							resource: "https://resource.example.com",
+							keywords: ["resource"],
+						}).success,
+					].every(Boolean),
+				}.success,
 			);
-			t.true(
-				OIDCFederationMetadataSchema.safeParse({
-					oauth_resource: { keywords: ["missing resource"] },
-				}).success,
-			);
+			t.true(OAuthResourceRole.parseMetadata({ keywords: ["missing resource"] }).success);
 		});
 	});
 
-	module("oidc / validateOIDCMetadata", () => {
+	module("oidc / role metadata parse results", () => {
 		test("returns parsed metadata for valid input", (t) => {
-			const result = validateOIDCMetadata({
-				openid_provider: {
-					...validProviderMetadata,
-					issuer: "https://op.example.com",
-					authorization_endpoint: "https://op.example.com/authorize",
-					token_endpoint: "https://op.example.com/token",
-					response_types_supported: ["code"],
-					subject_types_supported: ["public"],
-					id_token_signing_alg_values_supported: ["RS256", "ES256"],
-				},
+			const result = OidcProviderRole.parseMetadata({
+				...validProviderMetadata,
+				issuer: "https://op.example.com",
+				authorization_endpoint: "https://op.example.com/authorize",
+				token_endpoint: "https://op.example.com/token",
+				response_types_supported: ["code"],
+				subject_types_supported: ["public"],
+				id_token_signing_alg_values_supported: ["RS256", "ES256"],
 			});
-			t.equal(result.openid_provider?.issuer, "https://op.example.com");
+			t.true(result.success);
+			if (result.success) t.equal(result.data.issuer, "https://op.example.com");
 		});
 
 		test("throws for invalid OP metadata", (t) => {
-			t.throws(() => validateOIDCMetadata({ openid_provider: { issuer: "bad" } }));
+			t.false(OidcProviderRole.parseMetadata({ issuer: "bad" }).success);
 		});
 
 		test("throws for invalid RP metadata", (t) => {
-			t.throws(() => validateOIDCMetadata({ openid_relying_party: { redirect_uris: [123] } }));
+			t.false(OidcRelyingPartyRole.parseMetadata({ redirect_uris: [123] }).success);
 		});
 	});
 
@@ -3222,11 +3202,11 @@ export default (QUnit: QUnit) => {
 				metadata: { openid_relying_party: { redirect_uris: ["https://rp.example.com/callback"] } },
 			};
 			test("accepts valid registration request", (t) => {
-				t.true(ExplicitRegistrationRequestPayloadSchema.safeParse(validReq).success);
+				t.true(oidcRegistrationSchemas.request.safeParse(validReq).success);
 			});
 			test("rejects when iss !== sub", (t) => {
 				t.false(
-					ExplicitRegistrationRequestPayloadSchema.safeParse({
+					oidcRegistrationSchemas.request.safeParse({
 						...validReq,
 						sub: "https://other.example.com",
 					}).success,
@@ -3234,11 +3214,11 @@ export default (QUnit: QUnit) => {
 			});
 			test("requires aud", (t) => {
 				const { aud: _, ...v } = validReq;
-				t.false(ExplicitRegistrationRequestPayloadSchema.safeParse(v).success);
+				t.false(oidcRegistrationSchemas.request.safeParse(v).success);
 			});
 			test("rejects aud arrays", (t) => {
 				t.false(
-					ExplicitRegistrationRequestPayloadSchema.safeParse({
+					oidcRegistrationSchemas.request.safeParse({
 						...validReq,
 						aud: ["https://op.example.com", "https://other-op.example.com"],
 					}).success,
@@ -3246,15 +3226,15 @@ export default (QUnit: QUnit) => {
 			});
 			test("requires authority_hints", (t) => {
 				const { authority_hints: _, ...v } = validReq;
-				t.false(ExplicitRegistrationRequestPayloadSchema.safeParse(v).success);
+				t.false(oidcRegistrationSchemas.request.safeParse(v).success);
 			});
 			test("requires metadata", (t) => {
 				const { metadata: _, ...v } = validReq;
-				t.false(ExplicitRegistrationRequestPayloadSchema.safeParse(v).success);
+				t.false(oidcRegistrationSchemas.request.safeParse(v).success);
 			});
 			test("requires metadata to contain openid_relying_party", (t) => {
 				t.false(
-					ExplicitRegistrationRequestPayloadSchema.safeParse({
+					oidcRegistrationSchemas.request.safeParse({
 						...validReq,
 						metadata: { federation_entity: { organization_name: "Test" } },
 					}).success,
@@ -3279,11 +3259,11 @@ export default (QUnit: QUnit) => {
 				},
 			};
 			test("accepts valid registration response", (t) => {
-				t.true(ExplicitRegistrationResponsePayloadSchema.safeParse(validResp).success);
+				t.true(oidcRegistrationSchemas.response.safeParse(validResp).success);
 			});
 			test("rejects aud arrays", (t) => {
 				t.false(
-					ExplicitRegistrationResponsePayloadSchema.safeParse({
+					oidcRegistrationSchemas.response.safeParse({
 						...validResp,
 						aud: ["https://rp.example.com", "https://other-rp.example.com"],
 					}).success,
@@ -3291,11 +3271,11 @@ export default (QUnit: QUnit) => {
 			});
 			test("requires trust_anchor", (t) => {
 				const { trust_anchor: _, ...v } = validResp;
-				t.false(ExplicitRegistrationResponsePayloadSchema.safeParse(v).success);
+				t.false(oidcRegistrationSchemas.response.safeParse(v).success);
 			});
 			test("accepts nested client_secret", (t) => {
 				t.true(
-					ExplicitRegistrationResponsePayloadSchema.safeParse({
+					oidcRegistrationSchemas.response.safeParse({
 						...validResp,
 						metadata: {
 							openid_relying_party: {
@@ -3309,7 +3289,7 @@ export default (QUnit: QUnit) => {
 			});
 			test("rejects client_secret expiry before response expiry", (t) => {
 				t.false(
-					ExplicitRegistrationResponsePayloadSchema.safeParse({
+					oidcRegistrationSchemas.response.safeParse({
 						...validResp,
 						metadata: {
 							openid_relying_party: {
@@ -3324,7 +3304,7 @@ export default (QUnit: QUnit) => {
 			});
 			test("accepts response credential timestamps", (t) => {
 				t.true(
-					ExplicitRegistrationResponsePayloadSchema.safeParse({
+					oidcRegistrationSchemas.response.safeParse({
 						...validResp,
 						metadata: {
 							openid_relying_party: {
@@ -3364,7 +3344,7 @@ export default (QUnit: QUnit) => {
 				];
 				for (const metadata of invalidMetadata) {
 					t.false(
-						ExplicitRegistrationResponsePayloadSchema.safeParse({
+						oidcRegistrationSchemas.response.safeParse({
 							...validResp,
 							metadata,
 						}).success,
@@ -3373,7 +3353,7 @@ export default (QUnit: QUnit) => {
 			});
 			test("rejects top-level client_secret", (t) => {
 				t.false(
-					ExplicitRegistrationResponsePayloadSchema.safeParse({
+					oidcRegistrationSchemas.response.safeParse({
 						...validResp,
 						client_secret: "secret123",
 					}).success,
@@ -3381,11 +3361,11 @@ export default (QUnit: QUnit) => {
 			});
 			test("requires response metadata", (t) => {
 				const { metadata: _, ...v } = validResp;
-				t.false(ExplicitRegistrationResponsePayloadSchema.safeParse(v).success);
+				t.false(oidcRegistrationSchemas.response.safeParse(v).success);
 			});
 			test("requires openid_relying_party response metadata", (t) => {
 				t.false(
-					ExplicitRegistrationResponsePayloadSchema.safeParse({
+					oidcRegistrationSchemas.response.safeParse({
 						...validResp,
 						metadata: { oauth_client: { client_id: "client-123" } },
 					}).success,
@@ -3393,7 +3373,7 @@ export default (QUnit: QUnit) => {
 			});
 			test("requires response metadata client_id", (t) => {
 				t.false(
-					ExplicitRegistrationResponsePayloadSchema.safeParse({
+					oidcRegistrationSchemas.response.safeParse({
 						...validResp,
 						metadata: { openid_relying_party: { response_types: ["code"] } },
 					}).success,
@@ -3401,11 +3381,11 @@ export default (QUnit: QUnit) => {
 			});
 			test("requires authority_hints in response", (t) => {
 				const { authority_hints: _, ...v } = validResp;
-				t.false(ExplicitRegistrationResponsePayloadSchema.safeParse(v).success);
+				t.false(oidcRegistrationSchemas.response.safeParse(v).success);
 			});
 			test("requires authority_hints to be exactly one element", (t) => {
 				t.false(
-					ExplicitRegistrationResponsePayloadSchema.safeParse({
+					oidcRegistrationSchemas.response.safeParse({
 						...validResp,
 						authority_hints: ["https://a.example.com", "https://b.example.com"],
 					}).success,
@@ -5787,7 +5767,7 @@ export default (QUnit: QUnit) => {
 				const expected =
 					expiry === undefined || expiry === 0 || expiry === exp || expiry === exp + 1;
 				t.equal(
-					ExplicitRegistrationResponsePayloadSchema.safeParse(payload).success,
+					oidcRegistrationSchemas.response.safeParse(payload).success,
 					expected,
 					`schema: ${expiry}`,
 				);

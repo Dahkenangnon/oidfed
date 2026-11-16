@@ -1,11 +1,13 @@
 /** Metadata null-value checks shared by publication and trust chain validation. */
 
+import { isObject } from "./callbacks.js";
+
 /** Find nulls in positions requiring objects or non-null metadata parameters. */
 export function findInvalidMetadataNullPaths(
 	metadata: unknown,
 ): readonly (readonly (string | number)[])[] {
 	if (metadata === null) return [[]];
-	if (typeof metadata !== "object" || Array.isArray(metadata)) return [];
+	if (!isObject(metadata)) return [];
 
 	const invalid: (string | number)[][] = [];
 	for (const [entityType, parameters] of Object.entries(metadata)) {
@@ -13,7 +15,7 @@ export function findInvalidMetadataNullPaths(
 			invalid.push([entityType]);
 			continue;
 		}
-		if (typeof parameters !== "object" || Array.isArray(parameters)) continue;
+		if (!isObject(parameters)) continue;
 		for (const [parameter, value] of Object.entries(parameters)) {
 			if (value === null) invalid.push([entityType, parameter]);
 		}

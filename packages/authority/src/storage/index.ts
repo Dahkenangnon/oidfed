@@ -1,7 +1,6 @@
 export {
 	MemoryStorageAdapter,
 	type MemoryStorageAdapterOptions,
-	validateSubordinateRecord,
 } from "./memory.js";
 export type {
 	ListFilter,

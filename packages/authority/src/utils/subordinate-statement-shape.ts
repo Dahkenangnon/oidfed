@@ -7,8 +7,6 @@
 import { findInvalidMetadataNullPaths, setOwn } from "@oidfed/core";
 import { InvalidMetadata } from "../errors.js";
 
-export { InvalidMetadata };
-
 /**
  * Operational fields published in an Authority's own `metadata.federation_entity` block.
  * Federation §§8.1, 8.2 and 8.4 reserve fetch, list, and mark-status publication to the
@@ -16,7 +14,7 @@ export { InvalidMetadata };
  * exclusions are oidfed's policy for host-owned discovery metadata, used in signed
  * and unsigned views. Keep publication and storage checks on this shared list.
  */
-export const FEDERATION_ENTITY_OPERATIONAL_FIELDS: readonly string[] = Object.freeze([
+const FEDERATION_ENTITY_OPERATIONAL_FIELDS: readonly string[] = Object.freeze([
 	"federation_collection_endpoint",
 	"federation_collection_endpoint_auth_methods",
 	"federation_subordinate_events_endpoint",

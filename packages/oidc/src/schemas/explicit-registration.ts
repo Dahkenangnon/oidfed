@@ -102,12 +102,6 @@ function registrationSchemas(clientType: "openid_relying_party" | "oauth_client"
 }
 export const oidcRegistrationSchemas = registrationSchemas("openid_relying_party");
 export const oauthRegistrationSchemas = registrationSchemas("oauth_client");
-export const ExplicitRegistrationRequestPayloadSchema = oidcRegistrationSchemas.request;
-export const ExplicitRegistrationResponsePayloadSchema = oidcRegistrationSchemas.response;
 
-export type ExplicitRegistrationRequestPayload = z.infer<
-	typeof ExplicitRegistrationRequestPayloadSchema
->;
-export type ExplicitRegistrationResponsePayload = z.infer<
-	typeof ExplicitRegistrationResponsePayloadSchema
->;
+export type ExplicitRegistrationRequestPayload = z.infer<typeof oidcRegistrationSchemas.request>;
+export type ExplicitRegistrationResponsePayload = z.infer<typeof oidcRegistrationSchemas.response>;

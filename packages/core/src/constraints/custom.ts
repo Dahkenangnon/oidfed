@@ -22,9 +22,10 @@ const fail = (description: string): Result<never, FederationError> =>
 export function validateCustomConstraintChecks(
 	checks: readonly ConstraintCheckDefinition[],
 ): Result<void, FederationError> {
+	const definitions = checks;
 	if (!Array.isArray(checks)) return fail("Custom constraint checks must be an array");
 	const names = new Set<string>();
-	for (const definition of checks) {
+	for (const definition of definitions) {
 		if (
 			!definition ||
 			typeof definition.name !== "string" ||

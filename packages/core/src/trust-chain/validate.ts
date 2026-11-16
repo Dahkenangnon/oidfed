@@ -283,7 +283,7 @@ export function validateTrustMarkReferenceSyntax(
 		return;
 	}
 	for (let i = 0; i < trustMarks.length; i++) {
-		const trustMarkRef = trustMarks[i];
+		const trustMarkRef: unknown = trustMarks[i];
 		if (!isJsonObject(trustMarkRef)) {
 			continue;
 		}

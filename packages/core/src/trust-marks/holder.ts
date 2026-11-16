@@ -1,5 +1,6 @@
 /** Serialized, validated updates to a holder's published Trust Mark references. */
 
+import { createConcurrencyLimiter } from "../async-operation.js";
 import { decodeEntityStatement } from "../jose/verify.js";
 import type { TrustMarkRef } from "../schemas/trust-mark.js";
 import { entityId, type FederationOptions, type TrustAnchorSet } from "../types.js";
@@ -31,7 +32,7 @@ export interface FetchAndAttachTrustMarkOptions {
 /** Serializes publication mutations; a failed publisher leaves the prior references intact. */
 export class TrustMarkHolder {
 	private refs: TrustMarkRef[];
-	private tail: Promise<void> = Promise.resolve();
+	private readonly serialize = createConcurrencyLimiter(1);
 	/** Detach initial publication references and retain the host's publication callback. */
 	constructor(
 		private readonly subject: string,
@@ -49,17 +50,7 @@ export class TrustMarkHolder {
 	 * Serialize an operation with other holder publication changes, releasing the queue on failure.
 	 */
 	async updatePublication<T>(operation: () => Promise<T>): Promise<T> {
-		const prior = this.tail;
-		let release!: () => void;
-		this.tail = new Promise<void>((resolve) => {
-			release = resolve;
-		});
-		await prior;
-		try {
-			return await operation();
-		} finally {
-			release();
-		}
+		return this.serialize(async () => operation());
 	}
 	/**
 	 * Validate issuer evidence and holder binding before publishing the updated references.

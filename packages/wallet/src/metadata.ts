@@ -230,7 +230,7 @@ const keyReferences = {
 	signed_jwks_uri: https.optional(),
 };
 
-export const WalletProviderMetadataSchema = z.looseObject({
+const WalletProviderMetadataSchema = z.looseObject({
 	vp_formats_supported: formatCapabilities,
 	client_id_prefixes_supported: strings.optional(),
 	// Protocol-key representations are an integration convention, not new Wallet fields.
@@ -455,7 +455,7 @@ const credentialConfiguration = z
 		}
 	});
 
-export const CredentialIssuerMetadataSchema = z.looseObject({
+const CredentialIssuerMetadataSchema = z.looseObject({
 	credential_issuer: issuerId,
 	authorization_servers: z.array(issuerId).min(1).optional(),
 	credential_endpoint: https,
@@ -529,11 +529,6 @@ export const effectiveRoleSchemas = {
 	}),
 } as const;
 
-export const roleSchemas = {
-	openid_wallet_provider: WalletProviderMetadataSchema,
-	openid_credential_issuer: CredentialIssuerMetadataSchema,
-	openid_credential_verifier: CredentialVerifierMetadataSchema,
-} as const;
 /** Federation §5 permits superiors to complete top-level role metadata. */
 export const publicationRoleSchemas = {
 	openid_wallet_provider: WalletProviderMetadataSchema.partial(),
@@ -551,4 +546,4 @@ export type CredentialIssuerPublicationMetadata = z.infer<
 export type CredentialVerifierPublicationMetadata = z.infer<
 	typeof publicationRoleSchemas.openid_credential_verifier
 >;
-export type WalletRoleType = keyof typeof roleSchemas;
+export type WalletRoleType = keyof typeof effectiveRoleSchemas;

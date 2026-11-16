@@ -61,7 +61,9 @@ export function resolveMetadataPolicy(
 			}
 		}
 
-		const merged: Record<string, Record<string, Record<string, unknown>>> = Object.create(null);
+		const merged: Record<string, Record<string, Record<string, unknown>>> = Object.create(
+			null,
+		) as Record<string, Record<string, Record<string, unknown>>>;
 
 		for (let i = subordinateStatements.length - 1; i >= 0; i--) {
 			const stmt = subordinateStatements[i] as ParsedEntityStatement;
@@ -77,13 +79,13 @@ export function resolveMetadataPolicy(
 
 			for (const [entityType, paramPolicies] of Object.entries(clonedPolicy)) {
 				if (!Object.hasOwn(merged, entityType)) {
-					merged[entityType] = Object.create(null);
+					merged[entityType] = Object.create(null) as Record<string, Record<string, unknown>>;
 				}
 				const mergedEntityType = merged[entityType] as Record<string, Record<string, unknown>>;
 
 				for (const [paramName, opEntries] of Object.entries(paramPolicies)) {
 					if (!Object.hasOwn(mergedEntityType, paramName)) {
-						mergedEntityType[paramName] = Object.create(null);
+						mergedEntityType[paramName] = Object.create(null) as Record<string, unknown>;
 					}
 					const mergedParam = mergedEntityType[paramName] as Record<string, unknown>;
 

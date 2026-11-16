@@ -40,15 +40,17 @@ export function assertSubordinatePublicationClaims(
 	}
 	const payload = {
 		...extensions.additionalClaims,
-		...Object.fromEntries(
-			[
-				["metadata", record.metadata],
-				["metadata_policy", record.metadataPolicy],
-				["constraints", record.constraints],
-				["source_endpoint", record.sourceEndpoint],
-				["crit", extensions.crit],
-				["metadata_policy_crit", record.metadataPolicyCrit],
-			].filter(([, value]) => value !== undefined),
+		...Object.fromEntries<unknown>(
+			(
+				[
+					["metadata", record.metadata],
+					["metadata_policy", record.metadataPolicy],
+					["constraints", record.constraints],
+					["source_endpoint", record.sourceEndpoint],
+					["crit", extensions.crit],
+					["metadata_policy_crit", record.metadataPolicyCrit],
+				] as const
+			).filter(([, value]) => value !== undefined),
 		),
 	};
 	const valid = validateSubordinateStatementPublicationClaims(payload, options);

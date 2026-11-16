@@ -4,13 +4,7 @@ import { FederationErrorCode, isValidEntityId, nowSeconds, safeLogger } from "@o
 import type { ListFilter } from "../storage/types.js";
 import type { HandlerContext } from "./context.js";
 import { errorResponse, jsonResponse, parseQueryParams, requireMethod } from "./helpers.js";
-
-function parseBooleanQuery(value: string | null): boolean | null | undefined {
-	if (value === null) return null;
-	if (value === "true") return true;
-	if (value === "false") return false;
-	return undefined;
-}
+import { parseBooleanQuery, validateEntityTypes } from "./list-parameters.js";
 
 /** Handles subordinate listing requests with optional entity type and trust mark filters. */
 export function createListHandler(ctx: HandlerContext): (request: Request) => Promise<Response> {
@@ -25,15 +19,8 @@ export function createListHandler(ctx: HandlerContext): (request: Request) => Pr
 		// registry. Accept extension identifiers and filter by them (§8.2.1).
 		// An identifier that no subordinate publishes produces an empty result.
 		const entityTypes = params.getAll("entity_type");
-		for (const et of entityTypes) {
-			if (et.length === 0) {
-				return errorResponse(
-					400,
-					FederationErrorCode.InvalidRequest,
-					"entity_type must not be empty",
-				);
-			}
-		}
+		const entityTypeError = validateEntityTypes(entityTypes);
+		if (entityTypeError) return entityTypeError;
 		const trustMarkedRaw = params.get("trust_marked");
 		const trustMarked = parseBooleanQuery(trustMarkedRaw);
 		if (trustMarkedRaw !== null && trustMarked === undefined) {

@@ -1,5 +1,6 @@
 import type { CompactSign, JWK as JoseJWK, JWTHeaderParameters, JWTPayload, SignJWT } from "jose";
 import type QUnit from "qunit";
+import { createConcurrencyLimiter } from "../../../packages/core/src/async-operation.js";
 import {
 	chainCacheKey,
 	ecCacheKey,
@@ -194,10 +195,7 @@ import {
 } from "../../../packages/core/src/trust-chain/fetch-failure.js";
 import { resolveTrustChainForAnchor } from "../../../packages/core/src/trust-chain/peer.js";
 import { refreshTrustChain } from "../../../packages/core/src/trust-chain/refresh.js";
-import {
-	createConcurrencyLimiter,
-	resolveTrustChains,
-} from "../../../packages/core/src/trust-chain/resolve.js";
+import { resolveTrustChains } from "../../../packages/core/src/trust-chain/resolve.js";
 import {
 	calculateChainExpiration,
 	chainRemainingTtl,
@@ -16871,6 +16869,43 @@ export default (QUnit: QUnit) => {
 			);
 		}
 		module("core / createConcurrencyLimiter", () => {
+			test("serialized operations release after sync and async failures and remain instance-local", async (t) => {
+				const first = createConcurrencyLimiter(1);
+				const other = createConcurrencyLimiter(1);
+				const order: number[] = [];
+				let release!: () => void;
+				const gate = new Promise<void>((resolve) => {
+					release = resolve;
+				});
+				const blocked = first(async () => {
+					order.push(1);
+					await gate;
+				});
+				const syncFailure = first(() => {
+					order.push(2);
+					throw new Error("sync failure");
+				});
+				const asyncFailure = first(async () => {
+					order.push(3);
+					throw new Error("async failure");
+				});
+				const success = first(async () => {
+					order.push(4);
+					return "complete";
+				});
+				const settled = Promise.allSettled([blocked, syncFailure, asyncFailure, success]);
+				t.equal(await other(async () => "independent"), "independent");
+				t.deepEqual(order, [1], "later mutations remain queued");
+				release();
+				const results = await settled;
+				t.deepEqual(order, [1, 2, 3, 4]);
+				t.deepEqual(
+					results.map((result) => result.status),
+					["fulfilled", "rejected", "rejected", "fulfilled"],
+				);
+				t.equal(await success, "complete");
+			});
+
 			test("limits concurrent executions", async (t) => {
 				const limiter = createConcurrencyLimiter(2);
 				let active = 0,

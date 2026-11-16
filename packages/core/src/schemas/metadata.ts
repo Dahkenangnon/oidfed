@@ -55,10 +55,10 @@ export const FederationEntityMetadataSchema = z.looseObject({
 });
 
 /** Structural OpenID Relying Party metadata. `@oidfed/oidc` validates protocol-specific fields. */
-export const OpenIDRelyingPartyMetadataSchema = z.record(z.string(), z.unknown());
+const OpenIDRelyingPartyMetadataSchema = z.record(z.string(), z.unknown());
 
 /** Structural OpenID Provider metadata. `@oidfed/oidc` validates protocol-specific fields. */
-export const OpenIDProviderMetadataSchema = z.record(z.string(), z.unknown());
+const OpenIDProviderMetadataSchema = z.record(z.string(), z.unknown());
 
 /** Internal schema for supplied and resolved metadata, including empty results. */
 export const FederationMetadataValuesSchema = z
@@ -99,9 +99,9 @@ export const FederationMetadataSchema = FederationMetadataValuesSchema.superRefi
 
 export type FederationEntityMetadata = z.infer<typeof FederationEntityMetadataSchema>;
 /** Federation-layer RP metadata (loose record). For typed OIDC fields, use `@oidfed/oidc`. */
-export type OpenIDRelyingPartyMetadata = Record<string, unknown>;
+type OpenIDRelyingPartyMetadata = Record<string, unknown>;
 /** Federation-layer OP metadata (loose record). For typed OIDC fields, use `@oidfed/oidc`. */
-export type OpenIDProviderMetadata = Record<string, unknown>;
+type OpenIDProviderMetadata = Record<string, unknown>;
 export type FederationMetadata = z.infer<typeof FederationMetadataSchema>;
 
 /** Federation §5.1 allows framework-defined entity type identifiers. */

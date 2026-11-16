@@ -13,7 +13,6 @@ import {
 	nowSeconds,
 	ok,
 	type Result,
-	resolveTrustChainForAnchor,
 	runAsyncOperation,
 	safeLogger,
 	signEntityStatement,
@@ -25,6 +24,7 @@ import { ClientRegistrationType, RequestObjectTyp } from "../constants.js";
 import type { ProtocolSigningKeyProvider } from "../protocol-keys.js";
 import {
 	getRegistrationTypes,
+	registrationChainHeaders,
 	type SharedRegistrationTrustChains,
 	selectSharedRegistrationTrustChains,
 } from "./helpers.js";
@@ -241,42 +241,16 @@ export async function automaticRegistration(
 		...filteredParams,
 	};
 
-	const extraHeaders: Record<string, unknown> = {};
-	if (selectedChain.length > 0) {
-		extraHeaders.trust_chain = selectedChain;
-	}
-
-	if (rpConfig.includePeerTrustChain) {
-		if (!selectedTrustAnchorId) {
-			safeLogger(options?.logger)?.warn(
-				"includePeerTrustChain requires a selected RP Trust Anchor",
-			);
-			return err(
-				federationError(
-					InternalErrorCode.TrustAnchorUnknown,
-					"includePeerTrustChain requires a selected RP Trust Anchor; no valid RP chain was built",
-				),
-			);
-		}
-		const peerChainResult = await resolveTrustChainForAnchor(
-			discovery.entityId as EntityId,
-			selectedTrustAnchorId,
-			trustAnchors,
-			options,
-		);
-		if (!peerChainResult.ok) {
-			safeLogger(options?.logger)?.warn(
-				"Cannot build peer_trust_chain to the selected Trust Anchor",
-			);
-			return err(
-				federationError(
-					InternalErrorCode.TrustChainInvalid,
-					`includePeerTrustChain: cannot build peer Trust Chain for ${discovery.entityId} ending at ${selectedTrustAnchorId}: ${peerChainResult.error.description}`,
-				),
-			);
-		}
-		extraHeaders.peer_trust_chain = peerChainResult.value;
-	}
+	const headers = await registrationChainHeaders(
+		selectedChain,
+		selectedTrustAnchorId,
+		discovery.entityId as EntityId,
+		rpConfig.includePeerTrustChain,
+		trustAnchors,
+		options,
+	);
+	if (!headers.ok) return headers;
+	const extraHeaders = headers.value;
 
 	const requestObjectJwt = await runAsyncOperation(
 		() =>

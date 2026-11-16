@@ -203,7 +203,7 @@ function validateResponseParameters(request: z.infer<typeof requestSchema>): Res
 }
 
 /** Require exact membership in the supplied effective verifier endpoint list. */
-export function checkEndpoint(
+function checkEndpoint(
 	metadata: Readonly<Record<string, unknown>>,
 	field: "request_uris" | "response_uris" | "redirect_uris",
 	uri: unknown,

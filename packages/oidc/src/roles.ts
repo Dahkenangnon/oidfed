@@ -146,12 +146,7 @@ abstract class ClientRole implements EntityRole {
 		type: ProtocolEntityType,
 		options: EntityAssessmentOptions & { trustAnchors?: TrustAnchorSet } = {},
 	) {
-		return assessProtocolEntity(
-			target,
-			type,
-			options.trustAnchors ?? this.config.trustAnchors ?? this.context?.trustAnchors ?? new Map(),
-			{ ...this.context?.options, ...this.config.options, ...options },
-		);
+		return assessRoleEntity(target, type, this.config, this.context, options);
 	}
 
 	/**
@@ -203,6 +198,27 @@ abstract class ClientRole implements EntityRole {
 			...this.config.options,
 			...options,
 		});
+	}
+
+	/** Construct registration inputs after each call has applied its delivery overrides. */
+	private automaticRegistrationConfig(context: EntityContext, config: OidcRelyingPartyRoleConfig) {
+		return {
+			entityId: context.entityId as EntityId,
+			protocolKeyProvider: config.protocolKeyProvider,
+			authorityHints: (context.authorityHints ?? this.config.authorityHints ?? []) as readonly [
+				EntityId,
+				...EntityId[],
+			],
+			metadata: { [this.type]: this.composedMetadata ?? this.metadata },
+			...(config.requestObjectTtlSeconds !== undefined
+				? { requestObjectTtlSeconds: config.requestObjectTtlSeconds }
+				: {}),
+			...(config.includePeerTrustChain !== undefined
+				? { includePeerTrustChain: config.includePeerTrustChain }
+				: {}),
+			...(config.requestDelivery !== undefined ? { requestDelivery: config.requestDelivery } : {}),
+			...(config.requestUri !== undefined ? { requestUri: config.requestUri } : {}),
+		};
 	}
 
 	protected async registerAutomatically(
@@ -264,26 +280,7 @@ abstract class ClientRole implements EntityRole {
 				: {}),
 		};
 
-		const rpConfig = {
-			entityId: this.context.entityId as EntityId,
-			protocolKeyProvider: overrideConfig.protocolKeyProvider,
-			authorityHints: (this.context.authorityHints ??
-				this.config.authorityHints ??
-				[]) as readonly [EntityId, ...EntityId[]],
-			metadata: {
-				[this.type]: this.composedMetadata ?? this.metadata,
-			},
-			...(overrideConfig.requestObjectTtlSeconds !== undefined
-				? { requestObjectTtlSeconds: overrideConfig.requestObjectTtlSeconds }
-				: {}),
-			...(overrideConfig.includePeerTrustChain !== undefined
-				? { includePeerTrustChain: overrideConfig.includePeerTrustChain }
-				: {}),
-			...(overrideConfig.requestDelivery !== undefined
-				? { requestDelivery: overrideConfig.requestDelivery }
-				: {}),
-			...(overrideConfig.requestUri !== undefined ? { requestUri: overrideConfig.requestUri } : {}),
-		};
+		const rpConfig = this.automaticRegistrationConfig(this.context, overrideConfig);
 
 		return automaticRegistration(
 			discoveryResult.value,
@@ -378,26 +375,7 @@ abstract class ClientRole implements EntityRole {
 				? { requestObjectTtlSeconds: options.requestObjectTtlSeconds }
 				: {}),
 		};
-		const rpConfig = {
-			entityId: this.context.entityId as EntityId,
-			protocolKeyProvider: overrideConfig.protocolKeyProvider,
-			authorityHints: (this.context.authorityHints ??
-				this.config.authorityHints ??
-				[]) as readonly [EntityId, ...EntityId[]],
-			metadata: {
-				[this.type]: this.composedMetadata ?? this.metadata,
-			},
-			...(overrideConfig.requestObjectTtlSeconds !== undefined
-				? { requestObjectTtlSeconds: overrideConfig.requestObjectTtlSeconds }
-				: {}),
-			...(overrideConfig.includePeerTrustChain !== undefined
-				? { includePeerTrustChain: overrideConfig.includePeerTrustChain }
-				: {}),
-			...(overrideConfig.requestDelivery !== undefined
-				? { requestDelivery: overrideConfig.requestDelivery }
-				: {}),
-			...(overrideConfig.requestUri !== undefined ? { requestUri: overrideConfig.requestUri } : {}),
-		};
+		const rpConfig = this.automaticRegistrationConfig(this.context, overrideConfig);
 		return automaticRegistration(
 			discovery,
 			rpConfig,
@@ -517,12 +495,7 @@ abstract class ProviderRole implements EntityRole {
 		type: ProtocolEntityType,
 		options: EntityAssessmentOptions & { trustAnchors?: TrustAnchorSet } = {},
 	) {
-		return assessProtocolEntity(
-			target,
-			type,
-			options.trustAnchors ?? this.config.trustAnchors ?? this.context?.trustAnchors ?? new Map(),
-			{ ...this.context?.options, ...this.config.options, ...options },
-		);
+		return assessRoleEntity(target, type, this.config, this.context, options);
 	}
 
 	abstract readonly type: "openid_provider" | "oauth_authorization_server";
@@ -801,12 +774,7 @@ export class OAuthResourceRole implements EntityRole {
 		type: ProtocolEntityType,
 		options: EntityAssessmentOptions & { trustAnchors?: TrustAnchorSet } = {},
 	) {
-		return assessProtocolEntity(
-			target,
-			type,
-			options.trustAnchors ?? this.config.trustAnchors ?? this.context?.trustAnchors ?? new Map(),
-			{ ...this.context?.options, ...this.config.options, ...options },
-		);
+		return assessRoleEntity(target, type, this.config, this.context, options);
 	}
 
 	/**
@@ -859,6 +827,22 @@ export class OAuthResourceRole implements EntityRole {
 function assertRoleOwner(current: EntityContext | undefined, context: EntityContext): void {
 	if (current && current !== context)
 		throw new Error("Create a separate OIDC/OAuth role instance for each host");
+}
+
+/** Per-call settings override role settings, which override attached-host settings. */
+function assessRoleEntity(
+	target: string,
+	type: ProtocolEntityType,
+	config: { readonly trustAnchors?: TrustAnchorSet; readonly options?: FederationOptions },
+	context: EntityContext | undefined,
+	options: EntityAssessmentOptions & { trustAnchors?: TrustAnchorSet },
+) {
+	return assessProtocolEntity(
+		target,
+		type,
+		options.trustAnchors ?? config.trustAnchors ?? context?.trustAnchors ?? new Map(),
+		{ ...context?.options, ...config.options, ...options },
+	);
 }
 
 async function assessProtocolEntity(

@@ -2,8 +2,9 @@
 
 import { FederationErrorCode, MediaType } from "../constants.js";
 import { fetchFederationEndpoint } from "../endpoint-client.js";
-import { err, type FederationError, federationError, type Result } from "../errors.js";
+import type { FederationError, Result } from "../errors.js";
 import { safeLogger } from "./../logging.js";
+import { parseMetadataUrl } from "../metadata-url.js";
 import type { HistoricalKeysPayload } from "../schemas/entity-statement.js";
 import type { JWKSet } from "../schemas/jwk.js";
 import type { Clock, FederationOptions } from "../types.js";
@@ -28,25 +29,8 @@ export async function fetchHistoricalKeys(
 
 	const expectation = validateExpectedIssuer(options);
 	if (!expectation.ok) return expectation;
-	let parsed: URL;
-	try {
-		parsed = new URL(endpoint);
-	} catch {
-		return err(federationError(FederationErrorCode.InvalidRequest, `Invalid URL: ${endpoint}`));
-	}
-	if (parsed.protocol !== "https:") {
-		return err(
-			federationError(FederationErrorCode.InvalidRequest, `URL must use https scheme: ${endpoint}`),
-		);
-	}
-	if (parsed.href.includes("#")) {
-		return err(
-			federationError(
-				FederationErrorCode.InvalidRequest,
-				`URL must not contain a fragment: ${endpoint}`,
-			),
-		);
-	}
+	const parsed = parseMetadataUrl(endpoint, FederationErrorCode.InvalidRequest);
+	if (!parsed.ok) return parsed;
 
 	const fetched = await fetchFederationEndpoint(
 		endpoint,

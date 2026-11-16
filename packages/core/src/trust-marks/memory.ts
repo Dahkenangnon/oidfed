@@ -1,5 +1,6 @@
 /** Detached in-memory Trust Mark records with serialized store transactions. */
 
+import { createConcurrencyLimiter } from "../async-operation.js";
 import { decodeEntityStatement } from "../jose/verify.js";
 import type { EntityId } from "../types.js";
 import { isStoredTrustMarkEligible } from "./eligibility.js";
@@ -193,23 +194,13 @@ export class MemoryTrustMarkStorage implements TrustMarkStorage {
 /** In-memory, process-local transaction adapter. Production hosts supply durable storage. */
 export class MemoryTrustMarkStore implements TrustMarkStore {
 	private records = new Map<string, TrustMarkRecord>();
-	private tail: Promise<void> = Promise.resolve();
+	private readonly serialize = createConcurrencyLimiter(1);
 	readonly trustMarks = new MemoryTrustMarkStorage(
 		() => this.records,
 		(op) => this.exclusive(() => op(this.records)),
 	);
 	private async exclusive<T>(operation: () => Promise<T> | T): Promise<T> {
-		const prior = this.tail;
-		let release!: () => void;
-		this.tail = new Promise<void>((resolve) => {
-			release = resolve;
-		});
-		await prior;
-		try {
-			return await operation();
-		} finally {
-			release();
-		}
+		return this.serialize(async () => operation());
 	}
 	/** Serialize writes against a cloned record map; commit only after the callback succeeds. */
 	async transaction<T>(

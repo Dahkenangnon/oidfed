@@ -206,7 +206,7 @@ async function createClientAttestationImpl(
 	)
 		return failure("Invalid Client Attestation claims or expiration");
 	if (options.trustChain !== undefined) {
-		const first = Array.isArray(options.trustChain) ? options.trustChain[0] : undefined;
+		const first: unknown = Array.isArray(options.trustChain) ? options.trustChain[0] : undefined;
 		if (typeof first !== "string")
 			return failure("trust_chain must begin with the attester's Entity Configuration");
 		const configuration = decodeEntityConfiguration(first);

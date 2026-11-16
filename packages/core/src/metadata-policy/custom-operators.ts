@@ -32,7 +32,7 @@ export function buildOperatorLookup(
 	customOperators: readonly PolicyOperatorDefinition[] | undefined,
 ): Record<string, PolicyOperatorDefinition> {
 	const merged: Record<string, PolicyOperatorDefinition> = Object.assign(
-		Object.create(null),
+		Object.create(null) as Record<string, PolicyOperatorDefinition>,
 		operators,
 	);
 	for (const op of customOperators ?? []) {
@@ -66,6 +66,7 @@ const STANDARD_OPERATOR_NAMES: ReadonlySet<string> = new Set([
 export function validateCustomOperators(
 	operators: readonly PolicyOperatorDefinition[],
 ): Result<void, FederationError> {
+	const definitions = operators;
 	const seen = new Set<string>();
 	if (!Array.isArray(operators))
 		return err(
@@ -74,7 +75,7 @@ export function validateCustomOperators(
 				"Custom policy operators must be an array",
 			),
 		);
-	for (const op of operators) {
+	for (const op of definitions) {
 		if (
 			!op ||
 			typeof op.name !== "string" ||

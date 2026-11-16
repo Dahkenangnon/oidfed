@@ -6,6 +6,7 @@
 import { FederationErrorCode } from "../constants.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
 import { safeLogger } from "./../logging.js";
+import { parseMetadataUrl } from "../metadata-url.js";
 import { type JWKSet, MetadataJWKSetSchema } from "../schemas/jwk.js";
 import { performFetch } from "../trust-chain/fetch.js";
 import type { FederationOptions } from "../types.js";
@@ -26,25 +27,8 @@ export async function fetchJwkSet(
 ): Promise<Result<JWKSet, FederationError>> {
 	safeLogger(options?.logger)?.debug("Starting fetch jwk set");
 
-	let parsed: URL;
-	try {
-		parsed = new URL(url);
-	} catch {
-		return err(federationError(FederationErrorCode.InvalidMetadata, `Invalid URL: ${url}`));
-	}
-	if (parsed.protocol !== "https:") {
-		return err(
-			federationError(FederationErrorCode.InvalidMetadata, `URL must use https scheme: ${url}`),
-		);
-	}
-	if (parsed.href.includes("#")) {
-		return err(
-			federationError(
-				FederationErrorCode.InvalidMetadata,
-				`URL must not contain a fragment: ${url}`,
-			),
-		);
-	}
+	const parsed = parseMetadataUrl(url, FederationErrorCode.InvalidMetadata);
+	if (!parsed.ok) return parsed;
 
 	// RFC 7517 doesn't pin a media type for jwks_uri; servers commonly serve
 	// application/json or application/jwk-set+json. We send application/json in

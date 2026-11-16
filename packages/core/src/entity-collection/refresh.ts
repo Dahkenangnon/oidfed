@@ -1,7 +1,7 @@
 /** Bounded collection traversal and validation before snapshot publication. */
 
 import { z } from "zod";
-import { waitForOperation } from "../async-operation.js";
+import { createConcurrencyLimiter, waitForOperation } from "../async-operation.js";
 import { DEFAULT_MAX_CHAIN_DEPTH, FederationErrorCode } from "../constants.js";
 import { err, ok, type Result } from "../errors.js";
 import { fetchListSubordinatesForIssuer } from "../federation-api/index.js";
@@ -17,7 +17,6 @@ import {
 } from "../schemas/entity-collection.js";
 import type { EntityConfigurationPayload } from "../schemas/entity-statement.js";
 import { fetchEntityConfiguration, fetchSubordinateStatement } from "../trust-chain/fetch.js";
-import { createConcurrencyLimiter } from "../trust-chain/resolve.js";
 import { selectTrustChain } from "../trust-chain/selection.js";
 import { validateTrustMarkReferenceSyntax } from "../trust-chain/validate.js";
 import {
@@ -32,6 +31,7 @@ import {
 import { createCollectionEvidence } from "./evidence.js";
 import type {
 	CollectionEntry,
+	EntityCollectionCandidate,
 	EntityCollectionCollectorContext,
 	EntityCollectionConfig,
 	EntityCollectionSnapshot,
@@ -240,7 +240,8 @@ export async function buildCollectionSnapshot(
 				entity: createCollectionSchemas(config.infoClaims).entity,
 				expiresAt: z.number().finite(),
 			});
-			for (const input of supplied.value) {
+			const candidates: readonly EntityCollectionCandidate[] = supplied.value;
+			for (const input of candidates) {
 				const candidate = candidateSchema.parse(input);
 				// §3.4.1.1: a published summary includes every type known to the responder.
 				const types = new Set([

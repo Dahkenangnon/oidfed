@@ -514,6 +514,18 @@ async function cachedStatement(
 	return undefined;
 }
 
+/** Cache only unexpired statements, propagating storage failures to the caller. */
+async function cacheStatement(key: string, jwt: string, options: FederationOptions): Promise<void> {
+	const ttl = statementCacheTtl(jwt, options);
+	if (!options.cache || ttl <= 0) return;
+	try {
+		await options.cache.set(key, jwt, ttl);
+	} catch (error) {
+		safeLogger(options.logger)?.error("Failed to write the federation cache");
+		throw error;
+	}
+}
+
 /** Fetch an Entity Configuration using §9.1 GET discovery, without a Federation client assertion. */
 export async function fetchEntityConfiguration(
 	entityId: EntityId,
@@ -553,15 +565,7 @@ export async function fetchEntityConfiguration(
 
 	if (result.ok && options?.cache) {
 		const cacheKey = await ecCacheKey(entityId);
-		const ttl = statementCacheTtl(result.value, options);
-		if (ttl > 0) {
-			try {
-				await options.cache.set(cacheKey, result.value, ttl);
-			} catch (error) {
-				safeLogger(options.logger)?.error("Failed to write the federation cache");
-				throw error;
-			}
-		}
+		await cacheStatement(cacheKey, result.value, options);
 	}
 
 	return result;
@@ -627,15 +631,7 @@ export async function fetchSubordinateStatement(
 	if (result.ok && options?.cache) {
 		const issuer = options.issuer ?? (url.origin as EntityId);
 		const cacheKey = await esCacheKey(issuer, subject);
-		const ttl = statementCacheTtl(result.value, options);
-		if (ttl > 0) {
-			try {
-				await options.cache.set(cacheKey, result.value, ttl);
-			} catch (error) {
-				safeLogger(options.logger)?.error("Failed to write the federation cache");
-				throw error;
-			}
-		}
+		await cacheStatement(cacheKey, result.value, options);
 	}
 
 	return result;

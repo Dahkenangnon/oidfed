@@ -18,7 +18,6 @@ import {
 	ok,
 	type ParsedEntityStatement,
 	type Result,
-	resolveTrustChainForAnchor,
 	safeLogger,
 	signEntityStatement,
 	type TrustAnchorSet,
@@ -34,7 +33,11 @@ import {
 	OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE,
 } from "../constants.js";
 import { registrationResponseChoices } from "../metadata.js";
-import { getRegistrationTypes, selectSharedRegistrationTrustChains } from "./helpers.js";
+import {
+	getRegistrationTypes,
+	registrationChainHeaders,
+	selectSharedRegistrationTrustChains,
+} from "./helpers.js";
 import { validateRegistrationMetadataPolicy } from "./metadata-policy.js";
 import { oidcRegistrationProfile, type RegistrationProfile } from "./profile.js";
 
@@ -202,42 +205,16 @@ export async function explicitRegistration(
 		ecPayload.trust_marks = rpConfig.trustMarks;
 	}
 
-	const extraHeaders: Record<string, unknown> = {};
-	if (rpChainStatements.length > 0) {
-		extraHeaders.trust_chain = rpChainStatements;
-	}
-
-	if (rpConfig.includePeerTrustChain) {
-		if (!selectedTrustAnchorId) {
-			safeLogger(options?.logger)?.warn(
-				"includePeerTrustChain requires a selected RP Trust Anchor",
-			);
-			return err(
-				federationError(
-					InternalErrorCode.TrustAnchorUnknown,
-					"includePeerTrustChain requires a selected RP Trust Anchor; no valid RP chain was built",
-				),
-			);
-		}
-		const peerChainResult = await resolveTrustChainForAnchor(
-			discovery.entityId as EntityId,
-			selectedTrustAnchorId,
-			trustAnchors,
-			options,
-		);
-		if (!peerChainResult.ok) {
-			safeLogger(options?.logger)?.warn(
-				"Cannot build peer_trust_chain to the selected Trust Anchor",
-			);
-			return err(
-				federationError(
-					InternalErrorCode.TrustChainInvalid,
-					`includePeerTrustChain: cannot build peer Trust Chain for ${discovery.entityId} ending at ${selectedTrustAnchorId}: ${peerChainResult.error.description}`,
-				),
-			);
-		}
-		extraHeaders.peer_trust_chain = peerChainResult.value;
-	}
+	const headers = await registrationChainHeaders(
+		rpChainStatements,
+		selectedTrustAnchorId,
+		discovery.entityId as EntityId,
+		rpConfig.includePeerTrustChain,
+		trustAnchors,
+		options,
+	);
+	if (!headers.ok) return headers;
+	const extraHeaders = headers.value;
 
 	const ecJwt = await signEntityStatement(ecPayload, keySet.signer, {
 		typ: JwtTyp.EntityStatement,

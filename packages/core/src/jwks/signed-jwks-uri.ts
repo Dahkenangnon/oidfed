@@ -11,6 +11,7 @@ import {
 	verifySignedJwkSet,
 } from "../federation-api/index.js";
 import { safeLogger } from "./../logging.js";
+import { parseMetadataUrl } from "../metadata-url.js";
 import { EntityIdSchema } from "../schemas/entity-id.js";
 import type { SignedJwkSetPayload } from "../schemas/entity-statement.js";
 import type { JWKSet } from "../schemas/jwk.js";
@@ -43,25 +44,8 @@ export async function fetchSignedJwkSet(
 		return err(
 			federationError(FederationErrorCode.InvalidMetadata, "A valid expectedOwner is required"),
 		);
-	let parsed: URL;
-	try {
-		parsed = new URL(url);
-	} catch {
-		return err(federationError(FederationErrorCode.InvalidMetadata, `Invalid URL: ${url}`));
-	}
-	if (parsed.protocol !== "https:") {
-		return err(
-			federationError(FederationErrorCode.InvalidMetadata, `URL must use https scheme: ${url}`),
-		);
-	}
-	if (parsed.href.includes("#")) {
-		return err(
-			federationError(
-				FederationErrorCode.InvalidMetadata,
-				`URL must not contain a fragment: ${url}`,
-			),
-		);
-	}
+	const parsed = parseMetadataUrl(url, FederationErrorCode.InvalidMetadata);
+	if (!parsed.ok) return parsed;
 
 	const fetched = await performFetch(url, {
 		...options,

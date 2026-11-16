@@ -72,7 +72,7 @@ export function prepareEndpointParameters(
 		if (reserved.has(name) || result.has(name) || fixed.has(name))
 			throw new Error("Additional parameters cannot replace protocol selectors or credentials");
 		const values = typeof value === "string" ? [value] : value;
-		if (!Array.isArray(values) || values.some((v) => typeof v !== "string"))
+		if (!Array.isArray(values) || !values.every((v: unknown): v is string => typeof v === "string"))
 			throw new Error("Invalid additional parameter values");
 		for (const item of values) result.append(name, item);
 	}

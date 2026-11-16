@@ -4,6 +4,7 @@ import { FederationErrorCode, InternalErrorCode, MediaType } from "../constants.
 import { fetchFederationEndpoint } from "../endpoint-client.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
 import { safeLogger } from "./../logging.js";
+import { parseMetadataUrl } from "../metadata-url.js";
 import { type EntityId, entityId, type FederationOptions, isValidEntityId } from "../types.js";
 
 export interface FetchTrustMarkListParams {
@@ -25,30 +26,13 @@ export async function fetchTrustMarkList(
 		);
 	}
 
-	let parsed: URL;
-	try {
-		parsed = new URL(endpoint);
-	} catch {
-		return err(federationError(FederationErrorCode.InvalidRequest, `Invalid URL: ${endpoint}`));
-	}
-	if (parsed.protocol !== "https:") {
-		return err(
-			federationError(FederationErrorCode.InvalidRequest, `URL must use https scheme: ${endpoint}`),
-		);
-	}
-	if (parsed.href.includes("#")) {
-		return err(
-			federationError(
-				FederationErrorCode.InvalidRequest,
-				`URL must not contain a fragment: ${endpoint}`,
-			),
-		);
-	}
+	const parsed = parseMetadataUrl(endpoint, FederationErrorCode.InvalidRequest);
+	if (!parsed.ok) return parsed;
 
 	const selectors = new URLSearchParams({ trust_mark_type: params.trustMarkType });
 	if (params.sub) selectors.set("sub", params.sub);
 
-	const fetched = await fetchFederationEndpoint(parsed.toString(), selectors, {
+	const fetched = await fetchFederationEndpoint(parsed.value.toString(), selectors, {
 		...options,
 		expectedStatus: 200,
 		accept: MediaType.Json,
