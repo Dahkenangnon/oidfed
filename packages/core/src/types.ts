@@ -111,7 +111,6 @@ export interface FederationOptions {
 	maxResolutionSteps?: number;
 	maxAuthorityHints?: number;
 	maxConcurrentFetches?: number;
-	maxConcurrentResolutions?: number;
 	cacheMaxTtlSeconds?: number;
 	signal?: AbortSignal;
 	maxResponseBytes?: number;
