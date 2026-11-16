@@ -6,7 +6,7 @@ A collection is a searchable snapshot of federation participants. Refresh collec
 
 ## `CollectionAuthentication`
 
-[Source](../../../packages/core/src/entity-collection/types.ts#L44)
+[Source](../../../packages/core/src/entity-collection/types.ts#L46)
 
 Authentication configuration for an Entity Collection service.
 
@@ -35,7 +35,7 @@ Fields (including inherited fields):
 
 ## `CollectionEntry`
 
-[Source](../../../packages/core/src/entity-collection/types.ts#L9)
+[Source](../../../packages/core/src/entity-collection/types.ts#L11)
 
 Evidence is local server state; it is never returned as collection data.
 
@@ -61,7 +61,7 @@ Fields (including inherited fields):
 
 ## `CollectionRefreshOptions`
 
-[Source](../../../packages/core/src/entity-collection/types.ts#L108)
+[Source](../../../packages/core/src/entity-collection/types.ts#L110)
 
 Controls for a collection snapshot refresh, including cancellation.
 
@@ -79,7 +79,7 @@ Fields (including inherited fields):
 
 ## `CollectionRefreshResult`
 
-[Source](../../../packages/core/src/entity-collection/types.ts#L111)
+[Source](../../../packages/core/src/entity-collection/types.ts#L113)
 
 The outcome of a collection refresh and the snapshot it produced.
 
@@ -101,7 +101,7 @@ Fields (including inherited fields):
 
 ## `EntityCollectionCandidate`
 
-[Source](../../../packages/core/src/entity-collection/types.ts#L54)
+[Source](../../../packages/core/src/entity-collection/types.ts#L56)
 
 Informational input from an application-owned collector; core verifies mark evidence.
 
@@ -121,7 +121,7 @@ Fields (including inherited fields):
 
 ## `EntityCollectionCollector`
 
-[Source](../../../packages/core/src/entity-collection/types.ts#L68)
+[Source](../../../packages/core/src/entity-collection/types.ts#L70)
 
 Return the complete candidate set; failures leave the previously published snapshot intact.
 
@@ -133,7 +133,7 @@ type EntityCollectionCollector = (
 
 ## `EntityCollectionCollectorContext`
 
-[Source](../../../packages/core/src/entity-collection/types.ts#L60)
+[Source](../../../packages/core/src/entity-collection/types.ts#L62)
 
 Refresh context; network calls through options share the refresh limits and cancellation.
 
@@ -157,7 +157,7 @@ Fields (including inherited fields):
 
 ## `EntityCollectionConfig`
 
-[Source](../../../packages/core/src/entity-collection/types.ts#L84)
+[Source](../../../packages/core/src/entity-collection/types.ts#L86)
 
 Collection scope, storage, refresh, filtering, and endpoint settings.
 
@@ -211,7 +211,7 @@ Fields (including inherited fields):
 
 ## `EntityCollectionCursor`
 
-[Source](../../../packages/core/src/entity-collection/types.ts#L23)
+[Source](../../../packages/core/src/entity-collection/types.ts#L25)
 
 The continuation information used to resume a collection page.
 
@@ -237,7 +237,7 @@ Fields (including inherited fields):
 
 ## `EntityCollectionCursorCapacityError`
 
-[Source](../../../packages/core/src/entity-collection/store.ts#L11)
+[Source](../../../packages/core/src/entity-collection/store.ts#L12)
 
 Cursor allocation exceeded capacity after expired cursors were removed. This class extends the standard `Error` class, including its `name` and `message`.
 
@@ -249,7 +249,7 @@ new EntityCollectionCursorCapacityError(maxCursors: number): EntityCollectionCur
 
 The configured upper bound on retained listing cursors.
 
-[Source](../../../packages/core/src/entity-collection/store.ts#L12)
+[Source](../../../packages/core/src/entity-collection/store.ts#L13)
 
 ```typescript signature
 readonly maxCursors: number;
@@ -257,7 +257,7 @@ readonly maxCursors: number;
 
 ## `EntityCollectionFilter`
 
-[Source](../../../packages/core/src/entity-collection/types.ts#L73)
+[Source](../../../packages/core/src/entity-collection/types.ts#L75)
 
 Run once per entry during refresh; an explicit deadline can only shorten eligibility.
 
@@ -270,7 +270,7 @@ type EntityCollectionFilter = (
 
 ## `EntityCollectionIntegration`
 
-[Source](../../../packages/core/src/entity-collection/types.ts#L117)
+[Source](../../../packages/core/src/entity-collection/types.ts#L119)
 
 Optional integration; responder identity always comes from its hosting class.
 
@@ -300,7 +300,7 @@ Fields (including inherited fields):
 
 ## `EntityCollectionQueryMatcher`
 
-[Source](../../../packages/core/src/entity-collection/types.ts#L79)
+[Source](../../../packages/core/src/entity-collection/types.ts#L81)
 
 Local, synchronous search. Return the same decision for a fixed query and snapshot.
 
@@ -313,7 +313,7 @@ type EntityCollectionQueryMatcher = (
 
 ## `EntityCollectionService`
 
-[Source](../../../packages/core/src/entity-collection/service.ts#L52)
+[Source](../../../packages/core/src/entity-collection/service.ts#L54)
 
 Shared unsigned collection service for federation entities and independent providers.
 
@@ -325,7 +325,7 @@ new EntityCollectionService(config: EntityCollectionConfig): EntityCollectionSer
 
 Storage used for this component's authoritative records.
 
-[Source](../../../packages/core/src/entity-collection/service.ts#L53)
+[Source](../../../packages/core/src/entity-collection/service.ts#L55)
 
 ```typescript signature
 readonly store: EntityCollectionStore;
@@ -335,7 +335,7 @@ readonly store: EntityCollectionStore;
 
 Collect, validate, and publish a replacement collection snapshot. A cancelled queued caller is released without cancelling another caller's refresh.
 
-[Source](../../../packages/core/src/entity-collection/service.ts#L187)
+[Source](../../../packages/core/src/entity-collection/service.ts#L197)
 
 ```typescript signature
 refresh(anchor: EntityId, options?: CollectionRefreshOptions): Promise<Result<CollectionRefreshResult>>;
@@ -345,7 +345,7 @@ refresh(anchor: EntityId, options?: CollectionRefreshOptions): Promise<Result<Co
 
 Query the published collection snapshot using the supplied selectors.
 
-[Source](../../../packages/core/src/entity-collection/service.ts#L249)
+[Source](../../../packages/core/src/entity-collection/service.ts#L263)
 
 ```typescript signature
 query(params?: EntityCollectionRequestParams): Promise<Result<EntityCollectionResponse>>;
@@ -355,7 +355,7 @@ query(params?: EntityCollectionRequestParams): Promise<Result<EntityCollectionRe
 
 Handle a Web API Request and return the protocol Response. The application supplies external HTTPS routing.
 
-[Source](../../../packages/core/src/entity-collection/service.ts#L458)
+[Source](../../../packages/core/src/entity-collection/service.ts#L473)
 
 ```typescript signature
 handleRequest(request: Request): Promise<Response>;
@@ -363,7 +363,7 @@ handleRequest(request: Request): Promise<Response>;
 
 ## `EntityCollectionSnapshot`
 
-[Source](../../../packages/core/src/entity-collection/types.ts#L17)
+[Source](../../../packages/core/src/entity-collection/types.ts#L19)
 
 A stored collection of entity entries and the information needed to serve it.
 
@@ -387,7 +387,7 @@ Fields (including inherited fields):
 
 ## `EntityCollectionStore`
 
-[Source](../../../packages/core/src/entity-collection/types.ts#L36)
+[Source](../../../packages/core/src/entity-collection/types.ts#L38)
 
 Atomically publish snapshots and return detached values. Keep entries in their
 published Entity Identifier order (§3.1.1). Snapshot identifiers name immutable
@@ -417,7 +417,7 @@ Fields (including inherited fields):
 
 ## `MemoryEntityCollectionStore`
 
-[Source](../../../packages/core/src/entity-collection/store.ts#L19)
+[Source](../../../packages/core/src/entity-collection/store.ts#L20)
 
 Bounded in-memory snapshots and opaque cursors; no background cleanup timer.
 
@@ -429,7 +429,7 @@ new MemoryEntityCollectionStore(options?: MemoryEntityCollectionStoreOptions): M
 
 Publish the prepared snapshot through this store's consistency boundary.
 
-[Source](../../../packages/core/src/entity-collection/store.ts#L42)
+[Source](../../../packages/core/src/entity-collection/store.ts#L50)
 
 ```typescript signature
 publish(snapshot: EntityCollectionSnapshot): Promise<void>;
@@ -439,7 +439,7 @@ publish(snapshot: EntityCollectionSnapshot): Promise<void>;
 
 Read the currently published snapshot for the requested collection.
 
-[Source](../../../packages/core/src/entity-collection/store.ts#L65)
+[Source](../../../packages/core/src/entity-collection/store.ts#L74)
 
 ```typescript signature
 getCurrent(anchor: EntityId): Promise<EntityCollectionSnapshot | undefined>;
@@ -449,7 +449,7 @@ getCurrent(anchor: EntityId): Promise<EntityCollectionSnapshot | undefined>;
 
 Read the current stored collection snapshot.
 
-[Source](../../../packages/core/src/entity-collection/store.ts#L68)
+[Source](../../../packages/core/src/entity-collection/store.ts#L78)
 
 ```typescript signature
 getSnapshot(id: string): Promise<EntityCollectionSnapshot | undefined>;
@@ -459,7 +459,7 @@ getSnapshot(id: string): Promise<EntityCollectionSnapshot | undefined>;
 
 May throw EntityCollectionCursorCapacityError to report temporary capacity exhaustion.
 
-[Source](../../../packages/core/src/entity-collection/store.ts#L73)
+[Source](../../../packages/core/src/entity-collection/store.ts#L86)
 
 ```typescript signature
 putCursor(id: string, cursor: EntityCollectionCursor): Promise<void>;
@@ -469,7 +469,7 @@ putCursor(id: string, cursor: EntityCollectionCursor): Promise<void>;
 
 Read the snapshot associated with a listing cursor.
 
-[Source](../../../packages/core/src/entity-collection/store.ts#L79)
+[Source](../../../packages/core/src/entity-collection/store.ts#L93)
 
 ```typescript signature
 getCursor(id: string): Promise<EntityCollectionCursor | undefined>;
@@ -477,7 +477,7 @@ getCursor(id: string): Promise<EntityCollectionCursor | undefined>;
 
 ## `MemoryEntityCollectionStoreOptions`
 
-[Source](../../../packages/core/src/entity-collection/types.ts#L118)
+[Source](../../../packages/core/src/entity-collection/types.ts#L120)
 
 Settings for the in-memory collection store.
 

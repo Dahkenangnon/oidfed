@@ -6,7 +6,7 @@ Adapters own authoritative subordinate, Trust Mark, and event state. Keep transa
 
 ## `ListFilter`
 
-[Source](../../../packages/authority/src/storage/types.ts#L101)
+[Source](../../../packages/authority/src/storage/types.ts#L104)
 
 Filters for subordinate storage. Entity types and Trust Mark types use OR semantics within each list; different filters combine. `intermediate: false` selects non-intermediates, while `trustMarked: false` adds no mark restriction. Trust Mark filtering requires both an enabled mark repository and `validAt`. Custom Entity Type Identifiers remain valid filter values.
 
@@ -45,7 +45,7 @@ Fields (including inherited fields). `?` marks an optional member; types below r
 
 ## `ListPage`
 
-[Source](../../../packages/authority/src/storage/types.ts#L64)
+[Source](../../../packages/authority/src/storage/types.ts#L65)
 
 A detached page of subordinate records in lexicographic Entity Identifier order. `nextCursor` names the first unreturned position and is inclusive on the next call. An empty filtered page can still carry a continuation; omission means the scan is exhausted.
 
@@ -69,7 +69,7 @@ Fields (including inherited fields). `?` marks an optional member; types below r
 
 ## `ListPageOptions`
 
-[Source](../../../packages/authority/src/storage/types.ts#L56)
+[Source](../../../packages/authority/src/storage/types.ts#L57)
 
 Storage-level pagination and time filters. The cursor is inclusive. `updatedAfter` and `updatedBefore` compare NumericDates inclusively against `updatedAt`. With no page options, the storage contract returns every matching record. HTTP page-size validation is a separate endpoint concern.
 
@@ -94,7 +94,7 @@ Fields (including inherited fields). `?` marks an optional member; types below r
 
 ## `MemoryStorageAdapter`
 
-[Source](../../../packages/authority/src/storage/memory.ts#L230)
+[Source](../../../packages/authority/src/storage/memory.ts#L236)
 
 Process-local storage with subordinate records, replay protection, and cache always available. Trust Mark, subordinate-event, and collection repositories are opt-in. State is lost on restart and is not shared across processes.
 
@@ -108,7 +108,7 @@ new MemoryStorageAdapter(options?: MemoryStorageAdapterOptions): MemoryStorageAd
 
 The adapter's Entity Collection snapshot storage.
 
-[Source](../../../packages/authority/src/storage/memory.ts#L231)
+[Source](../../../packages/authority/src/storage/memory.ts#L237)
 
 ```typescript signature
 readonly collections?: EntityCollectionStore;
@@ -118,7 +118,7 @@ readonly collections?: EntityCollectionStore;
 
 The adapter's subordinate-record repository.
 
-[Source](../../../packages/authority/src/storage/memory.ts#L235)
+[Source](../../../packages/authority/src/storage/memory.ts#L241)
 
 ```typescript signature
 readonly subordinates: SubordinateStorage;
@@ -128,7 +128,7 @@ readonly subordinates: SubordinateStorage;
 
 The adapter's Trust Mark record repository.
 
-[Source](../../../packages/authority/src/storage/memory.ts#L236)
+[Source](../../../packages/authority/src/storage/memory.ts#L242)
 
 ```typescript signature
 readonly trustMarks?: TrustMarkStorage;
@@ -138,7 +138,7 @@ readonly trustMarks?: TrustMarkStorage;
 
 The optional subordinate-event repository.
 
-[Source](../../../packages/authority/src/storage/memory.ts#L237)
+[Source](../../../packages/authority/src/storage/memory.ts#L243)
 
 ```typescript signature
 readonly subordinateEvents?: SubordinateEventStorage;
@@ -148,7 +148,7 @@ readonly subordinateEvents?: SubordinateEventStorage;
 
 The adapter's replay-protection capability.
 
-[Source](../../../packages/authority/src/storage/memory.ts#L238)
+[Source](../../../packages/authority/src/storage/memory.ts#L244)
 
 ```typescript signature
 readonly replay: MemoryReplayStore;
@@ -158,7 +158,7 @@ readonly replay: MemoryReplayStore;
 
 Cache used by the owning adapter or service. Callers choose retention; consumers must still enforce signed evidence lifetimes.
 
-[Source](../../../packages/authority/src/storage/memory.ts#L239)
+[Source](../../../packages/authority/src/storage/memory.ts#L245)
 
 ```typescript signature
 readonly cache: MemoryCache;
@@ -168,7 +168,7 @@ readonly cache: MemoryCache;
 
 Serialize the read with writes; clone only the requested records.
 
-[Source](../../../packages/authority/src/storage/memory.ts#L273)
+[Source](../../../packages/authority/src/storage/memory.ts#L279)
 
 ```typescript signature
 readSnapshot<T>(operation: (snapshot: StorageReadSnapshot) => Promise<T>): Promise<T>;
@@ -178,7 +178,7 @@ readSnapshot<T>(operation: (snapshot: StorageReadSnapshot) => Promise<T>): Promi
 
 Commit callback writes atomically, or roll them back on failure. Use only tx repositories: awaiting a parent queued mutation inside the callback can deadlock.
 
-[Source](../../../packages/authority/src/storage/memory.ts#L300)
+[Source](../../../packages/authority/src/storage/memory.ts#L310)
 
 ```typescript signature
 transaction<T>(operation: (tx: StorageTransaction) => Promise<T>): Promise<T>;
@@ -186,7 +186,7 @@ transaction<T>(operation: (tx: StorageTransaction) => Promise<T>): Promise<T>;
 
 ## `MemoryStorageAdapterOptions`
 
-[Source](../../../packages/authority/src/storage/memory.ts#L220)
+[Source](../../../packages/authority/src/storage/memory.ts#L226)
 
 Options for the bundled in-memory adapter. Omitted repository flags leave those repositories unavailable. `clock` controls adapter update times, replay checks, and cache expiry; configure the authority’s own clock separately through `AuthorityConfig.options` when they must agree.
 
@@ -214,7 +214,7 @@ Fields (including inherited fields). `?` marks an optional member; types below r
 
 ## `StorageAdapter`
 
-[Source](../../../packages/authority/src/storage/types.ts#L15)
+[Source](../../../packages/authority/src/storage/types.ts#L16)
 
 Persistence contract supplied to an authority. `subordinates` and `transaction` are required. Trust Mark, event, replay, cache, collection, and read-snapshot capabilities are optional in the type but required by operations that use them. Trust Mark listing and issuance selection require `readSnapshot` with its Trust Mark view.
 
@@ -250,7 +250,7 @@ Fields (including inherited fields). `?` marks an optional member; types below r
 
 ## `StorageReadSnapshot`
 
-[Source](../../../packages/authority/src/storage/types.ts#L29)
+[Source](../../../packages/authority/src/storage/types.ts#L30)
 
 Read-only repository view containing subordinate `get`/`list`, optional Trust Mark `listCandidates`/`getByJwt`, and optional subordinate-event `list`. It exposes no mutations. Implementations must return detached data from one consistent view.
 
@@ -272,7 +272,7 @@ Fields (including inherited fields). `?` marks an optional member; types below r
 
 ## `StorageTransaction`
 
-[Source](../../../packages/authority/src/storage/types.ts#L35)
+[Source](../../../packages/authority/src/storage/types.ts#L36)
 
 Repositories available inside an atomic write transaction: subordinates, plus Trust Marks and subordinate events when enabled. Replay, cache, and collection operations are not included. Use the transaction-bound repositories, not the parent adapter.
 
@@ -294,7 +294,7 @@ Fields (including inherited fields). `?` marks an optional member; types below r
 
 ## `SubordinateEventAnnotations`
 
-[Source](../../../packages/authority/src/storage/types.ts#L92)
+[Source](../../../packages/authority/src/storage/types.ts#L95)
 
 Optional descriptions applied to every event generated by one authority lifecycle call. Supplying annotations requires event storage. `informationUri` must be a valid event URI; non-HTTPS values are permitted and produce an informational recommendation after a successful event commit.
 
@@ -334,7 +334,7 @@ Fields (including inherited fields). `?` marks an optional member; types below r
 
 ## `SubordinateRecord`
 
-[Source](../../../packages/authority/src/storage/types.ts#L73)
+[Source](../../../packages/authority/src/storage/types.ts#L74)
 
 Complete stored subordinate state, including the immutable Entity Identifier, attested keys, publication claims, and creation/update NumericDates. `registerSubordinate()` accepts the record without timestamps and supplies them; a direct adapter `add()` requires both timestamps. Operational federation endpoint metadata belongs in the subordinate’s own Entity Configuration, not this record’s Superior-supplied metadata.
 
@@ -378,7 +378,7 @@ Fields (including inherited fields). `?` marks an optional member; types below r
 
 ## `SubordinateRecordUpdate`
 
-[Source](../../../packages/authority/src/storage/types.ts#L97)
+[Source](../../../packages/authority/src/storage/types.ts#L100)
 
 Partial update excluding `entityId`, `createdAt`, and `updatedAt`. Omitted fields retain their current values. The memory adapter merges updates inside the write transaction and sets `updatedAt` from its own clock. Direct repository updates do not generate lifecycle events.
 
@@ -405,7 +405,7 @@ Fields (including inherited fields). `?` marks an optional member; types below r
 
 ## `SubordinateStorage`
 
-[Source](../../../packages/authority/src/storage/types.ts#L41)
+[Source](../../../packages/authority/src/storage/types.ts#L42)
 
 Subordinate repository contract. Reads return detached data; writes capture input before queued work. `add` rejects duplicate identifiers; `update` rejects unknown identifiers and validates the merged record inside the write transaction. The memory adapter’s `remove` also rejects an unknown identifier.
 

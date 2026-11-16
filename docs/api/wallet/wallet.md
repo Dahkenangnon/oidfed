@@ -8,7 +8,7 @@ Operational methods return core `Result` values, inspected through `ok`, `value`
 
 ## `AttestationVerificationOptions`
 
-[Source](../../../packages/wallet/src/roles.ts#L259)
+[Source](../../../packages/wallet/src/roles.ts#L298)
 
 Trust options and the host verifier for an alternative Wallet Provider attestation format. The callback receives trusted evidence and protocol keys; the library does not infer how to verify an opaque format.
 
@@ -65,7 +65,7 @@ Fields (including inherited fields):
 
 ## `AuthenticateWalletOptions`
 
-[Source](../../../packages/wallet/src/attestation.ts#L38)
+[Source](../../../packages/wallet/src/attestation.ts#L40)
 
 Wallet authentication policy for a JWT attestation/PoP pair. audience and acceptWallet are required. Choose an explicit replay policy or the replayStore shorthand; freshness defaults to an iat window of 300 seconds when neither freshness nor maxProofAgeSeconds overrides it. See the [core authentication contracts](../core/authentication.md#authenticateclientattestationoptions) for challenge and replay modes.
 
@@ -126,7 +126,7 @@ Fields (including inherited fields):
 
 ## `AuthorizationRequestContext`
 
-[Source](../../../packages/wallet/src/request.ts#L345)
+[Source](../../../packages/wallet/src/request.ts#L355)
 
 Context known after the host retrieves a Request Object: the expected wallet nonce and application mapping for its signed scope. It does not fetch the JWT or establish a new verifier identity.
 
@@ -147,7 +147,7 @@ Fields (including inherited fields):
 
 ## `AuthorizationRequestCreationOptions`
 
-[Source](../../../packages/wallet/src/request.ts#L75)
+[Source](../../../packages/wallet/src/request.ts#L77)
 
 Request Object creation settings, including an optional application mapping for a signed scope. scopeQuery is local validation input and is not serialized into the JWT. The supplied request must already carry the protocol fields and any desired date claims.
 
@@ -209,7 +209,7 @@ Fields (including inherited fields):
 
 ## `AuthorizationRequestOptions`
 
-[Source](../../../packages/wallet/src/request.ts#L44)
+[Source](../../../packages/wallet/src/request.ts#L46)
 
 Shared federation and local validation inputs for preparing/completing Request Objects. Audience, nonce, freshness, optional query matching, and transaction approval are local policy. The host owns Request URI GET/POST transport and the OpenID4VP exchange.
 
@@ -288,7 +288,7 @@ Fields (including inherited fields):
 
 ## `CreateWalletAttestationParams`
 
-[Source](../../../packages/wallet/src/attestation.ts#L29)
+[Source](../../../packages/wallet/src/attestation.ts#L31)
 
 Public alias of core's CreateClientAttestationParams. Supply an instance subject, public confirmation key, explicit future expiration, and any additional JSON claims. The provider identity is passed to creation separately or comes from the initialized role.
 
@@ -307,7 +307,7 @@ Fields (including inherited fields):
 
 ## `CredentialIssuerDiscoveryOptions`
 
-[Source](../../../packages/wallet/src/roles.ts#L320)
+[Source](../../../packages/wallet/src/roles.ts#L372)
 
 Trust and authorization-server discovery settings for a Credential Issuer.
 
@@ -360,7 +360,7 @@ Fields (including inherited fields):
 
 ## `CredentialIssuerMetadata`
 
-[Source](../../../packages/wallet/src/metadata.ts#L485)
+[Source](../../../packages/wallet/src/metadata.ts#L487)
 
 Effective Credential Issuer metadata output type. CredentialIssuerRole.parseMetadata checks supplied values, nested format rules, encryption relationships, and required top-level fields. Standalone parsing does not bind credential_issuer to a known federation subject; discovery and publication hooks add that check. Unknown extensions are preserved.
 
@@ -481,7 +481,7 @@ Fields (including inherited fields):
 
 ## `CredentialIssuerPublicationMetadata`
 
-[Source](../../../packages/wallet/src/metadata.ts#L546)
+[Source](../../../packages/wallet/src/metadata.ts#L543)
 
 Partial top-level Credential Issuer publication metadata. Missing requirements may be completed by a Superior. Supplied nested configuration, key, and format metadata still receive structural and applicable relationship checks; effective encryption relationships run after completion.
 
@@ -602,7 +602,7 @@ Fields (including inherited fields):
 
 ## `CredentialIssuerRole`
 
-[Source](../../../packages/wallet/src/roles.ts#L330)
+[Source](../../../packages/wallet/src/roles.ts#L382)
 
 Role for `openid_credential_issuer` publication, trusted issuer/AS discovery, and Wallet Attestation verification or authentication. Its inherited attestation consumers do not issue credentials; the host OpenID4VCI engine owns issuance and protocol endpoints. Construction deep-copies initial metadata without validating it. An attached Leaf or Authority invokes the publication hook; use the static parsers for independent validation. Only instance operations needing a signing identity require initialization; discovery/verification can run with configured anchors before attachment.
 
@@ -614,7 +614,7 @@ new CredentialIssuerRole(config?: WalletRoleConfig): CredentialIssuerRole;
 
 The literal Entity Type Identifier for CredentialIssuerRole, used by host composition and metadata validation.
 
-[Source](../../../packages/wallet/src/roles.ts#L331)
+[Source](../../../packages/wallet/src/roles.ts#L383)
 
 ```typescript signature
 readonly type: "openid_credential_issuer";
@@ -624,7 +624,7 @@ readonly type: "openid_credential_issuer";
 
 Establish issuer federation trust and validate complete Credential Issuer metadata, then discover the declared AS entities (or the co-located AS if absent). Every accepted AS uses validated OpenID4VCI-profile AS metadata and an exact issuer binding. Default all fails on any AS failure; available records failures but still requires a usable AS and necessary openid_credential authorization-details support for scopeless configurations. Results share one fetch budget and carry separate chain expirations. Instance options merge host, role, then per-call values. Pinned anchors are selected from per-call, role config, role options, then host; missing anchors throw before returning a Result.
 
-[Source](../../../packages/wallet/src/roles.ts#L455)
+[Source](../../../packages/wallet/src/roles.ts#L520)
 
 ```typescript signature
 discover(id: string, options?: CredentialIssuerDiscoveryOptions): Promise<Result<DiscoveredCredentialIssuer>>;
@@ -634,7 +634,7 @@ discover(id: string, options?: CredentialIssuerDiscoveryOptions): Promise<Result
 
 Establish the signing Wallet Provider's federation trust, resolve its protocol keys, and verify the JWT attestation signature, type, claims, times, and any supplied audience binding. Returns the attestation claims and provider evidence. This does not verify instance-key possession or call a host wallet-acceptance policy; use authenticateWallet for that. Instance options merge host, role, then per-call values. Pinned anchors are selected from per-call, role config, role options, then host; missing anchors throw before returning a Result.
 
-[Source](../../../packages/wallet/src/roles.ts#L230)
+[Source](../../../packages/wallet/src/roles.ts#L261)
 
 ```typescript signature
 verifyWalletAttestation(jwt: string, options?: WalletAttestationVerificationOptions): Promise<Result<VerifiedWalletAttestation, ClientAttestationError>>;
@@ -644,7 +644,7 @@ verifyWalletAttestation(jwt: string, options?: WalletAttestationVerificationOpti
 
 Verify the Wallet Attestation and its instance-signed PoP, including receiver binding, configured freshness, replay policy, and required acceptWallet callback. Supply either replayStore or replay, not both; freshness and maxProofAgeSeconds are also alternative configurations. Returns a Federation Result with ClientAttestationError on failure. The host enforces its own wallet acceptance policy and protocol HTTP error response. Instance options merge host, role, then per-call values. Pinned anchors are selected from per-call, role config, role options, then host; missing anchors throw before returning a Result.
 
-[Source](../../../packages/wallet/src/roles.ts#L237)
+[Source](../../../packages/wallet/src/roles.ts#L272)
 
 ```typescript signature
 authenticateWallet(attestation: string, proof: string, options: AuthenticateWalletOptions): Promise<Result<VerifiedWalletAttestation, ClientAttestationError>>;
@@ -654,7 +654,7 @@ authenticateWallet(attestation: string, proof: string, options: AuthenticateWall
 
 Establish provider federation trust and resolve provider protocol keys, then call the required verifyAttestation callback with copied input/evidence and a bounded abort signal. Only true accepts; throws, rejection, timeout, or cancellation produce a failed Result. The callback owns format-specific cryptographic verification. Success returns current provider evidence, not a parsed attestation. Instance options merge host, role, then per-call values. Pinned anchors are selected from per-call, role config, role options, then host; missing anchors throw before returning a Result.
 
-[Source](../../../packages/wallet/src/roles.ts#L245)
+[Source](../../../packages/wallet/src/roles.ts#L284)
 
 ```typescript signature
 verifyProviderAttestation(attestation: unknown, providerId: string, options: AttestationVerificationOptions): Promise<Result<TrustedWalletEntity>>;
@@ -664,7 +664,7 @@ verifyProviderAttestation(attestation: unknown, providerId: string, options: Att
 
 Assess target under bottom-up validation or an explicitly configured trusted-resolver mode, then validate effective metadata for the supplied wallet Entity Type. This type argument is explicit even on a concrete role. Accreditation issuers need not publish the target's protocol metadata. Returns a core EntityAssessment Result; no Request Object, attestation, or credential is verified by this call. Instance options merge host, role, then per-call values. Pinned anchors are selected from per-call, role config, role options, then host; missing anchors throw before returning a Result.
 
-[Source](../../../packages/wallet/src/roles.ts#L107)
+[Source](../../../packages/wallet/src/roles.ts#L117)
 
 ```typescript signature
 assessEntity(target: string, type: "openid_wallet_provider" | "openid_credential_issuer" | "openid_credential_verifier", options?: EntityAssessmentOptions & WalletTrustOptions): Promise<Result<EntityAssessment>>;
@@ -674,7 +674,7 @@ assessEntity(target: string, type: "openid_wallet_provider" | "openid_credential
 
 Mutable role metadata record deep-copied from config.metadata at construction. The readonly property prevents reassignment, not edits to the record. Leaf and Authority snapshot this block during host composition and invoke validateMetadata. Later edits to the role or its original input do not update the host's published metadata.
 
-[Source](../../../packages/wallet/src/roles.ts#L119)
+[Source](../../../packages/wallet/src/roles.ts#L129)
 
 ```typescript signature
 readonly metadata: Record<string, unknown>;
@@ -684,7 +684,7 @@ readonly metadata: Record<string, unknown>;
 
 The original configuration object, retained by reference. Metadata has a separate deep copy; options and anchor collections are not deeply snapshotted by construction. A readonly property does not freeze the referenced configuration.
 
-[Source](../../../packages/wallet/src/roles.ts#L121)
+[Source](../../../packages/wallet/src/roles.ts#L132)
 
 ```typescript signature
 readonly config: WalletRoleConfig;
@@ -694,7 +694,7 @@ readonly config: WalletRoleConfig;
 
 Bind the role to an EntityContext. Hosts call this during composition. Reusing the same context is allowed; rebinding the role to a different context throws. This method does not itself validate metadata.
 
-[Source](../../../packages/wallet/src/roles.ts#L124)
+[Source](../../../packages/wallet/src/roles.ts#L136)
 
 ```typescript signature
 initialize(context: EntityContext): void;
@@ -704,7 +704,7 @@ initialize(context: EntityContext): void;
 
 Validate a composed publication block with the matching partial schema. Missing top-level requirements may be completed by a Superior; supplied values and nested requirements are checked. Credential Issuer credential_issuer, when supplied, must equal context.entityId. Invalid metadata throws TypeError.
 
-[Source](../../../packages/wallet/src/roles.ts#L129)
+[Source](../../../packages/wallet/src/roles.ts#L144)
 
 ```typescript signature
 validateMetadata(metadata: Readonly<Record<string, unknown>>, context: EntityContext): void;
@@ -714,7 +714,7 @@ validateMetadata(metadata: Readonly<Record<string, unknown>>, context: EntityCon
 
 Validate completed effective metadata and return a Zod safe-parse result: success/data or success: false/error.issues. Unknown extension fields are preserved. Parsing establishes no federation trust; for Credential Issuers, standalone parsing does not bind credential_issuer to an independently known Entity Identifier.
 
-[Source](../../../packages/wallet/src/roles.ts#L333)
+[Source](../../../packages/wallet/src/roles.ts#L387)
 
 ```typescript signature
 static parseMetadata(metadata: unknown): z.ZodSafeParseResult<CredentialIssuerMetadata>;
@@ -724,7 +724,7 @@ static parseMetadata(metadata: unknown): z.ZodSafeParseResult<CredentialIssuerMe
 
 Validate supplied publication fields while permitting a Superior to complete missing top-level requirements. Supplied nested objects still receive their full checks. Returns a Zod safe-parse result, not a Federation Result, and establishes no trust.
 
-[Source](../../../packages/wallet/src/roles.ts#L337)
+[Source](../../../packages/wallet/src/roles.ts#L394)
 
 ```typescript signature
 static parsePublicationMetadata(metadata: unknown): z.ZodSafeParseResult<CredentialIssuerPublicationMetadata>;
@@ -734,7 +734,7 @@ static parsePublicationMetadata(metadata: unknown): z.ZodSafeParseResult<Credent
 
 Establish issuer federation trust and validate complete Credential Issuer metadata, then discover the declared AS entities (or the co-located AS if absent). Every accepted AS uses validated OpenID4VCI-profile AS metadata and an exact issuer binding. Default all fails on any AS failure; available records failures but still requires a usable AS and necessary openid_credential authorization-details support for scopeless configurations. Results share one fetch budget and carry separate chain expirations.
 
-[Source](../../../packages/wallet/src/roles.ts#L340)
+[Source](../../../packages/wallet/src/roles.ts#L401)
 
 ```typescript signature
 static discover(id: string, anchors: TrustAnchorSet, options?: CredentialIssuerDiscoveryOptions): Promise<Result<DiscoveredCredentialIssuer>>;
@@ -762,7 +762,7 @@ async function discoverIssuer(id: string, anchors: TrustAnchorSet) {
 
 Establish provider federation trust and resolve provider protocol keys, then call the required verifyAttestation callback with copied input/evidence and a bounded abort signal. Only true accepts; throws, rejection, timeout, or cancellation produce a failed Result. The callback owns format-specific cryptographic verification. Success returns current provider evidence, not a parsed attestation.
 
-[Source](../../../packages/wallet/src/roles.ts#L187)
+[Source](../../../packages/wallet/src/roles.ts#L206)
 
 ```typescript signature
 static verifyProviderAttestation(attestation: unknown, providerId: string, anchors: TrustAnchorSet, options: AttestationVerificationOptions): Promise<Result<TrustedWalletEntity>>;
@@ -772,7 +772,7 @@ static verifyProviderAttestation(attestation: unknown, providerId: string, ancho
 
 Establish the signing Wallet Provider's federation trust, resolve its protocol keys, and verify the JWT attestation signature, type, claims, times, and any supplied audience binding. Returns the attestation claims and provider evidence. This does not verify instance-key possession or call a host wallet-acceptance policy; use authenticateWallet for that.
 
-[Source](../../../packages/wallet/src/roles.ts#L213)
+[Source](../../../packages/wallet/src/roles.ts#L236)
 
 ```typescript signature
 static verifyWalletAttestation(jwt: string, anchors: TrustAnchorSet, options?: WalletAttestationVerificationOptions): Promise<Result<VerifiedWalletAttestation, ClientAttestationError>>;
@@ -782,7 +782,7 @@ static verifyWalletAttestation(jwt: string, anchors: TrustAnchorSet, options?: W
 
 Verify the Wallet Attestation and its instance-signed PoP, including receiver binding, configured freshness, replay policy, and required acceptWallet callback. Supply either replayStore or replay, not both; freshness and maxProofAgeSeconds are also alternative configurations. Returns a Federation Result with ClientAttestationError on failure. The host enforces its own wallet acceptance policy and protocol HTTP error response.
 
-[Source](../../../packages/wallet/src/roles.ts#L221)
+[Source](../../../packages/wallet/src/roles.ts#L248)
 
 ```typescript signature
 static authenticateWallet(attestation: string, proof: string, anchors: TrustAnchorSet, options: AuthenticateWalletOptions): Promise<Result<VerifiedWalletAttestation, ClientAttestationError>>;
@@ -815,7 +815,7 @@ async function authenticateInstance(
 
 Alias of core's createClientAttestationProof. Sign a PoP with the attested instance's protocol private key and intended AS audience. Creation does not authenticate the accompanying attestation or establish Federation trust; the receiver must verify the pair. See the [core contract](../core/authentication.md#createclientattestationproof).
 
-[Source](../../../packages/wallet/src/roles.ts#L71)
+[Source](../../../packages/wallet/src/roles.ts#L73)
 
 ```typescript signature
 static createClientAttestationProof: typeof createClientAttestationProof;
@@ -831,7 +831,7 @@ CredentialIssuerRole.createClientAttestationProof(params: CreateClientAttestatio
 
 Alias of core's clientAttestationHeaders. Return separate OAuth-Client-Attestation and OAuth-Client-Attestation-PoP headers; malformed inputs return a failing Result. This transport formatting does not verify either signature. See the [core contract](../core/authentication.md#clientattestationheaders).
 
-[Source](../../../packages/wallet/src/roles.ts#L72)
+[Source](../../../packages/wallet/src/roles.ts#L74)
 
 ```typescript signature
 static clientAttestationHeaders: typeof clientAttestationHeaders;
@@ -868,7 +868,7 @@ async function walletHeaders(
 
 Alias of core's serializeClientAttestation. Join the compact attestation and PoP using the tilde transport delimiter. Malformed inputs return a failing Result; serialization does not establish trust. See the [core contract](../core/authentication.md#serializeclientattestation).
 
-[Source](../../../packages/wallet/src/roles.ts#L73)
+[Source](../../../packages/wallet/src/roles.ts#L75)
 
 ```typescript signature
 static serializeClientAttestation: typeof serializeClientAttestation;
@@ -884,7 +884,7 @@ CredentialIssuerRole.serializeClientAttestation(attestationJwt: string, popJwt: 
 
 Alias of core's fetchAttestationChallenge. Fetch a challenge from an existing endpoint and return a Result. The helper uses POST, requires status 200, and checks the JSON attestation_challenge value. It does not cache the challenge or retry the protected request. See the [core contract](../core/authentication.md#fetchattestationchallenge).
 
-[Source](../../../packages/wallet/src/roles.ts#L74)
+[Source](../../../packages/wallet/src/roles.ts#L76)
 
 ```typescript signature
 static fetchAttestationChallenge: typeof fetchAttestationChallenge;
@@ -900,7 +900,7 @@ CredentialIssuerRole.fetchAttestationChallenge(endpoint: string, options?: Feder
 
 Alias of core's readAttestationChallenge. Read the OAuth-Client-Attestation-Challenge response header into a Result. An absent header returns ok(undefined); an empty value or CR/LF fails. This helper does not parse a body or authenticate the server. See the [core contract](../core/authentication.md#readattestationchallenge).
 
-[Source](../../../packages/wallet/src/roles.ts#L75)
+[Source](../../../packages/wallet/src/roles.ts#L77)
 
 ```typescript signature
 static readAttestationChallenge: typeof readAttestationChallenge;
@@ -916,7 +916,7 @@ CredentialIssuerRole.readAttestationChallenge(headers: Headers): { ok: false; er
 
 Alias of core's createAttestationChallengeHandler. Build a POST-only challenge handler around the host's challenge issuer, with no-store responses and bounded callback execution. The host mounts it and owns challenge storage, expiration, and consumption. See the [core contract](../core/authentication.md#createattestationchallengehandler).
 
-[Source](../../../packages/wallet/src/roles.ts#L76)
+[Source](../../../packages/wallet/src/roles.ts#L78)
 
 ```typescript signature
 static createAttestationChallengeHandler: typeof createAttestationChallengeHandler;
@@ -932,7 +932,7 @@ CredentialIssuerRole.createAttestationChallengeHandler(issue: (request: Request,
 
 Assess target under bottom-up validation or an explicitly configured trusted-resolver mode, then validate effective metadata for the supplied wallet Entity Type. This type argument is explicit even on a concrete role. Accreditation issuers need not publish the target's protocol metadata. Returns a core EntityAssessment Result; no Request Object, attestation, or credential is verified by this call.
 
-[Source](../../../packages/wallet/src/roles.ts#L78)
+[Source](../../../packages/wallet/src/roles.ts#L84)
 
 ```typescript signature
 static assessEntity(target: string, type: "openid_wallet_provider" | "openid_credential_issuer" | "openid_credential_verifier", anchors: TrustAnchorSet, options?: EntityAssessmentOptions & WalletTrustOptions): Promise<Result<EntityAssessment>>;
@@ -940,7 +940,7 @@ static assessEntity(target: string, type: "openid_wallet_provider" | "openid_cre
 
 ## `CredentialVerificationOptions`
 
-[Source](../../../packages/wallet/src/roles.ts#L460)
+[Source](../../../packages/wallet/src/roles.ts#L525)
 
 Trust inputs and host callbacks used to verify a credential.
 
@@ -996,7 +996,7 @@ Fields (including inherited fields):
 
 ## `CredentialVerifierMetadata`
 
-[Source](../../../packages/wallet/src/metadata.ts#L249)
+[Source](../../../packages/wallet/src/metadata.ts#L251)
 
 Effective Credential Verifier metadata. CredentialVerifierRole.parseMetadata validates it without establishing trust. Verifier keys need unique, nonempty kid values. Received repeated claim paths are permitted and normalized during request completion; publication and creation reject repeated paths. Unknown extensions remain available.
 
@@ -1043,7 +1043,7 @@ Fields (including inherited fields):
 
 ## `CredentialVerifierPublicationMetadata`
 
-[Source](../../../packages/wallet/src/metadata.ts#L549)
+[Source](../../../packages/wallet/src/metadata.ts#L546)
 
 Partial top-level verifier publication fields. The publication parser validates supplied fields with the creation/publication DCQL rules and permits a Superior to complete missing top-level requirements.
 
@@ -1090,7 +1090,7 @@ Fields (including inherited fields):
 
 ## `CredentialVerifierRole`
 
-[Source](../../../packages/wallet/src/roles.ts#L467)
+[Source](../../../packages/wallet/src/roles.ts#L532)
 
 Role for `openid_credential_verifier` publication, federation-backed Request Object creation and validation, and host-adapted credential verification. The host owns Request Object retrieval, presentation processing, consent, and response transport. Construction deep-copies initial metadata without validating it. An attached Leaf or Authority invokes the publication hook; use the static parsers for independent validation. Only instance operations needing a signing identity require initialization; discovery/verification can run with configured anchors before attachment.
 
@@ -1102,7 +1102,7 @@ new CredentialVerifierRole(config?: WalletRoleConfig): CredentialVerifierRole;
 
 The literal Entity Type Identifier for CredentialVerifierRole, used by host composition and metadata validation.
 
-[Source](../../../packages/wallet/src/roles.ts#L468)
+[Source](../../../packages/wallet/src/roles.ts#L533)
 
 ```typescript signature
 readonly type: "openid_credential_verifier";
@@ -1112,7 +1112,7 @@ readonly type: "openid_credential_verifier";
 
 Establish federation trust for the requested participant and validate completed Credential Verifier metadata. Explicit trustChain or entityChains evidence takes precedence over discovery. Offline use requires supplied evidence; a custom chain selector runs only on eligible validated candidates. Returns trusted metadata and its supporting chain. Instance options merge host, role, then per-call values. Pinned anchors are selected from per-call, role config, role options, then host; missing anchors throw before returning a Result.
 
-[Source](../../../packages/wallet/src/roles.ts#L540)
+[Source](../../../packages/wallet/src/roles.ts#L617)
 
 ```typescript signature
 discover(id: string, options?: WalletTrustOptions): Promise<Result<TrustedWalletEntity>>;
@@ -1122,7 +1122,7 @@ discover(id: string, options?: WalletTrustOptions): Promise<Result<TrustedWallet
 
 Prepare candidate verifier chains and protocol keys, validate the federation-prefixed client identifier, and bind any request_uri to effective verifier metadata. Returns a process-local handle, not an accepted request. Inline JWT hints are inspected, but signature and contextual query checks are completed later. Explicit supplied evidence takes precedence; an unusable embedded hint may fall back to bounded online discovery. Instance options merge host, role, then per-call values. Pinned anchors are selected from per-call, role config, role options, then host; missing anchors throw before returning a Result.
 
-[Source](../../../packages/wallet/src/roles.ts#L544)
+[Source](../../../packages/wallet/src/roles.ts#L621)
 
 ```typescript signature
 prepareAuthorizationRequest(outer: WalletAuthorizationRequest, options?: AuthorizationRequestOptions): Promise<Result<PreparedAuthorizationRequest>>;
@@ -1132,7 +1132,7 @@ prepareAuthorizationRequest(outer: WalletAuthorizationRequest, options?: Authori
 
 Complete the original preparation handle with its signed Request Object and optional retrieval context. Verify the signature, audience, wallet nonce, endpoint bindings, query/policy context, and configured transaction checks before selecting an eligible chain. Copied/deserialized, expired, or cancelled handles fail. An inline prepared request must use the identical JWT. Success returns federation-validated request context; the host still verifies presentations and processes the exchange.
 
-[Source](../../../packages/wallet/src/roles.ts#L555)
+[Source](../../../packages/wallet/src/roles.ts#L632)
 
 ```typescript signature
 completeAuthorizationRequest(prepared: PreparedAuthorizationRequest, jwt: string, context?: AuthorizationRequestContext): Promise<Result<ValidatedWalletRequest>>;
@@ -1142,7 +1142,7 @@ completeAuthorizationRequest(prepared: PreparedAuthorizationRequest, jwt: string
 
 Create an oauth-authz-req+jwt Request Object with client_id set to openid_federation:<signing Entity Identifier> and aud set from walletIssuer or https://self-issued.me/v2. The supplied signer is a protocol signer, not implicitly the host Federation signer. Dates are not added automatically. An explicit options.trustChain is validated against pinned anchors before attachment; restrict those anchors to the intended Wallet's trusted anchors. The host supplies scope mappings and protocol exchange transport. Instance signing requires host initialization. Options merge host, role, then per-call; attaching an explicit chain also requires pinned anchors.
 
-[Source](../../../packages/wallet/src/roles.ts#L562)
+[Source](../../../packages/wallet/src/roles.ts#L643)
 
 ```typescript signature
 createAuthorizationRequest(request: Readonly<Record<string, unknown>>, signer: JwtSigner, options?: AuthorizationRequestCreationOptions): Promise<Result<string>>;
@@ -1152,7 +1152,7 @@ createAuthorizationRequest(request: Readonly<Record<string, unknown>>, signer: J
 
 Establish Credential Issuer federation trust and validate its effective issuer metadata, then call verifyCredential with copied credential/evidence and protocol keys when published. The callback owns credential-format, proof, and status checks; only true accepts. Missing key metadata yields keys: undefined. Returns current issuer evidence on success and does not perform AS discovery. Instance options merge host, role, then per-call values. Pinned anchors are selected from per-call, role config, role options, then host; missing anchors throw before returning a Result.
 
-[Source](../../../packages/wallet/src/roles.ts#L578)
+[Source](../../../packages/wallet/src/roles.ts#L663)
 
 ```typescript signature
 verifyCredential(credential: unknown, issuerId: string, options: CredentialVerificationOptions): Promise<Result<TrustedWalletEntity>>;
@@ -1162,7 +1162,7 @@ verifyCredential(credential: unknown, issuerId: string, options: CredentialVerif
 
 Establish the signing Wallet Provider's federation trust, resolve its protocol keys, and verify the JWT attestation signature, type, claims, times, and any supplied audience binding. Returns the attestation claims and provider evidence. This does not verify instance-key possession or call a host wallet-acceptance policy; use authenticateWallet for that. Instance options merge host, role, then per-call values. Pinned anchors are selected from per-call, role config, role options, then host; missing anchors throw before returning a Result.
 
-[Source](../../../packages/wallet/src/roles.ts#L230)
+[Source](../../../packages/wallet/src/roles.ts#L261)
 
 ```typescript signature
 verifyWalletAttestation(jwt: string, options?: WalletAttestationVerificationOptions): Promise<Result<VerifiedWalletAttestation, ClientAttestationError>>;
@@ -1172,7 +1172,7 @@ verifyWalletAttestation(jwt: string, options?: WalletAttestationVerificationOpti
 
 Verify the Wallet Attestation and its instance-signed PoP, including receiver binding, configured freshness, replay policy, and required acceptWallet callback. Supply either replayStore or replay, not both; freshness and maxProofAgeSeconds are also alternative configurations. Returns a Federation Result with ClientAttestationError on failure. The host enforces its own wallet acceptance policy and protocol HTTP error response. Instance options merge host, role, then per-call values. Pinned anchors are selected from per-call, role config, role options, then host; missing anchors throw before returning a Result.
 
-[Source](../../../packages/wallet/src/roles.ts#L237)
+[Source](../../../packages/wallet/src/roles.ts#L272)
 
 ```typescript signature
 authenticateWallet(attestation: string, proof: string, options: AuthenticateWalletOptions): Promise<Result<VerifiedWalletAttestation, ClientAttestationError>>;
@@ -1182,7 +1182,7 @@ authenticateWallet(attestation: string, proof: string, options: AuthenticateWall
 
 Establish provider federation trust and resolve provider protocol keys, then call the required verifyAttestation callback with copied input/evidence and a bounded abort signal. Only true accepts; throws, rejection, timeout, or cancellation produce a failed Result. The callback owns format-specific cryptographic verification. Success returns current provider evidence, not a parsed attestation. Instance options merge host, role, then per-call values. Pinned anchors are selected from per-call, role config, role options, then host; missing anchors throw before returning a Result.
 
-[Source](../../../packages/wallet/src/roles.ts#L245)
+[Source](../../../packages/wallet/src/roles.ts#L284)
 
 ```typescript signature
 verifyProviderAttestation(attestation: unknown, providerId: string, options: AttestationVerificationOptions): Promise<Result<TrustedWalletEntity>>;
@@ -1192,7 +1192,7 @@ verifyProviderAttestation(attestation: unknown, providerId: string, options: Att
 
 Assess target under bottom-up validation or an explicitly configured trusted-resolver mode, then validate effective metadata for the supplied wallet Entity Type. This type argument is explicit even on a concrete role. Accreditation issuers need not publish the target's protocol metadata. Returns a core EntityAssessment Result; no Request Object, attestation, or credential is verified by this call. Instance options merge host, role, then per-call values. Pinned anchors are selected from per-call, role config, role options, then host; missing anchors throw before returning a Result.
 
-[Source](../../../packages/wallet/src/roles.ts#L107)
+[Source](../../../packages/wallet/src/roles.ts#L117)
 
 ```typescript signature
 assessEntity(target: string, type: "openid_wallet_provider" | "openid_credential_issuer" | "openid_credential_verifier", options?: EntityAssessmentOptions & WalletTrustOptions): Promise<Result<EntityAssessment>>;
@@ -1202,7 +1202,7 @@ assessEntity(target: string, type: "openid_wallet_provider" | "openid_credential
 
 Mutable role metadata record deep-copied from config.metadata at construction. The readonly property prevents reassignment, not edits to the record. Leaf and Authority snapshot this block during host composition and invoke validateMetadata. Later edits to the role or its original input do not update the host's published metadata.
 
-[Source](../../../packages/wallet/src/roles.ts#L119)
+[Source](../../../packages/wallet/src/roles.ts#L129)
 
 ```typescript signature
 readonly metadata: Record<string, unknown>;
@@ -1212,7 +1212,7 @@ readonly metadata: Record<string, unknown>;
 
 The original configuration object, retained by reference. Metadata has a separate deep copy; options and anchor collections are not deeply snapshotted by construction. A readonly property does not freeze the referenced configuration.
 
-[Source](../../../packages/wallet/src/roles.ts#L121)
+[Source](../../../packages/wallet/src/roles.ts#L132)
 
 ```typescript signature
 readonly config: WalletRoleConfig;
@@ -1222,7 +1222,7 @@ readonly config: WalletRoleConfig;
 
 Bind the role to an EntityContext. Hosts call this during composition. Reusing the same context is allowed; rebinding the role to a different context throws. This method does not itself validate metadata.
 
-[Source](../../../packages/wallet/src/roles.ts#L124)
+[Source](../../../packages/wallet/src/roles.ts#L136)
 
 ```typescript signature
 initialize(context: EntityContext): void;
@@ -1232,7 +1232,7 @@ initialize(context: EntityContext): void;
 
 Validate a composed publication block with the matching partial schema. Missing top-level requirements may be completed by a Superior; supplied values and nested requirements are checked. Credential Issuer credential_issuer, when supplied, must equal context.entityId. Invalid metadata throws TypeError.
 
-[Source](../../../packages/wallet/src/roles.ts#L129)
+[Source](../../../packages/wallet/src/roles.ts#L144)
 
 ```typescript signature
 validateMetadata(metadata: Readonly<Record<string, unknown>>, context: EntityContext): void;
@@ -1242,7 +1242,7 @@ validateMetadata(metadata: Readonly<Record<string, unknown>>, context: EntityCon
 
 Validate completed effective metadata and return a Zod safe-parse result: success/data or success: false/error.issues. Unknown extension fields are preserved. Parsing establishes no federation trust; for Credential Issuers, standalone parsing does not bind credential_issuer to an independently known Entity Identifier.
 
-[Source](../../../packages/wallet/src/roles.ts#L470)
+[Source](../../../packages/wallet/src/roles.ts#L537)
 
 ```typescript signature
 static parseMetadata(metadata: unknown): z.ZodSafeParseResult<CredentialVerifierMetadata>;
@@ -1252,7 +1252,7 @@ static parseMetadata(metadata: unknown): z.ZodSafeParseResult<CredentialVerifier
 
 Validate supplied publication fields while permitting a Superior to complete missing top-level requirements. Supplied nested objects still receive their full checks. Returns a Zod safe-parse result, not a Federation Result, and establishes no trust.
 
-[Source](../../../packages/wallet/src/roles.ts#L474)
+[Source](../../../packages/wallet/src/roles.ts#L544)
 
 ```typescript signature
 static parsePublicationMetadata(metadata: unknown): z.ZodSafeParseResult<CredentialVerifierPublicationMetadata>;
@@ -1262,7 +1262,7 @@ static parsePublicationMetadata(metadata: unknown): z.ZodSafeParseResult<Credent
 
 Establish federation trust for the requested participant and validate completed Credential Verifier metadata. Explicit trustChain or entityChains evidence takes precedence over discovery. Offline use requires supplied evidence; a custom chain selector runs only on eligible validated candidates. Returns trusted metadata and its supporting chain.
 
-[Source](../../../packages/wallet/src/roles.ts#L477)
+[Source](../../../packages/wallet/src/roles.ts#L548)
 
 ```typescript signature
 static discover(id: string, anchors: TrustAnchorSet, options?: WalletTrustOptions): Promise<Result<TrustedWalletEntity>>;
@@ -1272,7 +1272,7 @@ static discover(id: string, anchors: TrustAnchorSet, options?: WalletTrustOption
 
 Prepare candidate verifier chains and protocol keys, validate the federation-prefixed client identifier, and bind any request_uri to effective verifier metadata. Returns a process-local handle, not an accepted request. Inline JWT hints are inspected, but signature and contextual query checks are completed later. Explicit supplied evidence takes precedence; an unusable embedded hint may fall back to bounded online discovery.
 
-[Source](../../../packages/wallet/src/roles.ts#L482)
+[Source](../../../packages/wallet/src/roles.ts#L553)
 
 ```typescript signature
 static prepareAuthorizationRequest(outer: WalletAuthorizationRequest, anchors: TrustAnchorSet, options?: AuthorizationRequestOptions): Promise<Result<PreparedAuthorizationRequest>>;
@@ -1282,7 +1282,7 @@ static prepareAuthorizationRequest(outer: WalletAuthorizationRequest, anchors: T
 
 Complete the original preparation handle with its signed Request Object and optional retrieval context. Verify the signature, audience, wallet nonce, endpoint bindings, query/policy context, and configured transaction checks before selecting an eligible chain. Copied/deserialized, expired, or cancelled handles fail. An inline prepared request must use the identical JWT. Success returns federation-validated request context; the host still verifies presentations and processes the exchange.
 
-[Source](../../../packages/wallet/src/roles.ts#L491)
+[Source](../../../packages/wallet/src/roles.ts#L562)
 
 ```typescript signature
 static completeAuthorizationRequest(prepared: PreparedAuthorizationRequest, jwt: string, context?: AuthorizationRequestContext): Promise<Result<ValidatedWalletRequest>>;
@@ -1318,7 +1318,7 @@ async function validateRequest(
 
 Create an oauth-authz-req+jwt Request Object with client_id set to openid_federation:<signing Entity Identifier> and aud set from walletIssuer or https://self-issued.me/v2. The supplied signer is a protocol signer, not implicitly the host Federation signer. Dates are not added automatically. An explicit options.trustChain is validated against pinned anchors before attachment; restrict those anchors to the intended Wallet's trusted anchors. The host supplies scope mappings and protocol exchange transport.
 
-[Source](../../../packages/wallet/src/roles.ts#L498)
+[Source](../../../packages/wallet/src/roles.ts#L573)
 
 ```typescript signature
 static createAuthorizationRequest(id: string, request: Readonly<Record<string, unknown>>, signer: JwtSigner, options?: AuthorizationRequestCreationOptions): Promise<Result<string>>;
@@ -1328,7 +1328,7 @@ static createAuthorizationRequest(id: string, request: Readonly<Record<string, u
 
 Check an exact redirect URI match against the verifier metadata retained for an original, completed request result. Copies/deserialized results fail because they lack retained evidence. Expired or cancelled request evidence also fails; success does not send a response or verify a presentation.
 
-[Source](../../../packages/wallet/src/roles.ts#L512)
+[Source](../../../packages/wallet/src/roles.ts#L588)
 
 ```typescript signature
 static validateResponseRedirect(result: ValidatedWalletRequest, uri: string): { ok: false; error: FederationError; } | { ok: true; value: true; };
@@ -1338,7 +1338,7 @@ static validateResponseRedirect(result: ValidatedWalletRequest, uri: string): { 
 
 Establish Credential Issuer federation trust and validate its effective issuer metadata, then call verifyCredential with copied credential/evidence and protocol keys when published. The callback owns credential-format, proof, and status checks; only true accepts. Missing key metadata yields keys: undefined. Returns current issuer evidence on success and does not perform AS discovery.
 
-[Source](../../../packages/wallet/src/roles.ts#L516)
+[Source](../../../packages/wallet/src/roles.ts#L592)
 
 ```typescript signature
 static verifyCredential(credential: unknown, issuerId: string, anchors: TrustAnchorSet, options: CredentialVerificationOptions): Promise<Result<TrustedWalletEntity>>;
@@ -1368,7 +1368,7 @@ async function verifyMembershipCredential(
 
 Establish provider federation trust and resolve provider protocol keys, then call the required verifyAttestation callback with copied input/evidence and a bounded abort signal. Only true accepts; throws, rejection, timeout, or cancellation produce a failed Result. The callback owns format-specific cryptographic verification. Success returns current provider evidence, not a parsed attestation.
 
-[Source](../../../packages/wallet/src/roles.ts#L187)
+[Source](../../../packages/wallet/src/roles.ts#L206)
 
 ```typescript signature
 static verifyProviderAttestation(attestation: unknown, providerId: string, anchors: TrustAnchorSet, options: AttestationVerificationOptions): Promise<Result<TrustedWalletEntity>>;
@@ -1378,7 +1378,7 @@ static verifyProviderAttestation(attestation: unknown, providerId: string, ancho
 
 Establish the signing Wallet Provider's federation trust, resolve its protocol keys, and verify the JWT attestation signature, type, claims, times, and any supplied audience binding. Returns the attestation claims and provider evidence. This does not verify instance-key possession or call a host wallet-acceptance policy; use authenticateWallet for that.
 
-[Source](../../../packages/wallet/src/roles.ts#L213)
+[Source](../../../packages/wallet/src/roles.ts#L236)
 
 ```typescript signature
 static verifyWalletAttestation(jwt: string, anchors: TrustAnchorSet, options?: WalletAttestationVerificationOptions): Promise<Result<VerifiedWalletAttestation, ClientAttestationError>>;
@@ -1388,7 +1388,7 @@ static verifyWalletAttestation(jwt: string, anchors: TrustAnchorSet, options?: W
 
 Verify the Wallet Attestation and its instance-signed PoP, including receiver binding, configured freshness, replay policy, and required acceptWallet callback. Supply either replayStore or replay, not both; freshness and maxProofAgeSeconds are also alternative configurations. Returns a Federation Result with ClientAttestationError on failure. The host enforces its own wallet acceptance policy and protocol HTTP error response.
 
-[Source](../../../packages/wallet/src/roles.ts#L221)
+[Source](../../../packages/wallet/src/roles.ts#L248)
 
 ```typescript signature
 static authenticateWallet(attestation: string, proof: string, anchors: TrustAnchorSet, options: AuthenticateWalletOptions): Promise<Result<VerifiedWalletAttestation, ClientAttestationError>>;
@@ -1398,7 +1398,7 @@ static authenticateWallet(attestation: string, proof: string, anchors: TrustAnch
 
 Alias of core's createClientAttestationProof. Sign a PoP with the attested instance's protocol private key and intended AS audience. Creation does not authenticate the accompanying attestation or establish Federation trust; the receiver must verify the pair. See the [core contract](../core/authentication.md#createclientattestationproof).
 
-[Source](../../../packages/wallet/src/roles.ts#L71)
+[Source](../../../packages/wallet/src/roles.ts#L73)
 
 ```typescript signature
 static createClientAttestationProof: typeof createClientAttestationProof;
@@ -1414,7 +1414,7 @@ CredentialVerifierRole.createClientAttestationProof(params: CreateClientAttestat
 
 Alias of core's clientAttestationHeaders. Return separate OAuth-Client-Attestation and OAuth-Client-Attestation-PoP headers; malformed inputs return a failing Result. This transport formatting does not verify either signature. See the [core contract](../core/authentication.md#clientattestationheaders).
 
-[Source](../../../packages/wallet/src/roles.ts#L72)
+[Source](../../../packages/wallet/src/roles.ts#L74)
 
 ```typescript signature
 static clientAttestationHeaders: typeof clientAttestationHeaders;
@@ -1430,7 +1430,7 @@ CredentialVerifierRole.clientAttestationHeaders(attestationJwt: string, popJwt: 
 
 Alias of core's serializeClientAttestation. Join the compact attestation and PoP using the tilde transport delimiter. Malformed inputs return a failing Result; serialization does not establish trust. See the [core contract](../core/authentication.md#serializeclientattestation).
 
-[Source](../../../packages/wallet/src/roles.ts#L73)
+[Source](../../../packages/wallet/src/roles.ts#L75)
 
 ```typescript signature
 static serializeClientAttestation: typeof serializeClientAttestation;
@@ -1446,7 +1446,7 @@ CredentialVerifierRole.serializeClientAttestation(attestationJwt: string, popJwt
 
 Alias of core's fetchAttestationChallenge. Fetch a challenge from an existing endpoint and return a Result. The helper uses POST, requires status 200, and checks the JSON attestation_challenge value. It does not cache the challenge or retry the protected request. See the [core contract](../core/authentication.md#fetchattestationchallenge).
 
-[Source](../../../packages/wallet/src/roles.ts#L74)
+[Source](../../../packages/wallet/src/roles.ts#L76)
 
 ```typescript signature
 static fetchAttestationChallenge: typeof fetchAttestationChallenge;
@@ -1462,7 +1462,7 @@ CredentialVerifierRole.fetchAttestationChallenge(endpoint: string, options?: Fed
 
 Alias of core's readAttestationChallenge. Read the OAuth-Client-Attestation-Challenge response header into a Result. An absent header returns ok(undefined); an empty value or CR/LF fails. This helper does not parse a body or authenticate the server. See the [core contract](../core/authentication.md#readattestationchallenge).
 
-[Source](../../../packages/wallet/src/roles.ts#L75)
+[Source](../../../packages/wallet/src/roles.ts#L77)
 
 ```typescript signature
 static readAttestationChallenge: typeof readAttestationChallenge;
@@ -1478,7 +1478,7 @@ CredentialVerifierRole.readAttestationChallenge(headers: Headers): { ok: false; 
 
 Alias of core's createAttestationChallengeHandler. Build a POST-only challenge handler around the host's challenge issuer, with no-store responses and bounded callback execution. The host mounts it and owns challenge storage, expiration, and consumption. See the [core contract](../core/authentication.md#createattestationchallengehandler).
 
-[Source](../../../packages/wallet/src/roles.ts#L76)
+[Source](../../../packages/wallet/src/roles.ts#L78)
 
 ```typescript signature
 static createAttestationChallengeHandler: typeof createAttestationChallengeHandler;
@@ -1494,7 +1494,7 @@ CredentialVerifierRole.createAttestationChallengeHandler(issue: (request: Reques
 
 Assess target under bottom-up validation or an explicitly configured trusted-resolver mode, then validate effective metadata for the supplied wallet Entity Type. This type argument is explicit even on a concrete role. Accreditation issuers need not publish the target's protocol metadata. Returns a core EntityAssessment Result; no Request Object, attestation, or credential is verified by this call.
 
-[Source](../../../packages/wallet/src/roles.ts#L78)
+[Source](../../../packages/wallet/src/roles.ts#L84)
 
 ```typescript signature
 static assessEntity(target: string, type: "openid_wallet_provider" | "openid_credential_issuer" | "openid_credential_verifier", anchors: TrustAnchorSet, options?: EntityAssessmentOptions & WalletTrustOptions): Promise<Result<EntityAssessment>>;
@@ -1502,7 +1502,7 @@ static assessEntity(target: string, type: "openid_wallet_provider" | "openid_cre
 
 ## `DcqlQuery`
 
-[Source](../../../packages/wallet/src/metadata.ts#L177)
+[Source](../../../packages/wallet/src/metadata.ts#L179)
 
 Public structural DCQL query type used in metadata, local scope mappings, and completed request contexts. Runtime checks enforce identifiers, references, format-specific metadata, and creation/publication path uniqueness beyond this TypeScript shape. Unknown format and extension fields remain open.
 
@@ -1551,7 +1551,7 @@ Fields (including inherited fields):
 
 ## `DiscoveredCredentialIssuer`
 
-[Source](../../../packages/wallet/src/roles.ts#L325)
+[Source](../../../packages/wallet/src/roles.ts#L377)
 
 Trusted issuer metadata with usable AS evidence and, under the available policy, individual AS failures. Each chain has its own expiration; this value is not an OAuth session, credential response, or token-verification result.
 
@@ -1577,7 +1577,7 @@ Fields (including inherited fields):
 
 ## `PreparedAuthorizationRequest`
 
-[Source](../../../packages/wallet/src/request.ts#L90)
+[Source](../../../packages/wallet/src/request.ts#L92)
 
 Opaque process-local preparation handle. Keep the original object for completeAuthorizationRequest before expiresAt. Copying or serializing it loses the retained candidate chains and keys. Preparation alone does not authorize the request. The private brand shown below is descriptive and is not a package export.
 
@@ -1603,7 +1603,7 @@ Fields (including inherited fields):
 
 ## `TrustedWalletEntity`
 
-[Source](../../../packages/wallet/src/trust.ts#L41)
+[Source](../../../packages/wallet/src/trust.ts#L43)
 
 Validated participant identifier, effective role metadata, and its supporting chain. readonly declarations constrain assignments in TypeScript; they do not freeze the returned nested metadata or chain. A declared object of this type is not proof that validation ran.
 
@@ -1625,7 +1625,7 @@ Fields (including inherited fields):
 
 ## `ValidatedWalletRequest`
 
-[Source](../../../packages/wallet/src/request.ts#L96)
+[Source](../../../packages/wallet/src/request.ts#L98)
 
 Completed federation-backed Request Object context, including normalized query scenarios and the validated verifier metadata/chain. The returned request is sanitized for federation overrides; it is not a verified presentation. Retain the original result when using validateResponseRedirect because that method checks private evidence and request-specific deadlines.
 
@@ -1652,7 +1652,7 @@ Fields (including inherited fields):
 
 ## `VerifiedWalletAttestation`
 
-[Source](../../../packages/wallet/src/attestation.ts#L30)
+[Source](../../../packages/wallet/src/attestation.ts#L32)
 
 Wallet Attestation claims and the trusted provider evidence supporting them. verifyWalletAttestation verifies the attestation alone; authenticateWallet additionally verifies the instance PoP and invokes the host acceptance callback. This result has no aggregate expiresAt property: the attestation and provider chain retain separate deadlines.
 
@@ -1672,7 +1672,7 @@ Fields (including inherited fields):
 
 ## `WalletAttestation`
 
-[Source](../../../packages/wallet/src/attestation.ts#L28)
+[Source](../../../packages/wallet/src/attestation.ts#L30)
 
 Public alias of core's ClientAttestation claims type. It contains the required provider/instance identities, expiration, and public confirmation key, plus optional dates and wallet display claims. The type itself proves neither signature validity nor instance-key possession.
 
@@ -1695,7 +1695,7 @@ Fields (including inherited fields):
 
 ## `WalletAttestationVerificationOptions`
 
-[Source](../../../packages/wallet/src/attestation.ts#L34)
+[Source](../../../packages/wallet/src/attestation.ts#L36)
 
 Federation, protocol-key, and algorithm settings for verifying a Wallet Attestation without a PoP. expectedAudience is needed if the attestation carries aud; the recipient-specific PoP check is performed by authenticateWallet.
 
@@ -1749,7 +1749,7 @@ Fields (including inherited fields):
 
 ## `WalletAuthorizationRequest`
 
-[Source](../../../packages/wallet/src/request.ts#L38)
+[Source](../../../packages/wallet/src/request.ts#L40)
 
 Outer Request Object delivery parameters. Use the federation-prefixed client_id with either an inline request JWT or a request_uri. This package validates federation evidence but leaves Request URI HTTP retrieval to the host; completion requires the signed JWT.
 
@@ -1773,7 +1773,7 @@ Fields (including inherited fields):
 
 ## `WalletProviderMetadata`
 
-[Source](../../../packages/wallet/src/metadata.ts#L237)
+[Source](../../../packages/wallet/src/metadata.ts#L239)
 
 Completed Wallet Provider metadata, validated independently by WalletProviderRole.parseMetadata. vp_formats_supported is required; protocol-key references are an integration convention used by JWT Wallet Attestation verification. Shape validity does not establish federation trust.
 
@@ -1816,7 +1816,7 @@ Fields (including inherited fields):
 
 ## `WalletProviderPublicationMetadata`
 
-[Source](../../../packages/wallet/src/metadata.ts#L543)
+[Source](../../../packages/wallet/src/metadata.ts#L540)
 
 Wallet Provider publication fields with missing top-level requirements permitted for Superior completion. Supplied nested capability and key values are still checked.
 
@@ -1859,7 +1859,7 @@ Fields (including inherited fields):
 
 ## `WalletProviderRole`
 
-[Source](../../../packages/wallet/src/roles.ts#L279)
+[Source](../../../packages/wallet/src/roles.ts#L318)
 
 Role for `openid_wallet_provider` publication, trusted provider discovery, and Wallet Attestation creation. It exposes shared attestation-PoP and challenge helpers, but does not expose the attestation-verification instance methods available on the issuer and verifier roles. Construction deep-copies initial metadata without validating it. An attached Leaf or Authority invokes the publication hook; use the static parsers for independent validation. Only instance operations needing a signing identity require initialization; discovery/verification can run with configured anchors before attachment.
 
@@ -1871,7 +1871,7 @@ new WalletProviderRole(config?: WalletRoleConfig): WalletProviderRole;
 
 The literal Entity Type Identifier for WalletProviderRole, used by host composition and metadata validation.
 
-[Source](../../../packages/wallet/src/roles.ts#L280)
+[Source](../../../packages/wallet/src/roles.ts#L319)
 
 ```typescript signature
 readonly type: "openid_wallet_provider";
@@ -1881,7 +1881,7 @@ readonly type: "openid_wallet_provider";
 
 Establish federation trust for the requested participant and validate completed Wallet Provider metadata. Explicit trustChain or entityChains evidence takes precedence over discovery. Offline use requires supplied evidence; a custom chain selector runs only on eligible validated candidates. Returns trusted metadata and its supporting chain. Instance options merge host, role, then per-call values. Pinned anchors are selected from per-call, role config, role options, then host; missing anchors throw before returning a Result.
 
-[Source](../../../packages/wallet/src/roles.ts#L304)
+[Source](../../../packages/wallet/src/roles.ts#L353)
 
 ```typescript signature
 discover(id: string, options?: WalletTrustOptions): Promise<Result<TrustedWalletEntity>>;
@@ -1891,7 +1891,7 @@ discover(id: string, options?: WalletTrustOptions): Promise<Result<TrustedWallet
 
 Sign a JWT Wallet Attestation with the supplied provider protocol signer, instance subject, public confirmation key, explicit expiresAt, and optional additional claims. No default expiration is inserted. iss/sub/exp/cnf cannot be replaced by additional claims. When options.trustChain is supplied, validate its subject and signatures against pinned anchors before attaching it. Issue separately per desired anchor; this method does not select an audience-specific anchor. Instance signing requires host initialization. Options merge host, role, then per-call; attaching an explicit chain also requires pinned anchors.
 
-[Source](../../../packages/wallet/src/roles.ts#L307)
+[Source](../../../packages/wallet/src/roles.ts#L359)
 
 ```typescript signature
 createWalletAttestation(params: CreateWalletAttestationParams, signer: JwtSigner, options?: WalletTrustOptions): Promise<Result<string>>;
@@ -1901,7 +1901,7 @@ createWalletAttestation(params: CreateWalletAttestationParams, signer: JwtSigner
 
 Assess target under bottom-up validation or an explicitly configured trusted-resolver mode, then validate effective metadata for the supplied wallet Entity Type. This type argument is explicit even on a concrete role. Accreditation issuers need not publish the target's protocol metadata. Returns a core EntityAssessment Result; no Request Object, attestation, or credential is verified by this call. Instance options merge host, role, then per-call values. Pinned anchors are selected from per-call, role config, role options, then host; missing anchors throw before returning a Result.
 
-[Source](../../../packages/wallet/src/roles.ts#L107)
+[Source](../../../packages/wallet/src/roles.ts#L117)
 
 ```typescript signature
 assessEntity(target: string, type: "openid_wallet_provider" | "openid_credential_issuer" | "openid_credential_verifier", options?: EntityAssessmentOptions & WalletTrustOptions): Promise<Result<EntityAssessment>>;
@@ -1911,7 +1911,7 @@ assessEntity(target: string, type: "openid_wallet_provider" | "openid_credential
 
 Mutable role metadata record deep-copied from config.metadata at construction. The readonly property prevents reassignment, not edits to the record. Leaf and Authority snapshot this block during host composition and invoke validateMetadata. Later edits to the role or its original input do not update the host's published metadata.
 
-[Source](../../../packages/wallet/src/roles.ts#L119)
+[Source](../../../packages/wallet/src/roles.ts#L129)
 
 ```typescript signature
 readonly metadata: Record<string, unknown>;
@@ -1921,7 +1921,7 @@ readonly metadata: Record<string, unknown>;
 
 The original configuration object, retained by reference. Metadata has a separate deep copy; options and anchor collections are not deeply snapshotted by construction. A readonly property does not freeze the referenced configuration.
 
-[Source](../../../packages/wallet/src/roles.ts#L121)
+[Source](../../../packages/wallet/src/roles.ts#L132)
 
 ```typescript signature
 readonly config: WalletRoleConfig;
@@ -1931,7 +1931,7 @@ readonly config: WalletRoleConfig;
 
 Bind the role to an EntityContext. Hosts call this during composition. Reusing the same context is allowed; rebinding the role to a different context throws. This method does not itself validate metadata.
 
-[Source](../../../packages/wallet/src/roles.ts#L124)
+[Source](../../../packages/wallet/src/roles.ts#L136)
 
 ```typescript signature
 initialize(context: EntityContext): void;
@@ -1941,7 +1941,7 @@ initialize(context: EntityContext): void;
 
 Validate a composed publication block with the matching partial schema. Missing top-level requirements may be completed by a Superior; supplied values and nested requirements are checked. Credential Issuer credential_issuer, when supplied, must equal context.entityId. Invalid metadata throws TypeError.
 
-[Source](../../../packages/wallet/src/roles.ts#L129)
+[Source](../../../packages/wallet/src/roles.ts#L144)
 
 ```typescript signature
 validateMetadata(metadata: Readonly<Record<string, unknown>>, context: EntityContext): void;
@@ -1951,7 +1951,7 @@ validateMetadata(metadata: Readonly<Record<string, unknown>>, context: EntityCon
 
 Validate completed effective metadata and return a Zod safe-parse result: success/data or success: false/error.issues. Unknown extension fields are preserved. Parsing establishes no federation trust; for Credential Issuers, standalone parsing does not bind credential_issuer to an independently known Entity Identifier.
 
-[Source](../../../packages/wallet/src/roles.ts#L282)
+[Source](../../../packages/wallet/src/roles.ts#L323)
 
 ```typescript signature
 static parseMetadata(metadata: unknown): z.ZodSafeParseResult<WalletProviderMetadata>;
@@ -1961,7 +1961,7 @@ static parseMetadata(metadata: unknown): z.ZodSafeParseResult<WalletProviderMeta
 
 Validate supplied publication fields while permitting a Superior to complete missing top-level requirements. Supplied nested objects still receive their full checks. Returns a Zod safe-parse result, not a Federation Result, and establishes no trust.
 
-[Source](../../../packages/wallet/src/roles.ts#L286)
+[Source](../../../packages/wallet/src/roles.ts#L330)
 
 ```typescript signature
 static parsePublicationMetadata(metadata: unknown): z.ZodSafeParseResult<WalletProviderPublicationMetadata>;
@@ -1988,7 +1988,7 @@ if (!draft.success) {
 
 Establish federation trust for the requested participant and validate completed Wallet Provider metadata. Explicit trustChain or entityChains evidence takes precedence over discovery. Offline use requires supplied evidence; a custom chain selector runs only on eligible validated candidates. Returns trusted metadata and its supporting chain.
 
-[Source](../../../packages/wallet/src/roles.ts#L289)
+[Source](../../../packages/wallet/src/roles.ts#L334)
 
 ```typescript signature
 static discover(id: string, anchors: TrustAnchorSet, options?: WalletTrustOptions): Promise<Result<TrustedWalletEntity>>;
@@ -1998,7 +1998,7 @@ static discover(id: string, anchors: TrustAnchorSet, options?: WalletTrustOption
 
 Sign a JWT Wallet Attestation with the supplied provider protocol signer, instance subject, public confirmation key, explicit expiresAt, and optional additional claims. No default expiration is inserted. iss/sub/exp/cnf cannot be replaced by additional claims. When options.trustChain is supplied, validate its subject and signatures against pinned anchors before attaching it. Issue separately per desired anchor; this method does not select an audience-specific anchor.
 
-[Source](../../../packages/wallet/src/roles.ts#L293)
+[Source](../../../packages/wallet/src/roles.ts#L341)
 
 ```typescript signature
 static createWalletAttestation(id: string, params: CreateWalletAttestationParams, signer: JwtSigner, options?: WalletTrustOptions): Promise<Result<string>>;
@@ -2035,7 +2035,7 @@ async function issueWalletAttestation(
 
 Alias of core's createClientAttestationProof. Sign a PoP with the attested instance's protocol private key and intended AS audience. Creation does not authenticate the accompanying attestation or establish Federation trust; the receiver must verify the pair. See the [core contract](../core/authentication.md#createclientattestationproof).
 
-[Source](../../../packages/wallet/src/roles.ts#L71)
+[Source](../../../packages/wallet/src/roles.ts#L73)
 
 ```typescript signature
 static createClientAttestationProof: typeof createClientAttestationProof;
@@ -2051,7 +2051,7 @@ WalletProviderRole.createClientAttestationProof(params: CreateClientAttestationP
 
 Alias of core's clientAttestationHeaders. Return separate OAuth-Client-Attestation and OAuth-Client-Attestation-PoP headers; malformed inputs return a failing Result. This transport formatting does not verify either signature. See the [core contract](../core/authentication.md#clientattestationheaders).
 
-[Source](../../../packages/wallet/src/roles.ts#L72)
+[Source](../../../packages/wallet/src/roles.ts#L74)
 
 ```typescript signature
 static clientAttestationHeaders: typeof clientAttestationHeaders;
@@ -2067,7 +2067,7 @@ WalletProviderRole.clientAttestationHeaders(attestationJwt: string, popJwt: stri
 
 Alias of core's serializeClientAttestation. Join the compact attestation and PoP using the tilde transport delimiter. Malformed inputs return a failing Result; serialization does not establish trust. See the [core contract](../core/authentication.md#serializeclientattestation).
 
-[Source](../../../packages/wallet/src/roles.ts#L73)
+[Source](../../../packages/wallet/src/roles.ts#L75)
 
 ```typescript signature
 static serializeClientAttestation: typeof serializeClientAttestation;
@@ -2083,7 +2083,7 @@ WalletProviderRole.serializeClientAttestation(attestationJwt: string, popJwt: st
 
 Alias of core's fetchAttestationChallenge. Fetch a challenge from an existing endpoint and return a Result. The helper uses POST, requires status 200, and checks the JSON attestation_challenge value. It does not cache the challenge or retry the protected request. See the [core contract](../core/authentication.md#fetchattestationchallenge).
 
-[Source](../../../packages/wallet/src/roles.ts#L74)
+[Source](../../../packages/wallet/src/roles.ts#L76)
 
 ```typescript signature
 static fetchAttestationChallenge: typeof fetchAttestationChallenge;
@@ -2099,7 +2099,7 @@ WalletProviderRole.fetchAttestationChallenge(endpoint: string, options?: Federat
 
 Alias of core's readAttestationChallenge. Read the OAuth-Client-Attestation-Challenge response header into a Result. An absent header returns ok(undefined); an empty value or CR/LF fails. This helper does not parse a body or authenticate the server. See the [core contract](../core/authentication.md#readattestationchallenge).
 
-[Source](../../../packages/wallet/src/roles.ts#L75)
+[Source](../../../packages/wallet/src/roles.ts#L77)
 
 ```typescript signature
 static readAttestationChallenge: typeof readAttestationChallenge;
@@ -2115,7 +2115,7 @@ WalletProviderRole.readAttestationChallenge(headers: Headers): { ok: false; erro
 
 Alias of core's createAttestationChallengeHandler. Build a POST-only challenge handler around the host's challenge issuer, with no-store responses and bounded callback execution. The host mounts it and owns challenge storage, expiration, and consumption. See the [core contract](../core/authentication.md#createattestationchallengehandler).
 
-[Source](../../../packages/wallet/src/roles.ts#L76)
+[Source](../../../packages/wallet/src/roles.ts#L78)
 
 ```typescript signature
 static createAttestationChallengeHandler: typeof createAttestationChallengeHandler;
@@ -2131,7 +2131,7 @@ WalletProviderRole.createAttestationChallengeHandler(issue: (request: Request, s
 
 Assess target under bottom-up validation or an explicitly configured trusted-resolver mode, then validate effective metadata for the supplied wallet Entity Type. This type argument is explicit even on a concrete role. Accreditation issuers need not publish the target's protocol metadata. Returns a core EntityAssessment Result; no Request Object, attestation, or credential is verified by this call.
 
-[Source](../../../packages/wallet/src/roles.ts#L78)
+[Source](../../../packages/wallet/src/roles.ts#L84)
 
 ```typescript signature
 static assessEntity(target: string, type: "openid_wallet_provider" | "openid_credential_issuer" | "openid_credential_verifier", anchors: TrustAnchorSet, options?: EntityAssessmentOptions & WalletTrustOptions): Promise<Result<EntityAssessment>>;
@@ -2139,7 +2139,7 @@ static assessEntity(target: string, type: "openid_wallet_provider" | "openid_cre
 
 ## `WalletRoleConfig`
 
-[Source](../../../packages/wallet/src/roles.ts#L64)
+[Source](../../../packages/wallet/src/roles.ts#L66)
 
 Shared role configuration. Initial metadata is deep-copied, while config itself, options, and anchor references are retained. Instance option precedence is per-call over role over host. Instance signing requires host initialization; discovery and verification can run beforehand when role/per-call anchors are available.
 
@@ -2161,7 +2161,7 @@ Fields (including inherited fields):
 
 ## `WalletTrustOptions`
 
-[Source](../../../packages/wallet/src/trust.ts#L29)
+[Source](../../../packages/wallet/src/trust.ts#L31)
 
 Shared federation, supplied-evidence, and offline settings for wallet operations. Static discovery and verification receive an explicit anchor argument; instance methods resolve anchor defaults separately. Wallet operations share a fetch budget across discovery, candidate validation, AS discovery, and protocol-key retrieval. A supplied chain remains untrusted until validation succeeds.
 

@@ -6,7 +6,7 @@ Builders construct claims; signers produce JWTs; verification checks authenticat
 
 ## `assertTypHeader`
 
-[Source](../../../packages/core/src/jose/verify.ts#L179)
+[Source](../../../packages/core/src/jose/verify.ts#L180)
 
 Assert that a JWT header has the expected `typ` value, throwing on mismatch.
 
@@ -16,7 +16,7 @@ assertTypHeader(header: Record<string, unknown>, expectedTyp: string): asserts h
 
 ## `buildEntityConfigurationPayload`
 
-[Source](../../../packages/core/src/statement-builders.ts#L136)
+[Source](../../../packages/core/src/statement-builders.ts#L140)
 
 Build a self-issued Entity Configuration payload from the entity's public keys, metadata, lifetime, and extensions. Configuration errors throw before signing.
 
@@ -65,7 +65,7 @@ Fields (including inherited fields):
 
 ## `buildSubordinateStatementPayload`
 
-[Source](../../../packages/core/src/statement-builders.ts#L183)
+[Source](../../../packages/core/src/statement-builders.ts#L189)
 
 Build a Superior's statement about a subordinate, including its public federation keys, metadata, policy, and constraints. Invalid publication claims throw before signing.
 
@@ -114,7 +114,7 @@ Fields (including inherited fields):
 
 ## `checkApplicationJwtHeader`
 
-[Source](../../../packages/core/src/jose/application-jwt.ts#L46)
+[Source](../../../packages/core/src/jose/application-jwt.ts#L49)
 
 ACA §9 allows applications to narrow the backend's supported algorithms.
 
@@ -124,7 +124,7 @@ checkApplicationJwtHeader(header: jose.ProtectedHeaderParameters, typ: string, a
 
 ## `decodeApplicationJwt`
 
-[Source](../../../packages/core/src/jose/application-jwt.ts#L19)
+[Source](../../../packages/core/src/jose/application-jwt.ts#L22)
 
 Decode an application JWT into its header and payload under the configured limits. Decoding does not authenticate either object.
 
@@ -134,7 +134,7 @@ decodeApplicationJwt(jwt: string, options: FederationOptions): Result<{ header: 
 
 ## `decodeEntityConfiguration`
 
-[Source](../../../packages/core/src/jose/verify.ts#L103)
+[Source](../../../packages/core/src/jose/verify.ts#L104)
 
 Decode and schema-validate an Entity Configuration JWT without signature verification.
 
@@ -144,7 +144,7 @@ decodeEntityConfiguration(jwt: string): Result<UnverifiedEntityStatement<EntityC
 
 ## `decodeEntityStatement`
 
-[Source](../../../packages/core/src/jose/verify.ts#L82)
+[Source](../../../packages/core/src/jose/verify.ts#L83)
 
 Decode a JWT entity statement without signature verification.
 
@@ -154,7 +154,7 @@ decodeEntityStatement(jwt: string): Result<UnverifiedEntityStatement, Federation
 
 ## `decodeSubordinateStatement`
 
-[Source](../../../packages/core/src/jose/verify.ts#L128)
+[Source](../../../packages/core/src/jose/verify.ts#L129)
 
 Decode and schema-validate a Subordinate Statement JWT without signature verification.
 
@@ -206,7 +206,7 @@ type EntityStatementMetadata = Readonly<Record<string, Readonly<Record<string, u
 
 ## `JwkSigner`
 
-[Source](../../../packages/core/src/jose/signer.ts#L22)
+[Source](../../../packages/core/src/jose/signer.ts#L24)
 
 Software-key signer backed by `jose`. Construction validates and snapshots the private asymmetric JWK, including its `kid` and signing algorithm. Key import is deferred until signing; invalid input or backend failures throw or reject. `JwkSignerOptions` has an optional algorithm override, not a key-header override.
 
@@ -218,7 +218,7 @@ new JwkSigner(key: JWK, options?: JwkSignerOptions): JwkSigner;
 
 Key identifier used to select this signer's public key.
 
-[Source](../../../packages/core/src/jose/signer.ts#L23)
+[Source](../../../packages/core/src/jose/signer.ts#L25)
 
 ```typescript signature
 readonly kid: string;
@@ -228,7 +228,7 @@ readonly kid: string;
 
 Signing algorithm advertised by this signer.
 
-[Source](../../../packages/core/src/jose/signer.ts#L24)
+[Source](../../../packages/core/src/jose/signer.ts#L26)
 
 ```typescript signature
 readonly alg: SupportedAlgorithm;
@@ -238,7 +238,7 @@ readonly alg: SupportedAlgorithm;
 
 Sign the supplied JWT data through this signer's configured key or signing backend.
 
-[Source](../../../packages/core/src/jose/signer.ts#L35)
+[Source](../../../packages/core/src/jose/signer.ts#L39)
 
 ```typescript signature
 signJwt(payload: Uint8Array, protectedHeader: Readonly<Record<string, unknown>>): Promise<string>;
@@ -246,7 +246,7 @@ signJwt(payload: Uint8Array, protectedHeader: Readonly<Record<string, unknown>>)
 
 ## `JwkSignerOptions`
 
-[Source](../../../packages/core/src/jose/signer.ts#L17)
+[Source](../../../packages/core/src/jose/signer.ts#L19)
 
 Optional signing algorithm for `JwkSigner`. If omitted, the signer uses the JWK's `alg`; the key must also contain a nonempty `kid` and private material.
 
@@ -264,7 +264,7 @@ Fields (including inherited fields):
 
 ## `JwtSigner`
 
-[Source](../../../packages/core/src/jose/signer.ts#L11)
+[Source](../../../packages/core/src/jose/signer.ts#L13)
 
 Signing interface for a software key, remote signing service, or another host-controlled backend. Implementations own key custody. The bundled `JwkSigner` imports its private JWK through `jose`; callers using the interface do not need to expose private material to protocol code.
 
@@ -286,7 +286,7 @@ Fields (including inherited fields):
 
 ## `matchesJwtType`
 
-[Source](../../../packages/core/src/jose/application-jwt.ts#L36)
+[Source](../../../packages/core/src/jose/application-jwt.ts#L39)
 
 RFC 7515 §4.1.9 treats typ as a media type, with an optional application/ prefix.
 
@@ -306,7 +306,7 @@ prepareEntityStatementExtensions(options: EntityStatementExtensions): EntityStat
 
 ## `signApplicationJwt`
 
-[Source](../../../packages/core/src/jose/application-jwt.ts#L122)
+[Source](../../../packages/core/src/jose/application-jwt.ts#L130)
 
 Sign an application payload with the supplied signer, JWT type, and optional Trust Chain header. The caller supplies the protocol claims.
 
@@ -316,7 +316,7 @@ signApplicationJwt(payload: Record<string, unknown>, typ: string, signer: JwtSig
 
 ## `signEntityConfiguration`
 
-[Source](../../../packages/core/src/statement-builders.ts#L173)
+[Source](../../../packages/core/src/statement-builders.ts#L178)
 
 Build and sign a self-issued Entity Configuration using the supplied federation signer.
 
@@ -359,7 +359,7 @@ Fields (including inherited fields):
 
 ## `signEntityStatement`
 
-[Source](../../../packages/core/src/jose/sign.ts#L13)
+[Source](../../../packages/core/src/jose/sign.ts#L15)
 
 Serialize and sign a payload as a compact JWT. The default `typ` is `entity-statement+jwt`; the algorithm must match the signer. `extraHeaders` cannot override `alg`, `kid`, or `typ`. This generic signer does not validate the payload as an Entity Configuration or Subordinate Statement; use their builders when those publication checks are required. Errors reject the returned promise.
 
@@ -391,7 +391,7 @@ Fields (including inherited fields):
 
 ## `signSubordinateStatement`
 
-[Source](../../../packages/core/src/statement-builders.ts#L212)
+[Source](../../../packages/core/src/statement-builders.ts#L219)
 
 Build and sign a Subordinate Statement with the Superior's federation signer.
 
@@ -434,7 +434,7 @@ Fields (including inherited fields):
 
 ## `validateCriticalClaims`
 
-[Source](../../../packages/core/src/statement-validation.ts#L10)
+[Source](../../../packages/core/src/statement-validation.ts#L12)
 
 Enforce payload critical claims under Federation §3.1.1. Callers process the extensions they declare understood.
 
@@ -459,7 +459,7 @@ export function inspectStatementClaims(payload: Record<string, unknown>, clock: 
 
 ## `validateEntityStatementClaims`
 
-[Source](../../../packages/core/src/statement-builders.ts#L222)
+[Source](../../../packages/core/src/statement-builders.ts#L233)
 
 Check statement claims for the requested statement kind, including identity relationships and permitted claim placement.
 
@@ -487,7 +487,7 @@ Fields (including inherited fields):
 
 ## `validateEntityStatementTimeClaims`
 
-[Source](../../../packages/core/src/statement-validation.ts#L41)
+[Source](../../../packages/core/src/statement-validation.ts#L43)
 
 Check required Entity Statement times using the verifier's clock and allowed skew (§3.2).
 
@@ -497,7 +497,7 @@ validateEntityStatementTimeClaims(payload: Readonly<Record<string, unknown>>, op
 
 ## `validateSigner`
 
-[Source](../../../packages/core/src/jose/signer.ts#L46)
+[Source](../../../packages/core/src/jose/signer.ts#L51)
 
 Check that a signer has the algorithm and key identifier required for publication.
 
@@ -507,7 +507,7 @@ validateSigner(signer: JwtSigner): void;
 
 ## `validateSubordinateStatementPublicationClaims`
 
-[Source](../../../packages/core/src/statement-builders.ts#L265)
+[Source](../../../packages/core/src/statement-builders.ts#L276)
 
 Validate supplied publication claims without inventing required issuer, key, or time claims.
 
@@ -517,7 +517,7 @@ validateSubordinateStatementPublicationClaims(payload: Readonly<Record<string, u
 
 ## `VerifiedProtocolJwt`
 
-[Source](../../../packages/core/src/jose/verify-protocol.ts#L18)
+[Source](../../../packages/core/src/jose/verify-protocol.ts#L20)
 
 A protocol JWT's header and payload returned after verification.
 
@@ -537,7 +537,7 @@ Fields (including inherited fields):
 
 ## `verifyApplicationJwt`
 
-[Source](../../../packages/core/src/jose/application-jwt.ts#L65)
+[Source](../../../packages/core/src/jose/application-jwt.ts#L72)
 
 Verify the signature, type, supported algorithms, and any supplied audience against the provided public keys. Present `exp` and `nbf` claims are checked with clock tolerance; `iat` is checked for finite numeric syntax, without imposing an age limit. Required claims, freshness policy, and issuer trust belong to the calling protocol workflow.
 
@@ -547,7 +547,7 @@ verifyApplicationJwt(jwt: string, keys: JWKSet, typ: string, options: Federation
 
 ## `verifyEntityStatement`
 
-[Source](../../../packages/core/src/jose/verify.ts#L16)
+[Source](../../../packages/core/src/jose/verify.ts#L17)
 
 Verify the JWT's exact type, supported signing algorithm, nonempty `kid`, signature, and present JWT time claims against the supplied public keys. The default type is `entity-statement+jwt` and default clock tolerance is 60 seconds. This low-level call does not perform complete claim-shape, chain-link, policy, or Trust Anchor validation.
 
@@ -557,7 +557,7 @@ verifyEntityStatement(jwt: string, jwks: JWKSet, options?: { clockSkewSeconds?: 
 
 ## `verifyProtocolJwt`
 
-[Source](../../../packages/core/src/jose/verify-protocol.ts#L28)
+[Source](../../../packages/core/src/jose/verify-protocol.ts#L30)
 
 Verify a protocol JWT against authenticated public metadata keys.
 Checks signature, type and JWT time claims. The caller validates protocol claims
@@ -569,7 +569,7 @@ verifyProtocolJwt(jwt: string, jwks: JWKSet, options: VerifyProtocolJwtOptions):
 
 ## `VerifyProtocolJwtOptions`
 
-[Source](../../../packages/core/src/jose/verify-protocol.ts#L8)
+[Source](../../../packages/core/src/jose/verify-protocol.ts#L10)
 
 Expected type, identity, algorithms, and claim checks for a protocol JWT.
 

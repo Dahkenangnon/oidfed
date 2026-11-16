@@ -6,7 +6,7 @@ Use these contracts to connect your clock, cache, logger, HTTP transport, and pr
 
 ## `assertPositiveTtlSeconds`
 
-[Source](../../../packages/core/src/ttl.ts#L7)
+[Source](../../../packages/core/src/ttl.ts#L9)
 
 Validate a configured lifetime before publication. Entity Statement builders
 use safe-integer durations; Trust Marks and event responses allow fractions.
@@ -20,7 +20,7 @@ assertPositiveTtlSeconds(value: number, field: string, mode: "safe-integer" | "f
 
 ## `CacheProvider`
 
-[Source](../../../packages/core/src/types.ts#L69)
+[Source](../../../packages/core/src/types.ts#L70)
 
 The cache interface a host implements to store values with a lifetime.
 
@@ -46,7 +46,7 @@ Fields (including inherited fields):
 
 ## `chainCacheKey`
 
-[Source](../../../packages/core/src/cache/index.ts#L94)
+[Source](../../../packages/core/src/cache/index.ts#L107)
 
 Build the cache key for a subject's trust-chain operation under the supplied anchor context.
 
@@ -56,7 +56,7 @@ chainCacheKey(entityId: EntityId, trustAnchorId: EntityId): Promise<string>;
 
 ## `ChainSelectionStrategy`
 
-[Source](../../../packages/core/src/types.ts#L276)
+[Source](../../../packages/core/src/types.ts#L278)
 
 A synchronous callback that chooses one of the validated candidate chains.
 
@@ -66,7 +66,7 @@ type ChainSelectionStrategy = (chains: ValidatedTrustChain[]) => ValidatedTrustC
 
 ## `Clock`
 
-[Source](../../../packages/core/src/types.ts#L59)
+[Source](../../../packages/core/src/types.ts#L60)
 
 The time source used by operations that evaluate timestamps and expiry.
 
@@ -85,7 +85,7 @@ Fields (including inherited fields):
 
 ## `composeEntityMetadata`
 
-[Source](../../../packages/core/src/roles.ts#L12)
+[Source](../../../packages/core/src/roles.ts#L14)
 
 Compose detached metadata from own enumerable properties, in source order.
 Later sources replace whole parameter values, including arrays and objects.
@@ -100,7 +100,7 @@ composeEntityMetadata(...sources: readonly Readonly<Record<string, unknown>>[]):
 
 ## `ConstraintCheckContext`
 
-[Source](../../../packages/core/src/types.ts#L244)
+[Source](../../../packages/core/src/types.ts#L246)
 
 Detached, recursively frozen evidence. Position uses leaf-first chain indexing.
 
@@ -128,7 +128,7 @@ Fields (including inherited fields):
 
 ## `ConstraintCheckDefinition`
 
-[Source](../../../packages/core/src/types.ts#L254)
+[Source](../../../packages/core/src/types.ts#L256)
 
 Synchronous checks may run again when prepared validation is completed.
 
@@ -148,7 +148,7 @@ Fields (including inherited fields):
 
 ## `createTrustAnchorSet`
 
-[Source](../../../packages/core/src/types.ts#L136)
+[Source](../../../packages/core/src/types.ts#L138)
 
 Build a read-only-typed map from exact validated Entity Identifiers to the supplied key sets. Duplicate identifiers use the last entry. This helper validates the identifiers, but does not validate or clone their JWK Sets. Treat the configuration as owned trust data; the read-only type does not freeze the runtime Map or nested keys.
 
@@ -190,7 +190,7 @@ Fields (including inherited fields):
 
 ## `ecCacheKey`
 
-[Source](../../../packages/core/src/cache/index.ts#L84)
+[Source](../../../packages/core/src/cache/index.ts#L95)
 
 Build the cache key for an Entity Configuration identified by its exact Entity Identifier.
 
@@ -226,7 +226,7 @@ Fields (including inherited fields):
 
 ## `entityId`
 
-[Source](../../../packages/core/src/types.ts#L20)
+[Source](../../../packages/core/src/types.ts#L21)
 
 Validate an HTTPS Entity Identifier with at most 2048 characters, no credentials, query, or fragment, and return the original string with a TypeScript brand. Invalid input throws. The returned identifier is not URL-reserialized or normalized for comparisons.
 
@@ -236,7 +236,7 @@ entityId(value: string): EntityId;
 
 ## `EntityId`
 
-[Source](../../../packages/core/src/types.ts#L17)
+[Source](../../../packages/core/src/types.ts#L18)
 
 An Entity Identifier validated by the library and represented as a branded string.
 
@@ -273,7 +273,7 @@ Fields (including inherited fields):
 
 ## `err`
 
-[Source](../../../packages/core/src/errors.ts#L32)
+[Source](../../../packages/core/src/errors.ts#L34)
 
 Wrap an error in a Result.
 
@@ -283,7 +283,7 @@ err<E>(error: E): Result<never, E>;
 
 ## `esCacheKey`
 
-[Source](../../../packages/core/src/cache/index.ts#L89)
+[Source](../../../packages/core/src/cache/index.ts#L101)
 
 Build the cache key for a statement issued by one entity about another.
 
@@ -293,7 +293,7 @@ esCacheKey(issuer: EntityId, subject: EntityId): Promise<string>;
 
 ## `federationError`
 
-[Source](../../../packages/core/src/errors.ts#L13)
+[Source](../../../packages/core/src/errors.ts#L15)
 
 Construct a FederationError value.
 
@@ -303,7 +303,7 @@ federationError(code: FederationErrorCode | InternalErrorCode, description: stri
 
 ## `FederationError`
 
-[Source](../../../packages/core/src/errors.ts#L4)
+[Source](../../../packages/core/src/errors.ts#L6)
 
 Plain, structurally typed error data containing a code, description, and optional cause. A function's return type determines whether this is carried in a `Result`; other APIs can throw or reject. An arbitrary cause need not be JSON-serializable, and copying an error does not preserve private fetch-failure classification.
 
@@ -328,7 +328,7 @@ Fields (including inherited fields):
 
 ## `FederationOptions`
 
-[Source](../../../packages/core/src/types.ts#L85)
+[Source](../../../packages/core/src/types.ts#L86)
 
 Shared transport, trust-validation, caching, logging, and resource-limit settings.
 
@@ -420,7 +420,7 @@ Fields (including inherited fields):
 
 ## `findInvalidMetadataNullPaths`
 
-[Source](../../../packages/core/src/metadata-values.ts#L2)
+[Source](../../../packages/core/src/metadata-values.ts#L6)
 
 Return paths to a null metadata root, null Entity Type blocks, and null direct metadata parameter values. This helper does not reject null values nested inside a parameter object or array, and it is not a complete metadata-shape validator.
 
@@ -430,7 +430,7 @@ findInvalidMetadataNullPaths(metadata: unknown): readonly (readonly (string | nu
 
 ## `flatMap`
 
-[Source](../../../packages/core/src/errors.ts#L53)
+[Source](../../../packages/core/src/errors.ts#L60)
 
 Continue a successful Result with another Result-returning operation; preserve an existing error.
 
@@ -463,7 +463,7 @@ const optionalDisplayLimit = unwrapOr(readPageSize("25"), 25);
 
 ## `freezeSnapshot`
 
-[Source](../../../packages/core/src/callbacks.ts#L39)
+[Source](../../../packages/core/src/callbacks.ts#L45)
 
 Freeze the supplied object and its enumerable nested object values in place, returning the same value. It does not clone the input. Clone evidence first when the caller must retain a mutable copy; freezing an object also does not prevent a Map or Set's own mutation methods.
 
@@ -473,7 +473,7 @@ freezeSnapshot<T>(value: T): T;
 
 ## `HttpClient`
 
-[Source](../../../packages/core/src/types.ts#L57)
+[Source](../../../packages/core/src/types.ts#L58)
 
 The host-supplied HTTP transport used by federation clients.
 
@@ -483,7 +483,7 @@ type HttpClient = (input: string | URL | Request, init?: RequestInit) => Promise
 
 ## `isErr`
 
-[Source](../../../packages/core/src/errors.ts#L42)
+[Source](../../../packages/core/src/errors.ts#L44)
 
 Type guard narrowing a Result to its error variant.
 
@@ -493,7 +493,7 @@ isErr<T, E>(result: Result<T, E>): result is { ok: false; error: E };
 
 ## `isJsonData`
 
-[Source](../../../packages/core/src/callbacks.ts#L53)
+[Source](../../../packages/core/src/callbacks.ts#L59)
 
 Check for finite-number JSON data made from primitives, arrays, and plain or null-prototype objects. Cycles and unsupported values are rejected; shared references without cycles are allowed. This is a data-shape predicate, not a serializer or a trust check.
 
@@ -503,7 +503,7 @@ isJsonData(value: unknown): boolean;
 
 ## `isLanguageTag`
 
-[Source](../../../packages/core/src/language-tags.ts#L32)
+[Source](../../../packages/core/src/language-tags.ts#L35)
 
 Check a language tag's accepted BCP 47 syntax for localized metadata and request selectors.
 
@@ -513,7 +513,7 @@ isLanguageTag(tag: string): boolean;
 
 ## `isOk`
 
-[Source](../../../packages/core/src/errors.ts#L37)
+[Source](../../../packages/core/src/errors.ts#L39)
 
 Type guard narrowing a Result to its success variant.
 
@@ -523,7 +523,7 @@ isOk<T, E>(result: Result<T, E>): result is { ok: true; value: T };
 
 ## `isValidEntityId`
 
-[Source](../../../packages/core/src/types.ts#L31)
+[Source](../../../packages/core/src/types.ts#L32)
 
 Test the same identifier rules as `entityId`, returning `false` on invalid input without throwing or changing the string.
 
@@ -533,7 +533,7 @@ isValidEntityId(value: string): value is EntityId;
 
 ## `JtiReplayClaim`
 
-[Source](../../../packages/core/src/replay-store.ts#L2)
+[Source](../../../packages/core/src/replay-store.ts#L4)
 
 A replay-protected JWT identifier scoped to its issuer and audience.
 
@@ -558,7 +558,7 @@ Fields (including inherited fields):
 
 ## `Logger`
 
-[Source](../../../packages/core/src/types.ts#L78)
+[Source](../../../packages/core/src/types.ts#L79)
 
 Host logger. Returned promises are handled without awaiting them; sink failures are ignored.
 
@@ -582,7 +582,7 @@ Fields (including inherited fields):
 
 ## `map`
 
-[Source](../../../packages/core/src/errors.ts#L46)
+[Source](../../../packages/core/src/errors.ts#L49)
 
 Transform a Result's successful value while preserving its error branch.
 
@@ -592,7 +592,7 @@ map<T, U, E>(result: Result<T, E>, fn: (value: T) => U): Result<U, E>;
 
 ## `mapErr`
 
-[Source](../../../packages/core/src/errors.ts#L63)
+[Source](../../../packages/core/src/errors.ts#L71)
 
 Transform a Result's error while preserving its successful value.
 
@@ -602,7 +602,7 @@ mapErr<T, E, F>(result: Result<T, E>, fn: (error: E) => F): Result<T, F>;
 
 ## `MemoryCache`
 
-[Source](../../../packages/core/src/cache/index.ts#L22)
+[Source](../../../packages/core/src/cache/index.ts#L24)
 
 LRU in-memory cache with TTL-based expiry and configurable max entries.
 
@@ -620,7 +620,7 @@ Defaults to 1000 entries. Reads update LRU order and remove expired entries; ins
 
 Read the requested key or record through this store's contract.
 
-[Source](../../../packages/core/src/cache/index.ts#L32)
+[Source](../../../packages/core/src/cache/index.ts#L36)
 
 ```typescript signature
 get<T>(key: string): Promise<T | undefined>;
@@ -630,7 +630,7 @@ get<T>(key: string): Promise<T | undefined>;
 
 Store a value under the supplied key and retention options.
 
-[Source](../../../packages/core/src/cache/index.ts#L48)
+[Source](../../../packages/core/src/cache/index.ts#L56)
 
 ```typescript signature
 set<T>(key: string, value: T, ttlSeconds: number): Promise<void>;
@@ -640,7 +640,7 @@ set<T>(key: string, value: T, ttlSeconds: number): Promise<void>;
 
 Remove the requested stored value.
 
-[Source](../../../packages/core/src/cache/index.ts#L62)
+[Source](../../../packages/core/src/cache/index.ts#L70)
 
 ```typescript signature
 delete(key: string): Promise<void>;
@@ -650,7 +650,7 @@ delete(key: string): Promise<void>;
 
 Clear the values owned by this store.
 
-[Source](../../../packages/core/src/cache/index.ts#L66)
+[Source](../../../packages/core/src/cache/index.ts#L75)
 
 ```typescript signature
 clear(): Promise<void>;
@@ -660,7 +660,7 @@ clear(): Promise<void>;
 
 Clear this in-memory cache during asynchronous disposal. This does not clear another process's cache or revoke signed evidence.
 
-[Source](../../../packages/core/src/cache/index.ts#L73)
+[Source](../../../packages/core/src/cache/index.ts#L80)
 
 ```typescript signature
 [Symbol.asyncDispose](): Promise<void>;
@@ -668,7 +668,7 @@ Clear this in-memory cache during asynchronous disposal. This does not clear ano
 
 ## `MemoryCacheOptions`
 
-[Source](../../../packages/core/src/cache/index.ts#L9)
+[Source](../../../packages/core/src/cache/index.ts#L11)
 
 Capacity and time settings for the in-memory cache.
 
@@ -689,7 +689,7 @@ Fields (including inherited fields):
 
 ## `MemoryReplayStore`
 
-[Source](../../../packages/core/src/memory-replay-store.ts#L19)
+[Source](../../../packages/core/src/memory-replay-store.ts#L20)
 
 Development-only in-memory replay store with fail-closed capacity handling.
 
@@ -703,7 +703,7 @@ Defaults to 10000 live claims and requires a positive safe-integer capacity. The
 
 Returns true when claimed, or false when the claim was already used or has expired.
 
-[Source](../../../packages/core/src/memory-replay-store.ts#L32)
+[Source](../../../packages/core/src/memory-replay-store.ts#L42)
 
 ```typescript signature
 useJti(claim: JtiReplayClaim): Promise<boolean>;
@@ -711,7 +711,7 @@ useJti(claim: JtiReplayClaim): Promise<boolean>;
 
 ## `MemoryReplayStoreOptions`
 
-[Source](../../../packages/core/src/memory-replay-store.ts#L5)
+[Source](../../../packages/core/src/memory-replay-store.ts#L6)
 
 Settings for the in-memory replay store.
 
@@ -731,7 +731,7 @@ Fields (including inherited fields):
 
 ## `nowSeconds`
 
-[Source](../../../packages/core/src/types.ts#L65)
+[Source](../../../packages/core/src/types.ts#L66)
 
 Returns the current time as seconds since the epoch.
 
@@ -741,7 +741,7 @@ nowSeconds(clock?: Clock): number;
 
 ## `ok`
 
-[Source](../../../packages/core/src/errors.ts#L27)
+[Source](../../../packages/core/src/errors.ts#L29)
 
 Wrap a success value in a Result.
 
@@ -751,7 +751,7 @@ ok<T>(value: T): Result<T, never>;
 
 ## `ParsedEntityStatement`
 
-[Source](../../../packages/core/src/types.ts#L48)
+[Source](../../../packages/core/src/types.ts#L49)
 
 Decoded JWT header and payload. This structure does not contain the original compact JWT and does not itself establish signature or chain validity; its verification state comes from the operation returning it.
 
@@ -771,7 +771,7 @@ Fields (including inherited fields):
 
 ## `PolicyMergeResult`
 
-[Source](../../../packages/core/src/types.ts#L272)
+[Source](../../../packages/core/src/types.ts#L274)
 
 Success or failure from combining two values of a metadata-policy operator.
 
@@ -781,7 +781,7 @@ type PolicyMergeResult = { ok: true; value: unknown } | { ok: false; error: stri
 
 ## `PolicyOperatorDefinition`
 
-[Source](../../../packages/core/src/types.ts#L259)
+[Source](../../../packages/core/src/types.ts#L261)
 
 A custom operator's name, ordering, combination rules, and merge/application callbacks.
 
@@ -809,7 +809,7 @@ Fields (including inherited fields):
 
 ## `PolicyOperatorResult`
 
-[Source](../../../packages/core/src/types.ts#L268)
+[Source](../../../packages/core/src/types.ts#L270)
 
 Success or failure from applying a metadata-policy operator to a parameter value.
 
@@ -826,7 +826,7 @@ type PolicyOperatorResult = {
 
 ## `ReplayStore`
 
-[Source](../../../packages/core/src/replay-store.ts#L11)
+[Source](../../../packages/core/src/replay-store.ts#L13)
 
 Atomic replay protection for one-time JWT processing.
 
@@ -845,7 +845,7 @@ Fields (including inherited fields):
 
 ## `ReplayStoreCapacityError`
 
-[Source](../../../packages/core/src/memory-replay-store.ts#L11)
+[Source](../../../packages/core/src/memory-replay-store.ts#L12)
 
 Raised when accepting another claim would require evicting a live replay record.
 
@@ -857,7 +857,7 @@ Extends the standard `Error` class, including its `name` and `message`. Runtime-
 
 ## `ResolvedMetadataPolicy`
 
-[Source](../../../packages/core/src/types.ts#L274)
+[Source](../../../packages/core/src/types.ts#L276)
 
 The metadata policy produced by combining the applicable declarations.
 
@@ -867,7 +867,7 @@ type ResolvedMetadataPolicy = Record<string, Record<string, Record<string, unkno
 
 ## `Result`
 
-[Source](../../../packages/core/src/errors.ts#L22)
+[Source](../../../packages/core/src/errors.ts#L24)
 
 Success and failure branches discriminated by `ok`. Read `value` only after success and `error` only after failure. The type does not catch exceptions from callbacks passed to helpers such as `map` or `flatMap`.
 
@@ -883,7 +883,7 @@ type Result<T, E = FederationError> = {
 
 ## `runAsyncOperation`
 
-[Source](../../../packages/core/src/async-operation.ts#L26)
+[Source](../../../packages/core/src/async-operation.ts#L28)
 
 Run host-controlled work with a cooperative AbortSignal and a timeout, defaulting to 10000 milliseconds. Cancellation and timeout reject with `AbortError` or `TimeoutError`; callback exceptions and rejections propagate. A callback that ignores its signal can still finish later, so this helper does not roll back its side effects.
 
@@ -911,7 +911,7 @@ export async function queryHostPolicy<T>(
 
 ## `safeLogger`
 
-[Source](../../../packages/core/src/logging.ts#L6)
+[Source](../../../packages/core/src/logging.ts#L8)
 
 Return a message-only wrapper around the host logger, or `undefined` when no logger is supplied. It preserves the sink's receiver, catches synchronous throws, consumes rejected promises, and never waits for an async sink. Although `Logger` accepts optional context for host compatibility, the protected wrapper forwards only the message.
 
@@ -921,7 +921,7 @@ safeLogger(logger: Logger | undefined): Logger | undefined;
 
 ## `setOwn`
 
-[Source](../../../packages/core/src/callbacks.ts#L30)
+[Source](../../../packages/core/src/callbacks.ts#L32)
 
 Write JSON member names without invoking Object.prototype setters.
 
@@ -946,7 +946,7 @@ export function extensionSnapshot(name: string, value: unknown) {
 
 ## `TrustAnchorSet`
 
-[Source](../../../packages/core/src/types.ts#L133)
+[Source](../../../packages/core/src/types.ts#L135)
 
 Read-only-typed mapping of independently trusted Entity Identifiers to their public Federation Entity Keys. The type alone does not freeze a supplied Map or clone its values.
 
@@ -956,7 +956,7 @@ type TrustAnchorSet = ReadonlyMap<string, Readonly<{ jwks: JWKSet }>>;
 
 ## `TrustChain`
 
-[Source](../../../packages/core/src/types.ts#L142)
+[Source](../../../packages/core/src/types.ts#L144)
 
 A discovered candidate containing leaf-first compact Entity Statement JWTs and its proposed anchor and expiration. It is distinct from `ValidatedTrustChain`; discovery alone does not establish complete trust or effective protocol metadata.
 
@@ -985,7 +985,7 @@ Fields (including inherited fields):
 
 ## `TrustChainResult`
 
-[Source](../../../packages/core/src/types.ts#L152)
+[Source](../../../packages/core/src/types.ts#L154)
 
 The candidates and discovery information returned by trust-chain resolution.
 
@@ -1008,7 +1008,7 @@ Fields (including inherited fields):
 
 ## `TrustMarkEvaluation`
 
-[Source](../../../packages/core/src/types.ts#L191)
+[Source](../../../packages/core/src/types.ts#L193)
 
 Evaluation of a Trust Mark, independent of the enclosing chain's validity.
 
@@ -1031,7 +1031,7 @@ type TrustMarkEvaluation = Readonly<{
 
 ## `TrustMarkEvidence`
 
-[Source](../../../packages/core/src/types.ts#L205)
+[Source](../../../packages/core/src/types.ts#L207)
 
 Verified Trust Mark evidence with a required original JWT, verified claims, and the key's current or historical source. It also retains the supporting issuer context and evidence deadline when available.
 
@@ -1065,7 +1065,7 @@ Fields (including inherited fields):
 
 ## `UnverifiedEntityStatement`
 
-[Source](../../../packages/core/src/types.ts#L52)
+[Source](../../../packages/core/src/types.ts#L53)
 
 A decoded Entity Statement whose claims and signature have not established trust.
 
@@ -1086,7 +1086,7 @@ Fields (including inherited fields):
 
 ## `unwrapOr`
 
-[Source](../../../packages/core/src/errors.ts#L70)
+[Source](../../../packages/core/src/errors.ts#L79)
 
 Read a successful Result value or use the supplied fallback. Use an explicit branch when an error must stop the operation.
 
@@ -1096,7 +1096,7 @@ unwrapOr<T, E>(result: Result<T, E>, fallback: T): T;
 
 ## `ValidatedTrustChain`
 
-[Source](../../../packages/core/src/types.ts#L159)
+[Source](../../../packages/core/src/types.ts#L161)
 
 A validated chain, its resolved metadata, selected anchor, and evidence lifetime.
 
@@ -1127,7 +1127,7 @@ Fields (including inherited fields):
 
 ## `ValidatedTrustMark`
 
-[Source](../../../packages/core/src/types.ts#L215)
+[Source](../../../packages/core/src/types.ts#L217)
 
 A verified Trust Mark and the evidence associated with its validation.
 
@@ -1166,7 +1166,7 @@ Fields (including inherited fields):
 
 ## `ValidatedTrustMarkDelegation`
 
-[Source](../../../packages/core/src/types.ts#L231)
+[Source](../../../packages/core/src/types.ts#L233)
 
 A verified owner's delegation to a Trust Mark Issuer.
 
@@ -1192,7 +1192,7 @@ Fields (including inherited fields):
 
 ## `validateRoleMetadata`
 
-[Source](../../../packages/core/src/roles.ts#L30)
+[Source](../../../packages/core/src/roles.ts#L32)
 
 Run shared publication checks for composed inline public keys and protocol issuer binding, then invoke each attached role's `validateMetadata` hook on a detached, shallow-frozen metadata block. The host must compose metadata and initialize roles separately. Invalid publication data and role errors throw; missing effective fields may still be supplied by a Superior.
 
@@ -1202,7 +1202,7 @@ validateRoleMetadata(roles: readonly EntityRole[] | undefined, metadata: Readonl
 
 ## `ValidationError`
 
-[Source](../../../packages/core/src/types.ts#L182)
+[Source](../../../packages/core/src/types.ts#L184)
 
 The location and reason for a validation failure.
 
@@ -1228,7 +1228,7 @@ Fields (including inherited fields):
 
 ## `ValidationResult`
 
-[Source](../../../packages/core/src/types.ts#L170)
+[Source](../../../packages/core/src/types.ts#L172)
 
 A validation outcome and any errors explaining rejection.
 
@@ -1246,7 +1246,7 @@ type ValidationResult = {
 
 ## `waitForOperation`
 
-[Source](../../../packages/core/src/async-operation.ts#L5)
+[Source](../../../packages/core/src/async-operation.ts#L7)
 
 Wait for an existing promise while observing the supplied cancellation signals. Cancellation rejects with an `AbortError` and removes the waiting caller's listeners; the pending operation is allowed to finish. There is no timeout or rollback in this helper.
 

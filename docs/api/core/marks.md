@@ -6,7 +6,7 @@ Establish issuer trust before relying on a mark. Signing, delegation, holding a 
 
 ## `AttachTrustMarkOptions`
 
-[Source](../../../packages/core/src/trust-marks/holder.ts#L14)
+[Source](../../../packages/core/src/trust-marks/holder.ts#L17)
 
 Issuer evidence and replacement policy for attaching a mark to its holder.
 
@@ -61,7 +61,7 @@ Fields (including inherited fields):
 
 ## `checkTrustMarkRequirements`
 
-[Source](../../../packages/core/src/trust-marks/requirements.ts#L21)
+[Source](../../../packages/core/src/trust-marks/requirements.ts#L23)
 
 Check required Trust Mark types and, optionally, every published mark against already validated evidence. Chain, mark, delegation, and verification-evidence deadlines are checked again. This synchronous function does not fetch fresh issuer evidence or query Status/Listing endpoints; the host chooses those additional checks.
 
@@ -71,7 +71,7 @@ checkTrustMarkRequirements(chain: ValidatedTrustChain, requirements: TrustMarkRe
 
 ## `EstablishTrustMarkIssuerOptions`
 
-[Source](../../../packages/core/src/trust-marks/evidence.ts#L76)
+[Source](../../../packages/core/src/trust-marks/evidence.ts#L78)
 
 Issuer identity, accreditation policy, and trust inputs for establishing issuer evidence.
 
@@ -99,7 +99,7 @@ Fields (including inherited fields):
 
 ## `establishTrustMarkIssuerTrust`
 
-[Source](../../../packages/core/src/trust-marks/evidence.ts#L96)
+[Source](../../../packages/core/src/trust-marks/evidence.ts#L98)
 
 Validate supplied proofs or discover an eligible issuer chain without recursive mark evaluation.
 
@@ -109,7 +109,7 @@ establishTrustMarkIssuerTrust(input: EstablishTrustMarkIssuerOptions): Promise<R
 
 ## `FederationTrustMarkIssuerEvidence`
 
-[Source](../../../packages/core/src/trust-marks/evidence.ts#L39)
+[Source](../../../packages/core/src/trust-marks/evidence.ts#L41)
 
 Evidence issued by establishTrustMarkIssuerTrust after federation validation.
 Consumers check its process-local object identity as well as expiry. A spread,
@@ -150,7 +150,7 @@ Fields (including inherited fields):
 
 ## `FetchAndAttachTrustMarkOptions`
 
-[Source](../../../packages/core/src/trust-marks/holder.ts#L22)
+[Source](../../../packages/core/src/trust-marks/holder.ts#L25)
 
 Retrieval and validation settings for obtaining a mark and publishing it on its holder.
 
@@ -176,7 +176,7 @@ Fields (including inherited fields):
 
 ## `fetchTrustMark`
 
-[Source](../../../packages/core/src/trust-marks/fetch.ts#L34)
+[Source](../../../packages/core/src/trust-marks/fetch.ts#L35)
 
 Fetch a Trust Mark JWT; validate it before relying on it.
 Configure the endpoint and authentication together from trusted configuration or validated metadata.
@@ -190,7 +190,7 @@ fetchTrustMark(endpoint: string, params: FetchTrustMarkParams, options?: Federat
 
 ## `FetchTrustMarkParams`
 
-[Source](../../../packages/core/src/trust-marks/fetch.ts#L22)
+[Source](../../../packages/core/src/trust-marks/fetch.ts#L23)
 
 Subject and Trust Mark type selectors sent to the issuance endpoint.
 
@@ -210,7 +210,7 @@ Fields (including inherited fields):
 
 ## `fetchTrustMarkStatus`
 
-[Source](../../../packages/core/src/trust-marks/fetch.ts#L133)
+[Source](../../../packages/core/src/trust-marks/fetch.ts#L134)
 
 POST a Trust Mark JWT to a Trust Mark Status endpoint and verify the response.
 
@@ -223,7 +223,7 @@ The evidence-aware overload takes its endpoint and current keys from the issuer 
 
 ## `FetchTrustMarkStatusInput`
 
-[Source](../../../packages/core/src/trust-marks/fetch.ts#L114)
+[Source](../../../packages/core/src/trust-marks/fetch.ts#L115)
 
 The mark JWT and issuer evidence used for an evidence-aware Status request.
 
@@ -280,7 +280,7 @@ Fields (including inherited fields):
 
 ## `FetchTrustMarkStatusOptions`
 
-[Source](../../../packages/core/src/trust-marks/fetch.ts#L108)
+[Source](../../../packages/core/src/trust-marks/fetch.ts#L109)
 
 Verification and transport settings for a Trust Mark Status request.
 
@@ -331,7 +331,7 @@ Fields (including inherited fields):
 
 ## `HistoricalTrustMarkOptions`
 
-[Source](../../../packages/core/src/trust-marks/evidence.ts#L63)
+[Source](../../../packages/core/src/trust-marks/evidence.ts#L65)
 
 Historical-key sources and policy for checking marks signed with retired keys.
 
@@ -357,7 +357,7 @@ Fields (including inherited fields):
 
 ## `isStoredTrustMarkEligible`
 
-[Source](../../../packages/core/src/trust-marks/eligibility.ts#L10)
+[Source](../../../packages/core/src/trust-marks/eligibility.ts#L12)
 
 Filter previously verified stored marks by active state and mark/delegation time.
 Apply before choosing the newest record, using exact issuer time without leeway.
@@ -370,7 +370,7 @@ isStoredTrustMarkEligible(record: TrustMarkRecord, validAt: number): boolean;
 
 ## `MemoryTrustMarkStorage`
 
-[Source](../../../packages/core/src/trust-marks/memory.ts#L34)
+[Source](../../../packages/core/src/trust-marks/memory.ts#L42)
 
 Keep managed Trust Mark records in memory. Use durable transactional storage for deployments that must survive restart or coordinate workers.
 
@@ -384,7 +384,7 @@ new MemoryTrustMarkStorage(read: () => Map<string, TrustMarkRecord>, mutate: <T>
 
 Return every candidate, including revoked records, before service-level eligibility and newest-record selection. Return detached records from one consistent view.
 
-[Source](../../../packages/core/src/trust-marks/memory.ts#L48)
+[Source](../../../packages/core/src/trust-marks/memory.ts#L60)
 
 ```typescript signature
 listCandidates(filter: {
@@ -398,7 +398,7 @@ listCandidates(filter: {
 
 Read an eligible stored mark matching the supplied selectors.
 
-[Source](../../../packages/core/src/trust-marks/memory.ts#L66)
+[Source](../../../packages/core/src/trust-marks/memory.ts#L82)
 
 ```typescript signature
 getValid(trustMarkType: string, subject: EntityId, validAt: number): Promise<TrustMarkRecord | undefined>;
@@ -408,7 +408,7 @@ getValid(trustMarkType: string, subject: EntityId, validAt: number): Promise<Tru
 
 Return a detached record, including revoked or expired records when present.
 
-[Source](../../../packages/core/src/trust-marks/memory.ts#L84)
+[Source](../../../packages/core/src/trust-marks/memory.ts#L101)
 
 ```typescript signature
 getByJwt(jwt: string): Promise<TrustMarkRecord | undefined>;
@@ -418,7 +418,7 @@ getByJwt(jwt: string): Promise<TrustMarkRecord | undefined>;
 
 List eligible records under the requested issuer and type selectors.
 
-[Source](../../../packages/core/src/trust-marks/memory.ts#L89)
+[Source](../../../packages/core/src/trust-marks/memory.ts#L107)
 
 ```typescript signature
 listValid(trustMarkType: string, validAt: number, options: TrustMarkListOptions): Promise<TrustMarkListPage>;
@@ -428,7 +428,7 @@ listValid(trustMarkType: string, validAt: number, options: TrustMarkListOptions)
 
 List eligible records for a subject.
 
-[Source](../../../packages/core/src/trust-marks/memory.ts#L117)
+[Source](../../../packages/core/src/trust-marks/memory.ts#L136)
 
 ```typescript signature
 listValidForSubject(subject: EntityId, validAt: number): Promise<TrustMarkRecord[]>;
@@ -438,7 +438,7 @@ listValidForSubject(subject: EntityId, validAt: number): Promise<TrustMarkRecord
 
 Check whether any matching eligible record exists.
 
-[Source](../../../packages/core/src/trust-marks/memory.ts#L133)
+[Source](../../../packages/core/src/trust-marks/memory.ts#L153)
 
 ```typescript signature
 hasAnyValid(subject: EntityId, validAt: number): Promise<boolean>;
@@ -448,7 +448,7 @@ hasAnyValid(subject: EntityId, validAt: number): Promise<boolean>;
 
 Capture input before asynchronous work. Reissuing the same JWT must not replace its record.
 
-[Source](../../../packages/core/src/trust-marks/memory.ts#L139)
+[Source](../../../packages/core/src/trust-marks/memory.ts#L160)
 
 ```typescript signature
 issue(record: TrustMarkRecord): Promise<void>;
@@ -458,7 +458,7 @@ issue(record: TrustMarkRecord): Promise<void>;
 
 Apply the repository's revocation update to matching records.
 
-[Source](../../../packages/core/src/trust-marks/memory.ts#L148)
+[Source](../../../packages/core/src/trust-marks/memory.ts#L172)
 
 ```typescript signature
 revoke(trustMarkType: string, subject: EntityId, revokedAt: number, issuer?: string): Promise<void>;
@@ -466,7 +466,7 @@ revoke(trustMarkType: string, subject: EntityId, revokedAt: number, issuer?: str
 
 ## `MemoryTrustMarkStore`
 
-[Source](../../../packages/core/src/trust-marks/memory.ts#L171)
+[Source](../../../packages/core/src/trust-marks/memory.ts#L195)
 
 In-memory, process-local transaction adapter. Production hosts supply durable storage.
 
@@ -478,7 +478,7 @@ new MemoryTrustMarkStore(): MemoryTrustMarkStore;
 
 The adapter's Trust Mark record repository.
 
-[Source](../../../packages/core/src/trust-marks/memory.ts#L174)
+[Source](../../../packages/core/src/trust-marks/memory.ts#L198)
 
 ```typescript signature
 readonly trustMarks: MemoryTrustMarkStorage;
@@ -488,7 +488,7 @@ readonly trustMarks: MemoryTrustMarkStorage;
 
 Commit all callback writes together, or roll them back on failure. Use tx repositories only; awaiting parent queued writes inside the callback can deadlock.
 
-[Source](../../../packages/core/src/trust-marks/memory.ts#L191)
+[Source](../../../packages/core/src/trust-marks/memory.ts#L206)
 
 ```typescript signature
 transaction<T>(operation: (tx: { trustMarks: TrustMarkStorage }) => Promise<T>): Promise<T>;
@@ -498,7 +498,7 @@ transaction<T>(operation: (tx: { trustMarks: TrustMarkStorage }) => Promise<T>):
 
 Run reads against a consistent storage snapshot.
 
-[Source](../../../packages/core/src/trust-marks/memory.ts#L206)
+[Source](../../../packages/core/src/trust-marks/memory.ts#L222)
 
 ```typescript signature
 readSnapshot<T>(operation: (snapshot: {
@@ -508,7 +508,7 @@ readSnapshot<T>(operation: (snapshot: {
 
 ## `OutOfBandTrustMarkIssuer`
 
-[Source](../../../packages/core/src/trust-marks/evidence.ts#L53)
+[Source](../../../packages/core/src/trust-marks/evidence.ts#L55)
 
 Independently trusted issuer configuration supplied by the host, not discovered from an unverified mark.
 
@@ -537,7 +537,7 @@ Fields (including inherited fields):
 
 ## `RemoveTrustMarkSelector`
 
-[Source](../../../packages/core/src/trust-marks/holder.ts#L19)
+[Source](../../../packages/core/src/trust-marks/holder.ts#L22)
 
 Selects published Trust Mark references to remove from a holder.
 
@@ -552,7 +552,7 @@ type RemoveTrustMarkSelector = {
 
 ## `signTrustMark`
 
-[Source](../../../packages/core/src/trust-marks/sign.ts#L72)
+[Source](../../../packages/core/src/trust-marks/sign.ts#L74)
 
 Sign a Trust Mark without starting an issuer server. Accreditation is host policy.
 
@@ -562,7 +562,7 @@ signTrustMark(options: SignTrustMarkOptions): Promise<string>;
 
 ## `signTrustMarkDelegation`
 
-[Source](../../../packages/core/src/trust-marks/sign.ts#L84)
+[Source](../../../packages/core/src/trust-marks/sign.ts#L86)
 
 Owner-signed issuance authorization. The base delegation typ cannot be overridden.
 
@@ -572,7 +572,7 @@ signTrustMarkDelegation(options: SignTrustMarkDelegationOptions): Promise<string
 
 ## `SignTrustMarkDelegationOptions`
 
-[Source](../../../packages/core/src/trust-marks/sign.ts#L14)
+[Source](../../../packages/core/src/trust-marks/sign.ts#L16)
 
 Signing and extension settings for an owner's delegation JWT.
 
@@ -604,7 +604,7 @@ Fields (including inherited fields):
 
 ## `SignTrustMarkOptions`
 
-[Source](../../../packages/core/src/trust-marks/sign.ts#L23)
+[Source](../../../packages/core/src/trust-marks/sign.ts#L25)
 
 Signing and extension settings for a Trust Mark JWT.
 
@@ -637,7 +637,7 @@ Fields (including inherited fields):
 
 ## `TrustMarkDelegationIssuanceOptions`
 
-[Source](../../../packages/core/src/trust-marks/sign.ts#L92)
+[Source](../../../packages/core/src/trust-marks/sign.ts#L94)
 
 Lifetime and extension claims used when issuing an owner delegation.
 
@@ -659,7 +659,7 @@ Fields (including inherited fields):
 
 ## `TrustMarkHolder`
 
-[Source](../../../packages/core/src/trust-marks/holder.ts#L30)
+[Source](../../../packages/core/src/trust-marks/holder.ts#L33)
 
 Serializes publication mutations; a failed publisher leaves the prior references intact.
 
@@ -671,7 +671,7 @@ new TrustMarkHolder(subject: string, refs: readonly TrustMarkRef[], publish: (re
 
 Read the holder's currently published Trust Mark references as an independent snapshot.
 
-[Source](../../../packages/core/src/trust-marks/holder.ts#L41)
+[Source](../../../packages/core/src/trust-marks/holder.ts#L46)
 
 ```typescript signature
 getTrustMarks(): TrustMarkRef[];
@@ -681,7 +681,7 @@ getTrustMarks(): TrustMarkRef[];
 
 Notify the owning host that Trust Mark publication changed.
 
-[Source](../../../packages/core/src/trust-marks/holder.ts#L44)
+[Source](../../../packages/core/src/trust-marks/holder.ts#L52)
 
 ```typescript signature
 updatePublication<T>(operation: () => Promise<T>): Promise<T>;
@@ -691,7 +691,7 @@ updatePublication<T>(operation: () => Promise<T>): Promise<T>;
 
 Validate a received mark for this holder before updating its publication.
 
-[Source](../../../packages/core/src/trust-marks/holder.ts#L57)
+[Source](../../../packages/core/src/trust-marks/holder.ts#L59)
 
 ```typescript signature
 attachTrustMark(jwt: string, options: AttachTrustMarkOptions): Promise<void>;
@@ -701,7 +701,7 @@ attachTrustMark(jwt: string, options: AttachTrustMarkOptions): Promise<void>;
 
 Retrieve a mark using verified issuer context, validate it, and attach it to the holder on success.
 
-[Source](../../../packages/core/src/trust-marks/holder.ts#L91)
+[Source](../../../packages/core/src/trust-marks/holder.ts#L94)
 
 ```typescript signature
 fetchAndAttachTrustMark(input: FetchAndAttachTrustMarkOptions): Promise<void>;
@@ -711,7 +711,7 @@ fetchAndAttachTrustMark(input: FetchAndAttachTrustMarkOptions): Promise<void>;
 
 Remove a matching reference from future holder publication. This does not revoke the issuer's accreditation record.
 
-[Source](../../../packages/core/src/trust-marks/holder.ts#L118)
+[Source](../../../packages/core/src/trust-marks/holder.ts#L122)
 
 ```typescript signature
 removeTrustMark(selector: RemoveTrustMarkSelector): Promise<void>;
@@ -719,7 +719,7 @@ removeTrustMark(selector: RemoveTrustMarkSelector): Promise<void>;
 
 ## `TrustMarkIssuanceOptions`
 
-[Source](../../../packages/core/src/trust-marks/issuer.ts#L34)
+[Source](../../../packages/core/src/trust-marks/issuer.ts#L38)
 
 Claims, lifetime, and renewal choices for issuing a Trust Mark.
 
@@ -747,7 +747,7 @@ Fields (including inherited fields):
 
 ## `TrustMarkIssuerConfig`
 
-[Source](../../../packages/core/src/trust-marks/issuer.ts#L65)
+[Source](../../../packages/core/src/trust-marks/issuer.ts#L69)
 
 Keys, storage, lifetime defaults, delegations, and policies for a Trust Mark Issuer.
 
@@ -784,7 +784,7 @@ Fields (including inherited fields):
 
 ## `trustMarkIssuerContext`
 
-[Source](../../../packages/core/src/trust-marks/evidence.ts#L216)
+[Source](../../../packages/core/src/trust-marks/evidence.ts#L218)
 
 Check evidence each time it is used; plain JSON cannot impersonate a validated issuer chain.
 
@@ -800,7 +800,7 @@ trustMarkIssuerContext(context: TrustMarkIssuerContext, type: string, options?: 
 
 ## `TrustMarkIssuerContext`
 
-[Source](../../../packages/core/src/trust-marks/evidence.ts#L62)
+[Source](../../../packages/core/src/trust-marks/evidence.ts#L64)
 
 Issuer identity and authenticated evidence used to verify its marks.
 
@@ -810,7 +810,7 @@ type TrustMarkIssuerContext = FederationTrustMarkIssuerEvidence | OutOfBandTrust
 
 ## `TrustMarkIssuerService`
 
-[Source](../../../packages/core/src/trust-marks/issuer.ts#L128)
+[Source](../../../packages/core/src/trust-marks/issuer.ts#L132)
 
 Shared managed issuance and eligibility for Leaf and Authority hosts.
 
@@ -822,7 +822,7 @@ new TrustMarkIssuerService(config: TrustMarkIssuerServiceOptions): TrustMarkIssu
 
 The issuer identifier bound to this service.
 
-[Source](../../../packages/core/src/trust-marks/issuer.ts#L129)
+[Source](../../../packages/core/src/trust-marks/issuer.ts#L133)
 
 ```typescript signature
 readonly issuer: EntityId;
@@ -832,7 +832,7 @@ readonly issuer: EntityId;
 
 Update the issuer service's policy through its validated configuration boundary.
 
-[Source](../../../packages/core/src/trust-marks/issuer.ts#L221)
+[Source](../../../packages/core/src/trust-marks/issuer.ts#L227)
 
 ```typescript signature
 updatePolicy(owners: Readonly<Record<string, TrustMarkOwner>>, issuers?: Readonly<Record<string, readonly string[]>>): void;
@@ -842,7 +842,7 @@ updatePolicy(owners: Readonly<Record<string, TrustMarkOwner>>, issuers?: Readonl
 
 Replace this issuer service's delegation map after configuration-shape checks. Setting the map alone does not verify its JWT signatures or establish owner trust.
 
-[Source](../../../packages/core/src/trust-marks/issuer.ts#L229)
+[Source](../../../packages/core/src/trust-marks/issuer.ts#L236)
 
 ```typescript signature
 setDelegations(delegations: Readonly<Record<string, string>>): Promise<void>;
@@ -852,7 +852,7 @@ setDelegations(delegations: Readonly<Record<string, string>>): Promise<void>;
 
 Evaluate stored-mark eligibility against lifetime, delegation, and issuer state.
 
-[Source](../../../packages/core/src/trust-marks/issuer.ts#L239)
+[Source](../../../packages/core/src/trust-marks/issuer.ts#L250)
 
 ```typescript signature
 eligibility(record: TrustMarkRecord, at?: number): Promise<string>;
@@ -862,7 +862,7 @@ eligibility(record: TrustMarkRecord, at?: number): Promise<string>;
 
 List eligible marks issued for the subject under this issuer's state.
 
-[Source](../../../packages/core/src/trust-marks/issuer.ts#L304)
+[Source](../../../packages/core/src/trust-marks/issuer.ts#L316)
 
 ```typescript signature
 listTrustMarksForSubject(subject: string): Promise<TrustMarkRecord[]>;
@@ -872,7 +872,7 @@ listTrustMarksForSubject(subject: string): Promise<TrustMarkRecord[]>;
 
 Retrieve an eligible, already-issued mark for the requested subject and type.
 
-[Source](../../../packages/core/src/trust-marks/issuer.ts#L311)
+[Source](../../../packages/core/src/trust-marks/issuer.ts#L324)
 
 ```typescript signature
 getTrustMark(subject: string, type: string): Promise<string | undefined>;
@@ -882,7 +882,7 @@ getTrustMark(subject: string, type: string): Promise<string | undefined>;
 
 List subjects currently eligible for the requested mark type.
 
-[Source](../../../packages/core/src/trust-marks/issuer.ts#L316)
+[Source](../../../packages/core/src/trust-marks/issuer.ts#L330)
 
 ```typescript signature
 listTrustMarkedEntities(type: string, subject?: string): Promise<string[]>;
@@ -892,7 +892,7 @@ listTrustMarkedEntities(type: string, subject?: string): Promise<string[]>;
 
 Revoke matching active issuer records for the type and subject.
 
-[Source](../../../packages/core/src/trust-marks/issuer.ts#L328)
+[Source](../../../packages/core/src/trust-marks/issuer.ts#L343)
 
 ```typescript signature
 revokeTrustMark(type: string, subject: string): Promise<void>;
@@ -902,7 +902,7 @@ revokeTrustMark(type: string, subject: string): Promise<void>;
 
 Issue or reuse a stored mark according to the issuer's policy and requested renewal/lifetime options.
 
-[Source](../../../packages/core/src/trust-marks/issuer.ts#L357)
+[Source](../../../packages/core/src/trust-marks/issuer.ts#L376)
 
 ```typescript signature
 issueTrustMark(subject: string, type: string, requested?: TrustMarkIssuanceOptions): Promise<string>;
@@ -912,7 +912,7 @@ issueTrustMark(subject: string, type: string, requested?: TrustMarkIssuanceOptio
 
 Handle a Web API Request and return the protocol Response. The application supplies external HTTPS routing.
 
-[Source](../../../packages/core/src/trust-marks/issuer.ts#L489)
+[Source](../../../packages/core/src/trust-marks/issuer.ts#L509)
 
 ```typescript signature
 handleRequest(kind: "status" | "list" | "retrieval", request: Request): Promise<Response>;
@@ -922,7 +922,7 @@ handleRequest(kind: "status" | "list" | "retrieval", request: Request): Promise<
 
 Assess current status without signing; unknown instances have no assessment.
 
-[Source](../../../packages/core/src/trust-marks/issuer.ts#L542)
+[Source](../../../packages/core/src/trust-marks/issuer.ts#L562)
 
 ```typescript signature
 assessTrustMarkStatus(jwt: string): Promise<TrustMarkStatusAssessment | undefined>;
@@ -932,7 +932,7 @@ assessTrustMarkStatus(jwt: string): Promise<TrustMarkStatusAssessment | undefine
 
 Build the issuer's signed status response from authoritative mark eligibility and any configured status policy.
 
-[Source](../../../packages/core/src/trust-marks/issuer.ts#L631)
+[Source](../../../packages/core/src/trust-marks/issuer.ts#L652)
 
 ```typescript signature
 statusResponse(jwt: string): Promise<string | undefined>;
@@ -940,7 +940,7 @@ statusResponse(jwt: string): Promise<string | undefined>;
 
 ## `TrustMarkIssuerServiceOptions`
 
-[Source](../../../packages/core/src/trust-marks/issuer.ts#L79)
+[Source](../../../packages/core/src/trust-marks/issuer.ts#L83)
 
 HTTP endpoint and authentication settings for a hosted Trust Mark Issuer service.
 
@@ -978,7 +978,7 @@ Fields (including inherited fields):
 
 ## `TrustMarkLifetime`
 
-[Source](../../../packages/core/src/trust-marks/sign.ts#L10)
+[Source](../../../packages/core/src/trust-marks/sign.ts#L12)
 
 The choice between an expiring Trust Mark and one without an `exp` claim.
 
@@ -998,7 +998,7 @@ Fields (including inherited fields):
 
 ## `TrustMarkListOptions`
 
-[Source](../../../packages/core/src/trust-marks/storage.ts#L3)
+[Source](../../../packages/core/src/trust-marks/storage.ts#L5)
 
 Selectors and paging settings for reading an issuer's stored marks.
 
@@ -1021,7 +1021,7 @@ Fields (including inherited fields):
 
 ## `TrustMarkListPage`
 
-[Source](../../../packages/core/src/trust-marks/storage.ts#L10)
+[Source](../../../packages/core/src/trust-marks/storage.ts#L12)
 
 One page of stored Trust Mark records and its continuation information.
 
@@ -1041,7 +1041,7 @@ Fields (including inherited fields):
 
 ## `TrustMarkProfile`
 
-[Source](../../../packages/core/src/trust-marks/profiles.ts#L6)
+[Source](../../../packages/core/src/trust-marks/profiles.ts#L8)
 
 An explicitly recognized framework JWT type, scoped to its Trust Mark types.
 
@@ -1065,7 +1065,7 @@ Fields (including inherited fields):
 
 ## `TrustMarkRecord`
 
-[Source](../../../packages/core/src/trust-marks/storage.ts#L58)
+[Source](../../../packages/core/src/trust-marks/storage.ts#L60)
 
 Stored fields mirror the signed JWT's type, subject, iat, and optional exp.
 Ingestion establishes the JWT's signature and issuer trust before storing it.
@@ -1096,7 +1096,7 @@ Fields (including inherited fields):
 
 ## `TrustMarkRequestContext`
 
-[Source](../../../packages/core/src/trust-marks/issuer.ts#L55)
+[Source](../../../packages/core/src/trust-marks/issuer.ts#L59)
 
 Request and authentication information supplied to a Trust Mark endpoint extension.
 
@@ -1120,7 +1120,7 @@ Fields (including inherited fields):
 
 ## `TrustMarkRequestExtension`
 
-[Source](../../../packages/core/src/trust-marks/issuer.ts#L61)
+[Source](../../../packages/core/src/trust-marks/issuer.ts#L65)
 
 A host-defined extension for a Trust Mark request parameter.
 
@@ -1133,7 +1133,7 @@ type TrustMarkRequestExtension = (
 
 ## `TrustMarkRequirements`
 
-[Source](../../../packages/core/src/trust-marks/requirements.ts#L11)
+[Source](../../../packages/core/src/trust-marks/requirements.ts#L13)
 
 Application accreditation requirements, applied after Federation chain validation.
 
@@ -1153,7 +1153,7 @@ Fields (including inherited fields):
 
 ## `TrustMarkStatusAssessment`
 
-[Source](../../../packages/core/src/trust-marks/issuer.ts#L41)
+[Source](../../../packages/core/src/trust-marks/issuer.ts#L45)
 
 A Trust Mark Status response payload and its verification deadline.
 
@@ -1173,7 +1173,7 @@ Fields (including inherited fields):
 
 ## `TrustMarkStatusPolicy`
 
-[Source](../../../packages/core/src/trust-marks/issuer.ts#L49)
+[Source](../../../packages/core/src/trust-marks/issuer.ts#L53)
 
 A callback through which the issuer applies its own status policy.
 
@@ -1189,7 +1189,7 @@ type TrustMarkStatusPolicy = (context: TrustMarkStatusPolicyContext) => {
 
 ## `TrustMarkStatusPolicyContext`
 
-[Source](../../../packages/core/src/trust-marks/issuer.ts#L45)
+[Source](../../../packages/core/src/trust-marks/issuer.ts#L49)
 
 The mark and base status supplied to the issuer's status policy.
 
@@ -1209,7 +1209,7 @@ Fields (including inherited fields):
 
 ## `TrustMarkStatusResult`
 
-[Source](../../../packages/core/src/trust-marks/fetch.ts#L122)
+[Source](../../../packages/core/src/trust-marks/fetch.ts#L123)
 
 A mark's status together with the information returned by the status operation.
 
@@ -1238,7 +1238,7 @@ Fields (including inherited fields):
 
 ## `TrustMarkStorage`
 
-[Source](../../../packages/core/src/trust-marks/storage.ts#L23)
+[Source](../../../packages/core/src/trust-marks/storage.ts#L25)
 
 Current-validity queries require active marks with finite issuedAt <= validAt
 and either no expiration or expiresAt > validAt. An embedded delegation must
@@ -1295,7 +1295,7 @@ Fields (including inherited fields):
 
 ## `TrustMarkStore`
 
-[Source](../../../packages/core/src/trust-marks/storage.ts#L69)
+[Source](../../../packages/core/src/trust-marks/storage.ts#L71)
 
 Atomic write and consistent read boundary shared by Leaf and Authority issuers.
 
@@ -1324,7 +1324,7 @@ Fields (including inherited fields):
 
 ## `TrustMarkValidationOptions`
 
-[Source](../../../packages/core/src/trust-marks/index.ts#L24)
+[Source](../../../packages/core/src/trust-marks/index.ts#L26)
 
 Expected identities, time policy, and delegation settings for validating a mark.
 
@@ -1378,7 +1378,7 @@ Fields (including inherited fields):
 
 ## `TrustMarkVerificationOptions`
 
-[Source](../../../packages/core/src/trust-marks/evidence.ts#L70)
+[Source](../../../packages/core/src/trust-marks/evidence.ts#L72)
 
 Issuer evidence, accreditation anchors, resolution mode, and historical-key settings for published marks.
 
@@ -1402,7 +1402,7 @@ Fields (including inherited fields):
 
 ## `validateTrustMark`
 
-[Source](../../../packages/core/src/trust-marks/index.ts#L46)
+[Source](../../../packages/core/src/trust-marks/index.ts#L52)
 
 Validate a Trust Mark using the supplied issuer keys and owner/issuer policy. This low-level call does not discover accreditation trust for you.
 
@@ -1412,7 +1412,7 @@ validateTrustMark(trustMarkJwt: string, trustMarkIssuers: Record<string, string[
 
 ## `validateTrustMarkLogo`
 
-[Source](../../../packages/core/src/trust-marks/logo.ts#L20)
+[Source](../../../packages/core/src/trust-marks/logo.ts#L18)
 
 Fetch an HTTPS logo URL and check for a successful HTTP response whose media type begins with `image/`. This helper does not decode image bytes, enforce a body-size limit, or establish accreditation. Non-HTTPS URLs and fragments are rejected by this helper even though the Trust Mark claim's URL syntax is broader.
 
@@ -1422,7 +1422,7 @@ validateTrustMarkLogo(url: string, options?: ValidateTrustMarkLogoOptions): Prom
 
 ## `ValidateTrustMarkLogoOptions`
 
-[Source](../../../packages/core/src/trust-marks/logo.ts#L18)
+[Source](../../../packages/core/src/trust-marks/logo.ts#L13)
 
 Controls for validating a Trust Mark's logo URI.
 
@@ -1468,7 +1468,7 @@ Fields (including inherited fields):
 
 ## `validateTrustMarkWithIssuer`
 
-[Source](../../../packages/core/src/trust-marks/evidence.ts#L263)
+[Source](../../../packages/core/src/trust-marks/evidence.ts#L269)
 
 Validate a mark with established federation issuer evidence or explicit out-of-band issuer trust, including applicable delegation and historical-key rules.
 
@@ -1478,7 +1478,7 @@ validateTrustMarkWithIssuer(jwt: string, context: TrustMarkIssuerContext, input:
 
 ## `ValidateTrustMarkWithIssuerOptions`
 
-[Source](../../../packages/core/src/trust-marks/evidence.ts#L259)
+[Source](../../../packages/core/src/trust-marks/evidence.ts#L261)
 
 Expected mark type, holder, time, and historical-key settings used with issuer evidence.
 

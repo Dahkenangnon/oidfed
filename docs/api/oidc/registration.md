@@ -65,7 +65,7 @@ Fields (including inherited fields):
 
 ## `AutomaticRegistrationContext`
 
-[Source](../../../packages/oidc/src/registration/types.ts#L24)
+[Source](../../../packages/oidc/src/registration/types.ts#L26)
 
 Provider identity, clock, and leeway used for Request Object claim checks. It is a public context type, not a standalone signature-verification or trust-validation API.
 
@@ -90,7 +90,7 @@ Fields (including inherited fields):
 
 ## `AutomaticRegistrationResult`
 
-[Source](../../../packages/oidc/src/registration/automatic.ts#L96)
+[Source](../../../packages/oidc/src/registration/automatic.ts#L89)
 
 Success value discriminated by delivery. All variants contain requestObjectJwt, the selected provider trustChain, and its trustChainExpiresAt. The authorization Request Object also has its own exp, which can be earlier than that chain deadline. Narrow on delivery before accessing transport-specific fields. This result prepares an authorization interaction; it is not confirmation that the provider registered the client.
 
@@ -141,7 +141,7 @@ Common fields:
 
 ## `ExplicitRegistrationConfig`
 
-[Source](../../../packages/oidc/src/registration/explicit.ts#L39)
+[Source](../../../packages/oidc/src/registration/explicit.ts#L44)
 
 Client EC inputs assembled for explicit registration by the public client role. Its keyProvider supplies Federation signing keys, while any protocol keys belong inside metadata. The explicitRegistration implementation is not exported directly; explicitlyRegister supplies the host identity, composed client block, key provider, and hints. Not every field of this internal configuration shape has a corresponding per-call role option.
 
@@ -176,7 +176,7 @@ Fields (including inherited fields):
 
 ## `ExplicitRegistrationHandlerConfig`
 
-[Source](../../../packages/oidc/src/registration/handler.ts#L45)
+[Source](../../../packages/oidc/src/registration/handler.ts#L46)
 
 Configuration contract used by the provider role's explicit-registration handler. createExplicitRegistrationHandler is not a root export; use a provider role and its initialization/processing API. The handler validates the request and peer evidence, applies optional adapter and accreditation policy, prepares metadata, signs with Federation keys, then invokes the late invalidation hook followed by onRegistration. registrationManagement defaults to disabled; read-only mode retains adapter-supplied management fields, and the host must enforce the token's permissions.
 
@@ -227,7 +227,7 @@ Fields (including inherited fields):
 
 ## `ExplicitRegistrationResult`
 
-[Source](../../../packages/oidc/src/registration/explicit.ts#L54)
+[Source](../../../packages/oidc/src/registration/explicit.ts#L59)
 
 Verified provider registration response, selected client metadata, and credentials when returned. expiresAt bounds the signed response and trustChainExpiresAt bounds the provider evidence; use the registration only until the earlier deadline. Registration persistence and any later renewal are host responsibilities.
 
@@ -256,7 +256,7 @@ Fields (including inherited fields):
 
 ## `OIDCRegistrationAdapter`
 
-[Source](../../../packages/oidc/src/registration/adapter.ts#L21)
+[Source](../../../packages/oidc/src/registration/adapter.ts#L23)
 
 Optional OIDC-specific adapter implementing RegistrationProtocolAdapter. It validates a nested openid_relying_party block when present and adds a missing client_id during explicit response enrichment. Registration workflows perform their own effective protocol validation; this adapter alone is not a full metadata-map or trust validator.
 
@@ -268,7 +268,7 @@ new OIDCRegistrationAdapter(): OIDCRegistrationAdapter;
 
 Inspect raw.openid_relying_party when it is an object, returning InvalidMetadata if that nested block fails the effective RP schema. If the block is absent or non-object, return the original raw object unchanged. A bare client block therefore passes through; this method does not parse it as nested RP metadata. On success it returns the same raw object, not the schema's parsed copy. The concrete method takes only raw, unlike the interface's optional context argument.
 
-[Source](../../../packages/oidc/src/registration/adapter.ts#L22)
+[Source](../../../packages/oidc/src/registration/adapter.ts#L25)
 
 ```typescript signature
 validateClientMetadata(raw: Record<string, unknown>): { ok: false; error: FederationError; } | { ok: true; value: Record<string, unknown>; };
@@ -282,7 +282,7 @@ validateClientMetadata(raw: Record<string, unknown>): { ok: false; error: Federa
 
 Return a shallow copy of the selected RP response block, setting client_id to trustChain.entityId when its existing value is falsy. Nested values remain shared with the input. This does not independently validate the response or chain; the registration handler applies those checks.
 
-[Source](../../../packages/oidc/src/registration/adapter.ts#L46)
+[Source](../../../packages/oidc/src/registration/adapter.ts#L52)
 
 ```typescript signature
 enrichResponseMetadata(rpMeta: Record<string, unknown>, trustChain: ValidatedTrustChain): Record<string, unknown>;
@@ -295,7 +295,7 @@ enrichResponseMetadata(rpMeta: Record<string, unknown>, trustChain: ValidatedTru
 
 ## `PreparedPushedAuthorizationRequest`
 
-[Source](../../../packages/oidc/src/registration/pushed.ts#L63)
+[Source](../../../packages/oidc/src/registration/pushed.ts#L65)
 
 Prepared PAR POST returned by the client role. Send endpoint, parameters, and headers through the application's HTTP/TLS transport; preparation itself sends no PAR request. The value contains the selected provider chain and, for applicable modes, a signed Request Object. The host handles the PAR response and subsequent authorization redirect.
 
@@ -322,7 +322,7 @@ Fields (including inherited fields):
 
 ## `ProcessAutomaticRegistrationOptions`
 
-[Source](../../../packages/oidc/src/registration/process-automatic.ts#L58)
+[Source](../../../packages/oidc/src/registration/process-automatic.ts#L60)
 
 Validation inputs used by provider automatic-registration processing. The role supplies its own identity, replay store, and protocol type; callers supply the remaining per-call settings through processAutomaticRegistration. providerMetadata must be effective metadata for algorithm and policy negotiation, rather than an incomplete publication draft.
 
@@ -383,7 +383,7 @@ Fields (including inherited fields):
 
 ## `ProcessedAutomaticRegistration`
 
-[Source](../../../packages/oidc/src/registration/process-automatic.ts#L52)
+[Source](../../../packages/oidc/src/registration/process-automatic.ts#L54)
 
 Automatic-registration evidence, including the exact resolved protocol keys used to verify the signed Request Object and authenticationExpiresAt. That deadline includes permitted JWT clock skew while never extending the client chain's expiry. Recheck time-sensitive evidence before using it later.
 
@@ -408,7 +408,7 @@ Fields (including inherited fields):
 
 ## `ProcessedPushedAuthorizationRequest`
 
-[Source](../../../packages/oidc/src/registration/pushed.ts#L82)
+[Source](../../../packages/oidc/src/registration/pushed.ts#L84)
 
 Validated PAR parameters plus the selected client registration evidence and authentication deadline. Repeated resource values are preserved. The provider role can run its persistence callback before returning; the host still creates the PAR success response and stores the pushed request.
 
@@ -432,7 +432,7 @@ Fields (including inherited fields):
 
 ## `ProcessedRegistration`
 
-[Source](../../../packages/oidc/src/registration/process-automatic.ts#L37)
+[Source](../../../packages/oidc/src/registration/process-automatic.ts#L39)
 
 Validated client registration evidence shared by processing results. Historical rp/op field names also apply to OAuthClientRole and OAuthAuthorizationServerRole. This data does not itself create a client record or a protocol response; public provider role processing invokes configured persistence callbacks.
 
@@ -463,7 +463,7 @@ Fields (including inherited fields):
 
 ## `ProcessExplicitRegistrationOptions`
 
-[Source](../../../packages/oidc/src/registration/process-explicit.ts#L44)
+[Source](../../../packages/oidc/src/registration/process-explicit.ts#L46)
 
 Validation inputs used by the internal explicit-registration processor. The public provider role assembles these through its mounted HTTP handler; processExplicitRegistration itself is not a package-root function. The protocol type selects the OIDC or OAuth client metadata. A supplied Trust Chain header remains signed evidence requiring full validation.
 
@@ -521,7 +521,7 @@ Fields (including inherited fields):
 
 ## `ProcessPushedAuthorizationRequestOptions`
 
-[Source](../../../packages/oidc/src/registration/pushed.ts#L71)
+[Source](../../../packages/oidc/src/registration/pushed.ts#L73)
 
 Provider PAR validation and authentication inputs. The public provider method supplies its identity, protocol type, and replay store from the initialized role. Effective providerMetadata controls negotiation; a trusted host TLS callback is required for certificate authentication, and Client Attestation requires the host's attester and acceptance policies. The host protocol engine creates and stores any PAR request_uri after successful processing.
 
@@ -581,7 +581,7 @@ Fields (including inherited fields):
 
 ## `ProtocolSigningKeyProvider`
 
-[Source](../../../packages/oidc/src/protocol-keys.ts#L3)
+[Source](../../../packages/oidc/src/protocol-keys.ts#L6)
 
 Signing-capability contract for Request Objects and client assertions. Publish the corresponding public protocol keys in the client metadata; these are separate from the host's Federation Entity Keys. A dynamic implementation can select current signers on each call.
 
@@ -601,7 +601,7 @@ Fields (including inherited fields):
 
 ## `PushedAuthorizationProof`
 
-[Source](../../../packages/oidc/src/registration/pushed.ts#L53)
+[Source](../../../packages/oidc/src/registration/pushed.ts#L55)
 
 Client-side proof selection for prepared PAR. request_object signs the Request Object; private_key_jwt creates a published-key assertion; self_signed_tls_client_auth checks that the supplied base64 DER certificate appears in the resolved protocol JWKS, while the host supplies the actual TLS connection. attest_jwt_client_auth supplies an attestation/proof pair and also includes a signed Request Object. Preparation checks client/server binding and declared algorithms, without substituting for receiver-side authentication.
 
@@ -622,7 +622,7 @@ type PushedAuthorizationProof = {
 
 ## `RegistrationAccreditationContext`
 
-[Source](../../../packages/oidc/src/registration/accreditation.ts#L13)
+[Source](../../../packages/oidc/src/registration/accreditation.ts#L15)
 
 Validated client-chain evidence and the automatic/explicit flow discriminator supplied to beforeRegistration. The callback receives a detached, recursively frozen copy; it cannot alter the original authentication evidence.
 
@@ -642,7 +642,7 @@ Fields (including inherited fields):
 
 ## `RegistrationAccreditationPolicy`
 
-[Source](../../../packages/oidc/src/registration/accreditation.ts#L17)
+[Source](../../../packages/oidc/src/registration/accreditation.ts#L19)
 
 Optional declarative Trust Mark requirements followed by an application callback. A failing declarative check prevents the callback. beforeRegistration receives detached, recursively frozen client-chain evidence and a cancellation signal; it must return a successful Result to continue. A failure, throw, rejection, timeout, or cancellation rejects registration before acceptance side effects. Status queries and external accreditation policy remain explicit host choices.
 
@@ -662,7 +662,7 @@ Fields (including inherited fields):
 
 ## `RegistrationProtocolAdapter`
 
-[Source](../../../packages/oidc/src/registration/adapter-types.ts#L29)
+[Source](../../../packages/oidc/src/registration/adapter-types.ts#L31)
 
 Optional synchronous hooks for protocol/profile metadata checks and explicit-response enrichment. The federation flow independently validates its selected client schema and policy. Explicit validateClientMetadata receives the full resolved Entity Type map; automatic processing receives the selected client block. An adapter supporting both flows must handle those input shapes. Explicit processing uses the successful returned map when preparing response metadata. Automatic processing checks only acceptance; it persists the resolved client block and verified protocol keys rather than the adapter's returned replacement. Explicit enrichment receives the selected block and validated chain; automatic processing does not call enrichResponseMetadata. Exceptions can propagate to the calling role.
 
@@ -699,7 +699,7 @@ Fields (including inherited fields):
 
 ## `RegistrationProtocolAdapterContext`
 
-[Source](../../../packages/oidc/src/registration/adapter-types.ts#L10)
+[Source](../../../packages/oidc/src/registration/adapter-types.ts#L12)
 
 Optional hook context. Explicit registration supplies peerResolvedOpMetadata when a validated client-provided peer chain exists; these are the provider metadata values chosen by that client's chain. Automatic adapter validation supplies a cancellation signal through the bounded host-operation wrapper. The adapter must not assume every flow supplies both fields.
 
@@ -735,7 +735,7 @@ type RequestDelivery = "query" | "form_post" | "request_uri" | "par";
 
 ## `StaticProtocolSigningKeyProvider`
 
-[Source](../../../packages/oidc/src/protocol-keys.ts#L8)
+[Source](../../../packages/oidc/src/protocol-keys.ts#L15)
 
 Return the exact signer objects supplied at construction, retaining their identity without cloning, rotating, or validating them. If no clientAssertionSigner is supplied, getClientAssertionSigner returns the Request Object signer. Registration/signing workflows apply the relevant publication and algorithm checks.
 
@@ -747,7 +747,7 @@ new StaticProtocolSigningKeyProvider(options: { requestObjectSigner: JwtSigner; 
 
 Return the configured Request Object signer by reference.
 
-[Source](../../../packages/oidc/src/protocol-keys.ts#L17)
+[Source](../../../packages/oidc/src/protocol-keys.ts#L24)
 
 ```typescript signature
 getRequestObjectSigner(): Promise<JwtSigner>;
@@ -757,7 +757,7 @@ getRequestObjectSigner(): Promise<JwtSigner>;
 
 Return the configured client-assertion signer by reference, falling back to the Request Object signer when omitted.
 
-[Source](../../../packages/oidc/src/protocol-keys.ts#L21)
+[Source](../../../packages/oidc/src/protocol-keys.ts#L29)
 
 ```typescript signature
 getClientAssertionSigner(): Promise<JwtSigner>;
@@ -765,7 +765,7 @@ getClientAssertionSigner(): Promise<JwtSigner>;
 
 ## `ValidatedRequestObject`
 
-[Source](../../../packages/oidc/src/registration/types.ts#L4)
+[Source](../../../packages/oidc/src/registration/types.ts#L6)
 
 Request Object claims after claim-level validation, including asserted client/provider identities and optional attached chains. This type does not itself carry a validated chain or resolved metadata, and its name does not prove full signature or Federation validation. Completed registration evidence is represented by ProcessedAutomaticRegistration.
 
@@ -805,7 +805,7 @@ Fields (including inherited fields):
 
 ## `ValidatedRequestObjectResult`
 
-[Source](../../../packages/oidc/src/registration/types.ts#L33)
+[Source](../../../packages/oidc/src/registration/types.ts#L35)
 
 Result wrapper around ValidatedRequestObject and FederationError. It contains claim-validation output, not a completed client registration or resolved Federation evidence.
 

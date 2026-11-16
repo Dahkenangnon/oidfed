@@ -6,7 +6,7 @@ Choose endpoint authentication independently from application sessions. Private-
 
 ## `authenticateClientAttestation`
 
-[Source](../../../packages/core/src/client-attestation.ts#L612)
+[Source](../../../packages/core/src/client-attestation.ts#L623)
 
 Verify an attestation and proof pair with attester trust, audience, freshness, replay, and the optional host acceptance policy. Handle the returned failure before accepting the client.
 
@@ -16,7 +16,7 @@ authenticateClientAttestation(attestationJwt: string, popJwt: string, options: A
 
 ## `AuthenticateClientAttestationOptions`
 
-[Source](../../../packages/core/src/client-attestation.ts#L125)
+[Source](../../../packages/core/src/client-attestation.ts#L127)
 
 Trust, freshness, audience, and replay settings for client-attestation authentication.
 
@@ -88,7 +88,7 @@ Fields (including inherited fields):
 
 ## `authenticatedEndpointCaller`
 
-[Source](../../../packages/core/src/endpoint-authentication.ts#L109)
+[Source](../../../packages/core/src/endpoint-authentication.ts#L112)
 
 Read authentication context established for a request by the endpoint authentication layer.
 
@@ -98,7 +98,7 @@ authenticatedEndpointCaller(request: Request): string | undefined;
 
 ## `authenticateEndpointRequest`
 
-[Source](../../../packages/core/src/endpoint-authentication.ts#L174)
+[Source](../../../packages/core/src/endpoint-authentication.ts#L178)
 
 Shared credential verification for Authority, Leaf, and Collection endpoints.
 
@@ -108,7 +108,7 @@ authenticateEndpointRequest(request: Request, form: URLSearchParams, config: End
 
 ## `ClientAssertionOptions`
 
-[Source](../../../packages/core/src/jose/client-assertion.ts#L7)
+[Source](../../../packages/core/src/jose/client-assertion.ts#L9)
 
 Lifetime, clock, timeout, and cancellation settings for creating a client assertion.
 
@@ -132,7 +132,7 @@ Fields (including inherited fields):
 
 ## `ClientAttestation`
 
-[Source](../../../packages/core/src/client-attestation.ts#L69)
+[Source](../../../packages/core/src/client-attestation.ts#L71)
 
 Claims carried by a client attestation, including its confirmation key.
 
@@ -165,7 +165,7 @@ Fields (including inherited fields):
 
 ## `ClientAttestationError`
 
-[Source](../../../packages/core/src/client-attestation.ts#L27)
+[Source](../../../packages/core/src/client-attestation.ts#L29)
 
 Stable failure reason for a host's draft-07 HTTP response policy.
 
@@ -187,7 +187,7 @@ Fields (including inherited fields):
 
 ## `ClientAttestationFreshness`
 
-[Source](../../../packages/core/src/client-attestation.ts#L88)
+[Source](../../../packages/core/src/client-attestation.ts#L90)
 
 Policy for deciding whether attestation evidence is recent enough.
 
@@ -203,7 +203,7 @@ type ClientAttestationFreshness = {
 
 ## `clientAttestationHeaders`
 
-[Source](../../../packages/core/src/client-attestation.ts#L671)
+[Source](../../../packages/core/src/client-attestation.ts#L683)
 
 Build the HTTP header representation of a Client Attestation and proof pair.
 
@@ -213,7 +213,7 @@ clientAttestationHeaders(attestationJwt: string, popJwt: string): Result<Headers
 
 ## `ClientAttestationOptions`
 
-[Source](../../../packages/core/src/client-attestation.ts#L70)
+[Source](../../../packages/core/src/client-attestation.ts#L72)
 
 Shared federation settings and an optional chain used by client-attestation operations.
 
@@ -262,7 +262,7 @@ Fields (including inherited fields):
 
 ## `ClientAttestationReplay`
 
-[Source](../../../packages/core/src/client-attestation.ts#L97)
+[Source](../../../packages/core/src/client-attestation.ts#L99)
 
 Replay-protection settings for attestation proofs.
 
@@ -280,7 +280,7 @@ type ClientAttestationReplay = {
 
 ## `ClientAttestationVerificationOptions`
 
-[Source](../../../packages/core/src/client-attestation.ts#L115)
+[Source](../../../packages/core/src/client-attestation.ts#L117)
 
 Receiver binding for an attestation that supplies aud (RFC 7519 §4.1.3).
 
@@ -339,7 +339,7 @@ Fields (including inherited fields):
 
 ## `createAttestationChallengeHandler`
 
-[Source](../../../packages/core/src/attestation-challenge.ts#L51)
+[Source](../../../packages/core/src/attestation-challenge.ts#L54)
 
 Create a POST-only challenge handler around the host's issuance callback. The callback receives a bounded cancellation signal; issuance failures produce a generic HTTP 500 response. The host owns challenge generation, expiration, and any one-time consumption.
 
@@ -349,7 +349,7 @@ createAttestationChallengeHandler(issue: (request: Request, signal: AbortSignal)
 
 ## `createAttestationChallengeResponse`
 
-[Source](../../../packages/core/src/attestation-challenge.ts#L44)
+[Source](../../../packages/core/src/attestation-challenge.ts#L47)
 
 Create a JSON response containing the supplied challenge and `Cache-Control: no-store`. Empty challenges and values containing carriage returns or newlines throw `TypeError`. The host generates and tracks the challenge.
 
@@ -359,7 +359,7 @@ createAttestationChallengeResponse(challenge: string): Response;
 
 ## `createClientAssertion`
 
-[Source](../../../packages/core/src/jose/client-assertion.ts#L20)
+[Source](../../../packages/core/src/jose/client-assertion.ts#L22)
 
 Create a `private_key_jwt` assertion with `iss` and `sub` set to `clientId`, a single `aud`, a fresh random `jti`, and `iat`/`exp`. The default lifetime is 60 seconds. Invalid identifiers, clocks, or lifetimes reject before signing; signing is bounded by timeout and cancellation. Federation endpoint clients and OIDC/OAuth clients share this helper.
 
@@ -369,7 +369,7 @@ createClientAssertion(clientId: string, audience: string, signer: JwtSigner, opt
 
 ## `createClientAttestation`
 
-[Source](../../../packages/core/src/client-attestation.ts#L590)
+[Source](../../../packages/core/src/client-attestation.ts#L592)
 
 Create a draft-07 attestation using the caller's trusted attester signing key.
 
@@ -379,7 +379,7 @@ createClientAttestation(issuer: string, params: CreateClientAttestationParams, s
 
 ## `CreateClientAttestationParams`
 
-[Source](../../../packages/core/src/client-attestation.ts#L108)
+[Source](../../../packages/core/src/client-attestation.ts#L110)
 
 Subject, confirmation key, expiry, and additional claims for creating a client attestation.
 
@@ -403,7 +403,7 @@ Fields (including inherited fields):
 
 ## `createClientAttestationProof`
 
-[Source](../../../packages/core/src/client-attestation.ts#L630)
+[Source](../../../packages/core/src/client-attestation.ts#L641)
 
 Each invocation creates a new jti. Reuse the attestation, never its proof.
 
@@ -413,7 +413,7 @@ createClientAttestationProof(params: CreateClientAttestationProofParams, signer:
 
 ## `CreateClientAttestationProofParams`
 
-[Source](../../../packages/core/src/client-attestation.ts#L623)
+[Source](../../../packages/core/src/client-attestation.ts#L634)
 
 Client identity, audience, and signing inputs for an attestation proof of possession.
 
@@ -437,7 +437,7 @@ Fields (including inherited fields):
 
 ## `createEndpointAuthenticatedHandler`
 
-[Source](../../../packages/core/src/endpoint-authentication.ts#L321)
+[Source](../../../packages/core/src/endpoint-authentication.ts#L330)
 
 Wrap an endpoint handler with configured method and credential checks before invoking the protected handler.
 
@@ -447,7 +447,7 @@ createEndpointAuthenticatedHandler(config: EndpointAuthenticationConfig, inner: 
 
 ## `CustomEndpointClientAuthentication`
 
-[Source](../../../packages/core/src/endpoint-client.ts#L25)
+[Source](../../../packages/core/src/endpoint-client.ts#L27)
 
 A host-supplied authentication method for an outgoing federation endpoint request.
 
@@ -480,7 +480,7 @@ Fields (including inherited fields):
 
 ## `EndpointAuthentication`
 
-[Source](../../../packages/core/src/endpoint-authentication.ts#L95)
+[Source](../../../packages/core/src/endpoint-authentication.ts#L97)
 
 Custom endpoint authentication methods and the hook for obtaining trusted transport evidence.
 
@@ -501,7 +501,7 @@ Fields (including inherited fields):
 
 ## `EndpointAuthenticationConfig`
 
-[Source](../../../packages/core/src/endpoint-authentication.ts#L100)
+[Source](../../../packages/core/src/endpoint-authentication.ts#L102)
 
 Accepted methods and verification dependencies for a federation endpoint.
 
@@ -529,7 +529,7 @@ Fields (including inherited fields):
 
 ## `EndpointAuthenticationContext`
 
-[Source](../../../packages/core/src/endpoint-client.ts#L45)
+[Source](../../../packages/core/src/endpoint-client.ts#L47)
 
 Request context from traversal; standalone clients may not know the responder identity.
 
@@ -552,7 +552,7 @@ Fields (including inherited fields):
 
 ## `EndpointAuthenticationError`
 
-[Source](../../../packages/core/src/endpoint-authentication.ts#L18)
+[Source](../../../packages/core/src/endpoint-authentication.ts#L20)
 
 Controlled protocol response from a host authentication verifier.
 
@@ -578,7 +578,7 @@ Fields (including inherited fields):
 
 ## `endpointAuthenticationErrorResponse`
 
-[Source](../../../packages/core/src/endpoint-authentication.ts#L31)
+[Source](../../../packages/core/src/endpoint-authentication.ts#L33)
 
 Render only approved authentication headers; arbitrary host errors remain private.
 
@@ -588,7 +588,7 @@ endpointAuthenticationErrorResponse(error: EndpointAuthenticationError): Respons
 
 ## `EndpointAuthenticationInput`
 
-[Source](../../../packages/core/src/endpoint-authentication.ts#L87)
+[Source](../../../packages/core/src/endpoint-authentication.ts#L89)
 
 Request information supplied to endpoint authentication.
 
@@ -615,7 +615,7 @@ Fields (including inherited fields):
 
 ## `EndpointAuthenticationMethod`
 
-[Source](../../../packages/core/src/endpoint-authentication.ts#L77)
+[Source](../../../packages/core/src/endpoint-authentication.ts#L79)
 
 A registered authentication method and the parameters or headers it understands.
 
@@ -643,7 +643,7 @@ Fields (including inherited fields):
 
 ## `EndpointAuthenticationProvider`
 
-[Source](../../../packages/core/src/endpoint-client.ts#L52)
+[Source](../../../packages/core/src/endpoint-client.ts#L54)
 
 Return undefined to request anonymous access. Failure never falls back to anonymous access.
 
@@ -655,7 +655,7 @@ type EndpointAuthenticationProvider = (
 
 ## `EndpointClientAuthentication`
 
-[Source](../../../packages/core/src/endpoint-client.ts#L41)
+[Source](../../../packages/core/src/endpoint-client.ts#L43)
 
 Authentication settings for an outgoing federation endpoint request.
 
@@ -665,7 +665,7 @@ type EndpointClientAuthentication = PrivateKeyJwtEndpointAuthentication | Custom
 
 ## `endpointCredentialParameterNames`
 
-[Source](../../../packages/core/src/endpoint-authentication.ts#L311)
+[Source](../../../packages/core/src/endpoint-authentication.ts#L315)
 
 Credentials declared by authentication methods belong in the POST form, never the URL.
 
@@ -675,7 +675,7 @@ endpointCredentialParameterNames(extensions?: EndpointAuthentication): ReadonlyS
 
 ## `fetchAttestationChallenge`
 
-[Source](../../../packages/core/src/attestation-challenge.ts#L14)
+[Source](../../../packages/core/src/attestation-challenge.ts#L16)
 
 POST to a challenge endpoint and return its nonempty `attestation_challenge` value. The request requires HTTP 200, rejects redirects, and does not cache a challenge or retry the protected operation automatically.
 
@@ -685,7 +685,7 @@ fetchAttestationChallenge(endpoint: string, options?: FederationOptions): Promis
 
 ## `invokeVerificationPolicy`
 
-[Source](../../../packages/core/src/client-attestation.ts#L142)
+[Source](../../../packages/core/src/client-attestation.ts#L144)
 
 Bound application verification hooks and release the caller promptly on cancellation.
 
@@ -695,7 +695,7 @@ invokeVerificationPolicy<T>(policy: (context: T, signal?: AbortSignal) => boolea
 
 ## `parseClientAttestationHeaders`
 
-[Source](../../../packages/core/src/client-attestation.ts#L683)
+[Source](../../../packages/core/src/client-attestation.ts#L695)
 
 Fetch Headers combines duplicates; combined values fail the single-JWT grammar.
 
@@ -708,7 +708,7 @@ parseClientAttestationHeaders(headers: Headers, options?: Pick<FederationOptions
 
 ## `parseConcatenatedClientAttestation`
 
-[Source](../../../packages/core/src/client-attestation.ts#L560)
+[Source](../../../packages/core/src/client-attestation.ts#L562)
 
 ACA §7.2 syntax parsing; authenticate the returned pair before accepting its claims.
 
@@ -721,7 +721,7 @@ parseConcatenatedClientAttestation(value: string, options?: Pick<ClientAttestati
 
 ## `PrivateKeyJwtEndpointAuthentication`
 
-[Source](../../../packages/core/src/endpoint-client.ts#L18)
+[Source](../../../packages/core/src/endpoint-client.ts#L20)
 
 Client identity, responder audience, and signing credentials for `private_key_jwt` authentication.
 
@@ -746,7 +746,7 @@ Fields (including inherited fields):
 
 ## `readAttestationChallenge`
 
-[Source](../../../packages/core/src/attestation-challenge.ts#L40)
+[Source](../../../packages/core/src/attestation-challenge.ts#L42)
 
 A returned challenge replaces the previous challenge for the next request (draft-07 §8.1).
 
@@ -756,7 +756,7 @@ readAttestationChallenge(headers: Headers): Result<string | undefined>;
 
 ## `serializeClientAttestation`
 
-[Source](../../../packages/core/src/client-attestation.ts#L667)
+[Source](../../../packages/core/src/client-attestation.ts#L678)
 
 Syntactic serialization only; receivers must authenticate the pair.
 
@@ -766,7 +766,7 @@ serializeClientAttestation(attestationJwt: string, popJwt: string): Result<strin
 
 ## `TrustedClientAttester`
 
-[Source](../../../packages/core/src/client-attestation.ts#L73)
+[Source](../../../packages/core/src/client-attestation.ts#L75)
 
 Verification keys accepted for an attester, with an optional trust-evidence deadline.
 
@@ -787,7 +787,7 @@ Fields (including inherited fields):
 
 ## `validateEndpointAuthentication`
 
-[Source](../../../packages/core/src/endpoint-authentication.ts#L115)
+[Source](../../../packages/core/src/endpoint-authentication.ts#L119)
 
 Validate the endpoint's method configuration and extension handlers before accepting requests.
 
@@ -797,7 +797,7 @@ validateEndpointAuthentication(config: EndpointAuthenticationConfig): EndpointAu
 
 ## `VerifiedAttestationChallenge`
 
-[Source](../../../packages/core/src/client-attestation.ts#L84)
+[Source](../../../packages/core/src/client-attestation.ts#L86)
 
 Challenge evidence returned after verification.
 
@@ -817,7 +817,7 @@ Fields (including inherited fields):
 
 ## `VerifiedClientAssertion`
 
-[Source](../../../packages/core/src/jose/client-auth.ts#L10)
+[Source](../../../packages/core/src/jose/client-auth.ts#L12)
 
 The client identity and claims obtained from a verified client assertion.
 
@@ -841,7 +841,7 @@ Fields (including inherited fields):
 
 ## `VerifiedClientAttestation`
 
-[Source](../../../packages/core/src/client-attestation.ts#L78)
+[Source](../../../packages/core/src/client-attestation.ts#L80)
 
 The attestation and proof information returned after successful client authentication.
 
@@ -864,7 +864,7 @@ Fields (including inherited fields):
 
 ## `verifyClientAssertion`
 
-[Source](../../../packages/core/src/jose/client-auth.ts#L18)
+[Source](../../../packages/core/src/jose/client-auth.ts#L20)
 
 Verify a `private_key_jwt` client assertion against the client's JWKS and expected audience.
 
@@ -881,7 +881,7 @@ verifyClientAssertion(assertion: string, jwks: JWKSet, expectedAudience: string,
 
 ## `verifyClientAttestation`
 
-[Source](../../../packages/core/src/client-attestation.ts#L602)
+[Source](../../../packages/core/src/client-attestation.ts#L609)
 
 Verify the attestation JWT against an independently trusted attester and the configured freshness policy. Authentication also requires the instance's proof.
 

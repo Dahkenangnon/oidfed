@@ -10,6 +10,14 @@ pnpm release:verify
 
 `release:verify` builds the published packages and CLI, runs lint and type checks, executes the Node TAP suite and CLI/script tests, and checks package contents and the shared core dependency. `pnpm test` additionally runs the TAP suite across the configured runtimes; those runners need their own prerequisites. Application checks are separate: `pnpm typecheck:apps`, `pnpm test:apps`, and `pnpm build:apps`.
 
+For changes to the five protocol packages, follow the [security tool setup](security-checks.md#set-up-the-tools) and run the separate security checks alongside `release:verify`:
+
+```bash
+pnpm security:check
+```
+
+`release:verify` does not run this security command. The [security guide](security-checks.md) explains its scope and the additional advisory, fuzz, and mutation checks.
+
 ## Run the local federation
 
 Install [mkcert](https://github.com/FiloSottile/mkcert#installation), then run:

@@ -8,7 +8,7 @@ Field tables describe parsed output. A Zod-branded Entity Identifier is written 
 
 ## `BaseEntityStatementSchema`
 
-[Source](../../../packages/core/src/schemas/entity-statement.ts#L29)
+[Source](../../../packages/core/src/schemas/entity-statement.ts#L33)
 
 Parse the common Entity Statement fields and require `exp > iat`. The schema preserves extension claims. It does not enforce all EC/SS-specific claim placement, critical-claim semantics, signature, or trust rules.
 
@@ -33,7 +33,7 @@ Fields (including inherited fields):
 
 ## `COLLECTION_INFO_CLAIMS`
 
-[Source](../../../packages/core/src/schemas/entity-collection.ts#L8)
+[Source](../../../packages/core/src/schemas/entity-collection.ts#L9)
 
 Informational metadata claim names recognized by the Entity Collection schemas.
 
@@ -43,7 +43,7 @@ const COLLECTION_INFO_CLAIMS: readonly ["organization_name", "display_name", "de
 
 ## `createCollectionSchemas`
 
-[Source](../../../packages/core/src/schemas/entity-collection.ts#L21)
+[Source](../../../packages/core/src/schemas/entity-collection.ts#L22)
 
 Create informational, entity-entry, and collection-response schemas using the standard informational claims plus the supplied declaration names. Informational values retain unknown fields; standard and language-tagged claim values are checked. The returned schemas parse data only, without validating Federation or Trust Mark evidence.
 
@@ -77,7 +77,7 @@ createCollectionSchemas(infoClaims?: readonly string[]): {
 
 ## `DecodedFederationJwtPayload`
 
-[Source](../../../packages/core/src/schemas/entity-statement.ts#L83)
+[Source](../../../packages/core/src/schemas/entity-statement.ts#L87)
 
 Decoded federation tokens still need profile-specific claim validation.
 
@@ -130,7 +130,7 @@ Fields (including inherited fields):
 
 ## `EntityCollectionEntity`
 
-[Source](../../../packages/core/src/schemas/entity-collection.ts#L71)
+[Source](../../../packages/core/src/schemas/entity-collection.ts#L72)
 
 An informational entity entry returned by an Entity Collection endpoint.
 
@@ -149,7 +149,7 @@ Fields (including inherited fields):
 
 ## `EntityCollectionEntitySchema`
 
-[Source](../../../packages/core/src/schemas/entity-collection.ts#L56)
+[Source](../../../packages/core/src/schemas/entity-collection.ts#L57)
 
 Validates the `EntityCollectionEntity` data shape. Use `safeParse` to receive a success/error result, or `parse` when a thrown validation error is appropriate.
 
@@ -164,7 +164,7 @@ Fields (including inherited fields):
 
 ## `EntityCollectionRequestParams`
 
-[Source](../../../packages/core/src/schemas/entity-collection.ts#L74)
+[Source](../../../packages/core/src/schemas/entity-collection.ts#L75)
 
 Filters, selected claims, locales, and pagination parameters for a collection request.
 
@@ -188,7 +188,7 @@ Fields (including inherited fields):
 
 ## `EntityCollectionRequestSchema`
 
-[Source](../../../packages/core/src/schemas/entity-collection.ts#L58)
+[Source](../../../packages/core/src/schemas/entity-collection.ts#L59)
 
 Parse the library's camelCase collection request parameters, including nonempty selector values and BCP 47 locale syntax. Unknown top-level parameters are rejected. Use `EntityCollectionRequestParams` for its public input type; these are not the raw HTTP query names.
 
@@ -208,7 +208,7 @@ Fields (including inherited fields):
 
 ## `EntityCollectionResponse`
 
-[Source](../../../packages/core/src/schemas/entity-collection.ts#L73)
+[Source](../../../packages/core/src/schemas/entity-collection.ts#L74)
 
 A page of informational entity entries and an optional continuation cursor.
 
@@ -226,7 +226,7 @@ Fields (including inherited fields):
 
 ## `EntityCollectionResponseSchema`
 
-[Source](../../../packages/core/src/schemas/entity-collection.ts#L57)
+[Source](../../../packages/core/src/schemas/entity-collection.ts#L58)
 
 Validates the `EntityCollectionResponse` data shape. Use `safeParse` to receive a success/error result, or `parse` when a thrown validation error is appropriate.
 
@@ -240,7 +240,7 @@ Fields (including inherited fields):
 
 ## `EntityConfigurationPayload`
 
-[Source](../../../packages/core/src/schemas/entity-statement.ts#L185)
+[Source](../../../packages/core/src/schemas/entity-statement.ts#L189)
 
 Claims in an entity's self-issued Entity Configuration.
 
@@ -271,7 +271,7 @@ Fields (including inherited fields):
 
 ## `EntityConfigurationSchema`
 
-[Source](../../../packages/core/src/schemas/entity-statement.ts#L37)
+[Source](../../../packages/core/src/schemas/entity-statement.ts#L41)
 
 Parse Entity Configuration claims, require `iss === sub` and `exp > iat`, and retain extension fields. This is a shape check, not verification of the claimed self-signature or complete Federation claim placement.
 
@@ -298,13 +298,13 @@ Fields (including inherited fields):
 
 ## `EntityIdSchema`
 
-[Source](../../../packages/core/src/schemas/entity-id.ts#L5)
+[Source](../../../packages/core/src/schemas/entity-id.ts#L6)
 
 Validates an HTTPS Entity Identifier with no credentials, query, or fragment.
 
 ## `EntityStatementPayload`
 
-[Source](../../../packages/core/src/schemas/entity-statement.ts#L184)
+[Source](../../../packages/core/src/schemas/entity-statement.ts#L188)
 
 Claims shared by Entity Configurations and Subordinate Statements.
 
@@ -337,7 +337,7 @@ Fields (including inherited fields):
 
 ## `EntityStatementPayloadSchema`
 
-[Source](../../../packages/core/src/schemas/entity-statement.ts#L86)
+[Source](../../../packages/core/src/schemas/entity-statement.ts#L90)
 
 Combined Entity Statement schema accepting both ECs and SSs.
 
@@ -366,7 +366,7 @@ Fields (including inherited fields):
 
 ## `EntityTypeInfo`
 
-[Source](../../../packages/core/src/schemas/entity-collection.ts#L72)
+[Source](../../../packages/core/src/schemas/entity-collection.ts#L73)
 
 Informational metadata for an entity type in a collection entry.
 
@@ -376,13 +376,13 @@ type EntityTypeInfo = z.infer<typeof EntityTypeInfoSchema>;
 
 ## `EntityTypeInfoSchema`
 
-[Source](../../../packages/core/src/schemas/entity-collection.ts#L55)
+[Source](../../../packages/core/src/schemas/entity-collection.ts#L56)
 
 Validates the `EntityTypeInfo` data shape. Use `safeParse` to receive a success/error result, or `parse` when a thrown validation error is appropriate.
 
 ## `EntityTypeMetadataMap`
 
-[Source](../../../packages/core/src/schemas/metadata.ts#L121)
+[Source](../../../packages/core/src/schemas/metadata.ts#L112)
 
 Metadata indexed by Entity Type Identifier.
 
@@ -418,7 +418,7 @@ The core-local `OpenIDRelyingPartyMetadata` and `OpenIDProviderMetadata` aliases
 
 ## `EntityTypeMetadataPolicy`
 
-[Source](../../../packages/core/src/schemas/metadata-policy.ts#L30)
+[Source](../../../packages/core/src/schemas/metadata-policy.ts#L34)
 
 Policy declarations for the metadata parameters of one entity type.
 
@@ -428,13 +428,13 @@ type EntityTypeMetadataPolicy = z.infer<typeof EntityTypeMetadataPolicySchema>;
 
 ## `EntityTypeMetadataPolicySchema`
 
-[Source](../../../packages/core/src/schemas/metadata-policy.ts#L25)
+[Source](../../../packages/core/src/schemas/metadata-policy.ts#L29)
 
 Validates the `EntityTypeMetadataPolicy` data shape. Use `safeParse` to receive a success/error result, or `parse` when a thrown validation error is appropriate.
 
 ## `EXTENDED_LIST_SUPPORTED_CLAIMS`
 
-[Source](../../../packages/core/src/schemas/extended-list.ts#L23)
+[Source](../../../packages/core/src/schemas/extended-list.ts#L27)
 
 Built-in claims supported by Extended Listing claim selection.
 
@@ -444,7 +444,7 @@ const EXTENDED_LIST_SUPPORTED_CLAIMS: ReadonlySet<ExtendedListClaim>;
 
 ## `ExtendedListClaim`
 
-[Source](../../../packages/core/src/schemas/extended-list.ts#L6)
+[Source](../../../packages/core/src/schemas/extended-list.ts#L10)
 
 Top-level Entity Statement claims that the extended listing endpoint can return per entity.
 
@@ -469,7 +469,7 @@ type ExtendedListClaim = (typeof ExtendedListClaim)[keyof typeof ExtendedListCla
 
 ## `ExtendedListEntity`
 
-[Source](../../../packages/core/src/schemas/extended-list.ts#L77)
+[Source](../../../packages/core/src/schemas/extended-list.ts#L81)
 
 A subordinate entry with any requested audit timestamps and selected claims.
 
@@ -488,7 +488,7 @@ Fields (including inherited fields):
 
 ## `ExtendedListEntitySchema`
 
-[Source](../../../packages/core/src/schemas/extended-list.ts#L63)
+[Source](../../../packages/core/src/schemas/extended-list.ts#L67)
 
 Per-entity object inside `immediate_subordinate_entities`. Loose so custom claims may be present.
 
@@ -503,7 +503,7 @@ Fields (including inherited fields):
 
 ## `ExtendedListQuery`
 
-[Source](../../../packages/core/src/schemas/extended-list.ts#L76)
+[Source](../../../packages/core/src/schemas/extended-list.ts#L80)
 
 Filters, pagination, and claim-selection parameters for Extended Listing.
 
@@ -528,7 +528,7 @@ Fields (including inherited fields):
 
 ## `ExtendedListQuerySchema`
 
-[Source](../../../packages/core/src/schemas/extended-list.ts#L49)
+[Source](../../../packages/core/src/schemas/extended-list.ts#L53)
 
 Server-side query schema. Accepts raw HTTP query strings and coerces them into typed values.
 
@@ -549,7 +549,7 @@ Fields (including inherited fields):
 
 ## `ExtendedListRequestParams`
 
-[Source](../../../packages/core/src/schemas/extended-list.ts#L81)
+[Source](../../../packages/core/src/schemas/extended-list.ts#L85)
 
 Client-facing request parameters; serialised into URL query string by the fetch helper.
 
@@ -586,7 +586,7 @@ Fields (including inherited fields):
 
 ## `ExtendedListResponse`
 
-[Source](../../../packages/core/src/schemas/extended-list.ts#L78)
+[Source](../../../packages/core/src/schemas/extended-list.ts#L82)
 
 A page of Extended Listing results and its continuation information.
 
@@ -603,7 +603,7 @@ Fields (including inherited fields):
 
 ## `ExtendedListResponseSchema`
 
-[Source](../../../packages/core/src/schemas/extended-list.ts#L71)
+[Source](../../../packages/core/src/schemas/extended-list.ts#L75)
 
 Top-level response shape.
 
@@ -616,7 +616,7 @@ Fields (including inherited fields):
 
 ## `FederationEntityMetadata`
 
-[Source](../../../packages/core/src/schemas/metadata.ts#L109)
+[Source](../../../packages/core/src/schemas/metadata.ts#L100)
 
 Federation endpoints, authentication methods, and informational metadata published by an entity.
 
@@ -661,7 +661,7 @@ Fields (including inherited fields):
 
 ## `FederationEntityMetadataSchema`
 
-[Source](../../../packages/core/src/schemas/metadata.ts#L20)
+[Source](../../../packages/core/src/schemas/metadata.ts#L21)
 
 Validates the `FederationEntityMetadata` data shape. Use `safeParse` to receive a success/error result, or `parse` when a thrown validation error is appropriate.
 
@@ -702,7 +702,7 @@ Fields (including inherited fields):
 
 ## `FederationMetadata`
 
-[Source](../../../packages/core/src/schemas/metadata.ts#L114)
+[Source](../../../packages/core/src/schemas/metadata.ts#L105)
 
 Metadata blocks indexed by Entity Type Identifier.
 
@@ -726,7 +726,7 @@ Fields (including inherited fields):
 
 ## `FederationMetadataPolicy`
 
-[Source](../../../packages/core/src/schemas/metadata-policy.ts#L31)
+[Source](../../../packages/core/src/schemas/metadata-policy.ts#L35)
 
 Metadata-policy declarations indexed by entity type and parameter name.
 
@@ -736,13 +736,13 @@ type FederationMetadataPolicy = z.infer<typeof FederationMetadataPolicySchema>;
 
 ## `FederationMetadataPolicySchema`
 
-[Source](../../../packages/core/src/schemas/metadata-policy.ts#L27)
+[Source](../../../packages/core/src/schemas/metadata-policy.ts#L31)
 
 Validates the `FederationMetadataPolicy` data shape. Use `safeParse` to receive a success/error result, or `parse` when a thrown validation error is appropriate.
 
 ## `FederationMetadataSchema`
 
-[Source](../../../packages/core/src/schemas/metadata.ts#L98)
+[Source](../../../packages/core/src/schemas/metadata.ts#L89)
 
 Validates the `FederationMetadata` data shape. Use `safeParse` to receive a success/error result, or `parse` when a thrown validation error is appropriate.
 
@@ -762,7 +762,7 @@ Fields (including inherited fields):
 
 ## `FetchQuerySchema`
 
-[Source](../../../packages/core/src/schemas/entity-statement.ts#L156)
+[Source](../../../packages/core/src/schemas/entity-statement.ts#L160)
 
 Validates the `FetchQuery` data shape. Use `safeParse` to receive a success/error result, or `parse` when a thrown validation error is appropriate.
 
@@ -775,7 +775,7 @@ Fields (including inherited fields):
 
 ## `getEntityTypes`
 
-[Source](../../../packages/core/src/schemas/metadata.ts#L117)
+[Source](../../../packages/core/src/schemas/metadata.ts#L108)
 
 Return the own metadata block names whose values are not `undefined`, including framework-defined Entity Type Identifiers. This helper does not validate the blocks or establish protocol conformance.
 
@@ -785,7 +785,7 @@ getEntityTypes(metadata: FederationMetadata): ReadonlyArray<EntityTypeIdentifier
 
 ## `HistoricalKeyEntry`
 
-[Source](../../../packages/core/src/schemas/entity-statement.ts#L187)
+[Source](../../../packages/core/src/schemas/entity-statement.ts#L191)
 
 A federation key and its historical validity or revocation information.
 
@@ -814,7 +814,7 @@ Fields (including inherited fields):
 
 ## `HistoricalKeyEntrySchema`
 
-[Source](../../../packages/core/src/schemas/entity-statement.ts#L91)
+[Source](../../../packages/core/src/schemas/entity-statement.ts#L95)
 
 Historical key entry for the federation_historical_keys endpoint.
 
@@ -839,7 +839,7 @@ Fields (including inherited fields):
 
 ## `HistoricalKeysPayload`
 
-[Source](../../../packages/core/src/schemas/entity-statement.ts#L188)
+[Source](../../../packages/core/src/schemas/entity-statement.ts#L192)
 
 Claims and key history carried by a signed Historical Keys response.
 
@@ -857,7 +857,7 @@ Fields (including inherited fields):
 
 ## `HistoricalKeysPayloadSchema`
 
-[Source](../../../packages/core/src/schemas/entity-statement.ts#L104)
+[Source](../../../packages/core/src/schemas/entity-statement.ts#L108)
 
 Validates the `HistoricalKeysPayload` data shape. Use `safeParse` to receive a success/error result, or `parse` when a thrown validation error is appropriate.
 
@@ -871,7 +871,7 @@ Fields (including inherited fields):
 
 ## `JWK`
 
-[Source](../../../packages/core/src/schemas/jwk.ts#L56)
+[Source](../../../packages/core/src/schemas/jwk.ts#L57)
 
 A JSON Web Key, including its algorithm and intended-use metadata where supplied.
 
@@ -896,7 +896,7 @@ Fields (including inherited fields):
 
 ## `JWKSchema`
 
-[Source](../../../packages/core/src/schemas/jwk.ts#L7)
+[Source](../../../packages/core/src/schemas/jwk.ts#L8)
 
 Parse public JWK fields and preserve extensions and unsupported key types for later selection. Known private-key parameters are rejected. Parsing does not prove key material is complete, usable, trusted, or supported by the active cryptographic backend.
 
@@ -917,7 +917,7 @@ Fields (including inherited fields):
 
 ## `JWKSet`
 
-[Source](../../../packages/core/src/schemas/jwk.ts#L57)
+[Source](../../../packages/core/src/schemas/jwk.ts#L58)
 
 A set of public federation signing keys.
 
@@ -933,7 +933,7 @@ Fields (including inherited fields):
 
 ## `JWKSetSchema`
 
-[Source](../../../packages/core/src/schemas/jwk.ts#L41)
+[Source](../../../packages/core/src/schemas/jwk.ts#L42)
 
 Parse a nonempty public Federation signing-key set with a nonempty, distinct `kid` on every key. Unknown key types can remain for selection. This schema does not prove possession or cryptographic usability of a key.
 
@@ -945,7 +945,7 @@ Fields (including inherited fields):
 
 ## `ListQuerySchema`
 
-[Source](../../../packages/core/src/schemas/entity-statement.ts#L161)
+[Source](../../../packages/core/src/schemas/entity-statement.ts#L165)
 
 Validates the `ListQuery` data shape. Use `safeParse` to receive a success/error result, or `parse` when a thrown validation error is appropriate.
 
@@ -960,7 +960,7 @@ Fields (including inherited fields):
 
 ## `MetadataJWKSetSchema`
 
-[Source](../../../packages/core/src/schemas/jwk.ts#L36)
+[Source](../../../packages/core/src/schemas/jwk.ts#L37)
 
 Parse public protocol keys. The array may be empty; key identifiers are optional and may repeat. This shape check does not enforce mixed signing/encryption `use` requirements—`validateJwkSetUseRequirement` and the protocol workflows perform that check. `JWKSetSchema` adds the Federation signing-key rules.
 
@@ -980,7 +980,7 @@ Other exported schemas use the same `safeParse` contract. Select the schema for 
 
 ## `MetadataParameterPolicy`
 
-[Source](../../../packages/core/src/schemas/metadata-policy.ts#L29)
+[Source](../../../packages/core/src/schemas/metadata-policy.ts#L33)
 
 The operator declarations applied to one metadata parameter.
 
@@ -1002,7 +1002,7 @@ Fields (including inherited fields):
 
 ## `MetadataParameterPolicySchema`
 
-[Source](../../../packages/core/src/schemas/metadata-policy.ts#L15)
+[Source](../../../packages/core/src/schemas/metadata-policy.ts#L19)
 
 Validates the `MetadataParameterPolicy` data shape. Use `safeParse` to receive a success/error result, or `parse` when a thrown validation error is appropriate.
 
@@ -1020,7 +1020,7 @@ Fields (including inherited fields):
 
 ## `NamingConstraints`
 
-[Source](../../../packages/core/src/schemas/constraints.ts#L39)
+[Source](../../../packages/core/src/schemas/constraints.ts#L40)
 
 Permitted or excluded host patterns for subordinate Entity Identifiers.
 
@@ -1037,7 +1037,7 @@ Fields (including inherited fields):
 
 ## `NamingConstraintsSchema`
 
-[Source](../../../packages/core/src/schemas/constraints.ts#L18)
+[Source](../../../packages/core/src/schemas/constraints.ts#L19)
 
 Validates the `NamingConstraints` data shape. Use `safeParse` to receive a success/error result, or `parse` when a thrown validation error is appropriate.
 
@@ -1050,7 +1050,7 @@ Fields (including inherited fields):
 
 ## `OAuthAuthorizationServerMetadata`
 
-[Source](../../../packages/core/src/oauth-metadata.ts#L239)
+[Source](../../../packages/core/src/oauth-metadata.ts#L240)
 
 Effective OAuth authorization-server metadata, checked after Superior metadata and policy have been applied.
 
@@ -1245,7 +1245,7 @@ Fields (including inherited fields):
 
 ## `OAuthAuthorizationServerPublicationMetadata`
 
-[Source](../../../packages/core/src/oauth-metadata.ts#L240)
+[Source](../../../packages/core/src/oauth-metadata.ts#L241)
 
 OAuth authorization-server metadata suitable for publication before a Superior completes missing fields.
 
@@ -1440,7 +1440,7 @@ Fields (including inherited fields):
 
 ## `parseOAuthAuthorizationServerMetadata`
 
-[Source](../../../packages/core/src/oauth-metadata.ts#L243)
+[Source](../../../packages/core/src/oauth-metadata.ts#L244)
 
 Parse effective OAuth authorization-server metadata with protocol-specific field and cross-field checks. The default `oauth` profile requires `issuer` and `response_types_supported`; `openid4vci` permits the latter to be absent only for a pre-authorized-code-only server. Conditional endpoint and attestation requirements still apply. Unknown metadata is preserved. Parsing does not authenticate the issuer or `signed_metadata`.
 
@@ -1452,7 +1452,7 @@ parseOAuthAuthorizationServerMetadata(metadata: unknown, options: { profile?: "o
 
 ## `parseOAuthAuthorizationServerPublicationMetadata`
 
-[Source](../../../packages/core/src/oauth-metadata.ts#L265)
+[Source](../../../packages/core/src/oauth-metadata.ts#L266)
 
 Check supplied authorization-server publication fields while allowing a Superior to complete missing fields later. Supplied values and applicable cross-field consistency rules are still checked; unknown metadata is preserved.
 
@@ -1462,7 +1462,7 @@ parseOAuthAuthorizationServerPublicationMetadata(metadata: unknown): z.ZodSafePa
 
 ## `ResolveQuerySchema`
 
-[Source](../../../packages/core/src/schemas/entity-statement.ts#L174)
+[Source](../../../packages/core/src/schemas/entity-statement.ts#L178)
 
 Validates the `ResolveQuery` data shape. Use `safeParse` to receive a success/error result, or `parse` when a thrown validation error is appropriate.
 
@@ -1476,7 +1476,7 @@ Fields (including inherited fields):
 
 ## `ResolveResponsePayload`
 
-[Source](../../../packages/core/src/schemas/entity-statement.ts#L189)
+[Source](../../../packages/core/src/schemas/entity-statement.ts#L193)
 
 The subject's resolved metadata and chain evidence carried in a signed Resolve response.
 
@@ -1499,7 +1499,7 @@ Fields (including inherited fields):
 
 ## `ResolveResponsePayloadSchema`
 
-[Source](../../../packages/core/src/schemas/entity-statement.ts#L137)
+[Source](../../../packages/core/src/schemas/entity-statement.ts#L141)
 
 Resolve Response payload for the federation_resolve endpoint.
 
@@ -1518,7 +1518,7 @@ Fields (including inherited fields):
 
 ## `SubordinateEvent`
 
-[Source](../../../packages/core/src/schemas/subordinate-events.ts#L30)
+[Source](../../../packages/core/src/schemas/subordinate-events.ts#L31)
 
 A recorded subordinate lifecycle event and any associated extension data.
 
@@ -1537,7 +1537,7 @@ Fields (including inherited fields):
 
 ## `SubordinateEventSchema`
 
-[Source](../../../packages/core/src/schemas/subordinate-events.ts#L14)
+[Source](../../../packages/core/src/schemas/subordinate-events.ts#L15)
 
 Validates the `SubordinateEvent` data shape. Use `safeParse` to receive a success/error result, or `parse` when a thrown validation error is appropriate.
 
@@ -1552,7 +1552,7 @@ Fields (including inherited fields):
 
 ## `SubordinateEventsResponse`
 
-[Source](../../../packages/core/src/schemas/subordinate-events.ts#L31)
+[Source](../../../packages/core/src/schemas/subordinate-events.ts#L32)
 
 Claims and event history carried in a signed Subordinate Events response.
 
@@ -1572,7 +1572,7 @@ Fields (including inherited fields):
 
 ## `SubordinateEventsResponseSchema`
 
-[Source](../../../packages/core/src/schemas/subordinate-events.ts#L22)
+[Source](../../../packages/core/src/schemas/subordinate-events.ts#L23)
 
 Validates the `SubordinateEventsResponse` data shape. Use `safeParse` to receive a success/error result, or `parse` when a thrown validation error is appropriate.
 
@@ -1588,7 +1588,7 @@ Fields (including inherited fields):
 
 ## `SubordinateEventType`
 
-[Source](../../../packages/core/src/schemas/subordinate-events.ts#L5)
+[Source](../../../packages/core/src/schemas/subordinate-events.ts#L6)
 
 Standard subordinate lifecycle event names. Extension events use the extension-preserving event schema.
 
@@ -1605,7 +1605,7 @@ const SubordinateEventType: {
 
 ## `SubordinateStatementPayload`
 
-[Source](../../../packages/core/src/schemas/entity-statement.ts#L186)
+[Source](../../../packages/core/src/schemas/entity-statement.ts#L190)
 
 Claims in a Superior's statement about a specific subordinate.
 
@@ -1636,7 +1636,7 @@ Fields (including inherited fields):
 
 ## `SubordinateStatementSchema`
 
-[Source](../../../packages/core/src/schemas/entity-statement.ts#L54)
+[Source](../../../packages/core/src/schemas/entity-statement.ts#L58)
 
 Parse a Superior's statement about a different subject, require `iss !== sub` and `exp > iat`, and retain extension fields. Complete publication, signature, chain, and critical-claim validation are separate checks.
 
@@ -1663,7 +1663,7 @@ Fields (including inherited fields):
 
 ## `TrustChainConstraints`
 
-[Source](../../../packages/core/src/schemas/constraints.ts#L40)
+[Source](../../../packages/core/src/schemas/constraints.ts#L41)
 
 Path length, naming, entity-type, and extension constraints declared on a chain.
 
@@ -1681,7 +1681,7 @@ Fields (including inherited fields):
 
 ## `TrustChainConstraintsSchema`
 
-[Source](../../../packages/core/src/schemas/constraints.ts#L23)
+[Source](../../../packages/core/src/schemas/constraints.ts#L24)
 
 Validates the `TrustChainConstraints` data shape. Use `safeParse` to receive a success/error result, or `parse` when a thrown validation error is appropriate.
 
@@ -1839,7 +1839,7 @@ Fields (including inherited fields):
 
 ## `TrustMarkStatusBodySchema`
 
-[Source](../../../packages/core/src/schemas/entity-statement.ts#L180)
+[Source](../../../packages/core/src/schemas/entity-statement.ts#L184)
 
 Parse a Status request body with a nonempty `trust_mark` string. This object schema strips unknown fields; signature, issuer, and active-state checks occur in the Status workflow.
 
@@ -1851,7 +1851,7 @@ Fields (including inherited fields):
 
 ## `TrustMarkStatusResponsePayload`
 
-[Source](../../../packages/core/src/schemas/entity-statement.ts#L190)
+[Source](../../../packages/core/src/schemas/entity-statement.ts#L194)
 
 Claims in the issuer's signed response about a mark's status.
 
@@ -1870,7 +1870,7 @@ Fields (including inherited fields):
 
 ## `TrustMarkStatusResponsePayloadSchema`
 
-[Source](../../../packages/core/src/schemas/entity-statement.ts#L149)
+[Source](../../../packages/core/src/schemas/entity-statement.ts#L153)
 
 Trust Mark Status Response payload.
 

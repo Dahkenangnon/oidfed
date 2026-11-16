@@ -53,6 +53,8 @@ For documentation-only changes, check links, examples, and formatting. Runtime t
 
 Follow [SECURITY.md](SECURITY.md) for vulnerabilities. Use its private reporting process instead of opening a public issue with vulnerability details.
 
+For changes to the five protocol packages, run the [package security checks](docs/maintenance/security-checks.md) alongside the tests. That guide covers local setup, source and dependency scans, packed consumers, fuzzing, and mutation testing. The additional checks are scoped to those packages and their shared security and release workflows.
+
 Automated dependency PRs may use their generated branches and PR descriptions without a separate issue. Release automation follows the [release workflow](#releasing). These automated workflows can use their own issue and branch process. They follow the same review, commit, and verification requirements.
 
 ## Commit conventions
