@@ -10025,6 +10025,52 @@ export default (QUnit: QUnit) => {
 	// utils/subordinate-statement-shape — pure helpers
 	// -------------------------------------------------------------------------
 	module("authority / sanitizeSubordinateMetadata", () => {
+		test("public sanitizers preserve own extension names without changing prototypes", (t) => {
+			const prototype = Object.getOwnPropertyDescriptors(Object.prototype);
+			const metadata = JSON.parse(`{
+				"__proto__": {"example_claim": "retained"},
+				"constructor": {"example_claim": "constructor"},
+				"toString": {"example_claim": "toString"},
+				"hasOwnProperty": {"example_claim": "hasOwnProperty"},
+				"federation_entity": {
+					"__proto__": {"example_claim": "descriptive"},
+					"constructor": "retained", "toString": "retained", "hasOwnProperty": "retained",
+					"federation_fetch_endpoint": "https://authority.example/fetch"
+				}
+			}`) as Record<string, unknown>;
+			const before = JSON.stringify(metadata);
+			for (const Host of [TrustAnchor, Intermediate]) {
+				const result = Host.sanitizeSubordinateMetadata(metadata)!;
+				t.strictEqual(Object.getPrototypeOf(result), Object.prototype);
+				const federation = result.federation_entity as Record<string, unknown>;
+				t.strictEqual(Object.getPrototypeOf(federation), Object.prototype);
+				for (const name of ["__proto__", "constructor", "toString", "hasOwnProperty"]) {
+					t.true(Object.hasOwn(result, name), `${Host.name}: entity type ${name}`);
+					t.true(Object.hasOwn(federation, name), `${Host.name}: parameter ${name}`);
+					t.deepEqual(JSON.parse(JSON.stringify(result))[name], metadata[name]);
+				}
+				t.false(Object.hasOwn(federation, "federation_fetch_endpoint"));
+				t.equal(JSON.stringify(metadata), before, "input is unchanged");
+			}
+			const after = Object.getOwnPropertyDescriptors(Object.prototype);
+			t.deepEqual(Reflect.ownKeys(after), Reflect.ownKeys(prototype));
+			for (const key of Object.keys(prototype)) {
+				for (const field of [
+					"value",
+					"get",
+					"set",
+					"writable",
+					"enumerable",
+					"configurable",
+				] as const)
+					t.strictEqual(
+						after[key]?.[field],
+						prototype[key]?.[field],
+						`${key}.${field} is unchanged`,
+					);
+			}
+		});
+
 		test("strips every federation_entity operational field", (t) => {
 			const input = {
 				federation_entity: {

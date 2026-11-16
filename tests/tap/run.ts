@@ -7,6 +7,7 @@ export default async (QUnit: QUnit, done: (stats: QUnit.DoneDetails) => void) =>
 	QUnit.config.testTimeout = 10_000;
 
 	const modules = await Promise.all([
+		import("./security-properties.js"),
 		import("./integration/configuration-ownership.js"),
 		import("./packages/leaf.js"),
 		import("./packages/oidc.js"),

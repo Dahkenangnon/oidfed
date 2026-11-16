@@ -4,7 +4,7 @@
  * the fetch endpoint, and the subordinate store.
  */
 
-import { findInvalidMetadataNullPaths } from "@oidfed/core";
+import { findInvalidMetadataNullPaths, setOwn } from "@oidfed/core";
 import { InvalidMetadata } from "../errors.js";
 
 export { InvalidMetadata };
@@ -71,22 +71,22 @@ export function sanitizeSubordinateMetadata(
 	const result: Record<string, unknown> = {};
 	for (const [entityType, claims] of Object.entries(metadata)) {
 		if (entityType !== "federation_entity") {
-			result[entityType] = claims;
+			setOwn(result, entityType, claims);
 			continue;
 		}
 		if (!isPlainObject(claims)) {
 			// Pass through malformed federation_entity blocks untouched so the
 			// schema validator at signing time fails with a clearer error.
-			result[entityType] = claims;
+			setOwn(result, entityType, claims);
 			continue;
 		}
 		const filtered: Record<string, unknown> = {};
 		for (const [k, v] of Object.entries(claims)) {
 			if (isFederationEntityOperationalField(k)) continue;
-			filtered[k] = v;
+			setOwn(filtered, k, v);
 		}
 		if (Object.keys(filtered).length > 0) {
-			result[entityType] = filtered;
+			setOwn(result, entityType, filtered);
 		}
 	}
 	return Object.keys(result).length > 0 ? result : undefined;

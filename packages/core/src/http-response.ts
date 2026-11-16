@@ -24,17 +24,21 @@ export async function readResponseBody(
 		let text = "";
 		while (true) {
 			if (signal.aborted) throw new DOMException("Request aborted", "AbortError");
-			const { done, value } = await reader.read();
+			const chunk: { done: boolean; value?: unknown } = await reader.read();
+			const { done, value } = chunk;
 			if (signal.aborted) throw new DOMException("Request aborted", "AbortError");
 			if (done) {
 				finished = true;
 				return text + decoder.decode();
 			}
+			if (!ArrayBuffer.isView(value)) throw new TypeError("Response body must contain byte chunks");
 			received += value.byteLength;
 			if (received > maxBytes) {
 				throw new RangeError(`Response exceeds maximum size of ${maxBytes} bytes`);
 			}
-			text += decoder.decode(value, { stream: true });
+			text += decoder.decode(new Uint8Array(value.buffer, value.byteOffset, value.byteLength), {
+				stream: true,
+			});
 		}
 	} finally {
 		signal.removeEventListener("abort", onAbort);
