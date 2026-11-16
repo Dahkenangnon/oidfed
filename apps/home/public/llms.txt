@@ -10,11 +10,11 @@
 - [@oidfed/authority](https://github.com/Dahkenangnon/oidfed/blob/main/packages/authority/README.md): Trust Anchor and Intermediate Authority operations: subordinate management, statement issuance, and federation endpoint handlers, including fetch, list, resolve, Extended Listing, Subordinate Events, and Entity Collection.
 - [@oidfed/leaf](https://github.com/Dahkenangnon/oidfed/blob/main/packages/leaf/README.md): Leaf Entity toolkit — Entity Configuration serving, authority discovery, and trust chain participation for any entity at the edge of a federation (typically RPs or OPs that don't issue subordinate statements).
 - [@oidfed/oidc](https://github.com/Dahkenangnon/oidfed/blob/main/packages/oidc/README.md): OpenID Connect and OAuth 2.0 federation flows — automatic and explicit client registration, Request Object validation, and typed RP/OP metadata processing as defined in OpenID Federation 1.0 §12.
-- [@oidfed/wallet](https://github.com/Dahkenangnon/oidfed/blob/main/docs/packages/wallet.md): Wallet Provider, Credential Issuer, and Credential Verifier roles, federation trust checks, JWT Wallet Attestations, and protocol-engine integrations.
+- [@oidfed/wallet](https://github.com/Dahkenangnon/oidfed/blob/main/packages/wallet/README.md): Wallet Provider, Credential Issuer, and Credential Verifier roles, federation trust checks, JWT Wallet Attestations, and protocol-engine integrations.
 
 ## Tools
 
-- [@oidfed/cli](https://github.com/Dahkenangnon/oidfed/blob/main/docs/tools/cli.md): Command-line interface for inspecting, validating, and debugging OpenID Federation deployments: resolve trust chains, decode entity statements, verify signatures, check trust mark status, generate keys, sign statements, and query listing, collection, and event endpoints. Install with `npm i -g @oidfed/cli`.
+- [@oidfed/cli](https://github.com/Dahkenangnon/oidfed/blob/main/tools/cli/docs/readme.md): Command-line interface for inspecting, validating, and debugging OpenID Federation deployments: resolve trust chains, decode entity statements, verify signatures, check trust mark status, generate keys, sign statements, and query listing, collection, and event endpoints. Install with `npm i -g @oidfed/cli`.
 
 ## Apps
 
@@ -24,10 +24,10 @@
 
 ## Documentation
 
-- [Wiring Guide](https://github.com/Dahkenangnon/oidfed/blob/main/docs/guide/wiring-guide.md): End-to-end integration with Express.js and `panva/node-oidc-provider`. Worked eduGAIN-topology example covering Trust Anchor, Intermediate, OP, and RP.
-- [Storage Guide](https://github.com/Dahkenangnon/oidfed/blob/main/docs/guide/storage-guide.md): Production storage adapters, authority namespaces, subordinate records and event histories, Trust Marks, collection snapshots, replay protection, and the separate federation key-provider boundary.
-- [Dev Guide](https://github.com/Dahkenangnon/oidfed/blob/main/docs/guide/dev.md): Running the full multi-topology federation locally with wildcard DNS and TLS.
-- [E2E Test Infrastructure](https://github.com/Dahkenangnon/oidfed/blob/main/docs/test/e2e.md): Integration harness — real HTTPS over undici + Express + `oidc-provider`.
+- [Wiring Guide](https://github.com/Dahkenangnon/oidfed/blob/main/docs/features/11.5.http-wiring.md): End-to-end integration with Express.js and `panva/node-oidc-provider`. Worked eduGAIN-topology example covering Trust Anchor, Intermediate, OP, and RP.
+- [Storage Guide](https://github.com/Dahkenangnon/oidfed/blob/main/docs/features/11.6.storage-adapters.md): Production storage adapters, authority namespaces, subordinate records and event histories, Trust Marks, collection snapshots, replay protection, and the separate federation key-provider boundary.
+- [Dev Guide](https://github.com/Dahkenangnon/oidfed/blob/main/docs/maintenance/development.md): Running the full multi-topology federation locally with wildcard DNS and TLS.
+- [E2E Test Infrastructure](https://github.com/Dahkenangnon/oidfed/blob/main/docs/maintenance/testing/e2e.md): Integration harness — real HTTPS over undici + Express + `oidc-provider`.
 - [CONTRIBUTING](https://github.com/Dahkenangnon/oidfed/blob/main/CONTRIBUTING.md): Setup, test commands and runtime coverage, commit conventions, and the PR process.
 - [SECURITY](https://github.com/Dahkenangnon/oidfed/blob/main/SECURITY.md): Vulnerability disclosure policy.
 

@@ -8,7 +8,7 @@
 </p>
 
 <div align="center">
-  <img src="https://raw.githubusercontent.com/Dahkenangnon/oidfed/main/internal/assets/cli.png" alt="@oidfed/cli banner" width="600" />
+  <img src="https://raw.githubusercontent.com/Dahkenangnon/oidfed/main/apps/shared/assets/cli.png" alt="@oidfed/cli banner" width="600" />
 </div>
 
 <p align="center">
@@ -24,7 +24,7 @@ Command-line interface for inspecting, validating, and debugging OpenID Federati
 
 Implements command-line inspection and debugging utilities for the final [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) / [1.1](https://openid.net/specs/openid-federation-1_1.html) specifications, and [Extended Subordinate Listing 1.0](https://openid.net/specs/openid-federation-extended-listing-1_0.html) (tracks draft-03).
 
-The CLI also retrieves [Subordinate Events](https://openid.net/specs/openid-federation-subordinate-events-1_0-01.html) (Draft 01) and [Entity Collections](https://openid.net/specs/openid-federation-entity-collection-1_0-01.html) (Draft 01). See the [command reference](https://github.com/Dahkenangnon/oidfed/blob/main/docs/tools/cli.md) for their parameters and verification requirements.
+The CLI also retrieves [Subordinate Events](https://openid.net/specs/openid-federation-subordinate-events-1_0-01.html) (Draft 01) and [Entity Collections](https://openid.net/specs/openid-federation-entity-collection-1_0-01.html) (Draft 01). See the [command reference](https://github.com/Dahkenangnon/oidfed/blob/main/tools/cli/docs/readme.md) for their parameters and verification requirements.
 
 ## Install
 
@@ -54,7 +54,7 @@ Installs two equivalent binaries: `oidfed` and `openidfed`.
 
 ## Usage
 
-`oidfed validate` reports chain validity in `valid` and individual Trust Mark outcomes in `trust_marks`, for both entity-ID and JWT input. Each outcome is `verified`, `invalid`, or `unevaluated`. A valid chain can contain an expired or unverifiable mark; application accreditation requirements are a separate decision. The [core guide](../../docs/packages/core.md#trust-marks) describes the checks.
+`oidfed validate` reports chain validity in `valid` and individual Trust Mark outcomes in `trust_marks`, for both entity-ID and JWT input. Each outcome is `verified`, `invalid`, or `unevaluated`. A valid chain can contain an expired or unverifiable mark; application accreditation requirements are a separate decision. The [core guide](../../docs/features/6.4.trust-mark-validation.md#trust-marks-in-a-validated-chain) describes the checks.
 
 You can try the following commands immediately against `@oidfed`'s live reference deployment ([fed.oidfed.com](https://fed.oidfed.com/)):
 
@@ -88,8 +88,8 @@ oidfed list-extended https://ta.single.fed.oidfed.com \
 
 ## Documentation
 
-For a complete CLI command reference, configuration parameters, global flags, and debugging workflows, see the [docs/tools/cli.md](https://github.com/Dahkenangnon/oidfed/blob/main/docs/tools/cli.md) file.
+For a complete CLI command reference, configuration parameters, global flags, and debugging workflows, see the [CLI documentation](https://github.com/Dahkenangnon/oidfed/blob/main/tools/cli/docs/readme.md) file.
 
 ## License
 
-[Apache-2.0](./LICENSE) — see [`NOTICE`](./NOTICE) for attribution.
+[Apache-2.0](LICENSE) — see [`NOTICE`](NOTICE) for attribution.

@@ -9,7 +9,7 @@
 </p>
 
 <div align="center">
-  <img src="https://raw.githubusercontent.com/Dahkenangnon/oidfed/main/internal/assets/authority.png" alt="@oidfed/authority banner" width="600" />
+  <img src="https://raw.githubusercontent.com/Dahkenangnon/oidfed/main/apps/shared/assets/authority.png" alt="@oidfed/authority banner" width="600" />
 </div>
 
 <p align="center">
@@ -80,7 +80,7 @@ const ta = new TrustAnchor({
 });
 
 // Serve requests directly with fetch-compatible handleRequest:
-const response = await ta.handleRequest(request);
+export const handleRequest = (request: Request) => ta.handleRequest(request);
 ```
 
 Authority entities require a federation key provider with lifecycle support. Use
@@ -96,8 +96,8 @@ atomically recorded before the endpoint runs; production processes serving the s
 authority must share replay state.
 
 Authorities can publish signed subordinate histories through the optional
-[Subordinate Events endpoint](https://github.com/Dahkenangnon/oidfed/blob/main/docs/packages/authority.md#subordinate-event-history).
-Compose [wallet roles](https://github.com/Dahkenangnon/oidfed/blob/main/docs/packages/wallet.md)
+[Subordinate Events endpoint](https://github.com/Dahkenangnon/oidfed/blob/main/docs/features/13.1.subordinate-events.md#lifecycle-recording-and-endpoint-responses).
+Compose [wallet roles](https://github.com/Dahkenangnon/oidfed/blob/main/docs/api/wallet/README.md)
 when an authority also acts as a Wallet Provider, Credential Issuer, or Verifier.
 
 HTTP routes follow the URLs advertised in `metadata.federation_entity`. The
@@ -107,12 +107,12 @@ endpoint URL paths.
 
 ## Entity Collection
 
-Trust Anchors and Intermediates can serve Draft 01 collections through the shared core service. Refresh snapshots explicitly, then query them with filters, informational claims, language selection, and pagination. See the [Entity Collection guide](https://github.com/Dahkenangnon/oidfed/blob/main/docs/guide/entity-collection.md) for configuration and endpoint integration.
+Trust Anchors and Intermediates can serve Draft 01 collections through the shared core service. Refresh snapshots explicitly, then query them with filters, informational claims, language selection, and pagination. See the [Entity Collection guide](https://github.com/Dahkenangnon/oidfed/blob/main/docs/features/14.2.collection-operations.md) for configuration and endpoint integration.
 
 ## Documentation
 
-For a detailed API reference, subordinate management APIs, and unified storage adapter setups, see the [docs/packages/authority.md](https://github.com/Dahkenangnon/oidfed/blob/main/docs/packages/authority.md) file.
+For a detailed API reference, subordinate management APIs, and unified storage adapter setups, see the [authority API reference](https://github.com/Dahkenangnon/oidfed/blob/main/docs/api/authority/README.md) file.
 
 ## License
 
-[Apache-2.0](./LICENSE) — see [`NOTICE`](./NOTICE) for attribution.
+[Apache-2.0](LICENSE) — see [`NOTICE`](NOTICE) for attribution.

@@ -9,7 +9,7 @@
 </p>
 
 <div align="center">
-  <img src="https://raw.githubusercontent.com/Dahkenangnon/oidfed/main/internal/assets/leaf.png" alt="@oidfed/leaf banner" width="600" />
+  <img src="https://raw.githubusercontent.com/Dahkenangnon/oidfed/main/apps/shared/assets/leaf.png" alt="@oidfed/leaf banner" width="600" />
 </div>
 
 <p align="center">
@@ -55,9 +55,14 @@ import { Leaf } from "@oidfed/leaf";
 import { OidcRelyingPartyRole, StaticProtocolSigningKeyProvider } from "@oidfed/oidc";
 import {
   createFederationSigningKey,
+  generateSigningKey,
   JwkSigner,
   MemoryFederationKeyProvider,
 } from "@oidfed/core";
+
+// Temporary keys for this example; use persistent providers in deployment.
+const { privateKey: myFederationSigningKey } = await generateSigningKey("ES256");
+const { privateKey: myProtocolSigningKey, publicKey: protocolPublicKey } = await generateSigningKey("ES256");
 
 const leaf = new Leaf({
   entityId: "https://rp.example.com",
@@ -86,7 +91,7 @@ const leaf = new Leaf({
 });
 
 // Serve the request directly using a fetch-compatible interface:
-const response = await leaf.handleRequest(request);
+export const handleRequest = (request: Request) => leaf.handleRequest(request);
 ```
 
 `Leaf` accepts the read-only `FederationKeyProvider` contract because it only
@@ -94,16 +99,16 @@ needs the current federation signer and published Federation JWKS. The in-memory
 provider used above also supports lifecycle operations, but leaf code does not
 depend on those methods.
 
-Leaves can compose [wallet roles](https://github.com/Dahkenangnon/oidfed/blob/main/docs/packages/wallet.md) for Wallet Providers, Credential Issuers, and Credential Verifiers.
+Leaves can compose [wallet roles](https://github.com/Dahkenangnon/oidfed/blob/main/docs/api/wallet/README.md) for Wallet Providers, Credential Issuers, and Credential Verifiers.
 
 ## Entity Collection
 
-Leaves can serve Draft 01 collections through the shared core service. It supports explicit snapshot refresh, filters, informational metadata, language selection, and pagination. See the [Entity Collection guide](https://github.com/Dahkenangnon/oidfed/blob/main/docs/guide/entity-collection.md) for configuration and endpoint integration.
+Leaves can serve Draft 01 collections through the shared core service. It supports explicit snapshot refresh, filters, informational metadata, language selection, and pagination. See the [Entity Collection guide](https://github.com/Dahkenangnon/oidfed/blob/main/docs/features/14.2.collection-operations.md) for configuration and endpoint integration.
 
 ## Documentation
 
-For a detailed API reference, entity configuration setups, and authority discovery guides, see the [docs/packages/leaf.md](https://github.com/Dahkenangnon/oidfed/blob/main/docs/packages/leaf.md) file.
+See the [leaf API reference](https://github.com/Dahkenangnon/oidfed/blob/main/docs/api/leaf/README.md) for public constructors, methods, and configuration contracts.
 
 ## License
 
-[Apache-2.0](./LICENSE) — see [`NOTICE`](./NOTICE) for attribution.
+[Apache-2.0](LICENSE) — see [`NOTICE`](NOTICE) for attribution.

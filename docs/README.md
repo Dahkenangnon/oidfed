@@ -1,52 +1,28 @@
 # Documentation
 
-Use `@oidfed/*` to add federation trust to existing services and wallet ecosystems. Protocol roles compose into federation hosts; the application owns its protocol endpoints and sessions.
+Use oidfed to establish federation trust around an existing application. Start with a feature guide when building a workflow; use the API reference when you need an exact option or return value.
 
-## Start with your role
-
-| You are building… | Read first | Next step |
-|---|---|---|
-| A Trust Anchor or Intermediate Authority | [Authority](packages/authority.md) | [Storage](guide/storage-guide.md) and [HTTP wiring](guide/wiring-guide.md) |
-| An OP joining a federation | [Leaf](packages/leaf.md) and [OIDC roles](packages/oidc.md) | Connect registration processing to your OP's client store |
-| An RP joining a federation | [Leaf](packages/leaf.md) and [OIDC roles](packages/oidc.md) | Discover an OP and choose automatic or explicit registration |
-| A Wallet Provider, Credential Issuer, or Credential Verifier | [Wallet roles](packages/wallet.md) | Compose roles into a host or use static trust operations from a wallet application |
-| A federation inspector or validator | [CLI](tools/cli.md) or [explorer](apps/explorer.md) | [Core](packages/core.md) for programmatic access |
-| A contributor running the repository | [Local development](guide/dev.md) | [E2E tests](test/e2e.md) and [shared UI](internal/ui.md) |
-
-## Packages
-
-| Package | Responsibility |
+| What you need | Start here |
 |---|---|
-| [`@oidfed/core`](packages/core.md) | Entity Statements, signatures, trust-chain discovery and validation, metadata policies, constraints, trust marks, and federation key contracts |
-| [`@oidfed/authority`](packages/authority.md) | Trust Anchors and Intermediates: subordinate records, statement issuance, federation endpoints, and key lifecycle integration |
-| [`@oidfed/leaf`](packages/leaf.md) | Self-signed Entity Configurations for participants that do not issue Subordinate Statements |
-| [`@oidfed/oidc`](packages/oidc.md) | OIDC/OAuth roles and federation registration methods composed into a parent entity |
-| [`@oidfed/wallet`](packages/wallet.md) | Wallet ecosystem roles, metadata policies, Wallet Attestations, and federation-backed protocol checks |
-| [`@oidfed/cli`](tools/cli.md) | Terminal inspection, validation, signing, and health checks |
+| Enroll participants and operate a federation | [Federation participants](features/1.federation-participants.md) |
+| Discover an entity and decide whether to trust it | [Trust chains](features/3.trust-chains.md) and [discovery](features/8.discovery.md) |
+| Issue, publish, or rely on accreditation | [Trust Marks](features/6.trust-marks.md) |
+| Connect an OP, RP, OAuth client, or authorization server | [OIDC and OAuth](features/15.oidc-and-oauth.md) |
+| Add federation trust to a wallet ecosystem | [Wallet workflows](features/16.wallet.md) |
+| Look up a function, class, option, or type | [API reference](api/README.md) |
+| Contribute to this repository | [Contributing](../CONTRIBUTING.md) |
+| Set up local development and tests | [Development](maintenance/development.md), [HTTPS tests](maintenance/testing/e2e.md), and [conformance tests](maintenance/testing/conformance.md) |
 
-```text
-@oidfed/authority ─┐
-@oidfed/leaf      ─┤
-@oidfed/oidc      ─┼─→ @oidfed/core
-@oidfed/wallet    ─┘
-@oidfed/cli       ──→ @oidfed/core
-```
+The guides follow **Campus Alliance**, an academic-services federation, and **Market Alliance**, a loyalty-membership ecosystem. Each topic overview introduces its actors in an expandable example context. The names and `.example` addresses are fictional.
 
-The authority, leaf, OIDC, and wallet libraries use `core` as a peer dependency and do not depend on one another. Install `core` alongside the libraries you use.
+Choose one federation host per Entity Identifier: `Leaf`, `Intermediate`, or `TrustAnchor`. Compose protocol roles into it. The application supplies HTTPS serving, durable storage, key custody, and its OIDC/OAuth or wallet protocol engine. [Serve federation endpoints](features/11.5.http-wiring.md) connects the pieces.
 
-## Integration model
+## Package references
 
-Choose one parent entity for each Entity Identifier: `TrustAnchor`, `Intermediate`, or `Leaf`. Add OIDC/OAuth or wallet roles to that parent. For example, an OP that has no federation subordinates uses `Leaf` with `OidcProviderRole`; an OP that also issues Subordinate Statements can use `Intermediate` with the same role.
-
-Parent handlers accept a Web API `Request` and return a `Promise<Response>`. Parents merge role metadata and dispatch role routes. Your application adapts these handlers to its HTTP framework and connects protocol-specific hooks to its OIDC or VCI/VP implementation.
-
-Keep federation signing keys separate from protocol keys. Federation key providers expose the federation signer and public JWKS; protocol signers handle Request Objects, client assertions, and Wallet Attestations. In-memory providers and adapters support local development; production deployments need durable keys and shared authoritative state.
-
-## Guides
-
-- [Operator and application responsibilities](guide/operator-responsibilities.md): protocol requirements, library policies, and deployment ownership for each implemented specification.
-- [Wiring guide](guide/wiring-guide.md): configure entities, enroll subordinates, adapt HTTP requests, and connect OP/RP registration.
-- [Storage guide](guide/storage-guide.md): persistence, transaction, replay, and cache contracts.
-- [Development guide](guide/dev.md): workspace commands, local federation topologies, DNS, and TLS.
-- [E2E tests](test/e2e.md): HTTPS test infrastructure and scenario lifecycle.
-- [Project README](../README.md): requirements, specification support, security, and licensing.
+| Package | Public API |
+|---|---|
+| `@oidfed/core` | [Statements, keys, chains, policies, endpoint clients, Trust Marks, and shared contracts](api/core/README.md) |
+| `@oidfed/authority` | [Trust Anchors, Intermediates, subordinate management, and storage](api/authority/README.md) |
+| `@oidfed/leaf` | [Participant publication and composed federation services](api/leaf/README.md) |
+| `@oidfed/oidc` | [OIDC/OAuth roles and registration](api/oidc/README.md) |
+| `@oidfed/wallet` | [Wallet roles, attestations, and federation-backed request verification](api/wallet/README.md) |

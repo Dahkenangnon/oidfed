@@ -14,7 +14,7 @@ Protocol-specific roles add metadata and handlers to those entities. `@oidfed/oi
 | [OpenID Federation for OpenID Connect 1.1](https://openid.net/specs/openid-federation-connect-1_1.html) | OIDC and OAuth entity metadata, with automatic and explicit OIDC client registration. |
 | [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) | The combined trust framework and OIDC/OAuth functionality from which the two 1.1 specifications were separated. |
 | [Extended Subordinate Listing 1.0, Draft 03](https://openid.net/specs/openid-federation-extended-listing-1_0.html) | Opaque `from` / `next` pagination, repeated Trust Mark type filters, audit timestamps, and selected Subordinate Statement claims. |
-| [Subordinate Events Endpoint 1.0, Draft 01](https://openid.net/specs/openid-federation-subordinate-events-1_0.html) | Signed subordinate event history, transactional lifecycle recording, and verified library and CLI retrieval. |
+| [Subordinate Events Endpoint 1.0, Draft 01](https://openid.net/specs/openid-federation-subordinate-events-1_0.html) | Signed subordinate event history, transactional lifecycle recording, and verified event retrieval. |
 | [Entity Collection Endpoint 1.0, Draft 01](https://openid.net/specs/openid-federation-entity-collection-1_0.html) | Discovery of direct and indirect subordinates, with filters, informational metadata, language selection, and opaque pagination. Federation Entities and independent applications can serve the endpoint. |
 | [Wallet Architectures 1.0, Draft 05](https://openid.net/specs/openid-federation-wallet-1_0.html) | Provider, issuer, and verifier roles, federation-backed request checks, Wallet Attestations, and credential-verification integrations. |
 
@@ -26,14 +26,13 @@ See the [OpenID Federation ecosystem](https://oidfed.com/ecosystem/) for related
 
 | Package | Use it for |
 |---|---|
-| [`@oidfed/core`](docs/packages/core.md) | Entity Statements, trust-chain resolution and validation, metadata policies, constraints, Trust Marks, federation key providers, and the shared Entity Collection service and client. |
-| [`@oidfed/authority`](docs/packages/authority.md) | Trust Anchors and Intermediates: subordinate management, statement issuance, and federation endpoint handlers. |
-| [`@oidfed/leaf`](docs/packages/leaf.md) | Leaf Entity Configurations and trust-chain discovery. |
-| [`@oidfed/oidc`](docs/packages/oidc.md) | OIDC and OAuth roles composed into an authority or leaf, with federation registration for OPs and RPs. |
-| [`@oidfed/wallet`](docs/packages/wallet.md) | Wallet ecosystem roles, trust discovery, Wallet Attestations, presentation request policies, and credential-format integrations. |
-| [`@oidfed/cli`](docs/tools/cli.md) | Inspect entities, resolve trust chains, verify statements, and check federation endpoints from the terminal. |
+| [`@oidfed/core`](docs/api/core/README.md) | Entity Statements, trust-chain resolution and validation, metadata policies, constraints, Trust Marks, federation key providers, and the shared Entity Collection service and client. |
+| [`@oidfed/authority`](docs/api/authority/README.md) | Trust Anchors and Intermediates: subordinate management, statement issuance, and federation endpoint handlers. |
+| [`@oidfed/leaf`](docs/api/leaf/README.md) | Leaf Entity Configurations and trust-chain discovery. |
+| [`@oidfed/oidc`](docs/api/oidc/README.md) | OIDC and OAuth roles composed into an authority or leaf, with federation registration for OPs and RPs. |
+| [`@oidfed/wallet`](docs/api/wallet/README.md) | Wallet ecosystem roles, trust discovery, Wallet Attestations, presentation request policies, and credential-format integrations. |
 
-All five libraries include TypeScript types. The CLI runs on Node.js.
+All five libraries include TypeScript types.
 
 ```mermaid
 flowchart TD
@@ -77,20 +76,19 @@ export const handleRequest = (request: Request) => authority.handleRequest(reque
 
 Mount `handleRequest` in your HTTP server or worker and serve the Entity Identifier over HTTPS. Routes follow the advertised endpoint paths. The Entity Configuration is available at `https://ta.example.org/.well-known/openid-federation`.
 
-This example uses temporary in-memory keys and storage. For deployment, supply a durable federation key provider and a `StorageAdapter`. The [wiring guide](docs/guide/wiring-guide.md) covers HTTP integration, subordinate enrollment, and OP/RP registration. The [storage guide](docs/guide/storage-guide.md) defines persistence, transaction, replay, and cache contracts.
+This example uses temporary in-memory keys and storage. For deployment, supply a durable federation key provider and a `StorageAdapter`. The [wiring guide](docs/features/11.5.http-wiring.md) covers HTTP integration, subordinate enrollment, and OP/RP registration. The [storage guide](docs/features/11.6.storage-adapters.md) defines persistence, transaction, replay, and cache contracts.
 
-Use a Trust Anchor for an authority without superiors, an Intermediate for an authority with at least one superior, and a Leaf for a participant that does not issue Subordinate Statements. These choices describe the federation hierarchy independently of the application protocol. Trust-chain validation requires a configured set of trusted anchors and their public federation keys.
+Use a Trust Anchor when participants configure this entity as a root of trust, an Intermediate for a subordinate authority, and a Leaf for a participant that does not issue Subordinate Statements. A Trust Anchor can also have Superiors when it participates in another federation. These roles are independent of the application protocol. Trust-chain validation requires a configured set of trusted anchors and their public federation keys.
 
-For OIDC/OAuth applications, compose the appropriate [protocol role](docs/packages/oidc.md) into the parent entity. Keep federation signing keys separate from protocol keys used for Request Objects and client assertions.
+For OIDC/OAuth applications, compose the appropriate [protocol role](docs/api/oidc/README.md) into the parent entity. Keep federation signing keys separate from protocol keys used for Request Objects and client assertions.
 
 ## Example federation
 
 The [example federation repository](https://github.com/Dahkenangnon/fed-oidfed-com) demonstrates six topologies, including hierarchical and multi-anchor federations, cross-federation trust, constraints, and metadata policies. Browse the [demo federation](https://fed.oidfed.com) with the [Explorer](https://explore.oidfed.com).
 
-## Documentation and tools
+## Documentation and applications
 
 - [Documentation](docs/README.md): package APIs and integration guides.
-- [CLI](docs/tools/cli.md): command-line inspection and validation.
 - [Explorer](https://explore.oidfed.com): inspect Entity Configurations, trust chains, metadata policies, and Trust Marks in the browser.
 - [Learn OpenID Federation](https://learn.oidfed.com): an interactive course on federation concepts and protocol flows.
 - [Security policy](SECURITY.md): vulnerability reporting.

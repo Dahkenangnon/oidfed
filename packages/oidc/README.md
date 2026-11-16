@@ -9,7 +9,7 @@
 </p>
 
 <div align="center">
-  <img src="https://raw.githubusercontent.com/Dahkenangnon/oidfed/main/internal/assets/oidc.png" alt="@oidfed/oidc banner" width="600" />
+  <img src="https://raw.githubusercontent.com/Dahkenangnon/oidfed/main/apps/shared/assets/oidc.png" alt="@oidfed/oidc banner" width="600" />
 </div>
 
 <p align="center">
@@ -64,9 +64,14 @@ import { Leaf } from "@oidfed/leaf";
 import { OidcRelyingPartyRole, StaticProtocolSigningKeyProvider } from "@oidfed/oidc";
 import {
   createFederationSigningKey,
+  generateSigningKey,
   JwkSigner,
   MemoryFederationKeyProvider,
 } from "@oidfed/core";
+
+// Temporary keys for this example; use persistent providers in deployment.
+const { privateKey: federationSigningKey } = await generateSigningKey("ES256");
+const { privateKey: protocolSigningKey, publicKey: protocolPublicKey } = await generateSigningKey("ES256");
 
 const rpEntity = new Leaf({
   entityId: "https://rp.example.com",
@@ -103,46 +108,56 @@ This example assumes `opProtocolPublicKeys` contains the OP’s RSA and EC proto
 ```ts
 import { TrustAnchor, MemoryStorageAdapter } from "@oidfed/authority";
 import { OidcProviderRole } from "@oidfed/oidc";
-import { createTrustAnchorSet } from "@oidfed/core";
+import { createTrustAnchorSet, type FederationKeyLifecycleProvider, type JWK, type ReplayStore } from "@oidfed/core";
 
-const opEntity = new TrustAnchor({
-  entityId: "https://op.example.com",
-  keyProvider,
-  trustAnchors: createTrustAnchorSet([
-    {
-      entityId: "https://op.example.com",
-      jwks: { keys: [opFederationPublicKey] },
-    },
-  ]),
-  storage: new MemoryStorageAdapter(),
-  metadata: {
-    federation_entity: {
-      federation_fetch_endpoint: "https://op.example.com/federation_fetch",
-      federation_list_endpoint: "https://op.example.com/federation_list",
-    },
-  },
-  roles: [
-    new OidcProviderRole({
-      registrationPath: "/register",
-      metadata: {
-        issuer: "https://op.example.com",
-        authorization_endpoint: "https://op.example.com/auth",
-        token_endpoint: "https://op.example.com/token",
-        response_types_supported: ["code"],
-        subject_types_supported: ["public"],
-        id_token_signing_alg_values_supported: ["RS256", "ES256"],
-        client_registration_types_supported: ["automatic", "explicit"],
-        jwks: { keys: opProtocolPublicKeys },
+export async function createExampleOp(
+  keyProvider: FederationKeyLifecycleProvider,
+  opProtocolPublicKeys: JWK[],
+  replayStore: ReplayStore,
+) {
+  const federationKeys = await keyProvider.getFederationKeySet();
+
+  const opEntity = new TrustAnchor({
+    entityId: "https://op.example.com",
+    keyProvider,
+    trustAnchors: createTrustAnchorSet([
+      {
+        entityId: "https://op.example.com",
+        jwks: federationKeys.jwks,
       },
-    })
-  ]
-});
+    ]),
+    storage: new MemoryStorageAdapter(),
+    metadata: {
+      federation_entity: {
+        federation_fetch_endpoint: "https://op.example.com/federation_fetch",
+        federation_list_endpoint: "https://op.example.com/federation_list",
+      },
+    },
+    roles: [
+      new OidcProviderRole({
+        replayStore,
+        registrationPath: "/register",
+        metadata: {
+          issuer: "https://op.example.com",
+          authorization_endpoint: "https://op.example.com/auth",
+          token_endpoint: "https://op.example.com/token",
+          response_types_supported: ["code"],
+          subject_types_supported: ["public"],
+          id_token_signing_alg_values_supported: ["RS256", "ES256"],
+          client_registration_types_supported: ["automatic", "explicit"],
+          jwks: { keys: opProtocolPublicKeys },
+        },
+      })
+    ]
+  });
+  return opEntity;
+}
 ```
 
 ## Documentation
 
-For a detailed API reference, OIDC role classes, automatic/explicit registration details, and metadata types, see the [docs/packages/oidc.md](https://github.com/Dahkenangnon/oidfed/blob/main/docs/packages/oidc.md) file.
+See the [OIDC API reference](https://github.com/Dahkenangnon/oidfed/blob/main/docs/api/oidc/README.md) for public roles, registration contracts, protocol key providers, and metadata validation methods.
 
 ## License
 
-[Apache-2.0](./LICENSE) — see [`NOTICE`](./NOTICE) for attribution.
+[Apache-2.0](LICENSE) — see [`NOTICE`](NOTICE) for attribution.

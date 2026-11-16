@@ -9,7 +9,7 @@
 </p>
 
 <div align="center">
-  <img src="https://raw.githubusercontent.com/Dahkenangnon/oidfed/main/internal/assets/core.png" alt="@oidfed/core banner" width="600" />
+  <img src="https://raw.githubusercontent.com/Dahkenangnon/oidfed/main/apps/shared/assets/core.png" alt="@oidfed/core banner" width="600" />
 </div>
 
 <p align="center">
@@ -56,43 +56,46 @@ deno add npm:@oidfed/core
 ```ts
 import {
   entityId,
-  generateSigningKey,
+  type JWKSet,
   resolveTrustChains,
   validateTrustChain,
   createTrustAnchorSet,
 } from "@oidfed/core";
 
-const trustAnchors = createTrustAnchorSet([
-  { entityId: "https://ta.example.org", jwks: { keys: [taKey] } },
-]);
+// Obtain these keys through an independently trusted configuration process.
+export async function inspectParticipant(taKeys: JWKSet) {
+  const trustAnchors = createTrustAnchorSet([
+    { entityId: "https://ta.example.org", jwks: taKeys },
+  ]);
 
-const result = await resolveTrustChains(
-  entityId("https://leaf.example.com"),
-  trustAnchors,
-);
+  const result = await resolveTrustChains(
+    entityId("https://leaf.example.com"),
+    trustAnchors,
+  );
 
-for (const chain of result.chains) {
-  const validated = await validateTrustChain(chain.statements, trustAnchors, {
-    entityConfigurations: chain.entityConfigurations,
-  });
-  if (validated.valid) {
-    console.log(validated.chain.resolvedMetadata);
+  for (const chain of result.chains) {
+    const validated = await validateTrustChain(chain.statements, trustAnchors, {
+      entityConfigurations: chain.entityConfigurations,
+    });
+    if (validated.valid) {
+      console.log(validated.chain.resolvedMetadata);
+    }
   }
 }
 ```
 
 ## Subordinate Events
 
-Core provides event schemas, media types, and a client that verifies signed histories against trusted authority keys. See the [core guide](https://github.com/Dahkenangnon/oidfed/blob/main/docs/packages/core.md#subordinate-events-endpoint) for request and verification options.
+Core provides event schemas, media types, and a client that verifies signed histories against trusted authority keys. See the [core guide](https://github.com/Dahkenangnon/oidfed/blob/main/docs/features/13.1.subordinate-events.md#retrieve-and-verify-a-history-response) for request and verification options.
 
 ## Entity Collection
 
-Core provides the Draft 01 collection service and HTTP client. The service supports explicit snapshot refresh, filters, informational metadata, language selection, and pagination. Independent applications can use it to serve collections. See the [Entity Collection guide](https://github.com/Dahkenangnon/oidfed/blob/main/docs/guide/entity-collection.md) for standalone providers and the HTTP client.
+Core provides the Draft 01 collection service and HTTP client. The service supports explicit snapshot refresh, filters, informational metadata, language selection, and pagination. Independent applications can use it to serve collections. See the [Entity Collection guide](https://github.com/Dahkenangnon/oidfed/blob/main/docs/features/14.2.collection-operations.md) for standalone providers and the HTTP client.
 
 ## Documentation
 
-For a detailed API reference, configuration options, and core architectural guides, see the [docs/packages/core.md](https://github.com/Dahkenangnon/oidfed/blob/main/docs/packages/core.md) file.
+For a detailed API reference, configuration options, and core architectural guides, see the [core API reference](https://github.com/Dahkenangnon/oidfed/blob/main/docs/api/core/README.md) file.
 
 ## License
 
-[Apache-2.0](./LICENSE) — see [`NOTICE`](./NOTICE) for attribution.
+[Apache-2.0](LICENSE) — see [`NOTICE`](NOTICE) for attribution.

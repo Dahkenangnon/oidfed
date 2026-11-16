@@ -6,6 +6,6 @@ Compose roles into `@oidfed/leaf` or `@oidfed/authority`. Wallet applications ca
 
 The package supports JWT Wallet Attestations, proof-of-possession authentication, federation-backed Request Object checks, supplied chains, offline validation, and credential-format integrations. Your VCI/VP engine owns protocol endpoints, sessions, credential selection, and presentation processing.
 
-See the [wallet package guide](../../docs/packages/wallet.md) for APIs, composition examples, trust boundaries, and the Draft 05 DCQL interpretation.
+See the [wallet API reference](../../docs/api/wallet/README.md) for public roles, signatures, validation contracts, and usage examples.
 
-All three roles expose `parsePublicationMetadata()` for partial publications and `parseMetadata()` for completed effective metadata. Matching `*PublicationMetadata` types are available from the package entrypoint; see the [metadata guidance](../../docs/packages/wallet.md).
+All three roles expose `parsePublicationMetadata()` for partial publications and `parseMetadata()` for completed effective metadata. Matching `*PublicationMetadata` types are available from the package entrypoint; see the [metadata reference](../../docs/api/wallet/wallet.md#walletprovidermetadata).
