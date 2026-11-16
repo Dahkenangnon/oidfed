@@ -1,0 +1,150 @@
+name: Protocol package security
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/**'
+      - 'tests/tap/**'
+      - 'tests/security/**'
+      - 'scripts/security/**'
+      - '.node-version'
+      - 'tsconfig.base.json'
+      - 'biome.json'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.github/workflows/*.yml'
+      - '.github/workflows/*.yaml'
+  pull_request:
+    paths:
+      - 'packages/**'
+      - 'tests/tap/**'
+      - 'tests/security/**'
+      - 'scripts/security/**'
+      - '.node-version'
+      - 'tsconfig.base.json'
+      - 'biome.json'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.github/workflows/*.yml'
+      - '.github/workflows/*.yaml'
+  schedule:
+    - cron: '31 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Scoped source, dependencies, and artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm security:install
+      - name: Build the five protocol packages
+        run: pnpm --filter @oidfed/core --filter @oidfed/authority --filter @oidfed/leaf --filter @oidfed/oidc --filter @oidfed/wallet build
+      - run: pnpm security:test
+      - run: pnpm security:lint
+      - run: pnpm security:architecture
+      - run: pnpm security:semgrep
+      - run: pnpm security:secrets
+      - name: Check changed published dependencies on PRs; the full graph otherwise
+        env:
+          SECURITY_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: pnpm security:dependencies
+      - run: pnpm security:artifacts
+      - run: pnpm security:workflows
+      - name: Generated security properties and regression suite
+        env:
+          TSX_TSCONFIG_PATH: tests/tap/tsconfig.json
+        run: node --import tsx tests/tap/run-node.ts
+      - name: Advisory unused-code and duplication reports
+        run: pnpm security:advisory
+
+  semgrep-python:
+    name: Semgrep hash lock (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.12', '3.13', '3.14']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install only reviewed Semgrep wheels
+        run: node --input-type=module -e 'import {installSemgrep} from "./scripts/security/install.mjs"; await installSemgrep();'
+      - name: Verify local rule fixtures
+        env:
+          SEMGREP_SEND_METRICS: 'off'
+          SEMGREP_ENABLE_VERSION_CHECK: '0'
+          SEMGREP_SETTINGS_FILE: ${{ runner.temp }}/semgrep-settings.yml
+          SEMGREP_LOG_FILE: ${{ runner.temp }}/semgrep.log
+        run: node_modules/.cache/spec-security/semgrep/bin/semgrep --metrics off --disable-version-check --test --config scripts/security/semgrep.yml tests/security/semgrep.ts
+
+  deep-checks:
+    name: Bounded fuzzing and mutation checks
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm security:fuzz
+        env:
+          FUZZ_SECONDS: '120'
+      - run: pnpm security:mutation
+
+  codeql:
+    name: CodeQL security-extended (five packages)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4
+        with:
+          languages: javascript-typescript
+          build-mode: none
+          config-file: scripts/security/codeql.yml
+      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4
+        with:
+          category: '/language:javascript-typescript/spec-packages'
