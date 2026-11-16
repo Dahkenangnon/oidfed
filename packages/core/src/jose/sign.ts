@@ -1,10 +1,12 @@
 /** JWT signing for Entity Statements and other federation tokens. */
+
 import { JwtTyp, SUPPORTED_ALGORITHMS, type SupportedAlgorithm } from "../constants.js";
-import type { JwtSigner } from "./signer.js";
-import { validateSigner } from "./signer.js";
+import { type JwtSigner, validateSigner } from "./signer.js";
 
 export interface SignEntityStatementOptions {
+	/** Defaults to signer.alg. An explicit algorithm must match the signer. */
 	readonly alg?: SupportedAlgorithm;
+	/** Defaults to entity-statement+jwt. */
 	readonly typ?: string;
 	readonly extraHeaders?: Record<string, unknown>;
 }

@@ -1,4 +1,5 @@
 /** Stable builders for normal Entity Configuration and Subordinate Statement payloads. */
+
 import { isJsonData, isObject } from "./callbacks.js";
 import {
 	DEFAULT_ENTITY_STATEMENT_TTL_SECONDS,
@@ -22,8 +23,7 @@ import {
 	type SubordinateStatementPayload,
 	SubordinateStatementSchema,
 } from "./schemas/entity-statement.js";
-import type { JWKSet } from "./schemas/jwk.js";
-import { validatePublishedMetadataKeys } from "./schemas/jwk.js";
+import { type JWKSet, validatePublishedMetadataKeys } from "./schemas/jwk.js";
 import type { FederationMetadataPolicy } from "./schemas/metadata-policy.js";
 import type { TrustMarkOwner, TrustMarkRef } from "./schemas/trust-mark.js";
 import { assertPositiveTtlSeconds } from "./ttl.js";
@@ -133,6 +133,10 @@ const SS_ONLY_CLAIMS = [
 
 const NORMAL_STATEMENT_FORBIDDEN_CLAIMS = ["aud", "trust_anchor"] as const;
 
+/**
+ * Build a normal Entity Configuration payload and validate its publication claims.
+ * Invalid identifiers, keys, lifetimes, metadata, or extensions throw before signing.
+ */
 export function buildEntityConfigurationPayload(
 	options: BuildEntityConfigurationPayloadOptions,
 ): EntityConfigurationPayload {
@@ -170,6 +174,7 @@ export function buildEntityConfigurationPayload(
 	return payload as EntityConfigurationPayload;
 }
 
+/** Build and validate an Entity Configuration before signing it with the supplied signer. */
 export async function signEntityConfiguration(
 	options: SignEntityConfigurationOptions,
 ): Promise<string> {
@@ -180,6 +185,7 @@ export async function signEntityConfiguration(
 	});
 }
 
+/** Build a Subordinate Statement payload and reject invalid publication claims before signing. */
 export function buildSubordinateStatementPayload(
 	options: BuildSubordinateStatementPayloadOptions,
 ): SubordinateStatementPayload {
@@ -209,6 +215,7 @@ export function buildSubordinateStatementPayload(
 	return payload as SubordinateStatementPayload;
 }
 
+/** Build and validate a Subordinate Statement before signing it with the supplied signer. */
 export async function signSubordinateStatement(
 	options: SignSubordinateStatementOptions,
 ): Promise<string> {
@@ -219,6 +226,10 @@ export async function signSubordinateStatement(
 	});
 }
 
+/**
+ * Validate normal Entity Statement claim shape for the declared statement kind.
+ * This does not verify a signature or establish a trust chain.
+ */
 export function validateEntityStatementClaims(
 	payload: Readonly<Record<string, unknown>>,
 	options: ValidateEntityStatementClaimsOptions,

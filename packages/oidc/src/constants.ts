@@ -5,6 +5,7 @@
  * These errors should only be returned in PAR responses, not in redirected
  * authorization error responses, to avoid leaking federation internals to the User-Agent.
  */
+
 export const OIDCRegistrationErrorCode = {
 	InvalidTrustAnchor: "invalid_trust_anchor",
 	InvalidTrustChain: "invalid_trust_chain",

@@ -1,3 +1,5 @@
+/** Metadata policy declaration checks and protected operator-combination validation. */
+
 import { callSynchronous, freezeSnapshot, isJsonData, isObject } from "../callbacks.js";
 import { InternalErrorCode } from "../constants.js";
 import { err, type FederationError, ok, type Result } from "../errors.js";
@@ -13,6 +15,9 @@ import {
 } from "./custom-operators.js";
 import { validateStandardPolicyOperatorConfiguration } from "./operators.js";
 
+/**
+ * Check callback result ownership and JSON-compatible values before accepting an operator output.
+ */
 export function isPolicyResult(value: unknown): value is PolicyOperatorResult & PolicyMergeResult {
 	return (
 		isObject(value) &&
@@ -36,6 +41,10 @@ export function validateMetadataPolicy(
 	return validatePolicyDeclaration(policy, buildOperatorLookup(options?.customOperators));
 }
 
+/**
+ * Check declaration shape and combinations of understood operators.
+ * Resolved policies may be empty after unknown non-critical operators have been removed.
+ */
 export function validatePolicyDeclaration(
 	policy: unknown,
 	lookup: Record<string, PolicyOperatorDefinition>,

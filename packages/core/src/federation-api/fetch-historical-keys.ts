@@ -1,9 +1,5 @@
-/**
- * Client-side helper for the federation Historical Keys endpoint. Performs
- * the HTTPS GET, enforces URL/status/Content-Type, and delegates the JWT
- * verification (typ + signature + REQUIRED payload claims) to
- * `verifyHistoricalKeysResponse`.
- */
+/** Historical Keys retrieval with transport checks and signed-response verification. */
+
 import { FederationErrorCode, MediaType } from "../constants.js";
 import { fetchFederationEndpoint } from "../endpoint-client.js";
 import { err, type FederationError, federationError, type Result } from "../errors.js";

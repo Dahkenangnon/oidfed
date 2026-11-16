@@ -1,3 +1,5 @@
+/** Language-tag syntax and localized informational-claim name parsing. */
+
 // RFC 5646 includes private-use and grandfathered tags that Intl may reject.
 const grandfathered = new Set([
 	"en-gb-oed",
@@ -29,6 +31,7 @@ const grandfathered = new Set([
 ]);
 const languageTag =
 	/^(?:(?:[a-z]{2,3}(?:-[a-z]{3}){0,3}|[a-z]{4}|[a-z]{5,8})(?:-[a-z]{4})?(?:-(?:[a-z]{2}|[0-9]{3}))?(?:-(?:[a-z0-9]{5,8}|[0-9][a-z0-9]{3}))*(?:-[0-9a-wy-z](?:-[a-z0-9]{2,8})+)*(?:-x(?:-[a-z0-9]{1,8})+)?|x(?:-[a-z0-9]{1,8})+)$/i;
+/** Check supported BCP 47 syntax without changing the tag's spelling or case. */
 export function isLanguageTag(tag: string): boolean {
 	if (grandfathered.has(tag.toLowerCase())) return true;
 	if (!languageTag.test(tag)) return false;

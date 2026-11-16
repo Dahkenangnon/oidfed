@@ -1,3 +1,5 @@
+/** Fixed-selector comparison and extension-parameter handling for federation endpoints. */
+
 /** Compare repeated endpoint parameters; unknown parameters retain exact ordering. */
 export function endpointParameterValuesMatch(
 	name: string,

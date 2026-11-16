@@ -1,4 +1,5 @@
 /** OP-side explicit registration endpoint handler (self-contained, no authority dep). */
+
 import {
 	DEFAULT_ENTITY_STATEMENT_TTL_SECONDS,
 	DEFAULT_MAX_REQUEST_BODY_BYTES,
@@ -43,7 +44,7 @@ const REGISTRATION_MANAGEMENT_METADATA_FIELDS = [
 ] as const;
 
 export interface ExplicitRegistrationHandlerConfig extends RegistrationAccreditationPolicy {
-	/** The OP's Entity Identifier — used as the aud check target and as the issuer of the response. */
+	/** The OP's Entity Identifier, used for the aud check and as the response issuer. */
 	readonly opEntityId: EntityId;
 	/** Protocol role used to check the server's peer metadata. Defaults to OP. */
 	readonly providerMetadataType?: "openid_provider" | "oauth_authorization_server";

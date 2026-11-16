@@ -1,4 +1,8 @@
-/** HTTP response helpers, security headers, and request parameter extraction for federation endpoints. */
+/**
+ * HTTP response helpers, security headers, and request parameter extraction for federation
+ * endpoints.
+ */
+
 import { FederationErrorCode } from "./constants.js";
 import type { FederationError } from "./errors.js";
 
@@ -17,6 +21,7 @@ export interface ParsedContentTypeHeader {
 	readonly parameters: readonly string[];
 }
 
+/** Split a Content-Type value into its trimmed media type and raw parameter components. */
 export function parseContentTypeHeader(
 	value: string | null | undefined,
 ): ParsedContentTypeHeader | undefined {
@@ -34,6 +39,7 @@ export function parseContentTypeHeader(
 	};
 }
 
+/** Compare media types case-insensitively and reject any Content-Type parameters. */
 export function isExactContentType(
 	value: string | null | undefined,
 	expectedMediaType: string,

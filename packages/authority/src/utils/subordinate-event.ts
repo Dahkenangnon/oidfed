@@ -1,3 +1,5 @@
+/** Detached validation of manually published subordinate events. */
+
 import { type SubordinateEvent, SubordinateEventSchema } from "@oidfed/core";
 
 /** Local publication requires an event name; Draft 01 leaves custom names open. */

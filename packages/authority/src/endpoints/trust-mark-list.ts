@@ -1,6 +1,9 @@
+/** Authority adapter for Trust Marked Entities Listing. */
+
 import type { HandlerContext } from "./context.js";
 import { errorResponse } from "./helpers.js";
 import { trustMarkService } from "./trust-mark-service.js";
+
 export function createTrustMarkListHandler(
 	ctx: HandlerContext,
 ): (request: Request) => Promise<Response> {

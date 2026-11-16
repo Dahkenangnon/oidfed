@@ -1,3 +1,5 @@
+/** Protocol JWT verification using separately resolved keys and explicit caller expectations. */
+
 import * as jose from "jose";
 import { DEFAULT_CLOCK_SKEW_SECONDS, InternalErrorCode } from "../constants.js";
 import { err, type FederationError, ok, type Result } from "../errors.js";

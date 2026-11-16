@@ -1,3 +1,5 @@
+/** Authority adapters for Trust Mark retrieval and managed issuance. */
+
 import { isValidEntityId, MediaType, safeLogger } from "@oidfed/core";
 import type { HandlerContext } from "./context.js";
 import { errorResponse, jwtResponse, requireMethod } from "./helpers.js";

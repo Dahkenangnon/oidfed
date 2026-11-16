@@ -1,3 +1,5 @@
+/** Signed wallet presentation-request creation and prepared verifier-trust validation. */
+
 import {
 	completeTrustChainValidation,
 	DEFAULT_CLOCK_SKEW_SECONDS,
@@ -122,6 +124,9 @@ function requestEvidenceIsCurrent(result: ValidatedWalletRequest): boolean {
 	);
 }
 
+/**
+ * Match a redirect against effective verifier metadata from an original, current validation result.
+ */
 export function validateResponseRedirect(
 	result: ValidatedWalletRequest,
 	uri: string,
@@ -197,6 +202,7 @@ function validateResponseParameters(request: z.infer<typeof requestSchema>): Res
 	return ok(true);
 }
 
+/** Require exact membership in the supplied effective verifier endpoint list. */
 export function checkEndpoint(
 	metadata: Readonly<Record<string, unknown>>,
 	field: "request_uris" | "response_uris" | "redirect_uris",
@@ -207,6 +213,10 @@ export function checkEndpoint(
 	return ok(true);
 }
 
+/**
+ * Establish candidate verifier evidence and return a process-local preparation handle.
+ * Preparation does not accept the request; completion must authenticate its signed Request Object.
+ */
 export async function prepareRequest(
 	outer: WalletAuthorizationRequest,
 	anchors: TrustAnchorSet,
@@ -239,7 +249,7 @@ export async function prepareRequest(
 		if (!matchesJwtType(decoded.value.header.typ, "oauth-authz-req+jwt"))
 			return failure("Invalid Request Object type");
 
-		// VP §5.9.3 also permits the legacy payload hint (Federation §12.1.1.1).
+		// VP §5.9.3 also permits a trust_chain payload hint (Federation §12.1.1.1).
 		const supplied = decoded.value.header.trust_chain ?? decoded.value.payload.trust_chain;
 		if (decoded.value.header.trust_chain === null)
 			return failure("Invalid Request Object trust_chain");
@@ -438,6 +448,11 @@ function checkQueryFormats(
 	return ok(true);
 }
 
+/**
+ * Complete the original preparation with the signed request and contextual policies.
+ * Copied, expired, or cancelled handles fail; presentation processing remains the host engine's
+ * responsibility.
+ */
 export async function completeRequest(
 	prepared: PreparedAuthorizationRequest,
 	jwt: string,
@@ -713,6 +728,10 @@ function requestDeadline(
 		: failure("Request Object is outside the allowed freshness window");
 }
 
+/**
+ * Validate and sign federation-bound presentation request parameters.
+ * The host owns request transport, credential selection, and presentation processing.
+ */
 export async function createRequest(
 	id: string,
 	request: Readonly<Record<string, unknown>>,

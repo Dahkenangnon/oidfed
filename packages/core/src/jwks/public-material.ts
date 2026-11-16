@@ -1,3 +1,5 @@
+/** Validation and preparation of public verification-key material. */
+
 import { FederationErrorCode } from "../constants.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
 import { type JWK, type JWKSet, JWKSetSchema, PublicationJWKSchema } from "../schemas/jwk.js";

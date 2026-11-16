@@ -1,3 +1,5 @@
+/** Required endpoint checks for entities identified as federation authorities. */
+
 import { InternalErrorCode } from "../constants.js";
 import type { ParsedEntityStatement, ValidationError } from "../types.js";
 

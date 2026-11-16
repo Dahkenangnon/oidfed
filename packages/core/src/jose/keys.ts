@@ -1,7 +1,7 @@
-/** Key generation and JWK-to-KeyLike conversion utilities using the jose library. */
+/** Asymmetric key generation, public JWK handling, and verification-key selection. */
+
 import * as jose from "jose";
-import type { SupportedAlgorithm } from "../constants.js";
-import { SUPPORTED_ALGORITHMS } from "../constants.js";
+import { SUPPORTED_ALGORITHMS, type SupportedAlgorithm } from "../constants.js";
 import type { JWK, JWKSet } from "../schemas/jwk.js";
 
 /** Returns true if the given value is a supported asymmetric signing algorithm (not "none"). */
@@ -62,7 +62,7 @@ export function selectVerificationKey(
 	if (header.kid) {
 		const byKid = keys.find((k) => k.kid === header.kid && (!k.use || k.use === "sig"));
 		if (byKid?.alg && header.alg && byKid.alg !== header.alg) {
-			return undefined; // alg mismatch — refuse to return the key
+			return undefined; // Skip keys whose declared algorithm differs from the JWT algorithm.
 		}
 		return byKid;
 	}

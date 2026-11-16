@@ -1,3 +1,5 @@
+/** In-memory authority persistence with detached records and serialized transactions. */
+
 import {
 	type Clock,
 	type EntityCollectionStore,
@@ -44,6 +46,9 @@ type StateMutation = <T>(operation: (state: MemoryState) => T | Promise<T>) => P
 
 const detached = <T>(value: T): T => structuredClone(value);
 
+/**
+ * Validate stored subordinate shape and publication claims. Invalid records throw.
+ */
 export function validateSubordinateRecord(record: SubordinateRecord): void {
 	if (!isValidEntityId(record.entityId))
 		throw new InvalidSubordinateRecord("Subordinate entityId must be a valid Entity Identifier");
@@ -297,6 +302,10 @@ export class MemoryStorageAdapter implements StorageAdapter {
 		);
 	}
 
+	/**
+	 * Serialize mutations against a detached state; publish the new state only after the callback
+	 * succeeds.
+	 */
 	async transaction<T>(operation: (tx: StorageTransaction) => Promise<T>): Promise<T> {
 		return this.runExclusive(async () => {
 			const draft = detached(this.state);

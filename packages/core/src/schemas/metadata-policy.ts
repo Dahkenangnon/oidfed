@@ -1,4 +1,8 @@
-/** Zod schema for federation metadata policy: operator constraints applied during trust chain resolution. */
+/**
+ * Zod schema for federation metadata policy: operator constraints applied during trust chain
+ * resolution.
+ */
+
 import { z } from "zod";
 
 const jsonObject = z.record(z.string(), z.unknown());

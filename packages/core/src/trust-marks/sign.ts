@@ -1,3 +1,5 @@
+/** Standalone signing of Trust Marks and owner-to-issuer delegations. */
+
 import { isJsonData, setOwn } from "../callbacks.js";
 import { DEFAULT_DELEGATION_TTL_SECONDS, JwtTyp } from "../constants.js";
 import { signEntityStatement } from "../jose/sign.js";

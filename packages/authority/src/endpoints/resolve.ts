@@ -1,3 +1,5 @@
+/** Authority integration with the shared signed Resolve service. */
+
 import { type FederationOptions, FederationResolverService } from "@oidfed/core";
 import type { HandlerContext } from "./context.js";
 import { trustMarkService } from "./trust-mark-service.js";

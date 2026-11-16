@@ -1,3 +1,5 @@
+/** Subordinate Listing requests with standard filters and bounded storage traversal. */
+
 import { FederationErrorCode, isValidEntityId, nowSeconds, safeLogger } from "@oidfed/core";
 import type { ListFilter } from "../storage/types.js";
 import type { HandlerContext } from "./context.js";
@@ -20,9 +22,8 @@ export function createListHandler(ctx: HandlerContext): (request: Request) => Pr
 
 		// Federation 1.0 §5.1: "Additional Entity Type Identifiers MAY be defined
 		// to support use cases for other protocols", and §20 establishes no
-		// registry — the value space is open, so values are not checked against a
-		// known set. Per §8.2.1 the result is filtered; an identifier no
-		// subordinate carries yields an empty array, not a per-value error.
+		// registry. Accept extension identifiers and filter by them (§8.2.1).
+		// An identifier that no subordinate publishes produces an empty result.
 		const entityTypes = params.getAll("entity_type");
 		for (const et of entityTypes) {
 			if (et.length === 0) {

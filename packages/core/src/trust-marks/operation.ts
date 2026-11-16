@@ -1,3 +1,5 @@
+/** Shared transport scope and historical-key request reuse for Trust Mark operations. */
+
 import { MemoryCache } from "../cache/index.js";
 import { FederationErrorCode, MediaType } from "../constants.js";
 import { fetchFederationEndpoint } from "../endpoint-client.js";
@@ -34,7 +36,7 @@ export function trustMarkOperation<T extends FederationOptions>(options: T): T {
 	};
 }
 
-/** Share transport only within an operation; every consumer still authenticates the response. */
+/** Share transport within one operation. Each consumer authenticates its response. */
 export function fetchTrustMarkHistoricalResponse(
 	endpoint: string,
 	issuer: string,

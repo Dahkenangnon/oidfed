@@ -1,3 +1,5 @@
+/** Comparison of complete Trust Anchor key sets from independent sources. */
+
 import { jwkThumbprint } from "../jose/keys.js";
 import { preparePublicJwkSet } from "../jwks/public-material.js";
 import type { JWKSet } from "../schemas/jwk.js";

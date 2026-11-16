@@ -1,4 +1,5 @@
-/** Zod schema for OIDC Federation Entity Identifiers. */
+/** Structural validation for OpenID Federation Entity Identifiers. */
+
 import { z } from "zod";
 
 /** Validates an HTTPS Entity Identifier with no credentials, query, or fragment. */

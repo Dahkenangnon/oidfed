@@ -1,3 +1,5 @@
+/** Validated issuer evidence and Trust Mark checks used while collecting entities. */
+
 import { FederationErrorCode, InternalErrorCode } from "../constants.js";
 import { err, ok, type Result } from "../errors.js";
 import { decodeEntityConfiguration, decodeEntityStatement } from "../jose/verify.js";
@@ -94,7 +96,7 @@ export function createCollectionEvidence(
 		if (existing) return existing;
 		let pending = resolutions.get(issuer);
 		if (!pending) {
-			// Cache resolution facts once; each mark type applies its own failure policy below.
+			// Reuse issuer resolution results; each mark type applies its own failure policy.
 			pending = (async () => {
 				const paths = await resolveTrustChains(
 					issuer as EntityId,
@@ -168,8 +170,8 @@ export function createCollectionEvidence(
 				if (!pending) continue;
 				const established = await pending;
 				if (!established.ok) {
-					// Incomplete work must not replace a snapshot; a conclusively untrusted issuer
-					// simply cannot qualify this mark, just as in the same-anchor path.
+					// Keep the published snapshot when issuer resolution is incomplete.
+					// A completed trust rejection excludes this mark.
 					if (established.error.code === FederationErrorCode.TemporarilyUnavailable)
 						throw new Error(established.error.description);
 					continue;

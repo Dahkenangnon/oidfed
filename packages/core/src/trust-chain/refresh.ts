@@ -1,3 +1,5 @@
+/** Trust chain refresh with fresh statement retrieval when required or explicitly requested. */
+
 import { MemoryCache } from "../cache/index.js";
 import { CachePrefix, InternalErrorCode } from "../constants.js";
 import { err, federationError, ok, type Result } from "../errors.js";

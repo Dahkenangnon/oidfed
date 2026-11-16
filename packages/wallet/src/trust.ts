@@ -1,3 +1,5 @@
+/** Wallet participant trust, supplied evidence, protocol keys, and shared operation limits. */
+
 import {
 	createTrustChainOperation,
 	DEFAULT_MAX_CHAIN_LENGTH,
@@ -92,6 +94,7 @@ interface ChainCandidates {
 	readonly source: "supplied" | "hint" | "discovery";
 }
 
+/** Collect supplied or discovered target chains without treating them as validated evidence. */
 export async function candidates(
 	id: string,
 	anchors: TrustAnchorSet,
@@ -149,6 +152,10 @@ export async function candidates(
 	});
 }
 
+/**
+ * Validate effective metadata for the requested wallet role and bind issuer identity where
+ * applicable.
+ */
 export function roleMetadata(
 	type: WalletRoleType,
 	id: string,
@@ -232,6 +239,7 @@ async function* candidateAttempts(
 	yield await candidates(id, anchors, options);
 }
 
+/** Validate and select participant trust with effective wallet-role metadata. */
 export async function trustedEntity(
 	type: WalletRoleType,
 	id: string,
@@ -283,6 +291,7 @@ export async function trustedEntity(
 	return err({ code: InternalErrorCode.TrustChainInvalid, description: last });
 }
 
+/** Prepare all eligible verifier chains, retaining deferred contextual metadata for completion. */
 export async function prepareVerifierCandidates(
 	id: string,
 	anchors: TrustAnchorSet,
@@ -324,6 +333,7 @@ export async function prepareVerifierCandidates(
 	return err({ code: InternalErrorCode.TrustChainInvalid, description: last });
 }
 
+/** Select prepared verifier evidence for later contextual completion. */
 export async function prepareVerifier(
 	id: string,
 	anchors: TrustAnchorSet,
@@ -336,6 +346,10 @@ export async function prepareVerifier(
 	return first ? ok(first) : failure("No verifier chain available");
 }
 
+/**
+ * Resolve protocol keys from validated participant metadata, keeping Federation Entity Keys
+ * separate.
+ */
 export async function protocolKeys(
 	entity: {
 		readonly metadata: Readonly<Record<string, unknown>>;

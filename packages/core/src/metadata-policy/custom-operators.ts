@@ -1,12 +1,9 @@
 /**
- * Validation of federation-defined custom policy operators.
- *
- * Custom operators are an extension hook callers can use to teach the
- * library about federation-specific policy operators. The library's
- * default behaviour for unknown operators (silently ignore non-critical,
- * reject critical) is unchanged. Callers who want their custom operators
- * to actually run pass them via `MetadataPolicyOptions.customOperators`.
+ * Validate federation-defined policy operators supplied through
+ * `MetadataPolicyOptions.customOperators`. Unknown non-critical operators are ignored;
+ * unknown critical operators cause a policy error.
  */
+
 import { InternalErrorCode, PolicyOperator } from "../constants.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
 import type { PolicyOperatorDefinition } from "../types.js";

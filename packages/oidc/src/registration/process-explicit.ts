@@ -1,3 +1,5 @@
+/** Provider-side explicit registration and shared-anchor client trust validation. */
+
 import {
 	createTrustChainOperation,
 	decodeEntityStatement,
@@ -44,7 +46,7 @@ export interface ProcessedExplicitRegistration extends ProcessedRegistration {
 export interface ProcessExplicitRegistrationOptions
 	extends FederationOptions,
 		RegistrationAccreditationPolicy {
-	/** The OP's own Entity Identifier — REQUIRED for `aud` validation. */
+	/** The OP's Entity Identifier, REQUIRED for `aud` validation. */
 	opEntityId: EntityId;
 	/** Protocol role of the local server whose peer metadata is consumed. Defaults to OP. */
 	providerMetadataType?: "openid_provider" | "oauth_authorization_server";

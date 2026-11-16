@@ -1,4 +1,5 @@
 /** JWT signature verification with key matching by kid and algorithm. */
+
 import * as jose from "jose";
 import { DEFAULT_CLOCK_SKEW_SECONDS, InternalErrorCode, JwtTyp } from "../constants.js";
 import { err, type FederationError, ok, type Result } from "../errors.js";

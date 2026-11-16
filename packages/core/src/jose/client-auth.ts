@@ -1,3 +1,5 @@
+/** Federation client assertion verification with identity, audience, and replay checks. */
+
 import * as jose from "jose";
 import { runAsyncOperation } from "../async-operation.js";
 import { DEFAULT_CLOCK_SKEW_SECONDS } from "../constants.js";

@@ -1,3 +1,5 @@
+/** Protected callback execution, immutable snapshots, and safe JSON property handling. */
+
 import { err, ok, type Result } from "./errors.js";
 
 /** Reject accidental asynchronous callbacks without leaving a rejected promise unhandled. */
@@ -36,6 +38,10 @@ export function setOwn(object: object, name: string, value: unknown): void {
 	});
 }
 
+/**
+ * Freeze the reachable object graph in place, tolerating shared references and cycles.
+ * Clone caller-owned data first when the caller must retain a mutable copy.
+ */
 export function freezeSnapshot<T>(value: T): T {
 	const pending: unknown[] = [value];
 	const seen = new Set<object>();

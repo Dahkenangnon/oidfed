@@ -1,3 +1,5 @@
+/** Authenticated Request Object and automatic registration context contracts. */
+
 import type { Clock, EntityId, FederationError, Result } from "@oidfed/core";
 
 /** Typed output of Request Object JWT validation. */
@@ -16,7 +18,7 @@ export interface ValidatedRequestObject {
 	readonly claims: Readonly<Record<string, unknown>>;
 	/** Trust chain from JWT header (if present) */
 	readonly trustChainHeader?: readonly string[];
-	/** Peer Trust Chain from JWT header (if present) — Trust Chain for the OP. */
+	/** Optional peer Trust Chain from the JWT header, describing the OP. */
 	readonly peerTrustChainHeader?: readonly string[];
 }
 

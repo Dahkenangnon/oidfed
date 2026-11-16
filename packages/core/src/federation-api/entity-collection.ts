@@ -1,3 +1,5 @@
+/** Client requests and response validation for the Entity Collection endpoint. */
+
 import { FederationErrorCode, InternalErrorCode, MediaType } from "../constants.js";
 import { fetchFederationEndpoint } from "../endpoint-client.js";
 import { COLLECTION_UNORDERED_PARAMETERS } from "../endpoint-parameters.js";

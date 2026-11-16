@@ -1,3 +1,5 @@
+/** Collection request encoding, claim projection, and localized text selection. */
+
 import { FederationErrorCode } from "../constants.js";
 import { COLLECTION_UNORDERED_PARAMETERS } from "../endpoint-parameters.js";
 import { err, ok, type Result } from "../errors.js";

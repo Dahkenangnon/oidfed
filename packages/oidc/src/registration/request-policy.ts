@@ -1,3 +1,5 @@
+/** Authorization parameter parsing and effective Request Object requirements. */
+
 import {
 	err,
 	FederationErrorCode,

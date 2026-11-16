@@ -1,8 +1,8 @@
 /**
- * HTTP fetcher for `signed_jwks_uri` — performs the HTTPS GET, enforces the
- * URL/status/Content-Type requirements, and delegates JWT verification to
- * `verifySignedJwkSet`.
+ * Fetch a Signed JWK Set from `signed_jwks_uri`. Check the URL, status, and Content-Type,
+ * then verify the JWT with `verifySignedJwkSet`.
  */
+
 import { FederationErrorCode, MediaType } from "../constants.js";
 import { err, type FederationError, federationError, type Result } from "../errors.js";
 import {

@@ -1,3 +1,5 @@
+/** Collection authentication using the shared federation endpoint verifier. */
+
 import {
 	authenticateEndpointRequest,
 	type EndpointAuthenticationError,
@@ -6,6 +8,10 @@ import { ok, type Result } from "../errors.js";
 import type { FederationOptions } from "../types.js";
 import type { CollectionAuthentication } from "./types.js";
 
+/**
+ * Authenticate collection credentials through the shared endpoint verifier.
+ * The caller remains responsible for the Collection endpoint's GET and POST request rules.
+ */
 export async function authenticateCollectionRequest(
 	form: URLSearchParams,
 	method: string,

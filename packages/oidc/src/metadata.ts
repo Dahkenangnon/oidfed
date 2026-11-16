@@ -1,4 +1,5 @@
 /** Protocol checks belong at publication and at the point resolved metadata is used. */
+
 import { err, FederationErrorCode, federationError, ok } from "@oidfed/core";
 import {
 	effectiveRoleSchemas,
@@ -8,6 +9,10 @@ import {
 
 export type ProtocolEntityType = keyof typeof effectiveRoleSchemas;
 
+/**
+ * Validate effective metadata for a protocol role and, when supplied, bind its issuer to the
+ * expected entity.
+ */
 export function effectiveMetadata(
 	type: ProtocolEntityType,
 	metadata: unknown,
@@ -36,6 +41,10 @@ export function effectiveMetadata(
 			);
 }
 
+/**
+ * Validate supplied publication fields without requiring a Superior's later completions. Invalid
+ * fields throw.
+ */
 export function assertPublicationMetadata(type: ProtocolEntityType, metadata: unknown): void {
 	const parsed = publicationRoleSchemas[type].safeParse(metadata);
 	if (!parsed.success)
@@ -67,6 +76,7 @@ export function registrationResponseChoices(
 	return ok(undefined);
 }
 
+/** Copy metadata while removing registration-input-only choice fields from the returned object. */
 export function withoutRegistrationChoices(metadata: Record<string, unknown>) {
 	const output = { ...metadata };
 	for (const field of Object.keys(rpMetadataChoices)) delete output[field];

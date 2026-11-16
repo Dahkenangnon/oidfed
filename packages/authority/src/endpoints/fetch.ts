@@ -1,3 +1,5 @@
+/** Subordinate Statement signing and Fetch endpoint responses. */
+
 import {
 	buildSubordinateStatementPayload,
 	DEFAULT_ENTITY_STATEMENT_TTL_SECONDS,
@@ -60,11 +62,9 @@ export function createFetchHandler(ctx: HandlerContext): (request: Request) => P
 }
 
 /**
- * Builds and signs a subordinate statement JWT for the given record. When
- * `now` is supplied, it is used verbatim as the JWT `iat` (and `exp` is derived
- * from it) — this lets callers (e.g. the extended-listing handler) snapshot a
- * single timestamp for an entire page so synthetic `iat`/`exp` claims align
- * with the JWT.
+ * Build and sign a Subordinate Statement for the record. Use a supplied `now` as
+ * `iat` and derive `exp` from it. Extended Listing can share this timestamp across
+ * a page so the response's `iat`/`exp` claims match its signed statements.
  */
 export async function buildSubordinateStatement(
 	ctx: HandlerContext,

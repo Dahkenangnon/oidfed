@@ -1,3 +1,5 @@
+/** Wallet role metadata and query schemas for publication and effective validation. */
+
 import {
 	isLanguageTag,
 	isValidAlgorithm,
@@ -195,7 +197,7 @@ export function normalizeReceivedDcqlQuery(query: DcqlQuery): DcqlQuery {
 				paths.set(path, claim);
 				return true;
 			}
-			// Structural validation already requires identifiers when claim_sets is present.
+			// Structural validation requires identifiers when claim_sets is present.
 			if (claim.id !== undefined && first.id !== undefined) aliases.set(claim.id, first.id);
 			return false;
 		});

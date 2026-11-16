@@ -1,3 +1,5 @@
+/** Standard and application-defined filters for Extended Subordinate Listing. */
+
 import {
 	endpointCredentialParameterNames,
 	err,

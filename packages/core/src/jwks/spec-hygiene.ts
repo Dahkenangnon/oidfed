@@ -1,22 +1,22 @@
 /**
- * Opt-in helper enforcing the recommended hygiene rules on a Signed JWK Set
- * payload that the default verification path does NOT enforce.
+ * Optional checks for Signed JWK Set payload recommendations.
  *
- * `verifySignedJwkSet` checks caller-supplied issuer/owner identities and MUSTs (typ, kid,
- * signature, REQUIRED claims). This helper additionally checks the
- * recommendations:
- *   - `sub` SHOULD equal `iss`
- *   - `aud` SHOULD NOT be present
- *   - `nbf` SHOULD be omitted
- *   - `jti` SHOULD be omitted
- *
- * Integrators wanting recommendation-grade strictness compose this helper
- * after `verifySignedJwkSet` succeeds.
+ * `verifySignedJwkSet` checks the expected issuer and owner, JWT type, kid, signature,
+ * and required claims. After it succeeds, this helper can enforce these recommendations:
+ * - `sub` SHOULD equal `iss`.
+ * - `aud` SHOULD NOT be present.
+ * - `nbf` SHOULD be omitted.
+ * - `jti` SHOULD be omitted.
  */
+
 import { FederationErrorCode } from "../constants.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
 import type { SignedJwkSetPayload } from "../schemas/entity-statement.js";
 
+/**
+ * Apply the optional Signed JWK Set claim recommendations after signature verification.
+ * This function checks payload hygiene; it does not authenticate the JWT.
+ */
 export function validateSignedJwkSetSpecHygiene(
 	payload: SignedJwkSetPayload,
 ): Result<void, FederationError> {

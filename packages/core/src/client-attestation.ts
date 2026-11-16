@@ -1,3 +1,5 @@
+/** Client Attestation and proof-of-possession creation, verification, and authentication. */
+
 import * as jose from "jose";
 import { z } from "zod";
 import { runAsyncOperation as runOperation } from "./async-operation.js";
@@ -599,6 +601,11 @@ export async function createClientAttestation(
 		return failure("Client Attestation creation failed");
 	}
 }
+/**
+ * Verify an attestation against caller-established attester trust and return a Result.
+ * This checks the attestation; authenticating its holder also requires the proof-of-possession
+ * flow.
+ */
 export async function verifyClientAttestation(
 	jwt: string,
 	options: ClientAttestationVerificationOptions,
@@ -609,6 +616,10 @@ export async function verifyClientAttestation(
 		return failure("Client Attestation verification failed");
 	}
 }
+/**
+ * Verify the attestation and proof, enforce configured replay protection, and invoke acceptClient.
+ * The host establishes attester trust and decides whether the authenticated client is acceptable.
+ */
 export async function authenticateClientAttestation(
 	attestationJwt: string,
 	popJwt: string,
@@ -668,6 +679,7 @@ export function serializeClientAttestation(attestationJwt: string, popJwt: strin
 	const checked = parseConcatenatedClientAttestation(`${attestationJwt}~${popJwt}`);
 	return checked.ok ? ok(`${attestationJwt}~${popJwt}`) : checked;
 }
+/** Construct attestation authentication headers after validating the two serialized JWT values. */
 export function clientAttestationHeaders(attestationJwt: string, popJwt: string): Result<Headers> {
 	const checked = serializeClientAttestation(attestationJwt, popJwt);
 	return checked.ok

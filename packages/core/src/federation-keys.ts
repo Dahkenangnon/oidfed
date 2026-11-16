@@ -1,7 +1,8 @@
+/** Federation signing-key providers and publication, rollover, and historical-key lifecycles. */
+
 import { DEFAULT_KEY_RETIRE_AFTER_MS } from "./constants.js";
 import { stripPrivateFields } from "./jose/keys.js";
-import type { JwtSigner } from "./jose/signer.js";
-import { JwkSigner, validateSigner } from "./jose/signer.js";
+import { JwkSigner, type JwtSigner, validateSigner } from "./jose/signer.js";
 import { preparePublicJwkSet } from "./jwks/public-material.js";
 import type { HistoricalKeyEntry } from "./schemas/entity-statement.js";
 import type { JWK, JWKSet } from "./schemas/jwk.js";
@@ -53,13 +54,16 @@ interface ManagedFederationKeyEntry {
 	readonly revocationReason?: string;
 }
 
+/** A fixed signer with copied public keys. Use a lifecycle provider for rollover. */
 export class StaticFederationKeyProvider implements FederationKeyProvider {
 	private readonly keySet: FederationKeySet;
 
+	/** Validate the key set and copy its public keys, keeping the supplied signer instance. */
 	constructor(keySet: FederationKeySet) {
 		this.keySet = prepareFederationKeySet(keySet);
 	}
 
+	/** Return the retained signer with detached public verification keys. */
 	async getFederationKeySet(): Promise<FederationKeySet> {
 		return { signer: this.keySet.signer, jwks: structuredClone(this.keySet.jwks) };
 	}
@@ -76,6 +80,7 @@ export interface MemoryFederationKeyProviderOptions {
  * Production providers must share durable state and protect signing-key custody.
  */
 export class MemoryFederationKeyProvider implements FederationKeyLifecycleProvider {
+	/** Create a software-key provider from a private JWK with an algorithm and key identifier. */
 	static fromJWK(
 		jwk: JWK,
 		options?: MemoryFederationKeyProviderOptions,
@@ -88,6 +93,10 @@ export class MemoryFederationKeyProvider implements FederationKeyLifecycleProvid
 	// Order signer changes without inventing or relying on distinct wall-clock timestamps.
 	private activationOrder = 0;
 
+	/**
+	 * Capture initial active signing keys and an optional millisecond clock for local lifecycle
+	 * scheduling.
+	 */
 	constructor(
 		initial: FederationSigningKey | readonly [FederationSigningKey, ...FederationSigningKey[]],
 		options?: MemoryFederationKeyProviderOptions,
@@ -111,6 +120,10 @@ export class MemoryFederationKeyProvider implements FederationKeyLifecycleProvid
 		}
 	}
 
+	/**
+	 * Read the active signer and currently published keys; expired overlap keys are omitted.
+	 * Reject if no active signing key remains.
+	 */
 	async getFederationKeySet(): Promise<FederationKeySet> {
 		return this.currentKeySet();
 	}
@@ -142,6 +155,7 @@ export class MemoryFederationKeyProvider implements FederationKeyLifecycleProvid
 		return { signer: selected.signer, jwks };
 	}
 
+	/** Return detached records for revoked keys and retiring keys whose overlap has ended. */
 	async getHistoricalFederationKeys(): Promise<HistoricalKeyEntry[]> {
 		const now = this.nowMs();
 		// Section 8.7 records retracted keys; overlap keys remain in the current JWKS.
@@ -154,6 +168,7 @@ export class MemoryFederationKeyProvider implements FederationKeyLifecycleProvid
 			.map(mapHistoricalEntry);
 	}
 
+	/** Publish a detached replacement public key while retaining the existing active signer. */
 	async publishKey(key: FederationSigningKey): Promise<void> {
 		// Publish verification material while the existing active key continues signing.
 		const { signer, publicJwk } = this.validateNewKey(key);
@@ -165,6 +180,10 @@ export class MemoryFederationKeyProvider implements FederationKeyLifecycleProvid
 		});
 	}
 
+	/**
+	 * Activate a published replacement key and start retiring the signer it replaces.
+	 * The host chooses how long to wait for key publication to propagate before switching.
+	 */
 	async switchActiveKey(
 		kid: string,
 		options: SwitchActiveFederationKeyOptions = {},
@@ -207,6 +226,10 @@ export class MemoryFederationKeyProvider implements FederationKeyLifecycleProvid
 		}
 	}
 
+	/**
+	 * Retract the key locally and record its revocation in key history.
+	 * Issued statements and remote caches are unaffected by this operation.
+	 */
 	async revokeKey(kid: string, reason: string): Promise<void> {
 		// Federation §11.4 leaves the revocation process to the federation's own policy.
 		const entry = this.getEntry(kid);
@@ -239,6 +262,7 @@ export class MemoryFederationKeyProvider implements FederationKeyLifecycleProvid
 	}
 }
 
+/** Create a local signer and its public JWK from private signing material. Invalid keys throw. */
 export function createFederationSigningKey(jwk: JWK): FederationSigningKey {
 	const publicJwk = stripPrivateFields(jwk);
 	// Private signing-key operations do not describe the derived public key.
@@ -249,6 +273,7 @@ export function createFederationSigningKey(jwk: JWK): FederationSigningKey {
 	};
 }
 
+/** Validate the signer, public key set, and matching signing key. Invalid configurations throw. */
 export function validateFederationKeySet(keySet: FederationKeySet): void {
 	prepareFederationKeySet(keySet);
 }

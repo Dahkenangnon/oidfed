@@ -1,3 +1,5 @@
+/** Pushed authorization requests with Request Object and client authentication handling. */
+
 import {
 	type AuthenticateClientAttestationOptions,
 	authenticateClientAttestation,
@@ -107,6 +109,10 @@ function certificateMatches(
 	);
 }
 
+/**
+ * Create a signed client request and the selected proof for submission to a trusted provider's PAR
+ * endpoint.
+ */
 export async function createPushedAuthorizationRequest(
 	discovery: DiscoveryResult,
 	config: AutomaticRegistrationConfig,
@@ -256,6 +262,10 @@ export async function createPushedAuthorizationRequest(
 	}
 }
 
+/**
+ * Validate a pushed request's federation evidence and supported proof; return protocol context for
+ * the host engine.
+ */
 export async function processPushedAuthorizationRequest(
 	request: Request,
 	anchors: TrustAnchorSet,

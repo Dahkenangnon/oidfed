@@ -1,3 +1,5 @@
+/** Check application accreditation requirements against validated Trust Marks. */
+
 import { DEFAULT_CLOCK_SKEW_SECONDS, InternalErrorCode } from "../constants.js";
 import { err, type FederationError, ok, type Result } from "../errors.js";
 import {

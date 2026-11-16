@@ -1,4 +1,5 @@
-/** Leaf entity class: Entity Configuration serving with caching and trust chain discovery. */
+/** Leaf host for Entity Configuration publication, role routes, and optional federation services. */
+
 import {
 	type AttachTrustMarkOptions,
 	assertPositiveTtlSeconds,
@@ -78,7 +79,9 @@ function wellKnownPathForEntityId(value: EntityId): string {
 
 export class Leaf {
 	readonly resolver?: FederationResolverService;
+	/** Assess a target with explicitly supplied anchors and options. */
 	static assessEntity = assessEntity;
+	/** Validate supplied target statements with explicitly supplied anchors and options. */
 	static discoverEntityFromChain = discoverEntityFromChain;
 	/** Per-call options override host options; explicit anchors override configured anchors. Returns an assessment Result, not protocol authorization. */
 	assessEntity(
@@ -90,6 +93,9 @@ export class Leaf {
 			...options,
 		});
 	}
+	/**
+	 * Resolve, validate, and select a target chain using configured anchors and per-call overrides.
+	 */
 	discoverEntity(
 		target: EntityId,
 		options: FederationOptions & { trustAnchors?: TrustAnchorSet } = {},
@@ -100,6 +106,7 @@ export class Leaf {
 			{ ...this.config.options, ...options },
 		);
 	}
+	/** Validate supplied target statements and return discovery evidence using configured anchors. */
 	discoverEntityFromChain(
 		target: EntityId,
 		statements: readonly string[],
@@ -115,6 +122,7 @@ export class Leaf {
 	readonly collection?: EntityCollectionService;
 	private readonly issuerService?: TrustMarkIssuerService;
 	private readonly holder: TrustMarkHolder;
+	/** Resolve, validate, and select a target chain with explicitly supplied anchors and options. */
 	static discoverEntity(
 		targetEntityId: EntityId | string,
 		trustAnchors: TrustAnchorSet,
@@ -135,6 +143,10 @@ export class Leaf {
 	private generation = 0;
 	private collectionNoticeEmitted = false;
 
+	/**
+	 * Validate and compose Leaf metadata and routes; retain key and service dependencies for later
+	 * operations.
+	 */
 	constructor(config: LeafConfig) {
 		const rawEntityId = (
 			config.entityId.endsWith("/") ? config.entityId.slice(0, -1) : config.entityId
@@ -482,6 +494,10 @@ export class Leaf {
 		return jwt;
 	}
 
+	/**
+	 * Reuse an unexpired cached Entity Configuration or share an in-flight generation with other
+	 * callers.
+	 */
 	async getEntityConfiguration(): Promise<string> {
 		safeLogger(this.config.options?.logger)?.debug("Starting get entity configuration");
 
@@ -496,12 +512,17 @@ export class Leaf {
 		return this.inflight;
 	}
 
+	/** Report whether no cached Entity Configuration exists or its expiry has been reached. */
 	isEntityConfigurationExpired(): boolean {
 		if (this.cachedExp === null) return true;
 		const now = nowSeconds(this.config.options?.clock);
 		return now >= this.cachedExp;
 	}
 
+	/**
+	 * Force a new generation with the current keys, superseding prior cache writes without cancelling
+	 * their callers.
+	 */
 	async refreshEntityConfiguration(): Promise<string> {
 		safeLogger(this.config.options?.logger)?.debug("Starting refresh entity configuration");
 
@@ -514,15 +535,21 @@ export class Leaf {
 		return this.inflight;
 	}
 
+	/** Return a detached copy of this host's published Trust Mark references. */
 	getTrustMarks() {
 		return this.holder.getTrustMarks();
 	}
+	/**
+	 * Validate a mark for this host and publish it; failed validation leaves prior references intact.
+	 */
 	async attachTrustMark(jwt: string, options: AttachTrustMarkOptions) {
 		return this.holder.attachTrustMark(jwt, options);
 	}
+	/** Establish issuer trust and retrieve a mark for this host before validated publication. */
 	async fetchAndAttachTrustMark(options: FetchAndAttachTrustMarkOptions) {
 		return this.holder.fetchAndAttachTrustMark(options);
 	}
+	/** Remove matching references from this host's publication; this does not revoke issuance. */
 	async removeTrustMark(selector: RemoveTrustMarkSelector) {
 		return this.holder.removeTrustMark(selector);
 	}
@@ -531,6 +558,10 @@ export class Leaf {
 		if (!this.issuerService) throw new Error("Trust Mark issuer is not configured");
 		return this.issuerService;
 	}
+	/**
+	 * Issue or reuse a managed Trust Mark for a subject under the configured issuer policy. Requires
+	 * trustMarkIssuer configuration.
+	 */
 	async issueTrustMark(
 		subject: string,
 		type: string,
@@ -538,19 +569,33 @@ export class Leaf {
 	): Promise<string> {
 		return this.requireIssuer().issueTrustMark(subject, type, options);
 	}
+	/**
+	 * Revoke this issuer's matching local records for the type and subject. Requires trustMarkIssuer
+	 * configuration.
+	 */
 	async revokeTrustMark(type: string, subject: string): Promise<void> {
 		return this.requireIssuer().revokeTrustMark(type, subject);
 	}
+	/**
+	 * Return detached, eligible local issuance records for the subject. Requires trustMarkIssuer
+	 * configuration.
+	 */
 	async listTrustMarksForSubject(subject: string) {
 		return this.requireIssuer().listTrustMarksForSubject(subject);
 	}
+	/** List eligible local subjects for a Trust Mark type. Requires trustMarkIssuer configuration. */
 	async listTrustMarkedEntities(type: string, subject?: string) {
 		return this.requireIssuer().listTrustMarkedEntities(type, subject);
 	}
+	/**
+	 * Replace owner-delegation JWTs used by this host's managed issuer service. Requires
+	 * trustMarkIssuer configuration.
+	 */
 	async setTrustMarkDelegations(delegations: Readonly<Record<string, string>>): Promise<void> {
 		return this.requireIssuer().setDelegations(delegations);
 	}
 
+	/** Serve role and optional service routes, or the GET Entity Configuration discovery endpoint. */
 	async handleRequest(request: Request): Promise<Response> {
 		safeLogger(this.config.options?.logger)?.debug("Starting handle request");
 

@@ -1,3 +1,5 @@
+/** Shared registration trust, supplied-chain, and common-anchor selection helpers. */
+
 import {
 	createTrustChainOperation,
 	type EntityId,
@@ -30,6 +32,7 @@ const REQUIRED_TRUST_ANCHORS_MESSAGE =
 
 type TrustAnchorConfig = TrustAnchorSet extends ReadonlyMap<string, infer Config> ? Config : never;
 
+/** Parse the registration trust-chain array without treating its statements as authenticated. */
 export function parseTrustChainJsonBody(body: string): Result<readonly string[], FederationError> {
 	let parsed: unknown;
 	try {
@@ -56,6 +59,7 @@ export function parseTrustChainJsonBody(body: string): Result<readonly string[],
 	return ok(parsed);
 }
 
+/** Return an error when no local Trust Anchor configuration is available. */
 export function requireNonEmptyTrustAnchors(
 	trustAnchors: TrustAnchorSet | undefined,
 ): Result<TrustAnchorSet, FederationError> {
@@ -81,6 +85,7 @@ export function requireNonEmptyTrustAnchors(
 	return ok(normalized);
 }
 
+/** Require configured anchors for a role operation; missing configuration throws. */
 export function assertNonEmptyTrustAnchors(
 	trustAnchors: TrustAnchorSet | undefined,
 ): TrustAnchorSet {
@@ -91,6 +96,10 @@ export function assertNonEmptyTrustAnchors(
 	return result.value;
 }
 
+/**
+ * Validate supplied statements using the caller's anchors and preserve registration-specific
+ * context.
+ */
 export async function validateSuppliedTrustChain(
 	chain: readonly string[] | undefined,
 	trustAnchors: TrustAnchorSet,
@@ -222,6 +231,7 @@ async function resolveValidRegistrationChains(
 	return ok(validChains);
 }
 
+/** Select validated client and provider chains sharing an anchor before registration proceeds. */
 export async function selectSharedRegistrationTrustChains(
 	rpEntityId: EntityId,
 	opEntityId: EntityId,

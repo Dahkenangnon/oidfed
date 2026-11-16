@@ -1,3 +1,6 @@
+/** Shared signing and verification primitives for protocol JWTs beyond Entity Statements. */
+
+// biome-ignore assist/source/organizeImports: Preserve dependency evaluation order.
 import { runAsyncOperation as runOperation } from "../async-operation.js";
 import {
 	DEFAULT_CLOCK_SKEW_SECONDS,
@@ -10,12 +13,12 @@ import { JWKSchema, type JWKSet } from "../schemas/jwk.js";
 import { type FederationOptions, nowSeconds } from "../types.js";
 import { isValidAlgorithm, selectVerificationKey } from "./keys.js";
 import type { JwtSigner } from "./signer.js";
+import * as jose from "jose";
 
 const failure = (description: string): Result<never> =>
 	err({ code: FederationErrorCode.InvalidRequest, description });
 
-import * as jose from "jose";
-
+/** Decode a size-bounded JWT without authenticating its header or claims. */
 export function decodeApplicationJwt(
 	jwt: string,
 	options: FederationOptions,
@@ -62,6 +65,10 @@ export function checkApplicationJwtHeader(
 	return ok(header.alg as string);
 }
 
+/**
+ * Verify a protocol JWT's header, signature, times, and supplied audience expectation.
+ * The caller establishes trust in the verification keys and applies protocol-specific claim rules.
+ */
 export async function verifyApplicationJwt(
 	jwt: string,
 	keys: JWKSet,
@@ -119,6 +126,7 @@ export async function verifyApplicationJwt(
 	return failure("JWT signature or claims could not be verified with the trusted protocol keys");
 }
 
+/** Serialize and sign a protocol payload with the requested JWT type and optional trust chain. */
 export async function signApplicationJwt(
 	payload: Record<string, unknown>,
 	typ: string,

@@ -1,3 +1,5 @@
+/** Retrieval and verification of signed Subordinate Events responses. */
+
 import { InternalErrorCode, JwtTyp, MediaType } from "../constants.js";
 import { fetchFederationEndpoint } from "../endpoint-client.js";
 import { err, type FederationError, ok, type Result } from "../errors.js";

@@ -1,3 +1,5 @@
+/** Application-controlled chain selection without exposing authenticated evidence to mutation. */
+
 import { callSynchronous, freezeSnapshot } from "../callbacks.js";
 import { InternalErrorCode } from "../constants.js";
 import { err, federationError, ok, type Result } from "../errors.js";

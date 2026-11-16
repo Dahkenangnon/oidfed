@@ -1,3 +1,5 @@
+/** Protocol-engine callbacks for client metadata validation and registration responses. */
+
 import type { FederationError, Result, ValidatedTrustChain } from "@oidfed/core";
 
 /**

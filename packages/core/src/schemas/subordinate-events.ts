@@ -1,4 +1,5 @@
 /** OpenID Federation Subordinate Events Endpoint, Draft 01. */
+
 import { z } from "zod";
 import { EntityIdSchema } from "./entity-id.js";
 

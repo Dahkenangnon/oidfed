@@ -1,4 +1,5 @@
 /** Trust chain discovery: resolves and validates chains, returning a branded DiscoveryResult. */
+
 import { InternalErrorCode } from "../constants.js";
 import { err, federationError, ok, type Result } from "../errors.js";
 import { safeLogger } from "./../logging.js";
@@ -15,7 +16,7 @@ import { selectTrustChain } from "./selection.js";
 import { shortestChain, validateTrustChain } from "./validate.js";
 
 /**
- * Resolves and validates trust chains for a target entity, returning the shortest valid chain.
+ * Resolve and validate chains, then use options.chainSelection or the shortest valid chain.
  *
  * Callers should re-invoke when `result.trustChain.expiresAt` is reached to refresh
  * the chain.

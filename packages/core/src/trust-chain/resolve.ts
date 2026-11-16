@@ -1,4 +1,5 @@
 /** Bottom-up trust chain resolution: walks authority_hints to discover all possible chains. */
+
 import {
 	DEFAULT_MAX_AUTHORITY_HINTS,
 	DEFAULT_MAX_CHAIN_DEPTH,

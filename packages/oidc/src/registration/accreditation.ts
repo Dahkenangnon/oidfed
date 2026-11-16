@@ -1,3 +1,5 @@
+/** Declarative Trust Mark requirements and host policy before registration side effects. */
+
 import {
 	checkTrustMarkRequirements,
 	err,
@@ -28,6 +30,10 @@ function freeze<T>(value: T): T {
 	}
 	return value;
 }
+/**
+ * Enforce declarative Trust Mark requirements before invoking the host's registration policy
+ * callback.
+ */
 export async function checkRegistrationAccreditation(
 	chain: ValidatedTrustChain,
 	registrationType: "automatic" | "explicit",

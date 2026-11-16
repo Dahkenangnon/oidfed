@@ -1,3 +1,5 @@
+/** Default protocol metadata validation and explicit registration response enrichment. */
+
 import {
 	err,
 	type FederationError,
@@ -19,14 +21,15 @@ import type { RegistrationProtocolAdapter } from "./adapter-types.js";
  * Implements the `RegistrationProtocolAdapter` interface from `./adapter-types.js`.
  */
 export class OIDCRegistrationAdapter implements RegistrationProtocolAdapter {
+	/** Validate openid_relying_party metadata when present; leave other entity metadata unchanged. */
 	validateClientMetadata(
 		raw: Record<string, unknown>,
 	): Result<Record<string, unknown>, FederationError> {
 		const rpMeta = raw.openid_relying_party;
 		if (!rpMeta || typeof rpMeta !== "object") {
-			// Intentional pass-through: non-RP entities (e.g. AS, OP) may not carry
-			// openid_relying_party metadata. The OP-side process-explicit handler
-			// enforces its presence before this adapter is invoked (SEC-2).
+			// This adapter checks openid_relying_party metadata when present.
+			// The registration handler requires its profile's client metadata
+			// before calling the adapter.
 			return ok(raw);
 		}
 
@@ -43,6 +46,9 @@ export class OIDCRegistrationAdapter implements RegistrationProtocolAdapter {
 		return ok(raw);
 	}
 
+	/**
+	 * Copy client metadata and supply client_id from the validated chain when it is absent.
+	 */
 	enrichResponseMetadata(
 		rpMeta: Record<string, unknown>,
 		trustChain: ValidatedTrustChain,

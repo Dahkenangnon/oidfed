@@ -1,3 +1,5 @@
+/** Detached role metadata composition and shared publication validation. */
+
 import { isObject, setOwn } from "./callbacks.js";
 import { validatePublishedMetadataKeys } from "./schemas/jwk.js";
 import type { EntityContext, EntityRole } from "./types.js";

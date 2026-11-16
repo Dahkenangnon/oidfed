@@ -1,4 +1,5 @@
 /** Internal authority facade over the shared core HTTP helpers. */
+
 export {
 	type ExtractedRequestParams,
 	errorResponse,

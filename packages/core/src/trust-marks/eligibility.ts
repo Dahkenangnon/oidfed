@@ -1,3 +1,5 @@
+/** Eligibility checks for stored Trust Marks, including expiry and local revocation. */
+
 import { decodeEntityStatement } from "../jose/verify.js";
 import type { TrustMarkRecord } from "./storage.js";
 

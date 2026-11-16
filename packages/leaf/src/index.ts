@@ -1,4 +1,4 @@
-/** @oidfed/leaf — Leaf entity: EC serving and trust chain discovery. */
+/** @oidfed/leaf: Leaf Entity Configuration publication and trust chain discovery. */
 
 export type { DiscoveryResult } from "@oidfed/core";
 export {

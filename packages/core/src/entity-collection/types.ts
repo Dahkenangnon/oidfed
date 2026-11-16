@@ -1,3 +1,5 @@
+/** Storage, collection, authentication, and query contracts for Entity Collection services. */
+
 import type { EndpointAuthentication } from "../endpoint-authentication.js";
 import type { Result } from "../errors.js";
 import type { ReplayStore } from "../replay-store.js";
@@ -64,7 +66,7 @@ export interface EntityCollectionCollectorContext {
 	readonly signal: AbortSignal;
 }
 
-/** Return the complete candidate set; failures leave the previously published snapshot intact. */
+/** Return the complete candidate set; a failed refresh leaves the published snapshot in place. */
 export type EntityCollectionCollector = (
 	context: EntityCollectionCollectorContext,
 ) => Promise<Result<readonly EntityCollectionCandidate[]>>;

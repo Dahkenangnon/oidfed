@@ -1,4 +1,8 @@
-/** Zod schemas for the Extended Subordinate Listing endpoint (request query, per-entity entries, and response). */
+/**
+ * Zod schemas for the Extended Subordinate Listing endpoint (request query, per-entity entries, and
+ * response).
+ */
+
 import { z } from "zod";
 import { EntityIdSchema } from "./entity-id.js";
 

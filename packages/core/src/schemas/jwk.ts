@@ -1,4 +1,5 @@
 /** Structural schemas for public JSON Web Keys and federation JWK Sets. */
+
 import { z } from "zod";
 import { validateJwkSetUseRequirement } from "../jwks/use-requirement.js";
 

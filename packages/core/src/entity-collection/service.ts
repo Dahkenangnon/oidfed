@@ -1,3 +1,5 @@
+/** Collection refresh coordination, snapshot queries, and HTTP endpoint hosting. */
+
 import { waitForOperation } from "../async-operation.js";
 import { callSynchronous, freezeSnapshot } from "../callbacks.js";
 import {
@@ -53,6 +55,10 @@ export class EntityCollectionService {
 	readonly store: EntityCollectionStore;
 	private readonly config: EntityCollectionConfig;
 	private readonly refreshes = new Map<string, Promise<Result<CollectionRefreshResult>>>();
+	/**
+	 * Validate collection limits and authentication before retaining configuration and storage
+	 * dependencies.
+	 */
 	constructor(config: EntityCollectionConfig) {
 		if (config.queryMatcher !== undefined && typeof config.queryMatcher !== "function")
 			throw new TypeError("Collection queryMatcher must be a function");
@@ -184,6 +190,10 @@ export class EntityCollectionService {
 			});
 	}
 
+	/**
+	 * Build and publish a snapshot, queuing refreshes for the same anchor.
+	 * Cancellation releases the caller while later refreshes remain queued in order.
+	 */
 	async refresh(
 		anchor: EntityId,
 		options?: CollectionRefreshOptions,
@@ -246,6 +256,10 @@ export class EntityCollectionService {
 		}
 	}
 
+	/**
+	 * Query published snapshots and return a Result error for invalid selectors. This operation uses
+	 * stored data.
+	 */
 	async query(
 		params: EntityCollectionRequestParams = {},
 	): Promise<Result<EntityCollectionResponse>> {
@@ -455,6 +469,7 @@ export class EntityCollectionService {
 		}
 	}
 
+	/** Serve anonymous or authenticated Collection requests using published snapshots. */
 	async handleRequest(request: Request): Promise<Response> {
 		const failure = (error: {
 			code: Parameters<typeof toPublicError>[0]["code"];

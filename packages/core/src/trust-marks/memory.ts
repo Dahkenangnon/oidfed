@@ -1,3 +1,5 @@
+/** Detached in-memory Trust Mark records with serialized store transactions. */
+
 import { decodeEntityStatement } from "../jose/verify.js";
 import type { EntityId } from "../types.js";
 import { isStoredTrustMarkEligible } from "./eligibility.js";
@@ -31,6 +33,11 @@ function latestBySubject(records: TrustMarkRecord[]): TrustMarkRecord[] {
 	return [...latest.values()];
 }
 
+/**
+ * Detached storage operations over a host-supplied record map and mutation boundary.
+ * Storage eligibility uses local flags and lifetimes; the issuer service performs cryptographic
+ * checks.
+ */
 export class MemoryTrustMarkStorage implements TrustMarkStorage {
 	constructor(
 		private readonly read: () => Map<string, TrustMarkRecord>,
@@ -45,6 +52,10 @@ export class MemoryTrustMarkStorage implements TrustMarkStorage {
 		return records;
 	}
 
+	/**
+	 * Return detached records matching the decoded issuer and optional selectors, without verifying
+	 * JWT signatures.
+	 */
 	async listCandidates(filter: {
 		issuer: string;
 		trustMarkType?: string;
@@ -63,6 +74,10 @@ export class MemoryTrustMarkStorage implements TrustMarkStorage {
 		);
 	}
 
+	/**
+	 * Return the newest locally eligible record for a subject and type, without cryptographic
+	 * revalidation.
+	 */
 	async getValid(
 		trustMarkType: string,
 		subject: EntityId,
@@ -81,11 +96,13 @@ export class MemoryTrustMarkStorage implements TrustMarkStorage {
 		return records[0] ? detached(records[0]) : undefined;
 	}
 
+	/** Look up the exact JWT and return a detached record, including inactive records. */
 	async getByJwt(jwt: string): Promise<TrustMarkRecord | undefined> {
 		const record = this.records().get(jwt);
 		return record ? detached(record) : undefined;
 	}
 
+	/** Page locally eligible subjects in identifier order, returning one latest record per subject. */
 	async listValid(
 		trustMarkType: string,
 		validAt: number,
@@ -114,6 +131,7 @@ export class MemoryTrustMarkStorage implements TrustMarkStorage {
 		return { items: detached(records) };
 	}
 
+	/** Return the latest locally eligible record for each type held by the subject. */
 	async listValidForSubject(subject: EntityId, validAt: number): Promise<TrustMarkRecord[]> {
 		const records = [...this.records().values()].filter(
 			(record) => record.subject === subject && isStoredTrustMarkEligible(record, validAt),
@@ -130,12 +148,14 @@ export class MemoryTrustMarkStorage implements TrustMarkStorage {
 		);
 	}
 
+	/** Check local issuance flags and lifetimes; this does not authenticate the stored JWT. */
 	async hasAnyValid(subject: EntityId, validAt: number): Promise<boolean> {
 		return [...this.records().values()].some(
 			(record) => record.subject === subject && isStoredTrustMarkEligible(record, validAt),
 		);
 	}
 
+	/** Detach the issuance record before its write can wait behind another operation. */
 	async issue(record: TrustMarkRecord): Promise<void> {
 		// The caller may reuse its input while this write waits for a transaction.
 		const captured = detached(record);
@@ -145,6 +165,9 @@ export class MemoryTrustMarkStorage implements TrustMarkStorage {
 		});
 	}
 
+	/**
+	 * Deactivate all matching active records, optionally limited to an issuer. Reject when none match.
+	 */
 	async revoke(
 		trustMarkType: string,
 		subject: EntityId,
@@ -188,6 +211,7 @@ export class MemoryTrustMarkStore implements TrustMarkStore {
 			release();
 		}
 	}
+	/** Serialize writes against a cloned record map; commit only after the callback succeeds. */
 	async transaction<T>(
 		operation: (tx: { trustMarks: TrustMarkStorage }) => Promise<T>,
 	): Promise<T> {
@@ -203,6 +227,7 @@ export class MemoryTrustMarkStore implements TrustMarkStore {
 			return result;
 		});
 	}
+	/** Capture a detached read-only view before invoking the callback outside the write queue. */
 	async readSnapshot<T>(
 		operation: (snapshot: {
 			trustMarks: Pick<TrustMarkStorage, "listCandidates" | "getByJwt">;

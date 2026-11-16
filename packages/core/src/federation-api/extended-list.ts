@@ -3,6 +3,7 @@
  * Performs anonymous GET or authenticated POST, enforces URL/status/Content-Type, parses the JSON
  * response, and surfaces spec-defined error codes from 400 and 404 responses.
  */
+
 import { FederationErrorCode, InternalErrorCode, MediaType } from "../constants.js";
 import { fetchFederationEndpoint } from "../endpoint-client.js";
 import { EXTENDED_LIST_UNORDERED_PARAMETERS } from "../endpoint-parameters.js";

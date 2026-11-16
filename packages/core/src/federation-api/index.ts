@@ -1,3 +1,5 @@
+/** Federation endpoint clients and verification of signed endpoint responses. */
+
 import { setOwn } from "../callbacks.js";
 import {
 	DEFAULT_CLOCK_SKEW_SECONDS,
@@ -270,7 +272,7 @@ export async function verifySignedJwkSet(
 
 /** Optional filters accepted by the subordinate listing endpoint. */
 export interface ListSubordinatesFilter {
-	/** Open value space — Federation §5.1 permits identifiers beyond the published set. */
+	/** Accept extension Entity Type Identifiers as permitted by Federation §5.1. */
 	entityType?: EntityTypeIdentifier | EntityTypeIdentifier[];
 	trustMarked?: boolean;
 	trustMarkType?: string;
@@ -373,7 +375,7 @@ async function requestListSubordinates(
 export interface ResolveRequestParams {
 	sub: EntityId;
 	trustAnchor: EntityId | EntityId[];
-	/** Open value space — Federation §5.1 permits identifiers beyond the published set. */
+	/** Accept extension Entity Type Identifiers as permitted by Federation §5.1. */
 	entityType?: EntityTypeIdentifier | EntityTypeIdentifier[];
 }
 

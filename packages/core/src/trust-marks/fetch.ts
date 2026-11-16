@@ -1,10 +1,6 @@
+/** Trust Mark retrieval and signed status requests using standalone or trusted issuer context. */
+
 import { freezeSnapshot } from "../callbacks.js";
-/**
- * Client-side helpers for the federation Trust Mark and Trust Mark Status
- * endpoints. The library already provides server-side handlers; these helpers
- * mirror the symmetry of the JWK-Set fetchers so integrators do not have to
- * re-implement HTTP / Content-Type discipline.
- */
 import { FederationErrorCode, MediaType } from "../constants.js";
 import { fetchFederationEndpoint } from "../endpoint-client.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
@@ -13,8 +9,13 @@ import { decodeEntityStatement } from "../jose/verify.js";
 import { safeLogger } from "./../logging.js";
 import type { JWKSet } from "../schemas/jwk.js";
 import { TrustMarkPayloadSchema } from "../schemas/trust-mark.js";
-import type { Clock, EntityId, FederationOptions } from "../types.js";
-import { entityId, nowSeconds } from "../types.js";
+import {
+	type Clock,
+	type EntityId,
+	entityId,
+	type FederationOptions,
+	nowSeconds,
+} from "../types.js";
 import { type TrustMarkIssuerContext, trustMarkIssuerContext } from "./evidence.js";
 import { trustMarkOperation } from "./operation.js";
 import { checkTrustMarkProfile } from "./profiles.js";

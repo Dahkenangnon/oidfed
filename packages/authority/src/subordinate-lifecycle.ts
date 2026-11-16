@@ -1,3 +1,5 @@
+/** Subordinate registration, updates, revocation, and transactional lifecycle events. */
+
 import {
 	type EntityId,
 	entityId,
@@ -143,13 +145,13 @@ export function createSubordinateLifecycle(ctx: HandlerContext) {
 					);
 					let beforeKeys: string | undefined;
 					if (normalized.jwks !== undefined) {
-						// Reject invalid replacements within the transaction, while allowing repair
-						// of a legacy record whose keys could not have been published.
+						// Validate replacement keys inside the transaction. An invalid stored key set
+						// can be repaired by a valid replacement.
 						publicKeys({ ...before, jwks: normalized.jwks });
 						try {
 							beforeKeys = publicKeys(before);
 						} catch {
-							/* Legacy invalid keys count as changed. */
+							/* Treat an invalid stored key set as changed. */
 						}
 					}
 					await tx.subordinates.update(subject, normalized);

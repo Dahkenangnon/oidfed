@@ -1,4 +1,5 @@
-/** Request routing: maps federation endpoint paths to their respective handlers. */
+/** HTTP handler contracts and ordered middleware composition for authority hosts. */
+
 export type FederationHandler = (request: Request) => Promise<Response>;
 
 export type Middleware = (

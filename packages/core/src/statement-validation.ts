@@ -1,3 +1,5 @@
+/** Shared critical-claim and time-claim checks for Entity Statements. */
+
 import {
 	DEFAULT_CLOCK_SKEW_SECONDS,
 	InternalErrorCode,

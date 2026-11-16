@@ -1,3 +1,5 @@
+/** Path length, naming, and Entity Type restrictions applied to trust chains. */
+
 import { InternalErrorCode } from "../constants.js";
 import { err, type FederationError, ok, type Result } from "../errors.js";
 import { isDomainConstraint, type TrustChainConstraints } from "../schemas/constraints.js";

@@ -1,4 +1,5 @@
 /** Zod schemas for explicit-registration request and response payloads. */
+
 import {
 	EntityIdSchema,
 	FederationMetadataSchema,

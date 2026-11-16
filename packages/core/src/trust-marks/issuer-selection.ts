@@ -1,3 +1,5 @@
+/** Configured issuer-evidence selection shared by Trust Mark consumers. */
+
 import { ok, type Result } from "../errors.js";
 import type { FederationOptions, TrustAnchorSet } from "../types.js";
 import { establishTrustMarkIssuerTrust, type TrustMarkIssuerContext } from "./evidence.js";

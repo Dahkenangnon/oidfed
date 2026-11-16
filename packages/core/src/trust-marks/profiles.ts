@@ -1,3 +1,5 @@
+/** Base and application-defined Trust Mark JWT profile validation. */
+
 import { freezeSnapshot } from "../callbacks.js";
 import { InternalErrorCode, JwtTyp } from "../constants.js";
 import { err, ok, type Result } from "../errors.js";
@@ -11,6 +13,7 @@ export interface TrustMarkProfile {
 	) => Result<void> | Promise<Result<void>>;
 }
 
+/** Apply the base or registered Trust Mark profile and contain profile callback failures. */
 export async function checkTrustMarkProfile(
 	typ: unknown,
 	claims: Record<string, unknown>,

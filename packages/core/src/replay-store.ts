@@ -1,3 +1,5 @@
+/** Atomic replay-claim storage contracts for JWT authentication. */
+
 /** A replay-protected JWT identifier scoped to its issuer and audience. */
 export interface JtiReplayClaim {
 	readonly issuer: string;

@@ -1,3 +1,5 @@
+/** Bounded collection traversal and validation before snapshot publication. */
+
 import { z } from "zod";
 import { waitForOperation } from "../async-operation.js";
 import { DEFAULT_MAX_CHAIN_DEPTH, FederationErrorCode } from "../constants.js";
@@ -18,7 +20,6 @@ import { fetchEntityConfiguration, fetchSubordinateStatement } from "../trust-ch
 import { createConcurrencyLimiter } from "../trust-chain/resolve.js";
 import { selectTrustChain } from "../trust-chain/selection.js";
 import { validateTrustMarkReferenceSyntax } from "../trust-chain/validate.js";
-import type { ValidatedTrustChain } from "../types.js";
 import {
 	type CacheProvider,
 	type EntityId,
@@ -26,6 +27,7 @@ import {
 	type HttpClient,
 	isValidEntityId,
 	nowSeconds,
+	type ValidatedTrustChain,
 } from "../types.js";
 import { createCollectionEvidence } from "./evidence.js";
 import type {

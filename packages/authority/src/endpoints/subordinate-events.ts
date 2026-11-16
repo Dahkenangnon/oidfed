@@ -1,3 +1,5 @@
+/** Signed subordinate history responses with request cancellation and optional expiry. */
+
 import {
 	type EntityId,
 	FederationErrorCode,

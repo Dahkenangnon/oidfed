@@ -1,4 +1,8 @@
-/** OP-side pre-validation of automatic registration Request Objects (structure only, no signature check). */
+/**
+ * OP-side pre-validation of automatic registration Request Objects (structure only, no signature
+ * check).
+ */
+
 import {
 	DEFAULT_CLOCK_SKEW_SECONDS,
 	decodeEntityStatement,
@@ -18,20 +22,19 @@ import type {
 } from "./types.js";
 
 /**
- * Validate an incoming Authorization Request Object JWT for automatic registration.
+ * Check an incoming Authorization Request Object before automatic registration.
  *
- * Federation claim validation and oidfed's explicit-typing policy:
- * - `typ` must be `oauth-authz-req+jwt` (oidfed policy; RFC 9101 §10.8)
- * - `sub` MUST NOT be present
- * - `client_id` REQUIRED and MUST equal `iss`
- * - `aud` MUST be the OP's Entity Identifier (single string)
- * - `exp` MUST be present and not expired
- * - `jti` MUST be present
- * - `registration` MUST NOT be present
- * - If `trust_chain` header present, first entry must be subject's EC
+ * Federation claim rules and oidfed's typing policy:
+ * - `typ` must be `oauth-authz-req+jwt` (oidfed policy; RFC 9101 §10.8).
+ * - `sub` MUST NOT be present.
+ * - `client_id` is REQUIRED and MUST equal `iss`.
+ * - `aud` MUST be the OP's Entity Identifier as a single string.
+ * - `exp` MUST be present and unexpired.
+ * - `jti` MUST be present.
+ * - `registration` MUST NOT be present.
+ * - A `trust_chain` header starts with the subject's EC.
  *
- * Does NOT verify the JWT signature — that requires resolving the RP's trust chain
- * and is done separately by the OP after this validation step.
+ * The OP verifies the signature separately after resolving the RP's trust chain.
  */
 export function validateAutomaticRegistrationRequest(
 	requestObjectJwt: string,

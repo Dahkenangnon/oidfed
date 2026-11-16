@@ -1,3 +1,5 @@
+/** Provider-side automatic registration using authenticated client federation evidence. */
+
 import {
 	type ClientAttestationError,
 	DEFAULT_CLOCK_SKEW_SECONDS,
@@ -58,7 +60,7 @@ export interface ProcessedAutomaticRegistration extends ProcessedRegistration {
 export interface ProcessAutomaticRegistrationOptions
 	extends FederationOptions,
 		RegistrationAccreditationPolicy {
-	/** The OP's own Entity Identifier — REQUIRED to prevent cross-OP replay via `aud` validation. */
+	/** The OP's Entity Identifier, REQUIRED for `aud` validation to prevent cross-OP replay. */
 	opEntityId: EntityId;
 	/** Server role selecting the registration protocol. Defaults to OIDC. */
 	providerMetadataType?: "openid_provider" | "oauth_authorization_server";

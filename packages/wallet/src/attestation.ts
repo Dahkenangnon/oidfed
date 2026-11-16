@@ -1,3 +1,5 @@
+/** Wallet profile binding of client attestation authentication to trusted Wallet Providers. */
+
 import {
 	type AuthenticateClientAttestationOptions,
 	authenticateClientAttestation,
@@ -46,6 +48,10 @@ export interface AuthenticateWalletOptions
 		signal?: AbortSignal,
 	) => boolean | Promise<boolean>;
 }
+/**
+ * Create a JWT Wallet Attestation using the shared client-attestation signer. Issuance approval is
+ * host policy.
+ */
 export function createAttestation(
 	issuer: string,
 	params: CreateWalletAttestationParams,
@@ -75,6 +81,10 @@ function providerTrust(anchors: TrustAnchorSet, options: WalletAttestationVerifi
 	};
 	return { getAttester, provider: () => provider };
 }
+/**
+ * Establish Wallet Provider trust and verify its JWT attestation. This does not verify holder proof
+ * of possession.
+ */
 export async function verifyAttestation(
 	jwt: string,
 	anchors: TrustAnchorSet,
@@ -91,6 +101,10 @@ export async function verifyAttestation(
 		? ok({ attestation: verified.value.attestation, provider })
 		: failure("Wallet Provider trust is required");
 }
+/**
+ * Verify provider trust, the attestation, holder proof, replay policy, and the host's acceptWallet
+ * decision.
+ */
 export async function authenticateWallet(
 	attestation: string,
 	proof: string,

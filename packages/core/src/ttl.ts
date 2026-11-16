@@ -1,3 +1,5 @@
+/** Publication lifetime validation shared by Entity Statements and endpoint responses. */
+
 /**
  * Validate a configured lifetime before publication. Entity Statement builders
  * use safe-integer durations; Trust Marks and event responses allow fractions.

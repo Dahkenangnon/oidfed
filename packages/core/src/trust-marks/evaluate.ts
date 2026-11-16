@@ -1,3 +1,5 @@
+/** Evaluation of published Trust Marks using configured issuer trust evidence. */
+
 import { InternalErrorCode } from "../constants.js";
 import { decodeEntityStatement } from "../jose/verify.js";
 import type { JWKSet } from "../schemas/jwk.js";
@@ -12,7 +14,7 @@ import { validateTrustMarkWithIssuer } from "./evidence.js";
 import { validateTrustMark } from "./index.js";
 import { createConfiguredTrustMarkIssuerResolver } from "./issuer-selection.js";
 
-/** Evaluate subject marks using evidence already authenticated by chain validation or the caller. */
+/** Evaluate subject marks using evidence authenticated by chain validation or the caller. */
 export async function evaluatePublishedTrustMarks(
 	statements: readonly ParsedEntityStatement[],
 	anchors: TrustAnchorSet,

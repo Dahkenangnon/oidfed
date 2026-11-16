@@ -1,4 +1,5 @@
 /** OpenID Federation Entity Collection Endpoint 1.0, Draft 01. */
+
 import { z } from "zod";
 import { isLanguageTag, splitInformationalClaim } from "../language-tags.js";
 import { EntityIdSchema } from "./entity-id.js";

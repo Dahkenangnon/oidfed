@@ -1,3 +1,5 @@
+/** Metadata null-value checks shared by publication and trust chain validation. */
+
 /** Find nulls in positions requiring objects or non-null metadata parameters. */
 export function findInvalidMetadataNullPaths(
 	metadata: unknown,

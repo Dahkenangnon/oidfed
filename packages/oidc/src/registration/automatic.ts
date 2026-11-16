@@ -1,4 +1,5 @@
 /** RP-side automatic registration: builds a signed Request Object with embedded trust chain. */
+
 import {
 	DEFAULT_REQUEST_OBJECT_TTL_SECONDS,
 	type DiscoveryResult,
@@ -28,7 +29,6 @@ import {
 	selectSharedRegistrationTrustChains,
 } from "./helpers.js";
 import { oidcRegistrationProfile, type RegistrationProfile } from "./profile.js";
-
 import { authorizationParameters, requestObjectAlgorithms } from "./request-policy.js";
 
 const CLIENT_ASSERTION_TYPE = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
@@ -55,30 +55,23 @@ export interface AutomaticRegistrationConfig {
 	/** TTL for the Request Object JWT in seconds (default: 300). */
 	readonly requestObjectTtlSeconds?: number;
 	/**
-	 * When true, attach the peer_trust_chain JWS header — a Trust Chain for
-	 * the OP that ends at the same Trust Anchor as the RP chain. Disabled by
-	 * default; set to true only when the RP wants the OP to use the
-	 * metadata/policy values from the RP-built peer chain (for the
-	 * Federation/Metadata Integrity properties). The library throws if the
-	 * peer chain to the shared Trust Anchor cannot be built.
+	 * Attach the peer_trust_chain JWS header when enabled. It contains an OP chain ending
+	 * at the same Trust Anchor as the RP chain. Disabled by default. Enable it to offer
+	 * the RP-selected metadata and policy to the OP for Federation/Metadata Integrity.
+	 * Registration fails if a peer chain to the shared anchor cannot be built.
 	 */
 	readonly includePeerTrustChain?: boolean;
 	/**
-	 * Selects how the signed Request Object reaches the OP's authorization
-	 * endpoint. Defaults to `"form_post"` — the safest choice for Request
-	 * Objects that carry an embedded `trust_chain` (the JWT can easily exceed
-	 * the practical URL/header length limits of HTTP intermediaries).
-	 *
-	 * Pass `"query"` to preserve the historical 0.3.x GET-query behavior.
+	 * Choose how the signed Request Object reaches the OP's authorization endpoint.
+	 * Default: `"form_post"`, which avoids URL length limits when an embedded `trust_chain`
+	 * makes the JWT large. Use `"query"` to send it in the GET query string.
 	 */
 	readonly requestDelivery?: RequestDelivery;
 	/**
-	 * For `requestDelivery: "request_uri"`: the publicly-reachable URL at
-	 * which the RP will host the signed Request Object JWT. REQUIRED in that
-	 * mode and ignored otherwise. The library does NOT host the JWT — the
-	 * caller must serve the returned `requestObjectJwt` at this URL with
-	 * Content-Type `application/oauth-authz-req+jwt`, typically with a short
-	 * TTL and single-use semantics.
+	 * For `requestDelivery: "request_uri"`, supply the public URL where the RP serves the
+	 * returned `requestObjectJwt` with Content-Type `application/oauth-authz-req+jwt`.
+	 * The URL is REQUIRED in this mode and ignored otherwise. The caller hosts the JWT,
+	 * typically with a short TTL and single-use semantics.
 	 */
 	readonly requestUri?: string;
 }
@@ -237,7 +230,7 @@ export async function automaticRegistration(
 		}
 	}
 
-	// sub intentionally omitted — forbidden in automatic registration Request Objects
+	// Automatic registration Request Objects MUST NOT contain sub.
 	const payload: Record<string, unknown> = {
 		iss: rpConfig.entityId,
 		client_id: rpConfig.entityId,

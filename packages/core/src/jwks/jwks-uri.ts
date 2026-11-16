@@ -1,7 +1,8 @@
 /**
- * HTTP fetcher for `jwks_uri` — performs the HTTPS GET, validates the JSON
- * shape against `MetadataJWKSetSchema`, and applies the conditional `use` rule.
+ * Fetch a public JWK Set from `jwks_uri`, validate it with `MetadataJWKSetSchema`,
+ * and check the conditional `use` requirement.
  */
+
 import { FederationErrorCode } from "../constants.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
 import { safeLogger } from "./../logging.js";

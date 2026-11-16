@@ -1,6 +1,9 @@
+/** Authority adapter for signed Trust Mark Status responses. */
+
 import type { HandlerContext } from "./context.js";
 import { errorResponse } from "./helpers.js";
 import { trustMarkService } from "./trust-mark-service.js";
+
 export function createTrustMarkStatusHandler(
 	ctx: HandlerContext,
 ): (request: Request) => Promise<Response> {

@@ -1,14 +1,5 @@
-import type {
-	DiscoveryResult,
-	EntityContext,
-	EntityId,
-	EntityRole,
-	FederationOptions,
-	JWKSet,
-	ReplayStore,
-	Result,
-	TrustAnchorSet,
-} from "@oidfed/core";
+/** Composable OIDC and OAuth roles with protocol metadata and registration operations. */
+
 import {
 	assessEntity,
 	authenticateClientAttestation,
@@ -16,22 +7,30 @@ import {
 	clientAttestationHeaders,
 	createAttestationChallengeHandler,
 	createClientAttestationProof,
+	type DiscoveryResult,
 	discoverEntity,
 	type EntityAssessmentOptions,
+	type EntityContext,
+	type EntityId,
+	type EntityRole,
 	entityId,
 	err,
 	FederationErrorCode,
+	type FederationOptions,
 	federationError,
 	fetchAttestationChallenge,
+	type JWKSet,
+	type ReplayStore,
+	type Result,
 	readAttestationChallenge,
 	runAsyncOperation,
 	safeLogger,
 	serializeClientAttestation,
 	shortestChain,
+	type TrustAnchorSet,
 	verifyClientAttestation,
 } from "@oidfed/core";
-import type { ClientAssertionOptions } from "./client-auth/assertion.js";
-import { createClientAssertion } from "./client-auth/assertion.js";
+import { type ClientAssertionOptions, createClientAssertion } from "./client-auth/assertion.js";
 import {
 	assertPublicationMetadata,
 	effectiveMetadata,
@@ -72,7 +71,11 @@ import {
 	publicationRoleSchemas,
 } from "./schemas/metadata.js";
 
-/** Metadata is copied at construction. Instance operations require host initialization; per-call options override role options, which override host options. */
+/**
+ * Metadata is copied at construction. Registration and instance assertion signing require
+ * host initialization; assessments may use explicit or role-configured trust anchors.
+ * Per-call options override role options, which override host options.
+ */
 export interface OidcRelyingPartyRoleConfig {
 	readonly options?: FederationOptions;
 	readonly protocolKeyProvider: ProtocolSigningKeyProvider;
@@ -93,6 +96,7 @@ export interface CreateAuthorizationRequestOptions extends FederationOptions {
 	readonly trustAnchors?: TrustAnchorSet;
 }
 
+/** Shared OIDC and OAuth client operations; subclasses select the protocol profile explicitly. */
 abstract class ClientRole implements EntityRole {
 	static createClientAttestationProof = createClientAttestationProof;
 	static clientAttestationHeaders = clientAttestationHeaders;
@@ -134,7 +138,9 @@ abstract class ClientRole implements EntityRole {
 		);
 	}
 
+	/** Assess effective protocol metadata with explicitly supplied anchors and options. */
 	static assessEntity = assessProtocolEntity;
+	/** Assess protocol metadata using configured anchors, host options, and per-call overrides. */
 	assessEntity(
 		target: string,
 		type: ProtocolEntityType,
@@ -148,6 +154,9 @@ abstract class ClientRole implements EntityRole {
 		);
 	}
 
+	/**
+	 * Create a client assertion from an explicitly supplied identity, audience, signer, and options.
+	 */
 	static createClientAssertion = createClientAssertion;
 
 	abstract readonly type: "openid_relying_party" | "oauth_client";
@@ -160,20 +169,27 @@ abstract class ClientRole implements EntityRole {
 	private context?: EntityContext;
 	private composedMetadata?: Record<string, unknown>;
 
+	/** Detach supplied metadata and retain the protocol-key and host configuration dependencies. */
 	constructor(public readonly config: OidcRelyingPartyRoleConfig) {
 		this.metadata = structuredClone(config.metadata ?? {});
 	}
 
+	/** Validate composed publication metadata and capture a detached copy for client operations. */
 	validateMetadata(metadata: Readonly<Record<string, unknown>>): void {
 		assertPublicationMetadata(this.type, metadata);
 		this.composedMetadata = structuredClone(metadata);
 	}
 
+	/** Attach this role to one host identity; reusing it across distinct hosts throws. */
 	initialize(context: EntityContext): void {
 		assertRoleOwner(this.context, context);
 		this.context = context;
 	}
 
+	/**
+	 * Sign private_key_jwt authentication with a protocol signer; an initialized host identity is
+	 * required.
+	 */
 	async createClientAssertion(audience: string, options?: ClientAssertionOptions): Promise<string> {
 		if (!this.context) {
 			throw new Error("Role has not been initialized.");
@@ -280,6 +296,7 @@ abstract class ClientRole implements EntityRole {
 		);
 	}
 
+	/** Discover a conformant provider and validate its signed explicit-registration response. */
 	async explicitlyRegister(
 		opEntityId: string,
 		options?: FederationOptions & { readonly trustAnchors?: TrustAnchorSet },
@@ -335,6 +352,10 @@ abstract class ClientRole implements EntityRole {
 		);
 	}
 
+	/**
+	 * Create an authorization request using supplied provider discovery evidence and explicit
+	 * local anchors.
+	 */
 	async createAuthorizationRequest(
 		discovery: DiscoveryResult,
 		authzRequestParams: Readonly<Record<string, unknown>>,
@@ -391,14 +412,20 @@ abstract class ClientRole implements EntityRole {
 
 export class OidcRelyingPartyRole extends ClientRole {
 	readonly type = "openid_relying_party";
-	/** Validate effective protocol metadata. Returns a parse result; success does not establish federation trust. */
+	/**
+	 * Return a parse result for effective protocol metadata. Establish federation trust separately.
+	 */
 	static parseMetadata(metadata: unknown) {
 		return effectiveRoleSchemas.openid_relying_party.safeParse(metadata);
 	}
-	/** Validate supplied publication fields, allowing a Superior to complete omitted requirements. Returns a parse result without establishing trust. */
+	/**
+	 * Return a parse result for supplied publication fields. A Superior may complete omitted
+	 * requirements; establish federation trust separately.
+	 */
 	static parsePublicationMetadata(metadata: unknown) {
 		return publicationRoleSchemas.openid_relying_party.safeParse(metadata);
 	}
+	/** Discover a trusted OP and create the OIDC automatic-registration authorization request. */
 	automaticallyRegister(
 		params: {
 			readonly opEntityId: string;
@@ -436,10 +463,15 @@ export interface OidcProviderRoleConfig extends RegistrationAccreditationPolicy 
 	) => Promise<void>;
 }
 
+/** Shared OIDC and OAuth provider registration integration for a federation host. */
 abstract class ProviderRole implements EntityRole {
 	static verifyClientAttestation = verifyClientAttestation;
 	static authenticateClientAttestation = authenticateClientAttestation;
 	static createAttestationChallengeHandler = createAttestationChallengeHandler;
+	/**
+	 * Process PAR with configured replay protection and persist accepted automatic registration
+	 * through the host callback.
+	 */
 	async processPushedAuthorizationRequest(
 		request: Request,
 		options: Omit<
@@ -477,7 +509,9 @@ abstract class ProviderRole implements EntityRole {
 		}
 	}
 
+	/** Assess effective protocol metadata with explicitly supplied anchors and options. */
 	static assessEntity = assessProtocolEntity;
+	/** Assess protocol metadata using configured anchors, host options, and per-call overrides. */
 	assessEntity(
 		target: string,
 		type: ProtocolEntityType,
@@ -496,10 +530,15 @@ abstract class ProviderRole implements EntityRole {
 	public readonly routes = new Map<string, (request: Request) => Promise<Response>>();
 	private context?: EntityContext;
 
+	/** Detach supplied metadata and retain registration callbacks and dependencies. */
 	constructor(public readonly config: OidcProviderRoleConfig) {
 		this.metadata = structuredClone(config.metadata ?? {});
 	}
 
+	/**
+	 * Validate composed provider fields and require explicit capability for the installed registration
+	 * endpoint.
+	 */
 	validateMetadata(metadata: Readonly<Record<string, unknown>>): void {
 		// Federation §12.2 requires both the endpoint and its explicit capability.
 		const methods = metadata.client_registration_types_supported;
@@ -514,6 +553,7 @@ abstract class ProviderRole implements EntityRole {
 		assertPublicationMetadata(this.type, metadata);
 	}
 
+	/** Bind the role to one host, publish its registration endpoint, and install its handler. */
 	initialize(context: EntityContext): void {
 		assertRoleOwner(this.context, context);
 		this.context = context;
@@ -560,6 +600,10 @@ abstract class ProviderRole implements EntityRole {
 		this.routes.set(registrationPath, handler);
 	}
 
+	/**
+	 * Validate automatic registration with configured replay protection and persist accepted
+	 * metadata through the host callback.
+	 */
 	async processAutomaticRegistration(
 		requestObjectJwt: string,
 		options?: Omit<
@@ -629,7 +673,7 @@ abstract class ProviderRole implements EntityRole {
 		const current = checkRegistrationAuthentication(result.value, effectiveOptions);
 		if (!current.ok) return current;
 		if (this.config.onRegistration) {
-			// Persist the protocol keys actually used for §12.1.1.1.2 verification.
+			// Persist the protocol keys used for §12.1.1.1.2 verification.
 			try {
 				const onRegistration = this.config.onRegistration;
 				await runAsyncOperation(
@@ -653,6 +697,10 @@ abstract class ProviderRole implements EntityRole {
 		return result;
 	}
 
+	/**
+	 * Dispatch a request to the initialized explicit-registration handler; reject when it is not
+	 * mounted.
+	 */
 	async processExplicitRegistration(request: Request): Promise<Response> {
 		const registrationPath = this.config.registrationPath ?? "/registration";
 		const handler = this.routes.get(registrationPath);
@@ -665,11 +713,16 @@ abstract class ProviderRole implements EntityRole {
 
 export class OidcProviderRole extends ProviderRole {
 	readonly type = "openid_provider";
-	/** Validate effective protocol metadata. Returns a parse result; success does not establish federation trust. */
+	/**
+	 * Return a parse result for effective protocol metadata. Establish federation trust separately.
+	 */
 	static parseMetadata(metadata: unknown) {
 		return effectiveRoleSchemas.openid_provider.safeParse(metadata);
 	}
-	/** Validate supplied publication fields, allowing a Superior to complete omitted requirements. Returns a parse result without establishing trust. */
+	/**
+	 * Return a parse result for supplied publication fields. A Superior may complete omitted
+	 * requirements; establish federation trust separately.
+	 */
 	static parsePublicationMetadata(metadata: unknown) {
 		return publicationRoleSchemas.openid_provider.safeParse(metadata);
 	}
@@ -678,14 +731,23 @@ export class OidcProviderRole extends ProviderRole {
 export type OAuthClientRoleConfig = OidcRelyingPartyRoleConfig;
 export class OAuthClientRole extends ClientRole {
 	readonly type = "oauth_client";
-	/** Validate effective protocol metadata. Returns a parse result; success does not establish federation trust. */
+	/**
+	 * Return a parse result for effective protocol metadata. Establish federation trust separately.
+	 */
 	static parseMetadata(metadata: unknown) {
 		return effectiveRoleSchemas.oauth_client.safeParse(metadata);
 	}
-	/** Validate supplied publication fields, allowing a Superior to complete omitted requirements. Returns a parse result without establishing trust. */
+	/**
+	 * Return a parse result for supplied publication fields. A Superior may complete omitted
+	 * requirements; establish federation trust separately.
+	 */
 	static parsePublicationMetadata(metadata: unknown) {
 		return publicationRoleSchemas.oauth_client.safeParse(metadata);
 	}
+	/**
+	 * Discover a trusted authorization server and create an OAuth-profile automatic-registration
+	 * request.
+	 */
 	automaticallyRegister(
 		params: {
 			readonly authorizationServerEntityId: string;
@@ -708,11 +770,16 @@ export class OAuthClientRole extends ClientRole {
 export type OAuthAuthorizationServerRoleConfig = OidcProviderRoleConfig;
 export class OAuthAuthorizationServerRole extends ProviderRole {
 	readonly type = "oauth_authorization_server";
-	/** Validate effective protocol metadata. Returns a parse result; success does not establish federation trust. */
+	/**
+	 * Return a parse result for effective protocol metadata. Establish federation trust separately.
+	 */
 	static parseMetadata(metadata: unknown) {
 		return effectiveRoleSchemas.oauth_authorization_server.safeParse(metadata);
 	}
-	/** Validate supplied publication fields, allowing a Superior to complete omitted requirements. Returns a parse result without establishing trust. */
+	/**
+	 * Return a parse result for supplied publication fields. A Superior may complete omitted
+	 * requirements; establish federation trust separately.
+	 */
 	static parsePublicationMetadata(metadata: unknown) {
 		return publicationRoleSchemas.oauth_authorization_server.safeParse(metadata);
 	}
@@ -726,7 +793,9 @@ export interface OAuthResourceRoleConfig {
 }
 
 export class OAuthResourceRole implements EntityRole {
+	/** Assess effective protocol metadata with explicitly supplied anchors and options. */
 	static assessEntity = assessProtocolEntity;
+	/** Assess protocol metadata using configured anchors, host options, and per-call overrides. */
 	assessEntity(
 		target: string,
 		type: ProtocolEntityType,
@@ -740,7 +809,9 @@ export class OAuthResourceRole implements EntityRole {
 		);
 	}
 
-	/** Validate effective protocol metadata. Returns a parse result; success does not establish federation trust. */
+	/**
+	 * Return a parse result for effective protocol metadata. Establish federation trust separately.
+	 */
 	static parseMetadata(metadata: unknown, options: { profile?: "federation" | "rfc9728" } = {}) {
 		return (
 			options.profile === "rfc9728"
@@ -748,10 +819,17 @@ export class OAuthResourceRole implements EntityRole {
 				: effectiveRoleSchemas.oauth_resource
 		).safeParse(metadata);
 	}
-	/** Validate supplied publication fields, allowing a Superior to complete omitted requirements. Returns a parse result without establishing trust. */
+	/**
+	 * Return a parse result for supplied publication fields. A Superior may complete omitted
+	 * requirements; establish federation trust separately.
+	 */
 	static parsePublicationMetadata(metadata: unknown) {
 		return publicationRoleSchemas.oauth_resource.safeParse(metadata);
 	}
+	/**
+	 * Validate composed resource publication metadata without requiring fields completed by a
+	 * Superior.
+	 */
 	validateMetadata(metadata: Readonly<Record<string, unknown>>): void {
 		assertPublicationMetadata(this.type, metadata);
 	}
@@ -760,6 +838,9 @@ export class OAuthResourceRole implements EntityRole {
 	public readonly metadata: Record<string, unknown> = {};
 	public readonly routes = new Map<string, (request: Request) => Promise<Response>>();
 
+	/**
+	 * Detach supplied resource metadata and optional protocol keys before host composition.
+	 */
 	constructor(public readonly config: OAuthResourceRoleConfig) {
 		this.metadata = structuredClone(config.metadata ?? {});
 		if (config.jwks) {
@@ -768,6 +849,7 @@ export class OAuthResourceRole implements EntityRole {
 	}
 
 	private context?: EntityContext;
+	/** Attach this resource role to one host identity; cross-host reuse throws. */
 	initialize(context: EntityContext): void {
 		assertRoleOwner(this.context, context);
 		this.context = context;

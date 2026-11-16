@@ -1,4 +1,5 @@
 /** HTTP fetching for Entity Configurations and Subordinate Statements, with SSRF protection. */
+
 import { ecCacheKey, esCacheKey } from "../cache/index.js";
 import {
 	DEFAULT_CACHE_TTL_SECONDS,
@@ -15,8 +16,13 @@ import { isExactContentType, parseContentTypeHeader } from "../http.js";
 import { readResponseBody } from "../http-response.js";
 import { decodeEntityStatement } from "../jose/verify.js";
 import { safeLogger } from "./../logging.js";
-import type { EntityId, FederationOptions } from "../types.js";
-import { entityId, isValidEntityId, nowSeconds } from "../types.js";
+import {
+	type EntityId,
+	entityId,
+	type FederationOptions,
+	isValidEntityId,
+	nowSeconds,
+} from "../types.js";
 import { fetchFailure, httpFailureStatus } from "./fetch-failure.js";
 
 // --- IANA Special-Use IP Detection ---
@@ -121,36 +127,36 @@ export function isSpecialUseIPv6(address: string): boolean {
 	const hex = expandIPv6(address);
 	if (!hex) return false;
 
-	// ::/128 — Unspecified Address
+	// ::/128: Unspecified Address
 	if (hex === "00000000000000000000000000000000") return true;
-	// ::1/128 — Loopback Address
+	// ::1/128: Loopback Address
 	if (hex === "00000000000000000000000000000001") return true;
-	// ::ffff:0:0/96 — IPv4-mapped Address
+	// ::ffff:0:0/96: IPv4-mapped Address
 	if (hex.startsWith("00000000000000000000ffff")) return true;
-	// 64:ff9b::/96 — IPv4/IPv6 translation
+	// 64:ff9b::/96: IPv4/IPv6 translation
 	if (hex.startsWith("0064ff9b0000000000000000")) return true;
-	// 64:ff9b:1::/48 — IPv4/IPv6 translation
+	// 64:ff9b:1::/48: IPv4/IPv6 translation
 	if (hex.startsWith("0064ff9b0001")) return true;
-	// 100::/64 — Discard-only Address Block
+	// 100::/64: Discard-only Address Block
 	if (hex.startsWith("0100000000000000")) return true;
-	// 2001::/23 — IETF Protocol Assignments (second group 0x0000–0x01ff).
+	// 2001::/23: IETF Protocol Assignments (second group 0x0000–0x01ff).
 	// Two nibble-aligned 24-bit prefixes exactly cover the /23 range:
 	//   "200100" → 2001:0000:: to 2001:00ff:: (incl. Teredo, ORCHIDv2 2001:0020::)
 	//   "200101" → 2001:0100:: to 2001:01ff:: (incl. Drone Remote ID 2001:0130::)
 	if (hex.startsWith("200100") || hex.startsWith("200101")) return true;
-	// 2001:db8::/32 — Documentation (separate from the /23 range above)
+	// 2001:db8::/32: Documentation (separate from the /23 range above)
 	if (hex.startsWith("20010db8")) return true;
-	// 2002::/16 — 6to4
+	// 2002::/16: 6to4
 	if (hex.startsWith("2002")) return true;
-	// 2620:4f:8000::/48 — Direct Delegation AS112 Service
+	// 2620:4f:8000::/48: Direct Delegation AS112 Service
 	if (hex.startsWith("2620004f8000")) return true;
-	// fc00::/7 — Unique-Local Address (covers fc::/8 and fd::/8)
+	// fc00::/7: Unique-Local Address (covers fc::/8 and fd::/8)
 	const firstByte = Number.parseInt(hex.slice(0, 2), 16);
 	if ((firstByte & 0xfe) === 0xfc) return true;
-	// fe80::/10 — Link-local Unicast
+	// fe80::/10: Link-local Unicast
 	const firstTwoBytes = Number.parseInt(hex.slice(0, 4), 16);
 	if ((firstTwoBytes & 0xffc0) === 0xfe80) return true;
-	// ff00::/8 — Multicast
+	// ff00::/8: Multicast
 	if (hex.startsWith("ff")) return true;
 
 	return false;
@@ -255,6 +261,7 @@ export function validateFetchUrl(
 	return ok(parsed);
 }
 
+/** Validate Entity Identifier syntax without normalizing the identifier used in comparisons. */
 export function validateEntityId(value: string): Result<EntityId, FederationError> {
 	if (isValidEntityId(value)) {
 		return ok(entityId(value));
@@ -283,10 +290,14 @@ export interface PerformFetchOptions extends FederationOptions {
 	/** Form-encoded body for authenticated federation endpoint requests. */
 	body?: URLSearchParams;
 	expectedStatus?: number;
-	/** Decode Federation JSON errors without changing legacy callers. */
+	/** Decode Federation JSON error responses when enabled. */
 	federationErrors?: boolean | readonly number[];
 }
 
+/**
+ * Run a bounded HTTP request with configured URL, status, and response checks.
+ * Transport failures are returned as federation errors; this does not authenticate a JWT body.
+ */
 export async function performFetch(
 	url: string,
 	options?: PerformFetchOptions,

@@ -1,4 +1,5 @@
-/** Zod schema for naming_constraints: allowed/denied entity ID patterns for subordinate statements. */
+/** Structural schemas for path length, naming, and allowed Entity Type constraints. */
+
 import { z } from "zod";
 
 /** RFC 5280 URI constraints use DNS host/domain names, never URL or IP patterns. */

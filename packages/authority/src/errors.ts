@@ -1,6 +1,6 @@
 /** Typed errors raised by Authority configuration and shape validation. */
 
-/** Thrown by `createAuthorityServer` when the supplied configuration is invalid. */
+/** Configuration error raised by Authority validation. Other checks may throw Error or TypeError. */
 export class InvalidAuthorityConfig extends Error {
 	constructor(message: string) {
 		super(message);
@@ -16,7 +16,7 @@ export class InvalidSubordinateRecord extends Error {
 	}
 }
 
-/** Thrown when a payload destined for a Subordinate Statement carries an EC-only top-level claim. */
+/** Error available to integrations for reporting EC-only claims in a Subordinate Statement. */
 export class InvalidSubordinateStatementShape extends Error {
 	constructor(public readonly forbiddenClaims: readonly string[]) {
 		super(
@@ -26,7 +26,7 @@ export class InvalidSubordinateStatementShape extends Error {
 	}
 }
 
-/** Thrown when a metadata object contains a `null` leaf at any depth. */
+/** Reports a null entity-type block or direct metadata parameter value; this check does not reject nested JSON nulls. */
 export class InvalidMetadata extends Error {
 	constructor(public readonly path: string) {
 		super(

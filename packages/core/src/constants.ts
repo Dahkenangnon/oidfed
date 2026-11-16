@@ -1,4 +1,5 @@
-/** Protocol constants: default TTLs, clock skew tolerance, and maximum chain depth. */
+/** Shared protocol identifiers, media types, algorithms, and operational defaults. */
+
 export const WELL_KNOWN_OPENID_FEDERATION = "/.well-known/openid-federation";
 
 export const FederationEndpoint = {
@@ -55,16 +56,11 @@ export const EntityType = {
 export type EntityType = (typeof EntityType)[keyof typeof EntityType];
 
 /**
- * Any Entity Type Identifier, including extension identifiers.
+ * Any Entity Type Identifier, including extensions (Federation 1.0 §§1.2 and 5.1).
  *
- * Federation 1.0 §1.2 defines the value space as an open string ("String
- * identifier for an Entity Type"), §5.1 permits identifiers beyond the
- * published set ("Additional Entity Type Identifiers MAY be defined to support
- * use cases for other protocols"), and §20 establishes no registry — so no
- * closed validation set exists. `EntityType` enumerates the identifiers
- * published by Federation 1.0 §5.1 and Wallet Architectures Draft 05 §6; this
- * type additionally admits any other identifier while keeping editor
- * completion for the known constants.
+ * `EntityType` lists the identifiers from Federation 1.0 §5.1 and Wallet Architectures
+ * Draft 05 §6. This type accepts other strings while keeping editor completion for
+ * those constants. Federation §20 defines no registry for these identifiers.
  */
 export type EntityTypeIdentifier = EntityType | (string & Record<never, never>);
 
@@ -189,9 +185,8 @@ export const SUPPORTED_ALGORITHMS = [
 	"PS256",
 	"PS384",
 	"PS512",
-	// RS256 (RSASSA-PKCS1-v1_5) is retained intentionally: it is a recommended signature
-	// algorithm, and the PKCS#1 v1.5 deprecation warning applies only to RSA encryption,
-	// not signatures.
+	// RS256 (RSASSA-PKCS1-v1_5) is a recommended signature algorithm.
+	// The PKCS#1 v1.5 deprecation warning concerns RSA encryption, not signatures.
 	"RS256",
 ] as const;
 export type SupportedAlgorithm = (typeof SUPPORTED_ALGORITHMS)[number];

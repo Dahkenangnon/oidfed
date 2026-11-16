@@ -1,3 +1,5 @@
+/** Cancellation and timeout boundaries for independently owned asynchronous operations. */
+
 import { DEFAULT_HTTP_TIMEOUT_MS } from "./constants.js";
 import type { FederationOptions } from "./types.js";
 

@@ -1,19 +1,18 @@
-import { safeLogger } from "./../logging.js";
 /**
- * Unified entity-key resolver. Picks among the three JWK Set representations
- * (`signed_jwks_uri`, `jwks`, `jwks_uri`) defined in entity-type metadata
- * and returns the resolved key set tagged with its source.
+ * Resolve protocol keys from entity-type metadata and report the selected source.
  *
- * Priority order (federation-preferred → least preferred):
- *   1. `signed_jwks_uri` — cryptographic integrity tied to a Federation Entity Key.
- *   2. `jwks` — inline keys, already in the trust chain.
- *   3. `jwks_uri` — plain HTTPS fetch, no per-key signing.
+ * Try sources in this order:
+ * 1. `signed_jwks_uri`: signed with a trusted Federation Entity Key.
+ * 2. `jwks`: inline keys covered by the trust chain.
+ * 3. `jwks_uri`: keys retrieved over HTTPS.
  *
- * Strict mode (default) returns the first error encountered. With
- * `allowFallback: true`, availability failures can advance to the next source.
- * Invalid signatures, identities, payloads, and response formats always stop resolution.
+ * Return the first error by default. With `allowFallback: true`, continue after
+ * availability failures. Invalid signatures, identities, payloads, or response
+ * formats stop resolution.
  */
 
+// biome-ignore assist/source/organizeImports: Preserve dependency evaluation order.
+import { safeLogger } from "./../logging.js";
 import { FederationErrorCode } from "../constants.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
 import { type VerifySignedJwkSetOptions, validateExpectedIssuer } from "../federation-api/index.js";

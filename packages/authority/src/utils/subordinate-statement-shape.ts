@@ -3,20 +3,18 @@
  * Subordinate Statements emitted by this Authority. Used by the EC builder,
  * the fetch endpoint, and the subordinate store.
  */
+
 import { findInvalidMetadataNullPaths } from "@oidfed/core";
 import { InvalidMetadata } from "../errors.js";
 
 export { InvalidMetadata };
 
 /**
- * Operational fields that an Authority publishes in its own
- * `metadata.federation_entity` block. Federation §§8.1, 8.2 and 8.4 reserve
- * fetch, list and mark-status publication to the Entity Configuration; Extended
- * Listing §4 imports the list restriction. The remaining exclusions are oidfed's
- * host-owned discovery policy, applied consistently to signed and unsigned views.
- *
- * Set is the canonical source — keep alphabetically grouped (URL claims first,
- * then `_auth_methods` companions, then the signing-alg list).
+ * Operational fields published in an Authority's own `metadata.federation_entity` block.
+ * Federation §§8.1, 8.2 and 8.4 reserve fetch, list, and mark-status publication to the
+ * Entity Configuration; Extended Listing §4 uses the list restriction. The remaining
+ * exclusions are oidfed's policy for host-owned discovery metadata, used in signed
+ * and unsigned views. Keep publication and storage checks on this shared list.
  */
 export const FEDERATION_ENTITY_OPERATIONAL_FIELDS: readonly string[] = Object.freeze([
 	"federation_collection_endpoint",
@@ -54,25 +52,17 @@ export function isFederationEntityOperationalField(key: string): boolean {
 	return FEDERATION_ENTITY_OPERATIONAL_SET.has(key);
 }
 
-/**
- * Returned by sanitizers when a non-object value is passed where an object
- * was expected. Lets callers treat both undefined and malformed input as
- * "nothing to sanitize".
- */
+/** Recognize object metadata blocks; undefined, arrays, and other values are not blocks. */
 function isPlainObject(v: unknown): v is Record<string, unknown> {
 	return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
 /**
- * Returns a cleaned-up copy of an Authority's metadata claim suitable for
- * embedding in a Subordinate Statement: strips every operational field from
- * `metadata.federation_entity`. Other entity-type blocks
- * (`openid_relying_party`, `openid_provider`, `oauth_*`, ...) pass through
- * unchanged so the parent can attest legitimate non-endpoint metadata.
+ * Copy metadata for a Subordinate Statement, removing operational fields from
+ * `metadata.federation_entity`. Other blocks, including `openid_relying_party`,
+ * `openid_provider`, and `oauth_*`, pass through with their values unchanged.
  *
- * Returns `undefined` when the resulting metadata claim has no remaining
- * entity types — callers should omit the `metadata` claim from the JWT
- * payload in that case.
+ * Return `undefined` when no Entity Types remain; omit the `metadata` claim in that case.
  */
 export function sanitizeSubordinateMetadata(
 	metadata: Readonly<Record<string, unknown>> | undefined,

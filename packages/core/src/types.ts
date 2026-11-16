@@ -1,4 +1,5 @@
-/** Branded types for compile-time safety: EntityId, DiscoveryResult, and Result/Err helpers. */
+/** Shared federation identifiers, trust evidence, options, and extension contracts. */
+
 import type { InternalErrorCode } from "./constants.js";
 import type {
 	EndpointAdditionalParameters,
@@ -83,7 +84,7 @@ export interface Logger {
 }
 
 export interface FederationOptions {
-	/** Acquisition source; protocol consumers still validate the returned subject chain. */
+	/** How to acquire evidence. Protocol consumers validate the returned subject chain. */
 	trustResolution?: import("./trust-chain/assessment.js").TrustResolutionSource;
 	/** Select among validated candidates eligible for the current operation. */
 	chainSelection?: ChainSelectionStrategy;
@@ -97,7 +98,7 @@ export interface FederationOptions {
 	/** Disallow network access when only supplied evidence is permitted. */
 	offline?: boolean;
 	httpClient?: HttpClient;
-	/** Signed subject ECs for trust-chain validation, keyed by exact Entity Identifier. Still validated against the chain. */
+	/** Signed subject ECs keyed by exact Entity Identifier. Each is validated against the chain. */
 	entityConfigurations?: ReadonlyMap<string, string> | undefined;
 	clock?: Clock;
 	cache?: CacheProvider;
@@ -111,6 +112,7 @@ export interface FederationOptions {
 	maxResolutionSteps?: number;
 	maxAuthorityHints?: number;
 	maxConcurrentFetches?: number;
+	/** Fetched statement cache retention cap in seconds. Defaults to 3600, bounded by the statement's exp. */
 	cacheMaxTtlSeconds?: number;
 	signal?: AbortSignal;
 	maxResponseBytes?: number;
@@ -278,10 +280,8 @@ export type ChainSelectionStrategy = (chains: ValidatedTrustChain[]) => Validate
 declare const _discoveryBrand: unique symbol;
 
 /**
- * Result of entity discovery through the federation.
- *
- * Branded to prevent callers from constructing unchecked inputs —
- * `discoverEntity()` and `discoverEntityFromChain()` in core produce this type after validation.
+ * Discovery evidence produced by `discoverEntity()` or `discoverEntityFromChain()` in core.
+ * The brand distinguishes validated discovery results from unchecked input.
  */
 export type DiscoveryResult = {
 	readonly [_discoveryBrand]: true;

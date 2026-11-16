@@ -5,6 +5,7 @@
  * base `/federation_list` filter semantics and adding the parameters defined in
  * the Extended Subordinate Listing specification.
  */
+
 import {
 	DEFAULT_MAX_RESPONSE_BYTES,
 	type EntityId,
@@ -144,10 +145,10 @@ export function createExtendedListHandler(
 
 		const params = parseQueryParams(request);
 
-		// ── Base-endpoint filters (entity_type, intermediate, trust_marked, trust_mark_type)
+		// Base-endpoint filters (entity_type, intermediate, trust_marked, trust_mark_type)
 		// Ext-Listing §3.2 inherits the base §8.2.1 entity_type parameter, and
 		// Federation §5.1 keeps its value space open (no registry): filter, never
-		// reject unknown values — an unmatched identifier yields an empty page.
+		// reject unknown values; an unmatched identifier yields an empty page.
 		const rawEntityTypes = params.getAll("entity_type");
 		for (const et of rawEntityTypes) {
 			if (et.length === 0) {
@@ -188,7 +189,7 @@ export function createExtendedListHandler(
 			);
 		}
 
-		// ── Extended-endpoint parameters
+		// Extended-endpoint parameters
 		const from = params.get("from");
 		const limitParam = parsePositiveInt(params.get("limit"));
 		if (limitParam !== null && Number.isNaN(limitParam)) {
@@ -246,7 +247,7 @@ export function createExtendedListHandler(
 		// wins so the MUST-NOT on subordinate_statement is honoured.
 		const requestedClaims = params.has("claims") ? parseClaimsParam(params) : [...defaultClaims];
 
-		// ── Build store filter + page options
+		// Build store filter + page options
 		const filter: ListFilter = {};
 		if (rawEntityTypes.length > 0) filter.entityTypes = rawEntityTypes;
 		if (intermediate === true || intermediate === false) filter.intermediate = intermediate;
@@ -347,7 +348,7 @@ export function createExtendedListHandler(
 					pagesFetched >= maxStorePages &&
 					!storeExhausted
 				) {
-					// Cap fired before fill or exhaustion — surface the store cursor for resume.
+					// The traversal cap was reached; return the store cursor so the caller can resume.
 					nextEntityId = storeCursor;
 				}
 

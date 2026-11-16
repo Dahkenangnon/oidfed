@@ -1,8 +1,8 @@
 /** Zod schemas for Trust Mark JWTs and Trust Mark Owner declarations. */
+
 import { z } from "zod";
 import { EntityIdSchema } from "./entity-id.js";
-import type { JWKSet } from "./jwk.js";
-import { JWKSetSchema } from "./jwk.js";
+import { type JWKSet, JWKSetSchema } from "./jwk.js";
 
 export const TrustMarkRefSchema = z.object({
 	trust_mark_type: z.string(),

@@ -1,4 +1,5 @@
 /** Metadata policy operators (add, default, one_of, subset_of, superset_of, essential, value). */
+
 import { isJsonData } from "../callbacks.js";
 import { PolicyOperator } from "../constants.js";
 import type {

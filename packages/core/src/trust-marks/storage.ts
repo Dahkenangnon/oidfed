@@ -1,3 +1,5 @@
+/** Trust Mark persistence and transactional store contracts. */
+
 import type { EntityId } from "../types.js";
 
 export interface TrustMarkListOptions {
@@ -13,12 +15,12 @@ export interface TrustMarkListPage {
 }
 
 /**
- * Current-validity queries require active marks with finite issuedAt <= validAt
- * and either no expiration or expiresAt > validAt. An embedded delegation must
- * also be decodable, have finite iat <= validAt, and have no exp or exp > validAt.
- * Apply this eligibility before selecting the newest mark, using exact issuer time
- * without added clock leeway. See isStoredTrustMarkEligible for the shared predicate.
- * Ingestion, not this time filter, establishes signature and issuer trust.
+ * Validity queries require an active mark with finite issuedAt <= validAt and either
+ * no expiration or expiresAt > validAt. An embedded delegation must be decodable,
+ * have finite iat <= validAt, and have no exp or exp > validAt.
+ * Apply these checks before choosing the newest mark, using exact issuer time with
+ * no added clock leeway. See isStoredTrustMarkEligible for the shared predicate.
+ * Verify the signature and establish issuer trust before storing the record.
  */
 export interface TrustMarkStorage {
 	/** Return every candidate, including revoked records, before service-level eligibility and newest-record selection. Return detached records from one consistent view. */

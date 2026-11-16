@@ -1,4 +1,5 @@
 /** Peer-chain helper: build a Trust Chain ending at a specific Trust Anchor. */
+
 import { InternalErrorCode } from "../constants.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
 import { safeLogger } from "./../logging.js";

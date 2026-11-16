@@ -1,17 +1,12 @@
 /**
- * Validates the conditional rule that when a JWK Set contains both signing
- * and encryption keys, the `use` parameter is REQUIRED on every key.
+ * Require `use` on every key when a JWK Set contains both signing and encryption keys.
  *
- * Capability inference order (most authoritative first):
- *   1. The key's own `use` parameter (sig/enc) — when present, it is dispositive.
- *   2. `key_ops` — RFC 7517 explicit operation list.
- *   3. `alg` — RFC 7518 algorithm family (JWS vs JWE key-management).
- *   4. Otherwise the key is treated as ambiguous (could be either) and does
- *      not by itself trigger the rule.
- *
- * The rule does NOT apply when the set contains only signing-capable keys, or
- * only encryption-capable keys, or only ambiguous keys.
+ * A key's `use` value of sig or enc determines its purpose. Otherwise, inspect
+ * `key_ops` (RFC 7517) and `alg` (RFC 7518). A key whose purpose cannot be inferred
+ * does not trigger the rule by itself. A set containing only signing, only encryption,
+ * or only ambiguous keys does not trigger it either.
  */
+
 import { FederationErrorCode } from "../constants.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
 import type { JWK } from "../schemas/jwk.js";

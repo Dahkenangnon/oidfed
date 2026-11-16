@@ -1,4 +1,5 @@
-/** Zod schemas for federation entity metadata types (openid_provider, openid_relying_party, etc.). */
+/** Structural federation metadata schemas; protocol packages enforce role-specific conformance. */
+
 import { z } from "zod";
 import { EntityType, type EntityTypeIdentifier } from "../constants.js";
 
@@ -53,20 +54,10 @@ export const FederationEntityMetadataSchema = z.looseObject({
 	organization_uri: z.string().url().optional(),
 });
 
-/**
- * OpenID Relying Party metadata schema.
- *
- * In the federation layer, this is a loose record — protocol-specific
- * field validation is done by `@oidfed/oidc`.
- */
+/** Structural OpenID Relying Party metadata. `@oidfed/oidc` validates protocol-specific fields. */
 export const OpenIDRelyingPartyMetadataSchema = z.record(z.string(), z.unknown());
 
-/**
- * OpenID Provider metadata schema.
- *
- * In the federation layer, this is a loose record — protocol-specific
- * field validation is done by `@oidfed/oidc`.
- */
+/** Structural OpenID Provider metadata. `@oidfed/oidc` validates protocol-specific fields. */
 export const OpenIDProviderMetadataSchema = z.record(z.string(), z.unknown());
 
 /** Internal schema for supplied and resolved metadata, including empty results. */

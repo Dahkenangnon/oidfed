@@ -1,6 +1,7 @@
-import { trustMarkOperation } from "../trust-marks/operation.js";
-/** Trust chain validation: verifies signatures, expiry, issuer-subject chaining, and metadata policy along the chain. */
+/** Trust chain authentication, constraint checks, and effective metadata validation. */
 
+// biome-ignore assist/source/organizeImports: Preserve dependency evaluation order.
+import { trustMarkOperation } from "../trust-marks/operation.js";
 import { freezeSnapshot, setOwn } from "../callbacks.js";
 import {
 	DEFAULT_CLOCK_SKEW_SECONDS,

@@ -9,6 +9,7 @@
  * snapshot lets callers align the synthetic iat/exp with the iat/exp inside the
  * signed subordinate_statement JWT for the same record.
  */
+
 import {
 	DEFAULT_ENTITY_STATEMENT_TTL_SECONDS,
 	decodeEntityStatement,

@@ -1,3 +1,5 @@
+/** Message-only host logging isolated from synchronous and asynchronous sink failures. */
+
 import type { Logger } from "./types.js";
 
 const guarded = new WeakMap<Logger, Logger>();

@@ -1,14 +1,9 @@
 /**
- * Opt-in helper that fetches a Trust Mark `logo_uri` and verifies its
- * Content-Type starts with `image/`. The spec requires `logo_uri` to point
- * to a "valid image file"; the schema layer can only check URL syntax, so
- * integrators that want to verify the publisher honoured the obligation use
- * this helper.
- *
- * The library's HTTP fetch infrastructure is https-only for SSRF protection.
- * Non-https logo URLs (which the spec permits) cannot be verified by this
- * helper and must be handled by integrator-side code.
+ * Optional HTTPS logo checks based on the response's image media type.
+ * This does not decode image bytes or prove the resource is a valid image file.
+ * The shared URL policy permits HTTPS retrieval only; the host handles other schemes.
  */
+
 import { DEFAULT_HTTP_TIMEOUT_MS, FederationErrorCode } from "../constants.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
 import { parseContentTypeHeader } from "../http.js";
@@ -17,6 +12,9 @@ import type { FederationOptions } from "../types.js";
 
 export interface ValidateTrustMarkLogoOptions extends FederationOptions {}
 
+/**
+ * Fetch an HTTPS logo and check its image media type. This does not decode or validate image bytes.
+ */
 export async function validateTrustMarkLogo(
 	url: string,
 	options?: ValidateTrustMarkLogoOptions,

@@ -1,4 +1,5 @@
 /** Shared handler context: signing keys, stores, and configuration for all endpoints. */
+
 import type {
 	EndpointAuthentication,
 	EntityId,

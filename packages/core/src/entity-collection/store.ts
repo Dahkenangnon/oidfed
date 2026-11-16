@@ -1,5 +1,6 @@
-import type { EntityId } from "../types.js";
-import { nowSeconds } from "../types.js";
+/** In-memory collection snapshots and expiring pagination cursors. */
+
+import { type EntityId, nowSeconds } from "../types.js";
 import type {
 	EntityCollectionCursor,
 	EntityCollectionSnapshot,
@@ -23,6 +24,9 @@ export class MemoryEntityCollectionStore implements EntityCollectionStore {
 	>();
 	private readonly current = new Map<string, string>();
 	private readonly cursors = new Map<string, EntityCollectionCursor>();
+	/**
+	 * Validate capacity and retention options; snapshots and cursors are copied on reads and writes.
+	 */
 	constructor(private readonly options: MemoryEntityCollectionStoreOptions = {}) {
 		for (const value of [
 			options.retentionSeconds ?? 900,
@@ -39,6 +43,10 @@ export class MemoryEntityCollectionStore implements EntityCollectionStore {
 			if (this.current.get(snapshot.value.trustAnchor) !== id && snapshot.retainUntil <= now)
 				this.snapshots.delete(id);
 	}
+	/**
+	 * Publish a detached snapshot and advance its anchor's current pointer, subject to retention and
+	 * capacity limits.
+	 */
 	async publish(snapshot: EntityCollectionSnapshot): Promise<void> {
 		this.prune();
 		const copy = structuredClone(snapshot);
@@ -62,20 +70,26 @@ export class MemoryEntityCollectionStore implements EntityCollectionStore {
 		this.snapshots.set(copy.id, { value: copy, retainUntil: Infinity });
 		this.current.set(copy.trustAnchor, copy.id);
 	}
+	/** Return a detached copy of the anchor's current snapshot, if available. */
 	async getCurrent(anchor: EntityId): Promise<EntityCollectionSnapshot | undefined> {
 		return this.getSnapshot(this.current.get(anchor) ?? "");
 	}
+	/** Read a detached retained snapshot after pruning expired historical snapshots. */
 	async getSnapshot(id: string): Promise<EntityCollectionSnapshot | undefined> {
 		this.prune();
 		const item = this.snapshots.get(id);
 		return item ? structuredClone(item.value) : undefined;
 	}
+	/**
+	 * Store a detached cursor; a full live cursor table throws EntityCollectionCursorCapacityError.
+	 */
 	async putCursor(id: string, cursor: EntityCollectionCursor): Promise<void> {
 		this.prune();
 		if (!this.cursors.has(id) && this.cursors.size >= (this.options.maxCursors ?? 10000))
 			throw new EntityCollectionCursorCapacityError(this.options.maxCursors ?? 10000);
 		this.cursors.set(id, structuredClone(cursor));
 	}
+	/** Read a detached cursor if it has not expired. */
 	async getCursor(id: string): Promise<EntityCollectionCursor | undefined> {
 		this.prune();
 		const cursor = this.cursors.get(id);

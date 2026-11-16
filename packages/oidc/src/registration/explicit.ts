@@ -1,3 +1,5 @@
+/** Client-side explicit registration with trusted provider discovery and signed-response checks. */
+
 import {
 	DEFAULT_ENTITY_STATEMENT_TTL_SECONDS,
 	type DiscoveryResult,

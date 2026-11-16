@@ -1,3 +1,5 @@
+/** Registration-exchange metadata checks against the applicable federation policy. */
+
 import {
 	applyMetadataPolicy,
 	err,

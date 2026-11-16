@@ -1,3 +1,5 @@
+/** Issuer trust establishment and evidence-aware Trust Mark verification. */
+
 import { freezeSnapshot } from "../callbacks.js";
 import {
 	DEFAULT_CLOCK_SKEW_SECONDS,
@@ -19,13 +21,13 @@ import { type TrustMarkOwner, TrustMarkOwnerSchema } from "../schemas/trust-mark
 import { resolveTrustChains } from "../trust-chain/resolve.js";
 import { selectTrustChain } from "../trust-chain/selection.js";
 import { validateTrustChainStructure } from "../trust-chain/validate.js";
-import type { ValidatedTrustChain } from "../types.js";
 import {
 	entityId,
 	type FederationOptions,
 	nowSeconds,
 	type TrustAnchorSet,
 	type TrustMarkEvidence,
+	type ValidatedTrustChain,
 } from "../types.js";
 import { type TrustMarkValidationOptions, validateTrustMark } from "./index.js";
 import { fetchTrustMarkHistoricalResponse, trustMarkOperation } from "./operation.js";
@@ -260,6 +262,10 @@ export interface ValidateTrustMarkWithIssuerOptions extends TrustMarkValidationO
 	readonly expectedTrustMarkType: string;
 	readonly historicalKeys?: HistoricalTrustMarkOptions;
 }
+/**
+ * Validate a mark against established federation issuer evidence or explicit out-of-band trust.
+ * When enabled, historical-key resolution preserves issuer binding and evidence deadlines.
+ */
 export async function validateTrustMarkWithIssuer(
 	jwt: string,
 	context: TrustMarkIssuerContext,

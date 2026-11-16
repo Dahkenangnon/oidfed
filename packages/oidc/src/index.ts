@@ -4,7 +4,7 @@ export type {
 	ProcessPushedAuthorizationRequestOptions,
 	PushedAuthorizationProof,
 } from "./registration/pushed.js";
-// @oidfed/oidc — OIDC/OAuth2 protocol layer for OpenID Federation
+// @oidfed/oidc: OIDC and OAuth protocol integration for OpenID Federation.
 
 // Re-export common core types
 export type {

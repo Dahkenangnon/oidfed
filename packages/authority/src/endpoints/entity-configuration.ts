@@ -1,3 +1,5 @@
+/** Authority Entity Configuration payload construction and HTTP publication. */
+
 import {
 	buildEntityConfigurationPayload,
 	DEFAULT_ENTITY_STATEMENT_TTL_SECONDS,
@@ -46,10 +48,8 @@ export async function buildEntityConfiguration(ctx: HandlerContext): Promise<str
 		ttlSeconds,
 	};
 
-	// trust_mark_issuers and trust_mark_owners only have effect on a Trust
-	// Anchor's Entity Configuration; readers ignore them on Intermediates. The
-	// server constructor refuses to accept these fields on a non-TA config, so
-	// the inline check below is belt-and-suspenders.
+	// Publish trust_mark_issuers and trust_mark_owners only when this host acts
+	// as a Trust Anchor; recipients ignore these claims on Intermediates.
 	const isTrustAnchor = ctx.isTrustAnchor ?? !ctx.authorityHints?.length;
 	const payload = buildEntityConfigurationPayload({
 		...payloadOptions,

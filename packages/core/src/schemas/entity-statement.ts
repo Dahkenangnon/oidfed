@@ -1,4 +1,8 @@
-/** Zod schemas for Entity Statements (configurations and subordinate), including trust marks and registration payloads. */
+/**
+ * Zod schemas for Entity Statements (configurations and subordinate), including trust marks and
+ * registration payloads.
+ */
+
 import { z } from "zod";
 import { TrustChainConstraintsSchema } from "./constraints.js";
 import { EntityIdSchema } from "./entity-id.js";
@@ -107,7 +111,7 @@ export const HistoricalKeysPayloadSchema = z.looseObject({
 	keys: z.array(HistoricalKeyEntrySchema),
 });
 
-/** Signed JWK Set payload — returned by signed_jwks_uri. typ must be jwk-set+jwt. */
+/** Payload returned by signed_jwks_uri, with JWT typ jwk-set+jwt. */
 export const SignedJwkSetPayloadSchema = z.looseObject({
 	iss: EntityIdSchema,
 	sub: EntityIdSchema,

@@ -1,3 +1,5 @@
+/** HTTP challenge retrieval and response handling for client attestation authentication. */
+
 import { runAsyncOperation } from "./async-operation.js";
 import { FederationErrorCode } from "./constants.js";
 import { err, ok, type Result } from "./errors.js";
@@ -41,6 +43,7 @@ export function readAttestationChallenge(headers: Headers): Result<string | unde
 	const value = headers.get("OAuth-Client-Attestation-Challenge");
 	return value === null ? ok(undefined) : valid(value) ? ok(value) : invalid();
 }
+/** Create a non-cacheable JSON challenge response; malformed challenge values throw. */
 export function createAttestationChallengeResponse(challenge: string): Response {
 	if (!valid(challenge)) throw new TypeError("Invalid attestation challenge");
 	const response = jsonResponse({ attestation_challenge: challenge });

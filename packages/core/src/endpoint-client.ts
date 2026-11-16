@@ -1,3 +1,5 @@
+/** Federation endpoint requests with selector handling and configurable client authentication. */
+
 import { runAsyncOperation } from "./async-operation.js";
 import {
 	FederationErrorCode,

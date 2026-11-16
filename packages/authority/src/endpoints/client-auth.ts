@@ -1,6 +1,13 @@
+/** Authority adapter for shared federation endpoint authentication. */
+
 import { createEndpointAuthenticatedHandler } from "@oidfed/core";
 import { InvalidAuthorityConfig } from "../errors.js";
 import type { HandlerContext } from "./context.js";
+
+/**
+ * Adapt authority configuration to the shared endpoint authentication wrapper.
+ * Invalid authentication configuration is reported as InvalidAuthorityConfig.
+ */
 export function createAuthenticatedHandler(
 	ctx: HandlerContext,
 	inner: (request: Request) => Promise<Response>,

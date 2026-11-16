@@ -1,3 +1,5 @@
+/** Authority Historical Keys payload signing and endpoint responses. */
+
 import { JwtTyp, MediaType, nowSeconds, safeLogger, signEntityStatement } from "@oidfed/core";
 import type { HandlerContext } from "./context.js";
 import { errorResponse, jwtResponse, requireMethod } from "./helpers.js";
@@ -20,6 +22,7 @@ export function createHistoricalKeysHandler(
 	};
 }
 
+/** Sign the key provider's historical public-key records with the current Federation Entity Key. */
 export async function buildHistoricalKeys(ctx: HandlerContext): Promise<string> {
 	const keySet = await ctx.keyProvider.getFederationKeySet();
 	const historicalKeys = await ctx.keyProvider.getHistoricalFederationKeys();

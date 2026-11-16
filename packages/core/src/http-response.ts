@@ -1,4 +1,5 @@
 /** Internal bounded response reader shared by federation HTTP clients. */
+
 export async function readResponseBody(
 	response: Response,
 	maxBytes: number,

@@ -1,3 +1,5 @@
+/** JWT signer contracts and a local JWK-backed signer implementation. */
+
 import * as jose from "jose";
 import { SUPPORTED_ALGORITHMS, type SupportedAlgorithm } from "../constants.js";
 import type { JWK } from "../schemas/jwk.js";
@@ -5,8 +7,8 @@ import type { JWK } from "../schemas/jwk.js";
 /**
  * Runtime-agnostic JWT signing boundary.
  *
- * Implementations own key custody and JOSE operations. The core package never
- * imports private keys or calls Web Crypto directly.
+ * Implementations own key custody and JOSE operations. The bundled JwkSigner
+ * imports a software key through jose; other implementations may use remote signing.
  */
 export interface JwtSigner {
 	readonly kid: string;
@@ -25,6 +27,7 @@ export class JwkSigner implements JwtSigner {
 	private readonly key: JWK;
 	private importedKey: ReturnType<typeof jose.importJWK> | undefined;
 
+	/** Validate and detach a private signing JWK; importing the key is deferred until signing. */
 	constructor(key: JWK, options?: JwkSignerOptions) {
 		const { alg, kid } = validateSignerKey(key, options?.alg ?? key.alg);
 		this.key = structuredClone(key);
@@ -32,6 +35,7 @@ export class JwkSigner implements JwtSigner {
 		this.alg = alg;
 	}
 
+	/** Sign the supplied bytes and protected header, reusing the lazily imported software key. */
 	async signJwt(
 		payload: Uint8Array,
 		protectedHeader: Readonly<Record<string, unknown>>,
@@ -43,6 +47,7 @@ export class JwkSigner implements JwtSigner {
 	}
 }
 
+/** Reject empty key identifiers or signing algorithms unsupported by this library. */
 export function validateSigner(signer: JwtSigner): void {
 	if (!signer.kid) {
 		throw new Error("JwtSigner kid MUST NOT be empty");

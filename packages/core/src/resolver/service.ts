@@ -1,3 +1,5 @@
+/** Signed Resolve assessments, cache reuse, and authenticated HTTP hosting. */
+
 import { MemoryCache } from "../cache/index.js";
 import {
 	DEFAULT_CACHE_TTL_SECONDS,
@@ -70,6 +72,7 @@ export class FederationResolverService {
 	private readonly context: ResolverContext;
 	private readonly inner: (request: Request, local?: boolean) => Promise<Response>;
 	private readonly authenticated: (request: Request) => Promise<Response>;
+	/** Capture resolver dependencies and build the authenticated public endpoint handler. */
 	constructor(config: FederationResolverConfig) {
 		const id = entityId(config.entityId);
 		this.context = { ...config, entityId: id };
@@ -86,6 +89,9 @@ export class FederationResolverService {
 			RESOLVE_UNORDERED_PARAMETERS,
 		);
 	}
+	/**
+	 * Serve the public Resolve endpoint with configured client authentication and discovery limits.
+	 */
 	handleRequest(request: Request): Promise<Response> {
 		return this.authenticated(request);
 	}
@@ -452,7 +458,7 @@ function createResolveHandler(
 					);
 					if (issuerResult.ok) extraHeaders.trust_chain = [...issuerResult.value];
 				} catch {
-					/* MAY feature — silently ignore issuer chain resolution failures */
+					/* Omit the optional trust_chain header when the responder's chain cannot be resolved. */
 				}
 			}
 

@@ -1,3 +1,5 @@
+/** Subordinate publication-claim validation shared by write and signing paths. */
+
 import {
 	type EntityStatementExtensions,
 	type MetadataPolicyOptions,

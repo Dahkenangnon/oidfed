@@ -1,3 +1,5 @@
+/** Trust Mark and owner-delegation signature, claim, and authorization checks. */
+
 import { freezeSnapshot } from "../callbacks.js";
 import { DEFAULT_CLOCK_SKEW_SECONDS, InternalErrorCode, JwtTyp } from "../constants.js";
 import { err, type FederationError, ok, type Result } from "../errors.js";
@@ -12,13 +14,13 @@ import {
 	TrustMarkOwnerSchema,
 	TrustMarkPayloadSchema,
 } from "../schemas/trust-mark.js";
-import type {
-	Clock,
-	FederationOptions,
-	TrustMarkEvidence,
-	ValidatedTrustMarkDelegation,
+import {
+	type Clock,
+	type FederationOptions,
+	nowSeconds,
+	type TrustMarkEvidence,
+	type ValidatedTrustMarkDelegation,
 } from "../types.js";
-import { nowSeconds } from "../types.js";
 import { checkTrustMarkProfile } from "./profiles.js";
 
 export interface TrustMarkValidationOptions extends FederationOptions {
@@ -43,6 +45,10 @@ function describeSchemaIssues(
 		.join("; ");
 }
 
+/**
+ * Verify a mark's signature, claims, issuer authorization, and required owner delegation.
+ * The caller supplies trusted issuer keys and the applicable anchor policy.
+ */
 export async function validateTrustMark(
 	trustMarkJwt: string,
 	trustMarkIssuers: Record<string, string[]>,

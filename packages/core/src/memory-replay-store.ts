@@ -1,6 +1,7 @@
+/** In-memory replay claims scoped by issuer, audience, and JWT identifier. */
+
 import type { JtiReplayClaim, ReplayStore } from "./replay-store.js";
-import type { Clock } from "./types.js";
-import { nowSeconds } from "./types.js";
+import { type Clock, nowSeconds } from "./types.js";
 
 export interface MemoryReplayStoreOptions {
 	readonly clock?: Clock;
@@ -21,6 +22,10 @@ export class MemoryReplayStore implements ReplayStore {
 	private readonly clock: Clock | undefined;
 	private readonly maxEntries: number;
 
+	/**
+	 * Create a process-local replay store with a default capacity of 10,000 live claims.
+	 * A non-positive or unsafe-integer capacity throws RangeError.
+	 */
 	constructor(options?: MemoryReplayStoreOptions) {
 		this.clock = options?.clock;
 		this.maxEntries = options?.maxEntries ?? 10_000;
@@ -29,6 +34,11 @@ export class MemoryReplayStore implements ReplayStore {
 		}
 	}
 
+	/**
+	 * Atomically claim an issuer/audience/JTI tuple after hashing it.
+	 * Return false for replayed or expired claims; malformed claims throw, and a full store
+	 * throws ReplayStoreCapacityError rather than evicting a live replay record.
+	 */
 	async useJti(claim: JtiReplayClaim): Promise<boolean> {
 		this.validateClaim(claim);
 		const expiresAt = claim.expiresAt;

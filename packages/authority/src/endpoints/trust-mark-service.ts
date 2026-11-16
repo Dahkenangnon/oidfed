@@ -1,7 +1,10 @@
+/** Per-authority Trust Mark service reuse and issuer-policy updates. */
+
 import { type TrustMarkIssuerConfig, TrustMarkIssuerService } from "@oidfed/core";
 import type { HandlerContext } from "./context.js";
 
 const services = new WeakMap<HandlerContext, TrustMarkIssuerService>();
+/** Reuse one managed issuer service for this handler context and its storage dependencies. */
 export function trustMarkService(ctx: HandlerContext): TrustMarkIssuerService {
 	const existing = services.get(ctx);
 	if (existing) return existing;
@@ -52,6 +55,7 @@ export function trustMarkService(ctx: HandlerContext): TrustMarkIssuerService {
 	return service;
 }
 
+/** Update local policy on the context's existing managed issuer service. */
 export function updateTrustMarkServicePolicy(ctx: HandlerContext): void {
 	services.get(ctx)?.updatePolicy(ctx.trustMarkOwners ?? {}, ctx.trustMarkIssuers);
 }

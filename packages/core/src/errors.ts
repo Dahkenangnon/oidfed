@@ -1,6 +1,8 @@
+/** Serializable federation errors and discriminated Result helpers. */
+
 import type { FederationErrorCode, InternalErrorCode } from "./constants.js";
 
-/** Discriminated union error — plain data, serializable, structurally typed. */
+/** Plain, serializable, structurally typed federation error data. */
 export type FederationError = {
 	readonly code: FederationErrorCode | InternalErrorCode;
 	readonly description: string;
@@ -18,7 +20,7 @@ export function federationError(
 	return { code, description, cause };
 }
 
-/** Typed Result pattern — no silent failures. */
+/** A success value or error, distinguished by the ok field. */
 export type Result<T, E = FederationError> =
 	| { readonly ok: true; readonly value: T }
 	| { readonly ok: false; readonly error: E };
@@ -43,6 +45,7 @@ export function isErr<T, E>(result: Result<T, E>): result is { ok: false; error:
 	return !result.ok;
 }
 
+/** Apply fn to a successful value; return errors as received. Exceptions from fn propagate. */
 export function map<T, U, E>(result: Result<T, E>, fn: (value: T) => U): Result<U, E> {
 	if (result.ok) {
 		return ok(fn(result.value));
@@ -50,6 +53,10 @@ export function map<T, U, E>(result: Result<T, E>, fn: (value: T) => U): Result<
 	return result;
 }
 
+/**
+ * Pass a successful value to a Result-returning fn; return errors as received. Exceptions from fn
+ * propagate.
+ */
 export function flatMap<T, U, E>(
 	result: Result<T, E>,
 	fn: (value: T) => Result<U, E>,
@@ -60,6 +67,7 @@ export function flatMap<T, U, E>(
 	return result;
 }
 
+/** Apply fn to an error; return successful results as received. Exceptions from fn propagate. */
 export function mapErr<T, E, F>(result: Result<T, E>, fn: (error: E) => F): Result<T, F> {
 	if (!result.ok) {
 		return err(fn(result.error));
@@ -67,6 +75,7 @@ export function mapErr<T, E, F>(result: Result<T, E>, fn: (error: E) => F): Resu
 	return result;
 }
 
+/** Return the successful value, or the supplied fallback for an error Result. */
 export function unwrapOr<T, E>(result: Result<T, E>, fallback: T): T {
 	if (result.ok) {
 		return result.value;

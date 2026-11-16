@@ -1,3 +1,5 @@
+/** Shared private_key_jwt assertion construction for federation and protocol clients. */
+
 import { runAsyncOperation } from "../async-operation.js";
 import { DEFAULT_CLIENT_ASSERTION_TTL_SECONDS } from "../constants.js";
 import { type Clock, type FederationOptions, nowSeconds } from "../types.js";
@@ -14,8 +16,8 @@ export interface ClientAssertionOptions
 /**
  * Create a client assertion JWT for `private_key_jwt` authentication.
  *
- * This is an OIDC/OAuth2-specific concept used when the RP authenticates
- * to the OP's token endpoint using a signed JWT assertion.
+ * Shared by Federation endpoint clients and OIDC/OAuth clients. The caller supplies
+ * the recipient identifier required by the protocol; it is not inferred from a URL.
  */
 export async function createClientAssertion(
 	clientId: string,

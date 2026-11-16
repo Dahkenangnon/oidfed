@@ -1,3 +1,5 @@
+/** A shared fetch budget and cancellation boundary for one trust chain operation. */
+
 import { InternalErrorCode } from "../constants.js";
 import { err, ok, type Result } from "../errors.js";
 import type { FederationOptions } from "../types.js";

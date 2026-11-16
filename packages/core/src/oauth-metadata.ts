@@ -1,4 +1,5 @@
 /** Shared RFC 8414 metadata validation for OIDC and wallet protocol consumers. */
+
 import { z } from "zod";
 import { validateJwkSetUseRequirement } from "./jwks/use-requirement.js";
 import { MetadataJWKSetSchema } from "./schemas/jwk.js";

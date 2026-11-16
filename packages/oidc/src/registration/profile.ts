@@ -1,3 +1,5 @@
+/** Explicit OIDC and OAuth registration profiles for shared registration operations. */
+
 import {
 	oauthRegistrationSchemas,
 	oidcRegistrationSchemas,
@@ -26,6 +28,7 @@ export const oauthRegistrationProfile = {
 	...oauthRegistrationSchemas,
 } as const;
 export type RegistrationProfile = typeof oidcRegistrationProfile | typeof oauthRegistrationProfile;
+/** Select OIDC or OAuth registration rules explicitly from the provider Entity Type. */
 export function registrationProfile(
 	providerType: RegistrationProfile["providerType"] = "openid_provider",
 ): RegistrationProfile {

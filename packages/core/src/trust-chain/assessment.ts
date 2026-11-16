@@ -1,3 +1,5 @@
+/** Entity assessments from local chain validation or an explicitly trusted resolver. */
+
 import { freezeSnapshot } from "../callbacks.js";
 import {
 	DEFAULT_CLOCK_SKEW_SECONDS,
@@ -18,7 +20,6 @@ import {
 import type { ResolveResponsePayload } from "../schemas/entity-statement.js";
 import { type JWKSet, JWKSetSchema } from "../schemas/jwk.js";
 import { TrustMarkDelegationPayloadSchema, TrustMarkPayloadSchema } from "../schemas/trust-mark.js";
-import type { ValidationError } from "../types.js";
 import {
 	type DiscoveryResult,
 	type EntityId,
@@ -27,6 +28,7 @@ import {
 	nowSeconds,
 	type TrustAnchorSet,
 	type TrustChainResult,
+	type ValidationError,
 } from "../types.js";
 import { discoverEntity, discoverEntityFromChain } from "./discovery.js";
 import { createTrustChainOperation } from "./operation.js";
@@ -72,6 +74,7 @@ export type EntityAssessment =
 	  };
 
 const assessments = new WeakSet<object>();
+/** Recognize process-local assessment evidence; copied or deserialized objects are not accepted. */
 export function isEntityAssessment(value: unknown): value is EntityAssessment {
 	return typeof value === "object" && value !== null && assessments.has(value);
 }
@@ -265,7 +268,7 @@ async function resolverAssessment(
 	}
 }
 
-/** Acquire candidate evidence; callers must still validate the subject chain. */
+/** Acquire candidate evidence for the caller to validate as a subject chain. */
 export async function resolveThroughTrustedResolver(
 	subject: EntityId,
 	anchors: TrustAnchorSet,
@@ -289,6 +292,10 @@ export async function resolveThroughTrustedResolver(
 	};
 }
 
+/**
+ * Assess an entity through local chain validation or an explicitly authorized resolver.
+ * Resolver authorization is configured separately from trust in the assessed entity.
+ */
 export async function assessEntity(
 	subject: EntityId,
 	anchors: TrustAnchorSet,

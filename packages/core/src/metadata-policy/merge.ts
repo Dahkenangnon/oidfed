@@ -1,3 +1,5 @@
+/** Superior-first metadata policy resolution and operator combination. */
+
 import { callSynchronous } from "../callbacks.js";
 import { InternalErrorCode, PolicyOperator } from "../constants.js";
 import { err, type FederationError, ok, type Result } from "../errors.js";

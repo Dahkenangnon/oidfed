@@ -1,3 +1,5 @@
+/** Managed Trust Mark issuance, revocation, eligibility, and HTTP endpoints. */
+
 import { freezeSnapshot, isJsonData, setOwn } from "../callbacks.js";
 import {
 	DEFAULT_DELEGATION_TTL_SECONDS,
@@ -5,8 +7,10 @@ import {
 	JwtTyp,
 	MediaType,
 } from "../constants.js";
-import type { EndpointAuthenticationConfig } from "../endpoint-authentication.js";
-import { authenticatedEndpointCaller } from "../endpoint-authentication.js";
+import {
+	authenticatedEndpointCaller,
+	type EndpointAuthenticationConfig,
+} from "../endpoint-authentication.js";
 import type { Result } from "../errors.js";
 import { selectHistoricalVerificationKey } from "../federation-api/index.js";
 import type { FederationKeyLifecycleProvider, FederationKeyProvider } from "../federation-keys.js";
@@ -135,6 +139,7 @@ export class TrustMarkIssuerService {
 	private readonly extensions: ReadonlyMap<string, TrustMarkRequestExtension>;
 	private ownerPolicy: Readonly<Record<string, TrustMarkOwner>>;
 	private issuerPolicy: Readonly<Record<string, readonly string[]>> | undefined;
+	/** Validate issuer configuration and detach owner, issuer, delegation, and lifetime policies. */
 	constructor(private readonly config: TrustMarkIssuerServiceOptions) {
 		this.issuer = entityId(config.issuer);
 		this.extensions = new Map(Object.entries(config.trustMarkRequestExtensions ?? {}));
@@ -218,6 +223,7 @@ export class TrustMarkIssuerService {
 				throw new Error("Issuer is not authorized for this Trust Mark type");
 		}
 	}
+	/** Replace detached local owner and issuer policy for subsequent service operations. */
 	updatePolicy(
 		owners: Readonly<Record<string, TrustMarkOwner>>,
 		issuers?: Readonly<Record<string, readonly string[]>>,
@@ -226,6 +232,7 @@ export class TrustMarkIssuerService {
 		this.issuerPolicy = issuers ? freezeSnapshot(structuredClone(issuers)) : undefined;
 		this.version++;
 	}
+	/** Replace the detached owner-delegation JWT map used for managed issuance. */
 	async setDelegations(delegations: Readonly<Record<string, string>>): Promise<void> {
 		if (
 			!isJsonData(delegations) ||
@@ -236,6 +243,10 @@ export class TrustMarkIssuerService {
 		this.delegations = freezeSnapshot(structuredClone(delegations));
 		this.version++;
 	}
+	/**
+	 * Assess stored issuance under current signatures, local revocation, expiry, and delegation
+	 * policy.
+	 */
 	async eligibility(
 		record: TrustMarkRecord,
 		at = nowSeconds(this.config.options?.clock),
@@ -301,6 +312,7 @@ export class TrustMarkIssuerService {
 			(a, b) => b.issuedAt - a.issuedAt || (a.jwt < b.jwt ? 1 : a.jwt > b.jwt ? -1 : 0),
 		);
 	}
+	/** Return detached, currently eligible records for the subject from one storage snapshot. */
 	async listTrustMarksForSubject(subject: string): Promise<TrustMarkRecord[]> {
 		const id = entityId(subject),
 			at = nowSeconds(this.config.options?.clock);
@@ -308,11 +320,13 @@ export class TrustMarkIssuerService {
 			structuredClone(await this.eligible(snapshot.trustMarks, { subject: id }, at)),
 		);
 	}
+	/** Return an eligible stored JWT for the subject and type, if one exists. */
 	async getTrustMark(subject: string, type: string): Promise<string | undefined> {
 		return (await this.listTrustMarksForSubject(subject)).find(
 			(record) => record.trustMarkType === type,
 		)?.jwt;
 	}
+	/** List distinct eligible subjects for a type, optionally restricted to one subject. */
 	async listTrustMarkedEntities(type: string, subject?: string): Promise<string[]> {
 		const filter = { trustMarkType: type, ...(subject ? { subject: entityId(subject) } : {}) };
 		return this.config.storage.readSnapshot(async (snapshot) =>
@@ -325,6 +339,7 @@ export class TrustMarkIssuerService {
 			].sort(),
 		);
 	}
+	/** Revoke matching records issued by this service within a storage transaction. */
 	async revokeTrustMark(type: string, subject: string): Promise<void> {
 		const id = entityId(subject),
 			at = nowSeconds(this.config.options?.clock);
@@ -354,6 +369,10 @@ export class TrustMarkIssuerService {
 			if (!Object.hasOwn(p, field) || !sameJson(value, p[field]))
 				throw new Error("Requested claims conflict with stored Trust Mark; use renewal: renew");
 	}
+	/**
+	 * Authorize and store issuance. Reuse an eligible mark unless renewal requests a new JWT.
+	 * Reject requests whose claims conflict with the mark being reused.
+	 */
 	async issueTrustMark(
 		subject: string,
 		type: string,
@@ -486,6 +505,7 @@ export class TrustMarkIssuerService {
 		}
 		return true;
 	}
+	/** Handle a Trust Mark endpoint operation; hosting code supplies endpoint authentication. */
 	async handleRequest(kind: "status" | "list" | "retrieval", request: Request): Promise<Response> {
 		const methodError = requireMethod(request, kind === "status" ? "POST" : "GET");
 		if (methodError) return methodError;
@@ -628,6 +648,7 @@ export class TrustMarkIssuerService {
 		if (version !== this.version)
 			throw new Error("Trust Mark policy changed during status assessment");
 	}
+	/** Sign a status assessment after applying eligibility and the configured custom status policy. */
 	async statusResponse(jwt: string): Promise<string | undefined> {
 		const version = this.version;
 		const assessment = await this.assessTrustMarkStatus(jwt);

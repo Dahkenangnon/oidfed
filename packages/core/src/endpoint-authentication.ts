@@ -1,3 +1,5 @@
+/** Federation endpoint authentication, trusted caller context, and method enforcement. */
+
 import { runAsyncOperation } from "./async-operation.js";
 import { callSynchronous, freezeSnapshot } from "./callbacks.js";
 import {
@@ -106,12 +108,14 @@ export interface EndpointAuthenticationConfig {
 	readonly extensions?: EndpointAuthentication;
 }
 const identities = new WeakMap<Request, string>();
+/** Read the authenticated caller identifier associated with this exact Request object. */
 export function authenticatedEndpointCaller(request: Request): string | undefined {
 	return identities.get(request);
 }
 const invalid = (description: string) =>
 	err({ code: FederationErrorCode.InvalidClient, description });
 
+/** Validate and capture endpoint authentication configuration. Invalid configuration throws. */
 export function validateEndpointAuthentication(
 	config: EndpointAuthenticationConfig,
 ): EndpointAuthenticationConfig {
@@ -318,6 +322,11 @@ export function endpointCredentialParameterNames(
 	]);
 }
 
+/**
+ * Check request methods, credential placement, and client authentication before running the
+ * handler.
+ * Associate the verified caller identity with the Request for downstream checks.
+ */
 export function createEndpointAuthenticatedHandler(
 	config: EndpointAuthenticationConfig,
 	inner: (request: Request) => Promise<Response>,

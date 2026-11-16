@@ -1,3 +1,5 @@
+/** Registration and isolated execution of application-defined trust chain constraints. */
+
 import { callSynchronous, freezeSnapshot, isObject } from "../callbacks.js";
 import { InternalErrorCode } from "../constants.js";
 import { err, type FederationError, ok, type Result } from "../errors.js";
@@ -13,6 +15,10 @@ const standardNames = new Set(["max_path_length", "naming_constraints", "allowed
 const fail = (description: string): Result<never, FederationError> =>
 	err({ code: InternalErrorCode.ConstraintViolation, description });
 
+/**
+ * Check custom constraint names and synchronous callbacks before any checker runs.
+ * Duplicate names and collisions with standard constraints return an error.
+ */
 export function validateCustomConstraintChecks(
 	checks: readonly ConstraintCheckDefinition[],
 ): Result<void, FederationError> {

@@ -1,8 +1,5 @@
-/**
- * Client-side helper for the federation Trust Marked Entities Listing
- * endpoint. Performs the HTTPS GET, enforces URL/status/Content-Type, and
- * parses the JSON array of Entity Identifiers.
- */
+/** Trust Marked Entities Listing requests with transport and response-shape checks. */
+
 import { FederationErrorCode, InternalErrorCode, MediaType } from "../constants.js";
 import { fetchFederationEndpoint } from "../endpoint-client.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";

@@ -1,3 +1,5 @@
+/** Application of resolved metadata policies with isolated operator callbacks. */
+
 import { callSynchronous, setOwn } from "../callbacks.js";
 import { EntityType, InternalErrorCode } from "../constants.js";
 import { err, type FederationError, ok, type Result } from "../errors.js";
@@ -144,10 +146,14 @@ export function applyMetadataPolicy(
 	}
 }
 
+/**
+ * Split a space-delimited scope into nonempty values for policy operations.
+ */
 export function normalizeScope(scope: string): string[] {
 	return scope.split(" ").filter(Boolean);
 }
 
+/** Restore an array of scope values to its space-delimited metadata representation. */
 export function denormalizeScope(values: string[]): string {
 	return values.join(" ");
 }

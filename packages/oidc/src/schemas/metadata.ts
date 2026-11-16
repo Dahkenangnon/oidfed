@@ -1,5 +1,5 @@
 /**
- * Typed Zod schemas for all OpenID Federation 1.0 entity type metadata.
+ * Protocol metadata schemas for the five OIDC and OAuth Federation Entity Types.
  *
  * Covers:
  *   - openid_relying_party  (OIDC Dynamic Registration 1.0 + Federation 1.0)

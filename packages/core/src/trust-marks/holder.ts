@@ -1,3 +1,5 @@
+/** Serialized, validated updates to a holder's published Trust Mark references. */
+
 import { decodeEntityStatement } from "../jose/verify.js";
 import type { TrustMarkRef } from "../schemas/trust-mark.js";
 import { entityId, type FederationOptions, type TrustAnchorSet } from "../types.js";
@@ -30,6 +32,7 @@ export interface FetchAndAttachTrustMarkOptions {
 export class TrustMarkHolder {
 	private refs: TrustMarkRef[];
 	private tail: Promise<void> = Promise.resolve();
+	/** Detach initial publication references and retain the host's publication callback. */
 	constructor(
 		private readonly subject: string,
 		refs: readonly TrustMarkRef[],
@@ -38,9 +41,13 @@ export class TrustMarkHolder {
 		entityId(subject);
 		this.refs = structuredClone([...refs]);
 	}
+	/** Return detached publication references; this does not revalidate existing marks. */
 	getTrustMarks(): TrustMarkRef[] {
 		return structuredClone(this.refs);
 	}
+	/**
+	 * Serialize an operation with other holder publication changes, releasing the queue on failure.
+	 */
 	async updatePublication<T>(operation: () => Promise<T>): Promise<T> {
 		const prior = this.tail;
 		let release!: () => void;
@@ -54,6 +61,10 @@ export class TrustMarkHolder {
 			release();
 		}
 	}
+	/**
+	 * Validate issuer evidence and holder binding before publishing the updated references.
+	 * A failed validation or publisher leaves the previous references unchanged.
+	 */
 	async attachTrustMark(jwt: string, options: AttachTrustMarkOptions): Promise<void> {
 		if (options.replacement !== undefined && options.replacement !== "same-issuer-and-type")
 			throw new TypeError("Invalid Trust Mark replacement mode");
@@ -88,6 +99,7 @@ export class TrustMarkHolder {
 			this.refs = refs;
 		});
 	}
+	/** Establish issuer trust, retrieve the holder's mark, and validate it before publication. */
 	async fetchAndAttachTrustMark(input: FetchAndAttachTrustMarkOptions): Promise<void> {
 		const options = trustMarkOperation(input.options ?? {});
 		const evidence = await establishTrustMarkIssuerTrust({
@@ -115,6 +127,7 @@ export class TrustMarkHolder {
 			...(input.replacement ? { replacement: input.replacement } : {}),
 		});
 	}
+	/** Remove matching publication references without revoking the issuer's stored mark. */
 	async removeTrustMark(selector: RemoveTrustMarkSelector): Promise<void> {
 		return this.updatePublication(async () => {
 			const refs = this.refs.filter((ref) => {
