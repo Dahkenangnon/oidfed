@@ -39,7 +39,12 @@ export function trustMarkService(ctx: HandlerContext): TrustMarkIssuerService {
 		...(ctx.trustMarkIssuers ? { trustMarkIssuers: ctx.trustMarkIssuers } : {}),
 		...(ctx.trustMarkDelegations ? { delegations: ctx.trustMarkDelegations } : {}),
 		defaults: {
-			...(ctx.trustMarkTtlSeconds !== undefined ? { ttlSeconds: ctx.trustMarkTtlSeconds } : {}),
+			// Nested defaults select a lifetime mode before the authority-wide TTL fallback.
+			...(configured.defaults?.noExpiry === undefined &&
+			configured.defaults?.ttlSeconds === undefined &&
+			ctx.trustMarkTtlSeconds !== undefined
+				? { ttlSeconds: ctx.trustMarkTtlSeconds }
+				: {}),
 			...configured.defaults,
 		},
 	});

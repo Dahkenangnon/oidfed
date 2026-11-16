@@ -9080,6 +9080,65 @@ export default (QUnit: QUnit) => {
 					t.equal(payload.sub, SERVER_SUB1);
 				});
 
+				test("nested Trust Mark lifetimes override the authority TTL fallback", async (t) => {
+					for (const authorityHints of [undefined, [entityId("https://superior.example.com")]]) {
+						for (const scenario of [
+							{ defaults: { noExpiry: true }, expectedTtl: undefined },
+							{ defaults: { ttlSeconds: 200 }, expectedTtl: 200 },
+							{ defaults: { ref: "https://trust.example.com/framework" }, expectedTtl: 100 },
+							{ defaults: { noExpiry: false }, expectedTtl: 86400 },
+							{
+								defaults: { noExpiry: true },
+								trustMarkDefaults: { [SERVER_MARK_TYPE]: { ttlSeconds: 300 } },
+								expectedTtl: 300,
+							},
+							{
+								defaults: { noExpiry: true },
+								options: { ttlSeconds: 400 },
+								expectedTtl: 400,
+							},
+						]) {
+							const config = withOptionalServerEndpoints({
+								...srvConfig,
+								...(authorityHints ? { authorityHints } : {}),
+								trustMarkTtlSeconds: 100,
+								trustMarkIssuer: { defaults: scenario.defaults },
+								trustMarkDefaults: scenario.trustMarkDefaults,
+								options: { clock: { now: () => 1000 } },
+							});
+							if (authorityHints) delete config.trustMarkIssuers;
+							const server = createAuthorityServer(config);
+							const jwt = await server.issueTrustMark(SERVER_SUB1, SERVER_MARK_TYPE, {
+								renewal: "renew",
+								...scenario.options,
+							});
+							const decoded = decodeEntityStatement(jwt);
+							t.true(decoded.ok);
+							if (!decoded.ok) continue;
+							t.equal(decoded.value.payload.iat, 1000);
+							t.strictEqual(
+								decoded.value.payload.exp,
+								scenario.expectedTtl === undefined ? undefined : 1000 + scenario.expectedTtl,
+							);
+							if (scenario.defaults.ref !== undefined)
+								t.equal(decoded.value.payload.ref, scenario.defaults.ref);
+						}
+					}
+				});
+
+				test("conflicting nested Trust Mark lifetimes reject configuration", (t) => {
+					for (const authorityHints of [undefined, [entityId("https://superior.example.com")]]) {
+						const config = withOptionalServerEndpoints({
+							...srvConfig,
+							...(authorityHints ? { authorityHints } : {}),
+							trustMarkTtlSeconds: 100,
+							trustMarkIssuer: { defaults: { noExpiry: true, ttlSeconds: 200 } },
+						});
+						if (authorityHints) delete config.trustMarkIssuers;
+						t.throws(() => createAuthorityServer(config), /noExpiry and ttlSeconds conflict/);
+					}
+				});
+
 				test("listTrustMarkedEntities returns entity IDs", async (t) => {
 					const server = createAuthorityServer(srvConfig);
 					await server.issueTrustMark(SERVER_SUB1, SERVER_MARK_TYPE);
