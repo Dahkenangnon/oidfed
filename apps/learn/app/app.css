@@ -1,6 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
-@source "../../../internal/ui/src";
+@source "../../shared/ui/src";
 @import "@fontsource-variable/inter";
 @custom-variant dark (&:is(.dark *));
 

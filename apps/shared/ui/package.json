@@ -8,9 +8,9 @@
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/Dahkenangnon/oidfed.git",
-		"directory": "internal/ui"
+		"directory": "apps/shared/ui"
 	},
-	"homepage": "https://github.com/Dahkenangnon/oidfed/tree/main/internal/ui#readme",
+	"homepage": "https://github.com/Dahkenangnon/oidfed/tree/main/apps/shared/ui#readme",
 	"bugs": {
 		"url": "https://github.com/Dahkenangnon/oidfed/issues"
 	},

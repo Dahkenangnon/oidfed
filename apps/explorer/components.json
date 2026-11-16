@@ -15,7 +15,7 @@
   "aliases": {
     "components": "@/components",
     "utils": "@oidfed/ui",
-    "ui": "../../internal/ui/src/components",
+    "ui": "../shared/ui/src/components",
     "lib": "@/lib",
     "hooks": "@/hooks"
   },

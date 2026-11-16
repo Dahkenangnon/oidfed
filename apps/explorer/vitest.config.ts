@@ -19,7 +19,7 @@ export default defineProject({
 		alias: {
 			"@": resolve(__dirname, "src"),
 			"@oidfed/core": resolve(__dirname, "../../packages/core/src/index.ts"),
-			"@oidfed/ui": resolve(__dirname, "../../internal/ui/src/index.ts"),
+			"@oidfed/ui": resolve(__dirname, "../shared/ui/src/index.ts"),
 		},
 	},
 });

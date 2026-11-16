@@ -130,7 +130,7 @@ importers:
         version: link:../../packages/core
       '@oidfed/ui':
         specifier: workspace:*
-        version: link:../../internal/ui
+        version: link:../shared/ui
       '@types/dagre':
         specifier: ^0.7.54
         version: 0.7.54
@@ -224,7 +224,7 @@ importers:
         version: 5.3.0
       '@oidfed/ui':
         specifier: workspace:*
-        version: link:../../internal/ui
+        version: link:../shared/ui
       '@react-router/node':
         specifier: ^8.5.0
         version: 8.5.0(react-router@8.5.0(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(typescript@6.0.3)
@@ -273,7 +273,7 @@ importers:
         version: 5.3.0
       '@oidfed/ui':
         specifier: workspace:*
-        version: link:../../internal/ui
+        version: link:../shared/ui
       '@react-router/node':
         specifier: ^8.5.0
         version: 8.5.0(react-router@8.5.0(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(typescript@6.0.3)
@@ -321,7 +321,7 @@ importers:
         specifier: ^8.3.5
         version: 8.3.5(@types/node@25.9.3)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1)
 
-  internal/ui:
+  apps/shared/ui:
     dependencies:
       '@base-ui/react':
         specifier: ^1.9.0

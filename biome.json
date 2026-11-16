@@ -31,6 +31,12 @@
 					}
 				}
 			}
+		},
+		{
+			"includes": ["apps/shared/**"],
+			"formatter": { "enabled": true },
+			"linter": { "enabled": true },
+			"assist": { "actions": { "source": { "organizeImports": "on" } } }
 		}
 	],
 	"files": {
@@ -48,10 +54,6 @@
 			"tools/**/src/**/*.tsx",
 			"tools/**/test/**/*.ts",
 			"tools/**/test/**/*.tsx",
-			"internal/**/src/**/*.ts",
-			"internal/**/src/**/*.tsx",
-			"internal/**/test/**/*.ts",
-			"internal/**/test/**/*.tsx",
 			"tests/**/*.ts",
 			"scripts/**/*.sh",
 			"scripts/**/*.ts",
