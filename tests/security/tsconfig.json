@@ -1,0 +1,6 @@
+{
+	"extends": "../tap/tsconfig.json",
+	"compilerOptions": { "noEmit": true },
+	"include": ["fuzz.ts"],
+	"exclude": ["semgrep.ts"]
+}

@@ -1,0 +1,6 @@
+title = "Specification package secrets"
+
+[extend]
+useDefault = true
+
+# Protocol fixtures are tested separately; source and packed artifacts have no blanket exclusions.

@@ -1,0 +1,335 @@
+/** Exercise tool discovery and machine-readable output through the security commands. */
+
+import test from "node:test";
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import {
+	mkdtemp,
+	mkdir,
+	writeFile,
+	copyFile,
+	symlink,
+	readFile,
+	rm,
+	access,
+} from "node:fs/promises";
+import { join, delimiter } from "node:path";
+import { tmpdir } from "node:os";
+import { root } from "./scope.mjs";
+
+test("architecture reads analyzer JSON without package-manager warning output", async () => {
+	const temporary = await mkdtemp(join(tmpdir(), "oidfed-runner-warning-"));
+	try {
+		await writeFile(
+			join(temporary, "pnpm"),
+			'#!/bin/sh\nprintf "Unsupported engine warning before analyzer JSON\\n"\nexit 1\n',
+			{ mode: 0o755 },
+		);
+		const result = spawnSync(process.execPath, ["scripts/security/run.mjs", "architecture"], {
+			cwd: root,
+			env: { ...process.env, PATH: `${temporary}${delimiter}${process.env.PATH}` },
+			encoding: "utf8",
+		});
+		assert.equal(result.status, 0, result.stderr);
+		assert.match(result.stdout, /Architecture: \d+ modules/);
+		assert.doesNotMatch(result.stdout, /Unsupported engine warning/);
+	} finally {
+		await rm(temporary, { recursive: true, force: true });
+	}
+});
+
+async function scannerWorkspace(prefix = "oidfed-runner-scanner-") {
+	const temporary = await mkdtemp(join(tmpdir(), prefix));
+	const scripts = join(temporary, "scripts/security");
+	await mkdir(scripts, { recursive: true });
+	await mkdir(join(temporary, "node_modules"));
+	await writeFile(join(temporary, "package.json"), '{"type":"module"}');
+	for (const file of [
+		"run.mjs",
+		"scope.mjs",
+		"install.mjs",
+		"dependency-graph.mjs",
+		"known-cycles.mjs",
+	])
+		await copyFile(join(root, "scripts/security", file), join(scripts, file));
+	for (const dependency of ["esbuild", "typescript"])
+		await symlink(
+			join(root, "node_modules", dependency),
+			join(temporary, "node_modules", dependency),
+			"dir",
+		);
+	return temporary;
+}
+
+test("the runner executes and rejects unknown commands in encoded checkout paths", async () => {
+	const temporary = await scannerWorkspace("oidfed runner é-");
+	try {
+		const result = spawnSync(process.execPath, ["scripts/security/run.mjs", "unknown-command"], {
+			cwd: temporary,
+			encoding: "utf8",
+		});
+		assert.notEqual(
+			result.status,
+			0,
+			"the command must execute instead of silently returning success",
+		);
+		assert.match(result.stderr, /Choose lint/);
+		const imported = spawnSync(
+			process.execPath,
+			["--input-type=module", "-e", 'await import("./scripts/security/run.mjs")'],
+			{
+				cwd: temporary,
+				encoding: "utf8",
+			},
+		);
+		assert.equal(imported.status, 0, imported.stderr);
+		assert.equal(imported.stdout, "", "importing the runner does not execute a check");
+	} finally {
+		await rm(temporary, { recursive: true, force: true });
+	}
+});
+
+test("the installer executes in encoded checkout paths without executing on import", async () => {
+	const temporary = await scannerWorkspace("oidfed installer é-");
+	try {
+		const probe =
+			'globalThis.fetch = async () => { throw Error("installer download reached"); }; const module = "./scripts/security/install.mjs"; if (process.env.START_INSTALLER) process.argv[1] = process.cwd() + "/scripts/security/install.mjs"; await import(module);';
+		for (const start of [false, true]) {
+			const result = spawnSync(process.execPath, ["--input-type=module", "-e", probe], {
+				cwd: temporary,
+				env: { ...process.env, ...(start ? { START_INSTALLER: "1" } : {}) },
+				encoding: "utf8",
+			});
+			if (start) {
+				assert.notEqual(result.status, 0);
+				assert.match(result.stderr, /installer download reached/);
+			} else {
+				assert.equal(result.status, 0, result.stderr);
+				assert.equal(result.stdout, "");
+			}
+		}
+	} finally {
+		await rm(temporary, { recursive: true, force: true });
+	}
+});
+
+async function dependencyFixture(walletAtBase) {
+	const temporary = await scannerWorkspace();
+	await writeFile(join(temporary, "pnpm-workspace.yaml"), 'packages: ["packages/*"]\n');
+	await writeFile(join(temporary, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\nimporters: {}\n");
+	for (const name of ["core", "authority", "leaf", "oidc", ...(walletAtBase ? ["wallet"] : [])]) {
+		await mkdir(join(temporary, "packages", name), { recursive: true });
+		await writeFile(
+			join(temporary, "packages", name, "package.json"),
+			JSON.stringify({ name: `@oidfed/${name}` }),
+		);
+	}
+	const git = (...args) => {
+		const result = spawnSync(
+			"git",
+			[
+				"-c",
+				"commit.gpgsign=false",
+				"-c",
+				"core.hooksPath=/dev/null",
+				"-c",
+				"user.name=Fixture",
+				"-c",
+				"user.email=fixture@example.invalid",
+				...args,
+			],
+			{ cwd: temporary, encoding: "utf8" },
+		);
+		assert.equal(result.status, 0, result.stderr);
+		return result.stdout.trim();
+	};
+	git("init", "-q");
+	git("add", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "packages");
+	git("commit", "-qm", "baseline");
+	const base = git("rev-parse", "HEAD");
+	const executables = join(temporary, "fixture-bin");
+	const scanners = join(temporary, "node_modules/.cache/spec-security/bin");
+	await mkdir(executables);
+	await mkdir(scanners, { recursive: true });
+	await writeFile(
+		join(executables, "pnpm"),
+		`#!${process.execPath}\nconst base = process.cwd().endsWith("/base"); console.log(base && process.env.INVALID_BASE_GRAPH ? "invalid JSON" : base ? process.env.BASE_GRAPH : process.env.CURRENT_GRAPH);\n`,
+		{ mode: 0o755 },
+	);
+	await writeFile(
+		join(scanners, "osv-scanner"),
+		`#!${process.execPath}\nconst fs = require("node:fs"); fs.copyFileSync(process.argv.at(-1), process.env.SCANNED_BOM);\n`,
+		{ mode: 0o755 },
+	);
+	const graph = (version) =>
+		["core", "authority", "leaf", "oidc", "wallet"].map((name) => ({
+			name: `@oidfed/${name}`,
+			...(name === "core"
+				? { dependencies: { jose: { version }, zod: { version: "4.4.3" } } }
+				: {}),
+		}));
+	const output = join(temporary, "scanned-bom.json");
+	return {
+		temporary,
+		base,
+		output,
+		run(overrides = {}) {
+			return spawnSync(process.execPath, ["scripts/security/run.mjs", "dependencies"], {
+				cwd: temporary,
+				env: {
+					...process.env,
+					PATH: `${executables}${delimiter}${process.env.PATH}`,
+					SECURITY_BASE_SHA: base,
+					CURRENT_GRAPH: JSON.stringify(graph("6.2.13")),
+					BASE_GRAPH: JSON.stringify(graph("6.2.12")),
+					SCANNED_BOM: output,
+					...overrides,
+				},
+				encoding: "utf8",
+			});
+		},
+	};
+}
+
+test("a baseline predating wallet scans the full current graph", async () => {
+	const fixture = await dependencyFixture(false);
+	try {
+		const result = fixture.run();
+		assert.equal(result.status, 0, result.stderr);
+		assert.match(result.stdout, /baseline.*incomplete.*full current/i);
+		const bom = JSON.parse(await readFile(fixture.output, "utf8"));
+		assert.deepEqual(
+			bom.components.map(({ name, version }) => `${name}@${version}`),
+			["jose@6.2.13", "zod@4.4.3"],
+		);
+	} finally {
+		await rm(fixture.temporary, { recursive: true, force: true });
+	}
+});
+
+test("complete dependency baselines retain differential scanning", async () => {
+	const fixture = await dependencyFixture(true);
+	try {
+		const result = fixture.run();
+		assert.equal(result.status, 0, result.stderr);
+		const bom = JSON.parse(await readFile(fixture.output, "utf8"));
+		assert.deepEqual(
+			bom.components.map(({ name, version }) => `${name}@${version}`),
+			["jose@6.2.13"],
+		);
+	} finally {
+		await rm(fixture.temporary, { recursive: true, force: true });
+	}
+});
+
+test("invalid commits and corrupt or incomplete graphs fail without a scan", async () => {
+	const fixture = await dependencyFixture(true);
+	try {
+		for (const overrides of [
+			{ SECURITY_BASE_SHA: "0".repeat(40) },
+			{ SECURITY_BASE_SHA: "invalid-ref" },
+			{ INVALID_BASE_GRAPH: "1" },
+			{ CURRENT_GRAPH: "[]" },
+			{
+				CURRENT_GRAPH: JSON.stringify(Array.from({ length: 5 }, () => ({ name: "@oidfed/core" }))),
+			},
+		]) {
+			const result = fixture.run(overrides);
+			assert.notEqual(result.status, 0);
+			await assert.rejects(access(fixture.output));
+		}
+	} finally {
+		await rm(fixture.temporary, { recursive: true, force: true });
+	}
+});
+
+test("Semgrep is discovered in the workspace cache without a PATH override", async () => {
+	const temporary = await scannerWorkspace();
+	try {
+		const scannerBin = join(temporary, "node_modules/.cache/spec-security/semgrep/bin");
+		await mkdir(scannerBin, { recursive: true });
+		await writeFile(
+			join(scannerBin, "semgrep"),
+			'#!/bin/sh\nprintf "%s\\n" "$*" >> "$SCANNER_CALLS"\n',
+			{ mode: 0o755 },
+		);
+		const calls = join(temporary, "calls.txt");
+		const result = spawnSync(process.execPath, ["scripts/security/run.mjs", "semgrep"], {
+			cwd: temporary,
+			env: { ...process.env, PATH: temporary, SCANNER_CALLS: calls },
+			encoding: "utf8",
+		});
+		assert.equal(result.status, 0, result.stderr);
+		const invocations = (await readFile(calls, "utf8")).trim().split("\n");
+		assert.equal(invocations.length, 2, "both rule fixtures and package sources are checked");
+		assert.match(invocations[0], /--test/);
+		assert.match(invocations[1], /scan.*--error/);
+		for (const name of ["core", "authority", "leaf", "oidc", "wallet"])
+			assert.ok(invocations[1].includes(`packages/${name}/src`));
+	} finally {
+		await rm(temporary, { recursive: true, force: true });
+	}
+});
+
+test("a missing Semgrep installation explains how to install the tools", async () => {
+	const temporary = await scannerWorkspace();
+	try {
+		const result = spawnSync(process.execPath, ["scripts/security/run.mjs", "semgrep"], {
+			cwd: temporary,
+			env: { ...process.env, PATH: temporary },
+			encoding: "utf8",
+		});
+		assert.notEqual(result.status, 0);
+		assert.match(result.stderr, /semgrep.*not found/i);
+		assert.match(result.stderr, /pnpm security:install/);
+	} finally {
+		await rm(temporary, { recursive: true, force: true });
+	}
+});
+
+test("both workflow linters receive all workflow YAML files", async () => {
+	const temporary = await scannerWorkspace();
+	try {
+		await mkdir(join(temporary, ".github/workflows"), { recursive: true });
+		const files = ["ci.yml", "conformance.yml", "release.yml", "security.yml", "future.yaml"];
+		for (const file of [...files, "notes.md"])
+			await writeFile(join(temporary, ".github/workflows", file), "name: fixture\n");
+		const bin = join(temporary, "node_modules/.cache/spec-security/bin");
+		await mkdir(bin, { recursive: true });
+		for (const tool of ["actionlint", "zizmor"])
+			await writeFile(
+				join(bin, tool),
+				`#!${process.execPath}\nconst fs = require("node:fs"); fs.appendFileSync(process.env.WORKFLOW_CALLS, JSON.stringify({tool: ${JSON.stringify(tool)}, args: process.argv.slice(2)}) + "\\n");`,
+				{ mode: 0o755 },
+			);
+		const calls = join(temporary, "calls.txt");
+		const result = spawnSync(process.execPath, ["scripts/security/run.mjs", "workflows"], {
+			cwd: temporary,
+			env: { ...process.env, WORKFLOW_CALLS: calls },
+			encoding: "utf8",
+		});
+		assert.equal(result.status, 0, result.stderr);
+		const actual = (await readFile(calls, "utf8"))
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line));
+		assert.deepEqual(
+			actual.map((call) => call.tool),
+			["actionlint", "zizmor"],
+		);
+		for (const call of actual)
+			assert.deepEqual(
+				call.args.filter((arg) => arg.startsWith(".github/")),
+				files.map((file) => `.github/workflows/${file}`).sort(),
+			);
+		const workflow = await readFile(join(root, ".github/workflows/security.yml"), "utf8");
+		for (const suffix of ["yml", "yaml"])
+			assert.equal(
+				workflow.split(`'.github/workflows/*.${suffix}'`).length - 1,
+				2,
+				"push and PR checks include workflow changes",
+			);
+	} finally {
+		await rm(temporary, { recursive: true, force: true });
+	}
+});

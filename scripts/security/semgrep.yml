@@ -1,0 +1,50 @@
+rules:
+  - id: no-dynamic-code
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: Parse protocol data without executing it as JavaScript.
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: new Function(...)
+      - pattern: Function(...)
+  - id: no-inherited-auth-dispatch
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: Check registry membership with Object.hasOwn or use Map before dispatching an untrusted method name.
+    mode: taint
+    pattern-sources:
+      - pattern: $PARAMETERS.get(...)
+      - pattern: JSON.parse(...)
+    pattern-sinks:
+      - patterns:
+          - pattern: $REGISTRY[$NAME](...)
+          - focus-metavariable: $NAME
+          - pattern-not-inside: |
+              if (Object.hasOwn($REGISTRY, $NAME)) { ... }
+          - pattern-not-inside: |
+              if (!Object.hasOwn($REGISTRY, $NAME)) return ...;
+              ...
+  - id: no-prototype-assign-from-json
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: Copy decoded member names with setOwn or a null-prototype dictionary.
+    pattern: Object.assign({}, JSON.parse(...))
+  - id: no-unbounded-fetch
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: Use the shared bounded transport so timeouts, response limits, and redirects are enforced.
+    pattern-either:
+      - pattern: fetch(...)
+      - pattern: globalThis.fetch(...)
+  - id: no-secret-logging
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: Keep authentication material out of log messages.
+    patterns:
+      - pattern: $LOGGER.$LEVEL(..., $SECRET, ...)
+      - metavariable-regex:
+          metavariable: $LEVEL
+          regex: ^(debug|info|warn|error)$
+      - metavariable-regex:
+          metavariable: $SECRET
+          regex: ^(privateKey|clientSecret|clientAssertion|client_secret|client_assertion)$

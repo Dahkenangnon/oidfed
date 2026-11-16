@@ -1,0 +1,9 @@
+name: Protocol packages
+paths:
+  - packages/core/src
+  - packages/authority/src
+  - packages/leaf/src
+  - packages/oidc/src
+  - packages/wallet/src
+queries:
+  - uses: security-extended
