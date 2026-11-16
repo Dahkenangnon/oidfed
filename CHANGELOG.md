@@ -13,7 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Subordinate Events Draft 01: authorities publish signed histories, core verifies responses, and the CLI retrieves histories using pinned authority keys.
 - Entity Collection Draft 01: shared collection service and client, optional authority and leaf hosting, independent providers, and CLI retrieval. Collections support filters, claim selection, language matching, and opaque pagination.
 - Wallet Architectures Draft 05: composable Wallet Provider, Credential Issuer, and Credential Verifier roles, with Wallet Attestations, PoP authentication, and federation-backed presentation request checks. Applications supply their VCI/VP protocol engines and credential-format verification.
-- An [operator responsibilities guide](https://github.com/Dahkenangnon/oidfed/blob/main/docs/guide/operator-responsibilities.md) covering protocol requirements, library contracts, and deployment duties.
+- An [operator responsibilities guide](https://github.com/Dahkenangnon/oidfed/blob/main/docs/features/11.operations.md) covering protocol requirements, library contracts, and deployment duties.
 
 ### Breaking changes
 
