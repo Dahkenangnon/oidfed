@@ -1,40 +1,14 @@
 #!/usr/bin/env node
-/**
- * Release helper — bumps version(s), regenerates per-package + root
- * CHANGELOGs from the git log, commits, tags, and pushes.
- *
- * Usage:
- *   node scripts/release.mjs <package> <bump> [--dry-run|--prepare]
- *   node scripts/release.mjs <package> --finalize
- *
- * <package>  core | authority | leaf | oidc | wallet | cli | all
- * <bump>     patch | minor | major
- *
- * Examples:
- *   node scripts/release.mjs core patch --prepare
- *   node scripts/release.mjs core --finalize
- *   node scripts/release.mjs all minor --dry-run
- *
- * Or via pnpm:
- *   pnpm release core patch --prepare
- *   pnpm release core --finalize
- *   pnpm release all minor --dry-run
- */
+/** Prepare reviewed package releases or dispatch publication of committed versions. */
 
-import { execFileSync, execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import semver from "semver";
+import { getTargets, REPOSITORY, version } from "./release/catalog.mjs";
 
-const REMOTE = "https://github.com/Dahkenangnon/oidfed";
-
-const PACKAGES = {
-	core: { dir: "packages/core", scope: "core" },
-	authority: { dir: "packages/authority", scope: "authority" },
-	leaf: { dir: "packages/leaf", scope: "leaf" },
-	oidc: { dir: "packages/oidc", scope: "oidc" },
-	wallet: { dir: "packages/wallet", scope: "wallet" },
-	cli: { dir: "tools/cli", scope: "cli" },
-};
+const REMOTE = `https://github.com/${REPOSITORY}`;
 
 // Conventional-commit types that surface in user-facing CHANGELOGs.
 // Subjects with other types (chore, docs, ci, test, style, build, revert) are
@@ -49,8 +23,6 @@ const TYPE_TO_HEADING = {
 
 const HEADING_ORDER = ["### Features", "### Bug Fixes", "### Performance", "### Refactor"];
 
-const run = (cmd) => execSync(cmd, { stdio: "inherit" });
-
 function readText(path, readFile = readFileSync) {
 	return readFile(resolve(path), "utf8");
 }
@@ -61,32 +33,56 @@ function updateJsonVersion(src, version) {
 	return `${JSON.stringify(json, null, "\t")}\n`;
 }
 
-export function bumpVersion(version, bump) {
-	const match = version.match(/^(\d+)\.(\d+)\.(\d+)(-.+)?$/);
-	if (!match) throw new Error(`Unsupported version format: ${version}`);
-	const major = Number(match[1]);
-	const minor = Number(match[2]);
-	const patch = Number(match[3]);
-	if (bump === "major") return `${major + 1}.0.0`;
-	if (bump === "minor") return `${major}.${minor + 1}.0`;
-	if (bump === "patch") return `${major}.${minor}.${patch + 1}`;
-	throw new Error(`Unsupported bump: ${bump}`);
+export function bumpVersion(value, bump) {
+	version(value);
+	if (!["major", "minor", "patch"].includes(bump)) throw new Error(`Unsupported bump: ${bump}`);
+	return semver.inc(value, bump);
 }
 
-/**
- * Returns the most recent annotated tag matching '<scope>/v*.*.*' that is an
- * ancestor of HEAD, or empty string if none exists.
- */
-export function previousTagFor(scope) {
-	try {
-		return execFileSync(
-			"git",
-			["describe", "--tags", "--match", `${scope}/v*.*.*`, "--abbrev=0", "HEAD"],
-			{ encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
-		).trim();
-	} catch {
-		return "";
+/** Find the nearest scoped or applicable historical coordinated release. */
+export function previousTagFor(scope, excludeVersion, { execute = execFileSync } = {}) {
+	const target = getTargets(scope)[0];
+	const excluded = excludeVersion ? [`${scope}/v${excludeVersion}`, `all/v${excludeVersion}`] : [];
+	for (let attempt = 0; attempt < 1000; attempt++) {
+		let tag;
+		try {
+			tag = execute(
+				"git",
+				[
+					"describe",
+					"--tags",
+					"--match",
+					`${scope}/v*.*.*`,
+					"--match",
+					"all/v*.*.*",
+					"--abbrev=0",
+					...excluded.flatMap((value) => ["--exclude", value]),
+					"HEAD",
+				],
+				{ encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+			).trim();
+		} catch {
+			return "";
+		}
+		try {
+			const manifest = JSON.parse(
+				execute("git", ["show", `${tag}:${target.dir}/package.json`], {
+					encoding: "utf8",
+					stdio: ["ignore", "pipe", "ignore"],
+				}),
+			);
+			if (
+				manifest.name === target.name &&
+				`${tag.startsWith("all/") ? "all" : scope}/v${version(manifest.version)}` === tag
+			)
+				return tag;
+		} catch {
+			/* Tags predating a package or describing another version are not its baseline. */
+		}
+		if (excluded.includes(tag)) throw new Error("Git returned an excluded release tag");
+		excluded.push(tag);
 	}
+	throw new Error("Release tag search limit exceeded");
 }
 
 /**
@@ -116,11 +112,7 @@ export function generateBody(fromRef, packagePath) {
 	const range = fromRef ? `${fromRef}..HEAD` : "HEAD";
 	const args = ["log", "--no-merges", "--pretty=format:%H%x09%s", range];
 	if (packagePath) args.push("--", packagePath);
-	const out = execFileSync(
-		"git",
-		args,
-		{ encoding: "utf8" },
-	)
+	const out = execFileSync("git", args, { encoding: "utf8" })
 		.split("\n")
 		.filter((line) => line.length > 0);
 
@@ -151,176 +143,73 @@ export function generateBody(fromRef, packagePath) {
  * Replace `## [Unreleased]` with `## [Unreleased]\n\n## [<v>] - <date>\n\n<body>`.
  * When `body` is empty the section receives a stub placeholder so the
  * resulting file remains valid Keep-a-Changelog markdown.
- * When `skipBody` is true, the body is left empty for manual curation.
  */
-export function stampChangelogText(src, v, body, date, skipBody = false) {
+export function stampChangelogText(src, value, body, date) {
 	const marker = "## [Unreleased]";
-	if (!src.includes(marker)) return src;
-	const renderedBody = skipBody ? "" : body;
-	let block;
-	if (renderedBody) {
-		block = `## [Unreleased]\n\n## [${v}] - ${date}\n\n${renderedBody}\n`;
-	} else if (skipBody) {
-		block = `## [Unreleased]\n\n## [${v}] - ${date}\n\n`;
-	} else {
-		block = `## [Unreleased]\n\n## [${v}] - ${date}\n\n_No user-visible changes — released as part of the coordinated wave._\n`;
-	}
-	return src.replace(marker, block);
-}
-
-export function stampChangelog(changelogPath, v, fromRef, packagePath, skipBody = false) {
-	const src = readFileSync(changelogPath, "utf8");
-	const date = new Date().toISOString().slice(0, 10);
-	const body = skipBody ? "" : generateBody(fromRef, packagePath);
-	writeFileSync(changelogPath, stampChangelogText(src, v, body, date, skipBody));
-}
-
-function packageTargets(pkg) {
-	if (pkg === "all") return Object.values(PACKAGES);
-	return [PACKAGES[pkg]];
+	const rendered = body || "_No user-visible changes in this package._";
+	return src.replace(marker, () => `${marker}\n\n## [${value}] - ${date}\n\n${rendered}\n`);
 }
 
 function changedFile(path, before, after) {
 	return before === after ? null : { path, before, after };
 }
 
-function packageJsonPath(target) {
-	return `${target.dir}/package.json`;
-}
-
-function packageChangelogPath(target) {
-	return `${target.dir}/CHANGELOG.md`;
-}
-
-function targetFiles(pkg) {
-	const files = [];
-	for (const target of packageTargets(pkg)) {
-		files.push(packageJsonPath(target), packageChangelogPath(target));
-	}
-	if (pkg === "all") files.push("package.json", "CHANGELOG.md");
-	return files;
-}
-
-function hasChangelogSection(src, version) {
-	const escaped = version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-	return new RegExp(`^## \\[${escaped}\\]`, "m").test(src);
-}
-
-export function createReleasePlan(pkg, bump, options = {}) {
+export function createReleasePlan(scope, bump, options = {}) {
 	const readFile = options.readFile ?? readFileSync;
 	const previousTag = options.previousTagFor ?? previousTagFor;
 	const bodyGenerator = options.generateBody ?? generateBody;
-	const date =
-		options.date ?? (options.now ? options.now().toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10));
-
+	const date = options.date ?? new Date().toISOString().slice(0, 10);
 	const files = [];
-	const targets = packageTargets(pkg);
-	const scope = pkg === "all" ? "all" : PACKAGES[pkg].scope;
-	const prevTag = previousTag(scope);
-	let version;
-
-	for (const target of targets) {
-		const packagePath = packageJsonPath(target);
-		const packageBefore = readText(packagePath, readFile);
-		const nextVersion = bumpVersion(JSON.parse(packageBefore).version, bump);
-		version ??= nextVersion;
-		const packageAfter = updateJsonVersion(packageBefore, nextVersion);
-		const packageChange = changedFile(packagePath, packageBefore, packageAfter);
-		if (packageChange) files.push(packageChange);
-
-		const changelogPath = packageChangelogPath(target);
-		const changelogBefore = readText(changelogPath, readFile);
-		const changelogAfter = stampChangelogText(
-			changelogBefore,
-			nextVersion,
-			bodyGenerator(prevTag, target.dir),
-			date,
-		);
-		const changelogChange = changedFile(changelogPath, changelogBefore, changelogAfter);
-		if (changelogChange) files.push(changelogChange);
+	const releases = [];
+	for (const target of getTargets(scope)) {
+		const path = `${target.dir}/package.json`;
+		const before = readText(path, readFile);
+		const manifest = JSON.parse(before);
+		if (manifest.name !== target.name) throw new Error(`Package identity mismatch in ${path}`);
+		const next = bumpVersion(manifest.version, bump);
+		const previous = previousTag(target.scope);
+		releases.push({ ...target, version: next, tag: `${target.scope}/v${next}` });
+		const change = changedFile(path, before, updateJsonVersion(before, next));
+		if (change) files.push(change);
+		const changelogPath = `${target.dir}/CHANGELOG.md`;
+		const changelog = readText(changelogPath, readFile);
+		if (!changelog.includes("## [Unreleased]"))
+			throw new Error(`Missing Unreleased section in ${changelogPath}`);
+		if (changelog.split(/\r?\n/).some((line) => line.startsWith(`## [${next}]`)))
+			throw new Error(`Changelog already contains ${next}`);
+		const updated = stampChangelogText(changelog, next, bodyGenerator(previous, target.dir), date);
+		files.push(changedFile(changelogPath, changelog, updated));
 	}
-
-	if (pkg === "all") {
-		const rootPackagePath = "package.json";
-		const rootPackageBefore = readText(rootPackagePath, readFile);
-		const rootVersion = bumpVersion(JSON.parse(rootPackageBefore).version, bump);
-		const rootPackageAfter = updateJsonVersion(rootPackageBefore, rootVersion);
-		const rootPackageChange = changedFile(rootPackagePath, rootPackageBefore, rootPackageAfter);
-		if (rootPackageChange) files.push(rootPackageChange);
-
-		const rootChangelogPath = "CHANGELOG.md";
-		const rootChangelogBefore = readText(rootChangelogPath, readFile);
-		const rootChangelogAfter = stampChangelogText(rootChangelogBefore, version, "", date, true);
-		const rootChangelogChange = changedFile(rootChangelogPath, rootChangelogBefore, rootChangelogAfter);
-		if (rootChangelogChange) files.push(rootChangelogChange);
-	}
-
-	const gitAddPaths = files.map((file) => file.path);
-	const tagName = `${scope}/v${version}`;
-	const commitMessage =
-		scope === "all" ? `chore(release): all v${version}` : `chore(${scope}): release v${version}`;
-	const tagMessage =
-		scope === "all" ? `release: all v${version}` : `release: @oidfed/${scope} v${version}`;
-	const pushCommands = ["git push", `git push origin ${tagName}`];
-
-	return {
-		scope,
-		version,
-		files,
-		gitAddPaths,
-		commitMessage,
-		tagName,
-		tagMessage,
-		pushCommands,
-	};
+	return { scope, releases, files: files.filter(Boolean) };
 }
 
-export function createFinalizePlan(pkg, options = {}) {
-	const readFile = options.readFile ?? readFileSync;
-	const scope = pkg === "all" ? "all" : PACKAGES[pkg].scope;
-	const targets = packageTargets(pkg);
-	const versionSourcePath = packageJsonPath(targets[0]);
-	const version = JSON.parse(readText(versionSourcePath, readFile)).version;
-	const expectedPaths = targetFiles(pkg);
+export function prepareReleasePlan(plan, options = {}) {
+	const writeFile = options.writeFile ?? writeFileSync;
+	for (const file of plan.files) writeFile(file.path, file.after);
+}
 
-	for (const target of targets) {
-		const path = packageJsonPath(target);
-		const targetVersion = JSON.parse(readText(path, readFile)).version;
-		if (targetVersion !== version) {
-			throw new Error(
-				`Prepared release version mismatch: ${path} has ${targetVersion}, expected ${version}`,
-			);
-		}
-		const changelogPath = packageChangelogPath(target);
-		if (!hasChangelogSection(readText(changelogPath, readFile), version)) {
-			throw new Error(`Prepared release is missing ## [${version}] in ${changelogPath}`);
-		}
-	}
-
-	if (pkg === "all") {
-		const rootVersion = JSON.parse(readText("package.json", readFile)).version;
-		if (rootVersion !== version) {
-			throw new Error(
-				`Prepared release version mismatch: package.json has ${rootVersion}, expected ${version}`,
-			);
-		}
-		if (!hasChangelogSection(readText("CHANGELOG.md", readFile), version)) {
-			throw new Error(`Prepared release is missing ## [${version}] in CHANGELOG.md`);
-		}
-	}
-
-	return {
-		scope,
-		version,
-		gitAddPaths: expectedPaths,
-		commitMessage:
-			scope === "all" ? `chore(release): all v${version}` : `chore(${scope}): release v${version}`,
-		tagName: `${scope}/v${version}`,
-		tagMessage:
-			scope === "all" ? `release: all v${version}` : `release: @oidfed/${scope} v${version}`,
-		pushCommands: ["git push", `git push origin ${scope}/v${version}`],
-		expectedPaths,
-	};
+/** No local Git mutation: dispatch only after the reviewed commit is on origin/main. */
+export function dispatchPublication(scope, { resumeRunId, execute = execFileSync } = {}) {
+	if (resumeRunId !== undefined && !/^[1-9]\d*$/.test(resumeRunId))
+		throw new Error("Invalid release run ID");
+	if (!resumeRunId) getTargets(scope);
+	const git = (...args) => execute("git", args, { encoding: "utf8" }).trim();
+	if (git("status", "--porcelain"))
+		throw new Error("Commit or set aside local changes before publication");
+	const origin = git("remote", "get-url", "origin");
+	if (![`${REMOTE}.git`, REMOTE, `git@github.com:${REPOSITORY}.git`].includes(origin))
+		throw new Error("Release origin must be the upstream repository");
+	git("fetch", "--no-tags", "origin", "main");
+	const sha = git("rev-parse", "HEAD");
+	git("merge-base", "--is-ancestor", sha, "refs/remotes/origin/main");
+	const fields = resumeRunId
+		? ["-f", `resume_run_id=${resumeRunId}`]
+		: ["-f", `scope=${scope}`, "-f", `source_sha=${sha}`];
+	execute(
+		"gh",
+		["workflow", "run", "release.yml", "--repo", REPOSITORY, "--ref", "main", ...fields],
+		{ stdio: "inherit" },
+	);
 }
 
 function splitLines(text) {
@@ -374,135 +263,47 @@ export function unifiedDiff(path, before, after) {
 export function renderReleasePlan(plan) {
 	const lines = [
 		"=== DRY RUN ===",
-		`Scope: ${plan.scope}, version: v${plan.version}`,
 		"Mode: preview only; no files, commits, tags, or pushes will be created.",
-		"Files that would change:",
-		...(plan.files.length > 0 ? plan.files.map((file) => `  ${file.path}`) : ["  (none)"]),
-		`Commit: ${plan.commitMessage}`,
-		`Tag: ${plan.tagName}`,
-		"Push commands:",
-		...plan.pushCommands.map((cmd) => `  ${cmd}`),
+		...plan.releases.map((entry) => `${entry.name}: ${entry.version} → ${entry.tag}`),
 		"",
 		"Diff preview:",
 	];
-	for (const file of plan.files) {
+	for (const file of plan.files)
 		lines.push(unifiedDiff(file.path, file.before, file.after).trimEnd());
-	}
 	return `${lines.join("\n")}\n`;
 }
 
-export function applyReleasePlan(plan, options = {}) {
-	const writeFile = options.writeFile ?? writeFileSync;
-	const runCommand = options.run ?? run;
-	for (const file of plan.files) {
-		writeFile(file.path, file.after);
+export function main(args = process.argv.slice(2)) {
+	if (args.length === 2 && args[0] === "--resume") {
+		dispatchPublication(undefined, { resumeRunId: args[1] });
+		return;
 	}
-	if (plan.gitAddPaths.length > 0) {
-		runCommand(`git add ${plan.gitAddPaths.join(" ")}`);
+	const [scope, mode, flag] = args;
+	if (args.length === 2 && mode === "--publish") {
+		dispatchPublication(scope);
+		return;
 	}
-	runCommand(`git commit -m "${plan.commitMessage}"`);
-	runCommand(`git tag -a -m "${plan.tagMessage}" ${plan.tagName}`);
-	for (const cmd of plan.pushCommands) runCommand(cmd);
-}
-
-export function prepareReleasePlan(plan, options = {}) {
-	const writeFile = options.writeFile ?? writeFileSync;
-	for (const file of plan.files) {
-		writeFile(file.path, file.after);
-	}
-}
-
-export function assertOnlyExpectedChanges(expectedPaths, options = {}) {
-	const status =
-		options.status ??
-		execFileSync("git", ["status", "--porcelain"], { encoding: "utf8" });
-	const expected = new Set(expectedPaths);
-	const dirtyPaths = status
-		.split("\n")
-		.map((line) => line.trimEnd())
-		.filter(Boolean)
-		.map((line) => line.slice(3));
-	const unexpected = dirtyPaths.filter((path) => !expected.has(path));
-	const missing = expectedPaths.filter((path) => !dirtyPaths.includes(path));
-	if (unexpected.length > 0) {
+	if (args.length !== 3 || !["--dry-run", "--prepare"].includes(flag))
 		throw new Error(
-			`Unexpected worktree changes during release finalize:\n${unexpected
-				.map((path) => `  ${path}`)
-				.join("\n")}`,
+			"Use: pnpm release <package|all> <patch|minor|major> --dry-run|--prepare; then review and merge, and run pnpm release <package|all> --publish. Resume with pnpm release --resume <run-id>. Automatic finalization is not supported.",
 		);
-	}
-	if (missing.length > 0) {
-		throw new Error(
-			`Expected prepared release files are unchanged or missing from git status:\n${missing
-				.map((path) => `  ${path}`)
-				.join("\n")}`,
-		);
-	}
-}
-
-export function finalizeReleasePlan(plan, options = {}) {
-	assertOnlyExpectedChanges(plan.expectedPaths, options);
-	const runCommand = options.run ?? run;
-	runCommand(`git add ${plan.gitAddPaths.join(" ")}`);
-	runCommand(`git commit -m "${plan.commitMessage}"`);
-	runCommand(`git tag -a -m "${plan.tagMessage}" ${plan.tagName}`);
-	for (const cmd of plan.pushCommands) runCommand(cmd);
-}
-
-// Top-level only runs when invoked as a script, not when imported by tests.
-if (import.meta.url === `file://${process.argv[1]}`) {
-	const isDryRun = process.argv.includes("--dry-run");
-	const isPrepare = process.argv.includes("--prepare");
-	const isFinalize = process.argv.includes("--finalize");
-	const [, , pkg, bump] = process.argv;
-	const validPkgs = [...Object.keys(PACKAGES), "all"];
-	const validBumps = ["patch", "minor", "major"];
-	if (
-		!validPkgs.includes(pkg) ||
-		(isFinalize ? bump !== "--finalize" : !validBumps.includes(bump)) ||
-		[isDryRun, isPrepare, isFinalize].filter(Boolean).length > 1
-	) {
-		console.error(
-			`Usage:
-  node scripts/release.mjs <${validPkgs.join("|")}> <${validBumps.join("|")}> [--dry-run|--prepare]
-  node scripts/release.mjs <${validPkgs.join("|")}> --finalize
-
-Normal mode writes files, commits, tags, and pushes in one step.
---dry-run previews only and never edits the worktree.
---prepare writes version/changelog files only so release notes can be edited.
---finalize validates prepared files, refuses unexpected worktree changes, then commits, tags, and pushes.`,
-		);
-		process.exit(1);
-	}
-
-	if (isFinalize) {
-		const plan = createFinalizePlan(pkg);
-		console.log(`\n=== FINALIZE RELEASE ===`);
-		console.log(`Scope: ${plan.scope}, version: v${plan.version}`);
-		console.log("Files to commit:");
-		for (const path of plan.gitAddPaths) console.log(`  ${path}`);
-		finalizeReleasePlan(plan);
-		console.log(`\nReleased ${plan.scope === "all" ? "all packages" : `@oidfed/${plan.scope}`} at v${plan.version} → tag ${plan.tagName}`);
-		process.exit(0);
-	}
-
-	const plan = createReleasePlan(pkg, bump);
-	if (isDryRun) {
-		process.stdout.write(renderReleasePlan(plan));
-	} else if (isPrepare) {
-		console.log(`\n=== PREPARE RELEASE ===`);
-		console.log(`Scope: ${plan.scope}, version: v${plan.version}`);
-		console.log("Files changed for manual review:");
-		for (const file of plan.files) console.log(`  ${file.path}`);
+	const plan = createReleasePlan(scope, mode);
+	if (flag === "--dry-run") process.stdout.write(renderReleasePlan(plan));
+	else {
 		prepareReleasePlan(plan);
-		console.log("\nRelease files prepared. Edit CHANGELOG content, review the diff, then run:");
-		console.log(`  node scripts/release.mjs ${plan.scope} --finalize`);
-	} else {
-		console.log(`\n=== RELEASE ===`);
-		console.log(`Scope: ${plan.scope}, version: v${plan.version}`);
-		console.log("Files changed:");
-		for (const file of plan.files) console.log(`  ${file.path}`);
-		applyReleasePlan(plan);
-		console.log(`\nReleased ${plan.scope === "all" ? "all packages" : `@oidfed/${plan.scope}`} at v${plan.version} → tag ${plan.tagName}`);
+		console.log(
+			"Prepared package versions and changelogs. Review, commit, and merge these changes before publishing.",
+		);
+		for (const entry of plan.releases)
+			console.log(`${entry.name}: ${entry.version} → ${entry.tag}`);
+	}
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+	try {
+		main();
+	} catch (error) {
+		console.error(error.message);
+		process.exitCode = 1;
 	}
 }

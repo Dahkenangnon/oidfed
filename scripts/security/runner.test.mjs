@@ -52,7 +52,7 @@ async function scannerWorkspace(prefix = "oidfed-runner-scanner-") {
 		"known-cycles.mjs",
 	])
 		await copyFile(join(root, "scripts/security", file), join(scripts, file));
-	for (const dependency of ["esbuild", "typescript"])
+	for (const dependency of ["esbuild", "typescript", "yaml"])
 		await symlink(
 			join(root, "node_modules", dependency),
 			join(temporary, "node_modules", dependency),
@@ -296,7 +296,7 @@ test("both workflow linters receive all workflow YAML files", async () => {
 			await writeFile(join(temporary, ".github/workflows", file), "name: fixture\n");
 		const bin = join(temporary, "node_modules/.cache/spec-security/bin");
 		await mkdir(bin, { recursive: true });
-		for (const tool of ["actionlint", "zizmor"])
+		for (const tool of ["shellcheck", "actionlint", "zizmor"])
 			await writeFile(
 				join(bin, tool),
 				`#!${process.execPath}\nconst fs = require("node:fs"); fs.appendFileSync(process.env.WORKFLOW_CALLS, JSON.stringify({tool: ${JSON.stringify(tool)}, args: process.argv.slice(2)}) + "\\n");`,
@@ -315,9 +315,11 @@ test("both workflow linters receive all workflow YAML files", async () => {
 			.map((line) => JSON.parse(line));
 		assert.deepEqual(
 			actual.map((call) => call.tool),
-			["actionlint", "zizmor"],
+			["shellcheck", "actionlint", "zizmor"],
 		);
-		for (const call of actual)
+		assert.deepEqual(actual[0].args, ["--version"]);
+		assert.deepEqual(actual[1].args.slice(0, 2), ["-shellcheck", "shellcheck"]);
+		for (const call of actual.slice(1))
 			assert.deepEqual(
 				call.args.filter((arg) => arg.startsWith(".github/")),
 				files.map((file) => `.github/workflows/${file}`).sort(),
@@ -329,6 +331,89 @@ test("both workflow linters receive all workflow YAML files", async () => {
 				2,
 				"push and PR checks include workflow changes",
 			);
+	} finally {
+		await rm(temporary, { recursive: true, force: true });
+	}
+});
+
+test("workflow checks fail before linting when ShellCheck is missing", async () => {
+	const temporary = await scannerWorkspace();
+	try {
+		await mkdir(join(temporary, ".github/workflows"), { recursive: true });
+		await writeFile(join(temporary, ".github/workflows/ci.yml"), "name: fixture\n");
+		const result = spawnSync(process.execPath, ["scripts/security/run.mjs", "workflows"], {
+			cwd: temporary,
+			env: { ...process.env, PATH: join(temporary, "empty-bin") },
+			encoding: "utf8",
+		});
+		assert.notEqual(result.status, 0);
+		assert.match(result.stderr, /Required security tool 'shellcheck' was not found/);
+		assert.match(result.stderr, /pnpm security:install/);
+	} finally {
+		await rm(temporary, { recursive: true, force: true });
+	}
+});
+
+test("workflow checks really inspect shell scripts with the installed ShellCheck", async () => {
+	const temporary = await scannerWorkspace();
+	try {
+		const directory = join(temporary, ".github/workflows");
+		await mkdir(directory, { recursive: true });
+		const bin = join(temporary, "node_modules/.cache/spec-security/bin");
+		await mkdir(bin, { recursive: true });
+		for (const tool of ["shellcheck", "actionlint", "zizmor"])
+			await symlink(join(root, "node_modules/.cache/spec-security/bin", tool), join(bin, tool));
+		for (const [command, valid] of [
+			['echo "$GITHUB_WORKSPACE"', true],
+			["echo $GITHUB_WORKSPACE", false],
+		]) {
+			await writeFile(
+				join(directory, "ci.yml"),
+				`name: fixture\non: push\npermissions:\n  contents: read\njobs:\n  lint:\n    runs-on: ubuntu-latest\n    steps:\n      - shell: bash\n        run: ${command}\n`,
+			);
+			const result = spawnSync(process.execPath, ["scripts/security/run.mjs", "workflows"], {
+				cwd: temporary,
+				encoding: "utf8",
+			});
+			if (valid) assert.equal(result.status, 0, result.stderr);
+			else {
+				assert.notEqual(result.status, 0);
+				assert.match(result.stdout + result.stderr, /SC2086/);
+			}
+		}
+	} finally {
+		await rm(temporary, { recursive: true, force: true });
+	}
+});
+
+test("queued concurrency is checked without hiding other workflow diagnostics", async () => {
+	const temporary = await scannerWorkspace();
+	try {
+		const directory = join(temporary, ".github/workflows");
+		await mkdir(directory, { recursive: true });
+		const bin = join(temporary, "node_modules/.cache/spec-security/bin");
+		await mkdir(bin, { recursive: true });
+		for (const tool of ["shellcheck", "actionlint", "zizmor"])
+			await symlink(join(root, "node_modules/.cache/spec-security/bin", tool), join(bin, tool));
+		for (const [queue, cancel, extra, expected] of [
+			["max", false, "", null],
+			["unsupported", false, "", /Invalid queued concurrency/],
+			["max", true, "", /Invalid queued concurrency/],
+			["max", false, "      unexpected: value\n", /unexpected key "unexpected"/],
+		]) {
+			await writeFile(
+				join(directory, "ci.yml"),
+				`name: fixture\non: push\npermissions:\n  contents: read\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    concurrency:\n      group: fixture\n      queue: ${queue}\n      cancel-in-progress: ${cancel}\n${extra}    steps:\n      - run: echo safe\n`,
+			);
+			const result = spawnSync(process.execPath, ["scripts/security/run.mjs", "workflows"], {
+				cwd: temporary,
+				encoding: "utf8",
+			});
+			if (expected) {
+				assert.notEqual(result.status, 0);
+				assert.match(result.stdout + result.stderr, expected);
+			} else assert.equal(result.status, 0, result.stderr);
+		}
 	} finally {
 		await rm(temporary, { recursive: true, force: true });
 	}

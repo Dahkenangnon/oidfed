@@ -13,6 +13,7 @@ Use oidfed to establish federation trust around an existing application. Start w
 | Contribute to this repository | [Contributing](../CONTRIBUTING.md) |
 | Set up local development and tests | [Development](maintenance/development.md), [HTTPS tests](maintenance/testing/e2e.md), and [conformance tests](maintenance/testing/conformance.md) |
 | Check the protocol packages before a release | [Package security checks](maintenance/security-checks.md) |
+| Prepare, publish, or resume package releases | [Releasing packages](maintenance/releases.md) |
 
 The guides follow **Campus Alliance**, an academic-services federation, and **Market Alliance**, a loyalty-membership ecosystem. Each topic overview introduces its actors in an expandable example context. The names and `.example` addresses are fictional.
 

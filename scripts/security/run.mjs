@@ -8,6 +8,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import ts from "typescript";
+import { parse as parseYaml } from "yaml";
 import { packages, sources, root, workflowFiles } from "./scope.mjs";
 import { bin, semgrepBin, tools } from "./install.mjs";
 import { productionGraph, cycloneDxInput, baselineFiles } from "./dependency-graph.mjs";
@@ -122,16 +123,25 @@ async function dependencies(temporary) {
 }
 
 async function artifacts(temporary) {
+	const savedDirectory = process.env.RELEASE_ARTIFACT_DIR;
+	const saved = savedDirectory
+		? (await import("../release/artifacts.mjs")).loadArtifacts(savedDirectory)
+		: undefined;
 	const consumer = join(temporary, "consumer");
 	await mkdir(join(consumer, "node_modules/@oidfed"), { recursive: true });
 	await writeFile(join(consumer, "package.json"), '{"private":true,"type":"module"}');
 	for (const name of packages) {
 		const directory = join(temporary, name);
 		await mkdir(directory);
-		run("pnpm", ["--filter", `@oidfed/${name}`, "pack", "--pack-destination", directory]);
-		const tarball = (await readdir(directory)).find((file) => file.endsWith(".tgz"));
-		if (!tarball) throw new Error(`No packed artifact for ${name}`);
-		const path = join(directory, tarball);
+		let path;
+		if (saved)
+			path = join(savedDirectory, saved.packages.find((record) => record.scope === name).file);
+		else {
+			run("pnpm", ["--filter", `@oidfed/${name}`, "pack", "--pack-destination", directory]);
+			const tarball = (await readdir(directory)).find((file) => file.endsWith(".tgz"));
+			if (!tarball) throw new Error(`No packed artifact for ${name}`);
+			path = join(directory, tarball);
+		}
 		pnpm("publint", path, "--strict");
 		pnpm("attw", path);
 		const packageDirectory = join(consumer, `node_modules/@oidfed/${name}`);
@@ -202,12 +212,14 @@ async function artifacts(temporary) {
 		],
 		{ cwd: consumer },
 	);
-	pnpm(
-		"tsd",
-		"--typings",
-		"packages/core/dist/index.d.ts",
-		"--files",
-		"tests/security/public-api.test-d.ts",
+	// Resolve every public-contract import from the packed consumer, not workspace symlinks.
+	await symlink(join(root, "node_modules/tsd"), join(consumer, "node_modules/tsd"), "dir");
+	const contracts = join(consumer, "public-api.test-d.ts");
+	await writeFile(contracts, await readFile(join(root, "tests/security/public-api.test-d.ts")));
+	run(
+		join(root, "node_modules/.bin/tsd"),
+		["--typings", "node_modules/@oidfed/core/dist/index.d.ts", "--files", "public-api.test-d.ts"],
+		{ cwd: consumer },
 	);
 }
 
@@ -337,7 +349,35 @@ async function main(command) {
 				break;
 			case "workflows": {
 				const workflows = workflowFiles();
-				run("actionlint", workflows);
+				let queuedConcurrency = false;
+				for (const file of workflows) {
+					const document = parseYaml(await readFile(join(root, file), "utf8"));
+					for (const concurrency of [
+						document?.concurrency,
+						...Object.values(document?.jobs ?? {}).map((job) => job.concurrency),
+					]) {
+						if (concurrency && Object.hasOwn(concurrency, "queue")) {
+							if (
+								!["single", "max"].includes(concurrency.queue) ||
+								(concurrency.queue === "max" && concurrency["cancel-in-progress"] !== false)
+							)
+								throw new Error(`Invalid queued concurrency in ${file}`);
+							queuedConcurrency = true;
+						}
+					}
+				}
+				// actionlint silently skips shell analysis unless ShellCheck is available.
+				run("shellcheck", ["--version"]);
+				// GitHub supports queue, but actionlint 1.7.12 predates it. Validate it above;
+				// retain every other syntax and security diagnostic from the pinned linter.
+				run("actionlint", [
+					"-shellcheck",
+					"shellcheck",
+					...(queuedConcurrency
+						? ["-ignore", '^unexpected key "queue" for "concurrency" section\\.']
+						: []),
+					...workflows,
+				]);
 				run("zizmor", ["--offline", "--min-severity", "low", ...workflows]);
 				break;
 			}

@@ -5,9 +5,14 @@ on:
     branches: [main]
     paths:
       - 'packages/**'
+      - 'tools/cli/**'
       - 'tests/tap/**'
       - 'tests/security/**'
       - 'scripts/security/**'
+      - 'scripts/release/**'
+      - 'scripts/release*.mjs'
+      - 'scripts/check-pack-manifests*.mjs'
+      - 'scripts/extract-changelog*.mjs'
       - '.node-version'
       - 'tsconfig.base.json'
       - 'biome.json'
@@ -19,9 +24,14 @@ on:
   pull_request:
     paths:
       - 'packages/**'
+      - 'tools/cli/**'
       - 'tests/tap/**'
       - 'tests/security/**'
       - 'scripts/security/**'
+      - 'scripts/release/**'
+      - 'scripts/release*.mjs'
+      - 'scripts/check-pack-manifests*.mjs'
+      - 'scripts/extract-changelog*.mjs'
       - '.node-version'
       - 'tsconfig.base.json'
       - 'biome.json'

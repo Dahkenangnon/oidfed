@@ -1,5 +1,10 @@
 import { strict as assert } from "node:assert";
 import { describe, it } from "node:test";
+import { spawnSync } from "node:child_process";
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
 	inspectPackedFiles,
 	inspectPackedManifest,
@@ -10,6 +15,55 @@ import {
 } from "./check-pack-manifests.mjs";
 
 const targets = Object.fromEntries(PUBLISHABLE_TARGETS.map((target) => [target.scope, target]));
+
+describe("pack helper entrypoint", () => {
+	it("imports without invoking the CLI when argv is absent or only matches a filename suffix", () => {
+		for (const argv of ["delete process.argv[1];", 'process.argv[1] = "manifests.mjs";']) {
+			const result = spawnSync(
+				process.execPath,
+				[
+					"--input-type=module",
+					"--eval",
+					`${argv} await import(${JSON.stringify(new URL("./check-pack-manifests.mjs", import.meta.url).href)});`,
+				],
+				{
+					encoding: "utf8",
+					env: { ...process.env, PATH: "/missing-pack-command" },
+					timeout: 10_000,
+				},
+			);
+			assert.equal(result.status, 0, result.stderr);
+			assert.equal(result.stdout, "");
+		}
+	});
+
+	it("runs its CLI from a path containing spaces and non-ASCII characters", () => {
+		const directory = mkdtempSync(join(tmpdir(), "oidfed pack café-"));
+		try {
+			mkdirSync(join(directory, "release"));
+			const script = join(directory, "check-pack-manifests.mjs");
+			copyFileSync(new URL("./check-pack-manifests.mjs", import.meta.url), script);
+			copyFileSync(
+				new URL("./release/catalog.mjs", import.meta.url),
+				join(directory, "release/catalog.mjs"),
+			);
+			symlinkSync(
+				fileURLToPath(new URL("../node_modules", import.meta.url)),
+				join(directory, "node_modules"),
+				"dir",
+			);
+			const result = spawnSync(process.execPath, [script, "--help"], {
+				encoding: "utf8",
+				timeout: 10_000,
+			});
+			assert.equal(result.status, 0, result.stderr);
+			assert.match(result.stdout, /^Usage: node scripts\/check-pack-manifests\.mjs/);
+			assert.equal(result.stderr, "");
+		} finally {
+			rmSync(directory, { recursive: true, force: true });
+		}
+	});
+});
 const internalVersions = {
 	"@oidfed/core": "0.8.0",
 	"@oidfed/authority": "0.8.0",
@@ -133,7 +187,11 @@ describe("inspectPackedManifest", () => {
 
 	it("enforces the CLI-only Node engine policy", () => {
 		const library = baseManifest(targets.core, { engines: { node: NODE_ENGINE } });
-		assert.ok(inspect(library, targets.core).some((violation) => violation.includes("must not publish engines")));
+		assert.ok(
+			inspect(library, targets.core).some((violation) =>
+				violation.includes("must not publish engines"),
+			),
+		);
 
 		const cliWithoutEngine = baseManifest(targets.cli, { engines: undefined });
 		assert.ok(

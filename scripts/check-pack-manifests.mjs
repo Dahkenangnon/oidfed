@@ -14,34 +14,17 @@ import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
+import { TARGETS, getTargets } from "./release/catalog.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DEP_BUCKETS = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"];
 
 export const NODE_ENGINE = ">=22.12.0";
 
-export const PUBLISHABLE_TARGETS = [
-	{ scope: "core", name: "@oidfed/core", dir: "packages/core", kind: "library" },
-	{ scope: "authority", name: "@oidfed/authority", dir: "packages/authority", kind: "library" },
-	{ scope: "leaf", name: "@oidfed/leaf", dir: "packages/leaf", kind: "library" },
-	{ scope: "oidc", name: "@oidfed/oidc", dir: "packages/oidc", kind: "library" },
-	{ scope: "wallet", name: "@oidfed/wallet", dir: "packages/wallet", kind: "library" },
-	{ scope: "cli", name: "@oidfed/cli", dir: "tools/cli", kind: "cli" },
-];
-
+export const PUBLISHABLE_TARGETS = TARGETS;
+export { getTargets };
 function targetLabel(target) {
 	return `${target.name} (${target.dir})`;
-}
-
-export function getTargets(scope = "all") {
-	if (scope === "all") return PUBLISHABLE_TARGETS;
-	const target = PUBLISHABLE_TARGETS.find((candidate) => candidate.scope === scope);
-	if (!target) {
-		throw new Error(
-			`Unknown scope "${scope}". Expected one of: all, ${PUBLISHABLE_TARGETS.map((t) => t.scope).join(", ")}`,
-		);
-	}
-	return [target];
 }
 
 function readOptionValue(argv, index, optionName) {
@@ -111,7 +94,9 @@ export function listTgzEntries(tgzBuffer) {
 		const name = prefix ? `${prefix}/${rawName}` : rawName;
 		const size = readTarOctal(tar, offset + 124, 12);
 		const dataOffset = offset + 512;
-		entries.push({ name, size, dataOffset });
+		if (!Number.isSafeInteger(size) || size < 0 || dataOffset + size > tar.length)
+			throw new Error("Malformed tar entry size");
+		entries.push({ name, size, dataOffset, type: tar[offset + 156] });
 		offset = dataOffset + Math.ceil(size / 512) * 512;
 	}
 	return entries;
@@ -119,19 +104,8 @@ export function listTgzEntries(tgzBuffer) {
 
 export function extractTgzText(tgzBuffer, entryName) {
 	const tar = gunzipSync(tgzBuffer);
-	let offset = 0;
-	while (offset + 512 <= tar.length) {
-		if (isZeroBlock(tar, offset)) break;
-		const rawName = readTarString(tar, offset, 100);
-		const prefix = readTarString(tar, offset + 345, 155);
-		const name = prefix ? `${prefix}/${rawName}` : rawName;
-		const size = readTarOctal(tar, offset + 124, 12);
-		const dataOffset = offset + 512;
-		if (name === entryName) {
-			return tar.subarray(dataOffset, dataOffset + size).toString("utf8");
-		}
-		offset = dataOffset + Math.ceil(size / 512) * 512;
-	}
+	const entry = listTgzEntries(tgzBuffer).find((item) => item.name === entryName);
+	if (entry) return tar.subarray(entry.dataOffset, entry.dataOffset + entry.size).toString("utf8");
 	throw new Error(`Missing ${entryName} in packed tarball`);
 }
 
@@ -165,14 +139,38 @@ export function inspectPackedManifest(pkg, target, options = {}) {
 	}
 	pushIfMissing(violations, pkg.license === "Apache-2.0", `${label}: license must be Apache-2.0`);
 	pushIfMissing(violations, pkg.type === "module", `${label}: type must be module`);
-	pushIfMissing(violations, pkg.main === "./dist/index.cjs", `${label}: main must be ./dist/index.cjs`);
-	pushIfMissing(violations, pkg.module === "./dist/index.js", `${label}: module must be ./dist/index.js`);
-	pushIfMissing(violations, pkg.types === "./dist/index.d.ts", `${label}: types must be ./dist/index.d.ts`);
+	pushIfMissing(
+		violations,
+		pkg.main === "./dist/index.cjs",
+		`${label}: main must be ./dist/index.cjs`,
+	);
+	pushIfMissing(
+		violations,
+		pkg.module === "./dist/index.js",
+		`${label}: module must be ./dist/index.js`,
+	);
+	pushIfMissing(
+		violations,
+		pkg.types === "./dist/index.d.ts",
+		`${label}: types must be ./dist/index.d.ts`,
+	);
 	const entrypoint = pkg.exports?.["."];
 	if (target.kind === "cli") {
-		pushIfMissing(violations, entrypoint?.types === "./dist/index.d.ts", `${label}: exports[.].types must point to dist types`);
-		pushIfMissing(violations, entrypoint?.import === "./dist/index.js", `${label}: exports[.].import must point to ESM build`);
-		pushIfMissing(violations, entrypoint?.require === "./dist/index.cjs", `${label}: exports[.].require must point to CJS build`);
+		pushIfMissing(
+			violations,
+			entrypoint?.types === "./dist/index.d.ts",
+			`${label}: exports[.].types must point to dist types`,
+		);
+		pushIfMissing(
+			violations,
+			entrypoint?.import === "./dist/index.js",
+			`${label}: exports[.].import must point to ESM build`,
+		);
+		pushIfMissing(
+			violations,
+			entrypoint?.require === "./dist/index.cjs",
+			`${label}: exports[.].require must point to CJS build`,
+		);
 	} else {
 		// Library declarations must match the consumer's module format.
 		for (const [condition, declaration, runtime] of [
@@ -200,7 +198,11 @@ export function inspectPackedManifest(pkg, target, options = {}) {
 		);
 	}
 	pushIfMissing(violations, pkg.sideEffects === false, `${label}: sideEffects must be false`);
-	pushIfMissing(violations, pkg.publishConfig?.access === "public", `${label}: publishConfig.access must be public`);
+	pushIfMissing(
+		violations,
+		pkg.publishConfig?.access === "public",
+		`${label}: publishConfig.access must be public`,
+	);
 
 	for (const bucketName of DEP_BUCKETS) {
 		const bucket = dependencyBucket(pkg, bucketName);
@@ -225,9 +227,21 @@ export function inspectPackedManifest(pkg, target, options = {}) {
 	}
 
 	if (target.kind === "cli") {
-		pushIfMissing(violations, pkg.engines?.node === NODE_ENGINE, `${label}: CLI engines.node must be ${NODE_ENGINE}`);
-		pushIfMissing(violations, pkg.bin?.oidfed === "./dist/bin.js", `${label}: bin.oidfed must point to ./dist/bin.js`);
-		pushIfMissing(violations, pkg.bin?.openidfed === "./dist/bin.js", `${label}: bin.openidfed must point to ./dist/bin.js`);
+		pushIfMissing(
+			violations,
+			pkg.engines?.node === NODE_ENGINE,
+			`${label}: CLI engines.node must be ${NODE_ENGINE}`,
+		);
+		pushIfMissing(
+			violations,
+			pkg.bin?.oidfed === "./dist/bin.js",
+			`${label}: bin.oidfed must point to ./dist/bin.js`,
+		);
+		pushIfMissing(
+			violations,
+			pkg.bin?.openidfed === "./dist/bin.js",
+			`${label}: bin.openidfed must point to ./dist/bin.js`,
+		);
 	} else if (pkg.engines !== undefined) {
 		violations.push(`${label}: library packages are runtime-agnostic and must not publish engines`);
 	}
@@ -250,7 +264,9 @@ export function requiredPackedEntries(target) {
 }
 
 export function inspectPackedFiles(entries, target) {
-	const entryNames = new Set(entries.map((entry) => (typeof entry === "string" ? entry : entry.name)));
+	const entryNames = new Set(
+		entries.map((entry) => (typeof entry === "string" ? entry : entry.name)),
+	);
 	const violations = [];
 	for (const requiredEntry of requiredPackedEntries(target)) {
 		if (!entryNames.has(requiredEntry)) {
@@ -263,7 +279,8 @@ export function inspectPackedFiles(entries, target) {
 function resolvePackFilename(packJson, packDir) {
 	const parsed = JSON.parse(packJson);
 	const entry = Array.isArray(parsed) ? parsed[0] : parsed;
-	if (!entry || typeof entry !== "object") throw new Error("pnpm pack --json returned no package entry");
+	if (!entry || typeof entry !== "object")
+		throw new Error("pnpm pack --json returned no package entry");
 	const filename = entry.filename ?? entry.path ?? entry.name;
 	if (typeof filename !== "string" || filename.length === 0) {
 		throw new Error("pnpm pack --json did not include a tarball filename");
@@ -278,7 +295,8 @@ function packTarget(target, packDir) {
 		{ cwd: ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
 	);
 	const filename = resolvePackFilename(stdout, packDir);
-	if (!existsSync(filename)) throw new Error(`${targetLabel(target)}: pnpm pack did not create ${filename}`);
+	if (!existsSync(filename))
+		throw new Error(`${targetLabel(target)}: pnpm pack did not create ${filename}`);
 	return filename;
 }
 
@@ -341,10 +359,9 @@ function main() {
 		process.exit(1);
 	}
 
-	process.stdout.write(`pack manifest check OK: verified ${targets.map((t) => t.name).join(", ")}\n`);
+	process.stdout.write(
+		`pack manifest check OK: verified ${targets.map((t) => t.name).join(", ")}\n`,
+	);
 }
 
-const isEntry =
-	import.meta.url === `file://${process.argv[1]}` ||
-	import.meta.url.endsWith(process.argv[1] ?? "");
-if (isEntry) main();
+if (process.argv[1] === fileURLToPath(import.meta.url)) main();

@@ -9,135 +9,158 @@ on:
       - 'oidc/v*.*.*'
       - 'wallet/v*.*.*'
       - 'cli/v*.*.*'
-      - 'all/v*.*.*'
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: Package selection for a new release
+        type: choice
+        options: [all, core, authority, leaf, oidc, wallet, cli]
+        default: all
+      source_sha:
+        description: Reviewed commit on main (required for a new release)
+        type: string
+      resume_run_id:
+        description: Resume a saved release run instead of building new archives
+        type: string
 
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 
-concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false
+env:
+  RELEASE_SCOPE: ${{ inputs.scope }}
+  SOURCE_SHA: ${{ inputs.source_sha }}
+  RESUME_RUN_ID: ${{ inputs.resume_run_id }}
 
 jobs:
-  release:
-    name: Validate, publish & release
+  verify:
+    name: Verify and package
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      source_sha: ${{ steps.source.outputs.source_sha }}
+      origin_run_id: ${{ steps.source.outputs.origin_run_id }}
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
-
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Validate release source or restore verified archives
+        id: source
+        run: node scripts/release/workflow.mjs source
+      - name: Check out the reviewed package source
+        if: ${{ !inputs.resume_run_id }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.source.outputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - if: ${{ !inputs.resume_run_id }}
+        run: pnpm install --frozen-lockfile
+      - if: ${{ !inputs.resume_run_id }}
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - name: Build and verify the source
+        if: ${{ !inputs.resume_run_id }}
+        run: |
+          pnpm build:publish
+          pnpm lint
+          pnpm typecheck
+          pnpm test:coverage
+          pnpm --filter './tools/*' test
+          pnpm test:scripts
+          node scripts/check-single-core.mjs
+      - name: Pack the release archives once
+        if: ${{ !inputs.resume_run_id }}
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+        run: node scripts/release/workflow.mjs package
+      - name: Check source and the saved archives
+        if: ${{ !inputs.resume_run_id }}
+        env:
+          RELEASE_ARTIFACT_DIR: ${{ runner.temp }}/release-bundle
+        run: |
+          pnpm security:install
+          pnpm security:check
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-bundle
+          path: ${{ runner.temp }}/release-bundle/
+          if-no-files-found: error
+          retention-days: 30
 
+  publish:
+    name: Publish verified archives
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: npm
+    concurrency:
+      group: npm-publication
+      cancel-in-progress: false
+      queue: max
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    env:
+      SOURCE_SHA: ${{ needs.verify.outputs.source_sha }}
+      ORIGIN_RUN_ID: ${{ needs.verify.outputs.origin_run_id }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .node-version
           registry-url: 'https://registry.npmjs.org'
           package-manager-cache: false
-
-      # Run a fresh npm CLI for trusted publishing without self-upgrading Node's bundled npm.
-      - run: pnpm --package=npm@latest dlx npm --version
-
-      - run: pnpm install --frozen-lockfile
-
-      - name: Parse tag
-        id: tag
-        env:
-          REF_NAME: ${{ github.ref_name }}
-        run: |
-          SCOPE="${REF_NAME%%/v*}"
-          VERSION="${REF_NAME#*/v}"
-          echo "scope=$SCOPE"   >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      # Build only the package(s) that are being released
-      - name: Build
-        env:
-          SCOPE: ${{ steps.tag.outputs.scope }}
-        run: |
-          if [ "$SCOPE" = "all" ]; then
-            pnpm build:publish
-          else
-            PKG="@oidfed/$SCOPE"
-            # cli lives under tools/cli but is published as @oidfed/cli
-            pnpm turbo run build --filter="$PKG"
-          fi
-
-      - run: pnpm lint
-
-      - run: pnpm typecheck
-
-      - run: pnpm quick:test
-
-      - name: Verify @oidfed/core single-copy guarantee
-        run: node scripts/check-single-core.mjs
-
-      - name: Run repo scripts tests
-        run: pnpm test:scripts
-
-      - name: Verify packed package manifests
-        env:
-          SCOPE: ${{ steps.tag.outputs.scope }}
-          VERSION: ${{ steps.tag.outputs.version }}
-        run: node scripts/check-pack-manifests.mjs --scope "$SCOPE" --expected-version "$VERSION"
-
-      - name: Verify protocol package artifacts
-        if: steps.tag.outputs.scope != 'cli'
-        run: |
-          pnpm --filter @oidfed/core --filter @oidfed/authority --filter @oidfed/leaf --filter @oidfed/oidc --filter @oidfed/wallet build
-          pnpm security:install
-          pnpm security:artifacts
-
-      - name: Determine previous tag for compare link
-        id: prev
-        env:
-          SCOPE: ${{ steps.tag.outputs.scope }}
-        run: |
-          PREV=$(git tag --list "${SCOPE}/v*" --sort=-v:refname | sed -n '2p')
-          echo "tag=$PREV" >> "$GITHUB_OUTPUT"
-
-      - name: Extract changelog body
-        env:
-          SCOPE: ${{ steps.tag.outputs.scope }}
-          VERSION: ${{ steps.tag.outputs.version }}
-          PREV_TAG: ${{ steps.prev.outputs.tag }}
-        run: node scripts/extract-changelog.mjs "$SCOPE" "$VERSION" "$PREV_TAG" > RELEASE_BODY.md
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: '${{ steps.tag.outputs.scope }} v${{ steps.tag.outputs.version }}'
-          body_path: RELEASE_BODY.md
-          generate_release_notes: false
+          name: release-bundle
+          path: ${{ runner.temp }}/release-bundle
+      - run: node scripts/release/workflow.mjs publish
 
-      - name: Publish to npm with provenance via trusted publishing
-        env:
-          SCOPE: ${{ steps.tag.outputs.scope }}
-        run: |
-          set -euo pipefail
-          publish_one() {
-            local dir="$1"
-            pushd "$dir" >/dev/null
-            pnpm pack
-            local tgz
-            tgz=$(ls -t ./*.tgz | head -1)
-            pnpm --package=npm@latest dlx npm publish "$tgz" --provenance --access public
-            popd >/dev/null
-          }
-          if [ "$SCOPE" = "all" ]; then
-            publish_one packages/core
-            publish_one packages/authority
-            publish_one packages/leaf
-            publish_one packages/oidc
-            publish_one packages/wallet
-            publish_one tools/cli
-          else
-            case "$SCOPE" in
-              cli) dir=tools/cli ;;
-              *)   dir=packages/"$SCOPE" ;;
-            esac
-            publish_one "$dir"
-          fi
+  complete:
+    name: Complete package releases
+    needs: [verify, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    env:
+      SOURCE_SHA: ${{ needs.verify.outputs.source_sha }}
+      ORIGIN_RUN_ID: ${{ needs.verify.outputs.origin_run_id }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-bundle
+          path: ${{ runner.temp }}/release-bundle
+      - run: node scripts/release/workflow.mjs complete

@@ -1,7 +1,7 @@
 {
 	"name": "@oidfed/monorepo",
 	"version": "2.0.0",
-	"description": "The complete OpenID Federation 1.0 implementation for JavaScript \u2014 runtime-agnostic, spec-compliant, built on Web API standards.",
+	"description": "The complete OpenID Federation 1.0 implementation for JavaScript — runtime-agnostic, spec-compliant, built on Web API standards.",
 	"private": true,
 	"type": "module",
 	"packageManager": "pnpm@10.33.0",
@@ -41,7 +41,7 @@
 		"prepare": "husky",
 		"commit": "commit",
 		"commitlint": "commitlint --edit",
-		"release:verify": "pnpm build:publish && pnpm lint && pnpm typecheck && pnpm quick:test && node scripts/check-single-core.mjs && pnpm test:scripts && node scripts/check-pack-manifests.mjs",
+		"release:verify": "pnpm build:publish && pnpm lint && pnpm typecheck && pnpm test:coverage && pnpm --filter './tools/*' test && node scripts/check-single-core.mjs && pnpm test:scripts && node scripts/check-pack-manifests.mjs",
 		"security:install": "node scripts/security/install.mjs",
 		"security:test": "node --test scripts/security/*.test.mjs",
 		"security:lint": "node scripts/security/run.mjs lint",
@@ -119,6 +119,7 @@
 		"openid-client": "6.8.8",
 		"publint": "0.3.25",
 		"qunit": "^3.0.0",
+		"semver": "7.8.6",
 		"ts-blank-space": "^0.9.0",
 		"tsd": "0.33.0",
 		"tsup": "^9.0.0",
@@ -128,6 +129,7 @@
 		"typescript-eslint": "8.72.2",
 		"undici": "^8.12.2",
 		"vitest": "^5.0.5",
+		"yaml": "2.9.1",
 		"yauzl": "3.4.0"
 	},
 	"pnpm": {

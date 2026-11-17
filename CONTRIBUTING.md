@@ -212,43 +212,43 @@ pnpm build:apps              # apps and internal UI dependencies
 
 ## Releasing
 
-GitHub Actions publishes releases from scoped tags. Prepare and review the release files before committing, tagging, or pushing.
+Each package has its own version, changelog, Git tag, and GitHub Release. Use `all`
+to prepare or publish the six packages together; their versions remain independent.
 
-Preview the files that would change:
+Fetch the release tags so generated changelogs use the latest applicable baseline,
+then preview and prepare the changes:
 
 ```bash
+git fetch origin --tags
 pnpm release core patch --dry-run
-pnpm release all minor --dry-run
-```
-
-Prepare the release files:
-
-```bash
 pnpm release core patch --prepare
+# Or prepare every package:
 pnpm release all minor --prepare
 ```
 
-`--prepare` writes package versions and changelog sections. Review and edit each generated `## [<X.Y.Z>] - <date>` section before finalizing:
-
-- For a single package, edit its `CHANGELOG.md`, such as `packages/core/CHANGELOG.md`.
-- For an all-packages release, edit the package changelogs and the root `CHANGELOG.md`. The root section starts empty for you to write notes that cover changes across packages.
-
-Preparation does not commit, tag, or push. After reviewing the diff and changelogs, finalize the release:
+Review the generated package changelogs, edit the notes, and merge the changes into
+`main`. Preparation does not commit, tag, push, or publish anything. From a clean
+checkout of the reviewed commit, start publication:
 
 ```bash
-pnpm release core --finalize
-pnpm release all --finalize
+pnpm release core --publish
+# Or publish the committed versions of every package:
+pnpm release all --publish
 ```
 
-`--finalize` checks the prepared versions and changelog sections, refuses unexpected dirty files, then creates the release commit and tag and pushes them. Tags such as `core/v0.8.1` and `all/v0.9.0` trigger `.github/workflows/release.yml`, which validates, builds, creates the GitHub Release from the committed changelog, and publishes to npm.
+The workflow requires passing CI and security checks for that exact commit, validates
+and saves the package archives, and publishes those same archives through npm trusted
+publishing. It then creates a scoped tag and GitHub Release for each package.
+Conformance runs are separate from this release gate.
 
-The one-shot command prepares and publishes without a changelog review step:
+If publication or GitHub Release completion is interrupted, resume using the saved run:
 
 ```bash
-pnpm release oidc patch
+pnpm release --resume 123456789
 ```
 
-Use it only when you are satisfied with the generated changelog as written.
+See the [release guide](docs/maintenance/releases.md) for setup, independent versions,
+artifact checks, and recovery. Automatic commit-and-push finalization is not supported.
 
 ## Questions
 

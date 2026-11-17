@@ -1,278 +1,198 @@
+/** Verify independent release preparation and dispatch without local Git mutations. */
+
 import assert from "node:assert/strict";
 import { relative } from "node:path";
+import { spawnSync } from "node:child_process";
 import { test } from "node:test";
-
 import {
-	applyReleasePlan,
-	assertOnlyExpectedChanges,
 	bumpVersion,
 	createReleasePlan,
-	createFinalizePlan,
-	finalizeReleasePlan,
+	dispatchPublication,
+	main,
 	parseSubject,
 	prepareReleasePlan,
 	renderReleasePlan,
 	unifiedDiff,
+	previousTagFor,
+	stampChangelogText,
 } from "./release.mjs";
+import { TARGETS } from "./release/catalog.mjs";
 
-test("parseSubject — type with scope", () => {
-	const result = parseSubject("fix(cli): load version dynamically from package json");
-	assert.deepEqual(result, {
+function fixture() {
+	const files = new Map(
+		TARGETS.flatMap((target, index) => [
+			[
+				`${target.dir}/package.json`,
+				JSON.stringify({ name: target.name, version: index === 1 ? "2.1.0" : "2.0.0" }),
+			],
+			[
+				`${target.dir}/CHANGELOG.md`,
+				"# Changelog\n\n## [Unreleased]\n\n## [2.0.0] - 2026-01-01\n\nPrevious.\n",
+			],
+		]),
+	);
+	return {
+		files,
+		options: {
+			readFile: (path) => {
+				const text = files.get(relative(process.cwd(), path));
+				if (!text) throw Error(`Missing ${path}`);
+				return text;
+			},
+			previousTagFor: (scope) => `${scope}/v2.0.0`,
+			generateBody: (previous, path) => `### Bug Fixes\n\n* Changes to ${path} since ${previous}.`,
+			date: "2026-11-17",
+		},
+	};
+}
+
+test("preparation keeps independent versions, scoped tags and per-package notes", () => {
+	const { options } = fixture();
+	const plan = createReleasePlan("all", "patch", options);
+	assert.equal(plan.releases.length, 6);
+	assert.equal(plan.releases[0].tag, "core/v2.0.1");
+	assert.equal(plan.releases[1].tag, "authority/v2.1.1");
+	assert.equal(plan.files.length, 12);
+	assert.equal(
+		plan.files.some((f) => ["package.json", "CHANGELOG.md"].includes(f.path)),
+		false,
+	);
+	assert.ok(
+		plan.files
+			.find((f) => f.path === "packages/authority/CHANGELOG.md")
+			.after.includes("authority/v2.0.0"),
+	);
+	assert.equal("pushCommands" in plan, false);
+	assert.equal(
+		plan.releases.some((r) => r.tag.startsWith("all/")),
+		false,
+	);
+	assert.ok(renderReleasePlan(plan).includes("authority/v2.1.1"));
+});
+
+test("preparation validates every input before writing any file", () => {
+	const { files, options } = fixture();
+	const plan = createReleasePlan("core", "minor", options);
+	const writes = new Map();
+	prepareReleasePlan(plan, { writeFile: (p, s) => writes.set(p, s) });
+	assert.equal(writes.size, 2);
+	assert.equal(JSON.parse(writes.get("packages/core/package.json")).version, "2.1.0");
+	assert.equal(unifiedDiff("x", "same\n", "same\n"), "");
+	assert.match(renderReleasePlan(plan), /Diff preview/);
+	files.set("packages/core/CHANGELOG.md", "# Missing marker");
+	assert.throws(() => createReleasePlan("core", "patch", options), /Unreleased/);
+	assert.throws(() => createReleasePlan("constructor", "patch", options), /Unknown scope/);
+});
+
+test("version bumps and conventional subjects follow supported syntax", () => {
+	assert.equal(bumpVersion("2.1.0", "major"), "3.0.0");
+	assert.equal(bumpVersion("2.1.0", "minor"), "2.2.0");
+	assert.equal(bumpVersion("2.1.0-beta.1", "patch"), "2.1.0");
+	for (const value of ["01.0.0", "v2.0.0", "2.0", "2.0.0/other"])
+		assert.throws(() => bumpVersion(value, "patch"));
+	assert.throws(() => bumpVersion("2.0.0", "other"), /Unsupported bump/);
+	assert.deepEqual(parseSubject("fix(core)!: strict check"), {
 		type: "fix",
-		scope: "cli",
-		breaking: false,
-		description: "load version dynamically from package json",
-	});
-});
-
-test("parseSubject — type without scope", () => {
-	const result = parseSubject("feat: support trust mark delegation");
-	assert.deepEqual(result, {
-		type: "feat",
-		scope: null,
-		breaking: false,
-		description: "support trust mark delegation",
-	});
-});
-
-test("parseSubject — breaking marker", () => {
-	const result = parseSubject("feat(core)!: drop legacy resolveTrustChain signature");
-	assert.deepEqual(result, {
-		type: "feat",
 		scope: "core",
 		breaking: true,
-		description: "drop legacy resolveTrustChain signature",
+		description: "strict check",
 	});
+	assert.equal(parseSubject("Merge branch"), null);
 });
 
-test("parseSubject — multi-word scope tolerated", () => {
-	const result = parseSubject("fix(repo): some change");
-	assert.equal(result.type, "fix");
-	assert.equal(result.scope, "repo");
-	assert.equal(result.description, "some change");
+test("release notes preserve literal replacement tokens from commit subjects", () => {
+	const body = "Keep $& and $` and $' and $$ literal.";
+	assert.ok(stampChangelogText("## [Unreleased]\n", "2.0.1", body, "2026-11-17").includes(body));
 });
 
-test("parseSubject — non-conventional subject returns null", () => {
-	assert.equal(parseSubject("update files"), null);
-	assert.equal(parseSubject("Merge pull request #123"), null);
-	assert.equal(parseSubject("WIP: thing"), null);
-});
-
-test("parseSubject — colon without space rejected", () => {
-	// Conventional commits require a space after the colon.
-	assert.equal(parseSubject("fix(cli):something"), null);
-});
-
-test("bumpVersion — patch, minor, major", () => {
-	assert.equal(bumpVersion("0.8.0", "patch"), "0.8.1");
-	assert.equal(bumpVersion("0.8.0", "minor"), "0.9.0");
-	assert.equal(bumpVersion("0.8.0", "major"), "1.0.0");
-});
-
-function pkgJson(name, version = "0.8.0") {
-	return `${JSON.stringify({ name, version, private: true }, null, "\t")}\n`;
-}
-
-function changelog() {
-	return "# Changelog\n\n## [Unreleased]\n\n## [0.8.0] - 2026-06-01\n\n- Previous.\n";
-}
-
-function fixtureFiles() {
-	return new Map([
-		["package.json", pkgJson("@oidfed/monorepo")],
-		["CHANGELOG.md", changelog()],
-		["packages/core/package.json", pkgJson("@oidfed/core")],
-		["packages/core/CHANGELOG.md", changelog()],
-		["packages/authority/package.json", pkgJson("@oidfed/authority")],
-		["packages/authority/CHANGELOG.md", changelog()],
-		["packages/leaf/package.json", pkgJson("@oidfed/leaf")],
-		["packages/leaf/CHANGELOG.md", changelog()],
-		["packages/oidc/package.json", pkgJson("@oidfed/oidc")],
-		["packages/oidc/CHANGELOG.md", changelog()],
-		["packages/wallet/package.json", pkgJson("@oidfed/wallet")],
-		["packages/wallet/CHANGELOG.md", changelog()],
-		["tools/cli/package.json", pkgJson("@oidfed/cli")],
-		["tools/cli/CHANGELOG.md", changelog()],
-	]);
-}
-
-function readFrom(files) {
-	return (path) => {
-		const key = relative(process.cwd(), path);
-		const value = files.get(key);
-		if (value === undefined) throw new Error(`Missing fixture file: ${key}`);
-		return value;
-	};
-}
-
-function releasePlanOptions(files) {
+function executor({
+	dirty = "",
+	origin = "https://github.com/Dahkenangnon/oidfed.git",
+	ancestry = true,
+} = {}) {
+	const calls = [];
 	return {
-		readFile: readFrom(files),
-		previousTagFor: (scope) => `${scope}/v0.8.0`,
-		generateBody: (fromRef, packagePath) =>
-			`### Bug Fixes\n\n* release ${packagePath} from ${fromRef}`,
-		date: "2026-07-07",
+		calls,
+		execute(command, args) {
+			calls.push([command, ...args]);
+			if (command === "gh") return "";
+			if (args[0] === "status") return dirty;
+			if (args[0] === "remote") return origin;
+			if (args[0] === "rev-parse") return "a".repeat(40);
+			if (args[0] === "merge-base" && !ancestry) throw Error("not on main");
+			return "";
+		},
 	};
 }
 
-test("createReleasePlan — single package computes changed files and git metadata", () => {
-	const files = fixtureFiles();
-	const plan = createReleasePlan("core", "patch", releasePlanOptions(files));
-
-	assert.equal(plan.scope, "core");
-	assert.equal(plan.version, "0.8.1");
-	assert.equal(plan.commitMessage, "chore(core): release v0.8.1");
-	assert.equal(plan.tagName, "core/v0.8.1");
-	assert.deepEqual(
-		plan.files.map((file) => file.path),
-		["packages/core/package.json", "packages/core/CHANGELOG.md"],
-	);
-	assert.ok(plan.files[0].after.includes('"version": "0.8.1"'));
-	assert.ok(plan.files[1].after.includes("## [0.8.1] - 2026-07-07"));
-	assert.ok(plan.files[1].after.includes("release packages/core from core/v0.8.0"));
-});
-
-test("createReleasePlan — all packages includes every package plus manual root changelog", () => {
-	const files = fixtureFiles();
-	const plan = createReleasePlan("all", "minor", releasePlanOptions(files));
-
-	assert.equal(plan.scope, "all");
-	assert.equal(plan.version, "0.9.0");
-	assert.equal(plan.commitMessage, "chore(release): all v0.9.0");
-	assert.equal(plan.tagName, "all/v0.9.0");
-	assert.deepEqual(plan.files.map((file) => file.path), [
-		"packages/core/package.json",
-		"packages/core/CHANGELOG.md",
-		"packages/authority/package.json",
-		"packages/authority/CHANGELOG.md",
-		"packages/leaf/package.json",
-		"packages/leaf/CHANGELOG.md",
-		"packages/oidc/package.json",
-		"packages/oidc/CHANGELOG.md",
-		"packages/wallet/package.json",
-		"packages/wallet/CHANGELOG.md",
-		"tools/cli/package.json",
-		"tools/cli/CHANGELOG.md",
-		"package.json",
-		"CHANGELOG.md",
+test("publication dispatch binds the clean upstream commit without creating commits or tags", () => {
+	const e = executor();
+	dispatchPublication("all", e);
+	assert.deepEqual(e.calls.at(-1), [
+		"gh",
+		"workflow",
+		"run",
+		"release.yml",
+		"--repo",
+		"Dahkenangnon/oidfed",
+		"--ref",
+		"main",
+		"-f",
+		"scope=all",
+		"-f",
+		`source_sha=${"a".repeat(40)}`,
 	]);
-	const rootChangelog = plan.files.find((file) => file.path === "CHANGELOG.md");
-	assert.match(rootChangelog.after, /## \[0\.9\.0\] - 2026-07-07\n+\s*## \[0\.8\.0\]/);
-	assert.ok(!rootChangelog.after.includes("release package"));
-});
-
-test("renderReleasePlan — dry run previews summary and diff without side effects", () => {
-	const files = fixtureFiles();
-	const plan = createReleasePlan("core", "patch", releasePlanOptions(files));
-	const out = renderReleasePlan(plan);
-
-	assert.ok(out.includes("Mode: preview only"));
-	assert.ok(out.includes("packages/core/package.json"));
-	assert.ok(out.includes("diff --git a/packages/core/package.json b/packages/core/package.json"));
-	assert.ok(out.includes('+\t"version": "0.8.1"'));
-	assert.ok(out.includes("### Bug Fixes"));
-});
-
-test("unifiedDiff — returns empty string when file content is unchanged", () => {
-	assert.equal(unifiedDiff("package.json", "same\n", "same\n"), "");
-});
-
-test("applyReleasePlan — writes planned content then runs git commands", () => {
-	const files = fixtureFiles();
-	const plan = createReleasePlan("core", "patch", releasePlanOptions(files));
-	const writes = new Map();
-	const commands = [];
-
-	applyReleasePlan(plan, {
-		writeFile: (path, content) => writes.set(path, content),
-		run: (cmd) => commands.push(cmd),
-	});
-
-	assert.equal(writes.size, 2);
-	assert.ok(writes.get("packages/core/package.json").includes('"version": "0.8.1"'));
-	assert.deepEqual(commands, [
-		"git add packages/core/package.json packages/core/CHANGELOG.md",
-		'git commit -m "chore(core): release v0.8.1"',
-		'git tag -a -m "release: @oidfed/core v0.8.1" core/v0.8.1',
-		"git push",
-		"git push origin core/v0.8.1",
-	]);
-});
-
-test("prepareReleasePlan — writes files without running git commands", () => {
-	const files = fixtureFiles();
-	const plan = createReleasePlan("core", "patch", releasePlanOptions(files));
-	const writes = new Map();
-
-	prepareReleasePlan(plan, {
-		writeFile: (path, content) => writes.set(path, content),
-	});
-
-	assert.deepEqual([...writes.keys()], ["packages/core/package.json", "packages/core/CHANGELOG.md"]);
-	assert.ok(writes.get("packages/core/package.json").includes('"version": "0.8.1"'));
-});
-
-test("createFinalizePlan — validates prepared files and builds git metadata", () => {
-	const files = fixtureFiles();
-	const prepared = createReleasePlan("core", "patch", releasePlanOptions(files));
-	for (const file of prepared.files) files.set(file.path, file.after);
-
-	const plan = createFinalizePlan("core", { readFile: readFrom(files) });
-
-	assert.equal(plan.scope, "core");
-	assert.equal(plan.version, "0.8.1");
-	assert.deepEqual(plan.expectedPaths, ["packages/core/package.json", "packages/core/CHANGELOG.md"]);
-	assert.equal(plan.commitMessage, "chore(core): release v0.8.1");
-	assert.equal(plan.tagName, "core/v0.8.1");
-});
-
-test("createFinalizePlan — rejects missing prepared changelog section", () => {
-	const files = fixtureFiles();
-	files.set("packages/core/package.json", pkgJson("@oidfed/core", "0.8.1"));
-
-	assert.throws(
-		() => createFinalizePlan("core", { readFile: readFrom(files) }),
-		/missing ## \[0\.8\.1\]/,
+	assert.equal(
+		e.calls.some((c) => c[0] === "git" && ["commit", "tag", "push", "add"].includes(c[1])),
+		false,
 	);
+	const resume = executor();
+	dispatchPublication(undefined, { ...resume, resumeRunId: "123" });
+	assert.ok(resume.calls.at(-1).includes("resume_run_id=123"));
+	for (const setup of [
+		{ dirty: " M file" },
+		{ origin: "https://github.com/other/repo" },
+		{ ancestry: false },
+	]) {
+		const f = executor(setup);
+		assert.throws(() => dispatchPublication("core", f));
+		assert.equal(
+			f.calls.some((c) => c[0] === "gh"),
+			false,
+		);
+	}
+	assert.throws(() => dispatchPublication(undefined, { resumeRunId: "../other" }), /run ID/);
 });
 
-test("assertOnlyExpectedChanges — rejects unexpected dirty files", () => {
-	assert.throws(
-		() =>
-			assertOnlyExpectedChanges(["packages/core/package.json"], {
-				status: " M packages/core/package.json\n M scripts/release.mjs\n",
-			}),
-		/Unexpected worktree changes/,
-	);
-});
-
-test("assertOnlyExpectedChanges — rejects missing expected dirty files", () => {
-	assert.throws(
-		() =>
-			assertOnlyExpectedChanges(["packages/core/package.json", "packages/core/CHANGELOG.md"], {
-				status: " M packages/core/package.json\n",
-			}),
-		/Expected prepared release files/,
-	);
-});
-
-test("finalizeReleasePlan — validates status then runs git commands only", () => {
-	const files = fixtureFiles();
-	const prepared = createReleasePlan("core", "patch", releasePlanOptions(files));
-	for (const file of prepared.files) files.set(file.path, file.after);
-	const plan = createFinalizePlan("core", { readFile: readFrom(files) });
-	const commands = [];
-
-	finalizeReleasePlan(plan, {
-		status: " M packages/core/package.json\n M packages/core/CHANGELOG.md\n",
-		run: (cmd) => commands.push(cmd),
+test("retired automatic modes fail before preparation or publication", () => {
+	for (const args of [
+		["core", "--finalize"],
+		["all", "patch"],
+		["core", "patch", "--prepare", "extra"],
+	])
+		assert.throws(() => main(args), /review and merge/);
+	const run = spawnSync(process.execPath, ["scripts/release.mjs", "all", "patch"], {
+		encoding: "utf8",
 	});
+	assert.notEqual(run.status, 0);
+	assert.match(run.stderr, /Automatic finalization is not supported/);
+});
 
-	assert.deepEqual(commands, [
-		"git add packages/core/package.json packages/core/CHANGELOG.md",
-		'git commit -m "chore(core): release v0.8.1"',
-		'git tag -a -m "release: @oidfed/core v0.8.1" core/v0.8.1',
-		"git push",
-		"git push origin core/v0.8.1",
-	]);
+test("changelog baselines skip coordinated tags that do not describe this package", () => {
+	let attempts = 0;
+	const tag = previousTagFor("core", "2.1.0", {
+		execute(command, args) {
+			assert.equal(command, "git");
+			if (args[0] === "describe") {
+				attempts++;
+				assert.ok(args.includes("core/v2.1.0"));
+				if (attempts === 1) return "all/v2.0.0\n";
+				assert.ok(args.includes("all/v2.0.0"));
+				return "core/v1.9.0\n";
+			}
+			return JSON.stringify({ name: "@oidfed/core", version: "1.9.0" });
+		},
+	});
+	assert.equal(tag, "core/v1.9.0");
+	assert.equal(attempts, 2);
 });

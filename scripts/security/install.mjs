@@ -33,6 +33,13 @@ export const tools = Object.freeze({
 		asset: "actionlint_1.7.12_linux_amd64.tar.gz",
 		sha256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8",
 	},
+	shellcheck: {
+		version: "0.11.0",
+		repository: "koalaman/shellcheck",
+		asset: "shellcheck-v0.11.0.linux.x86_64.tar.gz",
+		member: "shellcheck-v0.11.0/shellcheck",
+		sha256: "b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6",
+	},
 });
 export const bin = join(root, "node_modules/.cache/spec-security/bin");
 export const semgrepEnvironment = join(root, "node_modules/.cache/spec-security/semgrep");
@@ -87,48 +94,52 @@ export async function installSemgrep(python = "python3", directory = semgrepEnvi
 	console.log(`Installed Semgrep ${installed} from verified wheels`);
 }
 
+/** Install one checksum-verified executable, extracting only its allowlisted archive member. */
+export async function installBinary(name, tool, destination = bin) {
+	await mkdir(destination, { recursive: true });
+	const temporary = await mkdtemp(join(tmpdir(), "oidfed-scanners-"));
+	try {
+		console.log(`Installing ${name} ${tool.version}`);
+		const response = await fetch(
+			`https://github.com/${tool.repository}/releases/download/v${tool.version}/${tool.asset}`,
+			{ signal: AbortSignal.timeout(600_000) },
+		);
+		if (!response.ok) throw new Error(`${name} download failed: HTTP ${response.status}`);
+		const data = Buffer.from(await response.arrayBuffer());
+		if (createHash("sha256").update(data).digest("hex") !== tool.sha256)
+			throw new Error(`${name} checksum mismatch`);
+		const archive = join(temporary, tool.asset);
+		await writeFile(archive, data);
+		if (tool.asset.endsWith(".tar.gz")) {
+			const members = execFileSync("tar", ["tzf", archive], { encoding: "utf8" })
+				.trim()
+				.split("\n");
+			const expected = tool.member ?? name;
+			const member = members.find((path) => path === expected || path === `./${expected}`);
+			if (!member) throw new Error(`${name} is missing from its archive`);
+			execFileSync("tar", ["xzf", archive, "-C", temporary, "--", member]);
+			await copyFile(join(temporary, expected), join(destination, name));
+		} else await copyFile(archive, join(destination, name));
+		await chmod(join(destination, name), 0o755);
+		console.log(`Installed ${name} ${tool.version} (SHA-256 verified)`);
+	} finally {
+		await rm(temporary, { recursive: true, force: true });
+	}
+}
+
 async function install() {
 	if (process.platform !== "linux" || process.arch !== "x64")
 		throw new Error(
 			"Automatic scanner installation supports Linux x64; install the documented versions on this platform.",
 		);
-	await mkdir(bin, { recursive: true });
-	const temporary = await mkdtemp(join(tmpdir(), "oidfed-scanners-"));
+	for (const [name, tool] of Object.entries(tools)) await installBinary(name, tool);
 	try {
-		for (const [name, tool] of Object.entries(tools)) {
-			console.log(`Installing ${name} ${tool.version}`);
-			const response = await fetch(
-				`https://github.com/${tool.repository}/releases/download/v${tool.version}/${tool.asset}`,
-				{ signal: AbortSignal.timeout(600_000) },
-			);
-			if (!response.ok) throw new Error(`${name} download failed: HTTP ${response.status}`);
-			const data = Buffer.from(await response.arrayBuffer());
-			if (createHash("sha256").update(data).digest("hex") !== tool.sha256)
-				throw new Error(`${name} checksum mismatch`);
-			const archive = join(temporary, tool.asset);
-			await writeFile(archive, data);
-			if (tool.asset.endsWith(".tar.gz")) {
-				const members = execFileSync("tar", ["tzf", archive], { encoding: "utf8" })
-					.trim()
-					.split("\n");
-				const member = members.find((path) => path === name || path === `./${name}`);
-				if (!member) throw new Error(`${name} is missing from its archive`);
-				execFileSync("tar", ["xzf", archive, "-C", temporary, "--", member]);
-				await copyFile(join(temporary, name), join(bin, name));
-			} else await copyFile(archive, join(bin, name));
-			await chmod(join(bin, name), 0o755);
-			console.log(`Installed ${name} ${tool.version} (SHA-256 verified)`);
-		}
-		try {
-			await installSemgrep();
-		} catch (cause) {
-			throw new Error(
-				"Semgrep setup failed. Use Python 3.12–3.14 with venv and pip, then rerun pnpm security:install; unlocked packages and source builds are not allowed.",
-				{ cause },
-			);
-		}
-	} finally {
-		await rm(temporary, { recursive: true, force: true });
+		await installSemgrep();
+	} catch (cause) {
+		throw new Error(
+			"Semgrep setup failed. Use Python 3.12–3.14 with venv and pip, then rerun pnpm security:install; unlocked packages and source builds are not allowed.",
+			{ cause },
+		);
 	}
 }
 

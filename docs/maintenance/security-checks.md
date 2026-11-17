@@ -15,7 +15,7 @@ pnpm install --frozen-lockfile
 pnpm security:install
 ```
 
-`security:install` supports Linux x64 and requires Python 3.12, 3.13, or 3.14 with `venv` and `pip`. It downloads pinned OSV-Scanner, Gitleaks, actionlint, and zizmor releases from their maintainers and verifies their SHA-256 digests. Semgrep and every Python dependency are pinned by version and SHA-256 in an interpreter-specific lock. Only wheels are accepted; an unavailable wheel fails installation instead of starting a source build.
+`security:install` supports Linux x64 and requires Python 3.12, 3.13, or 3.14 with `venv` and `pip`. It downloads pinned OSV-Scanner, Gitleaks, actionlint, ShellCheck, and zizmor releases from their maintainers and verifies their SHA-256 digests. Semgrep and every Python dependency are pinned by version and SHA-256 in an interpreter-specific lock. Only wheels are accepted; an unavailable wheel fails installation instead of starting a source build.
 
 The installer recreates its generated Semgrep environment under `node_modules/.cache/spec-security/semgrep`, then checks dependency compatibility and the installed scanner version. This replaces packages from earlier installations without changing system Python. The runner finds the tools automatically; no shell activation or PATH override is needed. CI uses Python 3.12 for the main gate and tests fresh Semgrep installations on all three supported Python versions. The npm tools are pinned development dependencies. None of these tools is shipped as a runtime dependency of the library.
 
@@ -28,7 +28,7 @@ pnpm security:check
 
 An `Unsupported engine` warning means the active Node version does not satisfy the repository's requirements. Switch Node versions before continuing. pnpm may name other workspaces in this warning; that does not extend the security scan to those applications.
 
-The GitHub security workflow runs the same checks on pull requests and `main`, with a weekly full dependency scan. CodeQL's `security-extended` suite runs in its own GitHub job. Its analysis paths explicitly select the five packages.
+The GitHub security workflow runs the same checks on pull requests and `main`, with a weekly full dependency scan. CodeQL uses advanced setup: its `security-extended` suite runs in the custom workflow with analysis paths limited to the five packages. Keep GitHub's default CodeQL setup disabled for this repository; enabling it blocks uploads from the custom workflow. To switch an existing repository, open **Settings → Advanced Security → CodeQL analysis → Switch to advanced**, disable default setup, and verify that the custom job uploads its results successfully.
 
 ## Choose a check
 
@@ -41,10 +41,12 @@ The GitHub security workflow runs the same checks on pull requests and `main`, w
 | `pnpm security:secrets` | Redacted Gitleaks scans of the five package directories. Packed artifacts are scanned separately by `security:artifacts`. |
 | `pnpm security:dependencies` | OSV advisories for exact production and optional dependency versions resolved from the five packages. Workspace links are traversed; app, tool, and development dependencies are excluded. |
 | `pnpm security:artifacts` | Packed manifests and declarations with publint and Are the Types Wrong, secret scanning, isolated NodeNext ESM/CommonJS and bundler consumers, runtime imports, and public contract tests with tsd. Build first. |
-| `pnpm security:workflows` | actionlint and zizmor checks of every YAML file in `.github/workflows`, including CI, conformance, security, and release. Zizmor's regular reporting mode gates findings of low severity or higher; pedantic findings require a separate review. |
+| `pnpm security:workflows` | actionlint, with required ShellCheck analysis, and zizmor checks of every YAML file in `.github/workflows`, including CI, conformance, security, and release. Zizmor's regular reporting mode gates findings of low severity or higher; pedantic findings require a separate review. |
 | `pnpm security:advisory` | Knip's unused-code report and jscpd's duplication report. These help reviewers choose useful cleanup work. They do not require deleting a public API or consolidating similar protocol rules. |
 
 `security:check` runs the required local checks above, excluding the advisory, fuzz, and mutation commands. CodeQL runs in GitHub. The full runtime suite also includes generated properties for prototype safety, preservation of caller-owned metadata, selector semantics, and concurrent replay claims.
+
+The workflow runner validates GitHub's queued-concurrency settings directly because actionlint 1.7.12 does not recognize `queue` yet. Only that unsupported-key diagnostic is exempted; invalid queue values, cancellation conflicts, shell issues, and other workflow errors still fail the check. During a release, `RELEASE_ARTIFACT_DIR` supplies the saved bundle to the artifact checks so they inspect the archives that will be published without packing again.
 
 Dependency scanning builds a temporary CycloneDX input from pnpm's lockfile-backed production graph. Only package names and versions go to the advisory service. On a pull request, `SECURITY_BASE_SHA` selects a base commit so the check scans newly introduced versions. If that commit predates a scoped package or lacks another required input, the check explains the missing baseline and scans the complete current graph. Invalid commits and corrupt graphs fail. Scheduled and ordinary local runs also scan the full scoped graph. A failed scan fails the command.
 
