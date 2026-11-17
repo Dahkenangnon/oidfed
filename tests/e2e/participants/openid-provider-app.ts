@@ -17,6 +17,8 @@ export interface OpenIDProviderAppConfig {
 	/** OP protocol signing key for oidc-provider tokens in the test bed. */
 	oidcSigningKey: JWK;
 	additionalSigningKeys?: readonly JWK[];
+	/** Request Object policy for the disposable OP; defaults to the role's strict policy. */
+	requestObjectTyping?: ConstructorParameters<typeof OidcProviderRole>[0]["requestObjectTyping"];
 	/**
 	 * Hostnames the OP is willing to fetch a by-reference Request Object from.
 	 * Constructed by the launcher from topology RP entity URLs — server-side
@@ -78,6 +80,9 @@ export function createOpenIDProviderApp(config: OpenIDProviderAppConfig): expres
 	const leafHandler = (request: Request) => leaf.handleRequest(request);
 	const oidcProvider = new OidcProviderRole({
 		registrationPath: "/federation_registration",
+		...(config.requestObjectTyping !== undefined
+			? { requestObjectTyping: config.requestObjectTyping }
+			: {}),
 		registrationResponseTtlSeconds: 3600,
 		replayStore,
 		onRegistration: async (sub, clientMetadata) => {
@@ -103,6 +108,10 @@ export function createOpenIDProviderApp(config: OpenIDProviderAppConfig): expres
 
 	const oidc = new Provider(entityId, {
 		adapter: Adapter,
+		// Exercise POST authorization in this HTTPS fixture. The engine requires
+		// SameSite=None session cookies for POST support; keep those cookies Secure.
+		enableHttpPostMethods: true,
+		cookies: { long: { sameSite: "none", secure: true } },
 		jwks: { keys: [oidcSigningKey, ...(config.additionalSigningKeys ?? [])] },
 		claims: { openid: ["sub"] },
 		scopes: ["openid"],

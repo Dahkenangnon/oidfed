@@ -77,29 +77,30 @@ module provides no coverage in this baseline.
 The OP and RP fixtures support authorization-code flows, including token and
 ID Token checks by their protocol engines. The suite's headless browser drives
 OP requests; the OP fixture logs in and grants consent for a disposable user.
+Its protocol engine enables GET and form-encoded POST authorization, with
+Secure, SameSite=None session cookies for POST support.
 The RP fixture uses state, nonce, PKCE, and protocol keys resolved from trusted
 Federation metadata. It always logs in against the suite's test issuer.
 The fixtures' login and consent policies are for testing only.
 
-### Current OP interoperability blocker
+### OP Request Object typing
 
-The pinned OP plan signs Request Objects with `typ: JWT`: its
-[`SignRequestObjectWithFederationTrustChain`](https://github.com/openid-certification/conformance-suite/blob/23353b36957d6466010de767c812d2c91ed37638/src/main/java/net/openid/conformance/openid/federation/SignRequestObjectWithFederationTrustChain.java)
-inherits the generic type from
-[`AbstractSignJWT`](https://github.com/openid-certification/conformance-suite/blob/23353b36957d6466010de767c812d2c91ed37638/src/main/java/net/openid/conformance/condition/client/AbstractSignJWT.java).
-oidfed requires `oauth-authz-req+jwt` in its
-[automatic-registration validator](../../../packages/oidc/src/registration/validate-request-object.ts).
-[RFC 9101 §10.8](https://www.rfc-editor.org/rfc/rfc9101.html#section-10.8)
-describes explicit typing as a defense against JWT confusion and allows new
-deployment profiles to require it. The suite's type header differs from oidfed's
-policy. This failure does not establish that either side violates a mandatory
-typing requirement.
+The pinned OP plan signs Request Objects with `typ: JWT`. The disposable conformance
+OP explicitly selects `requestObjectTyping: "compatible"` through the public provider
+role configuration. The library's default remains strict; its outgoing requests keep
+`oauth-authz-req+jwt`.
 
-The OP profile fails at its first positive flow, leaving later modules
-unverified. The harness reports the failure and preserves both the suite's
-signed requests and oidfed's typing policy. To resolve this blocker, the
-upstream configuration or tests must support explicitly typed Request Objects.
-The baseline can then be updated to a revision with that support.
+Federation §12.1.1.1.1 shows explicit typing in a non-normative example. RFC 9101 §10.8
+describes it as a deployment policy and discusses compatibility with existing Request
+Objects. This configuration preserves the suite's signed requests and all cryptographic,
+claim, trust-chain, and replay validation. It does not patch upstream modules or skip
+OP tests. Run the unchanged plan to identify any remaining interoperability failures.
+
+The negative OP modules add manual `REVIEW` prompts for error-page assessment even
+when their upstream module result is `PASSED`. The harness rejects these entries
+under its acceptance policy, so upstream module success alone does not make the
+OP profile green. These review requirements remain visible; the typing option
+does not bypass them.
 
 ### Current RP token-response blocker
 
@@ -119,7 +120,7 @@ suite reports success. This run therefore fails. It preserves token validation
 and does not add the missing fields. The upstream token response must be fixed
 and the baseline updated before the positive flow and later ID Token rejection
 tests can establish coverage. The full profile stops at this RP failure; the OP
-typing failure is verified in a separate run.
+plan runs independently with its explicit compatibility setting.
 
 The suite also exposed a transport defect in oidfed. OIDC query, form-post,
 and hosted Request Object delivery now repeat the supplied

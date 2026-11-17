@@ -9,17 +9,28 @@ import { createLeafApp } from "../participants/leaf-app.js";
 import { createOpenIDProviderApp } from "../participants/openid-provider-app.js";
 import { singleAnchorTopology } from "../topologies/single-anchor.js";
 
-/** Follow this fixture's GET-only login redirects, retaining only its OP cookies. */
-async function followLogin(start: string, op: string, rp: string): Promise<Response> {
+/** Submit the initial request, then follow GET redirects while retaining only the OP's cookies. */
+async function followLogin(
+	start: string,
+	op: string,
+	rp: string,
+	initialBody?: URLSearchParams,
+): Promise<Response> {
 	let target = new URL(start);
+	let body = initialBody;
 	const cookies = new Map<string, string>();
 	for (let hop = 0; hop < 15; hop++) {
 		if (target.origin !== op && target.origin !== rp)
 			throw new Error("Unexpected fixture redirect");
 		const response = await fetch(target, {
 			redirect: "manual",
-			headers: target.origin === op ? { cookie: [...cookies.values()].join("; ") } : {},
+			...(body ? { method: "POST", body } : {}),
+			headers: {
+				...(body ? { "content-type": "application/x-www-form-urlencoded" } : {}),
+				...(target.origin === op ? { cookie: [...cookies.values()].join("; ") } : {}),
+			},
 		});
+		body = undefined;
 		if (target.origin === op) {
 			for (const raw of response.headers.getSetCookie()) {
 				const cookie = raw.split(";")[0] ?? "";
@@ -93,38 +104,44 @@ describe("Disposable conformance OP integration", () => {
 		return { result: result.value, rp, rpId, opId, verifier, nonce, state };
 	}
 
-	it("completes automatic login, consent, code exchange, and ID Token validation", async () => {
-		const { result, rp, rpId, opId, verifier, nonce, state } = await authorization();
-		const response = await followLogin(result.authorizationUrl, opId, rpId);
-		expect(response.status).toBe(200);
-		const callback = new URL(response.url);
-		expect(callback.origin + callback.pathname).toBe(`${rpId}/callback`);
-		expect(callback.searchParams.get("state")).toBe(state);
-		expect(callback.searchParams.get("error")).toBeNull();
-		expect(callback.searchParams.get("code")).toBeTruthy();
-		const signingKey = await importJWK(
-			JSON.parse(JSON.stringify(rp.keys.protocolSigning)) as JWK,
-			"ES256",
-		);
-		if (signingKey instanceof Uint8Array) throw new Error("Expected an asymmetric key");
-		const configuration = new client.Configuration(
-			{
-				issuer: opId,
-				token_endpoint: `${opId}/token`,
-				jwks_uri: `${opId}/jwks`,
-			},
-			rpId,
-			{ token_endpoint_auth_signing_alg: "ES256", id_token_signed_response_alg: "ES256" },
-			client.PrivateKeyJwt(signingKey),
-		);
-		const tokens = await client.authorizationCodeGrant(configuration, callback, {
-			pkceCodeVerifier: verifier,
-			expectedState: state,
-			expectedNonce: nonce,
-			idTokenExpected: true,
-		});
-		expect(tokens.claims()?.sub).toBe("conformance-user");
-	});
+	it.each(["GET", "POST"] as const)(
+		"completes %s automatic login, consent, code exchange, and ID Token validation",
+		async (method) => {
+			const { result, rp, rpId, opId, verifier, nonce, state } = await authorization();
+			const url = new URL(result.authorizationUrl);
+			const body = method === "POST" ? new URLSearchParams(url.searchParams) : undefined;
+			if (body) url.search = "";
+			const response = await followLogin(url.href, opId, rpId, body);
+			expect(response.status).toBe(200);
+			const callback = new URL(response.url);
+			expect(callback.origin + callback.pathname).toBe(`${rpId}/callback`);
+			expect(callback.searchParams.get("state")).toBe(state);
+			expect(callback.searchParams.get("error")).toBeNull();
+			expect(callback.searchParams.get("code")).toBeTruthy();
+			const signingKey = await importJWK(
+				JSON.parse(JSON.stringify(rp.keys.protocolSigning)) as JWK,
+				"ES256",
+			);
+			if (signingKey instanceof Uint8Array) throw new Error("Expected an asymmetric key");
+			const configuration = new client.Configuration(
+				{
+					issuer: opId,
+					token_endpoint: `${opId}/token`,
+					jwks_uri: `${opId}/jwks`,
+				},
+				rpId,
+				{ token_endpoint_auth_signing_alg: "ES256", id_token_signed_response_alg: "ES256" },
+				client.PrivateKeyJwt(signingKey),
+			);
+			const tokens = await client.authorizationCodeGrant(configuration, callback, {
+				pkceCodeVerifier: verifier,
+				expectedState: state,
+				expectedNonce: nonce,
+				idTokenExpected: true,
+			});
+			expect(tokens.claims()?.sub).toBe("conformance-user");
+		},
+	);
 
 	it("returns errors only to the configured callback and rejects replay", async () => {
 		const { result, rpId, state } = await authorization();

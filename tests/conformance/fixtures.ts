@@ -249,6 +249,8 @@ const opApp = createOpenIDProviderApp({
 	entityId: base("op"),
 	trustAnchors: anchors,
 	federationKeyProvider: opKeys,
+	// The pinned suite emits typ: JWT; exercise the public compatibility policy.
+	requestObjectTyping: "compatible",
 	oidcSigningKey: key(7).privateKey,
 	allowedRequestUriHosts: new Set(["suite.ofed.test"]),
 	automaticInteractions: true,
