@@ -77,6 +77,190 @@ function mockFn<A extends unknown[]>() {
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("leaf / supplied discovery and managed marks", () => {
+		test("supplied-chain discovery uses configured anchors and permits per-call overrides without fetching", async (t) => {
+			const f = await createMockFederation();
+			const { config } = await createLeafConfig({
+				trustAnchors: f.trustAnchors,
+				options: {
+					...f.options,
+					maxTotalFetches: 0,
+					httpClient: async () => {
+						throw new Error("supplied evidence must not fetch");
+					},
+				},
+			});
+			const leaf = new Leaf(config);
+			const chain = [f.opEcJwt, f.taSubStatementForOp, f.taEcJwt];
+			const discovered = await leaf.discoverEntityFromChain(OP_ID, chain);
+			t.true(discovered.ok, JSON.stringify(discovered));
+			if (discovered.ok) {
+				t.equal(discovered.value.entityId, OP_ID);
+				t.equal(discovered.value.trustChain.trustAnchorId, TA_ID);
+			}
+			t.false((await leaf.discoverEntityFromChain(OP_ID, chain, { trustAnchors: new Map() })).ok);
+			const unconfigured = new Leaf({ ...config, trustAnchors: undefined });
+			t.false((await unconfigured.discoverEntityFromChain(OP_ID, chain)).ok);
+			t.true(
+				(await unconfigured.discoverEntityFromChain(OP_ID, chain, { trustAnchors: f.trustAnchors }))
+					.ok,
+			);
+		});
+
+		test("fetching a mark validates issuer trust and holder binding before publishing", async (t) => {
+			const clock = { now: () => 1000 };
+			const { config, publicKey } = await createLeafConfig({ options: { clock } });
+			const leaf = new Leaf(config);
+			const issuer = "https://accreditor.example";
+			const type = "urn:example:accreditation";
+			const key = await generateSigningKey("ES256");
+			const signer = new JwkSigner(key.privateKey);
+			const jwks = { keys: [key.publicKey] };
+			const ec = await signEntityStatement(
+				{
+					iss: issuer,
+					sub: issuer,
+					iat: 1000,
+					exp: 2000,
+					jwks,
+					trust_mark_issuers: { [type]: [issuer] },
+					metadata: {
+						federation_entity: {
+							federation_fetch_endpoint: `${issuer}/fetch`,
+							federation_list_endpoint: `${issuer}/list`,
+							federation_trust_mark_endpoint: `${issuer}/marks`,
+						},
+					},
+				},
+				signer,
+				{ typ: JwtTyp.EntityStatement },
+			);
+			const jwt = await CorePublic.signTrustMark({
+				issuer,
+				subject: leaf.entityId,
+				trustMarkType: type,
+				signer,
+				clock,
+				ttlSeconds: 100,
+			});
+			const wrongHolder = await CorePublic.signTrustMark({
+				issuer,
+				subject: "https://other.example",
+				trustMarkType: type,
+				signer,
+				clock,
+				ttlSeconds: 100,
+			});
+			let mode = "valid";
+			const input = {
+				issuer,
+				trustMarkType: type,
+				trustAnchors: CorePublic.createTrustAnchorSet([{ entityId: issuer, jwks }]),
+				options: {
+					clock,
+					httpClient: async (url: Parameters<CorePublic.HttpClient>[0]) => {
+						const target = new URL(String(url));
+						if (target.pathname === WELL_KNOWN_OPENID_FEDERATION)
+							return new Response(ec, { headers: { "content-type": MediaType.EntityStatement } });
+						t.equal(target.pathname, "/marks");
+						t.equal(target.searchParams.get("sub"), leaf.entityId);
+						t.equal(target.searchParams.get("trust_mark_type"), type);
+						return new Response(mode === "wrong-holder" ? wrongHolder : jwt, {
+							status: mode === "unavailable" ? 503 : 200,
+							headers: { "content-type": MediaType.TrustMark },
+						});
+					},
+				},
+			};
+			await leaf.fetchAndAttachTrustMark(input);
+			t.deepEqual(leaf.getTrustMarks(), [{ trust_mark_type: type, trust_mark: jwt }]);
+			const published = await leaf.getEntityConfiguration();
+			const checked = await verifyEntityStatement(published, { keys: [publicKey] }, { clock });
+			t.true(checked.ok);
+			if (checked.ok) t.deepEqual(checked.value.payload.trust_marks, leaf.getTrustMarks());
+			for (mode of ["unavailable", "wrong-holder"]) {
+				await t.rejects(leaf.fetchAndAttachTrustMark(input));
+				t.equal(
+					await leaf.getEntityConfiguration(),
+					published,
+					"failed retrieval preserves publication",
+				);
+				t.equal(leaf.getTrustMarks().length, 1);
+			}
+		});
+
+		test("managed issuance lists eligible records and uses replaced owner delegations", async (t) => {
+			const clock = { now: () => 1000 };
+			const { config, publicKey } = await createLeafConfig({ options: { clock } });
+			const owner = "https://owner.example";
+			const ownerKey = await generateSigningKey("ES256");
+			const type = "urn:example:accreditation";
+			const subject = "https://member.example";
+			const leaf = new Leaf({
+				...config,
+				trustMarkIssuer: {
+					storage: new CorePublic.MemoryTrustMarkStore(),
+					issuerEvidence: [
+						{
+							kind: "out-of-band",
+							issuer: String(config.entityId),
+							allowedTrustMarkTypes: [type],
+							keys: { keys: [publicKey] },
+							trustMarkOwners: { [type]: { sub: owner, jwks: { keys: [ownerKey.publicKey] } } },
+						},
+					],
+				},
+			});
+			const delegate = (ttlSeconds: number) =>
+				CorePublic.signTrustMarkDelegation({
+					issuer: owner,
+					subject: leaf.entityId,
+					trustMarkType: type,
+					signer: new JwkSigner(ownerKey.privateKey),
+					clock,
+					ttlSeconds,
+				});
+			await t.rejects(leaf.issueTrustMark(subject, type), /delegation/i);
+			const first = await delegate(100);
+			const delegations = { [type]: first };
+			await leaf.setTrustMarkDelegations(delegations);
+			delegations[type] = "caller mutation";
+			const jwt = await leaf.issueTrustMark(subject, type);
+			const decoded = decodeEntityStatement(jwt);
+			t.true(decoded.ok);
+			if (decoded.ok) t.equal(decoded.value.payload.delegation, first);
+			const records = await leaf.listTrustMarksForSubject(subject);
+			t.equal(records.length, 1);
+			t.equal(records[0]?.jwt, jwt);
+			records.pop();
+			t.equal((await leaf.listTrustMarksForSubject(subject)).length, 1);
+			t.deepEqual(await leaf.listTrustMarkedEntities(type), [subject]);
+			t.deepEqual(await leaf.listTrustMarkedEntities(type, "https://other.example"), []);
+			await t.rejects(
+				leaf.setTrustMarkDelegations({ [type]: 42 } as unknown as Record<string, string>),
+				/Invalid Trust Mark delegations/,
+			);
+			const preserved = decodeEntityStatement(
+				await leaf.issueTrustMark(subject, type, { renewal: "renew" }),
+			);
+			t.true(preserved.ok);
+			if (preserved.ok) t.equal(preserved.value.payload.delegation, first);
+			const replacement = await delegate(200);
+			await leaf.setTrustMarkDelegations({ [type]: replacement });
+			const renewed = decodeEntityStatement(
+				await leaf.issueTrustMark(subject, type, { renewal: "renew" }),
+			);
+			t.true(renewed.ok);
+			if (renewed.ok) t.equal(renewed.value.payload.delegation, replacement);
+			await leaf.revokeTrustMark(type, subject);
+			t.deepEqual(await leaf.listTrustMarksForSubject(subject), []);
+			t.deepEqual(await leaf.listTrustMarkedEntities(type), []);
+			const disabled = new Leaf(config);
+			await t.rejects(disabled.listTrustMarksForSubject(subject), /not configured/);
+			await t.rejects(disabled.listTrustMarkedEntities(type), /not configured/);
+			await t.rejects(disabled.setTrustMarkDelegations({}), /not configured/);
+		});
+	});
 	module("leaf / configurable trust establishment", () => {
 		test("Leaf hosts Resolve independently and forwards selection defaults", async (t) => {
 			const f = await createMockFederation();
