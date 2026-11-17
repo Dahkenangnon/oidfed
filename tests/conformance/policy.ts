@@ -38,12 +38,14 @@ export interface ModuleRecord {
 	result: string;
 	accepted: boolean;
 	diagnostics: { source: string; result: string }[];
+	suspension?: { revision: string; reason: string };
 }
 export interface Report {
 	revision: string;
 	profile: Profile;
 	modules: ModuleRecord[];
 	passed: boolean;
+	coverage: "complete" | "partial";
 	phase?: string;
 	errorClass?: string;
 	failureKind?: string;
@@ -59,6 +61,49 @@ export class HarnessError extends Error {
 }
 export class ApplicationOutcomeError extends HarnessError {}
 export class ModuleFailure extends HarnessError {}
+
+const SUSPENSION_REVISION = "23353b36957d6466010de767c812d2c91ed37638";
+
+// These pinned OP cases create conditional manual-review prompts. Keep them out
+// of unattended execution until those reviews can be resolved from evidence.
+const OP_MANUAL_REVIEW = new Set([
+	"openid-federation-automatic-client-registration-invalid-client-id-in-request-object",
+	"openid-federation-automatic-client-registration-invalid-client-id-in-query-parameters",
+	"openid-federation-automatic-client-registration-invalid-signature-on-request-object",
+	"openid-federation-automatic-client-registration-invalid-signature-with-other-keys-on-request-object",
+	"openid-federation-automatic-client-registration-invalid-request-object-exp",
+	"openid-federation-automatic-client-registration-invalid-request-object-iss",
+	"openid-federation-automatic-client-registration-invalid-request-object-aud",
+	"openid-federation-automatic-client-registration-invalid-request-object-sub",
+	"openid-federation-automatic-client-registration-invalid-missing-request-object-jti",
+	"openid-federation-automatic-client-registration-invalid-missing-request-object-exp",
+	"openid-federation-automatic-client-registration-invalid-missing-request-object-iss",
+	"openid-federation-automatic-client-registration-invalid-missing-request-object-aud",
+	"openid-federation-automatic-client-registration-invalid-duplicate-request-object-jti",
+]);
+
+// The shared upstream tokenResponse() omits access_token and token_type. These
+// four flows cannot exercise their intended assertions until that response is fixed.
+const RP_TOKEN_RESPONSE = new Set([
+	"openid-federation-client-test",
+	"openid-federation-client-valid-unknown-client-registration-types-supported",
+	"openid-federation-client-invalid-aud-in-id-token",
+	"openid-federation-client-invalid-iss-in-id-token",
+]);
+
+/** Temporary exclusions apply only to these exact modules and this reviewed suite revision. */
+export function suspensionReason(
+	role: Role,
+	name: string,
+	revision = BASELINE.revision,
+): string | undefined {
+	if (revision !== SUSPENSION_REVISION) throw new HarnessError("suspensions_require_review");
+	if (role === "op" && OP_MANUAL_REVIEW.has(name))
+		return "Pinned OP case requires manual error-page review; automated review is not implemented";
+	if (role === "rp" && RP_TOKEN_RESPONSE.has(name))
+		return "Pinned RP token response omits required access_token and token_type";
+	return undefined;
+}
 
 export const ENCRYPTED =
 	"openid-federation-automatic-client-registration-with-jar-and-encrypted-request-object";
@@ -108,12 +153,48 @@ export function moduleVariant(info: ModuleInfo): void {
 		throw new HarnessError("module_variant_mismatch");
 }
 
-export function instances(plan: PlanInfo, executed: Map<string, string>): void {
+export function instances(
+	plan: PlanInfo,
+	executed: Map<string, string>,
+	role: Role = "deployed",
+): void {
 	if (
-		plan.modules.length !== executed.size ||
-		plan.modules.some((x) => !isDeepStrictEqual(x.instances, [executed.get(x.testModule)]))
+		plan.modules.filter((x) => !suspensionReason(role, x.testModule)).length !== executed.size ||
+		plan.modules.some((x) =>
+			suspensionReason(role, x.testModule)
+				? executed.has(x.testModule) ||
+					(x.instances !== undefined && !isDeepStrictEqual(x.instances, []))
+				: !executed.has(x.testModule) ||
+					!isDeepStrictEqual(x.instances, [executed.get(x.testModule)]),
+		)
 	)
 		throw new HarnessError("module_execution_mismatch");
+}
+
+/** A recorded suspension is unexecuted, revision-bound, and never an accepted protocol result. */
+export function completedRecord(record: ModuleRecord): boolean {
+	if (!record || typeof record !== "object") return false;
+	if (record.suspension !== undefined) {
+		const role = record.target === "op" ? "op" : record.target === "rp" ? "rp" : undefined;
+		const reason = role ? suspensionReason(role, record.name) : undefined;
+		return (
+			reason !== undefined &&
+			record.status === "NOT_RUN" &&
+			record.result === "SKIPPED" &&
+			record.accepted === false &&
+			record.suspension?.revision === BASELINE.revision &&
+			record.suspension?.reason === reason &&
+			Array.isArray(record.diagnostics) &&
+			record.diagnostics.length === 0
+		);
+	}
+	if (record.accepted !== true || record.status !== "FINISHED") return false;
+	if (record.result === "PASSED") return true;
+	return (
+		record.result === "SKIPPED" &&
+		((record.target === "op" && record.name === ENCRYPTED) ||
+			(record.target === "leaf" && FETCH_MODULES.has(record.name)))
+	);
 }
 
 export function rpOutcome(name: string, status: number, body: unknown): void {
@@ -175,8 +256,12 @@ export function ensureComplete(value: unknown, profile: Profile): void {
 			),
 		)
 		.sort();
-	if (report.modules.some((record) => record?.accepted !== true || record.status !== "FINISHED"))
+	if (report.modules.some((record) => !completedRecord(record)))
 		throw new HarnessError("incomplete_report");
+	const coverage = report.modules.some((record) => record.suspension !== undefined)
+		? "partial"
+		: "complete";
+	if (report.coverage !== coverage) throw new HarnessError("incomplete_report");
 	const found = report.modules.map((record) => `${record.target}:${record.name}`).sort();
 	if (!isDeepStrictEqual(wanted, found)) throw new HarnessError("incomplete_report");
 }

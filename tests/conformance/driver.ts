@@ -8,6 +8,7 @@ import { checkExport } from "./exports.js";
 import {
 	ApplicationOutcomeError,
 	BASELINE,
+	completedRecord,
 	diagnostics,
 	grade,
 	HarnessError,
@@ -24,6 +25,7 @@ import {
 	type Role,
 	recordError,
 	rpOutcome,
+	suspensionReason,
 } from "./policy.js";
 
 export async function execute(
@@ -121,7 +123,13 @@ export class Session {
 		readonly state = "/run/oidfed",
 		readonly output = "/results",
 	) {
-		this.report = { revision: BASELINE.revision, profile, modules: [], passed: false };
+		this.report = {
+			revision: BASELINE.revision,
+			profile,
+			modules: [],
+			passed: false,
+			coverage: "partial",
+		};
 	}
 	private client(): ConformanceApi {
 		if (!this.api) throw new HarnessError("session_not_ready");
@@ -183,6 +191,21 @@ export class Session {
 		);
 		inventory(plan, role);
 		return plan;
+	}
+	/** Record only a named, revision-bound exclusion without creating an upstream instance. */
+	async suspend(role: Role, target: string, name: string): Promise<void> {
+		const reason = suspensionReason(role, name);
+		if (!reason || target !== role) throw new HarnessError("unexpected_module_suspension");
+		this.report.modules.push({
+			name,
+			target,
+			status: "NOT_RUN",
+			result: "SKIPPED",
+			accepted: false,
+			diagnostics: [],
+			suspension: { revision: BASELINE.revision, reason },
+		});
+		await this.save();
 	}
 	async module(
 		role: Role,
@@ -267,7 +290,7 @@ export class Session {
 			if (!isDeepStrictEqual(finalPlan.variant, BASELINE.variants))
 				throw new HarnessError("plan_variant_mismatch");
 			inventory(finalPlan, role);
-			instances(finalPlan, executed);
+			instances(finalPlan, executed, role);
 			this.report.phase = "verify-export";
 			const temp = await mkdtemp(join(this.state, "export-"));
 			try {
@@ -299,7 +322,11 @@ export class Session {
 	async finish(): Promise<void> {
 		if (!this.halted) {
 			this.report.passed =
-				this.report.modules.length > 0 && this.report.modules.every((x) => x.accepted);
+				this.report.modules.some((record) => record.accepted) &&
+				this.report.modules.every(completedRecord);
+			this.report.coverage = this.report.modules.some((record) => record.suspension !== undefined)
+				? "partial"
+				: "complete";
 			this.report.phase = "complete";
 		}
 		try {

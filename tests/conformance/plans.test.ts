@@ -1,7 +1,7 @@
 /** A named Vitest case for every module in the unchanged OpenID Federation conformance baseline. */
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { Session } from "./driver.js";
-import { BASELINE, HarnessError, type PlanInfo, type Profile } from "./policy.js";
+import { BASELINE, HarnessError, type PlanInfo, type Profile, suspensionReason } from "./policy.js";
 
 // biome-ignore lint/suspicious/noUndeclaredEnvVars: Docker runs this project directly, outside Turbo.
 const profile = process.env.OIDF_PROFILE ?? "deployed";
@@ -30,6 +30,12 @@ for (const role of BASELINE.profiles[session.profile]) {
 					// These are unexecuted cases after a fatal error, not accepted upstream skips.
 					if (session.halted) {
 						context.skip("Blocked by an earlier application or infrastructure failure");
+						return;
+					}
+					const reason = suspensionReason(role, module.name);
+					if (reason) {
+						await session.suspend(role, target, module.name);
+						context.skip(`Temporarily suspended: ${reason}`);
 						return;
 					}
 					const record = await session.module(

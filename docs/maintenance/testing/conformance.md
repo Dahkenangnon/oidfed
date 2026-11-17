@@ -93,14 +93,13 @@ role configuration. The library's default remains strict; its outgoing requests 
 Federation §12.1.1.1.1 shows explicit typing in a non-normative example. RFC 9101 §10.8
 describes it as a deployment policy and discusses compatibility with existing Request
 Objects. This configuration preserves the suite's signed requests and all cryptographic,
-claim, trust-chain, and replay validation. It does not patch upstream modules or skip
-OP tests. Run the unchanged plan to identify any remaining interoperability failures.
+claim, trust-chain, and replay validation. It does not patch upstream modules.
 
-The negative OP modules add manual `REVIEW` prompts for error-page assessment even
-when their upstream module result is `PASSED`. The harness rejects these entries
-under its acceptance policy, so upstream module success alone does not make the
-OP profile green. These review requirements remain visible; the typing option
-does not bypass them.
+Thirteen negative OP modules add conditional manual `REVIEW` prompts for error-page
+assessment even when their upstream module result is `PASSED`. These cases are
+temporarily suspended from unattended runs until their reviews can be automated.
+This is a harness limitation, not evidence of a protocol defect in those tests.
+The other seven OP cases remain enabled, including the optional encryption case.
 
 ### Current RP token-response blocker
 
@@ -116,11 +115,25 @@ requires both response fields. The fixture's `openid-client` engine rejects
 the response for its missing Access Token before validating the ID Token.
 
 The harness requires the application to accept a positive flow, even when the
-suite reports success. This run therefore fails. It preserves token validation
-and does not add the missing fields. The upstream token response must be fixed
-and the baseline updated before the positive flow and later ID Token rejection
-tests can establish coverage. The full profile stops at this RP failure; the OP
-plan runs independently with its explicit compatibility setting.
+suite reports success. It preserves token validation and does not add the
+missing fields. Four cases that depend on this token response are temporarily
+suspended: the positive flow, the valid unknown-registration-type flow, and the
+invalid ID Token audience and issuer flows. The first six negative RP cases
+remain enabled. Fixing the upstream token response is necessary before the
+suspended cases can establish their intended coverage.
+
+### Temporary exclusions
+
+The exact 13 OP and four RP names and their reasons are listed beside the
+exclusion policy in [`policy.ts`](../../../tests/conformance/policy.ts). They are
+bound to the pinned suite revision. A revision change fails the policy check
+until these exclusions are reviewed. No module is removed from the baseline
+inventory, and no suspended case creates an upstream test instance.
+
+Vitest shows each excluded case as skipped with its reason. The full profile
+contains 45 named cases: 28 run and 17 are temporarily suspended. The executed
+cases can also produce the capability skips described below. A green run means
+the enabled checks passed; it does not claim coverage of the suspended cases.
 
 The suite also exposed a transport defect in oidfed. OIDC query, form-post,
 and hosted Request Object delivery now repeat the supplied
@@ -144,18 +157,20 @@ Federation extension coverage. Trust Mark tests are tracked in an
 The TypeScript API client creates plans and executes their modules through the
 OpenID Foundation conformance suite's HTTP API. Vitest reports one named test per
 module and target; the protocol assertions run in the unmodified Java suite.
-The harness checks the returned inventory against the baseline. Each module
-must finish with a passing result, apart from the capability skips listed below.
+The harness checks the returned inventory against the baseline. Each enabled
+module must finish with a passing result, apart from the capability skips listed below.
 Modules run sequentially with retries disabled. Warnings, manual-review results,
 unexpected skips, missing logs, interrupted modules, and timeouts fail the run.
 Exports must contain every executed instance and agree with the API results.
+Suspended cases must have no upstream instances or exported results.
 
 Application and infrastructure errors block later cases in that profile.
 Those unexecuted cases count as neither accepted skips nor coverage. Main and
 nightly jobs run each plan independently.
 
-The launcher requires a complete, passing profile report even if the test
-process exits successfully. Missing or partial results fail the run. Export
+The launcher requires a report accounting for every case in the profile even if
+the test process exits successfully. Missing results or unrecorded omissions fail
+the run. Only the named, revision-bound suspensions permit partial coverage. Export
 checks validate ZIP integrity and agreement with API results. They reject
 duplicate instances and JSON entries over 50 MB without extracting archive paths.
 
@@ -165,15 +180,20 @@ Two capability-dependent skips are accepted:
 - The encrypted Request Object test when the OP does not advertise Request
   Object encryption algorithms and methods.
 
-The report records accepted skips as `SKIPPED`. All other skips fail the run,
-including those same Fetch tests on the authority fixtures.
+The report records accepted capability skips as `SKIPPED`. Temporary suspensions
+are recorded separately as `status: "NOT_RUN"`, `result: "SKIPPED"`, and
+`accepted: false`, with their reason and reviewed revision. All other skips fail
+the run, including those same Fetch tests on the authority fixtures.
 
 Reports are written under `.conformance/runs/<run-id>/results/`:
 
 - `build.json` records the suite revision, JAR and fixture digests, oidfed commit,
   working-tree state, runner image, and profile.
 - `summary.json` records each module, fixture, status, result, acceptance decision,
-  and failing condition identifiers. An infrastructure error also fails the run.
+  and failing condition identifiers. `coverage` is `partial` when cases are
+  suspended and `complete` otherwise. `passed` describes the enabled checks;
+  suspensions never count as accepted protocol results. An infrastructure error
+  also fails the run.
 
 Raw suite logs and exports can contain private test keys, assertions, cookies,
 and authorization codes. The harness keeps them in the private run directory
@@ -207,8 +227,9 @@ requirement separately; the workflow does not change repository protection rules
 
 To update the suite, review its source and relevant specification changes,
 update the pinned revision and module inventory together, and run all three
-profiles from a clean environment. Review every allowed skip again. Update
-container digests and pinned harness dependencies deliberately. Record coverage
+profiles from a clean environment. Review every capability skip and temporary
+suspension again, removing exclusions when their underlying limitation is resolved.
+Update container digests and pinned harness dependencies deliberately. Record coverage
 changes. Do not change oidfed's implemented specification drafts just to match
 an upstream test assumption.
 

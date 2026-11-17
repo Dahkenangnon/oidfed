@@ -13,6 +13,7 @@ import { checkExport } from "./exports.js";
 import {
 	ApplicationOutcomeError,
 	BASELINE,
+	completedRecord,
 	diagnostics,
 	ENCRYPTED,
 	ensureComplete,
@@ -23,9 +24,11 @@ import {
 	ModuleFailure,
 	moduleVariant,
 	type PlanInfo,
+	type Profile,
 	type Report,
 	recordError,
 	rpOutcome,
+	suspensionReason,
 } from "./policy.js";
 import { command, ROOT, validateOptions, withEnvironment } from "./run.js";
 
@@ -210,7 +213,13 @@ describe("result policy", () => {
 		);
 		expect(data).not.toContain("secret");
 		expect(data).toContain("ValidateSignature");
-		const report: Report = { revision: "pin", profile: "rp", modules: [], passed: false };
+		const report: Report = {
+			revision: "pin",
+			profile: "rp",
+			modules: [],
+			passed: false,
+			coverage: "partial",
+		};
 		recordError(report, new Error("private assertion"));
 		expect(JSON.stringify(report)).not.toContain("private assertion");
 	});
@@ -219,6 +228,7 @@ describe("result policy", () => {
 			revision: BASELINE.revision,
 			profile: "deployed",
 			passed: true,
+			coverage: "complete",
 			modules: ["ta", "ia", "leaf"].flatMap((target) =>
 				BASELINE.plans.deployed.modules.map((module) => ({
 					name: module.name,
@@ -241,6 +251,152 @@ describe("result policy", () => {
 			{ ...report, modules: report.modules.map((x) => ({ ...x, accepted: false })) },
 		])
 			expect(() => ensureComplete(changed, "deployed")).toThrow("incomplete_report");
+	});
+});
+
+function profileReport(profile: Profile): Report {
+	const modules = BASELINE.profiles[profile].flatMap((role) =>
+		(role === "deployed" ? ["ta", "ia", "leaf"] : [role]).flatMap((target) =>
+			BASELINE.plans[role].modules.map(({ name }) => {
+				const reason = suspensionReason(role, name);
+				return {
+					name,
+					target,
+					status: reason ? "NOT_RUN" : "FINISHED",
+					result: reason ? "SKIPPED" : "PASSED",
+					accepted: !reason,
+					diagnostics: [],
+					...(reason ? { suspension: { revision: BASELINE.revision, reason } } : {}),
+				};
+			}),
+		),
+	);
+	return {
+		revision: BASELINE.revision,
+		profile,
+		passed: true,
+		modules,
+		coverage: modules.some((record) => record.suspension) ? "partial" : "complete",
+	};
+}
+
+describe("temporary conformance suspensions", () => {
+	test("only the 13 named OP and four RP cases are suspended for the reviewed revision", () => {
+		for (const [role, count] of [
+			["deployed", 0],
+			["op", 13],
+			["rp", 4],
+		] as const) {
+			const suspended = BASELINE.plans[role].modules.filter(({ name }) =>
+				suspensionReason(role, name),
+			);
+			expect(suspended).toHaveLength(count);
+			for (const { name } of suspended)
+				for (const other of ["deployed", "rp", "op"] as const)
+					if (other !== role) expect(suspensionReason(other, name)).toBeUndefined();
+		}
+		expect(
+			suspensionReason("op", "openid-federation-automatic-client-registration-invalid-future-case"),
+		).toBeUndefined();
+		expect(() =>
+			suspensionReason("rp", "openid-federation-client-test", "another-revision"),
+		).toThrow("suspensions_require_review");
+	});
+	test("reports include every case while counting suspensions as unexecuted partial coverage", () => {
+		for (const profile of ["deployed", "op", "rp", "full"] as const) {
+			const report = profileReport(profile);
+			ensureComplete(report, profile);
+			expect(report.coverage).toBe(profile === "deployed" ? "complete" : "partial");
+			for (const record of report.modules.filter((m) => m.suspension)) {
+				expect(record.status).toBe("NOT_RUN");
+				expect(record.accepted).toBe(false);
+			}
+		}
+		expect(profileReport("full").modules).toHaveLength(45);
+		expect(profileReport("full").modules.filter((m) => m.suspension)).toHaveLength(17);
+	});
+	test("suspensions cannot conceal failures, unexpected skips, missing cases or changed reasons", () => {
+		const source = profileReport("op");
+		const index = source.modules.findIndex((m) => m.suspension);
+		const active = source.modules.findIndex((m) => !m.suspension);
+		const original = source.modules[index];
+		if (!original) throw new Error("Missing suspended fixture");
+		for (const change of [
+			{ status: "FINISHED", result: "FAILED" },
+			{ accepted: true },
+			{ status: "FINISHED" },
+			{ suspension: { revision: "other", reason: source.modules[index]?.suspension?.reason } },
+			{ suspension: { revision: BASELINE.revision, reason: "different" } },
+			{ diagnostics: [{ source: "ValidateSignature", result: "FAILURE" }] },
+		]) {
+			const report = structuredClone(source);
+			const record = report.modules[index];
+			if (!record) throw new Error("Missing suspended fixture");
+			Object.assign(record, change);
+			expect(() => ensureComplete(report, "op")).toThrow("incomplete_report");
+		}
+		for (const change of [
+			{ status: "NOT_RUN", result: "SKIPPED", accepted: false },
+			{ result: "FAILED", accepted: true },
+			{ result: "SKIPPED", accepted: true },
+		]) {
+			const report = structuredClone(source);
+			const record = report.modules[active];
+			if (!record) throw new Error("Missing active fixture");
+			Object.assign(record, change);
+			expect(() => ensureComplete(report, "op")).toThrow("incomplete_report");
+		}
+		for (const report of [
+			{ ...source, coverage: "complete" },
+			{ ...source, modules: source.modules.slice(1) },
+			{ ...source, modules: [...source.modules, source.modules[0]] },
+		])
+			expect(() => ensureComplete(report, "op")).toThrow("incomplete_report");
+		expect(completedRecord({ ...original, target: "leaf" })).toBe(false);
+	});
+	test("instance checks require all active executions and no suspended or hidden instances", () => {
+		for (const role of ["op", "rp"] as const) {
+			const p: PlanInfo = {
+				id: "plan",
+				modules: BASELINE.plans[role].modules.map(({ name }) => ({
+					testModule: name,
+					instances: suspensionReason(role, name) ? [] : [name],
+				})),
+			};
+			const executed = new Map(
+				p.modules.filter((m) => m.instances?.length).map((m) => [m.testModule, m.testModule]),
+			);
+			instances(p, executed, role);
+			const suspended = p.modules.find((m) => !m.instances?.length);
+			if (!suspended) throw new Error("Missing suspended fixture");
+			delete suspended.instances;
+			instances(p, executed, role);
+			suspended.instances = ["unexpected-instance"];
+			expect(() => instances(p, executed, role)).toThrow("module_execution_mismatch");
+			delete suspended.instances;
+			expect(() =>
+				instances(p, new Map([...executed, [suspended.testModule, "hidden"]]), role),
+			).toThrow("module_execution_mismatch");
+			const first = executed.keys().next().value;
+			if (!first) throw new Error("Missing active fixture");
+			executed.delete(first);
+			expect(() => instances(p, executed, role)).toThrow("module_execution_mismatch");
+		}
+	});
+	test("recording a suspension creates no upstream instance and cannot by itself pass a run", async () => {
+		const path = await temp();
+		const create = vi.spyOn(ConformanceApi.prototype, "createModule");
+		const session = new Session("rp", path, path);
+		await session.suspend("rp", "rp", "openid-federation-client-test");
+		expect(create).not.toHaveBeenCalled();
+		await session.finish();
+		const report = JSON.parse(await readFile(join(path, "summary.json"), "utf8"));
+		expect(report.passed).toBe(false);
+		expect(report.coverage).toBe("partial");
+		expect(report.modules[0].accepted).toBe(false);
+		await expect(session.suspend("rp", "rp", "unexpected")).rejects.toThrow(
+			"unexpected_module_suspension",
+		);
 	});
 });
 
