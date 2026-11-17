@@ -7530,6 +7530,49 @@ export default (QUnit: QUnit) => {
 				}
 			});
 
+		test("Request Object typing distinguishes strict and compatible policies", async (t) => {
+			const { privateKey } = await generateSigningKey("ES256");
+			const decoded = decodeEntityStatement(await buildRequestObject(privateKey));
+			if (!decoded.ok) throw new Error("fixture");
+			for (const typ of [
+				RequestObjectTyp,
+				"APPLICATION/OAUTH-AUTHZ-REQ+JWT",
+				"JWT",
+				"application/jwt",
+				undefined,
+				"entity-statement+jwt",
+				"",
+				null,
+				42,
+			]) {
+				const jwt = await signProtocolFixture(decoded.value.payload, new JwkSigner(privateKey), {
+					extraHeaders: { typ },
+				});
+				const explicit = typ === RequestObjectTyp || typ === "APPLICATION/OAUTH-AUTHZ-REQ+JWT";
+				const compatible =
+					explicit || typ === "JWT" || typ === "application/jwt" || typ === undefined;
+				t.equal(
+					validateAutomaticRegistrationRequest(jwt, ctx).ok,
+					explicit,
+					`strict: ${String(typ)}`,
+				);
+				t.equal(
+					validateAutomaticRegistrationRequest(jwt, { ...ctx, requestObjectTyping: "compatible" })
+						.ok,
+					compatible,
+					`compatible: ${String(typ)}`,
+				);
+			}
+			const invalidPolicy = {
+				...ctx,
+				requestObjectTyping: "unknown" as AutomaticRegistrationContext["requestObjectTyping"],
+			};
+			t.false(
+				validateAutomaticRegistrationRequest(await buildRequestObject(privateKey), invalidPolicy)
+					.ok,
+			);
+		});
+
 		test("rejects wrong typ header", async (t) => {
 			const { privateKey } = await generateSigningKey("ES256");
 			const result = validateAutomaticRegistrationRequest(

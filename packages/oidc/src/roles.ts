@@ -422,6 +422,8 @@ export class OidcRelyingPartyRole extends ClientRole {
 
 /** Metadata is copied; initialize attaches registration routes to a host. Configuration errors throw; protocol processing reports failures through its Result or HTTP response. */
 export interface OidcProviderRoleConfig extends RegistrationAccreditationPolicy {
+	/** Automatic registration and PAR typing policy; method options override this strict default. */
+	readonly requestObjectTyping?: ProcessAutomaticRegistrationOptions["requestObjectTyping"];
 	/** Opt in to adapter-issued read-only registration access; the host enforces token permissions. Default disabled. */
 	readonly registrationManagement?: ExplicitRegistrationHandlerConfig["registrationManagement"];
 	readonly options?: FederationOptions;
@@ -470,6 +472,8 @@ abstract class ProviderRole implements EntityRole {
 				replayStore: this.config.replayStore,
 				providerMetadataType: this.type,
 				providerMetadata: options.providerMetadata ?? this.metadata,
+				requestObjectTyping:
+					options.requestObjectTyping ?? this.config.requestObjectTyping ?? "strict",
 				...(this.config.trustMarkRequirements
 					? { trustMarkRequirements: structuredClone(this.config.trustMarkRequirements) }
 					: {}),
@@ -607,6 +611,8 @@ abstract class ProviderRole implements EntityRole {
 			replayStore,
 			providerMetadataType: this.type,
 			providerMetadata: options?.providerMetadata ?? this.metadata,
+			requestObjectTyping:
+				options?.requestObjectTyping ?? this.config.requestObjectTyping ?? "strict",
 		});
 
 		return this.persistAutomaticRegistration(result, effectiveOptions);

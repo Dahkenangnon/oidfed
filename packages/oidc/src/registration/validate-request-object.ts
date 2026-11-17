@@ -25,7 +25,7 @@ import type {
  * Check an incoming Authorization Request Object before automatic registration.
  *
  * Federation claim rules and oidfed's typing policy:
- * - `typ` must be `oauth-authz-req+jwt` (oidfed policy; RFC 9101 §10.8).
+ * - `typ` follows the configured Request Object typing policy (strict by default).
  * - `sub` MUST NOT be present.
  * - `client_id` is REQUIRED and MUST equal `iss`.
  * - `aud` MUST be the OP's Entity Identifier as a single string.
@@ -60,11 +60,27 @@ export function validateAutomaticRegistrationRequest(
 		);
 	const claims = payload as Record<string, unknown>;
 
-	if (header.typ !== RequestObjectTyp) {
+	const typing = context.requestObjectTyping ?? "strict";
+	if (typing !== "strict" && typing !== "compatible")
+		return err(
+			federationError(FederationErrorCode.InvalidRequest, "Invalid Request Object typing policy"),
+		);
+
+	// Federation §12.1.1.1.1 illustrates this typ in a non-normative example.
+	// RFC 9101 §10.8 permits explicit typing as a deployment policy and describes
+	// compatibility with existing Request Objects. Keep legacy acceptance opt-in.
+	// RFC 7515 §4.1.9 makes media types case-insensitive and permits application/.
+	const typ =
+		typeof header.typ === "string"
+			? header.typ.toLowerCase().replace(/^application\//, "")
+			: undefined;
+	const explicitlyTyped = typ === RequestObjectTyp;
+	const legacy = typing === "compatible" && (header.typ === undefined || typ === "jwt");
+	if (!explicitlyTyped && !legacy) {
 		return err(
 			federationError(
 				FederationErrorCode.InvalidRequest,
-				`Invalid typ header: expected '${RequestObjectTyp}', got '${String(header.typ)}'`,
+				"Request Object typ does not satisfy the configured typing policy",
 			),
 		);
 	}
@@ -258,6 +274,7 @@ export function validateAutomaticRegistrationRequest(
 		jti,
 		...(claims.iat !== undefined ? { iat: claims.iat as number } : {}),
 		claims,
+		...(typeof header.typ === "string" ? { headerTyp: header.typ } : {}),
 		...(trustChainHeader !== undefined ? { trustChainHeader } : {}),
 		...(peerTrustChainHeader !== undefined ? { peerTrustChainHeader } : {}),
 	};

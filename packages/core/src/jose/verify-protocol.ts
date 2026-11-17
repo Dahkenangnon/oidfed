@@ -8,7 +8,8 @@ import type { Clock } from "../types.js";
 import { isValidAlgorithm } from "./keys.js";
 
 export interface VerifyProtocolJwtOptions {
-	expectedTyp: string;
+	/** Exact protected typ; undefined requires the header to be absent, rather than ignoring it. */
+	expectedTyp: string | undefined;
 	/** Application policy, in addition to supported asymmetric algorithms. */
 	allowedAlgorithms?: readonly string[];
 	/** Require kid by default; single-key permits omission for a set containing one key. */
@@ -71,7 +72,7 @@ export async function verifyProtocolJwt(
 
 		const verificationOptions: jose.JWTVerifyOptions = {
 			algorithms: [header.alg],
-			typ: options.expectedTyp,
+			...(options.expectedTyp !== undefined ? { typ: options.expectedTyp } : {}),
 			clockTolerance: options.clockSkewSeconds ?? DEFAULT_CLOCK_SKEW_SECONDS,
 			...(options.clock ? { currentDate: new Date(options.clock.now() * 1_000) } : {}),
 		};

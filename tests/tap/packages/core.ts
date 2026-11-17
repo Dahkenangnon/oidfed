@@ -5351,6 +5351,38 @@ export default (QUnit: QUnit) => {
 			}
 		});
 
+		test("an absent protocol typ expectation still binds the header and signature", async (t) => {
+			const pair = await generateSigningKey();
+			const other = await generateSigningKey();
+			const options = { expectedTyp: undefined, clock: { now: () => 1500 } };
+			const untyped = await signProtocolFixture({ exp: 2000 }, new JwkSigner(pair.privateKey), {
+				extraHeaders: { typ: undefined },
+			});
+			t.true((await CorePublic.verifyProtocolJwt(untyped, { keys: [pair.publicKey] }, options)).ok);
+			t.false(
+				(
+					await CorePublic.verifyProtocolJwt(
+						untyped,
+						{ keys: [pair.publicKey] },
+						{ ...options, expectedTyp: "oauth-authz-req+jwt" },
+					)
+				).ok,
+			);
+			t.false(
+				(
+					await CorePublic.verifyProtocolJwt(
+						untyped,
+						{ keys: [{ ...other.publicKey, kid: pair.publicKey.kid }] },
+						options,
+					)
+				).ok,
+			);
+			const typed = await signProtocolFixture({ exp: 2000 }, new JwkSigner(pair.privateKey), {
+				typ: "JWT",
+			});
+			t.false((await CorePublic.verifyProtocolJwt(typed, { keys: [pair.publicKey] }, options)).ok);
+		});
+
 		test("permits an absent header identifier only for a single protocol key", async (t) => {
 			const pair = await generateSigningKey();
 			const other = await generateSigningKey();

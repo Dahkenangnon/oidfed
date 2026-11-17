@@ -171,6 +171,66 @@ async function assertionRequest(f: Awaited<ReturnType<typeof fixture>>): Promise
 export default (Q: QUnit) => {
 	Q.module("oidc / pushed authorization proof modes", () => {
 		Q.test(
+			"OIDC and OAuth typing policies apply to authorization and PAR without consuming rejected proofs",
+			async (t) => {
+				for (const oidc of [false, true]) {
+					const f = await fixture(oidc, { role: { requestObjectTyping: "compatible" } });
+					for (const delivery of ["authorization", "par"] as const) {
+						for (const typ of ["JWT", undefined]) {
+							const original = await signedRequest(f);
+							const form = new URLSearchParams(await original.text());
+							const decoded = C.decodeEntityStatement(form.get("request")!);
+							if (!decoded.ok) throw new Error("fixture");
+							const jwt = await new C.JwkSigner(f.keys.b.privateKey).signJwt(
+								new TextEncoder().encode(JSON.stringify(decoded.value.payload)),
+								{ ...decoded.value.header, typ },
+							);
+							const run = (requestObjectTyping?: "strict" | "compatible") => {
+								const options = requestObjectTyping ? { requestObjectTyping } : {};
+								return delivery === "authorization"
+									? f.server.processAutomaticRegistration(jwt, options)
+									: f.server.processPushedAuthorizationRequest(
+											new Request(`${f.ids.a}/par`, {
+												method: "POST",
+												headers: { "content-type": "application/x-www-form-urlencoded" },
+												body: new URLSearchParams({ client_id: f.ids.subject, request: jwt }),
+											}),
+											options,
+										);
+							};
+							const before = f.registered();
+							t.false((await run("strict")).ok, "per-call strict overrides compatible role policy");
+							t.equal(f.registered(), before, "rejected policy has no persistence side effect");
+							t.true((await run()).ok, "the same proof works under configured compatibility");
+							t.false((await run()).ok, "compatibility retains one-time replay enforcement");
+						}
+					}
+					const strict = await fixture(oidc);
+					const original = await signedRequest(strict);
+					const decoded = C.decodeEntityStatement(
+						new URLSearchParams(await original.text()).get("request")!,
+					);
+					if (!decoded.ok) throw new Error("fixture");
+					const jwt = await new C.JwkSigner(strict.keys.b.privateKey).signJwt(
+						new TextEncoder().encode(JSON.stringify(decoded.value.payload)),
+						{ ...decoded.value.header, typ: "JWT" },
+					);
+					t.false(
+						(await strict.server.processAutomaticRegistration(jwt)).ok,
+						"default role policy remains strict",
+					);
+					t.true(
+						(
+							await strict.server.processAutomaticRegistration(jwt, {
+								requestObjectTyping: "compatible",
+							})
+						).ok,
+						"per-call compatibility is available without configuring the role",
+					);
+				}
+			},
+		);
+		Q.test(
 			"PAR retains JSON claims and repeated resource parameters for both profiles",
 			async (t) => {
 				for (const oidc of [false, true]) {

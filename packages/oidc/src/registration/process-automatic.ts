@@ -21,7 +21,6 @@ import {
 	type ValidatedTrustChain,
 	verifyProtocolJwt,
 } from "@oidfed/core";
-import { RequestObjectTyp } from "../constants.js";
 import { effectiveMetadata } from "../metadata.js";
 import {
 	checkRegistrationAccreditation,
@@ -34,6 +33,7 @@ import {
 } from "./helpers.js";
 import { registrationProfile } from "./profile.js";
 import { requestObjectAlgorithms } from "./request-policy.js";
+import type { AutomaticRegistrationContext } from "./types.js";
 import { validateAutomaticRegistrationRequest } from "./validate-request-object.js";
 
 export interface ProcessedRegistration {
@@ -62,6 +62,8 @@ export interface ProcessAutomaticRegistrationOptions
 		RegistrationAccreditationPolicy {
 	/** The OP's Entity Identifier, REQUIRED for `aud` validation to prevent cross-OP replay. */
 	opEntityId: EntityId;
+	/** Request Object typing policy. Defaults to strict; compatible permits legacy JWT headers. */
+	requestObjectTyping?: AutomaticRegistrationContext["requestObjectTyping"];
 	/** Server role selecting the registration protocol. Defaults to OIDC. */
 	providerMetadataType?: "openid_provider" | "oauth_authorization_server";
 	/** Effective provider metadata when supplied by a role or host. */
@@ -93,6 +95,9 @@ export async function processAutomaticRegistration(
 
 	const validated = validateAutomaticRegistrationRequest(requestObjectJwt, {
 		opEntityId: options.opEntityId,
+		...(options.requestObjectTyping !== undefined
+			? { requestObjectTyping: options.requestObjectTyping }
+			: {}),
 		...(options.clockSkewSeconds !== undefined
 			? { clockSkewSeconds: options.clockSkewSeconds }
 			: {}),
@@ -127,7 +132,9 @@ export async function processAutomaticRegistration(
 		requestObjectJwt,
 		{ keys: protocolKeys.keys },
 		{
-			expectedTyp: RequestObjectTyp,
+			// Bind verification to the policy-checked header on this same JWT. An undefined
+			// expectation requires absence; it does not accept an arbitrary JWT type.
+			expectedTyp: validated.value.headerTyp,
 			allowedAlgorithms: algorithms.value,
 			keyIdPolicy: "single-key",
 			...(options.clock ? { clock: options.clock } : {}),

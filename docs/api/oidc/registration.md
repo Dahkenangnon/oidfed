@@ -73,6 +73,8 @@ Provider identity, clock, and leeway used for Request Object claim checks. It is
 interface AutomaticRegistrationContext {
 	/** The OP's own Entity Identifier */
 	readonly opEntityId: EntityId;
+	/** Request Object typing: strict by default; compatible also permits generic JWT or absent typ. */
+	readonly requestObjectTyping?: "strict" | "compatible";
 	/** Maximum allowed clock skew in seconds (default: 60) */
 	readonly clockSkewSeconds?: number;
 	/** NumericDate clock used for expiry validation. */
@@ -85,6 +87,7 @@ Fields (including inherited fields):
 | Field | Declared type | Description |
 |---|---|---|
 | `opEntityId` | `EntityId` | The OP's own Entity Identifier |
+| `requestObjectTyping?` | `"strict" \| "compatible"` | Strict requires oauth-authz-req+jwt; compatible additionally accepts generic JWT typing or an absent typ. Media-type case and application/ prefix equivalence apply. Default strict. |
 | `clockSkewSeconds?` | `number` | Allowed time-claim leeway in seconds; the default verifier allowance is 60 seconds. |
 | `clock?` | `Clock` | NumericDate time source; omitted clocks use the runtime's current time. |
 
@@ -330,6 +333,8 @@ Validation inputs used by provider automatic-registration processing. The role s
 interface ProcessAutomaticRegistrationOptions extends FederationOptions, RegistrationAccreditationPolicy {
 	/** The OP's own Entity Identifier — REQUIRED to prevent cross-OP replay via `aud` validation. */
 	opEntityId: EntityId;
+	/** Request Object typing policy. Defaults to strict; compatible permits legacy JWT headers. */
+	requestObjectTyping?: AutomaticRegistrationContext["requestObjectTyping"];
 	/** Server role selecting the registration protocol. Defaults to OIDC. */
 	providerMetadataType?: "openid_provider" | "oauth_authorization_server";
 	/** Effective provider metadata when supplied by a role or host. */
@@ -344,6 +349,7 @@ Fields (including inherited fields):
 | Field | Declared type | Description |
 |---|---|---|
 | `opEntityId` | `EntityId` | The OP's own Entity Identifier — REQUIRED to prevent cross-OP replay via `aud` validation. |
+| `requestObjectTyping?` | `AutomaticRegistrationContext["requestObjectTyping"]` | Incoming Request Object typing policy. Defaults to strict. |
 | `providerMetadataType?` | `"openid_provider" \| "oauth_authorization_server"` | Server role selecting the registration protocol. Defaults to OIDC. |
 | `providerMetadata?` | `Readonly<Record<string, unknown>>` | Effective provider metadata when supplied by a role or host. |
 | `replayStore` | `ReplayStore` | Atomic replay protection for one-time request proofs; processing automatic registration or PAR requires a configured store. |
@@ -543,6 +549,7 @@ Fields (including inherited fields):
 | `clientCertificate?` | `( request: Request, signal: AbortSignal, ) => string \| undefined \| Promise<string \| undefined>` | Trusted host TLS integration must return the certificate proven by the connection (base64 DER). |
 | `clientAttestation?` | `Omit<AuthenticateClientAttestationOptions, "audience" \| "clientId">` | Host-supplied attester trust, freshness, replay, and acceptance policy for PAR attestation authentication. The processing role supplies the provider audience and client identity. |
 | `opEntityId` | `EntityId` | The OP's own Entity Identifier — REQUIRED to prevent cross-OP replay via `aud` validation. |
+| `requestObjectTyping?` | `AutomaticRegistrationContext["requestObjectTyping"]` | Incoming Request Object typing policy. Defaults to strict. |
 | `providerMetadataType?` | `"openid_provider" \| "oauth_authorization_server"` | Server role selecting the registration protocol. Defaults to OIDC. |
 | `replayStore` | `ReplayStore` | Atomic replay protection for one-time request proofs; processing automatic registration or PAR requires a configured store. |
 | `trustResolution?` | `import("./trust-chain/assessment.js").TrustResolutionSource` | Acquisition source; protocol consumers still validate the returned subject chain. |
@@ -781,6 +788,8 @@ interface ValidatedRequestObject {
 	readonly jti: string;
 	/** Issued-at timestamp (if present) */
 	readonly iat?: number;
+	/** Protected typ accepted by the typing policy; omitted when the header is absent. */
+	readonly headerTyp?: string;
 	/** All decoded JWT payload claims */
 	readonly claims: Readonly<Record<string, unknown>>;
 	/** Trust chain from JWT header (if present) */
@@ -794,6 +803,7 @@ Fields (including inherited fields):
 
 | Field | Declared type | Description |
 |---|---|---|
+| `headerTyp?` | `string` | Original protected typ accepted by the structural typing policy; absent for an untyped Request Object. It does not itself prove signature validation. |
 | `rpEntityId` | `EntityId` | Registered client Entity Identifier; the RP field name also applies to the OAuth client profile. |
 | `opEntityId` | `string` | The OP's Entity Identifier (from `aud`) |
 | `exp` | `number` | Expiration time as a finite NumericDate in seconds since the Unix epoch. |

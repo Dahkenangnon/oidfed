@@ -277,6 +277,7 @@ Fields (including inherited fields):
 
 | Field | Declared type | Description |
 |---|---|---|
+| `requestObjectTyping?` | `ProcessAutomaticRegistrationOptions["requestObjectTyping"]` | Automatic registration and signed PAR typing policy. Default strict; method options override this setting. Applies to both provider classes. |
 | `registrationManagement?` | `ExplicitRegistrationHandlerConfig["registrationManagement"]` | Opt in to adapter-issued read-only registration access; the host enforces token permissions. Default disabled. |
 | `options?` | `FederationOptions` | Federation transport, time, validation, and resource settings; role options override host options, and method options override role options. |
 | `registrationPath?` | `string` | Explicit-registration route, defaulting to /registration. Use a leading-slash path or an absolute URL for host route integration. |
@@ -927,6 +928,8 @@ Provider role settings, also used by OAuthAuthorizationServerRole. Initializatio
 
 ```typescript signature
 interface OidcProviderRoleConfig extends RegistrationAccreditationPolicy {
+	/** Automatic registration and PAR typing policy; method options override this strict default. */
+	readonly requestObjectTyping?: ProcessAutomaticRegistrationOptions["requestObjectTyping"];
 	/** Opt in to adapter-issued read-only registration access; the host enforces token permissions. Default disabled. */
 	readonly registrationManagement?: ExplicitRegistrationHandlerConfig["registrationManagement"];
 	readonly options?: FederationOptions;
@@ -947,6 +950,7 @@ Fields (including inherited fields):
 
 | Field | Declared type | Description |
 |---|---|---|
+| `requestObjectTyping?` | `ProcessAutomaticRegistrationOptions["requestObjectTyping"]` | Automatic registration and signed PAR typing policy. Default strict; method options override this setting. Applies to both provider classes. |
 | `registrationManagement?` | `ExplicitRegistrationHandlerConfig["registrationManagement"]` | Opt in to adapter-issued read-only registration access; the host enforces token permissions. Default disabled. |
 | `options?` | `FederationOptions` | Federation transport, time, validation, and resource settings; role options override host options, and method options override role options. |
 | `registrationPath?` | `string` | Explicit-registration route, defaulting to /registration. Use a leading-slash path or an absolute URL for host route integration. |

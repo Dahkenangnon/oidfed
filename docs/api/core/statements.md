@@ -575,7 +575,8 @@ Expected type, identity, algorithms, and claim checks for a protocol JWT.
 
 ```typescript signature
 interface VerifyProtocolJwtOptions {
-	expectedTyp: string;
+	/** Exact protected typ; undefined requires the header to be absent, rather than ignoring it. */
+	expectedTyp: string | undefined;
 	/** Application policy, in addition to supported asymmetric algorithms. */
 	allowedAlgorithms?: readonly string[];
 	/** Require kid by default; single-key permits omission for a set containing one key. */
@@ -589,7 +590,7 @@ Fields (including inherited fields):
 
 | Field | Declared type | Description |
 |---|---|---|
-| `expectedTyp` | `string` | Exact JWT typ required by this verifier. |
+| `expectedTyp` | `string \| undefined` | Exact protected JWT typ; explicitly passing undefined requires the header to be absent. This does not disable signature, algorithm, key, or time validation. |
 | `allowedAlgorithms?` | `readonly string[]` | Optional algorithm allowlist, applied in addition to the library's supported algorithms. |
 | `keyIdPolicy?` | `"required" \| "single-key"` | Require kid by default; single-key permits omission for a set containing one key. |
 | `clockSkewSeconds?` | `number` | Allowed time-claim leeway in seconds; the default verifier allowance is 60 seconds. |
