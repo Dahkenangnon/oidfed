@@ -10,15 +10,13 @@ import { build } from "esbuild";
 import ts from "typescript";
 import { parse as parseYaml } from "yaml";
 import { packages, sources, root, workflowFiles } from "./scope.mjs";
-import { bin, semgrepBin, tools } from "./install.mjs";
+import { bin, tools } from "./install.mjs";
 import { productionGraph, cycloneDxInput, baselineFiles } from "./dependency-graph.mjs";
 import { knownCycles } from "./known-cycles.mjs";
 
 const environment = {
 	...process.env,
-	PATH: [bin, semgrepBin, process.env.PATH].filter(Boolean).join(delimiter),
-	SEMGREP_SEND_METRICS: "off",
-	SEMGREP_ENABLE_VERSION_CHECK: "0",
+	PATH: [bin, process.env.PATH].filter(Boolean).join(delimiter),
 };
 
 function run(command, args, options = {}) {
@@ -30,10 +28,9 @@ function run(command, args, options = {}) {
 	});
 	if (result.error) {
 		if (result.error.code === "ENOENT") {
-			const setup =
-				command === "semgrep" || Object.hasOwn(tools, command)
-					? "pnpm security:install"
-					: "pnpm install --frozen-lockfile";
+			const setup = Object.hasOwn(tools, command)
+				? "pnpm security:install"
+				: "pnpm install --frozen-lockfile";
 			throw new Error(`Required security tool '${command}' was not found. Run ${setup}.`, {
 				cause: result.error,
 			});
@@ -264,19 +261,11 @@ async function fuzz(temporary) {
 
 async function main(command) {
 	const temporary = await mkdtemp(join(tmpdir(), "oidfed-security-"));
-	environment.SEMGREP_SETTINGS_FILE = join(temporary, "semgrep-settings.yml");
-	environment.SEMGREP_LOG_FILE = join(temporary, "semgrep.log");
 	let complete = false;
 	try {
 		switch (command) {
 			case "lint":
-				pnpm(
-					"eslint",
-					"--no-config-lookup",
-					"-c",
-					"scripts/security/eslint.config.mjs",
-					...sources,
-				);
+				await (await import("./lint.mjs")).lintSources();
 				break;
 			case "architecture":
 				await architecture();
@@ -302,27 +291,6 @@ async function main(command) {
 					"--min-lines",
 					"15",
 				);
-				break;
-			case "semgrep":
-				run("semgrep", [
-					"--metrics",
-					"off",
-					"--disable-version-check",
-					"--test",
-					"--config",
-					"scripts/security/semgrep.yml",
-					"tests/security/semgrep.ts",
-				]);
-				run("semgrep", [
-					"scan",
-					"--metrics",
-					"off",
-					"--disable-version-check",
-					"--error",
-					"--config",
-					"scripts/security/semgrep.yml",
-					...sources,
-				]);
 				break;
 			case "secrets":
 				for (const name of packages)
@@ -383,7 +351,7 @@ async function main(command) {
 			}
 			default:
 				throw new Error(
-					"Choose lint, architecture, advisory, semgrep, secrets, dependencies, artifacts, fuzz, mutation, or workflows",
+					"Choose lint, architecture, advisory, secrets, dependencies, artifacts, fuzz, mutation, or workflows",
 				);
 		}
 		complete = true;

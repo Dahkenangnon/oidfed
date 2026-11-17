@@ -19,6 +19,10 @@ test("source tools share the five-package allowlist", async () => {
 	assert.deepEqual(packages, ["core", "authority", "leaf", "oidc", "wallet"]);
 	assert.deepEqual(
 		config[0].files,
+		sources.map((path) => `${path}/**/*.{ts,tsx,js,jsx,mjs,cjs}`),
+	);
+	assert.deepEqual(
+		config[1].files,
 		sources.map((path) => `${path}/**/*.ts`),
 	);
 	assert.deepEqual(

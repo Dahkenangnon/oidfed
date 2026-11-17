@@ -50,9 +50,20 @@ async function scannerWorkspace(prefix = "oidfed-runner-scanner-") {
 		"install.mjs",
 		"dependency-graph.mjs",
 		"known-cycles.mjs",
+		"lint.mjs",
+		"eslint.config.mjs",
+		"eslint-rules.mjs",
 	])
 		await copyFile(join(root, "scripts/security", file), join(scripts, file));
-	for (const dependency of ["esbuild", "typescript", "yaml"])
+	for (const dependency of [
+		"esbuild",
+		"typescript",
+		"yaml",
+		"eslint",
+		"typescript-eslint",
+		"eslint-plugin-regexp",
+		"eslint-plugin-jsdoc",
+	])
 		await symlink(
 			join(root, "node_modules", dependency),
 			join(temporary, "node_modules", dependency),
@@ -60,6 +71,75 @@ async function scannerWorkspace(prefix = "oidfed-runner-scanner-") {
 		);
 	return temporary;
 }
+
+test("security lint scans all five packages, including JavaScript, and fails closed", async () => {
+	const temporary = await scannerWorkspace();
+	try {
+		await writeFile(
+			join(temporary, "tsconfig.json"),
+			JSON.stringify({
+				compilerOptions: { strict: true, target: "ES2022", module: "ESNext" },
+				include: ["packages"],
+			}),
+		);
+		for (const name of ["core", "authority", "leaf", "oidc", "wallet"]) {
+			const directory = join(temporary, "packages", name, "src");
+			await mkdir(directory, { recursive: true });
+			await writeFile(join(directory, "index.ts"), "export const safe = 1;\n");
+		}
+		await mkdir(join(temporary, "apps/example/src"), { recursive: true });
+		await writeFile(join(temporary, "apps/example/src/index.ts"), "invalid syntax (((");
+		const lint = () =>
+			spawnSync(process.execPath, ["scripts/security/run.mjs", "lint"], {
+				cwd: temporary,
+				encoding: "utf8",
+			});
+		let result = lint();
+		assert.equal(result.status, 0, result.stderr);
+		assert.match(result.stdout, /5 source files across all five/);
+		const bad = join(temporary, "packages/core/src/trust-chain/fetch.js");
+		await mkdir(join(temporary, "packages/core/src/trust-chain"));
+		await writeFile(
+			bad,
+			"fetch('https://entity.example');\nglobalThis.fetch('https://entity.example');\n",
+		);
+		result = lint();
+		assert.notEqual(result.status, 0);
+		assert.equal(result.stdout.match(/protocol\/no-unbounded-fetch/g)?.length, 2);
+		await rm(bad);
+		const source = join(temporary, "packages/core/src/index.ts");
+		await writeFile(
+			source,
+			`
+export {};
+declare const parameters: URLSearchParams;
+declare const registry: Record<string, () => void>;
+const key = (parameters.get as (name: string) => string)("method");
+registry[key]();
+const box: Record<string, string> = {};
+box.method = parameters.get("method")!;
+registry[box["method"]]();
+(Function as typeof Function)("return 1");
+`,
+		);
+		result = lint();
+		assert.notEqual(result.status, 0);
+		assert.equal(result.stdout.match(/protocol\/no-inherited-auth-dispatch/g)?.length, 2);
+		assert.equal(result.stdout.match(/protocol\/no-wrapped-function-constructor/g)?.length, 1);
+		await writeFile(source, "export const invalid = (((");
+		result = lint();
+		assert.notEqual(result.status, 0);
+		assert.match(result.stdout, /Parsing error/);
+		await writeFile(source, "export const safe = 1;\n");
+		await rm(join(temporary, "packages/wallet/src/index.ts"));
+		result = lint();
+		assert.notEqual(result.status, 0, "an empty package cannot silently pass");
+		await rm(join(temporary, "scripts/security/eslint.config.mjs"));
+		assert.notEqual(lint().status, 0, "a missing scanner configuration cannot silently pass");
+	} finally {
+		await rm(temporary, { recursive: true, force: true });
+	}
+});
 
 test("the runner executes and rejects unknown commands in encoded checkout paths", async () => {
 	const temporary = await scannerWorkspace("oidfed runner é-");
@@ -240,50 +320,6 @@ test("invalid commits and corrupt or incomplete graphs fail without a scan", asy
 		}
 	} finally {
 		await rm(fixture.temporary, { recursive: true, force: true });
-	}
-});
-
-test("Semgrep is discovered in the workspace cache without a PATH override", async () => {
-	const temporary = await scannerWorkspace();
-	try {
-		const scannerBin = join(temporary, "node_modules/.cache/spec-security/semgrep/bin");
-		await mkdir(scannerBin, { recursive: true });
-		await writeFile(
-			join(scannerBin, "semgrep"),
-			'#!/bin/sh\nprintf "%s\\n" "$*" >> "$SCANNER_CALLS"\n',
-			{ mode: 0o755 },
-		);
-		const calls = join(temporary, "calls.txt");
-		const result = spawnSync(process.execPath, ["scripts/security/run.mjs", "semgrep"], {
-			cwd: temporary,
-			env: { ...process.env, PATH: temporary, SCANNER_CALLS: calls },
-			encoding: "utf8",
-		});
-		assert.equal(result.status, 0, result.stderr);
-		const invocations = (await readFile(calls, "utf8")).trim().split("\n");
-		assert.equal(invocations.length, 2, "both rule fixtures and package sources are checked");
-		assert.match(invocations[0], /--test/);
-		assert.match(invocations[1], /scan.*--error/);
-		for (const name of ["core", "authority", "leaf", "oidc", "wallet"])
-			assert.ok(invocations[1].includes(`packages/${name}/src`));
-	} finally {
-		await rm(temporary, { recursive: true, force: true });
-	}
-});
-
-test("a missing Semgrep installation explains how to install the tools", async () => {
-	const temporary = await scannerWorkspace();
-	try {
-		const result = spawnSync(process.execPath, ["scripts/security/run.mjs", "semgrep"], {
-			cwd: temporary,
-			env: { ...process.env, PATH: temporary },
-			encoding: "utf8",
-		});
-		assert.notEqual(result.status, 0);
-		assert.match(result.stderr, /semgrep.*not found/i);
-		assert.match(result.stderr, /pnpm security:install/);
-	} finally {
-		await rm(temporary, { recursive: true, force: true });
 	}
 });
 

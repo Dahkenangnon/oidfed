@@ -25,7 +25,6 @@ function ciApi({ failure, pending = false, foreign = false, missing } = {}) {
 			.filter((name) => !name.startsWith("Apps ")),
 		"Scoped source, dependencies, and artifacts",
 		"CodeQL security-extended (five packages)",
-		...["3.12", "3.13", "3.14"].map((v) => `Semgrep hash lock (Python ${v})`),
 	];
 	return async (path) =>
 		path.includes("/jobs?")
@@ -67,7 +66,7 @@ test("release CI gate is exact-commit and rejects failed, foreign or incomplete 
 });
 
 test("completed CI runs identify missing required jobs without waiting", async () => {
-	const missing = "Semgrep hash lock (Python 3.12)";
+	const missing = "Scoped source, dependencies, and artifacts";
 	await assert.rejects(
 		waitForSourceCi(SHA, {
 			api: ciApi({ missing }),
@@ -78,7 +77,7 @@ test("completed CI runs identify missing required jobs without waiting", async (
 });
 
 test("CI timeouts distinguish missing jobs from pending jobs and allow jobs to appear", async () => {
-	const missing = "Semgrep hash lock (Python 3.12)";
+	const missing = "Scoped source, dependencies, and artifacts";
 	await assert.rejects(
 		waitForSourceCi(SHA, {
 			api: ciApi({ pending: true, missing }),
@@ -103,6 +102,14 @@ test("CI timeouts distinguish missing jobs from pending jobs and allow jobs to a
 test("CLI release preparation triggers the required security workflow", () => {
 	for (const event of ["push", "pull_request"])
 		assert.ok(security.on[event].paths.includes("tools/cli/**"), event);
+});
+
+test("the scoped security job runs rule fixtures and source checks before release acceptance", () => {
+	const commands = security.jobs.checks.steps.flatMap((step) => step.run ? [step.run] : []);
+	assert.ok(commands.includes("pnpm security:test"));
+	assert.ok(commands.includes("pnpm security:lint"));
+	assert.ok(commands.indexOf("pnpm security:test") < commands.indexOf("pnpm security:lint"));
+	assert.equal(Object.values(security.jobs).filter((job) => job.strategy?.matrix?.python).length, 0);
 });
 
 test("saved runs require the correct repository, workflow, workflow commit and completed verifier", async () => {

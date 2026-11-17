@@ -10408,8 +10408,10 @@ export default (QUnit: QUnit) => {
 					t.false(result.ok, JSON.stringify(naming));
 					if (!result.ok) {
 						t.equal(result.error.code, InternalErrorCode.ConstraintViolation);
-						t.true(result.error.description.includes(intermediate));
-						t.true(result.error.description.includes("position 2"));
+						t.equal(
+							result.error.description,
+							`naming_constraints violated by entity '${intermediate}' at position 2`,
+						);
 					}
 				}
 			});
@@ -24650,7 +24652,10 @@ export default (QUnit: QUnit) => {
 				const options = {
 					...f.options,
 					httpClient: (async (url, init) => {
-						if (String(url).startsWith("https://unavailable.example"))
+						if (
+							new URL(url instanceof Request ? url.url : url.toString()).origin ===
+							"https://unavailable.example"
+						)
 							throw new Error("Unavailable alternative");
 						return f.graph.httpClient(url, init);
 					}) satisfies HttpClient,

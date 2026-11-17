@@ -1,7 +1,7 @@
 /** Install pinned security tools in the workspace's ignored tool cache. */
 
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, writeFile, chmod, rm, copyFile, access } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile, chmod, rm, copyFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
@@ -42,58 +42,6 @@ export const tools = Object.freeze({
 	},
 });
 export const bin = join(root, "node_modules/.cache/spec-security/bin");
-export const semgrepEnvironment = join(root, "node_modules/.cache/spec-security/semgrep");
-export const semgrepBin = join(semgrepEnvironment, "bin");
-const SEMGREP_VERSION = "1.185.0";
-
-/** Resolve only the reviewed interpreter-specific dependency locks. */
-export function semgrepRequirements(version) {
-	if (!["3.12", "3.13", "3.14"].includes(version))
-		throw new Error(`Semgrep installation requires Python 3.12–3.14; found ${version}`);
-	return join(root, "scripts/security/requirements", `semgrep-py${version.replace(".", "")}.txt`);
-}
-
-/** Replace the generated environment so previously unlocked packages cannot satisfy installation. */
-export async function installSemgrep(python = "python3", directory = semgrepEnvironment) {
-	const version = execFileSync(
-		python,
-		["-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"],
-		{ encoding: "utf8" },
-	).trim();
-	const requirements = semgrepRequirements(version);
-	await access(requirements);
-	console.log(`Installing Semgrep ${SEMGREP_VERSION} with the Python ${version} hash lock`);
-	execFileSync(python, ["-m", "venv", "--clear", directory], { stdio: "inherit" });
-	const interpreter = join(directory, "bin/python");
-	execFileSync(
-		interpreter,
-		[
-			"-m",
-			"pip",
-			"install",
-			"--disable-pip-version-check",
-			"--require-hashes",
-			"--only-binary=:all:",
-			"-r",
-			requirements,
-		],
-		{ stdio: "inherit" },
-	);
-	execFileSync(interpreter, ["-m", "pip", "check"], { stdio: "inherit" });
-	const installed = execFileSync(join(directory, "bin/semgrep"), ["--version"], {
-		encoding: "utf8",
-		env: {
-			...process.env,
-			SEMGREP_SEND_METRICS: "off",
-			SEMGREP_ENABLE_VERSION_CHECK: "0",
-			SEMGREP_SETTINGS_FILE: join(directory, "settings.yml"),
-			SEMGREP_LOG_FILE: join(directory, "semgrep.log"),
-		},
-	}).trim();
-	if (installed !== SEMGREP_VERSION) throw new Error(`Unexpected Semgrep version: ${installed}`);
-	console.log(`Installed Semgrep ${installed} from verified wheels`);
-}
-
 /** Install one checksum-verified executable, extracting only its allowlisted archive member. */
 export async function installBinary(name, tool, destination = bin) {
 	await mkdir(destination, { recursive: true });
@@ -133,14 +81,6 @@ async function install() {
 			"Automatic scanner installation supports Linux x64; install the documented versions on this platform.",
 		);
 	for (const [name, tool] of Object.entries(tools)) await installBinary(name, tool);
-	try {
-		await installSemgrep();
-	} catch (cause) {
-		throw new Error(
-			"Semgrep setup failed. Use Python 3.12–3.14 with venv and pip, then rerun pnpm security:install; unlocked packages and source builds are not allowed.",
-			{ cause },
-		);
-	}
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) await install();

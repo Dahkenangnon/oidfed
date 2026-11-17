@@ -60,9 +60,6 @@ const REQUIRED = {
 	"security.yml": [
 		"Scoped source, dependencies, and artifacts",
 		"CodeQL security-extended (five packages)",
-		"Semgrep hash lock (Python 3.12)",
-		"Semgrep hash lock (Python 3.13)",
-		"Semgrep hash lock (Python 3.14)",
 	],
 };
 

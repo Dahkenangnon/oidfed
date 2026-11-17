@@ -66,9 +66,6 @@ jobs:
         with:
           node-version-file: .node-version
           cache: pnpm
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        with:
-          python-version: '3.12'
       - run: pnpm install --frozen-lockfile
       - run: pnpm security:install
       - name: Build the five protocol packages
@@ -76,7 +73,6 @@ jobs:
       - run: pnpm security:test
       - run: pnpm security:lint
       - run: pnpm security:architecture
-      - run: pnpm security:semgrep
       - run: pnpm security:secrets
       - name: Check changed published dependencies on PRs; the full graph otherwise
         env:
@@ -90,34 +86,6 @@ jobs:
         run: node --import tsx tests/tap/run-node.ts
       - name: Advisory unused-code and duplication reports
         run: pnpm security:advisory
-
-  semgrep-python:
-    name: Semgrep hash lock (Python ${{ matrix.python }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        python: ['3.12', '3.13', '3.14']
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version-file: .node-version
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        with:
-          python-version: ${{ matrix.python }}
-      - name: Install only reviewed Semgrep wheels
-        run: node --input-type=module -e 'import {installSemgrep} from "./scripts/security/install.mjs"; await installSemgrep();'
-      - name: Verify local rule fixtures
-        env:
-          SEMGREP_SEND_METRICS: 'off'
-          SEMGREP_ENABLE_VERSION_CHECK: '0'
-          SEMGREP_SETTINGS_FILE: ${{ runner.temp }}/semgrep-settings.yml
-          SEMGREP_LOG_FILE: ${{ runner.temp }}/semgrep.log
-        run: node_modules/.cache/spec-security/semgrep/bin/semgrep --metrics off --disable-version-check --test --config scripts/security/semgrep.yml tests/security/semgrep.ts
 
   deep-checks:
     name: Bounded fuzzing and mutation checks

@@ -15,9 +15,9 @@ pnpm install --frozen-lockfile
 pnpm security:install
 ```
 
-`security:install` supports Linux x64 and requires Python 3.12, 3.13, or 3.14 with `venv` and `pip`. It downloads pinned OSV-Scanner, Gitleaks, actionlint, ShellCheck, and zizmor releases from their maintainers and verifies their SHA-256 digests. Semgrep and every Python dependency are pinned by version and SHA-256 in an interpreter-specific lock. Only wheels are accepted; an unavailable wheel fails installation instead of starting a source build.
+`security:install` supports Linux x64. It downloads pinned OSV-Scanner, Gitleaks, actionlint, ShellCheck, and zizmor releases from their maintainers and verifies their SHA-256 digests. The installer extracts only each tool's allowlisted executable into the workspace cache. The runner finds these tools automatically; no shell activation or PATH override is needed.
 
-The installer recreates its generated Semgrep environment under `node_modules/.cache/spec-security/semgrep`, then checks dependency compatibility and the installed scanner version. This replaces packages from earlier installations without changing system Python. The runner finds the tools automatically; no shell activation or PATH override is needed. CI uses Python 3.12 for the main gate and tests fresh Semgrep installations on all three supported Python versions. The npm tools are pinned development dependencies. None of these tools is shipped as a runtime dependency of the library.
+Source checks use the existing ESLint and TypeScript dependencies from the pnpm lockfile. Python is not required. None of these tools is shipped as a runtime dependency of the library.
 
 Build the five packages, then run the checks:
 
@@ -35,9 +35,8 @@ The GitHub security workflow runs the same checks on pull requests and `main`, w
 | Command | What it checks |
 |---|---|
 | `pnpm security:test` | Scanner scope, dependency extraction without an installation, directed-cycle matching, and detection and redaction of an unissued secret canary. Install the native tools first. |
-| `pnpm security:lint` | TypeScript-backed promise handling, unsafe `any` propagation, exhaustive switches, risky regular expressions, and JSDoc parameter and tag names. Biome remains the formatter and general linter. |
+| `pnpm security:lint` | TypeScript-backed promise handling, unsafe `any` propagation, exhaustive switches, risky regular expressions, JSDoc names, and local AST rules for dynamic execution, request-controlled dispatch, unsafe JSON copying, transport bypasses, and secret logging. Biome remains the formatter and general linter. |
 | `pnpm security:architecture` | Package layering, private cross-package imports, Node built-ins in runtime source, and new runtime import cycles. |
-| `pnpm security:semgrep` | Tested local rules for dynamic execution, request-controlled registry dispatch, unsafe JSON copying, transport bypasses, and secret logging. The logging rule recognizes specific secret identifiers in any argument position; renamed values, interpolation, and nested data still need review. No Semgrep account is needed. |
 | `pnpm security:secrets` | Redacted Gitleaks scans of the five package directories. Packed artifacts are scanned separately by `security:artifacts`. |
 | `pnpm security:dependencies` | OSV advisories for exact production and optional dependency versions resolved from the five packages. Workspace links are traversed; app, tool, and development dependencies are excluded. |
 | `pnpm security:artifacts` | Packed manifests and declarations with publint and Are the Types Wrong, secret scanning, isolated NodeNext ESM/CommonJS and bundler consumers, runtime imports, and public contract tests with tsd. Build first. |
@@ -50,22 +49,15 @@ The workflow runner validates GitHub's queued-concurrency settings directly beca
 
 Dependency scanning builds a temporary CycloneDX input from pnpm's lockfile-backed production graph. Only package names and versions go to the advisory service. On a pull request, `SECURITY_BASE_SHA` selects a base commit so the check scans newly introduced versions. If that commit predates a scoped package or lacks another required input, the check explains the missing baseline and scans the complete current graph. Invalid commits and corrupt graphs fail. Scheduled and ordinary local runs also scan the full scoped graph. A failed scan fails the command.
 
-## Update the Semgrep locks
+## Maintain the source rules
 
-Change the Semgrep version in `scripts/security/requirements/semgrep.in` and the installer's version check together. Regenerate each lock under its matching Python interpreter with pip-tools 7.7.0. For Python 3.12:
+`security:lint` analyzes source in all five protocol packages and fails if a package contributes no analyzed files. Parser errors, scanner configuration errors, findings, and warnings also fail the command. The local AST rules cover JavaScript and TypeScript; the typed checks use each TypeScript project's configuration. `security:test` exercises the rules with both unsafe and safe examples before the CI source scan runs.
 
-```bash
-python3.12 -m venv /tmp/oidfed-lock-compiler-312
-/tmp/oidfed-lock-compiler-312/bin/python -m pip install pip-tools==7.7.0
-/tmp/oidfed-lock-compiler-312/bin/pip-compile \
-  --upgrade --generate-hashes --strip-extras \
-  --no-header --no-annotate --no-emit-index-url --no-emit-trusted-host \
-  --pip-args='--only-binary=:all:' \
-  --output-file scripts/security/requirements/semgrep-py312.txt \
-  scripts/security/requirements/semgrep.in
-```
+The dispatch rule follows values obtained through `.get()` and `JSON.parse()` through local aliases, assignments, destructuring, and TypeScript casts. It accepts an applicable `Object.hasOwn()` branch or early-exit guard only while the checked registry and key remain unchanged. This is bounded, intraprocedural analysis: it does not prove the safety of arbitrary helper functions or track all mutations through aliases and calls. CodeQL's separate security analysis and human review remain necessary.
 
-Repeat with Python 3.13 and 3.14 and their respective lock filenames. Keep the compiler and interpreter versions in each lock's opening comment. Review every changed version and hash, then test fresh installations on all three interpreters. Commit the reviewed locks; CI consumes them without regenerating them or updating dependencies. A dependency without a compatible wheel needs a reviewed dependency change before the lock can be accepted.
+The logging rule recognizes `privateKey`, `clientSecret`, `clientAssertion`, `client_secret`, and `client_assertion` in any argument position of `debug`, `info`, `warn`, and `error` calls. Renamed values, interpolation, and nested data still need review.
+
+Keep a negative and a nearby safe example for every rule change in `scripts/security/eslint-rules.test.mjs`. Verify the expected rule identifiers and source locations, then run `security:test` and `security:lint`. Update native scanner pins and checksums together in the installer; retain checksum verification and allowlisted extraction.
 
 ## Exercise the parsers and test guards
 
@@ -95,4 +87,4 @@ Reproduce a finding against the affected source and its specification before cha
 
 The architecture check recognizes the exact existing cycles listed in `scripts/security/known-cycles.mjs`. A different directed cycle fails. Review any proposed exception as an architectural change. Knip protects the public entrypoints, and its reports can still include internal exports used only by tests or unused convenience barrels; check callers and package exports before removing anything.
 
-Keep exceptions narrow and explain them beside the code or configuration. The authority context builder has one typed-lint exception because TypeScript's variadic `Object.assign` overload loses the types of its configuration fragments. The unexecuted Semgrep fixture allows `eval` only so the scanner's rejection can be tested. Neither exception relaxes runtime validation.
+Keep exceptions narrow and explain them beside the code or configuration. The authority context builder has one typed-lint exception because TypeScript's variadic `Object.assign` overload loses the types of its configuration fragments. Security-rule fixtures are strings analyzed by ESLint; their unsafe examples are never executed.

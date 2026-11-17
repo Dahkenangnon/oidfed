@@ -73,9 +73,9 @@ failed, cancelled, or incomplete checks stop the release. Application-only check
 and OpenID conformance runs are not part of this package release gate.
 Completed workflows missing a required job fail immediately with its workflow, run,
 and job name. Timeouts list missing and pending jobs separately.
-The required security jobs are the scoped source/dependency/artifact checks, the
-three Semgrep hash-lock installs, and custom CodeQL. Scheduled fuzzing and mutation
-checks remain separate.
+The required security jobs are the scoped source/dependency/artifact checks and
+custom CodeQL. The scoped job runs the local rule fixtures and security lint.
+Scheduled fuzzing and mutation checks remain separate.
 
 ## Archives, dependencies, and versions
 

@@ -3,9 +3,24 @@
 import tseslint from "typescript-eslint";
 import regexp from "eslint-plugin-regexp";
 import jsdoc from "eslint-plugin-jsdoc";
+import protocol from "./eslint-rules.mjs";
 import { root, sources } from "./scope.mjs";
 
 export default [
+	{
+		files: sources.map((source) => `${source}/**/*.{ts,tsx,js,jsx,mjs,cjs}`),
+		languageOptions: { parser: tseslint.parser },
+		plugins: { protocol },
+		rules: {
+			"no-eval": "error",
+			"no-new-func": "error",
+			"protocol/no-wrapped-function-constructor": "error",
+			"protocol/no-inherited-auth-dispatch": "error",
+			"protocol/no-prototype-assign-from-json": "error",
+			"protocol/no-unbounded-fetch": "error",
+			"protocol/no-secret-logging": "error",
+		},
+	},
 	{
 		files: sources.map((source) => `${source}/**/*.ts`),
 		languageOptions: {
