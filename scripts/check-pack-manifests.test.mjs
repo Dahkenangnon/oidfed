@@ -30,9 +30,8 @@ function baseManifest(target, overrides = {}) {
 		types: "./dist/index.d.ts",
 		exports: {
 			".": {
-				types: "./dist/index.d.ts",
-				import: "./dist/index.js",
-				require: "./dist/index.cjs",
+				import: { types: "./dist/index.d.ts", default: "./dist/index.js" },
+				require: { types: "./dist/index.d.cts", default: "./dist/index.cjs" },
 			},
 		},
 		files: ["dist", "LICENSE", "NOTICE"],
@@ -40,6 +39,11 @@ function baseManifest(target, overrides = {}) {
 		publishConfig: { access: "public" },
 	};
 	if (target.kind === "cli") {
+		manifest.exports["."] = {
+			types: "./dist/index.d.ts",
+			import: "./dist/index.js",
+			require: "./dist/index.cjs",
+		};
 		manifest.engines = { node: NODE_ENGINE };
 		manifest.bin = { oidfed: "./dist/bin.js", openidfed: "./dist/bin.js" };
 	}
@@ -58,6 +62,34 @@ describe("parseArgs", () => {
 });
 
 describe("inspectPackedManifest", () => {
+	it("accepts separate ESM and CommonJS declarations for every library", () => {
+		for (const target of PUBLISHABLE_TARGETS.filter((item) => item.kind === "library")) {
+			assert.deepEqual(inspect(baseManifest(target), target), [], target.name);
+		}
+	});
+
+	it("rejects declarations assigned to the wrong module format", () => {
+		const manifest = baseManifest(targets.core);
+		manifest.exports["."].import.types = "./dist/index.d.cts";
+		manifest.exports["."].require.types = "./dist/index.d.ts";
+
+		const out = inspect(manifest, targets.core);
+		assert.equal(out.length, 2);
+		assert.ok(out.some((violation) => violation.includes("exports[.].import.types")));
+		assert.ok(out.some((violation) => violation.includes("exports[.].require.types")));
+	});
+
+	it("rejects runtime builds assigned to the wrong module format", () => {
+		const manifest = baseManifest(targets.core);
+		manifest.exports["."].import.default = "./dist/index.cjs";
+		manifest.exports["."].require.default = "./dist/index.js";
+
+		const out = inspect(manifest, targets.core);
+		assert.equal(out.length, 2);
+		assert.ok(out.some((violation) => violation.includes("exports[.].import.default")));
+		assert.ok(out.some((violation) => violation.includes("exports[.].require.default")));
+	});
+
 	it("accepts packed manifests with pnpm-rewritten internal dependency ranges", () => {
 		const manifest = baseManifest(targets.authority, {
 			devDependencies: { "@oidfed/core": "^0.8.0" },
@@ -93,9 +125,10 @@ describe("inspectPackedManifest", () => {
 		const manifest = baseManifest(targets.core, { exports: {} });
 
 		const out = inspect(manifest, targets.core);
-		assert.ok(out.some((violation) => violation.includes("exports[.].types")));
-		assert.ok(out.some((violation) => violation.includes("exports[.].import")));
-		assert.ok(out.some((violation) => violation.includes("exports[.].require")));
+		assert.ok(out.some((violation) => violation.includes("exports[.].import.types")));
+		assert.ok(out.some((violation) => violation.includes("exports[.].require.types")));
+		assert.ok(out.some((violation) => violation.includes("exports[.].import.default")));
+		assert.ok(out.some((violation) => violation.includes("exports[.].require.default")));
 	});
 
 	it("enforces the CLI-only Node engine policy", () => {

@@ -168,9 +168,29 @@ export function inspectPackedManifest(pkg, target, options = {}) {
 	pushIfMissing(violations, pkg.main === "./dist/index.cjs", `${label}: main must be ./dist/index.cjs`);
 	pushIfMissing(violations, pkg.module === "./dist/index.js", `${label}: module must be ./dist/index.js`);
 	pushIfMissing(violations, pkg.types === "./dist/index.d.ts", `${label}: types must be ./dist/index.d.ts`);
-	pushIfMissing(violations, pkg.exports?.["."]?.types === "./dist/index.d.ts", `${label}: exports[.].types must point to dist types`);
-	pushIfMissing(violations, pkg.exports?.["."]?.import === "./dist/index.js", `${label}: exports[.].import must point to ESM build`);
-	pushIfMissing(violations, pkg.exports?.["."]?.require === "./dist/index.cjs", `${label}: exports[.].require must point to CJS build`);
+	const entrypoint = pkg.exports?.["."];
+	if (target.kind === "cli") {
+		pushIfMissing(violations, entrypoint?.types === "./dist/index.d.ts", `${label}: exports[.].types must point to dist types`);
+		pushIfMissing(violations, entrypoint?.import === "./dist/index.js", `${label}: exports[.].import must point to ESM build`);
+		pushIfMissing(violations, entrypoint?.require === "./dist/index.cjs", `${label}: exports[.].require must point to CJS build`);
+	} else {
+		// Library declarations must match the consumer's module format.
+		for (const [condition, declaration, runtime] of [
+			["import", "./dist/index.d.ts", "./dist/index.js"],
+			["require", "./dist/index.d.cts", "./dist/index.cjs"],
+		]) {
+			pushIfMissing(
+				violations,
+				entrypoint?.[condition]?.types === declaration,
+				`${label}: exports[.].${condition}.types must point to ${declaration}`,
+			);
+			pushIfMissing(
+				violations,
+				entrypoint?.[condition]?.default === runtime,
+				`${label}: exports[.].${condition}.default must point to ${runtime}`,
+			);
+		}
+	}
 	pushIfMissing(violations, Array.isArray(pkg.files), `${label}: files must be an array`);
 	for (const requiredFile of ["dist", "LICENSE", "NOTICE"]) {
 		pushIfMissing(
