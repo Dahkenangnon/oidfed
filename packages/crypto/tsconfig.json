@@ -1,0 +1,15 @@
+{
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		"outDir": "dist",
+		"rootDir": "src",
+		"lib": ["ES2022"],
+		"types": [],
+		"noImplicitReturns": true,
+		"paths": {
+			"@oidfed/crypto": ["./src/index.ts"],
+			"@oidfed/crypto/web": ["./src/web.ts"]
+		}
+	},
+	"include": ["src"]
+}

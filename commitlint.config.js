@@ -39,6 +39,7 @@ export default {
 			"always",
 			[
 				"core",
+				"crypto",
 				"authority",
 				"leaf",
 				"oidc",

@@ -1,0 +1,9 @@
+@oidfed/crypto — Portable cryptographic contracts and JWS helpers
+
+Copyright 2026-Present Justin Dah-kenangnon
+
+Licensed under the Apache License, Version 2.0.
+http://www.apache.org/licenses/LICENSE-2.0
+
+Optional peer dependency, used only by @oidfed/crypto/jose:
+- jose (MIT) — https://github.com/panva/jose

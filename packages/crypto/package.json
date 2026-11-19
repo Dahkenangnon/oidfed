@@ -1,0 +1,76 @@
+{
+	"name": "@oidfed/crypto",
+	"version": "1.0.0",
+	"description": "Portable crypto engines, signing custody, keyrings, and compact JWS helpers for oidfed.",
+	"license": "Apache-2.0",
+	"author": "Justin Dah-kenangnon <dah.kenangnon@gmail.com>",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/Dahkenangnon/oidfed.git",
+		"directory": "packages/crypto"
+	},
+	"homepage": "https://github.com/Dahkenangnon/oidfed/tree/main/packages/crypto#readme",
+	"bugs": {
+		"url": "https://github.com/Dahkenangnon/oidfed/issues"
+	},
+	"type": "module",
+	"main": "./dist/index.cjs",
+	"module": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"import": {
+				"types": "./dist/index.d.ts",
+				"default": "./dist/index.js"
+			},
+			"require": {
+				"types": "./dist/index.d.cts",
+				"default": "./dist/index.cjs"
+			}
+		},
+		"./web": {
+			"import": {
+				"types": "./dist/web.d.ts",
+				"default": "./dist/web.js"
+			},
+			"require": {
+				"types": "./dist/web.d.cts",
+				"default": "./dist/web.cjs"
+			}
+		},
+		"./jose": {
+			"import": {
+				"types": "./dist/jose.d.ts",
+				"default": "./dist/jose.js"
+			},
+			"require": {
+				"types": "./dist/jose.d.cts",
+				"default": "./dist/jose.cjs"
+			}
+		}
+	},
+	"files": ["dist", "LICENSE", "NOTICE"],
+	"sideEffects": false,
+	"publishConfig": {
+		"access": "public"
+	},
+	"peerDependencies": {
+		"jose": "^6.2.13"
+	},
+	"peerDependenciesMeta": {
+		"jose": {
+			"optional": true
+		}
+	},
+	"scripts": {
+		"build": "tsup",
+		"typecheck": "tsc --noEmit",
+		"clean": "rm -rf dist"
+	},
+	"typesVersions": {
+		"*": {
+			"web": ["./dist/web.d.ts"],
+			"jose": ["./dist/jose.d.ts"]
+		}
+	}
+}

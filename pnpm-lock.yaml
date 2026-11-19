@@ -419,6 +419,12 @@ importers:
         specifier: 4.6.7
         version: 4.6.7
 
+  packages/crypto:
+    dependencies:
+      jose:
+        specifier: ^6.2.13
+        version: 6.2.13
+
   packages/leaf:
     devDependencies:
       '@oidfed/core':

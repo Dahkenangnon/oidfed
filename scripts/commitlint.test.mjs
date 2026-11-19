@@ -28,7 +28,7 @@ test("commit subjects allow 72 characters and reject 73", () => {
 });
 
 test("one trailing reference and issue-closing body footers are accepted", () => {
-	for (const prefix of ["feat(authority)", "feat(authority)!", "feat(core, authority, leaf)"])
+	for (const prefix of ["feat(crypto)", "feat(authority)", "feat(authority)!", "feat(core, authority, leaf)"])
 		assert.doesNotThrow(() => lint(`${prefix}: add collection (#116)\n\nCloses #115`));
 });
 
