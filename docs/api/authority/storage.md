@@ -101,7 +101,7 @@ Process-local storage with subordinate records, replay protection, and cache alw
 Transactions serialize access, apply writes to a detached draft, and commit that draft only when the callback succeeds. `readSnapshot` serializes a read with writes. Use only the callback’s repositories inside either boundary; waiting for a queued parent mutation there can deadlock. Neither callback boundary includes replay, cache, or collection state.
 
 ```typescript signature
-new MemoryStorageAdapter(options?: MemoryStorageAdapterOptions): MemoryStorageAdapter;
+new MemoryStorageAdapter(options: MemoryStorageAdapterOptions): MemoryStorageAdapter;
 ```
 
 ### `MemoryStorageAdapter#collections`
@@ -192,12 +192,14 @@ Options for the bundled in-memory adapter. Omitted repository flags leave those 
 
 ```typescript signature
 interface MemoryStorageAdapterOptions {
+	readonly engine: CryptoEngine;
 	readonly collections?: boolean;
 	readonly subordinateEvents?: boolean;
 	readonly trustMarks?: boolean;
 	readonly clock?: Clock;
 	readonly maxReplayEntries?: number;
 	readonly maxCacheEntries?: number;
+	readonly maxCompactBytes?: number;
 }
 ```
 
@@ -210,6 +212,7 @@ Fields (including inherited fields). `?` marks an optional member; types below r
 | `trustMarks?` | `boolean` | Enable Trust Mark records and issuer operations. Omitted/false leaves trustMarks undefined. |
 | `clock?` | `Clock` | NumericDate clock used by adapter updates, replay storage, cache, and optional collection storage. Defaults to the underlying components' system clocks. |
 | `maxReplayEntries?` | `number` | Replay-store capacity. Defaults to 10,000; must be a positive safe integer. Live claims are not evicted to admit another claim. |
+| `maxCompactBytes?` | `number` | Maximum compact JWT size for stored Trust Marks. Match the issuing host’s limit. |
 | `maxCacheEntries?` | `number` | LRU cache entry limit forwarded to MemoryCache. Defaults to 1,000. |
 
 ## `StorageAdapter`
@@ -363,7 +366,7 @@ Fields (including inherited fields). `?` marks an optional member; types below r
 | Field | Declared type | Description |
 |---|---|---|
 | `entityId` | `EntityId` | Immutable registered subordinate identifier. |
-| `jwks` | `JWKSet` | Attested subordinate public Federation Entity Keys embedded in the Subordinate Statement. The authority signs it with its own key provider. |
+| `jwks` | `JWKSet` | Attested subordinate public Federation Entity Keys embedded in the Subordinate Statement. The authority signs it with its own keyring. |
 | `metadata?` | `Readonly<Record<string, unknown>>` | Optional Superior-supplied protocol/informational metadata. Operational federation fields are prohibited in stored federation_entity metadata. |
 | `metadataPolicy?` | `Readonly<Record<string, unknown>>` | Metadata-policy declaration included in the subordinate's statement. |
 | `constraints?` | `Readonly<TrustChainConstraints>` | Constraints declared on this subordinate and applicable downstream paths. |
@@ -392,7 +395,7 @@ Fields (including inherited fields). `?` marks an optional member; types below r
 
 | Field | Declared type | Description |
 |---|---|---|
-| `jwks?` | `JWKSet` | Attested subordinate public Federation Entity Keys embedded in the Subordinate Statement. The authority signs it with its own key provider. |
+| `jwks?` | `JWKSet` | Attested subordinate public Federation Entity Keys embedded in the Subordinate Statement. The authority signs it with its own keyring. |
 | `metadata?` | `Readonly<Record<string, unknown>>` | Optional Superior-supplied protocol/informational metadata. Operational federation fields are prohibited in stored federation_entity metadata. |
 | `constraints?` | `Readonly<TrustChainConstraints>` | Constraints declared on this subordinate and applicable downstream paths. |
 | `crit?` | `readonly string[] \| undefined` | Extension claims recipients MUST understand and process (Federation §13.4). |

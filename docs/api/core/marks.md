@@ -82,7 +82,7 @@ interface EstablishTrustMarkIssuerOptions {
 	readonly trustAnchors: TrustAnchorSet;
 	readonly trustChain?: readonly string[];
 	readonly entityConfigurations?: ReadonlyMap<string, string>;
-	readonly options?: FederationOptions;
+	readonly options: FederationOptions;
 }
 ```
 
@@ -160,7 +160,7 @@ interface FetchAndAttachTrustMarkOptions {
 	readonly trustMarkType: string;
 	readonly trustAnchors: TrustAnchorSet;
 	readonly replacement?: "same-issuer-and-type";
-	readonly options?: FederationOptions;
+	readonly options: FederationOptions;
 }
 ```
 
@@ -185,7 +185,7 @@ getEndpointAuthentication receives no responder. Authenticated requests use POST
 TrustMarkHolder.fetchAndAttachTrustMark supplies its verified issuer identity for an additional audience check.
 
 ```typescript signature
-fetchTrustMark(endpoint: string, params: FetchTrustMarkParams, options?: FederationOptions): Promise<Result<string, FederationError>>;
+fetchTrustMark(endpoint: string, params: FetchTrustMarkParams, options: FederationOptions): Promise<Result<string, FederationError>>;
 ```
 
 ## `FetchTrustMarkParams`
@@ -365,7 +365,7 @@ Ingestion must establish signature, issuer trust, and matching record fields;
 this predicate does not perform cryptographic or profile verification.
 
 ```typescript signature
-isStoredTrustMarkEligible(record: TrustMarkRecord, validAt: number): boolean;
+isStoredTrustMarkEligible(record: TrustMarkRecord, validAt: number, maxCompactBytes?: number): boolean;
 ```
 
 ## `MemoryTrustMarkStorage`
@@ -377,7 +377,7 @@ Keep managed Trust Mark records in memory. Use durable transactional storage for
 ```typescript signature
 new MemoryTrustMarkStorage(read: () => Map<string, TrustMarkRecord>, mutate: <T>(
 			operation: (records: Map<string, TrustMarkRecord>) => T | Promise<T>,
-		) => Promise<T>): MemoryTrustMarkStorage;
+		) => Promise<T>, maxCompactBytes?: number): MemoryTrustMarkStorage;
 ```
 
 ### `MemoryTrustMarkStorage#listCandidates`
@@ -471,7 +471,7 @@ revoke(trustMarkType: string, subject: EntityId, revokedAt: number, issuer?: str
 In-memory, process-local transaction adapter. Production hosts supply durable storage.
 
 ```typescript signature
-new MemoryTrustMarkStore(): MemoryTrustMarkStore;
+new MemoryTrustMarkStore(options?: { readonly maxCompactBytes?: number }): MemoryTrustMarkStore;
 ```
 
 ### `MemoryTrustMarkStore#trustMarks`
@@ -581,7 +581,8 @@ interface SignTrustMarkDelegationOptions extends TrustMarkLifetime {
 	readonly issuer: string;
 	readonly subject: string;
 	readonly trustMarkType: string;
-	readonly signer: JwtSigner;
+	readonly signer: KeyringEntry;
+	readonly maxCompactBytes?: number | undefined;
 	readonly clock?: Clock;
 	readonly ref?: string;
 	readonly additionalClaims?: Readonly<Record<string, unknown>>;
@@ -595,7 +596,7 @@ Fields (including inherited fields):
 | `issuer` | `string` | Issuer identity for the signed artifact or configured service. |
 | `subject` | `string` | Subject identity for the statement, mark, or authentication being processed. |
 | `trustMarkType` | `string` | Trust Mark type identifier used for issuance, verification, or filtering. |
-| `signer` | `JwtSigner` | Signing capability and its public algorithm/key identifier. Private-key custody stays with the implementation. |
+| `signer` | `KeyringEntry` | Signing capability and its public algorithm/key identifier. Private-key custody stays with the implementation. |
 | `clock?` | `Clock` | NumericDate time source; omitted clocks use the runtime's current time. |
 | `ref?` | `string` | Reference URL for the Trust Mark or its delegation. |
 | `additionalClaims?` | `Readonly<Record<string, unknown>>` | Additional JSON claims. The owning builder rejects collisions with its reserved claims. |
@@ -628,7 +629,7 @@ Fields (including inherited fields):
 | `issuer` | `string` | Issuer identity for the signed artifact or configured service. |
 | `subject` | `string` | Subject identity for the statement, mark, or authentication being processed. |
 | `trustMarkType` | `string` | Trust Mark type identifier used for issuance, verification, or filtering. |
-| `signer` | `JwtSigner` | Signing capability and its public algorithm/key identifier. Private-key custody stays with the implementation. |
+| `signer` | `KeyringEntry` | Signing capability and its public algorithm/key identifier. Private-key custody stays with the implementation. |
 | `clock?` | `Clock` | NumericDate time source; omitted clocks use the runtime's current time. |
 | `ref?` | `string` | Reference URL for the Trust Mark or its delegation. |
 | `additionalClaims?` | `Readonly<Record<string, unknown>>` | Additional JSON claims. The owning builder rejects collisions with its reserved claims. |
@@ -714,7 +715,7 @@ Remove a matching reference from future holder publication. This does not revoke
 [Source](../../../packages/core/src/trust-marks/holder.ts#L122)
 
 ```typescript signature
-removeTrustMark(selector: RemoveTrustMarkSelector): Promise<void>;
+removeTrustMark(selector: RemoveTrustMarkSelector, options?: Pick<FederationOptions, "maxCompactBytes">): Promise<void>;
 ```
 
 ## `TrustMarkIssuanceOptions`
@@ -757,9 +758,6 @@ interface TrustMarkIssuerConfig {
 	readonly storage: TrustMarkStore;
 	readonly authentication?: Omit<EndpointAuthenticationConfig, "receiverEntityId" | "methods">;
 	readonly defaults?: TrustMarkIssuanceOptions;
-	readonly trustMarkSigner?: (
-		context: Readonly<{ issuer: string; subject: string; trustMarkType: string }>,
-	) => JwtSigner | Promise<JwtSigner>;
 	readonly trustMarkDefaults?: Readonly<Record<string, TrustMarkIssuanceOptions>>;
 	readonly delegations?: Readonly<Record<string, string>>;
 	/** Independent issuer trust supplies owner keys for delegated issuance. */
@@ -776,7 +774,6 @@ Fields (including inherited fields):
 | `storage` | `TrustMarkStore` | Transactional Trust Mark storage adapter. |
 | `authentication?` | `Omit<EndpointAuthenticationConfig, "receiverEntityId" \| "methods">` | Authentication settings for the endpoint or outgoing request described by this contract. |
 | `defaults?` | `TrustMarkIssuanceOptions` | Issuer-wide issuance defaults, overridden by per-type settings and then per-call options. |
-| `trustMarkSigner?` | `( context: Readonly<{ issuer: string; subject: string; trustMarkType: string }>, ) => JwtSigner \| Promise<JwtSigner>` | Host callback selecting the signing capability for one Trust Mark issuance. |
 | `trustMarkDefaults?` | `Readonly<Record<string, TrustMarkIssuanceOptions>>` | Per-type issuance defaults, overriding issuer-wide defaults. |
 | `delegations?` | `Readonly<Record<string, string>>` | Delegation JWTs indexed by Trust Mark type; setting them alone does not authenticate owner trust. |
 | `issuerEvidence?` | `readonly TrustMarkIssuerContext[]` | Previously established federation issuer evidence or explicit host out-of-band trust. |
@@ -789,13 +786,7 @@ Fields (including inherited fields):
 Check evidence each time it is used; plain JSON cannot impersonate a validated issuer chain.
 
 ```typescript signature
-trustMarkIssuerContext(context: TrustMarkIssuerContext, type: string, options?: FederationOptions): Result<{
-	issuer: string;
-	keys: JWKSet;
-	owners: Record<string, TrustMarkOwner>;
-	metadata?: FederationEntityMetadata;
-	expiresAt?: number;
-}>;
+trustMarkIssuerContext(context: TrustMarkIssuerContext, type: string, options: FederationOptions): Result<{ issuer: string; keys: JWKSet; owners: Record<string, TrustMarkOwner>; metadata?: FederationEntityMetadata; expiresAt?: number; }>;
 ```
 
 ## `TrustMarkIssuerContext`
@@ -948,8 +939,8 @@ HTTP endpoint and authentication settings for a hosted Trust Mark Issuer service
 interface TrustMarkIssuerServiceOptions extends TrustMarkIssuerConfig {
 	readonly issuer: string;
 	readonly statusEndpointPublished?: boolean;
-	readonly keyProvider: FederationKeyProvider;
-	readonly options?: FederationOptions;
+	readonly crypto: CryptoContext;
+	readonly options: FederationOptions;
 	/** Local Trust Anchor policy; do not populate from unverified token claims. */
 	readonly trustMarkOwners?: Readonly<Record<string, TrustMarkOwner>>;
 	readonly trustMarkIssuers?: Readonly<Record<string, readonly string[]>>;
@@ -962,7 +953,7 @@ Fields (including inherited fields):
 |---|---|---|
 | `issuer` | `string` | Issuer identity for the signed artifact or configured service. |
 | `statusEndpointPublished?` | `boolean` | Whether the issuer advertises a Status endpoint, used for non-expiring-mark guidance. |
-| `keyProvider` | `FederationKeyProvider` | Provider of current Federation Entity Keys and the active signer. |
+| `crypto` | `CryptoContext` | Provider of current Federation Entity Keys and the active signer. |
 | `options?` | `FederationOptions` | Shared federation transport and validation settings for this operation. |
 | `trustMarkOwners?` | `Readonly<Record<string, TrustMarkOwner>>` | Trusted owner identity and keys indexed by Trust Mark type. |
 | `trustMarkIssuers?` | `Readonly<Record<string, readonly string[]>>` | Permitted issuer identities indexed by Trust Mark type; an empty array allows any issuer under the applicable policy. |
@@ -970,7 +961,6 @@ Fields (including inherited fields):
 | `storage` | `TrustMarkStore` | Transactional Trust Mark storage adapter. |
 | `authentication?` | `Omit<EndpointAuthenticationConfig, "receiverEntityId" \| "methods">` | Authentication settings for the endpoint or outgoing request described by this contract. |
 | `defaults?` | `TrustMarkIssuanceOptions` | Issuer-wide issuance defaults, overridden by per-type settings and then per-call options. |
-| `trustMarkSigner?` | `( context: Readonly<{ issuer: string; subject: string; trustMarkType: string }>, ) => JwtSigner \| Promise<JwtSigner>` | Host callback selecting the signing capability for one Trust Mark issuance. |
 | `trustMarkDefaults?` | `Readonly<Record<string, TrustMarkIssuanceOptions>>` | Per-type issuance defaults, overriding issuer-wide defaults. |
 | `delegations?` | `Readonly<Record<string, string>>` | Delegation JWTs indexed by Trust Mark type; setting them alone does not authenticate owner trust. |
 | `issuerEvidence?` | `readonly TrustMarkIssuerContext[]` | Previously established federation issuer evidence or explicit host out-of-band trust. |

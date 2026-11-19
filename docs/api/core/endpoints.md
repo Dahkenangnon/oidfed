@@ -177,7 +177,7 @@ This standalone client uses authentication.audience without an independent respo
 getEndpointAuthentication receives no responder. Authenticated requests use POST and never retry anonymously.
 
 ```typescript signature
-fetchExtendedSubordinatesList(endpoint: string, params?: ExtendedListRequestParams, options?: FederationOptions): Promise<Result<ExtendedListResponse, FederationError>>;
+fetchExtendedSubordinatesList(endpoint: string, params: ExtendedListRequestParams | undefined, options: FederationOptions): Promise<Result<ExtendedListResponse, FederationError>>;
 ```
 
 ## `fetchHistoricalKeys`
@@ -251,7 +251,7 @@ getEndpointAuthentication receives no responder. Authenticated requests use POST
 Collection traversal supplies its known authority identity for an additional audience check.
 
 ```typescript signature
-fetchListSubordinates(listEndpoint: string, filter?: ListSubordinatesFilter, options?: FederationOptions): Promise<Result<EntityId[], FederationError>>;
+fetchListSubordinates(listEndpoint: string, filter: ListSubordinatesFilter | undefined, options: FederationOptions): Promise<Result<EntityId[], FederationError>>;
 ```
 
 ## `fetchResolveResponse`
@@ -264,7 +264,7 @@ nor a requested Trust Anchor establishes that identity. getEndpointAuthenticatio
 Authenticated requests use POST and never retry anonymously after authentication failure.
 
 ```typescript signature
-fetchResolveResponse(resolveEndpoint: string, params: ResolveRequestParams, options?: FederationOptions): Promise<Result<string, FederationError>>;
+fetchResolveResponse(resolveEndpoint: string, params: ResolveRequestParams, options: FederationOptions): Promise<Result<string, FederationError>>;
 ```
 
 ## `fetchSubordinateEvents`
@@ -339,7 +339,7 @@ Fields (including inherited fields):
 Fetch a list of Entity Identifiers with active Trust Marks of the given type.
 
 ```typescript signature
-fetchTrustMarkList(endpoint: string, params: FetchTrustMarkListParams, options?: FederationOptions): Promise<Result<EntityId[], FederationError>>;
+fetchTrustMarkList(endpoint: string, params: FetchTrustMarkListParams, options: FederationOptions): Promise<Result<EntityId[], FederationError>>;
 ```
 
 This is an unsigned JSON endpoint response protected by HTTPS and any configured endpoint authentication. It is not independently validated Trust Mark evidence. Omit `sub` to list by type without identifying a specific holder; the host chooses between that query and a holder-specific Status request according to its privacy and freshness policy.
@@ -677,7 +677,7 @@ verifyHistoricalKeysResponse(jwt: string, issuerJwks: JWKSet, options: VerifyOpt
 Expected signer identity, clock, and clock skew for verifying a signed federation response.
 
 ```typescript signature
-interface VerifyOptions {
+interface VerifyOptions extends FederationOptions {
 	/** Expected signer identity from trusted configuration or validated federation evidence. */
 	expectedIssuer: string;
 	clockSkewSeconds?: number;
@@ -770,11 +770,10 @@ Fields (including inherited fields):
 Expected authority, subject, and time checks for subordinate history.
 
 ```typescript signature
-interface VerifySubordinateEventsOptions {
+interface VerifySubordinateEventsOptions extends FederationOptions {
 	/** Expected authority Entity Identifier, independent of endpoint origin. */
 	issuer: EntityId;
 	subject: EntityId;
-	clock?: FederationOptions["clock"];
 	clockSkewSeconds?: number;
 }
 ```

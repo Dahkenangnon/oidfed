@@ -142,9 +142,6 @@ Signatures preserve optional and read-only declarations. An optional property is
 | [`EntityStatementExtensions`](statements.md#entitystatementextensions) | Interface |
 | [`EntityStatementKind`](statements.md#entitystatementkind) | Type |
 | [`EntityStatementMetadata`](statements.md#entitystatementmetadata) | Type |
-| [`JwkSigner`](statements.md#jwksigner) | Class |
-| [`JwkSignerOptions`](statements.md#jwksigneroptions) | Interface |
-| [`JwtSigner`](statements.md#jwtsigner) | Interface |
 | [`matchesJwtType`](statements.md#matchesjwttype) | Function |
 | [`prepareEntityStatementExtensions`](statements.md#prepareentitystatementextensions) | Function |
 | [`signApplicationJwt`](statements.md#signapplicationjwt) | Function |
@@ -158,7 +155,6 @@ Signatures preserve optional and read-only declarations. An optional property is
 | [`validateEntityStatementClaims`](statements.md#validateentitystatementclaims) | Function |
 | [`ValidateEntityStatementClaimsOptions`](statements.md#validateentitystatementclaimsoptions) | Interface |
 | [`validateEntityStatementTimeClaims`](statements.md#validateentitystatementtimeclaims) | Function |
-| [`validateSigner`](statements.md#validatesigner) | Function |
 | [`validateSubordinateStatementPublicationClaims`](statements.md#validatesubordinatestatementpublicationclaims) | Function |
 | [`VerifiedProtocolJwt`](statements.md#verifiedprotocoljwt) | Interface |
 | [`verifyApplicationJwt`](statements.md#verifyapplicationjwt) | Function |
@@ -170,29 +166,19 @@ Signatures preserve optional and read-only declarations. An optional property is
 
 | API | Kind |
 |---|---|
-| [`createFederationSigningKey`](keys.md#createfederationsigningkey) | Function |
 | [`EntityKeysSource`](keys.md#entitykeyssource) | Type |
-| [`FederationKeyLifecycleProvider`](keys.md#federationkeylifecycleprovider) | Interface |
-| [`FederationKeyProvider`](keys.md#federationkeyprovider) | Interface |
-| [`FederationKeySet`](keys.md#federationkeyset) | Interface |
-| [`FederationSigningKey`](keys.md#federationsigningkey) | Interface |
 | [`fetchJwkSet`](keys.md#fetchjwkset) | Function |
 | [`fetchSignedJwkSet`](keys.md#fetchsignedjwkset) | Function |
 | [`FetchSignedJwkSetOptions`](keys.md#fetchsignedjwksetoptions) | Interface |
-| [`generateSigningKey`](keys.md#generatesigningkey) | Function |
 | [`isValidAlgorithm`](keys.md#isvalidalgorithm) | Function |
 | [`JWK_PUBLIC_FIELDS`](keys.md#jwk_public_fields) | Value |
 | [`jwkThumbprint`](keys.md#jwkthumbprint) | Function |
-| [`MemoryFederationKeyProvider`](keys.md#memoryfederationkeyprovider) | Class |
-| [`MemoryFederationKeyProviderOptions`](keys.md#memoryfederationkeyprovideroptions) | Interface |
 | [`preparePublicJwkSet`](keys.md#preparepublicjwkset) | Function |
 | [`ResolvedEntityKeys`](keys.md#resolvedentitykeys) | Interface |
 | [`resolveEntityKeys`](keys.md#resolveentitykeys) | Function |
 | [`ResolveEntityKeysOptions`](keys.md#resolveentitykeysoptions) | Interface |
 | [`selectVerificationKey`](keys.md#selectverificationkey) | Function |
-| [`StaticFederationKeyProvider`](keys.md#staticfederationkeyprovider) | Class |
 | [`stripPrivateFields`](keys.md#stripprivatefields) | Function |
-| [`SwitchActiveFederationKeyOptions`](keys.md#switchactivefederationkeyoptions) | Interface |
 | [`timingSafeEqual`](keys.md#timingsafeequal) | Function |
 | [`validateFederationKeySet`](keys.md#validatefederationkeyset) | Function |
 | [`validateJwkSetUseRequirement`](keys.md#validatejwksetuserequirement) | Function |
@@ -485,7 +471,6 @@ Signatures preserve optional and read-only declarations. An optional property is
 | [`DEFAULT_DELEGATION_TTL_SECONDS`](constants.md#default_delegation_ttl_seconds) | Value |
 | [`DEFAULT_ENTITY_STATEMENT_TTL_SECONDS`](constants.md#default_entity_statement_ttl_seconds) | Value |
 | [`DEFAULT_HTTP_TIMEOUT_MS`](constants.md#default_http_timeout_ms) | Value |
-| [`DEFAULT_KEY_RETIRE_AFTER_MS`](constants.md#default_key_retire_after_ms) | Value |
 | [`DEFAULT_MAX_AUTHORITY_HINTS`](constants.md#default_max_authority_hints) | Value |
 | [`DEFAULT_MAX_CHAIN_DEPTH`](constants.md#default_max_chain_depth) | Value |
 | [`DEFAULT_MAX_CHAIN_LENGTH`](constants.md#default_max_chain_length) | Value |
@@ -502,11 +487,13 @@ Signatures preserve optional and read-only declarations. An optional property is
 | [`JwtTyp`](constants.md#jwttyp) | Value and type |
 | [`MediaType`](constants.md#mediatype) | Value and type |
 | [`PolicyOperator`](constants.md#policyoperator) | Value and type |
-| [`REQUIRED_ALGORITHMS`](constants.md#required_algorithms) | Value |
+| [`INTEROP_RECOMMENDED_ALGORITHMS`](constants.md#required_algorithms) | Value |
 | [`STANDARD_ENTITY_STATEMENT_CLAIMS`](constants.md#standard_entity_statement_claims) | Value |
 | [`StandardPolicyOperator`](constants.md#standardpolicyoperator) | Enum and type |
-| [`SUPPORTED_ALGORITHMS`](constants.md#supported_algorithms) | Value |
+| [`DEFAULT_ALLOWED_ALGORITHMS`](constants.md#supported_algorithms) | Value |
 | [`SupportedAlgorithm`](constants.md#supportedalgorithm) | Type |
 | [`TrustMarkStatus`](constants.md#trustmarkstatus) | Value and type |
 | [`WELL_KNOWN_OPENID_FEDERATION`](constants.md#well_known_openid_federation) | Value |
 
+
+The shared [crypto service and contracts](../crypto/migration.md) cover `JwsService`, `CryptoContext`, `BoundFederationOptions`, `SigningPurposes`, `historicalKeysFromKeyring`, and portable data helpers.

@@ -2,17 +2,7 @@
 
 [`@oidfed/core`](README.md)
 
-Federation key providers supply the current signer and public keys. Lifecycle providers also publish replacements, switch the active signer, and retain history. Protocol-key resolution follows the entity type's metadata and is separate from federation key pinning.
-
-## `createFederationSigningKey`
-
-[Source](../../../packages/core/src/federation-keys.ts#L273)
-
-Create a federation signing-key record from a private JWK for a key provider. Publish only the record's public material.
-
-```typescript signature
-createFederationSigningKey(jwk: JWK): FederationSigningKey;
-```
+Hosts receive an explicit `CryptoContext` containing a `CryptoEngine` and `Keyring` from `@oidfed/crypto`. A single `KeyringEntry` carries its signing binding and published public keys. Protocol-key resolution follows the entity type's metadata and is separate from federation key pinning.
 
 ## `EntityKeysSource`
 
@@ -23,96 +13,6 @@ The metadata key source selected during protocol-key resolution.
 ```typescript signature
 type EntityKeysSource = "jwks" | "jwks_uri" | "signed_jwks_uri";
 ```
-
-## `FederationKeyLifecycleProvider`
-
-[Source](../../../packages/core/src/federation-keys.ts#L31)
-
-A federation key provider with operations for publishing, activating, retiring, and revoking keys.
-
-```typescript signature
-interface FederationKeyLifecycleProvider extends FederationKeyProvider {
-	/** Return historical public keys with recorded lifetimes (Federation §8.7.2). */
-	getHistoricalFederationKeys(): Promise<HistoricalKeyEntry[]>;
-	/** Publish a next key without changing the signer (Federation §11.2). */
-	publishKey(key: FederationSigningKey): Promise<void>;
-	/**
-	 * Switch after the application's publication/propagation interval has elapsed.
-	 * A published replacement can also restore signing after all active keys are revoked.
-	 */
-	switchActiveKey(kid: string, options?: SwitchActiveFederationKeyOptions): Promise<void>;
-	/** Apply local revocation policy; this does not invalidate remote cached statements. */
-	revokeKey(kid: string, reason: string): Promise<void>;
-}
-```
-
-Fields (including inherited fields):
-
-| Field | Declared type | Description |
-|---|---|---|
-| `getHistoricalFederationKeys` | `() => Promise<HistoricalKeyEntry[]>` | Return historical public keys with recorded lifetimes (Federation §8.7.2). |
-| `publishKey` | `(key: FederationSigningKey) => Promise<void>` | Publish a next key without changing the signer (Federation §11.2). |
-| `switchActiveKey` | `(kid: string, options?: SwitchActiveFederationKeyOptions) => Promise<void>` | Switch after the application's publication/propagation interval has elapsed. A published replacement can also restore signing after all active keys are revoked. |
-| `revokeKey` | `(kid: string, reason: string) => Promise<void>` | Apply local revocation policy; this does not invalidate remote cached statements. |
-| `getFederationKeySet` | `() => Promise<FederationKeySet>` | Read the current public Federation Entity Keys and active signing capability. |
-
-## `FederationKeyProvider`
-
-[Source](../../../packages/core/src/federation-keys.ts#L15)
-
-The interface used to obtain current federation public keys and a signer.
-
-```typescript signature
-interface FederationKeyProvider {
-	getFederationKeySet(): Promise<FederationKeySet>;
-}
-```
-
-Fields (including inherited fields):
-
-| Field | Declared type | Description |
-|---|---|---|
-| `getFederationKeySet` | `() => Promise<FederationKeySet>` | Read the current public Federation Entity Keys and active signing capability. |
-
-## `FederationKeySet`
-
-[Source](../../../packages/core/src/federation-keys.ts#L10)
-
-The public federation keys and signing information returned by a key provider.
-
-```typescript signature
-interface FederationKeySet {
-	readonly signer: JwtSigner;
-	readonly jwks: JWKSet;
-}
-```
-
-Fields (including inherited fields):
-
-| Field | Declared type | Description |
-|---|---|---|
-| `signer` | `JwtSigner` | Signing capability and its public algorithm/key identifier. Private-key custody stays with the implementation. |
-| `jwks` | `JWKSet` | Public Federation Entity Keys, including a key matching the active signer. |
-
-## `FederationSigningKey`
-
-[Source](../../../packages/core/src/federation-keys.ts#L19)
-
-A public federation signing key paired with the signer that holds its private-key capability.
-
-```typescript signature
-interface FederationSigningKey {
-	readonly signer: JwtSigner;
-	readonly publicJwk: JWK;
-}
-```
-
-Fields (including inherited fields):
-
-| Field | Declared type | Description |
-|---|---|---|
-| `signer` | `JwtSigner` | Signing capability and its public algorithm/key identifier. Private-key custody stays with the implementation. |
-| `publicJwk` | `JWK` | Public JWK corresponding to the signer; private material must not be published. |
 
 ## `fetchJwkSet`
 
@@ -127,7 +27,7 @@ Fetch and parse a plain JWK Set from `jwks_uri`.
   require `use` on every key).
 
 ```typescript signature
-fetchJwkSet(url: string, options?: FederationOptions): Promise<Result<JWKSet, FederationError>>;
+fetchJwkSet(url: string, options: FederationOptions): Promise<Result<JWKSet, FederationError>>;
 ```
 
 ## `fetchSignedJwkSet`
@@ -196,32 +96,19 @@ Fields (including inherited fields):
 | `expectedOwner` | `string` | Key owner from trusted context; §5.2.1 permits an owner distinct from the issuer. |
 | `expectedIssuer` | `string` | Issuer identity that must match the verified payload. |
 
-## `generateSigningKey`
-
-[Source](../../../packages/core/src/jose/keys.ts#L27)
-
-Generate an asymmetric signing key pair for the given algorithm.
-
-```typescript signature
-generateSigningKey(alg?: SupportedAlgorithm): Promise<{
-	publicKey: JWK;
-	privateKey: JWK;
-}>;
-```
-
 ## `isValidAlgorithm`
 
-[Source](../../../packages/core/src/jose/keys.ts#L8)
+[Source](../../../packages/core/src/jose/keys.ts#L13)
 
-Returns true if the given value is a supported asymmetric signing algorithm (not "none").
+Returns true if the algorithm is registered. Pass the host registry to recognize a custom algorithm. The default registry contains the built-ins.
 
 ```typescript signature
-isValidAlgorithm(alg: unknown): alg is string;
+isValidAlgorithm(alg: unknown, registry?: JwsAlgorithmRegistry): alg is string;
 ```
 
 ## `JWK_PUBLIC_FIELDS`
 
-[Source](../../../packages/core/src/jose/keys.ts#L99)
+[Source](../../../packages/core/src/jose/keys.ts#L75)
 
 Allowlist of JWK fields that are safe to expose publicly.
 
@@ -233,114 +120,22 @@ The allowlist contains `kty`, `use`, `key_ops`, `alg`, `kid`, `x5u`, `x5c`, `x5t
 
 ## `jwkThumbprint`
 
-[Source](../../../packages/core/src/jose/keys.ts#L43)
+[Source](../../../packages/core/src/jose/keys.ts#L18)
 
-Compute JWK thumbprint (SHA-256) for the given key.
-
-```typescript signature
-jwkThumbprint(key: JWK): Promise<string>;
-```
-
-## `MemoryFederationKeyProvider`
-
-[Source](../../../packages/core/src/federation-keys.ts#L89)
-
-In-memory key lifecycle state. Applications drive Federation §11.2's
-publish, propagate, and switch stages; this provider schedules JWKS retirement.
-Production providers must share durable state and protect signing-key custody.
+Compute the RFC 7638 SHA-256 thumbprint for the given key. Pass the host registry for a custom JWK format.
 
 ```typescript signature
-new MemoryFederationKeyProvider(initial: FederationSigningKey | readonly [FederationSigningKey, ...FederationSigningKey[]], options?: MemoryFederationKeyProviderOptions): MemoryFederationKeyProvider;
+jwkThumbprint(key: JWK, engine: CryptoEngine, registry?: JwsAlgorithmRegistry): Promise<string>;
 ```
-
-### `MemoryFederationKeyProvider#getFederationKeySet`
-
-Read the current federation signer and public-key set from the provider.
-
-[Source](../../../packages/core/src/federation-keys.ts#L134)
-
-```typescript signature
-getFederationKeySet(): Promise<FederationKeySet>;
-```
-
-### `MemoryFederationKeyProvider#getHistoricalFederationKeys`
-
-Return historical public keys with recorded lifetimes (Federation §8.7.2).
-
-[Source](../../../packages/core/src/federation-keys.ts#L166)
-
-```typescript signature
-getHistoricalFederationKeys(): Promise<HistoricalKeyEntry[]>;
-```
-
-### `MemoryFederationKeyProvider#publishKey`
-
-Publish a next key without changing the signer (Federation §11.2).
-
-[Source](../../../packages/core/src/federation-keys.ts#L179)
-
-```typescript signature
-publishKey(key: FederationSigningKey): Promise<void>;
-```
-
-### `MemoryFederationKeyProvider#switchActiveKey`
-
-Switch after the application's publication/propagation interval has elapsed.
-A published replacement can also restore signing after all active keys are revoked.
-
-[Source](../../../packages/core/src/federation-keys.ts#L194)
-
-```typescript signature
-switchActiveKey(kid: string, options?: SwitchActiveFederationKeyOptions): Promise<void>;
-```
-
-### `MemoryFederationKeyProvider#revokeKey`
-
-Apply local revocation policy; this does not invalidate remote cached statements.
-
-[Source](../../../packages/core/src/federation-keys.ts#L240)
-
-```typescript signature
-revokeKey(kid: string, reason: string): Promise<void>;
-```
-
-### `MemoryFederationKeyProvider.fromJWK`
-
-Construct an in-memory federation key provider from the supplied private JWK.
-
-[Source](../../../packages/core/src/federation-keys.ts#L91)
-
-```typescript signature
-static fromJWK(jwk: JWK, options?: MemoryFederationKeyProviderOptions): MemoryFederationKeyProvider;
-```
-
-## `MemoryFederationKeyProviderOptions`
-
-[Source](../../../packages/core/src/federation-keys.ts#L79)
-
-Lifecycle and time settings for the in-memory federation key provider.
-
-```typescript signature
-interface MemoryFederationKeyProviderOptions {
-	/** Current Unix time in milliseconds for key-lifecycle scheduling. */
-	readonly nowMs?: () => number;
-}
-```
-
-Fields (including inherited fields):
-
-| Field | Declared type | Description |
-|---|---|---|
-| `nowMs?` | `() => number` | Current Unix time in milliseconds for key-lifecycle scheduling. |
 
 ## `preparePublicJwkSet`
 
-[Source](../../../packages/core/src/jwks/public-material.ts#L35)
+[Source](../../../packages/core/src/jwks/public-material.ts#L39)
 
 Capture the JSON data once so publishers store and sign exactly what was validated.
 
 ```typescript signature
-preparePublicJwkSet(value: unknown): Result<JWKSet, FederationError>;
+preparePublicJwkSet(value: unknown, registry?: JwsAlgorithmRegistry): Result<JWKSet, FederationError>;
 ```
 
 ## `ResolvedEntityKeys`
@@ -429,37 +224,17 @@ Fields (including inherited fields):
 
 ## `selectVerificationKey`
 
-[Source](../../../packages/core/src/jose/keys.ts#L51)
+[Source](../../../packages/core/src/jose/keys.ts#L27)
 
 Select a supported asymmetric verification key whose `key_ops` permits verification and whose `use` is absent or `sig`. A supplied `kid` must match; it never falls back to another key when missing or algorithm-incompatible. With no `kid`, selection can use the supported algorithm and key type. This helper selects a candidate; it does not verify a signature.
 
 ```typescript signature
-selectVerificationKey(header: { kid?: string; alg?: string }, jwks: JWKSet): JWK | undefined;
-```
-
-## `StaticFederationKeyProvider`
-
-[Source](../../../packages/core/src/federation-keys.ts#L65)
-
-Supply a fixed federation key set through the provider interface. Use a lifecycle provider when keys must be published, activated, or retired while the service runs.
-
-```typescript signature
-new StaticFederationKeyProvider(keySet: FederationKeySet): StaticFederationKeyProvider;
-```
-
-### `StaticFederationKeyProvider#getFederationKeySet`
-
-Read the current federation signer and public-key set from the provider.
-
-[Source](../../../packages/core/src/federation-keys.ts#L74)
-
-```typescript signature
-getFederationKeySet(): Promise<FederationKeySet>;
+selectVerificationKey(header: { kid?: string; alg?: string }, jwks: JWKSet, registry?: JwsAlgorithmRegistry): JWK | undefined;
 ```
 
 ## `stripPrivateFields`
 
-[Source](../../../packages/core/src/jose/keys.ts#L123)
+[Source](../../../packages/core/src/jose/keys.ts#L99)
 
 Strip private key material from a JWK, returning only spec-defined public fields.
 
@@ -471,28 +246,9 @@ Throws TypeError for symmetric keys (kty "oct") which have no public representat
 stripPrivateFields(key: JWK): JWK;
 ```
 
-## `SwitchActiveFederationKeyOptions`
-
-[Source](../../../packages/core/src/federation-keys.ts#L45)
-
-Controls how the previous signing key retires when a new key becomes active.
-
-```typescript signature
-interface SwitchActiveFederationKeyOptions {
-	/** Post-switch overlap in milliseconds; the memory provider requires a finite, nonnegative value and defaults to seven days. */
-	readonly retirePreviousAfterMs?: number;
-}
-```
-
-Fields (including inherited fields):
-
-| Field | Declared type | Description |
-|---|---|---|
-| `retirePreviousAfterMs?` | `number` | Post-switch overlap in milliseconds; the memory provider requires a finite, nonnegative value and defaults to seven days. |
-
 ## `timingSafeEqual`
 
-[Source](../../../packages/core/src/jose/keys.ts#L84)
+[Source](../../../packages/core/src/jose/keys.ts#L61)
 
 Compare the UTF-8 encodings of two strings without an early exit for a differing byte when lengths match. Different lengths return false immediately; use it for the documented public identifiers, not as a general secret-comparison guarantee.
 
@@ -502,17 +258,17 @@ timingSafeEqual(a: string, b: string): boolean;
 
 ## `validateFederationKeySet`
 
-[Source](../../../packages/core/src/federation-keys.ts#L284)
+[Source](../../../packages/core/src/federation-keys.ts#L99)
 
 Check the relationship between the federation key set and its signer before publication or signing.
 
 ```typescript signature
-validateFederationKeySet(keySet: FederationKeySet): void;
+validateFederationKeySet(entry: KeyringEntry, registry?: JwsAlgorithmRegistry): void;
 ```
 
 ## `validateJwkSetUseRequirement`
 
-[Source](../../../packages/core/src/jwks/use-requirement.ts#L86)
+[Source](../../../packages/core/src/jwks/use-requirement.ts#L88)
 
 Returns ok if the JWK Set satisfies the `use` conditional REQUIRED rule.
 
@@ -521,12 +277,12 @@ key are present in the set, but at least one key has no nonempty `use` value.
 RFC 7517 permits extension values in addition to sig and enc.
 
 ```typescript signature
-validateJwkSetUseRequirement(jwks: readonly JWK[]): Result<void, FederationError>;
+validateJwkSetUseRequirement(jwks: readonly JWK[], registry?: JwsAlgorithmRegistry): Result<void, FederationError>;
 ```
 
 ## `validatePublicJwkSet`
 
-[Source](../../../packages/core/src/jwks/public-material.ts#L29)
+[Source](../../../packages/core/src/jwks/public-material.ts#L30)
 
 Check the JSON representation before publishing a federation JWK Set. Includes the
 federation schema's unique, nonempty kid requirement. RFC 7518 §6 and RFC 8037
@@ -537,7 +293,7 @@ Received sets use the existing schemas and verification-key selection:
 RFC 7517 §5 recommends ignoring unusable keys when consuming a set.
 
 ```typescript signature
-validatePublicJwkSet(value: unknown): Result<void, FederationError>;
+validatePublicJwkSet(value: unknown, registry?: JwsAlgorithmRegistry): Result<void, FederationError>;
 ```
 
 ## `validateSignedJwkSetSpecHygiene`
@@ -562,3 +318,17 @@ export function acceptStrictSignedKeyMetadata(verifiedPayload: Parameters<typeof
 }
 ```
 
+
+## `historicalKeysFromKeyring`
+
+Convert recorded keyring events into the Federation historical-key response shape:
+
+```ts
+import { historicalKeysFromKeyring } from "@oidfed/core";
+const history = historicalKeysFromKeyring(keyring, "federation");
+const keys = await history.getHistoricalKeys();
+```
+
+Only retired or revoked keys enter this response. Per-key `exp` is the earlier recorded retirement or revocation. Publication and activation do not imply a key's creation time or validity start. A custom `FederationKeyHistorySource` can supply known `iat` and `nbf` facts.
+
+See the [crypto contracts](../crypto/README.md) and [host migration](../crypto/migration.md) for backend selection, signing purposes, snapshots and lifecycle operations.

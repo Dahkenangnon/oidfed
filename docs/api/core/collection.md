@@ -175,7 +175,7 @@ interface EntityCollectionConfig {
 	store?: EntityCollectionStore;
 	responder?: { entityId: EntityId; isTrustAnchor: boolean };
 	authentication?: CollectionAuthentication;
-	options?: FederationOptions;
+	options: FederationOptions;
 	maxPageSize?: number;
 	cursorTtlSeconds?: number;
 	maxEntities?: number;
@@ -275,7 +275,9 @@ type EntityCollectionFilter = (
 Optional integration; responder identity always comes from its hosting class.
 
 ```typescript signature
-type EntityCollectionIntegration = Omit<EntityCollectionConfig, "responder">;
+type EntityCollectionIntegration = Omit<EntityCollectionConfig, "responder" | "options"> & {
+	readonly options?: import("../types.js").BoundFederationOptions;
+};
 ```
 
 Fields (including inherited fields):

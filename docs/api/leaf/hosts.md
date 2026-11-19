@@ -2,7 +2,7 @@
 
 [`@oidfed/leaf`](README.md)
 
-Construct one host for an Entity Identifier and compose fresh protocol-role instances into it. Hosts accept Web API requests; the application supplies HTTPS routing and durable infrastructure. Constructor validation can throw before a handler is available.
+Construct one host for an Entity Identifier and compose fresh protocol-role instances into it. Hosts accept Web API requests; the application supplies HTTPS routing and durable infrastructure. Factory validation can reject before a handler is available.
 
 ## `Leaf`
 
@@ -10,12 +10,12 @@ Construct one host for an Entity Identifier and compose fresh protocol-role inst
 
 Host a non-authority Federation participant: publish its Entity Configuration, compose protocol roles, and optionally serve Resolve, Entity Collection, or Trust Mark endpoints. A Leaf never issues Subordinate Statements.
 
-Construction validates local configuration and composes detached publication metadata; it does not establish trust in a Superior or generate an EC. Requesting an uncached EC, refreshing it, or changing holder publication triggers signing. Constructor errors throw. Discovery and assessment return `Result` values; EC generation, holder mutations, and issuer operations can reject their promises.
+Construction validates local configuration and composes detached publication metadata; it does not establish trust in a Superior or generate an EC. Requesting an uncached EC, refreshing it, or changing holder publication triggers signing. Await `Leaf.create(config)` to receive initialization errors. Discovery and assessment return `Result` values; EC generation, holder mutations, and issuer operations can reject their promises.
 
 A public property marked `readonly` cannot be reassigned through TypeScript; the referenced service may still expose its own operations. Types other than `Leaf` and `LeafConfig` in the signatures below belong to `@oidfed/core`.
 
 ```typescript signature
-new Leaf(config: LeafConfig): Leaf;
+static create(config: LeafConfig): Promise<Leaf>;
 ```
 
 ### `Leaf#resolver`
@@ -47,9 +47,7 @@ Discover and validate candidate chains for the target, then apply the configured
 [Source](../../../packages/leaf/src/entity-configuration.ts#L99)
 
 ```typescript signature
-discoverEntity(target: EntityId, options?: FederationOptions & {
-	trustAnchors?: TrustAnchorSet;
-}): Promise<import("@oidfed/core").Result<import("@oidfed/core").DiscoveryResult>>;
+discoverEntity(target: EntityId, options?: BoundFederationOptions & { trustAnchors?: TrustAnchorSet; }): Promise<Result<DiscoveryResult>>;
 ```
 
 ### `Leaf#discoverEntityFromChain`
@@ -59,9 +57,7 @@ Validate supplied leaf-first compact Entity Statements for the exact target and 
 [Source](../../../packages/leaf/src/entity-configuration.ts#L110)
 
 ```typescript signature
-discoverEntityFromChain(target: EntityId, statements: readonly string[], options?: FederationOptions & {
-	trustAnchors?: TrustAnchorSet;
-}): Promise<import("@oidfed/core").Result<import("@oidfed/core").DiscoveryResult>>;
+discoverEntityFromChain(target: EntityId, statements: readonly string[], options?: BoundFederationOptions & { trustAnchors?: TrustAnchorSet; }): Promise<Result<DiscoveryResult>>;
 ```
 
 ### `Leaf#collection`
@@ -86,7 +82,7 @@ readonly entityId: EntityId;
 
 ### `Leaf#getEntityConfiguration`
 
-Return the cached EC while it is unexpired. Otherwise, generate and sign one with the current key provider, host clock, stored publication metadata, and current holder references. Concurrent calls share the in-flight build. Key-provider, validation, or signing errors reject the promise. An unchanged cached EC can remain in use after a provider key change; call `refreshEntityConfiguration` when immediate regeneration is required.
+Return the cached EC while it is unexpired. Otherwise, generate and sign one with the configured keyring, host clock, stored publication metadata, and current holder references. Concurrent calls share the in-flight build. Keyring, validation, or signing errors reject the promise. An unchanged cached EC can remain in use after a provider key change; call `refreshEntityConfiguration` when immediate regeneration is required.
 
 [Source](../../../packages/leaf/src/entity-configuration.ts#L501)
 
@@ -96,7 +92,7 @@ getEntityConfiguration(): Promise<string>;
 
 ### `Leaf#isEntityConfigurationExpired`
 
-Return `true` before any EC is cached, or when the host clock reaches its cached `exp`. This checks local cache lifetime only; it does not evaluate remote revocation, fetch a new chain, or check whether the key provider changed.
+Return `true` before any EC is cached, or when the host clock reaches its cached `exp`. This checks local cache lifetime only; it does not evaluate remote revocation, fetch a new chain, or check whether the keyring changed.
 
 [Source](../../../packages/leaf/src/entity-configuration.ts#L516)
 
@@ -141,7 +137,7 @@ Establish issuer trust using the explicitly supplied `trustAnchors` and `options
 [Source](../../../packages/leaf/src/entity-configuration.ts#L549)
 
 ```typescript signature
-fetchAndAttachTrustMark(options: FetchAndAttachTrustMarkOptions): Promise<void>;
+fetchAndAttachTrustMark(options: Omit<FetchAndAttachTrustMarkOptions, "options"> & { readonly options?: BoundFederationOptions; }): Promise<void>;
 ```
 
 ### `Leaf#removeTrustMark`
@@ -237,13 +233,13 @@ Static alias of core [`discoverEntityFromChain`](../core/chains.md#discoverentit
 [Source](../../../packages/leaf/src/entity-configuration.ts#L85)
 
 ```typescript signature
-static discoverEntityFromChain: typeof discoverEntityFromChain;
+Leaf.discoverEntityFromChain(entityId: EntityId, statements: readonly string[], trustAnchors: TrustAnchorSet, options: FederationOptions): Promise<Result<DiscoveryResult>>;
 ```
 
 Callable signature:
 
 ```typescript signature
-Leaf.discoverEntityFromChain(entityId: EntityId, statements: readonly string[], trustAnchors: TrustAnchorSet, options?: FederationOptions): Promise<Result<DiscoveryResult>>;
+Leaf.discoverEntityFromChain(entityId: EntityId, statements: readonly string[], trustAnchors: TrustAnchorSet, options: FederationOptions): Promise<Result<DiscoveryResult>>;
 ```
 
 ### `Leaf.discoverEntity`
@@ -253,7 +249,7 @@ Static convenience wrapper around core discovery. It accepts a string or branded
 [Source](../../../packages/leaf/src/entity-configuration.ts#L126)
 
 ```typescript signature
-static discoverEntity(targetEntityId: EntityId | string, trustAnchors: TrustAnchorSet, options?: FederationOptions): Promise<import("@oidfed/core").Result<import("@oidfed/core").DiscoveryResult>>;
+Leaf.discoverEntity(targetEntityId: EntityId | string, trustAnchors: TrustAnchorSet, options: FederationOptions): Promise<Result<DiscoveryResult>>;
 ```
 
 ## `LeafConfig`
@@ -262,7 +258,7 @@ static discoverEntity(targetEntityId: EntityId | string, trustAnchors: TrustAnch
 
 Construction settings for one Leaf. Host metadata is cloned, roles are initialized in order, and their metadata replaces matching host parameters in that order. The resulting publication metadata must be nonempty; an initially empty `metadata` object is permitted when a role contributes a block.
 
-Changing the original metadata object does not change the host. Re-create the Leaf to change general publication metadata; EC refresh re-reads keys and the existing stored metadata. Key providers, role instances, options, and storage are not universally cloned or frozen. Treat construction settings as immutable, including `trustAnchorHints`, whose array remains referenced.
+Changing the original metadata object does not change the host. Re-create the Leaf to change general publication metadata; EC refresh re-reads keys and the existing stored metadata. Keyrings, role instances, options, and storage are not universally cloned or frozen. Treat construction settings as immutable, including `trustAnchorHints`, whose array remains referenced.
 
 Instance discovery and assessment calls merge host options with call options. Holder attachment and fetching use their explicit verification/fetch options, while managed issuance uses its issuer service configuration. Static calls have no host defaults.
 
@@ -274,9 +270,9 @@ interface LeafConfig extends EntityStatementExtensions {
 	entityId: EntityId | string;
 	authorityHints: readonly (EntityId | string)[];
 	metadata: EntityStatementMetadata;
-	keyProvider: FederationKeyProvider;
+	crypto: CryptoContext;
 	roles?: EntityRole[];
-	options?: FederationOptions;
+	options?: BoundFederationOptions;
 	trustMarks?: TrustMarkRef[];
 	trustAnchorHints?: readonly (EntityId | string)[];
 	/** Positive safe-integer EC lifetime in seconds; omission uses the core default. */
@@ -295,7 +291,6 @@ Fields (including inherited fields):
 | `entityId` | `EntityId \| string` | Own HTTPS Entity Identifier without credentials, query, or fragment. Construction removes one trailing slash and validates the result. |
 | `authorityHints` | `readonly (EntityId \| string)[]` | Required nonempty Immediate Superior identifiers. Each must be a valid Entity Identifier; construction copies the array without checking remote registration or trust. |
 | `metadata` | `EntityStatementMetadata` | Host metadata indexed by Entity Type. Final composed metadata must be nonempty. Leaves reject Fetch, List, Extended Listing, and Subordinate Events endpoints and their auth-method fields in federation_entity. |
-| `keyProvider` | `FederationKeyProvider` | [`FederationKeyProvider`](../core/keys.md#federationkeyprovider) supplies current Federation Entity Keys and a signer when generating an EC. A lifecycle provider can also satisfy this narrower read interface. |
 | `roles?` | `EntityRole[]` | [`EntityRole`](../core/contracts.md#entityrole) instances are initialized and composed in array order. Create fresh stateful role instances for this host. Duplicate route paths and collisions with EC or service routes are rejected. |
 | `options?` | `FederationOptions` | [`FederationOptions`](../core/contracts.md#federationoptions) supplies the shared host clock, transport, validation, caching, and logging settings. They are inherited by instance discovery/assessment and service integrations as described above. |
 | `trustMarks?` | `TrustMarkRef[]` | Initial holder references, copied at construction and included in subsequent EC publication. Copying or publishing them does not cryptographically validate their JWTs; attachTrustMark performs evidence-aware validation. |

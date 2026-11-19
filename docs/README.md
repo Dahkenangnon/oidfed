@@ -23,6 +23,7 @@ Choose one federation host per Entity Identifier: `Leaf`, `Intermediate`, or `Tr
 
 | Package | Public API |
 |---|---|
+| `@oidfed/crypto` | [Engines, signing custody, keyrings and compact JWS utilities](api/crypto/README.md) |
 | `@oidfed/core` | [Statements, keys, chains, policies, endpoint clients, Trust Marks, and shared contracts](api/core/README.md) |
 | `@oidfed/authority` | [Trust Anchors, Intermediates, subordinate management, and storage](api/authority/README.md) |
 | `@oidfed/leaf` | [Participant publication and composed federation services](api/leaf/README.md) |

@@ -35,7 +35,6 @@ Metadata and extension claims are captured at construction. Initialized roles ov
 ```typescript signature
 interface AuthorityConfig extends EntityStatementExtensions {
 	trustMarkDefaults?: TrustMarkIssuerConfig["trustMarkDefaults"];
-	trustMarkSigner?: TrustMarkIssuerConfig["trustMarkSigner"];
 	trustMarkStatusPolicy?: TrustMarkIssuerConfig["trustMarkStatusPolicy"];
 	trustMarkRequestExtensions?: TrustMarkIssuerConfig["trustMarkRequestExtensions"];
 	endpointAuthentication?: EndpointAuthentication;
@@ -56,8 +55,8 @@ interface AuthorityConfig extends EntityStatementExtensions {
 	}>;
 	/** Unified persistence adapter for all non-key authority state. */
 	storage: StorageAdapter;
-	/** Federation-only signing key provider and lifecycle manager. */
-	keyProvider: FederationKeyLifecycleProvider;
+	/** Host crypto engine, signing keyring and optional key history. */
+	crypto: CryptoContext;
 	/**
 	 * Resolves public Federation Entity Keys for authenticated remote authority
 	 * endpoint clients. Defaults to `storage.subordinates.get(entityId)?.jwks`.
@@ -88,7 +87,7 @@ interface AuthorityConfig extends EntityStatementExtensions {
 	/** Positive finite TTL in seconds for issued Trust Marks; fractional values are allowed. */
 	trustMarkTtlSeconds?: number;
 	/** Federation-wide options (httpClient, clock, etc.). */
-	options?: Omit<FederationOptions, "cache">;
+	options?: Omit<BoundFederationOptions, "cache">;
 	/**
 	 * Configuration for the Extended Subordinate Listing endpoint. Set
 	 * `enabled: false` to keep the endpoint disabled (router returns 404) and
@@ -105,7 +104,6 @@ Fields (including inherited fields). `?` marks an optional member; types below r
 | Field | Declared type | Description |
 |---|---|---|
 | `trustMarkDefaults?` | `TrustMarkIssuerConfig["trustMarkDefaults"]` | Per-type issuance defaults. A supplied top-level map takes precedence over `trustMarkIssuer.trustMarkDefaults`. |
-| `trustMarkSigner?` | `TrustMarkIssuerConfig["trustMarkSigner"]` | Optional signer selector for issued marks; takes precedence over the nested selector. The resulting mark must verify with the issuer's published federation keys. |
 | `trustMarkStatusPolicy?` | `TrustMarkIssuerConfig["trustMarkStatusPolicy"]` | Issuer policy for Status responses and local Resolve status assessments. A top-level callback overrides the nested callback and cannot reactivate an ineligible mark. |
 | `trustMarkRequestExtensions?` | `TrustMarkIssuerConfig["trustMarkRequestExtensions"]` | Additional Trust Mark request-parameter validators. A supplied top-level map overrides the nested map. |
 | `endpointAuthentication?` | `EndpointAuthentication` | Custom federation endpoint authentication methods and trusted transport-evidence lookup. Advertise accepted method names in each endpoint's metadata. |
@@ -115,7 +113,7 @@ Fields (including inherited fields). `?` marks an optional member; types below r
 | `entityId` | `EntityId \| string` | HTTPS Entity Identifier without userinfo, query, or fragment. Construction removes one trailing slash before exposing the published identifier. |
 | `metadata` | `{ federation_entity: FederationEntityMetadata } & Partial<{ [K in EntityType]: EntityTypeMetadataMap[K]; }>` | Copied metadata, including required fetch/list endpoints in `federation_entity`. Initialized roles replace conflicting parameters in role order. Entity-type blocks and direct metadata parameters cannot be null. |
 | `storage` | `StorageAdapter` | Persistence adapter for subordinate records and any optional Trust Mark, event, replay, cache, and collection capabilities required by enabled operations. |
-| `keyProvider` | `FederationKeyLifecycleProvider` | Current federation signer and public keys, plus rollover and historical-key operations. Retained as a live service reference. |
+| `crypto` | `RotatingKeyring` | Current federation signer and public keys, plus rollover and historical-key operations. Retained as a live service reference. |
 | `clientKeyProvider?` | `AuthorityClientKeyProvider` | Client federation-key lookup for endpoint authentication. Defaults to the caller's `storage.subordinates` record; it performs no automatic remote discovery. |
 | `roles?` | `EntityRole[]` | Fresh protocol-role instances initialized once for this host. Their metadata and routes are composed during construction. |
 | `trustMarks?` | `TrustMarkRef[]` | Initial Trust Mark references held by this authority and published in its own EC; distinct from records issued by its Trust Mark service. |
@@ -162,9 +160,8 @@ interface AuthorityServer {
 	getSubordinateStatement(sub: EntityId): Promise<string>;
 	listSubordinates(filter?: ListFilter): Promise<EntityId[]>;
 	/**
-	 * Direct access to the Extended Subordinate Listing response (skipping HTTP).
-	 * Mirrors the wire-level handler — used for in-process pagination,
-	 * server-side rendering, and tests.
+	 * Run Extended Listing locally with the same filtering and pagination as the HTTP handler.
+	 * Use it for in-process pagination, server-side rendering, or tests.
 	 */
 	listSubordinatesExtended(
 		params?: ExtendedSubordinateListingParams,
@@ -176,8 +173,12 @@ interface AuthorityServer {
 	revokeTrustMark(type: string, subject: string): Promise<void>;
 	listTrustMarksForSubject(subject: string): Promise<TrustMarkRecord[]>;
 	getTrustMarks(): TrustMarkRef[];
-	attachTrustMark(jwt: string, options: AttachTrustMarkOptions): Promise<void>;
-	fetchAndAttachTrustMark(options: FetchAndAttachTrustMarkOptions): Promise<void>;
+	attachTrustMark(jwt: string, options: Omit<AttachTrustMarkOptions, "engine">): Promise<void>;
+	fetchAndAttachTrustMark(
+		options: Omit<FetchAndAttachTrustMarkOptions, "options"> & {
+			readonly options?: BoundFederationOptions;
+		},
+	): Promise<void>;
 	removeTrustMark(selector: RemoveTrustMarkSelector): Promise<void>;
 	setTrustMarkIssuers(issuers: Record<string, string[]>): Promise<void>;
 	setTrustMarkOwners(owners: Record<string, TrustMarkOwner>): Promise<void>;
@@ -417,10 +418,10 @@ type FederationHandler = (request: Request) => Promise<Response>;
 
 Authority host with at least one Superior. It issues statements for registered subordinates and can issue and hold Trust Marks. It rejects anchor issuer/owner policy configuration; its `setTrustMarkIssuers()` and `setTrustMarkOwners()` methods exist but always reject.
 
-The constructor requires advertised fetch and list endpoints, initializes roles, and rejects conflicting routes. Publication is signed on demand. Local methods do not authenticate an HTTP caller; authorize administrative access in the host application.
+The factory requires advertised fetch and list endpoints, initializes roles, and rejects conflicting routes. Publication is signed on demand. Local methods do not authenticate an HTTP caller; authorize administrative access in the host application.
 
 ```typescript signature
-new Intermediate(config: AuthorityConfig): Intermediate;
+static create(config: AuthorityConfig): Promise<Intermediate>;
 ```
 
 ### `Intermediate#assessEntity`
@@ -442,9 +443,7 @@ Discover candidates, validate their chains, and select a result. Instance calls 
 [Source](../../../packages/authority/src/server.ts#L1055)
 
 ```typescript signature
-discoverEntity(target: EntityId, options?: FederationOptions & {
-		trustAnchors?: TrustAnchorSet;
-	}): Promise<Result<import("@oidfed/core").DiscoveryResult>>;
+discoverEntity(target: EntityId, options?: BoundFederationOptions & { trustAnchors?: TrustAnchorSet; }): Promise<Result<DiscoveryResult>>;
 ```
 
 ### `Intermediate#discoverEntityFromChain`
@@ -454,9 +453,7 @@ Validate supplied readonly statements for the target and return a `DiscoveryResu
 [Source](../../../packages/authority/src/server.ts#L1066)
 
 ```typescript signature
-discoverEntityFromChain(target: EntityId, statements: readonly string[], options?: FederationOptions & {
-		trustAnchors?: TrustAnchorSet;
-	}): Promise<Result<import("@oidfed/core").DiscoveryResult>>;
+discoverEntityFromChain(target: EntityId, statements: readonly string[], options?: BoundFederationOptions & { trustAnchors?: TrustAnchorSet; }): Promise<Result<DiscoveryResult>>;
 ```
 
 ### `Intermediate#collection`
@@ -576,7 +573,7 @@ Establish the requested issuer’s trust, retrieve a mark, validate it for this 
 [Source](../../../packages/authority/src/server.ts#L1148)
 
 ```typescript signature
-fetchAndAttachTrustMark(options: FetchAndAttachTrustMarkOptions): Promise<void>;
+fetchAndAttachTrustMark(options: Omit<FetchAndAttachTrustMarkOptions, "options"> & { readonly options?: BoundFederationOptions; }): Promise<void>;
 ```
 
 ### `Intermediate#removeTrustMark`
@@ -752,13 +749,13 @@ Static callable property aliasing core’s [`discoverEntity`](../core/chains.md#
 [Source](../../../packages/authority/src/server.ts#L1271)
 
 ```typescript signature
-static discoverEntity: typeof discoverEntity;
+Intermediate.discoverEntity(entityId: EntityId, trustAnchors: TrustAnchorSet, options: FederationOptions): Promise<Result<DiscoveryResult>>;
 ```
 
 Callable signature:
 
 ```typescript signature
-Intermediate.discoverEntity(entityId: EntityId, trustAnchors: TrustAnchorSet, options?: FederationOptions): Promise<Result<DiscoveryResult>>;
+Intermediate.discoverEntity(entityId: EntityId, trustAnchors: TrustAnchorSet, options: FederationOptions): Promise<Result<DiscoveryResult>>;
 ```
 
 ### `Intermediate.discoverEntityFromChain`
@@ -768,13 +765,13 @@ Static callable property aliasing core’s [`discoverEntityFromChain`](../core/c
 [Source](../../../packages/authority/src/server.ts#L1273)
 
 ```typescript signature
-static discoverEntityFromChain: typeof discoverEntityFromChain;
+Intermediate.discoverEntityFromChain(entityId: EntityId, statements: readonly string[], trustAnchors: TrustAnchorSet, options: FederationOptions): Promise<Result<DiscoveryResult>>;
 ```
 
 Callable signature:
 
 ```typescript signature
-Intermediate.discoverEntityFromChain(entityId: EntityId, statements: readonly string[], trustAnchors: TrustAnchorSet, options?: FederationOptions): Promise<Result<DiscoveryResult>>;
+Intermediate.discoverEntityFromChain(entityId: EntityId, statements: readonly string[], trustAnchors: TrustAnchorSet, options: FederationOptions): Promise<Result<DiscoveryResult>>;
 ```
 
 ### `Intermediate.sanitizeSubordinateMetadata`
@@ -872,10 +869,10 @@ type Middleware = (
 
 Authority host whose identifier and keys consumers can configure as an anchor. It may also have Superiors. Without Superiors, omit `authorityHints` and `trustAnchorHints`; with Superiors, both hints may be supplied as nonempty arrays. It can publish and replace Trust Mark issuer/owner policy.
 
-The constructor requires advertised fetch and list endpoints, initializes roles, and rejects conflicting routes. Being a Trust Anchor does not automatically add this host to the anchors used by its discovery methods. Publication is signed on demand. Authorize local administrative calls in the host application.
+The factory requires advertised fetch and list endpoints, initializes roles, and rejects conflicting routes. Being a Trust Anchor does not automatically add this host to the anchors used by its discovery methods. Publication is signed on demand. Authorize local administrative calls in the host application.
 
 ```typescript signature
-new TrustAnchor(config: AuthorityConfig): TrustAnchor;
+static create(config: AuthorityConfig): Promise<TrustAnchor>;
 ```
 
 ### `TrustAnchor#assessEntity`
@@ -897,9 +894,7 @@ Discover candidates, validate their chains, and select a result. Instance calls 
 [Source](../../../packages/authority/src/server.ts#L1055)
 
 ```typescript signature
-discoverEntity(target: EntityId, options?: FederationOptions & {
-		trustAnchors?: TrustAnchorSet;
-	}): Promise<Result<import("@oidfed/core").DiscoveryResult>>;
+discoverEntity(target: EntityId, options?: BoundFederationOptions & { trustAnchors?: TrustAnchorSet; }): Promise<Result<DiscoveryResult>>;
 ```
 
 ### `TrustAnchor#discoverEntityFromChain`
@@ -909,9 +904,7 @@ Validate supplied readonly statements for the target and return a `DiscoveryResu
 [Source](../../../packages/authority/src/server.ts#L1066)
 
 ```typescript signature
-discoverEntityFromChain(target: EntityId, statements: readonly string[], options?: FederationOptions & {
-		trustAnchors?: TrustAnchorSet;
-	}): Promise<Result<import("@oidfed/core").DiscoveryResult>>;
+discoverEntityFromChain(target: EntityId, statements: readonly string[], options?: BoundFederationOptions & { trustAnchors?: TrustAnchorSet; }): Promise<Result<DiscoveryResult>>;
 ```
 
 ### `TrustAnchor#collection`
@@ -1031,7 +1024,7 @@ Establish the requested issuer’s trust, retrieve a mark, validate it for this 
 [Source](../../../packages/authority/src/server.ts#L1148)
 
 ```typescript signature
-fetchAndAttachTrustMark(options: FetchAndAttachTrustMarkOptions): Promise<void>;
+fetchAndAttachTrustMark(options: Omit<FetchAndAttachTrustMarkOptions, "options"> & { readonly options?: BoundFederationOptions; }): Promise<void>;
 ```
 
 ### `TrustAnchor#removeTrustMark`
@@ -1207,13 +1200,13 @@ Static callable property aliasing core’s [`discoverEntity`](../core/chains.md#
 [Source](../../../packages/authority/src/server.ts#L1253)
 
 ```typescript signature
-static discoverEntity: typeof discoverEntity;
+TrustAnchor.discoverEntity(entityId: EntityId, trustAnchors: TrustAnchorSet, options: FederationOptions): Promise<Result<DiscoveryResult>>;
 ```
 
 Callable signature:
 
 ```typescript signature
-TrustAnchor.discoverEntity(entityId: EntityId, trustAnchors: TrustAnchorSet, options?: FederationOptions): Promise<Result<DiscoveryResult>>;
+TrustAnchor.discoverEntity(entityId: EntityId, trustAnchors: TrustAnchorSet, options: FederationOptions): Promise<Result<DiscoveryResult>>;
 ```
 
 ### `TrustAnchor.discoverEntityFromChain`
@@ -1223,13 +1216,13 @@ Static callable property aliasing core’s [`discoverEntityFromChain`](../core/c
 [Source](../../../packages/authority/src/server.ts#L1255)
 
 ```typescript signature
-static discoverEntityFromChain: typeof discoverEntityFromChain;
+TrustAnchor.discoverEntityFromChain(entityId: EntityId, statements: readonly string[], trustAnchors: TrustAnchorSet, options: FederationOptions): Promise<Result<DiscoveryResult>>;
 ```
 
 Callable signature:
 
 ```typescript signature
-TrustAnchor.discoverEntityFromChain(entityId: EntityId, statements: readonly string[], trustAnchors: TrustAnchorSet, options?: FederationOptions): Promise<Result<DiscoveryResult>>;
+TrustAnchor.discoverEntityFromChain(entityId: EntityId, statements: readonly string[], trustAnchors: TrustAnchorSet, options: FederationOptions): Promise<Result<DiscoveryResult>>;
 ```
 
 ### `TrustAnchor.sanitizeSubordinateMetadata`

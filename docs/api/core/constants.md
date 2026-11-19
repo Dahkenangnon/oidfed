@@ -90,18 +90,6 @@ const DEFAULT_HTTP_TIMEOUT_MS = 10000;
 
 Runtime default: 10000 milliseconds.
 
-## `DEFAULT_KEY_RETIRE_AFTER_MS`
-
-[Source](../../../packages/core/src/constants.ts#L175)
-
-Default overlap after switching the active federation signing key, in milliseconds. This does not schedule the earlier wait between publishing a replacement and activating it. Check the calling API for overrides and operation-specific defaults.
-
-```typescript signature
-const DEFAULT_KEY_RETIRE_AFTER_MS: number;
-```
-
-Runtime default: 604800000 milliseconds (seven days).
-
 ## `DEFAULT_MAX_AUTHORITY_HINTS`
 
 [Source](../../../packages/core/src/constants.ts#L167)
@@ -361,17 +349,17 @@ const PolicyOperator: {
 type PolicyOperator = (typeof PolicyOperator)[keyof typeof PolicyOperator];
 ```
 
-## `REQUIRED_ALGORITHMS`
+## `INTEROP_RECOMMENDED_ALGORITHMS`
 
 [Source](../../../packages/core/src/constants.ts#L180)
 
-Signature algorithms designated as required by the supported federation profile.
+Interoperability guidance: implementations should support RS256. Deployment acceptance policy is configured separately.
 
 ```typescript signature
-const REQUIRED_ALGORITHMS: readonly ["ES256", "PS256"];
+const INTEROP_RECOMMENDED_ALGORITHMS: readonly ["RS256"];
 ```
 
-Runtime value: `["ES256", "PS256"]`.
+Runtime value: `["RS256"]`.
 
 ## `STANDARD_ENTITY_STATEMENT_CLAIMS`
 
@@ -401,26 +389,26 @@ enum StandardPolicyOperator {
 }
 ```
 
-## `SUPPORTED_ALGORITHMS`
+## `DEFAULT_ALLOWED_ALGORITHMS`
 
 [Source](../../../packages/core/src/constants.ts#L181)
 
-Signature algorithms supported by this implementation. A protocol or deployment can narrow the accepted set.
+Default acceptance list for asymmetric signatures. Deployments can set an explicit list of registered algorithms.
 
 ```typescript signature
-const SUPPORTED_ALGORITHMS: readonly ["ES256", "ES384", "ES512", "PS256", "PS384", "PS512", "RS256"];
+const DEFAULT_ALLOWED_ALGORITHMS: readonly ["ES256", "ES384", "ES512", "PS256", "PS384", "PS512", "RS256"];
 ```
 
 Runtime value: `["ES256", "ES384", "ES512", "PS256", "PS384", "PS512", "RS256"]`.
 
 ## `SupportedAlgorithm`
 
-[Source](../../../packages/core/src/constants.ts#L192)
+[Source](../../../packages/core/src/constants.ts#L187)
 
-A signing algorithm supported by the library.
+A signing algorithm defined by the built-in registry.
 
 ```typescript signature
-type SupportedAlgorithm = (typeof SUPPORTED_ALGORITHMS)[number];
+type SupportedAlgorithm = import("@oidfed/crypto").BuiltinJwsAlgorithm;
 ```
 
 ## `TrustMarkStatus`

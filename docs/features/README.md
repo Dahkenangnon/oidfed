@@ -111,7 +111,7 @@ The labels in the academic diagram come from the specification's example. These 
 
 Start with the public host and role APIs: `TrustAnchor` and `Intermediate` from `@oidfed/authority`, `Leaf` from `@oidfed/leaf`, and the protocol roles from `@oidfed/oidc` and `@oidfed/wallet`. The guides show where to configure dependencies and which operation exercises them.
 
-Core supplies shared contracts, key providers, and adapters. Direct core operations are used where the task needs a remote endpoint client, standalone publication, or another capability without a matching host or role operation. Those cases are explained beside their examples.
+Core supplies shared contracts, verification profiles and storage adapters. Direct core operations are used where the task needs a remote endpoint client, standalone publication, or another capability without a matching host or role operation. Those cases are explained beside their examples.
 
 Current TypeScript blocks import public package entry points. Parameters such as `keys`, `anchors`, `signer`, and `storage` are dependencies supplied by the host. Memory adapters and generated keys demonstrate one-process behavior; deployments supply durable state and suitable key custody.
 

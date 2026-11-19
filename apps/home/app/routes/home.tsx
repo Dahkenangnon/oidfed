@@ -30,6 +30,12 @@ export function meta(_args: Route.MetaArgs) {
 
 const specPackages = [
 	{
+		name: "@oidfed/crypto",
+		install: "npm i @oidfed/crypto",
+		description: "Crypto engines, signers and keyrings for Web Crypto, native keystores and remote signing services.",
+		href: "https://www.npmjs.com/package/@oidfed/crypto",
+	},
+	{
 		name: "@oidfed/core",
 		install: "npm i @oidfed/core",
 		description:
@@ -59,7 +65,7 @@ const specPackages = [
 	},
 	{
 		name: "@oidfed/wallet",
-		install: "npm i @oidfed/core @oidfed/wallet",
+		install: "npm i @oidfed/wallet",
 		description:
 			"Wallet Provider, Credential Issuer, and Credential Verifier roles, Wallet Attestations, and federation-backed request validation.",
 		href: "https://www.npmjs.com/package/@oidfed/wallet",
@@ -799,7 +805,7 @@ function WhatsInside() {
 					<div>
 						<SignalLabel id="03" label="What's Inside" />
 						<h2 className="mt-6 font-heading text-3xl font-semibold tracking-[-0.02em] text-balance sm:text-4xl">
-							Five libraries, three apps, one CLI.
+							Six libraries, three apps, one CLI.
 						</h2>
 						<p className="mt-4 max-w-xl text-[15px] leading-relaxed text-muted-foreground">
 							Modular by design. Install only what you need — from core primitives to full OIDC

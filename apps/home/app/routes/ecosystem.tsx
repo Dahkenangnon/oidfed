@@ -692,10 +692,10 @@ function OurImplementation() {
 			<div className="mx-auto max-w-6xl px-6 py-20 lg:py-24">
 				<div className="max-w-2xl">
 					<SignalLabel id="05" label="Our implementation" />
-					<SectionTitle>A spec-complete JavaScript implementation.</SectionTitle>
+					<SectionTitle>OpenID Federation for JavaScript.</SectionTitle>
 					<SectionIntro>
-						@oidfed is a spec-complete JavaScript implementation of OpenID Federation 1.0.
-						Runtime-agnostic, spec-compliant, built on Web API standards. Apache 2.0 licensed
+						@oidfed implements federation trust chains, entity publication and protocol roles.
+						Applications choose their crypto backend and manage their signing keys. Apache 2.0 licensed
 						(with MIT-licensed apps) and free to use.
 					</SectionIntro>
 				</div>
@@ -718,7 +718,7 @@ function OurImplementation() {
 								</Badge>
 							</div>
 							<p className="text-[14px] leading-relaxed text-muted-foreground">
-								5 libraries, 3 apps, and 17 CLI commands. The library test suite runs on Node.js,
+								6 libraries, 3 apps, and 17 CLI commands. The library test suite runs on Node.js,
 								Deno, Bun, workerd, Electron, and Chromium. Source at{" "}
 								<a
 									href="https://github.com/Dahkenangnon/oidfed"
@@ -735,7 +735,7 @@ function OurImplementation() {
 						<div aria-hidden className="hidden bg-border/60 sm:block" />
 
 						<div className="grid grid-cols-2 gap-0 bg-muted/40 sm:grid-cols-1">
-							<Mini label="Packages" value="05" note="core · authority · leaf · oidc · wallet" />
+							<Mini label="Packages" value="06" note="crypto · core · authority · leaf · oidc · wallet" />
 							<Mini
 								label="Runtimes"
 								value="06"
@@ -743,9 +743,9 @@ function OurImplementation() {
 								border
 							/>
 							<Mini
-								label="Dependencies"
-								value="02"
-								note="jose · zod"
+								label="Crypto backend"
+								value="Host supplied"
+								note="Web Crypto · optional jose · custom engines"
 								border
 								className="col-span-2 sm:col-span-1"
 							/>

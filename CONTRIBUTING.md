@@ -53,7 +53,7 @@ For documentation-only changes, check links, examples, and formatting. Runtime t
 
 Follow [SECURITY.md](SECURITY.md) for vulnerabilities. Use its private reporting process instead of opening a public issue with vulnerability details.
 
-For changes to the five protocol packages, run the [package security checks](docs/maintenance/security-checks.md) alongside the tests. That guide covers local setup, source and dependency scans, packed consumers, fuzzing, and mutation testing. The additional checks are scoped to those packages and their shared security and release workflows.
+For changes to the published library packages, run the [package security checks](docs/maintenance/security-checks.md) alongside the tests. That guide covers local setup, source and dependency scans, packed consumers, fuzzing, and mutation testing. The additional checks are scoped to those packages and their shared security and release workflows.
 
 Automated dependency PRs may use their generated branches and PR descriptions without a separate issue. Release automation follows the [release workflow](#releasing). These automated workflows can use their own issue and branch process. They follow the same review, commit, and verification requirements.
 
@@ -189,12 +189,12 @@ configuration changes, run the affected conformance profile.
 
 | Scope | Framework | Location |
 |---|---|---|
-| Unit (`core`, `authority`, `leaf`, `oidc`, `wallet`) | QUnit via TAP | `tests/tap/` |
+| Unit (`core`, `authority`, `leaf`, `oidc`, `wallet`, `crypto`) | QUnit via TAP | `tests/tap/` |
 | CLI (`tools/cli`) | Vitest | `tools/cli/test/` |
 | Explorer (`apps/explorer`) | Vitest | `apps/explorer/test/` |
 | E2E | Vitest | `tests/e2e/` (requires `pnpm setup:e2e` first) |
 
-The five libraries are framework-agnostic. Their unit tests use the same TAP suite across Node, Bun, Deno, workerd, Electron, and browsers.
+The six libraries are framework-agnostic. Their unit tests use the same TAP suite across Node, Bun, Deno, workerd, Electron, and browsers.
 
 ```bash
 pnpm test                    # published surface: 6 TAP runtimes + tools
@@ -213,7 +213,7 @@ pnpm build:apps              # apps and internal UI dependencies
 ## Releasing
 
 Each package has its own version, changelog, Git tag, and GitHub Release. Use `all`
-to prepare or publish the six packages together; their versions remain independent.
+to prepare or publish the seven packages together; their versions remain independent.
 
 Fetch the release tags so generated changelogs use the latest applicable baseline,
 then preview and prepare the changes:

@@ -92,7 +92,7 @@ Process a form-encoded POST using effective provider metadata, configured trust,
 [Source](../../../packages/oidc/src/roles.ts#L453)
 
 ```typescript signature
-processPushedAuthorizationRequest(request: Request, options?: Omit<ProcessPushedAuthorizationRequestOptions, "opEntityId" | "replayStore" | "providerMetadataType" | "providerMetadata"> & { readonly providerMetadata?: Readonly<Record<string, unknown>>; }): Promise<Result<ProcessedPushedAuthorizationRequest, ClientAttestationError>>;
+processPushedAuthorizationRequest(request: Request, options?: Omit<Omit<ProcessPushedAuthorizationRequestOptions, "opEntityId" | "replayStore" | "providerMetadataType" | "providerMetadata"> & { readonly providerMetadata?: Readonly<Record<string, unknown>>; }, "engine">): Promise<Result<ProcessedPushedAuthorizationRequest, ClientAttestationError>>;
 ```
 
 ### `OAuthAuthorizationServerRole#assessEntity`
@@ -162,7 +162,7 @@ Validate the signed Request Object, local recipient, client chain, selected clie
 [Source](../../../packages/oidc/src/roles.ts#L580)
 
 ```typescript signature
-processAutomaticRegistration(requestObjectJwt: string, options?: Omit<ProcessAutomaticRegistrationOptions, "opEntityId" | "replayStore" | "providerMetadataType">): Promise<Result<ProcessedAutomaticRegistration, ClientAttestationError>>;
+processAutomaticRegistration(requestObjectJwt: string, options?: Omit<Omit<ProcessAutomaticRegistrationOptions, "opEntityId" | "replayStore" | "providerMetadataType">, "engine">): Promise<Result<ProcessedAutomaticRegistration, ClientAttestationError>>;
 ```
 
 ### `OAuthAuthorizationServerRole#processExplicitRegistration`
@@ -202,7 +202,7 @@ Static alias of core verifyClientAttestation. Verify the attestation against ind
 [Source](../../../packages/oidc/src/roles.ts#L446)
 
 ```typescript signature
-static verifyClientAttestation: typeof verifyClientAttestation;
+OAuthAuthorizationServerRole.verifyClientAttestation(jwt: string, options: ClientAttestationVerificationOptions): Promise<Result<VerifiedClientAttestation, ClientAttestationError>>;
 ```
 
 Callable signature:
@@ -219,7 +219,7 @@ Static alias of core authenticateClientAttestation. Verify the attestation/proof
 [Source](../../../packages/oidc/src/roles.ts#L447)
 
 ```typescript signature
-static authenticateClientAttestation: typeof authenticateClientAttestation;
+OAuthAuthorizationServerRole.authenticateClientAttestation(attestationJwt: string, popJwt: string, options: AuthenticateClientAttestationOptions): Promise<Result<VerifiedClientAttestation, ClientAttestationError>>;
 ```
 
 Callable signature:
@@ -236,13 +236,13 @@ Static alias of core createAttestationChallengeHandler. Return a POST handler ar
 [Source](../../../packages/oidc/src/roles.ts#L448)
 
 ```typescript signature
-static createAttestationChallengeHandler: typeof createAttestationChallengeHandler;
+OAuthAuthorizationServerRole.createAttestationChallengeHandler(issue: (request: Request, signal: AbortSignal) => string | Promise<string>, options: FederationOptions): (request: Request) => Promise<Response>;
 ```
 
 Callable signature:
 
 ```typescript signature
-OAuthAuthorizationServerRole.createAttestationChallengeHandler(issue: (request: Request, signal: AbortSignal) => string | Promise<string>, options?: FederationOptions): (request: Request) => Promise<Response>;
+OAuthAuthorizationServerRole.createAttestationChallengeHandler(issue: (request: Request, signal: AbortSignal) => string | Promise<string>, options: FederationOptions): (request: Request) => Promise<Response>;
 ```
 
 
@@ -331,7 +331,7 @@ Prepare a complete PAR endpoint, form body, headers, and selected provider chain
 [Source](../../../packages/oidc/src/roles.ts#L107)
 
 ```typescript signature
-createPushedAuthorizationRequest(discovery: DiscoveryResult, parameters: Readonly<Record<string, unknown>>, proof: PushedAuthorizationProof, options?: FederationOptions & { trustAnchors?: TrustAnchorSet; }): Promise<Result<PreparedPushedAuthorizationRequest>>;
+createPushedAuthorizationRequest(discovery: DiscoveryResult, parameters: Readonly<Record<string, unknown>>, proof: PushedAuthorizationProof, options?: Omit<FederationOptions & { trustAnchors?: TrustAnchorSet; }, "engine">): Promise<Result<PreparedPushedAuthorizationRequest>>;
 ```
 
 ### `OAuthClientRole#assessEntity`
@@ -386,12 +386,12 @@ initialize(context: EntityContext): void;
 
 ### `OAuthClientRole#createClientAssertion`
 
-Sign a private_key_jwt assertion using the attached host's Entity Identifier and this role's protocol signing provider. Prefer getClientAssertionSigner when supplied; otherwise use getRequestObjectSigner. Call options override role options and host options. The default lifetime is 60 seconds. This helper does not prove that the signer is published in the client's metadata; registration workflows perform that binding check. Missing initialization rejects.
+Sign a private_key_jwt assertion using the attached host's Entity Identifier and this role's protocol signing purposes. Configure the clientAssertion signing purpose on the role. To reuse the Request Object key, bind both purposes to the same keyring entry explicitly. Call options inherit the host engine and can narrow the configured verification policy. The default lifetime is 60 seconds. This helper does not prove that the signer is published in the client's metadata; registration workflows perform that binding check. Missing initialization rejects.
 
 [Source](../../../packages/oidc/src/roles.ts#L188)
 
 ```typescript signature
-createClientAssertion(audience: string, options?: ClientAssertionOptions): Promise<string>;
+createClientAssertion(audience: string, options?: Omit<ClientAssertionOptions, "engine">): Promise<string>;
 ```
 
 ### `OAuthClientRole#explicitlyRegister`
@@ -401,7 +401,7 @@ Discover the provider, validate compatible shared-anchor evidence, and POST a se
 [Source](../../../packages/oidc/src/roles.ts#L297)
 
 ```typescript signature
-explicitlyRegister(opEntityId: string, options?: FederationOptions & { readonly trustAnchors?: TrustAnchorSet; }): Promise<Result<ExplicitRegistrationResult>>;
+explicitlyRegister(opEntityId: string, options?: Omit<FederationOptions & { readonly trustAnchors?: TrustAnchorSet; }, "engine">): Promise<Result<ExplicitRegistrationResult>>;
 ```
 
 ### `OAuthClientRole#createAuthorizationRequest`
@@ -441,13 +441,13 @@ Static alias of core createClientAttestationProof. Supply the client proof param
 [Source](../../../packages/oidc/src/roles.ts#L101)
 
 ```typescript signature
-static createClientAttestationProof: typeof createClientAttestationProof;
+OAuthClientRole.createClientAttestationProof(params: CreateClientAttestationProofParams, signer: KeyringEntry, options: FederationOptions): Promise<Result<string>>;
 ```
 
 Callable signature:
 
 ```typescript signature
-OAuthClientRole.createClientAttestationProof(params: CreateClientAttestationProofParams, signer: JwtSigner, options?: FederationOptions): Promise<Result<string>>;
+OAuthClientRole.createClientAttestationProof(params: CreateClientAttestationProofParams, signer: KeyringEntry, options: FederationOptions): Promise<Result<string>>;
 ```
 
 
@@ -475,13 +475,13 @@ Static alias of core serializeClientAttestation. Serialize the attestation and p
 [Source](../../../packages/oidc/src/roles.ts#L103)
 
 ```typescript signature
-static serializeClientAttestation: typeof serializeClientAttestation;
+OAuthClientRole.serializeClientAttestation(attestationJwt: string, popJwt: string): Result<string>;
 ```
 
 Callable signature:
 
 ```typescript signature
-OAuthClientRole.serializeClientAttestation(attestationJwt: string, popJwt: string): { ok: false; error: FederationError; } | { ok: true; value: string; };
+OAuthClientRole.serializeClientAttestation(attestationJwt: string, popJwt: string): Result<string>;
 ```
 
 
@@ -492,13 +492,13 @@ Static alias of core fetchAttestationChallenge. POST to the supplied challenge e
 [Source](../../../packages/oidc/src/roles.ts#L104)
 
 ```typescript signature
-static fetchAttestationChallenge: typeof fetchAttestationChallenge;
+OAuthClientRole.fetchAttestationChallenge(endpoint: string, options: FederationOptions): Promise<Result<string>>;
 ```
 
 Callable signature:
 
 ```typescript signature
-OAuthClientRole.fetchAttestationChallenge(endpoint: string, options?: FederationOptions): Promise<Result<string>>;
+OAuthClientRole.fetchAttestationChallenge(endpoint: string, options: FederationOptions): Promise<Result<string>>;
 ```
 
 
@@ -543,13 +543,13 @@ Static alias of core createClientAssertion. Supply the client identifier, recipi
 [Source](../../../packages/oidc/src/roles.ts#L155)
 
 ```typescript signature
-static createClientAssertion: typeof createClientAssertion;
+OAuthClientRole.createClientAssertion(clientId: string, audience: string, signer: KeyringEntry, options: ClientAssertionOptions): Promise<string>;
 ```
 
 Callable signature:
 
 ```typescript signature
-OAuthClientRole.createClientAssertion(clientId: string, audience: string, signer: JwtSigner, options?: ClientAssertionOptions): Promise<string>;
+OAuthClientRole.createClientAssertion(clientId: string, audience: string, signer: KeyringEntry, options: ClientAssertionOptions): Promise<string>;
 ```
 
 
@@ -568,7 +568,7 @@ Fields (including inherited fields):
 | Field | Declared type | Description |
 |---|---|---|
 | `options?` | `FederationOptions` | Federation transport, time, validation, and resource settings; role options override host options, and method options override role options. |
-| `protocolKeyProvider` | `ProtocolSigningKeyProvider` | Provider of Request Object and client-assertion signers. These are protocol keys, distinct from Federation Entity Keys. |
+| `signing?` | `SigningPurposes` | Explicit Request Object and client assertion purpose names in the host keyring. |
 | `metadata?` | `Record<string, unknown>` | Publication metadata for this role, cloned at construction. The host invokes its publication-validation hook. |
 | `requestObjectTtlSeconds?` | `number` | Request Object lifetime in seconds; defaults to 300 and is bounded by the applicable client-chain lifetime. |
 | `includePeerTrustChain?` | `boolean` | Include a peer_trust_chain ending at the selected shared anchor. Defaults to false; inability to build it returns a registration error. |
@@ -705,7 +705,7 @@ Resource metadata, optional protocol keys, and trust defaults. Supplied jwks rep
 ```typescript signature
 interface OAuthResourceRoleConfig {
 	readonly trustAnchors?: TrustAnchorSet;
-	readonly options?: FederationOptions;
+	readonly options?: BoundFederationOptions;
 	readonly metadata?: Record<string, unknown>;
 	readonly jwks?: JWKSet;
 }
@@ -749,7 +749,7 @@ Process a form-encoded POST using effective provider metadata, configured trust,
 [Source](../../../packages/oidc/src/roles.ts#L453)
 
 ```typescript signature
-processPushedAuthorizationRequest(request: Request, options?: Omit<ProcessPushedAuthorizationRequestOptions, "opEntityId" | "replayStore" | "providerMetadataType" | "providerMetadata"> & { readonly providerMetadata?: Readonly<Record<string, unknown>>; }): Promise<Result<ProcessedPushedAuthorizationRequest, ClientAttestationError>>;
+processPushedAuthorizationRequest(request: Request, options?: Omit<Omit<ProcessPushedAuthorizationRequestOptions, "opEntityId" | "replayStore" | "providerMetadataType" | "providerMetadata"> & { readonly providerMetadata?: Readonly<Record<string, unknown>>; }, "engine">): Promise<Result<ProcessedPushedAuthorizationRequest, ClientAttestationError>>;
 ```
 
 ### `OidcProviderRole#assessEntity`
@@ -819,7 +819,7 @@ Validate the signed Request Object, local recipient, client chain, selected clie
 [Source](../../../packages/oidc/src/roles.ts#L580)
 
 ```typescript signature
-processAutomaticRegistration(requestObjectJwt: string, options?: Omit<ProcessAutomaticRegistrationOptions, "opEntityId" | "replayStore" | "providerMetadataType">): Promise<Result<ProcessedAutomaticRegistration, ClientAttestationError>>;
+processAutomaticRegistration(requestObjectJwt: string, options?: Omit<Omit<ProcessAutomaticRegistrationOptions, "opEntityId" | "replayStore" | "providerMetadataType">, "engine">): Promise<Result<ProcessedAutomaticRegistration, ClientAttestationError>>;
 ```
 
 ### `OidcProviderRole#processExplicitRegistration`
@@ -859,7 +859,7 @@ Static alias of core verifyClientAttestation. Verify the attestation against ind
 [Source](../../../packages/oidc/src/roles.ts#L446)
 
 ```typescript signature
-static verifyClientAttestation: typeof verifyClientAttestation;
+OidcProviderRole.verifyClientAttestation(jwt: string, options: ClientAttestationVerificationOptions): Promise<Result<VerifiedClientAttestation, ClientAttestationError>>;
 ```
 
 Callable signature:
@@ -876,7 +876,7 @@ Static alias of core authenticateClientAttestation. Verify the attestation/proof
 [Source](../../../packages/oidc/src/roles.ts#L447)
 
 ```typescript signature
-static authenticateClientAttestation: typeof authenticateClientAttestation;
+OidcProviderRole.authenticateClientAttestation(attestationJwt: string, popJwt: string, options: AuthenticateClientAttestationOptions): Promise<Result<VerifiedClientAttestation, ClientAttestationError>>;
 ```
 
 Callable signature:
@@ -893,13 +893,13 @@ Static alias of core createAttestationChallengeHandler. Return a POST handler ar
 [Source](../../../packages/oidc/src/roles.ts#L448)
 
 ```typescript signature
-static createAttestationChallengeHandler: typeof createAttestationChallengeHandler;
+OidcProviderRole.createAttestationChallengeHandler(issue: (request: Request, signal: AbortSignal) => string | Promise<string>, options: FederationOptions): (request: Request) => Promise<Response>;
 ```
 
 Callable signature:
 
 ```typescript signature
-OidcProviderRole.createAttestationChallengeHandler(issue: (request: Request, signal: AbortSignal) => string | Promise<string>, options?: FederationOptions): (request: Request) => Promise<Response>;
+OidcProviderRole.createAttestationChallengeHandler(issue: (request: Request, signal: AbortSignal) => string | Promise<string>, options: FederationOptions): (request: Request) => Promise<Response>;
 ```
 
 
@@ -932,17 +932,21 @@ interface OidcProviderRoleConfig extends RegistrationAccreditationPolicy {
 	readonly requestObjectTyping?: ProcessAutomaticRegistrationOptions["requestObjectTyping"];
 	/** Opt in to adapter-issued read-only registration access; the host enforces token permissions. Default disabled. */
 	readonly registrationManagement?: ExplicitRegistrationHandlerConfig["registrationManagement"];
-	readonly options?: FederationOptions;
+	readonly options?: BoundFederationOptions;
 	readonly registrationPath?: string;
 	readonly metadata?: Record<string, unknown>;
 	readonly trustAnchors?: TrustAnchorSet;
 	readonly registrationResponseTtlSeconds?: number;
 	readonly registrationProtocolAdapter?: RegistrationProtocolAdapter;
 	readonly generateClientSecret?: (sub: EntityId) => Promise<string | undefined>;
-	/** Explicit-registration hook after validation and response signing, immediately before onRegistration. Automatic registration does not invoke this hook. */
+	/** Late pre-commit hook called after validation and response preparation, before `onRegistration`. */
 	readonly onRegistrationInvalidation?: (sub: EntityId) => Promise<void>;
 	readonly replayStore?: ReplayStore;
-	readonly onRegistration?: (sub: EntityId, clientMetadata: Record<string, unknown>, clientSecret?: string) => Promise<void>;
+	readonly onRegistration?: (
+		sub: EntityId,
+		clientMetadata: Record<string, unknown>,
+		clientSecret?: string,
+	) => Promise<void>;
 }
 ```
 
@@ -1004,7 +1008,7 @@ Prepare a complete PAR endpoint, form body, headers, and selected provider chain
 [Source](../../../packages/oidc/src/roles.ts#L107)
 
 ```typescript signature
-createPushedAuthorizationRequest(discovery: DiscoveryResult, parameters: Readonly<Record<string, unknown>>, proof: PushedAuthorizationProof, options?: FederationOptions & { trustAnchors?: TrustAnchorSet; }): Promise<Result<PreparedPushedAuthorizationRequest>>;
+createPushedAuthorizationRequest(discovery: DiscoveryResult, parameters: Readonly<Record<string, unknown>>, proof: PushedAuthorizationProof, options?: Omit<FederationOptions & { trustAnchors?: TrustAnchorSet; }, "engine">): Promise<Result<PreparedPushedAuthorizationRequest>>;
 ```
 
 ### `OidcRelyingPartyRole#assessEntity`
@@ -1059,12 +1063,12 @@ initialize(context: EntityContext): void;
 
 ### `OidcRelyingPartyRole#createClientAssertion`
 
-Sign a private_key_jwt assertion using the attached host's Entity Identifier and this role's protocol signing provider. Prefer getClientAssertionSigner when supplied; otherwise use getRequestObjectSigner. Call options override role options and host options. The default lifetime is 60 seconds. This helper does not prove that the signer is published in the client's metadata; registration workflows perform that binding check. Missing initialization rejects.
+Sign a private_key_jwt assertion using the attached host's Entity Identifier and this role's protocol signing purposes. Configure the clientAssertion signing purpose on the role. To reuse the Request Object key, bind both purposes to the same keyring entry explicitly. Call options inherit the host engine and can narrow the configured verification policy. The default lifetime is 60 seconds. This helper does not prove that the signer is published in the client's metadata; registration workflows perform that binding check. Missing initialization rejects.
 
 [Source](../../../packages/oidc/src/roles.ts#L188)
 
 ```typescript signature
-createClientAssertion(audience: string, options?: ClientAssertionOptions): Promise<string>;
+createClientAssertion(audience: string, options?: Omit<ClientAssertionOptions, "engine">): Promise<string>;
 ```
 
 ### `OidcRelyingPartyRole#explicitlyRegister`
@@ -1074,7 +1078,7 @@ Discover the provider, validate compatible shared-anchor evidence, and POST a se
 [Source](../../../packages/oidc/src/roles.ts#L297)
 
 ```typescript signature
-explicitlyRegister(opEntityId: string, options?: FederationOptions & { readonly trustAnchors?: TrustAnchorSet; }): Promise<Result<ExplicitRegistrationResult>>;
+explicitlyRegister(opEntityId: string, options?: Omit<FederationOptions & { readonly trustAnchors?: TrustAnchorSet; }, "engine">): Promise<Result<ExplicitRegistrationResult>>;
 ```
 
 ### `OidcRelyingPartyRole#createAuthorizationRequest`
@@ -1114,13 +1118,13 @@ Static alias of core createClientAttestationProof. Supply the client proof param
 [Source](../../../packages/oidc/src/roles.ts#L101)
 
 ```typescript signature
-static createClientAttestationProof: typeof createClientAttestationProof;
+OidcRelyingPartyRole.createClientAttestationProof(params: CreateClientAttestationProofParams, signer: KeyringEntry, options: FederationOptions): Promise<Result<string>>;
 ```
 
 Callable signature:
 
 ```typescript signature
-OidcRelyingPartyRole.createClientAttestationProof(params: CreateClientAttestationProofParams, signer: JwtSigner, options?: FederationOptions): Promise<Result<string>>;
+OidcRelyingPartyRole.createClientAttestationProof(params: CreateClientAttestationProofParams, signer: KeyringEntry, options: FederationOptions): Promise<Result<string>>;
 ```
 
 
@@ -1148,13 +1152,13 @@ Static alias of core serializeClientAttestation. Serialize the attestation and p
 [Source](../../../packages/oidc/src/roles.ts#L103)
 
 ```typescript signature
-static serializeClientAttestation: typeof serializeClientAttestation;
+OidcRelyingPartyRole.serializeClientAttestation(attestationJwt: string, popJwt: string): Result<string>;
 ```
 
 Callable signature:
 
 ```typescript signature
-OidcRelyingPartyRole.serializeClientAttestation(attestationJwt: string, popJwt: string): { ok: false; error: FederationError; } | { ok: true; value: string; };
+OidcRelyingPartyRole.serializeClientAttestation(attestationJwt: string, popJwt: string): Result<string>;
 ```
 
 
@@ -1165,13 +1169,13 @@ Static alias of core fetchAttestationChallenge. POST to the supplied challenge e
 [Source](../../../packages/oidc/src/roles.ts#L104)
 
 ```typescript signature
-static fetchAttestationChallenge: typeof fetchAttestationChallenge;
+OidcRelyingPartyRole.fetchAttestationChallenge(endpoint: string, options: FederationOptions): Promise<Result<string>>;
 ```
 
 Callable signature:
 
 ```typescript signature
-OidcRelyingPartyRole.fetchAttestationChallenge(endpoint: string, options?: FederationOptions): Promise<Result<string>>;
+OidcRelyingPartyRole.fetchAttestationChallenge(endpoint: string, options: FederationOptions): Promise<Result<string>>;
 ```
 
 
@@ -1216,13 +1220,13 @@ Static alias of core createClientAssertion. Supply the client identifier, recipi
 [Source](../../../packages/oidc/src/roles.ts#L155)
 
 ```typescript signature
-static createClientAssertion: typeof createClientAssertion;
+OidcRelyingPartyRole.createClientAssertion(clientId: string, audience: string, signer: KeyringEntry, options: ClientAssertionOptions): Promise<string>;
 ```
 
 Callable signature:
 
 ```typescript signature
-OidcRelyingPartyRole.createClientAssertion(clientId: string, audience: string, signer: JwtSigner, options?: ClientAssertionOptions): Promise<string>;
+OidcRelyingPartyRole.createClientAssertion(clientId: string, audience: string, signer: KeyringEntry, options: ClientAssertionOptions): Promise<string>;
 ```
 
 
@@ -1234,8 +1238,8 @@ Client role settings shared by OIDC relying parties and OAuth clients. Metadata 
 
 ```typescript signature
 interface OidcRelyingPartyRoleConfig {
-	readonly options?: FederationOptions;
-	readonly protocolKeyProvider: ProtocolSigningKeyProvider;
+	readonly options?: BoundFederationOptions;
+	readonly signing?: SigningPurposes;
 	readonly metadata?: Record<string, unknown>;
 	readonly requestObjectTtlSeconds?: number;
 	readonly includePeerTrustChain?: boolean;
@@ -1251,7 +1255,7 @@ Fields (including inherited fields):
 | Field | Declared type | Description |
 |---|---|---|
 | `options?` | `FederationOptions` | Federation transport, time, validation, and resource settings; role options override host options, and method options override role options. |
-| `protocolKeyProvider` | `ProtocolSigningKeyProvider` | Provider of Request Object and client-assertion signers. These are protocol keys, distinct from Federation Entity Keys. |
+| `signing?` | `SigningPurposes` | Explicit Request Object and client assertion purpose names in the host keyring. |
 | `metadata?` | `Record<string, unknown>` | Publication metadata for this role, cloned at construction. Full validation occurs through the host publication hook; the static parsers can validate input independently. |
 | `requestObjectTtlSeconds?` | `number` | Request Object lifetime in seconds; defaults to 300 and is bounded by the applicable client-chain lifetime. |
 | `includePeerTrustChain?` | `boolean` | Include a peer_trust_chain ending at the selected shared anchor. Defaults to false; inability to build it returns a registration error. |

@@ -2,9 +2,9 @@
 
 Every package has its own version and release history. A release of `@oidfed/core`
 uses a tag such as `core/v2.0.1` and a GitHub Release with that package's notes.
-The same applies to Authority, Leaf, OIDC, Wallet, and the CLI.
+The same applies to Authority, Leaf, OIDC, Wallet, Crypto, and the CLI.
 
-`all` is a command selector. It selects the six publishable packages without giving
+`all` is a command selector. It selects the seven publishable packages without giving
 them a shared version or creating an aggregate tag or GitHub Release. For example,
 a patch batch can release Core at `2.0.1` and Authority at `2.1.1` if they started at
 different versions. Historical coordinated tags remain available as changelog baselines.
@@ -101,8 +101,8 @@ not publish simultaneously; validation jobs can run independently.
 
 ## Trusted publishing setup
 
-Create a GitHub environment named `npm`, permitting `main` and the six package tag
-patterns (`core/v*`, `authority/v*`, `leaf/v*`, `oidc/v*`, `wallet/v*`, and `cli/v*`).
+Create a GitHub environment named `npm`, permitting `main` and the seven package tag
+patterns (`core/v*`, `authority/v*`, `leaf/v*`, `oidc/v*`, `wallet/v*`, `cli/v*`, and `crypto/v*`).
 Starting publication is the authorization to release; the environment does not add
 a separate review step by default.
 
@@ -116,12 +116,12 @@ For each npm package, configure its trusted publisher with:
 
 Keep the npm and GitHub environment settings aligned. No long-lived npm token is
 needed. Provenance is requested for each published archive. Keep the repository's
-required CodeQL check aligned with `CodeQL security-extended (five packages)`.
+required CodeQL check aligned with `CodeQL security-extended (six packages)`.
 
 See the [security checks](security-checks.md) for scanner setup. The workflow installs
 the pinned scanners and checks the saved archives through the existing manifest,
-consumer, declaration, and secret checks. The source scan remains limited to the five
-protocol packages; the CLI still receives its release manifest and test checks.
+consumer, declaration, and secret checks. The source scan remains limited to the six
+library packages; the CLI still receives its release manifest and test checks.
 
 ## Recover an interrupted release
 

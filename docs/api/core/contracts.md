@@ -51,7 +51,7 @@ Fields (including inherited fields):
 Build the cache key for a subject's trust-chain operation under the supplied anchor context.
 
 ```typescript signature
-chainCacheKey(entityId: EntityId, trustAnchorId: EntityId): Promise<string>;
+chainCacheKey(entityId: EntityId, trustAnchorId: EntityId, engine: CryptoEngine): Promise<string>;
 ```
 
 ## `ChainSelectionStrategy`
@@ -195,7 +195,7 @@ Fields (including inherited fields):
 Build the cache key for an Entity Configuration identified by its exact Entity Identifier.
 
 ```typescript signature
-ecCacheKey(entityId: EntityId): Promise<string>;
+ecCacheKey(entityId: EntityId, engine: CryptoEngine): Promise<string>;
 ```
 
 ## `EntityContext`
@@ -207,8 +207,8 @@ The parent entity's identity, keys, and shared settings made available to a comp
 ```typescript signature
 interface EntityContext {
 	readonly entityId: string;
-	readonly keyProvider: FederationKeyProvider;
-	readonly options?: FederationOptions | undefined;
+	readonly crypto: CryptoContext;
+	readonly options: FederationOptions;
 	readonly trustAnchors?: TrustAnchorSet;
 	readonly authorityHints?: readonly EntityId[];
 }
@@ -219,7 +219,7 @@ Fields (including inherited fields):
 | Field | Declared type | Description |
 |---|---|---|
 | `entityId` | `string` | Exact Entity Identifier bound to this object or operation. |
-| `keyProvider` | `FederationKeyProvider` | Provider of current Federation Entity Keys and the active signer. |
+| `crypto` | `CryptoContext` | Host crypto engine, signing keyring and optional key history. |
 | `options?` | `FederationOptions \| undefined` | Shared federation transport and validation settings for this operation. |
 | `trustAnchors?` | `TrustAnchorSet` | Independently trusted anchor identities and their public Federation Entity Keys. |
 | `authorityHints?` | `readonly EntityId[]` | Immediate Superior Entity Identifiers published as authority_hints. |
@@ -255,7 +255,12 @@ interface EntityRole {
 	readonly type: string;
 	readonly metadata: Record<string, unknown>;
 	readonly routes?: ReadonlyMap<string, (request: Request) => Promise<Response>>;
-	initialize?(context: EntityContext): void;
+	initialize?(context: EntityContext): void | Promise<void>;
+	/** Rebuild managed public keys for each EC publication; captured entries can pin an operation. */
+	publicationMetadata?(
+		context: EntityContext,
+		entries?: ReadonlyMap<string, import("@oidfed/crypto").KeyringEntry>,
+	): Promise<Record<string, unknown>>;
 	/** Validate the final composed role block before its host publishes metadata. */
 	validateMetadata?(metadata: Readonly<Record<string, unknown>>, context: EntityContext): void;
 }
@@ -288,7 +293,7 @@ err<E>(error: E): Result<never, E>;
 Build the cache key for a statement issued by one entity about another.
 
 ```typescript signature
-esCacheKey(issuer: EntityId, subject: EntityId): Promise<string>;
+esCacheKey(issuer: EntityId, subject: EntityId, engine: CryptoEngine): Promise<string>;
 ```
 
 ## `federationError`
@@ -334,7 +339,19 @@ Shared transport, trust-validation, caching, logging, and resource-limit setting
 
 ```typescript signature
 interface FederationOptions {
-	/** Acquisition source; protocol consumers still validate the returned subject chain. */
+	/** Explicit cryptographic backend. No global backend is selected by the library. */
+	readonly engine: CryptoEngine;
+	/** Public key and algorithm definitions for standalone operations. */
+	readonly algorithmRegistry?: JwsAlgorithmRegistry | undefined;
+	/** Algorithms permitted for signing and verification with Federation Entity Keys. */
+	readonly allowedFederationAlgorithms?: readonly string[] | undefined;
+	/** Local policy for protocol-key operations. */
+	readonly allowedAlgorithms?: readonly string[];
+	/** Maximum matching keys tried for one JWT. Defaults to 16. */
+	readonly maxVerificationCandidates?: number;
+	/** Maximum encoded compact JWT bytes. Defaults to the crypto package limit. */
+	readonly maxCompactBytes?: number;
+	/** How to acquire evidence. Protocol consumers validate the returned subject chain. */
 	trustResolution?: import("./trust-chain/assessment.js").TrustResolutionSource;
 	/** Select among validated candidates eligible for the current operation. */
 	chainSelection?: ChainSelectionStrategy;
@@ -348,7 +365,7 @@ interface FederationOptions {
 	/** Disallow network access when only supplied evidence is permitted. */
 	offline?: boolean;
 	httpClient?: HttpClient;
-	/** Signed subject ECs for trust-chain validation, keyed by exact Entity Identifier. Still validated against the chain. */
+	/** Signed subject ECs keyed by exact Entity Identifier. Each is validated against the chain. */
 	entityConfigurations?: ReadonlyMap<string, string> | undefined;
 	clock?: Clock;
 	cache?: CacheProvider;
@@ -362,6 +379,7 @@ interface FederationOptions {
 	maxResolutionSteps?: number;
 	maxAuthorityHints?: number;
 	maxConcurrentFetches?: number;
+	/** Fetched statement cache retention cap in seconds. Defaults to 3600, bounded by the statement's exp. */
 	cacheMaxTtlSeconds?: number;
 	signal?: AbortSignal;
 	maxResponseBytes?: number;
@@ -694,7 +712,7 @@ Fields (including inherited fields):
 Development-only in-memory replay store with fail-closed capacity handling.
 
 ```typescript signature
-new MemoryReplayStore(options?: MemoryReplayStoreOptions): MemoryReplayStore;
+new MemoryReplayStore(options: MemoryReplayStoreOptions): MemoryReplayStore;
 ```
 
 Defaults to 10000 live claims and requires a positive safe-integer capacity. The `(issuer, audience, jti)` tuple is hashed before the atomic lookup and insert. Expired or already-used claims return `false`; malformed claims throw and a full store rejects with `ReplayStoreCapacityError`. Records are process-local and disappear on restart.
@@ -717,6 +735,7 @@ Settings for the in-memory replay store.
 
 ```typescript signature
 interface MemoryReplayStoreOptions {
+	readonly engine: CryptoEngine;
 	readonly clock?: Clock;
 	readonly maxEntries?: number;
 }
@@ -888,7 +907,7 @@ type Result<T, E = FederationError> = {
 Run host-controlled work with a cooperative AbortSignal and a timeout, defaulting to 10000 milliseconds. Cancellation and timeout reject with `AbortError` or `TimeoutError`; callback exceptions and rejections propagate. A callback that ignores its signal can still finish later, so this helper does not roll back its side effects.
 
 ```typescript signature
-runAsyncOperation<T>(operation: (signal: AbortSignal) => T | Promise<T>, options: FederationOptions): Promise<T>;
+runAsyncOperation<T>(operation: (signal: AbortSignal) => T | Promise<T>, options: Pick<FederationOptions, "signal" | "httpTimeoutMs">): Promise<T>;
 ```
 
 ### Usage example
@@ -1254,3 +1273,7 @@ Wait for an existing promise while observing the supplied cancellation signals. 
 waitForOperation<T>(pending: Promise<T>, signals: readonly (AbortSignal | undefined)[]): Promise<T>;
 ```
 
+
+## Crypto dependencies
+
+`CryptoContext` contains `engine`, `keyring`, optional `federationPurpose`, and an optional `history` source. `BoundFederationOptions<Options>` omits the engine from options on an initialized host or role. The instance uses its host engine; standalone operations require `FederationOptions.engine`. See the [migration guide](../crypto/migration.md).

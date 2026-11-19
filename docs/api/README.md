@@ -2,6 +2,7 @@
 
 Each package index lists its public exports. Reference pages describe callable signatures, configuration contracts, and public class members, with short usage examples where helpful. Re-exports lead to the owning package's entry.
 
+- [Crypto](crypto/README.md): portable crypto engines, signing custody and keyring snapshots.
 - [Core](core/README.md): shared federation primitives and services.
 - [Authority](authority/README.md): Trust Anchors, Intermediates, and authoritative storage.
 - [Leaf](leaf/README.md): participant publication and optional hosted services.

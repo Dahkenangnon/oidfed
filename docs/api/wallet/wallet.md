@@ -15,11 +15,10 @@ Trust options and the host verifier for an alternative Wallet Provider attestati
 ```typescript signature
 interface AttestationVerificationOptions extends WalletTrustOptions {
 	/** Verify the attestation with the supplied keys and apply format-specific checks before accepting it. */
-	readonly verifyAttestation: (context: {
-		attestation: unknown;
-		provider: TrustedWalletEntity;
-		keys: JWKSet;
-	}, signal?: AbortSignal) => boolean | Promise<boolean>;
+	readonly verifyAttestation: (
+		context: { attestation: unknown; provider: TrustedWalletEntity; keys: JWKSet },
+		signal?: AbortSignal,
+	) => boolean | Promise<boolean>;
 }
 ```
 
@@ -70,8 +69,16 @@ Fields (including inherited fields):
 Wallet authentication policy for a JWT attestation/PoP pair. audience and acceptWallet are required. Choose an explicit replay policy or the replayStore shorthand; freshness defaults to an iat window of 300 seconds when neither freshness nor maxProofAgeSeconds overrides it. See the [core authentication contracts](../core/authentication.md#authenticateclientattestationoptions) for challenge and replay modes.
 
 ```typescript signature
-interface AuthenticateWalletOptions extends WalletTrustOptions, Omit<AuthenticateClientAttestationOptions, "getAttester" | "acceptClient" | keyof WalletTrustOptions> {
-	readonly acceptWallet: (verified: VerifiedWalletAttestation, signal?: AbortSignal) => boolean | Promise<boolean>;
+interface AuthenticateWalletOptions
+	extends WalletTrustOptions,
+		Omit<
+			AuthenticateClientAttestationOptions,
+			"getAttester" | "acceptClient" | keyof WalletTrustOptions
+		> {
+	readonly acceptWallet: (
+		verified: VerifiedWalletAttestation,
+		signal?: AbortSignal,
+	) => boolean | Promise<boolean>;
 }
 ```
 
@@ -117,8 +124,8 @@ Fields (including inherited fields):
 | `audience` | `string` | Expected AS receiver issuer identifier for the PoP aud claim and any attestation aud. Must be a valid HTTPS Entity Identifier without query or fragment. |
 | `freshness?` | `ClientAttestationFreshness` | PoP freshness policy: maximum age from its iat, or a host-verified challenge validity interval. Separate from replay policy; do not combine with maxProofAgeSeconds. |
 | `clientId?` | `string` | Optional expected Wallet Instance identifier. The PoP iss must equal this value when supplied and always equals the Wallet Attestation sub. |
-| `allowedAttestationAlgorithms?` | `readonly string[]` | Optional nonempty allowlist of supported asymmetric attestation-signing algorithms. Unsupported entries reject the configuration. |
-| `allowedProofAlgorithms?` | `readonly string[]` | Optional nonempty allowlist narrowing supported asymmetric PoP-signing algorithms. Unsupported entries reject the configuration. |
+| `allowedAttestationAlgorithms?` | `readonly string[]` | Attestation signing algorithms. An explicit general protocol allowlist further restricts this list. |
+| `allowedProofAlgorithms?` | `readonly string[]` | Proof-of-possession signing algorithms. An explicit general protocol allowlist further restricts this list. |
 | `expectedChallenge?` | `string` | Challenge value the verifier expects to see in the proof. |
 | `maxProofAgeSeconds?` | `number` | Positive, finite PoP iat-age window in seconds, default 300. Shorthand alternative to freshness; do not configure both. |
 | `replayStore?` | `ReplayStore` | Atomic store consuming PoP JWT identifiers after verification and acceptance. Shorthand alternative to replay; do not configure both. |
@@ -225,20 +232,23 @@ interface AuthorizationRequestOptions extends WalletTrustOptions {
 	 * Wallet §6.3.1 leaves this profile choice open; contextual policy input alone
 	 * does not authorize a different active query.
 	 */
-	readonly queryPolicy?: (context: {
-		queries: readonly DcqlQuery[];
-		request: Readonly<Record<string, unknown>>;
-		chain: ValidatedTrustChain;
-	}, signal?: AbortSignal) => boolean | Promise<boolean>;
+	readonly queryPolicy?: (
+		context: {
+			queries: readonly DcqlQuery[];
+			request: Readonly<Record<string, unknown>>;
+			chain: ValidatedTrustChain;
+		},
+		signal?: AbortSignal,
+	) => boolean | Promise<boolean>;
 	/**
 	 * Approve transaction types and contents after request-level checks pass.
 	 * Receives decoded data and active queries after any superior metadata override.
 	 * Invoked during completion; the protocol engine handles presentation verification.
 	 */
-	readonly verifyTransactionData?: (context: {
-		data: readonly Record<string, unknown>[];
-		queries: readonly DcqlQuery[];
-	}, signal?: AbortSignal) => boolean | Promise<boolean>;
+	readonly verifyTransactionData?: (
+		context: { data: readonly Record<string, unknown>[]; queries: readonly DcqlQuery[] },
+		signal?: AbortSignal,
+	) => boolean | Promise<boolean>;
 }
 ```
 
@@ -637,7 +647,7 @@ Establish the signing Wallet Provider's federation trust, resolve its protocol k
 [Source](../../../packages/wallet/src/roles.ts#L261)
 
 ```typescript signature
-verifyWalletAttestation(jwt: string, options?: WalletAttestationVerificationOptions): Promise<Result<VerifiedWalletAttestation, ClientAttestationError>>;
+verifyWalletAttestation(jwt: string, options?: Omit<WalletAttestationVerificationOptions, "engine">): Promise<Result<VerifiedWalletAttestation, ClientAttestationError>>;
 ```
 
 ### `CredentialIssuerRole#authenticateWallet`
@@ -647,7 +657,7 @@ Verify the Wallet Attestation and its instance-signed PoP, including receiver bi
 [Source](../../../packages/wallet/src/roles.ts#L272)
 
 ```typescript signature
-authenticateWallet(attestation: string, proof: string, options: AuthenticateWalletOptions): Promise<Result<VerifiedWalletAttestation, ClientAttestationError>>;
+authenticateWallet(attestation: string, proof: string, options: Omit<AuthenticateWalletOptions, "engine">): Promise<Result<VerifiedWalletAttestation, ClientAttestationError>>;
 ```
 
 ### `CredentialIssuerRole#verifyProviderAttestation`
@@ -667,7 +677,7 @@ Assess target under bottom-up validation or an explicitly configured trusted-res
 [Source](../../../packages/wallet/src/roles.ts#L117)
 
 ```typescript signature
-assessEntity(target: string, type: "openid_wallet_provider" | "openid_credential_issuer" | "openid_credential_verifier", options?: EntityAssessmentOptions & WalletTrustOptions): Promise<Result<EntityAssessment>>;
+assessEntity(target: string, type: WalletRoleType, options?: Omit<EntityAssessmentOptions & WalletTrustOptions, "engine">): Promise<{ readonly ok: false; readonly error: FederationError; } | { readonly ok: true; readonly value: EntityAssessment; }>;
 ```
 
 ### `CredentialIssuerRole#metadata`
@@ -775,7 +785,7 @@ Establish the signing Wallet Provider's federation trust, resolve its protocol k
 [Source](../../../packages/wallet/src/roles.ts#L236)
 
 ```typescript signature
-static verifyWalletAttestation(jwt: string, anchors: TrustAnchorSet, options?: WalletAttestationVerificationOptions): Promise<Result<VerifiedWalletAttestation, ClientAttestationError>>;
+CredentialIssuerRole.verifyWalletAttestation(jwt: string, anchors: TrustAnchorSet, options: WalletAttestationVerificationOptions): Promise<Result<VerifiedWalletAttestation, ClientAttestationError>>;
 ```
 
 ### `CredentialIssuerRole.authenticateWallet`
@@ -785,16 +795,17 @@ Verify the Wallet Attestation and its instance-signed PoP, including receiver bi
 [Source](../../../packages/wallet/src/roles.ts#L248)
 
 ```typescript signature
-static authenticateWallet(attestation: string, proof: string, anchors: TrustAnchorSet, options: AuthenticateWalletOptions): Promise<Result<VerifiedWalletAttestation, ClientAttestationError>>;
+CredentialIssuerRole.authenticateWallet(attestation: string, proof: string, anchors: TrustAnchorSet, options: AuthenticateWalletOptions): Promise<Result<VerifiedWalletAttestation, ClientAttestationError>>;
 ```
 
 Example:
 
 ```typescript
+import { engine } from "../../examples/software-crypto.js";
 import { MemoryReplayStore, type TrustAnchorSet } from "@oidfed/core";
 import { CredentialIssuerRole, type AuthenticateWalletOptions } from "@oidfed/wallet";
 
-const replayStore = new MemoryReplayStore(); // Share across receiver calls.
+const replayStore = new MemoryReplayStore({engine}); // Share across receiver calls.
 async function authenticateInstance(
   attestation: string,
   proof: string,
@@ -818,13 +829,13 @@ Alias of core's createClientAttestationProof. Sign a PoP with the attested insta
 [Source](../../../packages/wallet/src/roles.ts#L73)
 
 ```typescript signature
-static createClientAttestationProof: typeof createClientAttestationProof;
+CredentialIssuerRole.createClientAttestationProof(params: CreateClientAttestationProofParams, signer: KeyringEntry, options: FederationOptions): Promise<Result<string>>;
 ```
 
 Callable signature:
 
 ```typescript signature
-CredentialIssuerRole.createClientAttestationProof(params: CreateClientAttestationProofParams, signer: JwtSigner, options?: FederationOptions): Promise<Result<string>>;
+CredentialIssuerRole.createClientAttestationProof(params: CreateClientAttestationProofParams, signer: KeyringEntry, options: FederationOptions): Promise<Result<string>>;
 ```
 
 ### `CredentialIssuerRole.clientAttestationHeaders`
@@ -846,14 +857,14 @@ CredentialIssuerRole.clientAttestationHeaders(attestationJwt: string, popJwt: st
 Example:
 
 ```typescript
-import type { JwtSigner } from "@oidfed/core";
+import type { KeyringEntry } from "@oidfed/core";
 import { CredentialIssuerRole } from "@oidfed/wallet";
 
 async function walletHeaders(
   attestationJwt: string,
   clientId: string,
   authorizationServer: string,
-  instanceSigner: JwtSigner,
+  instanceSigner: KeyringEntry,
 ) {
   const proof = await CredentialIssuerRole.createClientAttestationProof(
     { clientId, audience: authorizationServer }, instanceSigner,
@@ -871,13 +882,13 @@ Alias of core's serializeClientAttestation. Join the compact attestation and PoP
 [Source](../../../packages/wallet/src/roles.ts#L75)
 
 ```typescript signature
-static serializeClientAttestation: typeof serializeClientAttestation;
+CredentialIssuerRole.serializeClientAttestation(attestationJwt: string, popJwt: string): Result<string>;
 ```
 
 Callable signature:
 
 ```typescript signature
-CredentialIssuerRole.serializeClientAttestation(attestationJwt: string, popJwt: string): { ok: false; error: FederationError; } | { ok: true; value: string; };
+CredentialIssuerRole.serializeClientAttestation(attestationJwt: string, popJwt: string): Result<string>;
 ```
 
 ### `CredentialIssuerRole.fetchAttestationChallenge`
@@ -887,13 +898,13 @@ Alias of core's fetchAttestationChallenge. Fetch a challenge from an existing en
 [Source](../../../packages/wallet/src/roles.ts#L76)
 
 ```typescript signature
-static fetchAttestationChallenge: typeof fetchAttestationChallenge;
+CredentialIssuerRole.fetchAttestationChallenge(endpoint: string, options: FederationOptions): Promise<Result<string>>;
 ```
 
 Callable signature:
 
 ```typescript signature
-CredentialIssuerRole.fetchAttestationChallenge(endpoint: string, options?: FederationOptions): Promise<Result<string>>;
+CredentialIssuerRole.fetchAttestationChallenge(endpoint: string, options: FederationOptions): Promise<Result<string>>;
 ```
 
 ### `CredentialIssuerRole.readAttestationChallenge`
@@ -919,13 +930,13 @@ Alias of core's createAttestationChallengeHandler. Build a POST-only challenge h
 [Source](../../../packages/wallet/src/roles.ts#L78)
 
 ```typescript signature
-static createAttestationChallengeHandler: typeof createAttestationChallengeHandler;
+CredentialIssuerRole.createAttestationChallengeHandler(issue: (request: Request, signal: AbortSignal) => string | Promise<string>, options: FederationOptions): (request: Request) => Promise<Response>;
 ```
 
 Callable signature:
 
 ```typescript signature
-CredentialIssuerRole.createAttestationChallengeHandler(issue: (request: Request, signal: AbortSignal) => string | Promise<string>, options?: FederationOptions): (request: Request) => Promise<Response>;
+CredentialIssuerRole.createAttestationChallengeHandler(issue: (request: Request, signal: AbortSignal) => string | Promise<string>, options: FederationOptions): (request: Request) => Promise<Response>;
 ```
 
 ### `CredentialIssuerRole.assessEntity`
@@ -935,7 +946,7 @@ Assess target under bottom-up validation or an explicitly configured trusted-res
 [Source](../../../packages/wallet/src/roles.ts#L84)
 
 ```typescript signature
-static assessEntity(target: string, type: "openid_wallet_provider" | "openid_credential_issuer" | "openid_credential_verifier", anchors: TrustAnchorSet, options?: EntityAssessmentOptions & WalletTrustOptions): Promise<Result<EntityAssessment>>;
+CredentialIssuerRole.assessEntity(target: string, type: WalletRoleType, anchors: TrustAnchorSet, options: EntityAssessmentOptions & WalletTrustOptions): Promise<{ readonly ok: false; readonly error: FederationError; } | { readonly ok: true; readonly value: EntityAssessment; }>;
 ```
 
 ## `CredentialVerificationOptions`
@@ -946,11 +957,10 @@ Trust inputs and host callbacks used to verify a credential.
 
 ```typescript signature
 interface CredentialVerificationOptions extends WalletTrustOptions {
-	readonly verifyCredential: (context: {
-		credential: unknown;
-		issuer: TrustedWalletEntity;
-		keys: JWKSet | undefined;
-	}, signal?: AbortSignal) => boolean | Promise<boolean>;
+	readonly verifyCredential: (
+		context: { credential: unknown; issuer: TrustedWalletEntity; keys: JWKSet | undefined },
+		signal?: AbortSignal,
+	) => boolean | Promise<boolean>;
 }
 ```
 
@@ -1115,7 +1125,7 @@ Establish federation trust for the requested participant and validate completed 
 [Source](../../../packages/wallet/src/roles.ts#L617)
 
 ```typescript signature
-discover(id: string, options?: WalletTrustOptions): Promise<Result<TrustedWalletEntity>>;
+discover(id: string, options?: Omit<WalletTrustOptions, "engine">): Promise<Result<TrustedWalletEntity>>;
 ```
 
 ### `CredentialVerifierRole#prepareAuthorizationRequest`
@@ -1165,7 +1175,7 @@ Establish the signing Wallet Provider's federation trust, resolve its protocol k
 [Source](../../../packages/wallet/src/roles.ts#L261)
 
 ```typescript signature
-verifyWalletAttestation(jwt: string, options?: WalletAttestationVerificationOptions): Promise<Result<VerifiedWalletAttestation, ClientAttestationError>>;
+verifyWalletAttestation(jwt: string, options?: Omit<WalletAttestationVerificationOptions, "engine">): Promise<Result<VerifiedWalletAttestation, ClientAttestationError>>;
 ```
 
 ### `CredentialVerifierRole#authenticateWallet`
@@ -1175,7 +1185,7 @@ Verify the Wallet Attestation and its instance-signed PoP, including receiver bi
 [Source](../../../packages/wallet/src/roles.ts#L272)
 
 ```typescript signature
-authenticateWallet(attestation: string, proof: string, options: AuthenticateWalletOptions): Promise<Result<VerifiedWalletAttestation, ClientAttestationError>>;
+authenticateWallet(attestation: string, proof: string, options: Omit<AuthenticateWalletOptions, "engine">): Promise<Result<VerifiedWalletAttestation, ClientAttestationError>>;
 ```
 
 ### `CredentialVerifierRole#verifyProviderAttestation`
@@ -1195,7 +1205,7 @@ Assess target under bottom-up validation or an explicitly configured trusted-res
 [Source](../../../packages/wallet/src/roles.ts#L117)
 
 ```typescript signature
-assessEntity(target: string, type: "openid_wallet_provider" | "openid_credential_issuer" | "openid_credential_verifier", options?: EntityAssessmentOptions & WalletTrustOptions): Promise<Result<EntityAssessment>>;
+assessEntity(target: string, type: WalletRoleType, options?: Omit<EntityAssessmentOptions & WalletTrustOptions, "engine">): Promise<{ readonly ok: false; readonly error: FederationError; } | { readonly ok: true; readonly value: EntityAssessment; }>;
 ```
 
 ### `CredentialVerifierRole#metadata`
@@ -1265,7 +1275,7 @@ Establish federation trust for the requested participant and validate completed 
 [Source](../../../packages/wallet/src/roles.ts#L548)
 
 ```typescript signature
-static discover(id: string, anchors: TrustAnchorSet, options?: WalletTrustOptions): Promise<Result<TrustedWalletEntity>>;
+CredentialVerifierRole.discover(id: string, anchors: TrustAnchorSet, options: WalletTrustOptions): Promise<Result<TrustedWalletEntity>>;
 ```
 
 ### `CredentialVerifierRole.prepareAuthorizationRequest`
@@ -1321,7 +1331,7 @@ Create an oauth-authz-req+jwt Request Object with client_id set to openid_federa
 [Source](../../../packages/wallet/src/roles.ts#L573)
 
 ```typescript signature
-static createAuthorizationRequest(id: string, request: Readonly<Record<string, unknown>>, signer: JwtSigner, options?: AuthorizationRequestCreationOptions): Promise<Result<string>>;
+CredentialVerifierRole.createAuthorizationRequest(id: string, request: Readonly<Record<string, unknown>>, signer: KeyringEntry, options: AuthorizationRequestCreationOptions): Promise<{ readonly ok: false; readonly error: FederationError; } | { readonly ok: true; readonly value: string; }>;
 ```
 
 ### `CredentialVerifierRole.validateResponseRedirect`
@@ -1381,7 +1391,7 @@ Establish the signing Wallet Provider's federation trust, resolve its protocol k
 [Source](../../../packages/wallet/src/roles.ts#L236)
 
 ```typescript signature
-static verifyWalletAttestation(jwt: string, anchors: TrustAnchorSet, options?: WalletAttestationVerificationOptions): Promise<Result<VerifiedWalletAttestation, ClientAttestationError>>;
+CredentialVerifierRole.verifyWalletAttestation(jwt: string, anchors: TrustAnchorSet, options: WalletAttestationVerificationOptions): Promise<Result<VerifiedWalletAttestation, ClientAttestationError>>;
 ```
 
 ### `CredentialVerifierRole.authenticateWallet`
@@ -1391,7 +1401,7 @@ Verify the Wallet Attestation and its instance-signed PoP, including receiver bi
 [Source](../../../packages/wallet/src/roles.ts#L248)
 
 ```typescript signature
-static authenticateWallet(attestation: string, proof: string, anchors: TrustAnchorSet, options: AuthenticateWalletOptions): Promise<Result<VerifiedWalletAttestation, ClientAttestationError>>;
+CredentialVerifierRole.authenticateWallet(attestation: string, proof: string, anchors: TrustAnchorSet, options: AuthenticateWalletOptions): Promise<Result<VerifiedWalletAttestation, ClientAttestationError>>;
 ```
 
 ### `CredentialVerifierRole.createClientAttestationProof`
@@ -1401,13 +1411,13 @@ Alias of core's createClientAttestationProof. Sign a PoP with the attested insta
 [Source](../../../packages/wallet/src/roles.ts#L73)
 
 ```typescript signature
-static createClientAttestationProof: typeof createClientAttestationProof;
+CredentialVerifierRole.createClientAttestationProof(params: CreateClientAttestationProofParams, signer: KeyringEntry, options: FederationOptions): Promise<Result<string>>;
 ```
 
 Callable signature:
 
 ```typescript signature
-CredentialVerifierRole.createClientAttestationProof(params: CreateClientAttestationProofParams, signer: JwtSigner, options?: FederationOptions): Promise<Result<string>>;
+CredentialVerifierRole.createClientAttestationProof(params: CreateClientAttestationProofParams, signer: KeyringEntry, options: FederationOptions): Promise<Result<string>>;
 ```
 
 ### `CredentialVerifierRole.clientAttestationHeaders`
@@ -1433,13 +1443,13 @@ Alias of core's serializeClientAttestation. Join the compact attestation and PoP
 [Source](../../../packages/wallet/src/roles.ts#L75)
 
 ```typescript signature
-static serializeClientAttestation: typeof serializeClientAttestation;
+CredentialVerifierRole.serializeClientAttestation(attestationJwt: string, popJwt: string): Result<string>;
 ```
 
 Callable signature:
 
 ```typescript signature
-CredentialVerifierRole.serializeClientAttestation(attestationJwt: string, popJwt: string): { ok: false; error: FederationError; } | { ok: true; value: string; };
+CredentialVerifierRole.serializeClientAttestation(attestationJwt: string, popJwt: string): Result<string>;
 ```
 
 ### `CredentialVerifierRole.fetchAttestationChallenge`
@@ -1449,13 +1459,13 @@ Alias of core's fetchAttestationChallenge. Fetch a challenge from an existing en
 [Source](../../../packages/wallet/src/roles.ts#L76)
 
 ```typescript signature
-static fetchAttestationChallenge: typeof fetchAttestationChallenge;
+CredentialVerifierRole.fetchAttestationChallenge(endpoint: string, options: FederationOptions): Promise<Result<string>>;
 ```
 
 Callable signature:
 
 ```typescript signature
-CredentialVerifierRole.fetchAttestationChallenge(endpoint: string, options?: FederationOptions): Promise<Result<string>>;
+CredentialVerifierRole.fetchAttestationChallenge(endpoint: string, options: FederationOptions): Promise<Result<string>>;
 ```
 
 ### `CredentialVerifierRole.readAttestationChallenge`
@@ -1481,13 +1491,13 @@ Alias of core's createAttestationChallengeHandler. Build a POST-only challenge h
 [Source](../../../packages/wallet/src/roles.ts#L78)
 
 ```typescript signature
-static createAttestationChallengeHandler: typeof createAttestationChallengeHandler;
+CredentialVerifierRole.createAttestationChallengeHandler(issue: (request: Request, signal: AbortSignal) => string | Promise<string>, options: FederationOptions): (request: Request) => Promise<Response>;
 ```
 
 Callable signature:
 
 ```typescript signature
-CredentialVerifierRole.createAttestationChallengeHandler(issue: (request: Request, signal: AbortSignal) => string | Promise<string>, options?: FederationOptions): (request: Request) => Promise<Response>;
+CredentialVerifierRole.createAttestationChallengeHandler(issue: (request: Request, signal: AbortSignal) => string | Promise<string>, options: FederationOptions): (request: Request) => Promise<Response>;
 ```
 
 ### `CredentialVerifierRole.assessEntity`
@@ -1497,7 +1507,7 @@ Assess target under bottom-up validation or an explicitly configured trusted-res
 [Source](../../../packages/wallet/src/roles.ts#L84)
 
 ```typescript signature
-static assessEntity(target: string, type: "openid_wallet_provider" | "openid_credential_issuer" | "openid_credential_verifier", anchors: TrustAnchorSet, options?: EntityAssessmentOptions & WalletTrustOptions): Promise<Result<EntityAssessment>>;
+CredentialVerifierRole.assessEntity(target: string, type: WalletRoleType, anchors: TrustAnchorSet, options: EntityAssessmentOptions & WalletTrustOptions): Promise<{ readonly ok: false; readonly error: FederationError; } | { readonly ok: true; readonly value: EntityAssessment; }>;
 ```
 
 ## `DcqlQuery`
@@ -1711,7 +1721,7 @@ Fields (including inherited fields):
 | Field | Declared type | Description |
 |---|---|---|
 | `expectedAudience?` | `string` | Expected recipient when the Wallet Attestation includes aud. If aud is present, omitting this option rejects the attestation; no PoP is checked by attestation verification alone. |
-| `allowedAttestationAlgorithms?` | `readonly string[]` | Optional nonempty allowlist of supported asymmetric attestation-signing algorithms. Unsupported entries reject the configuration. |
+| `allowedAttestationAlgorithms?` | `readonly string[]` | Attestation signing algorithms. An explicit general protocol allowlist further restricts this list. |
 | `trustAnchors?` | `TrustAnchorSet` | Pinned local anchors. Instance precedence is per-call trustAnchors, config.trustAnchors, config.options.trustAnchors, then host anchors. Static discovery and verification take their anchors argument explicitly. |
 | `trustChain?` | `readonly string[]` | Raw JWT chain for the target, validated before acceptance. For signing, use this field explicitly to attach a chain and supply pinned anchors. |
 | `entityChains?` | `ReadonlyMap<string, readonly string[]>` | Additional raw chains keyed by exact subject identifier, for offline or pre-supplied discovery. Explicit trustChain takes precedence. |
@@ -1884,7 +1894,7 @@ Establish federation trust for the requested participant and validate completed 
 [Source](../../../packages/wallet/src/roles.ts#L353)
 
 ```typescript signature
-discover(id: string, options?: WalletTrustOptions): Promise<Result<TrustedWalletEntity>>;
+discover(id: string, options?: Omit<WalletTrustOptions, "engine">): Promise<Result<TrustedWalletEntity>>;
 ```
 
 ### `WalletProviderRole#createWalletAttestation`
@@ -1894,7 +1904,7 @@ Sign a JWT Wallet Attestation with the supplied provider protocol signer, instan
 [Source](../../../packages/wallet/src/roles.ts#L359)
 
 ```typescript signature
-createWalletAttestation(params: CreateWalletAttestationParams, signer: JwtSigner, options?: WalletTrustOptions): Promise<Result<string>>;
+createWalletAttestation(params: CreateWalletAttestationParams, options?: Omit<WalletTrustOptions, "engine">): Promise<Result<string>>;
 ```
 
 ### `WalletProviderRole#assessEntity`
@@ -1904,7 +1914,7 @@ Assess target under bottom-up validation or an explicitly configured trusted-res
 [Source](../../../packages/wallet/src/roles.ts#L117)
 
 ```typescript signature
-assessEntity(target: string, type: "openid_wallet_provider" | "openid_credential_issuer" | "openid_credential_verifier", options?: EntityAssessmentOptions & WalletTrustOptions): Promise<Result<EntityAssessment>>;
+assessEntity(target: string, type: WalletRoleType, options?: Omit<EntityAssessmentOptions & WalletTrustOptions, "engine">): Promise<{ readonly ok: false; readonly error: FederationError; } | { readonly ok: true; readonly value: EntityAssessment; }>;
 ```
 
 ### `WalletProviderRole#metadata`
@@ -1991,7 +2001,7 @@ Establish federation trust for the requested participant and validate completed 
 [Source](../../../packages/wallet/src/roles.ts#L334)
 
 ```typescript signature
-static discover(id: string, anchors: TrustAnchorSet, options?: WalletTrustOptions): Promise<Result<TrustedWalletEntity>>;
+WalletProviderRole.discover(id: string, anchors: TrustAnchorSet, options: WalletTrustOptions): Promise<Result<TrustedWalletEntity>>;
 ```
 
 ### `WalletProviderRole.createWalletAttestation`
@@ -2001,20 +2011,20 @@ Sign a JWT Wallet Attestation with the supplied provider protocol signer, instan
 [Source](../../../packages/wallet/src/roles.ts#L341)
 
 ```typescript signature
-static createWalletAttestation(id: string, params: CreateWalletAttestationParams, signer: JwtSigner, options?: WalletTrustOptions): Promise<Result<string>>;
+WalletProviderRole.createWalletAttestation(id: string, params: CreateWalletAttestationParams, signer: KeyringEntry, options: WalletTrustOptions): Promise<Result<string>>;
 ```
 
 Example:
 
 ```typescript
-import type { JWK, JwtSigner } from "@oidfed/core";
+import type { JWK, KeyringEntry } from "@oidfed/core";
 import { WalletProviderRole } from "@oidfed/wallet";
 
 async function issueWalletAttestation(
   providerId: string,
   instanceId: string,
   confirmationKey: JWK,
-  providerProtocolSigner: JwtSigner,
+  providerProtocolSigner: KeyringEntry,
 ) {
   const result = await WalletProviderRole.createWalletAttestation(
     providerId,
@@ -2038,13 +2048,13 @@ Alias of core's createClientAttestationProof. Sign a PoP with the attested insta
 [Source](../../../packages/wallet/src/roles.ts#L73)
 
 ```typescript signature
-static createClientAttestationProof: typeof createClientAttestationProof;
+WalletProviderRole.createClientAttestationProof(params: CreateClientAttestationProofParams, signer: KeyringEntry, options: FederationOptions): Promise<Result<string>>;
 ```
 
 Callable signature:
 
 ```typescript signature
-WalletProviderRole.createClientAttestationProof(params: CreateClientAttestationProofParams, signer: JwtSigner, options?: FederationOptions): Promise<Result<string>>;
+WalletProviderRole.createClientAttestationProof(params: CreateClientAttestationProofParams, signer: KeyringEntry, options: FederationOptions): Promise<Result<string>>;
 ```
 
 ### `WalletProviderRole.clientAttestationHeaders`
@@ -2070,13 +2080,13 @@ Alias of core's serializeClientAttestation. Join the compact attestation and PoP
 [Source](../../../packages/wallet/src/roles.ts#L75)
 
 ```typescript signature
-static serializeClientAttestation: typeof serializeClientAttestation;
+WalletProviderRole.serializeClientAttestation(attestationJwt: string, popJwt: string): Result<string>;
 ```
 
 Callable signature:
 
 ```typescript signature
-WalletProviderRole.serializeClientAttestation(attestationJwt: string, popJwt: string): { ok: false; error: FederationError; } | { ok: true; value: string; };
+WalletProviderRole.serializeClientAttestation(attestationJwt: string, popJwt: string): Result<string>;
 ```
 
 ### `WalletProviderRole.fetchAttestationChallenge`
@@ -2086,13 +2096,13 @@ Alias of core's fetchAttestationChallenge. Fetch a challenge from an existing en
 [Source](../../../packages/wallet/src/roles.ts#L76)
 
 ```typescript signature
-static fetchAttestationChallenge: typeof fetchAttestationChallenge;
+WalletProviderRole.fetchAttestationChallenge(endpoint: string, options: FederationOptions): Promise<Result<string>>;
 ```
 
 Callable signature:
 
 ```typescript signature
-WalletProviderRole.fetchAttestationChallenge(endpoint: string, options?: FederationOptions): Promise<Result<string>>;
+WalletProviderRole.fetchAttestationChallenge(endpoint: string, options: FederationOptions): Promise<Result<string>>;
 ```
 
 ### `WalletProviderRole.readAttestationChallenge`
@@ -2118,13 +2128,13 @@ Alias of core's createAttestationChallengeHandler. Build a POST-only challenge h
 [Source](../../../packages/wallet/src/roles.ts#L78)
 
 ```typescript signature
-static createAttestationChallengeHandler: typeof createAttestationChallengeHandler;
+WalletProviderRole.createAttestationChallengeHandler(issue: (request: Request, signal: AbortSignal) => string | Promise<string>, options: FederationOptions): (request: Request) => Promise<Response>;
 ```
 
 Callable signature:
 
 ```typescript signature
-WalletProviderRole.createAttestationChallengeHandler(issue: (request: Request, signal: AbortSignal) => string | Promise<string>, options?: FederationOptions): (request: Request) => Promise<Response>;
+WalletProviderRole.createAttestationChallengeHandler(issue: (request: Request, signal: AbortSignal) => string | Promise<string>, options: FederationOptions): (request: Request) => Promise<Response>;
 ```
 
 ### `WalletProviderRole.assessEntity`
@@ -2134,7 +2144,7 @@ Assess target under bottom-up validation or an explicitly configured trusted-res
 [Source](../../../packages/wallet/src/roles.ts#L84)
 
 ```typescript signature
-static assessEntity(target: string, type: "openid_wallet_provider" | "openid_credential_issuer" | "openid_credential_verifier", anchors: TrustAnchorSet, options?: EntityAssessmentOptions & WalletTrustOptions): Promise<Result<EntityAssessment>>;
+WalletProviderRole.assessEntity(target: string, type: WalletRoleType, anchors: TrustAnchorSet, options: EntityAssessmentOptions & WalletTrustOptions): Promise<{ readonly ok: false; readonly error: FederationError; } | { readonly ok: true; readonly value: EntityAssessment; }>;
 ```
 
 ## `WalletRoleConfig`
@@ -2145,7 +2155,8 @@ Shared role configuration. Initial metadata is deep-copied, while config itself,
 
 ```typescript signature
 interface WalletRoleConfig {
-	readonly options?: WalletTrustOptions;
+	readonly signing?: SigningPurposes;
+	readonly options?: Omit<WalletTrustOptions, "engine">;
 	readonly metadata?: Readonly<Record<string, unknown>>;
 	readonly trustAnchors?: TrustAnchorSet;
 }

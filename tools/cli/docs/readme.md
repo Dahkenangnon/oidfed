@@ -65,7 +65,7 @@ For `list-extended`, `--updated-after` and `--updated-before` accept finite Nume
 | Command | Description |
 |---------|-------------|
 | `decode <jwt>` | Decode a federation JWT without verification |
-| `keygen [-a, --algorithm <alg>]` | Generate a signing key pair (default `ES256`; also supports the other algorithms in `SUPPORTED_ALGORITHMS`) |
+| `keygen [-a, --algorithm <alg>]` | Generate a signing key pair (default `ES256`; also supports the other algorithms in `DEFAULT_ALLOWED_ALGORITHMS`) |
 | `sign -p <file> -k <file>` | Sign a JSON payload as a JWT entity statement |
 
 ### Ops

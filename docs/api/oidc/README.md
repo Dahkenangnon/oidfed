@@ -63,14 +63,12 @@ A signature returning `Result` uses `ok`, `value`, and `error`. Metadata parsers
 | [`ProcessedRegistration`](registration.md#processedregistration) | Interface |
 | [`ProcessExplicitRegistrationOptions`](registration.md#processexplicitregistrationoptions) | Interface |
 | [`ProcessPushedAuthorizationRequestOptions`](registration.md#processpushedauthorizationrequestoptions) | Interface |
-| [`ProtocolSigningKeyProvider`](registration.md#protocolsigningkeyprovider) | Interface |
 | [`PushedAuthorizationProof`](registration.md#pushedauthorizationproof) | Type |
 | [`RegistrationAccreditationContext`](registration.md#registrationaccreditationcontext) | Interface |
 | [`RegistrationAccreditationPolicy`](registration.md#registrationaccreditationpolicy) | Interface |
 | [`RegistrationProtocolAdapter`](registration.md#registrationprotocoladapter) | Interface |
 | [`RegistrationProtocolAdapterContext`](registration.md#registrationprotocoladaptercontext) | Interface |
 | [`RequestDelivery`](registration.md#requestdelivery) | Type |
-| [`StaticProtocolSigningKeyProvider`](registration.md#staticprotocolsigningkeyprovider) | Class |
 | [`ValidatedRequestObject`](registration.md#validatedrequestobject) | Interface |
 | [`ValidatedRequestObjectResult`](registration.md#validatedrequestobjectresult) | Type |
 

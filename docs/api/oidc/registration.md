@@ -15,36 +15,30 @@ Typed client identity, protocol signers, publication metadata, and transport cho
 ```typescript signature
 interface AutomaticRegistrationConfig {
 	readonly entityId: EntityId;
-	readonly protocolKeyProvider: ProtocolSigningKeyProvider;
+	readonly crypto: CryptoContext;
+	readonly signing: SigningPurposes;
 	readonly authorityHints: readonly [EntityId, ...EntityId[]];
 	readonly metadata: Record<string, Record<string, unknown>>;
 	/** TTL for the Request Object JWT in seconds (default: 300). */
 	readonly requestObjectTtlSeconds?: number;
 	/**
-	 * When true, attach the peer_trust_chain JWS header — a Trust Chain for
-	 * the OP that ends at the same Trust Anchor as the RP chain. Disabled by
-	 * default; set to true only when the RP wants the OP to use the
-	 * metadata/policy values from the RP-built peer chain (for the
-	 * Federation/Metadata Integrity properties). Registration returns an error
-	 * if the peer chain to the shared Trust Anchor cannot be built.
+	 * Attach the peer_trust_chain JWS header when enabled. It contains an OP chain ending
+	 * at the same Trust Anchor as the RP chain. Disabled by default. Enable it to offer
+	 * the RP-selected metadata and policy to the OP for Federation/Metadata Integrity.
+	 * Registration fails if a peer chain to the shared anchor cannot be built.
 	 */
 	readonly includePeerTrustChain?: boolean;
 	/**
-	 * Selects how the signed Request Object reaches the OP's authorization
-	 * endpoint. Defaults to `"form_post"` — the safest choice for Request
-	 * Objects that carry an embedded `trust_chain` (the JWT can easily exceed
-	 * the practical URL/header length limits of HTTP intermediaries).
-	 *
-	 * Pass `"query"` to preserve the historical 0.3.x GET-query behavior.
+	 * Choose how the signed Request Object reaches the OP's authorization endpoint.
+	 * Default: `"form_post"`, which avoids URL length limits when an embedded `trust_chain`
+	 * makes the JWT large. Use `"query"` to send it in the GET query string.
 	 */
 	readonly requestDelivery?: RequestDelivery;
 	/**
-	 * For `requestDelivery: "request_uri"`: the publicly-reachable URL at
-	 * which the RP will host the signed Request Object JWT. REQUIRED in that
-	 * mode and ignored otherwise. The library does NOT host the JWT — the
-	 * caller must serve the returned `requestObjectJwt` at this URL with
-	 * Content-Type `application/oauth-authz-req+jwt`, typically with a short
-	 * TTL and single-use semantics.
+	 * For `requestDelivery: "request_uri"`, supply the public URL where the RP serves the
+	 * returned `requestObjectJwt` with Content-Type `application/oauth-authz-req+jwt`.
+	 * The URL is REQUIRED in this mode and ignored otherwise. The caller hosts the JWT,
+	 * typically with a short TTL and single-use semantics.
 	 */
 	readonly requestUri?: string;
 }
@@ -55,7 +49,7 @@ Fields (including inherited fields):
 | Field | Declared type | Description |
 |---|---|---|
 | `entityId` | `EntityId` | Exact Entity Identifier bound to this object or operation. |
-| `protocolKeyProvider` | `ProtocolSigningKeyProvider` | Provider of Request Object and client-assertion signers. These are protocol keys, distinct from Federation Entity Keys. |
+| `signing?` | `SigningPurposes` | Explicit Request Object and client assertion purpose names in the host keyring. |
 | `authorityHints` | `readonly [EntityId, ...EntityId[]]` | Immediate Superior identifiers for the client's publication/registration evidence. Attached host hints take precedence over role-configured hints. |
 | `metadata` | `Record<string, Record<string, unknown>>` | Protocol metadata for this configuration or artifact. Use its owning type to distinguish a single role block from an Entity Type map. |
 | `requestObjectTtlSeconds?` | `number` | Request Object lifetime in seconds; defaults to 300 and is bounded by the applicable client-chain lifetime. |
@@ -142,16 +136,18 @@ Common fields:
 | `request_uri` | Serve `requestObjectJwt` at `requestUri` and redirect using `authorizationUrl`. |
 | `par` | The PAR call has already been made. `parRequestUri` and `parExpiresAt` describe its response; redirect using `authorizationUrl`. |
 
+Automatic PAR includes a signed Request Object. When both parties support `private_key_jwt`, it also sends a client assertion if the provider's advertised algorithms permit the selected signing key. If the provider omits its list, the assertion follows local protocol policy. If the list excludes the algorithm, automatic PAR sends the signed Request Object alone. Explicitly preparing PAR with `private_key_jwt` returns an error for an excluded algorithm.
+
 ## `ExplicitRegistrationConfig`
 
 [Source](../../../packages/oidc/src/registration/explicit.ts#L44)
 
-Client EC inputs assembled for explicit registration by the public client role. Its keyProvider supplies Federation signing keys, while any protocol keys belong inside metadata. The explicitRegistration implementation is not exported directly; explicitlyRegister supplies the host identity, composed client block, key provider, and hints. Not every field of this internal configuration shape has a corresponding per-call role option.
+Client EC inputs assembled for explicit registration by the public client role. Its crypto supplies Federation signing keys, while any protocol keys belong inside metadata. The explicitRegistration implementation is not exported directly; explicitlyRegister supplies the host identity, composed client block, keyring, and hints. Not every field of this internal configuration shape has a corresponding per-call role option.
 
 ```typescript signature
 interface ExplicitRegistrationConfig {
 	readonly entityId: EntityId;
-	readonly keyProvider: FederationKeyProvider;
+	readonly crypto: CryptoContext;
 	readonly authorityHints: readonly [EntityId, ...EntityId[]];
 	readonly metadata: Record<string, Record<string, unknown>>;
 	readonly entityConfigurationTtlSeconds?: number;
@@ -170,7 +166,7 @@ Fields (including inherited fields):
 | Field | Declared type | Description |
 |---|---|---|
 | `entityId` | `EntityId` | Exact Entity Identifier bound to this object or operation. |
-| `keyProvider` | `FederationKeyProvider` | Current Federation Entity Keys and signer used for explicit-registration ECs or signed registration responses. |
+| `crypto` | `CryptoContext` | Current Federation Entity Keys and signer used for explicit-registration ECs or signed registration responses. |
 | `authorityHints` | `readonly [EntityId, ...EntityId[]]` | Immediate Superior identifiers for the client's publication/registration evidence. Attached host hints take precedence over role-configured hints. |
 | `metadata` | `Record<string, Record<string, unknown>>` | Protocol metadata for this configuration or artifact. Use its owning type to distinguish a single role block from an Entity Type map. |
 | `entityConfigurationTtlSeconds?` | `number` | Lifetime in seconds for the client's explicit-registration EC; the internal registration configuration defaults to 86400. |
@@ -185,12 +181,12 @@ Configuration contract used by the provider role's explicit-registration handler
 
 ```typescript signature
 interface ExplicitRegistrationHandlerConfig extends RegistrationAccreditationPolicy {
-	/** The OP's Entity Identifier — used as the aud check target and as the issuer of the response. */
+	/** The OP's Entity Identifier, used for the aud check and as the response issuer. */
 	readonly opEntityId: EntityId;
 	/** Protocol role used to check the server's peer metadata. Defaults to OP. */
 	readonly providerMetadataType?: "openid_provider" | "oauth_authorization_server";
-	/** Federation-only signing key provider used for the signed registration response. */
-	readonly keyProvider: FederationKeyProvider;
+	/** Federation signing keyring used for the signed registration response. */
+	readonly crypto: CryptoContext;
 	/** Non-empty trust anchors required for RP trust chain resolution. */
 	readonly trustAnchors: TrustAnchorSet;
 	/** TTL in seconds for the registration response JWT. Capped to chain expiry when a chain is resolved. */
@@ -201,12 +197,16 @@ interface ExplicitRegistrationHandlerConfig extends RegistrationAccreditationPol
 	readonly registrationManagement?: "disabled" | "read-only";
 	/** Optional generator producing a client_secret embedded in the response. Returning undefined omits the field. */
 	readonly generateClientSecret?: (sub: EntityId) => Promise<string | undefined>;
-	/** Explicit-registration hook after response preparation and signing, before onRegistration. A failed hook prevents the HTTP success response. */
+	/** Optional late pre-commit hook fired after response preparation and before `onRegistration`. */
 	readonly onRegistrationInvalidation?: (sub: EntityId) => Promise<void>;
 	/** Optional callback fired when dynamic registration completes successfully. */
-	readonly onRegistration?: (sub: EntityId, clientMetadata: Record<string, unknown>, clientSecret?: string) => Promise<void>;
+	readonly onRegistration?: (
+		sub: EntityId,
+		clientMetadata: Record<string, unknown>,
+		clientSecret?: string,
+	) => Promise<void>;
 	/** Federation-wide options (httpClient, clock, etc.). */
-	readonly options?: FederationOptions;
+	readonly options: FederationOptions;
 }
 ```
 
@@ -216,7 +216,7 @@ Fields (including inherited fields):
 |---|---|---|
 | `opEntityId` | `EntityId` | The OP's Entity Identifier — used as the aud check target and as the issuer of the response. |
 | `providerMetadataType?` | `"openid_provider" \| "oauth_authorization_server"` | Protocol role used to check the server's peer metadata. Defaults to OP. |
-| `keyProvider` | `FederationKeyProvider` | Current Federation Entity Keys and signer used for explicit-registration ECs or signed registration responses. |
+| `crypto` | `CryptoContext` | Current Federation Entity Keys and signer used for explicit-registration ECs or signed registration responses. |
 | `trustAnchors` | `TrustAnchorSet` | Independently trusted anchor identities and their public Federation Entity Keys. |
 | `registrationResponseTtlSeconds?` | `number` | Signed registration-response lifetime in seconds; defaults to 86400 and is capped by the validated client chain's expiry. |
 | `registrationProtocolAdapter?` | `RegistrationProtocolAdapter` | Optional protocol/profile validation and response-enrichment callbacks. The registration flow independently checks the selected protocol schema and federation policy. |
@@ -330,8 +330,10 @@ Fields (including inherited fields):
 Validation inputs used by provider automatic-registration processing. The role supplies its own identity, replay store, and protocol type; callers supply the remaining per-call settings through processAutomaticRegistration. providerMetadata must be effective metadata for algorithm and policy negotiation, rather than an incomplete publication draft.
 
 ```typescript signature
-interface ProcessAutomaticRegistrationOptions extends FederationOptions, RegistrationAccreditationPolicy {
-	/** The OP's own Entity Identifier — REQUIRED to prevent cross-OP replay via `aud` validation. */
+interface ProcessAutomaticRegistrationOptions
+	extends FederationOptions,
+		RegistrationAccreditationPolicy {
+	/** The OP's Entity Identifier, REQUIRED for `aud` validation to prevent cross-OP replay. */
 	opEntityId: EntityId;
 	/** Request Object typing policy. Defaults to strict; compatible permits legacy JWT headers. */
 	requestObjectTyping?: AutomaticRegistrationContext["requestObjectTyping"];
@@ -474,8 +476,10 @@ Fields (including inherited fields):
 Validation inputs used by the internal explicit-registration processor. The public provider role assembles these through its mounted HTTP handler; processExplicitRegistration itself is not a package-root function. The protocol type selects the OIDC or OAuth client metadata. A supplied Trust Chain header remains signed evidence requiring full validation.
 
 ```typescript signature
-interface ProcessExplicitRegistrationOptions extends FederationOptions, RegistrationAccreditationPolicy {
-	/** The OP's own Entity Identifier — REQUIRED for `aud` validation. */
+interface ProcessExplicitRegistrationOptions
+	extends FederationOptions,
+		RegistrationAccreditationPolicy {
+	/** The OP's Entity Identifier, REQUIRED for `aud` validation. */
 	opEntityId: EntityId;
 	/** Protocol role of the local server whose peer metadata is consumed. Defaults to OP. */
 	providerMetadataType?: "openid_provider" | "oauth_authorization_server";
@@ -532,12 +536,19 @@ Fields (including inherited fields):
 Provider PAR validation and authentication inputs. The public provider method supplies its identity, protocol type, and replay store from the initialized role. Effective providerMetadata controls negotiation; a trusted host TLS callback is required for certificate authentication, and Client Attestation requires the host's attester and acceptance policies. The host protocol engine creates and stores any PAR request_uri after successful processing.
 
 ```typescript signature
-interface ProcessPushedAuthorizationRequestOptions extends ProcessAutomaticRegistrationOptions {
+interface ProcessPushedAuthorizationRequestOptions
+	extends ProcessAutomaticRegistrationOptions {
 	/** Effective server metadata; partial publication metadata is insufficient for method negotiation. */
 	readonly providerMetadata: Readonly<Record<string, unknown>>;
 	/** Trusted host TLS integration must return the certificate proven by the connection (base64 DER). */
-	readonly clientCertificate?: (request: Request, signal: AbortSignal) => string | undefined | Promise<string | undefined>;
-	readonly clientAttestation?: Omit<AuthenticateClientAttestationOptions, "audience" | "clientId">;
+	readonly clientCertificate?: (
+		request: Request,
+		signal: AbortSignal,
+	) => string | undefined | Promise<string | undefined>;
+	readonly clientAttestation?: Omit<
+		AuthenticateClientAttestationOptions,
+		"audience" | "clientId" | "engine"
+	>;
 }
 ```
 
@@ -585,26 +596,6 @@ Fields (including inherited fields):
 | `customConstraintChecks?` | `readonly ConstraintCheckDefinition[]` | Federation-defined constraints checked against authenticated chains. Unknown names are ignored. |
 | `trustMarkRequirements?` | `TrustMarkRequirements` | Declarative accreditation requirements checked before beforeRegistration and before accepting registration side effects. |
 | `beforeRegistration?` | `( context: Readonly<RegistrationAccreditationContext>, signal?: AbortSignal, ) => Result<void> \| Promise<Result<void>>` | Application accreditation callback after declarative Trust Mark checks. A failing requirement prevents the callback; the callback must return a Result with ok set to true to continue. |
-
-## `ProtocolSigningKeyProvider`
-
-[Source](../../../packages/oidc/src/protocol-keys.ts#L6)
-
-Signing-capability contract for Request Objects and client assertions. Publish the corresponding public protocol keys in the client metadata; these are separate from the host's Federation Entity Keys. A dynamic implementation can select current signers on each call.
-
-```typescript signature
-interface ProtocolSigningKeyProvider {
-	getRequestObjectSigner(): Promise<JwtSigner>;
-	getClientAssertionSigner?(): Promise<JwtSigner>;
-}
-```
-
-Fields (including inherited fields):
-
-| Field | Declared type | Description |
-|---|---|---|
-| `getRequestObjectSigner` | `() => Promise<JwtSigner>` | Return the current protocol signer used for signed Request Objects. |
-| `getClientAssertionSigner?` | `() => Promise<JwtSigner>` | Return a protocol client-assertion signer; callers fall back to the Request Object signer when this method is absent. |
 
 ## `PushedAuthorizationProof`
 
@@ -738,36 +729,6 @@ String union selecting delivery: query places the signed Request Object in an au
 
 ```typescript signature
 type RequestDelivery = "query" | "form_post" | "request_uri" | "par";
-```
-
-## `StaticProtocolSigningKeyProvider`
-
-[Source](../../../packages/oidc/src/protocol-keys.ts#L15)
-
-Return the exact signer objects supplied at construction, retaining their identity without cloning, rotating, or validating them. If no clientAssertionSigner is supplied, getClientAssertionSigner returns the Request Object signer. Registration/signing workflows apply the relevant publication and algorithm checks.
-
-```typescript signature
-new StaticProtocolSigningKeyProvider(options: { requestObjectSigner: JwtSigner; clientAssertionSigner?: JwtSigner; }): StaticProtocolSigningKeyProvider;
-```
-
-### `StaticProtocolSigningKeyProvider#getRequestObjectSigner`
-
-Return the configured Request Object signer by reference.
-
-[Source](../../../packages/oidc/src/protocol-keys.ts#L24)
-
-```typescript signature
-getRequestObjectSigner(): Promise<JwtSigner>;
-```
-
-### `StaticProtocolSigningKeyProvider#getClientAssertionSigner`
-
-Return the configured client-assertion signer by reference, falling back to the Request Object signer when omitted.
-
-[Source](../../../packages/oidc/src/protocol-keys.ts#L29)
-
-```typescript signature
-getClientAssertionSigner(): Promise<JwtSigner>;
 ```
 
 ## `ValidatedRequestObject`

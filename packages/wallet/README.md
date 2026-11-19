@@ -4,6 +4,8 @@ Wallet Provider, Credential Issuer, and Credential Verifier roles for [OpenID Fe
 
 Compose roles into `@oidfed/leaf` or `@oidfed/authority`. Wallet applications can use their static discovery and verification methods without a federation identity. Core supplies trust-chain validation, metadata policies, key resolution, and replay storage contracts.
 
+Install `@oidfed/wallet` for standalone wallet operations, or use `pnpm add @oidfed/leaf @oidfed/wallet` to compose a wallet role into a Leaf. Both packages install core automatically.
+
 The package supports JWT Wallet Attestations, proof-of-possession authentication, federation-backed Request Object checks, supplied chains, offline validation, and credential-format integrations. Your VCI/VP engine owns protocol endpoints, sessions, credential selection, and presentation processing.
 
 See the [wallet API reference](../../docs/api/wallet/README.md) for public roles, signatures, validation contracts, and usage examples.

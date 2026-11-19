@@ -14,7 +14,7 @@ export function meta() {
 	return buildMeta({
 		title: "About — @oidfed",
 		description:
-			"About @oidfed: 5 libraries, 3 apps, and 17 CLI commands for OpenID Federation. Apache 2.0 for libraries and CLI; MIT for apps.",
+			"About @oidfed: 6 libraries, 3 apps, and 17 CLI commands for OpenID Federation. Apache 2.0 for libraries and CLI; MIT for apps.",
 		path: "/about",
 		jsonLd: {
 			"@context": "https://schema.org",
@@ -33,7 +33,7 @@ export function meta() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const highlights = [
-	{ value: "05", label: "Libraries", sub: "core · authority · leaf · oidc · wallet" },
+	{ value: "06", label: "Libraries", sub: "crypto · core · authority · leaf · oidc · wallet" },
 	{ value: "03", label: "Apps", sub: "home · explorer · learn" },
 	{ value: "17", label: "CLI commands", sub: "resolve · chain · verify · …" },
 	{ value: "Apache 2.0 / MIT", label: "License", sub: "Libraries · Apps" },
@@ -47,6 +47,7 @@ const architecture = [
 		description:
 			"Federation primitives, authority and leaf hosts, OIDC registration, and wallet trust operations. The libraries use standard Web APIs.",
 		items: [
+			{ name: "@oidfed/crypto", note: "engines · signers · keyrings" },
 			{ name: "@oidfed/core", note: "primitives · chain · policy" },
 			{ name: "@oidfed/authority", note: "TA · intermediate" },
 			{ name: "@oidfed/leaf", note: "RP · OP (leaf)" },
@@ -122,7 +123,7 @@ function Hero() {
 
 				<div className="mt-8 flex flex-wrap gap-x-6 gap-y-2">
 					<StatusDot tone="success">Apache 2.0 · MIT</StatusDot>
-					<StatusDot tone="brand">Spec-complete</StatusDot>
+					<StatusDot tone="brand">OpenID Federation</StatusDot>
 				</div>
 			</div>
 		</section>

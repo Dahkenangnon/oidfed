@@ -790,7 +790,15 @@ getEntityTypes(metadata: FederationMetadata): ReadonlyArray<EntityTypeIdentifier
 A federation key and its historical validity or revocation information.
 
 ```typescript signature
-type HistoricalKeyEntry = z.infer<typeof HistoricalKeyEntrySchema>;
+interface HistoricalKeyEntry extends Jwk {
+	readonly kid: string;
+	readonly exp: number;
+	readonly iat?: number | undefined;
+	readonly nbf?: number | undefined;
+	readonly revoked?:
+		| { readonly revoked_at: number; readonly reason?: string | undefined }
+		| undefined;
+}
 ```
 
 Fields (including inherited fields):
@@ -876,7 +884,7 @@ Fields (including inherited fields):
 A JSON Web Key, including its algorithm and intended-use metadata where supplied.
 
 ```typescript signature
-type JWK = z.infer<typeof JWKSchema>;
+type JWK = import("@oidfed/crypto").Jwk;
 ```
 
 Fields (including inherited fields):
@@ -922,7 +930,7 @@ Fields (including inherited fields):
 A set of public federation signing keys.
 
 ```typescript signature
-type JWKSet = z.infer<typeof JWKSetSchema>;
+type JWKSet = { readonly keys: readonly JWK[] };
 ```
 
 Fields (including inherited fields):

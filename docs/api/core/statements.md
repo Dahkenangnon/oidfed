@@ -6,7 +6,7 @@ Builders construct claims; signers produce JWTs; verification checks authenticat
 
 ## `assertTypHeader`
 
-[Source](../../../packages/core/src/jose/verify.ts#L180)
+[Source](../../../packages/core/src/jose/verify.ts#L123)
 
 Assert that a JWT header has the expected `typ` value, throwing on mismatch.
 
@@ -16,7 +16,7 @@ assertTypHeader(header: Record<string, unknown>, expectedTyp: string): asserts h
 
 ## `buildEntityConfigurationPayload`
 
-[Source](../../../packages/core/src/statement-builders.ts#L140)
+[Source](../../../packages/core/src/statement-builders.ts#L151)
 
 Build a self-issued Entity Configuration payload from the entity's public keys, metadata, lifetime, and extensions. Configuration errors throw before signing.
 
@@ -26,7 +26,7 @@ buildEntityConfigurationPayload(options: BuildEntityConfigurationPayloadOptions)
 
 ## `BuildEntityConfigurationPayloadOptions`
 
-[Source](../../../packages/core/src/statement-builders.ts#L79)
+[Source](../../../packages/core/src/statement-builders.ts#L83)
 
 Identity, keys, metadata, and timing inputs for building an Entity Configuration payload.
 
@@ -65,7 +65,7 @@ Fields (including inherited fields):
 
 ## `buildSubordinateStatementPayload`
 
-[Source](../../../packages/core/src/statement-builders.ts#L189)
+[Source](../../../packages/core/src/statement-builders.ts#L204)
 
 Build a Superior's statement about a subordinate, including its public federation keys, metadata, policy, and constraints. Invalid publication claims throw before signing.
 
@@ -75,7 +75,7 @@ buildSubordinateStatementPayload(options: BuildSubordinateStatementPayloadOption
 
 ## `BuildSubordinateStatementPayloadOptions`
 
-[Source](../../../packages/core/src/statement-builders.ts#L92)
+[Source](../../../packages/core/src/statement-builders.ts#L96)
 
 Superior and subordinate identities, keys, policy, and timing inputs for a Subordinate Statement payload.
 
@@ -114,12 +114,12 @@ Fields (including inherited fields):
 
 ## `checkApplicationJwtHeader`
 
-[Source](../../../packages/core/src/jose/application-jwt.ts#L49)
+[Source](../../../packages/core/src/jose/application-jwt.ts#L53)
 
 ACA §9 allows applications to narrow the backend's supported algorithms.
 
 ```typescript signature
-checkApplicationJwtHeader(header: jose.ProtectedHeaderParameters, typ: string, allowed?: readonly string[]): Result<string>;
+checkApplicationJwtHeader(header: Record<string, unknown>, typ: string, allowed?: readonly string[], registry?: JwsAlgorithmRegistry): Result<string>;
 ```
 
 ## `decodeApplicationJwt`
@@ -129,42 +129,42 @@ checkApplicationJwtHeader(header: jose.ProtectedHeaderParameters, typ: string, a
 Decode an application JWT into its header and payload under the configured limits. Decoding does not authenticate either object.
 
 ```typescript signature
-decodeApplicationJwt(jwt: string, options: FederationOptions): Result<{ header: jose.ProtectedHeaderParameters; payload: jose.JWTPayload }>;
+decodeApplicationJwt(jwt: string, options: Pick<FederationOptions, "maxResponseBytes" | "maxCompactBytes">): Result<{ header: Record<string, unknown>; payload: Record<string, unknown>; }>;
 ```
 
 ## `decodeEntityConfiguration`
 
-[Source](../../../packages/core/src/jose/verify.ts#L104)
+[Source](../../../packages/core/src/jose/verify.ts#L59)
 
 Decode and schema-validate an Entity Configuration JWT without signature verification.
 
 ```typescript signature
-decodeEntityConfiguration(jwt: string): Result<UnverifiedEntityStatement<EntityConfigurationPayload>, FederationError>;
+decodeEntityConfiguration(jwt: string, options?: Pick<JwsServiceOptions, "maxCompactBytes">): Result<UnverifiedEntityStatement<EntityConfigurationPayload>, FederationError>;
 ```
 
 ## `decodeEntityStatement`
 
-[Source](../../../packages/core/src/jose/verify.ts#L83)
+[Source](../../../packages/core/src/jose/verify.ts#L35)
 
 Decode a JWT entity statement without signature verification.
 
 ```typescript signature
-decodeEntityStatement(jwt: string): Result<UnverifiedEntityStatement, FederationError>;
+decodeEntityStatement(jwt: string, options?: Pick<JwsServiceOptions, "maxCompactBytes">): Result<UnverifiedEntityStatement, FederationError>;
 ```
 
 ## `decodeSubordinateStatement`
 
-[Source](../../../packages/core/src/jose/verify.ts#L129)
+[Source](../../../packages/core/src/jose/verify.ts#L85)
 
 Decode and schema-validate a Subordinate Statement JWT without signature verification.
 
 ```typescript signature
-decodeSubordinateStatement(jwt: string): Result<UnverifiedEntityStatement<SubordinateStatementPayload>, FederationError>;
+decodeSubordinateStatement(jwt: string, options?: Pick<JwsServiceOptions, "maxCompactBytes">): Result<UnverifiedEntityStatement<SubordinateStatementPayload>, FederationError>;
 ```
 
 ## `EntityStatementExtensions`
 
-[Source](../../../packages/core/src/statement-builders.ts#L46)
+[Source](../../../packages/core/src/statement-builders.ts#L50)
 
 Additional Entity Statement claims and critical-claim declarations.
 
@@ -186,7 +186,7 @@ Fields (including inherited fields):
 
 ## `EntityStatementKind`
 
-[Source](../../../packages/core/src/statement-builders.ts#L32)
+[Source](../../../packages/core/src/statement-builders.ts#L35)
 
 Distinguishes a self-issued Entity Configuration from a Subordinate Statement.
 
@@ -196,7 +196,7 @@ type EntityStatementKind = "entity-configuration" | "subordinate-statement";
 
 ## `EntityStatementMetadata`
 
-[Source](../../../packages/core/src/statement-builders.ts#L38)
+[Source](../../../packages/core/src/statement-builders.ts#L41)
 
 Metadata claims supplied when building an Entity Statement.
 
@@ -204,89 +204,9 @@ Metadata claims supplied when building an Entity Statement.
 type EntityStatementMetadata = Readonly<Record<string, Readonly<Record<string, unknown>>>>;
 ```
 
-## `JwkSigner`
-
-[Source](../../../packages/core/src/jose/signer.ts#L24)
-
-Software-key signer backed by `jose`. Construction validates and snapshots the private asymmetric JWK, including its `kid` and signing algorithm. Key import is deferred until signing; invalid input or backend failures throw or reject. `JwkSignerOptions` has an optional algorithm override, not a key-header override.
-
-```typescript signature
-new JwkSigner(key: JWK, options?: JwkSignerOptions): JwkSigner;
-```
-
-### `JwkSigner#kid`
-
-Key identifier used to select this signer's public key.
-
-[Source](../../../packages/core/src/jose/signer.ts#L25)
-
-```typescript signature
-readonly kid: string;
-```
-
-### `JwkSigner#alg`
-
-Signing algorithm advertised by this signer.
-
-[Source](../../../packages/core/src/jose/signer.ts#L26)
-
-```typescript signature
-readonly alg: SupportedAlgorithm;
-```
-
-### `JwkSigner#signJwt`
-
-Sign the supplied JWT data through this signer's configured key or signing backend.
-
-[Source](../../../packages/core/src/jose/signer.ts#L39)
-
-```typescript signature
-signJwt(payload: Uint8Array, protectedHeader: Readonly<Record<string, unknown>>): Promise<string>;
-```
-
-## `JwkSignerOptions`
-
-[Source](../../../packages/core/src/jose/signer.ts#L19)
-
-Optional signing algorithm for `JwkSigner`. If omitted, the signer uses the JWK's `alg`; the key must also contain a nonempty `kid` and private material.
-
-```typescript signature
-interface JwkSignerOptions {
-	readonly alg?: SupportedAlgorithm;
-}
-```
-
-Fields (including inherited fields):
-
-| Field | Declared type | Description |
-|---|---|---|
-| `alg?` | `SupportedAlgorithm` | Algorithm associated with the signer or JWK. |
-
-## `JwtSigner`
-
-[Source](../../../packages/core/src/jose/signer.ts#L13)
-
-Signing interface for a software key, remote signing service, or another host-controlled backend. Implementations own key custody. The bundled `JwkSigner` imports its private JWK through `jose`; callers using the interface do not need to expose private material to protocol code.
-
-```typescript signature
-interface JwtSigner {
-	readonly kid: string;
-	readonly alg: SupportedAlgorithm;
-	signJwt(payload: Uint8Array, protectedHeader: Readonly<Record<string, unknown>>): Promise<string>;
-}
-```
-
-Fields (including inherited fields):
-
-| Field | Declared type | Description |
-|---|---|---|
-| `kid` | `string` | Key identifier used to select a public verification key. |
-| `alg` | `SupportedAlgorithm` | Algorithm associated with the signer or JWK. |
-| `signJwt` | `(payload: Uint8Array, protectedHeader: Readonly<Record<string, unknown>>) => Promise<string>` | Sign the supplied payload bytes and protected header using this signer's key custody. |
-
 ## `matchesJwtType`
 
-[Source](../../../packages/core/src/jose/application-jwt.ts#L39)
+[Source](../../../packages/core/src/jose/application-jwt.ts#L43)
 
 RFC 7515 §4.1.9 treats typ as a media type, with an optional application/ prefix.
 
@@ -296,7 +216,7 @@ matchesJwtType(actual: unknown, expected: string): boolean;
 
 ## `prepareEntityStatementExtensions`
 
-[Source](../../../packages/core/src/statement-builders.ts#L54)
+[Source](../../../packages/core/src/statement-builders.ts#L58)
 
 Validate and detach publication extensions. Throws before retaining or signing invalid data.
 
@@ -306,17 +226,17 @@ prepareEntityStatementExtensions(options: EntityStatementExtensions): EntityStat
 
 ## `signApplicationJwt`
 
-[Source](../../../packages/core/src/jose/application-jwt.ts#L130)
+[Source](../../../packages/core/src/jose/application-jwt.ts#L113)
 
 Sign an application payload with the supplied signer, JWT type, and optional Trust Chain header. The caller supplies the protocol claims.
 
 ```typescript signature
-signApplicationJwt(payload: Record<string, unknown>, typ: string, signer: JwtSigner, options: FederationOptions, chain?: readonly string[]): Promise<Result<string>>;
+signApplicationJwt(payload: Record<string, unknown>, typ: string, signer: KeyringEntry, options: FederationOptions, chain?: readonly string[]): Promise<Result<string>>;
 ```
 
 ## `signEntityConfiguration`
 
-[Source](../../../packages/core/src/statement-builders.ts#L178)
+[Source](../../../packages/core/src/statement-builders.ts#L189)
 
 Build and sign a self-issued Entity Configuration using the supplied federation signer.
 
@@ -326,13 +246,15 @@ signEntityConfiguration(options: SignEntityConfigurationOptions): Promise<string
 
 ## `SignEntityConfigurationOptions`
 
-[Source](../../../packages/core/src/statement-builders.ts#L105)
+[Source](../../../packages/core/src/statement-builders.ts#L109)
 
 Payload and signing options for a self-issued Entity Configuration.
 
 ```typescript signature
-interface SignEntityConfigurationOptions extends BuildEntityConfigurationPayloadOptions {
-	readonly signer: JwtSigner;
+interface SignEntityConfigurationOptions
+	extends Omit<BuildEntityConfigurationPayloadOptions, "jwks"> {
+	readonly signer: KeyringEntry;
+	readonly maxCompactBytes?: number;
 	readonly alg?: SupportedAlgorithm;
 }
 ```
@@ -341,10 +263,10 @@ Fields (including inherited fields):
 
 | Field | Declared type | Description |
 |---|---|---|
-| `signer` | `JwtSigner` | Signing capability and its public algorithm/key identifier. Private-key custody stays with the implementation. |
+| `maxCompactBytes?` | `number` | Maximum encoded token size in bytes. |
+| `signer` | `KeyringEntry` | Signing capability and its public algorithm/key identifier. Private-key custody stays with the implementation. |
 | `alg?` | `SupportedAlgorithm` | Algorithm associated with the signer or JWK. |
 | `entityId` | `EntityId \| string` | Exact Entity Identifier bound to this object or operation. |
-| `jwks` | `JWKSet` | JSON Web Key Set. The owning API determines whether these are Federation Entity Keys or protocol keys. |
 | `metadata` | `EntityStatementMetadata` | Entity metadata indexed by Entity Type Identifier. Publication may be partial; effective metadata is checked after policy. |
 | `authorityHints?` | `readonly (EntityId \| string)[]` | Immediate Superior Entity Identifiers published as authority_hints. |
 | `trustAnchorHints?` | `readonly (EntityId \| string)[]` | Reachable Trust Anchor identifiers published as trust_anchor_hints when the entity has Superiors. |
@@ -359,25 +281,28 @@ Fields (including inherited fields):
 
 ## `signEntityStatement`
 
-[Source](../../../packages/core/src/jose/sign.ts#L15)
+[Source](../../../packages/core/src/jose/sign.ts#L21)
 
 Serialize and sign a payload as a compact JWT. The default `typ` is `entity-statement+jwt`; the algorithm must match the signer. `extraHeaders` cannot override `alg`, `kid`, or `typ`. This generic signer does not validate the payload as an Entity Configuration or Subordinate Statement; use their builders when those publication checks are required. Errors reject the returned promise.
 
 ```typescript signature
-signEntityStatement(payload: Record<string, unknown>, signer: JwtSigner, options?: SignEntityStatementOptions): Promise<string>;
+signEntityStatement(payload: Record<string, unknown>, entry: KeyringEntry, options?: SignEntityStatementOptions): Promise<string>;
 ```
 
 ## `SignEntityStatementOptions`
 
-[Source](../../../packages/core/src/jose/sign.ts#L6)
+[Source](../../../packages/core/src/jose/sign.ts#L12)
 
 Header and signing options for an Entity Statement JWT.
 
 ```typescript signature
 interface SignEntityStatementOptions {
-	readonly alg?: SupportedAlgorithm;
+	readonly alg?: JwsAlgorithm;
 	readonly typ?: string;
 	readonly extraHeaders?: Record<string, unknown>;
+	readonly maxBytes?: number | undefined;
+	readonly algorithmRegistry?: JwsAlgorithmRegistry | undefined;
+	readonly allowedFederationAlgorithms?: readonly string[] | undefined;
 }
 ```
 
@@ -385,13 +310,16 @@ Fields (including inherited fields):
 
 | Field | Declared type | Description |
 |---|---|---|
-| `alg?` | `SupportedAlgorithm` | Defaults to `signer.alg`; an explicit value must match the signer. |
+| `maxBytes?` | `number` | Maximum encoded compact JWT size. |
+| `algorithmRegistry?` | `JwsAlgorithmRegistry` | Registry for application-specific public keys and algorithms. |
+| `allowedFederationAlgorithms?` | `readonly string[]` | Permitted Federation Entity Key algorithms. |
+| `alg?` | `JwsAlgorithm` | Defaults to `signer.alg`; an explicit value must match the signer. |
 | `typ?` | `string` | Protected JWT type; defaults to `entity-statement+jwt`. |
 | `extraHeaders?` | `Record<string, unknown>` | Additional protected JWS headers, subject to the signer's reserved-header checks. |
 
 ## `signSubordinateStatement`
 
-[Source](../../../packages/core/src/statement-builders.ts#L219)
+[Source](../../../packages/core/src/statement-builders.ts#L234)
 
 Build and sign a Subordinate Statement with the Superior's federation signer.
 
@@ -401,13 +329,14 @@ signSubordinateStatement(options: SignSubordinateStatementOptions): Promise<stri
 
 ## `SignSubordinateStatementOptions`
 
-[Source](../../../packages/core/src/statement-builders.ts#L110)
+[Source](../../../packages/core/src/statement-builders.ts#L118)
 
 Payload and signing options for a Superior's Subordinate Statement.
 
 ```typescript signature
 interface SignSubordinateStatementOptions extends BuildSubordinateStatementPayloadOptions {
-	readonly signer: JwtSigner;
+	readonly signer: KeyringEntry;
+	readonly maxCompactBytes?: number;
 	readonly alg?: SupportedAlgorithm;
 }
 ```
@@ -416,7 +345,8 @@ Fields (including inherited fields):
 
 | Field | Declared type | Description |
 |---|---|---|
-| `signer` | `JwtSigner` | Signing capability and its public algorithm/key identifier. Private-key custody stays with the implementation. |
+| `maxCompactBytes?` | `number` | Maximum encoded token size in bytes. |
+| `signer` | `KeyringEntry` | Signing capability and its public algorithm/key identifier. Private-key custody stays with the implementation. |
 | `alg?` | `SupportedAlgorithm` | Algorithm associated with the signer or JWK. |
 | `issuer` | `EntityId \| string` | Issuer identity for the signed artifact or configured service. |
 | `subject` | `EntityId \| string` | Subject identity for the statement, mark, or authentication being processed. |
@@ -459,7 +389,7 @@ export function inspectStatementClaims(payload: Record<string, unknown>, clock: 
 
 ## `validateEntityStatementClaims`
 
-[Source](../../../packages/core/src/statement-builders.ts#L233)
+[Source](../../../packages/core/src/statement-builders.ts#L249)
 
 Check statement claims for the requested statement kind, including identity relationships and permitted claim placement.
 
@@ -469,7 +399,7 @@ validateEntityStatementClaims(payload: Readonly<Record<string, unknown>>, option
 
 ## `ValidateEntityStatementClaimsOptions`
 
-[Source](../../../packages/core/src/statement-builders.ts#L34)
+[Source](../../../packages/core/src/statement-builders.ts#L37)
 
 Statement kind, identity, time, and understood-critical-claim settings for claim validation.
 
@@ -492,22 +422,12 @@ Fields (including inherited fields):
 Check required Entity Statement times using the verifier's clock and allowed skew (§3.2).
 
 ```typescript signature
-validateEntityStatementTimeClaims(payload: Readonly<Record<string, unknown>>, options?: Pick<FederationOptions, "clock" | "clockSkewSeconds">): Result<void, FederationError & { readonly field: "iat" | "exp" }>;
-```
-
-## `validateSigner`
-
-[Source](../../../packages/core/src/jose/signer.ts#L51)
-
-Check that a signer has the algorithm and key identifier required for publication.
-
-```typescript signature
-validateSigner(signer: JwtSigner): void;
+validateEntityStatementTimeClaims(payload: Readonly<Record<string, unknown>>, options?: Pick<FederationOptions, "clock" | "clockSkewSeconds">): Result<void, FederationError & { readonly field: "iat" | "exp"; }>;
 ```
 
 ## `validateSubordinateStatementPublicationClaims`
 
-[Source](../../../packages/core/src/statement-builders.ts#L276)
+[Source](../../../packages/core/src/statement-builders.ts#L292)
 
 Validate supplied publication claims without inventing required issuer, key, or time claims.
 
@@ -517,7 +437,7 @@ validateSubordinateStatementPublicationClaims(payload: Readonly<Record<string, u
 
 ## `VerifiedProtocolJwt`
 
-[Source](../../../packages/core/src/jose/verify-protocol.ts#L20)
+[Source](../../../packages/core/src/jose/verify-protocol.ts#L11)
 
 A protocol JWT's header and payload returned after verification.
 
@@ -537,27 +457,27 @@ Fields (including inherited fields):
 
 ## `verifyApplicationJwt`
 
-[Source](../../../packages/core/src/jose/application-jwt.ts#L72)
+[Source](../../../packages/core/src/jose/application-jwt.ts#L79)
 
 Verify the signature, type, supported algorithms, and any supplied audience against the provided public keys. Present `exp` and `nbf` claims are checked with clock tolerance; `iat` is checked for finite numeric syntax, without imposing an age limit. Required claims, freshness policy, and issuer trust belong to the calling protocol workflow.
 
 ```typescript signature
-verifyApplicationJwt(jwt: string, keys: JWKSet, typ: string, options: FederationOptions, audience?: string, confirmationKey?: boolean, allowedAlgorithms?: readonly string[]): Promise<Result<jose.JWTPayload>>;
+verifyApplicationJwt(jwt: string, keys: JWKSet, typ: string, options: FederationOptions, audience?: string, confirmationKey?: boolean, allowedAlgorithms?: readonly string[]): Promise<Result<Record<string, unknown>>>;
 ```
 
 ## `verifyEntityStatement`
 
-[Source](../../../packages/core/src/jose/verify.ts#L17)
+[Source](../../../packages/core/src/jose/verify.ts#L22)
 
 Verify the JWT's exact type, supported signing algorithm, nonempty `kid`, signature, and present JWT time claims against the supplied public keys. The default type is `entity-statement+jwt` and default clock tolerance is 60 seconds. This low-level call does not perform complete claim-shape, chain-link, policy, or Trust Anchor validation.
 
 ```typescript signature
-verifyEntityStatement(jwt: string, jwks: JWKSet, options?: { clockSkewSeconds?: number; clock?: Clock; expectedTyp?: string }): Promise<Result<ParsedEntityStatement, FederationError>>;
+verifyEntityStatement(jwt: string, jwks: JWKSet, options: FederationJwsOptions & { readonly expectedTyp?: string; }): Promise<Result<ParsedEntityStatement>>;
 ```
 
 ## `verifyProtocolJwt`
 
-[Source](../../../packages/core/src/jose/verify-protocol.ts#L30)
+[Source](../../../packages/core/src/jose/verify-protocol.ts#L16)
 
 Verify a protocol JWT against authenticated public metadata keys.
 Checks signature, type and JWT time claims. The caller validates protocol claims
@@ -569,20 +489,15 @@ verifyProtocolJwt(jwt: string, jwks: JWKSet, options: VerifyProtocolJwtOptions):
 
 ## `VerifyProtocolJwtOptions`
 
-[Source](../../../packages/core/src/jose/verify-protocol.ts#L10)
+[Source](../../../packages/core/src/jose/verify-protocol.ts#L6)
 
 Expected type, identity, algorithms, and claim checks for a protocol JWT.
 
 ```typescript signature
-interface VerifyProtocolJwtOptions {
-	/** Exact protected typ; undefined requires the header to be absent, rather than ignoring it. */
-	expectedTyp: string | undefined;
-	/** Application policy, in addition to supported asymmetric algorithms. */
-	allowedAlgorithms?: readonly string[];
-	/** Require kid by default; single-key permits omission for a set containing one key. */
-	keyIdPolicy?: "required" | "single-key";
-	clockSkewSeconds?: number;
-	clock?: Clock;
+interface VerifyProtocolJwtOptions extends JwsServiceOptions {
+	/** Undefined requires the protected typ to be absent. */
+	readonly expectedTyp: string | undefined;
+	readonly keyIdPolicy?: "required" | "single-key";
 }
 ```
 

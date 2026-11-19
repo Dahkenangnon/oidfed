@@ -6,7 +6,7 @@ Choose endpoint authentication independently from application sessions. Private-
 
 ## `authenticateClientAttestation`
 
-[Source](../../../packages/core/src/client-attestation.ts#L623)
+[Source](../../../packages/core/src/client-attestation.ts#L660)
 
 Verify an attestation and proof pair with attester trust, audience, freshness, replay, and the optional host acceptance policy. Handle the returned failure before accepting the client.
 
@@ -16,7 +16,7 @@ authenticateClientAttestation(attestationJwt: string, popJwt: string, options: A
 
 ## `AuthenticateClientAttestationOptions`
 
-[Source](../../../packages/core/src/client-attestation.ts#L127)
+[Source](../../../packages/core/src/client-attestation.ts#L133)
 
 Trust, freshness, audience, and replay settings for client-attestation authentication.
 
@@ -42,7 +42,7 @@ Fields (including inherited fields):
 
 | Field | Declared type | Description |
 |---|---|---|
-| `allowedProofAlgorithms?` | `readonly string[]` | Proof-of-possession signing algorithms accepted in addition to backend support. |
+| `allowedProofAlgorithms?` | `readonly string[]` | Proof-of-possession signing algorithms. An explicit general protocol allowlist further restricts this list. |
 | `audience` | `string` | Expected recipient identity. Federation endpoint assertions use the responder's Entity Identifier, not its URL origin. |
 | `clientId?` | `string` | Optional expected client instance identifier; it must match the verified attestation subject. |
 | `expectedChallenge?` | `string` | Challenge value the verifier expects to see in the proof. |
@@ -83,8 +83,8 @@ Fields (including inherited fields):
 | `customPolicyOperators?` | `readonly PolicyOperatorDefinition[]` | Federation-defined policy operators in addition to the seven standard ones. Forwarded to `resolveMetadataPolicy` and `applyMetadataPolicy` during trust-chain validation. |
 | `customConstraintChecks?` | `readonly ConstraintCheckDefinition[]` | Federation-defined constraints checked against authenticated chains. Unknown names are ignored. |
 | `trustChain?` | `readonly string[]` | Supplied or validated Trust Chain, in the representation declared by this contract. |
-| `allowedAttestationAlgorithms?` | `readonly string[]` | Attestation signing algorithms accepted in addition to backend support. |
-| `getAttester` | `( issuer: string, header: Readonly<jose.ProtectedHeaderParameters>, signal: AbortSignal, ) => Result<TrustedClientAttester> \| Promise<Result<TrustedClientAttester>>` | The issuer and header are unverified lookup hints, never trust evidence. |
+| `allowedAttestationAlgorithms?` | `readonly string[]` | Attestation signing algorithms. An explicit general protocol allowlist further restricts this list. |
+| `getAttester` | `( issuer: string, header: Readonly<Record<string, unknown>>, signal: AbortSignal, ) => Result<TrustedClientAttester> \| Promise<Result<TrustedClientAttester>>` | The issuer and header are unverified lookup hints, never trust evidence. |
 
 ## `authenticatedEndpointCaller`
 
@@ -103,7 +103,7 @@ authenticatedEndpointCaller(request: Request): string | undefined;
 Shared credential verification for Authority, Leaf, and Collection endpoints.
 
 ```typescript signature
-authenticateEndpointRequest(request: Request, form: URLSearchParams, config: EndpointAuthenticationConfig, options?: FederationOptions): Promise<Result<string | undefined, EndpointAuthenticationError>>;
+authenticateEndpointRequest(request: Request, form: URLSearchParams, config: EndpointAuthenticationConfig, options: FederationOptions): Promise<Result<string | undefined, EndpointAuthenticationError>>;
 ```
 
 ## `ClientAssertionOptions`
@@ -114,7 +114,7 @@ Lifetime, clock, timeout, and cancellation settings for creating a client assert
 
 ```typescript signature
 interface ClientAssertionOptions
-	extends Pick<FederationOptions, "signal" | "httpTimeoutMs"> {
+	extends Pick<FederationOptions, "signal" | "httpTimeoutMs" | "engine"> {
 	readonly expiresInSeconds?: number;
 	/** NumericDate clock used for iat and exp. */
 	readonly clock?: Clock;
@@ -132,22 +132,12 @@ Fields (including inherited fields):
 
 ## `ClientAttestation`
 
-[Source](../../../packages/core/src/client-attestation.ts#L71)
+[Source](../../../packages/core/src/client-attestation.ts#L76)
 
 Claims carried by a client attestation, including its confirmation key.
 
 ```typescript signature
-type ClientAttestation = {
-	[key: string]: unknown;
-	iss: string;
-	sub: string;
-	exp: number;
-	cnf: { [key: string]: unknown; jwk: JWK; };
-	iat?: undefined | number;
-	nbf?: undefined | number;
-	wallet_name?: undefined | string;
-	wallet_link?: undefined | string;
-};
+type ClientAttestation = z.infer<typeof AttestationSchema>;
 ```
 
 Fields (including inherited fields):
@@ -165,13 +155,16 @@ Fields (including inherited fields):
 
 ## `ClientAttestationError`
 
-[Source](../../../packages/core/src/client-attestation.ts#L29)
+[Source](../../../packages/core/src/client-attestation.ts#L34)
 
 Stable failure reason for a host's draft-07 HTTP response policy.
 
 ```typescript signature
 interface ClientAttestationError extends FederationError {
-	readonly attestationError?: "use_attestation_challenge" | "use_fresh_attestation" | "invalid_client_attestation";
+	readonly attestationError?:
+		| "use_attestation_challenge"
+		| "use_fresh_attestation"
+		| "invalid_client_attestation";
 }
 ```
 
@@ -187,23 +180,25 @@ Fields (including inherited fields):
 
 ## `ClientAttestationFreshness`
 
-[Source](../../../packages/core/src/client-attestation.ts#L90)
+[Source](../../../packages/core/src/client-attestation.ts#L95)
 
 Policy for deciding whether attestation evidence is recent enough.
 
 ```typescript signature
-type ClientAttestationFreshness = {
-	readonly mode: "iat";
-	readonly maxAgeSeconds?: number;
-} | {
-	readonly mode: "challenge";
-	readonly verify: (challenge: string, signal: AbortSignal) => Result<VerifiedAttestationChallenge> | Promise<Result<VerifiedAttestationChallenge>>;
-};
+type ClientAttestationFreshness =
+	| { readonly mode: "iat"; readonly maxAgeSeconds?: number }
+	| {
+			readonly mode: "challenge";
+			readonly verify: (
+				challenge: string,
+				signal: AbortSignal,
+			) => Result<VerifiedAttestationChallenge> | Promise<Result<VerifiedAttestationChallenge>>;
+	  };
 ```
 
 ## `clientAttestationHeaders`
 
-[Source](../../../packages/core/src/client-attestation.ts#L683)
+[Source](../../../packages/core/src/client-attestation.ts#L720)
 
 Build the HTTP header representation of a Client Attestation and proof pair.
 
@@ -213,7 +208,7 @@ clientAttestationHeaders(attestationJwt: string, popJwt: string): Result<Headers
 
 ## `ClientAttestationOptions`
 
-[Source](../../../packages/core/src/client-attestation.ts#L72)
+[Source](../../../packages/core/src/client-attestation.ts#L77)
 
 Shared federation settings and an optional chain used by client-attestation operations.
 
@@ -262,25 +257,27 @@ Fields (including inherited fields):
 
 ## `ClientAttestationReplay`
 
-[Source](../../../packages/core/src/client-attestation.ts#L99)
+[Source](../../../packages/core/src/client-attestation.ts#L104)
 
 Replay-protection settings for attestation proofs.
 
 ```typescript signature
-type ClientAttestationReplay = {
-	readonly mode: "jti";
-	readonly store: ReplayStore;
-} | {
-	readonly mode: "challenge";
-	readonly consume: (challenge: string, expiresAt: number, signal: AbortSignal) => boolean | Promise<boolean>;
-} | {
-	readonly mode: "freshness-only";
-};
+type ClientAttestationReplay =
+	| { readonly mode: "jti"; readonly store: ReplayStore }
+	| {
+			readonly mode: "challenge";
+			readonly consume: (
+				challenge: string,
+				expiresAt: number,
+				signal: AbortSignal,
+			) => boolean | Promise<boolean>;
+	  }
+	| { readonly mode: "freshness-only" };
 ```
 
 ## `ClientAttestationVerificationOptions`
 
-[Source](../../../packages/core/src/client-attestation.ts#L117)
+[Source](../../../packages/core/src/client-attestation.ts#L122)
 
 Receiver binding for an attestation that supplies aud (RFC 7519 §4.1.3).
 
@@ -291,7 +288,7 @@ interface ClientAttestationVerificationOptions extends ClientAttestationOptions 
 	/** The issuer and header are unverified lookup hints, never trust evidence. */
 	readonly getAttester: (
 		issuer: string,
-		header: Readonly<jose.ProtectedHeaderParameters>,
+		header: Readonly<Record<string, unknown>>,
 		signal: AbortSignal,
 	) => Result<TrustedClientAttester> | Promise<Result<TrustedClientAttester>>;
 }
@@ -302,8 +299,8 @@ Fields (including inherited fields):
 | Field | Declared type | Description |
 |---|---|---|
 | `expectedAudience?` | `string` | Recipient identity used for checking a present aud claim or a required proof audience. |
-| `allowedAttestationAlgorithms?` | `readonly string[]` | Attestation signing algorithms accepted in addition to backend support. |
-| `getAttester` | `( issuer: string, header: Readonly<jose.ProtectedHeaderParameters>, signal: AbortSignal, ) => Result<TrustedClientAttester> \| Promise<Result<TrustedClientAttester>>` | The issuer and header are unverified lookup hints, never trust evidence. |
+| `allowedAttestationAlgorithms?` | `readonly string[]` | Attestation signing algorithms. An explicit general protocol allowlist further restricts this list. |
+| `getAttester` | `( issuer: string, header: Readonly<Record<string, unknown>>, signal: AbortSignal, ) => Result<TrustedClientAttester> \| Promise<Result<TrustedClientAttester>>` | The issuer and header are unverified lookup hints, never trust evidence. |
 | `trustChain?` | `readonly string[]` | Supplied or validated Trust Chain, in the representation declared by this contract. |
 | `trustResolution?` | `import("./trust-chain/assessment.js").TrustResolutionSource` | Acquisition source; protocol consumers still validate the returned subject chain. |
 | `chainSelection?` | `ChainSelectionStrategy` | Select among validated candidates eligible for the current operation. |
@@ -344,7 +341,7 @@ Fields (including inherited fields):
 Create a POST-only challenge handler around the host's issuance callback. The callback receives a bounded cancellation signal; issuance failures produce a generic HTTP 500 response. The host owns challenge generation, expiration, and any one-time consumption.
 
 ```typescript signature
-createAttestationChallengeHandler(issue: (request: Request, signal: AbortSignal) => string | Promise<string>, options?: FederationOptions): (request: Request) => Promise<Response>;
+createAttestationChallengeHandler(issue: (request: Request, signal: AbortSignal) => string | Promise<string>, options: FederationOptions): (request: Request) => Promise<Response>;
 ```
 
 ## `createAttestationChallengeResponse`
@@ -364,22 +361,22 @@ createAttestationChallengeResponse(challenge: string): Response;
 Create a `private_key_jwt` assertion with `iss` and `sub` set to `clientId`, a single `aud`, a fresh random `jti`, and `iat`/`exp`. The default lifetime is 60 seconds. Invalid identifiers, clocks, or lifetimes reject before signing; signing is bounded by timeout and cancellation. Federation endpoint clients and OIDC/OAuth clients share this helper.
 
 ```typescript signature
-createClientAssertion(clientId: string, audience: string, signer: JwtSigner, options?: ClientAssertionOptions): Promise<string>;
+createClientAssertion(clientId: string, audience: string, signer: KeyringEntry, options: ClientAssertionOptions): Promise<string>;
 ```
 
 ## `createClientAttestation`
 
-[Source](../../../packages/core/src/client-attestation.ts#L592)
+[Source](../../../packages/core/src/client-attestation.ts#L629)
 
 Create a draft-07 attestation using the caller's trusted attester signing key.
 
 ```typescript signature
-createClientAttestation(issuer: string, params: CreateClientAttestationParams, signer: JwtSigner, options?: ClientAttestationOptions): Promise<Result<string>>;
+createClientAttestation(issuer: string, params: CreateClientAttestationParams, signer: KeyringEntry, options: ClientAttestationOptions): Promise<Result<string>>;
 ```
 
 ## `CreateClientAttestationParams`
 
-[Source](../../../packages/core/src/client-attestation.ts#L110)
+[Source](../../../packages/core/src/client-attestation.ts#L115)
 
 Subject, confirmation key, expiry, and additional claims for creating a client attestation.
 
@@ -403,17 +400,17 @@ Fields (including inherited fields):
 
 ## `createClientAttestationProof`
 
-[Source](../../../packages/core/src/client-attestation.ts#L641)
+[Source](../../../packages/core/src/client-attestation.ts#L678)
 
 Each invocation creates a new jti. Reuse the attestation, never its proof.
 
 ```typescript signature
-createClientAttestationProof(params: CreateClientAttestationProofParams, signer: JwtSigner, options?: FederationOptions): Promise<Result<string>>;
+createClientAttestationProof(params: CreateClientAttestationProofParams, signer: KeyringEntry, options: FederationOptions): Promise<Result<string>>;
 ```
 
 ## `CreateClientAttestationProofParams`
 
-[Source](../../../packages/core/src/client-attestation.ts#L634)
+[Source](../../../packages/core/src/client-attestation.ts#L671)
 
 Client identity, audience, and signing inputs for an attestation proof of possession.
 
@@ -442,7 +439,7 @@ Fields (including inherited fields):
 Wrap an endpoint handler with configured method and credential checks before invoking the protected handler.
 
 ```typescript signature
-createEndpointAuthenticatedHandler(config: EndpointAuthenticationConfig, inner: (request: Request) => Promise<Response>, options?: FederationOptions, nativeMethod?: "GET" | "POST", unorderedParameters?: readonly string[]): (request: Request) => Promise<Response>;
+createEndpointAuthenticatedHandler(config: EndpointAuthenticationConfig, inner: (request: Request) => Promise<Response>, options: FederationOptions, nativeMethod?: "GET" | "POST", unorderedParameters?: readonly string[]): (request: Request) => Promise<Response>;
 ```
 
 ## `CustomEndpointClientAuthentication`
@@ -680,12 +677,12 @@ endpointCredentialParameterNames(extensions?: EndpointAuthentication): ReadonlyS
 POST to a challenge endpoint and return its nonempty `attestation_challenge` value. The request requires HTTP 200, rejects redirects, and does not cache a challenge or retry the protected operation automatically.
 
 ```typescript signature
-fetchAttestationChallenge(endpoint: string, options?: FederationOptions): Promise<Result<string>>;
+fetchAttestationChallenge(endpoint: string, options: FederationOptions): Promise<Result<string>>;
 ```
 
 ## `invokeVerificationPolicy`
 
-[Source](../../../packages/core/src/client-attestation.ts#L144)
+[Source](../../../packages/core/src/client-attestation.ts#L151)
 
 Bound application verification hooks and release the caller promptly on cancellation.
 
@@ -695,28 +692,22 @@ invokeVerificationPolicy<T>(policy: (context: T, signal?: AbortSignal) => boolea
 
 ## `parseClientAttestationHeaders`
 
-[Source](../../../packages/core/src/client-attestation.ts#L695)
+[Source](../../../packages/core/src/client-attestation.ts#L732)
 
 Fetch Headers combines duplicates; combined values fail the single-JWT grammar.
 
 ```typescript signature
-parseClientAttestationHeaders(headers: Headers, options?: Pick<FederationOptions, "maxResponseBytes">): Result<{
-	attestationJwt: string;
-	popJwt: string;
-}, ClientAttestationError>;
+parseClientAttestationHeaders(headers: Headers, options?: Pick<FederationOptions, "maxResponseBytes">): Result<{ attestationJwt: string; popJwt: string; }, ClientAttestationError>;
 ```
 
 ## `parseConcatenatedClientAttestation`
 
-[Source](../../../packages/core/src/client-attestation.ts#L562)
+[Source](../../../packages/core/src/client-attestation.ts#L599)
 
 ACA §7.2 syntax parsing; authenticate the returned pair before accepting its claims.
 
 ```typescript signature
-parseConcatenatedClientAttestation(value: string, options?: Pick<ClientAttestationOptions, "maxResponseBytes">): Result<{
-	attestationJwt: string;
-	popJwt: string;
-}>;
+parseConcatenatedClientAttestation(value: string, options?: Pick<ClientAttestationOptions, "maxResponseBytes">): Result<{ attestationJwt: string; popJwt: string; }>;
 ```
 
 ## `PrivateKeyJwtEndpointAuthentication`
@@ -731,7 +722,7 @@ interface PrivateKeyJwtEndpointAuthentication {
 	readonly clientId: string;
 	/** Entity Identifier of the responder, which may differ from the endpoint origin (§8.8). */
 	readonly audience: string;
-	readonly signer: JwtSigner;
+	readonly signer: KeyringEntry;
 }
 ```
 
@@ -742,7 +733,7 @@ Fields (including inherited fields):
 | `method` | `"private_key_jwt"` | Authentication method or native HTTP method, as specified by this contract. |
 | `clientId` | `string` | Client Entity Identifier used as the assertion issuer and subject. |
 | `audience` | `string` | Expected recipient identity. Federation endpoint assertions use the responder's Entity Identifier, not its URL origin. |
-| `signer` | `JwtSigner` | Signing capability and its public algorithm/key identifier. Private-key custody stays with the implementation. |
+| `signer` | `KeyringEntry` | Signing capability and its public algorithm/key identifier. Private-key custody stays with the implementation. |
 
 ## `readAttestationChallenge`
 
@@ -756,7 +747,7 @@ readAttestationChallenge(headers: Headers): Result<string | undefined>;
 
 ## `serializeClientAttestation`
 
-[Source](../../../packages/core/src/client-attestation.ts#L678)
+[Source](../../../packages/core/src/client-attestation.ts#L715)
 
 Syntactic serialization only; receivers must authenticate the pair.
 
@@ -766,7 +757,7 @@ serializeClientAttestation(attestationJwt: string, popJwt: string): Result<strin
 
 ## `TrustedClientAttester`
 
-[Source](../../../packages/core/src/client-attestation.ts#L75)
+[Source](../../../packages/core/src/client-attestation.ts#L80)
 
 Verification keys accepted for an attester, with an optional trust-evidence deadline.
 
@@ -797,7 +788,7 @@ validateEndpointAuthentication(config: EndpointAuthenticationConfig): EndpointAu
 
 ## `VerifiedAttestationChallenge`
 
-[Source](../../../packages/core/src/client-attestation.ts#L86)
+[Source](../../../packages/core/src/client-attestation.ts#L91)
 
 Challenge evidence returned after verification.
 
@@ -841,7 +832,7 @@ Fields (including inherited fields):
 
 ## `VerifiedClientAttestation`
 
-[Source](../../../packages/core/src/client-attestation.ts#L80)
+[Source](../../../packages/core/src/client-attestation.ts#L85)
 
 The attestation and proof information returned after successful client authentication.
 
@@ -869,19 +860,12 @@ Fields (including inherited fields):
 Verify a `private_key_jwt` client assertion against the client's JWKS and expected audience.
 
 ```typescript signature
-verifyClientAssertion(assertion: string, jwks: JWKSet, expectedAudience: string, options?: {
-	clockSkewSeconds?: number;
-	clock?: Clock;
-	allowedAlgorithms?: readonly string[];
-	replayStore?: ReplayStore;
-	signal?: AbortSignal;
-	httpTimeoutMs?: number;
-}): Promise<Result<VerifiedClientAssertion, FederationError>>;
+verifyClientAssertion(assertion: string, jwks: JWKSet, expectedAudience: string, options: JwsServiceOptions & { clockSkewSeconds?: number; clock?: Clock; allowedAlgorithms?: readonly string[]; replayStore?: ReplayStore; signal?: AbortSignal; httpTimeoutMs?: number; }): Promise<Result<VerifiedClientAssertion, FederationError>>;
 ```
 
 ## `verifyClientAttestation`
 
-[Source](../../../packages/core/src/client-attestation.ts#L609)
+[Source](../../../packages/core/src/client-attestation.ts#L646)
 
 Verify the attestation JWT against an independently trusted attester and the configured freshness policy. Authentication also requires the instance's proof.
 

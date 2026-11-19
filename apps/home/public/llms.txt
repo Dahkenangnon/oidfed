@@ -1,12 +1,13 @@
 # @oidfed
 
-> OpenID Federation for JavaScript and TypeScript: trust-chain discovery and validation, metadata policies, Trust Marks, constraints, OIDC registration, and wallet roles. The five libraries use standard Web APIs and share a test suite across Node.js, Deno, Bun, workerd, Electron, and Chromium. Their runtime dependencies are `jose` and `zod`.
+> OpenID Federation for JavaScript and TypeScript: trust-chain discovery and validation, metadata policies, Trust Marks, constraints, OIDC registration, and wallet roles. The six libraries use standard Web APIs and share a test suite across Node.js, Deno, Bun, workerd, Electron, and Chromium. Applications supply their crypto backend. The JOSE adapter is optional.
 
-@oidfed implements the [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) trust framework and related specifications listed below. Its endpoint handlers accept a standard `Request` and return a `Promise<Response>`. Applications connect them to an HTTP server or worker and supply persistent storage and key-provider implementations.
+@oidfed implements the [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) trust framework and related specifications listed below. Its endpoint handlers accept a standard `Request` and return a `Promise<Response>`. Applications connect them to an HTTP server or worker and supply persistent storage, an engine and a signing keyring.
 
 ## Packages
 
-- [@oidfed/core](https://github.com/Dahkenangnon/oidfed/blob/main/packages/core/README.md): Federation primitives — entity statements, trust chain resolution and validation, metadata policy, JOSE operations, typed schemas, caching, and trust marks. Foundation for every other package.
+- [@oidfed/crypto](https://github.com/Dahkenangnon/oidfed/blob/main/packages/crypto/README.md): Crypto engine and signer contracts, signing keyrings and compact JWS utilities. Includes Web Crypto and optional JOSE adapters.
+- [@oidfed/core](https://github.com/Dahkenangnon/oidfed/blob/main/packages/core/README.md): Federation primitives — entity statements, trust chain resolution and validation, metadata policy, JOSE operations, typed schemas, caching, and trust marks. Shared by the host and protocol role packages.
 - [@oidfed/authority](https://github.com/Dahkenangnon/oidfed/blob/main/packages/authority/README.md): Trust Anchor and Intermediate Authority operations: subordinate management, statement issuance, and federation endpoint handlers, including fetch, list, resolve, Extended Listing, Subordinate Events, and Entity Collection.
 - [@oidfed/leaf](https://github.com/Dahkenangnon/oidfed/blob/main/packages/leaf/README.md): Leaf Entity toolkit — Entity Configuration serving, authority discovery, and trust chain participation for any entity at the edge of a federation (typically RPs or OPs that don't issue subordinate statements).
 - [@oidfed/oidc](https://github.com/Dahkenangnon/oidfed/blob/main/packages/oidc/README.md): OpenID Connect and OAuth 2.0 federation flows — automatic and explicit client registration, Request Object validation, and typed RP/OP metadata processing as defined in OpenID Federation 1.0 §12.
@@ -55,5 +56,5 @@ Report vulnerabilities to <dah.kenangnon@gmail.com> — see [SECURITY.md](https:
 - **Repository:** <https://github.com/Dahkenangnon/oidfed>
 - **npm organization:** <https://www.npmjs.com/org/oidfed>
 - **Author:** Justin Dah-kenangnon (<https://github.com/Dahkenangnon>)
-- **License:** Apache-2.0 (libraries and CLI · @oidfed/core·authority·leaf·oidc·wallet·cli) · MIT (apps · home·explorer·learn)
-- **Runtime dependencies:** [`jose`](https://github.com/panva/jose), [`zod`](https://github.com/colinhacks/zod).
+- **License:** Apache-2.0 (libraries and CLI · @oidfed/crypto·core·authority·leaf·oidc·wallet·cli) · MIT (apps · home·explorer·learn)
+- Core uses Zod for schema validation. Install `jose` only when importing `@oidfed/crypto/jose`.

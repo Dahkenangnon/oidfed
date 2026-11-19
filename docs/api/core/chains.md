@@ -62,7 +62,7 @@ Compare Trust Anchor public keys retrieved from the Entity Configuration
 against keys retrieved via an independent mechanism.
 
 ```typescript signature
-compareTrustAnchorKeys(ecJwks: Pick<JWKSet, "keys">, independentJwks: Pick<JWKSet, "keys">, entityId: EntityId): Promise<TrustAnchorKeyComparisonResult>;
+compareTrustAnchorKeys(ecJwks: Pick<JWKSet, "keys">, independentJwks: Pick<JWKSet, "keys">, entityId: EntityId, engine: CryptoEngine): Promise<TrustAnchorKeyComparisonResult>;
 ```
 
 ## `completeTrustChainValidation`
@@ -116,10 +116,7 @@ createConcurrencyLimiter(maxConcurrent: number, signal?: AbortSignal): <T>(fn: (
 Create operation options that share one HTTP-call allowance across discovery, issuer resolution, and candidate validation. Cache hits and supplied statements consume no allowance. The default is 50 calls; zero permits cache/supplied-evidence use. The allowance must be a nonnegative safe integer. `exhausted()` reports an exceeded allowance or caller cancellation, not merely whether the last permitted call used it up.
 
 ```typescript signature
-createTrustChainOperation(options?: FederationOptions): Result<{
-	options: FederationOptions;
-	exhausted: () => boolean;
-}>;
+createTrustChainOperation(options: FederationOptions): Result<{ options: FederationOptions; exhausted: () => boolean; }>;
 ```
 
 ## `describeTrustChain`
@@ -139,7 +136,7 @@ describeTrustChain(chain: ValidatedTrustChain): string;
 Discover and validate candidate chains for the target, then select with `options.chainSelection`, or `shortestChain` when no selector is supplied. Discovery and candidate validation share one fetch allowance. Exhaustion, or incomplete discovery with a custom selector, returns an error rather than selecting from an incomplete set. Refresh the assessment when its evidence expires.
 
 ```typescript signature
-discoverEntity(entityId: EntityId, trustAnchors: TrustAnchorSet, options?: FederationOptions): Promise<Result<DiscoveryResult>>;
+discoverEntity(entityId: EntityId, trustAnchors: TrustAnchorSet, options: FederationOptions): Promise<Result<DiscoveryResult>>;
 ```
 
 ## `discoverEntityFromChain`
@@ -149,7 +146,7 @@ discoverEntity(entityId: EntityId, trustAnchors: TrustAnchorSet, options?: Feder
 Validate supplied statements before exposing them to protocol operations.
 
 ```typescript signature
-discoverEntityFromChain(entityId: EntityId, statements: readonly string[], trustAnchors: TrustAnchorSet, options?: FederationOptions): Promise<Result<DiscoveryResult>>;
+discoverEntityFromChain(entityId: EntityId, statements: readonly string[], trustAnchors: TrustAnchorSet, options: FederationOptions): Promise<Result<DiscoveryResult>>;
 ```
 
 ## `EntityAssessment`
@@ -240,10 +237,10 @@ Identity, signing, trust, caching, and authentication settings for a hosted Reso
 ```typescript signature
 interface FederationResolverConfig {
 	readonly entityId: EntityId | string;
-	readonly keyProvider: FederationKeyProvider;
+	readonly crypto: CryptoContext;
 	readonly trustAnchors?: TrustAnchorSet;
 	readonly cache?: CacheProvider;
-	readonly options?: FederationOptions;
+	readonly options: FederationOptions;
 	readonly requireAuthForFreshResolution?: boolean;
 	readonly authentication?: Omit<EndpointAuthenticationConfig, "receiverEntityId">;
 	readonly assessLocalTrustMarkStatus?: (
@@ -257,7 +254,7 @@ Fields (including inherited fields):
 | Field | Declared type | Description |
 |---|---|---|
 | `entityId` | `EntityId \| string` | Exact Entity Identifier bound to this object or operation. |
-| `keyProvider` | `FederationKeyProvider` | Provider of current Federation Entity Keys and the active signer. |
+| `crypto` | `CryptoContext` | Provider of current Federation Entity Keys and the active signer. |
 | `trustAnchors?` | `TrustAnchorSet` | Independently trusted anchor identities and their public Federation Entity Keys. |
 | `cache?` | `CacheProvider` | Host cache for signed statements or operation results; cache hits do not establish trust. |
 | `options?` | `FederationOptions` | Shared federation transport and validation settings for this operation. |
@@ -274,8 +271,8 @@ Configuration for composing a Resolve service into an entity host.
 ```typescript signature
 type FederationResolverIntegration = Omit<
 	FederationResolverConfig,
-	"entityId" | "keyProvider"
->;
+	"entityId" | "crypto" | "options"
+> & { readonly options?: Omit<FederationOptions, "engine"> };
 ```
 
 Fields (including inherited fields):
@@ -316,7 +313,7 @@ In-process callers may populate the cache without endpoint authentication.
 [Source](../../../packages/core/src/resolver/service.ts#L99)
 
 ```typescript signature
-resolve(request: Request, options?: FederationOptions): Promise<Response>;
+resolve(request: Request, options?: Omit<FederationOptions, "engine">): Promise<Response>;
 ```
 
 ### `FederationResolverService#handleAuthenticatedRequest`
@@ -336,7 +333,7 @@ handleAuthenticatedRequest(request: Request): Promise<Response>;
 Retrieve the target's compact Entity Configuration JWT using well-known HTTPS GET discovery, without a Federation client assertion. Network responses require HTTP 200; cached statements are reused only while their cache lifetime remains positive. This fetch does not authenticate the returned statement. Cache adapter failures can reject the promise rather than return a protocol Result.
 
 ```typescript signature
-fetchEntityConfiguration(entityId: EntityId, options?: FederationOptions): Promise<Result<string, FederationError>>;
+fetchEntityConfiguration(entityId: EntityId, options: FederationOptions): Promise<Result<string, FederationError>>;
 ```
 
 ## `fetchSubordinateStatement`
@@ -607,7 +604,7 @@ Returns the array of Entity Statement JWTs ready to attach as a
 valid chain to that anchor exists from this resolver's vantage point.
 
 ```typescript signature
-resolveTrustChainForAnchor(subject: EntityId, trustAnchorId: EntityId, trustAnchors: TrustAnchorSet, options?: FederationOptions): Promise<Result<readonly string[], FederationError>>;
+resolveTrustChainForAnchor(subject: EntityId, trustAnchorId: EntityId, trustAnchors: TrustAnchorSet, options: FederationOptions): Promise<Result<readonly string[], FederationError>>;
 ```
 
 ## `resolveTrustChains`
@@ -680,7 +677,7 @@ Fields (including inherited fields):
 Invoke the configured synchronous selector, or the supplied fallback, on detached frozen candidates. A selector must return one of those candidate objects; thrown errors, promises, and fabricated or copied selections are rejected. The callback cannot modify the frozen snapshots. The successful Result contains the corresponding original validated chain. Without a configured selector or fallback, the first candidate is used.
 
 ```typescript signature
-selectTrustChain(chains: readonly ValidatedTrustChain[], options?: FederationOptions, fallback?: ChainSelectionStrategy): Result<ValidatedTrustChain>;
+selectTrustChain(chains: readonly ValidatedTrustChain[], options: FederationOptions, fallback?: ChainSelectionStrategy): Result<ValidatedTrustChain>;
 ```
 
 ## `shortestChain`
