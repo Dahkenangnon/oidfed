@@ -41,6 +41,7 @@ jobs:
           node-version-file: .node-version
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @oidfed/crypto build
       - run: pnpm typecheck:conformance
       - run: pnpm test:conformance:unit
       - name: Run pinned OpenID Federation test plans
