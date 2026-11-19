@@ -15,7 +15,7 @@ import {
 } from "node:fs/promises";
 import { join, delimiter } from "node:path";
 import { tmpdir } from "node:os";
-import { root } from "./scope.mjs";
+import { root } from "../../../scripts/security/scope.mjs";
 
 test("architecture reads analyzer JSON without package-manager warning output", async () => {
 	const temporary = await mkdtemp(join(tmpdir(), "oidfed-runner-warning-"));

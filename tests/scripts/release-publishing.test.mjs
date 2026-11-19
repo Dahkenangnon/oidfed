@@ -4,14 +4,14 @@ import { test } from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { bundle, registry } from "./release/test-fixtures.mjs";
+import { bundle, registry } from "./fixtures/release.mjs";
 import {
 	publishRecords,
 	preflight,
 	registryJson,
 	selectedRecords,
 	confirmPublished,
-} from "./release/services.mjs";
+} from "../../scripts/release/services.mjs";
 
 const noWait = async () => {};
 test("batch publication orders dependencies, propagates failures and resumes identical archives", async () => {

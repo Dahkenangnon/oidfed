@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { assertPortableGraph } from "./check-crypto-isolation.mjs";
+import { assertPortableGraph } from "../../scripts/check-crypto-isolation.mjs";
 
 test("portable graph guard rejects backend and Node imports", () => {
 	assert.doesNotThrow(() =>

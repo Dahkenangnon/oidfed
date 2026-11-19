@@ -6,7 +6,7 @@ import {
 	extractBreakingChanges,
 	extractSectionFromText,
 	PKG_FILES,
-} from "./extract-changelog.mjs";
+} from "../../scripts/extract-changelog.mjs";
 const text =
 	"# Changelog\n\n## [Unreleased]\n\n## [2.1.0] - 2026-11-17\n\n**BREAKING** changed\n\n- New feature.\n\n## [2.0.0] - 2026-01-01\n\nPrevious.\n";
 test("extracts exact stable and prerelease sections", () => {

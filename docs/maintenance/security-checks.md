@@ -57,7 +57,7 @@ The dispatch rule follows values obtained through `.get()` and `JSON.parse()` th
 
 The logging rule recognizes `privateKey`, `clientSecret`, `clientAssertion`, `client_secret`, and `client_assertion` in any argument position of `debug`, `info`, `warn`, and `error` calls. Renamed values, interpolation, and nested data still need review.
 
-Keep a negative and a nearby safe example for every rule change in `scripts/security/eslint-rules.test.mjs`. Verify the expected rule identifiers and source locations, then run `security:test` and `security:lint`. Update native scanner pins and checksums together in the installer; retain checksum verification and allowlisted extraction.
+Keep a negative and a nearby safe example for every rule change in `tests/scripts/security/eslint-rules.test.mjs`. Verify the expected rule identifiers and source locations, then run `security:test` and `security:lint`. Update native scanner pins and checksums together in the installer; retain checksum verification and allowlisted extraction.
 
 ## Exercise the parsers and test guards
 

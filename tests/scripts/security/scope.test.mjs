@@ -7,13 +7,13 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { packages, sources, isPackageSource } from "./scope.mjs";
-import { registryPackages, cycloneDxInput, productionGraph } from "./dependency-graph.mjs";
-import { cycleKey } from "./run.mjs";
-import config from "./eslint.config.mjs";
-import dependencies from "./dependencies.config.mjs";
-import knip from "./knip.config.mjs";
-import { bin } from "./install.mjs";
+import { packages, sources, isPackageSource } from "../../../scripts/security/scope.mjs";
+import { registryPackages, cycloneDxInput, productionGraph } from "../../../scripts/security/dependency-graph.mjs";
+import { cycleKey } from "../../../scripts/security/run.mjs";
+import config from "../../../scripts/security/eslint.config.mjs";
+import dependencies from "../../../scripts/security/dependencies.config.mjs";
+import knip from "../../../scripts/security/knip.config.mjs";
+import { bin } from "../../../scripts/security/install.mjs";
 
 test("source tools share the six-package allowlist", async () => {
 	assert.deepEqual(packages, ["core", "authority", "leaf", "oidc", "wallet", "crypto"]);
@@ -29,7 +29,7 @@ test("source tools share the six-package allowlist", async () => {
 		Object.keys(knip.workspaces).filter((path) => path !== "."),
 		packages.map((name) => `packages/${name}`),
 	);
-	const codeql = await readFile(new URL("./codeql.yml", import.meta.url), "utf8");
+	const codeql = await readFile(new URL("../../../scripts/security/codeql.yml", import.meta.url), "utf8");
 	assert.deepEqual(
 		codeql
 			.split("\n")
@@ -103,7 +103,7 @@ test("pnpm produces the same scoped graph without an installation", async () => 
 		]) {
 			const directory = join(temporary, file, "..");
 			await mkdir(directory, { recursive: true });
-			await copyFile(new URL(`../../${file}`, import.meta.url), join(temporary, file));
+			await copyFile(new URL(`../../../${file}`, import.meta.url), join(temporary, file));
 		}
 		assert.deepEqual(productionGraph(temporary), productionGraph());
 	} finally {

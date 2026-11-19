@@ -4,7 +4,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { Linter } from "eslint";
 import tseslint from "typescript-eslint";
-import protocol from "./eslint-rules.mjs";
+import protocol from "../../../scripts/security/eslint-rules.mjs";
 
 const config = {
 	files: ["**/*.{ts,js}"],

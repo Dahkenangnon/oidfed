@@ -6,8 +6,8 @@ import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
-import config from "./dependencies.config.mjs";
-import { root } from "./scope.mjs";
+import config from "../../../scripts/security/dependencies.config.mjs";
+import { root } from "../../../scripts/security/scope.mjs";
 
 test("architecture rules reject Node built-ins and private cross-package imports", async () => {
 	const temporary = await mkdtemp(join(tmpdir(), "oidfed-architecture-"));

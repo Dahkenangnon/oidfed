@@ -2,9 +2,9 @@
 import { gzipSync } from "node:zlib";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join, basename } from "node:path";
-import { TARGETS } from "./catalog.mjs";
-import { requiredPackedEntries } from "../check-pack-manifests.mjs";
-import { createArtifacts } from "./artifacts.mjs";
+import { TARGETS } from "../../../scripts/release/catalog.mjs";
+import { requiredPackedEntries } from "../../../scripts/check-pack-manifests.mjs";
+import { createArtifacts } from "../../../scripts/release/artifacts.mjs";
 export const SHA = "a".repeat(40);
 export function archive(entries) {
 	const chunks = [];

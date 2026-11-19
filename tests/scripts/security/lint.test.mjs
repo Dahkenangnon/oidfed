@@ -6,7 +6,7 @@ import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { root } from "./scope.mjs";
+import { root } from "../../../scripts/security/scope.mjs";
 
 test("security lint rules detect unsafe code in a scoped TypeScript project", async () => {
 	const temporary = await mkdtemp(join(tmpdir(), "oidfed-lint-"));
@@ -20,7 +20,7 @@ test("security lint rules detect unsafe code in a scoped TypeScript project", as
 				include: ["packages"],
 			}),
 		);
-		const configUrl = new URL("./eslint.config.mjs", import.meta.url).href;
+		const configUrl = new URL("../../../scripts/security/eslint.config.mjs", import.meta.url).href;
 		await writeFile(
 			join(temporary, "eslint.config.mjs"),
 			`import original from ${JSON.stringify(configUrl)}; export default original.map(item => ({...item, languageOptions: {...item.languageOptions, parserOptions: {...item.languageOptions.parserOptions, tsconfigRootDir: ${JSON.stringify(temporary)}}}}));`,

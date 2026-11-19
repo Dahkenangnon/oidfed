@@ -15,8 +15,8 @@ import {
 	unifiedDiff,
 	previousTagFor,
 	stampChangelogText,
-} from "./release.mjs";
-import { TARGETS } from "./release/catalog.mjs";
+} from "../../scripts/release.mjs";
+import { TARGETS } from "../../scripts/release/catalog.mjs";
 
 function fixture() {
 	const files = new Map(

@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { describe, it } from "node:test";
-import { inspectPackage } from "./check-single-core.mjs";
+import { inspectPackage } from "../../scripts/check-single-core.mjs";
 
 const CORE_PKG = {
 	name: "@oidfed/core",

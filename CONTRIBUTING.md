@@ -192,6 +192,8 @@ configuration changes, run the affected conformance profile.
 | Unit (`core`, `authority`, `leaf`, `oidc`, `wallet`, `crypto`) | QUnit via TAP | `tests/tap/` |
 | CLI (`tools/cli`) | Vitest | `tools/cli/test/` |
 | Explorer (`apps/explorer`) | Vitest | `apps/explorer/test/` |
+| Repository scripts (`pnpm test:scripts`) | Node test runner | `tests/scripts/` |
+| Security tooling (`pnpm security:test`) | Node test runner | `tests/scripts/security/` |
 | E2E | Vitest | `tests/e2e/` (requires `pnpm setup:e2e` first) |
 
 The six libraries are framework-agnostic. Their unit tests use the same TAP suite across Node, Bun, Deno, workerd, Electron, and browsers.

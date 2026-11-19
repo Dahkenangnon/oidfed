@@ -4,9 +4,9 @@ import { test } from "node:test";
 import { mkdtempSync, readFileSync, writeFileSync, rmSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { archive, bundle, SHA } from "./release/test-fixtures.mjs";
-import { loadArtifacts, inspectArchive } from "./release/artifacts.mjs";
-import { parseTag, publicationOrder, TARGETS } from "./release/catalog.mjs";
+import { archive, bundle, SHA } from "./fixtures/release.mjs";
+import { loadArtifacts, inspectArchive } from "../../scripts/release/artifacts.mjs";
+import { parseTag, publicationOrder, TARGETS } from "../../scripts/release/catalog.mjs";
 
 test("saved archives retain per-package identities and reject mutation or foreign origins", () => {
 	const parent = mkdtempSync(join(tmpdir(), "oidfed-release-bundle-")),

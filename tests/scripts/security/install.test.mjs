@@ -7,7 +7,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { installBinary, tools } from "./install.mjs";
+import { installBinary, tools } from "../../../scripts/security/install.mjs";
 
 test("ShellCheck installation verifies hashes and extracts only its nested executable", async (t) => {
 	const temporary = await mkdtemp(join(tmpdir(), "oidfed-binary-installer-"));

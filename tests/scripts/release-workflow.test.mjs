@@ -5,8 +5,8 @@ import { readFileSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { parse } from "yaml";
-import { REPOSITORY, WORKFLOW } from "./release/catalog.mjs";
-import { bundle, registry, SHA } from "./release/test-fixtures.mjs";
+import { REPOSITORY, WORKFLOW } from "../../scripts/release/catalog.mjs";
+import { bundle, registry, SHA } from "./fixtures/release.mjs";
 import {
 	checkSourceCi,
 	waitForSourceCi,
@@ -14,7 +14,7 @@ import {
 	MissingResource,
 	completeRecords,
 	checkTags,
-} from "./release/services.mjs";
+} from "../../scripts/release/services.mjs";
 
 const ci = parse(readFileSync(".github/workflows/ci.yml", "utf8"));
 const security = parse(readFileSync(".github/workflows/security.yml", "utf8"));
@@ -99,9 +99,11 @@ test("CI timeouts distinguish missing jobs from pending jobs and allow jobs to a
 	});
 });
 
-test("CLI release preparation triggers the required security workflow", () => {
-	for (const event of ["push", "pull_request"])
+test("CLI and script test changes trigger the required security workflow", () => {
+	for (const event of ["push", "pull_request"]) {
 		assert.ok(security.on[event].paths.includes("tools/cli/**"), event);
+		assert.ok(security.on[event].paths.includes("tests/scripts/**"), event);
+	}
 });
 
 test("the scoped security job runs rule fixtures and source checks before release acceptance", () => {

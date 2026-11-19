@@ -12,9 +12,10 @@ import {
 	parseArgs,
 	PUBLISHABLE_TARGETS,
 	requiredPackedEntries,
-} from "./check-pack-manifests.mjs";
+} from "../../scripts/check-pack-manifests.mjs";
 
 const targets = Object.fromEntries(PUBLISHABLE_TARGETS.map((target) => [target.scope, target]));
+const packScript = new URL("../../scripts/check-pack-manifests.mjs", import.meta.url);
 
 describe("pack helper entrypoint", () => {
 	it("imports without invoking the CLI when argv is absent or only matches a filename suffix", () => {
@@ -24,7 +25,7 @@ describe("pack helper entrypoint", () => {
 				[
 					"--input-type=module",
 					"--eval",
-					`${argv} await import(${JSON.stringify(new URL("./check-pack-manifests.mjs", import.meta.url).href)});`,
+					`${argv} await import(${JSON.stringify(packScript.href)});`,
 				],
 				{
 					encoding: "utf8",
@@ -42,13 +43,13 @@ describe("pack helper entrypoint", () => {
 		try {
 			mkdirSync(join(directory, "release"));
 			const script = join(directory, "check-pack-manifests.mjs");
-			copyFileSync(new URL("./check-pack-manifests.mjs", import.meta.url), script);
+			copyFileSync(packScript, script);
 			copyFileSync(
-				new URL("./release/catalog.mjs", import.meta.url),
+				new URL("../../scripts/release/catalog.mjs", import.meta.url),
 				join(directory, "release/catalog.mjs"),
 			);
 			symlinkSync(
-				fileURLToPath(new URL("../node_modules", import.meta.url)),
+				fileURLToPath(new URL("../../node_modules", import.meta.url)),
 				join(directory, "node_modules"),
 				"dir",
 			);
