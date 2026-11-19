@@ -101,6 +101,16 @@ function baseManifest(target, overrides = {}) {
 		manifest.engines = { node: NODE_ENGINE };
 		manifest.bin = { oidfed: "./dist/bin.js", openidfed: "./dist/bin.js" };
 	}
+	if (target.scope === "crypto") {
+		manifest.typesVersions = { "*": { web: ["./dist/web.d.ts"], jose: ["./dist/jose.d.ts"] } };
+		for (const name of ["web", "jose"])
+			manifest.exports[`./${name}`] = {
+				import: { types: `./dist/${name}.d.ts`, default: `./dist/${name}.js` },
+				require: { types: `./dist/${name}.d.cts`, default: `./dist/${name}.cjs` },
+			};
+		manifest.peerDependencies = { jose: "^6.2.13" };
+		manifest.peerDependenciesMeta = { jose: { optional: true } };
+	}
 	return { ...manifest, ...overrides };
 }
 
@@ -216,6 +226,26 @@ describe("inspectPackedManifest", () => {
 });
 
 describe("inspectPackedFiles", () => {
+	it("requires both adapter builds and declarations", () => {
+		for (const missing of [
+			"web.js",
+			"web.cjs",
+			"web.d.ts",
+			"web.d.cts",
+			"jose.js",
+			"jose.cjs",
+			"jose.d.ts",
+			"jose.d.cts",
+		]) {
+			const entries = requiredPackedEntries(targets.crypto).filter(
+				(entry) => entry !== `package/dist/${missing}`,
+			);
+			assert.match(
+				inspectPackedFiles(entries, targets.crypto).join("\n"),
+				new RegExp(missing.replaceAll(".", "\\.")),
+			);
+		}
+	});
 	it("accepts the required library artifacts", () => {
 		assert.deepEqual(inspectPackedFiles(requiredPackedEntries(targets.core), targets.core), []);
 	});
@@ -238,5 +268,37 @@ describe("inspectPackedFiles", () => {
 		const out = inspectPackedFiles(entries, targets.cli);
 		assert.equal(out.length, 1);
 		assert.match(out[0], /dist\/bin\.js/);
+	});
+});
+
+describe("crypto dependency and export isolation", () => {
+	it("rejects required JOSE, hidden subpaths and mismatched adapter declarations", () => {
+		for (const change of [
+			(pkg) => {
+				pkg.dependencies = { jose: "^6.2.13" };
+			},
+			(pkg) => {
+				pkg.optionalDependencies = { jose: "^6.2.13" };
+			},
+			(pkg) => {
+				pkg.peerDependenciesMeta.jose.optional = false;
+			},
+			(pkg) => {
+				pkg.exports["./testing"] = pkg.exports["."];
+			},
+			(pkg) => {
+				pkg.exports["./web"].require.types = "./dist/web.d.ts";
+			},
+			(pkg) => {
+				delete pkg.exports["./jose"];
+			},
+			(pkg) => {
+				delete pkg.typesVersions;
+			},
+		]) {
+			const pkg = baseManifest(targets.crypto);
+			change(pkg);
+			assert(inspect(pkg, targets.crypto).length > 0);
+		}
 	});
 });

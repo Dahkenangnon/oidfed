@@ -49,10 +49,10 @@ function fixture() {
 test("preparation keeps independent versions, scoped tags and per-package notes", () => {
 	const { options } = fixture();
 	const plan = createReleasePlan("all", "patch", options);
-	assert.equal(plan.releases.length, 6);
+	assert.equal(plan.releases.length, 7);
 	assert.equal(plan.releases[0].tag, "core/v2.0.1");
 	assert.equal(plan.releases[1].tag, "authority/v2.1.1");
-	assert.equal(plan.files.length, 12);
+	assert.equal(plan.files.length, 14);
 	assert.equal(
 		plan.files.some((f) => ["package.json", "CHANGELOG.md"].includes(f.path)),
 		false,

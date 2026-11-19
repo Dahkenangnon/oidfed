@@ -3,6 +3,7 @@ name: Release
 on:
   push:
     tags:
+      - 'crypto/v*.*.*'
       - 'core/v*.*.*'
       - 'authority/v*.*.*'
       - 'leaf/v*.*.*'
@@ -14,7 +15,7 @@ on:
       scope:
         description: Package selection for a new release
         type: choice
-        options: [all, core, authority, leaf, oidc, wallet, cli]
+        options: [all, core, authority, leaf, oidc, wallet, cli, crypto]
         default: all
       source_sha:
         description: Reviewed commit on main (required for a new release)

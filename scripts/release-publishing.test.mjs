@@ -44,7 +44,7 @@ test("batch publication orders dependencies, propagates failures and resumes ide
 			}),
 			/Publication failed/,
 		);
-		assert.deepEqual(calls, ["core", "authority"]);
+		assert.deepEqual(calls, ["crypto", "core", "authority"]);
 		assert.ok(reports[0].some((r) => r.status === "incomplete"));
 		fail = false;
 		calls.length = 0;
@@ -55,7 +55,7 @@ test("batch publication orders dependencies, propagates failures and resumes ide
 		});
 		assert.equal(result.find((r) => r.package === "@oidfed/core").status, "already-present");
 		assert.equal(calls.includes("core"), false);
-		assert.equal(calls.length, 5);
+		assert.equal(calls.length, records.length - 2);
 		calls.length = 0;
 		await publishRecords(records, directory, { read: remote.read, execute, sleep: noWait });
 		assert.equal(calls.length, 0);
@@ -69,8 +69,8 @@ test("preflight rejects mismatched published bytes, unavailable dependencies and
 		directory = join(root, "bundle");
 	try {
 		const manifest = bundle(directory),
-			core = manifest.packages[0],
-			authority = manifest.packages[1],
+			core = manifest.packages.find((record) => record.scope === "core"),
+			authority = manifest.packages.find((record) => record.scope === "authority"),
 			remote = registry();
 		remote.put({ ...core, integrity: "different" });
 		await assert.rejects(preflight([core], remote.read), /integrity mismatch/);
@@ -79,7 +79,10 @@ test("preflight rejects mismatched published bytes, unavailable dependencies and
 		await assert.rejects(preflight([core], remote.read), /latest backward/);
 		remote.data.clear();
 		await assert.rejects(preflight([authority], remote.read), /unpublished dependency/);
-		remote.data.set(encodeURIComponent(core.name), { versions: { [core.version]: {} } });
+		for (const record of manifest.packages.filter((record) =>
+			["core", "crypto"].includes(record.scope),
+		))
+			remote.data.set(encodeURIComponent(record.name), { versions: { [record.version]: {} } });
 		assert.equal((await preflight([authority], remote.read)).ordered.length, 1);
 	} finally {
 		rmSync(root, { recursive: true, force: true });

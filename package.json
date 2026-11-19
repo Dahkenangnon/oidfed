@@ -41,7 +41,7 @@
 		"prepare": "husky",
 		"commit": "commit",
 		"commitlint": "commitlint --edit",
-		"release:verify": "pnpm build:publish && pnpm lint && pnpm typecheck && pnpm test:coverage && pnpm --filter './tools/*' test && node scripts/check-single-core.mjs && pnpm test:scripts && node scripts/check-pack-manifests.mjs",
+		"release:verify": "pnpm build:publish && pnpm lint && pnpm typecheck && pnpm test:coverage && pnpm --filter './tools/*' test && node scripts/check-single-core.mjs && pnpm test:scripts && node scripts/check-pack-manifests.mjs && node scripts/check-crypto-isolation.mjs",
 		"security:install": "node scripts/security/install.mjs",
 		"security:test": "node --test scripts/security/*.test.mjs",
 		"security:lint": "node scripts/security/run.mjs lint",

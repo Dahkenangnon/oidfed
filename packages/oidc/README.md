@@ -33,71 +33,60 @@ Choose the command for your preferred JavaScript package manager or runtime:
 
 ```bash
 # npm
-npm install @oidfed/core @oidfed/oidc
+npm install @oidfed/oidc
 
 # pnpm
-pnpm add @oidfed/core @oidfed/oidc
+pnpm add @oidfed/oidc
 
 # yarn
-yarn add @oidfed/core @oidfed/oidc
+yarn add @oidfed/oidc
 
 # bun
-bun add @oidfed/core @oidfed/oidc
+bun add @oidfed/oidc
 
 # Deno (Deno 2.0+ / JSR/npm specifier auto-resolution)
-deno add npm:@oidfed/core npm:@oidfed/oidc
+deno add npm:@oidfed/oidc
 ```
 
 ## Quick Start
 
 This package provides role classes that compose directly with `Leaf`, `TrustAnchor`, or `Intermediate` instances.
 
-OIDC/OAuth protocol keys are separate from federation entity keys:
-- OIDC/OAuth roles publish OIDC/OAuth protocol public keys via `jwks` inside the role `metadata` configuration.
-- Federation Entity Configurations and other federation artifacts stay on federation key providers from `@oidfed/core`.
-- OIDC/OAuth helpers only require the read-only `FederationKeyProvider`; authority-owned rollover and historical keys stay on `FederationKeyLifecycleProvider`.
+Configure federation and protocol keys under separate keyring purposes. RP roles derive their public `jwks` from the purposes used to sign Request Objects and client assertions. For an external OP protocol engine, its key metadata remains application owned. Hosts receive explicit engine and keyring contracts; historical-key features use an optional history source.
+
+The RP example imports `@oidfed/leaf` and `@oidfed/crypto`. The OP example imports `@oidfed/authority` and `@oidfed/core`. Add the dependencies for the example you use.
 
 ### RP Composition Example
 
 ```ts
+import { StaticKeyring, type Signer } from "@oidfed/crypto";
+import { createWebCryptoEngine } from "@oidfed/crypto/web";
 import { Leaf } from "@oidfed/leaf";
-import { OidcRelyingPartyRole, StaticProtocolSigningKeyProvider } from "@oidfed/oidc";
-import {
-  createFederationSigningKey,
-  generateSigningKey,
-  JwkSigner,
-  MemoryFederationKeyProvider,
-} from "@oidfed/core";
+import { OidcRelyingPartyRole } from "@oidfed/oidc";
 
-// Temporary keys for this example; use persistent providers in deployment.
-const { privateKey: federationSigningKey } = await generateSigningKey("ES256");
-const { privateKey: protocolSigningKey, publicKey: protocolPublicKey } = await generateSigningKey("ES256");
-
-const rpEntity = new Leaf({
-  entityId: "https://rp.example.com",
-  authorityHints: ["https://ta.example.org"],
-  keyProvider: new MemoryFederationKeyProvider(
-    createFederationSigningKey(federationSigningKey),
-  ),
-  metadata: {
-    federation_entity: {
-      organization_name: "My Relying Party",
+export async function createRelyingParty(federationSigner: Signer, protocolSigner: Signer) {
+  const engine = createWebCryptoEngine(); // The application chooses its backend.
+  const keyring = new StaticKeyring({
+    signers: { federation: federationSigner, request_object: protocolSigner },
+    aliases: { client_assertion: "request_object" },
+  });
+  const rp = new OidcRelyingPartyRole({
+    signing: { requestObject: "request_object", clientAssertion: "client_assertion" },
+    metadata: {
+      redirect_uris: ["https://rp.example.com/callback"],
+      response_types: ["code"],
+      client_registration_types: ["automatic", "explicit"],
     },
-  },
-  roles: [
-    new OidcRelyingPartyRole({
-      protocolKeyProvider: new StaticProtocolSigningKeyProvider({
-        requestObjectSigner: new JwkSigner(protocolSigningKey),
-      }),
-      metadata: {
-        redirect_uris: ["https://rp.example.com/callback"],
-        response_types: ["code"],
-        client_registration_types: ["automatic"],
-        jwks: { keys: [protocolPublicKey] },
-      },
-    })
-  ]
-});
+  });
+  const leaf = await Leaf.create({
+    entityId: "https://rp.example.com",
+    authorityHints: ["https://ta.example.org"],
+    crypto: { engine, keyring },
+    metadata: { federation_entity: { organization_name: "Example RP" } },
+    roles: [rp],
+  });
+  return { leaf, rp, handleRequest: (request: Request) => leaf.handleRequest(request) };
+}
 ```
 
 ### OP Composition Example
@@ -108,25 +97,27 @@ This example assumes `opProtocolPublicKeys` contains the OP’s RSA and EC proto
 ```ts
 import { TrustAnchor, MemoryStorageAdapter } from "@oidfed/authority";
 import { OidcProviderRole } from "@oidfed/oidc";
-import { createTrustAnchorSet, type FederationKeyLifecycleProvider, type JWK, type ReplayStore } from "@oidfed/core";
+import { createTrustAnchorSet, type CryptoContext, type JWK, type ReplayStore } from "@oidfed/core";
 
 export async function createExampleOp(
-  keyProvider: FederationKeyLifecycleProvider,
+  crypto: CryptoContext,
   opProtocolPublicKeys: JWK[],
   replayStore: ReplayStore,
 ) {
-  const federationKeys = await keyProvider.getFederationKeySet();
+  const federationKeys = await crypto.keyring.entry(crypto.federationPurpose ?? "federation", {
+    issuer: "https://op.example.com", subject: "https://op.example.com",
+  });
 
-  const opEntity = new TrustAnchor({
+  const opEntity = await TrustAnchor.create({
     entityId: "https://op.example.com",
-    keyProvider,
+    crypto,
     trustAnchors: createTrustAnchorSet([
       {
         entityId: "https://op.example.com",
-        jwks: federationKeys.jwks,
+        jwks: federationKeys.publishedJwks,
       },
     ]),
-    storage: new MemoryStorageAdapter(),
+    storage: new MemoryStorageAdapter({engine:crypto.engine}),
     metadata: {
       federation_entity: {
         federation_fetch_endpoint: "https://op.example.com/federation_fetch",
@@ -156,7 +147,7 @@ export async function createExampleOp(
 
 ## Documentation
 
-See the [OIDC API reference](https://github.com/Dahkenangnon/oidfed/blob/main/docs/api/oidc/README.md) for public roles, registration contracts, protocol key providers, and metadata validation methods.
+See the [OIDC API reference](https://github.com/Dahkenangnon/oidfed/blob/main/docs/api/oidc/README.md) for public roles, registration contracts, protocol signing purposes, and metadata validation methods.
 
 ## License
 

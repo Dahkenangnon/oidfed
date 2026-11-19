@@ -24,7 +24,7 @@ function ciApi({ failure, pending = false, foreign = false, missing } = {}) {
 			.map((j) => j.name)
 			.filter((name) => !name.startsWith("Apps ")),
 		"Scoped source, dependencies, and artifacts",
-		"CodeQL security-extended (five packages)",
+		"CodeQL security-extended (six packages)",
 	];
 	return async (path) =>
 		path.includes("/jobs?")
@@ -55,7 +55,7 @@ test("release CI gate is exact-commit and rejects failed, foreign or incomplete 
 	assert.equal(await checkSourceCi(SHA, ciApi()), true);
 	assert.equal(await checkSourceCi(SHA, ciApi({ pending: true })), false);
 	await assert.rejects(
-		checkSourceCi(SHA, ciApi({ failure: "CodeQL security-extended (five packages)" })),
+		checkSourceCi(SHA, ciApi({ failure: "CodeQL security-extended (six packages)" })),
 		/blocked/,
 	);
 	await assert.rejects(checkSourceCi(SHA, ciApi({ foreign: true })), /Missing/);
@@ -105,11 +105,14 @@ test("CLI release preparation triggers the required security workflow", () => {
 });
 
 test("the scoped security job runs rule fixtures and source checks before release acceptance", () => {
-	const commands = security.jobs.checks.steps.flatMap((step) => step.run ? [step.run] : []);
+	const commands = security.jobs.checks.steps.flatMap((step) => (step.run ? [step.run] : []));
 	assert.ok(commands.includes("pnpm security:test"));
 	assert.ok(commands.includes("pnpm security:lint"));
 	assert.ok(commands.indexOf("pnpm security:test") < commands.indexOf("pnpm security:lint"));
-	assert.equal(Object.values(security.jobs).filter((job) => job.strategy?.matrix?.python).length, 0);
+	assert.equal(
+		Object.values(security.jobs).filter((job) => job.strategy?.matrix?.python).length,
+		0,
+	);
 });
 
 test("saved runs require the correct repository, workflow, workflow commit and completed verifier", async () => {
@@ -249,5 +252,10 @@ test("workflow preserves permission boundaries and only package-specific tag tri
 	assert.equal(document.jobs.publish.concurrency.queue, "max");
 	assert.equal(document.jobs.publish.concurrency["cancel-in-progress"], false);
 	assert.equal(document.jobs.publish.environment, "npm");
-	assert.equal(security.jobs.codeql.name, "CodeQL security-extended (five packages)");
+	assert.equal(security.jobs.codeql.name, "CodeQL security-extended (six packages)");
+	assert.ok(document.on.push.tags.includes("crypto/v*.*.*"));
+	assert.ok(document.on.workflow_dispatch.inputs.scope.options.includes("crypto"));
+	assert.ok(
+		security.jobs.checks.steps.some((step) => step.run?.includes("--filter @oidfed/crypto build")),
+	);
 });

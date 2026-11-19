@@ -24,6 +24,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 const PUBLISHABLE = [
 	"packages/core/package.json",
+	"packages/crypto/package.json",
 	"packages/authority/package.json",
 	"packages/leaf/package.json",
 	"packages/oidc/package.json",

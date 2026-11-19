@@ -36,57 +36,46 @@ Choose the command for your preferred JavaScript package manager or runtime:
 
 ```bash
 # npm
-npm install @oidfed/core @oidfed/authority
+npm install @oidfed/authority
 
 # pnpm
-pnpm add @oidfed/core @oidfed/authority
+pnpm add @oidfed/authority
 
 # yarn
-yarn add @oidfed/core @oidfed/authority
+yarn add @oidfed/authority
 
 # bun
-bun add @oidfed/core @oidfed/authority
+bun add @oidfed/authority
 
 # Deno (Deno 2.0+ / JSR/npm specifier auto-resolution)
-deno add npm:@oidfed/core npm:@oidfed/authority
+deno add npm:@oidfed/authority
 ```
+
+The quick start also imports `@oidfed/crypto`. Add it as a direct dependency to use its keyring and Web Crypto adapter.
 
 ## Quick Start
 
 ```ts
-import { TrustAnchor, MemoryStorageAdapter } from "@oidfed/authority";
-import {
-  createFederationSigningKey,
-  generateSigningKey,
-  MemoryFederationKeyProvider,
-} from "@oidfed/core";
+import { StaticKeyring, type Signer } from "@oidfed/crypto";
+import { createWebCryptoEngine } from "@oidfed/crypto/web";
+import { MemoryStorageAdapter, TrustAnchor } from "@oidfed/authority";
 
-const signingKey = await generateSigningKey("ES256");
-const keyProvider = new MemoryFederationKeyProvider(
-  createFederationSigningKey(signingKey.privateKey),
-);
-
-const ta = new TrustAnchor({
-  entityId: "https://ta.example.org",
-  keyProvider,
-  metadata: {
-    federation_entity: {
+export async function createAuthority(federationSigner: Signer) {
+  const engine = createWebCryptoEngine(); // Choose or inject a backend in the application.
+  const authority = await TrustAnchor.create({
+    entityId: "https://ta.example.org",
+    crypto: { engine, keyring: new StaticKeyring({ signers: { federation: federationSigner } }) },
+    storage: new MemoryStorageAdapter({ engine }),
+    metadata: { federation_entity: {
       federation_fetch_endpoint: "https://ta.example.org/federation_fetch",
       federation_list_endpoint: "https://ta.example.org/federation_list",
-      federation_extended_list_endpoint: "https://ta.example.org/federation_extended_list",
-    },
-  },
-  storage: new MemoryStorageAdapter(),
-});
-
-// Serve requests directly with fetch-compatible handleRequest:
-export const handleRequest = (request: Request) => ta.handleRequest(request);
+    } },
+  });
+  return { authority, handleRequest: (request: Request) => authority.handleRequest(request) };
+}
 ```
 
-Authority entities require a federation key provider with lifecycle support. Use
-`FederationKeyLifecycleProvider` when plugging in KMS-backed or database-backed
-rollover; `MemoryFederationKeyProvider` is the in-memory implementation shown
-above.
+A basic keyring is enough for authority signing. Configure `crypto.history` when exposing historical-key features; `historicalKeysFromKeyring` in core converts a rotating keyring's recorded events. The host schedules propagation and retirement. See the [crypto migration guide](../../docs/api/crypto/migration.md).
 
 Federation endpoint `private_key_jwt` authentication uses `AuthorityConfig.clientKeyProvider`
 to resolve a caller's public Federation Entity Keys. Omit it to use the default

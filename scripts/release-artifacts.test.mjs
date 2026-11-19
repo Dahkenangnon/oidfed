@@ -13,7 +13,7 @@ test("saved archives retain per-package identities and reject mutation or foreig
 		dir = join(parent, "bundle");
 	try {
 		const manifest = bundle(dir);
-		assert.equal(loadArtifacts(dir, { sourceSha: SHA, runId: "123" }).packages.length, 6);
+		assert.equal(loadArtifacts(dir, { sourceSha: SHA, runId: "123" }).packages.length, 7);
 		const saved = readFileSync(join(dir, "manifest.json"));
 		const core = manifest.packages.find((p) => p.scope === "core");
 		const original = readFileSync(join(dir, core.file));

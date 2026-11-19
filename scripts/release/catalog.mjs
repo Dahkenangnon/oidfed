@@ -13,6 +13,7 @@ export const TARGETS = Object.freeze(
 		{ scope: "oidc", name: "@oidfed/oidc", dir: "packages/oidc", kind: "library" },
 		{ scope: "wallet", name: "@oidfed/wallet", dir: "packages/wallet", kind: "library" },
 		{ scope: "cli", name: "@oidfed/cli", dir: "tools/cli", kind: "cli" },
+		{ scope: "crypto", name: "@oidfed/crypto", dir: "packages/crypto", kind: "library" },
 	].map(Object.freeze),
 );
 

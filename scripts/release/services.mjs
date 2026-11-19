@@ -59,7 +59,7 @@ const REQUIRED = {
 	],
 	"security.yml": [
 		"Scoped source, dependencies, and artifacts",
-		"CodeQL security-extended (five packages)",
+		"CodeQL security-extended (six packages)",
 	],
 };
 

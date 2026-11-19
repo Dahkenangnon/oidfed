@@ -33,71 +33,57 @@ Choose the command for your preferred JavaScript package manager or runtime:
 
 ```bash
 # npm
-npm install @oidfed/core @oidfed/leaf
+npm install @oidfed/leaf
 
 # pnpm
-pnpm add @oidfed/core @oidfed/leaf
+pnpm add @oidfed/leaf
 
 # yarn
-yarn add @oidfed/core @oidfed/leaf
+yarn add @oidfed/leaf
 
 # bun
-bun add @oidfed/core @oidfed/leaf
+bun add @oidfed/leaf
 
 # Deno (Deno 2.0+ / JSR/npm specifier auto-resolution)
-deno add npm:@oidfed/core npm:@oidfed/leaf
+deno add npm:@oidfed/leaf
 ```
+
+For the OIDC quick start below, also install `@oidfed/oidc` and `@oidfed/crypto`.
 
 ## Quick Start
 
 ```ts
+import { StaticKeyring, type Signer } from "@oidfed/crypto";
+import { createWebCryptoEngine } from "@oidfed/crypto/web";
 import { Leaf } from "@oidfed/leaf";
-import { OidcRelyingPartyRole, StaticProtocolSigningKeyProvider } from "@oidfed/oidc";
-import {
-  createFederationSigningKey,
-  generateSigningKey,
-  JwkSigner,
-  MemoryFederationKeyProvider,
-} from "@oidfed/core";
+import { OidcRelyingPartyRole } from "@oidfed/oidc";
 
-// Temporary keys for this example; use persistent providers in deployment.
-const { privateKey: myFederationSigningKey } = await generateSigningKey("ES256");
-const { privateKey: myProtocolSigningKey, publicKey: protocolPublicKey } = await generateSigningKey("ES256");
-
-const leaf = new Leaf({
-  entityId: "https://rp.example.com",
-  authorityHints: ["https://federation.example.org"],
-  keyProvider: new MemoryFederationKeyProvider(
-    createFederationSigningKey(myFederationSigningKey),
-  ),
-  metadata: {
-    federation_entity: {
-      organization_name: "My Relying Party",
+export async function createRelyingParty(federationSigner: Signer, protocolSigner: Signer) {
+  const engine = createWebCryptoEngine(); // The application chooses its backend.
+  const keyring = new StaticKeyring({
+    signers: { federation: federationSigner, request_object: protocolSigner },
+    aliases: { client_assertion: "request_object" },
+  });
+  const rp = new OidcRelyingPartyRole({
+    signing: { requestObject: "request_object", clientAssertion: "client_assertion" },
+    metadata: {
+      redirect_uris: ["https://rp.example.com/callback"],
+      response_types: ["code"],
+      client_registration_types: ["automatic", "explicit"],
     },
-  },
-  roles: [
-    new OidcRelyingPartyRole({
-      protocolKeyProvider: new StaticProtocolSigningKeyProvider({
-        requestObjectSigner: new JwkSigner(myProtocolSigningKey),
-      }),
-      metadata: {
-        redirect_uris: ["https://rp.example.com/callback"],
-        response_types: ["code"],
-        client_registration_types: ["automatic"],
-        jwks: { keys: [protocolPublicKey] },
-      },
-    })
-  ]
-});
-
-// Serve the request directly using a fetch-compatible interface:
-export const handleRequest = (request: Request) => leaf.handleRequest(request);
+  });
+  const leaf = await Leaf.create({
+    entityId: "https://rp.example.com",
+    authorityHints: ["https://ta.example.org"],
+    crypto: { engine, keyring },
+    metadata: { federation_entity: { organization_name: "Example RP" } },
+    roles: [rp],
+  });
+  return { leaf, rp, handleRequest: (request: Request) => leaf.handleRequest(request) };
+}
 ```
 
-`Leaf` accepts the read-only `FederationKeyProvider` contract because it only
-needs the current federation signer and published Federation JWKS. The in-memory
-provider used above also supports lifecycle operations, but leaf code does not
-depend on those methods.
+The application supplies stable signers and chooses its engine. The host derives managed protocol JWKS from the configured purpose snapshots. `SoftwareSigner` from `@oidfed/crypto/web` is available for software custody; custom signers can retain native or remote key handles. See the [crypto migration guide](../../docs/api/crypto/migration.md).
 
 Leaves can compose [wallet roles](https://github.com/Dahkenangnon/oidfed/blob/main/docs/api/wallet/README.md) for Wallet Providers, Credential Issuers, and Credential Verifiers.
 

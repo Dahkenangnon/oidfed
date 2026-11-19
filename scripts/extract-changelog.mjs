@@ -77,7 +77,7 @@ function main() {
 	const [, , scope, version, prevTag] = process.argv;
 	if (!scope || !version) {
 		process.stderr.write(
-			"Usage: extract-changelog.mjs <core|authority|leaf|oidc|wallet|cli> <version> [prev-tag]\n",
+			"Usage: extract-changelog.mjs <core|authority|leaf|oidc|wallet|cli|crypto> <version> [prev-tag]\n",
 		);
 		process.exit(2);
 	}

@@ -36,19 +36,19 @@ Choose the command for your preferred JavaScript package manager or runtime:
 
 ```bash
 # npm
-npm install @oidfed/core
+npm install @oidfed/crypto @oidfed/core
 
 # pnpm
-pnpm add @oidfed/core
+pnpm add @oidfed/crypto @oidfed/core
 
 # yarn
-yarn add @oidfed/core
+yarn add @oidfed/crypto @oidfed/core
 
 # bun
-bun add @oidfed/core
+bun add @oidfed/crypto @oidfed/core
 
 # Deno (Deno 2.0+ / JSR/npm specifier auto-resolution)
-deno add npm:@oidfed/core
+deno add npm:@oidfed/crypto npm:@oidfed/core
 ```
 
 ## Quick Start
@@ -56,6 +56,7 @@ deno add npm:@oidfed/core
 ```ts
 import {
   entityId,
+  type FederationOptions,
   type JWKSet,
   resolveTrustChains,
   validateTrustChain,
@@ -63,7 +64,7 @@ import {
 } from "@oidfed/core";
 
 // Obtain these keys through an independently trusted configuration process.
-export async function inspectParticipant(taKeys: JWKSet) {
+export async function inspectParticipant(taKeys: JWKSet, options: FederationOptions) {
   const trustAnchors = createTrustAnchorSet([
     { entityId: "https://ta.example.org", jwks: taKeys },
   ]);
@@ -71,10 +72,12 @@ export async function inspectParticipant(taKeys: JWKSet) {
   const result = await resolveTrustChains(
     entityId("https://leaf.example.com"),
     trustAnchors,
+    options,
   );
 
   for (const chain of result.chains) {
     const validated = await validateTrustChain(chain.statements, trustAnchors, {
+      ...options,
       entityConfigurations: chain.entityConfigurations,
     });
     if (validated.valid) {

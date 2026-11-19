@@ -198,6 +198,46 @@ export function inspectPackedManifest(pkg, target, options = {}) {
 		);
 	}
 	pushIfMissing(violations, pkg.sideEffects === false, `${label}: sideEffects must be false`);
+	if (target.scope === "crypto") {
+		for (const name of ["web", "jose"]) {
+			pushIfMissing(
+				violations,
+				pkg.typesVersions?.["*"]?.[name]?.[0] === `./dist/${name}.d.ts`,
+				`${label}: typesVersions must resolve the ${name} adapter for legacy TypeScript resolution`,
+			);
+			for (const [condition, extension, declaration] of [
+				["import", "js", "d.ts"],
+				["require", "cjs", "d.cts"],
+			]) {
+				pushIfMissing(
+					violations,
+					pkg.exports?.[`./${name}`]?.[condition]?.default === `./dist/${name}.${extension}` &&
+						pkg.exports?.[`./${name}`]?.[condition]?.types === `./dist/${name}.${declaration}`,
+					`${label}: exports[./${name}].${condition} must select matching runtime and declaration files`,
+				);
+			}
+		}
+		pushIfMissing(
+			violations,
+			Object.keys(pkg.exports ?? {})
+				.sort()
+				.join(",") === ".,./jose,./web",
+			`${label}: only root, web and jose entrypoints are public`,
+		);
+		pushIfMissing(
+			violations,
+			Object.keys(pkg.dependencies ?? {}).length === 0 &&
+				Object.keys(pkg.optionalDependencies ?? {}).length === 0,
+			`${label}: no required runtime dependencies or optionalDependencies are allowed`,
+		);
+		pushIfMissing(
+			violations,
+			pkg.peerDependencies?.jose === "^6.2.13" &&
+				pkg.peerDependenciesMeta?.jose?.optional === true &&
+				Object.keys(pkg.peerDependencies ?? {}).length === 1,
+			`${label}: jose must be an optional peer only`,
+		);
+	}
 	pushIfMissing(
 		violations,
 		pkg.publishConfig?.access === "public",
@@ -260,6 +300,11 @@ export function requiredPackedEntries(target) {
 		"package/dist/index.d.cts",
 	];
 	if (target.kind === "cli") entries.push("package/dist/bin.js");
+	if (target.scope === "crypto") {
+		for (const name of ["web", "jose"])
+			for (const extension of ["js", "cjs", "d.ts", "d.cts"])
+				entries.push(`package/dist/${name}.${extension}`);
+	}
 	return entries;
 }
 
@@ -301,7 +346,7 @@ function packTarget(target, packDir) {
 }
 
 function usage() {
-	return `Usage: node scripts/check-pack-manifests.mjs [--scope <core|authority|leaf|oidc|wallet|cli|all>] [--expected-version <version>]\n`;
+	return `Usage: node scripts/check-pack-manifests.mjs [--scope <core|authority|leaf|oidc|wallet|cli|crypto|all>] [--expected-version <version>]\n`;
 }
 
 function main() {

@@ -12,6 +12,7 @@ on:
       - 'scripts/release/**'
       - 'scripts/release*.mjs'
       - 'scripts/check-pack-manifests*.mjs'
+      - 'scripts/check-crypto-isolation*.mjs'
       - 'scripts/extract-changelog*.mjs'
       - '.node-version'
       - 'tsconfig.base.json'
@@ -31,6 +32,7 @@ on:
       - 'scripts/release/**'
       - 'scripts/release*.mjs'
       - 'scripts/check-pack-manifests*.mjs'
+      - 'scripts/check-crypto-isolation*.mjs'
       - 'scripts/extract-changelog*.mjs'
       - '.node-version'
       - 'tsconfig.base.json'
@@ -68,8 +70,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm security:install
-      - name: Build the five protocol packages
-        run: pnpm --filter @oidfed/core --filter @oidfed/authority --filter @oidfed/leaf --filter @oidfed/oidc --filter @oidfed/wallet build
+      - name: Build the six library packages
+        run: pnpm --filter @oidfed/core --filter @oidfed/authority --filter @oidfed/leaf --filter @oidfed/oidc --filter @oidfed/wallet --filter @oidfed/crypto build
       - run: pnpm security:test
       - run: pnpm security:lint
       - run: pnpm security:architecture
@@ -108,7 +110,7 @@ jobs:
       - run: pnpm security:mutation
 
   codeql:
-    name: CodeQL security-extended (five packages)
+    name: CodeQL security-extended (six packages)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
