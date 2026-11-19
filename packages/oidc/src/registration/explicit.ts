@@ -1,13 +1,14 @@
+import { federationEntry, federationSigningOptions } from "@oidfed/core";
 /** Client-side explicit registration with trusted provider discovery and signed-response checks. */
 
 import {
+	type CryptoContext,
 	DEFAULT_ENTITY_STATEMENT_TTL_SECONDS,
 	type DiscoveryResult,
 	decodeEntityStatement,
 	type EntityId,
 	err,
 	FederationErrorCode,
-	type FederationKeyProvider,
 	type FederationOptions,
 	federationError,
 	InternalErrorCode,
@@ -43,7 +44,7 @@ import { oidcRegistrationProfile, type RegistrationProfile } from "./profile.js"
 
 export interface ExplicitRegistrationConfig {
 	readonly entityId: EntityId;
-	readonly keyProvider: FederationKeyProvider;
+	readonly crypto: CryptoContext;
 	readonly authorityHints: readonly [EntityId, ...EntityId[]];
 	readonly metadata: Record<string, Record<string, unknown>>;
 	readonly entityConfigurationTtlSeconds?: number;
@@ -77,14 +78,17 @@ export async function explicitRegistration(
 	discovery: DiscoveryResult,
 	rpConfig: ExplicitRegistrationConfig,
 	trustAnchors: TrustAnchorSet,
-	options?: FederationOptions,
+	options: FederationOptions,
 	providerDiscovery: "supplied" | "resolved" = "supplied",
 	profile: RegistrationProfile = oidcRegistrationProfile,
 ): Promise<Result<ExplicitRegistrationResult>> {
 	safeLogger(options?.logger)?.debug("Creating an Explicit Client Registration Request");
 
-	const keySet = await rpConfig.keyProvider.getFederationKeySet();
-	validateFederationKeySet(keySet);
+	const keySet = await federationEntry(rpConfig.crypto, {
+		issuer: rpConfig.entityId,
+		subject: rpConfig.entityId,
+	});
+	validateFederationKeySet(keySet, rpConfig.crypto.algorithmRegistry);
 	const now = nowSeconds(options?.clock);
 	const ttl = rpConfig.entityConfigurationTtlSeconds ?? DEFAULT_ENTITY_STATEMENT_TTL_SECONDS;
 	let candidateRequest: string | undefined;
@@ -96,13 +100,13 @@ export async function explicitRegistration(
 				aud: discovery.entityId,
 				iat: now,
 				exp: now + ttl,
-				jwks: keySet.jwks,
+				jwks: keySet.publishedJwks,
 				authority_hints: rpConfig.authorityHints,
 				metadata: rpConfig.metadata,
 				...(rpConfig.trustMarks?.length ? { trust_marks: rpConfig.trustMarks } : {}),
 			},
-			keySet.signer,
-			{ typ: JwtTyp.EntityStatement },
+			keySet,
+			{ typ: JwtTyp.EntityStatement, ...federationSigningOptions(options) },
 		);
 	const sharedChains = await selectSharedRegistrationTrustChains(
 		rpConfig.entityId,
@@ -196,7 +200,7 @@ export async function explicitRegistration(
 		aud: discovery.entityId,
 		iat: now,
 		exp: now + ttl,
-		jwks: keySet.jwks,
+		jwks: keySet.publishedJwks,
 		authority_hints: authorityHints,
 		metadata: rpConfig.metadata,
 	};
@@ -216,7 +220,8 @@ export async function explicitRegistration(
 	if (!headers.ok) return headers;
 	const extraHeaders = headers.value;
 
-	const ecJwt = await signEntityStatement(ecPayload, keySet.signer, {
+	const ecJwt = await signEntityStatement(ecPayload, keySet, {
+		...federationSigningOptions(options),
 		typ: JwtTyp.EntityStatement,
 		...(Object.keys(extraHeaders).length > 0 ? { extraHeaders } : {}),
 	});
@@ -282,6 +287,7 @@ export async function explicitRegistration(
 	}
 
 	const verifyResult = await verifyEntityStatement(responseJwt, opJwks, {
+		...options,
 		expectedTyp: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE,
 		...(options?.clock ? { clock: options.clock } : {}),
 		...(options?.clockSkewSeconds !== undefined
@@ -300,7 +306,7 @@ export async function explicitRegistration(
 		);
 	}
 
-	const decoded = decodeEntityStatement(responseJwt);
+	const decoded = decodeEntityStatement(responseJwt, options);
 	if (!decoded.ok) {
 		safeLogger(options?.logger)?.warn("Failed to decode the Explicit Client Registration response");
 		return err(
@@ -606,7 +612,7 @@ export async function explicitRegistration(
 
 	if (
 		responsePayload.jwks !== undefined &&
-		JSON.stringify(responsePayload.jwks) !== JSON.stringify(keySet.jwks)
+		JSON.stringify(responsePayload.jwks) !== JSON.stringify(keySet.publishedJwks)
 	) {
 		safeLogger(options?.logger)?.warn(
 			"Explicit Client Registration response jwks MUST be a verbatim copy of the RP Entity Configuration jwks",

@@ -1,3 +1,4 @@
+import { cloneData } from "@oidfed/core";
 /** Declarative Trust Mark requirements and host policy before registration side effects. */
 
 import {
@@ -38,7 +39,7 @@ export async function checkRegistrationAccreditation(
 	chain: ValidatedTrustChain,
 	registrationType: "automatic" | "explicit",
 	policy: RegistrationAccreditationPolicy,
-	options?: FederationOptions,
+	options: FederationOptions,
 ): Promise<Result<void>> {
 	if (policy.trustMarkRequirements) {
 		const checked = checkTrustMarkRequirements(chain, policy.trustMarkRequirements, options);
@@ -52,7 +53,7 @@ export async function checkRegistrationAccreditation(
 	try {
 		const callback = policy.beforeRegistration;
 		const checked = await runAsyncOperation(
-			(signal) => callback(freeze({ chain: structuredClone(chain), registrationType }), signal),
+			(signal) => callback(freeze({ chain: cloneData(chain), registrationType }), signal),
 			options ?? {},
 		);
 		if (checked?.ok !== true)

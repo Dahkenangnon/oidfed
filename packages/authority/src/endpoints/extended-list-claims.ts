@@ -45,9 +45,9 @@ const EXTENDED_LIST_CLAIM_EXTRACTORS: Readonly<Record<string, ClaimExtractor>> =
 	[ExtendedListClaim.Sub]: (record) => record.entityId,
 	[ExtendedListClaim.Iat]: (_record, _ctx, now) => now,
 	[ExtendedListClaim.Exp]: (_record, ctx, now) => statementExp(ctx, now),
-	[ExtendedListClaim.Jwks]: (record) => {
+	[ExtendedListClaim.Jwks]: (record, ctx) => {
 		// Extended Listing §3.2 selects the public statement keys defined by Federation §3.1.1.
-		const prepared = preparePublicJwkSet(record.jwks);
+		const prepared = preparePublicJwkSet(record.jwks, ctx.options.algorithmRegistry);
 		if (!prepared.ok) throw new Error(prepared.error.description);
 		return prepared.value;
 	},
@@ -74,7 +74,9 @@ const EXTENDED_LIST_CLAIM_EXTRACTORS: Readonly<Record<string, ClaimExtractor>> =
 				trust_mark_type: mark.trustMarkType,
 				trust_mark: mark.jwt,
 			});
-			const decoded = ref.success ? decodeEntityStatement(ref.data.trust_mark) : undefined;
+			const decoded = ref.success
+				? decodeEntityStatement(ref.data.trust_mark, ctx.options)
+				: undefined;
 			if (
 				!ref.success ||
 				!decoded?.ok ||

@@ -1,11 +1,10 @@
 import {
 	createTrustAnchorSet,
 	entityId,
-	generateSigningKey,
 	type HttpClient,
-	JwkSigner,
 	signEntityStatement,
 } from "../../../packages/core/src/index.js";
+import { generateSigningKey, SigningEntryFixture } from "./software-crypto.js";
 
 export interface CollectionGraphEdge {
 	issuer: string;
@@ -41,7 +40,7 @@ export async function createCollectionFederation(config: {
 	const sign = (name: string, payload: Record<string, unknown>, typ?: string) =>
 		signEntityStatement(
 			{ iat: 1000, exp: 5000, ...payload },
-			new JwkSigner(keys.get(name)!.privateKey),
+			new SigningEntryFixture(keys.get(name)!.privateKey),
 			typ ? { typ } : undefined,
 		);
 	const mark = config.marked

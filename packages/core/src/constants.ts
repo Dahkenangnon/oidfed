@@ -104,6 +104,8 @@ export const FederationErrorCode = {
 export type FederationErrorCode = (typeof FederationErrorCode)[keyof typeof FederationErrorCode];
 
 export const InternalErrorCode = {
+	CryptoOperationFailed: "ERR_CRYPTO_OPERATION_FAILED",
+	InvalidClock: "ERR_INVALID_CLOCK",
 	TrustChainInvalid: "ERR_TRUST_CHAIN_INVALID",
 	SignatureInvalid: "ERR_SIGNATURE_INVALID",
 	MetadataPolicyError: "ERR_METADATA_POLICY_ERROR",
@@ -172,21 +174,14 @@ export const DEFAULT_ENTITY_STATEMENT_TTL_SECONDS = 86400;
 export const DEFAULT_DELEGATION_TTL_SECONDS = 86400;
 export const DEFAULT_REQUEST_OBJECT_TTL_SECONDS = 300;
 export const DEFAULT_CLIENT_ASSERTION_TTL_SECONDS = 60;
-export const DEFAULT_KEY_RETIRE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 
 export const JWT_BEARER_CLIENT_ASSERTION_TYPE =
 	"urn:ietf:params:oauth:client-assertion-type:jwt-bearer" as const;
 
-export const REQUIRED_ALGORITHMS = ["ES256", "PS256"] as const;
-export const SUPPORTED_ALGORITHMS = [
-	"ES256",
-	"ES384",
-	"ES512",
-	"PS256",
-	"PS384",
-	"PS512",
-	// RS256 (RSASSA-PKCS1-v1_5) is a recommended signature algorithm.
-	// The PKCS#1 v1.5 deprecation warning concerns RSA encryption, not signatures.
-	"RS256",
-] as const;
-export type SupportedAlgorithm = (typeof SUPPORTED_ALGORITHMS)[number];
+/** Default acceptance policy; configured engines and callers may narrow it. */
+export {
+	CLASSICAL_ALGORITHMS as DEFAULT_ALLOWED_ALGORITHMS,
+	INTEROP_RECOMMENDED_ALGORITHMS,
+} from "@oidfed/crypto";
+/** Algorithms understood by the wire format; this is not the deployment acceptance policy. */
+export type SupportedAlgorithm = import("@oidfed/crypto").BuiltinJwsAlgorithm;

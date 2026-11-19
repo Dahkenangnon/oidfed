@@ -63,7 +63,7 @@
 		"clean": "rm -rf dist"
 	},
 	"dependencies": {
-		"jose": "6.2.13",
+		"@oidfed/crypto": "workspace:^",
 		"zod": "4.6.7"
 	}
 }

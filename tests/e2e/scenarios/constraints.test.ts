@@ -1,5 +1,6 @@
 import { entityId, InternalErrorCode, resolveTrustChains, validateTrustChain } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
+import { testEngine } from "../../tap/fixtures/software-crypto.js";
 import { useFederation } from "../helpers/lifecycle.js";
 import { constrainedTopology } from "../topologies/constrained.js";
 
@@ -11,7 +12,7 @@ describe("Constraint enforcement — maxPathLength", () => {
 		const port = server.port;
 
 		const opDirectId = entityId(`https://op-direct.ofed.test:${port}`);
-		const result = await resolveTrustChains(opDirectId, trustAnchors);
+		const result = await resolveTrustChains(opDirectId, trustAnchors, { engine: testEngine });
 
 		expect(result.chains).toHaveLength(1);
 		expect(result.errors).toHaveLength(0);
@@ -20,7 +21,9 @@ describe("Constraint enforcement — maxPathLength", () => {
 		const firstChain = result.chains[0];
 		expect(firstChain).toBeDefined();
 		if (!firstChain) return;
-		const validation = await validateTrustChain([...firstChain.statements], trustAnchors);
+		const validation = await validateTrustChain([...firstChain.statements], trustAnchors, {
+			engine: testEngine,
+		});
 		expect(validation.errors).toHaveLength(0);
 	});
 
@@ -33,13 +36,14 @@ describe("Constraint enforcement — maxPathLength", () => {
 		// meaning 0 intermediates between TA and the subject are allowed.
 		// IA-Deep is 1 intermediate between TA and OP-Deep — exceeding max_path_length=0.
 		const opDeepId = entityId(`https://op-deep.ofed.test:${port}`);
-		const result = await resolveTrustChains(opDeepId, trustAnchors);
+		const result = await resolveTrustChains(opDeepId, trustAnchors, { engine: testEngine });
 
 		// Chain resolution may succeed but validation should fail due to constraint violation
 		const firstChain = result.chains[0];
 		if (firstChain) {
 			const validation = await validateTrustChain([...firstChain.statements], trustAnchors, {
 				verboseErrors: true,
+				engine: testEngine,
 			});
 			expect(validation.errors.length).toBeGreaterThan(0);
 			const hasConstraintError = validation.errors.some(

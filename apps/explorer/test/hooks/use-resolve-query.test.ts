@@ -1,7 +1,11 @@
-import { generateSigningKey, JwkSigner, JwtTyp, signEntityStatement } from "@oidfed/core";
+import { JwtTyp, signEntityStatement } from "@oidfed/core";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useResolveQuery } from "@/features/resolve/hooks/use-resolve-query";
+import {
+	generateSigningKey,
+	SigningEntryFixture,
+} from "../../../../tests/tap/fixtures/software-crypto.js";
 
 const resolver = "https://resolver.example.com";
 const subject = "https://subject.example.com";
@@ -26,7 +30,7 @@ describe("useResolveQuery audience binding", () => {
 				: "accepts an audience-free response",
 			async () => {
 				const { privateKey, publicKey } = await generateSigningKey("ES256");
-				const signer = new JwkSigner(privateKey);
+				const signer = new SigningEntryFixture(privateKey);
 				const now = Math.floor(Date.now() / 1000);
 				const configuration = await signEntityStatement(
 					{

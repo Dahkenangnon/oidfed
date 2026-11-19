@@ -23,7 +23,7 @@ import { validateJwkSetUseRequirement } from "./use-requirement.js";
  */
 export async function fetchJwkSet(
 	url: string,
-	options?: FederationOptions,
+	options: FederationOptions,
 ): Promise<Result<JWKSet, FederationError>> {
 	safeLogger(options?.logger)?.debug("Starting fetch jwk set");
 
@@ -63,7 +63,7 @@ export async function fetchJwkSet(
 		);
 	}
 
-	const useResult = validateJwkSetUseRequirement(validated.data.keys);
+	const useResult = validateJwkSetUseRequirement(validated.data.keys, options.algorithmRegistry);
 	if (!useResult.ok) return useResult;
 
 	return ok(validated.data);

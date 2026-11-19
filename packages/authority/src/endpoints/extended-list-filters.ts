@@ -1,3 +1,4 @@
+import { cloneData } from "@oidfed/core";
 /** Standard and application-defined filters for Extended Subordinate Listing. */
 
 import {
@@ -80,11 +81,11 @@ export function createExtendedListFilters(
 					(parsed.value !== undefined && !isJsonData(parsed.value))
 				)
 					throw new TypeError("Filter values must be JSON data");
-				active.push({ definition, value: freezeSnapshot(structuredClone(parsed.value)) });
+				active.push({ definition, value: freezeSnapshot(cloneData(parsed.value)) });
 			}
 			return ok(async (record) => {
 				if (!active.length) return true;
-				const snapshot = freezeSnapshot(structuredClone(record));
+				const snapshot = freezeSnapshot(cloneData(record));
 				for (const { definition, value } of active) {
 					if (signal.aborted) throw new Error("Extended listing cancelled");
 					const matched = await definition.matches(snapshot, value, context);

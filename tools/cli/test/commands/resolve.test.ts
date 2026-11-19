@@ -1,5 +1,9 @@
-import { generateSigningKey, type HttpClient, JwkSigner, signEntityStatement } from "@oidfed/core";
+import { type HttpClient, signEntityStatement } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
+import {
+	generateSigningKey,
+	SigningEntryFixture,
+} from "../../../../tests/tap/fixtures/software-crypto.js";
 import { handler } from "../../src/commands/resolve.js";
 import { DEFAULT_CONFIG } from "../../src/config.js";
 import { JsonFormatter } from "../../src/output/json.js";
@@ -57,7 +61,7 @@ describe("resolve handler", () => {
 					},
 				},
 			},
-			new JwkSigner(taKey.privateKey),
+			new SigningEntryFixture(taKey.privateKey),
 		);
 		const leafEc = await signEntityStatement(
 			{
@@ -68,7 +72,7 @@ describe("resolve handler", () => {
 				jwks: { keys: [leafKey.publicKey] },
 				authority_hints: ["https://ta.example.com"],
 			},
-			new JwkSigner(leafKey.privateKey),
+			new SigningEntryFixture(leafKey.privateKey),
 		);
 		const subordinate = await signEntityStatement(
 			{
@@ -78,7 +82,7 @@ describe("resolve handler", () => {
 				exp: 9_999_999_999,
 				jwks: { keys: [leafKey.publicKey] },
 			},
-			new JwkSigner(taKey.privateKey),
+			new SigningEntryFixture(taKey.privateKey),
 		);
 
 		const client: HttpClient = async (input) => {

@@ -16,7 +16,7 @@ export async function authenticateCollectionRequest(
 	form: URLSearchParams,
 	method: string,
 	auth: CollectionAuthentication | undefined,
-	options?: FederationOptions,
+	options: FederationOptions,
 	request?: Request,
 ): Promise<Result<void, EndpointAuthenticationError>> {
 	const checked = await authenticateEndpointRequest(

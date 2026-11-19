@@ -31,7 +31,7 @@ export interface FetchEntityCollectionOptions extends FederationOptions {
 export async function fetchEntityCollection(
 	endpoint: string,
 	params: EntityCollectionRequestParams = {},
-	options?: FetchEntityCollectionOptions,
+	options: FetchEntityCollectionOptions,
 ): Promise<Result<EntityCollectionResponse>> {
 	safeLogger(options?.logger)?.debug("Starting fetch entity collection");
 

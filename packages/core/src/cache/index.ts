@@ -1,7 +1,9 @@
+import type { CryptoEngine } from "@oidfed/crypto";
+import { sha256Hex } from "../crypto-runtime.js";
 /** In-memory TTL caching and deterministic cache keys for federation evidence. */
 
 import { CachePrefix } from "../constants.js";
-import type { CacheProvider, Clock, EntityId } from "../types.js";
+import { type CacheProvider, type Clock, type EntityId, nowSeconds } from "../types.js";
 
 interface CacheEntry<T> {
 	value: T;
@@ -37,7 +39,7 @@ export class MemoryCache implements CacheProvider {
 		const entry = this.store.get(key);
 		if (!entry) return undefined;
 
-		if (this.clock.now() >= entry.expiresAt) {
+		if (nowSeconds(this.clock) >= entry.expiresAt) {
 			this.store.delete(key);
 			return undefined;
 		}
@@ -63,7 +65,7 @@ export class MemoryCache implements CacheProvider {
 
 		this.store.set(key, {
 			value,
-			expiresAt: this.clock.now() + ttlSeconds,
+			expiresAt: nowSeconds(this.clock) + ttlSeconds,
 		});
 	}
 
@@ -82,29 +84,28 @@ export class MemoryCache implements CacheProvider {
 	}
 }
 
-async function sha256Hex(input: string): Promise<string> {
-	const encoded = new TextEncoder().encode(input);
-	const hashBuffer = await crypto.subtle.digest("SHA-256", encoded);
-	const hashArray = new Uint8Array(hashBuffer);
-	return Array.from(hashArray)
-		.map((b) => b.toString(16).padStart(2, "0"))
-		.join("");
-}
-
 /** Derive a namespaced cache key from the exact Entity Identifier. */
-export async function ecCacheKey(entityId: EntityId): Promise<string> {
-	const hash = await sha256Hex(entityId);
+export async function ecCacheKey(entityId: EntityId, engine: CryptoEngine): Promise<string> {
+	const hash = await sha256Hex(entityId, engine);
 	return CachePrefix.EntityConfiguration + hash.slice(0, 32);
 }
 
 /** Derive a namespaced Subordinate Statement cache key from its issuer and subject. */
-export async function esCacheKey(issuer: EntityId, subject: EntityId): Promise<string> {
-	const hash = await sha256Hex(`${issuer}:${subject}`);
+export async function esCacheKey(
+	issuer: EntityId,
+	subject: EntityId,
+	engine: CryptoEngine,
+): Promise<string> {
+	const hash = await sha256Hex(`${issuer}:${subject}`, engine);
 	return CachePrefix.EntityStatement + hash.slice(0, 32);
 }
 
 /** Derive a namespaced trust chain cache key from its subject and selected anchor. */
-export async function chainCacheKey(entityId: EntityId, trustAnchorId: EntityId): Promise<string> {
-	const hash = await sha256Hex(`${entityId}:${trustAnchorId}`);
+export async function chainCacheKey(
+	entityId: EntityId,
+	trustAnchorId: EntityId,
+	engine: CryptoEngine,
+): Promise<string> {
+	const hash = await sha256Hex(`${entityId}:${trustAnchorId}`, engine);
 	return CachePrefix.TrustChain + hash.slice(0, 32);
 }

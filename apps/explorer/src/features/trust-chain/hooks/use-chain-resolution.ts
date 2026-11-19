@@ -7,6 +7,7 @@ import {
 } from "@oidfed/core";
 import { useCallback, useEffect, useState } from "react";
 import { useSettings } from "@/hooks/use-settings";
+import { engine } from "../../../lib/crypto.js";
 
 interface UseChainResolutionResult {
 	readonly chains: readonly TrustChain[];
@@ -52,6 +53,7 @@ export function useChainResolution(
 			httpTimeoutMs: settings.httpTimeoutMs,
 			maxChainDepth: settings.maxChainDepth,
 			signal: controller.signal,
+			engine: engine,
 		})
 			.then((result) => {
 				if (controller.signal.aborted) return;

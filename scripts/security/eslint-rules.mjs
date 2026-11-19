@@ -240,6 +240,32 @@ function guarded(source, call, registry, key) {
 
 export default {
 	rules: {
+		"no-host-crypto-globals": rule(
+			"Use the injected crypto contracts and portable data helpers.",
+			(context) => {
+				const prohibited = new Set([
+					"crypto",
+					"TextEncoder",
+					"TextDecoder",
+					"structuredClone",
+					"Buffer",
+					"atob",
+					"btoa",
+				]);
+				return {
+					"Program:exit"() {
+						for (const reference of context.sourceCode.scopeManager.globalScope.through) {
+							if (reference.isValueReference && prohibited.has(reference.identifier.name))
+								context.report({ node: reference.identifier, messageId: "unsafe" });
+						}
+					},
+					MemberExpression(node) {
+						if (member(node, "globalThis", property(node)) && prohibited.has(property(node)))
+							context.report({ node, messageId: "unsafe" });
+					},
+				};
+			},
+		),
 		"no-wrapped-function-constructor": rule(
 			"TypeScript wrappers do not make the global Function constructor safe.",
 			(context) => {

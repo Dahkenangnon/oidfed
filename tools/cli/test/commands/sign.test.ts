@@ -1,5 +1,6 @@
-import { decodeEntityStatement, generateSigningKey } from "@oidfed/core";
+import { decodeEntityStatement } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
+import { generateSigningKey } from "../../../../tests/tap/fixtures/software-crypto.js";
 import { handler } from "../../src/commands/sign.js";
 import { JsonFormatter } from "../../src/output/json.js";
 import { createLogger } from "../../src/util/logger.js";

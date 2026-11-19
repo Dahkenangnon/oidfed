@@ -5,7 +5,7 @@ import { resolve, relative, sep } from "node:path";
 import { readdirSync } from "node:fs";
 
 export const root = fileURLToPath(new URL("../../", import.meta.url));
-export const packages = Object.freeze(["core", "authority", "leaf", "oidc", "wallet"]);
+export const packages = Object.freeze(["core", "authority", "leaf", "oidc", "wallet", "crypto"]);
 export const sources = Object.freeze(packages.map((name) => `packages/${name}/src`));
 export const selectors = Object.freeze(packages.flatMap((name) => ["--filter", `@oidfed/${name}`]));
 

@@ -1,5 +1,9 @@
-import { generateSigningKey, type HttpClient, JwkSigner, signEntityStatement } from "@oidfed/core";
+import { type HttpClient, signEntityStatement } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
+import {
+	generateSigningKey,
+	SigningEntryFixture,
+} from "../../../../tests/tap/fixtures/software-crypto.js";
 import { handler } from "../../src/commands/trust-mark-status.js";
 import { JsonFormatter } from "../../src/output/json.js";
 import { createLogger } from "../../src/util/logger.js";
@@ -24,7 +28,7 @@ async function buildIssuerEcAndKey() {
 				},
 			},
 		},
-		new JwkSigner(key.privateKey),
+		new SigningEntryFixture(key.privateKey),
 	);
 	return { key, issuerEc };
 }
@@ -41,7 +45,7 @@ describe("trust-mark-status handler", () => {
 				status: "active",
 				trust_mark: "eyJ.test.jwt",
 			},
-			new JwkSigner(key.privateKey),
+			new SigningEntryFixture(key.privateKey),
 			{ typ: "trust-mark-status-response+jwt" },
 		);
 		const captures: { statusUrl?: string; postBody?: string } = {};
@@ -82,7 +86,7 @@ describe("trust-mark-status handler", () => {
 				exp: 9_999_999_999,
 				active: true,
 			},
-			new JwkSigner(key.privateKey),
+			new SigningEntryFixture(key.privateKey),
 		);
 		const client: HttpClient = async (input) => {
 			const url = typeof input === "string" ? input : input.toString();

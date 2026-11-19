@@ -1,6 +1,11 @@
-import { decodeEntityStatement, generateSigningKey, isOk, JwkSigner } from "@oidfed/core";
+import { decodeEntityStatement, isOk } from "@oidfed/core";
 import { OidcRelyingPartyRole } from "@oidfed/oidc";
 import { describe, expect, it } from "vitest";
+import {
+	generateSigningKey,
+	SigningEntryFixture,
+	testEngine,
+} from "../../tap/fixtures/software-crypto.js";
 import { getOidcClientEntity } from "../helpers/launcher.js";
 import { useFederation } from "../helpers/lifecycle.js";
 import { singleAnchorTopology } from "../topologies/single-anchor.js";
@@ -65,7 +70,8 @@ describe("Client authentication", () => {
 			const assertion = await OidcRelyingPartyRole.createClientAssertion(
 				rpId,
 				opId,
-				new JwkSigner(wrongKey.privateKey),
+				new SigningEntryFixture(wrongKey.privateKey),
+				{ engine: testEngine },
 			);
 
 			const response = await fetch(`${opId}/token`, {
@@ -95,7 +101,8 @@ describe("Client authentication", () => {
 			const assertion = await OidcRelyingPartyRole.createClientAssertion(
 				rpId,
 				opId,
-				new JwkSigner(rpEntity.keys.protocolSigning),
+				new SigningEntryFixture(rpEntity.keys.protocolSigning),
+				{ engine: testEngine },
 			);
 
 			const response = await fetch(`${opId}/token`, {

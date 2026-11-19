@@ -1,12 +1,14 @@
+import { cloneData } from "@oidfed/core";
+import { DEFAULT_JWS_REGISTRY } from "@oidfed/crypto";
 /** Authorization parameter parsing and effective Request Object requirements. */
 
 import {
+	DEFAULT_ALLOWED_ALGORITHMS,
 	err,
 	FederationErrorCode,
 	isJsonData,
 	ok,
 	type Result,
-	SUPPORTED_ALGORITHMS,
 } from "@oidfed/core";
 
 const invalid = (description: string): Result<never> =>
@@ -38,7 +40,7 @@ export function authorizationParameters(
 			)
 				return invalid("resource must contain absolute URIs without fragments");
 		}
-		return ok(structuredClone(input));
+		return ok(cloneData(input));
 	} catch {
 		return invalid("Invalid authorization parameters");
 	}
@@ -64,10 +66,27 @@ export function requiresRequestObject(
 	);
 }
 
+/** Check whether effective provider metadata permits the selected PAR assertion algorithm. */
+export function allowsParAssertionAlgorithm(
+	server: Readonly<Record<string, unknown>>,
+	algorithm: string,
+): Result<boolean> {
+	const declared = server.token_endpoint_auth_signing_alg_values_supported;
+	if (declared === undefined) return ok(true);
+	if (!Array.isArray(declared) || !Array.from(declared).every((value) => typeof value === "string"))
+		return err({
+			code: FederationErrorCode.InvalidMetadata,
+			description: "Invalid PAR client assertion algorithm metadata",
+		});
+	return ok(declared.includes(algorithm));
+}
+
 /** Missing optional declarations add no restriction to the supported signing algorithms. */
 export function requestObjectAlgorithms(
 	client: Readonly<Record<string, unknown>>,
 	server: Readonly<Record<string, unknown>>,
+	allowed: readonly string[] = DEFAULT_ALLOWED_ALGORITHMS,
+	registry = DEFAULT_JWS_REGISTRY,
 ): Result<readonly string[]> {
 	const declared = server.request_object_signing_alg_values_supported;
 	const selected = client.request_object_signing_alg;
@@ -81,8 +100,9 @@ export function requestObjectAlgorithms(
 		(selected !== undefined && typeof selected !== "string")
 	)
 		return invalid("Invalid Request Object signing algorithm metadata");
-	const algorithms = SUPPORTED_ALGORITHMS.filter(
+	const algorithms = allowed.filter(
 		(alg) =>
+			registry.algorithm(alg) !== undefined &&
 			lists.every((list) => list === undefined || (list as string[]).includes(alg)) &&
 			(selected === undefined || selected === alg),
 	);

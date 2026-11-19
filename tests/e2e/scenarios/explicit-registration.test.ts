@@ -1,14 +1,17 @@
 import {
 	decodeEntityStatement,
 	entityId,
-	generateSigningKey,
-	JwkSigner,
 	JwtTyp,
 	MediaType,
 	resolveTrustChains,
 	signEntityStatement,
 } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
+import {
+	generateSigningKey,
+	SigningEntryFixture,
+	testEngine,
+} from "../../tap/fixtures/software-crypto.js";
 import { getOidcClientEntity } from "../helpers/launcher.js";
 import { useFederation } from "../helpers/lifecycle.js";
 import { hierarchicalTopology } from "../topologies/hierarchical.js";
@@ -22,7 +25,7 @@ describe("Explicit registration", () => {
 			const { server, trustAnchors } = getTestBed();
 			const rpId = entityId(`https://rp2.ofed.test:${server.port}`);
 			const opId = entityId(`https://op.ofed.test:${server.port}`);
-			const resolution = await resolveTrustChains(rpId, trustAnchors);
+			const resolution = await resolveTrustChains(rpId, trustAnchors, { engine: testEngine });
 			const chain = resolution.chains[0]?.statements;
 			expect(chain).toBeDefined();
 			if (!chain) throw new Error("RP chain fixture is unavailable");
@@ -41,10 +44,14 @@ describe("Explicit registration", () => {
 				},
 			};
 			for (const supplied of [false, true]) {
-				const jwt = await signEntityStatement(payload, new JwkSigner(attacker.privateKey), {
-					typ: JwtTyp.EntityStatement,
-					...(supplied ? { extraHeaders: { trust_chain: [...chain] } } : {}),
-				});
+				const jwt = await signEntityStatement(
+					payload,
+					new SigningEntryFixture(attacker.privateKey),
+					{
+						typ: JwtTyp.EntityStatement,
+						...(supplied ? { extraHeaders: { trust_chain: [...chain] } } : {}),
+					},
+				);
 				const response = await fetch(`${opId}/federation_registration`, {
 					method: "POST",
 					headers: { "Content-Type": MediaType.EntityStatement },
@@ -117,7 +124,7 @@ describe("Explicit registration", () => {
 						},
 					},
 				},
-				new JwkSigner(rp.keys.signing),
+				new SigningEntryFixture(rp.keys.signing),
 			);
 			const registered = await fetch(`${opId}/federation_registration`, {
 				method: "POST",
@@ -176,7 +183,7 @@ describe("Explicit registration", () => {
 			const rp = getOidcClientEntity(entities, "https://rp2.ofed.test");
 			const rpId = entityId(`https://rp2.ofed.test:${server.port}`);
 			const opId = entityId(`https://op.ofed.test:${server.port}`);
-			const chains = await resolveTrustChains(rpId, trustAnchors);
+			const chains = await resolveTrustChains(rpId, trustAnchors, { engine: testEngine });
 			const chain = chains.chains[0]?.statements;
 			if (!chain) throw new Error("Missing RP evidence");
 			const published = decodeEntityStatement(chain[0] as string);
@@ -195,7 +202,7 @@ describe("Explicit registration", () => {
 						},
 					},
 				},
-				new JwkSigner(rp.keys.signing),
+				new SigningEntryFixture(rp.keys.signing),
 				{ extraHeaders: { trust_chain: [...chain] } },
 			);
 			const response = await fetch(`${opId}/federation_registration`, {

@@ -15,6 +15,7 @@ import {
 import type { Command } from "commander";
 import type { Config } from "../config.js";
 import type { OutputFormatter } from "../output/index.js";
+import { engine } from "../util/crypto.js";
 import { parseEntityIdOrError } from "../util/entity-id.js";
 import type { Logger } from "../util/logger.js";
 import { requireAnchorIds, resolveOrError } from "../util/trust-anchors.js";
@@ -59,7 +60,9 @@ async function handleEntityIdMode(
 	if (!chain) {
 		return err(federationError(FederationErrorCode.InvalidTrustChain, "No trust chains resolved"));
 	}
-	const validationResult = await validateTrustChain([...chain.statements], anchors);
+	const validationResult = await validateTrustChain([...chain.statements], anchors, {
+		engine: engine,
+	});
 
 	if (!validationResult.valid) {
 		return err(

@@ -1,3 +1,4 @@
+import { cloneData } from "../data-copy.js";
 /** Federation endpoint clients and verification of signed endpoint responses. */
 
 import { setOwn } from "../callbacks.js";
@@ -33,7 +34,7 @@ function apiError(description: string): FederationError {
 	return { code: InternalErrorCode.SignatureInvalid, description };
 }
 
-export interface VerifyOptions {
+export interface VerifyOptions extends FederationOptions {
 	/** Expected signer identity from trusted configuration or validated federation evidence. */
 	expectedIssuer: string;
 	clockSkewSeconds?: number;
@@ -61,19 +62,14 @@ export interface VerifySignedJwkSetOptions extends VerifyOptions {
 }
 
 /** Validate caller context before accepting any signed response (RFC 8725 §3.8). */
-export function validateExpectedIssuer(
-	options: VerifyOptions | undefined,
-): Result<void, FederationError> {
+export function validateExpectedIssuer(options: VerifyOptions): Result<void, FederationError> {
 	return EntityIdSchema.safeParse(options?.expectedIssuer).success
 		? ok(undefined)
 		: err(apiError("A valid expectedIssuer is required"));
 }
 
-function buildVerifyOpts(expectedTyp: string, options?: VerifyOptions) {
-	const opts: { expectedTyp: string; clockSkewSeconds?: number; clock?: Clock } = { expectedTyp };
-	if (options?.clockSkewSeconds !== undefined) opts.clockSkewSeconds = options.clockSkewSeconds;
-	if (options?.clock !== undefined) opts.clock = options.clock;
-	return opts;
+function buildVerifyOpts(expectedTyp: string, options: VerifyOptions) {
+	return { ...options, expectedTyp };
 }
 
 /**
@@ -234,7 +230,7 @@ export function selectHistoricalVerificationKey(
 		)
 			return err(apiError("Historical key is revoked"));
 	}
-	return ok(structuredClone(key));
+	return ok(cloneData(key));
 }
 
 /**
@@ -261,7 +257,7 @@ export async function verifySignedJwkSet(
 	if (!parsed.success) {
 		return err(apiError(`Invalid signed JWK Set payload: ${parsed.error.message}`));
 	}
-	const useResult = validateJwkSetUseRequirement(parsed.data.keys);
+	const useResult = validateJwkSetUseRequirement(parsed.data.keys, options.algorithmRegistry);
 	if (!useResult.ok) return useResult;
 	if (parsed.data.iss !== options.expectedIssuer)
 		return err(apiError("Response issuer does not match expectedIssuer"));
@@ -288,8 +284,8 @@ export interface ListSubordinatesFilter {
  */
 export async function fetchListSubordinates(
 	listEndpoint: string,
-	filter?: ListSubordinatesFilter,
-	options?: FederationOptions,
+	filter: ListSubordinatesFilter | undefined,
+	options: FederationOptions,
 ): Promise<Result<EntityId[], FederationError>> {
 	return requestListSubordinates(listEndpoint, filter, options);
 }
@@ -298,15 +294,15 @@ export async function fetchListSubordinates(
 export function fetchListSubordinatesForIssuer(
 	listEndpoint: string,
 	issuer: EntityId,
-	options?: FederationOptions,
+	options: FederationOptions,
 ): Promise<Result<EntityId[], FederationError>> {
 	return requestListSubordinates(listEndpoint, undefined, options, issuer);
 }
 
 async function requestListSubordinates(
 	listEndpoint: string,
-	filter?: ListSubordinatesFilter,
-	options?: FederationOptions,
+	filter: ListSubordinatesFilter | undefined,
+	options: FederationOptions,
 	issuer?: EntityId,
 ): Promise<Result<EntityId[], FederationError>> {
 	safeLogger(options?.logger)?.debug("Starting fetch list subordinates");
@@ -388,7 +384,7 @@ export interface ResolveRequestParams {
 export async function fetchResolveResponse(
 	resolveEndpoint: string,
 	params: ResolveRequestParams,
-	options?: FederationOptions,
+	options: FederationOptions,
 ): Promise<Result<string, FederationError>> {
 	safeLogger(options?.logger)?.debug("Starting fetch resolve response");
 

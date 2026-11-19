@@ -20,7 +20,7 @@ export async function resolveTrustChainForAnchor(
 	subject: EntityId,
 	trustAnchorId: EntityId,
 	trustAnchors: TrustAnchorSet,
-	options?: FederationOptions,
+	options: FederationOptions,
 ): Promise<Result<readonly string[], FederationError>> {
 	safeLogger(options?.logger)?.debug("Starting resolve trust chain for anchor");
 

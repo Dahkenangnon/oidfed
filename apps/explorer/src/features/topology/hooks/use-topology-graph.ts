@@ -7,6 +7,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSettings } from "@/hooks/use-settings";
 import { extractFederationEntity } from "@/lib/jwt";
+import { engine } from "../../../lib/crypto.js";
 import type {
 	GraphEdge,
 	GraphNode,
@@ -166,6 +167,7 @@ export function useTopologyGraph(): UseTopologyGraphResult {
 
 			const result = await fetchEntityConfiguration(validated.value, {
 				httpTimeoutMs: settings.httpTimeoutMs,
+				engine: engine,
 			});
 			if (!result.ok) return;
 			const decoded = decodeEntityStatement(result.value);
@@ -219,6 +221,7 @@ export function useTopologyGraph(): UseTopologyGraphResult {
 
 				const ecResult = await fetchEntityConfiguration(validated.value, {
 					httpTimeoutMs: settings.httpTimeoutMs,
+					engine: engine,
 				});
 				if (!ecResult.ok) {
 					setNodes((prev) =>
@@ -264,6 +267,7 @@ export function useTopologyGraph(): UseTopologyGraphResult {
 							if (!vId.ok) return null;
 							const r = await fetchEntityConfiguration(vId.value, {
 								httpTimeoutMs: settings.httpTimeoutMs,
+								engine: engine,
 							});
 							if (!r.ok)
 								return {

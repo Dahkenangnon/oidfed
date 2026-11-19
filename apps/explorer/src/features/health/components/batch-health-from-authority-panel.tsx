@@ -4,6 +4,7 @@ import { AlertTriangle, RefreshCw, Search, X } from "lucide-react";
 import { useCallback, useState } from "react";
 import { useSettings } from "@/hooks/use-settings";
 import { extractFederationEntity } from "@/lib/jwt";
+import { engine } from "../../../lib/crypto.js";
 import { BatchHealthPanel } from "../../subordinates/components/batch-health-panel";
 import { useBatchHealth } from "../../subordinates/hooks/use-batch-health";
 
@@ -32,6 +33,7 @@ export function BatchHealthFromAuthorityPanel() {
 
 			const ecResult = await fetchEntityConfiguration(validated.value, {
 				httpTimeoutMs: settings.httpTimeoutMs,
+				engine: engine,
 			});
 			if (!ecResult.ok) throw new Error(ecResult.error.description);
 

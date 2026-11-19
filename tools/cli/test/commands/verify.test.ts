@@ -1,5 +1,9 @@
-import { generateSigningKey, type HttpClient, JwkSigner, signEntityStatement } from "@oidfed/core";
+import { type HttpClient, signEntityStatement } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
+import {
+	generateSigningKey,
+	SigningEntryFixture,
+} from "../../../../tests/tap/fixtures/software-crypto.js";
 import { handler } from "../../src/commands/verify.js";
 import { JsonFormatter } from "../../src/output/json.js";
 import { createLogger } from "../../src/util/logger.js";
@@ -18,7 +22,7 @@ async function makeSignedJwt(claims?: Record<string, unknown>) {
 			jwks: { keys: [key.publicKey] },
 			...claims,
 		},
-		new JwkSigner(key.privateKey),
+		new SigningEntryFixture(key.privateKey),
 	);
 	return { jwt, key };
 }
@@ -54,7 +58,7 @@ describe("verify handler", () => {
 				exp: 9999999999,
 				jwks: { keys: [key.publicKey] },
 			},
-			new JwkSigner(key.privateKey),
+			new SigningEntryFixture(key.privateKey),
 		);
 
 		const client: HttpClient = async () =>
@@ -84,7 +88,7 @@ describe("verify handler", () => {
 				exp: 9999999999,
 				jwks: { keys: [key.publicKey] },
 			},
-			new JwkSigner(key.privateKey),
+			new SigningEntryFixture(key.privateKey),
 		);
 
 		const client: HttpClient = async () =>

@@ -1,15 +1,17 @@
 import {
 	decodeEntityStatement,
 	entityId,
-	generateSigningKey,
 	type HttpClient,
-	JwkSigner,
 	JwtTyp,
 	MediaType,
 	signEntityStatement,
 } from "@oidfed/core";
 import { Command } from "commander";
 import { describe, expect, it, vi } from "vitest";
+import {
+	generateSigningKey,
+	SigningEntryFixture,
+} from "../../../../tests/tap/fixtures/software-crypto.js";
 import { handler, register } from "../../src/commands/subordinate-events.js";
 import { JsonFormatter } from "../../src/output/json.js";
 import { createLogger } from "../../src/util/logger.js";
@@ -20,7 +22,7 @@ const endpoint = "https://events.example/history?tenant=1";
 
 async function fixture() {
 	const key = await generateSigningKey("ES256");
-	const signer = new JwkSigner(key.privateKey);
+	const signer = new SigningEntryFixture(key.privateKey);
 	const now = Math.floor(Date.now() / 1000);
 	const jwks = { keys: [key.publicKey] };
 	const ec = await signEntityStatement(

@@ -1,13 +1,13 @@
 /** Shared handler context: signing keys, stores, and configuration for all endpoints. */
 
 import type {
+	CryptoContext,
 	EndpointAuthentication,
 	EntityId,
 	EntityRole,
 	EntityStatementExtensions,
 	EntityStatementMetadata,
 	FederationEntityMetadata,
-	FederationKeyLifecycleProvider,
 	FederationOptions,
 	JWKSet,
 	TrustAnchorSet,
@@ -26,7 +26,6 @@ export interface HandlerContext extends EntityStatementExtensions {
 	/** Anchor role is independent of having Superiors. */
 	readonly isTrustAnchor?: boolean;
 	trustMarkDefaults?: TrustMarkIssuerConfig["trustMarkDefaults"];
-	trustMarkSigner?: TrustMarkIssuerConfig["trustMarkSigner"];
 	trustMarkStatusPolicy?: TrustMarkIssuerConfig["trustMarkStatusPolicy"];
 	trustMarkRequestExtensions?: TrustMarkIssuerConfig["trustMarkRequestExtensions"];
 	endpointAuthentication?: EndpointAuthentication;
@@ -39,7 +38,7 @@ export interface HandlerContext extends EntityStatementExtensions {
 	/** Preferred trust anchors this entity hints to resolvers in its Entity Configuration. */
 	readonly trustAnchorHints?: readonly [EntityId, ...EntityId[]];
 	/** Federation-only signing key provider and lifecycle manager. */
-	readonly keyProvider: FederationKeyLifecycleProvider;
+	readonly crypto: CryptoContext;
 	/** Unified persistence adapter for all non-key authority state. */
 	readonly storage: StorageAdapter;
 	/** Resolves remote client Federation Entity Keys for private_key_jwt endpoint auth. */
@@ -59,7 +58,7 @@ export interface HandlerContext extends EntityStatementExtensions {
 	/** Trust anchors for trust chain resolution. */
 	readonly trustAnchors?: TrustAnchorSet;
 	/** Federation-wide options (httpClient, clock, etc.). */
-	readonly options?: FederationOptions;
+	readonly options: FederationOptions;
 	/** TTL in seconds for the Entity Configuration JWT. */
 	readonly entityConfigurationTtlSeconds?: number;
 	/** TTL in seconds for subordinate statement JWTs. */

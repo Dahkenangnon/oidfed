@@ -1,3 +1,4 @@
+import { cloneData } from "../data-copy.js";
 /** Metadata policy declaration checks and protected operator-combination validation. */
 
 import { callSynchronous, freezeSnapshot, isJsonData, isObject } from "../callbacks.js";
@@ -73,8 +74,8 @@ export function validatePolicyDeclaration(
 						() =>
 							(lookup[first] as PolicyOperatorDefinition).canCombineWith(
 								second,
-								freezeSnapshot(structuredClone(entries[first])),
-								freezeSnapshot(structuredClone(entries[second])),
+								freezeSnapshot(cloneData(entries[first])),
+								freezeSnapshot(cloneData(entries[second])),
 							),
 						(v): v is boolean => typeof v === "boolean",
 					);
@@ -82,8 +83,8 @@ export function validatePolicyDeclaration(
 						() =>
 							(lookup[second] as PolicyOperatorDefinition).canCombineWith(
 								first,
-								freezeSnapshot(structuredClone(entries[second])),
-								freezeSnapshot(structuredClone(entries[first])),
+								freezeSnapshot(cloneData(entries[second])),
+								freezeSnapshot(cloneData(entries[first])),
 							),
 						(v): v is boolean => typeof v === "boolean",
 					);

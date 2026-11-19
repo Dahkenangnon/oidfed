@@ -18,7 +18,7 @@ import { createConfiguredTrustMarkIssuerResolver } from "./issuer-selection.js";
 export async function evaluatePublishedTrustMarks(
 	statements: readonly ParsedEntityStatement[],
 	anchors: TrustAnchorSet,
-	options: (FederationOptions & { trustMarkIssuerKeys?: ReadonlyMap<string, JWKSet> }) | undefined,
+	options: FederationOptions & { trustMarkIssuerKeys?: ReadonlyMap<string, JWKSet> },
 	evaluate: boolean,
 ): Promise<TrustMarkEvaluation[]> {
 	const subject = statements[0]?.payload;
@@ -54,7 +54,7 @@ export async function evaluatePublishedTrustMarks(
 			continue;
 		}
 		if (options?.trustMarkVerification) {
-			const decoded = decodeEntityStatement(ref.trust_mark);
+			const decoded = decodeEntityStatement(ref.trust_mark, options);
 			if (!decoded.ok) {
 				results.push(invalid(decoded.error.description));
 				continue;
@@ -103,7 +103,7 @@ export async function evaluatePublishedTrustMarks(
 			results.push(invalid("Trust Mark issuer entry must be an array of Entity Identifiers"));
 			continue;
 		}
-		const decoded = decodeEntityStatement(ref.trust_mark);
+		const decoded = decodeEntityStatement(ref.trust_mark, options);
 		if (!decoded.ok) {
 			results.push(invalid(decoded.error.description));
 			continue;

@@ -11,6 +11,7 @@ import {
 } from "@oidfed/core";
 import type { Command } from "commander";
 import type { OutputFormatter } from "../output/index.js";
+import { engine } from "../util/crypto.js";
 import { discoverEndpoint } from "../util/discover-endpoint.js";
 import { extractJwks, parseEntityIdOrError } from "../util/entity-id.js";
 import type { Logger } from "../util/logger.js";
@@ -76,6 +77,7 @@ export async function handler(
 	if (hasTrustMark && args.verify) {
 		const ecResult = await fetchEntityConfiguration(eidResult.value, {
 			httpClient: deps.httpClient,
+			engine: engine,
 		});
 		if (!ecResult.ok) return ecResult;
 		const ecDecoded = decodeEntityStatement(ecResult.value);
@@ -91,6 +93,7 @@ export async function handler(
 			{
 				expectedIssuer: eidResult.value,
 				httpClient: deps.httpClient,
+				engine: engine,
 			},
 		);
 		if (!statusResult.ok) return statusResult;

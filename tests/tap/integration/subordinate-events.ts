@@ -6,15 +6,20 @@ import {
 	FederationEntityMetadataSchema,
 	fetchExtendedSubordinatesList,
 	fetchSubordinateEvents,
-	generateSigningKey,
 	type HttpClient,
-	JwkSigner,
 	MediaType,
 	SubordinateEventSchema,
 	signEntityStatement,
 	verifySubordinateEventsResponse,
 } from "../../../packages/core/src/index.js";
 import { Leaf } from "../../../packages/leaf/src/index.js";
+import {
+	fixtureHostConfig,
+	fixtureSigner,
+	generateSigningKey,
+	SigningEntryFixture,
+	testEngine,
+} from "../fixtures/software-crypto.js";
 import * as SubordinateEventsFixture from "../fixtures/subordinate-events.js";
 
 export default function integrationTests(QUnit: QUnit): void {
@@ -71,7 +76,10 @@ export default function integrationTests(QUnit: QUnit): void {
 						await f.authority.revokeSubordinate(subject);
 						assert.strictEqual(await f.storage.subordinates.get(subject), undefined);
 						f.setNow(1600.5);
-						const fetched = await fetchSubordinateEvents(endpoint, subject, f.options);
+						const fetched = await fetchSubordinateEvents(endpoint, subject, {
+							...f.options,
+							engine: testEngine,
+						});
 						assert.true(fetched.ok);
 						if (fetched.ok) {
 							assert.strictEqual(fetched.value.iat, 1600.5);
@@ -98,22 +106,26 @@ export default function integrationTests(QUnit: QUnit): void {
 					await f.authority.registerSubordinate(f.record);
 					const before = await f.storage.subordinateEvents?.list(issuer, subject);
 					const next = await generateSigningKey("ES256");
-					const signer = new JwkSigner(next.privateKey);
-					await f.keyProvider.publishKey({ signer, publicJwk: next.publicKey });
-					await f.keyProvider.switchActiveKey(signer.kid);
+					const signer = new SigningEntryFixture(next.privateKey);
+					await f.crypto.keyring.publish(
+						"federation",
+						fixtureSigner({ signer, publicJwk: next.publicKey }),
+					);
+					await f.crypto.keyring.activate("federation", signer.kid);
 					const jwt = await f.authority.getSubordinateEvents(subject);
 					assert.true(
 						(
 							await verifySubordinateEventsResponse(
 								jwt,
 								{ keys: [next.publicKey] },
-								{ issuer, subject, clock: f.clock },
+								{ engine: testEngine, issuer, subject, clock: f.clock },
 							)
 						).ok,
 					);
 					assert.false(
 						(
 							await verifySubordinateEventsResponse(jwt, f.options.issuerJwks, {
+								engine: testEngine,
 								issuer,
 								subject,
 								clock: f.clock,
@@ -129,7 +141,10 @@ export default function integrationTests(QUnit: QUnit): void {
 				async (assert) => {
 					const f = await fixture();
 					await f.storage.subordinates.add({ ...f.record, createdAt: 1, updatedAt: 2 });
-					let fetched = await fetchSubordinateEvents(endpoint, subject, f.options);
+					let fetched = await fetchSubordinateEvents(endpoint, subject, {
+						...f.options,
+						engine: testEngine,
+					});
 					assert.true(fetched.ok);
 					if (fetched.ok)
 						assert.deepEqual(
@@ -170,12 +185,15 @@ export default function integrationTests(QUnit: QUnit): void {
 					assert.true(Boolean(await f.storage.subordinates.get(subject)));
 					assert.strictEqual((await events.list(issuer, subject)).length, 2);
 					await f.storage.subordinates.remove(subject);
-					fetched = await fetchSubordinateEvents(endpoint, subject, f.options);
+					fetched = await fetchSubordinateEvents(endpoint, subject, {
+						...f.options,
+						engine: testEngine,
+					});
 					assert.true(fetched.ok, "history remains queryable after a raw removal");
 					const missing = await fetchSubordinateEvents(
 						endpoint,
 						entityId("https://unknown.example"),
-						f.options,
+						{ ...f.options, engine: testEngine },
 					);
 					assert.false(missing.ok);
 					if (!missing.ok) assert.strictEqual(missing.error.code, "not_found");
@@ -189,17 +207,26 @@ export default function integrationTests(QUnit: QUnit): void {
 					await f.authority.registerSubordinate(f.record);
 					const assertion = (aud: string) =>
 						signEntityStatement(
-							{ iss: subject, sub: subject, aud, iat: 1500, exp: 1600, jti: crypto.randomUUID() },
-							new JwkSigner(f.clientKey.privateKey),
+							{
+								iss: subject,
+								sub: subject,
+								aud,
+								iat: 1500,
+								exp: 1600,
+								jti: globalThis.crypto.randomUUID(),
+							},
+							new SigningEntryFixture(f.clientKey.privateKey),
 							{ typ: "JWT" },
 						);
 					const valid = await fetchSubordinateEvents(endpoint, subject, {
+						engine: testEngine,
 						...f.options,
 						clientAssertion: await assertion(issuer),
 					});
 					assert.true(valid.ok);
 					for (const aud of [endpoint, "https://other.example"]) {
 						const invalid = await fetchSubordinateEvents(endpoint, subject, {
+							engine: testEngine,
 							...f.options,
 							clientAssertion: await assertion(aud),
 						});
@@ -223,50 +250,62 @@ export default function integrationTests(QUnit: QUnit): void {
 								federation_subordinate_events_endpoint: url,
 							}).success,
 						);
-						assert.throws(
-							() =>
-								new TrustAnchor({
+						await assert.rejects(
+							(async () =>
+								await TrustAnchor.create(
+									fixtureHostConfig({
+										...f.config,
+										metadata: {
+											federation_entity: {
+												...f.config.metadata.federation_entity,
+												federation_subordinate_events_endpoint: url,
+											},
+										},
+									}),
+								))(),
+						);
+					}
+					await assert.rejects(
+						(async () =>
+							await TrustAnchor.create(
+								fixtureHostConfig({
+									...f.config,
+									storage: new MemoryStorageAdapter({ engine: testEngine }),
+								}),
+							))(),
+						/subordinateEvents/,
+					);
+					await assert.rejects(
+						(async () =>
+							await TrustAnchor.create(
+								fixtureHostConfig({
 									...f.config,
 									metadata: {
 										federation_entity: {
 											...f.config.metadata.federation_entity,
-											federation_subordinate_events_endpoint: url,
+											federation_subordinate_events_endpoint: `${issuer}/list`,
 										},
 									},
 								}),
-						);
-					}
-					assert.throws(
-						() => new TrustAnchor({ ...f.config, storage: new MemoryStorageAdapter() }),
-						/subordinateEvents/,
-					);
-					assert.throws(
-						() =>
-							new TrustAnchor({
-								...f.config,
-								metadata: {
-									federation_entity: {
-										...f.config.metadata.federation_entity,
-										federation_subordinate_events_endpoint: `${issuer}/list`,
-									},
-								},
-							}),
+							))(),
 						/route path/,
 					);
-					assert.throws(
-						() =>
-							new Leaf({
-								entityId: subject,
-								authorityHints: [issuer],
-								keyProvider: f.keyProvider,
-								metadata: { federation_entity: {} },
-								roles: [
-									{
-										type: "federation_entity",
-										metadata: { federation_subordinate_events_endpoint: endpoint },
-									},
-								],
-							}),
+					await assert.rejects(
+						(async () =>
+							await Leaf.create(
+								fixtureHostConfig({
+									entityId: subject,
+									authorityHints: [issuer],
+									crypto: f.crypto,
+									metadata: { federation_entity: {} },
+									roles: [
+										{
+											type: "federation_entity",
+											metadata: { federation_subordinate_events_endpoint: endpoint },
+										},
+									],
+								}),
+							))(),
 						/subordinate_events/,
 					);
 					await f.authority.registerSubordinate({
@@ -303,6 +342,7 @@ export default function integrationTests(QUnit: QUnit): void {
 							endpoint,
 						);
 					const result = await fetchSubordinateEvents(endpoint, subject, {
+						engine: testEngine,
 						...f.options,
 						httpClient: async (url, init) => {
 							const parsed = new URL(String(url));
@@ -334,14 +374,19 @@ export default function integrationTests(QUnit: QUnit): void {
 						for (const suffix of ["#", "#details"]) {
 							const value = `https://history.example/path${suffix}`;
 							assert.false(FederationEntityMetadataSchema.safeParse({ [field]: value }).success);
-							assert.throws(
-								() =>
-									new TrustAnchor({
-										...f.config,
-										metadata: {
-											federation_entity: { ...f.config.metadata.federation_entity, [field]: value },
-										},
-									}),
+							await assert.rejects(
+								(async () =>
+									await TrustAnchor.create(
+										fixtureHostConfig({
+											...f.config,
+											metadata: {
+												federation_entity: {
+													...f.config.metadata.federation_entity,
+													[field]: value,
+												},
+											},
+										}),
+									))(),
 								/without fragment/,
 							);
 						}
@@ -360,14 +405,19 @@ export default function integrationTests(QUnit: QUnit): void {
 						assert.false(
 							(
 								await fetchSubordinateEvents(endpoint + suffix, subject, {
+									engine: testEngine,
 									...f.options,
 									httpClient,
 								})
 							).ok,
 						);
 						assert.false(
-							(await fetchExtendedSubordinatesList(endpoint + suffix, undefined, { httpClient }))
-								.ok,
+							(
+								await fetchExtendedSubordinatesList(endpoint + suffix, undefined, {
+									engine: testEngine,
+									httpClient,
+								})
+							).ok,
 						);
 						assert.strictEqual(calls, 0);
 					}

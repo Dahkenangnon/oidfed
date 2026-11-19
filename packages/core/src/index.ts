@@ -34,6 +34,13 @@ export {
 	verifyClientAttestation,
 } from "./client-attestation.js";
 export {
+	bindFederationOptions,
+	federationSigningOptions,
+	validateCryptoContext,
+} from "./crypto-context.js";
+export { randomUuid, sha256Hex } from "./crypto-runtime.js";
+export { cloneData } from "./data-copy.js";
+export {
 	checkApplicationJwtHeader,
 	decodeApplicationJwt,
 	matchesJwtType,
@@ -41,6 +48,20 @@ export {
 	verifyApplicationJwt,
 } from "./jose/application-jwt.js";
 export { type ClientAssertionOptions, createClientAssertion } from "./jose/client-assertion.js";
+export {
+	JwsService,
+	type JwsServiceOptions,
+	type JwtTypeRule,
+	type JwtVerificationProfile,
+	type VerifiedJwt,
+} from "./jws-service.js";
+export {
+	isProtocolSignerPublished,
+	type SigningPurposes,
+	selectSigningEntry,
+	signingPublication,
+	validateSigningPurposes,
+} from "./signing-purposes.js";
 // Replay protection
 
 export {
@@ -68,6 +89,7 @@ export {
 } from "./cache/index.js";
 export {
 	CachePrefix,
+	DEFAULT_ALLOWED_ALGORITHMS,
 	DEFAULT_CACHE_MAX_TTL_SECONDS,
 	DEFAULT_CACHE_TTL_SECONDS,
 	DEFAULT_CLIENT_ASSERTION_TTL_SECONDS,
@@ -75,7 +97,6 @@ export {
 	DEFAULT_DELEGATION_TTL_SECONDS,
 	DEFAULT_ENTITY_STATEMENT_TTL_SECONDS,
 	DEFAULT_HTTP_TIMEOUT_MS,
-	DEFAULT_KEY_RETIRE_AFTER_MS,
 	DEFAULT_MAX_AUTHORITY_HINTS,
 	DEFAULT_MAX_CHAIN_DEPTH,
 	DEFAULT_MAX_CHAIN_LENGTH,
@@ -87,15 +108,14 @@ export {
 	type EntityTypeIdentifier,
 	FederationEndpoint,
 	FederationErrorCode,
+	INTEROP_RECOMMENDED_ALGORITHMS,
 	InternalErrorCode,
 	JWT_BEARER_CLIENT_ASSERTION_TYPE,
 	JwtTyp,
 	MediaType,
 	PolicyOperator,
-	REQUIRED_ALGORITHMS,
 	STANDARD_ENTITY_STATEMENT_CLAIMS,
 	StandardPolicyOperator,
-	SUPPORTED_ALGORITHMS,
 	type SupportedAlgorithm,
 	TrustMarkStatus,
 	WELL_KNOWN_OPENID_FEDERATION,
@@ -186,15 +206,9 @@ export {
 	verifySubordinateEventsResponse,
 } from "./federation-api/subordinate-events.js";
 export {
-	createFederationSigningKey,
-	type FederationKeyLifecycleProvider,
-	type FederationKeyProvider,
-	type FederationKeySet,
-	type FederationSigningKey,
-	MemoryFederationKeyProvider,
-	type MemoryFederationKeyProviderOptions,
-	StaticFederationKeyProvider,
-	type SwitchActiveFederationKeyOptions,
+	type FederationKeyHistorySource,
+	federationEntry,
+	historicalKeysFromKeyring,
 	validateFederationKeySet,
 } from "./federation-keys.js";
 // HTTP helpers
@@ -221,12 +235,9 @@ export {
 	decodeEntityConfiguration,
 	decodeEntityStatement,
 	decodeSubordinateStatement,
-	generateSigningKey,
+	type FederationJwsOptions,
 	isValidAlgorithm,
 	JWK_PUBLIC_FIELDS,
-	JwkSigner,
-	type JwkSignerOptions,
-	type JwtSigner,
 	jwkThumbprint,
 	type SignEntityStatementOptions,
 	selectVerificationKey,
@@ -236,7 +247,6 @@ export {
 	type VerifiedClientAssertion,
 	type VerifiedProtocolJwt,
 	type VerifyProtocolJwtOptions,
-	validateSigner,
 	verifyClientAssertion,
 	verifyEntityStatement,
 	verifyProtocolJwt,
@@ -270,7 +280,11 @@ export {
 	type FederationResolverIntegration,
 	FederationResolverService,
 } from "./resolver/service.js";
-export { composeEntityMetadata, validateRoleMetadata } from "./roles.js";
+export {
+	composeEntityMetadata,
+	composeRolePublicationMetadata,
+	validateRoleMetadata,
+} from "./roles.js";
 // Schemas
 export * from "./schemas/index.js";
 // Statement builders
@@ -408,11 +422,13 @@ export type {
 export { assertPositiveTtlSeconds } from "./ttl.js";
 // Types
 export {
+	type BoundFederationOptions,
 	type CacheProvider,
 	type ChainSelectionStrategy,
 	type Clock,
 	type ConstraintCheckContext,
 	type ConstraintCheckDefinition,
+	type CryptoContext,
 	createTrustAnchorSet,
 	type DecodedFederationJwtPayload,
 	type DiscoveryResult,
@@ -422,6 +438,7 @@ export {
 	entityId,
 	type FederationOptions,
 	type HttpClient,
+	InvalidClockError,
 	isValidEntityId,
 	type Logger,
 	nowSeconds,

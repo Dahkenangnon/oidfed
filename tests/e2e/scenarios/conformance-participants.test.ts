@@ -3,6 +3,7 @@ import { Leaf } from "@oidfed/leaf";
 import { importJWK, type JWK } from "jose";
 import * as client from "openid-client";
 import { beforeEach, describe, expect, it } from "vitest";
+import { testEngine } from "../../tap/fixtures/software-crypto.js";
 import { getOidcClientEntity } from "../helpers/launcher.js";
 import { useFederation } from "../helpers/lifecycle.js";
 import { createLeafApp } from "../participants/leaf-app.js";
@@ -49,7 +50,7 @@ async function followLogin(
 describe("Disposable conformance OP integration", () => {
 	const getBed = useFederation(singleAnchorTopology);
 
-	beforeEach(() => {
+	beforeEach(async () => {
 		const { entities, server, trustAnchors } = getBed();
 		const op = entities.get("https://op.ofed.test");
 		const rp = getOidcClientEntity(entities, "https://rp.ofed.test");
@@ -59,11 +60,11 @@ describe("Disposable conformance OP integration", () => {
 		const rpId = `https://rp.ofed.test:${server.port}`;
 		server.addEntity(
 			"https://op.ofed.test",
-			createOpenIDProviderApp({
+			await createOpenIDProviderApp({
 				leaf: op.server,
 				entityId: `https://op.ofed.test:${server.port}`,
 				trustAnchors,
-				federationKeyProvider: op.keyProvider,
+				federationKeyProvider: op.crypto,
 				oidcSigningKey: op.keys.protocolSigning,
 				allowedRequestUriHosts: new Set(["rp.ofed.test"]),
 				automaticInteractions: true,
@@ -80,7 +81,7 @@ describe("Disposable conformance OP integration", () => {
 		const opId = `https://op.ofed.test:${server.port}`;
 		const rpId = `https://rp.ofed.test:${server.port}`;
 		const rp = getOidcClientEntity(entities, "https://rp.ofed.test");
-		const discovery = await discoverEntity(entityId(opId), trustAnchors);
+		const discovery = await discoverEntity(entityId(opId), trustAnchors, { engine: testEngine });
 		if (!discovery.ok) throw new Error("Fixture discovery failed");
 		const verifier = client.randomPKCECodeVerifier();
 		const state = client.randomState();
@@ -173,11 +174,11 @@ describe("Disposable conformance OP integration", () => {
 		const opId = `https://op.ofed.test:${server.port}`;
 		server.addEntity(
 			opId,
-			createOpenIDProviderApp({
+			await createOpenIDProviderApp({
 				leaf: op.server,
 				entityId: opId,
 				trustAnchors,
-				federationKeyProvider: op.keyProvider,
+				federationKeyProvider: op.crypto,
 				oidcSigningKey: op.keys.protocolSigning,
 				allowedRequestUriHosts: new Set(),
 				requestLimitPerMinute: 1,

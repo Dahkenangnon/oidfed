@@ -1,3 +1,11 @@
+import {
+	type BoundFederationOptions,
+	bindFederationOptions,
+	cloneData,
+	composeRolePublicationMetadata,
+	federationEntry,
+	validateCryptoContext,
+} from "@oidfed/core";
 /** Authority hosts composing federation handlers, role metadata, signing keys, and storage. */
 
 import {
@@ -6,6 +14,7 @@ import {
 	assessEntity,
 	buildExtendedListRequestParameters,
 	COLLECTION_UNORDERED_PARAMETERS,
+	type CryptoContext,
 	composeEntityMetadata,
 	decodeEntityStatement,
 	discoverEntity,
@@ -28,7 +37,6 @@ import {
 	type FederationEntityMetadata,
 	type FederationError,
 	FederationErrorCode,
-	type FederationKeyLifecycleProvider,
 	type FederationOptions,
 	type FetchAndAttachTrustMarkOptions,
 	federationError,
@@ -53,7 +61,6 @@ import {
 	type TrustMarkRecord,
 	type TrustMarkRef,
 	type TrustMarkStatusResponsePayload,
-	validateRoleMetadata,
 	WELL_KNOWN_OPENID_FEDERATION,
 } from "@oidfed/core";
 import { createAuthenticatedHandler } from "./endpoints/client-auth.js";
@@ -131,7 +138,6 @@ function assertTrustAnchorHintsConfig(config: AuthorityConfig, isTrustAnchor: bo
 
 export interface AuthorityConfig extends EntityStatementExtensions {
 	trustMarkDefaults?: TrustMarkIssuerConfig["trustMarkDefaults"];
-	trustMarkSigner?: TrustMarkIssuerConfig["trustMarkSigner"];
 	trustMarkStatusPolicy?: TrustMarkIssuerConfig["trustMarkStatusPolicy"];
 	trustMarkRequestExtensions?: TrustMarkIssuerConfig["trustMarkRequestExtensions"];
 	endpointAuthentication?: EndpointAuthentication;
@@ -152,8 +158,8 @@ export interface AuthorityConfig extends EntityStatementExtensions {
 	}>;
 	/** Unified persistence adapter for all non-key authority state. */
 	storage: StorageAdapter;
-	/** Federation-only signing key provider and lifecycle manager. */
-	keyProvider: FederationKeyLifecycleProvider;
+	/** Host engine and keyring; supply history when historical-key features are enabled. */
+	crypto: CryptoContext;
 	/**
 	 * Resolves public Federation Entity Keys for authenticated remote authority
 	 * endpoint clients. Defaults to `storage.subordinates.get(entityId)?.jwks`.
@@ -184,7 +190,7 @@ export interface AuthorityConfig extends EntityStatementExtensions {
 	/** Positive finite TTL in seconds for issued Trust Marks; fractional values are allowed. */
 	trustMarkTtlSeconds?: number;
 	/** Federation-wide options (httpClient, clock, etc.). */
-	options?: Omit<FederationOptions, "cache">;
+	options?: Omit<BoundFederationOptions, "cache">;
 	/**
 	 * Configuration for the Extended Subordinate Listing endpoint. Set
 	 * `enabled: false` to keep the endpoint disabled (router returns 404) and
@@ -227,8 +233,12 @@ export interface AuthorityServer {
 	revokeTrustMark(type: string, subject: string): Promise<void>;
 	listTrustMarksForSubject(subject: string): Promise<TrustMarkRecord[]>;
 	getTrustMarks(): TrustMarkRef[];
-	attachTrustMark(jwt: string, options: AttachTrustMarkOptions): Promise<void>;
-	fetchAndAttachTrustMark(options: FetchAndAttachTrustMarkOptions): Promise<void>;
+	attachTrustMark(jwt: string, options: Omit<AttachTrustMarkOptions, "engine">): Promise<void>;
+	fetchAndAttachTrustMark(
+		options: Omit<FetchAndAttachTrustMarkOptions, "options"> & {
+			readonly options?: BoundFederationOptions;
+		},
+	): Promise<void>;
 	removeTrustMark(selector: RemoveTrustMarkSelector): Promise<void>;
 	setTrustMarkIssuers(issuers: Record<string, string[]>): Promise<void>;
 	setTrustMarkOwners(owners: Record<string, TrustMarkOwner>): Promise<void>;
@@ -249,7 +259,7 @@ export interface AuthorityServer {
 
 /** Build around the established published identity without normalizing it again. */
 function createAuthorityServerWithIdentity(
-	config: AuthorityConfig & { entityId: EntityId },
+	config: PreparedAuthorityConfig,
 	roleRoutes: ReadonlyMap<string, (request: Request) => Promise<Response>>,
 	isTrustAnchor: boolean,
 ): AuthorityServer {
@@ -340,15 +350,16 @@ function createAuthorityServerWithIdentity(
 		...prepareEntityStatementExtensions(config),
 		...(config.roles ? { roles: config.roles } : {}),
 		entityId: normalizedEntityId,
-		keyProvider: config.keyProvider,
+		crypto: config.crypto,
 		storage: config.storage,
 		clientKeyProvider,
 		metadata: config.metadata,
+		options: config.options,
 	};
-	const effectiveOptions: FederationOptions | undefined =
-		config.options || config.storage.cache
-			? { ...config.options, ...(config.storage.cache ? { cache: config.storage.cache } : {}) }
-			: undefined;
+	const effectiveOptions: FederationOptions = {
+		...config.options,
+		...(config.storage.cache ? { cache: config.storage.cache } : {}),
+	};
 	// Object.assign loses its result type for the conditional list of typed config fragments.
 	// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
 	const ctx: HandlerContext = Object.assign(
@@ -358,18 +369,17 @@ function createAuthorityServerWithIdentity(
 			config.authorityHints && { authorityHints: config.authorityHints },
 			config.trustAnchorHints && { trustAnchorHints: config.trustAnchorHints },
 			config.endpointAuthentication && { endpointAuthentication: config.endpointAuthentication },
-			config.trustMarkDefaults && { trustMarkDefaults: structuredClone(config.trustMarkDefaults) },
-			config.trustMarkSigner && { trustMarkSigner: config.trustMarkSigner },
+			config.trustMarkDefaults && { trustMarkDefaults: cloneData(config.trustMarkDefaults) },
 			config.trustMarkStatusPolicy && { trustMarkStatusPolicy: config.trustMarkStatusPolicy },
 			config.trustMarkRequestExtensions && {
 				trustMarkRequestExtensions: { ...config.trustMarkRequestExtensions },
 			},
 			config.trustMarkIssuer && { trustMarkIssuer: config.trustMarkIssuer },
-			config.trustMarks && { trustMarks: structuredClone(config.trustMarks) },
-			config.trustMarkIssuers && { trustMarkIssuers: structuredClone(config.trustMarkIssuers) },
-			config.trustMarkOwners && { trustMarkOwners: structuredClone(config.trustMarkOwners) },
+			config.trustMarks && { trustMarks: cloneData(config.trustMarks) },
+			config.trustMarkIssuers && { trustMarkIssuers: cloneData(config.trustMarkIssuers) },
+			config.trustMarkOwners && { trustMarkOwners: cloneData(config.trustMarkOwners) },
 			config.trustMarkDelegations && {
-				trustMarkDelegations: structuredClone(config.trustMarkDelegations),
+				trustMarkDelegations: cloneData(config.trustMarkDelegations),
 			},
 			config.trustAnchors && { trustAnchors: config.trustAnchors },
 			config.entityConfigurationTtlSeconds !== undefined && {
@@ -388,7 +398,6 @@ function createAuthorityServerWithIdentity(
 		].filter(Boolean),
 	);
 
-	validateRoleMetadata(config.roles, config.metadata, ctx);
 	if (ctx.storage.trustMarks) trustMarkService(ctx);
 	const lifecycle = createSubordinateLifecycle(ctx);
 	const meta = config.metadata.federation_entity;
@@ -413,7 +422,7 @@ function createAuthorityServerWithIdentity(
 				...((config.collection.store ?? config.storage.collections)
 					? { store: config.collection.store ?? config.storage.collections }
 					: {}),
-				options: { ...effectiveOptions, ...config.collection.options },
+				options: bindFederationOptions(ctx.crypto, effectiveOptions, config.collection.options),
 				authentication: {
 					...config.collection.authentication,
 					methods: collectionMethods as ("none" | "private_key_jwt")[],
@@ -452,7 +461,7 @@ function createAuthorityServerWithIdentity(
 	const holder = new TrustMarkHolder(ctx.entityId, ctx.trustMarks ?? [], async (refs) => {
 		await buildEntityConfiguration({ ...ctx, trustMarks: refs });
 		Object.defineProperty(ctx, "trustMarks", {
-			value: structuredClone(refs),
+			value: cloneData(refs),
 			enumerable: true,
 			configurable: true,
 		});
@@ -727,7 +736,7 @@ function createAuthorityServerWithIdentity(
 				throw new Error(body.error_description ?? body.error);
 			}
 			const jwt = await res.text();
-			const decoded = decodeEntityStatement(jwt);
+			const decoded = decodeEntityStatement(jwt, ctx.options);
 			if (!isOk(decoded)) {
 				throw new Error("Failed to decode trust mark status response");
 			}
@@ -740,12 +749,20 @@ function createAuthorityServerWithIdentity(
 		},
 
 		getTrustMarks: () => holder.getTrustMarks(),
-		attachTrustMark: (jwt, options) => holder.attachTrustMark(jwt, options),
-		fetchAndAttachTrustMark: (options) => holder.fetchAndAttachTrustMark(options),
-		removeTrustMark: (selector) => holder.removeTrustMark(selector),
+		attachTrustMark: (jwt, options) =>
+			holder.attachTrustMark(jwt, {
+				...options,
+				...bindFederationOptions(ctx.crypto, ctx.options, options),
+			}),
+		fetchAndAttachTrustMark: (options) =>
+			holder.fetchAndAttachTrustMark({
+				...options,
+				options: bindFederationOptions(ctx.crypto, ctx.options, options.options),
+			}),
+		removeTrustMark: (selector) => holder.removeTrustMark(selector, ctx.options),
 		async setTrustMarkIssuers(issuers) {
 			if (!ctx.isTrustAnchor) throw new Error("Only Trust Anchors publish trust_mark_issuers");
-			const owned = structuredClone(issuers);
+			const owned = cloneData(issuers);
 			await holder.updatePublication(async () => {
 				await buildEntityConfiguration({ ...ctx, trustMarkIssuers: owned });
 				Object.defineProperty(ctx, "trustMarkIssuers", {
@@ -758,7 +775,7 @@ function createAuthorityServerWithIdentity(
 		},
 		async setTrustMarkOwners(owners) {
 			if (!ctx.isTrustAnchor) throw new Error("Only Trust Anchors publish trust_mark_owners");
-			const owned = structuredClone(owners);
+			const owned = cloneData(owners);
 			await holder.updatePublication(async () => {
 				await buildEntityConfiguration({ ...ctx, trustMarkOwners: owned });
 				Object.defineProperty(ctx, "trustMarkOwners", {
@@ -797,21 +814,33 @@ function createAuthorityServerWithIdentity(
 		): Promise<string> {
 			safeLogger(config.options?.logger)?.debug("Starting issue trust mark delegation");
 
-			const keySet = await ctx.keyProvider.getFederationKeySet();
-			const params = {
+			const keySet = await federationEntry(ctx.crypto, {
+				issuer: ctx.entityId,
+				subject,
+				trustMarkType,
+			});
+			const ttlSeconds =
+				options?.ttlSeconds ?? (options?.noExpiry ? undefined : config.trustMarkTtlSeconds);
+			const policy = bindFederationOptions(ctx.crypto, ctx.options, {
+				maxCompactBytes: options?.maxCompactBytes,
+				allowedFederationAlgorithms: options?.allowedFederationAlgorithms,
+			});
+			return signTrustMarkDelegation({
 				issuer: normalizedEntityId,
 				subject,
 				trustMarkType,
-				signer: keySet.signer,
-				...(options?.noExpiry
-					? {}
-					: config.trustMarkTtlSeconds !== undefined
-						? { ttlSeconds: config.trustMarkTtlSeconds }
-						: {}),
-				...options,
-				...(config.options?.clock ? { clock: config.options.clock } : {}),
-			};
-			return signTrustMarkDelegation(params);
+				signer: keySet,
+				maxCompactBytes: policy.maxCompactBytes,
+				algorithmRegistry: policy.algorithmRegistry,
+				allowedFederationAlgorithms: policy.allowedFederationAlgorithms,
+				...(ttlSeconds !== undefined ? { ttlSeconds } : {}),
+				...(options?.noExpiry !== undefined ? { noExpiry: options.noExpiry } : {}),
+				...(options?.ref !== undefined ? { ref: options.ref } : {}),
+				...(options?.additionalClaims !== undefined
+					? { additionalClaims: options.additionalClaims }
+					: {}),
+				...(ctx.options.clock ? { clock: ctx.options.clock } : {}),
+			});
 		},
 
 		async getHistoricalKeys(): Promise<string> {
@@ -1003,22 +1032,48 @@ function createStorageBackedClientKeyProvider(storage: StorageAdapter): Authorit
 }
 
 /** Compose owned metadata after each role initializes its generated fields. */
-function prepareAuthorityHost(
+type PreparedAuthorityConfig = Omit<AuthorityConfig, "options"> & {
+	entityId: EntityId;
+	options: FederationOptions;
+};
+type PreparedAuthorityHost = {
+	config: PreparedAuthorityConfig;
+	context: EntityContext;
+	routes: Map<string, (request: Request) => Promise<Response>>;
+};
+
+async function prepareAuthorityHost(
 	config: AuthorityConfig,
 	routes: Map<string, (request: Request) => Promise<Response>>,
 	isTrustAnchor: boolean,
-): { config: AuthorityConfig & { entityId: EntityId }; context: EntityContext } {
+): Promise<PreparedAuthorityHost> {
 	if (!isTrustAnchor && !config.authorityHints?.length)
 		throw new Error("Intermediate MUST have at least one authorityHint");
 	assertTrustAnchorHintsConfig(config, isTrustAnchor);
-	const normalized: AuthorityConfig & { entityId: EntityId } = {
+	const normalized: PreparedAuthorityConfig = {
 		...config,
+		...prepareEntityStatementExtensions(config),
+		crypto: Object.freeze({
+			engine: config.crypto.engine,
+			...(config.crypto.algorithmRegistry
+				? { algorithmRegistry: config.crypto.algorithmRegistry }
+				: {}),
+			keyring: config.crypto.keyring,
+			...(config.crypto.federationPurpose !== undefined
+				? { federationPurpose: config.crypto.federationPurpose }
+				: {}),
+			...(config.crypto.history !== undefined ? { history: config.crypto.history } : {}),
+		}),
+		...(config.authorityHints ? { authorityHints: [...config.authorityHints] } : {}),
+		...(config.roles ? { roles: [...config.roles] } : {}),
+		...(config.trustMarks ? { trustMarks: cloneData(config.trustMarks) } : {}),
+		options: bindFederationOptions(config.crypto, config.options),
 		entityId: normalizeAuthorityEntityId(config.entityId),
 		metadata: composeEntityMetadata(config.metadata) as AuthorityConfig["metadata"],
 	};
 	const context: EntityContext = {
 		entityId: normalized.entityId,
-		keyProvider: normalized.keyProvider,
+		crypto: normalized.crypto,
 		options: normalized.options,
 		...(normalized.authorityHints
 			? { authorityHints: normalized.authorityHints as readonly EntityId[] }
@@ -1026,13 +1081,23 @@ function prepareAuthorityHost(
 		...(normalized.trustAnchors ? { trustAnchors: normalized.trustAnchors } : {}),
 	};
 	for (const role of normalized.roles ?? []) {
-		role.initialize?.(context);
+		await role.initialize?.(context);
 		normalized.metadata = composeEntityMetadata(normalized.metadata, {
 			[role.type]: role.metadata,
 		}) as AuthorityConfig["metadata"];
 		addRoleRoutes(routes, role, normalized.entityId);
 	}
-	return { config: normalized, context };
+	await federationEntry(normalized.crypto, {
+		issuer: normalized.entityId,
+		subject: normalized.entityId,
+	});
+	await composeRolePublicationMetadata(normalized.roles, normalized.metadata, context);
+	if (
+		normalized.metadata.federation_entity.federation_historical_keys_endpoint &&
+		!normalized.crypto.history
+	)
+		throw new TypeError("Historical keys endpoint requires crypto.history");
+	return { config: normalized, context, routes };
 }
 
 /** Shared authority host lifecycle, storage forwarding, and request dispatch. */
@@ -1041,12 +1106,12 @@ abstract class AuthorityHost {
 	/** Assess a target using configured anchors and options, overridden by per-call settings. */
 	assessEntity(
 		target: EntityId,
-		options: EntityAssessmentOptions & { trustAnchors?: TrustAnchorSet } = {},
+		options: Omit<EntityAssessmentOptions, "engine"> & { trustAnchors?: TrustAnchorSet } = {},
 	) {
 		return assessEntity(
 			target,
 			options.trustAnchors ?? this.trustContext.trustAnchors ?? new Map(),
-			{ ...this.trustContext.options, ...options },
+			bindFederationOptions(this.trustContext.crypto, this.trustContext.options, options),
 		);
 	}
 	/**
@@ -1054,25 +1119,25 @@ abstract class AuthorityHost {
 	 */
 	discoverEntity(
 		target: EntityId,
-		options: FederationOptions & { trustAnchors?: TrustAnchorSet } = {},
+		options: BoundFederationOptions & { trustAnchors?: TrustAnchorSet } = {},
 	) {
 		return discoverEntity(
 			target,
 			options.trustAnchors ?? this.trustContext.trustAnchors ?? new Map(),
-			{ ...this.trustContext.options, ...options },
+			bindFederationOptions(this.trustContext.crypto, this.trustContext.options, options),
 		);
 	}
 	/** Validate supplied target statements and return discovery evidence using configured anchors. */
 	discoverEntityFromChain(
 		target: EntityId,
 		statements: readonly string[],
-		options: FederationOptions & { trustAnchors?: TrustAnchorSet } = {},
+		options: BoundFederationOptions & { trustAnchors?: TrustAnchorSet } = {},
 	) {
 		return discoverEntityFromChain(
 			target,
 			statements,
 			options.trustAnchors ?? this.trustContext.trustAnchors ?? new Map(),
-			{ ...this.trustContext.options, ...options },
+			bindFederationOptions(this.trustContext.crypto, this.trustContext.options, options),
 		);
 	}
 
@@ -1082,21 +1147,21 @@ abstract class AuthorityHost {
 	}
 
 	public readonly entityId: EntityId;
-	private readonly routes = new Map<string, (request: Request) => Promise<Response>>();
+	private readonly routes: Map<string, (request: Request) => Promise<Response>>;
 	private readonly server: AuthorityServer;
 
 	/**
-	 * Validate and compose host and role configuration; storage and key providers retain their
+	 * Validate and compose host and role configuration; storage and crypto services retain their
 	 * identity.
 	 */
-	protected constructor(config: AuthorityConfig, isTrustAnchor: boolean) {
-		const prepared = prepareAuthorityHost(config, this.routes, isTrustAnchor);
+	protected constructor(prepared: PreparedAuthorityHost, isTrustAnchor: boolean) {
+		this.routes = prepared.routes;
 		this.entityId = prepared.config.entityId;
 		this.trustContext = prepared.context;
 		this.server = createAuthorityServerWithIdentity(prepared.config, this.routes, isTrustAnchor);
 	}
 
-	/** Build and sign this authority's Entity Configuration using the current key provider. */
+	/** Build and sign this authority's Entity Configuration using one current keyring snapshot. */
 	async getEntityConfiguration(): Promise<string> {
 		return this.server.getEntityConfiguration();
 	}
@@ -1141,11 +1206,15 @@ abstract class AuthorityHost {
 	/**
 	 * Validate a mark for this host and publish it; failed validation leaves prior references intact.
 	 */
-	async attachTrustMark(jwt: string, options: AttachTrustMarkOptions) {
+	async attachTrustMark(jwt: string, options: Omit<AttachTrustMarkOptions, "engine">) {
 		return this.server.attachTrustMark(jwt, options);
 	}
 	/** Establish issuer trust and retrieve a mark for this host before validated publication. */
-	async fetchAndAttachTrustMark(options: FetchAndAttachTrustMarkOptions) {
+	async fetchAndAttachTrustMark(
+		options: Omit<FetchAndAttachTrustMarkOptions, "options"> & {
+			readonly options?: BoundFederationOptions;
+		},
+	) {
 		return this.server.fetchAndAttachTrustMark(options);
 	}
 	/** Remove matching references from this host's publication; this does not revoke issuance. */
@@ -1190,7 +1259,7 @@ abstract class AuthorityHost {
 		return this.server.issueTrustMarkDelegation(subject, trustMarkType, options);
 	}
 
-	/** Sign the configured key provider's historical-key response. */
+	/** Sign the recorded keys returned by the configured history source. */
 	async getHistoricalKeys(): Promise<string> {
 		return this.server.getHistoricalKeys();
 	}
@@ -1258,8 +1327,13 @@ export class TrustAnchor extends AuthorityHost {
 	declare private readonly trustAnchorBrand: undefined;
 
 	/** Validate host and role configuration, retaining storage and key provider identity. */
-	constructor(config: AuthorityConfig) {
-		super(config, true);
+	private constructor(prepared: PreparedAuthorityHost) {
+		super(prepared, true);
+	}
+	/** Await role setup and validate signing purposes before returning a ready host. */
+	static async create(config: AuthorityConfig): Promise<TrustAnchor> {
+		validateCryptoContext(config.crypto);
+		return new TrustAnchor(await prepareAuthorityHost(config, new Map(), true));
 	}
 }
 
@@ -1276,7 +1350,12 @@ export class Intermediate extends AuthorityHost {
 	declare private readonly intermediateBrand: undefined;
 
 	/** Validate host and role configuration, retaining storage and key provider identity. */
-	constructor(config: AuthorityConfig) {
-		super(config, false);
+	private constructor(prepared: PreparedAuthorityHost) {
+		super(prepared, false);
+	}
+	/** Await role setup and validate signing purposes before returning a ready host. */
+	static async create(config: AuthorityConfig): Promise<Intermediate> {
+		validateCryptoContext(config.crypto);
+		return new Intermediate(await prepareAuthorityHost(config, new Map(), false));
 	}
 }

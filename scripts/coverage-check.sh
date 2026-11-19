@@ -24,3 +24,7 @@ npx c8 check-coverage --include 'packages/oidc/src/**' \
 # Wallet federation and authentication use the same floor as core.
 npx c8 check-coverage --include 'packages/wallet/src/**' \
 	--statements 90 --branches 85 --functions 90 --lines 90
+
+# Portable crypto helpers and adapters use the core package floor.
+npx c8 check-coverage --include 'packages/crypto/src/**' \
+	--statements 90 --branches 85 --functions 90 --lines 90

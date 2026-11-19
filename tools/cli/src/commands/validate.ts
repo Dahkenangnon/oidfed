@@ -14,6 +14,7 @@ import {
 import type { Command } from "commander";
 import type { Config } from "../config.js";
 import type { OutputFormatter } from "../output/index.js";
+import { engine } from "../util/crypto.js";
 import { parseEntityIdOrError } from "../util/entity-id.js";
 import type { Logger } from "../util/logger.js";
 import { buildTrustAnchors, requireAnchorIds, resolveOrError } from "../util/trust-anchors.js";
@@ -59,7 +60,9 @@ async function handleEntityIdMode(
 	if (!chain) {
 		return err(federationError(FederationErrorCode.InvalidTrustChain, "No trust chains resolved"));
 	}
-	const validationResult = await validateTrustChain([...chain.statements], anchors);
+	const validationResult = await validateTrustChain([...chain.statements], anchors, {
+		engine: engine,
+	});
 
 	const chainValid = validationResult.valid;
 	const output: Record<string, unknown> = {
@@ -104,7 +107,9 @@ export async function handler(args: ValidateArgs, deps: ValidateDeps): Promise<R
 	const anchorsResult = await buildTrustAnchors(anchorResult.value, deps.httpClient, deps.config);
 	if (!anchorsResult.ok) return anchorsResult;
 
-	const validationResult = await validateTrustChain([...args.jwts], anchorsResult.value);
+	const validationResult = await validateTrustChain([...args.jwts], anchorsResult.value, {
+		engine: engine,
+	});
 
 	if (validationResult.valid) {
 		return ok(

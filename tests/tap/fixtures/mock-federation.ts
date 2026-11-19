@@ -1,9 +1,8 @@
 import { JwtTyp } from "../../../packages/core/src/constants.js";
-import { generateSigningKey } from "../../../packages/core/src/jose/keys.js";
 import { signEntityStatement } from "../../../packages/core/src/jose/sign.js";
-import { JwkSigner } from "../../../packages/core/src/jose/signer.js";
 import type { JWK, JWKSet } from "../../../packages/core/src/schemas/jwk.js";
 import type { EntityId, TrustAnchorSet } from "../../../packages/core/src/types.js";
+import { generateSigningKey, SigningEntryFixture } from "./software-crypto.js";
 
 interface EntityConfig {
 	entityId: string;
@@ -56,7 +55,7 @@ export class MockFederationBuilder {
 			md.federation_entity.federation_fetch_endpoint = `${entityId}/federation_fetch`;
 		}
 
-		const ecJwt = await signEntityStatement(payload, new JwkSigner(keys.privateKey), {
+		const ecJwt = await signEntityStatement(payload, new SigningEntryFixture(keys.privateKey), {
 			typ: JwtTyp.EntityStatement,
 		});
 
@@ -104,7 +103,7 @@ export class MockFederationBuilder {
 			},
 		};
 
-		const ecJwt = await signEntityStatement(ecPayload, new JwkSigner(keys.privateKey), {
+		const ecJwt = await signEntityStatement(ecPayload, new SigningEntryFixture(keys.privateKey), {
 			typ: JwtTyp.EntityStatement,
 		});
 
@@ -119,9 +118,13 @@ export class MockFederationBuilder {
 		if (options?.metadataPolicy) ssPayload.metadata_policy = options.metadataPolicy;
 		if (options?.constraints) ssPayload.constraints = options.constraints;
 
-		const ssJwt = await signEntityStatement(ssPayload, new JwkSigner(superior.privateKey), {
-			typ: JwtTyp.EntityStatement,
-		});
+		const ssJwt = await signEntityStatement(
+			ssPayload,
+			new SigningEntryFixture(superior.privateKey),
+			{
+				typ: JwtTyp.EntityStatement,
+			},
+		);
 
 		this.entities.set(entityId, {
 			entityId,
@@ -165,7 +168,7 @@ export class MockFederationBuilder {
 		if (options?.metadata) ecPayload.metadata = options.metadata;
 		if (options?.trustMarks) ecPayload.trust_marks = options.trustMarks;
 
-		const ecJwt = await signEntityStatement(ecPayload, new JwkSigner(keys.privateKey), {
+		const ecJwt = await signEntityStatement(ecPayload, new SigningEntryFixture(keys.privateKey), {
 			typ: JwtTyp.EntityStatement,
 		});
 
@@ -178,9 +181,13 @@ export class MockFederationBuilder {
 			jwks: { keys: [keys.publicKey] },
 		};
 
-		const ssJwt = await signEntityStatement(ssPayload, new JwkSigner(superior.privateKey), {
-			typ: JwtTyp.EntityStatement,
-		});
+		const ssJwt = await signEntityStatement(
+			ssPayload,
+			new SigningEntryFixture(superior.privateKey),
+			{
+				typ: JwtTyp.EntityStatement,
+			},
+		);
 
 		this.entities.set(entityId, {
 			entityId,

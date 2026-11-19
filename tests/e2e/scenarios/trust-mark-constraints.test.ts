@@ -1,5 +1,6 @@
 import { decodeEntityStatement, isOk, validateTrustMark } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
+import { testEngine } from "../../tap/fixtures/software-crypto.js";
 import { getAuthorityEntity } from "../helpers/launcher.js";
 import { useFederation } from "../helpers/lifecycle.js";
 import { singleAnchorTopology } from "../topologies/single-anchor.js";
@@ -58,7 +59,7 @@ describe("Trust mark issuer constraints", () => {
 			trustMarkJwt,
 			{ [trustMarkType(port)]: [taId] },
 			{ keys: [taInstance.keys.public] },
-			{ expectedSubject: rpId },
+			{ expectedSubject: rpId, engine: testEngine },
 		);
 
 		expect(isOk(result)).toBe(true);
@@ -80,7 +81,7 @@ describe("Trust mark issuer constraints", () => {
 			trustMarkJwt,
 			{ [trustMarkType(port)]: ["https://other-ta.ofed.test:9999"] },
 			{ keys: [taInstance.keys.public] },
-			{ expectedSubject: rpId },
+			{ expectedSubject: rpId, engine: testEngine },
 		);
 
 		expect(isOk(result)).toBe(false);

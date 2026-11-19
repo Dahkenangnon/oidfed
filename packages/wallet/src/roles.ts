@@ -1,3 +1,11 @@
+import {
+	bindFederationOptions,
+	cloneData,
+	selectSigningEntry,
+	signingPublication,
+	validateSigningPurposes,
+} from "@oidfed/core";
+import type { KeyPurpose, KeyringEntry } from "@oidfed/crypto";
 /** Composable Wallet Provider, Credential Issuer, and Credential Verifier federation roles. */
 
 import {
@@ -15,7 +23,6 @@ import {
 	FederationErrorCode,
 	fetchAttestationChallenge,
 	type JWKSet,
-	type JwtSigner,
 	nowSeconds,
 	ok,
 	parseOAuthAuthorizationServerMetadata,
@@ -56,6 +63,7 @@ import {
 	operationExhausted,
 	operationOptions,
 	protocolKeys,
+	requirePublishedProtocolSigner,
 	roleMetadata,
 	type TrustedWalletEntity,
 	trustedEntity,
@@ -64,7 +72,11 @@ import {
 
 /** Metadata is copied at construction. Instance operations combine host, role, then per-call options; attach the role before operations needing its signing identity. */
 export interface WalletRoleConfig {
-	readonly options?: WalletTrustOptions;
+	/** Map walletAttestation and authorizationRequest to the host keyring as needed. */
+	readonly signing?: Readonly<
+		Partial<Record<"walletAttestation" | "authorizationRequest", KeyPurpose>>
+	>;
+	readonly options?: Omit<WalletTrustOptions, "engine">;
 	readonly metadata?: Readonly<Record<string, unknown>>;
 	readonly trustAnchors?: TrustAnchorSet;
 }
@@ -85,7 +97,7 @@ abstract class WalletRole implements EntityRole {
 		target: string,
 		type: WalletRoleType,
 		anchors: TrustAnchorSet,
-		options: EntityAssessmentOptions & WalletTrustOptions = {},
+		options: EntityAssessmentOptions & WalletTrustOptions,
 	) {
 		const supplied = options.trustChain ?? options.entityChains?.get(target);
 		if (supplied) options = { ...options, trustChain: supplied };
@@ -99,7 +111,8 @@ abstract class WalletRole implements EntityRole {
 						chainSelection: (chains) => {
 							// Issuer accreditation is independent of the subject's wallet role (§17.5).
 							const eligible = chains.filter(
-								(chain) => chain.entityId !== target || roleMetadata(type, target, chain).ok,
+								(chain) =>
+									chain.entityId !== target || roleMetadata(type, target, chain, options).ok,
 							);
 							if (!eligible.length) throw new Error("No chain supplies valid wallet metadata");
 							return (options.chainSelection ?? shortestChain)(eligible);
@@ -107,7 +120,7 @@ abstract class WalletRole implements EntityRole {
 					},
 		);
 		if (!assessed.ok) return assessed;
-		const metadata = roleMetadata(type, target, assessed.value);
+		const metadata = roleMetadata(type, target, assessed.value, options);
 		return metadata.ok ? assessed : metadata;
 	}
 	/**
@@ -117,27 +130,50 @@ abstract class WalletRole implements EntityRole {
 	assessEntity(
 		target: string,
 		type: WalletRoleType,
-		options: EntityAssessmentOptions & WalletTrustOptions = {},
+		options: Omit<EntityAssessmentOptions & WalletTrustOptions, "engine"> = {},
 	) {
-		return WalletRole.assessEntity(target, type, this.anchors(options), {
-			...this.context?.options,
-			...this.config.options,
-			...options,
-		});
+		return WalletRole.assessEntity(
+			target,
+			type,
+			this.anchors(options),
+			bindFederationOptions(
+				this.identity().crypto,
+				this.context?.options,
+				this.config.options,
+				options,
+			),
+		);
 	}
 	abstract readonly type: WalletRoleType;
 	readonly metadata: Record<string, unknown>;
 	protected context?: EntityContext;
 	/** Detach supplied role metadata while retaining host-provided options and dependencies. */
 	constructor(readonly config: WalletRoleConfig = {}) {
-		this.metadata = structuredClone(config.metadata ?? {});
+		this.metadata = cloneData(config.metadata ?? {});
 	}
 	/** Attach the role to one federation host; reuse with a different host context throws. */
-	initialize(context: EntityContext): void {
+	async initialize(context: EntityContext): Promise<void> {
 		if (this.context && this.context !== context)
 			throw new Error("Create a separate wallet role instance for each host");
+		validateSigningPurposes(
+			this.config.signing,
+			this.type === "openid_wallet_provider"
+				? ["walletAttestation"]
+				: this.type === "openid_credential_verifier"
+					? ["authorizationRequest"]
+					: [],
+		);
+		await signingPublication(context, this.config.signing);
 		this.context = context;
 	}
+	/** Rebuild managed protocol keys for an Entity Configuration publication. */
+	publicationMetadata(
+		context: EntityContext,
+		entries?: ReadonlyMap<string, KeyringEntry>,
+	): Promise<Record<string, unknown>> {
+		return signingPublication(context, this.config.signing, entries);
+	}
+
 	/**
 	 * Check composed publication fields and bind a supplied credential_issuer to the host identity.
 	 */
@@ -157,7 +193,7 @@ abstract class WalletRole implements EntityRole {
 			throw new Error("Attach the role to a federation host before using instance operations");
 		return this.context;
 	}
-	protected anchors(options?: WalletTrustOptions): TrustAnchorSet {
+	protected anchors(options?: Omit<WalletTrustOptions, "engine">): TrustAnchorSet {
 		const anchors =
 			options?.trustAnchors ??
 			this.config.trustAnchors ??
@@ -166,12 +202,26 @@ abstract class WalletRole implements EntityRole {
 		if (!anchors?.size) throw new Error("Pinned trust anchors are required");
 		return anchors;
 	}
-	protected options<T extends WalletTrustOptions>(options: T): T {
-		return { ...this.context?.options, ...this.config.options, ...options };
+	protected options<T extends Omit<WalletTrustOptions, "engine">>(
+		options: T,
+	): T & WalletTrustOptions {
+		return {
+			...options,
+			...bindFederationOptions(
+				this.identity().crypto,
+				this.identity().options,
+				this.config.options,
+				options,
+			),
+		};
 	}
 }
 
-async function signingEvidence(id: string, options: WalletTrustOptions): Promise<Result<true>> {
+async function signingEvidence(
+	id: string,
+	signer: KeyringEntry,
+	options: WalletTrustOptions,
+): Promise<Result<true>> {
 	try {
 		entityId(id);
 	} catch {
@@ -194,7 +244,7 @@ async function signingEvidence(id: string, options: WalletTrustOptions): Promise
 			`Attached signing chain is invalid: ${checked.errors.map((error) => error.message).join("; ")}`,
 		);
 	return checked.chain.entityId === id
-		? ok(true)
+		? requirePublishedProtocolSigner(checked.chain, "openid_wallet_provider", signer, options)
 		: failure("Attached signing chain is invalid or belongs to another entity");
 }
 
@@ -236,7 +286,7 @@ abstract class AttestationConsumer extends WalletRole {
 	static async verifyWalletAttestation(
 		jwt: string,
 		anchors: TrustAnchorSet,
-		options: WalletAttestationVerificationOptions = {},
+		options: WalletAttestationVerificationOptions,
 	): Promise<Result<VerifiedWalletAttestation, ClientAttestationError>> {
 		const scope = operationOptions(options);
 		return scope.ok ? verifyAttestation(jwt, anchors, scope.value) : scope;
@@ -258,7 +308,10 @@ abstract class AttestationConsumer extends WalletRole {
 	 * Verify a JWT Wallet Attestation with trusted provider protocol keys; holder authentication is
 	 * separate.
 	 */
-	verifyWalletAttestation(jwt: string, options: WalletAttestationVerificationOptions = {}) {
+	verifyWalletAttestation(
+		jwt: string,
+		options: Omit<WalletAttestationVerificationOptions, "engine"> = {},
+	) {
 		return AttestationConsumer.verifyWalletAttestation(
 			jwt,
 			this.anchors(options),
@@ -269,7 +322,11 @@ abstract class AttestationConsumer extends WalletRole {
 	 * Authenticate the attestation and holder proof using configured replay and wallet acceptance
 	 * policies.
 	 */
-	authenticateWallet(attestation: string, proof: string, options: AuthenticateWalletOptions) {
+	authenticateWallet(
+		attestation: string,
+		proof: string,
+		options: Omit<AuthenticateWalletOptions, "engine">,
+	) {
 		return AttestationConsumer.authenticateWallet(
 			attestation,
 			proof,
@@ -284,7 +341,7 @@ abstract class AttestationConsumer extends WalletRole {
 	verifyProviderAttestation(
 		attestation: unknown,
 		providerId: string,
-		options: AttestationVerificationOptions,
+		options: Omit<AttestationVerificationOptions, "engine">,
 	) {
 		return AttestationConsumer.verifyProviderAttestation(
 			attestation,
@@ -331,7 +388,7 @@ export class WalletProviderRole extends WalletRole {
 		return publicationRoleSchemas.openid_wallet_provider.safeParse(metadata);
 	}
 	/** Establish Wallet Provider trust and validate its effective federation metadata. */
-	static async discover(id: string, anchors: TrustAnchorSet, options: WalletTrustOptions = {}) {
+	static async discover(id: string, anchors: TrustAnchorSet, options: WalletTrustOptions) {
 		const scope = operationOptions(options);
 		return scope.ok ? trustedEntity("openid_wallet_provider", id, anchors, scope.value) : scope;
 	}
@@ -341,27 +398,33 @@ export class WalletProviderRole extends WalletRole {
 	static async createWalletAttestation(
 		id: string,
 		params: CreateWalletAttestationParams,
-		signer: JwtSigner,
-		options: WalletTrustOptions = {},
+		signer: KeyringEntry,
+		options: WalletTrustOptions,
 	): Promise<Result<string>> {
 		const scope = operationOptions(options);
 		if (!scope.ok) return scope;
-		const evidence = await signingEvidence(id, scope.value);
+		const evidence = await signingEvidence(id, signer, scope.value);
 		return evidence.ok ? createAttestation(id, params, signer, scope.value) : evidence;
 	}
 	/** Establish Wallet Provider trust and validate its effective federation metadata. */
-	discover(id: string, options: WalletTrustOptions = {}) {
+	discover(id: string, options: Omit<WalletTrustOptions, "engine"> = {}) {
 		return WalletProviderRole.discover(id, this.anchors(options), this.options(options));
 	}
 	/**
 	 * Create a signed instance attestation; validate any supplied signing chain before attaching it.
 	 */
-	createWalletAttestation(
+	async createWalletAttestation(
 		params: CreateWalletAttestationParams,
-		signer: JwtSigner,
-		options: WalletTrustOptions = {},
+		options: Omit<WalletTrustOptions, "engine"> = {},
 	) {
 		const effective = this.options(options);
+		if (!this.config.signing?.walletAttestation)
+			return failure("Configure the walletAttestation signing purpose");
+		const signer = await selectSigningEntry(
+			this.identity().crypto,
+			this.config.signing?.walletAttestation,
+			{ issuer: this.identity().entityId, subject: params.subject },
+		);
 		return WalletProviderRole.createWalletAttestation(this.identity().entityId, params, signer, {
 			...effective,
 			...(effective.trustChain ? { trustAnchors: this.anchors(options) } : {}),
@@ -401,7 +464,7 @@ export class CredentialIssuerRole extends AttestationConsumer {
 	static async discover(
 		id: string,
 		anchors: TrustAnchorSet,
-		options: CredentialIssuerDiscoveryOptions = {},
+		options: CredentialIssuerDiscoveryOptions,
 	): Promise<Result<DiscoveredCredentialIssuer>> {
 		if (
 			options.authorizationServerPolicy !== undefined &&
@@ -517,7 +580,7 @@ export class CredentialIssuerRole extends AttestationConsumer {
 	 * Establish issuer trust and discover usable authorization servers under the configured
 	 * availability policy.
 	 */
-	discover(id: string, options: CredentialIssuerDiscoveryOptions = {}) {
+	discover(id: string, options: Omit<CredentialIssuerDiscoveryOptions, "engine"> = {}) {
 		return CredentialIssuerRole.discover(id, this.anchors(options), this.options(options));
 	}
 }
@@ -545,7 +608,7 @@ export class CredentialVerifierRole extends AttestationConsumer {
 		return publicationRoleSchemas.openid_credential_verifier.safeParse(metadata);
 	}
 	/** Establish Credential Verifier trust and validate its effective federation metadata. */
-	static async discover(id: string, anchors: TrustAnchorSet, options: WalletTrustOptions = {}) {
+	static async discover(id: string, anchors: TrustAnchorSet, options: WalletTrustOptions) {
 		const scope = operationOptions(options);
 		return scope.ok ? trustedEntity("openid_credential_verifier", id, anchors, scope.value) : scope;
 	}
@@ -553,7 +616,7 @@ export class CredentialVerifierRole extends AttestationConsumer {
 	static async prepareAuthorizationRequest(
 		outer: WalletAuthorizationRequest,
 		anchors: TrustAnchorSet,
-		options: AuthorizationRequestOptions = {},
+		options: AuthorizationRequestOptions,
 	): Promise<Result<PreparedAuthorizationRequest>> {
 		const scope = operationOptions(options);
 		return scope.ok ? prepareRequest(outer, anchors, scope.value) : scope;
@@ -573,8 +636,8 @@ export class CredentialVerifierRole extends AttestationConsumer {
 	static async createAuthorizationRequest(
 		id: string,
 		request: Readonly<Record<string, unknown>>,
-		signer: JwtSigner,
-		options: AuthorizationRequestCreationOptions = {},
+		signer: KeyringEntry,
+		options: AuthorizationRequestCreationOptions,
 	) {
 		try {
 			entityId(id);
@@ -614,13 +677,13 @@ export class CredentialVerifierRole extends AttestationConsumer {
 		return issuer;
 	}
 	/** Establish Credential Verifier trust and validate its effective federation metadata. */
-	discover(id: string, options: WalletTrustOptions = {}) {
+	discover(id: string, options: Omit<WalletTrustOptions, "engine"> = {}) {
 		return CredentialVerifierRole.discover(id, this.anchors(options), this.options(options));
 	}
 	/** Prepare using configured anchors and merged options. Keep the returned handle for completeAuthorizationRequest; preparation is not acceptance. */
 	prepareAuthorizationRequest(
 		outer: WalletAuthorizationRequest,
-		options: AuthorizationRequestOptions = {},
+		options: Omit<AuthorizationRequestOptions, "engine"> = {},
 	) {
 		return CredentialVerifierRole.prepareAuthorizationRequest(
 			outer,
@@ -640,12 +703,18 @@ export class CredentialVerifierRole extends AttestationConsumer {
 	 * Create a signed federation presentation request; the host supplies its signer and protocol
 	 * parameters.
 	 */
-	createAuthorizationRequest(
+	async createAuthorizationRequest(
 		request: Readonly<Record<string, unknown>>,
-		signer: JwtSigner,
-		options: AuthorizationRequestCreationOptions = {},
+		options: Omit<AuthorizationRequestCreationOptions, "engine"> = {},
 	) {
 		const effective = this.options(options);
+		if (!this.config.signing?.authorizationRequest)
+			return failure("Configure the authorizationRequest signing purpose");
+		const signer = await selectSigningEntry(
+			this.identity().crypto,
+			this.config.signing?.authorizationRequest,
+			{ issuer: this.identity().entityId },
+		);
 		return CredentialVerifierRole.createAuthorizationRequest(
 			this.identity().entityId,
 			request,
@@ -660,7 +729,11 @@ export class CredentialVerifierRole extends AttestationConsumer {
 	 * Use configured issuer trust and the required host callback for format, proof, and status
 	 * verification.
 	 */
-	verifyCredential(credential: unknown, issuerId: string, options: CredentialVerificationOptions) {
+	verifyCredential(
+		credential: unknown,
+		issuerId: string,
+		options: Omit<CredentialVerificationOptions, "engine">,
+	) {
 		return CredentialVerifierRole.verifyCredential(
 			credential,
 			issuerId,

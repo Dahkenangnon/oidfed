@@ -1,3 +1,11 @@
+import {
+	type CryptoContext,
+	isProtocolSignerPublished,
+	randomUuid,
+	type SigningPurposes,
+	selectSigningEntry,
+} from "@oidfed/core";
+import type { Jwk, JwsAlgorithmRegistry, KeyringEntry } from "@oidfed/crypto";
 /** RP-side automatic registration: builds a signed Request Object with embedded trust chain. */
 
 import {
@@ -9,19 +17,17 @@ import {
 	type FederationOptions,
 	federationError,
 	InternalErrorCode,
-	type JwtSigner,
+	JwsService,
 	nowSeconds,
 	ok,
 	type Result,
 	runAsyncOperation,
 	safeLogger,
-	signEntityStatement,
 	type TrustAnchorSet,
 	type ValidatedTrustChain,
 } from "@oidfed/core";
 import { createClientAssertion } from "../client-auth/assertion.js";
 import { ClientRegistrationType, RequestObjectTyp } from "../constants.js";
-import type { ProtocolSigningKeyProvider } from "../protocol-keys.js";
 import {
 	getRegistrationTypes,
 	registrationChainHeaders,
@@ -29,7 +35,11 @@ import {
 	selectSharedRegistrationTrustChains,
 } from "./helpers.js";
 import { oidcRegistrationProfile, type RegistrationProfile } from "./profile.js";
-import { authorizationParameters, requestObjectAlgorithms } from "./request-policy.js";
+import {
+	allowsParAssertionAlgorithm,
+	authorizationParameters,
+	requestObjectAlgorithms,
+} from "./request-policy.js";
 
 const CLIENT_ASSERTION_TYPE = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
 
@@ -49,7 +59,8 @@ const RESERVED_REQUEST_OBJECT_CLAIMS = new Set([
 
 export interface AutomaticRegistrationConfig {
 	readonly entityId: EntityId;
-	readonly protocolKeyProvider: ProtocolSigningKeyProvider;
+	readonly crypto: CryptoContext;
+	readonly signing: SigningPurposes;
 	readonly authorityHints: readonly [EntityId, ...EntityId[]];
 	readonly metadata: Record<string, Record<string, unknown>>;
 	/** TTL for the Request Object JWT in seconds (default: 300). */
@@ -129,7 +140,7 @@ export async function automaticRegistration(
 	rpConfig: AutomaticRegistrationConfig,
 	authzRequestParams: Readonly<Record<string, unknown>>,
 	trustAnchors: TrustAnchorSet,
-	options?: FederationOptions,
+	options: FederationOptions,
 	providerDiscovery: "supplied" | "resolved" = "supplied",
 	profile: RegistrationProfile = oidcRegistrationProfile,
 	selected?: SharedRegistrationTrustChains,
@@ -187,15 +198,20 @@ export async function automaticRegistration(
 	}
 
 	const requestObjectSigner = await runAsyncOperation(
-		() => rpConfig.protocolKeyProvider.getRequestObjectSigner(),
+		() =>
+			selectSigningEntry(rpConfig.crypto, rpConfig.signing.requestObject, {
+				issuer: rpConfig.entityId,
+			}),
 		options ?? {},
 	);
 	const algorithms = requestObjectAlgorithms(
 		sharedChains.value.rpChain.resolvedMetadata[profile.clientType] ?? {},
 		opMeta ?? {},
+		options.allowedAlgorithms,
+		options.algorithmRegistry,
 	);
 	if (!algorithms.ok) return algorithms;
-	if (!algorithms.value.includes(requestObjectSigner.alg))
+	if (!algorithms.value.includes(requestObjectSigner.signer.publicJwk.alg))
 		return err(
 			federationError(
 				FederationErrorCode.InvalidRequest,
@@ -208,6 +224,7 @@ export async function automaticRegistration(
 		requestObjectSigner,
 		"Request Object",
 		profile.clientType,
+		options.algorithmRegistry,
 	);
 	if (!assertSignerResult.ok) {
 		return assertSignerResult;
@@ -235,7 +252,7 @@ export async function automaticRegistration(
 		iss: rpConfig.entityId,
 		client_id: rpConfig.entityId,
 		aud: discovery.entityId,
-		jti: crypto.randomUUID(),
+		jti: await randomUuid(options.engine),
 		iat: now,
 		exp: now + (rpConfig.requestObjectTtlSeconds ?? DEFAULT_REQUEST_OBJECT_TTL_SECONDS),
 		...filteredParams,
@@ -254,10 +271,11 @@ export async function automaticRegistration(
 
 	const requestObjectJwt = await runAsyncOperation(
 		() =>
-			signEntityStatement(payload, requestObjectSigner, {
-				typ: RequestObjectTyp,
-				...(Object.keys(extraHeaders).length > 0 ? { extraHeaders } : {}),
-			}),
+			new JwsService({ ...options, allowedAlgorithms: algorithms.value }).signJwt(
+				requestObjectSigner,
+				payload,
+				{ ...extraHeaders, typ: RequestObjectTyp },
+			),
 		options ?? {},
 	);
 
@@ -347,7 +365,7 @@ export async function automaticRegistration(
 
 		case "par": {
 			const parEndpoint = opMeta?.pushed_authorization_request_endpoint as string | undefined;
-			if (!parEndpoint) {
+			if (!opMeta || !parEndpoint) {
 				safeLogger(options?.logger)?.warn(
 					"PAR requires pushed_authorization_request_endpoint in OP metadata",
 				);
@@ -363,7 +381,7 @@ export async function automaticRegistration(
 			const clientType = profile.clientType;
 			const authMethod = parJwtAuthentication(
 				sharedChains.value.rpChain.resolvedMetadata[clientType] ?? {},
-				opMeta ?? {},
+				opMeta,
 			);
 			if (!authMethod.ok) return authMethod;
 			const form = new URLSearchParams({ request: requestObjectJwt, client_id: clientIdStr });
@@ -371,15 +389,18 @@ export async function automaticRegistration(
 			// An additional assertion must use a mutually supported method (§12.1.4).
 			if (authMethod.value) {
 				try {
-					const clientAssertionSigner = rpConfig.protocolKeyProvider.getClientAssertionSigner
-						? await rpConfig.protocolKeyProvider.getClientAssertionSigner()
-						: requestObjectSigner;
+					const clientAssertionSigner = await selectSigningEntry(
+						rpConfig.crypto,
+						rpConfig.signing.clientAssertion,
+						{ issuer: rpConfig.entityId },
+					);
 
 					const assertAssertionSignerResult = assertProtocolSignerPublished(
 						sharedChains.value.rpChain.resolvedMetadata,
 						clientAssertionSigner,
 						"client assertion",
 						profile.clientType,
+						options.algorithmRegistry,
 					);
 					if (!assertAssertionSignerResult.ok) {
 						safeLogger(options?.logger)?.warn(
@@ -388,17 +409,22 @@ export async function automaticRegistration(
 						return err(assertAssertionSignerResult.error);
 					}
 
-					// Federation §12.1.1.2 requires the OP Entity Identifier as the assertion audience.
-					const clientAssertion = await createClientAssertion(
-						rpConfig.entityId as string,
-						discovery.entityId as string,
-						clientAssertionSigner,
-						{
-							...(options?.clock ? { clock: options.clock } : {}),
-						},
+					const allowed = allowsParAssertionAlgorithm(
+						opMeta,
+						clientAssertionSigner.signer.publicJwk.alg,
 					);
-					form.set("client_assertion_type", CLIENT_ASSERTION_TYPE);
-					form.set("client_assertion", clientAssertion);
+					if (!allowed.ok) return allowed;
+					if (allowed.value) {
+						// Federation §12.1.1.2 requires the OP Entity Identifier as the assertion audience.
+						const clientAssertion = await createClientAssertion(
+							rpConfig.entityId as string,
+							discovery.entityId as string,
+							clientAssertionSigner,
+							options,
+						);
+						form.set("client_assertion_type", CLIENT_ASSERTION_TYPE);
+						form.set("client_assertion", clientAssertion);
+					}
 				} catch (cause) {
 					safeLogger(options?.logger)?.error("Failed to create the PAR client assertion");
 					return err(
@@ -513,9 +539,10 @@ function parJwtAuthentication(
 
 export function assertProtocolSignerPublished(
 	metadata: Record<string, Record<string, unknown>>,
-	signer: JwtSigner,
+	signer: KeyringEntry,
 	purpose: string,
 	type: RegistrationProfile["clientType"],
+	registry?: JwsAlgorithmRegistry,
 ): Result<void> {
 	const rpMetadata = metadata[type];
 	if (!rpMetadata) {
@@ -527,7 +554,7 @@ export function assertProtocolSignerPublished(
 		);
 	}
 
-	const inlineJwks = rpMetadata.jwks as { keys?: Array<{ kid?: unknown }> } | undefined;
+	const inlineJwks = rpMetadata.jwks as { keys?: Array<Record<string, unknown>> } | undefined;
 	const hasInlineJwks = inlineJwks !== undefined;
 	const hasUriPublication =
 		typeof rpMetadata.jwks_uri === "string" || typeof rpMetadata.signed_jwks_uri === "string";
@@ -542,11 +569,11 @@ export function assertProtocolSignerPublished(
 				),
 			);
 		}
-		if (!keys.some((key) => key.kid === signer.kid)) {
+		if (!isProtocolSignerPublished(signer, keys as Jwk[], registry)) {
 			return err(
 				federationError(
 					FederationErrorCode.InvalidRequest,
-					`OIDC ${purpose} signer kid '${signer.kid}' is not published in metadata.${type}.jwks`,
+					`OIDC ${purpose} signer kid '${signer.signer.publicJwk.kid}' is not published in metadata.${type}.jwks`,
 				),
 			);
 		}

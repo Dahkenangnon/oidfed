@@ -1,12 +1,6 @@
-import {
-	entityId,
-	isOk,
-	JwkSigner,
-	JwtTyp,
-	signEntityStatement,
-	validateTrustMark,
-} from "@oidfed/core";
+import { entityId, isOk, JwtTyp, signEntityStatement, validateTrustMark } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
+import { SigningEntryFixture, testEngine } from "../../tap/fixtures/software-crypto.js";
 import { getAuthorityEntity } from "../helpers/launcher.js";
 import { useFederation } from "../helpers/lifecycle.js";
 import { hierarchicalTopology } from "../topologies/hierarchical.js";
@@ -44,7 +38,7 @@ describe("Trust mark lifecycle", () => {
 				trustMarkJwt,
 				{ [trustMarkType(port)]: [taId] },
 				{ keys: [taInstance.keys.public] },
-				{ expectedSubject: rpId },
+				{ expectedSubject: rpId, engine: testEngine },
 			);
 			expect(isOk(validationResult)).toBe(true);
 
@@ -79,7 +73,7 @@ describe("Trust mark lifecycle", () => {
 				trustMarkJwt,
 				{ [trustMarkType(port)]: [taId] },
 				{ keys: [taInstance.keys.public] },
-				{ expectedSubject: rpId },
+				{ expectedSubject: rpId, engine: testEngine },
 			);
 
 			// validateTrustMark only checks JWT structure/sig, not status endpoint.
@@ -108,7 +102,7 @@ describe("Trust mark lifecycle", () => {
 					trust_mark_type: type,
 					iat: issuedAt,
 				},
-				new JwkSigner(taInstance.keys.signing),
+				new SigningEntryFixture(taInstance.keys.signing),
 				{ typ: JwtTyp.TrustMark },
 			);
 
@@ -161,7 +155,7 @@ describe("Trust mark lifecycle", () => {
 				trustMarkJwt,
 				{ [trustMarkType(port)]: [taId] },
 				{ keys: [taInstance.keys.public] },
-				{ expectedSubject: opUniId },
+				{ expectedSubject: opUniId, engine: testEngine },
 			);
 			expect(isOk(validationResult)).toBe(true);
 		});

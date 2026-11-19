@@ -18,7 +18,7 @@ import { rpMetadataChoices } from "../schemas/metadata.js";
 export function validateRegistrationMetadataPolicy(
 	metadata: Record<string, Record<string, unknown>>,
 	chain: ValidatedTrustChain,
-	options?: FederationOptions,
+	options: FederationOptions,
 	declared: readonly string[] = Object.keys(chain.resolvedMetadata),
 ): Result<void, FederationError> {
 	const fail = (description: string): Result<void, FederationError> =>

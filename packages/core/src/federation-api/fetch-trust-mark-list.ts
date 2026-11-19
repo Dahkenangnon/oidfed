@@ -16,7 +16,7 @@ export interface FetchTrustMarkListParams {
 export async function fetchTrustMarkList(
 	endpoint: string,
 	params: FetchTrustMarkListParams,
-	options?: FederationOptions,
+	options: FederationOptions,
 ): Promise<Result<EntityId[], FederationError>> {
 	safeLogger(options?.logger)?.debug("Starting fetch trust mark list");
 

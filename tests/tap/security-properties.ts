@@ -1,3 +1,4 @@
+import { testEngine } from "./fixtures/software-crypto.js";
 /** Generated security invariants shared by every supported runtime. */
 
 import { applyMetadataPolicy, MemoryReplayStore } from "@oidfed/core";
@@ -84,7 +85,7 @@ export default function securityProperties(QUnit: QUnit) {
 					fc.scheduler(),
 					fc.string({ minLength: 1, maxLength: 100 }),
 					async (scheduler, jti) => {
-						const store = new MemoryReplayStore({ clock: { now: () => 1000 } });
+						const store = new MemoryReplayStore({ engine: testEngine, clock: { now: () => 1000 } });
 						const claim = {
 							issuer: "https://issuer.example",
 							audience: "https://receiver.example",

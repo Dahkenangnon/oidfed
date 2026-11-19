@@ -1,8 +1,9 @@
-/** JWT signature verification with key matching by kid and algorithm. */
-
-import * as jose from "jose";
-import { DEFAULT_CLOCK_SKEW_SECONDS, InternalErrorCode, JwtTyp } from "../constants.js";
+/** Entity Statement verification and explicitly unverified decoding. */
+import { decodeCompactJws } from "@oidfed/crypto";
+import { InternalErrorCode, JwtTyp } from "../constants.js";
+import { federationJwsOptions } from "../crypto-context.js";
 import { err, type FederationError, ok, type Result } from "../errors.js";
+import { JwsService, type JwsServiceOptions } from "../jws-service.js";
 import {
 	type EntityConfigurationPayload,
 	EntityConfigurationSchema,
@@ -10,82 +11,36 @@ import {
 	SubordinateStatementSchema,
 } from "../schemas/entity-statement.js";
 import type { JWKSet } from "../schemas/jwk.js";
-import type { Clock, ParsedEntityStatement, UnverifiedEntityStatement } from "../types.js";
-import { isValidAlgorithm, selectVerificationKey } from "./keys.js";
+import type { ParsedEntityStatement, UnverifiedEntityStatement } from "../types.js";
 
-/** Verify a JWT entity statement signature against a JWKS. */
+/** Compact verification options for signatures made with Federation Entity Keys. */
+export interface FederationJwsOptions extends Omit<JwsServiceOptions, "allowedAlgorithms"> {
+	readonly allowedFederationAlgorithms?: readonly string[] | undefined;
+}
+
+/** Verify signature and generic JWT claims; protocol schemas remain separate. */
 export async function verifyEntityStatement(
 	jwt: string,
 	jwks: JWKSet,
-	options?: { clockSkewSeconds?: number; clock?: Clock; expectedTyp?: string },
-): Promise<Result<ParsedEntityStatement, FederationError>> {
-	const headerResult = decodeProtectedHeader(jwt);
-	if (!headerResult.ok) return headerResult;
-	const header = headerResult.value;
-
-	const expectedTyp = options?.expectedTyp ?? JwtTyp.EntityStatement;
-	if (header.typ !== expectedTyp) {
-		return err({
-			code: "ERR_SIGNATURE_INVALID",
-			description: `Invalid typ header: expected '${expectedTyp}', got '${String(header.typ)}'`,
-		});
-	}
-
-	if (!isValidAlgorithm(header.alg)) {
-		return err({
-			code: "ERR_UNSUPPORTED_ALG",
-			description: `Unsupported algorithm: '${String(header.alg)}'`,
-		});
-	}
-
-	if (!header.kid || typeof header.kid !== "string") {
-		return err({
-			code: "ERR_SIGNATURE_INVALID",
-			description: "Missing or invalid kid header",
-		});
-	}
-
-	const key = selectVerificationKey(header as { kid?: string; alg?: string }, jwks);
-	if (!key) {
-		return err({
-			code: "ERR_SIGNATURE_INVALID",
-			description: "No matching key found in JWKS for verification",
-		});
-	}
-
-	try {
-		const cryptoKey = await jose.importJWK(key as unknown as jose.JWK, header.alg as string);
-		const clockSkew = options?.clockSkewSeconds ?? DEFAULT_CLOCK_SKEW_SECONDS;
-
-		const { payload } = await jose.jwtVerify(
-			jwt,
-			cryptoKey as unknown as Parameters<typeof jose.jwtVerify>[1],
-			{
-				clockTolerance: clockSkew,
-				...(options?.clock ? { currentDate: new Date(options.clock.now() * 1_000) } : {}),
-			},
-		);
-
-		return ok({
-			header: header as Record<string, unknown>,
-			payload: payload as unknown as ParsedEntityStatement["payload"],
-		});
-	} catch (cause) {
-		return err({
-			code: "ERR_SIGNATURE_INVALID",
-			description: cause instanceof Error ? cause.message : "Signature verification failed",
-			cause,
-		});
-	}
+	options: FederationJwsOptions & { readonly expectedTyp?: string },
+): Promise<Result<ParsedEntityStatement>> {
+	const result = await new JwsService(federationJwsOptions(options)).verifyJwt(jwt, jwks, {
+		typ: { expected: options.expectedTyp ?? JwtTyp.EntityStatement },
+		keyId: "required",
+	});
+	return result as Result<ParsedEntityStatement>;
 }
 
 /** Decode a JWT entity statement without signature verification. */
 export function decodeEntityStatement(
 	jwt: string,
+	options?: Pick<JwsServiceOptions, "maxCompactBytes">,
 ): Result<UnverifiedEntityStatement, FederationError> {
 	try {
-		const header = jose.decodeProtectedHeader(jwt);
-		const payload = jose.decodeJwt(jwt);
+		const { header, payload } = decodeCompactJws(
+			jwt,
+			options?.maxCompactBytes === undefined ? undefined : { maxBytes: options.maxCompactBytes },
+		);
 
 		return ok({
 			header: header as Record<string, unknown>,
@@ -103,8 +58,9 @@ export function decodeEntityStatement(
 /** Decode and schema-validate an Entity Configuration JWT without signature verification. */
 export function decodeEntityConfiguration(
 	jwt: string,
+	options?: Pick<JwsServiceOptions, "maxCompactBytes">,
 ): Result<UnverifiedEntityStatement<EntityConfigurationPayload>, FederationError> {
-	const decoded = decodeEntityStatement(jwt);
+	const decoded = decodeEntityStatement(jwt, options);
 	if (!decoded.ok) return decoded;
 
 	const typResult = requireEntityStatementTyp(decoded.value.header);
@@ -128,8 +84,9 @@ export function decodeEntityConfiguration(
 /** Decode and schema-validate a Subordinate Statement JWT without signature verification. */
 export function decodeSubordinateStatement(
 	jwt: string,
+	options?: Pick<JwsServiceOptions, "maxCompactBytes">,
 ): Result<UnverifiedEntityStatement<SubordinateStatementPayload>, FederationError> {
-	const decoded = decodeEntityStatement(jwt);
+	const decoded = decodeEntityStatement(jwt, options);
 	if (!decoded.ok) return decoded;
 
 	const typResult = requireEntityStatementTyp(decoded.value.header);
@@ -160,20 +117,6 @@ function requireEntityStatementTyp(header: Record<string, unknown>): Result<void
 	}
 
 	return ok(undefined);
-}
-
-function decodeProtectedHeader(
-	jwt: string,
-): Result<jose.ProtectedHeaderParameters, FederationError> {
-	try {
-		return ok(jose.decodeProtectedHeader(jwt));
-	} catch (cause) {
-		return err({
-			code: "ERR_SIGNATURE_INVALID",
-			description: cause instanceof Error ? cause.message : "Failed to decode JWT header",
-			cause,
-		});
-	}
 }
 
 /** Assert that a JWT header has the expected `typ` value, throwing on mismatch. */

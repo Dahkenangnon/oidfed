@@ -1,6 +1,7 @@
 import type { HistoricalKeyEntry, JWKSet } from "@oidfed/core";
 import { verifyHistoricalKeysResponse } from "@oidfed/core";
 import { useCallback, useRef, useState } from "react";
+import { engine } from "../../../lib/crypto.js";
 
 interface UseHistoricalKeysResult {
 	readonly keys: readonly HistoricalKeyEntry[] | null;
@@ -44,7 +45,7 @@ export function useHistoricalKeys(
 					{
 						keys: issuerJwks.keys as JWKSet["keys"],
 					},
-					{ expectedIssuer },
+					{ expectedIssuer, engine: engine },
 				);
 				if (controller.signal.aborted) return;
 				if (result.ok) {

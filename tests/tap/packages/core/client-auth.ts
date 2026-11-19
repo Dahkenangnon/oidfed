@@ -1,27 +1,184 @@
+import { StaticKeyring } from "@oidfed/crypto";
+import { createWebCryptoEngine } from "@oidfed/crypto/web";
 import { decodeJwt } from "jose";
 import type QUnit from "qunit";
+import {
+	algorithmRegistry,
+	createProfileEngine,
+	profileAlgorithm,
+	profileSigner,
+} from "../../../../docs/examples/custom-crypto.js";
 import { fetchFederationEndpoint } from "../../../../packages/core/src/endpoint-client.js";
 import * as C from "../../../../packages/core/src/index.js";
+import {
+	generateSigningKey,
+	instrumentSigningEntry,
+	SigningEntryFixture,
+	testEngine,
+} from "../../fixtures/software-crypto.js";
 
 export default (Q: QUnit) => {
 	Q.module("core / shared client authentication", () => {
+		Q.test("explicit deployment policy enables Edwards attestations and proofs", async (t) => {
+			for (const algorithm of ["Ed25519", "EdDSA"] as const) {
+				const key = await generateSigningKey(algorithm),
+					entry = new SigningEntryFixture(key.privateKey);
+				const engine = createWebCryptoEngine(undefined, { algorithms: [algorithm] });
+				const options = { engine, clock: { now: () => 1500 }, allowedAlgorithms: [algorithm] };
+				const attestation = await C.createClientAttestation(
+					"trusted-attester",
+					{ subject: "client", confirmationKey: key.publicKey, expiresAt: 1600 },
+					entry,
+					options,
+				);
+				const proof = await C.createClientAttestationProof(
+					{ clientId: "client", audience: "https://server.example" },
+					entry,
+					options,
+				);
+				t.true(attestation.ok);
+				t.true(proof.ok);
+				if (!attestation.ok || !proof.ok) return;
+				const config = {
+					...options,
+					audience: "https://server.example",
+					replay: { mode: "freshness-only" } as const,
+					getAttester: () => C.ok({ jwks: { keys: [key.publicKey] } }),
+					acceptClient: () => true,
+				};
+				const accepted = await C.authenticateClientAttestation(
+					attestation.value,
+					proof.value,
+					config,
+				);
+				t.true(accepted.ok, JSON.stringify(accepted));
+				t.false(
+					(
+						await C.authenticateClientAttestation(attestation.value, proof.value, {
+							...config,
+							allowedProofAlgorithms: ["ES256"],
+						})
+					).ok,
+				);
+				const { allowedAlgorithms: _, ...defaults } = config;
+				t.false(
+					(await C.authenticateClientAttestation(attestation.value, proof.value, defaults)).ok,
+				);
+			}
+		});
+
+		Q.test(
+			"token-specific attestations and proofs can enable a registered algorithm",
+			async (t) => {
+				const key = await generateSigningKey();
+				const classical = new SigningEntryFixture(key.privateKey);
+				const signer = profileSigner("profile", classical.signer);
+				const ring = new StaticKeyring({ algorithmRegistry, signers: { profile: signer } });
+				const custom = await ring.entry("profile");
+				const options = {
+					engine: createProfileEngine(testEngine),
+					algorithmRegistry,
+					clock: { now: () => 1500 },
+				};
+				const signing = { ...options, allowedAlgorithms: [profileAlgorithm] };
+				const audience = "https://server.example";
+				const claims = { subject: "client", expiresAt: 1600 };
+				const attestation = await C.createClientAttestation(
+					"trusted-attester",
+					{ ...claims, confirmationKey: key.publicKey },
+					custom,
+					signing,
+				);
+				const classicalAttestation = await C.createClientAttestation(
+					"trusted-attester",
+					{ ...claims, confirmationKey: signer.publicJwk },
+					classical,
+					options,
+				);
+				const proof = await C.createClientAttestationProof(
+					{ clientId: "client", audience },
+					custom,
+					signing,
+				);
+				if (!attestation.ok || !classicalAttestation.ok || !proof.ok)
+					throw new Error("Unable to issue test credentials");
+
+				let lookups = 0;
+				const verifier = {
+					...options,
+					allowedAttestationAlgorithms: [profileAlgorithm],
+					getAttester: () => {
+						lookups++;
+						return C.ok({ jwks: custom.publishedJwks });
+					},
+				};
+				t.true((await C.verifyClientAttestation(attestation.value, verifier)).ok);
+				lookups = 0;
+				for (const allowedAlgorithms of [["ES256"], [], ["unknown-algorithm"], "ES256"]) {
+					const rejected = await C.verifyClientAttestation(attestation.value, {
+						...verifier,
+						allowedAlgorithms: allowedAlgorithms as readonly string[],
+					});
+					t.false(rejected.ok);
+					if (!rejected.ok) t.equal(rejected.error.attestationError, "invalid_client_attestation");
+				}
+				t.equal(lookups, 0, "invalid policy stops before attester lookup");
+				t.false(
+					(await C.verifyClientAttestation(attestation.value, { ...verifier, engine: testEngine }))
+						.ok,
+				);
+
+				const auth = {
+					...options,
+					audience,
+					replay: { mode: "freshness-only" } as const,
+					getAttester: () => C.ok({ jwks: classical.publishedJwks }),
+					acceptClient: () => true,
+				};
+				t.true(
+					(
+						await C.authenticateClientAttestation(classicalAttestation.value, proof.value, {
+							...auth,
+							allowedProofAlgorithms: [profileAlgorithm],
+						})
+					).ok,
+					"classical attestation default and custom proof policy are independent",
+				);
+				for (const allowedProofAlgorithms of [
+					undefined,
+					["ES256"],
+					[],
+					[profileAlgorithm, "unknown-algorithm"],
+				]) {
+					t.false(
+						(
+							await C.authenticateClientAttestation(classicalAttestation.value, proof.value, {
+								...auth,
+								allowedProofAlgorithms,
+							})
+						).ok,
+					);
+				}
+			},
+		);
+
 		Q.test(
 			"attestation errors distinguish challenge attestation freshness and invalid proofs",
 			async (t) => {
-				const attester = await C.generateSigningKey(),
-					instance = await C.generateSigningKey();
+				const attester = await generateSigningKey(),
+					instance = await generateSigningKey();
 				let now = 1500;
 				const options = { clock: { now: () => now }, clockSkewSeconds: 0 };
 				const a = await C.createClientAttestation(
 					"trusted-attester",
 					{ subject: "client", confirmationKey: instance.publicKey, expiresAt: 1600 },
-					new C.JwkSigner(attester.privateKey),
-					options,
+					new SigningEntryFixture(attester.privateKey),
+					{ ...options, engine: testEngine },
 				);
 				const p = await C.createClientAttestationProof(
 					{ clientId: "client", audience: "https://server.example", challenge: "old" },
-					new C.JwkSigner(instance.privateKey),
-					options,
+					new SigningEntryFixture(instance.privateKey),
+					{ ...options, engine: testEngine },
 				);
 				if (!a.ok || !p.ok) throw new Error("fixture failed");
 				const config = {
@@ -32,6 +189,7 @@ export default (Q: QUnit) => {
 					acceptClient: () => true,
 				};
 				const mismatch = await C.authenticateClientAttestation(a.value, p.value, {
+					engine: testEngine,
 					...config,
 					expectedChallenge: "new",
 				});
@@ -55,6 +213,7 @@ export default (Q: QUnit) => {
 				t.true(
 					(
 						await C.authenticateClientAttestation(a.value, p.value, {
+							engine: testEngine,
 							...config,
 							expectedChallenge: "old",
 						})
@@ -62,14 +221,18 @@ export default (Q: QUnit) => {
 				);
 				now = 1601;
 				for (const stale of [
-					await C.verifyClientAttestation(a.value, config),
-					await C.authenticateClientAttestation(a.value, p.value, config),
+					await C.verifyClientAttestation(a.value, { ...config, engine: testEngine }),
+					await C.authenticateClientAttestation(a.value, p.value, {
+						...config,
+						engine: testEngine,
+					}),
 				]) {
 					t.false(stale.ok);
 					if (!stale.ok) t.equal(stale.error.attestationError, "use_fresh_attestation");
 				}
 				now = 1500;
 				const late = await C.authenticateClientAttestation(a.value, p.value, {
+					engine: testEngine,
 					...config,
 					acceptClient: async () => {
 						now = 1601;
@@ -82,14 +245,18 @@ export default (Q: QUnit) => {
 				const wrong = await C.signApplicationJwt(
 					{ ...decodeJwt(p.value), aud: "https://other.example" },
 					"oauth-client-attestation-pop+jwt",
-					new C.JwkSigner(instance.privateKey),
-					options,
+					new SigningEntryFixture(instance.privateKey),
+					{ ...options, engine: testEngine },
 				);
 				if (!wrong.ok) throw new Error("fixture failed");
-				const invalid = await C.authenticateClientAttestation(a.value, wrong.value, config);
+				const invalid = await C.authenticateClientAttestation(a.value, wrong.value, {
+					...config,
+					engine: testEngine,
+				});
 				t.false(invalid.ok);
 				if (!invalid.ok) t.notEqual(invalid.error.attestationError, "use_fresh_attestation");
 				const unavailable = await C.authenticateClientAttestation(a.value, p.value, {
+					engine: testEngine,
 					...config,
 					getAttester: () =>
 						C.err({ code: C.FederationErrorCode.ServerError, description: "unavailable" }),
@@ -102,12 +269,12 @@ export default (Q: QUnit) => {
 			},
 		);
 		Q.test("protocol JWT verification enforces application algorithm restrictions", async (t) => {
-			const key = await C.generateSigningKey();
+			const key = await generateSigningKey();
 			const token = await C.signApplicationJwt(
 				{ iss: "client", exp: 2000 },
 				"oauth-authz-req+jwt",
-				new C.JwkSigner(key.privateKey),
-				{ clock: { now: () => 1500 } },
+				new SigningEntryFixture(key.privateKey),
+				{ engine: testEngine, clock: { now: () => 1500 } },
 			);
 			if (!token.ok) throw new Error("fixture failed");
 			for (const allowedAlgorithms of [undefined, ["ES256"], ["RS256"], []]) {
@@ -117,7 +284,9 @@ export default (Q: QUnit) => {
 					{
 						expectedTyp: "oauth-authz-req+jwt",
 						clock: { now: () => 1500 },
-						...(allowedAlgorithms ? { allowedAlgorithms } : {}),
+						...(allowedAlgorithms
+							? { engine: testEngine, allowedAlgorithms }
+							: { engine: testEngine }),
 					},
 				);
 				t.equal(result.ok, allowedAlgorithms === undefined || allowedAlgorithms.includes("ES256"));
@@ -127,26 +296,27 @@ export default (Q: QUnit) => {
 		Q.test(
 			"private-key assertions share valid NumericDates and reject unusable lifetimes before signing",
 			async (t) => {
-				const key = await C.generateSigningKey();
-				const signer = new C.JwkSigner(key.privateKey);
+				const key = await generateSigningKey();
+				const signer = new SigningEntryFixture(key.privateKey);
 				let calls = 0;
-				const observed: C.JwtSigner = {
-					alg: signer.alg,
-					kid: signer.kid,
-					signJwt: (...args) => {
+				const observed: import("@oidfed/crypto").KeyringEntry = instrumentSigningEntry(
+					signer,
+					(...args) => {
 						calls++;
 						return signer.signJwt(...args);
 					},
-				};
+				);
 				for (const expiresInSeconds of [0, -1, NaN, Infinity])
 					await t.rejects(
 						C.createClientAssertion("client", "https://server.example", observed, {
+							engine: testEngine,
 							clock: { now: () => 1000 },
 							expiresInSeconds,
 						}),
 					);
 				t.equal(calls, 0);
 				const jwt = await C.createClientAssertion("client", "https://server.example", observed, {
+					engine: testEngine,
 					clock: { now: () => 1000.25 },
 					expiresInSeconds: 0.5,
 				});
@@ -157,7 +327,7 @@ export default (Q: QUnit) => {
 							jwt,
 							{ keys: [key.publicKey] },
 							"https://server.example",
-							{ clock: { now: () => 1000.25 } },
+							{ engine: testEngine, clock: { now: () => 1000.25 } },
 						)
 					).ok,
 				);
@@ -217,6 +387,7 @@ export default (Q: QUnit) => {
 						},
 					},
 					async () => new Response("ok"),
+					{ engine: testEngine },
 				);
 				const request = (credential: string) =>
 					new Request("https://server.example/endpoint", {
@@ -246,6 +417,7 @@ export default (Q: QUnit) => {
 						},
 					},
 					async () => new Response("ok"),
+					{ engine: testEngine },
 				);
 				t.equal(
 					(
@@ -299,6 +471,7 @@ export default (Q: QUnit) => {
 						"https://server.example/endpoint",
 						new URLSearchParams(),
 						{
+							engine: testEngine,
 							signal: controller.signal,
 							httpTimeoutMs: 20,
 							authentication: {
@@ -326,8 +499,8 @@ export default (Q: QUnit) => {
 		Q.test(
 			"generic attestation issuance and authentication preserve identity, trust expiry and replay",
 			async (t) => {
-				const attester = await C.generateSigningKey(),
-					client = await C.generateSigningKey();
+				const attester = await generateSigningKey(),
+					client = await generateSigningKey();
 				let time = 1000;
 				const options = { clock: { now: () => time }, clockSkewSeconds: 0 };
 				const attestation = await C.createClientAttestation(
@@ -338,24 +511,25 @@ export default (Q: QUnit) => {
 						expiresAt: 2000,
 						claims: JSON.parse('{"__proto__":{"safe":true},"label":"membership"}'),
 					},
-					new C.JwkSigner(attester.privateKey),
-					options,
+					new SigningEntryFixture(attester.privateKey),
+					{ ...options, engine: testEngine },
 				);
 				t.true(attestation.ok);
 				if (!attestation.ok) return;
 				t.false(Object.hasOwn(Object.prototype, "safe"));
 				const proof = await C.createClientAttestationProof(
 					{ clientId: "client", audience: "https://server.example" },
-					new C.JwkSigner(client.privateKey),
-					options,
+					new SigningEntryFixture(client.privateKey),
+					{ ...options, engine: testEngine },
 				);
 				t.true(proof.ok);
 				if (!proof.ok) return;
 				const config: C.AuthenticateClientAttestationOptions = {
+					engine: testEngine,
 					...options,
 					audience: "https://server.example",
 					getAttester: () => C.ok({ jwks: { keys: [attester.publicKey] }, expiresAt: 1500 }),
-					replayStore: new C.MemoryReplayStore(options),
+					replayStore: new C.MemoryReplayStore({ ...options, engine: testEngine }),
 					acceptClient: () => true,
 				};
 				t.true((await C.authenticateClientAttestation(attestation.value, proof.value, config)).ok);
@@ -371,6 +545,7 @@ export default (Q: QUnit) => {
 				t.false(
 					(
 						await C.verifyClientAttestation(attestation.value, {
+							engine: testEngine,
 							...options,
 							getAttester: () => {
 								time = 1501;
@@ -384,8 +559,8 @@ export default (Q: QUnit) => {
 						await C.createClientAttestation(
 							"attester",
 							{ subject: "client", confirmationKey: client.privateKey, expiresAt: 2000 },
-							new C.JwkSigner(attester.privateKey),
-							options,
+							new SigningEntryFixture(attester.privateKey),
+							{ ...options, engine: testEngine },
 						)
 					).ok,
 				);
@@ -394,8 +569,8 @@ export default (Q: QUnit) => {
 		Q.test(
 			"attestation creation binds supplied chains and controlled errors survive endpoint dispatch",
 			async (t) => {
-				const key = await C.generateSigningKey();
-				const signer = new C.JwkSigner(key.privateKey);
+				const key = await generateSigningKey();
+				const signer = new SigningEntryFixture(key.privateKey);
 				const ec = await C.signEntityStatement(
 					{
 						iss: "https://other.example",
@@ -410,7 +585,7 @@ export default (Q: QUnit) => {
 					"https://attester.example",
 					{ subject: "client", confirmationKey: key.publicKey, expiresAt: 2000 },
 					signer,
-					{ clock: { now: () => 1000 }, trustChain: [ec] },
+					{ engine: testEngine, clock: { now: () => 1000 }, trustChain: [ec] },
 				);
 				t.false(created.ok);
 				const handler = C.createEndpointAuthenticatedHandler(
@@ -435,6 +610,7 @@ export default (Q: QUnit) => {
 						},
 					},
 					async () => new Response("should not run"),
+					{ engine: testEngine },
 				);
 				const response = await handler(
 					new Request("https://server.example/endpoint", {
@@ -452,23 +628,24 @@ export default (Q: QUnit) => {
 		Q.test(
 			"server challenge freshness supports atomic consumption and explicit freshness-only mode",
 			async (t) => {
-				const attester = await C.generateSigningKey(),
-					client = await C.generateSigningKey();
+				const attester = await generateSigningKey(),
+					client = await generateSigningKey();
 				const clock = { now: () => 1000 };
 				const attestation = await C.createClientAttestation(
 					"attester",
 					{ subject: "client", confirmationKey: client.publicKey, expiresAt: 3000 },
-					new C.JwkSigner(attester.privateKey),
-					{ clock },
+					new SigningEntryFixture(attester.privateKey),
+					{ engine: testEngine, clock },
 				);
 				const proof = await C.createClientAttestationProof(
 					{ clientId: "client", audience: "https://server.example", challenge: "opaque" },
-					new C.JwkSigner(client.privateKey),
-					{ clock: { now: () => 1 } },
+					new SigningEntryFixture(client.privateKey),
+					{ engine: testEngine, clock: { now: () => 1 } },
 				);
 				if (!attestation.ok || !proof.ok) throw new Error("Invalid fixture");
 				let consumes = 0;
 				const options: C.AuthenticateClientAttestationOptions = {
+					engine: testEngine,
 					clock,
 					clockSkewSeconds: 0,
 					audience: "https://server.example",
@@ -511,18 +688,18 @@ export default (Q: QUnit) => {
 		Q.test(
 			"header and concatenated serialization reject duplicates and challenge endpoints remain host backed",
 			async (t) => {
-				const key = await C.generateSigningKey(),
-					signer = new C.JwkSigner(key.privateKey);
+				const key = await generateSigningKey(),
+					signer = new SigningEntryFixture(key.privateKey);
 				const a = await C.createClientAttestation(
 					"issuer",
 					{ subject: "client", confirmationKey: key.publicKey, expiresAt: 2000 },
 					signer,
-					{ clock: { now: () => 1000 } },
+					{ engine: testEngine, clock: { now: () => 1000 } },
 				);
 				const p = await C.createClientAttestationProof(
 					{ clientId: "client", audience: "https://server.example" },
 					signer,
-					{ clock: { now: () => 1000 } },
+					{ engine: testEngine, clock: { now: () => 1000 } },
 				);
 				if (!a.ok || !p.ok) throw new Error("Invalid fixture");
 				const headers = C.clientAttestationHeaders(a.value, p.value);
@@ -530,13 +707,14 @@ export default (Q: QUnit) => {
 				t.true(C.parseClientAttestationHeaders(headers.value).ok);
 				headers.value.append("OAuth-Client-Attestation", a.value);
 				t.false(C.parseClientAttestationHeaders(headers.value).ok);
-				const handler = C.createAttestationChallengeHandler(() => "opaque");
+				const handler = C.createAttestationChallengeHandler(() => "opaque", { engine: testEngine });
 				t.equal((await handler(new Request("https://server.example/challenge"))).status, 405);
 				const response = await handler(
 					new Request("https://server.example/challenge", { method: "POST" }),
 				);
 				t.equal(response.headers.get("cache-control"), "no-store");
 				const challenge = await C.fetchAttestationChallenge("https://server.example/challenge", {
+					engine: testEngine,
 					httpClient: async (_url, init) => {
 						t.equal(init?.method, "POST");
 						return response;

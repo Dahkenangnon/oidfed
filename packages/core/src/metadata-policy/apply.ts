@@ -1,3 +1,4 @@
+import { cloneData } from "../data-copy.js";
 /** Application of resolved metadata policies with isolated operator callbacks. */
 
 import { callSynchronous, setOwn } from "../callbacks.js";
@@ -28,7 +29,7 @@ export function applyMetadataPolicy(
 			options?.customOperators,
 		);
 
-		const result = structuredClone(metadata) as Record<string, Record<string, unknown>>;
+		const result = cloneData(metadata) as Record<string, Record<string, unknown>>;
 		// Federation §3.1.1 requires an object for every declared entity type.
 		for (const [entityType, value] of Object.entries(result)) {
 			if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -45,7 +46,7 @@ export function applyMetadataPolicy(
 				if (!Object.hasOwn(result, entityType)) continue;
 				const entityResult = result[entityType];
 				for (const [param, value] of Object.entries(params as Record<string, unknown>)) {
-					if (entityResult) setOwn(entityResult, param, structuredClone(value));
+					if (entityResult) setOwn(entityResult, param, cloneData(value));
 				}
 			}
 		}
@@ -100,7 +101,7 @@ export function applyMetadataPolicy(
 						});
 					} else {
 						try {
-							setOwn(entityMetadata, paramName, structuredClone(applyResult.value));
+							setOwn(entityMetadata, paramName, cloneData(applyResult.value));
 						} catch {
 							return err({
 								code: InternalErrorCode.MetadataPolicyViolation,

@@ -1,6 +1,7 @@
 import { type JWK, jwkThumbprint } from "@oidfed/core";
 import { Badge, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@oidfed/ui";
 import { useEffect, useState } from "react";
+import { engine } from "../../lib/crypto.js";
 import { CopyButton } from "./copy-button";
 
 interface JwkTableProps {
@@ -16,7 +17,7 @@ function useJwkThumbprints(keys: readonly Record<string, unknown>[]): Map<number
 			const results = new Map<number, string>();
 			for (let i = 0; i < keys.length; i++) {
 				try {
-					const tp = await jwkThumbprint(keys[i] as JWK);
+					const tp = await jwkThumbprint(keys[i] as JWK, engine);
 					results.set(i, tp);
 				} catch {
 					// skip keys that can't be thumbprinted

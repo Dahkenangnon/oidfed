@@ -1,5 +1,9 @@
-import { generateSigningKey, JwkSigner, signEntityStatement } from "@oidfed/core";
+import { signEntityStatement } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
+import {
+	generateSigningKey,
+	SigningEntryFixture,
+} from "../../../../tests/tap/fixtures/software-crypto.js";
 import { handler } from "../../src/commands/decode.js";
 import { JsonFormatter } from "../../src/output/json.js";
 import { createLogger } from "../../src/util/logger.js";
@@ -13,7 +17,7 @@ async function makeJwt() {
 	const key = await generateSigningKey("ES256");
 	return signEntityStatement(
 		{ iss: "https://ta.example.com", sub: "https://ta.example.com", iat: 1000, exp: 9999999999 },
-		new JwkSigner(key.privateKey),
+		new SigningEntryFixture(key.privateKey),
 	);
 }
 

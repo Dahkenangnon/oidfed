@@ -1,61 +1,38 @@
 /** Asymmetric key generation, public JWK handling, and verification-key selection. */
 
-import * as jose from "jose";
-import { SUPPORTED_ALGORITHMS, type SupportedAlgorithm } from "../constants.js";
+import {
+	type CryptoEngine,
+	DEFAULT_JWS_REGISTRY,
+	encodeBase64url,
+	jwkThumbprint as thumbprint,
+	utf8Encode,
+} from "@oidfed/crypto";
 import type { JWK, JWKSet } from "../schemas/jwk.js";
 
 /** Returns true if the given value is a supported asymmetric signing algorithm (not "none"). */
-export function isValidAlgorithm(alg: unknown): alg is string {
-	return (
-		typeof alg === "string" &&
-		alg !== "none" &&
-		(SUPPORTED_ALGORITHMS as readonly string[]).includes(alg)
-	);
+export function isValidAlgorithm(alg: unknown, registry = DEFAULT_JWS_REGISTRY): alg is string {
+	return typeof alg === "string" && registry.algorithm(alg) !== undefined;
 }
 
-const ALG_TO_KTY: Record<string, string> = {
-	ES256: "EC",
-	ES384: "EC",
-	ES512: "EC",
-	PS256: "RSA",
-	PS384: "RSA",
-	PS512: "RSA",
-	RS256: "RSA",
-};
-
-/** Generate an asymmetric signing key pair for the given algorithm. */
-export async function generateSigningKey(
-	alg: SupportedAlgorithm = "ES256",
-): Promise<{ publicKey: JWK; privateKey: JWK }> {
-	const { publicKey, privateKey } = await jose.generateKeyPair(alg, {
-		extractable: true,
-	});
-	const pub = await jose.exportJWK(publicKey);
-	const priv = await jose.exportJWK(privateKey);
-	const kid = await jose.calculateJwkThumbprint(pub);
-	return {
-		publicKey: stripPrivateFields({ ...pub, kid, alg, use: "sig" } as unknown as JWK),
-		privateKey: { ...priv, kid, alg, use: "sig" } as unknown as JWK,
-	};
-}
-
-/** Compute JWK thumbprint (SHA-256) for the given key. */
-export async function jwkThumbprint(key: JWK): Promise<string> {
-	return jose.calculateJwkThumbprint(
-		key as Parameters<typeof jose.calculateJwkThumbprint>[0],
-		"sha256",
-	);
+/** Compute the RFC 7638 SHA-256 thumbprint using the supplied engine. */
+export async function jwkThumbprint(
+	key: JWK,
+	engine: CryptoEngine,
+	registry = DEFAULT_JWS_REGISTRY,
+): Promise<string> {
+	return encodeBase64url(await thumbprint(engine, key, registry));
 }
 
 /** Select the best verification key from a JWKS, matching by `kid` first then by algorithm. */
 export function selectVerificationKey(
 	header: { kid?: string; alg?: string },
 	jwks: JWKSet,
+	registry = DEFAULT_JWS_REGISTRY,
 ): JWK | undefined {
 	// Keep the original set intact; unsupported types are ineligible candidates (RFC 7517 §5).
 	const keys = jwks.keys.filter(
 		(key) =>
-			["RSA", "EC", "OKP"].includes(key.kty) &&
+			registry.keyType(key.kty) !== undefined &&
 			(key.key_ops === undefined || key.key_ops.includes("verify")),
 	);
 
@@ -68,7 +45,7 @@ export function selectVerificationKey(
 	}
 
 	if (header.alg) {
-		const expectedKty = ALG_TO_KTY[header.alg];
+		const expectedKty = registry.algorithm(header.alg)?.keyType;
 		if (expectedKty) {
 			const byAlg = keys.find(
 				(k) =>
@@ -82,9 +59,8 @@ export function selectVerificationKey(
 }
 
 export function timingSafeEqual(a: string, b: string): boolean {
-	const enc = new TextEncoder();
-	const bufA = enc.encode(a);
-	const bufB = enc.encode(b);
+	const bufA = utf8Encode(a);
+	const bufB = utf8Encode(b);
 	// Length mismatch leaks that lengths differ; acceptable because values
 	// being compared (entity IDs, client_id) are public HTTPS URLs.
 	if (bufA.length !== bufB.length) return false;

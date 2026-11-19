@@ -1,5 +1,6 @@
 import { entityId, resolveTrustChains, validateTrustChain } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
+import { testEngine } from "../../tap/fixtures/software-crypto.js";
 import { useFederation } from "../helpers/lifecycle.js";
 import { policyOperatorsTopology } from "../topologies/policy-operators.js";
 
@@ -11,13 +12,15 @@ describe("Metadata policy operators", () => {
 		const port = server.port;
 
 		const opId = entityId(`https://op.ofed.test:${port}`);
-		const resolved = await resolveTrustChains(opId, trustAnchors);
+		const resolved = await resolveTrustChains(opId, trustAnchors, { engine: testEngine });
 		expect(resolved.chains).toHaveLength(1);
 
 		const firstChain = resolved.chains[0];
 		expect(firstChain).toBeDefined();
 		if (!firstChain) return;
-		const validation = await validateTrustChain([...firstChain.statements], trustAnchors);
+		const validation = await validateTrustChain([...firstChain.statements], trustAnchors, {
+			engine: testEngine,
+		});
 		expect(validation.valid).toBe(true);
 		if (!validation.valid) return;
 
@@ -33,11 +36,13 @@ describe("Metadata policy operators", () => {
 		const port = server.port;
 
 		const opId = entityId(`https://op.ofed.test:${port}`);
-		const resolved = await resolveTrustChains(opId, trustAnchors);
+		const resolved = await resolveTrustChains(opId, trustAnchors, { engine: testEngine });
 		const firstChain = resolved.chains[0];
 		expect(firstChain).toBeDefined();
 		if (!firstChain) return;
-		const validation = await validateTrustChain([...firstChain.statements], trustAnchors);
+		const validation = await validateTrustChain([...firstChain.statements], trustAnchors, {
+			engine: testEngine,
+		});
 		expect(validation.valid).toBe(true);
 		if (!validation.valid) return;
 
@@ -54,11 +59,13 @@ describe("Metadata policy operators", () => {
 		const port = server.port;
 
 		const opId = entityId(`https://op.ofed.test:${port}`);
-		const resolved = await resolveTrustChains(opId, trustAnchors);
+		const resolved = await resolveTrustChains(opId, trustAnchors, { engine: testEngine });
 		const firstChain = resolved.chains[0];
 		expect(firstChain).toBeDefined();
 		if (!firstChain) return;
-		const validation = await validateTrustChain([...firstChain.statements], trustAnchors);
+		const validation = await validateTrustChain([...firstChain.statements], trustAnchors, {
+			engine: testEngine,
+		});
 		expect(validation.valid).toBe(true);
 		if (!validation.valid) return;
 
@@ -73,11 +80,13 @@ describe("Metadata policy operators", () => {
 		const port = server.port;
 
 		const opId = entityId(`https://op.ofed.test:${port}`);
-		const resolved = await resolveTrustChains(opId, trustAnchors);
+		const resolved = await resolveTrustChains(opId, trustAnchors, { engine: testEngine });
 		const firstChain = resolved.chains[0];
 		expect(firstChain).toBeDefined();
 		if (!firstChain) return;
-		const validation = await validateTrustChain([...firstChain.statements], trustAnchors);
+		const validation = await validateTrustChain([...firstChain.statements], trustAnchors, {
+			engine: testEngine,
+		});
 		expect(validation.valid).toBe(true);
 		if (!validation.valid) return;
 

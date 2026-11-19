@@ -98,8 +98,8 @@ export function buildExtendedListRequestParameters(
  */
 export async function fetchExtendedSubordinatesList(
 	endpoint: string,
-	params?: ExtendedListRequestParams,
-	options?: FederationOptions,
+	params: ExtendedListRequestParams | undefined,
+	options: FederationOptions,
 ): Promise<Result<ExtendedListResponse, FederationError>> {
 	safeLogger(options?.logger)?.debug("Starting fetch extended subordinates list");
 

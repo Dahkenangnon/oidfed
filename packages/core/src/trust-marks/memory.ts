@@ -1,3 +1,4 @@
+import { cloneData } from "../data-copy.js";
 /** Detached in-memory Trust Mark records with serialized store transactions. */
 
 import { createConcurrencyLimiter } from "../async-operation.js";
@@ -12,7 +13,7 @@ import type {
 	TrustMarkStore,
 } from "./storage.js";
 
-const detached = <T>(value: T): T => structuredClone(value);
+const detached = <T>(value: T): T => cloneData(value);
 
 function compareStrings(left: string, right: string): number {
 	return left < right ? -1 : left > right ? 1 : 0;
@@ -45,6 +46,7 @@ export class MemoryTrustMarkStorage implements TrustMarkStorage {
 		private readonly mutate: <T>(
 			operation: (records: Map<string, TrustMarkRecord>) => T | Promise<T>,
 		) => Promise<T>,
+		private readonly maxCompactBytes?: number,
 	) {}
 
 	private records(): Map<string, TrustMarkRecord> {
@@ -64,7 +66,7 @@ export class MemoryTrustMarkStorage implements TrustMarkStorage {
 	}): Promise<TrustMarkRecord[]> {
 		return detached(
 			[...this.records().values()].filter((record) => {
-				const parsed = decodeEntityStatement(record.jwt);
+				const parsed = decodeEntityStatement(record.jwt, { maxCompactBytes: this.maxCompactBytes });
 				return (
 					parsed.ok &&
 					parsed.value.payload.iss === filter.issuer &&
@@ -89,7 +91,7 @@ export class MemoryTrustMarkStorage implements TrustMarkStorage {
 				(record) =>
 					record.trustMarkType === trustMarkType &&
 					record.subject === subject &&
-					isStoredTrustMarkEligible(record, validAt),
+					isStoredTrustMarkEligible(record, validAt, this.maxCompactBytes),
 			)
 			.sort((a, b) =>
 				a.issuedAt === b.issuedAt ? compareStrings(b.jwt, a.jwt) : b.issuedAt - a.issuedAt,
@@ -117,7 +119,7 @@ export class MemoryTrustMarkStorage implements TrustMarkStorage {
 				(record) =>
 					record.trustMarkType === trustMarkType &&
 					(options.subject === undefined || record.subject === options.subject) &&
-					isStoredTrustMarkEligible(record, validAt),
+					isStoredTrustMarkEligible(record, validAt, this.maxCompactBytes),
 			),
 		).sort((a, b) => compareStrings(a.subject, b.subject));
 		if (options.cursor !== undefined) {
@@ -135,7 +137,9 @@ export class MemoryTrustMarkStorage implements TrustMarkStorage {
 	/** Return the latest locally eligible record for each type held by the subject. */
 	async listValidForSubject(subject: EntityId, validAt: number): Promise<TrustMarkRecord[]> {
 		const records = [...this.records().values()].filter(
-			(record) => record.subject === subject && isStoredTrustMarkEligible(record, validAt),
+			(record) =>
+				record.subject === subject &&
+				isStoredTrustMarkEligible(record, validAt, this.maxCompactBytes),
 		);
 		const latest = new Map<string, TrustMarkRecord>();
 		for (const record of records) {
@@ -152,7 +156,9 @@ export class MemoryTrustMarkStorage implements TrustMarkStorage {
 	/** Check local issuance flags and lifetimes; this does not authenticate the stored JWT. */
 	async hasAnyValid(subject: EntityId, validAt: number): Promise<boolean> {
 		return [...this.records().values()].some(
-			(record) => record.subject === subject && isStoredTrustMarkEligible(record, validAt),
+			(record) =>
+				record.subject === subject &&
+				isStoredTrustMarkEligible(record, validAt, this.maxCompactBytes),
 		);
 	}
 
@@ -179,7 +185,7 @@ export class MemoryTrustMarkStorage implements TrustMarkStorage {
 			if (!records) throw new Error("Trust mark storage is not enabled");
 			let found = false;
 			for (const [jwt, record] of records) {
-				const parsed = decodeEntityStatement(jwt);
+				const parsed = decodeEntityStatement(jwt, { maxCompactBytes: this.maxCompactBytes });
 				if (issuer !== undefined && (!parsed.ok || parsed.value.payload.iss !== issuer)) continue;
 				if (record.trustMarkType === trustMarkType && record.subject === subject && record.active) {
 					records.set(jwt, { ...record, active: false, revokedAt });
@@ -195,10 +201,17 @@ export class MemoryTrustMarkStorage implements TrustMarkStorage {
 export class MemoryTrustMarkStore implements TrustMarkStore {
 	private records = new Map<string, TrustMarkRecord>();
 	private readonly serialize = createConcurrencyLimiter(1);
-	readonly trustMarks = new MemoryTrustMarkStorage(
-		() => this.records,
-		(op) => this.exclusive(() => op(this.records)),
-	);
+	readonly trustMarks: MemoryTrustMarkStorage;
+	private readonly maxCompactBytes: number | undefined;
+	/** Set the same compact size limit used by the issuing host. */
+	constructor(options?: { readonly maxCompactBytes?: number }) {
+		this.maxCompactBytes = options?.maxCompactBytes;
+		this.trustMarks = new MemoryTrustMarkStorage(
+			() => this.records,
+			(op) => this.exclusive(() => op(this.records)),
+			this.maxCompactBytes,
+		);
+	}
 	private async exclusive<T>(operation: () => Promise<T> | T): Promise<T> {
 		return this.serialize(async () => operation());
 	}
@@ -207,11 +220,12 @@ export class MemoryTrustMarkStore implements TrustMarkStore {
 		operation: (tx: { trustMarks: TrustMarkStorage }) => Promise<T>,
 	): Promise<T> {
 		return this.exclusive(async () => {
-			const records = structuredClone(this.records);
+			const records = cloneData(this.records);
 			const result = await operation({
 				trustMarks: new MemoryTrustMarkStorage(
 					() => records,
 					async (op) => op(records),
+					this.maxCompactBytes,
 				),
 			});
 			this.records = records;
@@ -224,12 +238,13 @@ export class MemoryTrustMarkStore implements TrustMarkStore {
 			trustMarks: Pick<TrustMarkStorage, "listCandidates" | "getByJwt">;
 		}) => Promise<T>,
 	): Promise<T> {
-		const records = await this.exclusive(() => structuredClone(this.records));
+		const records = await this.exclusive(() => cloneData(this.records));
 		const view = new MemoryTrustMarkStorage(
 			() => records,
 			async () => {
 				throw new Error("Read-only snapshot");
 			},
+			this.maxCompactBytes,
 		);
 		return operation({
 			trustMarks: {

@@ -2,6 +2,7 @@ import { verifySignedJwkSet } from "@oidfed/core";
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useSignedJwks } from "@/features/entity-inspector/hooks/use-signed-jwks";
+import { engine } from "@/lib/crypto";
 
 vi.mock("@oidfed/core", () => ({
 	verifySignedJwkSet: vi.fn().mockResolvedValue({
@@ -55,7 +56,7 @@ describe("useSignedJwks", () => {
 		expect(verifySignedJwkSet).toHaveBeenCalledWith(
 			expect.any(String),
 			{ keys: [{ kty: "EC" }] },
-			{ expectedIssuer: "https://op.test", expectedOwner: "https://op.test" },
+			{ engine, expectedIssuer: "https://op.test", expectedOwner: "https://op.test" },
 		);
 	});
 

@@ -1,7 +1,9 @@
+import { decodeBase64url, utf8Decode } from "@oidfed/crypto";
+import { registryFor } from "../crypto-context.js";
+import { cloneData } from "../data-copy.js";
+
 /** Trust chain authentication, constraint checks, and effective metadata validation. */
 
-// biome-ignore assist/source/organizeImports: Preserve dependency evaluation order.
-import { trustMarkOperation } from "../trust-marks/operation.js";
 import { freezeSnapshot, setOwn } from "../callbacks.js";
 import {
 	DEFAULT_CLOCK_SKEW_SECONDS,
@@ -9,7 +11,6 @@ import {
 	InternalErrorCode,
 	JwtTyp,
 	PolicyOperator,
-	SUPPORTED_ALGORITHMS,
 } from "../constants.js";
 import {
 	createCustomConstraintRunner,
@@ -34,6 +35,7 @@ import {
 	validateEntityStatementTimeClaims,
 } from "../statement-validation.js";
 import { evaluatePublishedTrustMarks } from "../trust-marks/evaluate.js";
+import { trustMarkOperation } from "../trust-marks/operation.js";
 import {
 	type ChainSelectionStrategy,
 	type Clock,
@@ -84,12 +86,8 @@ function isJsonObject(value: unknown): value is Record<string, unknown> {
 function decodeJwtPayloadJson(jwt: string): string | undefined {
 	const payload = jwt.split(".")[1];
 	if (!payload) return undefined;
-	const base64 = payload.replace(/-/g, "+").replace(/_/g, "/");
-	const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, "=");
 	try {
-		const binary = atob(padded);
-		const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
-		return new TextDecoder().decode(bytes);
+		return utf8Decode(decodeBase64url(payload));
 	} catch {
 		return undefined;
 	}
@@ -278,6 +276,7 @@ export function validateTrustMarkReferenceSyntax(
 	errors: ValidationError[],
 	trustMarks: unknown,
 	statementIndex: number,
+	options?: Pick<FederationOptions, "maxCompactBytes">,
 ) {
 	if (!Array.isArray(trustMarks)) {
 		return;
@@ -301,7 +300,7 @@ export function validateTrustMarkReferenceSyntax(
 				(segment) =>
 					segment.length > 0 && segment.length % 4 !== 1 && !/[^A-Za-z0-9_-]/.test(segment),
 			);
-		const decoded = decodeEntityStatement(trustMarkJwt);
+		const decoded = decodeEntityStatement(trustMarkJwt, options);
 		if (
 			!hasSignedCompactForm ||
 			!decoded.ok ||
@@ -335,6 +334,7 @@ function validateRawStatementShape(
 	statement: ParsedEntityStatement,
 	statementIndex: number,
 	lastIndex: number,
+	options: FederationOptions,
 ) {
 	const payload = statement.payload as Record<string, unknown>;
 	const isSubjectEc = statementIndex === 0;
@@ -370,7 +370,7 @@ function validateRawStatementShape(
 	}
 
 	validateMetadataPolicyShape(errors, payload.metadata_policy, statementIndex);
-	validateTrustMarkReferenceSyntax(errors, payload.trust_marks, statementIndex);
+	validateTrustMarkReferenceSyntax(errors, payload.trust_marks, statementIndex, options);
 
 	const metadataPolicyCrit = payload.metadata_policy_crit;
 	if (Array.isArray(metadataPolicyCrit)) {
@@ -402,7 +402,7 @@ interface TrustChainValidationOptions extends FederationOptions {
 /** Bound supplied work before copying statements or decoding JWTs (Federation §18.1). */
 function chainLengthError(
 	chain: readonly string[],
-	options?: FederationOptions,
+	options: FederationOptions,
 ): string | undefined {
 	const maximum = options?.maxChainLength ?? DEFAULT_MAX_CHAIN_LENGTH;
 	if (!Number.isSafeInteger(maximum) || maximum <= 0)
@@ -415,7 +415,7 @@ function chainLengthError(
 export async function validateTrustChain(
 	chain: ReadonlyArray<string>,
 	trustAnchors: TrustAnchorSet,
-	options?: TrustChainValidationOptions,
+	options: TrustChainValidationOptions,
 ): Promise<ValidationResult> {
 	safeLogger(options?.logger)?.debug("Starting validate trust chain");
 
@@ -432,9 +432,9 @@ export async function validateTrustChain(
 		errors: [{ code: InternalErrorCode.TrustChainInvalid, message }],
 	});
 	if (chain.length < 2) return fail("Explicit registration requires an Immediate Superior");
-	const decoded = decodeEntityStatement(request.jwt);
+	const decoded = decodeEntityStatement(request.jwt, options);
 	if (!decoded.ok) return fail(decoded.error.description);
-	const superior = decodeEntityStatement(chain[1] as string);
+	const superior = decodeEntityStatement(chain[1] as string, options);
 	if (
 		!superior.ok ||
 		superior.value.payload.iss === superior.value.payload.sub ||
@@ -509,6 +509,7 @@ export function validateResolvedMetadata(
 	metadata: Record<string, Record<string, unknown>>,
 	subject: string,
 	pending: readonly ContextualMetadataClaim[] = [],
+	registry?: FederationOptions["algorithmRegistry"],
 ): void {
 	const fail = (field: string, message: string) =>
 		addError(
@@ -575,7 +576,7 @@ export function validateResolvedMetadata(
 			}
 			continue;
 		}
-		const use = validateJwkSetUseRequirement(jwks.data.keys);
+		const use = validateJwkSetUseRequirement(jwks.data.keys, registry);
 		if (!use.ok) fail(`${type}.jwks`, use.error.description);
 	}
 }
@@ -618,7 +619,7 @@ export async function prepareTrustChainValidation(
 				{ code: InternalErrorCode.TrustChainInvalid, message: limitError },
 			]);
 		const savedChain = [...chain];
-		const savedAnchors = new Map([...anchors].map(([id, anchor]) => [id, structuredClone(anchor)]));
+		const savedAnchors = new Map([...anchors].map(([id, anchor]) => [id, cloneData(anchor)]));
 		const { deferredClaims, ...validationOptions } = options;
 		const savedOptions = {
 			...validationOptions,
@@ -636,12 +637,12 @@ export async function prepareTrustChainValidation(
 			...(options.trustMarkIssuerKeys
 				? {
 						trustMarkIssuerKeys: new Map(
-							[...options.trustMarkIssuerKeys].map(([id, keys]) => [id, structuredClone(keys)]),
+							[...options.trustMarkIssuerKeys].map(([id, keys]) => [id, cloneData(keys)]),
 						),
 					}
 				: {}),
 		};
-		const stage: MetadataStage = { deferred: structuredClone(deferredClaims), pending: [] };
+		const stage: MetadataStage = { deferred: cloneData(deferredClaims), pending: [] };
 		const result = await validateTrustChainImpl(
 			savedChain,
 			savedAnchors,
@@ -657,7 +658,7 @@ export async function prepareTrustChainValidation(
 				{ code: InternalErrorCode.TrustChainInvalid, message: "Validation was cancelled" },
 			]);
 		const prepared = freezeSnapshot(
-			structuredClone({
+			cloneData({
 				entityId: result.chain.entityId,
 				trustAnchorId: result.chain.trustAnchorId,
 				expiresAt: result.chain.expiresAt,
@@ -731,7 +732,7 @@ export async function completeTrustChainValidation(
 				]);
 			}
 		}
-		const stage: MetadataStage = { context: structuredClone(context), pending: [] };
+		const stage: MetadataStage = { context: cloneData(context), pending: [] };
 		const result = await validateTrustChainImpl(
 			saved.chain,
 			saved.anchors,
@@ -759,7 +760,7 @@ export async function completeTrustChainValidation(
 export function validateTrustChainStructure(
 	chain: ReadonlyArray<string>,
 	trustAnchors: TrustAnchorSet,
-	options?: TrustChainValidationOptions,
+	options: TrustChainValidationOptions,
 ): Promise<ValidationResult> {
 	safeLogger(options?.logger)?.debug("Starting validate trust chain structure");
 
@@ -773,7 +774,7 @@ type PublicationValidationResult =
 /** Internal publication check: authenticates the EC itself without establishing a trusted path. */
 export async function validateEntityConfigurationPublication(
 	jwt: string,
-	options?: FederationOptions,
+	options: FederationOptions,
 	registration?: { readonly audience: EntityId },
 ): Promise<PublicationValidationResult> {
 	// Publication checks must not inherit registration exceptions from chain validation.
@@ -781,7 +782,7 @@ export async function validateEntityConfigurationPublication(
 		explicitRegistrationAudience: _audience,
 		explicitRegistrationRequest: _request,
 		...publicationOptions
-	} = (options ?? {}) as TrustChainValidationOptions;
+	} = options as TrustChainValidationOptions;
 	const result = await authenticateChainStatements(
 		[jwt],
 		new Map(),
@@ -825,7 +826,7 @@ type AuthenticatedStatements =
 async function authenticateChainStatements(
 	chain: readonly string[],
 	trustAnchors: TrustAnchorSet,
-	options?: TrustChainValidationOptions,
+	options: TrustChainValidationOptions,
 	publicationOnly = false,
 ): Promise<AuthenticatedStatements> {
 	try {
@@ -853,6 +854,7 @@ async function authenticateChainStatements(
 		}
 		const clockSkew = options?.clockSkewSeconds ?? DEFAULT_CLOCK_SKEW_SECONDS;
 		const verifyOptions = {
+			...options,
 			clockSkewSeconds: clockSkew,
 			...(options?.clock ? { clock: options.clock } : {}),
 		};
@@ -866,7 +868,7 @@ async function authenticateChainStatements(
 
 		const parsed: ParsedEntityStatement[] = [];
 		for (let j = 0; j < chain.length; j++) {
-			const decodeResult = decodeEntityStatement(chain[j] as string);
+			const decodeResult = decodeEntityStatement(chain[j] as string, options);
 			if (!decodeResult.ok) {
 				addError(
 					errors,
@@ -889,7 +891,7 @@ async function authenticateChainStatements(
 			const p = es.payload as Record<string, unknown>;
 			const h = es.header;
 
-			validateRawStatementShape(errors, es, j, lastStatementIndex);
+			validateRawStatementShape(errors, es, j, lastStatementIndex, options);
 
 			if (!p.iss)
 				addError(errors, InternalErrorCode.TrustChainInvalid, `Missing 'iss' at statement ${j}`, {
@@ -935,7 +937,7 @@ async function authenticateChainStatements(
 			}
 
 			const alg = h.alg as string | undefined;
-			if (!alg || alg === "none" || !(SUPPORTED_ALGORITHMS as readonly string[]).includes(alg)) {
+			if (typeof alg !== "string" || !registryFor(options).algorithm(alg)) {
 				addError(
 					errors,
 					InternalErrorCode.UnsupportedAlg,
@@ -1018,7 +1020,7 @@ async function authenticateChainStatements(
 					if (!jwks || typeof jwks !== "object") continue;
 					const keys = (jwks as { keys?: unknown }).keys;
 					if (!Array.isArray(keys)) continue;
-					const useResult = validateJwkSetUseRequirement(keys as JWK[]);
+					const useResult = validateJwkSetUseRequirement(keys as JWK[], options.algorithmRegistry);
 					if (!useResult.ok) {
 						addError(errors, InternalErrorCode.TrustChainInvalid, useResult.error.description, {
 							statementIndex: j,
@@ -1166,7 +1168,10 @@ async function authenticateChainStatements(
 			if (!selfVerify.ok) {
 				addError(
 					errors,
-					InternalErrorCode.SignatureInvalid,
+					selfVerify.error.code === InternalErrorCode.CryptoOperationFailed ||
+						selfVerify.error.code === InternalErrorCode.InvalidClock
+						? selfVerify.error.code
+						: InternalErrorCode.SignatureInvalid,
 					`Leaf EC self-signature invalid: ${selfVerify.error.description}`,
 					{ statementIndex: 0, checkNumber: 10 },
 				);
@@ -1249,7 +1254,10 @@ async function authenticateChainStatements(
 				if (!sigResult.ok) {
 					addError(
 						errors,
-						InternalErrorCode.SignatureInvalid,
+						sigResult.error.code === InternalErrorCode.CryptoOperationFailed ||
+							sigResult.error.code === InternalErrorCode.InvalidClock
+							? sigResult.error.code
+							: InternalErrorCode.SignatureInvalid,
 						`Signature invalid at statement ${j}: ${sigResult.error.description}`,
 						{ statementIndex: j, checkNumber: 13 },
 					);
@@ -1282,7 +1290,10 @@ async function authenticateChainStatements(
 			if (!taVerify.ok) {
 				addError(
 					errors,
-					InternalErrorCode.SignatureInvalid,
+					taVerify.error.code === InternalErrorCode.CryptoOperationFailed ||
+						taVerify.error.code === InternalErrorCode.InvalidClock
+						? taVerify.error.code
+						: InternalErrorCode.SignatureInvalid,
 					`TA signature verification failed: ${taVerify.error.description}`,
 					{ statementIndex: lastIdx, checkNumber: 15 },
 				);
@@ -1300,7 +1311,10 @@ async function authenticateChainStatements(
 			if (!selfVerify.ok) {
 				addError(
 					errors,
-					InternalErrorCode.SignatureInvalid,
+					selfVerify.error.code === InternalErrorCode.CryptoOperationFailed ||
+						selfVerify.error.code === InternalErrorCode.InvalidClock
+						? selfVerify.error.code
+						: InternalErrorCode.SignatureInvalid,
 					`TA EC self-signature invalid: ${selfVerify.error.description}`,
 					{ statementIndex: lastIdx, field: "jwks", checkNumber: 15 },
 				);
@@ -1428,7 +1442,10 @@ async function authenticateChainStatements(
 					if (!bound.ok) {
 						addError(
 							errors,
-							InternalErrorCode.SignatureInvalid,
+							bound.error.code === InternalErrorCode.CryptoOperationFailed ||
+								bound.error.code === InternalErrorCode.InvalidClock
+								? bound.error.code
+								: InternalErrorCode.SignatureInvalid,
 							`Subject EC '${ss.sub}' does not verify with the chain's subject keys: ${bound.error.description}`,
 							{ statementIndex: j, field: "jwks", checkNumber: 6 },
 						);
@@ -1484,7 +1501,7 @@ async function authenticateChainStatements(
 async function validateTrustChainImpl(
 	chain: readonly string[],
 	trustAnchors: TrustAnchorSet,
-	options: TrustChainValidationOptions | undefined,
+	options: TrustChainValidationOptions,
 	verifyMarks: boolean,
 	stage?: MetadataStage,
 ): Promise<ValidationResult> {
@@ -1525,10 +1542,7 @@ async function validateTrustChainImpl(
 
 		const subordinateStatements = hasTrailingTrustAnchorEc ? parsed.slice(1, -1) : parsed.slice(1);
 
-		let metadata = structuredClone(leafPayload.metadata ?? {}) as Record<
-			string,
-			Record<string, unknown>
-		>;
+		let metadata = cloneData(leafPayload.metadata ?? {}) as Record<string, Record<string, unknown>>;
 
 		// Merge Immediate Superior's SS metadata before applying allowed_entity_types constraints,
 		// so the filter sees the fully merged metadata as required by the spec.
@@ -1651,7 +1665,13 @@ async function validateTrustChainImpl(
 		// Federation §§5 and 6.1.4.2 apply to the final metadata, including
 		// chains resolved through superior overrides without a metadata policy.
 		if (errors.length === 0) {
-			validateResolvedMetadata(errors, resolvedMetadata, leafPayload.iss as string, stage?.pending);
+			validateResolvedMetadata(
+				errors,
+				resolvedMetadata,
+				leafPayload.iss as string,
+				stage?.pending,
+				options.algorithmRegistry,
+			);
 			if (errors.length > 0) failureMessage = "Resolved metadata validation failed";
 		}
 

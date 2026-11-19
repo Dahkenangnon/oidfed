@@ -1,4 +1,11 @@
+import { type KeyringEntry, StaticKeyring } from "@oidfed/crypto";
 import type QUnit from "qunit";
+import {
+	algorithmRegistry,
+	createProfileEngine,
+	profileAlgorithm,
+	profileSigner,
+} from "../../../../docs/examples/custom-crypto.js";
 import * as C from "../../../../packages/core/src/index.js";
 import {
 	OAuthAuthorizationServerRole,
@@ -6,26 +13,46 @@ import {
 	OidcProviderRole,
 	OidcRelyingPartyRole,
 	type PushedAuthorizationProof,
-	StaticProtocolSigningKeyProvider,
 } from "../../../../packages/oidc/src/index.js";
+import {
+	FixtureCrypto,
+	fixtureRoleContext,
+	generateSigningKey,
+	instrumentSigningEntry,
+	PurposeBindingsFixture,
+	SigningEntryFixture,
+	testEngine,
+} from "../../fixtures/software-crypto.js";
 import { trustChainPaths } from "../../fixtures/trust-chain-paths.js";
 
 async function fixture(
 	oidc: boolean,
 	settings: {
+		profileEntry?: KeyringEntry;
+		clientAssertionSigner?: (entry: KeyringEntry) => KeyringEntry;
 		client?: Record<string, unknown>;
 		server?: Record<string, unknown>;
 		role?: Partial<ConstructorParameters<typeof OAuthAuthorizationServerRole>[0]>;
 	} = {},
 ) {
 	const f = await trustChainPaths();
+	const protocolEntry = settings.profileEntry ?? new SigningEntryFixture(f.keys.b.privateKey);
+	const engine = settings.profileEntry ? createProfileEngine(testEngine) : testEngine;
+	const profileOptions = settings.profileEntry
+		? {
+				algorithmRegistry,
+				allowedAlgorithms: [profileAlgorithm],
+			}
+		: {};
 	const clientType = oidc ? "openid_relying_party" : "oauth_client",
 		serverType = oidc ? "openid_provider" : "oauth_authorization_server";
 	const certificate = "aG9zdC12ZXJpZmllZC10bHMtY2VydGlmaWNhdGU=";
 	const clientMetadata: Record<string, unknown> = {
 		redirect_uris: [`${f.ids.subject}/callback`],
 		client_registration_types: ["automatic"],
-		jwks: { keys: [{ ...f.keys.b.publicKey, x5c: [certificate] }] },
+		jwks: settings.profileEntry?.publishedJwks ?? {
+			keys: [{ ...f.keys.b.publicKey, x5c: [certificate] }],
+		},
 		token_endpoint_auth_methods_supported: [
 			"private_key_jwt",
 			"self_signed_tls_client_auth",
@@ -65,6 +92,8 @@ async function fixture(
 	let now = 1500;
 	const options: C.FederationOptions = {
 		...f.options,
+		...profileOptions,
+		engine,
 		clock: { now: () => now },
 		httpClient: async (input) => {
 			const url = new URL(input instanceof Request ? input.url : String(input));
@@ -79,32 +108,37 @@ async function fixture(
 	const Server = oidc ? OidcProviderRole : OAuthAuthorizationServerRole;
 	const server = new Server({
 		metadata: serverMetadata,
-		replayStore: new C.MemoryReplayStore({ clock: options.clock }),
+		replayStore: new C.MemoryReplayStore({ engine: testEngine, clock: options.clock }),
 		onRegistration: async () => {
 			registered++;
 		},
 		...settings.role,
 	});
-	server.initialize({
-		entityId: f.ids.a,
-		keyProvider: C.MemoryFederationKeyProvider.fromJWK(f.keys.a.privateKey),
-		trustAnchors: f.anchors,
-		options,
-	});
+	await server.initialize(
+		fixtureRoleContext(server, {
+			entityId: f.ids.a,
+			crypto: { ...FixtureCrypto.fromJWK(f.keys.a.privateKey), engine, ...profileOptions },
+			trustAnchors: f.anchors,
+			options,
+		}),
+	);
 	const Client = oidc ? OidcRelyingPartyRole : OAuthClientRole;
 	const client = new Client({
 		metadata: clientMetadata,
-		protocolKeyProvider: new StaticProtocolSigningKeyProvider({
-			requestObjectSigner: new C.JwkSigner(f.keys.b.privateKey),
+		signing: new PurposeBindingsFixture({
+			requestObjectSigner: protocolEntry,
+			clientAssertionSigner: settings.clientAssertionSigner?.(protocolEntry),
 		}),
 	});
-	client.initialize({
-		entityId: f.ids.subject,
-		authorityHints: [f.ids.anchor],
-		keyProvider: C.MemoryFederationKeyProvider.fromJWK(f.keys.subject.privateKey),
-		trustAnchors: f.anchors,
-		options,
-	});
+	await client.initialize(
+		fixtureRoleContext(client, {
+			entityId: f.ids.subject,
+			authorityHints: [f.ids.anchor],
+			crypto: { ...FixtureCrypto.fromJWK(f.keys.subject.privateKey), engine, ...profileOptions },
+			trustAnchors: f.anchors,
+			options,
+		}),
+	);
 	const discovery = await C.discoverEntity(f.ids.a, f.anchors, options);
 	if (!discovery.ok) throw new Error(discovery.error.description);
 	return {
@@ -117,6 +151,7 @@ async function fixture(
 		registered: () => registered,
 		serverMetadata,
 		clientChain,
+		protocolEntry,
 		setNow: (value: number) => {
 			now = value;
 		},
@@ -133,13 +168,13 @@ async function signedRequest(
 			aud: f.ids.a,
 			iat: 1500,
 			exp: 3000,
-			jti: crypto.randomUUID(),
+			jti: globalThis.crypto.randomUUID(),
 			response_type: "code",
 			redirect_uri: `${f.ids.subject}/callback`,
 			...claims,
 		},
 		"oauth-authz-req+jwt",
-		new C.JwkSigner(f.keys.b.privateKey),
+		f.protocolEntry,
 		f.options,
 		f.clientChain,
 	);
@@ -162,7 +197,7 @@ async function assertionRequest(f: Awaited<ReturnType<typeof fixture>>): Promise
 			client_assertion: await C.createClientAssertion(
 				f.ids.subject,
 				f.ids.a,
-				new C.JwkSigner(f.keys.b.privateKey),
+				f.protocolEntry,
 				f.options,
 			),
 		}),
@@ -170,6 +205,172 @@ async function assertionRequest(f: Awaited<ReturnType<typeof fixture>>): Promise
 }
 export default (Q: QUnit) => {
 	Q.module("oidc / pushed authorization proof modes", () => {
+		Q.test(
+			"registered protocol algorithms work in OIDC registration and PAR independently of federation policy",
+			async (t) => {
+				const p256 = new SigningEntryFixture((await generateSigningKey()).privateKey);
+				const profile = profileSigner("oidc-profile", p256.signer);
+				const profileEntry = await new StaticKeyring({
+					algorithmRegistry,
+					signers: { protocol: profile },
+				}).entry("protocol");
+				const f = await fixture(true, {
+					profileEntry,
+					server: {
+						request_object_signing_alg_values_supported: [profileAlgorithm],
+						token_endpoint_auth_signing_alg_values_supported: [profileAlgorithm],
+					},
+				});
+				const request = await signedRequest(f);
+				const form = new URLSearchParams(await request.clone().text());
+				const automatic = await f.server.processAutomaticRegistration(form.get("request")!);
+				t.true(
+					automatic.ok,
+					automatic.ok ? "registered Request Object" : automatic.error.description,
+				);
+				const assertion = await f.server.processPushedAuthorizationRequest(
+					await assertionRequest(f),
+				);
+				t.true(
+					assertion.ok,
+					assertion.ok ? "registered client assertion" : assertion.error.description,
+				);
+			},
+		);
+		Q.test(
+			"automatic PAR uses the signed Request Object when the provider excludes the assertion algorithm",
+			async (t) => {
+				for (const oidc of [false, true]) {
+					for (const advertised of [undefined, ["ES256"], ["RS256"]]) {
+						const f = await fixture(oidc, {
+							server: advertised
+								? { token_endpoint_auth_signing_alg_values_supported: advertised }
+								: {},
+						});
+						const useAssertion = advertised?.includes("ES256") ?? true;
+						const params = {
+							response_type: "code",
+							redirect_uri: `${f.ids.subject}/callback`,
+							...(oidc ? { scope: "openid" } : {}),
+						};
+						let posts = 0;
+						const httpClient: C.HttpClient = async (input, init) => {
+							const request = new Request(input, init);
+							if (request.url !== `${f.ids.a}/par`) return f.options.httpClient!(input, init);
+							posts++;
+							const form = new URLSearchParams(await request.clone().text());
+							t.true(form.has("request"));
+							t.equal(form.has("client_assertion"), useAssertion);
+							t.equal(form.has("client_assertion_type"), useAssertion);
+							const processed = await f.server.processPushedAuthorizationRequest(request);
+							t.true(
+								processed.ok,
+								processed.ok ? "receiver accepts the request" : processed.error.description,
+							);
+							return Response.json(
+								{ request_uri: "urn:example:par", expires_in: 60 },
+								{ status: 201 },
+							);
+						};
+						const explicit = await f.client.createPushedAuthorizationRequest(
+							f.discovery,
+							params,
+							{ mode: "private_key_jwt" },
+							{ httpClient },
+						);
+						t.equal(explicit.ok, useAssertion);
+						if (!explicit.ok)
+							t.equal(
+								explicit.error.description,
+								"Server does not support the client assertion algorithm",
+							);
+						t.equal(posts, 0);
+						const automatic = await f.client.createAuthorizationRequest(
+							f.discovery,
+							params,
+							f.anchors,
+							{ requestDelivery: "par", httpClient },
+						);
+						t.true(automatic.ok, automatic.ok ? "PAR completed" : automatic.error.description);
+						t.equal(posts, 1);
+					}
+				}
+			},
+		);
+
+		Q.test("automatic PAR surfaces assertion signing failures before posting", async (t) => {
+			let calls = 0;
+			const f = await fixture(false, {
+				server: { token_endpoint_auth_signing_alg_values_supported: ["ES256"] },
+				clientAssertionSigner: (entry) =>
+					instrumentSigningEntry(entry, async () => {
+						calls++;
+						throw new Error("signing failed");
+					}),
+			});
+			let posts = 0;
+			const result = await f.client.createAuthorizationRequest(
+				f.discovery,
+				{ response_type: "code", redirect_uri: `${f.ids.subject}/callback` },
+				f.anchors,
+				{
+					requestDelivery: "par",
+					httpClient: async (input, init) => {
+						const url = new Request(input, init).url;
+						if (url !== `${f.ids.a}/par`) return f.options.httpClient!(input, init);
+						posts++;
+						return new Response(null, { status: 500 });
+					},
+				},
+			);
+			t.false(result.ok);
+			if (!result.ok) t.equal(result.error.code, C.FederationErrorCode.ServerError);
+			t.equal(calls, 1);
+			t.equal(posts, 0);
+		});
+
+		Q.test(
+			"Request Object and assertion algorithms must satisfy both local and published policy",
+			async (t) => {
+				const f = await fixture(false, {
+					server: { request_object_signing_alg_values_supported: ["RS256"] },
+				});
+				const request = await signedRequest(f);
+				const form = new URLSearchParams(await request.text());
+				const rejected = await f.server.processAutomaticRegistration(form.get("request")!, {
+					allowedAlgorithms: ["ES256", "RS256"],
+				});
+				t.false(rejected.ok);
+				t.equal(f.registered(), 0);
+
+				const protocol = await generateSigningKey("ES384");
+				const par = await fixture(false, {
+					client: { jwks: { keys: [protocol.publicKey] } },
+					server: { token_endpoint_auth_signing_alg_values_supported: ["ES384", "ES256"] },
+				});
+				const assertion = await C.createClientAssertion(
+					par.ids.subject,
+					par.ids.a,
+					new SigningEntryFixture(protocol.privateKey),
+					par.options,
+				);
+				const params = new URLSearchParams(await (await assertionRequest(par)).text());
+				params.set("client_assertion", assertion);
+				const submit = (allowedAlgorithms: string[]) =>
+					par.server.processPushedAuthorizationRequest(
+						new Request(`${par.ids.a}/par`, {
+							method: "POST",
+							headers: { "content-type": "application/x-www-form-urlencoded" },
+							body: params,
+						}),
+						{ allowedAlgorithms },
+					);
+				t.false((await submit(["ES256"])).ok);
+				t.equal(par.registered(), 0);
+				const accepted = await submit(["ES256", "ES384"]);
+				t.true(accepted.ok, accepted.ok ? "both policies allow ES384" : accepted.error.description);
+			},
+		);
 		Q.test(
 			"OIDC and OAuth typing policies apply to authorization and PAR without consuming rejected proofs",
 			async (t) => {
@@ -181,7 +382,7 @@ export default (Q: QUnit) => {
 							const form = new URLSearchParams(await original.text());
 							const decoded = C.decodeEntityStatement(form.get("request")!);
 							if (!decoded.ok) throw new Error("fixture");
-							const jwt = await new C.JwkSigner(f.keys.b.privateKey).signJwt(
+							const jwt = await new SigningEntryFixture(f.keys.b.privateKey).signJwt(
 								new TextEncoder().encode(JSON.stringify(decoded.value.payload)),
 								{ ...decoded.value.header, typ },
 							);
@@ -211,7 +412,7 @@ export default (Q: QUnit) => {
 						new URLSearchParams(await original.text()).get("request")!,
 					);
 					if (!decoded.ok) throw new Error("fixture");
-					const jwt = await new C.JwkSigner(strict.keys.b.privateKey).signJwt(
+					const jwt = await new SigningEntryFixture(strict.keys.b.privateKey).signJwt(
 						new TextEncoder().encode(JSON.stringify(decoded.value.payload)),
 						{ ...decoded.value.header, typ: "JWT" },
 					);
@@ -549,17 +750,17 @@ export default (Q: QUnit) => {
 			"Federation PAR requires a signed Request Object alongside attestation and verifies both",
 			async (t) => {
 				const f = await fixture(false);
-				const attester = await C.generateSigningKey(),
-					instance = await C.generateSigningKey();
+				const attester = await generateSigningKey(),
+					instance = await generateSigningKey();
 				const attestation = await C.createClientAttestation(
 					"trusted-attester",
 					{ subject: f.ids.subject, confirmationKey: instance.publicKey, expiresAt: 4000 },
-					new C.JwkSigner(attester.privateKey),
+					new SigningEntryFixture(attester.privateKey),
 					f.options,
 				);
 				const pop = await C.createClientAttestationProof(
 					{ clientId: f.ids.subject, audience: f.ids.a },
-					new C.JwkSigner(instance.privateKey),
+					new SigningEntryFixture(instance.privateKey),
 					f.options,
 				);
 				if (!attestation.ok || !pop.ok) throw new Error("Invalid fixture");
@@ -574,7 +775,7 @@ export default (Q: QUnit) => {
 				const config = {
 					clientAttestation: {
 						getAttester: () => C.ok({ jwks: { keys: [attester.publicKey] } }),
-						replayStore: new C.MemoryReplayStore({ clock: f.options.clock }),
+						replayStore: new C.MemoryReplayStore({ engine: testEngine, clock: f.options.clock }),
 						acceptClient: () => true,
 					},
 				};
@@ -590,7 +791,10 @@ export default (Q: QUnit) => {
 				t.false((await f.server.processPushedAuthorizationRequest(request(true), config)).ok);
 				t.equal(f.registered(), 0);
 				const mismatch = await f.server.processPushedAuthorizationRequest(request(false), {
-					clientAttestation: { ...config.clientAttestation, expectedChallenge: "new" },
+					clientAttestation: {
+						...config.clientAttestation,
+						expectedChallenge: "new",
+					},
 				});
 				t.false(mismatch.ok);
 				if (!mismatch.ok) t.equal(mismatch.error.attestationError, "use_attestation_challenge");
@@ -598,7 +802,10 @@ export default (Q: QUnit) => {
 				for (const [name, value] of prepared.value.headers) expiredRequest.headers.set(name, value);
 				const stale = await f.server.processPushedAuthorizationRequest(expiredRequest, {
 					clock: { now: () => 4100 },
-					clientAttestation: { ...config.clientAttestation, maxProofAgeSeconds: 5000 },
+					clientAttestation: {
+						...config.clientAttestation,
+						maxProofAgeSeconds: 5000,
+					},
 				});
 				t.false(stale.ok);
 				if (!stale.ok) t.equal(stale.error.attestationError, "use_fresh_attestation");

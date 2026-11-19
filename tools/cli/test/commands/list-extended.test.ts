@@ -1,6 +1,10 @@
-import { generateSigningKey, type HttpClient, JwkSigner, signEntityStatement } from "@oidfed/core";
+import { type HttpClient, signEntityStatement } from "@oidfed/core";
 import { Command } from "commander";
 import { describe, expect, it, vi } from "vitest";
+import {
+	generateSigningKey,
+	SigningEntryFixture,
+} from "../../../../tests/tap/fixtures/software-crypto.js";
 import { handler, register } from "../../src/commands/list-extended.js";
 import { JsonFormatter } from "../../src/output/json.js";
 import { createLogger } from "../../src/util/logger.js";
@@ -25,7 +29,7 @@ async function buildAuthorityEc() {
 				},
 			},
 		},
-		new JwkSigner(key.privateKey),
+		new SigningEntryFixture(key.privateKey),
 	);
 }
 

@@ -2,6 +2,7 @@ import { decodeEntityStatement, fetchEntityConfiguration, validateEntityId } fro
 import { useCallback, useEffect, useState } from "react";
 import { useSettings } from "@/hooks/use-settings";
 import { extractFederationEntity } from "@/lib/jwt";
+import { engine } from "../../../lib/crypto.js";
 
 export interface SubordinateFilters {
 	readonly entity_type?: string | undefined;
@@ -56,6 +57,7 @@ export function useSubordinateList(
 			const ecResult = await fetchEntityConfiguration(validated.value, {
 				httpTimeoutMs: settings.httpTimeoutMs,
 				signal: controller.signal,
+				engine: engine,
 			});
 			if (!ecResult.ok) throw new Error(ecResult.error.description);
 

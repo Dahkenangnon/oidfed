@@ -1,3 +1,4 @@
+import { federationEntry, federationSigningOptions } from "@oidfed/core";
 /** Subordinate Statement signing and Fetch endpoint responses. */
 
 import {
@@ -75,7 +76,10 @@ export async function buildSubordinateStatement(
 		{ ...record, metadata: undefined },
 		{ customOperators: ctx.options?.customPolicyOperators },
 	);
-	const keySet = await ctx.keyProvider.getFederationKeySet();
+	const keySet = await federationEntry(ctx.crypto, {
+		issuer: ctx.entityId,
+		subject: record.entityId,
+	});
 	const iat = now ?? nowSeconds(ctx.options?.clock);
 
 	// Operational fields are published through the subordinate's own Entity Configuration.
@@ -84,6 +88,7 @@ export async function buildSubordinateStatement(
 	subordinatePublicationClaim(record, "metadata_policy", ctx);
 	subordinatePublicationClaim(record, "constraints", ctx);
 	const payload = buildSubordinateStatementPayload({
+		algorithmRegistry: ctx.options.algorithmRegistry,
 		...(record.additionalClaims !== undefined ? { additionalClaims: record.additionalClaims } : {}),
 		issuer: ctx.entityId,
 		subject: record.entityId,
@@ -100,7 +105,8 @@ export async function buildSubordinateStatement(
 		ttlSeconds: ctx.subordinateStatementTtlSeconds ?? DEFAULT_ENTITY_STATEMENT_TTL_SECONDS,
 	});
 
-	return signEntityStatement(payload, keySet.signer, {
+	return signEntityStatement(payload, keySet, {
+		...federationSigningOptions(ctx.options),
 		typ: JwtTyp.EntityStatement,
 	});
 }

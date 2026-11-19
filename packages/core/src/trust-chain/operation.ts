@@ -6,7 +6,7 @@ import type { FederationOptions } from "../types.js";
 
 /** One transport allowance across discovery and every candidate's validation. */
 export function createTrustChainOperation(
-	options: FederationOptions = {},
+	options: FederationOptions,
 ): Result<{ options: FederationOptions; exhausted: () => boolean }> {
 	let remaining = options.maxTotalFetches ?? 50;
 	if (!Number.isSafeInteger(remaining) || remaining < 0)

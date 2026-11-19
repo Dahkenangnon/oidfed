@@ -8,6 +8,7 @@ import { useCallback, useState } from "react";
 import { useSettings } from "@/hooks/use-settings";
 import { extractFederationEntity } from "@/lib/jwt";
 import { ENDPOINT_EXPECTED_TYPES, probeEndpoint } from "@/lib/probe-endpoint";
+import { engine } from "../../../lib/crypto.js";
 
 export interface BatchHealthResult {
 	readonly ok: number;
@@ -60,6 +61,7 @@ export function useBatchHealth(): UseBatchHealthResult {
 					const ecResult = await fetchEntityConfiguration(v.value, {
 						httpTimeoutMs,
 						signal: ctrl.signal,
+						engine: engine,
 					});
 					if (!ecResult.ok) {
 						map.set(entityId, { ok: 0, fail: 1, total: 1 });

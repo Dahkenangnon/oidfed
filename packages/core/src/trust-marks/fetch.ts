@@ -1,3 +1,4 @@
+import { cloneData } from "../data-copy.js";
 /** Trust Mark retrieval and signed status requests using standalone or trusted issuer context. */
 
 import { freezeSnapshot } from "../callbacks.js";
@@ -35,7 +36,7 @@ export interface FetchTrustMarkParams {
 export async function fetchTrustMark(
 	endpoint: string,
 	params: FetchTrustMarkParams,
-	options?: FederationOptions,
+	options: FederationOptions,
 ): Promise<Result<string, FederationError>> {
 	return requestTrustMark(endpoint, params, options);
 }
@@ -45,7 +46,7 @@ export function fetchTrustMarkForIssuer(
 	endpoint: string,
 	params: FetchTrustMarkParams,
 	issuer: string,
-	options?: FederationOptions,
+	options: FederationOptions,
 ): Promise<Result<string, FederationError>> {
 	return requestTrustMark(endpoint, params, options, issuer);
 }
@@ -53,7 +54,7 @@ export function fetchTrustMarkForIssuer(
 async function requestTrustMark(
 	endpoint: string,
 	params: FetchTrustMarkParams,
-	options?: FederationOptions,
+	options: FederationOptions,
 	issuer?: string,
 ): Promise<Result<string, FederationError>> {
 	safeLogger(options?.logger)?.debug("Starting fetch trust mark");
@@ -165,7 +166,7 @@ async function fetchTrustedStatus(
 			options,
 		);
 		if (!trusted.ok) return trusted;
-		const decoded = decodeEntityStatement(input.jwt);
+		const decoded = decodeEntityStatement(input.jwt, options);
 		if (!decoded.ok) return decoded;
 		const mark = TrustMarkPayloadSchema.safeParse(decoded.value.payload);
 		if (
@@ -293,7 +294,7 @@ async function fetchStatus(
 			issuer: entityId(iss),
 			issuedAt: iat,
 			jwt: fetched.value,
-			claims: structuredClone(verified.value),
+			claims: cloneData(verified.value),
 			...(Number.isFinite(deadline) ? { verificationExpiresAt: deadline } : {}),
 		}),
 	);

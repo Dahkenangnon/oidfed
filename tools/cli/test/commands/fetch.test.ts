@@ -1,5 +1,9 @@
-import { generateSigningKey, type HttpClient, JwkSigner, signEntityStatement } from "@oidfed/core";
+import { type HttpClient, signEntityStatement } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
+import {
+	generateSigningKey,
+	SigningEntryFixture,
+} from "../../../../tests/tap/fixtures/software-crypto.js";
 import { handler } from "../../src/commands/fetch.js";
 import { JsonFormatter } from "../../src/output/json.js";
 import { createLogger } from "../../src/util/logger.js";
@@ -25,7 +29,7 @@ async function buildIssuerEcAndSs() {
 				},
 			},
 		},
-		new JwkSigner(key.privateKey),
+		new SigningEntryFixture(key.privateKey),
 	);
 	const subordinateStatement = await signEntityStatement(
 		{
@@ -35,7 +39,7 @@ async function buildIssuerEcAndSs() {
 			exp: 9_999_999_999,
 			jwks: { keys: [key.publicKey] },
 		},
-		new JwkSigner(key.privateKey),
+		new SigningEntryFixture(key.privateKey),
 	);
 	return { issuerEc, subordinateStatement };
 }
@@ -141,7 +145,7 @@ describe("fetch handler", () => {
 				jwks: { keys: [key.publicKey] },
 				metadata: { federation_entity: {} },
 			},
-			new JwkSigner(key.privateKey),
+			new SigningEntryFixture(key.privateKey),
 		);
 		const client: HttpClient = async () =>
 			new Response(ecWithoutEndpoint, {

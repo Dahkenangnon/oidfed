@@ -12,10 +12,7 @@ import {
 	decodeEntityStatement,
 	type EntityRole,
 	entityId,
-	generateSigningKey,
 	isStoredTrustMarkEligible,
-	JwkSigner,
-	MemoryFederationKeyProvider,
 	MemoryTrustMarkStore,
 	signTrustMark,
 	signTrustMarkDelegation,
@@ -26,9 +23,16 @@ import {
 	OAuthClientRole,
 	OAuthResourceRole,
 	OidcProviderRole,
-	StaticProtocolSigningKeyProvider,
 } from "../../../packages/oidc/src/index.js";
 import { WalletProviderRole } from "../../../packages/wallet/src/index.js";
+import {
+	FixtureCrypto,
+	fixtureHostConfig,
+	generateSigningKey,
+	PurposeBindingsFixture,
+	SigningEntryFixture,
+	testEngine,
+} from "../fixtures/software-crypto.js";
 
 const prototypeName = "__proto__";
 const subject = entityId("https://subject.example");
@@ -42,9 +46,9 @@ function deferred() {
 }
 async function signing() {
 	const keys = await generateSigningKey("ES256");
-	const signer = new JwkSigner({ ...keys.privateKey, kid: "ownership" });
+	const signer = new SigningEntryFixture({ ...keys.privateKey, kid: "ownership" });
 	const publicJwk = { ...keys.publicKey, kid: "ownership" };
-	return { signer, publicJwk, keyProvider: new MemoryFederationKeyProvider({ signer, publicJwk }) };
+	return { signer, publicJwk, crypto: new FixtureCrypto({ signer, publicJwk }) };
 }
 function metadata() {
 	return {
@@ -62,7 +66,7 @@ export default (q: QUnit) => {
 			"queued subordinate writes capture inputs and preserve transactional semantics",
 			async (t) => {
 				const { publicJwk } = await signing();
-				const storage = new MemoryStorageAdapter();
+				const storage = new MemoryStorageAdapter({ engine: testEngine });
 				const gate = deferred();
 				const entered = deferred();
 				const blocking = storage.transaction(async () => {
@@ -123,7 +127,7 @@ export default (q: QUnit) => {
 			});
 			for (const store of [
 				new MemoryTrustMarkStore(),
-				new MemoryStorageAdapter({ trustMarks: true }),
+				new MemoryStorageAdapter({ engine: testEngine, trustMarks: true }),
 			]) {
 				const gate = deferred();
 				const entered = deferred();
@@ -177,7 +181,7 @@ export default (q: QUnit) => {
 		});
 
 		q.test("hosts own metadata and initialize each role once before composition", async (t) => {
-			const { keyProvider } = await signing();
+			const { crypto } = await signing();
 			for (const kind of ["leaf", "anchor", "intermediate"] as const) {
 				const supplied = kind === "leaf" ? { example: metadata().example } : metadata();
 				const original = structuredClone(supplied);
@@ -192,18 +196,18 @@ export default (q: QUnit) => {
 				};
 				const config = {
 					entityId: anchor,
-					keyProvider,
+					crypto,
 					metadata: supplied,
 					roles: [role],
 					authorityHints: [subject],
-					storage: new MemoryStorageAdapter(),
+					storage: new MemoryStorageAdapter({ engine: testEngine }),
 				};
 				const host =
 					kind === "leaf"
-						? new Leaf(config)
+						? await Leaf.create(fixtureHostConfig(config))
 						: kind === "anchor"
-							? new TrustAnchor(config as AuthorityConfig)
-							: new Intermediate(config as AuthorityConfig);
+							? await TrustAnchor.create(fixtureHostConfig(config as AuthorityConfig))
+							: await Intermediate.create(fixtureHostConfig(config as AuthorityConfig));
 				t.deepEqual(supplied, original, "construction leaves caller metadata unchanged");
 				supplied.example.nested.values.push("changed");
 				role.metadata.generated = ["changed"];
@@ -219,17 +223,19 @@ export default (q: QUnit) => {
 		});
 
 		q.test("Leaf publishes special entity type and role names as own properties", async (t) => {
-			const { keyProvider } = await signing();
+			const { crypto } = await signing();
 			const input = JSON.parse(
 				'{"__proto__":{"retained":true},"constructor":{"retained":true},"toString":{"retained":true},"hasOwnProperty":{"retained":true}}',
 			);
-			const leaf = new Leaf({
-				entityId: subject,
-				authorityHints: [anchor],
-				keyProvider,
-				metadata: input,
-				roles: [{ type: "__proto__", metadata: { role: true } }],
-			});
+			const leaf = await Leaf.create(
+				fixtureHostConfig({
+					entityId: subject,
+					authorityHints: [anchor],
+					crypto,
+					metadata: input,
+					roles: [{ type: "__proto__", metadata: { role: true } }],
+				}),
+			);
 			const decoded = decodeEntityStatement(await leaf.getEntityConfiguration());
 			if (!decoded.ok) throw new Error(decoded.error.description);
 			for (const name of Object.keys(input))
@@ -238,11 +244,11 @@ export default (q: QUnit) => {
 		});
 
 		q.test("OIDC and wallet roles detach metadata and resource keys", async (t) => {
-			const { signer, publicJwk, keyProvider } = await signing();
+			const { signer, publicJwk, crypto } = await signing();
 			const input = { custom: { values: ["original"] } };
 			const client = new OAuthClientRole({
 				metadata: input,
-				protocolKeyProvider: new StaticProtocolSigningKeyProvider({ requestObjectSigner: signer }),
+				signing: new PurposeBindingsFixture({ requestObjectSigner: signer }),
 			});
 			const wallet = new WalletProviderRole({ metadata: input });
 			const jwks = { keys: [publicJwk] };
@@ -257,13 +263,15 @@ export default (q: QUnit) => {
 				metadata: opInput,
 				trustAnchors: new Map([[anchor, { jwks: { keys: [publicJwk] } }]]),
 			});
-			const host = new Leaf({
-				entityId: subject,
-				authorityHints: [anchor],
-				keyProvider,
-				metadata: {},
-				roles: [op],
-			});
+			const host = await Leaf.create(
+				fixtureHostConfig({
+					entityId: subject,
+					authorityHints: [anchor],
+					crypto,
+					metadata: {},
+					roles: [op],
+				}),
+			);
 			t.notOk(Object.hasOwn(opInput, "federation_registration_endpoint"));
 			const decoded = decodeEntityStatement(await host.getEntityConfiguration());
 			if (!decoded.ok) throw new Error(decoded.error.description);
@@ -276,55 +284,63 @@ export default (q: QUnit) => {
 		q.test(
 			"statement TTLs fail at construction while finite fractional lifetimes remain available",
 			async (t) => {
-				const { keyProvider, publicJwk, signer } = await signing();
+				const { crypto, publicJwk, signer } = await signing();
 				for (const value of [0, -1, NaN, Infinity, -Infinity, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
-					t.throws(
-						() =>
-							new Leaf({
-								entityId: subject,
-								authorityHints: [anchor],
-								keyProvider,
-								metadata: { example: {} },
-								entityConfigurationTtlSeconds: value,
-							}),
+					await t.rejects(
+						(async () =>
+							await Leaf.create(
+								fixtureHostConfig({
+									entityId: subject,
+									authorityHints: [anchor],
+									crypto,
+									metadata: { example: {} },
+									entityConfigurationTtlSeconds: value,
+								}),
+							))(),
 						/positive.*safe integer/,
 					);
 					for (const field of ["entityConfigurationTtlSeconds", "subordinateStatementTtlSeconds"])
-						t.throws(
-							() =>
-								new TrustAnchor({
-									entityId: anchor,
-									keyProvider,
-									storage: new MemoryStorageAdapter(),
-									metadata: metadata(),
-									[field]: value,
-								}),
+						await t.rejects(
+							(async () =>
+								await TrustAnchor.create(
+									fixtureHostConfig({
+										entityId: anchor,
+										crypto,
+										storage: new MemoryStorageAdapter({ engine: testEngine }),
+										metadata: metadata(),
+										[field]: value,
+									}),
+								))(),
 							/positive.*safe integer/,
 						);
 				}
 				for (const value of [0, -1, NaN, Infinity, -Infinity]) {
 					for (const field of ["trustMarkTtlSeconds", "subordinateEventsTtlSeconds"])
-						t.throws(
-							() =>
-								new TrustAnchor({
-									entityId: anchor,
-									keyProvider,
-									storage: new MemoryStorageAdapter(),
-									metadata: metadata(),
-									[field]: value,
-								}),
+						await t.rejects(
+							(async () =>
+								await TrustAnchor.create(
+									fixtureHostConfig({
+										entityId: anchor,
+										crypto,
+										storage: new MemoryStorageAdapter({ engine: testEngine }),
+										metadata: metadata(),
+										[field]: value,
+									}),
+								))(),
 							/positive and finite/,
 						);
 				}
 				assertPositiveTtlSeconds(0.5, "ttl", "finite");
-				new TrustAnchor({
-					entityId: anchor,
-					keyProvider,
-					storage: new MemoryStorageAdapter(),
-					metadata: metadata(),
-					trustMarkTtlSeconds: 0.5,
-					subordinateEventsTtlSeconds: 0.5,
-				});
+				await TrustAnchor.create(
+					fixtureHostConfig({
+						entityId: anchor,
+						crypto,
+						storage: new MemoryStorageAdapter({ engine: testEngine }),
+						metadata: metadata(),
+						trustMarkTtlSeconds: 0.5,
+						subordinateEventsTtlSeconds: 0.5,
+					}),
+				);
 				const jwt = await signTrustMark({
 					issuer: anchor,
 					subject,
@@ -354,7 +370,7 @@ export default (q: QUnit) => {
 			"core and authority storage agree on delegation eligibility before newest selection",
 			async (t) => {
 				const { signer, publicJwk } = await signing();
-				const authority = new MemoryStorageAdapter({ trustMarks: true });
+				const authority = new MemoryStorageAdapter({ engine: testEngine, trustMarks: true });
 				const standalone = new MemoryTrustMarkStore();
 				await authority.subordinates.add({
 					entityId: subject,

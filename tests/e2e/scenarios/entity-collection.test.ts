@@ -5,12 +5,12 @@ import {
 	entityId,
 	fetchEntityCollection,
 	InternalErrorCode,
-	JwkSigner,
 	ok,
 	signEntityStatement,
 } from "@oidfed/core";
 import express from "express";
 import { describe, expect, it } from "vitest";
+import { SigningEntryFixture, testEngine } from "../../tap/fixtures/software-crypto.js";
 import { getAuthorityEntity } from "../helpers/launcher.js";
 import { useFederation } from "../helpers/lifecycle.js";
 import { singleAnchorTopology } from "../topologies/single-anchor.js";
@@ -27,6 +27,7 @@ describe("Entity Collection over HTTPS", () => {
 		const client = entities.get("https://rp.ofed.test");
 		if (!client) throw new Error("RP fixture missing");
 		const service = new EntityCollectionService({
+			options: { engine: testEngine },
 			endpoint,
 			trustAnchors: createTrustAnchorSet([
 				{ entityId: anchor, jwks: { keys: [authority.keys.public] } },
@@ -61,7 +62,7 @@ describe("Entity Collection over HTTPS", () => {
 			const response = await fetchEntityCollection(
 				endpoint,
 				{ trustAnchor: anchor, limit: 1 },
-				{ method },
+				{ method, engine: testEngine },
 			);
 			expect(response.ok, JSON.stringify(response)).toBe(true);
 			if (response.ok) {
@@ -85,10 +86,14 @@ describe("Entity Collection over HTTPS", () => {
 					entities: response.value.entities,
 					next: expect.any(String),
 				});
-				const next = await fetchEntityCollection(endpoint, {
-					trustAnchor: anchor,
-					...(response.value.next ? { from: response.value.next } : {}),
-				});
+				const next = await fetchEntityCollection(
+					endpoint,
+					{
+						trustAnchor: anchor,
+						...(response.value.next ? { from: response.value.next } : {}),
+					},
+					{ engine: testEngine },
+				);
 				expect(next.ok).toBe(true);
 				if (next.ok)
 					expect(
@@ -108,7 +113,7 @@ describe("Entity Collection over HTTPS", () => {
 				exp: now + 60,
 				jti: crypto.randomUUID(),
 			},
-			new JwkSigner(client.keys.signing),
+			new SigningEntryFixture(client.keys.signing),
 			{ typ: "JWT" },
 		);
 		expect(
@@ -116,7 +121,7 @@ describe("Entity Collection over HTTPS", () => {
 				await fetchEntityCollection(
 					endpoint,
 					{ trustAnchor: anchor },
-					{ clientAssertion: assertion },
+					{ clientAssertion: assertion, engine: testEngine },
 				)
 			).ok,
 		).toBe(true);
@@ -125,11 +130,11 @@ describe("Entity Collection over HTTPS", () => {
 				await fetchEntityCollection(
 					endpoint,
 					{ trustAnchor: anchor },
-					{ clientAssertion: assertion },
+					{ clientAssertion: assertion, engine: testEngine },
 				)
 			).ok,
 		).toBe(false);
-		expect(await fetchEntityCollection(endpoint)).toMatchObject({
+		expect(await fetchEntityCollection(endpoint, {}, { engine: testEngine })).toMatchObject({
 			ok: true,
 			value: { entities: [] },
 		});
@@ -144,6 +149,7 @@ describe("Entity Collection over HTTPS", () => {
 		let collected = 0;
 		let filtered = 0;
 		const service = new EntityCollectionService({
+			options: { engine: testEngine },
 			trustAnchors: createTrustAnchorSet([
 				{ entityId: anchor, jwks: { keys: [authority.keys.public] } },
 			]),
@@ -188,7 +194,7 @@ describe("Entity Collection over HTTPS", () => {
 			const result = await fetchEntityCollection(
 				`${origin}/collect`,
 				{ trustAnchor: anchor, entityType: ["custom"] },
-				{ method },
+				{ method, engine: testEngine },
 			);
 			expect(result).toMatchObject({
 				ok: true,
@@ -210,11 +216,19 @@ describe("Entity Collection over HTTPS", () => {
 			res.status(400).json({ error: "unsupported_claim", error_description: "Unsupported claim" }),
 		);
 		server.addEntity(origin, app);
-		expect(await fetchEntityCollection(`${origin}/native-json`)).toEqual({
+		expect(
+			await fetchEntityCollection(`${origin}/native-json`, {}, { engine: testEngine }),
+		).toEqual({
 			ok: true,
 			value: { entities: [] },
 		});
-		expect(await fetchEntityCollection(`${origin}/native-json`, {}, { method: "POST" })).toEqual({
+		expect(
+			await fetchEntityCollection(
+				`${origin}/native-json`,
+				{},
+				{ method: "POST", engine: testEngine },
+			),
+		).toEqual({
 			ok: false,
 			error: { code: "unsupported_claim", description: "Unsupported claim" },
 		});
@@ -237,7 +251,10 @@ describe("Entity Collection over HTTPS", () => {
 				const result = await fetchEntityCollection(
 					`${origin}/redirect-${status}`,
 					{},
-					{ ...(clientAssertion ? { clientAssertion } : {}) },
+					{
+						...(clientAssertion ? { clientAssertion, engine: testEngine } : { engine: testEngine }),
+						engine: testEngine,
+					},
 				);
 				expect(result).toMatchObject({
 					ok: false,

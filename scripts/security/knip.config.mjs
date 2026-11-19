@@ -10,7 +10,8 @@ export default {
 			packages.map((name) => [
 				`packages/${name}`,
 				{
-					entry: ["src/index.ts"],
+					entry:
+						name === "crypto" ? ["src/index.ts", "src/web.ts", "src/jose.ts"] : ["src/index.ts"],
 					project: ["src/**/*.ts"],
 				},
 			]),

@@ -129,9 +129,12 @@ async function tryResolveSource(
 				fetchOpts,
 			);
 			if (!result.ok) return result;
-			const useResult = validateJwkSetUseRequirement(result.value.keys);
+			const useResult = validateJwkSetUseRequirement(
+				result.value.keys,
+				ctx.options.algorithmRegistry,
+			);
 			if (!useResult.ok) return useResult;
-			return ok(result.value.keys);
+			return ok([...result.value.keys]);
 		}
 		case "jwks": {
 			const parsed = MetadataJWKSetSchema.safeParse(ctx.inlineJwks);
@@ -143,14 +146,17 @@ async function tryResolveSource(
 					),
 				);
 			}
-			const useResult = validateJwkSetUseRequirement(parsed.data.keys);
+			const useResult = validateJwkSetUseRequirement(
+				parsed.data.keys,
+				ctx.options.algorithmRegistry,
+			);
 			if (!useResult.ok) return useResult;
 			return ok(parsed.data.keys);
 		}
 		case "jwks_uri": {
 			const result = await fetchJwkSet(ctx.plainUri as string, ctx.options);
 			if (!result.ok) return result;
-			return ok(result.value.keys);
+			return ok([...result.value.keys]);
 		}
 	}
 }

@@ -16,6 +16,7 @@ import {
 	type TrustChainResult,
 } from "@oidfed/core";
 import type { Config } from "../config.js";
+import { engine } from "./crypto.js";
 import { extractJwks } from "./entity-id.js";
 
 /**
@@ -68,7 +69,7 @@ export async function buildTrustAnchors(
 			continue;
 		}
 
-		const ecResult = await fetchEntityConfiguration(eid, { httpClient });
+		const ecResult = await fetchEntityConfiguration(eid, { httpClient, engine: engine });
 		if (!ecResult.ok) {
 			return err(
 				federationError(
@@ -145,7 +146,8 @@ export async function resolveOrError(
 
 	const resolved = await resolveTrustChains(eid, anchorsResult.value, {
 		httpClient,
-		...(maxChainDepth !== undefined ? { maxChainDepth } : {}),
+		...(maxChainDepth !== undefined ? { maxChainDepth, engine: engine } : { engine: engine }),
+		engine: engine,
 	});
 
 	if (resolved.chains.length === 0) {

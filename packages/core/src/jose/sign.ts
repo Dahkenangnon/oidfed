@@ -1,41 +1,46 @@
-/** JWT signing for Entity Statements and other federation tokens. */
-
-import { JwtTyp, SUPPORTED_ALGORITHMS, type SupportedAlgorithm } from "../constants.js";
-import { type JwtSigner, validateSigner } from "./signer.js";
-
+/** Compact JWT signing through a captured host keyring entry. */
+import {
+	CLASSICAL_ALGORITHMS,
+	CryptoError,
+	DEFAULT_JWS_REGISTRY,
+	type JwsAlgorithm,
+	type JwsAlgorithmRegistry,
+	type KeyringEntry,
+	signCompactJws,
+} from "@oidfed/crypto";
+import { JwtTyp } from "../constants.js";
 export interface SignEntityStatementOptions {
-	/** Defaults to signer.alg. An explicit algorithm must match the signer. */
-	readonly alg?: SupportedAlgorithm;
-	/** Defaults to entity-statement+jwt. */
+	readonly alg?: JwsAlgorithm;
 	readonly typ?: string;
 	readonly extraHeaders?: Record<string, unknown>;
+	readonly maxBytes?: number | undefined;
+	readonly algorithmRegistry?: JwsAlgorithmRegistry | undefined;
+	readonly allowedFederationAlgorithms?: readonly string[] | undefined;
 }
-
-/** Sign an entity statement payload as a compact JWT using the provided signing primitive. */
+/** Sign a payload without resolving another key. Publication must use this entry's keys. */
 export async function signEntityStatement(
 	payload: Record<string, unknown>,
-	signer: JwtSigner,
+	entry: KeyringEntry,
 	options?: SignEntityStatementOptions,
 ): Promise<string> {
-	validateSigner(signer);
-	// These fields bind the signature to its algorithm, key, and token profile (§3).
-	for (const name of ["alg", "kid", "typ"]) {
-		if (options?.extraHeaders && Object.hasOwn(options.extraHeaders, name)) {
+	for (const name of ["alg", "kid", "typ"])
+		if (options?.extraHeaders && Object.hasOwn(options.extraHeaders, name))
 			throw new TypeError(`extraHeaders must not override '${name}'`);
-		}
-	}
-
-	const alg = options?.alg ?? signer.alg;
-	if (!SUPPORTED_ALGORITHMS.includes(alg)) {
-		throw new Error(
-			`Unsupported signing algorithm: "${alg}". Supported: ${SUPPORTED_ALGORITHMS.join(", ")}`,
+	const registry = options?.algorithmRegistry ?? DEFAULT_JWS_REGISTRY;
+	if (options?.alg !== undefined && !registry.algorithm(options.alg))
+		throw new TypeError(`Unsupported signing algorithm: ${options.alg}`);
+	const { alg, kid } = entry.signer.publicJwk;
+	if (!(options?.allowedFederationAlgorithms ?? CLASSICAL_ALGORITHMS).includes(alg))
+		throw new CryptoError(
+			"UNSUPPORTED_ALGORITHM",
+			"Signing algorithm is outside the configured policy",
 		);
-	}
-	if (alg !== signer.alg) {
-		throw new Error(`Signing algorithm mismatch: signer uses "${signer.alg}", requested "${alg}"`);
-	}
-	const typ = options?.typ ?? JwtTyp.EntityStatement;
-
-	const header: Record<string, unknown> = { alg, typ, kid: signer.kid, ...options?.extraHeaders };
-	return signer.signJwt(new TextEncoder().encode(JSON.stringify(payload)), header);
+	if (options?.alg !== undefined && options.alg !== alg)
+		throw new TypeError("Signing algorithm mismatch");
+	return signCompactJws(
+		payload,
+		{ ...options?.extraHeaders, alg, kid, typ: options?.typ ?? JwtTyp.EntityStatement },
+		entry.signer,
+		{ maxBytes: options?.maxBytes, algorithmRegistry: options?.algorithmRegistry },
+	);
 }

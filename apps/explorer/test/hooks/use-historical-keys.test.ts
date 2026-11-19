@@ -2,6 +2,7 @@ import { verifyHistoricalKeysResponse } from "@oidfed/core";
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useHistoricalKeys } from "@/features/entity-inspector/hooks/use-historical-keys";
+import { engine } from "@/lib/crypto";
 
 vi.mock("@oidfed/core", () => ({
 	verifyHistoricalKeysResponse: vi.fn().mockResolvedValue({
@@ -67,7 +68,7 @@ describe("useHistoricalKeys", () => {
 		expect(verifyHistoricalKeysResponse).toHaveBeenCalledWith(
 			expect.any(String),
 			{ keys: [{ kty: "EC" }] },
-			{ expectedIssuer: "https://ta.test" },
+			{ engine, expectedIssuer: "https://ta.test" },
 		);
 		expect(result.current.loading).toBe(false);
 	});

@@ -1,3 +1,7 @@
+import { bindFederationOptions, federationSigningOptions } from "../crypto-context.js";
+import { randomUuid } from "../crypto-runtime.js";
+import { cloneData } from "../data-copy.js";
+import { federationEntry } from "../federation-keys.js";
 /** Signed Resolve assessments, cache reuse, and authenticated HTTP hosting. */
 
 import { MemoryCache } from "../cache/index.js";
@@ -16,7 +20,6 @@ import {
 } from "../endpoint-authentication.js";
 import { RESOLVE_UNORDERED_PARAMETERS } from "../endpoint-parameters.js";
 import type { FederationError } from "../errors.js";
-import type { FederationKeyProvider } from "../federation-keys.js";
 import { errorResponse, jwtResponse, parseQueryParams, requireMethod } from "../http.js";
 import { signEntityStatement } from "../jose/sign.js";
 import { decodeEntityStatement } from "../jose/verify.js";
@@ -33,6 +36,7 @@ import {
 } from "../trust-marks/evidence.js";
 import { fetchTrustMarkStatus } from "../trust-marks/fetch.js";
 import type { TrustMarkStatusAssessment } from "../trust-marks/issuer.js";
+import type { CryptoContext } from "../types.js";
 import {
 	type CacheProvider,
 	type EntityId,
@@ -51,10 +55,10 @@ import {
 
 export interface FederationResolverConfig {
 	readonly entityId: EntityId | string;
-	readonly keyProvider: FederationKeyProvider;
+	readonly crypto: CryptoContext;
 	readonly trustAnchors?: TrustAnchorSet;
 	readonly cache?: CacheProvider;
-	readonly options?: FederationOptions;
+	readonly options: FederationOptions;
 	readonly requireAuthForFreshResolution?: boolean;
 	readonly authentication?: Omit<EndpointAuthenticationConfig, "receiverEntityId">;
 	readonly assessLocalTrustMarkStatus?: (
@@ -63,8 +67,8 @@ export interface FederationResolverConfig {
 }
 export type FederationResolverIntegration = Omit<
 	FederationResolverConfig,
-	"entityId" | "keyProvider"
->;
+	"entityId" | "crypto" | "options"
+> & { readonly options?: Omit<FederationOptions, "engine"> };
 type ResolverContext = Omit<FederationResolverConfig, "entityId"> & { readonly entityId: EntityId };
 
 /** Resolve hosting independent of subordinate storage and Authority endpoints. */
@@ -96,13 +100,13 @@ export class FederationResolverService {
 		return this.authenticated(request);
 	}
 	/** In-process callers may populate the cache without endpoint authentication. */
-	resolve(request: Request, options?: FederationOptions): Promise<Response> {
+	resolve(request: Request, options?: Omit<FederationOptions, "engine">): Promise<Response> {
 		// Overrides get an isolated cache namespace, so a different policy cannot reuse prior assessments.
 		return options
-			? createResolveHandler({ ...this.context, options: { ...this.context.options, ...options } })(
-					request,
-					true,
-				)
+			? createResolveHandler({
+					...this.context,
+					options: bindFederationOptions(this.context.crypto, this.context.options, options),
+				})(request, true)
 			: this.inner(request, true);
 	}
 	/** For hosts which have already applied the shared authentication wrapper. */
@@ -201,7 +205,7 @@ function createResolveHandler(
 			...(ctx.options?.clock ? { clock: ctx.options.clock } : {}),
 		});
 	// Instance isolation prevents reuse across different authority policies and restarts.
-	const namespace = `resolve:${crypto.randomUUID()}:`;
+	let namespace: Promise<string> | undefined;
 	return async (request: Request, local = false) => {
 		const methodError = requireMethod(request, "GET");
 		if (methodError) return methodError;
@@ -253,8 +257,9 @@ function createResolveHandler(
 		}
 
 		const nowForCache = nowSeconds(ctx.options?.clock);
+		namespace ??= randomUuid(ctx.crypto.engine);
 		const cacheKey =
-			namespace +
+			(await namespace) +
 			JSON.stringify([
 				ctx.entityId,
 				sub,
@@ -271,24 +276,24 @@ function createResolveHandler(
 						"No cached resolution available; fresh resolution requires authentication",
 					);
 				}
-				const snapshot = structuredClone(cached);
+				const snapshot = cloneData(cached);
 				// §8.3.2 binds aud to this request. Stored assessments never carry a recipient.
 				delete snapshot.payload.aud;
 				// The optional issuer chain may describe a previous signing key. Cache hits
 				// omit it rather than performing discovery to refresh that header (§8.3.2).
 				delete snapshot.headers.trust_chain;
-				const keySet = await ctx.keyProvider.getFederationKeySet();
+				const keySet = await federationEntry(ctx.crypto, { issuer: ctx.entityId, subject: sub });
 				// Cache and key-provider reads may be asynchronous; recheck the fixed deadline.
 				const issuedAt = nowSeconds(ctx.options?.clock);
 				if (snapshot.reuseUntil <= issuedAt)
 					return errorResponse(404, FederationErrorCode.NotFound, "Cached resolution has expired");
 				// §8.3.2 derives exp from the subject's chain and included Trust Marks.
 				// The local reuse deadline controls cache access; preserve the assessed exp.
-				const jwt = await signEntityStatement(
-					{ ...snapshot.payload, iat: issuedAt },
-					keySet.signer,
-					{ typ: JwtTyp.ResolveResponse, extraHeaders: snapshot.headers },
-				);
+				const jwt = await signEntityStatement({ ...snapshot.payload, iat: issuedAt }, keySet, {
+					...federationSigningOptions(ctx.options),
+					typ: JwtTyp.ResolveResponse,
+					extraHeaders: snapshot.headers,
+				});
 				if (snapshot.reuseUntil <= nowSeconds(ctx.options?.clock))
 					return errorResponse(
 						404,
@@ -406,7 +411,7 @@ function createResolveHandler(
 				resolvedMetadata = filtered;
 			}
 
-			const keySet = await ctx.keyProvider.getFederationKeySet();
+			const keySet = await federationEntry(ctx.crypto, { issuer: ctx.entityId, subject: sub });
 			const now = nowSeconds(ctx.options?.clock);
 			const activeTrustMarks = await resolveActiveTrustMarks(
 				operationContext,
@@ -471,7 +476,8 @@ function createResolveHandler(
 					FederationErrorCode.TemporarilyUnavailable,
 					"Resolution evidence has expired or the operation was cancelled",
 				);
-			const jwt = await signEntityStatement(payload, keySet.signer, {
+			const jwt = await signEntityStatement(payload, keySet, {
+				...federationSigningOptions(ctx.options),
 				typ: JwtTyp.ResolveResponse,
 				extraHeaders,
 			});
@@ -504,7 +510,7 @@ function createResolveHandler(
 				const statements: readonly unknown[] = extraHeaders.trust_chain;
 				for (const statement of statements) {
 					if (typeof statement !== "string") continue;
-					const decoded = decodeEntityStatement(statement);
+					const decoded = decodeEntityStatement(statement, ctx.options);
 					if (decoded.ok && typeof decoded.value.payload.exp === "number")
 						cacheExpiry = Math.min(cacheExpiry, decoded.value.payload.exp);
 				}
@@ -515,7 +521,7 @@ function createResolveHandler(
 				try {
 					await cache.set(
 						cacheKey,
-						structuredClone({
+						cloneData({
 							payload: cachedPayload,
 							headers: extraHeaders,
 							reuseUntil: cacheExpiry,

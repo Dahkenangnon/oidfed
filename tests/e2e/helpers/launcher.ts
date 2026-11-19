@@ -1,24 +1,19 @@
 import type { AuthorityConfig, SubordinateRecord } from "@oidfed/authority";
 import { Intermediate, MemoryStorageAdapter, TrustAnchor } from "@oidfed/authority";
-import type {
-	EntityRole,
-	EntityType,
-	FederationKeyProvider,
-	JWK,
-	TrustAnchorSet,
-} from "@oidfed/core";
-import {
-	entityId,
-	generateSigningKey,
-	JwkSigner,
-	MemoryFederationKeyProvider,
-	stripPrivateFields,
-} from "@oidfed/core";
+import type { EntityRole, EntityType, JWK, TrustAnchorSet } from "@oidfed/core";
+import { entityId, stripPrivateFields } from "@oidfed/core";
 import { Leaf } from "@oidfed/leaf";
-import type { ProtocolSigningKeyProvider } from "@oidfed/oidc";
-import { OidcRelyingPartyRole, StaticProtocolSigningKeyProvider } from "@oidfed/oidc";
+import { OidcRelyingPartyRole } from "@oidfed/oidc";
 import type { Express } from "express";
 import { sanitizeSubordinateMetadata } from "../../../packages/authority/src/utils/subordinate-statement-shape.js";
+import {
+	FixtureCrypto,
+	fixtureHostConfig,
+	generateSigningKey,
+	PurposeBindingsFixture,
+	SigningEntryFixture,
+	testEngine,
+} from "../../tap/fixtures/software-crypto.js";
 import { createAuthorityApp } from "../participants/authority-app.js";
 import {
 	createLeafApp,
@@ -36,7 +31,7 @@ import {
 export interface LaunchOptions extends FederationServerOptions {}
 
 export function federationSigningKey(signingKey: JWK) {
-	return { signer: new JwkSigner(signingKey), publicJwk: stripPrivateFields(signingKey) };
+	return { signer: new SigningEntryFixture(signingKey), publicJwk: stripPrivateFields(signingKey) };
 }
 
 export interface EntityInstance {
@@ -49,8 +44,8 @@ export interface EntityInstance {
 		additionalProtocolSigning: JWK[];
 		additionalProtocolPublic: JWK[];
 	};
-	keyProvider: FederationKeyProvider;
-	oidcProtocolKeyProvider: ProtocolSigningKeyProvider;
+	crypto: FixtureCrypto;
+	oidcProtocolKeyProvider: PurposeBindingsFixture;
 	storage?: MemoryStorageAdapter;
 	oidcClient?: OidcRelyingPartyRole;
 }
@@ -203,20 +198,21 @@ export async function launchFederation(
 			trustMarks: true,
 			subordinateEvents:
 				typeof metadata.federation_entity?.federation_subordinate_events_endpoint === "string",
+			engine: testEngine,
 		});
 		authorityStorages.set(entity.id, storage);
 
 		const authorityHints = entity.authorityHints?.map((h) => entityId(rewriteUrl(h)));
 
-		const keyProvider = new MemoryFederationKeyProvider(federationSigningKey(keys.signing));
-		const oidcProtocolKeyProvider = new StaticProtocolSigningKeyProvider({
-			requestObjectSigner: new JwkSigner(keys.protocolSigning),
-			clientAssertionSigner: new JwkSigner(keys.protocolSigning),
+		const crypto = new FixtureCrypto(federationSigningKey(keys.signing));
+		const oidcProtocolKeyProvider = new PurposeBindingsFixture({
+			requestObjectSigner: new SigningEntryFixture(keys.protocolSigning),
+			clientAssertionSigner: new SigningEntryFixture(keys.protocolSigning),
 		});
 
 		const authorityConfig: AuthorityConfig = {
 			entityId: entityId(eid),
-			keyProvider,
+			crypto,
 			metadata: {
 				federation_entity:
 					(metadata.federation_entity as
@@ -245,13 +241,13 @@ export async function launchFederation(
 		}
 		const authority =
 			authorityHints !== undefined && authorityHints.length > 0
-				? new Intermediate(authorityConfig)
-				: new TrustAnchor(authorityConfig);
+				? await Intermediate.create(fixtureHostConfig(authorityConfig))
+				: await TrustAnchor.create(fixtureHostConfig(authorityConfig));
 
 		entities.set(entity.id, {
 			server: authority,
 			keys,
-			keyProvider,
+			crypto,
 			oidcProtocolKeyProvider,
 			storage,
 		});
@@ -265,10 +261,10 @@ export async function launchFederation(
 		const eid = rewriteUrl(entity.id);
 		const keys = getKeys(entity.id);
 		const metadata = addProtocolJwks(entity, rewriteMetadata(entity.metadata), keys);
-		const keyProvider = new MemoryFederationKeyProvider(federationSigningKey(keys.signing));
-		const oidcProtocolKeyProvider = new StaticProtocolSigningKeyProvider({
-			requestObjectSigner: new JwkSigner(keys.protocolSigning),
-			clientAssertionSigner: new JwkSigner(keys.protocolSigning),
+		const crypto = new FixtureCrypto(federationSigningKey(keys.signing));
+		const oidcProtocolKeyProvider = new PurposeBindingsFixture({
+			requestObjectSigner: new SigningEntryFixture(keys.protocolSigning),
+			clientAssertionSigner: new SigningEntryFixture(keys.protocolSigning),
 		});
 
 		const authorityHints = entity.authorityHints?.map((h) => entityId(rewriteUrl(h))) ?? [];
@@ -277,7 +273,7 @@ export async function launchFederation(
 		let oidcClient: OidcRelyingPartyRole | undefined;
 		if (entity.protocolRole === "rp") {
 			oidcClient = new OidcRelyingPartyRole({
-				protocolKeyProvider: oidcProtocolKeyProvider,
+				signing: oidcProtocolKeyProvider,
 				trustAnchors,
 				...(metadata.openid_relying_party !== undefined
 					? { metadata: metadata.openid_relying_party }
@@ -288,7 +284,7 @@ export async function launchFederation(
 
 		const leafConfig: Record<string, unknown> = {
 			entityId: entityId(eid),
-			keyProvider,
+			crypto,
 			authorityHints,
 			metadata: metadata as Record<string, Record<string, unknown>>,
 			roles,
@@ -298,12 +294,14 @@ export async function launchFederation(
 		if (entity.entityConfigurationTtlSeconds !== undefined) {
 			leafConfig.entityConfigurationTtlSeconds = entity.entityConfigurationTtlSeconds;
 		}
-		const leaf = new Leaf(leafConfig as unknown as ConstructorParameters<typeof Leaf>[0]);
+		const leaf = await Leaf.create(
+			fixtureHostConfig(leafConfig as unknown as Parameters<typeof Leaf.create>[0]),
+		);
 
 		entities.set(entity.id, {
 			server: leaf,
 			keys,
-			keyProvider,
+			crypto,
 			oidcProtocolKeyProvider,
 			...(oidcClient !== undefined ? { oidcClient } : {}),
 		});
@@ -311,11 +309,11 @@ export async function launchFederation(
 		if (entity.protocolRole === "op") {
 			apps.set(
 				entity.id,
-				createOpenIDProviderApp({
+				await createOpenIDProviderApp({
 					leaf,
 					entityId: eid,
 					trustAnchors,
-					federationKeyProvider: keyProvider,
+					federationKeyProvider: crypto,
 					oidcSigningKey: keys.protocolSigning,
 					additionalSigningKeys: keys.additionalProtocolSigning,
 					allowedRequestUriHosts,

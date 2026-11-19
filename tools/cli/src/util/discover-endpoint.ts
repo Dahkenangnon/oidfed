@@ -9,6 +9,7 @@ import {
 	ok,
 	type Result,
 } from "@oidfed/core";
+import { engine } from "./crypto.js";
 
 /**
  * Fetch an entity's configuration and extract a federation endpoint URL
@@ -24,7 +25,7 @@ export async function discoverEndpoint(
 	metadataKey: string,
 	httpClient: HttpClient,
 ): Promise<Result<string>> {
-	const ecResult = await fetchEntityConfiguration(entityId, { httpClient });
+	const ecResult = await fetchEntityConfiguration(entityId, { httpClient, engine: engine });
 	if (!ecResult.ok) return ecResult;
 
 	const decoded = decodeEntityStatement(ecResult.value);

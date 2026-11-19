@@ -17,7 +17,7 @@ export interface ValidateTrustMarkLogoOptions extends FederationOptions {}
  */
 export async function validateTrustMarkLogo(
 	url: string,
-	options?: ValidateTrustMarkLogoOptions,
+	options: ValidateTrustMarkLogoOptions,
 ): Promise<Result<{ contentType: string }, FederationError>> {
 	if (url.includes("#")) {
 		return err(

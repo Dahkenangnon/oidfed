@@ -300,7 +300,7 @@ export interface PerformFetchOptions extends FederationOptions {
  */
 export async function performFetch(
 	url: string,
-	options?: PerformFetchOptions,
+	options: PerformFetchOptions,
 ): Promise<Result<string, FederationError>> {
 	if (options?.offline) {
 		safeLogger(options.logger)?.warn(
@@ -482,8 +482,8 @@ export async function performFetch(
 }
 
 /** Decode only for cache lifetime (§10.2); callers still validate signatures and claims. */
-function statementCacheTtl(jwt: string, options?: FederationOptions): number {
-	const decoded = decodeEntityStatement(jwt);
+function statementCacheTtl(jwt: string, options: FederationOptions): number {
+	const decoded = decodeEntityStatement(jwt, options);
 	const exp = decoded.ok ? decoded.value.payload.exp : undefined;
 	if (typeof exp !== "number" || !Number.isFinite(exp)) return 0;
 	const remaining = exp - nowSeconds(options?.clock);
@@ -493,7 +493,7 @@ function statementCacheTtl(jwt: string, options?: FederationOptions): number {
 
 async function cachedStatement(
 	key: string,
-	options?: FederationOptions,
+	options: FederationOptions,
 ): Promise<string | undefined> {
 	if (!options?.cache) return undefined;
 	let cached: string | undefined;
@@ -529,13 +529,13 @@ async function cacheStatement(key: string, jwt: string, options: FederationOptio
 /** Fetch an Entity Configuration using §9.1 GET discovery, without a Federation client assertion. */
 export async function fetchEntityConfiguration(
 	entityId: EntityId,
-	options?: FederationOptions,
+	options: FederationOptions,
 ): Promise<Result<string, FederationError>> {
 	const base = entityId.endsWith("/") ? entityId.slice(0, -1) : entityId;
 	const url = `${base}${WELL_KNOWN_OPENID_FEDERATION}`;
 
 	if (options?.cache) {
-		const cacheKey = await ecCacheKey(entityId);
+		const cacheKey = await ecCacheKey(entityId, options.engine);
 		const cached = await cachedStatement(cacheKey, options);
 		if (cached !== undefined) {
 			safeLogger(options?.logger)?.debug("Cache hit for entity configuration");
@@ -564,7 +564,7 @@ export async function fetchEntityConfiguration(
 		);
 
 	if (result.ok && options?.cache) {
-		const cacheKey = await ecCacheKey(entityId);
+		const cacheKey = await ecCacheKey(entityId, options.engine);
 		await cacheStatement(cacheKey, result.value, options);
 	}
 
@@ -580,7 +580,7 @@ export interface FetchSubordinateStatementOptions extends FederationOptions {
 export async function fetchSubordinateStatement(
 	fetchEndpoint: string,
 	subject: EntityId,
-	options?: FetchSubordinateStatementOptions,
+	options: FetchSubordinateStatementOptions,
 ): Promise<Result<string, FederationError>> {
 	let url: URL;
 	try {
@@ -595,7 +595,7 @@ export async function fetchSubordinateStatement(
 
 	if (options?.cache) {
 		const issuer = options.issuer ?? (url.origin as EntityId);
-		const cacheKey = await esCacheKey(issuer, subject);
+		const cacheKey = await esCacheKey(issuer, subject, options.engine);
 		const cached = await cachedStatement(cacheKey, options);
 		if (cached !== undefined) {
 			safeLogger(options?.logger)?.debug("Cache hit for subordinate statement");
@@ -630,7 +630,7 @@ export async function fetchSubordinateStatement(
 
 	if (result.ok && options?.cache) {
 		const issuer = options.issuer ?? (url.origin as EntityId);
-		const cacheKey = await esCacheKey(issuer, subject);
+		const cacheKey = await esCacheKey(issuer, subject, options.engine);
 		await cacheStatement(cacheKey, result.value, options);
 	}
 

@@ -1,14 +1,19 @@
+import { assertVerificationKey } from "@oidfed/crypto";
+import { randomUuid } from "./crypto-runtime.js";
+import { cloneData } from "./data-copy.js";
+
 /** Client Attestation and proof-of-possession creation, verification, and authentication. */
 
-import * as jose from "jose";
+import type { KeyringEntry } from "@oidfed/crypto";
+import { CryptoError } from "@oidfed/crypto";
 import { z } from "zod";
 import { runAsyncOperation as runOperation } from "./async-operation.js";
 import { isJsonData } from "./callbacks.js";
 import {
+	DEFAULT_ALLOWED_ALGORITHMS,
 	DEFAULT_CLOCK_SKEW_SECONDS,
 	DEFAULT_MAX_RESPONSE_BYTES,
 	FederationErrorCode,
-	SUPPORTED_ALGORITHMS,
 } from "./constants.js";
 import { err, type FederationError, ok, type Result } from "./errors.js";
 import {
@@ -17,7 +22,7 @@ import {
 	signApplicationJwt as signToken,
 	verifyApplicationJwt as verifyToken,
 } from "./jose/application-jwt.js";
-import type { JwtSigner } from "./jose/signer.js";
+import { isValidAlgorithm } from "./jose/keys.js";
 import { decodeEntityConfiguration } from "./jose/verify.js";
 import { preparePublicJwkSet } from "./jwks/public-material.js";
 import { safeLogger } from "./logging.js";
@@ -116,16 +121,18 @@ export interface CreateClientAttestationParams {
 /** Receiver binding for an attestation that supplies aud (RFC 7519 §4.1.3). */
 export interface ClientAttestationVerificationOptions extends ClientAttestationOptions {
 	readonly expectedAudience?: string;
+	/** Attestation allowlist. An explicit general protocol policy further restricts it. */
 	readonly allowedAttestationAlgorithms?: readonly string[];
 	/** The issuer and header are unverified lookup hints, never trust evidence. */
 	readonly getAttester: (
 		issuer: string,
-		header: Readonly<jose.ProtectedHeaderParameters>,
+		header: Readonly<Record<string, unknown>>,
 		signal: AbortSignal,
 	) => Result<TrustedClientAttester> | Promise<Result<TrustedClientAttester>>;
 }
 export interface AuthenticateClientAttestationOptions
 	extends Omit<ClientAttestationVerificationOptions, "expectedAudience"> {
+	/** Proof allowlist. An explicit general protocol policy further restricts it. */
 	readonly allowedProofAlgorithms?: readonly string[];
 	readonly audience: string;
 	readonly clientId?: string;
@@ -157,10 +164,7 @@ export async function invokeVerificationPolicy<T>(
 		return failure("Required verification policy is missing or cancelled");
 	}
 	try {
-		const accepted = await runOperation(
-			(signal) => policy(structuredClone(context), signal),
-			options,
-		);
+		const accepted = await runOperation((signal) => policy(cloneData(context), signal), options);
 		if (accepted === true) return ok(true);
 		logger?.warn(`${operation} rejected the input`);
 		return failure("Verification policy rejected the input");
@@ -177,7 +181,7 @@ export async function invokeVerificationPolicy<T>(
 async function createClientAttestationImpl(
 	issuer: string,
 	params: CreateClientAttestationParams,
-	signer: JwtSigner,
+	signer: KeyringEntry,
 	options: ClientAttestationOptions,
 ): Promise<Result<string>> {
 	safeLogger(options?.logger)?.debug("Creating a Client Attestation");
@@ -209,7 +213,7 @@ async function createClientAttestationImpl(
 		const first: unknown = Array.isArray(options.trustChain) ? options.trustChain[0] : undefined;
 		if (typeof first !== "string")
 			return failure("trust_chain must begin with the attester's Entity Configuration");
-		const configuration = decodeEntityConfiguration(first);
+		const configuration = decodeEntityConfiguration(first, options);
 		if (
 			!configuration.ok ||
 			configuration.value.payload.iss !== issuer ||
@@ -217,7 +221,7 @@ async function createClientAttestationImpl(
 		)
 			return failure("trust_chain must begin with the attester's Entity Configuration");
 	}
-	const key = await validateConfirmationKey(parsed.data.cnf.jwk);
+	const key = await validateConfirmationKey(parsed.data.cnf.jwk, options);
 	if (!key.ok) return key;
 	return signToken(
 		parsed.data,
@@ -228,24 +232,51 @@ async function createClientAttestationImpl(
 	);
 }
 
+/** Resolve a token-specific policy before reading unverified claims or looking up trust. */
+function attestationAlgorithms(
+	options: FederationOptions,
+	specific: readonly string[] | undefined,
+): Result<readonly string[], ClientAttestationError> {
+	const general = options.allowedAlgorithms;
+	for (const list of [general, specific]) {
+		if (
+			list !== undefined &&
+			(!Array.isArray(list) ||
+				!list.length ||
+				!Array.from(list).every((id) => isValidAlgorithm(id, options.algorithmRegistry)))
+		)
+			return failure("Invalid allowed signing algorithms", "invalid_client_attestation");
+	}
+	const effective =
+		general && specific
+			? specific.filter((id) => general.includes(id))
+			: [...(specific ?? general ?? DEFAULT_ALLOWED_ALGORITHMS)];
+	return effective.length
+		? ok(effective)
+		: failure("No allowed signing algorithms for this token", "invalid_client_attestation");
+}
+
 async function verifyClientAttestationImpl(
 	jwt: string,
 	options: ClientAttestationVerificationOptions,
 ): Promise<Result<VerifiedClientAttestation, ClientAttestationError>> {
 	safeLogger(options?.logger)?.debug("Verifying a Client Attestation");
 
+	const algorithms = attestationAlgorithms(options, options.allowedAttestationAlgorithms);
+	if (!algorithms.ok) return algorithms;
 	const decoded = decodeToken(jwt, options);
 	if (!decoded.ok) return invalidCredential(decoded.error);
 	const header = checkProtocolHeader(
 		decoded.value.header,
 		"oauth-client-attestation+jwt",
-		options.allowedAttestationAlgorithms,
+		algorithms.value,
+		options.algorithmRegistry,
 	);
 	if (!header.ok) return invalidCredential(header.error);
 	const input = AttestationSchema.safeParse(decoded.value.payload);
 	if (!input.success)
 		return failure("Invalid Client Attestation claims", "invalid_client_attestation");
-	const confirmation = await validateConfirmationKey(input.data.cnf.jwk);
+	const confirmation = await validateConfirmationKey(input.data.cnf.jwk, options);
 	if (!confirmation.ok) return invalidCredential(confirmation.error);
 	const now = nowSeconds(options.clock);
 	const skew = options.clockSkewSeconds ?? DEFAULT_CLOCK_SKEW_SECONDS;
@@ -282,8 +313,7 @@ async function verifyClientAttestationImpl(
 	let trusted: Result<TrustedClientAttester>;
 	try {
 		trusted = await runOperation(
-			(signal) =>
-				options.getAttester(input.data.iss, structuredClone(decoded.value.header), signal),
+			(signal) => options.getAttester(input.data.iss, cloneData(decoded.value.header), signal),
 			options,
 		);
 	} catch {
@@ -295,7 +325,7 @@ async function verifyClientAttestationImpl(
 	if (!trusted.ok) return trusted;
 	let attester: TrustedClientAttester;
 	try {
-		attester = structuredClone(trusted.value);
+		attester = cloneData(trusted.value);
 	} catch {
 		return failure("Invalid attester evidence");
 	}
@@ -309,10 +339,8 @@ async function verifyClientAttestationImpl(
 		jwt,
 		attester.jwks,
 		"oauth-client-attestation+jwt",
-		options,
+		{ ...options, allowedAlgorithms: algorithms.value },
 		audience === undefined ? undefined : options.expectedAudience,
-		false,
-		options.allowedAttestationAlgorithms,
 	);
 	if (!checked.ok)
 		return input.data.exp + skew <= nowSeconds(options.clock)
@@ -382,12 +410,15 @@ async function authenticateClientAttestationImpl(
 	)
 		return failure("Invalid client authentication configuration");
 
+	const algorithms = attestationAlgorithms(options, options.allowedProofAlgorithms);
+	if (!algorithms.ok) return algorithms;
 	const parsed = decodeToken(popJwt, options);
 	if (!parsed.ok) return invalidCredential(parsed.error);
 	const header = checkProtocolHeader(
 		parsed.value.header,
 		"oauth-client-attestation-pop+jwt",
-		options.allowedProofAlgorithms,
+		algorithms.value,
+		options.algorithmRegistry,
 	);
 	if (!header.ok) return invalidCredential(header.error);
 	const proof = PopSchema.safeParse(parsed.value.payload);
@@ -485,10 +516,9 @@ async function authenticateClientAttestationImpl(
 		popJwt,
 		{ keys: [attestation.cnf.jwk] },
 		"oauth-client-attestation-pop+jwt",
-		options,
+		{ ...options, allowedAlgorithms: algorithms.value },
 		options.audience,
 		true,
-		options.allowedProofAlgorithms,
 	);
 	if (!checked.ok) return !attestationFresh() ? expired() : invalidCredential(checked.error);
 	const accepted = await invokeVerificationPolicy(
@@ -527,32 +557,39 @@ async function authenticateClientAttestationImpl(
 }
 
 /** Validate the designated PoP key, without tightening received federation JWK Sets. */
-async function validateConfirmationKey(key: JWK): Promise<Result<true>> {
+async function validateConfirmationKey(
+	key: JWK,
+	options: FederationOptions,
+): Promise<Result<true>> {
 	// The set helper checks public material. This local identifier does not alter cnf.jwk.
-	const material = preparePublicJwkSet({ keys: [{ ...key, kid: key.kid ?? "confirmation" }] });
+	const { engine, algorithmRegistry } = options;
+	const material = preparePublicJwkSet(
+		{ keys: [{ ...key, kid: key.kid ?? "confirmation" }] },
+		algorithmRegistry,
+	);
 	if (!material.ok) return failure("Invalid Client Attestation confirmation key material");
 	if (
 		(key.use !== undefined && key.use !== "sig") ||
 		(key.key_ops !== undefined && !key.key_ops.includes("verify"))
 	)
 		return failure("Client Attestation confirmation key must permit signature verification");
-	for (const alg of SUPPORTED_ALGORITHMS) {
+	for (const alg of engine.algorithms) {
 		if (key.alg !== undefined && key.alg !== alg) continue;
-		const curves: Readonly<Record<string, string>> = {
-			ES256: "P-256",
-			ES384: "P-384",
-			ES512: "P-521",
-		};
-		const curve = curves[alg];
-		if (curve ? key.kty !== "EC" || key.crv !== curve : key.kty !== "RSA") continue;
+
 		try {
-			const imported = await jose.importJWK(key as jose.JWK, alg);
-			if (imported instanceof Uint8Array) continue;
-			if ("modulusLength" in imported.algorithm && Number(imported.algorithm.modulusLength) < 2048)
-				continue;
+			assertVerificationKey(key, alg, algorithmRegistry);
+			await engine.validatePublicKey(key, alg);
 			return ok(true);
-		} catch {
-			/* Try another compatible supported algorithm. */
+		} catch (cause) {
+			if (
+				!(cause instanceof CryptoError) ||
+				!["MALFORMED_KEY", "UNSUPPORTED_ALGORITHM"].includes(cause.code)
+			)
+				return err({
+					code: "ERR_CRYPTO_OPERATION_FAILED",
+					description: "Confirmation key validation failed",
+					cause,
+				});
 		}
 	}
 	return failure("Client Attestation confirmation key has no usable signing algorithm");
@@ -592,8 +629,8 @@ export function parseConcatenatedClientAttestation(
 export async function createClientAttestation(
 	issuer: string,
 	params: CreateClientAttestationParams,
-	signer: JwtSigner,
-	options: ClientAttestationOptions = {},
+	signer: KeyringEntry,
+	options: ClientAttestationOptions,
 ): Promise<Result<string>> {
 	try {
 		return await createClientAttestationImpl(issuer, params, signer, options);
@@ -640,8 +677,8 @@ export interface CreateClientAttestationProofParams {
 /** Each invocation creates a new jti. Reuse the attestation, never its proof. */
 export async function createClientAttestationProof(
 	params: CreateClientAttestationProofParams,
-	signer: JwtSigner,
-	options: FederationOptions = {},
+	signer: KeyringEntry,
+	options: FederationOptions,
 ): Promise<Result<string>> {
 	try {
 		entityId(params.audience);
@@ -658,7 +695,7 @@ export async function createClientAttestationProof(
 			iss: params.clientId,
 			aud: params.audience,
 			iat: now,
-			jti: crypto.randomUUID(),
+			jti: await randomUuid(options.engine),
 			...(params.challenge !== undefined ? { challenge: params.challenge } : {}),
 		});
 		if (

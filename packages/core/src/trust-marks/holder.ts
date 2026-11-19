@@ -1,3 +1,4 @@
+import { cloneData } from "../data-copy.js";
 /** Serialized, validated updates to a holder's published Trust Mark references. */
 
 import { createConcurrencyLimiter } from "../async-operation.js";
@@ -27,7 +28,7 @@ export interface FetchAndAttachTrustMarkOptions {
 	readonly trustMarkType: string;
 	readonly trustAnchors: TrustAnchorSet;
 	readonly replacement?: "same-issuer-and-type";
-	readonly options?: FederationOptions;
+	readonly options: FederationOptions;
 }
 /** Serializes publication mutations; a failed publisher leaves the prior references intact. */
 export class TrustMarkHolder {
@@ -40,11 +41,11 @@ export class TrustMarkHolder {
 		private readonly publish: (references: readonly TrustMarkRef[]) => Promise<void>,
 	) {
 		entityId(subject);
-		this.refs = structuredClone([...refs]);
+		this.refs = cloneData([...refs]);
 	}
 	/** Return detached publication references; this does not revalidate existing marks. */
 	getTrustMarks(): TrustMarkRef[] {
-		return structuredClone(this.refs);
+		return cloneData(this.refs);
 	}
 	/**
 	 * Serialize an operation with other holder publication changes, releasing the queue on failure.
@@ -68,7 +69,7 @@ export class TrustMarkHolder {
 			if (!options.replacement && this.refs.some((ref) => ref.trust_mark === jwt)) return;
 			const refs = options.replacement
 				? this.refs.filter((ref) => {
-						const decoded = decodeEntityStatement(ref.trust_mark);
+						const decoded = decodeEntityStatement(ref.trust_mark, options);
 						return (
 							!decoded.ok ||
 							decoded.value.payload.iss !== checked.value.issuer ||
@@ -86,13 +87,13 @@ export class TrustMarkHolder {
 				)
 			)
 				return;
-			await this.publish(structuredClone(refs));
+			await this.publish(cloneData(refs));
 			this.refs = refs;
 		});
 	}
 	/** Establish issuer trust, retrieve the holder's mark, and validate it before publication. */
 	async fetchAndAttachTrustMark(input: FetchAndAttachTrustMarkOptions): Promise<void> {
-		const options = trustMarkOperation(input.options ?? {});
+		const options = trustMarkOperation(input.options);
 		const evidence = await establishTrustMarkIssuerTrust({
 			issuer: input.issuer,
 			trustMarkType: input.trustMarkType,
@@ -119,11 +120,14 @@ export class TrustMarkHolder {
 		});
 	}
 	/** Remove matching publication references without revoking the issuer's stored mark. */
-	async removeTrustMark(selector: RemoveTrustMarkSelector): Promise<void> {
+	async removeTrustMark(
+		selector: RemoveTrustMarkSelector,
+		options?: Pick<FederationOptions, "maxCompactBytes">,
+	): Promise<void> {
 		return this.updatePublication(async () => {
 			const refs = this.refs.filter((ref) => {
 				if ("jwt" in selector) return ref.trust_mark !== selector.jwt;
-				const decoded = decodeEntityStatement(ref.trust_mark);
+				const decoded = decodeEntityStatement(ref.trust_mark, options);
 				return (
 					!decoded.ok ||
 					decoded.value.payload.iss !== selector.issuer ||
@@ -131,7 +135,7 @@ export class TrustMarkHolder {
 				);
 			});
 			if (refs.length === this.refs.length) return;
-			await this.publish(structuredClone(refs));
+			await this.publish(cloneData(refs));
 			this.refs = refs;
 		});
 	}

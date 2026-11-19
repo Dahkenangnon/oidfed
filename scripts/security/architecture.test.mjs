@@ -12,13 +12,14 @@ import { root } from "./scope.mjs";
 test("architecture rules reject Node built-ins and private cross-package imports", async () => {
 	const temporary = await mkdtemp(join(tmpdir(), "oidfed-architecture-"));
 	try {
-		for (const name of ["core", "wallet", "oidc"])
+		for (const name of ["core", "wallet", "oidc", "crypto"])
 			await mkdir(join(temporary, `packages/${name}/src`), { recursive: true });
 		await writeFile(
 			join(temporary, "packages/core/src/index.ts"),
-			'import {existsSync} from "node:fs"; import {value} from "../../wallet/src/private.js"; export const result = [existsSync, value];',
+			'import {backend} from "../../crypto/src/web.js"; import {existsSync} from "node:fs"; import {value} from "../../wallet/src/private.js"; export const result = [existsSync, value, backend];',
 		);
 		await writeFile(join(temporary, "packages/wallet/src/private.ts"), "export const value = 1;");
+		await writeFile(join(temporary, "packages/crypto/src/web.ts"), "export const backend = {};");
 		await mkdir(join(temporary, "apps/sample/src"), { recursive: true });
 		await writeFile(
 			join(temporary, "apps/sample/src/index.ts"),
@@ -51,6 +52,7 @@ test("architecture rules reject Node built-ins and private cross-package imports
 		const rules = new Set(report.summary.violations.map((entry) => entry.rule.name));
 		for (const rule of [
 			"core-is-independent",
+			"protocol-libraries-have-no-crypto-backend",
 			"no-private-cross-package-imports",
 			"web-runtime-only",
 			"no-application-or-tool-imports",

@@ -1,3 +1,5 @@
+import { randomUuid } from "../crypto-runtime.js";
+import { cloneData } from "../data-copy.js";
 /** Bounded collection traversal and validation before snapshot publication. */
 
 import { z } from "zod";
@@ -221,7 +223,7 @@ export async function buildCollectionSnapshot(
 	}));
 	const context: EntityCollectionCollectorContext = Object.freeze({
 		trustAnchor: anchor,
-		trustAnchorJwks: freeze(structuredClone(pinned.jwks)),
+		trustAnchorJwks: freeze(cloneData(pinned.jwks)),
 		options: Object.freeze({ ...options }),
 		signal: controller.signal,
 	});
@@ -257,11 +259,11 @@ export async function buildCollectionSnapshot(
 							throw new Error("Invalid collection informational language tag");
 				JSON.stringify(candidate.entity);
 				const errors: Parameters<typeof validateTrustMarkReferenceSyntax>[0] = [];
-				validateTrustMarkReferenceSyntax(errors, candidate.entity.trust_marks, 0);
+				validateTrustMarkReferenceSyntax(errors, candidate.entity.trust_marks, 0, options);
 				if (errors.length || entries.has(candidate.entity.entity_id))
 					throw new Error("Invalid or duplicate collection candidate");
 				entries.set(candidate.entity.entity_id, {
-					...structuredClone(candidate),
+					...cloneData(candidate),
 					verifiedMarks: [],
 				});
 			}
@@ -278,7 +280,7 @@ export async function buildCollectionSnapshot(
 				const pathKey = JSON.stringify(node.path);
 				if (traversed.has(pathKey)) continue;
 				traversed.add(pathKey);
-				const decoded = decodeEntityConfiguration(node.chain[0] ?? "");
+				const decoded = decodeEntityConfiguration(node.chain[0] ?? "", options);
 				if (!decoded.ok) throw new Error("Invalid authority configuration");
 				const meta = decoded.value.payload.metadata?.federation_entity;
 				if (!meta?.federation_list_endpoint) {
@@ -316,7 +318,7 @@ export async function buildCollectionSnapshot(
 					const verified = await evidence.validatePath(chain);
 					if (!verified) continue;
 					if (options.chainSelection) candidates.set(id, [...(candidates.get(id) ?? []), verified]);
-					const child = decodeEntityConfiguration(childEc.value);
+					const child = decodeEntityConfiguration(childEc.value, options);
 					if (!child.ok || (child.value.payload.sub as string) !== (id as string)) continue;
 					const payload = child.value.payload;
 					const metadata = (payload.metadata ?? {}) as Record<string, Record<string, unknown>>;
@@ -364,7 +366,7 @@ export async function buildCollectionSnapshot(
 			const filter = config.filter;
 			if (filter) {
 				const decision = await callback(
-					() => filter(freeze(structuredClone(entry)), context),
+					() => filter(freeze(cloneData(entry)), context),
 					controller.signal,
 				);
 				if (decision === false) {
@@ -384,7 +386,7 @@ export async function buildCollectionSnapshot(
 		}
 		if (exhausted || controller.signal.aborted) throw new Error("Collection refresh incomplete");
 		return ok({
-			id: crypto.randomUUID(),
+			id: await randomUuid(options.engine),
 			trustAnchor: anchor,
 			lastUpdated: nowSeconds(options.clock),
 			entries: [...entries.values()].sort((a, b) =>

@@ -1,3 +1,4 @@
+import { federationEntry, federationSigningOptions } from "@oidfed/core";
 /** Signed subordinate history responses with request cancellation and optional expiry. */
 
 import {
@@ -65,7 +66,10 @@ export async function buildSubordinateEvents(
 	);
 	if (events === undefined) return undefined;
 	const history = events.map(parsePublishedSubordinateEvent);
-	const keys = await waitForOperation(ctx.keyProvider.getFederationKeySet(), [signal]);
+	const keys = await waitForOperation(
+		federationEntry(ctx.crypto, { issuer: ctx.entityId, subject }),
+		[signal],
+	);
 	const iat = nowSeconds(ctx.options?.clock);
 	const payload = SubordinateEventsResponseSchema.parse({
 		iss: ctx.entityId,
@@ -78,7 +82,10 @@ export async function buildSubordinateEvents(
 	});
 	signal.throwIfAborted();
 	return waitForOperation(
-		signEntityStatement(payload, keys.signer, { typ: JwtTyp.EntityEventsStatement }),
+		signEntityStatement(payload, keys, {
+			...federationSigningOptions(ctx.options),
+			typ: JwtTyp.EntityEventsStatement,
+		}),
 		[signal],
 	);
 }

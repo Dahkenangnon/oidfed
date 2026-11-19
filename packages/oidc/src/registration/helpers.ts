@@ -164,7 +164,7 @@ export interface SharedRegistrationTrustChains {
 async function resolveValidRegistrationChains(
 	subject: EntityId,
 	trustAnchors: TrustAnchorSet,
-	options: FederationOptions | undefined,
+	options: FederationOptions,
 	label: string,
 	validateCandidate?: (
 		statements: readonly string[],
@@ -240,7 +240,7 @@ export async function selectSharedRegistrationTrustChains(
 	opEntityId: EntityId,
 	preferredOpChain: ValidatedTrustChain,
 	trustAnchors: TrustAnchorSet,
-	options?: FederationOptions,
+	options: FederationOptions,
 	selection: {
 		readonly validateRpCandidate?: (
 			statements: readonly string[],
@@ -398,7 +398,7 @@ export async function registrationChainHeaders(
 	providerEntityId: EntityId,
 	includePeerTrustChain: boolean | undefined,
 	trustAnchors: TrustAnchorSet,
-	options?: FederationOptions,
+	options: FederationOptions,
 ): Promise<Result<Record<string, unknown>>> {
 	const extraHeaders: Record<string, unknown> = {};
 	if (selectedChain.length > 0) {

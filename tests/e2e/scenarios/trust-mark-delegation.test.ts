@@ -1,11 +1,11 @@
 import {
 	decodeEntityStatement,
 	isOk,
-	JwkSigner,
 	signTrustMarkDelegation,
 	validateTrustMark,
 } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
+import { SigningEntryFixture, testEngine } from "../../tap/fixtures/software-crypto.js";
 import { getAuthorityEntity } from "../helpers/launcher.js";
 import { useFederation } from "../helpers/lifecycle.js";
 import { singleAnchorTopology } from "../topologies/single-anchor.js";
@@ -30,7 +30,7 @@ describe("Trust mark delegation", () => {
 			issuer: taId,
 			subject: opId,
 			trustMarkType: trustMarkType(port),
-			signer: new JwkSigner(taInstance.keys.signing),
+			signer: new SigningEntryFixture(taInstance.keys.signing),
 		});
 
 		expect(delegationJwt).toBeTruthy();
@@ -88,7 +88,7 @@ describe("Trust mark delegation", () => {
 			trustMarkJwt,
 			{ [trustMarkType(port)]: [taId] },
 			{ keys: [taInstance.keys.public] },
-			{ expectedSubject: rpId },
+			{ expectedSubject: rpId, engine: testEngine },
 		);
 
 		expect(isOk(result)).toBe(true);

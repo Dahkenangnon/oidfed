@@ -1,3 +1,6 @@
+import { utf8Encode } from "@oidfed/crypto";
+import { randomUuid } from "../crypto-runtime.js";
+import { cloneData } from "../data-copy.js";
 /** Collection refresh coordination, snapshot queries, and HTTP endpoint hosting. */
 
 import { waitForOperation } from "../async-operation.js";
@@ -165,6 +168,7 @@ export class EntityCollectionService {
 							replayStore:
 								auth.replayStore ??
 								new MemoryReplayStore({
+									engine: config.options.engine,
 									...(config.options?.clock ? { clock: config.options.clock } : {}),
 								}),
 						},
@@ -381,7 +385,7 @@ export class EntityCollectionService {
 					const matcher = this.config.queryMatcher;
 					if (matcher) {
 						const matched = callSynchronous(
-							() => matcher(query, freezeSnapshot(structuredClone(entry.entity))),
+							() => matcher(query, freezeSnapshot(cloneData(entry.entity))),
 							(value): value is boolean => typeof value === "boolean",
 						);
 						if (!matched.ok) throw new Error(`Collection query matcher failed: ${matched.error}`);
@@ -402,9 +406,9 @@ export class EntityCollectionService {
 				this.config.maxPageSize ?? 100,
 			);
 			const page: EntityCollectionResponse["entities"] = [];
-			const encoder = new TextEncoder();
+
 			// Reserve the complete envelope, including a cursor, before adding records.
-			let bytes = encoder.encode(
+			let bytes = utf8Encode(
 				JSON.stringify({
 					entities: [],
 					last_updated: snapshot.lastUpdated,
@@ -426,7 +430,7 @@ export class EntityCollectionService {
 				const projected = projectCollectionEntity(entry.entity, request, supportedInfoClaims);
 				if (!entitySchema.safeParse(projected).success)
 					throw new Error("Invalid projected collection entity");
-				const size = encoder.encode(JSON.stringify(projected)).byteLength + (page.length ? 1 : 0);
+				const size = utf8Encode(JSON.stringify(projected)).byteLength + (page.length ? 1 : 0);
 				if (bytes + size > maxBytes) {
 					if (!page.length)
 						return err({
@@ -443,7 +447,7 @@ export class EntityCollectionService {
 				// A zero-result continuation can reuse its validated cursor without extending its lifetime.
 				if (cursor && page.length === 0) next = request.from;
 				else {
-					next = crypto.randomUUID();
+					next = await randomUuid(this.config.options.engine);
 					await this.store.putCursor(next, {
 						snapshotId: snapshot.id,
 						trustAnchor: anchor,

@@ -1,7 +1,5 @@
 import { JwtTyp, WELL_KNOWN_OPENID_FEDERATION } from "../../../packages/core/src/constants.js";
-import { generateSigningKey } from "../../../packages/core/src/jose/keys.js";
 import { signEntityStatement } from "../../../packages/core/src/jose/sign.js";
-import { JwkSigner } from "../../../packages/core/src/jose/signer.js";
 import type { JWK } from "../../../packages/core/src/schemas/jwk.js";
 import type {
 	FederationOptions,
@@ -10,6 +8,7 @@ import type {
 } from "../../../packages/core/src/types.js";
 import { LEAF_ID, OP_ID, TA_ID } from "./entity-ids.js";
 import { createMockTrustAnchors } from "./mock-trust-anchors.js";
+import { generateSigningKey, SigningEntryFixture, testEngine } from "./software-crypto.js";
 
 function signOpts(): { typ: string } {
 	return { typ: JwtTyp.EntityStatement };
@@ -69,7 +68,11 @@ export async function createMockFederation(overrides?: {
 			},
 		},
 	};
-	const taEcJwt = await signEntityStatement(taEcPayload, new JwkSigner(taSigningKey), signOpts());
+	const taEcJwt = await signEntityStatement(
+		taEcPayload,
+		new SigningEntryFixture(taSigningKey),
+		signOpts(),
+	);
 
 	// OP Entity Configuration (self-signed)
 	const opMetadata = overrides?.opMetadata ?? {
@@ -96,7 +99,11 @@ export async function createMockFederation(overrides?: {
 	};
 	if (overrides?.includeOAuthClient && !overrides.opMetadata)
 		opMetadata.oauth_authorization_server = { ...opMetadata.openid_provider };
-	const opEcJwt = await signEntityStatement(opEcPayload, new JwkSigner(opSigningKey), signOpts());
+	const opEcJwt = await signEntityStatement(
+		opEcPayload,
+		new SigningEntryFixture(opSigningKey),
+		signOpts(),
+	);
 
 	// Leaf Entity Configuration (self-signed)
 	const leafMetadata = overrides?.leafMetadata ?? {
@@ -120,7 +127,7 @@ export async function createMockFederation(overrides?: {
 	};
 	const leafEcJwt = await signEntityStatement(
 		leafEcPayload,
-		new JwkSigner(leafSigningKey),
+		new SigningEntryFixture(leafSigningKey),
 		signOpts(),
 	);
 
@@ -133,7 +140,7 @@ export async function createMockFederation(overrides?: {
 			exp,
 			jwks: { keys: [opPublicKey] },
 		},
-		new JwkSigner(taSigningKey),
+		new SigningEntryFixture(taSigningKey),
 		signOpts(),
 	);
 
@@ -146,7 +153,7 @@ export async function createMockFederation(overrides?: {
 			exp,
 			jwks: { keys: [leafPublicKey] },
 		},
-		new JwkSigner(taSigningKey),
+		new SigningEntryFixture(taSigningKey),
 		signOpts(),
 	);
 
@@ -205,7 +212,7 @@ export async function createMockFederation(overrides?: {
 		return new Response("Not Found", { status: 404 });
 	};
 
-	const options: FederationOptions = { httpClient };
+	const options: FederationOptions = { engine: testEngine, httpClient };
 
 	return {
 		opProtocolSigningKeys: protocolKeys.map((key) => key.privateKey),

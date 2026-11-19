@@ -2,11 +2,10 @@ import {
 	createTrustAnchorSet,
 	decodeEntityStatement,
 	entityId,
-	generateSigningKey,
 	type HttpClient,
-	JwkSigner,
 	signEntityStatement,
 } from "../../../packages/core/src/index.js";
+import { generateSigningKey, SigningEntryFixture, testEngine } from "./software-crypto.js";
 
 export const walletQuery = {
 	credentials: [
@@ -50,7 +49,7 @@ export async function walletFederation(
 	const sign = (name: keyof typeof keys, payload: Record<string, unknown>, typ?: string) =>
 		signEntityStatement(
 			{ iat: 1000, exp: 5000, ...payload },
-			new JwkSigner(keys[name].privateKey),
+			new SigningEntryFixture(keys[name].privateKey),
 			typ ? { typ } : undefined,
 		);
 	const anchorJwt = await sign("anchor", {
@@ -174,7 +173,7 @@ export async function walletFederation(
 		setTime: (value: number) => {
 			time = value;
 		},
-		options: { clock, clockSkewSeconds: 0, httpClient, entityChains: chains },
+		options: { engine: testEngine, clock, clockSkewSeconds: 0, httpClient, entityChains: chains },
 		requestPayload: {
 			client_id: `openid_federation:${ids.verifier}`,
 			response_type: "vp_token",
@@ -201,7 +200,7 @@ export async function hierarchicalWalletFederation(
 	const sign = (payload: Record<string, unknown>) =>
 		signEntityStatement(
 			{ iat: 1000, exp: 5000, ...payload },
-			new JwkSigner(intermediate.keys.privateKey),
+			new SigningEntryFixture(intermediate.keys.privateKey),
 		);
 	const response = (jwt: string) => () =>
 		new Response(jwt, { headers: { "content-type": "application/entity-statement+jwt" } });
@@ -225,7 +224,7 @@ export async function hierarchicalWalletFederation(
 			exp: 5000,
 			jwks: { keys: [intermediate.keys.publicKey] },
 		},
-		new JwkSigner(f.keys.anchor.privateKey),
+		new SigningEntryFixture(f.keys.anchor.privateKey),
 	);
 	f.routes.set(`${intermediate.id}/.well-known/openid-federation`, response(ec));
 	f.routes.set(`${f.ids.anchor}/fetch?sub=${encodeURIComponent(intermediate.id)}`, response(ss));
@@ -236,7 +235,7 @@ export async function hierarchicalWalletFederation(
 		if (!leaf.ok || !statement.ok) throw new Error("Invalid wallet fixture");
 		const leafEc = await signEntityStatement(
 			{ ...leaf.value.payload, authority_hints: [intermediate.id] },
-			new JwkSigner(f.keys[name].privateKey),
+			new SigningEntryFixture(f.keys[name].privateKey),
 		);
 		const leafSs = await sign({ ...statement.value.payload, iss: intermediate.id });
 		f.chains.set(f.ids[name], [leafEc, leafSs, ss, chain[2]!]);

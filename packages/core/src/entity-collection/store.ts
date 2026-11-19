@@ -1,3 +1,4 @@
+import { cloneData } from "../data-copy.js";
 /** In-memory collection snapshots and expiring pagination cursors. */
 
 import { type EntityId, nowSeconds } from "../types.js";
@@ -49,7 +50,7 @@ export class MemoryEntityCollectionStore implements EntityCollectionStore {
 	 */
 	async publish(snapshot: EntityCollectionSnapshot): Promise<void> {
 		this.prune();
-		const copy = structuredClone(snapshot);
+		const copy = cloneData(snapshot);
 		if (this.snapshots.has(copy.id)) throw new Error("Snapshot identifiers must be unique");
 		const max = this.options.maxSnapshots ?? 100;
 		if (this.snapshots.size >= max) {
@@ -78,7 +79,7 @@ export class MemoryEntityCollectionStore implements EntityCollectionStore {
 	async getSnapshot(id: string): Promise<EntityCollectionSnapshot | undefined> {
 		this.prune();
 		const item = this.snapshots.get(id);
-		return item ? structuredClone(item.value) : undefined;
+		return item ? cloneData(item.value) : undefined;
 	}
 	/**
 	 * Store a detached cursor; a full live cursor table throws EntityCollectionCursorCapacityError.
@@ -87,12 +88,12 @@ export class MemoryEntityCollectionStore implements EntityCollectionStore {
 		this.prune();
 		if (!this.cursors.has(id) && this.cursors.size >= (this.options.maxCursors ?? 10000))
 			throw new EntityCollectionCursorCapacityError(this.options.maxCursors ?? 10000);
-		this.cursors.set(id, structuredClone(cursor));
+		this.cursors.set(id, cloneData(cursor));
 	}
 	/** Read a detached cursor if it has not expired. */
 	async getCursor(id: string): Promise<EntityCollectionCursor | undefined> {
 		this.prune();
 		const cursor = this.cursors.get(id);
-		return cursor ? structuredClone(cursor) : undefined;
+		return cursor ? cloneData(cursor) : undefined;
 	}
 }

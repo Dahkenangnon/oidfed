@@ -12,6 +12,7 @@ import {
 import { useCallback, useState } from "react";
 import { useSettings } from "@/hooks/use-settings";
 import { extractFederationEntity } from "@/lib/jwt";
+import { engine } from "../../../lib/crypto.js";
 
 export interface ResolveQueryParams {
 	readonly resolverEntityId: string;
@@ -77,6 +78,7 @@ export function useResolveQuery(): UseResolveQueryResult {
 				const ecResult = await fetchEntityConfiguration(validatedResolver.value, {
 					httpTimeoutMs,
 					signal: controller.signal,
+					engine: engine,
 				});
 				if (!ecResult.ok)
 					throw new Error(`Failed to fetch resolver EC: ${ecResult.error.description}`);
@@ -123,6 +125,7 @@ export function useResolveQuery(): UseResolveQueryResult {
 						const verifyResult = await verifyResolveResponse(jwt, resolverJwks, {
 							expectedIssuer: params.resolverEntityId,
 							expectedSubject: params.subject,
+							engine: engine,
 						});
 						if (isErr(verifyResult)) {
 							return {

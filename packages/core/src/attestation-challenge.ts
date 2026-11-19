@@ -15,7 +15,7 @@ function valid(value: unknown): value is string {
 /** Fetch a challenge without caching it or automatically retrying the protected request. */
 export async function fetchAttestationChallenge(
 	endpoint: string,
-	options: FederationOptions = {},
+	options: FederationOptions,
 ): Promise<Result<string>> {
 	const response = await performFetch(endpoint, {
 		...options,
@@ -53,7 +53,7 @@ export function createAttestationChallengeResponse(challenge: string): Response 
 /** Host owns challenge generation, validity and optional atomic consumption. */
 export function createAttestationChallengeHandler(
 	issue: (request: Request, signal: AbortSignal) => string | Promise<string>,
-	options: FederationOptions = {},
+	options: FederationOptions,
 ): (request: Request) => Promise<Response> {
 	return async (request) => {
 		const method = requireMethods(request, ["POST"]);

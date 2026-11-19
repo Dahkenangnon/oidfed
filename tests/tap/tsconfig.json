@@ -21,6 +21,15 @@
 			],
 			"@oidfed/wallet": [
 				"../../packages/wallet/src/index.ts"
+			],
+			"@oidfed/crypto": [
+				"../../packages/crypto/src/index.ts"
+			],
+			"@oidfed/crypto/web": [
+				"../../packages/crypto/src/web.ts"
+			],
+			"@oidfed/crypto/jose": [
+				"../../packages/crypto/src/jose.ts"
 			]
 		},
 		"rootDir": "../..",

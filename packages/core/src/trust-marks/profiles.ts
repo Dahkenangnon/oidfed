@@ -1,3 +1,4 @@
+import { cloneData } from "../data-copy.js";
 /** Base and application-defined Trust Mark JWT profile validation. */
 
 import { freezeSnapshot } from "../callbacks.js";
@@ -46,7 +47,7 @@ export async function checkTrustMarkProfile(
 		);
 		if (!profile) return fail("Unrecognized Trust Mark typ or profile/type combination");
 		if (!validateClaims || !profile.validateClaims) return ok(undefined);
-		const result = await profile.validateClaims(freezeSnapshot(structuredClone(claims)));
+		const result = await profile.validateClaims(freezeSnapshot(cloneData(claims)));
 		if (!result || typeof result !== "object" || typeof result.ok !== "boolean")
 			return fail("Trust Mark profile returned an invalid result");
 		if (!result.ok) return fail("Trust Mark profile rejected the claims");

@@ -14,6 +14,7 @@ import {
 } from "@oidfed/core";
 import type { Command } from "commander";
 import type { OutputFormatter } from "../output/index.js";
+import { engine } from "../util/crypto.js";
 import { parseEntityIdOrError } from "../util/entity-id.js";
 import type { Logger } from "../util/logger.js";
 
@@ -53,9 +54,12 @@ export async function handler(
 			),
 		);
 	}
-	const ec = await fetchEntityConfiguration(issuer.value, { httpClient: deps.httpClient });
+	const ec = await fetchEntityConfiguration(issuer.value, {
+		httpClient: deps.httpClient,
+		engine: engine,
+	});
 	if (!ec.ok) return ec;
-	const verified = await verifyEntityStatement(ec.value, keys);
+	const verified = await verifyEntityStatement(ec.value, keys, { engine: engine });
 	if (!verified.ok) return verified;
 	const decoded = decodeEntityConfiguration(ec.value);
 	if (!decoded.ok) return decoded;
@@ -81,7 +85,8 @@ export async function handler(
 		issuer: issuer.value,
 		issuerJwks: keys,
 		httpClient: deps.httpClient,
-		...(clientAssertion !== undefined ? { clientAssertion } : {}),
+		...(clientAssertion !== undefined ? { clientAssertion, engine: engine } : { engine: engine }),
+		engine: engine,
 	});
 	if (!result.ok) return result;
 	return ok(deps.formatter.format(result.value));

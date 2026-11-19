@@ -1,12 +1,9 @@
+import { type HttpClient, JwtTyp, MediaType, signEntityStatement } from "@oidfed/core";
+import { describe, expect, it } from "vitest";
 import {
 	generateSigningKey,
-	type HttpClient,
-	JwkSigner,
-	JwtTyp,
-	MediaType,
-	signEntityStatement,
-} from "@oidfed/core";
-import { describe, expect, it } from "vitest";
+	SigningEntryFixture,
+} from "../../../../tests/tap/fixtures/software-crypto.js";
 import { handler } from "../../src/commands/validate.js";
 import { DEFAULT_CONFIG } from "../../src/config.js";
 import { JsonFormatter } from "../../src/output/json.js";
@@ -48,7 +45,7 @@ describe("validate handler", () => {
 				exp: 9999999999,
 				jwks: { keys: [key.publicKey] },
 			},
-			new JwkSigner(key.privateKey),
+			new SigningEntryFixture(key.privateKey),
 		);
 
 		const taClient: HttpClient = async () =>
@@ -95,7 +92,7 @@ describe("validate handler", () => {
 				exp: 9999999999,
 				jwks: { keys: [key.publicKey] },
 			},
-			new JwkSigner(key.privateKey),
+			new SigningEntryFixture(key.privateKey),
 		);
 		const client: HttpClient = async (input) => {
 			const parsed = new URL(typeof input === "string" ? input : input.toString());
@@ -122,7 +119,7 @@ describe("validate handler", () => {
 		const type = "https://marks.example/accredited";
 		const mark = await signEntityStatement(
 			{ iss: id, sub: id, iat: now - 600, exp: now - 300, trust_mark_type: type },
-			new JwkSigner(key.privateKey),
+			new SigningEntryFixture(key.privateKey),
 			{ typ: JwtTyp.TrustMark },
 		);
 		const jwt = await signEntityStatement(
@@ -141,7 +138,7 @@ describe("validate handler", () => {
 				trust_mark_issuers: { [type]: [id] },
 				trust_marks: [{ trust_mark_type: type, trust_mark: mark }],
 			},
-			new JwkSigner(key.privateKey),
+			new SigningEntryFixture(key.privateKey),
 		);
 		const httpClient: HttpClient = async () =>
 			new Response(jwt, { headers: { "content-type": MediaType.EntityStatement } });

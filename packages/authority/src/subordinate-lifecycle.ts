@@ -1,3 +1,4 @@
+import { cloneData } from "@oidfed/core";
 /** Subordinate registration, updates, revocation, and transactional lifecycle events. */
 
 import {
@@ -32,8 +33,11 @@ function canonical(value: unknown): string {
 	return JSON.stringify(value) ?? "undefined";
 }
 
-function publicKeys(record: SubordinateRecord): string {
-	const prepared = preparePublicJwkSet(record.jwks);
+function publicKeys(
+	record: SubordinateRecord,
+	registry: HandlerContext["options"]["algorithmRegistry"],
+): string {
+	const prepared = preparePublicJwkSet(record.jwks, registry);
 	if (!prepared.ok) throw new Error(prepared.error.description);
 	// Compare the published JSON, including lifecycle and extension members. Only
 	// key order is immaterial; Federation §8.7 dates can change without new key material.
@@ -104,7 +108,7 @@ export function createSubordinateLifecycle(ctx: HandlerContext) {
 		): Promise<void> {
 			entityId(record.entityId);
 			const fields = annotationFields(annotations);
-			const normalized = sanitize(structuredClone(record));
+			const normalized = sanitize(cloneData(record));
 			try {
 				await ctx.storage.transaction(async (tx) => {
 					requireTransactionEvents(tx);
@@ -132,7 +136,7 @@ export function createSubordinateLifecycle(ctx: HandlerContext) {
 			annotations?: SubordinateEventAnnotations,
 		): Promise<void> {
 			const fields = annotationFields(annotations);
-			const normalized = sanitize(structuredClone(updates));
+			const normalized = sanitize(cloneData(updates));
 			let recordedEvents = false;
 			try {
 				await ctx.storage.transaction(async (tx) => {
@@ -147,9 +151,9 @@ export function createSubordinateLifecycle(ctx: HandlerContext) {
 					if (normalized.jwks !== undefined) {
 						// Validate replacement keys inside the transaction. An invalid stored key set
 						// can be repaired by a valid replacement.
-						publicKeys({ ...before, jwks: normalized.jwks });
+						publicKeys({ ...before, jwks: normalized.jwks }, ctx.options.algorithmRegistry);
 						try {
-							beforeKeys = publicKeys(before);
+							beforeKeys = publicKeys(before, ctx.options.algorithmRegistry);
 						} catch {
 							/* Treat an invalid stored key set as changed. */
 						}
@@ -165,7 +169,10 @@ export function createSubordinateLifecycle(ctx: HandlerContext) {
 						eventTypes.push(SubordinateEventType.MetadataUpdate);
 					if (canonical(before.metadataPolicy) !== canonical(after.metadataPolicy))
 						eventTypes.push(SubordinateEventType.MetadataPolicyUpdate);
-					if (normalized.jwks !== undefined && beforeKeys !== publicKeys(after))
+					if (
+						normalized.jwks !== undefined &&
+						beforeKeys !== publicKeys(after, ctx.options.algorithmRegistry)
+					)
 						eventTypes.push(SubordinateEventType.JwksUpdate);
 					const iat = nowSeconds(ctx.options?.clock);
 					if (eventTypes.length) {

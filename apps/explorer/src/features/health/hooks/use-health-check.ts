@@ -8,6 +8,7 @@ import { useCallback, useState } from "react";
 import { useSettings } from "@/hooks/use-settings";
 import { extractFederationEntity } from "@/lib/jwt";
 import { ENDPOINT_EXPECTED_TYPES, type EndpointResult, probeEndpoint } from "@/lib/probe-endpoint";
+import { engine } from "../../../lib/crypto.js";
 
 export type { EndpointResult } from "@/lib/probe-endpoint";
 
@@ -59,6 +60,7 @@ export function useHealthCheck(): UseHealthCheckResult {
 				const ecResult = await fetchEntityConfiguration(validated.value, {
 					httpTimeoutMs,
 					signal: controller.signal,
+					engine: engine,
 				});
 				if (!ecResult.ok) throw new Error(ecResult.error.description);
 

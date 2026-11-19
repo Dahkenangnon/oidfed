@@ -10,6 +10,7 @@ import {
 	ok,
 } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
+import { fixtureHostConfig, testEngine } from "../../tap/fixtures/software-crypto.js";
 import { getAuthorityEntity } from "../helpers/launcher.js";
 import { useFederation } from "../helpers/lifecycle.js";
 import { createAuthorityApp } from "../participants/authority-app.js";
@@ -22,40 +23,42 @@ describe("Extended Subordinate Listing endpoint", () => {
 		const { server, entities } = getTestBed();
 		const original = getAuthorityEntity(entities, "https://ta.ofed.test");
 		const id = entityId(`https://ta.ofed.test:${server.port}`);
-		const authority = new TrustAnchor({
-			entityId: id,
-			keyProvider: original.keyProvider as import("@oidfed/core").FederationKeyLifecycleProvider,
-			storage: new MemoryStorageAdapter(),
-			metadata: {
-				federation_entity: {
-					federation_fetch_endpoint: `${id}/fetch`,
-					federation_list_endpoint: `${id}/list`,
-					federation_extended_list_endpoint: `${id}/extended`,
-					federation_extended_list_endpoint_auth_methods: ["none", "example"],
-				},
-			},
-			endpointAuthentication: {
-				methods: {
-					example: {
-						parameters: ["proof"],
-						authenticate: (input) =>
-							input.parameters.proof?.[0] === "valid"
-								? ok({ entityId: "https://caller.example" })
-								: err(federationError(FederationErrorCode.InvalidClient, "Invalid proof")),
+		const authority = await TrustAnchor.create(
+			fixtureHostConfig({
+				entityId: id,
+				crypto: original.crypto as import("@oidfed/core").CryptoContext,
+				storage: new MemoryStorageAdapter({ engine: testEngine }),
+				metadata: {
+					federation_entity: {
+						federation_fetch_endpoint: `${id}/fetch`,
+						federation_list_endpoint: `${id}/list`,
+						federation_extended_list_endpoint: `${id}/extended`,
+						federation_extended_list_endpoint_auth_methods: ["none", "example"],
 					},
 				},
-			},
-			extendedListing: {
-				storeBatchSize: 1,
-				requestFilters: {
-					campus: {
-						parse: (values) => ok([...values]),
-						matches: (record, value) =>
-							Array.isArray(value) && value.includes(record.additionalClaims?.campus),
+				endpointAuthentication: {
+					methods: {
+						example: {
+							parameters: ["proof"],
+							authenticate: (input) =>
+								input.parameters.proof?.[0] === "valid"
+									? ok({ entityId: "https://caller.example" })
+									: err(federationError(FederationErrorCode.InvalidClient, "Invalid proof")),
+						},
 					},
 				},
-			},
-		});
+				extendedListing: {
+					storeBatchSize: 1,
+					requestFilters: {
+						campus: {
+							parse: (values) => ok([...values]),
+							matches: (record, value) =>
+								Array.isArray(value) && value.includes(record.additionalClaims?.campus),
+						},
+					},
+				},
+			}),
+		);
 		for (const [index, campus] of ["south", "north", "south", "north"].entries())
 			await authority.registerSubordinate({
 				entityId: entityId(`https://member${index}.example`),
@@ -80,8 +83,10 @@ describe("Extended Subordinate Listing endpoint", () => {
 											audience: id,
 											prepare: () => ({ parameters: { proof: "valid" } }),
 										},
+										engine: testEngine,
 									}
-								: {}),
+								: { engine: testEngine }),
+							engine: testEngine,
 						},
 					);
 					expect(result.ok).toBe(true);
@@ -118,10 +123,14 @@ describe("Extended Subordinate Listing endpoint", () => {
 			const received: string[] = [];
 			let from: string | undefined;
 			for (let page = 0; page < 10; page++) {
-				const result = await fetchExtendedSubordinatesList(endpoint, {
-					entityType: "bulk_test",
-					...(from ? { from } : {}),
-				});
+				const result = await fetchExtendedSubordinatesList(
+					endpoint,
+					{
+						entityType: "bulk_test",
+						...(from ? { from } : {}),
+					},
+					{ engine: testEngine },
+				);
 				expect(result.ok).toBe(true);
 				if (!result.ok) throw new Error(result.error.description);
 				received.push(...result.value.immediate_subordinate_entities.map((entry) => entry.id));
@@ -141,11 +150,15 @@ describe("Extended Subordinate Listing endpoint", () => {
 		const ids: string[] = [];
 		let from: string | undefined;
 		for (let page = 0; page < 4; page++) {
-			const result = await fetchExtendedSubordinatesList(endpoint, {
-				limit: 1,
-				claims: [],
-				...(from === undefined ? {} : { from }),
-			});
+			const result = await fetchExtendedSubordinatesList(
+				endpoint,
+				{
+					limit: 1,
+					claims: [],
+					...(from === undefined ? {} : { from }),
+				},
+				{ engine: testEngine },
+			);
 			expect(result.ok).toBe(true);
 			if (!result.ok) throw new Error(result.error.description);
 			for (const entry of result.value.immediate_subordinate_entities) {
@@ -163,7 +176,11 @@ describe("Extended Subordinate Listing endpoint", () => {
 				`https://rp2.ofed.test:${server.port}`,
 			].sort(),
 		);
-		const missing = await fetchExtendedSubordinatesList(endpoint, { from: "unknown +/=" });
+		const missing = await fetchExtendedSubordinatesList(
+			endpoint,
+			{ from: "unknown +/=" },
+			{ engine: testEngine },
+		);
 		expect(missing.ok).toBe(false);
 		if (!missing.ok) {
 			expect(missing.error.code).toBe("page_not_found");
@@ -199,22 +216,30 @@ describe("Extended Subordinate Listing endpoint", () => {
 			});
 		try {
 			const endpoint = `https://ta.ofed.test:${server.port}/federation_extended_list`;
-			const first = await fetchExtendedSubordinatesList(endpoint, {
-				limit: 1,
-				claims: [],
-				trustMarked: false,
-				trustMarkType: [alpha, beta, beta],
-			});
+			const first = await fetchExtendedSubordinatesList(
+				endpoint,
+				{
+					limit: 1,
+					claims: [],
+					trustMarked: false,
+					trustMarkType: [alpha, beta, beta],
+				},
+				{ engine: testEngine },
+			);
 			expect(first.ok).toBe(true);
 			if (!first.ok) throw new Error(first.error.description);
 			expect(typeof first.value.next).toBe("string");
 			if (first.value.next === undefined) throw new Error("Expected a continuation cursor");
-			const tail = await fetchExtendedSubordinatesList(endpoint, {
-				from: first.value.next,
-				claims: [],
-				trustMarked: false,
-				trustMarkType: [alpha, beta],
-			});
+			const tail = await fetchExtendedSubordinatesList(
+				endpoint,
+				{
+					from: first.value.next,
+					claims: [],
+					trustMarked: false,
+					trustMarkType: [alpha, beta],
+				},
+				{ engine: testEngine },
+			);
 			expect(tail.ok).toBe(true);
 			if (!tail.ok) throw new Error(tail.error.description);
 			expect(
@@ -258,6 +283,7 @@ describe("Extended Subordinate Listing endpoint", () => {
 				const result = await fetchExtendedSubordinatesList(
 					`https://ta.ofed.test:${server.port}/federation_extended_list`,
 					{ claims: [], updatedAfter, updatedBefore: 1500.5 },
+					{ engine: testEngine },
 				);
 				expect(result.ok).toBe(true);
 				if (!result.ok) throw new Error(result.error.description);

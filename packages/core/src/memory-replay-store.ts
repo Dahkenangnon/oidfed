@@ -1,9 +1,12 @@
+import type { CryptoEngine } from "@oidfed/crypto";
+import { sha256Hex } from "./crypto-runtime.js";
 /** In-memory replay claims scoped by issuer, audience, and JWT identifier. */
 
 import type { JtiReplayClaim, ReplayStore } from "./replay-store.js";
 import { type Clock, nowSeconds } from "./types.js";
 
 export interface MemoryReplayStoreOptions {
+	readonly engine: CryptoEngine;
 	readonly clock?: Clock;
 	readonly maxEntries?: number;
 }
@@ -26,7 +29,7 @@ export class MemoryReplayStore implements ReplayStore {
 	 * Create a process-local replay store with a default capacity of 10,000 live claims.
 	 * A non-positive or unsafe-integer capacity throws RangeError.
 	 */
-	constructor(options?: MemoryReplayStoreOptions) {
+	constructor(private readonly options: MemoryReplayStoreOptions) {
 		this.clock = options?.clock;
 		this.maxEntries = options?.maxEntries ?? 10_000;
 		if (!Number.isSafeInteger(this.maxEntries) || this.maxEntries <= 0) {
@@ -44,11 +47,10 @@ export class MemoryReplayStore implements ReplayStore {
 		const expiresAt = claim.expiresAt;
 		// Hash the complete tuple before the atomic lookup/insert. Long protocol IDs
 		// retain their identity without consuming proportional persistent memory.
-		const bytes = new TextEncoder().encode(
+		const key = await sha256Hex(
 			JSON.stringify([claim.issuer, claim.audience, claim.jti]),
+			this.options.engine,
 		);
-		const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
-		const key = Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
 		const now = nowSeconds(this.clock);
 		this.removeExpired(now);
 		// Hashing can cross the deadline. Expired claims cannot acquire a replay slot.

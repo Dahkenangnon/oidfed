@@ -33,6 +33,8 @@ export interface AutomaticRegistrationContext {
 	 * compatible also permits generic JWT typing or an absent typ under RFC 9101 §10.8.
 	 */
 	readonly requestObjectTyping?: "strict" | "compatible";
+	/** Maximum encoded size of the Request Object. */
+	readonly maxCompactBytes?: number | undefined;
 	/** Maximum allowed clock skew in seconds (default: 60) */
 	readonly clockSkewSeconds?: number;
 	/** NumericDate clock used for expiry validation. */

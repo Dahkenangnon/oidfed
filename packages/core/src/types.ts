@@ -1,5 +1,6 @@
 /** Shared federation identifiers, trust evidence, options, and extension contracts. */
 
+import type { CryptoEngine, Keyring } from "@oidfed/crypto";
 import type { InternalErrorCode } from "./constants.js";
 import type {
 	EndpointAdditionalParameters,
@@ -7,7 +8,6 @@ import type {
 	EndpointClientAuthentication,
 } from "./endpoint-client.js";
 import type { FederationError, Result } from "./errors.js";
-import type { FederationKeyProvider } from "./federation-keys.js";
 import type { DecodedFederationJwtPayload, JWKSet } from "./schemas/index.js";
 import type { TrustMarkVerificationOptions } from "./trust-marks/evidence.js";
 import type { TrustMarkProfile } from "./trust-marks/profiles.js";
@@ -62,9 +62,19 @@ export interface Clock {
 	now(): number;
 }
 
-/** Returns the current time as seconds since the epoch. */
+/** A host clock returned a value that cannot be used as a JWT NumericDate. */
+export class InvalidClockError extends RangeError {
+	readonly code = "ERR_INVALID_CLOCK" as const;
+	constructor() {
+		super("Clock must return finite Unix seconds");
+		this.name = "InvalidClockError";
+	}
+}
+/** Return finite Unix seconds. Invalid host clocks throw before any deadline comparison. */
 export function nowSeconds(clock?: Clock): number {
-	return clock?.now() ?? Math.floor(Date.now() / 1000);
+	const now = clock ? clock.now() : Math.floor(Date.now() / 1000);
+	if (typeof now !== "number" || !Number.isFinite(now)) throw new InvalidClockError();
+	return now;
 }
 
 export interface CacheProvider {
@@ -83,7 +93,38 @@ export interface Logger {
 	error(msg: string, context?: Record<string, unknown>): void;
 }
 
+/** Dependencies shared by signing hosts; private custody stays inside the keyring. */
+export interface CryptoContext {
+	/** Public cryptographic operations owned by the application. */
+	readonly engine: CryptoEngine;
+	/** Atomic public-key snapshots and stable private signing bindings. */
+	readonly keyring: Keyring;
+	/** Immutable public key and algorithm definitions for this host and its roles. */
+	readonly algorithmRegistry?: import("@oidfed/crypto").JwsAlgorithmRegistry | undefined;
+	/** Local purpose for Federation Entity Keys. Defaults to federation. */
+	readonly federationPurpose?: import("@oidfed/crypto").KeyPurpose;
+	/** Required when historical-key features are configured. */
+	readonly history?: import("./federation-keys.js").FederationKeyHistorySource;
+}
+/** Per-operation policy on a host whose engine is already bound. */
+export type BoundFederationOptions<Options extends FederationOptions = FederationOptions> = Omit<
+	Options,
+	"engine" | "algorithmRegistry"
+>;
+
 export interface FederationOptions {
+	/** Explicit cryptographic backend. No global backend is selected by the library. */
+	readonly engine: CryptoEngine;
+	/** Definitions used by standalone operations; bound hosts supply their own registry. */
+	readonly algorithmRegistry?: import("@oidfed/crypto").JwsAlgorithmRegistry | undefined;
+	/** Algorithms permitted for signing and verification with Federation Entity Keys. */
+	readonly allowedFederationAlgorithms?: readonly string[] | undefined;
+	/** Local algorithm policy for protocol-key operations. */
+	readonly allowedAlgorithms?: readonly string[];
+	/** Maximum matching keys tried for one JWT. Defaults to 16. */
+	readonly maxVerificationCandidates?: number;
+	/** Maximum encoded compact JWT bytes. Defaults to the crypto package limit. */
+	readonly maxCompactBytes?: number | undefined;
 	/** How to acquire evidence. Protocol consumers validate the returned subject chain. */
 	trustResolution?: import("./trust-chain/assessment.js").TrustResolutionSource;
 	/** Select among validated candidates eligible for the current operation. */
@@ -293,8 +334,8 @@ export type DiscoveryResult = {
 
 export interface EntityContext {
 	readonly entityId: string;
-	readonly keyProvider: FederationKeyProvider;
-	readonly options?: FederationOptions | undefined;
+	readonly crypto: CryptoContext;
+	readonly options: FederationOptions;
 	readonly trustAnchors?: TrustAnchorSet;
 	readonly authorityHints?: readonly EntityId[];
 }
@@ -303,7 +344,12 @@ export interface EntityRole {
 	readonly type: string;
 	readonly metadata: Record<string, unknown>;
 	readonly routes?: ReadonlyMap<string, (request: Request) => Promise<Response>>;
-	initialize?(context: EntityContext): void;
+	initialize?(context: EntityContext): void | Promise<void>;
+	/** Rebuild managed public keys for each EC publication; captured entries can pin an operation. */
+	publicationMetadata?(
+		context: EntityContext,
+		entries?: ReadonlyMap<string, import("@oidfed/crypto").KeyringEntry>,
+	): Promise<Record<string, unknown>>;
 	/** Validate the final composed role block before its host publishes metadata. */
 	validateMetadata?(metadata: Readonly<Record<string, unknown>>, context: EntityContext): void;
 }

@@ -1,10 +1,6 @@
-import {
-	entityId,
-	generateSigningKey,
-	JwkSigner,
-	signEntityStatement,
-} from "../../../packages/core/src/index.js";
+import { entityId, signEntityStatement } from "../../../packages/core/src/index.js";
 import { createMockTrustAnchors } from "./mock-trust-anchors.js";
+import { generateSigningKey, SigningEntryFixture, testEngine } from "./software-crypto.js";
 
 /** Signed paths with independent keys and an offline validation clock. */
 export async function trustChainPaths(
@@ -50,7 +46,7 @@ export async function trustChainPaths(
 				...claims,
 				...authorityMetadata,
 			},
-			new JwkSigner(keys[issuer].privateKey),
+			new SigningEntryFixture(keys[issuer].privateKey),
 		);
 	};
 	const entityConfigurations = new Map<string, string>();
@@ -93,6 +89,7 @@ export async function trustChainPaths(
 		chain,
 		anchors: createMockTrustAnchors(ids.anchor, keys.anchor.publicKey),
 		options: {
+			engine: testEngine,
 			entityConfigurations,
 			clock: { now: () => 1500 },
 			clockSkewSeconds: 0,
@@ -129,7 +126,7 @@ export async function anchorKeyPaths(metadata: Record<string, Record<string, unk
 				exp: 5000,
 				jwks: { keys: [f.keys.subject.publicKey] },
 			},
-			new JwkSigner(replacement.privateKey),
+			new SigningEntryFixture(replacement.privateKey),
 		);
 		result[2] = await f.sign("anchor", "anchor", {
 			...anchorClaims,

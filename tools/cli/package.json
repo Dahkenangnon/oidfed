@@ -1,7 +1,7 @@
 {
 	"name": "@oidfed/cli",
 	"version": "2.0.0",
-	"description": "Command-line interface for inspecting, validating, and debugging OpenID Federation deployments — resolve trust chains, decode entity statements, verify signatures, and more.",
+	"description": "Command-line interface for inspecting, validating, and debugging OpenID Federation deployments \u2014 resolve trust chains, decode entity statements, verify signatures, and more.",
 	"license": "Apache-2.0",
 	"author": "Justin Dah-kenangnon <dah.kenangnon@gmail.com>",
 	"repository": {
@@ -68,6 +68,7 @@
 		"chalk": "6.0.1",
 		"commander": "15.0.0",
 		"yaml": "2.9.1",
-		"zod": "4.6.7"
+		"zod": "4.6.7",
+		"@oidfed/crypto": "workspace:^"
 	}
 }

@@ -2,6 +2,7 @@ import { validateTrustMark } from "@oidfed/core";
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useTrustMarkValidation } from "@/features/entity-inspector/hooks/use-trust-mark-validation";
+import { engine } from "@/lib/crypto";
 
 function fakeJwt(payload: Record<string, unknown>): string {
 	const header = btoa(JSON.stringify({ alg: "ES256", typ: "trust-mark+jwt" }));
@@ -79,7 +80,7 @@ describe("useTrustMarkValidation", () => {
 			jwt,
 			{ "https://ta.test/tm/certified": ["https://ta.test"] },
 			expect.any(Object),
-			{ expectedSubject: "https://rp.test" },
+			{ engine, expectedSubject: "https://rp.test" },
 		);
 		expect(result.current.details?.issuer).toBe("https://ta.test");
 	});

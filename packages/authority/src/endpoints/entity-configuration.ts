@@ -1,3 +1,8 @@
+import {
+	composeRolePublicationMetadata,
+	federationEntry,
+	federationSigningOptions,
+} from "@oidfed/core";
 /** Authority Entity Configuration payload construction and HTTP publication. */
 
 import {
@@ -8,7 +13,6 @@ import {
 	nowSeconds,
 	safeLogger,
 	signEntityStatement,
-	validateRoleMetadata,
 } from "@oidfed/core";
 import type { HandlerContext } from "./context.js";
 import { errorResponse, jwtResponse, requireMethod } from "./helpers.js";
@@ -35,15 +39,16 @@ export function createEntityConfigurationHandler(
 
 /** Builds and signs the Entity Configuration JWT from the current context. */
 export async function buildEntityConfiguration(ctx: HandlerContext): Promise<string> {
-	validateRoleMetadata(ctx.roles, ctx.metadata, ctx);
-	const keySet = await ctx.keyProvider.getFederationKeySet();
+	const publication = await composeRolePublicationMetadata(ctx.roles, ctx.metadata, ctx);
+	const keySet = await federationEntry(ctx.crypto, { issuer: ctx.entityId, subject: ctx.entityId });
 	const now = nowSeconds(ctx.options?.clock);
 	const ttlSeconds = ctx.entityConfigurationTtlSeconds ?? DEFAULT_ENTITY_STATEMENT_TTL_SECONDS;
 
 	const payloadOptions = {
+		algorithmRegistry: ctx.options.algorithmRegistry,
 		entityId: ctx.entityId,
-		jwks: keySet.jwks,
-		metadata: ctx.metadata,
+		jwks: keySet.publishedJwks,
+		metadata: publication,
 		issuedAt: now,
 		ttlSeconds,
 	};
@@ -66,7 +71,8 @@ export async function buildEntityConfiguration(ctx: HandlerContext): Promise<str
 		...(isTrustAnchor && ctx.trustMarkOwners ? { trustMarkOwners: ctx.trustMarkOwners } : {}),
 	});
 
-	const jwt = await signEntityStatement(payload, keySet.signer, {
+	const jwt = await signEntityStatement(payload, keySet, {
+		...federationSigningOptions(ctx.options),
 		typ: JwtTyp.EntityStatement,
 	});
 	if (

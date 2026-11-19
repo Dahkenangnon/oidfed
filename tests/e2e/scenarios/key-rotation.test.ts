@@ -2,13 +2,16 @@ import type { JWK } from "@oidfed/core";
 import {
 	decodeEntityStatement,
 	entityId,
-	type FederationKeyLifecycleProvider,
-	generateSigningKey,
 	isOk,
 	resolveTrustChains,
 	validateTrustChain,
 } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
+import {
+	fixtureSigner,
+	generateSigningKey,
+	testEngine,
+} from "../../tap/fixtures/software-crypto.js";
 import { federationSigningKey, getAuthorityEntity, getEntity } from "../helpers/launcher.js";
 import { useFederation } from "../helpers/lifecycle.js";
 import { hierarchicalTopology } from "../topologies/hierarchical.js";
@@ -27,7 +30,7 @@ describe("Key rotation", () => {
 
 			// Baseline: resolve RP chain
 			const rpId = entityId(`https://rp.ofed.test:${port}`);
-			const baseline = await resolveTrustChains(rpId, trustAnchors);
+			const baseline = await resolveTrustChains(rpId, trustAnchors, { engine: testEngine });
 			expect(baseline.chains).toHaveLength(1);
 
 			// Get original EC header
@@ -38,9 +41,9 @@ describe("Key rotation", () => {
 
 			// Generate new key and rotate
 			const newKey = await generateSigningKey("ES256");
-			const taKeyProvider = taInstance.keyProvider as FederationKeyLifecycleProvider;
+			const taKeyProvider = taInstance.crypto;
 			const nextSigningKey = federationSigningKey(newKey.privateKey as JWK);
-			await taKeyProvider.publishKey(nextSigningKey);
+			await taKeyProvider.keyring.publish("federation", fixtureSigner(nextSigningKey));
 			const overlapEc = await ta.getEntityConfiguration();
 			const overlapDecoded = decodeEntityStatement(overlapEc);
 			expect(isOk(overlapDecoded)).toBe(true);
@@ -49,7 +52,7 @@ describe("Key rotation", () => {
 			const overlapPayload = overlapDecoded.value.payload as Record<string, unknown>;
 			const overlapJwks = overlapPayload.jwks as { keys: JWK[] };
 			expect(overlapJwks.keys.map((key) => key.kid)).toContain(nextSigningKey.signer.kid);
-			await taKeyProvider.switchActiveKey(nextSigningKey.signer.kid);
+			await taKeyProvider.keyring.activate("federation", nextSigningKey.signer.kid);
 
 			// Fetch new EC — should use new key
 			const newEc = await ta.getEntityConfiguration();
@@ -73,7 +76,9 @@ describe("Key rotation", () => {
 			});
 
 			// Re-resolve with updated TA keys
-			const afterRotation = await resolveTrustChains(rpId, updatedTrustAnchors);
+			const afterRotation = await resolveTrustChains(rpId, updatedTrustAnchors, {
+				engine: testEngine,
+			});
 			expect(afterRotation.chains).toHaveLength(1);
 		});
 	});
@@ -89,24 +94,26 @@ describe("Key rotation", () => {
 
 			// Baseline
 			const opId = entityId(`https://op-uni.ofed.test:${port}`);
-			const baseline = await resolveTrustChains(opId, trustAnchors);
+			const baseline = await resolveTrustChains(opId, trustAnchors, { engine: testEngine });
 			expect(baseline.chains).toHaveLength(1);
 
 			// Rotate IA key
 			const newKey = await generateSigningKey("ES256");
-			const iaKeyProvider = iaEntity.keyProvider as FederationKeyLifecycleProvider;
+			const iaKeyProvider = iaEntity.crypto;
 			const nextSigningKey = federationSigningKey(newKey.privateKey as JWK);
-			await iaKeyProvider.publishKey(nextSigningKey);
-			await iaKeyProvider.switchActiveKey(nextSigningKey.signer.kid);
+			await iaKeyProvider.keyring.publish("federation", fixtureSigner(nextSigningKey));
+			await iaKeyProvider.keyring.activate("federation", nextSigningKey.signer.kid);
 
 			// After IA rotation without parent updating the subordinate statement,
 			// the IA's new EC key won't match the parent's subordinate statement JWKS.
 			// Resolution may still collect the chain, but validation MUST fail.
-			const afterRotation = await resolveTrustChains(opId, trustAnchors);
+			const afterRotation = await resolveTrustChains(opId, trustAnchors, { engine: testEngine });
 
 			const firstChain = afterRotation.chains[0];
 			if (firstChain) {
-				const validation = await validateTrustChain([...firstChain.statements], trustAnchors);
+				const validation = await validateTrustChain([...firstChain.statements], trustAnchors, {
+					engine: testEngine,
+				});
 				expect(validation.valid).toBe(false);
 			} else {
 				// If resolution itself caught the key mismatch, that's also acceptable

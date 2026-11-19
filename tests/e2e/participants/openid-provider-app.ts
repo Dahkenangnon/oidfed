@@ -1,4 +1,4 @@
-import type { EntityId, FederationKeyProvider, JWK, TrustAnchorSet } from "@oidfed/core";
+import type { CryptoContext, EntityId, JWK, TrustAnchorSet } from "@oidfed/core";
 import { decodeEntityStatement, MemoryReplayStore } from "@oidfed/core";
 import type { Leaf } from "@oidfed/leaf";
 import { OidcProviderRole } from "@oidfed/oidc";
@@ -6,6 +6,7 @@ import express from "express";
 import { rateLimit } from "express-rate-limit";
 import { decodeJwt } from "jose";
 import Provider from "oidc-provider";
+import { fixtureRoleContext } from "../../tap/fixtures/software-crypto.js";
 
 export interface OpenIDProviderAppConfig {
 	/** Leaf entity backing the OP's `.well-known/openid-federation` endpoint. */
@@ -13,7 +14,7 @@ export interface OpenIDProviderAppConfig {
 	entityId: string;
 	trustAnchors: TrustAnchorSet;
 	/** Federation signing provider for explicit-registration Entity Statements. */
-	federationKeyProvider: FederationKeyProvider;
+	federationKeyProvider: CryptoContext;
 	/** OP protocol signing key for oidc-provider tokens in the test bed. */
 	oidcSigningKey: JWK;
 	additionalSigningKeys?: readonly JWK[];
@@ -53,7 +54,9 @@ export interface OpenIDProviderAppConfig {
  *
  * In-memory adapter scoped per-process — fine for tests, not for production.
  */
-export function createOpenIDProviderApp(config: OpenIDProviderAppConfig): express.Express {
+export async function createOpenIDProviderApp(
+	config: OpenIDProviderAppConfig,
+): Promise<express.Express> {
 	const {
 		leaf,
 		entityId,
@@ -76,7 +79,7 @@ export function createOpenIDProviderApp(config: OpenIDProviderAppConfig): expres
 
 	const clientStore = new Map<string, StoredClient>();
 	const Adapter = createInMemoryAdapter(clientStore);
-	const replayStore = new MemoryReplayStore();
+	const replayStore = new MemoryReplayStore({ engine: federationKeyProvider.engine });
 	const leafHandler = (request: Request) => leaf.handleRequest(request);
 	const oidcProvider = new OidcProviderRole({
 		registrationPath: "/federation_registration",
@@ -100,11 +103,13 @@ export function createOpenIDProviderApp(config: OpenIDProviderAppConfig): expres
 			});
 		},
 	});
-	oidcProvider.initialize({
-		entityId: entityId as EntityId,
-		keyProvider: federationKeyProvider,
-		trustAnchors,
-	});
+	await oidcProvider.initialize(
+		fixtureRoleContext(oidcProvider, {
+			entityId: entityId as EntityId,
+			crypto: federationKeyProvider,
+			trustAnchors,
+		}),
+	);
 
 	const oidc = new Provider(entityId, {
 		adapter: Adapter,

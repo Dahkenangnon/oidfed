@@ -1,6 +1,7 @@
 import { decodeEntityStatement, fetchEntityConfiguration, validateEntityId } from "@oidfed/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSettings } from "@/hooks/use-settings";
+import { engine } from "../../../lib/crypto.js";
 
 interface UseTrustMarkListResult {
 	readonly items: string[] | null;
@@ -43,6 +44,7 @@ export function useTrustMarkList(): UseTrustMarkListResult {
 				const ecResult = await fetchEntityConfiguration(validated.value, {
 					httpTimeoutMs,
 					signal: controller.signal,
+					engine: engine,
 				});
 				if (!ecResult.ok) {
 					throw new Error(`Failed to fetch issuer EC: ${ecResult.error.description}`);

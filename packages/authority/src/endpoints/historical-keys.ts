@@ -1,3 +1,5 @@
+import { federationEntry, federationSigningOptions, HistoricalKeyEntrySchema } from "@oidfed/core";
+import { assertPublicJwk, DEFAULT_JWS_REGISTRY } from "@oidfed/crypto";
 /** Authority Historical Keys payload signing and endpoint responses. */
 
 import { JwtTyp, MediaType, nowSeconds, safeLogger, signEntityStatement } from "@oidfed/core";
@@ -24,8 +26,15 @@ export function createHistoricalKeysHandler(
 
 /** Sign the key provider's historical public-key records with the current Federation Entity Key. */
 export async function buildHistoricalKeys(ctx: HandlerContext): Promise<string> {
-	const keySet = await ctx.keyProvider.getFederationKeySet();
-	const historicalKeys = await ctx.keyProvider.getHistoricalFederationKeys();
+	const keySet = await federationEntry(ctx.crypto, { issuer: ctx.entityId });
+	if (!ctx.crypto.history) throw new TypeError("Historical keys source is not configured");
+	const historicalKeys = (await ctx.crypto.history.getHistoricalKeys()).map((key) => {
+		const record = HistoricalKeyEntrySchema.parse(key);
+		if (DEFAULT_JWS_REGISTRY.keyType(record.kty)) return record;
+		const publicKey = assertPublicJwk(record, ctx.crypto.algorithmRegistry);
+		const { exp, iat, nbf, revoked } = record;
+		return { ...publicKey, exp, iat, nbf, revoked };
+	});
 	const now = nowSeconds(ctx.options?.clock);
 
 	const payload = {
@@ -34,7 +43,8 @@ export async function buildHistoricalKeys(ctx: HandlerContext): Promise<string> 
 		keys: historicalKeys,
 	};
 
-	return signEntityStatement(payload as Record<string, unknown>, keySet.signer, {
+	return signEntityStatement(payload as Record<string, unknown>, keySet, {
+		...federationSigningOptions(ctx.options),
 		typ: JwtTyp.JwkSet,
 	});
 }

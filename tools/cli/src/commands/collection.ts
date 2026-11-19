@@ -8,6 +8,7 @@ import {
 } from "@oidfed/core";
 import { type Command, InvalidArgumentError } from "commander";
 import type { OutputFormatter } from "../output/index.js";
+import { engine } from "../util/crypto.js";
 import type { Logger } from "../util/logger.js";
 
 export interface CollectionDeps {
@@ -33,8 +34,9 @@ export async function handler(args: CollectionArgs, deps: CollectionDeps): Promi
 	}
 	const response = await fetchEntityCollection(endpoint, params, {
 		httpClient: deps.httpClient,
-		...(post ? { method: "POST" } : {}),
-		...(clientAssertion !== undefined ? { clientAssertion } : {}),
+		...(post ? { method: "POST", engine: engine } : { engine: engine }),
+		...(clientAssertion !== undefined ? { clientAssertion, engine: engine } : { engine: engine }),
+		engine: engine,
 	});
 	return response.ok ? ok(deps.formatter.format(response.value)) : response;
 }

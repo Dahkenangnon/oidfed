@@ -106,7 +106,7 @@ async function dependencies(temporary) {
 			);
 			graph = graph.filter((entry) => !previous.has(`${entry.name}@${entry.version}`));
 			if (graph.length === 0) {
-				console.log("No changed production dependencies in the five packages");
+				console.log("No changed production dependencies in the six packages");
 				return;
 			}
 		}
@@ -124,6 +124,11 @@ async function artifacts(temporary) {
 	const saved = savedDirectory
 		? (await import("../release/artifacts.mjs")).loadArtifacts(savedDirectory)
 		: undefined;
+	await (await import("../check-crypto-isolation.mjs")).checkCryptoIsolation(
+		saved
+			? join(savedDirectory, saved.packages.find((record) => record.scope === "crypto").file)
+			: undefined,
+	);
 	const consumer = join(temporary, "consumer");
 	await mkdir(join(consumer, "node_modules/@oidfed"), { recursive: true });
 	await writeFile(join(consumer, "package.json"), '{"private":true,"type":"module"}');
@@ -173,7 +178,7 @@ async function artifacts(temporary) {
 		await symlink(directory, join(consumer, `node_modules/${name}`), "dir");
 	}
 	const sample =
-		'import { entityId, type FederationOptions } from "@oidfed/core";\nimport { Leaf } from "@oidfed/leaf";\nimport { TrustAnchor } from "@oidfed/authority";\nimport { OidcProviderRole } from "@oidfed/oidc";\nimport { WalletProviderRole } from "@oidfed/wallet";\nconst options: FederationOptions = {maxTotalFetches:0};\nvoid [options, entityId("https://entity.example"), Leaf, TrustAnchor, OidcProviderRole, WalletProviderRole];\n';
+		'import { entityId, type FederationOptions } from "@oidfed/core";\nimport { Leaf } from "@oidfed/leaf";\nimport { TrustAnchor } from "@oidfed/authority";\nimport { OidcProviderRole } from "@oidfed/oidc";\nimport { WalletProviderRole } from "@oidfed/wallet";\nimport { StaticKeyring } from "@oidfed/crypto";\ndeclare const engine: import("@oidfed/crypto").CryptoEngine;\nconst options: FederationOptions = {engine,maxTotalFetches:0};\nvoid [options, entityId("https://entity.example"), Leaf, TrustAnchor, OidcProviderRole, WalletProviderRole, new StaticKeyring({signers:{}})];\n';
 	for (const [extension, module, moduleResolution] of [
 		["mts", ts.ModuleKind.NodeNext, ts.ModuleResolutionKind.NodeNext],
 		["cts", ts.ModuleKind.NodeNext, ts.ModuleResolutionKind.NodeNext],
@@ -205,7 +210,7 @@ async function artifacts(temporary) {
 		[
 			"--input-type=module",
 			"-e",
-			'import {createRequire} from "node:module"; const require=createRequire(import.meta.url); for(const name of ["core","authority","leaf","oidc","wallet"]){if(!Object.keys(await import("@oidfed/"+name)).length || !Object.keys(require("@oidfed/"+name)).length)throw Error(name);}',
+			'import {createRequire} from "node:module"; const require=createRequire(import.meta.url); for(const name of ["core","authority","leaf","oidc","wallet","crypto"]){if(!Object.keys(await import("@oidfed/"+name)).length || !Object.keys(require("@oidfed/"+name)).length)throw Error(name);}',
 		],
 		{ cwd: consumer },
 	);

@@ -14,13 +14,13 @@ export function trustMarkService(ctx: HandlerContext): TrustMarkIssuerService {
 	const service = new TrustMarkIssuerService({
 		...configured,
 		...(ctx.trustMarkDefaults ? { trustMarkDefaults: ctx.trustMarkDefaults } : {}),
-		...(ctx.trustMarkSigner ? { trustMarkSigner: ctx.trustMarkSigner } : {}),
+
 		...(ctx.trustMarkStatusPolicy ? { trustMarkStatusPolicy: ctx.trustMarkStatusPolicy } : {}),
 		...(ctx.trustMarkRequestExtensions
 			? { trustMarkRequestExtensions: ctx.trustMarkRequestExtensions }
 			: {}),
 		issuer: ctx.entityId,
-		keyProvider: ctx.keyProvider,
+		crypto: ctx.crypto,
 		statusEndpointPublished: !!ctx.metadata.federation_entity.federation_trust_mark_status_endpoint,
 		storage: {
 			trustMarks: storage.trustMarks,
@@ -37,7 +37,7 @@ export function trustMarkService(ctx: HandlerContext): TrustMarkIssuerService {
 				});
 			},
 		},
-		...(ctx.options ? { options: ctx.options } : {}),
+		options: ctx.options,
 		...(ctx.trustMarkOwners ? { trustMarkOwners: ctx.trustMarkOwners } : {}),
 		...(ctx.trustMarkIssuers ? { trustMarkIssuers: ctx.trustMarkIssuers } : {}),
 		...(ctx.trustMarkDelegations ? { delegations: ctx.trustMarkDelegations } : {}),

@@ -1,5 +1,7 @@
+import { federationJwsOptions } from "./crypto-context.js";
 /** Federation endpoint requests with selector handling and configurable client authentication. */
 
+import type { KeyringEntry } from "@oidfed/crypto";
 import { runAsyncOperation } from "./async-operation.js";
 import {
 	FederationErrorCode,
@@ -13,7 +15,6 @@ import {
 } from "./endpoint-parameters.js";
 import { err, type Result } from "./errors.js";
 import { createClientAssertion } from "./jose/client-assertion.js";
-import type { JwtSigner } from "./jose/signer.js";
 import { type PerformFetchOptions, performFetch, validateFetchUrl } from "./trust-chain/fetch.js";
 import { type EntityId, entityId } from "./types.js";
 
@@ -22,7 +23,7 @@ export interface PrivateKeyJwtEndpointAuthentication {
 	readonly clientId: string;
 	/** Entity Identifier of the responder, which may differ from the endpoint origin (§8.8). */
 	readonly audience: string;
-	readonly signer: JwtSigner;
+	readonly signer: KeyringEntry;
 }
 export interface CustomEndpointClientAuthentication {
 	readonly method: string;
@@ -142,7 +143,7 @@ export async function fetchFederationEndpoint(
 					entityId(auth.clientId),
 					audience,
 					auth.signer,
-					options,
+					federationJwsOptions(options),
 				);
 				form.set("client_assertion_type", JWT_BEARER_CLIENT_ASSERTION_TYPE);
 				form.set("client_assertion", assertion);

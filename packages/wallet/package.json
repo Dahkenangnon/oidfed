@@ -51,19 +51,9 @@
 		"typecheck": "tsc --noEmit",
 		"clean": "rm -rf dist"
 	},
-	"devDependencies": {
-		"@oidfed/core": "workspace:^"
-	},
 	"dependencies": {
-		"jose": "6.2.13",
+		"@oidfed/core": "workspace:^",
+		"@oidfed/crypto": "workspace:^",
 		"zod": "4.6.7"
-	},
-	"peerDependencies": {
-		"@oidfed/core": "workspace:^"
-	},
-	"peerDependenciesMeta": {
-		"@oidfed/core": {
-			"optional": false
-		}
 	}
 }

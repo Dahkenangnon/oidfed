@@ -72,7 +72,7 @@ async function scannerWorkspace(prefix = "oidfed-runner-scanner-") {
 	return temporary;
 }
 
-test("security lint scans all five packages, including JavaScript, and fails closed", async () => {
+test("security lint scans all six packages, including JavaScript, and fails closed", async () => {
 	const temporary = await scannerWorkspace();
 	try {
 		await writeFile(
@@ -82,7 +82,7 @@ test("security lint scans all five packages, including JavaScript, and fails clo
 				include: ["packages"],
 			}),
 		);
-		for (const name of ["core", "authority", "leaf", "oidc", "wallet"]) {
+		for (const name of ["core", "authority", "leaf", "oidc", "wallet", "crypto"]) {
 			const directory = join(temporary, "packages", name, "src");
 			await mkdir(directory, { recursive: true });
 			await writeFile(join(directory, "index.ts"), "export const safe = 1;\n");
@@ -96,7 +96,7 @@ test("security lint scans all five packages, including JavaScript, and fails clo
 			});
 		let result = lint();
 		assert.equal(result.status, 0, result.stderr);
-		assert.match(result.stdout, /5 source files across all five/);
+		assert.match(result.stdout, /6 source files across all six/);
 		const bad = join(temporary, "packages/core/src/trust-chain/fetch.js");
 		await mkdir(join(temporary, "packages/core/src/trust-chain"));
 		await writeFile(
@@ -197,7 +197,7 @@ async function dependencyFixture(walletAtBase) {
 	const temporary = await scannerWorkspace();
 	await writeFile(join(temporary, "pnpm-workspace.yaml"), 'packages: ["packages/*"]\n');
 	await writeFile(join(temporary, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\nimporters: {}\n");
-	for (const name of ["core", "authority", "leaf", "oidc", ...(walletAtBase ? ["wallet"] : [])]) {
+	for (const name of ["core", "authority", "leaf", "oidc", "crypto", ...(walletAtBase ? ["wallet"] : [])]) {
 		await mkdir(join(temporary, "packages", name), { recursive: true });
 		await writeFile(
 			join(temporary, "packages", name, "package.json"),
@@ -242,7 +242,7 @@ async function dependencyFixture(walletAtBase) {
 		{ mode: 0o755 },
 	);
 	const graph = (version) =>
-		["core", "authority", "leaf", "oidc", "wallet"].map((name) => ({
+		["core", "authority", "leaf", "oidc", "wallet", "crypto"].map((name) => ({
 			name: `@oidfed/${name}`,
 			...(name === "core"
 				? { dependencies: { jose: { version }, zod: { version: "4.4.3" } } }

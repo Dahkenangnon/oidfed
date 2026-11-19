@@ -8,6 +8,7 @@ import {
 import { useCallback, useState } from "react";
 import { useSettings } from "@/hooks/use-settings";
 import { extractFederationEntity } from "@/lib/jwt";
+import { engine } from "../../../lib/crypto.js";
 
 export interface ExpiryEntry {
 	readonly entityId: string;
@@ -78,6 +79,7 @@ export function useExpiryScan(): UseExpiryScanResult {
 				const ecResult = await fetchEntityConfiguration(validated.value, {
 					httpTimeoutMs,
 					signal: ctrl.signal,
+					engine: engine,
 				});
 				if (!ecResult.ok) throw new Error(ecResult.error.description);
 
@@ -113,6 +115,7 @@ export function useExpiryScan(): UseExpiryScanResult {
 							httpTimeoutMs,
 							maxChainDepth,
 							signal: ctrl.signal,
+							engine: engine,
 						});
 						for (const chain of chainResult.chains) {
 							const daysRemaining = Math.floor((chain.expiresAt - nowSeconds) / 86400);

@@ -1,5 +1,6 @@
-import { entityId, generateSigningKey, resolveTrustChains, validateTrustChain } from "@oidfed/core";
+import { entityId, resolveTrustChains, validateTrustChain } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
+import { generateSigningKey, testEngine } from "../../tap/fixtures/software-crypto.js";
 import { launchFederation } from "../helpers/launcher.js";
 import { useFederation } from "../helpers/lifecycle.js";
 import { hierarchicalTopology } from "../topologies/hierarchical.js";
@@ -21,7 +22,7 @@ describe("Failure modes", () => {
 			const { server, trustAnchors } = getTestBed();
 			const unknownId = entityId(`https://unknown.ofed.test:${server.port}`);
 
-			const result = await resolveTrustChains(unknownId, trustAnchors);
+			const result = await resolveTrustChains(unknownId, trustAnchors, { engine: testEngine });
 			expect(result.chains).toHaveLength(0);
 			expect(result.errors.length).toBeGreaterThan(0);
 		});
@@ -31,7 +32,7 @@ describe("Failure modes", () => {
 			const rpId = entityId(`https://rp.ofed.test:${server.port}`);
 			const emptyAnchors = new Map();
 
-			const result = await resolveTrustChains(rpId, emptyAnchors);
+			const result = await resolveTrustChains(rpId, emptyAnchors, { engine: testEngine });
 			expect(result.chains).toHaveLength(0);
 		});
 
@@ -40,7 +41,7 @@ describe("Failure modes", () => {
 			const rpId = entityId(`https://rp.ofed.test:${server.port}`);
 
 			// First resolve chains with real anchors
-			const result = await resolveTrustChains(rpId, trustAnchors);
+			const result = await resolveTrustChains(rpId, trustAnchors, { engine: testEngine });
 			expect(result.chains).toHaveLength(1);
 
 			const chain = result.chains[0];
@@ -53,7 +54,9 @@ describe("Failure modes", () => {
 				[entityId(`https://ta.ofed.test:${server.port}`), { jwks: { keys: [fakeKey.publicKey] } }],
 			]);
 
-			const validation = await validateTrustChain([...chain.statements], fakeAnchors);
+			const validation = await validateTrustChain([...chain.statements], fakeAnchors, {
+				engine: testEngine,
+			});
 			expect(validation.valid).toBe(false);
 			expect(validation.errors.length).toBeGreaterThan(0);
 		});
@@ -63,7 +66,7 @@ describe("Failure modes", () => {
 			const rpId = entityId(`https://rp.ofed.test:${server.port}`);
 
 			// Resolve real chain
-			const result = await resolveTrustChains(rpId, trustAnchors);
+			const result = await resolveTrustChains(rpId, trustAnchors, { engine: testEngine });
 			expect(result.chains).toHaveLength(1);
 
 			const chain = result.chains[0];
@@ -81,7 +84,7 @@ describe("Failure modes", () => {
 			parts[1] = Buffer.from(JSON.stringify(payload)).toString("base64url");
 			statements[0] = parts.join(".");
 
-			const validation = await validateTrustChain(statements, trustAnchors);
+			const validation = await validateTrustChain(statements, trustAnchors, { engine: testEngine });
 			expect(validation.valid).toBe(false);
 		});
 	});
@@ -98,7 +101,7 @@ describe("Failure modes", () => {
 			]);
 
 			const opId = entityId(`https://op-uni.ofed.test:${server.port}`);
-			const result = await resolveTrustChains(opId, wrongAnchors);
+			const result = await resolveTrustChains(opId, wrongAnchors, { engine: testEngine });
 			expect(result.chains).toHaveLength(0);
 		});
 	});
@@ -111,7 +114,7 @@ describe("Failure modes", () => {
 			const rpId = entityId(`https://rp.ofed.test:${server.port}`);
 
 			// Resolve a valid chain
-			const result = await resolveTrustChains(rpId, trustAnchors);
+			const result = await resolveTrustChains(rpId, trustAnchors, { engine: testEngine });
 			expect(result.chains).toHaveLength(1);
 
 			const chain = result.chains[0];
@@ -123,6 +126,7 @@ describe("Failure modes", () => {
 			const validation = await validateTrustChain([...chain.statements], trustAnchors, {
 				clock: futureClock,
 				verboseErrors: true,
+				engine: testEngine,
 			});
 			expect(validation.valid).toBe(false);
 			expect(validation.errors.some((e) => e.code === "ERR_EXPIRED")).toBe(true);
@@ -139,7 +143,7 @@ describe("Failure modes", () => {
 			await testBed.close();
 
 			const rpId = entityId(`https://rp.ofed.test:${port}`);
-			const result = await resolveTrustChains(rpId, trustAnchors);
+			const result = await resolveTrustChains(rpId, trustAnchors, { engine: testEngine });
 			expect(result.chains).toHaveLength(0);
 			expect(result.errors.length).toBeGreaterThan(0);
 		});

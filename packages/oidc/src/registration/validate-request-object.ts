@@ -40,7 +40,7 @@ export function validateAutomaticRegistrationRequest(
 	requestObjectJwt: string,
 	context: AutomaticRegistrationContext,
 ): ValidatedRequestObjectResult {
-	const decoded = decodeEntityStatement(requestObjectJwt);
+	const decoded = decodeEntityStatement(requestObjectJwt, context);
 	if (!decoded.ok) {
 		return err(
 			federationError(
@@ -195,7 +195,7 @@ export function validateAutomaticRegistrationRequest(
 	const trustChainHeader = header.trust_chain as readonly string[] | undefined;
 	if (trustChainHeader !== undefined) {
 		const firstEntry = trustChainHeader[0] as string;
-		const firstDecoded = decodeEntityStatement(firstEntry);
+		const firstDecoded = decodeEntityStatement(firstEntry, context);
 		if (!firstDecoded.ok) {
 			return err(
 				federationError(
@@ -218,7 +218,7 @@ export function validateAutomaticRegistrationRequest(
 	const peerTrustChainHeader = header.peer_trust_chain as readonly string[] | undefined;
 	if (peerTrustChainHeader !== undefined) {
 		const peerFirstEntry = peerTrustChainHeader[0] as string;
-		const peerFirstDecoded = decodeEntityStatement(peerFirstEntry);
+		const peerFirstDecoded = decodeEntityStatement(peerFirstEntry, context);
 		if (!peerFirstDecoded.ok) {
 			return err(
 				federationError(
@@ -244,8 +244,8 @@ export function validateAutomaticRegistrationRequest(
 		if (trustChainHeader !== undefined) {
 			const rpLastEntry = trustChainHeader[trustChainHeader.length - 1] as string;
 			const peerLastEntry = peerTrustChainHeader[peerTrustChainHeader.length - 1] as string;
-			const rpLastDecoded = decodeEntityStatement(rpLastEntry);
-			const peerLastDecoded = decodeEntityStatement(peerLastEntry);
+			const rpLastDecoded = decodeEntityStatement(rpLastEntry, context);
+			const peerLastDecoded = decodeEntityStatement(peerLastEntry, context);
 			if (!rpLastDecoded.ok || !peerLastDecoded.ok) {
 				return err(
 					federationError(

@@ -1,3 +1,5 @@
+import { cloneData } from "@oidfed/core";
+import type { KeyringEntry } from "@oidfed/crypto";
 /** Wallet profile binding of client attestation authentication to trusted Wallet Providers. */
 
 import {
@@ -8,7 +10,6 @@ import {
 	type ClientAttestationVerificationOptions,
 	type CreateClientAttestationParams,
 	createClientAttestation,
-	type JwtSigner,
 	ok,
 	type Result,
 	safeLogger,
@@ -55,7 +56,7 @@ export interface AuthenticateWalletOptions
 export function createAttestation(
 	issuer: string,
 	params: CreateWalletAttestationParams,
-	signer: JwtSigner,
+	signer: KeyringEntry,
 	options: WalletTrustOptions,
 ): Promise<Result<string>> {
 	return createClientAttestation(issuer, params, signer, options);
@@ -127,7 +128,7 @@ export async function authenticateWallet(
 			const provider = trust.provider();
 			return provider
 				? options.acceptWallet(
-						{ attestation: value.attestation, provider: structuredClone(provider) },
+						{ attestation: value.attestation, provider: cloneData(provider) },
 						signal,
 					)
 				: false;

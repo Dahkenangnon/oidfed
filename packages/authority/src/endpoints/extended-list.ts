@@ -1,3 +1,4 @@
+import { utf8Encode } from "@oidfed/crypto";
 /**
  * HTTP handler for the Extended Subordinate Listing endpoint
  * (`federation_extended_list_endpoint`). Returns an ordered, paginated JSON
@@ -348,10 +349,10 @@ export function createExtendedListHandler(
 					(auditTimestamps === null && (updatedAfterParam !== null || updatedBeforeParam !== null));
 
 				const entries: Array<Record<string, unknown>> = [];
-				const encoder = new TextEncoder();
+
 				let entryBytes = 0;
 				const responseBytes = (count: number, bytes: number, next?: EntityId) =>
-					encoder.encode(
+					utf8Encode(
 						JSON.stringify({
 							immediate_subordinate_entities: [],
 							...(next !== undefined ? { next } : {}),
@@ -375,7 +376,7 @@ export function createExtendedListHandler(
 					}
 
 					const serialized = JSON.stringify(entry);
-					const bytes = encoder.encode(serialized).byteLength;
+					const bytes = utf8Encode(serialized).byteLength;
 					const following = accumulated[index + 1]?.entityId ?? nextEntityId;
 					// Draft 03 §3.1.2: account for selected claims and the actual next cursor.
 					// The preceding accepted entry already reserved space for this record's cursor.

@@ -106,7 +106,7 @@ export async function processExplicitRegistration(
 		rpEcJwt = requestBody;
 	}
 
-	const decoded = decodeEntityStatement(rpEcJwt);
+	const decoded = decodeEntityStatement(rpEcJwt, options);
 	if (!decoded.ok) {
 		safeLogger(options?.logger)?.warn("Failed to decode the RP Entity Configuration");
 		return err(
@@ -275,9 +275,10 @@ export async function processExplicitRegistration(
 	// Validate typ header matches entity-statement+jwt
 	const selfVerify = await verifyEntityStatement(
 		rpEcJwt,
-		rpJwks as Parameters<typeof verifyEntityStatement>[1],
+		rpJwks as unknown as Parameters<typeof verifyEntityStatement>[1],
 		{
 			expectedTyp: JwtTyp.EntityStatement,
+			...options,
 			...(options.clock ? { clock: options.clock } : {}),
 			...(options.clockSkewSeconds !== undefined
 				? { clockSkewSeconds: options.clockSkewSeconds }

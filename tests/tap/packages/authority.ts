@@ -44,13 +44,24 @@ import {
 import { createSubordinateLifecycle } from "../../../packages/authority/src/subordinate-lifecycle.js";
 import * as CorePublic from "../../../packages/core/src/index.js";
 import { signProtocolFixture } from "../fixtures/protocol-jwt.js";
+import {
+	FixtureCrypto,
+	fixtureCryptoFromRead,
+	fixtureHostConfig,
+	fixtureSigner,
+	generateSigningKey,
+	instrumentSigningEntry,
+	rawFixtureJwt,
+	SigningEntryFixture,
+	testEngine,
+} from "../fixtures/software-crypto.js";
 import * as SubordinateEventsFixture from "../fixtures/subordinate-events.js";
 
-function createAuthorityServer(config: AuthorityConfig): AuthorityServer {
+async function createAuthorityServer(config: AuthorityConfig): Promise<AuthorityServer> {
 	const server =
 		config.authorityHints && config.authorityHints.length > 0
-			? new Intermediate(config)
-			: new TrustAnchor(config);
+			? await Intermediate.create(fixtureHostConfig(config))
+			: await TrustAnchor.create(fixtureHostConfig(config));
 	return {
 		registerSubordinate: (record) => server.registerSubordinate(record),
 		updateSubordinate: (sub, updates) => server.updateSubordinate(sub, updates),
@@ -104,15 +115,12 @@ import {
 	FederationEndpoint,
 	FederationErrorCode,
 	fetchExtendedSubordinatesList,
-	generateSigningKey,
 	type HttpClient,
 	InternalErrorCode,
 	isOk,
 	type JWK,
-	JwkSigner,
 	JwtTyp,
 	MediaType,
-	MemoryFederationKeyProvider,
 	signEntityStatement,
 	signTrustMarkDelegation,
 	stripPrivateFields,
@@ -135,7 +143,7 @@ const ENTITY_ID = entityId("https://authority.example.com");
 const TEST_KID = "test-key-1";
 
 function createFederationSigningKey(signingKey: JWK) {
-	return { signer: new JwkSigner(signingKey), publicJwk: stripPrivateFields(signingKey) };
+	return { signer: new SigningEntryFixture(signingKey), publicJwk: stripPrivateFields(signingKey) };
 }
 
 function testPublicJwk(
@@ -151,7 +159,7 @@ async function createTestContext(overrides?: TestContextOverrides): Promise<{
 	ctx: HandlerContext;
 	signingKey: JWK;
 	publicKey: JWK;
-	keyProvider: MemoryFederationKeyProvider;
+	crypto: FixtureCrypto;
 	storage: MemoryStorageAdapter;
 	subordinates: SubordinateStorage;
 	trustMarks: TrustMarkStorage;
@@ -160,9 +168,9 @@ async function createTestContext(overrides?: TestContextOverrides): Promise<{
 	const signingKey = { ...privateKey, kid: TEST_KID };
 	const publicKey = { ...rawPublicKey, kid: TEST_KID };
 
-	const keyProvider = new MemoryFederationKeyProvider(createFederationSigningKey(signingKey));
+	const crypto = new FixtureCrypto(createFederationSigningKey(signingKey));
 
-	const storage = new MemoryStorageAdapter({ trustMarks: true });
+	const storage = new MemoryStorageAdapter({ engine: testEngine, trustMarks: true });
 	const subordinates = storage.subordinates;
 	const trustMarks = storage.trustMarks!;
 
@@ -170,7 +178,7 @@ async function createTestContext(overrides?: TestContextOverrides): Promise<{
 		// Existing endpoint fixtures explicitly exercise fresh anonymous resolution.
 		requireAuthForFreshResolution: false,
 		entityId: ENTITY_ID,
-		keyProvider,
+		crypto,
 		storage,
 		clientKeyProvider: {
 			async getClientFederationJwks(entityId) {
@@ -184,9 +192,10 @@ async function createTestContext(overrides?: TestContextOverrides): Promise<{
 			},
 		},
 		...overrides,
+		options: { ...overrides?.options, engine: testEngine },
 	};
 
-	return { ctx, signingKey, publicKey, keyProvider, storage, subordinates, trustMarks };
+	return { ctx, signingKey, publicKey, crypto, storage, subordinates, trustMarks };
 }
 
 function hostConfig(ctx: HandlerContext): AuthorityConfig {
@@ -198,7 +207,7 @@ function hostConfig(ctx: HandlerContext): AuthorityConfig {
 }
 
 async function putTestMark(ctx: HandlerContext, record: TrustMarkRecord): Promise<string> {
-	const keySet = await ctx.keyProvider.getFederationKeySet();
+	const keySet = await ctx.crypto.keyring.entry("federation");
 	const jwt = await signEntityStatement(
 		{
 			iss: ctx.entityId,
@@ -207,7 +216,7 @@ async function putTestMark(ctx: HandlerContext, record: TrustMarkRecord): Promis
 			iat: record.issuedAt,
 			...(record.expiresAt !== undefined ? { exp: record.expiresAt } : {}),
 		},
-		keySet.signer,
+		keySet,
 		{ typ: JwtTyp.TrustMark },
 	);
 	await ctx.storage.trustMarks!.issue({ ...record, jwt });
@@ -228,9 +237,9 @@ async function resolveAsClient(
 			aud: ctx.entityId,
 			iat: now,
 			exp: now + 60,
-			jti: crypto.randomUUID(),
+			jti: globalThis.crypto.randomUUID(),
 		},
-		new JwkSigner(key.privateKey),
+		new SigningEntryFixture(key.privateKey),
 		{ typ: "JWT" },
 	);
 	const url = new URL(request.url),
@@ -257,8 +266,12 @@ export default (QUnit: QUnit) => {
 			const key = await generateSigningKey("ES256");
 			return {
 				entityId: id,
-				keyProvider: new MemoryFederationKeyProvider(createFederationSigningKey(key.privateKey)),
-				storage: new MemoryStorageAdapter({ trustMarks: true, subordinateEvents: true }),
+				crypto: new FixtureCrypto(createFederationSigningKey(key.privateKey)),
+				storage: new MemoryStorageAdapter({
+					engine: testEngine,
+					trustMarks: true,
+					subordinateEvents: true,
+				}),
 				metadata: {
 					federation_entity: {
 						federation_fetch_endpoint: "https://authority.example/fetch?tenant=academic",
@@ -276,22 +289,29 @@ export default (QUnit: QUnit) => {
 		test("role routes cannot replace discovery, built-in endpoints or another role", async (t) => {
 			const base = await config();
 			for (const Host of [TrustAnchor, Intermediate]) {
-				const make = (overrides: Partial<AuthorityConfig> = {}) =>
-					new Host({
-						...base,
-						metadata: structuredClone(base.metadata),
-						...(Host === Intermediate ? { authorityHints: [TA_ID] } : {}),
-						...overrides,
-					});
+				const make = async (overrides: Partial<AuthorityConfig> = {}) =>
+					await Host.create(
+						fixtureHostConfig({
+							...base,
+							metadata: structuredClone(base.metadata),
+							...(Host === Intermediate ? { authorityHints: [TA_ID] } : {}),
+							...overrides,
+						}),
+					);
 				for (const path of [
 					"/tenant/.well-known/openid-federation",
 					"https://authority.example/tenant/.well-known/openid-federation",
 					"/fetch",
 					"/list",
 				])
-					t.throws(() => make({ roles: [role(path)] }), /conflict/, `${Host.name}: ${path}`);
-				t.throws(
-					() => make({ roles: [role("/register"), role("https://authority.example/register")] }),
+					await t.rejects(
+						(() => make({ roles: [role(path)] }))(),
+						/conflict/,
+						`${Host.name}: ${path}`,
+					);
+				await t.rejects(
+					(() =>
+						make({ roles: [role("/register"), role("https://authority.example/register")] }))(),
 					/conflict/,
 				);
 				for (const field of [
@@ -305,8 +325,8 @@ export default (QUnit: QUnit) => {
 					"collection",
 				] as const) {
 					const endpoint = `https://authority.example/${field}?tenant=academic`;
-					t.throws(
-						() =>
+					await t.rejects(
+						(() =>
 							make({
 								metadata: {
 									federation_entity: {
@@ -316,14 +336,14 @@ export default (QUnit: QUnit) => {
 								},
 								...(field === "collection" ? { collection: { trustAnchors: new Map() } } : {}),
 								roles: [role(`/${field}`)],
-							}),
+							}))(),
 						/Role route.*conflicts/,
 						`${Host.name}: ${field}`,
 					);
 				}
 				// The reserved path comes from composed metadata, not just the original config.
-				t.throws(
-					() =>
+				await t.rejects(
+					(() =>
 						make({
 							roles: [
 								{
@@ -332,19 +352,23 @@ export default (QUnit: QUnit) => {
 								},
 								role("/composed"),
 							],
-						}),
+						}))(),
 					/Role route.*conflicts/,
 				);
 				const host = make({ roles: [role("/tenant//register")] });
 				t.equal(
 					await (
-						await host.handleRequest(new Request("https://authority.example/tenant//register"))
+						await (
+							await host
+						).handleRequest(new Request("https://authority.example/tenant//register"))
 					).text(),
 					"role",
 				);
 				t.equal(
 					(
-						await host.handleRequest(
+						await (
+							await host
+						).handleRequest(
 							new Request("https://authority.example/tenant/.well-known/openid-federation", {
 								method: "POST",
 							}),
@@ -366,22 +390,24 @@ export default (QUnit: QUnit) => {
 					for (const Host of [TrustAnchor, Intermediate]) {
 						let roleId: string | undefined;
 						let initialized = 0;
-						const host = new Host({
-							...base,
-							entityId: raw,
-							metadata: structuredClone(base.metadata),
-							...(Host === Intermediate ? { authorityHints: [TA_ID] } : {}),
-							roles: [
-								{
-									type: "example_protocol",
-									metadata: {},
-									initialize: (context) => {
-										roleId = context.entityId;
-										initialized++;
+						const host = await Host.create(
+							fixtureHostConfig({
+								...base,
+								entityId: raw,
+								metadata: structuredClone(base.metadata),
+								...(Host === Intermediate ? { authorityHints: [TA_ID] } : {}),
+								roles: [
+									{
+										type: "example_protocol",
+										metadata: {},
+										initialize: (context) => {
+											roleId = context.entityId;
+											initialized++;
+										},
 									},
-								},
-							],
-						});
+								],
+							}),
+						);
 						t.equal(host.entityId, expected);
 						t.equal(initialized, 1, "roles initialize once");
 						t.strictEqual(host.constructor, Host);
@@ -402,6 +428,7 @@ export default (QUnit: QUnit) => {
 							t.equal(ec.value.payload.sub, expected);
 						}
 						const result = await CorePublic.fetchEntityConfiguration(host.entityId, {
+							engine: testEngine,
 							httpClient: async (input) => host.handleRequest(new Request(String(input))),
 						});
 						t.true(result.ok, `${Host.name}: ${raw}`);
@@ -416,10 +443,10 @@ export default (QUnit: QUnit) => {
 				subject = "https://holder.example",
 				type = "type",
 				external = "https://external.example";
-			const key = await c.generateSigningKey("ES256"),
-				leaf = await c.generateSigningKey("ES256"),
-				ext = await c.generateSigningKey("ES256");
-			const provider = c.MemoryFederationKeyProvider.fromJWK(key.privateKey),
+			const key = await generateSigningKey("ES256"),
+				leaf = await generateSigningKey("ES256"),
+				ext = await generateSigningKey("ES256");
+			const provider = FixtureCrypto.fromJWK(key.privateKey),
 				clock = { now: () => 1000 };
 			const anchors = c.createTrustAnchorSet([
 				{ entityId: issuer, jwks: { keys: [key.publicKey] } },
@@ -427,7 +454,11 @@ export default (QUnit: QUnit) => {
 			let holderEc = "",
 				status = "active",
 				statusCalls = 0;
-			const storage = new AuthorityPublic.MemoryStorageAdapter({ trustMarks: true, clock });
+			const storage = new AuthorityPublic.MemoryStorageAdapter({
+				engine: testEngine,
+				trustMarks: true,
+				clock,
+			});
 			const metadata = {
 				federation_entity: {
 					federation_fetch_endpoint: `${issuer}/fetch`,
@@ -449,7 +480,7 @@ export default (QUnit: QUnit) => {
 					return new Response(
 						await c.signEntityStatement(
 							{ iss: external, iat: 1000, trust_mark: externalJwt, status },
-							new c.JwkSigner(ext.privateKey),
+							new SigningEntryFixture(ext.privateKey),
 							{ typ: c.JwtTyp.TrustMarkStatusResponse },
 						),
 						{ headers: { "content-type": c.MediaType.TrustMarkStatusResponse } },
@@ -457,16 +488,18 @@ export default (QUnit: QUnit) => {
 				}
 				return anchor.handleRequest(request);
 			};
-			anchor = new TrustAnchor({
-				entityId: issuer,
-				keyProvider: provider,
-				storage,
-				trustAnchors: anchors,
-				metadata,
-				options: { clock, httpClient },
-				trustMarkIssuers: { [type]: [issuer, external] },
-				trustMarkStatusPolicy: () => ({ status }),
-			});
+			anchor = await TrustAnchor.create(
+				fixtureHostConfig({
+					entityId: issuer,
+					crypto: provider,
+					storage,
+					trustAnchors: anchors,
+					metadata,
+					options: { clock, httpClient },
+					trustMarkIssuers: { [type]: [issuer, external] },
+					trustMarkStatusPolicy: () => ({ status }),
+				}),
+			);
 			await anchor.registerSubordinate({
 				entityId: c.entityId(subject),
 				jwks: { keys: [leaf.publicKey] },
@@ -480,7 +513,7 @@ export default (QUnit: QUnit) => {
 				issuer: external,
 				subject,
 				trustMarkType: type,
-				signer: new c.JwkSigner(ext.privateKey),
+				signer: new SigningEntryFixture(ext.privateKey),
 				clock,
 				ttlSeconds: 200,
 			});
@@ -496,7 +529,7 @@ export default (QUnit: QUnit) => {
 						federation_entity: { federation_trust_mark_status_endpoint: `${external}/status` },
 					},
 				},
-				new c.JwkSigner(ext.privateKey),
+				new SigningEntryFixture(ext.privateKey),
 			);
 			const proof = await c.establishTrustMarkIssuerTrust({
 				issuer: external,
@@ -507,7 +540,7 @@ export default (QUnit: QUnit) => {
 					await anchor.getSubordinateStatement(c.entityId(external)),
 					await anchor.getEntityConfiguration(),
 				],
-				options: { clock, offline: true },
+				options: { engine: testEngine, clock, offline: true },
 			});
 			if (!proof.ok) throw Error(proof.error.description);
 			const publish = async (jwt: string) => {
@@ -522,7 +555,7 @@ export default (QUnit: QUnit) => {
 						metadata: { federation_entity: {} },
 						trust_marks: [{ trust_mark_type: type, trust_mark: jwt }],
 					},
-					new c.JwkSigner(leaf.privateKey),
+					new SigningEntryFixture(leaf.privateKey),
 				);
 			};
 			const resolve = async (issuerEvidence?: CorePublic.TrustMarkIssuerContext[]) => {
@@ -530,10 +563,12 @@ export default (QUnit: QUnit) => {
 				if (!root.ok) throw Error(root.error.description);
 				const ctx: HandlerContext = {
 					...(root.value.payload.trust_mark_owners
-						? { trustMarkOwners: root.value.payload.trust_mark_owners }
+						? {
+								trustMarkOwners: root.value.payload.trust_mark_owners,
+							}
 						: {}),
 					entityId: c.entityId(issuer),
-					keyProvider: provider,
+					crypto: provider,
 					storage,
 					trustAnchors: anchors,
 					clientKeyProvider: { getClientFederationJwks: async () => undefined },
@@ -542,7 +577,9 @@ export default (QUnit: QUnit) => {
 					options: {
 						clock,
 						httpClient,
-						...(issuerEvidence ? { trustMarkVerification: { issuerEvidence } } : {}),
+						...(issuerEvidence
+							? { engine: testEngine, trustMarkVerification: { issuerEvidence } }
+							: { engine: testEngine }),
 					},
 				};
 				const response = await createResolveHandler(ctx)(
@@ -646,37 +683,42 @@ export default (QUnit: QUnit) => {
 				const crit = ["x_authority"];
 				const config: AuthorityConfig = {
 					entityId: f.ctx.entityId,
-					keyProvider: f.keyProvider,
+					crypto: f.crypto,
 					storage: f.storage,
 					metadata: f.ctx.metadata,
 					additionalClaims,
 					crit,
 					...(intermediate ? { authorityHints: ["https://superior.example"] } : {}),
 				};
-				const authority = createAuthorityServer(config);
+				const authority = await createAuthorityServer(config);
 				additionalClaims.x_authority.versions.push(2);
 				crit.push("missing");
-				const result = decodeEntityStatement(await authority.getEntityConfiguration());
+				const result = decodeEntityStatement(await (await authority).getEntityConfiguration());
 				t.true(result.ok);
 				if (result.ok) {
 					t.deepEqual(result.value.payload.x_authority, { versions: [1] });
 					t.deepEqual(result.value.payload.crit, ["x_authority"]);
 				}
-				t.throws(
-					() => createAuthorityServer({ ...config, additionalClaims: { exp: 1 } }),
+				await t.rejects(
+					(async () => await createAuthorityServer({ ...config, additionalClaims: { exp: 1 } }))(),
 					/reserved/,
 				);
-				t.throws(() => createAuthorityServer({ ...config, crit: [] }), /crit/);
+				await t.rejects(
+					(async () => await createAuthorityServer({ ...config, crit: [] }))(),
+					/crit/,
+				);
 			}
 		});
 		test("subordinate extensions survive registration, updates, Fetch and Extended Listing", async (t) => {
 			const f = await createTestContext();
-			const authority = new TrustAnchor({
-				entityId: f.ctx.entityId,
-				keyProvider: f.keyProvider,
-				storage: f.storage,
-				metadata: f.ctx.metadata,
-			});
+			const authority = await TrustAnchor.create(
+				fixtureHostConfig({
+					entityId: f.ctx.entityId,
+					crypto: f.crypto,
+					storage: f.storage,
+					metadata: f.ctx.metadata,
+				}),
+			);
 			const additionalClaims = { x_rules: { versions: [1] } };
 			await authority.registerSubordinate({
 				entityId: LEAF_ID,
@@ -758,7 +800,7 @@ export default (QUnit: QUnit) => {
 		});
 		test("authority lifecycle checks precede custom adapter writes and event creation", async (t) => {
 			const f = await createTestContext();
-			const backing = new MemoryStorageAdapter({ subordinateEvents: true });
+			const backing = new MemoryStorageAdapter({ engine: testEngine, subordinateEvents: true });
 			let adds = 0,
 				updates = 0;
 			const tracked = (repo: SubordinateStorage): SubordinateStorage => ({
@@ -877,7 +919,7 @@ export default (QUnit: QUnit) => {
 			if (!decoded.ok) throw Error("fixture");
 			const ss = await signEntityStatement(
 				{ ...decoded.value.payload, constraints: { custom: true } },
-				new JwkSigner(fed.taSigningKey),
+				new SigningEntryFixture(fed.taSigningKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 			const httpClient: HttpClient = async (input, init) => {
@@ -933,18 +975,20 @@ export default (QUnit: QUnit) => {
 							messages.push([level, args]);
 							if (throwingLogger) throw new Error("Logger failed");
 						};
-					const authority = new TrustAnchor({
-						...f.config,
-						options: {
-							...f.config.options,
-							logger: {
-								debug: record("debug"),
-								info: record("info"),
-								warn: record("warn"),
-								error: record("error"),
+					const authority = await TrustAnchor.create(
+						fixtureHostConfig({
+							...f.config,
+							options: {
+								...f.config.options,
+								logger: {
+									debug: record("debug"),
+									info: record("info"),
+									warn: record("warn"),
+									error: record("error"),
+								},
 							},
-						},
-					});
+						}),
+					);
 					if (operation !== "registration") await authority.registerSubordinate(f.record);
 					messages.length = 0;
 					const before = await f.storage.subordinates.get(SubordinateEventsFixture.subject);
@@ -1026,19 +1070,21 @@ export default (QUnit: QUnit) => {
 		test("HTTPS and omitted event documentation produce no recommendation notice", async (t) => {
 			const f = await SubordinateEventsFixture.fixture();
 			const messages: string[] = [];
-			const authority = new TrustAnchor({
-				...f.config,
-				options: {
-					logger: {
-						debug() {},
-						warn() {},
-						error() {},
-						info: (message) => {
-							messages.push(message);
+			const authority = await TrustAnchor.create(
+				fixtureHostConfig({
+					...f.config,
+					options: {
+						logger: {
+							debug() {},
+							warn() {},
+							error() {},
+							info: (message) => {
+								messages.push(message);
+							},
 						},
 					},
-				},
-			});
+				}),
+			);
 			await authority.registerSubordinate(f.record);
 			await authority.recordSubordinateEvents(SubordinateEventsFixture.subject, [
 				{ event: "custom", iat: 1500, information_uri: "https://docs.example/event" },
@@ -1058,38 +1104,41 @@ export default (QUnit: QUnit) => {
 							? { federation_resolve_endpoint: `${SubordinateEventsFixture.issuer}/resolve` }
 							: {}),
 					};
-					let failing = true;
-					const getKeys = f.keyProvider.getFederationKeySet.bind(f.keyProvider);
-					f.keyProvider.getFederationKeySet = async () => {
+					let failing = false;
+					const getKeys = f.crypto.keyring.entry.bind(f.crypto.keyring, "federation");
+					f.crypto.keyring.entry = async () => {
 						if (failing) throw new Error("signing failed");
 						return getKeys();
 					};
-					const authority = new TrustAnchor({
-						...f.config,
-						collection: { trustAnchors: new Map() },
-						metadata: {
-							...f.config.metadata,
-							federation_entity: {
-								...f.config.metadata!.federation_entity,
-								...(!throughRole ? collectionMetadata : {}),
-							},
-						},
-						...(throughRole
-							? { roles: [{ type: "federation_entity", metadata: collectionMetadata }] }
-							: {}),
-						options: {
-							logger: {
-								debug() {},
-								warn() {},
-								error() {},
-								info: (message) => {
-									messages.push(message);
-									throw new Error("Logger failed");
+					const authority = await TrustAnchor.create(
+						fixtureHostConfig({
+							...f.config,
+							collection: { trustAnchors: new Map() },
+							metadata: {
+								...f.config.metadata,
+								federation_entity: {
+									...f.config.metadata!.federation_entity,
+									...(!throughRole ? collectionMetadata : {}),
 								},
 							},
-						},
-					});
+							...(throughRole
+								? { roles: [{ type: "federation_entity", metadata: collectionMetadata }] }
+								: {}),
+							options: {
+								logger: {
+									debug() {},
+									warn() {},
+									error() {},
+									info: (message) => {
+										messages.push(message);
+										throw new Error("Logger failed");
+									},
+								},
+							},
+						}),
+					);
 					t.deepEqual(messages, []);
+					failing = true;
 					await t.rejects(authority.getEntityConfiguration());
 					t.deepEqual(messages, []);
 					failing = false;
@@ -1109,30 +1158,32 @@ export default (QUnit: QUnit) => {
 			for (const advertised of [false, true]) {
 				const notices: unknown[][] = [];
 				const warnings: unknown[][] = [];
-				const authority = new TrustAnchor({
-					entityId: TA_ID,
-					keyProvider: MemoryFederationKeyProvider.fromJWK(f.taSigningKey),
-					storage: new MemoryStorageAdapter({ trustMarks: true }),
-					metadata: {
-						federation_entity: {
-							federation_fetch_endpoint: `${TA_ID}/fetch`,
-							federation_list_endpoint: `${TA_ID}/list`,
-							...(advertised ? { federation_trust_mark_status_endpoint: `${TA_ID}/status` } : {}),
-						},
-					},
-					options: {
-						logger: {
-							debug() {},
-							error() {},
-							info: (...args) => {
-								notices.push(args);
-							},
-							warn: (...args) => {
-								warnings.push(args);
+				const authority = await TrustAnchor.create(
+					fixtureHostConfig({
+						entityId: TA_ID,
+						crypto: FixtureCrypto.fromJWK(f.taSigningKey),
+						storage: new MemoryStorageAdapter({ engine: testEngine, trustMarks: true }),
+						metadata: {
+							federation_entity: {
+								federation_fetch_endpoint: `${TA_ID}/fetch`,
+								federation_list_endpoint: `${TA_ID}/list`,
+								...(advertised ? { federation_trust_mark_status_endpoint: `${TA_ID}/status` } : {}),
 							},
 						},
-					},
-				});
+						options: {
+							logger: {
+								debug() {},
+								error() {},
+								info: (...args) => {
+									notices.push(args);
+								},
+								warn: (...args) => {
+									warnings.push(args);
+								},
+							},
+						},
+					}),
+				);
 				for (let i = 0; i < 2; i++)
 					t.true(
 						decodeEntityStatement(
@@ -1153,31 +1204,35 @@ export default (QUnit: QUnit) => {
 			const fail = () => {
 				throw new Error("Logger failed");
 			};
-			const authority = new TrustAnchor({
-				entityId: TA_ID,
-				keyProvider: MemoryFederationKeyProvider.fromJWK(f.taSigningKey),
-				storage: new MemoryStorageAdapter({ trustMarks: true }),
-				metadata: {
-					federation_entity: {
-						federation_fetch_endpoint: `${TA_ID}/fetch`,
-						federation_list_endpoint: `${TA_ID}/list`,
+			const authority = await TrustAnchor.create(
+				fixtureHostConfig({
+					entityId: TA_ID,
+					crypto: FixtureCrypto.fromJWK(f.taSigningKey),
+					storage: new MemoryStorageAdapter({ engine: testEngine, trustMarks: true }),
+					metadata: {
+						federation_entity: {
+							federation_fetch_endpoint: `${TA_ID}/fetch`,
+							federation_list_endpoint: `${TA_ID}/list`,
+						},
 					},
-				},
-				options: { logger: { debug: fail, info: fail, warn: fail, error: fail } },
-			});
+					options: { logger: { debug: fail, info: fail, warn: fail, error: fail } },
+				}),
+			);
 			t.true(
 				decodeEntityStatement(await authority.issueTrustMark(OP_ID, "https://marks.example/type"))
 					.ok,
 			);
-			t.throws(
-				() =>
-					new TrustAnchor({
-						entityId: TA_ID,
-						keyProvider: MemoryFederationKeyProvider.fromJWK(f.taSigningKey),
-						storage: new MemoryStorageAdapter(),
-						metadata: { federation_entity: {} },
-						options: { logger: { debug: fail, info: fail, warn: fail, error: fail } },
-					}),
+			await t.rejects(
+				(async () =>
+					await TrustAnchor.create(
+						fixtureHostConfig({
+							entityId: TA_ID,
+							crypto: FixtureCrypto.fromJWK(f.taSigningKey),
+							storage: new MemoryStorageAdapter({ engine: testEngine }),
+							metadata: { federation_entity: {} },
+							options: { logger: { debug: fail, info: fail, warn: fail, error: fail } },
+						}),
+					))(),
 				/fetch_endpoint/,
 			);
 		});
@@ -1209,17 +1264,19 @@ export default (QUnit: QUnit) => {
 
 	test("fixed-query routing preserves a double slash in an endpoint path", async (t) => {
 		const { ctx } = await createTestContext();
-		const authority = new TrustAnchor({
-			entityId: ctx.entityId,
-			keyProvider: ctx.keyProvider,
-			storage: ctx.storage,
-			metadata: {
-				federation_entity: {
-					federation_fetch_endpoint: `${ctx.entityId}/fetch`,
-					federation_list_endpoint: `${ctx.entityId}//api?kind=list`,
+		const authority = await TrustAnchor.create(
+			fixtureHostConfig({
+				entityId: ctx.entityId,
+				crypto: ctx.crypto,
+				storage: ctx.storage,
+				metadata: {
+					federation_entity: {
+						federation_fetch_endpoint: `${ctx.entityId}/fetch`,
+						federation_list_endpoint: `${ctx.entityId}//api?kind=list`,
+					},
 				},
-			},
-		});
+			}),
+		);
 		const response = await authority.handleRequest(new Request(`${ctx.entityId}//api?kind=list`));
 		t.equal(response.status, 200);
 		t.deepEqual(await response.json(), []);
@@ -1232,7 +1289,7 @@ export default (QUnit: QUnit) => {
 		const { buildSubordinateEvents } = await import(
 			"../../../packages/authority/src/endpoints/subordinate-events.js"
 		);
-		const backing = new MemoryStorageAdapter({ subordinateEvents: true });
+		const backing = new MemoryStorageAdapter({ engine: testEngine, subordinateEvents: true });
 		const subject = entityId("https://member.example");
 		await backing.subordinates.add({
 			entityId: subject,
@@ -1277,7 +1334,7 @@ export default (QUnit: QUnit) => {
 		const { createSubordinateLifecycle } = await import(
 			"../../../packages/authority/src/subordinate-lifecycle.js"
 		);
-		const backing = new MemoryStorageAdapter({ subordinateEvents: true });
+		const backing = new MemoryStorageAdapter({ engine: testEngine, subordinateEvents: true });
 		const { ctx } = await createTestContext({ storage: backing });
 		const lifecycle = createSubordinateLifecycle(ctx);
 		const subject = entityId("https://member.example");
@@ -1325,7 +1382,7 @@ export default (QUnit: QUnit) => {
 		);
 		t.deepEqual(await backing.subordinates.get(subject), before);
 		t.deepEqual(await backing.subordinateEvents!.list(ctx.entityId, subject), events);
-		const withoutEvents = new MemoryStorageAdapter();
+		const withoutEvents = new MemoryStorageAdapter({ engine: testEngine });
 		await t.rejects(
 			createSubordinateLifecycle({ ...ctx, storage: withoutEvents }).registerSubordinate(
 				{ entityId: subject, jwks: updates.jwks },
@@ -1346,29 +1403,31 @@ export default (QUnit: QUnit) => {
 			"trust_mark_list",
 			"trust_mark_status",
 		]) {
-			t.throws(
-				() =>
-					new TrustAnchor({
-						entityId: ctx.entityId,
-						keyProvider: ctx.keyProvider,
-						storage: ctx.storage,
-						metadata: {
-							federation_entity: {
-								...ctx.metadata.federation_entity,
-								[`federation_${endpoint}_endpoint_auth_methods`]: ["none"],
+			await t.rejects(
+				(async () =>
+					await TrustAnchor.create(
+						fixtureHostConfig({
+							entityId: ctx.entityId,
+							crypto: ctx.crypto,
+							storage: ctx.storage,
+							metadata: {
+								federation_entity: {
+									...ctx.metadata.federation_entity,
+									[`federation_${endpoint}_endpoint_auth_methods`]: ["none"],
+								},
 							},
-						},
-					}),
+						}),
+					))(),
 				/requires/,
 			);
 		}
 	});
 	test("authority routes distinguish fixed query selectors and reject overlaps", async (t) => {
 		const { ctx } = await createTestContext();
-		const storage = new MemoryStorageAdapter({ subordinateEvents: true });
+		const storage = new MemoryStorageAdapter({ engine: testEngine, subordinateEvents: true });
 		const config = {
 			entityId: ctx.entityId,
-			keyProvider: ctx.keyProvider,
+			crypto: ctx.crypto,
 			storage,
 			metadata: {
 				federation_entity: {
@@ -1378,7 +1437,7 @@ export default (QUnit: QUnit) => {
 				},
 			},
 		};
-		const authority = new TrustAnchor(config);
+		const authority = await TrustAnchor.create(fixtureHostConfig(config));
 		const subject = entityId("https://member.example");
 		await authority.registerSubordinate({ entityId: subject, jwks: { keys: [testPublicJwk()] } });
 		for (const [query, status] of [
@@ -1392,17 +1451,19 @@ export default (QUnit: QUnit) => {
 			t.equal(response.status, status);
 			await response.body?.cancel();
 		}
-		t.throws(
-			() =>
-				new TrustAnchor({
-					...config,
-					metadata: {
-						federation_entity: {
-							...config.metadata.federation_entity,
-							federation_extended_list_endpoint: `${ctx.entityId}/api?tenant=a`,
+		await t.rejects(
+			(async () =>
+				await TrustAnchor.create(
+					fixtureHostConfig({
+						...config,
+						metadata: {
+							federation_entity: {
+								...config.metadata.federation_entity,
+								federation_extended_list_endpoint: `${ctx.entityId}/api?tenant=a`,
+							},
 						},
-					},
-				}),
+					}),
+				))(),
 			/overlapping/,
 		);
 	});
@@ -1412,8 +1473,8 @@ export default (QUnit: QUnit) => {
 			{ ctx } = await createTestContext();
 		const config = {
 			entityId: ctx.entityId,
-			keyProvider: ctx.keyProvider,
-			storage: new MemoryStorageAdapter(),
+			crypto: ctx.crypto,
+			storage: new MemoryStorageAdapter({ engine: testEngine }),
 			endpointAuthentication: {
 				methods: {
 					example_auth: {
@@ -1430,7 +1491,7 @@ export default (QUnit: QUnit) => {
 				},
 			},
 		};
-		const authority = new TrustAnchor(config);
+		const authority = await TrustAnchor.create(fixtureHostConfig(config));
 		for (const query of [
 			"entity_type=openid_relying_party&entity_type=openid_provider",
 			"entity_type=openid_provider&entity_type=openid_relying_party&entity_type=openid_provider",
@@ -1467,9 +1528,13 @@ export default (QUnit: QUnit) => {
 						federation_list_endpoint: `${ctx.entityId}/shared?${reverse ? otherQuery : listQuery}`,
 					},
 				};
-				if (overlaps) t.throws(() => new TrustAnchor({ ...config, metadata }), /overlapping/);
+				if (overlaps)
+					await t.rejects(
+						(async () => await TrustAnchor.create(fixtureHostConfig({ ...config, metadata })))(),
+						/overlapping/,
+					);
 				else {
-					const routed = new TrustAnchor({ ...config, metadata });
+					const routed = await TrustAnchor.create(fixtureHostConfig({ ...config, metadata }));
 					const response = await routed.handleRequest(
 						new Request(`${ctx.entityId}/shared?${reverse ? otherQuery : listQuery}`),
 					);
@@ -1483,8 +1548,11 @@ export default (QUnit: QUnit) => {
 		const { createSubordinateLifecycle } = await import(
 			"../../../packages/authority/src/subordinate-lifecycle.js"
 		);
-		const storage = new MemoryStorageAdapter({ subordinateEvents: true });
-		const { ctx } = await createTestContext({ storage, options: { clock: { now: () => 100 } } });
+		const storage = new MemoryStorageAdapter({ engine: testEngine, subordinateEvents: true });
+		const { ctx } = await createTestContext({
+			storage,
+			options: { clock: { now: () => 100 }, engine: testEngine },
+		});
 		const lifecycle = createSubordinateLifecycle(ctx);
 		const subject = entityId("https://member.example");
 		await lifecycle.registerSubordinate(
@@ -1507,7 +1575,7 @@ export default (QUnit: QUnit) => {
 		t.equal(events[1]!.iat, 100);
 	});
 	test("memory read snapshots detach data and serialize against lifecycle writes", async (t) => {
-		const storage = new MemoryStorageAdapter({ subordinateEvents: true });
+		const storage = new MemoryStorageAdapter({ engine: testEngine, subordinateEvents: true });
 		const subject = entityId("https://member.example");
 		await storage.subordinates.add({
 			entityId: subject,
@@ -1526,7 +1594,7 @@ export default (QUnit: QUnit) => {
 		const reading = storage.readSnapshot(async (snapshot) => {
 			t.false("remove" in snapshot.subordinates);
 			const record = await snapshot.subordinates.get(subject);
-			record!.jwks.keys.length = 0;
+			(record!.jwks.keys as unknown[]).length = 0;
 			entered();
 			await gate;
 			t.ok(await snapshot.subordinates.get(subject));
@@ -1547,16 +1615,20 @@ export default (QUnit: QUnit) => {
 	});
 	test("an open Trust Mark issuer list allows administrative issuance", async (t) => {
 		const { ctx } = await createTestContext({ trustMarkIssuers: { "https://mark.example": [] } });
-		const jwt = await new TrustAnchor(hostConfig(ctx)).issueTrustMark(
+		const jwt = await (await TrustAnchor.create(fixtureHostConfig(hostConfig(ctx)))).issueTrustMark(
 			"https://member.example",
 			"https://mark.example",
 		);
 		t.true(decodeEntityStatement(jwt).ok);
 		await t.rejects(
-			new TrustAnchor({
-				...hostConfig(ctx),
-				trustMarkIssuers: { "https://mark.example": ["https://other.example"] },
-			}).issueTrustMark("https://member.example", "https://mark.example"),
+			(
+				await TrustAnchor.create(
+					fixtureHostConfig({
+						...hostConfig(ctx),
+						trustMarkIssuers: { "https://mark.example": ["https://other.example"] },
+					}),
+				)
+			).issueTrustMark("https://member.example", "https://mark.example"),
 			/not authorized/,
 		);
 	});
@@ -1635,12 +1707,20 @@ export default (QUnit: QUnit) => {
 				const metadata = { openid_relying_party: { jwks: { keys: scenario.keys } } };
 				const config = {
 					...f.config,
-					storage: new MemoryStorageAdapter({ clock: f.clock, subordinateEvents: true }),
+					storage: new MemoryStorageAdapter({
+						engine: testEngine,
+						clock: f.clock,
+						subordinateEvents: true,
+					}),
 					metadata: { ...f.config.metadata, ...metadata },
 				};
-				if (!scenario.valid) t.throws(() => new TrustAnchor(config), /'use'/);
+				if (!scenario.valid)
+					await t.rejects(
+						(async () => await TrustAnchor.create(fixtureHostConfig(config)))(),
+						/'use'/,
+					);
 				else {
-					const authority = new TrustAnchor(config);
+					const authority = await TrustAnchor.create(fixtureHostConfig(config));
 					const published = decodeEntityStatement(await authority.getEntityConfiguration());
 					t.true(published.ok);
 					if (published.ok)
@@ -1649,10 +1729,16 @@ export default (QUnit: QUnit) => {
 							metadata.openid_relying_party,
 						);
 				}
-				const authority = new TrustAnchor({
-					...f.config,
-					storage: new MemoryStorageAdapter({ clock: f.clock, subordinateEvents: true }),
-				});
+				const authority = await TrustAnchor.create(
+					fixtureHostConfig({
+						...f.config,
+						storage: new MemoryStorageAdapter({
+							engine: testEngine,
+							clock: f.clock,
+							subordinateEvents: true,
+						}),
+					}),
+				);
 				const publish = async () => {
 					await authority.registerSubordinate({ ...f.record, metadata });
 					return authority.getSubordinateStatement(SubordinateEventsFixture.subject);
@@ -1733,7 +1819,7 @@ export default (QUnit: QUnit) => {
 		});
 		test("byte-limited pages preserve every record and include actual cursor overhead", async (t) => {
 			const { ctx, storage, publicKey } = await createTestContext({
-				options: { clock: { now: () => 1500 } },
+				options: { clock: { now: () => 1500 }, engine: testEngine },
 			});
 			const ids = Array.from({ length: 6 }, (_, i) =>
 				entityId(`https://member.example/${i}-${"long".repeat(i)}`),
@@ -1812,7 +1898,10 @@ export default (QUnit: QUnit) => {
 			const result = await fetchExtendedSubordinatesList(
 				"https://authority.example/list",
 				undefined,
-				{ httpClient: (input, init) => handler(new Request(String(input), init)) },
+				{
+					engine: testEngine,
+					httpClient: (input, init) => handler(new Request(String(input), init)),
+				},
 			);
 			t.true(result.ok);
 			if (result.ok) {
@@ -1861,7 +1950,7 @@ export default (QUnit: QUnit) => {
 						}),
 					),
 			};
-			const authority = new TrustAnchor({ ...f.config, storage });
+			const authority = await TrustAnchor.create(fixtureHostConfig({ ...f.config, storage }));
 			await t.rejects(authority.getSubordinateEvents(SubordinateEventsFixture.subject), /empty/);
 			const response = await authority.handleRequest(
 				new Request(
@@ -1912,7 +2001,7 @@ export default (QUnit: QUnit) => {
 		const options = { clock: { now: () => 1000 }, clockSkewSeconds: 60 };
 		const request = (query: string) => new Request(`${ENTITY_ID}/extended?${query}`);
 		async function fixture() {
-			const f = await createTestContext({ options });
+			const f = await createTestContext({ options: { ...options, engine: testEngine } });
 			await f.subordinates.add({
 				entityId: subject,
 				jwks: { keys: [f.publicKey] },
@@ -1938,7 +2027,7 @@ export default (QUnit: QUnit) => {
 						...(expiresAt === undefined ? {} : { exp: expiresAt }),
 						...changes,
 					},
-					new JwkSigner(f.signingKey),
+					new SigningEntryFixture(f.signingKey),
 					{ typ: JwtTyp.TrustMark },
 				),
 			});
@@ -1960,7 +2049,7 @@ export default (QUnit: QUnit) => {
 			const statement = await verifyEntityStatement(
 				entry.subordinate_statement!,
 				{ keys: [f.publicKey] },
-				options,
+				{ ...options, engine: testEngine },
 			);
 			t.true(statement.ok);
 			if (statement.ok) t.false("trust_marks" in statement.value.payload);
@@ -1990,7 +2079,7 @@ export default (QUnit: QUnit) => {
 						...mark,
 						jwt: await signEntityStatement(
 							{ iss: ENTITY_ID, sub: subject, trust_mark_type: type, iat: 900 },
-							new JwkSigner(f.signingKey),
+							new SigningEntryFixture(f.signingKey),
 						),
 					};
 				const logs: string[] = [];
@@ -2011,6 +2100,7 @@ export default (QUnit: QUnit) => {
 						},
 					}),
 					options: {
+						engine: testEngine,
 						...options,
 						logger: {
 							debug() {},
@@ -2100,14 +2190,14 @@ export default (QUnit: QUnit) => {
 				[],
 			);
 			t.equal((await createTrustMarkHandler(f.ctx)(request(query.toString()))).status, 404);
-			const issuer = new TrustAnchor(hostConfig(f.ctx));
+			const issuer = await TrustAnchor.create(fixtureHostConfig(hostConfig(f.ctx)));
 			const jwt = await issuer.issueTrustMark(subject, type);
 			t.notEqual(jwt, future.jwt);
 			const checked = await validateTrustMark(
 				jwt,
 				{ [type]: [ENTITY_ID] },
 				{ keys: [f.publicKey] },
-				{ ...options, clockSkewSeconds: 0, expectedSubject: subject },
+				{ engine: testEngine, ...options, clockSkewSeconds: 0, expectedSubject: subject },
 			);
 			t.true(checked.ok);
 			t.equal((await f.trustMarks.getValid(type, subject, 1000))?.jwt, jwt);
@@ -2139,7 +2229,7 @@ export default (QUnit: QUnit) => {
 				const checked = await verifyEntityStatement(
 					await res.text(),
 					{ keys: [f.publicKey] },
-					{ ...options, expectedTyp: JwtTyp.TrustMarkStatusResponse },
+					{ engine: testEngine, ...options, expectedTyp: JwtTyp.TrustMarkStatusResponse },
 				);
 				t.true(checked.ok);
 				if (checked.ok) t.equal(checked.value.payload.status, expected);
@@ -2153,7 +2243,7 @@ export default (QUnit: QUnit) => {
 			const f = await createTestContext();
 			const config = {
 				entityId: f.ctx.entityId,
-				keyProvider: f.keyProvider,
+				crypto: f.crypto,
 				storage: f.storage,
 				metadata: {
 					federation_entity: {
@@ -2163,12 +2253,14 @@ export default (QUnit: QUnit) => {
 				},
 				extendedListing,
 			};
-			return { ...f, config, authority: new TrustAnchor(config) };
+			return { ...f, config, authority: await TrustAnchor.create(fixtureHostConfig(config)) };
 		}
 		test("cursor storage failures return errors through HTTP and both authority APIs", async (t) => {
 			const f = await fixture();
 			await f.authority.registerSubordinate({ entityId: LEAF_ID, jwks: { keys: [f.publicKey] } });
-			const intermediate = new Intermediate({ ...f.config, authorityHints: [TA_ID] });
+			const intermediate = await Intermediate.create(
+				fixtureHostConfig({ ...f.config, authorityHints: [TA_ID] }),
+			);
 			t.true((await f.authority.listSubordinatesExtended({ from: LEAF_ID, claims: [] })).ok);
 			const missing = await f.authority.handleRequest(
 				new Request(`${ENTITY_ID}/extended?from=unknown`),
@@ -2215,11 +2307,14 @@ export default (QUnit: QUnit) => {
 					{ id: "https://member0.example", campus: "north" },
 				]);
 			const remote = await fetchExtendedSubordinatesList(`${ENTITY_ID}/extended`, params, {
+				engine: testEngine,
 				...options,
 				httpClient: async (url, init) => f.authority.handleRequest(new Request(url, init)),
 			});
 			t.deepEqual(remote, local);
-			const intermediate = new Intermediate({ ...f.config, authorityHints: [TA_ID] });
+			const intermediate = await Intermediate.create(
+				fixtureHostConfig({ ...f.config, authorityHints: [TA_ID] }),
+			);
 			t.deepEqual(await intermediate.listSubordinatesExtended(params, options), local);
 			const conflict = await f.authority.listSubordinatesExtended(params, {
 				additionalParameters: { entity_type: "other" },
@@ -2526,7 +2621,7 @@ export default (QUnit: QUnit) => {
 						return new Promise<never>(() => {});
 					};
 					const handler = createExtendedListHandler(
-						{ ...f.ctx, options: { httpTimeoutMs: timeout ? 20 : 1000 } },
+						{ ...f.ctx, options: { engine: testEngine, httpTimeoutMs: timeout ? 20 : 1000 } },
 						{
 							requestFilters: {
 								campus: {
@@ -2583,43 +2678,45 @@ export default (QUnit: QUnit) => {
 			const f = await fixture();
 			let authCalls = 0;
 			let parseCalls = 0;
-			const authority = new TrustAnchor({
-				...f.config,
-				endpointAuthentication: {
-					methods: {
-						custom: {
-							parameters: ["proof"],
-							authenticate: (input) => {
-								authCalls++;
-								return input.parameters.proof?.[0] === "valid"
-									? c.ok({ entityId: LEAF_ID })
-									: c.err({
-											code: FederationErrorCode.InvalidClient,
-											description: "Invalid proof",
-										});
+			const authority = await TrustAnchor.create(
+				fixtureHostConfig({
+					...f.config,
+					endpointAuthentication: {
+						methods: {
+							custom: {
+								parameters: ["proof"],
+								authenticate: (input) => {
+									authCalls++;
+									return input.parameters.proof?.[0] === "valid"
+										? c.ok({ entityId: LEAF_ID })
+										: c.err({
+												code: FederationErrorCode.InvalidClient,
+												description: "Invalid proof",
+											});
+								},
 							},
 						},
 					},
-				},
-				metadata: {
-					federation_entity: {
-						...f.config.metadata.federation_entity,
-						federation_extended_list_endpoint: `${ENTITY_ID}/extended?campus=north`,
-						federation_extended_list_endpoint_auth_methods: ["none", "custom"],
-					},
-				},
-				extendedListing: {
-					requestFilters: {
-						campus: {
-							parse: (v) => {
-								parseCalls++;
-								return c.ok([...v]);
-							},
-							matches: () => true,
+					metadata: {
+						federation_entity: {
+							...f.config.metadata.federation_entity,
+							federation_extended_list_endpoint: `${ENTITY_ID}/extended?campus=north`,
+							federation_extended_list_endpoint_auth_methods: ["none", "custom"],
 						},
 					},
-				},
-			});
+					extendedListing: {
+						requestFilters: {
+							campus: {
+								parse: (v) => {
+									parseCalls++;
+									return c.ok([...v]);
+								},
+								matches: () => true,
+							},
+						},
+					},
+				}),
+			);
 			const get = await authority.handleRequest(
 				new Request(`${ENTITY_ID}/extended?campus=north&claims=`),
 			);
@@ -2792,8 +2889,8 @@ export default (QUnit: QUnit) => {
 
 	module("authority / listing filter semantics", () => {
 		test("false adds no mark restriction across storage, HTTP and both authority classes", async (t) => {
-			const { ctx, storage, keyProvider, subordinates, trustMarks } = await createTestContext({
-				options: { clock: { now: () => 2000 } },
+			const { ctx, storage, crypto, subordinates, trustMarks } = await createTestContext({
+				options: { clock: { now: () => 2000 }, engine: testEngine },
 			});
 			const ids = ["a", "b", "c", "d", "e"].map((name) => entityId(`https://${name}.example.com`));
 			const alpha = "https://marks.example/alpha";
@@ -2824,7 +2921,7 @@ export default (QUnit: QUnit) => {
 			const extended = createExtendedListHandler(ctx);
 			const config: AuthorityConfig = {
 				entityId: ENTITY_ID,
-				keyProvider,
+				crypto,
 				storage,
 				metadata: {
 					federation_entity: {
@@ -2836,8 +2933,13 @@ export default (QUnit: QUnit) => {
 				options: { clock: { now: () => 2000 } },
 			};
 			const servers = [
-				new TrustAnchor(config),
-				new Intermediate({ ...config, authorityHints: [entityId("https://superior.example.com")] }),
+				await TrustAnchor.create(fixtureHostConfig(config)),
+				await Intermediate.create(
+					fixtureHostConfig({
+						...config,
+						authorityHints: [entityId("https://superior.example.com")],
+					}),
+				),
 			];
 			for (const flag of [undefined, true, false]) {
 				for (const types of [undefined, [alpha], [alpha, beta, beta]]) {
@@ -2896,7 +2998,7 @@ export default (QUnit: QUnit) => {
 			}
 		});
 		test("false alone needs neither a mark store nor a validity time in direct storage", async (t) => {
-			const storage = new MemoryStorageAdapter();
+			const storage = new MemoryStorageAdapter({ engine: testEngine });
 			await storage.subordinates.add({
 				entityId: ENTITY_ID,
 				jwks: { keys: [] },
@@ -2933,28 +3035,31 @@ export default (QUnit: QUnit) => {
 
 			const { privateKey } = await generateSigningKey("ES256");
 			const { privateKey: nextKey } = await generateSigningKey("ES256");
-			const keyProvider = new MemoryFederationKeyProvider(
+			const crypto = new FixtureCrypto(
 				createFederationSigningKey({ ...privateKey, kid: "authority-key-1" }),
 			);
-			const ta = new AuthorityPublic.TrustAnchor({
-				entityId: ENTITY_ID,
-				keyProvider,
-				storage: new AuthorityPublic.MemoryStorageAdapter(),
-				metadata: {
-					federation_entity: {
-						federation_fetch_endpoint: `${ENTITY_ID}/federation_fetch`,
-						federation_list_endpoint: `${ENTITY_ID}/federation_list`,
+			const ta = await AuthorityPublic.TrustAnchor.create(
+				fixtureHostConfig({
+					entityId: ENTITY_ID,
+					crypto,
+					storage: new AuthorityPublic.MemoryStorageAdapter({ engine: testEngine }),
+					metadata: {
+						federation_entity: {
+							federation_fetch_endpoint: `${ENTITY_ID}/federation_fetch`,
+							federation_list_endpoint: `${ENTITY_ID}/federation_list`,
+						},
 					},
-				},
-			});
+				}),
+			);
 
 			t.false("rotateSigningKey" in ta);
-			await keyProvider.publishKey(
-				createFederationSigningKey({ ...nextKey, kid: "authority-key-2" }),
+			await crypto.keyring.publish(
+				"federation",
+				fixtureSigner(createFederationSigningKey({ ...nextKey, kid: "authority-key-2" })),
 			);
-			await keyProvider.switchActiveKey("authority-key-2");
-			const rotated = await keyProvider.getFederationKeySet();
-			t.equal(rotated.signer.kid, "authority-key-2");
+			await crypto.keyring.activate("federation", "authority-key-2");
+			const rotated = await crypto.keyring.entry("federation");
+			t.equal(rotated.signer.publicJwk.kid, "authority-key-2");
 		});
 	});
 
@@ -2987,7 +3092,7 @@ export default (QUnit: QUnit) => {
 		module("authority / SubordinateStorage", (hooks) => {
 			let store: SubordinateStorage;
 			hooks.beforeEach(() => {
-				store = new MemoryStorageAdapter().subordinates;
+				store = new MemoryStorageAdapter({ engine: testEngine }).subordinates;
 			});
 
 			module("add & get", () => {
@@ -3197,7 +3302,8 @@ export default (QUnit: QUnit) => {
 			module("update timestamps NumericDate", () => {
 				test("update() writes updatedAt as NumericDate (seconds) using injected clock", async (t) => {
 					const fixedClock = { now: () => 1_700_000_000 };
-					const store = new MemoryStorageAdapter({ clock: fixedClock }).subordinates;
+					const store = new MemoryStorageAdapter({ engine: testEngine, clock: fixedClock })
+						.subordinates;
 					await store.add(makeSubRecord(SUB1));
 					await store.update(SUB1, { isIntermediate: true });
 					const updated = await store.get(SUB1);
@@ -3205,7 +3311,7 @@ export default (QUnit: QUnit) => {
 				});
 
 				test("update() writes updatedAt within 1s of real now() (no clock injected)", async (t) => {
-					const store = new MemoryStorageAdapter().subordinates;
+					const store = new MemoryStorageAdapter({ engine: testEngine }).subordinates;
 					await store.add(makeSubRecord(SUB1));
 					const before = Math.floor(Date.now() / 1000);
 					await store.update(SUB1, { isIntermediate: true });
@@ -3250,7 +3356,7 @@ export default (QUnit: QUnit) => {
 		module("authority / TrustMarkStorage", (hooks) => {
 			let store: TrustMarkStorage;
 			hooks.beforeEach(() => {
-				store = new MemoryStorageAdapter({ trustMarks: true }).trustMarks!;
+				store = new MemoryStorageAdapter({ engine: testEngine, trustMarks: true }).trustMarks!;
 			});
 
 			module("issue and lookup", () => {
@@ -3394,16 +3500,16 @@ export default (QUnit: QUnit) => {
 		});
 
 		test("provides replay and cache while keeping trust marks opt-in", (t) => {
-			const basic = new MemoryStorageAdapter();
+			const basic = new MemoryStorageAdapter({ engine: testEngine });
 			t.ok(basic.replay);
 			t.ok(basic.cache);
 			t.equal(basic.trustMarks, undefined);
-			t.ok(new MemoryStorageAdapter({ trustMarks: true }).trustMarks);
+			t.ok(new MemoryStorageAdapter({ engine: testEngine, trustMarks: true }).trustMarks);
 		});
 
 		test("uses one NumericDate clock for records, replay, and cache", async (t) => {
 			let now = 100;
-			const storage = new MemoryStorageAdapter({ clock: { now: () => now } });
+			const storage = new MemoryStorageAdapter({ engine: testEngine, clock: { now: () => now } });
 			await storage.subordinates.add(record());
 			await storage.subordinates.update(id, { metadata: record().metadata });
 			t.equal((await storage.subordinates.get(id))?.updatedAt, 100);
@@ -3430,7 +3536,7 @@ export default (QUnit: QUnit) => {
 		});
 
 		test("commits all writes after a successful transaction", async (t) => {
-			const storage = new MemoryStorageAdapter();
+			const storage = new MemoryStorageAdapter({ engine: testEngine });
 			await storage.transaction(async (tx) => {
 				await tx.subordinates.add(record());
 			});
@@ -3438,7 +3544,7 @@ export default (QUnit: QUnit) => {
 		});
 
 		test("rolls back every repository when a transaction fails", async (t) => {
-			const storage = new MemoryStorageAdapter({ trustMarks: true });
+			const storage = new MemoryStorageAdapter({ engine: testEngine, trustMarks: true });
 			const mark: TrustMarkRecord = {
 				trustMarkType: "https://trust.example.com/transaction-mark",
 				subject: id,
@@ -3460,7 +3566,7 @@ export default (QUnit: QUnit) => {
 		});
 
 		test("serializes concurrent transactions", async (t) => {
-			const storage = new MemoryStorageAdapter();
+			const storage = new MemoryStorageAdapter({ engine: testEngine });
 			let releaseFirst!: () => void;
 			let notifyFirst!: () => void;
 			const firstEntered = new Promise<void>((resolve) => {
@@ -3491,7 +3597,7 @@ export default (QUnit: QUnit) => {
 		});
 
 		test("returns detached records that cannot mutate persisted state", async (t) => {
-			const storage = new MemoryStorageAdapter();
+			const storage = new MemoryStorageAdapter({ engine: testEngine });
 			await storage.subordinates.add(record());
 			const loaded = await storage.subordinates.get(id);
 			const metadata = loaded?.metadata as { openid_relying_party: { client_name: string } };
@@ -3511,38 +3617,42 @@ export default (QUnit: QUnit) => {
 	// keys/rotation
 	// -------------------------------------------------------------------------
 	module("authority / provider-owned key rollover", (hooks) => {
-		let keyProvider: MemoryFederationKeyProvider;
+		let crypto: FixtureCrypto;
 		let nowMs: number;
 
 		hooks.beforeEach(async () => {
 			nowMs = 1_000_000;
 			const { privateKey } = await generateSigningKey("ES256");
-			keyProvider = new MemoryFederationKeyProvider(
-				createFederationSigningKey({ ...privateKey, kid: "old-key" }),
-				{ nowMs: () => nowMs },
-			);
+			crypto = new FixtureCrypto(createFederationSigningKey({ ...privateKey, kid: "old-key" }), {
+				nowMs: () => nowMs,
+			});
 		});
 
 		test("published configurations follow propagation, switch, and retirement boundaries", async (t) => {
-			const authority = new TrustAnchor({
-				entityId: ENTITY_ID,
-				keyProvider,
-				storage: new MemoryStorageAdapter(),
-				options: { clock: { now: () => Math.floor(nowMs / 1000) } },
-				metadata: {
-					federation_entity: {
-						federation_fetch_endpoint: `${ENTITY_ID}/fetch`,
-						federation_list_endpoint: `${ENTITY_ID}/list`,
+			const authority = await TrustAnchor.create(
+				fixtureHostConfig({
+					entityId: ENTITY_ID,
+					crypto,
+					storage: new MemoryStorageAdapter({ engine: testEngine }),
+					options: { clock: { now: () => Math.floor(nowMs / 1000) } },
+					metadata: {
+						federation_entity: {
+							federation_fetch_endpoint: `${ENTITY_ID}/fetch`,
+							federation_list_endpoint: `${ENTITY_ID}/list`,
+						},
 					},
-				},
-			});
-			const original = await keyProvider.getFederationKeySet();
+				}),
+			);
+			const original = await crypto.keyring.entry("federation");
 			const { privateKey } = await generateSigningKey("ES256");
-			await keyProvider.publishKey(createFederationSigningKey({ ...privateKey, kid: "next-key" }));
+			await crypto.keyring.publish(
+				"federation",
+				fixtureSigner(createFederationSigningKey({ ...privateKey, kid: "next-key" })),
+			);
 			const published = await verifyEntityStatement(
 				await authority.getEntityConfiguration(),
-				original.jwks,
-				{ clock: { now: () => Math.floor(nowMs / 1000) } },
+				original.publishedJwks,
+				{ engine: testEngine, clock: { now: () => Math.floor(nowMs / 1000) } },
 			);
 			t.true(published.ok);
 			if (!published.ok) return;
@@ -3551,13 +3661,14 @@ export default (QUnit: QUnit) => {
 			if (!learned) return;
 			t.equal(published.value.header.kid, "old-key");
 			t.deepEqual(learned.keys.map((key) => key.kid).sort(), ["next-key", "old-key"]);
-			await keyProvider.switchActiveKey("next-key", { retirePreviousAfterMs: 10000 });
+			await crypto.keyring.activate("federation", "next-key");
 			for (const elapsed of [0, 9999, 10000]) {
 				nowMs = 1000000 + elapsed;
+				if (elapsed === 10000) await crypto.keyring.retire("federation", "old-key");
 				const checked = await verifyEntityStatement(
 					await authority.getEntityConfiguration(),
 					learned,
-					{ clock: { now: () => Math.floor(nowMs / 1000) } },
+					{ engine: testEngine, clock: { now: () => Math.floor(nowMs / 1000) } },
 				);
 				t.true(checked.ok);
 				if (!checked.ok) continue;
@@ -3567,43 +3678,53 @@ export default (QUnit: QUnit) => {
 					elapsed < 10000 ? ["next-key", "old-key"] : ["next-key"],
 				);
 			}
-			t.ok((await keyProvider.getHistoricalFederationKeys()).find((key) => key.kid === "old-key"));
+			t.ok((await crypto.history.getHistoricalKeys()).find((key) => key.kid === "old-key"));
 		});
 		test("publishes next key before signer switch", async (t) => {
 			const { privateKey: newKey } = await generateSigningKey("ES256");
-			await keyProvider.publishKey(createFederationSigningKey({ ...newKey, kid: "new-key" }));
+			await crypto.keyring.publish(
+				"federation",
+				fixtureSigner(createFederationSigningKey({ ...newKey, kid: "new-key" })),
+			);
 
-			const keySet = await keyProvider.getFederationKeySet();
-			t.equal(keySet.signer.kid, "old-key");
-			t.deepEqual(keySet.jwks.keys.map((k) => k.kid).sort(), ["new-key", "old-key"]);
+			const keySet = await crypto.keyring.entry("federation");
+			t.equal(keySet.signer.publicJwk.kid, "old-key");
+			t.deepEqual(keySet.publishedJwks.keys.map((k) => k.kid).sort(), ["new-key", "old-key"]);
 		});
 
 		test("switches signer and schedules previous key removal", async (t) => {
 			const { privateKey: newKey } = await generateSigningKey("ES256");
-			await keyProvider.publishKey(createFederationSigningKey({ ...newKey, kid: "new-key" }));
-			await keyProvider.switchActiveKey("new-key", { retirePreviousAfterMs: 10_000 });
+			await crypto.keyring.publish(
+				"federation",
+				fixtureSigner(createFederationSigningKey({ ...newKey, kid: "new-key" })),
+			);
+			await crypto.keyring.activate("federation", "new-key");
 
-			const keySet = await keyProvider.getFederationKeySet();
-			t.equal(keySet.signer.kid, "new-key");
-			t.deepEqual(keySet.jwks.keys.map((k) => k.kid).sort(), ["new-key", "old-key"]);
+			const keySet = await crypto.keyring.entry("federation");
+			t.equal(keySet.signer.publicJwk.kid, "new-key");
+			t.deepEqual(keySet.publishedJwks.keys.map((k) => k.kid).sort(), ["new-key", "old-key"]);
 
-			const history = await keyProvider.getHistoricalFederationKeys();
+			const history = await crypto.history.getHistoricalKeys();
 			t.deepEqual(history, [], "the old key remains in the current JWKS during overlap");
 		});
 
 		test("excludes retired key from active JWKS after removal time", async (t) => {
 			const { privateKey: newKey } = await generateSigningKey("ES256");
-			await keyProvider.publishKey(createFederationSigningKey({ ...newKey, kid: "new-key" }));
-			await keyProvider.switchActiveKey("new-key", { retirePreviousAfterMs: 10_000 });
+			await crypto.keyring.publish(
+				"federation",
+				fixtureSigner(createFederationSigningKey({ ...newKey, kid: "new-key" })),
+			);
+			await crypto.keyring.activate("federation", "new-key");
 			nowMs += 10_000;
+			await crypto.keyring.retire("federation", "old-key");
 
-			const keySet = await keyProvider.getFederationKeySet();
+			const keySet = await crypto.keyring.entry("federation");
 			t.deepEqual(
-				keySet.jwks.keys.map((k) => k.kid),
+				keySet.publishedJwks.keys.map((k) => k.kid),
 				["new-key"],
 			);
 
-			const history = await keyProvider.getHistoricalFederationKeys();
+			const history = await crypto.history.getHistoricalKeys();
 			t.ok(history.find((k) => k.kid === "old-key"));
 		});
 	});
@@ -4045,8 +4166,8 @@ export default (QUnit: QUnit) => {
 		});
 
 		test("returns 500 when no active keys are available", async (t) => {
-			const { ctx, keyProvider } = await createTestContext();
-			await keyProvider.revokeKey("test-key-1", "test");
+			const { ctx, crypto } = await createTestContext();
+			await crypto.keyring.revoke("federation", "test-key-1", "test");
 			const handler = createEntityConfigurationHandler(ctx);
 			const res = await handler(
 				new Request("https://authority.example.com/.well-known/openid-federation"),
@@ -4073,8 +4194,8 @@ export default (QUnit: QUnit) => {
 				new Request("https://authority.example.com/.well-known/openid-federation"),
 			);
 			const jwt = await res.text();
-			const keySet = await ctx.keyProvider.getFederationKeySet();
-			const result = await verifyEntityStatement(jwt, keySet.jwks);
+			const keySet = await ctx.crypto.keyring.entry("federation");
+			const result = await verifyEntityStatement(jwt, keySet.publishedJwks, { engine: testEngine });
 			t.true(isOk(result));
 		});
 	});
@@ -4339,7 +4460,9 @@ export default (QUnit: QUnit) => {
 			});
 
 			test("returns 400 with unsupported_parameter when trust_marked used but no trust mark store", async (t) => {
-				const { ctx } = await createTestContext({ storage: new MemoryStorageAdapter() });
+				const { ctx } = await createTestContext({
+					storage: new MemoryStorageAdapter({ engine: testEngine }),
+				});
 				const handler = createListHandler(ctx);
 				const res = await handler(
 					new Request("https://authority.example.com/federation_list?trust_marked=true"),
@@ -4351,7 +4474,9 @@ export default (QUnit: QUnit) => {
 			});
 
 			test("returns 400 with unsupported_parameter when trust_mark_type used but no trust mark store", async (t) => {
-				const { ctx } = await createTestContext({ storage: new MemoryStorageAdapter() });
+				const { ctx } = await createTestContext({
+					storage: new MemoryStorageAdapter({ engine: testEngine }),
+				});
 				const handler = createListHandler(ctx);
 				const res = await handler(
 					new Request(
@@ -4553,9 +4678,9 @@ export default (QUnit: QUnit) => {
 		module("authority / createExtendedListHandler", () => {
 			test("JWKS publication rejects private material through HTTP and direct listing", async (t) => {
 				const logs: string[] = [];
-				const { ctx, storage, keyProvider, subordinates } = await createTestContext();
+				const { ctx, storage, crypto, subordinates } = await createTestContext();
 				const secret = "private-key-publication-sentinel";
-				const server = createAuthorityServer({
+				const server = await createAuthorityServer({
 					entityId: ENTITY_ID,
 					metadata: {
 						federation_entity: {
@@ -4564,7 +4689,7 @@ export default (QUnit: QUnit) => {
 						},
 					},
 					storage,
-					keyProvider,
+					crypto,
 					extendedListing: { defaultClaims: ["jwks"] },
 					options: {
 						logger: {
@@ -4592,7 +4717,9 @@ export default (QUnit: QUnit) => {
 					});
 					const before = await subordinates.get(XLIST_SUB_B);
 					for (const query of ["?claims=jwks", "", "?claims=jwks,subordinate_statement"]) {
-						const response = await server.handler()(new Request(`${XLIST_BASE_URL}${query}`));
+						const response = await (await server).handler()(
+							new Request(`${XLIST_BASE_URL}${query}`),
+						);
 						t.equal(response.status, 500, `${field}, ${query}`);
 						t.equal(response.headers.get("content-type"), "application/json");
 						const text = await response.text();
@@ -4606,14 +4733,14 @@ export default (QUnit: QUnit) => {
 							"no partial page is returned",
 						);
 					}
-					const result = await server.listSubordinatesExtended({ claims: ["jwks"] });
+					const result = await (await server).listSubordinatesExtended({ claims: ["jwks"] });
 					t.false(result.ok);
 					if (!result.ok) t.equal(result.error.code, FederationErrorCode.ServerError);
 					t.deepEqual(await subordinates.get(XLIST_SUB_B), before, "stored keys remain unchanged");
 				}
 				t.true(logs.length > 0);
 				t.false(logs.join("\n").includes(secret), "logs contain no private values");
-				const idOnly = await server.listSubordinatesExtended({ claims: [] });
+				const idOnly = await (await server).listSubordinatesExtended({ claims: [] });
 				t.true(idOnly.ok);
 				if (idOnly.ok)
 					t.deepEqual(idOnly.value.immediate_subordinate_entities, [
@@ -4690,9 +4817,13 @@ export default (QUnit: QUnit) => {
 					};
 					const entry = body.immediate_subordinate_entities[0]!;
 					t.deepEqual(entry.jwks, jwks);
-					const verified = await verifyEntityStatement(entry.subordinate_statement, {
-						keys: [publicKey],
-					});
+					const verified = await verifyEntityStatement(
+						entry.subordinate_statement,
+						{
+							keys: [publicKey],
+						},
+						{ engine: testEngine },
+					);
 					t.true(verified.ok);
 					if (verified.ok) t.deepEqual(verified.value.payload.jwks, entry.jwks);
 					t.deepEqual(await subordinates.get(XLIST_SUB_A), before);
@@ -4801,7 +4932,7 @@ export default (QUnit: QUnit) => {
 			});
 			test("repeated trust mark types select the valid union across pages", async (t) => {
 				const { ctx, subordinates, trustMarks } = await createTestContext({
-					options: { clock: { now: () => 2000 } },
+					options: { clock: { now: () => 2000 }, engine: testEngine },
 				});
 				const alpha = "https://marks.example/alpha";
 				const beta = "https://marks.example/beta";
@@ -4913,7 +5044,7 @@ export default (QUnit: QUnit) => {
 				const verified = await verifyEntityStatement(
 					entry.subordinate_statement as string,
 					{ keys: [publicKey] },
-					{ expectedTyp: JwtTyp.EntityStatement },
+					{ engine: testEngine, expectedTyp: JwtTyp.EntityStatement },
 				);
 				t.true(isOk(verified));
 			});
@@ -4963,7 +5094,7 @@ export default (QUnit: QUnit) => {
 				const verified = await verifyEntityStatement(
 					entry.subordinate_statement as string,
 					{ keys: [publicKey] },
-					{ expectedTyp: JwtTyp.EntityStatement },
+					{ engine: testEngine, expectedTyp: JwtTyp.EntityStatement },
 				);
 				t.true(isOk(verified), "subordinate_statement verifies against authority key");
 				if (isOk(verified)) {
@@ -5002,7 +5133,7 @@ export default (QUnit: QUnit) => {
 				const verified = await verifyEntityStatement(
 					entry.subordinate_statement as string,
 					{ keys: [publicKey] },
-					{ expectedTyp: JwtTyp.EntityStatement },
+					{ engine: testEngine, expectedTyp: JwtTyp.EntityStatement },
 				);
 				t.true(isOk(verified));
 			});
@@ -5285,7 +5416,7 @@ export default (QUnit: QUnit) => {
 						trust_mark_type: "https://trust.example.com/mark",
 						iat: Math.floor(Date.now() / 1000),
 					},
-					new JwkSigner(signingKey),
+					new SigningEntryFixture(signingKey),
 					{ typ: JwtTyp.TrustMark },
 				);
 				await trustMarks.issue({
@@ -5327,7 +5458,7 @@ export default (QUnit: QUnit) => {
 			});
 
 			test("claims=trust_marks returns an empty selection when trust mark capability is absent", async (t) => {
-				const storage = new MemoryStorageAdapter();
+				const storage = new MemoryStorageAdapter({ engine: testEngine });
 				const { ctx } = await createTestContext({ storage });
 				await storage.subordinates.add(makeXListRecord(XLIST_SUB_A));
 				const handler = createExtendedListHandler(ctx);
@@ -5435,7 +5566,7 @@ export default (QUnit: QUnit) => {
 				const verified = await verifyEntityStatement(
 					entry.subordinate_statement,
 					{ keys: [publicKey] },
-					{ expectedTyp: JwtTyp.EntityStatement },
+					{ engine: testEngine, expectedTyp: JwtTyp.EntityStatement },
 				);
 				t.true(isOk(verified));
 				if (isOk(verified)) {
@@ -5864,7 +5995,7 @@ export default (QUnit: QUnit) => {
 							issuer: TA_ID,
 							subject: TA_ID,
 							trustMarkType,
-							signer: new JwkSigner(taSigningKey),
+							signer: new SigningEntryFixture(taSigningKey),
 							clock: { now: () => now },
 							ttlSeconds: options.delegationExpiresAt - now,
 						});
@@ -5878,7 +6009,7 @@ export default (QUnit: QUnit) => {
 					exp: trustMarkExpiresAt,
 					...(delegation ? { delegation } : {}),
 				},
-				new JwkSigner(taSigningKey),
+				new SigningEntryFixture(taSigningKey),
 				{ typ: JwtTyp.TrustMark },
 			);
 
@@ -5905,7 +6036,7 @@ export default (QUnit: QUnit) => {
 						},
 					},
 				},
-				new JwkSigner(taSigningKey),
+				new SigningEntryFixture(taSigningKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 
@@ -5919,7 +6050,7 @@ export default (QUnit: QUnit) => {
 						iat: now - 600,
 						exp: now - 300,
 					},
-					new JwkSigner(taSigningKey),
+					new SigningEntryFixture(taSigningKey),
 					{ typ: JwtTyp.TrustMark },
 				);
 				const ref = { trust_mark_type: trustMarkType, trust_mark: expired };
@@ -5945,7 +6076,7 @@ export default (QUnit: QUnit) => {
 					},
 					trust_marks: refs,
 				},
-				new JwkSigner(leafSigningKey),
+				new SigningEntryFixture(leafSigningKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 
@@ -5957,7 +6088,7 @@ export default (QUnit: QUnit) => {
 					exp: chainExp,
 					jwks: { keys: [leafPublicKey] },
 				},
-				new JwkSigner(taSigningKey),
+				new SigningEntryFixture(taSigningKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 
@@ -5968,7 +6099,7 @@ export default (QUnit: QUnit) => {
 					trust_mark: trustMarkJwt,
 					status,
 				},
-				new JwkSigner(taSigningKey),
+				new SigningEntryFixture(taSigningKey),
 				{ typ: JwtTyp.TrustMarkStatusResponse },
 			);
 
@@ -6016,7 +6147,7 @@ export default (QUnit: QUnit) => {
 			const { ctx, trustMarks } = await createTestContext({
 				entityId: resolverEntityId,
 				trustAnchors: new Map([[TA_ID, { jwks: { keys: [taPublicKey] } }]]),
-				options: { httpClient, clock: { now: () => now } },
+				options: { httpClient, clock: { now: () => now }, engine: testEngine },
 			});
 
 			if (options?.useLocalTrustMarkStore) {
@@ -6072,21 +6203,17 @@ export default (QUnit: QUnit) => {
 			const deadline = 1_700_000_010;
 			const fixture = await createResolveTrustMarkFixture({ delegationExpiresAt: deadline });
 			let now = 1_700_000_000;
-			const provider = fixture.ctx.keyProvider;
-			const original = provider.getFederationKeySet.bind(provider);
-			provider.getFederationKeySet = async () => {
+			const provider = fixture.ctx.crypto;
+			const original = provider.keyring.entry.bind(provider.keyring, "federation");
+			provider.keyring.entry = async () => {
 				const keys = await original();
 				return {
 					...keys,
-					signer: {
-						kid: keys.signer.kid,
-						alg: keys.signer.alg,
-						signJwt: async (payload, header) => {
-							const jwt = await keys.signer.signJwt(payload, header);
-							if (header.typ === JwtTyp.ResolveResponse) now = deadline;
-							return jwt;
-						},
-					},
+					signer: instrumentSigningEntry(keys.signer, async (payload, header) => {
+						const jwt = await rawFixtureJwt(keys.signer, payload, header);
+						if (header.typ === JwtTyp.ResolveResponse) now = deadline;
+						return jwt;
+					}).signer,
 				};
 			};
 			const handler = createResolveHandler({
@@ -6266,7 +6393,7 @@ export default (QUnit: QUnit) => {
 						},
 					},
 				},
-				new JwkSigner(fed.taSigningKey),
+				new SigningEntryFixture(fed.taSigningKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 			const { ctx } = await createTestContext({
@@ -6345,7 +6472,11 @@ export default (QUnit: QUnit) => {
 					await verifyResolveResponse(
 						jwt,
 						{ keys: [publicKey] },
-						{ expectedIssuer: "https://authority.example.com", expectedSubject: LEAF_ID },
+						{
+							engine: testEngine,
+							expectedIssuer: "https://authority.example.com",
+							expectedSubject: LEAF_ID,
+						},
 					)
 				).ok,
 			);
@@ -6355,6 +6486,7 @@ export default (QUnit: QUnit) => {
 						jwt,
 						{ keys: [publicKey] },
 						{
+							engine: testEngine,
 							expectedIssuer: "https://authority.example.com",
 							expectedSubject: LEAF_ID,
 							expectedAudience: "https://client.example.com",
@@ -6661,15 +6793,12 @@ export default (QUnit: QUnit) => {
 			const { ctx } = await createTestContext({
 				trustAnchors: fed.trustAnchors,
 				options: fed.options,
-				keyProvider: {
-					getFederationKeySet: async () => {
+				crypto: fixtureCryptoFromRead(
+					async () => {
 						throw new Error("boom");
 					},
-					getHistoricalFederationKeys: async () => [],
-					publishKey: async () => {},
-					switchActiveKey: async () => {},
-					revokeKey: async () => {},
-				},
+					async () => [],
+				),
 			});
 			const handler = createResolveHandler(ctx);
 			const res = await handler(
@@ -6693,6 +6822,7 @@ export default (QUnit: QUnit) => {
 						calls++;
 						throw new Error("Unexpected discovery");
 					},
+					engine: testEngine,
 				},
 			});
 			const response = await createResolveHandler(ctx)(
@@ -6752,22 +6882,27 @@ export default (QUnit: QUnit) => {
 	// -------------------------------------------------------------------------
 	module("authority / createHistoricalKeysHandler", () => {
 		test("publishes revocation history after explicit recovery with a replacement", async (t) => {
-			const { ctx, keyProvider } = await createTestContext();
-			await keyProvider.revokeKey("test-key-1", "compromised");
+			const { ctx, crypto } = await createTestContext();
+			await crypto.keyring.revoke("federation", "test-key-1", "compromised");
 			const handler = createHistoricalKeysHandler(ctx);
 			t.equal((await handler(new Request(`${ENTITY_ID}/federation_historical_keys`))).status, 500);
 			for (const kid of ["replacement", "spare"]) {
 				const key = await generateSigningKey("ES256");
-				await keyProvider.publishKey(createFederationSigningKey({ ...key.privateKey, kid }));
+				await crypto.keyring.publish(
+					"federation",
+					fixtureSigner(createFederationSigningKey({ ...key.privateKey, kid })),
+				);
 			}
-			await keyProvider.switchActiveKey("replacement");
+			await crypto.keyring.activate("federation", "replacement");
 			const response = await handler(new Request(`${ENTITY_ID}/federation_historical_keys`));
 			t.equal(response.status, 200);
-			const keys = await keyProvider.getFederationKeySet();
-			t.equal(keys.signer.kid, "replacement");
-			const verified = await verifyHistoricalKeysResponse(await response.text(), keys.jwks, {
-				expectedIssuer: ENTITY_ID,
-			});
+			const keys = await crypto.keyring.entry("federation");
+			t.equal(keys.signer.publicJwk.kid, "replacement");
+			const verified = await verifyHistoricalKeysResponse(
+				await response.text(),
+				keys.publishedJwks,
+				{ engine: testEngine, expectedIssuer: ENTITY_ID },
+			);
 			t.true(verified.ok);
 			if (verified.ok) {
 				t.equal(verified.value.keys.length, 1);
@@ -6804,31 +6939,37 @@ export default (QUnit: QUnit) => {
 		});
 
 		test("excludes active, prepublished, and overlapping keys", async (t) => {
-			const { ctx, keyProvider } = await createTestContext();
+			const { ctx, crypto } = await createTestContext();
 			for (const kid of ["published-key", "new-active-key"]) {
 				const { privateKey } = await generateSigningKey("ES256");
-				await keyProvider.publishKey(createFederationSigningKey({ ...privateKey, kid }));
+				await crypto.keyring.publish(
+					"federation",
+					fixtureSigner(createFederationSigningKey({ ...privateKey, kid })),
+				);
 			}
-			await keyProvider.switchActiveKey("new-active-key", { retirePreviousAfterMs: 86_400_000 });
+			await crypto.keyring.activate("federation", "new-active-key");
 			const response = await createHistoricalKeysHandler(ctx)(
 				new Request(`${ENTITY_ID}/federation_historical_keys`),
 			);
 			t.equal(response.status, 200);
 			const verified = await verifyHistoricalKeysResponse(
 				await response.text(),
-				(await keyProvider.getFederationKeySet()).jwks,
-				{ expectedIssuer: "https://authority.example.com" },
+				(await crypto.keyring.entry("federation")).publishedJwks,
+				{ engine: testEngine, expectedIssuer: "https://authority.example.com" },
 			);
 			t.true(verified.ok);
 			if (verified.ok) t.deepEqual(verified.value.keys, []);
 		});
 
 		test("revoked keys have revoked metadata", async (t) => {
-			const { ctx, keyProvider } = await createTestContext();
+			const { ctx, crypto } = await createTestContext();
 			const { privateKey: pk2 } = await generateSigningKey("ES256");
-			await keyProvider.publishKey(createFederationSigningKey({ ...pk2, kid: "new-active" }));
-			await keyProvider.switchActiveKey("new-active");
-			await keyProvider.revokeKey("test-key-1", "keyCompromise");
+			await crypto.keyring.publish(
+				"federation",
+				fixtureSigner(createFederationSigningKey({ ...pk2, kid: "new-active" })),
+			);
+			await crypto.keyring.activate("federation", "new-active");
+			await crypto.keyring.revoke("federation", "test-key-1", "keyCompromise");
 			const handler = createHistoricalKeysHandler(ctx);
 			const res = await handler(
 				new Request("https://authority.example.com/federation_historical_keys"),
@@ -6852,22 +6993,29 @@ export default (QUnit: QUnit) => {
 			const initial = await generateSigningKey("ES256");
 			const next = await generateSigningKey("ES256");
 			let nowMs = 1_000_250;
-			const keyProvider = MemoryFederationKeyProvider.fromJWK(
+			const crypto = FixtureCrypto.fromJWK(
 				{ ...initial.privateKey, kid: "old" },
 				{ nowMs: () => nowMs },
 			);
 			const options = { clock: { now: () => nowMs / 1000 }, clockSkewSeconds: 0 };
-			const { ctx } = await createTestContext({ keyProvider, options });
-			await keyProvider.publishKey(createFederationSigningKey({ ...next.privateKey, kid: "next" }));
-			await keyProvider.switchActiveKey("next", { retirePreviousAfterMs: 1000 });
+			const { ctx } = await createTestContext({
+				crypto,
+				options: { ...options, engine: testEngine },
+			});
+			await crypto.keyring.publish(
+				"federation",
+				fixtureSigner(createFederationSigningKey({ ...next.privateKey, kid: "next" })),
+			);
+			await crypto.keyring.activate("federation", "next");
 			const handler = createHistoricalKeysHandler(ctx);
 			for (const time of [1_001_249, 1_001_250, 1_002_750]) {
 				nowMs = time;
+				if (time === 1001250) await crypto.keyring.retire("federation", "old");
 				const response = await handler(new Request(`${ENTITY_ID}/federation_historical_keys`));
 				const verified = await verifyHistoricalKeysResponse(
 					await response.text(),
-					(await keyProvider.getFederationKeySet()).jwks,
-					{ expectedIssuer: "https://authority.example.com", ...options },
+					(await crypto.keyring.entry("federation")).publishedJwks,
+					{ engine: testEngine, expectedIssuer: "https://authority.example.com", ...options },
 				);
 				t.true(verified.ok);
 				if (!verified.ok) continue;
@@ -6879,8 +7027,8 @@ export default (QUnit: QUnit) => {
 				t.equal(verified.value.keys.length, 1);
 				const key = verified.value.keys[0]!;
 				t.equal(key.kid, "old");
-				t.equal(key.iat, 1000.25);
-				t.equal(key.nbf, 1000.25);
+				t.strictEqual(key.iat, undefined);
+				t.strictEqual(key.nbf, undefined);
 				t.equal(key.exp, 1001.25);
 				t.strictEqual(key.revoked, undefined);
 				for (const field of ["d", "p", "q", "dp", "dq", "qi", "oth", "k"]) t.false(field in key);
@@ -6888,17 +7036,20 @@ export default (QUnit: QUnit) => {
 		});
 
 		test("revoked prepublished keys have no activation date", async (t) => {
-			const { ctx, keyProvider } = await createTestContext();
+			const { ctx, crypto } = await createTestContext();
 			const { privateKey } = await generateSigningKey("ES256");
-			await keyProvider.publishKey(createFederationSigningKey({ ...privateKey, kid: "published" }));
-			await keyProvider.revokeKey("published", "compromised");
+			await crypto.keyring.publish(
+				"federation",
+				fixtureSigner(createFederationSigningKey({ ...privateKey, kid: "published" })),
+			);
+			await crypto.keyring.revoke("federation", "published", "compromised");
 			const response = await createHistoricalKeysHandler(ctx)(
 				new Request(`${ENTITY_ID}/federation_historical_keys`),
 			);
 			const verified = await verifyHistoricalKeysResponse(
 				await response.text(),
-				(await keyProvider.getFederationKeySet()).jwks,
-				{ expectedIssuer: "https://authority.example.com" },
+				(await crypto.keyring.entry("federation")).publishedJwks,
+				{ engine: testEngine, expectedIssuer: "https://authority.example.com" },
 			);
 			t.true(verified.ok);
 			if (!verified.ok) return;
@@ -6911,27 +7062,24 @@ export default (QUnit: QUnit) => {
 		});
 
 		test("preserves a custom provider's recorded future expiry", async (t) => {
-			const { ctx, keyProvider, publicKey } = await createTestContext({
-				options: { clock: { now: () => 1000.5 } },
+			const { ctx, crypto, publicKey } = await createTestContext({
+				options: { clock: { now: () => 1000.5 }, engine: testEngine },
 			});
 			const historical = { ...publicKey, kid: publicKey.kid!, iat: 900.25, exp: 2000.75 };
-			const custom: HandlerContext["keyProvider"] = {
-				getFederationKeySet: () => keyProvider.getFederationKeySet(),
-				getHistoricalFederationKeys: async () => [historical],
-				publishKey: (key) => keyProvider.publishKey(key),
-				switchActiveKey: (kid, options) => keyProvider.switchActiveKey(kid, options),
-				revokeKey: (kid, reason) => keyProvider.revokeKey(kid, reason),
-			};
-			const response = await createHistoricalKeysHandler({ ...ctx, keyProvider: custom })(
+			const custom: HandlerContext["crypto"] = fixtureCryptoFromRead(
+				() => crypto.keyring.entry("federation"),
+				async () => [historical],
+			);
+			const response = await createHistoricalKeysHandler({ ...ctx, crypto: custom })(
 				new Request(`${ENTITY_ID}/federation_historical_keys`),
 			);
 			const verified = await verifyHistoricalKeysResponse(
 				await response.text(),
-				(await keyProvider.getFederationKeySet()).jwks,
+				(await crypto.keyring.entry("federation")).publishedJwks,
 				{ expectedIssuer: "https://authority.example.com", ...ctx.options },
 			);
 			t.true(verified.ok);
-			if (verified.ok) t.deepEqual(verified.value.keys, [historical]);
+			if (verified.ok) t.deepEqual<unknown>(verified.value.keys, [historical]);
 		});
 
 		test("includes security headers", async (t) => {
@@ -7106,7 +7254,9 @@ export default (QUnit: QUnit) => {
 			});
 
 			test("returns 501 when no trust mark store", async (t) => {
-				const { ctx } = await createTestContext({ storage: new MemoryStorageAdapter() });
+				const { ctx } = await createTestContext({
+					storage: new MemoryStorageAdapter({ engine: testEngine }),
+				});
 				const handler = createTrustMarkListHandler(ctx);
 				const res = await handler(
 					new Request(
@@ -7170,7 +7320,7 @@ export default (QUnit: QUnit) => {
 			const now = Math.floor(Date.now() / 1000);
 			return signEntityStatement(
 				{ iss, sub, trust_mark_type: trustMarkType, iat: now, exp: now + 3600, ...overrides },
-				new JwkSigner(signingKey),
+				new SigningEntryFixture(signingKey),
 				{ typ: JwtTyp.TrustMark },
 			);
 		}
@@ -7404,7 +7554,7 @@ export default (QUnit: QUnit) => {
 						iat: now,
 						exp: now + 3600,
 					},
-					new JwkSigner(signingKey),
+					new SigningEntryFixture(signingKey),
 					{ typ: JwtTyp.TrustMark },
 				);
 				const handler = createTrustMarkStatusHandler(ctx);
@@ -7433,7 +7583,7 @@ export default (QUnit: QUnit) => {
 			});
 
 			test("validates trust mark signed with retiring key as active", async (t) => {
-				const { ctx, signingKey, trustMarks, keyProvider } = await createTestContext();
+				const { ctx, signingKey, trustMarks, crypto } = await createTestContext();
 				const jwt = await issueTrustMarkJwt(ENTITY_ID, TMS_SUB1, TMS_MARK_TYPE, signingKey);
 				await trustMarks.issue({
 					trustMarkType: TMS_MARK_TYPE,
@@ -7443,10 +7593,11 @@ export default (QUnit: QUnit) => {
 					active: true,
 				});
 				const { privateKey: newKey } = await generateSigningKey("ES256");
-				await keyProvider.publishKey(
-					createFederationSigningKey({ ...newKey, kid: "rotated-key-1" }),
+				await crypto.keyring.publish(
+					"federation",
+					fixtureSigner(createFederationSigningKey({ ...newKey, kid: "rotated-key-1" })),
 				);
-				await keyProvider.switchActiveKey("rotated-key-1");
+				await crypto.keyring.activate("federation", "rotated-key-1");
 				const handler = createTrustMarkStatusHandler(ctx);
 				const res = await handler(postRequest(`trust_mark=${encodeURIComponent(jwt)}`));
 				t.equal(res.status, 200);
@@ -7454,7 +7605,7 @@ export default (QUnit: QUnit) => {
 			});
 
 			test("returns invalid for trust mark signed with revoked key", async (t) => {
-				const { ctx, signingKey, trustMarks, keyProvider } = await createTestContext();
+				const { ctx, signingKey, trustMarks, crypto } = await createTestContext();
 				const jwt = await issueTrustMarkJwt(ENTITY_ID, TMS_SUB1, TMS_MARK_TYPE, signingKey);
 				await trustMarks.issue({
 					trustMarkType: TMS_MARK_TYPE,
@@ -7464,9 +7615,12 @@ export default (QUnit: QUnit) => {
 					active: true,
 				});
 				const { privateKey: newKey } = await generateSigningKey("ES256");
-				await keyProvider.publishKey(createFederationSigningKey({ ...newKey, kid: "new-key-1" }));
-				await keyProvider.switchActiveKey("new-key-1");
-				await keyProvider.revokeKey("test-key-1", "keyCompromise");
+				await crypto.keyring.publish(
+					"federation",
+					fixtureSigner(createFederationSigningKey({ ...newKey, kid: "new-key-1" })),
+				);
+				await crypto.keyring.activate("federation", "new-key-1");
+				await crypto.keyring.revoke("federation", "test-key-1", "keyCompromise");
 				const handler = createTrustMarkStatusHandler(ctx);
 				const res = await handler(postRequest(`trust_mark=${encodeURIComponent(jwt)}`));
 				t.equal(res.status, 200);
@@ -7474,7 +7628,9 @@ export default (QUnit: QUnit) => {
 			});
 
 			test("returns 501 when no trust mark store", async (t) => {
-				const { ctx } = await createTestContext({ storage: new MemoryStorageAdapter() });
+				const { ctx } = await createTestContext({
+					storage: new MemoryStorageAdapter({ engine: testEngine }),
+				});
 				const handler = createTrustMarkStatusHandler(ctx);
 				const res = await handler(
 					new Request("https://authority.example.com/federation_trust_mark_status", {
@@ -7608,7 +7764,9 @@ export default (QUnit: QUnit) => {
 			});
 
 			test("returns 501 when no trust mark store", async (t) => {
-				const { ctx } = await createTestContext({ storage: new MemoryStorageAdapter() });
+				const { ctx } = await createTestContext({
+					storage: new MemoryStorageAdapter({ engine: testEngine }),
+				});
 				const handler = createTrustMarkHandler(ctx);
 				const res = await handler(
 					new Request(
@@ -7633,7 +7791,7 @@ export default (QUnit: QUnit) => {
 				const { ctx } = await createTestContext({
 					trustMarkIssuers: { [TM_MARK_TYPE]: [ENTITY_ID] },
 				});
-				const issuer = new TrustAnchor(hostConfig(ctx));
+				const issuer = await TrustAnchor.create(fixtureHostConfig(hostConfig(ctx)));
 				const jwt = await issuer.issueTrustMark(TM_SUB1, TM_MARK_TYPE);
 				const decoded = decodeEntityStatement(jwt);
 				t.true(isOk(decoded));
@@ -7652,7 +7810,7 @@ export default (QUnit: QUnit) => {
 					trustMarkIssuers: { [TM_MARK_TYPE]: [ENTITY_ID] },
 					trustMarkTtlSeconds: 3600,
 				});
-				const issuer = new TrustAnchor(hostConfig(ctx));
+				const issuer = await TrustAnchor.create(fixtureHostConfig(hostConfig(ctx)));
 				const jwt = await issuer.issueTrustMark(TM_SUB1, TM_MARK_TYPE);
 				const decoded = decodeEntityStatement(jwt);
 				t.true(isOk(decoded));
@@ -7672,7 +7830,7 @@ export default (QUnit: QUnit) => {
 					issuedAt: Math.floor(Date.now() / 1000),
 					active: true,
 				});
-				const issuer = new TrustAnchor(hostConfig(ctx));
+				const issuer = await TrustAnchor.create(fixtureHostConfig(hostConfig(ctx)));
 				const jwt = await issuer.issueTrustMark(TM_SUB1, TM_MARK_TYPE);
 				t.equal(jwt, storedJwt);
 			});
@@ -7682,7 +7840,7 @@ export default (QUnit: QUnit) => {
 				const { ctx } = await createTestContext({
 					trustMarkIssuers: { [TM_MARK_TYPE]: [otherAuthority] },
 				});
-				const issuer = new TrustAnchor(hostConfig(ctx));
+				const issuer = await TrustAnchor.create(fixtureHostConfig(hostConfig(ctx)));
 				await t.rejects(issuer.issueTrustMark(TM_SUB1, TM_MARK_TYPE), /not authorized/);
 			});
 
@@ -7690,7 +7848,7 @@ export default (QUnit: QUnit) => {
 				const { ctx } = await createTestContext({
 					trustMarkIssuers: { "https://other.example.com/mark": [ENTITY_ID] },
 				});
-				const issuer = new TrustAnchor(hostConfig(ctx));
+				const issuer = await TrustAnchor.create(fixtureHostConfig(hostConfig(ctx)));
 				t.true(decodeEntityStatement(await issuer.issueTrustMark(TM_SUB1, TM_MARK_TYPE)).ok);
 			});
 
@@ -7700,7 +7858,7 @@ export default (QUnit: QUnit) => {
 					issuer: "https://owner.example.com",
 					subject: ENTITY_ID,
 					trustMarkType: TM_MARK_TYPE,
-					signer: new JwkSigner(ownerKeys.privateKey),
+					signer: new SigningEntryFixture(ownerKeys.privateKey),
 				});
 				const { ctx } = await createTestContext({
 					trustMarkIssuers: { [TM_MARK_TYPE]: [ENTITY_ID] },
@@ -7712,7 +7870,7 @@ export default (QUnit: QUnit) => {
 						},
 					},
 				});
-				const issuer = new TrustAnchor(hostConfig(ctx));
+				const issuer = await TrustAnchor.create(fixtureHostConfig(hostConfig(ctx)));
 				const jwt = await issuer.issueTrustMark(TM_SUB1, TM_MARK_TYPE);
 				const decoded = decodeEntityStatement(jwt);
 				t.true(isOk(decoded));
@@ -7724,7 +7882,7 @@ export default (QUnit: QUnit) => {
 				const { ctx } = await createTestContext({
 					trustMarkIssuers: { [TM_MARK_TYPE]: [ENTITY_ID] },
 				});
-				const issuer = new TrustAnchor(hostConfig(ctx));
+				const issuer = await TrustAnchor.create(fixtureHostConfig(hostConfig(ctx)));
 				const jwt = await issuer.issueTrustMark(TM_SUB1, TM_MARK_TYPE);
 				const decoded = decodeEntityStatement(jwt);
 				t.true(isOk(decoded));
@@ -7738,7 +7896,7 @@ export default (QUnit: QUnit) => {
 					issuer: "https://owner.example.com",
 					subject: ENTITY_ID,
 					trustMarkType: TM_MARK_TYPE,
-					signer: new JwkSigner(ownerKeys.privateKey),
+					signer: new SigningEntryFixture(ownerKeys.privateKey),
 				});
 				const { ctx, publicKey } = await createTestContext({
 					trustMarkIssuers: { [TM_MARK_TYPE]: [ENTITY_ID] },
@@ -7750,13 +7908,14 @@ export default (QUnit: QUnit) => {
 						},
 					},
 				});
-				const issuer = new TrustAnchor(hostConfig(ctx));
+				const issuer = await TrustAnchor.create(fixtureHostConfig(hostConfig(ctx)));
 				const jwt = await issuer.issueTrustMark(TM_SUB1, TM_MARK_TYPE);
 				const result = await validateTrustMark(
 					jwt,
 					{ [TM_MARK_TYPE]: [ENTITY_ID] },
 					{ keys: [publicKey] },
 					{
+						engine: testEngine,
 						expectedSubject: TM_SUB1,
 						trustMarkOwners: {
 							[TM_MARK_TYPE]: {
@@ -7777,8 +7936,8 @@ export default (QUnit: QUnit) => {
 			test("issueTrustMarkDelegation() server method returns valid delegation JWT", async (t) => {
 				const keys = await generateSigningKey("ES256");
 				const signingKey = { ...keys.privateKey, kid: "delegation-key-1" };
-				const keyProvider = new MemoryFederationKeyProvider(createFederationSigningKey(signingKey));
-				const server = createAuthorityServer({
+				const crypto = new FixtureCrypto(createFederationSigningKey(signingKey));
+				const server = await createAuthorityServer({
 					entityId: entityId("https://owner.example.com"),
 					metadata: {
 						federation_entity: {
@@ -7786,10 +7945,10 @@ export default (QUnit: QUnit) => {
 							federation_list_endpoint: "https://owner.example.com/federation_list",
 						},
 					},
-					storage: new MemoryStorageAdapter(),
-					keyProvider,
+					storage: new MemoryStorageAdapter({ engine: testEngine }),
+					crypto,
 				});
-				const delegationJwt = await server.issueTrustMarkDelegation(
+				const delegationJwt = await (await server).issueTrustMarkDelegation(
 					"https://issuer.example.com",
 					"https://example.com/tm",
 				);
@@ -7831,8 +7990,8 @@ export default (QUnit: QUnit) => {
 			const clientKeys = await generateSigningKey("ES256");
 			const clientSigningKey = { ...clientKeys.privateKey, kid: "client-key-1" };
 			const clientPublicKey = { ...clientKeys.publicKey, kid: "client-key-1" };
-			const keyProvider = new MemoryFederationKeyProvider(createFederationSigningKey(taSigningKey));
-			const storage = new MemoryStorageAdapter({ trustMarks: true });
+			const crypto = new FixtureCrypto(createFederationSigningKey(taSigningKey));
+			const storage = new MemoryStorageAdapter({ engine: testEngine, trustMarks: true });
 			const clientKeyProvider = {
 				async getClientFederationJwks(clientEntityId: EntityId) {
 					return clientEntityId === CA_CLIENT_ID ? { keys: [clientPublicKey] } : undefined;
@@ -7840,7 +7999,7 @@ export default (QUnit: QUnit) => {
 			};
 			const ctx: HandlerContext = {
 				entityId: CA_AUTHORITY_ID,
-				keyProvider,
+				crypto,
 				storage,
 				clientKeyProvider,
 				metadata: {
@@ -7849,6 +8008,7 @@ export default (QUnit: QUnit) => {
 					},
 				},
 				...overrides,
+				options: { engine: testEngine },
 			};
 
 			const createClientAssertionJwt = async (assertionOverrides?: {
@@ -7863,11 +8023,11 @@ export default (QUnit: QUnit) => {
 						iss: assertionOverrides?.iss ?? CA_CLIENT_ID,
 						sub: assertionOverrides?.sub ?? CA_CLIENT_ID,
 						aud: assertionOverrides?.aud ?? CA_AUTHORITY_ID,
-						jti: crypto.randomUUID(),
+						jti: globalThis.crypto.randomUUID(),
 						iat: now,
 						exp: assertionOverrides?.exp ?? now + 60,
 					},
-					new JwkSigner(clientSigningKey),
+					new SigningEntryFixture(clientSigningKey),
 					{ typ: "JWT" },
 				);
 			};
@@ -7914,7 +8074,7 @@ export default (QUnit: QUnit) => {
 				const { ctx, createClientAssertionJwt } = await setupClientAuthContext();
 				const config: AuthorityConfig = {
 					entityId: ctx.entityId,
-					keyProvider: ctx.keyProvider,
+					crypto: ctx.crypto,
 					storage: ctx.storage,
 					clientKeyProvider: ctx.clientKeyProvider,
 					metadata: {
@@ -7928,8 +8088,10 @@ export default (QUnit: QUnit) => {
 					},
 				};
 				for (const authority of [
-					new TrustAnchor(configForHost()),
-					new Intermediate({ ...configForHost(), authorityHints: [TA_ID] }),
+					await TrustAnchor.create(fixtureHostConfig(configForHost())),
+					await Intermediate.create(
+						fixtureHostConfig({ ...configForHost(), authorityHints: [TA_ID] }),
+					),
 				]) {
 					const statusJwt = await authority.issueTrustMark(CA_CLIENT_ID, "auth-test");
 					const discovery = await authority.handleRequest(
@@ -7941,8 +8103,9 @@ export default (QUnit: QUnit) => {
 							await verifyEntityStatement(
 								await discovery.text(),
 								(
-									await ctx.keyProvider.getFederationKeySet()
-								).jwks,
+									await ctx.crypto.keyring.entry("federation")
+								).publishedJwks,
+								{ engine: testEngine },
 							)
 						).ok,
 					);
@@ -7964,8 +8127,8 @@ export default (QUnit: QUnit) => {
 					t.equal(anonymous.status, 200);
 					const checked = await verifyEntityStatement(
 						await anonymous.text(),
-						(await ctx.keyProvider.getFederationKeySet()).jwks,
-						{ expectedTyp: JwtTyp.TrustMarkStatusResponse },
+						(await ctx.crypto.keyring.entry("federation")).publishedJwks,
+						{ engine: testEngine, expectedTyp: JwtTyp.TrustMarkStatusResponse },
 					);
 					t.true(checked.ok);
 					if (checked.ok) t.equal(checked.value.payload.status, "active");
@@ -8008,22 +8171,28 @@ export default (QUnit: QUnit) => {
 						["private_key_jwt", "private_key_jwt_typo"],
 					]) {
 						const endpoint = `federation_${suffix}_endpoint`;
-						t.throws(
-							() =>
-								new TrustAnchor({
-									entityId: ctx.entityId,
-									keyProvider: ctx.keyProvider,
-									storage: new MemoryStorageAdapter({ trustMarks: true, subordinateEvents: true }),
-									...(suffix === "collection" ? { collection: { trustAnchors: new Map() } } : {}),
-									metadata: {
-										federation_entity: {
-											federation_fetch_endpoint: `${ctx.entityId}/fetch`,
-											federation_list_endpoint: `${ctx.entityId}/list`,
-											[endpoint]: `${ctx.entityId}/${suffix}`,
-											[`${endpoint}_auth_methods`]: methods,
+						await t.rejects(
+							(async () =>
+								await TrustAnchor.create(
+									fixtureHostConfig({
+										entityId: ctx.entityId,
+										crypto: ctx.crypto,
+										storage: new MemoryStorageAdapter({
+											engine: testEngine,
+											trustMarks: true,
+											subordinateEvents: true,
+										}),
+										...(suffix === "collection" ? { collection: { trustAnchors: new Map() } } : {}),
+										metadata: {
+											federation_entity: {
+												federation_fetch_endpoint: `${ctx.entityId}/fetch`,
+												federation_list_endpoint: `${ctx.entityId}/list`,
+												[endpoint]: `${ctx.entityId}/${suffix}`,
+												[`${endpoint}_auth_methods`]: methods,
+											},
 										},
-									},
-								}),
+									}),
+								))(),
 							/auth.*method/i,
 							`${endpoint}: ${JSON.stringify(methods)}`,
 						);
@@ -8313,6 +8482,7 @@ export default (QUnit: QUnit) => {
 					const ctxWithoutDiscovery: HandlerContext = {
 						...ctx,
 						options: {
+							engine: testEngine,
 							httpClient: async () => {
 								throw new Error("discovery should not run for endpoint authentication");
 							},
@@ -8355,7 +8525,7 @@ export default (QUnit: QUnit) => {
 					const { ctx, createClientAssertionJwt } = await setupClientAuthContext();
 					const ctxWithClock: HandlerContext = {
 						...ctx,
-						options: { clockSkewSeconds: 0 },
+						options: { engine: testEngine, clockSkewSeconds: 0 },
 					};
 					const handler = createAuthenticatedHandler(ctxWithClock, echoHandler, [
 						"private_key_jwt",
@@ -8447,11 +8617,11 @@ export default (QUnit: QUnit) => {
 							iss: CA_CLIENT_ID,
 							sub: CA_CLIENT_ID,
 							aud: CA_AUTHORITY_ID,
-							jti: crypto.randomUUID(),
+							jti: globalThis.crypto.randomUUID(),
 							iat: now,
 							exp: now + 60,
 						},
-						new JwkSigner(otherKeys.privateKey),
+						new SigningEntryFixture(otherKeys.privateKey),
 						{ typ: "JWT" },
 					);
 					const res = await handler(
@@ -8468,10 +8638,11 @@ export default (QUnit: QUnit) => {
 					const { ctx, createClientAssertionJwt } = await setupClientAuthContext();
 					const ctxNoTa: HandlerContext = {
 						entityId: ctx.entityId,
-						keyProvider: ctx.keyProvider,
+						crypto: ctx.crypto,
 						storage: ctx.storage,
 						clientKeyProvider: ctx.clientKeyProvider,
 						metadata: ctx.metadata,
+						options: { engine: testEngine },
 					};
 					const handler = createAuthenticatedHandler(ctxNoTa, echoHandler, ["private_key_jwt"]);
 					const assertion = await createClientAssertionJwt();
@@ -8606,23 +8777,26 @@ export default (QUnit: QUnit) => {
 	}
 
 	module("authority / compromised key rollover", (hooks) => {
-		let keyProvider: MemoryFederationKeyProvider;
+		let crypto: FixtureCrypto;
 
 		hooks.beforeEach(async () => {
 			const { privateKey } = await generateSigningKey("ES256");
-			keyProvider = new MemoryFederationKeyProvider(
+			crypto = new FixtureCrypto(
 				createFederationSigningKey({ ...privateKey, kid: "compromised-key" }),
 			);
 		});
 
 		test("revokes old key after switching to replacement", async (t) => {
 			const { privateKey: newKey } = await generateSigningKey("ES256");
-			await keyProvider.publishKey(createFederationSigningKey({ ...newKey, kid: "new-key" }));
-			await keyProvider.switchActiveKey("new-key");
-			await keyProvider.revokeKey("compromised-key", "keyCompromise");
-			const keySet = await keyProvider.getFederationKeySet();
-			t.equal(keySet.signer.kid, "new-key");
-			const history = await keyProvider.getHistoricalFederationKeys();
+			await crypto.keyring.publish(
+				"federation",
+				fixtureSigner(createFederationSigningKey({ ...newKey, kid: "new-key" })),
+			);
+			await crypto.keyring.activate("federation", "new-key");
+			await crypto.keyring.revoke("federation", "compromised-key", "keyCompromise");
+			const keySet = await crypto.keyring.entry("federation");
+			t.equal(keySet.signer.publicJwk.kid, "new-key");
+			const history = await crypto.history.getHistoricalKeys();
 			const oldKey = history.find((k) => k.kid === "compromised-key");
 			t.ok(oldKey?.revoked);
 			t.equal(oldKey?.revoked?.reason, "keyCompromise");
@@ -8630,12 +8804,15 @@ export default (QUnit: QUnit) => {
 
 		test("revoked key is not in active keys", async (t) => {
 			const { privateKey: newKey } = await generateSigningKey("ES256");
-			await keyProvider.publishKey(createFederationSigningKey({ ...newKey, kid: "new-key" }));
-			await keyProvider.switchActiveKey("new-key");
-			await keyProvider.revokeKey("compromised-key", "keyCompromise");
-			const keySet = await keyProvider.getFederationKeySet();
-			t.equal(keySet.jwks.keys.length, 1);
-			t.equal(keySet.jwks.keys[0]!.kid, "new-key");
+			await crypto.keyring.publish(
+				"federation",
+				fixtureSigner(createFederationSigningKey({ ...newKey, kid: "new-key" })),
+			);
+			await crypto.keyring.activate("federation", "new-key");
+			await crypto.keyring.revoke("federation", "compromised-key", "keyCompromise");
+			const keySet = await crypto.keyring.entry("federation");
+			t.equal(keySet.publishedJwks.keys.length, 1);
+			t.equal(keySet.publishedJwks.keys[0]!.kid, "new-key");
 		});
 	});
 
@@ -8645,21 +8822,17 @@ export default (QUnit: QUnit) => {
 			const { privateKey: newKey } = await generateSigningKey("ES256");
 			const keyWithoutKid = { ...newKey };
 			delete (keyWithoutKid as { kid?: string }).kid;
-			new MemoryFederationKeyProvider(
-				createFederationSigningKey({ ...privateKey, kid: "existing" }),
-			);
-			t.throws(() => new JwkSigner(keyWithoutKid), /kid/);
+			new FixtureCrypto(createFederationSigningKey({ ...privateKey, kid: "existing" }));
+			t.throws(() => new SigningEntryFixture(keyWithoutKid), /kid/);
 		});
 
 		test("replacement key must have a kid", async (t) => {
 			const { privateKey } = await generateSigningKey("ES256");
-			new MemoryFederationKeyProvider(
-				createFederationSigningKey({ ...privateKey, kid: "compromised" }),
-			);
+			new FixtureCrypto(createFederationSigningKey({ ...privateKey, kid: "compromised" }));
 			const { privateKey: newKey } = await generateSigningKey("ES256");
 			const keyWithoutKid = { ...newKey };
 			delete (keyWithoutKid as { kid?: string }).kid;
-			t.throws(() => new JwkSigner(keyWithoutKid), /kid/);
+			t.throws(() => new SigningEntryFixture(keyWithoutKid), /kid/);
 		});
 	});
 
@@ -8715,17 +8888,17 @@ export default (QUnit: QUnit) => {
 
 		module("authority / createAuthorityServer", (hooks) => {
 			let srvStorage: MemoryStorageAdapter;
-			let srvKeyProvider: MemoryFederationKeyProvider;
+			let srvKeyProvider: FixtureCrypto;
 			let srvSubordinates: SubordinateStorage;
 			let srvConfig: AuthorityConfig;
 
 			hooks.beforeEach(async () => {
-				srvStorage = new MemoryStorageAdapter({ trustMarks: true });
+				srvStorage = new MemoryStorageAdapter({ engine: testEngine, trustMarks: true });
 				srvSubordinates = srvStorage.subordinates;
 
 				const { privateKey } = await generateSigningKey("ES256");
 				const signingKey = { ...privateKey, kid: "server-key-1" };
-				srvKeyProvider = new MemoryFederationKeyProvider(createFederationSigningKey(signingKey));
+				srvKeyProvider = new FixtureCrypto(createFederationSigningKey(signingKey));
 
 				srvConfig = {
 					entityId: SERVER_AUTHORITY_ID,
@@ -8736,7 +8909,7 @@ export default (QUnit: QUnit) => {
 						},
 					},
 					storage: srvStorage,
-					keyProvider: srvKeyProvider,
+					crypto: srvKeyProvider,
 					trustMarkIssuers: { [SERVER_MARK_TYPE]: [SERVER_AUTHORITY_ID] },
 				};
 			});
@@ -8755,8 +8928,8 @@ export default (QUnit: QUnit) => {
 							...(authorityHints ? { authorityHints } : {}),
 						});
 						if (authorityHints) delete config.trustMarkIssuers;
-						const server = createAuthorityServer(config);
-						const result = await server.listSubordinatesExtended({
+						const server = await createAuthorityServer(config);
+						const result = await (await server).listSubordinatesExtended({
 							claims: [],
 							updatedAfter: 1500.5,
 							updatedBefore: 1500.5,
@@ -8788,9 +8961,9 @@ export default (QUnit: QUnit) => {
 							...(authorityHints ? { authorityHints } : {}),
 						});
 						if (authorityHints) delete config.trustMarkIssuers;
-						const server = createAuthorityServer(config);
+						const server = await createAuthorityServer(config);
 						for (const claims of [undefined, [], ["metadata"], ["subordinate_statement"]]) {
-							const result = await server.listSubordinatesExtended({
+							const result = await (await server).listSubordinatesExtended({
 								...(claims === undefined ? {} : { claims }),
 								trustMarkType: [alpha, beta],
 							});
@@ -8808,11 +8981,11 @@ export default (QUnit: QUnit) => {
 								if (claims?.includes("metadata")) t.deepEqual(entry.metadata, metadata);
 							}
 						}
-						const first = await server.listSubordinatesExtended({ claims: [], limit: 1 });
+						const first = await (await server).listSubordinatesExtended({ claims: [], limit: 1 });
 						t.true(first.ok);
 						if (!first.ok) continue;
 						t.equal(typeof first.value.next, "string");
-						const tail = await server.listSubordinatesExtended({
+						const tail = await (await server).listSubordinatesExtended({
 							from: first.value.next!,
 							claims: [],
 						});
@@ -8821,19 +8994,19 @@ export default (QUnit: QUnit) => {
 							t.deepEqual(tail.value.immediate_subordinate_entities, [{ id: SERVER_SUB2 }]);
 							t.equal(tail.value.next, undefined);
 						}
-						const empty = await server.listSubordinatesExtended({
+						const empty = await (await server).listSubordinatesExtended({
 							claims: [],
 							trustMarkType: "https://marks.example/missing",
 						});
 						t.true(empty.ok);
 						if (empty.ok) t.deepEqual(empty.value, { immediate_subordinate_entities: [] });
-						const missing = await server.listSubordinatesExtended({ from: "unknown +/=" });
+						const missing = await (await server).listSubordinatesExtended({ from: "unknown +/=" });
 						t.false(missing.ok);
 						if (!missing.ok) {
 							t.equal(missing.error.code, FederationErrorCode.PageNotFound);
 							t.equal(missing.error.description, "Unknown continuation cursor");
 						}
-						const ec = decodeEntityStatement(await server.getEntityConfiguration());
+						const ec = decodeEntityStatement(await (await server).getEntityConfiguration());
 						t.true(ec.ok);
 						if (ec.ok)
 							t.equal(
@@ -8843,8 +9016,8 @@ export default (QUnit: QUnit) => {
 					}
 				});
 				test("getEntityConfiguration returns signed JWT", async (t) => {
-					const server = createAuthorityServer(srvConfig);
-					const jwt = await server.getEntityConfiguration();
+					const server = await createAuthorityServer(srvConfig);
+					const jwt = await (await server).getEntityConfiguration();
 					const decoded = decodeEntityStatement(jwt);
 					t.true(isOk(decoded));
 					if (!isOk(decoded)) return;
@@ -8853,10 +9026,12 @@ export default (QUnit: QUnit) => {
 				});
 
 				test("TrustAnchor normalizes trailing slash for facade and Entity Configuration", async (t) => {
-					const trustAnchor = new TrustAnchor({
-						...srvConfig,
-						entityId: `${SERVER_AUTHORITY_ID}/`,
-					});
+					const trustAnchor = await TrustAnchor.create(
+						fixtureHostConfig({
+							...srvConfig,
+							entityId: `${SERVER_AUTHORITY_ID}/`,
+						}),
+					);
 					t.equal(trustAnchor.entityId, SERVER_AUTHORITY_ID);
 					const jwt = await trustAnchor.getEntityConfiguration();
 					const decoded = decodeEntityStatement(jwt);
@@ -8874,7 +9049,7 @@ export default (QUnit: QUnit) => {
 						authorityHints: [parent],
 					};
 					delete intermediateConfig.trustMarkIssuers;
-					const intermediate = new Intermediate(intermediateConfig);
+					const intermediate = await Intermediate.create(fixtureHostConfig(intermediateConfig));
 					t.equal(intermediate.entityId, SERVER_AUTHORITY_ID);
 					const jwt = await intermediate.getEntityConfiguration();
 					const decoded = decodeEntityStatement(jwt);
@@ -8887,8 +9062,8 @@ export default (QUnit: QUnit) => {
 
 				test("getSubordinateStatement returns signed JWT", async (t) => {
 					await srvSubordinates.add(makeServerRecord(SERVER_SUB1));
-					const server = createAuthorityServer(srvConfig);
-					const jwt = await server.getSubordinateStatement(SERVER_SUB1);
+					const server = await createAuthorityServer(srvConfig);
+					const jwt = await (await server).getSubordinateStatement(SERVER_SUB1);
 					const decoded = decodeEntityStatement(jwt);
 					t.true(isOk(decoded));
 					if (!isOk(decoded)) return;
@@ -8897,9 +9072,9 @@ export default (QUnit: QUnit) => {
 				});
 
 				test("getSubordinateStatement throws for unknown entity", async (t) => {
-					const server = createAuthorityServer(srvConfig);
+					const server = await createAuthorityServer(srvConfig);
 					try {
-						await server.getSubordinateStatement(SERVER_SUB1);
+						await (await server).getSubordinateStatement(SERVER_SUB1);
 						t.ok(false, "should have thrown");
 					} catch (e: unknown) {
 						t.true((e as Error).message.includes("not found"));
@@ -8908,8 +9083,8 @@ export default (QUnit: QUnit) => {
 
 				test("listSubordinates returns entity IDs", async (t) => {
 					await srvSubordinates.add(makeServerRecord(SERVER_SUB1));
-					const server = createAuthorityServer(srvConfig);
-					const list = await server.listSubordinates();
+					const server = await createAuthorityServer(srvConfig);
+					const list = await (await server).listSubordinates();
 					t.deepEqual(list, [SERVER_SUB1]);
 				});
 
@@ -8917,16 +9092,16 @@ export default (QUnit: QUnit) => {
 					await srvSubordinates.add(makeServerRecord(SERVER_SUB1));
 					await srvSubordinates.add(makeServerRecord(SERVER_SUB2));
 					await srvSubordinates.add(makeServerRecord(SERVER_SUB3));
-					const server = createAuthorityServer(srvConfig);
+					const server = await createAuthorityServer(srvConfig);
 					const sorted = [SERVER_SUB1, SERVER_SUB2, SERVER_SUB3].sort();
-					const first = await server.listSubordinatesExtended({ limit: 2 });
+					const first = await (await server).listSubordinatesExtended({ limit: 2 });
 					t.true(first.ok);
 					if (!first.ok) return;
 					t.equal(first.value.immediate_subordinate_entities.length, 2);
 					t.equal(first.value.immediate_subordinate_entities[0]!.id, sorted[0]);
 					t.equal(first.value.immediate_subordinate_entities[1]!.id, sorted[1]);
 					t.equal(first.value.next, sorted[2]);
-					const tail = await server.listSubordinatesExtended({
+					const tail = await (await server).listSubordinatesExtended({
 						limit: 2,
 						from: first.value.next as string,
 						auditTimestamps: true,
@@ -8942,8 +9117,8 @@ export default (QUnit: QUnit) => {
 				});
 
 				test("listSubordinatesExtended returns Result.err with page_not_found on unknown cursor", async (t) => {
-					const server = createAuthorityServer(srvConfig);
-					const result = await server.listSubordinatesExtended({
+					const server = await createAuthorityServer(srvConfig);
+					const result = await (await server).listSubordinatesExtended({
 						from: entityId("https://does-not-exist.example.com"),
 					});
 					t.false(result.ok);
@@ -8953,11 +9128,11 @@ export default (QUnit: QUnit) => {
 				});
 
 				test("listSubordinatesExtended returns Result.err with unsupported_parameter on disabled audit_timestamps", async (t) => {
-					const server = createAuthorityServer({
+					const server = await createAuthorityServer({
 						...srvConfig,
 						extendedListing: { supportAuditTimestamps: false },
 					});
-					const result = await server.listSubordinatesExtended({ auditTimestamps: true });
+					const result = await (await server).listSubordinatesExtended({ auditTimestamps: true });
 					t.false(result.ok);
 					if (!result.ok) {
 						t.equal(result.error.code, FederationErrorCode.UnsupportedParameter);
@@ -8965,8 +9140,8 @@ export default (QUnit: QUnit) => {
 				});
 
 				test("issueTrustMark returns signed JWT", async (t) => {
-					const server = createAuthorityServer(srvConfig);
-					const jwt = await server.issueTrustMark(SERVER_SUB1, SERVER_MARK_TYPE);
+					const server = await createAuthorityServer(srvConfig);
+					const jwt = await (await server).issueTrustMark(SERVER_SUB1, SERVER_MARK_TYPE);
 					const decoded = decodeEntityStatement(jwt);
 					t.true(isOk(decoded));
 					if (!isOk(decoded)) return;
@@ -9002,8 +9177,8 @@ export default (QUnit: QUnit) => {
 								options: { clock: { now: () => 1000 } },
 							});
 							if (authorityHints) delete config.trustMarkIssuers;
-							const server = createAuthorityServer(config);
-							const jwt = await server.issueTrustMark(SERVER_SUB1, SERVER_MARK_TYPE, {
+							const server = await createAuthorityServer(config);
+							const jwt = await (await server).issueTrustMark(SERVER_SUB1, SERVER_MARK_TYPE, {
 								renewal: "renew",
 								...scenario.options,
 							});
@@ -9021,7 +9196,7 @@ export default (QUnit: QUnit) => {
 					}
 				});
 
-				test("conflicting nested Trust Mark lifetimes reject configuration", (t) => {
+				test("conflicting nested Trust Mark lifetimes reject configuration", async (t) => {
 					for (const authorityHints of [undefined, [entityId("https://superior.example.com")]]) {
 						const config = withOptionalServerEndpoints({
 							...srvConfig,
@@ -9030,42 +9205,46 @@ export default (QUnit: QUnit) => {
 							trustMarkIssuer: { defaults: { noExpiry: true, ttlSeconds: 200 } },
 						});
 						if (authorityHints) delete config.trustMarkIssuers;
-						t.throws(() => createAuthorityServer(config), /noExpiry and ttlSeconds conflict/);
+						await t.rejects(
+							(async () => await createAuthorityServer(config))(),
+							/noExpiry and ttlSeconds conflict/,
+						);
 					}
 				});
 
 				test("listTrustMarkedEntities returns entity IDs", async (t) => {
-					const server = createAuthorityServer(srvConfig);
-					await server.issueTrustMark(SERVER_SUB1, SERVER_MARK_TYPE);
-					const list = await server.listTrustMarkedEntities(SERVER_MARK_TYPE);
+					const server = await createAuthorityServer(srvConfig);
+					await (await server).issueTrustMark(SERVER_SUB1, SERVER_MARK_TYPE);
+					const list = await (await server).listTrustMarkedEntities(SERVER_MARK_TYPE);
 					t.true(list.includes(SERVER_SUB1));
 				});
 
 				test("getHistoricalKeys returns signed JWT", async (t) => {
-					const server = createAuthorityServer(srvConfig);
-					const jwt = await server.getHistoricalKeys();
+					const server = await createAuthorityServer(srvConfig);
+					const jwt = await (await server).getHistoricalKeys();
 					t.ok(jwt);
 					const decoded = decodeEntityStatement(jwt);
 					t.true(isOk(decoded));
 				});
 
 				test("injected key provider owns signer rollover", async (t) => {
-					const server = createAuthorityServer(srvConfig);
+					const server = await createAuthorityServer(srvConfig);
 					const { privateKey: newKey } = await generateSigningKey("ES256");
-					await srvKeyProvider.publishKey(
-						createFederationSigningKey({ ...newKey, kid: "server-key-2" }),
+					await srvKeyProvider.keyring.publish(
+						"federation",
+						fixtureSigner(createFederationSigningKey({ ...newKey, kid: "server-key-2" })),
 					);
-					await srvKeyProvider.switchActiveKey("server-key-2");
-					const keySet = await srvKeyProvider.getFederationKeySet();
-					t.equal(keySet.signer.kid, "server-key-2");
-					t.ok(await server.getEntityConfiguration());
+					await srvKeyProvider.keyring.activate("federation", "server-key-2");
+					const keySet = await srvKeyProvider.keyring.entry("federation");
+					t.equal(keySet.signer.publicJwk.kid, "server-key-2");
+					t.ok(await (await server).getEntityConfiguration());
 				});
 			});
 
 			module("HTTP handler", () => {
 				test("routes to entity configuration", async (t) => {
-					const server = createAuthorityServer(srvConfig);
-					const handler = server.handler();
+					const server = await createAuthorityServer(srvConfig);
+					const handler = (await server).handler();
 					const res = await handler(
 						new Request(`${SERVER_AUTHORITY_ID}${WELL_KNOWN_OPENID_FEDERATION}`),
 					);
@@ -9075,7 +9254,7 @@ export default (QUnit: QUnit) => {
 
 				test("serves path-based authority Entity Configuration at derived well-known path", async (t) => {
 					const pathAuthorityId = entityId("https://authority.example.com/tenant");
-					const server = createAuthorityServer({
+					const server = await createAuthorityServer({
 						...srvConfig,
 						entityId: pathAuthorityId,
 						metadata: {
@@ -9086,7 +9265,7 @@ export default (QUnit: QUnit) => {
 						},
 						trustMarkIssuers: { [SERVER_MARK_TYPE]: [pathAuthorityId] },
 					});
-					const handler = server.handler();
+					const handler = (await server).handler();
 					const res = await handler(
 						new Request(`${pathAuthorityId}${WELL_KNOWN_OPENID_FEDERATION}`),
 					);
@@ -9101,7 +9280,7 @@ export default (QUnit: QUnit) => {
 
 				test("does not serve path-based authority Entity Configuration at root well-known path", async (t) => {
 					const pathAuthorityId = entityId("https://authority.example.com/tenant");
-					const server = createAuthorityServer({
+					const server = await createAuthorityServer({
 						...srvConfig,
 						entityId: pathAuthorityId,
 						metadata: {
@@ -9112,7 +9291,7 @@ export default (QUnit: QUnit) => {
 						},
 						trustMarkIssuers: { [SERVER_MARK_TYPE]: [pathAuthorityId] },
 					});
-					const handler = server.handler();
+					const handler = (await server).handler();
 					const res = await handler(
 						new Request(`https://authority.example.com${WELL_KNOWN_OPENID_FEDERATION}`),
 					);
@@ -9121,8 +9300,8 @@ export default (QUnit: QUnit) => {
 
 				test("routes to fetch endpoint", async (t) => {
 					await srvSubordinates.add(makeServerRecord(SERVER_SUB1));
-					const server = createAuthorityServer(srvConfig);
-					const handler = server.handler();
+					const server = await createAuthorityServer(srvConfig);
+					const handler = (await server).handler();
 					const res = await handler(
 						new Request(
 							`${SERVER_AUTHORITY_ID}${FederationEndpoint.Fetch}?sub=${encodeURIComponent(SERVER_SUB1)}`,
@@ -9132,8 +9311,8 @@ export default (QUnit: QUnit) => {
 				});
 
 				test("routes to list endpoint", async (t) => {
-					const server = createAuthorityServer(srvConfig);
-					const handler = server.handler();
+					const server = await createAuthorityServer(srvConfig);
+					const handler = (await server).handler();
 					const res = await handler(
 						new Request(`${SERVER_AUTHORITY_ID}${FederationEndpoint.List}`),
 					);
@@ -9143,13 +9322,13 @@ export default (QUnit: QUnit) => {
 
 				test("routes fetch and list through advertised metadata paths", async (t) => {
 					await srvSubordinates.add(makeServerRecord(SERVER_SUB1));
-					const server = createAuthorityServer(
+					const server = await createAuthorityServer(
 						withFederationEntityMetadata(srvConfig, {
 							federation_fetch_endpoint: `${SERVER_AUTHORITY_ID}/custom/fetch`,
 							federation_list_endpoint: `${SERVER_AUTHORITY_ID}/custom/list`,
 						}),
 					);
-					const handler = server.handler();
+					const handler = (await server).handler();
 					const fetchRes = await handler(
 						new Request(
 							`${SERVER_AUTHORITY_ID}/custom/fetch?sub=${encodeURIComponent(SERVER_SUB1)}`,
@@ -9167,12 +9346,12 @@ export default (QUnit: QUnit) => {
 				});
 
 				test("routes optional endpoints through advertised metadata paths", async (t) => {
-					const server = createAuthorityServer(
+					const server = await createAuthorityServer(
 						withFederationEntityMetadata(srvConfig, {
 							federation_resolve_endpoint: `${SERVER_AUTHORITY_ID}/custom/resolve`,
 						}),
 					);
-					const handler = server.handler();
+					const handler = (await server).handler();
 					const customRes = await handler(
 						new Request(
 							`${SERVER_AUTHORITY_ID}/custom/resolve?sub=${encodeURIComponent(SERVER_SUB1)}`,
@@ -9188,8 +9367,8 @@ export default (QUnit: QUnit) => {
 				});
 
 				test("routes to historical keys endpoint", async (t) => {
-					const server = createAuthorityServer(withOptionalServerEndpoints(srvConfig));
-					const handler = server.handler();
+					const server = await createAuthorityServer(withOptionalServerEndpoints(srvConfig));
+					const handler = (await server).handler();
 					const res = await handler(
 						new Request(`${SERVER_AUTHORITY_ID}${FederationEndpoint.HistoricalKeys}`),
 					);
@@ -9198,9 +9377,9 @@ export default (QUnit: QUnit) => {
 				});
 
 				test("routes to trust mark status endpoint", async (t) => {
-					const server = createAuthorityServer(withOptionalServerEndpoints(srvConfig));
-					const handler = server.handler();
-					const statusJwt = await server.issueTrustMark(SERVER_SUB1, SERVER_MARK_TYPE);
+					const server = await createAuthorityServer(withOptionalServerEndpoints(srvConfig));
+					const handler = (await server).handler();
+					const statusJwt = await (await server).issueTrustMark(SERVER_SUB1, SERVER_MARK_TYPE);
 					const res = await handler(
 						new Request(`${SERVER_AUTHORITY_ID}${FederationEndpoint.TrustMarkStatus}`, {
 							method: "POST",
@@ -9212,8 +9391,8 @@ export default (QUnit: QUnit) => {
 				});
 
 				test("routes to trust mark list endpoint", async (t) => {
-					const server = createAuthorityServer(withOptionalServerEndpoints(srvConfig));
-					const handler = server.handler();
+					const server = await createAuthorityServer(withOptionalServerEndpoints(srvConfig));
+					const handler = (await server).handler();
 					const res = await handler(
 						new Request(
 							`${SERVER_AUTHORITY_ID}${FederationEndpoint.TrustMarkList}?trust_mark_type=${encodeURIComponent(SERVER_MARK_TYPE)}`,
@@ -9223,8 +9402,8 @@ export default (QUnit: QUnit) => {
 				});
 
 				test("routes to trust mark endpoint — returns 404 when no trust mark exists", async (t) => {
-					const server = createAuthorityServer(withOptionalServerEndpoints(srvConfig));
-					const handler = server.handler();
+					const server = await createAuthorityServer(withOptionalServerEndpoints(srvConfig));
+					const handler = (await server).handler();
 					const res = await handler(
 						new Request(
 							`${SERVER_AUTHORITY_ID}${FederationEndpoint.TrustMark}?trust_mark_type=${encodeURIComponent(SERVER_MARK_TYPE)}&sub=${encodeURIComponent(SERVER_SUB1)}`,
@@ -9234,9 +9413,9 @@ export default (QUnit: QUnit) => {
 				});
 
 				test("routes to trust mark endpoint — returns 200 when trust mark exists", async (t) => {
-					const server = createAuthorityServer(withOptionalServerEndpoints(srvConfig));
-					await server.issueTrustMark(SERVER_SUB1, SERVER_MARK_TYPE);
-					const handler = server.handler();
+					const server = await createAuthorityServer(withOptionalServerEndpoints(srvConfig));
+					await (await server).issueTrustMark(SERVER_SUB1, SERVER_MARK_TYPE);
+					const handler = (await server).handler();
 					const res = await handler(
 						new Request(
 							`${SERVER_AUTHORITY_ID}${FederationEndpoint.TrustMark}?trust_mark_type=${encodeURIComponent(SERVER_MARK_TYPE)}&sub=${encodeURIComponent(SERVER_SUB1)}`,
@@ -9246,8 +9425,8 @@ export default (QUnit: QUnit) => {
 				});
 
 				test("routes to resolve endpoint", async (t) => {
-					const server = createAuthorityServer(withOptionalServerEndpoints(srvConfig));
-					const handler = server.handler();
+					const server = await createAuthorityServer(withOptionalServerEndpoints(srvConfig));
+					const handler = (await server).handler();
 					const res = await handler(
 						new Request(
 							`${SERVER_AUTHORITY_ID}${FederationEndpoint.Resolve}?sub=${encodeURIComponent(SERVER_SUB1)}`,
@@ -9258,8 +9437,8 @@ export default (QUnit: QUnit) => {
 
 				test("strips X-Authenticated-Entity header from incoming requests", async (t) => {
 					await srvSubordinates.add(makeServerRecord(SERVER_SUB1));
-					const server = createAuthorityServer(srvConfig);
-					const handler = server.handler();
+					const server = await createAuthorityServer(srvConfig);
+					const handler = (await server).handler();
 					const res = await handler(
 						new Request(
 							`${SERVER_AUTHORITY_ID}${FederationEndpoint.Fetch}?sub=${encodeURIComponent(SERVER_SUB1)}`,
@@ -9272,8 +9451,8 @@ export default (QUnit: QUnit) => {
 				});
 
 				test("returns 404 for unknown paths", async (t) => {
-					const server = createAuthorityServer(srvConfig);
-					const handler = server.handler();
+					const server = await createAuthorityServer(srvConfig);
+					const handler = (await server).handler();
 					const res = await handler(new Request(`${SERVER_AUTHORITY_ID}/unknown-endpoint`));
 					t.equal(res.status, 404);
 					t.equal(res.headers.get("Cache-Control"), "no-store");
@@ -9282,8 +9461,8 @@ export default (QUnit: QUnit) => {
 				});
 
 				test("all responses include security headers", async (t) => {
-					const server = createAuthorityServer(srvConfig);
-					const handler = server.handler();
+					const server = await createAuthorityServer(srvConfig);
+					const handler = (await server).handler();
 					const res = await handler(
 						new Request(`${SERVER_AUTHORITY_ID}${WELL_KNOWN_OPENID_FEDERATION}`),
 					);
@@ -9294,9 +9473,9 @@ export default (QUnit: QUnit) => {
 			});
 
 			module("input validation", () => {
-				test("rejects non-HTTPS entityId", (t) => {
+				test("rejects non-HTTPS entityId", async (t) => {
 					try {
-						createAuthorityServer({
+						await createAuthorityServer({
 							...srvConfig,
 							entityId: "http://insecure.example.com" as EntityId,
 						});
@@ -9306,9 +9485,9 @@ export default (QUnit: QUnit) => {
 					}
 				});
 
-				test("rejects entityId with query parameter", (t) => {
+				test("rejects entityId with query parameter", async (t) => {
 					try {
-						createAuthorityServer({
+						await createAuthorityServer({
 							...srvConfig,
 							entityId: "https://example.com?foo=bar" as EntityId,
 						});
@@ -9318,9 +9497,9 @@ export default (QUnit: QUnit) => {
 					}
 				});
 
-				test("rejects entityId with fragment", (t) => {
+				test("rejects entityId with fragment", async (t) => {
 					try {
-						createAuthorityServer({
+						await createAuthorityServer({
 							...srvConfig,
 							entityId: "https://example.com#frag" as EntityId,
 						});
@@ -9330,18 +9509,18 @@ export default (QUnit: QUnit) => {
 					}
 				});
 
-				test("rejects zero entityConfigurationTtlSeconds", (t) => {
+				test("rejects zero entityConfigurationTtlSeconds", async (t) => {
 					try {
-						createAuthorityServer({ ...srvConfig, entityConfigurationTtlSeconds: 0 });
+						await createAuthorityServer({ ...srvConfig, entityConfigurationTtlSeconds: 0 });
 						t.ok(false, "should have thrown");
 					} catch (e: unknown) {
 						t.true((e as Error).message.includes("entityConfigurationTtlSeconds must be positive"));
 					}
 				});
 
-				test("rejects negative subordinateStatementTtlSeconds", (t) => {
+				test("rejects negative subordinateStatementTtlSeconds", async (t) => {
 					try {
-						createAuthorityServer({ ...srvConfig, subordinateStatementTtlSeconds: -1 });
+						await createAuthorityServer({ ...srvConfig, subordinateStatementTtlSeconds: -1 });
 						t.ok(false, "should have thrown");
 					} catch (e: unknown) {
 						t.true(
@@ -9350,27 +9529,27 @@ export default (QUnit: QUnit) => {
 					}
 				});
 
-				test("rejects negative trustMarkTtlSeconds", (t) => {
+				test("rejects negative trustMarkTtlSeconds", async (t) => {
 					try {
-						createAuthorityServer({ ...srvConfig, trustMarkTtlSeconds: -5 });
+						await createAuthorityServer({ ...srvConfig, trustMarkTtlSeconds: -5 });
 						t.ok(false, "should have thrown");
 					} catch (e: unknown) {
 						t.true((e as Error).message.includes("trustMarkTtlSeconds must be positive"));
 					}
 				});
 
-				test("accepts undefined TTL fields (uses defaults)", (t) => {
+				test("accepts undefined TTL fields (uses defaults)", async (t) => {
 					try {
-						createAuthorityServer(srvConfig);
+						await createAuthorityServer(srvConfig);
 						t.ok(true);
 					} catch {
 						t.ok(false, "should not have thrown");
 					}
 				});
 
-				test("accepts positive TTL values", (t) => {
+				test("accepts positive TTL values", async (t) => {
 					try {
-						createAuthorityServer({
+						await createAuthorityServer({
 							...srvConfig,
 							entityConfigurationTtlSeconds: 3600,
 							subordinateStatementTtlSeconds: 1800,
@@ -9387,13 +9566,11 @@ export default (QUnit: QUnit) => {
 				const JWT_BEARER_TYPE = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
 
 				async function setupAuthenticatedServer(authMethods: string[]) {
-					const taStorage = new MemoryStorageAdapter();
+					const taStorage = new MemoryStorageAdapter({ engine: testEngine });
 					const taSubStore = taStorage.subordinates;
 					const { privateKey: taPrivKey } = await generateSigningKey("ES256");
 					const taSigningKey = { ...taPrivKey, kid: "ta-key-1" };
-					const taKeyProvider = new MemoryFederationKeyProvider(
-						createFederationSigningKey(taSigningKey),
-					);
+					const taKeyProvider = new FixtureCrypto(createFederationSigningKey(taSigningKey));
 
 					const { privateKey: clientPrivKey, publicKey: clientPubKey } =
 						await generateSigningKey("ES256");
@@ -9417,7 +9594,7 @@ export default (QUnit: QUnit) => {
 							},
 						},
 						storage: taStorage,
-						keyProvider: taKeyProvider,
+						crypto: taKeyProvider,
 						options: {
 							httpClient: async () => {
 								throw new Error("discovery should not run for endpoint authentication");
@@ -9432,11 +9609,11 @@ export default (QUnit: QUnit) => {
 								iss: CLIENT_ID,
 								sub: CLIENT_ID,
 								aud: SERVER_AUTHORITY_ID,
-								jti: crypto.randomUUID(),
+								jti: globalThis.crypto.randomUUID(),
 								iat: now,
 								exp: now + 60,
 							},
-							new JwkSigner(clientSigningKey),
+							new SigningEntryFixture(clientSigningKey),
 							{ typ: "JWT" },
 						);
 					};
@@ -9446,8 +9623,8 @@ export default (QUnit: QUnit) => {
 
 				test("server with private_key_jwt rejects unauthenticated GET on fetch", async (t) => {
 					const { config: authConfig } = await setupAuthenticatedServer(["private_key_jwt"]);
-					const server = createAuthorityServer(authConfig);
-					const handler = server.handler();
+					const server = await createAuthorityServer(authConfig);
+					const handler = (await server).handler();
 					const res = await handler(
 						new Request(
 							`${SERVER_AUTHORITY_ID}${FederationEndpoint.Fetch}?sub=${encodeURIComponent(SERVER_SUB1)}`,
@@ -9460,8 +9637,8 @@ export default (QUnit: QUnit) => {
 					const { config: authConfig, createAssertion } = await setupAuthenticatedServer([
 						"private_key_jwt",
 					]);
-					const server = createAuthorityServer(authConfig);
-					const handler = server.handler();
+					const server = await createAuthorityServer(authConfig);
+					const handler = (await server).handler();
 					const assertion = await createAssertion();
 					const res = await handler(
 						new Request(`${SERVER_AUTHORITY_ID}${FederationEndpoint.Fetch}`, {
@@ -9477,12 +9654,12 @@ export default (QUnit: QUnit) => {
 					const { config: authConfig, createAssertion } = await setupAuthenticatedServer([
 						"private_key_jwt",
 					]);
-					const server = createAuthorityServer(
+					const server = await createAuthorityServer(
 						withFederationEntityMetadata(authConfig, {
 							endpoint_auth_signing_alg_values_supported: ["RS256"],
 						}),
 					);
-					const handler = server.handler();
+					const handler = (await server).handler();
 					const assertion = await createAssertion();
 					const res = await handler(
 						new Request(`${SERVER_AUTHORITY_ID}${FederationEndpoint.Fetch}`, {
@@ -9502,7 +9679,7 @@ export default (QUnit: QUnit) => {
 					const { config: authConfig, createAssertion } = await setupAuthenticatedServer([
 						"private_key_jwt",
 					]);
-					const server = createAuthorityServer({
+					const server = await createAuthorityServer({
 						...withFederationEntityMetadata(authConfig, {
 							federation_resolve_endpoint: `${SERVER_AUTHORITY_ID}${FederationEndpoint.Resolve}`,
 							federation_resolve_endpoint_auth_methods: ["private_key_jwt"],
@@ -9510,7 +9687,7 @@ export default (QUnit: QUnit) => {
 						options: fed.options,
 						trustAnchors: fed.trustAnchors,
 					});
-					const handler = server.handler();
+					const handler = (await server).handler();
 					const assertion = await createAssertion();
 					const res = await handler(
 						new Request(`${SERVER_AUTHORITY_ID}${FederationEndpoint.Resolve}`, {
@@ -9529,10 +9706,11 @@ export default (QUnit: QUnit) => {
 					if (!isOk(decoded)) return;
 					const payload = decoded.value.payload as Record<string, unknown>;
 					t.equal(payload.aud, CLIENT_ID);
-					const { jwks } = await authConfig.keyProvider.getFederationKeySet();
+					const { publishedJwks: jwks } = await authConfig.crypto.keyring.entry("federation");
 					t.true(
 						(
 							await verifyResolveResponse(jwt, jwks, {
+								engine: testEngine,
 								expectedIssuer: SERVER_AUTHORITY_ID,
 								expectedSubject: LEAF_ID,
 								expectedAudience: CLIENT_ID,
@@ -9542,6 +9720,7 @@ export default (QUnit: QUnit) => {
 					t.false(
 						(
 							await verifyResolveResponse(jwt, jwks, {
+								engine: testEngine,
 								expectedIssuer: SERVER_AUTHORITY_ID,
 								expectedSubject: LEAF_ID,
 								expectedAudience: "https://other.example.com",
@@ -9551,6 +9730,7 @@ export default (QUnit: QUnit) => {
 					t.false(
 						(
 							await verifyResolveResponse(jwt, jwks, {
+								engine: testEngine,
 								expectedIssuer: SERVER_AUTHORITY_ID,
 								expectedSubject: LEAF_ID,
 							})
@@ -9564,10 +9744,10 @@ export default (QUnit: QUnit) => {
 						createAssertion,
 						clientPublicKey,
 					} = await setupAuthenticatedServer(["private_key_jwt"]);
-					const storage = new MemoryStorageAdapter();
+					const storage = new MemoryStorageAdapter({ engine: testEngine });
 					await storage.subordinates.add(makeServerRecord(SERVER_SUB1));
 					let requestedEntityId: EntityId | undefined;
-					const server = createAuthorityServer({
+					const server = await createAuthorityServer({
 						...authConfig,
 						storage,
 						clientKeyProvider: {
@@ -9577,7 +9757,7 @@ export default (QUnit: QUnit) => {
 							},
 						},
 					});
-					const handler = server.handler();
+					const handler = (await server).handler();
 					const assertion = await createAssertion();
 					const res = await handler(
 						new Request(`${SERVER_AUTHORITY_ID}${FederationEndpoint.Fetch}`, {
@@ -9594,7 +9774,7 @@ export default (QUnit: QUnit) => {
 					const { config: authConfig, createAssertion } = await setupAuthenticatedServer([
 						"private_key_jwt",
 					]);
-					const storage = new MemoryStorageAdapter();
+					const storage = new MemoryStorageAdapter({ engine: testEngine });
 					await storage.subordinates.add(makeServerRecord(SERVER_SUB1));
 					const originalGet = storage.subordinates.get.bind(storage.subordinates);
 					storage.subordinates.get = async (entityId) => {
@@ -9603,11 +9783,11 @@ export default (QUnit: QUnit) => {
 						}
 						return originalGet(entityId);
 					};
-					const server = createAuthorityServer({
+					const server = await createAuthorityServer({
 						...authConfig,
 						storage,
 					});
-					const handler = server.handler();
+					const handler = (await server).handler();
 					const assertion = await createAssertion();
 					const res = await handler(
 						new Request(`${SERVER_AUTHORITY_ID}${FederationEndpoint.Fetch}`, {
@@ -9624,8 +9804,8 @@ export default (QUnit: QUnit) => {
 
 				test("server without auth methods accepts unauthenticated GET", async (t) => {
 					await srvSubordinates.add(makeServerRecord(SERVER_SUB1));
-					const server = createAuthorityServer(srvConfig);
-					const handler = server.handler();
+					const server = await createAuthorityServer(srvConfig);
+					const handler = (await server).handler();
 					const res = await handler(
 						new Request(
 							`${SERVER_AUTHORITY_ID}${FederationEndpoint.Fetch}?sub=${encodeURIComponent(SERVER_SUB1)}`,
@@ -9639,8 +9819,8 @@ export default (QUnit: QUnit) => {
 						"none",
 						"private_key_jwt",
 					]);
-					const server = createAuthorityServer(authConfig);
-					const handler = server.handler();
+					const server = await createAuthorityServer(authConfig);
+					const handler = (await server).handler();
 					const getRes = await handler(
 						new Request(
 							`${SERVER_AUTHORITY_ID}${FederationEndpoint.Fetch}?sub=${encodeURIComponent(SERVER_SUB1)}`,
@@ -9671,19 +9851,19 @@ export default (QUnit: QUnit) => {
 
 		module("authority / integration", (hooks) => {
 			let intStorage: MemoryStorageAdapter;
-			let intKeyProvider: MemoryFederationKeyProvider;
+			let intKeyProvider: FixtureCrypto;
 			let intSubordinates: SubordinateStorage;
 			let intTrustMarks: TrustMarkStorage;
-			let intServer: ReturnType<typeof createAuthorityServer>;
+			let intServer: Awaited<ReturnType<typeof createAuthorityServer>>;
 
 			hooks.beforeEach(async () => {
-				intStorage = new MemoryStorageAdapter({ trustMarks: true });
+				intStorage = new MemoryStorageAdapter({ engine: testEngine, trustMarks: true });
 				intSubordinates = intStorage.subordinates;
 				intTrustMarks = intStorage.trustMarks!;
 
 				const { privateKey, publicKey } = await generateSigningKey("ES256");
 				const signingKey = { ...privateKey, kid: "ta-key-1" };
-				intKeyProvider = new MemoryFederationKeyProvider(createFederationSigningKey(signingKey));
+				intKeyProvider = new FixtureCrypto(createFederationSigningKey(signingKey));
 
 				const config: AuthorityConfig = {
 					entityId: INT_AUTHORITY_ID,
@@ -9699,14 +9879,14 @@ export default (QUnit: QUnit) => {
 						},
 					},
 					storage: intStorage,
-					keyProvider: intKeyProvider,
+					crypto: intKeyProvider,
 					trustMarkIssuers: { [INT_MARK_TYPE]: [INT_AUTHORITY_ID] },
 					trustMarkDelegations: {
 						[INT_MARK_TYPE]: await signTrustMarkDelegation({
 							issuer: INT_AUTHORITY_ID,
 							subject: INT_AUTHORITY_ID,
 							trustMarkType: INT_MARK_TYPE,
-							signer: new JwkSigner({ ...privateKey, kid: "trust-owner-key-1" }),
+							signer: new SigningEntryFixture({ ...privateKey, kid: "trust-owner-key-1" }),
 						}),
 					},
 					trustMarkOwners: {
@@ -9717,12 +9897,12 @@ export default (QUnit: QUnit) => {
 					},
 				};
 
-				intServer = createAuthorityServer(config);
+				intServer = await createAuthorityServer(config);
 			});
 
 			module("Entity Configuration lifecycle", () => {
 				test("fetches EC via programmatic API and HTTP handler", async (t) => {
-					const ecJwt = await intServer.getEntityConfiguration();
+					const ecJwt = await (await intServer).getEntityConfiguration();
 					const decoded = decodeEntityStatement(ecJwt);
 					t.true(isOk(decoded));
 					if (!isOk(decoded)) return;
@@ -9733,23 +9913,25 @@ export default (QUnit: QUnit) => {
 					t.ok(payload.jwks);
 					t.deepEqual(payload.trust_mark_issuers, { [INT_MARK_TYPE]: [INT_AUTHORITY_ID] });
 					t.ok(payload.trust_mark_owners);
-					const httpHandler = intServer.handler();
+					const httpHandler = (await intServer).handler();
 					const httpRes = await httpHandler(
 						new Request(`${INT_AUTHORITY_ID}${WELL_KNOWN_OPENID_FEDERATION}`),
 					);
 					t.equal(httpRes.status, 200);
-					const keySet = await intKeyProvider.getFederationKeySet();
-					const verifyResult = await verifyEntityStatement(ecJwt, keySet.jwks);
+					const keySet = await intKeyProvider.keyring.entry("federation");
+					const verifyResult = await verifyEntityStatement(ecJwt, keySet.publishedJwks, {
+						engine: testEngine,
+					});
 					t.true(isOk(verifyResult));
 				});
 
 				test("EC includes authority_hints for intermediates", async (t) => {
 					const { privateKey: intKey } = await generateSigningKey("ES256");
-					const intIntKeyProvider = new MemoryFederationKeyProvider(
+					const intIntKeyProvider = new FixtureCrypto(
 						createFederationSigningKey({ ...intKey, kid: "int-key-1" }),
 					);
 
-					const intIntServer = createAuthorityServer({
+					const intIntServer = await createAuthorityServer({
 						entityId: INT_INTERMEDIATE_ID,
 						metadata: {
 							federation_entity: {
@@ -9757,12 +9939,12 @@ export default (QUnit: QUnit) => {
 								federation_list_endpoint: `${INT_INTERMEDIATE_ID}${FederationEndpoint.List}`,
 							},
 						},
-						storage: new MemoryStorageAdapter(),
-						keyProvider: intIntKeyProvider,
+						storage: new MemoryStorageAdapter({ engine: testEngine }),
+						crypto: intIntKeyProvider,
 						authorityHints: [INT_AUTHORITY_ID],
 					});
 
-					const ecJwt = await intIntServer.getEntityConfiguration();
+					const ecJwt = await (await intIntServer).getEntityConfiguration();
 					const decoded = decodeEntityStatement(ecJwt);
 					t.true(isOk(decoded));
 					if (!isOk(decoded)) return;
@@ -9795,17 +9977,17 @@ export default (QUnit: QUnit) => {
 					await intSubordinates.add(opRecord);
 					await intSubordinates.add(rpRecord);
 
-					const allSubs = await intServer.listSubordinates();
+					const allSubs = await (await intServer).listSubordinates();
 					t.equal(allSubs.length, 2);
 					t.true(allSubs.includes(INT_LEAF_OP));
 					t.true(allSubs.includes(INT_LEAF_RP));
 
-					const opOnly = await intServer.listSubordinates({
+					const opOnly = await (await intServer).listSubordinates({
 						entityTypes: [EntityType.OpenIDProvider],
 					});
 					t.deepEqual(opOnly, [INT_LEAF_OP]);
 
-					const ssJwt = await intServer.getSubordinateStatement(INT_LEAF_OP);
+					const ssJwt = await (await intServer).getSubordinateStatement(INT_LEAF_OP);
 					const decoded = decodeEntityStatement(ssJwt);
 					t.true(isOk(decoded));
 					if (!isOk(decoded)) return;
@@ -9823,7 +10005,7 @@ export default (QUnit: QUnit) => {
 						createdAt: Date.now(),
 						updatedAt: Date.now(),
 					});
-					const httpHandler = intServer.handler();
+					const httpHandler = (await intServer).handler();
 					const res = await httpHandler(
 						new Request(
 							`${INT_AUTHORITY_ID}${FederationEndpoint.Fetch}?sub=${encodeURIComponent(INT_LEAF_OP)}`,
@@ -9836,7 +10018,7 @@ export default (QUnit: QUnit) => {
 
 			module("Trust Mark lifecycle", () => {
 				test("issues, lists, checks status, and revokes trust marks", async (t) => {
-					const tmJwt = await intServer.issueTrustMark(INT_LEAF_OP, INT_MARK_TYPE);
+					const tmJwt = await (await intServer).issueTrustMark(INT_LEAF_OP, INT_MARK_TYPE);
 					t.ok(tmJwt);
 					const decoded = decodeEntityStatement(tmJwt);
 					t.true(isOk(decoded));
@@ -9845,30 +10027,33 @@ export default (QUnit: QUnit) => {
 					t.equal(payload.iss, INT_AUTHORITY_ID);
 					t.equal(payload.sub, INT_LEAF_OP);
 					t.equal(payload.trust_mark_type, INT_MARK_TYPE);
-					const entities = await intServer.listTrustMarkedEntities(INT_MARK_TYPE);
+					const entities = await (await intServer).listTrustMarkedEntities(INT_MARK_TYPE);
 					t.true(entities.includes(INT_LEAF_OP));
-					const status = await intServer.getTrustMarkStatus(tmJwt);
+					const status = await (await intServer).getTrustMarkStatus(tmJwt);
 					t.equal(status.status, "active");
 					await intTrustMarks.revoke(INT_MARK_TYPE, INT_LEAF_OP, Math.floor(Date.now() / 1000));
-					const statusAfterRevoke = await intServer.getTrustMarkStatus(tmJwt);
+					const statusAfterRevoke = await (await intServer).getTrustMarkStatus(tmJwt);
 					t.equal(statusAfterRevoke.status, "revoked");
-					const entitiesAfterRevoke = await intServer.listTrustMarkedEntities(INT_MARK_TYPE);
+					const entitiesAfterRevoke = await (await intServer).listTrustMarkedEntities(
+						INT_MARK_TYPE,
+					);
 					t.false(entitiesAfterRevoke.includes(INT_LEAF_OP));
 				});
 			});
 
 			module("Key rotation lifecycle", () => {
 				test("rotates key and verifies historical keys", async (t) => {
-					const activeKeysBefore = await intKeyProvider.getFederationKeySet();
-					t.equal(activeKeysBefore.jwks.keys.length, 1);
+					const activeKeysBefore = await intKeyProvider.keyring.entry("federation");
+					t.equal(activeKeysBefore.publishedJwks.keys.length, 1);
 					const { privateKey: newKey } = await generateSigningKey("ES256");
 					const newSigningKey = createFederationSigningKey({ ...newKey, kid: "ta-key-2" });
-					await intKeyProvider.publishKey(newSigningKey);
-					await intKeyProvider.switchActiveKey("ta-key-2", { retirePreviousAfterMs: 0 });
-					const signing = await intKeyProvider.getFederationKeySet();
-					t.equal(signing.signer.kid, "ta-key-2");
-					t.equal(signing.jwks.keys.length, 1);
-					const historicalJwt = await intServer.getHistoricalKeys();
+					await intKeyProvider.keyring.publish("federation", fixtureSigner(newSigningKey));
+					await intKeyProvider.keyring.activate("federation", "ta-key-2");
+					await intKeyProvider.keyring.retire("federation", "ta-key-1");
+					const signing = await intKeyProvider.keyring.entry("federation");
+					t.equal(signing.signer.publicJwk.kid, "ta-key-2");
+					t.equal(signing.publishedJwks.keys.length, 1);
+					const historicalJwt = await (await intServer).getHistoricalKeys();
 					const decoded = decodeEntityStatement(historicalJwt);
 					t.true(isOk(decoded));
 					if (!isOk(decoded)) return;
@@ -9877,21 +10062,23 @@ export default (QUnit: QUnit) => {
 					t.equal(keys.length, 1);
 					const oldKey = keys.find((k) => k.kid === "ta-key-1");
 					t.ok(oldKey);
-					const ecAfterRotation = await intServer.getEntityConfiguration();
+					const ecAfterRotation = await (await intServer).getEntityConfiguration();
 					const ecDecoded = decodeEntityStatement(ecAfterRotation);
 					t.true(isOk(ecDecoded));
 					if (!isOk(ecDecoded)) return;
 					const ecPayload = ecDecoded.value.payload as Record<string, unknown>;
 					const ecJwks = ecPayload.jwks as { keys: Array<Record<string, unknown>> };
 					t.equal(ecJwks.keys.length, 1);
-					const verifyResult = await verifyEntityStatement(ecAfterRotation, signing.jwks);
+					const verifyResult = await verifyEntityStatement(ecAfterRotation, signing.publishedJwks, {
+						engine: testEngine,
+					});
 					t.true(isOk(verifyResult));
 				});
 			});
 
 			module("HTTP routing coverage", () => {
 				test("all endpoints respond with security headers", async (t) => {
-					const httpHandler = intServer.handler();
+					const httpHandler = (await intServer).handler();
 					const endpoints = [
 						WELL_KNOWN_OPENID_FEDERATION,
 						`${FederationEndpoint.List}`,
@@ -9906,7 +10093,7 @@ export default (QUnit: QUnit) => {
 				});
 
 				test("404 for unknown paths", async (t) => {
-					const httpHandler = intServer.handler();
+					const httpHandler = (await intServer).handler();
 					const res = await httpHandler(new Request(`${INT_AUTHORITY_ID}/nonexistent`));
 					t.equal(res.status, 404);
 					const body = (await res.json()) as { error: string };
@@ -10196,8 +10383,8 @@ export default (QUnit: QUnit) => {
 			const signingKey = { ...privateKey, kid: "ck-1" };
 			return {
 				entityId: SPEC_ENTITY,
-				keyProvider: new MemoryFederationKeyProvider(createFederationSigningKey(signingKey)),
-				storage: new MemoryStorageAdapter(),
+				crypto: new FixtureCrypto(createFederationSigningKey(signingKey)),
+				storage: new MemoryStorageAdapter({ engine: testEngine }),
 				metadata: {
 					federation_entity: {
 						federation_fetch_endpoint: `${SPEC_ENTITY}/federation_fetch`,
@@ -10215,7 +10402,7 @@ export default (QUnit: QUnit) => {
 				trustAnchorHints: [PARENT],
 				trustMarkIssuers: { [type]: [] },
 			});
-			const anchor = new TrustAnchor(cfg);
+			const anchor = await TrustAnchor.create(fixtureHostConfig(cfg));
 			let decoded = decodeEntityStatement(await anchor.getEntityConfiguration());
 			t.true(decoded.ok);
 			if (!decoded.ok) return;
@@ -10223,15 +10410,17 @@ export default (QUnit: QUnit) => {
 			t.deepEqual(decoded.value.payload.trust_anchor_hints?.map(String), [String(PARENT)]);
 			t.deepEqual(decoded.value.payload.trust_mark_issuers, { [type]: [] });
 			await anchor.setTrustMarkIssuers({ [type]: [SPEC_ENTITY] });
-			const keys = await cfg.keyProvider.getFederationKeySet();
-			await anchor.setTrustMarkOwners({ [type]: { sub: SPEC_ENTITY, jwks: keys.jwks } });
+			const keys = await cfg.crypto.keyring.entry("federation");
+			await anchor.setTrustMarkOwners({ [type]: { sub: SPEC_ENTITY, jwks: keys.publishedJwks } });
 			decoded = decodeEntityStatement(await anchor.getEntityConfiguration());
 			if (!decoded.ok) return t.true(false);
 			t.deepEqual(decoded.value.payload.trust_mark_issuers?.[type]?.map(String), [
 				String(SPEC_ENTITY),
 			]);
-			t.deepEqual(decoded.value.payload.trust_mark_owners?.[type]?.jwks, keys.jwks);
-			const anchors = CorePublic.createTrustAnchorSet([{ entityId: SPEC_ENTITY, jwks: keys.jwks }]);
+			t.deepEqual(decoded.value.payload.trust_mark_owners?.[type]?.jwks, keys.publishedJwks);
+			const anchors = CorePublic.createTrustAnchorSet([
+				{ entityId: SPEC_ENTITY, jwks: keys.publishedJwks },
+			]);
 			const validated = await anchor.discoverEntityFromChain(
 				SPEC_ENTITY,
 				[await anchor.getEntityConfiguration()],
@@ -10242,18 +10431,18 @@ export default (QUnit: QUnit) => {
 
 		test("accepts a minimal TA config (no authorityHints, both required endpoints)", async (t) => {
 			const cfg = await baseConfig();
-			const s = createAuthorityServer(cfg);
+			const s = await createAuthorityServer(cfg);
 			t.ok(s);
 		});
 
 		test("preserves nested extension nulls in published configurations", async (t) => {
 			const extension = { display: [{ name: "Acme", logo: null }, null] };
 			const cfg = await baseConfig();
-			const server = createAuthorityServer({
+			const server = await createAuthorityServer({
 				...cfg,
 				metadata: { federation_entity: { ...cfg.metadata.federation_entity, ...extension } },
 			});
-			const jwt = await server.getEntityConfiguration();
+			const jwt = await (await server).getEntityConfiguration();
 			const parsed = decodeEntityStatement(jwt);
 			t.true(parsed.ok);
 			if (parsed.ok)
@@ -10262,13 +10451,13 @@ export default (QUnit: QUnit) => {
 
 		test("accepts a minimal Intermediate config (non-empty authorityHints)", async (t) => {
 			const cfg = await baseConfig({ authorityHints: [PARENT] });
-			const s = createAuthorityServer(cfg);
+			const s = await createAuthorityServer(cfg);
 			t.ok(s);
 		});
 
 		test("throws when authorityHints is an explicit empty array", async (t) => {
 			const cfg = await baseConfig({ authorityHints: [] as unknown as [EntityId, ...EntityId[]] });
-			t.throws(() => createAuthorityServer(cfg), InvalidAuthorityConfig);
+			await t.rejects((async () => await createAuthorityServer(cfg))(), InvalidAuthorityConfig);
 		});
 
 		test("throws when trustAnchorHints is an explicit empty array", async (t) => {
@@ -10276,7 +10465,7 @@ export default (QUnit: QUnit) => {
 				authorityHints: [PARENT],
 				trustAnchorHints: [],
 			});
-			t.throws(() => createAuthorityServer(cfg), InvalidAuthorityConfig);
+			await t.rejects((async () => await createAuthorityServer(cfg))(), InvalidAuthorityConfig);
 		});
 
 		test("throws when trustAnchorHints contains an invalid Entity Identifier", async (t) => {
@@ -10284,12 +10473,12 @@ export default (QUnit: QUnit) => {
 				authorityHints: [PARENT],
 				trustAnchorHints: ["http://ta.example" as EntityId],
 			});
-			t.throws(() => createAuthorityServer(cfg), InvalidAuthorityConfig);
+			await t.rejects((async () => await createAuthorityServer(cfg))(), InvalidAuthorityConfig);
 		});
 
 		test("throws when Trust Anchor config carries trustAnchorHints", async (t) => {
 			const cfg = await baseConfig({ trustAnchorHints: [PARENT] });
-			t.throws(() => createAuthorityServer(cfg), InvalidAuthorityConfig);
+			await t.rejects((async () => await createAuthorityServer(cfg))(), InvalidAuthorityConfig);
 		});
 
 		test("throws when Intermediate config carries trustMarkIssuers", async (t) => {
@@ -10297,7 +10486,7 @@ export default (QUnit: QUnit) => {
 				authorityHints: [PARENT],
 				trustMarkIssuers: { "https://example/tm": [SPEC_ENTITY] },
 			});
-			t.throws(() => createAuthorityServer(cfg), InvalidAuthorityConfig);
+			await t.rejects((async () => await createAuthorityServer(cfg))(), InvalidAuthorityConfig);
 		});
 
 		test("throws when Intermediate config carries trustMarkOwners", async (t) => {
@@ -10308,14 +10497,14 @@ export default (QUnit: QUnit) => {
 					"https://example/tm": { sub: "https://owner.example", jwks: { keys: [publicKey] } },
 				},
 			});
-			t.throws(() => createAuthorityServer(cfg), InvalidAuthorityConfig);
+			await t.rejects((async () => await createAuthorityServer(cfg))(), InvalidAuthorityConfig);
 		});
 
 		test("accepts TA with trustMarkIssuers", async (t) => {
 			const cfg = await baseConfig({
 				trustMarkIssuers: { "https://example/tm": [SPEC_ENTITY] },
 			});
-			const s = createAuthorityServer(cfg);
+			const s = await createAuthorityServer(cfg);
 			t.ok(s);
 		});
 
@@ -10327,7 +10516,7 @@ export default (QUnit: QUnit) => {
 					},
 				},
 			});
-			t.throws(() => createAuthorityServer(cfg), InvalidAuthorityConfig);
+			await t.rejects((async () => await createAuthorityServer(cfg))(), InvalidAuthorityConfig);
 		});
 
 		test("throws when federation_entity lacks federation_list_endpoint", async (t) => {
@@ -10338,7 +10527,7 @@ export default (QUnit: QUnit) => {
 					},
 				},
 			});
-			t.throws(() => createAuthorityServer(cfg), InvalidAuthorityConfig);
+			await t.rejects((async () => await createAuthorityServer(cfg))(), InvalidAuthorityConfig);
 		});
 
 		test("throws when an advertised federation endpoint URL is not HTTPS", async (t) => {
@@ -10350,7 +10539,7 @@ export default (QUnit: QUnit) => {
 					},
 				},
 			});
-			t.throws(() => createAuthorityServer(cfg), InvalidAuthorityConfig);
+			await t.rejects((async () => await createAuthorityServer(cfg))(), InvalidAuthorityConfig);
 		});
 
 		test("throws when advertised federation endpoint paths collide", async (t) => {
@@ -10362,7 +10551,7 @@ export default (QUnit: QUnit) => {
 					},
 				},
 			});
-			t.throws(() => createAuthorityServer(cfg), InvalidAuthorityConfig);
+			await t.rejects((async () => await createAuthorityServer(cfg))(), InvalidAuthorityConfig);
 		});
 
 		test("throws when trust mark endpoints are advertised without storage capability", async (t) => {
@@ -10375,7 +10564,7 @@ export default (QUnit: QUnit) => {
 					},
 				},
 			});
-			t.throws(() => createAuthorityServer(cfg), InvalidAuthorityConfig);
+			await t.rejects((async () => await createAuthorityServer(cfg))(), InvalidAuthorityConfig);
 		});
 
 		test("throws when metadata has a null leaf", async (t) => {
@@ -10388,7 +10577,7 @@ export default (QUnit: QUnit) => {
 					},
 				},
 			});
-			t.throws(() => createAuthorityServer(cfg), InvalidMetadata);
+			await t.rejects((async () => await createAuthorityServer(cfg))(), InvalidMetadata);
 		});
 	});
 
@@ -10409,11 +10598,11 @@ export default (QUnit: QUnit) => {
 		}) {
 			const { privateKey } = await generateSigningKey("ES256");
 			const signingKey = { ...privateKey, kid: "k1" };
-			const keyProvider = new MemoryFederationKeyProvider(createFederationSigningKey(signingKey));
+			const crypto = new FixtureCrypto(createFederationSigningKey(signingKey));
 			const cfg: AuthorityConfig = {
 				entityId: opts.id,
-				keyProvider,
-				storage: new MemoryStorageAdapter(),
+				crypto,
+				storage: new MemoryStorageAdapter({ engine: testEngine }),
 				metadata: {
 					federation_entity: {
 						federation_fetch_endpoint: `${opts.id}/federation_fetch`,
@@ -10425,11 +10614,11 @@ export default (QUnit: QUnit) => {
 				...(opts.trustMarkIssuers !== undefined ? { trustMarkIssuers: opts.trustMarkIssuers } : {}),
 				...(opts.trustMarkOwners !== undefined ? { trustMarkOwners: opts.trustMarkOwners } : {}),
 			} as AuthorityConfig;
-			return createAuthorityServer(cfg);
+			return await createAuthorityServer(cfg);
 		}
 
-		async function readEC(server: ReturnType<typeof createAuthorityServer>, id: EntityId) {
-			const httpHandler = server.handler();
+		async function readEC(server: Awaited<ReturnType<typeof createAuthorityServer>>, id: EntityId) {
+			const httpHandler = (await server).handler();
 			const res = await httpHandler(new Request(`${id}${WELL_KNOWN_OPENID_FEDERATION}`));
 			const jwt = await res.text();
 			const decoded = decodeEntityStatement(jwt);
@@ -10511,12 +10700,12 @@ export default (QUnit: QUnit) => {
 		const CHILD_ID = entityId("https://child-shape.example");
 
 		async function setupParent(): Promise<{
-			server: ReturnType<typeof createAuthorityServer>;
+			server: Awaited<ReturnType<typeof createAuthorityServer>>;
 		}> {
 			const { privateKey } = await generateSigningKey("ES256");
 			const signingKey = { ...privateKey, kid: "p1" };
-			const keyProvider = new MemoryFederationKeyProvider(createFederationSigningKey(signingKey));
-			const storage = new MemoryStorageAdapter();
+			const crypto = new FixtureCrypto(createFederationSigningKey(signingKey));
+			const storage = new MemoryStorageAdapter({ engine: testEngine });
 			const subordinates = storage.subordinates;
 			const childKeys = await generateSigningKey("ES256");
 			const childPublic = { ...childKeys.publicKey, kid: "c1" };
@@ -10536,7 +10725,7 @@ export default (QUnit: QUnit) => {
 			} as unknown as SubordinateRecord);
 			const cfg: AuthorityConfig = {
 				entityId: PARENT_ID,
-				keyProvider,
+				crypto,
 				storage,
 				metadata: {
 					federation_entity: {
@@ -10545,12 +10734,12 @@ export default (QUnit: QUnit) => {
 					},
 				},
 			} as AuthorityConfig;
-			return { server: createAuthorityServer(cfg) };
+			return { server: await createAuthorityServer(cfg) };
 		}
 
 		test("Subordinate Statement payload has none of the EC-only top-level claims", async (t) => {
 			const { server } = await setupParent();
-			const httpHandler = server.handler();
+			const httpHandler = (await server).handler();
 			const res = await httpHandler(
 				new Request(`${PARENT_ID}/federation_fetch?sub=${encodeURIComponent(CHILD_ID)}`),
 			);
@@ -10573,7 +10762,7 @@ export default (QUnit: QUnit) => {
 
 		test("Subordinate Statement JWT header has no trust_chain or peer_trust_chain", async (t) => {
 			const { server } = await setupParent();
-			const httpHandler = server.handler();
+			const httpHandler = (await server).handler();
 			const res = await httpHandler(
 				new Request(`${PARENT_ID}/federation_fetch?sub=${encodeURIComponent(CHILD_ID)}`),
 			);
@@ -10589,7 +10778,7 @@ export default (QUnit: QUnit) => {
 
 		test("Subordinate Statement JWT header is typ=entity-statement+jwt with kid", async (t) => {
 			const { server } = await setupParent();
-			const httpHandler = server.handler();
+			const httpHandler = (await server).handler();
 			const res = await httpHandler(
 				new Request(`${PARENT_ID}/federation_fetch?sub=${encodeURIComponent(CHILD_ID)}`),
 			);
@@ -10622,7 +10811,7 @@ export default (QUnit: QUnit) => {
 		}
 
 		test("rejects records carrying federation_fetch_endpoint in federation_entity", async (t) => {
-			const store = new MemoryStorageAdapter().subordinates;
+			const store = new MemoryStorageAdapter({ engine: testEngine }).subordinates;
 			const rec = await aRecord({
 				federation_entity: { federation_fetch_endpoint: `${SUB_ID}/federation_fetch` },
 			});
@@ -10630,7 +10819,7 @@ export default (QUnit: QUnit) => {
 		});
 
 		test("rejects records carrying federation_list_endpoint_auth_methods", async (t) => {
-			const store = new MemoryStorageAdapter().subordinates;
+			const store = new MemoryStorageAdapter({ engine: testEngine }).subordinates;
 			const rec = await aRecord({
 				federation_entity: { federation_list_endpoint_auth_methods: ["private_key_jwt"] },
 			});
@@ -10638,7 +10827,7 @@ export default (QUnit: QUnit) => {
 		});
 
 		test("rejects records carrying endpoint_auth_signing_alg_values_supported in federation_entity", async (t) => {
-			const store = new MemoryStorageAdapter().subordinates;
+			const store = new MemoryStorageAdapter({ engine: testEngine }).subordinates;
 			const rec = await aRecord({
 				federation_entity: { endpoint_auth_signing_alg_values_supported: ["ES256"] },
 			});
@@ -10646,7 +10835,7 @@ export default (QUnit: QUnit) => {
 		});
 
 		test("rejects records with a null metadata leaf", async (t) => {
-			const store = new MemoryStorageAdapter().subordinates;
+			const store = new MemoryStorageAdapter({ engine: testEngine }).subordinates;
 			const rec = await aRecord({
 				openid_provider: { issuer: null as unknown as string },
 			});
@@ -10654,7 +10843,7 @@ export default (QUnit: QUnit) => {
 		});
 
 		test("preserves nested nulls through subordinate storage", async (t) => {
-			const store = new MemoryStorageAdapter().subordinates;
+			const store = new MemoryStorageAdapter({ engine: testEngine }).subordinates;
 			const metadata = { custom_entity: { display: [{ name: "Acme", logo: null }, null] } };
 			const rec = await aRecord(metadata);
 			await store.add(rec);
@@ -10662,7 +10851,7 @@ export default (QUnit: QUnit) => {
 		});
 
 		test("accepts clean records (organization_name only)", async (t) => {
-			const store = new MemoryStorageAdapter().subordinates;
+			const store = new MemoryStorageAdapter({ engine: testEngine }).subordinates;
 			const rec = await aRecord({ federation_entity: { organization_name: "Sub" } });
 			await store.add(rec);
 			const stored = await store.get(SUB_ID);
@@ -10670,7 +10859,7 @@ export default (QUnit: QUnit) => {
 		});
 
 		test("accepts records with no metadata claim at all", async (t) => {
-			const store = new MemoryStorageAdapter().subordinates;
+			const store = new MemoryStorageAdapter({ engine: testEngine }).subordinates;
 			const rec = await aRecord();
 			await store.add(rec);
 			const stored = await store.get(SUB_ID);
@@ -10678,7 +10867,7 @@ export default (QUnit: QUnit) => {
 		});
 
 		test("accepts records with openid_provider.federation_registration_endpoint", async (t) => {
-			const store = new MemoryStorageAdapter().subordinates;
+			const store = new MemoryStorageAdapter({ engine: testEngine }).subordinates;
 			const rec = await aRecord({
 				openid_provider: {
 					issuer: "https://op.example",
@@ -10691,7 +10880,7 @@ export default (QUnit: QUnit) => {
 		});
 
 		test("still rejects duplicate entityIds", async (t) => {
-			const store = new MemoryStorageAdapter().subordinates;
+			const store = new MemoryStorageAdapter({ engine: testEngine }).subordinates;
 			const rec = await aRecord({ federation_entity: { organization_name: "Sub" } });
 			await store.add(rec);
 			await t.rejects(store.add(rec), /already exists/);
@@ -10710,12 +10899,12 @@ export default (QUnit: QUnit) => {
 		async function createFacadeConfigs() {
 			const { privateKey } = await generateSigningKey("ES256");
 			const signingKey = { ...privateKey, kid: "k1" };
-			const keyProvider = new MemoryFederationKeyProvider(createFederationSigningKey(signingKey));
-			const storage = new MemoryStorageAdapter({ trustMarks: true });
+			const crypto = new FixtureCrypto(createFederationSigningKey(signingKey));
+			const storage = new MemoryStorageAdapter({ engine: testEngine, trustMarks: true });
 
 			const taConfig: AuthorityConfig = {
 				entityId: TA_ID,
-				keyProvider,
+				crypto,
 				storage,
 				metadata: {
 					federation_entity: {
@@ -10732,7 +10921,7 @@ export default (QUnit: QUnit) => {
 
 			const intConfig: AuthorityConfig = {
 				entityId: INT_ID,
-				keyProvider,
+				crypto,
 				storage,
 				metadata: {
 					federation_entity: {
@@ -10748,13 +10937,13 @@ export default (QUnit: QUnit) => {
 				authorityHints: [PARENT_ID],
 			};
 
-			return { taConfig, intConfig, storage, keyProvider };
+			return { taConfig, intConfig, storage, crypto };
 		}
 
 		test("exercises TrustAnchor and Intermediate delegation methods for full function coverage", async (t) => {
-			const { taConfig, intConfig, storage, keyProvider } = await createFacadeConfigs();
-			const ta = new TrustAnchor(taConfig);
-			const intermediate = new Intermediate(intConfig);
+			const { taConfig, intConfig, storage, crypto } = await createFacadeConfigs();
+			const ta = await TrustAnchor.create(fixtureHostConfig(taConfig));
+			const intermediate = await Intermediate.create(fixtureHostConfig(intConfig));
 
 			// Setup a subordinate in storage to prevent not found errors during get/resolve/etc.
 			const { publicKey } = await generateSigningKey("ES256");
@@ -10819,10 +11008,13 @@ export default (QUnit: QUnit) => {
 			// 9. Intermediate key provider rollover
 			const { privateKey: newKey } = await generateSigningKey("ES256");
 			const nextSigningKey = { ...newKey, kid: "k2" };
-			await keyProvider.publishKey(createFederationSigningKey(nextSigningKey));
-			await keyProvider.switchActiveKey("k2");
-			const keySet = await keyProvider.getFederationKeySet();
-			t.equal(keySet.signer.kid, "k2");
+			await crypto.keyring.publish(
+				"federation",
+				fixtureSigner(createFederationSigningKey(nextSigningKey)),
+			);
+			await crypto.keyring.activate("federation", "k2");
+			const keySet = await crypto.keyring.entry("federation");
+			t.equal(keySet.signer.publicJwk.kid, "k2");
 
 			// 10. Intermediate handleRequest
 			const res = await intermediate.handleRequest(
@@ -10872,12 +11064,16 @@ export default (QUnit: QUnit) => {
 						const f = await fixture(intermediate);
 						const Authority = intermediate ? Intermediate : TrustAnchor;
 						for (const ttl of [0, -1, NaN, Infinity, -Infinity]) {
-							assert.throws(
-								() => new Authority({ ...f.config, subordinateEventsTtlSeconds: ttl }),
+							await assert.rejects(
+								(async () =>
+									await Authority.create({ ...f.config, subordinateEventsTtlSeconds: ttl }))(),
 								/positive and finite/,
 							);
 						}
-						const authority = new Authority({ ...f.config, subordinateEventsTtlSeconds: 60.5 });
+						const authority = await Authority.create({
+							...f.config,
+							subordinateEventsTtlSeconds: 60.5,
+						});
 						await authority.recordSubordinateEvents(subject, [
 							{ iat: -0.5, event: "operator.review" },
 						]);
@@ -10898,6 +11094,7 @@ export default (QUnit: QUnit) => {
 								]);
 							}
 							const fetched = await fetchSubordinateEvents(endpoint, subject, {
+								engine: testEngine,
 								...f.options,
 								clockSkewSeconds: 0,
 								clock: { now: () => now + 61 },
@@ -10923,15 +11120,19 @@ export default (QUnit: QUnit) => {
 						reads++;
 						return read(operation);
 					};
-					const getKeys = f.keyProvider.getFederationKeySet.bind(f.keyProvider);
-					f.keyProvider.getFederationKeySet = async () => {
+					const getKeys = f.crypto.keyring.entry.bind(f.crypto.keyring, "federation");
+					f.crypto.keyring.entry = async () => {
 						keys++;
 						return getKeys();
 					};
-					const authority = new TrustAnchor({
-						...f.config,
-						options: { ...f.config.options, signal: controller.signal },
-					});
+					const authority = await TrustAnchor.create(
+						fixtureHostConfig({
+							...f.config,
+							options: { ...f.config.options, signal: controller.signal },
+						}),
+					);
+					reads = 0;
+					keys = 0;
 					controller.abort();
 					await assert.rejects(authority.getSubordinateEvents(subject), /abort/i);
 					for (const [host, signal] of [
@@ -10961,9 +11162,9 @@ export default (QUnit: QUnit) => {
 						const gate = new Promise<void>((resolve) => {
 							release = resolve;
 						});
-						const originalKeys = f.keyProvider.getFederationKeySet.bind(f.keyProvider);
+						const originalKeys = f.crypto.keyring.entry.bind(f.crypto.keyring, "federation");
 						let signatures = 0;
-						f.keyProvider.getFederationKeySet = async () => {
+						f.crypto.keyring.entry = async () => {
 							if (stage === "keys") {
 								entered();
 								await gate;
@@ -10971,19 +11172,14 @@ export default (QUnit: QUnit) => {
 							const keys = await originalKeys();
 							return {
 								...keys,
-								signer: {
-									...keys.signer,
-									alg: keys.signer.alg,
-									kid: keys.signer.kid,
-									signJwt: async (data, header) => {
-										signatures++;
-										if (stage === "signing") {
-											entered();
-											await gate;
-										}
-										return keys.signer.signJwt(data, header);
-									},
-								},
+								signer: instrumentSigningEntry(keys.signer, async (data, header) => {
+									signatures++;
+									if (stage === "signing") {
+										entered();
+										await gate;
+									}
+									return rawFixtureJwt(keys.signer, data, header);
+								}).signer,
 							};
 						};
 						if (stage === "storage") {
@@ -11129,7 +11325,9 @@ export default (QUnit: QUnit) => {
 							f.storage.transaction((tx) => operation({ subordinates: tx.subordinates })),
 					};
 					await assert.rejects(
-						new TrustAnchor({ ...f.config, storage: broken }).registerSubordinate(f.record),
+						(
+							await TrustAnchor.create(fixtureHostConfig({ ...f.config, storage: broken }))
+						).registerSubordinate(f.record),
 						/transaction-bound/,
 					);
 					assert.strictEqual(await f.storage.subordinates.get(subject), undefined);
@@ -11149,7 +11347,9 @@ export default (QUnit: QUnit) => {
 							),
 					};
 					await assert.rejects(
-						new TrustAnchor({ ...f.config, storage: failing }).registerSubordinate(f.record),
+						(
+							await TrustAnchor.create(fixtureHostConfig({ ...f.config, storage: failing }))
+						).registerSubordinate(f.record),
 						/disk full/,
 					);
 					assert.strictEqual(await f.storage.subordinates.get(subject), undefined);
@@ -11182,7 +11382,9 @@ export default (QUnit: QUnit) => {
 							});
 						},
 					};
-					await new TrustAnchor({ ...f.config, storage }).registerSubordinate(f.record);
+					await (
+						await TrustAnchor.create(fixtureHostConfig({ ...f.config, storage }))
+					).registerSubordinate(f.record);
 					assert.strictEqual(attempts, 2);
 					assert.strictEqual((await f.storage.subordinateEvents?.list(issuer, subject))?.length, 1);
 				},
@@ -11192,15 +11394,17 @@ export default (QUnit: QUnit) => {
 				"event capture can be enabled without publishing an HTTP route",
 				async (assert) => {
 					const f = await fixture();
-					const authority = new TrustAnchor({
-						...f.config,
-						metadata: {
-							federation_entity: {
-								federation_fetch_endpoint: `${issuer}/fetch`,
-								federation_list_endpoint: `${issuer}/list`,
+					const authority = await TrustAnchor.create(
+						fixtureHostConfig({
+							...f.config,
+							metadata: {
+								federation_entity: {
+									federation_fetch_endpoint: `${issuer}/fetch`,
+									federation_list_endpoint: `${issuer}/list`,
+								},
 							},
-						},
-					});
+						}),
+					);
 					await authority.registerSubordinate(f.record);
 					assert.strictEqual((await f.storage.subordinateEvents?.list(issuer, subject))?.length, 1);
 					const response = await authority.handleRequest(
@@ -11220,17 +11424,19 @@ export default (QUnit: QUnit) => {
 			QUnit.test("method errors are Federation errors only on the events route", async (assert) => {
 				for (const methods of [undefined, ["private_key_jwt"], ["none", "private_key_jwt"]]) {
 					const f = await fixture();
-					const authority = new TrustAnchor({
-						...f.config,
-						metadata: {
-							federation_entity: {
-								...f.config.metadata.federation_entity,
-								...(methods
-									? { federation_subordinate_events_endpoint_auth_methods: methods }
-									: {}),
+					const authority = await TrustAnchor.create(
+						fixtureHostConfig({
+							...f.config,
+							metadata: {
+								federation_entity: {
+									...f.config.metadata.federation_entity,
+									...(methods
+										? { federation_subordinate_events_endpoint_auth_methods: methods }
+										: {}),
+								},
 							},
-						},
-					});
+						}),
+					);
 					const allow = methods?.includes("none") ? "GET, POST" : methods ? "POST" : "GET";
 					const disallowed = methods?.includes("none")
 						? ["PUT"]
@@ -11267,23 +11473,28 @@ export default (QUnit: QUnit) => {
 				"authority routing preserves abort signals for form body readers",
 				async (assert) => {
 					const key = await generateSigningKey("ES256");
-					const keyProvider = new MemoryFederationKeyProvider({
-						signer: new JwkSigner(key.privateKey),
+					const crypto = new FixtureCrypto({
+						signer: new SigningEntryFixture(key.privateKey),
 						publicJwk: key.publicKey,
 					});
-					const authority = new TrustAnchor({
-						entityId: anchor,
-						keyProvider,
-						storage: new MemoryStorageAdapter(),
-						metadata: {
-							federation_entity: {
-								federation_fetch_endpoint: `${anchor}/fetch`,
-								federation_list_endpoint: `${anchor}/list`,
-								federation_collection_endpoint: `${anchor}/collect`,
+					const authority = await TrustAnchor.create(
+						fixtureHostConfig({
+							entityId: anchor,
+							crypto,
+							storage: new MemoryStorageAdapter({ engine: testEngine }),
+							metadata: {
+								federation_entity: {
+									federation_fetch_endpoint: `${anchor}/fetch`,
+									federation_list_endpoint: `${anchor}/list`,
+									federation_collection_endpoint: `${anchor}/collect`,
+								},
 							},
-						},
-						collection: { trustAnchors: new Map(), options: { httpTimeoutMs: 1000 } },
-					});
+							collection: {
+								trustAnchors: new Map(),
+								options: { engine: testEngine, httpTimeoutMs: 1000 },
+							},
+						}),
+					);
 					let signal: AbortSignal | undefined;
 					const handle = authority.collection!.handleRequest.bind(authority.collection);
 					authority.collection!.handleRequest = async (request) => {
@@ -11325,7 +11536,9 @@ export default (QUnit: QUnit) => {
 					trustMarkIssuers: Object.create({ [type]: ["https://other.example"] }),
 					trustMarkDelegations: Object.create({ [type]: "inherited.jwt.token" }),
 				});
-				const jwt = await new TrustAnchor(hostConfig(ctx)).issueTrustMark(subject, type);
+				const jwt = await (
+					await TrustAnchor.create(fixtureHostConfig(hostConfig(ctx)))
+				).issueTrustMark(subject, type);
 				const parsed = decodeEntityStatement(jwt);
 				t.true(parsed.ok);
 				if (parsed.ok) t.false(Object.hasOwn(parsed.value.payload, "delegation"));
@@ -11339,7 +11552,7 @@ export default (QUnit: QUnit) => {
 						[field]: { [type]: value },
 					} as unknown as TestContextOverrides);
 					let accesses = 0;
-					ctx.keyProvider.getFederationKeySet = async () => {
+					ctx.crypto.keyring.entry = async () => {
 						accesses++;
 						throw new Error("Unexpected key access");
 					};
@@ -11351,7 +11564,7 @@ export default (QUnit: QUnit) => {
 						(async () => {
 							const issuer = new CorePublic.TrustMarkIssuerService({
 								issuer: ctx.entityId,
-								keyProvider: ctx.keyProvider,
+								crypto: ctx.crypto,
 								trustMarkIssuers: ctx.trustMarkIssuers,
 								delegations: ctx.trustMarkDelegations,
 								storage: {
@@ -11363,6 +11576,7 @@ export default (QUnit: QUnit) => {
 											operation({ trustMarks: snapshot.trustMarks! }),
 										),
 								},
+								options: { engine: testEngine },
 							});
 							await issuer.issueTrustMark(subject, type);
 						})(),
@@ -11377,30 +11591,32 @@ export default (QUnit: QUnit) => {
 			const fed = await createMockFederation();
 			let calls = 0;
 			let now = Math.floor(Date.now() / 1000);
-			const { keyProvider } = await createTestContext();
-			const storage = new MemoryStorageAdapter();
-			const server = new TrustAnchor({
-				entityId: ENTITY_ID,
-				keyProvider,
-				storage,
-				trustAnchors: fed.trustAnchors,
-				metadata: {
-					federation_entity: {
-						federation_fetch_endpoint: `${ENTITY_ID}/fetch`,
-						federation_list_endpoint: `${ENTITY_ID}/list`,
-						federation_resolve_endpoint: `${ENTITY_ID}/resolve`,
+			const { crypto } = await createTestContext();
+			const storage = new MemoryStorageAdapter({ engine: testEngine });
+			const server = await TrustAnchor.create(
+				fixtureHostConfig({
+					entityId: ENTITY_ID,
+					crypto,
+					storage,
+					trustAnchors: fed.trustAnchors,
+					metadata: {
+						federation_entity: {
+							federation_fetch_endpoint: `${ENTITY_ID}/fetch`,
+							federation_list_endpoint: `${ENTITY_ID}/list`,
+							federation_resolve_endpoint: `${ENTITY_ID}/resolve`,
+						},
 					},
-				},
-				options: {
-					...fed.options,
-					clock: { now: () => now },
-					cacheMaxTtlSeconds: 10,
-					httpClient: async (url, init) => {
-						calls++;
-						return fed.options.httpClient!(url, init);
+					options: {
+						...fed.options,
+						clock: { now: () => now },
+						cacheMaxTtlSeconds: 10,
+						httpClient: async (url, init) => {
+							calls++;
+							return fed.options.httpClient!(url, init);
+						},
 					},
-				},
-			});
+				}),
+			);
 			const request = () =>
 				new Request(
 					`${ENTITY_ID}/resolve?sub=${encodeURIComponent(LEAF_ID)}&trust_anchor=${encodeURIComponent(TA_ID)}`,
@@ -11426,8 +11642,11 @@ export default (QUnit: QUnit) => {
 			}
 			t.equal(calls, warmedCalls);
 			const next = await generateSigningKey();
-			await keyProvider.publishKey(createFederationSigningKey(next.privateKey));
-			await keyProvider.switchActiveKey(next.privateKey.kid!, { retirePreviousAfterMs: 0 });
+			await crypto.keyring.publish(
+				"federation",
+				fixtureSigner(createFederationSigningKey(next.privateKey)),
+			);
+			await crypto.keyring.activate("federation", next.privateKey.kid!);
 			const rotated = decodeEntityStatement(await (await server.handleRequest(request())).text());
 			t.true(rotated.ok);
 			if (rotated.ok) {
@@ -11435,8 +11654,8 @@ export default (QUnit: QUnit) => {
 				if (local.ok) t.equal(rotated.value.payload.exp, local.value.payload.exp);
 			}
 			t.equal(calls, warmedCalls);
-			const currentKeys = keyProvider.getFederationKeySet.bind(keyProvider);
-			keyProvider.getFederationKeySet = async () => {
+			const currentKeys = crypto.keyring.entry.bind(crypto.keyring, "federation");
+			crypto.keyring.entry = async () => {
 				now += 10;
 				return currentKeys();
 			};
@@ -11532,12 +11751,12 @@ export default (QUnit: QUnit) => {
 			let now = 1000;
 			const initial = await generateSigningKey();
 			const next = await generateSigningKey();
-			const provider = MemoryFederationKeyProvider.fromJWK(initial.privateKey, {
+			const provider = FixtureCrypto.fromJWK(initial.privateKey, {
 				nowMs: () => now * 1000,
 			});
 			const { ctx, trustMarks } = await createTestContext({
-				keyProvider: provider,
-				options: { clock: { now: () => now }, clockSkewSeconds: 0 },
+				crypto: provider,
+				options: { clock: { now: () => now }, clockSkewSeconds: 0, engine: testEngine },
 			});
 			const tokens: string[] = [];
 			for (const type of [
@@ -11548,7 +11767,7 @@ export default (QUnit: QUnit) => {
 			]) {
 				const jwt = await signEntityStatement(
 					{ iss: ENTITY_ID, sub: LEAF_ID, trust_mark_type: type, iat: now, exp: now + 100 },
-					new JwkSigner(initial.privateKey),
+					new SigningEntryFixture(initial.privateKey),
 					{ typ: JwtTyp.TrustMark },
 				);
 				await trustMarks.issue({
@@ -11575,17 +11794,20 @@ export default (QUnit: QUnit) => {
 			};
 			for (const jwt of tokens) t.equal(await status(jwt), "active");
 			now++;
-			await provider.publishKey(createFederationSigningKey(next.privateKey));
-			await provider.switchActiveKey(next.privateKey.kid!, { retirePreviousAfterMs: 0 });
+			await provider.keyring.publish(
+				"federation",
+				fixtureSigner(createFederationSigningKey(next.privateKey)),
+			);
+			await provider.keyring.activate("federation", next.privateKey.kid!);
+			await provider.keyring.retire("federation", initial.privateKey.kid!);
 			for (const jwt of tokens) t.equal(await status(jwt), "active");
 			for (const [iat, key] of [
-				[999, initial.privateKey],
 				[1001, initial.privateKey],
 				[1000, next.privateKey],
 			] as const) {
 				const jwt = await signProtocolFixture(
 					{ iss: ENTITY_ID, sub: LEAF_ID, trust_mark_type: "urn:example:bad", iat, exp: 1100 },
-					new JwkSigner(key),
+					new SigningEntryFixture(key),
 					{ typ: JwtTyp.TrustMark, extraHeaders: { kid: initial.privateKey.kid } },
 				);
 				await trustMarks.issue({
@@ -11598,7 +11820,7 @@ export default (QUnit: QUnit) => {
 				});
 				t.equal(await status(jwt), "invalid");
 			}
-			await provider.revokeKey(initial.privateKey.kid!, "keyCompromise");
+			await provider.keyring.revoke("federation", initial.privateKey.kid!, "keyCompromise");
 			for (const jwt of tokens) t.equal(await status(jwt), "invalid");
 			now = 1100;
 			for (const jwt of tokens) t.equal(await status(jwt), "expired");
@@ -11611,14 +11833,14 @@ export default (QUnit: QUnit) => {
 		) {
 			const c = CorePublic,
 				clock = { now: () => 1500 };
-			const f = await createTestContext({ options: { clock } });
+			const f = await createTestContext({ options: { clock, engine: testEngine } });
 			const a = f.ctx.entityId,
 				b = c.entityId("https://second.example"),
 				leaf = c.entityId("https://subject.example");
-			const bKey = await c.generateSigningKey("ES256"),
-				leafKey = await c.generateSigningKey("ES256");
+			const bKey = await generateSigningKey("ES256"),
+				leafKey = await generateSigningKey("ES256");
 			const sign = (payload: Record<string, unknown>, key: JWK) =>
-				c.signEntityStatement({ iat: 1500, exp: 2500, ...payload }, new c.JwkSigner(key));
+				c.signEntityStatement({ iat: 1500, exp: 2500, ...payload }, new SigningEntryFixture(key));
 			const leafEC = await sign(
 				{
 					iss: leaf,
@@ -11686,7 +11908,7 @@ export default (QUnit: QUnit) => {
 			const ctx: HandlerContext = {
 				...f.ctx,
 				trustAnchors: anchors,
-				options: { clock, httpClient, maxConcurrentFetches: 1 },
+				options: { engine: testEngine, clock, httpClient, maxConcurrentFetches: 1 },
 			};
 			const url = `${a}/resolve?${new URLSearchParams([
 				["sub", leaf],
@@ -11859,12 +12081,12 @@ export default (QUnit: QUnit) => {
 				ecExpiry = 1600,
 				calls = 0;
 			const clock = { now: () => now },
-				f = await createTestContext({ options: { clock } });
+				f = await createTestContext({ options: { clock, engine: testEngine } });
 			const anchor = f.ctx.entityId,
 				mid = c.entityId("https://intermediate.example"),
 				leaf = c.entityId("https://subject.example");
-			const mk = await c.generateSigningKey("ES256"),
-				lk = await c.generateSigningKey("ES256");
+			const mk = await generateSigningKey("ES256"),
+				lk = await generateSigningKey("ES256");
 			const fed = (id: string) => ({
 				federation_entity: {
 					federation_fetch_endpoint: `${id}/fetch`,
@@ -11872,7 +12094,7 @@ export default (QUnit: QUnit) => {
 				},
 			});
 			const sign = (payload: Record<string, unknown>, key: JWK) =>
-				c.signEntityStatement({ iat: 1500, exp: 2500, ...payload }, new c.JwkSigner(key));
+				c.signEntityStatement({ iat: 1500, exp: 2500, ...payload }, new SigningEntryFixture(key));
 			const docs = new Map<string, string>([
 				[
 					`${anchor}/.well-known/openid-federation`,
@@ -11908,6 +12130,7 @@ export default (QUnit: QUnit) => {
 				requireAuthForFreshResolution: true,
 				trustAnchors: c.createTrustAnchorSet([{ entityId: anchor, jwks: { keys: [f.publicKey] } }]),
 				options: {
+					engine: testEngine,
 					clock,
 					cacheMaxTtlSeconds: 1000,
 					clockSkewSeconds: 0,
@@ -12025,7 +12248,7 @@ export default (QUnit: QUnit) => {
 			const handler = createExtendedListHandler(
 				{
 					entityId: SubordinateEventsFixture.issuer,
-					keyProvider: f.keyProvider,
+					crypto: f.crypto,
 					storage: f.storage,
 					metadata: {
 						federation_entity: {
@@ -12033,7 +12256,7 @@ export default (QUnit: QUnit) => {
 							federation_list_endpoint: `${SubordinateEventsFixture.issuer}/list`,
 						},
 					},
-					options: { clock: f.clock },
+					options: { engine: testEngine, clock: f.clock },
 					clientKeyProvider: { getClientFederationJwks: async () => undefined },
 				},
 				{ supportAuditTimestamps: false, defaultClaims: [] },

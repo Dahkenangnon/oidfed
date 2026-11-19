@@ -1,3 +1,7 @@
+import type { CryptoEngine } from "@oidfed/crypto";
+
+declare const engine: CryptoEngine;
+
 import { type Intermediate, TrustAnchor } from "@oidfed/authority";
 import {
 	type assessEntity,
@@ -25,6 +29,7 @@ if (result.ok) {
 }
 expectType<EntityId>(entityId("https://entity.example"));
 expectAssignable<FederationOptions>({
+	engine,
 	maxTotalFetches: 0,
 	logger: {
 		debug: async () => {},
@@ -38,9 +43,9 @@ expectError(OidcProviderRole.parseMetadata({}, "extra"));
 expectType<boolean>(OAuthClientRole.parsePublicationMetadata({}).success);
 expectType<boolean>(WalletProviderRole.parsePublicationMetadata({}).success);
 expectType<boolean>(CredentialIssuerRole.parsePublicationMetadata({}).success);
-expectType<Leaf>(null as unknown as InstanceType<typeof Leaf>);
-expectType<TrustAnchor>(null as unknown as InstanceType<typeof TrustAnchor>);
-expectType<Intermediate>(null as unknown as InstanceType<typeof Intermediate>);
+expectType<Leaf>(null as unknown as Awaited<ReturnType<typeof Leaf.create>>);
+expectType<TrustAnchor>(null as unknown as Awaited<ReturnType<typeof TrustAnchor.create>>);
+expectType<Intermediate>(null as unknown as Awaited<ReturnType<typeof Intermediate.create>>);
 
 const anchor = null as unknown as TrustAnchor;
 const intermediate = null as unknown as Intermediate;
@@ -68,3 +73,5 @@ expectType<ReturnType<typeof assessEntity>>(
 expectType<ReturnType<typeof discoverEntity>>(
 	intermediate.discoverEntity(entityId("https://subject.example")),
 );
+
+expectError<FederationOptions>({ maxTotalFetches: 0 });

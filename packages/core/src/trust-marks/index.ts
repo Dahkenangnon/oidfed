@@ -1,3 +1,5 @@
+import { registryFor } from "../crypto-context.js";
+import { cloneData } from "../data-copy.js";
 /** Trust Mark and owner-delegation signature, claim, and authorization checks. */
 
 import { freezeSnapshot } from "../callbacks.js";
@@ -15,7 +17,6 @@ import {
 	TrustMarkPayloadSchema,
 } from "../schemas/trust-mark.js";
 import {
-	type Clock,
 	type FederationOptions,
 	nowSeconds,
 	type TrustMarkEvidence,
@@ -62,14 +63,14 @@ export async function validateTrustMark(
 	const clockSkew = options?.clockSkewSeconds ?? DEFAULT_CLOCK_SKEW_SECONDS;
 	const now = nowSeconds(options?.clock);
 
-	const decoded = decodeEntityStatement(trustMarkJwt);
+	const decoded = decodeEntityStatement(trustMarkJwt, options);
 	if (!decoded.ok)
 		return err(tmError(`Failed to decode trust mark JWT: ${decoded.error.description}`));
 
 	const { header, payload } = decoded.value;
 
 	const alg = header.alg as string | undefined;
-	if (!isValidAlgorithm(alg)) {
+	if (!isValidAlgorithm(alg, registryFor(options))) {
 		return err(tmError(`Unsupported algorithm: '${String(alg)}'`));
 	}
 
@@ -121,7 +122,8 @@ export async function validateTrustMark(
 		return err(tmError("Issuer is not authorized for this trust mark type"));
 	}
 
-	const verifyOpts: { clockSkewSeconds: number; expectedTyp: string; clock?: Clock } = {
+	const verifyOpts = {
+		...options,
 		clockSkewSeconds: clockSkew,
 		expectedTyp: header.typ as string,
 	};
@@ -171,7 +173,7 @@ export async function validateTrustMark(
 	const deadline = Math.min(exp ?? Infinity, delegation?.expiresAt ?? Infinity);
 	const validated: TrustMarkEvidence = {
 		jwt: trustMarkJwt,
-		claims: freezeSnapshot(structuredClone(payload)),
+		claims: freezeSnapshot(cloneData(payload)),
 		verificationKey: { source: "current", kid: header.kid as string },
 		...(Number.isFinite(deadline) ? { verificationExpiresAt: deadline } : {}),
 		trustMarkType,
@@ -188,11 +190,11 @@ async function validateDelegation(
 	delegationJwt: string,
 	trustMarkIssuer: string,
 	trustMarkType: string,
-	options: TrustMarkValidationOptions | undefined,
+	options: TrustMarkValidationOptions,
 	now: number,
 	clockSkew: number,
 ): Promise<Result<ValidatedTrustMarkDelegation, FederationError>> {
-	const decoded = decodeEntityStatement(delegationJwt);
+	const decoded = decodeEntityStatement(delegationJwt, options);
 	if (!decoded.ok)
 		return err(tmError(`Failed to decode delegation JWT: ${decoded.error.description}`));
 
@@ -211,7 +213,7 @@ async function validateDelegation(
 	}
 
 	const dAlg = header.alg as string | undefined;
-	if (!isValidAlgorithm(dAlg)) {
+	if (!isValidAlgorithm(dAlg, registryFor(options))) {
 		return err(tmError(`Unsupported delegation algorithm: '${String(dAlg)}'`));
 	}
 
@@ -259,7 +261,8 @@ async function validateDelegation(
 		return err(tmError(`Delegation iat is in the future: ${dIat}`));
 	}
 
-	const dVerifyOpts: { clockSkewSeconds: number; expectedTyp: string; clock?: Clock } = {
+	const dVerifyOpts = {
+		...options,
 		clockSkewSeconds: clockSkew,
 		expectedTyp: JwtTyp.TrustMarkDelegation,
 	};

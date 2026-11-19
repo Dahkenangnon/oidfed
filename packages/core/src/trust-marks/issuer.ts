@@ -1,3 +1,7 @@
+import { federationSigningOptions } from "../crypto-context.js";
+import { cloneData } from "../data-copy.js";
+import { federationEntry } from "../federation-keys.js";
+
 /** Managed Trust Mark issuance, revocation, eligibility, and HTTP endpoints. */
 
 import { freezeSnapshot, isJsonData, setOwn } from "../callbacks.js";
@@ -13,7 +17,6 @@ import {
 } from "../endpoint-authentication.js";
 import type { Result } from "../errors.js";
 import { selectHistoricalVerificationKey } from "../federation-api/index.js";
-import type { FederationKeyLifecycleProvider, FederationKeyProvider } from "../federation-keys.js";
 import {
 	errorResponse,
 	jsonResponse,
@@ -22,13 +25,13 @@ import {
 	requireMethod,
 } from "../http.js";
 import { signEntityStatement } from "../jose/sign.js";
-import type { JwtSigner } from "../jose/signer.js";
 import { decodeEntityStatement } from "../jose/verify.js";
 import { safeLogger } from "../logging.js";
 import { EntityIdSchema } from "../schemas/entity-id.js";
 import type { TrustMarkStatusResponsePayload } from "../schemas/entity-statement.js";
 import type { TrustMarkOwner } from "../schemas/trust-mark.js";
 import { assertPositiveTtlSeconds } from "../ttl.js";
+import type { CryptoContext } from "../types.js";
 import { type EntityId, entityId, type FederationOptions, nowSeconds } from "../types.js";
 import { type TrustMarkIssuerContext, trustMarkIssuerContext } from "./evidence.js";
 import { validateTrustMark } from "./index.js";
@@ -71,9 +74,6 @@ export interface TrustMarkIssuerConfig {
 	readonly storage: TrustMarkStore;
 	readonly authentication?: Omit<EndpointAuthenticationConfig, "receiverEntityId" | "methods">;
 	readonly defaults?: TrustMarkIssuanceOptions;
-	readonly trustMarkSigner?: (
-		context: Readonly<{ issuer: string; subject: string; trustMarkType: string }>,
-	) => JwtSigner | Promise<JwtSigner>;
 	readonly trustMarkDefaults?: Readonly<Record<string, TrustMarkIssuanceOptions>>;
 	readonly delegations?: Readonly<Record<string, string>>;
 	/** Independent issuer trust supplies owner keys for delegated issuance. */
@@ -83,8 +83,8 @@ export interface TrustMarkIssuerConfig {
 export interface TrustMarkIssuerServiceOptions extends TrustMarkIssuerConfig {
 	readonly issuer: string;
 	readonly statusEndpointPublished?: boolean;
-	readonly keyProvider: FederationKeyProvider;
-	readonly options?: FederationOptions;
+	readonly crypto: CryptoContext;
+	readonly options: FederationOptions;
 	/** Local Trust Anchor policy; do not populate from unverified token claims. */
 	readonly trustMarkOwners?: Readonly<Record<string, TrustMarkOwner>>;
 	readonly trustMarkIssuers?: Readonly<Record<string, readonly string[]>>;
@@ -157,16 +157,16 @@ export class TrustMarkIssuerService {
 				typeof handler !== "function"
 			)
 				throw new TypeError("Invalid Trust Mark request extension");
-		this.ownerPolicy = freezeSnapshot(structuredClone(config.trustMarkOwners ?? {}));
+		this.ownerPolicy = freezeSnapshot(cloneData(config.trustMarkOwners ?? {}));
 		this.issuerPolicy = config.trustMarkIssuers
-			? freezeSnapshot(structuredClone(config.trustMarkIssuers))
+			? freezeSnapshot(cloneData(config.trustMarkIssuers))
 			: undefined;
 		this.config = {
 			...config,
 			...(config.issuerEvidence
 				? {
 						issuerEvidence: config.issuerEvidence.map((evidence) =>
-							evidence.kind === "federation" ? evidence : freezeSnapshot(structuredClone(evidence)),
+							evidence.kind === "federation" ? evidence : freezeSnapshot(cloneData(evidence)),
 						),
 					}
 				: {}),
@@ -191,11 +191,11 @@ export class TrustMarkIssuerService {
 		validateIssuanceOptions(config.defaults ?? {});
 		for (const options of Object.values(config.trustMarkDefaults ?? {}))
 			validateIssuanceOptions(options);
-		this.defaults = freezeSnapshot(structuredClone(config.defaults ?? {}));
-		this.typeDefaults = freezeSnapshot(structuredClone(config.trustMarkDefaults ?? {}));
+		this.defaults = freezeSnapshot(cloneData(config.defaults ?? {}));
+		this.typeDefaults = freezeSnapshot(cloneData(config.trustMarkDefaults ?? {}));
 		if (Object.values(config.delegations ?? {}).some((value) => typeof value !== "string"))
 			throw new TypeError("Invalid Trust Mark delegation configuration");
-		this.delegations = freezeSnapshot(structuredClone(config.delegations ?? {}));
+		this.delegations = freezeSnapshot(cloneData(config.delegations ?? {}));
 	}
 	private owners(type: string): Record<string, TrustMarkOwner> {
 		const evidence = this.config.issuerEvidence?.find(
@@ -210,7 +210,7 @@ export class TrustMarkIssuerService {
 			if (!trusted.ok) throw new Error(trusted.error.description);
 			return trusted.value.owners;
 		}
-		return structuredClone(this.ownerPolicy);
+		return cloneData(this.ownerPolicy);
 	}
 	private authorize(type: string) {
 		if (!type) throw new TypeError("A Trust Mark type is required");
@@ -228,8 +228,8 @@ export class TrustMarkIssuerService {
 		owners: Readonly<Record<string, TrustMarkOwner>>,
 		issuers?: Readonly<Record<string, readonly string[]>>,
 	) {
-		this.ownerPolicy = freezeSnapshot(structuredClone(owners));
-		this.issuerPolicy = issuers ? freezeSnapshot(structuredClone(issuers)) : undefined;
+		this.ownerPolicy = freezeSnapshot(cloneData(owners));
+		this.issuerPolicy = issuers ? freezeSnapshot(cloneData(issuers)) : undefined;
 		this.version++;
 	}
 	/** Replace the detached owner-delegation JWT map used for managed issuance. */
@@ -240,7 +240,7 @@ export class TrustMarkIssuerService {
 			Object.values(delegations).some((v) => typeof v !== "string")
 		)
 			throw new TypeError("Invalid Trust Mark delegations");
-		this.delegations = freezeSnapshot(structuredClone(delegations));
+		this.delegations = freezeSnapshot(cloneData(delegations));
 		this.version++;
 	}
 	/**
@@ -251,7 +251,7 @@ export class TrustMarkIssuerService {
 		record: TrustMarkRecord,
 		at = nowSeconds(this.config.options?.clock),
 	): Promise<string> {
-		const decoded = decodeEntityStatement(record.jwt);
+		const decoded = decodeEntityStatement(record.jwt, this.config.options);
 		if (
 			!decoded.ok ||
 			String(decoded.value.payload.iss) !== this.issuer ||
@@ -264,17 +264,21 @@ export class TrustMarkIssuerService {
 		if (!record.active) return "revoked";
 		if (!Number.isFinite(decoded.value.payload.iat) || decoded.value.payload.iat > at)
 			return "invalid";
-		const current = await this.config.keyProvider.getFederationKeySet();
-		let keys = current.jwks;
+		const current = await federationEntry(this.config.crypto, {
+			issuer: this.issuer,
+			subject: record.subject,
+			trustMarkType: record.trustMarkType,
+		});
+		let keys = current.publishedJwks;
 		const kid = decoded.value.header.kid;
 		if (typeof kid !== "string") return "invalid";
 		if (!keys.keys.some((k) => k.kid === kid)) {
-			const provider = this.config.keyProvider as Partial<FederationKeyLifecycleProvider>;
-			if (!provider.getHistoricalFederationKeys) return "invalid";
-			const selected = selectHistoricalVerificationKey(
-				await provider.getHistoricalFederationKeys(),
-				{ kid, validAt: decoded.value.payload.iat },
-			);
+			const provider = this.config.crypto.history;
+			if (!provider) return "invalid";
+			const selected = selectHistoricalVerificationKey(await provider.getHistoricalKeys(), {
+				kid,
+				validAt: decoded.value.payload.iat,
+			});
 			if (!selected.ok) return "invalid";
 			keys = { keys: [selected.value] };
 		}
@@ -317,7 +321,7 @@ export class TrustMarkIssuerService {
 		const id = entityId(subject),
 			at = nowSeconds(this.config.options?.clock);
 		return this.config.storage.readSnapshot(async (snapshot) =>
-			structuredClone(await this.eligible(snapshot.trustMarks, { subject: id }, at)),
+			cloneData(await this.eligible(snapshot.trustMarks, { subject: id }, at)),
 		);
 	}
 	/** Return an eligible stored JWT for the subject and type, if one exists. */
@@ -346,7 +350,7 @@ export class TrustMarkIssuerService {
 		await this.config.storage.transaction((tx) => tx.trustMarks.revoke(type, id, at, this.issuer));
 	}
 	private assertReuse(record: TrustMarkRecord, requested: TrustMarkIssuanceOptions) {
-		const decoded = decodeEntityStatement(record.jwt);
+		const decoded = decodeEntityStatement(record.jwt, this.config.options);
 		if (!decoded.ok) throw new Error("Invalid stored Trust Mark");
 		const p = decoded.value.payload as Record<string, unknown>;
 		if (
@@ -387,7 +391,7 @@ export class TrustMarkIssuerService {
 			);
 		}
 		validateIssuanceOptions(requested);
-		const captured = structuredClone(requested);
+		const captured = cloneData(requested);
 		if (
 			captured.renewal !== undefined &&
 			captured.renewal !== "reuse" &&
@@ -423,14 +427,17 @@ export class TrustMarkIssuerService {
 					? perType
 					: this.defaults;
 		const now = nowSeconds(this.config.options?.clock);
-		const keySet = await this.config.keyProvider.getFederationKeySet();
+		const keySet = await federationEntry(this.config.crypto, {
+			issuer: this.issuer,
+			subject: subject,
+			trustMarkType: type,
+		});
 		const delegation = Object.hasOwn(this.delegations, type) ? this.delegations[type] : undefined;
-		const signer = this.config.trustMarkSigner
-			? await this.config.trustMarkSigner(
-					Object.freeze({ issuer: this.issuer, subject: id, trustMarkType: type }),
-				)
-			: keySet.signer;
+		const signer = keySet;
 		const signing: SignTrustMarkOptions = {
+			maxCompactBytes: this.config.options.maxCompactBytes,
+			algorithmRegistry: this.config.options.algorithmRegistry,
+			allowedFederationAlgorithms: this.config.options.allowedFederationAlgorithms,
 			issuer: this.issuer,
 			subject: id,
 			trustMarkType: type,
@@ -451,7 +458,7 @@ export class TrustMarkIssuerService {
 				: {}),
 		};
 		const jwt = await signTrustMark(signing);
-		const checked = await validateTrustMark(jwt, { [type]: [this.issuer] }, keySet.jwks, {
+		const checked = await validateTrustMark(jwt, { [type]: [this.issuer] }, keySet.publishedJwks, {
 			...this.config.options,
 			expectedSubject: id,
 			expectedTrustMarkType: type,
@@ -560,15 +567,18 @@ export class TrustMarkIssuerService {
 	}
 	/** Assess current status without signing; unknown instances have no assessment. */
 	async assessTrustMarkStatus(jwt: string): Promise<TrustMarkStatusAssessment | undefined> {
+		return (await this.assessStoredStatus(jwt))?.assessment;
+	}
+	private async assessStoredStatus(jwt: string) {
 		const version = this.version;
 		const record = await this.config.storage.readSnapshot((tx) => tx.trustMarks.getByJwt(jwt));
-		const decoded = decodeEntityStatement(jwt);
+		const decoded = decodeEntityStatement(jwt, this.config.options);
 		if (!record || !decoded.ok || String(decoded.value.payload.iss) !== this.issuer)
 			return undefined;
 		const baseStatus = await this.eligibility(record);
 		const custom = this.config.trustMarkStatusPolicy
 			? await this.config.trustMarkStatusPolicy(
-					freezeSnapshot({ baseStatus, record: structuredClone(record) }),
+					freezeSnapshot({ baseStatus, record: cloneData(record) }),
 				)
 			: { status: baseStatus };
 		if (
@@ -590,7 +600,7 @@ export class TrustMarkIssuerService {
 			const reserved = new Set(["iss", "iat", "trust_mark", "status", "alg", "kid", "typ", "crit"]);
 			for (const [name, value] of Object.entries(custom.additionalClaims)) {
 				if (reserved.has(name)) throw new TypeError("Reserved status claim");
-				setOwn(payload, name, structuredClone(value));
+				setOwn(payload, name, cloneData(value));
 			}
 		}
 		const refreshed = await this.config.storage.readSnapshot((tx) => tx.trustMarks.getByJwt(jwt));
@@ -602,7 +612,7 @@ export class TrustMarkIssuerService {
 		payload.iat = nowSeconds(this.config.options?.clock);
 		const delegation =
 			typeof decoded.value.payload.delegation === "string"
-				? decodeEntityStatement(decoded.value.payload.delegation)
+				? decodeEntityStatement(decoded.value.payload.delegation, this.config.options)
 				: undefined;
 		const issuerProof = this.config.issuerEvidence?.find(
 			(evidence) =>
@@ -623,7 +633,7 @@ export class TrustMarkIssuerService {
 				: {}),
 		});
 		await this.assertCurrentStatus(assessment, version);
-		return assessment;
+		return { assessment, subject: record.subject, trustMarkType: record.trustMarkType };
 	}
 	private async assertCurrentStatus(
 		assessment: TrustMarkStatusAssessment,
@@ -651,14 +661,19 @@ export class TrustMarkIssuerService {
 	/** Sign a status assessment after applying eligibility and the configured custom status policy. */
 	async statusResponse(jwt: string): Promise<string | undefined> {
 		const version = this.version;
-		const assessment = await this.assessTrustMarkStatus(jwt);
-		if (!assessment) return undefined;
-		const keySet = await this.config.keyProvider.getFederationKeySet();
+		const stored = await this.assessStoredStatus(jwt);
+		if (!stored) return undefined;
+		const { assessment, subject, trustMarkType } = stored;
+		const keySet = await federationEntry(this.config.crypto, {
+			issuer: this.issuer,
+			subject,
+			trustMarkType,
+		});
 		await this.assertCurrentStatus(assessment, version);
 		const response = await signEntityStatement(
 			{ ...assessment.payload, iat: nowSeconds(this.config.options?.clock) },
-			keySet.signer,
-			{ typ: JwtTyp.TrustMarkStatusResponse },
+			keySet,
+			{ ...federationSigningOptions(this.config.options), typ: JwtTyp.TrustMarkStatusResponse },
 		);
 		await this.assertCurrentStatus(assessment, version);
 		return response;

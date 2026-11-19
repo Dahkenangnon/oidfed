@@ -13,11 +13,10 @@ import {
 import { validateFetchUrl } from "../trust-chain/fetch.js";
 import { type EntityId, type FederationOptions, isValidEntityId } from "../types.js";
 
-export interface VerifySubordinateEventsOptions {
+export interface VerifySubordinateEventsOptions extends FederationOptions {
 	/** Expected authority Entity Identifier, independent of endpoint origin. */
 	issuer: EntityId;
 	subject: EntityId;
-	clock?: FederationOptions["clock"];
 	clockSkewSeconds?: number;
 }
 
@@ -28,6 +27,7 @@ export async function verifySubordinateEventsResponse(
 	options: VerifySubordinateEventsOptions,
 ): Promise<Result<SubordinateEventsResponse, FederationError>> {
 	const verified = await verifyEntityStatement(jwt, issuerJwks, {
+		...options,
 		expectedTyp: JwtTyp.EntityEventsStatement,
 		...(options.clock ? { clock: options.clock } : {}),
 		...(options.clockSkewSeconds !== undefined
@@ -93,6 +93,7 @@ export async function fetchSubordinateEvents(
 	);
 	if (!fetched.ok) return fetched;
 	return verifySubordinateEventsResponse(fetched.value, options.issuerJwks, {
+		...options,
 		issuer: options.issuer,
 		subject,
 		...(options.clock ? { clock: options.clock } : {}),

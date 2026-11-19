@@ -1,3 +1,5 @@
+import { cloneData } from "@oidfed/core";
+import type { CryptoEngine } from "@oidfed/crypto";
 /** In-memory authority persistence with detached records and serialized transactions. */
 
 import {
@@ -45,7 +47,7 @@ interface MemoryState {
 type StateReader = () => MemoryState;
 type StateMutation = <T>(operation: (state: MemoryState) => T | Promise<T>) => Promise<T>;
 
-const detached = <T>(value: T): T => structuredClone(value);
+const detached = <T>(value: T): T => cloneData(value);
 
 /**
  * Validate stored subordinate shape and publication claims. Invalid records throw.
@@ -99,6 +101,7 @@ class MemorySubordinateStorage implements SubordinateStorage {
 		private readonly read: StateReader,
 		private readonly mutate: StateMutation,
 		private readonly clock?: Clock,
+		private readonly maxCompactBytes?: number,
 	) {}
 
 	async get(entityId: EntityId): Promise<SubordinateRecord | undefined> {
@@ -133,7 +136,7 @@ class MemorySubordinateStorage implements SubordinateStorage {
 					(mark) =>
 						mark.subject === record.entityId &&
 						(requestedTypes === undefined || requestedTypes.includes(mark.trustMarkType)) &&
-						isStoredTrustMarkEligible(mark, filter.validAt as number),
+						isStoredTrustMarkEligible(mark, filter.validAt as number, this.maxCompactBytes),
 				);
 				return valid;
 			});
@@ -224,12 +227,15 @@ class MemorySubordinateEventStorage implements SubordinateEventStorage {
 }
 
 export interface MemoryStorageAdapterOptions {
+	readonly engine: CryptoEngine;
 	readonly collections?: boolean;
 	readonly subordinateEvents?: boolean;
 	readonly trustMarks?: boolean;
 	readonly clock?: Clock;
 	readonly maxReplayEntries?: number;
 	readonly maxCacheEntries?: number;
+	/** Match the issuer’s compact token limit when storing Trust Marks. */
+	readonly maxCompactBytes?: number;
 }
 
 /** Development-only unified authority storage adapter. */
@@ -238,14 +244,16 @@ export class MemoryStorageAdapter implements StorageAdapter {
 	private state: MemoryState;
 	private readonly serialize = createConcurrencyLimiter(1);
 	private readonly clock: Clock | undefined;
+	private readonly maxCompactBytes: number | undefined;
 	readonly subordinates: SubordinateStorage;
 	readonly trustMarks?: TrustMarkStorage;
 	readonly subordinateEvents?: SubordinateEventStorage;
 	readonly replay: MemoryReplayStore;
 	readonly cache: MemoryCache;
 
-	constructor(options?: MemoryStorageAdapterOptions) {
+	constructor(options: MemoryStorageAdapterOptions) {
 		this.clock = options?.clock;
+		this.maxCompactBytes = options.maxCompactBytes;
 		if (options?.collections)
 			this.collections = new MemoryEntityCollectionStore({
 				...(options.clock ? { clock: options.clock } : {}),
@@ -256,16 +264,23 @@ export class MemoryStorageAdapter implements StorageAdapter {
 			...(options?.trustMarks ? { trustMarks: new Map() } : {}),
 		};
 		const mutate: StateMutation = (operation) => this.runExclusive(() => operation(this.state));
-		this.subordinates = new MemorySubordinateStorage(() => this.state, mutate, this.clock);
+		this.subordinates = new MemorySubordinateStorage(
+			() => this.state,
+			mutate,
+			this.clock,
+			this.maxCompactBytes,
+		);
 		if (options?.trustMarks) {
 			this.trustMarks = new MemoryTrustMarkStorage(
 				() => trustMarkRecords(this.state),
 				(op) => mutate((state) => op(trustMarkRecords(state))),
+				this.maxCompactBytes,
 			);
 		}
 		if (options?.subordinateEvents)
 			this.subordinateEvents = new MemorySubordinateEventStorage(() => this.state, mutate);
 		this.replay = new MemoryReplayStore({
+			engine: options.engine,
 			...(options?.clock ? { clock: options.clock } : {}),
 			...(options?.maxReplayEntries !== undefined ? { maxEntries: options.maxReplayEntries } : {}),
 		});
@@ -312,7 +327,12 @@ export class MemoryStorageAdapter implements StorageAdapter {
 			const draft = detached(this.state);
 			const directMutation: StateMutation = async (mutate) => mutate(draft);
 			const tx: StorageTransaction = {
-				subordinates: new MemorySubordinateStorage(() => draft, directMutation, this.clock),
+				subordinates: new MemorySubordinateStorage(
+					() => draft,
+					directMutation,
+					this.clock,
+					this.maxCompactBytes,
+				),
 				...(draft.subordinateEvents
 					? { subordinateEvents: new MemorySubordinateEventStorage(() => draft, directMutation) }
 					: {}),
@@ -321,6 +341,7 @@ export class MemoryStorageAdapter implements StorageAdapter {
 							trustMarks: new MemoryTrustMarkStorage(
 								() => trustMarkRecords(draft),
 								(op) => directMutation((state) => op(trustMarkRecords(state))),
+								this.maxCompactBytes,
 							),
 						}
 					: {}),

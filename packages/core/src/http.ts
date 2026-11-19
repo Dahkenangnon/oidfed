@@ -1,3 +1,4 @@
+import { utf8Decode } from "@oidfed/crypto";
 /**
  * HTTP response helpers, security headers, and request parameter extraction for federation
  * endpoints.
@@ -188,7 +189,7 @@ export async function readStreamWithLimit(
 		if (received > maxBytes) {
 			return { ok: false };
 		}
-		chunks.push(chunk);
+		chunks.push(new Uint8Array(chunk));
 	}
 	const buf = new Uint8Array(received);
 	let off = 0;
@@ -196,7 +197,7 @@ export async function readStreamWithLimit(
 		buf.set(c, off);
 		off += c.length;
 	}
-	return { ok: true, text: new TextDecoder().decode(buf) };
+	return { ok: true, text: utf8Decode(buf, { fatal: false }) };
 }
 
 /**

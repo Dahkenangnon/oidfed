@@ -3,17 +3,17 @@
 // biome-ignore assist/source/organizeImports: Preserve dependency evaluation order.
 import { runAsyncOperation as runOperation } from "../async-operation.js";
 import {
-	DEFAULT_CLOCK_SKEW_SECONDS,
 	DEFAULT_MAX_RESPONSE_BYTES,
 	FederationErrorCode,
-	SUPPORTED_ALGORITHMS,
+	DEFAULT_ALLOWED_ALGORITHMS,
 } from "../constants.js";
 import { err, ok, type Result } from "../errors.js";
-import { JWKSchema, type JWKSet } from "../schemas/jwk.js";
-import { type FederationOptions, nowSeconds } from "../types.js";
-import { isValidAlgorithm, selectVerificationKey } from "./keys.js";
-import type { JwtSigner } from "./signer.js";
-import * as jose from "jose";
+import type { JWKSet } from "../schemas/jwk.js";
+import type { FederationOptions } from "../types.js";
+import { isValidAlgorithm } from "./keys.js";
+import type { KeyringEntry } from "@oidfed/crypto";
+import { DEFAULT_MAX_COMPACT_JWS_BYTES, decodeCompactJws, utf8Encode } from "@oidfed/crypto";
+import { JwsService } from "../jws-service.js";
 
 const failure = (description: string): Result<never> =>
 	err({ code: FederationErrorCode.InvalidRequest, description });
@@ -21,15 +21,19 @@ const failure = (description: string): Result<never> =>
 /** Decode a size-bounded JWT without authenticating its header or claims. */
 export function decodeApplicationJwt(
 	jwt: string,
-	options: FederationOptions,
-): Result<{ header: jose.ProtectedHeaderParameters; payload: jose.JWTPayload }> {
+	options: Pick<FederationOptions, "maxResponseBytes" | "maxCompactBytes">,
+): Result<{ header: Record<string, unknown>; payload: Record<string, unknown> }> {
 	if (
 		typeof jwt !== "string" ||
 		jwt.length > (options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES)
 	)
 		return failure("JWT exceeds the configured size limit");
 	try {
-		return ok({ header: jose.decodeProtectedHeader(jwt), payload: jose.decodeJwt(jwt) });
+		return ok(
+			decodeCompactJws(jwt, {
+				maxBytes: options.maxCompactBytes ?? DEFAULT_MAX_COMPACT_JWS_BYTES,
+			}),
+		);
 	} catch {
 		return failure("Malformed JWT");
 	}
@@ -47,19 +51,22 @@ export function matchesJwtType(actual: unknown, expected: string): boolean {
 
 /** ACA §9 allows applications to narrow the backend's supported algorithms. */
 export function checkApplicationJwtHeader(
-	header: jose.ProtectedHeaderParameters,
+	header: Record<string, unknown>,
 	typ: string,
 	allowed?: readonly string[],
+	registry?: import("@oidfed/crypto").JwsAlgorithmRegistry,
 ): Result<string> {
 	if (
 		allowed !== undefined &&
-		(!Array.isArray(allowed) || !allowed.length || !allowed.every(isValidAlgorithm))
+		(!Array.isArray(allowed) ||
+			!allowed.length ||
+			!allowed.every((alg) => isValidAlgorithm(alg, registry)))
 	)
 		return failure("Invalid allowed signing algorithms");
 	if (
 		!matchesJwtType(header.typ, typ) ||
-		!isValidAlgorithm(header.alg) ||
-		!(allowed ?? (SUPPORTED_ALGORITHMS as readonly string[])).includes(header.alg)
+		!isValidAlgorithm(header.alg, registry) ||
+		!(allowed ?? (DEFAULT_ALLOWED_ALGORITHMS as readonly string[])).includes(header.alg)
 	)
 		return failure("Invalid JWT type or unsupported signing algorithm");
 	return ok(header.alg as string);
@@ -77,83 +84,57 @@ export async function verifyApplicationJwt(
 	audience?: string,
 	confirmationKey = false,
 	allowedAlgorithms?: readonly string[],
-): Promise<Result<jose.JWTPayload>> {
-	const decoded = decodeApplicationJwt(jwt, options);
-	if (!decoded.ok) return decoded;
-	const { header } = decoded.value;
-	for (const claim of ["iat", "nbf", "exp"]) {
-		const value = decoded.value.payload[claim];
-		if (value !== undefined && (typeof value !== "number" || !Number.isFinite(value)))
-			return failure("JWT dates must be finite NumericDates");
-	}
-	const headerCheck = checkApplicationJwtHeader(header, typ, allowedAlgorithms);
-	if (!headerCheck.ok) return headerCheck;
-	const alg = headerCheck.value;
-	if (options.signal?.aborted) return failure("Operation cancelled");
-	for (const key of keys.keys) {
-		if (!JWKSchema.safeParse(key).success || (key.key_ops && !key.key_ops.includes("verify")))
-			continue;
-		// ACA §5.2 designates cnf.jwk itself; an absent key identifier is not a mismatch.
-		// A supplied hint still needs the string syntax defined by RFC 7515 §4.1.4.
-		if (
-			header.kid !== undefined &&
-			header.kid !== key.kid &&
-			!(
-				confirmationKey &&
-				typeof header.kid === "string" &&
-				keys.keys.length === 1 &&
-				key.kid === undefined
-			)
-		)
-			continue;
-		if (!selectVerificationKey({ alg, ...(key.kid ? { kid: key.kid } : {}) }, { keys: [key] }))
-			continue;
-		try {
-			const imported = await jose.importJWK(key as jose.JWK, alg);
-			const checked = await jose.jwtVerify(jwt, imported, {
-				algorithms: [alg],
-				typ,
-				currentDate: new Date(nowSeconds(options.clock) * 1000),
-				clockTolerance: options.clockSkewSeconds ?? DEFAULT_CLOCK_SKEW_SECONDS,
-				...(audience !== undefined ? { audience } : {}),
-			});
-			if (options.signal?.aborted) return failure("Operation cancelled");
-			return ok(checked.payload);
-		} catch {
-			/* Try other eligible public keys when the format permits omission of kid. */
-		}
-	}
-	return failure("JWT signature or claims could not be verified with the trusted protocol keys");
+): Promise<Result<Record<string, unknown>>> {
+	if (
+		typeof jwt !== "string" ||
+		jwt.length > (options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES)
+	)
+		return failure("JWT exceeds the configured size limit");
+	const result = await new JwsService(options).verifyJwt(
+		jwt,
+		keys,
+		{
+			typ: { expected: typ, comparison: "media-type" },
+			keyId: confirmationKey ? "confirmation-key" : "allow-missing",
+			...(audience === undefined
+				? {}
+				: { audience: { expected: audience, mode: "contains" as const } }),
+		},
+		allowedAlgorithms === undefined ? {} : { allowedAlgorithms },
+	);
+	if (!result.ok)
+		return ["ERR_CRYPTO_OPERATION_FAILED", "ERR_INVALID_CLOCK"].includes(result.error.code)
+			? result
+			: failure(result.error.description);
+	return ok(result.value.payload);
 }
 
 /** Serialize and sign a protocol payload with the requested JWT type and optional trust chain. */
 export async function signApplicationJwt(
 	payload: Record<string, unknown>,
 	typ: string,
-	signer: JwtSigner,
+	signer: KeyringEntry,
 	options: FederationOptions,
 	chain?: readonly string[],
 ): Promise<Result<string>> {
-	if (!isValidAlgorithm(signer.alg) || !signer.kid || options.signal?.aborted)
-		return failure("Invalid signer or cancelled operation");
+	if (options.signal?.aborted) return failure("Operation cancelled");
 	try {
-		const bytes = new TextEncoder().encode(JSON.stringify(payload));
-		if (bytes.length > (options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES))
+		if (
+			utf8Encode(JSON.stringify(payload)).length >
+			(options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES)
+		)
 			return failure("JWT payload exceeds the size limit");
 		const token = await runOperation(
 			() =>
-				signer.signJwt(bytes, {
-					alg: signer.alg,
-					kid: signer.kid,
+				new JwsService(options).signJwt(signer, payload, {
 					typ,
 					...(chain ? { trust_chain: chain } : {}),
 				}),
 			options,
 		);
-		if (options.signal?.aborted) return failure("Operation cancelled");
 		if (token.length > (options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES))
-			return failure("Signed JWT exceeds the configured size limit");
-		return ok(token);
+			return failure("JWT exceeds the configured size limit");
+		return options.signal?.aborted ? failure("Operation cancelled") : ok(token);
 	} catch {
 		return failure("Protocol JWT signing failed");
 	}

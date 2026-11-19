@@ -1,6 +1,7 @@
 import { type JWK, jwkThumbprint } from "@oidfed/core";
 import { useEffect, useMemo, useState } from "react";
 import { useSettings } from "@/hooks/use-settings";
+import { engine } from "../../../lib/crypto.js";
 
 export interface KeyComparisonEntry {
 	readonly thumbprint: string;
@@ -52,7 +53,7 @@ export function useTaKeyComparison(
 			const pinnedTps = new Map<string, Record<string, unknown>>();
 			for (const key of pinnedKeys) {
 				try {
-					const tp = await jwkThumbprint(key as JWK);
+					const tp = await jwkThumbprint(key as JWK, engine);
 					pinnedTps.set(tp, key);
 				} catch {
 					// skip invalid keys
@@ -62,7 +63,7 @@ export function useTaKeyComparison(
 			const liveTps = new Map<string, Record<string, unknown>>();
 			for (const key of liveKeys) {
 				try {
-					const tp = await jwkThumbprint(key as JWK);
+					const tp = await jwkThumbprint(key as JWK, engine);
 					liveTps.set(tp, key);
 				} catch {
 					// skip invalid keys

@@ -4,13 +4,14 @@ import {
 	MemoryStorageAdapter,
 	TrustAnchor,
 } from "../../../packages/authority/src/index.js";
+import { entityId, type HttpClient } from "../../../packages/core/src/index.js";
 import {
-	entityId,
+	FixtureCrypto,
+	fixtureHostConfig,
 	generateSigningKey,
-	type HttpClient,
-	JwkSigner,
-	MemoryFederationKeyProvider,
-} from "../../../packages/core/src/index.js";
+	SigningEntryFixture,
+	testEngine,
+} from "./software-crypto.js";
 
 export const issuer = entityId("https://authority.example/tenant");
 
@@ -23,15 +24,15 @@ export async function fixture(intermediate = false, authenticated = false) {
 	const clientKey = await generateSigningKey("ES256");
 	let now = 1500;
 	const clock = { now: () => now };
-	const storage = new MemoryStorageAdapter({ subordinateEvents: true, clock });
-	const keyProvider = new MemoryFederationKeyProvider({
-		signer: new JwkSigner(key.privateKey),
+	const storage = new MemoryStorageAdapter({ engine: testEngine, subordinateEvents: true, clock });
+	const crypto = new FixtureCrypto({
+		signer: new SigningEntryFixture(key.privateKey),
 		publicJwk: key.publicKey,
 	});
 	const config: AuthorityConfig = {
 		entityId: issuer,
 		storage,
-		keyProvider,
+		crypto,
 		options: { clock },
 		metadata: {
 			federation_entity: {
@@ -45,7 +46,9 @@ export async function fixture(intermediate = false, authenticated = false) {
 		},
 		...(intermediate ? { authorityHints: [entityId("https://superior.example")] } : {}),
 	};
-	const authority = intermediate ? new Intermediate(config) : new TrustAnchor(config);
+	const authority = intermediate
+		? await Intermediate.create(fixtureHostConfig(config))
+		: await TrustAnchor.create(fixtureHostConfig(config));
 	const record = {
 		entityId: subject,
 		jwks: { keys: [clientKey.publicKey] },
@@ -57,7 +60,7 @@ export async function fixture(intermediate = false, authenticated = false) {
 	return {
 		authority,
 		storage,
-		keyProvider,
+		crypto,
 		key,
 		clientKey,
 		record,

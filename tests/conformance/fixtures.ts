@@ -3,22 +3,22 @@ import { readFileSync, writeFileSync } from "node:fs";
 import https from "node:https";
 import { join } from "node:path";
 import { Intermediate, MemoryStorageAdapter, TrustAnchor } from "@oidfed/authority";
-import {
-	discoverEntity,
-	entityId,
-	generateSigningKey,
-	JwkSigner,
-	MemoryFederationKeyProvider,
-	resolveEntityKeys,
-	type TrustAnchorSet,
-} from "@oidfed/core";
+import { discoverEntity, entityId, resolveEntityKeys, type TrustAnchorSet } from "@oidfed/core";
 import { Leaf } from "@oidfed/leaf";
-import { OidcRelyingPartyRole, StaticProtocolSigningKeyProvider } from "@oidfed/oidc";
+import { OidcRelyingPartyRole } from "@oidfed/oidc";
 import { rateLimit } from "express-rate-limit";
 import * as oidc from "openid-client";
 import { createAuthorityApp } from "../e2e/participants/authority-app.js";
 import { createLeafApp } from "../e2e/participants/leaf-app.js";
 import { createOpenIDProviderApp } from "../e2e/participants/openid-provider-app.js";
+import {
+	FixtureCrypto,
+	fixtureHostConfig,
+	generateSigningKey,
+	PurposeBindingsFixture,
+	SigningEntryFixture,
+	testEngine,
+} from "../tap/fixtures/software-crypto.js";
 
 const state = "/run/oidfed";
 const settings = JSON.parse(readFileSync(join(state, "settings.json"), "utf8")) as {
@@ -33,7 +33,7 @@ const key = (index: number) => {
 	if (!value) throw new Error("Missing fixture key");
 	return value;
 };
-const provider = (index: number) => MemoryFederationKeyProvider.fromJWK(key(index).privateKey);
+const provider = (index: number) => FixtureCrypto.fromJWK(key(index).privateKey);
 const anchors: TrustAnchorSet = new Map([
 	[entityId(base("ta")), { jwks: { keys: [key(0).publicKey] } }],
 	[entityId(suiteAuthority("op")), { jwks: { keys: [key(6).publicKey] } }],
@@ -45,29 +45,35 @@ const fed = (id: string) => ({
 	federation_resolve_endpoint: `${id}/resolve`,
 });
 // Disposable suite authorities deliberately allow fresh anonymous Resolve requests.
-const ta = new TrustAnchor({
-	requireAuthForFreshResolution: false,
-	entityId: base("ta"),
-	metadata: { federation_entity: fed(base("ta")) },
-	storage: new MemoryStorageAdapter(),
-	keyProvider: provider(0),
-	trustAnchors: anchors,
-});
-const ia = new Intermediate({
-	requireAuthForFreshResolution: false,
-	entityId: base("ia"),
-	authorityHints: [base("ta")],
-	metadata: { federation_entity: fed(base("ia")) },
-	storage: new MemoryStorageAdapter(),
-	keyProvider: provider(1),
-	trustAnchors: anchors,
-});
-const leaf = new Leaf({
-	entityId: base("leaf"),
-	authorityHints: [base("ia")],
-	metadata: { federation_entity: { display_name: "Conformance Leaf" } },
-	keyProvider: provider(2),
-});
+const ta = await TrustAnchor.create(
+	fixtureHostConfig({
+		requireAuthForFreshResolution: false,
+		entityId: base("ta"),
+		metadata: { federation_entity: fed(base("ta")) },
+		storage: new MemoryStorageAdapter({ engine: testEngine }),
+		crypto: provider(0),
+		trustAnchors: anchors,
+	}),
+);
+const ia = await Intermediate.create(
+	fixtureHostConfig({
+		requireAuthForFreshResolution: false,
+		entityId: base("ia"),
+		authorityHints: [base("ta")],
+		metadata: { federation_entity: fed(base("ia")) },
+		storage: new MemoryStorageAdapter({ engine: testEngine }),
+		crypto: provider(1),
+		trustAnchors: anchors,
+	}),
+);
+const leaf = await Leaf.create(
+	fixtureHostConfig({
+		entityId: base("leaf"),
+		authorityHints: [base("ia")],
+		metadata: { federation_entity: { display_name: "Conformance Leaf" } },
+		crypto: provider(2),
+	}),
+);
 await ta.registerSubordinate({
 	entityId: entityId(base("ia")),
 	jwks: { keys: [key(1).publicKey] },
@@ -78,36 +84,38 @@ await ia.registerSubordinate({
 	jwks: { keys: [key(2).publicKey] },
 });
 const opKeys = provider(3);
-const opLeaf = new Leaf({
-	entityId: base("op"),
-	authorityHints: [suiteAuthority("op")],
-	keyProvider: opKeys,
-	metadata: {
-		federation_entity: {},
-		openid_provider: {
-			issuer: base("op"),
-			authorization_endpoint: `${base("op")}/auth`,
-			token_endpoint: `${base("op")}/token`,
-			userinfo_endpoint: `${base("op")}/me`,
-			jwks_uri: `${base("op")}/jwks`,
-			pushed_authorization_request_endpoint: `${base("op")}/request`,
-			response_types_supported: ["code"],
-			subject_types_supported: ["public"],
-			id_token_signing_alg_values_supported: ["RS256"],
-			request_object_signing_alg_values_supported: ["RS256"],
-			token_endpoint_auth_methods_supported: ["private_key_jwt"],
-			token_endpoint_auth_signing_alg_values_supported: ["RS256"],
-			scopes_supported: ["openid"],
-			claims_supported: ["sub"],
-			client_registration_types_supported: ["automatic"],
-			request_parameter_supported: true,
-			request_uri_parameter_supported: true,
+const opLeaf = await Leaf.create(
+	fixtureHostConfig({
+		entityId: base("op"),
+		authorityHints: [suiteAuthority("op")],
+		crypto: opKeys,
+		metadata: {
+			federation_entity: {},
+			openid_provider: {
+				issuer: base("op"),
+				authorization_endpoint: `${base("op")}/auth`,
+				token_endpoint: `${base("op")}/token`,
+				userinfo_endpoint: `${base("op")}/me`,
+				jwks_uri: `${base("op")}/jwks`,
+				pushed_authorization_request_endpoint: `${base("op")}/request`,
+				response_types_supported: ["code"],
+				subject_types_supported: ["public"],
+				id_token_signing_alg_values_supported: ["RS256"],
+				request_object_signing_alg_values_supported: ["RS256"],
+				token_endpoint_auth_methods_supported: ["private_key_jwt"],
+				token_endpoint_auth_signing_alg_values_supported: ["RS256"],
+				scopes_supported: ["openid"],
+				claims_supported: ["sub"],
+				client_registration_types_supported: ["automatic"],
+				request_parameter_supported: true,
+				request_uri_parameter_supported: true,
+			},
 		},
-	},
-});
+	}),
+);
 const rpRole = new OidcRelyingPartyRole({
-	protocolKeyProvider: new StaticProtocolSigningKeyProvider({
-		requestObjectSigner: new JwkSigner(key(5).privateKey),
+	signing: new PurposeBindingsFixture({
+		requestObjectSigner: new SigningEntryFixture(key(5).privateKey),
 	}),
 	metadata: {
 		redirect_uris: [`${base("rp")}/callback`],
@@ -118,14 +126,16 @@ const rpRole = new OidcRelyingPartyRole({
 		jwks: { keys: [key(5).publicKey] },
 	},
 });
-const rpLeaf = new Leaf({
-	entityId: base("rp"),
-	authorityHints: [suiteAuthority("rp")],
-	keyProvider: provider(4),
-	metadata: { federation_entity: {} },
-	roles: [rpRole],
-	trustAnchors: anchors,
-});
+const rpLeaf = await Leaf.create(
+	fixtureHostConfig({
+		entityId: base("rp"),
+		authorityHints: [suiteAuthority("rp")],
+		crypto: provider(4),
+		metadata: { federation_entity: {} },
+		roles: [rpRole],
+		trustAnchors: anchors,
+	}),
+);
 const sessions = new Map<
 	string,
 	{ configuration: oidc.Configuration; verifier: string; nonce: string; expires: number }
@@ -148,7 +158,7 @@ rpApp.get("/login", async (_req, res) => {
 	}
 	// Only the fixed suite RP-plan issuer is an allowed login target.
 	const issuer = `${suite}/test/a/${settings.runId}-rp`;
-	const discovered = await discoverEntity(entityId(issuer), anchors);
+	const discovered = await discoverEntity(entityId(issuer), anchors, { engine: testEngine });
 	if (!discovered.ok) {
 		res.status(400).json({ accepted: false, stage: "federation" });
 		return;
@@ -157,6 +167,7 @@ rpApp.get("/login", async (_req, res) => {
 	const federationKeys = discovered.value.trustChain.statements[0]?.payload.jwks;
 	if (!metadata || !federationKeys) throw new Error("Missing trusted OP metadata");
 	const keys = await resolveEntityKeys(metadata, federationKeys, {
+		engine: testEngine,
 		expectedIssuer: issuer,
 		expectedOwner: issuer,
 	});
@@ -244,7 +255,7 @@ rpApp.get("/callback", async (req, res) => {
 const taApp = createAuthorityApp(ta, base("ta"));
 const iaApp = createAuthorityApp(ia, base("ia"));
 const leafApp = createLeafApp(leaf, base("leaf"));
-const opApp = createOpenIDProviderApp({
+const opApp = await createOpenIDProviderApp({
 	leaf: opLeaf,
 	entityId: base("op"),
 	trustAnchors: anchors,

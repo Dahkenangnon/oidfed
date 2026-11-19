@@ -1,3 +1,4 @@
+import { cloneData } from "../data-copy.js";
 /** Issuer trust establishment and evidence-aware Trust Mark verification. */
 
 import { freezeSnapshot } from "../callbacks.js";
@@ -81,7 +82,7 @@ export interface EstablishTrustMarkIssuerOptions {
 	readonly trustAnchors: TrustAnchorSet;
 	readonly trustChain?: readonly string[];
 	readonly entityConfigurations?: ReadonlyMap<string, string>;
-	readonly options?: FederationOptions;
+	readonly options: FederationOptions;
 }
 const issuedEvidence = new WeakSet<object>();
 function failure(description: string) {
@@ -157,7 +158,7 @@ export async function establishTrustMarkIssuerTrust(
 					: {}),
 			});
 			if (!checked.valid || checked.chain.entityId !== input.issuer) continue;
-			const ec = decodeEntityConfiguration(candidate.statements[0] ?? "");
+			const ec = decodeEntityConfiguration(candidate.statements[0] ?? "", options);
 			const root = checked.chain.statements.at(-1)?.payload;
 			if (!ec.ok || !root || root.iss !== root.sub) continue;
 			const issuers = root.trust_mark_issuers;
@@ -172,7 +173,7 @@ export async function establishTrustMarkIssuerTrust(
 			const metadata =
 				rawMetadata === undefined ? undefined : FederationEntityMetadataSchema.parse(rawMetadata);
 			const evidence: FederationTrustMarkIssuerEvidence = freezeSnapshot(
-				structuredClone({
+				cloneData({
 					kind: "federation",
 					issuer: input.issuer,
 					trustMarkType: input.trustMarkType,
@@ -218,7 +219,7 @@ export async function establishTrustMarkIssuerTrust(
 export function trustMarkIssuerContext(
 	context: TrustMarkIssuerContext,
 	type: string,
-	options?: FederationOptions,
+	options: FederationOptions,
 ): Result<{
 	issuer: string;
 	keys: JWKSet;
@@ -242,14 +243,14 @@ export function trustMarkIssuerContext(
 			!context.allowedTrustMarkTypes.includes(type)
 		)
 			return failure("Issuer context does not authorize this Trust Mark type");
-		const owners = structuredClone(context.trustMarkOwners ?? {});
+		const owners = cloneData(context.trustMarkOwners ?? {});
 		for (const owner of Object.values(owners)) TrustMarkOwnerSchema.parse(owner);
 		return ok({
 			issuer: context.issuer,
-			keys: JWKSetSchema.parse(structuredClone(context.keys)),
+			keys: JWKSetSchema.parse(cloneData(context.keys)),
 			owners,
 			...(context.metadata
-				? { metadata: FederationEntityMetadataSchema.parse(structuredClone(context.metadata)) }
+				? { metadata: FederationEntityMetadataSchema.parse(cloneData(context.metadata)) }
 				: {}),
 			...(context.kind === "federation" ? { expiresAt: context.expiresAt } : {}),
 		});
@@ -275,7 +276,7 @@ export async function validateTrustMarkWithIssuer(
 		const options = trustMarkOperation(input);
 		const trusted = trustMarkIssuerContext(context, options.expectedTrustMarkType, options);
 		if (!trusted.ok) return trusted;
-		const decoded = decodeEntityStatement(jwt);
+		const decoded = decodeEntityStatement(jwt, options);
 		if (!decoded.ok) return decoded;
 		if (decoded.value.payload.iss !== trusted.value.issuer)
 			return failure("Trust Mark issuer does not match trusted context");
@@ -357,7 +358,7 @@ export async function validateTrustMarkWithIssuer(
 			freezeSnapshot({
 				...verified.value,
 				issuerEvidence:
-					context.kind === "federation" ? context : freezeSnapshot(structuredClone(context)),
+					context.kind === "federation" ? context : freezeSnapshot(cloneData(context)),
 				...(Number.isFinite(deadline) ? { verificationExpiresAt: deadline } : {}),
 				verificationKey: responseJwt
 					? { source: "historical" as const, kid, responseJwt }

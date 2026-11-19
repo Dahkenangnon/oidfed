@@ -1,3 +1,5 @@
+import { bindFederationOptions, selectSigningEntry } from "@oidfed/core";
+import type { KeyringEntry } from "@oidfed/crypto";
 /** Pushed authorization requests with Request Object and client authentication handling. */
 
 import {
@@ -18,7 +20,6 @@ import {
 	type FederationOptions,
 	isValidAlgorithm,
 	JWT_BEARER_CLIENT_ASSERTION_TYPE,
-	type JwtSigner,
 	nowSeconds,
 	ok,
 	parseClientAttestationHeaders,
@@ -45,6 +46,7 @@ import {
 } from "./process-automatic.js";
 import { type RegistrationProfile, registrationProfile } from "./profile.js";
 import {
+	allowsParAssertionAlgorithm,
 	authorizationForm,
 	authorizationParameters,
 	requiresRequestObject,
@@ -79,7 +81,10 @@ export interface ProcessPushedAuthorizationRequestOptions
 		request: Request,
 		signal: AbortSignal,
 	) => string | undefined | Promise<string | undefined>;
-	readonly clientAttestation?: Omit<AuthenticateClientAttestationOptions, "audience" | "clientId">;
+	readonly clientAttestation?: Omit<
+		AuthenticateClientAttestationOptions,
+		"audience" | "clientId" | "engine"
+	>;
 }
 export interface ProcessedPushedAuthorizationRequest extends ProcessedAutomaticRegistration {
 	readonly parameters: Readonly<Record<string, unknown>>;
@@ -186,10 +191,11 @@ export async function createPushedAuthorizationRequest(
 			form = new URLSearchParams({ client_id: config.entityId, request: requestObjectJwt });
 		}
 		if (proof.mode === "private_key_jwt") {
-			const signer: JwtSigner = await runAsyncOperation(
+			const signer: KeyringEntry = await runAsyncOperation(
 				() =>
-					config.protocolKeyProvider.getClientAssertionSigner?.() ??
-					config.protocolKeyProvider.getRequestObjectSigner(),
+					selectSigningEntry(config.crypto, config.signing.clientAssertion, {
+						issuer: config.entityId,
+					}),
 				options,
 			);
 			const published = assertProtocolSignerPublished(
@@ -197,11 +203,12 @@ export async function createPushedAuthorizationRequest(
 				signer,
 				"client assertion",
 				profile.clientType,
+				options.algorithmRegistry,
 			);
 			if (!published.ok) return published;
-			const algorithms = server.token_endpoint_auth_signing_alg_values_supported;
-			if (Array.isArray(algorithms) && !algorithms.includes(signer.alg))
-				return invalid("Server does not support the client assertion algorithm");
+			const allowed = allowsParAssertionAlgorithm(server, signer.signer.publicJwk.alg);
+			if (!allowed.ok) return allowed;
+			if (!allowed.value) return invalid("Server does not support the client assertion algorithm");
 			form.set("client_assertion_type", JWT_BEARER_CLIENT_ASSERTION_TYPE);
 			form.set(
 				"client_assertion",
@@ -241,7 +248,11 @@ export async function createPushedAuthorizationRequest(
 				["client_attestation_signing_alg_values_supported", attestation.value.header.alg],
 				["client_attestation_pop_signing_alg_values_supported", pop.value.header.alg],
 			] as const)
-				if (!(server[field] as string[] | undefined)?.includes(algorithm ?? ""))
+				if (
+					!(server[field] as string[] | undefined)?.includes(
+						typeof algorithm === "string" ? algorithm : "",
+					)
+				)
 					return invalid("The server does not support the attestation algorithms");
 		} else if (proof.mode !== "request_object") return invalid("Unsupported PAR proof mode");
 		if (
@@ -392,15 +403,16 @@ export async function processPushedAuthorizationRequest(
 							form.get("client_assertion") ?? "",
 							{ keys: client.protocolKeys.keys },
 							options.opEntityId,
-							{
-								...authenticationOptions,
-								...(Array.isArray(server.value.token_endpoint_auth_signing_alg_values_supported)
+							bindFederationOptions(
+								options,
+								authenticationOptions,
+								Array.isArray(server.value.token_endpoint_auth_signing_alg_values_supported)
 									? {
 											allowedAlgorithms: server.value
 												.token_endpoint_auth_signing_alg_values_supported as string[],
 										}
-									: {}),
-							},
+									: undefined,
+							),
 						),
 					options,
 				);
@@ -452,7 +464,7 @@ export async function processPushedAuthorizationRequest(
 							server.value.client_attestation_signing_alg_values_supported as string[]
 						).filter(
 							(alg) =>
-								isValidAlgorithm(alg) &&
+								isValidAlgorithm(alg, options.algorithmRegistry) &&
 								(!options.clientAttestation?.allowedAttestationAlgorithms ||
 									options.clientAttestation.allowedAttestationAlgorithms.includes(alg)),
 						),
@@ -460,7 +472,7 @@ export async function processPushedAuthorizationRequest(
 							server.value.client_attestation_pop_signing_alg_values_supported as string[]
 						).filter(
 							(alg) =>
-								isValidAlgorithm(alg) &&
+								isValidAlgorithm(alg, options.algorithmRegistry) &&
 								(!options.clientAttestation?.allowedProofAlgorithms ||
 									options.clientAttestation.allowedProofAlgorithms.includes(alg)),
 						),

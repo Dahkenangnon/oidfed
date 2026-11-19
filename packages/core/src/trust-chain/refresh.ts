@@ -51,7 +51,7 @@ function freshStatementCache(shared: CacheProvider | undefined, clock: Clock): C
 export async function refreshTrustChain(
 	chain: ValidatedTrustChain,
 	trustAnchors: TrustAnchorSet,
-	options?: RefreshOptions,
+	options: RefreshOptions,
 	clock?: Clock,
 ): Promise<Result<ValidatedTrustChain>> {
 	safeLogger(options?.logger)?.debug("Starting refresh trust chain");

@@ -17,6 +17,12 @@ const config = {
 	},
 };
 const fixtures = [
+	["crypto.getRandomValues(bytes)", "no-host-crypto-globals"],
+	["globalThis.crypto.subtle.verify(input)", "no-host-crypto-globals"],
+	["new TextEncoder().encode(text)", "no-host-crypto-globals"],
+	["structuredClone(value)", "no-host-crypto-globals"],
+	["function host(crypto) { return crypto.engine.random(8); }"],
+	["context.crypto.engine.digest('SHA-256', bytes)"],
 	[
 		"const box={}; box.method=parameters.get('method'); registry[box['method']]()",
 		"no-inherited-auth-dispatch",

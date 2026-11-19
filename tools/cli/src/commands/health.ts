@@ -14,6 +14,7 @@ import {
 } from "@oidfed/core";
 import type { Command } from "commander";
 import type { OutputFormatter } from "../output/index.js";
+import { engine } from "../util/crypto.js";
 import { extractJwks, parseEntityIdOrError } from "../util/entity-id.js";
 import type { Logger } from "../util/logger.js";
 
@@ -38,7 +39,10 @@ export async function handler(args: HealthArgs, deps: HealthDeps): Promise<Resul
 
 	// Check well-known endpoint
 	const ecStart = Date.now();
-	const ecResult = await fetchEntityConfiguration(eid, { httpClient: deps.httpClient });
+	const ecResult = await fetchEntityConfiguration(eid, {
+		httpClient: deps.httpClient,
+		engine: engine,
+	});
 	checks.push({
 		endpoint: WELL_KNOWN_OPENID_FEDERATION,
 		status: ecResult.ok ? "ok" : "error",
@@ -133,7 +137,7 @@ export async function handler(args: HealthArgs, deps: HealthDeps): Promise<Resul
 			const payload = decoded.value.payload as Record<string, unknown>;
 			const jwksResult = extractJwks(payload);
 			if (!jwksResult.ok) return jwksResult;
-			keyComparison = await compareTrustAnchorKeys(jwksResult.value, fileJwks.data, eid);
+			keyComparison = await compareTrustAnchorKeys(jwksResult.value, fileJwks.data, eid, engine);
 		}
 	}
 

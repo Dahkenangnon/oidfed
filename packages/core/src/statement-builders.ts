@@ -1,5 +1,10 @@
+import type { JwsAlgorithmRegistry } from "@oidfed/crypto";
+import { federationSigningOptions } from "./crypto-context.js";
+import { cloneData } from "./data-copy.js";
+
 /** Stable builders for normal Entity Configuration and Subordinate Statement payloads. */
 
+import type { KeyringEntry } from "@oidfed/crypto";
 import { isJsonData, isObject } from "./callbacks.js";
 import {
 	DEFAULT_ENTITY_STATEMENT_TTL_SECONDS,
@@ -7,11 +12,9 @@ import {
 	JwtTyp,
 	PolicyOperator,
 	STANDARD_ENTITY_STATEMENT_CLAIMS,
-	type SupportedAlgorithm,
 } from "./constants.js";
 import { err, type FederationError, federationError, ok, type Result } from "./errors.js";
 import { signEntityStatement } from "./jose/sign.js";
-import type { JwtSigner } from "./jose/signer.js";
 import { preparePublicJwkSet } from "./jwks/public-material.js";
 import { type MetadataPolicyOptions, validateMetadataPolicy } from "./metadata-policy/index.js";
 import { findInvalidMetadataNullPaths } from "./metadata-values.js";
@@ -38,6 +41,7 @@ export interface ValidateEntityStatementClaimsOptions {
 export type EntityStatementMetadata = Readonly<Record<string, Readonly<Record<string, unknown>>>>;
 
 interface StatementTimeOptions {
+	readonly algorithmRegistry?: JwsAlgorithmRegistry | undefined;
 	readonly clock?: Clock;
 	readonly issuedAt?: number;
 	readonly ttlSeconds?: number;
@@ -58,7 +62,7 @@ export function prepareEntityStatementExtensions(
 	if (options.additionalClaims !== undefined) {
 		if (!isObject(options.additionalClaims) || !isJsonData(options.additionalClaims))
 			throw new TypeError("Additional claims must be JSON object data");
-		additionalClaims = structuredClone(options.additionalClaims);
+		additionalClaims = cloneData(options.additionalClaims);
 		if (!isJsonData(additionalClaims))
 			throw new TypeError("Additional claims must be JSON object data");
 		for (const name of Object.keys(additionalClaims)) {
@@ -66,7 +70,7 @@ export function prepareEntityStatementExtensions(
 				throw new TypeError(`Additional claim '${name}' is reserved`);
 		}
 	}
-	const crit = options.crit === undefined ? undefined : structuredClone(options.crit);
+	const crit = options.crit === undefined ? undefined : cloneData(options.crit);
 	const errors: string[] = [];
 	validateCrit({ ...additionalClaims, ...(crit !== undefined ? { crit } : {}) }, errors);
 	if (errors.length > 0) throw new TypeError(errors.join("; "));
@@ -102,14 +106,21 @@ export interface BuildSubordinateStatementPayloadOptions
 	readonly metadataPolicyCrit?: readonly string[];
 }
 
-export interface SignEntityConfigurationOptions extends BuildEntityConfigurationPayloadOptions {
-	readonly signer: JwtSigner;
-	readonly alg?: SupportedAlgorithm;
+export interface SignEntityConfigurationOptions
+	extends Omit<BuildEntityConfigurationPayloadOptions, "jwks"> {
+	readonly signer: KeyringEntry;
+	/** Maximum encoded size of the signed statement. */
+	readonly maxCompactBytes?: number;
+	readonly allowedFederationAlgorithms?: readonly string[] | undefined;
+	readonly alg?: string;
 }
 
 export interface SignSubordinateStatementOptions extends BuildSubordinateStatementPayloadOptions {
-	readonly signer: JwtSigner;
-	readonly alg?: SupportedAlgorithm;
+	readonly signer: KeyringEntry;
+	/** Maximum encoded size of the signed statement. */
+	readonly maxCompactBytes?: number;
+	readonly allowedFederationAlgorithms?: readonly string[] | undefined;
+	readonly alg?: string;
 }
 
 const STANDARD_METADATA_POLICY_OPERATORS: ReadonlySet<string> = new Set(
@@ -150,7 +161,7 @@ export function buildEntityConfigurationPayload(
 		sub: eid,
 		iat,
 		exp,
-		jwks: copyPublicJwkSet(options.jwks),
+		jwks: copyPublicJwkSet(options.jwks, options.algorithmRegistry),
 		metadata: options.metadata,
 	};
 
@@ -170,7 +181,7 @@ export function buildEntityConfigurationPayload(
 		payload.trust_mark_owners = { ...options.trustMarkOwners };
 	}
 
-	assertValidEntityStatementClaims(payload, "entity-configuration");
+	assertValidEntityStatementClaims(payload, "entity-configuration", options.algorithmRegistry);
 	return payload as EntityConfigurationPayload;
 }
 
@@ -178,9 +189,13 @@ export function buildEntityConfigurationPayload(
 export async function signEntityConfiguration(
 	options: SignEntityConfigurationOptions,
 ): Promise<string> {
-	const payload = buildEntityConfigurationPayload(options);
+	const payload = buildEntityConfigurationPayload({
+		...options,
+		jwks: options.signer.publishedJwks,
+	});
 	return signEntityStatement(payload as Record<string, unknown>, options.signer, {
 		typ: JwtTyp.EntityStatement,
+		...federationSigningOptions(options),
 		...(options.alg ? { alg: options.alg } : {}),
 	});
 }
@@ -200,7 +215,7 @@ export function buildSubordinateStatementPayload(
 		sub: subject,
 		iat,
 		exp,
-		jwks: copyPublicJwkSet(options.jwks),
+		jwks: copyPublicJwkSet(options.jwks, options.algorithmRegistry),
 	};
 
 	if (options.metadata !== undefined) payload.metadata = options.metadata;
@@ -211,7 +226,7 @@ export function buildSubordinateStatementPayload(
 		payload.metadata_policy_crit = [...options.metadataPolicyCrit];
 	}
 
-	assertValidEntityStatementClaims(payload, "subordinate-statement");
+	assertValidEntityStatementClaims(payload, "subordinate-statement", options.algorithmRegistry);
 	return payload as SubordinateStatementPayload;
 }
 
@@ -222,6 +237,7 @@ export async function signSubordinateStatement(
 	const payload = buildSubordinateStatementPayload(options);
 	return signEntityStatement(payload as Record<string, unknown>, options.signer, {
 		typ: JwtTyp.EntityStatement,
+		...federationSigningOptions(options),
 		...(options.alg ? { alg: options.alg } : {}),
 	});
 }
@@ -309,6 +325,7 @@ export function validateSubordinateStatementPublicationClaims(
 function assertValidEntityStatementClaims(
 	payload: Readonly<Record<string, unknown>>,
 	kind: EntityStatementKind,
+	registry?: JwsAlgorithmRegistry,
 ): void {
 	const result = validateEntityStatementClaims(payload, { kind });
 	if (!result.ok) {
@@ -317,13 +334,17 @@ function assertValidEntityStatementClaims(
 	// Publication uses supported key types; generic claim validation also serves
 	// received statements and keeps RFC 7517 §5's open key-type space.
 	if (payload.metadata !== undefined)
-		validatePublishedMetadata(payload.metadata as Record<string, unknown>, payload.sub as string);
+		validatePublishedMetadata(
+			payload.metadata as Record<string, unknown>,
+			payload.sub as string,
+			registry,
+		);
 	if (payload.trust_mark_owners !== undefined)
-		validatePublishedMetadataKeys(payload.trust_mark_owners as Record<string, unknown>);
+		validatePublishedMetadataKeys(payload.trust_mark_owners as Record<string, unknown>, registry);
 }
 
-function copyPublicJwkSet(jwks: JWKSet): JWKSet {
-	const prepared = preparePublicJwkSet(jwks);
+function copyPublicJwkSet(jwks: JWKSet, registry?: JwsAlgorithmRegistry): JWKSet {
+	const prepared = preparePublicJwkSet(jwks, registry);
 	if (!prepared.ok) throw new Error(prepared.error.description);
 	return prepared.value;
 }

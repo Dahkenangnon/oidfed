@@ -1,17 +1,21 @@
+import type { KeyringEntry } from "@oidfed/crypto";
+import { StaticKeyring } from "@oidfed/crypto";
 import { base64url, decodeJwt, decodeProtectedHeader } from "jose";
 import type QUnit from "qunit";
+import {
+	algorithmRegistry,
+	createProfileEngine,
+	profileAlgorithm,
+	profileSigner,
+} from "../../../docs/examples/custom-crypto.js";
 import {
 	decodeEntityStatement,
 	ecCacheKey,
 	entityId,
 	err,
-	generateSigningKey,
 	InternalErrorCode,
 	type JWK,
-	JwkSigner,
-	type JwtSigner,
 	MemoryCache,
-	MemoryFederationKeyProvider,
 	MemoryReplayStore,
 	ok,
 	parseOAuthAuthorizationServerMetadata,
@@ -32,6 +36,16 @@ import {
 	type WalletProviderPublicationMetadata,
 	WalletProviderRole,
 } from "../../../packages/wallet/src/index.js";
+import {
+	FixtureCrypto,
+	fixtureHostConfig,
+	fixtureRoleContext,
+	generateSigningKey,
+	instrumentSigningEntry,
+	PurposeBindingsFixture,
+	SigningEntryFixture,
+	testEngine,
+} from "../fixtures/software-crypto.js";
 import { anchorKeyPaths, trustChainPaths } from "../fixtures/trust-chain-paths.js";
 import { hierarchicalWalletFederation, walletFederation, walletQuery } from "../fixtures/wallet.js";
 
@@ -41,7 +55,7 @@ async function token(
 	typ: string,
 	header: Record<string, unknown> = {},
 ) {
-	return new JwkSigner(key).signJwt(new TextEncoder().encode(JSON.stringify(payload)), {
+	return new SigningEntryFixture(key).signJwt(new TextEncoder().encode(JSON.stringify(payload)), {
 		alg: key.alg,
 		typ,
 		...header,
@@ -79,7 +93,7 @@ export default (QUnit: QUnit) => {
 						...ec.value.payload,
 						metadata: { ...ec.value.payload.metadata, openid_credential_issuer: metadata },
 					},
-					new JwkSigner(f.keys.issuer.privateKey),
+					new SigningEntryFixture(f.keys.issuer.privateKey),
 				);
 				const superior = await signEntityStatement(
 					{
@@ -97,12 +111,16 @@ export default (QUnit: QUnit) => {
 								}
 							: {}),
 					},
-					new JwkSigner(f.keys.anchor.privateKey),
+					new SigningEntryFixture(f.keys.anchor.privateKey),
 				);
 				const options = { ...f.options, offline: true, trustChain: [leaf, superior, original[2]!] };
 				const expected = mode === "omitted" || mode === "correct";
 				t.strictEqual(
-					(await CredentialIssuerRole.discover(f.ids.issuer, f.anchors, options)).ok,
+					(
+						await CredentialIssuerRole.discover(f.ids.issuer, f.anchors, {
+							...options,
+						})
+					).ok,
 					expected,
 					mode,
 				);
@@ -112,7 +130,7 @@ export default (QUnit: QUnit) => {
 							f.ids.issuer,
 							"openid_credential_issuer",
 							f.anchors,
-							options,
+							{ ...options },
 						)
 					).ok,
 					expected,
@@ -127,7 +145,7 @@ export default (QUnit: QUnit) => {
 						trust_chain: options.trustChain,
 						metadata: f.metadata.issuer,
 					},
-					new JwkSigner(f.keys.anchor.privateKey),
+					new SigningEntryFixture(f.keys.anchor.privateKey),
 					{ typ: "resolve-response+jwt" },
 				);
 				const assessed = await CredentialIssuerRole.assessEntity(
@@ -135,6 +153,7 @@ export default (QUnit: QUnit) => {
 					"openid_credential_issuer",
 					f.anchors,
 					{
+						engine: testEngine,
 						clock: f.clock,
 						clockSkewSeconds: 0,
 						mode: "resolver",
@@ -188,7 +207,13 @@ export default (QUnit: QUnit) => {
 			}
 			const cache = new MemoryCache({ clock: f.clock });
 			const online = { ...f.options, entityChains: undefined, cache };
-			t.true((await WalletProviderRole.discover(f.ids.provider, f.anchors, online)).ok);
+			t.true(
+				(
+					await WalletProviderRole.discover(f.ids.provider, f.anchors, {
+						...online,
+					})
+				).ok,
+			);
 			t.true(
 				(
 					await WalletProviderRole.discover(f.ids.provider, f.anchors, {
@@ -358,36 +383,46 @@ export default (QUnit: QUnit) => {
 					};
 					const role =
 						kind === "provider"
-							? new WalletProviderRole(config)
-							: new CredentialVerifierRole(config);
-					new Leaf({
-						entityId: f.ids[kind],
-						authorityHints: [f.ids.anchor],
-						metadata: { federation_entity: {} },
-						roles: [role],
-						...(source === "host" ? { trustAnchors: f.anchors } : {}),
-						keyProvider: new MemoryFederationKeyProvider({
-							signer: new JwkSigner(f.keys[kind].privateKey),
-							publicJwk: f.keys[kind].publicKey,
+							? new WalletProviderRole({
+									...config,
+									signing: new PurposeBindingsFixture({
+										walletAttestationSigner: new SigningEntryFixture(
+											f.protocol.provider.privateKey,
+										),
+									}),
+								})
+							: new CredentialVerifierRole({
+									...config,
+									signing: new PurposeBindingsFixture({
+										authorizationRequestSigner: new SigningEntryFixture(
+											f.protocol.verifier.privateKey,
+										),
+									}),
+								});
+					await Leaf.create(
+						fixtureHostConfig({
+							entityId: f.ids[kind],
+							authorityHints: [f.ids.anchor],
+							metadata: { federation_entity: {} },
+							roles: [role],
+							...(source === "host" ? { trustAnchors: f.anchors } : {}),
+							crypto: new FixtureCrypto({
+								signer: new SigningEntryFixture(f.keys[kind].privateKey),
+								publicJwk: f.keys[kind].publicKey,
+							}),
 						}),
-					});
+					);
 					const result =
 						role instanceof WalletProviderRole
-							? await role.createWalletAttestation(
-									{
-										subject: "instance",
-										expiresAt: 4000,
-										confirmationKey: f.protocol.issuer.publicKey,
-									},
-									new JwkSigner(f.protocol.provider.privateKey),
-								)
-							: await role.createAuthorizationRequest(
-									f.requestPayload,
-									new JwkSigner(f.protocol.verifier.privateKey),
-								);
+							? await role.createWalletAttestation({
+									subject: "instance",
+									expiresAt: 4000,
+									confirmationKey: f.protocol.issuer.publicKey,
+								})
+							: await role.createAuthorizationRequest(f.requestPayload);
 					t.true(result.ok, `${source}/${kind}: ${JSON.stringify(result)}`);
-					t.throws(
-						() =>
+					await t.rejects(
+						(() =>
 							role instanceof WalletProviderRole
 								? role.createWalletAttestation(
 										{
@@ -395,14 +430,9 @@ export default (QUnit: QUnit) => {
 											expiresAt: 4000,
 											confirmationKey: f.protocol.issuer.publicKey,
 										},
-										new JwkSigner(f.protocol.provider.privateKey),
 										{ trustAnchors: new Map() },
 									)
-								: role.createAuthorizationRequest(
-										f.requestPayload,
-										new JwkSigner(f.protocol.verifier.privateKey),
-										{ trustAnchors: new Map() },
-									),
+								: role.createAuthorizationRequest(f.requestPayload, { trustAnchors: new Map() }))(),
 						/Pinned trust anchors/,
 						"explicit empty anchors cannot fall back",
 					);
@@ -427,7 +457,7 @@ export default (QUnit: QUnit) => {
 				...f.options,
 				audience: f.ids.server,
 				expectedChallenge: "new",
-				replayStore: new MemoryReplayStore({ clock: f.clock }),
+				replayStore: new MemoryReplayStore({ engine: testEngine, clock: f.clock }),
 				acceptWallet: () => true,
 			});
 			t.false(mismatch.ok);
@@ -437,11 +467,9 @@ export default (QUnit: QUnit) => {
 				f.protocol.provider.privateKey,
 				"oauth-client-attestation+jwt",
 			);
-			const stale = await CredentialIssuerRole.verifyWalletAttestation(
-				expired,
-				f.anchors,
-				f.options,
-			);
+			const stale = await CredentialIssuerRole.verifyWalletAttestation(expired, f.anchors, {
+				...f.options,
+			});
 			t.false(stale.ok);
 			if (!stale.ok) t.equal(stale.error.attestationError, "use_fresh_attestation");
 		});
@@ -461,11 +489,9 @@ export default (QUnit: QUnit) => {
 					f.setTime(time);
 					return Response.json({ keys: [f.protocol.provider.publicKey] });
 				});
-				const result = await CredentialIssuerRole.verifyWalletAttestation(
-					jwt,
-					f.anchors,
-					f.options,
-				);
+				const result = await CredentialIssuerRole.verifyWalletAttestation(jwt, f.anchors, {
+					...f.options,
+				});
 				t.equal(result.ok, time < 5000, JSON.stringify(result));
 			}
 		});
@@ -483,12 +509,12 @@ export default (QUnit: QUnit) => {
 				issuer: f.ids.anchor,
 				subject: f.ids.provider,
 				trustMarkType: type,
-				signer: new JwkSigner(f.keys.anchor.privateKey),
+				signer: new SigningEntryFixture(f.keys.anchor.privateKey),
 				clock: f.clock,
 			});
 			const ec = await signEntityStatement(
 				{ ...provider.value.payload, trust_marks: [{ trust_mark_type: type, trust_mark: jwt }] },
-				new JwkSigner(f.keys.provider.privateKey),
+				new SigningEntryFixture(f.keys.provider.privateKey),
 			);
 			for (const authorized of [true, false]) {
 				const root = await signEntityStatement(
@@ -496,7 +522,7 @@ export default (QUnit: QUnit) => {
 						...anchor.value.payload,
 						trust_mark_issuers: { [type]: [authorized ? f.ids.anchor : f.ids.issuer] },
 					},
-					new JwkSigner(f.keys.anchor.privateKey),
+					new SigningEntryFixture(f.keys.anchor.privateKey),
 				);
 				for (const custom of [false, true]) {
 					const subjects: string[] = [];
@@ -514,12 +540,13 @@ export default (QUnit: QUnit) => {
 								}),
 							...(custom
 								? {
+										engine: testEngine,
 										chainSelection: (chains: import("@oidfed/core").ValidatedTrustChain[]) => {
 											subjects.push(chains[0]!.entityId);
 											return chains[0]!;
 										},
 									}
-								: {}),
+								: { engine: testEngine }),
 						},
 					);
 					t.true(result.ok, JSON.stringify(result));
@@ -589,7 +616,7 @@ export default (QUnit: QUnit) => {
 			const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
 				{ client_id: payload.client_id },
 				f.anchors,
-				options,
+				{ ...options },
 			);
 			t.true(prepared.ok, JSON.stringify(prepared));
 			t.strictEqual(selections, 0, "selection waits for the signed request");
@@ -613,7 +640,7 @@ export default (QUnit: QUnit) => {
 				const prep = await CredentialVerifierRole.prepareAuthorizationRequest(
 					{ client_id: payload.client_id, request: jwt },
 					f.anchors,
-					defaults,
+					{ ...defaults },
 				);
 				t.true(prep.ok, JSON.stringify(prep));
 				if (!prep.ok) continue;
@@ -645,7 +672,7 @@ export default (QUnit: QUnit) => {
 				const prep = await CredentialVerifierRole.prepareAuthorizationRequest(
 					{ client_id: payload.client_id, request: jwt },
 					f.anchors,
-					offline,
+					{ ...offline },
 				);
 				t.true(prep.ok, JSON.stringify(prep));
 				if (prep.ok)
@@ -670,13 +697,19 @@ export default (QUnit: QUnit) => {
 				}
 			}
 			const partial = { ...options, maxAuthorityHints: 1 };
-			t.false((await CredentialVerifierRole.discover(f.ids.subject, f.anchors, partial)).ok);
+			t.false(
+				(
+					await CredentialVerifierRole.discover(f.ids.subject, f.anchors, {
+						...partial,
+					})
+				).ok,
+			);
 			t.false(
 				(
 					await CredentialVerifierRole.prepareAuthorizationRequest(
 						{ client_id: payload.client_id },
 						f.anchors,
-						partial,
+						{ ...partial },
 					)
 				).ok,
 			);
@@ -769,6 +802,14 @@ export default (QUnit: QUnit) => {
 					},
 				},
 			});
+			await role.initialize(
+				fixtureRoleContext(role, {
+					entityId: f.ids.provider,
+					crypto: FixtureCrypto.fromJWK(f.keys.provider.privateKey),
+					options: f.options,
+					trustAnchors: f.anchors,
+				}),
+			);
 			t.true((await role.assessEntity(f.ids.provider, "openid_wallet_provider")).ok);
 			t.strictEqual(selected, 1);
 			t.false((await role.assessEntity(f.ids.provider, "openid_credential_verifier")).ok);
@@ -794,7 +835,7 @@ export default (QUnit: QUnit) => {
 				issuer: f.ids.issuer,
 				subject: f.ids.verifier,
 				trustMarkType: type,
-				signer: new JwkSigner(f.keys.issuer.privateKey),
+				signer: new SigningEntryFixture(f.keys.issuer.privateKey),
 				clock: f.clock,
 				typ: "merchant+jwt",
 				trustMarkProfiles: profiles,
@@ -804,7 +845,7 @@ export default (QUnit: QUnit) => {
 			if (!decoded.ok) throw new Error(decoded.error.description);
 			const ec = await signEntityStatement(
 				{ ...decoded.value.payload, trust_marks: [{ trust_mark_type: type, trust_mark: jwt }] },
-				new JwkSigner(f.keys.verifier.privateKey),
+				new SigningEntryFixture(f.keys.verifier.privateKey),
 			);
 			checks = 0;
 			const result = await CredentialVerifierRole.discover(f.ids.verifier, f.anchors, {
@@ -836,7 +877,7 @@ export default (QUnit: QUnit) => {
 			if (!decoded.ok) throw Error("fixture");
 			const ss = await signEntityStatement(
 				{ ...decoded.value.payload, constraints: { custom: true } },
-				new JwkSigner(f.keys.anchor.privateKey),
+				new SigningEntryFixture(f.keys.anchor.privateKey),
 			);
 			const chain = [original[0]!, ss, ...original.slice(2)];
 			for (const accepted of [true, false]) {
@@ -881,14 +922,18 @@ export default (QUnit: QUnit) => {
 						issuerMetadata: separate ? { authorization_servers: ["https://server.example"] } : {},
 						...(separate ? { serverMetadata: malformed } : { issuerServerMetadata: malformed }),
 					});
-					const result = await CredentialIssuerRole.discover(f.ids.issuer, f.anchors, f.options);
+					const result = await CredentialIssuerRole.discover(f.ids.issuer, f.anchors, {
+						...f.options,
+					});
 					t.false(result.ok, `${separate}: ${JSON.stringify(malformed)}`);
 					if (!result.ok) t.equal(result.error.code, "invalid_metadata");
 				}
 				const f = await walletFederation({
 					issuerMetadata: separate ? { authorization_servers: ["https://server.example"] } : {},
 				});
-				const result = await CredentialIssuerRole.discover(f.ids.issuer, f.anchors, f.options);
+				const result = await CredentialIssuerRole.discover(f.ids.issuer, f.anchors, {
+					...f.options,
+				});
 				t.true(result.ok);
 			}
 		});
@@ -903,7 +948,9 @@ export default (QUnit: QUnit) => {
 					authorization_endpoint: undefined,
 				},
 			});
-			const strict = await CredentialIssuerRole.discover(f.ids.issuer, f.anchors, f.options);
+			const strict = await CredentialIssuerRole.discover(f.ids.issuer, f.anchors, {
+				...f.options,
+			});
 			t.false(strict.ok);
 			const result = await CredentialIssuerRole.discover(f.ids.issuer, f.anchors, {
 				...f.options,
@@ -942,7 +989,7 @@ export default (QUnit: QUnit) => {
 					request_uri: "https://unregistered.example/private-request",
 				},
 				f.anchors,
-				options,
+				{ ...options },
 			);
 			t.false(outer.ok);
 			t.deepEqual(warnings, [
@@ -963,7 +1010,7 @@ export default (QUnit: QUnit) => {
 				const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
 					{ client_id: payload.client_id },
 					f.anchors,
-					options,
+					{ ...options },
 				);
 				if (!prepared.ok) throw new Error(JSON.stringify(prepared));
 				const result = await CredentialVerifierRole.completeAuthorizationRequest(
@@ -983,7 +1030,7 @@ export default (QUnit: QUnit) => {
 			const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
 				{ client_id: f.requestPayload.client_id },
 				f.anchors,
-				options,
+				{ ...options },
 			);
 			if (!prepared.ok) throw new Error(JSON.stringify(prepared));
 			const valid = await CredentialVerifierRole.completeAuthorizationRequest(
@@ -1009,7 +1056,7 @@ export default (QUnit: QUnit) => {
 					...f.options,
 					audience: f.ids.server,
 					acceptWallet: () => true,
-					replayStore: new MemoryReplayStore(),
+					replayStore: new MemoryReplayStore({ engine: testEngine }),
 					[field]: undefined,
 					logger: {
 						debug() {},
@@ -1139,8 +1186,8 @@ export default (QUnit: QUnit) => {
 								{
 									...options,
 									...(operation === "query"
-										? { queryPolicy: policy }
-										: { verifyTransactionData: policy }),
+										? { engine: testEngine, queryPolicy: policy }
+										: { engine: testEngine, verifyTransactionData: policy }),
 								},
 							);
 							if (!prepared.ok) throw new Error(JSON.stringify(prepared));
@@ -1211,7 +1258,7 @@ export default (QUnit: QUnit) => {
 				const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
 					{ client_id: payload.client_id },
 					f.anchors,
-					options,
+					{ ...options },
 				);
 				if (!prepared.ok) throw new Error(JSON.stringify(prepared));
 				t.false(
@@ -1254,7 +1301,13 @@ export default (QUnit: QUnit) => {
 					},
 				},
 			};
-			t.false((await WalletProviderRole.discover(f.ids.provider, f.anchors, options)).ok);
+			t.false(
+				(
+					await WalletProviderRole.discover(f.ids.provider, f.anchors, {
+						...options,
+					})
+				).ok,
+			);
 			t.true(
 				warnings.includes(
 					"Supply the missing federation evidence or protocol keys for offline trust evaluation",
@@ -1292,7 +1345,9 @@ export default (QUnit: QUnit) => {
 			};
 			const logger = { debug: record, info: record, warn: record, error: record };
 			const options = { ...f.options, logger };
-			const discovery = await WalletProviderRole.discover(f.ids.provider, f.anchors, options);
+			const discovery = await WalletProviderRole.discover(f.ids.provider, f.anchors, {
+				...options,
+			});
 			t.true(discovery.ok, JSON.stringify(discovery));
 			t.true(messages.some((args) => String(args[0]).includes("trusted entity")));
 			t.true(messages.every((args) => args.length === 1));
@@ -1303,12 +1358,16 @@ export default (QUnit: QUnit) => {
 				...f.options,
 				logger: { debug: fail, info: fail, warn: fail, error: fail },
 			};
-			t.true((await WalletProviderRole.discover(f.ids.provider, f.anchors, throwing)).ok);
-			const invalid = await WalletProviderRole.discover(
-				"http://invalid.example",
-				f.anchors,
-				throwing,
+			t.true(
+				(
+					await WalletProviderRole.discover(f.ids.provider, f.anchors, {
+						...throwing,
+					})
+				).ok,
 			);
+			const invalid = await WalletProviderRole.discover("http://invalid.example", f.anchors, {
+				...throwing,
+			});
 			t.false(invalid.ok);
 		});
 	});
@@ -1327,10 +1386,12 @@ export default (QUnit: QUnit) => {
 						clock: f.clock,
 						httpClient: f.httpClient,
 						maxTotalFetches: 5,
-						...(mode === "ttl-zero" ? { cacheMaxTtlSeconds: 0 } : {}),
+						...(mode === "ttl-zero"
+							? { engine: testEngine, cacheMaxTtlSeconds: 0 }
+							: { engine: testEngine }),
 						...(mode === "one-entry"
-							? { cache: new MemoryCache({ clock: f.clock, maxEntries: 1 }) }
-							: {}),
+							? { engine: testEngine, cache: new MemoryCache({ clock: f.clock, maxEntries: 1 }) }
+							: { engine: testEngine }),
 					});
 					t.true(result.ok, `${name}, ${mode}: ${JSON.stringify(result)}`);
 					t.equal(f.requests.length, 5);
@@ -1347,6 +1408,7 @@ export default (QUnit: QUnit) => {
 				issuerMetadata: { authorization_servers: ["https://server.example"] },
 			});
 			const result = await CredentialIssuerRole.discover(f.ids.issuer, f.anchors, {
+				engine: testEngine,
 				clock: f.clock,
 				httpClient: f.httpClient,
 				maxTotalFetches: 10,
@@ -1367,6 +1429,7 @@ export default (QUnit: QUnit) => {
 				{ client_id: f.requestPayload.client_id, request: jwt },
 				f.anchors,
 				{
+					engine: testEngine,
 					clock: f.clock,
 					httpClient: f.httpClient,
 					maxTotalFetches: 5,
@@ -1386,7 +1449,9 @@ export default (QUnit: QUnit) => {
 				[CredentialVerifierRole, "verifier"],
 			] as const) {
 				const options = { ...f.options, offline: true };
-				const missing = await Role.discover(f.ids[name], f.anchors, options);
+				const missing = await Role.discover(f.ids[name], f.anchors, {
+					...options,
+				});
 				t.false(missing.ok);
 				if (!missing.ok) t.true(missing.error.description.includes("Offline operation"));
 				t.true(
@@ -1399,7 +1464,7 @@ export default (QUnit: QUnit) => {
 				);
 				const cache = new MemoryCache({ clock: f.clock });
 				await cache.set(
-					await ecCacheKey(f.intermediate.id),
+					await ecCacheKey(f.intermediate.id, testEngine),
 					f.entityConfigurations.get(f.intermediate.id)!,
 					1000,
 				);
@@ -1410,14 +1475,13 @@ export default (QUnit: QUnit) => {
 		test("offline creation rejects missing intermediate ECs before fetching or signing", async (t) => {
 			const f = await hierarchicalWalletFederation();
 			let signatures = 0;
-			const signer: JwtSigner = {
-				alg: "ES256",
-				kid: "unused",
-				signJwt: async () => {
+			const signer = instrumentSigningEntry(
+				new SigningEntryFixture(f.protocol.verifier.privateKey),
+				async () => {
 					signatures++;
 					throw new Error("Unexpected signing");
 				},
-			};
+			);
 			const options = { ...f.options, trustAnchors: f.anchors, offline: true };
 			const attestation = await WalletProviderRole.createWalletAttestation(
 				f.ids.provider,
@@ -1440,7 +1504,7 @@ export default (QUnit: QUnit) => {
 			const f = await hierarchicalWalletFederation();
 			const cache = new MemoryCache({ clock: f.clock });
 			await cache.set(
-				await ecCacheKey(f.intermediate.id),
+				await ecCacheKey(f.intermediate.id, testEngine),
 				f.entityConfigurations.get(f.intermediate.id)!,
 				1000,
 			);
@@ -1453,14 +1517,14 @@ export default (QUnit: QUnit) => {
 						confirmationKey: f.protocol.issuer.publicKey,
 						expiresAt: 4000,
 					},
-					new JwkSigner(f.protocol.provider.privateKey),
+					new SigningEntryFixture(f.protocol.provider.privateKey),
 					{ ...options, trustChain: f.chains.get(f.ids.provider)! },
 				);
 				t.true(attestation.ok, JSON.stringify(attestation));
 				const request = await CredentialVerifierRole.createAuthorizationRequest(
 					f.ids.verifier,
 					f.requestPayload,
-					new JwkSigner(f.protocol.verifier.privateKey),
+					new SigningEntryFixture(f.protocol.verifier.privateKey),
 					{ ...options, trustChain: f.chains.get(f.ids.verifier)! },
 				);
 				t.true(request.ok, JSON.stringify(request));
@@ -1483,7 +1547,7 @@ export default (QUnit: QUnit) => {
 						confirmationKey: f.protocol.issuer.publicKey,
 						expiresAt: 4000,
 					},
-					new JwkSigner(f.protocol.provider.privateKey),
+					new SigningEntryFixture(f.protocol.provider.privateKey),
 					{ ...options, trustChain: f.chains.get(f.ids.provider)! },
 				);
 				t.false(attestation.ok);
@@ -1491,7 +1555,7 @@ export default (QUnit: QUnit) => {
 				const request = await CredentialVerifierRole.createAuthorizationRequest(
 					f.ids.verifier,
 					f.requestPayload,
-					new JwkSigner(f.protocol.verifier.privateKey),
+					new SigningEntryFixture(f.protocol.verifier.privateKey),
 					{ ...options, trustChain: f.chains.get(f.ids.verifier)! },
 				);
 				t.false(request.ok);
@@ -1499,6 +1563,96 @@ export default (QUnit: QUnit) => {
 			}
 			t.equal(f.requests.length, 0);
 		});
+	});
+	test("binds wallet issuers to effective protocol keys and supports a registered format", async (t) => {
+		const p256 = new SigningEntryFixture((await generateSigningKey()).privateKey);
+		const published = profileSigner("wallet-profile", p256.signer);
+		const other = profileSigner(
+			"other-profile",
+			new SigningEntryFixture((await generateSigningKey()).privateKey).signer,
+		);
+		const ring = new StaticKeyring({ algorithmRegistry, signers: { published, other } });
+		const active = await ring.entry("published");
+		let calls = 0;
+		const wrong = instrumentSigningEntry(await ring.entry("other"), async () => {
+			calls++;
+			throw new Error("A mismatch must stop before signing");
+		});
+		const f = await walletFederation({
+			providerMetadata: { jwks: active.publishedJwks },
+			verifierMetadata: { jwks: (await ring.entry("other")).publishedJwks },
+			verifierOverride: { jwks: active.publishedJwks },
+		});
+		const options = {
+			...f.options,
+			engine: createProfileEngine(testEngine),
+			algorithmRegistry,
+			allowedAlgorithms: [profileAlgorithm],
+			trustAnchors: f.anchors,
+			offline: true,
+		};
+		const params = {
+			subject: "wallet",
+			confirmationKey: f.protocol.issuer.publicKey,
+			expiresAt: 3000,
+		};
+		const attestationOptions = { ...options, trustChain: f.chains.get(f.ids.provider)! };
+		const requestOptions = { ...options, trustChain: f.chains.get(f.ids.verifier)! };
+		const failedAttestation = await WalletProviderRole.createWalletAttestation(
+			f.ids.provider,
+			params,
+			wrong,
+			attestationOptions,
+		);
+		t.false(failedAttestation.ok);
+		if (!failedAttestation.ok)
+			t.true(failedAttestation.error.description.includes("authenticated protocol JWKS"));
+		const failedRequest = await CredentialVerifierRole.createAuthorizationRequest(
+			f.ids.verifier,
+			f.requestPayload,
+			wrong,
+			requestOptions,
+		);
+		t.false(failedRequest.ok);
+		if (!failedRequest.ok)
+			t.true(failedRequest.error.description.includes("authenticated protocol JWKS"));
+		t.equal(calls, 0);
+		const issued = await WalletProviderRole.createWalletAttestation(
+			f.ids.provider,
+			params,
+			active,
+			attestationOptions,
+		);
+		t.true(issued.ok, issued.ok ? "issued profile attestation" : issued.error.description);
+		if (issued.ok)
+			t.true(
+				(await CredentialIssuerRole.verifyWalletAttestation(issued.value, f.anchors, options)).ok,
+			);
+		const request = await CredentialVerifierRole.createAuthorizationRequest(
+			f.ids.verifier,
+			f.requestPayload,
+			active,
+			requestOptions,
+		);
+		t.true(request.ok, request.ok ? "signed profile Request Object" : request.error.description);
+		if (request.ok) {
+			const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
+				{ client_id: f.requestPayload.client_id, request: request.value },
+				f.anchors,
+				options,
+			);
+			t.true(prepared.ok, prepared.ok ? "profile request prepared" : prepared.error.description);
+			if (prepared.ok) {
+				const checked = await CredentialVerifierRole.completeAuthorizationRequest(
+					prepared.value,
+					request.value,
+				);
+				t.true(
+					checked.ok,
+					checked.ok ? "verified profile Request Object" : checked.error.description,
+				);
+			}
+		}
 	});
 	test("request chain carriers preserve precedence and offline validation", async (t) => {
 		const f = await walletFederation();
@@ -1513,7 +1667,7 @@ export default (QUnit: QUnit) => {
 			const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
 				{ client_id: f.requestPayload.client_id, request: jwt },
 				f.anchors,
-				{ clock: f.clock, offline: true },
+				{ engine: testEngine, clock: f.clock, offline: true },
 			);
 			t.true(prepared.ok, carrier);
 			if (prepared.ok) {
@@ -1536,7 +1690,7 @@ export default (QUnit: QUnit) => {
 				await CredentialVerifierRole.prepareAuthorizationRequest(
 					{ client_id: f.requestPayload.client_id, request: malformed },
 					f.anchors,
-					f.options,
+					{ ...f.options },
 				)
 			).ok,
 		);
@@ -1551,7 +1705,7 @@ export default (QUnit: QUnit) => {
 			const result = await CredentialVerifierRole.prepareAuthorizationRequest(
 				{ client_id: f.requestPayload.client_id, ...request } as never,
 				f.anchors,
-				{ clock: f.clock, httpClient: f.httpClient },
+				{ engine: testEngine, clock: f.clock, httpClient: f.httpClient },
 			);
 			t.false(result.ok);
 			if (!result.ok) t.true(result.error.description.includes("request_uri"));
@@ -1584,8 +1738,8 @@ export default (QUnit: QUnit) => {
 				await CredentialVerifierRole.createAuthorizationRequest(
 					f.ids.verifier,
 					{ ...f.requestPayload, exp: 1 },
-					new JwkSigner(f.protocol.verifier.privateKey),
-					f.options,
+					new SigningEntryFixture(f.protocol.verifier.privateKey),
+					{ ...f.options },
 				)
 			).ok,
 		);
@@ -1600,23 +1754,19 @@ export default (QUnit: QUnit) => {
 		);
 		t.false(delayed.ok);
 		f.setTime(1500);
-		const signer = new JwkSigner(f.protocol.verifier.privateKey);
-		const slowSigner: JwtSigner = {
-			alg: signer.alg,
-			kid: signer.kid,
-			async signJwt(payload, header) {
-				const jwt = await signer.signJwt(payload, header);
-				f.setTime(1502);
-				return jwt;
-			},
-		};
+		const signer = new SigningEntryFixture(f.protocol.verifier.privateKey);
+		const slowSigner: KeyringEntry = instrumentSigningEntry(signer, async (payload, header) => {
+			const jwt = await signer.signJwt(payload, header);
+			f.setTime(1502);
+			return jwt;
+		});
 		t.false(
 			(
 				await CredentialVerifierRole.createAuthorizationRequest(
 					f.ids.verifier,
 					{ ...f.requestPayload, exp: 1501 },
 					slowSigner,
-					f.options,
+					{ ...f.options },
 				)
 			).ok,
 			"a signer cannot return a request whose validity window has elapsed",
@@ -1668,7 +1818,9 @@ export default (QUnit: QUnit) => {
 						{
 							...f.options,
 							clock: { now: () => now },
-							...(limit === "maximum age" ? { maxRequestAgeSeconds: 200 } : {}),
+							...(limit === "maximum age"
+								? { engine: testEngine, maxRequestAgeSeconds: 200 }
+								: { engine: testEngine }),
 							httpClient: async (input) => {
 								const url = new URL(input instanceof Request ? input.url : String(input));
 								url.searchParams.delete("iss");
@@ -1685,13 +1837,14 @@ export default (QUnit: QUnit) => {
 							},
 							...(stage !== "later candidate"
 								? {
+										engine: testEngine,
 										chainSelection: (chains: import("@oidfed/core").ValidatedTrustChain[]) => {
 											selections++;
 											if (stage === "selection") now = deadline + offset;
 											return chains[0]!;
 										},
 									}
-								: {}),
+								: { engine: testEngine }),
 						},
 					);
 					t.true(prepared.ok, JSON.stringify(prepared));
@@ -1795,8 +1948,8 @@ export default (QUnit: QUnit) => {
 			const result = await WalletProviderRole.createWalletAttestation(
 				f.ids.provider,
 				{ subject: "wallet", confirmationKey: key, expiresAt: 4000 },
-				new JwkSigner(f.protocol.provider.privateKey),
-				f.options,
+				new SigningEntryFixture(f.protocol.provider.privateKey),
+				{ ...f.options },
 			);
 			t.false(result.ok);
 			const jwt = await token(
@@ -1804,7 +1957,13 @@ export default (QUnit: QUnit) => {
 				f.protocol.provider.privateKey,
 				"oauth-client-attestation+jwt",
 			);
-			t.false((await CredentialIssuerRole.verifyWalletAttestation(jwt, f.anchors, f.options)).ok);
+			t.false(
+				(
+					await CredentialIssuerRole.verifyWalletAttestation(jwt, f.anchors, {
+						...f.options,
+					})
+				).ok,
+			);
 		}
 		for (const extra of [{ jku: "https://other.example/keys" }, { jwe: "encrypted" }]) {
 			const jwt = await token(
@@ -1812,14 +1971,26 @@ export default (QUnit: QUnit) => {
 				f.protocol.provider.privateKey,
 				"oauth-client-attestation+jwt",
 			);
-			t.false((await CredentialIssuerRole.verifyWalletAttestation(jwt, f.anchors, f.options)).ok);
+			t.false(
+				(
+					await CredentialIssuerRole.verifyWalletAttestation(jwt, f.anchors, {
+						...f.options,
+					})
+				).ok,
+			);
 		}
 		const jwt = await token(
 			{ ...attestation(f), cnf: { jwk: f.protocol.issuer.publicKey, extension: { opaque: true } } },
 			f.protocol.provider.privateKey,
 			"oauth-client-attestation+jwt",
 		);
-		t.true((await CredentialIssuerRole.verifyWalletAttestation(jwt, f.anchors, f.options)).ok);
+		t.true(
+			(
+				await CredentialIssuerRole.verifyWalletAttestation(jwt, f.anchors, {
+					...f.options,
+				})
+			).ok,
+		);
 	});
 	test("authentication rejects local failures before discovery and respects both algorithm policies", async (t) => {
 		const f = await walletFederation();
@@ -1833,7 +2004,7 @@ export default (QUnit: QUnit) => {
 			clockSkewSeconds: 0,
 			httpClient: f.httpClient,
 			audience: f.ids.server,
-			replayStore: new MemoryReplayStore({ clock: f.clock }),
+			replayStore: new MemoryReplayStore({ engine: testEngine, clock: f.clock }),
 			acceptWallet: () => true,
 		};
 		for (const body of [
@@ -1846,9 +2017,23 @@ export default (QUnit: QUnit) => {
 				f.protocol.issuer.privateKey,
 				"oauth-client-attestation-pop+jwt",
 			);
-			t.false((await CredentialIssuerRole.authenticateWallet(jwt, pop, f.anchors, opts)).ok);
+			t.false(
+				(
+					await CredentialIssuerRole.authenticateWallet(jwt, pop, f.anchors, {
+						...opts,
+						engine: testEngine,
+					})
+				).ok,
+			);
 		}
-		t.false((await CredentialIssuerRole.authenticateWallet(jwt, "garbage", f.anchors, opts)).ok);
+		t.false(
+			(
+				await CredentialIssuerRole.authenticateWallet(jwt, "garbage", f.anchors, {
+					...opts,
+					engine: testEngine,
+				})
+			).ok,
+		);
 		const pop = await token(
 			proof(f),
 			f.protocol.issuer.privateKey,
@@ -1857,6 +2042,7 @@ export default (QUnit: QUnit) => {
 		t.false(
 			(
 				await CredentialIssuerRole.authenticateWallet(jwt, pop, f.anchors, {
+					engine: testEngine,
 					...opts,
 					allowedProofAlgorithms: ["RS256"],
 				})
@@ -1865,6 +2051,7 @@ export default (QUnit: QUnit) => {
 		t.false(
 			(
 				await CredentialIssuerRole.authenticateWallet(jwt, pop, f.anchors, {
+					engine: testEngine,
 					...opts,
 					allowedAttestationAlgorithms: ["RS256"],
 				})
@@ -1874,6 +2061,7 @@ export default (QUnit: QUnit) => {
 		t.true(
 			(
 				await CredentialIssuerRole.authenticateWallet(jwt, pop, f.anchors, {
+					engine: testEngine,
 					...opts,
 					allowedProofAlgorithms: ["ES256"],
 					allowedAttestationAlgorithms: ["ES256"],
@@ -1891,7 +2079,13 @@ export default (QUnit: QUnit) => {
 				],
 			},
 		});
-		t.false((await CredentialIssuerRole.discover(f.ids.issuer, f.anchors, f.options)).ok);
+		t.false(
+			(
+				await CredentialIssuerRole.discover(f.ids.issuer, f.anchors, {
+					...f.options,
+				})
+			).ok,
+		);
 		const result = await CredentialIssuerRole.discover(f.ids.issuer, f.anchors, {
 			...f.options,
 			authorizationServerPolicy: "available",
@@ -1902,6 +2096,7 @@ export default (QUnit: QUnit) => {
 			t.equal(result.value.authorizationServerErrors[0]?.entityId, "https://missing.example");
 		}
 		const limited = await CredentialIssuerRole.discover(f.ids.issuer, f.anchors, {
+			engine: testEngine,
 			clock: f.clock,
 			httpClient: f.httpClient,
 			maxTotalFetches: 3,
@@ -1958,7 +2153,7 @@ export default (QUnit: QUnit) => {
 		chain[2] = await f.sign("anchor", "a", {
 			metadata_policy: { openid_credential_verifier: { jwks: { value: governedKeys } } },
 		});
-		const valid = await validateTrustChain(chain, f.anchors, f.options);
+		const valid = await validateTrustChain(chain, f.anchors, { ...f.options });
 		t.true(
 			(
 				await CredentialVerifierRole.discover(f.ids.subject, f.anchors, {
@@ -1976,7 +2171,9 @@ export default (QUnit: QUnit) => {
 				openid_credential_verifier: { jwks: { value: { keys: [f.keys.subject.publicKey] } } },
 			},
 		});
-		const conflict = await validateTrustChain(chain, f.anchors, f.options);
+		const conflict = await validateTrustChain(chain, f.anchors, {
+			...f.options,
+		});
 		t.false(conflict.valid, "conflicting complete objects invalidate the policy");
 		chain[1] = await f.sign("a", "subject");
 		chain[2] = await f.sign("anchor", "a", {
@@ -1998,15 +2195,31 @@ export default (QUnit: QUnit) => {
 			const options = { maxTotalFetches };
 			const anchors = new Map();
 			const calls = [
-				() => WalletProviderRole.discover("https://p.example", anchors, options),
-				() => CredentialIssuerRole.discover("https://i.example", anchors, options),
-				() => CredentialVerifierRole.discover("https://v.example", anchors, options),
-				() => CredentialIssuerRole.verifyWalletAttestation("bad", anchors, options),
+				() =>
+					WalletProviderRole.discover("https://p.example", anchors, {
+						...options,
+						engine: testEngine,
+					}),
+				() =>
+					CredentialIssuerRole.discover("https://i.example", anchors, {
+						...options,
+						engine: testEngine,
+					}),
+				() =>
+					CredentialVerifierRole.discover("https://v.example", anchors, {
+						...options,
+						engine: testEngine,
+					}),
+				() =>
+					CredentialIssuerRole.verifyWalletAttestation("bad", anchors, {
+						...options,
+						engine: testEngine,
+					}),
 				() =>
 					CredentialVerifierRole.prepareAuthorizationRequest(
 						{ client_id: "openid_federation:https://v.example", request: "bad" },
 						anchors,
-						options,
+						{ ...options, engine: testEngine },
 					),
 			];
 			for (const call of calls) {
@@ -2020,7 +2233,9 @@ export default (QUnit: QUnit) => {
 	});
 	test("JSON credential description paths start at an object and retain nested wildcards", async (t) => {
 		const f = await walletFederation();
-		const issuer = await CredentialIssuerRole.discover(f.ids.issuer, f.anchors, f.options);
+		const issuer = await CredentialIssuerRole.discover(f.ids.issuer, f.anchors, {
+			...f.options,
+		});
 		t.true(issuer.ok);
 		if (!issuer.ok) return;
 		for (const path of [[0], [null], ["names", null, "given"], ["names", 0, "given"]]) {
@@ -2056,7 +2271,13 @@ export default (QUnit: QUnit) => {
 					(Array.isArray(aud) && aud.includes(f.ids.server)),
 			);
 			if (aud !== undefined)
-				t.false((await CredentialIssuerRole.verifyWalletAttestation(jwt, f.anchors, f.options)).ok);
+				t.false(
+					(
+						await CredentialIssuerRole.verifyWalletAttestation(jwt, f.anchors, {
+							...f.options,
+						})
+					).ok,
+				);
 		}
 	});
 	test("a PoP kid hint can accompany a kid-less confirmation key", async (t) => {
@@ -2078,7 +2299,7 @@ export default (QUnit: QUnit) => {
 				await CredentialIssuerRole.authenticateWallet(jwt, pop, f.anchors, {
 					...f.options,
 					audience: f.ids.server,
-					replayStore: new MemoryReplayStore({ clock: f.options.clock }),
+					replayStore: new MemoryReplayStore({ engine: testEngine, clock: f.options.clock }),
 					acceptWallet: () => true,
 				})
 			).ok,
@@ -2093,7 +2314,7 @@ export default (QUnit: QUnit) => {
 				await CredentialIssuerRole.authenticateWallet(mismatched, pop, f.anchors, {
 					...f.options,
 					audience: f.ids.server,
-					replayStore: new MemoryReplayStore({ clock: f.options.clock }),
+					replayStore: new MemoryReplayStore({ engine: testEngine, clock: f.options.clock }),
 					acceptWallet: () => true,
 				})
 			).ok,
@@ -2110,7 +2331,7 @@ export default (QUnit: QUnit) => {
 					await CredentialIssuerRole.authenticateWallet(jwt, invalid, f.anchors, {
 						...f.options,
 						audience: f.ids.server,
-						replayStore: new MemoryReplayStore({ clock: f.options.clock }),
+						replayStore: new MemoryReplayStore({ engine: testEngine, clock: f.options.clock }),
 						acceptWallet: () => true,
 					})
 				).ok,
@@ -2193,11 +2414,9 @@ export default (QUnit: QUnit) => {
 			const original = structuredClone(metadata);
 			const parsed = CredentialVerifierRole.parseMetadata(metadata);
 			t.true(parsed.success);
-			const discovered = await CredentialVerifierRole.discover(
-				f.ids.verifier,
-				f.anchors,
-				f.options,
-			);
+			const discovered = await CredentialVerifierRole.discover(f.ids.verifier, f.anchors, {
+				...f.options,
+			});
 			t.true(discovered.ok);
 			if (parsed.success && discovered.ok) t.deepEqual(parsed.data, discovered.value.metadata);
 			if (parsed.success)
@@ -2212,15 +2431,16 @@ export default (QUnit: QUnit) => {
 				() =>
 					role.validateMetadata(metadata, {
 						entityId: f.ids.verifier,
-						keyProvider: MemoryFederationKeyProvider.fromJWK(f.keys.verifier.privateKey),
+						crypto: FixtureCrypto.fromJWK(f.keys.verifier.privateKey),
+						options: { engine: testEngine },
 					}),
 				/repeat a path/,
 			);
 			const created = await CredentialVerifierRole.createAuthorizationRequest(
 				f.ids.verifier,
 				{ ...f.requestPayload, dcql_query: query },
-				new JwkSigner(f.protocol.verifier.privateKey),
-				f.options,
+				new SigningEntryFixture(f.protocol.verifier.privateKey),
+				{ ...f.options },
 			);
 			t.false(created.ok);
 			t.deepEqual(metadata, original);
@@ -2250,21 +2470,29 @@ export default (QUnit: QUnit) => {
 					{},
 					{
 						entityId: f.ids.issuer,
-						keyProvider: MemoryFederationKeyProvider.fromJWK(f.keys.issuer.privateKey),
+						crypto: FixtureCrypto.fromJWK(f.keys.issuer.privateKey),
+						options: { engine: testEngine },
 					},
 				);
 				t.false(Role.parseMetadata({}).success, "effective metadata still requires its fields");
 			}
 			const role = new CredentialIssuerRole({});
 			const context = {
+				options: { engine: testEngine },
 				entityId: f.ids.issuer,
-				keyProvider: MemoryFederationKeyProvider.fromJWK(f.keys.issuer.privateKey),
+				crypto: FixtureCrypto.fromJWK(f.keys.issuer.privateKey),
 			};
 			t.throws(() =>
 				role.validateMetadata({ credential_endpoint: "http://insecure.example" }, context),
 			);
 			t.throws(() => role.validateMetadata({ credential_issuer: f.ids.provider }, context));
-			t.false((await CredentialIssuerRole.discover(f.ids.issuer, f.anchors, f.options)).ok);
+			t.false(
+				(
+					await CredentialIssuerRole.discover(f.ids.issuer, f.anchors, {
+						...f.options,
+					})
+				).ok,
+			);
 			const chain = f.chains.get(f.ids.issuer)!;
 			const ss = await signEntityStatement(
 				{
@@ -2273,10 +2501,16 @@ export default (QUnit: QUnit) => {
 						openid_credential_issuer: { credential_endpoint: `${f.ids.issuer}/credentials` },
 					},
 				},
-				new JwkSigner(f.keys.anchor.privateKey),
+				new SigningEntryFixture(f.keys.anchor.privateKey),
 			);
 			f.chains.set(f.ids.issuer, [chain[0]!, ss, chain[2]!]);
-			t.true((await CredentialIssuerRole.discover(f.ids.issuer, f.anchors, f.options)).ok);
+			t.true(
+				(
+					await CredentialIssuerRole.discover(f.ids.issuer, f.anchors, {
+						...f.options,
+					})
+				).ok,
+			);
 		});
 		test("request scope and credential scope use their respective OAuth grammars", async (t) => {
 			const f = await walletFederation();
@@ -2287,8 +2521,8 @@ export default (QUnit: QUnit) => {
 						await CredentialVerifierRole.createAuthorizationRequest(
 							f.ids.verifier,
 							{ ...request, scope: value },
-							new JwkSigner(f.protocol.verifier.privateKey),
-							f.options,
+							new SigningEntryFixture(f.protocol.verifier.privateKey),
+							{ ...f.options },
 						)
 					).ok,
 					JSON.stringify(value),
@@ -2300,8 +2534,8 @@ export default (QUnit: QUnit) => {
 						await CredentialVerifierRole.createAuthorizationRequest(
 							f.ids.verifier,
 							{ ...request, scope },
-							new JwkSigner(f.protocol.verifier.privateKey),
-							f.options,
+							new SigningEntryFixture(f.protocol.verifier.privateKey),
+							{ ...f.options },
 						)
 					).ok,
 				);
@@ -2317,7 +2551,7 @@ export default (QUnit: QUnit) => {
 			const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
 				{ client_id: request.client_id },
 				f.anchors,
-				f.options,
+				{ ...f.options },
 			);
 			if (!prepared.ok) throw new Error(prepared.error.description);
 			for (const scope of ["", 'a"b']) {
@@ -2377,8 +2611,8 @@ export default (QUnit: QUnit) => {
 						await CredentialVerifierRole.createAuthorizationRequest(
 							f.ids.verifier,
 							{ ...f.requestPayload, response_mode },
-							new JwkSigner(f.protocol.verifier.privateKey),
-							f.options,
+							new SigningEntryFixture(f.protocol.verifier.privateKey),
+							{ ...f.options },
 						)
 					).ok,
 					response_mode === "extension_mode",
@@ -2394,7 +2628,7 @@ export default (QUnit: QUnit) => {
 			const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
 				{ client_id: payload.client_id },
 				f.anchors,
-				f.options,
+				{ ...f.options },
 			);
 			if (!prepared.ok) throw new Error(prepared.error.description);
 			t.false((await CredentialVerifierRole.completeAuthorizationRequest(prepared.value, jwt)).ok);
@@ -2403,8 +2637,12 @@ export default (QUnit: QUnit) => {
 					await CredentialVerifierRole.createAuthorizationRequest(
 						f.ids.verifier,
 						payload,
-						new JwkSigner(f.protocol.verifier.privateKey),
-						{ ...f.options, trustChain: f.chains.get(f.ids.verifier), trustAnchors: f.anchors },
+						new SigningEntryFixture(f.protocol.verifier.privateKey),
+						{
+							...f.options,
+							trustChain: f.chains.get(f.ids.verifier),
+							trustAnchors: f.anchors,
+						},
 					)
 				).ok,
 			);
@@ -2414,7 +2652,7 @@ export default (QUnit: QUnit) => {
 			const prep = await CredentialVerifierRole.prepareAuthorizationRequest(
 				{ client_id: payload.client_id },
 				overridden.anchors,
-				overridden.options,
+				{ ...overridden.options },
 			);
 			if (!prep.ok) throw new Error(prep.error.description);
 			const ignored = await token(
@@ -2463,7 +2701,9 @@ export default (QUnit: QUnit) => {
 					issuerServerMetadata: { authorization_details_types_supported: [] },
 					serverMetadata: { authorization_details_types_supported: supported },
 				});
-				const result = await CredentialIssuerRole.discover(f.ids.issuer, f.anchors, f.options);
+				const result = await CredentialIssuerRole.discover(f.ids.issuer, f.anchors, {
+					...f.options,
+				});
 				t.equal(result.ok, supported?.includes("openid_credential") ?? false);
 				if (!result.ok) t.equal(result.error.code, "invalid_metadata");
 			}
@@ -2479,7 +2719,11 @@ export default (QUnit: QUnit) => {
 					},
 				});
 				t.equal(
-					(await CredentialIssuerRole.discover(f.ids.issuer, f.anchors, f.options)).ok,
+					(
+						await CredentialIssuerRole.discover(f.ids.issuer, f.anchors, {
+							...f.options,
+						})
+					).ok,
 					!mixed,
 				);
 			}
@@ -2494,7 +2738,7 @@ export default (QUnit: QUnit) => {
 						const payload = decodeJwt(jwt);
 						return signEntityStatement(
 							{ ...payload, iat: 5500, exp: 10000 },
-							new JwkSigner(
+							new SigningEntryFixture(
 								payload.iss === f.ids[name] ? f.keys[name].privateKey : f.keys.anchor.privateKey,
 							),
 						);
@@ -2572,7 +2816,11 @@ export default (QUnit: QUnit) => {
 				{ trust_chain: [] },
 			);
 			t.false(
-				(await CredentialIssuerRole.verifyWalletAttestation(malformed, f.anchors, online)).ok,
+				(
+					await CredentialIssuerRole.verifyWalletAttestation(malformed, f.anchors, {
+						...online,
+					})
+				).ok,
 			);
 			t.false((await verify({ ...online, maxChainDepth: 0 })).ok);
 			t.equal(f.requests.length, 0, "malformed and oversized evidence is rejected before fetching");
@@ -2583,7 +2831,11 @@ export default (QUnit: QUnit) => {
 				{ trust_chain: freshProvider },
 			);
 			t.false(
-				(await CredentialIssuerRole.verifyWalletAttestation(wrongSignature, f.anchors, online)).ok,
+				(
+					await CredentialIssuerRole.verifyWalletAttestation(wrongSignature, f.anchors, {
+						...online,
+					})
+				).ok,
 			);
 			t.equal(f.requests.length, 0, "signature rejection does not cause fresh discovery");
 			const malformedStatements = await token(
@@ -2593,8 +2845,11 @@ export default (QUnit: QUnit) => {
 				{ trust_chain: ["not-a-jwt"] },
 			);
 			t.true(
-				(await CredentialIssuerRole.verifyWalletAttestation(malformedStatements, f.anchors, online))
-					.ok,
+				(
+					await CredentialIssuerRole.verifyWalletAttestation(malformedStatements, f.anchors, {
+						...online,
+					})
+				).ok,
 				"unusable statements in a correctly shaped hint allow fresh discovery",
 			);
 			t.ok(f.requests.length > 0);
@@ -2608,7 +2863,7 @@ export default (QUnit: QUnit) => {
 			const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
 				{ client_id: f.requestPayload.client_id, request: jwt },
 				f.anchors,
-				online,
+				{ ...online },
 			);
 			t.true(prepared.ok);
 			if (prepared.ok)
@@ -2645,8 +2900,8 @@ export default (QUnit: QUnit) => {
 						expiresAt: 4000,
 						claims,
 					},
-					new JwkSigner(f.protocol.provider.privateKey),
-					f.options,
+					new SigningEntryFixture(f.protocol.provider.privateKey),
+					{ ...f.options },
 				);
 				t.equal(result.ok, expected, JSON.stringify(claims));
 				if (result.ok)
@@ -2669,7 +2924,7 @@ export default (QUnit: QUnit) => {
 				const auth = await CredentialIssuerRole.authenticateWallet(att, pop, f.anchors, {
 					...f.options,
 					audience: f.ids.server,
-					replayStore: new MemoryReplayStore({ clock: f.clock }),
+					replayStore: new MemoryReplayStore({ engine: testEngine, clock: f.clock }),
 					acceptWallet: () => true,
 				});
 				t.true(auth.ok);
@@ -2681,7 +2936,7 @@ export default (QUnit: QUnit) => {
 				const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
 					{ client_id: f.requestPayload.client_id, request: jwt },
 					f.anchors,
-					f.options,
+					{ ...f.options },
 				);
 				t.true(prepared.ok);
 				if (prepared.ok)
@@ -2704,15 +2959,23 @@ export default (QUnit: QUnit) => {
 					...f.options,
 					audience: f.ids.server,
 					expectedChallenge: challenge,
-					replayStore: new MemoryReplayStore({ clock: f.clock }),
+					replayStore: new MemoryReplayStore({ engine: testEngine, clock: f.clock }),
 					acceptWallet: () => true,
 				};
 				t.equal(
-					(await CredentialIssuerRole.authenticateWallet(att, pop, f.anchors, options)).ok,
+					(
+						await CredentialIssuerRole.authenticateWallet(att, pop, f.anchors, {
+							...options,
+						})
+					).ok,
 					challenge === "challenge",
 				);
 				t.false(
-					(await CredentialIssuerRole.authenticateWallet(att, pop, f.anchors, options)).ok,
+					(
+						await CredentialIssuerRole.authenticateWallet(att, pop, f.anchors, {
+							...options,
+						})
+					).ok,
 					"replay stays rejected",
 				);
 			}
@@ -2726,7 +2989,7 @@ export default (QUnit: QUnit) => {
 			const result = await CredentialVerifierRole.prepareAuthorizationRequest(
 				{ client_id: f.requestPayload.client_id, request: jwt },
 				f.anchors,
-				{ clock: f.clock, httpClient: f.httpClient },
+				{ engine: testEngine, clock: f.clock, httpClient: f.httpClient },
 			);
 			t.false(result.ok);
 			t.equal(f.requests.length, 0);
@@ -2755,7 +3018,7 @@ export default (QUnit: QUnit) => {
 			const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
 				{ client_id: f.requestPayload.client_id },
 				f.anchors,
-				f.options,
+				{ ...f.options },
 			);
 			if (!prepared.ok) throw new Error(prepared.error.description);
 			const result = await CredentialVerifierRole.completeAuthorizationRequest(prepared.value, jwt);
@@ -2775,8 +3038,8 @@ export default (QUnit: QUnit) => {
 			const created = await CredentialVerifierRole.createAuthorizationRequest(
 				f.ids.verifier,
 				{ ...f.requestPayload, dcql_query: query },
-				new JwkSigner(f.protocol.verifier.privateKey),
-				f.options,
+				new SigningEntryFixture(f.protocol.verifier.privateKey),
+				{ ...f.options },
 			);
 			t.false(created.ok);
 		});
@@ -2806,7 +3069,7 @@ export default (QUnit: QUnit) => {
 				const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
 					{ client_id: f.requestPayload.client_id },
 					f.anchors,
-					f.options,
+					{ ...f.options },
 				);
 				if (!prepared.ok) throw new Error(prepared.error.description);
 				const result = await CredentialVerifierRole.completeAuthorizationRequest(
@@ -2858,17 +3121,16 @@ export default (QUnit: QUnit) => {
 			});
 			role.validateMetadata(role.metadata, {
 				entityId: f.ids.issuer,
-				keyProvider: MemoryFederationKeyProvider.fromJWK(f.keys.issuer.privateKey),
+				crypto: FixtureCrypto.fromJWK(f.keys.issuer.privateKey),
+				options: { engine: testEngine },
 			});
 			t.ok(true, "partial publication is accepted");
 			const partial = await walletFederation({
 				issuerMetadata: { credential_response_encryption: response },
 			});
-			const before = await CredentialIssuerRole.discover(
-				partial.ids.issuer,
-				partial.anchors,
-				partial.options,
-			);
+			const before = await CredentialIssuerRole.discover(partial.ids.issuer, partial.anchors, {
+				...partial.options,
+			});
 			t.false(before.ok, "incomplete effective encryption metadata is rejected");
 			const chain = partial.chains.get(partial.ids.issuer)!;
 			const ss = decodeJwt(chain[1]!);
@@ -2877,14 +3139,12 @@ export default (QUnit: QUnit) => {
 					...ss,
 					metadata: { openid_credential_issuer: { credential_request_encryption: supported } },
 				},
-				new JwkSigner(partial.keys.anchor.privateKey),
+				new SigningEntryFixture(partial.keys.anchor.privateKey),
 			);
 			partial.chains.set(partial.ids.issuer, [chain[0]!, completedStatement, chain[2]!]);
-			const after = await CredentialIssuerRole.discover(
-				partial.ids.issuer,
-				partial.anchors,
-				partial.options,
-			);
+			const after = await CredentialIssuerRole.discover(partial.ids.issuer, partial.anchors, {
+				...partial.options,
+			});
 			t.true(after.ok, "superior-supplied request encryption completes effective metadata");
 		});
 		test("state is required only for known non-holder-bound requests outside the DC API", async (t) => {
@@ -2904,8 +3164,8 @@ export default (QUnit: QUnit) => {
 							dcql_query: query,
 							...(state ? { state } : {}),
 						},
-						new JwkSigner(f.protocol.verifier.privateKey),
-						f.options,
+						new SigningEntryFixture(f.protocol.verifier.privateKey),
+						{ ...f.options },
 					);
 					t.equal(result.ok, mode !== "direct_post" || state !== undefined);
 				}
@@ -2915,7 +3175,7 @@ export default (QUnit: QUnit) => {
 					await CredentialVerifierRole.createAuthorizationRequest(
 						f.ids.verifier,
 						{ ...scopeRequest, scope: "identity" },
-						new JwkSigner(f.protocol.verifier.privateKey),
+						new SigningEntryFixture(f.protocol.verifier.privateKey),
 						{ ...f.options, scopeQuery: query },
 					)
 				).ok,
@@ -2925,8 +3185,8 @@ export default (QUnit: QUnit) => {
 					await CredentialVerifierRole.createAuthorizationRequest(
 						f.ids.verifier,
 						{ ...scopeRequest, scope: "identity" },
-						new JwkSigner(f.protocol.verifier.privateKey),
-						f.options,
+						new SigningEntryFixture(f.protocol.verifier.privateKey),
+						{ ...f.options },
 					)
 				).ok,
 				"opaque scope remains an application contract",
@@ -2936,8 +3196,8 @@ export default (QUnit: QUnit) => {
 					await CredentialVerifierRole.createAuthorizationRequest(
 						f.ids.verifier,
 						f.requestPayload,
-						new JwkSigner(f.protocol.verifier.privateKey),
-						f.options,
+						new SigningEntryFixture(f.protocol.verifier.privateKey),
+						{ ...f.options },
 					)
 				).ok,
 				"holder-bound requests keep state optional",
@@ -3053,23 +3313,23 @@ export default (QUnit: QUnit) => {
 				t.equal(checked.error.code, "invalid_request");
 				if (config.error) t.equal(checked.error.description, config.error);
 			}
-			const signer = new JwkSigner(f.protocol.verifier.privateKey);
+			const signer = new SigningEntryFixture(f.protocol.verifier.privateKey);
 			let signatures = 0;
 			let creationCallbacks = 0;
-			const countingSigner: JwtSigner = {
-				alg: signer.alg,
-				kid: signer.kid,
-				signJwt: (...args) => {
-					signatures++;
-					return signer.signJwt(...args);
-				},
-			};
+			const countingSigner: KeyringEntry = instrumentSigningEntry(signer, (...args) => {
+				signatures++;
+				return signer.signJwt(...args);
+			});
 			const options: AuthorizationRequestCreationOptions = {
 				...f.options,
 				scopeQuery: config.scopeQuery,
 				...(config.withChain
-					? { trustChain: f.chains.get(f.ids.verifier)!, trustAnchors: f.anchors }
-					: {}),
+					? {
+							engine: testEngine,
+							trustChain: f.chains.get(f.ids.verifier)!,
+							trustAnchors: f.anchors,
+						}
+					: { engine: testEngine }),
 				httpClient: async () => {
 					throw new Error("Creation must use local inputs and supplied evidence");
 				},
@@ -3084,13 +3344,16 @@ export default (QUnit: QUnit) => {
 			};
 			const instance = new CredentialVerifierRole({
 				trustAnchors: f.anchors,
+				signing: new PurposeBindingsFixture({ authorizationRequestSigner: countingSigner }),
 			});
-			instance.initialize({
-				entityId: f.ids.verifier,
-				keyProvider: MemoryFederationKeyProvider.fromJWK(f.keys.verifier.privateKey),
-			});
+			await instance.initialize(
+				fixtureRoleContext(instance, {
+					entityId: f.ids.verifier,
+					crypto: FixtureCrypto.fromJWK(f.keys.verifier.privateKey),
+				}),
+			);
 			const created = config.instance
-				? await instance.createAuthorizationRequest(payload, countingSigner, options)
+				? await instance.createAuthorizationRequest(payload, options)
 				: await CredentialVerifierRole.createAuthorizationRequest(
 						f.ids.verifier,
 						payload,
@@ -3230,8 +3493,8 @@ export default (QUnit: QUnit) => {
 			const created = await CredentialVerifierRole.createAuthorizationRequest(
 				f.ids.verifier,
 				{ ...f.requestPayload, ...scoped },
-				new JwkSigner(f.protocol.verifier.privateKey),
-				f.options,
+				new SigningEntryFixture(f.protocol.verifier.privateKey),
+				{ ...f.options },
 			);
 			t.true(created.ok, "Scope creation without transactions needs no local mapping");
 		});
@@ -3345,7 +3608,13 @@ export default (QUnit: QUnit) => {
 							verifyAttestation: async ({ attestation: input, keys: resolved }) => {
 								calls++;
 								t.deepEqual(resolved.keys, keys);
-								await compactVerify(input as string, await importJWK(resolved.keys[0]!));
+								await compactVerify(
+									input as string,
+									await importJWK({
+										...resolved.keys[0]!,
+										key_ops: resolved.keys[0]?.key_ops ? [...resolved.keys[0].key_ops] : undefined,
+									}),
+								);
 								return true;
 							},
 						});
@@ -3439,7 +3708,13 @@ export default (QUnit: QUnit) => {
 						verifyAttestation: async ({ attestation: input, keys }) => {
 							calls++;
 							t.deepEqual(keys.keys, [replacement.publicKey]);
-							await compactVerify(input as string, await importJWK(keys.keys[0]!));
+							await compactVerify(
+								input as string,
+								await importJWK({
+									...keys.keys[0]!,
+									key_ops: keys.keys[0]?.key_ops ? [...keys.keys[0].key_ops] : undefined,
+								}),
+							);
 							return true;
 						},
 					});
@@ -3541,7 +3816,11 @@ export default (QUnit: QUnit) => {
 			}
 			t.equal(f.requests.length, 0);
 			t.true(
-				(await WalletProviderRole.discover(f.ids.provider, f.anchors, f.options)).ok,
+				(
+					await WalletProviderRole.discover(f.ids.provider, f.anchors, {
+						...f.options,
+					})
+				).ok,
 				"discovery remains available without published protocol keys",
 			);
 		});
@@ -3658,7 +3937,7 @@ export default (QUnit: QUnit) => {
 								offline: source === "jwks",
 							});
 							t.equal(result.ok, valid, JSON.stringify(result));
-							if (!result.ok) t.true(result.error.description.includes("JWT signature or claims"));
+							if (!result.ok) t.equal(result.error.code, "invalid_request");
 						}
 					}
 				}
@@ -3780,7 +4059,7 @@ export default (QUnit: QUnit) => {
 					const checked = await CredentialVerifierRole.prepareAuthorizationRequest(
 						{ client_id: f.requestPayload.client_id, request },
 						f.anchors,
-						f.options,
+						{ ...f.options },
 					);
 					t.equal(
 						checked.ok,
@@ -4072,15 +4351,15 @@ export default (QUnit: QUnit) => {
 			const signed = await CredentialVerifierRole.createAuthorizationRequest(
 				f.ids.verifier,
 				{ ...f.requestPayload, dcql_query: query },
-				new JwkSigner(f.protocol.verifier.privateKey),
-				f.options,
+				new SigningEntryFixture(f.protocol.verifier.privateKey),
+				{ ...f.options },
 			);
 			t.true(signed.ok, JSON.stringify(signed));
 			if (!signed.ok) return;
 			const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
 				{ client_id: f.requestPayload.client_id },
 				f.anchors,
-				f.options,
+				{ ...f.options },
 			);
 			t.true(prepared.ok);
 			if (!prepared.ok) return;
@@ -4287,22 +4566,27 @@ export default (QUnit: QUnit) => {
 					})
 				).ok,
 			);
-			t.false((await WalletProviderRole.discover(f.ids.issuer, f.anchors, f.options)).ok);
+			t.false(
+				(
+					await WalletProviderRole.discover(f.ids.issuer, f.anchors, {
+						...f.options,
+					})
+				).ok,
+			);
 			const malformed = await walletFederation({
 				providerMetadata: { vp_formats_supported: undefined },
 			});
 			t.false(
 				(
-					await WalletProviderRole.discover(
-						malformed.ids.provider,
-						malformed.anchors,
-						malformed.options,
-					)
+					await WalletProviderRole.discover(malformed.ids.provider, malformed.anchors, {
+						...malformed.options,
+					})
 				).ok,
 			);
 			t.false(
 				(
 					await WalletProviderRole.discover(f.ids.provider, f.anchors, {
+						engine: testEngine,
 						clock: f.clock,
 						httpClient: async () => new Response(null, { status: 404 }),
 					})
@@ -4340,10 +4624,22 @@ export default (QUnit: QUnit) => {
 				f.protocol.provider.privateKey,
 				"oauth-client-attestation+jwt",
 			);
-			t.true((await CredentialIssuerRole.verifyWalletAttestation(jwt, f.anchors, f.options)).ok);
+			t.true(
+				(
+					await CredentialIssuerRole.verifyWalletAttestation(jwt, f.anchors, {
+						...f.options,
+					})
+				).ok,
+			);
 			t.deepEqual(f.requests, ["https://provider.example/protocol-keys"]);
 			f.routes.delete("https://provider.example/protocol-keys");
-			t.false((await CredentialIssuerRole.verifyWalletAttestation(jwt, f.anchors, f.options)).ok);
+			t.false(
+				(
+					await CredentialIssuerRole.verifyWalletAttestation(jwt, f.anchors, {
+						...f.options,
+					})
+				).ok,
+			);
 		});
 		test("discovers all roles with supplied evidence and no local identity", async (t) => {
 			const f = await walletFederation();
@@ -4352,7 +4648,10 @@ export default (QUnit: QUnit) => {
 				[CredentialIssuerRole, "issuer"],
 				[CredentialVerifierRole, "verifier"],
 			] as const) {
-				const result = await Role.discover(f.ids[name], f.anchors, { ...f.options, offline: true });
+				const result = await Role.discover(f.ids[name], f.anchors, {
+					...f.options,
+					offline: true,
+				});
 				t.true(result.ok, JSON.stringify(result));
 				if (result.ok) t.equal(result.value.entityId, f.ids[name]);
 			}
@@ -4361,19 +4660,47 @@ export default (QUnit: QUnit) => {
 		test("discovers through core HTTP resolution and enforces work and offline limits", async (t) => {
 			const f = await walletFederation();
 			const options = { clock: f.clock, httpClient: f.httpClient, clockSkewSeconds: 0 };
-			t.true((await WalletProviderRole.discover(f.ids.provider, f.anchors, options)).ok);
+			t.true(
+				(
+					await WalletProviderRole.discover(f.ids.provider, f.anchors, {
+						...options,
+						engine: testEngine,
+					})
+				).ok,
+			);
 			t.true(f.requests.length > 0);
 			t.false(
 				(
 					await WalletProviderRole.discover(f.ids.provider, f.anchors, {
+						engine: testEngine,
 						...options,
 						maxTotalFetches: 1,
 					})
 				).ok,
 			);
-			t.false((await WalletProviderRole.discover(f.ids.provider, f.anchors, { offline: true })).ok);
-			t.false((await WalletProviderRole.discover("http://invalid.example", f.anchors, options)).ok);
-			t.false((await WalletProviderRole.discover(f.ids.provider, new Map(), f.options)).ok);
+			t.false(
+				(
+					await WalletProviderRole.discover(f.ids.provider, f.anchors, {
+						engine: testEngine,
+						offline: true,
+					})
+				).ok,
+			);
+			t.false(
+				(
+					await WalletProviderRole.discover("http://invalid.example", f.anchors, {
+						...options,
+						engine: testEngine,
+					})
+				).ok,
+			);
+			t.false(
+				(
+					await WalletProviderRole.discover(f.ids.provider, new Map(), {
+						...f.options,
+					})
+				).ok,
+			);
 		});
 		test("validates external authorization-server federation evidence", async (t) => {
 			const f = await walletFederation({
@@ -4492,17 +4819,13 @@ export default (QUnit: QUnit) => {
 	module("wallet / Wallet Attestations", () => {
 		test("bounds signing, cancellation, serialization, and final token size", async (t) => {
 			const f = await walletFederation();
-			const signer = new JwkSigner(f.protocol.provider.privateKey);
+			const signer = new SigningEntryFixture(f.protocol.provider.privateKey);
 			const params = {
 				subject: "wallet",
 				confirmationKey: f.protocol.issuer.publicKey,
 				expiresAt: 4000,
 			};
-			const stalled = {
-				kid: signer.kid,
-				alg: signer.alg,
-				signJwt: () => new Promise<string>(() => {}),
-			};
+			const stalled = instrumentSigningEntry(signer, () => new Promise<string>(() => {}));
 			t.false(
 				(
 					await WalletProviderRole.createWalletAttestation(f.ids.provider, params, stalled, {
@@ -4512,14 +4835,10 @@ export default (QUnit: QUnit) => {
 				).ok,
 			);
 			const controller = new AbortController();
-			const cancelled = {
-				kid: signer.kid,
-				alg: signer.alg,
-				signJwt: async () => {
-					controller.abort();
-					return "unused";
-				},
-			};
+			const cancelled = instrumentSigningEntry(signer, async () => {
+				controller.abort();
+				return "unused";
+			});
 			t.false(
 				(
 					await WalletProviderRole.createWalletAttestation(f.ids.provider, params, cancelled, {
@@ -4534,11 +4853,11 @@ export default (QUnit: QUnit) => {
 						f.ids.provider,
 						{ ...params, claims: { invalid: 1n } },
 						signer,
-						f.options,
+						{ ...f.options },
 					)
 				).ok,
 			);
-			const oversized = { kid: signer.kid, alg: signer.alg, signJwt: async () => "x".repeat(2000) };
+			const oversized = instrumentSigningEntry(signer, async () => "x".repeat(2000));
 			t.false(
 				(
 					await WalletProviderRole.createWalletAttestation(f.ids.provider, params, oversized, {
@@ -4553,7 +4872,11 @@ export default (QUnit: QUnit) => {
 			const { base64url } = await import("jose");
 			const unsigned = `${base64url.encode(JSON.stringify({ typ: "oauth-client-attestation+jwt", alg: "none" }))}.${base64url.encode(JSON.stringify(attestation(f)))}.AA`;
 			t.false(
-				(await CredentialIssuerRole.verifyWalletAttestation(unsigned, f.anchors, f.options)).ok,
+				(
+					await CredentialIssuerRole.verifyWalletAttestation(unsigned, f.anchors, {
+						...f.options,
+					})
+				).ok,
 			);
 			const unknown = await token(
 				attestation(f),
@@ -4562,7 +4885,11 @@ export default (QUnit: QUnit) => {
 				{ kid: "unknown" },
 			);
 			t.false(
-				(await CredentialIssuerRole.verifyWalletAttestation(unknown, f.anchors, f.options)).ok,
+				(
+					await CredentialIssuerRole.verifyWalletAttestation(unknown, f.anchors, {
+						...f.options,
+					})
+				).ok,
 			);
 			for (const change of [{ use: "enc" }, { key_ops: ["encrypt"] }, { alg: "ES384" }]) {
 				const constrained = await walletFederation({
@@ -4575,27 +4902,21 @@ export default (QUnit: QUnit) => {
 				);
 				t.false(
 					(
-						await CredentialIssuerRole.verifyWalletAttestation(
-							jwt,
-							constrained.anchors,
-							constrained.options,
-						)
+						await CredentialIssuerRole.verifyWalletAttestation(jwt, constrained.anchors, {
+							...constrained.options,
+						})
 					).ok,
 				);
 			}
 		});
 		test("attestation creation rejects unsupported confirmation key types before signing", async (t) => {
 			const pair = await generateSigningKey();
-			const delegate = new JwkSigner(pair.privateKey);
+			const delegate = new SigningEntryFixture(pair.privateKey);
 			let signatures = 0;
-			const signer: JwtSigner = {
-				alg: delegate.alg,
-				kid: delegate.kid,
-				signJwt: async (payload, header) => {
-					signatures++;
-					return delegate.signJwt(payload, header);
-				},
-			};
+			const signer: KeyringEntry = instrumentSigningEntry(delegate, async (payload, header) => {
+				signatures++;
+				return delegate.signJwt(payload, header);
+			});
 			for (const confirmationKey of [
 				{ kty: "oct" },
 				{ kty: "oct", k: "secret" },
@@ -4606,7 +4927,7 @@ export default (QUnit: QUnit) => {
 					"https://provider.example",
 					{ subject: "wallet", confirmationKey, expiresAt: 4000 },
 					signer,
-					{ clock: { now: () => 1500 } },
+					{ engine: testEngine, clock: { now: () => 1500 } },
 				);
 				t.false(result.ok, JSON.stringify(confirmationKey.kty));
 			}
@@ -4617,7 +4938,7 @@ export default (QUnit: QUnit) => {
 				"https://provider.example",
 				{ subject: "wallet", confirmationKey, expiresAt: 4000 },
 				signer,
-				{ clock: { now: () => 1500 } },
+				{ engine: testEngine, clock: { now: () => 1500 } },
 			);
 			t.true(valid.ok);
 			t.equal(signatures, 1);
@@ -4625,7 +4946,7 @@ export default (QUnit: QUnit) => {
 		});
 		test("validates chains when attaching them and rejects invalid signing inputs", async (t) => {
 			const f = await walletFederation();
-			const signer = new JwkSigner(f.protocol.provider.privateKey);
+			const signer = new SigningEntryFixture(f.protocol.provider.privateKey);
 			const params = {
 				subject: "wallet",
 				confirmationKey: f.protocol.issuer.publicKey,
@@ -4640,13 +4961,14 @@ export default (QUnit: QUnit) => {
 				f.ids.provider,
 				params,
 				signer,
-				options,
+				{ ...options },
 			);
 			t.true(signed.ok, JSON.stringify(signed));
 			if (signed.ok)
 				t.true(
 					(
 						await CredentialIssuerRole.verifyWalletAttestation(signed.value, f.anchors, {
+							engine: testEngine,
 							clock: f.clock,
 							offline: true,
 						})
@@ -4666,7 +4988,7 @@ export default (QUnit: QUnit) => {
 						"http://invalid.example",
 						params,
 						signer,
-						f.options,
+						{ ...f.options },
 					)
 				).ok,
 			);
@@ -4676,7 +4998,7 @@ export default (QUnit: QUnit) => {
 						f.ids.provider,
 						{ ...params, expiresAt: 1400 },
 						signer,
-						f.options,
+						{ ...f.options },
 					)
 				).ok,
 			);
@@ -4686,7 +5008,7 @@ export default (QUnit: QUnit) => {
 						f.ids.provider,
 						{ ...params, confirmationKey: f.protocol.issuer.privateKey },
 						signer,
-						f.options,
+						{ ...f.options },
 					)
 				).ok,
 			);
@@ -4695,14 +5017,10 @@ export default (QUnit: QUnit) => {
 					await WalletProviderRole.createWalletAttestation(
 						f.ids.provider,
 						params,
-						{
-							kid: signer.kid,
-							alg: signer.alg,
-							signJwt: async () => {
-								throw new Error("signer unavailable");
-							},
-						},
-						f.options,
+						instrumentSigningEntry(signer, async () => {
+							throw new Error("signer unavailable");
+						}),
+						{ ...f.options },
 					)
 				).ok,
 			);
@@ -4715,8 +5033,11 @@ export default (QUnit: QUnit) => {
 				).ok,
 			);
 			t.false(
-				(await WalletProviderRole.createWalletAttestation(f.ids.issuer, params, signer, options))
-					.ok,
+				(
+					await WalletProviderRole.createWalletAttestation(f.ids.issuer, params, signer, {
+						...options,
+					})
+				).ok,
 			);
 		});
 		test("rejects malformed chains, missing protocol keys, and unavailable offline keys", async (t) => {
@@ -4747,7 +5068,13 @@ export default (QUnit: QUnit) => {
 				"oauth-client-attestation+jwt",
 				{ trust_chain: 42 },
 			);
-			t.false((await CredentialIssuerRole.verifyWalletAttestation(jwt, f.anchors, f.options)).ok);
+			t.false(
+				(
+					await CredentialIssuerRole.verifyWalletAttestation(jwt, f.anchors, {
+						...f.options,
+					})
+				).ok,
+			);
 			t.false(
 				(
 					await WalletProviderRole.discover(f.ids.provider, f.anchors, {
@@ -4787,10 +5114,16 @@ export default (QUnit: QUnit) => {
 				audience: f.ids.server,
 				clientId: "shared-wallet-client",
 				expectedChallenge: "expected",
-				replayStore: new MemoryReplayStore({ clock: f.clock }),
+				replayStore: new MemoryReplayStore({ engine: testEngine, clock: f.clock }),
 				acceptWallet: () => true,
 			};
-			t.true((await CredentialIssuerRole.authenticateWallet(jwt, pop, f.anchors, options)).ok);
+			t.true(
+				(
+					await CredentialIssuerRole.authenticateWallet(jwt, pop, f.anchors, {
+						...options,
+					})
+				).ok,
+			);
 			for (const change of [
 				{ clientId: "different" },
 				{ audience: "invalid-url" },
@@ -4811,7 +5144,11 @@ export default (QUnit: QUnit) => {
 				"oauth-client-attestation-pop+jwt",
 			);
 			t.false(
-				(await CredentialIssuerRole.authenticateWallet(jwt, wrongKey, f.anchors, options)).ok,
+				(
+					await CredentialIssuerRole.authenticateWallet(jwt, wrongKey, f.anchors, {
+						...options,
+					})
+				).ok,
 			);
 		});
 		test("bounds stalled replay storage and rechecks expiry after storage completes", async (t) => {
@@ -4860,8 +5197,8 @@ export default (QUnit: QUnit) => {
 					expiresAt: 4000,
 					claims: { wallet_name: "Example", custom: true },
 				},
-				new JwkSigner(f.protocol.provider.privateKey),
-				f.options,
+				new SigningEntryFixture(f.protocol.provider.privateKey),
+				{ ...f.options },
 			);
 			t.true(created.ok);
 			if (!created.ok) return;
@@ -4890,12 +5227,16 @@ export default (QUnit: QUnit) => {
 			const options = {
 				...f.options,
 				audience: f.ids.server,
-				replayStore: new MemoryReplayStore({ clock: f.clock }),
+				replayStore: new MemoryReplayStore({ engine: testEngine, clock: f.clock }),
 				acceptWallet: () => true,
 			};
 			const results = await Promise.all([
-				CredentialIssuerRole.authenticateWallet(jwt, pop, f.anchors, options),
-				CredentialIssuerRole.authenticateWallet(jwt, pop, f.anchors, options),
+				CredentialIssuerRole.authenticateWallet(jwt, pop, f.anchors, {
+					...options,
+				}),
+				CredentialIssuerRole.authenticateWallet(jwt, pop, f.anchors, {
+					...options,
+				}),
 			]);
 			t.equal(results.filter((result) => result.ok).length, 1);
 		});
@@ -4925,12 +5266,16 @@ export default (QUnit: QUnit) => {
 						await CredentialIssuerRole.verifyWalletAttestation(
 							await token(claims, key, typ),
 							f.anchors,
-							f.options,
+							{ ...f.options },
 						)
 					).ok,
 				);
 			t.false(
-				(await CredentialIssuerRole.verifyWalletAttestation("not-a-jwt", f.anchors, f.options)).ok,
+				(
+					await CredentialIssuerRole.verifyWalletAttestation("not-a-jwt", f.anchors, {
+						...f.options,
+					})
+				).ok,
 			);
 			const jwt = await token(
 				attestation(f),
@@ -4975,7 +5320,7 @@ export default (QUnit: QUnit) => {
 							...f.options,
 							audience: f.ids.server,
 							expectedChallenge: "expected",
-							replayStore: new MemoryReplayStore({ clock: f.clock }),
+							replayStore: new MemoryReplayStore({ engine: testEngine, clock: f.clock }),
 							acceptWallet: () => true,
 						})
 					).ok,
@@ -5054,10 +5399,16 @@ export default (QUnit: QUnit) => {
 			const options = {
 				...f.options,
 				audience: f.ids.server,
-				replayStore: new MemoryReplayStore({ clock: f.clock }),
+				replayStore: new MemoryReplayStore({ engine: testEngine, clock: f.clock }),
 				acceptWallet: () => true,
 			};
-			t.false((await CredentialIssuerRole.authenticateWallet(jwt, pop, f.anchors, options)).ok);
+			t.false(
+				(
+					await CredentialIssuerRole.authenticateWallet(jwt, pop, f.anchors, {
+						...options,
+					})
+				).ok,
+			);
 			t.true(
 				(
 					await CredentialIssuerRole.authenticateWallet(jwt, pop, f.anchors, {
@@ -5090,7 +5441,7 @@ export default (QUnit: QUnit) => {
 			const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
 				{ client_id: f.requestPayload.client_id },
 				f.anchors,
-				f.options,
+				{ ...f.options },
 			);
 			t.true(prepared.ok);
 			if (!prepared.ok) return;
@@ -5116,7 +5467,7 @@ export default (QUnit: QUnit) => {
 								'"SIGNED_QUERY"',
 								queryJson,
 							);
-					const signer = new JwkSigner(f.protocol.verifier.privateKey);
+					const signer = new SigningEntryFixture(f.protocol.verifier.privateKey);
 					const jwt = await signer.signJwt(new TextEncoder().encode(payload), {
 						alg: signer.alg,
 						kid: signer.kid,
@@ -5148,7 +5499,7 @@ export default (QUnit: QUnit) => {
 			const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
 				{ client_id: f.requestPayload.client_id },
 				f.anchors,
-				f.options,
+				{ ...f.options },
 			);
 			t.true(prepared.ok);
 			if (!prepared.ok) return;
@@ -5354,14 +5705,14 @@ export default (QUnit: QUnit) => {
 			const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
 				{ client_id: f.requestPayload.client_id },
 				f.anchors,
-				f.options,
+				{ ...f.options },
 			);
 			if (!prepared.ok) {
 				t.true(prepared.ok);
 				return;
 			}
 			const payload = JSON.stringify(f.requestPayload).replace('"exp":2000', '"exp":1e309');
-			const jwt = await new JwkSigner(f.protocol.verifier.privateKey).signJwt(
+			const jwt = await new SigningEntryFixture(f.protocol.verifier.privateKey).signJwt(
 				new TextEncoder().encode(payload),
 				{ typ: "oauth-authz-req+jwt", alg: "ES256" },
 			);
@@ -5381,7 +5732,7 @@ export default (QUnit: QUnit) => {
 			const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
 				{ client_id: f.requestPayload.client_id },
 				f.anchors,
-				f.options,
+				{ ...f.options },
 			);
 			if (!prepared.ok) {
 				t.true(prepared.ok);
@@ -5412,7 +5763,7 @@ export default (QUnit: QUnit) => {
 			const keyB = await generateSigningKey();
 			const leafEc = await signEntityStatement(
 				{ ...leaf.value.payload, authority_hints: [f.ids.anchor, anchorB] },
-				new JwkSigner(f.keys.verifier.privateKey),
+				new SigningEntryFixture(f.keys.verifier.privateKey),
 			);
 			const statementB = await signEntityStatement(
 				{
@@ -5422,7 +5773,7 @@ export default (QUnit: QUnit) => {
 					exp: 5000,
 					jwks: { keys: [f.keys.verifier.publicKey] },
 				},
-				new JwkSigner(keyB.privateKey),
+				new SigningEntryFixture(keyB.privateKey),
 			);
 			const configurationB = await signEntityStatement(
 				{
@@ -5438,7 +5789,7 @@ export default (QUnit: QUnit) => {
 						},
 					},
 				},
-				new JwkSigner(keyB.privateKey),
+				new SigningEntryFixture(keyB.privateKey),
 			);
 			const chainA = [leafEc, ...original.slice(1)];
 			const chainB = [leafEc, statementB, configurationB];
@@ -5464,24 +5815,29 @@ export default (QUnit: QUnit) => {
 				},
 			};
 			for (const chain of [chainA, chainB]) {
-				const validated = await validateTrustChain(chain, localPins, localOptions);
+				const validated = await validateTrustChain(chain, localPins, {
+					...localOptions,
+					engine: testEngine,
+				});
 				t.true(validated.valid, JSON.stringify(validated.errors));
 			}
-			const instance = new CredentialVerifierRole({ trustAnchors: localPins });
-			instance.initialize({
-				entityId: f.ids.verifier,
-				keyProvider: MemoryFederationKeyProvider.fromJWK(f.keys.verifier.privateKey),
-			});
-			const signer = new JwkSigner(f.protocol.verifier.privateKey);
+
+			const signer = new SigningEntryFixture(f.protocol.verifier.privateKey);
 			let signatures = 0;
-			const countingSigner: JwtSigner = {
-				alg: signer.alg,
-				kid: signer.kid,
-				signJwt: (...args) => {
-					signatures++;
-					return signer.signJwt(...args);
-				},
-			};
+			const countingSigner: KeyringEntry = instrumentSigningEntry(signer, (...args) => {
+				signatures++;
+				return signer.signJwt(...args);
+			});
+			const instance = new CredentialVerifierRole({
+				trustAnchors: localPins,
+				signing: new PurposeBindingsFixture({ authorizationRequestSigner: countingSigner }),
+			});
+			await instance.initialize(
+				fixtureRoleContext(instance, {
+					entityId: f.ids.verifier,
+					crypto: FixtureCrypto.fromJWK(f.keys.verifier.privateKey),
+				}),
+			);
 			for (const useInstance of [false, true]) {
 				for (const scenario of [
 					{
@@ -5506,20 +5862,20 @@ export default (QUnit: QUnit) => {
 					};
 					if (useInstance && !scenario.pins.size) {
 						// Instance methods reject missing anchor configuration synchronously.
-						t.throws(
-							() => instance.createAuthorizationRequest(f.requestPayload, countingSigner, options),
+						await t.rejects(
+							(() => instance.createAuthorizationRequest(f.requestPayload, options))(),
 							/Pinned trust anchors are required/,
 						);
 						t.equal(signatures, 0);
 						continue;
 					}
 					const created = useInstance
-						? await instance.createAuthorizationRequest(f.requestPayload, countingSigner, options)
+						? await instance.createAuthorizationRequest(f.requestPayload, options)
 						: await CredentialVerifierRole.createAuthorizationRequest(
 								f.ids.verifier,
 								f.requestPayload,
 								countingSigner,
-								options,
+								{ ...options, engine: testEngine },
 							);
 					t.equal(
 						created.ok,
@@ -5533,7 +5889,7 @@ export default (QUnit: QUnit) => {
 					const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
 						{ client_id: f.requestPayload.client_id, request: created.value },
 						sharedPins,
-						localOptions,
+						{ ...localOptions, engine: testEngine },
 					);
 					t.true(prepared.ok, JSON.stringify(prepared));
 					if (!prepared.ok) continue;
@@ -5549,7 +5905,7 @@ export default (QUnit: QUnit) => {
 		});
 		test("creates chain-carrying requests with contextual policy without weakening chain validation", async (t) => {
 			const f = await walletFederation({ policy: { dcql_queries: { essential: true } } });
-			const signer = new JwkSigner(f.protocol.verifier.privateKey);
+			const signer = new SigningEntryFixture(f.protocol.verifier.privateKey);
 			const options = {
 				...f.options,
 				trustChain: f.chains.get(f.ids.verifier)!,
@@ -5558,12 +5914,9 @@ export default (QUnit: QUnit) => {
 			const request = { ...f.requestPayload, client_metadata: { dcql_query: walletQuery } };
 			t.true(
 				(
-					await CredentialVerifierRole.createAuthorizationRequest(
-						f.ids.verifier,
-						request,
-						signer,
-						options,
-					)
+					await CredentialVerifierRole.createAuthorizationRequest(f.ids.verifier, request, signer, {
+						...options,
+					})
 				).ok,
 			);
 			t.false(
@@ -5572,7 +5925,7 @@ export default (QUnit: QUnit) => {
 						f.ids.verifier,
 						f.requestPayload,
 						signer,
-						options,
+						{ ...options },
 					)
 				).ok,
 			);
@@ -5582,7 +5935,7 @@ export default (QUnit: QUnit) => {
 						f.ids.verifier,
 						{ ...request, client_metadata: { dcql_query: {} } },
 						signer,
-						options,
+						{ ...options },
 					)
 				).ok,
 			);
@@ -5608,7 +5961,7 @@ export default (QUnit: QUnit) => {
 						"http://bad.example",
 						request,
 						signer,
-						options,
+						{ ...options },
 					)
 				).ok,
 			);
@@ -5624,7 +5977,7 @@ export default (QUnit: QUnit) => {
 						await CredentialVerifierRole.prepareAuthorizationRequest(
 							{ client_id: f.requestPayload.client_id },
 							f.anchors,
-							f.options,
+							{ ...f.options },
 						)
 					).ok,
 				);
@@ -5635,14 +5988,14 @@ export default (QUnit: QUnit) => {
 					await CredentialVerifierRole.prepareAuthorizationRequest(
 						{ client_id: f.requestPayload.client_id },
 						f.anchors,
-						{ offline: true },
+						{ engine: testEngine, offline: true },
 					)
 				).ok,
 			);
 		});
 		test("rejects malformed query creation and expiry during query authorization", async (t) => {
 			const f = await walletFederation();
-			const signer = new JwkSigner(f.protocol.verifier.privateKey);
+			const signer = new SigningEntryFixture(f.protocol.verifier.privateKey);
 			for (const change of [
 				{ nonce: undefined },
 				{ dcql_query: undefined },
@@ -5655,7 +6008,7 @@ export default (QUnit: QUnit) => {
 							f.ids.verifier,
 							{ ...f.requestPayload, ...change },
 							signer,
-							f.options,
+							{ ...f.options },
 						)
 					).ok,
 				);
@@ -5683,21 +6036,20 @@ export default (QUnit: QUnit) => {
 		});
 		test("rejects invalid response parameters before signing and in independently signed requests", async (t) => {
 			const f = await walletFederation();
-			const signer = new JwkSigner(f.protocol.verifier.privateKey);
+			const signer = new SigningEntryFixture(f.protocol.verifier.privateKey);
 			let signatures = 0;
 			let requests = 0;
-			const countingSigner = {
-				alg: signer.alg,
-				kid: signer.kid,
-				signJwt: (...args: Parameters<typeof signer.signJwt>) => {
+			const countingSigner = instrumentSigningEntry(
+				signer,
+				(...args: [payload: Uint8Array, header: Readonly<Record<string, unknown>>]) => {
 					signatures++;
 					return signer.signJwt(...args);
 				},
-			};
+			);
 			const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
 				{ client_id: f.requestPayload.client_id },
 				f.anchors,
-				f.options,
+				{ ...f.options },
 			);
 			t.true(prepared.ok);
 			if (!prepared.ok) return;
@@ -5793,11 +6145,11 @@ export default (QUnit: QUnit) => {
 
 		test("response parameter checks preserve supported modes, exact endpoints, and later redirects", async (t) => {
 			const f = await walletFederation();
-			const signer = new JwkSigner(f.protocol.verifier.privateKey);
+			const signer = new SigningEntryFixture(f.protocol.verifier.privateKey);
 			const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
 				{ client_id: f.requestPayload.client_id },
 				f.anchors,
-				f.options,
+				{ ...f.options },
 			);
 			t.true(prepared.ok);
 			if (!prepared.ok) return;
@@ -5823,6 +6175,7 @@ export default (QUnit: QUnit) => {
 					payload,
 					signer,
 					{
+						engine: testEngine,
 						clock: f.clock,
 						httpClient: async () => {
 							throw new Error("Unexpected discovery");
@@ -5864,7 +6217,7 @@ export default (QUnit: QUnit) => {
 					f.ids.verifier,
 					{ ...f.requestPayload, ...change },
 					signer,
-					f.options,
+					{ ...f.options },
 				);
 				t.true(created.ok, "creation validates syntax without claiming endpoint authorization");
 				if (!created.ok) continue;
@@ -5894,7 +6247,7 @@ export default (QUnit: QUnit) => {
 				const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
 					{ client_id: f.requestPayload.client_id, request_uri: requestUri },
 					f.anchors,
-					f.options,
+					{ ...f.options },
 				);
 				t.true(prepared.ok, JSON.stringify(prepared));
 				if (!prepared.ok) continue;
@@ -5902,8 +6255,8 @@ export default (QUnit: QUnit) => {
 				const created = await CredentialVerifierRole.createAuthorizationRequest(
 					f.ids.verifier,
 					{ ...f.requestPayload, response_uri: responseUri },
-					new JwkSigner(f.protocol.verifier.privateKey),
-					f.options,
+					new SigningEntryFixture(f.protocol.verifier.privateKey),
+					{ ...f.options },
 				);
 				t.true(created.ok);
 				if (!created.ok) continue;
@@ -5952,7 +6305,7 @@ export default (QUnit: QUnit) => {
 				const result = await CredentialVerifierRole.prepareAuthorizationRequest(
 					{ client_id: f.requestPayload.client_id },
 					f.anchors,
-					f.options,
+					{ ...f.options },
 				);
 				t.false(result.ok, "superior overrides receive endpoint validation");
 				if (!result.ok) {
@@ -5969,8 +6322,9 @@ export default (QUnit: QUnit) => {
 			const created = await CredentialVerifierRole.createAuthorizationRequest(
 				f.ids.verifier,
 				f.requestPayload,
-				new JwkSigner(f.protocol.verifier.privateKey),
+				new SigningEntryFixture(f.protocol.verifier.privateKey),
 				{
+					engine: testEngine,
 					clock: f.clock,
 					trustChain: f.chains.get(f.ids.verifier),
 					trustAnchors: f.anchors,
@@ -5982,7 +6336,7 @@ export default (QUnit: QUnit) => {
 			const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
 				{ client_id: f.requestPayload.client_id, request: created.value },
 				f.anchors,
-				{ clock: f.clock, offline: true },
+				{ engine: testEngine, clock: f.clock, offline: true },
 			);
 			t.true(prepared.ok, JSON.stringify(prepared));
 			if (!prepared.ok) return;
@@ -6146,7 +6500,7 @@ export default (QUnit: QUnit) => {
 					request_uri_method: "post",
 				},
 				f.anchors,
-				f.options,
+				{ ...f.options },
 			);
 			t.true(prepared.ok, JSON.stringify(prepared));
 			if (!prepared.ok) return;
@@ -6191,8 +6545,11 @@ export default (QUnit: QUnit) => {
 				},
 			])
 				t.false(
-					(await CredentialVerifierRole.prepareAuthorizationRequest(input, f.anchors, f.options))
-						.ok,
+					(
+						await CredentialVerifierRole.prepareAuthorizationRequest(input, f.anchors, {
+							...f.options,
+						})
+					).ok,
 				);
 			t.equal(f.requests.length, 0);
 		});
@@ -6244,7 +6601,7 @@ export default (QUnit: QUnit) => {
 			const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
 				{ client_id: f.requestPayload.client_id },
 				f.anchors,
-				f.options,
+				{ ...f.options },
 			);
 			t.true(prepared.ok, JSON.stringify(prepared));
 			if (!prepared.ok) return;
@@ -6426,7 +6783,7 @@ export default (QUnit: QUnit) => {
 			const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
 				{ client_id: f.requestPayload.client_id },
 				f.anchors,
-				f.options,
+				{ ...f.options },
 			);
 			if (!prepared.ok) {
 				t.true(prepared.ok, JSON.stringify(prepared));
@@ -6464,7 +6821,7 @@ export default (QUnit: QUnit) => {
 			const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
 				{ client_id: f.requestPayload.client_id },
 				f.anchors,
-				options,
+				{ ...options },
 			);
 			t.true(prepared.ok, JSON.stringify(prepared));
 			if (prepared.ok) {
@@ -6489,7 +6846,7 @@ export default (QUnit: QUnit) => {
 			const withOverride = await CredentialVerifierRole.prepareAuthorizationRequest(
 				{ client_id: retained.requestPayload.client_id },
 				retained.anchors,
-				retained.options,
+				{ ...retained.options },
 			);
 			t.true(withOverride.ok);
 			if (!withOverride.ok) return;

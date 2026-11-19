@@ -11,12 +11,12 @@ import {
 	fetchSubordinateEvents,
 	fetchSubordinateStatement,
 	InternalErrorCode,
-	JwkSigner,
 	MediaType,
 	signEntityStatement,
 } from "@oidfed/core";
 import express from "express";
 import { describe, expect, it } from "vitest";
+import { SigningEntryFixture, testEngine } from "../../tap/fixtures/software-crypto.js";
 import { getAuthorityEntity } from "../helpers/launcher.js";
 import { useFederation } from "../helpers/lifecycle.js";
 import { singleAnchorTopology } from "../topologies/single-anchor.js";
@@ -108,7 +108,10 @@ describe("Subordinate Events over HTTPS", () => {
 						const result = await fetchSubordinateEvents(url.toString(), subject, {
 							issuer,
 							issuerJwks: { keys: [authority.keys.public] },
-							...(authenticated ? { clientAssertion: "synthetic-assertion" } : {}),
+							...(authenticated
+								? { clientAssertion: "synthetic-assertion", engine: testEngine }
+								: { engine: testEngine }),
+							engine: testEngine,
 						});
 						expect(result).toMatchObject({
 							ok: false,
@@ -123,7 +126,11 @@ describe("Subordinate Events over HTTPS", () => {
 					}
 				}
 			}
-			const listing = await fetchExtendedSubordinatesList(`${redirectOrigin}/legacy-list`);
+			const listing = await fetchExtendedSubordinatesList(
+				`${redirectOrigin}/legacy-list`,
+				{},
+				{ engine: testEngine },
+			);
 			expect(listing).toMatchObject({
 				ok: false,
 				error: {
@@ -131,7 +138,9 @@ describe("Subordinate Events over HTTPS", () => {
 					description: expect.stringContaining("HTTP 307"),
 				},
 			});
-			const statement = await fetchSubordinateStatement(`${redirectOrigin}/legacy-fetch`, subject);
+			const statement = await fetchSubordinateStatement(`${redirectOrigin}/legacy-fetch`, subject, {
+				engine: testEngine,
+			});
 			expect(statement).toMatchObject({
 				ok: false,
 				error: {
@@ -158,6 +167,7 @@ describe("Subordinate Events over HTTPS", () => {
 		const result = await fetchSubordinateEvents(endpoint, subject, {
 			issuer,
 			issuerJwks: { keys: [authority.keys.public] },
+			engine: testEngine,
 		});
 		expect(result.ok).toBe(true);
 		if (!result.ok) throw new Error(result.error.description);
@@ -209,15 +219,17 @@ setGlobalDispatcher(new Agent({ connect: { lookup(_host, _options, callback) { c
 		const endpoint = `https://ta.ofed.test:${server.port}/history?version=1`;
 		const options = { issuer, issuerJwks: { keys: [authority.keys.public] } };
 		await authority.server.revokeSubordinate(subject);
-		const result = await fetchSubordinateEvents(endpoint, subject, options);
+		const result = await fetchSubordinateEvents(endpoint, subject, {
+			...options,
+			engine: testEngine,
+		});
 		expect(result.ok).toBe(true);
 		if (result.ok)
 			expect(result.value.federation_registration_events.at(-1)?.event).toBe("revocation");
-		const missing = await fetchSubordinateEvents(
-			endpoint,
-			entityId("https://unknown.example"),
-			options,
-		);
+		const missing = await fetchSubordinateEvents(endpoint, entityId("https://unknown.example"), {
+			...options,
+			engine: testEngine,
+		});
 		expect(missing.ok).toBe(false);
 		if (!missing.ok) expect(missing.error.code).toBe("not_found");
 	});
@@ -240,7 +252,7 @@ setGlobalDispatcher(new Agent({ connect: { lookup(_host, _options, callback) { c
 				exp: now + 60,
 				jti: crypto.randomUUID(),
 			},
-			new JwkSigner(client.keys.signing),
+			new SigningEntryFixture(client.keys.signing),
 			{ typ: "JWT" },
 		);
 		const result = await fetchSubordinateEvents(
@@ -250,6 +262,7 @@ setGlobalDispatcher(new Agent({ connect: { lookup(_host, _options, callback) { c
 				issuer,
 				issuerJwks: { keys: [authority.keys.public] },
 				clientAssertion: assertion,
+				engine: testEngine,
 			},
 		);
 		expect(result.ok).toBe(true);

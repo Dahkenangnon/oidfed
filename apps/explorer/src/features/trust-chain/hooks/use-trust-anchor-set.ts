@@ -7,6 +7,7 @@ import {
 } from "@oidfed/core";
 import { useEffect, useState } from "react";
 import { useSettings } from "@/hooks/use-settings";
+import { engine } from "../../../lib/crypto.js";
 
 interface FailedAnchor {
 	readonly entityId: string;
@@ -70,6 +71,7 @@ export function useTrustAnchorSet(): UseTrustAnchorSetResult {
 				const ecResult = await fetchEntityConfiguration(validated.value, {
 					httpTimeoutMs: settings.httpTimeoutMs,
 					signal: controller.signal,
+					engine: engine,
 				});
 				if (!ecResult.ok) {
 					failed.push({ entityId: ta.entityId, reason: "fetch-failed" });

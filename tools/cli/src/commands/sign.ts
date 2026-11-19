@@ -1,18 +1,17 @@
 import {
+	DEFAULT_ALLOWED_ALGORITHMS,
 	err,
 	FederationErrorCode,
 	federationError,
 	InternalErrorCode,
 	type JWK,
-	JwkSigner,
 	ok,
 	type Result,
-	SUPPORTED_ALGORITHMS,
-	type SupportedAlgorithm,
 	signEntityStatement,
 } from "@oidfed/core";
 import type { Command } from "commander";
 import type { OutputFormatter } from "../output/index.js";
+import { softwareEntry } from "../util/crypto.js";
 import type { Logger } from "../util/logger.js";
 
 export interface SignDeps {
@@ -68,18 +67,18 @@ export async function handler(args: SignArgs, deps: SignDeps): Promise<Result<st
 	try {
 		if (
 			args.algorithm !== undefined &&
-			!(SUPPORTED_ALGORITHMS as readonly string[]).includes(args.algorithm)
+			!(DEFAULT_ALLOWED_ALGORITHMS as readonly string[]).includes(args.algorithm)
 		) {
 			return err(
 				federationError(
 					FederationErrorCode.InvalidRequest,
-					`Unsupported algorithm: ${args.algorithm}. Supported: ${SUPPORTED_ALGORITHMS.join(", ")}`,
+					`Unsupported algorithm: ${args.algorithm}. Supported: ${DEFAULT_ALLOWED_ALGORITHMS.join(", ")}`,
 				),
 			);
 		}
-		const signer = new JwkSigner(
+		const signer = await softwareEntry(
 			privateKey as JWK,
-			args.algorithm ? { alg: args.algorithm as SupportedAlgorithm } : undefined,
+			args.algorithm ?? (privateKey.alg as string),
 		);
 		const jwt = await signEntityStatement(payload, signer);
 		return ok(jwt);

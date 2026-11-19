@@ -7,6 +7,7 @@ import {
 } from "@oidfed/core";
 import type { Command } from "commander";
 import type { OutputFormatter } from "../output/index.js";
+import { engine } from "../util/crypto.js";
 import { discoverEndpoint } from "../util/discover-endpoint.js";
 import { parseEntityIdOrError } from "../util/entity-id.js";
 import type { Logger } from "../util/logger.js";
@@ -50,7 +51,10 @@ export async function handler(args: ListArgs, deps: ListDeps): Promise<Result<st
 	if (args.intermediate !== undefined) filter.intermediate = args.intermediate;
 
 	deps.logger.info(`Fetching subordinate list from ${endpoint}`);
-	const result = await fetchListSubordinates(endpoint, filter, { httpClient: deps.httpClient });
+	const result = await fetchListSubordinates(endpoint, filter, {
+		httpClient: deps.httpClient,
+		engine: engine,
+	});
 	if (!result.ok) return result;
 
 	return ok(deps.formatter.format(result.value));

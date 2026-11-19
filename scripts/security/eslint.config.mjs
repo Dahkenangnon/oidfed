@@ -44,4 +44,10 @@ export default [
 			"jsdoc/check-tag-names": ["error", { definedTags: ["defaultValue"] }],
 		},
 	},
+	{
+		files: ["packages/{core,authority,leaf,oidc,wallet}/src/**/*.ts"],
+		languageOptions: { parser: tseslint.parser },
+		plugins: { protocol },
+		rules: { "protocol/no-host-crypto-globals": "error" },
+	},
 ];

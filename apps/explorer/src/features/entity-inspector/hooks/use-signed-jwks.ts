@@ -1,6 +1,7 @@
 import type { JWKSet } from "@oidfed/core";
 import { verifySignedJwkSet } from "@oidfed/core";
 import { useCallback, useRef, useState } from "react";
+import { engine } from "../../../lib/crypto.js";
 
 interface UseSignedJwksResult {
 	readonly keys: readonly Record<string, unknown>[] | null;
@@ -44,7 +45,7 @@ export function useSignedJwks(
 					{
 						keys: issuerJwks.keys as JWKSet["keys"],
 					},
-					{ expectedIssuer, expectedOwner: expectedIssuer },
+					{ expectedIssuer, expectedOwner: expectedIssuer, engine: engine },
 				);
 				if (controller.signal.aborted) return;
 				if (result.ok) {

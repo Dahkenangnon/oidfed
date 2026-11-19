@@ -6,6 +6,7 @@ import {
 	validateTrustChain,
 } from "@oidfed/core";
 import { useEffect, useState } from "react";
+import { engine } from "../../../lib/crypto.js";
 
 export interface ValidatedChainDetails {
 	readonly valid: boolean;
@@ -38,7 +39,10 @@ export function useChainValidation(
 		setLoading(true);
 		setError(null);
 
-		validateTrustChain([...selectedChain.statements], trustAnchorSet, { signal: controller.signal })
+		validateTrustChain([...selectedChain.statements], trustAnchorSet, {
+			signal: controller.signal,
+			engine: engine,
+		})
 			.then((result) => {
 				if (controller.signal.aborted) return;
 				setDetails({

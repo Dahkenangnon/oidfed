@@ -5,13 +5,17 @@ import {
 	EntityCollectionEntitySchema,
 	EntityCollectionResponseSchema,
 	entityId,
-	generateSigningKey,
-	JwkSigner,
-	MemoryFederationKeyProvider,
 	ok,
 } from "../../../packages/core/src/index.js";
 import { Leaf } from "../../../packages/leaf/src/index.js";
 import * as EntityCollectionFixture from "../fixtures/entity-collection.js";
+import {
+	FixtureCrypto,
+	fixtureHostConfig,
+	generateSigningKey,
+	SigningEntryFixture,
+	testEngine,
+} from "../fixtures/software-crypto.js";
 
 export default function integrationTests(QUnit: QUnit): void {
 	{
@@ -68,8 +72,8 @@ export default function integrationTests(QUnit: QUnit): void {
 				"Authority and Leaf forward custom collection search and normalized inventory",
 				async (assert) => {
 					const key = await generateSigningKey("ES256");
-					const keyProvider = new MemoryFederationKeyProvider({
-						signer: new JwkSigner(key.privateKey),
+					const crypto = new FixtureCrypto({
+						signer: new SigningEntryFixture(key.privateKey),
 						publicJwk: key.publicKey,
 					});
 					const trustAnchors = new Map([[anchor, { jwks: { keys: [key.publicKey] } }]]);
@@ -77,7 +81,7 @@ export default function integrationTests(QUnit: QUnit): void {
 						let searches = 0;
 						const config = {
 							entityId: anchor,
-							keyProvider,
+							crypto,
 							metadata: {
 								federation_entity: {
 									federation_collection_endpoint: `${anchor}/collect`,
@@ -110,8 +114,18 @@ export default function integrationTests(QUnit: QUnit): void {
 						};
 						const host =
 							kind === "authority"
-								? new TrustAnchor({ ...config, storage: new MemoryStorageAdapter() })
-								: new Leaf({ ...config, authorityHints: [entityId("https://superior.example")] });
+								? await TrustAnchor.create(
+										fixtureHostConfig({
+											...config,
+											storage: new MemoryStorageAdapter({ engine: testEngine }),
+										}),
+									)
+								: await Leaf.create(
+										fixtureHostConfig({
+											...config,
+											authorityHints: [entityId("https://superior.example")],
+										}),
+									);
 						assert.true((await host.collection!.refresh(anchor)).ok);
 						for (const method of ["GET", "POST"]) {
 							const params = new URLSearchParams({
@@ -146,8 +160,8 @@ export default function integrationTests(QUnit: QUnit): void {
 
 			QUnit.test("hosted authentication cannot disagree with its metadata", async (assert) => {
 				const key = await generateSigningKey("ES256");
-				const keyProvider = new MemoryFederationKeyProvider({
-					signer: new JwkSigner(key.privateKey),
+				const crypto = new FixtureCrypto({
+					signer: new SigningEntryFixture(key.privateKey),
 					publicJwk: key.publicKey,
 				});
 				const trustAnchors = new Map([[anchor, { jwks: { keys: [key.publicKey] } }]]);
@@ -161,7 +175,7 @@ export default function integrationTests(QUnit: QUnit): void {
 						const methods = declared ?? ["none"];
 						const config = {
 							entityId: anchor,
-							keyProvider,
+							crypto,
 							metadata: {
 								federation_entity: {
 									federation_collection_endpoint: `${anchor}/collect`,
@@ -182,15 +196,25 @@ export default function integrationTests(QUnit: QUnit): void {
 								},
 							},
 						};
-						const construct = () =>
+						const construct = async () =>
 							kind === "authority"
-								? new TrustAnchor({ ...config, storage: new MemoryStorageAdapter() })
-								: new Leaf({ ...config, authorityHints: [entityId("https://superior.example")] });
-						assert.ok(construct());
+								? await TrustAnchor.create(
+										fixtureHostConfig({
+											...config,
+											storage: new MemoryStorageAdapter({ engine: testEngine }),
+										}),
+									)
+								: await Leaf.create(
+										fixtureHostConfig({
+											...config,
+											authorityHints: [entityId("https://superior.example")],
+										}),
+									);
+						assert.ok(await construct());
 						config.collection.authentication.methods = methods.includes("none")
 							? ["private_key_jwt"]
 							: ["none"];
-						assert.throws(construct, `${kind}: conflicting methods are rejected`);
+						await assert.rejects(construct(), `${kind}: conflicting methods are rejected`);
 					}
 				}
 			});

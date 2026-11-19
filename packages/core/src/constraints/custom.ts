@@ -1,3 +1,4 @@
+import { cloneData } from "../data-copy.js";
 /** Registration and isolated execution of application-defined trust chain constraints. */
 
 import { callSynchronous, freezeSnapshot, isObject } from "../callbacks.js";
@@ -66,7 +67,7 @@ export function createCustomConstraintRunner(
 	if (!valid.ok) return valid;
 	if (checks.length === 0) return ok(() => ok(undefined));
 	const registry = new Map(checks.map(({ name, check }) => [name, { name, check }]));
-	const statements = freezeSnapshot(structuredClone(chain));
+	const statements = freezeSnapshot(cloneData(chain));
 	return ok((constraints, position) => {
 		const statement = statements[position];
 		const first = statements[0];
@@ -85,7 +86,7 @@ export function createCustomConstraintRunner(
 			const check = registry.get(name);
 			if (!check) continue;
 			const callback = callSynchronous(
-				() => check.check(freezeSnapshot(structuredClone(value)), context),
+				() => check.check(freezeSnapshot(cloneData(value)), context),
 				isCheckResult,
 			);
 			if (!callback.ok) return fail(`Custom constraint '${name}': ${callback.error}`);

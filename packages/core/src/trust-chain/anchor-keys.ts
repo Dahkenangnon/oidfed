@@ -1,3 +1,4 @@
+import type { CryptoEngine, JwsAlgorithmRegistry } from "@oidfed/crypto";
 /** Comparison of complete Trust Anchor key sets from independent sources. */
 
 import { jwkThumbprint } from "../jose/keys.js";
@@ -27,6 +28,8 @@ export async function compareTrustAnchorKeys(
 	ecJwks: Pick<JWKSet, "keys">,
 	independentJwks: Pick<JWKSet, "keys">,
 	entityId: EntityId,
+	engine: CryptoEngine,
+	registry?: JwsAlgorithmRegistry,
 ): Promise<TrustAnchorKeyComparisonResult> {
 	const inputErrors: NonNullable<TrustAnchorKeyComparisonResult["inputErrors"]>[number][] = [];
 	// §11.3 compares complete sets. Silently skipping a key can create false agreement.
@@ -35,14 +38,14 @@ export async function compareTrustAnchorKeys(
 		source: "entity_configuration" | "independent_source",
 	) => {
 		const keys = new Map<string, string>();
-		const prepared = preparePublicJwkSet(jwks);
+		const prepared = preparePublicJwkSet(jwks, registry);
 		if (!prepared.ok) {
 			inputErrors.push({ source, reason: prepared.error.description });
 			return keys;
 		}
 		for (const key of prepared.value.keys) {
 			try {
-				keys.set(key.kid as string, await jwkThumbprint(key));
+				keys.set(key.kid as string, await jwkThumbprint(key, engine, registry));
 			} catch {
 				inputErrors.push({ source, reason: "Could not compute a public key thumbprint" });
 			}

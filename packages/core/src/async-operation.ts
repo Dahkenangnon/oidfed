@@ -27,7 +27,7 @@ export async function waitForOperation<T>(
 /** Bound application-controlled async work without retaining abort listeners afterward. */
 export async function runAsyncOperation<T>(
 	operation: (signal: AbortSignal) => T | Promise<T>,
-	options: FederationOptions,
+	options: Pick<FederationOptions, "signal" | "httpTimeoutMs">,
 ): Promise<T> {
 	if (options.signal?.aborted) throw new DOMException("Operation cancelled", "AbortError");
 	const timeout = options.httpTimeoutMs ?? DEFAULT_HTTP_TIMEOUT_MS;

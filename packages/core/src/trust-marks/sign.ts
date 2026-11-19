@@ -1,9 +1,12 @@
+import { federationSigningOptions } from "../crypto-context.js";
+import { cloneData } from "../data-copy.js";
+
 /** Standalone signing of Trust Marks and owner-to-issuer delegations. */
 
+import type { KeyringEntry } from "@oidfed/crypto";
 import { isJsonData, setOwn } from "../callbacks.js";
 import { DEFAULT_DELEGATION_TTL_SECONDS, JwtTyp } from "../constants.js";
 import { signEntityStatement } from "../jose/sign.js";
-import type { JwtSigner } from "../jose/signer.js";
 import { TrustMarkDelegationPayloadSchema, TrustMarkPayloadSchema } from "../schemas/trust-mark.js";
 import { assertPositiveTtlSeconds } from "../ttl.js";
 import { type Clock, nowSeconds } from "../types.js";
@@ -17,7 +20,10 @@ export interface SignTrustMarkDelegationOptions extends TrustMarkLifetime {
 	readonly issuer: string;
 	readonly subject: string;
 	readonly trustMarkType: string;
-	readonly signer: JwtSigner;
+	readonly signer: KeyringEntry;
+	readonly maxCompactBytes?: number | undefined;
+	readonly algorithmRegistry?: import("@oidfed/crypto").JwsAlgorithmRegistry | undefined;
+	readonly allowedFederationAlgorithms?: readonly string[] | undefined;
 	readonly clock?: Clock;
 	readonly ref?: string;
 	readonly additionalClaims?: Readonly<Record<string, unknown>>;
@@ -64,7 +70,7 @@ function payloadFor(options: SignTrustMarkDelegationOptions): Record<string, unk
 		]);
 		for (const [name, value] of Object.entries(extra)) {
 			if (reserved.has(name)) throw new TypeError(`Additional claim '${name}' is reserved`);
-			setOwn(payload, name, structuredClone(value));
+			setOwn(payload, name, cloneData(value));
 		}
 	}
 	return payload;
@@ -79,7 +85,10 @@ export async function signTrustMark(options: SignTrustMarkOptions): Promise<stri
 	const typ = options.typ ?? JwtTyp.TrustMark;
 	const profile = await checkTrustMarkProfile(typ, payload, options.trustMarkProfiles);
 	if (!profile.ok) throw new TypeError(profile.error.description);
-	return signEntityStatement(payload, options.signer, { typ });
+	return signEntityStatement(payload, options.signer, {
+		...federationSigningOptions(options),
+		typ,
+	});
 }
 
 /** Owner-signed issuance authorization. The base delegation typ cannot be overridden. */
@@ -88,10 +97,13 @@ export async function signTrustMarkDelegation(
 ): Promise<string> {
 	const payload = payloadFor(options);
 	TrustMarkDelegationPayloadSchema.parse(payload);
-	return signEntityStatement(payload, options.signer, { typ: JwtTyp.TrustMarkDelegation });
+	return signEntityStatement(payload, options.signer, {
+		...federationSigningOptions(options),
+		typ: JwtTyp.TrustMarkDelegation,
+	});
 }
 
 export type TrustMarkDelegationIssuanceOptions = Omit<
 	SignTrustMarkDelegationOptions,
-	"issuer" | "subject" | "trustMarkType" | "signer" | "clock"
+	"issuer" | "subject" | "trustMarkType" | "signer" | "clock" | "algorithmRegistry"
 >;

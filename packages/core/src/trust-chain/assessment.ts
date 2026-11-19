@@ -1,3 +1,4 @@
+import { cloneData } from "../data-copy.js";
 /** Entity assessments from local chain validation or an explicitly trusted resolver. */
 
 import { freezeSnapshot } from "../callbacks.js";
@@ -146,6 +147,7 @@ async function resolverAssessment(
 		);
 		if (!response.ok) return response;
 		const verified = await verifyResolveResponse(response.value, keys, {
+			...options,
 			expectedIssuer: issuer,
 			expectedSubject: subject,
 			...(requester ? { expectedAudience: entityId(requester) } : {}),
@@ -161,6 +163,8 @@ async function resolverAssessment(
 			metadataErrors,
 			payload.metadata as Record<string, Record<string, unknown>>,
 			subject,
+			undefined,
+			options.algorithmRegistry,
 		);
 		if (metadataErrors.length)
 			return failure(metadataErrors.map((error) => error.message).join("; "));
@@ -179,16 +183,16 @@ async function resolverAssessment(
 			return failure("Invalid Resolve Response chain length");
 		const statements = [];
 		for (const jwt of raw) {
-			const decoded = decodeEntityStatement(jwt);
+			const decoded = decodeEntityStatement(jwt, options);
 			if (!decoded.ok) return failure("Invalid Resolve Response subject chain");
 			const shaped =
 				decoded.value.payload.iss === decoded.value.payload.sub
-					? decodeEntityConfiguration(jwt)
-					: decodeSubordinateStatement(jwt);
+					? decodeEntityConfiguration(jwt, options)
+					: decodeSubordinateStatement(jwt, options);
 			if (!shaped.ok) return failure("Invalid Resolve Response Entity Statement shape");
 			statements.push(shaped.value.payload);
 		}
-		const leaf = decodeEntityConfiguration(raw[0] ?? "");
+		const leaf = decodeEntityConfiguration(raw[0] ?? "", options);
 		if (
 			!leaf.ok ||
 			String(leaf.value.payload.iss) !== subject ||
@@ -215,7 +219,7 @@ async function resolverAssessment(
 		if (!anchors.has(anchor)) return failure("Resolve Response uses an unrequested Trust Anchor");
 		deadline = Math.min(deadline, payload.exp, ...statements.map((statement) => statement.exp));
 		for (const ref of payload.trust_marks ?? []) {
-			const mark = decodeEntityStatement(ref.trust_mark);
+			const mark = decodeEntityStatement(ref.trust_mark, options);
 			if (!mark.ok) return failure("Malformed reported Trust Mark");
 			const shape = TrustMarkPayloadSchema.safeParse(mark.value.payload);
 			if (!shape.success) return failure("Malformed reported Trust Mark claims");
@@ -229,7 +233,7 @@ async function resolverAssessment(
 			}
 			if (claims.delegation !== undefined) {
 				if (typeof claims.delegation !== "string") return failure("Invalid reported delegation");
-				const delegation = decodeEntityStatement(claims.delegation);
+				const delegation = decodeEntityStatement(claims.delegation, options);
 				if (!delegation.ok) return failure("Invalid reported delegation");
 				const delegated = TrustMarkDelegationPayloadSchema.safeParse(delegation.value.payload);
 				if (
@@ -258,8 +262,8 @@ async function resolverAssessment(
 			expiresAt: deadline,
 			responseJwt: response.value,
 			statements: [...raw],
-			resolvedMetadata: structuredClone(payload.metadata),
-			reportedTrustMarks: structuredClone(payload.trust_marks ?? []),
+			resolvedMetadata: cloneData(payload.metadata),
+			reportedTrustMarks: cloneData(payload.trust_marks ?? []),
 		});
 		assessments.add(assessment);
 		return ok(assessment);
@@ -299,7 +303,7 @@ export async function resolveThroughTrustedResolver(
 export async function assessEntity(
 	subject: EntityId,
 	anchors: TrustAnchorSet,
-	options: EntityAssessmentOptions = {},
+	options: EntityAssessmentOptions,
 ): Promise<Result<EntityAssessment>> {
 	if (options.mode === "resolver") {
 		if (

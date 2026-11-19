@@ -1,5 +1,6 @@
 import { entityId, resolveTrustChains } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
+import { testEngine } from "../../tap/fixtures/software-crypto.js";
 import { useFederation } from "../helpers/lifecycle.js";
 import { crossFederationTopology } from "../topologies/cross-federation.js";
 import { multiAnchorTopology } from "../topologies/multi-anchor.js";
@@ -13,7 +14,7 @@ describe("Cross-federation trust", () => {
 			const port = server.port;
 
 			const rpXId = entityId(`https://rp-x.ofed.test:${port}`);
-			const result = await resolveTrustChains(rpXId, trustAnchors);
+			const result = await resolveTrustChains(rpXId, trustAnchors, { engine: testEngine });
 
 			expect(result.errors).toHaveLength(0);
 			expect(result.chains.length).toBeGreaterThanOrEqual(1);
@@ -30,7 +31,7 @@ describe("Cross-federation trust", () => {
 			const port = server.port;
 
 			const rpYId = entityId(`https://rp-y.ofed.test:${port}`);
-			const result = await resolveTrustChains(rpYId, trustAnchors);
+			const result = await resolveTrustChains(rpYId, trustAnchors, { engine: testEngine });
 
 			expect(result.errors).toHaveLength(0);
 			expect(result.chains.length).toBeGreaterThanOrEqual(1);
@@ -46,7 +47,7 @@ describe("Cross-federation trust", () => {
 			const port = server.port;
 
 			const bridgeId = entityId(`https://bridge.ofed.test:${port}`);
-			const result = await resolveTrustChains(bridgeId, trustAnchors);
+			const result = await resolveTrustChains(bridgeId, trustAnchors, { engine: testEngine });
 
 			expect(result.chains.length).toBe(2);
 
@@ -64,7 +65,7 @@ describe("Cross-federation trust", () => {
 			const port = server.port;
 
 			const iaId = entityId(`https://ia-shared.ofed.test:${port}`);
-			const result = await resolveTrustChains(iaId, trustAnchors);
+			const result = await resolveTrustChains(iaId, trustAnchors, { engine: testEngine });
 
 			expect(result.chains.length).toBe(2);
 
@@ -78,7 +79,7 @@ describe("Cross-federation trust", () => {
 			const port = server.port;
 
 			const opId = entityId(`https://op.ofed.test:${port}`);
-			const result = await resolveTrustChains(opId, trustAnchors);
+			const result = await resolveTrustChains(opId, trustAnchors, { engine: testEngine });
 
 			expect(result.chains.length).toBe(2);
 		});

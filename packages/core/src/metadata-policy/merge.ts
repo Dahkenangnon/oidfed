@@ -1,3 +1,4 @@
+import { cloneData } from "../data-copy.js";
 /** Superior-first metadata policy resolution and operator combination. */
 
 import { callSynchronous } from "../callbacks.js";
@@ -72,7 +73,7 @@ export function resolveMetadataPolicy(
 
 			const declaration = validatePolicyDeclaration(policy, lookup);
 			if (!declaration.ok) return declaration;
-			const clonedPolicy = structuredClone(policy) as Record<
+			const clonedPolicy = cloneData(policy) as Record<
 				string,
 				Record<string, Record<string, unknown>>
 			>;

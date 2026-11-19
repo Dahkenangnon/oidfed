@@ -24,7 +24,7 @@ import { shortestChain, validateTrustChain } from "./validate.js";
 export async function discoverEntity(
 	entityId: EntityId,
 	trustAnchors: TrustAnchorSet,
-	options?: FederationOptions,
+	options: FederationOptions,
 ): Promise<Result<DiscoveryResult>> {
 	safeLogger(options?.logger)?.debug("Starting discover entity");
 
@@ -92,7 +92,7 @@ export async function discoverEntityFromChain(
 	entityId: EntityId,
 	statements: readonly string[],
 	trustAnchors: TrustAnchorSet,
-	options?: FederationOptions,
+	options: FederationOptions,
 ): Promise<Result<DiscoveryResult>> {
 	const operation = createTrustChainOperation(options);
 	if (!operation.ok) return operation;

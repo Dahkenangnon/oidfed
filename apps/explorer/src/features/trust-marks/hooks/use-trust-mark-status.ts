@@ -8,6 +8,7 @@ import {
 } from "@oidfed/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSettings } from "@/hooks/use-settings";
+import { engine } from "../../../lib/crypto.js";
 
 export interface TrustMarkStatusResult {
 	readonly active: boolean;
@@ -54,6 +55,7 @@ export function useTrustMarkStatus(): UseTrustMarkStatusResult {
 				const ecResult = await fetchEntityConfiguration(validated.value, {
 					httpTimeoutMs,
 					signal: controller.signal,
+					engine: engine,
 				});
 				if (!ecResult.ok) {
 					throw new Error(`Failed to fetch issuer EC: ${ecResult.error.description}`);
@@ -86,6 +88,7 @@ export function useTrustMarkStatus(): UseTrustMarkStatusResult {
 					expectedIssuer: issuerEntityId,
 					httpTimeoutMs,
 					signal: controller.signal,
+					engine: engine,
 				});
 				if (!verified.ok)
 					throw new Error(`Failed to verify status response: ${verified.error.description}`);

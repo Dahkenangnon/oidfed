@@ -15,8 +15,8 @@ import dependencies from "./dependencies.config.mjs";
 import knip from "./knip.config.mjs";
 import { bin } from "./install.mjs";
 
-test("source tools share the five-package allowlist", async () => {
-	assert.deepEqual(packages, ["core", "authority", "leaf", "oidc", "wallet"]);
+test("source tools share the six-package allowlist", async () => {
+	assert.deepEqual(packages, ["core", "authority", "leaf", "oidc", "wallet", "crypto"]);
 	assert.deepEqual(
 		config[0].files,
 		sources.map((path) => `${path}/**/*.{ts,tsx,js,jsx,mjs,cjs}`),

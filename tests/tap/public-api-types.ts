@@ -1,16 +1,12 @@
 import type { AuthorityConfig, StorageAdapter } from "@oidfed/authority";
 import {
+	type CryptoContext,
 	decodeEntityConfiguration,
 	decodeSubordinateStatement,
 	type EntityConfigurationPayload,
 	type EntityStatementMetadata,
-	type FederationKeyLifecycleProvider,
-	type FederationKeyProvider,
-	type FederationSigningKey,
 	type JWKSet,
-	MemoryFederationKeyProvider,
 	type SubordinateStatementPayload,
-	type SwitchActiveFederationKeyOptions,
 	type TrustAnchorSet,
 } from "@oidfed/core";
 import type { LeafConfig } from "@oidfed/leaf";
@@ -23,9 +19,11 @@ import type {
 	RegistrationProtocolAdapter,
 } from "@oidfed/oidc";
 
-declare const federationKeyProvider: FederationKeyProvider;
-declare const federationKeyLifecycleProvider: FederationKeyLifecycleProvider;
-declare const federationSigningKey: FederationSigningKey;
+declare const federationKeyProvider: CryptoContext;
+declare const federationKeyLifecycleProvider: CryptoContext;
+declare const engine: import("@oidfed/crypto").CryptoEngine;
+declare const keyring: import("@oidfed/crypto").RotatingKeyring;
+declare const signer: import("@oidfed/crypto").Signer;
 declare const trustAnchors: TrustAnchorSet;
 declare const authorityStorage: StorageAdapter;
 
@@ -40,7 +38,7 @@ const leafConfig = {
 	trustAnchorHints: ["https://preferred-ta.example.com"],
 	trustAnchors,
 	metadata: leafMetadata,
-	keyProvider: federationKeyProvider,
+	crypto: federationKeyProvider,
 } satisfies LeafConfig;
 void leafConfig;
 
@@ -55,7 +53,7 @@ const intermediateAuthorityConfig = {
 		},
 	},
 	storage: authorityStorage,
-	keyProvider: federationKeyLifecycleProvider,
+	crypto: federationKeyLifecycleProvider,
 } satisfies AuthorityConfig;
 void intermediateAuthorityConfig;
 
@@ -64,7 +62,7 @@ const leafConfigWithScalarMetadata = {
 	authorityHints: ["https://ta.example.com"],
 	// @ts-expect-error Entity Statement metadata values must be JSON objects.
 	metadata: { openid_relying_party: "bad" },
-	keyProvider: federationKeyProvider,
+	crypto: federationKeyProvider,
 } satisfies LeafConfig;
 void leafConfigWithScalarMetadata;
 
@@ -129,20 +127,15 @@ const oauthResourceConfigWithInvalidJwks = {
 } satisfies OAuthResourceRoleConfig;
 void oauthResourceConfigWithInvalidJwks;
 
-void new MemoryFederationKeyProvider(federationSigningKey);
-void new MemoryFederationKeyProvider([federationSigningKey]);
-void federationKeyLifecycleProvider.publishKey(federationSigningKey);
-void federationKeyLifecycleProvider.switchActiveKey("next-key");
-void federationKeyLifecycleProvider.switchActiveKey("next-key", {
-	retirePreviousAfterMs: 60_000,
-} satisfies SwitchActiveFederationKeyOptions);
-void federationKeyLifecycleProvider.revokeKey("old-key", "keyCompromise");
-
-// @ts-expect-error an initial federation signing key is required.
-void new MemoryFederationKeyProvider();
-
-// @ts-expect-error initial key arrays must be non-empty.
-void new MemoryFederationKeyProvider([]);
+void keyring.publish("federation", signer);
+void keyring.activate("federation", "next-key");
+void keyring.retire("federation", "previous-key");
+void keyring.revoke("federation", "old-key", "compromised");
+const explicitCrypto = { engine, keyring } satisfies CryptoContext;
+void explicitCrypto;
+// @ts-expect-error a host requires its engine as well as a keyring.
+const incompleteCrypto: CryptoContext = { keyring };
+void incompleteCrypto;
 
 declare const entityConfigurationJwt: string;
 declare const subordinateStatementJwt: string;

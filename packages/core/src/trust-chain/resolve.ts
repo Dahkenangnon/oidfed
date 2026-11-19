@@ -34,7 +34,7 @@ export interface ResolveTrustChainsOptions extends FederationOptions {
 export async function resolveTrustChains(
 	entityId: EntityId,
 	trustAnchors: TrustAnchorSet,
-	options?: ResolveTrustChainsOptions,
+	options: ResolveTrustChainsOptions,
 ): Promise<TrustChainResult> {
 	safeLogger(options?.logger)?.debug("Starting resolve trust chains");
 	if (options?.trustResolution?.kind === "resolver" && !options.entityConfigurationJwt) {
@@ -361,7 +361,7 @@ export async function resolveTrustChains(
 				if (trustAnchors.has(hint as EntityId)) {
 					const fullChain = [...chainSoFar, ssResult.value, hintEcResult.value.jwt];
 					const parsed = fullChain.map((jwt) => {
-						const d = decodeEntityStatement(jwt);
+						const d = decodeEntityStatement(jwt, options);
 						return d.ok ? d.value : null;
 					});
 					if (parsed.every((p) => p !== null)) {

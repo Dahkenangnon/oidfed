@@ -1,3 +1,4 @@
+import type { Jwk } from "@oidfed/crypto";
 /**
  * Zod schemas for Entity Statements (configurations and subordinate), including trust marks and
  * registration payloads.
@@ -188,7 +189,16 @@ export const TrustMarkStatusBodySchema = z.object({
 export type EntityStatementPayload = z.infer<typeof EntityStatementPayloadSchema>;
 export type EntityConfigurationPayload = z.infer<typeof EntityConfigurationSchema>;
 export type SubordinateStatementPayload = z.infer<typeof SubordinateStatementSchema>;
-export type HistoricalKeyEntry = z.infer<typeof HistoricalKeyEntrySchema>;
+/** Public key and recorded protocol lifetime; timestamps are finite NumericDates. */
+export interface HistoricalKeyEntry extends Jwk {
+	readonly kid: string;
+	readonly exp: number;
+	readonly iat?: number | undefined;
+	readonly nbf?: number | undefined;
+	readonly revoked?:
+		| { readonly revoked_at: number; readonly reason?: string | undefined }
+		| undefined;
+}
 export type HistoricalKeysPayload = z.infer<typeof HistoricalKeysPayloadSchema>;
 export type ResolveResponsePayload = z.infer<typeof ResolveResponsePayloadSchema>;
 export type TrustMarkStatusResponsePayload = z.infer<typeof TrustMarkStatusResponsePayloadSchema>;

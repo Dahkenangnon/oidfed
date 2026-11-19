@@ -96,7 +96,7 @@ export interface EntityCollectionConfig {
 	store?: EntityCollectionStore;
 	responder?: { entityId: EntityId; isTrustAnchor: boolean };
 	authentication?: CollectionAuthentication;
-	options?: FederationOptions;
+	options: FederationOptions;
 	maxPageSize?: number;
 	cursorTtlSeconds?: number;
 	maxEntities?: number;
@@ -116,7 +116,9 @@ export interface CollectionRefreshResult {
 	entityCount: number;
 }
 /** Optional integration; responder identity always comes from its hosting class. */
-export type EntityCollectionIntegration = Omit<EntityCollectionConfig, "responder">;
+export type EntityCollectionIntegration = Omit<EntityCollectionConfig, "responder" | "options"> & {
+	readonly options?: import("../types.js").BoundFederationOptions;
+};
 export interface MemoryEntityCollectionStoreOptions {
 	clock?: Clock;
 	retentionSeconds?: number;

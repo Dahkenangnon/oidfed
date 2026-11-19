@@ -25,26 +25,34 @@ import {
 	TrustAnchor,
 } from "@oidfed/authority";
 import {
+	type CryptoContext,
 	type EntityType,
 	entityId,
-	type FederationKeyProvider,
-	generateSigningKey,
+	historicalKeysFromKeyring,
 	type JWK,
-	JwkSigner,
-	MemoryFederationKeyProvider,
-	stripPrivateFields,
 	type TrustAnchorSet,
 } from "@oidfed/core";
+import { isJwsAlgorithm, type Jwk, MemoryRotatingKeyring } from "@oidfed/crypto";
+import { SoftwareSigner } from "@oidfed/crypto/web";
 import { Leaf } from "@oidfed/leaf";
 import express from "express";
 import { createOpenIDProviderApp } from "../tests/e2e/participants/openid-provider-app.js";
+import { engine, generateSigningKey } from "../tools/cli/src/util/crypto.js";
 
 // ---------------------------------------------------------------------------
 
 const CERT_DIR = join(import.meta.dirname, "../.certs");
 
-function federationSigningKey(signingKey: JWK) {
-	return { signer: new JwkSigner(signingKey), publicJwk: stripPrivateFields(signingKey) };
+function cryptoContext(key: Jwk): CryptoContext {
+	if (!isJwsAlgorithm(key.alg))
+		throw new TypeError("The development topology requires a built-in software signing algorithm");
+	const signer = new SoftwareSigner({
+		...key,
+		kid: typeof key.kid === "string" ? key.kid : "",
+		alg: key.alg,
+	});
+	const keyring = new MemoryRotatingKeyring({ federation: signer });
+	return { engine, keyring, history: historicalKeysFromKeyring(keyring) };
 }
 
 // ---------------------------------------------------------------------------
@@ -968,7 +976,7 @@ async function bootstrapTopology(
 	function buildAuthorityConfig(
 		entity: EntityDefinition,
 		storage: MemoryStorageAdapter,
-		keyProvider: FederationKeyProvider,
+		cryptoContextValue: CryptoContext,
 	): Record<string, unknown> {
 		const eid = rw(entity.id);
 		const metadata = rewriteMetadata(entity.metadata, port);
@@ -976,7 +984,7 @@ async function bootstrapTopology(
 
 		const cfg: Record<string, unknown> = {
 			entityId: entityId(eid),
-			keyProvider,
+			crypto: cryptoContextValue,
 			metadata: {
 				federation_entity: (metadata.federation_entity as Record<string, string>) ?? {},
 				...Object.fromEntries(Object.entries(metadata).filter(([k]) => k !== "federation_entity")),
@@ -1003,18 +1011,15 @@ async function bootstrapTopology(
 			.map((entity) => new URL(rw(entity.id)).hostname),
 	);
 	const storageMap = new Map<string, MemoryStorageAdapter>();
-	const keyProviderMap = new Map<string, FederationKeyProvider>();
+	const cryptoContexts = new Map<string, CryptoContext>();
 
 	for (const entity of topology.entities) {
 		const isAuthority = entity.role === "trust-anchor" || entity.role === "intermediate";
 		if (!isAuthority && entity.protocolRole !== "op") continue;
 		const keys = getKeys(entity.id);
-		keyProviderMap.set(
-			entity.id,
-			new MemoryFederationKeyProvider(federationSigningKey(keys.signing)),
-		);
+		cryptoContexts.set(entity.id, cryptoContext(keys.signing));
 		if (isAuthority) {
-			storageMap.set(entity.id, new MemoryStorageAdapter({ trustMarks: true }));
+			storageMap.set(entity.id, new MemoryStorageAdapter({ engine, trustMarks: true }));
 		}
 	}
 
@@ -1026,17 +1031,17 @@ async function bootstrapTopology(
 
 		const eid = rw(entity.id);
 		const storage = storageMap.get(entity.id);
-		const keyProvider = keyProviderMap.get(entity.id);
-		if (!storage || !keyProvider) {
+		const cryptoContextValue = cryptoContexts.get(entity.id);
+		if (!storage || !cryptoContextValue) {
 			throw new Error(`Missing bootstrap resources for authority ${entity.id}`);
 		}
 
-		const cfg = buildAuthorityConfig(entity, storage, keyProvider);
+		const cfg = buildAuthorityConfig(entity, storage, cryptoContextValue);
 		let authority: TrustAnchor | Intermediate;
 		if (entity.role === "intermediate") {
-			authority = new Intermediate(cfg as unknown as AuthorityConfig);
+			authority = await Intermediate.create(cfg as unknown as AuthorityConfig);
 		} else {
-			authority = new TrustAnchor(cfg as unknown as AuthorityConfig);
+			authority = await TrustAnchor.create(cfg as unknown as AuthorityConfig);
 			trustAnchorServers.set(entity.id, authority);
 		}
 
@@ -1076,15 +1081,15 @@ async function bootstrapTopology(
 		const keys = getKeys(entity.id);
 		const metadata = rewriteMetadata(entity.metadata, port);
 		const authorityHints = entity.authorityHints?.map((ah) => entityId(rw(ah))) ?? [];
-		const keyProvider = keyProviderMap.get(entity.id);
-		if (!keyProvider) {
+		const cryptoContextValue = cryptoContexts.get(entity.id);
+		if (!cryptoContextValue) {
 			throw new Error(`Missing federation key provider for OP ${entity.id}`);
 		}
 		const extraTrustMarks = opTrustMarks.get(entity.id);
 
-		const leaf = new Leaf({
+		const leaf = await Leaf.create({
 			entityId: entityId(eid),
-			keyProvider,
+			crypto: cryptoContextValue,
 			authorityHints,
 			metadata,
 			trustAnchors,
@@ -1094,11 +1099,11 @@ async function bootstrapTopology(
 		const hostname = new URL(eid).hostname;
 		vhosts.set(
 			hostname,
-			createOpenIDProviderApp({
+			await createOpenIDProviderApp({
 				leaf,
 				entityId: eid,
 				trustAnchors,
-				federationKeyProvider: keyProvider,
+				federationKeyProvider: cryptoContextValue,
 				oidcSigningKey: keys.protocolSigning,
 				additionalSigningKeys: keys.additionalProtocolSigning,
 				allowedRequestUriHosts,
@@ -1128,9 +1133,9 @@ async function bootstrapTopology(
 			};
 		}
 
-		const leaf = new Leaf({
+		const leaf = await Leaf.create({
 			entityId: entityId(eid),
-			keyProvider: new MemoryFederationKeyProvider(federationSigningKey(keys.signing)),
+			crypto: cryptoContext(keys.signing),
 			authorityHints,
 			metadata: metadata as Record<string, Record<string, unknown>>,
 		});

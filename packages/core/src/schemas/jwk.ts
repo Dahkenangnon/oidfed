@@ -1,3 +1,4 @@
+import { assertPublicJwk, DEFAULT_JWS_REGISTRY } from "@oidfed/crypto";
 /** Structural schemas for public JSON Web Keys and federation JWK Sets. */
 
 import { z } from "zod";
@@ -54,8 +55,8 @@ export const JWKSetSchema = MetadataJWKSetSchema.extend({
 		{ message: "Every JWK kid MUST be unique within the set", path: ["keys"] },
 	);
 
-export type JWK = z.infer<typeof JWKSchema>;
-export type JWKSet = z.infer<typeof JWKSetSchema>;
+export type JWK = import("@oidfed/crypto").Jwk;
+export type JWKSet = { readonly keys: readonly JWK[] };
 
 /** Supported publication shape; received sets retain unknown key types for selection. */
 export const PublicationJWKSchema = JWKSchema.refine(
@@ -64,18 +65,24 @@ export const PublicationJWKSchema = JWKSchema.refine(
 );
 
 /** Validate inline protocol sets before publishing composed host metadata. */
-export function validatePublishedMetadataKeys(metadata: Readonly<Record<string, unknown>>): void {
+export function validatePublishedMetadataKeys(
+	metadata: Readonly<Record<string, unknown>>,
+	registry = DEFAULT_JWS_REGISTRY,
+): void {
 	for (const block of Object.values(metadata)) {
 		if (!block || typeof block !== "object" || Array.isArray(block)) continue;
 		const jwks = (block as Record<string, unknown>).jwks;
 		if (jwks === undefined) continue;
 		const parsed = MetadataJWKSetSchema.safeParse(jwks);
-		if (
-			!parsed.success ||
-			!parsed.data.keys.every((key) => PublicationJWKSchema.safeParse(key).success)
-		)
+		if (!parsed.success || !parsed.data.keys.every((key) => registry.keyType(key.kty)))
 			throw new Error("Published metadata must contain supported public JWKs");
-		const use = validateJwkSetUseRequirement(parsed.data.keys);
+		for (const key of parsed.data.keys) {
+			if (DEFAULT_JWS_REGISTRY.keyType(key.kty)) continue;
+			const approved = assertPublicJwk(key, registry);
+			if (Object.keys(key).some((name) => !Object.hasOwn(approved, name)))
+				throw new TypeError("Registered protocol keys must contain only approved public fields");
+		}
+		const use = validateJwkSetUseRequirement(parsed.data.keys, registry);
 		if (!use.ok) throw new Error(use.error.description);
 	}
 }

@@ -18,11 +18,6 @@ export type {
 // Client authentication
 export type { ClientAssertionOptions } from "./client-auth/assertion.js";
 
-// Protocol keys
-export {
-	type ProtocolSigningKeyProvider,
-	StaticProtocolSigningKeyProvider,
-} from "./protocol-keys.js";
 export type {
 	RegistrationAccreditationContext,
 	RegistrationAccreditationPolicy,

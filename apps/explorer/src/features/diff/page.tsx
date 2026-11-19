@@ -15,6 +15,7 @@ import { useCallback, useState } from "react";
 import { JsonTree } from "@/components/shared/json-tree";
 import { usePageTitle } from "@/hooks/use-page-title";
 import { useSettings } from "@/hooks/use-settings";
+import { engine } from "../../lib/crypto.js";
 import { ResolvedMetadataDiff } from "../trust-chain/components/resolved-metadata-diff";
 import { DiffForm } from "./components/diff-form";
 
@@ -41,7 +42,11 @@ async function buildTaSet(
 	const validated = validateEntityId(taEntityId);
 	if (!validated.ok) throw new Error(validated.error.description);
 
-	const ecResult = await fetchEntityConfiguration(validated.value, { httpTimeoutMs, signal });
+	const ecResult = await fetchEntityConfiguration(validated.value, {
+		httpTimeoutMs,
+		signal,
+		engine: engine,
+	});
 	if (!ecResult.ok) throw new Error(`Failed to fetch TA EC: ${ecResult.error.description}`);
 
 	const decoded = decodeEntityStatement(ecResult.value);
@@ -88,11 +93,13 @@ export function MetadataDiffPage() {
 						httpTimeoutMs,
 						maxChainDepth,
 						signal: controller.signal,
+						engine: engine,
 					}),
 					resolveTrustChains(validated.value, taSetB, {
 						httpTimeoutMs,
 						maxChainDepth,
 						signal: controller.signal,
+						engine: engine,
 					}),
 				]);
 

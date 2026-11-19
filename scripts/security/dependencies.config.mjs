@@ -5,6 +5,30 @@ import { sources } from "./scope.mjs";
 export default {
 	forbidden: [
 		{
+			name: "protocol-libraries-have-no-crypto-backend",
+			severity: "error",
+			from: { path: "^packages/(core|authority|leaf|oidc|wallet)/src" },
+			to: {
+				path: [
+					"node_modules/.*jose",
+					"^packages/crypto/(src|dist)/(web|jose)\\.(ts|js|cjs)$",
+					"^@oidfed/crypto/(web|jose)$",
+				],
+			},
+		},
+		{
+			name: "crypto-is-independent",
+			severity: "error",
+			from: { path: "^packages/crypto/src" },
+			to: { path: "^packages/(core|authority|leaf|oidc|wallet)/" },
+		},
+		{
+			name: "crypto-backend-isolation",
+			severity: "error",
+			from: { path: "^packages/crypto/src", pathNot: "^packages/crypto/src/jose\\.ts$" },
+			to: { path: "node_modules/.*jose" },
+		},
+		{
 			name: "core-is-independent",
 			severity: "error",
 			from: { path: "^packages/core/src" },
@@ -16,7 +40,10 @@ export default {
 			from: { path: "^packages/([^/]+)/src" },
 			to: {
 				path: "^packages/([^/]+)/src",
-				pathNot: ["^packages/$1/", "^packages/(core|authority|leaf|oidc|wallet)/src/index\\.ts$"],
+				pathNot: [
+					"^packages/$1/",
+					"^packages/(core|authority|leaf|oidc|wallet|crypto)/src/index\\.ts$",
+				],
 			},
 		},
 		{

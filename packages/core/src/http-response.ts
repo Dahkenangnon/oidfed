@@ -1,3 +1,4 @@
+import { utf8Decode } from "@oidfed/crypto";
 /** Internal bounded response reader shared by federation HTTP clients. */
 
 export async function readResponseBody(
@@ -19,9 +20,9 @@ export async function readResponseBody(
 	signal.addEventListener("abort", onAbort, { once: true });
 	let finished = false;
 	try {
-		const decoder = new TextDecoder();
+		const chunks: Uint8Array[] = [];
 		let received = 0;
-		let text = "";
+
 		while (true) {
 			if (signal.aborted) throw new DOMException("Request aborted", "AbortError");
 			const chunk: { done: boolean; value?: unknown } = await reader.read();
@@ -29,16 +30,20 @@ export async function readResponseBody(
 			if (signal.aborted) throw new DOMException("Request aborted", "AbortError");
 			if (done) {
 				finished = true;
-				return text + decoder.decode();
+				const bytes = new Uint8Array(received);
+				let offset = 0;
+				for (const bytesChunk of chunks) {
+					bytes.set(bytesChunk, offset);
+					offset += bytesChunk.length;
+				}
+				return utf8Decode(bytes, { fatal: false });
 			}
 			if (!ArrayBuffer.isView(value)) throw new TypeError("Response body must contain byte chunks");
 			received += value.byteLength;
 			if (received > maxBytes) {
 				throw new RangeError(`Response exceeds maximum size of ${maxBytes} bytes`);
 			}
-			text += decoder.decode(new Uint8Array(value.buffer, value.byteOffset, value.byteLength), {
-				stream: true,
-			});
+			chunks.push(new Uint8Array(new Uint8Array(value.buffer, value.byteOffset, value.byteLength)));
 		}
 	} finally {
 		signal.removeEventListener("abort", onAbort);

@@ -1,366 +1,113 @@
-/** Federation signing-key providers and publication, rollover, and historical-key lifecycles. */
-
-import { DEFAULT_KEY_RETIRE_AFTER_MS } from "./constants.js";
-import { stripPrivateFields } from "./jose/keys.js";
-import { JwkSigner, type JwtSigner, validateSigner } from "./jose/signer.js";
+/** Federation key snapshots and historical-key protocol conversion. */
+import {
+	assertSigningPublicJwk,
+	DEFAULT_JWS_REGISTRY,
+	type KeyPurpose,
+	type KeyringEntry,
+	type KeySelectionContext,
+	type RotatingKeyring,
+	samePublicKey,
+	toPublicJwk,
+} from "@oidfed/crypto";
+import { freezeSnapshot } from "./callbacks.js";
+import { registryFor } from "./crypto-context.js";
+import { cloneData } from "./data-copy.js";
 import { preparePublicJwkSet } from "./jwks/public-material.js";
-import type { HistoricalKeyEntry } from "./schemas/entity-statement.js";
-import type { JWK, JWKSet } from "./schemas/jwk.js";
+import { type HistoricalKeyEntry, HistoricalKeyEntrySchema } from "./schemas/entity-statement.js";
+import type { CryptoContext } from "./types.js";
 
-export interface FederationKeySet {
-	readonly signer: JwtSigner;
-	readonly jwks: JWKSet;
+/** Explicit source for recorded Federation historical-key wire objects. */
+export interface FederationKeyHistorySource {
+	getHistoricalKeys(): Promise<readonly HistoricalKeyEntry[]>;
 }
-
-export interface FederationKeyProvider {
-	getFederationKeySet(): Promise<FederationKeySet>;
-}
-
-export interface FederationSigningKey {
-	readonly signer: JwtSigner;
-	readonly publicJwk: JWK;
-}
-
-/** Preserve readonly element types when normalizing the initial signing keys. */
-function isSigningKeyList(
-	value: FederationSigningKey | readonly [FederationSigningKey, ...FederationSigningKey[]],
-): value is readonly [FederationSigningKey, ...FederationSigningKey[]] {
-	return Array.isArray(value);
-}
-
-export interface FederationKeyLifecycleProvider extends FederationKeyProvider {
-	/** Return historical public keys with recorded lifetimes (Federation §8.7.2). */
-	getHistoricalFederationKeys(): Promise<HistoricalKeyEntry[]>;
-	/** Publish a next key without changing the signer (Federation §11.2). */
-	publishKey(key: FederationSigningKey): Promise<void>;
-	/**
-	 * Switch after the application's publication/propagation interval has elapsed.
-	 * A published replacement can also restore signing after all active keys are revoked.
-	 */
-	switchActiveKey(kid: string, options?: SwitchActiveFederationKeyOptions): Promise<void>;
-	/** Apply local revocation policy; this does not invalidate remote cached statements. */
-	revokeKey(kid: string, reason: string): Promise<void>;
-}
-
-export interface SwitchActiveFederationKeyOptions {
-	/** Post-switch overlap in milliseconds; the memory provider requires a finite, nonnegative value and defaults to seven days. */
-	readonly retirePreviousAfterMs?: number;
-}
-
-type FederationKeyState = "published" | "active" | "retiring" | "revoked";
-
-interface ManagedFederationKeyEntry {
-	readonly signer: JwtSigner;
-	readonly publicJwk: JWK;
-	readonly state: FederationKeyState;
-	readonly createdAt?: number;
-	readonly activatedAt?: number;
-	readonly activationOrder?: number;
-	readonly expiresAt?: number;
-	readonly revokedAt?: number;
-	readonly revocationReason?: string;
-}
-
-/** A fixed signer with copied public keys. Use a lifecycle provider for rollover. */
-export class StaticFederationKeyProvider implements FederationKeyProvider {
-	private readonly keySet: FederationKeySet;
-
-	/** Validate the key set and copy its public keys, keeping the supplied signer instance. */
-	constructor(keySet: FederationKeySet) {
-		this.keySet = prepareFederationKeySet(keySet);
-	}
-
-	/** Return the retained signer with detached public verification keys. */
-	async getFederationKeySet(): Promise<FederationKeySet> {
-		return { signer: this.keySet.signer, jwks: structuredClone(this.keySet.jwks) };
-	}
-}
-
-export interface MemoryFederationKeyProviderOptions {
-	/** Current Unix time in milliseconds for key-lifecycle scheduling. */
-	readonly nowMs?: () => number;
-}
-
-/**
- * In-memory key lifecycle state. Applications drive Federation §11.2's
- * publish, propagate, and switch stages; this provider schedules JWKS retirement.
- * Production providers must share durable state and protect signing-key custody.
- */
-export class MemoryFederationKeyProvider implements FederationKeyLifecycleProvider {
-	/** Create a software-key provider from a private JWK with an algorithm and key identifier. */
-	static fromJWK(
-		jwk: JWK,
-		options?: MemoryFederationKeyProviderOptions,
-	): MemoryFederationKeyProvider {
-		return new MemoryFederationKeyProvider(createFederationSigningKey(jwk), options);
-	}
-
-	private readonly keys = new Map<string, ManagedFederationKeyEntry>();
-	private readonly nowMs: () => number;
-	// Order signer changes without inventing or relying on distinct wall-clock timestamps.
-	private activationOrder = 0;
-
-	/**
-	 * Capture initial active signing keys and an optional millisecond clock for local lifecycle
-	 * scheduling.
-	 */
-	constructor(
-		initial: FederationSigningKey | readonly [FederationSigningKey, ...FederationSigningKey[]],
-		options?: MemoryFederationKeyProviderOptions,
-	) {
-		this.nowMs = options?.nowMs ?? Date.now;
-		const keys = isSigningKeyList(initial) ? initial : [initial];
-		if (keys.length === 0) {
-			throw new Error("MemoryFederationKeyProvider requires at least one initial federation key");
-		}
-		const now = this.nowMs();
-		for (const key of keys) {
-			const { signer, publicJwk } = this.validateNewKey(key);
-			this.keys.set(signer.kid, {
-				signer,
-				publicJwk,
-				state: "active",
-				createdAt: now,
-				activatedAt: now,
-				activationOrder: this.activationOrder++,
-			});
-		}
-	}
-
-	/**
-	 * Read the active signer and currently published keys; expired overlap keys are omitted.
-	 * Reject if no active signing key remains.
-	 */
-	async getFederationKeySet(): Promise<FederationKeySet> {
-		return this.currentKeySet();
-	}
-
-	private currentKeySet(): FederationKeySet {
-		let selected: ManagedFederationKeyEntry | undefined;
-		const keys: JWK[] = [];
-		const now = this.nowMs();
-		for (const entry of this.keys.values()) {
-			// Retirement affects publication on read, without a timer or history deletion.
-			if (
-				entry.state === "active" ||
-				entry.state === "published" ||
-				(entry.state === "retiring" && (entry.expiresAt === undefined || entry.expiresAt > now))
-			) {
-				keys.push(structuredClone(entry.publicJwk));
-			}
-			if (entry.state === "active") {
-				if (!selected || (entry.activationOrder ?? 0) > (selected.activationOrder ?? 0)) {
-					selected = entry;
-				}
-			}
-		}
-		if (!selected) {
-			throw new Error("No active federation signing key available");
-		}
-		const jwks = { keys };
-		validateFederationKeySet({ signer: selected.signer, jwks });
-		return { signer: selected.signer, jwks };
-	}
-
-	/** Return detached records for revoked keys and retiring keys whose overlap has ended. */
-	async getHistoricalFederationKeys(): Promise<HistoricalKeyEntry[]> {
-		const now = this.nowMs();
-		// Section 8.7 records retracted keys; overlap keys remain in the current JWKS.
-		return Array.from(this.keys.values())
-			.filter(
-				(entry) =>
-					entry.state === "revoked" ||
-					(entry.state === "retiring" && entry.expiresAt !== undefined && entry.expiresAt <= now),
-			)
-			.map(mapHistoricalEntry);
-	}
-
-	/** Publish a detached replacement public key while retaining the existing active signer. */
-	async publishKey(key: FederationSigningKey): Promise<void> {
-		// Publish verification material while the existing active key continues signing.
-		const { signer, publicJwk } = this.validateNewKey(key);
-		this.keys.set(signer.kid, {
-			signer,
-			publicJwk,
-			state: "published",
-			createdAt: this.nowMs(),
-		});
-	}
-
-	/**
-	 * Activate a published replacement key and start retiring the signer it replaces.
-	 * The host chooses how long to wait for key publication to propagate before switching.
-	 */
-	async switchActiveKey(
-		kid: string,
-		options: SwitchActiveFederationKeyOptions = {},
-	): Promise<void> {
-		const entry = this.getEntry(kid);
-		if (entry.state !== "published") {
-			throw new Error(`Federation key '${kid}' is in state '${entry.state}', expected 'published'`);
-		}
-
-		// Keep the state check and transition in one synchronous operation.
-		// Recovery after revocation can start with no active signer (§11.4).
-		// Only the explicitly selected published key becomes active; revoked keys stay revoked.
-		const hasActive = Array.from(this.keys.values()).some((key) => key.state === "active");
-		const previousKid = hasActive ? this.currentKeySet().signer.kid : undefined;
-		const now = this.nowMs();
-		const interval = options.retirePreviousAfterMs ?? DEFAULT_KEY_RETIRE_AFTER_MS;
-		const expiresAt = now + interval;
-		if (!Number.isFinite(interval) || interval < 0 || !Number.isFinite(expiresAt)) {
-			throw new Error(
-				"Federation key retirement interval and deadline must be finite; interval must be nonnegative",
-			);
-		}
-		this.keys.set(kid, {
-			...entry,
-			state: "active",
-			activatedAt: now,
-			activationOrder: this.activationOrder++,
-		});
-
-		if (previousKid !== undefined && previousKid !== kid) {
-			const previous = this.getEntry(previousKid);
-			if (previous.state === "active") {
-				// This overlap starts at signer switch, after the separate propagation interval.
-				this.keys.set(previousKid, {
-					...previous,
-					state: "retiring",
-					expiresAt,
-				});
-			}
-		}
-	}
-
-	/**
-	 * Retract the key locally and record its revocation in key history.
-	 * Issued statements and remote caches are unaffected by this operation.
-	 */
-	async revokeKey(kid: string, reason: string): Promise<void> {
-		// Federation §11.4 leaves the revocation process to the federation's own policy.
-		const entry = this.getEntry(kid);
-		const revokedAt = entry.revokedAt ?? this.nowMs();
-		this.keys.set(kid, {
-			...entry,
-			state: "revoked",
-			// Preserve an existing expiry, including when compromise is discovered after retirement (§8.7).
-			expiresAt: entry.expiresAt ?? revokedAt,
-			revokedAt,
-			revocationReason: reason,
-		});
-	}
-
-	private validateNewKey(key: FederationSigningKey): FederationSigningKey {
-		const { signer } = key;
-		validateSigner(signer);
-		if (this.keys.has(signer.kid)) {
-			throw new Error(`Federation key '${signer.kid}' already exists`);
-		}
-		return { signer, publicJwk: validateFederationPublicJwk(key.publicJwk, signer) };
-	}
-
-	private getEntry(kid: string): ManagedFederationKeyEntry {
-		const entry = this.keys.get(kid);
-		if (!entry) {
-			throw new Error(`Federation key '${kid}' not found`);
-		}
-		return entry;
-	}
-}
-
-/** Create a local signer and its public JWK from private signing material. Invalid keys throw. */
-export function createFederationSigningKey(jwk: JWK): FederationSigningKey {
-	const publicJwk = stripPrivateFields(jwk);
-	// Private signing-key operations do not describe the derived public key.
-	if (jwk.d !== undefined && jwk.key_ops !== undefined) publicJwk.key_ops = ["verify"];
+/** Convert withdrawn records only. Publication and activation are not key issuance. */
+export function historicalKeysFromKeyring(
+	keyring: Pick<RotatingKeyring, "history">,
+	purpose: KeyPurpose = "federation",
+	registry = DEFAULT_JWS_REGISTRY,
+): FederationKeyHistorySource {
 	return {
-		signer: new JwkSigner(jwk),
-		publicJwk,
-	};
-}
-
-/** Validate the signer, public key set, and matching signing key. Invalid configurations throw. */
-export function validateFederationKeySet(keySet: FederationKeySet): void {
-	prepareFederationKeySet(keySet);
-}
-
-function prepareFederationKeySet(keySet: FederationKeySet): FederationKeySet {
-	validateSigner(keySet.signer);
-	const prepared = preparePublicJwkSet(keySet.jwks);
-	if (!prepared.ok) {
-		throw new Error(
-			`Federation JWKS MUST be a public JWK Set with unique non-empty kids: ${prepared.error.description}`,
-		);
-	}
-	let signerKeyCount = 0;
-	for (const key of prepared.value.keys) {
-		if (key.kid === keySet.signer.kid) {
-			signerKeyCount++;
-			validateVerificationUsage(key);
-			if (key.alg && key.alg !== keySet.signer.alg) {
-				throw new Error(
-					`Federation signer alg '${keySet.signer.alg}' does not match published key alg '${key.alg}'`,
+		async getHistoricalKeys() {
+			const output: HistoricalKeyEntry[] = [];
+			for (const record of await keyring.history(purpose)) {
+				if (record.retiredAt === undefined && record.revokedAt === undefined) continue;
+				const ends = [record.retiredAt, record.revokedAt].filter(
+					(value): value is number => value !== undefined,
+				);
+				if (!ends.every(Number.isFinite))
+					throw new TypeError("Historical withdrawal times must be finite");
+				output.push(
+					HistoricalKeyEntrySchema.parse({
+						...toPublicJwk(record.publicJwk, registry),
+						exp: Math.min(...ends),
+						...(record.revokedAt === undefined
+							? {}
+							: {
+									revoked: {
+										revoked_at: record.revokedAt,
+										...(record.revocationReason === undefined
+											? {}
+											: { reason: record.revocationReason }),
+									},
+								}),
+					}),
 				);
 			}
-		}
-	}
-	if (signerKeyCount !== 1) {
-		throw new Error(
-			"Federation JWKS MUST publish exactly one public key for the active signer kid",
-		);
-	}
-	return { signer: keySet.signer, jwks: prepared.value };
+			return output;
+		},
+	};
 }
-
-function validateFederationPublicJwk(publicJwk: JWK, signer: JwtSigner): JWK {
-	const prepared = preparePublicJwkSet({ keys: [publicJwk] });
-	if (!prepared.ok) {
-		throw new Error(
-			`Federation public JWK MUST contain only asymmetric public key material: ${prepared.error.description}`,
-		);
-	}
-	const jwk = prepared.value.keys[0] as JWK;
-	validateVerificationUsage(jwk);
-	if (jwk.kid !== signer.kid) {
-		throw new Error("Federation public JWK kid MUST match signer kid");
-	}
-	if (jwk.alg && jwk.alg !== signer.alg) {
-		throw new Error("Federation public JWK alg MUST match signer alg");
-	}
-	return jwk;
-}
-
-function validateVerificationUsage(jwk: JWK): void {
+/** Validate public publication and the selected signer's matching key identity. */
+export function captureKeyringEntry(
+	entry: KeyringEntry,
+	registry = DEFAULT_JWS_REGISTRY,
+): KeyringEntry {
+	const identity = assertSigningPublicJwk({ ...entry.signer.publicJwk }, registry);
+	const prepared = preparePublicJwkSet(
+		{
+			keys: entry.publishedJwks.keys.map((key) => ({
+				...key,
+				...(key.key_ops ? { key_ops: [...key.key_ops] } : {}),
+			})),
+		},
+		registry,
+	);
+	if (!prepared.ok) throw new TypeError(prepared.error.description);
+	const matches = prepared.value.keys.filter((key) => key.kid === identity.kid);
+	if (matches.length !== 1)
+		throw new TypeError("Federation keys must publish exactly one key for the selected signer");
+	const key = matches[0];
+	if (!key || !samePublicKey(key, identity, registry))
+		throw new TypeError("Published key material must match the selected signer");
 	if (
-		(jwk.use !== undefined && jwk.use !== "sig") ||
-		(jwk.key_ops !== undefined && !jwk.key_ops.includes("verify"))
-	) {
-		throw new Error("Federation public signing keys must permit signature verification");
-	}
+		(key?.alg !== undefined && key.alg !== identity.alg) ||
+		(key?.use !== undefined && key.use !== "sig") ||
+		(key?.key_ops !== undefined && !key.key_ops.includes("verify"))
+	)
+		throw new TypeError("Published key must allow the selected signature algorithm");
+	const sign = entry.signer.sign;
+	if (typeof sign !== "function") throw new TypeError("Signer must implement sign");
+	return Object.freeze({
+		signer: Object.freeze({
+			publicJwk: freezeSnapshot(cloneData(identity)),
+			sign: sign.bind(entry.signer),
+		}),
+		publishedJwks: freezeSnapshot(prepared.value),
+	});
+}
+/** Validate the selected binding and all advertised public key material. */
+export function validateFederationKeySet(
+	entry: KeyringEntry,
+	registry = DEFAULT_JWS_REGISTRY,
+): void {
+	captureKeyringEntry(entry, registry);
 }
 
-function mapHistoricalEntry(entry: ManagedFederationKeyEntry): HistoricalKeyEntry {
-	if (entry.expiresAt === undefined) {
-		throw new Error("Historical federation key requires a recorded expiration time");
-	}
-	const historical = structuredClone(entry.publicJwk) as HistoricalKeyEntry;
-	// NumericDate permits fractions; preserve the provider's millisecond validity boundaries.
-	historical.exp = entry.expiresAt / 1000;
-	if (entry.createdAt !== undefined) {
-		historical.iat = entry.createdAt / 1000;
-	}
-	if (entry.activatedAt !== undefined) {
-		historical.nbf = entry.activatedAt / 1000;
-	}
-	if (entry.state === "revoked") {
-		if (entry.revokedAt === undefined) {
-			throw new Error("Revoked federation key requires a recorded revocation time");
-		}
-		historical.revoked = {
-			revoked_at: entry.revokedAt / 1000,
-			...(entry.revocationReason ? { reason: entry.revocationReason } : {}),
-		};
-	}
-	return historical;
+/** Read one federation snapshot with framework-neutral selection facts. */
+export async function federationEntry(
+	crypto: CryptoContext,
+	context?: KeySelectionContext,
+): Promise<KeyringEntry> {
+	const entry = await crypto.keyring.entry(crypto.federationPurpose ?? "federation", context);
+	return captureKeyringEntry(entry, registryFor(crypto));
 }

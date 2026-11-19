@@ -2,6 +2,7 @@ import { decodeEntityStatement, fetchEntityConfiguration, validateEntityId } fro
 import { useEffect, useState } from "react";
 import { useSettings } from "@/hooks/use-settings";
 import { extractFederationEntity } from "@/lib/jwt";
+import { engine } from "../../../lib/crypto.js";
 
 export interface EnrichedEntity {
 	readonly organizationName: string | null;
@@ -44,6 +45,7 @@ export function useSubordinateEnrichment(
 				const ecResult = await fetchEntityConfiguration(v.value, {
 					httpTimeoutMs: settings.httpTimeoutMs,
 					signal: controller.signal,
+					engine: engine,
 				});
 				if (!ecResult.ok) return;
 

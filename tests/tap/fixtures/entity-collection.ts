@@ -11,15 +11,19 @@ import {
 	EntityCollectionService,
 	type EntityCollectionSnapshot,
 	entityId,
-	generateSigningKey,
 	type HttpClient,
-	JwkSigner,
 	MediaType,
 	MemoryEntityCollectionStore,
-	MemoryFederationKeyProvider,
 	signEntityStatement,
 } from "../../../packages/core/src/index.js";
 import { Leaf } from "../../../packages/leaf/src/index.js";
+import {
+	FixtureCrypto,
+	fixtureHostConfig,
+	generateSigningKey,
+	SigningEntryFixture,
+	testEngine,
+} from "./software-crypto.js";
 
 export const anchor = entityId("https://anchor.example");
 
@@ -76,7 +80,7 @@ export async function seed() {
 		store,
 		endpoint,
 		responder: { entityId: anchor, isTrustAnchor: true },
-		options: { clock },
+		options: { engine: testEngine, clock },
 		maxPageSize: 2,
 	});
 	return {
@@ -120,15 +124,15 @@ export async function federation(
 	const issuerKey = await generateSigningKey("ES256");
 	const clock = { now: () => now };
 	const provider = (key: typeof rootKey) =>
-		new MemoryFederationKeyProvider({
-			signer: new JwkSigner(key.privateKey),
+		new FixtureCrypto({
+			signer: new SigningEntryFixture(key.privateKey),
 			publicJwk: key.publicKey,
 		});
 	const trustAnchors = createTrustAnchorSet([
 		{ entityId: anchor, jwks: { keys: [rootKey.publicKey] } },
 	]);
-	const storage = new MemoryStorageAdapter({ collections: true, clock });
-	const middleStorage = new MemoryStorageAdapter({ clock });
+	const storage = new MemoryStorageAdapter({ engine: testEngine, collections: true, clock });
+	const middleStorage = new MemoryStorageAdapter({ engine: testEngine, clock });
 	let requests = 0;
 	let failedHost = "";
 	const httpClient: HttpClient = async (input, init) => {
@@ -152,6 +156,7 @@ export async function federation(
 	const collection = {
 		trustAnchors,
 		options: {
+			engine: testEngine,
 			clock,
 			httpClient,
 			logger: {
@@ -164,49 +169,55 @@ export async function federation(
 			},
 		},
 	};
-	const root = new TrustAnchor({
-		entityId: anchor,
-		storage,
-		keyProvider: provider(rootKey),
-		...(markMode !== "none"
-			? {
-					trustMarkIssuers: {
-						one: markMode === "unauthorized" ? ["https://unauthorized.example"] : [issuerId],
-					},
-				}
-			: {}),
-		options: { clock },
-		collection,
-		metadata: {
-			federation_entity: {
-				federation_fetch_endpoint: `${anchor}/fetch`,
-				federation_list_endpoint: `${anchor}/list`,
-				federation_collection_endpoint: `${anchor}/collect?version=1`,
+	const root = await TrustAnchor.create(
+		fixtureHostConfig({
+			entityId: anchor,
+			storage,
+			crypto: provider(rootKey),
+			...(markMode !== "none"
+				? {
+						trustMarkIssuers: {
+							one: markMode === "unauthorized" ? ["https://unauthorized.example"] : [issuerId],
+						},
+					}
+				: {}),
+			options: { clock },
+			collection,
+			metadata: {
+				federation_entity: {
+					federation_fetch_endpoint: `${anchor}/fetch`,
+					federation_list_endpoint: `${anchor}/list`,
+					federation_collection_endpoint: `${anchor}/collect?version=1`,
+				},
 			},
-		},
-	});
-	const middle = new Intermediate({
-		entityId: middleId,
-		authorityHints: [anchor],
-		storage: middleStorage,
-		keyProvider: provider(middleKey),
-		options: { clock },
-		collection,
-		metadata: {
-			federation_entity: {
-				federation_fetch_endpoint: `${middleId}/fetch`,
-				federation_list_endpoint: `${middleId}/list`,
-				federation_collection_endpoint: `${middleId}/collect`,
+		}),
+	);
+	const middle = await Intermediate.create(
+		fixtureHostConfig({
+			entityId: middleId,
+			authorityHints: [anchor],
+			storage: middleStorage,
+			crypto: provider(middleKey),
+			options: { clock },
+			collection,
+			metadata: {
+				federation_entity: {
+					federation_fetch_endpoint: `${middleId}/fetch`,
+					federation_list_endpoint: `${middleId}/list`,
+					federation_collection_endpoint: `${middleId}/collect`,
+				},
 			},
-		},
-	});
-	const issuer = new Leaf({
-		entityId: issuerId,
-		authorityHints: [anchor],
-		keyProvider: provider(issuerKey),
-		options: { clock },
-		metadata: { federation_entity: { display_name: "External issuer" } },
-	});
+		}),
+	);
+	const issuer = await Leaf.create(
+		fixtureHostConfig({
+			entityId: issuerId,
+			authorityHints: [anchor],
+			crypto: provider(issuerKey),
+			options: { clock },
+			metadata: { federation_entity: { display_name: "External issuer" } },
+		}),
+	);
 	const mark = await signEntityStatement(
 		{
 			iss: issuerId,
@@ -215,27 +226,35 @@ export async function federation(
 			exp: markMode === "expired" ? 1100 : 3000,
 			trust_mark_type: markMode === "wrong-type" ? "two" : "one",
 		},
-		new JwkSigner(markMode === "invalid-signature" ? leafKey.privateKey : issuerKey.privateKey),
+		new SigningEntryFixture(
+			markMode === "invalid-signature" ? leafKey.privateKey : issuerKey.privateKey,
+		),
 		{ typ: "trust-mark+jwt" },
 	);
-	const leaf = new Leaf({
-		entityId: leafId,
-		authorityHints: [middleId],
-		keyProvider: provider(leafKey),
-		...(markMode !== "none"
-			? {
-					trustMarks: [
-						{ trust_mark_type: "one", trust_mark: markMode === "malformed" ? "not-a-jwt" : mark },
-					],
-				}
-			: {}),
-		options: { clock },
-		collection,
-		metadata: {
-			federation_entity: { federation_collection_endpoint: `${leafId}/collect` },
-			oauth_resource: { resource: leafId, resource_name: "API", "resource_name#en": "English API" },
-		},
-	});
+	const leaf = await Leaf.create(
+		fixtureHostConfig({
+			entityId: leafId,
+			authorityHints: [middleId],
+			crypto: provider(leafKey),
+			...(markMode !== "none"
+				? {
+						trustMarks: [
+							{ trust_mark_type: "one", trust_mark: markMode === "malformed" ? "not-a-jwt" : mark },
+						],
+					}
+				: {}),
+			options: { clock },
+			collection,
+			metadata: {
+				federation_entity: { federation_collection_endpoint: `${leafId}/collect` },
+				oauth_resource: {
+					resource: leafId,
+					resource_name: "API",
+					"resource_name#en": "English API",
+				},
+			},
+		}),
+	);
 	if (markMode !== "none")
 		await storage.subordinates.add({
 			entityId: issuerId,

@@ -7,6 +7,7 @@
  * or only ambiguous keys does not trigger it either.
  */
 
+import { DEFAULT_JWS_REGISTRY, type JwsAlgorithmRegistry } from "@oidfed/crypto";
 import { FederationErrorCode } from "../constants.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
 import type { JWK } from "../schemas/jwk.js";
@@ -27,6 +28,7 @@ const JWS_ALGS: ReadonlySet<string> = new Set([
 	"PS384",
 	"PS512",
 	"EdDSA",
+	"Ed25519",
 ]);
 
 /** RFC 7518 JWE key-management algorithms. */
@@ -60,11 +62,11 @@ const ENC_KEY_OPS: ReadonlySet<string> = new Set([
 	"deriveBits",
 ]);
 
-function isLikelySigning(jwk: JWK): boolean {
+function isLikelySigning(jwk: JWK, registry: JwsAlgorithmRegistry): boolean {
 	if (jwk.use === "sig") return true;
 	if (jwk.use === "enc") return false;
 	if (jwk.key_ops?.some((op) => op === "sign" || op === "verify")) return true;
-	if (jwk.alg && JWS_ALGS.has(jwk.alg)) return true;
+	if (jwk.alg && (JWS_ALGS.has(jwk.alg) || registry.algorithm(jwk.alg))) return true;
 	return false;
 }
 
@@ -83,10 +85,13 @@ function isLikelyEncryption(jwk: JWK): boolean {
  * key are present in the set, but at least one key has no nonempty `use` value.
  * RFC 7517 permits extension values in addition to sig and enc.
  */
-export function validateJwkSetUseRequirement(jwks: readonly JWK[]): Result<void, FederationError> {
+export function validateJwkSetUseRequirement(
+	jwks: readonly JWK[],
+	registry = DEFAULT_JWS_REGISTRY,
+): Result<void, FederationError> {
 	if (jwks.length === 0) return ok(undefined);
 
-	const hasSigning = jwks.some(isLikelySigning);
+	const hasSigning = jwks.some((key) => isLikelySigning(key, registry));
 	const hasEncryption = jwks.some(isLikelyEncryption);
 
 	if (!hasSigning || !hasEncryption) {

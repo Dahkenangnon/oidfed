@@ -19,6 +19,7 @@ import {
 import { useCallback, useState } from "react";
 import { useSettings } from "@/hooks/use-settings";
 import { decodeJwtPart } from "@/lib/jwt";
+import { engine } from "../../../lib/crypto.js";
 
 export interface TrustMarkInspectResult {
 	readonly payload: TrustMarkPayload;
@@ -82,6 +83,7 @@ export function useTrustMarkInspect(): UseTrustMarkInspectResult {
 				const ecResult = await fetchEntityConfiguration(validated.value, {
 					httpTimeoutMs,
 					signal: controller.signal,
+					engine: engine,
 				});
 				if (!ecResult.ok)
 					throw new Error(`Failed to fetch issuer EC: ${ecResult.error.description}`);
@@ -105,6 +107,7 @@ export function useTrustMarkInspect(): UseTrustMarkInspectResult {
 
 				const validationResult = await validateTrustMark(normalized, trustMarkIssuers, issuerJwks, {
 					expectedSubject,
+					engine: engine,
 				});
 
 				let validatedMark: ValidatedTrustMark | null = null;
@@ -141,6 +144,7 @@ export function useTrustMarkInspect(): UseTrustMarkInspectResult {
 							if (!taEntityId.ok) continue;
 							const taResult = await fetchEntityConfiguration(taEntityId.value, {
 								httpTimeoutMs,
+								engine: engine,
 							});
 							if (!taResult.ok) continue;
 							const taDecoded = decodeEntityStatement(taResult.value);
@@ -167,6 +171,7 @@ export function useTrustMarkInspect(): UseTrustMarkInspectResult {
 							const delegationVerifyResult = await verifyEntityStatement(
 								payload.delegation as string,
 								ownerJwksParsed.data,
+								{ engine: engine },
 							);
 							if (delegationVerifyResult.ok) {
 								delegationVerified = true;
@@ -198,6 +203,7 @@ export function useTrustMarkInspect(): UseTrustMarkInspectResult {
 
 							const taResult = await fetchEntityConfiguration(taId.value, {
 								httpTimeoutMs,
+								engine: engine,
 							});
 							if (!taResult.ok) continue;
 							const taDecoded = decodeEntityStatement(taResult.value);
@@ -211,6 +217,7 @@ export function useTrustMarkInspect(): UseTrustMarkInspectResult {
 
 						const chainResult = await resolveTrustChains(validated.value, trustAnchors, {
 							httpTimeoutMs,
+							engine: engine,
 						});
 						if (chainResult.chains.length > 0) {
 							issuerTrusted = true;

@@ -1,5 +1,6 @@
 import { entityId, resolveTrustChains, validateTrustChain } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
+import { testEngine } from "../../tap/fixtures/software-crypto.js";
 import { useFederation } from "../helpers/lifecycle.js";
 import { hierarchicalTopology } from "../topologies/hierarchical.js";
 
@@ -12,7 +13,7 @@ describe("Metadata policy enforcement", () => {
 			const port = server.port;
 
 			const opId = entityId(`https://op-uni.ofed.test:${port}`);
-			const result = await resolveTrustChains(opId, trustAnchors);
+			const result = await resolveTrustChains(opId, trustAnchors, { engine: testEngine });
 
 			expect(result.errors).toHaveLength(0);
 			expect(result.chains).toHaveLength(1);
@@ -23,7 +24,9 @@ describe("Metadata policy enforcement", () => {
 			expect(chain.statements).toHaveLength(4);
 
 			// Validate the chain and get resolved metadata
-			const validation = await validateTrustChain([...chain.statements], trustAnchors);
+			const validation = await validateTrustChain([...chain.statements], trustAnchors, {
+				engine: testEngine,
+			});
 			expect(validation.valid).toBe(true);
 			expect(validation.chain).toBeDefined();
 
@@ -41,7 +44,7 @@ describe("Metadata policy enforcement", () => {
 			const port = server.port;
 
 			const opId = entityId(`https://op-hospital.ofed.test:${port}`);
-			const result = await resolveTrustChains(opId, trustAnchors);
+			const result = await resolveTrustChains(opId, trustAnchors, { engine: testEngine });
 
 			expect(result.errors).toHaveLength(0);
 			expect(result.chains).toHaveLength(1);
@@ -50,7 +53,9 @@ describe("Metadata policy enforcement", () => {
 			expect(chain).toBeDefined();
 			if (!chain) return;
 
-			const validation = await validateTrustChain([...chain.statements], trustAnchors);
+			const validation = await validateTrustChain([...chain.statements], trustAnchors, {
+				engine: testEngine,
+			});
 			expect(validation.valid).toBe(true);
 			expect(validation.chain).toBeDefined();
 
@@ -71,8 +76,8 @@ describe("Metadata policy enforcement", () => {
 			const opHospitalId = entityId(`https://op-hospital.ofed.test:${port}`);
 
 			const [uniResult, hospitalResult] = await Promise.all([
-				resolveTrustChains(opUniId, trustAnchors),
-				resolveTrustChains(opHospitalId, trustAnchors),
+				resolveTrustChains(opUniId, trustAnchors, { engine: testEngine }),
+				resolveTrustChains(opHospitalId, trustAnchors, { engine: testEngine }),
 			]);
 
 			expect(uniResult.chains).toHaveLength(1);

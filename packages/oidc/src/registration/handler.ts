@@ -1,12 +1,13 @@
+import { cloneData, federationEntry, federationSigningOptions } from "@oidfed/core";
 /** OP-side explicit registration endpoint handler (self-contained, no authority dep). */
 
 import {
+	type CryptoContext,
 	DEFAULT_ENTITY_STATEMENT_TTL_SECONDS,
 	DEFAULT_MAX_REQUEST_BODY_BYTES,
 	type EntityId,
 	errorResponse,
 	FederationErrorCode,
-	type FederationKeyProvider,
 	type FederationOptions,
 	InternalErrorCode,
 	isExactContentType,
@@ -49,7 +50,7 @@ export interface ExplicitRegistrationHandlerConfig extends RegistrationAccredita
 	/** Protocol role used to check the server's peer metadata. Defaults to OP. */
 	readonly providerMetadataType?: "openid_provider" | "oauth_authorization_server";
 	/** Federation-only signing key provider used for the signed registration response. */
-	readonly keyProvider: FederationKeyProvider;
+	readonly crypto: CryptoContext;
 	/** Non-empty trust anchors required for RP trust chain resolution. */
 	readonly trustAnchors: TrustAnchorSet;
 	/** TTL in seconds for the registration response JWT. Capped to chain expiry when a chain is resolved. */
@@ -69,7 +70,7 @@ export interface ExplicitRegistrationHandlerConfig extends RegistrationAccredita
 		clientSecret?: string,
 	) => Promise<void>;
 	/** Federation-wide options (httpClient, clock, etc.). */
-	readonly options?: FederationOptions;
+	readonly options: FederationOptions;
 }
 
 /**
@@ -137,14 +138,14 @@ export function createExplicitRegistrationHandler(
 			peerResolvedOpMetadata,
 		} = processed.value;
 
-		const policyChain = structuredClone(bestChain);
+		const policyChain = cloneData(bestChain);
 
 		const adapterContext =
 			peerResolvedOpMetadata !== undefined ? { peerResolvedOpMetadata } : undefined;
 
 		let validatedMetadata: Record<string, unknown> | undefined;
 		if (config.registrationProtocolAdapter) {
-			const metadataRecord = structuredClone(bestChain.resolvedMetadata);
+			const metadataRecord = cloneData(bestChain.resolvedMetadata);
 			let adapterResult: ReturnType<RegistrationProtocolAdapter["validateClientMetadata"]>;
 			try {
 				adapterResult = config.registrationProtocolAdapter.validateClientMetadata(
@@ -162,7 +163,10 @@ export function createExplicitRegistrationHandler(
 			validatedMetadata = adapterResult.value;
 		}
 
-		const keySet = await config.keyProvider.getFederationKeySet();
+		const keySet = await federationEntry(config.crypto, {
+			issuer: config.opEntityId,
+			subject: rpEntityId,
+		});
 		const now = nowSeconds(config.options?.clock);
 
 		const trustAnchorId = bestChain.trustAnchorId as string;
@@ -203,14 +207,14 @@ export function createExplicitRegistrationHandler(
 
 		const metadataForResponse = validatedMetadata ?? bestChain.resolvedMetadata;
 		if (metadataForResponse) {
-			const responseMetadata = structuredClone(metadataForResponse) as Record<string, unknown>;
+			const responseMetadata = cloneData(metadataForResponse) as Record<string, unknown>;
 			const sourceRpMeta = (responseMetadata[profile.clientType] ?? {}) as Record<string, unknown>;
 			let rpMeta: Record<string, unknown>;
 			if (config.registrationProtocolAdapter && bestChain) {
 				try {
 					rpMeta = config.registrationProtocolAdapter.enrichResponseMetadata(
 						sourceRpMeta,
-						structuredClone(bestChain),
+						cloneData(bestChain),
 						adapterContext,
 					);
 				} catch (error) {
@@ -320,7 +324,8 @@ export function createExplicitRegistrationHandler(
 		if (!finalPolicy.ok)
 			return errorResponse(400, finalPolicy.error.code, finalPolicy.error.description);
 
-		const responseJwt = await signEntityStatement(responsePayload, keySet.signer, {
+		const responseJwt = await signEntityStatement(responsePayload, keySet, {
+			...federationSigningOptions(config.options),
 			typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE,
 		});
 

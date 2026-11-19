@@ -4,17 +4,20 @@ import {
 	MemoryStorageAdapter,
 	TrustAnchor,
 } from "../../../packages/authority/src/index.js";
-import {
-	decodeEntityStatement,
-	JwkSigner,
-	MemoryFederationKeyProvider,
-} from "../../../packages/core/src/index.js";
+import { decodeEntityStatement } from "../../../packages/core/src/index.js";
 import { Leaf } from "../../../packages/leaf/src/index.js";
 import {
 	CredentialIssuerRole,
 	CredentialVerifierRole,
 	WalletProviderRole,
 } from "../../../packages/wallet/src/index.js";
+import {
+	FixtureCrypto,
+	fixtureHostConfig,
+	PurposeBindingsFixture,
+	SigningEntryFixture,
+	testEngine,
+} from "../fixtures/software-crypto.js";
 import { walletFederation } from "../fixtures/wallet.js";
 
 export default (QUnit: QUnit) => {
@@ -28,7 +31,7 @@ export default (QUnit: QUnit) => {
 						const role = new Role({ metadata: {} });
 						const config = {
 							entityId: f.ids.issuer,
-							keyProvider: MemoryFederationKeyProvider.fromJWK(f.keys.issuer.privateKey),
+							crypto: FixtureCrypto.fromJWK(f.keys.issuer.privateKey),
 							roles: [role],
 							options: f.options,
 							metadata: {
@@ -43,14 +46,23 @@ export default (QUnit: QUnit) => {
 						};
 						const entity =
 							host === "leaf"
-								? new Leaf({ ...config, authorityHints: [f.ids.anchor] })
+								? await Leaf.create(
+										fixtureHostConfig({ ...config, authorityHints: [f.ids.anchor] }),
+									)
 								: host === "anchor"
-									? new TrustAnchor({ ...config, storage: new MemoryStorageAdapter() })
-									: new Intermediate({
-											...config,
-											storage: new MemoryStorageAdapter(),
-											authorityHints: [f.ids.anchor],
-										});
+									? await TrustAnchor.create(
+											fixtureHostConfig({
+												...config,
+												storage: new MemoryStorageAdapter({ engine: testEngine }),
+											}),
+										)
+									: await Intermediate.create(
+											fixtureHostConfig({
+												...config,
+												storage: new MemoryStorageAdapter({ engine: testEngine }),
+												authorityHints: [f.ids.anchor],
+											}),
+										);
 						const decoded = decodeEntityStatement(await entity.getEntityConfiguration());
 						t.true(decoded.ok, `${host} ${role.type}`);
 						if (decoded.ok) t.deepEqual(decoded.value.payload.metadata?.[role.type], {});
@@ -69,14 +81,16 @@ export default (QUnit: QUnit) => {
 					[CredentialVerifierRole, "verifier"],
 				] as const) {
 					const role = new Role({ trustAnchors: f.anchors });
-					new Leaf({
-						entityId: f.ids[name],
-						authorityHints: [f.ids.anchor],
-						keyProvider: MemoryFederationKeyProvider.fromJWK(f.keys[name].privateKey),
-						metadata: f.metadata[name],
-						roles: [role],
-						options: f.options,
-					});
+					await Leaf.create(
+						fixtureHostConfig({
+							entityId: f.ids[name],
+							authorityHints: [f.ids.anchor],
+							crypto: FixtureCrypto.fromJWK(f.keys[name].privateKey),
+							metadata: f.metadata[name],
+							roles: [role],
+							options: f.options,
+						}),
+					);
 					let calls = 0;
 					const result = await role.verifyProviderAttestation("custom", f.ids.provider, {
 						...f.options,
@@ -97,37 +111,46 @@ export default (QUnit: QUnit) => {
 			"instance operations use initialized host context and configured anchors",
 			async (t) => {
 				const f = await walletFederation();
-				const provider = new WalletProviderRole({ trustAnchors: f.anchors });
+				const provider = new WalletProviderRole({
+					trustAnchors: f.anchors,
+					signing: new PurposeBindingsFixture({
+						walletAttestationSigner: new SigningEntryFixture(f.protocol.provider.privateKey),
+					}),
+				});
 				const issuer = new CredentialIssuerRole();
-				const verifier = new CredentialVerifierRole();
+				const verifier = new CredentialVerifierRole({
+					signing: new PurposeBindingsFixture({
+						authorizationRequestSigner: new SigningEntryFixture(f.protocol.verifier.privateKey),
+					}),
+				});
 				for (const [role, name] of [
 					[provider, "provider"],
 					[issuer, "issuer"],
 					[verifier, "verifier"],
 				] as const) {
-					new Leaf({
-						entityId: f.ids[name],
-						authorityHints: [f.ids.anchor],
-						keyProvider: MemoryFederationKeyProvider.fromJWK(f.keys[name].privateKey),
-						metadata: f.metadata[name],
-						roles: [role],
-						trustAnchors: f.anchors,
-						options: f.options,
-					});
+					await Leaf.create(
+						fixtureHostConfig({
+							entityId: f.ids[name],
+							authorityHints: [f.ids.anchor],
+							crypto: FixtureCrypto.fromJWK(f.keys[name].privateKey),
+							metadata: f.metadata[name],
+							roles: [role],
+							trustAnchors: f.anchors,
+							options: f.options,
+						}),
+					);
 					t.true((await role.discover(f.ids[name], f.options)).ok);
 				}
 				for (const response_mode of ["direct_post", "direct_post.jwt", "fragment"]) {
-					const invalid = await verifier.createAuthorizationRequest(
-						{ ...f.requestPayload, response_mode, response_uri: undefined },
-						new JwkSigner(f.protocol.verifier.privateKey),
-					);
+					const invalid = await verifier.createAuthorizationRequest({
+						...f.requestPayload,
+						response_mode,
+						response_uri: undefined,
+					});
 					t.false(invalid.ok, `${response_mode} requires its endpoint through instance APIs`);
 					if (!invalid.ok) t.equal(invalid.error.code, "invalid_request");
 				}
-				const signed = await verifier.createAuthorizationRequest(
-					f.requestPayload,
-					new JwkSigner(f.protocol.verifier.privateKey),
-				);
+				const signed = await verifier.createAuthorizationRequest(f.requestPayload);
 				t.true(signed.ok);
 				if (!signed.ok) return;
 				const prepared = await verifier.prepareAuthorizationRequest(
@@ -153,14 +176,15 @@ export default (QUnit: QUnit) => {
 						})
 					).ok,
 				);
-				const jwt = await provider.createWalletAttestation(
-					{ subject: "wallet", confirmationKey: f.protocol.issuer.publicKey, expiresAt: 4000 },
-					new JwkSigner(f.protocol.provider.privateKey),
-				);
+				const jwt = await provider.createWalletAttestation({
+					subject: "wallet",
+					confirmationKey: f.protocol.issuer.publicKey,
+					expiresAt: 4000,
+				});
 				t.true(jwt.ok);
 				if (!jwt.ok) return;
 				t.true((await issuer.verifyWalletAttestation(jwt.value, f.options)).ok);
-				const proof = await new JwkSigner(f.protocol.issuer.privateKey).signJwt(
+				const proof = await new SigningEntryFixture(f.protocol.issuer.privateKey).signJwt(
 					new TextEncoder().encode(
 						JSON.stringify({ iss: "wallet", aud: f.ids.server, iat: 1490, jti: "instance-proof" }),
 					),
@@ -180,20 +204,17 @@ export default (QUnit: QUnit) => {
 		);
 		QUnit.test("uninitialized instance methods require host identity or anchors", async (t) => {
 			const f = await walletFederation();
-			t.throws(
-				() =>
-					new WalletProviderRole().createWalletAttestation(
-						{ subject: "wallet", confirmationKey: f.protocol.issuer.publicKey, expiresAt: 4000 },
-						new JwkSigner(f.protocol.provider.privateKey),
-					),
+			await t.rejects(
+				(() =>
+					new WalletProviderRole().createWalletAttestation({
+						subject: "wallet",
+						confirmationKey: f.protocol.issuer.publicKey,
+						expiresAt: 4000,
+					}))(),
 				/Attach the role/,
 			);
-			t.throws(
-				() =>
-					new CredentialVerifierRole().createAuthorizationRequest(
-						f.requestPayload,
-						new JwkSigner(f.protocol.verifier.privateKey),
-					),
+			await t.rejects(
+				(() => new CredentialVerifierRole().createAuthorizationRequest(f.requestPayload))(),
 				/Attach the role/,
 			);
 			t.throws(() => new WalletProviderRole().discover(f.ids.provider), /Pinned trust anchors/);
@@ -225,20 +246,29 @@ export default (QUnit: QUnit) => {
 												federation_list_endpoint: `${id}/list`,
 											},
 							},
-							keyProvider: MemoryFederationKeyProvider.fromJWK(f.keys[name].privateKey),
+							crypto: FixtureCrypto.fromJWK(f.keys[name].privateKey),
 							roles: [role],
 							options: f.options,
 						};
 						const entity =
 							host === "leaf"
-								? new Leaf({ ...config, authorityHints: [f.ids.anchor] })
+								? await Leaf.create(
+										fixtureHostConfig({ ...config, authorityHints: [f.ids.anchor] }),
+									)
 								: host === "anchor"
-									? new TrustAnchor({ ...config, storage: new MemoryStorageAdapter() })
-									: new Intermediate({
-											...config,
-											storage: new MemoryStorageAdapter(),
-											authorityHints: [f.ids.anchor],
-										});
+									? await TrustAnchor.create(
+											fixtureHostConfig({
+												...config,
+												storage: new MemoryStorageAdapter({ engine: testEngine }),
+											}),
+										)
+									: await Intermediate.create(
+											fixtureHostConfig({
+												...config,
+												storage: new MemoryStorageAdapter({ engine: testEngine }),
+												authorityHints: [f.ids.anchor],
+											}),
+										);
 						const decoded = decodeEntityStatement(await entity.getEntityConfiguration());
 						t.true(decoded.ok);
 						if (!decoded.ok) continue;
@@ -295,8 +325,18 @@ export default (QUnit: QUnit) => {
 								: {},
 					);
 					const id = f.ids[name];
-					const role = new Role();
-					const keyProvider = MemoryFederationKeyProvider.fromJWK(f.keys[name].privateKey);
+					const role = new Role(
+						name === "provider"
+							? {
+									signing: new PurposeBindingsFixture({
+										walletAttestationSigner: new SigningEntryFixture(
+											f.protocol.provider.privateKey,
+										),
+									}),
+								}
+							: {},
+					);
+					const crypto = FixtureCrypto.fromJWK(f.keys[name].privateKey);
 					const federationMetadata =
 						host === "leaf"
 							? {}
@@ -307,35 +347,39 @@ export default (QUnit: QUnit) => {
 					const config = {
 						entityId: id,
 						metadata: { federation_entity: federationMetadata, ...f.metadata[name] },
-						keyProvider,
+						crypto,
 						roles: [role],
 						trustAnchors: f.anchors,
 						options: f.options,
 					};
 					const entity =
 						host === "leaf"
-							? new Leaf({ ...config, authorityHints: [f.ids.anchor] })
+							? await Leaf.create(fixtureHostConfig({ ...config, authorityHints: [f.ids.anchor] }))
 							: host === "anchor"
-								? new TrustAnchor({ ...config, storage: new MemoryStorageAdapter() })
-								: new Intermediate({
-										...config,
-										authorityHints: [f.ids.anchor],
-										storage: new MemoryStorageAdapter(),
-									});
+								? await TrustAnchor.create(
+										fixtureHostConfig({
+											...config,
+											storage: new MemoryStorageAdapter({ engine: testEngine }),
+										}),
+									)
+								: await Intermediate.create(
+										fixtureHostConfig({
+											...config,
+											authorityHints: [f.ids.anchor],
+											storage: new MemoryStorageAdapter({ engine: testEngine }),
+										}),
+									);
 					const decoded = decodeEntityStatement(await entity.getEntityConfiguration());
 					t.true(decoded.ok);
 					if (!decoded.ok) return;
 					const metadata = decoded.value.payload.metadata?.[role.type];
 					t.deepEqual(metadata, f.metadata[name][role.type]);
 					if (role instanceof WalletProviderRole) {
-						const signed = await role.createWalletAttestation(
-							{
-								subject: "wallet-client",
-								confirmationKey: f.protocol.issuer.publicKey,
-								expiresAt: 4000,
-							},
-							new JwkSigner(f.protocol.provider.privateKey),
-						);
+						const signed = await role.createWalletAttestation({
+							subject: "wallet-client",
+							confirmationKey: f.protocol.issuer.publicKey,
+							expiresAt: 4000,
+						});
 						t.true(signed.ok);
 					}
 				});
@@ -363,21 +407,30 @@ export default (QUnit: QUnit) => {
 								response_uris: [responseUri],
 							},
 						},
-						keyProvider: MemoryFederationKeyProvider.fromJWK(f.keys.verifier.privateKey),
+						crypto: FixtureCrypto.fromJWK(f.keys.verifier.privateKey),
 						roles: [new CredentialVerifierRole()],
 						options: f.options,
 					};
-					t.throws(
-						() =>
+					await t.rejects(
+						(async () =>
 							host === "leaf"
-								? new Leaf({ ...config, authorityHints: [f.ids.anchor] })
+								? await Leaf.create(
+										fixtureHostConfig({ ...config, authorityHints: [f.ids.anchor] }),
+									)
 								: host === "anchor"
-									? new TrustAnchor({ ...config, storage: new MemoryStorageAdapter() })
-									: new Intermediate({
-											...config,
-											authorityHints: [f.ids.anchor],
-											storage: new MemoryStorageAdapter(),
-										}),
+									? await TrustAnchor.create(
+											fixtureHostConfig({
+												...config,
+												storage: new MemoryStorageAdapter({ engine: testEngine }),
+											}),
+										)
+									: await Intermediate.create(
+											fixtureHostConfig({
+												...config,
+												authorityHints: [f.ids.anchor],
+												storage: new MemoryStorageAdapter({ engine: testEngine }),
+											}),
+										))(),
 						/response_uris/,
 					);
 				}
@@ -400,21 +453,28 @@ export default (QUnit: QUnit) => {
 							credential_issuer: "https://other.example",
 						},
 					},
-					keyProvider: MemoryFederationKeyProvider.fromJWK(f.keys.issuer.privateKey),
+					crypto: FixtureCrypto.fromJWK(f.keys.issuer.privateKey),
 					roles: [new CredentialIssuerRole()],
 					options: f.options,
 				};
-				t.throws(
-					() =>
+				await t.rejects(
+					(async () =>
 						host === "leaf"
-							? new Leaf({ ...config, authorityHints: [f.ids.anchor] })
+							? await Leaf.create(fixtureHostConfig({ ...config, authorityHints: [f.ids.anchor] }))
 							: host === "anchor"
-								? new TrustAnchor({ ...config, storage: new MemoryStorageAdapter() })
-								: new Intermediate({
-										...config,
-										authorityHints: [f.ids.anchor],
-										storage: new MemoryStorageAdapter(),
-									}),
+								? await TrustAnchor.create(
+										fixtureHostConfig({
+											...config,
+											storage: new MemoryStorageAdapter({ engine: testEngine }),
+										}),
+									)
+								: await Intermediate.create(
+										fixtureHostConfig({
+											...config,
+											authorityHints: [f.ids.anchor],
+											storage: new MemoryStorageAdapter({ engine: testEngine }),
+										}),
+									))(),
 					/credential_issuer/,
 				);
 			});
@@ -424,24 +484,28 @@ export default (QUnit: QUnit) => {
 			const role = new CredentialIssuerRole({
 				metadata: f.metadata.issuer.openid_credential_issuer,
 			});
-			const entity = new Leaf({
-				entityId: f.ids.issuer,
-				authorityHints: [f.ids.anchor],
-				keyProvider: MemoryFederationKeyProvider.fromJWK(f.keys.issuer.privateKey),
-				metadata: { openid_credential_issuer: { credential_issuer: "wrong" } },
-				roles: [role],
-				options: f.options,
-			});
+			const entity = await Leaf.create(
+				fixtureHostConfig({
+					entityId: f.ids.issuer,
+					authorityHints: [f.ids.anchor],
+					crypto: FixtureCrypto.fromJWK(f.keys.issuer.privateKey),
+					metadata: { openid_credential_issuer: { credential_issuer: "wrong" } },
+					roles: [role],
+					options: f.options,
+				}),
+			);
 			t.true(decodeEntityStatement(await entity.getEntityConfiguration()).ok);
-			t.throws(
-				() =>
-					new Leaf({
-						entityId: f.ids.issuer,
-						authorityHints: [f.ids.anchor],
-						keyProvider: MemoryFederationKeyProvider.fromJWK(f.keys.issuer.privateKey),
-						metadata: {},
-						roles: [role],
-					}),
+			await t.rejects(
+				(async () =>
+					await Leaf.create(
+						fixtureHostConfig({
+							entityId: f.ids.issuer,
+							authorityHints: [f.ids.anchor],
+							crypto: FixtureCrypto.fromJWK(f.keys.issuer.privateKey),
+							metadata: {},
+							roles: [role],
+						}),
+					))(),
 				/separate wallet role/,
 			);
 		});

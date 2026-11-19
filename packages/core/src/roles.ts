@@ -1,3 +1,5 @@
+import type { JwsAlgorithmRegistry } from "@oidfed/crypto";
+import { cloneData } from "./data-copy.js";
 /** Detached role metadata composition and shared publication validation. */
 
 import { isObject, setOwn } from "./callbacks.js";
@@ -20,8 +22,7 @@ export function composeEntityMetadata(
 			if (!isObject(block)) throw new TypeError(`Metadata for '${type}' must be an object`);
 			const merged = Object.hasOwn(metadata, type) ? (metadata[type] ?? {}) : {};
 			// Never invoke prototype setters when copying open metadata names.
-			for (const [name, value] of Object.entries(block))
-				setOwn(merged, name, structuredClone(value));
+			for (const [name, value] of Object.entries(block)) setOwn(merged, name, cloneData(value));
 			setOwn(metadata, type, merged);
 		}
 	}
@@ -34,17 +35,14 @@ export function validateRoleMetadata(
 	metadata: Readonly<Record<string, unknown>>,
 	context: EntityContext,
 ): void {
-	validatePublishedMetadata(metadata, context.entityId);
+	validatePublishedMetadata(metadata, context.entityId, context.crypto.algorithmRegistry);
 	for (const role of roles ?? []) {
 		if (role.validateMetadata) {
 			const block = Object.hasOwn(metadata, role.type) ? metadata[role.type] : undefined;
 			if (!block || typeof block !== "object" || Array.isArray(block)) {
 				throw new Error(`Metadata for role '${role.type}' must be an object`);
 			}
-			role.validateMetadata(
-				Object.freeze(structuredClone(block) as Record<string, unknown>),
-				context,
-			);
+			role.validateMetadata(Object.freeze(cloneData(block) as Record<string, unknown>), context);
 		}
 	}
 }
@@ -53,8 +51,9 @@ export function validateRoleMetadata(
 export function validatePublishedMetadata(
 	metadata: Readonly<Record<string, unknown>>,
 	subject: string,
+	registry?: JwsAlgorithmRegistry,
 ): void {
-	validatePublishedMetadataKeys(metadata);
+	validatePublishedMetadataKeys(metadata, registry);
 	for (const [type, value] of Object.entries(metadata)) {
 		if (!value || typeof value !== "object" || Array.isArray(value)) continue;
 		const block = value as Record<string, unknown>;
@@ -71,4 +70,27 @@ export function validatePublishedMetadata(
 				if (Object.hasOwn(block, field))
 					throw new TypeError(`${field} must not appear in federation_entity metadata`);
 	}
+}
+
+/** Rebuild managed role keys from fresh snapshots, then validate the complete publication. */
+export async function composeRolePublicationMetadata(
+	roles: readonly EntityRole[] | undefined,
+	metadata: Readonly<Record<string, unknown>>,
+	context: EntityContext,
+	entries?: ReadonlyMap<string, import("@oidfed/crypto").KeyringEntry>,
+): Promise<Record<string, Record<string, unknown>>> {
+	let result = composeEntityMetadata(metadata);
+	for (const role of roles ?? []) {
+		if (!role.publicationMetadata) continue;
+		const managed = await role.publicationMetadata(context, entries);
+		if (Object.hasOwn(managed, "jwks")) {
+			const block = result[role.type] ?? {};
+			for (const name of ["jwks", "jwks_uri", "signed_jwks_uri"])
+				if (Object.hasOwn(block, name))
+					throw new TypeError(`Managed ${role.type} keys conflict with supplied ${name}`);
+		}
+		result = composeEntityMetadata(result, { [role.type]: { ...result[role.type], ...managed } });
+	}
+	validateRoleMetadata(roles, result, context);
+	return result;
 }

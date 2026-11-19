@@ -1,8 +1,9 @@
+import { assertPublicJwk, DEFAULT_JWS_REGISTRY } from "@oidfed/crypto";
 /** Validation and preparation of public verification-key material. */
 
 import { FederationErrorCode } from "../constants.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
-import { type JWK, type JWKSet, JWKSetSchema, PublicationJWKSchema } from "../schemas/jwk.js";
+import { type JWK, type JWKSet, JWKSetSchema } from "../schemas/jwk.js";
 
 const BASE64URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 const EC_LENGTHS = new Map([
@@ -26,13 +27,19 @@ const OKP_LENGTHS = new Map([
  * Received sets use the existing schemas and verification-key selection:
  * RFC 7517 §5 recommends ignoring unusable keys when consuming a set.
  */
-export function validatePublicJwkSet(value: unknown): Result<void, FederationError> {
-	const prepared = preparePublicJwkSet(value);
+export function validatePublicJwkSet(
+	value: unknown,
+	registry = DEFAULT_JWS_REGISTRY,
+): Result<void, FederationError> {
+	const prepared = preparePublicJwkSet(value, registry);
 	return prepared.ok ? ok(undefined) : prepared;
 }
 
 /** Capture the JSON data once so publishers store and sign exactly what was validated. */
-export function preparePublicJwkSet(value: unknown): Result<JWKSet, FederationError> {
+export function preparePublicJwkSet(
+	value: unknown,
+	registry = DEFAULT_JWS_REGISTRY,
+): Result<JWKSet, FederationError> {
 	let snapshot: unknown;
 	try {
 		const json = JSON.stringify(value);
@@ -49,14 +56,22 @@ export function preparePublicJwkSet(value: unknown): Result<JWKSet, FederationEr
 			.replace(/^\./, "");
 		return invalid(path || "jwks", "invalid public JWK Set structure");
 	}
-	for (const [index, key] of parsed.data.keys.entries()) {
-		if (!PublicationJWKSchema.safeParse(key).success)
+	const keys = [...(snapshot as JWKSet).keys];
+	for (const [index, key] of keys.entries()) {
+		if (!registry.keyType(key.kty))
 			return invalid(`keys[${index}].kty`, "unsupported public key type");
-		const check = validateMaterial(key, `keys[${index}]`);
-		if (!check.ok) return check;
+		if (DEFAULT_JWS_REGISTRY.keyType(key.kty)) {
+			const check = validateMaterial(key, `keys[${index}]`);
+			if (!check.ok) return check;
+		} else {
+			try {
+				keys[index] = assertPublicJwk(key, registry);
+			} catch {
+				return invalid(`keys[${index}]`, "invalid registered public key material");
+			}
+		}
 	}
-	// Preserve JSON extension members, including those at the set level.
-	return ok(snapshot as JWKSet);
+	return ok({ ...(snapshot as JWKSet), keys });
 }
 
 function validateMaterial(key: JWK, path: string): Result<void, FederationError> {

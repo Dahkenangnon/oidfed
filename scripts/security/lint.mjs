@@ -24,5 +24,5 @@ export async function lintSources() {
 	if (output) console.log(output);
 	if (results.some((result) => result.errorCount || result.warningCount || result.fatalErrorCount))
 		throw new Error("Security lint failed; source or scanner errors require review");
-	console.log(`Security lint: ${results.length} source files across all five protocol packages`);
+	console.log(`Security lint: ${results.length} source files across all six library packages`);
 }

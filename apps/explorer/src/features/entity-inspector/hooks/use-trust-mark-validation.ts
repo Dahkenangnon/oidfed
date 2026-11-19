@@ -8,6 +8,7 @@ import {
 } from "@oidfed/core";
 import { useCallback, useState } from "react";
 import { useSettings } from "@/hooks/use-settings";
+import { engine } from "../../../lib/crypto.js";
 
 type ValidationStatus = "idle" | "verifying" | "valid" | "invalid" | "expired" | "error";
 
@@ -63,6 +64,7 @@ export function useTrustMarkValidation(
 			}
 			const ecResult = await fetchEntityConfiguration(issEntityId.value, {
 				httpTimeoutMs: settings.httpTimeoutMs,
+				engine: engine,
 			});
 			if (!ecResult.ok) {
 				setStatus("error");
@@ -94,6 +96,7 @@ export function useTrustMarkValidation(
 					if (!taEntityId.ok) continue;
 					const taResult = await fetchEntityConfiguration(taEntityId.value, {
 						httpTimeoutMs: settings.httpTimeoutMs,
+						engine: engine,
 					});
 					if (!taResult.ok) continue;
 					const taDecoded = decodeEntityStatement(taResult.value);
@@ -117,9 +120,15 @@ export function useTrustMarkValidation(
 			}
 
 			// 4. Validate
-			const result = await validateTrustMark(trustMarkJwt, trustMarkIssuers, issuerJwks as JWKSet, {
-				expectedSubject,
-			});
+			const result = await validateTrustMark(
+				trustMarkJwt,
+				trustMarkIssuers,
+				issuerJwks as unknown as JWKSet,
+				{
+					expectedSubject,
+					engine: engine,
+				},
+			);
 			if (result.ok) {
 				setDetails(result.value);
 				// Check if expired

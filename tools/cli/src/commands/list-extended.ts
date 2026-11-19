@@ -10,6 +10,7 @@ import {
 } from "@oidfed/core";
 import type { Command } from "commander";
 import type { OutputFormatter } from "../output/index.js";
+import { engine } from "../util/crypto.js";
 import { discoverEndpoint } from "../util/discover-endpoint.js";
 import { parseEntityIdOrError } from "../util/entity-id.js";
 import type { Logger } from "../util/logger.js";
@@ -72,6 +73,7 @@ export async function handler(
 	deps.logger.info(`Fetching extended subordinate listing from ${endpoint}`);
 	const result = await fetchExtendedSubordinatesList(endpoint, params, {
 		httpClient: deps.httpClient,
+		engine: engine,
 	});
 	if (!result.ok) return result;
 

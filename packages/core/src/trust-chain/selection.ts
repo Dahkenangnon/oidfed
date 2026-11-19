@@ -1,3 +1,4 @@
+import { cloneData } from "../data-copy.js";
 /** Application-controlled chain selection without exposing authenticated evidence to mutation. */
 
 import { callSynchronous, freezeSnapshot } from "../callbacks.js";
@@ -13,14 +14,14 @@ import {
 /** Select without exposing authenticated evidence to application mutation. */
 export function selectTrustChain(
 	chains: readonly ValidatedTrustChain[],
-	options?: FederationOptions,
+	options: FederationOptions,
 	fallback: ChainSelectionStrategy = (candidates) => candidates[0] as ValidatedTrustChain,
 ): Result<ValidatedTrustChain> {
 	const fail = (message: string) =>
 		err(federationError(InternalErrorCode.TrustChainInvalid, message));
 	if (!chains.length) return fail("No eligible trust chains");
 	try {
-		const snapshots = chains.map((chain) => freezeSnapshot(structuredClone(chain)));
+		const snapshots = chains.map((chain) => freezeSnapshot(cloneData(chain)));
 		const selected = callSynchronous(
 			() => (options?.chainSelection ?? fallback)([...snapshots]),
 			(value): value is ValidatedTrustChain => snapshots.includes(value as ValidatedTrustChain),

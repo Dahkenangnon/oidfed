@@ -94,6 +94,7 @@ export async function processAutomaticRegistration(
 	const configuredTrustAnchors = trustAnchorsResult.value;
 
 	const validated = validateAutomaticRegistrationRequest(requestObjectJwt, {
+		maxCompactBytes: options.maxCompactBytes,
 		opEntityId: options.opEntityId,
 		...(options.requestObjectTyping !== undefined
 			? { requestObjectTyping: options.requestObjectTyping }
@@ -121,7 +122,12 @@ export async function processAutomaticRegistration(
 	if (!client.ok) return client;
 	const { resolvedRpMetadata, protocolKeys } = client.value;
 
-	const algorithms = requestObjectAlgorithms(resolvedRpMetadata, options.providerMetadata ?? {});
+	const algorithms = requestObjectAlgorithms(
+		resolvedRpMetadata,
+		options.providerMetadata ?? {},
+		options.allowedAlgorithms,
+		options.algorithmRegistry,
+	);
 	if (!algorithms.ok) return algorithms;
 	const authenticationExpiresAt = Math.min(
 		bestChain.expiresAt,
@@ -134,13 +140,10 @@ export async function processAutomaticRegistration(
 		{
 			// Bind verification to the policy-checked header on this same JWT. An undefined
 			// expectation requires absence; it does not accept an arbitrary JWT type.
+			...options,
 			expectedTyp: validated.value.headerTyp,
 			allowedAlgorithms: algorithms.value,
 			keyIdPolicy: "single-key",
-			...(options.clock ? { clock: options.clock } : {}),
-			...(options.clockSkewSeconds !== undefined
-				? { clockSkewSeconds: options.clockSkewSeconds }
-				: {}),
 		},
 	);
 	if (!verifyResult.ok) {

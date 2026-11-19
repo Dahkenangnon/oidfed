@@ -1,3 +1,4 @@
+import { DEFAULT_JWS_REGISTRY, type JwsAlgorithmRegistry } from "@oidfed/crypto";
 /** Wallet role metadata and query schemas for publication and effective validation. */
 
 import {
@@ -7,7 +8,7 @@ import {
 	JWKSetSchema,
 	MetadataJWKSetSchema,
 } from "@oidfed/core";
-import { base64url } from "jose";
+import { decodeBase64url, encodeBase64url } from "@oidfed/crypto";
 import { z } from "zod";
 
 // These registered signing/MAC algorithms are unsuitable for JWE even when the
@@ -43,7 +44,7 @@ const trustedAuthority = z
 			if (authority.type === "openid_federation") valid = isValidEntityId(value);
 			if (authority.type === "aki") {
 				try {
-					valid = value.length > 0 && base64url.encode(base64url.decode(value)) === value;
+					valid = value.length > 0 && encodeBase64url(decodeBase64url(value)) === value;
 				} catch {
 					valid = false;
 				}
@@ -487,8 +488,8 @@ const CredentialIssuerMetadataSchema = z.looseObject({
 export type CredentialIssuerMetadata = z.infer<typeof CredentialIssuerMetadataSchema>;
 
 /** Cross-field checks apply after superior metadata has completed the issuer's configuration. */
-const effectiveCredentialIssuerMetadata = CredentialIssuerMetadataSchema.superRefine(
-	(metadata, ctx) => {
+const issuerMetadataWithRegistry = (registry?: JwsAlgorithmRegistry) =>
+	CredentialIssuerMetadataSchema.superRefine((metadata, ctx) => {
 		const encryption = metadata.credential_request_encryption;
 		if (
 			encryption &&
@@ -497,7 +498,7 @@ const effectiveCredentialIssuerMetadata = CredentialIssuerMetadataSchema.superRe
 					typeof key.alg === "string" &&
 					key.alg.length > 0 &&
 					key.alg !== "none" &&
-					!isValidAlgorithm(key.alg) &&
+					!isValidAlgorithm(key.alg, registry) &&
 					!otherSignatureAlgorithms.has(key.alg) &&
 					(key.use === undefined || key.use === "enc") &&
 					(key.key_ops === undefined ||
@@ -518,8 +519,16 @@ const effectiveCredentialIssuerMetadata = CredentialIssuerMetadataSchema.superRe
 				path: ["credential_request_encryption"],
 				message: "Required response encryption needs request encryption support (OpenID4VCI §8.2)",
 			});
-	},
-);
+	});
+
+const effectiveCredentialIssuerMetadata = issuerMetadataWithRegistry();
+
+/** Recognize locally registered signing algorithms when checking issuer encryption claims. */
+export function credentialIssuerMetadataFor(registry?: JwsAlgorithmRegistry) {
+	return registry === undefined || registry === DEFAULT_JWS_REGISTRY
+		? effectiveCredentialIssuerMetadata
+		: issuerMetadataWithRegistry(registry);
+}
 
 export const effectiveRoleSchemas = {
 	openid_wallet_provider: WalletProviderMetadataSchema,

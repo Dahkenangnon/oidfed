@@ -1,15 +1,16 @@
-import {
-	createTrustAnchorSet,
-	entityId,
-	generateSigningKey,
-	JwkSigner,
-	MemoryFederationKeyProvider,
-	MemoryReplayStore,
-} from "@oidfed/core";
+import { createTrustAnchorSet, entityId, MemoryReplayStore } from "@oidfed/core";
 import { Leaf } from "@oidfed/leaf";
 import { CredentialIssuerRole, CredentialVerifierRole, WalletProviderRole } from "@oidfed/wallet";
 import express from "express";
 import { describe, expect, it } from "vitest";
+import {
+	FixtureCrypto,
+	fixtureHostConfig,
+	generateSigningKey,
+	PurposeBindingsFixture,
+	SigningEntryFixture,
+	testEngine,
+} from "../../tap/fixtures/software-crypto.js";
 import { getAuthorityEntity } from "../helpers/launcher.js";
 import { useFederation } from "../helpers/lifecycle.js";
 import { createLeafApp } from "../participants/leaf-app.js";
@@ -32,12 +33,18 @@ describe("Wallet federation over HTTPS", () => {
 		const verifierProtocol = await generateSigningKey();
 		const walletKeys = await generateSigningKey();
 		const provider = new WalletProviderRole({
+			signing: new PurposeBindingsFixture({
+				walletAttestationSigner: new SigningEntryFixture(providerProtocol.privateKey),
+			}),
 			metadata: {
 				vp_formats_supported: { "dc+sd-jwt": {} },
 				jwks: { keys: [providerProtocol.publicKey] },
 			},
 		});
 		const verifier = new CredentialVerifierRole({
+			signing: new PurposeBindingsFixture({
+				authorizationRequestSigner: new SigningEntryFixture(verifierProtocol.privateKey),
+			}),
 			metadata: {
 				vp_formats_supported: { "dc+sd-jwt": {} },
 				jwks: { keys: [verifierProtocol.publicKey] },
@@ -46,22 +53,26 @@ describe("Wallet federation over HTTPS", () => {
 				redirect_uris: [`${verifierId}/done`],
 			},
 		});
-		const providerHost = new Leaf({
-			entityId: providerId,
-			authorityHints: [anchorId],
-			metadata: { federation_entity: {} },
-			keyProvider: MemoryFederationKeyProvider.fromJWK(providerKeys.privateKey),
-			roles: [provider],
-			trustAnchors: anchors,
-		});
-		const verifierHost = new Leaf({
-			entityId: verifierId,
-			authorityHints: [anchorId],
-			metadata: { federation_entity: {} },
-			keyProvider: MemoryFederationKeyProvider.fromJWK(verifierKeys.privateKey),
-			roles: [verifier],
-			trustAnchors: anchors,
-		});
+		const providerHost = await Leaf.create(
+			fixtureHostConfig({
+				entityId: providerId,
+				authorityHints: [anchorId],
+				metadata: { federation_entity: {} },
+				crypto: FixtureCrypto.fromJWK(providerKeys.privateKey),
+				roles: [provider],
+				trustAnchors: anchors,
+			}),
+		);
+		const verifierHost = await Leaf.create(
+			fixtureHostConfig({
+				entityId: verifierId,
+				authorityHints: [anchorId],
+				metadata: { federation_entity: {} },
+				crypto: FixtureCrypto.fromJWK(verifierKeys.privateKey),
+				roles: [verifier],
+				trustAnchors: anchors,
+			}),
+		);
 		server.addEntity(providerId, createLeafApp(providerHost, providerId));
 		const verifierApp = createLeafApp(verifierHost, verifierId);
 		let retrieved = 0;
@@ -84,7 +95,6 @@ describe("Wallet federation over HTTPS", () => {
 				nonce: "session-nonce",
 				dcql_query: query,
 			},
-			new JwkSigner(verifierProtocol.privateKey),
 			{ walletNonce },
 		);
 		expect(requestObject.ok, JSON.stringify(requestObject)).toBe(true);
@@ -107,27 +117,44 @@ describe("Wallet federation over HTTPS", () => {
 			entityId: verifierId,
 			jwks: { keys: [verifierKeys.publicKey] },
 		});
-		expect((await WalletProviderRole.discover(providerId, anchors)).ok).toBe(true);
+		expect(
+			(await WalletProviderRole.discover(providerId, anchors, { engine: testEngine })).ok,
+		).toBe(true);
 		const now = Math.floor(Date.now() / 1000);
-		const signed = await provider.createWalletAttestation(
-			{ subject: "wallet-type", confirmationKey: walletKeys.publicKey, expiresAt: now + 300 },
-			new JwkSigner(providerProtocol.privateKey),
-		);
+		const signed = await provider.createWalletAttestation({
+			subject: "wallet-type",
+			confirmationKey: walletKeys.publicKey,
+			expiresAt: now + 300,
+		});
 		expect(signed.ok).toBe(true);
 		if (!signed.ok) return;
 		const audience = `https://op.ofed.test:${server.port}`;
-		const pop = await new JwkSigner(walletKeys.privateKey).signJwt(
+		const pop = await new SigningEntryFixture(walletKeys.privateKey).signJwt(
 			new TextEncoder().encode(
 				JSON.stringify({ iss: "wallet-type", aud: audience, iat: now, jti: crypto.randomUUID() }),
 			),
 			{ alg: "ES256", typ: "oauth-client-attestation-pop+jwt" },
 		);
-		const options = { audience, replayStore: new MemoryReplayStore(), acceptWallet: () => true };
+		const options = {
+			audience,
+			replayStore: new MemoryReplayStore({ engine: testEngine }),
+			acceptWallet: () => true,
+		};
 		expect(
-			(await CredentialIssuerRole.authenticateWallet(signed.value, pop, anchors, options)).ok,
+			(
+				await CredentialIssuerRole.authenticateWallet(signed.value, pop, anchors, {
+					...options,
+					engine: testEngine,
+				})
+			).ok,
 		).toBe(true);
 		expect(
-			(await CredentialIssuerRole.authenticateWallet(signed.value, pop, anchors, options)).ok,
+			(
+				await CredentialIssuerRole.authenticateWallet(signed.value, pop, anchors, {
+					...options,
+					engine: testEngine,
+				})
+			).ok,
 		).toBe(false);
 		const prepared = await CredentialVerifierRole.prepareAuthorizationRequest(
 			{
@@ -136,6 +163,7 @@ describe("Wallet federation over HTTPS", () => {
 				request_uri_method: "post",
 			},
 			anchors,
+			{ engine: testEngine },
 		);
 		expect(prepared.ok, JSON.stringify(prepared)).toBe(true);
 		if (!prepared.ok) return;

@@ -1,3 +1,4 @@
+import { cloneData } from "@oidfed/core";
 /** Subordinate publication-claim validation shared by write and signing paths. */
 
 import {
@@ -80,8 +81,9 @@ export function subordinatePublicationClaim(
 		assertMetadataValuesNotNull(metadata);
 		validateRoleMetadata(undefined, metadata, {
 			entityId: record.entityId,
-			keyProvider: ctx.keyProvider,
+			crypto: ctx.crypto,
+			options: ctx.options,
 		});
 	}
-	return structuredClone(value);
+	return cloneData(value);
 }

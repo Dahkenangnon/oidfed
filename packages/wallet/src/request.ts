@@ -1,10 +1,12 @@
+import { cloneData } from "@oidfed/core";
+import type { KeyringEntry } from "@oidfed/crypto";
+import { utf8Decode } from "@oidfed/crypto";
 /** Signed wallet presentation-request creation and prepared verifier-trust validation. */
 
 import {
 	completeTrustChainValidation,
 	DEFAULT_CLOCK_SKEW_SECONDS,
 	type JWKSet,
-	type JwtSigner,
 	nowSeconds,
 	ok,
 	type PreparedTrustChain,
@@ -15,7 +17,7 @@ import {
 	type TrustAnchorSet,
 	type ValidatedTrustChain,
 } from "@oidfed/core";
-import { base64url } from "jose";
+import { decodeBase64url } from "@oidfed/crypto";
 import { z } from "zod";
 import { invokePolicy } from "./attestation.js";
 import { decodeToken, matchesJwtType, signToken, verifyToken } from "./jwt.js";
@@ -33,6 +35,7 @@ import {
 	prepareVerifier,
 	prepareVerifierCandidates,
 	protocolKeys,
+	requirePublishedProtocolSigner,
 	roleMetadata,
 	type WalletTrustOptions,
 } from "./trust.js";
@@ -294,8 +297,8 @@ export async function prepareRequest(
 	if (canDiscover) {
 		// Retry an unusable hint only after request-context validation, using the same budget.
 		preparationFallbacks.set(prepared, {
-			outer: structuredClone(outer),
-			anchors: new Map([...anchors].map(([id, keys]) => [id, structuredClone(keys)])),
+			outer: cloneData(outer),
+			anchors: new Map([...anchors].map(([id, keys]) => [id, cloneData(keys)])),
 			options: { ...options },
 		});
 	}
@@ -331,11 +334,7 @@ async function prepareRequestEvidence(
 			return endpoint;
 		}
 	}
-	const keys = await protocolKeys(
-		{ metadata: metadata.value, trustChain: chain },
-		"openid_credential_verifier",
-		options,
-	);
+	const keys = await protocolKeys({ trustChain: chain }, "openid_credential_verifier", options);
 	if (!keys.ok) return keys;
 	const prepared = Object.freeze({
 		verifierId: id,
@@ -344,8 +343,8 @@ async function prepareRequestEvidence(
 	}) as PreparedAuthorizationRequest;
 	preparations.set(prepared, {
 		chain: chain,
-		keys: structuredClone(keys.value),
-		outer: structuredClone(outer),
+		keys: cloneData(keys.value),
+		outer: cloneData(outer),
 		options: { ...options },
 	});
 	safeLogger(options?.logger)?.info("Wallet request preparation completed");
@@ -421,7 +420,7 @@ function validateTransactionData(
 						.min(1)
 						.refine((values) => values.every((id) => ids.has(id))),
 				})
-				.parse(JSON.parse(new TextDecoder().decode(base64url.decode(encoded))));
+				.parse(JSON.parse(utf8Decode(decodeBase64url(encoded))));
 		});
 		if (data.some((entry) => entry.credential_ids.some((id) => bindingDisabledIds.has(id))))
 			return failure(
@@ -678,7 +677,7 @@ async function completeRequestCandidate(
 		trustChain: completed.value,
 	};
 	validatedRequests.set(result, {
-		metadata: structuredClone(metadata.value),
+		metadata: cloneData(metadata.value),
 		expiresAt: Math.min(completed.value.expiresAt, deadline.value),
 		options: saved.options,
 	});
@@ -735,7 +734,7 @@ function requestDeadline(
 export async function createRequest(
 	id: string,
 	request: Readonly<Record<string, unknown>>,
-	signer: JwtSigner,
+	signer: KeyringEntry,
 	options: AuthorizationRequestCreationOptions,
 ): Promise<Result<string>> {
 	safeLogger(options?.logger)?.debug("Creating a signed OpenID4VP Authorization Request");
@@ -781,6 +780,13 @@ export async function createRequest(
 		const metadata = roleMetadata("openid_credential_verifier", id, completed.value);
 		if (!metadata.ok) return metadata;
 		effectiveMetadata = metadata.value;
+		const binding = await requirePublishedProtocolSigner(
+			completed.value,
+			"openid_credential_verifier",
+			signer,
+			options,
+		);
+		if (!binding.ok) return binding;
 		if (hasSuperiorQueryOverride(prepared.value)) {
 			// The validated statement establishes the override; completed metadata supplies
 			// its policy-processed value. Ignored request queries cannot override it.

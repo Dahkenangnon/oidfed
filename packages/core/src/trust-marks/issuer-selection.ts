@@ -7,7 +7,7 @@ import { establishTrustMarkIssuerTrust, type TrustMarkIssuerContext } from "./ev
 /** Operation-local evidence lookup shared by chain and collection verification. */
 export function createConfiguredTrustMarkIssuerResolver(
 	anchors: TrustAnchorSet,
-	options: FederationOptions | undefined,
+	options: FederationOptions,
 ) {
 	const evidence = new Map<string, Promise<Result<TrustMarkIssuerContext>>>();
 	return (

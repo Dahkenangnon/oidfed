@@ -1,5 +1,9 @@
-import { generateSigningKey, type HttpClient, JwkSigner, signEntityStatement } from "@oidfed/core";
+import { type HttpClient, signEntityStatement } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
+import {
+	generateSigningKey,
+	SigningEntryFixture,
+} from "../../../../tests/tap/fixtures/software-crypto.js";
 import { DEFAULT_CONFIG } from "../../src/config.js";
 import {
 	buildTrustAnchors,
@@ -50,7 +54,7 @@ describe("buildTrustAnchors", () => {
 				exp: 9999999999,
 				jwks: { keys: [key.publicKey] },
 			},
-			new JwkSigner(key.privateKey),
+			new SigningEntryFixture(key.privateKey),
 		);
 		const client: HttpClient = async () =>
 			new Response(jwt, {
@@ -87,7 +91,7 @@ describe("buildTrustAnchors", () => {
 				iat: 1000,
 				exp: 9999999999,
 			},
-			new JwkSigner(key.privateKey),
+			new SigningEntryFixture(key.privateKey),
 		);
 		const client: HttpClient = async () =>
 			new Response(jwt, {
@@ -127,7 +131,7 @@ describe("buildTrustAnchors", () => {
 				exp: 9999999999,
 				jwks: { keys: [key.publicKey] },
 			},
-			new JwkSigner(key.privateKey),
+			new SigningEntryFixture(key.privateKey),
 		);
 		let fetched = false;
 		const client: HttpClient = async () => {
@@ -158,7 +162,7 @@ describe("resolveOrError", () => {
 				exp: 9999999999,
 				jwks: { keys: [key.publicKey] },
 			},
-			new JwkSigner(key.privateKey),
+			new SigningEntryFixture(key.privateKey),
 		);
 		// Return TA EC for anchor fetch, 404 for everything else
 		const client: HttpClient = async (input) => {

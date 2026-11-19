@@ -1,5 +1,6 @@
 import { decodeEntityStatement, isOk, validateTrustMark } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
+import { testEngine } from "../../tap/fixtures/software-crypto.js";
 import { getAuthorityEntity } from "../helpers/launcher.js";
 import { useFederation } from "../helpers/lifecycle.js";
 import { singleAnchorTopology } from "../topologies/single-anchor.js";
@@ -57,7 +58,7 @@ describe("Trust marks in entity configurations", () => {
 			trustMarkJwt,
 			{ [trustMarkType(port)]: [taId] },
 			{ keys: [taInstance.keys.public] },
-			{ expectedSubject: opId },
+			{ expectedSubject: opId, engine: testEngine },
 		);
 
 		expect(isOk(result)).toBe(true);

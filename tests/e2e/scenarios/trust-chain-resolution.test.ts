@@ -1,5 +1,6 @@
 import { entityId, resolveTrustChains } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
+import { testEngine } from "../../tap/fixtures/software-crypto.js";
 import { useFederation } from "../helpers/lifecycle.js";
 import { hierarchicalTopology } from "../topologies/hierarchical.js";
 import { singleAnchorTopology } from "../topologies/single-anchor.js";
@@ -12,7 +13,7 @@ describe("Trust chain resolution", () => {
 			const { server, trustAnchors } = getTestBed();
 			const rpId = entityId(`https://rp.ofed.test:${server.port}`);
 
-			const result = await resolveTrustChains(rpId, trustAnchors);
+			const result = await resolveTrustChains(rpId, trustAnchors, { engine: testEngine });
 
 			expect(result.errors).toHaveLength(0);
 			expect(result.chains).toHaveLength(1);
@@ -29,7 +30,7 @@ describe("Trust chain resolution", () => {
 			const { server, trustAnchors } = getTestBed();
 			const opId = entityId(`https://op.ofed.test:${server.port}`);
 
-			const result = await resolveTrustChains(opId, trustAnchors);
+			const result = await resolveTrustChains(opId, trustAnchors, { engine: testEngine });
 
 			expect(result.errors).toHaveLength(0);
 			expect(result.chains).toHaveLength(1);
@@ -40,7 +41,7 @@ describe("Trust chain resolution", () => {
 			const { server, trustAnchors } = getTestBed();
 			const rp2Id = entityId(`https://rp2.ofed.test:${server.port}`);
 
-			const result = await resolveTrustChains(rp2Id, trustAnchors);
+			const result = await resolveTrustChains(rp2Id, trustAnchors, { engine: testEngine });
 
 			expect(result.errors).toHaveLength(0);
 			expect(result.chains).toHaveLength(1);
@@ -54,7 +55,7 @@ describe("Trust chain resolution", () => {
 			const { server, trustAnchors } = getTestBed();
 			const opId = entityId(`https://op-uni.ofed.test:${server.port}`);
 
-			const result = await resolveTrustChains(opId, trustAnchors);
+			const result = await resolveTrustChains(opId, trustAnchors, { engine: testEngine });
 
 			expect(result.errors).toHaveLength(0);
 			expect(result.chains).toHaveLength(1);
@@ -72,7 +73,7 @@ describe("Trust chain resolution", () => {
 			const { server, trustAnchors } = getTestBed();
 			const rpId = entityId(`https://rp2.ofed.test:${server.port}`);
 
-			const result = await resolveTrustChains(rpId, trustAnchors);
+			const result = await resolveTrustChains(rpId, trustAnchors, { engine: testEngine });
 
 			expect(result.errors).toHaveLength(0);
 			expect(result.chains).toHaveLength(1);
@@ -85,7 +86,7 @@ describe("Trust chain resolution", () => {
 
 			for (const leaf of leaves) {
 				const id = entityId(`https://${leaf}.ofed.test:${server.port}`);
-				const result = await resolveTrustChains(id, trustAnchors);
+				const result = await resolveTrustChains(id, trustAnchors, { engine: testEngine });
 				expect(result.errors, `errors for ${leaf}`).toHaveLength(0);
 				expect(result.chains, `chains for ${leaf}`).toHaveLength(1);
 			}

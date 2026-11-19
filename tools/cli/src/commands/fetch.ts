@@ -7,6 +7,7 @@ import {
 } from "@oidfed/core";
 import type { Command } from "commander";
 import type { OutputFormatter } from "../output/index.js";
+import { engine } from "../util/crypto.js";
 import { discoverEndpoint } from "../util/discover-endpoint.js";
 import { parseEntityIdOrError } from "../util/entity-id.js";
 import type { Logger } from "../util/logger.js";
@@ -47,6 +48,7 @@ export async function handler(args: FetchArgs, deps: FetchDeps): Promise<Result<
 	deps.logger.info(`Fetching subordinate statement from ${endpoint}`);
 	const ssResult = await fetchSubordinateStatement(endpoint, subjectResult.value, {
 		httpClient: deps.httpClient,
+		engine: engine,
 	});
 	if (!ssResult.ok) return ssResult;
 

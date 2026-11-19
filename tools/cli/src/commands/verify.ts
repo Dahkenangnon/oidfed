@@ -12,6 +12,7 @@ import {
 } from "@oidfed/core";
 import type { Command } from "commander";
 import type { OutputFormatter } from "../output/index.js";
+import { engine } from "../util/crypto.js";
 import { extractJwks, parseEntityIdOrError } from "../util/entity-id.js";
 import type { Logger } from "../util/logger.js";
 
@@ -76,6 +77,7 @@ export async function handler(args: VerifyArgs, deps: VerifyDeps): Promise<Resul
 
 		const ecResult = await fetchEntityConfiguration(validEid, {
 			httpClient: deps.httpClient,
+			engine: engine,
 		});
 		if (!ecResult.ok) return ecResult;
 
@@ -88,7 +90,7 @@ export async function handler(args: VerifyArgs, deps: VerifyDeps): Promise<Resul
 		jwks = jwksResult.value;
 	}
 
-	const verified = await verifyEntityStatement(args.jwt, jwks);
+	const verified = await verifyEntityStatement(args.jwt, jwks, { engine: engine });
 	if (!verified.ok) return verified;
 
 	return ok(

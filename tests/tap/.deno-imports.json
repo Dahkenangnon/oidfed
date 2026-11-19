@@ -4,6 +4,9 @@
     "@oidfed/authority": "../../packages/authority/src/index.ts",
     "@oidfed/leaf": "../../packages/leaf/src/index.ts",
     "@oidfed/oidc": "../../packages/oidc/src/index.ts",
-    "@oidfed/wallet": "../../packages/wallet/src/index.ts"
+    "@oidfed/wallet": "../../packages/wallet/src/index.ts",
+    "@oidfed/crypto": "../../packages/crypto/src/index.ts",
+    "@oidfed/crypto/web": "../../packages/crypto/src/web.ts",
+    "@oidfed/crypto/jose": "../../packages/crypto/src/jose.ts"
   }
 }

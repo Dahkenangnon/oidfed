@@ -1,15 +1,15 @@
 import {
+	DEFAULT_ALLOWED_ALGORITHMS,
 	err,
 	federationError,
-	generateSigningKey,
 	InternalErrorCode,
 	ok,
 	type Result,
-	SUPPORTED_ALGORITHMS,
 	type SupportedAlgorithm,
 } from "@oidfed/core";
 import type { Command } from "commander";
 import type { OutputFormatter } from "../output/index.js";
+import { generateSigningKey } from "../util/crypto.js";
 import type { Logger } from "../util/logger.js";
 
 export interface KeygenDeps {
@@ -23,11 +23,11 @@ export interface KeygenArgs {
 }
 
 export async function handler(args: KeygenArgs, deps: KeygenDeps): Promise<Result<string>> {
-	if (!(SUPPORTED_ALGORITHMS as readonly string[]).includes(args.algorithm)) {
+	if (!(DEFAULT_ALLOWED_ALGORITHMS as readonly string[]).includes(args.algorithm)) {
 		return err(
 			federationError(
 				InternalErrorCode.UnsupportedAlg,
-				`Unsupported algorithm: ${args.algorithm}. Supported: ${SUPPORTED_ALGORITHMS.join(", ")}`,
+				`Unsupported algorithm: ${args.algorithm}. Supported: ${DEFAULT_ALLOWED_ALGORITHMS.join(", ")}`,
 			),
 		);
 	}

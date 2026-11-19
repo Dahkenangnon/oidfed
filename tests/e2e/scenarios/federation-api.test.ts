@@ -1,12 +1,11 @@
 import type { JWK } from "@oidfed/core";
-import {
-	decodeEntityStatement,
-	type FederationKeyLifecycleProvider,
-	generateSigningKey,
-	isOk,
-	verifyHistoricalKeysResponse,
-} from "@oidfed/core";
+import { decodeEntityStatement, isOk, verifyHistoricalKeysResponse } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
+import {
+	fixtureSigner,
+	generateSigningKey,
+	testEngine,
+} from "../../tap/fixtures/software-crypto.js";
 import { federationSigningKey, getAuthorityEntity } from "../helpers/launcher.js";
 import { useFederation } from "../helpers/lifecycle.js";
 import { singleAnchorTopology } from "../topologies/single-anchor.js";
@@ -105,18 +104,19 @@ describe("Federation API endpoints", () => {
 
 		// Rotate
 		const newKey = await generateSigningKey("ES256");
-		const keyProvider = taInstance.keyProvider as FederationKeyLifecycleProvider;
+		const crypto = taInstance.crypto;
 		const nextSigningKey = federationSigningKey(newKey.privateKey as JWK);
-		await keyProvider.publishKey(nextSigningKey);
-		await keyProvider.switchActiveKey(nextSigningKey.signer.kid, { retirePreviousAfterMs: 0 });
+		await crypto.keyring.publish("federation", fixtureSigner(nextSigningKey));
+		await crypto.keyring.activate("federation", nextSigningKey.signer.kid);
+		await crypto.keyring.retire("federation", originalKid);
 
 		const response = await fetch(`https://ta.ofed.test:${server.port}/federation_historical_keys`);
 		expect(response.status).toBe(200);
 		expect(response.headers.get("Content-Type")).toBe("application/jwk-set+jwt");
 		const verified = await verifyHistoricalKeysResponse(
 			await response.text(),
-			(await keyProvider.getFederationKeySet()).jwks,
-			{ expectedIssuer: `https://ta.ofed.test:${server.port}` },
+			(await crypto.keyring.entry("federation")).publishedJwks,
+			{ expectedIssuer: `https://ta.ofed.test:${server.port}`, engine: testEngine },
 		);
 		expect(verified.ok).toBe(true);
 		if (verified.ok) expect(verified.value.keys.map((key) => key.kid)).toEqual([originalKid]);

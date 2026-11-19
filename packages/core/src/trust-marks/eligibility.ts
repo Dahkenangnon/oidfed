@@ -1,5 +1,6 @@
 /** Eligibility checks for stored Trust Marks, including expiry and local revocation. */
 
+import { DEFAULT_MAX_COMPACT_JWS_BYTES } from "@oidfed/crypto";
 import { decodeEntityStatement } from "../jose/verify.js";
 import type { TrustMarkRecord } from "./storage.js";
 
@@ -9,10 +10,22 @@ import type { TrustMarkRecord } from "./storage.js";
  * Ingestion must establish signature, issuer trust, and matching record fields;
  * this predicate does not perform cryptographic or profile verification.
  */
-export function isStoredTrustMarkEligible(record: TrustMarkRecord, validAt: number): boolean {
-	const decoded = decodeEntityStatement(record.jwt);
+export function isStoredTrustMarkEligible(
+	record: TrustMarkRecord,
+	validAt: number,
+	maxCompactBytes = DEFAULT_MAX_COMPACT_JWS_BYTES,
+): boolean {
+	if (
+		!Number.isSafeInteger(maxCompactBytes) ||
+		maxCompactBytes <= 0 ||
+		record.jwt.length > maxCompactBytes
+	)
+		return false;
+	const decoded = decodeEntityStatement(record.jwt, { maxCompactBytes });
 	if (decoded.ok && decoded.value.payload.delegation !== undefined) {
-		const delegation = decodeEntityStatement(decoded.value.payload.delegation as string);
+		const delegation = decodeEntityStatement(decoded.value.payload.delegation as string, {
+			maxCompactBytes,
+		});
 		if (
 			!delegation.ok ||
 			!Number.isFinite(delegation.value.payload.iat) ||

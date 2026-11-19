@@ -1,3 +1,5 @@
+import { isProtocolSignerPublished } from "@oidfed/core";
+import type { KeyringEntry } from "@oidfed/crypto";
 /** Wallet participant trust, supplied evidence, protocol keys, and shared operation limits. */
 
 import {
@@ -13,6 +15,7 @@ import {
 	type JWKSet,
 	JWKSetSchema,
 	MemoryCache,
+	nowSeconds,
 	ok,
 	type ParsedEntityStatement,
 	type PreparedTrustChain,
@@ -26,7 +29,11 @@ import {
 	type ValidatedTrustChain,
 	validateTrustChain,
 } from "@oidfed/core";
-import { effectiveRoleSchemas, type WalletRoleType } from "./metadata.js";
+import {
+	credentialIssuerMetadataFor,
+	effectiveRoleSchemas,
+	type WalletRoleType,
+} from "./metadata.js";
 
 export interface WalletTrustOptions extends FederationOptions {
 	/** Local anchor configuration for signed-object creation and role defaults. */
@@ -165,6 +172,7 @@ export function roleMetadata(
 		readonly statements?: readonly (ParsedEntityStatement | string)[];
 		readonly discovery?: { readonly trustChain: ValidatedTrustChain };
 	},
+	options?: Pick<FederationOptions, "maxCompactBytes" | "algorithmRegistry">,
 ): Result<Record<string, unknown>> {
 	if (chain.entityId !== id)
 		return failure("Trust chain subject does not match the requested entity");
@@ -173,7 +181,7 @@ export function roleMetadata(
 		// Resolver assessments authenticate these statements through the resolver response.
 		for (const statement of chain.statements ?? chain.discovery?.trustChain.statements ?? []) {
 			const decoded =
-				typeof statement === "string" ? decodeEntityStatement(statement) : ok(statement);
+				typeof statement === "string" ? decodeEntityStatement(statement, options) : ok(statement);
 			if (!decoded.ok) return failure("Invalid Credential Issuer statement evidence");
 			const payload = decoded.value.payload;
 			const metadata = payload.metadata?.openid_credential_issuer;
@@ -185,7 +193,11 @@ export function roleMetadata(
 				return failure("credential_issuer must equal the Entity Statement subject");
 		}
 	}
-	const parsed = effectiveRoleSchemas[type].safeParse(chain.resolvedMetadata[type]);
+	const schema =
+		type === "openid_credential_issuer"
+			? credentialIssuerMetadataFor(options?.algorithmRegistry)
+			: effectiveRoleSchemas[type];
+	const parsed = schema.safeParse(chain.resolvedMetadata[type]);
 	if (!parsed.success)
 		return err({
 			code: FederationErrorCode.InvalidMetadata,
@@ -263,7 +275,7 @@ export async function trustedEntity(
 				last = checked.errors.map((error) => error.message).join("; ");
 				continue;
 			}
-			const metadata = roleMetadata(type, id, checked.chain);
+			const metadata = roleMetadata(type, id, checked.chain, options);
 			if (!metadata.ok) {
 				last = metadata.error.description;
 				continue;
@@ -352,7 +364,6 @@ export async function prepareVerifier(
  */
 export async function protocolKeys(
 	entity: {
-		readonly metadata: Readonly<Record<string, unknown>>;
 		readonly trustChain: Pick<ValidatedTrustChain, "resolvedMetadata" | "statements">;
 	},
 	type: WalletRoleType,
@@ -382,4 +393,20 @@ export async function protocolKeys(
 		return failure("Credential Verifier keys must have unique, nonempty kid values");
 	}
 	return ok(keys);
+}
+
+/** Bind an outbound signer to the same effective protocol keys as the receiving role. */
+export async function requirePublishedProtocolSigner(
+	trustChain: Pick<ValidatedTrustChain, "resolvedMetadata" | "statements" | "expiresAt">,
+	type: WalletRoleType,
+	signer: KeyringEntry,
+	options: WalletTrustOptions,
+): Promise<Result<true>> {
+	const keys = await protocolKeys({ trustChain }, type, options);
+	if (!keys.ok) return keys;
+	if (options.signal?.aborted || trustChain.expiresAt <= nowSeconds(options.clock))
+		return failure("Signing evidence expired or was cancelled");
+	if (!isProtocolSignerPublished(signer, keys.value.keys, options.algorithmRegistry))
+		return failure("Selected signer is absent from the authenticated protocol JWKS");
+	return ok(true);
 }

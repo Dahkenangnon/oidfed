@@ -1,3 +1,5 @@
+import { federationJwsOptions } from "./crypto-context.js";
+import { cloneData } from "./data-copy.js";
 /** Federation endpoint authentication, trusted caller context, and method enforcement. */
 
 import { runAsyncOperation } from "./async-operation.js";
@@ -179,7 +181,7 @@ export async function authenticateEndpointRequest(
 	request: Request,
 	form: URLSearchParams,
 	config: EndpointAuthenticationConfig,
-	options?: FederationOptions,
+	options: FederationOptions,
 ): Promise<Result<string | undefined, EndpointAuthenticationError>> {
 	try {
 		const registry = new Map(Object.entries(config.extensions?.methods ?? {}));
@@ -191,7 +193,7 @@ export async function authenticateEndpointRequest(
 			headers: Object.fromEntries(request.headers.entries()),
 			...(config.extensions?.transportEvidence
 				? {
-						transport: structuredClone(
+						transport: cloneData(
 							await runAsyncOperation(() => config.extensions?.transportEvidence?.(request), {
 								...options,
 								signal: options?.signal ?? request.signal,
@@ -254,7 +256,7 @@ export async function authenticateEndpointRequest(
 			)
 				return invalid("Invalid client_assertion_type or duplicate client assertion parameters");
 			const jwt = form.get("client_assertion") ?? "",
-				decoded = decodeEntityStatement(jwt);
+				decoded = decodeEntityStatement(jwt, options);
 			if (!decoded.ok) return invalid("Invalid client assertion");
 			const issuer = entityId(decoded.value.payload.iss);
 			if (
@@ -279,13 +281,27 @@ export async function authenticateEndpointRequest(
 			}
 			if (!keys) return invalid("No federation keys found for client");
 			const checked = await verifyClientAssertion(jwt, keys, config.receiverEntityId, {
-				...options,
+				...federationJwsOptions(options),
 				replayStore: config.replayStore,
-				...(config.allowedAlgorithms ? { allowedAlgorithms: config.allowedAlgorithms } : {}),
+				...(config.allowedAlgorithms
+					? {
+							allowedAlgorithms: federationJwsOptions(options).allowedAlgorithms.filter(
+								(algorithm) => config.allowedAlgorithms?.includes(algorithm),
+							),
+						}
+					: {}),
 			});
 			if (!checked.ok)
-				return checked.error.code === FederationErrorCode.ServerError
-					? checked
+				return [
+					FederationErrorCode.ServerError,
+					"ERR_CRYPTO_OPERATION_FAILED",
+					"ERR_INVALID_CLOCK",
+				].includes(checked.error.code)
+					? err({
+							code: FederationErrorCode.ServerError,
+							description: "Client assertion verification could not be completed",
+							cause: checked.error,
+						})
 					: invalid(checked.error.description);
 			identity = issuer;
 		} else {
@@ -330,7 +346,7 @@ export function endpointCredentialParameterNames(
 export function createEndpointAuthenticatedHandler(
 	config: EndpointAuthenticationConfig,
 	inner: (request: Request) => Promise<Response>,
-	options?: FederationOptions,
+	options: FederationOptions,
 	nativeMethod: "GET" | "POST" = "GET",
 	unorderedParameters: readonly string[] = [],
 ): (request: Request) => Promise<Response> {

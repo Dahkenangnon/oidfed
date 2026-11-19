@@ -3,6 +3,7 @@ import { useCallback, useState } from "react";
 import type { ExpiryEntry, ScanProgress } from "@/features/expiry/hooks/use-expiry-scan";
 import { getExpiryStatus } from "@/features/expiry/hooks/use-expiry-scan";
 import { useSettings } from "@/hooks/use-settings";
+import { engine } from "../../../lib/crypto.js";
 
 export { getExpiryStatus };
 
@@ -49,6 +50,7 @@ export function useBatchExpiry(): UseBatchExpiryResult {
 						httpTimeoutMs,
 						maxChainDepth,
 						signal: ctrl.signal,
+						engine: engine,
 					});
 					for (const chain of chainResult.chains) {
 						const daysRemaining = Math.floor((chain.expiresAt - nowSeconds) / 86400);

@@ -1,13 +1,23 @@
+import { randomUuid } from "../crypto-runtime.js";
+
 /** Shared private_key_jwt assertion construction for federation and protocol clients. */
 
+import type { KeyringEntry } from "@oidfed/crypto";
 import { runAsyncOperation } from "../async-operation.js";
 import { DEFAULT_CLIENT_ASSERTION_TTL_SECONDS } from "../constants.js";
+import { JwsService } from "../jws-service.js";
 import { type Clock, type FederationOptions, nowSeconds } from "../types.js";
-import { signEntityStatement } from "./sign.js";
-import type { JwtSigner } from "./signer.js";
 
 export interface ClientAssertionOptions
-	extends Pick<FederationOptions, "signal" | "httpTimeoutMs"> {
+	extends Pick<
+		FederationOptions,
+		| "signal"
+		| "httpTimeoutMs"
+		| "engine"
+		| "maxCompactBytes"
+		| "algorithmRegistry"
+		| "allowedAlgorithms"
+	> {
 	readonly expiresInSeconds?: number;
 	/** NumericDate clock used for iat and exp. */
 	readonly clock?: Clock;
@@ -22,8 +32,8 @@ export interface ClientAssertionOptions
 export async function createClientAssertion(
 	clientId: string,
 	audience: string,
-	signer: JwtSigner,
-	options?: ClientAssertionOptions,
+	signer: KeyringEntry,
+	options: ClientAssertionOptions,
 ): Promise<string> {
 	const expiresIn = options?.expiresInSeconds ?? DEFAULT_CLIENT_ASSERTION_TTL_SECONDS;
 	const now = nowSeconds(options?.clock);
@@ -47,14 +57,13 @@ export async function createClientAssertion(
 		iss: clientId,
 		sub: clientId,
 		aud: audience,
-		jti: crypto.randomUUID(),
+		jti: await randomUuid(options.engine),
 		iat: now,
 		exp: now + expiresIn,
 	};
 
-	// signEntityStatement is a generic JWT signer despite its name
 	return runAsyncOperation(
-		() => signEntityStatement(payload, signer, { typ: "JWT" }),
-		options ?? {},
+		() => new JwsService(options).signJwt(signer, payload, { typ: "JWT" }),
+		options,
 	);
 }

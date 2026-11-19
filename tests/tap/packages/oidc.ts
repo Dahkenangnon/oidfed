@@ -1,3 +1,4 @@
+import type { KeyringEntry } from "@oidfed/crypto";
 import type QUnit from "qunit";
 import * as CorePublic from "../../../packages/core/src/index.js";
 import * as CoreVerify from "../../../packages/core/src/index.js";
@@ -10,17 +11,13 @@ import {
 	FederationErrorCode,
 	type FederationOptions,
 	federationError,
-	generateSigningKey,
 	type HttpClient,
 	InternalErrorCode,
 	isErr,
 	isOk,
 	type JWK,
-	JwkSigner,
-	type JwtSigner,
 	JwtTyp,
 	MediaType,
-	MemoryFederationKeyProvider,
 	MemoryReplayStore,
 	ok,
 	type PolicyOperatorDefinition,
@@ -49,7 +46,6 @@ import {
 	OidcProviderRole,
 	OidcRelyingPartyRole,
 } from "../../../packages/oidc/src/index.js";
-import { StaticProtocolSigningKeyProvider } from "../../../packages/oidc/src/protocol-keys.js";
 import { OIDCRegistrationAdapter } from "../../../packages/oidc/src/registration/adapter.js";
 import type { RegistrationProtocolAdapter } from "../../../packages/oidc/src/registration/adapter-types.js";
 import type { AutomaticRegistrationConfig } from "../../../packages/oidc/src/registration/automatic.js";
@@ -76,6 +72,18 @@ import {
 } from "../../../packages/oidc/src/schemas/metadata.js";
 import { createMockFederation, LEAF_ID, OP_ID, TA_ID } from "../fixtures/index.js";
 import { signProtocolFixture } from "../fixtures/protocol-jwt.js";
+import {
+	FixtureCrypto,
+	fixtureCryptoFromRead,
+	fixtureHostConfig,
+	fixtureRoleContext,
+	generateSigningKey,
+	instrumentSigningEntry,
+	PurposeBindingsFixture,
+	rawFixtureJwt,
+	SigningEntryFixture,
+	testEngine,
+} from "../fixtures/software-crypto.js";
 import { anchorKeyPaths, trustChainPaths } from "../fixtures/trust-chain-paths.js";
 import pushedAuthorizationTests from "./oidc/pushed.js";
 
@@ -103,7 +111,7 @@ const malformedChainHeaderValues: readonly unknown[] = [
 ];
 
 function createFederationSigningKey(signingKey: JWK) {
-	return { signer: new JwkSigner(signingKey), publicJwk: stripPrivateFields(signingKey) };
+	return { signer: new SigningEntryFixture(signingKey), publicJwk: stripPrivateFields(signingKey) };
 }
 
 async function createRpConfig(
@@ -116,11 +124,11 @@ async function createRpConfig(
 	const { privateKey: protocolPrivateKey, publicKey: protocolPublicKey } = federation
 		? { privateKey: federation.leafProtocolSigningKey, publicKey: federation.leafProtocolPublicKey }
 		: await generateSigningKey("ES256");
-	const config: RpConfig = {
+	const config: RpConfig = fixtureHostConfig({
 		entityId: LEAF_ID,
-		keyProvider: new MemoryFederationKeyProvider(createFederationSigningKey(privateKey)),
-		protocolKeyProvider: new StaticProtocolSigningKeyProvider({
-			requestObjectSigner: new JwkSigner(protocolPrivateKey),
+		crypto: new FixtureCrypto(createFederationSigningKey(privateKey)),
+		signing: new PurposeBindingsFixture({
+			requestObjectSigner: new SigningEntryFixture(protocolPrivateKey),
 		}),
 		authorityHints: [TA_ID],
 		metadata: {
@@ -132,7 +140,7 @@ async function createRpConfig(
 			},
 		},
 		...overrides,
-	};
+	});
 	return { config, signingKey: privateKey, publicKey };
 }
 
@@ -184,7 +192,7 @@ async function createDualAnchorRegistrationFixture(invalidPreferredProvider = fa
 	const now = Math.floor(Date.now() / 1000);
 	const exp = now + 86400;
 	const signStatement = (payload: Record<string, unknown>, key: JWK) =>
-		signEntityStatement(payload, new JwkSigner(key), { typ: JwtTyp.EntityStatement });
+		signEntityStatement(payload, new SigningEntryFixture(key), { typ: JwtTyp.EntityStatement });
 	const taMetadata = (ta: EntityId) => ({
 		federation_entity: {
 			federation_fetch_endpoint: `${ta}/federation_fetch`,
@@ -316,7 +324,7 @@ async function createDualAnchorRegistrationFixture(invalidPreferredProvider = fa
 		}
 		return new Response("Not Found", { status: 404 });
 	};
-	const options: FederationOptions = { httpClient };
+	const options: FederationOptions = { engine: testEngine, httpClient };
 	const preferredOpChain = await validateTrustChain(
 		[opEcJwt, taASubStatementForOp, taAEcJwt],
 		trustAnchors,
@@ -331,15 +339,15 @@ async function createDualAnchorRegistrationFixture(invalidPreferredProvider = fa
 		trustChain: preferredOpChain.chain,
 		trustMarks: preferredOpChain.chain.trustMarks,
 	} as DiscoveryResult;
-	const rpConfig: RpConfig = {
+	const rpConfig: RpConfig = fixtureHostConfig({
 		entityId: LEAF_ID,
-		keyProvider: new MemoryFederationKeyProvider(createFederationSigningKey(leafSigningKey)),
-		protocolKeyProvider: new StaticProtocolSigningKeyProvider({
-			requestObjectSigner: new JwkSigner(leafProtocolSigningKey),
+		crypto: new FixtureCrypto(createFederationSigningKey(leafSigningKey)),
+		signing: new PurposeBindingsFixture({
+			requestObjectSigner: new SigningEntryFixture(leafProtocolSigningKey),
 		}),
 		authorityHints: [taB],
 		metadata: leafMetadata,
-	};
+	});
 	return {
 		discovery,
 		httpClient,
@@ -485,34 +493,32 @@ export default (QUnit: QUnit) => {
 				options,
 			);
 			if (!discovered.ok) throw new Error(discovered.error.description);
-			const signer = new JwkSigner(
+			const signer = new SigningEntryFixture(
 				mode === "stale" ? f.keys.subject.privateKey : f.keys.b.privateKey,
 			);
 			let signs = 0;
-			const counted: JwtSigner = {
-				alg: signer.alg,
-				kid: signer.kid,
-				signJwt: (...args) => {
-					signs++;
-					return signer.signJwt(...args);
-				},
-			};
+			const counted: KeyringEntry = instrumentSigningEntry(signer, (...args) => {
+				signs++;
+				return signer.signJwt(...args);
+			});
 			const Role = type === "oauth_client" ? OAuthClientRole : OidcRelyingPartyRole;
 			const client = new Role({
 				metadata,
-				protocolKeyProvider: new StaticProtocolSigningKeyProvider({
+				signing: new PurposeBindingsFixture({
 					requestObjectSigner: counted,
-					clientAssertionSigner: new JwkSigner(
+					clientAssertionSigner: new SigningEntryFixture(
 						staleAssertion ? f.keys.subject.privateKey : f.keys.b.privateKey,
 					),
 				}),
 			});
-			client.initialize({
-				entityId: f.ids.subject,
-				authorityHints: [f.ids.anchor],
-				keyProvider: MemoryFederationKeyProvider.fromJWK(f.keys.subject.privateKey),
-				options,
-			});
+			await client.initialize(
+				fixtureRoleContext(client, {
+					entityId: f.ids.subject,
+					authorityHints: [f.ids.anchor],
+					crypto: FixtureCrypto.fromJWK(f.keys.subject.privateKey),
+					options,
+				}),
+			);
 			return { ...f, client, options, discovery: discovered.value, assertions, signs: () => signs };
 		}
 	});
@@ -584,7 +590,7 @@ export default (QUnit: QUnit) => {
 			};
 			const server = new OAuthAuthorizationServerRole({
 				metadata: serverMetadata,
-				replayStore: new MemoryReplayStore({ clock: f.options.clock }),
+				replayStore: new MemoryReplayStore({ engine: testEngine, clock: f.options.clock }),
 				registrationManagement: "read-only",
 				beforeRegistration: () =>
 					allow
@@ -603,28 +609,32 @@ export default (QUnit: QUnit) => {
 					}),
 				},
 			});
-			server.initialize({
-				entityId: f.ids.a,
-				keyProvider: MemoryFederationKeyProvider.fromJWK(f.keys.a.privateKey),
-				trustAnchors: f.anchors,
-				options,
-			});
+			await server.initialize(
+				fixtureRoleContext(server, {
+					entityId: f.ids.a,
+					crypto: FixtureCrypto.fromJWK(f.keys.a.privateKey),
+					trustAnchors: f.anchors,
+					options,
+				}),
+			);
 			const client = new OAuthClientRole({
 				metadata: completeAtSuperior
 					? { ...clientMetadata, redirect_uris: undefined }
 					: clientMetadata,
-				protocolKeyProvider: new StaticProtocolSigningKeyProvider({
-					requestObjectSigner: new JwkSigner(f.keys.b.privateKey),
+				signing: new PurposeBindingsFixture({
+					requestObjectSigner: new SigningEntryFixture(f.keys.b.privateKey),
 				}),
 				includePeerTrustChain: true,
 			});
-			client.initialize({
-				entityId: f.ids.subject,
-				authorityHints: [f.ids.anchor],
-				keyProvider: MemoryFederationKeyProvider.fromJWK(f.keys.subject.privateKey),
-				trustAnchors: f.anchors,
-				options,
-			});
+			await client.initialize(
+				fixtureRoleContext(client, {
+					entityId: f.ids.subject,
+					authorityHints: [f.ids.anchor],
+					crypto: FixtureCrypto.fromJWK(f.keys.subject.privateKey),
+					trustAnchors: f.anchors,
+					options,
+				}),
+			);
 			return {
 				...f,
 				options,
@@ -800,7 +810,7 @@ export default (QUnit: QUnit) => {
 				f.request,
 				MediaType.EntityStatement,
 				f.anchors,
-				f.options,
+				{ ...f.options },
 			);
 			t.true(initial.ok, JSON.stringify(initial));
 			if (!initial.ok) return;
@@ -840,7 +850,10 @@ export default (QUnit: QUnit) => {
 					f.request,
 					MediaType.EntityStatement,
 					f.anchors,
-					{ ...f.options, chainSelection: strategy as CorePublic.ChainSelectionStrategy },
+					{
+						...f.options,
+						chainSelection: strategy as CorePublic.ChainSelectionStrategy,
+					},
 				);
 				t.false(rejected.ok);
 			}
@@ -871,24 +884,21 @@ export default (QUnit: QUnit) => {
 				signatures = 0,
 				secrets = 0,
 				hooks = 0;
-			const signer = new JwkSigner(f.keys.anchor.privateKey);
+			const signer = new SigningEntryFixture(f.keys.anchor.privateKey);
 			for (const limits of [{ maxAuthorityHints: 1 }, { maxTotalFetches: 4 }]) {
 				const handler = createExplicitRegistrationHandler({
 					opEntityId: f.ids.anchor,
 					trustAnchors: f.anchors,
-					keyProvider: {
-						getFederationKeySet: async () => ({
-							jwks: { keys: [f.keys.anchor.publicKey] },
-							signer: {
-								kid: signer.kid,
-								alg: signer.alg,
-								signJwt: async (...args: Parameters<JwtSigner["signJwt"]>) => {
-									signatures++;
-									return signer.signJwt(...args);
-								},
+					crypto: fixtureCryptoFromRead(async () => ({
+						jwks: { keys: [f.keys.anchor.publicKey] },
+						signer: instrumentSigningEntry(
+							signer,
+							async (...args: [payload: Uint8Array, header: Readonly<Record<string, unknown>>]) => {
+								signatures++;
+								return signer.signJwt(...args);
 							},
-						}),
-					},
+						),
+					})),
 					options: {
 						...f.options,
 						...limits,
@@ -944,7 +954,7 @@ export default (QUnit: QUnit) => {
 			const f = await fixture();
 			const issuer = entityId("https://issuer.example"),
 				type = "https://marks.example/type";
-			const issuerKey = new JwkSigner(f.keys.a.privateKey);
+			const issuerKey = new SigningEntryFixture(f.keys.a.privateKey);
 			const issuerEc = await signEntityStatement(
 				{
 					iss: issuer,
@@ -967,7 +977,7 @@ export default (QUnit: QUnit) => {
 						exp: 5000,
 						jwks: { keys: [f.keys.a.publicKey] },
 					},
-					new JwkSigner(f.keys.anchor.privateKey),
+					new SigningEntryFixture(f.keys.anchor.privateKey),
 				),
 			);
 			for (const scenario of [
@@ -995,7 +1005,7 @@ export default (QUnit: QUnit) => {
 								issuer: f.ids.anchor,
 								subject: issuer,
 								trustMarkType: type,
-								signer: new JwkSigner(f.keys.anchor.privateKey),
+								signer: new SigningEntryFixture(f.keys.anchor.privateKey),
 								clock: { now: () => 1000 },
 								ttlSeconds: 100,
 							})
@@ -1004,7 +1014,8 @@ export default (QUnit: QUnit) => {
 					issuer,
 					subject: f.ids.subject,
 					trustMarkType: type,
-					signer: scenario === "wrong-key" ? new JwkSigner(f.keys.b.privateKey) : issuerKey,
+					signer:
+						scenario === "wrong-key" ? new SigningEntryFixture(f.keys.b.privateKey) : issuerKey,
 					clock: f.options.clock,
 					...(delegation ? { delegation } : {}),
 				});
@@ -1028,7 +1039,7 @@ export default (QUnit: QUnit) => {
 					request,
 					MediaType.EntityStatement,
 					f.anchors,
-					opts,
+					{ ...opts },
 				);
 				t.equal(checked.ok, scenario === "valid", `${scenario}: ${JSON.stringify(checked)}`);
 				t.equal(accredited, scenario === "valid" ? 1 : 0);
@@ -1066,23 +1077,23 @@ export default (QUnit: QUnit) => {
 						}),
 					},
 				});
-				role.initialize({
-					entityId: f.ids.anchor,
-					keyProvider: {
-						getFederationKeySet: async () => ({
+				await role.initialize(
+					fixtureRoleContext(role, {
+						entityId: f.ids.anchor,
+						crypto: fixtureCryptoFromRead(async () => ({
 							jwks: { keys: [f.keys.anchor.publicKey] },
-							signer: new JwkSigner(f.keys.anchor.privateKey),
-						}),
-					},
-					trustAnchors: f.anchors,
-					options: {
-						...f.options,
-						chainSelection: (chains) => {
-							calls++;
-							return chains.find((c) => c.resolvedMetadata[clientType]?.client_name === "b")!;
+							signer: new SigningEntryFixture(f.keys.anchor.privateKey),
+						})),
+						trustAnchors: f.anchors,
+						options: {
+							...f.options,
+							chainSelection: (chains) => {
+								calls++;
+								return chains.find((c) => c.resolvedMetadata[clientType]?.client_name === "b")!;
+							},
 						},
-					},
-				});
+					}),
+				);
 				const response = await role.routes.get("/registration")!(
 					new Request(`${f.ids.anchor}/registration`, {
 						method: "POST",
@@ -1116,11 +1127,11 @@ export default (QUnit: QUnit) => {
 				issuer: TA_ID,
 				subject: OP_ID,
 				trustMarkType: type,
-				signer: new JwkSigner(f.taSigningKey),
+				signer: new SigningEntryFixture(f.taSigningKey),
 			});
 			const ec = await signEntityStatement(
 				{ ...op.value.payload, trust_marks: [{ trust_mark_type: type, trust_mark: jwt }] },
-				new JwkSigner(f.opSigningKey),
+				new SigningEntryFixture(f.opSigningKey),
 			);
 			for (const authorized of [true, false]) {
 				const root = await signEntityStatement(
@@ -1128,7 +1139,7 @@ export default (QUnit: QUnit) => {
 						...anchor.value.payload,
 						trust_mark_issuers: { [type]: [authorized ? TA_ID : LEAF_ID] },
 					},
-					new JwkSigner(f.taSigningKey),
+					new SigningEntryFixture(f.taSigningKey),
 				);
 				for (const custom of [false, true]) {
 					const subjects: string[] = [];
@@ -1144,12 +1155,13 @@ export default (QUnit: QUnit) => {
 								new Response(root, { headers: { "content-type": MediaType.EntityStatement } }),
 							...(custom
 								? {
+										engine: testEngine,
 										chainSelection: (chains: ValidatedTrustChain[]) => {
 											subjects.push(chains[0]!.entityId);
 											return chains[0]!;
 										},
 									}
-								: {}),
+								: { engine: testEngine }),
 						},
 					);
 					t.true(result.ok, JSON.stringify(result));
@@ -1207,35 +1219,33 @@ export default (QUnit: QUnit) => {
 				signatures = 0;
 			const role = new OidcRelyingPartyRole({
 				trustAnchors: f.anchors,
-				protocolKeyProvider: {
-					getRequestObjectSigner: async () => {
-						signatures++;
-						throw new Error("Must not sign");
-					},
-				},
+				signing: new PurposeBindingsFixture({
+					getRequestObjectSigner: async () =>
+						instrumentSigningEntry(new SigningEntryFixture(f.keys.b.privateKey), async () => {
+							signatures++;
+							throw new Error("Must not sign");
+						}),
+				}),
 			});
-			role.initialize({
-				entityId: f.ids.b,
-				keyProvider: {
-					getFederationKeySet: async () => {
-						signatures++;
-						throw new Error("Must not sign");
+			await role.initialize(
+				fixtureRoleContext(role, {
+					entityId: f.ids.b,
+					crypto: FixtureCrypto.fromJWK(f.keys.b.privateKey),
+					options: {
+						...f.options,
+						httpClient: async (input, init) => {
+							if (init?.method === "POST") posts++;
+							const url = new URL(input instanceof Request ? input.url : input.toString());
+							url.searchParams.delete("iss");
+							const jwt = documents.get(url.toString());
+							return new Response(jwt ?? "missing", {
+								status: jwt ? 200 : 404,
+								headers: { "content-type": MediaType.EntityStatement },
+							});
+						},
 					},
-				},
-				options: {
-					...f.options,
-					httpClient: async (input, init) => {
-						if (init?.method === "POST") posts++;
-						const url = new URL(input instanceof Request ? input.url : input.toString());
-						url.searchParams.delete("iss");
-						const jwt = documents.get(url.toString());
-						return new Response(jwt ?? "missing", {
-							status: jwt ? 200 : 404,
-							headers: { "content-type": MediaType.EntityStatement },
-						});
-					},
-				},
-			});
+				}),
+			);
 			for (const allInvalid of [false, true]) {
 				if (allInvalid)
 					documents.set(
@@ -1282,9 +1292,9 @@ export default (QUnit: QUnit) => {
 					jwks: { keys: [f.leafProtocolPublicKey] },
 				},
 				authorityHints: [TA_ID],
-				protocolKeyProvider: {
-					getRequestObjectSigner: async () => new JwkSigner(f.leafProtocolSigningKey),
-				},
+				signing: new PurposeBindingsFixture({
+					getRequestObjectSigner: async () => new SigningEntryFixture(f.leafProtocolSigningKey),
+				}),
 				trustAnchors: f.trustAnchors,
 				options: {
 					chainSelection: (chains) => {
@@ -1293,22 +1303,22 @@ export default (QUnit: QUnit) => {
 					},
 				},
 			});
-			role.initialize({
-				entityId: LEAF_ID,
-				keyProvider: {
-					getFederationKeySet: async () => ({
+			await role.initialize(
+				fixtureRoleContext(role, {
+					entityId: LEAF_ID,
+					crypto: fixtureCryptoFromRead(async () => ({
 						jwks: { keys: [f.leafPublicKey] },
-						signer: new JwkSigner(f.leafSigningKey),
-					}),
-				},
-				options: {
-					...f.options,
-					chainSelection: (chains) => {
-						hostCalls++;
-						return chains[0] as ValidatedTrustChain;
+						signer: new SigningEntryFixture(f.leafSigningKey),
+					})),
+					options: {
+						...f.options,
+						chainSelection: (chains) => {
+							hostCalls++;
+							return chains[0] as ValidatedTrustChain;
+						},
 					},
-				},
-			});
+				}),
+			);
 			t.true((await role.assessEntity(OP_ID, "openid_provider")).ok);
 			t.strictEqual(roleCalls, 1);
 			t.strictEqual(hostCalls, 0);
@@ -1353,7 +1363,7 @@ export default (QUnit: QUnit) => {
 			if (!decoded.ok) throw Error("fixture");
 			const ss = await signEntityStatement(
 				{ ...decoded.value.payload, constraints: { custom: true } },
-				new JwkSigner(f.taSigningKey),
+				new SigningEntryFixture(f.taSigningKey),
 			);
 			const httpClient: typeof f.httpClient = async (input, init) => {
 				const url = new URL(String(input));
@@ -1364,38 +1374,40 @@ export default (QUnit: QUnit) => {
 			for (const accepted of [true, false]) {
 				let calls = 0;
 				const role = new OidcRelyingPartyRole({
-					protocolKeyProvider: new StaticProtocolSigningKeyProvider({
-						requestObjectSigner: new JwkSigner(f.leafProtocolSigningKey),
+					signing: new PurposeBindingsFixture({
+						requestObjectSigner: new SigningEntryFixture(f.leafProtocolSigningKey),
 					}),
 					metadata: {
 						redirect_uris: [`${LEAF_ID}/callback`],
 						jwks: { keys: [f.leafProtocolPublicKey] },
 					},
 				});
-				role.initialize({
-					entityId: LEAF_ID,
-					authorityHints: [TA_ID],
-					trustAnchors: f.trustAnchors,
-					keyProvider: MemoryFederationKeyProvider.fromJWK(f.leafSigningKey),
-					options: {
-						...f.options,
-						httpClient,
-						customConstraintChecks: [
-							{
-								name: "custom",
-								check() {
-									calls++;
-									return accepted
-										? CorePublic.ok(undefined)
-										: CorePublic.err({
-												code: CorePublic.InternalErrorCode.ConstraintViolation,
-												description: "denied",
-											});
+				await role.initialize(
+					fixtureRoleContext(role, {
+						entityId: LEAF_ID,
+						authorityHints: [TA_ID],
+						trustAnchors: f.trustAnchors,
+						crypto: FixtureCrypto.fromJWK(f.leafSigningKey),
+						options: {
+							...f.options,
+							httpClient,
+							customConstraintChecks: [
+								{
+									name: "custom",
+									check() {
+										calls++;
+										return accepted
+											? CorePublic.ok(undefined)
+											: CorePublic.err({
+													code: CorePublic.InternalErrorCode.ConstraintViolation,
+													description: "denied",
+												});
+									},
 								},
-							},
-						],
-					},
-				});
+							],
+						},
+					}),
+				);
 				const result = await role.automaticallyRegister({
 					opEntityId: OP_ID,
 					redirect_uri: `${LEAF_ID}/callback`,
@@ -1665,12 +1677,12 @@ export default (QUnit: QUnit) => {
 
 		test("roles reject malformed composed publication while bare federation hosts stay protocol-neutral", async (t) => {
 			const f = await createMockFederation();
-			const provider = new StaticProtocolSigningKeyProvider({
-				requestObjectSigner: new JwkSigner(f.leafProtocolSigningKey),
+			const provider = new PurposeBindingsFixture({
+				requestObjectSigner: new SigningEntryFixture(f.leafProtocolSigningKey),
 			});
 			const roles = [
 				new OidcRelyingPartyRole({
-					protocolKeyProvider: provider,
+					signing: provider,
 					metadata: { redirect_uris: 42 },
 				}),
 				new OidcProviderRole({
@@ -1685,40 +1697,52 @@ export default (QUnit: QUnit) => {
 						client_registration_types_supported: ["explicit"],
 					},
 				}),
-				new OAuthClientRole({ protocolKeyProvider: provider, metadata: { redirect_uris: 42 } }),
+				new OAuthClientRole({ signing: provider, metadata: { redirect_uris: 42 } }),
 				new OAuthResourceRole({ metadata: { resource: 42 } }),
 			];
 			const config = {
 				entityId: LEAF_ID,
 				authorityHints: [TA_ID],
 				trustAnchors: f.trustAnchors,
-				keyProvider: MemoryFederationKeyProvider.fromJWK(f.leafSigningKey),
+				crypto: FixtureCrypto.fromJWK(f.leafSigningKey),
 			};
 			for (const role of roles)
-				t.throws(
-					() => new Leaf({ ...config, metadata: { [role.type]: {} }, roles: [role] }),
+				await t.rejects(
+					(async () =>
+						await Leaf.create(
+							fixtureHostConfig({ ...config, metadata: { [role.type]: {} }, roles: [role] }),
+						))(),
 					/metadata/i,
 					role.type,
 				);
 			t.ok(
-				new Leaf({ ...config, metadata: { openid_provider: { response_types_supported: 42 } } }),
-			);
-			const role = new OidcRelyingPartyRole({ protocolKeyProvider: provider });
-			t.throws(
-				() =>
-					new Leaf({
+				await Leaf.create(
+					fixtureHostConfig({
 						...config,
-						metadata: { openid_relying_party: { redirect_uris: 42 } },
-						roles: [role],
+						metadata: { openid_provider: { response_types_supported: 42 } },
 					}),
+				),
+			);
+			const role = new OidcRelyingPartyRole({ signing: provider });
+			await t.rejects(
+				(async () =>
+					await Leaf.create(
+						fixtureHostConfig({
+							...config,
+							metadata: { openid_relying_party: { redirect_uris: 42 } },
+							roles: [role],
+						}),
+					))(),
 				/metadata/i,
 			);
 			t.ok(
-				new Leaf({
-					...config,
-					metadata: { openid_relying_party: {} },
-					roles: [new OidcRelyingPartyRole({ protocolKeyProvider: provider })],
-				}),
+				await Leaf.create(
+					fixtureHostConfig({
+						...config,
+						metadata: { openid_relying_party: {} },
+						roles: [new OidcRelyingPartyRole({ signing: provider })],
+					}),
+				),
 			);
 		});
 
@@ -1749,25 +1773,21 @@ export default (QUnit: QUnit) => {
 				);
 				let signatures = 0,
 					posts = 0;
-				const counted = (key: JWK): JwtSigner => {
-					const signer = new JwkSigner(key);
-					return {
-						alg: signer.alg,
-						kid: signer.kid,
-						signJwt: (...args) => {
-							signatures++;
-							return signer.signJwt(...args);
-						},
-					};
+				const counted = (key: JWK): KeyringEntry => {
+					const signer = new SigningEntryFixture(key);
+					return instrumentSigningEntry(signer, (...args) => {
+						signatures++;
+						return signer.signJwt(...args);
+					});
 				};
-				const config: RpConfig = {
+				const config: RpConfig = fixtureHostConfig({
 					entityId: LEAF_ID,
 					authorityHints: [TA_ID],
-					keyProvider: new MemoryFederationKeyProvider({
+					crypto: new FixtureCrypto({
 						signer: counted(f.leafSigningKey),
 						publicJwk: f.leafPublicKey,
 					}),
-					protocolKeyProvider: new StaticProtocolSigningKeyProvider({
+					signing: new PurposeBindingsFixture({
 						requestObjectSigner: counted(f.leafProtocolSigningKey),
 					}),
 					metadata: {
@@ -1776,7 +1796,7 @@ export default (QUnit: QUnit) => {
 							jwks: { keys: [f.leafProtocolPublicKey] },
 						},
 					},
-				};
+				});
 				const options = {
 					...f.options,
 					httpClient: (async (input, init) => {
@@ -1819,7 +1839,7 @@ export default (QUnit: QUnit) => {
 				);
 				const statement = await signEntityStatement(
 					{ ...superior.value.payload, [mode]: { openid_provider: completion } },
-					new JwkSigner(f.taSigningKey),
+					new SigningEntryFixture(f.taSigningKey),
 				);
 				const httpClient: HttpClient = async (input, init) => {
 					const url = new URL(input instanceof Request ? input.url : String(input));
@@ -1830,21 +1850,23 @@ export default (QUnit: QUnit) => {
 					return f.httpClient(input, init);
 				};
 				const role = new OidcRelyingPartyRole({
-					protocolKeyProvider: new StaticProtocolSigningKeyProvider({
-						requestObjectSigner: new JwkSigner(f.leafProtocolSigningKey),
+					signing: new PurposeBindingsFixture({
+						requestObjectSigner: new SigningEntryFixture(f.leafProtocolSigningKey),
 					}),
 					metadata: {
 						redirect_uris: [`${LEAF_ID}/callback`],
 						jwks: { keys: [f.leafProtocolPublicKey] },
 					},
 				});
-				role.initialize({
-					entityId: LEAF_ID,
-					authorityHints: [TA_ID],
-					trustAnchors: f.trustAnchors,
-					keyProvider: MemoryFederationKeyProvider.fromJWK(f.leafSigningKey),
-					options: { httpClient },
-				});
+				await role.initialize(
+					fixtureRoleContext(role, {
+						entityId: LEAF_ID,
+						authorityHints: [TA_ID],
+						trustAnchors: f.trustAnchors,
+						crypto: FixtureCrypto.fromJWK(f.leafSigningKey),
+						options: { engine: testEngine, httpClient },
+					}),
+				);
 				const result = await role.automaticallyRegister({
 					opEntityId: OP_ID,
 					redirect_uri: `${LEAF_ID}/callback`,
@@ -1876,7 +1898,7 @@ export default (QUnit: QUnit) => {
 				if (!leaf.ok) throw new Error("fixture");
 				const request = await signEntityStatement(
 					{ ...leaf.value.payload, aud: OP_ID },
-					new JwkSigner(f.leafSigningKey),
+					new SigningEntryFixture(f.leafSigningKey),
 					{
 						extraHeaders: {
 							trust_chain: [f.leafEcJwt, f.taSubStatementForLeaf, f.taEcJwt],
@@ -1886,12 +1908,14 @@ export default (QUnit: QUnit) => {
 				);
 				for (const Role of [OAuthAuthorizationServerRole, OidcProviderRole]) {
 					const role = new Role({ metadata: valid });
-					role.initialize({
-						entityId: OP_ID,
-						keyProvider: MemoryFederationKeyProvider.fromJWK(f.opSigningKey),
-						trustAnchors: f.trustAnchors,
-						options: f.options,
-					});
+					await role.initialize(
+						fixtureRoleContext(role, {
+							entityId: OP_ID,
+							crypto: FixtureCrypto.fromJWK(f.opSigningKey),
+							trustAnchors: f.trustAnchors,
+							options: f.options,
+						}),
+					);
 					const res = await role.routes.get("/registration")!(
 						new Request(`${OP_ID}/registration`, {
 							method: "POST",
@@ -1920,9 +1944,13 @@ export default (QUnit: QUnit) => {
 				const key = f.opProtocolSigningKeys.find((key) => key.alg === alg)!;
 				const jwt = await signEntityStatement(
 					{ iss: OP_ID, sub: "test-subject" },
-					new JwkSigner(key),
+					new SigningEntryFixture(key),
 				);
-				const checked = await CoreVerify.verifyEntityStatement(jwt, { keys: keys.keys });
+				const checked = await CoreVerify.verifyEntityStatement(
+					jwt,
+					{ keys: keys.keys },
+					{ engine: testEngine },
+				);
 				t.true(checked.ok, alg);
 			}
 		});
@@ -1931,16 +1959,18 @@ export default (QUnit: QUnit) => {
 	test("role-driven discovery selects a conformant alternative while supplied invalid discovery remains an error", async (t) => {
 		const f = await createDualAnchorRegistrationFixture(true);
 		const role = new OidcRelyingPartyRole({
-			protocolKeyProvider: f.rpConfig.protocolKeyProvider,
+			signing: f.rpConfig.signing,
 			metadata: f.rpConfig.metadata.openid_relying_party,
 		});
-		role.initialize({
-			entityId: LEAF_ID,
-			authorityHints: [f.taB],
-			trustAnchors: f.trustAnchors,
-			keyProvider: f.rpConfig.keyProvider,
-			options: { httpClient: f.httpClient },
-		});
+		await role.initialize(
+			fixtureRoleContext(role, {
+				entityId: LEAF_ID,
+				authorityHints: [f.taB],
+				trustAnchors: f.trustAnchors,
+				crypto: f.rpConfig.crypto,
+				options: { engine: testEngine, httpClient: f.httpClient },
+			}),
+		);
 		const supplied = await role.createAuthorizationRequest(
 			f.discovery,
 			{ response_type: "code", redirect_uri: `${LEAF_ID}/callback` },
@@ -1997,7 +2027,7 @@ export default (QUnit: QUnit) => {
 						: Object.fromEntries(Object.entries(complete).map(([key, value]) => [key, { value }]));
 				const ss = await signEntityStatement(
 					{ ...superior.value.payload, [mode]: { [type]: supplied } },
-					new JwkSigner(f.taSigningKey),
+					new SigningEntryFixture(f.taSigningKey),
 				);
 				const result = await validateTrustChain(
 					[f.leafEcJwt, ss, f.taEcJwt],
@@ -2025,18 +2055,20 @@ export default (QUnit: QUnit) => {
 			};
 			const logger = { debug: record, info: record, warn: record, error: record };
 			const role = new OidcRelyingPartyRole({
-				protocolKeyProvider: new StaticProtocolSigningKeyProvider({
-					requestObjectSigner: new JwkSigner(f.leafProtocolSigningKey),
+				signing: new PurposeBindingsFixture({
+					requestObjectSigner: new SigningEntryFixture(f.leafProtocolSigningKey),
 				}),
 				metadata: leaf.value.payload.metadata?.openid_relying_party,
 			});
-			role.initialize({
-				entityId: LEAF_ID,
-				authorityHints: [TA_ID],
-				trustAnchors: f.trustAnchors,
-				keyProvider: MemoryFederationKeyProvider.fromJWK(f.leafSigningKey),
-				options: { ...f.options, logger },
-			});
+			await role.initialize(
+				fixtureRoleContext(role, {
+					entityId: LEAF_ID,
+					authorityHints: [TA_ID],
+					trustAnchors: f.trustAnchors,
+					crypto: FixtureCrypto.fromJWK(f.leafSigningKey),
+					options: { ...f.options, logger },
+				}),
+			);
 			const params = {
 				opEntityId: OP_ID,
 				redirect_uri: "https://rp.example.com/callback",
@@ -2151,7 +2183,7 @@ export default (QUnit: QUnit) => {
 					suppliedDiscovery,
 					{
 						entityId: LEAF_ID,
-						keyProvider: MemoryFederationKeyProvider.fromJWK(fed.leafSigningKey),
+						crypto: FixtureCrypto.fromJWK(fed.leafSigningKey),
 						authorityHints: [TA_ID],
 						metadata: leaf.value.payload.metadata!,
 					},
@@ -2236,13 +2268,13 @@ export default (QUnit: QUnit) => {
 				const f = await createMockFederation({ leafMetadata: { openid_relying_party: metadata } });
 				const signedKeys = await signEntityStatement(
 					{ iss: LEAF_ID, sub: LEAF_ID, keys: [key] },
-					new JwkSigner(f.leafSigningKey),
+					new SigningEntryFixture(f.leafSigningKey),
 					{ typ: JwtTyp.JwkSet },
 				);
 				const options = {
 					...f.options,
 					opEntityId: OP_ID,
-					replayStore: new MemoryReplayStore(),
+					replayStore: new MemoryReplayStore({ engine: testEngine }),
 					httpClient: async (...args: Parameters<HttpClient>) => {
 						if (String(args[0]) === uri)
 							return new Response(
@@ -2270,7 +2302,7 @@ export default (QUnit: QUnit) => {
 						response_type: "code",
 						redirect_uri: `${LEAF_ID}/callback`,
 					},
-					new JwkSigner(protocol.privateKey),
+					new SigningEntryFixture(protocol.privateKey),
 					{ typ: RequestObjectTyp, extraHeaders: { kid: undefined } },
 				);
 				const automatic = await processAutomaticRegistration(request, f.trustAnchors, options);
@@ -2284,7 +2316,7 @@ export default (QUnit: QUnit) => {
 				if (!decoded.ok) throw new Error(decoded.error.description);
 				const registration = await signEntityStatement(
 					{ ...decoded.value.payload, aud: OP_ID },
-					new JwkSigner(f.leafSigningKey),
+					new SigningEntryFixture(f.leafSigningKey),
 				);
 				const explicit = await processExplicitRegistration(
 					registration,
@@ -2321,10 +2353,14 @@ export default (QUnit: QUnit) => {
 					response_type: "code",
 					redirect_uri: `${LEAF_ID}/callback`,
 				},
-				new JwkSigner(protocol.privateKey),
+				new SigningEntryFixture(protocol.privateKey),
 				{ typ: RequestObjectTyp },
 			);
-			const options = { ...f.options, opEntityId: OP_ID, replayStore: new MemoryReplayStore() };
+			const options = {
+				...f.options,
+				opEntityId: OP_ID,
+				replayStore: new MemoryReplayStore({ engine: testEngine }),
+			};
 			let callbacks = 0;
 			const denied = await processAutomaticRegistration(request, f.trustAnchors, {
 				...options,
@@ -2362,7 +2398,7 @@ export default (QUnit: QUnit) => {
 			const handler = createExplicitRegistrationHandler({
 				opEntityId: OP_ID,
 				trustAnchors: f.anchors,
-				keyProvider: MemoryFederationKeyProvider.fromJWK(f.keys.anchor.privateKey),
+				crypto: FixtureCrypto.fromJWK(f.keys.anchor.privateKey),
 				options: { ...f.options, clock: { now: () => now } },
 				beforeRegistration: async () => {
 					now = 6000;
@@ -2395,27 +2431,26 @@ export default (QUnit: QUnit) => {
 				let callbacks = 0,
 					saves = 0,
 					signatures = 0;
-				const keys = MemoryFederationKeyProvider.fromJWK(f.keys.anchor.privateKey);
+				const keys = FixtureCrypto.fromJWK(f.keys.anchor.privateKey);
 				const handler = createExplicitRegistrationHandler({
 					opEntityId: OP_ID,
 					trustAnchors: f.anchors,
+					crypto: fixtureCryptoFromRead(async () => {
+						const keySet = await keys.keyring.entry("federation");
+						return {
+							...keySet,
+							signer: instrumentSigningEntry(keySet.signer, async (data, header) => {
+								signatures++;
+								return rawFixtureJwt(keySet.signer, data, header);
+							}).signer,
+						};
+					}),
 					options: f.options,
-					keyProvider: {
-						getFederationKeySet: async () => {
-							const keySet = await keys.getFederationKeySet();
-							return {
-								...keySet,
-								signer: {
-									...keySet.signer,
-									signJwt: async (data, header) => {
-										signatures++;
-										return keySet.signer.signJwt(data, header);
-									},
-								},
-							};
-						},
-					},
-					...(mode === "required" ? { trustMarkRequirements: { requiredTypes: ["missing"] } } : {}),
+					...(mode === "required"
+						? {
+								trustMarkRequirements: { requiredTypes: ["missing"] },
+							}
+						: {}),
 					beforeRegistration: async (context) => {
 						callbacks++;
 						t.true(Object.isFrozen(context.chain.statements));
@@ -2458,9 +2493,9 @@ export default (QUnit: QUnit) => {
 				let calls = 0;
 				const handler = createExplicitRegistrationHandler({
 					opEntityId: OP_ID,
-					keyProvider: MemoryFederationKeyProvider.fromJWK(f.keys.anchor.privateKey),
+					crypto: FixtureCrypto.fromJWK(f.keys.anchor.privateKey),
 					trustAnchors: f.anchors,
-					options: f.options,
+					options: { ...f.options },
 					onRegistration: async () => {
 						calls++;
 					},
@@ -2497,9 +2532,9 @@ export default (QUnit: QUnit) => {
 				let calls = 0;
 				const handler = createExplicitRegistrationHandler({
 					opEntityId: OP_ID,
-					keyProvider: MemoryFederationKeyProvider.fromJWK(f.keys.anchor.privateKey),
+					crypto: FixtureCrypto.fromJWK(f.keys.anchor.privateKey),
 					trustAnchors: f.anchors,
-					options: f.options,
+					options: { ...f.options },
 					onRegistration: async () => {
 						calls++;
 					},
@@ -2536,7 +2571,6 @@ export default (QUnit: QUnit) => {
 				"OIDCRegistrationAdapter",
 				"OidcProviderRole",
 				"OidcRelyingPartyRole",
-				"StaticProtocolSigningKeyProvider",
 			]);
 
 			const hiddenRuntimeExports = [
@@ -2577,7 +2611,8 @@ export default (QUnit: QUnit) => {
 			const jwt = await OidcPublic.OidcRelyingPartyRole.createClientAssertion(
 				"https://rp.example.com",
 				"https://op.example.com/token",
-				new JwkSigner(privateKey),
+				new SigningEntryFixture(privateKey),
+				{ engine: testEngine },
 			);
 			const decoded = decodeEntityStatement(jwt);
 			t.true(decoded.ok);
@@ -2600,7 +2635,12 @@ export default (QUnit: QUnit) => {
 
 		test("produces valid JWT with correct claims", async (t) => {
 			const { privateKey } = await generateSigningKey("ES256");
-			const jwt = await createClientAssertion(clientId, audience, new JwkSigner(privateKey));
+			const jwt = await createClientAssertion(
+				clientId,
+				audience,
+				new SigningEntryFixture(privateKey),
+				{ engine: testEngine },
+			);
 			const decoded = decodeEntityStatement(jwt);
 			t.true(decoded.ok);
 			if (!decoded.ok) return;
@@ -2619,7 +2659,12 @@ export default (QUnit: QUnit) => {
 
 		test("sets iss === sub === clientId", async (t) => {
 			const { privateKey } = await generateSigningKey("ES256");
-			const jwt = await createClientAssertion(clientId, audience, new JwkSigner(privateKey));
+			const jwt = await createClientAssertion(
+				clientId,
+				audience,
+				new SigningEntryFixture(privateKey),
+				{ engine: testEngine },
+			);
 			const decoded = decodeEntityStatement(jwt);
 			t.true(decoded.ok);
 			if (!decoded.ok) return;
@@ -2629,9 +2674,13 @@ export default (QUnit: QUnit) => {
 
 		test("generates unique jti across calls", async (t) => {
 			const { privateKey } = await generateSigningKey("ES256");
-			const signer = new JwkSigner(privateKey);
-			const d1 = decodeEntityStatement(await createClientAssertion(clientId, audience, signer));
-			const d2 = decodeEntityStatement(await createClientAssertion(clientId, audience, signer));
+			const signer = new SigningEntryFixture(privateKey);
+			const d1 = decodeEntityStatement(
+				await createClientAssertion(clientId, audience, signer, { engine: testEngine }),
+			);
+			const d2 = decodeEntityStatement(
+				await createClientAssertion(clientId, audience, signer, { engine: testEngine }),
+			);
 			t.true(d1.ok && d2.ok);
 			if (!d1.ok || !d2.ok) return;
 			const jti1 = (d1.value.payload as Record<string, unknown>).jti;
@@ -2641,9 +2690,12 @@ export default (QUnit: QUnit) => {
 
 		test("respects expiresInSeconds option", async (t) => {
 			const { privateKey } = await generateSigningKey("ES256");
-			const jwt = await createClientAssertion(clientId, audience, new JwkSigner(privateKey), {
-				expiresInSeconds: 120,
-			});
+			const jwt = await createClientAssertion(
+				clientId,
+				audience,
+				new SigningEntryFixture(privateKey),
+				{ engine: testEngine, expiresInSeconds: 120 },
+			);
 			const decoded = decodeEntityStatement(jwt);
 			t.true(decoded.ok);
 			if (!decoded.ok) return;
@@ -2653,10 +2705,12 @@ export default (QUnit: QUnit) => {
 
 		test("uses the injected NumericDate clock", async (t) => {
 			const { privateKey } = await generateSigningKey("ES256");
-			const jwt = await createClientAssertion(clientId, audience, new JwkSigner(privateKey), {
-				expiresInSeconds: 120,
-				clock: { now: () => 1_700_000_000 },
-			});
+			const jwt = await createClientAssertion(
+				clientId,
+				audience,
+				new SigningEntryFixture(privateKey),
+				{ engine: testEngine, expiresInSeconds: 120, clock: { now: () => 1_700_000_000 } },
+			);
 			const decoded = decodeEntityStatement(jwt);
 			t.true(decoded.ok);
 			if (!decoded.ok) return;
@@ -2666,7 +2720,12 @@ export default (QUnit: QUnit) => {
 
 		test("defaults expiresInSeconds to 60", async (t) => {
 			const { privateKey } = await generateSigningKey("ES256");
-			const jwt = await createClientAssertion(clientId, audience, new JwkSigner(privateKey));
+			const jwt = await createClientAssertion(
+				clientId,
+				audience,
+				new SigningEntryFixture(privateKey),
+				{ engine: testEngine },
+			);
 			const decoded = decodeEntityStatement(jwt);
 			t.true(decoded.ok);
 			if (!decoded.ok) return;
@@ -2676,7 +2735,12 @@ export default (QUnit: QUnit) => {
 
 		test("signs with the provided key", async (t) => {
 			const { privateKey } = await generateSigningKey("ES256");
-			const jwt = await createClientAssertion(clientId, audience, new JwkSigner(privateKey));
+			const jwt = await createClientAssertion(
+				clientId,
+				audience,
+				new SigningEntryFixture(privateKey),
+				{ engine: testEngine },
+			);
 			const decoded = decodeEntityStatement(jwt);
 			t.true(decoded.ok);
 			if (!decoded.ok) return;
@@ -2686,7 +2750,12 @@ export default (QUnit: QUnit) => {
 
 		test("works with RS256 key", async (t) => {
 			const { privateKey } = await generateSigningKey("RS256");
-			const jwt = await createClientAssertion(clientId, audience, new JwkSigner(privateKey));
+			const jwt = await createClientAssertion(
+				clientId,
+				audience,
+				new SigningEntryFixture(privateKey),
+				{ engine: testEngine },
+			);
 			const decoded = decodeEntityStatement(jwt);
 			t.true(decoded.ok);
 			if (!decoded.ok) return;
@@ -2699,7 +2768,9 @@ export default (QUnit: QUnit) => {
 			const { privateKey } = await generateSigningKey("ES256");
 			const keyWithoutKid = { ...privateKey, kid: undefined } as unknown as typeof privateKey;
 			try {
-				await createClientAssertion(clientId, audience, new JwkSigner(keyWithoutKid));
+				await createClientAssertion(clientId, audience, new SigningEntryFixture(keyWithoutKid), {
+					engine: testEngine,
+				});
 				t.ok(false, "should have thrown");
 			} catch (e) {
 				t.ok((e as Error).message.includes("kid"), (e as Error).message);
@@ -3599,7 +3670,7 @@ export default (QUnit: QUnit) => {
 				fx.rpConfig,
 				authzParams,
 				fx.trustAnchors,
-				{ httpClient: fx.httpClient },
+				{ engine: testEngine, httpClient: fx.httpClient },
 			);
 			t.true(isOk(result), isErr(result) ? result.error.description : undefined);
 			if (!isOk(result)) return;
@@ -4297,9 +4368,9 @@ export default (QUnit: QUnit) => {
 			const assertionKeys = await generateSigningKey("ES256");
 			const { config } = await createRpConfig({
 				requestDelivery: "par",
-				protocolKeyProvider: new StaticProtocolSigningKeyProvider({
-					requestObjectSigner: new JwkSigner(requestKeys.privateKey),
-					clientAssertionSigner: new JwkSigner(assertionKeys.privateKey),
+				signing: new PurposeBindingsFixture({
+					requestObjectSigner: new SigningEntryFixture(requestKeys.privateKey),
+					clientAssertionSigner: new SigningEntryFixture(assertionKeys.privateKey),
 				}),
 				metadata: {
 					openid_relying_party: {
@@ -4392,9 +4463,7 @@ export default (QUnit: QUnit) => {
 		async function createMockOpWithRegistration() {
 			const fed = await createMockFederation();
 			const { config } = await createRpConfig({
-				keyProvider: new MemoryFederationKeyProvider(
-					createFederationSigningKey(fed.leafSigningKey),
-				),
+				crypto: new FixtureCrypto(createFederationSigningKey(fed.leafSigningKey)),
 			});
 			const discovery = await createMockDiscovery(OP_ID, fed);
 			const now = Math.floor(Date.now() / 1000);
@@ -4433,7 +4502,7 @@ export default (QUnit: QUnit) => {
 					};
 					const registrationResponseJwt = await signEntityStatement(
 						responsePayload,
-						new JwkSigner(fed.opSigningKey),
+						new SigningEntryFixture(fed.opSigningKey),
 						{ typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
 					);
 					return new Response(registrationResponseJwt, {
@@ -4448,7 +4517,7 @@ export default (QUnit: QUnit) => {
 				config,
 				discovery,
 				httpClient,
-				options: { httpClient } as FederationOptions,
+				options: { engine: testEngine, httpClient } as FederationOptions,
 				registrationResponsePayload,
 			};
 		}
@@ -4465,14 +4534,12 @@ export default (QUnit: QUnit) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
 			const { config } = await createRpConfig({
-				keyProvider: new MemoryFederationKeyProvider(
-					createFederationSigningKey(fed.leafSigningKey),
-				),
+				crypto: new FixtureCrypto(createFederationSigningKey(fed.leafSigningKey)),
 				...configOverrides,
 			});
 			const responseJwt = await signEntityStatement(
 				responsePayload,
-				new JwkSigner(fed.opSigningKey),
+				new SigningEntryFixture(fed.opSigningKey),
 				{ typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
 			);
 			const httpClient = async (input: string | URL | Request) => {
@@ -4498,6 +4565,7 @@ export default (QUnit: QUnit) => {
 				return fed.httpClient(input);
 			};
 			return explicitRegistration(discovery, config, fed.trustAnchors, {
+				engine: testEngine,
 				...validationOptions,
 				httpClient,
 			});
@@ -4531,9 +4599,9 @@ export default (QUnit: QUnit) => {
 			};
 			const handler = createExplicitRegistrationHandler({
 				opEntityId: OP_ID,
-				keyProvider: new MemoryFederationKeyProvider(createFederationSigningKey(mock.opSigningKey)),
+				crypto: new FixtureCrypto(createFederationSigningKey(mock.opSigningKey)),
 				trustAnchors: mock.trustAnchors,
-				options: { httpClient: mock.httpClient },
+				options: { engine: testEngine, httpClient: mock.httpClient },
 				registrationManagement: "read-only",
 				registrationProtocolAdapter: {
 					validateClientMetadata: (metadata) => ok(metadata),
@@ -4555,6 +4623,7 @@ export default (QUnit: QUnit) => {
 				return mock.httpClient(input, init);
 			};
 			const result = await explicitRegistration(mock.discovery, mock.config, mock.trustAnchors, {
+				engine: testEngine,
 				httpClient,
 			});
 			t.true(result.ok, result.ok ? "registered" : result.error.description);
@@ -4591,6 +4660,7 @@ export default (QUnit: QUnit) => {
 				return mock.httpClient(input, init);
 			};
 			const result = await explicitRegistration(mock.discovery, mock.config, mock.trustAnchors, {
+				engine: testEngine,
 				httpClient: trackingClient,
 			});
 			t.true(isOk(result), isErr(result) ? result.error.description : undefined);
@@ -4614,6 +4684,7 @@ export default (QUnit: QUnit) => {
 				return mock.httpClient(input, init);
 			};
 			const result = await explicitRegistration(mock.discovery, mock.config, mock.trustAnchors, {
+				engine: testEngine,
 				httpClient: trackingClient,
 			});
 			t.true(isOk(result));
@@ -4648,6 +4719,7 @@ export default (QUnit: QUnit) => {
 				return mock.httpClient(input, init);
 			};
 			const result = await explicitRegistration(mock.discovery, mock.config, mock.trustAnchors, {
+				engine: testEngine,
 				clock: { now: () => now },
 				httpClient: trackingClient,
 			});
@@ -4678,7 +4750,7 @@ export default (QUnit: QUnit) => {
 				mock.discovery,
 				{ ...mock.config, includePeerTrustChain: true },
 				mock.trustAnchors,
-				{ httpClient: trackingClient },
+				{ engine: testEngine, httpClient: trackingClient },
 			);
 			t.true(isOk(result));
 			const decoded = decodeEntityStatement(capturedBody);
@@ -4724,7 +4796,7 @@ export default (QUnit: QUnit) => {
 								},
 							},
 						},
-						new JwkSigner(fx.opSigningKey),
+						new SigningEntryFixture(fx.opSigningKey),
 						{ typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
 					);
 					return new Response(responseJwt, {
@@ -4735,6 +4807,7 @@ export default (QUnit: QUnit) => {
 				return fx.httpClient(input, init);
 			};
 			const result = await explicitRegistration(fx.discovery, fx.rpConfig, fx.trustAnchors, {
+				engine: testEngine,
 				httpClient,
 			});
 			t.true(isOk(result), isErr(result) ? result.error.description : undefined);
@@ -4851,9 +4924,7 @@ export default (QUnit: QUnit) => {
 				},
 			};
 			const { config } = await createRpConfig({
-				keyProvider: new MemoryFederationKeyProvider(
-					createFederationSigningKey(fed.leafSigningKey),
-				),
+				crypto: new FixtureCrypto(createFederationSigningKey(fed.leafSigningKey)),
 			});
 			let posts = 0;
 			const httpClient: HttpClient = async (input, init) => {
@@ -4905,9 +4976,7 @@ export default (QUnit: QUnit) => {
 			});
 			const discovery = await createMockDiscovery(OP_ID, fed);
 			const { config } = await createRpConfig({
-				keyProvider: new MemoryFederationKeyProvider(
-					createFederationSigningKey(fed.leafSigningKey),
-				),
+				crypto: new FixtureCrypto(createFederationSigningKey(fed.leafSigningKey)),
 			});
 			const result = await explicitRegistration(discovery, config, fed.trustAnchors, fed.options);
 			t.true(isErr(result));
@@ -4923,7 +4992,7 @@ export default (QUnit: QUnit) => {
 			const now = Math.floor(Date.now() / 1000);
 			const badResponseJwt = await signEntityStatement(
 				{ iss: OP_ID, sub: LEAF_ID, aud: LEAF_ID, iat: now, exp: now + 86400, trust_anchor: TA_ID },
-				new JwkSigner(unknownKey),
+				new SigningEntryFixture(unknownKey),
 				{ typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
 			);
 			const httpClient = async (input: string | URL | Request) => {
@@ -4941,11 +5010,10 @@ export default (QUnit: QUnit) => {
 				return fed.httpClient(input);
 			};
 			const { config } = await createRpConfig({
-				keyProvider: new MemoryFederationKeyProvider(
-					createFederationSigningKey(fed.leafSigningKey),
-				),
+				crypto: new FixtureCrypto(createFederationSigningKey(fed.leafSigningKey)),
 			});
 			const result = await explicitRegistration(discovery, config, fed.trustAnchors, {
+				engine: testEngine,
 				httpClient,
 			});
 			t.true(isErr(result));
@@ -4972,9 +5040,7 @@ export default (QUnit: QUnit) => {
 		test("fails if response trust_anchor doesn't match OP chain root", async (t) => {
 			const fed = await createMockFederation();
 			const { config } = await createRpConfig({
-				keyProvider: new MemoryFederationKeyProvider(
-					createFederationSigningKey(fed.leafSigningKey),
-				),
+				crypto: new FixtureCrypto(createFederationSigningKey(fed.leafSigningKey)),
 			});
 			const discovery = await createMockDiscovery(OP_ID, fed);
 			const now = Math.floor(Date.now() / 1000);
@@ -4994,7 +5060,7 @@ export default (QUnit: QUnit) => {
 						},
 					},
 				},
-				new JwkSigner(fed.opSigningKey),
+				new SigningEntryFixture(fed.opSigningKey),
 				{ typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
 			);
 			const httpClient = async (input: string | URL | Request) => {
@@ -5012,6 +5078,7 @@ export default (QUnit: QUnit) => {
 				return fed.httpClient(input);
 			};
 			const result = await explicitRegistration(discovery, config, fed.trustAnchors, {
+				engine: testEngine,
 				httpClient,
 			});
 			t.true(isErr(result));
@@ -5023,9 +5090,7 @@ export default (QUnit: QUnit) => {
 		test("fails if response metadata is missing a requested entity type", async (t) => {
 			const fed = await createMockFederation();
 			const { config } = await createRpConfig({
-				keyProvider: new MemoryFederationKeyProvider(
-					createFederationSigningKey(fed.leafSigningKey),
-				),
+				crypto: new FixtureCrypto(createFederationSigningKey(fed.leafSigningKey)),
 			});
 			const discovery = await createMockDiscovery(OP_ID, fed);
 			const now = Math.floor(Date.now() / 1000);
@@ -5042,7 +5107,7 @@ export default (QUnit: QUnit) => {
 					trust_anchor: TA_ID,
 					metadata: { openid_provider: { issuer: OP_ID } },
 				},
-				new JwkSigner(fed.opSigningKey),
+				new SigningEntryFixture(fed.opSigningKey),
 				{ typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
 			);
 			const httpClient = async (input: string | URL | Request) => {
@@ -5060,6 +5125,7 @@ export default (QUnit: QUnit) => {
 				return fed.httpClient(input);
 			};
 			const result = await explicitRegistration(discovery, config, fed.trustAnchors, {
+				engine: testEngine,
 				httpClient,
 			});
 			t.true(isErr(result));
@@ -5129,9 +5195,7 @@ export default (QUnit: QUnit) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
 			const { config } = await createRpConfig({
-				keyProvider: new MemoryFederationKeyProvider(
-					createFederationSigningKey(fed.leafSigningKey),
-				),
+				crypto: new FixtureCrypto(createFederationSigningKey(fed.leafSigningKey)),
 			});
 			const now = Math.floor(Date.now() / 1000);
 			const responseJwt = await signEntityStatement(
@@ -5150,7 +5214,7 @@ export default (QUnit: QUnit) => {
 						},
 					},
 				},
-				new JwkSigner(fed.opSigningKey),
+				new SigningEntryFixture(fed.opSigningKey),
 				{ typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
 			);
 			const httpClient: HttpClient = async (input) => {
@@ -5169,6 +5233,7 @@ export default (QUnit: QUnit) => {
 				return fed.httpClient(input);
 			};
 			const result = await explicitRegistration(discovery, config, fed.trustAnchors, {
+				engine: testEngine,
 				httpClient,
 			});
 			t.true(isErr(result));
@@ -5207,9 +5272,7 @@ export default (QUnit: QUnit) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
 			const { config } = await createRpConfig({
-				keyProvider: new MemoryFederationKeyProvider(
-					createFederationSigningKey(fed.leafSigningKey),
-				),
+				crypto: new FixtureCrypto(createFederationSigningKey(fed.leafSigningKey)),
 			});
 			const httpClient = async (input: string | URL | Request) => {
 				const url =
@@ -5223,6 +5286,7 @@ export default (QUnit: QUnit) => {
 				return fed.httpClient(input);
 			};
 			const result = await explicitRegistration(discovery, config, fed.trustAnchors, {
+				engine: testEngine,
 				httpClient,
 			});
 			t.true(isErr(result));
@@ -5237,9 +5301,7 @@ export default (QUnit: QUnit) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
 			const { config } = await createRpConfig({
-				keyProvider: new MemoryFederationKeyProvider(
-					createFederationSigningKey(fed.leafSigningKey),
-				),
+				crypto: new FixtureCrypto(createFederationSigningKey(fed.leafSigningKey)),
 			});
 			const past = Math.floor(Date.now() / 1000) - 7200;
 			const expiredResponseJwt = await signEntityStatement(
@@ -5257,7 +5319,7 @@ export default (QUnit: QUnit) => {
 						},
 					},
 				},
-				new JwkSigner(fed.opSigningKey),
+				new SigningEntryFixture(fed.opSigningKey),
 				{ typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
 			);
 			const httpClient = async (input: string | URL | Request) => {
@@ -5275,6 +5337,7 @@ export default (QUnit: QUnit) => {
 				return fed.httpClient(input);
 			};
 			const result = await explicitRegistration(discovery, config, fed.trustAnchors, {
+				engine: testEngine,
 				httpClient,
 			});
 			t.true(isErr(result));
@@ -5290,9 +5353,7 @@ export default (QUnit: QUnit) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
 			const { config } = await createRpConfig({
-				keyProvider: new MemoryFederationKeyProvider(
-					createFederationSigningKey(fed.leafSigningKey),
-				),
+				crypto: new FixtureCrypto(createFederationSigningKey(fed.leafSigningKey)),
 			});
 			const now = Math.floor(Date.now() / 1000);
 			const noExpResponseJwt = await signEntityStatement(
@@ -5309,7 +5370,7 @@ export default (QUnit: QUnit) => {
 						},
 					},
 				},
-				new JwkSigner(fed.opSigningKey),
+				new SigningEntryFixture(fed.opSigningKey),
 				{ typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
 			);
 			const httpClient = async (input: string | URL | Request) => {
@@ -5327,6 +5388,7 @@ export default (QUnit: QUnit) => {
 				return fed.httpClient(input);
 			};
 			const result = await explicitRegistration(discovery, config, fed.trustAnchors, {
+				engine: testEngine,
 				httpClient,
 			});
 			t.true(isErr(result));
@@ -5339,9 +5401,7 @@ export default (QUnit: QUnit) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
 			const { config } = await createRpConfig({
-				keyProvider: new MemoryFederationKeyProvider(
-					createFederationSigningKey(fed.leafSigningKey),
-				),
+				crypto: new FixtureCrypto(createFederationSigningKey(fed.leafSigningKey)),
 			});
 			const httpClient = async (input: string | URL | Request) => {
 				const url =
@@ -5358,6 +5418,7 @@ export default (QUnit: QUnit) => {
 				return fed.httpClient(input);
 			};
 			const result = await explicitRegistration(discovery, config, fed.trustAnchors, {
+				engine: testEngine,
 				httpClient,
 			});
 			t.true(isErr(result));
@@ -5373,9 +5434,7 @@ export default (QUnit: QUnit) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
 			const { config } = await createRpConfig({
-				keyProvider: new MemoryFederationKeyProvider(
-					createFederationSigningKey(fed.leafSigningKey),
-				),
+				crypto: new FixtureCrypto(createFederationSigningKey(fed.leafSigningKey)),
 			});
 			const now = Math.floor(Date.now() / 1000);
 			const wrongTypResponseJwt = await signEntityStatement(
@@ -5393,7 +5452,7 @@ export default (QUnit: QUnit) => {
 						},
 					},
 				},
-				new JwkSigner(fed.opSigningKey),
+				new SigningEntryFixture(fed.opSigningKey),
 				{ typ: "invalid-typ" },
 			);
 			const httpClient = async (input: string | URL | Request) => {
@@ -5411,6 +5470,7 @@ export default (QUnit: QUnit) => {
 				return fed.httpClient(input);
 			};
 			const result = await explicitRegistration(discovery, config, fed.trustAnchors, {
+				engine: testEngine,
 				httpClient,
 			});
 			t.true(isErr(result));
@@ -5426,9 +5486,7 @@ export default (QUnit: QUnit) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
 			const { config } = await createRpConfig({
-				keyProvider: new MemoryFederationKeyProvider(
-					createFederationSigningKey(fed.leafSigningKey),
-				),
+				crypto: new FixtureCrypto(createFederationSigningKey(fed.leafSigningKey)),
 			});
 			const now = Math.floor(Date.now() / 1000);
 			const wrongIssResponseJwt = await signEntityStatement(
@@ -5446,7 +5504,7 @@ export default (QUnit: QUnit) => {
 						},
 					},
 				},
-				new JwkSigner(fed.opSigningKey),
+				new SigningEntryFixture(fed.opSigningKey),
 				{ typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
 			);
 			const httpClient = async (input: string | URL | Request) => {
@@ -5464,6 +5522,7 @@ export default (QUnit: QUnit) => {
 				return fed.httpClient(input);
 			};
 			const result = await explicitRegistration(discovery, config, fed.trustAnchors, {
+				engine: testEngine,
 				httpClient,
 			});
 			t.true(isErr(result));
@@ -5495,9 +5554,7 @@ export default (QUnit: QUnit) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
 			const { config } = await createRpConfig({
-				keyProvider: new MemoryFederationKeyProvider(
-					createFederationSigningKey(fed.leafSigningKey),
-				),
+				crypto: new FixtureCrypto(createFederationSigningKey(fed.leafSigningKey)),
 			});
 			const now = Math.floor(Date.now() / 1000);
 			const wrongAudResponseJwt = await signEntityStatement(
@@ -5515,7 +5572,7 @@ export default (QUnit: QUnit) => {
 						},
 					},
 				},
-				new JwkSigner(fed.opSigningKey),
+				new SigningEntryFixture(fed.opSigningKey),
 				{ typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
 			);
 			const httpClient = async (input: string | URL | Request) => {
@@ -5533,6 +5590,7 @@ export default (QUnit: QUnit) => {
 				return fed.httpClient(input);
 			};
 			const result = await explicitRegistration(discovery, config, fed.trustAnchors, {
+				engine: testEngine,
 				httpClient,
 			});
 			t.true(isErr(result));
@@ -5586,9 +5644,7 @@ export default (QUnit: QUnit) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
 			const { config } = await createRpConfig({
-				keyProvider: new MemoryFederationKeyProvider(
-					createFederationSigningKey(fed.leafSigningKey),
-				),
+				crypto: new FixtureCrypto(createFederationSigningKey(fed.leafSigningKey)),
 			});
 			const now = Math.floor(Date.now() / 1000);
 			const noIatResponseJwt = await signEntityStatement(
@@ -5605,7 +5661,7 @@ export default (QUnit: QUnit) => {
 						},
 					},
 				},
-				new JwkSigner(fed.opSigningKey),
+				new SigningEntryFixture(fed.opSigningKey),
 				{ typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
 			);
 			const httpClient = async (input: string | URL | Request) => {
@@ -5623,6 +5679,7 @@ export default (QUnit: QUnit) => {
 				return fed.httpClient(input);
 			};
 			const result = await explicitRegistration(discovery, config, fed.trustAnchors, {
+				engine: testEngine,
 				httpClient,
 			});
 			t.true(isErr(result));
@@ -5635,9 +5692,7 @@ export default (QUnit: QUnit) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
 			const { config } = await createRpConfig({
-				keyProvider: new MemoryFederationKeyProvider(
-					createFederationSigningKey(fed.leafSigningKey),
-				),
+				crypto: new FixtureCrypto(createFederationSigningKey(fed.leafSigningKey)),
 			});
 			const now = Math.floor(Date.now() / 1000);
 			const unknownTaResponseJwt = await signEntityStatement(
@@ -5655,7 +5710,7 @@ export default (QUnit: QUnit) => {
 						},
 					},
 				},
-				new JwkSigner(fed.opSigningKey),
+				new SigningEntryFixture(fed.opSigningKey),
 				{ typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
 			);
 			const httpClient = async (input: string | URL | Request) => {
@@ -5673,6 +5728,7 @@ export default (QUnit: QUnit) => {
 				return fed.httpClient(input);
 			};
 			const result = await explicitRegistration(discovery, config, fed.trustAnchors, {
+				engine: testEngine,
 				httpClient,
 			});
 			t.true(isErr(result));
@@ -5685,9 +5741,7 @@ export default (QUnit: QUnit) => {
 			const fed = await createMockFederation();
 			const discovery = await createMockDiscovery(OP_ID, fed);
 			const { config } = await createRpConfig({
-				keyProvider: new MemoryFederationKeyProvider(
-					createFederationSigningKey(fed.leafSigningKey),
-				),
+				crypto: new FixtureCrypto(createFederationSigningKey(fed.leafSigningKey)),
 			});
 			const now = Math.floor(Date.now() / 1000);
 			const invalidHintsResponseJwt = await signEntityStatement(
@@ -5706,7 +5760,7 @@ export default (QUnit: QUnit) => {
 						},
 					},
 				},
-				new JwkSigner(fed.opSigningKey),
+				new SigningEntryFixture(fed.opSigningKey),
 				{ typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
 			);
 			const httpClient = async (input: string | URL | Request) => {
@@ -5724,6 +5778,7 @@ export default (QUnit: QUnit) => {
 				return fed.httpClient(input);
 			};
 			const result = await explicitRegistration(discovery, config, fed.trustAnchors, {
+				engine: testEngine,
 				httpClient,
 			});
 			t.true(isErr(result));
@@ -5877,7 +5932,7 @@ export default (QUnit: QUnit) => {
 	// registration/process-automatic
 	// -------------------------------------------------------------------------
 	module("oidc / processAutomaticRegistration", () => {
-		const replayStore = () => new MemoryReplayStore();
+		const replayStore = () => new MemoryReplayStore({ engine: testEngine });
 
 		async function createValidRequestObject(
 			fed: Awaited<ReturnType<typeof createMockFederation>>,
@@ -5889,14 +5944,14 @@ export default (QUnit: QUnit) => {
 					iss: LEAF_ID,
 					client_id: LEAF_ID,
 					aud: OP_ID,
-					jti: crypto.randomUUID(),
+					jti: globalThis.crypto.randomUUID(),
 					iat: now,
 					exp: now + 300,
 					redirect_uri: "https://rp.example.com/callback",
 					scope: "openid",
 					response_type: "code",
 				},
-				new JwkSigner(fed.leafProtocolSigningKey),
+				new SigningEntryFixture(fed.leafProtocolSigningKey),
 				{
 					typ: RequestObjectTyp,
 					...(extraHeaders ? { extraHeaders } : {}),
@@ -5937,6 +5992,7 @@ export default (QUnit: QUnit) => {
 
 		test("returns err when trust anchors are empty", async (t) => {
 			const result = await processAutomaticRegistration("not-a-request-object", new Map(), {
+				engine: testEngine,
 				opEntityId: OP_ID,
 				replayStore: replayStore(),
 			});
@@ -5950,10 +6006,7 @@ export default (QUnit: QUnit) => {
 			const result = await processAutomaticRegistration(
 				"not-a-request-object",
 				new Map([["http://ta.example.com", { jwks: { keys: [] } }]]),
-				{
-					opEntityId: OP_ID,
-					replayStore: replayStore(),
-				},
+				{ engine: testEngine, opEntityId: OP_ID, replayStore: replayStore() },
 			);
 			t.false(result.ok);
 			if (result.ok) return;
@@ -5993,7 +6046,7 @@ export default (QUnit: QUnit) => {
 						},
 					},
 				},
-				new JwkSigner(fed.leafSigningKey),
+				new SigningEntryFixture(fed.leafSigningKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 			const jwt = await createValidRequestObject(fed, {
@@ -6051,11 +6104,11 @@ export default (QUnit: QUnit) => {
 					iss: LEAF_ID,
 					client_id: LEAF_ID,
 					aud: OP_ID,
-					jti: crypto.randomUUID(),
+					jti: globalThis.crypto.randomUUID(),
 					iat: now,
 					exp: now + 300,
 				},
-				new JwkSigner(fed.leafSigningKey),
+				new SigningEntryFixture(fed.leafSigningKey),
 				{ typ: RequestObjectTyp },
 			);
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
@@ -6080,7 +6133,7 @@ export default (QUnit: QUnit) => {
 					iat: now,
 					exp: now + 300,
 				},
-				new JwkSigner(fed.leafSigningKey),
+				new SigningEntryFixture(fed.leafSigningKey),
 				{ typ: RequestObjectTyp },
 			);
 			let claims = 0;
@@ -6131,11 +6184,11 @@ export default (QUnit: QUnit) => {
 					iss: LEAF_ID,
 					client_id: LEAF_ID,
 					aud: OP_ID,
-					jti: crypto.randomUUID(),
+					jti: globalThis.crypto.randomUUID(),
 					iat: now,
 					exp: now + 300,
 				},
-				new JwkSigner(fed.leafProtocolSigningKey),
+				new SigningEntryFixture(fed.leafProtocolSigningKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
@@ -6157,11 +6210,11 @@ export default (QUnit: QUnit) => {
 					sub: LEAF_ID,
 					client_id: LEAF_ID,
 					aud: OP_ID,
-					jti: crypto.randomUUID(),
+					jti: globalThis.crypto.randomUUID(),
 					iat: now,
 					exp: now + 300,
 				},
-				new JwkSigner(fed.leafProtocolSigningKey),
+				new SigningEntryFixture(fed.leafProtocolSigningKey),
 				{ typ: "oauth-authz-req+jwt" },
 			);
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
@@ -6182,11 +6235,11 @@ export default (QUnit: QUnit) => {
 					iss: "https://other.example.com",
 					client_id: LEAF_ID,
 					aud: OP_ID,
-					jti: crypto.randomUUID(),
+					jti: globalThis.crypto.randomUUID(),
 					iat: now,
 					exp: now + 300,
 				},
-				new JwkSigner(fed.leafProtocolSigningKey),
+				new SigningEntryFixture(fed.leafProtocolSigningKey),
 				{ typ: "oauth-authz-req+jwt" },
 			);
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
@@ -6207,11 +6260,11 @@ export default (QUnit: QUnit) => {
 					iss: LEAF_ID,
 					client_id: LEAF_ID,
 					aud: "https://wrong-op.example.com",
-					jti: crypto.randomUUID(),
+					jti: globalThis.crypto.randomUUID(),
 					iat: now,
 					exp: now + 300,
 				},
-				new JwkSigner(fed.leafProtocolSigningKey),
+				new SigningEntryFixture(fed.leafProtocolSigningKey),
 				{ typ: "oauth-authz-req+jwt" },
 			);
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
@@ -6232,11 +6285,11 @@ export default (QUnit: QUnit) => {
 					iss: LEAF_ID,
 					client_id: LEAF_ID,
 					aud: OP_ID,
-					jti: crypto.randomUUID(),
+					jti: globalThis.crypto.randomUUID(),
 					iat: now - 600,
 					exp: now - 300,
 				},
-				new JwkSigner(fed.leafProtocolSigningKey),
+				new SigningEntryFixture(fed.leafProtocolSigningKey),
 				{ typ: "oauth-authz-req+jwt" },
 			);
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
@@ -6253,8 +6306,14 @@ export default (QUnit: QUnit) => {
 			const fed = await createMockFederation();
 			const now = Math.floor(Date.now() / 1000);
 			const jwt = await signEntityStatement(
-				{ iss: LEAF_ID, client_id: LEAF_ID, aud: OP_ID, jti: crypto.randomUUID(), iat: now },
-				new JwkSigner(fed.leafProtocolSigningKey),
+				{
+					iss: LEAF_ID,
+					client_id: LEAF_ID,
+					aud: OP_ID,
+					jti: globalThis.crypto.randomUUID(),
+					iat: now,
+				},
+				new SigningEntryFixture(fed.leafProtocolSigningKey),
 				{ typ: "oauth-authz-req+jwt" },
 			);
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
@@ -6272,7 +6331,7 @@ export default (QUnit: QUnit) => {
 			const now = Math.floor(Date.now() / 1000);
 			const jwt = await signEntityStatement(
 				{ iss: LEAF_ID, client_id: LEAF_ID, aud: OP_ID, iat: now, exp: now + 300 },
-				new JwkSigner(fed.leafProtocolSigningKey),
+				new SigningEntryFixture(fed.leafProtocolSigningKey),
 				{ typ: "oauth-authz-req+jwt" },
 			);
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
@@ -6333,11 +6392,11 @@ export default (QUnit: QUnit) => {
 					iss: LEAF_ID,
 					client_id: LEAF_ID,
 					aud: OP_ID,
-					jti: crypto.randomUUID(),
+					jti: globalThis.crypto.randomUUID(),
 					iat: now - 330,
 					exp: now - 30,
 				},
-				new JwkSigner(fed.leafProtocolSigningKey),
+				new SigningEntryFixture(fed.leafProtocolSigningKey),
 				{ typ: "oauth-authz-req+jwt" },
 			);
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
@@ -6359,11 +6418,11 @@ export default (QUnit: QUnit) => {
 					iss: unknownEntity,
 					client_id: unknownEntity,
 					aud: OP_ID,
-					jti: crypto.randomUUID(),
+					jti: globalThis.crypto.randomUUID(),
 					iat: now,
 					exp: now + 300,
 				},
-				new JwkSigner(privateKey),
+				new SigningEntryFixture(privateKey),
 				{ typ: "oauth-authz-req+jwt" },
 			);
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
@@ -6394,7 +6453,7 @@ export default (QUnit: QUnit) => {
 			};
 			const badLeafEcJwt = await signEntityStatement(
 				badLeafEcPayload,
-				new JwkSigner(fed.leafSigningKey),
+				new SigningEntryFixture(fed.leafSigningKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 			const requests: string[] = [];
@@ -6448,7 +6507,7 @@ export default (QUnit: QUnit) => {
 			};
 			const badLeafEcJwt = await signEntityStatement(
 				badLeafEcPayload,
-				new JwkSigner(fed.leafSigningKey),
+				new SigningEntryFixture(fed.leafSigningKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 			const httpClient: HttpClient = async (input, init) => {
@@ -6492,7 +6551,7 @@ export default (QUnit: QUnit) => {
 					jwks: { keys: [fed.opPublicKey] },
 					metadata: {},
 				},
-				new JwkSigner(fed.leafSigningKey),
+				new SigningEntryFixture(fed.leafSigningKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 			const jwt = await signEntityStatement(
@@ -6500,14 +6559,14 @@ export default (QUnit: QUnit) => {
 					iss: LEAF_ID,
 					client_id: LEAF_ID,
 					aud: OP_ID,
-					jti: crypto.randomUUID(),
+					jti: globalThis.crypto.randomUUID(),
 					iat: now,
 					exp: now + 300,
 					redirect_uri: "https://rp.example.com/callback",
 					scope: "openid",
 					response_type: "code",
 				},
-				new JwkSigner(fed.leafProtocolSigningKey),
+				new SigningEntryFixture(fed.leafProtocolSigningKey),
 				{
 					typ: "oauth-authz-req+jwt",
 					extraHeaders: {
@@ -6537,14 +6596,14 @@ export default (QUnit: QUnit) => {
 					iss: LEAF_ID,
 					client_id: LEAF_ID,
 					aud: OP_ID,
-					jti: crypto.randomUUID(),
+					jti: globalThis.crypto.randomUUID(),
 					iat: now,
 					exp: now + 300,
 					redirect_uri: "https://rp.example.com/callback",
 					scope: "openid",
 					response_type: "code",
 				},
-				new JwkSigner(fed.leafProtocolSigningKey),
+				new SigningEntryFixture(fed.leafProtocolSigningKey),
 				{
 					typ: "oauth-authz-req+jwt",
 					extraHeaders: {
@@ -6569,7 +6628,10 @@ export default (QUnit: QUnit) => {
 			const middleKeys = await generateSigningKey("ES256");
 			const now = Math.floor(Date.now() / 1000);
 			const sign = (payload: Record<string, unknown>, key: JWK) =>
-				signEntityStatement({ iat: now, exp: now + 86400, ...payload }, new JwkSigner(key));
+				signEntityStatement(
+					{ iat: now, exp: now + 86400, ...payload },
+					new SigningEntryFixture(key),
+				);
 			const leaf = decodeEntityStatement(fed.leafEcJwt);
 			const op = decodeEntityStatement(fed.opEcJwt);
 			if (!leaf.ok || !op.ok) throw new Error("Invalid test configurations");
@@ -6667,11 +6729,7 @@ export default (QUnit: QUnit) => {
 				const result = await processAutomaticRegistration(
 					await createValidRequestObject(fed, { peer_trust_chain: peer }),
 					trustAnchors,
-					{
-						...options,
-						opEntityId: OP_ID,
-						replayStore: replayStore(),
-					},
+					{ ...options, opEntityId: OP_ID, replayStore: replayStore() },
 				);
 				t.true(result.ok, result.ok ? "accepted" : result.error.description);
 				if (result.ok) {
@@ -6743,7 +6801,7 @@ export default (QUnit: QUnit) => {
 						},
 					},
 				},
-				new JwkSigner(fed.opSigningKey),
+				new SigningEntryFixture(fed.opSigningKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 			const otherTaSubStatementForOp = await signEntityStatement(
@@ -6754,7 +6812,7 @@ export default (QUnit: QUnit) => {
 					exp: now + 86400,
 					jwks: { keys: [fed.opPublicKey] },
 				},
-				new JwkSigner(otherTaKey),
+				new SigningEntryFixture(otherTaKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 			const otherTaEcJwt = await signEntityStatement(
@@ -6765,7 +6823,7 @@ export default (QUnit: QUnit) => {
 					exp: now + 86400,
 					jwks: { keys: [otherTaPublicKey] },
 				},
-				new JwkSigner(otherTaKey),
+				new SigningEntryFixture(otherTaKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 			const trustAnchors = new Map(fed.trustAnchors);
@@ -6828,7 +6886,7 @@ export default (QUnit: QUnit) => {
 						},
 					},
 				},
-				new JwkSigner(fed.leafSigningKey),
+				new SigningEntryFixture(fed.leafSigningKey),
 				signOpts(fed.leafSigningKey),
 			);
 		}
@@ -6838,7 +6896,7 @@ export default (QUnit: QUnit) => {
 				"not-an-entity-statement",
 				MediaType.EntityStatement,
 				new Map(),
-				{ opEntityId: OP_ID },
+				{ engine: testEngine, opEntityId: OP_ID },
 			);
 			t.false(result.ok);
 			if (result.ok) return;
@@ -6879,7 +6937,7 @@ export default (QUnit: QUnit) => {
 						},
 					},
 				},
-				new JwkSigner(fed.leafSigningKey),
+				new SigningEntryFixture(fed.leafSigningKey),
 				signOpts(fed.leafSigningKey),
 			);
 			const result = await processExplicitRegistration(
@@ -6921,7 +6979,7 @@ export default (QUnit: QUnit) => {
 					authority_hints: [TA_ID],
 					metadata: {},
 				},
-				new JwkSigner(fed.leafSigningKey),
+				new SigningEntryFixture(fed.leafSigningKey),
 				signOpts(fed.leafSigningKey),
 			);
 			const result = await processExplicitRegistration(
@@ -6949,7 +7007,7 @@ export default (QUnit: QUnit) => {
 					authority_hints: [TA_ID],
 					metadata: {},
 				},
-				new JwkSigner(fed.leafSigningKey),
+				new SigningEntryFixture(fed.leafSigningKey),
 				signOpts(fed.leafSigningKey),
 			);
 			const result = await processExplicitRegistration(
@@ -6977,7 +7035,7 @@ export default (QUnit: QUnit) => {
 					authority_hints: [TA_ID],
 					metadata: {},
 				},
-				new JwkSigner(fed.leafSigningKey),
+				new SigningEntryFixture(fed.leafSigningKey),
 				signOpts(fed.leafSigningKey),
 			);
 			const result = await processExplicitRegistration(
@@ -7008,7 +7066,7 @@ export default (QUnit: QUnit) => {
 						openid_relying_party: { redirect_uris: ["https://rp.example.com/callback"] },
 					},
 				},
-				new JwkSigner(wrongKey),
+				new SigningEntryFixture(wrongKey),
 				signOpts(wrongKey),
 			);
 			const result = await processExplicitRegistration(
@@ -7062,11 +7120,7 @@ export default (QUnit: QUnit) => {
 				await createValidExplicitRequest(fed),
 				MediaType.EntityStatement,
 				fed.trustAnchors,
-				{
-					...fed.options,
-					opEntityId: OP_ID,
-					trustChainHeader: [fed.leafEcJwt],
-				},
+				{ ...fed.options, opEntityId: OP_ID, trustChainHeader: [fed.leafEcJwt] },
 			);
 			t.false(result.ok);
 			if (result.ok) return;
@@ -7089,7 +7143,7 @@ export default (QUnit: QUnit) => {
 						openid_relying_party: { redirect_uris: ["https://rp.example.com/callback"] },
 					},
 				},
-				new JwkSigner(fed.leafSigningKey),
+				new SigningEntryFixture(fed.leafSigningKey),
 				signOpts(fed.leafSigningKey),
 			);
 			const result = await processExplicitRegistration(
@@ -7116,7 +7170,7 @@ export default (QUnit: QUnit) => {
 					authority_hints: [TA_ID],
 					metadata: {},
 				},
-				new JwkSigner(fed.leafSigningKey),
+				new SigningEntryFixture(fed.leafSigningKey),
 				signOpts(fed.leafSigningKey),
 			);
 			const result = await processExplicitRegistration(
@@ -7249,7 +7303,7 @@ export default (QUnit: QUnit) => {
 						openid_relying_party: { redirect_uris: ["https://rp.example.com/callback"] },
 					},
 				},
-				new JwkSigner(privateKey),
+				new SigningEntryFixture(privateKey),
 				signOpts(privateKey),
 			);
 			t.false(
@@ -7278,7 +7332,7 @@ export default (QUnit: QUnit) => {
 						openid_relying_party: { redirect_uris: ["https://rp.example.com/callback"] },
 					},
 				},
-				new JwkSigner(fed.leafSigningKey),
+				new SigningEntryFixture(fed.leafSigningKey),
 				signOpts(fed.leafSigningKey),
 			);
 			const result = await processExplicitRegistration(
@@ -7308,7 +7362,7 @@ export default (QUnit: QUnit) => {
 						openid_relying_party: { redirect_uris: ["https://rp.example.com/callback"] },
 					},
 				},
-				new JwkSigner(fed.leafSigningKey),
+				new SigningEntryFixture(fed.leafSigningKey),
 				signOpts(fed.leafSigningKey),
 			);
 			const result = await processExplicitRegistration(
@@ -7337,7 +7391,7 @@ export default (QUnit: QUnit) => {
 						openid_relying_party: { redirect_uris: ["https://rp.example.com/callback"] },
 					},
 				},
-				new JwkSigner(fed.leafSigningKey),
+				new SigningEntryFixture(fed.leafSigningKey),
 				signOpts(fed.leafSigningKey),
 			);
 			const result = await processExplicitRegistration(
@@ -7366,7 +7420,7 @@ export default (QUnit: QUnit) => {
 						openid_relying_party: { redirect_uris: ["https://rp.example.com/callback"] },
 					},
 				},
-				new JwkSigner(fed.leafSigningKey),
+				new SigningEntryFixture(fed.leafSigningKey),
 				signOpts(fed.leafSigningKey),
 			);
 			const result = await processExplicitRegistration(
@@ -7394,7 +7448,7 @@ export default (QUnit: QUnit) => {
 					authority_hints: [TA_ID],
 					metadata: { federation_entity: { organization_name: "Test" } },
 				},
-				new JwkSigner(fed.leafSigningKey),
+				new SigningEntryFixture(fed.leafSigningKey),
 				signOpts(fed.leafSigningKey),
 			);
 			const result = await processExplicitRegistration(
@@ -7421,7 +7475,7 @@ export default (QUnit: QUnit) => {
 					jwks: { keys: [fed.leafPublicKey] },
 					authority_hints: [TA_ID],
 				},
-				new JwkSigner(fed.leafSigningKey),
+				new SigningEntryFixture(fed.leafSigningKey),
 				signOpts(fed.leafSigningKey),
 			);
 			const result = await processExplicitRegistration(
@@ -7450,7 +7504,7 @@ export default (QUnit: QUnit) => {
 						openid_relying_party: { redirect_uris: ["https://rp.example.com/callback"] },
 					},
 				},
-				new JwkSigner(fed.leafSigningKey),
+				new SigningEntryFixture(fed.leafSigningKey),
 				signOpts(fed.leafSigningKey),
 			);
 			const result = await processExplicitRegistration(
@@ -7487,7 +7541,7 @@ export default (QUnit: QUnit) => {
 				iss: rpId,
 				client_id: rpId,
 				aud: opId,
-				jti: crypto.randomUUID(),
+				jti: globalThis.crypto.randomUUID(),
 				iat: now,
 				exp: now + 300,
 				redirect_uri: "https://rp.example.com/callback",
@@ -7496,7 +7550,7 @@ export default (QUnit: QUnit) => {
 				...overrides?.payloadOverrides,
 			};
 			for (const key of overrides?.removeClaims ?? []) delete payload[key];
-			return signEntityStatement(payload, new JwkSigner(signingKey), {
+			return signEntityStatement(payload, new SigningEntryFixture(signingKey), {
 				typ: (overrides?.typOverride ?? RequestObjectTyp) as string,
 				...(overrides?.extraHeaders ? { extraHeaders: overrides.extraHeaders } : {}),
 			});
@@ -7545,9 +7599,13 @@ export default (QUnit: QUnit) => {
 				null,
 				42,
 			]) {
-				const jwt = await signProtocolFixture(decoded.value.payload, new JwkSigner(privateKey), {
-					extraHeaders: { typ },
-				});
+				const jwt = await signProtocolFixture(
+					decoded.value.payload,
+					new SigningEntryFixture(privateKey),
+					{
+						extraHeaders: { typ },
+					},
+				);
 				const explicit = typ === RequestObjectTyp || typ === "APPLICATION/OAUTH-AUTHZ-REQ+JWT";
 				const compatible =
 					explicit || typ === "JWT" || typ === "application/jwt" || typ === undefined;
@@ -7752,7 +7810,7 @@ export default (QUnit: QUnit) => {
 					exp: Math.floor(Date.now() / 1000) + 3600,
 					jwks: { keys: [otherPub] },
 				},
-				new JwkSigner(otherKey),
+				new SigningEntryFixture(otherKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 			const result = validateAutomaticRegistrationRequest(
@@ -7774,7 +7832,7 @@ export default (QUnit: QUnit) => {
 					exp: Math.floor(Date.now() / 1000) + 3600,
 					jwks: { keys: [publicKey] },
 				},
-				new JwkSigner(privateKey),
+				new SigningEntryFixture(privateKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 			const result = validateAutomaticRegistrationRequest(
@@ -7796,17 +7854,17 @@ export default (QUnit: QUnit) => {
 			const exp = now + 3600;
 			const rpEc = await signEntityStatement(
 				{ iss: rpId, sub: rpId, iat: now, exp, jwks: { keys: [rpPub] } },
-				new JwkSigner(rpKey),
+				new SigningEntryFixture(rpKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 			const opEc = await signEntityStatement(
 				{ iss: opId, sub: opId, iat: now, exp, jwks: { keys: [opPub] } },
-				new JwkSigner(opKey),
+				new SigningEntryFixture(opKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 			const taEc = await signEntityStatement(
 				{ iss: taId, sub: taId, iat: now, exp, jwks: { keys: [taPub] } },
-				new JwkSigner(taKey),
+				new SigningEntryFixture(taKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 			return { rpKey, opKey, taKey, rpEc, opEc, taEc, rpPub, opPub, taPub };
@@ -7842,7 +7900,7 @@ export default (QUnit: QUnit) => {
 					exp: now + 3600,
 					jwks: { keys: [strangerPub] },
 				},
-				new JwkSigner(strangerKey),
+				new SigningEntryFixture(strangerKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 			const result = validateAutomaticRegistrationRequest(
@@ -7872,7 +7930,7 @@ export default (QUnit: QUnit) => {
 					exp: now + 3600,
 					jwks: { keys: [otherTaPub] },
 				},
-				new JwkSigner(otherTaKey),
+				new SigningEntryFixture(otherTaKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 			const result = validateAutomaticRegistrationRequest(
@@ -7918,8 +7976,9 @@ export default (QUnit: QUnit) => {
 			const opSigningKey: JWK = { ...privateKey, kid: "op-handler-test-kid" };
 			const baseConfig: ExplicitRegistrationHandlerConfig = {
 				opEntityId: HANDLER_ENTITY_ID,
-				keyProvider: new MemoryFederationKeyProvider(createFederationSigningKey(opSigningKey)),
+				crypto: new FixtureCrypto(createFederationSigningKey(opSigningKey)),
 				trustAnchors: new Map([[TA_ID, { jwks: { keys: [] } }]]),
+				options: { engine: testEngine },
 			};
 			return { ...baseConfig, ...overrides };
 		}
@@ -7952,7 +8011,7 @@ export default (QUnit: QUnit) => {
 					...REQUIRED_FIELDS,
 					...overrides,
 				},
-				new JwkSigner(rpPrivateKey),
+				new SigningEntryFixture(rpPrivateKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 		}
@@ -8117,23 +8176,22 @@ export default (QUnit: QUnit) => {
 							secrets = 0,
 							invalidations = 0;
 						let saved: Record<string, unknown> | undefined;
-						const signer = new JwkSigner(fed.opSigningKey);
+						const signer = new SigningEntryFixture(fed.opSigningKey);
 						const handler = createExplicitRegistrationHandler({
 							...config,
 							...(mode !== undefined ? { registrationManagement: mode } : {}),
-							keyProvider: {
-								getFederationKeySet: async () => ({
-									jwks: { keys: [fed.opPublicKey] },
-									signer: {
-										kid: signer.kid,
-										alg: signer.alg,
-										signJwt: async (...args: Parameters<JwtSigner["signJwt"]>) => {
-											signatures++;
-											return signer.signJwt(...args);
-										},
+							crypto: fixtureCryptoFromRead(async () => ({
+								jwks: { keys: [fed.opPublicKey] },
+								signer: instrumentSigningEntry(
+									signer,
+									async (
+										...args: [payload: Uint8Array, header: Readonly<Record<string, unknown>>]
+									) => {
+										signatures++;
+										return signer.signJwt(...args);
 									},
-								}),
-							},
+								),
+							})),
 							registrationProtocolAdapter: {
 								validateClientMetadata: (m) => CorePublic.ok(m),
 								enrichResponseMetadata: (m) => ({ ...m, ...fields }),
@@ -8199,11 +8257,11 @@ export default (QUnit: QUnit) => {
 							openid_relying_party: { registration_access_token: { value: null } },
 						},
 					},
-					new JwkSigner(fed.taSigningKey),
+					new SigningEntryFixture(fed.taSigningKey),
 				);
 				let signed = 0,
 					persisted = 0;
-				const signer = new JwkSigner(fed.opSigningKey);
+				const signer = new SigningEntryFixture(fed.opSigningKey);
 				const handler = createExplicitRegistrationHandler({
 					...config,
 					registrationManagement: "read-only",
@@ -8218,19 +8276,16 @@ export default (QUnit: QUnit) => {
 							return fed.httpClient(input, init);
 						},
 					},
-					keyProvider: {
-						getFederationKeySet: async () => ({
-							jwks: { keys: [fed.opPublicKey] },
-							signer: {
-								kid: signer.kid,
-								alg: signer.alg,
-								signJwt: async (...args: Parameters<JwtSigner["signJwt"]>) => {
-									signed++;
-									return signer.signJwt(...args);
-								},
+					crypto: fixtureCryptoFromRead(async () => ({
+						jwks: { keys: [fed.opPublicKey] },
+						signer: instrumentSigningEntry(
+							signer,
+							async (...args: [payload: Uint8Array, header: Readonly<Record<string, unknown>>]) => {
+								signed++;
+								return signer.signJwt(...args);
 							},
-						}),
-					},
+						),
+					})),
 					registrationProtocolAdapter: {
 						validateClientMetadata: (m) => CorePublic.ok(m),
 						enrichResponseMetadata: (m) => ({
@@ -8347,6 +8402,7 @@ export default (QUnit: QUnit) => {
 						httpClient: async () => {
 							throw new Error("discovery fetch should not run for supplied trust-chain+json");
 						},
+						engine: testEngine,
 					},
 				});
 				const handler = createExplicitRegistrationHandler(config);
@@ -8517,7 +8573,7 @@ export default (QUnit: QUnit) => {
 						exp: REG_NOW + 3600,
 						jwks: { keys: [otherKeys.publicKey] },
 					},
-					new JwkSigner(otherKeys.privateKey),
+					new SigningEntryFixture(otherKeys.privateKey),
 					{ typ: JwtTyp.EntityStatement },
 				);
 				const jwt = await signEntityStatement(
@@ -8530,7 +8586,7 @@ export default (QUnit: QUnit) => {
 						jwks: { keys: [rpKeys.publicKey] },
 						...REQUIRED_FIELDS,
 					},
-					new JwkSigner(rpKeys.privateKey),
+					new SigningEntryFixture(rpKeys.privateKey),
 					{ typ: JwtTyp.EntityStatement, extraHeaders: { trust_chain: [wrongEc] } },
 				);
 				const res = await handler(
@@ -8674,7 +8730,7 @@ export default (QUnit: QUnit) => {
 							openid_relying_party: { redirect_uris: ["https://rp.example.com/callback"] },
 						},
 					},
-					new JwkSigner(rpKeys.privateKey),
+					new SigningEntryFixture(rpKeys.privateKey),
 					{ typ: JwtTyp.EntityStatement },
 				);
 				const res = await handler(
@@ -8703,7 +8759,7 @@ export default (QUnit: QUnit) => {
 						authority_hints: ["https://ta.example.com"],
 						metadata: { federation_entity: { organization_name: "Test" } },
 					},
-					new JwkSigner(rpKeys.privateKey),
+					new SigningEntryFixture(rpKeys.privateKey),
 					{ typ: JwtTyp.EntityStatement },
 				);
 				const res = await handler(
@@ -8929,6 +8985,7 @@ export default (QUnit: QUnit) => {
 						httpClient: async () => {
 							throw new Error("discovery fetch should not run for supplied trust_chain");
 						},
+						engine: testEngine,
 					},
 				});
 				const handler = createExplicitRegistrationHandler(config);
@@ -8942,7 +8999,7 @@ export default (QUnit: QUnit) => {
 						jwks: { keys: [fed.leafPublicKey as unknown as Record<string, unknown>] },
 						...REQUIRED_FIELDS,
 					},
-					new JwkSigner(fed.leafSigningKey),
+					new SigningEntryFixture(fed.leafSigningKey),
 					{
 						typ: JwtTyp.EntityStatement,
 						extraHeaders: {
@@ -8981,7 +9038,7 @@ export default (QUnit: QUnit) => {
 						jwks: { keys: [fed.leafPublicKey as unknown as Record<string, unknown>] },
 						...REQUIRED_FIELDS,
 					},
-					new JwkSigner(fed.leafSigningKey),
+					new SigningEntryFixture(fed.leafSigningKey),
 					{
 						typ: JwtTyp.EntityStatement,
 						extraHeaders: { trust_chain: [fed.leafEcJwt] },
@@ -9147,7 +9204,7 @@ export default (QUnit: QUnit) => {
 						jwks: { keys: [rpKeys.publicKey as unknown as Record<string, unknown>] },
 						...REQUIRED_FIELDS,
 					},
-					new JwkSigner(rpKeys.privateKey),
+					new SigningEntryFixture(rpKeys.privateKey),
 					{
 						typ: JwtTyp.EntityStatement,
 						extraHeaders: {
@@ -9229,7 +9286,7 @@ export default (QUnit: QUnit) => {
 						exp: now + 3600,
 						jwks: { keys: [otherTaPub as unknown as Record<string, unknown>] },
 					},
-					new JwkSigner(otherTaKey),
+					new SigningEntryFixture(otherTaKey),
 					{ typ: JwtTyp.EntityStatement },
 				);
 
@@ -9265,7 +9322,7 @@ export default (QUnit: QUnit) => {
 						jwks: { keys: [rpKeys.publicKey as unknown as Record<string, unknown>] },
 						...REQUIRED_FIELDS,
 					},
-					new JwkSigner(rpKeys.privateKey),
+					new SigningEntryFixture(rpKeys.privateKey),
 					{
 						typ: JwtTyp.EntityStatement,
 						extraHeaders: {
@@ -9302,7 +9359,7 @@ export default (QUnit: QUnit) => {
 						exp: REG_NOW + 3600,
 						jwks: { keys: [rogueTaPub as unknown as Record<string, unknown>] },
 					},
-					new JwkSigner(rogueTaKey),
+					new SigningEntryFixture(rogueTaKey),
 					{ typ: JwtTyp.EntityStatement },
 				);
 				const fakeRpChain = [fed.leafEcJwt, rogueTaEc];
@@ -9317,7 +9374,7 @@ export default (QUnit: QUnit) => {
 						jwks: { keys: [rpKeys.publicKey as unknown as Record<string, unknown>] },
 						...REQUIRED_FIELDS,
 					},
-					new JwkSigner(rpKeys.privateKey),
+					new SigningEntryFixture(rpKeys.privateKey),
 					{
 						typ: JwtTyp.EntityStatement,
 						extraHeaders: {
@@ -9355,7 +9412,7 @@ export default (QUnit: QUnit) => {
 						exp: REG_NOW + 3600,
 						jwks: { keys: [foreignTaPub as unknown as Record<string, unknown>] },
 					},
-					new JwkSigner(foreignTaKey),
+					new SigningEntryFixture(foreignTaKey),
 					{ typ: JwtTyp.EntityStatement },
 				);
 
@@ -9369,7 +9426,7 @@ export default (QUnit: QUnit) => {
 						jwks: { keys: [rpKeys.publicKey as unknown as Record<string, unknown>] },
 						...REQUIRED_FIELDS,
 					},
-					new JwkSigner(rpKeys.privateKey),
+					new SigningEntryFixture(rpKeys.privateKey),
 					{
 						typ: JwtTyp.EntityStatement,
 						extraHeaders: {
@@ -9413,7 +9470,7 @@ export default (QUnit: QUnit) => {
 						jwks: { keys: [rpKeys.publicKey as unknown as Record<string, unknown>] },
 						...REQUIRED_FIELDS,
 					},
-					new JwkSigner(rpKeys.privateKey),
+					new SigningEntryFixture(rpKeys.privateKey),
 					{
 						typ: JwtTyp.EntityStatement,
 						extraHeaders: {
@@ -9514,18 +9571,19 @@ export default (QUnit: QUnit) => {
 	module("oidc / role composition", () => {
 		test("OidcRelyingPartyRole role composition metadata and type", async (t) => {
 			const { privateKey } = await generateSigningKey("ES256");
-			const protocolKeyProvider = new StaticProtocolSigningKeyProvider({
-				requestObjectSigner: new JwkSigner(privateKey),
+			const signing = new PurposeBindingsFixture({
+				requestObjectSigner: new SigningEntryFixture(privateKey),
 			});
 			const role = new OidcRelyingPartyRole({
-				protocolKeyProvider,
+				signing,
 				metadata: { client_name: "My OIDC RP" },
 			});
-			role.initialize({
-				entityId: "https://rp.example.com",
-				// biome-ignore lint/suspicious/noExplicitAny: test
-				keyProvider: {} as any,
-			});
+			await role.initialize(
+				fixtureRoleContext(role, {
+					entityId: "https://rp.example.com",
+					crypto: FixtureCrypto.fromJWK((await generateSigningKey()).privateKey),
+				}),
+			);
 			t.equal(role.type, "openid_relying_party");
 			t.equal(role.metadata.client_name, "My OIDC RP");
 		});
@@ -9536,13 +9594,14 @@ export default (QUnit: QUnit) => {
 				metadata: { op_name: "My OIDC OP" },
 				registrationProtocolAdapter: new OIDCRegistrationAdapter(),
 			});
-			t.throws(
-				() =>
-					role.initialize({
-						entityId: "https://op.example.com",
-						// biome-ignore lint/suspicious/noExplicitAny: test
-						keyProvider: {} as any,
-					}),
+			await t.rejects(
+				(async () =>
+					await role.initialize(
+						fixtureRoleContext(role, {
+							entityId: "https://op.example.com",
+							crypto: FixtureCrypto.fromJWK((await generateSigningKey()).privateKey),
+						}),
+					))(),
 				/Trust Anchor/,
 			);
 		});
@@ -9557,13 +9616,14 @@ export default (QUnit: QUnit) => {
 				registrationPath: "/my-reg",
 				metadata: { op_name: "My OIDC OP" },
 			});
-			role.initialize({
-				entityId: OP_ID,
-				// biome-ignore lint/suspicious/noExplicitAny: test
-				keyProvider: {} as any,
-				trustAnchors,
-				options: fed.options,
-			});
+			await role.initialize(
+				fixtureRoleContext(role, {
+					entityId: OP_ID,
+					crypto: FixtureCrypto.fromJWK(fed.leafSigningKey),
+					trustAnchors,
+					options: fed.options,
+				}),
+			);
 			t.equal(role.type, "openid_provider");
 			t.equal(role.metadata.op_name, "My OIDC OP");
 			t.ok(role.routes?.has("/my-reg"), "routes must map custom registration path");
@@ -9571,18 +9631,19 @@ export default (QUnit: QUnit) => {
 
 		test("OAuthClientRole role composition metadata and type", async (t) => {
 			const { privateKey } = await generateSigningKey("ES256");
-			const protocolKeyProvider = new StaticProtocolSigningKeyProvider({
-				requestObjectSigner: new JwkSigner(privateKey),
+			const signing = new PurposeBindingsFixture({
+				requestObjectSigner: new SigningEntryFixture(privateKey),
 			});
 			const role = new OAuthClientRole({
-				protocolKeyProvider,
+				signing,
 				metadata: { client_name: "My OAuth Client" },
 			});
-			role.initialize({
-				entityId: "https://rp.example.com",
-				// biome-ignore lint/suspicious/noExplicitAny: test
-				keyProvider: {} as any,
-			});
+			await role.initialize(
+				fixtureRoleContext(role, {
+					entityId: "https://rp.example.com",
+					crypto: FixtureCrypto.fromJWK((await generateSigningKey()).privateKey),
+				}),
+			);
 			t.equal(role.type, "oauth_client");
 			t.equal(role.metadata.client_name, "My OAuth Client");
 		});
@@ -9592,13 +9653,14 @@ export default (QUnit: QUnit) => {
 				registrationPath: "/oauth-reg",
 				metadata: { auth_server_name: "My AS" },
 			});
-			t.throws(
-				() =>
-					role.initialize({
-						entityId: "https://op.example.com",
-						// biome-ignore lint/suspicious/noExplicitAny: test
-						keyProvider: {} as any,
-					}),
+			await t.rejects(
+				(async () =>
+					await role.initialize(
+						fixtureRoleContext(role, {
+							entityId: "https://op.example.com",
+							crypto: FixtureCrypto.fromJWK((await generateSigningKey()).privateKey),
+						}),
+					))(),
 				/Trust Anchor/,
 			);
 		});
@@ -9618,12 +9680,13 @@ export default (QUnit: QUnit) => {
 				generateClientSecret: async () => "secret",
 				onRegistrationInvalidation: async () => {},
 			});
-			role.initialize({
-				entityId: OP_ID,
-				// biome-ignore lint/suspicious/noExplicitAny: test
-				keyProvider: {} as any,
-				options: fed.options,
-			});
+			await role.initialize(
+				fixtureRoleContext(role, {
+					entityId: OP_ID,
+					crypto: FixtureCrypto.fromJWK(fed.leafSigningKey),
+					options: fed.options,
+				}),
+			);
 			t.equal(role.type, "oauth_authorization_server");
 			t.equal(role.metadata.auth_server_name, "My AS");
 			t.ok(role.routes?.has("/oauth-reg"));
@@ -9636,11 +9699,12 @@ export default (QUnit: QUnit) => {
 				metadata: { resource_name: "My Resource" },
 				jwks,
 			});
-			role.initialize({
-				entityId: "https://rs.example.com",
-				// biome-ignore lint/suspicious/noExplicitAny: test
-				keyProvider: {} as any,
-			});
+			await role.initialize(
+				fixtureRoleContext(role, {
+					entityId: "https://rs.example.com",
+					crypto: FixtureCrypto.fromJWK((await generateSigningKey()).privateKey),
+				}),
+			);
 			t.equal(role.type, "oauth_resource");
 			t.equal(role.metadata.resource_name, "My Resource");
 			t.deepEqual(role.metadata.jwks, jwks);
@@ -9649,11 +9713,11 @@ export default (QUnit: QUnit) => {
 		test("OidcRelyingPartyRole and OAuthClientRole createAuthorizationRequest", async (t) => {
 			const fed = await createMockFederation({ includeOAuthClient: true });
 			const privateKey = fed.leafProtocolSigningKey;
-			const protocolKeyProvider = new StaticProtocolSigningKeyProvider({
-				requestObjectSigner: new JwkSigner(privateKey),
+			const signing = new PurposeBindingsFixture({
+				requestObjectSigner: new SigningEntryFixture(privateKey),
 			});
 			const role = new OidcRelyingPartyRole({
-				protocolKeyProvider,
+				signing,
 				metadata: {
 					client_name: "My OIDC RP",
 					redirect_uris: ["https://rp.example.com/callback"],
@@ -9663,7 +9727,7 @@ export default (QUnit: QUnit) => {
 				},
 			});
 			const oauthRole = new OAuthClientRole({
-				protocolKeyProvider,
+				signing,
 				metadata: {
 					client_name: "My OAuth Client",
 					redirect_uris: ["https://rp.example.com/callback"],
@@ -9677,14 +9741,13 @@ export default (QUnit: QUnit) => {
 
 			const context = {
 				entityId: LEAF_ID,
-				// biome-ignore lint/suspicious/noExplicitAny: test
-				keyProvider: {} as any,
+				crypto: FixtureCrypto.fromJWK(fed.leafSigningKey),
 				options: fed.options,
 				authorityHints: [TA_ID],
 			};
 
-			role.initialize(context);
-			oauthRole.initialize(context);
+			await role.initialize(fixtureRoleContext(role, context));
+			await oauthRole.initialize(fixtureRoleContext(oauthRole, context));
 
 			const authzParams = {
 				redirect_uri: "https://rp.example.com/callback",
@@ -9710,11 +9773,11 @@ export default (QUnit: QUnit) => {
 		test("OidcRelyingPartyRole stops automatic registration when discovery fails", async (t) => {
 			const { privateKey, publicKey } = await generateSigningKey("ES256");
 			const federationKey = await generateSigningKey("ES256");
-			const protocolKeyProvider = new StaticProtocolSigningKeyProvider({
-				requestObjectSigner: new JwkSigner(privateKey),
+			const signing = new PurposeBindingsFixture({
+				requestObjectSigner: new SigningEntryFixture(privateKey),
 			});
 			const role = new OidcRelyingPartyRole({
-				protocolKeyProvider,
+				signing,
 				metadata: {
 					redirect_uris: ["https://rp.example.com/callback"],
 					response_types: ["code"],
@@ -9735,15 +9798,15 @@ export default (QUnit: QUnit) => {
 				return new Response("Not Found", { status: 404 });
 			};
 			const fed = await createMockFederation();
-			role.initialize({
-				entityId: LEAF_ID,
-				keyProvider: new MemoryFederationKeyProvider(
-					createFederationSigningKey(federationKey.privateKey),
-				),
-				authorityHints: [TA_ID],
-				trustAnchors: fed.trustAnchors,
-				options: { httpClient },
-			});
+			await role.initialize(
+				fixtureRoleContext(role, {
+					entityId: LEAF_ID,
+					crypto: new FixtureCrypto(createFederationSigningKey(federationKey.privateKey)),
+					authorityHints: [TA_ID],
+					trustAnchors: fed.trustAnchors,
+					options: { engine: testEngine, httpClient },
+				}),
+			);
 
 			const result = await role.automaticallyRegister({
 				opEntityId: OP_ID,
@@ -9762,18 +9825,20 @@ export default (QUnit: QUnit) => {
 			const leaf = decodeEntityStatement(fed.leafEcJwt);
 			if (!leaf.ok) throw new Error("fixture");
 			const rp = new OidcRelyingPartyRole({
-				protocolKeyProvider: new StaticProtocolSigningKeyProvider({
-					requestObjectSigner: new JwkSigner(fed.leafProtocolSigningKey),
+				signing: new PurposeBindingsFixture({
+					requestObjectSigner: new SigningEntryFixture(fed.leafProtocolSigningKey),
 				}),
 				metadata: leaf.value.payload.metadata?.openid_relying_party,
 			});
-			rp.initialize({
-				entityId: LEAF_ID,
-				authorityHints: [TA_ID],
-				trustAnchors: fed.trustAnchors,
-				keyProvider: MemoryFederationKeyProvider.fromJWK(fed.leafSigningKey),
-				options: fed.options,
-			});
+			await rp.initialize(
+				fixtureRoleContext(rp, {
+					entityId: LEAF_ID,
+					authorityHints: [TA_ID],
+					trustAnchors: fed.trustAnchors,
+					crypto: FixtureCrypto.fromJWK(fed.leafSigningKey),
+					options: fed.options,
+				}),
+			);
 			const request = await rp.automaticallyRegister({
 				opEntityId: OP_ID,
 				redirect_uri: `${LEAF_ID}/callback`,
@@ -9792,7 +9857,7 @@ export default (QUnit: QUnit) => {
 							if (throwingLogger) throw new Error("Logger failed");
 						};
 					const provider = new OidcProviderRole({
-						replayStore: new MemoryReplayStore(),
+						replayStore: new MemoryReplayStore({ engine: testEngine }),
 						registrationProtocolAdapter: {
 							validateClientMetadata: (metadata) => {
 								calls.push("validate");
@@ -9811,22 +9876,24 @@ export default (QUnit: QUnit) => {
 							if (failure === "persist") throw original;
 						},
 					});
-					provider.initialize({
-						entityId: OP_ID,
-						trustAnchors: fed.trustAnchors,
-						keyProvider: MemoryFederationKeyProvider.fromJWK(fed.opSigningKey),
-						options: {
-							...fed.options,
-							logger: {
-								debug() {},
-								info() {},
-								warn() {},
-								error() {
-									throw new Error("Must use the operation logger");
+					await provider.initialize(
+						fixtureRoleContext(provider, {
+							entityId: OP_ID,
+							trustAnchors: fed.trustAnchors,
+							crypto: FixtureCrypto.fromJWK(fed.opSigningKey),
+							options: {
+								...fed.options,
+								logger: {
+									debug() {},
+									info() {},
+									warn() {},
+									error() {
+										throw new Error("Must use the operation logger");
+									},
 								},
 							},
-						},
-					});
+						}),
+					);
 					const run = () =>
 						provider.processAutomaticRegistration(request.value.requestObjectJwt, {
 							logger: {
@@ -9878,7 +9945,7 @@ export default (QUnit: QUnit) => {
 					...superior.value.payload,
 					metadata_policy: { openid_provider: { issuer: { value: "https://other.example" } } },
 				},
-				new JwkSigner(fed.taSigningKey),
+				new SigningEntryFixture(fed.taSigningKey),
 			);
 			let hostilePolicy = true;
 			let posts = 0;
@@ -9895,27 +9962,25 @@ export default (QUnit: QUnit) => {
 					return new Response(bad, { headers: { "content-type": MediaType.EntityStatement } });
 				return fed.httpClient(input, init);
 			};
-			const protocolSigner = new JwkSigner(fed.leafProtocolSigningKey);
+			const protocolSigner = new SigningEntryFixture(fed.leafProtocolSigningKey);
 			let requestObjectSignatures = 0;
-			const signer: JwtSigner = {
-				alg: protocolSigner.alg,
-				kid: protocolSigner.kid,
-				signJwt: (...args) => {
-					requestObjectSignatures++;
-					return protocolSigner.signJwt(...args);
-				},
-			};
+			const signer: KeyringEntry = instrumentSigningEntry(protocolSigner, (...args) => {
+				requestObjectSignatures++;
+				return protocolSigner.signJwt(...args);
+			});
 			const role = new OidcRelyingPartyRole({
-				protocolKeyProvider: new StaticProtocolSigningKeyProvider({ requestObjectSigner: signer }),
+				signing: new PurposeBindingsFixture({ requestObjectSigner: signer }),
 				metadata: leaf.value.payload.metadata?.openid_relying_party,
 			});
-			role.initialize({
-				entityId: LEAF_ID,
-				authorityHints: [TA_ID],
-				trustAnchors: fed.trustAnchors,
-				keyProvider: MemoryFederationKeyProvider.fromJWK(fed.leafSigningKey),
-				options: { ...fed.options, httpClient },
-			});
+			await role.initialize(
+				fixtureRoleContext(role, {
+					entityId: LEAF_ID,
+					authorityHints: [TA_ID],
+					trustAnchors: fed.trustAnchors,
+					crypto: FixtureCrypto.fromJWK(fed.leafSigningKey),
+					options: { ...fed.options, httpClient },
+				}),
+			);
 			const params = {
 				opEntityId: OP_ID,
 				redirect_uri: "https://rp.example.com/callback",
@@ -9951,25 +10016,27 @@ export default (QUnit: QUnit) => {
 			let fetches = 0;
 			const now = Math.floor(Date.now() / 1000) - 10;
 			const role = new OidcRelyingPartyRole({
-				protocolKeyProvider: new StaticProtocolSigningKeyProvider({
-					requestObjectSigner: new JwkSigner(fed.leafProtocolSigningKey),
+				signing: new PurposeBindingsFixture({
+					requestObjectSigner: new SigningEntryFixture(fed.leafProtocolSigningKey),
 				}),
 				includePeerTrustChain: true,
 				metadata: { jwks: { keys: [fed.leafProtocolPublicKey] } },
 			});
-			role.initialize({
-				entityId: LEAF_ID,
-				keyProvider: MemoryFederationKeyProvider.fromJWK(fed.leafSigningKey),
-				authorityHints: [TA_ID],
-				options: {
-					...fed.options,
-					clock: { now: () => now },
-					httpClient: async (...args) => {
-						fetches++;
-						return fed.httpClient(...args);
+			await role.initialize(
+				fixtureRoleContext(role, {
+					entityId: LEAF_ID,
+					crypto: FixtureCrypto.fromJWK(fed.leafSigningKey),
+					authorityHints: [TA_ID],
+					options: {
+						...fed.options,
+						clock: { now: () => now },
+						httpClient: async (...args) => {
+							fetches++;
+							return fed.httpClient(...args);
+						},
 					},
-				},
-			});
+				}),
+			);
 			const params = { redirect_uri: `${LEAF_ID}/callback`, response_type: "code" };
 			const result = await role.createAuthorizationRequest(discovery, params, fed.trustAnchors, {
 				requestDelivery: "request_uri",
@@ -9990,13 +10057,17 @@ export default (QUnit: QUnit) => {
 				t.equal(decoded.value.payload.exp! - decoded.value.payload.iat!, 42);
 				t.strictEqual(decoded.value.header.peer_trust_chain, undefined);
 			}
-			const provider = new OidcProviderRole({ replayStore: new MemoryReplayStore() });
-			provider.initialize({
-				entityId: OP_ID,
-				keyProvider: MemoryFederationKeyProvider.fromJWK(fed.opSigningKey),
-				trustAnchors: fed.trustAnchors,
-				options: fed.options,
+			const provider = new OidcProviderRole({
+				replayStore: new MemoryReplayStore({ engine: testEngine }),
 			});
+			await provider.initialize(
+				fixtureRoleContext(provider, {
+					entityId: OP_ID,
+					crypto: FixtureCrypto.fromJWK(fed.opSigningKey),
+					trustAnchors: fed.trustAnchors,
+					options: fed.options,
+				}),
+			);
 			t.true(
 				(
 					await provider.processAutomaticRegistration(result.value.requestObjectJwt, {
@@ -10011,16 +10082,18 @@ export default (QUnit: QUnit) => {
 			const discovery = await createMockDiscovery(OP_ID, fed);
 			for (const Role of [OidcRelyingPartyRole, OAuthClientRole]) {
 				const role = new Role({
-					protocolKeyProvider: new StaticProtocolSigningKeyProvider({
-						requestObjectSigner: new JwkSigner(fed.leafProtocolSigningKey),
+					signing: new PurposeBindingsFixture({
+						requestObjectSigner: new SigningEntryFixture(fed.leafProtocolSigningKey),
 					}),
 				});
-				role.initialize({
-					entityId: LEAF_ID,
-					keyProvider: MemoryFederationKeyProvider.fromJWK(fed.leafSigningKey),
-					authorityHints: [TA_ID],
-					options: fed.options,
-				});
+				await role.initialize(
+					fixtureRoleContext(role, {
+						entityId: LEAF_ID,
+						crypto: FixtureCrypto.fromJWK(fed.leafSigningKey),
+						authorityHints: [TA_ID],
+						options: fed.options,
+					}),
+				);
 				const composed = { jwks: { keys: [structuredClone(fed.leafProtocolPublicKey)] } };
 				role.validateMetadata(composed);
 				composed.jwks.keys.length = 0;
@@ -10034,27 +10107,30 @@ export default (QUnit: QUnit) => {
 		});
 		test("stateful roles reject a second host without changing their first owner", async (t) => {
 			const fed = await createMockFederation();
-			const protocolKeyProvider = new StaticProtocolSigningKeyProvider({
-				requestObjectSigner: new JwkSigner(fed.leafProtocolSigningKey),
+			const signing = new PurposeBindingsFixture({
+				requestObjectSigner: new SigningEntryFixture(fed.leafProtocolSigningKey),
 			});
 			const context = {
 				entityId: LEAF_ID,
-				keyProvider: MemoryFederationKeyProvider.fromJWK(fed.leafSigningKey),
+				crypto: FixtureCrypto.fromJWK(fed.leafSigningKey),
 				authorityHints: [TA_ID],
 				trustAnchors: fed.trustAnchors,
 				options: fed.options,
 			};
-			const rp = new OidcRelyingPartyRole({ protocolKeyProvider });
+			const rp = new OidcRelyingPartyRole({ signing });
 			for (const role of [
 				rp,
-				new OAuthClientRole({ protocolKeyProvider }),
+				new OAuthClientRole({ signing }),
 				new OidcProviderRole({}),
 				new OAuthAuthorizationServerRole({}),
 			]) {
-				role.initialize(context);
-				role.initialize(context);
-				t.throws(
-					() => role.initialize({ ...context, entityId: "https://another.example" }),
+				await role.initialize(fixtureRoleContext(role, context));
+				await role.initialize(fixtureRoleContext(role, context));
+				await t.rejects(
+					(async () =>
+						await role.initialize(
+							fixtureRoleContext(role, { ...context, entityId: "https://another.example" }),
+						))(),
 					/separate.*instance/,
 				);
 			}
@@ -10074,7 +10150,7 @@ export default (QUnit: QUnit) => {
 			if (!decoded.ok) throw new Error(decoded.error.description);
 			const statement = await signEntityStatement(
 				{ ...decoded.value.payload, ...statementOverrides },
-				new JwkSigner(fed.taSigningKey),
+				new SigningEntryFixture(fed.taSigningKey),
 			);
 			const events: string[] = [];
 			const httpClient: HttpClient = async (input, init) => {
@@ -10092,9 +10168,9 @@ export default (QUnit: QUnit) => {
 			};
 			const config: ExplicitRegistrationHandlerConfig = {
 				opEntityId: OP_ID,
-				keyProvider: new MemoryFederationKeyProvider(createFederationSigningKey(fed.opSigningKey)),
+				crypto: new FixtureCrypto(createFederationSigningKey(fed.opSigningKey)),
 				trustAnchors: fed.trustAnchors,
-				options: { httpClient, ...options },
+				options: { engine: testEngine, httpClient, ...options },
 				generateClientSecret: async () => {
 					events.push("secret");
 					return "test-secret";
@@ -10128,7 +10204,7 @@ export default (QUnit: QUnit) => {
 				key = fed.leafSigningKey,
 				headers: Record<string, unknown> = {},
 			) =>
-				signEntityStatement({ ...payload, ...overrides }, new JwkSigner(key), {
+				signEntityStatement({ ...payload, ...overrides }, new SigningEntryFixture(key), {
 					typ: JwtTyp.EntityStatement,
 					extraHeaders: headers,
 				});
@@ -10147,25 +10223,24 @@ export default (QUnit: QUnit) => {
 
 		test("registration responses omit RP choice inputs and reject incompatible engine selections before side effects", async (t) => {
 			for (const selected of ["private_key_jwt", "client_secret_basic"] as const) {
-				const fx = await fixture(undefined, {
-					metadata: {
-						openid_relying_party: { token_endpoint_auth_methods_supported: ["private_key_jwt"] },
+				const fx = await fixture(
+					{ engine: testEngine },
+					{
+						metadata: {
+							openid_relying_party: { token_endpoint_auth_methods_supported: ["private_key_jwt"] },
+						},
 					},
-				});
+				);
 				let responseSignatures = 0;
-				const original = await fx.config.keyProvider.getFederationKeySet();
+				const original = await fx.config.crypto.keyring.entry("federation");
 				const handler = createExplicitRegistrationHandler({
 					...fx.config,
-					keyProvider: new MemoryFederationKeyProvider({
-						publicJwk: original.jwks.keys[0]!,
-						signer: {
-							alg: original.signer.alg,
-							kid: original.signer.kid,
-							signJwt: (...args) => {
-								responseSignatures++;
-								return original.signer.signJwt(...args);
-							},
-						},
+					crypto: new FixtureCrypto({
+						publicJwk: original.publishedJwks.keys[0]!,
+						signer: instrumentSigningEntry(original.signer, (...args) => {
+							responseSignatures++;
+							return rawFixtureJwt(original.signer, ...args);
+						}),
 					}),
 					registrationProtocolAdapter: {
 						validateClientMetadata: (metadata) => ({ ok: true, value: metadata }),
@@ -10202,13 +10277,16 @@ export default (QUnit: QUnit) => {
 		});
 
 		test("an incompatible default cannot escape RP choices through a registration response", async (t) => {
-			const fx = await fixture(undefined, {
-				metadata_policy: {
-					openid_relying_party: {
-						token_endpoint_auth_methods_supported: { value: ["private_key_jwt"] },
+			const fx = await fixture(
+				{ engine: testEngine },
+				{
+					metadata_policy: {
+						openid_relying_party: {
+							token_endpoint_auth_methods_supported: { value: ["private_key_jwt"] },
+						},
 					},
 				},
-			});
+			);
 			const res = await fx.post(await fx.sign());
 			t.equal(res.status, 400);
 			t.deepEqual(fx.events, []);
@@ -10241,6 +10319,7 @@ export default (QUnit: QUnit) => {
 							warn: record("warn"),
 							error: record("error"),
 						},
+						engine: testEngine,
 					});
 					const handler = createExplicitRegistrationHandler({
 						...fx.config,
@@ -10370,6 +10449,7 @@ export default (QUnit: QUnit) => {
 			const config = {
 				...fx.config,
 				options: {
+					engine: testEngine,
 					httpClient: (async (input, init) => {
 						const url = new URL(input instanceof Request ? input.url : String(input));
 						if (url.origin === LEAF_ID) {
@@ -10392,17 +10472,20 @@ export default (QUnit: QUnit) => {
 		});
 
 		test("resolves tailored metadata through superior overrides and policy", async (t) => {
-			const fx = await fixture(undefined, {
-				metadata: { openid_relying_party: { organization_name: "Federation name" } },
-				metadata_policy: {
-					openid_relying_party: {
-						redirect_uris: {
-							subset_of: ["https://rp.example.com/tailored", "https://rp.example.com/callback"],
+			const fx = await fixture(
+				{ engine: testEngine },
+				{
+					metadata: { openid_relying_party: { organization_name: "Federation name" } },
+					metadata_policy: {
+						openid_relying_party: {
+							redirect_uris: {
+								subset_of: ["https://rp.example.com/tailored", "https://rp.example.com/callback"],
+							},
+							organization_name: { essential: true },
 						},
-						organization_name: { essential: true },
 					},
 				},
-			});
+			);
 			const jwt = await fx.sign(
 				{
 					metadata: {
@@ -10432,23 +10515,31 @@ export default (QUnit: QUnit) => {
 		});
 
 		test("superior metadata can supply a required RP value before schema validation", async (t) => {
-			const fx = await fixture(undefined, {
-				metadata: { openid_relying_party: { redirect_uris: ["https://rp.example.com/superior"] } },
-			});
+			const fx = await fixture(
+				{ engine: testEngine },
+				{
+					metadata: {
+						openid_relying_party: { redirect_uris: ["https://rp.example.com/superior"] },
+					},
+				},
+			);
 			const res = await fx.post(await fx.sign({ metadata: { openid_relying_party: {} } }));
 			t.equal(res.status, 200, await res.clone().text());
 		});
 
 		test("rejects policy violations and adapter policy bypass before credentials or hooks", async (t) => {
-			const fx = await fixture(undefined, {
-				metadata_policy: {
-					openid_relying_party: {
-						redirect_uris: {
-							subset_of: ["https://rp.example.com/tailored", "https://rp.example.com/callback"],
+			const fx = await fixture(
+				{ engine: testEngine },
+				{
+					metadata_policy: {
+						openid_relying_party: {
+							redirect_uris: {
+								subset_of: ["https://rp.example.com/tailored", "https://rp.example.com/callback"],
+							},
 						},
 					},
 				},
-			});
+			);
 			const handler = createExplicitRegistrationHandler({
 				...fx.config,
 				registrationProtocolAdapter: {
@@ -10475,7 +10566,7 @@ export default (QUnit: QUnit) => {
 			test(`${mode} enforces request iat and crit`, async (t) => {
 				// Pin the skew boundary while asynchronous signing and discovery run.
 				const now = Math.floor(Date.now() / 1000);
-				const fx = await fixture({ clock: { now: () => now } });
+				const fx = await fixture({ clock: { now: () => now }, engine: testEngine });
 				const headers = mode === "header" ? { trust_chain: fx.chain } : {};
 				for (const overrides of [
 					{ iat: now + 61 },
@@ -10498,6 +10589,7 @@ export default (QUnit: QUnit) => {
 			const fx = await fixture({
 				clock: { now: () => now },
 				understoodCriticalClaims: new Set(["extension"]),
+				engine: testEngine,
 			});
 			const missing = await fx.post(await fx.sign({ crit: ["extension"] }));
 			t.true(missing.status >= 400);
@@ -10515,7 +10607,7 @@ export default (QUnit: QUnit) => {
 				const clock = { now: () => now };
 				const jwt = await signEntityStatement(
 					{ iss: LEAF_ID, client_id: LEAF_ID, aud: OP_ID, jti: `replay-${skew}`, exp: start + 10 },
-					new JwkSigner(fed.leafProtocolSigningKey),
+					new SigningEntryFixture(fed.leafProtocolSigningKey),
 					{
 						typ: RequestObjectTyp,
 						extraHeaders: { trust_chain: [fed.leafEcJwt, fed.taSubStatementForLeaf, fed.taEcJwt] },
@@ -10526,7 +10618,7 @@ export default (QUnit: QUnit) => {
 					opEntityId: OP_ID,
 					clock,
 					clockSkewSeconds: skew,
-					replayStore: new MemoryReplayStore({ clock }),
+					replayStore: new MemoryReplayStore({ engine: testEngine, clock }),
 				};
 				const simultaneous = await Promise.all([
 					processAutomaticRegistration(jwt, fed.trustAnchors, options),
@@ -10557,9 +10649,7 @@ export default (QUnit: QUnit) => {
 				trustChain: { ...discovery.trustChain, expiresAt: opDeadline },
 			};
 			const { config } = await createRpConfig({
-				keyProvider: new MemoryFederationKeyProvider(
-					createFederationSigningKey(fx.fed.leafSigningKey),
-				),
+				crypto: new FixtureCrypto(createFederationSigningKey(fx.fed.leafSigningKey)),
 				authorityHints: [TA_ID, entityId("https://unrelated.example")],
 			});
 			let hints: unknown;
@@ -10572,6 +10662,7 @@ export default (QUnit: QUnit) => {
 				return fx.fed.httpClient(input, init);
 			};
 			const result = await explicitRegistration(boundedDiscovery, config, fx.fed.trustAnchors, {
+				engine: testEngine,
 				httpClient,
 			});
 			t.true(result.ok, result.ok ? undefined : result.error.description);
@@ -10584,7 +10675,7 @@ export default (QUnit: QUnit) => {
 				discovery,
 				{ ...config, authorityHints: [entityId("https://unrelated.example")] },
 				fx.fed.trustAnchors,
-				{ httpClient },
+				{ engine: testEngine, httpClient },
 			);
 			t.false(missingHint.ok);
 		});
@@ -10593,13 +10684,13 @@ export default (QUnit: QUnit) => {
 			const fx = await fixture();
 			const discovery = await createMockDiscovery(OP_ID, fx.fed);
 			const { config } = await createRpConfig({
-				keyProvider: new MemoryFederationKeyProvider(
-					createFederationSigningKey(fx.fed.leafSigningKey),
-				),
+				crypto: new FixtureCrypto(createFederationSigningKey(fx.fed.leafSigningKey)),
 			});
 			for (const understood of [undefined, new Set(["extension"])]) {
 				const result = await explicitRegistration(discovery, config, fx.fed.trustAnchors, {
-					...(understood ? { understoodCriticalClaims: understood } : {}),
+					...(understood
+						? { engine: testEngine, understoodCriticalClaims: understood }
+						: { engine: testEngine }),
 					httpClient: async (input, init) => {
 						if (input instanceof Request && input.url === `${OP_ID}/federation_registration`) {
 							const res = await createExplicitRegistrationHandler(fx.config)(input);
@@ -10608,7 +10699,7 @@ export default (QUnit: QUnit) => {
 							return new Response(
 								await signEntityStatement(
 									{ ...decoded.value.payload, crit: ["extension"], extension: true },
-									new JwkSigner(fx.fed.opSigningKey),
+									new SigningEntryFixture(fx.fed.opSigningKey),
 									{ typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
 								),
 								{ headers: { "Content-Type": OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE } },
@@ -10629,7 +10720,7 @@ export default (QUnit: QUnit) => {
 			const nextKey = await generateSigningKey("ES256");
 			const ta2 = entityId("https://ta2.example.com");
 			const signAs = (payload: Record<string, unknown>, key: JWK) =>
-				signEntityStatement(payload, new JwkSigner(key));
+				signEntityStatement(payload, new SigningEntryFixture(key));
 			const read = (jwt: string) => {
 				const decoded = decodeEntityStatement(jwt);
 				if (!decoded.ok) throw new Error(decoded.error.description);
@@ -10698,6 +10789,7 @@ export default (QUnit: QUnit) => {
 				return fx.fed.httpClient(input, init);
 			};
 			const ordered = await resolveTrustChains(LEAF_ID, anchors, {
+				engine: testEngine,
 				httpClient,
 				maxConcurrentFetches: 1,
 			});
@@ -10709,7 +10801,7 @@ export default (QUnit: QUnit) => {
 			const handler = createExplicitRegistrationHandler({
 				...fx.config,
 				trustAnchors: anchors,
-				options: { httpClient, maxConcurrentFetches: 1 },
+				options: { engine: testEngine, httpClient, maxConcurrentFetches: 1 },
 			});
 			const jwt = await fx.sign(
 				{ authority_hints: [TA_ID, ta2], jwks: { keys: [nextKey.publicKey] } },
@@ -10718,7 +10810,7 @@ export default (QUnit: QUnit) => {
 			const oldAnchorOnly = createExplicitRegistrationHandler({
 				...fx.config,
 				trustAnchors: fx.fed.trustAnchors,
-				options: { httpClient, maxConcurrentFetches: 1 },
+				options: { engine: testEngine, httpClient, maxConcurrentFetches: 1 },
 			});
 			const rejectedOldPath = await oldAnchorOnly(
 				new Request(`${OP_ID}/federation_registration`, {
@@ -10749,13 +10841,12 @@ export default (QUnit: QUnit) => {
 				"the preferred OP path uses the old-key anchor",
 			);
 			const { config } = await createRpConfig({
-				keyProvider: new MemoryFederationKeyProvider(
-					createFederationSigningKey(nextKey.privateKey),
-				),
+				crypto: new FixtureCrypto(createFederationSigningKey(nextKey.privateKey)),
 				authorityHints: [TA_ID, ta2],
 			});
 			let sentHints: unknown;
 			const result = await explicitRegistration(discovery, config, anchors, {
+				engine: testEngine,
 				httpClient: async (input, init) => {
 					if (input instanceof Request && input.url === `${OP_ID}/federation_registration`) {
 						sentHints = read(await input.clone().text()).authority_hints;
@@ -10784,20 +10875,26 @@ export default (QUnit: QUnit) => {
 		});
 
 		test("rejects a registration that loses an entity type under constraints", async (t) => {
-			const fx = await fixture(undefined, { constraints: { allowed_entity_types: [] } });
+			const fx = await fixture(
+				{ engine: testEngine },
+				{ constraints: { allowed_entity_types: [] } },
+			);
 			const res = await fx.post(await fx.sign());
 			t.equal(res.status, 400);
 			t.equal(((await res.json()) as { error: string }).error, FederationErrorCode.InvalidMetadata);
 			t.deepEqual(fx.events, []);
 		});
 		test("registration policies apply only to declared Entity Types", async (t) => {
-			const fx = await fixture(undefined, {
-				metadata_policy: {
-					openid_provider: {
-						token_endpoint_auth_methods_supported: { default: ["private_key_jwt"] },
+			const fx = await fixture(
+				{ engine: testEngine },
+				{
+					metadata_policy: {
+						openid_provider: {
+							token_endpoint_auth_methods_supported: { default: ["private_key_jwt"] },
+						},
 					},
 				},
-			});
+			);
 			const res = await fx.post(await fx.sign({}, undefined, { trust_chain: fx.chain }));
 			t.equal(res.status, 200, await res.clone().text());
 			const decoded = decodeEntityStatement(await res.text());
@@ -10807,22 +10904,24 @@ export default (QUnit: QUnit) => {
 		});
 
 		test("RP rejects a signed response that violates the selected policy", async (t) => {
-			const fx = await fixture(undefined, {
-				metadata_policy: {
-					openid_relying_party: {
-						redirect_uris: {
-							subset_of: ["https://rp.example.com/callback", "https://rp.example.com/tailored"],
+			const fx = await fixture(
+				{ engine: testEngine },
+				{
+					metadata_policy: {
+						openid_relying_party: {
+							redirect_uris: {
+								subset_of: ["https://rp.example.com/callback", "https://rp.example.com/tailored"],
+							},
 						},
 					},
 				},
-			});
+			);
 			const discovery = await createMockDiscovery(OP_ID, fx.fed);
 			const { config } = await createRpConfig({
-				keyProvider: new MemoryFederationKeyProvider(
-					createFederationSigningKey(fx.fed.leafSigningKey),
-				),
+				crypto: new FixtureCrypto(createFederationSigningKey(fx.fed.leafSigningKey)),
 			});
 			const result = await explicitRegistration(discovery, config, fx.fed.trustAnchors, {
+				engine: testEngine,
 				httpClient: async (input, init) => {
 					if (input instanceof Request && input.url === `${OP_ID}/federation_registration`) {
 						const response = await createExplicitRegistrationHandler(fx.config)(input);
@@ -10839,7 +10938,7 @@ export default (QUnit: QUnit) => {
 									},
 								},
 							},
-							new JwkSigner(fx.fed.opSigningKey),
+							new SigningEntryFixture(fx.fed.opSigningKey),
 							{ typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE },
 						);
 						return new Response(jwt, {
@@ -10859,11 +10958,14 @@ export default (QUnit: QUnit) => {
 		});
 		test("scope serialization: explicit registration accepts policy-initialized scopes", async (t) => {
 			for (const operator of ["default", "add", "value"]) {
-				const fx = await fixture(undefined, {
-					metadata_policy: {
-						openid_relying_party: { scope: { [operator]: ["openid", "profile"] } },
+				const fx = await fixture(
+					{ engine: testEngine },
+					{
+						metadata_policy: {
+							openid_relying_party: { scope: { [operator]: ["openid", "profile"] } },
+						},
 					},
-				});
+				);
 				t.false(Object.hasOwn(fx.payload.metadata.openid_relying_party, "scope"));
 				const response = await fx.post(await fx.sign({}, undefined, { trust_chain: fx.chain }));
 				t.equal(response.status, 200, `${operator}: ${await response.clone().text()}`);
@@ -10880,9 +10982,12 @@ export default (QUnit: QUnit) => {
 		test("scope serialization: explicit registration rejects non-string scope members", async (t) => {
 			for (const operator of ["default", "add", "value"]) {
 				for (const scope of [[123], [{}]]) {
-					const fx = await fixture(undefined, {
-						metadata_policy: { openid_relying_party: { scope: { [operator]: scope } } },
-					});
+					const fx = await fixture(
+						{ engine: testEngine },
+						{
+							metadata_policy: { openid_relying_party: { scope: { [operator]: scope } } },
+						},
+					);
 					const response = await fx.post(await fx.sign({}, undefined, { trust_chain: fx.chain }));
 					t.equal(response.status, 400, `${operator}: ${await response.clone().text()}`);
 					if (response.status === 400) {
@@ -10915,6 +11020,7 @@ export default (QUnit: QUnit) => {
 							canCombineWith: () => true,
 						},
 					],
+					engine: testEngine,
 				},
 				{
 					metadata_policy_crit: ["all_https"],
@@ -10949,14 +11055,17 @@ export default (QUnit: QUnit) => {
 
 		for (const mode of ["header", "body", "discovery"]) {
 			test(`${mode} uses tailored metadata when published metadata cannot satisfy policy`, async (t) => {
-				const fx = await fixture(undefined, {
-					metadata_policy: {
-						openid_relying_party: {
-							scope: { essential: true },
-							client_name: { one_of: ["Tailored"] },
+				const fx = await fixture(
+					{ engine: testEngine },
+					{
+						metadata_policy: {
+							openid_relying_party: {
+								scope: { essential: true },
+								client_name: { one_of: ["Tailored"] },
+							},
 						},
 					},
-				});
+				);
 				const metadata = {
 					openid_relying_party: {
 						...fx.payload.metadata.openid_relying_party,
@@ -11001,14 +11110,15 @@ export default (QUnit: QUnit) => {
 		});
 
 		test("RP selection resolves policy from its tailored request before choosing a path", async (t) => {
-			const fx = await fixture(undefined, {
-				metadata_policy: { openid_relying_party: { scope: { essential: true } } },
-			});
+			const fx = await fixture(
+				{ engine: testEngine },
+				{
+					metadata_policy: { openid_relying_party: { scope: { essential: true } } },
+				},
+			);
 			const discovery = await createMockDiscovery(OP_ID, fx.fed);
 			const { config } = await createRpConfig({
-				keyProvider: new MemoryFederationKeyProvider(
-					createFederationSigningKey(fx.fed.leafSigningKey),
-				),
+				crypto: new FixtureCrypto(createFederationSigningKey(fx.fed.leafSigningKey)),
 				metadata: {
 					openid_relying_party: { ...fx.payload.metadata.openid_relying_party, scope: "openid" },
 				},
@@ -11016,6 +11126,7 @@ export default (QUnit: QUnit) => {
 			const httpClient = fx.config.options?.httpClient;
 			if (!httpClient) throw new Error("Missing fixture client");
 			const result = await explicitRegistration(discovery, config, fx.fed.trustAnchors, {
+				engine: testEngine,
 				httpClient: (input, init) =>
 					input instanceof Request && input.url === `${OP_ID}/federation_registration`
 						? createExplicitRegistrationHandler(fx.config)(input)
@@ -11027,9 +11138,12 @@ export default (QUnit: QUnit) => {
 
 		for (const field of ["grant_types", "token_endpoint_auth_method"]) {
 			test(`preserves policy removal of the optional ${field} default`, async (t) => {
-				const fx = await fixture(undefined, {
-					metadata_policy: { openid_relying_party: { [field]: { value: null } } },
-				});
+				const fx = await fixture(
+					{ engine: testEngine },
+					{
+						metadata_policy: { openid_relying_party: { [field]: { value: null } } },
+					},
+				);
 				const response = await fx.post(await fx.sign({}, undefined, { trust_chain: fx.chain }));
 				t.equal(response.status, 200, await response.clone().text());
 				const parsed = decodeEntityStatement(await response.text());
@@ -11060,7 +11174,7 @@ export default (QUnit: QUnit) => {
 			test(`preserves custom ${action} output and rejects adapter changes or baseline mutation`, async (t) => {
 				for (const factor of [0.5, 0]) {
 					const fx = await fixture(
-						{ customPolicyOperators: [{ ...scaleAge, action }] },
+						{ customPolicyOperators: [{ ...scaleAge, action }], engine: testEngine },
 						{
 							metadata_policy_crit: ["scale_age"],
 							metadata_policy: { openid_relying_party: { default_max_age: { scale_age: factor } } },
@@ -11120,7 +11234,7 @@ export default (QUnit: QUnit) => {
 
 		test("RP checks custom-modified response fields against its tailored resolved baseline", async (t) => {
 			const fx = await fixture(
-				{ customPolicyOperators: [scaleAge] },
+				{ customPolicyOperators: [scaleAge], engine: testEngine },
 				{
 					metadata_policy_crit: ["scale_age"],
 					metadata_policy: { openid_relying_party: { default_max_age: { scale_age: 0.5 } } },
@@ -11128,9 +11242,7 @@ export default (QUnit: QUnit) => {
 			);
 			const discovery = await createMockDiscovery(OP_ID, fx.fed);
 			const { config } = await createRpConfig({
-				keyProvider: new MemoryFederationKeyProvider(
-					createFederationSigningKey(fx.fed.leafSigningKey),
-				),
+				crypto: new FixtureCrypto(createFederationSigningKey(fx.fed.leafSigningKey)),
 				metadata: {
 					openid_relying_party: {
 						...fx.payload.metadata.openid_relying_party,
@@ -11154,7 +11266,7 @@ export default (QUnit: QUnit) => {
 						const metadata = payload.metadata?.openid_relying_party as Record<string, unknown>;
 						metadata.default_max_age = 999;
 						return new Response(
-							await signEntityStatement(payload, new JwkSigner(fx.fed.opSigningKey), {
+							await signEntityStatement(payload, new SigningEntryFixture(fx.fed.opSigningKey), {
 								typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE,
 							}),
 							{ headers: { "Content-Type": OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE } },
@@ -11191,14 +11303,13 @@ export default (QUnit: QUnit) => {
 			}
 			const discovery = await createMockDiscovery(OP_ID, fx.fed);
 			const { config } = await createRpConfig({
-				keyProvider: new MemoryFederationKeyProvider(
-					createFederationSigningKey(fx.fed.leafSigningKey),
-				),
+				crypto: new FixtureCrypto(createFederationSigningKey(fx.fed.leafSigningKey)),
 				entityConfigurationTtlSeconds: 600,
 			});
 			const httpClient = fx.config.options?.httpClient;
 			if (!httpClient) throw new Error("Missing fixture client");
 			const result = await explicitRegistration(discovery, config, fx.fed.trustAnchors, {
+				engine: testEngine,
 				clock,
 				httpClient: (input, init) =>
 					input instanceof Request && input.url === `${OP_ID}/federation_registration`
@@ -11229,7 +11340,7 @@ export default (QUnit: QUnit) => {
 				const now = Math.floor(Date.now() / 1000);
 				const signedKeys = await signEntityStatement(
 					{ iss: LEAF_ID, sub: LEAF_ID, iat: now, exp: now + 300, keys: [keys.publicKey] },
-					new JwkSigner(fed.leafSigningKey),
+					new SigningEntryFixture(fed.leafSigningKey),
 					{ typ: "jwk-set+jwt" },
 				);
 				let reads = 0,
@@ -11251,33 +11362,39 @@ export default (QUnit: QUnit) => {
 					},
 				};
 				const role = new OidcProviderRole({
-					replayStore: new MemoryReplayStore(),
+					replayStore: new MemoryReplayStore({ engine: testEngine }),
 					onRegistration: async (_id, value) => {
 						callbacks++;
 						t.deepEqual(value.jwks, { keys: [keys.publicKey] }, source);
 						(value.jwks as { keys: JWK[] }).keys.length = 0;
 					},
 				});
-				role.initialize({
-					entityId: OP_ID,
-					keyProvider: MemoryFederationKeyProvider.fromJWK(fed.opSigningKey),
-					trustAnchors: fed.trustAnchors,
-					options,
-				});
+				await role.initialize(
+					fixtureRoleContext(role, {
+						entityId: OP_ID,
+						crypto: FixtureCrypto.fromJWK(fed.opSigningKey),
+						trustAnchors: fed.trustAnchors,
+						options,
+					}),
+				);
 				const payload = {
 					iss: LEAF_ID,
 					client_id: LEAF_ID,
 					aud: OP_ID,
 					iat: now,
 					exp: now + 60,
-					jti: crypto.randomUUID(),
+					jti: globalThis.crypto.randomUUID(),
 					response_type: "code",
 					scope: "openid",
 					redirect_uri: `${LEAF_ID}/callback`,
 				};
-				const request = await signEntityStatement(payload, new JwkSigner(keys.privateKey), {
-					typ: RequestObjectTyp,
-				});
+				const request = await signEntityStatement(
+					payload,
+					new SigningEntryFixture(keys.privateKey),
+					{
+						typ: RequestObjectTyp,
+					},
+				);
 				const result = await role.processAutomaticRegistration(request);
 				t.true(result.ok, result.ok ? source : result.error.description);
 				if (result.ok) {
@@ -11290,8 +11407,8 @@ export default (QUnit: QUnit) => {
 				}
 				t.equal(reads, source === "jwks" ? 0 : 1);
 				const invalid = await signEntityStatement(
-					{ ...payload, jti: crypto.randomUUID() },
-					new JwkSigner(decoy.privateKey),
+					{ ...payload, jti: globalThis.crypto.randomUUID() },
+					new SigningEntryFixture(decoy.privateKey),
 					{ typ: RequestObjectTyp },
 				);
 				t.false((await role.processAutomaticRegistration(invalid)).ok);
@@ -11341,17 +11458,19 @@ export default (QUnit: QUnit) => {
 				});
 				const role = new OAuthClientRole({
 					metadata: clientMetadata,
-					protocolKeyProvider: new StaticProtocolSigningKeyProvider({
-						requestObjectSigner: new JwkSigner(key.privateKey),
+					signing: new PurposeBindingsFixture({
+						requestObjectSigner: new SigningEntryFixture(key.privateKey),
 					}),
 					requestDelivery: "par",
 				});
-				role.initialize({
-					entityId: LEAF_ID,
-					keyProvider: MemoryFederationKeyProvider.fromJWK(fed.leafSigningKey),
-					authorityHints: [TA_ID],
-					options: fed.options,
-				});
+				await role.initialize(
+					fixtureRoleContext(role, {
+						entityId: LEAF_ID,
+						crypto: FixtureCrypto.fromJWK(fed.leafSigningKey),
+						authorityHints: [TA_ID],
+						options: fed.options,
+					}),
+				);
 				let posts = 0;
 				const result = await role.createAuthorizationRequest(
 					await createMockDiscovery(OP_ID, fed),
@@ -11467,7 +11586,7 @@ export default (QUnit: QUnit) => {
 								},
 							},
 						},
-						new JwkSigner(fed.taSigningKey),
+						new SigningEntryFixture(fed.taSigningKey),
 						{ typ: JwtTyp.EntityStatement },
 					);
 					const original = fed.httpClient;
@@ -11490,20 +11609,21 @@ export default (QUnit: QUnit) => {
 					signerCalls = 0;
 				const result = await automaticRegistration(
 					discovery,
-					{
+					fixtureHostConfig({
 						entityId: LEAF_ID,
+						crypto: FixtureCrypto.fromJWK(fed.leafSigningKey),
 						authorityHints: [TA_ID],
 						metadata,
 						requestDelivery: "par",
-						protocolKeyProvider: {
-							getRequestObjectSigner: async () => new JwkSigner(keys.privateKey),
+						signing: new PurposeBindingsFixture({
+							getRequestObjectSigner: async () => new SigningEntryFixture(keys.privateKey),
 							getClientAssertionSigner: async () => {
 								signerCalls++;
 								if (scenario.signerFails) throw new Error("signer unavailable");
-								return new JwkSigner(keys.privateKey);
+								return new SigningEntryFixture(keys.privateKey);
 							},
-						},
-					},
+						}),
+					}),
 					{ response_type: "code", scope: "openid", redirect_uri: `${LEAF_ID}/callback` },
 					fed.trustAnchors,
 					{

@@ -1,3 +1,12 @@
+import {
+	type BoundFederationOptions,
+	bindFederationOptions,
+	cloneData,
+	composeRolePublicationMetadata,
+	federationEntry,
+	federationSigningOptions,
+	validateCryptoContext,
+} from "@oidfed/core";
 /** Leaf host for Entity Configuration publication, role routes, and optional federation services. */
 
 import {
@@ -5,6 +14,7 @@ import {
 	assertPositiveTtlSeconds,
 	assessEntity,
 	buildEntityConfigurationPayload,
+	type CryptoContext,
 	composeEntityMetadata,
 	createEndpointAuthenticatedHandler,
 	DEFAULT_ENTITY_STATEMENT_TTL_SECONDS,
@@ -22,7 +32,6 @@ import {
 	endpointParameterValuesMatch,
 	entityId,
 	errorResponse,
-	type FederationKeyProvider,
 	type FederationOptions,
 	type FederationResolverIntegration,
 	FederationResolverService,
@@ -50,7 +59,7 @@ import {
 } from "@oidfed/core";
 
 /**
- * Construction configuration. Metadata is copied; services such as key providers
+ * Construction configuration. Metadata is copied; services such as keyrings
  * and storage retain their identity. Roles contribute metadata after initialization,
  * overriding host parameters in role order. Re-create the host to change general
  * metadata; refreshing its EC re-reads keys, not the original metadata object.
@@ -62,9 +71,10 @@ export interface LeafConfig extends EntityStatementExtensions {
 	entityId: EntityId | string;
 	authorityHints: readonly (EntityId | string)[];
 	metadata: EntityStatementMetadata;
-	keyProvider: FederationKeyProvider;
+	/** Explicit host crypto operations and signing snapshots. */
+	crypto: CryptoContext;
 	roles?: EntityRole[];
-	options?: FederationOptions;
+	options?: BoundFederationOptions;
 	trustMarks?: TrustMarkRef[];
 	trustAnchorHints?: readonly (EntityId | string)[];
 	/** Positive safe-integer EC lifetime in seconds; omission uses the core default. */
@@ -79,6 +89,44 @@ function wellKnownPathForEntityId(value: EntityId): string {
 
 export class Leaf {
 	readonly resolver?: FederationResolverService;
+	/** Initialize roles and validate mandatory signing purposes before returning a host. */
+	static async create(config: LeafConfig): Promise<Leaf> {
+		validateCryptoContext(config.crypto);
+		const normalized = {
+			...config,
+			...prepareEntityStatementExtensions(config),
+			crypto: Object.freeze({
+				engine: config.crypto.engine,
+				...(config.crypto.algorithmRegistry
+					? { algorithmRegistry: config.crypto.algorithmRegistry }
+					: {}),
+				keyring: config.crypto.keyring,
+				...(config.crypto.federationPurpose !== undefined
+					? { federationPurpose: config.crypto.federationPurpose }
+					: {}),
+				...(config.crypto.history !== undefined ? { history: config.crypto.history } : {}),
+			}),
+			metadata: composeEntityMetadata(config.metadata),
+			authorityHints: [...config.authorityHints],
+			...(config.roles ? { roles: [...config.roles] } : {}),
+			...(config.trustMarks ? { trustMarks: cloneData(config.trustMarks) } : {}),
+			options: bindFederationOptions(config.crypto, config.options),
+		};
+		const id = config.entityId.endsWith("/") ? config.entityId.slice(0, -1) : config.entityId;
+		const context: EntityContext = {
+			entityId: id,
+			crypto: normalized.crypto,
+			options: normalized.options,
+			...(config.trustAnchors ? { trustAnchors: config.trustAnchors } : {}),
+			authorityHints: normalized.authorityHints as readonly EntityId[],
+		};
+		await federationEntry(normalized.crypto, { issuer: id, subject: id });
+		for (const role of normalized.roles ?? []) await role.initialize?.(context);
+		const host = new Leaf(normalized, context);
+		await composeRolePublicationMetadata(normalized.roles, host.metadata, context);
+		return host;
+	}
+
 	/** Assess a target with explicitly supplied anchors and options. */
 	static assessEntity = assessEntity;
 	/** Validate supplied target statements with explicitly supplied anchors and options. */
@@ -86,37 +134,38 @@ export class Leaf {
 	/** Per-call options override host options; explicit anchors override configured anchors. Returns an assessment Result, not protocol authorization. */
 	assessEntity(
 		target: EntityId,
-		options: EntityAssessmentOptions & { trustAnchors?: TrustAnchorSet } = {},
+		options: Omit<EntityAssessmentOptions, "engine"> & { trustAnchors?: TrustAnchorSet } = {},
 	) {
-		return assessEntity(target, options.trustAnchors ?? this.config.trustAnchors ?? new Map(), {
-			...this.config.options,
-			...options,
-		});
+		return assessEntity(
+			target,
+			options.trustAnchors ?? this.config.trustAnchors ?? new Map(),
+			bindFederationOptions(this.config.crypto, this.config.options, options),
+		);
 	}
 	/**
 	 * Resolve, validate, and select a target chain using configured anchors and per-call overrides.
 	 */
 	discoverEntity(
 		target: EntityId,
-		options: FederationOptions & { trustAnchors?: TrustAnchorSet } = {},
+		options: BoundFederationOptions & { trustAnchors?: TrustAnchorSet } = {},
 	) {
 		return discoverEntityThroughTrustChain(
 			target,
 			options.trustAnchors ?? this.config.trustAnchors ?? new Map(),
-			{ ...this.config.options, ...options },
+			bindFederationOptions(this.config.crypto, this.config.options, options),
 		);
 	}
 	/** Validate supplied target statements and return discovery evidence using configured anchors. */
 	discoverEntityFromChain(
 		target: EntityId,
 		statements: readonly string[],
-		options: FederationOptions & { trustAnchors?: TrustAnchorSet } = {},
+		options: BoundFederationOptions & { trustAnchors?: TrustAnchorSet } = {},
 	) {
 		return discoverEntityFromChain(
 			target,
 			statements,
 			options.trustAnchors ?? this.config.trustAnchors ?? new Map(),
-			{ ...this.config.options, ...options },
+			bindFederationOptions(this.config.crypto, this.config.options, options),
 		);
 	}
 	readonly collection?: EntityCollectionService;
@@ -126,14 +175,14 @@ export class Leaf {
 	static discoverEntity(
 		targetEntityId: EntityId | string,
 		trustAnchors: TrustAnchorSet,
-		options?: FederationOptions,
+		options: FederationOptions,
 	) {
 		return discoverEntityThroughTrustChain(entityId(targetEntityId), trustAnchors, options);
 	}
 
 	public readonly entityId: EntityId;
 	private readonly routes = new Map<string, (request: Request) => Promise<Response>>();
-	private readonly config: LeafConfig;
+	private readonly config: Omit<LeafConfig, "options"> & { options: FederationOptions };
 	private readonly metadata: Record<string, Record<string, unknown>>;
 	private readonly roleContext: EntityContext;
 
@@ -147,7 +196,10 @@ export class Leaf {
 	 * Validate and compose Leaf metadata and routes; retain key and service dependencies for later
 	 * operations.
 	 */
-	constructor(config: LeafConfig) {
+	private constructor(
+		config: Omit<LeafConfig, "options"> & { options: FederationOptions },
+		context: EntityContext,
+	) {
 		const rawEntityId = (
 			config.entityId.endsWith("/") ? config.entityId.slice(0, -1) : config.entityId
 		) as EntityId;
@@ -160,21 +212,21 @@ export class Leaf {
 			...config,
 			...prepareEntityStatementExtensions(config),
 			authorityHints: [...config.authorityHints],
-			...(config.trustMarks ? { trustMarks: structuredClone(config.trustMarks) } : {}),
+			...(config.trustMarks ? { trustMarks: cloneData(config.trustMarks) } : {}),
 		};
 		this.holder = new TrustMarkHolder(this.entityId, config.trustMarks ?? [], async (refs) => {
 			const jwt = await this.buildEntityConfiguration(this.generation, refs, false);
-			const parsed = decodeEntityStatement(jwt);
+			const parsed = decodeEntityStatement(jwt, this.config.options);
 			if (!parsed.ok) throw new Error("Unable to publish Entity Configuration");
-			this.config.trustMarks = structuredClone([...refs]);
+			this.config.trustMarks = cloneData([...refs]);
 			this.generation++;
 			this.cachedJwt = jwt;
 			this.cachedExp = parsed.value.payload.exp;
 			this.inflight = null;
 		});
 
-		if (!config.keyProvider) {
-			throw new Error("keyProvider MUST be provided");
+		if (!config.crypto) {
+			throw new Error("crypto MUST be provided");
 		}
 
 		if (!config.authorityHints || config.authorityHints.length === 0) {
@@ -200,20 +252,10 @@ export class Leaf {
 
 		// Initialize roles & merge metadata/routes
 		let metadata = composeEntityMetadata(config.metadata);
-		const context: EntityContext = {
-			entityId: this.entityId,
-			keyProvider: config.keyProvider,
-			options: config.options,
-			...(config.trustAnchors ? { trustAnchors: config.trustAnchors } : {}),
-			authorityHints: config.authorityHints as readonly EntityId[],
-		};
 		this.roleContext = context;
 
 		if (config.roles) {
 			for (const role of config.roles) {
-				if (role.initialize) {
-					role.initialize(context);
-				}
 				metadata = composeEntityMetadata(metadata, { [role.type]: role.metadata });
 				if (role.routes) {
 					for (const [path, handler] of role.routes.entries()) {
@@ -253,7 +295,7 @@ export class Leaf {
 				...config.collection,
 				responder: { entityId: this.entityId, isTrustAnchor: false },
 				...(endpoint ? { endpoint } : {}),
-				options: { ...config.options, ...config.collection.options },
+				options: bindFederationOptions(config.crypto, config.options, config.collection.options),
 				authentication: {
 					...config.collection.authentication,
 					methods: methods as ("none" | "private_key_jwt")[],
@@ -302,10 +344,10 @@ export class Leaf {
 			this.resolver = new FederationResolverService({
 				...config.resolver,
 				entityId: this.entityId,
-				keyProvider: config.keyProvider,
+				crypto: config.crypto,
 				...(config.trustAnchors ? { trustAnchors: config.trustAnchors } : {}),
 				...(config.resolver.trustAnchors ? { trustAnchors: config.resolver.trustAnchors } : {}),
-				options: { ...config.options, ...config.resolver.options },
+				options: bindFederationOptions(config.crypto, config.options, config.resolver.options),
 				authentication: {
 					...config.resolver.authentication,
 					...(allowedAlgorithms ? { allowedAlgorithms } : {}),
@@ -350,10 +392,10 @@ export class Leaf {
 			this.issuerService = new TrustMarkIssuerService({
 				...config.trustMarkIssuer,
 				issuer: this.entityId,
-				keyProvider: config.keyProvider,
+				crypto: config.crypto,
 				statusEndpointPublished:
 					!!metadata.federation_entity?.federation_trust_mark_status_endpoint,
-				...(config.options ? { options: config.options } : {}),
+				options: config.options,
 			});
 		for (const [field, kind] of markEndpoints) {
 			const endpoint = metadata.federation_entity?.[field];
@@ -453,18 +495,26 @@ export class Leaf {
 		refs: readonly TrustMarkRef[] | undefined = this.config.trustMarks,
 		publish = true,
 	): Promise<string> {
-		validateRoleMetadata(this.config.roles, this.metadata, this.roleContext);
-		const keySet = await this.config.keyProvider.getFederationKeySet();
-		validateFederationKeySet(keySet);
+		const publication = await composeRolePublicationMetadata(
+			this.config.roles,
+			this.metadata,
+			this.roleContext,
+		);
+		const keySet = await federationEntry(this.config.crypto, {
+			issuer: this.entityId,
+			subject: this.entityId,
+		});
+		validateFederationKeySet(keySet, this.config.crypto.algorithmRegistry);
 		const now = nowSeconds(this.config.options?.clock);
 		const ttlSeconds =
 			this.config.entityConfigurationTtlSeconds ?? DEFAULT_ENTITY_STATEMENT_TTL_SECONDS;
 		const payload = buildEntityConfigurationPayload({
+			algorithmRegistry: this.config.options.algorithmRegistry,
 			additionalClaims: this.config.additionalClaims,
 			crit: this.config.crit,
 			entityId: this.entityId,
-			jwks: keySet.jwks,
-			metadata: this.metadata,
+			jwks: keySet.publishedJwks,
+			metadata: publication,
 			authorityHints: this.config.authorityHints,
 			...(this.config.trustAnchorHints ? { trustAnchorHints: this.config.trustAnchorHints } : {}),
 			...(refs ? { trustMarks: refs } : {}),
@@ -472,7 +522,8 @@ export class Leaf {
 			ttlSeconds,
 		});
 
-		const jwt = await signEntityStatement(payload, keySet.signer, {
+		const jwt = await signEntityStatement(payload, keySet, {
+			...federationSigningOptions(this.config.options),
 			typ: JwtTyp.EntityStatement,
 		});
 
@@ -542,16 +593,26 @@ export class Leaf {
 	/**
 	 * Validate a mark for this host and publish it; failed validation leaves prior references intact.
 	 */
-	async attachTrustMark(jwt: string, options: AttachTrustMarkOptions) {
-		return this.holder.attachTrustMark(jwt, options);
+	async attachTrustMark(jwt: string, options: Omit<AttachTrustMarkOptions, "engine">) {
+		return this.holder.attachTrustMark(jwt, {
+			...options,
+			...bindFederationOptions(this.config.crypto, this.config.options, options),
+		});
 	}
 	/** Establish issuer trust and retrieve a mark for this host before validated publication. */
-	async fetchAndAttachTrustMark(options: FetchAndAttachTrustMarkOptions) {
-		return this.holder.fetchAndAttachTrustMark(options);
+	async fetchAndAttachTrustMark(
+		options: Omit<FetchAndAttachTrustMarkOptions, "options"> & {
+			readonly options?: BoundFederationOptions;
+		},
+	) {
+		return this.holder.fetchAndAttachTrustMark({
+			...options,
+			options: bindFederationOptions(this.config.crypto, this.config.options, options.options),
+		});
 	}
 	/** Remove matching references from this host's publication; this does not revoke issuance. */
 	async removeTrustMark(selector: RemoveTrustMarkSelector) {
-		return this.holder.removeTrustMark(selector);
+		return this.holder.removeTrustMark(selector, this.config.options);
 	}
 
 	private requireIssuer(): TrustMarkIssuerService {

@@ -1,3 +1,12 @@
+import {
+	type BoundFederationOptions,
+	bindFederationOptions,
+	cloneData,
+	selectSigningEntry,
+	signingPublication,
+	validateSigningPurposes,
+} from "@oidfed/core";
+import type { KeyPurpose, KeyringEntry } from "@oidfed/crypto";
 /** Composable OIDC and OAuth roles with protocol metadata and registration operations. */
 
 import {
@@ -36,7 +45,6 @@ import {
 	effectiveMetadata,
 	type ProtocolEntityType,
 } from "./metadata.js";
-import type { ProtocolSigningKeyProvider } from "./protocol-keys.js";
 import type { RegistrationAccreditationPolicy } from "./registration/accreditation.js";
 import type { RegistrationProtocolAdapter } from "./registration/adapter-types.js";
 import {
@@ -77,8 +85,9 @@ import {
  * Per-call options override role options, which override host options.
  */
 export interface OidcRelyingPartyRoleConfig {
-	readonly options?: FederationOptions;
-	readonly protocolKeyProvider: ProtocolSigningKeyProvider;
+	readonly options?: BoundFederationOptions;
+	/** Map requestObject and clientAssertion to host keyring purposes; no implicit sharing. */
+	readonly signing?: Readonly<Partial<Record<"requestObject" | "clientAssertion", KeyPurpose>>>;
 	readonly metadata?: Record<string, unknown>;
 	readonly requestObjectTtlSeconds?: number;
 	readonly includePeerTrustChain?: boolean;
@@ -108,7 +117,7 @@ abstract class ClientRole implements EntityRole {
 		discovery: DiscoveryResult,
 		parameters: Readonly<Record<string, unknown>>,
 		proof: PushedAuthorizationProof,
-		options: FederationOptions & { trustAnchors?: TrustAnchorSet } = {},
+		options: Omit<FederationOptions & { trustAnchors?: TrustAnchorSet }, "engine"> = {},
 	): Promise<Result<PreparedPushedAuthorizationRequest>> {
 		if (!this.context) throw new Error("Role has not been initialized.");
 		const anchors = assertNonEmptyTrustAnchors(
@@ -118,7 +127,8 @@ abstract class ClientRole implements EntityRole {
 			discovery,
 			{
 				entityId: this.context.entityId as EntityId,
-				protocolKeyProvider: this.config.protocolKeyProvider,
+				crypto: this.context.crypto,
+				signing: this.config.signing ?? {},
 				authorityHints: (this.context.authorityHints ??
 					this.config.authorityHints ??
 					[]) as readonly [EntityId, ...EntityId[]],
@@ -133,7 +143,12 @@ abstract class ClientRole implements EntityRole {
 			parameters,
 			anchors,
 			proof,
-			{ ...this.context.options, ...this.config.options, ...options },
+			bindFederationOptions(
+				this.context.crypto,
+				this.context.options,
+				this.config.options,
+				options,
+			),
 			this.profile,
 		);
 	}
@@ -144,7 +159,7 @@ abstract class ClientRole implements EntityRole {
 	assessEntity(
 		target: string,
 		type: ProtocolEntityType,
-		options: EntityAssessmentOptions & { trustAnchors?: TrustAnchorSet } = {},
+		options: Omit<EntityAssessmentOptions & { trustAnchors?: TrustAnchorSet }, "engine"> = {},
 	) {
 		return assessRoleEntity(target, type, this.config, this.context, options);
 	}
@@ -164,47 +179,68 @@ abstract class ClientRole implements EntityRole {
 	private context?: EntityContext;
 	private composedMetadata?: Record<string, unknown>;
 
-	/** Detach supplied metadata and retain the protocol-key and host configuration dependencies. */
+	/** Detach supplied metadata and retain signing-purpose and host configuration dependencies. */
 	constructor(public readonly config: OidcRelyingPartyRoleConfig) {
-		this.metadata = structuredClone(config.metadata ?? {});
+		this.metadata = cloneData(config.metadata ?? {});
 	}
 
 	/** Validate composed publication metadata and capture a detached copy for client operations. */
 	validateMetadata(metadata: Readonly<Record<string, unknown>>): void {
 		assertPublicationMetadata(this.type, metadata);
-		this.composedMetadata = structuredClone(metadata);
+		this.composedMetadata = cloneData(metadata);
 	}
 
 	/** Attach this role to one host identity; reusing it across distinct hosts throws. */
-	initialize(context: EntityContext): void {
+	async initialize(context: EntityContext): Promise<void> {
 		assertRoleOwner(this.context, context);
+		validateSigningPurposes(this.config.signing, ["requestObject", "clientAssertion"]);
+		await signingPublication(context, this.config.signing);
 		this.context = context;
+	}
+	/** Publish keys selected for the configured protocol operations. */
+	publicationMetadata(
+		context: EntityContext,
+		entries?: ReadonlyMap<string, KeyringEntry>,
+	): Promise<Record<string, unknown>> {
+		return signingPublication(context, this.config.signing, entries);
 	}
 
 	/**
 	 * Sign private_key_jwt authentication with a protocol signer; an initialized host identity is
 	 * required.
 	 */
-	async createClientAssertion(audience: string, options?: ClientAssertionOptions): Promise<string> {
+	async createClientAssertion(
+		audience: string,
+		options?: Omit<ClientAssertionOptions, "engine">,
+	): Promise<string> {
 		if (!this.context) {
 			throw new Error("Role has not been initialized.");
 		}
-		const signer = this.config.protocolKeyProvider.getClientAssertionSigner
-			? await this.config.protocolKeyProvider.getClientAssertionSigner()
-			: await this.config.protocolKeyProvider.getRequestObjectSigner();
+		const signer = await selectSigningEntry(
+			this.context.crypto,
+			this.config.signing?.clientAssertion,
+			{ issuer: this.context.entityId, subject: audience },
+		);
 
-		return createClientAssertion(this.context.entityId as EntityId, audience, signer, {
-			...this.context.options,
-			...this.config.options,
-			...options,
-		});
+		return createClientAssertion(
+			this.context.entityId as EntityId,
+			audience,
+			signer,
+			bindFederationOptions(
+				this.context.crypto,
+				this.context.options,
+				this.config.options,
+				options,
+			),
+		);
 	}
 
 	/** Construct registration inputs after each call has applied its delivery overrides. */
 	private automaticRegistrationConfig(context: EntityContext, config: OidcRelyingPartyRoleConfig) {
 		return {
 			entityId: context.entityId as EntityId,
-			protocolKeyProvider: config.protocolKeyProvider,
+			crypto: context.crypto,
+			signing: config.signing ?? {},
 			authorityHints: (context.authorityHints ?? this.config.authorityHints ?? []) as readonly [
 				EntityId,
 				...EntityId[],
@@ -231,7 +267,7 @@ abstract class ClientRole implements EntityRole {
 			readonly requestDelivery?: RequestDelivery;
 			readonly requestUri?: string;
 		},
-		options?: CreateAuthorizationRequestOptions,
+		options?: Omit<CreateAuthorizationRequestOptions, "engine">,
 	): Promise<Result<AutomaticRegistrationResult>> {
 		if (!this.context) {
 			throw new Error(
@@ -247,11 +283,16 @@ abstract class ClientRole implements EntityRole {
 		const discoveryResult = await discoverEntity(
 			opEntityId,
 			trustAnchors,
-			protocolDiscoveryOptions(this.profile.providerType, opEntityId, {
-				...this.context.options,
-				...this.config.options,
-				...options,
-			}),
+			protocolDiscoveryOptions(
+				this.profile.providerType,
+				opEntityId,
+				bindFederationOptions(
+					this.context.crypto,
+					this.context.options,
+					this.config.options,
+					options,
+				),
+			),
 		);
 		if (!discoveryResult.ok) {
 			return err(discoveryResult.error);
@@ -287,7 +328,12 @@ abstract class ClientRole implements EntityRole {
 			rpConfig,
 			authzRequestParams,
 			trustAnchors,
-			{ ...this.context.options, ...this.config.options, ...options },
+			bindFederationOptions(
+				this.context.crypto,
+				this.context.options,
+				this.config.options,
+				options,
+			),
 			"resolved",
 			this.profile,
 		);
@@ -296,7 +342,7 @@ abstract class ClientRole implements EntityRole {
 	/** Discover a conformant provider and validate its signed explicit-registration response. */
 	async explicitlyRegister(
 		opEntityId: string,
-		options?: FederationOptions & { readonly trustAnchors?: TrustAnchorSet },
+		options?: Omit<FederationOptions & { readonly trustAnchors?: TrustAnchorSet }, "engine">,
 	): Promise<Result<ExplicitRegistrationResult>> {
 		if (!this.context) {
 			throw new Error(
@@ -311,11 +357,16 @@ abstract class ClientRole implements EntityRole {
 		const discoveryResult = await discoverEntity(
 			opEntityId as EntityId,
 			trustAnchors,
-			protocolDiscoveryOptions(this.profile.providerType, opEntityId, {
-				...this.context.options,
-				...this.config.options,
-				...options,
-			}),
+			protocolDiscoveryOptions(
+				this.profile.providerType,
+				opEntityId,
+				bindFederationOptions(
+					this.context.crypto,
+					this.context.options,
+					this.config.options,
+					options,
+				),
+			),
 		);
 		if (!discoveryResult.ok) {
 			return err(discoveryResult.error);
@@ -323,7 +374,7 @@ abstract class ClientRole implements EntityRole {
 
 		const rpConfig = {
 			entityId: this.context.entityId as EntityId,
-			keyProvider: this.context.keyProvider,
+			crypto: this.context.crypto,
 			authorityHints: (this.context.authorityHints ??
 				this.config.authorityHints ??
 				[]) as readonly [EntityId, ...EntityId[]],
@@ -339,11 +390,12 @@ abstract class ClientRole implements EntityRole {
 			discoveryResult.value,
 			rpConfig,
 			trustAnchors,
-			{
-				...this.context.options,
-				...this.config.options,
-				...options,
-			},
+			bindFederationOptions(
+				this.context.crypto,
+				this.context.options,
+				this.config.options,
+				options,
+			),
 			"resolved",
 			this.profile,
 		);
@@ -357,7 +409,7 @@ abstract class ClientRole implements EntityRole {
 		discovery: DiscoveryResult,
 		authzRequestParams: Readonly<Record<string, unknown>>,
 		trustAnchors: TrustAnchorSet,
-		options?: CreateAuthorizationRequestOptions,
+		options?: Omit<CreateAuthorizationRequestOptions, "engine">,
 	): Promise<Result<AutomaticRegistrationResult>> {
 		if (!this.context) {
 			throw new Error(
@@ -381,7 +433,12 @@ abstract class ClientRole implements EntityRole {
 			rpConfig,
 			authzRequestParams,
 			options?.trustAnchors ?? trustAnchors,
-			{ ...this.context.options, ...this.config.options, ...options },
+			bindFederationOptions(
+				this.context.crypto,
+				this.context.options,
+				this.config.options,
+				options,
+			),
 			"supplied",
 			this.profile,
 		);
@@ -414,7 +471,7 @@ export class OidcRelyingPartyRole extends ClientRole {
 			readonly requestDelivery?: RequestDelivery;
 			readonly requestUri?: string;
 		},
-		options?: CreateAuthorizationRequestOptions,
+		options?: Omit<CreateAuthorizationRequestOptions, "engine">,
 	): Promise<Result<AutomaticRegistrationResult>> {
 		return this.registerAutomatically({ ...params, serverEntityId: params.opEntityId }, options);
 	}
@@ -426,7 +483,7 @@ export interface OidcProviderRoleConfig extends RegistrationAccreditationPolicy 
 	readonly requestObjectTyping?: ProcessAutomaticRegistrationOptions["requestObjectTyping"];
 	/** Opt in to adapter-issued read-only registration access; the host enforces token permissions. Default disabled. */
 	readonly registrationManagement?: ExplicitRegistrationHandlerConfig["registrationManagement"];
-	readonly options?: FederationOptions;
+	readonly options?: BoundFederationOptions;
 	readonly registrationPath?: string;
 	readonly metadata?: Record<string, unknown>;
 	readonly trustAnchors?: TrustAnchorSet;
@@ -455,13 +512,21 @@ abstract class ProviderRole implements EntityRole {
 	async processPushedAuthorizationRequest(
 		request: Request,
 		options: Omit<
-			ProcessPushedAuthorizationRequestOptions,
-			"opEntityId" | "replayStore" | "providerMetadataType" | "providerMetadata"
-		> & { readonly providerMetadata?: Readonly<Record<string, unknown>> } = {},
+			Omit<
+				ProcessPushedAuthorizationRequestOptions,
+				"opEntityId" | "replayStore" | "providerMetadataType" | "providerMetadata"
+			> & { readonly providerMetadata?: Readonly<Record<string, unknown>> },
+			"engine"
+		> = {},
 	): Promise<Result<ProcessedPushedAuthorizationRequest, ClientAttestationError>> {
 		if (!this.context || !this.config.replayStore)
 			throw new Error("Initialize the provider role with a replayStore.");
-		const effectiveOptions = { ...this.context.options, ...this.config.options, ...options };
+		const effectiveOptions = bindFederationOptions(
+			this.context.crypto,
+			this.context.options,
+			this.config.options,
+			options,
+		);
 		effectiveOptions.signal ??= request.signal;
 		const result = await processPushedAuthorizationRequest(
 			request,
@@ -475,7 +540,7 @@ abstract class ProviderRole implements EntityRole {
 				requestObjectTyping:
 					options.requestObjectTyping ?? this.config.requestObjectTyping ?? "strict",
 				...(this.config.trustMarkRequirements
-					? { trustMarkRequirements: structuredClone(this.config.trustMarkRequirements) }
+					? { trustMarkRequirements: cloneData(this.config.trustMarkRequirements) }
 					: {}),
 				...(this.config.beforeRegistration
 					? { beforeRegistration: this.config.beforeRegistration }
@@ -497,7 +562,7 @@ abstract class ProviderRole implements EntityRole {
 	assessEntity(
 		target: string,
 		type: ProtocolEntityType,
-		options: EntityAssessmentOptions & { trustAnchors?: TrustAnchorSet } = {},
+		options: Omit<EntityAssessmentOptions & { trustAnchors?: TrustAnchorSet }, "engine"> = {},
 	) {
 		return assessRoleEntity(target, type, this.config, this.context, options);
 	}
@@ -509,7 +574,7 @@ abstract class ProviderRole implements EntityRole {
 
 	/** Detach supplied metadata and retain registration callbacks and dependencies. */
 	constructor(public readonly config: OidcProviderRoleConfig) {
-		this.metadata = structuredClone(config.metadata ?? {});
+		this.metadata = cloneData(config.metadata ?? {});
 	}
 
 	/**
@@ -545,7 +610,7 @@ abstract class ProviderRole implements EntityRole {
 		const handler = createExplicitRegistrationHandler({
 			opEntityId: context.entityId as EntityId,
 			...(this.config.trustMarkRequirements
-				? { trustMarkRequirements: structuredClone(this.config.trustMarkRequirements) }
+				? { trustMarkRequirements: cloneData(this.config.trustMarkRequirements) }
 				: {}),
 			...(this.config.beforeRegistration
 				? { beforeRegistration: this.config.beforeRegistration }
@@ -554,7 +619,7 @@ abstract class ProviderRole implements EntityRole {
 			...(this.config.registrationManagement !== undefined
 				? { registrationManagement: this.config.registrationManagement }
 				: {}),
-			keyProvider: context.keyProvider,
+			crypto: context.crypto,
 			trustAnchors,
 			...(this.config.registrationResponseTtlSeconds !== undefined
 				? { registrationResponseTtlSeconds: this.config.registrationResponseTtlSeconds }
@@ -571,7 +636,7 @@ abstract class ProviderRole implements EntityRole {
 			...(this.config.onRegistration !== undefined
 				? { onRegistration: this.config.onRegistration }
 				: {}),
-			options: { ...context.options, ...this.config.options },
+			options: bindFederationOptions(context.crypto, context.options, this.config.options),
 		});
 
 		this.routes.set(registrationPath, handler);
@@ -584,8 +649,11 @@ abstract class ProviderRole implements EntityRole {
 	async processAutomaticRegistration(
 		requestObjectJwt: string,
 		options?: Omit<
-			ProcessAutomaticRegistrationOptions,
-			"opEntityId" | "replayStore" | "providerMetadataType"
+			Omit<
+				ProcessAutomaticRegistrationOptions,
+				"opEntityId" | "replayStore" | "providerMetadataType"
+			>,
+			"engine"
 		>,
 	): Promise<Result<ProcessedAutomaticRegistration, ClientAttestationError>> {
 		if (!this.context) {
@@ -598,11 +666,16 @@ abstract class ProviderRole implements EntityRole {
 		const trustAnchors = assertNonEmptyTrustAnchors(
 			this.config.trustAnchors ?? this.context.trustAnchors,
 		);
-		const effectiveOptions = { ...this.context.options, ...this.config.options, ...options };
+		const effectiveOptions = bindFederationOptions(
+			this.context.crypto,
+			this.context.options,
+			this.config.options,
+			options,
+		);
 		const result = await processAutomaticRegistration(requestObjectJwt, trustAnchors, {
 			...effectiveOptions,
 			...(this.config.trustMarkRequirements
-				? { trustMarkRequirements: structuredClone(this.config.trustMarkRequirements) }
+				? { trustMarkRequirements: cloneData(this.config.trustMarkRequirements) }
 				: {}),
 			...(this.config.beforeRegistration
 				? { beforeRegistration: this.config.beforeRegistration }
@@ -632,7 +705,7 @@ abstract class ProviderRole implements EntityRole {
 				const adapter = this.config.registrationProtocolAdapter;
 				validationResult = await runAsyncOperation(
 					(signal) =>
-						adapter.validateClientMetadata(structuredClone(result.value.resolvedRpMetadata), {
+						adapter.validateClientMetadata(cloneData(result.value.resolvedRpMetadata), {
 							signal,
 						}),
 					effectiveOptions,
@@ -659,7 +732,7 @@ abstract class ProviderRole implements EntityRole {
 					() =>
 						onRegistration(
 							result.value.rpEntityId,
-							structuredClone({
+							cloneData({
 								...result.value.resolvedRpMetadata,
 								jwks: { keys: result.value.protocolKeys.keys },
 							}),
@@ -737,7 +810,7 @@ export class OAuthClientRole extends ClientRole {
 			readonly requestDelivery?: RequestDelivery;
 			readonly requestUri?: string;
 		},
-		options?: CreateAuthorizationRequestOptions,
+		options?: Omit<CreateAuthorizationRequestOptions, "engine">,
 	): Promise<Result<AutomaticRegistrationResult>> {
 		return this.registerAutomatically(
 			{ ...params, serverEntityId: params.authorizationServerEntityId },
@@ -766,7 +839,7 @@ export class OAuthAuthorizationServerRole extends ProviderRole {
 
 export interface OAuthResourceRoleConfig {
 	readonly trustAnchors?: TrustAnchorSet;
-	readonly options?: FederationOptions;
+	readonly options?: BoundFederationOptions;
 	readonly metadata?: Record<string, unknown>;
 	readonly jwks?: JWKSet;
 }
@@ -778,7 +851,7 @@ export class OAuthResourceRole implements EntityRole {
 	assessEntity(
 		target: string,
 		type: ProtocolEntityType,
-		options: EntityAssessmentOptions & { trustAnchors?: TrustAnchorSet } = {},
+		options: Omit<EntityAssessmentOptions & { trustAnchors?: TrustAnchorSet }, "engine"> = {},
 	) {
 		return assessRoleEntity(target, type, this.config, this.context, options);
 	}
@@ -816,9 +889,9 @@ export class OAuthResourceRole implements EntityRole {
 	 * Detach supplied resource metadata and optional protocol keys before host composition.
 	 */
 	constructor(public readonly config: OAuthResourceRoleConfig) {
-		this.metadata = structuredClone(config.metadata ?? {});
+		this.metadata = cloneData(config.metadata ?? {});
 		if (config.jwks) {
-			this.metadata.jwks = structuredClone(config.jwks);
+			this.metadata.jwks = cloneData(config.jwks);
 		}
 	}
 
@@ -839,15 +912,16 @@ function assertRoleOwner(current: EntityContext | undefined, context: EntityCont
 function assessRoleEntity(
 	target: string,
 	type: ProtocolEntityType,
-	config: { readonly trustAnchors?: TrustAnchorSet; readonly options?: FederationOptions },
+	config: { readonly trustAnchors?: TrustAnchorSet; readonly options?: BoundFederationOptions },
 	context: EntityContext | undefined,
-	options: EntityAssessmentOptions & { trustAnchors?: TrustAnchorSet },
+	options: Omit<EntityAssessmentOptions, "engine"> & { trustAnchors?: TrustAnchorSet },
 ) {
+	if (!context) throw new Error("Role has not been initialized");
 	return assessProtocolEntity(
 		target,
 		type,
 		options.trustAnchors ?? config.trustAnchors ?? context?.trustAnchors ?? new Map(),
-		{ ...context?.options, ...config.options, ...options },
+		bindFederationOptions(context.crypto, context.options, config.options, options),
 	);
 }
 
@@ -855,7 +929,7 @@ async function assessProtocolEntity(
 	target: string,
 	type: ProtocolEntityType,
 	anchors: TrustAnchorSet,
-	options: EntityAssessmentOptions = {},
+	options: EntityAssessmentOptions,
 ) {
 	const assessed = await assessEntity(
 		entityId(target),

@@ -1,6 +1,5 @@
 export { type VerifiedClientAssertion, verifyClientAssertion } from "./client-auth.js";
 export {
-	generateSigningKey,
 	isValidAlgorithm,
 	JWK_PUBLIC_FIELDS,
 	jwkThumbprint,
@@ -10,16 +9,11 @@ export {
 } from "./keys.js";
 export { type SignEntityStatementOptions, signEntityStatement } from "./sign.js";
 export {
-	JwkSigner,
-	type JwkSignerOptions,
-	type JwtSigner,
-	validateSigner,
-} from "./signer.js";
-export {
 	assertTypHeader,
 	decodeEntityConfiguration,
 	decodeEntityStatement,
 	decodeSubordinateStatement,
+	type FederationJwsOptions,
 	verifyEntityStatement,
 } from "./verify.js";
 

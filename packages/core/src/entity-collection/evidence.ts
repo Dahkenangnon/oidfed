@@ -61,7 +61,7 @@ export function createCollectionEvidence(
 			safeLogger(options.logger)?.debug("Excluded collection entity with an invalid chain");
 			return undefined;
 		}
-		const ec = decodeEntityConfiguration(chain[0] ?? "");
+		const ec = decodeEntityConfiguration(chain[0] ?? "", options);
 		if (!ec.ok) return undefined;
 		const id = checked.chain.entityId;
 		proofs.set(id, {
@@ -79,7 +79,7 @@ export function createCollectionEvidence(
 			const fetched = await configuration(anchor);
 			if (!fetched.ok) return fetched;
 			const verified = await validatePath([fetched.value]);
-			const ec = decodeEntityConfiguration(fetched.value);
+			const ec = decodeEntityConfiguration(fetched.value, options);
 			return verified && ec.ok
 				? ok({ jwt: fetched.value, payload: ec.value.payload, expiresAt: verified.expiresAt })
 				: err({
@@ -147,7 +147,7 @@ export function createCollectionEvidence(
 					throw new Error("Unable to confirm Trust Mark publication");
 				return;
 			}
-			const ec = decodeEntityConfiguration(fetched.value);
+			const ec = decodeEntityConfiguration(fetched.value, options);
 			if (!ec.ok || ec.value.payload.sub !== entry.entity.entity_id) return;
 			const self = await validateEntityConfigurationPublication(fetched.value, options);
 			if (!self.valid) return;
@@ -164,7 +164,7 @@ export function createCollectionEvidence(
 			)
 				continue;
 			if (configuredIssuerTrust) {
-				const decoded = decodeEntityStatement(ref.trust_mark);
+				const decoded = decodeEntityStatement(ref.trust_mark, options);
 				if (!decoded.ok || !isValidEntityId(decoded.value.payload.iss)) continue;
 				const pending = resolveConfiguredIssuer(decoded.value.payload.iss, ref.trust_mark_type);
 				if (!pending) continue;
@@ -215,7 +215,7 @@ export function createCollectionEvidence(
 				(authorized.length === 0) !== openOnly
 			)
 				continue;
-			const mark = decodeEntityStatement(ref.trust_mark);
+			const mark = decodeEntityStatement(ref.trust_mark, options);
 			if (!mark.ok || !isValidEntityId(mark.value.payload.iss)) continue;
 			if (authorized.length && !authorized.includes(mark.value.payload.iss)) continue;
 			const proof = await issuerProof(mark.value.payload.iss, authorized.length > 0);

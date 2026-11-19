@@ -1,3 +1,4 @@
+import { cloneData } from "../data-copy.js";
 /** Collection request encoding, claim projection, and localized text selection. */
 
 import { FederationErrorCode } from "../constants.js";
@@ -120,7 +121,7 @@ export function projectCollectionEntity(
 				]),
 		);
 	}
-	return structuredClone(result);
+	return cloneData(result);
 }
 
 export function collectionText(entity: EntityCollectionEntity): string {

@@ -7,6 +7,7 @@ import {
 import { useCallback, useEffect, useState } from "react";
 import { useSettings } from "@/hooks/use-settings";
 import { addRecentEntity } from "@/lib/settings";
+import { engine } from "../../../lib/crypto.js";
 
 interface DecodedEntityConfig {
 	readonly header: Record<string, unknown>;
@@ -54,6 +55,7 @@ export function useEntityConfig(entityId: string | undefined): UseEntityConfigRe
 		fetchEntityConfiguration(validated.value, {
 			httpTimeoutMs: settings.httpTimeoutMs,
 			signal: controller.signal,
+			engine: engine,
 		})
 			.then((result) => {
 				if (controller.signal.aborted) return;

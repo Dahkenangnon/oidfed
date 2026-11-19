@@ -7,15 +7,12 @@ import {
 	type EntityStatementMetadata,
 	entityId,
 	err,
-	generateSigningKey,
 	InternalErrorCode,
 	isErr,
 	isOk,
 	type JWK,
-	JwkSigner,
 	JwtTyp,
 	MediaType,
-	MemoryFederationKeyProvider,
 	ok,
 	signEntityStatement,
 	stripPrivateFields,
@@ -31,13 +28,26 @@ import {
 	OP_ID,
 	TA_ID,
 } from "../fixtures/index.js";
+import {
+	FixtureCrypto,
+	fixtureCryptoFailureAfterStartup,
+	fixtureCryptoFromKeys,
+	fixtureCryptoFromRead,
+	fixtureHostConfig,
+	fixtureSigner,
+	generateSigningKey,
+	instrumentSigningEntry,
+	rawFixtureJwt,
+	SigningEntryFixture,
+	testEngine,
+} from "../fixtures/software-crypto.js";
 
 // ---------------------------------------------------------------------------
 // Shared test helpers
 // ---------------------------------------------------------------------------
 
 function createFederationSigningKey(signingKey: JWK) {
-	return { signer: new JwkSigner(signingKey), publicJwk: stripPrivateFields(signingKey) };
+	return { signer: new SigningEntryFixture(signingKey), publicJwk: stripPrivateFields(signingKey) };
 }
 
 async function createLeafConfig(
@@ -47,7 +57,7 @@ async function createLeafConfig(
 	const signingKey = { ...privateKey, kid: privateKey.kid ?? "leaf-key-1" };
 	const config: LeafConfig = {
 		entityId: LEAF_ID,
-		keyProvider: new MemoryFederationKeyProvider(createFederationSigningKey(signingKey)),
+		crypto: new FixtureCrypto(createFederationSigningKey(signingKey)),
 		authorityHints: [TA_ID],
 		metadata: {
 			openid_relying_party: {
@@ -90,7 +100,7 @@ export default (QUnit: QUnit) => {
 					},
 				},
 			});
-			const leaf = new Leaf(config);
+			const leaf = await Leaf.create(fixtureHostConfig(config));
 			const chain = [f.opEcJwt, f.taSubStatementForOp, f.taEcJwt];
 			const discovered = await leaf.discoverEntityFromChain(OP_ID, chain);
 			t.true(discovered.ok, JSON.stringify(discovered));
@@ -99,7 +109,9 @@ export default (QUnit: QUnit) => {
 				t.equal(discovered.value.trustChain.trustAnchorId, TA_ID);
 			}
 			t.false((await leaf.discoverEntityFromChain(OP_ID, chain, { trustAnchors: new Map() })).ok);
-			const unconfigured = new Leaf({ ...config, trustAnchors: undefined });
+			const unconfigured = await Leaf.create(
+				fixtureHostConfig({ ...config, trustAnchors: undefined }),
+			);
 			t.false((await unconfigured.discoverEntityFromChain(OP_ID, chain)).ok);
 			t.true(
 				(await unconfigured.discoverEntityFromChain(OP_ID, chain, { trustAnchors: f.trustAnchors }))
@@ -110,11 +122,11 @@ export default (QUnit: QUnit) => {
 		test("fetching a mark validates issuer trust and holder binding before publishing", async (t) => {
 			const clock = { now: () => 1000 };
 			const { config, publicKey } = await createLeafConfig({ options: { clock } });
-			const leaf = new Leaf(config);
+			const leaf = await Leaf.create(fixtureHostConfig(config));
 			const issuer = "https://accreditor.example";
 			const type = "urn:example:accreditation";
 			const key = await generateSigningKey("ES256");
-			const signer = new JwkSigner(key.privateKey);
+			const signer = new SigningEntryFixture(key.privateKey);
 			const jwks = { keys: [key.publicKey] };
 			const ec = await signEntityStatement(
 				{
@@ -175,7 +187,11 @@ export default (QUnit: QUnit) => {
 			await leaf.fetchAndAttachTrustMark(input);
 			t.deepEqual(leaf.getTrustMarks(), [{ trust_mark_type: type, trust_mark: jwt }]);
 			const published = await leaf.getEntityConfiguration();
-			const checked = await verifyEntityStatement(published, { keys: [publicKey] }, { clock });
+			const checked = await verifyEntityStatement(
+				published,
+				{ keys: [publicKey] },
+				{ engine: testEngine, clock },
+			);
 			t.true(checked.ok);
 			if (checked.ok) t.deepEqual(checked.value.payload.trust_marks, leaf.getTrustMarks());
 			for (mode of ["unavailable", "wrong-holder"]) {
@@ -196,27 +212,29 @@ export default (QUnit: QUnit) => {
 			const ownerKey = await generateSigningKey("ES256");
 			const type = "urn:example:accreditation";
 			const subject = "https://member.example";
-			const leaf = new Leaf({
-				...config,
-				trustMarkIssuer: {
-					storage: new CorePublic.MemoryTrustMarkStore(),
-					issuerEvidence: [
-						{
-							kind: "out-of-band",
-							issuer: String(config.entityId),
-							allowedTrustMarkTypes: [type],
-							keys: { keys: [publicKey] },
-							trustMarkOwners: { [type]: { sub: owner, jwks: { keys: [ownerKey.publicKey] } } },
-						},
-					],
-				},
-			});
+			const leaf = await Leaf.create(
+				fixtureHostConfig({
+					...config,
+					trustMarkIssuer: {
+						storage: new CorePublic.MemoryTrustMarkStore(),
+						issuerEvidence: [
+							{
+								kind: "out-of-band",
+								issuer: String(config.entityId),
+								allowedTrustMarkTypes: [type],
+								keys: { keys: [publicKey] },
+								trustMarkOwners: { [type]: { sub: owner, jwks: { keys: [ownerKey.publicKey] } } },
+							},
+						],
+					},
+				}),
+			);
 			const delegate = (ttlSeconds: number) =>
 				CorePublic.signTrustMarkDelegation({
 					issuer: owner,
 					subject: leaf.entityId,
 					trustMarkType: type,
-					signer: new JwkSigner(ownerKey.privateKey),
+					signer: new SigningEntryFixture(ownerKey.privateKey),
 					clock,
 					ttlSeconds,
 				});
@@ -255,7 +273,7 @@ export default (QUnit: QUnit) => {
 			await leaf.revokeTrustMark(type, subject);
 			t.deepEqual(await leaf.listTrustMarksForSubject(subject), []);
 			t.deepEqual(await leaf.listTrustMarkedEntities(type), []);
-			const disabled = new Leaf(config);
+			const disabled = await Leaf.create(fixtureHostConfig(config));
 			await t.rejects(disabled.listTrustMarksForSubject(subject), /not configured/);
 			await t.rejects(disabled.listTrustMarkedEntities(type), /not configured/);
 			await t.rejects(disabled.setTrustMarkDelegations({}), /not configured/);
@@ -279,7 +297,7 @@ export default (QUnit: QUnit) => {
 				},
 				resolver: { requireAuthForFreshResolution: false },
 			});
-			const leaf = new Leaf(config);
+			const leaf = await Leaf.create(fixtureHostConfig(config));
 			const assessment = await leaf.assessEntity(OP_ID);
 			t.true(assessment.ok, JSON.stringify(assessment));
 			t.ok(calls > 0);
@@ -315,27 +333,29 @@ export default (QUnit: QUnit) => {
 					},
 				},
 			};
-			t.throws(() => new Leaf(collision), /conflicts/);
-			t.throws(
-				() =>
-					new Leaf({
-						...config,
-						metadata: {
-							federation_entity: {
-								federation_resolve_endpoint: `${LEAF_ID}/resolve`,
-								federation_resolve_endpoint_auth_methods: ["private_key_jwt"],
-								endpoint_auth_signing_alg_values_supported: ["ES256"],
+			await t.rejects((async () => await Leaf.create(fixtureHostConfig(collision)))(), /conflicts/);
+			await t.rejects(
+				(async () =>
+					await Leaf.create(
+						fixtureHostConfig({
+							...config,
+							metadata: {
+								federation_entity: {
+									federation_resolve_endpoint: `${LEAF_ID}/resolve`,
+									federation_resolve_endpoint_auth_methods: ["private_key_jwt"],
+									endpoint_auth_signing_alg_values_supported: ["ES256"],
+								},
 							},
-						},
-						resolver: {
-							authentication: {
-								methods: ["private_key_jwt"],
-								allowedAlgorithms: ["RS256"],
-								replayStore: new CorePublic.MemoryReplayStore(),
-								getClientFederationJwks: async () => ({ keys: [f.leafPublicKey] }),
+							resolver: {
+								authentication: {
+									methods: ["private_key_jwt"],
+									allowedAlgorithms: ["RS256"],
+									replayStore: new CorePublic.MemoryReplayStore({ engine: testEngine }),
+									getClientFederationJwks: async () => ({ keys: [f.leafPublicKey] }),
+								},
 							},
-						},
-					}),
+						}),
+					))(),
 				/no permitted intersection/,
 				"published signing algorithms cannot be bypassed by service configuration",
 			);
@@ -347,7 +367,7 @@ export default (QUnit: QUnit) => {
 			const additionalClaims = { x_rules: { versions: [1] } };
 			const crit = ["x_rules"];
 			const { config } = await createLeafConfig({ additionalClaims, crit });
-			const leaf = new Leaf(config);
+			const leaf = await Leaf.create(fixtureHostConfig(config));
 			additionalClaims.x_rules.versions.push(2);
 			crit.push("absent");
 			for (const jwt of [
@@ -366,8 +386,11 @@ export default (QUnit: QUnit) => {
 				{ crit: ["missing"] },
 				{ crit: [] },
 			]) {
-				t.throws(
-					() => new Leaf({ ...config, additionalClaims: {}, crit: undefined, ...patch }),
+				await t.rejects(
+					(async () =>
+						await Leaf.create(
+							fixtureHostConfig({ ...config, additionalClaims: {}, crit: undefined, ...patch }),
+						))(),
 					/reserved|crit/,
 				);
 			}
@@ -385,16 +408,23 @@ export default (QUnit: QUnit) => {
 				"/tenant/.well-known/openid-federation",
 				"https://leaf.example/tenant/.well-known/openid-federation",
 			])
-				t.throws(() => new Leaf({ ...config, roles: [role(path)] }), /Role route.*conflicts/);
-			t.throws(
-				() =>
-					new Leaf({
-						...config,
-						roles: [role("/register"), role("https://leaf.example/register")],
-					}),
+				await t.rejects(
+					(async () => await Leaf.create(fixtureHostConfig({ ...config, roles: [role(path)] })))(),
+					/Role route.*conflicts/,
+				);
+			await t.rejects(
+				(async () =>
+					await Leaf.create(
+						fixtureHostConfig({
+							...config,
+							roles: [role("/register"), role("https://leaf.example/register")],
+						}),
+					))(),
 				/Role route.*conflicts/,
 			);
-			const leaf = new Leaf({ ...config, roles: [role("/tenant//register")] });
+			const leaf = await Leaf.create(
+				fixtureHostConfig({ ...config, roles: [role("/tenant//register")] }),
+			);
 			t.equal(
 				await (
 					await leaf.handleRequest(new Request("https://leaf.example/tenant//register"))
@@ -419,22 +449,25 @@ export default (QUnit: QUnit) => {
 					const raw = prefix + "/".repeat(trailing),
 						expected = raw.endsWith("/") ? raw.slice(0, -1) : raw;
 					let roleId: string | undefined;
-					const leaf = new Leaf({
-						...config,
-						entityId: raw,
-						roles: [
-							{
-								type: "example_protocol",
-								metadata: {},
-								initialize: (context) => {
-									roleId = context.entityId;
+					const leaf = await Leaf.create(
+						fixtureHostConfig({
+							...config,
+							entityId: raw,
+							roles: [
+								{
+									type: "example_protocol",
+									metadata: {},
+									initialize: (context) => {
+										roleId = context.entityId;
+									},
 								},
-							},
-						],
-					});
+							],
+						}),
+					);
 					t.equal(leaf.entityId, expected);
 					t.equal(roleId, expected);
 					const result = await CorePublic.fetchEntityConfiguration(leaf.entityId, {
+						engine: testEngine,
 						httpClient: async (input) => leaf.handleRequest(new Request(String(input))),
 					});
 					t.true(result.ok, raw);
@@ -452,29 +485,31 @@ export default (QUnit: QUnit) => {
 				subject = entityId("https://member.example"),
 				type = "type";
 			const client = await generateSigningKey("ES256"),
-				signer = new JwkSigner(client.privateKey);
+				signer = new SigningEntryFixture(client.privateKey);
 			for (const advertised of [["RS256"], ["RS256", "ES256"], undefined]) {
-				const leaf = new Leaf({
-					...config,
-					metadata: {
-						federation_entity: {
-							federation_trust_mark_endpoint: `${issuer}/marks`,
-							federation_trust_mark_endpoint_auth_methods: ["private_key_jwt"],
-							federation_trust_mark_status_endpoint: `${issuer}/status`,
-							federation_trust_mark_status_endpoint_auth_methods: ["private_key_jwt"],
-							federation_trust_mark_list_endpoint: `${issuer}/list`,
-							federation_trust_mark_list_endpoint_auth_methods: ["private_key_jwt"],
-							...(advertised ? { endpoint_auth_signing_alg_values_supported: advertised } : {}),
+				const leaf = await Leaf.create(
+					fixtureHostConfig({
+						...config,
+						metadata: {
+							federation_entity: {
+								federation_trust_mark_endpoint: `${issuer}/marks`,
+								federation_trust_mark_endpoint_auth_methods: ["private_key_jwt"],
+								federation_trust_mark_status_endpoint: `${issuer}/status`,
+								federation_trust_mark_status_endpoint_auth_methods: ["private_key_jwt"],
+								federation_trust_mark_list_endpoint: `${issuer}/list`,
+								federation_trust_mark_list_endpoint_auth_methods: ["private_key_jwt"],
+								...(advertised ? { endpoint_auth_signing_alg_values_supported: advertised } : {}),
+							},
 						},
-					},
-					trustMarkIssuer: {
-						storage: new CorePublic.MemoryTrustMarkStore(),
-						authentication: {
-							replayStore: new CorePublic.MemoryReplayStore(),
-							getClientFederationJwks: async () => ({ keys: [client.publicKey] }),
+						trustMarkIssuer: {
+							storage: new CorePublic.MemoryTrustMarkStore(),
+							authentication: {
+								replayStore: new CorePublic.MemoryReplayStore({ engine: testEngine }),
+								getClientFederationJwks: async () => ({ keys: [client.publicKey] }),
+							},
 						},
-					},
-				});
+					}),
+				);
 				const jwt = await leaf.issueTrustMark(subject, type);
 				const options = {
 					httpClient: async (input: string | URL | Request, init?: RequestInit) =>
@@ -489,48 +524,54 @@ export default (QUnit: QUnit) => {
 				const fetched = await CorePublic.fetchTrustMark(
 					`${issuer}/marks`,
 					{ sub: subject, trustMarkType: type },
-					options,
+					{ ...options, engine: testEngine },
 				);
 				const listed = await CorePublic.fetchTrustMarkList(
 					`${issuer}/list`,
 					{ trustMarkType: type },
-					options,
+					{ ...options, engine: testEngine },
 				);
-				const keys = await config.keyProvider.getFederationKeySet();
-				const status = await CorePublic.fetchTrustMarkStatus(`${issuer}/status`, jwt, keys.jwks, {
-					...options,
-					expectedIssuer: issuer,
-				});
+				const keys = await config.crypto.keyring.entry("federation");
+				const status = await CorePublic.fetchTrustMarkStatus(
+					`${issuer}/status`,
+					jwt,
+					keys.publishedJwks,
+					{ engine: testEngine, ...options, expectedIssuer: issuer },
+				);
 				for (const result of [fetched, listed, status])
 					t.equal(result.ok, advertised?.includes("ES256") ?? true);
 			}
-			const build = (allowedAlgorithms: readonly string[]) =>
-				new Leaf({
-					...config,
-					metadata: {
-						federation_entity: {
-							federation_trust_mark_endpoint: `${issuer}/marks`,
-							federation_trust_mark_endpoint_auth_methods: ["private_key_jwt"],
-							endpoint_auth_signing_alg_values_supported: ["ES256", "RS256"],
+			const build = async (allowedAlgorithms: readonly string[]) =>
+				await Leaf.create(
+					fixtureHostConfig({
+						...config,
+						metadata: {
+							federation_entity: {
+								federation_trust_mark_endpoint: `${issuer}/marks`,
+								federation_trust_mark_endpoint_auth_methods: ["private_key_jwt"],
+								endpoint_auth_signing_alg_values_supported: ["ES256", "RS256"],
+							},
 						},
-					},
-					trustMarkIssuer: {
-						storage: new CorePublic.MemoryTrustMarkStore(),
-						authentication: {
-							allowedAlgorithms,
-							replayStore: new CorePublic.MemoryReplayStore(),
-							getClientFederationJwks: async () => ({ keys: [client.publicKey] }),
+						trustMarkIssuer: {
+							storage: new CorePublic.MemoryTrustMarkStore(),
+							authentication: {
+								allowedAlgorithms,
+								replayStore: new CorePublic.MemoryReplayStore({ engine: testEngine }),
+								getClientFederationJwks: async () => ({ keys: [client.publicKey] }),
+							},
 						},
-					},
-				});
-			t.throws(() => build(["PS256"]), /intersection/);
+					}),
+				);
+			await t.rejects((() => build(["PS256"]))(), /intersection/);
 			const restricted = build(["RS256"]);
-			await restricted.issueTrustMark(subject, type);
+			await (await restricted).issueTrustMark(subject, type);
 			const response = await CorePublic.fetchTrustMark(
 				`${issuer}/marks`,
 				{ sub: subject, trustMarkType: type },
 				{
-					httpClient: async (input, init) => restricted.handleRequest(new Request(input, init)),
+					engine: testEngine,
+					httpClient: async (input, init) =>
+						(await restricted).handleRequest(new Request(input, init)),
 					authentication: {
 						method: "private_key_jwt",
 						audience: issuer,
@@ -547,46 +588,49 @@ export default (QUnit: QUnit) => {
 			const issuer = String(config.entityId),
 				subject = entityId("https://member.example"),
 				type = "type";
-			const leaf = new Leaf({
-				...config,
-				metadata: {
-					federation_entity: {
-						federation_trust_mark_endpoint: `${issuer}/marks`,
-						federation_trust_mark_endpoint_auth_methods: ["example-auth"],
-						federation_trust_mark_list_endpoint: `${issuer}/mark-list`,
-						federation_trust_mark_status_endpoint: `${issuer}/mark-status`,
+			const leaf = await Leaf.create(
+				fixtureHostConfig({
+					...config,
+					metadata: {
+						federation_entity: {
+							federation_trust_mark_endpoint: `${issuer}/marks`,
+							federation_trust_mark_endpoint_auth_methods: ["example-auth"],
+							federation_trust_mark_list_endpoint: `${issuer}/mark-list`,
+							federation_trust_mark_status_endpoint: `${issuer}/mark-status`,
+						},
 					},
-				},
-				trustMarkIssuer: {
-					storage: new CorePublic.MemoryTrustMarkStore(),
-					authentication: {
-						extensions: {
-							methods: {
-								"example-auth": {
-									parameters: ["proof"],
-									authenticate: (input) =>
-										input.parameters.proof?.[0] === "valid"
-											? ok({ entityId: "https://caller.example" })
-											: err({ code: "invalid_client", description: "invalid" }),
+					trustMarkIssuer: {
+						storage: new CorePublic.MemoryTrustMarkStore(),
+						authentication: {
+							extensions: {
+								methods: {
+									"example-auth": {
+										parameters: ["proof"],
+										authenticate: (input) =>
+											input.parameters.proof?.[0] === "valid"
+												? ok({ entityId: "https://caller.example" })
+												: err({ code: "invalid_client", description: "invalid" }),
+									},
 								},
 							},
 						},
 					},
-				},
-			});
+				}),
+			);
 			const jwt = await leaf.issueTrustMark(subject, type, { noExpiry: true });
 			const httpClient: CorePublic.HttpClient = async (url, init) =>
 				leaf.handleRequest(new Request(url, init));
 			const missing = await CorePublic.fetchTrustMark(
 				`${issuer}/marks`,
 				{ sub: subject, trustMarkType: type },
-				{ httpClient },
+				{ engine: testEngine, httpClient },
 			);
 			t.false(missing.ok);
 			const fetched = await CorePublic.fetchTrustMark(
 				`${issuer}/marks`,
 				{ sub: subject, trustMarkType: type },
 				{
+					engine: testEngine,
 					httpClient,
 					authentication: {
 						method: "example-auth",
@@ -600,7 +644,7 @@ export default (QUnit: QUnit) => {
 			const listed = await CorePublic.fetchTrustMarkList(
 				`${issuer}/mark-list`,
 				{ trustMarkType: type },
-				{ httpClient },
+				{ engine: testEngine, httpClient },
 			);
 			t.true(listed.ok);
 			if (listed.ok) t.deepEqual(listed.value, [subject]);
@@ -608,7 +652,7 @@ export default (QUnit: QUnit) => {
 				`${issuer}/mark-status`,
 				jwt,
 				{ keys: [publicKey] },
-				{ expectedIssuer: issuer, httpClient },
+				{ engine: testEngine, expectedIssuer: issuer, httpClient },
 			);
 			t.true(checked.ok);
 			if (checked.ok) t.equal(checked.value.status, "active");
@@ -617,7 +661,7 @@ export default (QUnit: QUnit) => {
 				`${issuer}/mark-status`,
 				jwt,
 				{ keys: [publicKey] },
-				{ expectedIssuer: issuer, httpClient },
+				{ engine: testEngine, expectedIssuer: issuer, httpClient },
 			);
 			t.true(revoked.ok);
 			if (revoked.ok) t.equal(revoked.value.status, "revoked");
@@ -637,15 +681,17 @@ export default (QUnit: QUnit) => {
 
 		test("Trust Mark route selectors preserve exact extension ordering", async (t) => {
 			const { config } = await createLeafConfig();
-			const leaf = new Leaf({
-				...config,
-				metadata: {
-					federation_entity: {
-						federation_trust_mark_list_endpoint: `${config.entityId}/mark-list?extension=a&extension=b`,
+			const leaf = await Leaf.create(
+				fixtureHostConfig({
+					...config,
+					metadata: {
+						federation_entity: {
+							federation_trust_mark_list_endpoint: `${config.entityId}/mark-list?extension=a&extension=b`,
+						},
 					},
-				},
-				trustMarkIssuer: { storage: new CorePublic.MemoryTrustMarkStore() },
-			});
+					trustMarkIssuer: { storage: new CorePublic.MemoryTrustMarkStore() },
+				}),
+			);
 			const type = "urn:example:mark";
 			for (const [query, expected] of [
 				["extension=a&extension=b", 200],
@@ -664,15 +710,15 @@ export default (QUnit: QUnit) => {
 		test("holder attachment is validated, detached, deduplicated and rolls back when publication fails", async (t) => {
 			const { config } = await createLeafConfig();
 			let fail = false;
-			const leaf = new Leaf({
-				...config,
-				keyProvider: {
-					getFederationKeySet: async () => {
+			const leaf = await Leaf.create(
+				fixtureHostConfig({
+					...config,
+					crypto: fixtureCryptoFromRead(async () => {
 						if (fail) throw new Error("signer unavailable");
-						return config.keyProvider.getFederationKeySet();
-					},
-				},
-			});
+						return config.crypto.keyring.entry("federation");
+					}),
+				}),
+			);
 			const key = await generateSigningKey("ES256"),
 				issuer = "https://accreditor.example",
 				type = "type";
@@ -686,11 +732,16 @@ export default (QUnit: QUnit) => {
 				issuer,
 				subject: leaf.entityId,
 				trustMarkType: type,
-				signer: new JwkSigner(key.privateKey),
+				signer: new SigningEntryFixture(key.privateKey),
 			});
 			const before = await leaf.getEntityConfiguration();
 			fail = true;
-			await t.rejects(leaf.attachTrustMark(jwt, { issuerEvidence, expectedTrustMarkType: type }));
+			await t.rejects(
+				leaf.attachTrustMark(jwt, {
+					issuerEvidence,
+					expectedTrustMarkType: type,
+				}),
+			);
 			t.deepEqual(leaf.getTrustMarks(), []);
 			t.equal(await leaf.getEntityConfiguration(), before);
 			fail = false;
@@ -725,7 +776,7 @@ export default (QUnit: QUnit) => {
 			if (!decoded.ok) throw Error("fixture");
 			const ss = await signEntityStatement(
 				{ ...decoded.value.payload, constraints: { custom: true } },
-				new JwkSigner(f.taSigningKey),
+				new SigningEntryFixture(f.taSigningKey),
 				{ typ: JwtTyp.EntityStatement },
 			);
 			const httpClient: typeof f.httpClient = async (input, init) => {
@@ -763,37 +814,38 @@ export default (QUnit: QUnit) => {
 				for (const throughRole of [false, true]) {
 					const { config } = await createLeafConfig();
 					const messages: string[] = [];
-					let failing = true;
+					let failing = false;
 					const metadata = {
 						federation_collection_endpoint: `${LEAF_ID}/collect`,
 						...(resolve ? { federation_resolve_endpoint: `${LEAF_ID}/resolve` } : {}),
 					};
-					const leaf = new Leaf({
-						...config,
-						collection: { trustAnchors: new Map() },
-						metadata: {
-							...config.metadata,
-							...(!throughRole ? { federation_entity: metadata } : {}),
-						},
-						...(throughRole ? { roles: [{ type: "federation_entity", metadata }] } : {}),
-						keyProvider: {
-							getFederationKeySet: async () => {
-								if (failing) throw new Error("signing failed");
-								return config.keyProvider.getFederationKeySet();
+					const leaf = await Leaf.create(
+						fixtureHostConfig({
+							...config,
+							collection: { trustAnchors: new Map() },
+							metadata: {
+								...config.metadata,
+								...(!throughRole ? { federation_entity: metadata } : {}),
 							},
-						},
-						options: {
-							logger: {
-								debug() {},
-								warn() {},
-								error() {},
-								info: (message) => {
-									messages.push(message);
-									throw new Error("Logger failed");
+							...(throughRole ? { roles: [{ type: "federation_entity", metadata }] } : {}),
+							crypto: fixtureCryptoFromRead(async () => {
+								if (failing) throw new Error("signing failed");
+								return config.crypto.keyring.entry("federation");
+							}),
+							options: {
+								logger: {
+									debug() {},
+									warn() {},
+									error() {},
+									info: (message) => {
+										messages.push(message);
+										throw new Error("Logger failed");
+									},
 								},
 							},
-						},
-					});
+						}),
+					);
+					failing = true;
 					t.deepEqual(messages, []);
 					await t.rejects(leaf.getEntityConfiguration());
 					t.deepEqual(messages, []);
@@ -818,55 +870,59 @@ export default (QUnit: QUnit) => {
 				return { promise, release };
 			}
 			const { config } = await createLeafConfig();
-			const firstKeys = await config.keyProvider.getFederationKeySet();
+			const firstKeys = await config.crypto.keyring.entry("federation");
 			const replacement = await generateSigningKey("ES256");
-			const secondKeys = await MemoryFederationKeyProvider.fromJWK(
-				replacement.privateKey,
-			).getFederationKeySet();
+			const secondKeys = await FixtureCrypto.fromJWK(replacement.privateKey).keyring.entry(
+				"federation",
+			);
 			for (const newestFirst of [false, true])
 				for (const throwingLogger of [false, true]) {
 					const ready = [gate(), gate()];
 					const finish = [gate(), gate()];
 					const messages: unknown[][] = [];
 					let calls = 0;
-					const leaf = new Leaf({
-						...config,
-						collection: { trustAnchors: new Map() },
-						metadata: {
-							...config.metadata,
-							federation_entity: { federation_collection_endpoint: `${LEAF_ID}/collect` },
-						},
-						keyProvider: {
-							getFederationKeySet: async () => {
+					let initialized = false;
+					const leaf = await Leaf.create(
+						fixtureHostConfig({
+							...config,
+							collection: { trustAnchors: new Map() },
+							metadata: {
+								...config.metadata,
+								federation_entity: { federation_collection_endpoint: `${LEAF_ID}/collect` },
+							},
+							crypto: fixtureCryptoFromRead(async () => {
+								if (!initialized) return firstKeys;
 								const index = calls++;
 								const keys = index === 0 ? firstKeys : secondKeys;
 								return {
 									...keys,
-									signer: {
-										alg: keys.signer.alg,
-										kid: keys.signer.kid,
-										signJwt: async (...args: Parameters<typeof keys.signer.signJwt>) => {
-											const jwt = await keys.signer.signJwt(...args);
+									signer: instrumentSigningEntry(
+										keys.signer,
+										async (
+											...args: [payload: Uint8Array, header: Readonly<Record<string, unknown>>]
+										) => {
+											const jwt = await rawFixtureJwt(keys.signer, ...args);
 											ready[index]!.release();
 											await finish[index]!.promise;
 											return jwt;
 										},
-									},
+									).signer,
 								};
-							},
-						},
-						options: {
-							logger: {
-								debug() {},
-								warn() {},
-								error() {},
-								info: (...args: unknown[]) => {
-									messages.push(args);
-									if (throwingLogger) throw new Error("Private sink error");
+							}),
+							options: {
+								logger: {
+									debug() {},
+									warn() {},
+									error() {},
+									info: (...args: unknown[]) => {
+										messages.push(args);
+										if (throwingLogger) throw new Error("Private sink error");
+									},
 								},
 							},
-						},
-					});
+						}),
+					);
+					initialized = true;
 					try {
 						const older = leaf.handleRequest(
 							new Request(`${LEAF_ID}${WELL_KNOWN_OPENID_FEDERATION}`),
@@ -930,7 +986,7 @@ export default (QUnit: QUnit) => {
 			};
 			const logger = { debug: record, info: record, warn: record, error: record };
 			const { config } = await createLeafConfig({ options: { logger } });
-			const leaf = new Leaf(config);
+			const leaf = await Leaf.create(fixtureHostConfig(config));
 			t.equal(
 				(await leaf.handleRequest(new Request(`${LEAF_ID}${WELL_KNOWN_OPENID_FEDERATION}`))).status,
 				200,
@@ -941,21 +997,19 @@ export default (QUnit: QUnit) => {
 				throw new Error("Logger failed");
 			};
 			const options = { logger: { debug: fail, info: fail, warn: fail, error: fail } };
-			const healthy = new Leaf({ ...config, options });
+			const healthy = await Leaf.create(fixtureHostConfig({ ...config, options }));
 			t.equal(
 				(await healthy.handleRequest(new Request(`${LEAF_ID}${WELL_KNOWN_OPENID_FEDERATION}`)))
 					.status,
 				200,
 			);
-			const broken = new Leaf({
-				...config,
-				options,
-				keyProvider: {
-					getFederationKeySet: async () => {
-						throw new Error("Private signing error");
-					},
-				},
-			});
+			const broken = await Leaf.create(
+				fixtureHostConfig({
+					...config,
+					options,
+					crypto: await fixtureCryptoFailureAfterStartup(new Error("Private signing error")),
+				}),
+			);
 			const response = await broken.handleRequest(
 				new Request(`${LEAF_ID}${WELL_KNOWN_OPENID_FEDERATION}`),
 			);
@@ -967,14 +1021,16 @@ export default (QUnit: QUnit) => {
 	test("leaf rejects authentication companions for forbidden endpoints", async (t) => {
 		const { config } = await createLeafConfig();
 		for (const endpoint of ["fetch", "list", "extended_list"]) {
-			t.throws(
-				() =>
-					new Leaf({
-						...config,
-						metadata: {
-							federation_entity: { [`federation_${endpoint}_endpoint_auth_methods`]: ["none"] },
-						},
-					}),
+			await t.rejects(
+				(async () =>
+					await Leaf.create(
+						fixtureHostConfig({
+							...config,
+							metadata: {
+								federation_entity: { [`federation_${endpoint}_endpoint_auth_methods`]: ["none"] },
+							},
+						}),
+					))(),
 				/cannot publish/,
 			);
 		}
@@ -1013,10 +1069,13 @@ export default (QUnit: QUnit) => {
 				const jwks = { keys: scenario.keys };
 				const configured = { ...config, metadata: { openid_relying_party: { jwks } } };
 				if (!scenario.valid) {
-					t.throws(() => new Leaf(configured), /'use'/);
+					await t.rejects(
+						(async () => await Leaf.create(fixtureHostConfig(configured)))(),
+						/'use'/,
+					);
 					continue;
 				}
-				const leaf = new Leaf(configured);
+				const leaf = await Leaf.create(fixtureHostConfig(configured));
 				const published = decodeEntityStatement(await leaf.getEntityConfiguration());
 				t.true(published.ok);
 				if (published.ok)
@@ -1028,7 +1087,7 @@ export default (QUnit: QUnit) => {
 			const metadata = {
 				openid_provider: { issuer: LEAF_ID, client_registration_types_supported: ["explicit"] },
 			};
-			const leaf = new Leaf({ ...config, metadata });
+			const leaf = await Leaf.create(fixtureHostConfig({ ...config, metadata }));
 			const published = decodeEntityStatement(await leaf.getEntityConfiguration());
 			t.true(published.ok);
 			if (published.ok) t.deepEqual(published.value.payload.metadata, metadata);
@@ -1152,47 +1211,62 @@ export default (QUnit: QUnit) => {
 	module("leaf / Leaf / validation", () => {
 		test("rejects empty metadata — requires at least one Entity Type", async (t) => {
 			const { config } = await createLeafConfig({ metadata: {} as never });
-			t.throws(() => new Leaf(config), /metadata MUST contain at least one Entity Type/);
+			await t.rejects(
+				(async () => await Leaf.create(fixtureHostConfig(config)))(),
+				/metadata MUST contain at least one Entity Type/,
+			);
 		});
 
 		test("throws on empty authorityHints", async (t) => {
 			const { config } = await createLeafConfig({
 				authorityHints: [] as unknown as [EntityId, ...EntityId[]],
 			});
-			t.throws(() => new Leaf(config), /authorityHints/);
+			await t.rejects(
+				(async () => await Leaf.create(fixtureHostConfig(config)))(),
+				/authorityHints/,
+			);
 		});
 
 		test("rejects non-HTTPS authorityHint — requires valid Entity Identifiers", async (t) => {
 			const { config } = await createLeafConfig({
 				authorityHints: ["http://ta.example.com" as EntityId],
 			});
-			t.throws(() => new Leaf(config), /authorityHint/);
+			await t.rejects(
+				(async () => await Leaf.create(fixtureHostConfig(config)))(),
+				/authorityHint/,
+			);
 		});
 
 		test("throws on empty trustAnchorHints", async (t) => {
 			const { config } = await createLeafConfig({
 				trustAnchorHints: [],
 			});
-			t.throws(() => new Leaf(config), /trustAnchorHints/);
+			await t.rejects(
+				(async () => await Leaf.create(fixtureHostConfig(config)))(),
+				/trustAnchorHints/,
+			);
 		});
 
 		test("rejects non-HTTPS trustAnchorHint — requires valid Entity Identifiers", async (t) => {
 			const { config } = await createLeafConfig({
 				trustAnchorHints: ["http://ta.example.com" as EntityId],
 			});
-			t.throws(() => new Leaf(config), /trustAnchorHint/);
+			await t.rejects(
+				(async () => await Leaf.create(fixtureHostConfig(config)))(),
+				/trustAnchorHint/,
+			);
 		});
 
-		test("throws when keyProvider is missing", async (t) => {
-			const { config } = await createLeafConfig({ keyProvider: undefined });
-			t.throws(() => new Leaf(config), /keyProvider/);
+		test("throws when crypto is missing", async (t) => {
+			const { config } = await createLeafConfig({ crypto: undefined });
+			await t.rejects((async () => await Leaf.create(fixtureHostConfig(config)))(), /crypto/);
 		});
 
 		test("throws on signer key without kid", async (t) => {
 			const { privateKey } = await generateSigningKey("ES256");
 			const keyWithoutKid = { ...privateKey } as Record<string, unknown>;
 			delete keyWithoutKid.kid;
-			t.throws(() => new JwkSigner(keyWithoutKid as unknown as JWK), /kid/);
+			t.throws(() => new SigningEntryFixture(keyWithoutKid as unknown as JWK), /kid/);
 		});
 
 		test("throws when metadata includes federation_fetch_endpoint", async (t) => {
@@ -1202,7 +1276,10 @@ export default (QUnit: QUnit) => {
 					federation_entity: { federation_fetch_endpoint: "https://rp.example.com/fetch" },
 				} as never,
 			});
-			t.throws(() => new Leaf(config), /Leaf entities MUST NOT publish federation_fetch_endpoint/);
+			await t.rejects(
+				(async () => await Leaf.create(fixtureHostConfig(config)))(),
+				/Leaf entities MUST NOT publish federation_fetch_endpoint/,
+			);
 		});
 
 		test("throws when metadata includes federation_list_endpoint", async (t) => {
@@ -1212,7 +1289,10 @@ export default (QUnit: QUnit) => {
 					federation_entity: { federation_list_endpoint: "https://rp.example.com/list" },
 				} as never,
 			});
-			t.throws(() => new Leaf(config), /Leaf entities MUST NOT publish federation_list_endpoint/);
+			await t.rejects(
+				(async () => await Leaf.create(fixtureHostConfig(config)))(),
+				/Leaf entities MUST NOT publish federation_list_endpoint/,
+			);
 		});
 
 		test("rejects extended listing endpoint metadata directly and through roles", async (t) => {
@@ -1222,8 +1302,8 @@ export default (QUnit: QUnit) => {
 				{ roles: [{ type: "federation_entity", metadata: endpoint }] },
 			]) {
 				const { config } = await createLeafConfig(overrides);
-				t.throws(
-					() => new Leaf(config),
+				await t.rejects(
+					(async () => await Leaf.create(fixtureHostConfig(config)))(),
 					/Leaf entities MUST NOT publish federation_extended_list_endpoint/,
 				);
 			}
@@ -1233,20 +1313,21 @@ export default (QUnit: QUnit) => {
 			const { privateKey: key1 } = await generateSigningKey("ES256");
 			const { privateKey: key2 } = await generateSigningKey("ES256");
 			const key2WithSameKid = { ...key2, kid: key1.kid } as unknown as JWK;
-			t.throws(
-				() =>
-					new MemoryFederationKeyProvider([
+			await t.rejects(
+				(async () =>
+					await fixtureCryptoFromKeys([
 						createFederationSigningKey(key1),
 						createFederationSigningKey(key2WithSameKid),
-					]),
-				/Duplicate|already exists/,
+					]))(),
+				/identifiers cannot be reused/,
 			);
 		});
 
 		test("rejects symmetric key (kty 'oct') — requires asymmetric keys", async (t) => {
 			t.throws(
-				() => new JwkSigner({ kty: "oct", kid: "sym-1", k: "c2VjcmV0" } as unknown as JWK),
-				/Symmetric keys/,
+				() =>
+					new SigningEntryFixture({ kty: "oct", kid: "sym-1", k: "c2VjcmV0" } as unknown as JWK),
+				/private key material/,
 			);
 		});
 
@@ -1254,8 +1335,8 @@ export default (QUnit: QUnit) => {
 			const { privateKey } = await generateSigningKey("ES256");
 			t.throws(
 				() =>
-					new MemoryFederationKeyProvider({
-						signer: new JwkSigner(privateKey),
+					new FixtureCrypto({
+						signer: new SigningEntryFixture(privateKey),
 						publicJwk: privateKey,
 					}),
 				/public JWK/,
@@ -1266,11 +1347,11 @@ export default (QUnit: QUnit) => {
 			const { privateKey } = await generateSigningKey("ES256");
 			t.throws(
 				() =>
-					new MemoryFederationKeyProvider({
-						signer: new JwkSigner(privateKey),
+					new FixtureCrypto({
+						signer: new SigningEntryFixture(privateKey),
 						publicJwk: { ...stripPrivateFields(privateKey), kid: "different-key" },
 					}),
-				/kid MUST match/,
+				/selected signer/,
 			);
 		});
 
@@ -1278,36 +1359,42 @@ export default (QUnit: QUnit) => {
 			const { config } = await createLeafConfig({
 				entityId: "http://rp.example.com" as EntityId,
 			});
-			t.throws(() => new Leaf(config), /HTTPS URL/);
+			await t.rejects((async () => await Leaf.create(fixtureHostConfig(config)))(), /HTTPS URL/);
 		});
 
 		test("rejects entityId with query parameter", async (t) => {
 			const { config } = await createLeafConfig({
 				entityId: "https://rp.example.com?foo=bar" as EntityId,
 			});
-			t.throws(() => new Leaf(config), /HTTPS URL/);
+			await t.rejects((async () => await Leaf.create(fixtureHostConfig(config)))(), /HTTPS URL/);
 		});
 
 		test("rejects entityId with fragment", async (t) => {
 			const { config } = await createLeafConfig({
 				entityId: "https://rp.example.com#frag" as EntityId,
 			});
-			t.throws(() => new Leaf(config), /HTTPS URL/);
+			await t.rejects((async () => await Leaf.create(fixtureHostConfig(config)))(), /HTTPS URL/);
 		});
 
 		test("rejects empty entityId", async (t) => {
 			const { config } = await createLeafConfig({ entityId: "" as EntityId });
-			t.throws(() => new Leaf(config));
+			await t.rejects((async () => await Leaf.create(fixtureHostConfig(config)))());
 		});
 
 		test("rejects ttlSeconds of 0", async (t) => {
 			const { config } = await createLeafConfig({ entityConfigurationTtlSeconds: 0 });
-			t.throws(() => new Leaf(config), /entityConfigurationTtlSeconds must be positive/);
+			await t.rejects(
+				(async () => await Leaf.create(fixtureHostConfig(config)))(),
+				/entityConfigurationTtlSeconds must be positive/,
+			);
 		});
 
 		test("rejects negative ttlSeconds", async (t) => {
 			const { config } = await createLeafConfig({ entityConfigurationTtlSeconds: -1 });
-			t.throws(() => new Leaf(config), /entityConfigurationTtlSeconds must be positive/);
+			await t.rejects(
+				(async () => await Leaf.create(fixtureHostConfig(config)))(),
+				/entityConfigurationTtlSeconds must be positive/,
+			);
 		});
 	});
 
@@ -1319,7 +1406,7 @@ export default (QUnit: QUnit) => {
 			const { config } = await createLeafConfig({
 				entityId: "https://rp.example.com/" as EntityId,
 			});
-			const entity = new Leaf(config);
+			const entity = await Leaf.create(fixtureHostConfig(config));
 			t.equal(entity.entityId, "https://rp.example.com");
 			const jwt = await entity.getEntityConfiguration();
 			const decoded = decodeEntityStatement(jwt);
@@ -1333,7 +1420,7 @@ export default (QUnit: QUnit) => {
 			const { config } = await createLeafConfig({
 				entityId: "https://rp.example.com" as EntityId,
 			});
-			const entity = new Leaf(config);
+			const entity = await Leaf.create(fixtureHostConfig(config));
 			const jwt = await entity.getEntityConfiguration();
 			const decoded = decodeEntityStatement(jwt);
 			t.true(decoded.ok);
@@ -1348,16 +1435,20 @@ export default (QUnit: QUnit) => {
 	module("leaf / Leaf / getEntityConfiguration", () => {
 		test("returns a valid signed JWT", async (t) => {
 			const { config, publicKey } = await createLeafConfig();
-			const entity = new Leaf(config);
+			const entity = await Leaf.create(fixtureHostConfig(config));
 			const jwt = await entity.getEntityConfiguration();
 			t.equal(jwt.split(".").length, 3);
-			const result = await verifyEntityStatement(jwt, { keys: [publicKey] });
+			const result = await verifyEntityStatement(
+				jwt,
+				{ keys: [publicKey] },
+				{ engine: testEngine },
+			);
 			t.true(result.ok);
 		});
 
 		test("has iss === sub === entityId", async (t) => {
 			const { config } = await createLeafConfig();
-			const entity = new Leaf(config);
+			const entity = await Leaf.create(fixtureHostConfig(config));
 			const jwt = await entity.getEntityConfiguration();
 			const decoded = decodeEntityStatement(jwt);
 			t.true(decoded.ok);
@@ -1368,7 +1459,7 @@ export default (QUnit: QUnit) => {
 
 		test("includes typ: entity-statement+jwt", async (t) => {
 			const { config } = await createLeafConfig();
-			const entity = new Leaf(config);
+			const entity = await Leaf.create(fixtureHostConfig(config));
 			const jwt = await entity.getEntityConfiguration();
 			const decoded = decodeEntityStatement(jwt);
 			t.true(decoded.ok);
@@ -1378,7 +1469,7 @@ export default (QUnit: QUnit) => {
 
 		test("contains public keys only in jwks (no d field)", async (t) => {
 			const { config } = await createLeafConfig();
-			const entity = new Leaf(config);
+			const entity = await Leaf.create(fixtureHostConfig(config));
 			const jwt = await entity.getEntityConfiguration();
 			const decoded = decodeEntityStatement(jwt);
 			t.true(decoded.ok);
@@ -1400,7 +1491,7 @@ export default (QUnit: QUnit) => {
 
 		test("includes authority_hints", async (t) => {
 			const { config } = await createLeafConfig();
-			const entity = new Leaf(config);
+			const entity = await Leaf.create(fixtureHostConfig(config));
 			const jwt = await entity.getEntityConfiguration();
 			const decoded = decodeEntityStatement(jwt);
 			t.true(decoded.ok);
@@ -1412,7 +1503,7 @@ export default (QUnit: QUnit) => {
 		test("includes trust_anchor_hints when configured", async (t) => {
 			const trustAnchorHint = entityId("https://preferred-ta.example.com");
 			const { config } = await createLeafConfig({ trustAnchorHints: [trustAnchorHint] });
-			const entity = new Leaf(config);
+			const entity = await Leaf.create(fixtureHostConfig(config));
 			const jwt = await entity.getEntityConfiguration();
 			const decoded = decodeEntityStatement(jwt);
 			t.true(decoded.ok);
@@ -1423,7 +1514,7 @@ export default (QUnit: QUnit) => {
 
 		test("includes metadata", async (t) => {
 			const { config } = await createLeafConfig();
-			const entity = new Leaf(config);
+			const entity = await Leaf.create(fixtureHostConfig(config));
 			const jwt = await entity.getEntityConfiguration();
 			const decoded = decodeEntityStatement(jwt);
 			t.true(decoded.ok);
@@ -1437,7 +1528,7 @@ export default (QUnit: QUnit) => {
 		test("includes trust_marks when configured", async (t) => {
 			const trustMarks = [{ trust_mark_type: "https://example.com/tm1", trust_mark: "jwt-value" }];
 			const { config } = await createLeafConfig({ trustMarks });
-			const entity = new Leaf(config);
+			const entity = await Leaf.create(fixtureHostConfig(config));
 			const jwt = await entity.getEntityConfiguration();
 			const decoded = decodeEntityStatement(jwt);
 			t.true(decoded.ok);
@@ -1448,7 +1539,7 @@ export default (QUnit: QUnit) => {
 
 		test("omits trust_marks when not configured", async (t) => {
 			const { config } = await createLeafConfig();
-			const entity = new Leaf(config);
+			const entity = await Leaf.create(fixtureHostConfig(config));
 			const jwt = await entity.getEntityConfiguration();
 			const decoded = decodeEntityStatement(jwt);
 			t.true(decoded.ok);
@@ -1459,7 +1550,7 @@ export default (QUnit: QUnit) => {
 
 		test("sets exp = iat + ttlSeconds (default 86400)", async (t) => {
 			const { config } = await createLeafConfig();
-			const entity = new Leaf(config);
+			const entity = await Leaf.create(fixtureHostConfig(config));
 			const jwt = await entity.getEntityConfiguration();
 			const decoded = decodeEntityStatement(jwt);
 			t.true(decoded.ok);
@@ -1470,7 +1561,7 @@ export default (QUnit: QUnit) => {
 
 		test("respects custom entityConfigurationTtlSeconds", async (t) => {
 			const { config } = await createLeafConfig({ entityConfigurationTtlSeconds: 3600 });
-			const entity = new Leaf(config);
+			const entity = await Leaf.create(fixtureHostConfig(config));
 			const jwt = await entity.getEntityConfiguration();
 			const decoded = decodeEntityStatement(jwt);
 			t.true(decoded.ok);
@@ -1481,7 +1572,7 @@ export default (QUnit: QUnit) => {
 
 		test("caches the signed JWT", async (t) => {
 			const { config } = await createLeafConfig();
-			const entity = new Leaf(config);
+			const entity = await Leaf.create(fixtureHostConfig(config));
 			const jwt1 = await entity.getEntityConfiguration();
 			const jwt2 = await entity.getEntityConfiguration();
 			t.equal(jwt1, jwt2);
@@ -1491,12 +1582,12 @@ export default (QUnit: QUnit) => {
 			const { privateKey: key1 } = await generateSigningKey("ES256");
 			const { privateKey: key2 } = await generateSigningKey("ES256");
 			const { config } = await createLeafConfig({
-				keyProvider: new MemoryFederationKeyProvider([
+				crypto: await fixtureCryptoFromKeys([
 					createFederationSigningKey(key1),
 					createFederationSigningKey(key2),
 				]),
 			});
-			const entity = new Leaf(config);
+			const entity = await Leaf.create(fixtureHostConfig(config));
 			const jwt = await entity.getEntityConfiguration();
 			const decoded = decodeEntityStatement(jwt);
 			t.true(decoded.ok);
@@ -1508,16 +1599,15 @@ export default (QUnit: QUnit) => {
 		test("concurrent calls share one signing operation (stampede protection)", async (t) => {
 			const { config: baseConfig } = await createLeafConfig();
 			let providerCalls = 0;
-			const keySet = await baseConfig.keyProvider.getFederationKeySet();
+			const keySet = await baseConfig.crypto.keyring.entry("federation");
 			const { config } = await createLeafConfig({
-				keyProvider: {
-					getFederationKeySet: async () => {
-						providerCalls++;
-						return keySet;
-					},
-				},
+				crypto: fixtureCryptoFromRead(async () => {
+					providerCalls++;
+					return keySet;
+				}),
 			});
-			const entity = new Leaf(config);
+			const entity = await Leaf.create(fixtureHostConfig(config));
+			providerCalls = 0;
 			const [jwt1, jwt2] = await Promise.all([
 				entity.getEntityConfiguration(),
 				entity.getEntityConfiguration(),
@@ -1528,13 +1618,9 @@ export default (QUnit: QUnit) => {
 
 		test("propagates key provider rejection", async (t) => {
 			const { config } = await createLeafConfig({
-				keyProvider: {
-					getFederationKeySet: async () => {
-						throw new Error("key provider failure");
-					},
-				},
+				crypto: await fixtureCryptoFailureAfterStartup(new Error("key provider failure")),
 			});
-			const entity = new Leaf(config);
+			const entity = await Leaf.create(fixtureHostConfig(config));
 			try {
 				await entity.getEntityConfiguration();
 				t.ok(false, "should have thrown");
@@ -1550,14 +1636,14 @@ export default (QUnit: QUnit) => {
 	module("leaf / Leaf / isEntityConfigurationExpired", () => {
 		test("returns false for fresh EC", async (t) => {
 			const { config } = await createLeafConfig();
-			const entity = new Leaf(config);
+			const entity = await Leaf.create(fixtureHostConfig(config));
 			await entity.getEntityConfiguration();
 			t.false(entity.isEntityConfigurationExpired());
 		});
 
 		test("returns true when no EC has been generated", async (t) => {
 			const { config } = await createLeafConfig();
-			const entity = new Leaf(config);
+			const entity = await Leaf.create(fixtureHostConfig(config));
 			t.true(entity.isEntityConfigurationExpired());
 		});
 
@@ -1569,7 +1655,7 @@ export default (QUnit: QUnit) => {
 				entityConfigurationTtlSeconds: ttl,
 				options: { clock },
 			});
-			const entity = new Leaf(config);
+			const entity = await Leaf.create(fixtureHostConfig(config));
 			await entity.getEntityConfiguration();
 			nowMs += ttl * 1000;
 			t.true(entity.isEntityConfigurationExpired());
@@ -1588,7 +1674,7 @@ export default (QUnit: QUnit) => {
 				entityConfigurationTtlSeconds: ttl,
 				options: { clock },
 			});
-			const entity = new Leaf(config);
+			const entity = await Leaf.create(fixtureHostConfig(config));
 			const jwt1 = await entity.getEntityConfiguration();
 			nowMs += (ttl + 1) * 1000;
 			const jwt2 = await entity.getEntityConfiguration();
@@ -1602,7 +1688,7 @@ export default (QUnit: QUnit) => {
 	module("leaf / Leaf / refreshEntityConfiguration", () => {
 		test("produces a new JWT", async (t) => {
 			const { config } = await createLeafConfig();
-			const entity = new Leaf(config);
+			const entity = await Leaf.create(fixtureHostConfig(config));
 			await entity.getEntityConfiguration();
 			const jwt2 = await entity.refreshEntityConfiguration();
 			t.equal(typeof jwt2, "string");
@@ -1611,7 +1697,7 @@ export default (QUnit: QUnit) => {
 
 		test("replaces the cached EC", async (t) => {
 			const { config } = await createLeafConfig();
-			const entity = new Leaf(config);
+			const entity = await Leaf.create(fixtureHostConfig(config));
 			await entity.getEntityConfiguration();
 			const refreshed = await entity.refreshEntityConfiguration();
 			const cached = await entity.getEntityConfiguration();
@@ -1625,7 +1711,7 @@ export default (QUnit: QUnit) => {
 	module("leaf / Leaf / handleRequest", () => {
 		test("responds 200 with entity-statement+jwt on /.well-known/openid-federation", async (t) => {
 			const { config } = await createLeafConfig();
-			const entity = new Leaf(config);
+			const entity = await Leaf.create(fixtureHostConfig(config));
 			const request = new Request("https://rp.example.com/.well-known/openid-federation");
 			const response = await entity.handleRequest(request);
 			t.equal(response.status, 200);
@@ -1645,7 +1731,7 @@ export default (QUnit: QUnit) => {
 					federation_entity: descriptiveMetadata,
 				},
 			});
-			const entity = new Leaf(config);
+			const entity = await Leaf.create(fixtureHostConfig(config));
 			const response = await entity.handleRequest(
 				new Request("https://rp.example.com/.well-known/openid-federation"),
 			);
@@ -1669,7 +1755,7 @@ export default (QUnit: QUnit) => {
 				metadata: inputMetadata,
 				roles: [role],
 			});
-			const entity = new Leaf(config);
+			const entity = await Leaf.create(fixtureHostConfig(config));
 
 			t.false(Object.hasOwn(inputMetadata, "openid_relying_party"));
 			const jwt = await entity.getEntityConfiguration();
@@ -1687,7 +1773,7 @@ export default (QUnit: QUnit) => {
 		test("serves path-based Entity Identifier at derived well-known path", async (t) => {
 			const pathEntityId = entityId("https://rp.example.com/tenant");
 			const { config } = await createLeafConfig({ entityId: pathEntityId });
-			const entity = new Leaf(config);
+			const entity = await Leaf.create(fixtureHostConfig(config));
 			const response = await entity.handleRequest(
 				new Request(`${pathEntityId}${WELL_KNOWN_OPENID_FEDERATION}`),
 			);
@@ -1704,7 +1790,7 @@ export default (QUnit: QUnit) => {
 			const { config } = await createLeafConfig({
 				entityId: "https://rp.example.com:8443/tenant/" as EntityId,
 			});
-			const entity = new Leaf(config);
+			const entity = await Leaf.create(fixtureHostConfig(config));
 			t.equal(entity.entityId, "https://rp.example.com:8443/tenant");
 			const response = await entity.handleRequest(
 				new Request("https://rp.example.com:8443/tenant/.well-known/openid-federation"),
@@ -1721,7 +1807,7 @@ export default (QUnit: QUnit) => {
 			const { config } = await createLeafConfig({
 				entityId: "https://rp.example.com/tenant/" as EntityId,
 			});
-			const entity = new Leaf(config);
+			const entity = await Leaf.create(fixtureHostConfig(config));
 			t.equal(entity.entityId, "https://rp.example.com/tenant");
 			const response = await entity.handleRequest(
 				new Request("https://rp.example.com/tenant/.well-known/openid-federation"),
@@ -1735,7 +1821,7 @@ export default (QUnit: QUnit) => {
 
 		test("returns 405 for POST to well-known path", async (t) => {
 			const { config } = await createLeafConfig();
-			const entity = new Leaf(config);
+			const entity = await Leaf.create(fixtureHostConfig(config));
 			const response = await entity.handleRequest(
 				new Request(`${LEAF_ID}${WELL_KNOWN_OPENID_FEDERATION}`, { method: "POST" }),
 			);
@@ -1744,7 +1830,7 @@ export default (QUnit: QUnit) => {
 
 		test("returns 404 for unknown paths", async (t) => {
 			const { config } = await createLeafConfig();
-			const entity = new Leaf(config);
+			const entity = await Leaf.create(fixtureHostConfig(config));
 			const response = await entity.handleRequest(new Request(`${LEAF_ID}/unknown-path`));
 			t.equal(response.status, 404);
 		});
@@ -1752,13 +1838,9 @@ export default (QUnit: QUnit) => {
 		test("returns 500 when getEntityConfiguration throws", async (t) => {
 			const originalError = new Error("signing failure");
 			const { config } = await createLeafConfig({
-				keyProvider: {
-					getFederationKeySet: async () => {
-						throw originalError;
-					},
-				},
+				crypto: await fixtureCryptoFailureAfterStartup(originalError),
 			});
-			const entity = new Leaf(config);
+			const entity = await Leaf.create(fixtureHostConfig(config));
 			const response = await entity.handleRequest(
 				new Request(`${LEAF_ID}${WELL_KNOWN_OPENID_FEDERATION}`),
 			);
@@ -1770,13 +1852,9 @@ export default (QUnit: QUnit) => {
 		test("500 body does NOT contain internal error message (no info leak)", async (t) => {
 			const secretMessage = "database password is hunter2";
 			const { config } = await createLeafConfig({
-				keyProvider: {
-					getFederationKeySet: async () => {
-						throw new Error(secretMessage);
-					},
-				},
+				crypto: await fixtureCryptoFailureAfterStartup(new Error(secretMessage)),
 			});
-			const entity = new Leaf(config);
+			const entity = await Leaf.create(fixtureHostConfig(config));
 			const response = await entity.handleRequest(
 				new Request(`${LEAF_ID}${WELL_KNOWN_OPENID_FEDERATION}`),
 			);
@@ -1788,11 +1866,7 @@ export default (QUnit: QUnit) => {
 			const originalError = new Error("signing failure");
 			const errorFn = mockFn<[string, Record<string, unknown>]>();
 			const { config } = await createLeafConfig({
-				keyProvider: {
-					getFederationKeySet: async () => {
-						throw originalError;
-					},
-				},
+				crypto: await fixtureCryptoFailureAfterStartup(originalError),
 				options: {
 					logger: {
 						debug: mockFn(),
@@ -1802,7 +1876,7 @@ export default (QUnit: QUnit) => {
 					},
 				},
 			});
-			const entity = new Leaf(config);
+			const entity = await Leaf.create(fixtureHostConfig(config));
 			await entity.handleRequest(new Request(`${LEAF_ID}${WELL_KNOWN_OPENID_FEDERATION}`));
 			t.equal(errorFn.callCount(), 1);
 			const [msg, ctx] = errorFn.lastCall();
@@ -1812,7 +1886,7 @@ export default (QUnit: QUnit) => {
 
 		test("404 response has error and error_description fields", async (t) => {
 			const { config } = await createLeafConfig();
-			const entity = new Leaf(config);
+			const entity = await Leaf.create(fixtureHostConfig(config));
 			const response = await entity.handleRequest(new Request(`${LEAF_ID}/unknown`));
 			const body = (await response.json()) as Record<string, unknown>;
 			t.equal(body.error, "not_found");
@@ -1821,7 +1895,7 @@ export default (QUnit: QUnit) => {
 
 		test("405 response has error field", async (t) => {
 			const { config } = await createLeafConfig();
-			const entity = new Leaf(config);
+			const entity = await Leaf.create(fixtureHostConfig(config));
 			const response = await entity.handleRequest(
 				new Request(`${LEAF_ID}${WELL_KNOWN_OPENID_FEDERATION}`, { method: "POST" }),
 			);
@@ -1831,13 +1905,9 @@ export default (QUnit: QUnit) => {
 
 		test("500 response has error and error_description fields", async (t) => {
 			const { config } = await createLeafConfig({
-				keyProvider: {
-					getFederationKeySet: async () => {
-						throw new Error("fail");
-					},
-				},
+				crypto: await fixtureCryptoFailureAfterStartup(new Error("fail")),
 			});
-			const entity = new Leaf(config);
+			const entity = await Leaf.create(fixtureHostConfig(config));
 			const response = await entity.handleRequest(
 				new Request(`${LEAF_ID}${WELL_KNOWN_OPENID_FEDERATION}`),
 			);
@@ -1855,9 +1925,7 @@ export default (QUnit: QUnit) => {
 			const fed = await createMockMockFederation();
 			const config: LeafConfig = {
 				entityId: LEAF_ID,
-				keyProvider: new MemoryFederationKeyProvider(
-					createFederationSigningKey(fed.leafSigningKey),
-				),
+				crypto: new FixtureCrypto(createFederationSigningKey(fed.leafSigningKey)),
 				authorityHints: [TA_ID],
 				metadata: {
 					openid_relying_party: {
@@ -1867,7 +1935,7 @@ export default (QUnit: QUnit) => {
 					},
 				},
 			};
-			const entity = new Leaf(config);
+			const entity = await Leaf.create(fixtureHostConfig(config));
 			const response = await entity.handleRequest(
 				new Request(`${LEAF_ID}${WELL_KNOWN_OPENID_FEDERATION}`),
 			);
@@ -1887,9 +1955,7 @@ export default (QUnit: QUnit) => {
 			const fed = await createMockMockFederation();
 			const config: LeafConfig = {
 				entityId: LEAF_ID,
-				keyProvider: new MemoryFederationKeyProvider(
-					createFederationSigningKey(fed.leafSigningKey),
-				),
+				crypto: new FixtureCrypto(createFederationSigningKey(fed.leafSigningKey)),
 				authorityHints: [TA_ID],
 				metadata: {
 					openid_relying_party: {
@@ -1898,7 +1964,7 @@ export default (QUnit: QUnit) => {
 					},
 				},
 			};
-			new Leaf(config);
+			await Leaf.create(fixtureHostConfig(config));
 			const discovery = await discoverEntity(OP_ID, fed.trustAnchors, fed.options);
 			t.true(isOk(discovery));
 			if (isOk(discovery)) {
@@ -1912,15 +1978,13 @@ export default (QUnit: QUnit) => {
 			const fed = await createMockMockFederation();
 			const config: LeafConfig = {
 				entityId: LEAF_ID,
-				keyProvider: new MemoryFederationKeyProvider(
-					createFederationSigningKey(fed.leafSigningKey),
-				),
+				crypto: new FixtureCrypto(createFederationSigningKey(fed.leafSigningKey)),
 				authorityHints: [TA_ID],
 				metadata: {
 					openid_relying_party: { redirect_uris: ["https://rp.example.com/callback"] },
 				},
 			};
-			const entity = new Leaf(config);
+			const entity = await Leaf.create(fixtureHostConfig(config));
 			t.true(entity.isEntityConfigurationExpired());
 			const ec1 = await entity.getEntityConfiguration();
 			t.false(entity.isEntityConfigurationExpired());
@@ -1937,16 +2001,19 @@ export default (QUnit: QUnit) => {
 			let nowMs = 1000000;
 			const original = await generateSigningKey("ES256");
 			const next = await generateSigningKey("ES256");
-			const provider = MemoryFederationKeyProvider.fromJWK(original.privateKey, {
+			const provider = FixtureCrypto.fromJWK(original.privateKey, {
 				nowMs: () => nowMs,
 			});
 			const { config } = await createLeafConfig({
-				keyProvider: provider,
+				crypto: provider,
 				options: { clock: { now: () => Math.floor(nowMs / 1000) } },
 			});
-			const leaf = new Leaf(config);
+			const leaf = await Leaf.create(fixtureHostConfig(config));
 			let cached = await leaf.getEntityConfiguration();
-			await provider.publishKey(createFederationSigningKey(next.privateKey));
+			await provider.keyring.publish(
+				"federation",
+				fixtureSigner(createFederationSigningKey(next.privateKey)),
+			);
 			t.equal(await leaf.getEntityConfiguration(), cached);
 			cached = await leaf.refreshEntityConfiguration();
 			let decoded = decodeEntityStatement(cached);
@@ -1955,7 +2022,7 @@ export default (QUnit: QUnit) => {
 				t.equal(decoded.value.header.kid, original.publicKey.kid);
 				t.equal(decoded.value.payload.jwks?.keys.length, 2);
 			}
-			await provider.switchActiveKey(next.privateKey.kid!, { retirePreviousAfterMs: 1000 });
+			await provider.keyring.activate("federation", next.privateKey.kid!);
 			t.equal(await leaf.getEntityConfiguration(), cached);
 			cached = await leaf.refreshEntityConfiguration();
 			decoded = decodeEntityStatement(cached);
@@ -1965,6 +2032,7 @@ export default (QUnit: QUnit) => {
 				t.equal(decoded.value.payload.jwks?.keys.length, 2);
 			}
 			nowMs += 1000;
+			await provider.keyring.retire("federation", original.privateKey.kid!);
 			t.equal(await leaf.getEntityConfiguration(), cached);
 			decoded = decodeEntityStatement(await leaf.refreshEntityConfiguration());
 			t.true(decoded.ok);
@@ -1977,7 +2045,7 @@ export default (QUnit: QUnit) => {
 
 		test("an older build cannot overwrite the refreshed configuration", async (t) => {
 			const { config } = await createLeafConfig();
-			const old = await config.keyProvider.getFederationKeySet();
+			const old = await config.crypto.keyring.entry("federation");
 			const next = await generateSigningKey("ES256");
 			let entered!: () => void, release!: () => void;
 			const started = new Promise<void>((r) => {
@@ -1988,23 +2056,27 @@ export default (QUnit: QUnit) => {
 			});
 			let current = {
 				...old,
-				signer: {
-					kid: old.signer.kid,
-					alg: old.signer.alg,
-					signJwt: async (...args: Parameters<typeof old.signer.signJwt>) => {
+				signer: instrumentSigningEntry(
+					old.signer,
+					async (...args: [payload: Uint8Array, header: Readonly<Record<string, unknown>>]) => {
 						entered();
 						await gate;
-						return old.signer.signJwt(...args);
+						return rawFixtureJwt(old.signer, ...args);
 					},
-				},
+				).signer,
 			};
-			const leaf = new Leaf({
-				...config,
-				keyProvider: { getFederationKeySet: async () => current },
-			});
+			const leaf = await Leaf.create(
+				fixtureHostConfig({
+					...config,
+					crypto: fixtureCryptoFromRead(async () => current),
+				}),
+			);
 			const pending = leaf.getEntityConfiguration();
 			await started;
-			current = { signer: new JwkSigner(next.privateKey), jwks: { keys: [next.publicKey] } };
+			current = {
+				signer: new SigningEntryFixture(next.privateKey).signer,
+				publishedJwks: { keys: [next.publicKey] },
+			};
 			const refreshed = await leaf.refreshEntityConfiguration();
 			release();
 			await pending;
@@ -2015,7 +2087,7 @@ export default (QUnit: QUnit) => {
 		});
 		test("old failures cannot clear the current in-flight refresh", async (t) => {
 			const { config } = await createLeafConfig();
-			const set = await config.keyProvider.getFederationKeySet();
+			const set = await config.crypto.keyring.entry("federation");
 			let failOld!: () => void, releaseNew!: () => void, started!: () => void;
 			const oldGate = new Promise<void>((_, reject) => {
 				failOld = () => reject(new Error("old signing failed"));
@@ -2027,26 +2099,25 @@ export default (QUnit: QUnit) => {
 				started = r;
 			});
 			let calls = 0;
-			const leaf = new Leaf({
-				...config,
-				keyProvider: {
-					getFederationKeySet: async () => ({
+			const leaf = await Leaf.create(
+				fixtureHostConfig({
+					...config,
+					crypto: fixtureCryptoFromRead(async () => ({
 						...set,
-						signer: {
-							kid: set.signer.kid,
-							alg: set.signer.alg,
-							signJwt: async (...args: Parameters<typeof set.signer.signJwt>) => {
+						signer: instrumentSigningEntry(
+							set.signer,
+							async (...args: [payload: Uint8Array, header: Readonly<Record<string, unknown>>]) => {
 								calls++;
 								if (calls === 1) {
 									started();
 									await oldGate;
 								} else await newGate;
-								return set.signer.signJwt(...args);
+								return rawFixtureJwt(set.signer, ...args);
 							},
-						},
-					}),
-				},
-			});
+						).signer,
+					})),
+				}),
+			);
 			const old = leaf.getEntityConfiguration();
 			const rejected = t.rejects(old, /old signing failed/);
 			await entered;
