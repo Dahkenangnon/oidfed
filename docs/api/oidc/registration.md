@@ -6,88 +6,9 @@ The role methods prepare or process Federation registration evidence. The host p
 
 Several exported configuration types describe the internal registration workflows assembled by role methods. They do not expose standalone registration functions; the role entries identify the public call sites.
 
-## `AutomaticRegistrationConfig`
-
-[Source](../../../packages/oidc/src/registration/automatic.ts#L50)
-
-Typed client identity, protocol signers, publication metadata, and transport choices assembled by the public client role methods. The underlying automaticRegistration function is not a package-root export. Configure roles with OidcRelyingPartyRoleConfig or OAuthClientRoleConfig; method-specific options override the relevant fields.
-
-```typescript signature
-interface AutomaticRegistrationConfig {
-	readonly entityId: EntityId;
-	readonly crypto: CryptoContext;
-	readonly signing: SigningPurposes;
-	readonly authorityHints: readonly [EntityId, ...EntityId[]];
-	readonly metadata: Record<string, Record<string, unknown>>;
-	/** TTL for the Request Object JWT in seconds (default: 300). */
-	readonly requestObjectTtlSeconds?: number;
-	/**
-	 * Attach the peer_trust_chain JWS header when enabled. It contains an OP chain ending
-	 * at the same Trust Anchor as the RP chain. Disabled by default. Enable it to offer
-	 * the RP-selected metadata and policy to the OP for Federation/Metadata Integrity.
-	 * Registration fails if a peer chain to the shared anchor cannot be built.
-	 */
-	readonly includePeerTrustChain?: boolean;
-	/**
-	 * Choose how the signed Request Object reaches the OP's authorization endpoint.
-	 * Default: `"form_post"`, which avoids URL length limits when an embedded `trust_chain`
-	 * makes the JWT large. Use `"query"` to send it in the GET query string.
-	 */
-	readonly requestDelivery?: RequestDelivery;
-	/**
-	 * For `requestDelivery: "request_uri"`, supply the public URL where the RP serves the
-	 * returned `requestObjectJwt` with Content-Type `application/oauth-authz-req+jwt`.
-	 * The URL is REQUIRED in this mode and ignored otherwise. The caller hosts the JWT,
-	 * typically with a short TTL and single-use semantics.
-	 */
-	readonly requestUri?: string;
-}
-```
-
-Fields (including inherited fields):
-
-| Field | Declared type | Description |
-|---|---|---|
-| `entityId` | `EntityId` | Exact Entity Identifier bound to this object or operation. |
-| `signing?` | `SigningPurposes` | Explicit Request Object and client assertion purpose names in the host keyring. |
-| `authorityHints` | `readonly [EntityId, ...EntityId[]]` | Immediate Superior identifiers for the client's publication/registration evidence. Attached host hints take precedence over role-configured hints. |
-| `metadata` | `Record<string, Record<string, unknown>>` | Protocol metadata for this configuration or artifact. Use its owning type to distinguish a single role block from an Entity Type map. |
-| `requestObjectTtlSeconds?` | `number` | Request Object lifetime in seconds; defaults to 300 and is bounded by the applicable client-chain lifetime. |
-| `includePeerTrustChain?` | `boolean` | Include a peer_trust_chain ending at the selected shared anchor. Defaults to false; inability to build it returns a registration error. |
-| `requestDelivery?` | `RequestDelivery` | Delivery mode: query, form_post, request_uri, or par. The default is form_post. The result shape depends on this mode. |
-| `requestUri?` | `string` | HTTPS URL where the application will serve the returned Request Object for request_uri delivery. It is required in that mode; this library does not host it. |
-
-## `AutomaticRegistrationContext`
-
-[Source](../../../packages/oidc/src/registration/types.ts#L26)
-
-Provider identity, clock, and leeway used for Request Object claim checks. It is a public context type, not a standalone signature-verification or trust-validation API.
-
-```typescript signature
-interface AutomaticRegistrationContext {
-	/** The OP's own Entity Identifier */
-	readonly opEntityId: EntityId;
-	/** Request Object typing: strict by default; compatible also permits generic JWT or absent typ. */
-	readonly requestObjectTyping?: "strict" | "compatible";
-	/** Maximum allowed clock skew in seconds (default: 60) */
-	readonly clockSkewSeconds?: number;
-	/** NumericDate clock used for expiry validation. */
-	readonly clock?: Clock;
-}
-```
-
-Fields (including inherited fields):
-
-| Field | Declared type | Description |
-|---|---|---|
-| `opEntityId` | `EntityId` | The OP's own Entity Identifier |
-| `requestObjectTyping?` | `"strict" \| "compatible"` | Strict requires oauth-authz-req+jwt; compatible additionally accepts generic JWT typing or an absent typ. Media-type case and application/ prefix equivalence apply. Default strict. |
-| `clockSkewSeconds?` | `number` | Allowed time-claim leeway in seconds; the default verifier allowance is 60 seconds. |
-| `clock?` | `Clock` | NumericDate time source; omitted clocks use the runtime's current time. |
-
 ## `AutomaticRegistrationResult`
 
-[Source](../../../packages/oidc/src/registration/automatic.ts#L89)
+[Source](../../../packages/oidc/src/registration/automatic-client.ts#L98)
 
 Success value discriminated by delivery. All variants contain requestObjectJwt, the selected provider trustChain, and its trustChainExpiresAt. The authorization Request Object also has its own exp, which can be earlier than that chain deadline. Narrow on delivery before accessing transport-specific fields. This result prepares an authorization interaction; it is not confirmation that the provider registered the client.
 
@@ -138,99 +59,9 @@ Common fields:
 
 Automatic PAR includes a signed Request Object. When both parties support `private_key_jwt`, it also sends a client assertion if the provider's advertised algorithms permit the selected signing key. If the provider omits its list, the assertion follows local protocol policy. If the list excludes the algorithm, automatic PAR sends the signed Request Object alone. Explicitly preparing PAR with `private_key_jwt` returns an error for an excluded algorithm.
 
-## `ExplicitRegistrationConfig`
-
-[Source](../../../packages/oidc/src/registration/explicit.ts#L44)
-
-Client EC inputs assembled for explicit registration by the public client role. Its crypto supplies Federation signing keys, while any protocol keys belong inside metadata. The explicitRegistration implementation is not exported directly; explicitlyRegister supplies the host identity, composed client block, keyring, and hints. Not every field of this internal configuration shape has a corresponding per-call role option.
-
-```typescript signature
-interface ExplicitRegistrationConfig {
-	readonly entityId: EntityId;
-	readonly crypto: CryptoContext;
-	readonly authorityHints: readonly [EntityId, ...EntityId[]];
-	readonly metadata: Record<string, Record<string, unknown>>;
-	readonly entityConfigurationTtlSeconds?: number;
-	readonly trustMarks?: ReadonlyArray<Record<string, unknown>>;
-	/**
-	 * Include the OP's chain to the selected shared anchor in the registration
-	 * JWT header (§12.2.1). Defaults to false. Returns an error if no peer path
-	 * can be resolved. Requests use the Entity Configuration JWT transport.
-	 */
-	readonly includePeerTrustChain?: boolean;
-}
-```
-
-Fields (including inherited fields):
-
-| Field | Declared type | Description |
-|---|---|---|
-| `entityId` | `EntityId` | Exact Entity Identifier bound to this object or operation. |
-| `crypto` | `CryptoContext` | Current Federation Entity Keys and signer used for explicit-registration ECs or signed registration responses. |
-| `authorityHints` | `readonly [EntityId, ...EntityId[]]` | Immediate Superior identifiers for the client's publication/registration evidence. Attached host hints take precedence over role-configured hints. |
-| `metadata` | `Record<string, Record<string, unknown>>` | Protocol metadata for this configuration or artifact. Use its owning type to distinguish a single role block from an Entity Type map. |
-| `entityConfigurationTtlSeconds?` | `number` | Lifetime in seconds for the client's explicit-registration EC; the internal registration configuration defaults to 86400. |
-| `trustMarks?` | `ReadonlyArray<Record<string, unknown>>` | Trust Mark references, verified marks, or evaluations supplied by the owning contract. |
-| `includePeerTrustChain?` | `boolean` | Include a peer_trust_chain ending at the selected shared anchor. Defaults to false; inability to build it returns a registration error. |
-
-## `ExplicitRegistrationHandlerConfig`
-
-[Source](../../../packages/oidc/src/registration/handler.ts#L46)
-
-Configuration contract used by the provider role's explicit-registration handler. createExplicitRegistrationHandler is not a root export; use a provider role and its initialization/processing API. The handler validates the request and peer evidence, applies optional adapter and accreditation policy, prepares metadata, signs with Federation keys, then invokes the late invalidation hook followed by onRegistration. registrationManagement defaults to disabled; read-only mode retains adapter-supplied management fields, and the host must enforce the token's permissions.
-
-```typescript signature
-interface ExplicitRegistrationHandlerConfig extends RegistrationAccreditationPolicy {
-	/** The OP's Entity Identifier, used for the aud check and as the response issuer. */
-	readonly opEntityId: EntityId;
-	/** Protocol role used to check the server's peer metadata. Defaults to OP. */
-	readonly providerMetadataType?: "openid_provider" | "oauth_authorization_server";
-	/** Federation signing keyring used for the signed registration response. */
-	readonly crypto: CryptoContext;
-	/** Non-empty trust anchors required for RP trust chain resolution. */
-	readonly trustAnchors: TrustAnchorSet;
-	/** TTL in seconds for the registration response JWT. Capped to chain expiry when a chain is resolved. */
-	readonly registrationResponseTtlSeconds?: number;
-	/** Optional protocol-specific adapter for metadata validation/enrichment. */
-	readonly registrationProtocolAdapter?: RegistrationProtocolAdapter;
-	/** Default disabled. In read-only mode the host MUST prevent the adapter-issued token from modifying registration. */
-	readonly registrationManagement?: "disabled" | "read-only";
-	/** Optional generator producing a client_secret embedded in the response. Returning undefined omits the field. */
-	readonly generateClientSecret?: (sub: EntityId) => Promise<string | undefined>;
-	/** Optional late pre-commit hook fired after response preparation and before `onRegistration`. */
-	readonly onRegistrationInvalidation?: (sub: EntityId) => Promise<void>;
-	/** Optional callback fired when dynamic registration completes successfully. */
-	readonly onRegistration?: (
-		sub: EntityId,
-		clientMetadata: Record<string, unknown>,
-		clientSecret?: string,
-	) => Promise<void>;
-	/** Federation-wide options (httpClient, clock, etc.). */
-	readonly options: FederationOptions;
-}
-```
-
-Fields (including inherited fields):
-
-| Field | Declared type | Description |
-|---|---|---|
-| `opEntityId` | `EntityId` | The OP's Entity Identifier — used as the aud check target and as the issuer of the response. |
-| `providerMetadataType?` | `"openid_provider" \| "oauth_authorization_server"` | Protocol role used to check the server's peer metadata. Defaults to OP. |
-| `crypto` | `CryptoContext` | Current Federation Entity Keys and signer used for explicit-registration ECs or signed registration responses. |
-| `trustAnchors` | `TrustAnchorSet` | Independently trusted anchor identities and their public Federation Entity Keys. |
-| `registrationResponseTtlSeconds?` | `number` | Signed registration-response lifetime in seconds; defaults to 86400 and is capped by the validated client chain's expiry. |
-| `registrationProtocolAdapter?` | `RegistrationProtocolAdapter` | Optional protocol/profile validation and response-enrichment callbacks. The registration flow independently checks the selected protocol schema and federation policy. |
-| `registrationManagement?` | `"disabled" \| "read-only"` | Default disabled. In read-only mode the host MUST prevent the adapter-issued token from modifying registration. |
-| `generateClientSecret?` | `(sub: EntityId) => Promise<string \| undefined>` | Optional explicit-registration secret generator. A nonempty returned value is added to the response; undefined omits it. |
-| `onRegistrationInvalidation?` | `(sub: EntityId) => Promise<void>` | Explicit-registration hook after response preparation and signing, before onRegistration. A failed hook prevents the HTTP success response. |
-| `onRegistration?` | `( sub: EntityId, clientMetadata: Record<string, unknown>, clientSecret?: string, ) => Promise<void>` | Optional persistence callback. It receives the client identifier, selected client metadata block, and any client secret. Automatic processing passes the protocol keys actually used for authentication. |
-| `options?` | `FederationOptions` | Federation transport, time, validation, and resource settings; role options override host options, and method options override role options. |
-| `trustMarkRequirements?` | `TrustMarkRequirements` | Declarative accreditation requirements checked before beforeRegistration and before accepting registration side effects. |
-| `beforeRegistration?` | `( context: Readonly<RegistrationAccreditationContext>, signal?: AbortSignal, ) => Result<void> \| Promise<Result<void>>` | Application accreditation callback after declarative Trust Mark checks. A failing requirement prevents the callback; the callback must return a Result with ok set to true to continue. |
-
 ## `ExplicitRegistrationResult`
 
-[Source](../../../packages/oidc/src/registration/explicit.ts#L59)
+[Source](../../../packages/oidc/src/registration/explicit-client.ts#L59)
 
 Verified provider registration response, selected client metadata, and credentials when returned. expiresAt bounds the signed response and trustChainExpiresAt bounds the provider evidence; use the registration only until the earlier deadline. Registration persistence and any later renewal are host responsibilities.
 
@@ -257,48 +88,9 @@ Fields (including inherited fields):
 | `registeredMetadata` | `Readonly<Record<string, unknown>>` | Verified selected client metadata block returned in the signed registration response. |
 | `trustChainExpiresAt` | `number` | Provider Trust Chain expiration, separate from the signed registration response's expiration. |
 
-## `OIDCRegistrationAdapter`
-
-[Source](../../../packages/oidc/src/registration/adapter.ts#L23)
-
-Optional OIDC-specific adapter implementing RegistrationProtocolAdapter. It validates a nested openid_relying_party block when present and adds a missing client_id during explicit response enrichment. Registration workflows perform their own effective protocol validation; this adapter alone is not a full metadata-map or trust validator.
-
-```typescript signature
-new OIDCRegistrationAdapter(): OIDCRegistrationAdapter;
-```
-
-### `OIDCRegistrationAdapter#validateClientMetadata`
-
-Inspect raw.openid_relying_party when it is an object, returning InvalidMetadata if that nested block fails the effective RP schema. If the block is absent or non-object, return the original raw object unchanged. A bare client block therefore passes through; this method does not parse it as nested RP metadata. On success it returns the same raw object, not the schema's parsed copy. The concrete method takes only raw, unlike the interface's optional context argument.
-
-[Source](../../../packages/oidc/src/registration/adapter.ts#L25)
-
-```typescript signature
-validateClientMetadata(raw: Record<string, unknown>): { ok: false; error: FederationError; } | { ok: true; value: Record<string, unknown>; };
-```
-
-- `param`: raw - Request metadata after superior overrides, constraints, and policy
-- `param`: context - Optional adapter context (peer chain metadata, etc.)
-- `returns`: The validated metadata or a federation error
-
-### `OIDCRegistrationAdapter#enrichResponseMetadata`
-
-Return a shallow copy of the selected RP response block, setting client_id to trustChain.entityId when its existing value is falsy. Nested values remain shared with the input. This does not independently validate the response or chain; the registration handler applies those checks.
-
-[Source](../../../packages/oidc/src/registration/adapter.ts#L52)
-
-```typescript signature
-enrichResponseMetadata(rpMeta: Record<string, unknown>, trustChain: ValidatedTrustChain): Record<string, unknown>;
-```
-
-- `param`: rpMeta - The RP's resolved metadata
-- `param`: trustChain - The validated trust chain for the RP
-- `param`: context - Optional adapter context (peer chain metadata, etc.)
-- `returns`: The enriched metadata for the response
-
 ## `PreparedPushedAuthorizationRequest`
 
-[Source](../../../packages/oidc/src/registration/pushed.ts#L65)
+[Source](../../../packages/oidc/src/registration/pushed.ts#L74)
 
 Prepared PAR POST returned by the client role. Send endpoint, parameters, and headers through the application's HTTP/TLS transport; preparation itself sends no PAR request. The value contains the selected provider chain and, for applicable modes, a signed Request Object. The host handles the PAR response and subsequent authorization redirect.
 
@@ -325,73 +117,18 @@ Fields (including inherited fields):
 
 ## `ProcessAutomaticRegistrationOptions`
 
-[Source](../../../packages/oidc/src/registration/process-automatic.ts#L60)
-
-Validation inputs used by provider automatic-registration processing. The role supplies its own identity, replay store, and protocol type; callers supply the remaining per-call settings through processAutomaticRegistration. providerMetadata must be effective metadata for algorithm and policy negotiation, rather than an incomplete publication draft.
+Per-call options for `provider.processAutomaticRegistration()`. The attached host supplies the engine, registry, storage, and receiver identity. The role selects the provider profile.
 
 ```typescript signature
-interface ProcessAutomaticRegistrationOptions
-	extends FederationOptions,
-		RegistrationAccreditationPolicy {
-	/** The OP's Entity Identifier, REQUIRED for `aud` validation to prevent cross-OP replay. */
-	opEntityId: EntityId;
-	/** Request Object typing policy. Defaults to strict; compatible permits legacy JWT headers. */
-	requestObjectTyping?: AutomaticRegistrationContext["requestObjectTyping"];
-	/** Server role selecting the registration protocol. Defaults to OIDC. */
-	providerMetadataType?: "openid_provider" | "oauth_authorization_server";
-	/** Effective provider metadata when supplied by a role or host. */
-	providerMetadata?: Readonly<Record<string, unknown>>;
-	/** Atomic replay protection required for one-time Request Object processing. */
-	replayStore: ReplayStore;
+interface ProcessAutomaticRegistrationOptions extends BoundFederationOptions, RegistrationAccreditationPolicy {
+  requestObjectTyping?: "strict" | "compatible";
+  providerMetadata?: Readonly<Record<string, unknown>>;
 }
 ```
 
-Fields (including inherited fields):
-
-| Field | Declared type | Description |
-|---|---|---|
-| `opEntityId` | `EntityId` | The OP's own Entity Identifier — REQUIRED to prevent cross-OP replay via `aud` validation. |
-| `requestObjectTyping?` | `AutomaticRegistrationContext["requestObjectTyping"]` | Incoming Request Object typing policy. Defaults to strict. |
-| `providerMetadataType?` | `"openid_provider" \| "oauth_authorization_server"` | Server role selecting the registration protocol. Defaults to OIDC. |
-| `providerMetadata?` | `Readonly<Record<string, unknown>>` | Effective provider metadata when supplied by a role or host. |
-| `replayStore` | `ReplayStore` | Atomic replay protection for one-time request proofs; processing automatic registration or PAR requires a configured store. |
-| `trustResolution?` | `import("./trust-chain/assessment.js").TrustResolutionSource` | Acquisition source; protocol consumers still validate the returned subject chain. |
-| `chainSelection?` | `ChainSelectionStrategy` | Select among validated candidates eligible for the current operation. |
-| `authentication?` | `EndpointClientAuthentication` | Authentication settings for the endpoint or outgoing request described by this contract. |
-| `getEndpointAuthentication?` | `EndpointAuthenticationProvider` | Select authentication for each outgoing federation endpoint request. Mutually exclusive with authentication. |
-| `additionalParameters?` | `EndpointAdditionalParameters` | Extension selectors for outgoing requests; reserved names and conflicting fixed selectors are rejected. |
-| `trustMarkVerification?` | `TrustMarkVerificationOptions` | Issuer-evidence and accreditation-resolution options for evaluating published Trust Marks. |
-| `trustMarkIssuerKeys?` | `ReadonlyMap<string, JWKSet>` | Independently supplied issuer keys for evaluating published Trust Marks. |
-| `trustMarkProfiles?` | `readonly TrustMarkProfile[]` | Explicitly recognized framework JWT types and their optional claim-validation policies. |
-| `offline?` | `boolean` | Disable network access in core federation retrieval. Host-owned protocol transport and direct protocol HTTP paths require their own transport policy. |
-| `httpClient?` | `HttpClient` | Host HTTP transport; defaults to the runtime's fetch implementation. |
-| `entityConfigurations?` | `ReadonlyMap<string, string> \| undefined` | Subject Entity Configuration JWTs used during chain validation; signatures and identity bindings still need validation. |
-| `clock?` | `Clock` | NumericDate time source; omitted clocks use the runtime's current time. |
-| `cache?` | `CacheProvider` | Host cache for signed statements or operation results; cache hits do not establish trust. |
-| `logger?` | `Logger` | Optional host logger. Library calls are message-only, nonblocking, and protected from sink failures. |
-| `httpTimeoutMs?` | `number` | Timeout in milliseconds for bounded transport or host callbacks; defaults to 10000. |
-| `clockSkewSeconds?` | `number` | Allowed time-claim leeway in seconds; the default verifier allowance is 60 seconds. |
-| `maxChainDepth?` | `number` | Maximum recursive discovery depth; defaults to 8. |
-| `maxChainLength?` | `number` | Maximum statements in a validated chain, including both ECs. Default: 100; resource policy, not a protocol limit. |
-| `maxResolutionSteps?` | `number` | Maximum eligible branch expansions per resolution, including reused statements. Default: 1000. |
-| `maxAuthorityHints?` | `number` | Maximum authority hints examined for an entity; defaults to 10. |
-| `maxConcurrentFetches?` | `number` | Maximum concurrent fetches during chain traversal and collection refresh; defaults to 6. |
-| `cacheMaxTtlSeconds?` | `number` | Fetched EC and Subordinate Statement cache retention cap in seconds; defaults to 3600 and is bounded by the statement's `exp`. Applies to statement fetchers using a cache. |
-| `signal?` | `AbortSignal` | Cancellation signal for the waiting caller and cooperative work started by this operation. |
-| `maxResponseBytes?` | `number` | Maximum response or decoded token size in bytes for APIs applying this limit; the shared default is 524288. |
-| `blockedCIDRs?` | `string[]` | Additional blocked IPv4 CIDRs used by core URL validation. DNS resolution and connection-level destination checks remain the host transport's responsibility. |
-| `allowedHosts?` | `string[]` | Optional exact hostname allowlist applied before outbound fetching. |
-| `authorityHintFilter?` | `(hint: URL, subject: EntityId) => boolean` | Host predicate for accepting an authority hint before traversal. |
-| `understoodCriticalClaims?` | `ReadonlySet<string>` | Extension claim names the application actually understands and processes; unknown critical claims are rejected. |
-| `maxTotalFetches?` | `number` | Maximum HTTP client calls; discovery helpers share the allowance across discovery and candidate validation. Cached and supplied statements use no allowance. Core accepts zero. Default: 50. |
-| `customPolicyOperators?` | `readonly PolicyOperatorDefinition[]` | Federation-defined policy operators in addition to the seven standard ones. Forwarded to `resolveMetadataPolicy` and `applyMetadataPolicy` during trust-chain validation. |
-| `customConstraintChecks?` | `readonly ConstraintCheckDefinition[]` | Federation-defined constraints checked against authenticated chains. Unknown names are ignored. |
-| `trustMarkRequirements?` | `TrustMarkRequirements` | Declarative accreditation requirements checked before beforeRegistration and before accepting registration side effects. |
-| `beforeRegistration?` | `( context: Readonly<RegistrationAccreditationContext>, signal?: AbortSignal, ) => Result<void> \| Promise<Result<void>>` | Application accreditation callback after declarative Trust Mark checks. A failing requirement prevents the callback; the callback must return a Result with ok set to true to continue. |
-
 ## `ProcessedAutomaticRegistration`
 
-[Source](../../../packages/oidc/src/registration/process-automatic.ts#L54)
+[Source](../../../packages/oidc/src/registration/automatic-server.ts#L73)
 
 Automatic-registration evidence, including the exact resolved protocol keys used to verify the signed Request Object and authenticationExpiresAt. That deadline includes permitted JWT clock skew while never extending the client chain's expiry. Recheck time-sensitive evidence before using it later.
 
@@ -416,7 +153,7 @@ Fields (including inherited fields):
 
 ## `ProcessedPushedAuthorizationRequest`
 
-[Source](../../../packages/oidc/src/registration/pushed.ts#L84)
+[Source](../../../packages/oidc/src/registration/pushed.ts#L98)
 
 Validated PAR parameters plus the selected client registration evidence and authentication deadline. Repeated resource values are preserved. The provider role can run its persistence callback before returning; the host still creates the PAR success response and stores the pushed request.
 
@@ -440,7 +177,7 @@ Fields (including inherited fields):
 
 ## `ProcessedRegistration`
 
-[Source](../../../packages/oidc/src/registration/process-automatic.ts#L39)
+[Source](../../../packages/oidc/src/registration/automatic-server.ts#L58)
 
 Validated client registration evidence shared by processing results. Historical rp/op field names also apply to OAuthClientRole and OAuthAuthorizationServerRole. This data does not itself create a client record or a protocol response; public provider role processing invokes configured persistence callbacks.
 
@@ -469,137 +206,25 @@ Fields (including inherited fields):
 | `trustChain` | `ValidatedTrustChain` | Supplied or validated Trust Chain, in the representation declared by this contract. |
 | `peerResolvedOpMetadata?` | `Readonly<Record<string, unknown>>` | When the Request Object carried a `peer_trust_chain` JWS header, the OP's resolved metadata as derived from the RP-supplied peer chain. Integrators may use these RP-chosen values when creating the client registration; the library validates structural integrity but does not auto-apply the values. |
 
-## `ProcessExplicitRegistrationOptions`
-
-[Source](../../../packages/oidc/src/registration/process-explicit.ts#L46)
-
-Validation inputs used by the internal explicit-registration processor. The public provider role assembles these through its mounted HTTP handler; processExplicitRegistration itself is not a package-root function. The protocol type selects the OIDC or OAuth client metadata. A supplied Trust Chain header remains signed evidence requiring full validation.
-
-```typescript signature
-interface ProcessExplicitRegistrationOptions
-	extends FederationOptions,
-		RegistrationAccreditationPolicy {
-	/** The OP's Entity Identifier, REQUIRED for `aud` validation. */
-	opEntityId: EntityId;
-	/** Protocol role of the local server whose peer metadata is consumed. Defaults to OP. */
-	providerMetadataType?: "openid_provider" | "oauth_authorization_server";
-	/** Optional `trust_chain` JWS header value supplied with an entity-statement body. */
-	trustChainHeader?: readonly string[];
-}
-```
-
-Fields (including inherited fields):
-
-| Field | Declared type | Description |
-|---|---|---|
-| `opEntityId` | `EntityId` | The OP's own Entity Identifier — REQUIRED for `aud` validation. |
-| `providerMetadataType?` | `"openid_provider" \| "oauth_authorization_server"` | Protocol role of the local server whose peer metadata is consumed. Defaults to OP. |
-| `trustChainHeader?` | `readonly string[]` | Optional `trust_chain` JWS header value supplied with an entity-statement body. |
-| `trustResolution?` | `import("./trust-chain/assessment.js").TrustResolutionSource` | Acquisition source; protocol consumers still validate the returned subject chain. |
-| `chainSelection?` | `ChainSelectionStrategy` | Select among validated candidates eligible for the current operation. |
-| `authentication?` | `EndpointClientAuthentication` | Authentication settings for the endpoint or outgoing request described by this contract. |
-| `getEndpointAuthentication?` | `EndpointAuthenticationProvider` | Select authentication for each outgoing federation endpoint request. Mutually exclusive with authentication. |
-| `additionalParameters?` | `EndpointAdditionalParameters` | Extension selectors for outgoing requests; reserved names and conflicting fixed selectors are rejected. |
-| `trustMarkVerification?` | `TrustMarkVerificationOptions` | Issuer-evidence and accreditation-resolution options for evaluating published Trust Marks. |
-| `trustMarkIssuerKeys?` | `ReadonlyMap<string, JWKSet>` | Independently supplied issuer keys for evaluating published Trust Marks. |
-| `trustMarkProfiles?` | `readonly TrustMarkProfile[]` | Explicitly recognized framework JWT types and their optional claim-validation policies. |
-| `offline?` | `boolean` | Disable network access in core federation retrieval. Host-owned protocol transport and direct protocol HTTP paths require their own transport policy. |
-| `httpClient?` | `HttpClient` | Host HTTP transport; defaults to the runtime's fetch implementation. |
-| `entityConfigurations?` | `ReadonlyMap<string, string> \| undefined` | Subject Entity Configuration JWTs used during chain validation; signatures and identity bindings still need validation. |
-| `clock?` | `Clock` | NumericDate time source; omitted clocks use the runtime's current time. |
-| `cache?` | `CacheProvider` | Host cache for signed statements or operation results; cache hits do not establish trust. |
-| `logger?` | `Logger` | Optional host logger. Library calls are message-only, nonblocking, and protected from sink failures. |
-| `httpTimeoutMs?` | `number` | Timeout in milliseconds for bounded transport or host callbacks; defaults to 10000. |
-| `clockSkewSeconds?` | `number` | Allowed time-claim leeway in seconds; the default verifier allowance is 60 seconds. |
-| `maxChainDepth?` | `number` | Maximum recursive discovery depth; defaults to 8. |
-| `maxChainLength?` | `number` | Maximum statements in a validated chain, including both ECs. Default: 100; resource policy, not a protocol limit. |
-| `maxResolutionSteps?` | `number` | Maximum eligible branch expansions per resolution, including reused statements. Default: 1000. |
-| `maxAuthorityHints?` | `number` | Maximum authority hints examined for an entity; defaults to 10. |
-| `maxConcurrentFetches?` | `number` | Maximum concurrent fetches during chain traversal and collection refresh; defaults to 6. |
-| `cacheMaxTtlSeconds?` | `number` | Fetched EC and Subordinate Statement cache retention cap in seconds; defaults to 3600 and is bounded by the statement's `exp`. Applies to statement fetchers using a cache. |
-| `signal?` | `AbortSignal` | Cancellation signal for the waiting caller and cooperative work started by this operation. |
-| `maxResponseBytes?` | `number` | Maximum response or decoded token size in bytes for APIs applying this limit; the shared default is 524288. |
-| `blockedCIDRs?` | `string[]` | Additional blocked IPv4 CIDRs used by core URL validation. DNS resolution and connection-level destination checks remain the host transport's responsibility. |
-| `allowedHosts?` | `string[]` | Optional exact hostname allowlist applied before outbound fetching. |
-| `authorityHintFilter?` | `(hint: URL, subject: EntityId) => boolean` | Host predicate for accepting an authority hint before traversal. |
-| `understoodCriticalClaims?` | `ReadonlySet<string>` | Extension claim names the application actually understands and processes; unknown critical claims are rejected. |
-| `maxTotalFetches?` | `number` | Maximum HTTP client calls; discovery helpers share the allowance across discovery and candidate validation. Cached and supplied statements use no allowance. Core accepts zero. Default: 50. |
-| `customPolicyOperators?` | `readonly PolicyOperatorDefinition[]` | Federation-defined policy operators in addition to the seven standard ones. Forwarded to `resolveMetadataPolicy` and `applyMetadataPolicy` during trust-chain validation. |
-| `customConstraintChecks?` | `readonly ConstraintCheckDefinition[]` | Federation-defined constraints checked against authenticated chains. Unknown names are ignored. |
-| `trustMarkRequirements?` | `TrustMarkRequirements` | Declarative accreditation requirements checked before beforeRegistration and before accepting registration side effects. |
-| `beforeRegistration?` | `( context: Readonly<RegistrationAccreditationContext>, signal?: AbortSignal, ) => Result<void> \| Promise<Result<void>>` | Application accreditation callback after declarative Trust Mark checks. A failing requirement prevents the callback; the callback must return a Result with ok set to true to continue. |
-
 ## `ProcessPushedAuthorizationRequestOptions`
 
-[Source](../../../packages/oidc/src/registration/pushed.ts#L73)
-
-Provider PAR validation and authentication inputs. The public provider method supplies its identity, protocol type, and replay store from the initialized role. Effective providerMetadata controls negotiation; a trusted host TLS callback is required for certificate authentication, and Client Attestation requires the host's attester and acceptance policies. The host protocol engine creates and stores any PAR request_uri after successful processing.
+Per-call policy and trusted transport evidence for `provider.processPushedAuthorizationRequest()`. Supply effective provider metadata when it differs from the role’s publication fields. For client certificate authentication, the host callback supplies the certificate verified by the TLS connection.
 
 ```typescript signature
-interface ProcessPushedAuthorizationRequestOptions
-	extends ProcessAutomaticRegistrationOptions {
-	/** Effective server metadata; partial publication metadata is insufficient for method negotiation. */
-	readonly providerMetadata: Readonly<Record<string, unknown>>;
-	/** Trusted host TLS integration must return the certificate proven by the connection (base64 DER). */
-	readonly clientCertificate?: (
-		request: Request,
-		signal: AbortSignal,
-	) => string | undefined | Promise<string | undefined>;
-	readonly clientAttestation?: Omit<
-		AuthenticateClientAttestationOptions,
-		"audience" | "clientId" | "engine"
-	>;
+interface ProcessPushedAuthorizationRequestOptions extends ProcessAutomaticRegistrationOptions {
+  readonly clientCertificate?: (
+    request: Request, signal: AbortSignal,
+  ) => string | undefined | Promise<string | undefined>;
+  readonly clientAttestation?: Omit<
+    AuthenticateClientAttestationOptions,
+    "audience" | "clientId" | "engine" | "algorithmRegistry" | "storage"
+  >;
 }
 ```
-
-Fields (including inherited fields):
-
-| Field | Declared type | Description |
-|---|---|---|
-| `providerMetadata` | `Readonly<Record<string, unknown>>` | Effective server metadata; partial publication metadata is insufficient for method negotiation. |
-| `clientCertificate?` | `( request: Request, signal: AbortSignal, ) => string \| undefined \| Promise<string \| undefined>` | Trusted host TLS integration must return the certificate proven by the connection (base64 DER). |
-| `clientAttestation?` | `Omit<AuthenticateClientAttestationOptions, "audience" \| "clientId">` | Host-supplied attester trust, freshness, replay, and acceptance policy for PAR attestation authentication. The processing role supplies the provider audience and client identity. |
-| `opEntityId` | `EntityId` | The OP's own Entity Identifier — REQUIRED to prevent cross-OP replay via `aud` validation. |
-| `requestObjectTyping?` | `AutomaticRegistrationContext["requestObjectTyping"]` | Incoming Request Object typing policy. Defaults to strict. |
-| `providerMetadataType?` | `"openid_provider" \| "oauth_authorization_server"` | Server role selecting the registration protocol. Defaults to OIDC. |
-| `replayStore` | `ReplayStore` | Atomic replay protection for one-time request proofs; processing automatic registration or PAR requires a configured store. |
-| `trustResolution?` | `import("./trust-chain/assessment.js").TrustResolutionSource` | Acquisition source; protocol consumers still validate the returned subject chain. |
-| `chainSelection?` | `ChainSelectionStrategy` | Select among validated candidates eligible for the current operation. |
-| `authentication?` | `EndpointClientAuthentication` | Authentication settings for the endpoint or outgoing request described by this contract. |
-| `getEndpointAuthentication?` | `EndpointAuthenticationProvider` | Select authentication for each outgoing federation endpoint request. Mutually exclusive with authentication. |
-| `additionalParameters?` | `EndpointAdditionalParameters` | Extension selectors for outgoing requests; reserved names and conflicting fixed selectors are rejected. |
-| `trustMarkVerification?` | `TrustMarkVerificationOptions` | Issuer-evidence and accreditation-resolution options for evaluating published Trust Marks. |
-| `trustMarkIssuerKeys?` | `ReadonlyMap<string, JWKSet>` | Independently supplied issuer keys for evaluating published Trust Marks. |
-| `trustMarkProfiles?` | `readonly TrustMarkProfile[]` | Explicitly recognized framework JWT types and their optional claim-validation policies. |
-| `offline?` | `boolean` | Disable network access in core federation retrieval. Host-owned protocol transport and direct protocol HTTP paths require their own transport policy. |
-| `httpClient?` | `HttpClient` | Host HTTP transport; defaults to the runtime's fetch implementation. |
-| `entityConfigurations?` | `ReadonlyMap<string, string> \| undefined` | Subject Entity Configuration JWTs used during chain validation; signatures and identity bindings still need validation. |
-| `clock?` | `Clock` | NumericDate time source; omitted clocks use the runtime's current time. |
-| `cache?` | `CacheProvider` | Host cache for signed statements or operation results; cache hits do not establish trust. |
-| `logger?` | `Logger` | Optional host logger. Library calls are message-only, nonblocking, and protected from sink failures. |
-| `httpTimeoutMs?` | `number` | Timeout in milliseconds for bounded transport or host callbacks; defaults to 10000. |
-| `clockSkewSeconds?` | `number` | Allowed time-claim leeway in seconds; the default verifier allowance is 60 seconds. |
-| `maxChainDepth?` | `number` | Maximum recursive discovery depth; defaults to 8. |
-| `maxChainLength?` | `number` | Maximum statements in a validated chain, including both ECs. Default: 100; resource policy, not a protocol limit. |
-| `maxResolutionSteps?` | `number` | Maximum eligible branch expansions per resolution, including reused statements. Default: 1000. |
-| `maxAuthorityHints?` | `number` | Maximum authority hints examined for an entity; defaults to 10. |
-| `maxConcurrentFetches?` | `number` | Maximum concurrent fetches during chain traversal and collection refresh; defaults to 6. |
-| `cacheMaxTtlSeconds?` | `number` | Fetched EC and Subordinate Statement cache retention cap in seconds; defaults to 3600 and is bounded by the statement's `exp`. Applies to statement fetchers using a cache. |
-| `signal?` | `AbortSignal` | Cancellation signal for the waiting caller and cooperative work started by this operation. |
-| `maxResponseBytes?` | `number` | Maximum response or decoded token size in bytes for APIs applying this limit; the shared default is 524288. |
-| `blockedCIDRs?` | `string[]` | Additional blocked IPv4 CIDRs used by core URL validation. DNS resolution and connection-level destination checks remain the host transport's responsibility. |
-| `allowedHosts?` | `string[]` | Optional exact hostname allowlist applied before outbound fetching. |
-| `authorityHintFilter?` | `(hint: URL, subject: EntityId) => boolean` | Host predicate for accepting an authority hint before traversal. |
-| `understoodCriticalClaims?` | `ReadonlySet<string>` | Extension claim names the application actually understands and processes; unknown critical claims are rejected. |
-| `maxTotalFetches?` | `number` | Maximum HTTP client calls; discovery helpers share the allowance across discovery and candidate validation. Cached and supplied statements use no allowance. Core accepts zero. Default: 50. |
-| `customPolicyOperators?` | `readonly PolicyOperatorDefinition[]` | Federation-defined policy operators in addition to the seven standard ones. Forwarded to `resolveMetadataPolicy` and `applyMetadataPolicy` during trust-chain validation. |
-| `customConstraintChecks?` | `readonly ConstraintCheckDefinition[]` | Federation-defined constraints checked against authenticated chains. Unknown names are ignored. |
-| `trustMarkRequirements?` | `TrustMarkRequirements` | Declarative accreditation requirements checked before beforeRegistration and before accepting registration side effects. |
-| `beforeRegistration?` | `( context: Readonly<RegistrationAccreditationContext>, signal?: AbortSignal, ) => Result<void> \| Promise<Result<void>>` | Application accreditation callback after declarative Trust Mark checks. A failing requirement prevents the callback; the callback must return a Result with ok set to true to continue. |
 
 ## `PushedAuthorizationProof`
 
-[Source](../../../packages/oidc/src/registration/pushed.ts#L55)
+[Source](../../../packages/oidc/src/registration/pushed.ts#L64)
 
 Client-side proof selection for prepared PAR. request_object signs the Request Object; private_key_jwt creates a published-key assertion; self_signed_tls_client_auth checks that the supplied base64 DER certificate appears in the resolved protocol JWKS, while the host supplies the actual TLS connection. attest_jwt_client_auth supplies an attestation/proof pair and also includes a signed Request Object. Preparation checks client/server binding and declared algorithms, without substituting for receiver-side authentication.
 
@@ -620,7 +245,7 @@ type PushedAuthorizationProof = {
 
 ## `RegistrationAccreditationContext`
 
-[Source](../../../packages/oidc/src/registration/accreditation.ts#L15)
+[Source](../../../packages/oidc/src/registration/accreditation.ts#L16)
 
 Validated client-chain evidence and the automatic/explicit flow discriminator supplied to beforeRegistration. The callback receives a detached, recursively frozen copy; it cannot alter the original authentication evidence.
 
@@ -640,7 +265,7 @@ Fields (including inherited fields):
 
 ## `RegistrationAccreditationPolicy`
 
-[Source](../../../packages/oidc/src/registration/accreditation.ts#L19)
+[Source](../../../packages/oidc/src/registration/accreditation.ts#L20)
 
 Optional declarative Trust Mark requirements followed by an application callback. A failing declarative check prevents the callback. beforeRegistration receives detached, recursively frozen client-chain evidence and a cancellation signal; it must return a successful Result to continue. A failure, throw, rejection, timeout, or cancellation rejects registration before acceptance side effects. Status queries and external accreditation policy remain explicit host choices.
 
@@ -660,127 +285,42 @@ Fields (including inherited fields):
 
 ## `RegistrationProtocolAdapter`
 
-[Source](../../../packages/oidc/src/registration/adapter-types.ts#L31)
-
-Optional synchronous hooks for protocol/profile metadata checks and explicit-response enrichment. The federation flow independently validates its selected client schema and policy. Explicit validateClientMetadata receives the full resolved Entity Type map; automatic processing receives the selected client block. An adapter supporting both flows must handle those input shapes. Explicit processing uses the successful returned map when preparing response metadata. Automatic processing checks only acceptance; it persists the resolved client block and verified protocol keys rather than the adapter's returned replacement. Explicit enrichment receives the selected block and validated chain; automatic processing does not call enrichResponseMetadata. Exceptions can propagate to the calling role.
+The adapter can reject authenticated client metadata in explicit, automatic, and pushed authorization registration. The optional enrichment callback customizes explicit response metadata before policy validation, signing, and persistence.
 
 ```typescript signature
 interface RegistrationProtocolAdapter {
-	/**
-	 * Validate resolved client metadata from the registration request.
-	 * Called after federation-layer validation succeeds.
-	 *
-	 * @param raw - Request metadata after superior overrides, constraints, and policy
-	 * @param context - Optional adapter context (peer chain metadata, etc.)
-	 * @returns The validated metadata or a federation error
-	 */
-	validateClientMetadata(raw: Record<string, unknown>, context?: RegistrationProtocolAdapterContext): Result<Record<string, unknown>, FederationError>;
-	/**
-	 * Enrich the registration response metadata with protocol-specific fields.
-	 * Called before the response is signed and returned.
-	 *
-	 * @param rpMeta - The RP's resolved metadata
-	 * @param trustChain - The validated trust chain for the RP
-	 * @param context - Optional adapter context (peer chain metadata, etc.)
-	 * @returns The enriched metadata for the response
-	 */
-	enrichResponseMetadata(rpMeta: Record<string, unknown>, trustChain: ValidatedTrustChain, context?: RegistrationProtocolAdapterContext): Record<string, unknown>;
+  validateClientMetadata(
+    metadata: Readonly<Record<string, Readonly<Record<string, unknown>>>>,
+    context: RegistrationProtocolAdapterContext,
+  ): Result<void, FederationError>;
+  enrichResponseMetadata?(
+    metadata: Record<string, Record<string, unknown>>,
+    trustChain: ValidatedTrustChain,
+    context: RegistrationProtocolAdapterContext & { readonly flow: "explicit" },
+  ): Record<string, Record<string, unknown>>;
 }
 ```
-
-Fields (including inherited fields):
-
-| Field | Declared type | Description |
-|---|---|---|
-| `validateClientMetadata` | `(raw: Record<string, unknown>, context?: RegistrationProtocolAdapterContext) => Result<Record<string, unknown>, FederationError>` | Synchronous validation hook. Explicit processing uses the returned metadata map; automatic processing passes the selected client block and uses only the acceptance decision. A failing Result rejects registration. |
-| `enrichResponseMetadata` | `(rpMeta: Record<string, unknown>, trustChain: ValidatedTrustChain, context?: RegistrationProtocolAdapterContext) => Record<string, unknown>` | Synchronous explicit-registration response hook receiving the selected client block and validated chain. Its returned block is checked against the response schema and federation policy. |
 
 ## `RegistrationProtocolAdapterContext`
 
-[Source](../../../packages/oidc/src/registration/adapter-types.ts#L12)
-
-Optional hook context. Explicit registration supplies peerResolvedOpMetadata when a validated client-provided peer chain exists; these are the provider metadata values chosen by that client's chain. Automatic adapter validation supplies a cancellation signal through the bounded host-operation wrapper. The adapter must not assume every flow supplies both fields.
+Use `clientMetadataType` to select the client block in the metadata map. `peerResolvedOpMetadata` is present when processing supplied and validated peer evidence. The signal identifies the operation’s cancellation context.
 
 ```typescript signature
 interface RegistrationProtocolAdapterContext {
-	/**
-	 * The OP's resolved metadata as derived from the validated peer chain
-	 * (validated by the federation handler before this is passed in). When
-	 * absent, no peer chain was supplied. Invalid peer chains fail registration.
-	 */
-	readonly peerResolvedOpMetadata?: Readonly<Record<string, unknown>>;
-	/** Cancellation for asynchronous host integrations, when supplied by the caller. */
-	readonly signal?: AbortSignal;
+  readonly flow: "explicit" | "automatic" | "par";
+  readonly clientMetadataType: "openid_relying_party" | "oauth_client";
+  readonly peerResolvedOpMetadata?: Readonly<Record<string, unknown>>;
+  readonly signal?: AbortSignal;
 }
 ```
 
-Fields (including inherited fields):
-
-| Field | Declared type | Description |
-|---|---|---|
-| `peerResolvedOpMetadata?` | `Readonly<Record<string, unknown>>` | The OP's resolved metadata as derived from the validated peer chain (validated by the federation handler before this is passed in). When absent, no peer chain was supplied. Invalid peer chains fail registration. |
-| `signal?` | `AbortSignal` | Cancellation signal for the waiting caller and cooperative work started by this operation. |
-
 ## `RequestDelivery`
 
-[Source](../../../packages/oidc/src/registration/automatic.ts#L36)
+[Source](../../../packages/oidc/src/registration/automatic-client.ts#L44)
 
 String union selecting delivery: query places the signed Request Object in an authorization URL; form_post returns form fields; request_uri returns a URL referencing a caller-hosted JWT; par performs a PAR request and returns the resulting authorization URL. The default is form_post.
 
 ```typescript signature
 type RequestDelivery = "query" | "form_post" | "request_uri" | "par";
-```
-
-## `ValidatedRequestObject`
-
-[Source](../../../packages/oidc/src/registration/types.ts#L6)
-
-Request Object claims after claim-level validation, including asserted client/provider identities and optional attached chains. This type does not itself carry a validated chain or resolved metadata, and its name does not prove full signature or Federation validation. Completed registration evidence is represented by ProcessedAutomaticRegistration.
-
-```typescript signature
-interface ValidatedRequestObject {
-	/** The RP's Entity Identifier (from `client_id` / `iss`) */
-	readonly rpEntityId: EntityId;
-	/** The OP's Entity Identifier (from `aud`) */
-	readonly opEntityId: string;
-	/** JWT expiration timestamp */
-	readonly exp: number;
-	/** Unique JWT identifier */
-	readonly jti: string;
-	/** Issued-at timestamp (if present) */
-	readonly iat?: number;
-	/** Protected typ accepted by the typing policy; omitted when the header is absent. */
-	readonly headerTyp?: string;
-	/** All decoded JWT payload claims */
-	readonly claims: Readonly<Record<string, unknown>>;
-	/** Trust chain from JWT header (if present) */
-	readonly trustChainHeader?: readonly string[];
-	/** Peer Trust Chain from JWT header (if present) — Trust Chain for the OP. */
-	readonly peerTrustChainHeader?: readonly string[];
-}
-```
-
-Fields (including inherited fields):
-
-| Field | Declared type | Description |
-|---|---|---|
-| `headerTyp?` | `string` | Original protected typ accepted by the structural typing policy; absent for an untyped Request Object. It does not itself prove signature validation. |
-| `rpEntityId` | `EntityId` | Registered client Entity Identifier; the RP field name also applies to the OAuth client profile. |
-| `opEntityId` | `string` | The OP's Entity Identifier (from `aud`) |
-| `exp` | `number` | Expiration time as a finite NumericDate in seconds since the Unix epoch. |
-| `jti` | `string` | JWT identifier used for replay protection, scoped to issuer and audience. |
-| `iat?` | `number` | Issuance time as a finite NumericDate in seconds since the Unix epoch. |
-| `claims` | `Readonly<Record<string, unknown>>` | Claims associated with the artifact or selected for this operation. |
-| `trustChainHeader?` | `readonly string[]` | Trust chain from JWT header (if present) |
-| `peerTrustChainHeader?` | `readonly string[]` | Peer Trust Chain from JWT header (if present) — Trust Chain for the OP. |
-
-## `ValidatedRequestObjectResult`
-
-[Source](../../../packages/oidc/src/registration/types.ts#L35)
-
-Result wrapper around ValidatedRequestObject and FederationError. It contains claim-validation output, not a completed client registration or resolved Federation evidence.
-
-```typescript signature
-type ValidatedRequestObjectResult = Result<ValidatedRequestObject, FederationError>;
 ```
 

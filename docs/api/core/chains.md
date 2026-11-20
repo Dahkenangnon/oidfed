@@ -6,17 +6,17 @@ Discovery obtains candidate evidence. Validation checks a chain against configur
 
 ## `assessEntity`
 
-[Source](../../../packages/core/src/trust-chain/assessment.ts#L299)
+[Source](../../../packages/core/src/trust-chain/assessment.ts#L303)
 
 Assess a subject using local chain validation or an explicitly authorized resolver. The returned kind records which trust boundary was used; resolver-reported metadata is not relabeled as a locally validated chain.
 
 ```typescript signature
-assessEntity(subject: EntityId, anchors: TrustAnchorSet, options?: EntityAssessmentOptions): Promise<Result<EntityAssessment>>;
+assessEntity(subject: EntityId, anchors: TrustAnchorSet, options: EntityAssessmentOptions): Promise<Result<EntityAssessment>>;
 ```
 
 ## `calculateChainExpiration`
 
-[Source](../../../packages/core/src/trust-chain/validate.ts#L61)
+[Source](../../../packages/core/src/trust-chain/validate.ts#L62)
 
 Calculate the earliest expiration across all statements in a chain.
 
@@ -26,7 +26,7 @@ calculateChainExpiration(chain: readonly ParsedEntityStatement[]): number;
 
 ## `chainRemainingTtl`
 
-[Source](../../../packages/core/src/trust-chain/validate.ts#L1720)
+[Source](../../../packages/core/src/trust-chain/validate.ts#L1736)
 
 Get remaining TTL in seconds, returning 0 if expired.
 
@@ -77,7 +77,7 @@ completeTrustChainValidation(prepared: PreparedTrustChain, context?: Readonly<Re
 
 ## `ContextualMetadataClaim`
 
-[Source](../../../packages/core/src/trust-chain/validate.ts#L475)
+[Source](../../../packages/core/src/trust-chain/validate.ts#L474)
 
 A metadata claim whose final validation depends on protocol context supplied later.
 
@@ -121,7 +121,7 @@ createTrustChainOperation(options: FederationOptions): Result<{ options: Federat
 
 ## `describeTrustChain`
 
-[Source](../../../packages/core/src/trust-chain/validate.ts#L1726)
+[Source](../../../packages/core/src/trust-chain/validate.ts#L1742)
 
 Human-readable chain description: hostnames joined with arrows.
 
@@ -151,7 +151,7 @@ discoverEntityFromChain(entityId: EntityId, statements: readonly string[], trust
 
 ## `EntityAssessment`
 
-[Source](../../../packages/core/src/trust-chain/assessment.ts#L56)
+[Source](../../../packages/core/src/trust-chain/assessment.ts#L57)
 
 The result of assessing an entity through a locally validated chain or a trusted resolver.
 
@@ -177,7 +177,7 @@ type EntityAssessment = {
 
 ## `EntityAssessmentOptions`
 
-[Source](../../../packages/core/src/trust-chain/assessment.ts#L50)
+[Source](../../../packages/core/src/trust-chain/assessment.ts#L51)
 
 The trust-resolution mode and inputs used to assess an entity.
 
@@ -208,7 +208,7 @@ Fields (including inherited fields):
 | `httpClient?` | `HttpClient` | Host HTTP transport; defaults to the runtime's fetch implementation. |
 | `entityConfigurations?` | `ReadonlyMap<string, string> \| undefined` | Subject Entity Configuration JWTs used during chain validation; signatures and identity bindings still need validation. |
 | `clock?` | `Clock` | NumericDate time source; omitted clocks use the runtime's current time. |
-| `cache?` | `CacheProvider` | Host cache for signed statements or operation results; cache hits do not establish trust. |
+| `storage?` | `FederationStorage \| undefined` | Storage for standalone calls. Hosted calls inherit storage from their entity. |
 | `logger?` | `Logger` | Optional host logger. Library calls are message-only, nonblocking, and protected from sink failures. |
 | `httpTimeoutMs?` | `number` | Timeout in milliseconds for bounded transport or host callbacks; defaults to 10000. |
 | `clockSkewSeconds?` | `number` | Allowed time-claim leeway in seconds; the default verifier allowance is 60 seconds. |
@@ -230,7 +230,7 @@ Fields (including inherited fields):
 
 ## `FederationResolverConfig`
 
-[Source](../../../packages/core/src/resolver/service.ts#L52)
+[Source](../../../packages/core/src/resolver/service.ts#L60)
 
 Identity, signing, trust, caching, and authentication settings for a hosted Resolve service.
 
@@ -239,7 +239,6 @@ interface FederationResolverConfig {
 	readonly entityId: EntityId | string;
 	readonly crypto: CryptoContext;
 	readonly trustAnchors?: TrustAnchorSet;
-	readonly cache?: CacheProvider;
 	readonly options: FederationOptions;
 	readonly requireAuthForFreshResolution?: boolean;
 	readonly authentication?: Omit<EndpointAuthenticationConfig, "receiverEntityId">;
@@ -256,7 +255,7 @@ Fields (including inherited fields):
 | `entityId` | `EntityId \| string` | Exact Entity Identifier bound to this object or operation. |
 | `crypto` | `CryptoContext` | Provider of current Federation Entity Keys and the active signer. |
 | `trustAnchors?` | `TrustAnchorSet` | Independently trusted anchor identities and their public Federation Entity Keys. |
-| `cache?` | `CacheProvider` | Host cache for signed statements or operation results; cache hits do not establish trust. |
+| `storage?` | `FederationStorage \| undefined` | Storage for standalone calls. Hosted calls inherit storage from their entity. |
 | `options?` | `FederationOptions` | Shared federation transport and validation settings for this operation. |
 | `requireAuthForFreshResolution?` | `boolean` | Require authenticated HTTP access for live discovery; true by default. Local calls can populate the cache. |
 | `authentication?` | `Omit<EndpointAuthenticationConfig, "receiverEntityId">` | Authentication settings for the endpoint or outgoing request described by this contract. |
@@ -264,7 +263,7 @@ Fields (including inherited fields):
 
 ## `FederationResolverIntegration`
 
-[Source](../../../packages/core/src/resolver/service.ts#L64)
+[Source](../../../packages/core/src/resolver/service.ts#L71)
 
 Configuration for composing a Resolve service into an entity host.
 
@@ -272,7 +271,7 @@ Configuration for composing a Resolve service into an entity host.
 type FederationResolverIntegration = Omit<
 	FederationResolverConfig,
 	"entityId" | "crypto" | "options"
-> & { readonly options?: Omit<FederationOptions, "engine"> };
+> & { readonly options?: BoundFederationOptions };
 ```
 
 Fields (including inherited fields):
@@ -281,14 +280,14 @@ Fields (including inherited fields):
 |---|---|---|
 | `options?` | `FederationOptions` | Shared federation transport and validation settings for this operation. |
 | `authentication?` | `Omit<EndpointAuthenticationConfig, "receiverEntityId">` | Authentication settings for the endpoint or outgoing request described by this contract. |
-| `cache?` | `CacheProvider` | Host cache for signed statements or operation results; cache hits do not establish trust. |
+| `storage?` | `FederationStorage \| undefined` | Storage for standalone calls. Hosted calls inherit storage from their entity. |
 | `trustAnchors?` | `TrustAnchorSet` | Independently trusted anchor identities and their public Federation Entity Keys. |
 | `requireAuthForFreshResolution?` | `boolean` | Require authenticated HTTP access for live discovery; true by default. Local calls can populate the cache. |
 | `assessLocalTrustMarkStatus?` | `( jwt: string, ) => Promise<TrustMarkStatusAssessment \| undefined>` | Read authoritative local status and its evidence deadline when the resolver encounters a locally issued mark. |
 
 ## `FederationResolverService`
 
-[Source](../../../packages/core/src/resolver/service.ts#L71)
+[Source](../../../packages/core/src/resolver/service.ts#L78)
 
 Resolve hosting independent of subordinate storage and Authority endpoints.
 
@@ -300,7 +299,7 @@ new FederationResolverService(config: FederationResolverConfig): FederationResol
 
 Handle a Web API Request and return the protocol Response. The application supplies external HTTPS routing.
 
-[Source](../../../packages/core/src/resolver/service.ts#L95)
+[Source](../../../packages/core/src/resolver/service.ts#L102)
 
 ```typescript signature
 handleRequest(request: Request): Promise<Response>;
@@ -310,25 +309,33 @@ handleRequest(request: Request): Promise<Response>;
 
 In-process callers may populate the cache without endpoint authentication.
 
-[Source](../../../packages/core/src/resolver/service.ts#L99)
+[Source](../../../packages/core/src/resolver/service.ts#L106)
 
 ```typescript signature
-resolve(request: Request, options?: Omit<FederationOptions, "engine">): Promise<Response>;
+resolve(request: Request, options?: BoundFederationOptions): Promise<Response>;
 ```
 
 ### `FederationResolverService#handleAuthenticatedRequest`
 
 For hosts which have already applied the shared authentication wrapper.
 
-[Source](../../../packages/core/src/resolver/service.ts#L109)
+[Source](../../../packages/core/src/resolver/service.ts#L123)
 
 ```typescript signature
 handleAuthenticatedRequest(request: Request): Promise<Response>;
 ```
 
+## `entityConfigurationUrl`
+
+Build the Entity Configuration discovery URL for an Entity Identifier. The helper removes a trailing slash before appending the well-known suffix. The host still uses the original identifier in its signed statements.
+
+```typescript signature
+entityConfigurationUrl(entityId: EntityId): string;
+```
+
 ## `fetchEntityConfiguration`
 
-[Source](../../../packages/core/src/trust-chain/fetch.ts#L530)
+[Source](../../../packages/core/src/trust-chain/fetch.ts#L90)
 
 Retrieve the target's compact Entity Configuration JWT using well-known HTTPS GET discovery, without a Federation client assertion. Network responses require HTTP 200; cached statements are reused only while their cache lifetime remains positive. This fetch does not authenticate the returned statement. Cache adapter failures can reject the promise rather than return a protocol Result.
 
@@ -338,17 +345,17 @@ fetchEntityConfiguration(entityId: EntityId, options: FederationOptions): Promis
 
 ## `fetchSubordinateStatement`
 
-[Source](../../../packages/core/src/trust-chain/fetch.ts#L580)
+[Source](../../../packages/core/src/trust-chain/fetch.ts#L140)
 
 Retrieve a compact Subordinate Statement JWT about the subject, using anonymous GET or configured authenticated POST. Network responses require HTTP 200; signature, subject, and chain checks remain the caller's responsibility. When the issuer identity is known, pass `options.issuer` for cache isolation and the independent authentication-audience check. Cache adapter failures can reject the promise.
 
 ```typescript signature
-fetchSubordinateStatement(fetchEndpoint: string, subject: EntityId, options?: FetchSubordinateStatementOptions): Promise<Result<string, FederationError>>;
+fetchSubordinateStatement(fetchEndpoint: string, subject: EntityId, options: FetchSubordinateStatementOptions): Promise<Result<string, FederationError>>;
 ```
 
 ## `FetchSubordinateStatementOptions`
 
-[Source](../../../packages/core/src/trust-chain/fetch.ts#L574)
+[Source](../../../packages/core/src/trust-chain/fetch.ts#L134)
 
 Transport, authentication, and caching settings for fetching a Subordinate Statement.
 
@@ -376,7 +383,7 @@ Fields (including inherited fields):
 | `httpClient?` | `HttpClient` | Host HTTP transport; defaults to the runtime's fetch implementation. |
 | `entityConfigurations?` | `ReadonlyMap<string, string> \| undefined` | Subject Entity Configuration JWTs used during chain validation; signatures and identity bindings still need validation. |
 | `clock?` | `Clock` | NumericDate time source; omitted clocks use the runtime's current time. |
-| `cache?` | `CacheProvider` | Host cache for signed statements or operation results; cache hits do not establish trust. |
+| `storage?` | `FederationStorage \| undefined` | Storage for standalone calls. Hosted calls inherit storage from their entity. |
 | `logger?` | `Logger` | Optional host logger. Library calls are message-only, nonblocking, and protected from sink failures. |
 | `httpTimeoutMs?` | `number` | Timeout in milliseconds for bounded transport or host callbacks; defaults to 10000. |
 | `clockSkewSeconds?` | `number` | Allowed time-claim leeway in seconds; the default verifier allowance is 60 seconds. |
@@ -398,7 +405,7 @@ Fields (including inherited fields):
 
 ## `isChainExpired`
 
-[Source](../../../packages/core/src/trust-chain/validate.ts#L1714)
+[Source](../../../packages/core/src/trust-chain/validate.ts#L1730)
 
 Check if a validated trust chain has expired.
 
@@ -408,7 +415,7 @@ isChainExpired(chain: ValidatedTrustChain, clock?: Clock): boolean;
 
 ## `isEntityAssessment`
 
-[Source](../../../packages/core/src/trust-chain/assessment.ts#L78)
+[Source](../../../packages/core/src/trust-chain/assessment.ts#L79)
 
 Recognize an assessment created by this library instance. Copying or deserializing the object's fields does not retain its provenance.
 
@@ -418,7 +425,7 @@ isEntityAssessment(value: unknown): value is EntityAssessment;
 
 ## `longestExpiry`
 
-[Source](../../../packages/core/src/trust-chain/validate.ts#L1748)
+[Source](../../../packages/core/src/trust-chain/selection.ts#L51)
 
 Select the chain that expires last.
 
@@ -428,7 +435,7 @@ const longestExpiry: ChainSelectionStrategy;
 
 ## `preferTrustAnchor`
 
-[Source](../../../packages/core/src/trust-chain/validate.ts#L1755)
+[Source](../../../packages/core/src/trust-chain/selection.ts#L58)
 
 Create a strategy that prefers chains terminating at the given trust anchor.
 
@@ -438,7 +445,7 @@ preferTrustAnchor(taId: string): ChainSelectionStrategy;
 
 ## `PreparedTrustChain`
 
-[Source](../../../packages/core/src/trust-chain/validate.ts#L489)
+[Source](../../../packages/core/src/trust-chain/validate.ts#L488)
 
 Authenticated chain evidence with explicitly unfinished metadata policy checks.
 
@@ -468,7 +475,7 @@ Fields (including inherited fields):
 
 ## `PrepareTrustChainOptions`
 
-[Source](../../../packages/core/src/trust-chain/validate.ts#L480)
+[Source](../../../packages/core/src/trust-chain/validate.ts#L479)
 
 Inputs for validating a chain while deferring metadata checks that need additional context.
 
@@ -499,7 +506,7 @@ Fields (including inherited fields):
 | `offline?` | `boolean` | Disallow network access when only supplied evidence is permitted. |
 | `httpClient?` | `HttpClient` | Host HTTP transport; defaults to the runtime's fetch implementation. |
 | `entityConfigurations?` | `ReadonlyMap<string, string> \| undefined` | Subject Entity Configuration JWTs used during chain validation; signatures and identity bindings still need validation. |
-| `cache?` | `CacheProvider` | Host cache for signed statements or operation results; cache hits do not establish trust. |
+| `storage?` | `FederationStorage \| undefined` | Storage for standalone calls. Hosted calls inherit storage from their entity. |
 | `logger?` | `Logger` | Optional host logger. Library calls are message-only, nonblocking, and protected from sink failures. |
 | `clockSkewSeconds?` | `number` | Allowed time-claim leeway in seconds; the default verifier allowance is 60 seconds. |
 | `maxChainDepth?` | `number` | Maximum recursive discovery depth; defaults to 8. |
@@ -531,7 +538,7 @@ prepareTrustChainValidation(chain: readonly string[], anchors: TrustAnchorSet, o
 
 ## `RefreshOptions`
 
-[Source](../../../packages/core/src/trust-chain/refresh.ts#L20)
+[Source](../../../packages/core/src/trust-chain/refresh.ts#L23)
 
 Controls for refreshing a previously validated trust chain.
 
@@ -559,7 +566,7 @@ Fields (including inherited fields):
 | `httpClient?` | `HttpClient` | Host HTTP transport; defaults to the runtime's fetch implementation. |
 | `entityConfigurations?` | `ReadonlyMap<string, string> \| undefined` | Subject Entity Configuration JWTs used during chain validation; signatures and identity bindings still need validation. |
 | `clock?` | `Clock` | NumericDate time source; omitted clocks use the runtime's current time. |
-| `cache?` | `CacheProvider` | Host cache for signed statements or operation results; cache hits do not establish trust. |
+| `storage?` | `FederationStorage \| undefined` | Storage for standalone calls. Hosted calls inherit storage from their entity. |
 | `logger?` | `Logger` | Optional host logger. Library calls are message-only, nonblocking, and protected from sink failures. |
 | `httpTimeoutMs?` | `number` | Timeout in milliseconds for bounded transport or host callbacks; defaults to 10000. |
 | `clockSkewSeconds?` | `number` | Allowed time-claim leeway in seconds; the default verifier allowance is 60 seconds. |
@@ -590,7 +597,7 @@ Forced refresh bypasses existing statement cache entries, writes fetched stateme
 and never falls back to the previous chain on failure. Transport/upstream caches remain host-owned.
 
 ```typescript signature
-refreshTrustChain(chain: ValidatedTrustChain, trustAnchors: TrustAnchorSet, options?: RefreshOptions, clock?: Clock): Promise<Result<ValidatedTrustChain>>;
+refreshTrustChain(chain: ValidatedTrustChain, trustAnchors: TrustAnchorSet, options: RefreshOptions, clock?: Clock): Promise<Result<ValidatedTrustChain>>;
 ```
 
 ## `resolveTrustChainForAnchor`
@@ -614,7 +621,7 @@ resolveTrustChainForAnchor(subject: EntityId, trustAnchorId: EntityId, trustAnch
 Discover candidate compact-JWT chains ending at the configured anchors, within the supplied traversal limits. Candidates are not fully validated chains. Inspect both `errors` and `incomplete`: hitting a limit or cancellation can leave a partial set. Pass each candidate's `entityConfigurations` into validation to reuse retrieved subject ECs.
 
 ```typescript signature
-resolveTrustChains(entityId: EntityId, trustAnchors: TrustAnchorSet, options?: ResolveTrustChainsOptions): Promise<TrustChainResult>;
+resolveTrustChains(entityId: EntityId, trustAnchors: TrustAnchorSet, options: ResolveTrustChainsOptions): Promise<TrustChainResult>;
 ```
 
 ## `ResolveTrustChainsOptions`
@@ -650,7 +657,7 @@ Fields (including inherited fields):
 | `httpClient?` | `HttpClient` | Host HTTP transport; defaults to the runtime's fetch implementation. |
 | `entityConfigurations?` | `ReadonlyMap<string, string> \| undefined` | Subject Entity Configuration JWTs used during chain validation; signatures and identity bindings still need validation. |
 | `clock?` | `Clock` | NumericDate time source; omitted clocks use the runtime's current time. |
-| `cache?` | `CacheProvider` | Host cache for signed statements or operation results; cache hits do not establish trust. |
+| `storage?` | `FederationStorage \| undefined` | Storage for standalone calls. Hosted calls inherit storage from their entity. |
 | `logger?` | `Logger` | Optional host logger. Library calls are message-only, nonblocking, and protected from sink failures. |
 | `httpTimeoutMs?` | `number` | Timeout in milliseconds for bounded transport or host callbacks; defaults to 10000. |
 | `clockSkewSeconds?` | `number` | Allowed time-claim leeway in seconds; the default verifier allowance is 60 seconds. |
@@ -672,7 +679,7 @@ Fields (including inherited fields):
 
 ## `selectTrustChain`
 
-[Source](../../../packages/core/src/trust-chain/selection.ts#L14)
+[Source](../../../packages/core/src/trust-chain/selection.ts#L15)
 
 Invoke the configured synchronous selector, or the supplied fallback, on detached frozen candidates. A selector must return one of those candidate objects; thrown errors, promises, and fabricated or copied selections are rejected. The callback cannot modify the frozen snapshots. The successful Result contains the corresponding original validated chain. Without a configured selector or fallback, the first candidate is used.
 
@@ -682,7 +689,7 @@ selectTrustChain(chains: readonly ValidatedTrustChain[], options: FederationOpti
 
 ## `shortestChain`
 
-[Source](../../../packages/core/src/trust-chain/validate.ts#L1739)
+[Source](../../../packages/core/src/trust-chain/selection.ts#L42)
 
 Select the chain with the fewest statements.
 
@@ -724,7 +731,7 @@ Fields (including inherited fields):
 
 ## `TrustedResolverConfig`
 
-[Source](../../../packages/core/src/trust-chain/assessment.ts#L37)
+[Source](../../../packages/core/src/trust-chain/assessment.ts#L38)
 
 The resolver identity, verification policy, and trust configuration accepted by the host.
 
@@ -756,7 +763,7 @@ Fields (including inherited fields):
 
 ## `TrustResolutionSource`
 
-[Source](../../../packages/core/src/trust-chain/assessment.ts#L47)
+[Source](../../../packages/core/src/trust-chain/assessment.ts#L48)
 
 Identifies how an entity's trust assessment was obtained.
 
@@ -771,7 +778,7 @@ type TrustResolutionSource = {
 
 ## `validateEntityId`
 
-[Source](../../../packages/core/src/trust-chain/fetch.ts#L265)
+[Source](../../../packages/core/src/trust-chain/fetch.ts#L22)
 
 Validate an Entity Identifier and return the result through the error model shown in the signature.
 
@@ -781,7 +788,7 @@ validateEntityId(value: string): Result<EntityId, FederationError>;
 
 ## `validateFetchUrl`
 
-[Source](../../../packages/core/src/trust-chain/fetch.ts#L201)
+[Source](../../../packages/core/src/http/fetch-url.ts#L180)
 
 Check HTTPS syntax, the 2048-character limit, absence of URL credentials, an optional exact hostname allowlist, special-use IP literals, and additional blocked IPv4 CIDRs. This URL check does not resolve DNS or pin a connection's destination; the host transport owns that enforcement. Endpoint-specific fragment rules are checked by their callers.
 
@@ -791,12 +798,12 @@ validateFetchUrl(url: string, options?: Pick<FederationOptions, "blockedCIDRs" |
 
 ## `validateTrustChain`
 
-[Source](../../../packages/core/src/trust-chain/validate.ts#L415)
+[Source](../../../packages/core/src/trust-chain/validate.ts#L414)
 
 Validate a chain and report its published Trust Marks independently (Federation §§3.2, 7.3).
 
 ```typescript signature
-validateTrustChain(chain: ReadonlyArray<string>, trustAnchors: TrustAnchorSet, options?: TrustChainValidationOptions): Promise<ValidationResult>;
+validateTrustChain(chain: ReadonlyArray<string>, trustAnchors: TrustAnchorSet, options: TrustChainValidationOptions): Promise<ValidationResult>;
 ```
 
 `TrustChainValidationOptions` is the local name used by the declaration, rather than a root export. It extends [`FederationOptions`](contracts.md#federationoptions) with these call-specific fields:
@@ -809,13 +816,19 @@ validateTrustChain(chain: ReadonlyArray<string>, trustAnchors: TrustAnchorSet, o
 
 The signature remains usable without importing that local type:
 
+<!-- oidfed-example -->
 ```typescript
+import type { CryptoEngine } from "@oidfed/crypto";
 import { validateTrustChain } from "@oidfed/core";
 
-type ValidationOptions = NonNullable<Parameters<typeof validateTrustChain>[2]>;
-const options: ValidationOptions = {
-  verboseErrors: true,
-  offline: true,
-  maxTotalFetches: 0,
-};
+export function validationOptions(engine: CryptoEngine) {
+  type ValidationOptions = Parameters<typeof validateTrustChain>[2];
+  const options: ValidationOptions = {
+    engine,
+    verboseErrors: true,
+    offline: true,
+    maxTotalFetches: 0,
+  };
+  return options;
+}
 ```

@@ -6,7 +6,7 @@ Use these exported values when constructing protocol messages or configuring lim
 
 ## `CachePrefix`
 
-[Source](../../../packages/core/src/constants.ts#L124)
+[Source](../../../packages/core/src/constants.ts#L126)
 
 Prefixes used to namespace Entity Configuration, Entity Statement, and Trust Chain cache keys.
 
@@ -20,7 +20,7 @@ const CachePrefix: {
 
 ## `DEFAULT_CACHE_MAX_TTL_SECONDS`
 
-[Source](../../../packages/core/src/constants.ts#L169)
+[Source](../../../packages/core/src/constants.ts#L171)
 
 Maximum default cache retention, in seconds. Check the calling API for overrides and operation-specific defaults.
 
@@ -30,7 +30,7 @@ const DEFAULT_CACHE_MAX_TTL_SECONDS = 86400;
 
 ## `DEFAULT_CACHE_TTL_SECONDS`
 
-[Source](../../../packages/core/src/constants.ts#L168)
+[Source](../../../packages/core/src/constants.ts#L170)
 
 Default cache-entry lifetime, in seconds. Check the calling API for overrides and operation-specific defaults.
 
@@ -40,7 +40,7 @@ const DEFAULT_CACHE_TTL_SECONDS = 3600;
 
 ## `DEFAULT_CLIENT_ASSERTION_TTL_SECONDS`
 
-[Source](../../../packages/core/src/constants.ts#L174)
+[Source](../../../packages/core/src/constants.ts#L176)
 
 Default private-key JWT client-assertion lifetime, in seconds. Check the calling API for overrides and operation-specific defaults.
 
@@ -50,7 +50,7 @@ const DEFAULT_CLIENT_ASSERTION_TTL_SECONDS = 60;
 
 ## `DEFAULT_CLOCK_SKEW_SECONDS`
 
-[Source](../../../packages/core/src/constants.ts#L163)
+[Source](../../../packages/core/src/constants.ts#L165)
 
 Default leeway for supported time-claim checks, in seconds. Check the calling API for overrides and operation-specific defaults.
 
@@ -60,7 +60,7 @@ const DEFAULT_CLOCK_SKEW_SECONDS = 60;
 
 ## `DEFAULT_DELEGATION_TTL_SECONDS`
 
-[Source](../../../packages/core/src/constants.ts#L172)
+[Source](../../../packages/core/src/constants.ts#L174)
 
 Default Trust Mark delegation lifetime, in seconds. Check the calling API for overrides and operation-specific defaults.
 
@@ -70,7 +70,7 @@ const DEFAULT_DELEGATION_TTL_SECONDS = 86400;
 
 ## `DEFAULT_ENTITY_STATEMENT_TTL_SECONDS`
 
-[Source](../../../packages/core/src/constants.ts#L171)
+[Source](../../../packages/core/src/constants.ts#L173)
 
 Default Entity Statement lifetime, in seconds. Check the calling API for overrides and operation-specific defaults.
 
@@ -80,7 +80,7 @@ const DEFAULT_ENTITY_STATEMENT_TTL_SECONDS = 86400;
 
 ## `DEFAULT_HTTP_TIMEOUT_MS`
 
-[Source](../../../packages/core/src/constants.ts#L162)
+[Source](../../../packages/core/src/constants.ts#L164)
 
 Default HTTP operation timeout, in milliseconds. Check the calling API for overrides and operation-specific defaults.
 
@@ -92,7 +92,7 @@ Runtime default: 10000 milliseconds.
 
 ## `DEFAULT_MAX_AUTHORITY_HINTS`
 
-[Source](../../../packages/core/src/constants.ts#L167)
+[Source](../../../packages/core/src/constants.ts#L169)
 
 Default limit on authority hints examined for an entity. Check the calling API for overrides and operation-specific defaults.
 
@@ -102,7 +102,7 @@ const DEFAULT_MAX_AUTHORITY_HINTS = 10;
 
 ## `DEFAULT_MAX_CHAIN_DEPTH`
 
-[Source](../../../packages/core/src/constants.ts#L165)
+[Source](../../../packages/core/src/constants.ts#L167)
 
 Default discovery depth limit. Check the calling API for overrides and operation-specific defaults.
 
@@ -112,7 +112,7 @@ const DEFAULT_MAX_CHAIN_DEPTH = 8;
 
 ## `DEFAULT_MAX_CHAIN_LENGTH`
 
-[Source](../../../packages/core/src/constants.ts#L164)
+[Source](../../../packages/core/src/constants.ts#L166)
 
 Default maximum statement count in a validated chain. Check the calling API for overrides and operation-specific defaults.
 
@@ -122,7 +122,7 @@ const DEFAULT_MAX_CHAIN_LENGTH = 100;
 
 ## `DEFAULT_MAX_REQUEST_BODY_BYTES`
 
-[Source](../../../packages/core/src/constants.ts#L161)
+[Source](../../../packages/core/src/constants.ts#L163)
 
 Default maximum accepted request-body size, in bytes. Check the calling API for overrides and operation-specific defaults.
 
@@ -134,7 +134,7 @@ Runtime default: 65536 bytes.
 
 ## `DEFAULT_MAX_RESOLUTION_STEPS`
 
-[Source](../../../packages/core/src/constants.ts#L166)
+[Source](../../../packages/core/src/constants.ts#L168)
 
 Default upper bound on branch expansion during chain resolution. Check the calling API for overrides and operation-specific defaults.
 
@@ -144,7 +144,7 @@ const DEFAULT_MAX_RESOLUTION_STEPS = 1000;
 
 ## `DEFAULT_MAX_RESPONSE_BYTES`
 
-[Source](../../../packages/core/src/constants.ts#L160)
+[Source](../../../packages/core/src/constants.ts#L162)
 
 Default maximum fetched response size, in bytes. Check the calling API for overrides and operation-specific defaults.
 
@@ -156,7 +156,7 @@ Runtime default: 524288 bytes.
 
 ## `DEFAULT_REQUEST_OBJECT_TTL_SECONDS`
 
-[Source](../../../packages/core/src/constants.ts#L173)
+[Source](../../../packages/core/src/constants.ts#L175)
 
 Default signed Request Object lifetime, in seconds. Check the calling API for overrides and operation-specific defaults.
 
@@ -280,7 +280,7 @@ type InternalErrorCode = (typeof InternalErrorCode)[keyof typeof InternalErrorCo
 
 ## `JWT_BEARER_CLIENT_ASSERTION_TYPE`
 
-[Source](../../../packages/core/src/constants.ts#L177)
+[Source](../../../packages/core/src/constants.ts#L178)
 
 The JWT bearer assertion-type value placed in client_assertion_type for private-key JWT authentication.
 
@@ -351,7 +351,7 @@ type PolicyOperator = (typeof PolicyOperator)[keyof typeof PolicyOperator];
 
 ## `INTEROP_RECOMMENDED_ALGORITHMS`
 
-[Source](../../../packages/core/src/constants.ts#L180)
+[Source](../../../packages/core/src/constants.ts#L184)
 
 Interoperability guidance: implementations should support RS256. Deployment acceptance policy is configured separately.
 
@@ -363,7 +363,7 @@ Runtime value: `["RS256"]`.
 
 ## `STANDARD_ENTITY_STATEMENT_CLAIMS`
 
-[Source](../../../packages/core/src/constants.ts#L139)
+[Source](../../../packages/core/src/constants.ts#L141)
 
 Claims that MUST NOT appear in the `crit` array.
 
@@ -391,7 +391,7 @@ enum StandardPolicyOperator {
 
 ## `DEFAULT_ALLOWED_ALGORITHMS`
 
-[Source](../../../packages/core/src/constants.ts#L181)
+[Source](../../../packages/core/src/constants.ts#L183)
 
 Default acceptance list for asymmetric signatures. Deployments can set an explicit list of registered algorithms.
 
@@ -413,7 +413,7 @@ type SupportedAlgorithm = import("@oidfed/crypto").BuiltinJwsAlgorithm;
 
 ## `TrustMarkStatus`
 
-[Source](../../../packages/core/src/constants.ts#L130)
+[Source](../../../packages/core/src/constants.ts#L132)
 
 A Trust Mark status value.
 

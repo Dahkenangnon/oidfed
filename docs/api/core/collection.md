@@ -6,14 +6,14 @@ A collection is a searchable snapshot of federation participants. Refresh collec
 
 ## `CollectionAuthentication`
 
-[Source](../../../packages/core/src/entity-collection/types.ts#L46)
+[Source](../../../packages/core/src/entity-collection/types.ts#L10)
 
 Authentication configuration for an Entity Collection service.
 
 ```typescript signature
 interface CollectionAuthentication {
 	extensions?: EndpointAuthentication;
-	replayStore?: ReplayStore;
+
 	methods: readonly string[];
 	/** Receiver identity used as assertion audience, including standalone providers. */
 	receiverEntityId?: EntityId;
@@ -27,7 +27,6 @@ Fields (including inherited fields):
 | Field | Declared type | Description |
 |---|---|---|
 | `extensions?` | `EndpointAuthentication` | Host authentication-method implementations and optional transport evidence. |
-| `replayStore?` | `ReplayStore` | Atomic replay store for consuming one-time JWT identifiers. |
 | `methods` | `readonly string[]` | Authentication methods accepted by the endpoint; include none to permit anonymous requests. |
 | `receiverEntityId?` | `EntityId` | Entity Identifier of the receiving endpoint used as the client-assertion audience. |
 | `getClientFederationJwks?` | `(client: EntityId) => Promise<JWKSet \| undefined>` | Look up independently trusted Federation Entity Keys for the authenticating client. |
@@ -35,7 +34,7 @@ Fields (including inherited fields):
 
 ## `CollectionEntry`
 
-[Source](../../../packages/core/src/entity-collection/types.ts#L11)
+[Source](../../../packages/core/src/storage/collection.ts#L10)
 
 Evidence is local server state; it is never returned as collection data.
 
@@ -46,7 +45,8 @@ interface CollectionEntry {
 	expiresAt: number;
 	/** Present only when core collected a valid chain for this entry. */
 	chainExpiresAt?: number;
-	verifiedMarks: readonly { type: string; expiresAt: number }[];
+	verifiedMarks: readonly { type: string; jwt: string; expiresAt: number }[];
+	readonly extensions?: JsonObject;
 }
 ```
 
@@ -57,11 +57,13 @@ Fields (including inherited fields):
 | `entity` | `EntityCollectionEntity` | Informational collection entry; verified local evidence is stored separately. |
 | `expiresAt` | `number` | Application or collector eligibility deadline in seconds since the Unix epoch. |
 | `chainExpiresAt?` | `number` | Present only when core collected a valid chain for this entry. |
-| `verifiedMarks` | `readonly { type: string; expiresAt: number }[]` | Locally verified mark types and eligibility deadlines; never returned as unsigned collection evidence. |
+| `verifiedMarks` | `readonly { type: string; jwt: string; expiresAt: number }[]` | Verified type, exact published JWT, and eligibility deadline. The endpoint keeps this evidence private. |
+| `extensions?` | `JsonObject` | Private JSON data for the storage adapter. |
+
 
 ## `CollectionRefreshOptions`
 
-[Source](../../../packages/core/src/entity-collection/types.ts#L110)
+[Source](../../../packages/core/src/entity-collection/types.ts#L72)
 
 Controls for a collection snapshot refresh, including cancellation.
 
@@ -79,7 +81,7 @@ Fields (including inherited fields):
 
 ## `CollectionRefreshResult`
 
-[Source](../../../packages/core/src/entity-collection/types.ts#L113)
+[Source](../../../packages/core/src/entity-collection/types.ts#L75)
 
 The outcome of a collection refresh and the snapshot it produced.
 
@@ -101,7 +103,7 @@ Fields (including inherited fields):
 
 ## `EntityCollectionCandidate`
 
-[Source](../../../packages/core/src/entity-collection/types.ts#L56)
+[Source](../../../packages/core/src/entity-collection/types.ts#L19)
 
 Informational input from an application-owned collector; core verifies mark evidence.
 
@@ -121,7 +123,7 @@ Fields (including inherited fields):
 
 ## `EntityCollectionCollector`
 
-[Source](../../../packages/core/src/entity-collection/types.ts#L70)
+[Source](../../../packages/core/src/entity-collection/types.ts#L33)
 
 Return the complete candidate set; failures leave the previously published snapshot intact.
 
@@ -133,7 +135,7 @@ type EntityCollectionCollector = (
 
 ## `EntityCollectionCollectorContext`
 
-[Source](../../../packages/core/src/entity-collection/types.ts#L62)
+[Source](../../../packages/core/src/entity-collection/types.ts#L25)
 
 Refresh context; network calls through options share the refresh limits and cancellation.
 
@@ -157,7 +159,7 @@ Fields (including inherited fields):
 
 ## `EntityCollectionConfig`
 
-[Source](../../../packages/core/src/entity-collection/types.ts#L86)
+[Source](../../../packages/core/src/entity-collection/types.ts#L49)
 
 Collection scope, storage, refresh, filtering, and endpoint settings.
 
@@ -172,7 +174,6 @@ interface EntityCollectionConfig {
 	queryMatcher?: EntityCollectionQueryMatcher;
 	/** Optional serving URL, including fixed query components. */
 	endpoint?: string;
-	store?: EntityCollectionStore;
 	responder?: { entityId: EntityId; isTrustAnchor: boolean };
 	authentication?: CollectionAuthentication;
 	options: FederationOptions;
@@ -197,10 +198,9 @@ Fields (including inherited fields):
 | `filter?` | `EntityCollectionFilter` | Additional snapshot-time restriction, applied after mark verification. |
 | `queryMatcher?` | `EntityCollectionQueryMatcher` | Defaults to case-insensitive substring matching. Receives deeply frozen, detached data. |
 | `endpoint?` | `string` | Serving or remote endpoint URL; request extension contexts use status, list, or retrieval instead. |
-| `store?` | `EntityCollectionStore` | Storage adapter for published collection snapshots and cursors. |
 | `responder?` | `{ entityId: EntityId; isTrustAnchor: boolean }` | Known hosting entity identity and anchor role used to bind serving and authentication behavior. |
 | `authentication?` | `CollectionAuthentication` | Authentication settings for the endpoint or outgoing request described by this contract. |
-| `options?` | `FederationOptions` | Shared federation transport and validation settings for this operation. |
+| `options` | `FederationOptions` | Standalone federation settings. Supply `options.storage` with the Collection capability. |
 | `maxPageSize?` | `number` | Maximum number of entries returned in one collection page. |
 | `cursorTtlSeconds?` | `number` | Lifetime of a collection pagination cursor in seconds. |
 | `maxEntities?` | `number` | Maximum entities retained by one collection refresh. |
@@ -211,7 +211,7 @@ Fields (including inherited fields):
 
 ## `EntityCollectionCursor`
 
-[Source](../../../packages/core/src/entity-collection/types.ts#L25)
+[Source](../../../packages/core/src/storage/collection.ts#L12)
 
 The continuation information used to resume a collection page.
 
@@ -222,6 +222,7 @@ interface EntityCollectionCursor {
 	context: string;
 	index: number;
 	expiresAt: number;
+	readonly extensions?: JsonObject;
 }
 ```
 
@@ -234,10 +235,12 @@ Fields (including inherited fields):
 | `context` | `string` | Context that binds a saved cursor to its query. |
 | `index` | `number` | Zero-based continuation position within the retained snapshot. |
 | `expiresAt` | `number` | Expiration or eligibility deadline as a NumericDate in seconds; the owning API defines the evidence it bounds. |
+| `extensions?` | `JsonObject` | Private JSON data for the storage adapter. |
+
 
 ## `EntityCollectionCursorCapacityError`
 
-[Source](../../../packages/core/src/entity-collection/store.ts#L12)
+[Source](../../../packages/core/src/storage/collection-memory.ts#L19)
 
 Cursor allocation exceeded capacity after expired cursors were removed. This class extends the standard `Error` class, including its `name` and `message`.
 
@@ -249,7 +252,7 @@ new EntityCollectionCursorCapacityError(maxCursors: number): EntityCollectionCur
 
 The configured upper bound on retained listing cursors.
 
-[Source](../../../packages/core/src/entity-collection/store.ts#L13)
+[Source](../../../packages/core/src/storage/collection-memory.ts#L20)
 
 ```typescript signature
 readonly maxCursors: number;
@@ -257,7 +260,7 @@ readonly maxCursors: number;
 
 ## `EntityCollectionFilter`
 
-[Source](../../../packages/core/src/entity-collection/types.ts#L75)
+[Source](../../../packages/core/src/entity-collection/types.ts#L38)
 
 Run once per entry during refresh; an explicit deadline can only shorten eligibility.
 
@@ -270,7 +273,7 @@ type EntityCollectionFilter = (
 
 ## `EntityCollectionIntegration`
 
-[Source](../../../packages/core/src/entity-collection/types.ts#L119)
+[Source](../../../packages/core/src/entity-collection/types.ts#L81)
 
 Optional integration; responder identity always comes from its hosting class.
 
@@ -285,12 +288,11 @@ Fields (including inherited fields):
 | Field | Declared type | Description |
 |---|---|---|
 | `filter?` | `EntityCollectionFilter` | Additional snapshot-time restriction, applied after mark verification. |
-| `options?` | `FederationOptions` | Shared federation transport and validation settings for this operation. |
+| `options?` | `BoundFederationOptions` | Per-integration settings. The service uses the host’s storage and crypto. |
 | `authentication?` | `CollectionAuthentication` | Authentication settings for the endpoint or outgoing request described by this contract. |
 | `endpoint?` | `string` | Serving or remote endpoint URL; request extension contexts use status, list, or retrieval instead. |
 | `entityClaims?` | `readonly string[]` | Entity-level claims selected or supported by the collection API. |
 | `infoClaims?` | `readonly string[]` | Informational metadata claims selected or supported by the collection API. |
-| `store?` | `EntityCollectionStore` | Storage adapter for published collection snapshots and cursors. |
 | `trustAnchors` | `TrustAnchorSet` | Independently trusted anchor identities and their public Federation Entity Keys. |
 | `collector?` | `EntityCollectionCollector` | Defaults to core's validated federation traversal. |
 | `queryMatcher?` | `EntityCollectionQueryMatcher` | Defaults to case-insensitive substring matching. Receives deeply frozen, detached data. |
@@ -302,7 +304,7 @@ Fields (including inherited fields):
 
 ## `EntityCollectionQueryMatcher`
 
-[Source](../../../packages/core/src/entity-collection/types.ts#L81)
+[Source](../../../packages/core/src/entity-collection/types.ts#L44)
 
 Local, synchronous search. Return the same decision for a fixed query and snapshot.
 
@@ -315,7 +317,7 @@ type EntityCollectionQueryMatcher = (
 
 ## `EntityCollectionService`
 
-[Source](../../../packages/core/src/entity-collection/service.ts#L54)
+[Source](../../../packages/core/src/entity-collection/service.ts#L61)
 
 Shared unsigned collection service for federation entities and independent providers.
 
@@ -327,7 +329,7 @@ new EntityCollectionService(config: EntityCollectionConfig): EntityCollectionSer
 
 Storage used for this component's authoritative records.
 
-[Source](../../../packages/core/src/entity-collection/service.ts#L55)
+[Source](../../../packages/core/src/entity-collection/service.ts#L62)
 
 ```typescript signature
 readonly store: EntityCollectionStore;
@@ -337,7 +339,7 @@ readonly store: EntityCollectionStore;
 
 Collect, validate, and publish a replacement collection snapshot. A cancelled queued caller is released without cancelling another caller's refresh.
 
-[Source](../../../packages/core/src/entity-collection/service.ts#L197)
+[Source](../../../packages/core/src/entity-collection/service.ts#L195)
 
 ```typescript signature
 refresh(anchor: EntityId, options?: CollectionRefreshOptions): Promise<Result<CollectionRefreshResult>>;
@@ -357,7 +359,7 @@ query(params?: EntityCollectionRequestParams): Promise<Result<EntityCollectionRe
 
 Handle a Web API Request and return the protocol Response. The application supplies external HTTPS routing.
 
-[Source](../../../packages/core/src/entity-collection/service.ts#L473)
+[Source](../../../packages/core/src/entity-collection/service.ts#L498)
 
 ```typescript signature
 handleRequest(request: Request): Promise<Response>;
@@ -365,7 +367,7 @@ handleRequest(request: Request): Promise<Response>;
 
 ## `EntityCollectionSnapshot`
 
-[Source](../../../packages/core/src/entity-collection/types.ts#L19)
+[Source](../../../packages/core/src/storage/collection.ts#L11)
 
 A stored collection of entity entries and the information needed to serve it.
 
@@ -375,6 +377,7 @@ interface EntityCollectionSnapshot {
 	trustAnchor: EntityId;
 	lastUpdated: number;
 	entries: readonly CollectionEntry[];
+	readonly extensions?: JsonObject;
 }
 ```
 
@@ -386,24 +389,26 @@ Fields (including inherited fields):
 | `trustAnchor` | `EntityId` | Configured or requested Trust Anchor identity; this does not identify the endpoint responder. |
 | `lastUpdated` | `number` | NumericDate when this collection snapshot was last updated. |
 | `entries` | `readonly CollectionEntry[]` | Collection entries and their local eligibility evidence, ordered by published Entity Identifier. |
+| `extensions?` | `JsonObject` | Private JSON data for the storage adapter. |
+
 
 ## `EntityCollectionStore`
 
-[Source](../../../packages/core/src/entity-collection/types.ts#L38)
+[Source](../../../packages/core/src/storage/collection.ts#L20)
 
 Atomically publish snapshots and return detached values. Keep entries in their
 published Entity Identifier order (§3.1.1). Snapshot identifiers name immutable
-contents; getCurrent is isolated by anchor. A cursor retains its snapshot identity
+contents; current is isolated by anchor. A cursor retains its snapshot identity
 and position. Expired or unavailable snapshots must not resolve to newer contents.
 
 ```typescript signature
 interface EntityCollectionStore {
 	publish(snapshot: EntityCollectionSnapshot): Promise<void>;
-	getCurrent(trustAnchor: EntityId): Promise<EntityCollectionSnapshot | undefined>;
-	getSnapshot(id: string): Promise<EntityCollectionSnapshot | undefined>;
+	current(trustAnchor: EntityId): Promise<EntityCollectionSnapshot | undefined>;
+	snapshot(id: string): Promise<EntityCollectionSnapshot | undefined>;
 	/** May throw EntityCollectionCursorCapacityError to report temporary capacity exhaustion. */
-	putCursor(id: string, cursor: EntityCollectionCursor): Promise<void>;
-	getCursor(id: string): Promise<EntityCollectionCursor | undefined>;
+	saveCursor(id: string, cursor: EntityCollectionCursor): Promise<void>;
+	cursor(id: string): Promise<EntityCollectionCursor | undefined>;
 }
 ```
 
@@ -412,92 +417,8 @@ Fields (including inherited fields):
 | Field | Declared type | Description |
 |---|---|---|
 | `publish` | `(snapshot: EntityCollectionSnapshot) => Promise<void>` | Atomically publish the supplied collection snapshot. |
-| `getCurrent` | `(trustAnchor: EntityId) => Promise<EntityCollectionSnapshot \| undefined>` | Read the currently published snapshot for the requested anchor. |
-| `getSnapshot` | `(id: string) => Promise<EntityCollectionSnapshot \| undefined>` | Read an immutable retained snapshot by identifier. |
-| `putCursor` | `(id: string, cursor: EntityCollectionCursor) => Promise<void>` | Store a cursor bound to its snapshot, query context, and expiration. |
-| `getCursor` | `(id: string) => Promise<EntityCollectionCursor \| undefined>` | Read an unexpired cursor, without substituting a newer snapshot. |
-
-## `MemoryEntityCollectionStore`
-
-[Source](../../../packages/core/src/entity-collection/store.ts#L20)
-
-Bounded in-memory snapshots and opaque cursors; no background cleanup timer.
-
-```typescript signature
-new MemoryEntityCollectionStore(options?: MemoryEntityCollectionStoreOptions): MemoryEntityCollectionStore;
-```
-
-### `MemoryEntityCollectionStore#publish`
-
-Publish the prepared snapshot through this store's consistency boundary.
-
-[Source](../../../packages/core/src/entity-collection/store.ts#L50)
-
-```typescript signature
-publish(snapshot: EntityCollectionSnapshot): Promise<void>;
-```
-
-### `MemoryEntityCollectionStore#getCurrent`
-
-Read the currently published snapshot for the requested collection.
-
-[Source](../../../packages/core/src/entity-collection/store.ts#L74)
-
-```typescript signature
-getCurrent(anchor: EntityId): Promise<EntityCollectionSnapshot | undefined>;
-```
-
-### `MemoryEntityCollectionStore#getSnapshot`
-
-Read the current stored collection snapshot.
-
-[Source](../../../packages/core/src/entity-collection/store.ts#L78)
-
-```typescript signature
-getSnapshot(id: string): Promise<EntityCollectionSnapshot | undefined>;
-```
-
-### `MemoryEntityCollectionStore#putCursor`
-
-May throw EntityCollectionCursorCapacityError to report temporary capacity exhaustion.
-
-[Source](../../../packages/core/src/entity-collection/store.ts#L86)
-
-```typescript signature
-putCursor(id: string, cursor: EntityCollectionCursor): Promise<void>;
-```
-
-### `MemoryEntityCollectionStore#getCursor`
-
-Read the snapshot associated with a listing cursor.
-
-[Source](../../../packages/core/src/entity-collection/store.ts#L93)
-
-```typescript signature
-getCursor(id: string): Promise<EntityCollectionCursor | undefined>;
-```
-
-## `MemoryEntityCollectionStoreOptions`
-
-[Source](../../../packages/core/src/entity-collection/types.ts#L120)
-
-Settings for the in-memory collection store.
-
-```typescript signature
-interface MemoryEntityCollectionStoreOptions {
-	clock?: Clock;
-	retentionSeconds?: number;
-	maxSnapshots?: number;
-	maxCursors?: number;
-}
-```
-
-Fields (including inherited fields):
-
-| Field | Declared type | Description |
-|---|---|---|
-| `clock?` | `Clock` | NumericDate time source; omitted clocks use the runtime's current time. |
-| `retentionSeconds?` | `number` | Retention duration for collection snapshots and their cursors; defaults to 900 seconds. |
-| `maxSnapshots?` | `number` | Maximum retained collection snapshots; defaults to 100. |
-| `maxCursors?` | `number` | Maximum retained listing cursors; defaults to 10000. |
+| `current` | `(trustAnchor: EntityId) => Promise<EntityCollectionSnapshot \| undefined>` | Read the currently published snapshot for the requested anchor. |
+| `snapshot` | `(id: string) => Promise<EntityCollectionSnapshot \| undefined>` | Read an immutable retained snapshot by identifier. |
+| `saveCursor` | `(id: string, cursor: EntityCollectionCursor) => Promise<void>` | Store a cursor bound to its snapshot, query context, and expiration. |
+| `cursor` | `(id: string) => Promise<EntityCollectionCursor \| undefined>` | Read an unexpired cursor, without substituting a newer snapshot. |
 

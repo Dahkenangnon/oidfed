@@ -8,15 +8,29 @@ pnpm build
 pnpm release:verify
 ```
 
-`release:verify` builds the published packages and CLI, runs lint and type checks, executes the Node TAP suite with per-package coverage thresholds and the CLI/script tests, and checks package contents and the shared core dependency. `pnpm test` additionally runs the TAP suite across the configured runtimes; those runners need their own prerequisites. Application checks are separate: `pnpm typecheck:apps`, `pnpm test:apps`, and `pnpm build:apps`.
+`release:verify` builds the published packages and CLI, runs lint and type checks, executes the Node TAP suite with per-package coverage thresholds and the CLI/script tests, and checks package contents, standalone documentation examples, and the shared Core dependency. `pnpm test` additionally runs the TAP suite across the configured runtimes; those runners need their own prerequisites. Application checks are separate: `pnpm typecheck:apps`, `pnpm test:apps`, and `pnpm build:apps`.
 
-For changes to the five protocol packages, follow the [security tool setup](security-checks.md#set-up-the-tools) and run the separate security checks alongside `release:verify`:
+For changes to the published libraries, follow the [security tool setup](security-checks.md#set-up-the-tools) and run the separate security checks alongside `release:verify`:
 
 ```bash
 pnpm security:check
 ```
 
 `release:verify` does not run this security command. The [security guide](security-checks.md) explains its scope and the additional advisory, fuzz, and mutation checks.
+
+## Documentation examples
+
+Place `<!-- oidfed-example -->` immediately above a standalone TypeScript fence in `docs/api/` or `docs/features/` to include it in the packed consumer check. Use public package imports and pass host dependencies as inputs. Run `node scripts/check-crypto-isolation.mjs` after `pnpm build:publish` to check the examples against installed tarballs.
+
+## Storage checks
+
+```bash
+pnpm typecheck:contracts
+pnpm test:storage:memory
+pnpm test:storage:adapters
+```
+
+The local `release:verify` command runs the strict storage contract type check and memory tests, and type-checks the PostgreSQL example. `test:storage:adapters` requires Docker to run the PostgreSQL integration suite. The GitHub release check requires this storage job to pass for the exact commit being released.
 
 ## Run the local federation
 

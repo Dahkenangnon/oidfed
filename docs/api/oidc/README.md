@@ -2,9 +2,9 @@
 
 [API reference](../README.md)
 
-The package root exports the 57 entries listed below. Six are core-owned re-exports; their links lead to the core reference. There are no public subpath imports.
+The package root exports the role classes and their OIDC and OAuth contracts. Import the shared types and authentication helpers below from `@oidfed/core`.
 
-The class entries cover constructors and all 86 public members, including inherited instance methods and callable static properties. Metadata schema objects and standalone registration-processing functions are not root exports. Use role methods for processing and their static parsers for independent metadata checks.
+The class entries cover constructors and public members, including inherited instance methods and callable static properties. Metadata schema objects and standalone registration-processing functions are not root exports. Use role methods for processing and their static parsers for independent metadata checks.
 
 A signature returning `Result` uses `ok`, `value`, and `error`. Metadata parsers instead use Zod's `success`, `data`, and `error.issues`. Some configuration, signing, and host-callback failures can throw or reject; the individual entries describe those cases.
 
@@ -18,11 +18,7 @@ A signature returning `Result` uses `ok`, `value`, and `error`. Metadata parsers
 | [`Result`](../core/contracts.md#result) | Type; from @oidfed/core |
 | [`TrustAnchorSet`](../core/contracts.md#trustanchorset) | Type; from @oidfed/core |
 
-## Client and endpoint authentication
-
-| API | Kind |
-|---|---|
-| [`ClientAssertionOptions`](../core/authentication.md#clientassertionoptions) | Interface; from @oidfed/core |
+Standalone [client and endpoint authentication](../core/authentication.md) is available through Core.
 
 ## Metadata and wire types
 
@@ -49,19 +45,13 @@ A signature returning `Result` uses `ok`, `value`, and `error`. Metadata parsers
 
 | API | Kind |
 |---|---|
-| [`AutomaticRegistrationConfig`](registration.md#automaticregistrationconfig) | Interface |
-| [`AutomaticRegistrationContext`](registration.md#automaticregistrationcontext) | Interface |
 | [`AutomaticRegistrationResult`](registration.md#automaticregistrationresult) | Type |
-| [`ExplicitRegistrationConfig`](registration.md#explicitregistrationconfig) | Interface |
-| [`ExplicitRegistrationHandlerConfig`](registration.md#explicitregistrationhandlerconfig) | Interface |
 | [`ExplicitRegistrationResult`](registration.md#explicitregistrationresult) | Interface |
-| [`OIDCRegistrationAdapter`](registration.md#oidcregistrationadapter) | Class |
 | [`PreparedPushedAuthorizationRequest`](registration.md#preparedpushedauthorizationrequest) | Interface |
 | [`ProcessAutomaticRegistrationOptions`](registration.md#processautomaticregistrationoptions) | Interface |
 | [`ProcessedAutomaticRegistration`](registration.md#processedautomaticregistration) | Interface |
 | [`ProcessedPushedAuthorizationRequest`](registration.md#processedpushedauthorizationrequest) | Interface |
 | [`ProcessedRegistration`](registration.md#processedregistration) | Interface |
-| [`ProcessExplicitRegistrationOptions`](registration.md#processexplicitregistrationoptions) | Interface |
 | [`ProcessPushedAuthorizationRequestOptions`](registration.md#processpushedauthorizationrequestoptions) | Interface |
 | [`PushedAuthorizationProof`](registration.md#pushedauthorizationproof) | Type |
 | [`RegistrationAccreditationContext`](registration.md#registrationaccreditationcontext) | Interface |
@@ -69,8 +59,6 @@ A signature returning `Result` uses `ok`, `value`, and `error`. Metadata parsers
 | [`RegistrationProtocolAdapter`](registration.md#registrationprotocoladapter) | Interface |
 | [`RegistrationProtocolAdapterContext`](registration.md#registrationprotocoladaptercontext) | Interface |
 | [`RequestDelivery`](registration.md#requestdelivery) | Type |
-| [`ValidatedRequestObject`](registration.md#validatedrequestobject) | Interface |
-| [`ValidatedRequestObjectResult`](registration.md#validatedrequestobjectresult) | Type |
 
 ## Protocol roles and configuration
 

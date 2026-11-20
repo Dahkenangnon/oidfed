@@ -10,6 +10,7 @@ Use oidfed to establish federation trust around an existing application. Start w
 | Connect an OP, RP, OAuth client, or authorization server | [OIDC and OAuth](features/15.oidc-and-oauth.md) |
 | Add federation trust to a wallet ecosystem | [Wallet workflows](features/16.wallet.md) |
 | Look up a function, class, option, or type | [API reference](api/README.md) |
+| Upgrade an existing installation to v3 | [v3 migration guide](api/migration-v3.md) |
 | Contribute to this repository | [Contributing](../CONTRIBUTING.md) |
 | Set up local development and tests | [Development](maintenance/development.md), [HTTPS tests](maintenance/testing/e2e.md), and [conformance tests](maintenance/testing/conformance.md) |
 | Check the protocol packages before a release | [Package security checks](maintenance/security-checks.md) |

@@ -2,13 +2,14 @@
 
 ## Supported Versions
 
-| Version | Supported |
-|---------|-----------|
-| 2.x.y | Security fixes provided. |
-| 1.x.y | Security fixes provided. |
-| 0.x.y and earlier prerelease lines | Not supported. Upgrade to a supported release series. |
+When version 3 is published, security fixes will target the release lines below. Use the latest patch in the supported line for your package.
 
-Security fixes target the `2.x.y` and supported `1.x.y` release series. Prerelease versions and the `0.x.y` series do not receive backported fixes. Use the latest patch release in a supported series.
+| Packages | Supported versions after the v3 release |
+| --- | --- |
+| `@oidfed/core`, `@oidfed/authority`, `@oidfed/leaf`, `@oidfed/oidc`, `@oidfed/wallet`, and `@oidfed/cli` | `3.x` |
+| `@oidfed/crypto` | `1.x` |
+
+Earlier release lines of those packages and prereleases will stop receiving security fixes when v3 is published.
 
 ## Reporting a Vulnerability
 
@@ -26,6 +27,7 @@ You will receive an acknowledgement within 72 hours. Confirmed vulnerabilities a
 
 Security reports are accepted for all `@oidfed/*` packages:
 - `@oidfed/core` — trust chain resolution and validation
+- `@oidfed/crypto` — crypto adapters, signing, and keyrings
 - `@oidfed/authority` — federation endpoint handlers
 - `@oidfed/leaf` — entity configuration serving
 - `@oidfed/oidc` — registration protocol handling

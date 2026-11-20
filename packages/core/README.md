@@ -99,6 +99,8 @@ Core provides the Draft 01 collection service and HTTP client. The service suppo
 
 For a detailed API reference, configuration options, and core architectural guides, see the [core API reference](https://github.com/Dahkenangnon/oidfed/blob/main/docs/api/core/README.md) file.
 
+For mobile app setup, see [React Native compatibility](https://github.com/Dahkenangnon/oidfed/blob/main/docs/api/react-native.md).
+
 ## License
 
 [Apache-2.0](LICENSE) — see [`NOTICE`](NOTICE) for attribution.

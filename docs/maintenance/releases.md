@@ -28,6 +28,8 @@ pnpm release core patch --prepare
 pnpm release all minor --prepare
 ```
 
+For the v3 batch, prepare a major release individually for core, authority, leaf, OIDC, wallet, and CLI. The batch also includes the first public Crypto release at `1.0.0`. Verify its trusted publisher before dispatch and confirm that the saved Core manifest resolves to the Crypto version in the batch.
+
 Each selected package's own version is bumped. Its changelog is generated from its
 nearest applicable release tag. The private root package and root changelog are not
 versioned by these commands. Edit the generated notes so they explain changes a
@@ -67,7 +69,7 @@ The workflow has three jobs:
    GitHub Release with its notes and checksum. Only this job has repository-write
    permission.
 
-Package CI and the security workflow must have passed for the exact source SHA in
+Package CI, including the memory and PostgreSQL storage job, and the security workflow must have passed for the exact source SHA in
 this repository. Pending checks are allowed up to 20 minutes to complete. Missing,
 failed, cancelled, or incomplete checks stop the release. Application-only checks
 and OpenID conformance runs are not part of this package release gate.
@@ -119,9 +121,7 @@ needed. Provenance is requested for each published archive. Keep the repository'
 required CodeQL check aligned with `CodeQL security-extended (six packages)`.
 
 See the [security checks](security-checks.md) for scanner setup. The workflow installs
-the pinned scanners and checks the saved archives through the existing manifest,
-consumer, declaration, and secret checks. The source scan remains limited to the six
-library packages; the CLI still receives its release manifest and test checks.
+the pinned scanners and runs the consumer checks against the six saved library archives. The dependency scan covers all published packages, including the CLI. Source checks cover the six libraries. The CLI also receives its release manifest and test checks.
 
 ## Recover an interrupted release
 

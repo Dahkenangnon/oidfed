@@ -18,35 +18,9 @@ This does not check the resulting expiration against a particular clock.
 assertPositiveTtlSeconds(value: number, field: string, mode: "safe-integer" | "finite"): void;
 ```
 
-## `CacheProvider`
-
-[Source](../../../packages/core/src/types.ts#L70)
-
-The cache interface a host implements to store values with a lifetime.
-
-```typescript signature
-interface CacheProvider {
-	get<T>(key: string): Promise<T | undefined>;
-	set<T>(key: string, value: T, ttlSeconds: number): Promise<void>;
-	delete(key: string): Promise<void>;
-	clear(): Promise<void>;
-	[Symbol.asyncDispose](): Promise<void>;
-}
-```
-
-Fields (including inherited fields):
-
-| Field | Declared type | Description |
-|---|---|---|
-| `get` | `<T>(key: string) => Promise<T \| undefined>` | Read a cached value by key, returning undefined when absent or expired. |
-| `set` | `<T>(key: string, value: T, ttlSeconds: number) => Promise<void>` | Store a value with its TTL in seconds. |
-| `delete` | `(key: string) => Promise<void>` | Remove a cached entry by key. |
-| `clear` | `() => Promise<void>` | Clear the entries owned by this cache. |
-| `[Symbol.asyncDispose]` | `() => Promise<void>` | Release this cache's resources; MemoryCache clears its process-local entries. |
-
 ## `chainCacheKey`
 
-[Source](../../../packages/core/src/cache/index.ts#L107)
+[Source](../../../packages/core/src/storage/cache.ts#L115)
 
 Build the cache key for a subject's trust-chain operation under the supplied anchor context.
 
@@ -56,7 +30,7 @@ chainCacheKey(entityId: EntityId, trustAnchorId: EntityId, engine: CryptoEngine)
 
 ## `ChainSelectionStrategy`
 
-[Source](../../../packages/core/src/types.ts#L278)
+[Source](../../../packages/core/src/types.ts#L319)
 
 A synchronous callback that chooses one of the validated candidate chains.
 
@@ -66,7 +40,7 @@ type ChainSelectionStrategy = (chains: ValidatedTrustChain[]) => ValidatedTrustC
 
 ## `Clock`
 
-[Source](../../../packages/core/src/types.ts#L60)
+[Source](../../../packages/core/src/types.ts#L67)
 
 The time source used by operations that evaluate timestamps and expiry.
 
@@ -100,7 +74,7 @@ composeEntityMetadata(...sources: readonly Readonly<Record<string, unknown>>[]):
 
 ## `ConstraintCheckContext`
 
-[Source](../../../packages/core/src/types.ts#L246)
+[Source](../../../packages/core/src/types.ts#L287)
 
 Detached, recursively frozen evidence. Position uses leaf-first chain indexing.
 
@@ -128,7 +102,7 @@ Fields (including inherited fields):
 
 ## `ConstraintCheckDefinition`
 
-[Source](../../../packages/core/src/types.ts#L256)
+[Source](../../../packages/core/src/types.ts#L297)
 
 Synchronous checks may run again when prepared validation is completed.
 
@@ -148,7 +122,7 @@ Fields (including inherited fields):
 
 ## `createTrustAnchorSet`
 
-[Source](../../../packages/core/src/types.ts#L138)
+[Source](../../../packages/core/src/types.ts#L179)
 
 Build a read-only-typed map from exact validated Entity Identifiers to the supplied key sets. Duplicate identifiers use the last entry. This helper validates the identifiers, but does not validate or clone their JWK Sets. Treat the configuration as owned trust data; the read-only type does not freeze the runtime Map or nested keys.
 
@@ -161,7 +135,7 @@ createTrustAnchorSet(anchors: ReadonlyArray<{
 
 ## `DiscoveryResult`
 
-[Source](../../../packages/core/src/types.ts#L286)
+[Source](../../../packages/core/src/types.ts#L327)
 
 Result of entity discovery through the federation.
 
@@ -190,7 +164,7 @@ Fields (including inherited fields):
 
 ## `ecCacheKey`
 
-[Source](../../../packages/core/src/cache/index.ts#L95)
+[Source](../../../packages/core/src/storage/cache.ts#L99)
 
 Build the cache key for an Entity Configuration identified by its exact Entity Identifier.
 
@@ -200,7 +174,7 @@ ecCacheKey(entityId: EntityId, engine: CryptoEngine): Promise<string>;
 
 ## `EntityContext`
 
-[Source](../../../packages/core/src/types.ts#L294)
+[Source](../../../packages/core/src/types.ts#L335)
 
 The parent entity's identity, keys, and shared settings made available to a composed role.
 
@@ -208,6 +182,7 @@ The parent entity's identity, keys, and shared settings made available to a comp
 interface EntityContext {
 	readonly entityId: string;
 	readonly crypto: CryptoContext;
+	readonly storage?: FederationStorage;
 	readonly options: FederationOptions;
 	readonly trustAnchors?: TrustAnchorSet;
 	readonly authorityHints?: readonly EntityId[];
@@ -226,7 +201,7 @@ Fields (including inherited fields):
 
 ## `entityId`
 
-[Source](../../../packages/core/src/types.ts#L21)
+[Source](../../../packages/core/src/types.ts#L44)
 
 Validate an HTTPS Entity Identifier with at most 2048 characters, no credentials, query, or fragment, and return the original string with a TypeScript brand. Invalid input throws. The returned identifier is not URL-reserialized or normalized for comparisons.
 
@@ -246,7 +221,7 @@ type EntityId = string & { readonly [EntityIdBrand]: true };
 
 ## `EntityRole`
 
-[Source](../../../packages/core/src/types.ts#L302)
+[Source](../../../packages/core/src/types.ts#L344)
 
 The contract for adding protocol metadata, validation, and routes to an entity host.
 
@@ -288,7 +263,7 @@ err<E>(error: E): Result<never, E>;
 
 ## `esCacheKey`
 
-[Source](../../../packages/core/src/cache/index.ts#L101)
+[Source](../../../packages/core/src/storage/cache.ts#L105)
 
 Build the cache key for a statement issued by one entity about another.
 
@@ -333,7 +308,7 @@ Fields (including inherited fields):
 
 ## `FederationOptions`
 
-[Source](../../../packages/core/src/types.ts#L86)
+[Source](../../../packages/core/src/types.ts#L114)
 
 Shared transport, trust-validation, caching, logging, and resource-limit settings.
 
@@ -368,7 +343,7 @@ interface FederationOptions {
 	/** Signed subject ECs keyed by exact Entity Identifier. Each is validated against the chain. */
 	entityConfigurations?: ReadonlyMap<string, string> | undefined;
 	clock?: Clock;
-	cache?: CacheProvider;
+	readonly storage?: FederationStorage | undefined;
 	logger?: Logger;
 	httpTimeoutMs?: number;
 	clockSkewSeconds?: number;
@@ -416,7 +391,7 @@ Fields (including inherited fields):
 | `httpClient?` | `HttpClient` | Host HTTP transport; defaults to the runtime's fetch implementation. |
 | `entityConfigurations?` | `ReadonlyMap<string, string> \| undefined` | Subject Entity Configuration JWTs used during chain validation; signatures and identity bindings still need validation. |
 | `clock?` | `Clock` | NumericDate time source; omitted clocks use the runtime's current time. |
-| `cache?` | `CacheProvider` | Host cache for signed statements or operation results; cache hits do not establish trust. |
+| `storage?` | `FederationStorage \| undefined` | Storage for standalone calls. Hosted calls inherit storage from their entity. |
 | `logger?` | `Logger` | Optional host logger. Library calls are message-only, nonblocking, and protected from sink failures. |
 | `httpTimeoutMs?` | `number` | Timeout in milliseconds for bounded transport or host callbacks; defaults to 10000. |
 | `clockSkewSeconds?` | `number` | Allowed time-claim leeway in seconds; the default verifier allowance is 60 seconds. |
@@ -491,7 +466,7 @@ freezeSnapshot<T>(value: T): T;
 
 ## `HttpClient`
 
-[Source](../../../packages/core/src/types.ts#L58)
+[Source](../../../packages/core/src/types.ts#L65)
 
 The host-supplied HTTP transport used by federation clients.
 
@@ -541,7 +516,7 @@ isOk<T, E>(result: Result<T, E>): result is { ok: true; value: T };
 
 ## `isValidEntityId`
 
-[Source](../../../packages/core/src/types.ts#L32)
+[Source](../../../packages/core/src/types.ts#L51)
 
 Test the same identifier rules as `entityId`, returning `false` on invalid input without throwing or changing the string.
 
@@ -551,7 +526,7 @@ isValidEntityId(value: string): value is EntityId;
 
 ## `JtiReplayClaim`
 
-[Source](../../../packages/core/src/replay-store.ts#L4)
+[Source](../../../packages/core/src/storage/replay-store.ts#L4)
 
 A replay-protected JWT identifier scoped to its issuer and audience.
 
@@ -560,8 +535,9 @@ interface JtiReplayClaim {
 	readonly issuer: string;
 	readonly audience: string;
 	readonly jti: string;
-	/** JWT expiration as a NumericDate. */
+	/** Absolute acceptance deadline as a NumericDate. */
 	readonly expiresAt: number;
+	readonly extensions?: JsonObject;
 }
 ```
 
@@ -572,11 +548,12 @@ Fields (including inherited fields):
 | `issuer` | `string` | Issuer identity for the signed artifact or configured service. |
 | `audience` | `string` | Expected recipient identity. Federation endpoint assertions use the responder's Entity Identifier, not its URL origin. |
 | `jti` | `string` | JWT identifier used for replay protection, scoped to issuer and audience. |
-| `expiresAt` | `number` | Expiration or eligibility deadline as a NumericDate in seconds; the owning API defines the evidence it bounds. |
+| `expiresAt` | `number` | Absolute acceptance deadline in seconds, including any applicable clock leeway. |
+| `extensions?` | `JsonObject` | Private JSON data for the storage adapter. |
 
 ## `Logger`
 
-[Source](../../../packages/core/src/types.ts#L79)
+[Source](../../../packages/core/src/types.ts#L88)
 
 Host logger. Returned promises are handled without awaiting them; sink failures are ignored.
 
@@ -618,139 +595,9 @@ Transform a Result's error while preserving its successful value.
 mapErr<T, E, F>(result: Result<T, E>, fn: (error: E) => F): Result<T, F>;
 ```
 
-## `MemoryCache`
-
-[Source](../../../packages/core/src/cache/index.ts#L24)
-
-LRU in-memory cache with TTL-based expiry and configurable max entries.
-
-**WARNING: Development and testing only.** Cache is not shared across processes
-and is lost on restart. For production with multiple processes or containers,
-implement `CacheProvider` with Redis or similar.
-
-```typescript signature
-new MemoryCache(options?: MemoryCacheOptions): MemoryCache;
-```
-
-Defaults to 1000 entries. Reads update LRU order and remove expired entries; inserting a new key at capacity evicts the least recently used entry. Values are retained and returned by reference, so this cache does not provide snapshot isolation. TTLs are measured in seconds using the configured clock.
-
-### `MemoryCache#get`
-
-Read the requested key or record through this store's contract.
-
-[Source](../../../packages/core/src/cache/index.ts#L36)
-
-```typescript signature
-get<T>(key: string): Promise<T | undefined>;
-```
-
-### `MemoryCache#set`
-
-Store a value under the supplied key and retention options.
-
-[Source](../../../packages/core/src/cache/index.ts#L56)
-
-```typescript signature
-set<T>(key: string, value: T, ttlSeconds: number): Promise<void>;
-```
-
-### `MemoryCache#delete`
-
-Remove the requested stored value.
-
-[Source](../../../packages/core/src/cache/index.ts#L70)
-
-```typescript signature
-delete(key: string): Promise<void>;
-```
-
-### `MemoryCache#clear`
-
-Clear the values owned by this store.
-
-[Source](../../../packages/core/src/cache/index.ts#L75)
-
-```typescript signature
-clear(): Promise<void>;
-```
-
-### `MemoryCache#[Symbol.asyncDispose]`
-
-Clear this in-memory cache during asynchronous disposal. This does not clear another process's cache or revoke signed evidence.
-
-[Source](../../../packages/core/src/cache/index.ts#L80)
-
-```typescript signature
-[Symbol.asyncDispose](): Promise<void>;
-```
-
-## `MemoryCacheOptions`
-
-[Source](../../../packages/core/src/cache/index.ts#L11)
-
-Capacity and time settings for the in-memory cache.
-
-```typescript signature
-interface MemoryCacheOptions {
-	readonly maxEntries?: number;
-	/** NumericDate clock in seconds. */
-	readonly clock?: Clock;
-}
-```
-
-Fields (including inherited fields):
-
-| Field | Declared type | Description |
-|---|---|---|
-| `maxEntries?` | `number` | Maximum in-memory cache entries; defaults to 1000 for MemoryCache. |
-| `clock?` | `Clock` | NumericDate time source; omitted clocks use the runtime's current time. |
-
-## `MemoryReplayStore`
-
-[Source](../../../packages/core/src/memory-replay-store.ts#L20)
-
-Development-only in-memory replay store with fail-closed capacity handling.
-
-```typescript signature
-new MemoryReplayStore(options: MemoryReplayStoreOptions): MemoryReplayStore;
-```
-
-Defaults to 10000 live claims and requires a positive safe-integer capacity. The `(issuer, audience, jti)` tuple is hashed before the atomic lookup and insert. Expired or already-used claims return `false`; malformed claims throw and a full store rejects with `ReplayStoreCapacityError`. Records are process-local and disappear on restart.
-
-### `MemoryReplayStore#useJti`
-
-Returns true when claimed, or false when the claim was already used or has expired.
-
-[Source](../../../packages/core/src/memory-replay-store.ts#L42)
-
-```typescript signature
-useJti(claim: JtiReplayClaim): Promise<boolean>;
-```
-
-## `MemoryReplayStoreOptions`
-
-[Source](../../../packages/core/src/memory-replay-store.ts#L6)
-
-Settings for the in-memory replay store.
-
-```typescript signature
-interface MemoryReplayStoreOptions {
-	readonly engine: CryptoEngine;
-	readonly clock?: Clock;
-	readonly maxEntries?: number;
-}
-```
-
-Fields (including inherited fields):
-
-| Field | Declared type | Description |
-|---|---|---|
-| `clock?` | `Clock` | NumericDate time source; omitted clocks use the runtime's current time. |
-| `maxEntries?` | `number` | Maximum live replay claims; defaults to 10000. Must be a positive safe integer; live entries are never evicted to admit a new claim. |
-
 ## `nowSeconds`
 
-[Source](../../../packages/core/src/types.ts#L66)
+[Source](../../../packages/core/src/types.ts#L81)
 
 Returns the current time as seconds since the epoch.
 
@@ -770,7 +617,7 @@ ok<T>(value: T): Result<T, never>;
 
 ## `ParsedEntityStatement`
 
-[Source](../../../packages/core/src/types.ts#L49)
+[Source](../../../packages/core/src/types.ts#L56)
 
 Decoded JWT header and payload. This structure does not contain the original compact JWT and does not itself establish signature or chain validity; its verification state comes from the operation returning it.
 
@@ -790,7 +637,7 @@ Fields (including inherited fields):
 
 ## `PolicyMergeResult`
 
-[Source](../../../packages/core/src/types.ts#L274)
+[Source](../../../packages/core/src/types.ts#L315)
 
 Success or failure from combining two values of a metadata-policy operator.
 
@@ -800,7 +647,7 @@ type PolicyMergeResult = { ok: true; value: unknown } | { ok: false; error: stri
 
 ## `PolicyOperatorDefinition`
 
-[Source](../../../packages/core/src/types.ts#L261)
+[Source](../../../packages/core/src/types.ts#L302)
 
 A custom operator's name, ordering, combination rules, and merge/application callbacks.
 
@@ -828,7 +675,7 @@ Fields (including inherited fields):
 
 ## `PolicyOperatorResult`
 
-[Source](../../../packages/core/src/types.ts#L270)
+[Source](../../../packages/core/src/types.ts#L311)
 
 Success or failure from applying a metadata-policy operator to a parameter value.
 
@@ -845,7 +692,7 @@ type PolicyOperatorResult = {
 
 ## `ReplayStore`
 
-[Source](../../../packages/core/src/replay-store.ts#L13)
+[Source](../../../packages/core/src/storage/replay-store.ts#L8)
 
 Atomic replay protection for one-time JWT processing.
 
@@ -864,7 +711,7 @@ Fields (including inherited fields):
 
 ## `ReplayStoreCapacityError`
 
-[Source](../../../packages/core/src/memory-replay-store.ts#L12)
+[Source](../../../packages/core/src/storage/replay-memory.ts#L16)
 
 Raised when accepting another claim would require evicting a live replay record.
 
@@ -876,7 +723,7 @@ Extends the standard `Error` class, including its `name` and `message`. Runtime-
 
 ## `ResolvedMetadataPolicy`
 
-[Source](../../../packages/core/src/types.ts#L276)
+[Source](../../../packages/core/src/types.ts#L317)
 
 The metadata policy produced by combining the applicable declarations.
 
@@ -965,7 +812,7 @@ export function extensionSnapshot(name: string, value: unknown) {
 
 ## `TrustAnchorSet`
 
-[Source](../../../packages/core/src/types.ts#L135)
+[Source](../../../packages/core/src/types.ts#L176)
 
 Read-only-typed mapping of independently trusted Entity Identifiers to their public Federation Entity Keys. The type alone does not freeze a supplied Map or clone its values.
 
@@ -975,7 +822,7 @@ type TrustAnchorSet = ReadonlyMap<string, Readonly<{ jwks: JWKSet }>>;
 
 ## `TrustChain`
 
-[Source](../../../packages/core/src/types.ts#L144)
+[Source](../../../packages/core/src/types.ts#L185)
 
 A discovered candidate containing leaf-first compact Entity Statement JWTs and its proposed anchor and expiration. It is distinct from `ValidatedTrustChain`; discovery alone does not establish complete trust or effective protocol metadata.
 
@@ -1004,7 +851,7 @@ Fields (including inherited fields):
 
 ## `TrustChainResult`
 
-[Source](../../../packages/core/src/types.ts#L154)
+[Source](../../../packages/core/src/types.ts#L195)
 
 The candidates and discovery information returned by trust-chain resolution.
 
@@ -1027,7 +874,7 @@ Fields (including inherited fields):
 
 ## `TrustMarkEvaluation`
 
-[Source](../../../packages/core/src/types.ts#L193)
+[Source](../../../packages/core/src/types.ts#L234)
 
 Evaluation of a Trust Mark, independent of the enclosing chain's validity.
 
@@ -1050,7 +897,7 @@ type TrustMarkEvaluation = Readonly<{
 
 ## `TrustMarkEvidence`
 
-[Source](../../../packages/core/src/types.ts#L207)
+[Source](../../../packages/core/src/types.ts#L248)
 
 Verified Trust Mark evidence with a required original JWT, verified claims, and the key's current or historical source. It also retains the supporting issuer context and evidence deadline when available.
 
@@ -1084,7 +931,7 @@ Fields (including inherited fields):
 
 ## `UnverifiedEntityStatement`
 
-[Source](../../../packages/core/src/types.ts#L53)
+[Source](../../../packages/core/src/types.ts#L60)
 
 A decoded Entity Statement whose claims and signature have not established trust.
 
@@ -1115,7 +962,7 @@ unwrapOr<T, E>(result: Result<T, E>, fallback: T): T;
 
 ## `ValidatedTrustChain`
 
-[Source](../../../packages/core/src/types.ts#L161)
+[Source](../../../packages/core/src/types.ts#L202)
 
 A validated chain, its resolved metadata, selected anchor, and evidence lifetime.
 
@@ -1146,7 +993,7 @@ Fields (including inherited fields):
 
 ## `ValidatedTrustMark`
 
-[Source](../../../packages/core/src/types.ts#L217)
+[Source](../../../packages/core/src/types.ts#L258)
 
 A verified Trust Mark and the evidence associated with its validation.
 
@@ -1185,7 +1032,7 @@ Fields (including inherited fields):
 
 ## `ValidatedTrustMarkDelegation`
 
-[Source](../../../packages/core/src/types.ts#L233)
+[Source](../../../packages/core/src/types.ts#L274)
 
 A verified owner's delegation to a Trust Mark Issuer.
 
@@ -1221,7 +1068,7 @@ validateRoleMetadata(roles: readonly EntityRole[] | undefined, metadata: Readonl
 
 ## `ValidationError`
 
-[Source](../../../packages/core/src/types.ts#L184)
+[Source](../../../packages/core/src/types.ts#L225)
 
 The location and reason for a validation failure.
 
@@ -1247,7 +1094,7 @@ Fields (including inherited fields):
 
 ## `ValidationResult`
 
-[Source](../../../packages/core/src/types.ts#L172)
+[Source](../../../packages/core/src/types.ts#L213)
 
 A validation outcome and any errors explaining rejection.
 
@@ -1274,6 +1121,12 @@ waitForOperation<T>(pending: Promise<T>, signals: readonly (AbortSignal | undefi
 ```
 
 
-## Crypto dependencies
+## `CryptoContext`
 
-`CryptoContext` contains `engine`, `keyring`, optional `federationPurpose`, and an optional `history` source. `BoundFederationOptions<Options>` omits the engine from options on an initialized host or role. The instance uses its host engine; standalone operations require `FederationOptions.engine`. See the [migration guide](../crypto/migration.md).
+Pass `engine` and `keyring` to a signing host. Use `algorithmRegistry` for custom algorithm definitions, `federationPurpose` to select the keyring purpose for Federation Entity Keys, and `history` when serving the historical keys endpoint.
+
+`BoundFederationOptions<Options>` excludes `engine`, `algorithmRegistry`, and `storage`. The host supplies these dependencies to attached roles. Standalone operations take them through `FederationOptions`. See the [crypto migration guide](../migration-v3.md#verify-tokens-and-bind-policy) and the [source contract](../../../packages/core/src/types.ts#L96).
+
+## `JwsService`
+
+`new JwsService(options)` takes a host engine and optional JWT policy in `JwsServiceOptions`. Use `signJwt(entry, payload, header?)` with a captured keyring entry. Use `verifyJwt(token, jwks, profile, call?)` with trusted keys and an explicit type and key identifier policy. Verification returns authenticated headers and claims. Apply the artifact’s protocol schema and trust rules before using those claims. See [`JwsServiceOptions` and `JwtVerificationProfile`](../../../packages/core/src/jws-service.ts).

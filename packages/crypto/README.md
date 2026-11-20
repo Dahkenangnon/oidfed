@@ -16,7 +16,7 @@ The root and `/web` imports do not install or import JOSE. ESM and CommonJS expo
 
 The root helpers use ES2022 JavaScript and typed arrays. UTF-8 handling and JWK copies work without `TextEncoder`, `TextDecoder`, `structuredClone`, `Buffer`, `atob` or `btoa`. A host can supply its engine and signing bindings without installing global crypto or encoding polyfills.
 
-Core and the federation hosts use these contracts through explicit application configuration. See the [migration guide](../../docs/api/crypto/migration.md) for awaited host factories, managed role publication and standalone verification.
+Core and the federation hosts use these contracts through explicit application configuration. See the [migration guide](../../docs/api/migration-v3.md#host-provided-crypto) for awaited host factories, managed role publication and standalone verification.
 
 ## Sign with host-owned custody
 
@@ -94,8 +94,4 @@ const engine = createJoseEngine();
 
 The JOSE adapter uses JOSE's global Web Crypto for verification. An explicitly injected implementation supplies its digest/random operations; it does not replace JOSE's verification backend. Use `/web` or a custom `CryptoEngine` when the whole backend must be injected.
 
-See the [migration guide](../../docs/api/crypto/migration.md) for how other packages will consume these contracts.
-
 The repository tests the package in its Node, Bun, Deno, workerd, Electron and Chromium matrix. React Native and individual native keystores are integration targets, not validated runtimes. See the [API reference](../../docs/api/crypto/README.md) and [adapter recipes](../../docs/api/crypto/adapters.md).
-
-Federation, OIDC and wallet hosts accept these contracts through an explicit `crypto` context. See the [migration guide](../../docs/api/crypto/migration.md) for async factories, managed protocol publication and host-scheduled key retirement.

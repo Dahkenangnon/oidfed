@@ -6,7 +6,7 @@ Hosts receive an explicit `CryptoContext` containing a `CryptoEngine` and `Keyri
 
 ## `EntityKeysSource`
 
-[Source](../../../packages/core/src/jwks/resolve.ts#L27)
+[Source](../../../packages/core/src/jwks/resolve.ts#L28)
 
 The metadata key source selected during protocol-key resolution.
 
@@ -32,7 +32,7 @@ fetchJwkSet(url: string, options: FederationOptions): Promise<Result<JWKSet, Fed
 
 ## `fetchSignedJwkSet`
 
-[Source](../../../packages/core/src/jwks/signed-jwks-uri.ts#L34)
+[Source](../../../packages/core/src/jwks/signed-jwks-uri.ts#L31)
 
 Fetch and verify a Signed JWK Set from `signed_jwks_uri`.
 
@@ -47,7 +47,7 @@ fetchSignedJwkSet(url: string, signerJwks: JWKSet, options: FetchSignedJwkSetOpt
 
 ## `FetchSignedJwkSetOptions`
 
-[Source](../../../packages/core/src/jwks/signed-jwks-uri.ts#L21)
+[Source](../../../packages/core/src/jwks/signed-jwks-uri.ts#L18)
 
 Identity, verification, and transport settings for fetching a signed JWK Set.
 
@@ -75,7 +75,7 @@ Fields (including inherited fields):
 | `offline?` | `boolean` | Disallow network access when only supplied evidence is permitted. |
 | `httpClient?` | `HttpClient` | Host HTTP transport; defaults to the runtime's fetch implementation. |
 | `entityConfigurations?` | `ReadonlyMap<string, string> \| undefined` | Subject Entity Configuration JWTs used during chain validation; signatures and identity bindings still need validation. |
-| `cache?` | `CacheProvider` | Host cache for signed statements or operation results; cache hits do not establish trust. |
+| `storage?` | `FederationStorage \| undefined` | Storage for standalone calls. Hosted calls inherit storage from their entity. |
 | `logger?` | `Logger` | Optional host logger. Library calls are message-only, nonblocking, and protected from sink failures. |
 | `httpTimeoutMs?` | `number` | Timeout in milliseconds for bounded transport or host callbacks; defaults to 10000. |
 | `maxChainDepth?` | `number` | Maximum recursive discovery depth; defaults to 8. |
@@ -140,7 +140,7 @@ preparePublicJwkSet(value: unknown, registry?: JwsAlgorithmRegistry): Result<JWK
 
 ## `ResolvedEntityKeys`
 
-[Source](../../../packages/core/src/jwks/resolve.ts#L36)
+[Source](../../../packages/core/src/jwks/resolve.ts#L37)
 
 Protocol keys together with the source from which they were resolved.
 
@@ -160,7 +160,7 @@ Fields (including inherited fields):
 
 ## `resolveEntityKeys`
 
-[Source](../../../packages/core/src/jwks/resolve.ts#L42)
+[Source](../../../packages/core/src/jwks/resolve.ts#L43)
 
 Resolve public protocol keys in this order: `signed_jwks_uri`, inline `jwks`, then `jwks_uri`. Signed sets are checked against the supplied Federation Entity Keys and expected signer/owner. Default behavior stops at the first error. `allowFallback` advances only after recognized availability failures; signature, identity, payload, and response-format failures stop resolution.
 
@@ -170,7 +170,7 @@ resolveEntityKeys(entityMetadata: Record<string, unknown>, federationEntityKeys:
 
 ## `ResolveEntityKeysOptions`
 
-[Source](../../../packages/core/src/jwks/resolve.ts#L29)
+[Source](../../../packages/core/src/jwks/resolve.ts#L30)
 
 Key-source selection, fallback, verification, and transport settings.
 
@@ -201,7 +201,7 @@ Fields (including inherited fields):
 | `offline?` | `boolean` | Disallow network access when only supplied evidence is permitted. |
 | `httpClient?` | `HttpClient` | Host HTTP transport; defaults to the runtime's fetch implementation. |
 | `entityConfigurations?` | `ReadonlyMap<string, string> \| undefined` | Subject Entity Configuration JWTs used during chain validation; signatures and identity bindings still need validation. |
-| `cache?` | `CacheProvider` | Host cache for signed statements or operation results; cache hits do not establish trust. |
+| `storage?` | `FederationStorage \| undefined` | Storage for standalone calls. Hosted calls inherit storage from their entity. |
 | `logger?` | `Logger` | Optional host logger. Library calls are message-only, nonblocking, and protected from sink failures. |
 | `httpTimeoutMs?` | `number` | Timeout in milliseconds for bounded transport or host callbacks; defaults to 10000. |
 | `maxChainDepth?` | `number` | Maximum recursive discovery depth; defaults to 8. |
@@ -321,14 +321,18 @@ export function acceptStrictSignedKeyMetadata(verifiedPayload: Parameters<typeof
 
 ## `historicalKeysFromKeyring`
 
-Convert recorded keyring events into the Federation historical-key response shape:
+Convert recorded keyring events into the Federation historical-key response shape.
 
+<!-- oidfed-example -->
 ```ts
+import type { RotatingKeyring } from "@oidfed/crypto";
 import { historicalKeysFromKeyring } from "@oidfed/core";
-const history = historicalKeysFromKeyring(keyring, "federation");
-const keys = await history.getHistoricalKeys();
+
+export function readFederationKeyHistory(keyring: RotatingKeyring) {
+  return historicalKeysFromKeyring(keyring, "federation").getHistoricalKeys();
+}
 ```
 
 Only retired or revoked keys enter this response. Per-key `exp` is the earlier recorded retirement or revocation. Publication and activation do not imply a key's creation time or validity start. A custom `FederationKeyHistorySource` can supply known `iat` and `nbf` facts.
 
-See the [crypto contracts](../crypto/README.md) and [host migration](../crypto/migration.md) for backend selection, signing purposes, snapshots and lifecycle operations.
+See the [crypto contracts](../crypto/README.md) and [host migration](../migration-v3.md#host-provided-crypto) for backend selection, signing purposes, snapshots and lifecycle operations.

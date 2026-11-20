@@ -1,6 +1,6 @@
 # Checking the protocol packages
 
-The security checks cover `@oidfed/core`, `@oidfed/authority`, `@oidfed/leaf`, `@oidfed/oidc`, `@oidfed/wallet`, and `@oidfed/crypto`. They also check the workflows that validate and publish those packages. Applications, the CLI, and their own dependencies stay outside these checks.
+Source checks cover `@oidfed/core`, `@oidfed/authority`, `@oidfed/leaf`, `@oidfed/oidc`, `@oidfed/wallet`, and `@oidfed/crypto`. The dependency advisory scan also includes the published CLI. Workflow checks cover every file in `.github/workflows`.
 
 Run the existing build, tests, lint, and type checks alongside them. Protocol tests establish the expected behavior; the additional tools help find unsafe data handling, missing assertions, packaging mistakes, and regressions in the tests themselves.
 
@@ -38,7 +38,7 @@ The GitHub security workflow runs the same checks on pull requests and `main`, w
 | `pnpm security:lint` | TypeScript-backed promise handling, unsafe `any` propagation, exhaustive switches, risky regular expressions, JSDoc names, and local AST rules for dynamic execution, request-controlled dispatch, unsafe JSON copying, transport bypasses, and secret logging. Biome remains the formatter and general linter. |
 | `pnpm security:architecture` | Package layering, private cross-package imports, Node built-ins in runtime source, and new runtime import cycles. |
 | `pnpm security:secrets` | Redacted Gitleaks scans of the six package directories. Packed artifacts are scanned separately by `security:artifacts`. |
-| `pnpm security:dependencies` | OSV advisories for exact production and optional dependency versions resolved from the six packages. Workspace links are traversed; app, tool, and development dependencies are excluded. |
+| `pnpm security:dependencies` | OSV advisories for exact production and optional dependency versions of all seven published packages, including the CLI. The scan follows workspace links and skips application and development dependencies. |
 | `pnpm security:artifacts` | Packed manifests and declarations with publint and Are the Types Wrong, secret scanning, isolated NodeNext ESM/CommonJS and bundler consumers, runtime imports, and public contract tests with tsd. Build first. |
 | `pnpm security:workflows` | actionlint, with required ShellCheck analysis, and zizmor checks of every YAML file in `.github/workflows`, including CI, conformance, security, and release. Zizmor's regular reporting mode gates findings of low severity or higher; pedantic findings require a separate review. |
 | `pnpm security:advisory` | Knip's unused-code report and jscpd's duplication report. These help reviewers choose useful cleanup work. They do not require deleting a public API or consolidating similar protocol rules. |

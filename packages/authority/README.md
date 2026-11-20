@@ -51,21 +51,26 @@ bun add @oidfed/authority
 deno add npm:@oidfed/authority
 ```
 
-The quick start also imports `@oidfed/crypto`. Add it as a direct dependency to use its keyring and Web Crypto adapter.
-
 ## Quick Start
+
+Install the Authority, its Core memory storage adapter, and the crypto package for the keyring and Web Crypto engine.
+
+```bash
+npm install @oidfed/authority @oidfed/core @oidfed/crypto
+```
 
 ```ts
 import { StaticKeyring, type Signer } from "@oidfed/crypto";
 import { createWebCryptoEngine } from "@oidfed/crypto/web";
-import { MemoryStorageAdapter, TrustAnchor } from "@oidfed/authority";
+import { TrustAnchor } from "@oidfed/authority";
+import { MemoryFederationStorage } from "@oidfed/core";
 
 export async function createAuthority(federationSigner: Signer) {
   const engine = createWebCryptoEngine(); // Choose or inject a backend in the application.
   const authority = await TrustAnchor.create({
     entityId: "https://ta.example.org",
     crypto: { engine, keyring: new StaticKeyring({ signers: { federation: federationSigner } }) },
-    storage: new MemoryStorageAdapter({ engine }),
+    storage: new MemoryFederationStorage({ namespace: "https://ta.example.org" }),
     metadata: { federation_entity: {
       federation_fetch_endpoint: "https://ta.example.org/federation_fetch",
       federation_list_endpoint: "https://ta.example.org/federation_list",
@@ -75,11 +80,11 @@ export async function createAuthority(federationSigner: Signer) {
 }
 ```
 
-A basic keyring is enough for authority signing. Configure `crypto.history` when exposing historical-key features; `historicalKeysFromKeyring` in core converts a rotating keyring's recorded events. The host schedules propagation and retirement. See the [crypto migration guide](../../docs/api/crypto/migration.md).
+A basic keyring is enough for authority signing. Configure `crypto.history` when exposing historical-key features; `historicalKeysFromKeyring` in core converts a rotating keyring's recorded events. The host schedules propagation and retirement. See the [crypto migration guide](../../docs/api/migration-v3.md#publish-and-retire-keys-deliberately).
 
 Federation endpoint `private_key_jwt` authentication uses `AuthorityConfig.clientKeyProvider`
 to resolve a caller's public Federation Entity Keys. Omit it to use the default
-subordinate-storage lookup: `storage.subordinates.get(entityId)?.jwks`.
+subordinate-storage lookup: `storage.subordinate.fetch(entityId)?.jwks`.
 Authenticated federation endpoints require `storage.replay`. Claims are checked and
 atomically recorded before the endpoint runs; production processes serving the same
 authority must share replay state.

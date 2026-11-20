@@ -6,15 +6,19 @@ Every entry below is exported from `@oidfed/core`; there are no public subpath i
 
 Signatures preserve optional and read-only declarations. An optional property is marked with `?`; `undefined` is included in its declared type only when the source allows it explicitly. Schema field tables describe parsed output, which can differ from raw input. Parsing, decoding, signature verification, and establishing trust are separate steps; each entry states which work it performs.
 
+## Storage
+
+[Storage contracts](storage.md) cover [`FederationStorage`](storage.md#federationstorage) and [`MemoryFederationStorage`](storage.md#memoryfederationstorage). See also the [storage migration guide](../migration-v3.md#federation-storage).
+
 ## Identifiers, results, and host contracts
 
 | API | Kind |
 |---|---|
 | [`assertPositiveTtlSeconds`](contracts.md#assertpositivettlseconds) | Function |
-| [`CacheProvider`](contracts.md#cacheprovider) | Interface |
 | [`chainCacheKey`](contracts.md#chaincachekey) | Function |
 | [`ChainSelectionStrategy`](contracts.md#chainselectionstrategy) | Type |
 | [`Clock`](contracts.md#clock) | Interface |
+| [`CryptoContext`](contracts.md#cryptocontext) | Interface |
 | [`composeEntityMetadata`](contracts.md#composeentitymetadata) | Function |
 | [`ConstraintCheckContext`](contracts.md#constraintcheckcontext) | Interface |
 | [`ConstraintCheckDefinition`](contracts.md#constraintcheckdefinition) | Interface |
@@ -40,13 +44,10 @@ Signatures preserve optional and read-only declarations. An optional property is
 | [`isOk`](contracts.md#isok) | Function |
 | [`isValidEntityId`](contracts.md#isvalidentityid) | Function |
 | [`JtiReplayClaim`](contracts.md#jtireplayclaim) | Interface |
+| [`JwsService`](contracts.md#jwsservice) | Class |
 | [`Logger`](contracts.md#logger) | Interface |
 | [`map`](contracts.md#map) | Function |
 | [`mapErr`](contracts.md#maperr) | Function |
-| [`MemoryCache`](contracts.md#memorycache) | Class |
-| [`MemoryCacheOptions`](contracts.md#memorycacheoptions) | Interface |
-| [`MemoryReplayStore`](contracts.md#memoryreplaystore) | Class |
-| [`MemoryReplayStoreOptions`](contracts.md#memoryreplaystoreoptions) | Interface |
 | [`nowSeconds`](contracts.md#nowseconds) | Function |
 | [`ok`](contracts.md#ok) | Function |
 | [`ParsedEntityStatement`](contracts.md#parsedentitystatement) | Type |
@@ -259,6 +260,7 @@ Signatures preserve optional and read-only declarations. An optional property is
 | [`FederationResolverConfig`](chains.md#federationresolverconfig) | Interface |
 | [`FederationResolverIntegration`](chains.md#federationresolverintegration) | Type |
 | [`FederationResolverService`](chains.md#federationresolverservice) | Class |
+| [`entityConfigurationUrl`](chains.md#entityconfigurationurl) | Function |
 | [`fetchEntityConfiguration`](chains.md#fetchentityconfiguration) | Function |
 | [`fetchSubordinateStatement`](chains.md#fetchsubordinatestatement) | Function |
 | [`FetchSubordinateStatementOptions`](chains.md#fetchsubordinatestatementoptions) | Interface |
@@ -315,8 +317,6 @@ Signatures preserve optional and read-only declarations. An optional property is
 | [`FetchTrustMarkStatusOptions`](marks.md#fetchtrustmarkstatusoptions) | Interface |
 | [`HistoricalTrustMarkOptions`](marks.md#historicaltrustmarkoptions) | Interface |
 | [`isStoredTrustMarkEligible`](marks.md#isstoredtrustmarkeligible) | Function |
-| [`MemoryTrustMarkStorage`](marks.md#memorytrustmarkstorage) | Class |
-| [`MemoryTrustMarkStore`](marks.md#memorytrustmarkstore) | Class |
 | [`OutOfBandTrustMarkIssuer`](marks.md#outofbandtrustmarkissuer) | Interface |
 | [`RemoveTrustMarkSelector`](marks.md#removetrustmarkselector) | Type |
 | [`signTrustMark`](marks.md#signtrustmark) | Function |
@@ -343,7 +343,6 @@ Signatures preserve optional and read-only declarations. An optional property is
 | [`TrustMarkStatusPolicy`](marks.md#trustmarkstatuspolicy) | Type |
 | [`TrustMarkStatusPolicyContext`](marks.md#trustmarkstatuspolicycontext) | Interface |
 | [`TrustMarkStatusResult`](marks.md#trustmarkstatusresult) | Interface |
-| [`TrustMarkStorage`](marks.md#trustmarkstorage) | Interface |
 | [`TrustMarkStore`](marks.md#trustmarkstore) | Interface |
 | [`TrustMarkValidationOptions`](marks.md#trustmarkvalidationoptions) | Interface |
 | [`TrustMarkVerificationOptions`](marks.md#trustmarkverificationoptions) | Interface |
@@ -373,8 +372,6 @@ Signatures preserve optional and read-only declarations. An optional property is
 | [`EntityCollectionService`](collection.md#entitycollectionservice) | Class |
 | [`EntityCollectionSnapshot`](collection.md#entitycollectionsnapshot) | Interface |
 | [`EntityCollectionStore`](collection.md#entitycollectionstore) | Interface |
-| [`MemoryEntityCollectionStore`](collection.md#memoryentitycollectionstore) | Class |
-| [`MemoryEntityCollectionStoreOptions`](collection.md#memoryentitycollectionstoreoptions) | Interface |
 
 ## Schemas and wire types
 
@@ -433,6 +430,8 @@ Signatures preserve optional and read-only declarations. An optional property is
 | [`NamingConstraintsSchema`](schemas.md#namingconstraintsschema) | Value |
 | [`OAuthAuthorizationServerMetadata`](schemas.md#oauthauthorizationservermetadata) | Type |
 | [`OAuthAuthorizationServerPublicationMetadata`](schemas.md#oauthauthorizationserverpublicationmetadata) | Type |
+| [`MetadataValidationOptions`](schemas.md#metadatavalidationoptions) | Interface |
+| [`withMetadataJwkUse`](schemas.md#withmetadatajwkuse) | Function |
 | [`parseOAuthAuthorizationServerMetadata`](schemas.md#parseoauthauthorizationservermetadata) | Function |
 | [`parseOAuthAuthorizationServerPublicationMetadata`](schemas.md#parseoauthauthorizationserverpublicationmetadata) | Function |
 | [`ResolveQuerySchema`](schemas.md#resolvequeryschema) | Value |
@@ -487,13 +486,13 @@ Signatures preserve optional and read-only declarations. An optional property is
 | [`JwtTyp`](constants.md#jwttyp) | Value and type |
 | [`MediaType`](constants.md#mediatype) | Value and type |
 | [`PolicyOperator`](constants.md#policyoperator) | Value and type |
-| [`INTEROP_RECOMMENDED_ALGORITHMS`](constants.md#required_algorithms) | Value |
+| [`INTEROP_RECOMMENDED_ALGORITHMS`](constants.md#interop_recommended_algorithms) | Value |
 | [`STANDARD_ENTITY_STATEMENT_CLAIMS`](constants.md#standard_entity_statement_claims) | Value |
 | [`StandardPolicyOperator`](constants.md#standardpolicyoperator) | Enum and type |
-| [`DEFAULT_ALLOWED_ALGORITHMS`](constants.md#supported_algorithms) | Value |
+| [`DEFAULT_ALLOWED_ALGORITHMS`](constants.md#default_allowed_algorithms) | Value |
 | [`SupportedAlgorithm`](constants.md#supportedalgorithm) | Type |
 | [`TrustMarkStatus`](constants.md#trustmarkstatus) | Value and type |
 | [`WELL_KNOWN_OPENID_FEDERATION`](constants.md#well_known_openid_federation) | Value |
 
 
-The shared [crypto service and contracts](../crypto/migration.md) cover `JwsService`, `CryptoContext`, `BoundFederationOptions`, `SigningPurposes`, `historicalKeysFromKeyring`, and portable data helpers.
+The shared [crypto service and contracts](../migration-v3.md#host-provided-crypto) cover `JwsService`, `CryptoContext`, `BoundFederationOptions`, `SigningPurposes`, `historicalKeysFromKeyring`, and portable data helpers.

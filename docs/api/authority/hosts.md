@@ -26,9 +26,9 @@ Fields (including inherited fields). `?` marks an optional member; types below r
 
 ## `AuthorityConfig`
 
-[Source](../../../packages/authority/src/server.ts#L132)
+[Source](../../../packages/authority/src/server.ts#L139)
 
-Configuration shared by `TrustAnchor` and `Intermediate`. `metadata.federation_entity` must advertise fetch and list endpoints. An Intermediate requires nonempty `authorityHints` and rejects `trustMarkIssuers` and `trustMarkOwners`; a Trust Anchor permits Superiors and those policy maps together.
+Configuration for a `TrustAnchor`. `metadata.federation_entity` must advertise Fetch and Listing endpoints. A Trust Anchor can publish both Superior hints and Trust Mark policy maps.
 
 Metadata and extension claims are captured at construction. Initialized roles override metadata parameters in role order. Providers, stores, and callbacks remain service references. Construct a replacement host to change general metadata; the dedicated policy, holder, and subordinate methods update their own state. Hosted endpoint operations use `storage.cache`; `options` deliberately excludes `cache`. Instance discovery can receive a cache in its per-call options.
 
@@ -54,12 +54,12 @@ interface AuthorityConfig extends EntityStatementExtensions {
 		[K in EntityType]: EntityTypeMetadataMap[K];
 	}>;
 	/** Unified persistence adapter for all non-key authority state. */
-	storage: StorageAdapter;
+	storage: FederationStorage;
 	/** Host crypto engine, signing keyring and optional key history. */
 	crypto: CryptoContext;
 	/**
 	 * Resolves public Federation Entity Keys for authenticated remote authority
-	 * endpoint clients. Defaults to `storage.subordinates.get(entityId)?.jwks`.
+	 * endpoint clients. Defaults to `storage.subordinate.fetch(entityId)?.jwks`.
 	 */
 	clientKeyProvider?: AuthorityClientKeyProvider;
 	/** Roles (like OIDC OP, RP etc.) bound to this authority. */
@@ -87,7 +87,7 @@ interface AuthorityConfig extends EntityStatementExtensions {
 	/** Positive finite TTL in seconds for issued Trust Marks; fractional values are allowed. */
 	trustMarkTtlSeconds?: number;
 	/** Federation-wide options (httpClient, clock, etc.). */
-	options?: Omit<BoundFederationOptions, "cache">;
+	options?: BoundFederationOptions;
 	/**
 	 * Configuration for the Extended Subordinate Listing endpoint. Set
 	 * `enabled: false` to keep the endpoint disabled (router returns 404) and
@@ -110,11 +110,11 @@ Fields (including inherited fields). `?` marks an optional member; types below r
 | `trustMarkIssuer?` | `Omit<TrustMarkIssuerConfig, "storage">` | Shared issuer-service options. Storage always comes from `storage.trustMarks`. Top-level issuer callback/maps override their nested equivalents; nested `defaults` override the global `trustMarkTtlSeconds` fallback. |
 | `requireAuthForFreshResolution?` | `boolean` | Defaults to `true`: anonymous HTTP Resolve requests use cached assessments. Local `resolveEntity()` and authenticated calls may discover fresh evidence. |
 | `collection?` | `EntityCollectionIntegration` | Optional collection service configuration. Publishing the collection endpoint requires this configuration; creating the service alone does not advertise the endpoint. |
-| `entityId` | `EntityId \| string` | HTTPS Entity Identifier without userinfo, query, or fragment. Construction removes one trailing slash before exposing the published identifier. |
+| `entityId` | `EntityId \| string` | HTTPS Entity Identifier without userinfo, query, or fragment. The authority validates and preserves the configured value. |
 | `metadata` | `{ federation_entity: FederationEntityMetadata } & Partial<{ [K in EntityType]: EntityTypeMetadataMap[K]; }>` | Copied metadata, including required fetch/list endpoints in `federation_entity`. Initialized roles replace conflicting parameters in role order. Entity-type blocks and direct metadata parameters cannot be null. |
-| `storage` | `StorageAdapter` | Persistence adapter for subordinate records and any optional Trust Mark, event, replay, cache, and collection capabilities required by enabled operations. |
+| `storage` | `FederationStorage` | Persistence adapter for subordinate records and any optional Trust Mark, event, replay, cache, and collection capabilities required by enabled operations. |
 | `crypto` | `RotatingKeyring` | Current federation signer and public keys, plus rollover and historical-key operations. Retained as a live service reference. |
-| `clientKeyProvider?` | `AuthorityClientKeyProvider` | Client federation-key lookup for endpoint authentication. Defaults to the caller's `storage.subordinates` record; it performs no automatic remote discovery. |
+| `clientKeyProvider?` | `AuthorityClientKeyProvider` | Client federation-key lookup for endpoint authentication. Defaults to the caller's `storage.subordinate` record; it performs no automatic remote discovery. |
 | `roles?` | `EntityRole[]` | Fresh protocol-role instances initialized once for this host. Their metadata and routes are composed during construction. |
 | `trustMarks?` | `TrustMarkRef[]` | Initial Trust Mark references held by this authority and published in its own EC; distinct from records issued by its Trust Mark service. |
 | `trustMarkIssuers?` | `Record<string, string[]>` | Anchor policy mapping types to accepted issuers. Allowed on Trust Anchors, including anchors with Superiors; rejected by Intermediate construction. |
@@ -127,111 +127,14 @@ Fields (including inherited fields). `?` marks an optional member; types below r
 | `subordinateStatementTtlSeconds?` | `number` | Positive safe-integer Subordinate Statement lifetime in seconds. Defaults to 86,400. |
 | `subordinateEventsTtlSeconds?` | `number` | Optional positive finite history-response lifetime in seconds; fractions are accepted. Omission leaves the optional response `exp` absent. |
 | `trustMarkTtlSeconds?` | `number` | Positive finite issuer lifetime fallback in seconds; fractions are accepted. Defaults ultimately to 86,400 when no nested defaults, per-type, or per-call lifetime applies. Also supplies the default for `issueTrustMarkDelegation()`. |
-| `options?` | `Omit<FederationOptions, "cache">` | Federation defaults. Hosted endpoint contexts use `storage.cache`; this configuration type excludes a `cache` option. Per-call trust options can override host defaults. |
+| `options?` | `BoundFederationOptions` | Federation defaults. The host binds crypto and storage. Per-call policies may narrow these defaults. |
 | `extendedListing?` | `ExtendedListingConfig` | Extended Listing behavior and limits. The handler defaults to enabled, but an HTTP route requires an advertised endpoint. `enabled: false` makes handler/local page requests return not_found. |
 | `additionalClaims?` | `Readonly<Record<string, unknown>> \| undefined` | Custom top-level claims; standard Entity Statement claims cannot be overridden. |
 | `crit?` | `readonly string[] \| undefined` | Extension claims recipients MUST understand and process (Federation §13.4). |
 
-## `AuthorityServer`
-
-[Source](../../../packages/authority/src/server.ts#L198)
-
-The exported type contract for the authority server delegate, including local lifecycle operations and `handler()`. There is no root-package factory returning this interface. `TrustAnchor` and `Intermediate` expose `handleRequest(request)` directly and do not expose `handler()`.
-
-Local methods call the corresponding service without HTTP client authentication. Methods returning plain values reject on failure. `listSubordinatesExtended()` returns a `Result` for the handler’s success or error response.
-
-```typescript signature
-interface AuthorityServer {
-	readonly collection?: EntityCollectionService;
-	registerSubordinate(
-		record: Omit<SubordinateRecord, "createdAt" | "updatedAt">,
-		annotations?: SubordinateEventAnnotations,
-	): Promise<void>;
-	updateSubordinate(
-		subject: EntityId,
-		updates: SubordinateRecordUpdate,
-		annotations?: SubordinateEventAnnotations,
-	): Promise<void>;
-	revokeSubordinate(subject: EntityId, annotations?: SubordinateEventAnnotations): Promise<void>;
-	recordSubordinateEvents(subject: EntityId, events: readonly SubordinateEvent[]): Promise<void>;
-	getSubordinateEvents(subject: EntityId): Promise<string>;
-
-	getEntityConfiguration(): Promise<string>;
-	getSubordinateStatement(sub: EntityId): Promise<string>;
-	listSubordinates(filter?: ListFilter): Promise<EntityId[]>;
-	/**
-	 * Run Extended Listing locally with the same filtering and pagination as the HTTP handler.
-	 * Use it for in-process pagination, server-side rendering, or tests.
-	 */
-	listSubordinatesExtended(
-		params?: ExtendedSubordinateListingParams,
-		options?: ExtendedSubordinateListingOptions,
-	): Promise<Result<ExtendedSubordinateListingResult, FederationError>>;
-	resolveEntity(sub: EntityId, ta?: EntityId, options?: FederationOptions): Promise<string>;
-	getTrustMarkStatus(trustMark: string): Promise<TrustMarkStatusResponsePayload>;
-	listTrustMarkedEntities(trustMarkType: string): Promise<string[]>;
-	revokeTrustMark(type: string, subject: string): Promise<void>;
-	listTrustMarksForSubject(subject: string): Promise<TrustMarkRecord[]>;
-	getTrustMarks(): TrustMarkRef[];
-	attachTrustMark(jwt: string, options: Omit<AttachTrustMarkOptions, "engine">): Promise<void>;
-	fetchAndAttachTrustMark(
-		options: Omit<FetchAndAttachTrustMarkOptions, "options"> & {
-			readonly options?: BoundFederationOptions;
-		},
-	): Promise<void>;
-	removeTrustMark(selector: RemoveTrustMarkSelector): Promise<void>;
-	setTrustMarkIssuers(issuers: Record<string, string[]>): Promise<void>;
-	setTrustMarkOwners(owners: Record<string, TrustMarkOwner>): Promise<void>;
-	setTrustMarkDelegations(delegations: Record<string, string>): Promise<void>;
-	issueTrustMark(
-		sub: string,
-		trustMarkType: string,
-		options?: TrustMarkIssuanceOptions,
-	): Promise<string>;
-	issueTrustMarkDelegation(
-		subject: string,
-		trustMarkType: string,
-		options?: TrustMarkDelegationIssuanceOptions,
-	): Promise<string>;
-	getHistoricalKeys(): Promise<string>;
-	handler(): (request: Request) => Promise<Response>;
-}
-```
-
-Fields (including inherited fields). `?` marks an optional member; types below retain the declared aliases and readonly arrays.
-
-| Field | Declared type | Description |
-|---|---|---|
-| `collection?` | `EntityCollectionService` | Optional collection service on the delegate; absent when no collection service was configured. |
-| `registerSubordinate` | `(record: Omit<SubordinateRecord, "createdAt" \| "updatedAt">, annotations?: SubordinateEventAnnotations) => Promise<void>` | Validate publication claims, sanitize Superior-supplied metadata, supply timestamps from the authority clock, and add the subordinate in one transaction. Configured event storage receives a registration event atomically. Annotations require event storage; duplicate identifiers fail through storage. |
-| `updateSubordinate` | `(subject: EntityId, updates: SubordinateRecordUpdate, annotations?: SubordinateEventAnnotations) => Promise<void>` | Update an existing subordinate through the lifecycle transaction. The input is captured and sanitized, and merged publication claims are checked. Configured event storage records relevant metadata, policy, and key changes; a no-op update creates no update event. Rejects for an unknown subordinate or invalid update. |
-| `revokeSubordinate` | `(subject: EntityId, annotations?: SubordinateEventAnnotations) => Promise<void>` | Remove the registration in a transaction and append a revocation event when event storage is enabled. History remains available. Previously distributed statements and remote caches are not invalidated by the local removal. |
-| `recordSubordinateEvents` | `(subject: EntityId, events: readonly SubordinateEvent[]) => Promise<void>` | Validate and capture manually supplied observations, including nested extension data, then append them transactionally. Requires subordinate-event storage. This method does not modify enrollment state, suspend a participant, or revoke a registration. |
-| `getSubordinateEvents` | `(subject: EntityId) => Promise<string>` | Return a compact signed history JWT for the subject. Requires event storage and known registration or retained history. Its optional `exp` is controlled by `subordinateEventsTtlSeconds`; storage, cancellation, and signing failures reject the call. |
-| `getEntityConfiguration` | `() => Promise<string>` | Build and sign a compact Entity Configuration JWT using the current key-provider state. This authority method does not reuse a Leaf-style EC cache. Rejects if keys, publication validation, or signing fail. |
-| `getSubordinateStatement` | `(sub: EntityId) => Promise<string>` | Load the registered subordinate and build a compact signed Subordinate Statement with the authority’s current signer, policy, and lifetime. Rejects for an unknown subordinate or invalid/unavailable publication data. |
-| `listSubordinates` | `(filter?: ListFilter) => Promise<EntityId[]>` | Return matching subordinate identifiers from `storage.subordinates.list(filter)` without paging options. This is a local storage read, not an HTTP request, and returns identifiers rather than records. |
-| `listSubordinatesExtended` | `(params?: ExtendedSubordinateListingParams, options?: ExtendedSubordinateListingOptions) => Promise<Result<ExtendedSubordinateListingResult, FederationError>>` | Invoke the existing Extended Listing handler locally and return its decoded body in a `Result`. Routing and HTTP client authentication are bypassed, and no advertised endpoint is required for this local call. Handler validation and configured limits still apply; `enabled: false` returns a `not_found` error result. |
-| `resolveEntity` | `(sub: EntityId, ta?: EntityId, options?: FederationOptions) => Promise<string>` | Return a compact signed Resolve response JWT for the subject and optional requested anchor. A trusted local call can perform fresh discovery and warm the resolver cache. Per-call federation options are forwarded to the service. An unsuccessful resolver response rejects this promise with its error description. |
-| `getTrustMarkStatus` | `(trustMark: string) => Promise<TrustMarkStatusResponsePayload>` | Build a local signed Trust Mark Status response, decode it, and return its payload object, not the JWT. Requires `storage.trustMarks`. Rejects when the mark instance is unknown or the status response cannot be produced; configured status policy applies. |
-| `listTrustMarkedEntities` | `(trustMarkType: string) => Promise<string[]>` | Return sorted, deduplicated subject identifiers with an eligible mark of the requested type issued by this authority. Requires Trust Mark storage and a consistent read snapshot. This does not make an external Status request. |
-| `revokeTrustMark` | `(type: string, subject: string) => Promise<void>` | Revoke every matching active record issued by this authority for the type and subject, inside a storage transaction. Requires Trust Mark storage. Historical records remain stored; holder EC references and remote caches are not removed. |
-| `listTrustMarksForSubject` | `(subject: string) => Promise<TrustMarkRecord[]>` | Return detached eligible records issued by this authority for the subject, ordered newest first. Multiple eligible records of the same type can be returned. Requires Trust Mark storage and a consistent read snapshot. |
-| `getTrustMarks` | `() => TrustMarkRef[]` | Return a detached copy of the holder’s current Trust Mark references. This does not revoke, retrieve, or revalidate their issuer records. |
-| `attachTrustMark` | `(jwt: string, options: AttachTrustMarkOptions) => Promise<void>` | Verify the mark for this host with the supplied issuer evidence, then sign the prospective EC before replacing the holder references. Duplicate attachment is idempotent; the requested replacement policy can remove older references. A failed publication leaves the previous holder state intact. |
-| `fetchAndAttachTrustMark` | `(options: FetchAndAttachTrustMarkOptions) => Promise<void>` | Establish the requested issuer’s trust, retrieve a mark, validate it for this holder, and publish it through the same attachment operation. Trust and transport settings come from the supplied options; retrieval does not establish trust by itself. |
-| `removeTrustMark` | `(selector: RemoveTrustMarkSelector) => Promise<void>` | Remove matching holder references through a signed publication update. It can remove an expired mark without fetching or validating it again. It does not revoke the issuer’s stored mark; a failed publication leaves the previous references intact. |
-| `setTrustMarkIssuers` | `(issuers: Record<string, string[]>) => Promise<void>` | Replace anchor issuer policy after successful EC preparation. Rejects when the delegate is an Intermediate. |
-| `setTrustMarkOwners` | `(owners: Record<string, TrustMarkOwner>) => Promise<void>` | Replace anchor owner policy after successful EC preparation. Rejects when the delegate is an Intermediate. |
-| `setTrustMarkDelegations` | `(delegations: Record<string, string>) => Promise<void>` | Replace the issuer’s delegation map with an owned copy after map/value shape checks. Requires Trust Mark storage. This setter does not verify delegation signatures or expiry; applicable issuance and mark-validation operations perform those checks. |
-| `issueTrustMark` | `(sub: string, trustMarkType: string, options?: TrustMarkIssuanceOptions) => Promise<string>` | Issue a compact Trust Mark JWT or reuse an eligible stored JWT. Requires Trust Mark storage, transactions, and a read snapshot. The default renewal mode is `"reuse"`; conflicting explicit options reject reuse. `"renew"` requests issuance while retaining earlier records. The selected signer must verify against the issuer’s published keys before the record is stored. |
-| `issueTrustMarkDelegation` | `(subject: string, trustMarkType: string, options?: TrustMarkDelegationIssuanceOptions) => Promise<string>` | Sign a compact delegation JWT with this host as owner and `subject` as the delegated issuer. This operation does not require Trust Mark storage or publish owner policy. Per-call lifetime options override `trustMarkTtlSeconds`; otherwise the signing helper defaults to 86,400 seconds. Delivery to the issuer is arranged by the host. |
-| `getHistoricalKeys` | `() => Promise<string>` | Build a compact signed Historical Keys response JWT from the provider’s recorded public-key history. The return value is a string, not a key array. The response can contain `keys: []` when the provider has no historical keys. Provider and signer failures reject the call. |
-| `handler` | `() => (request: Request) => Promise<Response>` | Return the delegate router as a FederationHandler. The concrete host classes expose handleRequest instead. |
-
 ## `ExtendedListingConfig`
 
-[Source](../../../packages/authority/src/endpoints/extended-list.ts#L32)
+[Source](../../../packages/authority/src/endpoints/extended-list.ts#L37)
 
 Configuration controlling Extended Listing; numeric limits must be positive safe integers.
 
@@ -291,7 +194,7 @@ Fields (including inherited fields). `?` marks an optional member; types below r
 
 ## `ExtendedListingFilterContext`
 
-[Source](../../../packages/authority/src/endpoints/extended-list-filters.ts#L17)
+[Source](../../../packages/authority/src/endpoints/extended-list-filters.ts#L19)
 
 Context passed to a custom filter: its only field is the operation’s `AbortSignal`. It does not contain a request or authenticated caller identity.
 
@@ -309,7 +212,7 @@ Fields (including inherited fields). `?` marks an optional member; types below r
 
 ## `ExtendedListingRequestFilter`
 
-[Source](../../../packages/authority/src/endpoints/extended-list-filters.ts#L22)
+[Source](../../../packages/authority/src/endpoints/extended-list-filters.ts#L24)
 
 Defines one additional query selector. A nonempty name must not replace a standard selector or credential parameter. `parse` runs once for each supplied registered selector, even when storage is empty. Its successful value must be JSON data or `undefined` for a flag. `matches` receives a detached, deeply frozen record and parsed value. All supplied custom filters must match in addition to the standard filters.
 
@@ -339,7 +242,7 @@ Fields (including inherited fields). `?` marks an optional member; types below r
 
 ## `ExtendedSubordinateListingOptions`
 
-[Source](../../../packages/authority/src/server.ts#L103)
+[Source](../../../packages/authority/src/server.ts#L110)
 
 Per-call options for local Extended Listing: extension selectors and cancellation only. This type does not accept HTTP credentials, a transport, or trust anchors. The call uses the authority’s existing Extended Listing handler and configuration.
 
@@ -357,34 +260,9 @@ Fields (including inherited fields). `?` marks an optional member; types below r
 | `signal?` | `AbortSignal` | Per-call cancellation signal passed to the local request and handler. |
 | `additionalParameters?` | `EndpointAdditionalParameters` | Extra string or repeated-string selector values. Cannot override standard protocol selectors or credential names. |
 
-## `ExtendedSubordinateListingParams`
-
-[Source](../../../packages/authority/src/server.ts#L100)
-
-Alias of core’s `ExtendedListRequestParams`. These are local camel-case parameters; the implementation serializes them to the endpoint’s wire names before invoking the handler. Omitted values retain the configured defaults.
-
-```typescript signature
-type ExtendedSubordinateListingParams = ExtendedListRequestParams;
-```
-
-Fields (including inherited fields). `?` marks an optional member; types below retain the declared aliases and readonly arrays.
-
-| Field | Declared type | Description |
-|---|---|---|
-| `from?` | `string` | Opaque inclusive continuation returned as next. Keep other selectors unchanged when continuing. |
-| `limit?` | `number` | Positive integer requested page size, capped by maxPageSize. Omission uses defaultPageSize. |
-| `updatedAfter?` | `number` | Inclusive lower NumericDate bound on updatedAt. Finite fractional and negative values are accepted. |
-| `updatedBefore?` | `number` | Inclusive upper NumericDate bound on updatedAt. Finite fractional and negative values are accepted. |
-| `auditTimestamps?` | `boolean` | True requests registered/updated timestamps; false suppresses them, including when time filters otherwise imply them. |
-| `claims?` | `ReadonlyArray<ExtendedListClaim \| string>` | Selected subordinate claims. Omission uses defaultClaims; [] explicitly suppresses that default. |
-| `entityType?` | `string \| ReadonlyArray<string>` | One or more Entity Type Identifiers; any matching type qualifies. Custom nonempty identifiers are accepted. |
-| `trustMarked?` | `boolean` | True requires an eligible issued mark; false adds no mark restriction. Trust Mark filters require mark storage. |
-| `trustMarkType?` | `string \| ReadonlyArray<string>` | One or more mark types; any requested type qualifies. Requires Trust Mark storage. |
-| `intermediate?` | `boolean` | True selects Intermediates, false selects non-Intermediates, and omission selects both. |
-
 ## `ExtendedSubordinateListingResult`
 
-[Source](../../../packages/authority/src/server.ts#L109)
+[Source](../../../packages/authority/src/server.ts#L116)
 
 The decoded JSON success body from local Extended Listing. Each item has an `id` plus any selected claims. `next`, when present, is an opaque inclusive continuation; it can accompany an empty page. Keep filters and claim selections unchanged when continuing.
 
@@ -412,23 +290,27 @@ An asynchronous Web API request handler: accepts one `Request` and returns a `Re
 type FederationHandler = (request: Request) => Promise<Response>;
 ```
 
+## `IntermediateConfig`
+
+`Intermediate.create(config)` takes the common authority settings and requires a nonempty `authorityHints` tuple. It excludes `trustMarkIssuers` and `trustMarkOwners`, which belong to Trust Anchor policy. Intermediates can publish and use Trust Mark delegations where configured.
+
 ## `Intermediate`
 
-[Source](../../../packages/authority/src/server.ts#L1267)
+[Source](../../../packages/authority/src/server.ts#L1342)
 
 Authority host with at least one Superior. It issues statements for registered subordinates and can issue and hold Trust Marks. It rejects anchor issuer/owner policy configuration; its `setTrustMarkIssuers()` and `setTrustMarkOwners()` methods exist but always reject.
 
 The factory requires advertised fetch and list endpoints, initializes roles, and rejects conflicting routes. Publication is signed on demand. Local methods do not authenticate an HTTP caller; authorize administrative access in the host application.
 
 ```typescript signature
-static create(config: AuthorityConfig): Promise<Intermediate>;
+static create(config: IntermediateConfig): Promise<Intermediate>;
 ```
 
 ### `Intermediate#assessEntity`
 
 Assess the target locally or through an explicitly trusted resolver. Instance calls use per-call anchors first, then configured host anchors, then an empty set. Per-call options override host options; no implicit self-anchor trust is added. Returns a `Result<EntityAssessment>`.
 
-[Source](../../../packages/authority/src/server.ts#L1042)
+[Source](../../../packages/authority/src/server.ts#L1108)
 
 ```typescript signature
 assessEntity(target: EntityId, options?: EntityAssessmentOptions & {
@@ -440,7 +322,7 @@ assessEntity(target: EntityId, options?: EntityAssessmentOptions & {
 
 Discover candidates, validate their chains, and select a result. Instance calls use per-call anchors first, then configured host anchors, then an empty set; per-call federation options override host options. Returns a `Result<DiscoveryResult>`.
 
-[Source](../../../packages/authority/src/server.ts#L1055)
+[Source](../../../packages/authority/src/server.ts#L1123)
 
 ```typescript signature
 discoverEntity(target: EntityId, options?: BoundFederationOptions & { trustAnchors?: TrustAnchorSet; }): Promise<Result<DiscoveryResult>>;
@@ -450,7 +332,7 @@ discoverEntity(target: EntityId, options?: BoundFederationOptions & { trustAncho
 
 Validate supplied readonly statements for the target and return a `DiscoveryResult` in a `Result`. Instance calls inherit host anchors and options unless overridden. Supply supporting Entity Configurations through the options when the path needs them.
 
-[Source](../../../packages/authority/src/server.ts#L1066)
+[Source](../../../packages/authority/src/server.ts#L1134)
 
 ```typescript signature
 discoverEntityFromChain(target: EntityId, statements: readonly string[], options?: BoundFederationOptions & { trustAnchors?: TrustAnchorSet; }): Promise<Result<DiscoveryResult>>;
@@ -460,7 +342,7 @@ discoverEntityFromChain(target: EntityId, statements: readonly string[], options
 
 Readonly getter for the configured `EntityCollectionService`; `undefined` when `AuthorityConfig.collection` was omitted. Configuring a service does not advertise its HTTP endpoint automatically.
 
-[Source](../../../packages/authority/src/server.ts#L1080)
+[Source](../../../packages/authority/src/server.ts#L1148)
 
 ```typescript signature
 get collection(): EntityCollectionService | undefined;
@@ -468,9 +350,9 @@ get collection(): EntityCollectionService | undefined;
 
 ### `Intermediate#entityId`
 
-Readonly published Entity Identifier. Construction removes one trailing slash from the configured value and validates the result. EC claims, role context, and hosted services use this identifier.
+The exact configured Entity Identifier used in Entity Configurations, role context, and hosted services. The authority removes a trailing slash when constructing the well-known URL.
 
-[Source](../../../packages/authority/src/server.ts#L1084)
+[Source](../../../packages/authority/src/server.ts#L1152)
 
 ```typescript signature
 readonly entityId: EntityId;
@@ -480,7 +362,7 @@ readonly entityId: EntityId;
 
 Build and sign a compact Entity Configuration JWT using the current key-provider state. This authority method does not reuse a Leaf-style EC cache. Rejects if keys, publication validation, or signing fail.
 
-[Source](../../../packages/authority/src/server.ts#L1100)
+[Source](../../../packages/authority/src/server.ts#L1168)
 
 ```typescript signature
 getEntityConfiguration(): Promise<string>;
@@ -490,7 +372,7 @@ getEntityConfiguration(): Promise<string>;
 
 Load the registered subordinate and build a compact signed Subordinate Statement with the authority’s current signer, policy, and lifetime. Rejects for an unknown subordinate or invalid/unavailable publication data.
 
-[Source](../../../packages/authority/src/server.ts#L1105)
+[Source](../../../packages/authority/src/server.ts#L1173)
 
 ```typescript signature
 getSubordinateStatement(sub: EntityId): Promise<string>;
@@ -498,9 +380,9 @@ getSubordinateStatement(sub: EntityId): Promise<string>;
 
 ### `Intermediate#listSubordinates`
 
-Return matching subordinate identifiers from `storage.subordinates.list(filter)` without paging options. This is a local storage read, not an HTTP request, and returns identifiers rather than records.
+Return matching subordinate identifiers from `storage.subordinate.list(filter)` without paging options. This is a local storage read, not an HTTP request, and returns identifiers rather than records.
 
-[Source](../../../packages/authority/src/server.ts#L1110)
+[Source](../../../packages/authority/src/server.ts#L1178)
 
 ```typescript signature
 listSubordinates(filter?: ListFilter): Promise<EntityId[]>;
@@ -510,27 +392,27 @@ listSubordinates(filter?: ListFilter): Promise<EntityId[]>;
 
 Invoke the existing Extended Listing handler locally and return its decoded body in a `Result`. Routing and HTTP client authentication are bypassed, and no advertised endpoint is required for this local call. Handler validation and configured limits still apply; `enabled: false` returns a `not_found` error result.
 
-[Source](../../../packages/authority/src/server.ts#L1115)
+[Source](../../../packages/authority/src/server.ts#L1183)
 
 ```typescript signature
-listSubordinatesExtended(params?: ExtendedSubordinateListingParams, options?: ExtendedSubordinateListingOptions): Promise<Result<ExtendedSubordinateListingResult, FederationError>>;
+listSubordinatesExtended(params?: ExtendedListRequestParams, options?: ExtendedSubordinateListingOptions): Promise<Result<ExtendedSubordinateListingResult, FederationError>>;
 ```
 
 ### `Intermediate#resolveEntity`
 
 Return a compact signed Resolve response JWT for the subject and optional requested anchor. A trusted local call can perform fresh discovery and warm the resolver cache. Per-call federation options are forwarded to the service. An unsuccessful resolver response rejects this promise with its error description.
 
-[Source](../../../packages/authority/src/server.ts#L1123)
+[Source](../../../packages/authority/src/server.ts#L1191)
 
 ```typescript signature
-resolveEntity(sub: EntityId, ta?: EntityId, options?: FederationOptions): Promise<string>;
+resolveEntity(sub: EntityId, ta?: EntityId, options?: BoundFederationOptions): Promise<string>;
 ```
 
 ### `Intermediate#getTrustMarkStatus`
 
 Build a local signed Trust Mark Status response, decode it, and return its payload object, not the JWT. Requires `storage.trustMarks`. Rejects when the mark instance is unknown or the status response cannot be produced; configured status policy applies.
 
-[Source](../../../packages/authority/src/server.ts#L1128)
+[Source](../../../packages/authority/src/server.ts#L1200)
 
 ```typescript signature
 getTrustMarkStatus(trustMark: string): Promise<TrustMarkStatusResponsePayload>;
@@ -540,7 +422,7 @@ getTrustMarkStatus(trustMark: string): Promise<TrustMarkStatusResponsePayload>;
 
 Return sorted, deduplicated subject identifiers with an eligible mark of the requested type issued by this authority. Requires Trust Mark storage and a consistent read snapshot. This does not make an external Status request.
 
-[Source](../../../packages/authority/src/server.ts#L1133)
+[Source](../../../packages/authority/src/server.ts#L1205)
 
 ```typescript signature
 listTrustMarkedEntities(trustMarkType: string): Promise<string[]>;
@@ -550,7 +432,7 @@ listTrustMarkedEntities(trustMarkType: string): Promise<string[]>;
 
 Return a detached copy of the holder’s current Trust Mark references. This does not revoke, retrieve, or revalidate their issuer records.
 
-[Source](../../../packages/authority/src/server.ts#L1138)
+[Source](../../../packages/authority/src/server.ts#L1210)
 
 ```typescript signature
 getTrustMarks(): { trust_mark_type: string; trust_mark: string; }[];
@@ -560,7 +442,7 @@ getTrustMarks(): { trust_mark_type: string; trust_mark: string; }[];
 
 Verify the mark for this host with the supplied issuer evidence, then sign the prospective EC before replacing the holder references. Duplicate attachment is idempotent; the requested replacement policy can remove older references. A failed publication leaves the previous holder state intact.
 
-[Source](../../../packages/authority/src/server.ts#L1144)
+[Source](../../../packages/authority/src/server.ts#L1216)
 
 ```typescript signature
 attachTrustMark(jwt: string, options: AttachTrustMarkOptions): Promise<void>;
@@ -570,7 +452,7 @@ attachTrustMark(jwt: string, options: AttachTrustMarkOptions): Promise<void>;
 
 Establish the requested issuer’s trust, retrieve a mark, validate it for this holder, and publish it through the same attachment operation. Trust and transport settings come from the supplied options; retrieval does not establish trust by itself.
 
-[Source](../../../packages/authority/src/server.ts#L1148)
+[Source](../../../packages/authority/src/server.ts#L1220)
 
 ```typescript signature
 fetchAndAttachTrustMark(options: Omit<FetchAndAttachTrustMarkOptions, "options"> & { readonly options?: BoundFederationOptions; }): Promise<void>;
@@ -580,37 +462,17 @@ fetchAndAttachTrustMark(options: Omit<FetchAndAttachTrustMarkOptions, "options">
 
 Remove matching holder references through a signed publication update. It can remove an expired mark without fetching or validating it again. It does not revoke the issuer’s stored mark; a failed publication leaves the previous references intact.
 
-[Source](../../../packages/authority/src/server.ts#L1152)
+[Source](../../../packages/authority/src/server.ts#L1228)
 
 ```typescript signature
 removeTrustMark(selector: RemoveTrustMarkSelector): Promise<void>;
-```
-
-### `Intermediate#setTrustMarkIssuers`
-
-Always rejects: an `Intermediate` cannot publish `trust_mark_issuers`. This method exists on the class but does not update its state.
-
-[Source](../../../packages/authority/src/server.ts#L1156)
-
-```typescript signature
-setTrustMarkIssuers(issuers: Record<string, string[]>): Promise<void>;
-```
-
-### `Intermediate#setTrustMarkOwners`
-
-Always rejects: an `Intermediate` cannot publish `trust_mark_owners`. This method exists on the class but does not update its state.
-
-[Source](../../../packages/authority/src/server.ts#L1160)
-
-```typescript signature
-setTrustMarkOwners(owners: Record<string, TrustMarkOwner>): Promise<void>;
 ```
 
 ### `Intermediate#setTrustMarkDelegations`
 
 Replace the issuer’s delegation map with an owned copy after map/value shape checks. Requires Trust Mark storage. This setter does not verify delegation signatures or expiry; applicable issuance and mark-validation operations perform those checks.
 
-[Source](../../../packages/authority/src/server.ts#L1164)
+[Source](../../../packages/authority/src/server.ts#L1232)
 
 ```typescript signature
 setTrustMarkDelegations(delegations: Record<string, string>): Promise<void>;
@@ -620,7 +482,7 @@ setTrustMarkDelegations(delegations: Record<string, string>): Promise<void>;
 
 Revoke every matching active record issued by this authority for the type and subject, inside a storage transaction. Requires Trust Mark storage. Historical records remain stored; holder EC references and remote caches are not removed.
 
-[Source](../../../packages/authority/src/server.ts#L1168)
+[Source](../../../packages/authority/src/server.ts#L1236)
 
 ```typescript signature
 revokeTrustMark(type: string, subject: string): Promise<void>;
@@ -630,7 +492,7 @@ revokeTrustMark(type: string, subject: string): Promise<void>;
 
 Return detached eligible records issued by this authority for the subject, ordered newest first. Multiple eligible records of the same type can be returned. Requires Trust Mark storage and a consistent read snapshot.
 
-[Source](../../../packages/authority/src/server.ts#L1172)
+[Source](../../../packages/authority/src/server.ts#L1240)
 
 ```typescript signature
 listTrustMarksForSubject(subject: string): Promise<TrustMarkRecord[]>;
@@ -640,7 +502,7 @@ listTrustMarksForSubject(subject: string): Promise<TrustMarkRecord[]>;
 
 Issue a compact Trust Mark JWT or reuse an eligible stored JWT. Requires Trust Mark storage, transactions, and a read snapshot. The default renewal mode is `"reuse"`; conflicting explicit options reject reuse. `"renew"` requests issuance while retaining earlier records. The selected signer must verify against the issuer’s published keys before the record is stored.
 
-[Source](../../../packages/authority/src/server.ts#L1176)
+[Source](../../../packages/authority/src/server.ts#L1244)
 
 ```typescript signature
 issueTrustMark(sub: string, trustMarkType: string, options?: TrustMarkIssuanceOptions): Promise<string>;
@@ -650,7 +512,7 @@ issueTrustMark(sub: string, trustMarkType: string, options?: TrustMarkIssuanceOp
 
 Sign a compact delegation JWT with this host as owner and `subject` as the delegated issuer. This operation does not require Trust Mark storage or publish owner policy. Per-call lifetime options override `trustMarkTtlSeconds`; otherwise the signing helper defaults to 86,400 seconds. Delivery to the issuer is arranged by the host.
 
-[Source](../../../packages/authority/src/server.ts#L1185)
+[Source](../../../packages/authority/src/server.ts#L1253)
 
 ```typescript signature
 issueTrustMarkDelegation(subject: string, trustMarkType: string, options?: TrustMarkDelegationIssuanceOptions): Promise<string>;
@@ -660,7 +522,7 @@ issueTrustMarkDelegation(subject: string, trustMarkType: string, options?: Trust
 
 Build a compact signed Historical Keys response JWT from the provider’s recorded public-key history. The return value is a string, not a key array. The response can contain `keys: []` when the provider has no historical keys. Provider and signer failures reject the call.
 
-[Source](../../../packages/authority/src/server.ts#L1194)
+[Source](../../../packages/authority/src/server.ts#L1262)
 
 ```typescript signature
 getHistoricalKeys(): Promise<string>;
@@ -670,7 +532,7 @@ getHistoricalKeys(): Promise<string>;
 
 Validate publication claims, sanitize Superior-supplied metadata, supply timestamps from the authority clock, and add the subordinate in one transaction. Configured event storage receives a registration event atomically. Annotations require event storage; duplicate identifiers fail through storage.
 
-[Source](../../../packages/authority/src/server.ts#L1199)
+[Source](../../../packages/authority/src/server.ts#L1267)
 
 ```typescript signature
 registerSubordinate(record: Omit<SubordinateRecord, "createdAt" | "updatedAt">, annotations?: SubordinateEventAnnotations): Promise<void>;
@@ -680,7 +542,7 @@ registerSubordinate(record: Omit<SubordinateRecord, "createdAt" | "updatedAt">, 
 
 Update an existing subordinate through the lifecycle transaction. The input is captured and sanitized, and merged publication claims are checked. Configured event storage records relevant metadata, policy, and key changes; a no-op update creates no update event. Rejects for an unknown subordinate or invalid update.
 
-[Source](../../../packages/authority/src/server.ts#L1208)
+[Source](../../../packages/authority/src/server.ts#L1276)
 
 ```typescript signature
 updateSubordinate(subject: EntityId, updates: SubordinateRecordUpdate, annotations?: SubordinateEventAnnotations): Promise<void>;
@@ -690,7 +552,7 @@ updateSubordinate(subject: EntityId, updates: SubordinateRecordUpdate, annotatio
 
 Remove the registration in a transaction and append a revocation event when event storage is enabled. History remains available. Previously distributed statements and remote caches are not invalidated by the local removal.
 
-[Source](../../../packages/authority/src/server.ts#L1216)
+[Source](../../../packages/authority/src/server.ts#L1284)
 
 ```typescript signature
 revokeSubordinate(subject: EntityId, annotations?: SubordinateEventAnnotations): Promise<void>;
@@ -700,7 +562,7 @@ revokeSubordinate(subject: EntityId, annotations?: SubordinateEventAnnotations):
 
 Validate and capture manually supplied observations, including nested extension data, then append them transactionally. Requires subordinate-event storage. This method does not modify enrollment state, suspend a participant, or revoke a registration.
 
-[Source](../../../packages/authority/src/server.ts#L1225)
+[Source](../../../packages/authority/src/server.ts#L1293)
 
 ```typescript signature
 recordSubordinateEvents(subject: EntityId, events: readonly SubordinateEvent[]): Promise<void>;
@@ -710,7 +572,7 @@ recordSubordinateEvents(subject: EntityId, events: readonly SubordinateEvent[]):
 
 Return a compact signed history JWT for the subject. Requires event storage and known registration or retained history. Its optional `exp` is controlled by `subordinateEventsTtlSeconds`; storage, cancellation, and signing failures reject the call.
 
-[Source](../../../packages/authority/src/server.ts#L1232)
+[Source](../../../packages/authority/src/server.ts#L1300)
 
 ```typescript signature
 getSubordinateEvents(subject: EntityId): Promise<string>;
@@ -720,74 +582,10 @@ getSubordinateEvents(subject: EntityId): Promise<string>;
 
 Dispatch a Web API `Request` to a composed role route or a federation endpoint. Endpoint routes use advertised paths and fixed selectors; Entity Configuration discovery stays anonymous GET. Ordinary protocol failures return HTTP responses. A role handler can still reject; the host provides HTTPS serving and external request policy.
 
-[Source](../../../packages/authority/src/server.ts#L1237)
+[Source](../../../packages/authority/src/server.ts#L1305)
 
 ```typescript signature
 handleRequest(request: Request): Promise<Response>;
-```
-
-### `Intermediate.assessEntity`
-
-Static callable property aliasing core’s [`assessEntity`](../core/chains.md#assessentity). Supply explicit anchors and options; this call does not inherit any authority instance’s configuration. The property is writable in the public declaration.
-
-[Source](../../../packages/authority/src/server.ts#L1269)
-
-```typescript signature
-static assessEntity: typeof assessEntity;
-```
-
-Callable signature:
-
-```typescript signature
-Intermediate.assessEntity(subject: EntityId, anchors: TrustAnchorSet, options?: EntityAssessmentOptions): Promise<Result<EntityAssessment>>;
-```
-
-### `Intermediate.discoverEntity`
-
-Static callable property aliasing core’s [`discoverEntity`](../core/chains.md#discoverentity). Supply explicit anchors and options; this call does not inherit any authority instance’s configuration. The property is writable in the public declaration.
-
-[Source](../../../packages/authority/src/server.ts#L1271)
-
-```typescript signature
-Intermediate.discoverEntity(entityId: EntityId, trustAnchors: TrustAnchorSet, options: FederationOptions): Promise<Result<DiscoveryResult>>;
-```
-
-Callable signature:
-
-```typescript signature
-Intermediate.discoverEntity(entityId: EntityId, trustAnchors: TrustAnchorSet, options: FederationOptions): Promise<Result<DiscoveryResult>>;
-```
-
-### `Intermediate.discoverEntityFromChain`
-
-Static callable property aliasing core’s [`discoverEntityFromChain`](../core/chains.md#discoverentityfromchain). Supply explicit anchors and options; this call does not inherit any authority instance’s configuration. The property is writable in the public declaration.
-
-[Source](../../../packages/authority/src/server.ts#L1273)
-
-```typescript signature
-Intermediate.discoverEntityFromChain(entityId: EntityId, statements: readonly string[], trustAnchors: TrustAnchorSet, options: FederationOptions): Promise<Result<DiscoveryResult>>;
-```
-
-Callable signature:
-
-```typescript signature
-Intermediate.discoverEntityFromChain(entityId: EntityId, statements: readonly string[], trustAnchors: TrustAnchorSet, options: FederationOptions): Promise<Result<DiscoveryResult>>;
-```
-
-### `Intermediate.sanitizeSubordinateMetadata`
-
-Return a new outer metadata object with operational `federation_entity` fields removed. Return `undefined` for absent/nonobject input or when no entity-type blocks remain. Non-federation blocks and retained nested values are shared with the input; this helper is not a deep clone or a publication validator.
-
-[Source](../../../packages/authority/src/server.ts#L1275)
-
-```typescript signature
-static sanitizeSubordinateMetadata: typeof sanitizeSubordinateMetadata;
-```
-
-Callable signature:
-
-```typescript signature
-Intermediate.sanitizeSubordinateMetadata(metadata: Readonly<Record<string, unknown>> | undefined): Record<string, unknown> | undefined;
 ```
 
 ## `InvalidAuthorityConfig`
@@ -800,72 +598,9 @@ Configuration error used by authority validation. Its constructor takes a messag
 new InvalidAuthorityConfig(message: string): InvalidAuthorityConfig;
 ```
 
-## `InvalidMetadata`
-
-[Source](../../../packages/authority/src/errors.ts#L30)
-
-Reports a null entity-type block or direct metadata parameter. Its `path` is a metadata location such as `federation_entity.organization_name`, not an HTTP route. This null check does not reject nulls nested inside parameter objects or arrays; protocol validators can apply additional rules. The constructor builds the diagnostic message and sets `name` to `"InvalidMetadata"`.
-
-```typescript signature
-new InvalidMetadata(path: string): InvalidMetadata;
-```
-
-### `InvalidMetadata#path`
-
-Readonly metadata location passed to the constructor and included in the error message.
-
-[Source](../../../packages/authority/src/errors.ts#L31)
-
-```typescript signature
-readonly path: string;
-```
-
-## `InvalidSubordinateRecord`
-
-[Source](../../../packages/authority/src/errors.ts#L12)
-
-Error used when validating a stored subordinate record, including invalid identifiers and publication claims. The constructor takes a message and sets `name` to `"InvalidSubordinateRecord"`. Other lifecycle and adapter failures may use ordinary errors.
-
-```typescript signature
-new InvalidSubordinateRecord(message: string): InvalidSubordinateRecord;
-```
-
-## `InvalidSubordinateStatementShape`
-
-[Source](../../../packages/authority/src/errors.ts#L20)
-
-Exported error class for reporting Entity Configuration-only claims in a Subordinate Statement. The current authority publication paths use core claim validation and do not instantiate this class. It remains constructible by integrations; `forbiddenClaims` is included in its message and its `name` is `"InvalidSubordinateStatementShape"`.
-
-```typescript signature
-new InvalidSubordinateStatementShape(forbiddenClaims: readonly string[]): InvalidSubordinateStatementShape;
-```
-
-### `InvalidSubordinateStatementShape#forbiddenClaims`
-
-Readonly reference to the constructor-supplied readonly array of forbidden top-level claim names. The constructor retains that array; it does not clone it.
-
-[Source](../../../packages/authority/src/errors.ts#L21)
-
-```typescript signature
-readonly forbiddenClaims: readonly string[];
-```
-
-## `Middleware`
-
-[Source](../../../packages/authority/src/handler.ts#L5)
-
-An asynchronous HTTP middleware callback receiving a request and a `next` handler. The host integration invokes or composes these callbacks; the authority constructors do not take a middleware list.
-
-```typescript signature
-type Middleware = (
-	request: Request,
-	next: (request: Request) => Promise<Response>,
-) => Promise<Response>;
-```
-
 ## `TrustAnchor`
 
-[Source](../../../packages/authority/src/server.ts#L1249)
+[Source](../../../packages/authority/src/server.ts#L1317)
 
 Authority host whose identifier and keys consumers can configure as an anchor. It may also have Superiors. Without Superiors, omit `authorityHints` and `trustAnchorHints`; with Superiors, both hints may be supplied as nonempty arrays. It can publish and replace Trust Mark issuer/owner policy.
 
@@ -879,7 +614,7 @@ static create(config: AuthorityConfig): Promise<TrustAnchor>;
 
 Assess the target locally or through an explicitly trusted resolver. Instance calls use per-call anchors first, then configured host anchors, then an empty set. Per-call options override host options; no implicit self-anchor trust is added. Returns a `Result<EntityAssessment>`.
 
-[Source](../../../packages/authority/src/server.ts#L1042)
+[Source](../../../packages/authority/src/server.ts#L1108)
 
 ```typescript signature
 assessEntity(target: EntityId, options?: EntityAssessmentOptions & {
@@ -891,7 +626,7 @@ assessEntity(target: EntityId, options?: EntityAssessmentOptions & {
 
 Discover candidates, validate their chains, and select a result. Instance calls use per-call anchors first, then configured host anchors, then an empty set; per-call federation options override host options. Returns a `Result<DiscoveryResult>`.
 
-[Source](../../../packages/authority/src/server.ts#L1055)
+[Source](../../../packages/authority/src/server.ts#L1123)
 
 ```typescript signature
 discoverEntity(target: EntityId, options?: BoundFederationOptions & { trustAnchors?: TrustAnchorSet; }): Promise<Result<DiscoveryResult>>;
@@ -901,7 +636,7 @@ discoverEntity(target: EntityId, options?: BoundFederationOptions & { trustAncho
 
 Validate supplied readonly statements for the target and return a `DiscoveryResult` in a `Result`. Instance calls inherit host anchors and options unless overridden. Supply supporting Entity Configurations through the options when the path needs them.
 
-[Source](../../../packages/authority/src/server.ts#L1066)
+[Source](../../../packages/authority/src/server.ts#L1134)
 
 ```typescript signature
 discoverEntityFromChain(target: EntityId, statements: readonly string[], options?: BoundFederationOptions & { trustAnchors?: TrustAnchorSet; }): Promise<Result<DiscoveryResult>>;
@@ -911,7 +646,7 @@ discoverEntityFromChain(target: EntityId, statements: readonly string[], options
 
 Readonly getter for the configured `EntityCollectionService`; `undefined` when `AuthorityConfig.collection` was omitted. Configuring a service does not advertise its HTTP endpoint automatically.
 
-[Source](../../../packages/authority/src/server.ts#L1080)
+[Source](../../../packages/authority/src/server.ts#L1148)
 
 ```typescript signature
 get collection(): EntityCollectionService | undefined;
@@ -919,9 +654,9 @@ get collection(): EntityCollectionService | undefined;
 
 ### `TrustAnchor#entityId`
 
-Readonly published Entity Identifier. Construction removes one trailing slash from the configured value and validates the result. EC claims, role context, and hosted services use this identifier.
+The exact configured Entity Identifier used in Entity Configurations, role context, and hosted services. The authority removes a trailing slash when constructing the well-known URL.
 
-[Source](../../../packages/authority/src/server.ts#L1084)
+[Source](../../../packages/authority/src/server.ts#L1152)
 
 ```typescript signature
 readonly entityId: EntityId;
@@ -931,7 +666,7 @@ readonly entityId: EntityId;
 
 Build and sign a compact Entity Configuration JWT using the current key-provider state. This authority method does not reuse a Leaf-style EC cache. Rejects if keys, publication validation, or signing fail.
 
-[Source](../../../packages/authority/src/server.ts#L1100)
+[Source](../../../packages/authority/src/server.ts#L1168)
 
 ```typescript signature
 getEntityConfiguration(): Promise<string>;
@@ -941,7 +676,7 @@ getEntityConfiguration(): Promise<string>;
 
 Load the registered subordinate and build a compact signed Subordinate Statement with the authority’s current signer, policy, and lifetime. Rejects for an unknown subordinate or invalid/unavailable publication data.
 
-[Source](../../../packages/authority/src/server.ts#L1105)
+[Source](../../../packages/authority/src/server.ts#L1173)
 
 ```typescript signature
 getSubordinateStatement(sub: EntityId): Promise<string>;
@@ -949,9 +684,9 @@ getSubordinateStatement(sub: EntityId): Promise<string>;
 
 ### `TrustAnchor#listSubordinates`
 
-Return matching subordinate identifiers from `storage.subordinates.list(filter)` without paging options. This is a local storage read, not an HTTP request, and returns identifiers rather than records.
+Return matching subordinate identifiers from `storage.subordinate.list(filter)` without paging options. This is a local storage read, not an HTTP request, and returns identifiers rather than records.
 
-[Source](../../../packages/authority/src/server.ts#L1110)
+[Source](../../../packages/authority/src/server.ts#L1178)
 
 ```typescript signature
 listSubordinates(filter?: ListFilter): Promise<EntityId[]>;
@@ -961,27 +696,27 @@ listSubordinates(filter?: ListFilter): Promise<EntityId[]>;
 
 Invoke the existing Extended Listing handler locally and return its decoded body in a `Result`. Routing and HTTP client authentication are bypassed, and no advertised endpoint is required for this local call. Handler validation and configured limits still apply; `enabled: false` returns a `not_found` error result.
 
-[Source](../../../packages/authority/src/server.ts#L1115)
+[Source](../../../packages/authority/src/server.ts#L1183)
 
 ```typescript signature
-listSubordinatesExtended(params?: ExtendedSubordinateListingParams, options?: ExtendedSubordinateListingOptions): Promise<Result<ExtendedSubordinateListingResult, FederationError>>;
+listSubordinatesExtended(params?: ExtendedListRequestParams, options?: ExtendedSubordinateListingOptions): Promise<Result<ExtendedSubordinateListingResult, FederationError>>;
 ```
 
 ### `TrustAnchor#resolveEntity`
 
 Return a compact signed Resolve response JWT for the subject and optional requested anchor. A trusted local call can perform fresh discovery and warm the resolver cache. Per-call federation options are forwarded to the service. An unsuccessful resolver response rejects this promise with its error description.
 
-[Source](../../../packages/authority/src/server.ts#L1123)
+[Source](../../../packages/authority/src/server.ts#L1191)
 
 ```typescript signature
-resolveEntity(sub: EntityId, ta?: EntityId, options?: FederationOptions): Promise<string>;
+resolveEntity(sub: EntityId, ta?: EntityId, options?: BoundFederationOptions): Promise<string>;
 ```
 
 ### `TrustAnchor#getTrustMarkStatus`
 
 Build a local signed Trust Mark Status response, decode it, and return its payload object, not the JWT. Requires `storage.trustMarks`. Rejects when the mark instance is unknown or the status response cannot be produced; configured status policy applies.
 
-[Source](../../../packages/authority/src/server.ts#L1128)
+[Source](../../../packages/authority/src/server.ts#L1200)
 
 ```typescript signature
 getTrustMarkStatus(trustMark: string): Promise<TrustMarkStatusResponsePayload>;
@@ -991,7 +726,7 @@ getTrustMarkStatus(trustMark: string): Promise<TrustMarkStatusResponsePayload>;
 
 Return sorted, deduplicated subject identifiers with an eligible mark of the requested type issued by this authority. Requires Trust Mark storage and a consistent read snapshot. This does not make an external Status request.
 
-[Source](../../../packages/authority/src/server.ts#L1133)
+[Source](../../../packages/authority/src/server.ts#L1205)
 
 ```typescript signature
 listTrustMarkedEntities(trustMarkType: string): Promise<string[]>;
@@ -1001,7 +736,7 @@ listTrustMarkedEntities(trustMarkType: string): Promise<string[]>;
 
 Return a detached copy of the holder’s current Trust Mark references. This does not revoke, retrieve, or revalidate their issuer records.
 
-[Source](../../../packages/authority/src/server.ts#L1138)
+[Source](../../../packages/authority/src/server.ts#L1210)
 
 ```typescript signature
 getTrustMarks(): { trust_mark_type: string; trust_mark: string; }[];
@@ -1011,7 +746,7 @@ getTrustMarks(): { trust_mark_type: string; trust_mark: string; }[];
 
 Verify the mark for this host with the supplied issuer evidence, then sign the prospective EC before replacing the holder references. Duplicate attachment is idempotent; the requested replacement policy can remove older references. A failed publication leaves the previous holder state intact.
 
-[Source](../../../packages/authority/src/server.ts#L1144)
+[Source](../../../packages/authority/src/server.ts#L1216)
 
 ```typescript signature
 attachTrustMark(jwt: string, options: AttachTrustMarkOptions): Promise<void>;
@@ -1021,7 +756,7 @@ attachTrustMark(jwt: string, options: AttachTrustMarkOptions): Promise<void>;
 
 Establish the requested issuer’s trust, retrieve a mark, validate it for this holder, and publish it through the same attachment operation. Trust and transport settings come from the supplied options; retrieval does not establish trust by itself.
 
-[Source](../../../packages/authority/src/server.ts#L1148)
+[Source](../../../packages/authority/src/server.ts#L1220)
 
 ```typescript signature
 fetchAndAttachTrustMark(options: Omit<FetchAndAttachTrustMarkOptions, "options"> & { readonly options?: BoundFederationOptions; }): Promise<void>;
@@ -1031,7 +766,7 @@ fetchAndAttachTrustMark(options: Omit<FetchAndAttachTrustMarkOptions, "options">
 
 Remove matching holder references through a signed publication update. It can remove an expired mark without fetching or validating it again. It does not revoke the issuer’s stored mark; a failed publication leaves the previous references intact.
 
-[Source](../../../packages/authority/src/server.ts#L1152)
+[Source](../../../packages/authority/src/server.ts#L1228)
 
 ```typescript signature
 removeTrustMark(selector: RemoveTrustMarkSelector): Promise<void>;
@@ -1041,7 +776,7 @@ removeTrustMark(selector: RemoveTrustMarkSelector): Promise<void>;
 
 Deep-copy the replacement issuer map, validate and sign a prospective EC, then replace the anchor policy and update its issuer service. A validation/signing failure preserves the old policy. Does not invalidate already distributed ECs.
 
-[Source](../../../packages/authority/src/server.ts#L1156)
+[Source](../../../packages/authority/src/server.ts#L1319)
 
 ```typescript signature
 setTrustMarkIssuers(issuers: Record<string, string[]>): Promise<void>;
@@ -1051,7 +786,7 @@ setTrustMarkIssuers(issuers: Record<string, string[]>): Promise<void>;
 
 Deep-copy the replacement owner declarations, including nested keys, validate and sign a prospective EC, then replace the anchor policy and update its issuer service. A validation/signing failure preserves the old policy. Does not create or deliver owner delegation JWTs.
 
-[Source](../../../packages/authority/src/server.ts#L1160)
+[Source](../../../packages/authority/src/server.ts#L1323)
 
 ```typescript signature
 setTrustMarkOwners(owners: Record<string, TrustMarkOwner>): Promise<void>;
@@ -1061,7 +796,7 @@ setTrustMarkOwners(owners: Record<string, TrustMarkOwner>): Promise<void>;
 
 Replace the issuer’s delegation map with an owned copy after map/value shape checks. Requires Trust Mark storage. This setter does not verify delegation signatures or expiry; applicable issuance and mark-validation operations perform those checks.
 
-[Source](../../../packages/authority/src/server.ts#L1164)
+[Source](../../../packages/authority/src/server.ts#L1232)
 
 ```typescript signature
 setTrustMarkDelegations(delegations: Record<string, string>): Promise<void>;
@@ -1071,7 +806,7 @@ setTrustMarkDelegations(delegations: Record<string, string>): Promise<void>;
 
 Revoke every matching active record issued by this authority for the type and subject, inside a storage transaction. Requires Trust Mark storage. Historical records remain stored; holder EC references and remote caches are not removed.
 
-[Source](../../../packages/authority/src/server.ts#L1168)
+[Source](../../../packages/authority/src/server.ts#L1236)
 
 ```typescript signature
 revokeTrustMark(type: string, subject: string): Promise<void>;
@@ -1081,7 +816,7 @@ revokeTrustMark(type: string, subject: string): Promise<void>;
 
 Return detached eligible records issued by this authority for the subject, ordered newest first. Multiple eligible records of the same type can be returned. Requires Trust Mark storage and a consistent read snapshot.
 
-[Source](../../../packages/authority/src/server.ts#L1172)
+[Source](../../../packages/authority/src/server.ts#L1240)
 
 ```typescript signature
 listTrustMarksForSubject(subject: string): Promise<TrustMarkRecord[]>;
@@ -1091,7 +826,7 @@ listTrustMarksForSubject(subject: string): Promise<TrustMarkRecord[]>;
 
 Issue a compact Trust Mark JWT or reuse an eligible stored JWT. Requires Trust Mark storage, transactions, and a read snapshot. The default renewal mode is `"reuse"`; conflicting explicit options reject reuse. `"renew"` requests issuance while retaining earlier records. The selected signer must verify against the issuer’s published keys before the record is stored.
 
-[Source](../../../packages/authority/src/server.ts#L1176)
+[Source](../../../packages/authority/src/server.ts#L1244)
 
 ```typescript signature
 issueTrustMark(sub: string, trustMarkType: string, options?: TrustMarkIssuanceOptions): Promise<string>;
@@ -1101,7 +836,7 @@ issueTrustMark(sub: string, trustMarkType: string, options?: TrustMarkIssuanceOp
 
 Sign a compact delegation JWT with this host as owner and `subject` as the delegated issuer. This operation does not require Trust Mark storage or publish owner policy. Per-call lifetime options override `trustMarkTtlSeconds`; otherwise the signing helper defaults to 86,400 seconds. Delivery to the issuer is arranged by the host.
 
-[Source](../../../packages/authority/src/server.ts#L1185)
+[Source](../../../packages/authority/src/server.ts#L1253)
 
 ```typescript signature
 issueTrustMarkDelegation(subject: string, trustMarkType: string, options?: TrustMarkDelegationIssuanceOptions): Promise<string>;
@@ -1111,7 +846,7 @@ issueTrustMarkDelegation(subject: string, trustMarkType: string, options?: Trust
 
 Build a compact signed Historical Keys response JWT from the provider’s recorded public-key history. The return value is a string, not a key array. The response can contain `keys: []` when the provider has no historical keys. Provider and signer failures reject the call.
 
-[Source](../../../packages/authority/src/server.ts#L1194)
+[Source](../../../packages/authority/src/server.ts#L1262)
 
 ```typescript signature
 getHistoricalKeys(): Promise<string>;
@@ -1121,7 +856,7 @@ getHistoricalKeys(): Promise<string>;
 
 Validate publication claims, sanitize Superior-supplied metadata, supply timestamps from the authority clock, and add the subordinate in one transaction. Configured event storage receives a registration event atomically. Annotations require event storage; duplicate identifiers fail through storage.
 
-[Source](../../../packages/authority/src/server.ts#L1199)
+[Source](../../../packages/authority/src/server.ts#L1267)
 
 ```typescript signature
 registerSubordinate(record: Omit<SubordinateRecord, "createdAt" | "updatedAt">, annotations?: SubordinateEventAnnotations): Promise<void>;
@@ -1131,7 +866,7 @@ registerSubordinate(record: Omit<SubordinateRecord, "createdAt" | "updatedAt">, 
 
 Update an existing subordinate through the lifecycle transaction. The input is captured and sanitized, and merged publication claims are checked. Configured event storage records relevant metadata, policy, and key changes; a no-op update creates no update event. Rejects for an unknown subordinate or invalid update.
 
-[Source](../../../packages/authority/src/server.ts#L1208)
+[Source](../../../packages/authority/src/server.ts#L1276)
 
 ```typescript signature
 updateSubordinate(subject: EntityId, updates: SubordinateRecordUpdate, annotations?: SubordinateEventAnnotations): Promise<void>;
@@ -1141,7 +876,7 @@ updateSubordinate(subject: EntityId, updates: SubordinateRecordUpdate, annotatio
 
 Remove the registration in a transaction and append a revocation event when event storage is enabled. History remains available. Previously distributed statements and remote caches are not invalidated by the local removal.
 
-[Source](../../../packages/authority/src/server.ts#L1216)
+[Source](../../../packages/authority/src/server.ts#L1284)
 
 ```typescript signature
 revokeSubordinate(subject: EntityId, annotations?: SubordinateEventAnnotations): Promise<void>;
@@ -1151,7 +886,7 @@ revokeSubordinate(subject: EntityId, annotations?: SubordinateEventAnnotations):
 
 Validate and capture manually supplied observations, including nested extension data, then append them transactionally. Requires subordinate-event storage. This method does not modify enrollment state, suspend a participant, or revoke a registration.
 
-[Source](../../../packages/authority/src/server.ts#L1225)
+[Source](../../../packages/authority/src/server.ts#L1293)
 
 ```typescript signature
 recordSubordinateEvents(subject: EntityId, events: readonly SubordinateEvent[]): Promise<void>;
@@ -1161,7 +896,7 @@ recordSubordinateEvents(subject: EntityId, events: readonly SubordinateEvent[]):
 
 Return a compact signed history JWT for the subject. Requires event storage and known registration or retained history. Its optional `exp` is controlled by `subordinateEventsTtlSeconds`; storage, cancellation, and signing failures reject the call.
 
-[Source](../../../packages/authority/src/server.ts#L1232)
+[Source](../../../packages/authority/src/server.ts#L1300)
 
 ```typescript signature
 getSubordinateEvents(subject: EntityId): Promise<string>;
@@ -1171,73 +906,9 @@ getSubordinateEvents(subject: EntityId): Promise<string>;
 
 Dispatch a Web API `Request` to a composed role route or a federation endpoint. Endpoint routes use advertised paths and fixed selectors; Entity Configuration discovery stays anonymous GET. Ordinary protocol failures return HTTP responses. A role handler can still reject; the host provides HTTPS serving and external request policy.
 
-[Source](../../../packages/authority/src/server.ts#L1237)
+[Source](../../../packages/authority/src/server.ts#L1305)
 
 ```typescript signature
 handleRequest(request: Request): Promise<Response>;
-```
-
-### `TrustAnchor.assessEntity`
-
-Static callable property aliasing core’s [`assessEntity`](../core/chains.md#assessentity). Supply explicit anchors and options; this call does not inherit any authority instance’s configuration. The property is writable in the public declaration.
-
-[Source](../../../packages/authority/src/server.ts#L1251)
-
-```typescript signature
-static assessEntity: typeof assessEntity;
-```
-
-Callable signature:
-
-```typescript signature
-TrustAnchor.assessEntity(subject: EntityId, anchors: TrustAnchorSet, options?: EntityAssessmentOptions): Promise<Result<EntityAssessment>>;
-```
-
-### `TrustAnchor.discoverEntity`
-
-Static callable property aliasing core’s [`discoverEntity`](../core/chains.md#discoverentity). Supply explicit anchors and options; this call does not inherit any authority instance’s configuration. The property is writable in the public declaration.
-
-[Source](../../../packages/authority/src/server.ts#L1253)
-
-```typescript signature
-TrustAnchor.discoverEntity(entityId: EntityId, trustAnchors: TrustAnchorSet, options: FederationOptions): Promise<Result<DiscoveryResult>>;
-```
-
-Callable signature:
-
-```typescript signature
-TrustAnchor.discoverEntity(entityId: EntityId, trustAnchors: TrustAnchorSet, options: FederationOptions): Promise<Result<DiscoveryResult>>;
-```
-
-### `TrustAnchor.discoverEntityFromChain`
-
-Static callable property aliasing core’s [`discoverEntityFromChain`](../core/chains.md#discoverentityfromchain). Supply explicit anchors and options; this call does not inherit any authority instance’s configuration. The property is writable in the public declaration.
-
-[Source](../../../packages/authority/src/server.ts#L1255)
-
-```typescript signature
-TrustAnchor.discoverEntityFromChain(entityId: EntityId, statements: readonly string[], trustAnchors: TrustAnchorSet, options: FederationOptions): Promise<Result<DiscoveryResult>>;
-```
-
-Callable signature:
-
-```typescript signature
-TrustAnchor.discoverEntityFromChain(entityId: EntityId, statements: readonly string[], trustAnchors: TrustAnchorSet, options: FederationOptions): Promise<Result<DiscoveryResult>>;
-```
-
-### `TrustAnchor.sanitizeSubordinateMetadata`
-
-Return a new outer metadata object with operational `federation_entity` fields removed. Return `undefined` for absent/nonobject input or when no entity-type blocks remain. Non-federation blocks and retained nested values are shared with the input; this helper is not a deep clone or a publication validator.
-
-[Source](../../../packages/authority/src/server.ts#L1257)
-
-```typescript signature
-static sanitizeSubordinateMetadata: typeof sanitizeSubordinateMetadata;
-```
-
-Callable signature:
-
-```typescript signature
-TrustAnchor.sanitizeSubordinateMetadata(metadata: Readonly<Record<string, unknown>> | undefined): Record<string, unknown> | undefined;
 ```
 

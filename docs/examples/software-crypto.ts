@@ -33,13 +33,15 @@ export async function generateSoftwareKey(alg: BuiltinJwsAlgorithm = "ES256") {
 		"sign",
 		"verify",
 	])) as CryptoKeyPair;
-	const publicKey = await crypto.subtle.exportKey("jwk", pair.publicKey);
-	const kid = encodeBase64url(await jwkThumbprint(engine, publicKey as Jwk));
+	const exported = await crypto.subtle.exportKey("jwk", pair.publicKey);
+	if (!exported.kty) throw new Error("Web Crypto did not export a JWK key type");
+	const publicKey = { ...exported, kty: exported.kty };
+	const kid = encodeBase64url(await jwkThumbprint(engine, publicKey));
 	return {
-		publicKey: { ...publicKey, kty: publicKey.kty!, kid, alg, use: "sig" },
+		publicKey: { ...publicKey, kid, alg, use: "sig" },
 		privateKey: {
 			...(await crypto.subtle.exportKey("jwk", pair.privateKey)),
-			kty: publicKey.kty!,
+			kty: publicKey.kty,
 			kid,
 			alg,
 			use: "sig",

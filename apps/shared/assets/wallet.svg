@@ -1,0 +1,340 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2172" height="724" viewBox="0 0 2172 724" role="img" aria-labelledby="t d" font-family="Noto Sans, Inter, system-ui, -apple-system, Segoe UI, sans-serif">
+  <title id="t">@oidfed/wallet</title>
+  <desc id="d">Wallet Trust, Backed by Federation. Wallet Provider, Credential Issuer, and Credential Verifier roles for OpenID Federation for Wallet Architectures.</desc>
+
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="2172" y2="724" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fbfcfe"/>
+      <stop offset="0.45" stop-color="#f6f9fd"/>
+      <stop offset="1" stop-color="#eef4fb"/>
+    </linearGradient>
+
+    <linearGradient id="head" x1="608" y1="300" x2="1548" y2="380" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1552cf"/>
+      <stop offset="0.52" stop-color="#1877d6"/>
+      <stop offset="1" stop-color="#19a6bb"/>
+    </linearGradient>
+
+    <linearGradient id="mark" x1="176" y1="278" x2="328" y2="382" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3391ea"/>
+      <stop offset="0.5" stop-color="#1b74d8"/>
+      <stop offset="1" stop-color="#1596c6"/>
+    </linearGradient>
+
+    <linearGradient id="markSm" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3391ea"/>
+      <stop offset="1" stop-color="#19a6bb"/>
+    </linearGradient>
+
+    <linearGradient id="card2" x1="186" y1="222" x2="318" y2="304" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#cfe6fa"/>
+      <stop offset="1" stop-color="#dff0f6"/>
+    </linearGradient>
+
+    <linearGradient id="wave" x1="1640" y1="240" x2="2172" y2="430" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#dcebfa" stop-opacity="0"/>
+      <stop offset="0.45" stop-color="#d8e9f8" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#e6f3f7" stop-opacity="0.35"/>
+    </linearGradient>
+
+    <radialGradient id="pedestal" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#7ec8f5" stop-opacity="0.55"/>
+      <stop offset="0.55" stop-color="#9ad6f0" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#cfeaf8" stop-opacity="0"/>
+    </radialGradient>
+
+    <radialGradient id="aura" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#9fd4f7" stop-opacity="0.34"/>
+      <stop offset="1" stop-color="#cfe8fa" stop-opacity="0"/>
+    </radialGradient>
+
+    <linearGradient id="beam" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7ac8f2" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#bfe6f8" stop-opacity="0"/>
+    </linearGradient>
+
+    <filter id="soft" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="14"/>
+    </filter>
+    <filter id="softer" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="7"/>
+    </filter>
+    <filter id="lift" x="-35%" y="-35%" width="170%" height="170%">
+      <feDropShadow dx="0" dy="7" stdDeviation="10" flood-color="#0f3763" flood-opacity="0.12"/>
+    </filter>
+
+    <pattern id="grid" width="46" height="46" patternUnits="userSpaceOnUse">
+      <path d="M46 0H0V46" fill="none" stroke="#cddff1" stroke-width="1"/>
+    </pattern>
+
+    <symbol id="hexOutline" viewBox="0 0 100 112">
+      <path d="M50 2 96 29v54L50 110 4 83V29L50 2Z" fill="none" stroke="currentColor" stroke-width="5" stroke-linejoin="round"/>
+    </symbol>
+  </defs>
+
+  <!-- ===================== background ===================== -->
+  <rect width="2172" height="724" fill="url(#bg)"/>
+  <rect x="0" y="0" width="300" height="724" fill="url(#grid)" opacity="0.5"/>
+  <rect x="1900" y="0" width="272" height="724" fill="url(#grid)" opacity="0.5"/>
+
+  <g fill="none" stroke="#d9e7f6" stroke-width="1.6" opacity="0.85">
+    <circle cx="252" cy="306" r="158"/>
+    <circle cx="252" cy="306" r="216" stroke-dasharray="7 11"/>
+    <circle cx="252" cy="306" r="274" opacity="0.6"/>
+  </g>
+  <circle cx="252" cy="306" r="250" fill="url(#aura)"/>
+  <g fill="#bcd6f0">
+    <circle cx="252" cy="50" r="7"/>
+    <circle cx="468" cy="306" r="7"/>
+    <circle cx="88" cy="180" r="5"/>
+    <circle cx="72" cy="448" r="5"/>
+  </g>
+  <circle cx="502" cy="190" r="17" fill="none" stroke="#c7dcf2" stroke-width="2.4"/>
+  <circle cx="58" cy="368" r="22" fill="none" stroke="#d5e5f5" stroke-width="2.4"/>
+  <path d="M468 306 371 283" stroke="#c7dcf2" stroke-width="2" stroke-dasharray="6 7" fill="none"/>
+  <path d="M252 50v102" stroke="#c7dcf2" stroke-width="2" stroke-dasharray="6 7" fill="none"/>
+
+  <path d="M1660 404c130-104 236-16 330-74s120-156 182-186v420h-512Z" fill="url(#wave)" opacity="0.7"/>
+  <path d="M1690 430c140-112 244-18 342-80s118-168 180-198" fill="none" stroke="#cfe6f6" stroke-width="3" opacity="0.75"/>
+
+  <!-- ===================== left hero ===================== -->
+  <g>
+    <ellipse cx="254" cy="492" rx="140" ry="41" fill="url(#pedestal)" filter="url(#soft)"/>
+    <ellipse cx="254" cy="492" rx="128" ry="35" fill="none" stroke="#bfe1f6" stroke-width="2.6" opacity="0.85"/>
+    <ellipse cx="254" cy="499" rx="93" ry="24" fill="none" stroke="#cfe9f8" stroke-width="2.2" opacity="0.8"/>
+    <ellipse cx="254" cy="505" rx="58" ry="15" fill="none" stroke="#dcf0fb" stroke-width="2" opacity="0.75"/>
+    <path d="M212 404h84l42 84h-168l42-84Z" fill="url(#beam)" filter="url(#softer)"/>
+
+    <g color="#1f6fe0">
+      <use href="#hexOutline" x="141" y="159" width="222" height="249"/>
+    </g>
+    <path d="M252 161 356 221v120l-104 60-104-60V221l104-60Z" fill="#ffffff" opacity="0.6"/>
+
+    <!-- credential card peeking out behind the wallet -->
+    <g filter="url(#lift)" transform="rotate(-10 242 244)">
+      <rect x="190" y="212" width="104" height="64" rx="11" fill="url(#card2)"/>
+      <rect x="202" y="228" width="27" height="20" rx="4.5" fill="#ffffff" opacity="0.92"/>
+      <rect x="238" y="230" width="46" height="6" rx="3" fill="#ffffff" opacity="0.95"/>
+      <rect x="238" y="243" width="31" height="6" rx="3" fill="#ffffff" opacity="0.8"/>
+      <rect x="202" y="257" width="68" height="6" rx="3" fill="#ffffff" opacity="0.7"/>
+    </g>
+
+    <!-- wallet body in front -->
+    <g filter="url(#lift)">
+      <rect x="186" y="272" width="112" height="86" rx="18" fill="url(#mark)"/>
+      <path d="M186 298h112" stroke="#ffffff" stroke-width="2.6" opacity="0.26"/>
+      <rect x="236" y="298" width="48" height="28" rx="11" fill="#0e4ba3"/>
+      <circle cx="254" cy="312" r="7.6" fill="#bfe8f4"/>
+      <circle cx="254" cy="312" r="3.2" fill="#0e4ba3"/>
+    </g>
+
+    <!-- verified badge -->
+    <g filter="url(#lift)" transform="translate(268 302)">
+      <path d="M26 0 52 9v26c0 17-11 28-26 34-15-6-26-17-26-34V9L26 0Z" fill="#17a2bb"/>
+      <path d="M15 32l8 9 16-18" fill="none" stroke="#ffffff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+
+    <g fill="#2f80ed">
+      <circle cx="141" cy="221" r="8"/>
+      <circle cx="363" cy="221" r="8"/>
+      <circle cx="141" cy="341" r="8"/>
+      <circle cx="363" cy="341" r="8"/>
+    </g>
+  </g>
+
+  <!-- ===================== top badge ===================== -->
+  <g>
+    <path d="M790 96h56" stroke="#c3d8ef" stroke-width="2" stroke-dasharray="6 8"/>
+    <path d="M1310 96h56" stroke="#c3d8ef" stroke-width="2" stroke-dasharray="6 8"/>
+    <path d="M762 96l9-9 9 9-9 9-9-9Z" fill="#9ec5f0"/>
+    <path d="M1383 96l9-9 9 9-9 9-9-9Z" fill="#9ec5f0"/>
+
+    <g color="#1f6fe0">
+      <use href="#hexOutline" x="865" y="58" width="68" height="76"/>
+    </g>
+    <g transform="translate(882 82)">
+      <rect x="0" y="5" width="34" height="24" rx="6" fill="url(#markSm)"/>
+      <rect x="19" y="12" width="19" height="11" rx="5" fill="#0e4ba3"/>
+      <circle cx="28.5" cy="17.5" r="2.8" fill="#bfe8f4"/>
+      <path d="M4 1h25" stroke="#8fc4f2" stroke-width="3.2" stroke-linecap="round"/>
+    </g>
+
+    <text x="949" y="113" font-size="46" font-weight="600" fill="#12325c" letter-spacing="-0.5">@oidfed/wallet</text>
+  </g>
+
+  <!-- ===================== headline ===================== -->
+  <text x="1078" y="248" text-anchor="middle" font-size="104" font-weight="700" fill="#10294d"
+        letter-spacing="-3" textLength="547" lengthAdjust="spacingAndGlyphs">Wallet Trust,</text>
+  <text x="1078" y="356" text-anchor="middle" font-size="104" font-weight="700" fill="url(#head)"
+        letter-spacing="-3" textLength="940" lengthAdjust="spacingAndGlyphs">Backed by Federation</text>
+
+  <!-- ===================== subtitle ===================== -->
+  <g text-anchor="middle" fill="#20406a">
+    <text x="1078" y="424" font-size="29">Wallet Provider, Credential Issuer, and Credential Verifier roles for</text>
+    <text x="1078" y="462" font-size="29">OpenID Federation for Wallet Architectures. Wallet Attestations,</text>
+    <text x="1078" y="500" font-size="26" fill="#2d4f79">PoP authentication, and federation-backed presentation checks.</text>
+  </g>
+
+  <!-- ===================== capability chips ===================== -->
+  <g font-size="23" fill="#20406a">
+    <g transform="translate(485 530)">
+      <rect width="263" height="54" rx="27" fill="#ffffff" stroke="#cfe0f5" stroke-width="2"/>
+      <g transform="translate(17 13)">
+        <path d="M14 1.5 26 8.5v14l-12 7-12-7v-14l12-7Z" fill="none" stroke="#2f80ed" stroke-width="2.4" stroke-linejoin="round"/>
+        <path d="M14 1.5v14l12 7M14 15.5 2 22.5" fill="none" stroke="#2f80ed" stroke-width="2" stroke-linejoin="round"/>
+      </g>
+      <text x="55" y="35">Runtime agnostic</text>
+    </g>
+
+    <g transform="translate(763 530)">
+      <rect width="156" height="54" rx="27" fill="#ffffff" stroke="#cfe0f5" stroke-width="2"/>
+      <g transform="translate(17 13)">
+        <path d="M14 1.5 26 8.5v14l-12 7-12-7v-14l12-7Z" fill="none" stroke="#5a9f3f" stroke-width="2.4" stroke-linejoin="round"/>
+        <text x="14" y="20" text-anchor="middle" font-size="12" font-weight="700" fill="#5a9f3f">JS</text>
+      </g>
+      <text x="55" y="35">Node.js</text>
+    </g>
+
+    <g transform="translate(934 530)">
+      <rect width="132" height="54" rx="27" fill="#ffffff" stroke="#cfe0f5" stroke-width="2"/>
+      <g transform="translate(17 13)">
+        <circle cx="14" cy="14" r="13" fill="#10294d"/>
+        <path d="M10.5 8.5c3.4-1 7.5.4 7.5 4.4 0 5-5 6-5 10.4" fill="none" stroke="#ffffff" stroke-width="2.3" stroke-linecap="round"/>
+        <circle cx="10.6" cy="11" r="1.7" fill="#ffffff"/>
+      </g>
+      <text x="55" y="35">Deno</text>
+    </g>
+
+    <g transform="translate(1081 530)">
+      <rect width="117" height="54" rx="27" fill="#ffffff" stroke="#cfe0f5" stroke-width="2"/>
+      <g transform="translate(17 13)">
+        <circle cx="14" cy="14" r="13" fill="#f7e4d2"/>
+        <circle cx="5.6" cy="16.5" r="2.3" fill="#eec5a6"/>
+        <circle cx="22.4" cy="16.5" r="2.3" fill="#eec5a6"/>
+        <circle cx="9.6" cy="12.6" r="1.9" fill="#3b2a1c"/>
+        <circle cx="18.4" cy="12.6" r="1.9" fill="#3b2a1c"/>
+        <path d="M10.4 18.4c2.4 2.2 4.8 2.2 7.2 0" fill="none" stroke="#3b2a1c" stroke-width="1.9" stroke-linecap="round"/>
+      </g>
+      <text x="55" y="35">Bun</text>
+    </g>
+
+    <g transform="translate(1213 530)">
+      <rect width="163" height="54" rx="27" fill="#ffffff" stroke="#cfe0f5" stroke-width="2"/>
+      <g transform="translate(17 13)">
+        <circle cx="14" cy="14" r="12.8" fill="none" stroke="#2f80ed" stroke-width="2.4"/>
+        <ellipse cx="14" cy="14" rx="5.5" ry="12.8" fill="none" stroke="#2f80ed" stroke-width="2"/>
+        <path d="M1.4 14h25.2M3.4 7.4h21.2M3.4 20.6h21.2" stroke="#2f80ed" stroke-width="2"/>
+      </g>
+      <text x="55" y="35">Browser</text>
+    </g>
+
+    <g transform="translate(1391 530)">
+      <rect width="279" height="54" rx="27" fill="#ffffff" stroke="#cfe0f5" stroke-width="2"/>
+      <g transform="translate(17 13)">
+        <path d="M10 6.5 2 14l8 7.5M18 6.5 26 14l-8 7.5" fill="none" stroke="#19a6bb" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round"/>
+      </g>
+      <text x="55" y="35">Framework neutral</text>
+    </g>
+  </g>
+
+  <!-- ===================== footer ===================== -->
+  <g>
+    <path d="M866 664h55" stroke="#c3d8ef" stroke-width="2" stroke-dasharray="6 8"/>
+    <path d="M1235 664h55" stroke="#c3d8ef" stroke-width="2" stroke-dasharray="6 8"/>
+    <path d="M838 664l9-9 9 9-9 9-9-9Z" fill="#9ec5f0"/>
+    <path d="M1308 664l9-9 9 9-9 9-9-9Z" fill="#9ec5f0"/>
+    <g transform="translate(941 643)">
+      <circle cx="21" cy="21" r="19.6" fill="none" stroke="#2f80ed" stroke-width="2.9"/>
+      <ellipse cx="21" cy="21" rx="8.4" ry="19.6" fill="none" stroke="#2f80ed" stroke-width="2.5"/>
+      <path d="M1.8 21h38.4M4.6 10.8h32.8M4.6 31.2h32.8" stroke="#2f80ed" stroke-width="2.5"/>
+    </g>
+    <text x="997" y="678" font-size="40" font-weight="600" fill="#1b74d8" letter-spacing="-0.5">oidfed.com</text>
+  </g>
+
+  <!-- ===================== right graph ===================== -->
+  <g>
+    <g fill="none" stroke="#9ec5f0" stroke-width="2.4">
+      <path d="M1790 222v32"/>
+      <path d="M1682 292h52"/>
+      <path d="M1718 388l36-26"/>
+      <path d="M1858 286l64-58" stroke-dasharray="7 8"/>
+      <path d="M1856 358l68 64" stroke-dasharray="7 8"/>
+    </g>
+    <g fill="#2f80ed">
+      <circle cx="1790" cy="238" r="6.5"/>
+      <circle cx="1708" cy="292" r="6.5"/>
+      <circle cx="1736" cy="375" r="6.5"/>
+    </g>
+    <circle cx="1890" cy="257" r="10" fill="none" stroke="#bcd6f0" stroke-width="2.4"/>
+    <circle cx="1890" cy="390" r="10" fill="none" stroke="#bcd6f0" stroke-width="2.4"/>
+
+    <circle cx="1800" cy="320" r="74" fill="#ffffff" opacity="0.94"/>
+    <circle cx="1800" cy="320" r="66" fill="none" stroke="#1f6fe0" stroke-width="3.4"/>
+    <circle cx="1800" cy="320" r="75" fill="none" stroke="#9fd4f7" stroke-width="2" stroke-dasharray="4 9"/>
+    <g transform="translate(1769 303)">
+      <rect x="0" y="0" width="62" height="44" rx="10" fill="url(#markSm)"/>
+      <rect x="35" y="13" width="31" height="19" rx="8" fill="#0e4ba3"/>
+      <circle cx="50.5" cy="22.5" r="4.6" fill="#bfe8f4"/>
+      <path d="M6 -7h46" stroke="#8fc4f2" stroke-width="4.2" stroke-linecap="round"/>
+    </g>
+
+    <g color="#1f6fe0">
+      <use href="#hexOutline" x="1748" y="128" width="84" height="94"/>
+      <use href="#hexOutline" x="1598" y="245" width="84" height="94"/>
+      <use href="#hexOutline" x="1648" y="383" width="84" height="94"/>
+    </g>
+
+    <!-- wallet provider -->
+    <g transform="translate(1771 157)" fill="none" stroke="#1552cf" stroke-width="2.8" stroke-linejoin="round">
+      <rect x="0" y="5" width="38" height="27" rx="6"/>
+      <path d="M0 14h38"/>
+      <circle cx="28" cy="23.5" r="3.6" fill="#1552cf" stroke="none"/>
+    </g>
+    <!-- credential issuer -->
+    <g transform="translate(1621 274)" fill="none" stroke="#1552cf" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="0" y="0" width="29" height="36" rx="5"/>
+      <path d="M7 10h15M7 18h15M7 26h9"/>
+      <circle cx="31" cy="31" r="8" fill="#ffffff"/>
+      <path d="M27.5 31.2l2.8 3 4.9-6" stroke="#17a2bb" stroke-width="3"/>
+    </g>
+    <!-- credential verifier -->
+    <g transform="translate(1672 410)">
+      <path d="M18 0 36 6v19c0 12-8 20-18 24C8 45 0 37 0 25V6L18 0Z" fill="none" stroke="#1552cf" stroke-width="2.8" stroke-linejoin="round"/>
+      <path d="M10 23l6 7 11-13" fill="none" stroke="#17a2bb" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+
+    <!-- card: wallet attestation -->
+    <g transform="translate(1928 174)">
+      <rect width="190" height="100" rx="12" fill="#ffffff" stroke="#bcd6f0" stroke-width="2.4"/>
+      <text x="16" y="29" font-size="16" font-weight="700" fill="#10294d" letter-spacing="0.4">WALLET</text>
+      <text x="16" y="50" font-size="16" font-weight="700" fill="#10294d" letter-spacing="0.4">ATTESTATION</text>
+      <g stroke="#17a2bb" stroke-width="2.8" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M18 64l5 5 9-10"/>
+        <path d="M18 82l5 5 9-10"/>
+      </g>
+      <g fill="#cfe0f5">
+        <rect x="42" y="63" width="96" height="5" rx="2.5"/>
+        <rect x="42" y="81" width="74" height="5" rx="2.5"/>
+      </g>
+      <g transform="translate(152 66)">
+        <circle cx="13" cy="13" r="13" fill="#eef5fd"/>
+        <path d="M13 5.5l2.3 4.7 5.2.7-3.8 3.6.9 5.1-4.6-2.5-4.6 2.5.9-5.1-3.8-3.6 5.2-.7L13 5.5Z" fill="#9ec5f0"/>
+      </g>
+    </g>
+
+    <!-- card: presentation request -->
+    <g transform="translate(1930 420)">
+      <rect width="180" height="130" rx="12" fill="#ffffff" stroke="#bcd6f0" stroke-width="2.4"/>
+      <text x="16" y="31" font-size="15" font-weight="700" fill="#10294d" letter-spacing="0.4">PRESENTATION</text>
+      <text x="16" y="52" font-size="15" font-weight="700" fill="#10294d" letter-spacing="0.4">REQUEST</text>
+      <g fill="#cfe0f5">
+        <rect x="16" y="68" width="114" height="5" rx="2.5"/>
+        <rect x="16" y="84" width="88" height="5" rx="2.5"/>
+        <rect x="16" y="100" width="102" height="5" rx="2.5"/>
+      </g>
+      <g transform="translate(130 88)" fill="none" stroke="#17a2bb" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M9 3 2 10l7 7M21 3l7 7-7 7"/>
+      </g>
+    </g>
+  </g>
+</svg>

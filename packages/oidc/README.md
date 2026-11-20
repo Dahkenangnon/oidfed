@@ -95,14 +95,14 @@ export async function createRelyingParty(federationSigner: Signer, protocolSigne
 This example assumes `opProtocolPublicKeys` contains the OP’s RSA and EC protocol public keys, matching its RS256 and ES256 support. Keep these separate from its Federation Entity Keys.
 
 ```ts
-import { TrustAnchor, MemoryStorageAdapter } from "@oidfed/authority";
+import { TrustAnchor } from "@oidfed/authority";
 import { OidcProviderRole } from "@oidfed/oidc";
-import { createTrustAnchorSet, type CryptoContext, type JWK, type ReplayStore } from "@oidfed/core";
+import { createTrustAnchorSet, type CryptoContext, type JWK, type FederationStorage } from "@oidfed/core";
 
 export async function createExampleOp(
   crypto: CryptoContext,
   opProtocolPublicKeys: JWK[],
-  replayStore: ReplayStore,
+  storage: FederationStorage,
 ) {
   const federationKeys = await crypto.keyring.entry(crypto.federationPurpose ?? "federation", {
     issuer: "https://op.example.com", subject: "https://op.example.com",
@@ -117,7 +117,7 @@ export async function createExampleOp(
         jwks: federationKeys.publishedJwks,
       },
     ]),
-    storage: new MemoryStorageAdapter({engine:crypto.engine}),
+    storage,
     metadata: {
       federation_entity: {
         federation_fetch_endpoint: "https://op.example.com/federation_fetch",
@@ -126,7 +126,6 @@ export async function createExampleOp(
     },
     roles: [
       new OidcProviderRole({
-        replayStore,
         registrationPath: "/register",
         metadata: {
           issuer: "https://op.example.com",

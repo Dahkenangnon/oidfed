@@ -2,13 +2,9 @@
 
 [API reference](../README.md)
 
-The index includes public exports and links to the owning reference for re-exports. Class entries include constructors, inherited public methods, static methods, and public properties.
+The index covers the package’s public exports. Class entries include constructors, inherited public methods, static methods, and public properties.
 
-## Client and endpoint authentication
-
-| API | Kind |
-|---|---|
-| [`parseConcatenatedWalletAttestation`](../core/authentication.md#parseconcatenatedclientattestation) | Function alias of `parseConcatenatedClientAttestation` from `@oidfed/core` |
+Import [client attestation helpers and types](../core/authentication.md) from `@oidfed/core`.
 
 ## Wallet federation operations
 
@@ -19,7 +15,6 @@ The index includes public exports and links to the owning reference for re-expor
 | [`AuthorizationRequestContext`](wallet.md#authorizationrequestcontext) | Interface |
 | [`AuthorizationRequestCreationOptions`](wallet.md#authorizationrequestcreationoptions) | Interface |
 | [`AuthorizationRequestOptions`](wallet.md#authorizationrequestoptions) | Interface |
-| [`CreateWalletAttestationParams`](wallet.md#createwalletattestationparams) | Type |
 | [`CredentialIssuerDiscoveryOptions`](wallet.md#credentialissuerdiscoveryoptions) | Interface |
 | [`CredentialIssuerMetadata`](wallet.md#credentialissuermetadata) | Type |
 | [`CredentialIssuerPublicationMetadata`](wallet.md#credentialissuerpublicationmetadata) | Type |
@@ -34,7 +29,6 @@ The index includes public exports and links to the owning reference for re-expor
 | [`TrustedWalletEntity`](wallet.md#trustedwalletentity) | Interface |
 | [`ValidatedWalletRequest`](wallet.md#validatedwalletrequest) | Interface |
 | [`VerifiedWalletAttestation`](wallet.md#verifiedwalletattestation) | Interface |
-| [`WalletAttestation`](wallet.md#walletattestation) | Type |
 | [`WalletAttestationVerificationOptions`](wallet.md#walletattestationverificationoptions) | Interface |
 | [`WalletAuthorizationRequest`](wallet.md#walletauthorizationrequest) | Interface |
 | [`WalletProviderMetadata`](wallet.md#walletprovidermetadata) | Type |

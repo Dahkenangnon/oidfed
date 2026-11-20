@@ -180,7 +180,7 @@ layout and make sure the comments describe the code accurately.
 
 `pnpm test` and `pnpm build` cover the published packages and tools. Their `:apps` variants cover the applications and their internal UI dependencies.
 
-`pnpm typecheck` also checks TAP tests, E2E tests, and scripts. `pnpm lint` uses the root Biome configuration. `pnpm test:e2e` runs the HTTPS federation scenarios.
+`pnpm typecheck` also checks TAP, E2E, storage contract and conformance tests, and scripts. Use `pnpm typecheck:contracts` to check the storage contract project by itself. `pnpm lint` uses the root Biome configuration. `pnpm test:e2e` runs the HTTPS federation scenarios.
 
 See the [OpenID Federation conformance guide](docs/maintenance/testing/conformance.md) for
 the pinned test plans, local Docker setup, CI profiles, and coverage limits.
@@ -190,6 +190,7 @@ configuration changes, run the affected conformance profile.
 | Scope | Framework | Location |
 |---|---|---|
 | Unit (`core`, `authority`, `leaf`, `oidc`, `wallet`, `crypto`) | QUnit via TAP | `tests/tap/` |
+| Storage contracts | Node test runner | `tests/contracts/` and `examples/adapters/tests/` |
 | CLI (`tools/cli`) | Vitest | `tools/cli/test/` |
 | Explorer (`apps/explorer`) | Vitest | `apps/explorer/test/` |
 | Repository scripts (`pnpm test:scripts`) | Node test runner | `tests/scripts/` |
@@ -206,11 +207,16 @@ pnpm test:tap                # all 6 TAP runtimes
 pnpm test:tap:bun            # one runtime (debug aid) — same for deno/workerd/electron/browser
 pnpm test:coverage           # c8 coverage with per-package thresholds
 pnpm test:e2e                # e2e suite (Node only)
-pnpm typecheck               # packages, tools, and TAP types
+pnpm typecheck               # packages, tools, tests, and scripts
+pnpm typecheck:contracts     # strict storage contract types
+pnpm test:storage:memory     # in-memory storage contract
+pnpm test:storage:adapters   # PostgreSQL integration tests (Docker required)
 pnpm typecheck:apps          # apps and internal UI
 pnpm build                   # packages and tools
 pnpm build:apps              # apps and internal UI dependencies
 ```
+
+The local release gate runs the memory contract suite and type-checks the PostgreSQL example. The release check on GitHub also requires a successful Docker-backed storage job for the exact commit. See the [storage checks](docs/maintenance/development.md#storage-checks).
 
 ## Releasing
 

@@ -1,6 +1,6 @@
 # Crypto
 
-`@oidfed/crypto` separates public cryptographic operations from private-key custody. The [package guide](../../../packages/crypto/README.md) provides installation, signing and rotation examples. Federation hosts receive these contracts explicitly; the [migration guide](migration.md) covers their configuration.
+`@oidfed/crypto` separates public cryptographic operations from private-key custody. The [package guide](../../../packages/crypto/README.md) provides installation, signing and rotation examples. Federation hosts receive these contracts explicitly; the [migration guide](../migration-v3.md#host-provided-crypto) covers their configuration.
 
 ```mermaid
 flowchart TD
@@ -83,7 +83,7 @@ Pass the registry to host crypto, standalone operations and any built-in keyring
 
 Encoding follows [RFC 7515](https://www.rfc-editor.org/rfc/rfc7515), asymmetric key representations follow [RFC 7518](https://www.rfc-editor.org/rfc/rfc7518), thumbprints follow [RFC 7638](https://www.rfc-editor.org/rfc/rfc7638), and encoded-payload handling follows [RFC 7797](https://www.rfc-editor.org/rfc/rfc7797). The package accepts the fully specified Ed25519 identifier from [RFC 9864](https://www.rfc-editor.org/rfc/rfc9864) and retains EdDSA for compatibility.
 
-The [migration guide](migration.md) describes host integration and the boundaries protocol code must preserve.
+The [migration guide](../migration-v3.md#host-provided-crypto) describes host integration and the boundaries protocol code must preserve.
 
 Signature verification does not validate JWT NumericDates, audience, issuer, subject, token type, trust chain or key provenance. Protocol code supplies those rules, including its handling of missing/duplicate key identifiers. Never use parsed claims or embedded JWKS as trusted input merely because they were decoded.
 

@@ -6,11 +6,11 @@ These are exported TypeScript types, not schema objects. Validate individual met
 
 Publication metadata can omit requirements supplied later by a Superior. Effective metadata must satisfy those requirements after completion. Registration response types separately permit credential fields that cannot be published in client EC metadata. Conditional runtime requirements can apply even to fields marked optional in TypeScript.
 
-Known fields are typed and extension fields are preserved as unknown data. The expanded declarations below use public type names; `z.output<typeof EntityIdSchema>` refers to core's Zod-branded identifier, distinct from its `EntityId` factory brand. Long declarations can be expanded when needed; field tables remain visible.
+Known fields are typed and extension fields are preserved as unknown data. The expanded declarations below use public type names; `z.output<typeof EntityIdSchema>` is the same `EntityId` type returned by Core's `entityId()`. Long declarations can be expanded when needed; field tables remain visible.
 
 ## `ExplicitRegistrationRequestPayload`
 
-[Source](../../../packages/oidc/src/schemas/explicit-registration.ts#L106)
+[Source](../../../packages/oidc/src/schemas/explicit-registration.ts#L110)
 
 Exported OIDC explicit-registration EC envelope type. It includes a self-issued client identity, intended provider audience, Federation public keys, nonempty Superior hints, and metadata containing openid_relying_party. The OAuth role uses a corresponding internal OAuth envelope; this export is the OIDC form. Parsing and complete cryptographic registration checks are separate.
 
@@ -45,7 +45,7 @@ Fields (including inherited fields):
 
 ## `ExplicitRegistrationResponsePayload`
 
-[Source](../../../packages/oidc/src/schemas/explicit-registration.ts#L107)
+[Source](../../../packages/oidc/src/schemas/explicit-registration.ts#L111)
 
 Exported OIDC registration-response envelope type. The provider identifies the client as subject and audience, carries exactly one Immediate Superior hint and the selected anchor, and places credentials inside metadata.openid_relying_party. The OAuth profile uses a separate internal envelope. Its JWT signature, recipient, times, and metadata policy must also be verified.
 
@@ -78,7 +78,7 @@ Fields (including inherited fields):
 
 ## `OAuthAuthorizationServerMetadata`
 
-[Source](../../../packages/oidc/src/schemas/metadata.ts#L436)
+[Source](../../../packages/oidc/src/schemas/metadata.ts#L426)
 
 Effective AS metadata type shared structurally with core's RFC 8414 parser. OAuthAuthorizationServerRole.parseMetadata checks the complete object, including conditional endpoints and attestation requirements. Standalone parsing does not establish issuer trust, bind it to a known Entity Identifier, or authenticate signed_metadata.
 
@@ -278,7 +278,7 @@ Fields (including inherited fields):
 
 ## `OAuthAuthorizationServerPublicationMetadata`
 
-[Source](../../../packages/oidc/src/schemas/metadata.ts#L685)
+[Source](../../../packages/oidc/src/schemas/metadata.ts#L682)
 
 Partial AS publication metadata. The shared core rules are used by OAuthAuthorizationServerRole.parsePublicationMetadata so omitted requirements can be completed by a Superior; supplied values and applicable relationships are still checked.
 
@@ -478,7 +478,7 @@ Fields (including inherited fields):
 
 ## `OAuthClientMetadata`
 
-[Source](../../../packages/oidc/src/schemas/metadata.ts#L606)
+[Source](../../../packages/oidc/src/schemas/metadata.ts#L598)
 
 Effective OAuth client metadata type. Required relationships, including redirect-based flows, are enforced at runtime even where fields remain optional in TypeScript. Use the matching role's parseMetadata method. Registration-response credentials are rejected in publication metadata; unknown extensions are preserved.
 
@@ -684,7 +684,7 @@ Fields (including inherited fields):
 
 ## `OAuthClientPublicationMetadata`
 
-[Source](../../../packages/oidc/src/schemas/metadata.ts#L688)
+[Source](../../../packages/oidc/src/schemas/metadata.ts#L685)
 
 Publication metadata type for a client EC or Superior statement whose missing fields may be completed later. The matching role's parsePublicationMetadata checks supplied fields and applicable consistency rules, while deferring effective requirements. Registration-response credential fields cannot be published.
 
@@ -890,7 +890,7 @@ Fields (including inherited fields):
 
 ## `OAuthClientRegistrationResponseMetadata`
 
-[Source](../../../packages/oidc/src/schemas/metadata.ts#L602)
+[Source](../../../packages/oidc/src/schemas/metadata.ts#L594)
 
 Client metadata carried in a verified Explicit Registration response. client_id is required; optional secrets and management credentials belong in this block. The OIDC response rejects plural RP Metadata Choices inputs after the protocol engine selects singular values. Shape validity alone does not authenticate a response or enforce read-only token permissions.
 
@@ -1108,7 +1108,7 @@ Fields (including inherited fields):
 
 ## `OAuthResourceMetadata`
 
-[Source](../../../packages/oidc/src/schemas/metadata.ts#L660)
+[Source](../../../packages/oidc/src/schemas/metadata.ts#L651)
 
 Resource metadata as a Federation Entity Type, where resource is optional. OAuthResourceRole.parseMetadata uses this default profile; pass profile: rfc9728 when validating a complete protected-resource metadata document, which requires resource. Parsing does not fetch the resource or its keys, validate a token, or authenticate signed_metadata.
 
@@ -1184,7 +1184,7 @@ Fields (including inherited fields):
 
 ## `OAuthResourcePublicationMetadata`
 
-[Source](../../../packages/oidc/src/schemas/metadata.ts#L689)
+[Source](../../../packages/oidc/src/schemas/metadata.ts#L688)
 
 Publication form of resource metadata, using the same optional field shape as the Federation resource profile. OAuthResourceRole.parsePublicationMetadata validates supplied values and mixed-key use requirements without requiring a full RFC 9728 document.
 
@@ -1260,7 +1260,7 @@ Fields (including inherited fields):
 
 ## `OIDCFederationMetadata`
 
-[Source](../../../packages/oidc/src/schemas/metadata.ts#L694)
+[Source](../../../packages/oidc/src/schemas/metadata.ts#L693)
 
 Federation Entity Type map whose OIDC/OAuth blocks use effective metadata types. This is a TypeScript contract; there is no public aggregate parser or exported schema object with this name. Validate each protocol block through the matching public role, and use core APIs for Federation signature, policy, and trust checks. Wallet blocks remain loose records here.
 
@@ -1291,7 +1291,7 @@ Fields (including inherited fields):
 
 ## `OIDCFederationPublicationMetadata`
 
-[Source](../../../packages/oidc/src/schemas/metadata.ts#L704)
+[Source](../../../packages/oidc/src/schemas/metadata.ts#L703)
 
 Federation metadata map using publication types for the OIDC/OAuth blocks. This type permits missing protocol requirements that a Superior may complete. It is not an aggregate public parser, and wallet blocks retain the core Federation shape rather than wallet protocol validation.
 
@@ -1321,7 +1321,7 @@ Fields (including inherited fields):
 
 ## `OpenIDProviderMetadata`
 
-[Source](../../../packages/oidc/src/schemas/metadata.ts#L541)
+[Source](../../../packages/oidc/src/schemas/metadata.ts#L533)
 
 Effective OP metadata, validated through OidcProviderRole.parseMetadata. The parser combines OP and shared AS checks, including required issuer, authorization endpoint, response types, subject types, RS256 support, and a public-key representation. Conditional token, explicit-registration, CIBA, and attestation requirements also apply. A standalone parse does not bind issuer to an independently known Entity Identifier; federation-aware consumption performs that check.
 
@@ -1521,7 +1521,7 @@ Fields (including inherited fields):
 
 ## `OpenIDProviderPublicationMetadata`
 
-[Source](../../../packages/oidc/src/schemas/metadata.ts#L682)
+[Source](../../../packages/oidc/src/schemas/metadata.ts#L679)
 
 Partial OP publication metadata. The role publication parser checks supplied values while allowing a Superior to complete requirements. Missing fields in this type are permitted for publication, not proof that the same object is valid effective OP metadata.
 
@@ -1721,7 +1721,7 @@ Fields (including inherited fields):
 
 ## `OpenIDRelyingPartyMetadata`
 
-[Source](../../../packages/oidc/src/schemas/metadata.ts#L536)
+[Source](../../../packages/oidc/src/schemas/metadata.ts#L528)
 
 Effective OIDC relying-party metadata type. Required relationships, including redirect-based flows, are enforced at runtime even where fields remain optional in TypeScript. Use the matching role's parseMetadata method. Registration-response credentials are rejected in publication metadata; unknown extensions are preserved.
 
@@ -1927,7 +1927,7 @@ Fields (including inherited fields):
 
 ## `OpenIDRelyingPartyPublicationMetadata`
 
-[Source](../../../packages/oidc/src/schemas/metadata.ts#L678)
+[Source](../../../packages/oidc/src/schemas/metadata.ts#L675)
 
 Publication metadata type for a client EC or Superior statement whose missing fields may be completed later. The matching role's parsePublicationMetadata checks supplied fields and applicable consistency rules, while deferring effective requirements. Registration-response credential fields cannot be published.
 
@@ -2133,7 +2133,7 @@ Fields (including inherited fields):
 
 ## `OpenIDRelyingPartyRegistrationResponseMetadata`
 
-[Source](../../../packages/oidc/src/schemas/metadata.ts#L538)
+[Source](../../../packages/oidc/src/schemas/metadata.ts#L530)
 
 Client metadata carried in a verified Explicit Registration response. client_id is required; optional secrets and management credentials belong in this block. The OIDC response rejects plural RP Metadata Choices inputs after the protocol engine selects singular values. Shape validity alone does not authenticate a response or enforce read-only token permissions.
 

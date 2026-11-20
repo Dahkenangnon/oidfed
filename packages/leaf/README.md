@@ -83,7 +83,7 @@ export async function createRelyingParty(federationSigner: Signer, protocolSigne
 }
 ```
 
-The application supplies stable signers and chooses its engine. The host derives managed protocol JWKS from the configured purpose snapshots. `SoftwareSigner` from `@oidfed/crypto/web` is available for software custody; custom signers can retain native or remote key handles. See the [crypto migration guide](../../docs/api/crypto/migration.md).
+The application supplies stable signers and chooses its engine. The host derives managed protocol JWKS from the configured purpose snapshots. `SoftwareSigner` from `@oidfed/crypto/web` is available for software custody; custom signers can retain native or remote key handles. See the [crypto migration guide](../../docs/api/migration-v3.md#separate-federation-and-protocol-purposes).
 
 Leaves can compose [wallet roles](https://github.com/Dahkenangnon/oidfed/blob/main/docs/api/wallet/README.md) for Wallet Providers, Credential Issuers, and Credential Verifiers.
 

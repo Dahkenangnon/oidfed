@@ -4,11 +4,15 @@
 
 Schemas check data shape and local claim relationships. A successful parse does not verify a signature, establish an anchor, or authorize an operation. Publication metadata may be partial; effective protocol metadata is checked after superior completion and policy.
 
-Field tables describe parsed output. A Zod-branded Entity Identifier is written as `z.output<typeof EntityIdSchema>`; it has a different TypeScript brand from the core `EntityId` factory type. `z.infer` and `z.output` refer to Zod's type helpers, not additional core exports. Loose object schemas preserve unknown fields; plain object schemas strip them, and strict object schemas reject them. Use the parser's returned data when those distinctions matter.
+Field tables describe parsed output. `EntityIdSchema` and `entityId()` both return the Core `EntityId` type. `z.infer` and `z.output` refer to Zod's type helpers, not additional core exports. Loose object schemas preserve unknown fields; plain object schemas strip them, and strict object schemas reject them. Use the parser's returned data when those distinctions matter.
+
+## Compose schemas
+
+Core installs Zod as a runtime dependency. Declare Zod directly in your app if you import from it. When composing oidfed schemas with your own, use the same resolved Zod version in the app and the oidfed packages. Separate versions can produce incompatible TypeScript schema types.
 
 ## `BaseEntityStatementSchema`
 
-[Source](../../../packages/core/src/schemas/entity-statement.ts#L33)
+[Source](../../../packages/core/src/schemas/entity-statement.ts#L30)
 
 Parse the common Entity Statement fields and require `exp > iat`. The schema preserves extension claims. It does not enforce all EC/SS-specific claim placement, critical-claim semantics, signature, or trust rules.
 
@@ -51,7 +55,7 @@ Create informational, entity-entry, and collection-response schemas using the st
 createCollectionSchemas(infoClaims?: readonly string[]): {
 	info: z.ZodRecord<z.ZodString, z.ZodUnknown>;
 	entity: z.ZodObject<{
-		entity_id: z.core.$ZodBranded<z.ZodURL, "EntityId", "out">;
+		entity_id: z.ZodType<EntityId, string>;
 		entity_types: z.ZodOptional<z.ZodArray<z.ZodString>>;
 		entity_infos: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodRecord<z.ZodString, z.ZodUnknown>>>;
 		trust_marks: z.ZodOptional<z.ZodArray<z.ZodObject<{
@@ -61,7 +65,7 @@ createCollectionSchemas(infoClaims?: readonly string[]): {
 	}, z.core.$loose>;
 	response: z.ZodObject<{
 		entities: z.ZodArray<z.ZodObject<{
-			entity_id: z.core.$ZodBranded<z.ZodURL, "EntityId", "out">;
+			entity_id: z.ZodType<EntityId, string>;
 			entity_types: z.ZodOptional<z.ZodArray<z.ZodString>>;
 			entity_infos: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodRecord<z.ZodString, z.ZodUnknown>>>;
 			trust_marks: z.ZodOptional<z.ZodArray<z.ZodObject<{
@@ -77,7 +81,7 @@ createCollectionSchemas(infoClaims?: readonly string[]): {
 
 ## `DecodedFederationJwtPayload`
 
-[Source](../../../packages/core/src/schemas/entity-statement.ts#L87)
+[Source](../../../packages/core/src/schemas/entity-statement.ts#L84)
 
 Decoded federation tokens still need profile-specific claim validation.
 
@@ -240,7 +244,7 @@ Fields (including inherited fields):
 
 ## `EntityConfigurationPayload`
 
-[Source](../../../packages/core/src/schemas/entity-statement.ts#L189)
+[Source](../../../packages/core/src/schemas/entity-statement.ts#L92)
 
 Claims in an entity's self-issued Entity Configuration.
 
@@ -271,7 +275,7 @@ Fields (including inherited fields):
 
 ## `EntityConfigurationSchema`
 
-[Source](../../../packages/core/src/schemas/entity-statement.ts#L41)
+[Source](../../../packages/core/src/schemas/entity-statement.ts#L38)
 
 Parse Entity Configuration claims, require `iss === sub` and `exp > iat`, and retain extension fields. This is a shape check, not verification of the claimed self-signature or complete Federation claim placement.
 
@@ -300,11 +304,11 @@ Fields (including inherited fields):
 
 [Source](../../../packages/core/src/schemas/entity-id.ts#L6)
 
-Validates an HTTPS Entity Identifier with no credentials, query, or fragment.
+Validates an HTTPS Entity Identifier with a host and no credentials, query, or fragment. The schema rejects raw whitespace, control characters, and backslashes. It preserves valid text exactly, including trailing slashes, and returns the same `EntityId` type as `entityId()`. JSON Schema consumers see a URI string with a maximum length of 2,048.
 
 ## `EntityStatementPayload`
 
-[Source](../../../packages/core/src/schemas/entity-statement.ts#L188)
+[Source](../../../packages/core/src/schemas/entity-statement.ts#L91)
 
 Claims shared by Entity Configurations and Subordinate Statements.
 
@@ -337,7 +341,7 @@ Fields (including inherited fields):
 
 ## `EntityStatementPayloadSchema`
 
-[Source](../../../packages/core/src/schemas/entity-statement.ts#L90)
+[Source](../../../packages/core/src/schemas/entity-statement.ts#L87)
 
 Combined Entity Statement schema accepting both ECs and SSs.
 
@@ -762,7 +766,7 @@ Fields (including inherited fields):
 
 ## `FetchQuerySchema`
 
-[Source](../../../packages/core/src/schemas/entity-statement.ts#L160)
+[Source](../../../packages/core/src/schemas/endpoints.ts#L76)
 
 Validates the `FetchQuery` data shape. Use `safeParse` to receive a success/error result, or `parse` when a thrown validation error is appropriate.
 
@@ -785,7 +789,7 @@ getEntityTypes(metadata: FederationMetadata): ReadonlyArray<EntityTypeIdentifier
 
 ## `HistoricalKeyEntry`
 
-[Source](../../../packages/core/src/schemas/entity-statement.ts#L191)
+[Source](../../../packages/core/src/schemas/endpoints.ts#L105)
 
 A federation key and its historical validity or revocation information.
 
@@ -822,7 +826,7 @@ Fields (including inherited fields):
 
 ## `HistoricalKeyEntrySchema`
 
-[Source](../../../packages/core/src/schemas/entity-statement.ts#L95)
+[Source](../../../packages/core/src/schemas/endpoints.ts#L11)
 
 Historical key entry for the federation_historical_keys endpoint.
 
@@ -847,7 +851,7 @@ Fields (including inherited fields):
 
 ## `HistoricalKeysPayload`
 
-[Source](../../../packages/core/src/schemas/entity-statement.ts#L192)
+[Source](../../../packages/core/src/schemas/endpoints.ts#L114)
 
 Claims and key history carried by a signed Historical Keys response.
 
@@ -865,7 +869,7 @@ Fields (including inherited fields):
 
 ## `HistoricalKeysPayloadSchema`
 
-[Source](../../../packages/core/src/schemas/entity-statement.ts#L108)
+[Source](../../../packages/core/src/schemas/endpoints.ts#L24)
 
 Validates the `HistoricalKeysPayload` data shape. Use `safeParse` to receive a success/error result, or `parse` when a thrown validation error is appropriate.
 
@@ -879,7 +883,7 @@ Fields (including inherited fields):
 
 ## `JWK`
 
-[Source](../../../packages/core/src/schemas/jwk.ts#L57)
+[Source](../../../packages/core/src/schemas/jwk.ts#L58)
 
 A JSON Web Key, including its algorithm and intended-use metadata where supplied.
 
@@ -904,7 +908,7 @@ Fields (including inherited fields):
 
 ## `JWKSchema`
 
-[Source](../../../packages/core/src/schemas/jwk.ts#L8)
+[Source](../../../packages/core/src/schemas/jwk.ts#L9)
 
 Parse public JWK fields and preserve extensions and unsupported key types for later selection. Known private-key parameters are rejected. Parsing does not prove key material is complete, usable, trusted, or supported by the active cryptographic backend.
 
@@ -925,7 +929,7 @@ Fields (including inherited fields):
 
 ## `JWKSet`
 
-[Source](../../../packages/core/src/schemas/jwk.ts#L58)
+[Source](../../../packages/core/src/schemas/jwk.ts#L59)
 
 A set of public federation signing keys.
 
@@ -953,7 +957,7 @@ Fields (including inherited fields):
 
 ## `ListQuerySchema`
 
-[Source](../../../packages/core/src/schemas/entity-statement.ts#L165)
+[Source](../../../packages/core/src/schemas/endpoints.ts#L81)
 
 Validates the `ListQuery` data shape. Use `safeParse` to receive a success/error result, or `parse` when a thrown validation error is appropriate.
 
@@ -1058,7 +1062,7 @@ Fields (including inherited fields):
 
 ## `OAuthAuthorizationServerMetadata`
 
-[Source](../../../packages/core/src/oauth-metadata.ts#L240)
+[Source](../../../packages/core/src/oauth-metadata.ts#L238)
 
 Effective OAuth authorization-server metadata, checked after Superior metadata and policy have been applied.
 
@@ -1253,7 +1257,7 @@ Fields (including inherited fields):
 
 ## `OAuthAuthorizationServerPublicationMetadata`
 
-[Source](../../../packages/core/src/oauth-metadata.ts#L241)
+[Source](../../../packages/core/src/oauth-metadata.ts#L239)
 
 OAuth authorization-server metadata suitable for publication before a Superior completes missing fields.
 
@@ -1448,29 +1452,29 @@ Fields (including inherited fields):
 
 ## `parseOAuthAuthorizationServerMetadata`
 
-[Source](../../../packages/core/src/oauth-metadata.ts#L244)
+[Source](../../../packages/core/src/oauth-metadata.ts#L242)
 
 Parse effective OAuth authorization-server metadata with protocol-specific field and cross-field checks. The default `oauth` profile requires `issuer` and `response_types_supported`; `openid4vci` permits the latter to be absent only for a pre-authorized-code-only server. Conditional endpoint and attestation requirements still apply. Unknown metadata is preserved. Parsing does not authenticate the issuer or `signed_metadata`.
 
 ```typescript signature
-parseOAuthAuthorizationServerMetadata(metadata: unknown, options?: { profile?: "oauth" }): z.ZodSafeParseResult<OAuthAuthorizationServerMetadata>;
-parseOAuthAuthorizationServerMetadata(metadata: unknown, options: { profile: "openid4vci" }): z.ZodSafeParseResult<OAuthAuthorizationServerPublicationMetadata & { issuer: string }>;
-parseOAuthAuthorizationServerMetadata(metadata: unknown, options: { profile?: "oauth" | "openid4vci" }): z.ZodSafeParseResult<OAuthAuthorizationServerMetadata> | z.ZodSafeParseResult<OAuthAuthorizationServerPublicationMetadata & { issuer: string }>;
+parseOAuthAuthorizationServerMetadata(metadata: unknown, options?: MetadataValidationOptions & { profile?: "oauth" }): z.ZodSafeParseResult<OAuthAuthorizationServerMetadata>;
+parseOAuthAuthorizationServerMetadata(metadata: unknown, options: MetadataValidationOptions & { profile: "openid4vci" }): z.ZodSafeParseResult<OAuthAuthorizationServerPublicationMetadata & { issuer: string }>;
+parseOAuthAuthorizationServerMetadata(metadata: unknown, options: MetadataValidationOptions & { profile?: "oauth" | "openid4vci" }): z.ZodSafeParseResult<OAuthAuthorizationServerMetadata> | z.ZodSafeParseResult<OAuthAuthorizationServerPublicationMetadata & { issuer: string }>;
 ```
 
 ## `parseOAuthAuthorizationServerPublicationMetadata`
 
-[Source](../../../packages/core/src/oauth-metadata.ts#L266)
+[Source](../../../packages/core/src/oauth-metadata.ts#L264)
 
 Check supplied authorization-server publication fields while allowing a Superior to complete missing fields later. Supplied values and applicable cross-field consistency rules are still checked; unknown metadata is preserved.
 
 ```typescript signature
-parseOAuthAuthorizationServerPublicationMetadata(metadata: unknown): z.ZodSafeParseResult<OAuthAuthorizationServerPublicationMetadata>;
+parseOAuthAuthorizationServerPublicationMetadata(metadata: unknown, options?: MetadataValidationOptions): z.ZodSafeParseResult<OAuthAuthorizationServerPublicationMetadata>;
 ```
 
 ## `ResolveQuerySchema`
 
-[Source](../../../packages/core/src/schemas/entity-statement.ts#L178)
+[Source](../../../packages/core/src/schemas/endpoints.ts#L94)
 
 Validates the `ResolveQuery` data shape. Use `safeParse` to receive a success/error result, or `parse` when a thrown validation error is appropriate.
 
@@ -1484,7 +1488,7 @@ Fields (including inherited fields):
 
 ## `ResolveResponsePayload`
 
-[Source](../../../packages/core/src/schemas/entity-statement.ts#L193)
+[Source](../../../packages/core/src/schemas/endpoints.ts#L115)
 
 The subject's resolved metadata and chain evidence carried in a signed Resolve response.
 
@@ -1507,7 +1511,7 @@ Fields (including inherited fields):
 
 ## `ResolveResponsePayloadSchema`
 
-[Source](../../../packages/core/src/schemas/entity-statement.ts#L141)
+[Source](../../../packages/core/src/schemas/endpoints.ts#L57)
 
 Resolve Response payload for the federation_resolve endpoint.
 
@@ -1613,7 +1617,7 @@ const SubordinateEventType: {
 
 ## `SubordinateStatementPayload`
 
-[Source](../../../packages/core/src/schemas/entity-statement.ts#L190)
+[Source](../../../packages/core/src/schemas/entity-statement.ts#L93)
 
 Claims in a Superior's statement about a specific subordinate.
 
@@ -1644,7 +1648,7 @@ Fields (including inherited fields):
 
 ## `SubordinateStatementSchema`
 
-[Source](../../../packages/core/src/schemas/entity-statement.ts#L58)
+[Source](../../../packages/core/src/schemas/entity-statement.ts#L55)
 
 Parse a Superior's statement about a different subject, require `iss !== sub` and `exp > iat`, and retain extension fields. Complete publication, signature, chain, and critical-claim validation are separate checks.
 
@@ -1847,7 +1851,7 @@ Fields (including inherited fields):
 
 ## `TrustMarkStatusBodySchema`
 
-[Source](../../../packages/core/src/schemas/entity-statement.ts#L184)
+[Source](../../../packages/core/src/schemas/endpoints.ts#L100)
 
 Parse a Status request body with a nonempty `trust_mark` string. This object schema strips unknown fields; signature, issuer, and active-state checks occur in the Status workflow.
 
@@ -1859,7 +1863,7 @@ Fields (including inherited fields):
 
 ## `TrustMarkStatusResponsePayload`
 
-[Source](../../../packages/core/src/schemas/entity-statement.ts#L194)
+[Source](../../../packages/core/src/schemas/endpoints.ts#L116)
 
 Claims in the issuer's signed response about a mark's status.
 
@@ -1878,7 +1882,7 @@ Fields (including inherited fields):
 
 ## `TrustMarkStatusResponsePayloadSchema`
 
-[Source](../../../packages/core/src/schemas/entity-statement.ts#L153)
+[Source](../../../packages/core/src/schemas/endpoints.ts#L69)
 
 Trust Mark Status Response payload.
 
@@ -1891,3 +1895,11 @@ Fields (including inherited fields):
 | `trust_mark` | `string` | Compact Trust Mark JWT, not merely its type identifier. |
 | `status` | `string` | Reported mark status; active is the interoperable positive value, while other strings may be profile-defined. |
 
+
+## `MetadataValidationOptions`
+
+Supply `algorithmRegistry` when parsing protocol metadata that uses locally registered JWS algorithms. With no option, parsers use the built-in registry. The registry helps classify inline signing keys for the mixed signing and encryption JWK Set rule.
+
+## `withMetadataJwkUse`
+
+Attach the conditional JWK `use` check to a Zod metadata schema with an inline `jwks` field. The refinement reports a validation issue at `jwks` when the set mixes signing and encryption keys and a key is missing `use`.

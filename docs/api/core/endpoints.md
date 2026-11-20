@@ -6,7 +6,7 @@ Use the endpoint-specific clients to build protocol requests and verify signed r
 
 Direct fetch calls use authentication and transport controls such as `signal`, `httpTimeoutMs`, `offline`, URL restrictions, and response-size limits. Clients that verify a signed response also use their documented issuer, key, and time-check options. They do not discover or validate a Trust Chain or evaluate published Trust Marks.
 
-The option interfaces below inherit the full `FederationOptions` type. Chain acquisition and selection (`trustResolution`, `chainSelection`, `entityConfigurations`), Trust Mark evaluation options, policy and constraint callbacks, `authorityHintFilter`, and chain traversal limits do not run on these direct clients. In particular, `maxTotalFetches` and `maxConcurrentFetches` do not bound a standalone request, and the clients do not use statement-cache settings. Higher-level discovery operations enforce their shared fetch budget by wrapping the HTTP transport before calling endpoint clients. The inherited fields remain available so the same options object can be passed through those operations.
+The option interfaces below inherit the full `FederationOptions` type. Chain acquisition and selection (`trustResolution`, `chainSelection`, `entityConfigurations`), Trust Mark evaluation options, policy and constraint callbacks, `authorityHintFilter`, and chain traversal limits do not run on these direct clients. In particular, `maxTotalFetches` and `maxConcurrentFetches` do not bound a standalone request, and the clients do not use statement-cache settings. Higher-level discovery operations enforce their shared fetch budget by wrapping the HTTP transport before calling endpoint clients. Pass the same options object to discovery and endpoint clients when they share transport settings.
 
 ## `buildExtendedListRequestParameters`
 
@@ -70,7 +70,7 @@ const EXTENDED_LIST_UNORDERED_PARAMETERS: readonly ["entity_type", "trust_mark_t
 
 ## `ExtractedRequestParams`
 
-[Source](../../../packages/core/src/http.ts#L156)
+[Source](../../../packages/core/src/http.ts#L157)
 
 Parameters extracted from an incoming endpoint request.
 
@@ -108,9 +108,10 @@ Fetch informational collection data; no trust validation is implied.
 Configure authentication.audience with the collection provider's Entity Identifier. Neither the endpoint
 origin nor a requested Trust Anchor establishes that identity. getEndpointAuthentication receives no responder.
 Authenticated requests use POST and never retry anonymously after authentication failure.
+Pass `undefined` as the second argument to send a request without selectors.
 
 ```typescript signature
-fetchEntityCollection(endpoint: string, params?: EntityCollectionRequestParams, options?: FetchEntityCollectionOptions): Promise<Result<EntityCollectionResponse>>;
+fetchEntityCollection(endpoint: string, params: EntityCollectionRequestParams | undefined, options: FetchEntityCollectionOptions): Promise<Result<EntityCollectionResponse>>;
 ```
 
 ## `FetchEntityCollectionOptions`
@@ -147,7 +148,7 @@ Fields (including inherited fields):
 | `httpClient?` | `HttpClient` | Host HTTP transport; defaults to the runtime's fetch implementation. |
 | `entityConfigurations?` | `ReadonlyMap<string, string> \| undefined` | Subject Entity Configuration JWTs used during chain validation; signatures and identity bindings still need validation. |
 | `clock?` | `Clock` | NumericDate time source; omitted clocks use the runtime's current time. |
-| `cache?` | `CacheProvider` | Host cache for signed statements or operation results; cache hits do not establish trust. |
+| `storage?` | `FederationStorage \| undefined` | Storage for standalone calls. Hosted calls inherit storage from their entity. |
 | `logger?` | `Logger` | Optional host logger. Library calls are message-only, nonblocking, and protected from sink failures. |
 | `httpTimeoutMs?` | `number` | Timeout in milliseconds for bounded transport or host callbacks; defaults to 10000. |
 | `clockSkewSeconds?` | `number` | Allowed time-claim leeway in seconds; the default verifier allowance is 60 seconds. |
@@ -182,7 +183,7 @@ fetchExtendedSubordinatesList(endpoint: string, params: ExtendedListRequestParam
 
 ## `fetchHistoricalKeys`
 
-[Source](../../../packages/core/src/federation-api/fetch-historical-keys.ts#L23)
+[Source](../../../packages/core/src/federation-api/historical-keys.ts#L102)
 
 Fetch and verify a Historical Keys JWT from a federation Historical Keys endpoint.
 
@@ -192,7 +193,7 @@ fetchHistoricalKeys(endpoint: string, signerJwks: JWKSet, options: FetchHistoric
 
 ## `FetchHistoricalKeysOptions`
 
-[Source](../../../packages/core/src/federation-api/fetch-historical-keys.ts#L17)
+[Source](../../../packages/core/src/federation-api/historical-keys.ts#L96)
 
 Verification and transport settings for retrieving historical federation keys. Inherited chain-operation fields have the scope described at the top of this reference; they do not start discovery or validation here.
 
@@ -220,7 +221,7 @@ Fields (including inherited fields):
 | `offline?` | `boolean` | Disallow network access when only supplied evidence is permitted. |
 | `httpClient?` | `HttpClient` | Host HTTP transport; defaults to the runtime's fetch implementation. |
 | `entityConfigurations?` | `ReadonlyMap<string, string> \| undefined` | Subject Entity Configuration JWTs used during chain validation; signatures and identity bindings still need validation. |
-| `cache?` | `CacheProvider` | Host cache for signed statements or operation results; cache hits do not establish trust. |
+| `storage?` | `FederationStorage \| undefined` | Storage for standalone calls. Hosted calls inherit storage from their entity. |
 | `logger?` | `Logger` | Optional host logger. Library calls are message-only, nonblocking, and protected from sink failures. |
 | `httpTimeoutMs?` | `number` | Timeout in milliseconds for bounded transport or host callbacks; defaults to 10000. |
 | `maxChainDepth?` | `number` | Maximum recursive discovery depth; defaults to 8. |
@@ -242,7 +243,7 @@ Fields (including inherited fields):
 
 ## `fetchListSubordinates`
 
-[Source](../../../packages/core/src/federation-api/index.ts#L289)
+[Source](../../../packages/core/src/federation-api/subordinate-listing.ts#L25)
 
 Fetch an authority's subordinate listing and return its Entity Identifiers.
 Configure the endpoint and authentication together from trusted configuration or validated metadata.
@@ -256,7 +257,7 @@ fetchListSubordinates(listEndpoint: string, filter: ListSubordinatesFilter | und
 
 ## `fetchResolveResponse`
 
-[Source](../../../packages/core/src/federation-api/index.ts#L388)
+[Source](../../../packages/core/src/federation-api/resolve.ts#L83)
 
 Fetch a Resolve Response JWT; use verifyResolveResponse to authenticate the returned statement.
 Configure authentication.audience with the resolver's Entity Identifier. Neither the endpoint origin
@@ -312,7 +313,7 @@ Fields (including inherited fields):
 | `httpClient?` | `HttpClient` | Host HTTP transport; defaults to the runtime's fetch implementation. |
 | `entityConfigurations?` | `ReadonlyMap<string, string> \| undefined` | Subject Entity Configuration JWTs used during chain validation; signatures and identity bindings still need validation. |
 | `clock?` | `Clock` | NumericDate time source; omitted clocks use the runtime's current time. |
-| `cache?` | `CacheProvider` | Host cache for signed statements or operation results; cache hits do not establish trust. |
+| `storage?` | `FederationStorage \| undefined` | Storage for standalone calls. Hosted calls inherit storage from their entity. |
 | `logger?` | `Logger` | Optional host logger. Library calls are message-only, nonblocking, and protected from sink failures. |
 | `httpTimeoutMs?` | `number` | Timeout in milliseconds for bounded transport or host callbacks; defaults to 10000. |
 | `clockSkewSeconds?` | `number` | Allowed time-claim leeway in seconds; the default verifier allowance is 60 seconds. |
@@ -416,7 +417,7 @@ const LIST_UNORDERED_PARAMETERS: readonly ["entity_type"];
 
 ## `ListSubordinatesFilter`
 
-[Source](../../../packages/core/src/federation-api/index.ts#L274)
+[Source](../../../packages/core/src/federation-api/subordinate-listing.ts#L10)
 
 Optional filters accepted by the subordinate listing endpoint.
 
@@ -451,7 +452,7 @@ parseContentTypeHeader(value: string | null | undefined): ParsedContentTypeHeade
 
 ## `ParsedContentTypeHeader`
 
-[Source](../../../packages/core/src/http.ts#L18)
+[Source](../../../packages/core/src/http.ts#L19)
 
 A parsed HTTP content type and its parameters.
 
@@ -569,7 +570,7 @@ const RESOLVE_UNORDERED_PARAMETERS: readonly ["trust_anchor", "entity_type"];
 
 ## `ResolveRequestParams`
 
-[Source](../../../packages/core/src/federation-api/index.ts#L375)
+[Source](../../../packages/core/src/federation-api/resolve.ts#L70)
 
 Resolve-endpoint request parameters. `trustAnchor` and `entityType` may repeat.
 
@@ -612,7 +613,7 @@ Response helpers apply these defaults:
 
 ## `selectHistoricalVerificationKey`
 
-[Source](../../../packages/core/src/federation-api/index.ts#L206)
+[Source](../../../packages/core/src/federation-api/historical-keys.ts#L62)
 
 Select a historical key usable for verifying material issued at the supplied NumericDate. Revoked keys are rejected by default. An explicitly allowed non-security reason permits only signatures strictly before revocation and within key validity; security reasons always reject the key.
 
@@ -622,7 +623,7 @@ selectHistoricalVerificationKey(keys: readonly HistoricalKeyEntry[], options: Se
 
 ## `SelectHistoricalVerificationKeyOptions`
 
-[Source](../../../packages/core/src/federation-api/index.ts#L196)
+[Source](../../../packages/core/src/federation-api/historical-keys.ts#L52)
 
 Time and revocation policy used to select a historical verification key.
 
@@ -662,7 +663,7 @@ toPublicError(error: FederationError): {
 
 ## `verifyHistoricalKeysResponse`
 
-[Source](../../../packages/core/src/federation-api/index.ts#L171)
+[Source](../../../packages/core/src/federation-api/historical-keys.ts#L27)
 
 Verify and validate a Historical Keys Response JWT.
 
@@ -672,7 +673,7 @@ verifyHistoricalKeysResponse(jwt: string, issuerJwks: JWKSet, options: VerifyOpt
 
 ## `VerifyOptions`
 
-[Source](../../../packages/core/src/federation-api/index.ts#L36)
+[Source](../../../packages/core/src/federation-api/verify-issuer.ts#L10)
 
 Expected signer identity, clock, and clock skew for verifying a signed federation response.
 
@@ -695,7 +696,7 @@ Fields (including inherited fields):
 
 ## `verifyResolveResponse`
 
-[Source](../../../packages/core/src/federation-api/index.ts#L83)
+[Source](../../../packages/core/src/federation-api/resolve.ts#L28)
 
 Verify a Resolve Response's typ, signature, claims, and recipient binding.
 Federation §8.3.2 permits aud to be absent, including on authenticated responses.
@@ -706,7 +707,7 @@ verifyResolveResponse(jwt: string, issuerJwks: JWKSet, options: VerifyResolveRes
 
 ## `VerifyResolveResponseOptions`
 
-[Source](../../../packages/core/src/federation-api/index.ts#L43)
+[Source](../../../packages/core/src/federation-api/resolve.ts#L18)
 
 Expected resolver, subject, audience, and time settings for a Resolve response.
 
@@ -730,7 +731,7 @@ Fields (including inherited fields):
 
 ## `verifySignedJwkSet`
 
-[Source](../../../packages/core/src/federation-api/index.ts#L244)
+[Source](../../../packages/core/src/jwks/signed-jwk-set.ts#L24)
 
 Verify and validate a Signed JWK Set JWT (returned by signed_jwks_uri).
 Checks typ=jwk-set+jwt, signature, and required payload claims (iss, sub, keys).
@@ -743,7 +744,7 @@ The returned payload has required `iss`, `sub`, and public `keys`, optional fini
 
 ## `VerifySignedJwkSetOptions`
 
-[Source](../../../packages/core/src/federation-api/index.ts#L58)
+[Source](../../../packages/core/src/jwks/signed-jwk-set.ts#L15)
 
 Identity and time checks for a signed JWK Set response.
 
@@ -789,7 +790,7 @@ Fields (including inherited fields):
 
 ## `verifySubordinateEventsResponse`
 
-[Source](../../../packages/core/src/federation-api/subordinate-events.ts#L25)
+[Source](../../../packages/core/src/federation-api/subordinate-events.ts#L24)
 
 Verify a history statement with independently trusted keys and expected identities.
 
@@ -799,7 +800,7 @@ verifySubordinateEventsResponse(jwt: string, issuerJwks: JWKSet, options: Verify
 
 ## `VerifyTrustMarkStatusOptions`
 
-[Source](../../../packages/core/src/federation-api/index.ts#L49)
+[Source](../../../packages/core/src/federation-api/trust-mark-status.ts#L18)
 
 Expected issuer, exact submitted mark, and freshness checks for a Trust Mark Status response.
 
@@ -827,7 +828,7 @@ Fields (including inherited fields):
 
 ## `verifyTrustMarkStatusResponse`
 
-[Source](../../../packages/core/src/federation-api/index.ts#L127)
+[Source](../../../packages/core/src/federation-api/trust-mark-status.ts#L30)
 
 Verify and validate a Trust Mark Status Response JWT.
 

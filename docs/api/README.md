@@ -1,6 +1,6 @@
 # API reference
 
-Each package index lists its public exports. Reference pages describe callable signatures, configuration contracts, and public class members, with short usage examples where helpful. Re-exports lead to the owning package's entry.
+Use the package indexes to find documented public APIs. Reference pages describe callable signatures, configuration contracts, and public class members, with short usage examples where helpful. Shared types, errors, and helpers are imported from `@oidfed/core`. See the [v3 API migration](migration-v3.md).
 
 - [Crypto](crypto/README.md): portable crypto engines, signing custody and keyring snapshots.
 - [Core](core/README.md): shared federation primitives and services.
@@ -8,16 +8,19 @@ Each package index lists its public exports. Reference pages describe callable s
 - [Leaf](leaf/README.md): participant publication and optional hosted services.
 - [OIDC/OAuth](oidc/README.md): protocol roles and federation registration.
 - [Wallet](wallet/README.md): federation trust for wallet participants and artifacts.
+- [React Native setup for Core and Wallet](react-native.md).
 
 ## Reading a result
 
 The API's declared return type matters. `Result<T>` uses `ok` and exposes either `value` or `error`. Trust-chain validation uses `valid` and validation errors. Metadata parsers use `success`. Constructors and assertion-style configuration helpers can throw. Do not treat every API as returning the same error shape.
 
+<!-- oidfed-example -->
 ```ts
+import type { CryptoEngine } from "@oidfed/crypto";
 import { entityId, discoverEntity, type TrustAnchorSet } from "@oidfed/core";
 
-export async function findHarbor(anchors: TrustAnchorSet) {
-  const result = await discoverEntity(entityId("https://harbor.example"), anchors);
+export async function findHarbor(engine: CryptoEngine, anchors: TrustAnchorSet) {
+  const result = await discoverEntity(entityId("https://harbor.example"), anchors, { engine });
   if (!result.ok) return result;
   // Keep the authenticated discovery result for a subsequent protocol operation.
   return result;

@@ -37,7 +37,7 @@ Each machine or CI runner generates its own certificates. Setup skips generation
 
 The dispatcher setup runs through `setupFiles` in the test worker so `setGlobalDispatcher()` affects that worker's fetch calls. Its lookup redirects requests to loopback; keep external network requests out of these scenarios.
 
-The server uses one port for all entities. The launcher adds that port to topology URLs, creates separate federation and protocol keys for each entity, and pins the generated TA keys in a `TrustAnchorSet`. Authorities get their own `MemoryStorageAdapter`; OP processing uses replay protection. RP test instances expose their OIDC role and request-object stores for registration scenarios.
+The server uses one port for all entities. The launcher adds that port to topology URLs, creates separate federation and protocol keys for each entity, and pins the generated TA keys in a `TrustAnchorSet`. Authorities get their own `MemoryFederationStorage`; OP processing uses replay protection. RP test instances expose their OIDC role and request-object stores for registration scenarios.
 
 Participant applications preserve the request body and forward the handler's HTTP status, headers, and response body. A leaf's own handler also supports composed role routes; the test leaf wrapper mounts the Entity Configuration route and optional Request Object retrieval. The OP participant adds explicit registration, authorization, token, and PAR integration used by the suite. The [wiring guide](../../features/11.5.http-wiring.md) explains the application boundary.
 
@@ -92,7 +92,7 @@ Add a `TopologyDefinition` in `topologies/` when a scenario needs a different tr
 | `pnpm test:apps` | Application tests |
 | `pnpm test:e2e` | HTTPS scenarios using the local test CA |
 
-E2E has a standalone Vitest configuration. It maps the four federation libraries to `src/index.ts` through aliases. The other suites do not need E2E certificates.
+The E2E Vitest configuration maps `@oidfed/core`, `@oidfed/authority`, `@oidfed/leaf`, `@oidfed/oidc`, and `@oidfed/wallet` to their `src/index.ts` entrypoints. The other suites use their own test configuration.
 
 ## Browser testing
 
