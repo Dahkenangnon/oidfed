@@ -7,7 +7,7 @@ import { ToggleView } from "~/components/toggle-view";
 import { getLesson } from "~/data/lessons";
 
 import { lessonMetaForSlug } from "~/lib/seo";
-export const handle = { lastUpdated: "2026-06-05" };
+export const handle = { lastUpdated: "2026-11-20" };
 
 export function meta() {
 	return lessonMetaForSlug("what-is-federation");
@@ -228,6 +228,12 @@ export default function Lesson01() {
 						href: "https://self-issued.info/?p=2813",
 					},
 					{
+						title: "OpenID Federation 1.1 final specifications",
+						source: "OpenID Foundation",
+						date: "May 2026",
+						href: "https://openid.net/openid-federation-1-1-final-specifications-approved/",
+					},
+					{
 						title: "2025: A year worth talking about for the OpenID Foundation",
 						source: "OpenID Foundation",
 						date: "Dec 2025",
@@ -251,6 +257,27 @@ export default function Lesson01() {
 				<SpecRef sec="1.2" title="Terminology" />
 				). Intermediates can further delegate authority, creating a clean, scalable tree.
 			</p>
+
+			<h2 id="reading-the-specifications">Read the 1.0 and 1.1 specifications</h2>
+			<p>
+				This course cites OpenID Federation 1.0, which describes the trust framework and its OpenID
+				Connect and OAuth bindings together. The two final 1.1 specifications put these same
+				capabilities in separate documents.
+			</p>
+			<ul>
+				<li>
+					<a href="https://openid.net/specs/openid-federation-1_1-final.html">
+						OpenID Federation 1.1
+					</a>{" "}
+					covers entities, trust chains, policies, and federation endpoints.
+				</li>
+				<li>
+					<a href="https://openid.net/specs/openid-federation-connect-1_1-final.html">
+						OpenID Federation for OpenID Connect 1.1
+					</a>{" "}
+					covers the OpenID Connect and OAuth bindings, including client registration.
+				</li>
+			</ul>
 
 			<h2 id="see-the-difference">See the Difference</h2>
 			<ToggleView

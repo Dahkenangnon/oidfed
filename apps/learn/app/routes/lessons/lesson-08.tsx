@@ -7,7 +7,7 @@ import { SpecRef } from "~/components/spec-ref";
 import { getLesson } from "~/data/lessons";
 
 import { lessonMetaForSlug } from "~/lib/seo";
-export const handle = { lastUpdated: "2026-10-26" };
+export const handle = { lastUpdated: "2026-11-20" };
 
 export function meta() {
 	return lessonMetaForSlug("federation-endpoints");
@@ -161,10 +161,11 @@ export default function Lesson08() {
 				OpenID Federation 1.0 defines one Entity Configuration discovery URL (
 				<SpecRef sec="9" title="Obtaining Federation Entity Configuration Information" />
 				), seven federation endpoints (
-				<SpecRef sec="8" title="Federation Endpoints" />), and an OP registration endpoint (
+				<SpecRef sec="8" title="Federation Endpoints" />
+				), and an OP registration endpoint (
 				<SpecRef sec="12.2" title="Explicit Registration" />
-				). Entities expose endpoints appropriate to their roles. An OP can be a Leaf,
-				Intermediate, or Trust Anchor. Extensions define additional endpoints.
+				). Entities expose endpoints appropriate to their roles. An OP can be a Leaf, Intermediate,
+				or Trust Anchor.
 			</p>
 
 			<Accordion>
@@ -196,6 +197,40 @@ export default function Lesson08() {
 					</AccordionItem>
 				))}
 			</Accordion>
+
+			<h2 id="endpoint-extensions">Optional endpoint extensions</h2>
+			<p>
+				Deployments can advertise additional endpoints when their federation needs them. These
+				specifications extend the base endpoints above.
+			</p>
+			<ul>
+				<li>
+					<a href="https://openid.net/specs/openid-federation-extended-listing-1_0-ID1.html">
+						Extended Subordinate Listing
+					</a>{" "}
+					adds pagination and selected statement claims to listings of direct subordinates.
+				</li>
+				<li>
+					<a href="https://openid.net/specs/openid-federation-subordinate-events-1_0-ID1.html">
+						Subordinate Events
+					</a>{" "}
+					provides a signed history of changes an authority recorded about its subordinates.
+				</li>
+				<li>
+					<a href="https://openid.net/specs/openid-federation-entity-collection-1_0-02.html">
+						Entity Collection
+					</a>{" "}
+					helps clients find direct and indirect members under a Trust Anchor. Validate an entity’s
+					trust chain before relying on it.
+				</li>
+			</ul>
+			<p>
+				Extended Listing and Subordinate Events have approved Implementer’s Drafts. In November
+				2026, the OpenID Foundation opened public review for a proposed Implementer’s Draft of
+				Entity Collection based on Draft 02. See the{" "}
+				<a href="https://oidfed.com/trust-journal#standards">Trust Journal</a> for publication
+				status.
+			</p>
 
 			<h2 id="media-types">Media Types</h2>
 			<p>

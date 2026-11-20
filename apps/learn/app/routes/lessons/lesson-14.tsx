@@ -16,7 +16,7 @@ import { LessonPage } from "~/components/lesson-page";
 import { getLesson } from "~/data/lessons";
 
 import { lessonMetaForSlug } from "~/lib/seo";
-export const handle = { lastUpdated: "2026-06-05" };
+export const handle = { lastUpdated: "2026-11-20" };
 
 export function meta() {
 	return lessonMetaForSlug("real-use-cases");
@@ -123,17 +123,17 @@ const useCases = [
 	},
 	{
 		id: "wallets",
-		title: "Digital Wallets (EUDI)",
+		title: "Digital Wallets",
 		emoji: "👛",
 		problem:
 			"The EU Digital Identity Wallet ecosystem requires trust between Wallet Providers, Credential Issuers, and Verifiers across member states.",
 		topology:
-			"EU Commission (TA) → National eID Authorities (IA) → Wallet Providers, Credential Issuers, Relying Parties (Leaf)",
-		trustMarks: ["EUDI Wallet Certified", "LoA High Issuer", "Qualified Trust Service"],
+			"Scheme Operator (TA) → Accreditation Bodies (IA) → Wallet Providers, Credential Issuers, Credential Verifiers (Leaf)",
+		trustMarks: ["Certified Wallet Provider", "Accredited Credential Issuer"],
 		policyExample:
 			'wallet_protocol_versions: { subset_of: ["OID4VP-1.0", "OID4VCI-1.0"] }\ncredential_formats: { superset_of: ["sd-jwt-vc"] }\nkey_storage: { one_of: ["secure_element", "cloud_hsm"] }\nloa_min: { value: "high" }',
 		takeaway:
-			"OpenID Federation is already being adopted for EUDI Wallet trust establishment — see the OpenID Federation Wallet Architectures specification for the formal framework.",
+			"A federation can publish which organizations are accredited to provide wallets, issue credentials, or verify presentations.",
 	},
 ];
 
@@ -180,9 +180,15 @@ export default function Lesson14() {
 						href: "https://openid.net/nine-countries-prove-openid-federation-interoperability/",
 					},
 					{
-						title: "OpenID Federation Wallet Architectures 1.0 (draft)",
+						title: "OpenID Federation for Wallet Architectures 1.0, Draft 06",
 						source: "OpenID Foundation",
-						href: "https://openid.net/specs/openid-federation-wallet-1_0.html",
+						date: "Nov 2026",
+						href: "https://openid.net/specs/openid-federation-wallet-1_0-06.html",
+					},
+					{
+						title: "EU Digital Identity Wallet Architecture and Reference Framework",
+						source: "EU Digital Identity Wallet",
+						href: "https://eu-digital-identity-wallet.github.io/",
 					},
 				],
 			}}
@@ -197,11 +203,11 @@ export default function Lesson14() {
 				<CardPanel className="space-y-3">
 					<h3 className="text-base font-semibold">Beyond OpenID Connect</h3>
 					<p className="text-sm text-muted-foreground">
-						The specification was originally drafted as <em>OpenID Connect Federation 1.0</em>{" "}
-						and renamed to <em>OpenID Federation 1.0</em> once it was clear the underlying trust
+						The specification was originally drafted as <em>OpenID Connect Federation 1.0</em> and
+						renamed to <em>OpenID Federation 1.0</em> once it was clear the underlying trust
 						framework — Entity Statements, Trust Chains, Trust Marks, Metadata Policies — is
-						independent of OpenID Connect and applies to any protocol. Michael&nbsp;B.&nbsp;Jones,
-						a spec co-author, recounts the project's arc in his retrospective{" "}
+						independent of OpenID Connect and applies to any protocol. Michael&nbsp;B.&nbsp;Jones, a
+						spec co-author, recounts the project's arc in his retrospective{" "}
 						<a
 							href="https://self-issued.info/?p=2813"
 							target="_blank"
@@ -215,9 +221,9 @@ export default function Lesson14() {
 					<p className="text-sm text-muted-foreground">
 						This insight led to the 1.1 split into two final specifications:{" "}
 						<strong>OpenID Federation 1.1</strong> (the protocol-independent trust layer) and{" "}
-						<strong>OpenID Federation for OpenID Connect 1.1</strong> (OIDC/OAuth-specific
-						bindings) — both published as final in May 2026. Federation can be applied anywhere
-						trust establishment via hierarchy is needed on the internet.
+						<strong>OpenID Federation for OpenID Connect 1.1</strong> (OIDC/OAuth-specific bindings)
+						— both published as final in May 2026. Federation can be applied anywhere trust
+						establishment via hierarchy is needed on the internet.
 					</p>
 				</CardPanel>
 			</Card>
@@ -225,11 +231,28 @@ export default function Lesson14() {
 			<Callout variant="note" title="These examples are illustrative">
 				The use cases below are <strong>illustrative abstractions</strong> showing how OpenID
 				Federation's mechanisms could be applied in various industries. The metadata fields, policy
-				operators, and trust-mark names shown are <strong>not defined by the official
-				specification</strong> — they demonstrate how the spec's extensible framework can be
-				profiled to a sector. Do not assume any of the field names are wire-compatible across
-				deployments without checking the relevant sector profile.
+				operators, and trust-mark names shown are{" "}
+				<strong>not defined by the official specification</strong> — they demonstrate how the spec's
+				extensible framework can be profiled to a sector. Do not assume any of the field names are
+				wire-compatible across deployments without checking the relevant sector profile.
 			</Callout>
+
+			<p>
+				The wallet topology below is an example of a scheme that uses OpenID Federation. For the EU
+				Digital Identity Wallet’s trust model, read its{" "}
+				<a href="https://eu-digital-identity-wallet.github.io/">
+					Architecture and Reference Framework
+				</a>
+				. The DC4EU report explores how OpenID Federation could complement that model.
+			</p>
+			<p>
+				<a href="https://openid.net/specs/openid-federation-wallet-1_0-06.html#section-8.1">
+					Wallet Architectures Draft 06
+				</a>{" "}
+				describes how a wallet can evaluate a Verifier Attestation and check that a presentation
+				request is signed with the attested key. OidFed v3 targets{" "}
+				<a href="https://openid.net/specs/openid-federation-wallet-1_0-05.html">Draft 05</a>.
+			</p>
 
 			<Tabs defaultValue="healthcare">
 				<TabsList className="flex-wrap">
@@ -277,7 +300,6 @@ export default function Lesson14() {
 					</TabsPanel>
 				))}
 			</Tabs>
-
 		</LessonPage>
 	);
 }
