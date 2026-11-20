@@ -101,3 +101,20 @@ test("known fences receive light and dark tokens and unknown fences remain escap
 	assert.match(page.html, /<pre><code class="language-unrecognized">&lt;tag&gt;/);
 	assert.doesNotMatch(page.html, /<tag>/);
 });
+
+test("Mermaid diagrams provide escaped source before the browser renderer loads", () => {
+	for (const path of ["/docs/api/crypto", "/docs/features/6.trust-marks"]) {
+		const page = renderDocumentation(path);
+		assert.ok(page);
+		assert.match(
+			page.html,
+			/<figure class="docs-diagram" data-mermaid><div data-diagram-output><\/div>/,
+		);
+		assert.match(page.html, /<details open><summary>Diagram source<\/summary>/);
+		assert.match(page.html, /<code class="language-mermaid"/);
+	}
+	const page = renderMarkdown("README.md", '```mermaid\nflowchart LR\nA["A < B & C"] --> D\n```');
+	assert.match(page.html, /&(?:lt|#60|#x3c);/i);
+	assert.match(page.html, /&(?:amp|#38|#x26);/i);
+	assert.doesNotMatch(page.html, /A < B/);
+});

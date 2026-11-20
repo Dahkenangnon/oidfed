@@ -181,6 +181,30 @@
 	font-weight: 600;
 }
 
+.docs-diagram {
+	margin-block: 1.5rem;
+}
+
+.docs-diagram [data-diagram-output]:not(:empty) {
+	overflow-x: auto;
+	border: 1px solid var(--border);
+	border-radius: 0.625rem;
+	padding: 1rem;
+	background: #fff;
+}
+
+.docs-diagram [data-diagram-output] > svg {
+	display: block;
+	min-width: 28rem;
+	height: auto;
+	margin-inline: auto;
+}
+
+.docs-diagram [data-diagram-output]:focus-visible {
+	outline: 2px solid var(--site-accent);
+	outline-offset: 3px;
+}
+
 @media (width >= 52rem) {
 	.docs-layout {
 		grid-template-columns: minmax(10rem, 0.28fr) minmax(0, 1fr);

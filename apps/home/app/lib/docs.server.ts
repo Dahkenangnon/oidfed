@@ -35,6 +35,16 @@ const markdown = new MarkdownIt({
 });
 const escape = markdown.utils.escapeHtml;
 
+const renderFence = markdown.renderer.rules.fence;
+markdown.renderer.rules.fence = (...args) => {
+	const [tokens, index] = args;
+	const token = tokens[index];
+	if (!token || !/^mermaid(?:\s|$)/.test(token.info.trim())) {
+		return renderFence?.(...args) ?? "";
+	}
+	return `<figure class="docs-diagram" data-mermaid><div data-diagram-output></div><details open><summary>Diagram source</summary>${highlightCode(token.content, "mermaid")}</details></figure>\n`;
+};
+
 function featureGuideTopics() {
 	const guides = [...documentation].flatMap(([path, source]) => {
 		const match = /^features\/(\d+)\.(?:(\d+)\.)?[^/]+\.md$/.exec(source);

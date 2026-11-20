@@ -4,6 +4,7 @@
 
 ```mermaid
 flowchart TD
+    accTitle: Crypto engine and signing custody
     Host[Application / protocol integration] --> Snapshot[Keyring.entry: signer + published JWKS]
     Snapshot --> Payload[Construct payload from this snapshot]
     Payload --> Compact[signCompactJws]

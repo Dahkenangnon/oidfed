@@ -1,5 +1,6 @@
 import { ArrowUpRight, ChevronRight } from "lucide-react";
 import { isRouteErrorResponse, Link, NavLink } from "react-router";
+import { DocsArticle } from "../components/docs-article";
 import { guideCatalog, renderDocumentation } from "../lib/docs.server";
 import { buildMeta, DOMAIN } from "../lib/seo";
 import type { Route } from "./+types/docs";
@@ -74,8 +75,7 @@ export default function Documentation({ loaderData }: Route.ComponentProps) {
 				<DocumentationNav key={path} path={path} topics={topics} />
 			</aside>
 			<div className="min-w-0">
-				{/* biome-ignore lint/security/noDangerouslySetInnerHtml: server-only Markdown rendering escapes raw HTML and validates URLs */}
-				<article className="docs-article" dangerouslySetInnerHTML={{ __html: html }} />
+				<DocsArticle html={html} />
 				<a href={source} className="site-link mt-10 inline-flex items-center gap-1.5 text-sm">
 					View source on GitHub <ArrowUpRight aria-hidden className="size-3.5" />
 				</a>
