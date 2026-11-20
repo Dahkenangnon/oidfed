@@ -1,17 +1,27 @@
-# @oidfed
+# OidFed
 
-> OpenID Federation for JavaScript and TypeScript: trust-chain discovery and validation, metadata policies, Trust Marks, constraints, OIDC registration, and wallet roles. The six libraries use standard Web APIs and share a test suite across Node.js, Deno, Bun, workerd, Electron, and Chromium. Applications supply their crypto backend. The JOSE adapter is optional.
+> OidFed is an Apache-2.0 OpenID Federation SDK for JavaScript and TypeScript. Use it to run a Trust Anchor, an Intermediate, or a Leaf, verify trust chains and Trust Marks, or add federation trust to OIDC, OAuth, and digital wallet applications.
 
-@oidfed implements the [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) trust framework and related specifications listed below. Its endpoint handlers accept a standard `Request` and return a `Promise<Response>`. Applications connect them to an HTTP server or worker and supply persistent storage, an engine and a signing keyring.
+## Start here
+
+- [Documentation](https://oidfed.com/docs): Feature guides, example code, package API reference, and migration instructions.
+- [TypeScript quickstart](https://oidfed.com/#quickstart): Create a Trust Anchor, an Intermediate, or a Leaf. A fourth example composes an OIDC Relying Party and a wallet Credential Verifier on one Leaf.
+- [Choose a federation host](https://oidfed.com/docs/features/1.1.entity-roles): Create a host, attach protocol roles, and enroll participants with their immediate superior.
+- [OIDC and OAuth workflows](https://oidfed.com/docs/features/15.oidc-and-oauth): OpenID Providers and Relying Parties, OAuth clients, authorization servers, and protected resources. Use automatic or explicit client registration with your protocol engine.
+- [Wallet workflows](https://oidfed.com/docs/features/16.wallet): Wallet Providers, Credential Issuers, and Credential Verifiers. Establish trust, verify Wallet Attestations, and prepare or check presentation requests with the application's credential engine.
+
+Construct federation hosts with `TrustAnchor.create()`, `Intermediate.create()`, or `Leaf.create()`. Attach roles in `roles`, serve federation routes with the host's `handleRequest(Request)`, and use Core directly when you only need trust discovery and verification. Your application provides HTTPS serving, crypto, signing custody, storage, and its OIDC, OAuth or wallet protocol engine.
+
+OidFed implements [OpenID Federation 1.1](https://openid.net/specs/openid-federation-1_1-final.html) and the [OpenID Connect 1.1 profile](https://openid.net/specs/openid-federation-connect-1_1-final.html). The six libraries use Web APIs and share a test suite across Node.js, Deno, Bun, workerd, Electron, and Chromium.
 
 ## Packages
 
-- [@oidfed/crypto](https://github.com/Dahkenangnon/oidfed/blob/main/packages/crypto/README.md): Crypto engine and signer contracts, signing keyrings and compact JWS utilities. Includes Web Crypto and optional JOSE adapters.
-- [@oidfed/core](https://github.com/Dahkenangnon/oidfed/blob/main/packages/core/README.md): Federation primitives — entity statements, trust chain resolution and validation, metadata policy, JOSE operations, typed schemas, caching, and trust marks. Shared by the host and protocol role packages.
-- [@oidfed/authority](https://github.com/Dahkenangnon/oidfed/blob/main/packages/authority/README.md): Trust Anchor and Intermediate Authority operations: subordinate management, statement issuance, and federation endpoint handlers, including fetch, list, resolve, Extended Listing, Subordinate Events, and Entity Collection.
-- [@oidfed/leaf](https://github.com/Dahkenangnon/oidfed/blob/main/packages/leaf/README.md): Leaf Entity toolkit — Entity Configuration serving, authority discovery, and trust chain participation for any entity at the edge of a federation (typically RPs or OPs that don't issue subordinate statements).
-- [@oidfed/oidc](https://github.com/Dahkenangnon/oidfed/blob/main/packages/oidc/README.md): OpenID Connect and OAuth 2.0 federation flows — automatic and explicit client registration, Request Object validation, and typed RP/OP metadata processing as defined in OpenID Federation 1.0 §12.
-- [@oidfed/wallet](https://github.com/Dahkenangnon/oidfed/blob/main/packages/wallet/README.md): Wallet Provider, Credential Issuer, and Credential Verifier roles, federation trust checks, JWT Wallet Attestations, and protocol-engine integrations.
+- [@oidfed/crypto](https://oidfed.com/docs/api/crypto): Crypto engine and signer contracts, signing keyrings and compact JWS utilities. Includes Web Crypto and optional JOSE adapters.
+- [@oidfed/core](https://oidfed.com/docs/api/core): Entity Statements, trust-chain discovery and validation, metadata policy, Trust Marks, Entity Collection, and the shared storage contract.
+- [@oidfed/authority](https://oidfed.com/docs/api/authority): Trust Anchor and Intermediate Authority operations: subordinate management, statement issuance, and federation endpoint handlers, including fetch, list, resolve, Extended Listing, Subordinate Events, and Entity Collection.
+- [@oidfed/leaf](https://oidfed.com/docs/api/leaf): Leaf Entity toolkit — Entity Configuration serving, authority discovery, and trust chain participation for any entity at the edge of a federation (typically RPs or OPs that don't issue subordinate statements).
+- [@oidfed/oidc](https://oidfed.com/docs/api/oidc): OpenID Connect and OAuth 2.0 federation flows — automatic and explicit client registration, Request Object validation, and typed RP/OP metadata processing as defined in OpenID Federation 1.0 §12.
+- [@oidfed/wallet](https://oidfed.com/docs/api/wallet): Wallet Provider, Credential Issuer, and Credential Verifier roles, federation trust checks, JWT Wallet Attestations, and protocol-engine integrations.
 
 ## Tools
 
@@ -19,29 +29,31 @@
 
 ## Apps
 
-- [@oidfed/home](https://oidfed.com): The authoritative @oidfed site — project intent, ecosystem, about. Machine-readable overview: <https://oidfed.com/llms.txt>.
+- [@oidfed/home](https://oidfed.com): Library quickstart, ecosystem, and Trust Journal. Machine-readable overview: <https://oidfed.com/llms.txt>.
 - [@oidfed/explorer](https://explore.oidfed.com): Visual federation-exploration tool — inspect entity configurations, trace trust chains, browse metadata, validate topology. Browser-based, no backend. Machine-readable overview: <https://explore.oidfed.com/llms.txt>.
 - [@oidfed/learn](https://learn.oidfed.com): Interactive OpenID Federation 1.0 course — 15 lessons from first principles to federation topology design. Machine-readable overview: <https://learn.oidfed.com/llms.txt>.
 
 ## Documentation
 
-- [Wiring Guide](https://github.com/Dahkenangnon/oidfed/blob/main/docs/features/11.5.http-wiring.md): End-to-end integration with Express.js and `panva/node-oidc-provider`. Worked eduGAIN-topology example covering Trust Anchor, Intermediate, OP, and RP.
-- [Storage Guide](https://github.com/Dahkenangnon/oidfed/blob/main/docs/features/11.6.storage-adapters.md): Production storage adapters, authority namespaces, subordinate records and event histories, Trust Marks, collection snapshots, replay protection, and the separate federation key-provider boundary.
-- [Dev Guide](https://github.com/Dahkenangnon/oidfed/blob/main/docs/maintenance/development.md): Running the full multi-topology federation locally with wildcard DNS and TLS.
-- [E2E Test Infrastructure](https://github.com/Dahkenangnon/oidfed/blob/main/docs/maintenance/testing/e2e.md): Integration harness — real HTTPS over undici + Express + `oidc-provider`.
+- [Trust Journal](https://oidfed.com/trust-journal) collects standards updates, guides, deployment reports, and related digital trust resources.
+- [v3 Migration](https://oidfed.com/docs/api/migration-v3) covers dependency, crypto, storage, and public API changes.
+- [React Native Compatibility](https://oidfed.com/docs/api/react-native) covers Metro, URL parsing, and streaming HTTP setup for mobile apps using Core or Wallet.
+- [Wiring Guide](https://oidfed.com/docs/features/11.5.http-wiring): End-to-end integration with Express.js and `panva/node-oidc-provider`. Worked eduGAIN-topology example covering Trust Anchor, Intermediate, OP, and RP.
+- [Storage Guide](https://oidfed.com/docs/features/11.6.storage-adapters): Configure one storage adapter for subordinate records, events, Trust Marks, collection snapshots, replay protection, and caching.
+- [Dev Guide](https://oidfed.com/docs/maintenance/development): Running the full multi-topology federation locally with wildcard DNS and TLS.
+- [E2E Test Infrastructure](https://oidfed.com/docs/maintenance/testing/e2e): Integration harness — real HTTPS over undici + Express + `oidc-provider`.
 - [CONTRIBUTING](https://github.com/Dahkenangnon/oidfed/blob/main/CONTRIBUTING.md): Setup, test commands and runtime coverage, commit conventions, and the PR process.
 - [SECURITY](https://github.com/Dahkenangnon/oidfed/blob/main/SECURITY.md): Vulnerability disclosure policy.
 
 ## Related Specifications
 
-- [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) *(final)* — this library's target spec. **Implemented.**
-- [OpenID Federation 1.1](https://openid.net/specs/openid-federation-1_1.html) *(final)* — protocol-independent successor layer (Entity Statements, Trust Chains, Metadata, Policies, Trust Marks, Federation Endpoints). **Implemented** by virtue of 1.0.
-- [OpenID Federation for OpenID Connect 1.1](https://openid.net/specs/openid-federation-connect-1_1.html) *(final)* — protocol-specific layer (OAuth 2.0 / OIDC entity types, client registration). **Implemented** by virtue of 1.0.
-- [OpenID Federation Extended Subordinate Listing 1.0](https://openid.net/specs/openid-federation-extended-listing-1_0.html) *(draft 03)* — paginated subordinate listing with audit timestamps and bulk per-entity claim retrieval. **Implemented** end-to-end (server, client, CLI).
-- [OpenID Federation Subordinate Events 1.0](https://openid.net/specs/openid-federation-subordinate-events-1_0-01.html) *(draft 01)*: signed authority histories, core verification, and CLI retrieval. Event storage is optional; authority lifecycle operations capture changes transactionally.
-- [OpenID Federation Entity Collection 1.0](https://openid.net/specs/openid-federation-entity-collection-1_0.html) *(draft 01)*: implemented in core. Authorities and leaves can serve the endpoint. Supports explicit snapshot refresh, filters, informational metadata, language selection, and CLI queries.
-- [OpenID Federation for Wallet Architectures 1.0](https://openid.net/specs/openid-federation-wallet-1_0.html) *(draft 05)*: implemented in `@oidfed/wallet` with composable provider, issuer, and verifier roles, JWT Wallet Attestations, and federation-backed request validation. Applications supply VCI/VP protocol engines and credential-format verification.
-- [ACME with OpenID Federation 1.0](https://datatracker.ietf.org/doc/draft-ietf-acme-openid-federation/) *(IETF Internet-Draft)* — Federation Entity Types for ACME Requestor / Issuer roles; automated X.509 over federation discovery. Not yet implemented.
+- [OpenID Federation 1.1](https://openid.net/specs/openid-federation-1_1-final.html) *(Final)* covers the protocol-independent trust framework.
+- [OpenID Federation for OpenID Connect 1.1](https://openid.net/specs/openid-federation-connect-1_1-final.html) *(Final)* covers the OpenID Connect and OAuth bindings. [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) covers both layers in one specification.
+- [Extended Subordinate Listing 1.0](https://openid.net/specs/openid-federation-extended-listing-1_0-ID1.html) *(Implementer’s Draft 1)* adds paginated listings, audit timestamps, and selected Subordinate Statement claims. OidFed provides server, client, and CLI support.
+- [Subordinate Events 1.0](https://openid.net/specs/openid-federation-subordinate-events-1_0-ID1.html) *(Implementer’s Draft 1)* defines signed authority histories. OidFed supports transactional event recording and verified retrieval.
+- [Entity Collection Endpoint 1.0](https://openid.net/specs/openid-federation-entity-collection-1_0-01.html) *(Draft 01 implemented)* covers filterable discovery of direct and indirect subordinates. [Draft 02](https://openid.net/specs/openid-federation-entity-collection-1_0-02.html) is a separate standards update.
+- [Wallet Architectures 1.0](https://openid.net/specs/openid-federation-wallet-1_0-05.html) *(Draft 05 implemented)* covers federation trust for Wallet Providers, Credential Issuers, and Credential Verifiers. Applications supply their OpenID4VCI and OpenID4VP engines. [Draft 06](https://openid.net/specs/openid-federation-wallet-1_0-06.html) adds federation processing for Verifier Attestations.
+- [ACME with OpenID Federation 1.0](https://datatracker.ietf.org/doc/draft-ietf-acme-openid-federation/) *(Expired Internet-Draft)* proposed using federation to establish trust in certificate issuance.
 
 ## Federation Operator Notes
 

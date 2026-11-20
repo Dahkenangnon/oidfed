@@ -1,27 +1,74 @@
-import { OidfedLogo } from "@oidfed/ui";
-import { ArrowUpRight, Menu, X } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
-import { Link, Outlet, useLocation } from "react-router";
+import { GitHubIcon, OidfedLogo } from "@oidfed/ui";
+import { ArrowRight, ArrowUpRight, Menu, X } from "lucide-react";
+import { useEffect, useId, useState } from "react";
+import { Link, NavLink, Outlet, useLocation } from "react-router";
+import { InstallCommand } from "../components/copy-button";
 import { ThemeToggle } from "../components/theme-toggle";
+import { DOCS, EXPLORER, FEDERATIONS, LEARN, REPOSITORY } from "../lib/links";
 
-const NAV_PRIMARY = [
-	{ to: "/", label: "Home" },
-	{ to: "/ecosystem", label: "Ecosystem" },
-	{ to: "/about", label: "About" },
+const primaryLinks = [
+	{ label: "Docs", href: DOCS },
+	{ label: "Learn", href: LEARN },
+	{ label: "Explorer", href: EXPLORER },
+	{ label: "Ecosystem", href: "/ecosystem" },
+	{ label: "Trust Journal", href: "/trust-journal" },
+	{ label: "About", href: "/about" },
 ];
 
-const NAV_EXTERNAL = [
-	{ href: "https://explore.oidfed.com", label: "Explorer" },
-	{ href: "https://fed.oidfed.com", label: "Federations" },
-	{ href: "https://learn.oidfed.com", label: "Learn" },
-	{ href: "https://github.com/Dahkenangnon/oidfed", label: "GitHub" },
+const footerGroups = [
+	{
+		label: "Build",
+		links: [
+			{ label: "Quickstart", href: "/#quickstart" },
+			{ label: "API reference", href: `${DOCS}/api` },
+			{ label: "Migrate to v3", href: `${DOCS}/api/migration-v3` },
+			{ label: "React Native", href: `${DOCS}/api/react-native` },
+		],
+	},
+	{
+		label: "Explore",
+		links: [
+			{ label: "Learn OpenID Federation", href: LEARN },
+			{ label: "Trust-chain Explorer", href: EXPLORER },
+			{ label: "Demo federations", href: FEDERATIONS },
+			{ label: "Trust Journal", href: "/trust-journal" },
+		],
+	},
+	{
+		label: "Standards",
+		links: [
+			{ label: "Ecosystem", href: "/ecosystem" },
+			{
+				label: "OpenID Federation 1.1",
+				href: "https://openid.net/specs/openid-federation-1_1-final.html",
+			},
+			{
+				label: "OpenID Connect profile",
+				href: "https://openid.net/specs/openid-federation-connect-1_1-final.html",
+			},
+		],
+	},
+	{
+		label: "Project",
+		links: [
+			{ label: "About OidFed", href: "/about" },
+			{ label: "Contributing", href: `${REPOSITORY}/blob/main/CONTRIBUTING.md` },
+			{ label: "Security", href: `${REPOSITORY}/blob/main/SECURITY.md` },
+		],
+	},
 ];
 
 export default function SiteLayout() {
 	return (
 		<div className="flex min-h-screen flex-col">
+			<a
+				href="#main-content"
+				className="sr-only focus:not-sr-only focus:absolute focus:z-10 focus:m-2 focus:rounded-md focus:bg-background focus:p-3 focus:font-semibold"
+			>
+				Skip to content
+			</a>
 			<SiteHeader />
-			<main className="flex-1">
+			<main id="main-content" tabIndex={-1} className="flex-1">
 				<Outlet />
 			</main>
 			<SiteFooter />
@@ -29,181 +76,158 @@ export default function SiteLayout() {
 	);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Header
-// ─────────────────────────────────────────────────────────────────────────────
-
 function SiteHeader() {
 	const location = useLocation();
-	const mobileMenuId = useId();
-	const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-	const previousPathname = useRef(location.pathname);
+	const menuId = useId();
+	const [open, setOpen] = useState(false);
 
 	useEffect(() => {
-		if (previousPathname.current === location.pathname) return;
-		previousPathname.current = location.pathname;
-		setMobileMenuOpen(false);
-	}, [location.pathname]);
-
-	const isActive = (to: string) => location.pathname === to;
+		setOpen(false);
+	}, [location.key]);
 
 	return (
-		<header className="sticky top-0 z-50 border-b border-border/60 bg-background/80 backdrop-blur-md supports-[backdrop-filter]:bg-background/60">
-			<div className="mx-auto flex h-14 max-w-6xl items-center gap-3 px-4 sm:gap-5 sm:px-6">
-				<Link
-					to="/"
-					className="group flex min-w-0 items-center gap-2"
-					aria-label="@oidfed — home"
-				>
-					<OidfedLogo
-						label="oidfed"
-						markClassName="size-7 transition-transform group-hover:scale-105"
-					/>
-				</Link>
-
-				<span aria-hidden className="hidden h-5 w-px bg-border/70 md:block" />
-
-				<nav className="hidden min-w-0 items-center gap-1 md:flex" aria-label="Primary">
-					{NAV_PRIMARY.filter((n) => n.to !== "/").map((item) => {
-						const active = isActive(item.to);
-						return (
-							<Link
-								key={item.to}
-								to={item.to}
-								className={`relative rounded-md px-2.5 py-1 text-[13px] transition-colors ${
-									active ? "text-foreground" : "text-muted-foreground hover:text-foreground"
-								}`}
-								aria-current={active ? "page" : undefined}
-							>
-								{item.label}
-								{active && (
-									<span
-										aria-hidden
-										className="absolute inset-x-2.5 -bottom-[11px] h-px bg-brand-500"
-									/>
-								)}
-							</Link>
-						);
-					})}
-				</nav>
-
-				<div className="ml-auto flex items-center gap-1 sm:gap-2">
-					<nav className="hidden items-center gap-1 lg:flex" aria-label="External">
-						{NAV_EXTERNAL.map((item) => (
-							<a
-								key={item.href}
-								href={item.href}
-								target="_blank"
-								rel="noopener noreferrer"
-								className="group flex items-center gap-1 rounded-md px-2.5 py-1 text-[13px] text-muted-foreground transition-colors hover:text-foreground"
-							>
-								{item.label}
-								<ArrowUpRight className="size-3 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
-							</a>
-						))}
-					</nav>
-					<ThemeToggle />
-					<button
-						type="button"
-						className="inline-flex size-9 items-center justify-center rounded-md border border-border bg-background text-muted-foreground transition-colors hover:border-foreground/30 hover:text-foreground lg:hidden"
-						aria-label={mobileMenuOpen ? "Close navigation menu" : "Open navigation menu"}
-						aria-controls={mobileMenuId}
-						aria-expanded={mobileMenuOpen}
-						onClick={() => setMobileMenuOpen((open) => !open)}
-					>
-						{mobileMenuOpen ? <X className="size-4" /> : <Menu className="size-4" />}
-					</button>
-				</div>
-			</div>
-
-			<div
-				id={mobileMenuId}
-				className={`${mobileMenuOpen ? "block" : "hidden"} border-t border-border/60 bg-background/95 shadow-sm lg:hidden`}
+		<header>
+			<Link
+				to="/trust-journal#standards"
+				className="site-announcement flex items-center justify-center gap-2 px-4 py-2 text-center text-sm font-medium hover:underline"
 			>
-				<div className="mx-auto grid max-w-6xl gap-4 px-4 py-4 sm:px-6 md:grid-cols-2">
-					<nav aria-label="Primary mobile navigation" className="grid gap-1">
-						<p className="px-2 font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-							Pages
-						</p>
-						{NAV_PRIMARY.map((item) => {
-							const active = isActive(item.to);
-							return (
-								<Link
-									key={item.to}
-									to={item.to}
-									className={`flex h-10 items-center rounded-md px-2.5 text-[14px] transition-colors ${
-										active
-											? "bg-brand-500/10 text-foreground"
-											: "text-muted-foreground hover:bg-muted hover:text-foreground"
-									}`}
-									aria-current={active ? "page" : undefined}
-									onClick={() => setMobileMenuOpen(false)}
-								>
-									{item.label}
-								</Link>
-							);
-						})}
+				<span>Wallet and Entity Collection draft updates</span>
+				<ArrowRight aria-hidden className="size-3.5 shrink-0" />
+			</Link>
+			<div className="border-b border-border">
+				<div className="mx-auto flex min-h-16 max-w-6xl items-center justify-between gap-5 px-5 sm:px-8">
+					<Link to="/" aria-label="OidFed home" className="shrink-0">
+						<OidfedLogo label="oidfed" markClassName="size-8" labelClassName="text-lg" />
+					</Link>
+
+					<nav aria-label="Primary" className="hidden items-center gap-5 lg:flex xl:gap-7">
+						<PrimaryLinks />
 					</nav>
 
-					<nav aria-label="External mobile navigation" className="grid gap-1">
-						<p className="px-2 font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-							Tools
-						</p>
-						{NAV_EXTERNAL.map((item) => (
-							<a
-								key={item.href}
-								href={item.href}
-								target="_blank"
-								rel="noopener noreferrer"
-								className="group flex h-10 items-center justify-between rounded-md px-2.5 text-[14px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-								onClick={() => setMobileMenuOpen(false)}
-							>
-								<span>{item.label}</span>
-								<ArrowUpRight className="size-3.5 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
-							</a>
-						))}
-					</nav>
+					<div className="flex shrink-0 items-center gap-2">
+						<a
+							href={REPOSITORY}
+							aria-label="OidFed on GitHub"
+							className="grid size-9 place-items-center rounded-md text-foreground hover:bg-muted"
+						>
+							<GitHubIcon aria-hidden className="size-5" />
+						</a>
+						<ThemeToggle />
+						<button
+							type="button"
+							className="grid size-9 place-items-center rounded-md border border-border lg:hidden"
+							aria-label={open ? "Close navigation menu" : "Open navigation menu"}
+							aria-expanded={open}
+							aria-controls={menuId}
+							onClick={() => setOpen(!open)}
+						>
+							{open ? (
+								<X aria-hidden className="size-4" />
+							) : (
+								<Menu aria-hidden className="size-4" />
+							)}
+						</button>
+					</div>
 				</div>
+
+				<nav
+					id={menuId}
+					aria-label="Primary mobile navigation"
+					className={`mx-auto max-w-6xl flex-col gap-1 border-t border-border px-5 py-3 sm:px-8 lg:hidden ${open ? "flex" : "hidden"}`}
+				>
+					<PrimaryLinks mobile />
+				</nav>
 			</div>
 		</header>
 	);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Footer — minimal © line
-// ─────────────────────────────────────────────────────────────────────────────
+function PrimaryLinks({ mobile = false }: { mobile?: boolean }) {
+	const style = mobile
+		? "block rounded-md px-3 py-2.5 text-sm font-medium hover:bg-muted aria-[current=page]:text-site-accent"
+		: "text-sm font-medium hover:text-site-accent aria-[current=page]:text-site-accent aria-[current=page]:underline underline-offset-6";
+
+	return primaryLinks.map(({ label, href }) =>
+		href.startsWith("/") ? (
+			<NavLink key={href} to={href} className={style}>
+				{label}
+			</NavLink>
+		) : (
+			<a key={href} href={href} className={style}>
+				{label}
+			</a>
+		),
+	);
+}
 
 function SiteFooter() {
 	return (
-		<footer className="relative border-t border-border/60 bg-muted/20">
-			<div
-				aria-hidden
-				className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-500/40 to-transparent"
-			/>
-			<div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 px-6 py-6 text-[12px] text-muted-foreground/80 sm:flex-row">
-				<Link to="/" className="flex items-center gap-2 transition-colors hover:text-foreground">
-					<OidfedLogo label="oidfed" markClassName="size-6" labelClassName="text-[13px]" />
-				</Link>
-				<p className="font-mono text-[11px] tracking-wide">
-					© 2026{" "}
-					<a
-						href="https://github.com/Dahkenangnon"
-						target="_blank"
-						rel="noopener noreferrer"
-						className="transition-colors hover:text-foreground"
+		<footer className="site-footer">
+			<div className="relative mx-auto max-w-6xl px-5 pt-12 pb-7 sm:px-8 sm:pt-16">
+				<div className="grid gap-10 md:gap-12">
+					<div className="flex min-w-0 flex-col items-center text-center">
+						<p className="max-w-110 text-base leading-relaxed text-muted-foreground">
+							Open-source OpenID Federation libraries for JavaScript and TypeScript.
+						</p>
+						<Link
+							to="/docs"
+							className="site-footer-cta mt-5 inline-flex items-center gap-2 text-sm font-semibold"
+						>
+							Read the documentation <ArrowUpRight aria-hidden className="size-4" />
+						</Link>
+						<div className="mt-5">
+							<InstallCommand label="Core install command from footer" />
+						</div>
+					</div>
+					<nav
+						aria-label="Footer"
+						className="grid grid-cols-2 items-start gap-x-5 gap-y-8 text-center sm:grid-cols-4"
 					>
-						Justin Dah-kenangnon
+						{footerGroups.map(({ label, links }) => (
+							<div key={label}>
+								<h2 className="mb-3 text-sm font-semibold">{label}</h2>
+								<ul className="space-y-2.5 text-sm text-muted-foreground">
+									{links.map(({ label, href }) => (
+										<li key={href}>
+											{href.startsWith("/") ? (
+												<Link to={href} className="hover:text-foreground hover:underline">
+													{label}
+												</Link>
+											) : (
+												<a href={href} className="hover:text-foreground hover:underline">
+													{label}
+												</a>
+											)}
+										</li>
+									))}
+								</ul>
+							</div>
+						))}
+					</nav>
+				</div>
+				<div className="site-footer-signature text-center">
+					<Link to="/" aria-label="OidFed home" className="site-footer-wordmark">
+						OidFed
+					</Link>
+				</div>
+				<div className="flex flex-wrap items-center justify-between gap-4 border-t border-border pt-5">
+					<p className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground sm:text-sm">
+						<span>© 2026 Justin Dah-kenangnon</span>
+						<a className="site-link" href={`${REPOSITORY}/blob/main/LICENSE`}>
+							Apache-2.0 libraries
+						</a>
+						<a className="site-link" href={`${REPOSITORY}/blob/main/apps/home/LICENSE`}>
+							MIT app
+						</a>
+					</p>
+					<a
+						href={REPOSITORY}
+						aria-label="OidFed on GitHub"
+						className="site-footer-cta inline-flex items-center gap-2 text-sm font-semibold"
+					>
+						<GitHubIcon className="size-4" /> GitHub
 					</a>
-				</p>
-				<a
-					href="https://openid.net/specs/openid-federation-1_0.html"
-					target="_blank"
-					rel="noopener noreferrer"
-					className="group inline-flex items-center gap-1 font-mono text-[10.5px] uppercase tracking-[0.18em] transition-colors hover:text-foreground"
-				>
-					OpenID Federation 1.0 spec
-					<ArrowUpRight className="size-3 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
-				</a>
+				</div>
 			</div>
 		</footer>
 	);

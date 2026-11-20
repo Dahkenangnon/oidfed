@@ -4,8 +4,10 @@
  */
 
 export const DOMAIN = "https://oidfed.com";
-export const SITE_NAME = "@oidfed";
-export const DEFAULT_OG_IMAGE = `${DOMAIN}/og-image.svg`;
+export const SITE_NAME = "OidFed";
+export const HOME_DESCRIPTION =
+	"Build OpenID Federation Trust Anchors, Intermediates, and Leaves with a simple TypeScript API. Compose OIDC, OAuth, and wallet roles, or verify trust chains.";
+export const DEFAULT_OG_IMAGE = `${DOMAIN}/og-image.png`;
 export const DEFAULT_OG_IMAGE_WIDTH = "1200";
 export const DEFAULT_OG_IMAGE_HEIGHT = "630";
 
@@ -36,6 +38,7 @@ export function buildMeta(input: BuildMetaInput): MetaDescriptor[] {
 		{ name: "description", content: input.description },
 		{ tagName: "link", rel: "canonical", href: canonical },
 		{ property: "og:site_name", content: SITE_NAME },
+		{ property: "og:locale", content: "en_US" },
 		{ property: "og:type", content: ogType },
 		{ property: "og:url", content: canonical },
 		{ property: "og:title", content: input.title },
@@ -43,6 +46,7 @@ export function buildMeta(input: BuildMetaInput): MetaDescriptor[] {
 		{ property: "og:image", content: ogImage },
 		{ property: "og:image:width", content: DEFAULT_OG_IMAGE_WIDTH },
 		{ property: "og:image:height", content: DEFAULT_OG_IMAGE_HEIGHT },
+		{ property: "og:image:alt", content: "OidFed. OpenID Federation for OIDC, OAuth and wallets." },
 		{ name: "twitter:card", content: "summary_large_image" },
 		{ name: "twitter:title", content: input.title },
 		{ name: "twitter:description", content: input.description },
@@ -68,11 +72,11 @@ export const organizationJsonLd: Record<string, unknown> = {
 	"@context": "https://schema.org",
 	"@type": "Organization",
 	"@id": `${DOMAIN}/#organization`,
-	name: "@oidfed",
+	name: SITE_NAME,
+	alternateName: "@oidfed",
 	url: DOMAIN,
 	logo: `${DOMAIN}/favicon.svg`,
-	description:
-		"The complete OpenID Federation 1.0 implementation for JavaScript — runtime-agnostic, spec-compliant, built on Web API standards.",
+	description: "Open-source libraries and learning resources for OpenID Federation.",
 	founder: {
 		"@type": "Person",
 		name: "Justin Dah-kenangnon",
@@ -94,7 +98,7 @@ export const websiteJsonLd: Record<string, unknown> = {
 	url: DOMAIN,
 	name: SITE_NAME,
 	description:
-		"Authoritative home of @oidfed — the complete OpenID Federation 1.0 implementation for JavaScript.",
+		"Build with OidFed, learn OpenID Federation, and explore live deployments and standards updates.",
 	publisher: { "@id": `${DOMAIN}/#organization` },
 	inLanguage: "en",
 };
@@ -103,18 +107,25 @@ export const websiteJsonLd: Record<string, unknown> = {
 export const softwareSourceCodeJsonLd: Record<string, unknown> = {
 	"@context": "https://schema.org",
 	"@type": "SoftwareSourceCode",
-	name: "@oidfed",
-	description:
-		"The complete OpenID Federation 1.0 implementation for JavaScript — runtime-agnostic, spec-compliant, built on Web API standards.",
+	"@id": `${DOMAIN}/#sdk`,
+	name: "OidFed OpenID Federation SDK",
+	alternateName: "@oidfed",
+	description: HOME_DESCRIPTION,
+	url: DOMAIN,
+	documentation: `${DOMAIN}/docs`,
+	mainEntityOfPage: DOMAIN,
 	codeRepository: "https://github.com/Dahkenangnon/oidfed",
-	programmingLanguage: "TypeScript",
+	programmingLanguage: ["TypeScript", "JavaScript"],
 	runtimePlatform: ["Node.js", "Deno", "Bun", "workerd", "Electron", "Browser"],
-	license: "https://opensource.org/licenses/MIT",
+	license: "https://spdx.org/licenses/Apache-2.0.html",
 	author: { "@id": `${DOMAIN}/#organization` },
 	keywords: [
 		"OpenID Federation",
-		"OpenID Federation 1.0",
+		"OpenID Federation 1.1",
+		"OpenID Federation JavaScript SDK",
 		"Trust Anchor",
+		"Intermediate",
+		"Leaf",
 		"Entity Configuration",
 		"Trust Chain",
 		"Subordinate Statement",
@@ -122,9 +133,10 @@ export const softwareSourceCodeJsonLd: Record<string, unknown> = {
 		"Trust Mark",
 		"OAuth 2.0",
 		"OpenID Connect",
-		"federation",
-		"trust infrastructure",
-		"JavaScript",
-		"TypeScript",
+		"OIDC federation registration",
+		"OpenID Federation for Wallet Architectures",
+		"Wallet Provider",
+		"Credential Issuer",
+		"Credential Verifier",
 	],
 };

@@ -1,11 +1,11 @@
 {
-	"name": "@oidfed — OpenID Federation 1.0 for JavaScript",
-	"short_name": "@oidfed",
-	"description": "The complete OpenID Federation 1.0 implementation for JavaScript — runtime-agnostic, spec-compliant, built on Web API standards.",
+	"name": "OidFed OpenID Federation SDK",
+	"short_name": "OidFed",
+	"description": "OpenID Federation libraries and documentation for JavaScript, TypeScript, OpenID Connect, OAuth, and digital wallets.",
 	"start_url": "/",
 	"display": "standalone",
-	"background_color": "#0b1220",
-	"theme_color": "#007acc",
+	"background_color": "#fcfdff",
+	"theme_color": "#33224f",
 	"icons": [
 		{
 			"src": "/favicon.svg",

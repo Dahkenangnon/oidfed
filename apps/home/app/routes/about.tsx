@@ -1,13 +1,8 @@
 import { Badge } from "@oidfed/ui";
 import { ArrowRight, Globe, Package, Terminal } from "lucide-react";
-import {
-	DotGrid,
-	RowHeader,
-	SectionIntro,
-	SectionTitle,
-	SignalLabel,
-	StatusDot,
-} from "../components/section-ui";
+import { RowHeader, SectionIntro, SectionTitle } from "../components/section-ui";
+import { SiteHero } from "../components/site-hero";
+import { DOCS, REPOSITORY } from "../lib/links";
 import { buildMeta, DOMAIN } from "../lib/seo";
 
 export function meta() {
@@ -31,13 +26,6 @@ export function meta() {
 // ─────────────────────────────────────────────────────────────────────────────
 // Data
 // ─────────────────────────────────────────────────────────────────────────────
-
-const highlights = [
-	{ value: "06", label: "Libraries", sub: "crypto · core · authority · leaf · oidc · wallet" },
-	{ value: "03", label: "Apps", sub: "home · explorer · learn" },
-	{ value: "17", label: "CLI commands", sub: "resolve · chain · verify · …" },
-	{ value: "Apache 2.0 / MIT", label: "License", sub: "Libraries · Apps" },
-];
 
 const architecture = [
 	{
@@ -71,8 +59,7 @@ const architecture = [
 		Icon: Terminal,
 		title: "Tools",
 		kind: "tools",
-		description:
-			"Inspect, validate, and debug federation deployments with 17 commands.",
+		description: "Inspect, validate, and debug federation deployments with 17 commands.",
 		items: [{ name: "@oidfed/cli", note: "npm i -g @oidfed/cli" }],
 	},
 ];
@@ -85,7 +72,6 @@ export default function About() {
 	return (
 		<article className="relative">
 			<Hero />
-			<Stats />
 			<Architecture />
 		</article>
 	);
@@ -97,68 +83,19 @@ export default function About() {
 
 function Hero() {
 	return (
-		<section className="relative border-b border-border/60">
-			<DotGrid />
-			<div
-				aria-hidden
-				className="pointer-events-none absolute left-1/2 top-0 -z-10 h-[280px] w-[720px] -translate-x-1/2 rounded-full bg-brand-500/10 blur-3xl dark:bg-brand-500/15"
-			/>
-
-			<div className="relative mx-auto max-w-4xl px-6 py-20 lg:py-24">
-				<SignalLabel id="01" label="About the project" />
-
-				<h1 className="mt-6 font-heading text-4xl font-bold leading-[1.05] tracking-[-0.03em] text-balance sm:text-5xl lg:text-[60px]">
-					<span className="block text-muted-foreground/80">The complete</span>
-					<span className="block bg-gradient-to-r from-brand-600 via-brand-500 to-brand-300 bg-clip-text text-transparent dark:from-brand-300 dark:via-brand-400 dark:to-brand-500">
-						OpenID Federation 1.0
-					</span>
-					<span className="block">implementation for JavaScript.</span>
-				</h1>
-
-				<p className="mt-7 max-w-2xl text-lg leading-relaxed text-muted-foreground text-balance">
-					Runtime-agnostic, spec-compliant, built on Web API standards. Modular by design — use only
-					what you need, from core primitives to OIDC registration flows and visual exploration
-					tools.
-				</p>
-
-				<div className="mt-8 flex flex-wrap gap-x-6 gap-y-2">
-					<StatusDot tone="success">Apache 2.0 · MIT</StatusDot>
-					<StatusDot tone="brand">OpenID Federation</StatusDot>
-				</div>
+		<SiteHero
+			title="About OidFed"
+			description="OidFed is an open-source JavaScript and TypeScript project for building federations and understanding how trust flows between their participants."
+		>
+			<div className="mt-7 flex flex-wrap justify-center gap-3">
+				<a href={`${DOCS}/api`} className="site-button">
+					Browse the API
+				</a>
+				<a href={REPOSITORY} className="site-button site-button-outline">
+					View on GitHub
+				</a>
 			</div>
-		</section>
-	);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// §02 · Stats
-// ─────────────────────────────────────────────────────────────────────────────
-
-function Stats() {
-	return (
-		<section className="border-b border-border/60 bg-muted/30">
-			<div className="mx-auto max-w-6xl px-6 py-14">
-				<SignalLabel id="02" label="By the numbers" />
-				<ul className="mt-8 grid grid-cols-2 gap-0 rounded-2xl border border-border/60 bg-card/40 sm:grid-cols-4">
-					{highlights.map((s, i) => (
-						<li
-							key={s.label}
-							className={`relative p-6 ${
-								i > 0 ? "border-t border-border/60 sm:border-l sm:border-t-0" : ""
-							} ${i === 2 ? "border-t sm:border-t-0" : ""}`}
-						>
-							<div className="font-heading text-[44px] font-semibold tabular-nums leading-none tracking-[-0.03em] text-brand-500 sm:text-[52px]">
-								{s.value}
-							</div>
-							<div className="mt-3 font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-								{s.label}
-							</div>
-							<div className="mt-1.5 text-[12px] text-muted-foreground/70">{s.sub}</div>
-						</li>
-					))}
-				</ul>
-			</div>
-		</section>
+		</SiteHero>
 	);
 }
 
@@ -173,8 +110,7 @@ function Architecture() {
 				<div className="grid gap-10 lg:grid-cols-[1fr_1.6fr] lg:gap-16">
 					{/* Left intro */}
 					<div className="lg:sticky lg:top-24 lg:self-start">
-						<SignalLabel id="03" label="Architecture" />
-						<SectionTitle>A monorepo structured into packages, apps, and tools.</SectionTitle>
+						<SectionTitle>Libraries, apps, and tools</SectionTitle>
 						<SectionIntro>
 							Libraries are versioned and published independently and share core contracts.
 							Applications connect them to their protocol implementations.

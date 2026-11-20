@@ -22,14 +22,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
 			<head>
 				<meta charSet="utf-8" />
 				<meta name="viewport" content="width=device-width, initial-scale=1" />
-				<meta name="theme-color" content="#007acc" />
+				<meta name="theme-color" content="#33224f" />
 				<meta name="twitter:site" content="@oidfed" />
 				<Meta />
 				<Links />
 				<script
 					// biome-ignore lint/security/noDangerouslySetInnerHtml: inline theme script prevents FOUC
 					dangerouslySetInnerHTML={{
-						__html: `(function(){var t=localStorage.getItem("theme");if(t!=="light")document.documentElement.classList.add("dark")})()`,
+						__html: `(function(){if(localStorage.getItem("theme")==="dark")document.documentElement.classList.add("dark")})()`,
 					}}
 				/>
 			</head>

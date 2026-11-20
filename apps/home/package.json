@@ -1,6 +1,6 @@
 {
 	"name": "@oidfed/home",
-	"description": "The official home of @oidfed — the complete OpenID Federation 1.0 implementation for JavaScript, runtime-agnostic, spec-compliant, built on Web API standards.",
+	"description": "OpenID Federation SDK documentation, JavaScript and TypeScript examples, ecosystem resources, and the Trust Journal.",
 	"version": "0.2.0",
 	"private": true,
 	"license": "MIT",
@@ -27,6 +27,7 @@
 	"scripts": {
 		"dev": "react-router dev",
 		"build": "react-router build",
+		"test": "node --import tsx --test test/*.test.ts",
 		"typecheck": "react-router typegen && tsc",
 		"clean": "rm -rf build .react-router"
 	},
@@ -34,17 +35,21 @@
 		"@fontsource-variable/inter": "^5.3.0",
 		"@oidfed/ui": "workspace:*",
 		"@react-router/node": "^8.5.0",
+		"isbot": "^5",
 		"lucide-react": "^1.61.0",
 		"react": "^19.3.1",
 		"react-dom": "^19.3.1",
-		"react-router": "^8.5.0",
-		"isbot": "^5"
+		"react-router": "^8.5.0"
 	},
 	"devDependencies": {
 		"@react-router/dev": "^8.5.0",
 		"@tailwindcss/vite": "^4.3.3",
+		"@types/markdown-it": "^14.2.0",
 		"@types/react": "^19.3.0",
 		"@types/react-dom": "^19.3.0",
+		"github-slugger": "^2.0.0",
+		"markdown-it": "^14.3.3",
+		"shiki": "4.5.0",
 		"tailwindcss": "^4.3.3",
 		"typescript": "^6.0.3",
 		"vite": "^8.3.5"

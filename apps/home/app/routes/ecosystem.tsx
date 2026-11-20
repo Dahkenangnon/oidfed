@@ -6,19 +6,13 @@ import {
 	Bot,
 	Briefcase,
 	CheckCircle2,
-	FileText,
 	GraduationCap,
 	Landmark,
 	Library,
 } from "lucide-react";
-import {
-	DotGrid,
-	RegionPill,
-	RowHeader,
-	SectionIntro,
-	SectionTitle,
-	SignalLabel,
-} from "../components/section-ui";
+import { RegionPill, RowHeader, SectionIntro, SectionTitle } from "../components/section-ui";
+import { Link } from "react-router";
+import { SiteHero } from "../components/site-hero";
 import { buildMeta, DOMAIN } from "../lib/seo";
 
 export function meta() {
@@ -48,7 +42,7 @@ export function meta() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Data (all entries source-linked and verified 2026-04-25)
+// Deployment and reading links
 // ─────────────────────────────────────────────────────────────────────────────
 
 const sectorGroups = [
@@ -58,12 +52,12 @@ const sectorGroups = [
 		title: "Government & national digital identity",
 		entries: [
 			{
-				name: "European Digital Identity Wallet (eIDAS 2.0 ARF)",
-				status: "ARF reference",
+				name: "European Digital Identity Wallet trust architecture",
+				status: "Architecture and Reference Framework",
 				region: "EU",
 				detail:
-					"The Architecture and Reference Framework references OpenID Federation for cross-border wallet trust establishment.",
-				href: "https://digital-strategy.ec.europa.eu/en/library/european-digital-identity-wallet-architecture-and-reference-framework",
+					"The reference framework describes the EUDI Wallet trust model. DC4EU explored OpenID Federation as part of a proposed trust model.",
+				href: "https://eu-digital-identity-wallet.github.io/",
 			},
 			{
 				name: "Italy — SPID / CIE OIDC Federation",
@@ -83,11 +77,11 @@ const sectorGroups = [
 			},
 			{
 				name: "Sweden Connect technical framework",
-				status: "Introducing OpenID Federation (2025)",
+				status: "October 2026 technical framework",
 				region: "SE",
 				detail:
-					"The Swedish eID framework is adding OpenID Federation support during 2025, alongside the existing Sweden Connect SAML profile.",
-				href: "https://docs.swedenconnect.se/technical-framework/latest/00_-_Swedish_eID_Framework_-_Introduction.html",
+					"Sweden Connect publishes its OpenID Connect profile, federation metadata requirements, and links to the Swedish OpenID Federation deployment profile.",
+				href: "https://docs.swedenconnect.se/technical-framework/index.html",
 			},
 		],
 	},
@@ -98,11 +92,11 @@ const sectorGroups = [
 		entries: [
 			{
 				name: "eduGAIN — OpenID Federation pilot",
-				status: "12-month pilot (GN5-2, started Jul 2025)",
+				status: "Pilot findings (August 2026)",
 				region: "GÉANT",
 				detail:
-					"GÉANT eduGAIN is piloting OpenID Federation as the future trust technology alongside SAML.",
-				href: "https://connect.geant.org/2025/10/13/edugain-piloting-use-of-openid-federation",
+					"The UK Federation shares what it learned from testing OpenID Federation alongside eduGAIN’s SAML infrastructure.",
+				href: "https://trustandidentity.jiscinvolve.org/wp/2026/08/05/reflecting-on-the-uk-federations-participation-in-the-edugain-openid-federation-pilot/",
 			},
 			{
 				name: "DC4EU final report (Feb 2026)",
@@ -324,56 +318,48 @@ const specDocs = [
 	{
 		label: "OpenID Federation 1.0",
 		status: "Final",
-		tone: "success" as const,
 		href: "https://openid.net/specs/openid-federation-1_0.html",
 		implemented: true,
 	},
 	{
 		label: "OpenID Federation 1.1",
 		status: "Final",
-		tone: "success" as const,
-		href: "https://openid.net/specs/openid-federation-1_1.html",
+		href: "https://openid.net/specs/openid-federation-1_1-final.html",
 		implemented: true,
 	},
 	{
 		label: "OpenID Federation for OpenID Connect 1.1",
 		status: "Final",
-		tone: "success" as const,
-		href: "https://openid.net/specs/openid-federation-connect-1_1.html",
+		href: "https://openid.net/specs/openid-federation-connect-1_1-final.html",
 		implemented: true,
 	},
 	{
 		label: "OpenID Federation Extended Subordinate Listing 1.0",
-		status: "Draft 03",
-		tone: "warn" as const,
-		href: "https://openid.net/specs/openid-federation-extended-listing-1_0.html",
+		status: "Implementer’s Draft 1",
+		href: "https://openid.net/specs/openid-federation-extended-listing-1_0-ID1.html",
 		implemented: true,
 	},
 	{
 		label: "OpenID Federation Subordinate Events Endpoint 1.0",
-		status: "Draft 01",
-		tone: "warn" as const,
-		href: "https://openid.net/specs/openid-federation-subordinate-events-1_0.html",
+		status: "Implementer’s Draft 1",
+		href: "https://openid.net/specs/openid-federation-subordinate-events-1_0-ID1.html",
 		implemented: true,
 	},
 	{
 		label: "OpenID Federation Entity Collection 1.0",
 		status: "Draft 01",
-		tone: "warn" as const,
-		href: "https://openid.net/specs/openid-federation-entity-collection-1_0.html",
+		href: "https://openid.net/specs/openid-federation-entity-collection-1_0-01.html",
 		implemented: true,
 	},
 	{
 		label: "OpenID Federation for Wallet Architectures 1.0",
 		status: "Draft 05",
-		tone: "warn" as const,
-		href: "https://openid.net/specs/openid-federation-wallet-1_0.html",
+		href: "https://openid.net/specs/openid-federation-wallet-1_0-05.html",
 		implemented: true,
 	},
 	{
 		label: "ACME with OpenID Federation 1.0",
-		status: "IETF Draft",
-		tone: "warn" as const,
+		status: "Expired Internet-Draft",
 		href: "https://datatracker.ietf.org/doc/draft-ietf-acme-openid-federation/",
 		implemented: false,
 	},
@@ -404,69 +390,19 @@ export default function Ecosystem() {
 
 function Hero() {
 	return (
-		<section className="relative border-b border-border/60">
-			<DotGrid />
-			<div
-				aria-hidden
-				className="pointer-events-none absolute left-1/3 top-0 -z-10 h-[320px] w-[640px] -translate-x-1/2 rounded-full bg-brand-500/10 blur-3xl dark:bg-brand-500/15"
-			/>
-
-			<div className="relative mx-auto grid max-w-6xl gap-12 px-6 py-20 lg:grid-cols-[1.2fr_1fr] lg:items-end lg:gap-16 lg:py-24">
-				<div>
-					<SignalLabel id="01" label="Ecosystem" />
-
-					<h1 className="mt-6 font-heading text-4xl font-bold leading-[1.05] tracking-[-0.03em] text-balance sm:text-5xl lg:text-[60px]">
-						<span className="bg-gradient-to-r from-brand-600 via-brand-500 to-brand-300 bg-clip-text text-transparent dark:from-brand-300 dark:via-brand-400 dark:to-brand-500">
-							OpenID Federation
-						</span>
-						<br />
-						in the wild.
-					</h1>
-
-					<p className="mt-6 max-w-2xl text-lg leading-relaxed text-muted-foreground text-balance">
-						Governments, academic networks, and identity platforms are adopting, piloting, or
-						specifying OpenID Federation — and AI-agent identity researchers are naming it as the
-						trust fabric for machine-to-machine identity. Status varies by sector; every link below
-						goes to an authoritative source.
-					</p>
-				</div>
-
-				{/* Verifiable stat panel */}
-				<div className="relative">
-					<Card className="overflow-hidden">
-						<div className="grid grid-cols-2 divide-x divide-border/60 border-b border-border/60">
-							<div className="p-6">
-								<div className="font-heading text-5xl font-semibold tabular-nums leading-none tracking-[-0.03em] text-brand-500 sm:text-6xl">
-									14+
-								</div>
-								<div className="mt-3 font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-									Tracked impls
-								</div>
-								<div className="mt-1 text-[11px] text-muted-foreground/70">
-									OID Foundation registry
-								</div>
-							</div>
-							<div className="p-6">
-								<div className="font-heading text-5xl font-semibold tabular-nums leading-none tracking-[-0.03em] text-foreground sm:text-6xl">
-									15
-								</div>
-								<div className="mt-3 font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-									Countries
-								</div>
-								<div className="mt-1 text-[11px] text-muted-foreground/70">
-									2025 Stockholm interop
-								</div>
-							</div>
-						</div>
-						<div className="flex items-center gap-3 p-5 font-mono text-[10.5px] uppercase tracking-[0.18em] text-muted-foreground">
-							<CheckCircle2 className="size-3.5 text-emerald-500" />
-							<span>OpenID Federation 1.0 · Final</span>
-							<span className="ml-auto text-muted-foreground/60">reached Feb 2026</span>
-						</div>
-					</Card>
-				</div>
+		<SiteHero
+			title="OpenID Federation in practice"
+			description="See how governments and research networks use federation, what interoperability pilots have tested, and which specifications are ready to implement."
+		>
+			<div className="mt-7 flex flex-wrap justify-center gap-3">
+				<a href="#specifications" className="site-button">
+					View specifications <ArrowRight aria-hidden className="size-4" />
+				</a>
+				<Link to="/trust-journal" className="site-button site-button-outline">
+					Trust Journal
+				</Link>
 			</div>
-		</section>
+		</SiteHero>
 	);
 }
 
@@ -479,8 +415,7 @@ function AdoptionBySector() {
 		<section className="border-b border-border/60 bg-muted/30">
 			<div className="mx-auto max-w-6xl px-6 py-20 lg:py-24">
 				<div className="max-w-2xl">
-					<SignalLabel id="02" label="Adoption by sector" />
-					<SectionTitle>Named adoptions, specifications, and pilots.</SectionTitle>
+					<SectionTitle>Deployments and pilots by sector</SectionTitle>
 					<SectionIntro>
 						Documented examples of OpenID Federation being adopted, piloted, or specified across
 						sectors. Every entry links to an authoritative source.
@@ -541,8 +476,7 @@ function Interoperability() {
 		<section className="border-b border-border/60">
 			<div className="mx-auto max-w-6xl px-6 py-20 lg:py-24">
 				<div className="max-w-2xl">
-					<SignalLabel id="03" label="Interoperability" />
-					<SectionTitle>Proven across countries and implementations.</SectionTitle>
+					<SectionTitle>Interoperability events</SectionTitle>
 					<SectionIntro>
 						OpenID Federation implementations meet to interoperate. Two recent events anchor the
 						specification's maturity.
@@ -594,23 +528,18 @@ function Implementations() {
 		<section className="border-b border-border/60 bg-muted/30">
 			<div className="mx-auto max-w-6xl px-6 py-20 lg:py-24">
 				<div className="max-w-2xl">
-					<SignalLabel id="04" label="Implementations" />
-					<SectionTitle>Known OpenID Federation implementations.</SectionTitle>
+					<SectionTitle>OpenID Federation implementations</SectionTitle>
 					<SectionIntro>
 						The OpenID Foundation maintains the canonical directory of known implementations by
-						language and commercial product. Below is a representative selection — jump straight
-						to the official registry for the full list.
+						language and commercial product. Below is a representative selection — jump straight to
+						the official registry for the full list.
 					</SectionIntro>
 				</div>
 
 				<div className="mt-12 grid gap-10 lg:grid-cols-[1fr_1.2fr] lg:gap-16">
 					{/* Commercial */}
-					<div>
-						<RowHeader
-							icon={<Briefcase className="size-3.5" />}
-							label="Commercial products"
-							right={`${String(commercialImpls.length).padStart(2, "0")} listed`}
-						/>
+					<div className="min-w-0">
+						<RowHeader icon={<Briefcase className="size-3.5" />} label="Commercial products" />
 						<ul className="mt-5 divide-y divide-border/60 rounded-xl border border-border/60 bg-card/40">
 							{commercialImpls.map((impl) => (
 								<li key={impl.name}>
@@ -631,17 +560,13 @@ function Implementations() {
 					</div>
 
 					{/* Language implementations */}
-					<div>
-						<RowHeader
-							icon={<Library className="size-3.5" />}
-							label="Language implementations"
-							right={`${languageImpls.length} languages`}
-						/>
+					<div className="min-w-0">
+						<RowHeader icon={<Library className="size-3.5" />} label="Language implementations" />
 						<ul className="mt-5 divide-y divide-border/60 rounded-xl border border-border/60 bg-card/40">
 							{languageImpls.map((row) => (
 								<li
 									key={row.lang}
-									className="grid grid-cols-[80px_1fr] items-center gap-4 p-4 sm:grid-cols-[100px_1fr]"
+									className="grid gap-2 p-4 sm:grid-cols-[100px_minmax(0,1fr)] sm:items-center sm:gap-4"
 								>
 									<span className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
 										{row.lang}
@@ -691,12 +616,11 @@ function OurImplementation() {
 		<section className="border-b border-border/60">
 			<div className="mx-auto max-w-6xl px-6 py-20 lg:py-24">
 				<div className="max-w-2xl">
-					<SignalLabel id="05" label="Our implementation" />
-					<SectionTitle>OpenID Federation for JavaScript.</SectionTitle>
+					<SectionTitle>OpenID Federation for JavaScript</SectionTitle>
 					<SectionIntro>
 						@oidfed implements federation trust chains, entity publication and protocol roles.
-						Applications choose their crypto backend and manage their signing keys. Apache 2.0 licensed
-						(with MIT-licensed apps) and free to use.
+						Applications choose their crypto backend and manage their signing keys. Apache 2.0
+						licensed (with MIT-licensed apps) and free to use.
 					</SectionIntro>
 				</div>
 
@@ -735,7 +659,11 @@ function OurImplementation() {
 						<div aria-hidden className="hidden bg-border/60 sm:block" />
 
 						<div className="grid grid-cols-2 gap-0 bg-muted/40 sm:grid-cols-1">
-							<Mini label="Packages" value="06" note="crypto · core · authority · leaf · oidc · wallet" />
+							<Mini
+								label="Packages"
+								value="06"
+								note="crypto · core · authority · leaf · oidc · wallet"
+							/>
 							<Mini
 								label="Runtimes"
 								value="06"
@@ -791,88 +719,43 @@ function Mini({
 
 function SpecStatus() {
 	return (
-		<section className="border-b border-border/60 bg-muted/30">
-			<div className="mx-auto max-w-6xl px-6 py-20 lg:py-24">
-				<div className="grid gap-12 lg:grid-cols-[1fr_1.4fr] lg:gap-16">
-					<div className="lg:sticky lg:top-24 lg:self-start">
-						<SignalLabel id="06" label="Specification Status" />
-						<SectionTitle>Reached final. Splitting next.</SectionTitle>
-						<SectionIntro>
-							<strong className="text-foreground">OpenID Federation 1.0</strong> reached final
-							specification status in February 2026. The working group is preparing a 1.1 split that
-							separates the core federation protocol from entity-type-specific profiles.
-						</SectionIntro>
-
-						<a
-							href="https://learn.oidfed.com"
-							target="_blank"
-							rel="noopener noreferrer"
-							className="group mt-8 inline-flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-[0.18em] text-brand-500 transition-colors hover:text-brand-600"
-						>
-							<BookOpen className="size-3.5" />
-							Deep dive in the Learn app
-							<ArrowUpRight className="size-3 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
-						</a>
-					</div>
-
-					<div>
-						<div className="flex items-center gap-3 font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-							<FileText className="size-3.5" />
-							Related specifications
-							<span className="h-px flex-1 bg-border" />
-							<span className="tabular-nums">{specDocs.length} docs</span>
-						</div>
-
-						<ul className="mt-5 divide-y divide-border/60 rounded-xl border border-border/60 bg-card/40">
-							{specDocs.map((doc) => (
-								<li key={doc.label}>
-									<a
-										href={doc.href}
-										target="_blank"
-										rel="noopener noreferrer"
-										className="group grid grid-cols-[auto_1fr_auto] items-center gap-4 p-5 transition-colors hover:bg-muted/50"
-									>
-										<span
-											className={`inline-flex size-2 rounded-full ${
-												doc.tone === "success" ? "bg-emerald-500" : "bg-amber-500"
-											}`}
-											aria-hidden
-										/>
-										<div className="min-w-0">
-											<div className="text-[14px] font-medium leading-snug tracking-tight">
-												{doc.label}
-											</div>
-											<div className="mt-1 font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-												{doc.status === "Final" ? "Final specification" : "Working group draft"}
-											</div>
-										</div>
-										<div className="flex items-center gap-2">
-											{doc.implemented ? (
-												<Badge
-													variant="default"
-													className="bg-brand-500 font-mono text-[10px] text-white hover:bg-brand-600"
-												>
-													✓ Implemented
-												</Badge>
-											) : (
-												<Badge variant="outline" className="font-mono text-[10px] text-muted-foreground">
-													Tracked
-												</Badge>
-											)}
-											<Badge
-												variant={doc.tone === "success" ? "secondary" : "outline"}
-												className="font-mono text-[10px]"
-											>
-												{doc.status}
-											</Badge>
-											<ArrowUpRight className="size-3.5 text-muted-foreground transition-colors group-hover:text-brand-500" />
-										</div>
-									</a>
-								</li>
-							))}
-						</ul>
-					</div>
+		<section id="specifications" className="scroll-mt-8 border-b border-border bg-muted/30">
+			<div className="mx-auto grid max-w-6xl gap-9 px-5 py-16 sm:px-8 lg:grid-cols-[1fr_1.5fr] lg:gap-14 lg:py-22">
+				<div>
+					<h2 className="site-section-title">OpenID Federation specifications</h2>
+					<p className="mt-4 leading-relaxed text-muted-foreground">
+						OpenID Federation 1.0 became final in February 2026. The two final 1.1 specifications,
+						approved in May, cover the core trust framework and the OpenID Connect and OAuth
+						bindings.
+					</p>
+					<p className="mt-3 leading-relaxed text-muted-foreground">
+						The list identifies the versions OidFed implements. Find newer publications in the Trust
+						Journal, including Wallet Draft 06 and Entity Collection Draft 02.
+					</p>
+					<Link
+						to="/trust-journal#standards"
+						className="site-link mt-5 inline-flex items-center gap-2 text-sm font-medium"
+					>
+						Standards updates <ArrowRight aria-hidden className="size-4" />
+					</Link>
 				</div>
+				<ul className="divide-y divide-border rounded-xl border border-border bg-card">
+					{specDocs.map(({ label, status, href, implemented }) => (
+						<li key={href}>
+							<a href={href} className="group flex items-start gap-3 p-4 hover:bg-site-code sm:p-5">
+								<div className="min-w-0 flex-1">
+									<p className="text-sm font-semibold">{label}</p>
+									<p className="mt-1 text-xs text-muted-foreground">{status}</p>
+								</div>
+								{implemented && <Badge variant="secondary">Implemented</Badge>}
+								<ArrowUpRight
+									aria-hidden
+									className="mt-0.5 size-4 shrink-0 text-muted-foreground group-hover:text-site-accent"
+								/>
+							</a>
+						</li>
+					))}
+				</ul>
 			</div>
 		</section>
 	);
@@ -887,8 +770,7 @@ function FurtherReading() {
 		<section className="border-b border-border/60">
 			<div className="mx-auto max-w-6xl px-6 py-20 lg:py-24">
 				<div className="max-w-2xl">
-					<SignalLabel id="07" label="Further reading" />
-					<SectionTitle>Adoption narratives and retrospectives.</SectionTitle>
+					<SectionTitle>Further reading</SectionTitle>
 					<SectionIntro>
 						Curated essays, blog posts, and reports that explain <em>why</em> organizations are
 						adopting OpenID Federation — from spec editors, federation operators, national wallet
@@ -942,8 +824,7 @@ function FamilySignals() {
 		<section className="border-b border-border/60">
 			<div className="mx-auto max-w-6xl px-6 py-16 lg:py-20">
 				<div className="max-w-2xl">
-					<SignalLabel id="08" label="Adjacent OID Foundation standards" />
-					<SectionTitle>Family momentum in finance & healthcare.</SectionTitle>
+					<SectionTitle>Related profiles in finance and healthcare</SectionTitle>
 					<SectionIntro>
 						Adjacent OpenID Foundation standards (FAPI) are in production at national scale — a
 						maturity signal for the broader standards family, even where OpenID Federation itself is
