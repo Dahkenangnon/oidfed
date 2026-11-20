@@ -1,5 +1,5 @@
 import type { CryptoContext, EntityId, JWK, TrustAnchorSet } from "@oidfed/core";
-import { decodeEntityStatement, MemoryReplayStore } from "@oidfed/core";
+import { decodeEntityStatement, MemoryFederationStorage } from "@oidfed/core";
 import type { Leaf } from "@oidfed/leaf";
 import { OidcProviderRole } from "@oidfed/oidc";
 import express from "express";
@@ -79,7 +79,11 @@ export async function createOpenIDProviderApp(
 
 	const clientStore = new Map<string, StoredClient>();
 	const Adapter = createInMemoryAdapter(clientStore);
-	const replayStore = new MemoryReplayStore({ engine: federationKeyProvider.engine });
+	const storage = new MemoryFederationStorage({
+		namespace: entityId,
+		capabilities: ["replay"],
+		engine: federationKeyProvider.engine,
+	});
 	const leafHandler = (request: Request) => leaf.handleRequest(request);
 	const oidcProvider = new OidcProviderRole({
 		registrationPath: "/federation_registration",
@@ -87,7 +91,6 @@ export async function createOpenIDProviderApp(
 			? { requestObjectTyping: config.requestObjectTyping }
 			: {}),
 		registrationResponseTtlSeconds: 3600,
-		replayStore,
 		onRegistration: async (sub, clientMetadata) => {
 			registerClient(clientStore, {
 				client_id: sub,
@@ -106,6 +109,7 @@ export async function createOpenIDProviderApp(
 	await oidcProvider.initialize(
 		fixtureRoleContext(oidcProvider, {
 			entityId: entityId as EntityId,
+			storage,
 			crypto: federationKeyProvider,
 			trustAnchors,
 		}),

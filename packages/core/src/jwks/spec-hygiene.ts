@@ -11,7 +11,7 @@
 
 import { FederationErrorCode } from "../constants.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
-import type { SignedJwkSetPayload } from "../schemas/entity-statement.js";
+import type { SignedJwkSetPayload } from "../schemas/endpoints.js";
 
 /**
  * Apply the optional Signed JWK Set claim recommendations after signature verification.

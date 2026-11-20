@@ -1,10 +1,14 @@
 import { bindFederationOptions, federationSigningOptions } from "../crypto-context.js";
 import { randomUuid } from "../crypto-runtime.js";
-import { cloneData } from "../data-copy.js";
 import { federationEntry } from "../federation-keys.js";
+import {
+	ResolveAssessmentCacheValueSchema,
+	readResolveAssessment,
+} from "../storage/cache-records.js";
+import { getCacheStorage } from "../storage/capabilities.js";
+
 /** Signed Resolve assessments, cache reuse, and authenticated HTTP hosting. */
 
-import { MemoryCache } from "../cache/index.js";
 import {
 	DEFAULT_CACHE_TTL_SECONDS,
 	FederationErrorCode,
@@ -25,6 +29,7 @@ import { signEntityStatement } from "../jose/sign.js";
 import { decodeEntityStatement } from "../jose/verify.js";
 import { safeLogger } from "../logging.js";
 import type { JWKSet } from "../schemas/jwk.js";
+import { MemoryCache } from "../storage/cache.js";
 import { resolveTrustChainForAnchor } from "../trust-chain/peer.js";
 import { resolveTrustChains } from "../trust-chain/resolve.js";
 import { selectTrustChain } from "../trust-chain/selection.js";
@@ -38,7 +43,6 @@ import { fetchTrustMarkStatus } from "../trust-marks/fetch.js";
 import type { TrustMarkStatusAssessment } from "../trust-marks/issuer.js";
 import type { CryptoContext } from "../types.js";
 import {
-	type CacheProvider,
 	type EntityId,
 	entityId,
 	type FederationOptions,
@@ -57,7 +61,6 @@ export interface FederationResolverConfig {
 	readonly entityId: EntityId | string;
 	readonly crypto: CryptoContext;
 	readonly trustAnchors?: TrustAnchorSet;
-	readonly cache?: CacheProvider;
 	readonly options: FederationOptions;
 	readonly requireAuthForFreshResolution?: boolean;
 	readonly authentication?: Omit<EndpointAuthenticationConfig, "receiverEntityId">;
@@ -68,7 +71,7 @@ export interface FederationResolverConfig {
 export type FederationResolverIntegration = Omit<
 	FederationResolverConfig,
 	"entityId" | "crypto" | "options"
-> & { readonly options?: Omit<FederationOptions, "engine"> };
+> & { readonly options?: import("../types.js").BoundFederationOptions };
 type ResolverContext = Omit<FederationResolverConfig, "entityId"> & { readonly entityId: EntityId };
 
 /** Resolve hosting independent of subordinate storage and Authority endpoints. */
@@ -100,12 +103,19 @@ export class FederationResolverService {
 		return this.authenticated(request);
 	}
 	/** In-process callers may populate the cache without endpoint authentication. */
-	resolve(request: Request, options?: Omit<FederationOptions, "engine">): Promise<Response> {
+	resolve(
+		request: Request,
+		options?: import("../types.js").BoundFederationOptions,
+	): Promise<Response> {
 		// Overrides get an isolated cache namespace, so a different policy cannot reuse prior assessments.
 		return options
 			? createResolveHandler({
 					...this.context,
-					options: bindFederationOptions(this.context.crypto, this.context.options, options),
+					options: bindFederationOptions(
+						{ crypto: this.context.crypto, storage: this.context.options.storage },
+						this.context.options,
+						options,
+					),
 				})(request, true)
 			: this.inner(request, true);
 	}
@@ -120,13 +130,6 @@ type ResolveTrustMarkRef = { trust_mark_type: string; trust_mark: string };
 interface ActiveResolveTrustMark {
 	ref: ResolveTrustMarkRef;
 	mark: ValidatedTrustMark;
-}
-
-/** A completed assessment with a fixed reuse deadline and no requester identity. */
-interface ResolutionSnapshot {
-	payload: Record<string, unknown>;
-	headers: Record<string, unknown>;
-	reuseUntil: number;
 }
 
 const metadataFailures = new Set<string>([
@@ -199,7 +202,7 @@ function createResolveHandler(
 	ctx: ResolverContext,
 ): (request: Request, local?: boolean) => Promise<Response> {
 	const cache =
-		ctx.cache ??
+		getCacheStorage(ctx.options.storage) ??
 		new MemoryCache({
 			maxEntries: 1000,
 			...(ctx.options?.clock ? { clock: ctx.options.clock } : {}),
@@ -259,6 +262,7 @@ function createResolveHandler(
 		const nowForCache = nowSeconds(ctx.options?.clock);
 		namespace ??= randomUuid(ctx.crypto.engine);
 		const cacheKey =
+			"resolve:" +
 			(await namespace) +
 			JSON.stringify([
 				ctx.entityId,
@@ -268,15 +272,22 @@ function createResolveHandler(
 			]);
 		if (!local && !isAuthenticated && ctx.requireAuthForFreshResolution !== false) {
 			try {
-				const cached = await cache.get<ResolutionSnapshot>(cacheKey);
-				if (!cached || !Number.isFinite(cached.reuseUntil) || cached.reuseUntil <= nowForCache) {
+				const cached = readResolveAssessment(
+					await cache.get<unknown>(cacheKey),
+					ctx.entityId,
+					sub,
+					usableTrustAnchors,
+					nowForCache,
+					ctx.options.maxCompactBytes,
+				);
+				if (!cached) {
 					return errorResponse(
 						404,
 						FederationErrorCode.NotFound,
 						"No cached resolution available; fresh resolution requires authentication",
 					);
 				}
-				const snapshot = cloneData(cached);
+				const snapshot = cached;
 				// §8.3.2 binds aud to this request. Stored assessments never carry a recipient.
 				delete snapshot.payload.aud;
 				// The optional issuer chain may describe a previous signing key. Cache hits
@@ -521,7 +532,8 @@ function createResolveHandler(
 				try {
 					await cache.set(
 						cacheKey,
-						cloneData({
+						ResolveAssessmentCacheValueSchema.parse({
+							trustAnchor: validated.trustAnchorId,
 							payload: cachedPayload,
 							headers: extraHeaders,
 							reuseUntil: cacheExpiry,

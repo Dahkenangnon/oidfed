@@ -3,7 +3,7 @@
 	"version": "2.0.0",
 	"description": "Federation primitives for JavaScript — entity statements, trust chain resolution, metadata policy, and cryptographic verification for OpenID Federation 1.0 deployments.",
 	"license": "Apache-2.0",
-	"author": "Justin Dah-kenangnon <dah.kenangnon@gmail.com>",
+	"author": "Yamonwan Justin Dah-kenangnon <dah.kenangnon@gmail.com>",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/Dahkenangnon/oidfed.git",
@@ -64,6 +64,6 @@
 	},
 	"dependencies": {
 		"@oidfed/crypto": "workspace:^",
-		"zod": "4.6.7"
+		"zod": "^4.6.7"
 	}
 }

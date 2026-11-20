@@ -7,6 +7,7 @@ import {
 	profileSigner,
 } from "../../../../docs/examples/custom-crypto.js";
 import * as C from "../../../../packages/core/src/index.js";
+import { MemoryReplayStore } from "../../../../packages/core/src/storage/replay-memory.js";
 import {
 	OAuthAuthorizationServerRole,
 	OAuthClientRole,
@@ -14,6 +15,9 @@ import {
 	OidcRelyingPartyRole,
 	type PushedAuthorizationProof,
 } from "../../../../packages/oidc/src/index.js";
+import { processAutomaticRegistration } from "../../../../packages/oidc/src/registration/automatic-server.js";
+import { processPushedAuthorizationRequest } from "../../../../packages/oidc/src/registration/pushed.js";
+import { replayStorage } from "../../../storage-fixtures.js";
 import {
 	FixtureCrypto,
 	fixtureRoleContext,
@@ -32,7 +36,9 @@ async function fixture(
 		clientAssertionSigner?: (entry: KeyringEntry) => KeyringEntry;
 		client?: Record<string, unknown>;
 		server?: Record<string, unknown>;
-		role?: Partial<ConstructorParameters<typeof OAuthAuthorizationServerRole>[0]>;
+		role?: Partial<ConstructorParameters<typeof OAuthAuthorizationServerRole>[0]> & {
+			storage?: C.FederationStorage;
+		};
 	} = {},
 ) {
 	const f = await trustChainPaths();
@@ -106,17 +112,21 @@ async function fixture(
 	};
 	let registered = 0;
 	const Server = oidc ? OidcProviderRole : OAuthAuthorizationServerRole;
+	const {
+		storage = replayStorage(new MemoryReplayStore({ engine: testEngine, clock: options.clock })),
+		...rolePolicy
+	} = settings.role ?? {};
 	const server = new Server({
 		metadata: serverMetadata,
-		replayStore: new C.MemoryReplayStore({ engine: testEngine, clock: options.clock }),
 		onRegistration: async () => {
 			registered++;
 		},
-		...settings.role,
+		...rolePolicy,
 	});
 	await server.initialize(
 		fixtureRoleContext(server, {
 			entityId: f.ids.a,
+			storage,
 			crypto: { ...FixtureCrypto.fromJWK(f.keys.a.privateKey), engine, ...profileOptions },
 			trustAnchors: f.anchors,
 			options,
@@ -205,6 +215,90 @@ async function assertionRequest(f: Awaited<ReturnType<typeof fixture>>): Promise
 }
 export default (Q: QUnit) => {
 	Q.module("oidc / pushed authorization proof modes", () => {
+		Q.test(
+			"adapters see the same effective client metadata on every registration path",
+			async (t) => {
+				for (const oidc of [true, false]) {
+					const clientType = oidc ? "openid_relying_party" : "oauth_client";
+					const seen: string[] = [];
+					let reject = false;
+					const f = await fixture(oidc, {
+						client: {
+							token_endpoint_auth_method: "private_key_jwt",
+							client_registration_types: ["automatic", "explicit"],
+						},
+						role: {
+							registrationProtocolAdapter: {
+								validateClientMetadata(metadata, context) {
+									t.equal(context.clientMetadataType, clientType);
+									t.deepEqual(metadata[clientType]?.redirect_uris, [`${f.ids.subject}/callback`]);
+									seen.push(context.flow);
+									return reject
+										? C.err({
+												code: C.FederationErrorCode.InvalidMetadata,
+												description: "Rejected by host",
+											})
+										: C.ok(undefined);
+								},
+								enrichResponseMetadata(metadata, _chain, context) {
+									t.equal(context.flow, "explicit");
+									return {
+										...metadata,
+										[clientType]: { ...metadata[clientType], registration_profile: "test" },
+									};
+								},
+							},
+						},
+					});
+					const [ec, ...superiors] = f.clientChain;
+					if (!ec) throw new Error("Missing client configuration");
+					const decoded = C.decodeEntityStatement(ec);
+					if (!decoded.ok) throw new Error(decoded.error.description);
+					const explicitJwt = await C.signEntityStatement(
+						{ ...decoded.value.payload, aud: f.ids.a },
+						new SigningEntryFixture(f.keys.subject.privateKey),
+						{ typ: C.JwtTyp.EntityStatement },
+					);
+					const explicit = () =>
+						f.server.processExplicitRegistration(
+							new Request(`${f.ids.a}/registration`, {
+								method: "POST",
+								headers: { "content-type": C.MediaType.TrustChain },
+								body: JSON.stringify([explicitJwt, ...superiors]),
+							}),
+						);
+					const automatic = async () => {
+						const form = new URLSearchParams(await (await signedRequest(f)).text());
+						return f.server.processAutomaticRegistration(form.get("request")!);
+					};
+					const par = async () =>
+						f.server.processPushedAuthorizationRequest(await signedRequest(f));
+
+					const response = await explicit();
+					const responseBody = await response.text();
+					t.equal(
+						response.status,
+						200,
+						response.status === 200 ? "Explicit registration succeeds" : responseBody,
+					);
+					const responseJwt = C.decodeEntityStatement(responseBody);
+					t.true(responseJwt.ok);
+					if (responseJwt.ok) {
+						t.equal(responseJwt.value.payload.metadata?.[clientType]?.client_id, f.ids.subject);
+						t.equal(responseJwt.value.payload.metadata?.[clientType]?.registration_profile, "test");
+					}
+					t.true((await automatic()).ok);
+					t.true((await par()).ok);
+					t.deepEqual(seen, ["explicit", "automatic", "par"]);
+					t.equal(f.registered(), 3);
+					reject = true;
+					t.equal((await explicit()).status, 400);
+					t.false((await automatic()).ok);
+					t.false((await par()).ok);
+					t.equal(f.registered(), 3);
+				}
+			},
+		);
 		Q.test(
 			"registered protocol algorithms work in OIDC registration and PAR independently of federation policy",
 			async (t) => {
@@ -570,12 +664,12 @@ export default (Q: QUnit) => {
 			let claims = 0;
 			const f = await fixture(false, {
 				role: {
-					replayStore: {
+					storage: replayStorage({
 						useJti: async () => {
 							claims++;
 							return true;
 						},
-					},
+					}),
 				},
 			});
 			for (const name of ["request", "request_uri"]) {
@@ -622,18 +716,17 @@ export default (Q: QUnit) => {
 							if (stage === "policy") advance();
 							return C.ok(undefined);
 						},
-						replayStore: {
+						storage: replayStorage({
 							useJti: async () => {
 								if (stage === "replay") advance();
 								return true;
 							},
-						},
+						}),
 						registrationProtocolAdapter: {
-							validateClientMetadata: (raw) => {
+							validateClientMetadata: () => {
 								if (stage === "adapter") advance();
-								return C.ok(raw);
+								return C.ok(undefined);
 							},
-							enrichResponseMetadata: (raw) => raw,
 						},
 					},
 				});
@@ -663,7 +756,7 @@ export default (Q: QUnit) => {
 					const f = await fixture(false, {
 						role:
 							stage === "replay"
-								? { replayStore: { useJti: () => pending } }
+								? { storage: replayStorage({ useJti: () => pending }) }
 								: { beforeRegistration: () => pending },
 					});
 					const request = await signedRequest(f);
@@ -719,6 +812,32 @@ export default (Q: QUnit) => {
 								headers: prepared.value.headers,
 								body: new URLSearchParams(prepared.value.parameters),
 							});
+						const standalone = await processPushedAuthorizationRequest(request(), f.anchors, {
+							...f.options,
+							storage: undefined,
+							opEntityId: f.ids.a,
+							providerMetadataType: oidc ? "openid_provider" : "oauth_authorization_server",
+							providerMetadata: f.serverMetadata,
+							...(mode === "self_signed_tls_client_auth"
+								? { clientCertificate: () => f.certificate }
+								: {}),
+						});
+						t.equal(standalone.ok, mode === "self_signed_tls_client_auth", `storage-free ${mode}`);
+						if (!standalone.ok) t.equal(standalone.error.code, C.FederationErrorCode.ServerError);
+						if (prepared.value.requestObjectJwt) {
+							const absent = await processAutomaticRegistration(
+								prepared.value.requestObjectJwt,
+								f.anchors,
+								{
+									...f.options,
+									opEntityId: f.ids.a,
+									// @ts-expect-error Standalone callers must supply replay storage.
+									storage: undefined,
+								},
+							);
+							t.false(absent.ok);
+							if (!absent.ok) t.equal(absent.error.code, C.FederationErrorCode.ServerError);
+						}
 						const before = f.registered();
 						const processed = await f.server.processPushedAuthorizationRequest(
 							request(),
@@ -775,7 +894,9 @@ export default (Q: QUnit) => {
 				const config = {
 					clientAttestation: {
 						getAttester: () => C.ok({ jwks: { keys: [attester.publicKey] } }),
-						replayStore: new C.MemoryReplayStore({ engine: testEngine, clock: f.options.clock }),
+						storage: replayStorage(
+							new MemoryReplayStore({ engine: testEngine, clock: f.options.clock }),
+						),
 						acceptClient: () => true,
 					},
 				};

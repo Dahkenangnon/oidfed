@@ -20,7 +20,7 @@ import { applyAllowedEntityTypes, checkConstraints } from "../constraints/index.
 import { err, ok, type Result } from "../errors.js";
 import { decodeEntityStatement, verifyEntityStatement } from "../jose/verify.js";
 import { validateJwkSetUseRequirement } from "../jwks/use-requirement.js";
-import { safeLogger } from "./../logging.js";
+import { safeLogger } from "../logging.js";
 import { applyMetadataPolicy } from "../metadata-policy/apply.js";
 import { resolveMetadataPolicy } from "../metadata-policy/merge.js";
 import { findInvalidMetadataNullPaths } from "../metadata-values.js";
@@ -37,7 +37,6 @@ import {
 import { evaluatePublishedTrustMarks } from "../trust-marks/evaluate.js";
 import { trustMarkOperation } from "../trust-marks/operation.js";
 import {
-	type ChainSelectionStrategy,
 	type Clock,
 	type EntityId,
 	type FederationOptions,
@@ -1267,11 +1266,11 @@ async function authenticateChainStatements(
 
 		const lastIdx = parsed.length - 1;
 		const last = parsed[lastIdx] as ParsedEntityStatement;
-		const lastPayload = last.payload as Record<string, unknown>;
-		const lastIss = lastPayload.iss as string;
+		const lastPayload = last.payload;
+		const lastIss = lastPayload.iss;
 		const hasTrailingTrustAnchorEc = lastPayload.iss === lastPayload.sub;
 
-		if (!trustAnchors.has(lastIss as EntityId)) {
+		if (!trustAnchors.has(lastIss)) {
 			addError(
 				errors,
 				InternalErrorCode.TrustAnchorUnknown,
@@ -1280,7 +1279,7 @@ async function authenticateChainStatements(
 			);
 		}
 
-		const taConfig = trustAnchors.get(lastIss as EntityId);
+		const taConfig = trustAnchors.get(lastIss);
 		if (taConfig) {
 			const taVerify = await verifyEntityStatement(
 				chain[lastIdx] as string,
@@ -1323,7 +1322,7 @@ async function authenticateChainStatements(
 
 		// Federation §4.1 permits a configured anchor to have superiors. Its signed
 		// authority_hints declare those relationships; configured trust ends this chain.
-		if (hasTrailingTrustAnchorEc && trustAnchors.has(lastIss as EntityId)) {
+		if (hasTrailingTrustAnchorEc && trustAnchors.has(lastIss)) {
 			if (errors.length === 0) {
 				checkAuthorityMetadata(last, lastIdx);
 			}
@@ -1343,9 +1342,9 @@ async function authenticateChainStatements(
 		// Non-TA Entity Configurations MUST have authority_hints
 		for (let j = 0; j < parsed.length; j++) {
 			const stmt = parsed[j] as ParsedEntityStatement;
-			const sp = stmt.payload as Record<string, unknown>;
+			const sp = stmt.payload;
 			const isEC = sp.iss === sp.sub;
-			const isTrustAnchor = j === lastIdx && trustAnchors.has(sp.iss as EntityId);
+			const isTrustAnchor = j === lastIdx && trustAnchors.has(sp.iss);
 			if (isEC && !isTrustAnchor && sp.authority_hints === undefined) {
 				addError(
 					errors,
@@ -1392,10 +1391,7 @@ async function authenticateChainStatements(
 					let jwt = configurationJwts.get(ss.sub);
 					if (jwt === undefined) {
 						try {
-							const fetched = await fetchEntityConfiguration(
-								ss.sub as unknown as EntityId,
-								fetchOptions,
-							);
+							const fetched = await fetchEntityConfiguration(ss.sub, fetchOptions);
 							if (!fetched.ok) {
 								addError(
 									errors,
@@ -1534,10 +1530,10 @@ async function validateTrustChainImpl(
 			};
 		const errors: ValidationError[] = [];
 		let failureMessage: string | undefined;
-		const leafPayload = (parsed[0] as ParsedEntityStatement).payload as Record<string, unknown>;
+		const leafPayload = (parsed[0] as ParsedEntityStatement).payload;
 		const lastIdx = parsed.length - 1;
 		const lastPayload = (parsed[lastIdx] as ParsedEntityStatement).payload;
-		const lastIss = lastPayload.iss as string;
+		const lastIss = lastPayload.iss;
 		const hasTrailingTrustAnchorEc = lastPayload.iss === lastPayload.sub;
 
 		const subordinateStatements = hasTrailingTrustAnchorEc ? parsed.slice(1, -1) : parsed.slice(1);
@@ -1668,7 +1664,7 @@ async function validateTrustChainImpl(
 			validateResolvedMetadata(
 				errors,
 				resolvedMetadata,
-				leafPayload.iss as string,
+				leafPayload.iss,
 				stage?.pending,
 				options.algorithmRegistry,
 			);
@@ -1702,8 +1698,8 @@ async function validateTrustChainImpl(
 			};
 		}
 
-		const entityIdStr = leafPayload.iss as unknown as EntityId;
-		const trustAnchorId = lastIss as unknown as EntityId;
+		const entityIdStr = leafPayload.iss;
+		const trustAnchorId = lastIss;
 
 		const validatedChain: ValidatedTrustChain = {
 			statements: parsed,
@@ -1753,31 +1749,4 @@ export function describeTrustChain(chain: ValidatedTrustChain): string {
 			}
 		})
 		.join(" ← ");
-}
-
-/** Select the chain with the fewest statements. */
-export const shortestChain: ChainSelectionStrategy = (
-	chains: ValidatedTrustChain[],
-): ValidatedTrustChain => {
-	return chains
-		.slice()
-		.sort((a, b) => a.statements.length - b.statements.length)[0] as ValidatedTrustChain;
-};
-
-/** Select the chain that expires last. */
-export const longestExpiry: ChainSelectionStrategy = (
-	chains: ValidatedTrustChain[],
-): ValidatedTrustChain => {
-	return chains.slice().sort((a, b) => b.expiresAt - a.expiresAt)[0] as ValidatedTrustChain;
-};
-
-/** Create a strategy that prefers chains terminating at the given trust anchor. */
-export function preferTrustAnchor(taId: string): ChainSelectionStrategy {
-	return (chains: ValidatedTrustChain[]): ValidatedTrustChain => {
-		const matching = chains.filter((c) => c.trustAnchorId === taId);
-		if (matching.length > 0) {
-			return shortestChain(matching);
-		}
-		return shortestChain(chains);
-	};
 }

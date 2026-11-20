@@ -15,6 +15,7 @@ export default async (QUnit: QUnit, done: (stats: QUnit.DoneDetails) => void) =>
 		import("./packages/core.js"),
 		import("./packages/crypto.js"),
 		import("./packages/jws-service.js"),
+		import("./packages/storage.js"),
 		import("./packages/wallet.js"),
 		import("./integration/subordinate-events.js"),
 		import("./integration/entity-collection.js"),

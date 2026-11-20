@@ -12,13 +12,14 @@
  */
 
 // biome-ignore assist/source/organizeImports: Preserve dependency evaluation order.
-import { safeLogger } from "./../logging.js";
+import { safeLogger } from "../logging.js";
 import { FederationErrorCode } from "../constants.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
-import { type VerifySignedJwkSetOptions, validateExpectedIssuer } from "../federation-api/index.js";
+import type { VerifySignedJwkSetOptions } from "./signed-jwk-set.js";
+import { validateExpectedIssuer } from "../federation-api/verify-issuer.js";
 import { EntityIdSchema } from "../schemas/entity-id.js";
 import { type JWK, type JWKSet, MetadataJWKSetSchema } from "../schemas/jwk.js";
-import { isAvailabilityFailure } from "../trust-chain/fetch-failure.js";
+import { isAvailabilityFailure } from "../http/fetch-failure.js";
 import type { Clock, FederationOptions } from "../types.js";
 import { fetchJwkSet } from "./jwks-uri.js";
 import { fetchSignedJwkSet } from "./signed-jwks-uri.js";

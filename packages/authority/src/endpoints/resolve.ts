@@ -1,8 +1,8 @@
 /** Authority integration with the shared signed Resolve service. */
 
 import { FederationResolverService } from "@oidfed/core";
+import { trustMarkService } from "../trust-mark-service.js";
 import type { HandlerContext } from "./context.js";
-import { trustMarkService } from "./trust-mark-service.js";
 
 /** Authority adapter; resolution itself has no subordinate-store dependency. */
 export function createResolveHandler(
@@ -16,12 +16,11 @@ export function createResolveHandler(
 		entityId: ctx.entityId,
 		crypto: ctx.crypto,
 		...(ctx.trustAnchors ? { trustAnchors: ctx.trustAnchors } : {}),
-		...(ctx.storage.cache ? { cache: ctx.storage.cache } : {}),
-		options: ctx.options,
+		options: { ...ctx.options, storage: ctx.storage },
 		...(ctx.requireAuthForFreshResolution !== undefined
 			? { requireAuthForFreshResolution: ctx.requireAuthForFreshResolution }
 			: {}),
-		...(ctx.storage.trustMarks
+		...(ctx.storage.capabilities.includes("trustMark:read")
 			? {
 					assessLocalTrustMarkStatus: (jwt: string) =>
 						trustMarkService(ctx).assessTrustMarkStatus(jwt),

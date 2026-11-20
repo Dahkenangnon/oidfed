@@ -1,21 +1,14 @@
-import {
-	type BoundFederationOptions,
-	bindFederationOptions,
-	cloneData,
-	selectSigningEntry,
-	signingPublication,
-	validateSigningPurposes,
-} from "@oidfed/core";
-import type { KeyPurpose, KeyringEntry } from "@oidfed/crypto";
 /** Composable OIDC and OAuth roles with protocol metadata and registration operations. */
 
 import {
+	assertStorageCapabilities,
 	assessEntity,
-	authenticateClientAttestation,
+	type BoundFederationOptions,
+	bindFederationOptions,
+	type ClientAssertionOptions,
 	type ClientAttestationError,
-	clientAttestationHeaders,
-	createAttestationChallengeHandler,
-	createClientAttestationProof,
+	cloneData,
+	createClientAssertion,
 	type DiscoveryResult,
 	discoverEntity,
 	type EntityAssessmentOptions,
@@ -27,52 +20,56 @@ import {
 	FederationErrorCode,
 	type FederationOptions,
 	federationError,
-	fetchAttestationChallenge,
 	type JWKSet,
-	type ReplayStore,
+	type MetadataValidationOptions,
 	type Result,
-	readAttestationChallenge,
+	requireReplayStorage,
 	runAsyncOperation,
 	safeLogger,
-	serializeClientAttestation,
+	selectSigningEntry,
 	shortestChain,
+	signingPublication,
 	type TrustAnchorSet,
-	verifyClientAttestation,
+	validateSigningPurposes,
+	withMetadataJwkUse,
 } from "@oidfed/core";
-import { type ClientAssertionOptions, createClientAssertion } from "./client-auth/assertion.js";
+import type { KeyPurpose, KeyringEntry } from "@oidfed/crypto";
 import {
 	assertPublicationMetadata,
 	effectiveMetadata,
 	type ProtocolEntityType,
-} from "./metadata.js";
+} from "./metadata-validation.js";
 import type { RegistrationAccreditationPolicy } from "./registration/accreditation.js";
 import type { RegistrationProtocolAdapter } from "./registration/adapter-types.js";
 import {
 	type AutomaticRegistrationResult,
 	automaticRegistration,
 	type RequestDelivery,
-} from "./registration/automatic.js";
-import { type ExplicitRegistrationResult, explicitRegistration } from "./registration/explicit.js";
+} from "./registration/automatic-client.js";
+import {
+	type AutomaticRegistrationProcessingInput,
+	checkRegistrationAuthentication,
+	type ProcessedAutomaticRegistration,
+	processAutomaticRegistration,
+} from "./registration/automatic-server.js";
+import {
+	type ExplicitRegistrationResult,
+	explicitRegistration,
+} from "./registration/explicit-client.js";
 import {
 	createExplicitRegistrationHandler,
 	type ExplicitRegistrationHandlerConfig,
-} from "./registration/handler.js";
-import { assertNonEmptyTrustAnchors } from "./registration/helpers.js";
-import {
-	checkRegistrationAuthentication,
-	type ProcessAutomaticRegistrationOptions,
-	type ProcessedAutomaticRegistration,
-	processAutomaticRegistration,
-} from "./registration/process-automatic.js";
+} from "./registration/explicit-endpoint.js";
 import { registrationProfile } from "./registration/profile.js";
 import {
 	createPushedAuthorizationRequest,
 	type PreparedPushedAuthorizationRequest,
 	type ProcessedPushedAuthorizationRequest,
-	type ProcessPushedAuthorizationRequestOptions,
+	type PushedAuthorizationProcessingInput,
 	type PushedAuthorizationProof,
 	processPushedAuthorizationRequest,
 } from "./registration/pushed.js";
+import { assertNonEmptyTrustAnchors } from "./registration/trust-chains.js";
 import {
 	effectiveRoleSchemas,
 	OAuthResourceDocumentMetadataSchema,
@@ -107,17 +104,12 @@ export interface CreateAuthorizationRequestOptions extends FederationOptions {
 
 /** Shared OIDC and OAuth client operations; subclasses select the protocol profile explicitly. */
 abstract class ClientRole implements EntityRole {
-	static createClientAttestationProof = createClientAttestationProof;
-	static clientAttestationHeaders = clientAttestationHeaders;
-	static serializeClientAttestation = serializeClientAttestation;
-	static fetchAttestationChallenge = fetchAttestationChallenge;
-	static readAttestationChallenge = readAttestationChallenge;
 	/** Prepare PAR using validated discovery. Returns a Result; throws if this role is not attached or has no configured anchors. */
 	async createPushedAuthorizationRequest(
 		discovery: DiscoveryResult,
 		parameters: Readonly<Record<string, unknown>>,
 		proof: PushedAuthorizationProof,
-		options: Omit<FederationOptions & { trustAnchors?: TrustAnchorSet }, "engine"> = {},
+		options: BoundFederationOptions<FederationOptions & { trustAnchors?: TrustAnchorSet }> = {},
 	): Promise<Result<PreparedPushedAuthorizationRequest>> {
 		if (!this.context) throw new Error("Role has not been initialized.");
 		const anchors = assertNonEmptyTrustAnchors(
@@ -143,12 +135,7 @@ abstract class ClientRole implements EntityRole {
 			parameters,
 			anchors,
 			proof,
-			bindFederationOptions(
-				this.context.crypto,
-				this.context.options,
-				this.config.options,
-				options,
-			),
+			bindFederationOptions(this.context, this.context.options, this.config.options, options),
 			this.profile,
 		);
 	}
@@ -159,15 +146,12 @@ abstract class ClientRole implements EntityRole {
 	assessEntity(
 		target: string,
 		type: ProtocolEntityType,
-		options: Omit<EntityAssessmentOptions & { trustAnchors?: TrustAnchorSet }, "engine"> = {},
+		options: BoundFederationOptions<
+			EntityAssessmentOptions & { trustAnchors?: TrustAnchorSet }
+		> = {},
 	) {
 		return assessRoleEntity(target, type, this.config, this.context, options);
 	}
-
-	/**
-	 * Create a client assertion from an explicitly supplied identity, audience, signer, and options.
-	 */
-	static createClientAssertion = createClientAssertion;
 
 	abstract readonly type: "openid_relying_party" | "oauth_client";
 	private get profile() {
@@ -185,8 +169,8 @@ abstract class ClientRole implements EntityRole {
 	}
 
 	/** Validate composed publication metadata and capture a detached copy for client operations. */
-	validateMetadata(metadata: Readonly<Record<string, unknown>>): void {
-		assertPublicationMetadata(this.type, metadata);
+	validateMetadata(metadata: Readonly<Record<string, unknown>>, context?: EntityContext): void {
+		assertPublicationMetadata(this.type, metadata, context?.crypto);
 		this.composedMetadata = cloneData(metadata);
 	}
 
@@ -211,7 +195,7 @@ abstract class ClientRole implements EntityRole {
 	 */
 	async createClientAssertion(
 		audience: string,
-		options?: Omit<ClientAssertionOptions, "engine">,
+		options?: BoundFederationOptions<ClientAssertionOptions>,
 	): Promise<string> {
 		if (!this.context) {
 			throw new Error("Role has not been initialized.");
@@ -226,12 +210,7 @@ abstract class ClientRole implements EntityRole {
 			this.context.entityId as EntityId,
 			audience,
 			signer,
-			bindFederationOptions(
-				this.context.crypto,
-				this.context.options,
-				this.config.options,
-				options,
-			),
+			bindFederationOptions(this.context, this.context.options, this.config.options, options),
 		);
 	}
 
@@ -267,7 +246,7 @@ abstract class ClientRole implements EntityRole {
 			readonly requestDelivery?: RequestDelivery;
 			readonly requestUri?: string;
 		},
-		options?: Omit<CreateAuthorizationRequestOptions, "engine">,
+		options?: BoundFederationOptions<CreateAuthorizationRequestOptions>,
 	): Promise<Result<AutomaticRegistrationResult>> {
 		if (!this.context) {
 			throw new Error(
@@ -286,12 +265,7 @@ abstract class ClientRole implements EntityRole {
 			protocolDiscoveryOptions(
 				this.profile.providerType,
 				opEntityId,
-				bindFederationOptions(
-					this.context.crypto,
-					this.context.options,
-					this.config.options,
-					options,
-				),
+				bindFederationOptions(this.context, this.context.options, this.config.options, options),
 			),
 		);
 		if (!discoveryResult.ok) {
@@ -328,12 +302,7 @@ abstract class ClientRole implements EntityRole {
 			rpConfig,
 			authzRequestParams,
 			trustAnchors,
-			bindFederationOptions(
-				this.context.crypto,
-				this.context.options,
-				this.config.options,
-				options,
-			),
+			bindFederationOptions(this.context, this.context.options, this.config.options, options),
 			"resolved",
 			this.profile,
 		);
@@ -342,7 +311,9 @@ abstract class ClientRole implements EntityRole {
 	/** Discover a conformant provider and validate its signed explicit-registration response. */
 	async explicitlyRegister(
 		opEntityId: string,
-		options?: Omit<FederationOptions & { readonly trustAnchors?: TrustAnchorSet }, "engine">,
+		options?: BoundFederationOptions<
+			FederationOptions & { readonly trustAnchors?: TrustAnchorSet }
+		>,
 	): Promise<Result<ExplicitRegistrationResult>> {
 		if (!this.context) {
 			throw new Error(
@@ -360,12 +331,7 @@ abstract class ClientRole implements EntityRole {
 			protocolDiscoveryOptions(
 				this.profile.providerType,
 				opEntityId,
-				bindFederationOptions(
-					this.context.crypto,
-					this.context.options,
-					this.config.options,
-					options,
-				),
+				bindFederationOptions(this.context, this.context.options, this.config.options, options),
 			),
 		);
 		if (!discoveryResult.ok) {
@@ -390,12 +356,7 @@ abstract class ClientRole implements EntityRole {
 			discoveryResult.value,
 			rpConfig,
 			trustAnchors,
-			bindFederationOptions(
-				this.context.crypto,
-				this.context.options,
-				this.config.options,
-				options,
-			),
+			bindFederationOptions(this.context, this.context.options, this.config.options, options),
 			"resolved",
 			this.profile,
 		);
@@ -409,7 +370,7 @@ abstract class ClientRole implements EntityRole {
 		discovery: DiscoveryResult,
 		authzRequestParams: Readonly<Record<string, unknown>>,
 		trustAnchors: TrustAnchorSet,
-		options?: Omit<CreateAuthorizationRequestOptions, "engine">,
+		options?: BoundFederationOptions<CreateAuthorizationRequestOptions>,
 	): Promise<Result<AutomaticRegistrationResult>> {
 		if (!this.context) {
 			throw new Error(
@@ -433,12 +394,7 @@ abstract class ClientRole implements EntityRole {
 			rpConfig,
 			authzRequestParams,
 			options?.trustAnchors ?? trustAnchors,
-			bindFederationOptions(
-				this.context.crypto,
-				this.context.options,
-				this.config.options,
-				options,
-			),
+			bindFederationOptions(this.context, this.context.options, this.config.options, options),
 			"supplied",
 			this.profile,
 		);
@@ -450,15 +406,15 @@ export class OidcRelyingPartyRole extends ClientRole {
 	/**
 	 * Return a parse result for effective protocol metadata. Establish federation trust separately.
 	 */
-	static parseMetadata(metadata: unknown) {
-		return effectiveRoleSchemas.openid_relying_party.safeParse(metadata);
+	static parseMetadata(metadata: unknown, options?: MetadataValidationOptions) {
+		return effectiveRoleSchemas.openid_relying_party(options).safeParse(metadata);
 	}
 	/**
 	 * Return a parse result for supplied publication fields. A Superior may complete omitted
 	 * requirements; establish federation trust separately.
 	 */
-	static parsePublicationMetadata(metadata: unknown) {
-		return publicationRoleSchemas.openid_relying_party.safeParse(metadata);
+	static parsePublicationMetadata(metadata: unknown, options?: MetadataValidationOptions) {
+		return publicationRoleSchemas.openid_relying_party(options).safeParse(metadata);
 	}
 	/** Discover a trusted OP and create the OIDC automatic-registration authorization request. */
 	automaticallyRegister(
@@ -471,7 +427,7 @@ export class OidcRelyingPartyRole extends ClientRole {
 			readonly requestDelivery?: RequestDelivery;
 			readonly requestUri?: string;
 		},
-		options?: Omit<CreateAuthorizationRequestOptions, "engine">,
+		options?: BoundFederationOptions<CreateAuthorizationRequestOptions>,
 	): Promise<Result<AutomaticRegistrationResult>> {
 		return this.registerAutomatically({ ...params, serverEntityId: params.opEntityId }, options);
 	}
@@ -492,7 +448,6 @@ export interface OidcProviderRoleConfig extends RegistrationAccreditationPolicy 
 	readonly generateClientSecret?: (sub: EntityId) => Promise<string | undefined>;
 	/** Late pre-commit hook called after validation and response preparation, before `onRegistration`. */
 	readonly onRegistrationInvalidation?: (sub: EntityId) => Promise<void>;
-	readonly replayStore?: ReplayStore;
 	readonly onRegistration?: (
 		sub: EntityId,
 		clientMetadata: Record<string, unknown>,
@@ -500,29 +455,33 @@ export interface OidcProviderRoleConfig extends RegistrationAccreditationPolicy 
 	) => Promise<void>;
 }
 
+/** Per-call policy for processing an automatic registration on an attached provider role. */
+export type ProcessAutomaticRegistrationOptions = BoundFederationOptions<
+	Omit<AutomaticRegistrationProcessingInput, "opEntityId" | "providerMetadataType">
+>;
+
+/** Per-call policy and transport evidence for PAR on an attached provider role. */
+export type ProcessPushedAuthorizationRequestOptions = BoundFederationOptions<
+	Omit<
+		PushedAuthorizationProcessingInput,
+		"opEntityId" | "providerMetadataType" | "providerMetadata"
+	>
+> & { readonly providerMetadata?: Readonly<Record<string, unknown>> };
+
 /** Shared OIDC and OAuth provider registration integration for a federation host. */
 abstract class ProviderRole implements EntityRole {
-	static verifyClientAttestation = verifyClientAttestation;
-	static authenticateClientAttestation = authenticateClientAttestation;
-	static createAttestationChallengeHandler = createAttestationChallengeHandler;
 	/**
 	 * Process PAR with configured replay protection and persist accepted automatic registration
 	 * through the host callback.
 	 */
 	async processPushedAuthorizationRequest(
 		request: Request,
-		options: Omit<
-			Omit<
-				ProcessPushedAuthorizationRequestOptions,
-				"opEntityId" | "replayStore" | "providerMetadataType" | "providerMetadata"
-			> & { readonly providerMetadata?: Readonly<Record<string, unknown>> },
-			"engine"
-		> = {},
+		options: ProcessPushedAuthorizationRequestOptions = {},
 	): Promise<Result<ProcessedPushedAuthorizationRequest, ClientAttestationError>> {
-		if (!this.context || !this.config.replayStore)
-			throw new Error("Initialize the provider role with a replayStore.");
+		if (!this.context) throw new Error("Provider role is not initialized.");
+		requireReplayStorage(this.context.storage, "Pushed authorization requests");
 		const effectiveOptions = bindFederationOptions(
-			this.context.crypto,
+			this.context,
 			this.context.options,
 			this.config.options,
 			options,
@@ -534,7 +493,6 @@ abstract class ProviderRole implements EntityRole {
 			{
 				...effectiveOptions,
 				opEntityId: this.context.entityId as EntityId,
-				replayStore: this.config.replayStore,
 				providerMetadataType: this.type,
 				providerMetadata: options.providerMetadata ?? this.metadata,
 				requestObjectTyping:
@@ -548,7 +506,7 @@ abstract class ProviderRole implements EntityRole {
 			},
 		);
 		try {
-			return await this.persistAutomaticRegistration(result, effectiveOptions);
+			return await this.persistAutomaticRegistration(result, effectiveOptions, "par");
 		} catch {
 			return err(
 				federationError(FederationErrorCode.ServerError, "PAR registration persistence failed"),
@@ -562,7 +520,9 @@ abstract class ProviderRole implements EntityRole {
 	assessEntity(
 		target: string,
 		type: ProtocolEntityType,
-		options: Omit<EntityAssessmentOptions & { trustAnchors?: TrustAnchorSet }, "engine"> = {},
+		options: BoundFederationOptions<
+			EntityAssessmentOptions & { trustAnchors?: TrustAnchorSet }
+		> = {},
 	) {
 		return assessRoleEntity(target, type, this.config, this.context, options);
 	}
@@ -581,7 +541,7 @@ abstract class ProviderRole implements EntityRole {
 	 * Validate composed provider fields and require explicit capability for the installed registration
 	 * endpoint.
 	 */
-	validateMetadata(metadata: Readonly<Record<string, unknown>>): void {
+	validateMetadata(metadata: Readonly<Record<string, unknown>>, context: EntityContext): void {
 		// Federation §12.2 requires both the endpoint and its explicit capability.
 		const methods = metadata.client_registration_types_supported;
 		if (
@@ -592,7 +552,15 @@ abstract class ProviderRole implements EntityRole {
 			throw new TypeError(
 				"An installed registration endpoint requires client_registration_types_supported to include explicit",
 			);
-		assertPublicationMetadata(this.type, metadata);
+		assertPublicationMetadata(this.type, metadata, context?.crypto);
+		if (
+			methods.includes("automatic") ||
+			typeof metadata.pushed_authorization_request_endpoint === "string"
+		)
+			requireReplayStorage(
+				context.storage,
+				`Provider ${context.entityId} automatic registration or PAR`,
+			);
 	}
 
 	/** Bind the role to one host, publish its registration endpoint, and install its handler. */
@@ -636,7 +604,7 @@ abstract class ProviderRole implements EntityRole {
 			...(this.config.onRegistration !== undefined
 				? { onRegistration: this.config.onRegistration }
 				: {}),
-			options: bindFederationOptions(context.crypto, context.options, this.config.options),
+			options: bindFederationOptions(context, context.options, this.config.options),
 		});
 
 		this.routes.set(registrationPath, handler);
@@ -648,32 +616,25 @@ abstract class ProviderRole implements EntityRole {
 	 */
 	async processAutomaticRegistration(
 		requestObjectJwt: string,
-		options?: Omit<
-			Omit<
-				ProcessAutomaticRegistrationOptions,
-				"opEntityId" | "replayStore" | "providerMetadataType"
-			>,
-			"engine"
-		>,
+		options?: ProcessAutomaticRegistrationOptions,
 	): Promise<Result<ProcessedAutomaticRegistration, ClientAttestationError>> {
 		if (!this.context) {
 			throw new Error("Provider role is not initialized.");
 		}
-		const replayStore = this.config.replayStore;
-		if (!replayStore) {
-			throw new Error("replayStore is required to process automatic registration.");
-		}
+		const storage = this.context.storage;
+		assertStorageCapabilities(storage, ["replay"], "Automatic registration");
 		const trustAnchors = assertNonEmptyTrustAnchors(
 			this.config.trustAnchors ?? this.context.trustAnchors,
 		);
 		const effectiveOptions = bindFederationOptions(
-			this.context.crypto,
+			this.context,
 			this.context.options,
 			this.config.options,
 			options,
 		);
 		const result = await processAutomaticRegistration(requestObjectJwt, trustAnchors, {
 			...effectiveOptions,
+			storage,
 			...(this.config.trustMarkRequirements
 				? { trustMarkRequirements: cloneData(this.config.trustMarkRequirements) }
 				: {}),
@@ -681,18 +642,18 @@ abstract class ProviderRole implements EntityRole {
 				? { beforeRegistration: this.config.beforeRegistration }
 				: {}),
 			opEntityId: this.context.entityId as EntityId,
-			replayStore,
 			providerMetadataType: this.type,
 			providerMetadata: options?.providerMetadata ?? this.metadata,
 			requestObjectTyping:
 				options?.requestObjectTyping ?? this.config.requestObjectTyping ?? "strict",
 		});
 
-		return this.persistAutomaticRegistration(result, effectiveOptions);
+		return this.persistAutomaticRegistration(result, effectiveOptions, "automatic");
 	}
 	private async persistAutomaticRegistration<T extends ProcessedAutomaticRegistration>(
 		result: Result<T, ClientAttestationError>,
 		effectiveOptions: FederationOptions,
+		flow: "automatic" | "par",
 	): Promise<Result<T, ClientAttestationError>> {
 		if (!result.ok) return result;
 
@@ -705,8 +666,13 @@ abstract class ProviderRole implements EntityRole {
 				const adapter = this.config.registrationProtocolAdapter;
 				validationResult = await runAsyncOperation(
 					(signal) =>
-						adapter.validateClientMetadata(cloneData(result.value.resolvedRpMetadata), {
+						adapter.validateClientMetadata(cloneData(result.value.trustChain.resolvedMetadata), {
+							flow,
+							clientMetadataType: registrationProfile(this.type).clientType,
 							signal,
+							...(result.value.peerResolvedOpMetadata !== undefined
+								? { peerResolvedOpMetadata: cloneData(result.value.peerResolvedOpMetadata) }
+								: {}),
 						}),
 					effectiveOptions,
 				);
@@ -768,15 +734,15 @@ export class OidcProviderRole extends ProviderRole {
 	/**
 	 * Return a parse result for effective protocol metadata. Establish federation trust separately.
 	 */
-	static parseMetadata(metadata: unknown) {
-		return effectiveRoleSchemas.openid_provider.safeParse(metadata);
+	static parseMetadata(metadata: unknown, options?: MetadataValidationOptions) {
+		return effectiveRoleSchemas.openid_provider(options).safeParse(metadata);
 	}
 	/**
 	 * Return a parse result for supplied publication fields. A Superior may complete omitted
 	 * requirements; establish federation trust separately.
 	 */
-	static parsePublicationMetadata(metadata: unknown) {
-		return publicationRoleSchemas.openid_provider.safeParse(metadata);
+	static parsePublicationMetadata(metadata: unknown, options?: MetadataValidationOptions) {
+		return publicationRoleSchemas.openid_provider(options).safeParse(metadata);
 	}
 }
 
@@ -786,15 +752,15 @@ export class OAuthClientRole extends ClientRole {
 	/**
 	 * Return a parse result for effective protocol metadata. Establish federation trust separately.
 	 */
-	static parseMetadata(metadata: unknown) {
-		return effectiveRoleSchemas.oauth_client.safeParse(metadata);
+	static parseMetadata(metadata: unknown, options?: MetadataValidationOptions) {
+		return effectiveRoleSchemas.oauth_client(options).safeParse(metadata);
 	}
 	/**
 	 * Return a parse result for supplied publication fields. A Superior may complete omitted
 	 * requirements; establish federation trust separately.
 	 */
-	static parsePublicationMetadata(metadata: unknown) {
-		return publicationRoleSchemas.oauth_client.safeParse(metadata);
+	static parsePublicationMetadata(metadata: unknown, options?: MetadataValidationOptions) {
+		return publicationRoleSchemas.oauth_client(options).safeParse(metadata);
 	}
 	/**
 	 * Discover a trusted authorization server and create an OAuth-profile automatic-registration
@@ -810,7 +776,7 @@ export class OAuthClientRole extends ClientRole {
 			readonly requestDelivery?: RequestDelivery;
 			readonly requestUri?: string;
 		},
-		options?: Omit<CreateAuthorizationRequestOptions, "engine">,
+		options?: BoundFederationOptions<CreateAuthorizationRequestOptions>,
 	): Promise<Result<AutomaticRegistrationResult>> {
 		return this.registerAutomatically(
 			{ ...params, serverEntityId: params.authorizationServerEntityId },
@@ -825,15 +791,15 @@ export class OAuthAuthorizationServerRole extends ProviderRole {
 	/**
 	 * Return a parse result for effective protocol metadata. Establish federation trust separately.
 	 */
-	static parseMetadata(metadata: unknown) {
-		return effectiveRoleSchemas.oauth_authorization_server.safeParse(metadata);
+	static parseMetadata(metadata: unknown, options?: MetadataValidationOptions) {
+		return effectiveRoleSchemas.oauth_authorization_server(options).safeParse(metadata);
 	}
 	/**
 	 * Return a parse result for supplied publication fields. A Superior may complete omitted
 	 * requirements; establish federation trust separately.
 	 */
-	static parsePublicationMetadata(metadata: unknown) {
-		return publicationRoleSchemas.oauth_authorization_server.safeParse(metadata);
+	static parsePublicationMetadata(metadata: unknown, options?: MetadataValidationOptions) {
+		return publicationRoleSchemas.oauth_authorization_server(options).safeParse(metadata);
 	}
 }
 
@@ -851,7 +817,9 @@ export class OAuthResourceRole implements EntityRole {
 	assessEntity(
 		target: string,
 		type: ProtocolEntityType,
-		options: Omit<EntityAssessmentOptions & { trustAnchors?: TrustAnchorSet }, "engine"> = {},
+		options: BoundFederationOptions<
+			EntityAssessmentOptions & { trustAnchors?: TrustAnchorSet }
+		> = {},
 	) {
 		return assessRoleEntity(target, type, this.config, this.context, options);
 	}
@@ -859,26 +827,29 @@ export class OAuthResourceRole implements EntityRole {
 	/**
 	 * Return a parse result for effective protocol metadata. Establish federation trust separately.
 	 */
-	static parseMetadata(metadata: unknown, options: { profile?: "federation" | "rfc9728" } = {}) {
+	static parseMetadata(
+		metadata: unknown,
+		options: MetadataValidationOptions & { profile?: "federation" | "rfc9728" } = {},
+	) {
 		return (
 			options.profile === "rfc9728"
-				? OAuthResourceDocumentMetadataSchema
-				: effectiveRoleSchemas.oauth_resource
+				? withMetadataJwkUse(OAuthResourceDocumentMetadataSchema, options)
+				: effectiveRoleSchemas.oauth_resource(options)
 		).safeParse(metadata);
 	}
 	/**
 	 * Return a parse result for supplied publication fields. A Superior may complete omitted
 	 * requirements; establish federation trust separately.
 	 */
-	static parsePublicationMetadata(metadata: unknown) {
-		return publicationRoleSchemas.oauth_resource.safeParse(metadata);
+	static parsePublicationMetadata(metadata: unknown, options?: MetadataValidationOptions) {
+		return publicationRoleSchemas.oauth_resource(options).safeParse(metadata);
 	}
 	/**
 	 * Validate composed resource publication metadata without requiring fields completed by a
 	 * Superior.
 	 */
-	validateMetadata(metadata: Readonly<Record<string, unknown>>): void {
-		assertPublicationMetadata(this.type, metadata);
+	validateMetadata(metadata: Readonly<Record<string, unknown>>, context?: EntityContext): void {
+		assertPublicationMetadata(this.type, metadata, context?.crypto);
 	}
 
 	public readonly type = "oauth_resource";
@@ -914,14 +885,14 @@ function assessRoleEntity(
 	type: ProtocolEntityType,
 	config: { readonly trustAnchors?: TrustAnchorSet; readonly options?: BoundFederationOptions },
 	context: EntityContext | undefined,
-	options: Omit<EntityAssessmentOptions, "engine"> & { trustAnchors?: TrustAnchorSet },
+	options: BoundFederationOptions<EntityAssessmentOptions> & { trustAnchors?: TrustAnchorSet },
 ) {
 	if (!context) throw new Error("Role has not been initialized");
 	return assessProtocolEntity(
 		target,
 		type,
 		options.trustAnchors ?? config.trustAnchors ?? context?.trustAnchors ?? new Map(),
-		bindFederationOptions(context.crypto, context.options, config.options, options),
+		bindFederationOptions(context, context.options, config.options, options),
 	);
 }
 
@@ -939,7 +910,7 @@ async function assessProtocolEntity(
 			: { ...options, ...protocolDiscoveryOptions(type, target, options) },
 	);
 	if (!assessed.ok) return assessed;
-	const metadata = effectiveMetadata(type, assessed.value.resolvedMetadata[type], target);
+	const metadata = effectiveMetadata(type, assessed.value.resolvedMetadata[type], target, options);
 	return metadata.ok ? assessed : metadata;
 }
 
@@ -955,7 +926,7 @@ function protocolDiscoveryOptions(
 			const eligible = chains.filter(
 				(chain) =>
 					chain.entityId !== target ||
-					effectiveMetadata(type, chain.resolvedMetadata[type], target).ok,
+					effectiveMetadata(type, chain.resolvedMetadata[type], target, options).ok,
 			);
 			if (!eligible.length) throw new Error("No chain supplies valid protocol metadata");
 			return (options.chainSelection ?? shortestChain)(eligible);

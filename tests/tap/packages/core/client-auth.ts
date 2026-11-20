@@ -10,6 +10,8 @@ import {
 } from "../../../../docs/examples/custom-crypto.js";
 import { fetchFederationEndpoint } from "../../../../packages/core/src/endpoint-client.js";
 import * as C from "../../../../packages/core/src/index.js";
+import { MemoryReplayStore } from "../../../../packages/core/src/storage/replay-memory.js";
+import { replayStorage } from "../../../storage-fixtures.js";
 import {
 	generateSigningKey,
 	instrumentSigningEntry,
@@ -529,7 +531,7 @@ export default (Q: QUnit) => {
 					...options,
 					audience: "https://server.example",
 					getAttester: () => C.ok({ jwks: { keys: [attester.publicKey] }, expiresAt: 1500 }),
-					replayStore: new C.MemoryReplayStore({ ...options, engine: testEngine }),
+					storage: replayStorage(new MemoryReplayStore({ ...options, engine: testEngine })),
 					acceptClient: () => true,
 				};
 				t.true((await C.authenticateClientAttestation(attestation.value, proof.value, config)).ok);

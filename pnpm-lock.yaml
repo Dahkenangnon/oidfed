@@ -425,7 +425,7 @@ importers:
         specifier: workspace:^
         version: link:../crypto
       zod:
-        specifier: 4.6.7
+        specifier: ^4.6.7
         version: 4.6.7
 
   packages/crypto:
@@ -439,9 +439,6 @@ importers:
       '@oidfed/core':
         specifier: workspace:^
         version: link:../core
-      '@oidfed/crypto':
-        specifier: workspace:^
-        version: link:../crypto
 
   packages/oidc:
     dependencies:
@@ -452,7 +449,7 @@ importers:
         specifier: workspace:^
         version: link:../crypto
       zod:
-        specifier: 4.6.7
+        specifier: ^4.6.7
         version: 4.6.7
 
   packages/wallet:
@@ -464,7 +461,7 @@ importers:
         specifier: workspace:^
         version: link:../crypto
       zod:
-        specifier: 4.6.7
+        specifier: ^4.6.7
         version: 4.6.7
 
   tools/cli:

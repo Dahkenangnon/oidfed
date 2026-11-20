@@ -1,7 +1,6 @@
 /** Parameter rules shared by base and Extended Subordinate Listing. */
 
-import { FederationErrorCode } from "@oidfed/core";
-import { errorResponse } from "./helpers.js";
+import { errorResponse, FederationErrorCode } from "@oidfed/core";
 
 /** Distinguish absence from an invalid boolean value. */
 export function parseBooleanQuery(value: string | null): boolean | null | undefined {

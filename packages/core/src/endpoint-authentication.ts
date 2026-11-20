@@ -14,8 +14,9 @@ import { err, type FederationError, ok, type Result } from "./errors.js";
 import { errorResponse, readBodyWithLimit, requireMethods } from "./http.js";
 import { verifyClientAssertion } from "./jose/client-auth.js";
 import { decodeEntityStatement } from "./jose/verify.js";
-import type { ReplayStore } from "./replay-store.js";
 import type { JWKSet } from "./schemas/jwk.js";
+import { requireReplayStorage } from "./storage/capabilities.js";
+import type { FederationStorage } from "./storage/contracts.js";
 import { type EntityId, entityId, type FederationOptions } from "./types.js";
 
 /** Controlled protocol response from a host authentication verifier. */
@@ -104,7 +105,6 @@ export interface EndpointAuthentication {
 export interface EndpointAuthenticationConfig {
 	readonly receiverEntityId: string;
 	readonly methods: readonly string[];
-	readonly replayStore?: ReplayStore;
 	readonly getClientFederationJwks?: (client: EntityId) => Promise<JWKSet | undefined>;
 	readonly allowedAlgorithms?: readonly string[];
 	readonly extensions?: EndpointAuthentication;
@@ -120,6 +120,7 @@ const invalid = (description: string) =>
 /** Validate and capture endpoint authentication configuration. Invalid configuration throws. */
 export function validateEndpointAuthentication(
 	config: EndpointAuthenticationConfig,
+	storage?: FederationStorage,
 ): EndpointAuthenticationConfig {
 	if (!config.methods.length) throw new TypeError("Endpoint auth methods must not be empty");
 	const entries = Object.entries(config.extensions?.methods ?? {}).map(([name, definition]) => {
@@ -168,11 +169,11 @@ export function validateEndpointAuthentication(
 	for (const name of config.methods)
 		if (name !== "none" && name !== "private_key_jwt" && !Object.hasOwn(methods, name))
 			throw new TypeError(`Unsupported endpoint auth method: '${name}'`);
-	if (
-		config.methods.includes("private_key_jwt") &&
-		(!config.replayStore || !config.getClientFederationJwks)
-	)
-		throw new TypeError("private_key_jwt requires replay storage and client keys");
+	if (config.methods.includes("private_key_jwt")) {
+		requireReplayStorage(storage, "private_key_jwt");
+		if (!config.getClientFederationJwks)
+			throw new TypeError("private_key_jwt requires client keys");
+	}
 	return { ...config, methods: [...config.methods], extensions: { ...config.extensions, methods } };
 }
 
@@ -264,7 +265,7 @@ export async function authenticateEndpointRequest(
 				(form.has("client_id") && form.get("client_id") !== issuer)
 			)
 				return invalid("client_id must match the client assertion issuer");
-			if (!config.getClientFederationJwks || !config.replayStore)
+			if (!config.getClientFederationJwks || !options.storage?.capabilities.includes("replay"))
 				return invalid("Client authentication is not configured");
 			const getKeys = config.getClientFederationJwks;
 			let keys: JWKSet | undefined;
@@ -282,7 +283,7 @@ export async function authenticateEndpointRequest(
 			if (!keys) return invalid("No federation keys found for client");
 			const checked = await verifyClientAssertion(jwt, keys, config.receiverEntityId, {
 				...federationJwsOptions(options),
-				replayStore: config.replayStore,
+				storage: options.storage,
 				...(config.allowedAlgorithms
 					? {
 							allowedAlgorithms: federationJwsOptions(options).allowedAlgorithms.filter(
@@ -350,7 +351,7 @@ export function createEndpointAuthenticatedHandler(
 	nativeMethod: "GET" | "POST" = "GET",
 	unorderedParameters: readonly string[] = [],
 ): (request: Request) => Promise<Response> {
-	const captured = validateEndpointAuthentication(config);
+	const captured = validateEndpointAuthentication(config, options.storage);
 	const allowsNone = captured.methods.includes("none");
 	const credentialNames = endpointCredentialParameterNames(captured.extensions);
 	const credentials = new Set(["client_id", "client_secret", ...credentialNames]);

@@ -2,7 +2,7 @@
 
 import { InternalErrorCode } from "../constants.js";
 import { err, federationError, ok, type Result } from "../errors.js";
-import { safeLogger } from "./../logging.js";
+import { safeLogger } from "../logging.js";
 import type {
 	DiscoveryResult,
 	EntityId,
@@ -12,8 +12,8 @@ import type {
 } from "../types.js";
 import { createTrustChainOperation } from "./operation.js";
 import { resolveTrustChains } from "./resolve.js";
-import { selectTrustChain } from "./selection.js";
-import { shortestChain, validateTrustChain } from "./validate.js";
+import { selectTrustChain, shortestChain } from "./selection.js";
+import { validateTrustChain } from "./validate.js";
 
 /**
  * Resolve and validate chains, then use options.chainSelection or the shortest valid chain.

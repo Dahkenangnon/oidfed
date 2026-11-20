@@ -10,23 +10,20 @@
  * signed subordinate_statement JWT for the same record.
  */
 
+import type { SubordinateRecord } from "@oidfed/core";
 import {
+	assertSubordinatePublicationClaims,
 	DEFAULT_ENTITY_STATEMENT_TTL_SECONDS,
-	decodeEntityStatement,
 	ExtendedListClaim,
-	JwtTyp,
+	isStoredTrustMarkEligible,
+	parseStoredTrustMark,
 	prepareEntityStatementExtensions,
 	preparePublicJwkSet,
 	setOwn,
-	TrustMarkRefSchema,
 } from "@oidfed/core";
-import type { SubordinateRecord } from "../storage/types.js";
-import {
-	assertSubordinatePublicationClaims,
-	subordinatePublicationClaim,
-} from "../utils/subordinate-publication.js";
 import type { HandlerContext } from "./context.js";
 import { buildSubordinateStatement } from "./fetch.js";
+import { subordinatePublicationClaim } from "./subordinate-claims.js";
 
 type ClaimExtractor = (
 	record: SubordinateRecord,
@@ -65,30 +62,18 @@ const EXTENDED_LIST_CLAIM_EXTRACTORS: Readonly<Record<string, ClaimExtractor>> =
 			: undefined,
 	[ExtendedListClaim.SourceEndpoint]: (record) => record.sourceEndpoint,
 	[ExtendedListClaim.TrustMarks]: async (record, ctx, now) => {
-		if (!ctx.storage.trustMarks) return [];
-		const marks = await ctx.storage.trustMarks.listValidForSubject(record.entityId, now);
-		return marks.map((mark) => {
-			// Federation §3.1.2 binds the reference type to the enclosed Trust Mark.
-			// This checks stored data consistency; ingestion establishes signature trust.
-			const ref = TrustMarkRefSchema.safeParse({
-				trust_mark_type: mark.trustMarkType,
-				trust_mark: mark.jwt,
+		const { trustMark, capabilities } = ctx.storage;
+		if (!trustMark || !capabilities.includes("trustMark:read")) return [];
+		const marks = await trustMark.forSubject(record.entityId, now);
+		const references = [];
+		for (const raw of marks) {
+			const mark = parseStoredTrustMark(raw, ctx.options, "forSubject", {
+				subject: record.entityId,
 			});
-			const decoded = ref.success
-				? decodeEntityStatement(ref.data.trust_mark, ctx.options)
-				: undefined;
-			if (
-				!ref.success ||
-				!decoded?.ok ||
-				decoded.value.header.typ !== JwtTyp.TrustMark ||
-				decoded.value.payload.trust_mark_type !== ref.data.trust_mark_type ||
-				(decoded.value.payload.sub as string) !== mark.subject ||
-				mark.subject !== record.entityId
-			) {
-				throw new Error("Invalid stored Trust Mark reference");
-			}
-			return ref.data;
-		});
+			if (isStoredTrustMarkEligible(mark, now, ctx.options))
+				references.push({ trust_mark_type: mark.trustMarkType, trust_mark: mark.jwt });
+		}
+		return references;
 	},
 };
 

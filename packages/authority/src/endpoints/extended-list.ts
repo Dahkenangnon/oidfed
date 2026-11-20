@@ -1,4 +1,6 @@
+import { fetchStoredSubordinate, listStoredSubordinates } from "@oidfed/core";
 import { utf8Encode } from "@oidfed/crypto";
+
 /**
  * HTTP handler for the Extended Subordinate Listing endpoint
  * (`federation_extended_list_endpoint`). Returns an ordered, paginated JSON
@@ -7,26 +9,28 @@ import { utf8Encode } from "@oidfed/crypto";
  * the Extended Subordinate Listing specification.
  */
 
+import type { ListFilter, ListPageOptions, SubordinateRecord } from "@oidfed/core";
 import {
 	DEFAULT_MAX_RESPONSE_BYTES,
 	type EntityId,
 	ExtendedListQuerySchema,
+	errorResponse,
 	FederationErrorCode,
-	isValidEntityId,
+	jsonResponse,
 	nowSeconds,
+	parseQueryParams,
+	requireMethod,
 	runAsyncOperation,
 	safeLogger,
 	setOwn,
 	waitForOperation,
 } from "@oidfed/core";
-import type { ListFilter, ListPageOptions, SubordinateRecord } from "../storage/types.js";
 import type { HandlerContext } from "./context.js";
 import { extractClaims } from "./extended-list-claims.js";
 import {
 	createExtendedListFilters,
 	type ExtendedListingRequestFilter,
 } from "./extended-list-filters.js";
-import { errorResponse, jsonResponse, parseQueryParams, requireMethod } from "./helpers.js";
 import { parseBooleanQuery, validateEntityTypes } from "./list-parameters.js";
 
 /** Configuration controlling Extended Listing; numeric limits must be positive safe integers. */
@@ -159,7 +163,10 @@ export function createExtendedListHandler(
 		}
 		const trustMarkTypes = params.getAll("trust_mark_type");
 
-		if ((trustMarkedRaw !== null || trustMarkTypes.length > 0) && !ctx.storage.trustMarks) {
+		if (
+			(trustMarkedRaw !== null || trustMarkTypes.length > 0) &&
+			!ctx.storage.capabilities.includes("trustMark:read")
+		) {
 			return errorResponse(
 				400,
 				FederationErrorCode.UnsupportedParameter,
@@ -263,7 +270,11 @@ export function createExtendedListHandler(
 					);
 				// The wire cursor is opaque to callers; this implementation uses the store bookmark.
 				if (from !== null) {
-					const cursorRecord = await ctx.storage.subordinates.get(from as EntityId);
+					const cursorRecord = await fetchStoredSubordinate(
+						ctx.storage.subordinate,
+						from as EntityId,
+						ctx.options,
+					);
 					if (!cursorRecord) {
 						return errorResponse(
 							404,
@@ -282,23 +293,13 @@ export function createExtendedListHandler(
 				while (accumulated.length < effectiveLimit && pagesFetched < maxStorePages) {
 					const opts: ListPageOptions = { limit: storeBatchSize, ...baseOpts };
 					if (storeCursor !== undefined) opts.cursor = storeCursor;
-					const page = await ctx.storage.subordinates.list(filter, opts);
+					const page = await listStoredSubordinates(
+						ctx.storage.subordinate,
+						filter,
+						opts,
+						ctx.options,
+					);
 					pagesFetched += 1;
-					if (
-						page.items.some((record) => !isValidEntityId(record.entityId)) ||
-						(page.nextCursor !== undefined && !isValidEntityId(page.nextCursor))
-					)
-						throw new Error("Invalid subordinate identifier from storage");
-					// Empty filtered pages can still have a continuation. Require progress
-					// so bounded scans cannot hand the client a repeating or backward cursor.
-					const lastStoreRecord = page.items[page.items.length - 1];
-					if (
-						page.nextCursor !== undefined &&
-						((storeCursor !== undefined && page.nextCursor <= storeCursor) ||
-							(lastStoreRecord !== undefined && page.nextCursor <= lastStoreRecord.entityId))
-					) {
-						throw new Error("Subordinate storage returned a nonadvancing cursor");
-					}
 
 					for (const record of page.items) {
 						if (accumulated.length >= effectiveLimit) break;

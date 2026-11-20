@@ -2,58 +2,30 @@
 
 import type { FederationError, Result, ValidatedTrustChain } from "@oidfed/core";
 
-/**
- * Optional context passed to adapter methods when the registration request
- * carried a `peer_trust_chain` JWS header. The peer chain provides the OP's
- * metadata/policy as the RP resolved it; the adapter MAY consult these
- * RP-chosen values when validating client metadata or constructing the
- * response.
- */
 export interface RegistrationProtocolAdapterContext {
-	/**
-	 * The OP's resolved metadata as derived from the validated peer chain
-	 * (validated by the federation handler before this is passed in). When
-	 * absent, no peer chain was supplied. Invalid peer chains fail registration.
-	 */
+	readonly flow: "explicit" | "automatic" | "par";
+	readonly clientMetadataType: "openid_relying_party" | "oauth_client";
+	/** Effective server metadata from a verified peer chain, when supplied. */
 	readonly peerResolvedOpMetadata?: Readonly<Record<string, unknown>>;
-	/** Cancellation for asynchronous host integrations, when supplied by the caller. */
+	/** Cancellation signal for the registration operation. */
 	readonly signal?: AbortSignal;
 }
 
-/**
- * Protocol-specific adapter for the federation registration endpoint.
- *
- * The handler validates resolved metadata for the selected OIDC or OAuth client role. An adapter adds profile
- * checks and response fields; its output must satisfy the federation policy.
- * Values governed by custom modifying operators retain their resolved value
- * or omission, so transformations are applied once.
- */
+/** Add host protocol checks and customize explicit registration responses. */
 export interface RegistrationProtocolAdapter {
 	/**
-	 * Validate resolved client metadata from the registration request.
-	 * Called after federation-layer validation succeeds.
-	 *
-	 * @param raw - Request metadata after superior overrides, constraints, and policy
-	 * @param context - Optional adapter context (peer chain metadata, etc.)
-	 * @returns The validated metadata or a federation error
+	 * Accept or reject the detached effective metadata after federation validation.
+	 * Use clientMetadataType to find the relevant client block.
 	 */
 	validateClientMetadata(
-		raw: Record<string, unknown>,
-		context?: RegistrationProtocolAdapterContext,
-	): Result<Record<string, unknown>, FederationError>;
+		metadata: Readonly<Record<string, Readonly<Record<string, unknown>>>>,
+		context: RegistrationProtocolAdapterContext,
+	): Result<void, FederationError>;
 
-	/**
-	 * Enrich the registration response metadata with protocol-specific fields.
-	 * Called before the response is signed and returned.
-	 *
-	 * @param rpMeta - The RP's resolved metadata
-	 * @param trustChain - The validated trust chain for the RP
-	 * @param context - Optional adapter context (peer chain metadata, etc.)
-	 * @returns The enriched metadata for the response
-	 */
-	enrichResponseMetadata(
-		rpMeta: Record<string, unknown>,
+	/** Customize the explicit response metadata before policy checks, signing, and persistence. */
+	enrichResponseMetadata?(
+		metadata: Record<string, Record<string, unknown>>,
 		trustChain: ValidatedTrustChain,
-		context?: RegistrationProtocolAdapterContext,
-	): Record<string, unknown>;
+		context: RegistrationProtocolAdapterContext & { readonly flow: "explicit" },
+	): Record<string, Record<string, unknown>>;
 }

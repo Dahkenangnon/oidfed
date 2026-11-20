@@ -5,8 +5,9 @@ import { DEFAULT_CLOCK_SKEW_SECONDS } from "../constants.js";
 import { err, type FederationError, ok, type Result } from "../errors.js";
 import type { JwsServiceOptions } from "../jws-service.js";
 import { JwsService } from "../jws-service.js";
-import type { ReplayStore } from "../replay-store.js";
 import type { JWKSet } from "../schemas/jwk.js";
+import { requireReplayStorage } from "../storage/capabilities.js";
+import type { FederationStorage } from "../storage/contracts.js";
 import { type Clock, InvalidClockError, nowSeconds } from "../types.js";
 
 export interface VerifiedClientAssertion {
@@ -26,7 +27,7 @@ export async function verifyClientAssertion(
 		clock?: Clock;
 		allowedAlgorithms?: readonly string[];
 		algorithmRegistry?: import("@oidfed/crypto").JwsAlgorithmRegistry | undefined;
-		replayStore?: ReplayStore;
+		storage?: FederationStorage | undefined;
 		signal?: AbortSignal;
 		httpTimeoutMs?: number;
 	},
@@ -99,9 +100,9 @@ export async function verifyClientAssertion(
 		if (payload.iat !== undefined && (!Number.isFinite(payload.iat) || payload.iat > now + skew)) {
 			return err({ code: "invalid_client", description: "Invalid client assertion issuance time" });
 		}
-		if (options?.replayStore) {
+		if (options.storage?.capabilities.includes("replay")) {
 			try {
-				const replayStore = options.replayStore;
+				const replayStore = requireReplayStorage(options.storage, "Client assertion");
 				const claim = {
 					issuer: payload.iss,
 					audience: expectedAudience,
@@ -109,7 +110,7 @@ export async function verifyClientAssertion(
 					expiresAt: payload.exp + skew,
 				};
 				const claimed = await runAsyncOperation(() => replayStore.useJti(claim), options);
-				if (!claimed)
+				if (claimed !== true)
 					return err({ code: "invalid_client", description: "Client assertion was already used" });
 			} catch (cause) {
 				return err({

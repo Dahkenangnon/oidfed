@@ -1,4 +1,11 @@
-import { entityId, isOk, JwtTyp, signEntityStatement, validateTrustMark } from "@oidfed/core";
+import {
+	assertStorageCapabilities,
+	entityId,
+	isOk,
+	JwtTyp,
+	signEntityStatement,
+	validateTrustMark,
+} from "@oidfed/core";
 import { describe, expect, it } from "vitest";
 import { SigningEntryFixture, testEngine } from "../../tap/fixtures/software-crypto.js";
 import { getAuthorityEntity } from "../helpers/launcher.js";
@@ -43,8 +50,9 @@ describe("Trust mark lifecycle", () => {
 			expect(isOk(validationResult)).toBe(true);
 
 			// Revoke via store
-			const trustMarks = taInstance.storage?.trustMarks;
-			if (!trustMarks) throw new Error("trust mark storage not found");
+			const { storage } = taInstance;
+			assertStorageCapabilities(storage, ["trustMark:write"]);
+			const trustMarks = storage.trustMark;
 			await trustMarks.revoke(trustMarkType(port), entityId(rpId), Math.floor(Date.now() / 1000));
 
 			// Re-check status — revoked (should return non-active directly)
@@ -64,8 +72,9 @@ describe("Trust mark lifecycle", () => {
 
 			// Issue and then revoke
 			const trustMarkJwt = await ta.issueTrustMark(rpId, trustMarkType(port));
-			const trustMarks = taInstance.storage?.trustMarks;
-			if (!trustMarks) throw new Error("trust mark storage not found");
+			const { storage } = taInstance;
+			assertStorageCapabilities(storage, ["trustMark:write"]);
+			const trustMarks = storage.trustMark;
 			await trustMarks.revoke(trustMarkType(port), entityId(rpId), Math.floor(Date.now() / 1000));
 
 			// Validate after revoke — the JWT signature is still valid but status is revoked
@@ -88,8 +97,9 @@ describe("Trust mark lifecycle", () => {
 
 			const taInstance = getAuthorityEntity(entities, "https://ta.ofed.test");
 			const ta = taInstance.server;
-			const trustMarks = taInstance.storage?.trustMarks;
-			if (!trustMarks) throw new Error("trust mark storage not found");
+			const { storage } = taInstance;
+			assertStorageCapabilities(storage, ["trustMark:write"]);
+			const trustMarks = storage.trustMark;
 
 			const rpId = `https://rp.ofed.test:${port}`;
 			const taId = `https://ta.ofed.test:${port}`;

@@ -3,12 +3,6 @@ import type { CompactSign, JWK as JoseJWK, JWTHeaderParameters, JWTPayload, Sign
 import type QUnit from "qunit";
 import { createConcurrencyLimiter } from "../../../packages/core/src/async-operation.js";
 import {
-	chainCacheKey,
-	ecCacheKey,
-	esCacheKey,
-	MemoryCache,
-} from "../../../packages/core/src/cache/index.js";
-import {
 	CachePrefix,
 	DEFAULT_ALLOWED_ALGORITHMS,
 	DEFAULT_CACHE_MAX_TTL_SECONDS,
@@ -49,17 +43,33 @@ import {
 	unwrapOr,
 } from "../../../packages/core/src/errors.js";
 import {
-	fetchExtendedSubordinatesList,
-	fetchHistoricalKeys,
-	fetchListSubordinates,
-	fetchResolveResponse,
-	fetchTrustMarkList,
 	selectHistoricalVerificationKey,
 	verifyHistoricalKeysResponse,
-	verifyResolveResponse,
-	verifySignedJwkSet,
-	verifyTrustMarkStatusResponse,
+} from "../../../packages/core/src/federation-api/historical-keys.js";
+import {
+	fetchExtendedSubordinatesList,
+	fetchHistoricalKeys,
+	fetchTrustMarkList,
 } from "../../../packages/core/src/federation-api/index.js";
+import {
+	fetchResolveResponse,
+	verifyResolveResponse,
+} from "../../../packages/core/src/federation-api/resolve.js";
+import { fetchListSubordinates } from "../../../packages/core/src/federation-api/subordinate-listing.js";
+import { verifyTrustMarkStatusResponse } from "../../../packages/core/src/federation-api/trust-mark-status.js";
+import { performFetch } from "../../../packages/core/src/http/fetch.js";
+import {
+	fetchFailure,
+	isAvailabilityFailure,
+} from "../../../packages/core/src/http/fetch-failure.js";
+import {
+	expandIPv6,
+	ipv4ToInt,
+	isSpecialUseIP,
+	isSpecialUseIPv4,
+	isSpecialUseIPv6,
+	validateFetchUrl,
+} from "../../../packages/core/src/http/fetch-url.js";
 import {
 	errorResponse,
 	extractRequestParams,
@@ -89,7 +99,6 @@ import {
 	type EntityCollectionSnapshot,
 	fetchEntityCollection,
 	fetchSubordinateEvents,
-	MemoryEntityCollectionStore,
 	SubordinateEventSchema,
 	SubordinateEventsResponseSchema,
 	verifySubordinateEventsResponse,
@@ -113,13 +122,10 @@ import {
 } from "../../../packages/core/src/jose/verify.js";
 import { fetchJwkSet } from "../../../packages/core/src/jwks/jwks-uri.js";
 import { resolveEntityKeys } from "../../../packages/core/src/jwks/resolve.js";
+import { verifySignedJwkSet } from "../../../packages/core/src/jwks/signed-jwk-set.js";
 import { fetchSignedJwkSet } from "../../../packages/core/src/jwks/signed-jwks-uri.js";
 import { validateSignedJwkSetSpecHygiene } from "../../../packages/core/src/jwks/spec-hygiene.js";
 import { validateJwkSetUseRequirement } from "../../../packages/core/src/jwks/use-requirement.js";
-import {
-	MemoryReplayStore,
-	ReplayStoreCapacityError,
-} from "../../../packages/core/src/memory-replay-store.js";
 import {
 	applyMetadataPolicy,
 	denormalizeScope,
@@ -133,14 +139,16 @@ import {
 	NamingConstraintsSchema,
 	TrustChainConstraintsSchema,
 } from "../../../packages/core/src/schemas/constraints.js";
+import {
+	HistoricalKeyEntrySchema,
+	HistoricalKeysPayloadSchema,
+} from "../../../packages/core/src/schemas/endpoints.js";
 import { EntityIdSchema } from "../../../packages/core/src/schemas/entity-id.js";
 import type { EntityStatementPayload } from "../../../packages/core/src/schemas/entity-statement.js";
 import {
 	BaseEntityStatementSchema,
 	EntityConfigurationSchema,
 	EntityIdSchema as EntityStatementEntityIdSchema,
-	HistoricalKeyEntrySchema,
-	HistoricalKeysPayloadSchema,
 	SubordinateStatementSchema,
 } from "../../../packages/core/src/schemas/entity-statement.js";
 import {
@@ -168,35 +176,37 @@ import {
 	TrustMarkPayloadSchema,
 	TrustMarkRefSchema,
 } from "../../../packages/core/src/schemas/trust-mark.js";
+import {
+	chainCacheKey,
+	ecCacheKey,
+	esCacheKey,
+	MemoryCache,
+} from "../../../packages/core/src/storage/cache.js";
+import { MemoryEntityCollectionStore } from "../../../packages/core/src/storage/collection-memory.js";
+import {
+	MemoryReplayStore,
+	ReplayStoreCapacityError,
+} from "../../../packages/core/src/storage/replay-memory.js";
 import { compareTrustAnchorKeys } from "../../../packages/core/src/trust-chain/anchor-keys.js";
 import { discoverEntity } from "../../../packages/core/src/trust-chain/discovery.js";
 import {
-	expandIPv6,
 	fetchEntityConfiguration,
 	fetchSubordinateStatement,
-	ipv4ToInt,
-	isSpecialUseIP,
-	isSpecialUseIPv4,
-	isSpecialUseIPv6,
-	performFetch,
 	validateEntityId,
-	validateFetchUrl,
 } from "../../../packages/core/src/trust-chain/fetch.js";
-import {
-	fetchFailure,
-	isAvailabilityFailure,
-} from "../../../packages/core/src/trust-chain/fetch-failure.js";
 import { resolveTrustChainForAnchor } from "../../../packages/core/src/trust-chain/peer.js";
 import { refreshTrustChain } from "../../../packages/core/src/trust-chain/refresh.js";
 import { resolveTrustChains } from "../../../packages/core/src/trust-chain/resolve.js";
+import {
+	longestExpiry,
+	preferTrustAnchor,
+	shortestChain,
+} from "../../../packages/core/src/trust-chain/selection.js";
 import {
 	calculateChainExpiration,
 	chainRemainingTtl,
 	describeTrustChain,
 	isChainExpired,
-	longestExpiry,
-	preferTrustAnchor,
-	shortestChain,
 	validateEntityConfigurationPublication,
 	validateTrustChain,
 	validateTrustChainStructure,
@@ -207,9 +217,9 @@ import {
 	fetchTrustMarkStatus,
 	signTrustMark,
 	signTrustMarkDelegation,
-	validateTrustMark,
 	validateTrustMarkLogo,
 } from "../../../packages/core/src/trust-marks/index.js";
+import { validateTrustMark } from "../../../packages/core/src/trust-marks/validate.js";
 import type {
 	Clock,
 	EntityId,
@@ -220,6 +230,12 @@ import type {
 	ValidatedTrustChain,
 } from "../../../packages/core/src/types.js";
 import { entityId, isValidEntityId } from "../../../packages/core/src/types.js";
+import {
+	cacheStorage,
+	collectionOptions,
+	memoryStorage,
+	replayStorage,
+} from "../../storage-fixtures.js";
 import {
 	type CollectionGraphEdge,
 	createCollectionFederation,
@@ -517,7 +533,7 @@ export default (QUnit: QUnit) => {
 				(
 					await CorePublic.discoverEntity(f.ids.subject, f.anchors, {
 						...f.options,
-						cache,
+						storage: cacheStorage(cache),
 					})
 				).ok,
 			);
@@ -534,7 +550,7 @@ export default (QUnit: QUnit) => {
 				(
 					await CorePublic.discoverEntity(f.ids.subject, f.anchors, {
 						...options,
-						cache,
+						storage: cacheStorage(cache),
 					})
 				).ok,
 			);
@@ -565,7 +581,7 @@ export default (QUnit: QUnit) => {
 				(
 					await CorePublic.resolveTrustChainForAnchor(f.ids.subject, f.ids.anchor, f.anchors, {
 						...options,
-						cache,
+						storage: cacheStorage(cache),
 					})
 				).ok,
 			);
@@ -618,7 +634,7 @@ export default (QUnit: QUnit) => {
 				entityId: f.ids.anchor,
 				trustAnchors: f.anchors,
 				crypto,
-				cache,
+				storage: cacheStorage(cache),
 				options: {
 					...f.options,
 					maxAuthorityHints: 1,
@@ -2181,14 +2197,17 @@ export default (QUnit: QUnit) => {
 					{
 						receiverEntityId: issuer,
 						methods: ["none", "private_key_jwt"],
-						replayStore: new c.MemoryReplayStore({ engine: testEngine, clock: f.clock }),
 						getClientFederationJwks: async () => ({ keys: [f.clientKey.publicKey] }),
 					},
 					async (request) => {
 						t.deepEqual(new URL(request.url).searchParams.getAll(client.name), fixed);
 						return new Response(client.body, { headers: { "content-type": client.media } });
 					},
-					{ engine: testEngine, clock: f.clock },
+					{
+						engine: testEngine,
+						clock: f.clock,
+						storage: replayStorage(new MemoryReplayStore({ engine: testEngine, clock: f.clock })),
+					},
 				);
 				const base: CorePublic.FederationOptions = {
 					engine: testEngine,
@@ -2276,9 +2295,9 @@ export default (QUnit: QUnit) => {
 				const endpoint = `https://collection.example/collect?${fixed}`;
 				const service = new c.EntityCollectionService({
 					trustAnchors: f.trustAnchors,
-					store: f.store,
+
 					endpoint,
-					options: { engine: testEngine, clock: f.clock },
+					options: collectionOptions({ engine: testEngine, clock: f.clock }, f.store),
 					responder: { entityId: EntityCollectionFixture.anchor, isTrustAnchor: true },
 				});
 				for (const method of ["GET", "POST"] as const) {
@@ -2319,9 +2338,9 @@ export default (QUnit: QUnit) => {
 			}
 			const service = new c.EntityCollectionService({
 				trustAnchors: f.trustAnchors,
-				store: f.store,
+
 				endpoint: "https://collection.example/collect?limit=10",
-				options: { engine: testEngine, clock: f.clock },
+				options: collectionOptions({ engine: testEngine, clock: f.clock }, f.store),
 				responder: { entityId: EntityCollectionFixture.anchor, isTrustAnchor: true },
 			});
 			for (const method of ["GET", "POST"] as const) {
@@ -2425,10 +2444,10 @@ export default (QUnit: QUnit) => {
 				});
 				t.equal(result.ok, status === 200);
 			}
-			const cache = new c.MemoryCache({ clock: f.clock });
+			const cache = new MemoryCache({ clock: f.clock });
 			let calls = 0;
 			const options = {
-				cache,
+				storage: cacheStorage(cache),
 				issuer: SubordinateEventsFixture.issuer,
 				clock: f.clock,
 				httpClient: async () => {
@@ -2462,9 +2481,9 @@ export default (QUnit: QUnit) => {
 			const endpoint = "https://collection.example/collect?tenant=academic&entity_type=custom_type";
 			const service = new c.EntityCollectionService({
 				trustAnchors: f.trustAnchors,
-				store: f.store,
+
 				endpoint,
-				options: { engine: testEngine, clock: f.clock },
+				options: collectionOptions({ engine: testEngine, clock: f.clock }, f.store),
 				responder: { entityId: EntityCollectionFixture.anchor, isTrustAnchor: true },
 			});
 			const httpClient: HttpClient = async (url, init) =>
@@ -2573,7 +2592,7 @@ export default (QUnit: QUnit) => {
 						pending = false,
 						policyCalls = 0;
 					const clock = { now: () => now },
-						storage = new c.MemoryTrustMarkStore();
+						storage = memoryStorage({ trustMarks: true });
 					const delegation = delegated
 						? await c.signTrustMarkDelegation({
 								issuer,
@@ -2685,7 +2704,7 @@ export default (QUnit: QUnit) => {
 				reads = 0;
 			const service = new c.TrustMarkIssuerService({
 				issuer,
-				storage: new c.MemoryTrustMarkStore(),
+				storage: memoryStorage({ trustMarks: true }),
 				options: { engine: testEngine, clock: { now: () => 1000 } },
 				crypto: fixtureCryptoFromRead(async () => {
 					const selected = pending && ++reads >= 3 ? replacement : key;
@@ -2946,7 +2965,7 @@ export default (QUnit: QUnit) => {
 		test("concurrent reuse, renewal, revocation and detached records share one eligibility service", async (t) => {
 			let now = 1000;
 			const key = await generateSigningKey("ES256");
-			const storage = new CorePublic.MemoryTrustMarkStore();
+			const storage = memoryStorage({ trustMarks: true });
 			const service = new CorePublic.TrustMarkIssuerService({
 				issuer: "https://issuer.example",
 				storage,
@@ -3006,7 +3025,7 @@ export default (QUnit: QUnit) => {
 					ttlSeconds,
 				});
 			const long = await delegation(100),
-				storage = new CorePublic.MemoryTrustMarkStore();
+				storage = memoryStorage({ trustMarks: true });
 			const service = new CorePublic.TrustMarkIssuerService({
 				issuer,
 				storage,
@@ -3034,7 +3053,17 @@ export default (QUnit: QUnit) => {
 		test("failed signer, status hooks and unregistered profile cannot create valid records", async (t) => {
 			const key = await generateSigningKey("ES256"),
 				wrong = await generateSigningKey("ES256");
-			const storage = new CorePublic.MemoryTrustMarkStore(),
+			const profiles: CorePublic.TrustMarkProfile[] = [
+				{
+					typ: "example-mark+jwt",
+					trustMarkTypes: ["type"],
+					validateClaims: (claims: Readonly<Record<string, unknown>>) =>
+						claims.approved === true
+							? ok(undefined)
+							: err({ code: "invalid_request", description: "missing approval" }),
+				},
+			];
+			const storage = memoryStorage({ trustMarks: true, trustMarkProfiles: profiles }),
 				issuer = "https://issuer.example",
 				subject = "https://holder.example";
 			const base = {
@@ -3061,17 +3090,7 @@ export default (QUnit: QUnit) => {
 				options: { engine: testEngine },
 			});
 			await t.rejects(wrongSigner.issueTrustMark(subject, "type"));
-			t.equal((await storage.trustMarks.listCandidates({ issuer })).length, 0);
-			const profiles: CorePublic.TrustMarkProfile[] = [
-				{
-					typ: "example-mark+jwt",
-					trustMarkTypes: ["type"],
-					validateClaims: (claims: Readonly<Record<string, unknown>>) =>
-						claims.approved === true
-							? ok(undefined)
-							: err({ code: "invalid_request", description: "missing approval" }),
-				},
-			];
+			t.equal((await storage.trustMark!.candidates({ issuer })).length, 0);
 			const service = new CorePublic.TrustMarkIssuerService({
 				...base,
 				options: { engine: testEngine, trustMarkProfiles: profiles },
@@ -4171,7 +4190,7 @@ export default (QUnit: QUnit) => {
 			const notices: string[] = [];
 			const service = new CorePublic.EntityCollectionService({
 				trustAnchors: new Map(),
-				options: {
+				options: collectionOptions({
 					engine: testEngine,
 					logger: {
 						debug() {},
@@ -4181,7 +4200,7 @@ export default (QUnit: QUnit) => {
 							notices.push(message);
 						},
 					},
-				},
+				}),
 			});
 			const response = await service.handleRequest(
 				new Request("https://collection.example/collect"),
@@ -4230,7 +4249,7 @@ export default (QUnit: QUnit) => {
 						};
 						const options = {
 							clock,
-							cache,
+							storage: cacheStorage(cache),
 							logger,
 							issuer: TA_ID,
 							httpClient: async () =>
@@ -4812,7 +4831,6 @@ export default (QUnit: QUnit) => {
 	});
 
 	test("replay records have bounded keys and claim identifiers atomically", async (t) => {
-		const { MemoryReplayStore } = await import("../../../packages/core/src/index.js");
 		let time = 100;
 		const store = new MemoryReplayStore({
 			engine: testEngine,
@@ -4869,7 +4887,7 @@ export default (QUnit: QUnit) => {
 		const infoClaims = ["display_name#v2", "description#long"];
 		const svc = new EntityCollectionService({
 			trustAnchors: f.anchors,
-			options: { engine: testEngine, clock: f.clock },
+			options: collectionOptions({ engine: testEngine, clock: f.clock }),
 			infoClaims,
 			defaultInfoClaims: ["display_name#v2"],
 			collector: async () =>
@@ -4929,12 +4947,12 @@ export default (QUnit: QUnit) => {
 				new EntityCollectionService({
 					trustAnchors: f.anchors,
 					defaultInfoClaims: ["unsupported"],
-					options: { engine: testEngine },
+					options: collectionOptions({ engine: testEngine }),
 				}),
 		);
 		const bad = new EntityCollectionService({
 			trustAnchors: f.anchors,
-			options: { engine: testEngine, clock: f.clock },
+			options: collectionOptions({ engine: testEngine, clock: f.clock }),
 			collector: async () =>
 				ok([
 					{
@@ -5011,7 +5029,7 @@ export default (QUnit: QUnit) => {
 	});
 	test("historical keys retain extensions and reject private material", async (t) => {
 		const { HistoricalKeysPayloadSchema } = await import(
-			"../../../packages/core/src/schemas/entity-statement.js"
+			"../../../packages/core/src/schemas/endpoints.js"
 		);
 
 		const key = await generateSigningKey();
@@ -5423,20 +5441,20 @@ export default (QUnit: QUnit) => {
 			});
 			const service = new EntityCollectionService({
 				trustAnchors: f.anchors,
-				store,
-				options: { engine: testEngine, clock: f.clock },
+
+				options: collectionOptions({ engine: testEngine, clock: f.clock }, store),
 				cursorTtlSeconds: 10,
 			});
 			const first = await service.query({ trustAnchor: f.ids.anchor, limit: 1 });
 			if (!first.ok || !first.value.next) throw new Error("fixture");
 			const from = first.value.next;
-			const before = await store.getCursor(from);
+			const before = await store.cursor(from);
 			for (let i = 0; i < 4; i++) {
 				const empty = await service.query({ trustAnchor: f.ids.anchor, limit: 0, from });
 				t.true(empty.ok);
 				if (empty.ok) t.equal(empty.value.next, from);
 			}
-			t.deepEqual(await store.getCursor(from), before);
+			t.deepEqual(await store.cursor(from), before);
 			t.true((await service.query({ trustAnchor: f.ids.anchor, limit: 0 })).ok);
 			const full = await service.handleRequest(
 				new Request(`https://collection.example?trust_anchor=${f.ids.anchor}&limit=0`),
@@ -6156,7 +6174,7 @@ export default (QUnit: QUnit) => {
 							httpClient: graph.httpClient,
 							maxConcurrentFetches: concurrent,
 							maxTotalFetches: count,
-							...(cached ? { cache: new CorePublic.MemoryCache({ clock }) } : {}),
+							...(cached ? { storage: cacheStorage(new MemoryCache({ clock })) } : {}),
 						};
 						const result = await resolveTrustChains(graph.id("leaf"), graph.trustAnchors, {
 							...options,
@@ -6187,8 +6205,8 @@ export default (QUnit: QUnit) => {
 		});
 		test("warm cache and supplied subject statements consume no network budget", async (t) => {
 			const graph = await createCollectionFederation({ edges: converging });
-			const cache = new CorePublic.MemoryCache({ clock });
-			const options = { clock, cache, httpClient: graph.httpClient };
+			const cache = new MemoryCache({ clock });
+			const options = { clock, storage: cacheStorage(cache), httpClient: graph.httpClient };
 			t.equal(
 				(
 					await resolveTrustChains(graph.id("leaf"), graph.trustAnchors, {
@@ -6338,8 +6356,8 @@ export default (QUnit: QUnit) => {
 					{ issuer: "a", subject: "leaf" },
 				],
 			});
-			const cache = new CorePublic.MemoryCache({ clock });
-			const options = { clock, cache, httpClient: graph.httpClient };
+			const cache = new MemoryCache({ clock });
+			const options = { clock, storage: cacheStorage(cache), httpClient: graph.httpClient };
 			await resolveTrustChains(graph.id("leaf"), graph.trustAnchors, {
 				...options,
 				engine: testEngine,
@@ -6373,7 +6391,7 @@ export default (QUnit: QUnit) => {
 					() =>
 						new CorePublic.EntityCollectionService({
 							trustAnchors: graph.trustAnchors,
-							options: { engine: testEngine, maxResolutionSteps: value },
+							options: collectionOptions({ engine: testEngine, maxResolutionSteps: value }),
 						}),
 				);
 			}
@@ -6485,7 +6503,12 @@ export default (QUnit: QUnit) => {
 			let marked = false;
 			const service = new CorePublic.EntityCollectionService({
 				trustAnchors: graph.trustAnchors,
-				options: { engine: testEngine, clock, httpClient: graph.httpClient, maxResolutionSteps: 1 },
+				options: collectionOptions({
+					engine: testEngine,
+					clock,
+					httpClient: graph.httpClient,
+					maxResolutionSteps: 1,
+				}),
 				collector: async () =>
 					CorePublic.ok([
 						{
@@ -6498,11 +6521,11 @@ export default (QUnit: QUnit) => {
 					]),
 			});
 			t.true((await service.refresh(graph.id("ta"))).ok);
-			const previous = await service.store.getCurrent(graph.id("ta"));
+			const previous = await service.store.current(graph.id("ta"));
 			t.ok(previous);
 			marked = true;
 			t.false((await service.refresh(graph.id("ta"))).ok);
-			t.deepEqual(await service.store.getCurrent(graph.id("ta")), previous);
+			t.deepEqual(await service.store.current(graph.id("ta")), previous);
 		});
 	});
 	module("core / anchor self-signature", () => {
@@ -6943,7 +6966,7 @@ export default (QUnit: QUnit) => {
 			const options = {
 				...f.options,
 				entityConfigurations: undefined,
-				cache: new MemoryCache({ clock: f.options.clock }),
+				storage: cacheStorage(new MemoryCache({ clock: f.options.clock })),
 				httpClient: async (input: string | URL | Request) => {
 					const url = String(input);
 					requests.push(url);
@@ -8845,6 +8868,46 @@ export default (QUnit: QUnit) => {
 
 	// ── schemas/entity-id ─────────────────────────────────────────────
 	module("core / schemas/entity-id", () => {
+		test("the constructor and both schemas preserve valid identifiers exactly", (t) => {
+			const prefix = "https://entity.example/";
+			for (const value of [
+				"https://entity.example/",
+				"HTTPS://Entity.Example:443/tenant%2fpath/%23%3F/",
+				"https://entity.example/δοκιμή/資料/😀",
+				prefix + "界".repeat(2048 - prefix.length),
+			]) {
+				t.true(CorePublic.isValidEntityId(value));
+				t.strictEqual(entityId(value), value);
+				t.strictEqual(EntityIdSchema.parse(value), value);
+				t.strictEqual(CorePublic.StorageEntityIdSchema.parse(value), value);
+			}
+		});
+
+		test("all identifier validators reject inputs that would require URL repair", (t) => {
+			for (const value of [
+				" https://entity.example/",
+				"https://entity.example/ ",
+				"https://entity.example/a\tb",
+				"https://entity.example/a\nb",
+				"https://entity.example/a b",
+				"https://entity.example/a\0b",
+				"https://entity.example/a\uD800b",
+				"https://entity.example/a\\b",
+				"https:entity.example/",
+				"https:///entity.example/",
+				"https://@entity.example/",
+				"https://:443/",
+				"https://entity.example/?",
+				"https://entity.example/#",
+				`https://entity.example/${"界".repeat(2048)}`,
+			]) {
+				t.false(CorePublic.isValidEntityId(value));
+				t.false(EntityIdSchema.safeParse(value).success);
+				t.false(CorePublic.StorageEntityIdSchema.safeParse(value).success);
+				t.throws(() => entityId(value), TypeError);
+			}
+		});
+
 		test("accepts valid HTTPS entity ID", (t) => {
 			t.true(EntityIdSchema.safeParse("https://example.com").success);
 		});
@@ -10488,6 +10551,57 @@ export default (QUnit: QUnit) => {
 				}
 			});
 
+			test("reuses an empty Resolve assessment for an anonymous request", async (t) => {
+				const fed = await createMockFederation({ leafMetadata: { custom_entity: {} } });
+				const statement = decodeEntityStatement(fed.taSubStatementForLeaf);
+				if (!statement.ok) throw new Error("Invalid fixture");
+				const constrained = await signEntityStatement(
+					{ ...statement.value.payload, constraints: { allowed_entity_types: [] } },
+					new SigningEntryFixture(fed.taSigningKey),
+					{ typ: JwtTyp.EntityStatement },
+				);
+				const issuer = statement.value.payload.iss;
+				const subject = statement.value.payload.sub;
+				let calls = 0;
+				const service = new CorePublic.FederationResolverService({
+					entityId: issuer,
+					trustAnchors: fed.trustAnchors,
+					crypto: FixtureCrypto.fromJWK(fed.taSigningKey),
+					options: {
+						...fed.options,
+						httpClient: async (input) => {
+							calls++;
+							const url = new URL(input instanceof Request ? input.url : String(input));
+							return url.pathname === "/federation_fetch" && url.searchParams.get("sub") === subject
+								? new Response(constrained, {
+										headers: { "Content-Type": MediaType.EntityStatement },
+									})
+								: fed.httpClient(input);
+						},
+					},
+				});
+				const request = new Request(
+					`${issuer}/resolve?sub=${encodeURIComponent(subject)}&trust_anchor=${encodeURIComponent(issuer)}`,
+				);
+				const fresh = await service.resolve(request);
+				t.equal(fresh.status, 200);
+				const after = calls;
+				const cached = await service.handleRequest(request);
+				t.equal(cached.status, 200);
+				t.equal(calls, after, "cache reuse performs no discovery");
+				const result = await verifyResolveResponse(
+					await cached.text(),
+					{ keys: [fed.taPublicKey] },
+					{
+						engine: testEngine,
+						expectedIssuer: issuer,
+						expectedSubject: subject,
+					},
+				);
+				t.true(result.ok);
+				if (result.ok) t.deepEqual(result.value.metadata, {});
+			});
+
 			test("rejects invalid federation metadata in signed overrides and resolved policies", async (t) => {
 				const fed = await createMockFederation({ leafMetadata: { federation_entity: {} } });
 				const decoded = decodeEntityStatement(fed.taSubStatementForLeaf);
@@ -11638,14 +11752,14 @@ export default (QUnit: QUnit) => {
 						engine: testEngine,
 						clock: { now: () => now },
 						clockSkewSeconds: 5,
-						replayStore: {
+						storage: replayStorage({
 							async useJti(claim) {
 								calls++;
 								t.equal(claim.expiresAt, exp + 5);
 								now = exp + offset;
 								return true;
 							},
-						},
+						}),
 					});
 					t.equal(calls, 1);
 					t.equal(result.ok, offset < 5);
@@ -17093,7 +17207,7 @@ export default (QUnit: QUnit) => {
 				const options: CorePublic.FederationOptions = {
 					engine: testEngine,
 					clock,
-					cache,
+					storage: cacheStorage(cache),
 					clockSkewSeconds: 0,
 					httpClient: async (input) => {
 						const url = String(input);
@@ -17121,7 +17235,7 @@ export default (QUnit: QUnit) => {
 				return {
 					clock,
 					options,
-					cache,
+					storage: cacheStorage(cache),
 					anchors,
 					chain: validated.chain,
 					documents,
@@ -17187,13 +17301,13 @@ export default (QUnit: QUnit) => {
 						(options as CorePublic.FederationOptions).clock?.now(),
 						conflicting ? rf_now : undefined,
 					);
-					t.equal(options.cache, f.cache);
+					t.equal(options.storage?.cache, f.storage?.cache);
 				}
 			});
 			test("forced refresh retrieves changed metadata and rollover keys through a warm cache", async (t) => {
 				const f = await refreshFixture();
-				await f.cache.set("application:unrelated", "keep", 500);
-				await f.cache.set("ec:unrelated", "keep too", 500);
+				await f.storage!.cache!.set("application:unrelated", "keep", 500);
+				await f.storage!.cache!.set("ec:unrelated", "keep too", 500);
 				f.reads.length = 0;
 				f.writes.length = 0;
 				await f.publish("After", 600, true);
@@ -17209,13 +17323,13 @@ export default (QUnit: QUnit) => {
 				t.equal(f.writes.length, 3, "fresh statements write through once");
 				t.true(f.writes.every(({ ttl }) => ttl === 600));
 				t.deepEqual(f.lifecycle(), { clears: 0, disposals: 0 });
-				t.equal(await f.cache.get("application:unrelated"), "keep");
-				t.equal(await f.cache.get("ec:unrelated"), "keep too");
+				t.equal(await f.storage!.cache!.get("application:unrelated"), "keep");
+				t.equal(await f.storage!.cache!.get("ec:unrelated"), "keep too");
 				f.requests.length = 0;
 				const cached = await fetchEntityConfiguration(f.leaf, f.options);
 				t.true(cached.ok && cached.value === f.documents.get(f.leafUrl));
 				t.equal(f.requests.length, 0, "later operations can reuse the refreshed entry");
-				t.equal(options.cache, f.cache);
+				t.equal(options.storage?.cache, f.storage?.cache);
 			});
 			test("forced operations each retrieve their own statements even with a shared cache", async (t) => {
 				const f = await refreshFixture();
@@ -18855,14 +18969,14 @@ export default (QUnit: QUnit) => {
 			const r1 = await fetchEntityConfiguration("https://example.com" as EntityId, {
 				engine: testEngine,
 				httpClient: mockFetch,
-				cache,
+				storage: cacheStorage(cache),
 			});
 			t.true(isOk(r1));
 			t.equal(callCount, 1);
 			const r2 = await fetchEntityConfiguration("https://example.com" as EntityId, {
 				engine: testEngine,
 				httpClient: mockFetch,
-				cache,
+				storage: cacheStorage(cache),
 			});
 			t.true(isOk(r2));
 			t.equal(callCount, 1);
@@ -24028,10 +24142,11 @@ export default (QUnit: QUnit) => {
 								snapshot.entries[0]!.entity.entity_infos!.openid_provider as Record<string, unknown>
 							).display_name = 17;
 						else snapshot.lastUpdated = NaN;
-						await f.store.publish(snapshot);
+						await assert.rejects(f.store.publish(snapshot), /Invalid collectionSnapshot/);
+						f.store.current = async () => snapshot;
 						let cursors = 0;
-						const allocate = f.store.putCursor.bind(f.store);
-						f.store.putCursor = async (...args) => {
+						const allocate = f.store.saveCursor.bind(f.store);
+						f.store.saveCursor = async (...args) => {
 							cursors++;
 							return allocate(...args);
 						};
@@ -24039,11 +24154,7 @@ export default (QUnit: QUnit) => {
 						assert.false(result.ok);
 						if (!result.ok) assert.equal(result.error.code, "server_error");
 						assert.equal(cursors, 0);
-						if (invalid === "claim")
-							assert.true(
-								(await f.service.query({ entityClaims: [] })).ok,
-								"unselected malformed optional data does not prevent valid output",
-							);
+						assert.false((await f.service.query({ entityClaims: [] })).ok);
 					}
 					for (const body of [
 						"not-json",
@@ -24103,7 +24214,7 @@ export default (QUnit: QUnit) => {
 					store.publish({ ...f.snapshot, id: "other", trustAnchor: other }),
 					/capacity 1.*current anchors.*maxSnapshots/,
 				);
-				assert.ok(await store.getCurrent(anchor));
+				assert.ok(await store.current(anchor));
 			});
 
 			QUnit.test("metadata and extensible schemas enforce wire types", (assert) => {
@@ -24153,16 +24264,16 @@ export default (QUnit: QUnit) => {
 					const f = await seed();
 					const standalone = new EntityCollectionService({
 						trustAnchors: f.trustAnchors,
-						store: f.store,
-						options: { engine: testEngine, clock: f.clock },
+
+						options: collectionOptions({ engine: testEngine, clock: f.clock }, f.store),
 					});
 					assert.false((await standalone.query()).ok);
 					assert.equal((await query(standalone, { trustAnchor: anchor })).entities.length, 3);
 					const identified = new EntityCollectionService({
 						trustAnchors: f.trustAnchors,
-						store: f.store,
+
 						responder: { entityId: leafId, isTrustAnchor: false },
-						options: { engine: testEngine },
+						options: collectionOptions({ engine: testEngine }, f.store),
 					});
 					assert.deepEqual(await query(identified), { entities: [] });
 					assert.equal((await query(f.service)).entities.length, 2);
@@ -24383,10 +24494,14 @@ export default (QUnit: QUnit) => {
 					const f = await seed();
 					const service = new EntityCollectionService({
 						trustAnchors: f.trustAnchors,
-						store: f.store,
+
 						endpoint,
 						responder: { entityId: anchor, isTrustAnchor: true },
-						options: { engine: testEngine, clock: f.clock },
+						options: collectionOptions(
+							{ engine: testEngine, clock: f.clock },
+							f.store,
+							new MemoryReplayStore({ engine: testEngine, clock: f.clock }),
+						),
 						authentication: {
 							methods: ["none", "private_key_jwt"],
 							receiverEntityId: anchor,
@@ -24555,23 +24670,26 @@ export default (QUnit: QUnit) => {
 				async (assert) => {
 					const f = await federation();
 					assert.true((await f.root.collection!.refresh(anchor)).ok);
-					const before = await f.root.collection!.store.getCurrent(anchor);
+					const before = await f.root.collection!.store.current(anchor);
 					f.fail("middle.example");
 					assert.false((await f.root.collection!.refresh(anchor)).ok);
-					assert.deepEqual(await f.root.collection!.store.getCurrent(anchor), before);
+					assert.deepEqual(await f.root.collection!.store.current(anchor), before);
 					const controller = new AbortController();
 					controller.abort();
 					assert.false(
 						(await f.root.collection!.refresh(anchor, { signal: controller.signal })).ok,
 					);
-					assert.deepEqual(await f.root.collection!.store.getCurrent(anchor), before);
+					assert.deepEqual(await f.root.collection!.store.current(anchor), before);
 					const limited = new EntityCollectionService({
 						...f.collection,
-						store: f.root.collection!.store,
-						options: { ...f.collection.options, maxTotalFetches: 1 },
+
+						options: collectionOptions(
+							{ ...f.collection.options, maxTotalFetches: 1 },
+							f.root.collection!.store,
+						),
 					});
 					assert.false((await limited.refresh(anchor)).ok);
-					assert.deepEqual(await f.root.collection!.store.getCurrent(anchor), before);
+					assert.deepEqual(await f.root.collection!.store.current(anchor), before);
 				},
 			);
 
@@ -24614,7 +24732,7 @@ export default (QUnit: QUnit) => {
 				"cycles terminate and invalid attestations cannot introduce entities",
 				async (assert) => {
 					const f = await federation();
-					await f.middleStorage.subordinates.add({
+					await f.middleStorage.subordinate.register({
 						entityId: anchor,
 						jwks: { keys: [f.rootKey.publicKey] },
 						createdAt: now,
@@ -24622,16 +24740,24 @@ export default (QUnit: QUnit) => {
 					});
 					assert.true((await f.root.collection!.refresh(anchor)).ok);
 					assert.equal((await query(f.root.collection!)).entities.length, 2);
-					await f.middleStorage.subordinates.update(leafId, {
-						jwks: { keys: [f.rootKey.publicKey] },
-					});
+					await f.middleStorage.subordinate.update(
+						leafId,
+						{
+							jwks: { keys: [f.rootKey.publicKey] },
+						},
+						f.collection.options.clock.now(),
+					);
 					await f.storage.cache.clear();
 					assert.true((await f.root.collection!.refresh(anchor)).ok);
 					assert.equal(
 						(await query(f.root.collection!, { entityType: ["oauth_resource"] })).entities.length,
 						0,
 					);
-					const limited = new EntityCollectionService({ ...f.collection, maxEntities: 1 });
+					const limited = new EntityCollectionService({
+						...f.collection,
+						maxEntities: 1,
+						options: collectionOptions(f.collection.options),
+					});
 					assert.false((await limited.refresh(anchor)).ok);
 				},
 			);
@@ -24642,11 +24768,14 @@ export default (QUnit: QUnit) => {
 					const f = await seed();
 					const service = new EntityCollectionService({
 						trustAnchors: f.trustAnchors,
-						store: f.store,
+
 						responder: { entityId: anchor, isTrustAnchor: true },
-						options: { engine: testEngine, clock: f.clock, maxResponseBytes: 600 },
+						options: collectionOptions(
+							{ engine: testEngine, clock: f.clock, maxResponseBytes: 600 },
+							f.store,
+						),
 					});
-					const page = await query(service);
+					const page = await query(service, { entityClaims: ["entity_types", "entity_infos"] });
 					assert.equal(page.entities.length, 1);
 					assert.ok(page.next);
 					assert.deepEqual(
@@ -24655,9 +24784,12 @@ export default (QUnit: QUnit) => {
 					);
 					const tiny = new EntityCollectionService({
 						trustAnchors: f.trustAnchors,
-						store: f.store,
+
 						responder: { entityId: anchor, isTrustAnchor: true },
-						options: { engine: testEngine, clock: f.clock, maxResponseBytes: 100 },
+						options: collectionOptions(
+							{ engine: testEngine, clock: f.clock, maxResponseBytes: 100 },
+							f.store,
+						),
 					});
 					assert.false((await tiny.query()).ok);
 				},
@@ -24669,9 +24801,13 @@ export default (QUnit: QUnit) => {
 					const f = await seed();
 					const service = new EntityCollectionService({
 						trustAnchors: f.trustAnchors,
-						store: f.store,
+
 						responder: { entityId: anchor, isTrustAnchor: true },
-						options: { engine: testEngine, clock: f.clock, clockSkewSeconds: 0 },
+						options: collectionOptions(
+							{ engine: testEngine, clock: f.clock, clockSkewSeconds: 0 },
+							f.store,
+							new MemoryReplayStore({ engine: testEngine, clock: f.clock }),
+						),
 						authentication: {
 							methods: ["private_key_jwt"],
 							receiverEntityId: anchor,
@@ -24747,16 +24883,15 @@ export default (QUnit: QUnit) => {
 					const unavailable = new EntityCollectionService({
 						trustAnchors: f.trustAnchors,
 						responder: { entityId: anchor, isTrustAnchor: true },
-						options: { engine: testEngine, clock: f.clock },
+						options: collectionOptions({ engine: testEngine, clock: f.clock }, undefined, {
+							useJti: async () => {
+								throw new Error("unavailable");
+							},
+						}),
 						authentication: {
 							methods: ["private_key_jwt"],
 							receiverEntityId: anchor,
 							getClientFederationJwks: async () => ({ keys: [f.key.publicKey] }),
-							replayStore: {
-								useJti: async () => {
-									throw new Error("unavailable");
-								},
-							},
 						},
 					});
 					const response = await unavailable.handleRequest(
@@ -24779,7 +24914,7 @@ export default (QUnit: QUnit) => {
 					const f = await seed();
 					const service = new EntityCollectionService({
 						trustAnchors: f.trustAnchors,
-						options: { engine: testEngine, httpTimeoutMs: 5 },
+						options: collectionOptions({ engine: testEngine, httpTimeoutMs: 5 }),
 					});
 					let cancelled = false;
 					const stalled = new Request(endpoint, {
@@ -24818,8 +24953,8 @@ export default (QUnit: QUnit) => {
 				const f = await seed();
 				const service = new EntityCollectionService({
 					trustAnchors: new Map([...f.trustAnchors, [other, f.trustAnchors.get(anchor)!]]),
-					store: f.store,
-					options: { engine: testEngine, clock: f.clock },
+
+					options: collectionOptions({ engine: testEngine, clock: f.clock }, f.store),
 				});
 				const unavailable = await service.query({ trustAnchor: other });
 				assert.false(unavailable.ok);
@@ -24835,7 +24970,7 @@ export default (QUnit: QUnit) => {
 				const service = new EntityCollectionService({
 					trustAnchors: f.trustAnchors,
 					authentication: { methods: ["none"], receiverEntityId: leafId },
-					options: { engine: testEngine },
+					options: collectionOptions({ engine: testEngine }),
 				});
 				assert.deepEqual(await query(service), { entities: [] });
 				for (const endpoint of ["", "http://example.com/collect", "https://example.com/collect#"])
@@ -24844,7 +24979,7 @@ export default (QUnit: QUnit) => {
 							new EntityCollectionService({
 								trustAnchors: f.trustAnchors,
 								endpoint,
-								options: { engine: testEngine },
+								options: collectionOptions({ engine: testEngine }),
 							}),
 					);
 				assert.throws(
@@ -24853,7 +24988,7 @@ export default (QUnit: QUnit) => {
 							trustAnchors: f.trustAnchors,
 							responder: { entityId: anchor, isTrustAnchor: true },
 							authentication: { methods: ["none"], receiverEntityId: leafId },
-							options: { engine: testEngine },
+							options: collectionOptions({ engine: testEngine }),
 						}),
 				);
 				const invalidClaim = await f.service.query({ entityClaims: ["entity_types#en"] });
@@ -24865,7 +25000,7 @@ export default (QUnit: QUnit) => {
 				"snapshot/cursor capacity and detached reads protect stored state",
 				async (assert) => {
 					const f = await seed();
-					const snapshot = (await f.store.getCurrent(anchor))!;
+					const snapshot = (await f.store.current(anchor))!;
 					snapshot.entries[0]!.entity.entity_infos!.openid_provider!.display_name = "mutated";
 					assert.equal(
 						(await query(f.service)).entities[0]?.entity_infos?.openid_provider?.display_name,
@@ -24878,14 +25013,14 @@ export default (QUnit: QUnit) => {
 					});
 					await limited.publish(f.snapshot);
 					await limited.publish({ ...f.snapshot, id: "replacement" });
-					assert.notOk(await limited.getSnapshot("first"));
-					assert.equal((await limited.getCurrent(anchor))?.id, "replacement");
+					assert.notOk(await limited.snapshot("first"));
+					assert.equal((await limited.current(anchor))?.id, "replacement");
 					assert.throws(
 						() =>
 							new EntityCollectionService({
 								trustAnchors: f.trustAnchors,
 								maxPageSize: 0,
-								options: { engine: testEngine },
+								options: collectionOptions({ engine: testEngine }),
 							}),
 					);
 				},
@@ -24924,7 +25059,7 @@ export default (QUnit: QUnit) => {
 					let requests = 0;
 					const result = await fetchSubordinateStatement(`${anchor}/fetch`, subject, {
 						engine: testEngine,
-						cache,
+						storage: cacheStorage(cache),
 						clock,
 						httpClient: async () => {
 							requests++;
@@ -25041,12 +25176,12 @@ export default (QUnit: QUnit) => {
 					});
 					const service = new EntityCollectionService({
 						trustAnchors: graph.trustAnchors,
-						options: {
+						options: collectionOptions({
 							engine: testEngine,
 							clock,
 							httpClient: graph.httpClient,
 							maxConcurrentFetches: 1,
-						},
+						}),
 					});
 					const ac = new AbortController();
 					const first = service.refresh(graph.id("ta"), { signal: ac.signal });
@@ -25121,17 +25256,20 @@ export default (QUnit: QUnit) => {
 				const { store, snapshot } = await seeded();
 				const service = new EntityCollectionService({
 					trustAnchors: graph.trustAnchors,
-					store,
-					options: {
-						engine: testEngine,
-						clock,
-						httpClient: graph.httpClient,
-						maxChainDepth: 1,
-						maxConcurrentFetches: 8,
-					},
+
+					options: collectionOptions(
+						{
+							engine: testEngine,
+							clock,
+							httpClient: graph.httpClient,
+							maxChainDepth: 1,
+							maxConcurrentFetches: 8,
+						},
+						store,
+					),
 				});
 				assert.false((await service.refresh(graph.id("ta"))).ok);
-				assert.deepEqual(await store.getCurrent(anchor), snapshot);
+				assert.deepEqual(await store.current(anchor), snapshot);
 			});
 
 			QUnit.test(
@@ -25215,7 +25353,9 @@ export default (QUnit: QUnit) => {
 							options: {
 								clock,
 								httpClient: graph.httpClient,
-								...(cache ? { engine: testEngine, cache } : { engine: testEngine }),
+								...(cache
+									? { engine: testEngine, storage: cacheStorage(cache) }
+									: { engine: testEngine }),
 							},
 						});
 						assert.true(result.ok);
@@ -25295,8 +25435,8 @@ export default (QUnit: QUnit) => {
 					for (const suffix of ["de_DE", "", "en#US"]) {
 						const service = new EntityCollectionService({
 							trustAnchors: new Map([[anchor, { jwks: { keys: [] } }]]),
-							store,
-							options: { engine: testEngine, clock },
+
+							options: collectionOptions({ engine: testEngine, clock }, store),
 							infoClaims: ["vendor_label"],
 							collector: async () =>
 								ok([
@@ -25314,7 +25454,7 @@ export default (QUnit: QUnit) => {
 						const result = await service.refresh(anchor);
 						assert.false(result.ok, `reject malformed suffix: ${suffix}`);
 						if (!result.ok) assert.equal(result.error.code, "temporarily_unavailable");
-						assert.deepEqual(await store.getCurrent(anchor), snapshot);
+						assert.deepEqual(await store.current(anchor), snapshot);
 						assert.false(JSON.stringify(result).includes("Private fixture value"));
 					}
 				},
@@ -25345,8 +25485,8 @@ export default (QUnit: QUnit) => {
 					});
 					const service = new EntityCollectionService({
 						trustAnchors: new Map([[anchor, { jwks: { keys: [] } }]]),
-						store,
-						options: { engine: testEngine, clock },
+
+						options: collectionOptions({ engine: testEngine, clock }, store),
 						infoClaims: ["vendor_label"],
 					});
 					for (const params of [{}, { locale: ["en"] }, { infoClaims: ["vendor_label"] }]) {
@@ -25370,7 +25510,7 @@ export default (QUnit: QUnit) => {
 						{ entityType: ["other"] },
 						{ query: "https://a.example" },
 					]) {
-						assert.true(
+						assert.false(
 							(await service.query({ trustAnchor: anchor, ...params })).ok,
 							JSON.stringify(params),
 						);
@@ -25400,7 +25540,7 @@ export default (QUnit: QUnit) => {
 					};
 					const service = new EntityCollectionService({
 						trustAnchors: new Map([[anchor, { jwks: { keys: [] } }]]),
-						options: { engine: testEngine, clock },
+						options: collectionOptions({ engine: testEngine, clock }),
 						infoClaims: ["vendor_label", "vendor_label#de_DE", uri],
 						collector: async () =>
 							ok([
@@ -25478,8 +25618,8 @@ export default (QUnit: QUnit) => {
 					});
 					const service = new EntityCollectionService({
 						trustAnchors: new Map([[anchor, { jwks: { keys: [] } }]]),
-						store,
-						options: { engine: testEngine, clock },
+
+						options: collectionOptions({ engine: testEngine, clock }, store),
 						infoClaims: [name],
 					});
 					for (const params of [
@@ -25587,12 +25727,12 @@ export default (QUnit: QUnit) => {
 				f.graph.requests.length = 0;
 				const service = new EntityCollectionService({
 					trustAnchors: f.graph.trustAnchors,
-					options: {
+					options: collectionOptions({
 						...f.options,
 						...(verification
 							? { engine: testEngine, trustMarkVerification: verification }
 							: { engine: testEngine }),
-					},
+					}),
 				});
 				const refreshed = await service.refresh(f.graph.id("ta"));
 				assert.true(refreshed.ok, `${name}: ${JSON.stringify(refreshed)}`);
@@ -25612,7 +25752,7 @@ export default (QUnit: QUnit) => {
 					);
 				if (name === "provided federation" || name === "resolve independent")
 					assert.equal(
-						(await service.store.getCurrent(f.graph.id("ta")))?.entries.find(
+						(await service.store.current(f.graph.id("ta")))?.entries.find(
 							(e) => e.entity.entity_id === String(f.graph.id("leaf")),
 						)?.verifiedMarks[0]?.expiresAt,
 						2100,
@@ -25658,11 +25798,11 @@ export default (QUnit: QUnit) => {
 				assert.true(proof.ok, JSON.stringify(proof));
 				const service = new EntityCollectionService({
 					trustAnchors: f.graph.trustAnchors,
-					options: {
+					options: collectionOptions({
 						engine: testEngine,
 						...options,
 						trustMarkVerification: { mode: "resolve", trustAnchors: f.accreditationAnchors },
-					},
+					}),
 				});
 				assert.true((await service.refresh(f.graph.id("ta"))).ok);
 				const result = await service.query({
@@ -25718,12 +25858,12 @@ export default (QUnit: QUnit) => {
 								};
 					const service = new EntityCollectionService({
 						trustAnchors: f.graph.trustAnchors,
-						options: {
+						options: collectionOptions({
 							engine: testEngine,
 							...f.options,
 							clock: { now: () => (variant === "expired-evidence" ? 2100 : 1500) },
 							trustMarkVerification: { mode: "provided", issuerEvidence: [context] },
-						},
+						}),
 						collector: async () =>
 							ok([
 								{
@@ -25755,7 +25895,7 @@ export default (QUnit: QUnit) => {
 				let calls = 0;
 				const service = new EntityCollectionService({
 					trustAnchors: f.graph.trustAnchors,
-					options: {
+					options: collectionOptions({
 						engine: testEngine,
 						...f.options,
 						maxTotalFetches: 20,
@@ -25766,15 +25906,15 @@ export default (QUnit: QUnit) => {
 							return f.graph.httpClient(url, init);
 						},
 						trustMarkVerification: { mode: "resolve", trustAnchors: f.accreditationAnchors },
-					},
+					}),
 				});
 				assert.true((await service.refresh(f.graph.id("ta"))).ok);
-				const prior = await service.store.getCurrent(f.graph.id("ta"));
+				const prior = await service.store.current(f.graph.id("ta"));
 				fail = true;
 				calls = 0;
 				assert.false((await service.refresh(f.graph.id("ta"))).ok);
 				assert.ok(calls <= 20);
-				assert.deepEqual(await service.store.getCurrent(f.graph.id("ta")), prior);
+				assert.deepEqual(await service.store.current(f.graph.id("ta")), prior);
 			},
 		);
 
@@ -25794,7 +25934,7 @@ export default (QUnit: QUnit) => {
 				);
 				const service = new EntityCollectionService({
 					trustAnchors: f.graph.trustAnchors,
-					options: {
+					options: collectionOptions({
 						engine: testEngine,
 						...f.options,
 						trustMarkVerification: {
@@ -25802,10 +25942,10 @@ export default (QUnit: QUnit) => {
 							issuerEvidence: [{ ...f.oob, keys: { keys: [current.publicKey] } }],
 							historicalKeys: { mode: "supplied-only", maxAgeSeconds: 30, responses: [response] },
 						},
-					},
+					}),
 				});
 				assert.true((await service.refresh(f.graph.id("ta"))).ok);
-				const entry = (await service.store.getCurrent(f.graph.id("ta")))?.entries.find(
+				const entry = (await service.store.current(f.graph.id("ta")))?.entries.find(
 					(e) => e.entity.entity_id === String(f.graph.id("leaf")),
 				);
 				assert.equal(entry?.verifiedMarks.length, 1);
@@ -25842,7 +25982,7 @@ export default (QUnit: QUnit) => {
 				const original = JSON.stringify(inputs);
 				const service = new EntityCollectionService({
 					trustAnchors: anchors,
-					options: { engine: testEngine, clock },
+					options: collectionOptions({ engine: testEngine, clock }),
 					collector: async () => ok(inputs),
 					filter: (entry) => {
 						if (entry.entity.entity_id === first.entity.entity_id)
@@ -25867,7 +26007,7 @@ export default (QUnit: QUnit) => {
 						{ entity_id: first.entity.entity_id },
 						{ entity_id: second.entity.entity_id },
 					]);
-				const snapshot = await service.store.getCurrent(anchor);
+				const snapshot = await service.store.current(anchor);
 				assert.strictEqual(
 					snapshot?.entries.find((e) => e.entity.entity_id === third.entity.entity_id)?.entity
 						.entity_types,
@@ -25891,7 +26031,7 @@ export default (QUnit: QUnit) => {
 				];
 				const service = new EntityCollectionService({
 					trustAnchors: anchors,
-					options: { engine: testEngine, clock },
+					options: collectionOptions({ engine: testEngine, clock }),
 					maxPageSize: 1,
 					collector: async () => ok(items),
 					queryMatcher: (query, entity) => {
@@ -25933,8 +26073,7 @@ export default (QUnit: QUnit) => {
 				assert.equal(calls, before, "matcher cannot restore an ineligible mark");
 				const defaults = new EntityCollectionService({
 					trustAnchors: anchors,
-					options: { engine: testEngine, clock },
-					store: service.store,
+					options: collectionOptions({ engine: testEngine, clock }, service.store),
 				});
 				const page = await defaults.query({ trustAnchor: anchor, query: "ALPHA" });
 				assert.true(
@@ -25961,13 +26100,13 @@ export default (QUnit: QUnit) => {
 				]) {
 					const store = new MemoryEntityCollectionStore({ clock });
 					let cursors = 0;
-					store.putCursor = async () => {
+					store.saveCursor = async () => {
 						cursors++;
 					};
 					const service = new EntityCollectionService({
 						trustAnchors: anchors,
-						options: { engine: testEngine, clock },
-						store,
+						options: collectionOptions({ engine: testEngine, clock }, store),
+
 						collector: async () => ok([candidate("alpha"), candidate("beta")]),
 						maxPageSize: 1,
 						queryMatcher: matcher as unknown as CorePublic.EntityCollectionQueryMatcher,
@@ -25977,7 +26116,7 @@ export default (QUnit: QUnit) => {
 					assert.false(page.ok);
 					assert.equal(cursors, 0);
 					assert.equal(
-						(await store.getCurrent(anchor))?.entries[0]?.entity.entity_id,
+						(await store.current(anchor))?.entries[0]?.entity.entity_id,
 						"https://alpha.example",
 					);
 				}
@@ -25998,7 +26137,7 @@ export default (QUnit: QUnit) => {
 				let calls = 0;
 				const service = new EntityCollectionService({
 					trustAnchors: anchors,
-					options: { engine: testEngine, clock },
+					options: collectionOptions({ engine: testEngine, clock }),
 					collector: async () => {
 						calls++;
 						if (calls === 1) {
@@ -26032,7 +26171,7 @@ export default (QUnit: QUnit) => {
 				assert.true((await third).ok);
 				assert.equal(calls, 2, "cancelled collector never runs");
 				assert.equal(
-					(await service.store.getCurrent(anchor))?.entries[0]?.entity.entity_id,
+					(await service.store.current(anchor))?.entries[0]?.entity.entity_id,
 					"https://third.example",
 				);
 			},
@@ -26050,7 +26189,7 @@ export default (QUnit: QUnit) => {
 				let calls = 0;
 				const service = new EntityCollectionService({
 					trustAnchors: anchors,
-					options: { engine: testEngine, clock, signal: cancellation.signal },
+					options: collectionOptions({ engine: testEngine, clock, signal: cancellation.signal }),
 					collector: async () => {
 						calls++;
 						started();
@@ -26069,7 +26208,7 @@ export default (QUnit: QUnit) => {
 				reject(new Error("late collector rejection"));
 				await Promise.resolve();
 				assert.equal(calls, 1);
-				assert.strictEqual(await service.store.getCurrent(anchor), undefined);
+				assert.strictEqual(await service.store.current(anchor), undefined);
 			},
 		);
 
@@ -26081,8 +26220,8 @@ export default (QUnit: QUnit) => {
 					let verified = 0;
 					const service = new EntityCollectionService({
 						trustAnchors: f.trustAnchors,
-						store: f.store,
-						options: { engine: testEngine, clock },
+
+						options: collectionOptions({ engine: testEngine, clock }, f.store),
 						responder: { entityId: EntityCollectionFixture.anchor, isTrustAnchor: true },
 						authentication: {
 							methods,
@@ -26165,13 +26304,13 @@ export default (QUnit: QUnit) => {
 					const original = candidate();
 					const service = new EntityCollectionService({
 						trustAnchors: new Map([...anchors, [other, { jwks: keys }]]),
-						options: {
+						options: collectionOptions({
 							engine: testEngine,
 							clock: { now: () => 1500 },
 							httpClient: async () => {
 								throw new Error("Unexpected network call");
 							},
-						},
+						}),
 						collector: async (context) => {
 							collected++;
 							contexts.push(context);
@@ -26210,7 +26349,7 @@ export default (QUnit: QUnit) => {
 						[anchor, other],
 					);
 					assert.equal(contexts[0]?.options.maxTotalFetches, 1000);
-					const snapshot = await service.store.getCurrent(anchor);
+					const snapshot = await service.store.current(anchor);
 					assert.equal(snapshot?.lastUpdated, 1500);
 					assert.equal(snapshot?.entries[0]?.expiresAt, 3000);
 					assert.strictEqual(snapshot?.entries[0]?.chainExpiresAt, undefined);
@@ -26226,7 +26365,7 @@ export default (QUnit: QUnit) => {
 					let deadline = 4000;
 					const service = new EntityCollectionService({
 						trustAnchors: anchors,
-						options: { engine: testEngine, clock: { now: () => time } },
+						options: collectionOptions({ engine: testEngine, clock: { now: () => time } }),
 						collector: async () => ok([candidate(), candidate("https://excluded.example")]),
 						filter: (entry) =>
 							entry.entity.entity_id === "https://excluded.example"
@@ -26234,11 +26373,11 @@ export default (QUnit: QUnit) => {
 								: { expiresAt: deadline },
 					});
 					assert.true((await service.refresh(anchor)).ok);
-					assert.equal((await service.store.getCurrent(anchor))?.entries[0]?.expiresAt, 3000);
+					assert.equal((await service.store.current(anchor))?.entries[0]?.expiresAt, 3000);
 					deadline = 2000;
 					assert.true((await service.refresh(anchor)).ok);
-					assert.equal((await service.store.getCurrent(anchor))?.entries.length, 1);
-					assert.equal((await service.store.getCurrent(anchor))?.entries[0]?.expiresAt, 2000);
+					assert.equal((await service.store.current(anchor))?.entries.length, 1);
+					assert.equal((await service.store.current(anchor))?.entries[0]?.expiresAt, 2000);
 					time = 2000;
 					assert.deepEqual(await service.query({ trustAnchor: anchor }), {
 						ok: true,
@@ -26256,7 +26395,11 @@ export default (QUnit: QUnit) => {
 				});
 				const service = new EntityCollectionService({
 					trustAnchors: graph.trustAnchors,
-					options: { engine: testEngine, clock: { now: () => 1500 }, httpClient: graph.httpClient },
+					options: collectionOptions({
+						engine: testEngine,
+						clock: { now: () => 1500 },
+						httpClient: graph.httpClient,
+					}),
 					filter: (entry) => String(entry.entity.entity_id) === graph.id("leaf"),
 				});
 				assert.true((await service.refresh(anchor)).ok);
@@ -26267,7 +26410,7 @@ export default (QUnit: QUnit) => {
 						result.value.entities.map((entity) => String(entity.entity_id)),
 						[String(graph.id("leaf"))],
 					);
-				assert.equal((await service.store.getCurrent(anchor))?.entries[0]?.chainExpiresAt, 5000);
+				assert.equal((await service.store.current(anchor))?.entries[0]?.chainExpiresAt, 5000);
 			});
 
 			QUnit.test(
@@ -26297,11 +26440,11 @@ export default (QUnit: QUnit) => {
 						trustAnchors: anchors,
 						maxEntities: 3,
 						maxPageSize: 1,
-						options: { engine: testEngine, clock: { now: () => 1500 } },
+						options: collectionOptions({ engine: testEngine, clock: { now: () => 1500 } }),
 						collector: async () => ok(values as EntityCollectionCandidate[]),
 					});
 					assert.true((await service.refresh(anchor)).ok);
-					const previous = await service.store.getCurrent(anchor);
+					const previous = await service.store.current(anchor);
 					const first = await service.query({ trustAnchor: anchor });
 					assert.true(first.ok && !!first.value.next);
 					for (const invalid of [
@@ -26324,7 +26467,7 @@ export default (QUnit: QUnit) => {
 					]) {
 						values = invalid;
 						assert.false((await service.refresh(anchor)).ok);
-						assert.deepEqual(await service.store.getCurrent(anchor), previous);
+						assert.deepEqual(await service.store.current(anchor), previous);
 						if (first.ok)
 							assert.true(
 								(await service.query({ trustAnchor: anchor, from: first.value.next })).ok,
@@ -26340,7 +26483,7 @@ export default (QUnit: QUnit) => {
 						let fail = false;
 						const service = new EntityCollectionService({
 							trustAnchors: anchors,
-							options: { engine: testEngine, clock: { now: () => 1500 } },
+							options: collectionOptions({ engine: testEngine, clock: { now: () => 1500 } }),
 							collector: async () => {
 								if (fail && phase === "collector") throw new Error("Source failed");
 								if (fail && phase === "source-error")
@@ -26356,10 +26499,10 @@ export default (QUnit: QUnit) => {
 							},
 						});
 						assert.true((await service.refresh(anchor)).ok);
-						const previous = await service.store.getCurrent(anchor);
+						const previous = await service.store.current(anchor);
 						fail = true;
 						assert.false((await service.refresh(anchor)).ok, phase);
-						assert.deepEqual(await service.store.getCurrent(anchor), previous);
+						assert.deepEqual(await service.store.current(anchor), previous);
 					}
 				},
 			);
@@ -26386,7 +26529,7 @@ export default (QUnit: QUnit) => {
 						};
 						const service = new EntityCollectionService({
 							trustAnchors: anchors,
-							options: {
+							options: collectionOptions({
 								engine: testEngine,
 								clock: { now: () => 1500 },
 								httpClient: async (_url, init) => {
@@ -26394,7 +26537,7 @@ export default (QUnit: QUnit) => {
 									await wait();
 									return new Response("{}");
 								},
-							},
+							}),
 							collector: async (context) => {
 								if (phase === "collector") await wait();
 								if (phase === "transport")
@@ -26426,12 +26569,12 @@ export default (QUnit: QUnit) => {
 							continue;
 						}
 						assert.false(settled.ok, phase);
-						assert.strictEqual(await service.store.getCurrent(anchor), undefined);
+						assert.strictEqual(await service.store.current(anchor), undefined);
 						assert.true((await service.refresh(anchor)).ok);
-						const published = await service.store.getCurrent(anchor);
+						const published = await service.store.current(anchor);
 						release();
 						await Promise.resolve();
-						assert.deepEqual(await service.store.getCurrent(anchor), published);
+						assert.deepEqual(await service.store.current(anchor), published);
 					}
 				},
 			);
@@ -26444,7 +26587,7 @@ export default (QUnit: QUnit) => {
 						calls++;
 						return ok([]);
 					},
-					options: { engine: testEngine },
+					options: collectionOptions({ engine: testEngine }),
 				});
 				const controller = new AbortController();
 				controller.abort();
@@ -26487,11 +26630,11 @@ export default (QUnit: QUnit) => {
 						}
 						const service = new EntityCollectionService({
 							trustAnchors: graph.trustAnchors,
-							options: {
+							options: collectionOptions({
 								engine: testEngine,
 								clock: { now: () => 1500 },
 								httpClient: graph.httpClient,
-							},
+							}),
 							collector: async () =>
 								ok([
 									{
@@ -26513,7 +26656,7 @@ export default (QUnit: QUnit) => {
 						const filtered = await service.query({ trustAnchor: anchor, trustMarkType: ["one"] });
 						assert.true(filtered.ok);
 						if (filtered.ok) assert.equal(filtered.value.entities.length, mode === "valid" ? 1 : 0);
-						const entry = (await service.store.getCurrent(anchor))?.entries[0];
+						const entry = (await service.store.current(anchor))?.entries[0];
 						assert.equal(entry?.expiresAt, 6000);
 						assert.strictEqual(entry?.chainExpiresAt, undefined);
 						if (mode === "valid") assert.equal(entry?.verifiedMarks[0]?.expiresAt, 4000);
@@ -26541,7 +26684,7 @@ export default (QUnit: QUnit) => {
 						let changed = false;
 						const service = new EntityCollectionService({
 							trustAnchors: graph.trustAnchors,
-							options: {
+							options: collectionOptions({
 								engine: testEngine,
 								clock: { now: () => 1500 },
 								maxTotalFetches: mode === "transport" ? 1000 : mode === "issuer-budget" ? 2 : 1,
@@ -26551,7 +26694,7 @@ export default (QUnit: QUnit) => {
 									assert.equal(init?.redirect, "manual");
 									return graph.httpClient(url, init);
 								},
-							},
+							}),
 							collector: async (context) => {
 								if (changed && mode === "collector-budget") {
 									await fetchEntityConfiguration(anchor, context.options);
@@ -26573,10 +26716,10 @@ export default (QUnit: QUnit) => {
 							},
 						});
 						assert.true((await service.refresh(anchor)).ok);
-						const previous = await service.store.getCurrent(anchor);
+						const previous = await service.store.current(anchor);
 						changed = true;
 						assert.false((await service.refresh(anchor)).ok, mode);
-						assert.deepEqual(await service.store.getCurrent(anchor), previous, mode);
+						assert.deepEqual(await service.store.current(anchor), previous, mode);
 					}
 				},
 			);
@@ -26630,8 +26773,8 @@ export default (QUnit: QUnit) => {
 					});
 					const service = new EntityCollectionService({
 						trustAnchors: anchors,
-						store,
-						options: { engine: testEngine, clock: { now: () => 1500 } },
+
+						options: collectionOptions({ engine: testEngine, clock: { now: () => 1500 } }, store),
 					});
 					const page = await service.query({ trustAnchor: anchor });
 					assert.true(page.ok);
@@ -26691,7 +26834,7 @@ export default (QUnit: QUnit) => {
 			const issuerRequests = new Map<string, number>();
 			const service = new EntityCollectionService({
 				trustAnchors: graph.trustAnchors,
-				options: {
+				options: collectionOptions({
 					engine: testEngine,
 					clock: { now: () => 1500 },
 					httpTimeoutMs: config.timeout ? 20 : 1000,
@@ -26756,7 +26899,7 @@ export default (QUnit: QUnit) => {
 						}
 						return graph.httpClient(url, init);
 					},
-				},
+				}),
 				...(config.custom
 					? {
 							collector: async () =>
@@ -26815,14 +26958,14 @@ export default (QUnit: QUnit) => {
 						const f = await fixture(config);
 						const anchor = f.graph.id("ta");
 						assert.true((await f.service.refresh(anchor)).ok);
-						const previous = await f.service.store.getCurrent(anchor);
+						const previous = await f.service.store.current(anchor);
 						await f.marks(["open", "open"]);
 						await f.publish("healthy", {
 							metadata: { federation_entity: { display_name: "Updated" } },
 						});
 						for (let i = 1; i <= 2; i++) {
 							assert.true((await f.service.refresh(anchor)).ok, JSON.stringify(config));
-							const current = await f.service.store.getCurrent(anchor);
+							const current = await f.service.store.current(anchor);
 							assert.notEqual(current?.id, previous?.id, "a new snapshot is published");
 							assert.equal(current?.entries.length, 2);
 							const leaf = current?.entries.find(
@@ -26861,7 +27004,7 @@ export default (QUnit: QUnit) => {
 						const f = await fixture();
 						const anchor = f.graph.id("ta");
 						assert.true((await f.service.refresh(anchor)).ok);
-						const previous = await f.service.store.getCurrent(anchor);
+						const previous = await f.service.store.current(anchor);
 						await f.marks(types);
 						assert.false((await f.service.refresh(anchor)).ok, types.join(","));
 						assert.equal(
@@ -26869,7 +27012,7 @@ export default (QUnit: QUnit) => {
 							1,
 							"the unresolved outcome is reused without repeating network calls",
 						);
-						assert.deepEqual(await f.service.store.getCurrent(anchor), previous);
+						assert.deepEqual(await f.service.store.current(anchor), previous);
 					}
 				},
 			);
@@ -26880,14 +27023,14 @@ export default (QUnit: QUnit) => {
 					const f = await fixture({ timeout: true });
 					const anchor = f.graph.id("ta");
 					assert.true((await f.service.refresh(anchor)).ok);
-					const previous = await f.service.store.getCurrent(anchor);
+					const previous = await f.service.store.current(anchor);
 					await f.marks(["open"]);
 					const controller = new AbortController();
 					const pending = f.service.refresh(anchor, { signal: controller.signal });
 					await f.pendingIssuer;
 					controller.abort();
 					assert.false((await pending).ok);
-					assert.deepEqual(await f.service.store.getCurrent(anchor), previous);
+					assert.deepEqual(await f.service.store.current(anchor), previous);
 					assert.true(
 						(await f.service.refresh(anchor)).ok,
 						"a later refresh can complete without the unresolved mark",
@@ -26913,11 +27056,11 @@ export default (QUnit: QUnit) => {
 					const f = await fixture({ maxTotalFetches: budget, issuerGraphs: true });
 					const anchor = f.graph.id("ta");
 					assert.true((await f.service.refresh(anchor)).ok);
-					const previous = await f.service.store.getCurrent(anchor);
+					const previous = await f.service.store.current(anchor);
 					await f.marks(["open"], true, ["https://issuer-0-0-0.example"]);
 					f.graph.requests.length = 0;
 					assert.true((await f.service.refresh(anchor)).ok, `budget ${budget}`);
-					const current = await f.service.store.getCurrent(anchor);
+					const current = await f.service.store.current(anchor);
 					assert.notEqual(current?.id, previous?.id);
 					assert.equal(current?.entries.length, 2);
 					assert.true(current!.entries.every((entry) => entry.verifiedMarks.length === 0));
@@ -26937,7 +27080,7 @@ export default (QUnit: QUnit) => {
 						assert.equal(f.issuerRequests.get("1"), 50 * refresh);
 						assert.equal(f.issuerRequests.get("2") ?? 0, 0);
 						assert.equal(f.issuerRequests.get("3") ?? 0, 0);
-						const current = await f.service.store.getCurrent(anchor);
+						const current = await f.service.store.current(anchor);
 						assert.equal(current?.entries.length, 2);
 						assert.true(current!.entries.every((entry) => entry.verifiedMarks.length === 0));
 					}
@@ -26967,7 +27110,7 @@ export default (QUnit: QUnit) => {
 					trust_marks: [{ trust_mark_type: "required", trust_mark: mark }],
 				});
 				assert.true((await f.service.refresh(f.graph.id("ta"))).ok);
-				const current = await f.service.store.getCurrent(f.graph.id("ta"));
+				const current = await f.service.store.current(f.graph.id("ta"));
 				assert.deepEqual(
 					current?.entries.find((entry) => String(entry.entity.entity_id) === f.graph.id("leaf"))
 						?.verifiedMarks,
@@ -26986,7 +27129,7 @@ export default (QUnit: QUnit) => {
 				async (assert) => {
 					const f = await fixture({ maxTotalFetches: 5 });
 					assert.false((await f.service.refresh(f.graph.id("ta"))).ok);
-					assert.strictEqual(await f.service.store.getCurrent(f.graph.id("ta")), undefined);
+					assert.strictEqual(await f.service.store.current(f.graph.id("ta")), undefined);
 					assert.equal(f.graph.requests.length, 5);
 				},
 			);
@@ -27077,13 +27220,13 @@ export default (QUnit: QUnit) => {
 				new SigningEntryFixture(keys.privateKey),
 				{ typ: "JWT" },
 			);
-			const replayStore = new CorePublic.MemoryReplayStore({ engine: testEngine, clock });
+			const replayStore = new MemoryReplayStore({ engine: testEngine, clock });
 			const verify = () =>
 				verifyClientAssertion(jwt, { keys: [keys.publicKey] }, "https://receiver.example", {
 					engine: testEngine,
 					clock,
 					clockSkewSeconds: 20,
-					replayStore,
+					storage: replayStorage(replayStore),
 				});
 			const checked = await Promise.all([verify(), verify()]);
 			t.equal(checked.filter((r) => r.ok).length, 1);
@@ -27100,11 +27243,11 @@ export default (QUnit: QUnit) => {
 					engine: testEngine,
 					clock,
 					clockSkewSeconds: 20,
-					replayStore: {
+					storage: replayStorage({
 						useJti: async () => {
 							throw new Error("offline");
 						},
-					},
+					}),
 				},
 			);
 			t.false(failed.ok);
@@ -27415,7 +27558,7 @@ export default (QUnit: QUnit) => {
 			let calls = 0;
 			const options = {
 				...fed.options,
-				cache,
+				storage: cacheStorage(cache),
 				entityConfigurationJwt: submitted,
 				explicitRegistrationAudience: OP_ID,
 				maxTotalFetches: 2,
@@ -27431,7 +27574,7 @@ export default (QUnit: QUnit) => {
 			t.equal(await cache.get(key), fed.leafEcJwt);
 			const ordinary = await resolveTrustChains(LEAF_ID, fed.trustAnchors, {
 				...fed.options,
-				cache,
+				storage: cacheStorage(cache),
 			});
 			t.equal(ordinary.chains[0]?.statements[0], fed.leafEcJwt);
 		});
@@ -27855,7 +27998,11 @@ export default (QUnit: QUnit) => {
 			);
 			const service = new EntityCollectionService({
 				trustAnchors: graph.trustAnchors,
-				options: { engine: testEngine, clock: { now: () => 1500 }, httpClient: graph.httpClient },
+				options: collectionOptions({
+					engine: testEngine,
+					clock: { now: () => 1500 },
+					httpClient: graph.httpClient,
+				}),
 			});
 			const refreshed = await service.refresh(graph.id("ta"));
 			t.true(refreshed.ok, JSON.stringify(refreshed));
@@ -28746,7 +28893,7 @@ export default (QUnit: QUnit) => {
 					);
 					const options = {
 						clock,
-						cache,
+						storage: cacheStorage(cache),
 						cacheMaxTtlSeconds: ttl,
 						httpClient: async () =>
 							new Response(++calls === 1 ? first : next, {
@@ -28799,7 +28946,7 @@ export default (QUnit: QUnit) => {
 					let calls = 0;
 					const options = {
 						clock,
-						cache,
+						storage: cacheStorage(cache),
 						httpClient: async () => {
 							calls++;
 							return new Response(token, {
@@ -28853,7 +29000,7 @@ export default (QUnit: QUnit) => {
 				await cache.set(cacheKey, old, 3600);
 				let calls = 0;
 				const options = {
-					cache,
+					storage: cacheStorage(cache),
 					clock,
 					httpClient: async () => {
 						calls++;

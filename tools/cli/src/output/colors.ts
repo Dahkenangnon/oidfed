@@ -27,9 +27,3 @@ export const colors = {
 	info: (s: string) => chalk.blue(s),
 	debug: (s: string) => chalk.dim(s),
 } as const;
-
-export function isCompactJwt(data: unknown): data is string {
-	if (typeof data !== "string") return false;
-	const parts = data.split(".");
-	return parts.length === 3 && parts.every((p) => p.length > 0);
-}

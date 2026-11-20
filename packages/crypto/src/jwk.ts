@@ -1,5 +1,5 @@
 /** Public JWK validation, safe publication, and RFC 7638 thumbprints. */
-import { utf8Encode } from "./base64url.js";
+import { utf8Encode } from "./encoding.js";
 import {
 	DEFAULT_JWS_REGISTRY,
 	isAsymmetricIdentifier,

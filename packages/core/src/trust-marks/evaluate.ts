@@ -11,8 +11,8 @@ import type {
 	TrustMarkEvaluation,
 } from "../types.js";
 import { validateTrustMarkWithIssuer } from "./evidence.js";
-import { validateTrustMark } from "./index.js";
 import { createConfiguredTrustMarkIssuerResolver } from "./issuer-selection.js";
+import { validateTrustMark } from "./validate.js";
 
 /** Evaluate subject marks using evidence authenticated by chain validation or the caller. */
 export async function evaluatePublishedTrustMarks(

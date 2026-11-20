@@ -16,7 +16,7 @@ import {
 	type EndpointAuthenticationConfig,
 } from "../endpoint-authentication.js";
 import type { Result } from "../errors.js";
-import { selectHistoricalVerificationKey } from "../federation-api/index.js";
+import { selectHistoricalVerificationKey } from "../federation-api/historical-keys.js";
 import {
 	errorResponse,
 	jsonResponse,
@@ -27,16 +27,27 @@ import {
 import { signEntityStatement } from "../jose/sign.js";
 import { decodeEntityStatement } from "../jose/verify.js";
 import { safeLogger } from "../logging.js";
+import type { TrustMarkStatusResponsePayload } from "../schemas/endpoints.js";
 import { EntityIdSchema } from "../schemas/entity-id.js";
-import type { TrustMarkStatusResponsePayload } from "../schemas/entity-statement.js";
 import type { TrustMarkOwner } from "../schemas/trust-mark.js";
+import {
+	assertStorageCapabilities,
+	assertStorageView,
+	describeStorageRequirements,
+	storageSnapshot,
+	storageTransaction,
+} from "../storage/capabilities.js";
+import type { FederationStorage, ReadSnapshotView } from "../storage/contracts.js";
+import type { TrustMarkReadStore, TrustMarkRecord } from "../storage/trust-mark.js";
 import { assertPositiveTtlSeconds } from "../ttl.js";
 import type { CryptoContext } from "../types.js";
 import { type EntityId, entityId, type FederationOptions, nowSeconds } from "../types.js";
 import { type TrustMarkIssuerContext, trustMarkIssuerContext } from "./evidence.js";
-import { validateTrustMark } from "./index.js";
 import { type SignTrustMarkOptions, signTrustMark, type TrustMarkLifetime } from "./sign.js";
-import type { TrustMarkRecord, TrustMarkStorage, TrustMarkStore } from "./storage.js";
+import { validateTrustMark } from "./validate.js";
+
+type CandidateFilter = { trustMarkType?: string; subject?: EntityId };
+type Eligibility = { readonly status: string; readonly expiresAt?: number };
 
 export interface TrustMarkIssuanceOptions extends TrustMarkLifetime {
 	readonly renewal?: "reuse" | "renew";
@@ -71,7 +82,7 @@ export type TrustMarkRequestExtension = (
 ) => Result<void> | Promise<Result<void>>;
 export interface TrustMarkIssuerConfig {
 	readonly trustMarkRequestExtensions?: Readonly<Record<string, TrustMarkRequestExtension>>;
-	readonly storage: TrustMarkStore;
+	readonly storage: FederationStorage;
 	readonly authentication?: Omit<EndpointAuthenticationConfig, "receiverEntityId" | "methods">;
 	readonly defaults?: TrustMarkIssuanceOptions;
 	readonly trustMarkDefaults?: Readonly<Record<string, TrustMarkIssuanceOptions>>;
@@ -142,6 +153,11 @@ export class TrustMarkIssuerService {
 	/** Validate issuer configuration and detach owner, issuer, delegation, and lifetime policies. */
 	constructor(private readonly config: TrustMarkIssuerServiceOptions) {
 		this.issuer = entityId(config.issuer);
+		assertStorageCapabilities(
+			config.storage,
+			describeStorageRequirements("trustMarkRead"),
+			`Trust Mark issuer ${this.issuer}`,
+		);
 		this.extensions = new Map(Object.entries(config.trustMarkRequestExtensions ?? {}));
 		for (const [name, handler] of this.extensions)
 			if (
@@ -197,7 +213,10 @@ export class TrustMarkIssuerService {
 			throw new TypeError("Invalid Trust Mark delegation configuration");
 		this.delegations = freezeSnapshot(cloneData(config.delegations ?? {}));
 	}
-	private owners(type: string): Record<string, TrustMarkOwner> {
+	private ownerContext(type: string): {
+		owners: Record<string, TrustMarkOwner>;
+		expiresAt?: number;
+	} {
 		const evidence = this.config.issuerEvidence?.find(
 			(e) =>
 				e.issuer === this.issuer &&
@@ -208,9 +227,9 @@ export class TrustMarkIssuerService {
 		if (evidence) {
 			const trusted = trustMarkIssuerContext(evidence, type, this.config.options);
 			if (!trusted.ok) throw new Error(trusted.error.description);
-			return trusted.value.owners;
+			return trusted.value;
 		}
-		return cloneData(this.ownerPolicy);
+		return { owners: cloneData(this.ownerPolicy) };
 	}
 	private authorize(type: string) {
 		if (!type) throw new TypeError("A Trust Mark type is required");
@@ -247,10 +266,13 @@ export class TrustMarkIssuerService {
 	 * Assess stored issuance under current signatures, local revocation, expiry, and delegation
 	 * policy.
 	 */
-	async eligibility(
+	async eligibility(record: TrustMarkRecord, at?: number): Promise<string> {
+		return (await this.evaluateEligibility(record, at)).status;
+	}
+	private async evaluateEligibility(
 		record: TrustMarkRecord,
 		at = nowSeconds(this.config.options?.clock),
-	): Promise<string> {
+	): Promise<Eligibility> {
 		const decoded = decodeEntityStatement(record.jwt, this.config.options);
 		if (
 			!decoded.ok ||
@@ -258,12 +280,24 @@ export class TrustMarkIssuerService {
 			String(decoded.value.payload.sub) !== record.subject ||
 			decoded.value.payload.trust_mark_type !== record.trustMarkType
 		)
-			return "invalid";
+			return { status: "invalid" };
 		if (decoded.value.payload.exp !== undefined && decoded.value.payload.exp <= at)
-			return "expired";
-		if (!record.active) return "revoked";
-		if (!Number.isFinite(decoded.value.payload.iat) || decoded.value.payload.iat > at)
-			return "invalid";
+			return { status: "expired" };
+		if (!record.active) return { status: "revoked" };
+		if (
+			!Number.isFinite(decoded.value.payload.iat) ||
+			decoded.value.payload.iat > at ||
+			!Number.isFinite(record.issuedAt) ||
+			(record.expiresAt !== undefined && !Number.isFinite(record.expiresAt))
+		)
+			return { status: "invalid" };
+		let ownerContext: ReturnType<TrustMarkIssuerService["ownerContext"]>;
+		try {
+			this.authorize(record.trustMarkType);
+			ownerContext = this.ownerContext(record.trustMarkType);
+		} catch {
+			return { status: "invalid" };
+		}
 		const current = await federationEntry(this.config.crypto, {
 			issuer: this.issuer,
 			subject: record.subject,
@@ -271,15 +305,15 @@ export class TrustMarkIssuerService {
 		});
 		let keys = current.publishedJwks;
 		const kid = decoded.value.header.kid;
-		if (typeof kid !== "string") return "invalid";
+		if (typeof kid !== "string") return { status: "invalid" };
 		if (!keys.keys.some((k) => k.kid === kid)) {
 			const provider = this.config.crypto.history;
-			if (!provider) return "invalid";
+			if (!provider) return { status: "invalid" };
 			const selected = selectHistoricalVerificationKey(await provider.getHistoricalKeys(), {
 				kid,
 				validAt: decoded.value.payload.iat,
 			});
-			if (!selected.ok) return "invalid";
+			if (!selected.ok) return { status: "invalid" };
 			keys = { keys: [selected.value] };
 		}
 		const checked = await validateTrustMark(
@@ -292,63 +326,92 @@ export class TrustMarkIssuerService {
 				clockSkewSeconds: 0,
 				expectedSubject: record.subject,
 				expectedTrustMarkType: record.trustMarkType,
-				trustMarkOwners: this.owners(record.trustMarkType),
+				trustMarkOwners: ownerContext.owners,
 			},
 		);
-		if (!checked.ok) return "invalid";
+		if (!checked.ok) return { status: "invalid" };
 		const now = nowSeconds(this.config.options?.clock);
-		if ((checked.value.verificationExpiresAt ?? Infinity) <= now)
+		const deadline = Math.min(
+			checked.value.verificationExpiresAt ?? Infinity,
+			ownerContext.expiresAt ?? Infinity,
+		);
+		if (deadline <= now)
 			return decoded.value.payload.exp !== undefined && decoded.value.payload.exp <= now
-				? "expired"
-				: "invalid";
-		return "active";
+				? { status: "expired" }
+				: { status: "invalid" };
+		return { status: "active", expiresAt: deadline };
+	}
+	private read<T>(operation: (store: TrustMarkReadStore) => Promise<T>): Promise<T> {
+		return storageSnapshot(
+			this.config.storage,
+			(view: ReadSnapshotView) => {
+				assertStorageView(view, ["trustMark:read"], "Trust Mark read");
+				return operation(view.trustMark);
+			},
+			this.config.options,
+		);
 	}
 	private async eligible(
-		store: Pick<TrustMarkStorage, "listCandidates">,
-		filter: { trustMarkType?: string; subject?: EntityId },
+		records: readonly TrustMarkRecord[],
 		at: number,
-	): Promise<TrustMarkRecord[]> {
-		const records = await store.listCandidates({ issuer: this.issuer, ...filter });
-		const valid: TrustMarkRecord[] = [];
-		for (const record of records)
-			if ((await this.eligibility(record, at)) === "active") valid.push(record);
-		return valid.sort(
-			(a, b) => b.issuedAt - a.issuedAt || (a.jwt < b.jwt ? 1 : a.jwt > b.jwt ? -1 : 0),
+	): Promise<{ record: TrustMarkRecord; expiresAt: number }[]> {
+		const valid: { record: TrustMarkRecord; expiresAt: number }[] = [];
+		for (const record of records) {
+			const eligibility = await this.evaluateEligibility(record, at);
+			if (eligibility.status === "active")
+				valid.push({ record, expiresAt: eligibility.expiresAt ?? Infinity });
+		}
+		const now = nowSeconds(this.config.options.clock);
+		return valid
+			.filter((mark) => mark.expiresAt > now)
+			.sort(
+				({ record: a }, { record: b }) =>
+					b.issuedAt - a.issuedAt || (a.jwt < b.jwt ? 1 : a.jwt > b.jwt ? -1 : 0),
+			);
+	}
+	private async eligibleCandidates(filter: CandidateFilter): Promise<TrustMarkRecord[]> {
+		const records = await this.read((store) =>
+			store.candidates({ issuer: this.issuer, ...filter }),
+		);
+		return (await this.eligible(records, nowSeconds(this.config.options.clock))).map(
+			({ record }) => record,
 		);
 	}
 	/** Return detached, currently eligible records for the subject from one storage snapshot. */
 	async listTrustMarksForSubject(subject: string): Promise<TrustMarkRecord[]> {
-		const id = entityId(subject),
-			at = nowSeconds(this.config.options?.clock);
-		return this.config.storage.readSnapshot(async (snapshot) =>
-			cloneData(await this.eligible(snapshot.trustMarks, { subject: id }, at)),
-		);
+		return this.eligibleCandidates({ subject: entityId(subject) });
 	}
 	/** Return an eligible stored JWT for the subject and type, if one exists. */
 	async getTrustMark(subject: string, type: string): Promise<string | undefined> {
-		return (await this.listTrustMarksForSubject(subject)).find(
-			(record) => record.trustMarkType === type,
-		)?.jwt;
+		return (await this.eligibleCandidates({ subject: entityId(subject), trustMarkType: type }))[0]
+			?.jwt;
 	}
 	/** List distinct eligible subjects for a type, optionally restricted to one subject. */
 	async listTrustMarkedEntities(type: string, subject?: string): Promise<string[]> {
 		const filter = { trustMarkType: type, ...(subject ? { subject: entityId(subject) } : {}) };
-		return this.config.storage.readSnapshot(async (snapshot) =>
-			[
-				...new Set(
-					(
-						await this.eligible(snapshot.trustMarks, filter, nowSeconds(this.config.options?.clock))
-					).map((r) => r.subject),
-				),
-			].sort(),
-		);
+		return [
+			...new Set((await this.eligibleCandidates(filter)).map((record) => record.subject)),
+		].sort();
 	}
 	/** Revoke matching records issued by this service within a storage transaction. */
 	async revokeTrustMark(type: string, subject: string): Promise<void> {
-		const id = entityId(subject),
-			at = nowSeconds(this.config.options?.clock);
-		await this.config.storage.transaction((tx) => tx.trustMarks.revoke(type, id, at, this.issuer));
+		const id = entityId(subject);
+		const at = nowSeconds(this.config.options.clock);
+		assertStorageCapabilities(
+			this.config.storage,
+			describeStorageRequirements("trustMarkWrite"),
+			"Revoke Trust Mark",
+		);
+		await storageTransaction(
+			this.config.storage,
+			(tx) => {
+				assertStorageView(tx, ["trustMark:write"], "Revoke Trust Mark");
+				return tx.trustMark.revoke(type, id, at, this.issuer);
+			},
+			this.config.options,
+		);
 	}
+
 	private assertReuse(record: TrustMarkRecord, requested: TrustMarkIssuanceOptions) {
 		const decoded = decodeEntityStatement(record.jwt, this.config.options);
 		if (!decoded.ok) throw new Error("Invalid stored Trust Mark");
@@ -400,23 +463,83 @@ export class TrustMarkIssuerService {
 			throw new TypeError("Invalid renewal mode");
 		if (captured.noExpiry && captured.ttlSeconds !== undefined)
 			throw new TypeError("noExpiry and ttlSeconds conflict");
+		assertStorageCapabilities(
+			this.config.storage,
+			describeStorageRequirements("trustMarkWrite"),
+			"Issue Trust Mark",
+		);
 		const version = this.version;
-		const reuse = async (store: Pick<TrustMarkStorage, "listCandidates">) => {
-			if (captured.renewal === "renew") return undefined;
-			const candidate = (
-				await this.eligible(
-					store,
-					{ trustMarkType: type, subject: id },
-					nowSeconds(this.config.options?.clock),
-				)
-			)[0];
-			if (candidate) this.assertReuse(candidate, captured);
-			return candidate;
+		const filter = { issuer: this.issuer, trustMarkType: type, subject: id };
+		const readCandidates = () =>
+			this.read(async (store) => ({
+				revision: await store.revision(),
+				records: captured.renewal === "renew" ? [] : await store.candidates(filter),
+			}));
+		const assertPolicy = () => {
+			if (version !== this.version)
+				throw new Error("Trust Mark policy changed during issuance; retry the operation");
 		};
-		const prior = await this.config.storage.transaction((tx) => reuse(tx.trustMarks));
-		if (version !== this.version)
-			throw new Error("Trust Mark policy changed during issuance; retry the operation");
-		if (prior) return prior.jwt;
+		let signed: TrustMarkRecord | undefined;
+		for (let attempt = 0; attempt < 3; attempt++) {
+			const { revision, records } = await readCandidates();
+			if (typeof revision !== "string" || !revision)
+				throw new TypeError("Trust Mark storage returned an invalid revision");
+			const now = nowSeconds(this.config.options.clock);
+			const winner = (await this.eligible(records, now))[0];
+			assertPolicy();
+			if (!winner && !signed) signed = await this.signRecord(id, type, captured);
+			const proof =
+				winner ??
+				(signed
+					? {
+							record: signed,
+							expiresAt: (await this.evaluateEligibility(signed)).expiresAt ?? -Infinity,
+						}
+					: undefined);
+			assertPolicy();
+			if (!proof || (!winner && proof.expiresAt <= nowSeconds(this.config.options.clock)))
+				throw new Error("Trust Mark is no longer eligible for issuance");
+			const completed = await storageTransaction(
+				this.config.storage,
+				async (tx) => {
+					assertStorageView(tx, ["trustMark:write"], "Issue Trust Mark");
+					if ((await tx.trustMark.checkRevision(revision)) !== true) return false;
+					assertPolicy();
+					if (proof.expiresAt <= nowSeconds(this.config.options.clock)) return false;
+					if (winner) {
+						this.assertReuse(proof.record, captured);
+						return true;
+					}
+					const store = tx.trustMark;
+					const collision = await store.status(proof.record.jwt);
+					assertPolicy();
+					if (proof.expiresAt <= nowSeconds(this.config.options.clock)) return false;
+					if (collision && !collision.active)
+						throw new Error(
+							"Identical Trust Mark was revoked; advance the issuance time before renewing",
+						);
+					await store.issue(proof.record);
+					assertPolicy();
+					if (proof.expiresAt <= nowSeconds(this.config.options.clock))
+						throw new Error("Trust Mark expired during issuance");
+					return true;
+				},
+				this.config.options,
+			);
+			if (completed) {
+				assertPolicy();
+				if (proof.expiresAt <= nowSeconds(this.config.options.clock))
+					throw new Error("Trust Mark expired before issuance completed");
+				return proof.record.jwt;
+			}
+		}
+		throw new Error("Trust Mark storage changed during issuance; retry the operation");
+	}
+	private async signRecord(
+		id: EntityId,
+		type: string,
+		captured: TrustMarkIssuanceOptions,
+	): Promise<TrustMarkRecord> {
 		const perType = Object.hasOwn(this.typeDefaults, type) ? this.typeDefaults[type] : undefined;
 		const effective: TrustMarkIssuanceOptions = { ...this.defaults, ...perType, ...captured };
 		// A selected lifetime mode replaces the lower-precedence mode as a whole.
@@ -429,7 +552,7 @@ export class TrustMarkIssuerService {
 		const now = nowSeconds(this.config.options?.clock);
 		const keySet = await federationEntry(this.config.crypto, {
 			issuer: this.issuer,
-			subject: subject,
+			subject: id,
 			trustMarkType: type,
 		});
 		const delegation = Object.hasOwn(this.delegations, type) ? this.delegations[type] : undefined;
@@ -462,11 +585,11 @@ export class TrustMarkIssuerService {
 			...this.config.options,
 			expectedSubject: id,
 			expectedTrustMarkType: type,
-			trustMarkOwners: this.owners(type),
+			trustMarkOwners: this.ownerContext(type).owners,
 			clockSkewSeconds: 0,
 		});
 		if (!checked.ok) throw new Error(checked.error.description);
-		const record: TrustMarkRecord = {
+		return {
 			trustMarkType: type,
 			subject: id,
 			jwt,
@@ -474,21 +597,6 @@ export class TrustMarkIssuerService {
 			...(checked.value.expiresAt !== undefined ? { expiresAt: checked.value.expiresAt } : {}),
 			active: true,
 		};
-		return this.config.storage.transaction(async (tx) => {
-			if (version !== this.version)
-				throw new Error("Trust Mark policy changed during issuance; retry the operation");
-			const winner = await reuse(tx.trustMarks);
-			if (winner) return winner.jwt;
-			if ((await this.eligibility(record)) !== "active")
-				throw new Error("Trust Mark is no longer eligible for issuance");
-			const collision = await tx.trustMarks.getByJwt(jwt);
-			if (collision && !collision.active)
-				throw new Error(
-					"Identical Trust Mark was revoked; advance the issuance time before renewing",
-				);
-			await tx.trustMarks.issue(record);
-			return jwt;
-		});
 	}
 	private async requestExtensions(
 		kind: "status" | "list" | "retrieval",
@@ -571,7 +679,7 @@ export class TrustMarkIssuerService {
 	}
 	private async assessStoredStatus(jwt: string) {
 		const version = this.version;
-		const record = await this.config.storage.readSnapshot((tx) => tx.trustMarks.getByJwt(jwt));
+		const record = await this.read((store) => store.status(jwt));
 		const decoded = decodeEntityStatement(jwt, this.config.options);
 		if (!record || !decoded.ok || String(decoded.value.payload.iss) !== this.issuer)
 			return undefined;
@@ -603,7 +711,7 @@ export class TrustMarkIssuerService {
 				setOwn(payload, name, cloneData(value));
 			}
 		}
-		const refreshed = await this.config.storage.readSnapshot((tx) => tx.trustMarks.getByJwt(jwt));
+		const refreshed = await this.read((store) => store.status(jwt));
 		if (!refreshed) return undefined;
 		const currentStatus = await this.eligibility(refreshed);
 		if (version !== this.version)
@@ -640,15 +748,11 @@ export class TrustMarkIssuerService {
 		version: number,
 	): Promise<void> {
 		if (assessment.payload.status === "active") {
-			const record = await this.config.storage.readSnapshot((tx) =>
-				tx.trustMarks.getByJwt(assessment.payload.trust_mark),
-			);
+			const record = await this.read((store) => store.status(assessment.payload.trust_mark));
 			if (!record || (await this.eligibility(record)) !== "active")
 				throw new Error("Trust Mark status assessment is no longer active");
 			// Key/profile checks may await host code. Finish with a fresh revocation and time check.
-			const latest = await this.config.storage.readSnapshot((tx) =>
-				tx.trustMarks.getByJwt(assessment.payload.trust_mark),
-			);
+			const latest = await this.read((store) => store.status(assessment.payload.trust_mark));
 			if (
 				!latest?.active ||
 				(assessment.verificationExpiresAt ?? Infinity) <= nowSeconds(this.config.options?.clock)

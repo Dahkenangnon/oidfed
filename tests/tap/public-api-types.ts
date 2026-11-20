@@ -1,4 +1,5 @@
-import type { AuthorityConfig, StorageAdapter } from "@oidfed/authority";
+import type { AuthorityConfig } from "@oidfed/authority";
+import type { FederationStorage } from "@oidfed/core";
 import {
 	type CryptoContext,
 	decodeEntityConfiguration,
@@ -25,7 +26,7 @@ declare const engine: import("@oidfed/crypto").CryptoEngine;
 declare const keyring: import("@oidfed/crypto").RotatingKeyring;
 declare const signer: import("@oidfed/crypto").Signer;
 declare const trustAnchors: TrustAnchorSet;
-declare const authorityStorage: StorageAdapter;
+declare const authorityStorage: FederationStorage;
 
 const leafMetadata = {
 	federation_entity: { organization_name: "Example Leaf" },
@@ -88,8 +89,7 @@ const rpRegistrationResponseMetadata = {
 void rpRegistrationResponseMetadata;
 
 const registrationAdapter: RegistrationProtocolAdapter = {
-	validateClientMetadata: (raw) => ({ ok: true, value: raw }),
-	enrichResponseMetadata: (rpMeta) => rpMeta,
+	validateClientMetadata: () => ({ ok: true, value: undefined }),
 };
 
 const oidcProviderConfig = {
@@ -102,12 +102,10 @@ const oauthProviderConfig = {
 } satisfies OAuthAuthorizationServerRoleConfig;
 void oauthProviderConfig;
 
-const incompleteRegistrationAdapter = {
-	validateClientMetadata: (raw: Record<string, unknown>) => ({ ok: true, value: raw }),
-};
+const incompleteRegistrationAdapter = {};
 
 const oidcProviderConfigWithIncompleteAdapter = {
-	// @ts-expect-error registrationProtocolAdapter must implement the full adapter contract.
+	// @ts-expect-error registrationProtocolAdapter must provide a validation hook.
 	registrationProtocolAdapter: incompleteRegistrationAdapter,
 } satisfies OidcProviderRoleConfig;
 void oidcProviderConfigWithIncompleteAdapter;

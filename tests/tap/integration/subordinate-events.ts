@@ -1,5 +1,6 @@
+import { assertStorageView } from "@oidfed/core";
 import type QUnit from "qunit";
-import { MemoryStorageAdapter, TrustAnchor } from "../../../packages/authority/src/index.js";
+import { TrustAnchor } from "../../../packages/authority/src/index.js";
 import {
 	decodeEntityStatement,
 	entityId,
@@ -13,6 +14,7 @@ import {
 	verifySubordinateEventsResponse,
 } from "../../../packages/core/src/index.js";
 import { Leaf } from "../../../packages/leaf/src/index.js";
+import { memoryStorage } from "../../storage-fixtures.js";
 import {
 	fixtureHostConfig,
 	fixtureSigner,
@@ -36,7 +38,7 @@ export default function integrationTests(QUnit: QUnit): void {
 							metadata: { openid_relying_party: { organization_name: "Client" } },
 						});
 						assert.deepEqual(
-							(await f.storage.subordinateEvents?.list(issuer, subject))?.map((e) => e.event),
+							(await f.storage.subordinateEvent?.history(issuer, subject))?.map((e) => e.event),
 							["registration"],
 							"no-op update has no event",
 						);
@@ -54,10 +56,10 @@ export default function integrationTests(QUnit: QUnit): void {
 							{ iat: 1500, event: "operator.custom" },
 						]);
 						assert.true(
-							Boolean(await f.storage.subordinates.get(subject)),
+							Boolean(await f.storage.subordinate.fetch(subject)),
 							"recording suspension does not remove registration",
 						);
-						const history = await f.storage.subordinateEvents?.list(issuer, subject);
+						const history = await f.storage.subordinateEvent?.history(issuer, subject);
 						assert.deepEqual(
 							history?.map((e) => e.event),
 							[
@@ -74,7 +76,7 @@ export default function integrationTests(QUnit: QUnit): void {
 							"later operations retain legitimate equal timestamps",
 						);
 						await f.authority.revokeSubordinate(subject);
-						assert.strictEqual(await f.storage.subordinates.get(subject), undefined);
+						assert.strictEqual(await f.storage.subordinate.fetch(subject), undefined);
 						f.setNow(1600.5);
 						const fetched = await fetchSubordinateEvents(endpoint, subject, {
 							...f.options,
@@ -92,7 +94,7 @@ export default function integrationTests(QUnit: QUnit): void {
 						}
 						await f.authority.registerSubordinate(f.record);
 						assert.strictEqual(
-							(await f.storage.subordinateEvents?.list(issuer, subject))?.at(-1)?.event,
+							(await f.storage.subordinateEvent?.history(issuer, subject))?.at(-1)?.event,
 							"registration",
 						);
 					},
@@ -104,7 +106,7 @@ export default function integrationTests(QUnit: QUnit): void {
 				async (assert) => {
 					const f = await fixture();
 					await f.authority.registerSubordinate(f.record);
-					const before = await f.storage.subordinateEvents?.list(issuer, subject);
+					const before = await f.storage.subordinateEvent?.history(issuer, subject);
 					const next = await generateSigningKey("ES256");
 					const signer = new SigningEntryFixture(next.privateKey);
 					await f.crypto.keyring.publish(
@@ -132,7 +134,7 @@ export default function integrationTests(QUnit: QUnit): void {
 							})
 						).ok,
 					);
-					assert.deepEqual(await f.storage.subordinateEvents?.list(issuer, subject), before);
+					assert.deepEqual(await f.storage.subordinateEvent?.history(issuer, subject), before);
 				},
 			);
 
@@ -140,7 +142,7 @@ export default function integrationTests(QUnit: QUnit): void {
 				"history is detached, issuer scoped, independent of raw writes, and atomic",
 				async (assert) => {
 					const f = await fixture();
-					await f.storage.subordinates.add({ ...f.record, createdAt: 1, updatedAt: 2 });
+					await f.storage.subordinate.register({ ...f.record, createdAt: 1, updatedAt: 2 });
 					let fetched = await fetchSubordinateEvents(endpoint, subject, {
 						...f.options,
 						engine: testEngine,
@@ -152,39 +154,38 @@ export default function integrationTests(QUnit: QUnit): void {
 							[],
 							"raw writes do not backfill events",
 						);
-					const events = f.storage.subordinateEvents;
+					const events = f.storage.subordinateEvent;
 					if (!events) throw new Error("Missing events storage");
 					const input = { iat: 5, event: "registration", extra: { nested: 1 } };
 					await events.append(issuer, subject, [input, input]);
 					input.extra.nested = 999;
-					const detached = await events.list(issuer, subject);
+					const detached = await events.history(issuer, subject);
 					const first = detached[0];
 					if (!first) throw new Error("Expected a stored event");
 					(first.extra as { nested: number }).nested = 42;
 					assert.strictEqual(
-						((await events.list(issuer, subject))[0]?.extra as { nested: number } | undefined)
+						((await events.history(issuer, subject))[0]?.extra as { nested: number } | undefined)
 							?.nested,
 						1,
 					);
 					assert.strictEqual(
-						(await events.list(issuer, subject)).length,
+						(await events.history(issuer, subject)).length,
 						2,
 						"same timestamp and type are not deduplicated",
 					);
-					assert.deepEqual(await events.list(entityId("https://another.example"), subject), []);
-					assert.deepEqual(await events.list(issuer, entityId("https://another.example")), []);
+					assert.deepEqual(await events.history(entityId("https://another.example"), subject), []);
+					assert.deepEqual(await events.history(issuer, entityId("https://another.example")), []);
 					await assert.rejects(
 						f.storage.transaction(async (tx) => {
-							await tx.subordinates.remove(subject);
-							await tx.subordinateEvents?.append(issuer, subject, [
-								{ iat: 6, event: "revocation" },
-							]);
+							await tx.subordinate.remove(subject);
+							assertStorageView(tx, ["subordinateEvent:write"], "Test append");
+							await tx.subordinateEvent.append(issuer, subject, [{ iat: 6, event: "revocation" }]);
 							throw new Error("rollback");
 						}),
 					);
-					assert.true(Boolean(await f.storage.subordinates.get(subject)));
-					assert.strictEqual((await events.list(issuer, subject)).length, 2);
-					await f.storage.subordinates.remove(subject);
+					assert.true(Boolean(await f.storage.subordinate.fetch(subject)));
+					assert.strictEqual((await events.history(issuer, subject)).length, 2);
+					await f.storage.subordinate.remove(subject);
 					fetched = await fetchSubordinateEvents(endpoint, subject, {
 						...f.options,
 						engine: testEngine,
@@ -270,10 +271,10 @@ export default function integrationTests(QUnit: QUnit): void {
 							await TrustAnchor.create(
 								fixtureHostConfig({
 									...f.config,
-									storage: new MemoryStorageAdapter({ engine: testEngine }),
+									storage: memoryStorage({ engine: testEngine }),
 								}),
 							))(),
-						/subordinateEvents/,
+						/subordinateEvent:read/,
 					);
 					await assert.rejects(
 						(async () =>
@@ -318,7 +319,7 @@ export default function integrationTests(QUnit: QUnit): void {
 						},
 					});
 					assert.strictEqual(
-						(await f.storage.subordinates.get(subject))?.metadata,
+						(await f.storage.subordinate.fetch(subject))?.metadata,
 						undefined,
 						"operational-only metadata is omitted",
 					);

@@ -1,8 +1,11 @@
 /** Shared RFC 8414 metadata validation for OIDC and wallet protocol consumers. */
 
 import { z } from "zod";
-import { validateJwkSetUseRequirement } from "./jwks/use-requirement.js";
-import { MetadataJWKSetSchema } from "./schemas/jwk.js";
+import {
+	MetadataJWKSetSchema,
+	type MetadataValidationOptions,
+	withMetadataJwkUse,
+} from "./schemas/jwk.js";
 
 const strings = z.array(z.string());
 const httpsUrl = z
@@ -134,11 +137,6 @@ const shape = {
 };
 
 function requirements(meta: Record<string, unknown>, ctx: z.RefinementCtx, publication: boolean) {
-	const keys = MetadataJWKSetSchema.safeParse(meta.jwks);
-	if (keys.success) {
-		const use = validateJwkSetUseRequirement(keys.data.keys);
-		if (!use.ok) ctx.addIssue({ code: "custom", path: ["jwks"], message: use.error.description });
-	}
 	const requireField = (field: string, message: string) => {
 		if (!publication && meta[field] === undefined)
 			ctx.addIssue({ code: "custom", path: [field], message });
@@ -243,26 +241,29 @@ export type OAuthAuthorizationServerPublicationMetadata = z.infer<typeof publica
 /** Parse effective protocol metadata. This does not authenticate its issuer or signed_metadata. */
 export function parseOAuthAuthorizationServerMetadata(
 	metadata: unknown,
-	options?: { profile?: "oauth" },
+	options?: MetadataValidationOptions & { profile?: "oauth" },
 ): ReturnType<typeof effective.safeParse>;
 export function parseOAuthAuthorizationServerMetadata(
 	metadata: unknown,
-	options: { profile: "openid4vci" },
+	options: MetadataValidationOptions & { profile: "openid4vci" },
 ): ReturnType<typeof vciEffective.safeParse>;
 export function parseOAuthAuthorizationServerMetadata(
 	metadata: unknown,
-	options: { profile?: "oauth" | "openid4vci" },
+	options: MetadataValidationOptions & { profile?: "oauth" | "openid4vci" },
 ): ReturnType<typeof effective.safeParse> | ReturnType<typeof vciEffective.safeParse>;
 export function parseOAuthAuthorizationServerMetadata(
 	metadata: unknown,
-	options: { profile?: "oauth" | "openid4vci" } = {},
+	options: MetadataValidationOptions & { profile?: "oauth" | "openid4vci" } = {},
 ) {
 	return options.profile === "openid4vci"
-		? vciEffective.safeParse(metadata)
-		: effective.safeParse(metadata);
+		? withMetadataJwkUse(vciEffective, options).safeParse(metadata)
+		: withMetadataJwkUse(effective, options).safeParse(metadata);
 }
 
 /** Check supplied publication fields while allowing a Superior to complete missing fields. */
-export function parseOAuthAuthorizationServerPublicationMetadata(metadata: unknown) {
-	return publication.safeParse(metadata);
+export function parseOAuthAuthorizationServerPublicationMetadata(
+	metadata: unknown,
+	options?: MetadataValidationOptions,
+) {
+	return withMetadataJwkUse(publication, options).safeParse(metadata);
 }

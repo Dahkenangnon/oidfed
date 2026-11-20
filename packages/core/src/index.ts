@@ -36,6 +36,7 @@ export {
 export {
 	bindFederationOptions,
 	federationSigningOptions,
+	snapshotCryptoContext,
 	validateCryptoContext,
 } from "./crypto-context.js";
 export { randomUuid, sha256Hex } from "./crypto-runtime.js";
@@ -62,31 +63,20 @@ export {
 	signingPublication,
 	validateSigningPurposes,
 } from "./signing-purposes.js";
+
 // Replay protection
 
-export {
-	MemoryReplayStore,
-	type MemoryReplayStoreOptions,
-	ReplayStoreCapacityError,
-} from "./memory-replay-store.js";
 export {
 	type OAuthAuthorizationServerMetadata,
 	type OAuthAuthorizationServerPublicationMetadata,
 	parseOAuthAuthorizationServerMetadata,
 	parseOAuthAuthorizationServerPublicationMetadata,
 } from "./oauth-metadata.js";
-export type { JtiReplayClaim, ReplayStore } from "./replay-store.js";
+export { ReplayStoreCapacityError } from "./storage/replay-memory.js";
+export type { JtiReplayClaim, ReplayStore } from "./storage/replay-store.js";
 
 // Constants
 
-// Cache
-export {
-	chainCacheKey,
-	ecCacheKey,
-	esCacheKey,
-	MemoryCache,
-	type MemoryCacheOptions,
-} from "./cache/index.js";
 export {
 	CachePrefix,
 	DEFAULT_ALLOWED_ALGORITHMS,
@@ -211,6 +201,7 @@ export {
 	historicalKeysFromKeyring,
 	validateFederationKeySet,
 } from "./federation-keys.js";
+export { validateFetchUrl } from "./http/fetch-url.js";
 // HTTP helpers
 export {
 	type ExtractedRequestParams,
@@ -309,6 +300,104 @@ export {
 	validateCriticalClaims,
 	validateEntityStatementTimeClaims,
 } from "./statement-validation.js";
+// Cache
+export {
+	chainCacheKey,
+	ecCacheKey,
+	esCacheKey,
+} from "./storage/cache.js";
+export {
+	type ResolveAssessmentCacheValue,
+	ResolveAssessmentCacheValueSchema,
+	StatementCacheValueSchema,
+} from "./storage/cache-records.js";
+export {
+	assertStorageCapabilities,
+	assertStorageView,
+	describeStorageRequirements,
+	requireReplayStorage,
+	StorageCapabilityError,
+	type StorageFeature,
+	storageSnapshot,
+	storageTransaction,
+} from "./storage/capabilities.js";
+export type {
+	CollectionEntry,
+	EntityCollectionCursor,
+	EntityCollectionSnapshot,
+	EntityCollectionStore,
+} from "./storage/collection.js";
+export { composeFederationStorage, type FederationStorageParts } from "./storage/compose.js";
+export type {
+	CacheStore,
+	FederationStorage,
+	ReadSnapshotView,
+	StorageCapability,
+	TransactionView,
+} from "./storage/contracts.js";
+export {
+	InvalidMetadata,
+	InvalidStorageRecordError,
+	InvalidSubordinateRecord,
+} from "./storage/errors.js";
+export { MemoryFederationStorage, type MemoryFederationStorageOptions } from "./storage/memory.js";
+export { parseStoragePayload, type StoragePayloadByKind } from "./storage/payload-schemas.js";
+export {
+	type CacheWrite,
+	CacheWriteSchema,
+	CollectionEntrySchema,
+	EntityCollectionCursorSchema,
+	EntityCollectionSnapshotSchema,
+	type JsonObject,
+	type JsonValue,
+	JtiReplayClaimSchema,
+	parseStorageRecord,
+	parseStoredSubordinateEvents,
+	parseStoredTrustMark,
+	parseSubordinateRecord,
+	parseSubordinateUpdate,
+	StorageEntityIdSchema,
+	StorageJsonSchema,
+	type StorageValidationOptions,
+	StoredSubordinateEventSchema,
+	type SubordinateEventHistory,
+	SubordinateEventHistorySchema,
+	SubordinatePageSchema,
+	SubordinateRecordSchema,
+	SubordinateRecordUpdateSchema,
+	TrustMarkRecordSchema,
+	type TrustMarkRevision,
+	TrustMarkRevisionSchema,
+} from "./storage/record-schemas.js";
+export { parsePublishedSubordinateEvent } from "./storage/subordinate-event.js";
+export { assertSubordinatePublicationClaims } from "./storage/subordinate-publication.js";
+export {
+	assertMetadataValuesNotNull,
+	isFederationEntityOperationalField,
+	sanitizeSubordinateMetadata,
+} from "./storage/subordinate-statement-shape.js";
+export type {
+	ListFilter,
+	ListPage,
+	ListPageOptions,
+	SubordinateEventAnnotations,
+	SubordinateEventReadStore,
+	SubordinateEventStore,
+	SubordinateReadStore,
+	SubordinateRecord,
+	SubordinateRecordUpdate,
+	SubordinateStore,
+} from "./storage/subordinates.js";
+export type {
+	TrustMarkListOptions,
+	TrustMarkListPage,
+	TrustMarkReadStore,
+	TrustMarkRecord,
+	TrustMarkStore,
+	TrustMarkTransactionStore,
+} from "./storage/trust-mark.js";
+export { isStoredTrustMarkEligible } from "./storage/trust-mark-eligibility.js";
+export { fetchStoredSubordinate, listStoredSubordinates } from "./storage/validated-records.js";
 export {
 	compareTrustAnchorKeys,
 	type TrustAnchorKeyComparisonResult,
@@ -324,11 +413,11 @@ export {
 // Trust Chain
 export { discoverEntity, discoverEntityFromChain } from "./trust-chain/discovery.js";
 export {
+	entityConfigurationUrl,
 	type FetchSubordinateStatementOptions,
 	fetchEntityConfiguration,
 	fetchSubordinateStatement,
 	validateEntityId,
-	validateFetchUrl,
 } from "./trust-chain/fetch.js";
 export { createTrustChainOperation } from "./trust-chain/operation.js";
 export { resolveTrustChainForAnchor } from "./trust-chain/peer.js";
@@ -340,7 +429,12 @@ export {
 	type ResolveTrustChainsOptions,
 	resolveTrustChains,
 } from "./trust-chain/resolve.js";
-export { selectTrustChain } from "./trust-chain/selection.js";
+export {
+	longestExpiry,
+	preferTrustAnchor,
+	selectTrustChain,
+	shortestChain,
+} from "./trust-chain/selection.js";
 export {
 	type ContextualMetadataClaim,
 	calculateChainExpiration,
@@ -348,15 +442,11 @@ export {
 	completeTrustChainValidation,
 	describeTrustChain,
 	isChainExpired,
-	longestExpiry,
 	type PreparedTrustChain,
 	type PrepareTrustChainOptions,
-	preferTrustAnchor,
 	prepareTrustChainValidation,
-	shortestChain,
 	validateTrustChain,
 } from "./trust-chain/validate.js";
-export { isStoredTrustMarkEligible } from "./trust-marks/eligibility.js";
 export {
 	type EstablishTrustMarkIssuerOptions,
 	establishTrustMarkIssuerTrust,
@@ -404,26 +494,16 @@ export {
 	type TrustMarkStatusPolicy,
 	type TrustMarkStatusPolicyContext,
 } from "./trust-marks/issuer.js";
-export { MemoryTrustMarkStorage, MemoryTrustMarkStore } from "./trust-marks/memory.js";
 // Trust Marks
 export {
 	checkTrustMarkRequirements,
 	type TrustMarkRequirements,
 } from "./trust-marks/requirements.js";
 export type { TrustMarkDelegationIssuanceOptions } from "./trust-marks/sign.js";
-export type {
-	TrustMarkListOptions,
-	TrustMarkListPage,
-	TrustMarkRecord,
-	TrustMarkStorage,
-	TrustMarkStore,
-} from "./trust-marks/storage.js";
-
 export { assertPositiveTtlSeconds } from "./ttl.js";
 // Types
 export {
 	type BoundFederationOptions,
-	type CacheProvider,
 	type ChainSelectionStrategy,
 	type Clock,
 	type ConstraintCheckContext,

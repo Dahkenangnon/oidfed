@@ -14,8 +14,9 @@ import {
 	prepareEndpointParameters,
 } from "./endpoint-parameters.js";
 import { err, type Result } from "./errors.js";
+import { type PerformFetchOptions, performFetch } from "./http/fetch.js";
+import { validateFetchUrl } from "./http/fetch-url.js";
 import { createClientAssertion } from "./jose/client-assertion.js";
-import { type PerformFetchOptions, performFetch, validateFetchUrl } from "./trust-chain/fetch.js";
 import { type EntityId, entityId } from "./types.js";
 
 export interface PrivateKeyJwtEndpointAuthentication {

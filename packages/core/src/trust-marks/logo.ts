@@ -6,8 +6,8 @@
 
 import { DEFAULT_HTTP_TIMEOUT_MS, FederationErrorCode } from "../constants.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
+import { validateFetchUrl } from "../http/fetch-url.js";
 import { parseContentTypeHeader } from "../http.js";
-import { validateFetchUrl } from "../trust-chain/fetch.js";
 import type { FederationOptions } from "../types.js";
 
 export interface ValidateTrustMarkLogoOptions extends FederationOptions {}

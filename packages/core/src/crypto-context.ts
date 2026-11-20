@@ -4,7 +4,20 @@ import {
 	DEFAULT_JWS_REGISTRY,
 	type JwsAlgorithmRegistry,
 } from "@oidfed/crypto";
+import type { FederationStorage } from "./storage/contracts.js";
 import type { BoundFederationOptions, CryptoContext, FederationOptions } from "./types.js";
+
+/** Capture host crypto configuration while retaining the adapters and their signing custody. */
+export function snapshotCryptoContext(crypto: CryptoContext): Readonly<CryptoContext> {
+	const { engine, keyring, algorithmRegistry, federationPurpose, history } = crypto;
+	return Object.freeze({
+		engine,
+		keyring,
+		...(algorithmRegistry ? { algorithmRegistry } : {}),
+		...(federationPurpose !== undefined ? { federationPurpose } : {}),
+		...(history !== undefined ? { history } : {}),
+	});
+}
 
 /** Validate the host boundary without exporting private keys or exercising signing custody. */
 export function validateCryptoContext(crypto: CryptoContext): void {
@@ -26,13 +39,20 @@ export function validateCryptoContext(crypto: CryptoContext): void {
 }
 
 /**
- * Apply host, role and call settings in order, keeping the engine bound to the host.
+ * Apply host, role and call settings in order, keeping the engine and storage bound to the host.
  * Algorithm lists intersect and resource ceilings take the smallest configured value.
  */
 export function bindFederationOptions(
-	crypto: Pick<CryptoContext, "engine" | "algorithmRegistry">,
+	dependencies:
+		| Pick<CryptoContext, "engine" | "algorithmRegistry">
+		| {
+				readonly crypto: Pick<CryptoContext, "engine" | "algorithmRegistry">;
+				readonly storage?: FederationStorage | undefined;
+		  },
 	...policies: readonly (BoundFederationOptions | undefined)[]
 ): FederationOptions {
+	const crypto = "crypto" in dependencies ? dependencies.crypto : dependencies;
+	const storage = "crypto" in dependencies ? dependencies.storage : undefined;
 	const combined: BoundFederationOptions = {};
 	for (const policy of policies) Object.assign(combined, policy);
 	const result: FederationOptions = {
@@ -40,6 +60,7 @@ export function bindFederationOptions(
 		engine: crypto.engine,
 		algorithmRegistry: registryFor(crypto),
 	};
+	Object.defineProperty(result, "storage", { value: storage, enumerable: true });
 	const lists = policies.flatMap((policy) =>
 		policy?.allowedAlgorithms === undefined ? [] : [policy.allowedAlgorithms],
 	);

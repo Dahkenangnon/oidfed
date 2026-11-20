@@ -3,8 +3,8 @@
 import { runAsyncOperation } from "./async-operation.js";
 import { FederationErrorCode } from "./constants.js";
 import { err, ok, type Result } from "./errors.js";
+import { performFetch } from "./http/fetch.js";
 import { errorResponse, jsonResponse, requireMethods } from "./http.js";
-import { performFetch } from "./trust-chain/fetch.js";
 import type { FederationOptions } from "./types.js";
 
 const invalid = () =>

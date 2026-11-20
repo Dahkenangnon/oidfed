@@ -3,42 +3,14 @@ export type {
 	ExtendedListingFilterContext,
 	ExtendedListingRequestFilter,
 } from "./endpoints/extended-list-filters.js";
-export {
-	InvalidAuthorityConfig,
-	InvalidMetadata,
-	InvalidSubordinateRecord,
-	InvalidSubordinateStatementShape,
-} from "./errors.js";
-export type {
-	FederationHandler,
-	Middleware,
-} from "./handler.js";
+export { InvalidAuthorityConfig } from "./errors.js";
+export type { FederationHandler } from "./handler.js";
 export {
 	type AuthorityClientKeyProvider,
 	type AuthorityConfig,
-	type AuthorityServer,
 	type ExtendedSubordinateListingOptions,
-	type ExtendedSubordinateListingParams,
 	type ExtendedSubordinateListingResult,
 	Intermediate,
+	type IntermediateConfig,
 	TrustAnchor,
 } from "./server.js";
-export {
-	type ListFilter,
-	type ListPage,
-	type ListPageOptions,
-	MemoryStorageAdapter,
-	type MemoryStorageAdapterOptions,
-	type StorageAdapter,
-	type StorageReadSnapshot,
-	type StorageTransaction,
-	type SubordinateEventAnnotations,
-	type SubordinateEventStorage,
-	type SubordinateRecord,
-	type SubordinateRecordUpdate,
-	type SubordinateStorage,
-	type TrustMarkListOptions,
-	type TrustMarkListPage,
-	type TrustMarkRecord,
-	type TrustMarkStorage,
-} from "./storage/index.js";

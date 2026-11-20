@@ -1,10 +1,13 @@
+import { getCacheStorage } from "../storage/capabilities.js";
+
 /** Shared transport scope and historical-key request reuse for Trust Mark operations. */
 
-import { MemoryCache } from "../cache/index.js";
 import { FederationErrorCode, MediaType } from "../constants.js";
 import { fetchFederationEndpoint } from "../endpoint-client.js";
 import { err, type Result } from "../errors.js";
-import type { PerformFetchOptions } from "../trust-chain/fetch.js";
+import type { PerformFetchOptions } from "../http/fetch.js";
+import { MemoryCache } from "../storage/cache.js";
+import { withOperationCache } from "../storage/cache-view.js";
 import type { FederationOptions, HttpClient } from "../types.js";
 
 const scopedClients = new WeakSet<HttpClient>();
@@ -32,7 +35,12 @@ export function trustMarkOperation<T extends FederationOptions>(options: T): T {
 	return {
 		...options,
 		httpClient,
-		cache: options.cache ?? new MemoryCache(options.clock ? { clock: options.clock } : undefined),
+		storage: getCacheStorage(options.storage)
+			? options.storage
+			: withOperationCache(
+					options.storage,
+					new MemoryCache(options.clock ? { clock: options.clock } : undefined),
+				),
 	};
 }
 

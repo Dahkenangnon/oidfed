@@ -1,5 +1,5 @@
 /** Immutable, application-scoped definitions for asymmetric compact JWS. */
-import { decodeBase64url } from "./base64url.js";
+import { decodeBase64url } from "./encoding.js";
 import { CryptoError, JWS_ALGORITHMS, type PublicJwk } from "./types.js";
 
 /** Signature representation required by an algorithm's compact JWS profile. */

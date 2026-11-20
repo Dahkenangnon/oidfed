@@ -1,5 +1,6 @@
-import { MemoryStorageAdapter, TrustAnchor } from "@oidfed/authority";
+import { TrustAnchor } from "@oidfed/authority";
 import {
+	assertStorageCapabilities,
 	decodeEntityStatement,
 	entityId,
 	err,
@@ -7,9 +8,11 @@ import {
 	federationError,
 	fetchExtendedSubordinatesList,
 	isOk,
+	MemoryFederationStorage,
 	ok,
 } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
+import { STORED_PUBLIC_JWK, storedTrustMarkToken } from "../../storage-fixtures.js";
 import { fixtureHostConfig, testEngine } from "../../tap/fixtures/software-crypto.js";
 import { getAuthorityEntity } from "../helpers/launcher.js";
 import { useFederation } from "../helpers/lifecycle.js";
@@ -27,7 +30,7 @@ describe("Extended Subordinate Listing endpoint", () => {
 			fixtureHostConfig({
 				entityId: id,
 				crypto: original.crypto as import("@oidfed/core").CryptoContext,
-				storage: new MemoryStorageAdapter({ engine: testEngine }),
+				storage: new MemoryFederationStorage({ namespace: "extended-listing", engine: testEngine }),
 				metadata: {
 					federation_entity: {
 						federation_fetch_endpoint: `${id}/fetch`,
@@ -140,7 +143,9 @@ describe("Extended Subordinate Listing endpoint", () => {
 			}
 			expect(received).toEqual(ids);
 		} finally {
-			for (const id of ids) await authority.storage?.subordinates.remove(id);
+			const { storage } = authority;
+			assertStorageCapabilities(storage, ["subordinate:write"]);
+			for (const id of ids) await storage.subordinate.remove(id);
 		}
 	});
 
@@ -191,8 +196,9 @@ describe("Extended Subordinate Listing endpoint", () => {
 	it("repeated mark types return the valid union across HTTPS pages", async () => {
 		const { entities, server } = getTestBed();
 		const authority = getAuthorityEntity(entities, "https://ta.ofed.test");
-		const marks = authority.storage?.trustMarks;
-		if (!marks) throw new Error("Expected authority trust mark storage");
+		const { storage } = authority;
+		assertStorageCapabilities(storage, ["trustMark:write"]);
+		const marks = storage.trustMark;
 		const now = Math.floor(Date.now() / 1000);
 		const alpha = "https://marks.example/alpha";
 		const beta = "https://marks.example/beta";
@@ -205,15 +211,10 @@ describe("Extended Subordinate Listing endpoint", () => {
 			[rp, beta, true, now + 3600],
 			[rp2, alpha, true, now - 1],
 			[rp2, beta, false, now + 3600],
-		] as const)
-			await marks.issue({
-				subject,
-				trustMarkType: type,
-				jwt: `fixture.${subject}.${type}`,
-				issuedAt: now - 60,
-				active,
-				expiresAt,
-			});
+		] as const) {
+			const record = { subject, trustMarkType: type, issuedAt: now - 60, active, expiresAt };
+			await marks.issue({ ...record, jwt: storedTrustMarkToken(record) });
+		}
 		try {
 			const endpoint = `https://ta.ofed.test:${server.port}/federation_extended_list`;
 			const first = await fetchExtendedSubordinatesList(
@@ -269,12 +270,13 @@ describe("Extended Subordinate Listing endpoint", () => {
 	it("preserves fractional audit timestamps and inclusive time filters over HTTPS", async () => {
 		const { entities, server } = getTestBed();
 		const authority = getAuthorityEntity(entities, "https://ta.ofed.test");
-		const subordinates = authority.storage?.subordinates;
-		if (!subordinates) throw new Error("Expected authority subordinate storage");
+		const { storage } = authority;
+		assertStorageCapabilities(storage, ["subordinate:write"]);
+		const subordinates = storage.subordinate;
 		const id = entityId(`https://rp.ofed.test:${server.port}/fractional`);
-		await subordinates.add({
+		await subordinates.register({
 			entityId: id,
-			jwks: { keys: [] },
+			jwks: { keys: [STORED_PUBLIC_JWK] },
 			createdAt: -0.5,
 			updatedAt: 1500.5,
 		});

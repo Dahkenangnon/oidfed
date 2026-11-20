@@ -3,14 +3,14 @@
 import { InternalErrorCode, JwtTyp, MediaType } from "../constants.js";
 import { fetchFederationEndpoint } from "../endpoint-client.js";
 import { err, type FederationError, ok, type Result } from "../errors.js";
+import { validateFetchUrl } from "../http/fetch-url.js";
 import { verifyEntityStatement } from "../jose/verify.js";
-import { safeLogger } from "./../logging.js";
+import { safeLogger } from "../logging.js";
 import type { JWKSet } from "../schemas/jwk.js";
 import {
 	type SubordinateEventsResponse,
 	SubordinateEventsResponseSchema,
 } from "../schemas/subordinate-events.js";
-import { validateFetchUrl } from "../trust-chain/fetch.js";
 import { type EntityId, type FederationOptions, isValidEntityId } from "../types.js";
 
 export interface VerifySubordinateEventsOptions extends FederationOptions {

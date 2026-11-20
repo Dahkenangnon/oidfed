@@ -2,11 +2,15 @@ import type { CryptoEngine } from "@oidfed/crypto";
 
 declare const engine: CryptoEngine;
 
-import { type Intermediate, TrustAnchor } from "@oidfed/authority";
+import {
+	type AuthorityConfig,
+	Intermediate,
+	type IntermediateConfig,
+	TrustAnchor,
+} from "@oidfed/authority";
 import {
 	type assessEntity,
 	type discoverEntity,
-	type discoverEntityFromChain,
 	type EntityId,
 	entityId,
 	err,
@@ -55,18 +59,30 @@ expectType<EntityId>(anchor.entityId);
 expectError(() => {
 	anchor.entityId = entityId("https://other.example");
 });
-expectType<typeof Intermediate.assessEntity>(TrustAnchor.assessEntity);
-expectType<typeof Intermediate.discoverEntity>(TrustAnchor.discoverEntity);
-expectType<typeof Intermediate.discoverEntityFromChain>(TrustAnchor.discoverEntityFromChain);
-expectType<typeof Intermediate.sanitizeSubordinateMetadata>(
-	TrustAnchor.sanitizeSubordinateMetadata,
+expectError(TrustAnchor.assessEntity);
+expectError(Intermediate.discoverEntity);
+expectError(intermediate.setTrustMarkIssuers);
+expectError(intermediate.setTrustMarkOwners);
+expectType<Promise<string>>(
+	anchor.resolveEntity(entityId("https://subject.example"), undefined, { clockSkewSeconds: 5 }),
+);
+expectError(anchor.resolveEntity(entityId("https://subject.example"), undefined, { engine }));
+const config = null as unknown as AuthorityConfig;
+const intermediateConfig = null as unknown as IntermediateConfig;
+expectType<Promise<Intermediate>>(Intermediate.create(intermediateConfig));
+expectError(Intermediate.create(config));
+expectError(Intermediate.create({ ...intermediateConfig, authorityHints: [] }));
+expectError(Intermediate.create({ ...intermediateConfig, trustMarkIssuers: {} }));
+const provider = null as unknown as OidcProviderRole;
+expectError(provider.processAutomaticRegistration("request", { engine }));
+expectError(
+	provider.processPushedAuthorizationRequest(new Request("https://provider.example/par"), {
+		algorithmRegistry: undefined,
+	}),
 );
 expectType<Promise<string>>(anchor.getEntityConfiguration());
 expectType<Promise<Response>>(intermediate.handleRequest(new Request("https://authority.example")));
 
-expectType<typeof assessEntity>(TrustAnchor.assessEntity);
-expectType<typeof discoverEntity>(TrustAnchor.discoverEntity);
-expectType<typeof discoverEntityFromChain>(TrustAnchor.discoverEntityFromChain);
 expectType<ReturnType<typeof assessEntity>>(
 	anchor.assessEntity(entityId("https://subject.example")),
 );

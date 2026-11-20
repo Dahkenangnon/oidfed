@@ -5,6 +5,7 @@ import {
 	entityId,
 	fetchEntityCollection,
 	InternalErrorCode,
+	MemoryFederationStorage,
 	ok,
 	signEntityStatement,
 } from "@oidfed/core";
@@ -27,7 +28,13 @@ describe("Entity Collection over HTTPS", () => {
 		const client = entities.get("https://rp.ofed.test");
 		if (!client) throw new Error("RP fixture missing");
 		const service = new EntityCollectionService({
-			options: { engine: testEngine },
+			options: {
+				engine: testEngine,
+				storage: new MemoryFederationStorage({
+					namespace: receiver,
+					capabilities: ["entityCollection", "replay"],
+				}),
+			},
 			endpoint,
 			trustAnchors: createTrustAnchorSet([
 				{ entityId: anchor, jwks: { keys: [authority.keys.public] } },
@@ -149,7 +156,13 @@ describe("Entity Collection over HTTPS", () => {
 		let collected = 0;
 		let filtered = 0;
 		const service = new EntityCollectionService({
-			options: { engine: testEngine },
+			options: {
+				engine: testEngine,
+				storage: new MemoryFederationStorage({
+					namespace: anchor,
+					capabilities: ["entityCollection"],
+				}),
+			},
 			trustAnchors: createTrustAnchorSet([
 				{ entityId: anchor, jwks: { keys: [authority.keys.public] } },
 			]),
@@ -204,7 +217,7 @@ describe("Entity Collection over HTTPS", () => {
 		}
 		expect(collected).toBe(1);
 		expect(filtered).toBe(2);
-		expect((await service.store.getCurrent(anchor))?.entries[0]?.chainExpiresAt).toBeUndefined();
+		expect((await service.store.current(anchor))?.entries[0]?.chainExpiresAt).toBeUndefined();
 	});
 
 	it("accepts framework-generated JSON content types for success and errors", async () => {

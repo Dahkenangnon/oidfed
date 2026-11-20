@@ -13,7 +13,7 @@ import { freezeSnapshot } from "./callbacks.js";
 import { registryFor } from "./crypto-context.js";
 import { cloneData } from "./data-copy.js";
 import { preparePublicJwkSet } from "./jwks/public-material.js";
-import { type HistoricalKeyEntry, HistoricalKeyEntrySchema } from "./schemas/entity-statement.js";
+import { type HistoricalKeyEntry, HistoricalKeyEntrySchema } from "./schemas/endpoints.js";
 import type { CryptoContext } from "./types.js";
 
 /** Explicit source for recorded Federation historical-key wire objects. */

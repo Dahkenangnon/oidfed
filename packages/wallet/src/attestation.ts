@@ -24,14 +24,8 @@ import {
 	type WalletTrustOptions,
 } from "./trust.js";
 
-export {
-	invokeVerificationPolicy as invokePolicy,
-	parseConcatenatedClientAttestation as parseConcatenatedWalletAttestation,
-} from "@oidfed/core";
-export type WalletAttestation = ClientAttestation;
-export type CreateWalletAttestationParams = CreateClientAttestationParams;
 export interface VerifiedWalletAttestation {
-	readonly attestation: WalletAttestation;
+	readonly attestation: ClientAttestation;
 	readonly provider: TrustedWalletEntity;
 }
 export interface WalletAttestationVerificationOptions extends WalletTrustOptions {
@@ -55,7 +49,7 @@ export interface AuthenticateWalletOptions
  */
 export function createAttestation(
 	issuer: string,
-	params: CreateWalletAttestationParams,
+	params: CreateClientAttestationParams,
 	signer: KeyringEntry,
 	options: WalletTrustOptions,
 ): Promise<Result<string>> {
@@ -112,12 +106,15 @@ export async function authenticateWallet(
 	anchors: TrustAnchorSet,
 	options: AuthenticateWalletOptions,
 ): Promise<Result<VerifiedWalletAttestation, ClientAttestationError>> {
-	if (typeof options.acceptWallet !== "function" || (!options.replayStore && !options.replay)) {
+	if (
+		typeof options.acceptWallet !== "function" ||
+		(!options.storage?.capabilities.includes("replay") && !options.replay)
+	) {
 		const logger = safeLogger(options.logger);
 		if (typeof options.acceptWallet !== "function")
 			logger?.warn("Provide acceptWallet to decide whether to accept the Wallet");
-		if (!options.replayStore && !options.replay)
-			logger?.warn("Provide a replayStore for Client Attestation PoP replay protection");
+		if (!options.storage?.capabilities.includes("replay") && !options.replay)
+			logger?.warn("Configure replay storage or a Client Attestation PoP replay policy");
 		return failure("Invalid wallet authentication configuration");
 	}
 	const trust = providerTrust(anchors, { ...options, expectedAudience: options.audience });

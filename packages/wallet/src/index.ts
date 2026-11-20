@@ -1,11 +1,16 @@
 export type {
 	AuthenticateWalletOptions,
-	CreateWalletAttestationParams,
 	VerifiedWalletAttestation,
-	WalletAttestation,
 	WalletAttestationVerificationOptions,
 } from "./attestation.js";
-export { parseConcatenatedWalletAttestation } from "./attestation.js";
+export type {
+	AuthorizationRequestContext,
+	AuthorizationRequestCreationOptions,
+	AuthorizationRequestOptions,
+	PreparedAuthorizationRequest,
+	ValidatedWalletRequest,
+	WalletAuthorizationRequest,
+} from "./authorization-request.js";
 export type {
 	CredentialIssuerMetadata,
 	CredentialIssuerPublicationMetadata,
@@ -15,14 +20,6 @@ export type {
 	WalletProviderMetadata,
 	WalletProviderPublicationMetadata,
 } from "./metadata.js";
-export type {
-	AuthorizationRequestContext,
-	AuthorizationRequestCreationOptions,
-	AuthorizationRequestOptions,
-	PreparedAuthorizationRequest,
-	ValidatedWalletRequest,
-	WalletAuthorizationRequest,
-} from "./request.js";
 export type {
 	AttestationVerificationOptions,
 	CredentialIssuerDiscoveryOptions,

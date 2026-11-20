@@ -1,11 +1,14 @@
+import { getCacheStorage } from "../storage/capabilities.js";
+
 /** Trust chain refresh with fresh statement retrieval when required or explicitly requested. */
 
-import { MemoryCache } from "../cache/index.js";
 import { CachePrefix, InternalErrorCode } from "../constants.js";
 import { err, federationError, ok, type Result } from "../errors.js";
-import { safeLogger } from "./../logging.js";
+import { safeLogger } from "../logging.js";
+import { MemoryCache } from "../storage/cache.js";
+import { withOperationCache } from "../storage/cache-view.js";
+import type { CacheStore } from "../storage/contracts.js";
 import {
-	type CacheProvider,
 	type Clock,
 	type FederationOptions,
 	nowSeconds,
@@ -23,7 +26,7 @@ export interface RefreshOptions extends FederationOptions {
 }
 
 /** Keep newly retrieved statements reusable without reading old statements from the host cache. */
-function freshStatementCache(shared: CacheProvider | undefined, clock: Clock): CacheProvider {
+function freshStatementCache(shared: CacheStore | undefined, clock: Clock): CacheStore {
 	const local = new MemoryCache({ clock });
 	if (!shared) return local;
 	const statementKey = (key: string) =>
@@ -37,7 +40,6 @@ function freshStatementCache(shared: CacheProvider | undefined, clock: Clock): C
 		delete: (key: string) => (statementKey(key) ? local.delete(key) : shared.delete(key)),
 		// The operation owns only this view, never the application's cache lifetime.
 		clear: () => local.clear(),
-		[Symbol.asyncDispose]: () => local[Symbol.asyncDispose](),
 	};
 }
 
@@ -66,7 +68,14 @@ export async function refreshTrustChain(
 	const operationOptions: FederationOptions = {
 		...operation.value.options,
 		clock: effectiveClock,
-		...(options?.forceRefresh ? { cache: freshStatementCache(options.cache, effectiveClock) } : {}),
+		...(options?.forceRefresh
+			? {
+					storage: withOperationCache(
+						options.storage,
+						freshStatementCache(getCacheStorage(options.storage), effectiveClock),
+					),
+				}
+			: {}),
 	};
 	const entityId = chain.entityId;
 	const resolveResult = await resolveTrustChains(entityId, trustAnchors, operationOptions);

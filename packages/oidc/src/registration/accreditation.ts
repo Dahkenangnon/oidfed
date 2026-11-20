@@ -1,8 +1,8 @@
-import { cloneData } from "@oidfed/core";
 /** Declarative Trust Mark requirements and host policy before registration side effects. */
 
 import {
 	checkTrustMarkRequirements,
+	cloneData,
 	err,
 	FederationErrorCode,
 	type FederationOptions,

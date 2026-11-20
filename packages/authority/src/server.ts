@@ -1,15 +1,29 @@
 import {
+	assertStorageCapabilities,
 	type BoundFederationOptions,
 	bindFederationOptions,
 	cloneData,
 	composeRolePublicationMetadata,
+	describeStorageRequirements,
 	federationEntry,
+	fetchStoredSubordinate,
+	listStoredSubordinates,
+	snapshotCryptoContext,
 	validateCryptoContext,
 } from "@oidfed/core";
+
 /** Authority hosts composing federation handlers, role metadata, signing keys, and storage. */
 
+import type {
+	FederationStorage,
+	ListFilter,
+	SubordinateEventAnnotations,
+	SubordinateRecord,
+	SubordinateRecordUpdate,
+} from "@oidfed/core";
 import {
 	type AttachTrustMarkOptions,
+	assertMetadataValuesNotNull,
 	assertPositiveTtlSeconds,
 	assessEntity,
 	buildExtendedListRequestParameters,
@@ -32,6 +46,7 @@ import {
 	EXTENDED_LIST_UNORDERED_PARAMETERS,
 	type ExtendedListRequestParams,
 	endpointParameterValuesMatch,
+	entityConfigurationUrl,
 	err,
 	FederationEndpoint,
 	type FederationEntityMetadata,
@@ -49,6 +64,7 @@ import {
 	RESOLVE_UNORDERED_PARAMETERS,
 	type RemoveTrustMarkSelector,
 	type Result,
+	SECURITY_HEADERS,
 	type SubordinateEvent,
 	safeLogger,
 	signTrustMarkDelegation,
@@ -61,7 +77,6 @@ import {
 	type TrustMarkRecord,
 	type TrustMarkRef,
 	type TrustMarkStatusResponsePayload,
-	WELL_KNOWN_OPENID_FEDERATION,
 } from "@oidfed/core";
 import { createAuthenticatedHandler } from "./endpoints/client-auth.js";
 import type { AuthorityClientKeyProvider, HandlerContext } from "./endpoints/context.js";
@@ -74,7 +89,6 @@ import {
 	type ExtendedListingConfig,
 } from "./endpoints/extended-list.js";
 import { buildSubordinateStatement, createFetchHandler } from "./endpoints/fetch.js";
-import { SECURITY_HEADERS } from "./endpoints/helpers.js";
 import { buildHistoricalKeys, createHistoricalKeysHandler } from "./endpoints/historical-keys.js";
 import { createListHandler } from "./endpoints/list.js";
 import { createResolveHandler } from "./endpoints/resolve.js";
@@ -85,26 +99,12 @@ import {
 } from "./endpoints/subordinate-events.js";
 import { createTrustMarkHandler } from "./endpoints/trust-mark.js";
 import { createTrustMarkListHandler } from "./endpoints/trust-mark-list.js";
-import { trustMarkService, updateTrustMarkServicePolicy } from "./endpoints/trust-mark-service.js";
 import { createTrustMarkStatusHandler } from "./endpoints/trust-mark-status.js";
 import { InvalidAuthorityConfig } from "./errors.js";
-import type {
-	ListFilter,
-	StorageAdapter,
-	SubordinateEventAnnotations,
-	SubordinateRecord,
-	SubordinateRecordUpdate,
-} from "./storage/types.js";
 import { createSubordinateLifecycle } from "./subordinate-lifecycle.js";
-import {
-	assertMetadataValuesNotNull,
-	sanitizeSubordinateMetadata,
-} from "./utils/subordinate-statement-shape.js";
+import { trustMarkService, updateTrustMarkServicePolicy } from "./trust-mark-service.js";
 
 export type { AuthorityClientKeyProvider } from "./endpoints/context.js";
-
-/** Parameters accepted by {@link AuthorityServer.listSubordinatesExtended}. */
-export type ExtendedSubordinateListingParams = ExtendedListRequestParams;
 
 /** In-process extension selectors and cancellation; no HTTP authentication is performed. */
 export type ExtendedSubordinateListingOptions = Pick<
@@ -157,12 +157,12 @@ export interface AuthorityConfig extends EntityStatementExtensions {
 		[K in EntityType]: EntityTypeMetadataMap[K];
 	}>;
 	/** Unified persistence adapter for all non-key authority state. */
-	storage: StorageAdapter;
+	storage: FederationStorage;
 	/** Host engine and keyring; supply history when historical-key features are enabled. */
 	crypto: CryptoContext;
 	/**
 	 * Resolves public Federation Entity Keys for authenticated remote authority
-	 * endpoint clients. Defaults to `storage.subordinates.get(entityId)?.jwks`.
+	 * endpoint clients. Defaults to `storage.subordinate.fetch(entityId)?.jwks`.
 	 */
 	clientKeyProvider?: AuthorityClientKeyProvider;
 	/** Roles (like OIDC OP, RP etc.) bound to this authority. */
@@ -190,7 +190,7 @@ export interface AuthorityConfig extends EntityStatementExtensions {
 	/** Positive finite TTL in seconds for issued Trust Marks; fractional values are allowed. */
 	trustMarkTtlSeconds?: number;
 	/** Federation-wide options (httpClient, clock, etc.). */
-	options?: Omit<BoundFederationOptions, "cache">;
+	options?: BoundFederationOptions;
 	/**
 	 * Configuration for the Extended Subordinate Listing endpoint. Set
 	 * `enabled: false` to keep the endpoint disabled (router returns 404) and
@@ -201,7 +201,15 @@ export interface AuthorityConfig extends EntityStatementExtensions {
 	extendedListing?: ExtendedListingConfig;
 }
 
-export interface AuthorityServer {
+/** An Intermediate has at least one Superior and publishes its own delegation JWTs when configured. */
+export interface IntermediateConfig
+	extends Omit<AuthorityConfig, "authorityHints" | "trustMarkIssuers" | "trustMarkOwners"> {
+	authorityHints: readonly [EntityId | string, ...(EntityId | string)[]];
+	trustMarkIssuers?: never;
+	trustMarkOwners?: never;
+}
+
+interface AuthorityServer {
 	readonly collection?: EntityCollectionService;
 	registerSubordinate(
 		record: Omit<SubordinateRecord, "createdAt" | "updatedAt">,
@@ -224,16 +232,19 @@ export interface AuthorityServer {
 	 * Use it for in-process pagination, server-side rendering, or tests.
 	 */
 	listSubordinatesExtended(
-		params?: ExtendedSubordinateListingParams,
+		params?: ExtendedListRequestParams,
 		options?: ExtendedSubordinateListingOptions,
 	): Promise<Result<ExtendedSubordinateListingResult, FederationError>>;
-	resolveEntity(sub: EntityId, ta?: EntityId, options?: FederationOptions): Promise<string>;
+	resolveEntity(sub: EntityId, ta?: EntityId, options?: BoundFederationOptions): Promise<string>;
 	getTrustMarkStatus(trustMark: string): Promise<TrustMarkStatusResponsePayload>;
 	listTrustMarkedEntities(trustMarkType: string): Promise<string[]>;
 	revokeTrustMark(type: string, subject: string): Promise<void>;
 	listTrustMarksForSubject(subject: string): Promise<TrustMarkRecord[]>;
 	getTrustMarks(): TrustMarkRef[];
-	attachTrustMark(jwt: string, options: Omit<AttachTrustMarkOptions, "engine">): Promise<void>;
+	attachTrustMark(
+		jwt: string,
+		options: BoundFederationOptions<AttachTrustMarkOptions>,
+	): Promise<void>;
 	fetchAndAttachTrustMark(
 		options: Omit<FetchAndAttachTrustMarkOptions, "options"> & {
 			readonly options?: BoundFederationOptions;
@@ -263,7 +274,7 @@ function createAuthorityServerWithIdentity(
 	roleRoutes: ReadonlyMap<string, (request: Request) => Promise<Response>>,
 	isTrustAnchor: boolean,
 ): AuthorityServer {
-	const normalizedEntityId = config.entityId;
+	const entityId = config.entityId;
 
 	const ttlFields = [
 		["entityConfigurationTtlSeconds", config.entityConfigurationTtlSeconds, "safe-integer"],
@@ -325,41 +336,45 @@ function createAuthorityServerWithIdentity(
 		fedEntity.federation_trust_mark_status_endpoint,
 		fedEntity.federation_trust_mark_list_endpoint,
 	].some((endpoint) => typeof endpoint === "string");
-	if (advertisedTrustMarkEndpoints && !config.storage.trustMarks) {
+	const storage = config.storage;
+	assertStorageCapabilities(storage, ["subordinate:read"], `Authority ${entityId}`);
+	const has = (capability: import("@oidfed/core").StorageCapability) =>
+		storage.capabilities.includes(capability);
+	const historyPublished = fedEntity.federation_subordinate_events_endpoint !== undefined;
+	const features: import("@oidfed/core").StorageFeature[] = ["authority"];
+	if (historyPublished) features.push("eventHistory");
+	if (has("subordinate:write")) features.push("subordinateLifecycle");
+	if (has("subordinateEvent:write")) features.push("eventCapture");
+	if (advertisedTrustMarkEndpoints || config.trustMarkIssuer || has("trustMark:read"))
+		features.push(has("trustMark:write") ? "trustMarkWrite" : "trustMarkRead");
+	if (config.collection) features.push("collection");
+	assertStorageCapabilities(
+		storage,
+		describeStorageRequirements(...features),
+		`Authority ${entityId}`,
+	);
+	if (historyPublished && !has("snapshot") && !has("transaction"))
 		throw new InvalidAuthorityConfig(
-			"Trust mark endpoints require storage.trustMarks to be configured.",
+			"Subordinate Events requires a consistent storage snapshot or transaction",
 		);
-	}
-
-	if (
-		fedEntity.federation_subordinate_events_endpoint !== undefined &&
-		!config.storage.subordinateEvents
-	) {
-		throw new InvalidAuthorityConfig(
-			"The subordinate events endpoint requires storage.subordinateEvents",
-		);
-	}
 
 	// Reject null entity-type blocks and direct metadata parameters; nested JSON nulls are allowed.
 	assertMetadataValuesNotNull(config.metadata as Record<string, unknown>);
 
 	const clientKeyProvider =
-		config.clientKeyProvider ?? createStorageBackedClientKeyProvider(config.storage);
+		config.clientKeyProvider ?? createStorageBackedClientKeyProvider(storage, config.options);
 
 	const base: HandlerContext = {
 		...prepareEntityStatementExtensions(config),
 		...(config.roles ? { roles: config.roles } : {}),
-		entityId: normalizedEntityId,
+		entityId,
 		crypto: config.crypto,
-		storage: config.storage,
+		storage,
 		clientKeyProvider,
 		metadata: config.metadata,
 		options: config.options,
 	};
-	const effectiveOptions: FederationOptions = {
-		...config.options,
-		...(config.storage.cache ? { cache: config.storage.cache } : {}),
-	};
+	const effectiveOptions = config.options;
 	// Object.assign loses its result type for the conditional list of typed config fragments.
 	// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
 	const ctx: HandlerContext = Object.assign(
@@ -398,7 +413,7 @@ function createAuthorityServerWithIdentity(
 		].filter(Boolean),
 	);
 
-	if (ctx.storage.trustMarks) trustMarkService(ctx);
+	if (has("trustMark:read")) trustMarkService(ctx);
 	const lifecycle = createSubordinateLifecycle(ctx);
 	const meta = config.metadata.federation_entity;
 	const collectionMethods = meta.federation_collection_endpoint_auth_methods ?? ["none"];
@@ -415,24 +430,16 @@ function createAuthorityServerWithIdentity(
 	const collection = config.collection
 		? new EntityCollectionService({
 				...config.collection,
-				responder: { entityId: normalizedEntityId, isTrustAnchor },
+				responder: { entityId, isTrustAnchor },
 				...(meta.federation_collection_endpoint
 					? { endpoint: meta.federation_collection_endpoint }
 					: {}),
-				...((config.collection.store ?? config.storage.collections)
-					? { store: config.collection.store ?? config.storage.collections }
-					: {}),
-				options: bindFederationOptions(ctx.crypto, effectiveOptions, config.collection.options),
+				options: bindFederationOptions(ctx, effectiveOptions, config.collection.options),
 				authentication: {
 					...config.collection.authentication,
 					methods: collectionMethods as ("none" | "private_key_jwt")[],
-					receiverEntityId: normalizedEntityId,
+					receiverEntityId: entityId,
 					getClientFederationJwks: (id) => clientKeyProvider.getClientFederationJwks(id),
-					...(config.storage.replay
-						? {
-								replayStore: config.collection.authentication?.replayStore ?? config.storage.replay,
-							}
-						: {}),
 					...(meta.endpoint_auth_signing_alg_values_supported
 						? { allowedAlgorithms: meta.endpoint_auth_signing_alg_values_supported }
 						: {}),
@@ -484,7 +491,7 @@ function createAuthorityServerWithIdentity(
 		routeMap,
 		routeNames,
 		"entity configuration",
-		wellKnownPathForEntityId(normalizedEntityId),
+		wellKnownPathForEntityId(entityId),
 		ecHandler,
 	);
 	addAuthorityRoute(
@@ -648,7 +655,7 @@ function createAuthorityServerWithIdentity(
 		async getSubordinateStatement(sub: EntityId): Promise<string> {
 			safeLogger(config.options?.logger)?.debug("Starting get subordinate statement");
 
-			const record = await config.storage.subordinates.get(sub);
+			const record = await fetchStoredSubordinate(storage.subordinate, sub, ctx.options);
 			if (!record) {
 				throw new Error(`Subordinate '${sub}' not found`);
 			}
@@ -658,17 +665,22 @@ function createAuthorityServerWithIdentity(
 		async listSubordinates(filter?: ListFilter): Promise<EntityId[]> {
 			safeLogger(config.options?.logger)?.debug("Starting list subordinates");
 
-			const page = await config.storage.subordinates.list(filter);
+			const page = await listStoredSubordinates(
+				storage.subordinate,
+				filter,
+				undefined,
+				ctx.options,
+			);
 			return page.items.map((r) => r.entityId);
 		},
 
 		async listSubordinatesExtended(
-			params?: ExtendedSubordinateListingParams,
+			params?: ExtendedListRequestParams,
 			options?: ExtendedSubordinateListingOptions,
 		): Promise<Result<ExtendedSubordinateListingResult, FederationError>> {
 			safeLogger(config.options?.logger)?.debug("Starting list subordinates extended");
 
-			const url = new URL(FederationEndpoint.ExtendedList, normalizedEntityId);
+			const url = new URL(FederationEndpoint.ExtendedList, entityId);
 			const selectors = buildExtendedListRequestParameters(url.href, params);
 			if (!selectors.ok) return selectors;
 			let req: Request;
@@ -702,11 +714,11 @@ function createAuthorityServerWithIdentity(
 		async resolveEntity(
 			sub: EntityId,
 			_ta?: EntityId,
-			options?: FederationOptions,
+			options?: BoundFederationOptions,
 		): Promise<string> {
 			safeLogger(config.options?.logger)?.debug("Starting resolve entity");
 
-			const baseUrl = normalizedEntityId;
+			const baseUrl = entityId;
 			const url = new URL(FederationEndpoint.Resolve, baseUrl);
 			url.searchParams.set("sub", sub);
 			if (_ta) url.searchParams.set("trust_anchor", _ta);
@@ -722,14 +734,11 @@ function createAuthorityServerWithIdentity(
 		async getTrustMarkStatus(trustMark: string): Promise<TrustMarkStatusResponsePayload> {
 			safeLogger(config.options?.logger)?.debug("Starting get trust mark status");
 
-			const req = new Request(
-				new URL(FederationEndpoint.TrustMarkStatus, normalizedEntityId).toString(),
-				{
-					method: "POST",
-					headers: { "Content-Type": "application/x-www-form-urlencoded" },
-					body: `trust_mark=${encodeURIComponent(trustMark)}`,
-				},
-			);
+			const req = new Request(new URL(FederationEndpoint.TrustMarkStatus, entityId).toString(), {
+				method: "POST",
+				headers: { "Content-Type": "application/x-www-form-urlencoded" },
+				body: `trust_mark=${encodeURIComponent(trustMark)}`,
+			});
 			const res = await trustMarkStatusHandler(req);
 			if (res.status !== 200) {
 				const body = (await res.json()) as { error: string; error_description?: string };
@@ -752,12 +761,12 @@ function createAuthorityServerWithIdentity(
 		attachTrustMark: (jwt, options) =>
 			holder.attachTrustMark(jwt, {
 				...options,
-				...bindFederationOptions(ctx.crypto, ctx.options, options),
+				...bindFederationOptions(ctx, ctx.options, options),
 			}),
 		fetchAndAttachTrustMark: (options) =>
 			holder.fetchAndAttachTrustMark({
 				...options,
-				options: bindFederationOptions(ctx.crypto, ctx.options, options.options),
+				options: bindFederationOptions(ctx, ctx.options, options.options),
 			}),
 		removeTrustMark: (selector) => holder.removeTrustMark(selector, ctx.options),
 		async setTrustMarkIssuers(issuers) {
@@ -821,12 +830,12 @@ function createAuthorityServerWithIdentity(
 			});
 			const ttlSeconds =
 				options?.ttlSeconds ?? (options?.noExpiry ? undefined : config.trustMarkTtlSeconds);
-			const policy = bindFederationOptions(ctx.crypto, ctx.options, {
+			const policy = bindFederationOptions(ctx, ctx.options, {
 				maxCompactBytes: options?.maxCompactBytes,
 				allowedFederationAlgorithms: options?.allowedFederationAlgorithms,
 			});
 			return signTrustMarkDelegation({
-				issuer: normalizedEntityId,
+				issuer: entityId,
 				subject,
 				trustMarkType,
 				signer: keySet,
@@ -855,12 +864,11 @@ function createAuthorityServerWithIdentity(
 	};
 }
 
-function normalizeAuthorityEntityId(value: EntityId | string): EntityId {
-	const normalized = value.endsWith("/") ? value.slice(0, -1) : value;
-	if (!isValidEntityId(normalized)) {
+function validateAuthorityEntityId(value: EntityId | string): EntityId {
+	if (!isValidEntityId(value)) {
 		throw new Error("entityId MUST be a valid HTTPS URL without query or fragment");
 	}
-	return normalized as EntityId;
+	return value;
 }
 
 function validateEndpointCompanions(metadata: Record<string, unknown>): void {
@@ -883,9 +891,7 @@ function validateEndpointCompanions(metadata: Record<string, unknown>): void {
 }
 
 function wellKnownPathForEntityId(value: EntityId): string {
-	// Section 9 constructs the URL from the published identifier, independently of host normalization.
-	const base = value.endsWith("/") ? value.slice(0, -1) : value;
-	return new URL(`${base}${WELL_KNOWN_OPENID_FEDERATION}`).pathname;
+	return new URL(entityConfigurationUrl(value)).pathname;
 }
 
 function addRoleRoutes(
@@ -1022,10 +1028,13 @@ function addOptionalAuthorityRoute(
 	addAuthorityRoute(routeMap, routeNames, endpointName, path, handler);
 }
 
-function createStorageBackedClientKeyProvider(storage: StorageAdapter): AuthorityClientKeyProvider {
+function createStorageBackedClientKeyProvider(
+	storage: HandlerContext["storage"],
+	options: FederationOptions,
+): AuthorityClientKeyProvider {
 	return {
 		async getClientFederationJwks(entityId: EntityId) {
-			const record = await storage.subordinates.get(entityId);
+			const record = await fetchStoredSubordinate(storage.subordinate, entityId, options);
 			return record?.jwks;
 		},
 	};
@@ -1050,36 +1059,28 @@ async function prepareAuthorityHost(
 	if (!isTrustAnchor && !config.authorityHints?.length)
 		throw new Error("Intermediate MUST have at least one authorityHint");
 	assertTrustAnchorHintsConfig(config, isTrustAnchor);
+	const crypto = snapshotCryptoContext(config.crypto);
 	const normalized: PreparedAuthorityConfig = {
 		...config,
 		...prepareEntityStatementExtensions(config),
-		crypto: Object.freeze({
-			engine: config.crypto.engine,
-			...(config.crypto.algorithmRegistry
-				? { algorithmRegistry: config.crypto.algorithmRegistry }
-				: {}),
-			keyring: config.crypto.keyring,
-			...(config.crypto.federationPurpose !== undefined
-				? { federationPurpose: config.crypto.federationPurpose }
-				: {}),
-			...(config.crypto.history !== undefined ? { history: config.crypto.history } : {}),
-		}),
+		crypto,
 		...(config.authorityHints ? { authorityHints: [...config.authorityHints] } : {}),
 		...(config.roles ? { roles: [...config.roles] } : {}),
 		...(config.trustMarks ? { trustMarks: cloneData(config.trustMarks) } : {}),
-		options: bindFederationOptions(config.crypto, config.options),
-		entityId: normalizeAuthorityEntityId(config.entityId),
+		options: bindFederationOptions({ crypto, storage: config.storage }, config.options),
+		entityId: validateAuthorityEntityId(config.entityId),
 		metadata: composeEntityMetadata(config.metadata) as AuthorityConfig["metadata"],
 	};
-	const context: EntityContext = {
+	const context: EntityContext = Object.freeze({
 		entityId: normalized.entityId,
 		crypto: normalized.crypto,
+		storage: normalized.storage,
 		options: normalized.options,
 		...(normalized.authorityHints
 			? { authorityHints: normalized.authorityHints as readonly EntityId[] }
 			: {}),
 		...(normalized.trustAnchors ? { trustAnchors: normalized.trustAnchors } : {}),
-	};
+	});
 	for (const role of normalized.roles ?? []) {
 		await role.initialize?.(context);
 		normalized.metadata = composeEntityMetadata(normalized.metadata, {
@@ -1106,12 +1107,14 @@ abstract class AuthorityHost {
 	/** Assess a target using configured anchors and options, overridden by per-call settings. */
 	assessEntity(
 		target: EntityId,
-		options: Omit<EntityAssessmentOptions, "engine"> & { trustAnchors?: TrustAnchorSet } = {},
+		options: BoundFederationOptions<EntityAssessmentOptions> & {
+			trustAnchors?: TrustAnchorSet;
+		} = {},
 	) {
 		return assessEntity(
 			target,
 			options.trustAnchors ?? this.trustContext.trustAnchors ?? new Map(),
-			bindFederationOptions(this.trustContext.crypto, this.trustContext.options, options),
+			bindFederationOptions(this.trustContext, this.trustContext.options, options),
 		);
 	}
 	/**
@@ -1124,7 +1127,7 @@ abstract class AuthorityHost {
 		return discoverEntity(
 			target,
 			options.trustAnchors ?? this.trustContext.trustAnchors ?? new Map(),
-			bindFederationOptions(this.trustContext.crypto, this.trustContext.options, options),
+			bindFederationOptions(this.trustContext, this.trustContext.options, options),
 		);
 	}
 	/** Validate supplied target statements and return discovery evidence using configured anchors. */
@@ -1137,7 +1140,7 @@ abstract class AuthorityHost {
 			target,
 			statements,
 			options.trustAnchors ?? this.trustContext.trustAnchors ?? new Map(),
-			bindFederationOptions(this.trustContext.crypto, this.trustContext.options, options),
+			bindFederationOptions(this.trustContext, this.trustContext.options, options),
 		);
 	}
 
@@ -1148,7 +1151,7 @@ abstract class AuthorityHost {
 
 	public readonly entityId: EntityId;
 	private readonly routes: Map<string, (request: Request) => Promise<Response>>;
-	private readonly server: AuthorityServer;
+	protected readonly server: AuthorityServer;
 
 	/**
 	 * Validate and compose host and role configuration; storage and crypto services retain their
@@ -1178,14 +1181,18 @@ abstract class AuthorityHost {
 
 	/** Run local Extended Listing with filtering and pagination, returning a Result. */
 	async listSubordinatesExtended(
-		params?: ExtendedSubordinateListingParams,
+		params?: ExtendedListRequestParams,
 		options?: ExtendedSubordinateListingOptions,
 	): Promise<Result<ExtendedSubordinateListingResult, FederationError>> {
 		return this.server.listSubordinatesExtended(params, options);
 	}
 
 	/** Build a local signed Resolve response; per-call federation options override host defaults. */
-	async resolveEntity(sub: EntityId, ta?: EntityId, options?: FederationOptions): Promise<string> {
+	async resolveEntity(
+		sub: EntityId,
+		ta?: EntityId,
+		options?: BoundFederationOptions,
+	): Promise<string> {
 		return this.server.resolveEntity(sub, ta, options);
 	}
 
@@ -1206,7 +1213,7 @@ abstract class AuthorityHost {
 	/**
 	 * Validate a mark for this host and publish it; failed validation leaves prior references intact.
 	 */
-	async attachTrustMark(jwt: string, options: Omit<AttachTrustMarkOptions, "engine">) {
+	async attachTrustMark(jwt: string, options: BoundFederationOptions<AttachTrustMarkOptions>) {
 		return this.server.attachTrustMark(jwt, options);
 	}
 	/** Establish issuer trust and retrieve a mark for this host before validated publication. */
@@ -1220,14 +1227,6 @@ abstract class AuthorityHost {
 	/** Remove matching references from this host's publication; this does not revoke issuance. */
 	async removeTrustMark(selector: RemoveTrustMarkSelector) {
 		return this.server.removeTrustMark(selector);
-	}
-	/** Replace the anchor's detached issuer declarations after validating the new publication. */
-	async setTrustMarkIssuers(issuers: Record<string, string[]>) {
-		return this.server.setTrustMarkIssuers(issuers);
-	}
-	/** Replace the anchor's detached owner declarations after validating the new publication. */
-	async setTrustMarkOwners(owners: Record<string, TrustMarkOwner>) {
-		return this.server.setTrustMarkOwners(owners);
 	}
 	/** Replace owner-delegation JWTs used by this host's managed issuer service. */
 	async setTrustMarkDelegations(delegations: Record<string, string>) {
@@ -1316,14 +1315,15 @@ abstract class AuthorityHost {
 
 /** Federation authority acting as a local policy anchor, optionally with Superiors of its own. */
 export class TrustAnchor extends AuthorityHost {
-	/** Assess a target with explicitly supplied anchors and options. */
-	static assessEntity = assessEntity;
-	/** Resolve, validate, and select a target chain with explicitly supplied anchors and options. */
-	static discoverEntity = discoverEntity;
-	/** Validate supplied target statements with explicitly supplied anchors and options. */
-	static discoverEntityFromChain = discoverEntityFromChain;
-	/** Remove operational federation metadata before storing a subordinate enrollment. */
-	static sanitizeSubordinateMetadata = sanitizeSubordinateMetadata;
+	/** Replace the anchor's detached issuer declarations after validating the new publication. */
+	async setTrustMarkIssuers(issuers: Record<string, string[]>) {
+		return this.server.setTrustMarkIssuers(issuers);
+	}
+	/** Replace the anchor's detached owner declarations after validating the new publication. */
+	async setTrustMarkOwners(owners: Record<string, TrustMarkOwner>) {
+		return this.server.setTrustMarkOwners(owners);
+	}
+
 	declare private readonly trustAnchorBrand: undefined;
 
 	/** Validate host and role configuration, retaining storage and key provider identity. */
@@ -1333,20 +1333,13 @@ export class TrustAnchor extends AuthorityHost {
 	/** Await role setup and validate signing purposes before returning a ready host. */
 	static async create(config: AuthorityConfig): Promise<TrustAnchor> {
 		validateCryptoContext(config.crypto);
+		assertStorageCapabilities(config.storage, ["subordinate:read"], `Authority ${config.entityId}`);
 		return new TrustAnchor(await prepareAuthorityHost(config, new Map(), true));
 	}
 }
 
 /** Federation authority with at least one configured Superior. */
 export class Intermediate extends AuthorityHost {
-	/** Assess a target with explicitly supplied anchors and options. */
-	static assessEntity = assessEntity;
-	/** Resolve, validate, and select a target chain with explicitly supplied anchors and options. */
-	static discoverEntity = discoverEntity;
-	/** Validate supplied target statements with explicitly supplied anchors and options. */
-	static discoverEntityFromChain = discoverEntityFromChain;
-	/** Remove operational federation metadata before storing a subordinate enrollment. */
-	static sanitizeSubordinateMetadata = sanitizeSubordinateMetadata;
 	declare private readonly intermediateBrand: undefined;
 
 	/** Validate host and role configuration, retaining storage and key provider identity. */
@@ -1354,8 +1347,9 @@ export class Intermediate extends AuthorityHost {
 		super(prepared, false);
 	}
 	/** Await role setup and validate signing purposes before returning a ready host. */
-	static async create(config: AuthorityConfig): Promise<Intermediate> {
+	static async create(config: IntermediateConfig): Promise<Intermediate> {
 		validateCryptoContext(config.crypto);
+		assertStorageCapabilities(config.storage, ["subordinate:read"], `Authority ${config.entityId}`);
 		return new Intermediate(await prepareAuthorityHost(config, new Map(), false));
 	}
 }

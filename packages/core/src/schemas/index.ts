@@ -4,15 +4,7 @@ export {
 	type TrustChainConstraints,
 	TrustChainConstraintsSchema,
 } from "./constraints.js";
-export * from "./entity-collection.js";
 export {
-	BaseEntityStatementSchema,
-	type DecodedFederationJwtPayload,
-	type EntityConfigurationPayload,
-	EntityConfigurationSchema,
-	EntityIdSchema,
-	type EntityStatementPayload,
-	EntityStatementPayloadSchema,
 	FetchQuerySchema,
 	type HistoricalKeyEntry,
 	HistoricalKeyEntrySchema,
@@ -22,11 +14,21 @@ export {
 	ResolveQuerySchema,
 	type ResolveResponsePayload,
 	ResolveResponsePayloadSchema,
-	type SubordinateStatementPayload,
-	SubordinateStatementSchema,
 	TrustMarkStatusBodySchema,
 	type TrustMarkStatusResponsePayload,
 	TrustMarkStatusResponsePayloadSchema,
+} from "./endpoints.js";
+export * from "./entity-collection.js";
+export {
+	BaseEntityStatementSchema,
+	type DecodedFederationJwtPayload,
+	type EntityConfigurationPayload,
+	EntityConfigurationSchema,
+	EntityIdSchema,
+	type EntityStatementPayload,
+	EntityStatementPayloadSchema,
+	type SubordinateStatementPayload,
+	SubordinateStatementSchema,
 } from "./entity-statement.js";
 export {
 	EXTENDED_LIST_SUPPORTED_CLAIMS,
@@ -45,6 +47,8 @@ export {
 	type JWKSet,
 	JWKSetSchema,
 	MetadataJWKSetSchema,
+	type MetadataValidationOptions,
+	withMetadataJwkUse,
 } from "./jwk.js";
 export {
 	type EntityTypeMetadataMap,

@@ -15,7 +15,8 @@ import {
 import type { Command } from "commander";
 import type { OutputFormatter } from "../output/index.js";
 import { engine } from "../util/crypto.js";
-import { extractJwks, parseEntityIdOrError } from "../util/entity-id.js";
+import { extractJwks } from "../util/entity-configuration.js";
+import { parseEntityIdOrError } from "../util/entity-id.js";
 import type { Logger } from "../util/logger.js";
 
 export interface HealthDeps {

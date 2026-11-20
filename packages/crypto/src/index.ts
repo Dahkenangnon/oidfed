@@ -1,8 +1,8 @@
 /** Cryptographic contracts and portable JWS helpers; no backend is initialized here. */
 
-export * from "./base64url.js";
 export * from "./compact.js";
 export * from "./ecdsa.js";
+export * from "./encoding.js";
 export * from "./jwk.js";
 export * from "./keyring.js";
 export {

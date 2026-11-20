@@ -9,13 +9,13 @@ import type {
 	EntityStatementMetadata,
 	FederationEntityMetadata,
 	FederationOptions,
+	FederationStorage,
 	JWKSet,
 	TrustAnchorSet,
 	TrustMarkIssuerConfig,
 	TrustMarkOwner,
 	TrustMarkRef,
 } from "@oidfed/core";
-import type { StorageAdapter } from "../storage/types.js";
 
 /** Resolves public Federation Entity Keys for authenticated authority endpoint clients. */
 export interface AuthorityClientKeyProvider {
@@ -40,7 +40,9 @@ export interface HandlerContext extends EntityStatementExtensions {
 	/** Federation-only signing key provider and lifecycle manager. */
 	readonly crypto: CryptoContext;
 	/** Unified persistence adapter for all non-key authority state. */
-	readonly storage: StorageAdapter;
+	readonly storage: FederationStorage & {
+		readonly subordinate: import("@oidfed/core").SubordinateReadStore;
+	};
 	/** Resolves remote client Federation Entity Keys for private_key_jwt endpoint auth. */
 	readonly clientKeyProvider: AuthorityClientKeyProvider;
 	/** Metadata published in this authority's Entity Configuration. */

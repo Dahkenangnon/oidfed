@@ -9,7 +9,7 @@ import {
 } from "../constants.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
 import { decodeEntityStatement } from "../jose/verify.js";
-import { safeLogger } from "./../logging.js";
+import { safeLogger } from "../logging.js";
 import { validateEntityStatementTimeClaims } from "../statement-validation.js";
 import type {
 	EntityId,

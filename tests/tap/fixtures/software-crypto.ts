@@ -182,16 +182,14 @@ function fixtureBindings(crypto: CryptoContext, purposes: readonly object[]): Cr
 	};
 }
 /** Assemble actual library configuration; the production APIs receive only crypto contracts. */
+export function fixtureHostConfig<T extends { crypto: CryptoContext }>(config: T): T;
 export function fixtureHostConfig(
-	config: import("@oidfed/authority").AuthorityConfig,
+	config: import("@oidfed/authority").AuthorityConfig & { authorityHints?: never },
 ): import("@oidfed/authority").AuthorityConfig;
 export function fixtureHostConfig(
 	config: import("@oidfed/leaf").LeafConfig,
 ): import("@oidfed/leaf").LeafConfig;
-export function fixtureHostConfig(
-	config: import("@oidfed/oidc").AutomaticRegistrationConfig,
-): import("@oidfed/oidc").AutomaticRegistrationConfig;
-export function fixtureHostConfig<T extends { crypto: CryptoContext }>(config: T): T;
+
 export function fixtureHostConfig(config: {
 	crypto: CryptoContext;
 	roles?: readonly import("@oidfed/core").EntityRole[];

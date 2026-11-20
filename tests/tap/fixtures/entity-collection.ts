@@ -1,8 +1,4 @@
-import {
-	Intermediate,
-	MemoryStorageAdapter,
-	TrustAnchor,
-} from "../../../packages/authority/src/index.js";
+import { Intermediate, TrustAnchor } from "../../../packages/authority/src/index.js";
 import {
 	createTrustAnchorSet,
 	type EntityCollectionRequestParams,
@@ -13,10 +9,11 @@ import {
 	entityId,
 	type HttpClient,
 	MediaType,
-	MemoryEntityCollectionStore,
 	signEntityStatement,
 } from "../../../packages/core/src/index.js";
+import { MemoryEntityCollectionStore } from "../../../packages/core/src/storage/collection-memory.js";
 import { Leaf } from "../../../packages/leaf/src/index.js";
+import { collectionOptions, memoryStorage, storedTrustMarkToken } from "../../storage-fixtures.js";
 import {
 	FixtureCrypto,
 	fixtureHostConfig,
@@ -47,40 +44,48 @@ export async function seed() {
 		id: "first",
 		trustAnchor: anchor,
 		lastUpdated: -0.5,
-		entries: ["a", "b", "c"].map((name, index) => ({
-			entity: {
-				entity_id: EntityCollectionResponseSchema.parse({
-					entities: [{ entity_id: `https://${name}.example` }],
-				}).entities[0]!.entity_id,
-				entity_types: [index === 1 ? "custom_type" : "openid_provider", "federation_entity"],
-				entity_infos: {
-					openid_provider: {
-						display_name: name.toUpperCase(),
-						"display_name#en-US": `${name} English`,
-						"display_name#de": `${name} Deutsch`,
-						description: "Example",
+		entries: ["a", "b", "c"].map((name, index) => {
+			const subject = entityId(`https://${name}.example`);
+			const verifiedMarks = (index === 0 ? ["one", "two"] : ["one"]).map((type) => {
+				const expiresAt = type === "one" ? 2000 : 3000;
+				return {
+					type,
+					expiresAt,
+					jwt: storedTrustMarkToken({ subject, trustMarkType: type, issuedAt: 1000, expiresAt }),
+				};
+			});
+			return {
+				entity: {
+					entity_id: EntityCollectionResponseSchema.parse({ entities: [{ entity_id: subject }] })
+						.entities[0]!.entity_id,
+					entity_types: [index === 1 ? "custom_type" : "openid_provider", "federation_entity"],
+					entity_infos: {
+						openid_provider: {
+							display_name: name.toUpperCase(),
+							"display_name#en-US": `${name} English`,
+							"display_name#de": `${name} Deutsch`,
+							description: "Example",
+						},
+						federation_entity: { organization_name: "Organization" },
 					},
-					federation_entity: { organization_name: "Organization" },
+					trust_marks: verifiedMarks.map(({ type, jwt }) => ({
+						trust_mark_type: type,
+						trust_mark: jwt,
+					})),
 				},
-			},
-			expiresAt: 5000,
-			chainExpiresAt: 5000,
-			verifiedMarks:
-				index === 0
-					? [
-							{ type: "one", expiresAt: 2000 },
-							{ type: "two", expiresAt: 3000 },
-						]
-					: [{ type: "one", expiresAt: 2000 }],
-		})),
+				expiresAt: 5000,
+				chainExpiresAt: 5000,
+				verifiedMarks,
+			};
+		}),
 	};
 	await store.publish(snapshot);
 	const service = new EntityCollectionService({
 		trustAnchors,
-		store,
+
 		endpoint,
 		responder: { entityId: anchor, isTrustAnchor: true },
-		options: { engine: testEngine, clock },
+		options: collectionOptions({ engine: testEngine, clock }, store),
 		maxPageSize: 2,
 	});
 	return {
@@ -131,8 +136,8 @@ export async function federation(
 	const trustAnchors = createTrustAnchorSet([
 		{ entityId: anchor, jwks: { keys: [rootKey.publicKey] } },
 	]);
-	const storage = new MemoryStorageAdapter({ engine: testEngine, collections: true, clock });
-	const middleStorage = new MemoryStorageAdapter({ engine: testEngine, clock });
+	const storage = memoryStorage({ engine: testEngine, collections: true, clock });
+	const middleStorage = memoryStorage({ engine: testEngine, collections: true, clock });
 	let requests = 0;
 	let failedHost = "";
 	const httpClient: HttpClient = async (input, init) => {
@@ -245,6 +250,7 @@ export async function federation(
 				: {}),
 			options: { clock },
 			collection,
+			storage: memoryStorage({ collections: true, clock }),
 			metadata: {
 				federation_entity: { federation_collection_endpoint: `${leafId}/collect` },
 				oauth_resource: {
@@ -256,20 +262,20 @@ export async function federation(
 		}),
 	);
 	if (markMode !== "none")
-		await storage.subordinates.add({
+		await storage.subordinate.register({
 			entityId: issuerId,
 			jwks: { keys: [issuerKey.publicKey] },
 			createdAt: now,
 			updatedAt: now,
 		});
-	await storage.subordinates.add({
+	await storage.subordinate.register({
 		entityId: middleId,
 		jwks: { keys: [middleKey.publicKey] },
 		isIntermediate: true,
 		createdAt: now,
 		updatedAt: now,
 	});
-	await middleStorage.subordinates.add({
+	await middleStorage.subordinate.register({
 		entityId: leafId,
 		jwks: { keys: [leafKey.publicKey] },
 		createdAt: now,

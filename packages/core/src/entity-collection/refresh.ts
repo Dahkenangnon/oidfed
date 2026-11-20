@@ -1,15 +1,18 @@
 import { randomUuid } from "../crypto-runtime.js";
 import { cloneData } from "../data-copy.js";
+import { withOperationCache } from "../storage/cache-view.js";
+import { getCacheStorage } from "../storage/capabilities.js";
+import type { CacheStore } from "../storage/contracts.js";
 /** Bounded collection traversal and validation before snapshot publication. */
 
 import { z } from "zod";
 import { createConcurrencyLimiter, waitForOperation } from "../async-operation.js";
 import { DEFAULT_MAX_CHAIN_DEPTH, FederationErrorCode } from "../constants.js";
 import { err, ok, type Result } from "../errors.js";
-import { fetchListSubordinatesForIssuer } from "../federation-api/index.js";
+import { fetchListSubordinatesForIssuer } from "../federation-api/subordinate-listing.js";
 import { decodeEntityConfiguration } from "../jose/verify.js";
 import { splitInformationalClaim } from "../language-tags.js";
-import { safeLogger } from "./../logging.js";
+import { safeLogger } from "../logging.js";
 import {
 	COLLECTION_INFO_CLAIMS,
 	createCollectionSchemas,
@@ -18,11 +21,11 @@ import {
 	EntityTypeInfoSchema,
 } from "../schemas/entity-collection.js";
 import type { EntityConfigurationPayload } from "../schemas/entity-statement.js";
+import type { CollectionEntry, EntityCollectionSnapshot } from "../storage/collection.js";
 import { fetchEntityConfiguration, fetchSubordinateStatement } from "../trust-chain/fetch.js";
 import { selectTrustChain } from "../trust-chain/selection.js";
 import { validateTrustMarkReferenceSyntax } from "../trust-chain/validate.js";
 import {
-	type CacheProvider,
 	type EntityId,
 	type FederationOptions,
 	type HttpClient,
@@ -32,11 +35,9 @@ import {
 } from "../types.js";
 import { createCollectionEvidence } from "./evidence.js";
 import type {
-	CollectionEntry,
 	EntityCollectionCandidate,
 	EntityCollectionCollectorContext,
 	EntityCollectionConfig,
-	EntityCollectionSnapshot,
 } from "./types.js";
 
 const MAX_OPEN_ISSUER_FETCHES = 50;
@@ -129,25 +130,23 @@ export async function buildCollectionSnapshot(
 		source?.addEventListener("abort", abort, { once: true });
 	}
 	// Freeze the first cache value seen during this refresh, including shared-cache hits.
+	const sharedCache = getCacheStorage(config.options.storage);
 	const frozen = new Map<string, unknown>();
-	const cache: CacheProvider = {
+	const cache: CacheStore = {
 		async get<T>(key: string): Promise<T | undefined> {
 			if (frozen.has(key)) return frozen.get(key) as T;
-			const value = await config.options?.cache?.get<T>(key);
+			const value = await sharedCache?.get<T>(key);
 			if (value !== undefined) frozen.set(key, value);
 			return value;
 		},
 		async set<T>(key: string, value: T, ttl: number): Promise<void> {
 			if (!frozen.has(key)) frozen.set(key, value);
-			await config.options?.cache?.set(key, value, ttl);
+			await sharedCache?.set(key, value, ttl);
 		},
 		async delete(key) {
 			frozen.delete(key);
 		},
 		async clear() {
-			frozen.clear();
-		},
-		async [Symbol.asyncDispose]() {
 			frozen.clear();
 		},
 	};
@@ -183,7 +182,7 @@ export async function buildCollectionSnapshot(
 	const options: FederationOptions = {
 		...config.options,
 		maxTotalFetches: maxFetches,
-		cache,
+		storage: withOperationCache(config.options?.storage, cache),
 		signal: controller.signal,
 		httpClient: createHttpClient(),
 	};

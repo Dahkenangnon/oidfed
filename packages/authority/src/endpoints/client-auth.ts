@@ -23,13 +23,12 @@ export function createAuthenticatedHandler(
 			{
 				receiverEntityId: ctx.entityId,
 				methods: methods ?? ["none"],
-				...(ctx.storage.replay ? { replayStore: ctx.storage.replay } : {}),
 				getClientFederationJwks: (id) => ctx.clientKeyProvider.getClientFederationJwks(id),
 				...(options?.allowedAlgorithms ? { allowedAlgorithms: options.allowedAlgorithms } : {}),
 				...(ctx.endpointAuthentication ? { extensions: ctx.endpointAuthentication } : {}),
 			},
 			inner,
-			ctx.options,
+			{ ...ctx.options, storage: ctx.storage },
 			options?.nativeMethod,
 			options?.unorderedParameters,
 		);

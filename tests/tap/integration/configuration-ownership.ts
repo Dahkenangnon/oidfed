@@ -2,7 +2,6 @@ import type QUnit from "qunit";
 import {
 	type AuthorityConfig,
 	Intermediate,
-	MemoryStorageAdapter,
 	TrustAnchor,
 } from "../../../packages/authority/src/index.js";
 import {
@@ -13,7 +12,6 @@ import {
 	type EntityRole,
 	entityId,
 	isStoredTrustMarkEligible,
-	MemoryTrustMarkStore,
 	signTrustMark,
 	signTrustMarkDelegation,
 	type TrustMarkRecord,
@@ -25,6 +23,7 @@ import {
 	OidcProviderRole,
 } from "../../../packages/oidc/src/index.js";
 import { WalletProviderRole } from "../../../packages/wallet/src/index.js";
+import { memoryStorage } from "../../storage-fixtures.js";
 import {
 	FixtureCrypto,
 	fixtureHostConfig,
@@ -66,7 +65,7 @@ export default (q: QUnit) => {
 			"queued subordinate writes capture inputs and preserve transactional semantics",
 			async (t) => {
 				const { publicJwk } = await signing();
-				const storage = new MemoryStorageAdapter({ engine: testEngine });
+				const storage = memoryStorage({ engine: testEngine });
 				const gate = deferred();
 				const entered = deferred();
 				const blocking = storage.transaction(async () => {
@@ -81,35 +80,39 @@ export default (q: QUnit) => {
 					updatedAt: 1,
 					metadata: { example: { values: ["captured"] } },
 				};
-				const added = storage.subordinates.add(record);
+				const added = storage.subordinate.register(record);
 				record.entityId = "invalid" as typeof subject;
 				record.metadata.example.values.push("later");
 				const updates = { metadata: { example: { values: ["update"] } } };
-				const updated = storage.subordinates.update(subject, updates);
+				const updated = storage.subordinate.update(subject, updates, 1500);
 				updates.metadata.example.values.push("later");
 				gate.resolve();
 				await Promise.all([blocking, added, updated]);
-				t.deepEqual((await storage.subordinates.get(subject))?.metadata, {
+				t.deepEqual((await storage.subordinate.fetch(subject))?.metadata, {
 					example: { values: ["update"] },
 				});
-				t.notOk(await storage.subordinates.get("invalid" as typeof subject));
-				await t.rejects(storage.subordinates.add(record), /Entity Identifier/);
+				t.notOk(await storage.subordinate.fetch("invalid" as typeof subject));
+				await t.rejects(storage.subordinate.register(record), /Entity Identifier/);
 				await t.rejects(
-					storage.subordinates.add({ ...record, entityId: subject }),
+					storage.subordinate.register({ ...record, entityId: subject }),
 					/already exists/,
 				);
-				await t.rejects(storage.subordinates.update(anchor, {}), /not found/);
+				await t.rejects(storage.subordinate.update(anchor, {}, 1500), /not found/);
 				await t.rejects(
 					storage.transaction(async (tx) => {
-						await tx.subordinates.remove(subject);
+						await tx.subordinate.remove(subject);
 						throw new Error("rollback");
 					}),
 					/rollback/,
 				);
-				t.ok(await storage.subordinates.get(subject), "rollback preserves the record");
-				await storage.subordinates.update(subject, { metadata: { example: { repaired: true } } });
+				t.ok(await storage.subordinate.fetch(subject), "rollback preserves the record");
+				await storage.subordinate.update(
+					subject,
+					{ metadata: { example: { repaired: true } } },
+					1500,
+				);
 				t.deepEqual(
-					(await storage.subordinates.get(subject))?.metadata,
+					(await storage.subordinate.fetch(subject))?.metadata,
 					{ example: { repaired: true } },
 					"queue continues after errors",
 				);
@@ -123,11 +126,12 @@ export default (q: QUnit) => {
 				subject,
 				trustMarkType: "example",
 				signer,
+				noExpiry: true,
 				clock: { now: () => 1 },
 			});
 			for (const store of [
-				new MemoryTrustMarkStore(),
-				new MemoryStorageAdapter({ engine: testEngine, trustMarks: true }),
+				memoryStorage({ trustMarks: true }),
+				memoryStorage({ engine: testEngine, trustMarks: true }),
 			]) {
 				const gate = deferred();
 				const entered = deferred();
@@ -137,14 +141,14 @@ export default (q: QUnit) => {
 				});
 				await entered.promise;
 				const record = { jwt, subject, trustMarkType: "example", issuedAt: 1, active: true };
-				const issued = store.trustMarks!.issue(record);
+				const issued = store.trustMark!.issue!(record);
 				record.active = false;
 				gate.resolve();
 				await Promise.all([blocking, issued]);
-				t.true((await store.trustMarks!.getByJwt(jwt))!.active);
-				await store.trustMarks!.issue(record);
+				t.true((await store.trustMark!.status(jwt))!.active);
+				await store.trustMark!.issue!(record);
 				t.true(
-					(await store.trustMarks!.getByJwt(jwt))!.active,
+					(await store.trustMark!.status(jwt))!.active,
 					"duplicate issue does not replace the record",
 				);
 			}
@@ -199,15 +203,20 @@ export default (q: QUnit) => {
 					crypto,
 					metadata: supplied,
 					roles: [role],
-					authorityHints: [subject],
-					storage: new MemoryStorageAdapter({ engine: testEngine }),
+					authorityHints: [subject] as const,
+					storage: memoryStorage({ engine: testEngine }),
 				};
 				const host =
 					kind === "leaf"
 						? await Leaf.create(fixtureHostConfig(config))
 						: kind === "anchor"
 							? await TrustAnchor.create(fixtureHostConfig(config as AuthorityConfig))
-							: await Intermediate.create(fixtureHostConfig(config as AuthorityConfig));
+							: await Intermediate.create(
+									fixtureHostConfig({
+										...config,
+										metadata: supplied as AuthorityConfig["metadata"],
+									}),
+								);
 				t.deepEqual(supplied, original, "construction leaves caller metadata unchanged");
 				supplied.example.nested.values.push("changed");
 				role.metadata.generated = ["changed"];
@@ -306,7 +315,7 @@ export default (q: QUnit) => {
 									fixtureHostConfig({
 										entityId: anchor,
 										crypto,
-										storage: new MemoryStorageAdapter({ engine: testEngine }),
+										storage: memoryStorage({ engine: testEngine }),
 										metadata: metadata(),
 										[field]: value,
 									}),
@@ -322,7 +331,7 @@ export default (q: QUnit) => {
 									fixtureHostConfig({
 										entityId: anchor,
 										crypto,
-										storage: new MemoryStorageAdapter({ engine: testEngine }),
+										storage: memoryStorage({ engine: testEngine }),
 										metadata: metadata(),
 										[field]: value,
 									}),
@@ -335,7 +344,7 @@ export default (q: QUnit) => {
 					fixtureHostConfig({
 						entityId: anchor,
 						crypto,
-						storage: new MemoryStorageAdapter({ engine: testEngine }),
+						storage: memoryStorage({ engine: testEngine }),
 						metadata: metadata(),
 						trustMarkTtlSeconds: 0.5,
 						subordinateEventsTtlSeconds: 0.5,
@@ -370,9 +379,9 @@ export default (q: QUnit) => {
 			"core and authority storage agree on delegation eligibility before newest selection",
 			async (t) => {
 				const { signer, publicJwk } = await signing();
-				const authority = new MemoryStorageAdapter({ engine: testEngine, trustMarks: true });
-				const standalone = new MemoryTrustMarkStore();
-				await authority.subordinates.add({
+				const authority = memoryStorage({ engine: testEngine, trustMarks: true });
+				const standalone = memoryStorage({ trustMarks: true });
+				await authority.subordinate.register({
 					entityId: subject,
 					jwks: { keys: [publicJwk] },
 					createdAt: 1,
@@ -412,7 +421,7 @@ export default (q: QUnit) => {
 					trustMarkType: "example",
 				};
 				const replacement: TrustMarkRecord = { ...old, jwt: newJwt, issuedAt: 2, expiresAt: 102 };
-				for (const store of [standalone.trustMarks, authority.trustMarks!]) {
+				for (const store of [standalone.trustMark, authority.trustMark!]) {
 					await store.issue(old);
 					await store.issue(replacement);
 				}
@@ -423,10 +432,9 @@ export default (q: QUnit) => {
 					[10, true],
 					[101, false],
 				] as const) {
-					t.equal(await standalone.trustMarks.hasAnyValid(subject, at), expected);
+					t.equal(await standalone.trustMark!.hasAny(subject, at), expected);
 					t.equal(
-						(await authority.subordinates.list({ trustMarked: true, validAt: at })).items.length >
-							0,
+						(await authority.subordinate.list({ trustMarked: true, validAt: at })).items.length > 0,
 						expected,
 					);
 				}
@@ -435,14 +443,14 @@ export default (q: QUnit) => {
 					"future issuance/delegation is ineligible",
 				);
 				t.false(isStoredTrustMarkEligible({ ...old, active: false }, 10));
-				for (const store of [standalone.trustMarks, authority.trustMarks!]) {
+				for (const store of [standalone.trustMark, authority.trustMark!]) {
 					t.equal(
-						(await store.getValid("example", subject, 2))?.jwt,
+						(await store.valid("example", subject, 2))?.jwt,
 						newJwt,
 						"eligible newer mark is selected",
 					);
 					t.equal(
-						(await store.getValid("example", subject, 10))?.jwt,
+						(await store.valid("example", subject, 10))?.jwt,
 						oldJwt,
 						"expired newer delegation does not hide the older mark",
 					);

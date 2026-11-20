@@ -1,4 +1,5 @@
 import {
+	assertStorageCapabilities,
 	decodeEntityStatement,
 	entityId,
 	JwtTyp,
@@ -101,18 +102,22 @@ describe("Explicit registration", () => {
 			const publicKey = { ...protocol.publicKey };
 			delete publicKey.kid;
 			const storage = entities.get("https://ta.ofed.test")?.storage;
-			if (!storage) throw new Error("Missing authority storage");
-			const record = await storage.subordinates.get(entityId(rpId));
+			assertStorageCapabilities(storage, ["subordinate:write"]);
+			const record = await storage.subordinate.fetch(entityId(rpId));
 			if (!record) throw new Error("Missing RP registration");
-			await storage.subordinates.update(entityId(rpId), {
-				metadata: {
-					...record.metadata,
-					openid_relying_party: {
-						...published.value.payload.metadata?.openid_relying_party,
-						jwks: { keys: [publicKey] },
+			await storage.subordinate.update(
+				entityId(rpId),
+				{
+					metadata: {
+						...record.metadata,
+						openid_relying_party: {
+							...published.value.payload.metadata?.openid_relying_party,
+							jwks: { keys: [publicKey] },
+						},
 					},
 				},
-			});
+				Math.floor(Date.now() / 1000),
+			);
 			const jwt = await signEntityStatement(
 				{
 					...published.value.payload,

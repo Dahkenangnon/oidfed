@@ -1,4 +1,4 @@
-import { decodeEntityStatement, entityId, isOk } from "@oidfed/core";
+import { decodeEntityStatement, isOk } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
 import { getAuthorityEntity } from "../helpers/launcher.js";
 import { useFederation } from "../helpers/lifecycle.js";
@@ -95,11 +95,7 @@ describe("Trust mark HTTP endpoints", () => {
 			expect(activeStatus.status).toBe("active");
 
 			// Revoke
-			await taInstance.storage?.trustMarks?.revoke(
-				trustMarkType(port),
-				entityId(rpId),
-				Math.floor(Date.now() / 1000),
-			);
+			await ta.revokeTrustMark(trustMarkType(port), rpId);
 
 			// Check via HTTP endpoint — should not be active
 			const response = await fetch(`https://ta.ofed.test:${port}/federation_trust_mark_status`, {

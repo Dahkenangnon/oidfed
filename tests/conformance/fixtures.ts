@@ -2,8 +2,14 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import https from "node:https";
 import { join } from "node:path";
-import { Intermediate, MemoryStorageAdapter, TrustAnchor } from "@oidfed/authority";
-import { discoverEntity, entityId, resolveEntityKeys, type TrustAnchorSet } from "@oidfed/core";
+import { Intermediate, TrustAnchor } from "@oidfed/authority";
+import {
+	discoverEntity,
+	entityId,
+	MemoryFederationStorage,
+	resolveEntityKeys,
+	type TrustAnchorSet,
+} from "@oidfed/core";
 import { Leaf } from "@oidfed/leaf";
 import { OidcRelyingPartyRole } from "@oidfed/oidc";
 import { rateLimit } from "express-rate-limit";
@@ -50,7 +56,7 @@ const ta = await TrustAnchor.create(
 		requireAuthForFreshResolution: false,
 		entityId: base("ta"),
 		metadata: { federation_entity: fed(base("ta")) },
-		storage: new MemoryStorageAdapter({ engine: testEngine }),
+		storage: new MemoryFederationStorage({ namespace: "conformance", engine: testEngine }),
 		crypto: provider(0),
 		trustAnchors: anchors,
 	}),
@@ -61,7 +67,7 @@ const ia = await Intermediate.create(
 		entityId: base("ia"),
 		authorityHints: [base("ta")],
 		metadata: { federation_entity: fed(base("ia")) },
-		storage: new MemoryStorageAdapter({ engine: testEngine }),
+		storage: new MemoryFederationStorage({ namespace: "conformance", engine: testEngine }),
 		crypto: provider(1),
 		trustAnchors: anchors,
 	}),

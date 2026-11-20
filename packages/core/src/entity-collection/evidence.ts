@@ -3,10 +3,11 @@
 import { FederationErrorCode, InternalErrorCode } from "../constants.js";
 import { err, ok, type Result } from "../errors.js";
 import { decodeEntityConfiguration, decodeEntityStatement } from "../jose/verify.js";
-import { safeLogger } from "./../logging.js";
+import { safeLogger } from "../logging.js";
 import type { EntityConfigurationPayload } from "../schemas/entity-statement.js";
 import type { JWKSet } from "../schemas/jwk.js";
 import type { FederationEntityMetadata } from "../schemas/metadata.js";
+import type { CollectionEntry } from "../storage/collection.js";
 import type { fetchEntityConfiguration } from "../trust-chain/fetch.js";
 import { resolveTrustChains } from "../trust-chain/resolve.js";
 import {
@@ -22,7 +23,6 @@ import {
 	type TrustAnchorSet,
 	type ValidatedTrustChain,
 } from "../types.js";
-import type { CollectionEntry } from "./types.js";
 
 type Root = { jwt: string; payload: EntityConfigurationPayload; expiresAt: number };
 type IssuerProof = { keys: JWKSet; expiresAt: number; metadata?: FederationEntityMetadata };
@@ -137,7 +137,7 @@ export function createCollectionEvidence(
 		if (trustedRoot && !trustedRoot.ok) throw new Error(trustedRoot.error.description);
 		let publicationExpiresAt = entry.chainExpiresAt ?? Infinity;
 		if (!publication) {
-			const id = entry.entity.entity_id as unknown as EntityId;
+			const id = entry.entity.entity_id;
 			const fetched = await configuration(id);
 			if (!fetched.ok) {
 				if (
@@ -187,6 +187,7 @@ export function createCollectionEvidence(
 						...entry.verifiedMarks,
 						{
 							type: ref.trust_mark_type,
+							jwt: ref.trust_mark,
 							expiresAt: Math.min(
 								entry.expiresAt,
 								entry.chainExpiresAt ?? Infinity,
@@ -249,6 +250,7 @@ export function createCollectionEvidence(
 				...entry.verifiedMarks,
 				{
 					type: ref.trust_mark_type,
+					jwt: ref.trust_mark,
 					expiresAt: Math.min(
 						entry.expiresAt,
 						entry.chainExpiresAt ?? Infinity,

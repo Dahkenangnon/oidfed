@@ -1,11 +1,16 @@
-import type { AuthorityConfig, SubordinateRecord } from "@oidfed/authority";
-import { Intermediate, MemoryStorageAdapter, TrustAnchor } from "@oidfed/authority";
-import type { EntityRole, EntityType, JWK, TrustAnchorSet } from "@oidfed/core";
-import { entityId, stripPrivateFields } from "@oidfed/core";
+import type { AuthorityConfig } from "@oidfed/authority";
+import { Intermediate, TrustAnchor } from "@oidfed/authority";
+import type { EntityRole, EntityType, JWK, SubordinateRecord, TrustAnchorSet } from "@oidfed/core";
+import {
+	assertStorageCapabilities,
+	entityId,
+	MemoryFederationStorage,
+	sanitizeSubordinateMetadata,
+	stripPrivateFields,
+} from "@oidfed/core";
 import { Leaf } from "@oidfed/leaf";
 import { OidcRelyingPartyRole } from "@oidfed/oidc";
 import type { Express } from "express";
-import { sanitizeSubordinateMetadata } from "../../../packages/authority/src/utils/subordinate-statement-shape.js";
 import {
 	FixtureCrypto,
 	fixtureHostConfig,
@@ -46,7 +51,7 @@ export interface EntityInstance {
 	};
 	crypto: FixtureCrypto;
 	oidcProtocolKeyProvider: PurposeBindingsFixture;
-	storage?: MemoryStorageAdapter;
+	storage?: MemoryFederationStorage;
 	oidcClient?: OidcRelyingPartyRole;
 }
 
@@ -174,7 +179,7 @@ export async function launchFederation(
 	);
 
 	const entities = new Map<string, EntityInstance>();
-	const authorityStorages = new Map<string, MemoryStorageAdapter>();
+	const authorityStorages = new Map<string, MemoryFederationStorage>();
 	const apps = new Map<string, Express>();
 	const requestObjectStores = new Map<string, RequestObjectStore>();
 
@@ -194,10 +199,21 @@ export async function launchFederation(
 		const eid = rewriteUrl(entity.id);
 		const keys = getKeys(entity.id);
 		const metadata = addProtocolJwks(entity, rewriteMetadata(entity.metadata), keys);
-		const storage = new MemoryStorageAdapter({
-			trustMarks: true,
-			subordinateEvents:
-				typeof metadata.federation_entity?.federation_subordinate_events_endpoint === "string",
+		const storage = new MemoryFederationStorage({
+			namespace: eid,
+			capabilities: [
+				"subordinate:read",
+				"subordinate:write",
+				"trustMark:read",
+				"trustMark:write",
+				"transaction",
+				"snapshot",
+				"cache",
+				"replay",
+				...(typeof metadata.federation_entity?.federation_subordinate_events_endpoint === "string"
+					? (["subordinateEvent:read", "subordinateEvent:write"] as const)
+					: []),
+			],
 			engine: testEngine,
 		});
 		authorityStorages.set(entity.id, storage);
@@ -239,9 +255,18 @@ export async function launchFederation(
 		if (entity.entityConfigurationTtlSeconds !== undefined) {
 			authorityConfig.entityConfigurationTtlSeconds = entity.entityConfigurationTtlSeconds;
 		}
+		const [superior, ...otherSuperiors] = authorityHints ?? [];
+		const { trustMarkIssuers, trustMarkOwners, ...common } = authorityConfig;
+		if (superior !== undefined && (trustMarkIssuers !== undefined || trustMarkOwners !== undefined))
+			throw new Error("Intermediate topology cannot declare Trust Mark anchor policy");
 		const authority =
-			authorityHints !== undefined && authorityHints.length > 0
-				? await Intermediate.create(fixtureHostConfig(authorityConfig))
+			superior !== undefined
+				? await Intermediate.create(
+						fixtureHostConfig({
+							...common,
+							authorityHints: [superior, ...otherSuperiors] as const,
+						}),
+					)
 				: await TrustAnchor.create(fixtureHostConfig(authorityConfig));
 
 		entities.set(entity.id, {
@@ -358,7 +383,8 @@ export async function launchFederation(
 				updatedAt: Date.now() / 1000,
 			};
 
-			await storage.subordinates.add(record);
+			assertStorageCapabilities(storage, ["subordinate:write"], "Seed the integration topology");
+			await storage.subordinate.register(record);
 		}
 	}
 

@@ -5,14 +5,14 @@ import { fetchFederationEndpoint } from "../endpoint-client.js";
 import { COLLECTION_UNORDERED_PARAMETERS } from "../endpoint-parameters.js";
 import { serializeCollectionParams } from "../entity-collection/protocol.js";
 import { err, ok, type Result } from "../errors.js";
-import { safeLogger } from "./../logging.js";
+import { validateFetchUrl } from "../http/fetch-url.js";
+import { safeLogger } from "../logging.js";
 import {
 	createCollectionSchemas,
 	type EntityCollectionRequestParams,
 	EntityCollectionRequestSchema,
 	type EntityCollectionResponse,
 } from "../schemas/entity-collection.js";
-import { validateFetchUrl } from "../trust-chain/fetch.js";
 import type { FederationOptions } from "../types.js";
 
 export interface FetchEntityCollectionOptions extends FederationOptions {

@@ -26,8 +26,8 @@ import { isValidAlgorithm } from "./jose/keys.js";
 import { decodeEntityConfiguration } from "./jose/verify.js";
 import { preparePublicJwkSet } from "./jwks/public-material.js";
 import { safeLogger } from "./logging.js";
-import type { ReplayStore } from "./replay-store.js";
 import { type JWK, JWKSchema, type JWKSet } from "./schemas/jwk.js";
+import { requireReplayStorage } from "./storage/capabilities.js";
 import { entityId, type FederationOptions, nowSeconds } from "./types.js";
 
 /** Stable failure reason for a host's draft-07 HTTP response policy. */
@@ -102,7 +102,7 @@ export type ClientAttestationFreshness =
 			) => Result<VerifiedAttestationChallenge> | Promise<Result<VerifiedAttestationChallenge>>;
 	  };
 export type ClientAttestationReplay =
-	| { readonly mode: "jti"; readonly store: ReplayStore }
+	| { readonly mode: "jti" }
 	| {
 			readonly mode: "challenge";
 			readonly consume: (
@@ -138,7 +138,6 @@ export interface AuthenticateClientAttestationOptions
 	readonly clientId?: string;
 	readonly expectedChallenge?: string;
 	readonly maxProofAgeSeconds?: number;
-	readonly replayStore?: ReplayStore;
 	readonly freshness?: ClientAttestationFreshness;
 	readonly replay?: ClientAttestationReplay;
 	readonly acceptClient: (
@@ -374,7 +373,7 @@ async function authenticateClientAttestationImpl(
 		300;
 	const replay =
 		options.replay ??
-		(options.replayStore ? { mode: "jti" as const, store: options.replayStore } : undefined);
+		(options.storage?.capabilities.includes("replay") ? { mode: "jti" as const } : undefined);
 	const skew = options.clockSkewSeconds ?? DEFAULT_CLOCK_SKEW_SECONDS;
 	try {
 		entityId(options.audience);
@@ -386,7 +385,7 @@ async function authenticateClientAttestationImpl(
 	}
 	if (!replay)
 		safeLogger(options.logger)?.warn(
-			"Provide a replayStore for Client Attestation PoP replay protection",
+			"Configure replay storage or a Client Attestation PoP replay policy",
 		);
 	if (typeof options.acceptClient !== "function")
 		safeLogger(options.logger)?.warn("Provide acceptClient to decide whether to accept the client");
@@ -399,8 +398,7 @@ async function authenticateClientAttestationImpl(
 		(options.freshness !== undefined && !["iat", "challenge"].includes(options.freshness.mode)) ||
 		(replay !== undefined && !["jti", "challenge", "freshness-only"].includes(replay.mode)) ||
 		(replay?.mode === "challenge" && typeof replay.consume !== "function") ||
-		(replay?.mode === "jti" && typeof replay.store?.useJti !== "function") ||
-		(options.replay !== undefined && options.replayStore !== undefined) ||
+		(replay?.mode === "jti" && !options.storage?.capabilities.includes("replay")) ||
 		(options.freshness !== undefined && options.maxProofAgeSeconds !== undefined) ||
 		typeof options.acceptClient !== "function" ||
 		!options.audience ||
@@ -533,7 +531,7 @@ async function authenticateClientAttestationImpl(
 		const consumed = await invokeVerificationPolicy(
 			(_, signal) =>
 				replay.mode === "jti"
-					? replay.store.useJti({
+					? requireReplayStorage(options.storage, "Client Attestation PoP").useJti({
 							issuer: claims.iss,
 							audience: options.audience,
 							jti: claims.jti,

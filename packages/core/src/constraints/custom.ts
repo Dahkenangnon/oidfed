@@ -8,7 +8,6 @@ import type { TrustChainConstraints } from "../schemas/constraints.js";
 import type {
 	ConstraintCheckContext,
 	ConstraintCheckDefinition,
-	EntityId,
 	ParsedEntityStatement,
 } from "../types.js";
 
@@ -75,10 +74,10 @@ export function createCustomConstraintRunner(
 		if (!statement || !first || !last)
 			return fail("Custom constraint context requires a complete chain and valid position");
 		const context: ConstraintCheckContext = Object.freeze({
-			issuerId: statement.payload.iss as unknown as EntityId,
-			subjectId: statement.payload.sub as unknown as EntityId,
-			trustChainSubjectId: first.payload.sub as unknown as EntityId,
-			trustAnchorId: last.payload.iss as unknown as EntityId,
+			issuerId: statement.payload.iss,
+			subjectId: statement.payload.sub,
+			trustChainSubjectId: first.payload.sub,
+			trustAnchorId: last.payload.iss,
 			position,
 			statements,
 		});

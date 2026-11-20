@@ -110,8 +110,11 @@ export function checkConstraints(
 	if (constraints.naming_constraints) {
 		// Include this statement's subject; its issuer is outside its own constraint.
 		for (let i = 0; i <= position; i++) {
-			const entityId = chain[i]?.payload.sub as unknown as EntityId;
-			if (!checkNamingConstraints(constraints.naming_constraints, entityId)) {
+			const entityId = chain[i]?.payload.sub;
+			if (
+				entityId === undefined ||
+				!checkNamingConstraints(constraints.naming_constraints, entityId)
+			) {
 				return err({
 					code: InternalErrorCode.ConstraintViolation,
 					description: `naming_constraints violated by entity '${entityId}' at position ${i}`,

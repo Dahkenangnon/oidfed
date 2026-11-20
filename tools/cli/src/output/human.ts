@@ -1,8 +1,14 @@
-import { colors, isCompactJwt } from "./colors.js";
+import { colors } from "./colors.js";
 import type { OutputFormatter } from "./index.js";
 
 const STATUS_OK = new Set(["ok", "active", "true"]);
 const STATUS_ERR = new Set(["error", "expired", "revoked", "unreachable", "false"]);
+
+function isCompactJwt(data: unknown): data is string {
+	if (typeof data !== "string") return false;
+	const parts = data.split(".");
+	return parts.length === 3 && parts.every((p) => p.length > 0);
+}
 
 function colorizeCell(value: unknown): string {
 	if (typeof value === "boolean") {

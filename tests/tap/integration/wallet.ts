@@ -1,9 +1,5 @@
 import type QUnit from "qunit";
-import {
-	Intermediate,
-	MemoryStorageAdapter,
-	TrustAnchor,
-} from "../../../packages/authority/src/index.js";
+import { Intermediate, TrustAnchor } from "../../../packages/authority/src/index.js";
 import { decodeEntityStatement } from "../../../packages/core/src/index.js";
 import { Leaf } from "../../../packages/leaf/src/index.js";
 import {
@@ -11,6 +7,7 @@ import {
 	CredentialVerifierRole,
 	WalletProviderRole,
 } from "../../../packages/wallet/src/index.js";
+import { memoryStorage, replayStorage } from "../../storage-fixtures.js";
 import {
 	FixtureCrypto,
 	fixtureHostConfig,
@@ -33,6 +30,7 @@ export default (QUnit: QUnit) => {
 							entityId: f.ids.issuer,
 							crypto: FixtureCrypto.fromJWK(f.keys.issuer.privateKey),
 							roles: [role],
+							storage: replayStorage({ useJti: async () => true }),
 							options: f.options,
 							metadata: {
 								federation_entity:
@@ -53,13 +51,13 @@ export default (QUnit: QUnit) => {
 									? await TrustAnchor.create(
 											fixtureHostConfig({
 												...config,
-												storage: new MemoryStorageAdapter({ engine: testEngine }),
+												storage: memoryStorage({ engine: testEngine }),
 											}),
 										)
 									: await Intermediate.create(
 											fixtureHostConfig({
 												...config,
-												storage: new MemoryStorageAdapter({ engine: testEngine }),
+												storage: memoryStorage({ engine: testEngine }),
 												authorityHints: [f.ids.anchor],
 											}),
 										);
@@ -88,6 +86,7 @@ export default (QUnit: QUnit) => {
 							crypto: FixtureCrypto.fromJWK(f.keys[name].privateKey),
 							metadata: f.metadata[name],
 							roles: [role],
+							storage: replayStorage({ useJti: async () => true }),
 							options: f.options,
 						}),
 					);
@@ -135,6 +134,7 @@ export default (QUnit: QUnit) => {
 							crypto: FixtureCrypto.fromJWK(f.keys[name].privateKey),
 							metadata: f.metadata[name],
 							roles: [role],
+							storage: replayStorage({ useJti: async () => true }),
 							trustAnchors: f.anchors,
 							options: f.options,
 						}),
@@ -195,7 +195,6 @@ export default (QUnit: QUnit) => {
 						await issuer.authenticateWallet(jwt.value, proof, {
 							...f.options,
 							audience: f.ids.server,
-							replayStore: { useJti: async () => true },
 							acceptWallet: () => true,
 						})
 					).ok,
@@ -248,6 +247,7 @@ export default (QUnit: QUnit) => {
 							},
 							crypto: FixtureCrypto.fromJWK(f.keys[name].privateKey),
 							roles: [role],
+							storage: replayStorage({ useJti: async () => true }),
 							options: f.options,
 						};
 						const entity =
@@ -259,13 +259,13 @@ export default (QUnit: QUnit) => {
 									? await TrustAnchor.create(
 											fixtureHostConfig({
 												...config,
-												storage: new MemoryStorageAdapter({ engine: testEngine }),
+												storage: memoryStorage({ engine: testEngine }),
 											}),
 										)
 									: await Intermediate.create(
 											fixtureHostConfig({
 												...config,
-												storage: new MemoryStorageAdapter({ engine: testEngine }),
+												storage: memoryStorage({ engine: testEngine }),
 												authorityHints: [f.ids.anchor],
 											}),
 										);
@@ -349,6 +349,7 @@ export default (QUnit: QUnit) => {
 						metadata: { federation_entity: federationMetadata, ...f.metadata[name] },
 						crypto,
 						roles: [role],
+						storage: replayStorage({ useJti: async () => true }),
 						trustAnchors: f.anchors,
 						options: f.options,
 					};
@@ -359,14 +360,14 @@ export default (QUnit: QUnit) => {
 								? await TrustAnchor.create(
 										fixtureHostConfig({
 											...config,
-											storage: new MemoryStorageAdapter({ engine: testEngine }),
+											storage: memoryStorage({ engine: testEngine }),
 										}),
 									)
 								: await Intermediate.create(
 										fixtureHostConfig({
 											...config,
 											authorityHints: [f.ids.anchor],
-											storage: new MemoryStorageAdapter({ engine: testEngine }),
+											storage: memoryStorage({ engine: testEngine }),
 										}),
 									);
 					const decoded = decodeEntityStatement(await entity.getEntityConfiguration());
@@ -421,14 +422,14 @@ export default (QUnit: QUnit) => {
 									? await TrustAnchor.create(
 											fixtureHostConfig({
 												...config,
-												storage: new MemoryStorageAdapter({ engine: testEngine }),
+												storage: memoryStorage({ engine: testEngine }),
 											}),
 										)
 									: await Intermediate.create(
 											fixtureHostConfig({
 												...config,
 												authorityHints: [f.ids.anchor],
-												storage: new MemoryStorageAdapter({ engine: testEngine }),
+												storage: memoryStorage({ engine: testEngine }),
 											}),
 										))(),
 						/response_uris/,
@@ -465,14 +466,14 @@ export default (QUnit: QUnit) => {
 								? await TrustAnchor.create(
 										fixtureHostConfig({
 											...config,
-											storage: new MemoryStorageAdapter({ engine: testEngine }),
+											storage: memoryStorage({ engine: testEngine }),
 										}),
 									)
 								: await Intermediate.create(
 										fixtureHostConfig({
 											...config,
 											authorityHints: [f.ids.anchor],
-											storage: new MemoryStorageAdapter({ engine: testEngine }),
+											storage: memoryStorage({ engine: testEngine }),
 										}),
 									))(),
 					/credential_issuer/,
@@ -491,6 +492,7 @@ export default (QUnit: QUnit) => {
 					crypto: FixtureCrypto.fromJWK(f.keys.issuer.privateKey),
 					metadata: { openid_credential_issuer: { credential_issuer: "wrong" } },
 					roles: [role],
+					storage: replayStorage({ useJti: async () => true }),
 					options: f.options,
 				}),
 			);
@@ -504,6 +506,7 @@ export default (QUnit: QUnit) => {
 							crypto: FixtureCrypto.fromJWK(f.keys.issuer.privateKey),
 							metadata: {},
 							roles: [role],
+							storage: replayStorage({ useJti: async () => true }),
 						}),
 					))(),
 				/separate wallet role/,

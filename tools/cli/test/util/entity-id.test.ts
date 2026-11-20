@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { extractJwks, parseEntityIdOrError } from "../../src/util/entity-id.js";
+import { extractJwks } from "../../src/util/entity-configuration.js";
+import { parseEntityIdOrError } from "../../src/util/entity-id.js";
 
 describe("parseEntityIdOrError", () => {
 	it("returns ok for valid HTTPS entity ID", () => {

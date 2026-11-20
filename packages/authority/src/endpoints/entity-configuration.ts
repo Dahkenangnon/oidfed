@@ -8,14 +8,16 @@ import {
 import {
 	buildEntityConfigurationPayload,
 	DEFAULT_ENTITY_STATEMENT_TTL_SECONDS,
+	errorResponse,
 	JwtTyp,
+	jwtResponse,
 	MediaType,
 	nowSeconds,
+	requireMethod,
 	safeLogger,
 	signEntityStatement,
 } from "@oidfed/core";
 import type { HandlerContext } from "./context.js";
-import { errorResponse, jwtResponse, requireMethod } from "./helpers.js";
 
 const collectionNotices = new WeakSet<HandlerContext>();
 

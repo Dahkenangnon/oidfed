@@ -11,7 +11,7 @@ import { err, ok, type Result } from "../errors.js";
 import {
 	selectHistoricalVerificationKey,
 	verifyHistoricalKeysResponse,
-} from "../federation-api/index.js";
+} from "../federation-api/historical-keys.js";
 import { decodeEntityConfiguration, decodeEntityStatement } from "../jose/verify.js";
 import { type JWKSet, JWKSetSchema } from "../schemas/jwk.js";
 import {
@@ -30,8 +30,8 @@ import {
 	type TrustMarkEvidence,
 	type ValidatedTrustChain,
 } from "../types.js";
-import { type TrustMarkValidationOptions, validateTrustMark } from "./index.js";
 import { fetchTrustMarkHistoricalResponse, trustMarkOperation } from "./operation.js";
+import { type TrustMarkValidationOptions, validateTrustMark } from "./validate.js";
 
 /**
  * Evidence issued by establishTrustMarkIssuerTrust after federation validation.

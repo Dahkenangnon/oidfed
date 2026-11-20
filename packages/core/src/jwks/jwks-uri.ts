@@ -5,10 +5,10 @@
 
 import { FederationErrorCode } from "../constants.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
-import { safeLogger } from "./../logging.js";
+import { performFetch } from "../http/fetch.js";
+import { safeLogger } from "../logging.js";
 import { parseMetadataUrl } from "../metadata-url.js";
 import { type JWKSet, MetadataJWKSetSchema } from "../schemas/jwk.js";
-import { performFetch } from "../trust-chain/fetch.js";
 import type { FederationOptions } from "../types.js";
 import { validateJwkSetUseRequirement } from "./use-requirement.js";
 

@@ -120,10 +120,18 @@ describe("resolve handler", () => {
 		);
 		expect(result.ok).toBe(true);
 		if (result.ok) {
-			const parsed = JSON.parse(result.value);
-			expect(parsed.chains_found).toBe(1);
-			expect(parsed.chains[0].entity_id).toBe("https://leaf.example.com");
-			expect(parsed.chains[0].trust_anchor_id).toBe("https://ta.example.com");
+			expect(JSON.parse(result.value)).toEqual({
+				chains_found: 1,
+				errors: 0,
+				chains: [
+					{
+						entity_id: "https://leaf.example.com",
+						trust_anchor_id: "https://ta.example.com",
+						statements: 3,
+						expires_at: new Date(9_999_999_999 * 1000).toISOString(),
+					},
+				],
+			});
 		}
 	});
 });

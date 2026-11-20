@@ -1,8 +1,7 @@
-import { cloneData } from "@oidfed/core";
-import { DEFAULT_JWS_REGISTRY } from "@oidfed/crypto";
 /** Authorization parameter parsing and effective Request Object requirements. */
 
 import {
+	cloneData,
 	DEFAULT_ALLOWED_ALGORITHMS,
 	err,
 	FederationErrorCode,
@@ -10,6 +9,7 @@ import {
 	ok,
 	type Result,
 } from "@oidfed/core";
+import { DEFAULT_JWS_REGISTRY } from "@oidfed/crypto";
 
 const invalid = (description: string): Result<never> =>
 	err({ code: FederationErrorCode.InvalidRequest, description });

@@ -17,32 +17,39 @@ export type { DecodedFederationJwtPayload } from "./schemas/index.js";
 declare const EntityIdBrand: unique symbol;
 export type EntityId = string & { readonly [EntityIdBrand]: true };
 
-/** Parse and validate a string as an HTTPS Entity Identifier, throwing on invalid input. */
+function entityIdError(value: string): string | undefined {
+	if (typeof value !== "string") return "Entity ID must be a string";
+	if (value.length > 2048) return "Entity ID must not exceed 2048 characters";
+	if (/\s/u.test(value) || value.includes("\\"))
+		return "Entity ID must not contain raw whitespace or backslashes";
+	for (const character of value) {
+		const code = character.charCodeAt(0);
+		if (
+			code < 0x20 ||
+			(code >= 0x7f && code <= 0x9f) ||
+			(character.length === 1 && code >= 0xd800 && code <= 0xdfff)
+		)
+			return "Entity ID must not contain control characters or unpaired surrogates";
+	}
+	const authority = /^https:\/\/([^/?#]+)/i.exec(value)?.[1];
+	if (!authority) return "Entity ID must be an HTTPS URL with a host";
+	if (authority.includes("@")) return "Entity ID must not contain credentials";
+	if (value.includes("?") || value.includes("#"))
+		return "Entity ID must not contain query parameters or fragments";
+	if (!URL.canParse(value)) return "Entity ID must be a valid HTTPS URL";
+	return undefined;
+}
+
+/** Validate an HTTPS Entity Identifier and return the original string. */
 export function entityId(value: string): EntityId {
-	if (value.length > 2048) throw new TypeError("Entity ID must not exceed 2048 characters");
-	const url = new URL(value);
-	if (url.protocol !== "https:") throw new TypeError("Entity ID must be HTTPS");
-	if (url.username || url.password) throw new TypeError("Entity ID must not contain credentials");
-	if (url.href.includes("?") || url.href.includes("#"))
-		throw new TypeError("Entity ID must not contain query parameters or fragments");
+	const error = entityIdError(value);
+	if (error) throw new TypeError(error);
 	return value as EntityId;
 }
 
-/** Check whether a string is a valid Entity Identifier without throwing. */
+/** Check whether a string is a valid Entity Identifier without throwing or rewriting it. */
 export function isValidEntityId(value: string): value is EntityId {
-	if (value.length > 2048) return false;
-	try {
-		const url = new URL(value);
-		return (
-			url.protocol === "https:" &&
-			!url.username &&
-			!url.password &&
-			!url.href.includes("?") &&
-			!url.href.includes("#")
-		);
-	} catch {
-		return false;
-	}
+	return entityIdError(value) === undefined;
 }
 
 declare const Unverified: unique symbol;
@@ -77,14 +84,6 @@ export function nowSeconds(clock?: Clock): number {
 	return now;
 }
 
-export interface CacheProvider {
-	get<T>(key: string): Promise<T | undefined>;
-	set<T>(key: string, value: T, ttlSeconds: number): Promise<void>;
-	delete(key: string): Promise<void>;
-	clear(): Promise<void>;
-	[Symbol.asyncDispose](): Promise<void>;
-}
-
 /** Host logger. Returned promises are handled without awaiting them; sink failures are ignored. */
 export interface Logger {
 	debug(msg: string, context?: Record<string, unknown>): void;
@@ -109,7 +108,7 @@ export interface CryptoContext {
 /** Per-operation policy on a host whose engine is already bound. */
 export type BoundFederationOptions<Options extends FederationOptions = FederationOptions> = Omit<
 	Options,
-	"engine" | "algorithmRegistry"
+	"engine" | "algorithmRegistry" | "storage"
 >;
 
 export interface FederationOptions {
@@ -142,7 +141,8 @@ export interface FederationOptions {
 	/** Signed subject ECs keyed by exact Entity Identifier. Each is validated against the chain. */
 	entityConfigurations?: ReadonlyMap<string, string> | undefined;
 	clock?: Clock;
-	cache?: CacheProvider;
+	/** Optional storage supplied by the standalone caller or bound by its host. */
+	readonly storage?: import("./storage/contracts.js").FederationStorage | undefined;
 	logger?: Logger;
 	httpTimeoutMs?: number;
 	clockSkewSeconds?: number;
@@ -335,6 +335,7 @@ export type DiscoveryResult = {
 export interface EntityContext {
 	readonly entityId: string;
 	readonly crypto: CryptoContext;
+	readonly storage?: import("./storage/contracts.js").FederationStorage;
 	readonly options: FederationOptions;
 	readonly trustAnchors?: TrustAnchorSet;
 	readonly authorityHints?: readonly EntityId[];

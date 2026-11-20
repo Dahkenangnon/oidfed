@@ -1,4 +1,5 @@
 #!/usr/bin/env npx tsx
+
 /**
  * Launches all 6 federation topologies on a fixed port for browser access.
  *
@@ -20,16 +21,19 @@ import { parseArgs } from "node:util";
 import {
 	type AuthorityConfig,
 	Intermediate,
-	MemoryStorageAdapter,
-	type SubordinateRecord,
+	type IntermediateConfig,
 	TrustAnchor,
 } from "@oidfed/authority";
 import {
+	assertStorageCapabilities,
 	type CryptoContext,
 	type EntityType,
 	entityId,
 	historicalKeysFromKeyring,
 	type JWK,
+	MemoryFederationStorage,
+	type SubordinateRecord,
+	sanitizeSubordinateMetadata,
 	type TrustAnchorSet,
 } from "@oidfed/core";
 import { isJwsAlgorithm, type Jwk, MemoryRotatingKeyring } from "@oidfed/crypto";
@@ -975,7 +979,7 @@ async function bootstrapTopology(
 
 	function buildAuthorityConfig(
 		entity: EntityDefinition,
-		storage: MemoryStorageAdapter,
+		storage: MemoryFederationStorage,
 		cryptoContextValue: CryptoContext,
 	): Record<string, unknown> {
 		const eid = rw(entity.id);
@@ -1010,7 +1014,7 @@ async function bootstrapTopology(
 			.filter((entity) => entity.role === "leaf" && entity.protocolRole === "rp")
 			.map((entity) => new URL(rw(entity.id)).hostname),
 	);
-	const storageMap = new Map<string, MemoryStorageAdapter>();
+	const storageMap = new Map<string, MemoryFederationStorage>();
 	const cryptoContexts = new Map<string, CryptoContext>();
 
 	for (const entity of topology.entities) {
@@ -1019,7 +1023,7 @@ async function bootstrapTopology(
 		const keys = getKeys(entity.id);
 		cryptoContexts.set(entity.id, cryptoContext(keys.signing));
 		if (isAuthority) {
-			storageMap.set(entity.id, new MemoryStorageAdapter({ engine, trustMarks: true }));
+			storageMap.set(entity.id, new MemoryFederationStorage({ namespace: entity.id, engine }));
 		}
 	}
 
@@ -1039,7 +1043,7 @@ async function bootstrapTopology(
 		const cfg = buildAuthorityConfig(entity, storage, cryptoContextValue);
 		let authority: TrustAnchor | Intermediate;
 		if (entity.role === "intermediate") {
-			authority = await Intermediate.create(cfg as unknown as AuthorityConfig);
+			authority = await Intermediate.create(cfg as unknown as IntermediateConfig);
 		} else {
 			authority = await TrustAnchor.create(cfg as unknown as AuthorityConfig);
 			trustAnchorServers.set(entity.id, authority);
@@ -1169,7 +1173,7 @@ async function bootstrapTopology(
 			}
 			// Operational authority endpoints belong only in the subordinate's own Entity
 			// Configuration, never in the statement issued by its parent.
-			const subordinateMetadata = TrustAnchor.sanitizeSubordinateMetadata(metadata);
+			const subordinateMetadata = sanitizeSubordinateMetadata(metadata);
 
 			// Parent's constraints apply to all subordinate statements it issues
 			const parentEntity = topology.entities.find((e) => e.id === parentId);
@@ -1187,7 +1191,8 @@ async function bootstrapTopology(
 				updatedAt: Date.now() / 1000,
 			};
 
-			await storage.subordinates.add(record);
+			assertStorageCapabilities(storage, ["subordinate:write"], "Seed the development topology");
+			await storage.subordinate.register(record);
 		}
 	}
 

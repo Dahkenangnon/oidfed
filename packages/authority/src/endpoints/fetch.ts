@@ -1,26 +1,28 @@
-import { federationEntry, federationSigningOptions } from "@oidfed/core";
+import { federationEntry, federationSigningOptions, fetchStoredSubordinate } from "@oidfed/core";
+
 /** Subordinate Statement signing and Fetch endpoint responses. */
 
+import type { SubordinateRecord } from "@oidfed/core";
 import {
+	assertSubordinatePublicationClaims,
 	buildSubordinateStatementPayload,
 	DEFAULT_ENTITY_STATEMENT_TTL_SECONDS,
 	type EntityId,
 	type EntityStatementMetadata,
+	errorResponse,
 	FederationErrorCode,
 	isValidEntityId,
 	JwtTyp,
+	jwtResponse,
 	MediaType,
 	nowSeconds,
+	parseQueryParams,
+	requireMethod,
 	safeLogger,
 	signEntityStatement,
 } from "@oidfed/core";
-import type { SubordinateRecord } from "../storage/types.js";
-import {
-	assertSubordinatePublicationClaims,
-	subordinatePublicationClaim,
-} from "../utils/subordinate-publication.js";
 import type { HandlerContext } from "./context.js";
-import { errorResponse, jwtResponse, parseQueryParams, requireMethod } from "./helpers.js";
+import { subordinatePublicationClaim } from "./subordinate-claims.js";
 
 /** Handles fetch endpoint requests to return a subordinate statement. */
 export function createFetchHandler(ctx: HandlerContext): (request: Request) => Promise<Response> {
@@ -48,7 +50,11 @@ export function createFetchHandler(ctx: HandlerContext): (request: Request) => P
 				);
 			}
 
-			const record = await ctx.storage.subordinates.get(sub as EntityId);
+			const record = await fetchStoredSubordinate(
+				ctx.storage.subordinate,
+				sub as EntityId,
+				ctx.options,
+			);
 			if (!record) {
 				return errorResponse(404, FederationErrorCode.NotFound, "Entity not found");
 			}

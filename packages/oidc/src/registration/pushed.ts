@@ -1,10 +1,10 @@
-import { bindFederationOptions, selectSigningEntry } from "@oidfed/core";
-import type { KeyringEntry } from "@oidfed/crypto";
 /** Pushed authorization requests with Request Object and client authentication handling. */
 
 import {
 	type AuthenticateClientAttestationOptions,
+	assertStorageCapabilities,
 	authenticateClientAttestation,
+	bindFederationOptions,
 	type ClientAttestationError,
 	clientAttestationHeaders,
 	createClientAssertion,
@@ -18,6 +18,7 @@ import {
 	err,
 	FederationErrorCode,
 	type FederationOptions,
+	federationError,
 	isValidAlgorithm,
 	JWT_BEARER_CLIENT_ASSERTION_TYPE,
 	nowSeconds,
@@ -25,25 +26,27 @@ import {
 	parseClientAttestationHeaders,
 	type Result,
 	readBodyWithLimit,
+	requireReplayStorage,
 	runAsyncOperation,
+	selectSigningEntry,
 	type TrustAnchorSet,
 	type ValidatedTrustChain,
 	verifyClientAssertion,
 } from "@oidfed/core";
-import { effectiveMetadata } from "../metadata.js";
+import type { KeyringEntry } from "@oidfed/crypto";
+import { effectiveMetadata } from "../metadata-validation.js";
 import { checkRegistrationAccreditation } from "./accreditation.js";
 import {
 	type AutomaticRegistrationConfig,
 	assertProtocolSignerPublished,
 	automaticRegistration,
-} from "./automatic.js";
-import { resolveAndValidateBestChain, selectSharedRegistrationTrustChains } from "./helpers.js";
+} from "./automatic-client.js";
 import {
-	type ProcessAutomaticRegistrationOptions,
+	type AutomaticRegistrationProcessingInput,
 	type ProcessedAutomaticRegistration,
 	processAutomaticRegistration,
 	registrationClientFromChain,
-} from "./process-automatic.js";
+} from "./automatic-server.js";
 import { type RegistrationProfile, registrationProfile } from "./profile.js";
 import {
 	allowsParAssertionAlgorithm,
@@ -51,6 +54,10 @@ import {
 	authorizationParameters,
 	requiresRequestObject,
 } from "./request-policy.js";
+import {
+	resolveAndValidateBestChain,
+	selectSharedRegistrationTrustChains,
+} from "./trust-chains.js";
 
 const invalid = (description: string): Result<never> =>
 	err({ code: FederationErrorCode.InvalidRequest, description });
@@ -72,8 +79,10 @@ export interface PreparedPushedAuthorizationRequest {
 	readonly trustChain: ValidatedTrustChain;
 	readonly requestObjectJwt?: string;
 }
-export interface ProcessPushedAuthorizationRequestOptions
-	extends ProcessAutomaticRegistrationOptions {
+export interface PushedAuthorizationProcessingInput
+	extends Omit<AutomaticRegistrationProcessingInput, "storage"> {
+	/** Required for Request Objects, client assertions, and JTI proof mode. */
+	readonly storage?: FederationOptions["storage"];
 	/** Effective server metadata; partial publication metadata is insufficient for method negotiation. */
 	readonly providerMetadata: Readonly<Record<string, unknown>>;
 	/** Trusted host TLS integration must return the certificate proven by the connection (base64 DER). */
@@ -83,7 +92,7 @@ export interface ProcessPushedAuthorizationRequestOptions
 	) => string | undefined | Promise<string | undefined>;
 	readonly clientAttestation?: Omit<
 		AuthenticateClientAttestationOptions,
-		"audience" | "clientId" | "engine"
+		"audience" | "clientId" | "engine" | "algorithmRegistry" | "storage"
 	>;
 }
 export interface ProcessedPushedAuthorizationRequest extends ProcessedAutomaticRegistration {
@@ -280,7 +289,7 @@ export async function createPushedAuthorizationRequest(
 export async function processPushedAuthorizationRequest(
 	request: Request,
 	anchors: TrustAnchorSet,
-	options: ProcessPushedAuthorizationRequestOptions,
+	options: PushedAuthorizationProcessingInput,
 ): Promise<Result<ProcessedPushedAuthorizationRequest, ClientAttestationError>> {
 	try {
 		if (
@@ -317,6 +326,7 @@ export async function processPushedAuthorizationRequest(
 			profile.providerType,
 			options.providerMetadata,
 			options.opEntityId,
+			options,
 		);
 		if (!server.ok) return server;
 		if (
@@ -375,7 +385,7 @@ export async function processPushedAuthorizationRequest(
 			return invalid(
 				"Federation PAR requires a Request Object or RP protocol-key possession proof",
 			);
-		const { replayStore: _registrationReplay, ...authenticationOptions } = options;
+		const { storage: _registrationStorage, ...authenticationOptions } = options;
 		let proofExpiresAt = Infinity;
 		const verifyProof = async (
 			client: ProcessedAutomaticRegistration,
@@ -395,6 +405,17 @@ export async function processPushedAuthorizationRequest(
 			if (methods.some((method) => !mutual(method, client.resolvedRpMetadata, server.value)))
 				return invalid("PAR authentication must be mutually supported");
 			if (hasAssertion) {
+				let replay: ReturnType<typeof requireReplayStorage>;
+				try {
+					replay = requireReplayStorage(options.storage, "PAR client assertion");
+				} catch {
+					return err(
+						federationError(
+							FederationErrorCode.ServerError,
+							"PAR client assertions require replay storage",
+						),
+					);
+				}
 				if (form.get("client_assertion_type") !== JWT_BEARER_CLIENT_ASSERTION_TYPE)
 					return invalid("Invalid PAR client assertion type");
 				const verified = await runAsyncOperation(
@@ -422,7 +443,7 @@ export async function processPushedAuthorizationRequest(
 					verified.value.expiresAt + (options.clockSkewSeconds ?? DEFAULT_CLOCK_SKEW_SECONDS);
 				const claimed = await runAsyncOperation(
 					() =>
-						options.replayStore.useJti({
+						replay.useJti({
 							issuer: id,
 							audience: options.opEntityId,
 							jti: verified.value.jti,
@@ -456,6 +477,7 @@ export async function processPushedAuthorizationRequest(
 					{
 						...authenticationOptions,
 						...options.clientAttestation,
+						storage: options.storage,
 						...(options.signal ? { signal: options.signal } : {}),
 						...(options.clock ? { clock: options.clock } : {}),
 						audience: options.opEntityId,
@@ -488,7 +510,23 @@ export async function processPushedAuthorizationRequest(
 		};
 		let client: Result<ProcessedAutomaticRegistration, ClientAttestationError>;
 		if (requestObject !== null) {
-			client = await processAutomaticRegistration(requestObject, anchors, options, verifyProof);
+			const storage = options.storage;
+			try {
+				assertStorageCapabilities(storage, ["replay"], "PAR Request Object");
+			} catch {
+				return err(
+					federationError(
+						FederationErrorCode.ServerError,
+						"PAR Request Objects require replay storage",
+					),
+				);
+			}
+			client = await processAutomaticRegistration(
+				requestObject,
+				anchors,
+				{ ...options, storage },
+				verifyProof,
+			);
 		} else {
 			const chain = await resolveAndValidateBestChain(id, anchors, options, profile);
 			if (!chain.ok) return chain;

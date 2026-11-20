@@ -1,4 +1,4 @@
-import { createTrustAnchorSet, entityId, MemoryReplayStore } from "@oidfed/core";
+import { createTrustAnchorSet, entityId, MemoryFederationStorage } from "@oidfed/core";
 import { Leaf } from "@oidfed/leaf";
 import { CredentialIssuerRole, CredentialVerifierRole, WalletProviderRole } from "@oidfed/wallet";
 import express from "express";
@@ -137,7 +137,11 @@ describe("Wallet federation over HTTPS", () => {
 		);
 		const options = {
 			audience,
-			replayStore: new MemoryReplayStore({ engine: testEngine }),
+			storage: new MemoryFederationStorage({
+				namespace: audience,
+				capabilities: ["replay"],
+				engine: testEngine,
+			}),
 			acceptWallet: () => true,
 		};
 		expect(

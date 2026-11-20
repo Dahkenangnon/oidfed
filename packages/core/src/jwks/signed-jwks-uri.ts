@@ -5,18 +5,15 @@
 
 import { FederationErrorCode, MediaType } from "../constants.js";
 import { err, type FederationError, federationError, type Result } from "../errors.js";
-import {
-	type VerifySignedJwkSetOptions,
-	validateExpectedIssuer,
-	verifySignedJwkSet,
-} from "../federation-api/index.js";
-import { safeLogger } from "./../logging.js";
+import { validateExpectedIssuer } from "../federation-api/verify-issuer.js";
+import { performFetch } from "../http/fetch.js";
+import { safeLogger } from "../logging.js";
 import { parseMetadataUrl } from "../metadata-url.js";
+import type { SignedJwkSetPayload } from "../schemas/endpoints.js";
 import { EntityIdSchema } from "../schemas/entity-id.js";
-import type { SignedJwkSetPayload } from "../schemas/entity-statement.js";
 import type { JWKSet } from "../schemas/jwk.js";
-import { performFetch } from "../trust-chain/fetch.js";
 import type { Clock, FederationOptions } from "../types.js";
+import { type VerifySignedJwkSetOptions, verifySignedJwkSet } from "./signed-jwk-set.js";
 
 export interface FetchSignedJwkSetOptions extends FederationOptions, VerifySignedJwkSetOptions {
 	clockSkewSeconds?: number;

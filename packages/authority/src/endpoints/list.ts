@@ -1,9 +1,17 @@
+import { listStoredSubordinates } from "@oidfed/core";
 /** Subordinate Listing requests with standard filters and bounded storage traversal. */
 
-import { FederationErrorCode, isValidEntityId, nowSeconds, safeLogger } from "@oidfed/core";
-import type { ListFilter } from "../storage/types.js";
+import type { ListFilter } from "@oidfed/core";
+import {
+	errorResponse,
+	FederationErrorCode,
+	jsonResponse,
+	nowSeconds,
+	parseQueryParams,
+	requireMethod,
+	safeLogger,
+} from "@oidfed/core";
 import type { HandlerContext } from "./context.js";
-import { errorResponse, jsonResponse, parseQueryParams, requireMethod } from "./helpers.js";
 import { parseBooleanQuery, validateEntityTypes } from "./list-parameters.js";
 
 /** Handles subordinate listing requests with optional entity type and trust mark filters. */
@@ -41,7 +49,10 @@ export function createListHandler(ctx: HandlerContext): (request: Request) => Pr
 			);
 		}
 
-		if ((trustMarkedRaw !== null || trustMarkType !== null) && !ctx.storage.trustMarks) {
+		if (
+			(trustMarkedRaw !== null || trustMarkType !== null) &&
+			!ctx.storage.capabilities.includes("trustMark:read")
+		) {
 			return errorResponse(
 				400,
 				FederationErrorCode.UnsupportedParameter,
@@ -59,13 +70,14 @@ export function createListHandler(ctx: HandlerContext): (request: Request) => Pr
 		}
 
 		try {
-			const page = await ctx.storage.subordinates.list(filter);
+			const page = await listStoredSubordinates(
+				ctx.storage.subordinate,
+				filter,
+				undefined,
+				ctx.options,
+			);
 			const entityIds = page.items.map((record) => record.entityId);
-			if (
-				entityIds.some((id) => !isValidEntityId(id)) ||
-				(page.nextCursor !== undefined && !isValidEntityId(page.nextCursor))
-			)
-				throw new Error("Invalid subordinate identifier from storage");
+
 			return jsonResponse(entityIds);
 		} catch {
 			safeLogger(ctx.options?.logger)?.error("Failed to list subordinates");

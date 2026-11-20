@@ -3,7 +3,7 @@
 import { FederationErrorCode, InternalErrorCode, MediaType } from "../constants.js";
 import { fetchFederationEndpoint } from "../endpoint-client.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
-import { safeLogger } from "./../logging.js";
+import { safeLogger } from "../logging.js";
 import { parseMetadataUrl } from "../metadata-url.js";
 import { type EntityId, entityId, type FederationOptions, isValidEntityId } from "../types.js";
 

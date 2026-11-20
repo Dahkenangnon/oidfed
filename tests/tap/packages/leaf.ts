@@ -21,6 +21,7 @@ import {
 } from "../../../packages/core/src/index.js";
 import * as LeafPublic from "../../../packages/leaf/src/index.js";
 import { Leaf, type LeafConfig } from "../../../packages/leaf/src/index.js";
+import { memoryStorage } from "../../storage-fixtures.js";
 import {
 	createMockFederation,
 	createMockTrustAnchors,
@@ -215,8 +216,8 @@ export default (QUnit: QUnit) => {
 			const leaf = await Leaf.create(
 				fixtureHostConfig({
 					...config,
+					storage: memoryStorage({ trustMarks: true }),
 					trustMarkIssuer: {
-						storage: new CorePublic.MemoryTrustMarkStore(),
 						issuerEvidence: [
 							{
 								kind: "out-of-band",
@@ -350,7 +351,6 @@ export default (QUnit: QUnit) => {
 								authentication: {
 									methods: ["private_key_jwt"],
 									allowedAlgorithms: ["RS256"],
-									replayStore: new CorePublic.MemoryReplayStore({ engine: testEngine }),
 									getClientFederationJwks: async () => ({ keys: [f.leafPublicKey] }),
 								},
 							},
@@ -446,8 +446,7 @@ export default (QUnit: QUnit) => {
 			const { config } = await createLeafConfig();
 			for (const prefix of ["https://leaf.example", "https://leaf.example:8443/tenant%2Fname"])
 				for (const trailing of [0, 1, 2, 3]) {
-					const raw = prefix + "/".repeat(trailing),
-						expected = raw.endsWith("/") ? raw.slice(0, -1) : raw;
+					const raw = prefix + "/".repeat(trailing);
 					let roleId: string | undefined;
 					const leaf = await Leaf.create(
 						fixtureHostConfig({
@@ -464,8 +463,8 @@ export default (QUnit: QUnit) => {
 							],
 						}),
 					);
-					t.equal(leaf.entityId, expected);
-					t.equal(roleId, expected);
+					t.equal(leaf.entityId, raw);
+					t.equal(roleId, raw);
 					const result = await CorePublic.fetchEntityConfiguration(leaf.entityId, {
 						engine: testEngine,
 						httpClient: async (input) => leaf.handleRequest(new Request(String(input))),
@@ -473,7 +472,7 @@ export default (QUnit: QUnit) => {
 					t.true(result.ok, raw);
 					if (result.ok) {
 						const ec = decodeEntityStatement(result.value);
-						t.true(ec.ok && ec.value.payload.iss === expected && ec.value.payload.sub === expected);
+						t.true(ec.ok && ec.value.payload.iss === raw && ec.value.payload.sub === raw);
 					}
 				}
 		});
@@ -501,10 +500,9 @@ export default (QUnit: QUnit) => {
 								...(advertised ? { endpoint_auth_signing_alg_values_supported: advertised } : {}),
 							},
 						},
+						storage: memoryStorage({ trustMarks: true }),
 						trustMarkIssuer: {
-							storage: new CorePublic.MemoryTrustMarkStore(),
 							authentication: {
-								replayStore: new CorePublic.MemoryReplayStore({ engine: testEngine }),
 								getClientFederationJwks: async () => ({ keys: [client.publicKey] }),
 							},
 						},
@@ -552,11 +550,10 @@ export default (QUnit: QUnit) => {
 								endpoint_auth_signing_alg_values_supported: ["ES256", "RS256"],
 							},
 						},
+						storage: memoryStorage({ trustMarks: true }),
 						trustMarkIssuer: {
-							storage: new CorePublic.MemoryTrustMarkStore(),
 							authentication: {
 								allowedAlgorithms,
-								replayStore: new CorePublic.MemoryReplayStore({ engine: testEngine }),
 								getClientFederationJwks: async () => ({ keys: [client.publicKey] }),
 							},
 						},
@@ -599,8 +596,8 @@ export default (QUnit: QUnit) => {
 							federation_trust_mark_status_endpoint: `${issuer}/mark-status`,
 						},
 					},
+					storage: memoryStorage({ trustMarks: true }),
 					trustMarkIssuer: {
-						storage: new CorePublic.MemoryTrustMarkStore(),
 						authentication: {
 							extensions: {
 								methods: {
@@ -689,7 +686,8 @@ export default (QUnit: QUnit) => {
 							federation_trust_mark_list_endpoint: `${config.entityId}/mark-list?extension=a&extension=b`,
 						},
 					},
-					trustMarkIssuer: { storage: new CorePublic.MemoryTrustMarkStore() },
+					storage: memoryStorage({ trustMarks: true }),
+					trustMarkIssuer: {},
 				}),
 			);
 			const type = "urn:example:mark";
@@ -787,7 +785,7 @@ export default (QUnit: QUnit) => {
 			};
 			for (const accepted of [true, false]) {
 				let calls = 0;
-				const result = await Leaf.discoverEntity(OP_ID, f.trustAnchors, {
+				const result = await CorePublic.discoverEntity(OP_ID, f.trustAnchors, {
 					...f.options,
 					httpClient,
 					customConstraintChecks: [
@@ -823,6 +821,7 @@ export default (QUnit: QUnit) => {
 						fixtureHostConfig({
 							...config,
 							collection: { trustAnchors: new Map() },
+							storage: memoryStorage({ collections: true }),
 							metadata: {
 								...config.metadata,
 								...(!throughRole ? { federation_entity: metadata } : {}),
@@ -886,6 +885,7 @@ export default (QUnit: QUnit) => {
 						fixtureHostConfig({
 							...config,
 							collection: { trustAnchors: new Map() },
+							storage: memoryStorage({ collections: true }),
 							metadata: {
 								...config.metadata,
 								federation_entity: { federation_collection_endpoint: `${LEAF_ID}/collect` },
@@ -1096,7 +1096,7 @@ export default (QUnit: QUnit) => {
 	module("leaf / public root exports", () => {
 		test("exports only the leaf class as a runtime entrypoint", (t) => {
 			t.equal(LeafPublic.Leaf, Leaf);
-			t.equal(typeof LeafPublic.Leaf.discoverEntity, "function");
+			t.false("discoverEntity" in LeafPublic.Leaf);
 			t.false("discoverEntity" in LeafPublic);
 			t.false("createFederationSigningKey" in LeafPublic);
 		});
@@ -1399,21 +1399,21 @@ export default (QUnit: QUnit) => {
 	});
 
 	// -------------------------------------------------------------------------
-	// Leaf — entity ID normalization
+	// Leaf — entity ID preservation
 	// -------------------------------------------------------------------------
-	module("leaf / Leaf / entity ID normalization", () => {
-		test("normalizes trailing slash in iss/sub", async (t) => {
+	module("leaf / Leaf / entity ID preservation", () => {
+		test("preserves trailing slash in iss/sub", async (t) => {
 			const { config } = await createLeafConfig({
 				entityId: "https://rp.example.com/" as EntityId,
 			});
 			const entity = await Leaf.create(fixtureHostConfig(config));
-			t.equal(entity.entityId, "https://rp.example.com");
+			t.equal(entity.entityId, "https://rp.example.com/");
 			const jwt = await entity.getEntityConfiguration();
 			const decoded = decodeEntityStatement(jwt);
 			t.true(decoded.ok);
 			if (!decoded.ok) return;
-			t.equal(decoded.value.payload.iss, "https://rp.example.com");
-			t.equal(decoded.value.payload.sub, "https://rp.example.com");
+			t.equal(decoded.value.payload.iss, "https://rp.example.com/");
+			t.equal(decoded.value.payload.sub, "https://rp.example.com/");
 		});
 
 		test("preserves entityId without trailing slash", async (t) => {
@@ -1791,7 +1791,7 @@ export default (QUnit: QUnit) => {
 				entityId: "https://rp.example.com:8443/tenant/" as EntityId,
 			});
 			const entity = await Leaf.create(fixtureHostConfig(config));
-			t.equal(entity.entityId, "https://rp.example.com:8443/tenant");
+			t.equal(entity.entityId, "https://rp.example.com:8443/tenant/");
 			const response = await entity.handleRequest(
 				new Request("https://rp.example.com:8443/tenant/.well-known/openid-federation"),
 			);
@@ -1799,16 +1799,16 @@ export default (QUnit: QUnit) => {
 			const decoded = decodeEntityStatement(await response.text());
 			t.true(isOk(decoded));
 			if (!isOk(decoded)) return;
-			t.equal(decoded.value.payload.iss, "https://rp.example.com:8443/tenant");
-			t.equal(decoded.value.payload.sub, "https://rp.example.com:8443/tenant");
+			t.equal(decoded.value.payload.iss, "https://rp.example.com:8443/tenant/");
+			t.equal(decoded.value.payload.sub, "https://rp.example.com:8443/tenant/");
 		});
 
-		test("normalizes trailing slash before deriving well-known route", async (t) => {
+		test("preserves the identifier and removes the slash from the well-known route", async (t) => {
 			const { config } = await createLeafConfig({
 				entityId: "https://rp.example.com/tenant/" as EntityId,
 			});
 			const entity = await Leaf.create(fixtureHostConfig(config));
-			t.equal(entity.entityId, "https://rp.example.com/tenant");
+			t.equal(entity.entityId, "https://rp.example.com/tenant/");
 			const response = await entity.handleRequest(
 				new Request("https://rp.example.com/tenant/.well-known/openid-federation"),
 			);

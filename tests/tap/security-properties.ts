@@ -1,11 +1,12 @@
+import { MemoryReplayStore } from "../../packages/core/src/storage/replay-memory.js";
 import { testEngine } from "./fixtures/software-crypto.js";
 /** Generated security invariants shared by every supported runtime. */
 
-import { applyMetadataPolicy, MemoryReplayStore } from "@oidfed/core";
+import { applyMetadataPolicy } from "@oidfed/core";
 import * as fc from "fast-check";
 import type QUnit from "qunit";
 import { endpointParameterValuesMatch } from "../../packages/core/src/endpoint-parameters.js";
-import { readResponseBody } from "../../packages/core/src/http-response.js";
+import { readResponseBody } from "../../packages/core/src/http/response-body.js";
 
 const options = { seed: 20261116, numRuns: 100 };
 const key = fc.oneof(

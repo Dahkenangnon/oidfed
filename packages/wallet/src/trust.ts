@@ -1,8 +1,9 @@
-import { isProtocolSignerPublished } from "@oidfed/core";
+import { isProtocolSignerPublished, withMetadataJwkUse } from "@oidfed/core";
 import type { KeyringEntry } from "@oidfed/crypto";
 /** Wallet participant trust, supplied evidence, protocol keys, and shared operation limits. */
 
 import {
+	composeFederationStorage,
 	createTrustChainOperation,
 	DEFAULT_MAX_CHAIN_LENGTH,
 	DEFAULT_MAX_RESPONSE_BYTES,
@@ -14,7 +15,7 @@ import {
 	InternalErrorCode,
 	type JWKSet,
 	JWKSetSchema,
-	MemoryCache,
+	MemoryFederationStorage,
 	nowSeconds,
 	ok,
 	type ParsedEntityStatement,
@@ -64,9 +65,18 @@ export function operationOptions<T extends WalletTrustOptions>(options: T): Resu
 	if (!operation.ok) return operation;
 	const client = operation.value.options.httpClient;
 	if (!client) return failure("Missing operation transport");
+	let storage = options.storage;
+	if (!storage?.capabilities.includes("cache")) {
+		const cache = new MemoryFederationStorage({
+			namespace: storage?.namespace ?? "wallet-operation",
+			capabilities: ["cache"],
+			...(options.clock ? { clock: options.clock } : {}),
+		});
+		storage = storage ? composeFederationStorage({ base: storage, cache }) : cache;
+	}
 	const scoped = {
 		...options,
-		cache: options.cache ?? new MemoryCache(options.clock ? { clock: options.clock } : undefined),
+		storage,
 		httpClient: async (input: string | URL | Request, init?: RequestInit) => {
 			if (options.offline) {
 				safeLogger(options.logger)?.warn(
@@ -197,7 +207,7 @@ export function roleMetadata(
 		type === "openid_credential_issuer"
 			? credentialIssuerMetadataFor(options?.algorithmRegistry)
 			: effectiveRoleSchemas[type];
-	const parsed = schema.safeParse(chain.resolvedMetadata[type]);
+	const parsed = withMetadataJwkUse(schema, options).safeParse(chain.resolvedMetadata[type]);
 	if (!parsed.success)
 		return err({
 			code: FederationErrorCode.InvalidMetadata,

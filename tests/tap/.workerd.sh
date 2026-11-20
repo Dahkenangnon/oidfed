@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -e
 
-COMPATIBILITY_DATE=$(node -p "new Date().toISOString().slice(0,10)")
+COMPATIBILITY_DATE=2026-11-19
+WORKERD_VERSION=1.20261119.1
 
 ./node_modules/.bin/esbuild \
   --log-level=warning \
@@ -27,10 +28,7 @@ const tapWorker :Workerd.Worker = (
 EOT
 }
 
-run_test() { generate_capnp "$1"; npx workerd test --verbose "$(pwd)/tests/tap/.workerd.capnp"; }
+run_test() { generate_capnp "$1"; npx --yes "workerd@$WORKERD_VERSION" test --verbose "$(pwd)/tests/tap/.workerd.capnp"; }
 
 run_test "[]"
-NO_COMPAT=$?
 run_test '["nodejs_compat"]'
-COMPAT=$?
-test $NO_COMPAT -eq 0 && test $COMPAT -eq 0

@@ -2,7 +2,7 @@
  * Some Web Crypto implementations accept off-curve coordinates during import.
  * This checks public data only; signing and signature verification stay in the backend.
  */
-import { decodeBase64url } from "./base64url.js";
+import { decodeBase64url } from "./encoding.js";
 import { CryptoError, type Jwk } from "./types.js";
 
 const CURVES = {

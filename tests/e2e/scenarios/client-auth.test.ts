@@ -1,5 +1,4 @@
-import { decodeEntityStatement, isOk } from "@oidfed/core";
-import { OidcRelyingPartyRole } from "@oidfed/oidc";
+import { createClientAssertion, decodeEntityStatement, isOk } from "@oidfed/core";
 import { describe, expect, it } from "vitest";
 import {
 	generateSigningKey,
@@ -67,7 +66,7 @@ describe("Client authentication", () => {
 			const opId = `https://op.ofed.test:${port}`;
 
 			const wrongKey = await generateSigningKey("ES256");
-			const assertion = await OidcRelyingPartyRole.createClientAssertion(
+			const assertion = await createClientAssertion(
 				rpId,
 				opId,
 				new SigningEntryFixture(wrongKey.privateKey),
@@ -98,7 +97,7 @@ describe("Client authentication", () => {
 			const rpId = `https://rp.ofed.test:${port}`;
 			const opId = `https://op.ofed.test:${port}`;
 
-			const assertion = await OidcRelyingPartyRole.createClientAssertion(
+			const assertion = await createClientAssertion(
 				rpId,
 				opId,
 				new SigningEntryFixture(rpEntity.keys.protocolSigning),

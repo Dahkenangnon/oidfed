@@ -14,6 +14,41 @@ export interface TrustMarkProfile {
 	) => Result<void> | Promise<Result<void>>;
 }
 
+const fail = (description: string) =>
+	err({ code: InternalErrorCode.TrustMarkInvalid, description });
+
+/** Match a framework profile without invoking application callbacks. */
+export function matchTrustMarkProfile(
+	typ: unknown,
+	trustMarkType: unknown,
+	profiles: readonly TrustMarkProfile[] = [],
+): Result<TrustMarkProfile | undefined> {
+	const names = new Set<string>();
+	for (const profile of profiles) {
+		if (
+			!profile ||
+			typeof profile.typ !== "string" ||
+			!profile.typ ||
+			profile.typ === JwtTyp.TrustMark ||
+			profile.typ === JwtTyp.TrustMarkDelegation ||
+			names.has(profile.typ) ||
+			!Array.isArray(profile.trustMarkTypes) ||
+			profile.trustMarkTypes.length === 0 ||
+			!profile.trustMarkTypes.every((type) => typeof type === "string" && type.length > 0)
+		)
+			return fail("Invalid or duplicate Trust Mark profile registration");
+		names.add(profile.typ);
+	}
+	if (typ === JwtTyp.TrustMark) return ok(undefined);
+	const profile = profiles.find(
+		(profile) =>
+			profile.typ === typ &&
+			typeof trustMarkType === "string" &&
+			profile.trustMarkTypes.includes(trustMarkType),
+	);
+	return profile ? ok(profile) : fail("Unrecognized Trust Mark typ or profile/type combination");
+}
+
 /** Apply the base or registered Trust Mark profile and contain profile callback failures. */
 export async function checkTrustMarkProfile(
 	typ: unknown,
@@ -21,32 +56,11 @@ export async function checkTrustMarkProfile(
 	profiles: readonly TrustMarkProfile[] = [],
 	validateClaims = true,
 ): Promise<Result<void>> {
-	const fail = (description: string) =>
-		err({ code: InternalErrorCode.TrustMarkInvalid, description });
 	try {
-		const names = new Set<string>();
-		for (const profile of profiles) {
-			if (
-				!profile ||
-				typeof profile.typ !== "string" ||
-				!profile.typ ||
-				profile.typ === JwtTyp.TrustMark ||
-				profile.typ === JwtTyp.TrustMarkDelegation ||
-				names.has(profile.typ) ||
-				!Array.isArray(profile.trustMarkTypes) ||
-				profile.trustMarkTypes.length === 0 ||
-				!profile.trustMarkTypes.every((type) => typeof type === "string" && type.length > 0)
-			)
-				return fail("Invalid or duplicate Trust Mark profile registration");
-			names.add(profile.typ);
-		}
-		if (typ === JwtTyp.TrustMark) return ok(undefined);
-		const profile = profiles.find(
-			(profile) =>
-				profile.typ === typ && profile.trustMarkTypes.includes(claims.trust_mark_type as string),
-		);
-		if (!profile) return fail("Unrecognized Trust Mark typ or profile/type combination");
-		if (!validateClaims || !profile.validateClaims) return ok(undefined);
+		const matched = matchTrustMarkProfile(typ, claims.trust_mark_type, profiles);
+		if (!matched.ok) return matched;
+		const profile = matched.value;
+		if (!validateClaims || !profile?.validateClaims) return ok(undefined);
 		const result = await profile.validateClaims(freezeSnapshot(cloneData(claims)));
 		if (!result || typeof result !== "object" || typeof result.ok !== "boolean")
 			return fail("Trust Mark profile returned an invalid result");

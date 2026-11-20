@@ -37,3 +37,30 @@ export function selectTrustChain(
 		return fail("Trust chain selection failed");
 	}
 }
+
+/** Select the chain with the fewest statements. */
+export const shortestChain: ChainSelectionStrategy = (
+	chains: ValidatedTrustChain[],
+): ValidatedTrustChain => {
+	return chains
+		.slice()
+		.sort((a, b) => a.statements.length - b.statements.length)[0] as ValidatedTrustChain;
+};
+
+/** Select the chain that expires last. */
+export const longestExpiry: ChainSelectionStrategy = (
+	chains: ValidatedTrustChain[],
+): ValidatedTrustChain => {
+	return chains.slice().sort((a, b) => b.expiresAt - a.expiresAt)[0] as ValidatedTrustChain;
+};
+
+/** Create a strategy that prefers chains terminating at the given trust anchor. */
+export function preferTrustAnchor(taId: string): ChainSelectionStrategy {
+	return (chains: ValidatedTrustChain[]): ValidatedTrustChain => {
+		const matching = chains.filter((c) => c.trustAnchorId === taId);
+		if (matching.length > 0) {
+			return shortestChain(matching);
+		}
+		return shortestChain(chains);
+	};
+}

@@ -2,9 +2,17 @@ import { federationEntry, federationSigningOptions, HistoricalKeyEntrySchema } f
 import { assertPublicJwk, DEFAULT_JWS_REGISTRY } from "@oidfed/crypto";
 /** Authority Historical Keys payload signing and endpoint responses. */
 
-import { JwtTyp, MediaType, nowSeconds, safeLogger, signEntityStatement } from "@oidfed/core";
+import {
+	errorResponse,
+	JwtTyp,
+	jwtResponse,
+	MediaType,
+	nowSeconds,
+	requireMethod,
+	safeLogger,
+	signEntityStatement,
+} from "@oidfed/core";
 import type { HandlerContext } from "./context.js";
-import { errorResponse, jwtResponse, requireMethod } from "./helpers.js";
 
 /** Publish the provider's historical keys as a signed JWK Set (Federation §8.7.2). */
 export function createHistoricalKeysHandler(

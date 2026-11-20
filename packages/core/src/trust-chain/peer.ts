@@ -2,7 +2,7 @@
 
 import { InternalErrorCode } from "../constants.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
-import { safeLogger } from "./../logging.js";
+import { safeLogger } from "../logging.js";
 import type { EntityId, FederationOptions, TrustAnchorSet, ValidatedTrustChain } from "../types.js";
 import { createTrustChainOperation } from "./operation.js";
 import { resolveTrustChains } from "./resolve.js";

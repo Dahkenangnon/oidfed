@@ -15,14 +15,14 @@ import {
 	err,
 	InternalErrorCode,
 	type JWK,
-	MemoryCache,
-	MemoryReplayStore,
 	ok,
 	parseOAuthAuthorizationServerMetadata,
 	signEntityStatement,
 	signTrustMark,
 	validateTrustChain,
 } from "../../../packages/core/src/index.js";
+import { MemoryCache } from "../../../packages/core/src/storage/cache.js";
+import { MemoryReplayStore } from "../../../packages/core/src/storage/replay-memory.js";
 import { Leaf } from "../../../packages/leaf/src/index.js";
 import {
 	type AttestationVerificationOptions,
@@ -36,6 +36,7 @@ import {
 	type WalletProviderPublicationMetadata,
 	WalletProviderRole,
 } from "../../../packages/wallet/src/index.js";
+import { cacheStorage, replayStorage } from "../../storage-fixtures.js";
 import {
 	FixtureCrypto,
 	fixtureHostConfig,
@@ -206,7 +207,7 @@ export default (QUnit: QUnit) => {
 				);
 			}
 			const cache = new MemoryCache({ clock: f.clock });
-			const online = { ...f.options, entityChains: undefined, cache };
+			const online = { ...f.options, entityChains: undefined, storage: cacheStorage(cache) };
 			t.true(
 				(
 					await WalletProviderRole.discover(f.ids.provider, f.anchors, {
@@ -228,7 +229,7 @@ export default (QUnit: QUnit) => {
 				(
 					await WalletProviderRole.discover(f.ids.provider, f.anchors, {
 						...online,
-						cache: new MemoryCache(),
+						storage: cacheStorage(new MemoryCache()),
 						httpClient,
 						maxTotalFetches: 0,
 					})
@@ -457,7 +458,7 @@ export default (QUnit: QUnit) => {
 				...f.options,
 				audience: f.ids.server,
 				expectedChallenge: "new",
-				replayStore: new MemoryReplayStore({ engine: testEngine, clock: f.clock }),
+				storage: replayStorage(new MemoryReplayStore({ engine: testEngine, clock: f.clock })),
 				acceptWallet: () => true,
 			});
 			t.false(mismatch.ok);
@@ -905,6 +906,41 @@ export default (QUnit: QUnit) => {
 	});
 
 	module("wallet / authorization server metadata conformance", () => {
+		test("discovery applies the registry to inline authorization server keys", async (t) => {
+			const signer = new SigningEntryFixture((await generateSigningKey()).privateKey);
+			const encryptionKey = (await generateSigningKey()).publicKey;
+			const { use: _use, ...key } = profileSigner("server-profile", signer.signer).publicJwk;
+			for (const separate of [false, true]) {
+				for (const labeled of [false, true]) {
+					const metadata = {
+						jwks: {
+							keys: [
+								{ ...key, ...(labeled ? { use: "sig" } : {}) },
+								{ ...encryptionKey, use: "enc", alg: "ECDH-ES" },
+							],
+						},
+					};
+					const f = await walletFederation(
+						separate
+							? {
+									issuerMetadata: { authorization_servers: ["https://server.example"] },
+									serverMetadata: metadata,
+								}
+							: { issuerServerMetadata: metadata },
+					);
+					const result = await CredentialIssuerRole.discover(f.ids.issuer, f.anchors, {
+						...f.options,
+						algorithmRegistry,
+					});
+					t.equal(
+						result.ok,
+						labeled,
+						`separate server: ${separate}, signing key has use: ${labeled}`,
+					);
+				}
+			}
+		});
+
 		test("both colocated and separate server paths reject malformed effective metadata", async (t) => {
 			for (const separate of [false, true]) {
 				for (const malformed of [
@@ -1050,13 +1086,13 @@ export default (QUnit: QUnit) => {
 		});
 		test("missing wallet acceptance and replay configuration leaves authentication rejected", async (t) => {
 			const f = await walletFederation();
-			for (const field of ["acceptWallet", "replayStore"] as const) {
+			for (const field of ["acceptWallet", "storage"] as const) {
 				const warnings: string[] = [];
 				const options = {
 					...f.options,
 					audience: f.ids.server,
 					acceptWallet: () => true,
-					replayStore: new MemoryReplayStore({ engine: testEngine }),
+					storage: replayStorage(new MemoryReplayStore({ engine: testEngine })),
 					[field]: undefined,
 					logger: {
 						debug() {},
@@ -1080,7 +1116,7 @@ export default (QUnit: QUnit) => {
 				t.deepEqual(warnings, [
 					field === "acceptWallet"
 						? "Provide acceptWallet to decide whether to accept the Wallet"
-						: "Provide a replayStore for Client Attestation PoP replay protection",
+						: "Configure replay storage or a Client Attestation PoP replay policy",
 				]);
 			}
 		});
@@ -1155,9 +1191,9 @@ export default (QUnit: QUnit) => {
 								...options,
 								audience: f.ids.server,
 								acceptWallet: operation === "acceptance" ? policy : () => true,
-								replayStore: {
+								storage: replayStorage({
 									useJti: operation === "replay" ? async () => policy() : async () => true,
-								},
+								}),
 							});
 						else {
 							const payload = {
@@ -1390,7 +1426,10 @@ export default (QUnit: QUnit) => {
 							? { engine: testEngine, cacheMaxTtlSeconds: 0 }
 							: { engine: testEngine }),
 						...(mode === "one-entry"
-							? { engine: testEngine, cache: new MemoryCache({ clock: f.clock, maxEntries: 1 }) }
+							? {
+									engine: testEngine,
+									storage: cacheStorage(new MemoryCache({ clock: f.clock, maxEntries: 1 })),
+								}
 							: { engine: testEngine }),
 					});
 					t.true(result.ok, `${name}, ${mode}: ${JSON.stringify(result)}`);
@@ -1468,7 +1507,14 @@ export default (QUnit: QUnit) => {
 					f.entityConfigurations.get(f.intermediate.id)!,
 					1000,
 				);
-				t.true((await Role.discover(f.ids[name], f.anchors, { ...options, cache })).ok);
+				t.true(
+					(
+						await Role.discover(f.ids[name], f.anchors, {
+							...options,
+							storage: cacheStorage(cache),
+						})
+					).ok,
+				);
 			}
 			t.equal(f.requests.length, 0);
 		});
@@ -1508,7 +1554,10 @@ export default (QUnit: QUnit) => {
 				f.entityConfigurations.get(f.intermediate.id)!,
 				1000,
 			);
-			for (const evidence of [{ entityConfigurations: f.entityConfigurations }, { cache }]) {
+			for (const evidence of [
+				{ entityConfigurations: f.entityConfigurations },
+				{ storage: cacheStorage(cache) },
+			]) {
 				const options = { ...f.options, trustAnchors: f.anchors, offline: true, ...evidence };
 				const attestation = await WalletProviderRole.createWalletAttestation(
 					f.ids.provider,
@@ -2004,7 +2053,7 @@ export default (QUnit: QUnit) => {
 			clockSkewSeconds: 0,
 			httpClient: f.httpClient,
 			audience: f.ids.server,
-			replayStore: new MemoryReplayStore({ engine: testEngine, clock: f.clock }),
+			storage: replayStorage(new MemoryReplayStore({ engine: testEngine, clock: f.clock })),
 			acceptWallet: () => true,
 		};
 		for (const body of [
@@ -2116,9 +2165,7 @@ export default (QUnit: QUnit) => {
 		);
 	});
 	test("concatenated attestation syntax consumes the complete input", async (t) => {
-		const { parseConcatenatedWalletAttestation } = await import(
-			"../../../packages/wallet/src/index.js"
-		);
+		const { parseConcatenatedClientAttestation } = await import("@oidfed/core");
 		const f = await walletFederation();
 		const jwt = await token(
 				attestation(f),
@@ -2126,7 +2173,7 @@ export default (QUnit: QUnit) => {
 				"oauth-client-attestation+jwt",
 			),
 			pop = await token(proof(f), f.protocol.issuer.privateKey, "oauth-client-attestation-pop+jwt");
-		const result = parseConcatenatedWalletAttestation(`${jwt}~${pop}`);
+		const result = parseConcatenatedClientAttestation(`${jwt}~${pop}`);
 		t.true(result.ok);
 		if (result.ok) t.deepEqual(result.value, { attestationJwt: jwt, popJwt: pop });
 		for (const value of [
@@ -2139,8 +2186,8 @@ export default (QUnit: QUnit) => {
 			`${jwt.slice(0, jwt.lastIndexOf(".") + 1)}A~${pop}`,
 			`${jwt}~${pop.slice(0, pop.lastIndexOf(".") + 1)}AAAAA`,
 		])
-			t.false(parseConcatenatedWalletAttestation(value).ok);
-		t.false(parseConcatenatedWalletAttestation(`${jwt}~${pop}`, { maxResponseBytes: 10 }).ok);
+			t.false(parseConcatenatedClientAttestation(value).ok);
+		t.false(parseConcatenatedClientAttestation(`${jwt}~${pop}`, { maxResponseBytes: 10 }).ok);
 	});
 
 	test("object-valued wallet policy crosses an intermediate without merging key sets", async (t) => {
@@ -2299,7 +2346,9 @@ export default (QUnit: QUnit) => {
 				await CredentialIssuerRole.authenticateWallet(jwt, pop, f.anchors, {
 					...f.options,
 					audience: f.ids.server,
-					replayStore: new MemoryReplayStore({ engine: testEngine, clock: f.options.clock }),
+					storage: replayStorage(
+						new MemoryReplayStore({ engine: testEngine, clock: f.options.clock }),
+					),
 					acceptWallet: () => true,
 				})
 			).ok,
@@ -2314,7 +2363,9 @@ export default (QUnit: QUnit) => {
 				await CredentialIssuerRole.authenticateWallet(mismatched, pop, f.anchors, {
 					...f.options,
 					audience: f.ids.server,
-					replayStore: new MemoryReplayStore({ engine: testEngine, clock: f.options.clock }),
+					storage: replayStorage(
+						new MemoryReplayStore({ engine: testEngine, clock: f.options.clock }),
+					),
 					acceptWallet: () => true,
 				})
 			).ok,
@@ -2331,7 +2382,9 @@ export default (QUnit: QUnit) => {
 					await CredentialIssuerRole.authenticateWallet(jwt, invalid, f.anchors, {
 						...f.options,
 						audience: f.ids.server,
-						replayStore: new MemoryReplayStore({ engine: testEngine, clock: f.options.clock }),
+						storage: replayStorage(
+							new MemoryReplayStore({ engine: testEngine, clock: f.options.clock }),
+						),
 						acceptWallet: () => true,
 					})
 				).ok,
@@ -2924,7 +2977,7 @@ export default (QUnit: QUnit) => {
 				const auth = await CredentialIssuerRole.authenticateWallet(att, pop, f.anchors, {
 					...f.options,
 					audience: f.ids.server,
-					replayStore: new MemoryReplayStore({ engine: testEngine, clock: f.clock }),
+					storage: replayStorage(new MemoryReplayStore({ engine: testEngine, clock: f.clock })),
 					acceptWallet: () => true,
 				});
 				t.true(auth.ok);
@@ -2959,7 +3012,7 @@ export default (QUnit: QUnit) => {
 					...f.options,
 					audience: f.ids.server,
 					expectedChallenge: challenge,
-					replayStore: new MemoryReplayStore({ engine: testEngine, clock: f.clock }),
+					storage: replayStorage(new MemoryReplayStore({ engine: testEngine, clock: f.clock })),
 					acceptWallet: () => true,
 				};
 				t.equal(
@@ -5114,7 +5167,7 @@ export default (QUnit: QUnit) => {
 				audience: f.ids.server,
 				clientId: "shared-wallet-client",
 				expectedChallenge: "expected",
-				replayStore: new MemoryReplayStore({ engine: testEngine, clock: f.clock }),
+				storage: replayStorage(new MemoryReplayStore({ engine: testEngine, clock: f.clock })),
 				acceptWallet: () => true,
 			};
 			t.true(
@@ -5169,7 +5222,7 @@ export default (QUnit: QUnit) => {
 					await CredentialIssuerRole.authenticateWallet(jwt, pop, f.anchors, {
 						...options,
 						httpTimeoutMs: 5,
-						replayStore: { useJti: () => new Promise(() => {}) },
+						storage: replayStorage({ useJti: () => new Promise(() => {}) }),
 					})
 				).ok,
 			);
@@ -5177,12 +5230,12 @@ export default (QUnit: QUnit) => {
 				(
 					await CredentialIssuerRole.authenticateWallet(jwt, pop, f.anchors, {
 						...options,
-						replayStore: {
+						storage: replayStorage({
 							useJti: async () => {
 								f.setTime(1900);
 								return true;
 							},
-						},
+						}),
 					})
 				).ok,
 			);
@@ -5227,7 +5280,7 @@ export default (QUnit: QUnit) => {
 			const options = {
 				...f.options,
 				audience: f.ids.server,
-				replayStore: new MemoryReplayStore({ engine: testEngine, clock: f.clock }),
+				storage: replayStorage(new MemoryReplayStore({ engine: testEngine, clock: f.clock })),
 				acceptWallet: () => true,
 			};
 			const results = await Promise.all([
@@ -5320,7 +5373,7 @@ export default (QUnit: QUnit) => {
 							...f.options,
 							audience: f.ids.server,
 							expectedChallenge: "expected",
-							replayStore: new MemoryReplayStore({ engine: testEngine, clock: f.clock }),
+							storage: replayStorage(new MemoryReplayStore({ engine: testEngine, clock: f.clock })),
 							acceptWallet: () => true,
 						})
 					).ok,
@@ -5352,7 +5405,7 @@ export default (QUnit: QUnit) => {
 					await CredentialIssuerRole.authenticateWallet(jwt, pop, f.anchors, {
 						...f.options,
 						audience: f.ids.server,
-						replayStore,
+						storage: replayStorage(replayStore),
 						acceptWallet: () => false,
 					})
 				).ok,
@@ -5363,7 +5416,7 @@ export default (QUnit: QUnit) => {
 					await CredentialIssuerRole.authenticateWallet(jwt, pop, f.anchors, {
 						...f.options,
 						audience: f.ids.server,
-						replayStore,
+						storage: replayStorage(replayStore),
 						acceptWallet: () => true,
 					})
 				).ok,
@@ -5374,11 +5427,11 @@ export default (QUnit: QUnit) => {
 					await CredentialIssuerRole.authenticateWallet(jwt, pop, f.anchors, {
 						...f.options,
 						audience: f.ids.server,
-						replayStore: {
+						storage: replayStorage({
 							useJti: async () => {
 								throw new Error("unavailable");
 							},
-						},
+						}),
 						acceptWallet: () => true,
 					})
 				).ok,
@@ -5399,7 +5452,7 @@ export default (QUnit: QUnit) => {
 			const options = {
 				...f.options,
 				audience: f.ids.server,
-				replayStore: new MemoryReplayStore({ engine: testEngine, clock: f.clock }),
+				storage: replayStorage(new MemoryReplayStore({ engine: testEngine, clock: f.clock })),
 				acceptWallet: () => true,
 			};
 			t.false(

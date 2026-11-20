@@ -1,6 +1,8 @@
 import { cloneData } from "@oidfed/core";
+
 /** Standard and application-defined filters for Extended Subordinate Listing. */
 
+import type { SubordinateRecord } from "@oidfed/core";
 import {
 	endpointCredentialParameterNames,
 	err,
@@ -12,7 +14,6 @@ import {
 	ok,
 	type Result,
 } from "@oidfed/core";
-import type { SubordinateRecord } from "../storage/types.js";
 import type { HandlerContext } from "./context.js";
 
 export interface ExtendedListingFilterContext {

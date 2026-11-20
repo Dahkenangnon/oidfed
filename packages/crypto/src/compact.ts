@@ -1,5 +1,5 @@
 /** Compact JSON JWS parsing and signing. Claim and trust validation belong to the caller. */
-import { decodeBase64url, encodeBase64url, utf8Decode, utf8Encode } from "./base64url.js";
+import { decodeBase64url, encodeBase64url, utf8Decode, utf8Encode } from "./encoding.js";
 import { assertSigningPublicJwk, jwsSignatureRules } from "./jwk.js";
 import {
 	DEFAULT_JWS_REGISTRY,

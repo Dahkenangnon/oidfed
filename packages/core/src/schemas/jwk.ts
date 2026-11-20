@@ -1,4 +1,4 @@
-import { assertPublicJwk, DEFAULT_JWS_REGISTRY } from "@oidfed/crypto";
+import { assertPublicJwk, DEFAULT_JWS_REGISTRY, type JwsAlgorithmRegistry } from "@oidfed/crypto";
 /** Structural schemas for public JSON Web Keys and federation JWK Sets. */
 
 import { z } from "zod";
@@ -58,11 +58,24 @@ export const JWKSetSchema = MetadataJWKSetSchema.extend({
 export type JWK = import("@oidfed/crypto").Jwk;
 export type JWKSet = { readonly keys: readonly JWK[] };
 
-/** Supported publication shape; received sets retain unknown key types for selection. */
-export const PublicationJWKSchema = JWKSchema.refine(
-	(key) => ["RSA", "EC", "OKP"].includes(key.kty),
-	{ message: "Unsupported public key type for publication" },
-);
+/** Options for validating protocol metadata containing inline JWK Sets. */
+export interface MetadataValidationOptions {
+	readonly algorithmRegistry?: JwsAlgorithmRegistry | undefined;
+}
+
+/** Check the conditional JWK `use` rule after parsing the metadata structure. */
+export function withMetadataJwkUse<T extends z.ZodType>(
+	schema: T,
+	{ algorithmRegistry }: MetadataValidationOptions = {},
+) {
+	return schema.superRefine((meta, ctx) => {
+		if (!meta || typeof meta !== "object" || !("jwks" in meta)) return;
+		const keys = MetadataJWKSetSchema.safeParse(meta.jwks);
+		if (!keys.success) return;
+		const use = validateJwkSetUseRequirement(keys.data.keys, algorithmRegistry);
+		if (!use.ok) ctx.addIssue({ code: "custom", path: ["jwks"], message: use.error.description });
+	});
+}
 
 /** Validate inline protocol sets before publishing composed host metadata. */
 export function validatePublishedMetadataKeys(

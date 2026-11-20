@@ -1,13 +1,16 @@
 import type QUnit from "qunit";
-import { MemoryStorageAdapter, TrustAnchor } from "../../../packages/authority/src/index.js";
+import { TrustAnchor } from "../../../packages/authority/src/index.js";
 import {
+	composeFederationStorage,
 	decodeEntityStatement,
 	EntityCollectionEntitySchema,
 	EntityCollectionResponseSchema,
 	entityId,
+	MemoryFederationStorage,
 	ok,
 } from "../../../packages/core/src/index.js";
 import { Leaf } from "../../../packages/leaf/src/index.js";
+import { memoryStorage } from "../../storage-fixtures.js";
 import * as EntityCollectionFixture from "../fixtures/entity-collection.js";
 import {
 	FixtureCrypto,
@@ -37,10 +40,10 @@ export default function integrationTests(QUnit: QUnit): void {
 					const afterRefresh = f.requests();
 					await query(f.root.collection!);
 					assert.equal(f.requests(), afterRefresh, "queries do not crawl");
-					assert.strictEqual(f.root.collection!.store, f.storage.collections);
+					assert.strictEqual(f.root.collection!.store, f.storage.entityCollection);
 					for (const entity of [f.middle, f.leaf]) {
 						await entity.collection!.store.publish(
-							(await f.root.collection!.store.getCurrent(anchor))!,
+							(await f.root.collection!.store.current(anchor))!,
 						);
 						assert.deepEqual(await query(entity.collection!), { entities: [] });
 						assert.deepEqual(
@@ -112,21 +115,37 @@ export default function integrationTests(QUnit: QUnit): void {
 								},
 							},
 						};
+						const clock = { now: () => 1500 };
+						const storage = composeFederationStorage({
+							base: new MemoryFederationStorage({
+								namespace: anchor,
+								capabilities: ["subordinate:read", "entityCollection", "replay"],
+								clock,
+								engine: testEngine,
+							}),
+							cache: new MemoryFederationStorage({
+								namespace: anchor,
+								capabilities: ["cache"],
+								clock,
+							}),
+						});
 						const host =
 							kind === "authority"
 								? await TrustAnchor.create(
 										fixtureHostConfig({
 											...config,
-											storage: new MemoryStorageAdapter({ engine: testEngine }),
+											storage,
 										}),
 									)
 								: await Leaf.create(
 										fixtureHostConfig({
 											...config,
 											authorityHints: [entityId("https://superior.example")],
+											storage,
 										}),
 									);
 						assert.true((await host.collection!.refresh(anchor)).ok);
+						assert.strictEqual(host.collection!.store, storage.entityCollection);
 						for (const method of ["GET", "POST"]) {
 							const params = new URLSearchParams({
 								query: "academic",
@@ -201,13 +220,18 @@ export default function integrationTests(QUnit: QUnit): void {
 								? await TrustAnchor.create(
 										fixtureHostConfig({
 											...config,
-											storage: new MemoryStorageAdapter({ engine: testEngine }),
+											storage: memoryStorage({
+												engine: testEngine,
+												collections: true,
+												clock: { now: () => 1500 },
+											}),
 										}),
 									)
 								: await Leaf.create(
 										fixtureHostConfig({
 											...config,
 											authorityHints: [entityId("https://superior.example")],
+											storage: memoryStorage({ collections: true, clock: { now: () => 1500 } }),
 										}),
 									);
 						assert.ok(await construct());

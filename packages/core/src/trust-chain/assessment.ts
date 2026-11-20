@@ -12,13 +12,13 @@ import {
 import { fetchFederationEndpoint } from "../endpoint-client.js";
 import { RESOLVE_UNORDERED_PARAMETERS } from "../endpoint-parameters.js";
 import { err, ok, type Result } from "../errors.js";
-import { verifyResolveResponse } from "../federation-api/index.js";
+import { verifyResolveResponse } from "../federation-api/resolve.js";
 import {
 	decodeEntityConfiguration,
 	decodeEntityStatement,
 	decodeSubordinateStatement,
 } from "../jose/verify.js";
-import type { ResolveResponsePayload } from "../schemas/entity-statement.js";
+import type { ResolveResponsePayload } from "../schemas/endpoints.js";
 import { type JWKSet, JWKSetSchema } from "../schemas/jwk.js";
 import { TrustMarkDelegationPayloadSchema, TrustMarkPayloadSchema } from "../schemas/trust-mark.js";
 import {

@@ -1,6 +1,9 @@
+import { assertStorageView } from "@oidfed/core";
+import { MemoryCache } from "../../../packages/core/src/storage/cache.js";
+import { cacheStorage, memoryStorage, replayStorage } from "../../storage-fixtures.js";
 /** Protocol policy regressions exercised through the real injected crypto contracts. */
 
-import { MemoryStorageAdapter, TrustAnchor } from "@oidfed/authority";
+import { Intermediate, TrustAnchor } from "@oidfed/authority";
 import {
 	bindFederationOptions,
 	cloneData,
@@ -13,8 +16,8 @@ import {
 	JWT_BEARER_CLIENT_ASSERTION_TYPE,
 	JwsService,
 	MediaType,
-	MemoryCache,
-	MemoryTrustMarkStore,
+	parseOAuthAuthorizationServerMetadata,
+	parseOAuthAuthorizationServerPublicationMetadata,
 	signEntityConfiguration,
 	signingPublication,
 	validateJwkSetUseRequirement,
@@ -38,7 +41,7 @@ import {
 import { createJoseEngine } from "@oidfed/crypto/jose";
 import { createWebCryptoEngine } from "@oidfed/crypto/web";
 import { Leaf } from "@oidfed/leaf";
-import { OidcRelyingPartyRole } from "@oidfed/oidc";
+import { OAuthAuthorizationServerRole, OidcRelyingPartyRole } from "@oidfed/oidc";
 import { WalletProviderRole } from "@oidfed/wallet";
 import type QUnit from "qunit";
 import {
@@ -47,6 +50,7 @@ import {
 	profileAlgorithm,
 	profileSigner,
 } from "../../../docs/examples/custom-crypto.js";
+import { oidcRegistrationSchemas } from "../../../packages/oidc/src/schemas/explicit-registration.js";
 import { cryptoFixture } from "../fixtures/crypto.js";
 import { signProtocolFixture } from "../fixtures/protocol-jwt.js";
 
@@ -57,6 +61,145 @@ export default async function register(qunit: QUnit) {
 	const service = new JwsService({ engine, clock: { now: () => 1500 } });
 	const payload = { iss: "https://issuer.example", iat: 1000, exp: 2000 };
 	qunit.module("core / injected JWT service", () => {
+		qunit.test(
+			"discovery and a pinned chain preserve exact slash-terminated host identities",
+			async (a) => {
+				const anchorId = entityId("https://exact-anchor.example/");
+				const intermediateId = entityId("https://exact-intermediate.example/tenant/");
+				const leafId = entityId("https://exact-leaf.example/tenant/");
+				const crypto = {
+					engine,
+					keyring: new StaticKeyring({ signers: { federation: f.signer } }),
+				};
+				const authorityMetadata = (id: string) => ({
+					federation_entity: {
+						federation_fetch_endpoint: `${id}fetch`,
+						federation_list_endpoint: `${id}list`,
+					},
+				});
+				const anchor = await TrustAnchor.create({
+					entityId: anchorId,
+					crypto,
+					metadata: authorityMetadata(anchorId),
+					storage: memoryStorage(),
+				});
+				const intermediate = await Intermediate.create({
+					entityId: intermediateId,
+					authorityHints: [anchorId],
+					crypto,
+					metadata: authorityMetadata(intermediateId),
+					storage: memoryStorage(),
+				});
+				const leaf = await Leaf.create({
+					entityId: leafId,
+					authorityHints: [intermediateId],
+					crypto,
+					metadata: { federation_entity: {} },
+				});
+				const jwks = { keys: [f.publicJwk] };
+				await anchor.registerSubordinate({ entityId: intermediateId, jwks });
+				await intermediate.registerSubordinate({ entityId: leafId, jwks });
+
+				const retrieved: string[] = [];
+				for (const [id, host] of [
+					[leafId, leaf],
+					[intermediateId, intermediate],
+					[anchorId, anchor],
+				] as const) {
+					a.equal(host.entityId, id);
+					const configuration = await fetchEntityConfiguration(id, {
+						engine,
+						httpClient: async (url) => {
+							a.equal(String(url), `${id.slice(0, -1)}/.well-known/openid-federation`);
+							return host.handleRequest(new Request(url));
+						},
+					});
+					a.true(configuration.ok);
+					if (!configuration.ok) return;
+					const decoded = decodeEntityConfiguration(configuration.value);
+					a.true(decoded.ok);
+					if (!decoded.ok) return;
+					a.equal(decoded.value.payload.iss, id);
+					a.equal(decoded.value.payload.sub, id);
+					retrieved.push(configuration.value);
+				}
+				const [leafEc, intermediateEc, anchorEc] = retrieved;
+				if (!leafEc || !intermediateEc || !anchorEc)
+					throw new Error("Missing published configuration");
+				const result = await validateTrustChain(
+					[
+						leafEc,
+						await intermediate.getSubordinateStatement(leafId),
+						await anchor.getSubordinateStatement(intermediateId),
+						anchorEc,
+					],
+					new Map([[anchorId, { jwks }]]),
+					{ engine, entityConfigurations: new Map([[intermediateId, intermediateEc]]) },
+				);
+				a.true(result.valid, result.valid ? "chain validated" : JSON.stringify(result.errors));
+				if (result.valid) a.equal(result.chain.entityId, leafId);
+			},
+		);
+
+		qunit.test("protocol metadata parsers classify registered signing keys consistently", (a) => {
+			const { use: _use, ...signing } = profileSigner("profile", f.signer).publicJwk;
+			const encryption = { ...f.publicJwk, alg: "ECDH-ES", use: "enc" };
+			const missingUse = { keys: [signing, encryption] };
+			const complete = { keys: [{ ...signing, use: "sig" }, encryption] };
+			const options = { algorithmRegistry };
+			const issuer = "https://issuer.example";
+			const as = {
+				issuer,
+				authorization_endpoint: `${issuer}/authorize`,
+				token_endpoint: `${issuer}/token`,
+				response_types_supported: ["code"],
+			};
+			const rp = { redirect_uris: [`${issuer}/callback`] };
+			const wallet = { vp_formats_supported: { "dc+sd-jwt": {} } };
+
+			a.true(parseOAuthAuthorizationServerMetadata({ ...as, jwks: missingUse }).success);
+			for (const [index, parse] of [
+				(jwks: unknown) => parseOAuthAuthorizationServerMetadata({ ...as, jwks }, options),
+				(jwks: unknown) =>
+					parseOAuthAuthorizationServerMetadata(
+						{ ...as, jwks },
+						{ ...options, profile: "openid4vci" },
+					),
+				(jwks: unknown) => parseOAuthAuthorizationServerPublicationMetadata({ jwks }, options),
+				(jwks: unknown) => OAuthAuthorizationServerRole.parseMetadata({ ...as, jwks }, options),
+				(jwks: unknown) => OidcRelyingPartyRole.parseMetadata({ ...rp, jwks }, options),
+				(jwks: unknown) => OidcRelyingPartyRole.parsePublicationMetadata({ jwks }, options),
+				(jwks: unknown) => WalletProviderRole.parseMetadata({ ...wallet, jwks }, options),
+				(jwks: unknown) => WalletProviderRole.parsePublicationMetadata({ jwks }, options),
+			].entries()) {
+				const invalid = parse(missingUse);
+				a.false(invalid.success, `parser ${index} requires use on each key`);
+				if (!invalid.success)
+					a.true(
+						invalid.error.issues.some((issue) => issue.path[0] === "jwks"),
+						JSON.stringify(invalid.error.issues),
+					);
+				a.true(parse(complete).success, `parser ${index} accepts a fully labeled set`);
+			}
+			const response = (jwks: unknown) => ({
+				iss: issuer,
+				sub: `${issuer}/client`,
+				aud: `${issuer}/client`,
+				iat: 1000,
+				exp: 2000,
+				trust_anchor: `${issuer}/anchor`,
+				authority_hints: [`${issuer}/anchor`],
+				metadata: { openid_relying_party: { ...rp, client_id: `${issuer}/client`, jwks } },
+			});
+			const schema = oidcRegistrationSchemas.responseFor(options);
+			a.false(schema.safeParse(response(missingUse)).success);
+			const accepted = schema.safeParse(response(complete));
+			a.true(
+				accepted.success,
+				accepted.success ? "valid response" : JSON.stringify(accepted.error.issues),
+			);
+		});
+
 		qunit.test(
 			"registered key formats work through mixed Federation chains and public history",
 			async (a) => {
@@ -86,7 +229,12 @@ export default async function register(qunit: QUnit) {
 						history: historicalKeysFromKeyring(ring, "federation", algorithmRegistry),
 					},
 					options,
-					storage: new MemoryStorageAdapter({ engine: customEngine, clock, trustMarks: true }),
+					storage: memoryStorage({
+						engine: customEngine,
+						clock,
+						trustMarks: true,
+						algorithmRegistry,
+					}),
 					metadata: {
 						federation_entity: {
 							federation_fetch_endpoint: `${anchorId}/fetch`,
@@ -202,7 +350,7 @@ export default async function register(qunit: QUnit) {
 					entityId: superior,
 					crypto: { engine, keyring },
 					options,
-					storage: new MemoryStorageAdapter({ engine, clock }),
+					storage: memoryStorage({ engine, clock }),
 					metadata: {
 						federation_entity: {
 							federation_fetch_endpoint: `${superior}/fetch`,
@@ -417,7 +565,7 @@ export default async function register(qunit: QUnit) {
 				const fetchOptions = {
 					...options,
 					maxResponseBytes: token.length,
-					cache: new MemoryCache({ clock: options.clock }),
+					storage: cacheStorage(new MemoryCache({ clock: options.clock })),
 					httpClient: async () => {
 						fetches++;
 						return new Response(token, {
@@ -432,7 +580,7 @@ export default async function register(qunit: QUnit) {
 					(
 						await fetchEntityConfiguration(id, {
 							...fetchOptions,
-							cache: new MemoryCache(),
+							storage: cacheStorage(new MemoryCache()),
 							maxResponseBytes: token.length - 1,
 						})
 					).ok,
@@ -459,25 +607,29 @@ export default async function register(qunit: QUnit) {
 					{ ...payload, sub: subject, trust_mark_type: type, example: "x".repeat(400000) },
 					{ typ: "trust-mark+jwt" },
 				);
-				const store = new MemoryTrustMarkStore({ maxCompactBytes: jwt.length });
-				await store.transaction((tx) =>
-					tx.trustMarks.issue({
+				const store = memoryStorage({ trustMarks: true, ...{ maxCompactBytes: jwt.length } });
+				await store.transaction((tx) => {
+					assertStorageView(tx, ["trustMark:write"], "Test issue");
+					return tx.trustMark.issue({
 						jwt,
 						issuedAt: 1000,
 						expiresAt: 2000,
 						active: true,
 						subject,
 						trustMarkType: type,
-					}),
-				);
+					});
+				});
 				a.equal(
-					(await store.readSnapshot((tx) => tx.trustMarks.listCandidates({ issuer: payload.iss })))
+					(await store.readSnapshot((tx) => tx.trustMark!.candidates({ issuer: payload.iss })))
 						.length,
 					1,
 				);
-				a.true(await store.trustMarks.hasAnyValid(subject, 1500));
-				await store.transaction((tx) => tx.trustMarks.revoke(type, subject, 1500, payload.iss));
-				a.false(await store.trustMarks.hasAnyValid(subject, 1500));
+				a.true(await store.trustMark!.hasAny(subject, 1500));
+				await store.transaction((tx) => {
+					assertStorageView(tx, ["trustMark:write"], "Test revoke");
+					return tx.trustMark.revoke(type, subject, 1500, payload.iss);
+				});
+				a.false(await store.trustMark!.hasAny(subject, 1500));
 			},
 		);
 		qunit.test("a clock failure after replay storage returns a typed failure", async (a) => {
@@ -490,12 +642,12 @@ export default async function register(qunit: QUnit) {
 			const checked = await verifyClientAssertion(token, entry.publishedJwks, "receiver", {
 				engine,
 				clock: { now: () => now },
-				replayStore: {
+				storage: replayStorage({
 					useJti: async () => {
 						now = NaN;
 						return true;
 					},
-				},
+				}),
 			});
 			a.false(checked.ok);
 			if (!checked.ok) a.equal(checked.error.code, "ERR_INVALID_CLOCK");

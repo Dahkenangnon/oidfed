@@ -13,9 +13,10 @@ import {
 	type FederationEntityMetadataSchema,
 	type FederationMetadata,
 	MetadataJWKSetSchema,
+	type MetadataValidationOptions,
 	parseOAuthAuthorizationServerMetadata,
 	parseOAuthAuthorizationServerPublicationMetadata,
-	validateJwkSetUseRequirement,
+	withMetadataJwkUse,
 } from "@oidfed/core";
 import { z } from "zod";
 
@@ -131,21 +132,12 @@ const ChoiceShape = {
 	introspection_encryption_enc_values_supported: z.array(z.string()).optional(),
 };
 
-function keyRequirements(meta: Record<string, unknown>, ctx: z.RefinementCtx) {
-	const keys = MetadataJWKSetSchema.safeParse(meta.jwks);
-	if (keys.success) {
-		const use = validateJwkSetUseRequirement(keys.data.keys);
-		if (!use.ok) ctx.addIssue({ code: "custom", path: ["jwks"], message: use.error.description });
-	}
-}
-
 function clientRequirements(
 	meta: Record<string, unknown>,
 	ctx: z.RefinementCtx,
 	publication: boolean,
 	oidc: boolean,
 ) {
-	keyRequirements(meta, ctx);
 	const add = (field: string, message: string) =>
 		ctx.addIssue({ code: "custom", path: [field], message });
 	const grants = (meta.grant_types as string[] | undefined) ?? ["authorization_code"];
@@ -411,10 +403,9 @@ export const OpenIDRelyingPartyRegistrationResponseMetadataSchema = z
  * CIBA, and OpenID Federation 1.0 Section 5.1 federation-specific parameters.
  */
 // The shared AS validator lives in core because wallet discovery also consumes it.
-export const OAuthAuthorizationServerMetadataSchema = z
-	.record(z.string(), z.unknown())
-	.transform((raw, ctx) => {
-		const parsed = parseOAuthAuthorizationServerMetadata(raw);
+const oauthAuthorizationServerMetadataSchema = (options?: MetadataValidationOptions) =>
+	z.record(z.string(), z.unknown()).transform((raw, ctx) => {
+		const parsed = parseOAuthAuthorizationServerMetadata(raw, options);
 		if (!parsed.success) {
 			for (const issue of parsed.error.issues)
 				ctx.addIssue({ code: "custom", path: issue.path, message: issue.message });
@@ -422,10 +413,9 @@ export const OAuthAuthorizationServerMetadataSchema = z
 		}
 		return parsed.data;
 	});
-const OAuthAuthorizationServerPublicationMetadataSchema = z
-	.record(z.string(), z.unknown())
-	.transform((raw, ctx) => {
-		const parsed = parseOAuthAuthorizationServerPublicationMetadata(raw);
+const oauthAuthorizationServerPublicationMetadataSchema = (options?: MetadataValidationOptions) =>
+	z.record(z.string(), z.unknown()).transform((raw, ctx) => {
+		const parsed = parseOAuthAuthorizationServerPublicationMetadata(raw, options);
 		if (!parsed.success) {
 			for (const issue of parsed.error.issues)
 				ctx.addIssue({ code: "custom", path: issue.path, message: issue.message });
@@ -434,7 +424,7 @@ const OAuthAuthorizationServerPublicationMetadataSchema = z
 		return parsed.data;
 	});
 export type OAuthAuthorizationServerMetadata = z.infer<
-	typeof OAuthAuthorizationServerMetadataSchema
+	ReturnType<typeof oauthAuthorizationServerMetadataSchema>
 >;
 
 const OpenIDProviderMetadataShape = {
@@ -520,15 +510,17 @@ function providerRequirements(
 			message: "OP metadata requires jwks, jwks_uri, or signed_jwks_uri",
 		});
 }
-export const OpenIDProviderMetadataSchema = z
-	.looseObject(OpenIDProviderMetadataShape)
-	.superRefine((meta, ctx) => providerRequirements(meta, ctx, false))
-	.and(OAuthAuthorizationServerMetadataSchema);
-const OpenIDProviderPublicationMetadataSchema = z
-	.looseObject(OpenIDProviderMetadataShape)
-	.partial()
-	.superRefine((meta, ctx) => providerRequirements(meta, ctx, true))
-	.and(OAuthAuthorizationServerPublicationMetadataSchema);
+const openIDProviderMetadataSchema = (options?: MetadataValidationOptions) =>
+	z
+		.looseObject(OpenIDProviderMetadataShape)
+		.superRefine((meta, ctx) => providerRequirements(meta, ctx, false))
+		.and(oauthAuthorizationServerMetadataSchema(options));
+const openIDProviderPublicationMetadataSchema = (options?: MetadataValidationOptions) =>
+	z
+		.looseObject(OpenIDProviderMetadataShape)
+		.partial()
+		.superRefine((meta, ctx) => providerRequirements(meta, ctx, true))
+		.and(oauthAuthorizationServerPublicationMetadataSchema(options));
 
 type OpenIDRelyingPartyResponseOnlyFields = {
 	readonly [K in (typeof OPENID_RP_REGISTRATION_RESPONSE_FIELDS)[number]]?: never;
@@ -538,7 +530,7 @@ export type OpenIDRelyingPartyMetadata = z.infer<typeof OpenIDRelyingPartyMetada
 export type OpenIDRelyingPartyRegistrationResponseMetadata = z.infer<
 	typeof OpenIDRelyingPartyRegistrationResponseMetadataSchema
 >;
-export type OpenIDProviderMetadata = z.infer<typeof OpenIDProviderMetadataSchema>;
+export type OpenIDProviderMetadata = z.infer<ReturnType<typeof openIDProviderMetadataSchema>>;
 
 // ---------------------------------------------------------------------------
 // 4. OAuth 2.0 Client (RFC 7591 + Federation 1.0)
@@ -585,7 +577,7 @@ function oauthClientRequirements(
 				message: `${field} is only valid in registration response metadata`,
 			});
 }
-export const OAuthClientMetadataSchema = z
+const OAuthClientMetadataSchema = z
 	.looseObject(OAuthClientMetadataShape)
 	.superRefine((meta, ctx) => oauthClientRequirements(meta, ctx, false));
 const OAuthClientPublicationMetadataSchema = z
@@ -650,44 +642,51 @@ const OAuthResourceMetadataShape = {
 	// Optional organization identifier extension supplied by the deployment.
 	organization_identifier: z.string().optional(),
 };
-export const OAuthResourceMetadataSchema = z
-	.looseObject(OAuthResourceMetadataShape)
-	.superRefine(keyRequirements);
-export const OAuthResourceDocumentMetadataSchema = z
-	.looseObject({ ...OAuthResourceMetadataShape, resource: httpsUrlNoFragment })
-	.superRefine(keyRequirements);
+const OAuthResourceMetadataSchema = z.looseObject(OAuthResourceMetadataShape);
+export const OAuthResourceDocumentMetadataSchema = z.looseObject({
+	...OAuthResourceMetadataShape,
+	resource: httpsUrlNoFragment,
+});
 
 export type OAuthResourceMetadata = z.infer<typeof OAuthResourceMetadataSchema>;
 
 export const effectiveRoleSchemas = {
-	openid_relying_party: OpenIDRelyingPartyMetadataSchema,
-	openid_provider: OpenIDProviderMetadataSchema,
-	oauth_authorization_server: OAuthAuthorizationServerMetadataSchema,
-	oauth_client: OAuthClientMetadataSchema,
-	oauth_resource: OAuthResourceMetadataSchema,
+	openid_relying_party: (options?: MetadataValidationOptions) =>
+		withMetadataJwkUse(OpenIDRelyingPartyMetadataSchema, options),
+	openid_provider: openIDProviderMetadataSchema,
+	oauth_authorization_server: oauthAuthorizationServerMetadataSchema,
+	oauth_client: (options?: MetadataValidationOptions) =>
+		withMetadataJwkUse(OAuthClientMetadataSchema, options),
+	oauth_resource: (options?: MetadataValidationOptions) =>
+		withMetadataJwkUse(OAuthResourceMetadataSchema, options),
 };
 export const publicationRoleSchemas = {
-	openid_relying_party: OpenIDRelyingPartyPublicationMetadataSchema,
-	openid_provider: OpenIDProviderPublicationMetadataSchema,
-	oauth_authorization_server: OAuthAuthorizationServerPublicationMetadataSchema,
-	oauth_client: OAuthClientPublicationMetadataSchema,
-	oauth_resource: OAuthResourceMetadataSchema,
+	openid_relying_party: (options?: MetadataValidationOptions) =>
+		withMetadataJwkUse(OpenIDRelyingPartyPublicationMetadataSchema, options),
+	openid_provider: openIDProviderPublicationMetadataSchema,
+	oauth_authorization_server: oauthAuthorizationServerPublicationMetadataSchema,
+	oauth_client: (options?: MetadataValidationOptions) =>
+		withMetadataJwkUse(OAuthClientPublicationMetadataSchema, options),
+	oauth_resource: (options?: MetadataValidationOptions) =>
+		withMetadataJwkUse(OAuthResourceMetadataSchema, options),
 };
 
 /** Publication types follow the same schemas used by role publication hooks. */
 export type OpenIDRelyingPartyPublicationMetadata = z.infer<
-	typeof publicationRoleSchemas.openid_relying_party
+	ReturnType<typeof publicationRoleSchemas.openid_relying_party>
 > &
 	OpenIDRelyingPartyResponseOnlyFields;
 export type OpenIDProviderPublicationMetadata = z.infer<
-	typeof publicationRoleSchemas.openid_provider
+	ReturnType<typeof publicationRoleSchemas.openid_provider>
 >;
 export type OAuthAuthorizationServerPublicationMetadata = z.infer<
-	typeof publicationRoleSchemas.oauth_authorization_server
+	ReturnType<typeof publicationRoleSchemas.oauth_authorization_server>
 >;
-export type OAuthClientPublicationMetadata = z.infer<typeof publicationRoleSchemas.oauth_client>;
+export type OAuthClientPublicationMetadata = z.infer<
+	ReturnType<typeof publicationRoleSchemas.oauth_client>
+>;
 export type OAuthResourcePublicationMetadata = z.infer<
-	typeof publicationRoleSchemas.oauth_resource
+	ReturnType<typeof publicationRoleSchemas.oauth_resource>
 >;
 
 /** Effective metadata, after federation processing and protocol validation. */

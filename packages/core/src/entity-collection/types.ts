@@ -2,50 +2,13 @@
 
 import type { EndpointAuthentication } from "../endpoint-authentication.js";
 import type { Result } from "../errors.js";
-import type { ReplayStore } from "../replay-store.js";
 import type { EntityCollectionEntity } from "../schemas/entity-collection.js";
 import type { JWKSet } from "../schemas/jwk.js";
-import type { Clock, EntityId, FederationOptions, TrustAnchorSet } from "../types.js";
+import type { CollectionEntry } from "../storage/collection.js";
+import type { EntityId, FederationOptions, TrustAnchorSet } from "../types.js";
 
-/** Evidence is local server state; it is never returned as collection data. */
-export interface CollectionEntry {
-	entity: EntityCollectionEntity;
-	/** Application or collector eligibility deadline, in seconds since the epoch. */
-	expiresAt: number;
-	/** Present only when core collected a valid chain for this entry. */
-	chainExpiresAt?: number;
-	verifiedMarks: readonly { type: string; expiresAt: number }[];
-}
-export interface EntityCollectionSnapshot {
-	id: string;
-	trustAnchor: EntityId;
-	lastUpdated: number;
-	entries: readonly CollectionEntry[];
-}
-export interface EntityCollectionCursor {
-	snapshotId: string;
-	trustAnchor: EntityId;
-	context: string;
-	index: number;
-	expiresAt: number;
-}
-/**
- * Atomically publish snapshots and return detached values. Keep entries in their
- * published Entity Identifier order (§3.1.1). Snapshot identifiers name immutable
- * contents; getCurrent is isolated by anchor. A cursor retains its snapshot identity
- * and position. Expired or unavailable snapshots must not resolve to newer contents.
- */
-export interface EntityCollectionStore {
-	publish(snapshot: EntityCollectionSnapshot): Promise<void>;
-	getCurrent(trustAnchor: EntityId): Promise<EntityCollectionSnapshot | undefined>;
-	getSnapshot(id: string): Promise<EntityCollectionSnapshot | undefined>;
-	/** May throw EntityCollectionCursorCapacityError to report temporary capacity exhaustion. */
-	putCursor(id: string, cursor: EntityCollectionCursor): Promise<void>;
-	getCursor(id: string): Promise<EntityCollectionCursor | undefined>;
-}
 export interface CollectionAuthentication {
 	extensions?: EndpointAuthentication;
-	replayStore?: ReplayStore;
 	methods: readonly string[];
 	/** Receiver identity used as assertion audience, including standalone providers. */
 	receiverEntityId?: EntityId;
@@ -93,7 +56,6 @@ export interface EntityCollectionConfig {
 	queryMatcher?: EntityCollectionQueryMatcher;
 	/** Optional serving URL, including fixed query components. */
 	endpoint?: string;
-	store?: EntityCollectionStore;
 	responder?: { entityId: EntityId; isTrustAnchor: boolean };
 	authentication?: CollectionAuthentication;
 	options: FederationOptions;
@@ -119,9 +81,3 @@ export interface CollectionRefreshResult {
 export type EntityCollectionIntegration = Omit<EntityCollectionConfig, "responder" | "options"> & {
 	readonly options?: import("../types.js").BoundFederationOptions;
 };
-export interface MemoryEntityCollectionStoreOptions {
-	clock?: Clock;
-	retentionSeconds?: number;
-	maxSnapshots?: number;
-	maxCursors?: number;
-}

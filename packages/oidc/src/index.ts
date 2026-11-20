@@ -1,54 +1,27 @@
 export type {
-	PreparedPushedAuthorizationRequest,
-	ProcessedPushedAuthorizationRequest,
-	ProcessPushedAuthorizationRequestOptions,
-	PushedAuthorizationProof,
-} from "./registration/pushed.js";
-// @oidfed/oidc: OIDC and OAuth protocol integration for OpenID Federation.
-
-// Re-export common core types
-export type {
-	EntityId,
-	FederationError,
-	FederationOptions,
-	Result,
-	TrustAnchorSet,
-} from "@oidfed/core";
-
-// Client authentication
-export type { ClientAssertionOptions } from "./client-auth/assertion.js";
-
-export type {
 	RegistrationAccreditationContext,
 	RegistrationAccreditationPolicy,
 } from "./registration/accreditation.js";
 // Registration types
-export { OIDCRegistrationAdapter } from "./registration/adapter.js";
 export type {
 	RegistrationProtocolAdapter,
 	RegistrationProtocolAdapterContext,
 } from "./registration/adapter-types.js";
 export type {
-	AutomaticRegistrationConfig,
 	AutomaticRegistrationResult,
 	RequestDelivery,
-} from "./registration/automatic.js";
+} from "./registration/automatic-client.js";
 export type {
-	ExplicitRegistrationConfig,
-	ExplicitRegistrationResult,
-} from "./registration/explicit.js";
-export type { ExplicitRegistrationHandlerConfig } from "./registration/handler.js";
-export type {
-	ProcessAutomaticRegistrationOptions,
 	ProcessedAutomaticRegistration,
 	ProcessedRegistration,
-} from "./registration/process-automatic.js";
-export type { ProcessExplicitRegistrationOptions } from "./registration/process-explicit.js";
+} from "./registration/automatic-server.js";
+export type { ExplicitRegistrationResult } from "./registration/explicit-client.js";
 export type {
-	AutomaticRegistrationContext,
-	ValidatedRequestObject,
-	ValidatedRequestObjectResult,
-} from "./registration/types.js";
+	PreparedPushedAuthorizationRequest,
+	ProcessedPushedAuthorizationRequest,
+	PushedAuthorizationProof,
+} from "./registration/pushed.js";
+
 // Roles composition
 export {
 	type CreateAuthorizationRequestOptions,
@@ -62,7 +35,10 @@ export {
 	type OidcProviderRoleConfig,
 	OidcRelyingPartyRole,
 	type OidcRelyingPartyRoleConfig,
+	type ProcessAutomaticRegistrationOptions,
+	type ProcessPushedAuthorizationRequestOptions,
 } from "./roles.js";
+
 // Schemas & Types
 export type {
 	ExplicitRegistrationRequestPayload,

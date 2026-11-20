@@ -34,9 +34,9 @@ export async function handler(args: CollectionArgs, deps: CollectionDeps): Promi
 	}
 	const response = await fetchEntityCollection(endpoint, params, {
 		httpClient: deps.httpClient,
-		...(post ? { method: "POST", engine: engine } : { engine: engine }),
-		...(clientAssertion !== undefined ? { clientAssertion, engine: engine } : { engine: engine }),
-		engine: engine,
+		...(post ? { method: "POST" } : {}),
+		...(clientAssertion !== undefined ? { clientAssertion } : {}),
+		engine,
 	});
 	return response.ok ? ok(deps.formatter.format(response.value)) : response;
 }

@@ -5,9 +5,10 @@ import { freezeSnapshot } from "../callbacks.js";
 import { FederationErrorCode, MediaType } from "../constants.js";
 import { fetchFederationEndpoint } from "../endpoint-client.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
-import { validateExpectedIssuer, verifyTrustMarkStatusResponse } from "../federation-api/index.js";
+import { verifyTrustMarkStatusResponse } from "../federation-api/trust-mark-status.js";
+import { validateExpectedIssuer } from "../federation-api/verify-issuer.js";
 import { decodeEntityStatement } from "../jose/verify.js";
-import { safeLogger } from "./../logging.js";
+import { safeLogger } from "../logging.js";
 import type { JWKSet } from "../schemas/jwk.js";
 import { TrustMarkPayloadSchema } from "../schemas/trust-mark.js";
 import {

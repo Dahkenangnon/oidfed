@@ -8,13 +8,13 @@ import { FederationErrorCode, InternalErrorCode, MediaType } from "../constants.
 import { fetchFederationEndpoint } from "../endpoint-client.js";
 import { EXTENDED_LIST_UNORDERED_PARAMETERS } from "../endpoint-parameters.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
-import { safeLogger } from "./../logging.js";
+import { httpFailureStatus } from "../http/fetch-failure.js";
+import { safeLogger } from "../logging.js";
 import {
 	type ExtendedListRequestParams,
 	type ExtendedListResponse,
 	ExtendedListResponseSchema,
 } from "../schemas/extended-list.js";
-import { httpFailureStatus } from "../trust-chain/fetch-failure.js";
 import type { FederationOptions } from "../types.js";
 
 /** Build standard Extended Listing selectors for HTTP clients and local authority calls. */

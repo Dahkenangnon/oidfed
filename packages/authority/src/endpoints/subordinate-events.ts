@@ -1,22 +1,31 @@
-import { federationEntry, federationSigningOptions } from "@oidfed/core";
+import {
+	assertStorageView,
+	federationEntry,
+	federationSigningOptions,
+	storageSnapshot,
+} from "@oidfed/core";
+
 /** Signed subordinate history responses with request cancellation and optional expiry. */
 
+import type { ReadSnapshotView } from "@oidfed/core";
 import {
 	type EntityId,
+	errorResponse,
 	FederationErrorCode,
 	isValidEntityId,
 	JwtTyp,
+	jwtResponse,
 	MediaType,
 	nowSeconds,
+	parsePublishedSubordinateEvent,
+	parseQueryParams,
+	requireMethod,
 	SubordinateEventsResponseSchema,
 	safeLogger,
 	signEntityStatement,
 	waitForOperation,
 } from "@oidfed/core";
-import type { StorageReadSnapshot } from "../storage/types.js";
-import { parsePublishedSubordinateEvent } from "../utils/subordinate-event.js";
 import type { HandlerContext } from "./context.js";
-import { errorResponse, jwtResponse, parseQueryParams, requireMethod } from "./helpers.js";
 
 /** Apply the events error contract after both native and authenticated method checks. */
 export function withSubordinateEventsMethodErrors(
@@ -49,19 +58,18 @@ export async function buildSubordinateEvents(
 		),
 	);
 	signal.throwIfAborted();
-	if (!ctx.storage.subordinateEvents)
+	if (!ctx.storage.capabilities.includes("subordinateEvent:read"))
 		throw new Error("Subordinate event storage is not configured");
-	const read = async (tx: StorageReadSnapshot) => {
+	const read = async (tx: ReadSnapshotView) => {
 		signal.throwIfAborted();
-		if (!tx.subordinateEvents)
-			throw new Error("Transaction-bound subordinateEvents is unavailable");
-		const history = await tx.subordinateEvents.list(ctx.entityId, subject);
+		assertStorageView(tx, ["subordinate:read", "subordinateEvent:read"], "Subordinate Events");
+		const history = await tx.subordinateEvent.history(ctx.entityId, subject);
 		signal.throwIfAborted();
-		if (history.length === 0 && !(await tx.subordinates.get(subject))) return undefined;
+		if (history.length === 0 && !(await tx.subordinate.fetch(subject))) return undefined;
 		return history;
 	};
 	const events = await waitForOperation(
-		ctx.storage.readSnapshot ? ctx.storage.readSnapshot(read) : ctx.storage.transaction(read),
+		storageSnapshot(ctx.storage, read, { ...ctx.options, allowTransaction: true }),
 		[signal],
 	);
 	if (events === undefined) return undefined;

@@ -1,3 +1,4 @@
+import { createClientAssertion } from "@oidfed/core";
 import type { KeyringEntry } from "@oidfed/crypto";
 import type QUnit from "qunit";
 import * as CorePublic from "../../../packages/core/src/index.js";
@@ -18,7 +19,6 @@ import {
 	type JWK,
 	JwtTyp,
 	MediaType,
-	MemoryReplayStore,
 	ok,
 	type PolicyOperatorDefinition,
 	type ReplayStore,
@@ -30,14 +30,8 @@ import {
 	validateTrustChain,
 	WELL_KNOWN_OPENID_FEDERATION,
 } from "../../../packages/core/src/index.js";
+import { MemoryReplayStore } from "../../../packages/core/src/storage/replay-memory.js";
 import { Leaf } from "../../../packages/leaf/src/index.js";
-import { createClientAssertion } from "../../../packages/oidc/src/client-auth/assertion.js";
-import {
-	ClientRegistrationType,
-	OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE,
-	OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE,
-	RequestObjectTyp,
-} from "../../../packages/oidc/src/constants.js";
 import * as OidcPublic from "../../../packages/oidc/src/index.js";
 import {
 	OAuthAuthorizationServerRole,
@@ -46,30 +40,29 @@ import {
 	OidcProviderRole,
 	OidcRelyingPartyRole,
 } from "../../../packages/oidc/src/index.js";
-import { OIDCRegistrationAdapter } from "../../../packages/oidc/src/registration/adapter.js";
 import type { RegistrationProtocolAdapter } from "../../../packages/oidc/src/registration/adapter-types.js";
-import type { AutomaticRegistrationConfig } from "../../../packages/oidc/src/registration/automatic.js";
-import { automaticRegistration } from "../../../packages/oidc/src/registration/automatic.js";
-import type { ExplicitRegistrationConfig } from "../../../packages/oidc/src/registration/explicit.js";
-import { explicitRegistration } from "../../../packages/oidc/src/registration/explicit.js";
+import type { AutomaticRegistrationConfig } from "../../../packages/oidc/src/registration/automatic-client.js";
+import { automaticRegistration } from "../../../packages/oidc/src/registration/automatic-client.js";
+import type { AutomaticRegistrationContext } from "../../../packages/oidc/src/registration/automatic-server.js";
+import { processAutomaticRegistration } from "../../../packages/oidc/src/registration/automatic-server.js";
+import {
+	ClientRegistrationType,
+	OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE,
+	OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE,
+	RequestObjectTyp,
+} from "../../../packages/oidc/src/registration/constants.js";
+import type { ExplicitRegistrationConfig } from "../../../packages/oidc/src/registration/explicit-client.js";
+import { explicitRegistration } from "../../../packages/oidc/src/registration/explicit-client.js";
 import {
 	createExplicitRegistrationHandler,
 	type ExplicitRegistrationHandlerConfig,
-} from "../../../packages/oidc/src/registration/handler.js";
-import { processAutomaticRegistration } from "../../../packages/oidc/src/registration/process-automatic.js";
-import { processExplicitRegistration } from "../../../packages/oidc/src/registration/process-explicit.js";
+} from "../../../packages/oidc/src/registration/explicit-endpoint.js";
+import { processExplicitRegistration } from "../../../packages/oidc/src/registration/explicit-server.js";
 import { oauthRegistrationProfile } from "../../../packages/oidc/src/registration/profile.js";
-import type { AutomaticRegistrationContext } from "../../../packages/oidc/src/registration/types.js";
-import { validateAutomaticRegistrationRequest } from "../../../packages/oidc/src/registration/validate-request-object.js";
+import { validateAutomaticRegistrationRequest } from "../../../packages/oidc/src/registration/request-object.js";
 import { oidcRegistrationSchemas } from "../../../packages/oidc/src/schemas/explicit-registration.js";
-import {
-	OAuthAuthorizationServerMetadataSchema,
-	OAuthClientMetadataSchema,
-	OAuthResourceMetadataSchema,
-	OpenIDProviderMetadataSchema,
-	OpenIDRelyingPartyMetadataSchema,
-	OpenIDRelyingPartyRegistrationResponseMetadataSchema,
-} from "../../../packages/oidc/src/schemas/metadata.js";
+import { OpenIDRelyingPartyRegistrationResponseMetadataSchema } from "../../../packages/oidc/src/schemas/metadata.js";
+import { replayStorage } from "../../storage-fixtures.js";
 import { createMockFederation, LEAF_ID, OP_ID, TA_ID } from "../fixtures/index.js";
 import { signProtocolFixture } from "../fixtures/protocol-jwt.js";
 import {
@@ -590,7 +583,7 @@ export default (QUnit: QUnit) => {
 			};
 			const server = new OAuthAuthorizationServerRole({
 				metadata: serverMetadata,
-				replayStore: new MemoryReplayStore({ engine: testEngine, clock: f.options.clock }),
+
 				registrationManagement: "read-only",
 				beforeRegistration: () =>
 					allow
@@ -601,16 +594,25 @@ export default (QUnit: QUnit) => {
 					persisted.push(metadata);
 				},
 				registrationProtocolAdapter: {
-					validateClientMetadata: (metadata) => ok(metadata),
-					enrichResponseMetadata: (metadata) => ({
-						...metadata,
-						registration_access_token: "read-only",
-						registration_client_uri: `${f.ids.a}/client`,
-					}),
+					validateClientMetadata: () => ok(undefined),
+					enrichResponseMetadata: (responseMetadata, _trustChain, context) => {
+						const metadata = responseMetadata[context.clientMetadataType] ?? {};
+						return {
+							...responseMetadata,
+							[context.clientMetadataType]: {
+								...metadata,
+								registration_access_token: "read-only",
+								registration_client_uri: `${f.ids.a}/client`,
+							},
+						};
+					},
 				},
 			});
 			await server.initialize(
 				fixtureRoleContext(server, {
+					storage: replayStorage(
+						new MemoryReplayStore({ engine: testEngine, clock: f.options.clock }),
+					),
 					entityId: f.ids.a,
 					crypto: FixtureCrypto.fromJWK(f.keys.a.privateKey),
 					trustAnchors: f.anchors,
@@ -1069,12 +1071,18 @@ export default (QUnit: QUnit) => {
 					metadata: { client_registration_types_supported: ["explicit"] },
 					registrationManagement: "read-only",
 					registrationProtocolAdapter: {
-						validateClientMetadata: (m) => CorePublic.ok(m),
-						enrichResponseMetadata: (m) => ({
-							...m,
-							registration_access_token: "read-token",
-							registration_client_uri: `${f.ids.anchor}/client`,
-						}),
+						validateClientMetadata: () => CorePublic.ok(undefined),
+						enrichResponseMetadata: (responseMetadata, _trustChain, context) => {
+							const m = responseMetadata[context.clientMetadataType] ?? {};
+							return {
+								...responseMetadata,
+								[context.clientMetadataType]: {
+									...m,
+									registration_access_token: "read-token",
+									registration_client_uri: `${f.ids.anchor}/client`,
+								},
+							};
+						},
 					},
 				});
 				await role.initialize(
@@ -2133,17 +2141,23 @@ export default (QUnit: QUnit) => {
 		t.deepEqual(publication.openid_provider, {});
 	});
 	module("oidc / publication and endpoint validation", () => {
-		test("installed registration handlers require an explicit capability in composed metadata", (t) => {
+		test("installed registration handlers require an explicit capability in composed metadata", async (t) => {
+			const graph = await trustChainPaths();
 			for (const role of [new OidcProviderRole({}), new OAuthAuthorizationServerRole({})]) {
+				const context = fixtureRoleContext(role, {
+					entityId: graph.ids.a,
+					crypto: FixtureCrypto.fromJWK(graph.keys.a.privateKey),
+					storage: replayStorage(new MemoryReplayStore({ engine: testEngine })),
+				});
 				for (const methods of [undefined, [], ["automatic"], ["explicit", 1]])
 					t.throws(
-						() => role.validateMetadata({ client_registration_types_supported: methods }),
+						() => role.validateMetadata({ client_registration_types_supported: methods }, context),
 						/explicit/,
 					);
 				const metadata = {
 					client_registration_types_supported: ["automatic", "custom", "explicit"],
 				};
-				role.validateMetadata(metadata);
+				role.validateMetadata(metadata, context);
 				t.deepEqual(metadata.client_registration_types_supported, [
 					"automatic",
 					"custom",
@@ -2221,13 +2235,13 @@ export default (QUnit: QUnit) => {
 			for (const keys of [[anonymous], [pair.publicKey, pair.publicKey]]) {
 				const jwks = { keys };
 				t.true(
-					OpenIDRelyingPartyMetadataSchema.safeParse({
+					OidcRelyingPartyRole.parseMetadata({
 						redirect_uris: [`${LEAF_ID}/callback`],
 						jwks,
 					}).success,
 				);
 				t.true(
-					OpenIDProviderMetadataSchema.safeParse({
+					OidcProviderRole.parseMetadata({
 						...validProviderMetadata,
 						issuer: OP_ID,
 						authorization_endpoint: `${OP_ID}/authorize`,
@@ -2238,7 +2252,7 @@ export default (QUnit: QUnit) => {
 					}).success,
 				);
 				t.true(
-					OAuthAuthorizationServerMetadataSchema.safeParse({
+					OAuthAuthorizationServerRole.parseMetadata({
 						authorization_endpoint: `${OP_ID}/authorize`,
 						token_endpoint: `${OP_ID}/token`,
 						issuer: OP_ID,
@@ -2247,10 +2261,9 @@ export default (QUnit: QUnit) => {
 					}).success,
 				);
 				t.true(
-					OAuthClientMetadataSchema.safeParse({ jwks, redirect_uris: [`${LEAF_ID}/callback`] })
-						.success,
+					OAuthClientRole.parseMetadata({ jwks, redirect_uris: [`${LEAF_ID}/callback`] }).success,
 				);
-				t.true(OAuthResourceMetadataSchema.safeParse({ resource: LEAF_ID, jwks }).success);
+				t.true(OAuthResourceRole.parseMetadata({ resource: LEAF_ID, jwks }).success);
 			}
 		});
 
@@ -2274,7 +2287,7 @@ export default (QUnit: QUnit) => {
 				const options = {
 					...f.options,
 					opEntityId: OP_ID,
-					replayStore: new MemoryReplayStore({ engine: testEngine }),
+					storage: replayStorage(new MemoryReplayStore({ engine: testEngine })),
 					httpClient: async (...args: Parameters<HttpClient>) => {
 						if (String(args[0]) === uri)
 							return new Response(
@@ -2359,7 +2372,7 @@ export default (QUnit: QUnit) => {
 			const options = {
 				...f.options,
 				opEntityId: OP_ID,
-				replayStore: new MemoryReplayStore({ engine: testEngine }),
+				storage: replayStorage(new MemoryReplayStore({ engine: testEngine })),
 			};
 			let callbacks = 0;
 			const denied = await processAutomaticRegistration(request, f.trustAnchors, {
@@ -2568,7 +2581,6 @@ export default (QUnit: QUnit) => {
 				"OAuthAuthorizationServerRole",
 				"OAuthClientRole",
 				"OAuthResourceRole",
-				"OIDCRegistrationAdapter",
 				"OidcProviderRole",
 				"OidcRelyingPartyRole",
 			]);
@@ -2598,7 +2610,7 @@ export default (QUnit: QUnit) => {
 				t.false(exportName in OidcPublic, `${exportName} is not a root runtime export`);
 			}
 
-			t.equal(typeof OidcPublic.OidcRelyingPartyRole.createClientAssertion, "function");
+			t.false("createClientAssertion" in OidcPublic.OidcRelyingPartyRole);
 			t.equal(typeof OidcPublic.OidcRelyingPartyRole.prototype.createClientAssertion, "function");
 			t.equal(typeof OidcPublic.OidcRelyingPartyRole.prototype.explicitlyRegister, "function");
 			t.equal(
@@ -2608,7 +2620,7 @@ export default (QUnit: QUnit) => {
 			t.equal(typeof OidcPublic.OidcProviderRole.prototype.processExplicitRegistration, "function");
 
 			const { privateKey } = await generateSigningKey("ES256");
-			const jwt = await OidcPublic.OidcRelyingPartyRole.createClientAssertion(
+			const jwt = await createClientAssertion(
 				"https://rp.example.com",
 				"https://op.example.com/token",
 				new SigningEntryFixture(privateKey),
@@ -2828,7 +2840,7 @@ export default (QUnit: QUnit) => {
 			];
 			for (const [field, value] of responseOnlyFields) {
 				t.false(
-					OpenIDRelyingPartyMetadataSchema.safeParse({
+					OidcRelyingPartyRole.parseMetadata({
 						redirect_uris: ["https://rp.example.com/callback"],
 						[field]: value,
 					}).success,
@@ -2913,12 +2925,12 @@ export default (QUnit: QUnit) => {
 			{
 				name: "OpenID Provider metadata",
 				parse: (metadata) =>
-					OpenIDProviderMetadataSchema.safeParse({ ...validProvider, ...metadata }).success,
+					OidcProviderRole.parseMetadata({ ...validProvider, ...metadata }).success,
 			},
 			{
 				name: "OpenID Relying Party metadata",
 				parse: (metadata) =>
-					OpenIDRelyingPartyMetadataSchema.safeParse({
+					OidcRelyingPartyRole.parseMetadata({
 						redirect_uris: ["https://rp.example.com/callback"],
 						...metadata,
 					}).success,
@@ -2926,7 +2938,7 @@ export default (QUnit: QUnit) => {
 			{
 				name: "OAuth Authorization Server metadata",
 				parse: (metadata) =>
-					OAuthAuthorizationServerMetadataSchema.safeParse({
+					OAuthAuthorizationServerRole.parseMetadata({
 						...validAuthorizationServer,
 						...metadata,
 					}).success,
@@ -2934,7 +2946,7 @@ export default (QUnit: QUnit) => {
 			{
 				name: "OAuth Client metadata",
 				parse: (metadata) =>
-					OAuthClientMetadataSchema.safeParse({
+					OAuthClientRole.parseMetadata({
 						redirect_uris: ["https://client.example.com/callback"],
 						...metadata,
 					}).success,
@@ -2942,7 +2954,7 @@ export default (QUnit: QUnit) => {
 			{
 				name: "OAuth Resource metadata",
 				parse: (metadata) =>
-					OAuthResourceMetadataSchema.safeParse({
+					OAuthResourceRole.parseMetadata({
 						resource: "https://resource.example.com",
 						...metadata,
 					}).success,
@@ -2981,7 +2993,7 @@ export default (QUnit: QUnit) => {
 
 		test("rejects http:// federation_registration_endpoint", (t) => {
 			t.false(
-				OpenIDProviderMetadataSchema.safeParse({
+				OidcProviderRole.parseMetadata({
 					...validOP,
 					client_registration_types_supported: ["explicit"],
 					federation_registration_endpoint: "http://op.example.com/register",
@@ -2991,7 +3003,7 @@ export default (QUnit: QUnit) => {
 
 		test("rejects fragment in federation_registration_endpoint", (t) => {
 			t.false(
-				OpenIDProviderMetadataSchema.safeParse({
+				OidcProviderRole.parseMetadata({
 					...validOP,
 					client_registration_types_supported: ["explicit"],
 					federation_registration_endpoint: "https://op.example.com/register#frag",
@@ -3001,7 +3013,7 @@ export default (QUnit: QUnit) => {
 
 		test("rejects http:// signed_jwks_uri", (t) => {
 			t.false(
-				OpenIDProviderMetadataSchema.safeParse({
+				OidcProviderRole.parseMetadata({
 					...validOP,
 					client_registration_types_supported: ["explicit"],
 					signed_jwks_uri: "http://op.example.com/jwks",
@@ -3011,7 +3023,7 @@ export default (QUnit: QUnit) => {
 
 		test("rejects http:// jwks_uri", (t) => {
 			t.false(
-				OpenIDProviderMetadataSchema.safeParse({
+				OidcProviderRole.parseMetadata({
 					...validOP,
 					client_registration_types_supported: ["explicit"],
 					jwks_uri: "http://op.example.com/jwks",
@@ -3032,7 +3044,7 @@ export default (QUnit: QUnit) => {
 		};
 
 		test("rejects OP advertising 'explicit' without federation_registration_endpoint", (t) => {
-			const result = OpenIDProviderMetadataSchema.safeParse({
+			const result = OidcProviderRole.parseMetadata({
 				...validOP,
 				client_registration_types_supported: ["explicit"],
 			});
@@ -3047,7 +3059,7 @@ export default (QUnit: QUnit) => {
 
 		test("accepts OP advertising 'automatic' without federation_registration_endpoint", (t) => {
 			t.true(
-				OpenIDProviderMetadataSchema.safeParse({
+				OidcProviderRole.parseMetadata({
 					...validOP,
 					client_registration_types_supported: ["automatic"],
 				}).success,
@@ -3056,7 +3068,7 @@ export default (QUnit: QUnit) => {
 
 		test("accepts OP advertising 'explicit' with valid federation_registration_endpoint", (t) => {
 			t.true(
-				OpenIDProviderMetadataSchema.safeParse({
+				OidcProviderRole.parseMetadata({
 					...validOP,
 					client_registration_types_supported: ["explicit"],
 					federation_registration_endpoint: "https://op.example.com/register",
@@ -3065,7 +3077,7 @@ export default (QUnit: QUnit) => {
 		});
 
 		test("rejects OP advertising both 'explicit' and 'automatic' without federation_registration_endpoint", (t) => {
-			const result = OpenIDProviderMetadataSchema.safeParse({
+			const result = OidcProviderRole.parseMetadata({
 				...validOP,
 				client_registration_types_supported: ["automatic", "explicit"],
 			});
@@ -3082,7 +3094,7 @@ export default (QUnit: QUnit) => {
 	module("oidc / OpenIDRelyingPartyMetadataSchema — URL validation", () => {
 		test("rejects http:// signed_jwks_uri", (t) => {
 			t.false(
-				OpenIDRelyingPartyMetadataSchema.safeParse({
+				OidcRelyingPartyRole.parseMetadata({
 					signed_jwks_uri: "http://rp.example.com/jwks",
 				}).success,
 			);
@@ -3090,8 +3102,7 @@ export default (QUnit: QUnit) => {
 
 		test("rejects http:// jwks_uri", (t) => {
 			t.false(
-				OpenIDRelyingPartyMetadataSchema.safeParse({ jwks_uri: "http://rp.example.com/jwks" })
-					.success,
+				OidcRelyingPartyRole.parseMetadata({ jwks_uri: "http://rp.example.com/jwks" }).success,
 			);
 		});
 	});
@@ -3112,7 +3123,7 @@ export default (QUnit: QUnit) => {
 			];
 			for (const issuer of invalidIssuers) {
 				t.false(
-					OAuthAuthorizationServerMetadataSchema.safeParse({
+					OAuthAuthorizationServerRole.parseMetadata({
 						...validAuthorizationServer,
 						issuer,
 					}).success,
@@ -3121,20 +3132,20 @@ export default (QUnit: QUnit) => {
 			}
 
 			t.false(
-				OAuthAuthorizationServerMetadataSchema.safeParse({
+				OAuthAuthorizationServerRole.parseMetadata({
 					...validAuthorizationServer,
 					client_registration_types_supported: ["explicit"],
 				}).success,
 			);
 			t.false(
-				OAuthAuthorizationServerMetadataSchema.safeParse({
+				OAuthAuthorizationServerRole.parseMetadata({
 					...validAuthorizationServer,
 					client_registration_types_supported: ["explicit"],
 					federation_registration_endpoint: "http://as.example.com/register",
 				}).success,
 			);
 			t.true(
-				OAuthAuthorizationServerMetadataSchema.safeParse({
+				OAuthAuthorizationServerRole.parseMetadata({
 					...validAuthorizationServer,
 					client_registration_types_supported: ["explicit"],
 					federation_registration_endpoint: "https://as.example.com/register",
@@ -3152,7 +3163,7 @@ export default (QUnit: QUnit) => {
 					name: "authorization server",
 					host: "as.example.com",
 					parse: (field, value) =>
-						OAuthAuthorizationServerMetadataSchema.safeParse({
+						OAuthAuthorizationServerRole.parseMetadata({
 							...validAuthorizationServer,
 							[field]: value,
 						}).success,
@@ -3161,7 +3172,7 @@ export default (QUnit: QUnit) => {
 					name: "client",
 					host: "client.example.com",
 					parse: (field, value) =>
-						OAuthClientMetadataSchema.safeParse({
+						OAuthClientRole.parseMetadata({
 							redirect_uris: ["https://client.example.com/callback"],
 							[field]: value,
 						}).success,
@@ -3170,7 +3181,7 @@ export default (QUnit: QUnit) => {
 					name: "resource",
 					host: "resource.example.com",
 					parse: (field, value) =>
-						OAuthResourceMetadataSchema.safeParse({
+						OAuthResourceRole.parseMetadata({
 							resource: "https://resource.example.com",
 							[field]: value,
 						}).success,
@@ -3187,10 +3198,10 @@ export default (QUnit: QUnit) => {
 		});
 
 		test("Federation resource metadata permits informational metadata and validates supplied URLs", (t) => {
-			t.true(OAuthResourceMetadataSchema.safeParse({}).success);
-			t.false(OAuthResourceMetadataSchema.safeParse({ resource: "not-a-url" }).success);
+			t.true(OAuthResourceRole.parseMetadata({}).success);
+			t.false(OAuthResourceRole.parseMetadata({ resource: "not-a-url" }).success);
 			t.true(
-				OAuthResourceMetadataSchema.safeParse({
+				OAuthResourceRole.parseMetadata({
 					resource: "https://resource.example.com",
 					authorization_servers: ["https://as.example.com"],
 				}).success,
@@ -3464,93 +3475,6 @@ export default (QUnit: QUnit) => {
 			});
 		});
 	}
-
-	// -------------------------------------------------------------------------
-	// registration/adapter
-	// -------------------------------------------------------------------------
-	module("oidc / OIDCRegistrationAdapter", () => {
-		const adapter = new OIDCRegistrationAdapter();
-		const mockTrustChain = {
-			entityId: entityId("https://rp.example.com"),
-			statements: [],
-			resolvedMetadata: {},
-			expiresAt: Math.floor(Date.now() / 1000) + 86400,
-		} as unknown as ValidatedTrustChain;
-
-		test("accepts valid openid_relying_party metadata", (t) => {
-			const result = adapter.validateClientMetadata({
-				openid_relying_party: {
-					redirect_uris: ["https://rp.example.com/callback"],
-					response_types: ["code"],
-					client_registration_types: ["automatic"],
-				},
-			});
-			t.true(result.ok);
-		});
-
-		test("accepts metadata without openid_relying_party (federation-only)", (t) => {
-			t.true(
-				adapter.validateClientMetadata({ federation_entity: { organization_name: "Test Org" } }).ok,
-			);
-		});
-
-		test("rejects invalid openid_relying_party metadata", (t) => {
-			const result = adapter.validateClientMetadata({
-				openid_relying_party: { redirect_uris: ["not-a-url"] },
-			});
-			t.false(result.ok);
-			if (result.ok) return;
-			t.equal(result.error.code, "invalid_metadata");
-		});
-
-		test("rejects registration response fields in RP entity metadata", (t) => {
-			const result = adapter.validateClientMetadata({
-				openid_relying_party: {
-					redirect_uris: ["https://rp.example.com/callback"],
-					client_id: "client-123",
-				},
-			});
-			t.false(result.ok);
-			if (result.ok) return;
-			t.equal(result.error.code, "invalid_metadata");
-		});
-
-		test("adds client_id from trust chain if missing", (t) => {
-			const enriched = adapter.enrichResponseMetadata({}, mockTrustChain);
-			t.equal(enriched.client_id, "https://rp.example.com");
-		});
-
-		test("preserves existing client_id", (t) => {
-			const enriched = adapter.enrichResponseMetadata({ client_id: "existing-id" }, mockTrustChain);
-			t.equal(enriched.client_id, "existing-id");
-		});
-
-		test("does not mutate the original metadata object", (t) => {
-			const original = { scope: "openid" };
-			const enriched = adapter.enrichResponseMetadata(original, mockTrustChain);
-			t.equal(enriched.client_id, "https://rp.example.com");
-			t.equal((original as Record<string, unknown>).client_id, undefined);
-		});
-
-		test("rejects openid_relying_party with invalid signed_jwks_uri (http)", (t) => {
-			const result = adapter.validateClientMetadata({
-				openid_relying_party: { signed_jwks_uri: "http://insecure.example.com/jwks" },
-			});
-			t.false(result.ok);
-			if (result.ok) return;
-			t.equal(result.error.code, "invalid_metadata");
-		});
-
-		test("rejects incomplete effective relying party metadata", (t) => {
-			t.false(
-				adapter.validateClientMetadata({ openid_relying_party: { client_name: "Test RP" } }).ok,
-			);
-		});
-
-		test("rejects empty effective relying party metadata for default flows", (t) => {
-			t.false(adapter.validateClientMetadata({ openid_relying_party: {} }).ok);
-		});
-	});
 
 	// -------------------------------------------------------------------------
 	// registration/automatic
@@ -4604,12 +4528,18 @@ export default (QUnit: QUnit) => {
 				options: { engine: testEngine, httpClient: mock.httpClient },
 				registrationManagement: "read-only",
 				registrationProtocolAdapter: {
-					validateClientMetadata: (metadata) => ok(metadata),
-					enrichResponseMetadata: (metadata) => ({
-						...metadata,
-						...access,
-						client_secret_expires_at: 0,
-					}),
+					validateClientMetadata: () => ok(undefined),
+					enrichResponseMetadata: (responseMetadata, _trustChain, context) => {
+						const metadata = responseMetadata[context.clientMetadataType] ?? {};
+						return {
+							...responseMetadata,
+							[context.clientMetadataType]: {
+								...metadata,
+								...access,
+								client_secret_expires_at: 0,
+							},
+						};
+					},
 				},
 				generateClientSecret: async () => "test-client-secret",
 			});
@@ -5973,12 +5903,12 @@ export default (QUnit: QUnit) => {
 							requests++;
 							throw new Error("Malformed headers must fail before discovery");
 						},
-						replayStore: {
+						storage: replayStorage({
 							useJti: async () => {
 								replayClaims++;
 								return true;
 							},
-						},
+						}),
 					});
 					t.false(result.ok, JSON.stringify(value));
 					if (!result.ok) {
@@ -5994,7 +5924,7 @@ export default (QUnit: QUnit) => {
 			const result = await processAutomaticRegistration("not-a-request-object", new Map(), {
 				engine: testEngine,
 				opEntityId: OP_ID,
-				replayStore: replayStore(),
+				storage: replayStorage(replayStore()),
 			});
 			t.false(result.ok);
 			if (result.ok) return;
@@ -6006,7 +5936,7 @@ export default (QUnit: QUnit) => {
 			const result = await processAutomaticRegistration(
 				"not-a-request-object",
 				new Map([["http://ta.example.com", { jwks: { keys: [] } }]]),
-				{ engine: testEngine, opEntityId: OP_ID, replayStore: replayStore() },
+				{ engine: testEngine, opEntityId: OP_ID, storage: replayStorage(replayStore()) },
 			);
 			t.false(result.ok);
 			if (result.ok) return;
@@ -6019,7 +5949,7 @@ export default (QUnit: QUnit) => {
 			const result = await processAutomaticRegistration(
 				await createValidRequestObject(fed),
 				fed.trustAnchors,
-				{ ...fed.options, opEntityId: OP_ID, replayStore: replayStore() },
+				{ ...fed.options, opEntityId: OP_ID, storage: replayStorage(replayStore()) },
 			);
 			t.true(result.ok);
 			if (!result.ok) return;
@@ -6055,7 +5985,7 @@ export default (QUnit: QUnit) => {
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
 				...fed.options,
 				opEntityId: OP_ID,
-				replayStore: replayStore(),
+				storage: replayStorage(replayStore()),
 			});
 			t.false(result.ok);
 			if (result.ok) return;
@@ -6075,7 +6005,7 @@ export default (QUnit: QUnit) => {
 				...fed.options,
 				httpClient,
 				opEntityId: OP_ID,
-				replayStore: replayStore(),
+				storage: replayStorage(replayStore()),
 			});
 			t.true(result.ok);
 			if (!result.ok) return;
@@ -6088,7 +6018,7 @@ export default (QUnit: QUnit) => {
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
 				...fed.options,
 				opEntityId: OP_ID,
-				replayStore: replayStore(),
+				storage: replayStorage(replayStore()),
 			});
 			t.false(result.ok);
 			if (result.ok) return;
@@ -6114,7 +6044,7 @@ export default (QUnit: QUnit) => {
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
 				...fed.options,
 				opEntityId: OP_ID,
-				replayStore: replayStore(),
+				storage: replayStorage(replayStore()),
 			});
 			t.false(result.ok);
 			if (result.ok) return;
@@ -6146,7 +6076,7 @@ export default (QUnit: QUnit) => {
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
 				...fed.options,
 				opEntityId: OP_ID,
-				replayStore: store,
+				storage: replayStorage(store),
 			});
 			t.false(result.ok);
 			t.equal(claims, 0);
@@ -6157,7 +6087,7 @@ export default (QUnit: QUnit) => {
 			const result = await processAutomaticRegistration(
 				await createValidRequestObject(fed),
 				fed.trustAnchors,
-				{ ...fed.options, opEntityId: OP_ID, replayStore: replayStore() },
+				{ ...fed.options, opEntityId: OP_ID, storage: replayStorage(replayStore()) },
 			);
 			t.true(result.ok);
 			if (!result.ok) return;
@@ -6169,7 +6099,7 @@ export default (QUnit: QUnit) => {
 			const result = await processAutomaticRegistration(
 				await createValidRequestObject(fed),
 				fed.trustAnchors,
-				{ ...fed.options, opEntityId: OP_ID, replayStore: replayStore() },
+				{ ...fed.options, opEntityId: OP_ID, storage: replayStorage(replayStore()) },
 			);
 			t.true(result.ok);
 			if (!result.ok) return;
@@ -6194,7 +6124,7 @@ export default (QUnit: QUnit) => {
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
 				...fed.options,
 				opEntityId: OP_ID,
-				replayStore: replayStore(),
+				storage: replayStorage(replayStore()),
 			});
 			t.false(result.ok);
 			if (result.ok) return;
@@ -6220,7 +6150,7 @@ export default (QUnit: QUnit) => {
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
 				...fed.options,
 				opEntityId: OP_ID,
-				replayStore: replayStore(),
+				storage: replayStorage(replayStore()),
 			});
 			t.false(result.ok);
 			if (result.ok) return;
@@ -6245,7 +6175,7 @@ export default (QUnit: QUnit) => {
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
 				...fed.options,
 				opEntityId: OP_ID,
-				replayStore: replayStore(),
+				storage: replayStorage(replayStore()),
 			});
 			t.false(result.ok);
 			if (result.ok) return;
@@ -6270,7 +6200,7 @@ export default (QUnit: QUnit) => {
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
 				...fed.options,
 				opEntityId: OP_ID,
-				replayStore: replayStore(),
+				storage: replayStorage(replayStore()),
 			});
 			t.false(result.ok);
 			if (result.ok) return;
@@ -6295,7 +6225,7 @@ export default (QUnit: QUnit) => {
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
 				...fed.options,
 				opEntityId: OP_ID,
-				replayStore: replayStore(),
+				storage: replayStorage(replayStore()),
 			});
 			t.false(result.ok);
 			if (result.ok) return;
@@ -6319,7 +6249,7 @@ export default (QUnit: QUnit) => {
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
 				...fed.options,
 				opEntityId: OP_ID,
-				replayStore: replayStore(),
+				storage: replayStorage(replayStore()),
 			});
 			t.false(result.ok);
 			if (result.ok) return;
@@ -6337,7 +6267,7 @@ export default (QUnit: QUnit) => {
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
 				...fed.options,
 				opEntityId: OP_ID,
-				replayStore: replayStore(),
+				storage: replayStorage(replayStore()),
 			});
 			t.false(result.ok);
 			if (result.ok) return;
@@ -6351,13 +6281,13 @@ export default (QUnit: QUnit) => {
 			const result1 = await processAutomaticRegistration(jwt, fed.trustAnchors, {
 				...fed.options,
 				opEntityId: OP_ID,
-				replayStore: store,
+				storage: replayStorage(store),
 			});
 			t.true(result1.ok);
 			const result2 = await processAutomaticRegistration(jwt, fed.trustAnchors, {
 				...fed.options,
 				opEntityId: OP_ID,
-				replayStore: store,
+				storage: replayStorage(store),
 			});
 			t.false(result2.ok);
 			if (result2.ok) return;
@@ -6372,11 +6302,11 @@ export default (QUnit: QUnit) => {
 				{
 					...fed.options,
 					opEntityId: OP_ID,
-					replayStore: {
+					storage: replayStorage({
 						async useJti() {
 							throw new Error("database unavailable");
 						},
-					},
+					}),
 				},
 			);
 			t.false(result.ok);
@@ -6402,7 +6332,7 @@ export default (QUnit: QUnit) => {
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
 				...fed.options,
 				opEntityId: OP_ID,
-				replayStore: replayStore(),
+				storage: replayStorage(replayStore()),
 				clockSkewSeconds: 60,
 			});
 			t.true(result.ok);
@@ -6428,7 +6358,7 @@ export default (QUnit: QUnit) => {
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
 				...fed.options,
 				opEntityId: OP_ID,
-				replayStore: replayStore(),
+				storage: replayStorage(replayStore()),
 			});
 			t.false(result.ok);
 		});
@@ -6477,7 +6407,7 @@ export default (QUnit: QUnit) => {
 			const result = await processAutomaticRegistration(
 				await createValidRequestObject(fed),
 				fed.trustAnchors,
-				{ ...fed.options, httpClient, opEntityId: OP_ID, replayStore: replayStore() },
+				{ ...fed.options, httpClient, opEntityId: OP_ID, storage: replayStorage(replayStore()) },
 			);
 			t.false(result.ok);
 			if (result.ok) return;
@@ -6529,7 +6459,7 @@ export default (QUnit: QUnit) => {
 			const result = await processAutomaticRegistration(
 				await createValidRequestObject(fed),
 				fed.trustAnchors,
-				{ ...fed.options, httpClient, opEntityId: OP_ID, replayStore: replayStore() },
+				{ ...fed.options, httpClient, opEntityId: OP_ID, storage: replayStorage(replayStore()) },
 			);
 			t.false(result.ok);
 			if (result.ok) return;
@@ -6578,7 +6508,7 @@ export default (QUnit: QUnit) => {
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
 				...fed.options,
 				opEntityId: OP_ID,
-				replayStore: replayStore(),
+				storage: replayStorage(replayStore()),
 			});
 			t.false(result.ok);
 			if (result.ok) return;
@@ -6615,7 +6545,7 @@ export default (QUnit: QUnit) => {
 			const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
 				...fed.options,
 				opEntityId: OP_ID,
-				replayStore: replayStore(),
+				storage: replayStorage(replayStore()),
 			});
 			t.true(result.ok);
 		});
@@ -6729,7 +6659,7 @@ export default (QUnit: QUnit) => {
 				const result = await processAutomaticRegistration(
 					await createValidRequestObject(fed, { peer_trust_chain: peer }),
 					trustAnchors,
-					{ ...options, opEntityId: OP_ID, replayStore: replayStore() },
+					{ ...options, opEntityId: OP_ID, storage: replayStorage(replayStore()) },
 				);
 				t.true(result.ok, result.ok ? "accepted" : result.error.description);
 				if (result.ok) {
@@ -6765,7 +6695,7 @@ export default (QUnit: QUnit) => {
 					const result = await processAutomaticRegistration(jwt, fed.trustAnchors, {
 						...fed.options,
 						opEntityId: OP_ID,
-						replayStore: replayStore(),
+						storage: replayStorage(replayStore()),
 						maxTotalFetches: 0,
 						httpClient: async () => {
 							throw new Error("Supplied direct chains need no fetches");
@@ -6845,7 +6775,7 @@ export default (QUnit: QUnit) => {
 					const result = await processAutomaticRegistration(jwt, trustAnchors, {
 						...fed.options,
 						opEntityId: OP_ID,
-						replayStore: replayStore(),
+						storage: replayStorage(replayStore()),
 					});
 					t.false(result.ok);
 					if (!result.ok) {
@@ -8193,8 +8123,11 @@ export default (QUnit: QUnit) => {
 								),
 							})),
 							registrationProtocolAdapter: {
-								validateClientMetadata: (m) => CorePublic.ok(m),
-								enrichResponseMetadata: (m) => ({ ...m, ...fields }),
+								validateClientMetadata: () => CorePublic.ok(undefined),
+								enrichResponseMetadata: (responseMetadata, _trustChain, context) => {
+									const m = responseMetadata[context.clientMetadataType] ?? {};
+									return { ...responseMetadata, [context.clientMetadataType]: { ...m, ...fields } };
+								},
 							},
 							generateClientSecret: async () => {
 								secrets++;
@@ -8287,12 +8220,18 @@ export default (QUnit: QUnit) => {
 						),
 					})),
 					registrationProtocolAdapter: {
-						validateClientMetadata: (m) => CorePublic.ok(m),
-						enrichResponseMetadata: (m) => ({
-							...m,
-							registration_access_token: "read-token",
-							registration_client_uri: `${HANDLER_ENTITY_ID}/client`,
-						}),
+						validateClientMetadata: () => CorePublic.ok(undefined),
+						enrichResponseMetadata: (responseMetadata, _trustChain, context) => {
+							const m = responseMetadata[context.clientMetadataType] ?? {};
+							return {
+								...responseMetadata,
+								[context.clientMetadataType]: {
+									...m,
+									registration_access_token: "read-token",
+									registration_client_uri: `${HANDLER_ENTITY_ID}/client`,
+								},
+							};
+						},
 					},
 					onRegistration: async () => {
 						persisted++;
@@ -8318,12 +8257,18 @@ export default (QUnit: QUnit) => {
 			test("removes registration management fields from response metadata", async (t) => {
 				let committedMetadata: Record<string, unknown> | undefined;
 				const adapter: RegistrationProtocolAdapter = {
-					validateClientMetadata: (metadata) => ({ ok: true, value: metadata }),
-					enrichResponseMetadata: (metadata) => ({
-						...metadata,
-						registration_access_token: "token-123",
-						registration_client_uri: `${HANDLER_ENTITY_ID}/registration/client-123`,
-					}),
+					validateClientMetadata: () => ({ ok: true, value: undefined }),
+					enrichResponseMetadata: (responseMetadata, _trustChain, context) => {
+						const metadata = responseMetadata[context.clientMetadataType] ?? {};
+						return {
+							...responseMetadata,
+							[context.clientMetadataType]: {
+								...metadata,
+								registration_access_token: "token-123",
+								registration_client_uri: `${HANDLER_ENTITY_ID}/registration/client-123`,
+							},
+						};
+					},
 				};
 				const { config, fed } = await createFederatedHandlerFixture({
 					registrationProtocolAdapter: adapter,
@@ -8604,7 +8549,6 @@ export default (QUnit: QUnit) => {
 				const rejectingAdapter: RegistrationProtocolAdapter = {
 					validateClientMetadata: () =>
 						err(federationError(FederationErrorCode.InvalidMetadata, "Bad RP metadata")),
-					enrichResponseMetadata: (meta) => meta,
 				};
 				const { config, fed } = await createFederatedHandlerFixture({
 					registrationProtocolAdapter: rejectingAdapter,
@@ -8630,11 +8574,17 @@ export default (QUnit: QUnit) => {
 
 			test("returns server_error when response metadata preparation is invalid", async (t) => {
 				const invalidResponseAdapter: RegistrationProtocolAdapter = {
-					validateClientMetadata: (raw) => ({ ok: true, value: raw }),
-					enrichResponseMetadata: (meta) => ({
-						...meta,
-						client_id: 123,
-					}),
+					validateClientMetadata: () => ({ ok: true, value: undefined }),
+					enrichResponseMetadata: (responseMetadata, _trustChain, context) => {
+						const meta = responseMetadata[context.clientMetadataType] ?? {};
+						return {
+							...responseMetadata,
+							[context.clientMetadataType]: {
+								...meta,
+								client_id: 123,
+							},
+						};
+					},
 				};
 				const { config, fed } = await createFederatedHandlerFixture({
 					registrationProtocolAdapter: invalidResponseAdapter,
@@ -8665,7 +8615,6 @@ export default (QUnit: QUnit) => {
 				const rejectingAdapter: RegistrationProtocolAdapter = {
 					validateClientMetadata: () =>
 						err(federationError(FederationErrorCode.InvalidMetadata, "Bad RP metadata")),
-					enrichResponseMetadata: (meta) => meta,
 				};
 				const { config, fed } = await createFederatedHandlerFixture({
 					registrationProtocolAdapter: rejectingAdapter,
@@ -9061,10 +9010,15 @@ export default (QUnit: QUnit) => {
 				const fed = await createMockFederation();
 				let enrichCalled = false;
 				const adapter: RegistrationProtocolAdapter = {
-					validateClientMetadata: (metadata) => ({ ok: true, value: metadata }),
-					enrichResponseMetadata: (metadata) => {
+					validateClientMetadata: () => ({ ok: true, value: undefined }),
+					enrichResponseMetadata: (responseMetadata, _trustChain, context) => {
+						const metadata = responseMetadata[context.clientMetadataType] ?? {};
+
 						enrichCalled = true;
-						return { ...metadata, injected: true };
+						return {
+							...responseMetadata,
+							[context.clientMetadataType]: { ...metadata, injected: true },
+						};
 					},
 				};
 				const config = await createHandlerConfig({
@@ -9218,11 +9172,10 @@ export default (QUnit: QUnit) => {
 			test("validates and exposes peer_trust_chain metadata to the adapter", async (t) => {
 				let receivedPeerMetadata: Readonly<Record<string, unknown>> | undefined;
 				const adapter: RegistrationProtocolAdapter = {
-					validateClientMetadata: (metadata, context) => {
+					validateClientMetadata: (_metadata, context) => {
 						receivedPeerMetadata = context?.peerResolvedOpMetadata;
-						return { ok: true, value: metadata };
+						return { ok: true, value: undefined };
 					},
-					enrichResponseMetadata: (metadata) => metadata,
 				};
 				const { config, fed } = await buildPeerHandlerConfig(adapter);
 				const handler = createExplicitRegistrationHandler(config);
@@ -9451,11 +9404,10 @@ export default (QUnit: QUnit) => {
 			test("rejects an empty peer_trust_chain before invoking the adapter", async (t) => {
 				let receivedPeerMetadata: Readonly<Record<string, unknown>> | undefined;
 				const adapter: RegistrationProtocolAdapter = {
-					validateClientMetadata: (metadata, context) => {
+					validateClientMetadata: (_metadata, context) => {
 						receivedPeerMetadata = context?.peerResolvedOpMetadata;
-						return { ok: true, value: metadata };
+						return { ok: true, value: undefined };
 					},
-					enrichResponseMetadata: (metadata) => metadata,
 				};
 				const { config, fed } = await buildPeerHandlerConfig(adapter);
 				const handler = createExplicitRegistrationHandler(config);
@@ -9592,7 +9544,6 @@ export default (QUnit: QUnit) => {
 			const role = new OidcProviderRole({
 				registrationPath: "/my-reg",
 				metadata: { op_name: "My OIDC OP" },
-				registrationProtocolAdapter: new OIDCRegistrationAdapter(),
 			});
 			await t.rejects(
 				(async () =>
@@ -9668,8 +9619,7 @@ export default (QUnit: QUnit) => {
 		test("OAuthAuthorizationServerRole role composition with all config options", async (t) => {
 			const fed = await createMockFederation();
 			const adapter: RegistrationProtocolAdapter = {
-				validateClientMetadata: (metadata) => ({ ok: true, value: metadata }),
-				enrichResponseMetadata: (metadata) => metadata,
+				validateClientMetadata: () => ({ ok: true, value: undefined }),
 			};
 			const role = new OAuthAuthorizationServerRole({
 				registrationPath: "/oauth-reg",
@@ -9857,9 +9807,8 @@ export default (QUnit: QUnit) => {
 							if (throwingLogger) throw new Error("Logger failed");
 						};
 					const provider = new OidcProviderRole({
-						replayStore: new MemoryReplayStore({ engine: testEngine }),
 						registrationProtocolAdapter: {
-							validateClientMetadata: (metadata) => {
+							validateClientMetadata: () => {
 								calls.push("validate");
 								if (failure === "validate") throw original;
 								return failure === "reject"
@@ -9867,9 +9816,8 @@ export default (QUnit: QUnit) => {
 											ok: false,
 											error: { code: FederationErrorCode.InvalidMetadata, description: "Rejected" },
 										}
-									: { ok: true, value: metadata };
+									: { ok: true, value: undefined };
 							},
-							enrichResponseMetadata: (metadata) => metadata,
 						},
 						onRegistration: async () => {
 							calls.push("persist");
@@ -9878,6 +9826,7 @@ export default (QUnit: QUnit) => {
 					});
 					await provider.initialize(
 						fixtureRoleContext(provider, {
+							storage: replayStorage(new MemoryReplayStore({ engine: testEngine })),
 							entityId: OP_ID,
 							trustAnchors: fed.trustAnchors,
 							crypto: FixtureCrypto.fromJWK(fed.opSigningKey),
@@ -10057,11 +10006,10 @@ export default (QUnit: QUnit) => {
 				t.equal(decoded.value.payload.exp! - decoded.value.payload.iat!, 42);
 				t.strictEqual(decoded.value.header.peer_trust_chain, undefined);
 			}
-			const provider = new OidcProviderRole({
-				replayStore: new MemoryReplayStore({ engine: testEngine }),
-			});
+			const provider = new OidcProviderRole({});
 			await provider.initialize(
 				fixtureRoleContext(provider, {
+					storage: replayStorage(new MemoryReplayStore({ engine: testEngine })),
 					entityId: OP_ID,
 					crypto: FixtureCrypto.fromJWK(fed.opSigningKey),
 					trustAnchors: fed.trustAnchors,
@@ -10243,11 +10191,17 @@ export default (QUnit: QUnit) => {
 						}),
 					}),
 					registrationProtocolAdapter: {
-						validateClientMetadata: (metadata) => ({ ok: true, value: metadata }),
-						enrichResponseMetadata: (metadata) => ({
-							...metadata,
-							token_endpoint_auth_method: selected,
-						}),
+						validateClientMetadata: () => ({ ok: true, value: undefined }),
+						enrichResponseMetadata: (responseMetadata, _trustChain, context) => {
+							const metadata = responseMetadata[context.clientMetadataType] ?? {};
+							return {
+								...responseMetadata,
+								[context.clientMetadataType]: {
+									...metadata,
+									token_endpoint_auth_method: selected,
+								},
+							};
+						},
 					},
 				});
 				const res = await handler(
@@ -10324,7 +10278,7 @@ export default (QUnit: QUnit) => {
 					const handler = createExplicitRegistrationHandler({
 						...fx.config,
 						registrationProtocolAdapter: {
-							validateClientMetadata: (metadata) => {
+							validateClientMetadata: () => {
 								calls.push("validate");
 								if (failure === "validate") throw original;
 								return failure === "reject"
@@ -10332,12 +10286,14 @@ export default (QUnit: QUnit) => {
 											ok: false,
 											error: { code: FederationErrorCode.InvalidMetadata, description: "Rejected" },
 										}
-									: { ok: true, value: metadata };
+									: { ok: true, value: undefined };
 							},
-							enrichResponseMetadata: (metadata) => {
+							enrichResponseMetadata: (responseMetadata, _trustChain, context) => {
+								const metadata = responseMetadata[context.clientMetadataType] ?? {};
+
 								calls.push("enrich");
 								if (failure === "enrich") throw original;
-								return metadata;
+								return { ...responseMetadata, [context.clientMetadataType]: metadata };
 							},
 						},
 						generateClientSecret: async () => {
@@ -10543,11 +10499,17 @@ export default (QUnit: QUnit) => {
 			const handler = createExplicitRegistrationHandler({
 				...fx.config,
 				registrationProtocolAdapter: {
-					validateClientMetadata: (metadata) => ({ ok: true, value: metadata }),
-					enrichResponseMetadata: (metadata) => ({
-						...metadata,
-						redirect_uris: ["https://attacker.example/cb"],
-					}),
+					validateClientMetadata: () => ({ ok: true, value: undefined }),
+					enrichResponseMetadata: (responseMetadata, _trustChain, context) => {
+						const metadata = responseMetadata[context.clientMetadataType] ?? {};
+						return {
+							...responseMetadata,
+							[context.clientMetadataType]: {
+								...metadata,
+								redirect_uris: ["https://attacker.example/cb"],
+							},
+						};
+					},
 				},
 			});
 			const res = await handler(
@@ -10618,7 +10580,7 @@ export default (QUnit: QUnit) => {
 					opEntityId: OP_ID,
 					clock,
 					clockSkewSeconds: skew,
-					replayStore: new MemoryReplayStore({ engine: testEngine, clock }),
+					storage: replayStorage(new MemoryReplayStore({ engine: testEngine, clock })),
 				};
 				const simultaneous = await Promise.all([
 					processAutomaticRegistration(jwt, fed.trustAnchors, options),
@@ -11035,11 +10997,17 @@ export default (QUnit: QUnit) => {
 			const response = await createExplicitRegistrationHandler({
 				...fx.config,
 				registrationProtocolAdapter: {
-					validateClientMetadata: (metadata) => ({ ok: true, value: metadata }),
-					enrichResponseMetadata: (metadata) => ({
-						...metadata,
-						redirect_uris: ["http://rp.example.com/callback"],
-					}),
+					validateClientMetadata: () => ({ ok: true, value: undefined }),
+					enrichResponseMetadata: (responseMetadata, _trustChain, context) => {
+						const metadata = responseMetadata[context.clientMetadataType] ?? {};
+						return {
+							...responseMetadata,
+							[context.clientMetadataType]: {
+								...metadata,
+								redirect_uris: ["http://rp.example.com/callback"],
+							},
+						};
+					},
 				},
 			})(
 				new Request(`${OP_ID}/federation_registration`, {
@@ -11195,15 +11163,17 @@ export default (QUnit: QUnit) => {
 					for (const edit of ["unchanged", "replace", "remove", "mutate-baseline"]) {
 						fx.events.length = 0;
 						const adapter: RegistrationProtocolAdapter = {
-							validateClientMetadata: (raw) => ({ ok: true, value: raw }),
-							enrichResponseMetadata: (raw, chain) => {
+							validateClientMetadata: () => ({ ok: true, value: undefined }),
+							enrichResponseMetadata: (responseMetadata, chain, context) => {
+								const raw = responseMetadata[context.clientMetadataType] ?? {};
+
 								if (edit === "replace" || edit === "mutate-baseline") raw.default_max_age = 999;
 								if (edit === "remove") delete raw.default_max_age;
 								if (edit === "mutate-baseline")
 									(
 										chain.resolvedMetadata.openid_relying_party as Record<string, unknown>
 									).default_max_age = 999;
-								return raw;
+								return { ...responseMetadata, [context.clientMetadataType]: raw };
 							},
 						};
 						const response = await createExplicitRegistrationHandler({
@@ -11362,7 +11332,6 @@ export default (QUnit: QUnit) => {
 					},
 				};
 				const role = new OidcProviderRole({
-					replayStore: new MemoryReplayStore({ engine: testEngine }),
 					onRegistration: async (_id, value) => {
 						callbacks++;
 						t.deepEqual(value.jwks, { keys: [keys.publicKey] }, source);
@@ -11371,6 +11340,7 @@ export default (QUnit: QUnit) => {
 				});
 				await role.initialize(
 					fixtureRoleContext(role, {
+						storage: replayStorage(new MemoryReplayStore({ engine: testEngine })),
 						entityId: OP_ID,
 						crypto: FixtureCrypto.fromJWK(fed.opSigningKey),
 						trustAnchors: fed.trustAnchors,
