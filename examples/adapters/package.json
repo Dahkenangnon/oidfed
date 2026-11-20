@@ -1,0 +1,17 @@
+{
+	"name": "@oidfed/storage-examples",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"typecheck": "tsc --noEmit -p tsconfig.json",
+		"test": "tsx --test tests/adapters.test.ts"
+	},
+	"dependencies": {
+		"@oidfed/core": "workspace:*",
+		"pg": "8.16.3"
+	},
+	"devDependencies": {
+		"@types/pg": "8.15.6"
+	}
+}

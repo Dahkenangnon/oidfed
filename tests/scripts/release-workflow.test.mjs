@@ -65,6 +65,13 @@ test("release CI gate is exact-commit and rejects failed, foreign or incomplete 
 	);
 });
 
+test("publication requires the exact source storage job", async () => {
+	const name = "Storage contract (memory and PostgreSQL)";
+	await assert.rejects(checkSourceCi(SHA, ciApi({ failure: name })), /Release blocked.*Storage contract/);
+	await assert.rejects(checkSourceCi(SHA, ciApi({ missing: name })), /Missing required CI jobs.*Storage contract/);
+	assert.equal(await checkSourceCi(SHA, ciApi({ pending: true })), false);
+});
+
 test("completed CI runs identify missing required jobs without waiting", async () => {
 	const missing = "Scoped source, dependencies, and artifacts";
 	await assert.rejects(

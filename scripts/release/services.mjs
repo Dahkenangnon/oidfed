@@ -48,6 +48,7 @@ const REQUIRED = {
 		"Scripts (unit)",
 		"Packages & tools (typecheck)",
 		"Tools (Vitest)",
+		"Storage contract (memory and PostgreSQL)",
 		"Node",
 		"Bun",
 		"Deno",

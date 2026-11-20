@@ -55,6 +55,7 @@
 			"tools/**/test/**/*.ts",
 			"tools/**/test/**/*.tsx",
 			"tests/**/*.ts",
+			"examples/adapters/**/*.ts",
 			"scripts/**/*.sh",
 			"scripts/**/*.ts",
 			"!apps/**/.react-router"
