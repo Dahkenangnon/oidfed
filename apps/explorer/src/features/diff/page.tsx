@@ -15,8 +15,8 @@ import { useCallback, useState } from "react";
 import { JsonTree } from "@/components/shared/json-tree";
 import { usePageTitle } from "@/hooks/use-page-title";
 import { useSettings } from "@/hooks/use-settings";
+import { ResolvedMetadataDiff } from "../../components/shared/resolved-metadata-diff";
 import { engine } from "../../lib/crypto.js";
-import { ResolvedMetadataDiff } from "../trust-chain/components/resolved-metadata-diff";
 import { DiffForm } from "./components/diff-form";
 
 interface DiffParams {

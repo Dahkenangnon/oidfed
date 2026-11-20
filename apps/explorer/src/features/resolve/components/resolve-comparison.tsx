@@ -11,7 +11,7 @@ import {
 } from "@oidfed/ui";
 import { AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
 import { useMemo, useState } from "react";
-import { ResolvedMetadataDiff } from "../../trust-chain/components/resolved-metadata-diff";
+import { ResolvedMetadataDiff } from "../../../components/shared/resolved-metadata-diff";
 import type {
 	ResolvePerTaError,
 	ResolvePerTaOutcome,

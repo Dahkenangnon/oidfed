@@ -1,6 +1,6 @@
 import { AlertTriangle } from "lucide-react";
+import { ResolvedMetadataDiff } from "../../../components/shared/resolved-metadata-diff";
 import type { PolicyLevel } from "../hooks/use-policy-level-diff";
-import { ResolvedMetadataDiff } from "./resolved-metadata-diff";
 
 interface PolicyLevelDiffViewProps {
 	readonly levels: readonly PolicyLevel[];

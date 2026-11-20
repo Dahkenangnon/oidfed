@@ -18,13 +18,13 @@ export function IssuerTrustCard({
 	return (
 		<Card>
 			<CardHeader>
-				<CardTitle className="text-sm">Issuer Trust</CardTitle>
+				<CardTitle className="text-sm">Issuer chain discovery</CardTitle>
 			</CardHeader>
 			<CardContent className="space-y-2">
 				{issuerTrusted === true && (
 					<div className="flex items-center gap-2">
 						<ShieldCheck className="size-4 text-success-foreground" />
-						<Badge variant="success">Trusted</Badge>
+						<Badge variant="success">Chain found</Badge>
 						{trustedByTA && (
 							<span className="text-xs text-muted-foreground">
 								via <EntityLink entityId={trustedByTA} />
@@ -36,7 +36,7 @@ export function IssuerTrustCard({
 					<div className="space-y-1">
 						<div className="flex items-center gap-2">
 							<ShieldX className="size-4 text-destructive-foreground" />
-							<Badge variant="destructive">Not Trusted</Badge>
+							<Badge variant="destructive">Chain unavailable</Badge>
 						</div>
 						{issuerChainError && (
 							<p className="text-xs text-muted-foreground">{issuerChainError}</p>

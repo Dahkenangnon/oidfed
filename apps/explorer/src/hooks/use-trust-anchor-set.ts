@@ -7,7 +7,7 @@ import {
 } from "@oidfed/core";
 import { useEffect, useState } from "react";
 import { useSettings } from "@/hooks/use-settings";
-import { engine } from "../../../lib/crypto.js";
+import { engine } from "../lib/crypto.js";
 
 interface FailedAnchor {
 	readonly entityId: string;

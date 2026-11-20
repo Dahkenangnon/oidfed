@@ -5,8 +5,8 @@ import { useCallback, useState } from "react";
 import { useSettings } from "@/hooks/use-settings";
 import { extractFederationEntity } from "@/lib/jwt";
 import { engine } from "../../../lib/crypto.js";
-import { BatchHealthPanel } from "../../subordinates/components/batch-health-panel";
-import { useBatchHealth } from "../../subordinates/hooks/use-batch-health";
+import { useBatchHealth } from "../hooks/use-batch-health";
+import { BatchHealthPanel } from "./batch-health-panel";
 
 export function BatchHealthFromAuthorityPanel() {
 	const [settings] = useSettings();

@@ -9,7 +9,7 @@ import { AlertTriangle, FlaskConical } from "lucide-react";
 import { useMemo, useState } from "react";
 import { JsonTree } from "@/components/shared/json-tree";
 import { usePageTitle } from "@/hooks/use-page-title";
-import { ResolvedMetadataDiff } from "../trust-chain/components/resolved-metadata-diff";
+import { ResolvedMetadataDiff } from "../../components/shared/resolved-metadata-diff";
 import { CombinationWarnings } from "./components/combination-warnings";
 import { PolicyInputForm } from "./components/policy-input-form";
 import { PolicyTree } from "./components/policy-tree";

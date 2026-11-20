@@ -12,7 +12,7 @@ import { AlertTriangle, HeartPulse, RefreshCw, Search, X } from "lucide-react";
 import { useCallback, useState } from "react";
 import { useSearchParams } from "react-router";
 import { usePageTitle } from "@/hooks/use-page-title";
-import { BatchHealthFromAuthorityPanel } from "./components/batch-health-from-authority-panel";
+import { BatchHealthFromAuthorityPanel } from "./components/authority-batch-panel";
 import { EndpointResultsTable } from "./components/endpoint-results-table";
 import { TaKeyComparisonCard } from "./components/ta-key-comparison-card";
 import { useHealthCheck } from "./hooks/use-health-check";

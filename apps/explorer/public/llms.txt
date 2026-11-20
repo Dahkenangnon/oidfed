@@ -14,7 +14,7 @@ OidFed Explorer is a tool, not a library and not the @oidfed project home. It is
 - **Topology Graph** (`/topology`) — render a federation's hierarchy as a directed graph from a Trust Anchor down through intermediates to leaves.
 - **Subordinate Listing** (`/subordinates`) — browse an authority's subordinates via `federation_list_endpoint`, filtered by entity type or intermediate status.
 - **Expiration Dashboard** (`/expiry`) — show candidate-chain expiry for an authority’s immediate subordinates. It does not scan the full hierarchy or predict key rotation.
-- **Trust Mark Viewer** (`/trust-marks`) — fetch and validate trust marks, check status via the issuer's status endpoint.
+- **Trust Mark Viewer** (`/trust-marks`) — inspect claims and delegation, check signatures with keys fetched from the issuer's Entity Configuration, and query the issuer's status endpoint. Issuer chain discovery uses keys fetched from configured Trust Anchors. Accreditation decisions require independently trusted keys and issuer authorization. [Trust Mark validation workflow](https://github.com/Dahkenangnon/oidfed/blob/main/docs/features/6.4.trust-mark-validation.md)
 - **Policy Simulator** (`/policy`) — apply OpenID Federation 1.0 §6 metadata policy operators (`subset_of`, `value`, `add`, etc.) against sample metadata and see the resolved output.
 - **Health Check** (`/health`) — probe the app’s supported set of advertised federation endpoints and show their responses.
 - **Metadata Diff** (`/diff`) — compare an entity's self-declared metadata against the TA-resolved metadata (after policy cascade).
@@ -32,6 +32,6 @@ Preferences persist in `localStorage` under `oidfed-explorer-settings` — confi
 
 ## Technical notes
 
-- Federation operations use `@oidfed/core`; the interface also depends on React and UI packages.
+- Federation operations use `@oidfed/core` with the browser Web Crypto adapter from `@oidfed/crypto/web`. The interface uses React and shared UI components.
 - Router: hash-based (`#/entity`, `#/chain`, etc.) for zero-config static deployment.
-- License: MIT (this app). Library dependency: @oidfed/core (Apache-2.0).
+- License: MIT (this app). Federation libraries: `@oidfed/core` and `@oidfed/crypto` (Apache-2.0).

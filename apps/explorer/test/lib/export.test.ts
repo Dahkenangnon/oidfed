@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { downloadJson, downloadText } from "@/lib/export";
+import { downloadJson, downloadText } from "@/lib/download";
 
 // jsdom doesn't provide URL.createObjectURL/revokeObjectURL
 if (typeof URL.createObjectURL !== "function") {

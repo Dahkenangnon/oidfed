@@ -104,7 +104,7 @@ Policy Simulator accepts local JSON without network access. For an example, use 
 
 ## Trust Mark inspection limits
 
-The current Trust Mark Viewer verifies a mark with keys fetched from its issuer's Entity Configuration. Its issuer-trust indicator looks for a discovered chain using downloaded anchor keys; it does not perform full `validateTrustChain()` validation against independently pinned keys. Treat that view as inspection, not as an accreditation decision. Host applications should use the library's [issuer-trust and mark-validation workflow](../../../docs/features/6.4.trust-mark-validation.md).
+The Trust Mark Viewer checks the signature using keys fetched from the issuer's Entity Configuration. Its issuer chain discovery result uses keys fetched from configured Trust Anchors. For accreditation decisions, validate the issuer's chain with independently trusted keys and confirm the issuer is authorized for the Trust Mark type. [Trust Mark validation workflow](../../../docs/features/6.4.trust-mark-validation.md)
 
 ## Troubleshooting
 

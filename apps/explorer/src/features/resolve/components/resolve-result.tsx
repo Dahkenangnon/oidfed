@@ -13,7 +13,7 @@ import {
 import { CopyButton } from "@/components/shared/copy-button";
 import { EntityLink } from "@/components/shared/entity-link";
 import { JsonTree } from "@/components/shared/json-tree";
-import { ResolvedMetadataDiff } from "../../trust-chain/components/resolved-metadata-diff";
+import { ResolvedMetadataDiff } from "../../../components/shared/resolved-metadata-diff";
 
 interface ResolveResultProps {
 	readonly payload: ResolveResponsePayload;

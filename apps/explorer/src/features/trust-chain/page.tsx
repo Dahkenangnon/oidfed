@@ -4,6 +4,9 @@ import { CheckCircle, Link, XCircle } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useParams } from "react-router";
 import { usePageTitle } from "@/hooks/use-page-title";
+import { ResolvedMetadataDiff } from "../../components/shared/resolved-metadata-diff";
+import { NoTrustAnchorsWarning } from "../../components/shared/trust-anchor-warning";
+import { useTrustAnchorSet } from "../../hooks/use-trust-anchor-set";
 import { ChainComparisonView } from "./components/chain-comparison-view";
 import { ChainExpirationBar } from "./components/chain-expiration-bar";
 import { ChainForm } from "./components/chain-form";
@@ -12,16 +15,13 @@ import { ChainSelector } from "./components/chain-selector";
 import { ChainTimeline } from "./components/chain-timeline";
 import { ConstraintPanel } from "./components/constraint-panel";
 import { CriticalOperators } from "./components/critical-operators";
-import { NoTrustAnchorsWarning } from "./components/no-trust-anchors-warning";
 import { PolicyLevelDiffView } from "./components/policy-level-diff-view";
 import { PolicyMergeView } from "./components/policy-merge-view";
-import { ResolvedMetadataDiff } from "./components/resolved-metadata-diff";
 import { TrustMarkList } from "./components/trust-mark-list";
 import { useChainComparison } from "./hooks/use-chain-comparison";
 import { useChainResolution } from "./hooks/use-chain-resolution";
 import { useChainValidation } from "./hooks/use-chain-validation";
 import { usePolicyLevelDiff } from "./hooks/use-policy-level-diff";
-import { useTrustAnchorSet } from "./hooks/use-trust-anchor-set";
 
 export function TrustChainPage() {
 	usePageTitle("Trust Chain — OidFed Explorer");

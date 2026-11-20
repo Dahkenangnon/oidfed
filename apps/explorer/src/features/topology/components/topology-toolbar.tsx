@@ -21,7 +21,7 @@ import {
 	X,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { downloadText, exportDot, exportMermaid } from "@/lib/topology-export";
+import { downloadText, exportDot, exportMermaid } from "@/features/topology/export";
 import type { UseTopologyGraphResult } from "../hooks/use-topology-graph";
 import type { LayoutDirection, SubordinateFilters } from "../types";
 

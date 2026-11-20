@@ -38,7 +38,7 @@ vi.mock("@/features/resolve/components/resolve-result", () => ({
 	),
 }));
 
-vi.mock("@/features/trust-chain/components/resolved-metadata-diff", () => ({
+vi.mock("@/components/shared/resolved-metadata-diff", () => ({
 	ResolvedMetadataDiff: () => <div data-testid="metadata-diff" />,
 }));
 

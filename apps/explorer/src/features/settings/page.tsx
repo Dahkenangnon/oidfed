@@ -25,7 +25,7 @@ import { useSearchParams } from "react-router";
 import { usePageTitle } from "@/hooks/use-page-title";
 import { useSettings } from "@/hooks/use-settings";
 import { useTheme } from "@/hooks/use-theme";
-import { downloadJson } from "@/lib/export";
+import { downloadJson } from "@/lib/download";
 import { SettingsSchema } from "@/lib/settings";
 import { UrlImportPreview } from "./components/url-import-preview.js";
 

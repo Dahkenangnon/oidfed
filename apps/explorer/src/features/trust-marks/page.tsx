@@ -48,8 +48,10 @@ export function TrustMarkViewerPage() {
 				<div className="h-1 w-8 rounded-full bg-brand-500" />
 				<h1 className="text-2xl font-semibold tracking-tight">Trust Mark Viewer</h1>
 				<p className="text-sm text-muted-foreground">
-					Decode, verify, and inspect a Trust Mark JWT — including signature validation and
-					delegation chain
+					Inspect Trust Mark claims and delegation. Signature checks use keys fetched from the
+					issuer’s Entity Configuration. Chain discovery uses keys fetched from configured Trust
+					Anchors. Use independently trusted keys and issuer authorization for accreditation
+					decisions.
 				</p>
 			</div>
 
