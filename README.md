@@ -26,77 +26,48 @@ See the [OpenID Federation ecosystem](https://oidfed.com/ecosystem/) for related
 
 | Package | Use it for |
 |---|---|
-| [`@oidfed/crypto`](docs/api/crypto/README.md) | Portable crypto engines, signing custody, keyring snapshots and compact JWS utilities; independent of existing host crypto APIs. |
-| [`@oidfed/core`](docs/api/core/README.md) | Entity Statements, trust-chain resolution and validation, metadata policy, Trust Marks, Entity Collection, and the shared storage contract. |
-| [`@oidfed/authority`](docs/api/authority/README.md) | Trust Anchors and Intermediates: subordinate management, statement issuance, and federation endpoint handlers. |
-| [`@oidfed/leaf`](docs/api/leaf/README.md) | Leaf Entity Configurations and trust-chain discovery. |
-| [`@oidfed/oidc`](docs/api/oidc/README.md) | OIDC and OAuth roles composed into an authority or leaf, with federation registration for OPs and RPs. |
-| [`@oidfed/wallet`](docs/api/wallet/README.md) | Wallet ecosystem roles, trust discovery, Wallet Attestations, presentation request policies, and credential-format integrations. |
+| [`@oidfed/crypto`](https://oidfed.com/docs/api/crypto) | Portable crypto engines, signing custody, keyring snapshots and compact JWS utilities; independent of existing host crypto APIs. |
+| [`@oidfed/core`](https://oidfed.com/docs/api/core) | Entity Statements, trust-chain resolution and validation, metadata policy, Trust Marks, Entity Collection, and the shared storage contract. |
+| [`@oidfed/authority`](https://oidfed.com/docs/api/authority) | Trust Anchors and Intermediates: subordinate management, statement issuance, and federation endpoint handlers. |
+| [`@oidfed/leaf`](https://oidfed.com/docs/api/leaf) | Leaf Entity Configurations and trust-chain discovery. |
+| [`@oidfed/oidc`](https://oidfed.com/docs/api/oidc) | OIDC and OAuth roles composed into an authority or leaf, with federation registration for OPs and RPs. |
+| [`@oidfed/wallet`](https://oidfed.com/docs/api/wallet) | Wallet ecosystem roles, trust discovery, Wallet Attestations, presentation request policies, and credential-format integrations. |
 
-Install the host and roles your app uses, for example `pnpm add @oidfed/leaf @oidfed/wallet` or `pnpm add @oidfed/authority @oidfed/oidc`. Each host and role package brings in `@oidfed/core`. Declare core or `@oidfed/crypto` directly when your application imports from them. Both `@oidfed/crypto/web` and `@oidfed/crypto/jose` are entry points in `@oidfed/crypto`. Install `jose` alongside it only for the JOSE adapter. A React Native app can supply its own engine, signer, keyring, and storage adapter. Verify the transport APIs and native backend on the devices you support.
-
-In the topology below, the Trust Anchor and Intermediate use `@oidfed/authority`. The Leaves use `@oidfed/leaf`.
-
-```mermaid
-flowchart TD
-    TA["Trust Anchor<br/>@oidfed/authority"]
-    IA["Intermediate Authority<br/>@oidfed/authority"]
-    L1["Leaf Entity<br/>@oidfed/leaf"]
-    L2["Leaf Entity<br/>@oidfed/leaf"]
-
-    TA -->|issues Subordinate Statements| IA
-    TA -->|issues Subordinate Statements| L1
-    IA -->|issues Subordinate Statements| L2
-```
+Install the host and protocol packages your application uses. Add Core or Crypto directly when your code imports them.
 
 ## Usage
 
-A Trust Anchor exposes a self-signed Entity Configuration and endpoints for fetching and listing its subordinates. Install the packages used in this example.
+Create a Trust Anchor with your [crypto engine and federation keyring](https://oidfed.com/docs/api/crypto).
 
 ```sh
-pnpm add @oidfed/authority @oidfed/core @oidfed/crypto
+pnpm add @oidfed/authority @oidfed/core
 ```
 
 ```ts
-import { StaticKeyring, type Signer } from "@oidfed/crypto";
-import { createWebCryptoEngine } from "@oidfed/crypto/web";
 import { TrustAnchor } from "@oidfed/authority";
-import { MemoryFederationStorage } from "@oidfed/core";
+import { MemoryFederationStorage, type CryptoContext } from "@oidfed/core";
 
-export async function createAuthority(federationSigner: Signer) {
-  const engine = createWebCryptoEngine(); // Choose or inject a backend in the application.
-  const authority = await TrustAnchor.create({
-    entityId: "https://ta.example.org",
-    crypto: { engine, keyring: new StaticKeyring({ signers: { federation: federationSigner } }) },
-    storage: new MemoryFederationStorage({ namespace: "https://ta.example.org" }),
-    metadata: { federation_entity: {
-      federation_fetch_endpoint: "https://ta.example.org/federation_fetch",
-      federation_list_endpoint: "https://ta.example.org/federation_list",
-    } },
+export function createAnchor(crypto: CryptoContext) {
+  const entityId = "https://anchor.example";
+  return TrustAnchor.create({
+    entityId,
+    crypto,
+    storage: new MemoryFederationStorage({ namespace: entityId }),
+    metadata: {
+      federation_entity: {
+        federation_fetch_endpoint: `${entityId}/fetch`,
+        federation_list_endpoint: `${entityId}/list`,
+      },
+    },
   });
-  return { authority, handleRequest: (request: Request) => authority.handleRequest(request) };
 }
 ```
 
-Mount `handleRequest` in your HTTP server or worker and serve the Entity Identifier over HTTPS. Routes follow the advertised endpoint paths. The Entity Configuration is available at `https://ta.example.org/.well-known/openid-federation`.
+Serve requests through `anchor.handleRequest(request)` over HTTPS and configure [durable storage](https://oidfed.com/docs/features/11.6.storage-adapters) for deployment.
 
-The application supplies a stable `Signer`; `SoftwareSigner` from `@oidfed/crypto/web` is available for software custody. For deployment, use durable key management and a `FederationStorage` adapter. See the [crypto migration guide](docs/api/migration-v3.md#host-provided-crypto) for custom engines and opaque key handles. The [wiring guide](docs/features/11.5.http-wiring.md) covers HTTP integration, subordinate enrollment, and OP/RP registration. The [storage guide](docs/features/11.6.storage-adapters.md) defines persistence, transaction, replay, and cache contracts.
+## Resources
 
-For an assurance profile, set `options.allowedFederationAlgorithms` to the algorithms the host may use and accept with Federation Entity Keys. OIDC and wallet protocol keys follow their role settings. Applications can register additional algorithms and public JWK formats. See the [custom crypto example](docs/examples/custom-crypto.ts).
-
-Use a Trust Anchor when participants configure this entity as a root of trust, an Intermediate for a subordinate authority, and a Leaf for a participant that does not issue Subordinate Statements. A Trust Anchor can also have Superiors when it participates in another federation. These roles are independent of the application protocol. Trust-chain validation requires a configured set of trusted anchors and their public federation keys.
-
-For OIDC/OAuth applications, compose the appropriate [protocol role](docs/api/oidc/README.md) into the parent entity. Keep federation signing keys separate from protocol keys used for Request Objects and client assertions.
-
-## Example federation
-
-The [example federation repository](https://github.com/Dahkenangnon/fed-oidfed-com) demonstrates six topologies, including hierarchical and multi-anchor federations, cross-federation trust, constraints, and metadata policies. Browse the [demo federation](https://fed.oidfed.com) with the [Explorer](https://explore.oidfed.com).
-
-## Documentation and applications
-
-- [Documentation](docs/README.md): package APIs and integration guides.
-- [v3 migration guide](docs/api/migration-v3.md): upgrade dependencies, host configuration, registration, and storage.
-- [Explorer](https://explore.oidfed.com): inspect Entity Configurations, trust chains, metadata policies, and Trust Marks in the browser.
-- [Learn OpenID Federation](https://learn.oidfed.com): an interactive course on federation concepts and protocol flows.
-- [Security policy](SECURITY.md): vulnerability reporting.
-- [Contributing](CONTRIBUTING.md): repository setup, development, and verification commands.
+- [Documentation](https://oidfed.com/docs) and [v3 migration guide](https://oidfed.com/docs/api/migration-v3)
+- [Demo federations](https://fed.oidfed.com) and [Explorer](https://explore.oidfed.com)
+- [Learn OpenID Federation](https://learn.oidfed.com)
+- [Security policy](https://github.com/Dahkenangnon/oidfed/blob/main/SECURITY.md) and [Contributing](https://github.com/Dahkenangnon/oidfed/blob/main/CONTRIBUTING.md)
