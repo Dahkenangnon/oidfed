@@ -8,6 +8,8 @@ import { archive, bundle, SHA } from "./fixtures/release.mjs";
 import { loadArtifacts, inspectArchive } from "../../scripts/release/artifacts.mjs";
 import { parseTag, publicationOrder, TARGETS } from "../../scripts/release/catalog.mjs";
 
+import { stageLibraryArchives } from "../../scripts/check-crypto-isolation.mjs";
+
 test("saved archives retain per-package identities and reject mutation or foreign origins", () => {
 	const parent = mkdtempSync(join(tmpdir(), "oidfed-release-bundle-")),
 		dir = join(parent, "bundle");
@@ -79,4 +81,32 @@ test("release tags and dependencies are validated independently of input order",
 			publicationOrder([{ ...core, dependencies: { "@oidfed/authority": "^2.0.0" } }, dependent]),
 		/Cyclic/,
 	);
+});
+
+test("the consumer uses the saved bytes of all library archives", () => {
+	const parent = mkdtempSync(join(tmpdir(), "oidfed-release-consumer-"));
+	try {
+		const directory = join(parent, "bundle");
+		const consumer = join(parent, "consumer");
+		mkdirSync(consumer);
+		const { packages } = bundle(directory);
+		const libraries = packages.filter(({ scope }) => scope !== "cli");
+		const paths = Object.fromEntries(libraries.map(({ scope, file }) => [scope, join(directory, file)]));
+		const staged = stageLibraryArchives(consumer, paths);
+		assert.equal(Object.keys(staged).length, 6);
+		for (const { scope, name } of libraries) {
+			assert.equal(staged[name], "file:./" + scope + ".tgz");
+			assert.deepEqual(readFileSync(join(consumer, scope + ".tgz")), readFileSync(paths[scope]));
+		}
+		const { wallet: _missing, ...incomplete } = paths;
+		assert.throws(() => stageLibraryArchives(consumer, incomplete), /Missing saved wallet tarball/);
+	} finally {
+		rmSync(parent, { recursive: true, force: true });
+	}
+});
+
+test("a v3 batch accepts Crypto 1.0.0 and publishes it before Core", () => {
+	const crypto = { name: "@oidfed/crypto", version: "1.0.0", dependencies: {} };
+	const core = { name: "@oidfed/core", version: "3.0.0", dependencies: { "@oidfed/crypto": "^1.0.0" } };
+	assert.deepEqual(publicationOrder([core, crypto]), [crypto, core]);
 });

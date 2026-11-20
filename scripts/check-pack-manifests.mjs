@@ -198,6 +198,20 @@ export function inspectPackedManifest(pkg, target, options = {}) {
 		);
 	}
 	pushIfMissing(violations, pkg.sideEffects === false, `${label}: sideEffects must be false`);
+	if (["core", "oidc", "wallet"].includes(target.scope)) {
+		pushIfMissing(
+			violations,
+			typeof pkg.dependencies?.zod === "string" && pkg.dependencies.zod.length > 0,
+			`${label}: zod must be a runtime dependency`,
+		);
+		for (const bucketName of ["peerDependencies", "devDependencies", "optionalDependencies"]) {
+			pushIfMissing(
+				violations,
+				pkg[bucketName]?.zod === undefined,
+				`${label}: zod must not appear in ${bucketName}`,
+			);
+		}
+	}
 	if (target.scope === "crypto") {
 		for (const name of ["web", "jose"]) {
 			pushIfMissing(

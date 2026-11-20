@@ -55,8 +55,11 @@ async function scannerWorkspace(prefix = "oidfed-runner-scanner-") {
 		"eslint-rules.mjs",
 	])
 		await copyFile(join(root, "scripts/security", file), join(scripts, file));
+	await mkdir(join(temporary, "scripts/release"));
+	await copyFile(join(root, "scripts/release/catalog.mjs"), join(temporary, "scripts/release/catalog.mjs"));
 	for (const dependency of [
 		"esbuild",
+		"semver",
 		"typescript",
 		"yaml",
 		"eslint",
@@ -204,6 +207,8 @@ async function dependencyFixture(walletAtBase) {
 			JSON.stringify({ name: `@oidfed/${name}` }),
 		);
 	}
+	await mkdir(join(temporary, "tools/cli"), { recursive: true });
+	await writeFile(join(temporary, "tools/cli/package.json"), JSON.stringify({ name: "@oidfed/cli" }));
 	const git = (...args) => {
 		const result = spawnSync(
 			"git",
@@ -224,7 +229,7 @@ async function dependencyFixture(walletAtBase) {
 		return result.stdout.trim();
 	};
 	git("init", "-q");
-	git("add", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "packages");
+	git("add", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "packages", "tools");
 	git("commit", "-qm", "baseline");
 	const base = git("rev-parse", "HEAD");
 	const executables = join(temporary, "fixture-bin");
@@ -242,7 +247,7 @@ async function dependencyFixture(walletAtBase) {
 		{ mode: 0o755 },
 	);
 	const graph = (version) =>
-		["core", "authority", "leaf", "oidc", "wallet", "crypto"].map((name) => ({
+		["core", "authority", "leaf", "oidc", "wallet", "crypto", "cli"].map((name) => ({
 			name: `@oidfed/${name}`,
 			...(name === "core"
 				? { dependencies: { jose: { version }, zod: { version: "4.4.3" } } }

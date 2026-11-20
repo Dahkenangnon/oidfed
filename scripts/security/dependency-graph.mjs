@@ -1,7 +1,11 @@
 /** Translate pnpm's resolved production graph into a scoped OSV input. */
 
 import { execFileSync } from "node:child_process";
-import { packages, selectors, root } from "./scope.mjs";
+import { TARGETS } from "../release/catalog.mjs";
+import { root } from "./scope.mjs";
+
+const packageNames = new Set(TARGETS.map(({ name }) => name));
+const selectors = TARGETS.flatMap(({ name }) => ["--filter", name]);
 
 /** Only compare complete historical inputs; an absent package requires a full current scan. */
 export function baselineFiles(base, cwd = root) {
@@ -15,7 +19,7 @@ export function baselineFiles(base, cwd = root) {
 		"package.json",
 		"pnpm-lock.yaml",
 		"pnpm-workspace.yaml",
-		...packages.map((name) => `packages/${name}/package.json`),
+		...TARGETS.map(({ dir }) => `${dir}/package.json`),
 	];
 	const paths = new Set(
 		execFileSync("git", ["ls-tree", "-r", "--name-only", "-z", base, "--", ...required], {
@@ -46,7 +50,7 @@ export function registryPackages(projects) {
 		}
 	}
 	for (const project of projects) {
-		if (!packages.some((name) => project.name === `@oidfed/${name}`))
+		if (!packageNames.has(project.name))
 			throw new Error("Production graph includes an out-of-scope workspace");
 		visit(project.dependencies);
 		visit(project.optionalDependencies);
@@ -72,14 +76,13 @@ export function productionGraph(cwd = root) {
 		{ cwd, encoding: "utf8", maxBuffer: 10 * 1024 * 1024 },
 	);
 	const projects = JSON.parse(json);
-	const expected = new Set(packages.map((name) => `@oidfed/${name}`));
 	if (
 		!Array.isArray(projects) ||
-		projects.length !== expected.size ||
-		new Set(projects.map((project) => project.name)).size !== expected.size ||
-		projects.some((project) => !expected.has(project.name))
+		projects.length !== packageNames.size ||
+		new Set(projects.map((project) => project.name)).size !== packageNames.size ||
+		projects.some((project) => !packageNames.has(project.name))
 	)
-		throw new Error("Incomplete specification-package graph");
+		throw new Error("Incomplete published-package dependency graph");
 	return registryPackages(projects);
 }
 

@@ -102,6 +102,9 @@ function baseManifest(target, overrides = {}) {
 		manifest.engines = { node: NODE_ENGINE };
 		manifest.bin = { oidfed: "./dist/bin.js", openidfed: "./dist/bin.js" };
 	}
+	if (["core", "oidc", "wallet"].includes(target.scope)) {
+		manifest.dependencies = { zod: "^4.6.7" };
+	}
 	if (target.scope === "crypto") {
 		manifest.typesVersions = { "*": { web: ["./dist/web.d.ts"], jose: ["./dist/jose.d.ts"] } };
 		for (const name of ["web", "jose"])
@@ -177,13 +180,28 @@ describe("inspectPackedManifest", () => {
 
 	it("rejects stale internal dependency ranges", () => {
 		const manifest = baseManifest(targets.oidc, {
-			dependencies: { zod: "4.4.3" },
 			peerDependencies: { "@oidfed/core": "^0.7.0" },
 		});
 
 		const out = inspect(manifest, targets.oidc);
 		assert.equal(out.length, 1);
 		assert.match(out[0], /expected \^0\.8\.0/);
+	});
+
+	it("requires Zod to appear only under runtime dependencies", () => {
+		for (const target of [targets.core, targets.oidc, targets.wallet]) {
+			for (const bucket of ["peerDependencies", "devDependencies", "optionalDependencies"]) {
+				const moved = baseManifest(target, { dependencies: {}, [bucket]: { zod: "^4.6.7" } });
+				const duplicate = baseManifest(target, { [bucket]: { zod: "^4.6.7" } });
+
+				assert.ok(
+					inspect(moved, target).some((message) => message.endsWith("zod must be a runtime dependency")),
+				);
+				assert.ok(
+					inspect(duplicate, target).some((message) => message.endsWith(`zod must not appear in ${bucket}`)),
+				);
+			}
+		}
 	});
 
 	it("rejects missing packed entrypoint metadata", () => {

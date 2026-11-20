@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import ts from "typescript";
@@ -110,9 +110,33 @@ for (const load of [name => import(name), name => require(name)]) {
     assert.equal(await hostEngine.verify({...softwareParsed,key:software.publicJwk,algorithm:'ES256'}),true);
     const federation = await load('@oidfed/core');
     const {Leaf} = await load('@oidfed/leaf');
-    const {TrustAnchor,Intermediate,MemoryStorageAdapter} = await load('@oidfed/authority');
-    const {OidcRelyingPartyRole,OidcProviderRole} = await load('@oidfed/oidc');
-    const {WalletProviderRole} = await load('@oidfed/wallet');
+    const authorityExports = await load('@oidfed/authority');
+    const oidcExports = await load('@oidfed/oidc');
+    const walletExports = await load('@oidfed/wallet');
+    const coreValues = new Set(Object.values(federation).filter(value =>
+      typeof value === 'function' || (value !== null && typeof value === 'object')));
+    for (const [packageName,exports] of Object.entries({authority:authorityExports,leaf:await load('@oidfed/leaf'),oidc:oidcExports,wallet:walletExports})) {
+      for (const [name,value] of Object.entries(exports)) {
+        assert(!coreValues.has(value), packageName + ' re-exports Core value ' + name);
+        if (typeof value !== 'function') continue;
+        for (let owner = value; owner && owner !== Function.prototype; owner = Object.getPrototypeOf(owner)) {
+          for (const [member,descriptor] of Object.entries(Object.getOwnPropertyDescriptors(owner))) {
+            assert(!coreValues.has(descriptor.value), packageName + '.' + name + '.' + member + ' aliases Core');
+          }
+        }
+      }
+    }
+    assert(!('discoverEntity' in Leaf));
+    assert(!('OIDCRegistrationAdapter' in oidcExports));
+    const {TrustAnchor,Intermediate} = authorityExports;
+    assert(!('setTrustMarkIssuers' in Intermediate.prototype));
+    assert(!('setTrustMarkOwners' in Intermediate.prototype));
+    assert.equal('InvalidMetadata' in authorityExports, false);
+    assert.equal('InvalidSubordinateRecord' in authorityExports, false);
+    assert.equal(typeof federation.InvalidMetadata, 'function');
+    assert.equal(typeof federation.InvalidSubordinateRecord, 'function');
+    const {OidcRelyingPartyRole,OidcProviderRole} = oidcExports;
+    const {WalletProviderRole} = walletExports;
     const keyring = new core.StaticKeyring({signers:{federation:signer,request_object:software,wallet_attestation:software},aliases:{client_assertion:'request_object'}});
     const crypto = {engine:hostEngine,keyring};
     const clock = {now:()=>1500};
@@ -129,12 +153,12 @@ for (const load of [name => import(name), name => require(name)]) {
     const attestation = await wallet.createWalletAttestation({subject:'wallet',confirmationKey:publicJwk,expiresAt:2000});
     assert.equal(attestation.ok,true);
     assert.equal((await new federation.JwsService({engine:hostEngine,clock}).verifyJwt(attestation.value,{keys:[software.publicJwk]},{typ:{expected:'oauth-client-attestation+jwt'},keyId:'allow-single-key'})).ok,true);
-    const cache = new federation.MemoryCache({clock});
-    await cache.set('sample',{map:new Map([['nested',{value:1}]])},60);
-    const cached = federation.cloneData(await cache.get('sample')); cached.map.get('nested').value=2;
-    assert.equal((await cache.get('sample')).map.get('nested').value,1);
+    const cache = new federation.MemoryFederationStorage({namespace:"test-cache",capabilities:["cache"],clock}).cache;
+    await cache.set('sample',{nested:{value:1}},60);
+    const cached = federation.cloneData(await cache.get('sample')); cached.nested.value=2;
+    assert.equal((await cache.get('sample')).nested.value,1);
     assert.match(await federation.ecCacheKey('https://rp.example',hostEngine),/^ec:/);
-    const replay = new federation.MemoryReplayStore({engine:hostEngine,clock});
+    const replay = new federation.MemoryFederationStorage({namespace:"test-replay",capabilities:["replay"],clock}).replay;
     const claim = {issuer:'issuer',audience:'audience',jti:'id',expiresAt:2000};
     assert.equal(await replay.useJti(claim),true); assert.equal(await replay.useJti(claim),false);
     for (const Host of [TrustAnchor,Intermediate]) {
@@ -152,7 +176,7 @@ for (const load of [name => import(name), name => require(name)]) {
       const role=new ManagedRole({signing:{requestObject:'request_object'},metadata:{redirect_uris:[entityId+'/callback']}});
       let refreshedPolicy;
       const collection={trustAnchors:new Map([[entityId,{jwks:{keys:[publicJwk]}}]]),options:{engine:{...hostEngine},allowedAlgorithms:['ES256','RS256'],maxCompactBytes:9000,maxVerificationCandidates:10},collector:async({options})=>{refreshedPolicy=options;return federation.ok([]);}};
-      const authority=await Host.create({entityId,crypto:selected,roles:[role],collection,storage:new MemoryStorageAdapter({engine:hostEngine}),...(Host===Intermediate?{authorityHints:['https://ta.example']}:{}),metadata:{federation_entity:{federation_fetch_endpoint:entityId+'/fetch',federation_list_endpoint:entityId+'/list'}},options:{clock,allowedAlgorithms:['ES256'],maxCompactBytes:5000,maxVerificationCandidates:2}});
+      const authority=await Host.create({entityId,crypto:selected,roles:[role],collection,storage:new federation.MemoryFederationStorage({namespace:entityId,clock}),...(Host===Intermediate?{authorityHints:['https://ta.example']}:{}),metadata:{federation_entity:{federation_fetch_endpoint:entityId+'/fetch',federation_list_endpoint:entityId+'/list'}},options:{clock,allowedAlgorithms:['ES256'],maxCompactBytes:5000,maxVerificationCandidates:2}});
       const subordinate='https://sub.example';
       await authority.registerSubordinate({entityId:subordinate,jwks:{keys:[publicJwk]}});
       await authority.getSubordinateStatement(subordinate);
@@ -170,7 +194,7 @@ for (const load of [name => import(name), name => require(name)]) {
       assert.equal((await federation.verifyEntityStatement(await authority.getEntityConfiguration(),{keys:[publicJwk]},{engine:hostEngine,clock})).ok,true);
     }
     const anchor = 'https://ta.example';
-    const collection = new federation.EntityCollectionService({trustAnchors:new Map([[anchor,{jwks:{keys:[publicJwk]}}]]),options:{engine:hostEngine,clock},collector:async()=>federation.ok(['https://one.example','https://two.example'].map(entity_id=>({entity:{entity_id},expiresAt:2000})))});
+    const collection = new federation.EntityCollectionService({trustAnchors:new Map([[anchor,{jwks:{keys:[publicJwk]}}]]),options:{engine:hostEngine,clock,storage:new federation.MemoryFederationStorage({namespace:anchor,clock,capabilities:["entityCollection"]})},collector:async()=>federation.ok(['https://one.example','https://two.example'].map(entity_id=>({entity:{entity_id},expiresAt:2000})))});
     const refreshed=await collection.refresh(anchor); assert.equal(refreshed.ok,true,JSON.stringify(refreshed));
     const page=await collection.query({trustAnchor:anchor,limit:1});assert.equal(page.ok,true);assert.equal(page.value.entities.length,1);assert.equal(typeof page.value.next,'string');
     const following=await collection.query({trustAnchor:anchor,from:page.value.next});assert.equal(following.ok,true);assert.equal(following.value.entities[0].entity_id,'https://two.example');
@@ -205,22 +229,124 @@ for (const load of [name => import(name), name => require(name)]) {
 }
 `;
 
-/** Compile the actual quick starts against the declarations installed from tarballs. */
+function markedExamples() {
+	return ["docs/api", "docs/features"].flatMap((directory) =>
+		readdirSync(join(root, directory), { recursive: true })
+			.filter((file) => file.endsWith(".md"))
+			.sort()
+			.flatMap((file) => {
+				const source = `${directory}/${file}`;
+				const markdown = readFileSync(join(root, source), "utf8");
+				const examples = [
+					...markdown.matchAll(/^<!-- oidfed-example -->\n```(?:ts|typescript)\n([\s\S]*?)^```$/gm),
+				];
+				assert.equal(
+					examples.length,
+					[...markdown.matchAll(/^<!-- oidfed-example -->$/gm)].length,
+					`Each example marker in ${source} must precede a TypeScript block`,
+				);
+				return examples.map((match) => ({
+					source,
+					line: markdown.slice(0, match.index).split("\n").length + 2,
+					code: match[1],
+				}));
+			}),
+	);
+}
+
+/** Follow public declaration aliases through barrel files and renamed types. */
+function assertCoreTypeOwnership(consumer, program, files) {
+	const checker = program.getTypeChecker();
+	const resolveAlias = (symbol) =>
+		symbol && symbol.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(symbol) : symbol;
+	for (const file of files) {
+		const source = program.getSourceFile(file);
+		assert(source, `Missing ownership consumer in ${consumer}`);
+		const [core, ...packages] = source.statements.map((statement) => {
+			const module = checker.getSymbolAtLocation(statement.moduleSpecifier);
+			assert(module, `Cannot resolve ${statement.moduleSpecifier.text} from ${file}`);
+			return checker.getExportsOfModule(module);
+		});
+		const owned = new Set(core.map(resolveAlias));
+		function refersToCore(symbol, visited = new Set()) {
+			const target = resolveAlias(symbol);
+			if (!target || visited.has(target)) return false;
+			if (owned.has(target)) return true;
+			visited.add(target);
+			return target.declarations?.some(
+				(declaration) => ts.isTypeAliasDeclaration(declaration) &&
+					ts.isTypeReferenceNode(declaration.type) &&
+					!declaration.type.typeArguments &&
+					refersToCore(checker.getSymbolAtLocation(declaration.type.typeName), visited),
+			);
+		}
+		for (const [index, exports] of packages.entries()) {
+			const name = source.statements[index + 1].moduleSpecifier.text;
+			for (const exported of exports)
+				assert(!refersToCore(exported), `${name} re-exports Core declaration ${exported.name}`);
+		}
+	}
+}
+
+/** Compile the quick starts and marked standalone examples against packed declarations. */
 function checkDocumentedExamples(consumer) {
-	const sources = ["README.md", ...["core","crypto","authority","leaf","oidc"].map(name => "packages/" + name + "/README.md")];
-	const files = sources.flatMap((source,index) => {
-		const markdown = readFileSync(join(root,source),"utf8");
+	const sources = [
+		"README.md",
+		...["core", "crypto", "authority", "leaf", "oidc"].map((name) => `packages/${name}/README.md`),
+	];
+	const files = sources.flatMap((source, index) => {
+		const markdown = readFileSync(join(root, source), "utf8");
 		const examples = [...markdown.matchAll(/^`{3}ts\n([\s\S]*?)^`{3}$/gm)];
 		assert(examples.length, "Missing TypeScript quick start in " + source);
-		return examples.map(([,code],section) => {
-			const file = join(consumer, "quick-start-" + index + "-" + section + ".mts");
+		return examples.map(([, code], section) => {
+			const file = join(consumer, `quick-start-${index}-${section}.mts`);
 			writeFileSync(file, code);
 			return file;
 		});
 	});
-	const adapterExample = join(consumer, "custom-crypto.mts");
-	copyFileSync(join(root, "docs/examples/custom-crypto.ts"), adapterExample);
-	const program = ts.createProgram([...files, adapterExample], {
+	for (const name of ["custom-crypto", "software-crypto"]) {
+		const file = join(consumer, `${name}.mts`);
+		copyFileSync(join(root, `docs/examples/${name}.ts`), file);
+		files.push(file);
+	}
+	const examples = markedExamples();
+	assert(examples.length, "Missing standalone documentation examples");
+	const exampleSources = new Map();
+	for (const [index, { source, line, code }] of examples.entries()) {
+		const file = join(consumer, `documentation-example-${index}.mts`);
+		writeFileSync(file, "\n".repeat(line - 1) + code + "\nexport {};\n");
+		files.push(file);
+		exampleSources.set(file, source);
+	}
+	// Use the application's own Zod import and the packed Core declarations.
+	const collectionSource = `import { z } from "zod";
+import { EntityIdSchema, entityId, type EntityCollectionStore, type EntityId } from "@oidfed/core";
+const idSchema: z.ZodType<EntityId, string> = EntityIdSchema;
+const composed = z.object({ entity_id: idSchema });
+const parsed: EntityId = composed.parse({ entity_id: "https://leaf.example/" }).entity_id;
+declare const collection: EntityCollectionStore;
+void collection.publish({
+  id: "snapshot",
+  lastUpdated: 1000,
+  trustAnchor: entityId("https://anchor.example/"),
+  entries: [
+    { entity: { entity_id: entityId("https://leaf.example/") }, expiresAt: 2000, verifiedMarks: [] },
+    { entity: { entity_id: parsed }, expiresAt: 2000, verifiedMarks: [] },
+  ],
+});
+`;
+	const ownershipFiles = [];
+	for (const extension of ["mts", "cts"]) {
+		const file = join(consumer, `collection.${extension}`);
+		writeFileSync(file, collectionSource);
+		files.push(file);
+		const ownership = join(consumer, `ownership.${extension}`);
+		writeFileSync(ownership, ["core", "authority", "leaf", "oidc", "wallet"]
+			.map((name) => `import "@oidfed/${name}";`).join("\n"));
+		ownershipFiles.push(ownership);
+		files.push(ownership);
+	}
+	const program = ts.createProgram(files, {
 		strict: true,
 		exactOptionalPropertyTypes: true,
 		noEmit: true,
@@ -230,11 +356,40 @@ function checkDocumentedExamples(consumer) {
 		types: [],
 	});
 	const diagnostics = ts.getPreEmitDiagnostics(program);
-	assert.equal(diagnostics.length, 0, ts.formatDiagnostics(diagnostics, {
+	const formatHost = {
 		getCurrentDirectory: () => consumer,
-		getCanonicalFileName: file => file,
+		getCanonicalFileName: (file) => file,
 		getNewLine: () => "\n",
-	}));
+	};
+	assert.equal(
+		diagnostics.length,
+		0,
+		diagnostics.map((diagnostic) => {
+			const file = diagnostic.file?.fileName;
+			const source = exampleSources.get(file);
+			const message = ts.formatDiagnostic(diagnostic, formatHost);
+			return source ? message.replace(relative(consumer, file), () => source) : message;
+		}).join(""),
+	);
+	assertCoreTypeOwnership(consumer, program, ownershipFiles);
+	const comparison = examples.find(
+		({ source, code }) =>
+			source === "docs/features/9.6.anchor-key-consistency.md" &&
+			code.includes("export async function checkCampusKeys("),
+	);
+	assert(comparison, "Missing Trust Anchor key comparison example");
+	const compiled = ts.transpileModule(comparison.code, {
+		compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+	});
+	writeFileSync(join(consumer, "anchor-key-comparison.mjs"), compiled.outputText);
+	copyFileSync(
+		join(root, "tests/scripts/fixtures/anchor-key-comparison.mjs"),
+		join(consumer, "test-anchor-key-comparison.mjs"),
+	);
+	run(process.execPath, ["test-anchor-key-comparison.mjs"], consumer);
+	process.stdout.write(
+		`Packed documentation check OK: ${examples.length} standalone examples and Trust Anchor retry\n`,
+	);
 }
 
 function types(consumer, includeJose) {
@@ -289,43 +444,68 @@ function checkHostInstall(consumer, names, archives, packageManager) {
 		join(host, "package.json"),
 		JSON.stringify({ private: true, packageManager, dependencies, pnpm: { overrides } }),
 	);
-	writeFileSync(join(host, ".npmrc"), "auto-install-peers=false\nhoist=false\nnode-linker=isolated\n");
+	writeFileSync(
+		join(host, ".npmrc"),
+		"auto-install-peers=false\nstrict-peer-dependencies=true\nhoist=false\nnode-linker=isolated\n",
+	);
 	run("pnpm", ["install", "--prod", "--offline", "--ignore-scripts"], host);
 
-	const require = createRequire(join(host, "package.json"));
-	assert.throws(() => require.resolve("@oidfed/core"), { code: "MODULE_NOT_FOUND" });
-	const corePaths = names.map((name) => {
-		require(name);
-		return createRequire(require.resolve(name)).resolve("@oidfed/core");
-	});
-	assert.equal(new Set(corePaths).size, 1, `${names.join(" and ")} must resolve the same core`);
+	writeFileSync(
+		join(host, "entrypoints.mjs"),
+		`import assert from "node:assert/strict";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const [host, role] = process.argv.slice(2);
+for (const name of ["@oidfed/core", "zod", "jose"]) {
+	assert.throws(() => require.resolve(name), { code: "MODULE_NOT_FOUND" });
+}
+for (const name of [host, role]) {
+	require(name);
+	await import(name);
+}
+const hostRequire = createRequire(require.resolve(host));
+const roleRequire = createRequire(require.resolve(role));
+const core = hostRequire.resolve("@oidfed/core");
+assert.equal(roleRequire.resolve("@oidfed/core"), core);
+const coreRequire = createRequire(core);
+coreRequire("@oidfed/crypto");
+assert.equal(roleRequire.resolve("zod/package.json"), coreRequire.resolve("zod/package.json"));
+`,
+	);
+	run(process.execPath, ["entrypoints.mjs", ...names], host);
+	assert(!readFileSync(join(host, "pnpm-lock.yaml"), "utf8").includes("jose@"));
 }
 
-export async function checkCryptoIsolation(archivePath) {
-	const consumer = mkdtempSync(join(tmpdir(), "oidfed-crypto-consumer-"));
-	try {
-		if (archivePath) copyFileSync(archivePath, join(consumer, "crypto.tgz"));
-		else
+/** Stage the six consumer dependencies, retaining the exact saved bytes in release mode. */
+export function stageLibraryArchives(consumer, savedArchives) {
+	const dependencies = {};
+	for (const name of ["crypto", "core", "authority", "leaf", "oidc", "wallet"]) {
+		let archive;
+		if (savedArchives !== undefined) {
+			assert(savedArchives[name], "Missing saved " + name + " tarball");
+			archive = name + ".tgz";
+			copyFileSync(savedArchives[name], join(consumer, archive));
+		} else {
 			run(
 				"pnpm",
-				["--dir", join(root, "packages/crypto"), "pack", "--pack-destination", consumer],
+				["--dir", join(root, "packages", name), "pack", "--pack-destination", consumer],
 				root,
 			);
-		const dependencies = {};
-		for (const name of ["crypto", "core", "authority", "leaf", "oidc", "wallet"]) {
-			if (name !== "crypto")
-				run(
-					"pnpm",
-					["--dir", join(root, "packages", name), "pack", "--pack-destination", consumer],
-					root,
-				);
-			const archive =
-				readdirSync(consumer).find(
-					(file) => file.startsWith("oidfed-" + name + "-") && file.endsWith(".tgz"),
-				) ?? (name === "crypto" && archivePath ? "crypto.tgz" : undefined);
+			archive = readdirSync(consumer).find(
+				(file) => file.startsWith("oidfed-" + name + "-") && file.endsWith(".tgz"),
+			);
 			assert(archive, "Missing " + name + " tarball");
-			dependencies["@oidfed/" + name] = "file:./" + archive;
 		}
+		dependencies["@oidfed/" + name] = "file:./" + archive;
+	}
+	return dependencies;
+}
+
+export async function checkCryptoIsolation(savedArchives) {
+	const consumer = mkdtempSync(join(tmpdir(), "oidfed-crypto-consumer-"));
+	try {
+		const dependencies = stageLibraryArchives(consumer, savedArchives);
 		run(
 			"pnpm",
 			[
@@ -342,20 +522,23 @@ export async function checkCryptoIsolation(archivePath) {
 			(file) => file.startsWith("zod-") && file.endsWith(".tgz"),
 		);
 		assert(zodArchive, "Missing installed Zod tarball");
-		const overrides = { ...dependencies, zod: "file:./" + zodArchive };
+		const overrides = { ...dependencies };
 		const packageManager = JSON.parse(
 			readFileSync(join(root, "package.json"), "utf8"),
 		).packageManager;
-		checkHostInstall(consumer, ["@oidfed/leaf", "@oidfed/wallet"], overrides, packageManager);
-		checkHostInstall(consumer, ["@oidfed/authority", "@oidfed/oidc"], overrides, packageManager);
+		for (const names of [["@oidfed/leaf", "@oidfed/wallet"], ["@oidfed/authority", "@oidfed/oidc"]]) {
+			checkHostInstall(consumer, names, overrides, packageManager);
+		}
+		// The app and libraries use the same Zod archive in the schema-composition fixture.
+		const zodSpec = `file:./${zodArchive}`;
 		writeFileSync(
 			join(consumer, "package.json"),
 			JSON.stringify({
 				private: true,
 				type: "module",
 				packageManager,
-				dependencies,
-				pnpm: { overrides },
+				dependencies: { ...dependencies, zod: zodSpec },
+				pnpm: { overrides: { ...overrides, zod: zodSpec } },
 			}),
 		);
 		run("pnpm", ["install", "--offline", "--ignore-scripts"], consumer);
@@ -367,6 +550,16 @@ export async function checkCryptoIsolation(archivePath) {
 			!readFileSync(join(consumer, "pnpm-lock.yaml"), "utf8").includes("jose@"),
 			"Consumer lockfile unexpectedly resolves JOSE",
 		);
+		const require = createRequire(join(consumer, "package.json"));
+		const zod = require.resolve("zod/package.json");
+		for (const name of ["core", "oidc", "wallet"]) {
+			assert.equal(createRequire(require.resolve(`@oidfed/${name}`)).resolve("zod/package.json"), zod);
+		}
+		const { z: appZod } = require("zod");
+		const composed = appZod.object({ entity_id: require("@oidfed/core").EntityIdSchema });
+		const entity = { entity_id: "https://leaf.example/" };
+		assert.deepEqual(composed.parse(entity), entity);
+		assert.equal(appZod.toJSONSchema(composed).properties.entity_id.format, "uri");
 		writeFileSync(join(consumer, "runtime.mjs"), runtime);
 		run(process.execPath, ["runtime.mjs"], consumer);
 		types(consumer, false);

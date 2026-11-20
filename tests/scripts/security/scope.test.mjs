@@ -68,10 +68,11 @@ test("dependency extraction keeps exact transitive and optional versions, not de
 			},
 			devDependencies: { "app-only": { version: "99.0.0" } },
 		},
+		{ name: "@oidfed/cli", dependencies: { "cli-only": { version: "1.2.3" } } },
 	];
 	assert.deepEqual(
 		registryPackages(graph).map(({ name, version }) => `${name}@${version}`),
-		["jose@6.2.13", "optional@3.0.0", "shared@1.0.0"],
+		["cli-only@1.2.3", "jose@6.2.13", "optional@3.0.0", "shared@1.0.0"],
 	);
 	assert.throws(() => registryPackages([{ name: "@oidfed/explorer" }]), /out-of-scope/);
 	assert.throws(
@@ -99,6 +100,7 @@ test("pnpm produces the same scoped graph without an installation", async () => 
 			"package.json",
 			"pnpm-lock.yaml",
 			"pnpm-workspace.yaml",
+			"tools/cli/package.json",
 			...packages.map((name) => `packages/${name}/package.json`),
 		]) {
 			const directory = join(temporary, file, "..");

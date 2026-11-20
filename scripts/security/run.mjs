@@ -106,7 +106,7 @@ async function dependencies(temporary) {
 			);
 			graph = graph.filter((entry) => !previous.has(`${entry.name}@${entry.version}`));
 			if (graph.length === 0) {
-				console.log("No changed production dependencies in the six packages");
+				console.log("No changed production dependencies in the published packages");
 				return;
 			}
 		}
@@ -126,7 +126,7 @@ async function artifacts(temporary) {
 		: undefined;
 	await (await import("../check-crypto-isolation.mjs")).checkCryptoIsolation(
 		saved
-			? join(savedDirectory, saved.packages.find((record) => record.scope === "crypto").file)
+			? Object.fromEntries(saved.packages.map(({ scope, file }) => [scope, join(savedDirectory, file)]))
 			: undefined,
 	);
 	const consumer = join(temporary, "consumer");
