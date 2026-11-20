@@ -446,7 +446,15 @@ function checkHostInstall(consumer, names, archives, packageManager) {
 	);
 	writeFileSync(
 		join(host, ".npmrc"),
-		"auto-install-peers=false\nstrict-peer-dependencies=true\nhoist=false\nnode-linker=isolated\n",
+		[
+			"auto-install-peers=false",
+			"strict-peer-dependencies=true",
+			"hoist=false",
+			"node-linker=isolated",
+			// A warm registry metadata cache would hide missing local tarball overrides.
+			`cache-dir=${join(host, ".pnpm-cache")}`,
+			"",
+		].join("\n"),
 	);
 	run("pnpm", ["install", "--prod", "--offline", "--ignore-scripts"], host);
 
@@ -522,15 +530,15 @@ export async function checkCryptoIsolation(savedArchives) {
 			(file) => file.startsWith("zod-") && file.endsWith(".tgz"),
 		);
 		assert(zodArchive, "Missing installed Zod tarball");
-		const overrides = { ...dependencies };
+		// Every offline consumer resolves the same installed Zod tarball.
+		const zodSpec = `file:./${zodArchive}`;
+		const overrides = { ...dependencies, zod: zodSpec };
 		const packageManager = JSON.parse(
 			readFileSync(join(root, "package.json"), "utf8"),
 		).packageManager;
 		for (const names of [["@oidfed/leaf", "@oidfed/wallet"], ["@oidfed/authority", "@oidfed/oidc"]]) {
 			checkHostInstall(consumer, names, overrides, packageManager);
 		}
-		// The app and libraries use the same Zod archive in the schema-composition fixture.
-		const zodSpec = `file:./${zodArchive}`;
 		writeFileSync(
 			join(consumer, "package.json"),
 			JSON.stringify({
@@ -538,7 +546,7 @@ export async function checkCryptoIsolation(savedArchives) {
 				type: "module",
 				packageManager,
 				dependencies: { ...dependencies, zod: zodSpec },
-				pnpm: { overrides: { ...overrides, zod: zodSpec } },
+				pnpm: { overrides },
 			}),
 		);
 		run("pnpm", ["install", "--offline", "--ignore-scripts"], consumer);
