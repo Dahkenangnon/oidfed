@@ -45,15 +45,19 @@ markdown.renderer.rules.fence = (...args) => {
 	return `<figure class="docs-diagram" data-mermaid><div data-diagram-output></div><details open><summary>Diagram source</summary>${highlightCode(token.content, "mermaid")}</details></figure>\n`;
 };
 
+function navigationTitle(source: string) {
+	const firstLine = readFileSync(join(docsRoot, source), "utf8").split(/\r?\n/, 1)[0] ?? "";
+	return firstLine.replace(/^#\s+/, "").trim();
+}
+
 function featureGuideTopics() {
 	const guides = [...documentation].flatMap(([path, source]) => {
 		const match = /^features\/(\d+)\.(?:(\d+)\.)?[^/]+\.md$/.exec(source);
 		if (!match) return [];
-		const firstLine = readFileSync(join(docsRoot, source), "utf8").split(/\r?\n/, 1)[0] ?? "";
 		return [
 			{
 				path,
-				label: firstLine.replace(/^#\s+/, "").trim(),
+				label: navigationTitle(source),
 				topic: Number(match[1]),
 				order: Number(match[2] ?? 0),
 			},
@@ -72,6 +76,12 @@ function featureGuideTopics() {
 }
 
 export const guideCatalog = featureGuideTopics();
+
+export const packagePages = [...documentation].flatMap(([path, source]) =>
+	/^api\/[^/]+\/(?!README\.md$)[^/]+\.md$/.test(source)
+		? [{ path, label: navigationTitle(source) }]
+		: [],
+);
 
 function resolveLink(href: string, source: string) {
 	if (!href || href.startsWith("#") || /^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith("//")) {

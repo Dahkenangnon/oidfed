@@ -163,7 +163,7 @@ function PrimaryLinks({ mobile = false }: { mobile?: boolean }) {
 function SiteFooter() {
 	return (
 		<footer className="site-footer">
-			<div className="relative mx-auto max-w-6xl px-5 pt-12 pb-7 sm:px-8 sm:pt-16">
+			<div className="relative mx-auto max-w-6xl px-5 pt-12 pb-4 sm:px-8 sm:pt-16">
 				<div className="grid gap-10 md:gap-12">
 					<div className="flex min-w-0 flex-col items-center text-center">
 						<p className="max-w-110 text-base leading-relaxed text-muted-foreground">
@@ -210,7 +210,7 @@ function SiteFooter() {
 						OidFed
 					</Link>
 				</div>
-				<div className="flex flex-wrap items-center justify-between gap-4 border-t border-border pt-5">
+				<div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-border pt-3">
 					<p className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground sm:text-sm">
 						<span>© 2026 Justin Dah-kenangnon</span>
 						<a className="site-link" href={`${REPOSITORY}/blob/main/LICENSE`}>

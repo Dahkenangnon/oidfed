@@ -274,7 +274,7 @@
 	}
 
 	.site-footer-signature {
-		padding-block: clamp(2.5rem, 7vw, 6rem) clamp(2rem, 5vw, 4rem);
+		padding-block: clamp(2.5rem, 7vw, 6rem) clamp(0.75rem, 2vw, 1.5rem);
 	}
 
 	.site-footer-wordmark {

@@ -1,31 +1,29 @@
 import { ArrowUpRight, ChevronRight } from "lucide-react";
-import { isRouteErrorResponse, Link, NavLink } from "react-router";
+import { useEffect, useRef } from "react";
+import { isRouteErrorResponse, Link, useLocation } from "react-router";
 import { DocsArticle } from "../components/docs-article";
-import { guideCatalog, renderDocumentation } from "../lib/docs.server";
+import { guideCatalog, packagePages, renderDocumentation } from "../lib/docs.server";
 import { buildMeta, DOMAIN } from "../lib/seo";
 import type { Route } from "./+types/docs";
 import "./docs.css";
 
-const sections = [
-	["API reference", "/docs/api"],
-	["@oidfed/core", "/docs/api/core"],
-	["@oidfed/crypto", "/docs/api/crypto"],
-	["@oidfed/authority", "/docs/api/authority"],
-	["@oidfed/leaf", "/docs/api/leaf"],
-	["@oidfed/oidc", "/docs/api/oidc"],
-	["@oidfed/wallet", "/docs/api/wallet"],
-	["Migrate to v3", "/docs/api/migration-v3"],
-	["React Native", "/docs/api/react-native"],
-	["Development", "/docs/maintenance/development"],
+const packages = [
+	["Core", "/docs/api/core"],
+	["Crypto", "/docs/api/crypto"],
+	["Authority", "/docs/api/authority"],
+	["Leaf", "/docs/api/leaf"],
+	["OIDC", "/docs/api/oidc"],
+	["Wallet", "/docs/api/wallet"],
 ] as const;
 
 const featureIndex = "/docs/features";
+type DocsNavigation = Pick<Route.ComponentProps["loaderData"], "path" | "topics" | "apiPages">;
 
 export function loader({ params }: Route.LoaderArgs) {
 	const path = params["*"] ? `/docs/${params["*"].replace(/\/$/, "")}` : "/docs";
 	const page = renderDocumentation(path);
 	if (!page) throw new Response("Documentation page not found", { status: 404 });
-	return { ...page, path, topics: guideCatalog };
+	return { ...page, path, topics: guideCatalog, apiPages: packagePages };
 }
 
 export function meta({ loaderData }: Route.MetaArgs) {
@@ -64,15 +62,28 @@ export function meta({ loaderData }: Route.MetaArgs) {
 }
 
 export default function Documentation({ loaderData }: Route.ComponentProps) {
-	const { headings, html, path, source, topics } = loaderData;
+	const { headings, html, path, source, topics, apiPages } = loaderData;
+	const sidebar = useRef<HTMLElement>(null);
+
+	useEffect(() => {
+		const rail = sidebar.current;
+		const active = rail?.querySelector('[aria-current="page"]');
+		if (!rail || !active || !rail.clientHeight) return;
+		const railBounds = rail.getBoundingClientRect();
+		const linkBounds = active.getBoundingClientRect();
+		if (linkBounds.top < railBounds.top || linkBounds.bottom > railBounds.bottom) {
+			rail.scrollTop += linkBounds.top - railBounds.top - rail.clientHeight / 2;
+		}
+	}, [path]);
+
 	return (
 		<div className="docs-layout mx-auto max-w-7xl px-5 py-10 sm:px-8 sm:py-14">
 			<details key={path} className="docs-sidebar" open={path === featureIndex}>
 				<summary>Documentation menu</summary>
-				<DocumentationNav path={path} topics={topics} />
+				<DocumentationNav path={path} topics={topics} apiPages={apiPages} />
 			</details>
-			<aside className="docs-sidebar-desktop">
-				<DocumentationNav key={path} path={path} topics={topics} />
+			<aside ref={sidebar} className="docs-sidebar-desktop">
+				<DocumentationNav key={path} path={path} topics={topics} apiPages={apiPages} />
 			</aside>
 			<div className="min-w-0">
 				<DocsArticle html={html} />
@@ -98,91 +109,146 @@ export default function Documentation({ loaderData }: Route.ComponentProps) {
 	);
 }
 
-function DocumentationNav({
-	path,
-	topics,
-}: {
-	path: string;
-	topics: Route.ComponentProps["loaderData"]["topics"];
-}) {
+function DocumentationNav({ path, topics, apiPages }: DocsNavigation) {
 	return (
-		<nav aria-label="Documentation">
-			<ul className="space-y-1">
-				<li>
-					<DocumentationLink href="/docs" label="Documentation home" />
-				</li>
-				<li>
-					<details
-						className="docs-nav-branch"
-						open={path === featureIndex || path.startsWith(`${featureIndex}/`)}
-					>
-						<summary>
-							<ChevronRight aria-hidden /> Feature guides
-						</summary>
-						<ul>
-							<li>
-								<DocumentationLink href={featureIndex} label="All feature guides" />
-							</li>
-							{topics.map((topic) => (
+		<nav aria-label="Documentation" className="docs-nav">
+			<section aria-label="Get started">
+				<h2 className="docs-nav-heading">Get started</h2>
+				<ul>
+					<li>
+						<DocumentationLink href="/docs" label="Overview" />
+					</li>
+					<li>
+						<DocumentationLink href="/docs/api/migration-v3" label="Migrate to v3" />
+					</li>
+					<li>
+						<DocumentationLink href="/docs/api/react-native" label="React Native" />
+					</li>
+				</ul>
+			</section>
+			<section aria-label="Feature guides">
+				<details
+					className="docs-nav-branch docs-nav-section"
+					open={path === featureIndex || path.startsWith(`${featureIndex}/`)}
+				>
+					<summary className="docs-nav-heading">
+						Feature guides <ChevronRight aria-hidden />
+					</summary>
+					<ul>
+						<li>
+							<DocumentationLink href={featureIndex} label="Guide index" />
+						</li>
+						{topics.map((topic) => {
+							const label = guideLabel(topic.label);
+							const current =
+								path === topic.path || topic.guides.some((guide) => guide.path === path);
+							return (
 								<li key={topic.path}>
 									{topic.guides.length === 0 ? (
-										<DocumentationLink href={topic.path} label={topic.label} />
+										<DocumentationLink href={topic.path} label={label} />
 									) : (
 										<details
 											className="docs-nav-branch"
-											open={
-												path === topic.path || topic.guides.some((guide) => guide.path === path)
-											}
+											open={current}
+											data-current={current || undefined}
 										>
 											<summary>
-												<ChevronRight aria-hidden /> {topic.label}
+												<span>{label}</span> <ChevronRight aria-hidden />
 											</summary>
 											<ul>
 												<li>
 													<DocumentationLink
 														href={topic.path}
-														label="Topic overview"
-														accessibleLabel={`${topic.label} overview`}
+														label="Overview"
+														accessibleLabel={`${label} overview`}
 													/>
 												</li>
 												{topic.guides.map((guide) => (
 													<li key={guide.path}>
-														<DocumentationLink href={guide.path} label={guide.label} />
+														<DocumentationLink href={guide.path} label={guideLabel(guide.label)} />
 													</li>
 												))}
 											</ul>
 										</details>
 									)}
 								</li>
-							))}
-						</ul>
-					</details>
-				</li>
-				{sections.map(([label, href]) => (
-					<li key={href}>
-						<DocumentationLink href={href} label={label} end={!href.startsWith("/docs/api/")} />
+							);
+						})}
+					</ul>
+				</details>
+			</section>
+			<section aria-label="API reference">
+				<h2 className="docs-nav-heading">API reference</h2>
+				<ul>
+					<li>
+						<DocumentationLink href="/docs/api" label="API index" />
 					</li>
-				))}
-			</ul>
+					{packages.map(([label, href]) => {
+						const pages = apiPages.filter((page) => page.path.startsWith(`${href}/`));
+						const current = path === href || pages.some((page) => page.path === path);
+						return (
+							<li key={href} className="docs-nav-package" data-current={current || undefined}>
+								<DocumentationLink href={href} label={label} />
+								{pages.length > 0 && (
+									<details className="docs-nav-branch" open={current}>
+										<summary aria-label={`${label} reference pages`}>
+											<ChevronRight aria-hidden />
+										</summary>
+										<ul>
+											{pages.map((page) => (
+												<li key={page.path}>
+													<DocumentationLink href={page.path} label={page.label} />
+												</li>
+											))}
+										</ul>
+									</details>
+								)}
+							</li>
+						);
+					})}
+				</ul>
+			</section>
+			<section aria-label="Maintenance">
+				<h2 className="docs-nav-heading">Maintenance</h2>
+				<ul>
+					<li>
+						<DocumentationLink href="/docs/maintenance/development" label="Development" />
+					</li>
+					<li>
+						<DocumentationLink href="/docs/maintenance/security-checks" label="Security checks" />
+					</li>
+					<li>
+						<DocumentationLink href="/docs/maintenance/releases" label="Releases" />
+					</li>
+				</ul>
+			</section>
 		</nav>
 	);
+}
+
+function guideLabel(title: string) {
+	return title.replace(/^\d+(?:\.\d+)*\.\s+/, "");
 }
 
 function DocumentationLink({
 	href,
 	label,
 	accessibleLabel,
-	end = true,
 }: {
 	href: string;
 	label: string;
 	accessibleLabel?: string;
-	end?: boolean;
 }) {
+	const current = useLocation().pathname.replace(/\/$/, "") === href;
 	return (
-		<NavLink to={href} end={end} aria-label={accessibleLabel} className="docs-nav-link">
+		<Link
+			to={href}
+			aria-current={current ? "page" : undefined}
+			aria-label={accessibleLabel}
+			className="docs-nav-link"
+		>
 			{label}
-		</NavLink>
+		</Link>
 	);
 }
 

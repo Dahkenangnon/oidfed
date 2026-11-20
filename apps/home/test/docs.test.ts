@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
 	documentation,
 	guideCatalog,
+	packagePages,
 	renderDocumentation,
 	renderMarkdown,
 } from "../app/lib/docs.server";
@@ -78,6 +79,15 @@ test("the sidebar includes every numbered feature guide in numeric order", () =>
 	assert.ok(marks);
 	assert.match(marks.guides[1]?.path ?? "", /\/6\.2\./);
 	assert.match(marks.guides[9]?.path ?? "", /\/6\.10\./);
+});
+
+test("the sidebar includes the API pages under each package index", () => {
+	const expected = [...documentation.keys()].filter((path) => /^\/docs\/api\/[^/]+\//.test(path));
+	assert.deepEqual(
+		packagePages.map(({ path }) => path),
+		expected,
+	);
+	assert.ok(packagePages.every(({ label }) => label.length > 0));
 });
 
 test("known fences receive light and dark tokens and unknown fences remain escaped text", () => {
