@@ -6,6 +6,7 @@ import {
 /** Authority Entity Configuration payload construction and HTTP publication. */
 
 import {
+	assertEndpointAuthenticationCompanions,
 	buildEntityConfigurationPayload,
 	DEFAULT_ENTITY_STATEMENT_TTL_SECONDS,
 	errorResponse,
@@ -17,6 +18,7 @@ import {
 	safeLogger,
 	signEntityStatement,
 } from "@oidfed/core";
+import { InvalidAuthorityConfig } from "../errors.js";
 import type { HandlerContext } from "./context.js";
 
 const collectionNotices = new WeakSet<HandlerContext>();
@@ -42,6 +44,7 @@ export function createEntityConfigurationHandler(
 /** Builds and signs the Entity Configuration JWT from the current context. */
 export async function buildEntityConfiguration(ctx: HandlerContext): Promise<string> {
 	const publication = await composeRolePublicationMetadata(ctx.roles, ctx.metadata, ctx);
+	assertEndpointAuthenticationCompanions(publication.federation_entity, InvalidAuthorityConfig);
 	const keySet = await federationEntry(ctx.crypto, { issuer: ctx.entityId, subject: ctx.entityId });
 	const now = nowSeconds(ctx.options?.clock);
 	const ttlSeconds = ctx.entityConfigurationTtlSeconds ?? DEFAULT_ENTITY_STATEMENT_TTL_SECONDS;

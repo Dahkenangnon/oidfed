@@ -23,6 +23,7 @@ import type {
 } from "@oidfed/core";
 import {
 	type AttachTrustMarkOptions,
+	assertEndpointAuthenticationCompanions,
 	assertMetadataValuesNotNull,
 	assertPositiveTtlSeconds,
 	assessEntity,
@@ -30,6 +31,7 @@ import {
 	COLLECTION_UNORDERED_PARAMETERS,
 	type CryptoContext,
 	composeEntityMetadata,
+	createHistoricalKeysHandler,
 	decodeEntityStatement,
 	discoverEntity,
 	discoverEntityFromChain,
@@ -67,6 +69,7 @@ import {
 	SECURITY_HEADERS,
 	type SubordinateEvent,
 	safeLogger,
+	signHistoricalKeysResponse,
 	signTrustMarkDelegation,
 	type TrustAnchorSet,
 	type TrustMarkDelegationIssuanceOptions,
@@ -89,7 +92,6 @@ import {
 	type ExtendedListingConfig,
 } from "./endpoints/extended-list.js";
 import { buildSubordinateStatement, createFetchHandler } from "./endpoints/fetch.js";
-import { buildHistoricalKeys, createHistoricalKeysHandler } from "./endpoints/historical-keys.js";
 import { createListHandler } from "./endpoints/list.js";
 import { createResolveHandler } from "./endpoints/resolve.js";
 import {
@@ -447,7 +449,7 @@ function createAuthorityServerWithIdentity(
 			})
 		: undefined;
 
-	validateEndpointCompanions(meta);
+	assertEndpointAuthenticationCompanions(meta, InvalidAuthorityConfig);
 
 	function withAuth(
 		handler: (req: Request) => Promise<Response>,
@@ -855,7 +857,7 @@ function createAuthorityServerWithIdentity(
 		async getHistoricalKeys(): Promise<string> {
 			safeLogger(config.options?.logger)?.debug("Starting get historical keys");
 
-			return buildHistoricalKeys(ctx);
+			return signHistoricalKeysResponse(ctx);
 		},
 
 		handler(): (request: Request) => Promise<Response> {
@@ -869,25 +871,6 @@ function validateAuthorityEntityId(value: EntityId | string): EntityId {
 		throw new Error("entityId MUST be a valid HTTPS URL without query or fragment");
 	}
 	return value;
-}
-
-function validateEndpointCompanions(metadata: Record<string, unknown>): void {
-	for (const endpoint of [
-		"fetch",
-		"list",
-		"extended_list",
-		"subordinate_events",
-		"resolve",
-		"collection",
-		"trust_mark",
-		"trust_mark_status",
-		"trust_mark_list",
-		"historical_keys",
-	]) {
-		const name = `federation_${endpoint}_endpoint`;
-		if (metadata[`${name}_auth_methods`] !== undefined && metadata[name] === undefined)
-			throw new InvalidAuthorityConfig(`${name}_auth_methods requires ${name}`);
-	}
 }
 
 function wellKnownPathForEntityId(value: EntityId): string {
@@ -1092,7 +1075,12 @@ async function prepareAuthorityHost(
 		issuer: normalized.entityId,
 		subject: normalized.entityId,
 	});
-	await composeRolePublicationMetadata(normalized.roles, normalized.metadata, context);
+	const publication = await composeRolePublicationMetadata(
+		normalized.roles,
+		normalized.metadata,
+		context,
+	);
+	assertEndpointAuthenticationCompanions(publication.federation_entity, InvalidAuthorityConfig);
 	if (
 		normalized.metadata.federation_entity.federation_historical_keys_endpoint &&
 		!normalized.crypto.history

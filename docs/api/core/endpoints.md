@@ -8,6 +8,10 @@ Direct fetch calls use authentication and transport controls such as `signal`, `
 
 The option interfaces below inherit the full `FederationOptions` type. Chain acquisition and selection (`trustResolution`, `chainSelection`, `entityConfigurations`), Trust Mark evaluation options, policy and constraint callbacks, `authorityHintFilter`, and chain traversal limits do not run on these direct clients. In particular, `maxTotalFetches` and `maxConcurrentFetches` do not bound a standalone request, and the clients do not use statement-cache settings. Higher-level discovery operations enforce their shared fetch budget by wrapping the HTTP transport before calling endpoint clients. Pass the same options object to discovery and endpoint clients when they share transport settings.
 
+## `assertEndpointAuthenticationCompanions`
+
+Validate a host's `federation_entity` metadata before publication. Each advertised `*_auth_methods` field for a known endpoint must have the corresponding endpoint URL. Supply an optional error class to preserve the host's configuration error type. [Source](../../../packages/core/src/schemas/metadata.ts#L62)
+
 ## `buildExtendedListRequestParameters`
 
 [Source](../../../packages/core/src/federation-api/extended-list.ts#L21)
@@ -181,9 +185,21 @@ getEndpointAuthentication receives no responder. Authenticated requests use POST
 fetchExtendedSubordinatesList(endpoint: string, params: ExtendedListRequestParams | undefined, options: FederationOptions): Promise<Result<ExtendedListResponse, FederationError>>;
 ```
 
+## `signHistoricalKeysResponse`
+
+[Source](../../../packages/core/src/federation-api/historical-keys.ts#L39)
+
+Sign the entity's available historical public-key records with its current Federation Entity signer. Supply the entity ID, a crypto context with `history`, and its federation options.
+
+## `createHistoricalKeysHandler`
+
+[Source](../../../packages/core/src/federation-api/historical-keys.ts#L68)
+
+Build the shared HTTP handler for signing Historical Keys responses. The handler accepts `GET` after the host's authentication wrapper has verified and translated any authenticated `POST` request.
+
 ## `fetchHistoricalKeys`
 
-[Source](../../../packages/core/src/federation-api/historical-keys.ts#L102)
+[Source](../../../packages/core/src/federation-api/historical-keys.ts#L165)
 
 Fetch and verify a Historical Keys JWT from a federation Historical Keys endpoint.
 
@@ -193,7 +209,7 @@ fetchHistoricalKeys(endpoint: string, signerJwks: JWKSet, options: FetchHistoric
 
 ## `FetchHistoricalKeysOptions`
 
-[Source](../../../packages/core/src/federation-api/historical-keys.ts#L96)
+[Source](../../../packages/core/src/federation-api/historical-keys.ts#L159)
 
 Verification and transport settings for retrieving historical federation keys. Inherited chain-operation fields have the scope described at the top of this reference; they do not start discovery or validation here.
 
@@ -613,7 +629,7 @@ Response helpers apply these defaults:
 
 ## `selectHistoricalVerificationKey`
 
-[Source](../../../packages/core/src/federation-api/historical-keys.ts#L62)
+[Source](../../../packages/core/src/federation-api/historical-keys.ts#L125)
 
 Select a historical key usable for verifying material issued at the supplied NumericDate. Revoked keys are rejected by default. An explicitly allowed non-security reason permits only signatures strictly before revocation and within key validity; security reasons always reject the key.
 
@@ -623,7 +639,7 @@ selectHistoricalVerificationKey(keys: readonly HistoricalKeyEntry[], options: Se
 
 ## `SelectHistoricalVerificationKeyOptions`
 
-[Source](../../../packages/core/src/federation-api/historical-keys.ts#L52)
+[Source](../../../packages/core/src/federation-api/historical-keys.ts#L115)
 
 Time and revocation policy used to select a historical verification key.
 
@@ -663,7 +679,7 @@ toPublicError(error: FederationError): {
 
 ## `verifyHistoricalKeysResponse`
 
-[Source](../../../packages/core/src/federation-api/historical-keys.ts#L27)
+[Source](../../../packages/core/src/federation-api/historical-keys.ts#L90)
 
 Verify and validate a Historical Keys Response JWT.
 

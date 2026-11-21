@@ -51,6 +51,7 @@ export {
 	withMetadataJwkUse,
 } from "./jwk.js";
 export {
+	assertEndpointAuthenticationCompanions,
 	type EntityTypeMetadataMap,
 	type FederationEntityMetadata,
 	FederationEntityMetadataSchema,

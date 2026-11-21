@@ -88,6 +88,509 @@ function mockFn<A extends unknown[]>() {
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	module("leaf / historical keys", () => {
+		test("serves opted-in history signed by the current federation key", async (t) => {
+			const { config, signingKey } = await createLeafConfig();
+			const endpoint = `${config.entityId}/history?scope=keys`;
+			const inactive = await Leaf.create(config);
+			t.equal((await inactive.handleRequest(new Request(endpoint))).status, 404);
+
+			const crypto = FixtureCrypto.fromJWK(signingKey);
+			const leaf = await Leaf.create({
+				...config,
+				crypto,
+				metadata: { federation_entity: { federation_historical_keys_endpoint: endpoint } },
+			});
+			const publication = decodeEntityStatement(await leaf.getEntityConfiguration());
+			t.true(publication.ok);
+			if (publication.ok) {
+				t.equal(
+					publication.value.payload.metadata?.federation_entity
+						?.federation_historical_keys_endpoint,
+					endpoint,
+				);
+			}
+			const replacement = await generateSigningKey("ES256");
+			await crypto.keyring.publish(
+				"federation",
+				new SigningEntryFixture(replacement.privateKey).signer,
+			);
+			await crypto.keyring.activate("federation", replacement.publicKey.kid!);
+			await crypto.keyring.revoke("federation", signingKey.kid!, "compromised");
+			t.equal((await leaf.handleRequest(new Request(`${config.entityId}/history`))).status, 404);
+			t.equal((await leaf.handleRequest(new Request(endpoint, { method: "PUT" }))).status, 405);
+
+			const current = await crypto.keyring.entry("federation");
+			const result = await CorePublic.fetchHistoricalKeys(endpoint, current.publishedJwks, {
+				engine: testEngine,
+				expectedIssuer: leaf.entityId,
+				httpClient: async (input, init) => leaf.handleRequest(new Request(input, init)),
+			});
+			t.true(result.ok, JSON.stringify(result));
+			if (result.ok) {
+				t.equal(result.value.keys.length, 1);
+				t.equal(result.value.keys[0]?.kid, signingKey.kid);
+				t.equal(result.value.keys[0]?.revoked?.reason, "compromised");
+				t.false(Object.hasOwn(result.value.keys[0]!, "d"));
+			}
+			const signed = decodeEntityStatement(await leaf.getHistoricalKeys());
+			t.true(signed.ok);
+			if (signed.ok) t.equal(signed.value.header.kid, replacement.publicKey.kid);
+		});
+
+		test("uses the Entity Configuration signer context for Historical Keys", async (t) => {
+			const { config, signingKey } = await createLeafConfig();
+			const other = await generateSigningKey("ES256");
+			const self = FixtureCrypto.fromJWK(signingKey);
+			const fallback = FixtureCrypto.fromJWK(other.privateKey);
+			const endpoint = `${config.entityId}/history`;
+			const leaf = await Leaf.create({
+				...config,
+				crypto: {
+					...self,
+					keyring: {
+						entry(purpose, selection) {
+							const keyring =
+								selection?.issuer === config.entityId && selection.subject === config.entityId
+									? self.keyring
+									: fallback.keyring;
+							return keyring.entry(purpose, selection);
+						},
+					},
+				},
+				metadata: { federation_entity: { federation_historical_keys_endpoint: endpoint } },
+			});
+			const ec = decodeEntityStatement(await leaf.getEntityConfiguration());
+			t.true(ec.ok);
+			if (!ec.ok) return;
+			t.equal(ec.value.header.kid, signingKey.kid);
+			const result = await CorePublic.fetchHistoricalKeys(
+				endpoint,
+				ec.value.payload.jwks ?? { keys: [] },
+				{
+					engine: testEngine,
+					expectedIssuer: leaf.entityId,
+					httpClient: async (input, init) => leaf.handleRequest(new Request(input, init)),
+				},
+			);
+			t.true(result.ok, JSON.stringify(result));
+		});
+
+		test("signs with the replacement when the previous key is revoked during the history read", async (t) => {
+			const { config, signingKey } = await createLeafConfig();
+			const crypto = FixtureCrypto.fromJWK(signingKey);
+			const replacement = await generateSigningKey("ES256");
+			await crypto.keyring.publish(
+				"federation",
+				new SigningEntryFixture(replacement.privateKey).signer,
+			);
+			const endpoint = `${config.entityId}/history`;
+			const leaf = await Leaf.create({
+				...config,
+				crypto: {
+					...crypto,
+					history: {
+						async getHistoricalKeys() {
+							await crypto.keyring.activate("federation", replacement.publicKey.kid!);
+							await crypto.keyring.revoke("federation", signingKey.kid!, "compromised");
+							return crypto.history.getHistoricalKeys();
+						},
+					},
+				},
+				metadata: { federation_entity: { federation_historical_keys_endpoint: endpoint } },
+			});
+			const response = await leaf.handleRequest(new Request(endpoint));
+			t.equal(response.status, 200);
+			const jwt = await response.text();
+			const signed = decodeEntityStatement(jwt);
+			t.true(signed.ok);
+			if (signed.ok) t.equal(signed.value.header.kid, replacement.publicKey.kid);
+			const result = await CorePublic.verifyHistoricalKeysResponse(
+				jwt,
+				{ keys: [replacement.publicKey] },
+				{
+					engine: testEngine,
+					expectedIssuer: leaf.entityId,
+				},
+			);
+			t.true(result.ok, JSON.stringify(result));
+			if (result.ok) {
+				t.equal(result.value.keys[0]?.kid, signingKey.kid);
+				t.equal(result.value.keys[0]?.revoked?.reason, "compromised");
+			}
+		});
+
+		test("refuses a signer whose public key is recorded as revoked under another kid", async (t) => {
+			const { config, publicKey } = await createLeafConfig();
+			const endpoint = `${config.entityId}/history`;
+			const leaf = await Leaf.create({
+				...config,
+				crypto: {
+					...config.crypto,
+					history: {
+						getHistoricalKeys: async () => [
+							{
+								...publicKey,
+								kid: "previous-key-id",
+								exp: 1000,
+								revoked: { revoked_at: 1000, reason: "compromised" },
+							},
+						],
+					},
+				},
+				metadata: { federation_entity: { federation_historical_keys_endpoint: endpoint } },
+			});
+			await t.rejects(leaf.getHistoricalKeys(), /signer is recorded as revoked/);
+			t.equal((await leaf.handleRequest(new Request(endpoint))).status, 500);
+		});
+
+		test("honors historical endpoint authentication and advertised algorithms", async (t) => {
+			const { config, publicKey } = await createLeafConfig();
+			const client = await generateSigningKey("ES256");
+			const clientId = entityId("https://history-client.example");
+			const endpoint = `${config.entityId}/history`;
+			const build = async (algorithm: string) =>
+				Leaf.create({
+					...config,
+					metadata: {
+						federation_entity: {
+							federation_historical_keys_endpoint: endpoint,
+							federation_historical_keys_endpoint_auth_methods: ["private_key_jwt"],
+							endpoint_auth_signing_alg_values_supported: [algorithm],
+						},
+					},
+					storage: memoryStorage(),
+					historicalKeysAuthentication: {
+						getClientFederationJwks: async (id) =>
+							id === clientId ? { keys: [client.publicKey] } : undefined,
+					},
+				});
+			for (const algorithm of ["ES256", "RS256"]) {
+				const leaf = await build(algorithm);
+				t.equal((await leaf.handleRequest(new Request(endpoint))).status, 405);
+				const result = await CorePublic.fetchHistoricalKeys(
+					endpoint,
+					{ keys: [publicKey] },
+					{
+						engine: testEngine,
+						expectedIssuer: leaf.entityId,
+						httpClient: async (input, init) => leaf.handleRequest(new Request(input, init)),
+						authentication: {
+							method: "private_key_jwt",
+							audience: leaf.entityId,
+							clientId,
+							signer: new SigningEntryFixture(client.privateKey),
+						},
+					},
+				);
+				t.equal(result.ok, algorithm === "ES256", JSON.stringify(result));
+			}
+		});
+
+		test("preserves role-owned history routes and rejects competing managed route configuration", async (t) => {
+			const { config } = await createLeafConfig();
+			const endpoint = `${config.entityId}/history`;
+			const supplied = {
+				...config,
+				metadata: { federation_entity: { federation_historical_keys_endpoint: endpoint } },
+				roles: [
+					{
+						type: "example_role",
+						metadata: {},
+						routes: new Map([["/history", async () => new Response("host route")]]),
+					},
+				],
+			};
+			const { engine, keyring } = config.crypto;
+			const warn = mockFn<[string]>();
+			const logger = { debug() {}, info() {}, warn, error() {} };
+			const leaf = await Leaf.create({
+				...supplied,
+				crypto: { engine, keyring },
+				options: { logger },
+			});
+			t.equal(await (await leaf.handleRequest(new Request(endpoint))).text(), "host route");
+			t.equal(warn.callCount(), 0);
+			const withHistory = await Leaf.create({ ...supplied, options: { logger } });
+			t.equal(await (await withHistory.handleRequest(new Request(endpoint))).text(), "host route");
+			t.true(decodeEntityStatement(await withHistory.getHistoricalKeys()).ok);
+			t.equal(warn.callCount(), 0);
+			await t.rejects(
+				Leaf.create({ ...supplied, historicalKeysAuthentication: {} }),
+				/conflicts with a role-owned route/,
+			);
+			await t.rejects(
+				Leaf.create({
+					...supplied,
+					roles: [],
+					resolver: {},
+					metadata: {
+						federation_entity: {
+							...supplied.metadata.federation_entity,
+							federation_resolve_endpoint: endpoint,
+						},
+					},
+				}),
+				/Resolve endpoint conflicts/,
+			);
+
+			const external = await Leaf.create({
+				...supplied,
+				metadata: {
+					federation_entity: {
+						...supplied.metadata.federation_entity,
+						federation_historical_keys_endpoint_auth_methods: ["private_key_jwt"],
+					},
+				},
+				roles: [],
+				crypto: { engine, keyring },
+				options: { logger },
+			});
+			t.equal((await external.handleRequest(new Request(endpoint))).status, 404);
+			const ec = decodeEntityStatement(await external.getEntityConfiguration());
+			t.true(ec.ok);
+			if (ec.ok)
+				t.deepEqual(
+					ec.value.payload.metadata?.federation_entity
+						?.federation_historical_keys_endpoint_auth_methods,
+					["private_key_jwt"],
+				);
+			t.equal(warn.callCount(), 1);
+			t.true(warn.lastCall()[0].includes("Historical Keys endpoint without a local handler"));
+		});
+
+		test("rejects managed URLs with credential query parameters", async (t) => {
+			const { config } = await createLeafConfig();
+			for (const name of [
+				"client_id",
+				"client_secret",
+				"client_assertion",
+				"client_assertion_type",
+				"custom_token",
+			]) {
+				await t.rejects(
+					Leaf.create({
+						...config,
+						metadata: {
+							federation_entity: {
+								federation_historical_keys_endpoint: `${config.entityId}/history?${name}=example`,
+							},
+						},
+						historicalKeysAuthentication: {
+							extensions: {
+								methods: {
+									example: {
+										parameters: ["custom_token"],
+										authenticate: () => ok({ entityId: config.entityId }),
+									},
+								},
+							},
+						},
+					}),
+					/query must not contain credential parameters/,
+				);
+			}
+		});
+
+		test("rejects role publication that differs from the managed route", async (t) => {
+			const { config } = await createLeafConfig();
+			const endpoint = `https://keys.example.com/history?scope=keys`;
+			let publication: Record<string, unknown> = {};
+			const role = {
+				type: "federation_entity",
+				metadata: { federation_historical_keys_endpoint: endpoint },
+				publicationMetadata: async () => publication,
+			};
+			const leaf = await Leaf.create({ ...config, roles: [role] });
+			publication = { federation_historical_keys_endpoint: `${endpoint}&other=1` };
+			await t.rejects(leaf.getEntityConfiguration(), /URL must match the managed route/);
+			publication = { federation_historical_keys_endpoint_auth_methods: ["private_key_jwt"] };
+			await t.rejects(leaf.getEntityConfiguration(), /authentication must match the managed route/);
+			publication = {};
+			t.true(decodeEntityStatement(await leaf.getEntityConfiguration()).ok);
+			t.equal((await leaf.handleRequest(new Request(endpoint))).status, 200);
+		});
+
+		test("rejects malformed historical keys and keeps provider data out of HTTP and logs", async (t) => {
+			const { config, publicKey } = await createLeafConfig();
+			const endpoint = `${config.entityId}/history`;
+			const error = mockFn<[string]>();
+			const logger = { debug() {}, info() {}, warn() {}, error };
+			const invalidRecords = [
+				{ kty: "EC", kid: "incomplete", exp: 1000 },
+				{ ...publicKey, kid: "private-fixture-key", exp: 1000, d: "private-fixture" },
+			];
+			for (const record of invalidRecords) {
+				const leaf = await Leaf.create({
+					...config,
+					metadata: { federation_entity: { federation_historical_keys_endpoint: endpoint } },
+					crypto: { ...config.crypto, history: { getHistoricalKeys: async () => [record] } },
+					options: { logger },
+				});
+				const response = await leaf.handleRequest(new Request(endpoint));
+				t.equal(response.status, 500);
+				t.deepEqual(await response.json(), {
+					error: "server_error",
+					error_description: "Failed to build historical keys",
+				});
+				t.deepEqual(error.lastCall(), [
+					"Failed to build historical keys: invalid historical key record",
+				]);
+			}
+		});
+
+		test("reports missing history before opening the signing keyring", async (t) => {
+			const { config } = await createLeafConfig();
+			const entry = mockFn<[]>();
+			await t.rejects(
+				CorePublic.signHistoricalKeysResponse({
+					entityId: entityId(config.entityId),
+					crypto: {
+						engine: testEngine,
+						keyring: {
+							async entry() {
+								entry();
+								throw new Error("unexpected signing key lookup");
+							},
+						},
+					},
+					options: { engine: testEngine },
+				}),
+				/Historical keys source is not configured/,
+			);
+			t.equal(entry.callCount(), 0);
+		});
+	});
+
+	module("leaf / federation endpoint publication", () => {
+		test("warns once for a Resolve endpoint served by the application and accepts a role route", async (t) => {
+			const { config } = await createLeafConfig();
+			const endpoint = "https://resolve.example/resolve";
+			const warn = mockFn<[string]>();
+			const supplied = {
+				...config,
+				metadata: {
+					federation_entity: {
+						federation_resolve_endpoint: endpoint,
+						federation_resolve_endpoint_auth_methods: ["private_key_jwt"],
+					},
+				},
+				options: { logger: { debug() {}, info() {}, warn, error() {} } },
+			};
+			const external = await Leaf.create(supplied);
+			const ec = decodeEntityStatement(await external.getEntityConfiguration());
+			t.true(ec.ok);
+			if (ec.ok) {
+				t.equal(
+					ec.value.payload.metadata?.federation_entity?.federation_resolve_endpoint,
+					endpoint,
+				);
+				t.deepEqual(
+					ec.value.payload.metadata?.federation_entity?.federation_resolve_endpoint_auth_methods,
+					["private_key_jwt"],
+				);
+			}
+			t.equal((await external.handleRequest(new Request(endpoint))).status, 404);
+			t.equal(warn.callCount(), 1);
+			t.true(warn.lastCall()[0].includes("Resolve endpoint without a local handler"));
+			const withRoute = await Leaf.create({
+				...supplied,
+				roles: [
+					{
+						type: "example_role",
+						metadata: {},
+						routes: new Map([["/resolve", async () => new Response(null, { status: 204 })]]),
+					},
+				],
+			});
+			t.equal(
+				(await withRoute.handleRequest(new Request(endpoint, { method: "POST" }))).status,
+				204,
+			);
+			t.equal(warn.callCount(), 1);
+		});
+
+		test("rejects endpoint auth metadata without its endpoint", async (t) => {
+			const { config } = await createLeafConfig();
+			for (const name of [
+				"resolve",
+				"collection",
+				"trust_mark",
+				"trust_mark_status",
+				"trust_mark_list",
+				"historical_keys",
+			]) {
+				await t.rejects(
+					Leaf.create({
+						...config,
+						metadata: {
+							federation_entity: {
+								[`federation_${name}_endpoint_auth_methods`]: ["private_key_jwt"],
+							},
+						},
+					}),
+					new RegExp(`requires federation_${name}_endpoint`),
+				);
+			}
+		});
+
+		test("validates federation endpoint metadata after role publication callbacks", async (t) => {
+			const { config } = await createLeafConfig();
+			const endpoint = `${config.entityId}/resolve`;
+			let publication: Record<string, unknown> = {};
+			const build = () =>
+				Leaf.create({
+					...config,
+					resolver: {},
+					roles: [
+						{
+							type: "federation_entity",
+							metadata: { federation_resolve_endpoint: endpoint },
+							publicationMetadata: async () => publication,
+						},
+					],
+				});
+			publication = { federation_fetch_endpoint: `${config.entityId}/fetch` };
+			await t.rejects(build(), /MUST NOT publish federation_fetch_endpoint/);
+			publication = {};
+			const leaf = await build();
+			publication = { federation_collection_endpoint_auth_methods: ["none"] };
+			await t.rejects(leaf.getEntityConfiguration(), /requires federation_collection_endpoint/);
+			publication = { federation_subordinate_events_endpoint: `${config.entityId}/events` };
+			await t.rejects(
+				leaf.getEntityConfiguration(),
+				/cannot publish federation_subordinate_events_endpoint/,
+			);
+			publication = { federation_collection_endpoint: `${config.entityId}/collection` };
+			await t.rejects(leaf.getEntityConfiguration(), /Collection URL must match the managed route/);
+			publication = { federation_resolve_endpoint: `${endpoint}?tenant=elsewhere` };
+			await t.rejects(leaf.getEntityConfiguration(), /Resolve URL must match the managed route/);
+			publication = { federation_resolve_endpoint_auth_methods: ["private_key_jwt"] };
+			await t.rejects(
+				leaf.getEntityConfiguration(),
+				/Resolve authentication must match the managed route/,
+			);
+			publication = {};
+			t.true(decodeEntityStatement(await leaf.getEntityConfiguration()).ok);
+		});
+
+		test("rejects credential parameters in a managed Resolve URL", async (t) => {
+			const { config } = await createLeafConfig();
+			await t.rejects(
+				Leaf.create({
+					...config,
+					resolver: {},
+					metadata: {
+						federation_entity: {
+							federation_resolve_endpoint: `${config.entityId}/resolve?client_assertion_type=fixture`,
+						},
+					},
+				}),
+				/Resolve endpoint query must not contain credential parameters/,
+			);
+		});
+	});
+
 	module("leaf / supplied discovery and managed marks", () => {
 		test("supplied-chain discovery uses configured anchors and permits per-call overrides without fetching", async (t) => {
 			const f = await createMockFederation();

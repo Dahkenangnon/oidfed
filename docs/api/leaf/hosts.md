@@ -20,9 +20,9 @@ static create(config: LeafConfig): Promise<Leaf>;
 
 ### `Leaf#resolver`
 
-The hosted [`FederationResolverService`](../core/chains.md#federationresolverservice), present only when `LeafConfig.resolver` is configured. It remains available for local calls even without a published Resolve endpoint; publishing that endpoint also installs its HTTP route.
+The hosted [`FederationResolverService`](../core/chains.md#federationresolverservice), available for local calls when `LeafConfig.resolver` is configured. With that configuration, publishing a Resolve URL also installs its HTTP route. An application can instead serve the advertised URL itself. [Resolve endpoint guide](../../features/7.3.resolve-endpoint.md)
 
-[Source](../../../packages/leaf/src/leaf.ts#L94)
+[Source](../../../packages/leaf/src/leaf.ts#L141)
 
 ```typescript signature
 readonly resolver?: FederationResolverService;
@@ -200,11 +200,21 @@ Replace this issuer's delegation map with a detached, frozen copy after checking
 setTrustMarkDelegations(delegations: Readonly<Record<string, string>>): Promise<void>;
 ```
 
+### `Leaf#getHistoricalKeys`
+
+Sign this Leaf's historical public keys with its current Federation Entity signer. Requires `crypto.history`. Calling this method does not require publishing an endpoint.
+
+[Source](../../../packages/leaf/src/leaf.ts#L806)
+
+```typescript signature
+getHistoricalKeys(): Promise<string>;
+```
+
 ### `Leaf#handleRequest`
 
 Dispatch by URL path to a composed role or configured service route, then to this Leaf's well-known EC path. EC discovery accepts GET, returns HTTP 200 with `application/entity-statement+jwt`, and converts EC generation failures to a generic HTTP 500 response. Unsupported methods receive 405 and unknown paths receive 404. Composed handlers retain their own error behavior and can reject. The application supplies external HTTPS routing.
 
-[Source](../../../packages/leaf/src/leaf.ts#L655)
+[Source](../../../packages/leaf/src/leaf.ts#L811)
 
 ```typescript signature
 handleRequest(request: Request): Promise<Response>;
@@ -212,7 +222,7 @@ handleRequest(request: Request): Promise<Response>;
 
 ## `LeafConfig`
 
-[Source](../../../packages/leaf/src/leaf.ts#L70)
+[Source](../../../packages/leaf/src/leaf.ts#L75)
 
 Construction settings for one Leaf. Host metadata is cloned, roles are initialized in order, and their metadata replaces matching host parameters in that order. The resulting publication metadata must be nonempty; an initially empty `metadata` object is permitted when a role contributes a block.
 
@@ -224,6 +234,7 @@ Instance discovery and assessment calls merge host options with call options. Ho
 interface LeafConfig extends EntityStatementExtensions {
 	resolver?: FederationResolverIntegration;
 	trustMarkIssuer?: Omit<TrustMarkIssuerConfig, "storage">;
+	historicalKeysAuthentication?: Omit<EndpointAuthenticationConfig, "receiverEntityId" | "methods" | "allowedAlgorithms">;
 	readonly storage?: FederationStorage;
 	collection?: EntityCollectionIntegration;
 	entityId: EntityId | string;
@@ -246,6 +257,7 @@ Fields (including inherited fields):
 |---|---|---|
 | `resolver?` | `FederationResolverIntegration` | Optional Resolve service configuration. Identity and keys come from this Leaf; resolver options override host options, and resolver anchors override host anchors. See [`FederationResolverIntegration`](../core/chains.md#federationresolverintegration). |
 | `trustMarkIssuer?` | `Omit<TrustMarkIssuerConfig, "storage">` | Issuance defaults, delegation evidence, and endpoint authentication. |
+| `historicalKeysAuthentication?` | `Omit<EndpointAuthenticationConfig, "receiverEntityId" \| "methods" \| "allowedAlgorithms">` | Caller key lookup and custom authentication for the managed [Historical Keys endpoint](../../features/7.4.historical-keys.md). The Leaf takes the receiver, methods, and algorithms from its identity and published metadata. |
 | `storage?` | `FederationStorage` | Host adapter for enabled roles and endpoints. Omit it for a stateless Leaf. |
 | `collection?` | `EntityCollectionIntegration` | Optional Entity Collection service configuration. Its anchors are supplied through this integration; its options override host options. A published collection endpoint requires this configuration. See [`EntityCollectionIntegration`](../core/collection.md#entitycollectionintegration). |
 | `entityId` | `EntityId \| string` | Own HTTPS Entity Identifier without credentials, query, or fragment. Leaf validates and preserves the configured value. |

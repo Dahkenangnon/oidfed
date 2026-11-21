@@ -22,7 +22,6 @@ import {
 	type ExtendedListingConfig,
 } from "../../../packages/authority/src/endpoints/extended-list.js";
 import { createFetchHandler } from "../../../packages/authority/src/endpoints/fetch.js";
-import { createHistoricalKeysHandler } from "../../../packages/authority/src/endpoints/historical-keys.js";
 import { createListHandler } from "../../../packages/authority/src/endpoints/list.js";
 import { createResolveHandler } from "../../../packages/authority/src/endpoints/resolve.js";
 import { createTrustMarkHandler } from "../../../packages/authority/src/endpoints/trust-mark.js";
@@ -38,6 +37,7 @@ import {
 } from "../../../packages/authority/src/index.js";
 import { createSubordinateLifecycle } from "../../../packages/authority/src/subordinate-lifecycle.js";
 import * as CorePublic from "../../../packages/core/src/index.js";
+import { createHistoricalKeysHandler } from "../../../packages/core/src/index.js";
 import { memoryStorage, storedTrustMarkToken } from "../../storage-fixtures.js";
 import { signProtocolFixture } from "../fixtures/protocol-jwt.js";
 import {
@@ -4048,6 +4048,30 @@ export default (QUnit: QUnit) => {
 	// endpoints/entity-configuration
 	// -------------------------------------------------------------------------
 	module("authority / createEntityConfigurationHandler", () => {
+		test("rejects orphan endpoint authentication added by a publication callback", async (t) => {
+			const { ctx } = await createTestContext();
+			const handler = createEntityConfigurationHandler({
+				...ctx,
+				roles: [
+					{
+						type: "federation_entity",
+						metadata: {},
+						publicationMetadata: async () => ({
+							federation_historical_keys_endpoint_auth_methods: ["none"],
+						}),
+					},
+				],
+			});
+			const response = await handler(
+				new Request("https://authority.example.com/.well-known/openid-federation"),
+			);
+			t.equal(response.status, 500);
+			t.deepEqual(await response.json(), {
+				error: "server_error",
+				error_description: "Failed to build entity configuration",
+			});
+		});
+
 		test("returns a signed JWT with entity-statement+jwt content type", async (t) => {
 			const { ctx } = await createTestContext();
 			const handler = createEntityConfigurationHandler(ctx);

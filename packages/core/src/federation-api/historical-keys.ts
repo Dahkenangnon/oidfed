@@ -1,25 +1,88 @@
-/** Retrieval, verification, and key selection for Federation Historical Keys. */
+/** Publication, retrieval, and verification of Federation Historical Keys. */
 
+import { assertPublicJwk, samePublicKey } from "@oidfed/crypto";
 import { FederationErrorCode, JwtTyp, MediaType } from "../constants.js";
+import { federationSigningOptions } from "../crypto-context.js";
 import { cloneData } from "../data-copy.js";
 import { fetchFederationEndpoint } from "../endpoint-client.js";
 import { err, type FederationError, ok, type Result } from "../errors.js";
+import { federationEntry } from "../federation-keys.js";
+import { errorResponse, jwtResponse, requireMethod } from "../http.js";
+import { signEntityStatement } from "../jose/sign.js";
 import { verifyEntityStatement } from "../jose/verify.js";
 import { safeLogger } from "../logging.js";
 import { parseMetadataUrl } from "../metadata-url.js";
 import {
 	type HistoricalKeyEntry,
+	HistoricalKeyEntrySchema,
 	type HistoricalKeysPayload,
 	HistoricalKeysPayloadSchema,
 } from "../schemas/endpoints.js";
 import type { JWKSet } from "../schemas/jwk.js";
-import type { Clock, FederationOptions } from "../types.js";
+import { type Clock, type EntityContext, type FederationOptions, nowSeconds } from "../types.js";
 import {
 	apiError,
 	buildVerifyOpts,
 	type VerifyOptions,
 	validateExpectedIssuer,
 } from "./verify-issuer.js";
+
+type HistoricalKeysContext = Pick<EntityContext, "entityId" | "crypto" | "options">;
+
+class InvalidHistoricalKeyRecord extends TypeError {
+	constructor(cause: unknown) {
+		super("Invalid historical key record", { cause });
+	}
+}
+
+/** Sign this entity's historical public keys with its current Federation Entity signer (§8.7.2). */
+export async function signHistoricalKeysResponse({
+	entityId,
+	crypto,
+	options,
+}: HistoricalKeysContext): Promise<string> {
+	if (!crypto.history) throw new TypeError("Historical keys source is not configured");
+	const keys = (await crypto.history.getHistoricalKeys()).map((key) => {
+		try {
+			const { exp, iat, nbf, revoked, ...record } = HistoricalKeyEntrySchema.parse(key);
+			const publicKey = assertPublicJwk(record, crypto.algorithmRegistry);
+			return { ...publicKey, exp, iat, nbf, revoked };
+		} catch (cause) {
+			throw new InvalidHistoricalKeyRecord(cause);
+		}
+	});
+	const keySet = await federationEntry(crypto, { issuer: entityId, subject: entityId });
+	if (
+		keys.some(
+			(key) => key.revoked && samePublicKey(key, keySet.signer.publicJwk, crypto.algorithmRegistry),
+		)
+	)
+		throw new TypeError("Historical keys signer is recorded as revoked");
+	return signEntityStatement({ iss: entityId, iat: nowSeconds(options.clock), keys }, keySet, {
+		...federationSigningOptions(options),
+		typ: JwtTyp.JwkSet,
+	});
+}
+
+/** Serve a Historical Keys response after any endpoint authentication has run. */
+export function createHistoricalKeysHandler(
+	context: HistoricalKeysContext,
+): (request: Request) => Promise<Response> {
+	return async (request) => {
+		const methodError = requireMethod(request, "GET");
+		if (methodError) return methodError;
+		try {
+			return jwtResponse(await signHistoricalKeysResponse(context), MediaType.JwkSet);
+		} catch (error) {
+			safeLogger(context.options.logger)?.error(
+				error instanceof InvalidHistoricalKeyRecord
+					? "Failed to build historical keys: invalid historical key record"
+					: "Failed to build historical keys",
+			);
+			return errorResponse(500, "server_error", "Failed to build historical keys");
+		}
+	};
+}
 
 /**
  * Verify and validate a Historical Keys Response JWT.

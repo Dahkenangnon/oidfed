@@ -166,6 +166,10 @@ export {
 	type FetchEntityCollectionOptions,
 	fetchEntityCollection,
 } from "./federation-api/entity-collection.js";
+export {
+	createHistoricalKeysHandler,
+	signHistoricalKeysResponse,
+} from "./federation-api/historical-keys.js";
 // Federation API verification + remote-endpoint clients
 export {
 	buildExtendedListRequestParameters,

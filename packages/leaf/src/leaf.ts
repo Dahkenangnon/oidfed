@@ -15,16 +15,19 @@ import {
 
 import {
 	type AttachTrustMarkOptions,
+	assertEndpointAuthenticationCompanions,
 	assertPositiveTtlSeconds,
 	assessEntity,
 	buildEntityConfigurationPayload,
 	type CryptoContext,
 	composeEntityMetadata,
 	createEndpointAuthenticatedHandler,
+	createHistoricalKeysHandler,
 	DEFAULT_ENTITY_STATEMENT_TTL_SECONDS,
 	decodeEntityStatement,
 	discoverEntityFromChain,
 	discoverEntity as discoverEntityThroughTrustChain,
+	type EndpointAuthenticationConfig,
 	type EntityAssessmentOptions,
 	type EntityCollectionIntegration,
 	EntityCollectionService,
@@ -33,6 +36,7 @@ import {
 	type EntityRole,
 	type EntityStatementExtensions,
 	type EntityStatementMetadata,
+	endpointCredentialParameterNames,
 	endpointParameterValuesMatch,
 	entityConfigurationUrl,
 	errorResponse,
@@ -51,6 +55,7 @@ import {
 	requireMethod,
 	safeLogger,
 	signEntityStatement,
+	signHistoricalKeysResponse,
 	type TrustAnchorSet,
 	TrustMarkHolder,
 	type TrustMarkIssuanceOptions,
@@ -70,6 +75,11 @@ import {
 export interface LeafConfig extends EntityStatementExtensions {
 	resolver?: FederationResolverIntegration;
 	trustMarkIssuer?: Omit<TrustMarkIssuerConfig, "storage">;
+	/** Caller key lookup or custom authentication for the managed Historical Keys endpoint. */
+	historicalKeysAuthentication?: Omit<
+		EndpointAuthenticationConfig,
+		"receiverEntityId" | "methods" | "allowedAlgorithms"
+	>;
 	readonly storage?: FederationStorage;
 	collection?: EntityCollectionIntegration;
 	entityId: EntityId | string;
@@ -88,6 +98,43 @@ export interface LeafConfig extends EntityStatementExtensions {
 
 function wellKnownPathForEntityId(value: EntityId): string {
 	return new URL(entityConfigurationUrl(value)).pathname;
+}
+
+const trustMarkEndpoints = [
+	["federation_trust_mark_status_endpoint", "status"],
+	["federation_trust_mark_list_endpoint", "list"],
+	["federation_trust_mark_endpoint", "retrieval"],
+] as const;
+
+function validateLeafEndpointMetadata(
+	metadata: Readonly<Record<string, unknown>> | undefined,
+): void {
+	if (!metadata) return;
+	for (const endpoint of [
+		"federation_fetch_endpoint",
+		"federation_list_endpoint",
+		"federation_extended_list_endpoint",
+	]) {
+		if (`${endpoint}_auth_methods` in metadata)
+			throw new Error(`Leaf entities cannot publish ${endpoint}_auth_methods`);
+		if (endpoint in metadata) throw new Error(`Leaf entities MUST NOT publish ${endpoint}`);
+	}
+	if (
+		"federation_subordinate_events_endpoint" in metadata ||
+		"federation_subordinate_events_endpoint_auth_methods" in metadata
+	)
+		throw new Error("Leaf entities cannot publish federation_subordinate_events_endpoint");
+	assertEndpointAuthenticationCompanions(metadata);
+}
+
+function sameAdvertisedValues(expected: unknown, published: unknown): boolean {
+	if (expected === undefined && published === undefined) return true;
+	if (!Array.isArray(expected) || !Array.isArray(published)) return false;
+	const supported = new Set(expected);
+	const advertised = new Set(published);
+	return (
+		supported.size === advertised.size && [...advertised].every((value) => supported.has(value))
+	);
 }
 
 export class Leaf {
@@ -122,7 +169,7 @@ export class Leaf {
 		await federationEntry(normalized.crypto, { issuer: id, subject: id });
 		for (const role of normalized.roles ?? []) await role.initialize?.(context);
 		const host = new Leaf({ ...normalized, entityId: id }, context);
-		await composeRolePublicationMetadata(normalized.roles, host.metadata, context);
+		await host.publicationMetadata();
 		return host;
 	}
 
@@ -174,12 +221,14 @@ export class Leaf {
 	private readonly config: Omit<LeafConfig, "options"> & { options: FederationOptions };
 	private readonly metadata: Record<string, Record<string, unknown>>;
 	private readonly roleContext: EntityContext;
+	private readonly managesHistoricalKeys: boolean;
 
 	private cachedJwt: string | null = null;
 	private cachedExp: number | null = null;
 	private inflight: Promise<string> | null = null;
 	private generation = 0;
 	private collectionNoticeEmitted = false;
+	private readonly externalEndpointNotices = new Set<string>();
 
 	/**
 	 * Validate and compose Leaf metadata and routes; retain key and service dependencies for later
@@ -256,8 +305,11 @@ export class Leaf {
 			}
 		}
 		validateRoleMetadata(config.roles, metadata, context);
+		validateLeafEndpointMetadata(metadata.federation_entity);
 		this.metadata = metadata;
 		this.config.metadata = metadata;
+		// Role routes are already registered. Reserve the built-in route before other services mount.
+		this.managesHistoricalKeys = this.registerHistoricalKeysEndpoint();
 		const collectionEndpoint = metadata.federation_entity?.federation_collection_endpoint;
 		if (collectionEndpoint !== undefined && typeof collectionEndpoint !== "string")
 			throw new Error("Collection endpoint must be an HTTPS URL");
@@ -342,37 +394,21 @@ export class Leaf {
 			if (resolveEndpoint !== undefined) {
 				if (
 					typeof resolveEndpoint !== "string" ||
+					resolveEndpoint.includes("#") ||
 					!isValidEntityId(resolveEndpoint.split("?")[0] ?? "")
 				)
 					throw new Error("Invalid Resolve endpoint URL");
-				const path = new URL(resolveEndpoint).pathname;
-				if (this.routes.has(path) || path === wellKnownPathForEntityId(this.entityId))
-					throw new Error("Resolve endpoint conflicts with an existing route");
 				const resolver = this.resolver;
-				const advertised = new URL(resolveEndpoint);
-				this.routes.set(path, (request) => {
-					const incoming = new URL(request.url).searchParams;
-					for (const name of new Set(advertised.searchParams.keys())) {
-						if (
-							!endpointParameterValuesMatch(
-								name,
-								advertised.searchParams.getAll(name),
-								incoming.getAll(name),
-								RESOLVE_UNORDERED_PARAMETERS,
-							)
-						)
-							return Promise.resolve(errorResponse(404, "not_found", "Unknown endpoint"));
-					}
-					return resolver.handleRequest(request);
-				});
+				this.registerSelectedEndpoint(
+					new URL(resolveEndpoint),
+					"Resolve",
+					(request) => resolver.handleRequest(request),
+					config.resolver.authentication?.extensions,
+					RESOLVE_UNORDERED_PARAMETERS,
+				);
 			}
 		}
 
-		const markEndpoints = [
-			["federation_trust_mark_status_endpoint", "status"],
-			["federation_trust_mark_list_endpoint", "list"],
-			["federation_trust_mark_endpoint", "retrieval"],
-		] as const;
 		if (config.trustMarkIssuer) {
 			const storage = config.storage;
 			assertStorageCapabilities(
@@ -392,7 +428,7 @@ export class Leaf {
 				options: config.options,
 			});
 		}
-		for (const [field, kind] of markEndpoints) {
+		for (const [field, kind] of trustMarkEndpoints) {
 			const endpoint = metadata.federation_entity?.[field];
 			if (endpoint === undefined) continue;
 			if (typeof endpoint !== "string" || !this.issuerService)
@@ -449,40 +485,159 @@ export class Leaf {
 				return authenticated(request);
 			});
 		}
-
 		if (Object.keys(this.metadata).length === 0) {
 			throw new Error("metadata MUST contain at least one Entity Type Identifier");
 		}
 
-		const fedEntity = this.metadata.federation_entity;
-		if (fedEntity) {
-			for (const endpoint of [
-				"federation_fetch_endpoint",
-				"federation_list_endpoint",
-				"federation_extended_list_endpoint",
-			]) {
-				if (`${endpoint}_auth_methods` in fedEntity)
-					throw new Error(`Leaf entities cannot publish ${endpoint}_auth_methods`);
-			}
-			if ("federation_fetch_endpoint" in fedEntity) {
-				throw new Error("Leaf entities MUST NOT publish federation_fetch_endpoint");
-			}
-			if ("federation_list_endpoint" in fedEntity) {
-				throw new Error("Leaf entities MUST NOT publish federation_list_endpoint");
-			}
-			if (
-				"federation_subordinate_events_endpoint" in fedEntity ||
-				"federation_subordinate_events_endpoint_auth_methods" in fedEntity
-			) {
-				throw new Error("Leaf entities cannot publish federation_subordinate_events_endpoint");
-			}
-			if ("federation_extended_list_endpoint" in fedEntity) {
-				throw new Error("Leaf entities MUST NOT publish federation_extended_list_endpoint");
-			}
-		}
-
 		const ttlSeconds = config.entityConfigurationTtlSeconds ?? DEFAULT_ENTITY_STATEMENT_TTL_SECONDS;
 		assertPositiveTtlSeconds(ttlSeconds, "entityConfigurationTtlSeconds", "safe-integer");
+	}
+
+	private registerHistoricalKeysEndpoint(): boolean {
+		const metadata = this.metadata.federation_entity;
+		const endpoint = metadata?.federation_historical_keys_endpoint;
+		const { crypto, historicalKeysAuthentication, options } = this.config;
+		if (!metadata || endpoint === undefined || !crypto.history) {
+			if (historicalKeysAuthentication)
+				throw new TypeError(
+					"Historical keys authentication requires a managed endpoint and crypto.history",
+				);
+			return false;
+		}
+		if (
+			typeof endpoint !== "string" ||
+			endpoint.includes("#") ||
+			!isValidEntityId(endpoint.split("?")[0] ?? "")
+		)
+			throw new TypeError("Historical keys endpoint must use HTTPS without a fragment");
+		const url = new URL(endpoint);
+		if (this.routes.has(url.pathname)) {
+			if (historicalKeysAuthentication)
+				throw new TypeError("Historical keys authentication conflicts with a role-owned route");
+			return false;
+		}
+		const methods = metadata.federation_historical_keys_endpoint_auth_methods;
+		const algorithms = metadata.endpoint_auth_signing_alg_values_supported;
+		if (
+			methods !== undefined &&
+			(!Array.isArray(methods) || !methods.every((method) => typeof method === "string"))
+		)
+			throw new TypeError("Invalid historical keys authentication methods");
+		if (
+			algorithms !== undefined &&
+			(!Array.isArray(algorithms) ||
+				!algorithms.every((algorithm) => typeof algorithm === "string"))
+		)
+			throw new TypeError("Invalid endpoint authentication algorithms");
+		const handle = createEndpointAuthenticatedHandler(
+			{
+				...historicalKeysAuthentication,
+				receiverEntityId: this.entityId,
+				methods: methods ?? ["none"],
+				...(algorithms ? { allowedAlgorithms: algorithms } : {}),
+			},
+			createHistoricalKeysHandler(this.roleContext),
+			options,
+		);
+		this.registerSelectedEndpoint(
+			url,
+			"Historical keys",
+			handle,
+			historicalKeysAuthentication?.extensions,
+		);
+		return true;
+	}
+
+	private registerSelectedEndpoint(
+		url: URL,
+		label: string,
+		handle: (request: Request) => Promise<Response>,
+		extensions: EndpointAuthenticationConfig["extensions"],
+		unordered: readonly string[] = [],
+	): void {
+		if (this.routes.has(url.pathname) || url.pathname === wellKnownPathForEntityId(this.entityId))
+			throw new Error(`${label} endpoint conflicts with an existing route`);
+		const selectors = [...new Set(url.searchParams.keys())];
+		const credentialNames = endpointCredentialParameterNames(extensions);
+		if (
+			selectors.some(
+				(name) => credentialNames.has(name) || name === "client_id" || name === "client_secret",
+			)
+		)
+			throw new TypeError(`${label} endpoint query must not contain credential parameters`);
+		this.routes.set(url.pathname, (request) => {
+			const incoming = new URL(request.url).searchParams;
+			for (const name of selectors)
+				if (
+					!endpointParameterValuesMatch(
+						name,
+						url.searchParams.getAll(name),
+						incoming.getAll(name),
+						unordered,
+					)
+				)
+					return Promise.resolve(errorResponse(404, "not_found", "Unknown endpoint"));
+			return handle(request);
+		});
+	}
+
+	private async publicationMetadata(): Promise<Record<string, Record<string, unknown>>> {
+		const publication = await composeRolePublicationMetadata(
+			this.config.roles,
+			this.metadata,
+			this.roleContext,
+		);
+		const published = publication.federation_entity;
+		validateLeafEndpointMetadata(published);
+		this.validateEndpointPublication(
+			published,
+			"federation_resolve_endpoint",
+			"Resolve",
+			!this.resolver,
+		);
+		this.validateEndpointPublication(
+			published,
+			"federation_historical_keys_endpoint",
+			"Historical Keys",
+			!this.managesHistoricalKeys,
+		);
+		this.validateEndpointPublication(published, "federation_collection_endpoint", "Collection");
+		for (const [field] of trustMarkEndpoints)
+			this.validateEndpointPublication(published, field, "Trust Mark");
+		return publication;
+	}
+
+	private validateEndpointPublication(
+		published: Readonly<Record<string, unknown>> | undefined,
+		field: string,
+		label: string,
+		external = false,
+	): void {
+		const endpoint = published?.[field];
+		if (!external) {
+			const configured = this.metadata.federation_entity;
+			if (endpoint !== configured?.[field])
+				throw new TypeError(`Published ${label} URL must match the managed route`);
+			if (
+				endpoint !== undefined &&
+				[`${field}_auth_methods`, "endpoint_auth_signing_alg_values_supported"].some(
+					(name) => !sameAdvertisedValues(configured?.[name], published?.[name]),
+				)
+			)
+				throw new TypeError(`Published ${label} authentication must match the managed route`);
+			return;
+		}
+		if (
+			!this.externalEndpointNotices.has(field) &&
+			typeof endpoint === "string" &&
+			URL.canParse(endpoint) &&
+			!this.routes.has(new URL(endpoint).pathname)
+		) {
+			this.externalEndpointNotices.add(field);
+			safeLogger(this.config.options.logger)?.warn(
+				`Leaf advertises a ${label} endpoint without a local handler. Serve the advertised URL in the host application.`,
+			);
+		}
 	}
 
 	private async buildEntityConfiguration(
@@ -490,11 +645,7 @@ export class Leaf {
 		refs: readonly TrustMarkRef[] | undefined = this.config.trustMarks,
 		publish = true,
 	): Promise<string> {
-		const publication = await composeRolePublicationMetadata(
-			this.config.roles,
-			this.metadata,
-			this.roleContext,
-		);
+		const publication = await this.publicationMetadata();
 		const keySet = await federationEntry(this.config.crypto, {
 			issuer: this.entityId,
 			subject: this.entityId,
@@ -649,6 +800,11 @@ export class Leaf {
 	 */
 	async setTrustMarkDelegations(delegations: Readonly<Record<string, string>>): Promise<void> {
 		return this.requireIssuer().setDelegations(delegations);
+	}
+
+	/** Sign this Leaf's historical public keys. Requires a configured history source. */
+	async getHistoricalKeys(): Promise<string> {
+		return signHistoricalKeysResponse(this.roleContext);
 	}
 
 	/** Serve role and optional service routes, or the GET Entity Configuration discovery endpoint. */

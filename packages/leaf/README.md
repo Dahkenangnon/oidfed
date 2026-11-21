@@ -94,6 +94,7 @@ Leaves can serve Draft 01 collections through the shared core service. It suppor
 ## Documentation
 
 See the [leaf API reference](https://github.com/Dahkenangnon/oidfed/blob/main/docs/api/leaf/README.md) for public constructors, methods, and configuration contracts.
+To publish retired or revoked federation public keys, configure the optional [Historical Keys endpoint](https://github.com/Dahkenangnon/oidfed/blob/main/docs/features/7.4.historical-keys.md).
 
 ## License
 

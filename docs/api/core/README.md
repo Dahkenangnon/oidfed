@@ -192,6 +192,7 @@ Signatures preserve optional and read-only declarations. An optional property is
 |---|---|
 | [`buildExtendedListRequestParameters`](endpoints.md#buildextendedlistrequestparameters) | Function |
 | [`COLLECTION_UNORDERED_PARAMETERS`](endpoints.md#collection_unordered_parameters) | Value |
+| [`createHistoricalKeysHandler`](endpoints.md#createhistoricalkeyshandler) | Function |
 | [`EndpointAdditionalParameters`](endpoints.md#endpointadditionalparameters) | Type |
 | [`endpointParameterValuesMatch`](endpoints.md#endpointparametervaluesmatch) | Function |
 | [`errorResponse`](endpoints.md#errorresponse) | Function |
@@ -228,6 +229,7 @@ Signatures preserve optional and read-only declarations. An optional property is
 | [`SECURITY_HEADERS`](endpoints.md#security_headers) | Value |
 | [`selectHistoricalVerificationKey`](endpoints.md#selecthistoricalverificationkey) | Function |
 | [`SelectHistoricalVerificationKeyOptions`](endpoints.md#selecthistoricalverificationkeyoptions) | Interface |
+| [`signHistoricalKeysResponse`](endpoints.md#signhistoricalkeysresponse) | Function |
 | [`toPublicError`](endpoints.md#topublicerror) | Function |
 | [`verifyHistoricalKeysResponse`](endpoints.md#verifyhistoricalkeysresponse) | Function |
 | [`VerifyOptions`](endpoints.md#verifyoptions) | Interface |

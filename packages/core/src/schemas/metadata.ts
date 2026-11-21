@@ -54,6 +54,23 @@ export const FederationEntityMetadataSchema = z.looseObject({
 	organization_uri: z.string().url().optional(),
 });
 
+const endpointFields = Object.keys(FederationEntityMetadataSchema.shape).filter((field) =>
+	field.endsWith("_endpoint"),
+);
+
+/** Require each advertised authentication method list to describe a published endpoint. */
+export function assertEndpointAuthenticationCompanions(
+	metadata: Readonly<Record<string, unknown>> | undefined,
+	ConfigError: new (message: string) => Error = TypeError,
+): void {
+	if (!metadata) return;
+	for (const endpoint of endpointFields) {
+		const methods = `${endpoint}_auth_methods`;
+		if (metadata[methods] !== undefined && metadata[endpoint] === undefined)
+			throw new ConfigError(`${methods} requires ${endpoint}`);
+	}
+}
+
 /** Structural OpenID Relying Party metadata. `@oidfed/oidc` validates protocol-specific fields. */
 const OpenIDRelyingPartyMetadataSchema = z.record(z.string(), z.unknown());
 

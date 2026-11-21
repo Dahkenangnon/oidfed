@@ -53,6 +53,7 @@ import {
 import { oidcRegistrationSchemas } from "../../../packages/oidc/src/schemas/explicit-registration.js";
 import { cryptoFixture } from "../fixtures/crypto.js";
 import { signProtocolFixture } from "../fixtures/protocol-jwt.js";
+import { generateSigningKey, SigningEntryFixture } from "../fixtures/software-crypto.js";
 
 export default async function register(qunit: QUnit) {
 	const engine = createWebCryptoEngine();
@@ -215,7 +216,11 @@ export default async function register(qunit: QUnit) {
 				const anchorId = entityId("https://profile-anchor.example");
 				const leafId = entityId("https://profile-leaf.example");
 				const custom = profileSigner("custom", f.signer);
-				const replacement = profileSigner("replacement", (await cryptoFixture("ES256")).signer);
+				const replacementKey = await generateSigningKey("ES256");
+				const replacement = profileSigner(
+					"replacement",
+					new SigningEntryFixture(replacementKey.privateKey).signer,
+				);
 				const ring = new MemoryRotatingKeyring(
 					{ federation: custom },
 					{ algorithmRegistry, nowSeconds: clock.now },
