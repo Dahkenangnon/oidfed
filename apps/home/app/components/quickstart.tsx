@@ -12,13 +12,13 @@ export const quickstartExamples = [
 			"Publish a root of trust and serve signed Subordinate Statements for the participants you enroll.",
 		guide: "/docs/features/1.1.entity-roles",
 		guideLabel: "Set up a federation host",
-		install: "npm install @oidfed/authority@3 @oidfed/core@3 @oidfed/crypto@1",
+		install: "npm install @oidfed/authority @oidfed/core @oidfed/crypto",
 		code: `import { TrustAnchor } from "@oidfed/authority";
 import { MemoryFederationStorage, type CryptoContext } from "@oidfed/core";
 
-export function createAnchor(crypto: CryptoContext) {
+export async function createAnchor(crypto: CryptoContext) {
   const entityId = "https://anchor.example";
-  return TrustAnchor.create({
+  const anchor = await TrustAnchor.create({
     entityId,
     crypto,
     storage: new MemoryFederationStorage({ namespace: entityId }),
@@ -29,6 +29,7 @@ export function createAnchor(crypto: CryptoContext) {
       },
     },
   });
+  return anchor;
 }`,
 	},
 	{
@@ -40,17 +41,17 @@ export function createAnchor(crypto: CryptoContext) {
 			"Point to an immediate superior and issue Subordinate Statements for the participants below you. Have the superior enroll your Intermediate.",
 		guide: "/docs/features/1.3.subordinate-enrollment",
 		guideLabel: "Enroll a subordinate",
-		install: "npm install @oidfed/authority@3 @oidfed/core@3 @oidfed/crypto@1",
+		install: "npm install @oidfed/authority @oidfed/core @oidfed/crypto",
 		code: `import { Intermediate } from "@oidfed/authority";
 import {
   MemoryFederationStorage, type CryptoContext, type TrustAnchorSet,
 } from "@oidfed/core";
 
-export function createIntermediate(
+export async function createIntermediate(
   crypto: CryptoContext, trustAnchors: TrustAnchorSet,
 ) {
   const entityId = "https://authority.example";
-  return Intermediate.create({
+  const intermediate = await Intermediate.create({
     entityId, crypto, trustAnchors,
     authorityHints: ["https://anchor.example"],
     storage: new MemoryFederationStorage({ namespace: entityId }),
@@ -61,6 +62,7 @@ export function createIntermediate(
       },
     },
   });
+  return intermediate;
 }`,
 	},
 	{
@@ -72,14 +74,14 @@ export function createIntermediate(
 			"Publish a signed Entity Configuration that points to the authority that enrolled you. Add protocol roles as your application needs them.",
 		guide: "/docs/api/leaf/hosts",
 		guideLabel: "Read the Leaf API",
-		install: "npm install @oidfed/leaf@3 @oidfed/core@3 @oidfed/crypto@1",
+		install: "npm install @oidfed/leaf @oidfed/core @oidfed/crypto",
 		code: `import { Leaf } from "@oidfed/leaf";
 import type { CryptoContext, TrustAnchorSet } from "@oidfed/core";
 
-export function createLeaf(
+export async function createLeaf(
   crypto: CryptoContext, trustAnchors: TrustAnchorSet,
 ) {
-  return Leaf.create({
+  const leaf = await Leaf.create({
     entityId: "https://participant.example",
     authorityHints: ["https://authority.example"],
     crypto,
@@ -88,6 +90,7 @@ export function createLeaf(
       federation_entity: { organization_name: "Example participant" },
     },
   });
+  return leaf;
 }`,
 	},
 	{
@@ -100,17 +103,17 @@ export function createLeaf(
 		guide: "/docs/features/1.1.entity-roles",
 		guideLabel: "Compose protocol roles",
 		install:
-			"npm install @oidfed/leaf@3 @oidfed/oidc@3 @oidfed/wallet@3 @oidfed/core@3 @oidfed/crypto@1",
+			"npm install @oidfed/leaf @oidfed/oidc @oidfed/wallet @oidfed/core @oidfed/crypto",
 		code: `import { Leaf } from "@oidfed/leaf";
 import { OidcRelyingPartyRole } from "@oidfed/oidc";
 import { CredentialVerifierRole } from "@oidfed/wallet";
 import type { CryptoContext, JWKSet, TrustAnchorSet } from "@oidfed/core";
 
-export function createParticipant(
+export async function createParticipant(
   crypto: CryptoContext, trustAnchors: TrustAnchorSet,
   verifierKeys: JWKSet,
 ) {
-  return Leaf.create({
+  const participant = await Leaf.create({
     entityId: "https://portal.example",
     authorityHints: ["https://authority.example"],
     crypto, trustAnchors,
@@ -134,6 +137,7 @@ export function createParticipant(
       }),
     ],
   });
+  return participant;
 }`,
 	},
 ] as const;

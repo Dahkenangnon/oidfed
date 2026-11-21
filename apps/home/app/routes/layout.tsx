@@ -1,5 +1,5 @@
 import { GitHubIcon, OidfedLogo } from "@oidfed/ui";
-import { ArrowRight, ArrowUpRight, Menu, X } from "lucide-react";
+import { ArrowRight, Menu, X } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router";
 import { InstallCommand } from "../components/copy-button";
@@ -11,8 +11,6 @@ const primaryLinks = [
 	{ label: "Learn", href: LEARN },
 	{ label: "Explorer", href: EXPLORER },
 	{ label: "Ecosystem", href: "/ecosystem" },
-	{ label: "Trust Journal", href: "/trust-journal" },
-	{ label: "About", href: "/about" },
 ];
 
 const footerGroups = [
@@ -105,6 +103,12 @@ function SiteHeader() {
 					</nav>
 
 					<div className="flex shrink-0 items-center gap-2">
+						<Link
+							to="/#quickstart"
+							className="site-button hidden min-h-9 px-4 lg:inline-flex"
+						>
+							Get started
+						</Link>
 						<a
 							href={REPOSITORY}
 							aria-label="OidFed on GitHub"
@@ -136,6 +140,9 @@ function SiteHeader() {
 					className={`mx-auto max-w-6xl flex-col gap-1 border-t border-border px-5 py-3 sm:px-8 lg:hidden ${open ? "flex" : "hidden"}`}
 				>
 					<PrimaryLinks mobile />
+					<Link to="/#quickstart" className="site-button mt-2 w-full">
+						Get started
+					</Link>
 				</nav>
 			</div>
 		</header>
@@ -166,14 +173,11 @@ function SiteFooter() {
 			<div className="relative mx-auto max-w-6xl px-5 pt-12 pb-4 sm:px-8 sm:pt-16">
 				<div className="grid gap-10 md:gap-12">
 					<div className="flex min-w-0 flex-col items-center text-center">
-						<p className="max-w-110 text-base leading-relaxed text-muted-foreground">
-							Open-source OpenID Federation libraries for JavaScript and TypeScript.
-						</p>
 						<Link
 							to="/docs"
-							className="site-footer-cta mt-5 inline-flex items-center gap-2 text-sm font-semibold"
+							className="site-footer-cta inline-flex items-center gap-2 text-base font-semibold"
 						>
-							Read the documentation <ArrowUpRight aria-hidden className="size-4" />
+							Start building <ArrowRight aria-hidden className="size-4" />
 						</Link>
 						<div className="mt-5">
 							<InstallCommand label="Core install command from footer" />
@@ -212,12 +216,12 @@ function SiteFooter() {
 				</div>
 				<div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-border pt-3">
 					<p className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground sm:text-sm">
-						<span>© 2026 Justin Dah-kenangnon</span>
+						<span>© 2026 Yamonwan Justin Dah-kenangnon</span>
 						<a className="site-link" href={`${REPOSITORY}/blob/main/LICENSE`}>
-							Apache-2.0 libraries
+							Libraries: Apache-2.0
 						</a>
 						<a className="site-link" href={`${REPOSITORY}/blob/main/apps/home/LICENSE`}>
-							MIT app
+							This site: MIT
 						</a>
 					</p>
 					<a

@@ -99,11 +99,8 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 					<a href="#quickstart" className="site-button">
 						Build with OidFed <ArrowRight aria-hidden className="size-4" />
 					</a>
-					<a
-						href={`${LEARN}/lessons/what-is-federation`}
-						className="site-button site-button-outline"
-					>
-						Learn OpenID Federation
+					<a href={DOCS} className="site-button site-button-outline">
+						Read the docs
 					</a>
 				</div>
 			</SiteHero>
