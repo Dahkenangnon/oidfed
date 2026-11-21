@@ -7,16 +7,16 @@ import { buildMeta, DOMAIN } from "../lib/seo";
 
 export function meta() {
 	return buildMeta({
-		title: "About the project",
+		title: "About OidFed: OpenID Federation libraries & tools",
 		description:
-			"About @oidfed: 6 libraries, 3 apps, and 17 CLI commands for OpenID Federation. Apache-2.0 for libraries and CLI; MIT for apps.",
+			"OidFed is six OpenID Federation libraries, three apps, and a 17-command CLI. Apache-2.0 for the libraries and CLI; MIT for the apps.",
 		path: "/about",
 		jsonLd: {
 			"@context": "https://schema.org",
 			"@type": "AboutPage",
 			"@id": `${DOMAIN}/about#webpage`,
 			url: `${DOMAIN}/about`,
-			name: "About @oidfed",
+			name: "About OidFed",
 			isPartOf: { "@id": `${DOMAIN}/#website` },
 			mainEntity: { "@id": `${DOMAIN}/#organization` },
 		},

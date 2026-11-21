@@ -3,6 +3,7 @@ import { useEffect, useRef } from "react";
 import { isRouteErrorResponse, Link, useLocation } from "react-router";
 import { DocsArticle } from "../components/docs-article";
 import { guideCatalog, packagePages, renderDocumentation } from "../lib/docs.server";
+import { docsSeo } from "../lib/docs-meta";
 import { buildMeta, DOMAIN } from "../lib/seo";
 import type { Route } from "./+types/docs";
 import "./docs.css";
@@ -30,34 +31,49 @@ export function meta({ loaderData }: Route.MetaArgs) {
 	if (!loaderData) {
 		return buildMeta({
 			title: "Documentation page not found",
-			description: "Browse the OidFed documentation to find a guide or API reference.",
+			description:
+				"Browse the OidFed documentation to find an OpenID Federation feature guide, a package API reference, or the v3 migration notes.",
 			path: "/docs",
 			noindex: true,
 		});
 	}
-	const { title, description, path } = loaderData;
-	const packageName = path.match(
-		/^\/docs\/api\/(core|crypto|authority|leaf|oidc|wallet)(?:\/|$)/,
-	)?.[1];
-	const section = packageName ? `@oidfed/${packageName}` : "OidFed Documentation";
+	const { title, description, section, breadcrumbs } = docsSeo({
+		heading: loaderData.title,
+		description: loaderData.description,
+		path: loaderData.path,
+	});
+	const url = `${DOMAIN}${loaderData.path}`;
 	return buildMeta({
-		title:
-			path === "/docs"
-				? "OpenID Federation Documentation & API Reference"
-				: `${title} | ${section}`,
+		title,
 		description,
-		path,
+		path: loaderData.path,
 		ogType: "article",
-		jsonLd: {
-			"@context": "https://schema.org",
-			"@type": "TechArticle",
-			headline: title,
-			description,
-			url: `${DOMAIN}${path}`,
-			inLanguage: "en",
-			isPartOf: { "@id": `${DOMAIN}/#website` },
-			publisher: { "@id": `${DOMAIN}/#organization` },
-		},
+		jsonLd: [
+			{
+				"@context": "https://schema.org",
+				"@type": "TechArticle",
+				"@id": `${url}#article`,
+				headline: title,
+				description,
+				url,
+				inLanguage: "en",
+				articleSection: section,
+				about: { "@type": "Thing", name: "OpenID Federation" },
+				isPartOf: { "@id": `${DOMAIN}/#website` },
+				publisher: { "@id": `${DOMAIN}/#organization` },
+			},
+			{
+				"@context": "https://schema.org",
+				"@type": "BreadcrumbList",
+				"@id": `${url}#breadcrumbs`,
+				itemListElement: breadcrumbs.map(({ name, path }, index) => ({
+					"@type": "ListItem",
+					position: index + 1,
+					name,
+					item: `${DOMAIN}${path}`,
+				})),
+			},
+		],
 	});
 }
 

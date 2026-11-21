@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { buildMeta, SITE_NAME } from "../app/lib/seo";
+import { buildMeta, HOME_DESCRIPTION, SITE_NAME } from "../app/lib/seo";
 
 type Tags = ReturnType<typeof buildMeta>;
 
@@ -50,5 +50,42 @@ test("route titles leave the brand suffix to buildMeta", () => {
 				`${file} spells its own brand suffix in "${title}" — pass a bare title instead`,
 			);
 		}
+	}
+});
+
+/** Descriptions a route shares through `seo.ts` instead of spelling inline. */
+const SHARED_DESCRIPTIONS: Record<string, string> = { HOME_DESCRIPTION };
+
+/** The `meta()` body of each route, where the page-level SEO text is declared. */
+function metaBodies(): { file: string; body: string }[] {
+	const routes = join(import.meta.dirname, "..", "app", "routes");
+	return readdirSync(routes)
+		.filter((name) => name.endsWith(".tsx"))
+		.flatMap((file) => {
+			const source = readFileSync(join(routes, file), "utf8");
+			const start = source.indexOf("export function meta(");
+			if (start < 0) return [];
+			const end = source.indexOf("\n}", start);
+			return [{ file, body: source.slice(start, end) }];
+		});
+}
+
+test("every route title fits a search listing once the brand is appended", () => {
+	for (const { file, body } of metaBodies()) {
+		for (const [, title] of body.matchAll(/title:\s*"([^"]+)"/g)) {
+			const rendered = `${title} | ${SITE_NAME}`;
+			assert.ok(rendered.length <= 70, `${file}: "${rendered}" is ${rendered.length} chars`);
+		}
+	}
+});
+
+test("every route description fills a search snippet without overflowing it", () => {
+	for (const { file, body } of metaBodies()) {
+		const match = /description:\s*\n?\s*(?:"((?:[^"\\]|\\.)+)"|([A-Z][A-Z_]+))/.exec(body);
+		const named = match?.[2];
+		const description = match?.[1] ?? (named ? SHARED_DESCRIPTIONS[named] : undefined);
+		assert.ok(description, `${file} declares no resolvable description`);
+		assert.ok(description.length >= 70, `${file}: description is ${description.length} chars`);
+		assert.ok(description.length <= 160, `${file}: description is ${description.length} chars`);
 	}
 });

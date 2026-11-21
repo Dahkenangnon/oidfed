@@ -10,6 +10,8 @@ export const HOME_DESCRIPTION =
 export const DEFAULT_OG_IMAGE = `${DOMAIN}/og-image.png`;
 export const DEFAULT_OG_IMAGE_WIDTH = "1200";
 export const DEFAULT_OG_IMAGE_HEIGHT = "630";
+/** Describes the shared social card for both the Open Graph and Twitter tags. */
+export const OG_IMAGE_ALT = "OidFed. OpenID Federation for OIDC, OAuth and wallets.";
 
 export interface BuildMetaInput {
 	title: string;
@@ -56,11 +58,12 @@ export function buildMeta(input: BuildMetaInput): MetaDescriptor[] {
 		{ property: "og:image", content: ogImage },
 		{ property: "og:image:width", content: DEFAULT_OG_IMAGE_WIDTH },
 		{ property: "og:image:height", content: DEFAULT_OG_IMAGE_HEIGHT },
-		{ property: "og:image:alt", content: "OidFed. OpenID Federation for OIDC, OAuth and wallets." },
+		{ property: "og:image:alt", content: OG_IMAGE_ALT },
 		{ name: "twitter:card", content: "summary_large_image" },
 		{ name: "twitter:title", content: title },
 		{ name: "twitter:description", content: input.description },
 		{ name: "twitter:image", content: ogImage },
+		{ name: "twitter:image:alt", content: OG_IMAGE_ALT },
 	];
 
 	if (input.noindex) {

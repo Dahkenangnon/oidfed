@@ -1,6 +1,6 @@
 # Using host-provided crypto
 
-This material is part of the [v3 migration guide](../migration-v3.md#host-provided-crypto).
+Migrating to v3 means supplying your own `CryptoEngine`, `Signer`, and keyring. This page collects the crypto steps of the [v3 migration guide](../migration-v3.md#host-provided-crypto).
 
 ## Configure a host
 

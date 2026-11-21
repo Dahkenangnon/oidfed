@@ -1,13 +1,25 @@
 import { ArrowUpRight } from "lucide-react";
 import { SiteHero } from "../components/site-hero";
-import { buildMeta } from "../lib/seo";
+import { buildMeta, DOMAIN } from "../lib/seo";
 
 export function meta() {
 	return buildMeta({
-		title: "Trust Journal",
+		title: "Trust Journal: OpenID Federation standards updates",
 		description:
 			"Standards updates, guides, and deployment reports about OpenID Federation and related ways to establish digital trust.",
 		path: "/trust-journal",
+		jsonLd: {
+			"@context": "https://schema.org",
+			"@type": "CollectionPage",
+			"@id": `${DOMAIN}/trust-journal#webpage`,
+			url: `${DOMAIN}/trust-journal`,
+			name: "OpenID Federation Trust Journal",
+			description:
+				"A curated reading list of OpenID Federation specifications, guides, and deployment reports.",
+			inLanguage: "en",
+			isPartOf: { "@id": `${DOMAIN}/#website` },
+			about: { "@type": "Thing", name: "OpenID Federation" },
+		},
 	});
 }
 

@@ -19,7 +19,7 @@ export function meta() {
 	return buildMeta({
 		title: "Ecosystem: OpenID Federation adoption and pilots",
 		description:
-			"OpenID Federation is being adopted, piloted, or specified across governments, academic networks, and AI-agent identity research — EU Digital Identity Wallet, Italy SPID/CIE, eduGAIN pilot, OpenID Foundation AI-agent whitepaper. Verified, source-linked.",
+			"Who is adopting OpenID Federation: the EU Digital Identity Wallet, Italy’s SPID and CIE, the eduGAIN pilot, and AI-agent identity research.",
 		path: "/ecosystem",
 		jsonLd: {
 			"@context": "https://schema.org",
@@ -31,7 +31,7 @@ export function meta() {
 				"Documented adoption and interest in OpenID Federation across governments, academic networks, and AI-agent identity research.",
 			isPartOf: { "@id": `${DOMAIN}/#website` },
 			about: [
-				{ "@type": "Thing", name: "OpenID Federation 1.0" },
+				{ "@type": "Thing", name: "OpenID Federation" },
 				{ "@type": "Thing", name: "EU Digital Identity Wallet" },
 				{ "@type": "Thing", name: "SPID" },
 				{ "@type": "Thing", name: "eduGAIN" },
