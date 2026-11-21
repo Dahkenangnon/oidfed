@@ -47,9 +47,9 @@ pnpm add @oidfed/authority @oidfed/core
 import { TrustAnchor } from "@oidfed/authority";
 import { MemoryFederationStorage, type CryptoContext } from "@oidfed/core";
 
-export function createAnchor(crypto: CryptoContext) {
+export async function createAnchor(crypto: CryptoContext) {
   const entityId = "https://anchor.example";
-  return TrustAnchor.create({
+  const anchor = await TrustAnchor.create({
     entityId,
     crypto,
     storage: new MemoryFederationStorage({ namespace: entityId }),
@@ -60,10 +60,11 @@ export function createAnchor(crypto: CryptoContext) {
       },
     },
   });
+  return anchor;
 }
 ```
 
-Serve requests through `anchor.handleRequest(request)` over HTTPS and configure [durable storage](https://oidfed.com/docs/features/11.6.storage-adapters) for deployment.
+Create the anchor once at startup with `const anchor = await createAnchor(crypto)`, then serve each request through `await anchor.handleRequest(request)` over HTTPS. Configure [durable storage](https://oidfed.com/docs/features/11.6.storage-adapters) for deployment.
 
 ## Resources
 
