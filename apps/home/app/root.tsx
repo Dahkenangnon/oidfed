@@ -7,6 +7,7 @@ import {
 	ScrollRestoration,
 } from "react-router";
 
+import { THEME_COLORS, themeBootstrapScript } from "./lib/theme";
 import type { Route } from "./+types/root";
 import "./app.css";
 
@@ -22,15 +23,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
 			<head>
 				<meta charSet="utf-8" />
 				<meta name="viewport" content="width=device-width, initial-scale=1" />
-				<meta name="theme-color" content="#33224f" />
+				{/* The bootstrap script below rewrites this for a dark visitor. */}
+				<meta name="theme-color" content={THEME_COLORS.light} />
 				<meta name="twitter:site" content="@oidfed" />
 				<Meta />
 				<Links />
 				<script
-					// biome-ignore lint/security/noDangerouslySetInnerHtml: inline theme script prevents FOUC
-					dangerouslySetInnerHTML={{
-						__html: `(function(){if(localStorage.getItem("theme")==="dark")document.documentElement.classList.add("dark")})()`,
-					}}
+					// biome-ignore lint/security/noDangerouslySetInnerHtml: a compile-time constant, no user input
+					dangerouslySetInnerHTML={{ __html: themeBootstrapScript() }}
 				/>
 			</head>
 			<body className="bg-background text-foreground antialiased">

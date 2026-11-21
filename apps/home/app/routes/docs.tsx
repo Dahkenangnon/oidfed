@@ -29,7 +29,7 @@ export function loader({ params }: Route.LoaderArgs) {
 export function meta({ loaderData }: Route.MetaArgs) {
 	if (!loaderData) {
 		return buildMeta({
-			title: "Documentation page not found | OidFed",
+			title: "Documentation page not found",
 			description: "Browse the OidFed documentation to find a guide or API reference.",
 			path: "/docs",
 			noindex: true,
@@ -43,7 +43,7 @@ export function meta({ loaderData }: Route.MetaArgs) {
 	return buildMeta({
 		title:
 			path === "/docs"
-				? "OpenID Federation Documentation & API Reference | OidFed"
+				? "OpenID Federation Documentation & API Reference"
 				: `${title} | ${section}`,
 		description,
 		path,
@@ -97,8 +97,11 @@ export default function Documentation({ loaderData }: Route.ComponentProps) {
 					<ul className="space-y-2 text-sm text-muted-foreground">
 						{headings.map(({ id, label, level }) => (
 							<li key={id} className={level === 3 ? "pl-3" : undefined}>
-								<a href={`#${id}`} className="wrap-anywhere hover:text-site-accent hover:underline">
-									{label}
+								<a
+									href={`#${id}`}
+									className="wrap-break-word hover:text-site-accent hover:underline"
+								>
+									{outlineLabel(label)}
 								</a>
 							</li>
 						))}
@@ -223,6 +226,24 @@ function DocumentationNav({ path, topics, apiPages }: DocsNavigation) {
 				</ul>
 			</section>
 		</nav>
+	);
+}
+
+/**
+ * Offers a break before a `Type#member` separator so a long outline entry wraps
+ * at the member boundary. Paired with `wrap-break-word`, which breaks a word
+ * only when it cannot fit a line on its own, this keeps an identifier intact
+ * unless it is genuinely wider than the rail.
+ */
+function outlineLabel(label: string) {
+	const separator = label.indexOf("#");
+	if (separator <= 0) return label;
+	return (
+		<>
+			{label.slice(0, separator)}
+			<wbr />
+			{label.slice(separator)}
+		</>
 	);
 }
 

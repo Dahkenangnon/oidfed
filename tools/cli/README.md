@@ -22,7 +22,7 @@
 
 Command-line interface for inspecting, validating, and debugging OpenID Federation deployments — resolve trust chains, decode entity statements, verify signatures, and more.
 
-Implements command-line inspection and debugging utilities for the final [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) / [1.1](https://openid.net/specs/openid-federation-1_1.html) specifications, and [Extended Subordinate Listing 1.0](https://openid.net/specs/openid-federation-extended-listing-1_0.html) (tracks draft-03).
+Implements command-line inspection and debugging utilities for the final [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) / [1.1](https://openid.net/specs/openid-federation-1_1-final.html) specifications, and [Extended Subordinate Listing 1.0](https://openid.net/specs/openid-federation-extended-listing-1_0.html) (tracks draft-03).
 
 The CLI also retrieves [Subordinate Events](https://openid.net/specs/openid-federation-subordinate-events-1_0-01.html) (Draft 01) and [Entity Collections](https://openid.net/specs/openid-federation-entity-collection-1_0-01.html) (Draft 01). See the [command reference](https://github.com/Dahkenangnon/oidfed/blob/main/tools/cli/docs/readme.md) for their parameters and verification requirements.
 

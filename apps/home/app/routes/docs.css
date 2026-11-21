@@ -276,26 +276,38 @@
 		top: 1.5rem;
 		max-height: calc(100vh - 3rem);
 		overflow-y: auto;
+		overscroll-behavior: contain;
 		padding-inline-end: 1rem;
 		border-inline-end: 1px solid var(--border);
 		scrollbar-width: thin;
 		scrollbar-color: var(--border) transparent;
+		scrollbar-gutter: stable;
 	}
 }
 
 @media (width >= 76rem) {
 	.docs-layout {
-		grid-template-columns: 15rem minmax(0, 1fr) 12rem;
+		grid-template-columns: 15rem minmax(0, 1fr) 15rem;
 	}
 
 	.docs-outline {
-		display: block;
+		display: flex;
+		flex-direction: column;
 		align-self: start;
 		position: sticky;
 		top: 1.5rem;
 		max-height: calc(100vh - 3rem);
-		overflow-y: auto;
 		border-inline-start: 1px solid var(--border);
 		padding-inline-start: 1.25rem;
+	}
+
+	.docs-outline > ul {
+		min-height: 0;
+		overflow-y: auto;
+		overscroll-behavior: contain;
+		padding-inline-end: 0.5rem;
+		scrollbar-width: thin;
+		scrollbar-color: var(--border) transparent;
+		scrollbar-gutter: stable;
 	}
 }

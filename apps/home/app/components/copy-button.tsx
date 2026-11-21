@@ -1,6 +1,11 @@
 import { Check, Copy } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { INSTALL } from "../lib/links";
+
+/** How long the button advertises a successful copy before returning to idle. */
+const COPIED_FEEDBACK_MS = 2000;
+
+type CopyStatus = "idle" | "copied" | "failed";
 
 export function InstallCommand({
 	command = INSTALL,
@@ -18,13 +23,22 @@ export function InstallCommand({
 }
 
 export function CopyButton({ text, label }: { text: string; label: string }) {
-	const [status, setStatus] = useState("idle");
+	const [status, setStatus] = useState<CopyStatus>("idle");
+	const reset = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+	// Drop a pending reset when the button leaves the page, so an unmounted
+	// component never calls setState.
+	useEffect(() => () => clearTimeout(reset.current), []);
 
 	async function copy() {
+		clearTimeout(reset.current);
 		try {
 			await navigator.clipboard.writeText(text);
 			setStatus("copied");
+			// Return to idle so a second copy is acknowledged as clearly as the first.
+			reset.current = setTimeout(() => setStatus("idle"), COPIED_FEEDBACK_MS);
 		} catch {
+			// Left in place: the visitor has to act on the fallback instruction.
 			setStatus("failed");
 		}
 	}

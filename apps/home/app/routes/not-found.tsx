@@ -1,9 +1,15 @@
 import { ArrowLeft } from "lucide-react";
 import { Link } from "react-router";
 import { SiteHero } from "../components/site-hero";
+import { buildMeta } from "../lib/seo";
 
 export function meta() {
-	return [{ title: "Page not found | OidFed" }, { name: "robots", content: "noindex,nofollow" }];
+	return buildMeta({
+		title: "Page not found",
+		description: "The address may have changed. Browse the documentation or the ecosystem instead.",
+		path: "/404",
+		noindex: true,
+	});
 }
 
 export default function NotFound() {

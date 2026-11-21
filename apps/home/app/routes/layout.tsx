@@ -1,16 +1,15 @@
 import { GitHubIcon, OidfedLogo } from "@oidfed/ui";
 import { ArrowRight, Menu, X } from "lucide-react";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router";
 import { InstallCommand } from "../components/copy-button";
 import { ThemeToggle } from "../components/theme-toggle";
 import { DOCS, EXPLORER, FEDERATIONS, LEARN, REPOSITORY } from "../lib/links";
 
-const primaryLinks = [
+const primaryLinks: { label: string; href: `/${string}` }[] = [
 	{ label: "Docs", href: DOCS },
-	{ label: "Learn", href: LEARN },
-	{ label: "Explorer", href: EXPLORER },
 	{ label: "Ecosystem", href: "/ecosystem" },
+	{ label: "Trust Journal", href: "/trust-journal" },
 ];
 
 const footerGroups = [
@@ -78,10 +77,25 @@ function SiteHeader() {
 	const location = useLocation();
 	const menuId = useId();
 	const [open, setOpen] = useState(false);
+	const toggle = useRef<HTMLButtonElement>(null);
 
 	useEffect(() => {
 		setOpen(false);
 	}, [location.key]);
+
+	// The menu is a disclosure rendered in the document flow rather than a modal,
+	// so it needs no focus trap: Escape closes it and hands focus back to the
+	// control that opened it.
+	useEffect(() => {
+		if (!open) return;
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (event.key !== "Escape") return;
+			setOpen(false);
+			toggle.current?.focus();
+		};
+		document.addEventListener("keydown", onKeyDown);
+		return () => document.removeEventListener("keydown", onKeyDown);
+	}, [open]);
 
 	return (
 		<header>
@@ -118,6 +132,7 @@ function SiteHeader() {
 						</a>
 						<ThemeToggle />
 						<button
+							ref={toggle}
 							type="button"
 							className="grid size-9 place-items-center rounded-md border border-border lg:hidden"
 							aria-label={open ? "Close navigation menu" : "Open navigation menu"}
@@ -154,17 +169,11 @@ function PrimaryLinks({ mobile = false }: { mobile?: boolean }) {
 		? "block rounded-md px-3 py-2.5 text-sm font-medium hover:bg-muted aria-[current=page]:text-site-accent"
 		: "text-sm font-medium hover:text-site-accent aria-[current=page]:text-site-accent aria-[current=page]:underline underline-offset-6";
 
-	return primaryLinks.map(({ label, href }) =>
-		href.startsWith("/") ? (
-			<NavLink key={href} to={href} className={style}>
-				{label}
-			</NavLink>
-		) : (
-			<a key={href} href={href} className={style}>
-				{label}
-			</a>
-		),
-	);
+	return primaryLinks.map(({ label, href }) => (
+		<NavLink key={href} to={href} className={style}>
+			{label}
+		</NavLink>
+	));
 }
 
 function SiteFooter() {
@@ -184,12 +193,15 @@ function SiteFooter() {
 						</div>
 					</div>
 					<nav
-						aria-label="Footer"
+						aria-labelledby="footer-heading"
 						className="grid grid-cols-2 items-start gap-x-5 gap-y-8 text-center sm:grid-cols-4"
 					>
+						<h2 id="footer-heading" className="sr-only">
+							Site
+						</h2>
 						{footerGroups.map(({ label, links }) => (
 							<div key={label}>
-								<h2 className="mb-3 text-sm font-semibold">{label}</h2>
+								<h3 className="mb-3 text-sm font-semibold">{label}</h3>
 								<ul className="space-y-2.5 text-sm text-muted-foreground">
 									{links.map(({ label, href }) => (
 										<li key={href}>
@@ -216,7 +228,7 @@ function SiteFooter() {
 				</div>
 				<div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-border pt-3">
 					<p className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground sm:text-sm">
-						<span>© 2026 Yamonwan Justin Dah-kenangnon</span>
+						<span>© {new Date().getFullYear()} Yamonwan Justin Dah-kenangnon</span>
 						<a className="site-link" href={`${REPOSITORY}/blob/main/LICENSE`}>
 							Libraries: Apache-2.0
 						</a>

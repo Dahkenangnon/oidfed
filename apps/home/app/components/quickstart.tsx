@@ -1,8 +1,25 @@
 import { useState } from "react";
+import { Link } from "react-router";
 import { CopyButton, InstallCommand } from "./copy-button";
 import { HighlightedCode } from "./highlighted-code";
 
-export const quickstartExamples = [
+/** One tab of the quickstart: a runnable example plus the links around it. */
+interface QuickstartExample {
+	/** Keys the server-highlighted markup and the tab/panel ARIA wiring. */
+	readonly id: string;
+	readonly label: string;
+	readonly filename: string;
+	readonly title: string;
+	readonly description: string;
+	readonly guide: string;
+	readonly guideLabel: string;
+	readonly install: string;
+	readonly code: string;
+	/** Shown only for examples that persist federation state. */
+	readonly storageNote?: string;
+}
+
+export const quickstartExamples: readonly QuickstartExample[] = [
 	{
 		id: "anchor",
 		label: "Trust Anchor",
@@ -12,6 +29,7 @@ export const quickstartExamples = [
 			"Publish a root of trust and serve signed Subordinate Statements for the participants you enroll.",
 		guide: "/docs/features/1.1.entity-roles",
 		guideLabel: "Set up a federation host",
+		storageNote: "Use durable storage for a deployed authority.",
 		install: "npm install @oidfed/authority @oidfed/core @oidfed/crypto",
 		code: `import { TrustAnchor } from "@oidfed/authority";
 import { MemoryFederationStorage, type CryptoContext } from "@oidfed/core";
@@ -41,6 +59,7 @@ export async function createAnchor(crypto: CryptoContext) {
 			"Point to an immediate superior and issue Subordinate Statements for the participants below you. Have the superior enroll your Intermediate.",
 		guide: "/docs/features/1.3.subordinate-enrollment",
 		guideLabel: "Enroll a subordinate",
+		storageNote: "Use durable storage for a deployed authority.",
 		install: "npm install @oidfed/authority @oidfed/core @oidfed/crypto",
 		code: `import { Intermediate } from "@oidfed/authority";
 import {
@@ -140,7 +159,7 @@ export async function createParticipant(
   return participant;
 }`,
 	},
-] as const;
+];
 
 export function Quickstart({ highlighted }: { highlighted: Record<string, string> }) {
 	const [active, setActive] = useState(0);
@@ -200,7 +219,7 @@ export function Quickstart({ highlighted }: { highlighted: Record<string, string
 				</div>
 			</div>
 			{quickstartExamples.map(
-				({ id, title, description, install, filename, code, guide, guideLabel }, index) => (
+				({ id, title, description, install, filename, code, guide, guideLabel, storageNote }, index) => (
 					<div
 						key={id}
 						id={`quickstart-panel-${id}`}
@@ -219,18 +238,18 @@ export function Quickstart({ highlighted }: { highlighted: Record<string, string
 							</div>
 							<p className="mt-4 max-w-[46ch] text-sm leading-relaxed text-muted-foreground">
 								Bring your{" "}
-								<a className="site-link" href="/docs/api/crypto">
+								<Link className="site-link" to="/docs/api/crypto">
 									crypto engine and keyring
-								</a>
-								.{index < 2 && " Use durable storage for a deployed authority."}
+								</Link>
+								.{storageNote ? ` ${storageNote}` : ""}
 							</p>
 							<div className="mt-5 flex flex-wrap gap-x-5 gap-y-2 text-sm font-semibold">
-								<a className="site-link" href={guide}>
+								<Link className="site-link" to={guide}>
 									{guideLabel}
-								</a>
-								<a className="site-link" href="/docs/features/11.5.http-wiring">
+								</Link>
+								<Link className="site-link" to="/docs/features/11.5.http-wiring">
 									Serve over HTTPS
-								</a>
+								</Link>
 							</div>
 						</div>
 						<div className="quickstart-code min-w-0">

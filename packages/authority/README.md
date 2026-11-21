@@ -24,8 +24,8 @@
 Trust Anchor and Intermediate Authority operations — subordinate management, statement issuance, federation endpoint serving, and policy enforcement for OpenID Federation 1.0 deployments.
 
 Targets the final [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) specification and its successor specifications:
-* [OpenID Federation 1.1](https://openid.net/specs/openid-federation-1_1.html) (protocol-independent layer)
-* [OpenID Federation for OpenID Connect 1.1](https://openid.net/specs/openid-federation-connect-1_1.html) (protocol-specific layer)
+* [OpenID Federation 1.1](https://openid.net/specs/openid-federation-1_1-final.html) (protocol-independent layer)
+* [OpenID Federation for OpenID Connect 1.1](https://openid.net/specs/openid-federation-connect-1_1-final.html) (protocol-specific layer)
 * [Extended Subordinate Listing, Draft 03](https://openid.net/specs/openid-federation-extended-listing-1_0-03.html)
 * [Subordinate Events, Draft 01](https://openid.net/specs/openid-federation-subordinate-events-1_0-01.html)
 * [Entity Collection, Draft 01](https://openid.net/specs/openid-federation-entity-collection-1_0-01.html)

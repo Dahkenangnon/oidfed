@@ -17,7 +17,7 @@ import { buildMeta, DOMAIN } from "../lib/seo";
 
 export function meta() {
 	return buildMeta({
-		title: "Ecosystem — OpenID Federation adoption, pilots, and AI-agent identity | @oidfed",
+		title: "Ecosystem: OpenID Federation adoption and pilots",
 		description:
 			"OpenID Federation is being adopted, piloted, or specified across governments, academic networks, and AI-agent identity research — EU Digital Identity Wallet, Italy SPID/CIE, eduGAIN pilot, OpenID Foundation AI-agent whitepaper. Verified, source-linked.",
 		path: "/ecosystem",
@@ -619,7 +619,7 @@ function OurImplementation() {
 					<SectionTitle>OpenID Federation for JavaScript</SectionTitle>
 					<SectionIntro>
 						@oidfed implements federation trust chains, entity publication and protocol roles.
-						Applications choose their crypto backend and manage their signing keys. Apache 2.0
+						Applications choose their crypto backend and manage their signing keys. Apache-2.0
 						licensed (with MIT-licensed apps) and free to use.
 					</SectionIntro>
 				</div>
@@ -638,7 +638,7 @@ function OurImplementation() {
 									Runtime-agnostic
 								</Badge>
 								<Badge variant="outline" className="font-mono text-[10px]">
-									Apache 2.0
+									Apache-2.0
 								</Badge>
 							</div>
 							<p className="text-[14px] leading-relaxed text-muted-foreground">

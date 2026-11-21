@@ -28,27 +28,37 @@ type MetaDescriptor =
 	| { tagName: "link"; rel: string; href: string }
 	| { "script:ld+json": Record<string, unknown> };
 
+/**
+ * Appends the site name so every result in a search listing reads as one site.
+ * Routes pass a bare page title; a title that already carries the suffix is
+ * left alone so the two forms cannot drift apart.
+ */
+function withSiteName(title: string): string {
+	return title.endsWith(`| ${SITE_NAME}`) ? title : `${title} | ${SITE_NAME}`;
+}
+
 export function buildMeta(input: BuildMetaInput): MetaDescriptor[] {
 	const canonical = `${DOMAIN}${input.path === "/" ? "" : input.path}`;
 	const ogImage = input.ogImage ?? DEFAULT_OG_IMAGE;
 	const ogType = input.ogType ?? "website";
+	const title = withSiteName(input.title);
 
 	const tags: MetaDescriptor[] = [
-		{ title: input.title },
+		{ title },
 		{ name: "description", content: input.description },
 		{ tagName: "link", rel: "canonical", href: canonical },
 		{ property: "og:site_name", content: SITE_NAME },
 		{ property: "og:locale", content: "en_US" },
 		{ property: "og:type", content: ogType },
 		{ property: "og:url", content: canonical },
-		{ property: "og:title", content: input.title },
+		{ property: "og:title", content: title },
 		{ property: "og:description", content: input.description },
 		{ property: "og:image", content: ogImage },
 		{ property: "og:image:width", content: DEFAULT_OG_IMAGE_WIDTH },
 		{ property: "og:image:height", content: DEFAULT_OG_IMAGE_HEIGHT },
 		{ property: "og:image:alt", content: "OidFed. OpenID Federation for OIDC, OAuth and wallets." },
 		{ name: "twitter:card", content: "summary_large_image" },
-		{ name: "twitter:title", content: input.title },
+		{ name: "twitter:title", content: title },
 		{ name: "twitter:description", content: input.description },
 		{ name: "twitter:image", content: ogImage },
 	];
@@ -79,7 +89,7 @@ export const organizationJsonLd: Record<string, unknown> = {
 	description: "Open-source libraries and learning resources for OpenID Federation.",
 	founder: {
 		"@type": "Person",
-		name: "Justin Dah-kenangnon",
+		name: "Yamonwan Justin Dah-kenangnon",
 		url: "https://github.com/Dahkenangnon",
 	},
 	sameAs: [

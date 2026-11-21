@@ -17,7 +17,7 @@ import type { Route } from "./+types/home";
 
 export function meta() {
 	return buildMeta({
-		title: "OpenID Federation SDK for OIDC, OAuth & Wallets | OidFed",
+		title: "OpenID Federation SDK for OIDC, OAuth & Wallets",
 		description: HOME_DESCRIPTION,
 		path: "/",
 		jsonLd: [organizationJsonLd, websiteJsonLd, softwareSourceCodeJsonLd],
@@ -99,9 +99,9 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 					<a href="#quickstart" className="site-button">
 						Build with OidFed <ArrowRight aria-hidden className="size-4" />
 					</a>
-					<a href={DOCS} className="site-button site-button-outline">
+					<Link to={DOCS} className="site-button site-button-outline">
 						Read the docs
-					</a>
+					</Link>
 				</div>
 			</SiteHero>
 
@@ -125,8 +125,8 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 					<ul className="mt-7 grid overflow-hidden rounded-2xl border border-border bg-border [gap:1px] sm:grid-cols-2 lg:grid-cols-3">
 						{packages.map(({ name, description }) => (
 							<li key={name} className="bg-card">
-								<a
-									href={`${DOCS}/api/${name}`}
+								<Link
+									to={`${DOCS}/api/${name}`}
 									className="group block h-full p-5 hover:bg-site-code sm:p-6"
 								>
 									<span className="flex items-center justify-between gap-3 font-mono text-base font-semibold text-site-accent">
@@ -139,20 +139,20 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 									<p className="mt-2 text-sm leading-relaxed text-muted-foreground">
 										{description}
 									</p>
-								</a>
+								</Link>
 							</li>
 						))}
 					</ul>
 					<div className="mt-5 flex flex-wrap gap-x-6 gap-y-2 text-sm">
-						<a href={`${DOCS}/features/11.5.http-wiring`} className="site-link">
+						<Link to={`${DOCS}/features/11.5.http-wiring`} className="site-link">
 							Wiring guide
-						</a>
-						<a href={`${DOCS}/api/core/storage`} className="site-link">
+						</Link>
+						<Link to={`${DOCS}/api/core/storage`} className="site-link">
 							Storage contracts
-						</a>
-						<a href={`${DOCS}/api/react-native`} className="site-link">
+						</Link>
+						<Link to={`${DOCS}/api/react-native`} className="site-link">
 							React Native compatibility
-						</a>
+						</Link>
 					</div>
 				</section>
 
@@ -172,24 +172,36 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 					</div>
 					<ul className="divide-y divide-border border-y border-border">
 						<li className="py-4">
-							<a href={LEARN} className="site-link font-semibold">
+							<a
+								href={LEARN}
+								className="site-link inline-flex items-center gap-1.5 font-semibold"
+							>
 								Learn OpenID Federation
+								<ArrowUpRight aria-hidden className="size-3.5" />
 							</a>
 							<p className="mt-1 text-sm text-muted-foreground">
 								Fifteen interactive lessons, from the first trust chain to federation design.
 							</p>
 						</li>
 						<li className="py-4">
-							<a href={EXPLORER} className="site-link font-semibold">
+							<a
+								href={EXPLORER}
+								className="site-link inline-flex items-center gap-1.5 font-semibold"
+							>
 								Open the Explorer
+								<ArrowUpRight aria-hidden className="size-3.5" />
 							</a>
 							<p className="mt-1 text-sm text-muted-foreground">
 								Inspect signed statements and trace trust chains from live entities.
 							</p>
 						</li>
 						<li className="py-4">
-							<a href={FEDERATIONS} className="site-link font-semibold">
+							<a
+								href={FEDERATIONS}
+								className="site-link inline-flex items-center gap-1.5 font-semibold"
+							>
 								Browse demo federations
+								<ArrowUpRight aria-hidden className="size-3.5" />
 							</a>
 							<p className="mt-1 text-sm text-muted-foreground">
 								See hierarchies, multiple Trust Anchors, and metadata policies in action.
@@ -233,10 +245,11 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 							<CopyButton text="npm install -g @oidfed/cli" label="CLI install command" />
 						</div>
 						<a
-							className="site-link mt-5 inline-block text-sm"
+							className="site-link mt-5 inline-flex items-center gap-1.5 text-sm"
 							href={`${REPOSITORY}/blob/main/tools/cli/docs/readme.md`}
 						>
 							CLI reference
+							<ArrowUpRight aria-hidden className="size-3.5" />
 						</a>
 					</div>
 					<div className="min-w-0 border-t border-border bg-site-code p-5 sm:p-7 lg:border-t-0 lg:border-l">

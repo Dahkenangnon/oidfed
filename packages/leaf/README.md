@@ -24,8 +24,8 @@
 Leaf Entity toolkit — Entity Configuration serving, authority discovery, and trust chain participation for any entity at the edge of an OpenID Federation.
 
 Targets the final [OpenID Federation 1.0](https://openid.net/specs/openid-federation-1_0.html) specification and its successor specifications:
-* [OpenID Federation 1.1](https://openid.net/specs/openid-federation-1_1.html) (protocol-independent layer)
-* [OpenID Federation for OpenID Connect 1.1](https://openid.net/specs/openid-federation-connect-1_1.html) (protocol-specific layer)
+* [OpenID Federation 1.1](https://openid.net/specs/openid-federation-1_1-final.html) (protocol-independent layer)
+* [OpenID Federation for OpenID Connect 1.1](https://openid.net/specs/openid-federation-connect-1_1-final.html) (protocol-specific layer)
 
 ## Install
 

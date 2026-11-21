@@ -85,6 +85,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm typecheck
+      - run: pnpm check:snippets
 
   tools:
     name: Tools (Vitest)

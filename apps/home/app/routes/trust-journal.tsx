@@ -4,7 +4,7 @@ import { buildMeta } from "../lib/seo";
 
 export function meta() {
 	return buildMeta({
-		title: "Trust Journal | @oidfed",
+		title: "Trust Journal",
 		description:
 			"Standards updates, guides, and deployment reports about OpenID Federation and related ways to establish digital trust.",
 		path: "/trust-journal",
