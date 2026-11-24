@@ -8,6 +8,7 @@ import {
 	fetchExtendedSubordinatesList,
 	fetchSubordinateEvents,
 	type HttpClient,
+	JwtTyp,
 	MediaType,
 	SubordinateEventSchema,
 	signEntityStatement,
@@ -33,7 +34,13 @@ export default function integrationTests(QUnit: QUnit): void {
 					`${intermediate ? "Intermediate" : "TrustAnchor"} captures changes and retains history`,
 					async (assert) => {
 						const f = await fixture(intermediate);
-						await f.authority.registerSubordinate(f.record);
+						await f.authority.registerSubordinate({
+							...f.record,
+							metadataPolicy: { openid_relying_party: { organization_name: { value: "Initial" } } },
+						});
+						assert.deepEqual(await f.storage.subordinateEvent.history(issuer, subject), [
+							{ iat: 1500, event: "registration" },
+						]);
 						await f.authority.updateSubordinate(subject, {
 							metadata: { openid_relying_party: { organization_name: "Client" } },
 						});
@@ -100,6 +107,53 @@ export default function integrationTests(QUnit: QUnit): void {
 					},
 				);
 			}
+
+			QUnit.test("legacy imported events remain visible after revocation", async (assert) => {
+				const f = await fixture();
+				const registration = { iat: 1500, event: "registration" };
+				const update = { iat: 1500, event: "jwks_update" };
+				await f.storage.subordinate.register({ ...f.record, createdAt: 1500, updatedAt: 1500 });
+				await f.authority.recordSubordinateEvents(subject, [registration]);
+				await f.authority.recordSubordinateEvents(subject, [update]);
+
+				const fetchUrl = new URL(f.config.metadata.federation_entity.federation_fetch_endpoint);
+				fetchUrl.searchParams.set("sub", subject);
+				assert.strictEqual((await f.options.httpClient(fetchUrl.href)).status, 200);
+				f.setNow(1600);
+				await f.authority.revokeSubordinate(subject);
+				assert.strictEqual((await f.options.httpClient(fetchUrl.href)).status, 404);
+
+				const expected = [registration, update, { iat: 1600, event: "revocation" }];
+				assert.deepEqual(await f.storage.subordinateEvent.history(issuer, subject), expected);
+				const result = await fetchSubordinateEvents(endpoint, subject, {
+					...f.options,
+					engine: testEngine,
+				});
+				assert.true(result.ok);
+				if (result.ok) assert.deepEqual(result.value.federation_registration_events, expected);
+			});
+
+			QUnit.test("verification retains revocation after equal-time events", async (assert) => {
+				const f = await fixture();
+				const events = [
+					{ iat: 1400, event: "registration" },
+					{ iat: 1400, event: "jwks_update" },
+					{ iat: 1450, event: "revocation" },
+				];
+				const jwt = await signEntityStatement(
+					{ iss: issuer, sub: subject, iat: 1500, federation_registration_events: events },
+					new SigningEntryFixture(f.key.privateKey),
+					{ typ: JwtTyp.EntityEventsStatement },
+				);
+				const result = await verifySubordinateEventsResponse(jwt, f.options.issuerJwks, {
+					issuer,
+					subject,
+					engine: testEngine,
+					clock: f.clock,
+				});
+				assert.true(result.ok);
+				if (result.ok) assert.deepEqual(result.value.federation_registration_events, events);
+			});
 
 			QUnit.test(
 				"authority signer rollover changes response keys without a subordinate update",
