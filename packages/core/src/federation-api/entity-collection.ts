@@ -3,7 +3,10 @@
 import { FederationErrorCode, InternalErrorCode, MediaType } from "../constants.js";
 import { fetchFederationEndpoint } from "../endpoint-client.js";
 import { COLLECTION_UNORDERED_PARAMETERS } from "../endpoint-parameters.js";
-import { serializeCollectionParams } from "../entity-collection/protocol.js";
+import {
+	COLLECTION_OPERATION_PARAMETERS,
+	serializeCollectionParams,
+} from "../entity-collection/protocol.js";
 import { err, ok, type Result } from "../errors.js";
 import { validateFetchUrl } from "../http/fetch-url.js";
 import { safeLogger } from "../logging.js";
@@ -76,6 +79,7 @@ export async function fetchEntityCollection(
 		},
 		undefined,
 		COLLECTION_UNORDERED_PARAMETERS,
+		COLLECTION_OPERATION_PARAMETERS,
 	);
 	if (!result.ok) return result;
 	try {

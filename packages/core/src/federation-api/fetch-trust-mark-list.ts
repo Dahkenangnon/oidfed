@@ -2,6 +2,7 @@
 
 import { FederationErrorCode, InternalErrorCode, MediaType } from "../constants.js";
 import { fetchFederationEndpoint } from "../endpoint-client.js";
+import { ENDPOINT_OPERATION_PARAMETERS } from "../endpoint-parameters.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
 import { safeLogger } from "../logging.js";
 import { parseMetadataUrl } from "../metadata-url.js";
@@ -32,12 +33,19 @@ export async function fetchTrustMarkList(
 	const selectors = new URLSearchParams({ trust_mark_type: params.trustMarkType });
 	if (params.sub) selectors.set("sub", params.sub);
 
-	const fetched = await fetchFederationEndpoint(parsed.value.toString(), selectors, {
-		...options,
-		expectedStatus: 200,
-		accept: MediaType.Json,
-		expectedContentType: MediaType.Json,
-	});
+	const fetched = await fetchFederationEndpoint(
+		parsed.value.toString(),
+		selectors,
+		{
+			...options,
+			expectedStatus: 200,
+			accept: MediaType.Json,
+			expectedContentType: MediaType.Json,
+		},
+		undefined,
+		[],
+		ENDPOINT_OPERATION_PARAMETERS.trustMark,
+	);
 	if (!fetched.ok) return fetched;
 
 	let raw: unknown;

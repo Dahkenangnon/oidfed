@@ -193,6 +193,7 @@ Signatures preserve optional and read-only declarations. An optional property is
 | [`buildExtendedListRequestParameters`](endpoints.md#buildextendedlistrequestparameters) | Function |
 | [`COLLECTION_UNORDERED_PARAMETERS`](endpoints.md#collection_unordered_parameters) | Value |
 | [`createHistoricalKeysHandler`](endpoints.md#createhistoricalkeyshandler) | Function |
+| [`ENDPOINT_OPERATION_PARAMETERS`](endpoints.md#endpoint_operation_parameters) | Value |
 | [`EndpointAdditionalParameters`](endpoints.md#endpointadditionalparameters) | Type |
 | [`endpointParameterValuesMatch`](endpoints.md#endpointparametervaluesmatch) | Function |
 | [`errorResponse`](endpoints.md#errorresponse) | Function |

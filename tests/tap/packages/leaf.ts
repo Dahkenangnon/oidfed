@@ -784,6 +784,93 @@ export default (QUnit: QUnit) => {
 		});
 	});
 	module("leaf / configurable trust establishment", () => {
+		test("Leaf Collection matches its advertised routing query for GET and POST", async (t) => {
+			const { config } = await createLeafConfig({
+				metadata: {
+					federation_entity: { federation_collection_endpoint: `${LEAF_ID}/collect?version=1` },
+				},
+				storage: memoryStorage({ collections: true }),
+				collection: { trustAnchors: new Map() },
+			});
+			const leaf = await Leaf.create(fixtureHostConfig(config));
+			for (const method of ["GET", "POST"]) {
+				for (const [query, expected] of [
+					["", 404],
+					["?version=2", 404],
+					["?version=1", 200],
+				] as const) {
+					const result = await leaf.handleRequest(
+						new Request(`${LEAF_ID}/collect${query}`, {
+							method,
+							...(method === "POST" ? { body: new URLSearchParams() } : {}),
+						}),
+					);
+					t.equal(result.status, expected);
+					await result.body?.cancel();
+				}
+			}
+		});
+
+		test("authenticated Leaf Resolve validates the form and caches equivalent fixed anchor lists", async (t) => {
+			const f = await createMockFederation();
+			const client = await generateSigningKey("ES256");
+			const endpoint = `${LEAF_ID}/resolve?tenant=academic&trust_anchor=${encodeURIComponent(TA_ID)}`;
+			let keyLookups = 0;
+			const { config } = await createLeafConfig({
+				metadata: {
+					federation_entity: {
+						federation_resolve_endpoint: endpoint,
+						federation_resolve_endpoint_auth_methods: ["none", "private_key_jwt"],
+					},
+				},
+				storage: memoryStorage({}),
+				trustAnchors: f.trustAnchors,
+				options: { httpClient: f.httpClient },
+				resolver: {
+					authentication: {
+						methods: ["none", "private_key_jwt"],
+						getClientFederationJwks: async () => {
+							keyLookups++;
+							return { keys: [client.publicKey] };
+						},
+					},
+				},
+			});
+			const leaf = await Leaf.create(fixtureHostConfig(config));
+			const form = new URLSearchParams({
+				client_assertion_type: CorePublic.JWT_BEARER_CLIENT_ASSERTION_TYPE,
+				client_assertion: await CorePublic.createClientAssertion(
+					entityId(OP_ID),
+					entityId(LEAF_ID),
+					new SigningEntryFixture(client.privateKey),
+					{ engine: testEngine },
+				),
+			});
+			const url = `${endpoint}&sub=${encodeURIComponent(OP_ID)}`;
+			const missing = await leaf.handleRequest(new Request(url, { method: "POST", body: form }));
+			t.equal(missing.status, 400);
+			t.equal(((await missing.json()) as { error: string }).error, "invalid_request");
+			form.set("sub", OP_ID);
+			form.set("trust_anchor", "https://wrong-anchor.example");
+			const conflict = await leaf.handleRequest(new Request(url, { method: "POST", body: form }));
+			t.equal(conflict.status, 400);
+			await conflict.body?.cancel();
+			t.equal(keyLookups, 0);
+			form.set("trust_anchor", TA_ID);
+			form.append("trust_anchor", TA_ID);
+			const matched = await leaf.handleRequest(new Request(url, { method: "POST", body: form }));
+			t.equal(matched.status, 200);
+			const result = decodeEntityStatement(await matched.text());
+			t.true(result.ok);
+			if (result.ok) t.equal(result.value.payload.aud, OP_ID);
+			t.equal(keyLookups, 1);
+			const cached = await leaf.handleRequest(new Request(url));
+			t.equal(cached.status, 200);
+			const decoded = decodeEntityStatement(await cached.text());
+			t.true(decoded.ok);
+			if (decoded.ok) t.strictEqual(decoded.value.payload.aud, undefined);
+		});
+
 		test("Leaf hosts Resolve independently and forwards selection defaults", async (t) => {
 			const f = await createMockFederation();
 			let calls = 0;
@@ -981,6 +1068,58 @@ export default (QUnit: QUnit) => {
 		});
 	});
 	module("leaf / managed Trust Mark lifecycle", () => {
+		test("anonymous Trust Mark Status checks configured selectors and keeps locale in the URL", async (t) => {
+			const { config } = await createLeafConfig();
+			const endpoint = `${config.entityId}/status?locale=en&campus=north&campus=west&region=central`;
+			let calls = 0;
+			const leaf = await Leaf.create(
+				fixtureHostConfig({
+					...config,
+					metadata: { federation_entity: { federation_trust_mark_status_endpoint: endpoint } },
+					storage: memoryStorage({ trustMarks: true }),
+					trustMarkIssuer: {
+						authentication: { operationParameterNames: ["region"] },
+						trustMarkRequestExtensions: {
+							campus: (values) => {
+								calls++;
+								t.deepEqual(values, ["north", "west"]);
+								return ok(undefined);
+							},
+						},
+					},
+				}),
+			);
+			const mark = await leaf.issueTrustMark(entityId("https://member.example"), "type");
+			for (const [campuses, regions, expected] of [
+				[[], ["central"], 400],
+				[["west", "north"], ["central"], 400],
+				[["north", "west"], [], 400],
+				[["north", "west"], ["central"], 200],
+			] as const) {
+				const form = new URLSearchParams({ trust_mark: mark });
+				for (const campus of campuses) form.append("campus", campus);
+				for (const region of regions) form.append("region", region);
+				const result = await leaf.handleRequest(
+					new Request(endpoint, { method: "POST", body: form }),
+				);
+				t.equal(result.status, expected);
+				await result.body?.cancel();
+			}
+			const jwks = (await config.crypto.keyring.entry("federation")).publishedJwks;
+			const client = await CorePublic.fetchTrustMarkStatus(endpoint, mark, jwks, {
+				expectedIssuer: config.entityId,
+				engine: testEngine,
+				additionalParameters: { campus: ["north", "west"], region: "central" },
+				httpClient: (input, init) => {
+					t.equal(String(input), endpoint);
+					t.false(new URLSearchParams(String(init?.body)).has("locale"));
+					return leaf.handleRequest(new Request(input, init));
+				},
+			});
+			t.true(client.ok);
+			t.equal(calls, 2);
+		});
+
 		test("Trust Mark endpoints enforce advertised and locally restricted authentication algorithms", async (t) => {
 			const { config } = await createLeafConfig();
 			const issuer = String(config.entityId),

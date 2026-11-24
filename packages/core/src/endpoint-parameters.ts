@@ -14,6 +14,38 @@ export function endpointParameterValuesMatch(
 	return expected.size === actual.size && [...expected].every((value) => actual.has(value));
 }
 
+/** Validate POST selectors and retain the URL sequence for equivalent membership filters. */
+export function validateEndpointPostParameters(
+	query: URLSearchParams,
+	form: URLSearchParams,
+	unorderedParameters: readonly string[],
+	operationParameters: ReadonlySet<string>,
+	routingParameters: ReadonlySet<string>,
+): string | undefined {
+	for (const name of new Set(query.keys())) {
+		const operation = operationParameters.has(name);
+		if (!operation && !routingParameters.has(name)) continue;
+		if (!form.has(name)) {
+			if (operation) return "Operation parameters must be in the POST body";
+			continue;
+		}
+		const fixed = query.getAll(name);
+		const unordered = operation && unorderedParameters.includes(name);
+		if (
+			!endpointParameterValuesMatch(
+				name,
+				fixed,
+				form.getAll(name),
+				unordered ? unorderedParameters : [],
+			)
+		)
+			return "Body parameters conflict with endpoint query parameters";
+		if (!operation || unordered) form.delete(name);
+		if (unordered) for (const value of fixed) form.append(name, value);
+	}
+	return undefined;
+}
+
 /** Federation §8.2.1 filters by membership in the requested Entity Types. */
 export const LIST_UNORDERED_PARAMETERS = Object.freeze(["entity_type"] as const);
 export const EXTENDED_LIST_UNORDERED_PARAMETERS = Object.freeze([
@@ -21,6 +53,28 @@ export const EXTENDED_LIST_UNORDERED_PARAMETERS = Object.freeze([
 	"trust_mark_type",
 ] as const);
 export const RESOLVE_UNORDERED_PARAMETERS = Object.freeze(["trust_anchor", "entity_type"] as const);
+
+/** Selectors understood by the built-in federation clients and hosts. */
+export const ENDPOINT_OPERATION_PARAMETERS = Object.freeze({
+	fetch: Object.freeze(["sub"] as const),
+	list: Object.freeze(["entity_type", "trust_marked", "trust_mark_type", "intermediate"] as const),
+	extendedList: Object.freeze([
+		"entity_type",
+		"trust_marked",
+		"trust_mark_type",
+		"intermediate",
+		"from",
+		"limit",
+		"updated_after",
+		"updated_before",
+		"audit_timestamps",
+		"claims",
+	] as const),
+	resolve: Object.freeze(["sub", ...RESOLVE_UNORDERED_PARAMETERS] as const),
+	trustMarkStatus: Object.freeze(["trust_mark"] as const),
+	trustMark: Object.freeze(["trust_mark_type", "sub"] as const),
+	subordinateEvents: Object.freeze(["sub"] as const),
+});
 
 /** Collection §3.3.1 defines these repeated selectors by membership. */
 export const COLLECTION_UNORDERED_PARAMETERS = Object.freeze([

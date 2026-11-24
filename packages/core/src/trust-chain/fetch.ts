@@ -7,6 +7,7 @@ import {
 	WELL_KNOWN_OPENID_FEDERATION,
 } from "../constants.js";
 import { fetchFederationEndpoint } from "../endpoint-client.js";
+import { ENDPOINT_OPERATION_PARAMETERS } from "../endpoint-parameters.js";
 import { err, type FederationError, ok, type Result } from "../errors.js";
 import { performFetch } from "../http/fetch.js";
 import { fetchFailure, httpFailureStatus } from "../http/fetch-failure.js";
@@ -175,6 +176,8 @@ export async function fetchSubordinateStatement(
 			federationErrors: true,
 		},
 		options?.issuer,
+		[],
+		ENDPOINT_OPERATION_PARAMETERS.fetch,
 	);
 
 	if (

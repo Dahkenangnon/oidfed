@@ -22,7 +22,10 @@ import {
 	createEndpointAuthenticatedHandler,
 	type EndpointAuthenticationConfig,
 } from "../endpoint-authentication.js";
-import { RESOLVE_UNORDERED_PARAMETERS } from "../endpoint-parameters.js";
+import {
+	ENDPOINT_OPERATION_PARAMETERS,
+	RESOLVE_UNORDERED_PARAMETERS,
+} from "../endpoint-parameters.js";
 import type { FederationError } from "../errors.js";
 import { errorResponse, jwtResponse, parseQueryParams, requireMethod } from "../http.js";
 import { signEntityStatement } from "../jose/sign.js";
@@ -80,7 +83,7 @@ export class FederationResolverService {
 	private readonly inner: (request: Request, local?: boolean) => Promise<Response>;
 	private readonly authenticated: (request: Request) => Promise<Response>;
 	/** Capture resolver dependencies and build the authenticated public endpoint handler. */
-	constructor(config: FederationResolverConfig) {
+	constructor(config: FederationResolverConfig, fixedQuery?: URLSearchParams) {
 		const id = entityId(config.entityId);
 		this.context = { ...config, entityId: id };
 		this.inner = createResolveHandler(this.context);
@@ -94,6 +97,10 @@ export class FederationResolverService {
 			config.options,
 			"GET",
 			RESOLVE_UNORDERED_PARAMETERS,
+			{
+				...(fixedQuery ? { fixedQuery } : {}),
+				operationParameterNames: ENDPOINT_OPERATION_PARAMETERS.resolve,
+			},
 		);
 	}
 	/**

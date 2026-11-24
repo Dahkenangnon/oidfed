@@ -35,6 +35,7 @@ import {
 	decodeEntityStatement,
 	discoverEntity,
 	discoverEntityFromChain,
+	ENDPOINT_OPERATION_PARAMETERS,
 	type EndpointAuthentication,
 	type EntityAssessmentOptions,
 	type EntityCollectionIntegration,
@@ -454,12 +455,10 @@ function createAuthorityServerWithIdentity(
 	function withAuth(
 		handler: (req: Request) => Promise<Response>,
 		authMethods: string[] | undefined,
-		nativeMethod?: "GET" | "POST",
-		unorderedParameters?: readonly string[],
+		options?: Parameters<typeof createAuthenticatedHandler>[3],
 	): (req: Request) => Promise<Response> {
 		return createAuthenticatedHandler(ctx, handler, authMethods, {
-			...(nativeMethod !== undefined ? { nativeMethod } : {}),
-			...(unorderedParameters ? { unorderedParameters } : {}),
+			...options,
 			...(meta.endpoint_auth_signing_alg_values_supported !== undefined
 				? { allowedAlgorithms: meta.endpoint_auth_signing_alg_values_supported }
 				: {}),
@@ -483,6 +482,7 @@ function createAuthorityServerWithIdentity(
 	const trustMarkStatusHandler = createTrustMarkStatusHandler(ctx);
 	const trustMarkListHandler = createTrustMarkListHandler(ctx);
 	const trustMarkHandler = createTrustMarkHandler(ctx);
+	const trustMarkExtensionNames = Object.keys(ctx.trustMarkRequestExtensions ?? {});
 
 	const resolveHandler = createResolveHandler(ctx);
 
@@ -501,75 +501,101 @@ function createAuthorityServerWithIdentity(
 		routeNames,
 		"federation_fetch_endpoint",
 		fetchEndpointPath,
-		withAuth(fetchHandler, meta.federation_fetch_endpoint_auth_methods),
+		withAuth(fetchHandler, meta.federation_fetch_endpoint_auth_methods, {
+			operationParameterNames: ENDPOINT_OPERATION_PARAMETERS.fetch,
+			fixedQuery: new URL(`https://routing.invalid${fetchEndpointPath}`).searchParams,
+		}),
 	);
 	addAuthorityRoute(
 		routeMap,
 		routeNames,
 		"federation_list_endpoint",
 		listEndpointPath,
-		withAuth(
-			listHandler,
-			meta.federation_list_endpoint_auth_methods,
-			undefined,
-			LIST_UNORDERED_PARAMETERS,
-		),
+		withAuth(listHandler, meta.federation_list_endpoint_auth_methods, {
+			unorderedParameters: LIST_UNORDERED_PARAMETERS,
+			operationParameterNames: ENDPOINT_OPERATION_PARAMETERS.list,
+			fixedQuery: new URL(`https://routing.invalid${listEndpointPath}`).searchParams,
+		}),
 	);
 	addOptionalAuthorityRoute(
 		routeMap,
 		routeNames,
 		"federation_extended_list_endpoint",
 		meta.federation_extended_list_endpoint,
-		withAuth(
-			extendedListHandler,
-			meta.federation_extended_list_endpoint_auth_methods,
-			undefined,
-			EXTENDED_LIST_UNORDERED_PARAMETERS,
-		),
+		(fixedQuery) =>
+			withAuth(extendedListHandler, meta.federation_extended_list_endpoint_auth_methods, {
+				unorderedParameters: EXTENDED_LIST_UNORDERED_PARAMETERS,
+				operationParameterNames: [
+					...ENDPOINT_OPERATION_PARAMETERS.extendedList,
+					...Object.keys(config.extendedListing?.requestFilters ?? {}),
+				],
+				fixedQuery,
+			}),
 	);
 	addOptionalAuthorityRoute(
 		routeMap,
 		routeNames,
 		"federation_historical_keys_endpoint",
 		meta.federation_historical_keys_endpoint,
-		withAuth(historicalKeysHandler, meta.federation_historical_keys_endpoint_auth_methods),
+		(fixedQuery) =>
+			withAuth(historicalKeysHandler, meta.federation_historical_keys_endpoint_auth_methods, {
+				fixedQuery,
+			}),
 	);
 	addOptionalAuthorityRoute(
 		routeMap,
 		routeNames,
 		"federation_trust_mark_status_endpoint",
 		meta.federation_trust_mark_status_endpoint,
-		withAuth(
-			trustMarkStatusHandler,
-			meta.federation_trust_mark_status_endpoint_auth_methods,
-			"POST",
-		),
+		(fixedQuery) =>
+			withAuth(trustMarkStatusHandler, meta.federation_trust_mark_status_endpoint_auth_methods, {
+				nativeMethod: "POST",
+				operationParameterNames: [
+					...ENDPOINT_OPERATION_PARAMETERS.trustMarkStatus,
+					...trustMarkExtensionNames,
+				],
+				fixedQuery,
+			}),
 	);
 	addOptionalAuthorityRoute(
 		routeMap,
 		routeNames,
 		"federation_trust_mark_list_endpoint",
 		meta.federation_trust_mark_list_endpoint,
-		withAuth(trustMarkListHandler, meta.federation_trust_mark_list_endpoint_auth_methods),
+		(fixedQuery) =>
+			withAuth(trustMarkListHandler, meta.federation_trust_mark_list_endpoint_auth_methods, {
+				operationParameterNames: [
+					...ENDPOINT_OPERATION_PARAMETERS.trustMark,
+					...trustMarkExtensionNames,
+				],
+				fixedQuery,
+			}),
 	);
 	addOptionalAuthorityRoute(
 		routeMap,
 		routeNames,
 		"federation_trust_mark_endpoint",
 		meta.federation_trust_mark_endpoint,
-		withAuth(trustMarkHandler, meta.federation_trust_mark_endpoint_auth_methods),
+		(fixedQuery) =>
+			withAuth(trustMarkHandler, meta.federation_trust_mark_endpoint_auth_methods, {
+				operationParameterNames: [
+					...ENDPOINT_OPERATION_PARAMETERS.trustMark,
+					...trustMarkExtensionNames,
+				],
+				fixedQuery,
+			}),
 	);
 	addOptionalAuthorityRoute(
 		routeMap,
 		routeNames,
 		"federation_resolve_endpoint",
 		meta.federation_resolve_endpoint,
-		withAuth(
-			resolveHandler,
-			meta.federation_resolve_endpoint_auth_methods,
-			undefined,
-			RESOLVE_UNORDERED_PARAMETERS,
-		),
+		(fixedQuery) =>
+			withAuth(resolveHandler, meta.federation_resolve_endpoint_auth_methods, {
+				unorderedParameters: RESOLVE_UNORDERED_PARAMETERS,
+				operationParameterNames: ENDPOINT_OPERATION_PARAMETERS.resolve,
+				fixedQuery,
+			}),
 	);
 
 	addOptionalAuthorityRoute(
@@ -577,9 +603,17 @@ function createAuthorityServerWithIdentity(
 		routeNames,
 		"federation_subordinate_events_endpoint",
 		meta.federation_subordinate_events_endpoint,
-		withSubordinateEventsMethodErrors(
-			withAuth(subordinateEventsHandler, meta.federation_subordinate_events_endpoint_auth_methods),
-		),
+		(fixedQuery) =>
+			withSubordinateEventsMethodErrors(
+				withAuth(
+					subordinateEventsHandler,
+					meta.federation_subordinate_events_endpoint_auth_methods,
+					{
+						operationParameterNames: ENDPOINT_OPERATION_PARAMETERS.subordinateEvents,
+						fixedQuery,
+					},
+				),
+			),
 	);
 
 	if (collection)
@@ -588,7 +622,7 @@ function createAuthorityServerWithIdentity(
 			routeNames,
 			"federation_collection_endpoint",
 			meta.federation_collection_endpoint,
-			(request) => collection.handleRequest(request),
+			() => (request) => collection.handleRequest(request),
 		);
 
 	// Role routes match the whole pathname, including requests with fixed selectors.
@@ -1002,13 +1036,14 @@ function addOptionalAuthorityRoute(
 	routeNames: Map<string, string>,
 	endpointName: string,
 	endpoint: unknown,
-	handler: (request: Request) => Promise<Response>,
+	createHandler: (fixedQuery: URLSearchParams) => (request: Request) => Promise<Response>,
 ): void {
 	const path = advertisedEndpointPath(endpointName, endpoint);
 	if (path === undefined) {
 		return;
 	}
-	addAuthorityRoute(routeMap, routeNames, endpointName, path, handler);
+	const fixedQuery = new URL(`https://routing.invalid${path}`).searchParams;
+	addAuthorityRoute(routeMap, routeNames, endpointName, path, createHandler(fixedQuery));
 }
 
 function createStorageBackedClientKeyProvider(

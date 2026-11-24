@@ -1,6 +1,9 @@
 import { type EntityTypeIdentifier, InternalErrorCode, JwtTyp, MediaType } from "../constants.js";
 import { fetchFederationEndpoint } from "../endpoint-client.js";
-import { RESOLVE_UNORDERED_PARAMETERS } from "../endpoint-parameters.js";
+import {
+	ENDPOINT_OPERATION_PARAMETERS,
+	RESOLVE_UNORDERED_PARAMETERS,
+} from "../endpoint-parameters.js";
 import { err, type FederationError, type Result } from "../errors.js";
 import { verifyEntityStatement } from "../jose/verify.js";
 import { safeLogger } from "../logging.js";
@@ -129,5 +132,6 @@ export async function fetchResolveResponse(
 		},
 		undefined,
 		RESOLVE_UNORDERED_PARAMETERS,
+		ENDPOINT_OPERATION_PARAMETERS.resolve,
 	);
 }

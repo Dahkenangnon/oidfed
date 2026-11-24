@@ -292,7 +292,7 @@ Fields (including inherited fields):
 Resolve hosting independent of subordinate storage and Authority endpoints.
 
 ```typescript signature
-new FederationResolverService(config: FederationResolverConfig): FederationResolverService;
+new FederationResolverService(config: FederationResolverConfig, fixedQuery?: URLSearchParams): FederationResolverService;
 ```
 
 ### `FederationResolverService#handleRequest`

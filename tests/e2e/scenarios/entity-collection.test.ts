@@ -5,6 +5,7 @@ import {
 	entityId,
 	fetchEntityCollection,
 	InternalErrorCode,
+	JWT_BEARER_CLIENT_ASSERTION_TYPE,
 	MemoryFederationStorage,
 	ok,
 	signEntityStatement,
@@ -84,6 +85,7 @@ describe("Entity Collection over HTTPS", () => {
 				const extendedUrl = new URL(endpoint);
 				if (method === "GET")
 					for (const [name, value] of extendedParams) extendedUrl.searchParams.append(name, value);
+				else extendedUrl.searchParams.set("future_extension", "unrelated-transport-value");
 				const extendedResponse = await fetch(extendedUrl, {
 					method,
 					...(method === "POST" ? { body: extendedParams } : {}),
@@ -123,6 +125,16 @@ describe("Entity Collection over HTTPS", () => {
 			new SigningEntryFixture(client.keys.signing),
 			{ typ: "JWT" },
 		);
+		const wrongRoute = await fetch(`${receiver}/collect?version=2`, {
+			method: "POST",
+			body: new URLSearchParams({
+				trust_anchor: anchor,
+				client_assertion: assertion,
+				client_assertion_type: JWT_BEARER_CLIENT_ASSERTION_TYPE,
+			}),
+		});
+		expect(wrongRoute.status).toBe(404);
+		expect(await wrongRoute.json()).toMatchObject({ error: "not_found" });
 		expect(
 			(
 				await fetchEntityCollection(

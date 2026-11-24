@@ -16,6 +16,8 @@ export function createAuthenticatedHandler(
 		nativeMethod?: "GET" | "POST" | undefined;
 		unorderedParameters?: readonly string[] | undefined;
 		allowedAlgorithms?: readonly string[] | undefined;
+		operationParameterNames?: readonly string[] | undefined;
+		fixedQuery?: URLSearchParams | undefined;
 	},
 ): (request: Request) => Promise<Response> {
 	try {
@@ -25,12 +27,16 @@ export function createAuthenticatedHandler(
 				methods: methods ?? ["none"],
 				getClientFederationJwks: (id) => ctx.clientKeyProvider.getClientFederationJwks(id),
 				...(options?.allowedAlgorithms ? { allowedAlgorithms: options.allowedAlgorithms } : {}),
+				...(options?.operationParameterNames
+					? { operationParameterNames: options.operationParameterNames }
+					: {}),
 				...(ctx.endpointAuthentication ? { extensions: ctx.endpointAuthentication } : {}),
 			},
 			inner,
 			{ ...ctx.options, storage: ctx.storage },
 			options?.nativeMethod,
 			options?.unorderedParameters,
+			options?.fixedQuery ? { fixedQuery: options.fixedQuery } : undefined,
 		);
 	} catch (cause) {
 		throw new InvalidAuthorityConfig(

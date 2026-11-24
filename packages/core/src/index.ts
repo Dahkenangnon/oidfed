@@ -140,6 +140,7 @@ export type {
 } from "./endpoint-client.js";
 export {
 	COLLECTION_UNORDERED_PARAMETERS,
+	ENDPOINT_OPERATION_PARAMETERS,
 	EXTENDED_LIST_UNORDERED_PARAMETERS,
 	endpointParameterValuesMatch,
 	isReservedEndpointParameter,

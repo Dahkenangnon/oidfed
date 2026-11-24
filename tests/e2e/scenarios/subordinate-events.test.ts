@@ -11,6 +11,7 @@ import {
 	fetchSubordinateEvents,
 	fetchSubordinateStatement,
 	InternalErrorCode,
+	JWT_BEARER_CLIENT_ASSERTION_TYPE,
 	MediaType,
 	signEntityStatement,
 } from "@oidfed/core";
@@ -234,7 +235,7 @@ setGlobalDispatcher(new Agent({ connect: { lookup(_host, _options, callback) { c
 		if (!missing.ok) expect(missing.error.code).toBe("not_found");
 	});
 
-	it("accepts authenticated POST with a separate client and requested subject", async () => {
+	it("requires the authenticated POST subject in the body over HTTPS", async () => {
 		const { entities, server } = bed();
 		const authority = getAuthorityEntity(entities, "https://ta.ofed.test");
 		const client = entities.get("https://rp.ofed.test");
@@ -255,16 +256,22 @@ setGlobalDispatcher(new Agent({ connect: { lookup(_host, _options, callback) { c
 			new SigningEntryFixture(client.keys.signing),
 			{ typ: "JWT" },
 		);
-		const result = await fetchSubordinateEvents(
-			`https://ta.ofed.test:${server.port}/history?version=1`,
-			subject,
-			{
-				issuer,
-				issuerJwks: { keys: [authority.keys.public] },
-				clientAssertion: assertion,
-				engine: testEngine,
-			},
-		);
+		const endpoint = `https://ta.ofed.test:${server.port}/history?version=1&sub=${encodeURIComponent(subject)}`;
+		const invalid = await fetch(endpoint, {
+			method: "POST",
+			body: new URLSearchParams({
+				client_assertion: assertion,
+				client_assertion_type: JWT_BEARER_CLIENT_ASSERTION_TYPE,
+			}),
+		});
+		expect(invalid.status).toBe(400);
+		expect(await invalid.json()).toMatchObject({ error: "invalid_request" });
+		const result = await fetchSubordinateEvents(endpoint, subject, {
+			issuer,
+			issuerJwks: { keys: [authority.keys.public] },
+			clientAssertion: assertion,
+			engine: testEngine,
+		});
 		expect(result.ok).toBe(true);
 		if (result.ok) expect(result.value.sub).toBe(subject);
 	});

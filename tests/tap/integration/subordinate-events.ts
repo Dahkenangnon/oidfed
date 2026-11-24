@@ -8,6 +8,7 @@ import {
 	fetchExtendedSubordinatesList,
 	fetchSubordinateEvents,
 	type HttpClient,
+	JWT_BEARER_CLIENT_ASSERTION_TYPE,
 	JwtTyp,
 	MediaType,
 	SubordinateEventSchema,
@@ -273,10 +274,26 @@ export default function integrationTests(QUnit: QUnit): void {
 							new SigningEntryFixture(f.clientKey.privateKey),
 							{ typ: "JWT" },
 						);
-					const valid = await fetchSubordinateEvents(endpoint, subject, {
+					const query = `${endpoint}&sub=${encodeURIComponent(subject)}`;
+					const signed = await assertion(issuer);
+					const badRequest = await f.authority.handleRequest(
+						new Request(query, {
+							method: "POST",
+							body: new URLSearchParams({
+								client_assertion: signed,
+								client_assertion_type: JWT_BEARER_CLIENT_ASSERTION_TYPE,
+							}),
+						}),
+					);
+					assert.strictEqual(badRequest.status, 400);
+					assert.strictEqual(
+						((await badRequest.json()) as { error: string }).error,
+						"invalid_request",
+					);
+					const valid = await fetchSubordinateEvents(query, subject, {
 						engine: testEngine,
 						...f.options,
-						clientAssertion: await assertion(issuer),
+						clientAssertion: signed,
 					});
 					assert.true(valid.ok);
 					for (const aud of [endpoint, "https://other.example"]) {

@@ -27,6 +27,7 @@ import {
 	decodeEntityStatement,
 	discoverEntityFromChain,
 	discoverEntity as discoverEntityThroughTrustChain,
+	ENDPOINT_OPERATION_PARAMETERS,
 	type EndpointAuthenticationConfig,
 	type EntityAssessmentOptions,
 	type EntityCollectionIntegration,
@@ -357,6 +358,16 @@ export class Leaf {
 
 		const resolveEndpoint = metadata.federation_entity?.federation_resolve_endpoint;
 		if (config.resolver) {
+			let resolveUrl: URL | undefined;
+			if (resolveEndpoint !== undefined) {
+				if (
+					typeof resolveEndpoint !== "string" ||
+					resolveEndpoint.includes("#") ||
+					!isValidEntityId(resolveEndpoint.split("?")[0] ?? "")
+				)
+					throw new Error("Invalid Resolve endpoint URL");
+				resolveUrl = new URL(resolveEndpoint);
+			}
 			const methods = metadata.federation_entity?.federation_resolve_endpoint_auth_methods ?? [
 				"none",
 			];
@@ -378,29 +389,26 @@ export class Leaf {
 				: configuredAlgorithms;
 			if (methods.includes("private_key_jwt") && allowedAlgorithms?.length === 0)
 				throw new Error("Endpoint authentication algorithms have no permitted intersection");
-			this.resolver = new FederationResolverService({
-				...config.resolver,
-				entityId: this.entityId,
-				crypto: config.crypto,
-				...(config.trustAnchors ? { trustAnchors: config.trustAnchors } : {}),
-				...(config.resolver.trustAnchors ? { trustAnchors: config.resolver.trustAnchors } : {}),
-				options: bindFederationOptions(config, config.options, config.resolver.options),
-				authentication: {
-					...config.resolver.authentication,
-					...(allowedAlgorithms ? { allowedAlgorithms } : {}),
-					methods,
+			this.resolver = new FederationResolverService(
+				{
+					...config.resolver,
+					entityId: this.entityId,
+					crypto: config.crypto,
+					...(config.trustAnchors ? { trustAnchors: config.trustAnchors } : {}),
+					...(config.resolver.trustAnchors ? { trustAnchors: config.resolver.trustAnchors } : {}),
+					options: bindFederationOptions(config, config.options, config.resolver.options),
+					authentication: {
+						...config.resolver.authentication,
+						...(allowedAlgorithms ? { allowedAlgorithms } : {}),
+						methods,
+					},
 				},
-			});
-			if (resolveEndpoint !== undefined) {
-				if (
-					typeof resolveEndpoint !== "string" ||
-					resolveEndpoint.includes("#") ||
-					!isValidEntityId(resolveEndpoint.split("?")[0] ?? "")
-				)
-					throw new Error("Invalid Resolve endpoint URL");
+				resolveUrl?.searchParams,
+			);
+			if (resolveUrl) {
 				const resolver = this.resolver;
 				this.registerSelectedEndpoint(
-					new URL(resolveEndpoint),
+					resolveUrl,
 					"Resolve",
 					(request) => resolver.handleRequest(request),
 					config.resolver.authentication?.extensions,
@@ -473,6 +481,16 @@ export class Leaf {
 				(request) => service.handleRequest(kind, request),
 				config.options,
 				kind === "status" ? "POST" : "GET",
+				[],
+				{
+					fixedQuery: url.searchParams,
+					operationParameterNames: [
+						...(kind === "status"
+							? ENDPOINT_OPERATION_PARAMETERS.trustMarkStatus
+							: ENDPOINT_OPERATION_PARAMETERS.trustMark),
+						...Object.keys(config.trustMarkIssuer?.trustMarkRequestExtensions ?? {}),
+					],
+				},
 			);
 			this.routes.set(url.pathname, (request) => {
 				const incoming = new URL(request.url).searchParams;
@@ -538,6 +556,9 @@ export class Leaf {
 			},
 			createHistoricalKeysHandler(this.roleContext),
 			options,
+			"GET",
+			[],
+			{ fixedQuery: url.searchParams },
 		);
 		this.registerSelectedEndpoint(
 			url,
@@ -559,11 +580,7 @@ export class Leaf {
 			throw new Error(`${label} endpoint conflicts with an existing route`);
 		const selectors = [...new Set(url.searchParams.keys())];
 		const credentialNames = endpointCredentialParameterNames(extensions);
-		if (
-			selectors.some(
-				(name) => credentialNames.has(name) || name === "client_id" || name === "client_secret",
-			)
-		)
+		if (selectors.some((name) => credentialNames.has(name)))
 			throw new TypeError(`${label} endpoint query must not contain credential parameters`);
 		this.routes.set(url.pathname, (request) => {
 			const incoming = new URL(request.url).searchParams;

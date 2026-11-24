@@ -73,6 +73,7 @@ export async function fetchFederationEndpoint(
 	options: PerformFetchOptions & { readonly clientAssertion?: string },
 	expectedAudience?: string,
 	unorderedParameters: readonly string[] = [],
+	operationParameterNames: readonly string[] = [],
 ): Promise<Result<string>> {
 	try {
 		const url = new URL(endpoint);
@@ -83,10 +84,9 @@ export async function fetchFederationEndpoint(
 			});
 		if (url.href.includes("#") || url.username || url.password)
 			throw new Error("Invalid endpoint URL");
-		const form = prepareEndpointParameters(
-			selectors,
-			options.additionalParameters,
-			url.searchParams,
+		const form = prepareEndpointParameters(selectors, options.additionalParameters);
+		const fixedAdditional = Object.keys(options.additionalParameters ?? {}).filter((name) =>
+			url.searchParams.has(name),
 		);
 		if ([...credentials].some((name) => url.searchParams.has(name) || form.has(name)))
 			throw new Error("Endpoint selectors cannot contain credentials");
@@ -97,13 +97,13 @@ export async function fetchFederationEndpoint(
 			options.clientAssertion !== undefined
 		)
 			throw new Error("Authentication and clientAssertion cannot be combined");
-		for (const name of new Set(form.keys())) {
+		for (const name of new Set([...form.keys(), ...fixedAdditional])) {
 			if (!url.searchParams.has(name)) continue;
 			const fixed = url.searchParams.getAll(name),
 				supplied = form.getAll(name);
 			if (!endpointParameterValuesMatch(name, fixed, supplied, unorderedParameters))
 				throw new Error("Parameters conflict with endpoint fixed query");
-			// Match the advertised query representation for authenticated POST wrappers too.
+			// Echo fixed values in their advertised order, even for set-like selectors.
 			form.delete(name);
 			for (const value of fixed) form.append(name, value);
 		}
@@ -131,6 +131,14 @@ export async function fetchFederationEndpoint(
 				throw new Error("Invalid authentication selection");
 			if (options.signal?.aborted) throw new DOMException("Operation aborted", "AbortError");
 		}
+		const method =
+			auth || options.clientAssertion !== undefined ? "POST" : (options.method ?? "GET");
+		if (method !== "POST" && fixedAdditional.length)
+			throw new Error("Additional parameters cannot replace fixed query parameters");
+		if (method === "POST")
+			for (const name of operationParameterNames)
+				if (!form.has(name))
+					for (const fixedValue of url.searchParams.getAll(name)) form.append(name, fixedValue);
 		const headers = new Headers(options.headers);
 		if (auth) {
 			const audience = entityId(auth.audience);
@@ -187,8 +195,6 @@ export async function fetchFederationEndpoint(
 			form.set("client_assertion_type", JWT_BEARER_CLIENT_ASSERTION_TYPE);
 			form.set("client_assertion", options.clientAssertion);
 		}
-		const method =
-			auth || options.clientAssertion !== undefined ? "POST" : (options.method ?? "GET");
 		if (method === "GET")
 			for (const name of new Set(form.keys()))
 				if (!url.searchParams.has(name))

@@ -435,10 +435,10 @@ Fields (including inherited fields):
 
 [Source](../../../packages/core/src/endpoint-authentication.ts#L347)
 
-Wrap an endpoint handler with configured method and credential checks before invoking the protected handler.
+Wrap an endpoint handler with method, POST form, and credential checks. The caller matches the route before invoking the wrapper. Set `route.fixedQuery` to identify routing parameters for form conflict checks and `route.operationParameterNames` to supply the hosted operation's selectors.
 
 ```typescript signature
-createEndpointAuthenticatedHandler(config: EndpointAuthenticationConfig, inner: (request: Request) => Promise<Response>, options: FederationOptions, nativeMethod?: "GET" | "POST", unorderedParameters?: readonly string[]): (request: Request) => Promise<Response>;
+createEndpointAuthenticatedHandler(config: EndpointAuthenticationConfig, inner: (request: Request) => Promise<Response>, options: FederationOptions, nativeMethod?: "GET" | "POST", unorderedParameters?: readonly string[], route?: { readonly fixedQuery?: URLSearchParams; readonly operationParameterNames?: readonly string[] }): (request: Request) => Promise<Response>;
 ```
 
 ## `CustomEndpointClientAuthentication`
@@ -509,6 +509,7 @@ interface EndpointAuthenticationConfig {
 	readonly getClientFederationJwks?: (client: EntityId) => Promise<JWKSet | undefined>;
 	readonly allowedAlgorithms?: readonly string[];
 	readonly extensions?: EndpointAuthentication;
+	readonly operationParameterNames?: readonly string[];
 }
 ```
 
@@ -521,6 +522,7 @@ Fields (including inherited fields):
 | `getClientFederationJwks?` | `(client: EntityId) => Promise<JWKSet \| undefined>` | Look up independently trusted Federation Entity Keys for the authenticating client. |
 | `allowedAlgorithms?` | `readonly string[]` | Optional algorithm allowlist, applied in addition to the library's supported algorithms. |
 | `extensions?` | `EndpointAuthentication` | Host authentication-method implementations and optional transport evidence. |
+| `operationParameterNames?` | `readonly string[]` | Selectors that require a matching form value when present in a POST URL. |
 
 ## `EndpointAuthenticationContext`
 

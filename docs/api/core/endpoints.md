@@ -32,6 +32,10 @@ Collection §3.3.1 defines these repeated selectors by membership.
 const COLLECTION_UNORDERED_PARAMETERS: readonly ["entity_type", "trust_mark_type", "entity_claims", "info_claims", "locale"];
 ```
 
+## `ENDPOINT_OPERATION_PARAMETERS`
+
+Read-only lists of recognized selectors for Fetch, List, Extended Listing, Resolve, Trust Mark Status, Trust Mark List and Retrieval, and Subordinate Events. Historical Keys uses no standard operation selectors. Collection derives its selectors from its request format.
+
 ## `EndpointAdditionalParameters`
 
 [Source](../../../packages/core/src/endpoint-parameters.ts#L34)

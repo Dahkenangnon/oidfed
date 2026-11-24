@@ -9,7 +9,7 @@ import {
 	FederationErrorCode,
 	JWT_BEARER_CLIENT_ASSERTION_TYPE,
 } from "./constants.js";
-import { endpointParameterValuesMatch } from "./endpoint-parameters.js";
+import { validateEndpointPostParameters } from "./endpoint-parameters.js";
 import { err, type FederationError, ok, type Result } from "./errors.js";
 import { errorResponse, readBodyWithLimit, requireMethods } from "./http.js";
 import { verifyClientAssertion } from "./jose/client-auth.js";
@@ -108,6 +108,8 @@ export interface EndpointAuthenticationConfig {
 	readonly getClientFederationJwks?: (client: EntityId) => Promise<JWKSet | undefined>;
 	readonly allowedAlgorithms?: readonly string[];
 	readonly extensions?: EndpointAuthentication;
+	/** Operation parameters that require a matching form value when present in a POST URL. */
+	readonly operationParameterNames?: readonly string[];
 }
 const identities = new WeakMap<Request, string>();
 /** Read the authenticated caller identifier associated with this exact Request object. */
@@ -123,6 +125,14 @@ export function validateEndpointAuthentication(
 	storage?: FederationStorage,
 ): EndpointAuthenticationConfig {
 	if (!config.methods.length) throw new TypeError("Endpoint auth methods must not be empty");
+	const declaredNames: unknown = config.operationParameterNames;
+	if (
+		declaredNames !== undefined &&
+		(!Array.isArray(declaredNames) ||
+			[...(declaredNames as readonly unknown[])].some((name) => typeof name !== "string" || !name))
+	)
+		throw new TypeError("Invalid endpoint operation parameter names");
+	const operationParameterNames = config.operationParameterNames;
 	const entries = Object.entries(config.extensions?.methods ?? {}).map(([name, definition]) => {
 		if (
 			name === "none" ||
@@ -166,6 +176,9 @@ export function validateEndpointAuthentication(
 			throw new TypeError("Shared assertion credentials require an explicit detector");
 	}
 	const methods = Object.fromEntries(entries);
+	const credentialNames = endpointCredentialParameterNames({ methods });
+	if (operationParameterNames?.some((name) => credentialNames.has(name)))
+		throw new TypeError("Endpoint operation parameters cannot be credentials");
 	for (const name of config.methods)
 		if (name !== "none" && name !== "private_key_jwt" && !Object.hasOwn(methods, name))
 			throw new TypeError(`Unsupported endpoint auth method: '${name}'`);
@@ -174,7 +187,12 @@ export function validateEndpointAuthentication(
 		if (!config.getClientFederationJwks)
 			throw new TypeError("private_key_jwt requires client keys");
 	}
-	return { ...config, methods: [...config.methods], extensions: { ...config.extensions, methods } };
+	return {
+		...config,
+		methods: [...config.methods],
+		extensions: { ...config.extensions, methods },
+		...(operationParameterNames ? { operationParameterNames: [...operationParameterNames] } : {}),
+	};
 }
 
 /** Shared credential verification for Authority, Leaf, and Collection endpoints. */
@@ -318,10 +336,7 @@ export async function authenticateEndpointRequest(
 		}
 		if ((options?.signal ?? request.signal).aborted)
 			return invalid("Client authentication was cancelled");
-		form.delete("client_assertion");
-		form.delete("client_assertion_type");
-		for (const plugin of registry.values())
-			for (const name of plugin.parameters ?? []) form.delete(name);
+		for (const name of endpointCredentialParameterNames(config.extensions)) form.delete(name);
 		return ok(identity);
 	} catch {
 		return invalid("Client authentication failed");
@@ -333,6 +348,8 @@ export function endpointCredentialParameterNames(
 	extensions?: EndpointAuthentication,
 ): ReadonlySet<string> {
 	return new Set([
+		"client_id",
+		"client_secret",
 		"client_assertion",
 		"client_assertion_type",
 		...Object.values(extensions?.methods ?? {}).flatMap((method) => method.parameters ?? []),
@@ -350,12 +367,23 @@ export function createEndpointAuthenticatedHandler(
 	options: FederationOptions,
 	nativeMethod: "GET" | "POST" = "GET",
 	unorderedParameters: readonly string[] = [],
+	route?: {
+		readonly fixedQuery?: URLSearchParams;
+		readonly operationParameterNames?: readonly string[];
+	},
 ): (request: Request) => Promise<Response> {
 	const captured = validateEndpointAuthentication(config, options.storage);
 	const allowsNone = captured.methods.includes("none");
 	const credentialNames = endpointCredentialParameterNames(captured.extensions);
-	const credentials = new Set(["client_id", "client_secret", ...credentialNames]);
-	const unordered = [...unorderedParameters].filter((name) => !credentials.has(name));
+	const unordered = [...unorderedParameters].filter((name) => !credentialNames.has(name));
+	const operationNames = new Set([
+		...unordered,
+		...(captured.operationParameterNames ?? []),
+		...(route?.operationParameterNames ?? []),
+	]);
+	if ([...operationNames].some((name) => credentialNames.has(name)))
+		throw new TypeError("Endpoint operation parameters cannot be credentials");
+	const routingNames = new Set(route?.fixedQuery?.keys());
 	return async (request) => {
 		const methods = captured.methods.every((method) => method === "none")
 			? [nativeMethod]
@@ -369,7 +397,7 @@ export function createEndpointAuthenticatedHandler(
 			const query = url.searchParams;
 			if ([...credentialNames].some((name) => query.has(name)))
 				return errorResponse(401, "invalid_client", "Credentials require the POST form");
-			const form = new URLSearchParams(query);
+			let form: URLSearchParams;
 			if (request.method === "POST") {
 				if (
 					request.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !==
@@ -382,23 +410,21 @@ export function createEndpointAuthenticatedHandler(
 					);
 				const body = await readBodyWithLimit(request, DEFAULT_MAX_REQUEST_BODY_BYTES);
 				if (!body.ok) return errorResponse(413, "invalid_request", "Request body too large");
-				const posted = new URLSearchParams(body.text);
-				for (const name of new Set(posted.keys())) {
-					const values = posted.getAll(name),
-						fixed = query.getAll(name);
-					if (query.has(name) && !endpointParameterValuesMatch(name, fixed, values, unordered))
-						return errorResponse(
-							400,
-							"invalid_request",
-							"Body parameters conflict with endpoint query parameters",
-						);
-					if (!query.has(name)) for (const value of values) form.append(name, value);
-				}
-			}
+				form = new URLSearchParams(body.text);
+				const error = validateEndpointPostParameters(
+					query,
+					form,
+					unordered,
+					operationNames,
+					routingNames,
+				);
+				if (error) return errorResponse(400, "invalid_request", error);
+			} else form = new URLSearchParams(query);
 			const checked = await authenticateEndpointRequest(request, form, captured, options);
 			if (!checked.ok) return endpointAuthenticationErrorResponse(checked.error);
 			if (request.method === "POST" && nativeMethod === "GET" && checked.value === undefined)
 				return errorResponse(401, "invalid_client", "Authenticated POST required");
+			if (checked.value === undefined) for (const name of credentialNames) form.delete(name);
 			const headers = new Headers(request.headers);
 			headers.delete("X-Authenticated-Entity");
 			headers.delete("Content-Length");

@@ -4,6 +4,7 @@ import { cloneData } from "../data-copy.js";
 import { freezeSnapshot } from "../callbacks.js";
 import { FederationErrorCode, MediaType } from "../constants.js";
 import { fetchFederationEndpoint } from "../endpoint-client.js";
+import { ENDPOINT_OPERATION_PARAMETERS } from "../endpoint-parameters.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
 import { verifyTrustMarkStatusResponse } from "../federation-api/trust-mark-status.js";
 import { validateExpectedIssuer } from "../federation-api/verify-issuer.js";
@@ -105,6 +106,8 @@ async function requestTrustMark(
 			expectedContentType: MediaType.TrustMark,
 		},
 		issuer,
+		[],
+		ENDPOINT_OPERATION_PARAMETERS.trustMark,
 	);
 }
 
@@ -274,6 +277,8 @@ async function fetchStatus(
 			accept: MediaType.TrustMarkStatusResponse,
 		},
 		options.expectedIssuer,
+		[],
+		ENDPOINT_OPERATION_PARAMETERS.trustMarkStatus,
 	);
 	if (!fetched.ok) return fetched;
 	const verified = await verifyTrustMarkStatusResponse(fetched.value, signerJwks, {

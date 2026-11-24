@@ -23,6 +23,7 @@ export const COLLECTION_PARAMETERS = {
 	info_claims: "infoClaims",
 	locale: "locale",
 } as const;
+export const COLLECTION_OPERATION_PARAMETERS = Object.freeze(Object.keys(COLLECTION_PARAMETERS));
 const repeated: ReadonlySet<string> = new Set(COLLECTION_UNORDERED_PARAMETERS);
 
 export function parseCollectionParams(

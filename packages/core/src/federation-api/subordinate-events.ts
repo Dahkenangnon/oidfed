@@ -2,6 +2,7 @@
 
 import { InternalErrorCode, JwtTyp, MediaType } from "../constants.js";
 import { fetchFederationEndpoint } from "../endpoint-client.js";
+import { ENDPOINT_OPERATION_PARAMETERS } from "../endpoint-parameters.js";
 import { err, type FederationError, ok, type Result } from "../errors.js";
 import { validateFetchUrl } from "../http/fetch-url.js";
 import { verifyEntityStatement } from "../jose/verify.js";
@@ -90,6 +91,8 @@ export async function fetchSubordinateEvents(
 			federationErrors: true,
 		},
 		options.issuer,
+		[],
+		ENDPOINT_OPERATION_PARAMETERS.subordinateEvents,
 	);
 	if (!fetched.ok) return fetched;
 	return verifySubordinateEventsResponse(fetched.value, options.issuerJwks, {

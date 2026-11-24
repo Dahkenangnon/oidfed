@@ -2771,6 +2771,27 @@ export default (QUnit: QUnit) => {
 				new Request(`${ENTITY_ID}/extended?campus=north&claims=`),
 			);
 			t.equal(get.status, 200);
+			for (const query of ["", "?campus=south"]) {
+				const missingRoute = await authority.handleRequest(
+					new Request(`${ENTITY_ID}/extended${query}`, {
+						method: "POST",
+						body: new URLSearchParams({ campus: "south", proof: "valid" }),
+					}),
+				);
+				t.equal(missingRoute.status, 404);
+				t.equal(((await missingRoute.json()) as { error: string }).error, "not_found");
+			}
+			t.equal(authCalls, 0);
+			const queryOnly = await authority.handleRequest(
+				new Request(`${ENTITY_ID}/extended?campus=north`, {
+					method: "POST",
+					body: new URLSearchParams({ proof: "valid", claims: "" }),
+				}),
+			);
+			t.equal(queryOnly.status, 400);
+			t.equal(((await queryOnly.json()) as { error: string }).error, "invalid_request");
+			t.equal(authCalls, 0);
+			t.equal(parseCalls, 1);
 			const post = await authority.handleRequest(
 				new Request(`${ENTITY_ID}/extended?campus=north`, {
 					method: "POST",
@@ -2788,6 +2809,62 @@ export default (QUnit: QUnit) => {
 			);
 			t.equal(conflict.status, 400);
 			t.equal(parseCalls, 2);
+			t.equal(authCalls, 1);
+			const client = await fetchExtendedSubordinatesList(
+				`${ENTITY_ID}/extended?campus=north`,
+				{ claims: [] },
+				{
+					engine: testEngine,
+					additionalParameters: { campus: "north" },
+					authentication: {
+						method: "custom",
+						audience: ENTITY_ID,
+						prepare: () => ({ parameters: { proof: "valid" } }),
+					},
+					httpClient: (input, init) => authority.handleRequest(new Request(input, init)),
+				},
+			);
+			t.true(client.ok);
+			t.equal(authCalls, 2);
+			t.equal(parseCalls, 3);
+		});
+
+		test("only published Trust Mark routes check for selector and credential collisions", async (t) => {
+			const f = await fixture();
+			const config = {
+				...f.config,
+				endpointAuthentication: {
+					methods: {
+						custom: { parameters: ["proof"], authenticate: () => c.ok({ entityId: LEAF_ID }) },
+					},
+				},
+				trustMarkRequestExtensions: { proof: () => c.ok(undefined) },
+				metadata: {
+					federation_entity: {
+						federation_fetch_endpoint: `${ENTITY_ID}/fetch`,
+						federation_list_endpoint: `${ENTITY_ID}/list`,
+						federation_fetch_endpoint_auth_methods: ["custom"],
+					},
+				},
+			};
+			const authority = await TrustAnchor.create(fixtureHostConfig(config));
+			const absent = await authority.handleRequest(new Request(`${ENTITY_ID}/status`));
+			t.equal(absent.status, 404);
+			await t.rejects(
+				(async () =>
+					await TrustAnchor.create(
+						fixtureHostConfig({
+							...config,
+							metadata: {
+								federation_entity: {
+									...config.metadata.federation_entity,
+									federation_trust_mark_status_endpoint: `${ENTITY_ID}/status`,
+								},
+							},
+						}),
+					))(),
+				/Endpoint operation parameters cannot be credentials/,
+			);
 		});
 	});
 
@@ -8120,7 +8197,7 @@ export default (QUnit: QUnit) => {
 		}
 
 		module("authority / createAuthenticatedHandler", () => {
-			test("authenticated forwarding preserves fixed selectors and repeated filters", async (t) => {
+			test("authenticated forwarding keeps form selectors and strips routing and credentials", async (t) => {
 				const { ctx, createClientAssertionJwt } = await setupClientAuthContext();
 				let forwarded: URL | undefined;
 				const handler = createAuthenticatedHandler(
@@ -8132,22 +8209,44 @@ export default (QUnit: QUnit) => {
 						return new Response("ok");
 					},
 					["private_key_jwt"],
+					{
+						fixedQuery: new URLSearchParams({ tenant: "alpha" }),
+						operationParameterNames: ["entity_type"],
+					},
 				);
 				const request = async (extra: string) =>
-					new Request(`${CA_AUTHORITY_ID}/api?tenant=alpha`, {
+					new Request(`${CA_AUTHORITY_ID}/api?tenant=alpha&entity_type=one&entity_type=two`, {
 						method: "POST",
 						headers: { "Content-Type": "application/x-www-form-urlencoded" },
-						body: `client_assertion=${encodeURIComponent(await createClientAssertionJwt())}&client_assertion_type=${encodeURIComponent(JWT_BEARER_TYPE)}&entity_type=one&entity_type=two${extra}`,
+						body: `client_assertion=${encodeURIComponent(await createClientAssertionJwt())}&client_assertion_type=${encodeURIComponent(JWT_BEARER_TYPE)}&client_id=${encodeURIComponent(CA_CLIENT_ID)}&entity_type=one&entity_type=two${extra}`,
 					});
 				const response = await handler(await request(""));
 				t.equal(response.status, 200);
 				await response.body?.cancel();
-				t.equal(forwarded?.searchParams.get("tenant"), "alpha");
+				t.false(forwarded?.searchParams.has("tenant"));
 				t.deepEqual(forwarded?.searchParams.getAll("entity_type"), ["one", "two"]);
 				t.false(forwarded?.searchParams.has("client_assertion"));
+				t.false(forwarded?.searchParams.has("client_id"));
 				const conflict = await handler(await request("&tenant=beta"));
 				t.equal(conflict.status, 400);
 				await conflict.body?.cancel();
+				const echoedRoute = await handler(await request("&tenant=alpha"));
+				t.equal(echoedRoute.status, 200);
+				t.false(forwarded?.searchParams.has("tenant"));
+				await echoedRoute.body?.cancel();
+				for (const name of ["client_id", "client_secret", "client_assertion"]) {
+					const input = await request("");
+					const url = new URL(input.url);
+					url.searchParams.set(name, "misplaced");
+					const response = await handler(
+						new Request(url, {
+							method: "POST",
+							body: new URLSearchParams(await input.text()),
+						}),
+					);
+					t.equal(response.status, 401);
+					t.equal(((await response.json()) as { error: string }).error, "invalid_client");
+				}
 			});
 
 			test("optional Trust Mark Status and required fetch leave discovery public", async (t) => {
@@ -8208,6 +8307,14 @@ export default (QUnit: QUnit) => {
 						}),
 					);
 					t.equal(anonymous.status, 200);
+					const queryOnly = await authority.handleRequest(
+						new Request(`${CA_AUTHORITY_ID}/status?trust_mark=${encodeURIComponent(statusJwt)}`, {
+							method: "POST",
+							body: new URLSearchParams(),
+						}),
+					);
+					t.equal(queryOnly.status, 400);
+					t.equal(((await queryOnly.json()) as { error: string }).error, "invalid_request");
 					const checked = await verifyEntityStatement(
 						await anonymous.text(),
 						(await ctx.crypto.keyring.entry("federation")).publishedJwks,
@@ -9722,21 +9829,36 @@ export default (QUnit: QUnit) => {
 					t.equal(res.status, 405);
 				});
 
-				test("server with private_key_jwt accepts storage-backed authenticated POST on fetch", async (t) => {
+				test("authenticated Fetch requires the subject in the form and preserves fixed routing", async (t) => {
 					const { config: authConfig, createAssertion } = await setupAuthenticatedServer([
 						"private_key_jwt",
 					]);
-					const server = await createAuthorityServer(authConfig);
-					const handler = (await server).handler();
-					const assertion = await createAssertion();
-					const res = await handler(
-						new Request(`${SERVER_AUTHORITY_ID}${FederationEndpoint.Fetch}`, {
-							method: "POST",
-							headers: { "Content-Type": "application/x-www-form-urlencoded" },
-							body: `sub=${encodeURIComponent(SERVER_SUB1)}&client_assertion=${encodeURIComponent(assertion)}&client_assertion_type=${encodeURIComponent(JWT_BEARER_TYPE)}`,
+					const endpoint = `${SERVER_AUTHORITY_ID}${FederationEndpoint.Fetch}?version=1`;
+					const server = await createAuthorityServer(
+						withFederationEntityMetadata(authConfig, {
+							federation_fetch_endpoint: endpoint,
 						}),
 					);
-					t.equal(res.status, 200);
+					const handler = (await server).handler();
+					const assertion = await createAssertion();
+					const request = (url: string, sub?: string) =>
+						handler(
+							new Request(url, {
+								method: "POST",
+								body: new URLSearchParams({
+									client_assertion: assertion,
+									client_assertion_type: JWT_BEARER_TYPE,
+									...(sub ? { sub } : {}),
+								}),
+							}),
+						);
+					const query = `${endpoint}&sub=${encodeURIComponent(SERVER_SUB1)}`;
+					for (const sub of [undefined, "https://other.example"]) {
+						const invalid = await request(query, sub);
+						t.equal(invalid.status, 400);
+						t.equal(((await invalid.json()) as { error: string }).error, "invalid_request");
+					}
+					t.equal((await request(endpoint, SERVER_SUB1)).status, 200);
 				});
 
 				test("server with private_key_jwt rejects assertions outside endpoint algorithms", async (t) => {

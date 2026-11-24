@@ -1102,6 +1102,7 @@ export default (QUnit: QUnit) => {
 				{
 					receiverEntityId: "https://authority.example",
 					methods: ["example_auth"],
+					operationParameterNames: ["extension", "sub"],
 					extensions: {
 						methods: {
 							example_auth: {
@@ -1141,6 +1142,7 @@ export default (QUnit: QUnit) => {
 				["extension=a&extension=b", "extension=b&extension=a&proof=ok", 400],
 				["sub=a", "sub=b&proof=ok", 400],
 				["proof=a&proof=b", "proof=b&proof=a", 401],
+				["future_extension=a", "future_extension=b&proof=ok", 200],
 			] as const) {
 				const response = await gate(
 					new Request(`https://authority.example/list?${query}`, {
@@ -1150,7 +1152,7 @@ export default (QUnit: QUnit) => {
 				);
 				t.equal(response.status, expected);
 			}
-			t.equal(handled, 3, "conflicts never reach the endpoint");
+			t.equal(handled, 4, "only valid requests reach the endpoint");
 			t.true(Object.isFrozen(c.LIST_UNORDERED_PARAMETERS));
 		});
 		test("known responders reject mismatched audiences before preparing credentials or fetching the endpoint", async (t) => {
@@ -2281,6 +2283,54 @@ export default (QUnit: QUnit) => {
 				t.equal(calls, 1, "unknown and scalar parameters do not gain set semantics");
 			}
 		});
+		test("POST clients echo fixed operation selectors and leave routing in the URL", async (t) => {
+			const f = await SubordinateEventsFixture.fixture();
+			const endpoint =
+				"https://transport.example/api?version=1&locale=en&entity_type=b&entity_type=a&campus=north";
+			const authentication = {
+				method: "private_key_jwt" as const,
+				audience: SubordinateEventsFixture.issuer,
+				clientId: SubordinateEventsFixture.subject,
+				signer: new SigningEntryFixture(f.clientKey.privateKey),
+			};
+			let calls = 0;
+			const httpClient: HttpClient = async (url, init) => {
+				calls++;
+				t.equal(String(url), endpoint);
+				t.equal(init?.method, "POST");
+				const form = new URLSearchParams(String(init?.body));
+				t.deepEqual(form.getAll("entity_type"), ["b", "a"]);
+				t.equal(form.get("campus"), "north");
+				t.false(form.has("version"));
+				t.false(form.has("locale"));
+				return new Response("jwt", { headers: { "content-type": MediaType.EntityStatement } });
+			};
+			const request = (
+				options: Omit<Parameters<typeof fetchFederationEndpoint>[2], "engine" | "httpClient">,
+			) =>
+				fetchFederationEndpoint(
+					endpoint,
+					new URLSearchParams(),
+					{ ...options, httpClient, engine: testEngine },
+					undefined,
+					CorePublic.LIST_UNORDERED_PARAMETERS,
+					CorePublic.ENDPOINT_OPERATION_PARAMETERS.list,
+				);
+			const additionalParameters = { campus: "north" };
+			for (const options of [
+				{ method: "POST", additionalParameters },
+				{ clientAssertion: "signed-by-caller", additionalParameters },
+				{ getEndpointAuthentication: () => authentication, additionalParameters },
+			] as const)
+				t.true((await request(options)).ok);
+			for (const options of [
+				{ method: "GET", additionalParameters },
+				{ method: "POST", additionalParameters: { campus: "south" } },
+				{ method: "POST", additionalParameters: { campus: [] } },
+			] as const)
+				t.false((await request(options)).ok);
+			t.equal(calls, 3);
+		});
 		test("Collection accepts equivalent fixed selector sets on direct GET and POST", async (t) => {
 			const c = CorePublic,
 				f = await EntityCollectionFixture.seed();
@@ -2518,14 +2568,47 @@ export default (QUnit: QUnit) => {
 				400,
 			);
 			for (const [url, body] of [
+				[endpoint, ""],
+				["https://collection.example/collect?tenant=academic", ""],
 				[endpoint, "entity_type=openid_provider"],
+				[endpoint, "entity_type=custom_type&tenant=elsewhere"],
 				[`${endpoint}&locale=en`, ""],
 				[`${endpoint}&client_assertion=secret`, ""],
+				[`${endpoint}&client_id=unexpected`, ""],
 			]) {
 				const response = await service.handleRequest(
 					new Request(url!, { method: "POST", body: new URLSearchParams(body) }),
 				);
 				t.equal(response.status, 400);
+				t.equal(((await response.json()) as { error: string }).error, "invalid_request");
+			}
+			const unknown = await service.handleRequest(
+				new Request(`${endpoint}&future_extension=first`, {
+					method: "POST",
+					body: new URLSearchParams({ entity_type: "custom_type", future_extension: "second" }),
+				}),
+			);
+			t.equal(unknown.status, 200);
+			t.deepEqual(
+				((await unknown.json()) as { entities: Array<{ entity_id: string }> }).entities.map(
+					(entry) => entry.entity_id,
+				),
+				["https://b.example"],
+			);
+			for (const query of ["", "&tenant=elsewhere"]) {
+				const url = `https://collection.example/collect?entity_type=custom_type${query}`;
+				for (const method of ["GET", "POST"]) {
+					const response = await service.handleRequest(
+						new Request(url, {
+							method,
+							...(method === "POST"
+								? { body: new URLSearchParams({ entity_type: "custom_type" }) }
+								: {}),
+						}),
+					);
+					t.equal(response.status, 404);
+					t.equal(((await response.json()) as { error: string }).error, "not_found");
+				}
 			}
 		});
 	});

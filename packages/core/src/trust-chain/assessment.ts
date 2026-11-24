@@ -10,7 +10,10 @@ import {
 	MediaType,
 } from "../constants.js";
 import { fetchFederationEndpoint } from "../endpoint-client.js";
-import { RESOLVE_UNORDERED_PARAMETERS } from "../endpoint-parameters.js";
+import {
+	ENDPOINT_OPERATION_PARAMETERS,
+	RESOLVE_UNORDERED_PARAMETERS,
+} from "../endpoint-parameters.js";
 import { err, ok, type Result } from "../errors.js";
 import { verifyResolveResponse } from "../federation-api/resolve.js";
 import {
@@ -144,6 +147,7 @@ async function resolverAssessment(
 			},
 			issuer,
 			RESOLVE_UNORDERED_PARAMETERS,
+			ENDPOINT_OPERATION_PARAMETERS.resolve,
 		);
 		if (!response.ok) return response;
 		const verified = await verifyResolveResponse(response.value, keys, {

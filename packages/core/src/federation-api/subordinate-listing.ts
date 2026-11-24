@@ -1,6 +1,9 @@
 import { type EntityTypeIdentifier, InternalErrorCode, MediaType } from "../constants.js";
 import { fetchFederationEndpoint } from "../endpoint-client.js";
-import { LIST_UNORDERED_PARAMETERS } from "../endpoint-parameters.js";
+import {
+	ENDPOINT_OPERATION_PARAMETERS,
+	LIST_UNORDERED_PARAMETERS,
+} from "../endpoint-parameters.js";
 import { err, type FederationError, ok, type Result } from "../errors.js";
 import { safeLogger } from "../logging.js";
 import { EntityIdSchema } from "../schemas/entity-id.js";
@@ -85,6 +88,7 @@ async function requestListSubordinates(
 		},
 		issuer,
 		LIST_UNORDERED_PARAMETERS,
+		ENDPOINT_OPERATION_PARAMETERS.list,
 	);
 	if (!result.ok) return result;
 

@@ -6,7 +6,10 @@
 
 import { FederationErrorCode, InternalErrorCode, MediaType } from "../constants.js";
 import { fetchFederationEndpoint } from "../endpoint-client.js";
-import { EXTENDED_LIST_UNORDERED_PARAMETERS } from "../endpoint-parameters.js";
+import {
+	ENDPOINT_OPERATION_PARAMETERS,
+	EXTENDED_LIST_UNORDERED_PARAMETERS,
+} from "../endpoint-parameters.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
 import { httpFailureStatus } from "../http/fetch-failure.js";
 import { safeLogger } from "../logging.js";
@@ -118,6 +121,7 @@ export async function fetchExtendedSubordinatesList(
 		},
 		undefined,
 		EXTENDED_LIST_UNORDERED_PARAMETERS,
+		ENDPOINT_OPERATION_PARAMETERS.extendedList,
 	);
 	if (!result.ok) {
 		const status = httpFailureStatus(result.error);
