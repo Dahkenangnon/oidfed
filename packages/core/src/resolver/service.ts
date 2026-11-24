@@ -100,6 +100,7 @@ export class FederationResolverService {
 			{
 				...(fixedQuery ? { fixedQuery } : {}),
 				operationParameterNames: ENDPOINT_OPERATION_PARAMETERS.resolve,
+				endpointName: "Resolve endpoint",
 			},
 		);
 	}
@@ -300,7 +301,11 @@ function createResolveHandler(
 				// The optional issuer chain may describe a previous signing key. Cache hits
 				// omit it rather than performing discovery to refresh that header (§8.3.2).
 				delete snapshot.headers.trust_chain;
-				const keySet = await federationEntry(ctx.crypto, { issuer: ctx.entityId, subject: sub });
+				const keySet = await federationEntry(ctx.crypto, {
+					artifact: "resolve-response",
+					issuer: ctx.entityId,
+					subject: sub,
+				});
 				// Cache and key-provider reads may be asynchronous; recheck the fixed deadline.
 				const issuedAt = nowSeconds(ctx.options?.clock);
 				if (snapshot.reuseUntil <= issuedAt)
@@ -308,7 +313,7 @@ function createResolveHandler(
 				// §8.3.2 derives exp from the subject's chain and included Trust Marks.
 				// The local reuse deadline controls cache access; preserve the assessed exp.
 				const jwt = await signEntityStatement({ ...snapshot.payload, iat: issuedAt }, keySet, {
-					...federationSigningOptions(ctx.options),
+					...federationSigningOptions(ctx.options, "resolve-response"),
 					typ: JwtTyp.ResolveResponse,
 					extraHeaders: snapshot.headers,
 				});
@@ -429,7 +434,11 @@ function createResolveHandler(
 				resolvedMetadata = filtered;
 			}
 
-			const keySet = await federationEntry(ctx.crypto, { issuer: ctx.entityId, subject: sub });
+			const keySet = await federationEntry(ctx.crypto, {
+				artifact: "resolve-response",
+				issuer: ctx.entityId,
+				subject: sub,
+			});
 			const now = nowSeconds(ctx.options?.clock);
 			const activeTrustMarks = await resolveActiveTrustMarks(
 				operationContext,
@@ -495,7 +504,7 @@ function createResolveHandler(
 					"Resolution evidence has expired or the operation was cancelled",
 				);
 			const jwt = await signEntityStatement(payload, keySet, {
-				...federationSigningOptions(ctx.options),
+				...federationSigningOptions(ctx.options, "resolve-response"),
 				typ: JwtTyp.ResolveResponse,
 				extraHeaders,
 			});

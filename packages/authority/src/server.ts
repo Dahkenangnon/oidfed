@@ -85,6 +85,7 @@ import {
 import { createAuthenticatedHandler } from "./endpoints/client-auth.js";
 import type { AuthorityClientKeyProvider, HandlerContext } from "./endpoints/context.js";
 import {
+	assertAuthorityAuthenticationPublication,
 	buildEntityConfiguration,
 	createEntityConfigurationHandler,
 } from "./endpoints/entity-configuration.js";
@@ -444,7 +445,7 @@ function createAuthorityServerWithIdentity(
 					receiverEntityId: entityId,
 					getClientFederationJwks: (id) => clientKeyProvider.getClientFederationJwks(id),
 					...(meta.endpoint_auth_signing_alg_values_supported
-						? { allowedAlgorithms: meta.endpoint_auth_signing_alg_values_supported }
+						? { advertisedAlgorithms: meta.endpoint_auth_signing_alg_values_supported }
 						: {}),
 				},
 			})
@@ -460,7 +461,7 @@ function createAuthorityServerWithIdentity(
 		return createAuthenticatedHandler(ctx, handler, authMethods, {
 			...options,
 			...(meta.endpoint_auth_signing_alg_values_supported !== undefined
-				? { allowedAlgorithms: meta.endpoint_auth_signing_alg_values_supported }
+				? { advertisedAlgorithms: meta.endpoint_auth_signing_alg_values_supported }
 				: {}),
 		});
 	}
@@ -502,6 +503,7 @@ function createAuthorityServerWithIdentity(
 		"federation_fetch_endpoint",
 		fetchEndpointPath,
 		withAuth(fetchHandler, meta.federation_fetch_endpoint_auth_methods, {
+			endpointName: "Fetch endpoint",
 			operationParameterNames: ENDPOINT_OPERATION_PARAMETERS.fetch,
 			fixedQuery: new URL(`https://routing.invalid${fetchEndpointPath}`).searchParams,
 		}),
@@ -512,6 +514,7 @@ function createAuthorityServerWithIdentity(
 		"federation_list_endpoint",
 		listEndpointPath,
 		withAuth(listHandler, meta.federation_list_endpoint_auth_methods, {
+			endpointName: "List endpoint",
 			unorderedParameters: LIST_UNORDERED_PARAMETERS,
 			operationParameterNames: ENDPOINT_OPERATION_PARAMETERS.list,
 			fixedQuery: new URL(`https://routing.invalid${listEndpointPath}`).searchParams,
@@ -524,6 +527,7 @@ function createAuthorityServerWithIdentity(
 		meta.federation_extended_list_endpoint,
 		(fixedQuery) =>
 			withAuth(extendedListHandler, meta.federation_extended_list_endpoint_auth_methods, {
+				endpointName: "Extended List endpoint",
 				unorderedParameters: EXTENDED_LIST_UNORDERED_PARAMETERS,
 				operationParameterNames: [
 					...ENDPOINT_OPERATION_PARAMETERS.extendedList,
@@ -539,6 +543,7 @@ function createAuthorityServerWithIdentity(
 		meta.federation_historical_keys_endpoint,
 		(fixedQuery) =>
 			withAuth(historicalKeysHandler, meta.federation_historical_keys_endpoint_auth_methods, {
+				endpointName: "Historical Keys endpoint",
 				fixedQuery,
 			}),
 	);
@@ -549,6 +554,7 @@ function createAuthorityServerWithIdentity(
 		meta.federation_trust_mark_status_endpoint,
 		(fixedQuery) =>
 			withAuth(trustMarkStatusHandler, meta.federation_trust_mark_status_endpoint_auth_methods, {
+				endpointName: "Trust Mark Status endpoint",
 				nativeMethod: "POST",
 				operationParameterNames: [
 					...ENDPOINT_OPERATION_PARAMETERS.trustMarkStatus,
@@ -564,6 +570,7 @@ function createAuthorityServerWithIdentity(
 		meta.federation_trust_mark_list_endpoint,
 		(fixedQuery) =>
 			withAuth(trustMarkListHandler, meta.federation_trust_mark_list_endpoint_auth_methods, {
+				endpointName: "Trust Mark List endpoint",
 				operationParameterNames: [
 					...ENDPOINT_OPERATION_PARAMETERS.trustMark,
 					...trustMarkExtensionNames,
@@ -578,6 +585,7 @@ function createAuthorityServerWithIdentity(
 		meta.federation_trust_mark_endpoint,
 		(fixedQuery) =>
 			withAuth(trustMarkHandler, meta.federation_trust_mark_endpoint_auth_methods, {
+				endpointName: "Trust Mark endpoint",
 				operationParameterNames: [
 					...ENDPOINT_OPERATION_PARAMETERS.trustMark,
 					...trustMarkExtensionNames,
@@ -592,6 +600,7 @@ function createAuthorityServerWithIdentity(
 		meta.federation_resolve_endpoint,
 		(fixedQuery) =>
 			withAuth(resolveHandler, meta.federation_resolve_endpoint_auth_methods, {
+				endpointName: "Resolve endpoint",
 				unorderedParameters: RESOLVE_UNORDERED_PARAMETERS,
 				operationParameterNames: ENDPOINT_OPERATION_PARAMETERS.resolve,
 				fixedQuery,
@@ -609,6 +618,7 @@ function createAuthorityServerWithIdentity(
 					subordinateEventsHandler,
 					meta.federation_subordinate_events_endpoint_auth_methods,
 					{
+						endpointName: "Subordinate Events endpoint",
 						operationParameterNames: ENDPOINT_OPERATION_PARAMETERS.subordinateEvents,
 						fixedQuery,
 					},
@@ -860,6 +870,7 @@ function createAuthorityServerWithIdentity(
 			safeLogger(config.options?.logger)?.debug("Starting issue trust mark delegation");
 
 			const keySet = await federationEntry(ctx.crypto, {
+				artifact: "trust-mark-delegation",
 				issuer: ctx.entityId,
 				subject,
 				trustMarkType,
@@ -869,6 +880,7 @@ function createAuthorityServerWithIdentity(
 			const policy = bindFederationOptions(ctx, ctx.options, {
 				maxCompactBytes: options?.maxCompactBytes,
 				allowedFederationAlgorithms: options?.allowedFederationAlgorithms,
+				allowedAlgorithmsForArtifact: options?.allowedAlgorithmsForArtifact,
 			});
 			return signTrustMarkDelegation({
 				issuer: entityId,
@@ -878,6 +890,7 @@ function createAuthorityServerWithIdentity(
 				maxCompactBytes: policy.maxCompactBytes,
 				algorithmRegistry: policy.algorithmRegistry,
 				allowedFederationAlgorithms: policy.allowedFederationAlgorithms,
+				allowedAlgorithmsForArtifact: policy.allowedAlgorithmsForArtifact,
 				...(ttlSeconds !== undefined ? { ttlSeconds } : {}),
 				...(options?.noExpiry !== undefined ? { noExpiry: options.noExpiry } : {}),
 				...(options?.ref !== undefined ? { ref: options.ref } : {}),
@@ -1107,6 +1120,7 @@ async function prepareAuthorityHost(
 		addRoleRoutes(routes, role, normalized.entityId);
 	}
 	await federationEntry(normalized.crypto, {
+		artifact: "entity-configuration",
 		issuer: normalized.entityId,
 		subject: normalized.entityId,
 	});
@@ -1115,7 +1129,10 @@ async function prepareAuthorityHost(
 		normalized.metadata,
 		context,
 	);
-	assertEndpointAuthenticationCompanions(publication.federation_entity, InvalidAuthorityConfig);
+	assertAuthorityAuthenticationPublication(
+		normalized.metadata.federation_entity,
+		publication.federation_entity,
+	);
 	if (
 		normalized.metadata.federation_entity.federation_historical_keys_endpoint &&
 		!normalized.crypto.history

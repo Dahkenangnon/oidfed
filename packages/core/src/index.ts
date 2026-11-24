@@ -1,3 +1,4 @@
+export type { FederationArtifact } from "@oidfed/crypto";
 export {
 	createConcurrencyLimiter,
 	runAsyncOperation,
@@ -203,6 +204,7 @@ export {
 export {
 	type FederationKeyHistorySource,
 	federationEntry,
+	federationPublicationJwks,
 	historicalKeysFromKeyring,
 	validateFederationKeySet,
 } from "./federation-keys.js";

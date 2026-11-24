@@ -83,6 +83,7 @@ export async function buildSubordinateStatement(
 		{ customOperators: ctx.options?.customPolicyOperators },
 	);
 	const keySet = await federationEntry(ctx.crypto, {
+		artifact: "subordinate-statement",
 		issuer: ctx.entityId,
 		subject: record.entityId,
 	});
@@ -112,7 +113,7 @@ export async function buildSubordinateStatement(
 	});
 
 	return signEntityStatement(payload, keySet, {
-		...federationSigningOptions(ctx.options),
+		...federationSigningOptions(ctx.options, "subordinate-statement"),
 		typ: JwtTyp.EntityStatement,
 	});
 }

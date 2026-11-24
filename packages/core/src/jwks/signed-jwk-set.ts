@@ -33,7 +33,7 @@ export async function verifySignedJwkSet(
 	const result = await verifyEntityStatement(
 		jwt,
 		signerJwks,
-		buildVerifyOpts(JwtTyp.JwkSet, options),
+		buildVerifyOpts(JwtTyp.JwkSet, options, "signed-protocol-jwks"),
 	);
 	if (!result.ok) return result;
 

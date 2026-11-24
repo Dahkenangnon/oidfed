@@ -27,7 +27,8 @@ flowchart TD
 | `Signer` | Readonly `SigningPublicJwk` and async `sign(signingInput): Uint8Array`; operation is permanently bound to that identity |
 | `Keyring` / `KeyringEntry` | `entry(purpose, context?)` returns a detached frozen signer identity and published JWKS together |
 | `RotatingKeyring` | Keyring plus `publish`, `activate`, `retire`, `revoke`, `history` |
-| `KeyPurpose` / `KeySelectionContext` | Application-defined purpose names; optional issuer, subject, trustMarkType and string-valued extensions |
+| `KeyPurpose` / `KeySelectionContext` | Application-defined purpose names with optional artifact, issuer, subject, Trust Mark type, and string-valued extensions |
+| `FederationArtifact` / `FEDERATION_ARTIFACTS` | Typed signing and verification operations used by Federation hosts |
 | `HistoricalKeyRecord` | Public signing identity and recorded optional publication, activation, retirement and revocation events |
 | `Jwk` / `PublicJwk` | Structural wire representation; identifier optional; runtime validation still required |
 | `SigningPublicJwk` | Public JWK with required nonempty `kid` and supported `alg` |
@@ -75,6 +76,20 @@ RSA validation requires a minimally encoded modulus of at least 2048 bits and an
 Pass the registry to host crypto, standalone operations and any built-in keyring selecting those keys. The engine advertises verification capabilities and the signer binds one algorithm to a private key operation. Use the [complete adapter example](../../examples/custom-crypto.ts) to see how both can use a private-use algorithm and key format alongside built-in support.
 
 ## Optional backends
+
+The bundled Web Crypto and JOSE verification adapters support `RS384` and `RS512` when explicitly enabled. Both use RSA PKCS#1 v1.5, with SHA-384 or SHA-512 respectively. The default allowlist still has seven algorithms. To accept either new algorithm for Federation signatures, include it in both the engine's capabilities and `allowedFederationAlgorithms`.
+
+<!-- oidfed-example -->
+```ts
+import { createWebCryptoEngine } from "@oidfed/crypto/web";
+import type { FederationOptions } from "@oidfed/core";
+
+const algorithms = ["ES256", "RS384", "RS512"] as const;
+export const options: FederationOptions = {
+  engine: createWebCryptoEngine(undefined, { algorithms }),
+  allowedFederationAlgorithms: algorithms,
+};
+```
 
 `@oidfed/crypto/web` exports `createWebCryptoEngine(implementation?, options?)`, `SoftwareSigner`, `WebCryptoEngineOptions`, `WebCryptoLike` and `WebCryptoAlgorithm`. `SoftwareSigner` takes a private JWK with `kid`/`alg`, optionally an injected Web Crypto implementation; its public property contains only public key metadata. Concurrent calls share the import. Success releases its private JWK copy and a failed import can be retried. Web Crypto algorithms may be restricted using `options.algorithms`. Unavailable runtime algorithms reject with a typed unsupported error when used. Random generation splits requests into Web Crypto's 65,536-byte chunks.
 

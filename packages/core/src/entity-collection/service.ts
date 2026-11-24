@@ -177,11 +177,17 @@ export class EntityCollectionService {
 					receiverEntityId: configured.receiverEntityId ?? "https://collection.invalid",
 				},
 				config.options.storage,
+				config.options,
+				"Entity Collection endpoint",
 			);
 			this.config.authentication = {
 				...configured,
 				...(captured.extensions ? { extensions: captured.extensions } : {}),
 				methods: captured.methods,
+				...(captured.allowedAlgorithms ? { allowedAlgorithms: captured.allowedAlgorithms } : {}),
+				...(captured.advertisedAlgorithms
+					? { advertisedAlgorithms: captured.advertisedAlgorithms }
+					: {}),
 			};
 		}
 		const storage = config.options.storage;

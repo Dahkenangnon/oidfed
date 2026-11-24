@@ -171,6 +171,7 @@ export function createExplicitRegistrationHandler(
 		}
 
 		const keySet = await federationEntry(config.crypto, {
+			artifact: "explicit-registration-response",
 			issuer: config.opEntityId,
 			subject: rpEntityId,
 		});
@@ -311,7 +312,7 @@ export function createExplicitRegistrationHandler(
 			return errorResponse(400, finalPolicy.error.code, finalPolicy.error.description);
 
 		const responseJwt = await signEntityStatement(responsePayload, keySet, {
-			...federationSigningOptions(config.options),
+			...federationSigningOptions(config.options, "explicit-registration-response"),
 			typ: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE,
 		});
 

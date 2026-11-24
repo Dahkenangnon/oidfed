@@ -1,6 +1,69 @@
 # Host adapter recipes
 
-Implement `Signer` when only key custody changes. Implement `CryptoEngine` when the host also supplies verification, hashing or secure randomness. A custom `Keyring` can select per issuer, subject or trust-mark type using `KeySelectionContext`. These contracts have no framework or wallet dependency.
+Implement `Signer` when only key custody changes. Implement `CryptoEngine` when the host also supplies verification, hashing or secure randomness. A custom `Keyring` can select by artifact, issuer, subject, or Trust Mark type using `KeySelectionContext`. These contracts have no framework or wallet dependency.
+
+## Choose a Federation signing key by artifact
+
+For one Federation key, pass `new StaticKeyring({ signers: { federation: signer } })` to the host's crypto configuration. Omit the artifact policy to use the Federation algorithm allowlist for every operation.
+
+An Entity Configuration and a Historical Keys response can have the same issuer and subject. If they use separate signing bindings, select the binding by `context.artifact`. A binding supplies its signer and public keys together. For artifacts verified against the issuer's Entity Configuration, `federationEntry()` also checks that the selected key matches a verification key in that configuration's Federation JWKS. Trust Mark Delegations use the owner keys that the Trust Anchor publishes for the mark type.
+
+<!-- oidfed-example -->
+```ts
+import { type Keyring, type Signer, StaticKeyring } from "@oidfed/crypto";
+import type { BoundFederationOptions } from "@oidfed/core";
+
+export function federationBindings(configuration: Signer, historical: Signer) {
+  const custody = new StaticKeyring({
+    signers: { federation: configuration, historical },
+    additionalPublishedKeys: {
+      federation: [historical.publicJwk],
+      historical: [configuration.publicJwk],
+    },
+  });
+  const keyring: Keyring = {
+    entry(purpose, context) {
+      const useHistorical = purpose === "federation" && context?.artifact === "historical-keys";
+      return custody.entry(useHistorical ? "historical" : purpose, context);
+    },
+  };
+  const options: BoundFederationOptions = {
+    allowedFederationAlgorithms: ["ES256", "PS256"],
+    allowedAlgorithmsForArtifact(artifact) {
+      return artifact === "historical-keys" ? ["PS256"] : ["ES256"];
+    },
+  };
+  return { keyring, options };
+}
+```
+
+This example expects an ES256 configuration signer and a PS256 Historical Keys signer. Each callback result narrows the Federation allowlist. Return an empty array to deny the operation. Keep callbacks synchronous and stable for the lifetime of the configured host. Create a new host when policy changes require fresh evaluation of cached Resolve evidence.
+
+For rollover, add the next key to the Entity Configuration, refresh Leaf's cached configuration when applicable, and allow peers time to fetch it before switching the signing binding. Leaf checks the last unexpired configuration during a refresh. An Authority that generates configurations on demand checks its Entity Configuration keyring binding.
+
+When your application publishes a retained Entity Configuration outside oidfed, set `crypto.readPublishedFederationJwks(issuer)` to return the trusted Federation JWKS from the current publication. Read it from your serving state so the check follows the same revision as the published JWT. If that state is unavailable, let the reader fail. oidfed will stop the signing operation. The reader does not need access to private keys.
+
+For a custom `signed_jwks_uri` handler, supply the artifact when selecting the signer and when signing. The payload contains the published protocol public keys. The JWT is signed by the issuer's Federation key.
+
+<!-- oidfed-example -->
+```ts
+import { type CryptoContext, type EntityId, type FederationOptions, type JWKSet,
+  federationEntry, federationSigningOptions, JwtTyp, nowSeconds, signEntityStatement } from "@oidfed/core";
+
+export async function signProtocolKeys(
+  crypto: CryptoContext, options: FederationOptions, issuer: EntityId, owner: EntityId, keys: JWKSet,
+) {
+  const artifact = "signed-protocol-jwks";
+  const entry = await federationEntry(crypto, { artifact, issuer, subject: owner });
+  return signEntityStatement(
+    { iss: issuer, sub: owner, iat: nowSeconds(options.clock), keys: keys.keys },
+    entry,
+    { ...federationSigningOptions(options, artifact), typ: JwtTyp.JwkSet },
+  );
+}
+```
+
+Consumers use `verifySignedJwkSet()` for protocol keys and `verifyHistoricalKeysResponse()` for Historical Keys. Both JWTs have the type `jwk-set+jwt`. Each verifier applies the policy for the operation it performs. For the generic signing and verification APIs, supply `artifact` explicitly whenever a policy callback is configured.
 
 ## Opaque key handles
 

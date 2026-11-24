@@ -128,7 +128,10 @@ export async function validateTrustMark(
 		expectedTyp: header.typ as string,
 	};
 	if (options?.clock) verifyOpts.clock = options.clock;
-	const verifyResult = await verifyEntityStatement(trustMarkJwt, issuerJwks, verifyOpts);
+	const verifyResult = await verifyEntityStatement(trustMarkJwt, issuerJwks, {
+		...verifyOpts,
+		artifact: "trust-mark",
+	});
 	if (!verifyResult.ok) {
 		return err(tmError(`Signature verification failed: ${verifyResult.error.description}`));
 	}
@@ -267,7 +270,10 @@ async function validateDelegation(
 		expectedTyp: JwtTyp.TrustMarkDelegation,
 	};
 	if (options?.clock) dVerifyOpts.clock = options.clock;
-	const verifyResult = await verifyEntityStatement(delegationJwt, owner.jwks, dVerifyOpts);
+	const verifyResult = await verifyEntityStatement(delegationJwt, owner.jwks, {
+		...dVerifyOpts,
+		artifact: "trust-mark-delegation",
+	});
 	if (!verifyResult.ok) {
 		return err(
 			tmError(`Delegation signature verification failed: ${verifyResult.error.description}`),

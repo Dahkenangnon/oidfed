@@ -1,20 +1,32 @@
 /** Bind application dependencies while combining narrower operation policies. */
 import {
 	CLASSICAL_ALGORITHMS,
+	CryptoError,
 	DEFAULT_JWS_REGISTRY,
+	FEDERATION_ARTIFACTS,
+	type FederationArtifact,
 	type JwsAlgorithmRegistry,
 } from "@oidfed/crypto";
+import { callSynchronous } from "./callbacks.js";
 import type { FederationStorage } from "./storage/contracts.js";
 import type { BoundFederationOptions, CryptoContext, FederationOptions } from "./types.js";
 
 /** Capture host crypto configuration while retaining the adapters and their signing custody. */
 export function snapshotCryptoContext(crypto: CryptoContext): Readonly<CryptoContext> {
-	const { engine, keyring, algorithmRegistry, federationPurpose, history } = crypto;
+	const {
+		engine,
+		keyring,
+		algorithmRegistry,
+		federationPurpose,
+		readPublishedFederationJwks,
+		history,
+	} = crypto;
 	return Object.freeze({
 		engine,
 		keyring,
 		...(algorithmRegistry ? { algorithmRegistry } : {}),
 		...(federationPurpose !== undefined ? { federationPurpose } : {}),
+		...(readPublishedFederationJwks !== undefined ? { readPublishedFederationJwks } : {}),
 		...(history !== undefined ? { history } : {}),
 	});
 }
@@ -23,6 +35,11 @@ export function snapshotCryptoContext(crypto: CryptoContext): Readonly<CryptoCon
 export function validateCryptoContext(crypto: CryptoContext): void {
 	if (!crypto?.engine || !crypto.keyring || typeof crypto.keyring.entry !== "function")
 		throw new TypeError("Host crypto requires an engine and keyring");
+	if (
+		crypto.readPublishedFederationJwks !== undefined &&
+		typeof crypto.readPublishedFederationJwks !== "function"
+	)
+		throw new TypeError("Published Federation JWKS reader must be a function");
 	if (crypto.history !== undefined && typeof crypto.history?.getHistoricalKeys !== "function")
 		throw new TypeError("Crypto history requires getHistoricalKeys");
 	for (const name of ["verify", "validatePublicKey", "digest", "random"] as const)
@@ -94,6 +111,26 @@ export function bindFederationOptions(
 		),
 		enumerable: true,
 	});
+	const artifactPolicies = policies.flatMap((policy) =>
+		policy?.allowedAlgorithmsForArtifact === undefined ? [] : [policy.allowedAlgorithmsForArtifact],
+	);
+	if (artifactPolicies.some((policy) => typeof policy !== "function"))
+		throw new TypeError("Federation artifact algorithm policy requires a function");
+	if (artifactPolicies.length)
+		Object.defineProperty(result, "allowedAlgorithmsForArtifact", {
+			value: (artifact: FederationArtifact) => {
+				const lists = artifactPolicies.map((policy) =>
+					readArtifactAlgorithms(policy, artifact, registryFor(crypto)),
+				);
+				return lists
+					.slice(1)
+					.reduce(
+						(allowed, list) => allowed.filter((algorithm) => list.includes(algorithm)),
+						lists[0] ?? [],
+					);
+			},
+			enumerable: true,
+		});
 	for (const name of ["maxCompactBytes", "maxVerificationCandidates"] as const) {
 		const values = policies.flatMap((policy) =>
 			policy?.[name] === undefined ? [] : [policy[name]],
@@ -115,25 +152,76 @@ export function registryFor(options?: {
 	return options?.algorithmRegistry ?? DEFAULT_JWS_REGISTRY;
 }
 
+type ArtifactAlgorithmPolicy = NonNullable<FederationOptions["allowedAlgorithmsForArtifact"]>;
+type FederationAlgorithmOptions = Pick<
+	FederationOptions,
+	"algorithmRegistry" | "allowedFederationAlgorithms" | "allowedAlgorithmsForArtifact"
+>;
+
+/** Validate a host callback before trusting any algorithm identifiers it returns. */
+function readArtifactAlgorithms(
+	policy: ArtifactAlgorithmPolicy,
+	artifact: FederationArtifact,
+	registry: JwsAlgorithmRegistry,
+): readonly string[] {
+	const allowed = callSynchronous(
+		() => {
+			const declared: unknown = policy(artifact);
+			return Array.isArray(declared) ? Array.from(declared as readonly unknown[]) : declared;
+		},
+		(value): value is readonly string[] =>
+			Array.isArray(value) &&
+			value.every(
+				(algorithm: unknown) =>
+					typeof algorithm === "string" && registry.algorithm(algorithm) !== undefined,
+			),
+	);
+	if (!allowed.ok)
+		throw new CryptoError(
+			"CRYPTO_OPERATION_FAILED",
+			"Invalid Federation artifact algorithm policy",
+		);
+	return allowed.value;
+}
+
+/** Narrow the existing Federation allowlist for an artifact selected by the operation. */
+export function federationAlgorithms(
+	options?: FederationAlgorithmOptions,
+	artifact?: FederationArtifact,
+): readonly string[] {
+	const allowed = options?.allowedFederationAlgorithms ?? CLASSICAL_ALGORITHMS;
+	if (options?.allowedAlgorithmsForArtifact === undefined) return allowed;
+	// The JWT typ is shared by some artifacts. Its caller supplies the expected operation.
+	if (artifact === undefined || !FEDERATION_ARTIFACTS.includes(artifact))
+		throw new CryptoError(
+			"CRYPTO_OPERATION_FAILED",
+			"Federation artifact algorithm policy requires an artifact",
+		);
+	const restricted = readArtifactAlgorithms(
+		options.allowedAlgorithmsForArtifact,
+		artifact,
+		registryFor(options),
+	);
+	return allowed.filter((algorithm) => restricted.includes(algorithm));
+}
+
 /** Adapt Federation Entity Key policy for generic JWS operations. */
-export function federationJwsOptions<
-	T extends { readonly allowedFederationAlgorithms?: readonly string[] | undefined },
->(options: T): T & { readonly allowedAlgorithms: readonly string[] } {
-	return {
-		...options,
-		allowedAlgorithms: options.allowedFederationAlgorithms ?? CLASSICAL_ALGORITHMS,
-	};
+export function federationJwsOptions<T extends FederationAlgorithmOptions>(
+	options: T,
+	artifact?: FederationArtifact,
+): T & { readonly allowedAlgorithms: readonly string[] } {
+	return { ...options, allowedAlgorithms: federationAlgorithms(options, artifact) };
 }
 
 /** Select the same policy and registry for outbound federation signatures. */
 export function federationSigningOptions(
-	options: Pick<
-		FederationOptions,
-		"allowedFederationAlgorithms" | "algorithmRegistry" | "maxCompactBytes"
-	>,
+	options: FederationAlgorithmOptions & Pick<FederationOptions, "maxCompactBytes">,
+	artifact?: FederationArtifact,
 ) {
 	return {
 		allowedFederationAlgorithms: options.allowedFederationAlgorithms ?? CLASSICAL_ALGORITHMS,
+		allowedAlgorithmsForArtifact: options.allowedAlgorithmsForArtifact,
+		artifact,
 		algorithmRegistry: registryFor(options),
 		maxBytes: options.maxCompactBytes,
 	};

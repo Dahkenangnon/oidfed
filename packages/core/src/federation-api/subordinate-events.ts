@@ -29,6 +29,7 @@ export async function verifySubordinateEventsResponse(
 ): Promise<Result<SubordinateEventsResponse, FederationError>> {
 	const verified = await verifyEntityStatement(jwt, issuerJwks, {
 		...options,
+		artifact: "subordinate-events",
 		expectedTyp: JwtTyp.EntityEventsStatement,
 		...(options.clock ? { clock: options.clock } : {}),
 		...(options.clockSkewSeconds !== undefined

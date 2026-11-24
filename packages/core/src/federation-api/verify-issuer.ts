@@ -1,3 +1,4 @@
+import type { FederationArtifact } from "@oidfed/crypto";
 import { InternalErrorCode } from "../constants.js";
 import { err, type FederationError, ok, type Result } from "../errors.js";
 import { EntityIdSchema } from "../schemas/entity-id.js";
@@ -21,6 +22,10 @@ export function validateExpectedIssuer(options: VerifyOptions): Result<void, Fed
 		: err(apiError("A valid expectedIssuer is required"));
 }
 
-export function buildVerifyOpts(expectedTyp: string, options: VerifyOptions) {
-	return { ...options, expectedTyp };
+export function buildVerifyOpts(
+	expectedTyp: string,
+	options: VerifyOptions,
+	artifact: FederationArtifact,
+) {
+	return { ...options, expectedTyp, artifact };
 }

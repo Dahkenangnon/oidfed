@@ -84,6 +84,7 @@ export async function explicitRegistration(
 	safeLogger(options?.logger)?.debug("Creating an Explicit Client Registration Request");
 
 	const keySet = await federationEntry(rpConfig.crypto, {
+		artifact: "entity-configuration",
 		issuer: rpConfig.entityId,
 		subject: rpConfig.entityId,
 	});
@@ -105,7 +106,7 @@ export async function explicitRegistration(
 				...(rpConfig.trustMarks?.length ? { trust_marks: rpConfig.trustMarks } : {}),
 			},
 			keySet,
-			{ typ: JwtTyp.EntityStatement, ...federationSigningOptions(options) },
+			{ typ: JwtTyp.EntityStatement, ...federationSigningOptions(options, "entity-configuration") },
 		);
 	const sharedChains = await selectSharedRegistrationTrustChains(
 		rpConfig.entityId,
@@ -220,7 +221,7 @@ export async function explicitRegistration(
 	const extraHeaders = headers.value;
 
 	const ecJwt = await signEntityStatement(ecPayload, keySet, {
-		...federationSigningOptions(options),
+		...federationSigningOptions(options, "entity-configuration"),
 		typ: JwtTyp.EntityStatement,
 		...(Object.keys(extraHeaders).length > 0 ? { extraHeaders } : {}),
 	});
@@ -288,6 +289,7 @@ export async function explicitRegistration(
 	const verifyResult = await verifyEntityStatement(responseJwt, opJwks, {
 		...options,
 		expectedTyp: OIDC_JWT_TYP_EXPLICIT_REGISTRATION_RESPONSE,
+		artifact: "explicit-registration-response",
 		...(options?.clock ? { clock: options.clock } : {}),
 		...(options?.clockSkewSeconds !== undefined
 			? { clockSkewSeconds: options.clockSkewSeconds }

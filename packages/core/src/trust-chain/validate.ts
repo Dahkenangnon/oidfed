@@ -1159,11 +1159,10 @@ async function authenticateChainStatements(
 		}
 
 		if (leaf.payload.jwks) {
-			const selfVerify = await verifyEntityStatement(
-				chain[0] as string,
-				leaf.payload.jwks,
-				verifyOptions,
-			);
+			const selfVerify = await verifyEntityStatement(chain[0] as string, leaf.payload.jwks, {
+				...verifyOptions,
+				artifact: "entity-configuration",
+			});
 			if (!selfVerify.ok) {
 				addError(
 					errors,
@@ -1245,11 +1244,10 @@ async function authenticateChainStatements(
 			}
 
 			if (next.payload.jwks) {
-				const sigResult = await verifyEntityStatement(
-					chain[j] as string,
-					next.payload.jwks,
-					verifyOptions,
-				);
+				const sigResult = await verifyEntityStatement(chain[j] as string, next.payload.jwks, {
+					...verifyOptions,
+					artifact: j === 0 ? "entity-configuration" : "subordinate-statement",
+				});
 				if (!sigResult.ok) {
 					addError(
 						errors,
@@ -1281,11 +1279,10 @@ async function authenticateChainStatements(
 
 		const taConfig = trustAnchors.get(lastIss);
 		if (taConfig) {
-			const taVerify = await verifyEntityStatement(
-				chain[lastIdx] as string,
-				taConfig.jwks,
-				verifyOptions,
-			);
+			const taVerify = await verifyEntityStatement(chain[lastIdx] as string, taConfig.jwks, {
+				...verifyOptions,
+				artifact: hasTrailingTrustAnchorEc ? "entity-configuration" : "subordinate-statement",
+			});
 			if (!taVerify.ok) {
 				addError(
 					errors,
@@ -1305,7 +1302,7 @@ async function authenticateChainStatements(
 			const selfVerify = await verifyEntityStatement(
 				chain[lastIdx] as string,
 				last.payload.jwks as JWKSet,
-				verifyOptions,
+				{ ...verifyOptions, artifact: "entity-configuration" },
 			);
 			if (!selfVerify.ok) {
 				addError(
@@ -1434,7 +1431,10 @@ async function authenticateChainStatements(
 						break;
 					}
 					// Bind the self-published EC to the keys attested by this authenticated SS.
-					const bound = await verifyEntityStatement(jwt, ss.jwks as JWKSet, verifyOptions);
+					const bound = await verifyEntityStatement(jwt, ss.jwks as JWKSet, {
+						...verifyOptions,
+						artifact: "entity-configuration",
+					});
 					if (!bound.ok) {
 						addError(
 							errors,

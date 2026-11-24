@@ -99,6 +99,14 @@ const SPECS: Record<
 		import: { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
 		operation: { name: "RSASSA-PKCS1-v1_5" },
 	},
+	RS384: {
+		import: { name: "RSASSA-PKCS1-v1_5", hash: "SHA-384" },
+		operation: { name: "RSASSA-PKCS1-v1_5" },
+	},
+	RS512: {
+		import: { name: "RSASSA-PKCS1-v1_5", hash: "SHA-512" },
+		operation: { name: "RSASSA-PKCS1-v1_5" },
+	},
 	Ed25519: { import: { name: "Ed25519" }, operation: { name: "Ed25519" } },
 	EdDSA: { import: { name: "Ed25519" }, operation: { name: "Ed25519" } },
 };

@@ -115,6 +115,7 @@ export default (QUnit: QUnit) => {
 				"federation",
 				new SigningEntryFixture(replacement.privateKey).signer,
 			);
+			await leaf.refreshEntityConfiguration();
 			await crypto.keyring.activate("federation", replacement.publicKey.kid!);
 			await crypto.keyring.revoke("federation", signingKey.kid!, "compromised");
 			t.equal((await leaf.handleRequest(new Request(`${config.entityId}/history`))).status, 404);
@@ -930,6 +931,7 @@ export default (QUnit: QUnit) => {
 					await Leaf.create(
 						fixtureHostConfig({
 							...config,
+							storage: memoryStorage(),
 							metadata: {
 								federation_entity: {
 									federation_resolve_endpoint: `${LEAF_ID}/resolve`,
@@ -946,7 +948,7 @@ export default (QUnit: QUnit) => {
 							},
 						}),
 					))(),
-				/no permitted intersection/,
+				/Resolve endpoint advertises unsupported private_key_jwt algorithms/,
 				"published signing algorithms cannot be bypassed by service configuration",
 			);
 		});
@@ -1181,7 +1183,7 @@ export default (QUnit: QUnit) => {
 				for (const result of [fetched, listed, status])
 					t.equal(result.ok, advertised?.includes("ES256") ?? true);
 			}
-			const build = async (allowedAlgorithms: readonly string[]) =>
+			const build = async (allowedAlgorithms: readonly string[], advertisedAlgorithms: string[]) =>
 				await Leaf.create(
 					fixtureHostConfig({
 						...config,
@@ -1189,7 +1191,7 @@ export default (QUnit: QUnit) => {
 							federation_entity: {
 								federation_trust_mark_endpoint: `${issuer}/marks`,
 								federation_trust_mark_endpoint_auth_methods: ["private_key_jwt"],
-								endpoint_auth_signing_alg_values_supported: ["ES256", "RS256"],
+								endpoint_auth_signing_alg_values_supported: advertisedAlgorithms,
 							},
 						},
 						storage: memoryStorage({ trustMarks: true }),
@@ -1201,8 +1203,9 @@ export default (QUnit: QUnit) => {
 						},
 					}),
 				);
-			await t.rejects((() => build(["PS256"]))(), /intersection/);
-			const restricted = build(["RS256"]);
+			await t.rejects(build(["PS256"], ["ES256", "RS256"]), /advertises unsupported/);
+			await t.rejects(build(["RS256"], ["ES256", "RS256"]), /advertises unsupported/);
+			const restricted = build(["RS256"], ["RS256"]);
 			await (await restricted).issueTrustMark(subject, type);
 			const response = await CorePublic.fetchTrustMark(
 				`${issuer}/marks`,

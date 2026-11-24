@@ -2,6 +2,7 @@ import {
 	assertStorageCapabilities,
 	decodeEntityStatement,
 	entityId,
+	type FederationArtifact,
 	JwtTyp,
 	MediaType,
 	resolveTrustChains,
@@ -72,10 +73,19 @@ describe("Explicit registration", () => {
 			const rpId = `https://rp2.ofed.test:${port}`;
 			const opId = entityId(`https://op.ofed.test:${port}`);
 
-			const resultVal = await rp2Entity.oidcClient.explicitlyRegister(opId, { trustAnchors });
+			const artifacts = new Set<FederationArtifact>();
+			const resultVal = await rp2Entity.oidcClient.explicitlyRegister(opId, {
+				trustAnchors,
+				allowedAlgorithmsForArtifact(artifact) {
+					artifacts.add(artifact);
+					return ["ES256"];
+				},
+			});
 
 			expect(resultVal.ok, resultVal.ok ? undefined : resultVal.error.description).toBe(true);
 			if (!resultVal.ok) throw new Error("Registration failed");
+			expect(artifacts).toContain("entity-configuration");
+			expect(artifacts).toContain("explicit-registration-response");
 			const result = resultVal.value;
 
 			expect(result.clientId).toBe(rpId);

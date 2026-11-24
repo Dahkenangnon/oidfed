@@ -1,5 +1,3 @@
-import { federationJwsOptions } from "./crypto-context.js";
-import { cloneData } from "./data-copy.js";
 /** Federation endpoint authentication, trusted caller context, and method enforcement. */
 
 import { runAsyncOperation } from "./async-operation.js";
@@ -9,6 +7,8 @@ import {
 	FederationErrorCode,
 	JWT_BEARER_CLIENT_ASSERTION_TYPE,
 } from "./constants.js";
+import { federationAlgorithms, registryFor } from "./crypto-context.js";
+import { cloneData } from "./data-copy.js";
 import { validateEndpointPostParameters } from "./endpoint-parameters.js";
 import { err, type FederationError, ok, type Result } from "./errors.js";
 import { errorResponse, readBodyWithLimit, requireMethods } from "./http.js";
@@ -107,6 +107,8 @@ export interface EndpointAuthenticationConfig {
 	readonly methods: readonly string[];
 	readonly getClientFederationJwks?: (client: EntityId) => Promise<JWKSet | undefined>;
 	readonly allowedAlgorithms?: readonly string[];
+	/** Algorithms the host advertises for this endpoint in Federation metadata. */
+	readonly advertisedAlgorithms?: readonly string[];
 	readonly extensions?: EndpointAuthentication;
 	/** Operation parameters that require a matching form value when present in a POST URL. */
 	readonly operationParameterNames?: readonly string[];
@@ -119,10 +121,40 @@ export function authenticatedEndpointCaller(request: Request): string | undefine
 const invalid = (description: string) =>
 	err({ code: FederationErrorCode.InvalidClient, description });
 
+/** Keep the algorithms advertised for private_key_jwt consistent with what can be verified. */
+function clientAssertionAlgorithms(
+	config: EndpointAuthenticationConfig,
+	options: FederationOptions,
+	endpointName = "Federation endpoint",
+): readonly string[] {
+	const registry = registryFor(options);
+	const supported = federationAlgorithms(options, "client-assertion").filter(
+		(algorithm) =>
+			registry.algorithm(algorithm) !== undefined &&
+			options.engine.algorithms.includes(algorithm) &&
+			(config.allowedAlgorithms?.includes(algorithm) ?? true),
+	);
+	const advertised: unknown = config.advertisedAlgorithms;
+	if (
+		advertised !== undefined &&
+		(!Array.isArray(advertised) ||
+			!(advertised as readonly unknown[]).every(
+				(algorithm) => typeof algorithm === "string" && supported.includes(algorithm),
+			))
+	)
+		throw new TypeError(`${endpointName} advertises unsupported private_key_jwt algorithms`);
+	const allowed = config.advertisedAlgorithms ?? supported;
+	if (allowed.length === 0)
+		throw new TypeError(`${endpointName} has no usable private_key_jwt algorithm`);
+	return allowed;
+}
+
 /** Validate and capture endpoint authentication configuration. Invalid configuration throws. */
 export function validateEndpointAuthentication(
 	config: EndpointAuthenticationConfig,
 	storage?: FederationStorage,
+	options?: FederationOptions,
+	endpointName?: string,
 ): EndpointAuthenticationConfig {
 	if (!config.methods.length) throw new TypeError("Endpoint auth methods must not be empty");
 	const declaredNames: unknown = config.operationParameterNames;
@@ -186,10 +218,15 @@ export function validateEndpointAuthentication(
 		requireReplayStorage(storage, "private_key_jwt");
 		if (!config.getClientFederationJwks)
 			throw new TypeError("private_key_jwt requires client keys");
+		if (options) clientAssertionAlgorithms(config, options, endpointName);
 	}
 	return {
 		...config,
 		methods: [...config.methods],
+		...(config.allowedAlgorithms ? { allowedAlgorithms: [...config.allowedAlgorithms] } : {}),
+		...(config.advertisedAlgorithms
+			? { advertisedAlgorithms: [...config.advertisedAlgorithms] }
+			: {}),
 		extensions: { ...config.extensions, methods },
 		...(operationParameterNames ? { operationParameterNames: [...operationParameterNames] } : {}),
 	};
@@ -285,6 +322,18 @@ export async function authenticateEndpointRequest(
 				return invalid("client_id must match the client assertion issuer");
 			if (!config.getClientFederationJwks || !options.storage?.capabilities.includes("replay"))
 				return invalid("Client authentication is not configured");
+			let allowedAlgorithms: readonly string[];
+			try {
+				allowedAlgorithms = clientAssertionAlgorithms(config, options);
+			} catch {
+				return err({
+					code: FederationErrorCode.ServerError,
+					description: "Federation client assertion algorithm policy could not be applied",
+				});
+			}
+			const algorithm = decoded.value.header.alg;
+			if (typeof algorithm !== "string" || !allowedAlgorithms.includes(algorithm))
+				return invalid("Client assertion algorithm is not allowed or supported");
 			const getKeys = config.getClientFederationJwks;
 			let keys: JWKSet | undefined;
 			try {
@@ -300,15 +349,8 @@ export async function authenticateEndpointRequest(
 			}
 			if (!keys) return invalid("No federation keys found for client");
 			const checked = await verifyClientAssertion(jwt, keys, config.receiverEntityId, {
-				...federationJwsOptions(options),
-				storage: options.storage,
-				...(config.allowedAlgorithms
-					? {
-							allowedAlgorithms: federationJwsOptions(options).allowedAlgorithms.filter(
-								(algorithm) => config.allowedAlgorithms?.includes(algorithm),
-							),
-						}
-					: {}),
+				...options,
+				allowedAlgorithms,
 			});
 			if (!checked.ok)
 				return [
@@ -370,9 +412,15 @@ export function createEndpointAuthenticatedHandler(
 	route?: {
 		readonly fixedQuery?: URLSearchParams;
 		readonly operationParameterNames?: readonly string[];
+		readonly endpointName?: string;
 	},
 ): (request: Request) => Promise<Response> {
-	const captured = validateEndpointAuthentication(config, options.storage);
+	const captured = validateEndpointAuthentication(
+		config,
+		options.storage,
+		options,
+		route?.endpointName,
+	);
 	const allowsNone = captured.methods.includes("none");
 	const credentialNames = endpointCredentialParameterNames(captured.extensions);
 	const unordered = [...unorderedParameters].filter((name) => !credentialNames.has(name));

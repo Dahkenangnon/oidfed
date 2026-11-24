@@ -47,6 +47,10 @@ Managed roles derive inline JWKS from the selected purposes. Remove explicit `jw
 
 Review limits for compact token size and verification candidates where the app sets custom policy. [JWS service](core/contracts.md#jwsservice) · [Custom algorithm example](../examples/custom-crypto.ts)
 
+`RS384` and `RS512` are built-in algorithms. Remove custom definitions that use either identifier and enable the stock implementation in your crypto adapter and allowlist where you need it. The default allowlist is unchanged. Custom algorithms can still use their own identifiers.
+
+When a managed Federation endpoint offers `private_key_jwt`, make sure it can verify every algorithm in `endpoint_auth_signing_alg_values_supported`. The declaration is optional. The engine, Federation algorithm policy, client-assertion policy, and endpoint restrictions all apply. [Endpoint authentication](../features/7.5.endpoint-authentication.md)
+
 ### Publish and retire keys deliberately
 
 Replace automatic retirement with a host schedule. Publish the next key, allow for propagation, activate it, then call `keyring.retire()` after your overlap window. Supply `crypto.history`, for example with `historicalKeysFromKeyring(keyring)`, when serving Historical Keys. [Key rollover](../features/9.5.key-rollover.md)

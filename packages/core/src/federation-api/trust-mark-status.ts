@@ -39,7 +39,7 @@ export async function verifyTrustMarkStatusResponse(
 	const result = await verifyEntityStatement(
 		jwt,
 		issuerJwks,
-		buildVerifyOpts(JwtTyp.TrustMarkStatusResponse, options),
+		buildVerifyOpts(JwtTyp.TrustMarkStatusResponse, options, "trust-mark-status"),
 	);
 	if (!result.ok) return result;
 

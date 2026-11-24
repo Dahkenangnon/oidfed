@@ -44,7 +44,7 @@ export async function verifyResolveResponse(
 	const result = await verifyEntityStatement(
 		jwt,
 		issuerJwks,
-		buildVerifyOpts(JwtTyp.ResolveResponse, options),
+		buildVerifyOpts(JwtTyp.ResolveResponse, options, "resolve-response"),
 	);
 	if (!result.ok) return result;
 

@@ -1,5 +1,5 @@
 /** Entity Statement verification and explicitly unverified decoding. */
-import { decodeCompactJws } from "@oidfed/crypto";
+import { decodeCompactJws, type FederationArtifact } from "@oidfed/crypto";
 import { InternalErrorCode, JwtTyp } from "../constants.js";
 import { federationJwsOptions } from "../crypto-context.js";
 import { err, type FederationError, ok, type Result } from "../errors.js";
@@ -11,11 +11,18 @@ import {
 	SubordinateStatementSchema,
 } from "../schemas/entity-statement.js";
 import type { JWKSet } from "../schemas/jwk.js";
-import type { ParsedEntityStatement, UnverifiedEntityStatement } from "../types.js";
+import type {
+	FederationOptions,
+	ParsedEntityStatement,
+	UnverifiedEntityStatement,
+} from "../types.js";
 
 /** Compact verification options for signatures made with Federation Entity Keys. */
 export interface FederationJwsOptions extends Omit<JwsServiceOptions, "allowedAlgorithms"> {
 	readonly allowedFederationAlgorithms?: readonly string[] | undefined;
+	readonly allowedAlgorithmsForArtifact?: FederationOptions["allowedAlgorithmsForArtifact"];
+	/** The expected operation from trusted context. Required with an artifact policy. */
+	readonly artifact?: FederationArtifact | undefined;
 }
 
 /** Verify signature and generic JWT claims; protocol schemas remain separate. */
@@ -24,7 +31,16 @@ export async function verifyEntityStatement(
 	jwks: JWKSet,
 	options: FederationJwsOptions & { readonly expectedTyp?: string },
 ): Promise<Result<ParsedEntityStatement>> {
-	const result = await new JwsService(federationJwsOptions(options)).verifyJwt(jwt, jwks, {
+	let scoped: JwsServiceOptions;
+	try {
+		scoped = federationJwsOptions(options, options.artifact);
+	} catch {
+		return err({
+			code: InternalErrorCode.CryptoOperationFailed,
+			description: "Federation artifact algorithm policy could not be applied",
+		});
+	}
+	const result = await new JwsService(scoped).verifyJwt(jwt, jwks, {
 		typ: { expected: options.expectedTyp ?? JwtTyp.EntityStatement },
 		keyId: "required",
 	});

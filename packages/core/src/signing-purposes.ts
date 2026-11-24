@@ -1,12 +1,8 @@
 /** Explicit signing-purpose selection and public role key publication. */
 import {
-	assertVerificationKey,
-	type Jwk,
-	type JwsAlgorithmRegistry,
 	type KeyPurpose,
 	type KeyringEntry,
 	type KeySelectionContext,
-	samePublicKey,
 	toPublicJwk,
 } from "@oidfed/crypto";
 import { captureKeyringEntry, validateFederationKeySet } from "./federation-keys.js";
@@ -56,23 +52,7 @@ export async function signingPublication(
 	return { jwks: { keys: [...keys.values()] } };
 }
 
-/** Check a protocol signing binding against the keys the verifier will select. */
-export function isProtocolSignerPublished(
-	entry: KeyringEntry,
-	keys: readonly Jwk[],
-	registry?: JwsAlgorithmRegistry,
-): boolean {
-	const identity = entry.signer.publicJwk;
-	return keys.some((key) => {
-		if (key.kid !== identity.kid || !samePublicKey(key, identity, registry)) return false;
-		try {
-			assertVerificationKey(key, identity.alg, registry);
-			return true;
-		} catch {
-			return false;
-		}
-	});
-}
+export { isSignerPublished as isProtocolSignerPublished } from "./federation-keys.js";
 
 /** Check the operation names configured for a built-in role. */
 export function validateSigningPurposes(

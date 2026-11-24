@@ -7,6 +7,7 @@ import {
 	describeStorageRequirements,
 	type FederationStorage,
 	federationEntry,
+	federationPublicationJwks,
 	federationSigningOptions,
 	snapshotCryptoContext,
 	validateCryptoContext,
@@ -24,7 +25,6 @@ import {
 	createEndpointAuthenticatedHandler,
 	createHistoricalKeysHandler,
 	DEFAULT_ENTITY_STATEMENT_TTL_SECONDS,
-	decodeEntityStatement,
 	discoverEntityFromChain,
 	discoverEntity as discoverEntityThroughTrustChain,
 	ENDPOINT_OPERATION_PARAMETERS,
@@ -46,6 +46,7 @@ import {
 	FederationResolverService,
 	type FetchAndAttachTrustMarkOptions,
 	isValidEntityId,
+	type JWKSet,
 	JwtTyp,
 	jwtResponse,
 	MediaType,
@@ -79,7 +80,7 @@ export interface LeafConfig extends EntityStatementExtensions {
 	/** Caller key lookup or custom authentication for the managed Historical Keys endpoint. */
 	historicalKeysAuthentication?: Omit<
 		EndpointAuthenticationConfig,
-		"receiverEntityId" | "methods" | "allowedAlgorithms"
+		"receiverEntityId" | "methods" | "advertisedAlgorithms"
 	>;
 	readonly storage?: FederationStorage;
 	collection?: EntityCollectionIntegration;
@@ -143,7 +144,22 @@ export class Leaf {
 	/** Initialize roles and validate mandatory signing purposes before returning a host. */
 	static async create(config: LeafConfig): Promise<Leaf> {
 		validateCryptoContext(config.crypto);
-		const crypto = snapshotCryptoContext(config.crypto);
+		const configuredCrypto = snapshotCryptoContext(config.crypto);
+		let host: Leaf | undefined;
+		const crypto = configuredCrypto.readPublishedFederationJwks
+			? configuredCrypto
+			: snapshotCryptoContext({
+					...configuredCrypto,
+					readPublishedFederationJwks(issuer) {
+						if (
+							host?.entityId === issuer &&
+							host.cachedConfiguration &&
+							!host.isEntityConfigurationExpired()
+						)
+							return host.cachedConfiguration.jwks;
+						return federationPublicationJwks(configuredCrypto, issuer);
+					},
+				});
 		if (config.storage) assertStorageCapabilities(config.storage, [], `Leaf ${config.entityId}`);
 		const normalized = {
 			...config,
@@ -167,9 +183,13 @@ export class Leaf {
 			...(config.trustAnchors ? { trustAnchors: config.trustAnchors } : {}),
 			authorityHints: normalized.authorityHints as readonly EntityId[],
 		});
-		await federationEntry(normalized.crypto, { issuer: id, subject: id });
+		await federationEntry(normalized.crypto, {
+			artifact: "entity-configuration",
+			issuer: id,
+			subject: id,
+		});
 		for (const role of normalized.roles ?? []) await role.initialize?.(context);
-		const host = new Leaf({ ...normalized, entityId: id }, context);
+		host = new Leaf({ ...normalized, entityId: id }, context);
 		await host.publicationMetadata();
 		return host;
 	}
@@ -224,8 +244,11 @@ export class Leaf {
 	private readonly roleContext: EntityContext;
 	private readonly managesHistoricalKeys: boolean;
 
-	private cachedJwt: string | null = null;
-	private cachedExp: number | null = null;
+	private cachedConfiguration?: {
+		readonly jwt: string;
+		readonly exp: number;
+		readonly jwks: JWKSet;
+	};
 	private inflight: Promise<string> | null = null;
 	private generation = 0;
 	private collectionNoticeEmitted = false;
@@ -250,13 +273,10 @@ export class Leaf {
 			...(config.trustMarks ? { trustMarks: cloneData(config.trustMarks) } : {}),
 		};
 		this.holder = new TrustMarkHolder(this.entityId, config.trustMarks ?? [], async (refs) => {
-			const jwt = await this.buildEntityConfiguration(this.generation, refs, false);
-			const parsed = decodeEntityStatement(jwt, this.config.options);
-			if (!parsed.ok) throw new Error("Unable to publish Entity Configuration");
+			const publication = await this.buildEntityConfiguration(refs);
 			this.config.trustMarks = cloneData([...refs]);
 			this.generation++;
-			this.cachedJwt = jwt;
-			this.cachedExp = parsed.value.payload.exp;
+			this.cachedConfiguration = publication;
 			this.inflight = null;
 		});
 
@@ -340,7 +360,7 @@ export class Leaf {
 					receiverEntityId: this.entityId,
 					...(Array.isArray(metadata.federation_entity?.endpoint_auth_signing_alg_values_supported)
 						? {
-								allowedAlgorithms: metadata.federation_entity
+								advertisedAlgorithms: metadata.federation_entity
 									.endpoint_auth_signing_alg_values_supported as string[],
 							}
 						: {}),
@@ -381,14 +401,6 @@ export class Leaf {
 				throw new Error("Resolver authentication must match published metadata");
 			const publishedAlgorithms =
 				metadata.federation_entity?.endpoint_auth_signing_alg_values_supported;
-			const configuredAlgorithms = config.resolver.authentication?.allowedAlgorithms;
-			const allowedAlgorithms = Array.isArray(publishedAlgorithms)
-				? (publishedAlgorithms as string[]).filter(
-						(algorithm) => !configuredAlgorithms || configuredAlgorithms.includes(algorithm),
-					)
-				: configuredAlgorithms;
-			if (methods.includes("private_key_jwt") && allowedAlgorithms?.length === 0)
-				throw new Error("Endpoint authentication algorithms have no permitted intersection");
 			this.resolver = new FederationResolverService(
 				{
 					...config.resolver,
@@ -399,7 +411,9 @@ export class Leaf {
 					options: bindFederationOptions(config, config.options, config.resolver.options),
 					authentication: {
 						...config.resolver.authentication,
-						...(allowedAlgorithms ? { allowedAlgorithms } : {}),
+						...(Array.isArray(publishedAlgorithms)
+							? { advertisedAlgorithms: publishedAlgorithms as string[] }
+							: {}),
 						methods,
 					},
 				},
@@ -462,19 +476,12 @@ export class Leaf {
 					!advertisedAlgorithms.every((value) => typeof value === "string"))
 			)
 				throw new Error("Invalid endpoint authentication algorithms");
-			const configuredAlgorithms = config.trustMarkIssuer?.authentication?.allowedAlgorithms;
-			const allowedAlgorithms =
-				advertisedAlgorithms === undefined
-					? configuredAlgorithms
-					: (advertisedAlgorithms as string[]).filter(
-							(algorithm) => !configuredAlgorithms || configuredAlgorithms.includes(algorithm),
-						);
-			if (declared?.includes("private_key_jwt") && allowedAlgorithms?.length === 0)
-				throw new Error("Endpoint authentication algorithms have no permitted intersection");
 			const authenticated = createEndpointAuthenticatedHandler(
 				{
 					...config.trustMarkIssuer?.authentication,
-					...(allowedAlgorithms ? { allowedAlgorithms } : {}),
+					...(advertisedAlgorithms !== undefined
+						? { advertisedAlgorithms: advertisedAlgorithms as string[] }
+						: {}),
 					receiverEntityId: this.entityId,
 					methods: (declared as string[] | undefined) ?? ["none"],
 				},
@@ -483,6 +490,7 @@ export class Leaf {
 				kind === "status" ? "POST" : "GET",
 				[],
 				{
+					endpointName: field,
 					fixedQuery: url.searchParams,
 					operationParameterNames: [
 						...(kind === "status"
@@ -552,13 +560,13 @@ export class Leaf {
 				...historicalKeysAuthentication,
 				receiverEntityId: this.entityId,
 				methods: methods ?? ["none"],
-				...(algorithms ? { allowedAlgorithms: algorithms } : {}),
+				...(algorithms ? { advertisedAlgorithms: algorithms } : {}),
 			},
 			createHistoricalKeysHandler(this.roleContext),
 			options,
 			"GET",
 			[],
-			{ fixedQuery: url.searchParams },
+			{ fixedQuery: url.searchParams, endpointName: "Historical Keys endpoint" },
 		);
 		this.registerSelectedEndpoint(
 			url,
@@ -658,12 +666,11 @@ export class Leaf {
 	}
 
 	private async buildEntityConfiguration(
-		generation: number,
 		refs: readonly TrustMarkRef[] | undefined = this.config.trustMarks,
-		publish = true,
-	): Promise<string> {
+	) {
 		const publication = await this.publicationMetadata();
 		const keySet = await federationEntry(this.config.crypto, {
+			artifact: "entity-configuration",
 			issuer: this.entityId,
 			subject: this.entityId,
 		});
@@ -686,14 +693,10 @@ export class Leaf {
 		});
 
 		const jwt = await signEntityStatement(payload, keySet, {
-			...federationSigningOptions(this.config.options),
+			...federationSigningOptions(this.config.options, "entity-configuration"),
 			typ: JwtTyp.EntityStatement,
 		});
 
-		if (publish && generation === this.generation) {
-			this.cachedJwt = jwt;
-			this.cachedExp = payload.exp;
-		}
 		if (
 			this.metadata.federation_entity?.federation_collection_endpoint &&
 			!this.metadata.federation_entity.federation_resolve_endpoint &&
@@ -705,7 +708,7 @@ export class Leaf {
 			);
 		}
 		safeLogger(this.config.options?.logger)?.info("Entity Configuration generated");
-		return jwt;
+		return { jwt, exp: payload.exp, jwks: keySet.publishedJwks };
 	}
 
 	/**
@@ -715,22 +718,17 @@ export class Leaf {
 	async getEntityConfiguration(): Promise<string> {
 		safeLogger(this.config.options?.logger)?.debug("Starting get entity configuration");
 
-		if (this.cachedJwt && !this.isEntityConfigurationExpired()) {
-			return this.cachedJwt;
-		}
 		if (this.inflight !== null) return this.inflight;
-		const generation = this.generation;
-		this.inflight = this.buildEntityConfiguration(generation).finally(() => {
-			if (generation === this.generation) this.inflight = null;
-		});
-		return this.inflight;
+		if (this.cachedConfiguration && !this.isEntityConfigurationExpired())
+			return this.cachedConfiguration.jwt;
+		return this.generateEntityConfiguration();
 	}
 
 	/** Report whether no cached Entity Configuration exists or its expiry has been reached. */
 	isEntityConfigurationExpired(): boolean {
-		if (this.cachedExp === null) return true;
+		if (!this.cachedConfiguration) return true;
 		const now = nowSeconds(this.config.options?.clock);
-		return now >= this.cachedExp;
+		return now >= this.cachedConfiguration.exp;
 	}
 
 	/**
@@ -740,12 +738,21 @@ export class Leaf {
 	async refreshEntityConfiguration(): Promise<string> {
 		safeLogger(this.config.options?.logger)?.debug("Starting refresh entity configuration");
 
-		const generation = ++this.generation;
-		this.cachedJwt = null;
-		this.cachedExp = null;
-		this.inflight = this.buildEntityConfiguration(generation).finally(() => {
-			if (generation === this.generation) this.inflight = null;
-		});
+		++this.generation;
+		return this.generateEntityConfiguration();
+	}
+
+	/** Keep the previous key publication available until the new generation is ready. */
+	private generateEntityConfiguration(): Promise<string> {
+		const generation = this.generation;
+		this.inflight = this.buildEntityConfiguration()
+			.then((publication) => {
+				if (generation === this.generation) this.cachedConfiguration = publication;
+				return publication.jwt;
+			})
+			.finally(() => {
+				if (generation === this.generation) this.inflight = null;
+			});
 		return this.inflight;
 	}
 

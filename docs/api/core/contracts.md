@@ -320,6 +320,7 @@ interface FederationOptions {
 	readonly algorithmRegistry?: JwsAlgorithmRegistry | undefined;
 	/** Algorithms permitted for signing and verification with Federation Entity Keys. */
 	readonly allowedFederationAlgorithms?: readonly string[] | undefined;
+	readonly allowedAlgorithmsForArtifact?: ((artifact: FederationArtifact) => readonly string[]) | undefined;
 	/** Local policy for protocol-key operations. */
 	readonly allowedAlgorithms?: readonly string[];
 	/** Maximum matching keys tried for one JWT. Defaults to 16. */
@@ -380,6 +381,7 @@ Fields (including inherited fields):
 | Field | Declared type | Description |
 |---|---|---|
 | `trustResolution?` | `import("./trust-chain/assessment.js").TrustResolutionSource` | Acquisition source; protocol consumers still validate the returned subject chain. |
+| `allowedAlgorithmsForArtifact?` | `(artifact: FederationArtifact) => readonly string[]` | Synchronous restriction on the Federation allowlist for one operation. An empty list denies it. |
 | `chainSelection?` | `ChainSelectionStrategy` | Select among validated candidates eligible for the current operation. |
 | `authentication?` | `EndpointClientAuthentication` | Authentication settings for the endpoint or outgoing request described by this contract. |
 | `getEndpointAuthentication?` | `EndpointAuthenticationProvider` | Select authentication for each outgoing federation endpoint request. Mutually exclusive with authentication. |

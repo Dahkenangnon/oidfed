@@ -51,7 +51,11 @@ export async function signHistoricalKeysResponse({
 			throw new InvalidHistoricalKeyRecord(cause);
 		}
 	});
-	const keySet = await federationEntry(crypto, { issuer: entityId, subject: entityId });
+	const keySet = await federationEntry(crypto, {
+		artifact: "historical-keys",
+		issuer: entityId,
+		subject: entityId,
+	});
 	if (
 		keys.some(
 			(key) => key.revoked && samePublicKey(key, keySet.signer.publicJwk, crypto.algorithmRegistry),
@@ -59,7 +63,7 @@ export async function signHistoricalKeysResponse({
 	)
 		throw new TypeError("Historical keys signer is recorded as revoked");
 	return signEntityStatement({ iss: entityId, iat: nowSeconds(options.clock), keys }, keySet, {
-		...federationSigningOptions(options),
+		...federationSigningOptions(options, "historical-keys"),
 		typ: JwtTyp.JwkSet,
 	});
 }
@@ -97,7 +101,7 @@ export async function verifyHistoricalKeysResponse(
 	const result = await verifyEntityStatement(
 		jwt,
 		issuerJwks,
-		buildVerifyOpts(JwtTyp.JwkSet, options),
+		buildVerifyOpts(JwtTyp.JwkSet, options, "historical-keys"),
 	);
 	if (!result.ok) return result;
 

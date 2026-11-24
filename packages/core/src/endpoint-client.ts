@@ -1,4 +1,3 @@
-import { federationJwsOptions } from "./crypto-context.js";
 /** Federation endpoint requests with selector handling and configurable client authentication. */
 
 import type { KeyringEntry } from "@oidfed/crypto";
@@ -8,6 +7,7 @@ import {
 	InternalErrorCode,
 	JWT_BEARER_CLIENT_ASSERTION_TYPE,
 } from "./constants.js";
+import { federationAlgorithms, federationJwsOptions, registryFor } from "./crypto-context.js";
 import {
 	endpointParameterValuesMatch,
 	isReservedEndpointParameter,
@@ -17,6 +17,7 @@ import { err, type Result } from "./errors.js";
 import { type PerformFetchOptions, performFetch } from "./http/fetch.js";
 import { validateFetchUrl } from "./http/fetch-url.js";
 import { createClientAssertion } from "./jose/client-assertion.js";
+import { decodeEntityStatement } from "./jose/verify.js";
 import { type EntityId, entityId } from "./types.js";
 
 export interface PrivateKeyJwtEndpointAuthentication {
@@ -152,7 +153,7 @@ export async function fetchFederationEndpoint(
 					entityId(auth.clientId),
 					audience,
 					auth.signer,
-					federationJwsOptions(options),
+					federationJwsOptions(options, "client-assertion"),
 				);
 				form.set("client_assertion_type", JWT_BEARER_CLIENT_ASSERTION_TYPE);
 				form.set("client_assertion", assertion);
@@ -191,6 +192,20 @@ export async function fetchFederationEndpoint(
 		if (options.clientAssertion !== undefined) {
 			if (typeof options.clientAssertion !== "string" || !options.clientAssertion)
 				throw new Error("Invalid client assertion");
+			if (
+				options.allowedFederationAlgorithms !== undefined ||
+				options.allowedAlgorithmsForArtifact !== undefined
+			) {
+				const decoded = decodeEntityStatement(options.clientAssertion, options);
+				const allowed = federationAlgorithms(options, "client-assertion");
+				if (
+					!decoded.ok ||
+					typeof decoded.value.header.alg !== "string" ||
+					!registryFor(options).algorithm(decoded.value.header.alg) ||
+					!allowed.includes(decoded.value.header.alg)
+				)
+					throw new Error("Client assertion algorithm is outside the configured policy");
+			}
 
 			form.set("client_assertion_type", JWT_BEARER_CLIENT_ASSERTION_TYPE);
 			form.set("client_assertion", options.clientAssertion);

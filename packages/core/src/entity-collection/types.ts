@@ -14,6 +14,8 @@ export interface CollectionAuthentication {
 	receiverEntityId?: EntityId;
 	getClientFederationJwks?: (client: EntityId) => Promise<JWKSet | undefined>;
 	allowedAlgorithms?: readonly string[];
+	/** Algorithms published by a host in its Federation metadata. */
+	advertisedAlgorithms?: readonly string[];
 }
 /** Informational input from an application-owned collector; core verifies mark evidence. */
 export interface EntityCollectionCandidate {

@@ -279,6 +279,7 @@ export async function processExplicitRegistration(
 		{
 			expectedTyp: JwtTyp.EntityStatement,
 			...options,
+			artifact: "entity-configuration",
 			...(options.clock ? { clock: options.clock } : {}),
 			...(options.clockSkewSeconds !== undefined
 				? { clockSkewSeconds: options.clockSkewSeconds }

@@ -1,14 +1,16 @@
 /** Compact JWT signing through a captured host keyring entry. */
 import {
-	CLASSICAL_ALGORITHMS,
 	CryptoError,
 	DEFAULT_JWS_REGISTRY,
+	type FederationArtifact,
 	type JwsAlgorithm,
 	type JwsAlgorithmRegistry,
 	type KeyringEntry,
 	signCompactJws,
 } from "@oidfed/crypto";
 import { JwtTyp } from "../constants.js";
+import { federationAlgorithms } from "../crypto-context.js";
+import type { FederationOptions } from "../types.js";
 export interface SignEntityStatementOptions {
 	readonly alg?: JwsAlgorithm;
 	readonly typ?: string;
@@ -16,6 +18,9 @@ export interface SignEntityStatementOptions {
 	readonly maxBytes?: number | undefined;
 	readonly algorithmRegistry?: JwsAlgorithmRegistry | undefined;
 	readonly allowedFederationAlgorithms?: readonly string[] | undefined;
+	readonly allowedAlgorithmsForArtifact?: FederationOptions["allowedAlgorithmsForArtifact"];
+	/** The operation that owns this JWT profile. Required when an artifact policy is configured. */
+	readonly artifact?: FederationArtifact | undefined;
 }
 /** Sign a payload without resolving another key. Publication must use this entry's keys. */
 export async function signEntityStatement(
@@ -30,7 +35,7 @@ export async function signEntityStatement(
 	if (options?.alg !== undefined && !registry.algorithm(options.alg))
 		throw new TypeError(`Unsupported signing algorithm: ${options.alg}`);
 	const { alg, kid } = entry.signer.publicJwk;
-	if (!(options?.allowedFederationAlgorithms ?? CLASSICAL_ALGORITHMS).includes(alg))
+	if (!federationAlgorithms(options, options?.artifact).includes(alg))
 		throw new CryptoError(
 			"UNSUPPORTED_ALGORITHM",
 			"Signing algorithm is outside the configured policy",

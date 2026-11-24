@@ -8,6 +8,7 @@ export default async (QUnit: QUnit, done: (stats: QUnit.DoneDetails) => void) =>
 
 	const modules = await Promise.all([
 		import("./security-properties.js"),
+		import("./integration/federation-signing.js"),
 		import("./integration/configuration-ownership.js"),
 		import("./packages/leaf.js"),
 		import("./packages/oidc.js"),

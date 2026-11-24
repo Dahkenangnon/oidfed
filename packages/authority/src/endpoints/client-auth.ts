@@ -15,7 +15,8 @@ export function createAuthenticatedHandler(
 	options?: {
 		nativeMethod?: "GET" | "POST" | undefined;
 		unorderedParameters?: readonly string[] | undefined;
-		allowedAlgorithms?: readonly string[] | undefined;
+		advertisedAlgorithms?: readonly string[] | undefined;
+		endpointName?: string | undefined;
 		operationParameterNames?: readonly string[] | undefined;
 		fixedQuery?: URLSearchParams | undefined;
 	},
@@ -26,7 +27,9 @@ export function createAuthenticatedHandler(
 				receiverEntityId: ctx.entityId,
 				methods: methods ?? ["none"],
 				getClientFederationJwks: (id) => ctx.clientKeyProvider.getClientFederationJwks(id),
-				...(options?.allowedAlgorithms ? { allowedAlgorithms: options.allowedAlgorithms } : {}),
+				...(options?.advertisedAlgorithms
+					? { advertisedAlgorithms: options.advertisedAlgorithms }
+					: {}),
 				...(options?.operationParameterNames
 					? { operationParameterNames: options.operationParameterNames }
 					: {}),
@@ -36,7 +39,10 @@ export function createAuthenticatedHandler(
 			{ ...ctx.options, storage: ctx.storage },
 			options?.nativeMethod,
 			options?.unorderedParameters,
-			options?.fixedQuery ? { fixedQuery: options.fixedQuery } : undefined,
+			{
+				...(options?.fixedQuery ? { fixedQuery: options.fixedQuery } : {}),
+				...(options?.endpointName ? { endpointName: options.endpointName } : {}),
+			},
 		);
 	} catch (cause) {
 		throw new InvalidAuthorityConfig(

@@ -75,7 +75,7 @@ export async function buildSubordinateEvents(
 	if (events === undefined) return undefined;
 	const history = events.map(parsePublishedSubordinateEvent);
 	const keys = await waitForOperation(
-		federationEntry(ctx.crypto, { issuer: ctx.entityId, subject }),
+		federationEntry(ctx.crypto, { artifact: "subordinate-events", issuer: ctx.entityId, subject }),
 		[signal],
 	);
 	const iat = nowSeconds(ctx.options?.clock);
@@ -91,7 +91,7 @@ export async function buildSubordinateEvents(
 	signal.throwIfAborted();
 	return waitForOperation(
 		signEntityStatement(payload, keys, {
-			...federationSigningOptions(ctx.options),
+			...federationSigningOptions(ctx.options, "subordinate-events"),
 			typ: JwtTyp.EntityEventsStatement,
 		}),
 		[signal],

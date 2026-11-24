@@ -303,6 +303,8 @@ interface SignEntityStatementOptions {
 	readonly maxBytes?: number | undefined;
 	readonly algorithmRegistry?: JwsAlgorithmRegistry | undefined;
 	readonly allowedFederationAlgorithms?: readonly string[] | undefined;
+	readonly allowedAlgorithmsForArtifact?: FederationOptions["allowedAlgorithmsForArtifact"];
+	readonly artifact?: FederationArtifact | undefined;
 }
 ```
 
@@ -313,6 +315,8 @@ Fields (including inherited fields):
 | `maxBytes?` | `number` | Maximum encoded compact JWT size. |
 | `algorithmRegistry?` | `JwsAlgorithmRegistry` | Registry for application-specific public keys and algorithms. |
 | `allowedFederationAlgorithms?` | `readonly string[]` | Permitted Federation Entity Key algorithms. |
+| `allowedAlgorithmsForArtifact?` | `(artifact: FederationArtifact) => readonly string[]` | Synchronous operation policy that narrows the allowlist. |
+| `artifact?` | `FederationArtifact` | Expected operation. Supply it when configuring an artifact algorithm policy. |
 | `alg?` | `JwsAlgorithm` | Defaults to `signer.alg`; an explicit value must match the signer. |
 | `typ?` | `string` | Protected JWT type; defaults to `entity-statement+jwt`. |
 | `extraHeaders?` | `Record<string, unknown>` | Additional protected JWS headers, subject to the signer's reserved-header checks. |
@@ -470,6 +474,8 @@ verifyApplicationJwt(jwt: string, keys: JWKSet, typ: string, options: Federation
 [Source](../../../packages/core/src/jose/verify.ts#L22)
 
 Verify the JWT's exact type, supported signing algorithm, nonempty `kid`, signature, and present JWT time claims against the supplied public keys. The default type is `entity-statement+jwt` and default clock tolerance is 60 seconds. This low-level call does not perform complete claim-shape, chain-link, policy, or Trust Anchor validation.
+
+When setting `allowedAlgorithmsForArtifact`, supply `options.artifact` from the calling operation. Built-in protocol verifiers supply it internally. The JWT's `typ` does not determine the artifact because multiple operations can share a type.
 
 ```typescript signature
 verifyEntityStatement(jwt: string, jwks: JWKSet, options: FederationJwsOptions & { readonly expectedTyp?: string; }): Promise<Result<ParsedEntityStatement>>;

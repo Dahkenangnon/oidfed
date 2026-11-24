@@ -112,6 +112,7 @@ export interface SignEntityConfigurationOptions
 	/** Maximum encoded size of the signed statement. */
 	readonly maxCompactBytes?: number;
 	readonly allowedFederationAlgorithms?: readonly string[] | undefined;
+	readonly allowedAlgorithmsForArtifact?: import("./types.js").FederationOptions["allowedAlgorithmsForArtifact"];
 	readonly alg?: string;
 }
 
@@ -120,6 +121,7 @@ export interface SignSubordinateStatementOptions extends BuildSubordinateStateme
 	/** Maximum encoded size of the signed statement. */
 	readonly maxCompactBytes?: number;
 	readonly allowedFederationAlgorithms?: readonly string[] | undefined;
+	readonly allowedAlgorithmsForArtifact?: import("./types.js").FederationOptions["allowedAlgorithmsForArtifact"];
 	readonly alg?: string;
 }
 
@@ -195,7 +197,7 @@ export async function signEntityConfiguration(
 	});
 	return signEntityStatement(payload as Record<string, unknown>, options.signer, {
 		typ: JwtTyp.EntityStatement,
-		...federationSigningOptions(options),
+		...federationSigningOptions(options, "entity-configuration"),
 		...(options.alg ? { alg: options.alg } : {}),
 	});
 }
@@ -237,7 +239,7 @@ export async function signSubordinateStatement(
 	const payload = buildSubordinateStatementPayload(options);
 	return signEntityStatement(payload as Record<string, unknown>, options.signer, {
 		typ: JwtTyp.EntityStatement,
-		...federationSigningOptions(options),
+		...federationSigningOptions(options, "subordinate-statement"),
 		...(options.alg ? { alg: options.alg } : {}),
 	});
 }

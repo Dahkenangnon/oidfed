@@ -7,14 +7,16 @@ export type BuiltinJwsAlgorithm =
 	| "PS384"
 	| "PS512"
 	| "RS256"
+	| "RS384"
+	| "RS512"
 	| "Ed25519"
 	| "EdDSA";
 
 /** Wire algorithm identifier. Resolve it through a configured registry before use. */
 export type JwsAlgorithm = string;
 
-/** Built-in algorithm identifiers. */
-export const JWS_ALGORITHMS: readonly BuiltinJwsAlgorithm[] = Object.freeze([
+/** Default adapter and policy capabilities. Other built-ins require explicit approval. */
+export const CLASSICAL_ALGORITHMS: readonly BuiltinJwsAlgorithm[] = Object.freeze([
 	"ES256",
 	"ES384",
 	"ES512",
@@ -22,13 +24,15 @@ export const JWS_ALGORITHMS: readonly BuiltinJwsAlgorithm[] = Object.freeze([
 	"PS384",
 	"PS512",
 	"RS256",
+]);
+/** Built-in algorithm identifiers, including optional capabilities. */
+export const JWS_ALGORITHMS: readonly BuiltinJwsAlgorithm[] = Object.freeze([
+	...CLASSICAL_ALGORITHMS,
+	"RS384",
+	"RS512",
 	"Ed25519",
 	"EdDSA",
 ]);
-/** Default adapter capability list. Edwards algorithms require explicit opt-in. */
-export const CLASSICAL_ALGORITHMS: readonly BuiltinJwsAlgorithm[] = Object.freeze(
-	JWS_ALGORITHMS.filter((algorithm) => algorithm !== "Ed25519" && algorithm !== "EdDSA"),
-);
 /** Federation §3 recommends RS256 verification; deployments choose their own policy. */
 export const INTEROP_RECOMMENDED_ALGORITHMS: readonly BuiltinJwsAlgorithm[] = Object.freeze([
 	"RS256",
@@ -121,8 +125,26 @@ export type KeyPurpose =
 	| `trust_mark:${string}`
 	| (string & Record<never, never>);
 
+/** Federation-key artifacts identified by the signing or verification operation. */
+export const FEDERATION_ARTIFACTS = Object.freeze([
+	"entity-configuration",
+	"subordinate-statement",
+	"subordinate-events",
+	"historical-keys",
+	"resolve-response",
+	"trust-mark",
+	"trust-mark-delegation",
+	"trust-mark-status",
+	"signed-protocol-jwks",
+	"client-assertion",
+	"explicit-registration-response",
+] as const);
+export type FederationArtifact = (typeof FEDERATION_ARTIFACTS)[number];
+
 /** Framework-neutral facts a custom keyring may use when selecting a signer. */
 export interface KeySelectionContext {
+	/** Operation being performed. Different artifacts can share the same issuer and subject. */
+	readonly artifact?: FederationArtifact;
 	/** Issuer for the operation, if known. */
 	readonly issuer?: string;
 	/** Subject for the operation, if known. */

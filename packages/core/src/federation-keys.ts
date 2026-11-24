@@ -1,7 +1,9 @@
 /** Federation key snapshots and historical-key protocol conversion. */
 import {
 	assertSigningPublicJwk,
+	assertVerificationKey,
 	DEFAULT_JWS_REGISTRY,
+	type Jwk,
 	type KeyPurpose,
 	type KeyringEntry,
 	type KeySelectionContext,
@@ -14,7 +16,8 @@ import { registryFor } from "./crypto-context.js";
 import { cloneData } from "./data-copy.js";
 import { preparePublicJwkSet } from "./jwks/public-material.js";
 import { type HistoricalKeyEntry, HistoricalKeyEntrySchema } from "./schemas/endpoints.js";
-import type { CryptoContext } from "./types.js";
+import type { JWKSet } from "./schemas/jwk.js";
+import { type CryptoContext, type EntityId, entityId } from "./types.js";
 
 /** Explicit source for recorded Federation historical-key wire objects. */
 export interface FederationKeyHistorySource {
@@ -103,11 +106,67 @@ export function validateFederationKeySet(
 	captureKeyringEntry(entry, registry);
 }
 
-/** Read one federation snapshot with framework-neutral selection facts. */
+/** Find the exact signer identity in the public keys available to a verifier. */
+export function isSignerPublished(
+	entry: KeyringEntry,
+	keys: readonly Jwk[],
+	registry = DEFAULT_JWS_REGISTRY,
+): boolean {
+	const identity = entry.signer.publicJwk;
+	return keys.some((key) => {
+		if (key.kid !== identity.kid || !samePublicKey(key, identity, registry)) return false;
+		try {
+			assertVerificationKey(key, identity.alg, registry);
+			return true;
+		} catch {
+			return false;
+		}
+	});
+}
+
+/** Read the issuer's verification keys without generating or fetching a signed Entity Configuration. */
+export async function federationPublicationJwks(
+	crypto: CryptoContext,
+	issuer: EntityId,
+): Promise<JWKSet> {
+	if (crypto.readPublishedFederationJwks === undefined)
+		return (
+			await federationEntry(crypto, { artifact: "entity-configuration", issuer, subject: issuer })
+		).publishedJwks;
+	const prepared = preparePublicJwkSet(
+		await crypto.readPublishedFederationJwks(issuer),
+		registryFor(crypto),
+	);
+	if (!prepared.ok) throw new TypeError("Invalid published Federation JWKS");
+	return prepared.value;
+}
+
+/**
+ * Read one signing binding and its issuer-wide public Federation keys.
+ * An Entity Configuration and Historical Keys can share an issuer and subject.
+ * The artifact lets a keyring choose different signers without changing its purpose.
+ */
 export async function federationEntry(
 	crypto: CryptoContext,
 	context?: KeySelectionContext,
 ): Promise<KeyringEntry> {
-	const entry = await crypto.keyring.entry(crypto.federationPurpose ?? "federation", context);
-	return captureKeyringEntry(entry, registryFor(crypto));
+	const registry = registryFor(crypto);
+	const entry = captureKeyringEntry(
+		await crypto.keyring.entry(crypto.federationPurpose ?? "federation", context),
+		registry,
+	);
+	const artifact = context?.artifact;
+	// A configuration carries its own keys. Delegations use the Trust Anchor's owner keys.
+	if (
+		artifact === undefined ||
+		artifact === "entity-configuration" ||
+		artifact === "trust-mark-delegation"
+	)
+		return entry;
+	if (!context?.issuer)
+		throw new TypeError("Federation signing requires the issuer Entity Identifier");
+	const publication = await federationPublicationJwks(crypto, entityId(context.issuer));
+	if (!isSignerPublished(entry, publication.keys, registry))
+		throw new TypeError("Selected signer is absent from the issuer's published Federation JWKS");
+	return entry;
 }

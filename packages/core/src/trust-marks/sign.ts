@@ -24,6 +24,7 @@ export interface SignTrustMarkDelegationOptions extends TrustMarkLifetime {
 	readonly maxCompactBytes?: number | undefined;
 	readonly algorithmRegistry?: import("@oidfed/crypto").JwsAlgorithmRegistry | undefined;
 	readonly allowedFederationAlgorithms?: readonly string[] | undefined;
+	readonly allowedAlgorithmsForArtifact?: import("../types.js").FederationOptions["allowedAlgorithmsForArtifact"];
 	readonly clock?: Clock;
 	readonly ref?: string;
 	readonly additionalClaims?: Readonly<Record<string, unknown>>;
@@ -86,7 +87,7 @@ export async function signTrustMark(options: SignTrustMarkOptions): Promise<stri
 	const profile = await checkTrustMarkProfile(typ, payload, options.trustMarkProfiles);
 	if (!profile.ok) throw new TypeError(profile.error.description);
 	return signEntityStatement(payload, options.signer, {
-		...federationSigningOptions(options),
+		...federationSigningOptions(options, "trust-mark"),
 		typ,
 	});
 }
@@ -98,7 +99,7 @@ export async function signTrustMarkDelegation(
 	const payload = payloadFor(options);
 	TrustMarkDelegationPayloadSchema.parse(payload);
 	return signEntityStatement(payload, options.signer, {
-		...federationSigningOptions(options),
+		...federationSigningOptions(options, "trust-mark-delegation"),
 		typ: JwtTyp.TrustMarkDelegation,
 	});
 }

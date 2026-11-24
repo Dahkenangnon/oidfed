@@ -1,6 +1,6 @@
 import { federationSigningOptions } from "../crypto-context.js";
 import { cloneData } from "../data-copy.js";
-import { federationEntry } from "../federation-keys.js";
+import { federationEntry, federationPublicationJwks } from "../federation-keys.js";
 
 /** Managed Trust Mark issuance, revocation, eligibility, and HTTP endpoints. */
 
@@ -298,12 +298,7 @@ export class TrustMarkIssuerService {
 		} catch {
 			return { status: "invalid" };
 		}
-		const current = await federationEntry(this.config.crypto, {
-			issuer: this.issuer,
-			subject: record.subject,
-			trustMarkType: record.trustMarkType,
-		});
-		let keys = current.publishedJwks;
+		let keys = await federationPublicationJwks(this.config.crypto, this.issuer);
 		const kid = decoded.value.header.kid;
 		if (typeof kid !== "string") return { status: "invalid" };
 		if (!keys.keys.some((k) => k.kid === kid)) {
@@ -551,6 +546,7 @@ export class TrustMarkIssuerService {
 					: this.defaults;
 		const now = nowSeconds(this.config.options?.clock);
 		const keySet = await federationEntry(this.config.crypto, {
+			artifact: "trust-mark",
 			issuer: this.issuer,
 			subject: id,
 			trustMarkType: type,
@@ -561,6 +557,7 @@ export class TrustMarkIssuerService {
 			maxCompactBytes: this.config.options.maxCompactBytes,
 			algorithmRegistry: this.config.options.algorithmRegistry,
 			allowedFederationAlgorithms: this.config.options.allowedFederationAlgorithms,
+			allowedAlgorithmsForArtifact: this.config.options.allowedAlgorithmsForArtifact,
 			issuer: this.issuer,
 			subject: id,
 			trustMarkType: type,
@@ -769,6 +766,7 @@ export class TrustMarkIssuerService {
 		if (!stored) return undefined;
 		const { assessment, subject, trustMarkType } = stored;
 		const keySet = await federationEntry(this.config.crypto, {
+			artifact: "trust-mark-status",
 			issuer: this.issuer,
 			subject,
 			trustMarkType,
@@ -777,7 +775,10 @@ export class TrustMarkIssuerService {
 		const response = await signEntityStatement(
 			{ ...assessment.payload, iat: nowSeconds(this.config.options?.clock) },
 			keySet,
-			{ ...federationSigningOptions(this.config.options), typ: JwtTyp.TrustMarkStatusResponse },
+			{
+				...federationSigningOptions(this.config.options, "trust-mark-status"),
+				typ: JwtTyp.TrustMarkStatusResponse,
+			},
 		);
 		await this.assertCurrentStatus(assessment, version);
 		return response;

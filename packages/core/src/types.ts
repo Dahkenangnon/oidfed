@@ -1,6 +1,6 @@
 /** Shared federation identifiers, trust evidence, options, and extension contracts. */
 
-import type { CryptoEngine, Keyring } from "@oidfed/crypto";
+import type { CryptoEngine, FederationArtifact, Keyring } from "@oidfed/crypto";
 import type { InternalErrorCode } from "./constants.js";
 import type {
 	EndpointAdditionalParameters,
@@ -102,6 +102,8 @@ export interface CryptoContext {
 	readonly algorithmRegistry?: import("@oidfed/crypto").JwsAlgorithmRegistry | undefined;
 	/** Local purpose for Federation Entity Keys. Defaults to federation. */
 	readonly federationPurpose?: import("@oidfed/crypto").KeyPurpose;
+	/** Trusted Federation JWKS from the issuer's current publication, when managed separately. */
+	readonly readPublishedFederationJwks?: (issuer: EntityId) => JWKSet | Promise<JWKSet>;
 	/** Required when historical-key features are configured. */
 	readonly history?: import("./federation-keys.js").FederationKeyHistorySource;
 }
@@ -118,6 +120,10 @@ export interface FederationOptions {
 	readonly algorithmRegistry?: import("@oidfed/crypto").JwsAlgorithmRegistry | undefined;
 	/** Algorithms permitted for signing and verification with Federation Entity Keys. */
 	readonly allowedFederationAlgorithms?: readonly string[] | undefined;
+	/** Further restrict the Federation allowlist for the given operation. An empty list denies it. */
+	readonly allowedAlgorithmsForArtifact?:
+		| ((artifact: FederationArtifact) => readonly string[])
+		| undefined;
 	/** Local algorithm policy for protocol-key operations. */
 	readonly allowedAlgorithms?: readonly string[];
 	/** Maximum matching keys tried for one JWT. Defaults to 16. */
