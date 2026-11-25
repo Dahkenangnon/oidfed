@@ -60,15 +60,13 @@ export function createFetchHandler(ctx: HandlerContext): (request: Request) => P
 			if (readRetained) {
 				const statement = await readRetained(record);
 				if (statement.expiresAt <= nowSeconds(ctx.options.clock))
-					throw new RetainedSubordinateUnavailable();
+					throw new RetainedSubordinateUnavailable("invalid-validity-window");
 				return jwtResponse(statement.jwt, MediaType.EntityStatement);
 			}
 			return jwtResponse(await buildSubordinateStatement(ctx, record), MediaType.EntityStatement);
 		} catch (error) {
-			if (error instanceof RetainedSubordinateUnavailable) {
-				safeLogger(ctx.options.logger)?.warn("Approved subordinate statement is unavailable");
-				return retainedSubordinateUnavailableResponse();
-			}
+			if (error instanceof RetainedSubordinateUnavailable)
+				return retainedSubordinateUnavailableResponse(ctx, error.reason);
 			safeLogger(ctx.options?.logger)?.error("Failed to build subordinate statement");
 			return errorResponse(500, "server_error", "Failed to build statement");
 		}

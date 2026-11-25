@@ -13,6 +13,7 @@ import {
 	federationPublicationJwks,
 	federationSigningOptions,
 	freezeSnapshot,
+	InternalErrorCode,
 	type JWKSet,
 	JwtTyp,
 	nowSeconds,
@@ -20,17 +21,38 @@ import {
 	type SubordinateRecord,
 	type SubordinateStatementPayload,
 	SubordinateStatementSchema,
+	safeLogger,
 	signEntityStatement,
 	verifyEntityStatement,
 } from "@oidfed/core";
 import type { HandlerContext } from "./context.js";
 import { canonicalSubordinateJson, subordinatePublicationClaim } from "./subordinate-claims.js";
 
-/** Distinguish unavailable retained evidence from on-demand signing and storage errors. */
-export class RetainedSubordinateUnavailable extends Error {}
+type RetainedFailure =
+	| "missing-evidence"
+	| "loader-failure"
+	| "key-lookup-failure"
+	| "verification-failure"
+	| "identity-mismatch"
+	| "approval-mismatch"
+	| "invalid-validity-window"
+	| "invalid-approved-record"
+	| "timeout"
+	| "cancelled";
+
+/** Preserve an internal diagnostic without exposing artifact or adapter data. */
+export class RetainedSubordinateUnavailable extends Error {
+	constructor(readonly reason: RetainedFailure) {
+		super("Approved subordinate statement is unavailable");
+	}
+}
 
 /** Use a generic Federation error whenever an approved live statement cannot be served. */
-export function retainedSubordinateUnavailableResponse(): Response {
+export function retainedSubordinateUnavailableResponse(
+	ctx: HandlerContext,
+	reason: RetainedFailure,
+): Response {
+	safeLogger(ctx.options.logger)?.warn(`Approved subordinate statement is unavailable (${reason})`);
 	return errorResponse(
 		503,
 		FederationErrorCode.TemporarilyUnavailable,
@@ -141,46 +163,60 @@ export function createRetainedSubordinateReader(
 	};
 	let publishedKeys: Promise<JWKSet> | undefined;
 	return async (record) => {
+		let phase: RetainedFailure = "loader-failure";
 		try {
 			return await runAsyncOperation(async (signal) => {
 				const jwt = await load(freezeSnapshot(cloneData(record)), signal);
-				if (typeof jwt !== "string" || jwt.length === 0 || signal.aborted)
-					throw new RetainedSubordinateUnavailable();
+				if (signal.aborted) throw new RetainedSubordinateUnavailable("cancelled");
+				if (jwt === undefined || jwt === "")
+					throw new RetainedSubordinateUnavailable("missing-evidence");
+				if (typeof jwt !== "string") throw new RetainedSubordinateUnavailable("loader-failure");
 				// A retained reader must continue to work without a live signer or keyring entry.
-				if (!ctx.crypto.readPublishedFederationJwks) throw new RetainedSubordinateUnavailable();
+				phase = "key-lookup-failure";
+				if (!ctx.crypto.readPublishedFederationJwks)
+					throw new RetainedSubordinateUnavailable(phase);
 				publishedKeys ??= federationPublicationJwks(ctx.crypto, ctx.entityId).then(({ keys }) => ({
 					keys: keys.filter((key) => key.revoked === undefined),
 				}));
-				const verified = await verifyEntityStatement(jwt, await publishedKeys, {
+				const keys = await publishedKeys;
+				phase = "verification-failure";
+				const verified = await verifyEntityStatement(jwt, keys, {
 					...options,
 					signal,
 					artifact: "subordinate-statement",
 					expectedTyp: JwtTyp.EntityStatement,
 					clockSkewSeconds: 0,
 				});
-				if (!verified.ok) throw new RetainedSubordinateUnavailable();
-				const parsed = SubordinateStatementSchema.safeParse(verified.value.payload);
-				if (!parsed.success) throw new RetainedSubordinateUnavailable();
-				const { iat, exp, iss, sub, jwks } = parsed.data;
+				if (!verified.ok)
+					throw new RetainedSubordinateUnavailable(
+						verified.error.code === InternalErrorCode.Expired ? "invalid-validity-window" : phase,
+					);
 				const payload = verified.value.payload;
+				const parsed = SubordinateStatementSchema.safeParse(payload);
+				if (!parsed.success || !payload.jwks) throw new RetainedSubordinateUnavailable(phase);
+				const { iat, exp, iss, sub } = parsed.data;
+				if (iss !== ctx.entityId || sub !== record.entityId)
+					throw new RetainedSubordinateUnavailable("identity-mismatch");
+				const now = nowSeconds(options.clock);
+				if (iat > now || exp <= now)
+					throw new RetainedSubordinateUnavailable("invalid-validity-window");
 
 				// The builder validates the current record. Its placeholder dates are excluded from
 				// the comparison because the saved statement has its own signed validity window.
+				phase = "invalid-approved-record";
 				const approved = buildPublicationPayload(ctx, record, 0, 1);
-				const now = nowSeconds(options.clock);
-				if (
-					iss !== ctx.entityId ||
-					sub !== record.entityId ||
-					iat > now ||
-					exp <= now ||
-					publicationClaims(payload, { ...payload.jwks, keys: jwks.keys }) !==
-						publicationClaims(approved, approved.jwks)
-				)
-					throw new RetainedSubordinateUnavailable();
+				// Compare the signed bytes' data. Schema output may omit a JWK extension member.
+				if (publicationClaims(payload, payload.jwks) !== publicationClaims(approved, approved.jwks))
+					throw new RetainedSubordinateUnavailable("approval-mismatch");
 				return { jwt, payload, expiresAt: exp };
 			}, options);
-		} catch {
-			throw new RetainedSubordinateUnavailable("Approved subordinate statement is unavailable");
+		} catch (error) {
+			if (error instanceof RetainedSubordinateUnavailable) throw error;
+			if (error instanceof DOMException) {
+				if (error.name === "TimeoutError") throw new RetainedSubordinateUnavailable("timeout");
+				if (error.name === "AbortError") throw new RetainedSubordinateUnavailable("cancelled");
+			}
+			throw new RetainedSubordinateUnavailable(phase);
 		}
 	};
 }

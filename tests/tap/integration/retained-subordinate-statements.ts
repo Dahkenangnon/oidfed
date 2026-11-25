@@ -41,6 +41,7 @@ async function fixture(kind: "anchor" | "intermediate", retained: boolean) {
 	let algorithms = ["ES256", "ES384"];
 	const selectedLifetimes: string[] = [];
 	const loaded: string[] = [];
+	const warnings: string[] = [];
 	const approved = new Map<string, string>();
 	let onLoad: ((id: string) => void) | undefined;
 	const crypto: CryptoContext = {
@@ -64,6 +65,14 @@ async function fixture(kind: "anchor" | "intermediate", retained: boolean) {
 		options: {
 			clock: { now: () => now },
 			allowedAlgorithmsForArtifact: () => algorithms,
+			logger: {
+				debug() {},
+				info() {},
+				error() {},
+				warn(message) {
+					warnings.push(message);
+				},
+			},
 		},
 		metadata: {
 			federation_entity: {
@@ -106,6 +115,7 @@ async function fixture(kind: "anchor" | "intermediate", retained: boolean) {
 		config,
 		record,
 		loaded,
+		warnings,
 		selectedLifetimes,
 		signerReads: () => signerReads,
 		keyReads: () => keyReads,
@@ -254,6 +264,7 @@ export default function retainedSubordinateTests(qunit: QUnit): void {
 				assert.strictEqual((await f.list("iat", "1")).status, 503);
 			};
 			await unavailable();
+			assert.true(f.warnings.at(-1)?.endsWith("(missing-evidence)"));
 			const other = await f.unrelatedSigner();
 			for (const jwt of [
 				"malformed",
@@ -277,6 +288,22 @@ export default function retainedSubordinateTests(qunit: QUnit): void {
 			const permitted = await f.fetch();
 			assert.strictEqual(permitted.headers.get("content-type"), MediaType.EntityStatement);
 			assert.strictEqual(await permitted.text(), reordered);
+			const extraMember = { ...original.jwks.keys[0] };
+			Object.defineProperty(extraMember, "__proto__", {
+				enumerable: true,
+				value: { example: "Unapproved extension" },
+			});
+			f.approved.set(
+				first,
+				await f.signFixture({
+					...original,
+					jwks: { keys: [extraMember, ...original.jwks.keys.slice(1)] },
+				}),
+			);
+			await unavailable();
+			assert.true(f.warnings.at(-1)?.endsWith("(approval-mismatch)"));
+			assert.false(f.warnings.join("\n").includes("Unapproved extension"));
+			f.approved.set(first, reordered);
 			await f.authority.updateSubordinate(first, {
 				metadataPolicy: { openid_relying_party: { organization_name: { value: "Tightened" } } },
 			});
@@ -325,6 +352,29 @@ export default function retainedSubordinateTests(qunit: QUnit): void {
 			assert.strictEqual(f.keyReads() - reads, 1, "the page uses one published key snapshot");
 			assert.strictEqual((await f.fetch()).status, 503);
 			assert.strictEqual((await f.fetch(second)).status, 200);
+		});
+
+		test("returns a full byte-capped page before loading the next row's evidence", async (assert) => {
+			const f = await fixture("anchor", true);
+			const jwt = await f.authority.getSubordinateStatement(first);
+			f.approved.set(first, jwt);
+			const page = {
+				immediate_subordinate_entities: [{ id: first, subordinate_statement: jwt }],
+				next: second,
+			};
+			const maxResponseBytes = new TextEncoder().encode(JSON.stringify(page)).length;
+			const host = await TrustAnchor.create({ ...f.config, extendedListing: { maxResponseBytes } });
+			const response = await host.handleRequest(
+				new Request(`${listUrl}?claims=subordinate_statement`),
+			);
+			assert.strictEqual(response.status, 200);
+			assert.deepEqual(await response.json(), page);
+			assert.deepEqual(f.loaded, [first]);
+			const cursor = new URLSearchParams({ claims: "subordinate_statement", from: second });
+			const unavailable = await host.handleRequest(new Request(`${listUrl}?${cursor}`));
+			assert.strictEqual(unavailable.status, 503);
+			assert.deepEqual(f.loaded, [first, second]);
+			assert.true(f.warnings.at(-1)?.endsWith("(missing-evidence)"));
 		});
 
 		test("retained hosting requires a public key reader independent of custody", async (assert) => {

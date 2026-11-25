@@ -13,6 +13,7 @@ import type { ListFilter, ListPageOptions, SubordinateRecord } from "@oidfed/cor
 import {
 	DEFAULT_MAX_RESPONSE_BYTES,
 	type EntityId,
+	ExtendedListClaim,
 	ExtendedListQuerySchema,
 	errorResponse,
 	FederationErrorCode,
@@ -34,6 +35,7 @@ import {
 import { parseBooleanQuery, validateEntityTypes } from "./list-parameters.js";
 import {
 	createRetainedSubordinateReader,
+	type RetainedSubordinateStatement,
 	RetainedSubordinateUnavailable,
 	retainedSubordinateUnavailableResponse,
 } from "./subordinate-statement.js";
@@ -374,14 +376,27 @@ export function createExtendedListHandler(
 					Math.max(0, count - 1);
 				for (const [index, record] of accumulated.entries()) {
 					const entry: Record<string, unknown> = { id: record.entityId };
-					const retained =
-						readRetained && requestsSubordinatePublication(requestedClaims, record)
-							? await readRetained(record)
-							: undefined;
-
 					if (effectiveAuditTimestamps) {
 						entry.registered = record.createdAt;
 						entry.updated = record.updatedAt;
+					}
+					const following = accumulated[index + 1]?.entityId ?? nextEntityId;
+					let retained: RetainedSubordinateStatement | undefined;
+					if (readRetained && requestsSubordinatePublication(requestedClaims, record)) {
+						// An empty string accounts for the mandatory field without loading the JWT.
+						const minimum = requestedClaims.includes(ExtendedListClaim.SubordinateStatement)
+							? { ...entry, subordinate_statement: "" }
+							: entry;
+						const minimumBytes = utf8Encode(JSON.stringify(minimum)).byteLength;
+						if (
+							entries.length &&
+							responseBytes(entries.length + 1, entryBytes + minimumBytes, following) >
+								maxResponseBytes
+						) {
+							nextEntityId = record.entityId;
+							break;
+						}
+						retained = await readRetained(record);
 					}
 
 					if (requestedClaims.length > 0) {
@@ -393,7 +408,6 @@ export function createExtendedListHandler(
 
 					const serialized = JSON.stringify(entry);
 					const bytes = utf8Encode(serialized).byteLength;
-					const following = accumulated[index + 1]?.entityId ?? nextEntityId;
 					// Draft 03 §3.1.2: account for selected claims and the actual next cursor.
 					// The preceding accepted entry already reserved space for this record's cursor.
 					if (responseBytes(entries.length + 1, entryBytes + bytes, following) > maxResponseBytes) {
@@ -416,7 +430,7 @@ export function createExtendedListHandler(
 
 				if (signal.aborted) throw new Error("Extended listing cancelled");
 				if (retainedExpiry !== Infinity && retainedExpiry <= nowSeconds(ctx.options.clock))
-					throw new RetainedSubordinateUnavailable();
+					throw new RetainedSubordinateUnavailable("invalid-validity-window");
 				return jsonResponse(body);
 			};
 			// Use one deadline for custom-filter scans and retained evidence across the page.
@@ -430,13 +444,10 @@ export function createExtendedListHandler(
 				[signal],
 			);
 		} catch (error) {
-			if (
-				error instanceof RetainedSubordinateUnavailable ||
-				(retainedRequested && error instanceof DOMException && error.name === "TimeoutError")
-			) {
-				safeLogger(ctx.options.logger)?.warn("Approved subordinate statement is unavailable");
-				return retainedSubordinateUnavailableResponse();
-			}
+			if (error instanceof RetainedSubordinateUnavailable)
+				return retainedSubordinateUnavailableResponse(ctx, error.reason);
+			if (retainedRequested && error instanceof DOMException && error.name === "TimeoutError")
+				return retainedSubordinateUnavailableResponse(ctx, "timeout");
 			safeLogger(ctx.options?.logger)?.error("Failed to build extended subordinate listing");
 			return errorResponse(
 				500,
