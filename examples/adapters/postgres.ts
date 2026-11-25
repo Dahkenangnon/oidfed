@@ -361,18 +361,24 @@ function operations(
 		async pruneExpired(time, limit) {
 			const { rowCount } = await client.query(
 				`WITH expired_replay AS (
-					SELECT ctid FROM oidfed.oidfed_storage_record
+					SELECT ctid, replay_expiry AS expiry FROM oidfed.oidfed_storage_record
 					WHERE namespace_key=$1 AND namespace=$2 AND kind='replay' AND replay_expiry<=$3
-					ORDER BY replay_expiry LIMIT $4
+					ORDER BY expiry LIMIT $4
 				), expired_cursors AS (
-					SELECT ctid FROM oidfed.oidfed_storage_record
+					SELECT ctid, (payload->'value'->>'expiresAt')::double precision AS expiry
+					FROM oidfed.oidfed_storage_record
 					WHERE namespace_key=$1 AND namespace=$2 AND kind='collectionCursor'
 					AND ((payload->'value'->>'expiresAt')::double precision)<=$3
-					ORDER BY ((payload->'value'->>'expiresAt')::double precision)
-					LIMIT GREATEST(0, $4::bigint - (SELECT count(*) FROM expired_replay))
+					ORDER BY expiry LIMIT $4
+				), ranked AS (
+					SELECT ctid, expiry, row_number() OVER (ORDER BY expiry) AS position FROM expired_replay
+					UNION ALL
+					SELECT ctid, expiry, row_number() OVER (ORDER BY expiry) AS position FROM expired_cursors
+				), batch AS (
+					SELECT ctid FROM ranked
+					ORDER BY (position <= $4::bigint / 2) DESC, expiry, ctid LIMIT $4
 				)
-				DELETE FROM oidfed.oidfed_storage_record
-				WHERE ctid IN (SELECT ctid FROM expired_replay UNION ALL SELECT ctid FROM expired_cursors)`,
+				DELETE FROM oidfed.oidfed_storage_record WHERE ctid IN (SELECT ctid FROM batch)`,
 				[namespaceKey, namespace, time, limit],
 			);
 			return rowCount ?? 0;

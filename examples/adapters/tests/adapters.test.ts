@@ -113,6 +113,53 @@ test("guarded replay and bounded expiry cleanup preserve live records across cli
 	assert.equal((await reopened.storage.entityCollection.cursor("live"))?.expiresAt, 1100);
 });
 
+test("expiry cleanup leaves capacity for cursors while expired replay claims remain", async () => {
+	assert.ok(postgresUrl);
+	const namespace = randomUUID();
+	let now = 1000;
+	const options = { now: () => now, cleanupIntervalSeconds: 0 };
+	await using db = await openTestStorage(postgresUrl, namespace, options);
+	await using replica = await openTestStorage(postgresUrl, namespace, options);
+	await using other = await openTestStorage(postgresUrl, `${namespace}-other`, options);
+	const anchor = entityId("https://anchor.example");
+	const cursor = {
+		snapshotId: "snapshot",
+		trustAnchor: anchor,
+		context: "query",
+		index: 0,
+		expiresAt: 1005,
+	};
+	await db.storage.entityCollection.saveCursor("oldest", cursor);
+	await db.storage.entityCollection.saveCursor("expired", { ...cursor, expiresAt: 1020 });
+	await db.storage.entityCollection.saveCursor("live", { ...cursor, expiresAt: 1100 });
+	await other.storage.entityCollection.saveCursor("expired", cursor);
+	for (let i = 0; i < 5; i++) {
+		assert.equal(
+			await db.storage.replay?.useJti({
+				issuer: "issuer",
+				audience: "receiver",
+				jti: String(i),
+				expiresAt: 1010 + i,
+			}),
+			true,
+		);
+	}
+	now = 1030;
+	assert.equal(await db.storage.pruneExpired(1), 1);
+	await db.seedRaw("collectionCursor", "oldest", {
+		id: "oldest",
+		value: { ...cursor, expiresAt: 1100 },
+	});
+	assert.equal(await replica.storage.pruneExpired(2), 2);
+	await db.seedRaw("collectionCursor", "expired", {
+		id: "expired",
+		value: { ...cursor, expiresAt: 1100 },
+	});
+	assert.equal(await db.storage.pruneExpired(9), 4, "unused cursor allowance goes to replay");
+	assert.equal(await other.storage.pruneExpired(9), 1);
+	assert.equal((await db.storage.entityCollection.cursor("live"))?.expiresAt, 1100);
+});
+
 test("provisioning reports an earlier layout without altering it", async (t) => {
 	assert.ok(postgresUrl);
 	const admin = new Pool({ connectionString: postgresUrl });
