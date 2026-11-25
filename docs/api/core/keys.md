@@ -296,6 +296,14 @@ RFC 7517 §5 recommends ignoring unusable keys when consuming a set.
 validatePublicJwkSet(value: unknown, registry?: JwsAlgorithmRegistry): Result<void, FederationError>;
 ```
 
+## `signProtocolJwkSet`
+
+Signs one Entity Type's public protocol keys with the issuer's published Federation signing key. It returns a compact JWT with protected `typ: jwk-set+jwt` and the signer's `kid`. Serve it at the host's HTTPS `signed_jwks_uri` with `MediaType.JwkSet`.
+
+### `SignProtocolJwkSetOptions`
+
+Provide `issuer`, `jwks`, and a host `crypto` context. Set `owner` to override the issuer as the key owner. `options` accepts bound Federation signing policy and a clock. `issuedAt` adds `iat`. A positive finite `ttlSeconds` also sets `exp` and uses the clock for `iat` if omitted. See the [publication example](../../features/4.4.protocol-keys.md#publish-a-signed-protocol-jwk-set).
+
 ## `validateSignedJwkSetSpecHygiene`
 
 [Source](../../../packages/core/src/jwks/spec-hygiene.ts#L20)

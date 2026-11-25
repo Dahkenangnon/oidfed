@@ -263,6 +263,7 @@ export {
 	type ResolveEntityKeysOptions,
 	resolveEntityKeys,
 } from "./jwks/resolve.js";
+export { type SignProtocolJwkSetOptions, signProtocolJwkSet } from "./jwks/signed-jwk-set.js";
 export { type FetchSignedJwkSetOptions, fetchSignedJwkSet } from "./jwks/signed-jwks-uri.js";
 export { validateSignedJwkSetSpecHygiene } from "./jwks/spec-hygiene.js";
 export { validateJwkSetUseRequirement } from "./jwks/use-requirement.js";

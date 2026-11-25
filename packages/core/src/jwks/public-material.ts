@@ -3,7 +3,7 @@ import { assertPublicJwk, DEFAULT_JWS_REGISTRY } from "@oidfed/crypto";
 
 import { FederationErrorCode } from "../constants.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
-import { type JWK, type JWKSet, JWKSetSchema } from "../schemas/jwk.js";
+import { type JWK, type JWKSet, JWKSetSchema, MetadataJWKSetSchema } from "../schemas/jwk.js";
 
 const BASE64URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 const EC_LENGTHS = new Map([
@@ -40,6 +40,22 @@ export function preparePublicJwkSet(
 	value: unknown,
 	registry = DEFAULT_JWS_REGISTRY,
 ): Result<JWKSet, FederationError> {
+	return prepareKeySet(value, registry, JWKSetSchema);
+}
+
+/** Prepare public protocol keys without imposing the Federation signing key identifier rules. */
+export function prepareProtocolJwkSet(
+	value: unknown,
+	registry = DEFAULT_JWS_REGISTRY,
+): Result<JWKSet, FederationError> {
+	return prepareKeySet(value, registry, MetadataJWKSetSchema);
+}
+
+function prepareKeySet(
+	value: unknown,
+	registry: typeof DEFAULT_JWS_REGISTRY,
+	schema: typeof MetadataJWKSetSchema,
+): Result<JWKSet, FederationError> {
 	let snapshot: unknown;
 	try {
 		const json = JSON.stringify(value);
@@ -48,7 +64,7 @@ export function preparePublicJwkSet(
 	} catch {
 		return invalid("jwks", "could not serialize public JWK Set");
 	}
-	const parsed = JWKSetSchema.safeParse(snapshot);
+	const parsed = schema.safeParse(snapshot);
 	if (!parsed.success) {
 		const path = parsed.error.issues[0]?.path
 			.map((part) => (typeof part === "number" ? `[${part}]` : `.${String(part)}`))

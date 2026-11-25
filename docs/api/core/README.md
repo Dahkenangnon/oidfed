@@ -184,6 +184,8 @@ Signatures preserve optional and read-only declarations. An optional property is
 | [`validateFederationKeySet`](keys.md#validatefederationkeyset) | Function |
 | [`validateJwkSetUseRequirement`](keys.md#validatejwksetuserequirement) | Function |
 | [`validatePublicJwkSet`](keys.md#validatepublicjwkset) | Function |
+| [`signProtocolJwkSet`](keys.md#signprotocoljwkset) | Function |
+| [`SignProtocolJwkSetOptions`](keys.md#signprotocoljwksetoptions) | Interface |
 | [`validateSignedJwkSetSpecHygiene`](keys.md#validatesignedjwksetspechygiene) | Function |
 
 ## Federation endpoint clients and responses

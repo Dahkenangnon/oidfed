@@ -12,12 +12,15 @@ import {
 	entityId,
 	type FederationArtifact,
 	type FederationOptions,
-	federationEntry,
+	fetchSignedJwkSet,
 	fetchSubordinateEvents,
 	fetchSubordinateStatement,
-	JwtTyp,
+	jwtResponse,
+	MediaType,
 	signEntityStatement,
+	signProtocolJwkSet,
 	signTrustMark,
+	validateSignedJwkSetSpecHygiene,
 	validateTrustChain,
 	validateTrustMark,
 	verifyEntityStatement,
@@ -83,6 +86,109 @@ export default function artifactSigningTests(qunit: QUnit): void {
 					).ok,
 				);
 			});
+
+		test("signed protocol JWKS round-trips through the public verifier and fetcher", async (assert) => {
+			const [federation, protocol] = await Promise.all([
+				generateSigningKey(),
+				generateSigningKey(),
+			]);
+			const signer = new SigningEntryFixture(federation.privateKey);
+			const crypto = { engine: testEngine, keyring: { entry: async () => signer } };
+			const { kid: _kid, ...key } = protocol.publicKey;
+			const jwks = { keys: [key] };
+			const clock = { now: () => 10_000 };
+			const input = { issuer, jwks, crypto, options: { clock } };
+			const verify = { engine: testEngine, expectedIssuer: issuer, expectedOwner: issuer, clock };
+			const minimal = await signProtocolJwkSet(input);
+			const parsed = await verifySignedJwkSet(minimal, signer.publishedJwks, verify);
+			assert.true(parsed.ok);
+			if (!parsed.ok) return;
+			assert.deepEqual(parsed.value, { iss: issuer, sub: issuer, keys: [key] });
+			assert.true(validateSignedJwkSetSpecHygiene(parsed.value).ok);
+			assert.false((await verifySignedJwkSet(minimal, { keys: [protocol.publicKey] }, verify)).ok);
+
+			const withDate = await signProtocolJwkSet({ ...input, issuedAt: 9_999 });
+			const dated = await verifySignedJwkSet(withDate, signer.publishedJwks, verify);
+			assert.true(dated.ok && dated.value.iat === 9_999 && dated.value.exp === undefined);
+
+			const jwt = await signProtocolJwkSet({ ...input, owner: subject, ttlSeconds: 60 });
+			assert.false((await verifySignedJwkSet(jwt, signer.publishedJwks, verify)).ok);
+			const wrongIssuer = { ...verify, expectedOwner: subject, expectedIssuer: subject };
+			assert.false((await verifySignedJwkSet(jwt, signer.publishedJwks, wrongIssuer)).ok);
+			const route = `${issuer}/keys`;
+			const fetched = await fetchSignedJwkSet(route, signer.publishedJwks, {
+				...verify,
+				expectedOwner: subject,
+				httpClient(input, init) {
+					const request = new Request(input, init);
+					assert.strictEqual(request.method, "GET");
+					assert.strictEqual(request.url, route);
+					return Promise.resolve(jwtResponse(jwt, MediaType.JwkSet));
+				},
+			});
+			assert.true(fetched.ok);
+			if (!fetched.ok) return;
+			assert.strictEqual(fetched.value.sub, subject);
+			assert.strictEqual(fetched.value.iat, 10_000);
+			assert.strictEqual(fetched.value.exp, 10_060);
+			assert.false(validateSignedJwkSetSpecHygiene(fetched.value).ok);
+			const wrongMediaType = await fetchSignedJwkSet(route, signer.publishedJwks, {
+				...verify,
+				expectedOwner: subject,
+				httpClient: async () => jwtResponse(jwt, MediaType.EntityStatement),
+			});
+			assert.false(wrongMediaType.ok);
+		});
+
+		test("signed protocol JWKS rejects unsafe inputs before selecting a Federation signer", async (assert) => {
+			const key = await generateSigningKey();
+			let selections = 0;
+			const crypto = {
+				engine: testEngine,
+				keyring: {
+					async entry() {
+						selections++;
+						return new SigningEntryFixture(key.privateKey);
+					},
+				},
+			};
+			const input = { issuer, jwks: { keys: [key.publicKey] }, crypto };
+			await assert.rejects(
+				signProtocolJwkSet({ ...input, jwks: { keys: [key.privateKey] } }),
+				/invalid public JWK Set structure/,
+			);
+			const { use: _use, ...signingKey } = key.publicKey;
+			await assert.rejects(
+				signProtocolJwkSet({
+					...input,
+					jwks: { keys: [signingKey, { ...key.publicKey, use: "enc" }] },
+				}),
+				/signing and encryption keys/,
+			);
+			await assert.rejects(
+				signProtocolJwkSet({ ...input, jwks: { keys: [{ ...key.publicKey, x: "invalid" }] } }),
+				/expected.*octets|base64url/,
+			);
+			await assert.rejects(signProtocolJwkSet({ ...input, ttlSeconds: 0 }), /ttlSeconds/);
+			await assert.rejects(signProtocolJwkSet({ ...input, issuedAt: Infinity }), /iat/);
+			await assert.rejects(
+				signProtocolJwkSet({ ...input, issuedAt: Number.MAX_VALUE, ttlSeconds: Number.MAX_VALUE }),
+				/expiry/,
+			);
+			assert.strictEqual(selections, 0);
+			const unrelated = (await generateSigningKey()).publicKey;
+			await assert.rejects(
+				signProtocolJwkSet({
+					...input,
+					crypto: { ...crypto, readPublishedFederationJwks: () => ({ keys: [unrelated] }) },
+				}),
+				/absent from the issuer's published Federation JWKS/,
+			);
+			await assert.rejects(
+				signProtocolJwkSet({ ...input, options: { allowedAlgorithmsForArtifact: () => [] } }),
+				/outside the configured policy/,
+			);
+		});
 
 		test("hosts select artifact bindings that verify against each issuer's published keys", async (assert) => {
 			const [regular, separate, leafKey, ownerKey] = await Promise.all([
@@ -268,16 +374,13 @@ export default function artifactSigningTests(qunit: QUnit): void {
 				).ok,
 			);
 
-			const jwksBinding = await federationEntry(crypto, {
-				artifact: "signed-protocol-jwks",
+			const signedSet = await signProtocolJwkSet({
 				issuer,
-				subject,
+				owner: subject,
+				jwks: { keys: [leafKey.publicKey] },
+				crypto,
+				options: base,
 			});
-			const signedSet = await signEntityStatement(
-				{ iss: issuer, sub: subject, iat: Date.now() / 1000, keys: [leafKey.publicKey] },
-				jwksBinding,
-				{ ...base, typ: JwtTyp.JwkSet, artifact: "signed-protocol-jwks" },
-			);
 			assert.true(
 				(
 					await verifySignedJwkSet(signedSet, issuerKeys, {
