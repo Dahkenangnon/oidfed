@@ -27,6 +27,14 @@ import {
 
 const MAX_RESOLVE_TRUST_MARK_CANDIDATES = 100;
 
+/** A Resolve network request was declined before it reached the transport. */
+export class ResolveFetchBudgetExhausted extends Error {}
+
+export interface ResolveTrustMarkCandidateLimits {
+	readonly maxCandidates: number;
+	readonly maxBytes: number;
+}
+
 export interface ResolveTrustMarkCandidateInput {
 	readonly caller: string | undefined;
 	readonly subject: EntityId;
@@ -39,7 +47,9 @@ export interface ResolveTrustMarkCandidateInput {
 	}>[];
 	/** Expiry of the selected chain before any disclosed mark shortens the response. */
 	readonly chainExpiresAt: number;
-	/** Use this transport to count issuer retrieval against this Resolve request's fetch budget. */
+	/** Limits applied to the returned JWT candidates before verification. */
+	readonly candidateLimits: ResolveTrustMarkCandidateLimits;
+	/** Optional issuer work shares the Resolve fetch budget with required verification. */
 	readonly httpClient: HttpClient;
 	readonly signal: AbortSignal;
 }
@@ -102,40 +112,53 @@ async function disclosureCandidates(
 	verified: readonly ActiveResolveTrustMark[],
 	policy: ResolveTrustMarkCandidates,
 ): Promise<Set<string>> {
-	const result = await runAsyncOperation(
-		(signal) =>
-			policy(
-				Object.freeze({
-					caller,
-					subject: chain.entityId,
-					trustAnchor: chain.trustAnchorId,
-					held: Object.freeze(held.map((ref) => ref.trust_mark)),
-					verifiedHeld: Object.freeze(
-						verified.map(({ ref: { trust_mark_type, trust_mark }, mark: { issuer, expiresAt } }) =>
-							Object.freeze({
-								ref: Object.freeze({ trust_mark_type, trust_mark }),
-								mark: Object.freeze({ issuer, ...(expiresAt === undefined ? {} : { expiresAt }) }),
-							}),
+	const limits: ResolveTrustMarkCandidateLimits = Object.freeze({
+		maxCandidates: MAX_RESOLVE_TRUST_MARK_CANDIDATES,
+		maxBytes: Math.min(
+			ctx.options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES,
+			ctx.options.maxCompactBytes ?? Infinity,
+		),
+	});
+	let returned: unknown;
+	try {
+		returned = await runAsyncOperation(
+			(signal) =>
+				policy(
+					Object.freeze({
+						caller,
+						subject: chain.entityId,
+						trustAnchor: chain.trustAnchorId,
+						held: Object.freeze(held.map((ref) => ref.trust_mark)),
+						verifiedHeld: Object.freeze(
+							verified.map(
+								({ ref: { trust_mark_type, trust_mark }, mark: { issuer, expiresAt } }) =>
+									Object.freeze({
+										ref: Object.freeze({ trust_mark_type, trust_mark }),
+										mark: Object.freeze({
+											issuer,
+											...(expiresAt === undefined ? {} : { expiresAt }),
+										}),
+									}),
+							),
 						),
-					),
-					chainExpiresAt: calculateChainExpiration(chain.statements),
-					httpClient: ctx.options.httpClient ?? fetch,
-					signal,
-				}),
-			),
-		ctx.options,
-	);
-	const returned: unknown = result;
-	if (!Array.isArray(returned) || returned.length > MAX_RESOLVE_TRUST_MARK_CANDIDATES)
+						chainExpiresAt: calculateChainExpiration(chain.statements),
+						candidateLimits: limits,
+						httpClient: ctx.options.httpClient ?? fetch,
+						signal,
+					}),
+				),
+			ctx.options,
+		);
+	} catch (error) {
+		// An interrupted policy has not approved any candidates for disclosure.
+		if (error instanceof ResolveFetchBudgetExhausted) return new Set();
+		throw error;
+	}
+	if (!Array.isArray(returned) || returned.length > limits.maxCandidates)
 		throw new TypeError(
 			"Resolve Trust Mark policy returned too many candidates or an invalid list",
 		);
-	// Bound candidate input here. The signer separately limits the complete compact response.
-	const bytes = Math.min(
-		ctx.options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES,
-		ctx.options.maxCompactBytes ?? Infinity,
-	);
-	let remaining = bytes;
+	let remaining = limits.maxBytes;
 	const candidates = new Set<string>();
 	for (const jwt of returned as readonly unknown[]) {
 		if (typeof jwt !== "string")
@@ -160,6 +183,7 @@ export async function resolveActiveTrustMarks(
 	chain: ValidatedTrustChain,
 	caller: string | undefined,
 	now: number,
+	optionalHttpClient: HttpClient,
 ): Promise<ActiveResolveTrustMark[]> {
 	const held = chain.statements[0]?.payload.trust_marks ?? [];
 	const anchor = ctx.trustAnchors?.get(chain.trustAnchorId);
@@ -173,6 +197,7 @@ export async function resolveActiveTrustMarks(
 		ref: TrustMarkRef,
 		issuer: string,
 		evidence?: ResolveMarkEvidence,
+		work = ctx,
 	): Promise<ActiveResolveTrustMark | undefined> {
 		const jwt = ref.trust_mark;
 		if (assessed.has(jwt)) return assessed.get(jwt);
@@ -198,7 +223,7 @@ export async function resolveActiveTrustMarks(
 						issuer,
 						trustMarkType: type,
 						trustAnchors: anchors,
-						options: ctx.options,
+						options: work.options,
 					});
 					if (checked.ok) context = checked.value;
 				}
@@ -209,7 +234,7 @@ export async function resolveActiveTrustMarks(
 		const mark =
 			issuerEvidence &&
 			(await activeTrustMarkForResolve(
-				ctx,
+				work,
 				chain.statements,
 				ref,
 				{ ...evidence, issuer, subject: chain.entityId, issuerEvidence },
@@ -235,7 +260,9 @@ export async function resolveActiveTrustMarks(
 
 	if (!policy) return defaults;
 	if (ctx.options.signal?.aborted) return [];
-	const candidates = await disclosureCandidates(ctx, chain, caller, held, defaults, policy);
+	// A failed attempt to improve eligible evidence cannot make required verification incomplete.
+	const optional = { ...ctx, options: { ...ctx.options, httpClient: optionalHttpClient } };
+	const candidates = await disclosureCandidates(optional, chain, caller, held, defaults, policy);
 	const selected = new Map<string, ActiveResolveTrustMark>();
 	for (const jwt of candidates) {
 		if (ctx.options.signal?.aborted) break;
@@ -246,6 +273,8 @@ export async function resolveActiveTrustMarks(
 			active = await assessMark(
 				{ trust_mark_type: claims.trust_mark_type, trust_mark: jwt },
 				claims.iss,
+				undefined,
+				optional,
 			);
 		}
 		if (!active) continue;

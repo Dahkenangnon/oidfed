@@ -287,6 +287,7 @@ export { findInvalidMetadataNullPaths } from "./metadata-values.js";
 export type { ResolveCacheScopeInput, ResolverCacheOptions } from "./resolver/assessment-cache.js";
 export type {
 	ResolveTrustMarkCandidateInput,
+	ResolveTrustMarkCandidateLimits,
 	ResolveTrustMarkCandidates,
 	ResolveTrustMarkStatusMaxAge,
 } from "./resolver/mark-disclosure.js";

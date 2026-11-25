@@ -47,6 +47,7 @@ import {
 	type EntityId,
 	entityId,
 	type FederationOptions,
+	type HttpClient,
 	isValidEntityId,
 	nowSeconds,
 	type TrustAnchorSet,
@@ -60,7 +61,7 @@ import {
 	resolveAssessmentKey,
 	snapshotResolverCache,
 } from "./assessment-cache.js";
-import { resolveActiveTrustMarks } from "./mark-disclosure.js";
+import { ResolveFetchBudgetExhausted, resolveActiveTrustMarks } from "./mark-disclosure.js";
 
 export interface FederationResolverConfig {
 	readonly entityId: EntityId | string;
@@ -463,23 +464,26 @@ function createResolveHandler(
 			return errorResponse(404, FederationErrorCode.NotFound, "No eligible cached resolution");
 
 		try {
-			// All candidate attempts and their evidence checks share one network budget.
+			// Required and optional calls spend the same allowance. Only incomplete required work fails Resolve.
 			let remainingFetches = ctx.options?.maxTotalFetches ?? 50;
 			let budgetExhausted = false;
 			const transport = ctx.options?.httpClient ?? fetch;
+			const budgetedTransport =
+				(required: boolean): HttpClient =>
+				async (input, init) => {
+					if (signal.aborted) throw new DOMException("Operation aborted", "AbortError");
+					if (remainingFetches <= 0) {
+						if (required) budgetExhausted = true;
+						throw new ResolveFetchBudgetExhausted("Fetch budget exhausted");
+					}
+					remainingFetches--;
+					return transport(input, init);
+				};
 			const options: FederationOptions = {
 				...ctx.options,
 				trustResolution: { kind: "bottom-up" },
 				signal,
-				httpClient: async (input, init) => {
-					if (signal.aborted) throw new DOMException("Operation aborted", "AbortError");
-					if (remainingFetches <= 0) {
-						budgetExhausted = true;
-						throw new Error("Fetch budget exhausted");
-					}
-					remainingFetches--;
-					return transport(input, init);
-				},
+				httpClient: budgetedTransport(true),
 			};
 			const operationContext = { ...ctx, options };
 			const result = await resolveTrustChains(sub, requestedAnchors, options);
@@ -574,6 +578,7 @@ function createResolveHandler(
 				validated,
 				rawEntity,
 				now,
+				budgetedTransport(false),
 			);
 			if (budgetExhausted || signal.aborted) return discoveryFailure([], true);
 			const hasLocalMarks = Boolean(

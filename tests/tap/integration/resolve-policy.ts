@@ -233,6 +233,91 @@ export default function resolvePolicyTests({ module, test }: QUnit): void {
 			assert.deepEqual(results, ["miss", "hit"]);
 		});
 
+		test("optional issuer refresh shares the fetch limit without losing verified held evidence", async (assert) => {
+			for (const [budget, expectedStatus, replace] of [
+				[2, 503, false],
+				[3, 200, false],
+				[4, 200, true],
+			] as const) {
+				const f = await createFixture();
+				const owner = await f.install();
+				const held = await owner.issueTrustMark(subject, markType, { ttlSeconds: 120 });
+				const fresh = await owner.issueTrustMark(subject, markType, {
+					ttlSeconds: 240,
+					renewal: "renew",
+				});
+				await f.publishHeldMark(held);
+				let calls = 0;
+				let refreshes = 0;
+				const host = await f.install({
+					maxTotalFetches: budget,
+					async httpClient(input, init) {
+						const request = new Request(input, init);
+						calls++;
+						if (new URL(request.url).pathname === "/optional-issuer-lookup") {
+							refreshes++;
+							return new Response(fresh);
+						}
+						return f.httpClient(request);
+					},
+					async resolveTrustMarkCandidates({ verifiedHeld, candidateLimits, httpClient, signal }) {
+						assert.true(Object.isFrozen(candidateLimits));
+						assert.strictEqual(candidateLimits.maxCandidates, 100);
+						assert.true(candidateLimits.maxBytes > held.length);
+						const candidates = verifiedHeld.map(({ ref }) => ref.trust_mark);
+						assert.deepEqual(candidates, [held]);
+						try {
+							const response = await httpClient(`${issuer}/optional-issuer-lookup`, { signal });
+							if (response.ok) candidates.push(await response.text());
+						} catch {
+							// An unavailable optional lookup leaves the policy's approved held JWT eligible.
+						}
+						return candidates;
+					},
+				});
+				const reply = await host.handleRequest(resolveRequest(issuer, await f.assertion(callerA)));
+				assert.strictEqual(reply.status, expectedStatus, `budget ${budget}`);
+				assert.strictEqual(calls, budget, "no fetch exceeds the shared allowance");
+				assert.strictEqual(refreshes, replace ? 1 : 0);
+				if (!reply.ok) continue;
+				const decoded = decodeEntityStatement(await reply.text());
+				assert.deepEqual(decoded.ok && decoded.value.payload.trust_marks, [
+					{ trust_mark_type: markType, trust_mark: replace ? fresh : held },
+				]);
+			}
+		});
+
+		test("an optional candidate needing more verification cannot discard a selected held mark", async (assert) => {
+			const f = await createFixture();
+			const owner = await f.install();
+			const held = await owner.issueTrustMark(subject, markType, { ttlSeconds: 120 });
+			const candidate = await signTrustMark({
+				issuer: callerB,
+				subject,
+				trustMarkType: markType,
+				signer: await f.crypto.keyring.entry(),
+				clock: f.clock,
+				ttlSeconds: 240,
+			});
+			await f.publishHeldMark(held);
+			const host = await f.install({
+				maxTotalFetches: 3,
+				resolveTrustMarkCandidates: ({ verifiedHeld }) => [
+					candidate,
+					...verifiedHeld.map(({ ref }) => ref.trust_mark),
+				],
+			});
+			await host.setTrustMarkIssuers({ [markType]: [issuer, callerB] });
+			const outbound = f.readOutbound();
+			const reply = await host.handleRequest(resolveRequest(issuer, await f.assertion(callerA)));
+			assert.strictEqual(reply.status, 200);
+			assert.strictEqual(f.readOutbound() - outbound, 3);
+			const decoded = decodeEntityStatement(await reply.text());
+			assert.deepEqual(decoded.ok && decoded.value.payload.trust_marks, [
+				{ trust_mark_type: markType, trust_mark: held },
+			]);
+		});
+
 		test("public priming uses the same cache entry for equivalent Resolve selectors", async (assert) => {
 			const f = await createFixture();
 			const scopeTypes: (readonly string[])[] = [];
