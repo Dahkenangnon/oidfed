@@ -4,16 +4,13 @@
  * derived from the stored {@link SubordinateRecord} (and, for trust marks, from
  * the trust mark store).
  *
- * Some claims (iss, sub, iat, exp, subordinate_statement) are synthetic: they
- * are computed from the handler context plus a per-request "now" snapshot. The
- * snapshot lets callers align the synthetic iat/exp with the iat/exp inside the
- * signed subordinate_statement JWT for the same record.
+ * On-demand issuance uses the page's clock and one lifetime per row. Retained
+ * mode projects statement claims from the approved and verified signed payload.
  */
 
 import type { SubordinateRecord } from "@oidfed/core";
 import {
 	assertSubordinatePublicationClaims,
-	DEFAULT_ENTITY_STATEMENT_TTL_SECONDS,
 	ExtendedListClaim,
 	isStoredTrustMarkEligible,
 	parseStoredTrustMark,
@@ -22,26 +19,31 @@ import {
 	setOwn,
 } from "@oidfed/core";
 import type { HandlerContext } from "./context.js";
-import { buildSubordinateStatement } from "./fetch.js";
 import { subordinatePublicationClaim } from "./subordinate-claims.js";
+import {
+	buildSubordinateStatement,
+	type RetainedSubordinateStatement,
+	subordinateLifetime,
+} from "./subordinate-statement.js";
 
 type ClaimExtractor = (
 	record: SubordinateRecord,
 	ctx: HandlerContext,
 	now: number,
+	lifetime?: number,
 ) => Promise<unknown> | unknown;
 
-function statementExp(ctx: HandlerContext, now: number): number {
-	return now + (ctx.subordinateStatementTtlSeconds ?? DEFAULT_ENTITY_STATEMENT_TTL_SECONDS);
-}
-
 const EXTENDED_LIST_CLAIM_EXTRACTORS: Readonly<Record<string, ClaimExtractor>> = {
-	[ExtendedListClaim.SubordinateStatement]: async (record, ctx, now) =>
-		buildSubordinateStatement(ctx, record, now),
+	[ExtendedListClaim.SubordinateStatement]: (record, ctx, now, lifetime) =>
+		buildSubordinateStatement(ctx, record, now, lifetime),
 	[ExtendedListClaim.Iss]: (_record, ctx) => ctx.entityId,
 	[ExtendedListClaim.Sub]: (record) => record.entityId,
 	[ExtendedListClaim.Iat]: (_record, _ctx, now) => now,
-	[ExtendedListClaim.Exp]: (_record, ctx, now) => statementExp(ctx, now),
+	[ExtendedListClaim.Exp]: (record, ctx, now, lifetime) => {
+		const exp = now + (lifetime ?? subordinateLifetime(ctx, record));
+		if (!Number.isFinite(exp) || exp <= now) throw new TypeError("Invalid statement expiry");
+		return exp;
+	},
 	[ExtendedListClaim.Jwks]: (record, ctx) => {
 		// Extended Listing §3.2 selects the public statement keys defined by Federation §3.1.1.
 		const prepared = preparePublicJwkSet(record.jwks, ctx.options.algorithmRegistry);
@@ -77,6 +79,31 @@ const EXTENDED_LIST_CLAIM_EXTRACTORS: Readonly<Record<string, ClaimExtractor>> =
 	},
 };
 
+const independentListingClaims = new Set([
+	"id",
+	"registered",
+	"updated",
+	ExtendedListClaim.TrustMarks,
+]);
+
+/** An unknown requested name needs evidence only when it names an approved extension on the row. */
+function isStatementClaim(claim: string, record?: SubordinateRecord): boolean {
+	return (
+		!independentListingClaims.has(claim) &&
+		(record === undefined ||
+			Object.hasOwn(EXTENDED_LIST_CLAIM_EXTRACTORS, claim) ||
+			(record.additionalClaims !== undefined && Object.hasOwn(record.additionalClaims, claim)))
+	);
+}
+
+/** Identify listing work that depends on retained statement evidence. */
+export function requestsSubordinatePublication(
+	claims: readonly string[],
+	record?: SubordinateRecord,
+): boolean {
+	return claims.some((claim) => isStatementClaim(claim, record));
+}
+
 /**
  * Resolve the set of requested claims into per-entity fields. Unknown claim
  * names are silently ignored. Extractors that return undefined are omitted so
@@ -88,13 +115,25 @@ export async function extractClaims(
 	ctx: HandlerContext,
 	requestedClaims: ReadonlyArray<string>,
 	now: number,
+	retained?: RetainedSubordinateStatement,
 ): Promise<Record<string, unknown>> {
 	const out: Record<string, unknown> = {};
+	const lifetime =
+		!retained &&
+		(requestedClaims.includes(ExtendedListClaim.Exp) ||
+			requestedClaims.includes(ExtendedListClaim.SubordinateStatement))
+			? subordinateLifetime(ctx, record)
+			: undefined;
 	let extensions: ReturnType<typeof prepareEntityStatementExtensions> | undefined;
 	for (const claim of requestedClaims) {
+		if (retained && isStatementClaim(claim, record)) {
+			if (claim === ExtendedListClaim.SubordinateStatement) setOwn(out, claim, retained.jwt);
+			else if (Object.hasOwn(retained.payload, claim)) setOwn(out, claim, retained.payload[claim]);
+			continue;
+		}
 		if (!Object.hasOwn(EXTENDED_LIST_CLAIM_EXTRACTORS, claim)) {
 			// Listing fields retain their own meaning even when an SS extension uses that name.
-			if (["id", "registered", "updated"].includes(claim)) continue;
+			if (independentListingClaims.has(claim)) continue;
 			if (!record.additionalClaims || !Object.hasOwn(record.additionalClaims, claim)) continue;
 			extensions ??= prepareEntityStatementExtensions(record);
 			if (extensions.additionalClaims && Object.hasOwn(extensions.additionalClaims, claim))
@@ -109,7 +148,7 @@ export async function extractClaims(
 			});
 		const extractor = EXTENDED_LIST_CLAIM_EXTRACTORS[claim];
 		if (!extractor) continue;
-		const value = await extractor(record, ctx, now);
+		const value = await extractor(record, ctx, now, lifetime);
 		if (value !== undefined) setOwn(out, claim, value);
 	}
 	return out;

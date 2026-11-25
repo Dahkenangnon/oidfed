@@ -152,6 +152,7 @@ import {
 	WELL_KNOWN_OPENID_FEDERATION,
 } from "../../../packages/core/src/index.js";
 import { createMockFederation, LEAF_ID, OP_ID, TA_ID } from "../fixtures/index.js";
+import retainedSubordinateTests from "../integration/retained-subordinate-statements.js";
 
 // ---------------------------------------------------------------------------
 // Shared test helper
@@ -287,6 +288,7 @@ async function resolveAsClient(
 
 export default (QUnit: QUnit) => {
 	const { module, test } = QUnit;
+	retainedSubordinateTests(QUnit);
 	module("authority / configuration route boundaries", () => {
 		async function config(id = "https://authority.example/tenant"): Promise<AuthorityConfig> {
 			const key = await generateSigningKey("ES256");

@@ -82,6 +82,13 @@ interface AuthorityConfig extends EntityStatementExtensions {
 	entityConfigurationTtlSeconds?: number;
 	/** Positive safe-integer TTL in seconds for subordinate statement JWTs. */
 	subordinateStatementTtlSeconds?: number;
+	/** Per-record lifetime for new statements. Return undefined to use the host default. */
+	subordinateLifetime?: (record: Readonly<SubordinateRecord>) => number | undefined;
+	/** Opt public Fetch and Extended Listing into serving retained, approved evidence. */
+	loadSubordinateStatement?: (
+		record: Readonly<SubordinateRecord>,
+		signal: AbortSignal,
+	) => string | undefined | Promise<string | undefined>;
 	/** Optional positive, finite history-response TTL; omission leaves exp absent. */
 	subordinateEventsTtlSeconds?: number;
 	/** Positive finite TTL in seconds for issued Trust Marks; fractional values are allowed. */
@@ -125,6 +132,8 @@ Fields (including inherited fields). `?` marks an optional member; types below r
 | `trustAnchors?` | `TrustAnchorSet` | Pins available to composed roles and local trust operations. The host is not automatically inserted into this set. |
 | `entityConfigurationTtlSeconds?` | `number` | Positive safe-integer EC lifetime in seconds. Defaults to 86,400. |
 | `subordinateStatementTtlSeconds?` | `number` | Positive safe-integer Subordinate Statement lifetime in seconds. Defaults to 86,400. |
+| `subordinateLifetime?` | `(record: Readonly<SubordinateRecord>) => number \| undefined` | Per-record lifetime for new statements. Return undefined to use the host lifetime. |
+| `loadSubordinateStatement?` | `(record: Readonly<SubordinateRecord>, signal: AbortSignal) => string \| undefined \| Promise<string \| undefined>` | Opt into retained Fetch and Extended Listing. Requires `crypto.readPublishedFederationJwks`. See the [serving guide](../../features/7.1.fetch-endpoint.md#serve-approved-retained-statements). |
 | `subordinateEventsTtlSeconds?` | `number` | Optional positive finite history-response lifetime in seconds; fractions are accepted. Omission leaves the optional response `exp` absent. |
 | `trustMarkTtlSeconds?` | `number` | Positive finite issuer lifetime fallback in seconds; fractions are accepted. Defaults ultimately to 86,400 when no nested defaults, per-type, or per-call lifetime applies. Also supplies the default for `issueTrustMarkDelegation()`. |
 | `options?` | `BoundFederationOptions` | Federation defaults. The host binds crypto and storage. Per-call policies may narrow these defaults. |

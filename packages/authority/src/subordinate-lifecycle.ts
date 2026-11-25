@@ -27,18 +27,7 @@ import {
 	sanitizeSubordinateMetadata,
 } from "@oidfed/core";
 import type { HandlerContext } from "./endpoints/context.js";
-
-function canonical(value: unknown): string {
-	if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
-	if (value && typeof value === "object") {
-		return `{${Object.entries(value)
-			.filter(([, v]) => v !== undefined)
-			.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-			.map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`)
-			.join(",")}}`;
-	}
-	return JSON.stringify(value) ?? "undefined";
-}
+import { canonicalSubordinateJson as canonical } from "./endpoints/subordinate-claims.js";
 
 function publicKeys(
 	record: SubordinateRecord,

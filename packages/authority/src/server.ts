@@ -97,7 +97,7 @@ import {
 	createExtendedListHandler,
 	type ExtendedListingConfig,
 } from "./endpoints/extended-list.js";
-import { buildSubordinateStatement, createFetchHandler } from "./endpoints/fetch.js";
+import { createFetchHandler } from "./endpoints/fetch.js";
 import { createListHandler } from "./endpoints/list.js";
 import { createAuthorityResolver } from "./endpoints/resolve.js";
 import {
@@ -105,6 +105,7 @@ import {
 	createSubordinateEventsHandler,
 	withSubordinateEventsMethodErrors,
 } from "./endpoints/subordinate-events.js";
+import { buildSubordinateStatement } from "./endpoints/subordinate-statement.js";
 import { createTrustMarkHandler } from "./endpoints/trust-mark.js";
 import { createTrustMarkListHandler } from "./endpoints/trust-mark-list.js";
 import { createTrustMarkStatusHandler } from "./endpoints/trust-mark-status.js";
@@ -193,6 +194,10 @@ export interface AuthorityConfig extends EntityStatementExtensions {
 	entityConfigurationTtlSeconds?: number;
 	/** Positive safe-integer TTL in seconds for subordinate statement JWTs. */
 	subordinateStatementTtlSeconds?: number;
+	/** Per-record lifetime for new statements. Return undefined to use the host default. */
+	subordinateLifetime?: HandlerContext["subordinateLifetime"];
+	/** Opt public Fetch and Extended Listing into serving retained, approved evidence. */
+	loadSubordinateStatement?: HandlerContext["loadSubordinateStatement"];
 	/** Optional positive, finite history-response TTL; omission leaves exp absent. */
 	subordinateEventsTtlSeconds?: number;
 	/** Positive finite TTL in seconds for issued Trust Marks; fractional values are allowed. */
@@ -294,6 +299,16 @@ function createAuthorityServerWithIdentity(
 	] as const;
 	for (const [name, value, mode] of ttlFields) {
 		if (value !== undefined) assertPositiveTtlSeconds(value, name, mode);
+	}
+	if (config.subordinateLifetime !== undefined && typeof config.subordinateLifetime !== "function")
+		throw new InvalidAuthorityConfig("subordinateLifetime must be a function");
+	if (config.loadSubordinateStatement !== undefined) {
+		if (typeof config.loadSubordinateStatement !== "function")
+			throw new InvalidAuthorityConfig("loadSubordinateStatement must be a function");
+		if (!config.crypto.readPublishedFederationJwks)
+			throw new InvalidAuthorityConfig(
+				"Retained Subordinate Statements require crypto.readPublishedFederationJwks",
+			);
 	}
 
 	// Superior hints describe topology independently of the authority role.
@@ -411,6 +426,10 @@ function createAuthorityServerWithIdentity(
 			},
 			config.subordinateStatementTtlSeconds !== undefined && {
 				subordinateStatementTtlSeconds: config.subordinateStatementTtlSeconds,
+			},
+			config.subordinateLifetime && { subordinateLifetime: config.subordinateLifetime },
+			config.loadSubordinateStatement && {
+				loadSubordinateStatement: config.loadSubordinateStatement,
 			},
 			config.subordinateEventsTtlSeconds !== undefined && {
 				subordinateEventsTtlSeconds: config.subordinateEventsTtlSeconds,

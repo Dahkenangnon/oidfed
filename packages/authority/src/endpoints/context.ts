@@ -11,6 +11,7 @@ import type {
 	FederationOptions,
 	FederationStorage,
 	JWKSet,
+	SubordinateRecord,
 	TrustAnchorSet,
 	TrustMarkIssuerConfig,
 	TrustMarkOwner,
@@ -65,6 +66,13 @@ export interface HandlerContext extends EntityStatementExtensions {
 	readonly entityConfigurationTtlSeconds?: number;
 	/** TTL in seconds for subordinate statement JWTs. */
 	readonly subordinateStatementTtlSeconds?: number;
+	/** Override the lifetime for newly signed statements about this record. */
+	readonly subordinateLifetime?: (record: Readonly<SubordinateRecord>) => number | undefined;
+	/** Load evidence from the active approved publication for this record. */
+	readonly loadSubordinateStatement?: (
+		record: Readonly<SubordinateRecord>,
+		signal: AbortSignal,
+	) => string | undefined | Promise<string | undefined>;
 	/** Optional lifetime of a signed subordinate events response. */
 	readonly subordinateEventsTtlSeconds?: number;
 	/** TTL in seconds for issued trust mark JWTs. */

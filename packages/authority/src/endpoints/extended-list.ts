@@ -26,12 +26,17 @@ import {
 	waitForOperation,
 } from "@oidfed/core";
 import type { HandlerContext } from "./context.js";
-import { extractClaims } from "./extended-list-claims.js";
+import { extractClaims, requestsSubordinatePublication } from "./extended-list-claims.js";
 import {
 	createExtendedListFilters,
 	type ExtendedListingRequestFilter,
 } from "./extended-list-filters.js";
 import { parseBooleanQuery, validateEntityTypes } from "./list-parameters.js";
+import {
+	createRetainedSubordinateReader,
+	RetainedSubordinateUnavailable,
+	retainedSubordinateUnavailableResponse,
+} from "./subordinate-statement.js";
 
 /** Configuration controlling Extended Listing; numeric limits must be positive safe integers. */
 export interface ExtendedListingConfig {
@@ -241,6 +246,8 @@ export function createExtendedListHandler(
 		// parameter at all. If `claims=` is present (even empty), the user's value
 		// wins so the MUST-NOT on subordinate_statement is honoured.
 		const requestedClaims = params.has("claims") ? parseClaimsParam(params) : [...defaultClaims];
+		const retainedRequested =
+			ctx.loadSubordinateStatement !== undefined && requestsSubordinatePublication(requestedClaims);
 
 		// Build store filter + page options
 		const filter: ListFilter = {};
@@ -350,6 +357,10 @@ export function createExtendedListHandler(
 					(auditTimestamps === null && (updatedAfterParam !== null || updatedBeforeParam !== null));
 
 				const entries: Array<Record<string, unknown>> = [];
+				const readRetained = retainedRequested
+					? createRetainedSubordinateReader(ctx, signal)
+					: undefined;
+				let retainedExpiry = Infinity;
 
 				let entryBytes = 0;
 				const responseBytes = (count: number, bytes: number, next?: EntityId) =>
@@ -363,6 +374,10 @@ export function createExtendedListHandler(
 					Math.max(0, count - 1);
 				for (const [index, record] of accumulated.entries()) {
 					const entry: Record<string, unknown> = { id: record.entityId };
+					const retained =
+						readRetained && requestsSubordinatePublication(requestedClaims, record)
+							? await readRetained(record)
+							: undefined;
 
 					if (effectiveAuditTimestamps) {
 						entry.registered = record.createdAt;
@@ -370,7 +385,7 @@ export function createExtendedListHandler(
 					}
 
 					if (requestedClaims.length > 0) {
-						const extracted = await extractClaims(record, ctx, requestedClaims, now);
+						const extracted = await extractClaims(record, ctx, requestedClaims, now, retained);
 						for (const key of Object.keys(extracted)) {
 							setOwn(entry, key, extracted[key]);
 						}
@@ -391,6 +406,7 @@ export function createExtendedListHandler(
 					// measurement and response serialization while later entries are awaited.
 					entries.push(JSON.parse(serialized) as Record<string, unknown>);
 					entryBytes += bytes;
+					if (retained) retainedExpiry = Math.min(retainedExpiry, retained.expiresAt);
 				}
 				if (responseBytes(entries.length, entryBytes, nextEntityId) > maxResponseBytes)
 					throw new Error("Extended listing envelope exceeds the response size limit");
@@ -399,19 +415,28 @@ export function createExtendedListHandler(
 				if (nextEntityId !== undefined) body.next = nextEntityId;
 
 				if (signal.aborted) throw new Error("Extended listing cancelled");
+				if (retainedExpiry !== Infinity && retainedExpiry <= nowSeconds(ctx.options.clock))
+					throw new RetainedSubordinateUnavailable();
 				return jsonResponse(body);
 			};
-			// One deadline covers parsing and the entire custom-filter scan, not one timeout per record.
+			// Use one deadline for custom-filter scans and retained evidence across the page.
 			const signal = ctx.options?.signal
 				? AbortSignal.any([request.signal, ctx.options.signal])
 				: request.signal;
 			return await waitForOperation(
-				requestFilters.present(params)
+				retainedRequested || requestFilters.present(params)
 					? runAsyncOperation(build, { ...ctx.options, signal })
 					: build(signal),
 				[signal],
 			);
-		} catch {
+		} catch (error) {
+			if (
+				error instanceof RetainedSubordinateUnavailable ||
+				(retainedRequested && error instanceof DOMException && error.name === "TimeoutError")
+			) {
+				safeLogger(ctx.options.logger)?.warn("Approved subordinate statement is unavailable");
+				return retainedSubordinateUnavailableResponse();
+			}
 			safeLogger(ctx.options?.logger)?.error("Failed to build extended subordinate listing");
 			return errorResponse(
 				500,

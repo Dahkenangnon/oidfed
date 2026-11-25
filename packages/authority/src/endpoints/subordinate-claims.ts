@@ -11,6 +11,19 @@ import {
 } from "@oidfed/core";
 import type { HandlerContext } from "./context.js";
 
+/** Compare JSON data independently of object member order. Array order remains significant. */
+export function canonicalSubordinateJson(value: unknown): string {
+	if (Array.isArray(value)) return `[${value.map(canonicalSubordinateJson).join(",")}]`;
+	if (value && typeof value === "object") {
+		return `{${Object.entries(value)
+			.filter(([, member]) => member !== undefined)
+			.sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+			.map(([name, member]) => `${JSON.stringify(name)}:${canonicalSubordinateJson(member)}`)
+			.join(",")}}`;
+	}
+	return JSON.stringify(value) ?? "undefined";
+}
+
 /** Validate only the selected public claim, shared by signed fetch and Extended Listing §3.2. */
 export function subordinatePublicationClaim(
 	record: SubordinateRecord,
