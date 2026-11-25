@@ -4,6 +4,7 @@ import { DEFAULT_MAX_RESPONSE_BYTES, TrustMarkStatus } from "../constants.js";
 import { decodeEntityStatement } from "../jose/verify.js";
 import { safeLogger } from "../logging.js";
 import { TrustMarkPayloadSchema, type TrustMarkRef } from "../schemas/trust-mark.js";
+import { calculateChainExpiration } from "../trust-chain/validate.js";
 import {
 	establishTrustMarkIssuerTrust,
 	type TrustMarkIssuerContext,
@@ -31,6 +32,13 @@ export interface ResolveTrustMarkCandidateInput {
 	readonly subject: EntityId;
 	readonly trustAnchor: EntityId;
 	readonly held: readonly string[];
+	/** Held marks already verified under the selected anchor and assessed as active. */
+	readonly verifiedHeld: readonly Readonly<{
+		ref: Readonly<Pick<TrustMarkRef, "trust_mark_type" | "trust_mark">>;
+		mark: Readonly<Pick<ValidatedTrustMark, "issuer" | "expiresAt">>;
+	}>[];
+	/** Expiry of the selected chain before any disclosed mark shortens the response. */
+	readonly chainExpiresAt: number;
 	/** Use this transport to count issuer retrieval against this Resolve request's fetch budget. */
 	readonly httpClient: HttpClient;
 	readonly signal: AbortSignal;
@@ -91,6 +99,7 @@ async function disclosureCandidates(
 	chain: ValidatedTrustChain,
 	caller: string | undefined,
 	held: readonly TrustMarkRef[],
+	verified: readonly ActiveResolveTrustMark[],
 	policy: ResolveTrustMarkCandidates,
 ): Promise<Set<string>> {
 	const result = await runAsyncOperation(
@@ -101,6 +110,15 @@ async function disclosureCandidates(
 					subject: chain.entityId,
 					trustAnchor: chain.trustAnchorId,
 					held: Object.freeze(held.map((ref) => ref.trust_mark)),
+					verifiedHeld: Object.freeze(
+						verified.map(({ ref: { trust_mark_type, trust_mark }, mark: { issuer, expiresAt } }) =>
+							Object.freeze({
+								ref: Object.freeze({ trust_mark_type, trust_mark }),
+								mark: Object.freeze({ issuer, ...(expiresAt === undefined ? {} : { expiresAt }) }),
+							}),
+						),
+					),
+					chainExpiresAt: calculateChainExpiration(chain.statements),
 					httpClient: ctx.options.httpClient ?? fetch,
 					signal,
 				}),
@@ -217,7 +235,7 @@ export async function resolveActiveTrustMarks(
 
 	if (!policy) return defaults;
 	if (ctx.options.signal?.aborted) return [];
-	const candidates = await disclosureCandidates(ctx, chain, caller, held, policy);
+	const candidates = await disclosureCandidates(ctx, chain, caller, held, defaults, policy);
 	const selected = new Map<string, ActiveResolveTrustMark>();
 	for (const jwt of candidates) {
 		if (ctx.options.signal?.aborted) break;

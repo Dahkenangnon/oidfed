@@ -204,6 +204,35 @@ function cachePolicy(policyRevision: string): ResolverCacheOptions {
 
 export default function resolvePolicyTests({ module, test }: QUnit): void {
 	module("integration / Resolve request and Trust Mark policy", () => {
+		test("HTTP Resolve observes reuse once and ignores failed observers", async (assert) => {
+			const f = await createFixture();
+			const results: string[] = [];
+			const host = await f.install({
+				resolverCache: cachePolicy("observed"),
+				onResolverCacheResult(result) {
+					results.push(result);
+					if (result === "miss") throw new Error("synchronous observer failure");
+					return Promise.reject(new Error("asynchronous observer failure"));
+				},
+			});
+			const outbound = f.readOutbound();
+			assert.strictEqual((await host.handleRequest(resolveRequest(issuer))).status, 404);
+			assert.strictEqual(f.readOutbound(), outbound);
+			assert.deepEqual(results, ["miss"]);
+			await host.primeAnonymousResolve({ subject, trustAnchor: issuer });
+			assert.deepEqual(results, ["miss"]);
+			assert.strictEqual((await host.handleRequest(resolveRequest(issuer))).status, 200);
+			assert.strictEqual((await host.handleRequest(new Request(`${issuer}/resolve`))).status, 400);
+			assert.deepEqual(results, ["miss", "hit"]);
+			const read = f.storage.cache.get.bind(f.storage.cache);
+			f.storage.cache.get = async (key) => {
+				if (key.startsWith("resolve:")) throw new Error("Cache unavailable");
+				return read(key);
+			};
+			assert.strictEqual((await host.handleRequest(resolveRequest(issuer))).status, 500);
+			assert.deepEqual(results, ["miss", "hit"]);
+		});
+
 		test("public priming uses the same cache entry for equivalent Resolve selectors", async (assert) => {
 			const f = await createFixture();
 			const scopeTypes: (readonly string[])[] = [];
@@ -722,8 +751,16 @@ export default function resolvePolicyTests({ module, test }: QUnit): void {
 						...(disclosure === "default"
 							? {}
 							: {
-									resolveTrustMarkCandidates({ held }) {
+									resolveTrustMarkCandidates({ held, verifiedHeld, chainExpiresAt }) {
 										assert.deepEqual(held, [mark]);
+										assert.deepEqual(verifiedHeld, [
+											{
+												ref: { trust_mark_type: markType, trust_mark: mark },
+												mark: { issuer, expiresAt: f.clock.now() + 120 },
+											},
+										]);
+										assert.true(Object.isFrozen(verifiedHeld[0]?.ref));
+										assert.true(chainExpiresAt > f.clock.now() + 120);
 										return disclosure === "held" ? held : [];
 									},
 								}),

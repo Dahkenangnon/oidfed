@@ -308,6 +308,18 @@ async function signCachedAssessment(
 	return jwtResponse(jwt, MediaType.ResolveResponse);
 }
 
+/** Keep application metrics off the critical path and contain observer failures. */
+function reportCacheResult(options: FederationOptions, result: "hit" | "miss"): void {
+	const observe = options.onResolverCacheResult;
+	if (!observe) return;
+	const failed = () => safeLogger(options.logger)?.warn("Resolve cache observer failed");
+	try {
+		void Promise.resolve(observe(result)).catch(failed);
+	} catch {
+		failed();
+	}
+}
+
 /** HTTP callers use the cache policy; trusted local callers can evaluate the public partition. */
 function createResolveHandler(
 	ctx: ResolverContext,
@@ -424,7 +436,10 @@ function createResolveHandler(
 						sub,
 						rawEntity,
 					);
-					if (reply) return reply;
+					if (reply) {
+						reportCacheResult(ctx.options, "hit");
+						return reply;
+					}
 				}
 			}
 		} catch {
@@ -435,6 +450,8 @@ function createResolveHandler(
 				"Failed to reuse Resolve assessment",
 			);
 		}
+
+		if (mode === "http") reportCacheResult(ctx.options, "miss");
 
 		if (mode === "prime" && !cacheKey)
 			return errorResponse(

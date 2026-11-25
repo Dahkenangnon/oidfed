@@ -166,6 +166,8 @@ export interface FederationOptions {
 	authorizeEndpointRequest?: EndpointAuthorizationPolicy;
 	/** Opt in to authenticated Resolve reuse, with a stable scope for shared storage. */
 	resolverCache?: ResolverCacheOptions;
+	/** Observe one HTTP cache outcome without receiving request or assessment data. */
+	onResolverCacheResult?: (result: "hit" | "miss") => void | Promise<void>;
 	/** Choose eligible Trust Mark JWTs to evaluate and disclose for this Resolve request. */
 	resolveTrustMarkCandidates?: ResolveTrustMarkCandidates;
 	/** Bound the age of exact issuer status evidence used for Resolve disclosure. */
