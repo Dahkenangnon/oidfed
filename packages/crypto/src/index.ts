@@ -1,6 +1,7 @@
 /** Cryptographic contracts and portable JWS helpers; no backend is initialized here. */
 
 export * from "./compact.js";
+export { assertEcPublicPoint } from "./ec-public-key.js";
 export * from "./ecdsa.js";
 export * from "./encoding.js";
 export * from "./jwk.js";

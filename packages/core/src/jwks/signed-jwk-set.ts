@@ -16,7 +16,7 @@ import type { JWKSet } from "../schemas/jwk.js";
 import { assertPositiveTtlSeconds } from "../ttl.js";
 import { type BoundFederationOptions, type CryptoContext, entityId, nowSeconds } from "../types.js";
 import { prepareProtocolJwkSet } from "./public-material.js";
-import { validateJwkSetUseRequirement } from "./use-requirement.js";
+import { hasConsistentJwkUse, validateJwkSetUseRequirement } from "./use-requirement.js";
 
 export interface SignProtocolJwkSetOptions {
 	readonly issuer: string;
@@ -39,6 +39,8 @@ export async function signProtocolJwkSet(input: SignProtocolJwkSetOptions): Prom
 	const prepared = prepareProtocolJwkSet(input.jwks, options.algorithmRegistry);
 	if (!prepared.ok) throw new TypeError(prepared.error.description);
 	const { keys } = prepared.value;
+	if (!keys.every(hasConsistentJwkUse))
+		throw new TypeError("Protocol JWK use and key_ops must be consistent");
 	const use = validateJwkSetUseRequirement(keys, options.algorithmRegistry);
 	if (!use.ok) throw new TypeError(use.error.description);
 

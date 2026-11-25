@@ -1,4 +1,4 @@
-import { assertPublicJwk, DEFAULT_JWS_REGISTRY } from "@oidfed/crypto";
+import { assertEcPublicPoint, assertPublicJwk, DEFAULT_JWS_REGISTRY } from "@oidfed/crypto";
 /** Validation and preparation of public verification-key material. */
 
 import { FederationErrorCode } from "../constants.js";
@@ -48,7 +48,17 @@ export function prepareProtocolJwkSet(
 	value: unknown,
 	registry = DEFAULT_JWS_REGISTRY,
 ): Result<JWKSet, FederationError> {
-	return prepareKeySet(value, registry, MetadataJWKSetSchema);
+	const prepared = prepareKeySet(value, registry, MetadataJWKSetSchema);
+	if (!prepared.ok) return prepared;
+	for (const [index, key] of prepared.value.keys.entries()) {
+		if (key.kty !== "EC" || key.crv === undefined || !EC_LENGTHS.has(key.crv)) continue;
+		try {
+			assertEcPublicPoint(key);
+		} catch {
+			return invalid(`keys[${index}]`, "EC public point is outside its curve");
+		}
+	}
+	return prepared;
 }
 
 function prepareKeySet(

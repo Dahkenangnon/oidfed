@@ -62,6 +62,15 @@ const ENC_KEY_OPS: ReadonlySet<string> = new Set([
 	"deriveBits",
 ]);
 
+/** RFC 7517 §4.3 requires consistent uses when a producer supplies both members. */
+export function hasConsistentJwkUse(jwk: JWK): boolean {
+	return !jwk.key_ops?.some(
+		(op) =>
+			(jwk.use === "sig" && ENC_KEY_OPS.has(op)) ||
+			(jwk.use === "enc" && (op === "sign" || op === "verify")),
+	);
+}
+
 function isLikelySigning(jwk: JWK, registry: JwsAlgorithmRegistry): boolean {
 	if (jwk.use === "sig") return true;
 	if (jwk.use === "enc") return false;

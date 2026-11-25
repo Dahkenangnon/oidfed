@@ -106,6 +106,18 @@ export default function artifactSigningTests(qunit: QUnit): void {
 			assert.deepEqual(parsed.value, { iss: issuer, sub: issuer, keys: [key] });
 			assert.true(validateSignedJwkSetSpecHygiene(parsed.value).ok);
 			assert.false((await verifySignedJwkSet(minimal, { keys: [protocol.publicKey] }, verify)).ok);
+			const empty = await signProtocolJwkSet({ ...input, jwks: { keys: [] } });
+			const emptyResult = await verifySignedJwkSet(empty, signer.publishedJwks, verify);
+			assert.deepEqual(emptyResult.ok && emptyResult.value.keys, []);
+			const mixed = {
+				keys: [
+					{ ...key, use: "sig", key_ops: ["verify"] },
+					{ ...key, use: "enc", alg: "ECDH-ES", key_ops: ["deriveBits"] },
+				],
+			};
+			const signedMixed = await signProtocolJwkSet({ ...input, jwks: mixed });
+			const verifiedMixed = await verifySignedJwkSet(signedMixed, signer.publishedJwks, verify);
+			assert.deepEqual(verifiedMixed.ok && verifiedMixed.value.keys, mixed.keys);
 
 			const withDate = await signProtocolJwkSet({ ...input, issuedAt: 9_999 });
 			const dated = await verifySignedJwkSet(withDate, signer.publishedJwks, verify);
@@ -170,6 +182,21 @@ export default function artifactSigningTests(qunit: QUnit): void {
 				/expected.*octets|base64url/,
 			);
 			await assert.rejects(signProtocolJwkSet({ ...input, ttlSeconds: 0 }), /ttlSeconds/);
+			const zeroCoordinate = "A".repeat(43);
+			await assert.rejects(
+				signProtocolJwkSet({
+					...input,
+					jwks: { keys: [{ ...key.publicKey, x: zeroCoordinate, y: zeroCoordinate }] },
+				}),
+				/outside its curve/,
+			);
+			await assert.rejects(
+				signProtocolJwkSet({
+					...input,
+					jwks: { keys: [{ ...key.publicKey, use: "enc", key_ops: ["verify"] }] },
+				}),
+				/use and key_ops must be consistent/,
+			);
 			await assert.rejects(signProtocolJwkSet({ ...input, issuedAt: Infinity }), /iat/);
 			await assert.rejects(
 				signProtocolJwkSet({ ...input, issuedAt: Number.MAX_VALUE, ttlSeconds: Number.MAX_VALUE }),
