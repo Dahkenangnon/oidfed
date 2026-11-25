@@ -1,64 +1,66 @@
-import { bindFederationOptions, federationSigningOptions } from "../crypto-context.js";
-import { randomUuid } from "../crypto-runtime.js";
-import { federationEntry } from "../federation-keys.js";
-import {
-	ResolveAssessmentCacheValueSchema,
-	readResolveAssessment,
-} from "../storage/cache-records.js";
-import { getCacheStorage } from "../storage/capabilities.js";
-
 /** Signed Resolve assessments, cache reuse, and authenticated HTTP hosting. */
 
+import { runAsyncOperation } from "../async-operation.js";
+import { isObject } from "../callbacks.js";
 import {
 	DEFAULT_CACHE_TTL_SECONDS,
 	FederationErrorCode,
 	InternalErrorCode,
 	JwtTyp,
 	MediaType,
-	TrustMarkStatus,
 } from "../constants.js";
+import { bindFederationOptions, federationSigningOptions, registryFor } from "../crypto-context.js";
+import { randomUuid } from "../crypto-runtime.js";
 import {
 	authenticatedEndpointCaller,
 	createEndpointAuthenticatedHandler,
 	type EndpointAuthenticationConfig,
+	endpointCredentialParameterNames,
 } from "../endpoint-authentication.js";
+import { authorizeFederationEndpoint } from "../endpoint-authorization.js";
 import {
 	ENDPOINT_OPERATION_PARAMETERS,
+	endpointParameterValuesMatch,
 	RESOLVE_UNORDERED_PARAMETERS,
 } from "../endpoint-parameters.js";
 import type { FederationError } from "../errors.js";
+import { federationEntry, isSignerPublished } from "../federation-keys.js";
 import { errorResponse, jwtResponse, parseQueryParams, requireMethod } from "../http.js";
 import { signEntityStatement } from "../jose/sign.js";
 import { decodeEntityStatement } from "../jose/verify.js";
 import { safeLogger } from "../logging.js";
 import type { JWKSet } from "../schemas/jwk.js";
 import { MemoryCache } from "../storage/cache.js";
+import {
+	type ResolveAssessmentCacheValue,
+	ResolveAssessmentCacheValueSchema,
+	readResolveAssessment,
+} from "../storage/cache-records.js";
+import { getCacheStorage } from "../storage/capabilities.js";
 import { resolveTrustChainForAnchor } from "../trust-chain/peer.js";
 import { resolveTrustChains } from "../trust-chain/resolve.js";
 import { selectTrustChain } from "../trust-chain/selection.js";
 import { calculateChainExpiration, validateTrustChain } from "../trust-chain/validate.js";
-import {
-	type TrustMarkIssuerContext,
-	trustMarkIssuerContext,
-	validateTrustMarkWithIssuer,
-} from "../trust-marks/evidence.js";
-import { fetchTrustMarkStatus } from "../trust-marks/fetch.js";
 import type { TrustMarkStatusAssessment } from "../trust-marks/issuer.js";
-import type { CryptoContext } from "../types.js";
+import type { BoundFederationOptions, CryptoContext } from "../types.js";
 import {
 	type EntityId,
 	entityId,
 	type FederationOptions,
 	isValidEntityId,
 	nowSeconds,
-	type ParsedEntityStatement,
 	type TrustAnchorSet,
 	type TrustChain,
-	type TrustMarkEvaluation,
-	type TrustMarkEvidence,
 	type ValidatedTrustChain,
-	type ValidatedTrustMark,
 } from "../types.js";
+import {
+	hasCurrentLocalTrustMarks,
+	localTrustMarkRevision,
+	localTrustMarkRevisionMatches,
+	resolveAssessmentKey,
+	snapshotResolverCache,
+} from "./assessment-cache.js";
+import { resolveActiveTrustMarks } from "./mark-disclosure.js";
 
 export interface FederationResolverConfig {
 	readonly entityId: EntityId | string;
@@ -74,18 +76,33 @@ export interface FederationResolverConfig {
 export type FederationResolverIntegration = Omit<
 	FederationResolverConfig,
 	"entityId" | "crypto" | "options"
-> & { readonly options?: import("../types.js").BoundFederationOptions };
+> & { readonly options?: BoundFederationOptions };
 type ResolverContext = Omit<FederationResolverConfig, "entityId"> & { readonly entityId: EntityId };
+type ResolveMode = "http" | "local" | "prime";
+
+export interface PrimeAnonymousResolveInput {
+	readonly subject: string;
+	readonly trustAnchor: string | readonly string[];
+	readonly entityTypes?: readonly string[];
+	readonly signal?: AbortSignal;
+}
 
 /** Resolve hosting independent of subordinate storage and Authority endpoints. */
 export class FederationResolverService {
 	private readonly context: ResolverContext;
-	private readonly inner: (request: Request, local?: boolean) => Promise<Response>;
+	private readonly inner: (request: Request, mode?: ResolveMode) => Promise<Response>;
 	private readonly authenticated: (request: Request) => Promise<Response>;
+	private readonly fixedQuery: URLSearchParams;
 	/** Capture resolver dependencies and build the authenticated public endpoint handler. */
 	constructor(config: FederationResolverConfig, fixedQuery?: URLSearchParams) {
 		const id = entityId(config.entityId);
-		this.context = { ...config, entityId: id };
+		const resolverCache = snapshotResolverCache(config.options.resolverCache);
+		this.fixedQuery = new URLSearchParams(fixedQuery);
+		this.context = {
+			...config,
+			entityId: id,
+			options: resolverCache ? { ...config.options, resolverCache } : config.options,
+		};
 		this.inner = createResolveHandler(this.context);
 		this.authenticated = createEndpointAuthenticatedHandler(
 			{
@@ -98,9 +115,10 @@ export class FederationResolverService {
 			"GET",
 			RESOLVE_UNORDERED_PARAMETERS,
 			{
-				...(fixedQuery ? { fixedQuery } : {}),
+				fixedQuery: this.fixedQuery,
 				operationParameterNames: ENDPOINT_OPERATION_PARAMETERS.resolve,
 				endpointName: "Resolve endpoint",
+				endpoint: "resolve",
 			},
 		);
 	}
@@ -111,21 +129,69 @@ export class FederationResolverService {
 		return this.authenticated(request);
 	}
 	/** In-process callers may populate the cache without endpoint authentication. */
-	resolve(
-		request: Request,
-		options?: import("../types.js").BoundFederationOptions,
-	): Promise<Response> {
-		// Overrides get an isolated cache namespace, so a different policy cannot reuse prior assessments.
+	resolve(request: Request, options?: BoundFederationOptions): Promise<Response> {
+		// Trusted per-call overrides bypass the HTTP policy and the serving assessment cache.
 		return options
-			? createResolveHandler({
-					...this.context,
-					options: bindFederationOptions(
-						{ crypto: this.context.crypto, storage: this.context.options.storage },
-						this.context.options,
-						options,
-					),
-				})(request, true)
-			: this.inner(request, true);
+			? createResolveHandler(
+					{
+						...this.context,
+						options: bindFederationOptions(
+							{ crypto: this.context.crypto, storage: this.context.options.storage },
+							this.context.options,
+							options,
+						),
+					},
+					true,
+				)(request, "local")
+			: this.inner(request, "local");
+	}
+	/**
+	 * Evaluate a request as an anonymous caller would see it, then store that assessment.
+	 *
+	 * Anonymous HTTP requests never trigger discovery, so their answer must be prepared in
+	 * advance. This caller is trusted, but its privileges only decide that the resolution runs:
+	 * the assessment is evaluated under anonymous authorization and disclosure policy, so a
+	 * privileged view can never reach the public cache partition.
+	 *
+	 * @throws Error when a fixed selector conflicts, anonymous authorization denies the request,
+	 * the cache policy declines it, or the assessment cannot be stored.
+	 */
+	async primeAnonymousResolve(input: PrimeAnonymousResolveInput): Promise<void> {
+		const url = new URL(this.context.entityId);
+		url.searchParams.set("sub", input.subject);
+		const anchors = typeof input.trustAnchor === "string" ? [input.trustAnchor] : input.trustAnchor;
+		for (const anchor of anchors) url.searchParams.append("trust_anchor", anchor);
+		for (const type of input.entityTypes ?? this.fixedQuery.getAll("entity_type"))
+			url.searchParams.append("entity_type", type);
+		for (const name of ENDPOINT_OPERATION_PARAMETERS.resolve) {
+			if (
+				this.fixedQuery.has(name) &&
+				!endpointParameterValuesMatch(
+					name,
+					this.fixedQuery.getAll(name),
+					url.searchParams.getAll(name),
+					RESOLVE_UNORDERED_PARAMETERS,
+				)
+			)
+				throw primeError(
+					400,
+					"invalid_request",
+					"Request conflicts with the Resolve endpoint's fixed selectors",
+				);
+		}
+		const reply = await this.inner(
+			new Request(url, input.signal ? { signal: input.signal } : {}),
+			"prime",
+		);
+		if (reply.status === 200) return;
+		const details: unknown = await reply.json().catch(() => undefined);
+		throw primeError(
+			reply.status,
+			isObject(details) && typeof details.error === "string" ? details.error : undefined,
+			isObject(details) && typeof details.error_description === "string"
+				? details.error_description
+				: undefined,
+		);
 	}
 	/** For hosts which have already applied the shared authentication wrapper. */
 	handleAuthenticatedRequest(request: Request): Promise<Response> {
@@ -133,11 +199,11 @@ export class FederationResolverService {
 	}
 }
 
-type ResolveTrustMarkRef = { trust_mark_type: string; trust_mark: string };
-
-interface ActiveResolveTrustMark {
-	ref: ResolveTrustMarkRef;
-	mark: ValidatedTrustMark;
+/** Report the safe protocol details of an unsuccessful in-process prime. */
+function primeError(status: number, code?: string, description?: string): Error {
+	return new Error(
+		`Could not prime anonymous Resolve (HTTP ${status}${code ? ` ${code}` : ""})${description ? `: ${description}` : ""}`,
+	);
 }
 
 const metadataFailures = new Set<string>([
@@ -205,19 +271,57 @@ function discoveryFailure(errors: readonly FederationError[], incomplete: boolea
 	return errorResponse(500, FederationErrorCode.ServerError, "Trust chain discovery failed");
 }
 
-/** HTTP callers use the cache policy; local server calls may explicitly perform discovery. */
+/** Re-sign a stored assessment for this request without refreshing evidence over the network. */
+async function signCachedAssessment(
+	ctx: ResolverContext,
+	snapshot: ResolveAssessmentCacheValue,
+	subject: EntityId,
+	caller: string | undefined,
+): Promise<Response | undefined> {
+	const keySet = await federationEntry(ctx.crypto, {
+		artifact: "resolve-response",
+		issuer: ctx.entityId,
+		subject,
+	});
+	const issuedAt = nowSeconds(ctx.options.clock);
+	if (snapshot.reuseUntil <= issuedAt || ctx.options.signal?.aborted) return undefined;
+	// Stored assessments omit aud. The responder chain can describe an earlier signing key.
+	const jwt = await signEntityStatement(
+		{
+			...snapshot.payload,
+			iat: issuedAt,
+			...(caller === undefined ? {} : { aud: caller }),
+		},
+		keySet,
+		{
+			...federationSigningOptions(ctx.options, "resolve-response"),
+			typ: JwtTyp.ResolveResponse,
+		},
+	);
+	if (
+		snapshot.localTrustMarkRevision !== undefined &&
+		!(await localTrustMarkRevisionMatches(snapshot.localTrustMarkRevision, ctx.options))
+	)
+		return undefined;
+	if (snapshot.reuseUntil <= nowSeconds(ctx.options.clock) || ctx.options.signal?.aborted)
+		return undefined;
+	return jwtResponse(jwt, MediaType.ResolveResponse);
+}
+
+/** HTTP callers use the cache policy; trusted local callers can evaluate the public partition. */
 function createResolveHandler(
 	ctx: ResolverContext,
-): (request: Request, local?: boolean) => Promise<Response> {
-	const cache =
-		getCacheStorage(ctx.options.storage) ??
-		new MemoryCache({
-			maxEntries: 1000,
-			...(ctx.options?.clock ? { clock: ctx.options.clock } : {}),
-		});
-	// Instance isolation prevents reuse across different authority policies and restarts.
+	isolated = false,
+): (request: Request, mode?: ResolveMode) => Promise<Response> {
+	const cache = isolated
+		? undefined
+		: (getCacheStorage(ctx.options.storage) ??
+			new MemoryCache({
+				maxEntries: 1000,
+				...(ctx.options.clock ? { clock: ctx.options.clock } : {}),
+			}));
 	let namespace: Promise<string> | undefined;
-	return async (request: Request, local = false) => {
+	return async (request, mode = "http") => {
 		const methodError = requireMethod(request, "GET");
 		if (methodError) return methodError;
 
@@ -225,131 +329,127 @@ function createResolveHandler(
 		const sub = params.get("sub");
 		const trustAnchorParam = params.getAll("trust_anchor");
 		const entityTypeParam = params.getAll("entity_type");
-
-		if (!sub || !isValidEntityId(sub)) {
+		if (!sub || !isValidEntityId(sub))
 			return errorResponse(
 				400,
 				FederationErrorCode.InvalidRequest,
 				"Missing or invalid 'sub' parameter",
 			);
-		}
-
-		if (trustAnchorParam.length === 0) {
+		if (trustAnchorParam.length === 0)
 			return errorResponse(
 				400,
 				FederationErrorCode.InvalidRequest,
 				"Missing 'trust_anchor' parameter",
 			);
-		}
-
-		// Authentication evidence belongs to the verified Request instance.
-		const rawEntity = authenticatedEndpointCaller(request);
-		const isAuthenticated = Boolean(rawEntity);
-
-		if (!ctx.trustAnchors) {
+		if (!ctx.trustAnchors)
 			return errorResponse(
 				404,
 				FederationErrorCode.InvalidTrustAnchor,
 				"No trust anchors configured",
 			);
-		}
-
-		const usableTrustAnchors: EntityId[] = [];
-		for (const ta of trustAnchorParam) {
-			if (!isValidEntityId(ta)) {
+		const requestedAnchors = new Map<EntityId, Readonly<{ jwks: JWKSet }>>();
+		for (const candidate of trustAnchorParam) {
+			if (!isValidEntityId(candidate))
 				return errorResponse(404, FederationErrorCode.InvalidTrustAnchor, "Unknown trust anchor");
-			}
-			if (ctx.trustAnchors.has(ta as EntityId)) {
-				usableTrustAnchors.push(ta as EntityId);
-			}
+			const approved = ctx.trustAnchors.get(candidate);
+			if (approved) requestedAnchors.set(candidate, approved);
 		}
-		if (usableTrustAnchors.length === 0) {
+		if (!requestedAnchors.size)
 			return errorResponse(404, FederationErrorCode.InvalidTrustAnchor, "Unknown trust anchor");
-		}
 
-		const nowForCache = nowSeconds(ctx.options?.clock);
-		namespace ??= randomUuid(ctx.crypto.engine);
-		const cacheKey =
-			"resolve:" +
-			(await namespace) +
-			JSON.stringify([
-				ctx.entityId,
-				sub,
-				usableTrustAnchors.map((id) => [id, ctx.trustAnchors?.get(id)?.jwks]),
-				entityTypeParam,
-			]);
-		if (!local && !isAuthenticated && ctx.requireAuthForFreshResolution !== false) {
-			try {
+		// Only identity from the authentication wrapper can enter a private partition.
+		const rawEntity = mode === "http" ? authenticatedEndpointCaller(request) : undefined;
+		const requiresCache =
+			mode === "http" && rawEntity === undefined && ctx.requireAuthForFreshResolution !== false;
+		const signal = ctx.options.signal
+			? AbortSignal.any([request.signal, ctx.options.signal])
+			: request.signal;
+		const requestOptions = { ...ctx.options, signal };
+
+		let canStore = cache !== undefined;
+		if (mode !== "http" && canStore) {
+			const publicParameters = new URLSearchParams(params);
+			for (const name of endpointCredentialParameterNames(ctx.authentication?.extensions))
+				publicParameters.delete(name);
+			const denied = await authorizeFederationEndpoint(
+				requestOptions,
+				{
+					endpoint: "resolve",
+					receiverEntityId: ctx.entityId,
+					caller: undefined,
+				},
+				publicParameters,
+				signal,
+			);
+			if (denied && mode === "prime") return denied;
+			canStore = denied === undefined;
+		}
+		let cacheKey: string | undefined;
+		try {
+			if (canStore && (rawEntity === undefined || ctx.options.resolverCache)) {
+				namespace ??= ctx.options.resolverCache
+					? Promise.resolve("")
+					: randomUuid(ctx.crypto.engine);
+				cacheKey = await resolveAssessmentKey(
+					requestOptions,
+					await namespace,
+					ctx.entityId,
+					rawEntity,
+					sub,
+					requestedAnchors,
+					entityTypeParam,
+				);
+			}
+			if (cache && cacheKey && mode === "http" && (requiresCache || ctx.options.resolverCache)) {
+				const key = cacheKey;
 				const cached = readResolveAssessment(
-					await cache.get<unknown>(cacheKey),
+					await runAsyncOperation(() => cache.get<unknown>(key), requestOptions),
 					ctx.entityId,
 					sub,
-					usableTrustAnchors,
-					nowForCache,
+					[...requestedAnchors.keys()],
+					nowSeconds(ctx.options.clock),
 					ctx.options.maxCompactBytes,
 				);
-				if (!cached) {
-					return errorResponse(
-						404,
-						FederationErrorCode.NotFound,
-						"No cached resolution available; fresh resolution requires authentication",
+				if (
+					cached &&
+					(await hasCurrentLocalTrustMarks(
+						cached,
+						requestOptions,
+						ctx.assessLocalTrustMarkStatus !== undefined,
+					))
+				) {
+					const reply = await signCachedAssessment(
+						{ ...ctx, options: requestOptions },
+						cached,
+						sub,
+						rawEntity,
 					);
+					if (reply) return reply;
 				}
-				const snapshot = cached;
-				// §8.3.2 binds aud to this request. Stored assessments never carry a recipient.
-				delete snapshot.payload.aud;
-				// The optional issuer chain may describe a previous signing key. Cache hits
-				// omit it rather than performing discovery to refresh that header (§8.3.2).
-				delete snapshot.headers.trust_chain;
-				const keySet = await federationEntry(ctx.crypto, {
-					artifact: "resolve-response",
-					issuer: ctx.entityId,
-					subject: sub,
-				});
-				// Cache and key-provider reads may be asynchronous; recheck the fixed deadline.
-				const issuedAt = nowSeconds(ctx.options?.clock);
-				if (snapshot.reuseUntil <= issuedAt)
-					return errorResponse(404, FederationErrorCode.NotFound, "Cached resolution has expired");
-				// §8.3.2 derives exp from the subject's chain and included Trust Marks.
-				// The local reuse deadline controls cache access; preserve the assessed exp.
-				const jwt = await signEntityStatement({ ...snapshot.payload, iat: issuedAt }, keySet, {
-					...federationSigningOptions(ctx.options, "resolve-response"),
-					typ: JwtTyp.ResolveResponse,
-					extraHeaders: snapshot.headers,
-				});
-				if (snapshot.reuseUntil <= nowSeconds(ctx.options?.clock))
-					return errorResponse(
-						404,
-						FederationErrorCode.NotFound,
-						"Cached resolution expired during signing",
-					);
-				return jwtResponse(jwt, MediaType.ResolveResponse);
-			} catch {
-				safeLogger(ctx.options?.logger)?.error("Failed to read cached resolution");
-				return errorResponse(
-					500,
-					FederationErrorCode.ServerError,
-					"Failed to read cached resolution",
-				);
 			}
+		} catch {
+			safeLogger(ctx.options.logger)?.error("Failed to reuse Resolve assessment");
+			return errorResponse(
+				500,
+				FederationErrorCode.ServerError,
+				"Failed to reuse Resolve assessment",
+			);
 		}
 
-		try {
-			const requestedAnchors: Map<EntityId, Readonly<{ jwks: JWKSet }>> = new Map();
-			for (const ta of usableTrustAnchors) {
-				const anchorData = ctx.trustAnchors.get(ta);
-				if (anchorData) {
-					requestedAnchors.set(ta, anchorData);
-				}
-			}
+		if (mode === "prime" && !cacheKey)
+			return errorResponse(
+				404,
+				FederationErrorCode.NotFound,
+				"Resolve cache policy declined this request",
+			);
+		if (requiresCache)
+			return errorResponse(404, FederationErrorCode.NotFound, "No eligible cached resolution");
 
+		try {
 			// All candidate attempts and their evidence checks share one network budget.
 			let remainingFetches = ctx.options?.maxTotalFetches ?? 50;
 			let budgetExhausted = false;
 			const transport = ctx.options?.httpClient ?? fetch;
-			const signal = ctx.options?.signal
-				? AbortSignal.any([request.signal, ctx.options.signal])
-				: request.signal;
 			const options: FederationOptions = {
 				...ctx.options,
 				trustResolution: { kind: "bottom-up" },
@@ -365,7 +465,7 @@ function createResolveHandler(
 				},
 			};
 			const operationContext = { ...ctx, options };
-			const result = await resolveTrustChains(sub as EntityId, requestedAnchors, options);
+			const result = await resolveTrustChains(sub, requestedAnchors, options);
 			if (!result.chains.length)
 				return discoveryFailure(
 					result.errors,
@@ -440,12 +540,29 @@ function createResolveHandler(
 				subject: sub,
 			});
 			const now = nowSeconds(ctx.options?.clock);
+			const assessLocally = ctx.assessLocalTrustMarkStatus;
+			let revision: Promise<string | undefined> | undefined;
 			const activeTrustMarks = await resolveActiveTrustMarks(
-				operationContext,
-				validated.statements,
-				validated.trustMarkEvaluations,
+				assessLocally
+					? {
+							...operationContext,
+							async assessLocalTrustMarkStatus(jwt) {
+								// Begin the freshness check only when a verified local mark needs status.
+								revision ??= localTrustMarkRevision(options);
+								await revision;
+								return assessLocally(jwt);
+							},
+						}
+					: operationContext,
+				validated,
+				rawEntity,
 				now,
 			);
+			if (budgetExhausted || signal.aborted) return discoveryFailure([], true);
+			const hasLocalMarks = Boolean(
+				assessLocally && activeTrustMarks.some(({ mark }) => mark.issuer === ctx.entityId),
+			);
+			const assessmentRevision = hasLocalMarks ? await revision : undefined;
 
 			// Exp is capped to the earliest expiry across the chain and trust marks
 			let resolveExp = calculateChainExpiration(validated.statements);
@@ -488,7 +605,19 @@ function createResolveHandler(
 						requestedAnchors,
 						options,
 					);
-					if (issuerResult.ok) extraHeaders.trust_chain = [...issuerResult.value];
+					if (issuerResult.ok) {
+						const configuration = issuerResult.value[0];
+						const decoded = configuration
+							? decodeEntityStatement(configuration, options)
+							: undefined;
+						// The validated responder chain may still publish a key from before rollover.
+						if (
+							decoded?.ok &&
+							decoded.value.payload.jwks &&
+							isSignerPublished(keySet, decoded.value.payload.jwks.keys, registryFor(ctx.crypto))
+						)
+							extraHeaders.trust_chain = [...issuerResult.value];
+					}
 				} catch {
 					/* Omit the optional trust_chain header when the responder's chain cannot be resolved. */
 				}
@@ -526,13 +655,6 @@ function createResolveHandler(
 				evidenceDeadline,
 				now + (ctx.options?.cacheMaxTtlSeconds ?? DEFAULT_CACHE_TTL_SECONDS),
 			);
-			for (const { mark } of activeTrustMarks) {
-				// Delegation validation is part of Trust Mark validity (§7.3).
-				if (mark.verificationExpiresAt !== undefined)
-					cacheExpiry = Math.min(cacheExpiry, mark.verificationExpiresAt);
-				if (mark.delegation?.expiresAt !== undefined)
-					cacheExpiry = Math.min(cacheExpiry, mark.delegation.expiresAt);
-			}
 			if (Array.isArray(extraHeaders.trust_chain)) {
 				const statements: readonly unknown[] = extraHeaders.trust_chain;
 				for (const statement of statements) {
@@ -542,7 +664,23 @@ function createResolveHandler(
 						cacheExpiry = Math.min(cacheExpiry, decoded.value.payload.exp);
 				}
 			}
-			if (Number.isFinite(cacheExpiry) && cacheExpiry > nowSeconds(ctx.options?.clock)) {
+			let stored = false;
+			if (
+				cache &&
+				cacheKey &&
+				(!hasLocalMarks || assessmentRevision !== undefined) &&
+				Number.isFinite(cacheExpiry) &&
+				cacheExpiry > nowSeconds(ctx.options?.clock)
+			) {
+				if (
+					assessmentRevision !== undefined &&
+					!(await localTrustMarkRevisionMatches(assessmentRevision, options))
+				)
+					return errorResponse(
+						503,
+						FederationErrorCode.TemporarilyUnavailable,
+						"Local Trust Mark evidence changed during resolution",
+					);
 				const cachedPayload = { ...payload };
 				delete cachedPayload.aud;
 				try {
@@ -551,18 +689,27 @@ function createResolveHandler(
 						ResolveAssessmentCacheValueSchema.parse({
 							trustAnchor: validated.trustAnchorId,
 							payload: cachedPayload,
-							headers: extraHeaders,
+							// Retain the cache record shape. Re-signed replies omit the responder chain.
+							headers: {},
 							reuseUntil: cacheExpiry,
+							...(assessmentRevision !== undefined
+								? { localTrustMarkRevision: assessmentRevision }
+								: {}),
 						}),
 						cacheExpiry - nowSeconds(ctx.options?.clock),
 					);
+					stored = true;
 				} catch {
 					safeLogger(ctx.options?.logger)?.debug("Could not cache successful resolution");
 				}
 			}
 
 			// Cache storage is asynchronous, even when it eventually rejects the write.
+			const markEvidenceChanged =
+				assessmentRevision !== undefined &&
+				!(await localTrustMarkRevisionMatches(assessmentRevision, options));
 			if (
+				markEvidenceChanged ||
 				signal.aborted ||
 				Math.min(resolveExp, evidenceDeadline) <= nowSeconds(ctx.options?.clock)
 			)
@@ -572,133 +719,16 @@ function createResolveHandler(
 					"Resolution evidence expired or the operation was cancelled before delivery",
 				);
 
+			if (mode === "prime" && !stored)
+				return errorResponse(
+					503,
+					FederationErrorCode.TemporarilyUnavailable,
+					"Could not store public resolution",
+				);
 			return jwtResponse(jwt, MediaType.ResolveResponse);
 		} catch {
 			safeLogger(ctx.options?.logger)?.error("Failed to resolve entity");
 			return errorResponse(500, "server_error", "Failed to resolve entity");
 		}
 	};
-}
-
-async function resolveActiveTrustMarks(
-	ctx: ResolverContext,
-	statements: ReadonlyArray<ParsedEntityStatement>,
-	evaluations: ReadonlyArray<TrustMarkEvaluation>,
-	now: number,
-): Promise<ActiveResolveTrustMark[]> {
-	if (evaluations.length === 0) return [];
-	const leafStatement = statements[0];
-	const leafTrustMarks = leafStatement
-		? ((leafStatement.payload as Record<string, unknown>).trust_marks as
-				| ResolveTrustMarkRef[]
-				| undefined)
-		: undefined;
-	if (!leafTrustMarks || leafTrustMarks.length === 0) return [];
-
-	const active: ActiveResolveTrustMark[] = [];
-	for (const evaluation of evaluations) {
-		if (evaluation.status !== "verified") continue;
-		const ref = leafTrustMarks[evaluation.referenceIndex];
-		if (!ref || ref.trust_mark_type !== evaluation.trustMarkType) continue;
-		const mark = evaluation.mark;
-
-		const assessed = await activeTrustMarkForResolve(ctx, statements, ref, mark, now);
-		if (assessed) active.push({ ref, mark: assessed });
-	}
-	return active;
-}
-
-async function activeTrustMarkForResolve(
-	ctx: ResolverContext,
-	statements: ReadonlyArray<ParsedEntityStatement>,
-	ref: ResolveTrustMarkRef,
-	mark: ValidatedTrustMark,
-	now: number,
-): Promise<ValidatedTrustMark | undefined> {
-	try {
-		// Resolve vouches for the selected anchor's policy, not a caller's unrelated accreditation.
-		const root = statements.at(-1)?.payload;
-		const issuers = root?.iss === root?.sub ? root?.trust_mark_issuers : undefined;
-		if (!issuers || !Object.hasOwn(issuers, ref.trust_mark_type)) return undefined;
-		const allowed = issuers[ref.trust_mark_type];
-		if (
-			!Array.isArray(allowed) ||
-			(allowed.length && !allowed.some((issuer) => issuer === mark.issuer))
-		)
-			return undefined;
-		let context: TrustMarkIssuerContext | undefined = mark.issuerEvidence;
-		if (!context) {
-			const issuer = statements.find(
-				(statement) =>
-					statement.payload.iss === mark.issuer && statement.payload.sub === mark.issuer,
-			)?.payload;
-			if (!issuer?.jwks) return undefined;
-			context = {
-				kind: "out-of-band",
-				issuer: mark.issuer,
-				allowedTrustMarkTypes: [ref.trust_mark_type],
-				keys: issuer.jwks,
-				...(issuer.metadata?.federation_entity
-					? { metadata: issuer.metadata.federation_entity }
-					: {}),
-			};
-		}
-		const trusted = trustMarkIssuerContext(context, ref.trust_mark_type, ctx.options);
-		if (!trusted.ok) return undefined;
-		// The original context has already authenticated the issuer. Apply the resolver's anchor policy independently.
-		const selected: TrustMarkIssuerContext = {
-			kind: "out-of-band",
-			issuer: trusted.value.issuer,
-			keys: trusted.value.keys,
-			allowedTrustMarkTypes: [ref.trust_mark_type],
-			trustMarkOwners: root?.trust_mark_owners ?? {},
-			...(trusted.value.metadata ? { metadata: trusted.value.metadata } : {}),
-		};
-		const history = ctx.options?.trustMarkVerification?.historicalKeys;
-		const historyResponse = (mark as Partial<TrustMarkEvidence>).verificationKey?.responseJwt;
-		const checked = await validateTrustMarkWithIssuer(ref.trust_mark, selected, {
-			...ctx.options,
-			expectedSubject: mark.subject,
-			expectedTrustMarkType: ref.trust_mark_type,
-			...(history
-				? {
-						historicalKeys: {
-							...history,
-							...(historyResponse
-								? { mode: "supplied-only" as const, responses: [historyResponse] }
-								: {}),
-						},
-					}
-				: {}),
-		});
-		if (!checked.ok) return undefined;
-		let statusDeadline = Infinity;
-		if (mark.issuer === ctx.entityId && ctx.assessLocalTrustMarkStatus) {
-			const assessment = await ctx.assessLocalTrustMarkStatus(ref.trust_mark);
-			if (assessment?.payload.status !== TrustMarkStatus.Active) return undefined;
-			statusDeadline = assessment.verificationExpiresAt ?? Infinity;
-		} else {
-			const status = await fetchTrustMarkStatus({
-				...ctx.options,
-				jwt: ref.trust_mark,
-				issuerEvidence: context,
-				expectedSubject: mark.subject,
-				expectedTrustMarkType: ref.trust_mark_type,
-			});
-			if (!status.ok || status.value.status !== TrustMarkStatus.Active) return undefined;
-			statusDeadline = status.value.verificationExpiresAt ?? Infinity;
-		}
-		const deadline = Math.min(
-			mark.verificationExpiresAt ?? Infinity,
-			checked.value.verificationExpiresAt ?? Infinity,
-			trusted.value.expiresAt ?? Infinity,
-			statusDeadline,
-		);
-		if (deadline <= Math.max(now, nowSeconds(ctx.options?.clock)) || ctx.options?.signal?.aborted)
-			return undefined;
-		return { ...mark, ...(Number.isFinite(deadline) ? { verificationExpiresAt: deadline } : {}) };
-	} catch {
-		safeLogger(ctx.options?.logger)?.debug("Failed to verify trust mark status for resolution");
-		return undefined;
-	}
 }

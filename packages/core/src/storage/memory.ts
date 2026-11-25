@@ -77,6 +77,7 @@ function trustMarkRepository(
 		hasAny: records.hasAny.bind(records),
 		issue: records.issue.bind(records),
 		revoke: records.revoke.bind(records),
+		revokeExact: records.revokeExact.bind(records),
 		revision: async () => read().trustMarkRevision.toString(),
 	};
 }
@@ -139,13 +140,18 @@ export class MemoryFederationStorage implements FederationStorage {
 				};
 			}
 			if (has("trustMark:read")) {
-				const { issue, revoke, ...queries } = trustMarkRepository(read, mutate, options);
+				const { issue, revoke, revokeExact, ...queries } = trustMarkRepository(
+					read,
+					mutate,
+					options,
+				);
 				view.trustMark = {
 					...queries,
 					...(writable && has("trustMark:write")
 						? {
 								issue,
 								revoke,
+								...(revokeExact ? { revokeExact } : {}),
 								...(transaction
 									? {
 											checkRevision: async (expected: string) =>

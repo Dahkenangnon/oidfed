@@ -244,6 +244,7 @@ export async function runScoped<T, V extends ReadSnapshotView | TransactionView>
 			if (repository === "trustMark") {
 				assertRevisionGuard(view, scope);
 				names.push("checkRevision");
+				if (typeof Reflect.get(target, "revokeExact") === "function") names.push("revokeExact");
 			}
 		}
 		result[repository] = Object.freeze(

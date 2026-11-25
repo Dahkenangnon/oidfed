@@ -13,6 +13,7 @@ export const ResolveAssessmentCacheValueSchema = z
 		payload: ResolveResponsePayloadSchema,
 		headers: z.strictObject({ trust_chain: z.array(StatementCacheValueSchema).min(1).optional() }),
 		reuseUntil: z.number().finite(),
+		localTrustMarkRevision: z.string().min(1).optional(),
 	})
 	.refine(
 		({ payload, reuseUntil }) =>

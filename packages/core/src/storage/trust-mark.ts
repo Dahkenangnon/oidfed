@@ -1,8 +1,8 @@
-import type { z } from "zod";
-import type { TrustMarkRecordSchema } from "./record-schemas.js";
 /** Trust Mark persistence and transactional store contracts. */
 
+import type { z } from "zod";
 import type { EntityId } from "../types.js";
+import type { TrustMarkRecordSchema } from "./record-schemas.js";
 
 export interface TrustMarkListOptions {
 	readonly subject?: EntityId;
@@ -58,6 +58,8 @@ export interface TrustMarkStore extends TrustMarkReadStore {
 		revokedAt: number,
 		issuer?: string,
 	): Promise<void>;
+	/** Withdraw precisely this issuer's JWT. Repeating a withdrawal is a no-op. */
+	revokeExact?(jwt: string, revokedAt: number, issuer: string): Promise<void>;
 }
 
 /** Writable Trust Mark repository bound to one serializable transaction. */

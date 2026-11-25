@@ -132,6 +132,11 @@ export {
 	validateEndpointAuthentication,
 } from "./endpoint-authentication.js";
 export type {
+	EndpointAuthorizationInput,
+	EndpointAuthorizationPolicy,
+	FederationEndpointOperation,
+} from "./endpoint-authorization.js";
+export type {
 	CustomEndpointClientAuthentication,
 	EndpointAdditionalParameters,
 	EndpointAuthenticationContext,
@@ -273,10 +278,17 @@ export {
 } from "./metadata-policy/index.js";
 export { operators } from "./metadata-policy/operators.js";
 export { findInvalidMetadataNullPaths } from "./metadata-values.js";
+export type { ResolveCacheScopeInput, ResolverCacheOptions } from "./resolver/assessment-cache.js";
+export type {
+	ResolveTrustMarkCandidateInput,
+	ResolveTrustMarkCandidates,
+	ResolveTrustMarkStatusMaxAge,
+} from "./resolver/mark-disclosure.js";
 export {
 	type FederationResolverConfig,
 	type FederationResolverIntegration,
 	FederationResolverService,
+	type PrimeAnonymousResolveInput,
 } from "./resolver/service.js";
 export {
 	composeEntityMetadata,
@@ -491,6 +503,7 @@ export {
 	validateTrustMarkLogo,
 } from "./trust-marks/index.js";
 export {
+	type TrustMarkExactWithdrawalOptions,
 	type TrustMarkIssuanceOptions,
 	type TrustMarkIssuerConfig,
 	TrustMarkIssuerService,

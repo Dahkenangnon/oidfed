@@ -77,6 +77,20 @@ export function bindFederationOptions(
 		engine: crypto.engine,
 		algorithmRegistry: registryFor(crypto),
 	};
+	const endpointPolicies = policies.flatMap((policy) =>
+		policy?.authorizeEndpointRequest === undefined ? [] : [policy.authorizeEndpointRequest],
+	);
+	if (endpointPolicies[0]) result.authorizeEndpointRequest = endpointPolicies[0];
+	if (endpointPolicies.length > 1)
+		result.authorizeEndpointRequest = async (input) => {
+			for (const policy of endpointPolicies) {
+				if (input.signal.aborted) throw new DOMException("Operation cancelled", "AbortError");
+				const decision = await policy(input);
+				// Let the handler distinguish a denial from an invalid result at runtime.
+				if (decision !== true) return decision;
+			}
+			return true;
+		};
 	Object.defineProperty(result, "storage", { value: storage, enumerable: true });
 	const lists = policies.flatMap((policy) =>
 		policy?.allowedAlgorithms === undefined ? [] : [policy.allowedAlgorithms],

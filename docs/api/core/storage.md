@@ -69,6 +69,12 @@ Use the record's optional `extensions` object for private JSON data. Put protoco
 
 Reject malformed durable records. Core treats malformed cache values as misses under the operation’s fetch policy. Resolve checks the request identity, configured anchor, and evidence reuse deadline after parsing the cache value. Restrict write access to the resolver's cache.
 
+An issuer can call `revokeTrustMarkExact(jwt, { revokedAt })` to withdraw one stored instance and leave any replacement active. Omit `revokedAt` to use the issuer's clock. An unknown JWT and a JWT issued by someone else both report not found. Repeating a withdrawal preserves the first timestamp and revision. Issuer status continues to report expired marks as expired.
+
+The optional `TrustMarkStore.revokeExact(jwt, revokedAt, issuer)` method is available in the memory and PostgreSQL adapters. Provide it in writable transaction views if your adapter supports exact withdrawal. Indexes may use a digest for lookup and must compare the full JWT and issuer before writing. Advance the Trust Mark revision only when the active record changes. Keep withdrawal methods out of read snapshots. An adapter without exact withdrawal reports an unsupported operation when the issuer calls it. The existing type-and-subject method is available for bulk withdrawal.
+
+Resolve rechecks the exact local Trust Mark records and their revision in one read snapshot before signing a cached assessment, then checks the revision again before returning it. Use the same authoritative issuer store for all replicas that share a Resolve cache. If you restore an older issuer database, reconcile withdrawals and rotate the Resolve cache policy revision before serving again.
+
 ## Scoped repositories
 
 `ReadSnapshotView` exposes read methods on the declared subordinate, Trust Mark, and event repositories. `TransactionView` adds mutations declared by the parent. It uses `TrustMarkTransactionStore` for Trust Mark writes. The repository's `checkRevision(expected)` runs under the same serialization boundary as `issue` and `revoke`.

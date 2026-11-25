@@ -8,6 +8,7 @@ import {
 	bumpVersion,
 	createReleasePlan,
 	dispatchPublication,
+	generateBody,
 	main,
 	parseSubject,
 	prepareReleasePlan,
@@ -103,6 +104,36 @@ test("version bumps and conventional subjects follow supported syntax", () => {
 test("release notes preserve literal replacement tokens from commit subjects", () => {
 	const body = "Keep $& and $` and $' and $$ literal.";
 	assert.ok(stampChangelogText("## [Unreleased]\n", "2.0.1", body, "2026-11-17").includes(body));
+});
+
+test("generated notes list each breaking commit once and keep ordinary package notes", () => {
+	const descriptions = [
+		"fix(core)!: require authenticated form selectors",
+		"feat(core): add scoped cache reuse",
+		"docs(core): clarify the cache guide",
+		"fix(core): preserve optional headers",
+	];
+	const notes = generateBody("core/v2.0.0", "packages/core", {
+		execute(command, args) {
+			assert.equal(command, "git");
+			assert.deepEqual(args, [
+				"log",
+				"--no-merges",
+				"--pretty=format:%H%x09%s",
+				"core/v2.0.0..HEAD",
+				"--",
+				"packages/core",
+			]);
+			return descriptions
+				.map((subject, index) => `${String(index).repeat(40)}\t${subject}`)
+				.join("\n");
+		},
+	});
+	assert.match(notes, /^### Breaking Changes\n\n\* require authenticated form selectors /);
+	assert.equal(notes.match(/require authenticated form selectors/g)?.length, 1);
+	assert.match(notes, /### Features\n\n\* add scoped cache reuse /);
+	assert.match(notes, /### Bug Fixes\n\n\* preserve optional headers /);
+	assert.doesNotMatch(notes, /clarify the cache guide/);
 });
 
 function executor({

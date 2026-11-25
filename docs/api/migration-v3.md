@@ -51,6 +51,8 @@ Review limits for compact token size and verification candidates where the app s
 
 When a managed Federation endpoint offers `private_key_jwt`, make sure it can verify every algorithm in `endpoint_auth_signing_alg_values_supported`. The declaration is optional. The engine, Federation algorithm policy, client-assertion policy, and endpoint restrictions all apply. [Endpoint authentication](../features/7.5.endpoint-authentication.md)
 
+Replace any authenticated cache warming for public Resolve with `primeAnonymousResolve({ subject, trustAnchor })`. The resolver now evaluates that assessment under the anonymous caller's policy. Configure `resolverCache` and shared cache storage when authenticated assessments need to survive a restart. [Resolve hosting](../features/7.3.resolve-endpoint.md)
+
 ### Publish and retire keys deliberately
 
 Replace automatic retirement with a host schedule. Publish the next key, allow for propagation, activate it, then call `keyring.retire()` after your overlap window. Supply `crypto.history`, for example with `historicalKeysFromKeyring(keyring)`, when serving Historical Keys. [Key rollover](../features/9.5.key-rollover.md)

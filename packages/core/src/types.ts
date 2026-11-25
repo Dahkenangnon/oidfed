@@ -1,15 +1,34 @@
 /** Shared federation identifiers, trust evidence, options, and extension contracts. */
 
-import type { CryptoEngine, FederationArtifact, Keyring } from "@oidfed/crypto";
+import type {
+	CryptoEngine,
+	FederationArtifact,
+	JwsAlgorithmRegistry,
+	KeyPurpose,
+	Keyring,
+	KeyringEntry,
+} from "@oidfed/crypto";
 import type { InternalErrorCode } from "./constants.js";
+import type { EndpointAuthorizationPolicy } from "./endpoint-authorization.js";
 import type {
 	EndpointAdditionalParameters,
 	EndpointAuthenticationProvider,
 	EndpointClientAuthentication,
 } from "./endpoint-client.js";
 import type { FederationError, Result } from "./errors.js";
+import type { FederationKeyHistorySource } from "./federation-keys.js";
+import type { ResolverCacheOptions } from "./resolver/assessment-cache.js";
+import type {
+	ResolveTrustMarkCandidates,
+	ResolveTrustMarkStatusMaxAge,
+} from "./resolver/mark-disclosure.js";
 import type { DecodedFederationJwtPayload, JWKSet } from "./schemas/index.js";
-import type { TrustMarkVerificationOptions } from "./trust-marks/evidence.js";
+import type { FederationStorage } from "./storage/contracts.js";
+import type { TrustResolutionSource } from "./trust-chain/assessment.js";
+import type {
+	TrustMarkIssuerContext,
+	TrustMarkVerificationOptions,
+} from "./trust-marks/evidence.js";
 import type { TrustMarkProfile } from "./trust-marks/profiles.js";
 
 export type { DecodedFederationJwtPayload } from "./schemas/index.js";
@@ -99,13 +118,13 @@ export interface CryptoContext {
 	/** Atomic public-key snapshots and stable private signing bindings. */
 	readonly keyring: Keyring;
 	/** Immutable public key and algorithm definitions for this host and its roles. */
-	readonly algorithmRegistry?: import("@oidfed/crypto").JwsAlgorithmRegistry | undefined;
+	readonly algorithmRegistry?: JwsAlgorithmRegistry | undefined;
 	/** Local purpose for Federation Entity Keys. Defaults to federation. */
-	readonly federationPurpose?: import("@oidfed/crypto").KeyPurpose;
+	readonly federationPurpose?: KeyPurpose;
 	/** Trusted Federation JWKS from the issuer's current publication, when managed separately. */
 	readonly readPublishedFederationJwks?: (issuer: EntityId) => JWKSet | Promise<JWKSet>;
 	/** Required when historical-key features are configured. */
-	readonly history?: import("./federation-keys.js").FederationKeyHistorySource;
+	readonly history?: FederationKeyHistorySource;
 }
 /** Per-operation policy on a host whose engine is already bound. */
 export type BoundFederationOptions<Options extends FederationOptions = FederationOptions> = Omit<
@@ -117,7 +136,7 @@ export interface FederationOptions {
 	/** Explicit cryptographic backend. No global backend is selected by the library. */
 	readonly engine: CryptoEngine;
 	/** Definitions used by standalone operations; bound hosts supply their own registry. */
-	readonly algorithmRegistry?: import("@oidfed/crypto").JwsAlgorithmRegistry | undefined;
+	readonly algorithmRegistry?: JwsAlgorithmRegistry | undefined;
 	/** Algorithms permitted for signing and verification with Federation Entity Keys. */
 	readonly allowedFederationAlgorithms?: readonly string[] | undefined;
 	/** Further restrict the Federation allowlist for the given operation. An empty list denies it. */
@@ -131,7 +150,7 @@ export interface FederationOptions {
 	/** Maximum encoded compact JWT bytes. Defaults to the crypto package limit. */
 	readonly maxCompactBytes?: number | undefined;
 	/** How to acquire evidence. Protocol consumers validate the returned subject chain. */
-	trustResolution?: import("./trust-chain/assessment.js").TrustResolutionSource;
+	trustResolution?: TrustResolutionSource;
 	/** Select among validated candidates eligible for the current operation. */
 	chainSelection?: ChainSelectionStrategy;
 	authentication?: EndpointClientAuthentication;
@@ -143,12 +162,20 @@ export interface FederationOptions {
 	trustMarkProfiles?: readonly TrustMarkProfile[];
 	/** Disallow network access when only supplied evidence is permitted. */
 	offline?: boolean;
+	/** Authorize a managed operation after endpoint authentication and replay protection. */
+	authorizeEndpointRequest?: EndpointAuthorizationPolicy;
+	/** Opt in to authenticated Resolve reuse, with a stable scope for shared storage. */
+	resolverCache?: ResolverCacheOptions;
+	/** Choose eligible Trust Mark JWTs to evaluate and disclose for this Resolve request. */
+	resolveTrustMarkCandidates?: ResolveTrustMarkCandidates;
+	/** Bound the age of exact issuer status evidence used for Resolve disclosure. */
+	resolveTrustMarkStatusMaxAge?: ResolveTrustMarkStatusMaxAge;
 	httpClient?: HttpClient;
 	/** Signed subject ECs keyed by exact Entity Identifier. Each is validated against the chain. */
 	entityConfigurations?: ReadonlyMap<string, string> | undefined;
 	clock?: Clock;
 	/** Optional storage supplied by the standalone caller or bound by its host. */
-	readonly storage?: import("./storage/contracts.js").FederationStorage | undefined;
+	readonly storage?: FederationStorage | undefined;
 	logger?: Logger;
 	httpTimeoutMs?: number;
 	clockSkewSeconds?: number;
@@ -263,7 +290,7 @@ export interface TrustMarkEvidence extends ValidatedTrustMark {
 
 export interface ValidatedTrustMark {
 	/** Authenticated issuer context retained for subsequent status checks; federation provenance is runtime-bound. */
-	readonly issuerEvidence?: import("./trust-marks/evidence.js").TrustMarkIssuerContext;
+	readonly issuerEvidence?: TrustMarkIssuerContext;
 	/** Present on marks validated by current core APIs; optional for older host-created records. */
 	readonly jwt?: string;
 	readonly claims?: Readonly<Record<string, unknown>>;
@@ -341,7 +368,7 @@ export type DiscoveryResult = {
 export interface EntityContext {
 	readonly entityId: string;
 	readonly crypto: CryptoContext;
-	readonly storage?: import("./storage/contracts.js").FederationStorage;
+	readonly storage?: FederationStorage;
 	readonly options: FederationOptions;
 	readonly trustAnchors?: TrustAnchorSet;
 	readonly authorityHints?: readonly EntityId[];
@@ -355,7 +382,7 @@ export interface EntityRole {
 	/** Rebuild managed public keys for each EC publication; captured entries can pin an operation. */
 	publicationMetadata?(
 		context: EntityContext,
-		entries?: ReadonlyMap<string, import("@oidfed/crypto").KeyringEntry>,
+		entries?: ReadonlyMap<string, KeyringEntry>,
 	): Promise<Record<string, unknown>>;
 	/** Validate the final composed role block before its host publishes metadata. */
 	validateMetadata?(metadata: Readonly<Record<string, unknown>>, context: EntityContext): void;

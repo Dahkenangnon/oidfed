@@ -34,6 +34,7 @@ import {
 	assertStorageCapabilities,
 	assertStorageView,
 	describeStorageRequirements,
+	StorageCapabilityError,
 	storageSnapshot,
 	storageTransaction,
 } from "../storage/capabilities.js";
@@ -56,6 +57,10 @@ export interface TrustMarkIssuanceOptions extends TrustMarkLifetime {
 	readonly additionalClaims?: Readonly<Record<string, unknown>>;
 	readonly typ?: string;
 }
+export interface TrustMarkExactWithdrawalOptions {
+	readonly revokedAt?: number;
+}
+
 export interface TrustMarkStatusAssessment {
 	readonly payload: Readonly<TrustMarkStatusResponsePayload>;
 	readonly verificationExpiresAt?: number;
@@ -402,6 +407,37 @@ export class TrustMarkIssuerService {
 			(tx) => {
 				assertStorageView(tx, ["trustMark:write"], "Revoke Trust Mark");
 				return tx.trustMark.revoke(type, id, at, this.issuer);
+			},
+			this.config.options,
+		);
+	}
+
+	/** Withdraw a stored JWT belonging to this issuer; other issuances remain active. */
+	async revokeTrustMarkExact(
+		jwt: string,
+		options?: TrustMarkExactWithdrawalOptions,
+	): Promise<void> {
+		const operation = "Withdraw exact Trust Mark";
+		const revokedAt = options?.revokedAt ?? nowSeconds(this.config.options.clock);
+		if (!Number.isFinite(revokedAt))
+			throw new TypeError("Trust Mark revocation date must be finite");
+		assertStorageCapabilities(
+			this.config.storage,
+			describeStorageRequirements("trustMarkWrite"),
+			operation,
+		);
+		await storageTransaction(
+			this.config.storage,
+			async (tx) => {
+				assertStorageView(tx, ["trustMark:write"], operation);
+				if (typeof tx.trustMark.revokeExact !== "function")
+					throw new StorageCapabilityError(operation, "trustMark:write", "trustMark.revokeExact");
+				const record = await tx.trustMark.status(jwt);
+				if (record?.jwt !== jwt) throw new Error("Trust Mark not found");
+				const decoded = decodeEntityStatement(jwt, this.config.options);
+				if (!decoded.ok || decoded.value.payload.iss !== this.issuer)
+					throw new Error("Trust Mark not found");
+				if (record.active) await tx.trustMark.revokeExact(jwt, revokedAt, this.issuer);
 			},
 			this.config.options,
 		);

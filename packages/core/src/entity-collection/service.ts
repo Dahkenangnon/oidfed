@@ -23,6 +23,7 @@ import {
 	endpointCredentialParameterNames,
 	validateEndpointAuthentication,
 } from "../endpoint-authentication.js";
+import { authorizeFederationEndpoint } from "../endpoint-authorization.js";
 import {
 	COLLECTION_UNORDERED_PARAMETERS,
 	endpointParameterValuesMatch,
@@ -131,6 +132,8 @@ export class EntityCollectionService {
 			this.fixedQuery = url.searchParams;
 		} else this.fixedQuery = new URLSearchParams();
 		const auth = config.authentication;
+		if (config.options.authorizeEndpointRequest && !config.responder && !auth?.receiverEntityId)
+			throw new TypeError("Collection authorization requires a receiver Entity Identifier");
 		if (
 			config.responder &&
 			auth?.receiverEntityId &&
@@ -634,8 +637,23 @@ export class EntityCollectionService {
 				request,
 			);
 			if (!authenticated.ok) return endpointAuthenticationErrorResponse(authenticated.error);
+			for (const name of credentialNames) form.delete(name);
 			const params = parseCollectionParams(form);
 			if (!params.ok) return failure(params.error);
+			const denied = await authorizeFederationEndpoint(
+				this.config.options,
+				{
+					endpoint: "collection",
+					receiverEntityId:
+						this.config.responder?.entityId ??
+						this.config.authentication?.receiverEntityId ??
+						"https://collection.invalid",
+					caller: authenticated.value,
+				},
+				form,
+				request.signal,
+			);
+			if (denied) return denied;
 			const result = await this.query(params.value);
 			return result.ok ? jsonResponse(result.value) : failure(result.error);
 		} catch {

@@ -9,6 +9,10 @@ import {
 } from "./constants.js";
 import { federationAlgorithms, registryFor } from "./crypto-context.js";
 import { cloneData } from "./data-copy.js";
+import {
+	authorizeFederationEndpoint,
+	type FederationEndpointOperation,
+} from "./endpoint-authorization.js";
 import { validateEndpointPostParameters } from "./endpoint-parameters.js";
 import { err, type FederationError, ok, type Result } from "./errors.js";
 import { errorResponse, readBodyWithLimit, requireMethods } from "./http.js";
@@ -413,6 +417,7 @@ export function createEndpointAuthenticatedHandler(
 		readonly fixedQuery?: URLSearchParams;
 		readonly operationParameterNames?: readonly string[];
 		readonly endpointName?: string;
+		readonly endpoint?: FederationEndpointOperation;
 	},
 ): (request: Request) => Promise<Response> {
 	const captured = validateEndpointAuthentication(
@@ -473,6 +478,20 @@ export function createEndpointAuthenticatedHandler(
 			if (request.method === "POST" && nativeMethod === "GET" && checked.value === undefined)
 				return errorResponse(401, "invalid_client", "Authenticated POST required");
 			if (checked.value === undefined) for (const name of credentialNames) form.delete(name);
+			const authorizationParameters = routingNames.size ? new URLSearchParams(form) : form;
+			for (const name of routingNames)
+				if (!operationNames.has(name)) authorizationParameters.delete(name);
+			const denied = await authorizeFederationEndpoint(
+				options,
+				{
+					endpoint: route?.endpoint ?? "custom",
+					receiverEntityId: captured.receiverEntityId,
+					caller: checked.value,
+				},
+				authorizationParameters,
+				request.signal,
+			);
+			if (denied) return denied;
 			const headers = new Headers(request.headers);
 			headers.delete("X-Authenticated-Entity");
 			headers.delete("Content-Length");

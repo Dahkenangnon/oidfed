@@ -10,10 +10,7 @@ import { getTargets, REPOSITORY, version } from "./release/catalog.mjs";
 
 const REMOTE = `https://github.com/${REPOSITORY}`;
 
-// Conventional-commit types that surface in user-facing CHANGELOGs.
-// Subjects with other types (chore, docs, ci, test, style, build, revert) are
-// dropped — they still show in the GitHub commit-comparison view but don't
-// belong in a Keep-a-Changelog file.
+// Ordinary release notes include user-facing changes. A breaking marker takes priority.
 const TYPE_TO_HEADING = {
 	feat: "### Features",
 	fix: "### Bug Fixes",
@@ -21,7 +18,14 @@ const TYPE_TO_HEADING = {
 	refactor: "### Refactor",
 };
 
-const HEADING_ORDER = ["### Features", "### Bug Fixes", "### Performance", "### Refactor"];
+const BREAKING_HEADING = "### Breaking Changes";
+const HEADING_ORDER = [
+	BREAKING_HEADING,
+	"### Features",
+	"### Bug Fixes",
+	"### Performance",
+	"### Refactor",
+];
 
 function readText(path, readFile = readFileSync) {
 	return readFile(resolve(path), "utf8");
@@ -108,11 +112,11 @@ export function parseSubject(subject) {
  * filtered to commits that touched files inside it. Returns empty string
  * when no qualifying commits exist.
  */
-export function generateBody(fromRef, packagePath) {
+export function generateBody(fromRef, packagePath, { execute = execFileSync } = {}) {
 	const range = fromRef ? `${fromRef}..HEAD` : "HEAD";
 	const args = ["log", "--no-merges", "--pretty=format:%H%x09%s", range];
 	if (packagePath) args.push("--", packagePath);
-	const out = execFileSync("git", args, { encoding: "utf8" })
+	const out = execute("git", args, { encoding: "utf8" })
 		.split("\n")
 		.filter((line) => line.length > 0);
 
@@ -124,7 +128,7 @@ export function generateBody(fromRef, packagePath) {
 		const subject = line.slice(sep + 1);
 		const parsed = parseSubject(subject);
 		if (parsed === null) continue;
-		const heading = TYPE_TO_HEADING[parsed.type];
+		const heading = parsed.breaking ? BREAKING_HEADING : TYPE_TO_HEADING[parsed.type];
 		if (!heading) continue;
 		const bullet = `* ${parsed.description} ([${sha.slice(0, 7)}](${REMOTE}/commit/${sha}))`;
 		(grouped[heading] ||= []).push(bullet);

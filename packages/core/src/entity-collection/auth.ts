@@ -4,7 +4,7 @@ import {
 	authenticateEndpointRequest,
 	type EndpointAuthenticationError,
 } from "../endpoint-authentication.js";
-import { ok, type Result } from "../errors.js";
+import type { Result } from "../errors.js";
 import type { FederationOptions } from "../types.js";
 import type { CollectionAuthentication } from "./types.js";
 
@@ -18,8 +18,8 @@ export async function authenticateCollectionRequest(
 	auth: CollectionAuthentication | undefined,
 	options: FederationOptions,
 	request?: Request,
-): Promise<Result<void, EndpointAuthenticationError>> {
-	const checked = await authenticateEndpointRequest(
+): Promise<Result<string | undefined, EndpointAuthenticationError>> {
+	return authenticateEndpointRequest(
 		request ?? new Request("https://collection.invalid", { method }),
 		form,
 		{
@@ -29,5 +29,4 @@ export async function authenticateCollectionRequest(
 		},
 		options,
 	);
-	return checked.ok ? ok(undefined) : checked;
 }

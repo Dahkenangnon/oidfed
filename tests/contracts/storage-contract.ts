@@ -5,11 +5,13 @@ import {
 	assertStorageCapabilities,
 	assertStorageView,
 	EntityCollectionCursorCapacityError,
+	type EntityId,
 	type FederationStorage,
 	InvalidStorageRecordError,
 	parseStoragePayload,
 	type StorageCapability,
 	type StoragePayloadByKind,
+	storageTransaction,
 	type TransactionView,
 } from "@oidfed/core";
 
@@ -33,7 +35,7 @@ const jwks = {
 		},
 	],
 };
-const id = (value: string) => value as import("@oidfed/core").EntityId;
+const id = (value: string) => value as EntityId;
 const record = {
 	entityId: id(member),
 	jwks,
@@ -243,6 +245,47 @@ export async function verifyStorageContract(
 		assert.equal(await ar.status(`${jwt}A`), undefined);
 		assert.equal((await ar.candidates({ issuer })).length, 1);
 		assert.deepEqual(await br.candidates({ issuer: other }), []);
+		if (ar.revokeExact && br.revokeExact) {
+			const newMark = (iat: number) => ({
+				...mark,
+				issuedAt: iat,
+				jwt: [
+					jwt.split(".")[0],
+					Buffer.from(
+						JSON.stringify({
+							iss: issuer,
+							sub: member,
+							iat,
+							exp: mark.expiresAt,
+							trust_mark_type: mark.trustMarkType,
+						}),
+					).toString("base64url"),
+					"AA",
+				].join("."),
+			});
+			const older = newMark(1100);
+			const replacement = newMark(1150);
+			await ar.issue(older);
+			await br.issue(replacement);
+			const prior = await ar.revision();
+			await assert.rejects(br.revokeExact(older.jwt, 1220, other), /Trust Mark not found/);
+			await assert.rejects(br.revokeExact(`${older.jwt}A`, 1220, issuer), /Trust Mark not found/);
+			assert.equal(await ar.revision(), prior);
+			await storageTransaction(b, async (view) => {
+				assertStorageView(view, ["trustMark:write"], "Exact withdrawal contract");
+				assert.ok(view.trustMark.revokeExact);
+				await view.trustMark.revokeExact(older.jwt, 1230, issuer);
+			});
+			const withdrawn = await ar.revision();
+			assert.notEqual(withdrawn, prior);
+			await ar.revokeExact(older.jwt, 1240, issuer);
+			assert.equal(await br.revision(), withdrawn);
+			assert.equal((await ar.status(older.jwt))?.revokedAt, 1230);
+			assert.equal((await ar.status(replacement.jwt))?.active, true);
+			await required(a.readSnapshot).call(a, async (view) => {
+				assert.equal("revokeExact" in required(view.trustMark), false);
+			});
+		}
 		if (durable) {
 			await fixture.disconnect?.();
 			const reopened = await fixture.connect(namespace);

@@ -717,6 +717,23 @@ function repositories(db: Database, options: StorageValidationOptions) {
 				await bump(records);
 			});
 		},
+		async revokeExact(jwt, revokedAt, issuer) {
+			if (!Number.isFinite(revokedAt))
+				throw new TypeError("Trust Mark revocation date must be finite");
+			await db.write(async (records) => {
+				const key = digest(jwt);
+				const bucket = await records.get("mark", key);
+				const record = bucket?.find((mark) => mark.jwt === jwt && belongs(mark, issuer));
+				if (!bucket || !record) throw new Error("Trust Mark not found");
+				if (!record.active) return;
+				await records.set(
+					"mark",
+					key,
+					bucket.map((mark) => (mark === record ? { ...mark, active: false, revokedAt } : mark)),
+				);
+				await bump(records);
+			});
+		},
 	};
 	return { subordinate, subordinateEvent, trustMark };
 }
@@ -817,7 +834,12 @@ function createStorage(
 				scoped(
 					records,
 					({ subordinate, subordinateEvent, trustMark }) => {
-						const { issue: _issue, revoke: _revoke, ...queries } = trustMark;
+						const {
+							issue: _issue,
+							revoke: _revoke,
+							revokeExact: _revokeExact,
+							...queries
+						} = trustMark;
 						return operation({
 							subordinate: { fetch: subordinate.fetch, list: subordinate.list },
 							subordinateEvent: { history: subordinateEvent.history },

@@ -21,9 +21,11 @@ import {
 	createExtendedListHandler,
 	type ExtendedListingConfig,
 } from "../../../packages/authority/src/endpoints/extended-list.js";
+import { extractClaims } from "../../../packages/authority/src/endpoints/extended-list-claims.js";
 import { createFetchHandler } from "../../../packages/authority/src/endpoints/fetch.js";
 import { createListHandler } from "../../../packages/authority/src/endpoints/list.js";
-import { createResolveHandler } from "../../../packages/authority/src/endpoints/resolve.js";
+import { createAuthorityResolver } from "../../../packages/authority/src/endpoints/resolve.js";
+import { buildSubordinateEvents } from "../../../packages/authority/src/endpoints/subordinate-events.js";
 import { createTrustMarkHandler } from "../../../packages/authority/src/endpoints/trust-mark.js";
 import { createTrustMarkListHandler } from "../../../packages/authority/src/endpoints/trust-mark-list.js";
 import { createTrustMarkStatusHandler } from "../../../packages/authority/src/endpoints/trust-mark-status.js";
@@ -37,7 +39,10 @@ import {
 } from "../../../packages/authority/src/index.js";
 import { createSubordinateLifecycle } from "../../../packages/authority/src/subordinate-lifecycle.js";
 import * as CorePublic from "../../../packages/core/src/index.js";
-import { createHistoricalKeysHandler } from "../../../packages/core/src/index.js";
+import {
+	type BoundFederationOptions,
+	createHistoricalKeysHandler,
+} from "../../../packages/core/src/index.js";
 import { memoryStorage, storedTrustMarkToken } from "../../storage-fixtures.js";
 import { signProtocolFixture } from "../fixtures/protocol-jwt.js";
 import {
@@ -79,10 +84,12 @@ async function createAuthorityServer(config: AuthorityConfig): Promise<Authority
 		listSubordinates: (filter) => server.listSubordinates(filter),
 		listSubordinatesExtended: (params) => server.listSubordinatesExtended(params),
 		resolveEntity: (sub, ta) => server.resolveEntity(sub, ta),
+		primeAnonymousResolve: (input) => server.primeAnonymousResolve(input),
 		getTrustMarkStatus: (tm) => server.getTrustMarkStatus(tm),
 		listTrustMarkedEntities: (type) => server.listTrustMarkedEntities(type),
 		issueTrustMark: (sub, type, options) => server.issueTrustMark(sub, type, options),
 		revokeTrustMark: (sub, type) => server.revokeTrustMark(sub, type),
+		revokeTrustMarkExact: (jwt, options) => server.revokeTrustMarkExact(jwt, options),
 		listTrustMarksForSubject: (sub) => server.listTrustMarksForSubject(sub),
 		getTrustMarks: () => server.getTrustMarks(),
 		attachTrustMark: (jwt, options) => server.attachTrustMark(jwt, options),
@@ -234,6 +241,13 @@ async function putTestMark(ctx: HandlerContext, record: TrustMarkRecord): Promis
 	await ctx.storage.trustMark.issue({ ...record, jwt });
 	return jwt;
 }
+/** Adapt the service to the HTTP and maintenance paths exercised by the Authority tests. */
+function createResolveHandler(ctx: HandlerContext) {
+	const service = createAuthorityResolver(ctx);
+	return (request: Request, local = false, options?: BoundFederationOptions) =>
+		local ? service.resolve(request, options) : service.handleAuthenticatedRequest(request);
+}
+
 async function resolveAsClient(
 	ctx: HandlerContext,
 	request: Request,
@@ -1318,9 +1332,6 @@ export default (QUnit: QUnit) => {
 	});
 
 	test("event readers use readSnapshot with a transaction fallback", async (t) => {
-		const { buildSubordinateEvents } = await import(
-			"../../../packages/authority/src/endpoints/subordinate-events.js"
-		);
 		const backing = memoryStorage({ engine: testEngine, subordinateEvents: true });
 		const subject = entityId("https://member.example");
 		await backing.subordinate.register({
@@ -1365,9 +1376,6 @@ export default (QUnit: QUnit) => {
 		}
 	});
 	test("annotations cover every update event and failed appends roll back state", async (t) => {
-		const { createSubordinateLifecycle } = await import(
-			"../../../packages/authority/src/subordinate-lifecycle.js"
-		);
 		const backing = memoryStorage({ engine: testEngine, subordinateEvents: true });
 		const { ctx } = await createTestContext({ storage: backing });
 		const lifecycle = createSubordinateLifecycle(ctx);
@@ -1580,9 +1588,6 @@ export default (QUnit: QUnit) => {
 		}
 	});
 	test("lifecycle annotations share the transaction and cannot forge event fields", async (t) => {
-		const { createSubordinateLifecycle } = await import(
-			"../../../packages/authority/src/subordinate-lifecycle.js"
-		);
 		const storage = memoryStorage({ engine: testEngine, subordinateEvents: true });
 		const { ctx } = await createTestContext({
 			storage,
@@ -1668,9 +1673,6 @@ export default (QUnit: QUnit) => {
 		);
 	});
 	test("unsigned selected claims follow subordinate publication rules", async (t) => {
-		const { extractClaims } = await import(
-			"../../../packages/authority/src/endpoints/extended-list-claims.js"
-		);
 		const { ctx, publicKey } = await createTestContext();
 		const record = {
 			entityId: entityId("https://member.example"),
@@ -6318,9 +6320,7 @@ export default (QUnit: QUnit) => {
 				{ typ: JwtTyp.TrustMarkStatusResponse },
 			);
 
-			const httpClient: import("../../../packages/core/src/index.js").HttpClient = async (
-				input,
-			) => {
+			const httpClient: HttpClient = async (input) => {
 				const url =
 					typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
 				const parsed = new URL(url);
@@ -6953,6 +6953,7 @@ export default (QUnit: QUnit) => {
 			const fed = await createMockFederation();
 			const { ctx } = await createTestContext({
 				entityId: OP_ID,
+				crypto: new FixtureCrypto(createFederationSigningKey(fed.opSigningKey)),
 				trustAnchors: fed.trustAnchors,
 				options: fed.options,
 			});
@@ -6973,7 +6974,7 @@ export default (QUnit: QUnit) => {
 
 		test("silently ignores issuer chain resolution failures", async (t) => {
 			const fed = await createMockFederation();
-			const failingClient: import("../../../packages/core/src/index.js").HttpClient = async (
+			const failingClient: HttpClient = async (
 				input: string | URL | Request,
 			): Promise<Response> => {
 				const url =
@@ -9040,8 +9041,8 @@ export default (QUnit: QUnit) => {
 
 		function makeServerRecord(
 			id: ReturnType<typeof entityId>,
-			overrides?: Partial<import("../../../packages/core/src/index.js").SubordinateRecord>,
-		): import("../../../packages/core/src/index.js").SubordinateRecord {
+			overrides?: Partial<SubordinateRecord>,
+		): SubordinateRecord {
 			return {
 				entityId: id,
 				jwks: { keys: [testPublicJwk()] },
@@ -10166,7 +10167,7 @@ export default (QUnit: QUnit) => {
 
 			module("Subordinate management lifecycle", () => {
 				test("adds subordinates, lists them, and fetches statements", async (t) => {
-					const opRecord: import("../../../packages/core/src/index.js").SubordinateRecord = {
+					const opRecord: SubordinateRecord = {
 						entityId: INT_LEAF_OP,
 						jwks: { keys: [testPublicJwk("op-key-1")] },
 						metadata: { openid_provider: { issuer: INT_LEAF_OP } },
@@ -10175,7 +10176,7 @@ export default (QUnit: QUnit) => {
 						createdAt: Date.now(),
 						updatedAt: Date.now(),
 					};
-					const rpRecord: import("../../../packages/core/src/index.js").SubordinateRecord = {
+					const rpRecord: SubordinateRecord = {
 						entityId: INT_LEAF_RP,
 						jwks: { keys: [testPublicJwk("rp-key-1")] },
 						metadata: { openid_relying_party: { client_name: "Test RP" } },
@@ -11890,7 +11891,7 @@ export default (QUnit: QUnit) => {
 			);
 			t.equal(calls, warmedCalls);
 		});
-		test("authenticated assessments never leak audience to anonymous cache hits and query changes miss", async (t) => {
+		test("authenticated assessments cannot warm the anonymous cache and query changes miss", async (t) => {
 			const fed = await createMockFederation();
 			let calls = 0;
 			const { ctx } = await createTestContext({
@@ -11913,6 +11914,10 @@ export default (QUnit: QUnit) => {
 				t.true(decoded.ok);
 				if (decoded.ok) t.equal(decoded.value.payload.aud, caller);
 			}
+			const afterAuthenticated = calls;
+			t.equal((await handler(new Request(url))).status, 404);
+			t.equal(calls, afterAuthenticated, "the anonymous miss performs no discovery");
+			t.equal((await handler(new Request(url), true)).status, 200);
 			const previousCalls = calls;
 			const anonymous = decodeEntityStatement(await (await handler(new Request(url))).text());
 			t.true(anonymous.ok);

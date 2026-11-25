@@ -8,6 +8,9 @@ import {
 	federationEntry,
 	fetchStoredSubordinate,
 	listStoredSubordinates,
+	type PrimeAnonymousResolveInput,
+	type StorageCapability,
+	type StorageFeature,
 	snapshotCryptoContext,
 	validateCryptoContext,
 } from "@oidfed/core";
@@ -74,6 +77,7 @@ import {
 	signTrustMarkDelegation,
 	type TrustAnchorSet,
 	type TrustMarkDelegationIssuanceOptions,
+	type TrustMarkExactWithdrawalOptions,
 	TrustMarkHolder,
 	type TrustMarkIssuanceOptions,
 	type TrustMarkIssuerConfig,
@@ -95,7 +99,7 @@ import {
 } from "./endpoints/extended-list.js";
 import { buildSubordinateStatement, createFetchHandler } from "./endpoints/fetch.js";
 import { createListHandler } from "./endpoints/list.js";
-import { createResolveHandler } from "./endpoints/resolve.js";
+import { createAuthorityResolver } from "./endpoints/resolve.js";
 import {
 	buildSubordinateEvents,
 	createSubordinateEventsHandler,
@@ -240,9 +244,11 @@ interface AuthorityServer {
 		options?: ExtendedSubordinateListingOptions,
 	): Promise<Result<ExtendedSubordinateListingResult, FederationError>>;
 	resolveEntity(sub: EntityId, ta?: EntityId, options?: BoundFederationOptions): Promise<string>;
+	primeAnonymousResolve(input: PrimeAnonymousResolveInput): Promise<void>;
 	getTrustMarkStatus(trustMark: string): Promise<TrustMarkStatusResponsePayload>;
 	listTrustMarkedEntities(trustMarkType: string): Promise<string[]>;
 	revokeTrustMark(type: string, subject: string): Promise<void>;
+	revokeTrustMarkExact(jwt: string, options?: TrustMarkExactWithdrawalOptions): Promise<void>;
 	listTrustMarksForSubject(subject: string): Promise<TrustMarkRecord[]>;
 	getTrustMarks(): TrustMarkRef[];
 	attachTrustMark(
@@ -342,10 +348,9 @@ function createAuthorityServerWithIdentity(
 	].some((endpoint) => typeof endpoint === "string");
 	const storage = config.storage;
 	assertStorageCapabilities(storage, ["subordinate:read"], `Authority ${entityId}`);
-	const has = (capability: import("@oidfed/core").StorageCapability) =>
-		storage.capabilities.includes(capability);
+	const has = (capability: StorageCapability) => storage.capabilities.includes(capability);
 	const historyPublished = fedEntity.federation_subordinate_events_endpoint !== undefined;
-	const features: import("@oidfed/core").StorageFeature[] = ["authority"];
+	const features: StorageFeature[] = ["authority"];
 	if (historyPublished) features.push("eventHistory");
 	if (has("subordinate:write")) features.push("subordinateLifecycle");
 	if (has("subordinateEvent:write")) features.push("eventCapture");
@@ -485,7 +490,15 @@ function createAuthorityServerWithIdentity(
 	const trustMarkHandler = createTrustMarkHandler(ctx);
 	const trustMarkExtensionNames = Object.keys(ctx.trustMarkRequestExtensions ?? {});
 
-	const resolveHandler = createResolveHandler(ctx);
+	const resolveEndpointPath = advertisedEndpointPath(
+		"federation_resolve_endpoint",
+		meta.federation_resolve_endpoint,
+	);
+	const resolveQuery =
+		resolveEndpointPath === undefined
+			? undefined
+			: new URL(`https://routing.invalid${resolveEndpointPath}`).searchParams;
+	const resolver = createAuthorityResolver(ctx, resolveQuery);
 
 	const routeMap = new Map<string, (request: Request) => Promise<Response>>();
 	const routeNames = new Map<string, string>();
@@ -504,6 +517,7 @@ function createAuthorityServerWithIdentity(
 		fetchEndpointPath,
 		withAuth(fetchHandler, meta.federation_fetch_endpoint_auth_methods, {
 			endpointName: "Fetch endpoint",
+			endpoint: "fetch",
 			operationParameterNames: ENDPOINT_OPERATION_PARAMETERS.fetch,
 			fixedQuery: new URL(`https://routing.invalid${fetchEndpointPath}`).searchParams,
 		}),
@@ -515,6 +529,7 @@ function createAuthorityServerWithIdentity(
 		listEndpointPath,
 		withAuth(listHandler, meta.federation_list_endpoint_auth_methods, {
 			endpointName: "List endpoint",
+			endpoint: "list",
 			unorderedParameters: LIST_UNORDERED_PARAMETERS,
 			operationParameterNames: ENDPOINT_OPERATION_PARAMETERS.list,
 			fixedQuery: new URL(`https://routing.invalid${listEndpointPath}`).searchParams,
@@ -528,6 +543,7 @@ function createAuthorityServerWithIdentity(
 		(fixedQuery) =>
 			withAuth(extendedListHandler, meta.federation_extended_list_endpoint_auth_methods, {
 				endpointName: "Extended List endpoint",
+				endpoint: "extended-list",
 				unorderedParameters: EXTENDED_LIST_UNORDERED_PARAMETERS,
 				operationParameterNames: [
 					...ENDPOINT_OPERATION_PARAMETERS.extendedList,
@@ -544,6 +560,7 @@ function createAuthorityServerWithIdentity(
 		(fixedQuery) =>
 			withAuth(historicalKeysHandler, meta.federation_historical_keys_endpoint_auth_methods, {
 				endpointName: "Historical Keys endpoint",
+				endpoint: "historical-keys",
 				fixedQuery,
 			}),
 	);
@@ -555,6 +572,7 @@ function createAuthorityServerWithIdentity(
 		(fixedQuery) =>
 			withAuth(trustMarkStatusHandler, meta.federation_trust_mark_status_endpoint_auth_methods, {
 				endpointName: "Trust Mark Status endpoint",
+				endpoint: "trust-mark-status",
 				nativeMethod: "POST",
 				operationParameterNames: [
 					...ENDPOINT_OPERATION_PARAMETERS.trustMarkStatus,
@@ -571,6 +589,7 @@ function createAuthorityServerWithIdentity(
 		(fixedQuery) =>
 			withAuth(trustMarkListHandler, meta.federation_trust_mark_list_endpoint_auth_methods, {
 				endpointName: "Trust Mark List endpoint",
+				endpoint: "trust-mark-list",
 				operationParameterNames: [
 					...ENDPOINT_OPERATION_PARAMETERS.trustMark,
 					...trustMarkExtensionNames,
@@ -586,6 +605,7 @@ function createAuthorityServerWithIdentity(
 		(fixedQuery) =>
 			withAuth(trustMarkHandler, meta.federation_trust_mark_endpoint_auth_methods, {
 				endpointName: "Trust Mark endpoint",
+				endpoint: "trust-mark",
 				operationParameterNames: [
 					...ENDPOINT_OPERATION_PARAMETERS.trustMark,
 					...trustMarkExtensionNames,
@@ -593,19 +613,24 @@ function createAuthorityServerWithIdentity(
 				fixedQuery,
 			}),
 	);
-	addOptionalAuthorityRoute(
-		routeMap,
-		routeNames,
-		"federation_resolve_endpoint",
-		meta.federation_resolve_endpoint,
-		(fixedQuery) =>
-			withAuth(resolveHandler, meta.federation_resolve_endpoint_auth_methods, {
-				endpointName: "Resolve endpoint",
-				unorderedParameters: RESOLVE_UNORDERED_PARAMETERS,
-				operationParameterNames: ENDPOINT_OPERATION_PARAMETERS.resolve,
-				fixedQuery,
-			}),
-	);
+	if (resolveEndpointPath !== undefined)
+		addAuthorityRoute(
+			routeMap,
+			routeNames,
+			"federation_resolve_endpoint",
+			resolveEndpointPath,
+			withAuth(
+				(request) => resolver.handleAuthenticatedRequest(request),
+				meta.federation_resolve_endpoint_auth_methods,
+				{
+					endpointName: "Resolve endpoint",
+					endpoint: "resolve",
+					unorderedParameters: RESOLVE_UNORDERED_PARAMETERS,
+					operationParameterNames: ENDPOINT_OPERATION_PARAMETERS.resolve,
+					fixedQuery: resolveQuery,
+				},
+			),
+		);
 
 	addOptionalAuthorityRoute(
 		routeMap,
@@ -619,6 +644,7 @@ function createAuthorityServerWithIdentity(
 					meta.federation_subordinate_events_endpoint_auth_methods,
 					{
 						endpointName: "Subordinate Events endpoint",
+						endpoint: "subordinate-events",
 						operationParameterNames: ENDPOINT_OPERATION_PARAMETERS.subordinateEvents,
 						fixedQuery,
 					},
@@ -769,12 +795,16 @@ function createAuthorityServerWithIdentity(
 			url.searchParams.set("sub", sub);
 			if (_ta) url.searchParams.set("trust_anchor", _ta);
 			const req = new Request(url.toString());
-			const res = await resolveHandler(req, true, options);
+			const res = await resolver.resolve(req, options);
 			if (res.status !== 200) {
 				const body = (await res.json()) as { error: string; error_description?: string };
 				throw new Error(body.error_description ?? body.error);
 			}
 			return res.text();
+		},
+
+		primeAnonymousResolve(input) {
+			return resolver.primeAnonymousResolve(input);
 		},
 
 		async getTrustMarkStatus(trustMark: string): Promise<TrustMarkStatusResponsePayload> {
@@ -847,6 +877,9 @@ function createAuthorityServerWithIdentity(
 
 		async revokeTrustMark(type: string, subject: string) {
 			return trustMarkService(ctx).revokeTrustMark(type, subject);
+		},
+		async revokeTrustMarkExact(jwt, options) {
+			return trustMarkService(ctx).revokeTrustMarkExact(jwt, options);
 		},
 		async listTrustMarksForSubject(subject: string) {
 			return trustMarkService(ctx).listTrustMarksForSubject(subject);
@@ -1236,6 +1269,11 @@ abstract class AuthorityHost {
 		return this.server.resolveEntity(sub, ta, options);
 	}
 
+	/** Evaluate a request as anonymous and store the eligible assessment. */
+	async primeAnonymousResolve(input: PrimeAnonymousResolveInput): Promise<void> {
+		return this.server.primeAnonymousResolve(input);
+	}
+
 	/** Obtain this issuer's local status assessment; this is not a remote issuer lookup. */
 	async getTrustMarkStatus(trustMark: string): Promise<TrustMarkStatusResponsePayload> {
 		return this.server.getTrustMarkStatus(trustMark);
@@ -1275,6 +1313,13 @@ abstract class AuthorityHost {
 	/** Revoke this issuer's matching local records for the type and subject. */
 	async revokeTrustMark(type: string, subject: string) {
 		return this.server.revokeTrustMark(type, subject);
+	}
+	/** Withdraw one stored Trust Mark JWT issued by this authority. */
+	async revokeTrustMarkExact(
+		jwt: string,
+		options?: TrustMarkExactWithdrawalOptions,
+	): Promise<void> {
+		return this.server.revokeTrustMarkExact(jwt, options);
 	}
 	/** Return detached, eligible local issuance records for the subject. */
 	async listTrustMarksForSubject(subject: string) {

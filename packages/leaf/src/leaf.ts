@@ -1,30 +1,22 @@
-import {
-	assertStorageCapabilities,
-	type BoundFederationOptions,
-	bindFederationOptions,
-	cloneData,
-	composeRolePublicationMetadata,
-	describeStorageRequirements,
-	type FederationStorage,
-	federationEntry,
-	federationPublicationJwks,
-	federationSigningOptions,
-	snapshotCryptoContext,
-	validateCryptoContext,
-} from "@oidfed/core";
 /** Leaf host for Entity Configuration publication, role routes, and optional federation services. */
 
 import {
 	type AttachTrustMarkOptions,
 	assertEndpointAuthenticationCompanions,
 	assertPositiveTtlSeconds,
+	assertStorageCapabilities,
 	assessEntity,
+	type BoundFederationOptions,
+	bindFederationOptions,
 	buildEntityConfigurationPayload,
 	type CryptoContext,
+	cloneData,
 	composeEntityMetadata,
+	composeRolePublicationMetadata,
 	createEndpointAuthenticatedHandler,
 	createHistoricalKeysHandler,
 	DEFAULT_ENTITY_STATEMENT_TTL_SECONDS,
+	describeStorageRequirements,
 	discoverEntityFromChain,
 	discoverEntity as discoverEntityThroughTrustChain,
 	ENDPOINT_OPERATION_PARAMETERS,
@@ -44,7 +36,11 @@ import {
 	type FederationOptions,
 	type FederationResolverIntegration,
 	FederationResolverService,
+	type FederationStorage,
 	type FetchAndAttachTrustMarkOptions,
+	federationEntry,
+	federationPublicationJwks,
+	federationSigningOptions,
 	isValidEntityId,
 	type JWKSet,
 	JwtTyp,
@@ -58,12 +54,15 @@ import {
 	safeLogger,
 	signEntityStatement,
 	signHistoricalKeysResponse,
+	snapshotCryptoContext,
 	type TrustAnchorSet,
+	type TrustMarkExactWithdrawalOptions,
 	TrustMarkHolder,
 	type TrustMarkIssuanceOptions,
 	type TrustMarkIssuerConfig,
 	TrustMarkIssuerService,
 	type TrustMarkRef,
+	validateCryptoContext,
 	validateFederationKeySet,
 	validateRoleMetadata,
 } from "@oidfed/core";
@@ -409,6 +408,12 @@ export class Leaf {
 					...(config.trustAnchors ? { trustAnchors: config.trustAnchors } : {}),
 					...(config.resolver.trustAnchors ? { trustAnchors: config.resolver.trustAnchors } : {}),
 					options: bindFederationOptions(config, config.options, config.resolver.options),
+					...(config.trustMarkIssuer && !config.resolver.assessLocalTrustMarkStatus
+						? {
+								assessLocalTrustMarkStatus: async (jwt: string) =>
+									this.issuerService?.assessTrustMarkStatus(jwt),
+							}
+						: {}),
 					authentication: {
 						...config.resolver.authentication,
 						...(Array.isArray(publishedAlgorithms)
@@ -491,6 +496,12 @@ export class Leaf {
 				[],
 				{
 					endpointName: field,
+					endpoint:
+						kind === "status"
+							? "trust-mark-status"
+							: kind === "list"
+								? "trust-mark-list"
+								: "trust-mark",
 					fixedQuery: url.searchParams,
 					operationParameterNames: [
 						...(kind === "status"
@@ -566,7 +577,11 @@ export class Leaf {
 			options,
 			"GET",
 			[],
-			{ fixedQuery: url.searchParams, endpointName: "Historical Keys endpoint" },
+			{
+				fixedQuery: url.searchParams,
+				endpointName: "Historical Keys endpoint",
+				endpoint: "historical-keys",
+			},
 		);
 		this.registerSelectedEndpoint(
 			url,
@@ -806,6 +821,13 @@ export class Leaf {
 	 */
 	async revokeTrustMark(type: string, subject: string): Promise<void> {
 		return this.requireIssuer().revokeTrustMark(type, subject);
+	}
+	/** Withdraw one stored JWT from this Leaf's managed Trust Mark issuer. */
+	async revokeTrustMarkExact(
+		jwt: string,
+		options?: TrustMarkExactWithdrawalOptions,
+	): Promise<void> {
+		return this.requireIssuer().revokeTrustMarkExact(jwt, options);
 	}
 	/**
 	 * Return detached, eligible local issuance records for the subject. Requires trustMarkIssuer

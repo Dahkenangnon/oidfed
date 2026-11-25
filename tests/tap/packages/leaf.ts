@@ -865,6 +865,8 @@ export default (QUnit: QUnit) => {
 			t.true(result.ok);
 			if (result.ok) t.equal(result.value.payload.aud, OP_ID);
 			t.equal(keyLookups, 1);
+			t.equal((await leaf.handleRequest(new Request(url))).status, 404);
+			await leaf.resolver?.primeAnonymousResolve({ subject: OP_ID, trustAnchor: TA_ID });
 			const cached = await leaf.handleRequest(new Request(url));
 			t.equal(cached.status, 200);
 			const decoded = decodeEntityStatement(await cached.text());

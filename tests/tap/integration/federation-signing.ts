@@ -35,6 +35,8 @@ import {
 	testEngine,
 } from "../fixtures/software-crypto.js";
 
+import resolvePolicyTests from "./resolve-policy.js";
+
 const issuer = entityId("https://artifact-authority.example");
 const subject = entityId("https://artifact-leaf.example");
 const markType = "https://artifact-authority.example/marks/member";
@@ -50,7 +52,9 @@ const algorithms = ["ES256", "ES384"];
 const policy = (artifact: FederationArtifact) =>
 	secondaryArtifacts.includes(artifact) ? ["ES384"] : ["ES256"];
 
-export default function artifactSigningTests({ module, test }: QUnit): void {
+export default function artifactSigningTests(qunit: QUnit): void {
+	const { module, test } = qunit;
+	resolvePolicyTests(qunit);
 	module("integration / Federation artifact signing", () => {
 		for (const algorithm of ["RS384", "RS512"] as const)
 			test(`${algorithm} requires both engine support and explicit Federation approval`, async (assert) => {

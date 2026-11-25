@@ -1,6 +1,6 @@
 /** Authority adapter for shared federation endpoint authentication. */
 
-import { createEndpointAuthenticatedHandler } from "@oidfed/core";
+import { createEndpointAuthenticatedHandler, type FederationEndpointOperation } from "@oidfed/core";
 import { InvalidAuthorityConfig } from "../errors.js";
 import type { HandlerContext } from "./context.js";
 
@@ -17,6 +17,7 @@ export function createAuthenticatedHandler(
 		unorderedParameters?: readonly string[] | undefined;
 		advertisedAlgorithms?: readonly string[] | undefined;
 		endpointName?: string | undefined;
+		endpoint?: FederationEndpointOperation | undefined;
 		operationParameterNames?: readonly string[] | undefined;
 		fixedQuery?: URLSearchParams | undefined;
 	},
@@ -42,6 +43,7 @@ export function createAuthenticatedHandler(
 			{
 				...(options?.fixedQuery ? { fixedQuery: options.fixedQuery } : {}),
 				...(options?.endpointName ? { endpointName: options.endpointName } : {}),
+				...(options?.endpoint ? { endpoint: options.endpoint } : {}),
 			},
 		);
 	} catch (cause) {

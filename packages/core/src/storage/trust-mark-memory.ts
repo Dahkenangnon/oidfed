@@ -1,6 +1,6 @@
-import { cloneData } from "../data-copy.js";
 /** Detached in-memory Trust Mark records with serialized store transactions. */
 
+import { cloneData } from "../data-copy.js";
 import { decodeEntityStatement } from "../jose/verify.js";
 import type { EntityId } from "../types.js";
 import { parseStoredTrustMark, type StorageValidationOptions } from "./record-schemas.js";
@@ -194,6 +194,21 @@ export class MemoryTrustMarkStorage implements Omit<TrustMarkStore, "revision"> 
 				}
 			}
 			if (!found) throw new Error(`Trust mark '${trustMarkType}' for '${subject}' not found`);
+			return true;
+		});
+	}
+
+	/** Deactivate one issuer-owned record and preserve its first withdrawal time. */
+	async revokeExact(jwt: string, revokedAt: number, issuer: string): Promise<void> {
+		if (!Number.isFinite(revokedAt))
+			throw new TypeError("Trust Mark revocation date must be finite");
+		await this.mutate((records) => {
+			const record = records.get(jwt);
+			const decoded = record && decodeEntityStatement(jwt, this.options);
+			if (!record || !decoded?.ok || decoded.value.payload.iss !== issuer)
+				throw new Error("Trust Mark not found");
+			if (!record.active) return false;
+			records.set(jwt, { ...record, active: false, revokedAt });
 			return true;
 		});
 	}
