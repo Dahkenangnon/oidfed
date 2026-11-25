@@ -213,6 +213,8 @@ export {
 	historicalKeysFromKeyring,
 	validateFederationKeySet,
 } from "./federation-keys.js";
+// JOSE
+export { BodyLimitExceeded, readBytesWithLimit } from "./http/body-bytes.js";
 export { validateFetchUrl } from "./http/fetch-url.js";
 // HTTP helpers
 export {
@@ -232,7 +234,6 @@ export {
 	SECURITY_HEADERS,
 	toPublicError,
 } from "./http.js";
-// JOSE
 export {
 	assertTypHeader,
 	decodeEntityConfiguration,
@@ -256,7 +257,11 @@ export {
 } from "./jose/index.js";
 // JWK Set helpers
 export { fetchJwkSet } from "./jwks/jwks-uri.js";
-export { preparePublicJwkSet, validatePublicJwkSet } from "./jwks/public-material.js";
+export {
+	prepareProtocolJwkSet,
+	preparePublicJwkSet,
+	validatePublicJwkSet,
+} from "./jwks/public-material.js";
 export {
 	type EntityKeysSource,
 	type ResolvedEntityKeys,

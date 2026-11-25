@@ -535,6 +535,18 @@ export function campusSelectors() {
 }
 ```
 
+## `readBytesWithLimit`
+
+Use this reader when you need the original bytes, for example to check a digest before decoding JSON. It returns `null` for an absent body and a zero-length array for an empty stream. A body exactly at the limit is accepted. Overflow cancels the stream and throws `BodyLimitExceeded`. An aborted signal cancels a pending read and propagates its reason. Transport failures propagate to the caller.
+
+```ts
+readBytesWithLimit(
+  body: ReadableStream<Uint8Array> | null,
+  maxBytes: number,
+  signal?: AbortSignal,
+): Promise<Uint8Array<ArrayBuffer> | null>;
+```
+
 ## `readBodyWithLimit`
 
 [Source](../../../packages/core/src/http.ts#L207)

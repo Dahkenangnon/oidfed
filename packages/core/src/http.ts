@@ -6,6 +6,7 @@ import { utf8Decode } from "@oidfed/crypto";
 
 import { FederationErrorCode } from "./constants.js";
 import type { FederationError } from "./errors.js";
+import { BodyLimitExceeded, readBytesWithLimit } from "./http/body-bytes.js";
 
 /** Standard security headers applied to all federation responses. */
 export const SECURITY_HEADERS: Record<string, string> = {
@@ -182,22 +183,13 @@ export async function readStreamWithLimit(
 	body: ReadableStream<Uint8Array>,
 	maxBytes: number,
 ): Promise<{ ok: true; text: string } | { ok: false }> {
-	const chunks: Uint8Array[] = [];
-	let received = 0;
-	for await (const chunk of body as AsyncIterable<Uint8Array>) {
-		received += chunk.length;
-		if (received > maxBytes) {
-			return { ok: false };
-		}
-		chunks.push(new Uint8Array(chunk));
+	try {
+		const bytes = await readBytesWithLimit(body, maxBytes);
+		return bytes === null ? { ok: false } : { ok: true, text: utf8Decode(bytes, { fatal: false }) };
+	} catch (error) {
+		if (error instanceof BodyLimitExceeded) return { ok: false };
+		throw error;
 	}
-	const buf = new Uint8Array(received);
-	let off = 0;
-	for (const c of chunks) {
-		buf.set(c, off);
-		off += c.length;
-	}
-	return { ok: true, text: utf8Decode(buf, { fatal: false }) };
 }
 
 /**

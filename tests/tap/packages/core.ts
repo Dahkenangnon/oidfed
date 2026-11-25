@@ -88,6 +88,7 @@ import {
 import type { SignEntityStatementOptions } from "../../../packages/core/src/index.js";
 import * as CorePublic from "../../../packages/core/src/index.js";
 import {
+	BodyLimitExceeded,
 	COLLECTION_INFO_CLAIMS,
 	type EntityCollectionCandidate,
 	type EntityCollectionCollectorContext,
@@ -99,6 +100,7 @@ import {
 	type EntityCollectionSnapshot,
 	fetchEntityCollection,
 	fetchSubordinateEvents,
+	readBytesWithLimit,
 	SubordinateEventSchema,
 	SubordinateEventsResponseSchema,
 	verifySubordinateEventsResponse,
@@ -8884,6 +8886,56 @@ export default (QUnit: QUnit) => {
 			t.equal(result.clientAssertionType, "urn:ietf:params:oauth:client-assertion-type:jwt-bearer");
 			t.equal(result.params.get("grant_type"), "client_credentials");
 			t.equal(result.params.get("client_assertion"), null);
+		});
+	});
+
+	module("core / readBytesWithLimit", () => {
+		test("preserves exact bytes and distinguishes absent and empty bodies", async (t) => {
+			const bytes = new Uint8Array([0, 0xef, 0xbb, 0xbf, 0xff, 128]);
+			const stream = new ReadableStream<Uint8Array>({
+				start(controller) {
+					controller.enqueue(bytes.subarray(0, 2));
+					controller.enqueue(bytes.subarray(2));
+					controller.close();
+				},
+			});
+			t.deepEqual(await readBytesWithLimit(stream, bytes.length), bytes);
+			t.strictEqual(stream.locked, false);
+			t.strictEqual(await readBytesWithLimit(null, 0), null);
+			const empty = new ReadableStream<Uint8Array>({ start: (controller) => controller.close() });
+			t.deepEqual(await readBytesWithLimit(empty, 0), new Uint8Array());
+		});
+
+		test("cancels a stalled or oversized stream and preserves the failure category", async (t) => {
+			const controller = new AbortController();
+			let cancellations = 0;
+			const stalled = new ReadableStream<Uint8Array>({
+				cancel: () => {
+					cancellations++;
+				},
+			});
+			const reading = readBytesWithLimit(stalled, 1, controller.signal);
+			const aborted = t.rejects(reading, /Read cancelled by caller/);
+			controller.abort(new Error("Read cancelled by caller"));
+			await aborted;
+			t.strictEqual(stalled.locked, false);
+			const oversized = new ReadableStream<Uint8Array>({
+				start(stream) {
+					stream.enqueue(new Uint8Array(2));
+				},
+				cancel() {
+					cancellations++;
+				},
+			});
+			await t.rejects(readBytesWithLimit(oversized, 1), BodyLimitExceeded);
+			t.strictEqual(oversized.locked, false);
+			t.strictEqual(cancellations, 2);
+			const broken = new ReadableStream<Uint8Array>({
+				start(stream) {
+					stream.error(new Error("Transport interrupted"));
+				},
+			});
+			await t.rejects(readBytesWithLimit(broken, 5), /Transport interrupted/);
 		});
 	});
 
