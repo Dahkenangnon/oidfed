@@ -70,6 +70,7 @@ import {
 	isSpecialUseIPv6,
 	validateFetchUrl,
 } from "../../../packages/core/src/http/fetch-url.js";
+import { readResponseBody } from "../../../packages/core/src/http/response-body.js";
 import {
 	errorResponse,
 	extractRequestParams,
@@ -8936,6 +8937,25 @@ export default (QUnit: QUnit) => {
 				},
 			});
 			await t.rejects(readBytesWithLimit(broken, 5), /Transport interrupted/);
+		});
+	});
+
+	module("core / legacy text reader limits", () => {
+		test("preserves fractional and unbounded limits while the byte API rejects them", async (t) => {
+			const request = () => new Request("https://example.test", { method: "POST", body: "ok" });
+			const stream = () => new Response("ok").body as ReadableStream<Uint8Array>;
+			const signal = new AbortController().signal;
+			for (const limit of [Infinity, NaN, 2.5]) {
+				t.deepEqual(await readStreamWithLimit(stream(), limit), { ok: true, text: "ok" });
+				t.deepEqual(await readBodyWithLimit(request(), limit), { ok: true, text: "ok" });
+				t.strictEqual(await readResponseBody(new Response("ok"), limit, signal), "ok");
+				await t.rejects(readBytesWithLimit(stream(), limit), RangeError);
+			}
+			for (const limit of [1.5, -1]) {
+				t.deepEqual(await readStreamWithLimit(stream(), limit), { ok: false });
+				t.deepEqual(await readBodyWithLimit(request(), limit), { ok: false });
+				await t.rejects(readResponseBody(new Response("ok"), limit, signal), BodyLimitExceeded);
+			}
 		});
 	});
 

@@ -1,6 +1,6 @@
 /** Internal bounded response reader shared by federation HTTP clients. */
 import { utf8Decode } from "@oidfed/crypto";
-import { BodyLimitExceeded, readBytesWithLimit } from "./body-bytes.js";
+import { BodyLimitExceeded, readStreamBytes } from "./body-bytes.js";
 
 export async function readResponseBody(
 	response: Response,
@@ -13,6 +13,6 @@ export async function readResponseBody(
 		void response.body.cancel().catch(() => {});
 		throw new BodyLimitExceeded(maxBytes);
 	}
-	const bytes = await readBytesWithLimit(response.body, maxBytes, signal);
-	return bytes === null ? "" : utf8Decode(bytes, { fatal: false });
+	const bytes = await readStreamBytes(response.body, maxBytes, signal);
+	return utf8Decode(bytes, { fatal: false });
 }

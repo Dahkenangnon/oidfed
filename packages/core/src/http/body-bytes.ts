@@ -20,6 +20,15 @@ export async function readBytesWithLimit(
 		signal?.throwIfAborted();
 		return null;
 	}
+	return readStreamBytes(body, maxBytes, signal);
+}
+
+/** Read a stream while preserving the numeric comparison used by legacy text readers. */
+export async function readStreamBytes(
+	body: ReadableStream<Uint8Array>,
+	maxBytes: number,
+	signal?: AbortSignal,
+): Promise<Uint8Array<ArrayBuffer>> {
 	const reader = body.getReader();
 	/** Cancellation also wakes a pending read when the underlying transport ignores the signal. */
 	const cancel = () => {
@@ -39,7 +48,7 @@ export async function readBytesWithLimit(
 				break;
 			}
 			if (!ArrayBuffer.isView(value)) throw new TypeError("Body must contain byte chunks");
-			if (value.byteLength > maxBytes - received) throw new BodyLimitExceeded(maxBytes);
+			if (received + value.byteLength > maxBytes) throw new BodyLimitExceeded(maxBytes);
 			if (value.byteLength === 0) continue;
 			received += value.byteLength;
 			// Own the retained bytes before allowing the producer to supply another chunk.
