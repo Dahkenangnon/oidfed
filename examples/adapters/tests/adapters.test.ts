@@ -66,6 +66,53 @@ test("PostgreSQL preserves long exact namespace and record identities", async ()
 	);
 });
 
+test("guarded replay and bounded expiry cleanup preserve live records across clients", async () => {
+	assert.ok(postgresUrl);
+	const namespace = randomUUID();
+	let now = 1000;
+	const options = { now: () => now, cleanupIntervalSeconds: 0, maxReplayEntries: 2 };
+	await using a = await openTestStorage(postgresUrl, namespace, options);
+	await using b = await openTestStorage(postgresUrl, namespace, options);
+	await using other = await openTestStorage(postgresUrl, `${namespace}-other`, options);
+	const claim = { issuer: "issuer", audience: "receiver", expiresAt: 1010 };
+	const claims = await Promise.allSettled(
+		[a, b, a].map((client, index) =>
+			client.storage.replay?.useJti({ ...claim, jti: String(index) }),
+		),
+	);
+	assert.equal(claims.filter((result) => result.status === "fulfilled" && result.value).length, 2);
+	assert.equal(claims.filter((result) => result.status === "rejected").length, 1);
+	assert.equal(await other.storage.replay?.useJti({ ...claim, jti: "other" }), true);
+	const anchor = entityId("https://anchor.example");
+	const cursor = {
+		snapshotId: "snapshot",
+		trustAnchor: anchor,
+		context: "query",
+		index: 1,
+		expiresAt: 1010,
+	};
+	await a.storage.entityCollection.saveCursor("expired", cursor);
+	await a.storage.entityCollection.saveCursor("live", { ...cursor, expiresAt: 1100 });
+	const accepted = claims.findIndex((result) => result.status === "fulfilled" && result.value);
+	now = 1010;
+	const renewed = { ...claim, jti: String(accepted), expiresAt: 1100 };
+	assert.equal(
+		await b.storage.replay?.useJti(renewed),
+		true,
+		"reuse an expired key before pruning",
+	);
+	assert.deepEqual(
+		await Promise.all([a.storage.pruneExpired(1), b.storage.pruneExpired(1)]),
+		[1, 1],
+	);
+	assert.equal(await a.storage.pruneExpired(1), 0);
+	assert.equal(await other.storage.pruneExpired(1), 1, "cleanup is scoped to the exact namespace");
+	await using reopened = await openTestStorage(postgresUrl, namespace, options);
+	assert.equal(await reopened.storage.replay?.useJti(renewed), false);
+	assert.equal(await reopened.storage.entityCollection.cursor("expired"), undefined);
+	assert.equal((await reopened.storage.entityCollection.cursor("live"))?.expiresAt, 1100);
+});
+
 test("provisioning reports an earlier layout without altering it", async (t) => {
 	assert.ok(postgresUrl);
 	const admin = new Pool({ connectionString: postgresUrl });

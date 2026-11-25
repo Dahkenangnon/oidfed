@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import {
 	cloneData,
 	decodeEntityStatement,
@@ -83,6 +84,9 @@ export async function provisionPostgresStorage(pool: Pool): Promise<void> {
 		);
 		CREATE INDEX IF NOT EXISTS oidfed_replay_expiry
 			ON oidfed.oidfed_storage_record (namespace_key, replay_expiry) WHERE kind = 'replay';
+		CREATE INDEX IF NOT EXISTS oidfed_collection_cursor_expiry
+			ON oidfed.oidfed_storage_record (namespace_key, (((payload->'value'->>'expiresAt')::double precision)))
+			WHERE kind = 'collectionCursor';
 		CREATE INDEX IF NOT EXISTS oidfed_subordinate_order
 			ON oidfed.oidfed_storage_record (namespace_key, (substring(entity_order FROM 1 FOR 128)))
 			WHERE kind = 'subordinate';
@@ -272,16 +276,10 @@ function operations(
 			}
 		},
 		async claimReplay(key, claim, capacity, clock) {
-			const time = clock ? clock() : await this.now();
-			if (!Number.isFinite(time)) throw new TypeError("Invalid replay clock");
-			if (claim.expiresAt <= time) return false;
-			await client.query(
-				`DELETE FROM oidfed.oidfed_storage_record
-				 WHERE namespace_key = $3 AND namespace = $1 AND kind = 'replay' AND replay_expiry <= $2`,
-				[namespace, time, namespaceKey],
-			);
 			const override = clock ? clock() : null;
-			if (clock && !Number.isFinite(override)) throw new TypeError("Invalid replay clock");
+			if (override !== null && !Number.isFinite(override))
+				throw new TypeError("Invalid replay clock");
+			if (override !== null && claim.expiresAt <= override) return false;
 			const payload = storedPayload(
 				"replay",
 				key,
@@ -304,8 +302,11 @@ function operations(
 				       WHERE namespace_key = $7 AND id_key = $8 AND namespace = $1 AND kind = 'replay' AND id = $2 AND replay_expiry > now
 				     ) THEN 'duplicate'
 				     WHEN (
-				       SELECT count(*) FROM oidfed.oidfed_storage_record
-				       WHERE namespace_key = $7 AND namespace = $1 AND kind = 'replay' AND replay_expiry > now
+				       SELECT count(*) FROM (
+				         SELECT 1 FROM oidfed.oidfed_storage_record
+				         WHERE namespace_key = $7 AND namespace = $1 AND kind = 'replay' AND replay_expiry > now
+				         LIMIT $6::bigint
+				       ) AS live
 				     ) >= $6 THEN 'full'
 				     ELSE 'claim'
 				   END AS outcome FROM tick
@@ -338,6 +339,44 @@ function operations(
 			if (decision.full) throw new ReplayStoreCapacityError(capacity);
 			return decision.claimed;
 		},
+		/** Check cursor capacity and overwrite eligibility without transferring cursor payloads. */
+		async cursorUsage(id, time, limit) {
+			const { rows } = await client.query<{ live: number; existing: boolean }>(
+				`SELECT (SELECT count(*)::float8 FROM (
+					SELECT 1 FROM oidfed.oidfed_storage_record
+					WHERE namespace_key=$1 AND namespace=$2 AND kind='collectionCursor'
+					AND ((payload->'value'->>'expiresAt')::double precision)>$3 LIMIT $5::bigint
+				) live) AS live, EXISTS(
+					SELECT 1 FROM oidfed.oidfed_storage_record
+					WHERE namespace_key=$1 AND namespace=$2 AND kind='collectionCursor' AND id_key=$4 AND id=$6
+					AND ((payload->'value'->>'expiresAt')::double precision)>$3
+				) AS existing`,
+				[namespaceKey, namespace, time, storageKey(id), limit, id],
+			);
+			const usage = rows[0];
+			if (!usage) throw new Error("Missing Collection cursor usage");
+			return usage;
+		},
+		/** Delete one bounded batch of expired rows under the namespace write guard. */
+		async pruneExpired(time, limit) {
+			const { rowCount } = await client.query(
+				`WITH expired_replay AS (
+					SELECT ctid FROM oidfed.oidfed_storage_record
+					WHERE namespace_key=$1 AND namespace=$2 AND kind='replay' AND replay_expiry<=$3
+					ORDER BY replay_expiry LIMIT $4
+				), expired_cursors AS (
+					SELECT ctid FROM oidfed.oidfed_storage_record
+					WHERE namespace_key=$1 AND namespace=$2 AND kind='collectionCursor'
+					AND ((payload->'value'->>'expiresAt')::double precision)<=$3
+					ORDER BY ((payload->'value'->>'expiresAt')::double precision)
+					LIMIT GREATEST(0, $4::bigint - (SELECT count(*) FROM expired_replay))
+				)
+				DELETE FROM oidfed.oidfed_storage_record
+				WHERE ctid IN (SELECT ctid FROM expired_replay UNION ALL SELECT ctid FROM expired_cursors)`,
+				[namespaceKey, namespace, time, limit],
+			);
+			return rowCount ?? 0;
+		},
 		async delete(kind, id) {
 			const result = await client.query(
 				"DELETE FROM oidfed.oidfed_storage_record WHERE namespace_key = $4 AND kind = $2 AND id_key = $5 AND namespace = $1 AND id = $3",
@@ -348,28 +387,42 @@ function operations(
 	};
 }
 
+type PostgresStorage = ReturnType<typeof createStorage> & {
+	pruneExpired(batchSize?: number): Promise<number>;
+};
+
 export type PostgresStorageOptions = DatabaseStorageOptions & { pool: Pool; namespace: string };
 export function postgresStorage(
 	options: PostgresStorageOptions & { replay?: true | undefined },
-): ReturnType<typeof createStorage> & { replay: ReplayStore };
-export function postgresStorage(options: PostgresStorageOptions): ReturnType<typeof createStorage>;
+): PostgresStorage & { replay: ReplayStore };
+export function postgresStorage(options: PostgresStorageOptions): PostgresStorage;
 export function postgresStorage({
 	pool,
 	namespace,
 	...options
-}: PostgresStorageOptions): ReturnType<typeof createStorage> {
+}: PostgresStorageOptions): PostgresStorage {
 	const namespaceKey = storageKey(namespace);
-	async function run<T>(write: boolean, operation: (records: Records) => Promise<T>): Promise<T> {
+	const { cleanupIntervalSeconds = 60 } = options;
+	if (!Number.isFinite(cleanupIntervalSeconds) || cleanupIntervalSeconds < 0)
+		throw new RangeError("Invalid expired-record cleanup interval");
+	let nextCleanup = 0;
+	/** Hold the namespace guard through each atomic write or maintenance operation. */
+	async function run<T>(
+		mode: "read" | "write" | "guarded",
+		operation: (records: Records) => Promise<T>,
+	): Promise<T> {
 		for (let attempt = 0; ; attempt++) {
 			const client = await pool.connect();
 			let discard = false;
 			try {
 				await client.query(
-					write
-						? "BEGIN ISOLATION LEVEL SERIALIZABLE"
-						: "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY",
+					mode === "read"
+						? "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY"
+						: mode === "guarded"
+							? "BEGIN ISOLATION LEVEL READ COMMITTED"
+							: "BEGIN ISOLATION LEVEL SERIALIZABLE",
 				);
-				if (write) {
+				if (mode !== "read") {
 					const guard = await client.query(
 						`INSERT INTO oidfed.oidfed_storage_guard AS guard (namespace, namespace_key)
 						 VALUES ($1, $2)
@@ -397,19 +450,44 @@ export function postgresStorage({
 			} finally {
 				client.release(discard);
 			}
+			await delay(Math.min(100, 5 * 2 ** attempt) + Math.floor(Math.random() * 10));
 		}
 	}
-	const database: Database = {
-		read: (operation) => run(false, operation),
-		write: (operation) => run(true, operation),
+	/** Run one maintenance batch with the same expiry clock as replay and Collection. */
+	async function pruneExpired(batchSize = 1000): Promise<number> {
+		if (!Number.isSafeInteger(batchSize) || batchSize < 1 || batchSize > 1000)
+			throw new RangeError("Cleanup batch size must be between 1 and 1000");
+		return run("guarded", async (records) => {
+			const now = options.now ? options.now() : await records.now();
+			if (!Number.isFinite(now)) throw new TypeError("Invalid expired-record cleanup clock");
+			return records.pruneExpired(now, batchSize);
+		});
+	}
+	/** Allocate at most one opportunistic maintenance pass per interval on this handle. */
+	async function write<T>(
+		mode: "write" | "guarded",
+		operation: (records: Records) => Promise<T>,
+	): Promise<T> {
+		const now = performance.now();
+		if (cleanupIntervalSeconds > 0 && now >= nextCleanup) {
+			nextCleanup = now + cleanupIntervalSeconds * 1000;
+			await pruneExpired();
+		}
+		return run(mode, operation);
+	}
+	const database = {
+		read: <T>(operation: (records: Records) => Promise<T>) => run("read", operation),
+		write: <T>(operation: (records: Records) => Promise<T>) => write("write", operation),
+		claim: <T>(operation: (records: Records) => Promise<T>) => write("guarded", operation),
 	};
-	return createStorage(
+	const storage = createStorage(
 		namespace,
 		database,
 		options.now,
 		(name) => postgresStorage({ ...options, pool, namespace: name }),
 		options,
 	);
+	return { ...storage, pruneExpired };
 }
 
 type RecordKind = keyof StoragePayloadByKind;
@@ -454,6 +532,12 @@ interface Records {
 	get<K extends RecordKind>(kind: K, id: string): Promise<StoragePayloadByKind[K] | undefined>;
 	list<K extends RecordKind>(kind: K): Promise<StoragePayloadByKind[K][]>;
 	set<K extends RecordKind>(kind: K, id: string, payload: StoragePayloadByKind[K]): Promise<void>;
+	cursorUsage(
+		id: string,
+		time: number,
+		limit: number,
+	): Promise<{ live: number; existing: boolean }>;
+	pruneExpired(time: number, limit: number): Promise<number>;
 	delete(kind: RecordKind, id: string): Promise<boolean>;
 }
 
@@ -754,7 +838,7 @@ const recordCapabilities = [
 
 function createStorage(
 	namespace: string,
-	db: Database,
+	db: Database & { claim: Database["write"] },
 	now: (() => number) | undefined,
 	withNamespace: (name: string) => FederationStorage,
 	options: DatabaseStorageOptions,
@@ -856,7 +940,7 @@ function createStorage(
 						async useJti(input: JtiReplayClaim) {
 							const claim = parseStorageRecord(JtiReplayClaimSchema, input, "replay", "claim");
 							const key = digest(JSON.stringify([claim.issuer, claim.audience, claim.jti]));
-							return db.write((records) => records.claimReplay(key, claim, maxReplayEntries, now));
+							return db.claim((records) => records.claimReplay(key, claim, maxReplayEntries, now));
 						},
 					},
 				}
@@ -867,6 +951,8 @@ function createStorage(
 interface DatabaseStorageOptions extends StorageValidationOptions {
 	readonly now?: () => number;
 	readonly maxReplayEntries?: number;
+	/** Seconds between write-triggered cleanup batches. Set to zero when scheduling pruning externally. */
+	readonly cleanupIntervalSeconds?: number;
 	readonly replay?: boolean;
 	readonly collection?: CollectionStorageOptions;
 }
@@ -989,15 +1075,7 @@ function durableCollection(
 			);
 			await database.write(async (records) => {
 				const time = await now(records);
-				let live = 0;
-				let existing = false;
-				for (const item of await records.list("collectionCursor")) {
-					if (item.value.expiresAt <= time) await records.delete("collectionCursor", item.id);
-					else {
-						live++;
-						existing ||= item.id === id;
-					}
-				}
+				const { live, existing } = await records.cursorUsage(id, time, maxCursors);
 				if (!existing && live >= maxCursors)
 					throw new EntityCollectionCursorCapacityError(maxCursors);
 				await records.set("collectionCursor", id, { id, value });

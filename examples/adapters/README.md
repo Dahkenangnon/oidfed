@@ -75,9 +75,15 @@ The namespace guard serializes writes across clients. Within a scope, the adapte
 
 PostgreSQL filters subordinate candidates and scans them in keyset batches. Derived rows index the subjects, types, and issuers of Trust Marks. Core applies mark eligibility before the adapter selects the newest record or returns a page. Store writes go through the adapter to keep the lookup data and payloads consistent.
 
-Replay checks the exact key, bulk-deletes expired claims, and counts live claims under the namespace guard. Replay and Collection expiry use the database clock by default. PostgreSQL stores payloads as `jsonb`, which excludes NUL characters and unpaired UTF-16 surrogates even when a generic JSON encoder accepts them.
+Replay checks the exact key, expiry, and live capacity under the namespace guard with a bounded SQL query. Outer storage transactions keep their serializable isolation. The adapter backs off between retries after a confirmed serialization failure or deadlock. Replay and Collection expiry use the database clock by default. PostgreSQL stores payloads as `jsonb`, which excludes NUL characters and unpaired UTF-16 surrogates even when a generic JSON encoder accepts them.
 
-Unpaged listing can return all matching records. Event history reads and appends transfer a complete history for one subject. Collection publishes its snapshot and current pointer in one transaction. Publication scans retained snapshots and live cursors while checking capacity and identity. Size the retention window and `maxSnapshots` and `maxCursors` limits for the deployment. An expired cursor or an unavailable historical snapshot produces `page_not_found`.
+Unpaged listing can return all matching records. Event history reads and appends transfer a complete history for one subject. Collection publishes its snapshot and current pointer in one transaction. Publication scans retained snapshots. Cursor saves use an indexed check of live capacity and exact cursor identity. Size the retention window and `maxSnapshots` and `maxCursors` limits for the deployment. An expired cursor or an unavailable historical snapshot produces `page_not_found`.
+
+### Prune expired records
+
+The adapter removes at most 1,000 expired replay claims and cursors per maintenance pass. Writes trigger a pass at most once per 60 seconds per handle by default. Replicas serialize each pass under the same namespace guard. Expired claims can be replaced and expired cursors stop counting toward capacity even before cleanup.
+
+To set your own cadence, set `cleanupIntervalSeconds: 0` and schedule `await storage.pruneExpired()` from an operator job for each active namespace. Use `pruneExpired(batchSize)` to choose a smaller batch. Pruning uses the same clock as the adapter. Hosts should also schedule cleanup for inactive namespaces if physical retention matters.
 
 ## Verify the adapter
 
