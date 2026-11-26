@@ -9,9 +9,9 @@
 	},
 	"dependencies": {
 		"@oidfed/core": "workspace:*",
-		"pg": "8.16.3"
+		"pg": "8.23.1"
 	},
 	"devDependencies": {
-		"@types/pg": "8.15.6"
+		"@types/pg": "8.23.1"
 	}
 }
