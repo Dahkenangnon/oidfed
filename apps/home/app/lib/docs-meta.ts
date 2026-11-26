@@ -111,14 +111,12 @@ function sectionFor(path: string): string {
 	if (api) return `${PACKAGE_LABELS[api]} API`;
 	if (path.startsWith("/docs/features")) return "Feature guides";
 	if (path.startsWith("/docs/examples")) return "Examples";
-	if (path.startsWith("/docs/maintenance")) return "Maintenance";
 	return "Documentation";
 }
 
 /**
- * Ancestors that are themselves documentation pages. `/docs/examples` and
- * `/docs/maintenance` have no index, so a trail skips straight to `/docs`
- * rather than pointing a crawler at an address that does not resolve.
+ * List ancestors with their own documentation pages. Example pages link
+ * back to `/docs` because the examples directory has no index.
  */
 function trail(path: string): string[] {
 	const api = docsPackage(path);

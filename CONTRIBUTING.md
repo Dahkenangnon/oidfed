@@ -53,7 +53,7 @@ For documentation-only changes, check links, examples, and formatting. Runtime t
 
 Follow [SECURITY.md](SECURITY.md) for vulnerabilities. Use its private reporting process instead of opening a public issue with vulnerability details.
 
-For changes to the published library packages, run the [package security checks](docs/maintenance/security-checks.md) alongside the tests. That guide covers local setup, source and dependency scans, packed consumers, fuzzing, and mutation testing. The additional checks are scoped to those packages and their shared security and release workflows.
+For changes to the published library packages, run the [package security checks](.github/maintainers/security-checks.md) alongside the tests. That guide covers local setup, source and dependency scans, packed consumers, fuzzing, and mutation testing. The additional checks are scoped to those packages and their shared security and release workflows.
 
 Automated dependency PRs may use their generated branches and PR descriptions without a separate issue. Release automation follows the [release workflow](#releasing). These automated workflows can use their own issue and branch process. They follow the same review, commit, and verification requirements.
 
@@ -182,7 +182,7 @@ layout and make sure the comments describe the code accurately.
 
 `pnpm typecheck` also checks TAP, E2E, storage contract and conformance tests, and scripts. Use `pnpm typecheck:contracts` to check the storage contract project by itself. `pnpm lint` uses the root Biome configuration. `pnpm test:e2e` runs the HTTPS federation scenarios.
 
-See the [OpenID Federation conformance guide](docs/maintenance/testing/conformance.md) for
+See the [OpenID Federation conformance guide](.github/maintainers/testing/conformance.md) for
 the pinned test plans, local Docker setup, CI profiles, and coverage limits.
 Run `pnpm test:conformance:unit` when changing the harness. For fixture or
 configuration changes, run the affected conformance profile.
@@ -216,47 +216,11 @@ pnpm build                   # packages and tools
 pnpm build:apps              # apps and internal UI dependencies
 ```
 
-The local release gate runs the memory contract suite and type-checks the PostgreSQL example. The release check on GitHub also requires a successful Docker-backed storage job for the exact commit. See the [storage checks](docs/maintenance/development.md#storage-checks).
+The local release gate runs the memory contract suite and type-checks the PostgreSQL example. The release check on GitHub also requires a successful Docker-backed storage job for the exact commit. See the [storage checks](.github/maintainers/development.md#storage-checks).
 
 ## Releasing
 
-Each package has its own version, changelog, Git tag, and GitHub Release. Use `all`
-to prepare or publish the seven packages together; their versions remain independent.
-
-Fetch the release tags so generated changelogs use the latest applicable baseline,
-then preview and prepare the changes:
-
-```bash
-git fetch origin --tags
-pnpm release core patch --dry-run
-pnpm release core patch --prepare
-# Or prepare every package:
-pnpm release all minor --prepare
-```
-
-Review the generated package changelogs, edit the notes, and merge the changes into
-`main`. Preparation does not commit, tag, push, or publish anything. From a clean
-checkout of the reviewed commit, start publication:
-
-```bash
-pnpm release core --publish
-# Or publish the committed versions of every package:
-pnpm release all --publish
-```
-
-The workflow requires passing CI and security checks for that exact commit, validates
-and saves the package archives, and publishes those same archives through npm trusted
-publishing. It then creates a scoped tag and GitHub Release for each package.
-Conformance runs are separate from this release gate.
-
-If publication or GitHub Release completion is interrupted, resume using the saved run:
-
-```bash
-pnpm release --resume 123456789
-```
-
-See the [release guide](docs/maintenance/releases.md) for setup, independent versions,
-artifact checks, and recovery. Automatic commit-and-push finalization is not supported.
+Maintainers use the [release guide](.github/maintainers/releases.md) to prepare, publish, and recover releases.
 
 ## Questions
 

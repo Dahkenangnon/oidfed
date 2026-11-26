@@ -49,7 +49,6 @@ const footerGroups = [
 		label: "Project",
 		links: [
 			{ label: "About OidFed", href: "/about" },
-			{ label: "Contributing", href: `${REPOSITORY}/blob/main/CONTRIBUTING.md` },
 			{ label: "Security", href: `${REPOSITORY}/blob/main/SECURITY.md` },
 		],
 	},

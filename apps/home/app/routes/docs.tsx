@@ -233,20 +233,6 @@ function DocumentationNav({ path, topics, apiPages }: DocsNavigation) {
 					})}
 				</ul>
 			</section>
-			<section aria-label="Maintenance">
-				<h2 className="docs-nav-heading">Maintenance</h2>
-				<ul>
-					<li>
-						<DocumentationLink href="/docs/maintenance/development" label="Development" />
-					</li>
-					<li>
-						<DocumentationLink href="/docs/maintenance/security-checks" label="Security checks" />
-					</li>
-					<li>
-						<DocumentationLink href="/docs/maintenance/releases" label="Releases" />
-					</li>
-				</ul>
-			</section>
 		</nav>
 	);
 }

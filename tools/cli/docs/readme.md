@@ -19,7 +19,7 @@ pnpm add -g @oidfed/cli
 node tools/cli/dist/bin.js <command>
 ```
 
-The workspace shortcuts `pnpm oidfed` and `pnpm cli` disable TLS certificate verification through `NODE_TLS_REJECT_UNAUTHORIZED=0`. They are local test helpers. Use the installed `oidfed` command or the direct Node invocation above when inspecting remote deployments. To trust the local test CA without disabling verification, set `NODE_EXTRA_CA_CERTS` as described in the [development guide](../../../docs/maintenance/development.md#tls-trust).
+The workspace shortcuts `pnpm oidfed` and `pnpm cli` disable TLS certificate verification through `NODE_TLS_REJECT_UNAUTHORIZED=0`. They are local test helpers. Use the installed `oidfed` command or the direct Node invocation above when inspecting remote deployments. To trust the local test CA without disabling verification, set `NODE_EXTRA_CA_CERTS` as described in the [development guide](../../../.github/maintainers/development.md#tls-trust).
 
 ## Global options
 

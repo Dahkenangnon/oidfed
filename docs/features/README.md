@@ -121,6 +121,6 @@ Inspect `result.ok` before reading `result.value`. Chain validation uses `valid`
 
 Inline code identifies API names, claim names, literal values, and normative keywords such as `MUST` or `SHOULD`. **Bold** highlights example participants and important concepts. Specification references remain next to the behavior they support; code formatting alone does not indicate a verbatim quotation.
 
-The [API reference](../api/README.md) lists public APIs and their contracts. For repository changes, follow [Contributing](../../CONTRIBUTING.md).
+The [API reference](../api/README.md) lists public APIs and their contracts.
 
 [Next: 1. Federation participants](1.federation-participants.md)

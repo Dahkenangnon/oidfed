@@ -24,7 +24,7 @@ pnpm exec turbo run typecheck --filter=@oidfed/explorer
 pnpm --filter @oidfed/explorer preview
 ```
 
-To test against the local dev federation, start it first; see [development guide](../../../docs/maintenance/development.md).
+To test against the local dev federation, start it first; see [development guide](../../../.github/maintainers/development.md).
 
 ## Deploy on Cloudflare Pages
 
@@ -66,7 +66,7 @@ Settings can be exported to JSON and re-imported. Importing a settings file repl
 
 ## Testing with the dev federation
 
-Start the dev federation first; see [development guide](../../../docs/maintenance/development.md) for setup.
+Start the dev federation first; see [development guide](../../../.github/maintainers/development.md) for setup.
 
 ### Configure trust anchors
 

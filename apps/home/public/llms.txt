@@ -40,9 +40,6 @@ OidFed implements [OpenID Federation 1.1](https://openid.net/specs/openid-federa
 - [React Native Compatibility](https://oidfed.com/docs/api/react-native) covers Metro, URL parsing, and streaming HTTP setup for mobile apps using Core or Wallet.
 - [Wiring Guide](https://oidfed.com/docs/features/11.5.http-wiring): End-to-end integration with Express.js and `panva/node-oidc-provider`. Worked eduGAIN-topology example covering Trust Anchor, Intermediate, OP, and RP.
 - [Storage Guide](https://oidfed.com/docs/features/11.6.storage-adapters): Configure one storage adapter for subordinate records, events, Trust Marks, collection snapshots, replay protection, and caching.
-- [Dev Guide](https://oidfed.com/docs/maintenance/development): Running the full multi-topology federation locally with wildcard DNS and TLS.
-- [E2E Test Infrastructure](https://oidfed.com/docs/maintenance/testing/e2e): Integration harness — real HTTPS over undici + Express + `oidc-provider`.
-- [CONTRIBUTING](https://github.com/Dahkenangnon/oidfed/blob/main/CONTRIBUTING.md): Setup, test commands and runtime coverage, commit conventions, and the PR process.
 - [SECURITY](https://github.com/Dahkenangnon/oidfed/blob/main/SECURITY.md): Vulnerability disclosure policy.
 
 ## Related Specifications
