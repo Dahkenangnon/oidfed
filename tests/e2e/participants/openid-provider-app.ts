@@ -121,7 +121,12 @@ export async function createOpenIDProviderApp(
 		// SameSite=None session cookies for POST support; keep those cookies Secure.
 		enableHttpPostMethods: true,
 		cookies: { long: { sameSite: "none", secure: true } },
-		jwks: { keys: [oidcSigningKey, ...(config.additionalSigningKeys ?? [])] },
+		jwks: {
+			// The provider manages key usage from its own configuration.
+			keys: [oidcSigningKey, ...(config.additionalSigningKeys ?? [])].map(
+				({ key_ops: _keyOperations, ...key }) => key,
+			),
+		},
 		claims: { openid: ["sub"] },
 		scopes: ["openid"],
 		responseTypes: ["code"],
