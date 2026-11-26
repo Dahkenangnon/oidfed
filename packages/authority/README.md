@@ -47,7 +47,7 @@ yarn add @oidfed/authority
 # bun
 bun add @oidfed/authority
 
-# Deno (Deno 2.0+ / JSR/npm specifier auto-resolution)
+# Deno (npm packages)
 deno add npm:@oidfed/authority
 ```
 
@@ -80,18 +80,18 @@ export async function createAuthority(federationSigner: Signer) {
 }
 ```
 
-A basic keyring is enough for authority signing. Configure `crypto.history` when exposing historical-key features; `historicalKeysFromKeyring` in core converts a rotating keyring's recorded events. The host schedules propagation and retirement. See the [crypto migration guide](../../docs/api/migration-v3.md#publish-and-retire-keys-deliberately).
+A basic keyring is enough for authority signing. Configure `crypto.history` when exposing historical-key features; `historicalKeysFromKeyring` in core converts a rotating keyring's lifecycle records. The host schedules propagation and retirement. See the [key rollover guide](https://oidfed.com/docs/features/9.5.key-rollover).
 
 Federation endpoint `private_key_jwt` authentication uses `AuthorityConfig.clientKeyProvider`
 to resolve a caller's public Federation Entity Keys. Omit it to use the default
-subordinate-storage lookup: `storage.subordinate.fetch(entityId)?.jwks`.
+subordinate-storage lookup, which reads the caller’s subordinate record asynchronously and returns its Federation Entity Keys.
 Authenticated federation endpoints require `storage.replay`. Claims are checked and
 atomically recorded before the endpoint runs; production processes serving the same
 authority must share replay state.
 
 Authorities can publish signed subordinate histories through the optional
-[Subordinate Events endpoint](https://github.com/Dahkenangnon/oidfed/blob/main/docs/features/13.1.subordinate-events.md#lifecycle-recording-and-endpoint-responses).
-Compose [wallet roles](https://github.com/Dahkenangnon/oidfed/blob/main/docs/api/wallet/README.md)
+[Subordinate Events endpoint](https://oidfed.com/docs/features/13.1.subordinate-events#lifecycle-recording-and-endpoint-responses).
+Compose [wallet roles](https://oidfed.com/docs/api/wallet)
 when an authority also acts as a Wallet Provider, Credential Issuer, or Verifier.
 
 HTTP routes follow the URLs advertised in `metadata.federation_entity`. The
@@ -101,11 +101,11 @@ endpoint URL paths.
 
 ## Entity Collection
 
-Trust Anchors and Intermediates can serve Draft 01 collections through the shared core service. Refresh snapshots explicitly, then query them with filters, informational claims, language selection, and pagination. See the [Entity Collection guide](https://github.com/Dahkenangnon/oidfed/blob/main/docs/features/14.2.collection-operations.md) for configuration and endpoint integration.
+Trust Anchors and Intermediates can serve Draft 01 collections through the shared core service. Refresh snapshots explicitly, then query them with filters, informational claims, language selection, and pagination. See the [Entity Collection guide](https://oidfed.com/docs/features/14.2.collection-operations) for configuration and endpoint integration.
 
 ## Documentation
 
-For a detailed API reference, subordinate management APIs, and unified storage adapter setups, see the [authority API reference](https://github.com/Dahkenangnon/oidfed/blob/main/docs/api/authority/README.md) file.
+For a detailed API reference, subordinate management APIs, and unified storage adapter setups, see the [authority API reference](https://oidfed.com/docs/api/authority) file.
 
 ## License
 

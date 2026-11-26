@@ -44,7 +44,7 @@ yarn add @oidfed/oidc
 # bun
 bun add @oidfed/oidc
 
-# Deno (Deno 2.0+ / JSR/npm specifier auto-resolution)
+# Deno (npm packages)
 deno add npm:@oidfed/oidc
 ```
 
@@ -54,17 +54,22 @@ This package provides role classes that compose directly with `Leaf`, `TrustAnch
 
 Configure federation and protocol keys under separate keyring purposes. RP roles derive their public `jwks` from the purposes used to sign Request Objects and client assertions. For an external OP protocol engine, its key metadata remains application owned. Hosts receive explicit engine and keyring contracts; historical-key features use an optional history source.
 
-The RP example imports `@oidfed/leaf` and `@oidfed/crypto`. The OP example imports `@oidfed/authority` and `@oidfed/core`. Add the dependencies for the example you use.
+The RP example also imports `@oidfed/leaf`, `@oidfed/core`, and `@oidfed/crypto`. The OP example imports `@oidfed/authority` and `@oidfed/core`. Add the dependencies for the example you use.
 
 ### RP Composition Example
 
 ```ts
 import { StaticKeyring, type Signer } from "@oidfed/crypto";
 import { createWebCryptoEngine } from "@oidfed/crypto/web";
+import type { TrustAnchorSet } from "@oidfed/core";
 import { Leaf } from "@oidfed/leaf";
 import { OidcRelyingPartyRole } from "@oidfed/oidc";
 
-export async function createRelyingParty(federationSigner: Signer, protocolSigner: Signer) {
+export async function createRelyingParty(
+  federationSigner: Signer,
+  protocolSigner: Signer,
+  trustAnchors: TrustAnchorSet,
+) {
   const engine = createWebCryptoEngine(); // The application chooses its backend.
   const keyring = new StaticKeyring({
     signers: { federation: federationSigner, request_object: protocolSigner },
@@ -81,6 +86,7 @@ export async function createRelyingParty(federationSigner: Signer, protocolSigne
   const leaf = await Leaf.create({
     entityId: "https://rp.example.com",
     authorityHints: ["https://ta.example.org"],
+    trustAnchors,
     crypto: { engine, keyring },
     metadata: { federation_entity: { organization_name: "Example RP" } },
     roles: [rp],
@@ -92,7 +98,7 @@ export async function createRelyingParty(federationSigner: Signer, protocolSigne
 ### OP Composition Example
 
 
-This example assumes `opProtocolPublicKeys` contains the OP’s RSA and EC protocol public keys, matching its RS256 and ES256 support. Keep these separate from its Federation Entity Keys.
+This example assumes `opProtocolPublicKeys` contains the OP’s RSA and EC protocol public keys, matching its RS256 and ES256 support. Keep these separate from its Federation Entity Keys. Supply replay-capable storage for automatic registration. The role mounts Explicit Registration at `/register`. Your application calls the automatic registration and PAR handlers from its own protocol routes.
 
 ```ts
 import { TrustAnchor } from "@oidfed/authority";
@@ -146,7 +152,7 @@ export async function createExampleOp(
 
 ## Documentation
 
-See the [OIDC API reference](https://github.com/Dahkenangnon/oidfed/blob/main/docs/api/oidc/README.md) for public roles, registration contracts, protocol signing purposes, and metadata validation methods.
+See the [OIDC API reference](https://oidfed.com/docs/api/oidc) for public roles, registration contracts, protocol signing purposes, and metadata validation methods.
 
 ## License
 

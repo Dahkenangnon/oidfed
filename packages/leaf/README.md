@@ -44,11 +44,11 @@ yarn add @oidfed/leaf
 # bun
 bun add @oidfed/leaf
 
-# Deno (Deno 2.0+ / JSR/npm specifier auto-resolution)
+# Deno (npm packages)
 deno add npm:@oidfed/leaf
 ```
 
-For the OIDC quick start below, also install `@oidfed/oidc` and `@oidfed/crypto`.
+For the OIDC quick start below, also install `@oidfed/oidc` and `@oidfed/crypto`. Configure pinned Trust Anchors on the Leaf before evaluating peers or registering with an OP.
 
 ## Quick Start
 
@@ -83,18 +83,18 @@ export async function createRelyingParty(federationSigner: Signer, protocolSigne
 }
 ```
 
-The application supplies stable signers and chooses its engine. The host derives managed protocol JWKS from the configured purpose snapshots. `SoftwareSigner` from `@oidfed/crypto/web` is available for software custody; custom signers can retain native or remote key handles. See the [crypto migration guide](../../docs/api/migration-v3.md#separate-federation-and-protocol-purposes).
+The application supplies stable signers and chooses its engine. The host derives managed protocol JWKS from the configured purpose snapshots. `SoftwareSigner` from `@oidfed/crypto/web` is available for software custody; custom signers can retain native or remote key handles. See the [crypto adapter guide](https://oidfed.com/docs/api/crypto/adapters).
 
-Leaves can compose [wallet roles](https://github.com/Dahkenangnon/oidfed/blob/main/docs/api/wallet/README.md) for Wallet Providers, Credential Issuers, and Credential Verifiers.
+Leaves can compose [wallet roles](https://oidfed.com/docs/api/wallet) for Wallet Providers, Credential Issuers, and Credential Verifiers.
 
 ## Entity Collection
 
-Leaves can serve Draft 01 collections through the shared core service. It supports explicit snapshot refresh, filters, informational metadata, language selection, and pagination. See the [Entity Collection guide](https://github.com/Dahkenangnon/oidfed/blob/main/docs/features/14.2.collection-operations.md) for configuration and endpoint integration.
+Leaves can serve Draft 01 collections through the shared core service. It supports explicit snapshot refresh, filters, informational metadata, language selection, and pagination. See the [Entity Collection guide](https://oidfed.com/docs/features/14.2.collection-operations) for configuration and endpoint integration.
 
 ## Documentation
 
-See the [leaf API reference](https://github.com/Dahkenangnon/oidfed/blob/main/docs/api/leaf/README.md) for public constructors, methods, and configuration contracts.
-To publish retired or revoked federation public keys, configure the optional [Historical Keys endpoint](https://github.com/Dahkenangnon/oidfed/blob/main/docs/features/7.4.historical-keys.md).
+See the [leaf API reference](https://oidfed.com/docs/api/leaf) for public constructors, methods, and configuration contracts.
+To publish retired or revoked federation public keys, configure the optional [Historical Keys endpoint](https://oidfed.com/docs/features/7.4.historical-keys).
 
 ## License
 

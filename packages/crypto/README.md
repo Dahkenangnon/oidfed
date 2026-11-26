@@ -1,6 +1,6 @@
 # @oidfed/crypto
 
-Portable cryptographic operations, signing custody, keyring snapshots, and compact JSON JWS helpers. Applications can use Web Crypto, the optional JOSE adapter, or their own implementation.
+Use `@oidfed/crypto` to sign and verify compact JWS and manage the keys those operations use. Choose Web Crypto, the optional JOSE adapter, or your own implementation. Your application controls where private keys are kept and how signing runs.
 
 ```sh
 pnpm add @oidfed/crypto
@@ -12,17 +12,16 @@ pnpm add @oidfed/crypto
 | `@oidfed/crypto/web` | Web Crypto engine and JWK-backed `SoftwareSigner` | Host Web Crypto, resolved when constructed |
 | `@oidfed/crypto/jose` | JOSE verification engine | Optional `jose` v6 peer and host Web Crypto |
 
-The root and `/web` imports do not install or import JOSE. ESM and CommonJS exports include matching declarations. Public declarations work with ES2022 types without requiring DOM or Node declaration packages. Importing the package does not initialize a crypto backend.
+JOSE is optional and only the `/jose` entry point loads it. You choose a crypto backend when you configure your application. The package ships matching TypeScript declarations for ESM and CommonJS, and ES2022 types are enough to use them.
 
-The root helpers use ES2022 JavaScript and typed arrays. UTF-8 handling and JWK copies work without `TextEncoder`, `TextDecoder`, `structuredClone`, `Buffer`, `atob` or `btoa`. A host can supply its engine and signing bindings without installing global crypto or encoding polyfills.
+The root helpers use ES2022 JavaScript and typed arrays. They handle UTF-8 and copy JWKs without relying on `TextEncoder`, `TextDecoder`, `structuredClone`, `Buffer`, `atob` or `btoa`. You can pass in your own engine and signing bindings without installing global crypto or encoding polyfills.
 
-Core and the federation hosts use these contracts through explicit application configuration. See the [migration guide](../../docs/api/migration-v3.md#host-provided-crypto) for awaited host factories, managed role publication and standalone verification.
+Standalone Core operations take an engine in their options. Federation hosts take the engine and signing bindings in their configuration.
 
 ## Sign with host-owned custody
 
 ```ts
 import { StaticKeyring, signCompactJws, toPublicJwk, type Signer } from "@oidfed/crypto";
-import { createWebCryptoEngine } from "@oidfed/crypto/web";
 
 const pair = await crypto.subtle.generateKey(
   { name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"],
@@ -46,26 +45,27 @@ const compact = await signCompactJws(
   { alg: snapshot.signer.publicJwk.alg, kid: snapshot.signer.publicJwk.kid },
   snapshot.signer,
 );
-const engine = createWebCryptoEngine();
 ```
 
-The private key in this example is non-exportable. A keystore, hardware device, or remote service can implement the same `Signer` contract. Bind the operation to an immutable key identifier and algorithm; do not resolve a mutable "current key" alias inside `sign`. Signers return raw JWS signature bytes, including fixed-width `R || S` for ECDSA. `SoftwareSigner` is available from `/web` for private JWKs with explicit `kid` and `alg`. The signer shares an in-flight import across calls, releases its private JWK copy after a successful import and retries a failed import on the next call.
+The example keeps the private key non-exportable. You can use the same `Signer` contract with a keystore, hardware device, or remote signing service. Bind `sign` to a fixed key identifier and algorithm so it uses the same key even if the service’s “current key” changes. Return raw JWS signature bytes, using fixed-width `R || S` for ECDSA.
 
-Read the signing binding and advertised keys from one `KeyringEntry`, as above. Keep that snapshot through payload construction and signing. A snapshot remains bound to its original key when the keyring rotates. Hosts control request cancellation and backend revocation if already-issued snapshots must stop signing.
+Use `SoftwareSigner` from `/web` if you have a private JWK with an explicit `kid` and `alg`. Concurrent calls share the same key import. The signer releases its private JWK copy once the import succeeds and tries again on the next call if the import fails.
+
+Take the signer and the advertised keys from the same `KeyringEntry`. Use that snapshot to build and sign the payload so both operations use the same key even during rotation. If you need to stop an existing snapshot from signing, your application controls request cancellation and key revocation in the backend.
 
 ## Verification boundary
 
-`decodeCompactJws()` reads encoded JSON header and payload objects for inspection. It leaves algorithm values, critical headers and the signature segment uninterpreted. `parseCompactJws()` additionally checks supported headers and signature encoding. Both return **unverified** data.
+`decodeCompactJws()` reads the JSON header and payload so you can inspect them. It leaves interpretation of the algorithm, critical headers, and signature segment to the caller. `parseCompactJws()` also checks header support and signature encoding. Treat the output of either function as unverified.
 
-`CryptoEngine.verify()` consumes the original `signingInput` and `signature` bytes with the caller-selected algorithm and public key. These bytes are authoritative; the JOSE adapter reconstructs its serialization from them without reserializing JSON. Use the algorithm from the parsed protected header and require the verification result to be literally `true`. The parsed `compact` string is retained for inspection, not passed as a second verification representation.
+Pass the original `signingInput` and `signature` bytes to `CryptoEngine.verify()` along with the selected public key and the algorithm from the parsed protected header. The JOSE adapter rebuilds the compact form from those bytes without reserializing the JSON. Accept the signature only if verification returns exactly `true`. Use the parsed `compact` string for inspection.
 
-Protocol code must separately apply algorithm policy, select trusted keys, enforce its `typ` and `kid` rules, validate claims and audience, and establish trust. There is deliberately no generic JWT verification helper in this package. A valid signature alone does not establish federation trust. [OpenID Federation §3](https://openid.net/specs/openid-federation-1_0-final.html#section-3) recommends RS256 verification and requires explicit `typ` and `kid` for Entity Statements; those rules belong in the protocol verifier.
+Use your protocol verifier to establish trust. It applies the algorithm policy, selects trusted keys, checks `typ` and `kid`, and validates the claims and audience. For Entity Statements, [OpenID Federation §3](https://openid.net/specs/openid-federation-1_0-final.html#section-3) recommends RS256 verification and requires explicit `typ` and `kid`.
 
-Both adapters enable ES256/384/512, PS256/384/512 and RS256 by default. Ed25519 and its legacy `EdDSA` identifier require explicit opt-in and runtime support. `algorithms` advertises the adapter's configured capability ceiling, not deployment acceptance policy or a runtime probe. Deployments should narrow accepted algorithms per operation. `INTEROP_RECOMMENDED_ALGORITHMS` contains RS256 as guidance and does not change policy.
+Both adapters enable ES256/384/512, PS256/384/512, and RS256 by default. To use `RS384`, `RS512`, `Ed25519`, or the legacy `EdDSA` identifier, enable it explicitly and check that your runtime supports it. The `algorithms` property reports the configured capabilities. Set the accepted algorithms separately for each operation. `INTEROP_RECOMMENDED_ALGORITHMS` lists RS256 as guidance for that choice.
 
 ## Key rotation
 
-`MemoryRotatingKeyring` supports arbitrary purpose names and an empty initial map:
+`MemoryRotatingKeyring` accepts your own purpose names and can start with an empty map. Rotate keys in this order.
 
 1. `publish(purpose, nextSigner)` includes the next public key before it signs.
 2. Allow the application's propagation interval to elapse.
@@ -73,13 +73,15 @@ Both adapters enable ES256/384/512, PS256/384/512 and RS256 by default. Ed25519 
 4. `retire(purpose, oldKid)` withdraws the old public key after outstanding tokens expire.
 5. `revoke(purpose, kid, reason)` withdraws a compromised key immediately from future snapshots.
 
-`history(purpose)` records publication, activation, retirement and revocation events in Unix seconds; active keys have no invented end time. `publishedAt` records introduction into this keyring. It does not establish when the key was created or when a remote party received its JWKS. Pending keys enter history only after activation or withdrawal. Historical records are building blocks for a host's historical-key endpoint; protocol code maps their meaning to wire fields. The injectable clock must be finite and nondecreasing. A rejected clock read leaves state unchanged. This keyring is in-memory; durable, distributed rotation and propagation schedules belong to the application.
+`history(purpose)` returns one record per key with the available publication, activation, retirement, and revocation timestamps in Unix seconds. Active keys have no end timestamp. `publishedAt` is the time this keyring recorded the key. A pending key appears in the history after activation or withdrawal. When serving a historical-key endpoint, map these records to the fields your protocol expects.
 
-`StaticKeyring` offers explicit one-hop purpose aliases and additional published keys. Neither implementation implicitly shares a federation signer with another purpose. Custom keyrings can use `KeySelectionContext` for issuer, subject, trust-mark type and application extension facts.
+If you supply a clock, it must return finite values in nondecreasing order. The keyring keeps its state when it rejects a clock reading. The keyring stores its data in memory. Your application manages persistence, rotation across processes, and propagation timing.
+
+`StaticKeyring` lets you publish additional keys and point one purpose directly to another. To share a federation signer with another purpose, configure the binding explicitly with either keyring. A custom keyring can use `KeySelectionContext` to pick a key by issuer, subject, Trust Mark type, or other information supplied by the application.
 
 ## Application algorithms
 
-Use `createJwsAlgorithmRegistry` to add an algorithm and its public key format. Share the registry across your host, keyring and standalone operations. Select the permitted Federation Entity Key algorithms with `allowedFederationAlgorithms`. Protocol roles apply their own algorithm settings. See the [complete custom crypto example](../../docs/examples/custom-crypto.ts).
+Use `createJwsAlgorithmRegistry` to add an algorithm and its public key format. Share the registry across your host, keyring and standalone operations. Select the permitted Federation Entity Key algorithms with `allowedFederationAlgorithms`. Protocol roles apply their own algorithm settings. See the [complete custom crypto example](https://oidfed.com/docs/examples/custom-crypto).
 
 ## Adapters and support
 
@@ -92,6 +94,6 @@ import { createJoseEngine } from "@oidfed/crypto/jose";
 const engine = createJoseEngine();
 ```
 
-The JOSE adapter uses JOSE's global Web Crypto for verification. An explicitly injected implementation supplies its digest/random operations; it does not replace JOSE's verification backend. Use `/web` or a custom `CryptoEngine` when the whole backend must be injected.
+JOSE uses global Web Crypto to verify signatures. If you pass an implementation to the JOSE adapter, it uses that implementation for hashing and randomness. Use `/web` or provide your own `CryptoEngine` if you need to supply the entire backend.
 
-The repository tests the package in its Node, Bun, Deno, workerd, Electron and Chromium matrix. React Native and individual native keystores are integration targets, not validated runtimes. See the [API reference](../../docs/api/crypto/README.md) and [adapter recipes](../../docs/api/crypto/adapters.md).
+The test suite covers Node, Bun, Deno, workerd, Electron, and Chromium. React Native and native keystore integrations are outside that test matrix. See the [API reference](https://oidfed.com/docs/api/crypto) and [adapter recipes](https://oidfed.com/docs/api/crypto/adapters).

@@ -9,7 +9,7 @@
 		"url": "https://github.com/Dahkenangnon/oidfed.git",
 		"directory": "packages/wallet"
 	},
-	"homepage": "https://github.com/Dahkenangnon/oidfed/tree/main/packages/wallet#readme",
+	"homepage": "https://oidfed.com/docs/api/wallet",
 	"bugs": {
 		"url": "https://github.com/Dahkenangnon/oidfed/issues"
 	},

@@ -9,7 +9,7 @@
 		"url": "https://github.com/Dahkenangnon/oidfed.git",
 		"directory": "packages/crypto"
 	},
-	"homepage": "https://github.com/Dahkenangnon/oidfed/tree/main/packages/crypto#readme",
+	"homepage": "https://oidfed.com/docs/api/crypto",
 	"bugs": {
 		"url": "https://github.com/Dahkenangnon/oidfed/issues"
 	},

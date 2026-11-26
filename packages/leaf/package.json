@@ -9,7 +9,7 @@
 		"url": "https://github.com/Dahkenangnon/oidfed.git",
 		"directory": "packages/leaf"
 	},
-	"homepage": "https://github.com/Dahkenangnon/oidfed/tree/main/packages/leaf#readme",
+	"homepage": "https://oidfed.com/docs/api/leaf",
 	"bugs": {
 		"url": "https://github.com/Dahkenangnon/oidfed/issues"
 	},

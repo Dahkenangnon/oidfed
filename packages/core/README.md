@@ -47,11 +47,13 @@ yarn add @oidfed/crypto @oidfed/core
 # bun
 bun add @oidfed/crypto @oidfed/core
 
-# Deno (Deno 2.0+ / JSR/npm specifier auto-resolution)
+# Deno (npm packages)
 deno add npm:@oidfed/crypto npm:@oidfed/core
 ```
 
 ## Quick Start
+
+Pass your verification engine in `options.engine`. An incomplete discovery result means the search stopped early.
 
 ```ts
 import {
@@ -75,6 +77,11 @@ export async function inspectParticipant(taKeys: JWKSet, options: FederationOpti
     options,
   );
 
+  if (result.incomplete) {
+    console.warn(result.errors);
+    return;
+  }
+
   for (const chain of result.chains) {
     const validated = await validateTrustChain(chain.statements, trustAnchors, {
       ...options,
@@ -89,17 +96,17 @@ export async function inspectParticipant(taKeys: JWKSet, options: FederationOpti
 
 ## Subordinate Events
 
-Core provides event schemas, media types, and a client that verifies signed histories against trusted authority keys. See the [core guide](https://github.com/Dahkenangnon/oidfed/blob/main/docs/features/13.1.subordinate-events.md#retrieve-and-verify-a-history-response) for request and verification options.
+Core provides event schemas, media types, and a client that verifies signed histories against trusted authority keys. See the [core guide](https://oidfed.com/docs/features/13.1.subordinate-events#retrieve-and-verify-a-history-response) for request and verification options.
 
 ## Entity Collection
 
-Core provides the Draft 01 collection service and HTTP client. The service supports explicit snapshot refresh, filters, informational metadata, language selection, and pagination. Independent applications can use it to serve collections. See the [Entity Collection guide](https://github.com/Dahkenangnon/oidfed/blob/main/docs/features/14.2.collection-operations.md) for standalone providers and the HTTP client.
+Core provides the Draft 01 collection service and HTTP client. The service supports explicit snapshot refresh, filters, informational metadata, language selection, and pagination. Independent applications can use it to serve collections. See the [Entity Collection guide](https://oidfed.com/docs/features/14.2.collection-operations) for standalone providers and the HTTP client.
 
 ## Documentation
 
-For a detailed API reference, configuration options, and core architectural guides, see the [core API reference](https://github.com/Dahkenangnon/oidfed/blob/main/docs/api/core/README.md) file.
+For a detailed API reference, configuration options, and core architectural guides, see the [core API reference](https://oidfed.com/docs/api/core) file.
 
-For mobile app setup, see [React Native compatibility](https://github.com/Dahkenangnon/oidfed/blob/main/docs/api/react-native.md).
+For mobile app setup, see [React Native compatibility](https://oidfed.com/docs/api/react-native).
 
 ## License
 

@@ -9,7 +9,7 @@
 		"url": "https://github.com/Dahkenangnon/oidfed.git",
 		"directory": "packages/authority"
 	},
-	"homepage": "https://github.com/Dahkenangnon/oidfed/tree/main/packages/authority#readme",
+	"homepage": "https://oidfed.com/docs/api/authority",
 	"bugs": {
 		"url": "https://github.com/Dahkenangnon/oidfed/issues"
 	},
