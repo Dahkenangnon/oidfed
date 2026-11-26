@@ -30,6 +30,8 @@ pnpm release all minor --prepare
 
 For the v3 batch, prepare a major release individually for core, authority, leaf, OIDC, wallet, and CLI. The batch also includes the first public Crypto release at `1.0.0`. Verify its trusted publisher before dispatch and confirm that the saved Core manifest resolves to the Crypto version in the batch.
 
+When reviewing the generated v3 release notes, state that Entity Collection remains on Draft 01 and Wallet support remains on Draft 05. Describe the conformance exclusions for the exact pinned suite revision. The excluded OP cases require manual error-page review, and the excluded RP cases use fixture token responses that omit required `access_token` and `token_type`. Use the [conformance policy](../../tests/conformance/policy.ts) for the exact cases.
+
 Each selected package's own version is bumped. Its changelog is generated from its
 nearest applicable release tag. The private root package and root changelog are not
 versioned by these commands. Edit the generated notes so they explain changes a
@@ -119,6 +121,8 @@ For each npm package, configure its trusted publisher with:
 Keep the npm and GitHub environment settings aligned. No long-lived npm token is
 needed. Provenance is requested for each published archive. Keep the repository's
 required CodeQL check aligned with `CodeQL security-extended (six packages)`.
+
+Before dispatching the v3 batch, confirm that npm is configured to accept the first public `@oidfed/crypto` publication from this workflow. A missing registry entry alone gives no evidence that this setup is complete. The workflow publishes Crypto before Core, whose packed manifest depends on it.
 
 See the [security checks](security-checks.md) for scanner setup. The workflow installs
 the pinned scanners and runs the consumer checks against the six saved library archives. The dependency scan covers all published packages, including the CLI. Source checks cover the six libraries. The CLI also receives its release manifest and test checks.
