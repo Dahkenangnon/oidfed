@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-11-26
+
+### Breaking Changes
+
+* unify storage and federation host contracts ([2882619](https://github.com/Dahkenangnon/oidfed/commit/28826192c47f6eb898a0d1f590c87aa12b3a3d5d))
+* require host-provided crypto ([d748f11](https://github.com/Dahkenangnon/oidfed/commit/d748f1168d8819ea5943433400b858e26f7030fb))
+* bind verification to caller context ([c138e09](https://github.com/Dahkenangnon/oidfed/commit/c138e09808827d95c83e0b4ea3cc90c5fce47ee4))
+* separate Trust Mark results from chain validity ([921bd96](https://github.com/Dahkenangnon/oidfed/commit/921bd96a0b0391590b9c54ead9d0473f6065c6df))
+
+### Bug Fixes
+
+* correct metadata, theming, links and docs scrolling ([c6053e4](https://github.com/Dahkenangnon/oidfed/commit/c6053e47549cfa8bce16d99105de940c7c810dd3))
+* require authority fetch and list endpoints ([485c343](https://github.com/Dahkenangnon/oidfed/commit/485c34381b5ef5e646407cbf392012c3d8c92bd3))
+* support explicit false listing filters ([6f62861](https://github.com/Dahkenangnon/oidfed/commit/6f62861a0e3e90a0faba109f2bbb3b45610ac0d9))
+* align extended listing claims ([f6c5bc4](https://github.com/Dahkenangnon/oidfed/commit/f6c5bc465716b80959ebf65d004f8956b09d3378))
+* accept custom entity_type values in list filters ([32664f8](https://github.com/Dahkenangnon/oidfed/commit/32664f8b04cbd7bac4b32f49fbc350dad00fbfd3))
+
+
 ## [2.0.0] - 2026-10-26
 
 ### Breaking changes

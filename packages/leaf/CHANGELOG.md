@@ -6,6 +6,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-11-26
+
+### Breaking Changes
+
+* authorize federation requests and scope resolve reuse ([8a93565](https://github.com/Dahkenangnon/oidfed/commit/8a935655f5ca15c5f4fdc00b5b8c31be297f1978))
+* enforce federation artifact signing policy ([888e2a8](https://github.com/Dahkenangnon/oidfed/commit/888e2a86308baad021346123c109549c3740a704))
+* require federation POST selectors in the form ([7997498](https://github.com/Dahkenangnon/oidfed/commit/7997498008d5e674a8488827bca84e268c9bfb64))
+* unify storage and federation host contracts ([2882619](https://github.com/Dahkenangnon/oidfed/commit/28826192c47f6eb898a0d1f590c87aa12b3a3d5d))
+* require host-provided crypto ([d748f11](https://github.com/Dahkenangnon/oidfed/commit/d748f1168d8819ea5943433400b858e26f7030fb))
+
+### Features
+
+* serve historical keys and validate endpoint metadata ([6497391](https://github.com/Dahkenangnon/oidfed/commit/64973910bc04840efb690972b1cd14846e780808))
+* add standalone federation resolver hosting ([86ea2bc](https://github.com/Dahkenangnon/oidfed/commit/86ea2bc5c3fe850a1bb1ace9cc2aba9f51e7cedb))
+* support critical extensions in Entity Statement publication ([a558bea](https://github.com/Dahkenangnon/oidfed/commit/a558bea6f091c8e0bdcf31b0d4853dabde5df28e))
+* host trust mark endpoints and manage publication ([df7e462](https://github.com/Dahkenangnon/oidfed/commit/df7e462a79768d0accbb1bd353222854f8a2555b))
+
+### Bug Fixes
+
+* correct metadata, theming, links and docs scrolling ([c6053e4](https://github.com/Dahkenangnon/oidfed/commit/c6053e47549cfa8bce16d99105de940c7c810dd3))
+* correct ESM and CommonJS declaration exports ([3475f0b](https://github.com/Dahkenangnon/oidfed/commit/3475f0bbc7cc7eea7c8501e02acb83edd0970375))
+* validate configured TTLs before publication ([633fad1](https://github.com/Dahkenangnon/oidfed/commit/633fad1efaf507166dc8d44266f3cd60e7745fda))
+* isolate and safely compose host metadata ([9ec838a](https://github.com/Dahkenangnon/oidfed/commit/9ec838a3bbb49dcf0973f0a7051a30feada1b7c6))
+* reject conflicting hosted role routes ([fc1c3af](https://github.com/Dahkenangnon/oidfed/commit/fc1c3af088cbe5ca267c15e48c31fc72b81ad828))
+* normalize published entity identifiers once ([9e825ae](https://github.com/Dahkenangnon/oidfed/commit/9e825ae30716c98d845e0146d6e1041715e1453f))
+* unify fixed endpoint selector matching ([d23a183](https://github.com/Dahkenangnon/oidfed/commit/d23a183e6f85950d27e2812f6830114fca517b8c))
+* report configuration generation and serving failures ([162e0b9](https://github.com/Dahkenangnon/oidfed/commit/162e0b9bec3462d3fbed63bda6363056efb4e3c2))
+* reject forbidden endpoint auth metadata ([9d39edd](https://github.com/Dahkenangnon/oidfed/commit/9d39edd4a44cb68c95e214ac990ef75c6a3329f2))
+
+### Refactor
+
+* share protocol helpers and remove dead code ([f299374](https://github.com/Dahkenangnon/oidfed/commit/f299374faab2822cd06c543832e0d959e5210c39))
+* consolidate request handling ([34c96b2](https://github.com/Dahkenangnon/oidfed/commit/34c96b21c2ef4262557657d189ae139fa40257ac))
+
+
 ## [2.0.0] - 2026-10-26
 
 ### Added
