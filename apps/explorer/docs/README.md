@@ -6,23 +6,29 @@ The current views cover the base federation workflows. There are no dedicated Ex
 
 ## Running locally
 
+Use the Node version in [`.node-version`](../../../.node-version) and run these commands from the repository root.
+
 ```bash
+# Build Explorer and its workspace dependencies before the first dev run
+pnpm exec turbo run build --filter=@oidfed/explorer
+# → apps/explorer/dist/ (static site)
+
 # Dev server (hot reload)
 pnpm --filter @oidfed/explorer dev
 # → http://localhost:5173
 
 # Type-check
-pnpm --filter @oidfed/explorer typecheck
-
-# Production build
-pnpm --filter @oidfed/explorer build
-# → apps/explorer/dist/  (static site)
+pnpm exec turbo run typecheck --filter=@oidfed/explorer
 
 # Preview production build locally
 pnpm --filter @oidfed/explorer preview
 ```
 
 To test against the local dev federation, start it first; see [development guide](../../../docs/maintenance/development.md).
+
+## Deploy on Cloudflare Pages
+
+Use the repository root as the Pages root directory and set `NODE_VERSION` to the version in `.node-version` for both production and preview. Set the build command to `pnpm exec turbo run build --filter=@oidfed/explorer` and the output directory to `apps/explorer/dist`. Turbo builds Crypto before Core and Explorer, including on a fresh checkout.
 
 ## Routes
 

@@ -1,12 +1,10 @@
 # Discovery, chain validation, and assessments
 
-[`@oidfed/core`](README.md)
-
 Discovery obtains candidate evidence. Validation checks a chain against configured anchors and applies constraints and policy. An assessment can use local validation or an explicitly trusted resolver; the selected mode determines the trust boundary.
 
 ## `assessEntity`
 
-[Source](../../../packages/core/src/trust-chain/assessment.ts#L303)
+[Source](../../../packages/core/src/trust-chain/assessment.ts)
 
 Assess a subject using local chain validation or an explicitly authorized resolver. The returned kind records which trust boundary was used; resolver-reported metadata is not relabeled as a locally validated chain.
 
@@ -16,7 +14,7 @@ assessEntity(subject: EntityId, anchors: TrustAnchorSet, options: EntityAssessme
 
 ## `calculateChainExpiration`
 
-[Source](../../../packages/core/src/trust-chain/validate.ts#L62)
+[Source](../../../packages/core/src/trust-chain/validate.ts)
 
 Calculate the earliest expiration across all statements in a chain.
 
@@ -26,7 +24,7 @@ calculateChainExpiration(chain: readonly ParsedEntityStatement[]): number;
 
 ## `chainRemainingTtl`
 
-[Source](../../../packages/core/src/trust-chain/validate.ts#L1736)
+[Source](../../../packages/core/src/trust-chain/validate.ts)
 
 Get remaining TTL in seconds, returning 0 if expired.
 
@@ -56,7 +54,7 @@ export function evidenceSummary(chain: ValidatedTrustChain, clock: Clock) {
 
 ## `compareTrustAnchorKeys`
 
-[Source](../../../packages/core/src/trust-chain/anchor-keys.ts#L26)
+[Source](../../../packages/core/src/trust-chain/anchor-keys.ts)
 
 Compare Trust Anchor public keys retrieved from the Entity Configuration
 against keys retrieved via an independent mechanism.
@@ -67,7 +65,7 @@ compareTrustAnchorKeys(ecJwks: Pick<JWKSet, "keys">, independentJwks: Pick<JWKSe
 
 ## `completeTrustChainValidation`
 
-[Source](../../../packages/core/src/trust-chain/validate.ts#L687)
+[Source](../../../packages/core/src/trust-chain/validate.ts)
 
 Complete the original prepared evidence with permitted contextual inputs. Context cannot replace published metadata, only fill the explicitly pending absent values. Completion rejects copied or fabricated prepared objects, rechecks evidence lifetime and constraints, and returns a completed validated chain or a failing Result.
 
@@ -77,7 +75,7 @@ completeTrustChainValidation(prepared: PreparedTrustChain, context?: Readonly<Re
 
 ## `ContextualMetadataClaim`
 
-[Source](../../../packages/core/src/trust-chain/validate.ts#L474)
+[Source](../../../packages/core/src/trust-chain/validate.ts)
 
 A metadata claim whose final validation depends on protocol context supplied later.
 
@@ -97,7 +95,7 @@ Fields (including inherited fields):
 
 ## `createConcurrencyLimiter`
 
-[Source](../../../packages/core/src/async-operation.ts#L67)
+[Source](../../../packages/core/src/async-operation.ts)
 
 Create a concurrency limiter that allows at most `maxConcurrent` parallel executions.
 
@@ -111,7 +109,7 @@ createConcurrencyLimiter(maxConcurrent: number, signal?: AbortSignal): <T>(fn: (
 
 ## `createTrustChainOperation`
 
-[Source](../../../packages/core/src/trust-chain/operation.ts#L8)
+[Source](../../../packages/core/src/trust-chain/operation.ts)
 
 Create operation options that share one HTTP-call allowance across discovery, issuer resolution, and candidate validation. Cache hits and supplied statements consume no allowance. The default is 50 calls; zero permits cache/supplied-evidence use. The allowance must be a nonnegative safe integer. `exhausted()` reports an exceeded allowance or caller cancellation, not merely whether the last permitted call used it up.
 
@@ -121,7 +119,7 @@ createTrustChainOperation(options: FederationOptions): Result<{ options: Federat
 
 ## `describeTrustChain`
 
-[Source](../../../packages/core/src/trust-chain/validate.ts#L1742)
+[Source](../../../packages/core/src/trust-chain/validate.ts)
 
 Human-readable chain description: hostnames joined with arrows.
 
@@ -131,7 +129,7 @@ describeTrustChain(chain: ValidatedTrustChain): string;
 
 ## `discoverEntity`
 
-[Source](../../../packages/core/src/trust-chain/discovery.ts#L24)
+[Source](../../../packages/core/src/trust-chain/discovery.ts)
 
 Discover and validate candidate chains for the target, then select with `options.chainSelection`, or `shortestChain` when no selector is supplied. Discovery and candidate validation share one fetch allowance. Exhaustion, or incomplete discovery with a custom selector, returns an error rather than selecting from an incomplete set. Refresh the assessment when its evidence expires.
 
@@ -141,7 +139,7 @@ discoverEntity(entityId: EntityId, trustAnchors: TrustAnchorSet, options: Federa
 
 ## `discoverEntityFromChain`
 
-[Source](../../../packages/core/src/trust-chain/discovery.ts#L91)
+[Source](../../../packages/core/src/trust-chain/discovery.ts)
 
 Validate supplied statements before exposing them to protocol operations.
 
@@ -151,7 +149,7 @@ discoverEntityFromChain(entityId: EntityId, statements: readonly string[], trust
 
 ## `EntityAssessment`
 
-[Source](../../../packages/core/src/trust-chain/assessment.ts#L57)
+[Source](../../../packages/core/src/trust-chain/assessment.ts)
 
 The result of assessing an entity through a locally validated chain or a trusted resolver.
 
@@ -177,7 +175,7 @@ type EntityAssessment = {
 
 ## `EntityAssessmentOptions`
 
-[Source](../../../packages/core/src/trust-chain/assessment.ts#L51)
+[Source](../../../packages/core/src/trust-chain/assessment.ts)
 
 The trust-resolution mode and inputs used to assess an entity.
 
@@ -230,7 +228,7 @@ Fields (including inherited fields):
 
 ## `FederationResolverConfig`
 
-[Source](../../../packages/core/src/resolver/service.ts#L60)
+[Source](../../../packages/core/src/resolver/service.ts)
 
 Identity, signing, trust, caching, and authentication settings for a hosted Resolve service.
 
@@ -263,7 +261,7 @@ Fields (including inherited fields):
 
 ## `FederationResolverIntegration`
 
-[Source](../../../packages/core/src/resolver/service.ts#L71)
+[Source](../../../packages/core/src/resolver/service.ts)
 
 Configuration for composing a Resolve service into an entity host.
 
@@ -287,7 +285,7 @@ Fields (including inherited fields):
 
 ## `FederationResolverService`
 
-[Source](../../../packages/core/src/resolver/service.ts#L78)
+[Source](../../../packages/core/src/resolver/service.ts)
 
 Resolve hosting independent of subordinate storage and Authority endpoints.
 
@@ -299,7 +297,7 @@ new FederationResolverService(config: FederationResolverConfig, fixedQuery?: URL
 
 Handle a Web API Request and return the protocol Response. The application supplies external HTTPS routing.
 
-[Source](../../../packages/core/src/resolver/service.ts#L102)
+[Source](../../../packages/core/src/resolver/service.ts)
 
 ```typescript signature
 handleRequest(request: Request): Promise<Response>;
@@ -307,19 +305,27 @@ handleRequest(request: Request): Promise<Response>;
 
 ### `FederationResolverService#resolve`
 
-In-process callers may populate the cache without endpoint authentication.
+Trusted local calls with the host policy can warm the public cache when anonymous authorization permits it. Passing per-call options bypasses HTTP authorization and the serving assessment cache.
 
-[Source](../../../packages/core/src/resolver/service.ts#L106)
+[Source](../../../packages/core/src/resolver/service.ts)
 
 ```typescript signature
 resolve(request: Request, options?: BoundFederationOptions): Promise<Response>;
+```
+
+### `FederationResolverService#primeAnonymousResolve`
+
+Evaluate and store a public assessment using the host's anonymous authorization and disclosure policy. The operation rejects on failure. See the [Resolve guide](../../features/7.3.resolve-endpoint.md#host-a-standalone-resolve-service) for fixed selectors and cache behavior.
+
+```typescript signature
+primeAnonymousResolve(input: PrimeAnonymousResolveInput): Promise<void>;
 ```
 
 ### `FederationResolverService#handleAuthenticatedRequest`
 
 For hosts which have already applied the shared authentication wrapper.
 
-[Source](../../../packages/core/src/resolver/service.ts#L123)
+[Source](../../../packages/core/src/resolver/service.ts)
 
 ```typescript signature
 handleAuthenticatedRequest(request: Request): Promise<Response>;
@@ -335,7 +341,7 @@ entityConfigurationUrl(entityId: EntityId): string;
 
 ## `fetchEntityConfiguration`
 
-[Source](../../../packages/core/src/trust-chain/fetch.ts#L90)
+[Source](../../../packages/core/src/trust-chain/fetch.ts)
 
 Retrieve the target's compact Entity Configuration JWT using well-known HTTPS GET discovery, without a Federation client assertion. Network responses require HTTP 200; cached statements are reused only while their cache lifetime remains positive. This fetch does not authenticate the returned statement. Cache adapter failures can reject the promise rather than return a protocol Result.
 
@@ -345,7 +351,7 @@ fetchEntityConfiguration(entityId: EntityId, options: FederationOptions): Promis
 
 ## `fetchSubordinateStatement`
 
-[Source](../../../packages/core/src/trust-chain/fetch.ts#L140)
+[Source](../../../packages/core/src/trust-chain/fetch.ts)
 
 Retrieve a compact Subordinate Statement JWT about the subject, using anonymous GET or configured authenticated POST. Network responses require HTTP 200; signature, subject, and chain checks remain the caller's responsibility. When the issuer identity is known, pass `options.issuer` for cache isolation and the independent authentication-audience check. Cache adapter failures can reject the promise.
 
@@ -355,7 +361,7 @@ fetchSubordinateStatement(fetchEndpoint: string, subject: EntityId, options: Fet
 
 ## `FetchSubordinateStatementOptions`
 
-[Source](../../../packages/core/src/trust-chain/fetch.ts#L134)
+[Source](../../../packages/core/src/trust-chain/fetch.ts)
 
 Transport, authentication, and caching settings for fetching a Subordinate Statement.
 
@@ -405,7 +411,7 @@ Fields (including inherited fields):
 
 ## `isChainExpired`
 
-[Source](../../../packages/core/src/trust-chain/validate.ts#L1730)
+[Source](../../../packages/core/src/trust-chain/validate.ts)
 
 Check if a validated trust chain has expired.
 
@@ -415,7 +421,7 @@ isChainExpired(chain: ValidatedTrustChain, clock?: Clock): boolean;
 
 ## `isEntityAssessment`
 
-[Source](../../../packages/core/src/trust-chain/assessment.ts#L79)
+[Source](../../../packages/core/src/trust-chain/assessment.ts)
 
 Recognize an assessment created by this library instance. Copying or deserializing the object's fields does not retain its provenance.
 
@@ -425,7 +431,7 @@ isEntityAssessment(value: unknown): value is EntityAssessment;
 
 ## `longestExpiry`
 
-[Source](../../../packages/core/src/trust-chain/selection.ts#L51)
+[Source](../../../packages/core/src/trust-chain/selection.ts)
 
 Select the chain that expires last.
 
@@ -435,7 +441,7 @@ const longestExpiry: ChainSelectionStrategy;
 
 ## `preferTrustAnchor`
 
-[Source](../../../packages/core/src/trust-chain/selection.ts#L58)
+[Source](../../../packages/core/src/trust-chain/selection.ts)
 
 Create a strategy that prefers chains terminating at the given trust anchor.
 
@@ -445,7 +451,7 @@ preferTrustAnchor(taId: string): ChainSelectionStrategy;
 
 ## `PreparedTrustChain`
 
-[Source](../../../packages/core/src/trust-chain/validate.ts#L488)
+[Source](../../../packages/core/src/trust-chain/validate.ts)
 
 Authenticated chain evidence with explicitly unfinished metadata policy checks.
 
@@ -475,7 +481,7 @@ Fields (including inherited fields):
 
 ## `PrepareTrustChainOptions`
 
-[Source](../../../packages/core/src/trust-chain/validate.ts#L479)
+[Source](../../../packages/core/src/trust-chain/validate.ts)
 
 Inputs for validating a chain while deferring metadata checks that need additional context.
 
@@ -528,7 +534,7 @@ Fields (including inherited fields):
 
 ## `prepareTrustChainValidation`
 
-[Source](../../../packages/core/src/trust-chain/validate.ts#L601)
+[Source](../../../packages/core/src/trust-chain/validate.ts)
 
 Authenticate chain evidence and resolve policy while allowing explicitly named, absent context-dependent metadata inputs to remain pending. The result carries process-local provenance for completion and is not a fully completed discovery result. Use `completeTrustChainValidation` with that original prepared object before accepting its final effective metadata.
 
@@ -538,7 +544,7 @@ prepareTrustChainValidation(chain: readonly string[], anchors: TrustAnchorSet, o
 
 ## `RefreshOptions`
 
-[Source](../../../packages/core/src/trust-chain/refresh.ts#L23)
+[Source](../../../packages/core/src/trust-chain/refresh.ts)
 
 Controls for refreshing a previously validated trust chain.
 
@@ -588,7 +594,7 @@ Fields (including inherited fields):
 
 ## `refreshTrustChain`
 
-[Source](../../../packages/core/src/trust-chain/refresh.ts#L51)
+[Source](../../../packages/core/src/trust-chain/refresh.ts)
 
 Refreshes a trust chain if it has expired (or if forceRefresh is set).
 Participants must support refreshing expired trust chains.
@@ -602,7 +608,7 @@ refreshTrustChain(chain: ValidatedTrustChain, trustAnchors: TrustAnchorSet, opti
 
 ## `resolveTrustChainForAnchor`
 
-[Source](../../../packages/core/src/trust-chain/peer.ts#L19)
+[Source](../../../packages/core/src/trust-chain/peer.ts)
 
 Build a Trust Chain for `subject` that ends at the given `trustAnchorId`.
 
@@ -616,7 +622,7 @@ resolveTrustChainForAnchor(subject: EntityId, trustAnchorId: EntityId, trustAnch
 
 ## `resolveTrustChains`
 
-[Source](../../../packages/core/src/trust-chain/resolve.ts#L34)
+[Source](../../../packages/core/src/trust-chain/resolve.ts)
 
 Discover candidate compact-JWT chains ending at the configured anchors, within the supplied traversal limits. Candidates are not fully validated chains. Inspect both `errors` and `incomplete`: hitting a limit or cancellation can leave a partial set. Pass each candidate's `entityConfigurations` into validation to reuse retrieved subject ECs.
 
@@ -626,7 +632,7 @@ resolveTrustChains(entityId: EntityId, trustAnchors: TrustAnchorSet, options: Re
 
 ## `ResolveTrustChainsOptions`
 
-[Source](../../../packages/core/src/trust-chain/resolve.ts#L26)
+[Source](../../../packages/core/src/trust-chain/resolve.ts)
 
 Inputs and limits for discovering candidate trust chains.
 
@@ -679,7 +685,7 @@ Fields (including inherited fields):
 
 ## `selectTrustChain`
 
-[Source](../../../packages/core/src/trust-chain/selection.ts#L15)
+[Source](../../../packages/core/src/trust-chain/selection.ts)
 
 Invoke the configured synchronous selector, or the supplied fallback, on detached frozen candidates. A selector must return one of those candidate objects; thrown errors, promises, and fabricated or copied selections are rejected. The callback cannot modify the frozen snapshots. The successful Result contains the corresponding original validated chain. Without a configured selector or fallback, the first candidate is used.
 
@@ -689,7 +695,7 @@ selectTrustChain(chains: readonly ValidatedTrustChain[], options: FederationOpti
 
 ## `shortestChain`
 
-[Source](../../../packages/core/src/trust-chain/selection.ts#L42)
+[Source](../../../packages/core/src/trust-chain/selection.ts)
 
 Select the chain with the fewest statements.
 
@@ -699,7 +705,7 @@ const shortestChain: ChainSelectionStrategy;
 
 ## `TrustAnchorKeyComparisonResult`
 
-[Source](../../../packages/core/src/trust-chain/anchor-keys.ts#L9)
+[Source](../../../packages/core/src/trust-chain/anchor-keys.ts)
 
 Result of comparing Trust Anchor keys from two sources.
 
@@ -731,7 +737,7 @@ Fields (including inherited fields):
 
 ## `TrustedResolverConfig`
 
-[Source](../../../packages/core/src/trust-chain/assessment.ts#L38)
+[Source](../../../packages/core/src/trust-chain/assessment.ts)
 
 The resolver identity, verification policy, and trust configuration accepted by the host.
 
@@ -763,7 +769,7 @@ Fields (including inherited fields):
 
 ## `TrustResolutionSource`
 
-[Source](../../../packages/core/src/trust-chain/assessment.ts#L48)
+[Source](../../../packages/core/src/trust-chain/assessment.ts)
 
 Identifies how an entity's trust assessment was obtained.
 
@@ -778,7 +784,7 @@ type TrustResolutionSource = {
 
 ## `validateEntityId`
 
-[Source](../../../packages/core/src/trust-chain/fetch.ts#L22)
+[Source](../../../packages/core/src/trust-chain/fetch.ts)
 
 Validate an Entity Identifier and return the result through the error model shown in the signature.
 
@@ -788,7 +794,7 @@ validateEntityId(value: string): Result<EntityId, FederationError>;
 
 ## `validateFetchUrl`
 
-[Source](../../../packages/core/src/http/fetch-url.ts#L180)
+[Source](../../../packages/core/src/http/fetch-url.ts)
 
 Check HTTPS syntax, the 2048-character limit, absence of URL credentials, an optional exact hostname allowlist, special-use IP literals, and additional blocked IPv4 CIDRs. This URL check does not resolve DNS or pin a connection's destination; the host transport owns that enforcement. Endpoint-specific fragment rules are checked by their callers.
 
@@ -798,7 +804,7 @@ validateFetchUrl(url: string, options?: Pick<FederationOptions, "blockedCIDRs" |
 
 ## `validateTrustChain`
 
-[Source](../../../packages/core/src/trust-chain/validate.ts#L414)
+[Source](../../../packages/core/src/trust-chain/validate.ts)
 
 Validate a chain and report its published Trust Marks independently (Federation §§3.2, 7.3).
 
@@ -831,4 +837,77 @@ export function validationOptions(engine: CryptoEngine) {
   };
   return options;
 }
+```
+
+## `PrimeAnonymousResolveInput`
+
+```typescript signature
+interface PrimeAnonymousResolveInput {
+  readonly subject: string;
+  readonly trustAnchor: string | readonly string[];
+  readonly entityTypes?: readonly string[];
+  readonly signal?: AbortSignal;
+}
+```
+
+## `ResolveCacheScopeInput`
+
+```typescript signature
+interface ResolveCacheScopeInput {
+  readonly caller: string | undefined;
+  readonly subject: EntityId;
+  readonly trustAnchor: EntityId;
+  readonly entityTypes: readonly string[];
+  readonly signal: AbortSignal;
+}
+```
+
+## `ResolverCacheOptions`
+
+```typescript signature
+interface ResolverCacheOptions {
+  readonly namespace: string;
+  readonly policyRevision: string;
+  readonly scope?: (input: Readonly<ResolveCacheScopeInput>) => string | undefined | Promise<string | undefined>;
+}
+```
+
+## `ResolveTrustMarkCandidateLimits`
+
+```typescript signature
+interface ResolveTrustMarkCandidateLimits {
+  readonly maxCandidates: number;
+  readonly maxBytes: number;
+}
+```
+
+## `ResolveTrustMarkCandidateInput`
+
+```typescript signature
+interface ResolveTrustMarkCandidateInput {
+  readonly caller: string | undefined;
+  readonly subject: EntityId;
+  readonly trustAnchor: EntityId;
+  readonly held: readonly string[];
+  readonly verifiedHeld: readonly Readonly<{
+    ref: Readonly<Pick<TrustMarkRef, "trust_mark_type" | "trust_mark">>;
+    mark: Readonly<Pick<ValidatedTrustMark, "issuer" | "expiresAt">>;
+  }>[];
+  readonly chainExpiresAt: number;
+  readonly candidateLimits: ResolveTrustMarkCandidateLimits;
+  readonly httpClient: HttpClient;
+  readonly signal: AbortSignal;
+}
+```
+
+## `ResolveTrustMarkCandidates`
+
+```typescript signature
+type ResolveTrustMarkCandidates = (input: Readonly<ResolveTrustMarkCandidateInput>) => readonly string[] | Promise<readonly string[]>;
+```
+
+## `ResolveTrustMarkStatusMaxAge`
+
+```typescript signature
+type ResolveTrustMarkStatusMaxAge = (trustMarkType: string) => number | undefined;
 ```

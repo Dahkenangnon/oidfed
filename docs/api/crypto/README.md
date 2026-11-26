@@ -59,6 +59,7 @@ flowchart TD
 | `StaticKeyring(config)` | Configured signers, explicit aliases, optional additional public keys; unique published kids |
 | `MemoryRotatingKeyring(initial?, options?)` | General-purpose lifecycle with immutable snapshots and an optional `nowSeconds` clock |
 | `JWS_ALGORITHMS`, `CLASSICAL_ALGORITHMS`, `INTEROP_RECOMMENDED_ALGORITHMS`, `isJwsAlgorithm` | Frozen capability/guidance lists and an identifier guard |
+| `CompactJwsSizeError` | A `CryptoError` thrown when a compact JWS exceeds its byte limit. Its code remains `MALFORMED_JWS`. |
 | `CryptoError`, `CryptoUnsupportedError`, `CryptoErrorCode` | Typed error codes and optional causes; adapters share the root error class within each module format |
 
 `StaticKeyringConfig` and `MemoryRotatingKeyringOptions` describe constructor options. `publishedAt` is the recorded introduction into a memory keyring, including initial keys, and remains unchanged across later lifecycle events. Custom histories may omit it. It is distinct from creation time and confirmed network propagation.

@@ -1,7 +1,5 @@
 # `@oidfed/oidc` API
 
-[API reference](../README.md)
-
 The package root exports the role classes and their OIDC and OAuth contracts. Import the shared types and authentication helpers below from `@oidfed/core`.
 
 The class entries cover constructors and public members, including inherited instance methods and callable static properties. Metadata schema objects and standalone registration-processing functions are not root exports. Use role methods for processing and their static parsers for independent metadata checks.

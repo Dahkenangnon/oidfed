@@ -1,14 +1,12 @@
 # Registration and protocol keys
 
-[`@oidfed/oidc`](README.md)
-
 The role methods prepare or process Federation registration evidence. The host protocol engine owns authorization responses, token endpoints, PAR request storage, user sessions, and client persistence. Optional adapter and callback contracts connect those responsibilities. Federation signing keys and protocol signing keys have separate jobs.
 
 Several exported configuration types describe the internal registration workflows assembled by role methods. They do not expose standalone registration functions; the role entries identify the public call sites.
 
 ## `AutomaticRegistrationResult`
 
-[Source](../../../packages/oidc/src/registration/automatic-client.ts#L98)
+[Source](../../../packages/oidc/src/registration/automatic-client.ts)
 
 Success value discriminated by delivery. All variants contain requestObjectJwt, the selected provider trustChain, and its trustChainExpiresAt. The authorization Request Object also has its own exp, which can be earlier than that chain deadline. Narrow on delivery before accessing transport-specific fields. This result prepares an authorization interaction; it is not confirmation that the provider registered the client.
 
@@ -61,7 +59,7 @@ Automatic PAR includes a signed Request Object. When both parties support `priva
 
 ## `ExplicitRegistrationResult`
 
-[Source](../../../packages/oidc/src/registration/explicit-client.ts#L59)
+[Source](../../../packages/oidc/src/registration/explicit-client.ts)
 
 Verified provider registration response, selected client metadata, and credentials when returned. expiresAt bounds the signed response and trustChainExpiresAt bounds the provider evidence; use the registration only until the earlier deadline. Registration persistence and any later renewal are host responsibilities.
 
@@ -90,7 +88,7 @@ Fields (including inherited fields):
 
 ## `PreparedPushedAuthorizationRequest`
 
-[Source](../../../packages/oidc/src/registration/pushed.ts#L74)
+[Source](../../../packages/oidc/src/registration/pushed.ts)
 
 Prepared PAR POST returned by the client role. Send endpoint, parameters, and headers through the application's HTTP/TLS transport; preparation itself sends no PAR request. The value contains the selected provider chain and, for applicable modes, a signed Request Object. The host handles the PAR response and subsequent authorization redirect.
 
@@ -128,7 +126,7 @@ interface ProcessAutomaticRegistrationOptions extends BoundFederationOptions, Re
 
 ## `ProcessedAutomaticRegistration`
 
-[Source](../../../packages/oidc/src/registration/automatic-server.ts#L73)
+[Source](../../../packages/oidc/src/registration/automatic-server.ts)
 
 Automatic-registration evidence, including the exact resolved protocol keys used to verify the signed Request Object and authenticationExpiresAt. That deadline includes permitted JWT clock skew while never extending the client chain's expiry. Recheck time-sensitive evidence before using it later.
 
@@ -153,7 +151,7 @@ Fields (including inherited fields):
 
 ## `ProcessedPushedAuthorizationRequest`
 
-[Source](../../../packages/oidc/src/registration/pushed.ts#L98)
+[Source](../../../packages/oidc/src/registration/pushed.ts)
 
 Validated PAR parameters plus the selected client registration evidence and authentication deadline. Repeated resource values are preserved. The provider role can run its persistence callback before returning; the host still creates the PAR success response and stores the pushed request.
 
@@ -177,7 +175,7 @@ Fields (including inherited fields):
 
 ## `ProcessedRegistration`
 
-[Source](../../../packages/oidc/src/registration/automatic-server.ts#L58)
+[Source](../../../packages/oidc/src/registration/automatic-server.ts)
 
 Validated client registration evidence shared by processing results. Historical rp/op field names also apply to OAuthClientRole and OAuthAuthorizationServerRole. This data does not itself create a client record or a protocol response; public provider role processing invokes configured persistence callbacks.
 
@@ -224,7 +222,7 @@ interface ProcessPushedAuthorizationRequestOptions extends ProcessAutomaticRegis
 
 ## `PushedAuthorizationProof`
 
-[Source](../../../packages/oidc/src/registration/pushed.ts#L64)
+[Source](../../../packages/oidc/src/registration/pushed.ts)
 
 Client-side proof selection for prepared PAR. request_object signs the Request Object; private_key_jwt creates a published-key assertion; self_signed_tls_client_auth checks that the supplied base64 DER certificate appears in the resolved protocol JWKS, while the host supplies the actual TLS connection. attest_jwt_client_auth supplies an attestation/proof pair and also includes a signed Request Object. Preparation checks client/server binding and declared algorithms, without substituting for receiver-side authentication.
 
@@ -245,7 +243,7 @@ type PushedAuthorizationProof = {
 
 ## `RegistrationAccreditationContext`
 
-[Source](../../../packages/oidc/src/registration/accreditation.ts#L16)
+[Source](../../../packages/oidc/src/registration/accreditation.ts)
 
 Validated client-chain evidence and the automatic/explicit flow discriminator supplied to beforeRegistration. The callback receives a detached, recursively frozen copy; it cannot alter the original authentication evidence.
 
@@ -265,7 +263,7 @@ Fields (including inherited fields):
 
 ## `RegistrationAccreditationPolicy`
 
-[Source](../../../packages/oidc/src/registration/accreditation.ts#L20)
+[Source](../../../packages/oidc/src/registration/accreditation.ts)
 
 Optional declarative Trust Mark requirements followed by an application callback. A failing declarative check prevents the callback. beforeRegistration receives detached, recursively frozen client-chain evidence and a cancellation signal; it must return a successful Result to continue. A failure, throw, rejection, timeout, or cancellation rejects registration before acceptance side effects. Status queries and external accreditation policy remain explicit host choices.
 
@@ -316,7 +314,7 @@ interface RegistrationProtocolAdapterContext {
 
 ## `RequestDelivery`
 
-[Source](../../../packages/oidc/src/registration/automatic-client.ts#L44)
+[Source](../../../packages/oidc/src/registration/automatic-client.ts)
 
 String union selecting delivery: query places the signed Request Object in an authorization URL; form_post returns form fields; request_uri returns a URL referencing a caller-hosted JWT; par performs a PAR request and returns the resulting authorization URL. The default is form_post.
 

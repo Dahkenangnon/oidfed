@@ -1,12 +1,17 @@
 # `@oidfed/core` API
 
-[API reference](../README.md)
-
 Every entry below is exported from `@oidfed/core`; there are no public subpath imports. Class entries cover constructors and library-defined public members. Standard `Error` inheritance is noted beside error classes.
 
 Signatures preserve optional and read-only declarations. An optional property is marked with `?`; `undefined` is included in its declared type only when the source allows it explicitly. Schema field tables describe parsed output, which can differ from raw input. Parsing, decoding, signature verification, and establishing trust are separate steps; each entry states which work it performs.
 
 ## Storage
+
+- [`SubordinateRecord`](storage.md#subordinaterecord)
+- [`SubordinateRecordUpdate`](storage.md#subordinaterecordupdate)
+- [`ListFilter`](storage.md#listfilter)
+- [`ListPage`](storage.md#listpage)
+- [`ListPageOptions`](storage.md#listpageoptions)
+- [`SubordinateEventAnnotations`](storage.md#subordinateeventannotations)
 
 [Storage contracts](storage.md) cover [`FederationStorage`](storage.md#federationstorage) and [`MemoryFederationStorage`](storage.md#memoryfederationstorage). See also the [storage migration guide](../migration-v3.md#federation-storage).
 
@@ -102,6 +107,9 @@ Signatures preserve optional and read-only declarations. An optional property is
 | [`createEndpointAuthenticatedHandler`](authentication.md#createendpointauthenticatedhandler) | Function |
 | [`CustomEndpointClientAuthentication`](authentication.md#customendpointclientauthentication) | Interface |
 | [`EndpointAuthentication`](authentication.md#endpointauthentication) | Interface |
+| [`EndpointAuthorizationInput`](authentication.md#endpointauthorizationinput) | Interface |
+| [`EndpointAuthorizationPolicy`](authentication.md#endpointauthorizationpolicy) | Type |
+| [`FederationEndpointOperation`](authentication.md#federationendpointoperation) | Type |
 | [`EndpointAuthenticationConfig`](authentication.md#endpointauthenticationconfig) | Interface |
 | [`EndpointAuthenticationContext`](authentication.md#endpointauthenticationcontext) | Interface |
 | [`EndpointAuthenticationError`](authentication.md#endpointauthenticationerror) | Interface |
@@ -184,6 +192,7 @@ Signatures preserve optional and read-only declarations. An optional property is
 | [`validateFederationKeySet`](keys.md#validatefederationkeyset) | Function |
 | [`validateJwkSetUseRequirement`](keys.md#validatejwksetuserequirement) | Function |
 | [`validatePublicJwkSet`](keys.md#validatepublicjwkset) | Function |
+| [`prepareProtocolJwkSet`](keys.md#prepareprotocoljwkset) | Function |
 | [`signProtocolJwkSet`](keys.md#signprotocoljwkset) | Function |
 | [`SignProtocolJwkSetOptions`](keys.md#signprotocoljwksetoptions) | Interface |
 | [`validateSignedJwkSetSpecHygiene`](keys.md#validatesignedjwksetspechygiene) | Function |
@@ -267,6 +276,13 @@ Signatures preserve optional and read-only declarations. An optional property is
 | [`EntityAssessmentOptions`](chains.md#entityassessmentoptions) | Interface |
 | [`FederationResolverConfig`](chains.md#federationresolverconfig) | Interface |
 | [`FederationResolverIntegration`](chains.md#federationresolverintegration) | Type |
+| [`PrimeAnonymousResolveInput`](chains.md#primeanonymousresolveinput) | Interface |
+| [`ResolveCacheScopeInput`](chains.md#resolvecachescopeinput) | Interface |
+| [`ResolverCacheOptions`](chains.md#resolvercacheoptions) | Interface |
+| [`ResolveTrustMarkCandidateInput`](chains.md#resolvetrustmarkcandidateinput) | Interface |
+| [`ResolveTrustMarkCandidateLimits`](chains.md#resolvetrustmarkcandidatelimits) | Interface |
+| [`ResolveTrustMarkCandidates`](chains.md#resolvetrustmarkcandidates) | Type |
+| [`ResolveTrustMarkStatusMaxAge`](chains.md#resolvetrustmarkstatusmaxage) | Type |
 | [`FederationResolverService`](chains.md#federationresolverservice) | Class |
 | [`entityConfigurationUrl`](chains.md#entityconfigurationurl) | Function |
 | [`fetchEntityConfiguration`](chains.md#fetchentityconfiguration) | Function |

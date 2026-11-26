@@ -1,12 +1,10 @@
 # Federation hosts
 
-[`@oidfed/leaf`](README.md)
-
 Construct one host for an Entity Identifier and compose fresh protocol-role instances into it. Hosts accept Web API requests; the application supplies HTTPS routing and durable infrastructure. Factory validation can reject before a handler is available.
 
 ## `Leaf`
 
-[Source](../../../packages/leaf/src/leaf.ts#L93)
+[Source](../../../packages/leaf/src/leaf.ts)
 
 Host a non-authority Federation participant: publish its Entity Configuration, compose protocol roles, and optionally serve Resolve, Entity Collection, or Trust Mark endpoints. A Leaf never issues Subordinate Statements.
 
@@ -22,7 +20,7 @@ static create(config: LeafConfig): Promise<Leaf>;
 
 The hosted [`FederationResolverService`](../core/chains.md#federationresolverservice), available for local calls when `LeafConfig.resolver` is configured. With that configuration, publishing a Resolve URL also installs its HTTP route. An application can instead serve the advertised URL itself. [Resolve endpoint guide](../../features/7.3.resolve-endpoint.md)
 
-[Source](../../../packages/leaf/src/leaf.ts#L141)
+[Source](../../../packages/leaf/src/leaf.ts)
 
 ```typescript signature
 readonly resolver?: FederationResolverService;
@@ -32,7 +30,7 @@ readonly resolver?: FederationResolverService;
 
 Assess the target through local chain validation or an explicitly trusted resolver, using the core [`assessEntity`](../core/chains.md#assessentity) contract. Per-call options override host options. Anchors come from the call's `trustAnchors`, then `LeafConfig.trustAnchors`, then an empty set. A successful assessment is evidence, not application authorization.
 
-[Source](../../../packages/leaf/src/leaf.ts#L130)
+[Source](../../../packages/leaf/src/leaf.ts)
 
 ```typescript signature
 assessEntity(target: EntityId, options?: EntityAssessmentOptions & {
@@ -44,7 +42,7 @@ assessEntity(target: EntityId, options?: EntityAssessmentOptions & {
 
 Discover and validate candidate chains for the target, then apply the configured chain selector or the default shortest-chain selection. Per-call options override host options. Anchors come from the call, then the host configuration, then an empty set. Handle the returned `Result` before using its discovery evidence. This method performs local chain discovery; use `assessEntity` to choose a trusted-resolver mode.
 
-[Source](../../../packages/leaf/src/leaf.ts#L145)
+[Source](../../../packages/leaf/src/leaf.ts)
 
 ```typescript signature
 discoverEntity(target: EntityId, options?: BoundFederationOptions & { trustAnchors?: TrustAnchorSet; }): Promise<Result<DiscoveryResult>>;
@@ -54,7 +52,7 @@ discoverEntity(target: EntityId, options?: BoundFederationOptions & { trustAncho
 
 Validate supplied leaf-first compact Entity Statements for the exact target and return a branded discovery result on success. Read-only chain arrays are accepted. Options and anchors follow the same per-call-over-host precedence as `discoverEntity`. Supplied statements do not imply offline operation: validation can retrieve required subject ECs or issuer evidence unless configured otherwise.
 
-[Source](../../../packages/leaf/src/leaf.ts#L156)
+[Source](../../../packages/leaf/src/leaf.ts)
 
 ```typescript signature
 discoverEntityFromChain(target: EntityId, statements: readonly string[], options?: BoundFederationOptions & { trustAnchors?: TrustAnchorSet; }): Promise<Result<DiscoveryResult>>;
@@ -64,7 +62,7 @@ discoverEntityFromChain(target: EntityId, statements: readonly string[], options
 
 The hosted [`EntityCollectionService`](../core/collection.md#entitycollectionservice), present only when `LeafConfig.collection` is configured. Refresh and query it explicitly. An advertised collection endpoint installs its HTTP route; construction does not automatically collect or publish a snapshot.
 
-[Source](../../../packages/leaf/src/leaf.ts#L168)
+[Source](../../../packages/leaf/src/leaf.ts)
 
 ```typescript signature
 readonly collection?: EntityCollectionService;
@@ -74,7 +72,7 @@ readonly collection?: EntityCollectionService;
 
 The configured HTTPS Entity Identifier. Leaf uses the exact value in signed Entity Configurations and host operations. When constructing the well-known URL, it removes one trailing slash before appending the federation path.
 
-[Source](../../../packages/leaf/src/leaf.ts#L172)
+[Source](../../../packages/leaf/src/leaf.ts)
 
 ```typescript signature
 readonly entityId: EntityId;
@@ -84,7 +82,7 @@ readonly entityId: EntityId;
 
 Return the cached EC while it is unexpired. Otherwise, generate and sign one with the configured keyring, host clock, stored publication metadata, and current holder references. Concurrent calls share the in-flight build. Keyring, validation, or signing errors reject the promise. An unchanged cached EC can remain in use after a provider key change; call `refreshEntityConfiguration` when immediate regeneration is required.
 
-[Source](../../../packages/leaf/src/leaf.ts#L547)
+[Source](../../../packages/leaf/src/leaf.ts)
 
 ```typescript signature
 getEntityConfiguration(): Promise<string>;
@@ -94,7 +92,7 @@ getEntityConfiguration(): Promise<string>;
 
 Return `true` before any EC is cached, or when the host clock reaches its cached `exp`. This checks local cache lifetime only; it does not evaluate remote revocation, fetch a new chain, or check whether the keyring changed.
 
-[Source](../../../packages/leaf/src/leaf.ts#L562)
+[Source](../../../packages/leaf/src/leaf.ts)
 
 ```typescript signature
 isEntityConfigurationExpired(): boolean;
@@ -104,7 +102,7 @@ isEntityConfigurationExpired(): boolean;
 
 Invalidate the cached EC and start a new build using current keys and the host's stored metadata. An older concurrent build cannot overwrite this generation's cache. The method returns a compact JWT or rejects; it does not reload metadata from the original configuration object. A failed refresh leaves the old cache invalidated.
 
-[Source](../../../packages/leaf/src/leaf.ts#L572)
+[Source](../../../packages/leaf/src/leaf.ts)
 
 ```typescript signature
 refreshEntityConfiguration(): Promise<string>;
@@ -114,7 +112,7 @@ refreshEntityConfiguration(): Promise<string>;
 
 Return a detached snapshot of the holder's currently published Trust Mark references. Initial references are included before an EC has been generated. Reading the array does not verify the JWTs or check their current status.
 
-[Source](../../../packages/leaf/src/leaf.ts#L585)
+[Source](../../../packages/leaf/src/leaf.ts)
 
 ```typescript signature
 getTrustMarks(): { trust_mark_type: string; trust_mark: string; }[];
@@ -124,7 +122,7 @@ getTrustMarks(): { trust_mark_type: string; trust_mark: string; }[];
 
 Validate a mark for this Leaf using the explicitly supplied issuer evidence and verification options, then sign and cache an EC containing the updated holder references. Optional `same-issuer-and-type` replacement replaces prior references for that issuer/type; otherwise a distinct JWT is appended and an identical JWT is ignored. Failed validation or publication rejects and preserves the prior references. Verification options are not automatically merged with `LeafConfig.options`; EC generation still uses the host's configured keys and clock.
 
-[Source](../../../packages/leaf/src/leaf.ts#L591)
+[Source](../../../packages/leaf/src/leaf.ts)
 
 ```typescript signature
 attachTrustMark(jwt: string, options: AttachTrustMarkOptions): Promise<void>;
@@ -134,7 +132,7 @@ attachTrustMark(jwt: string, options: AttachTrustMarkOptions): Promise<void>;
 
 Establish issuer trust using the explicitly supplied `trustAnchors` and `options`, fetch a mark from the verified issuer's endpoint, validate it for this holder, and attach it. This method does not inherit the host's discovery anchors or transport options. EC publication uses the host configuration. A failure rejects without attaching an unverified mark.
 
-[Source](../../../packages/leaf/src/leaf.ts#L598)
+[Source](../../../packages/leaf/src/leaf.ts)
 
 ```typescript signature
 fetchAndAttachTrustMark(options: Omit<FetchAndAttachTrustMarkOptions, "options"> & { readonly options?: BoundFederationOptions; }): Promise<void>;
@@ -144,7 +142,7 @@ fetchAndAttachTrustMark(options: Omit<FetchAndAttachTrustMarkOptions, "options">
 
 Remove references matching the exact JWT or issuer/type selector, then regenerate the holder's EC when publication changes. Failure to publish rejects and preserves the prior references. This changes future publication; it does not revoke the issuer's records or invalidate ECs already held by other parties.
 
-[Source](../../../packages/leaf/src/leaf.ts#L609)
+[Source](../../../packages/leaf/src/leaf.ts)
 
 ```typescript signature
 removeTrustMark(selector: RemoveTrustMarkSelector): Promise<void>;
@@ -154,7 +152,7 @@ removeTrustMark(selector: RemoveTrustMarkSelector): Promise<void>;
 
 Issue a mark for the subject, or reuse an eligible stored mark according to the requested renewal mode and issuer defaults. Requires `LeafConfig.trustMarkIssuer`; otherwise the promise rejects. The core issuer service handles signing, storage, profile, delegation, and lifetime checks. Issuing a mark does not attach it to the subject's EC.
 
-[Source](../../../packages/leaf/src/leaf.ts#L621)
+[Source](../../../packages/leaf/src/leaf.ts)
 
 ```typescript signature
 issueTrustMark(subject: string, type: string, options?: TrustMarkIssuanceOptions): Promise<string>;
@@ -164,7 +162,7 @@ issueTrustMark(subject: string, type: string, options?: TrustMarkIssuanceOptions
 
 Revoke all matching active records held by this issuer for the type and subject. Requires `LeafConfig.trustMarkIssuer`. This records local issuer revocation; it does not remove the holder's published reference or erase signed JWTs already distributed.
 
-[Source](../../../packages/leaf/src/leaf.ts#L632)
+[Source](../../../packages/leaf/src/leaf.ts)
 
 ```typescript signature
 revokeTrustMark(type: string, subject: string): Promise<void>;
@@ -174,7 +172,7 @@ revokeTrustMark(type: string, subject: string): Promise<void>;
 
 Return detached eligible records issued by this Leaf for the subject, evaluated using the issuer service's current state and clock. Requires `LeafConfig.trustMarkIssuer`; it does not list marks obtained by this Leaf as a holder.
 
-[Source](../../../packages/leaf/src/leaf.ts#L639)
+[Source](../../../packages/leaf/src/leaf.ts)
 
 ```typescript signature
 listTrustMarksForSubject(subject: string): Promise<import("@oidfed/core").TrustMarkRecord[]>;
@@ -184,7 +182,7 @@ listTrustMarksForSubject(subject: string): Promise<import("@oidfed/core").TrustM
 
 Return sorted, distinct subject identifiers with eligible locally issued marks of the given type. An optional subject restricts the result. Requires `LeafConfig.trustMarkIssuer`.
 
-[Source](../../../packages/leaf/src/leaf.ts#L643)
+[Source](../../../packages/leaf/src/leaf.ts)
 
 ```typescript signature
 listTrustMarkedEntities(type: string, subject?: string): Promise<string[]>;
@@ -194,7 +192,7 @@ listTrustMarkedEntities(type: string, subject?: string): Promise<string[]>;
 
 Replace this issuer's delegation map with a detached, frozen copy after checking that it is JSON object data containing string values. Requires `LeafConfig.trustMarkIssuer`. Setting the map does not itself authenticate the owner's JWTs; issuance and eligibility checks apply the cryptographic and lifetime rules. It does not change holder references or automatically regenerate the EC.
 
-[Source](../../../packages/leaf/src/leaf.ts#L650)
+[Source](../../../packages/leaf/src/leaf.ts)
 
 ```typescript signature
 setTrustMarkDelegations(delegations: Readonly<Record<string, string>>): Promise<void>;
@@ -204,7 +202,7 @@ setTrustMarkDelegations(delegations: Readonly<Record<string, string>>): Promise<
 
 Sign this Leaf's historical public keys with its current Federation Entity signer. Requires `crypto.history`. Calling this method does not require publishing an endpoint.
 
-[Source](../../../packages/leaf/src/leaf.ts#L806)
+[Source](../../../packages/leaf/src/leaf.ts)
 
 ```typescript signature
 getHistoricalKeys(): Promise<string>;
@@ -214,7 +212,7 @@ getHistoricalKeys(): Promise<string>;
 
 Dispatch by URL path to a composed role or configured service route, then to this Leaf's well-known EC path. EC discovery accepts GET, returns HTTP 200 with `application/entity-statement+jwt`, and converts EC generation failures to a generic HTTP 500 response. Unsupported methods receive 405 and unknown paths receive 404. Composed handlers retain their own error behavior and can reject. The application supplies external HTTPS routing.
 
-[Source](../../../packages/leaf/src/leaf.ts#L811)
+[Source](../../../packages/leaf/src/leaf.ts)
 
 ```typescript signature
 handleRequest(request: Request): Promise<Response>;
@@ -222,7 +220,7 @@ handleRequest(request: Request): Promise<Response>;
 
 ## `LeafConfig`
 
-[Source](../../../packages/leaf/src/leaf.ts#L75)
+[Source](../../../packages/leaf/src/leaf.ts)
 
 Construction settings for one Leaf. Host metadata is cloned, roles are initialized in order, and their metadata replaces matching host parameters in that order. The resulting publication metadata must be nonempty; an initially empty `metadata` object is permitted when a role contributes a block.
 

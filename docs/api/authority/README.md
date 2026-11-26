@@ -1,10 +1,10 @@
 # `@oidfed/authority` API
 
-[API reference](../README.md)
-
 Every root export is listed below. Class entries include constructors and library-defined public members, including static callable properties and readonly getters. `InvalidAuthorityConfig` inherits the runtime’s `Error` API.
 
 ## Trust Marks
+
+Import [subordinate storage types](../core/storage.md#subordinaterecord) from `@oidfed/core`.
 
 Import [`TrustMarkListOptions`](../core/marks.md#trustmarklistoptions), [`TrustMarkListPage`](../core/marks.md#trustmarklistpage), and [`TrustMarkRecord`](../core/marks.md#trustmarkrecord) from `@oidfed/core`.
 
@@ -27,14 +27,5 @@ Import [`TrustMarkListOptions`](../core/marks.md#trustmarklistoptions), [`TrustM
 
 ## Storage
 
-Import the following types, `FederationStorage`, and `MemoryFederationStorage` from [`@oidfed/core`](../core/storage.md).
-
-| API | Kind |
-|---|---|
-| [`ListFilter`](storage.md#listfilter) | Interface |
-| [`ListPage`](storage.md#listpage) | Interface |
-| [`ListPageOptions`](storage.md#listpageoptions) | Interface |
-| [`SubordinateEventAnnotations`](storage.md#subordinateeventannotations) | Interface |
-| [`SubordinateRecord`](storage.md#subordinaterecord) | Type |
-| [`SubordinateRecordUpdate`](storage.md#subordinaterecordupdate) | Type |
+Import subordinate record, pagination, and event types from [Core storage](../core/storage.md#subordinaterecord). See [Authority storage](storage.md) for the capabilities needed to serve endpoints and manage subordinates.
 

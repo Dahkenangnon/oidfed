@@ -1,7 +1,5 @@
 # `@oidfed/leaf` API
 
-[API reference](../README.md)
-
 Import `Leaf` and `LeafConfig` from `@oidfed/leaf`. The class reference covers factory and instance operations.
 
 Configuration and method types owned by core link to its canonical reference. Optional properties are marked with `?`; their declared types include `undefined` only when it is explicit in the source.

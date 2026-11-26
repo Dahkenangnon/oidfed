@@ -1,12 +1,10 @@
 # Protocol constants and defaults
 
-[`@oidfed/core`](README.md)
-
 Use these exported values when constructing protocol messages or configuring limits. Defaults are library policy unless the associated specification requires the value. A host may tighten operational limits through the documented options.
 
 ## `CachePrefix`
 
-[Source](../../../packages/core/src/constants.ts#L126)
+[Source](../../../packages/core/src/constants.ts)
 
 Prefixes used to namespace Entity Configuration, Entity Statement, and Trust Chain cache keys.
 
@@ -20,7 +18,7 @@ const CachePrefix: {
 
 ## `DEFAULT_CACHE_MAX_TTL_SECONDS`
 
-[Source](../../../packages/core/src/constants.ts#L171)
+[Source](../../../packages/core/src/constants.ts)
 
 Maximum default cache retention, in seconds. Check the calling API for overrides and operation-specific defaults.
 
@@ -30,7 +28,7 @@ const DEFAULT_CACHE_MAX_TTL_SECONDS = 86400;
 
 ## `DEFAULT_CACHE_TTL_SECONDS`
 
-[Source](../../../packages/core/src/constants.ts#L170)
+[Source](../../../packages/core/src/constants.ts)
 
 Default cache-entry lifetime, in seconds. Check the calling API for overrides and operation-specific defaults.
 
@@ -40,7 +38,7 @@ const DEFAULT_CACHE_TTL_SECONDS = 3600;
 
 ## `DEFAULT_CLIENT_ASSERTION_TTL_SECONDS`
 
-[Source](../../../packages/core/src/constants.ts#L176)
+[Source](../../../packages/core/src/constants.ts)
 
 Default private-key JWT client-assertion lifetime, in seconds. Check the calling API for overrides and operation-specific defaults.
 
@@ -50,7 +48,7 @@ const DEFAULT_CLIENT_ASSERTION_TTL_SECONDS = 60;
 
 ## `DEFAULT_CLOCK_SKEW_SECONDS`
 
-[Source](../../../packages/core/src/constants.ts#L165)
+[Source](../../../packages/core/src/constants.ts)
 
 Default leeway for supported time-claim checks, in seconds. Check the calling API for overrides and operation-specific defaults.
 
@@ -60,7 +58,7 @@ const DEFAULT_CLOCK_SKEW_SECONDS = 60;
 
 ## `DEFAULT_DELEGATION_TTL_SECONDS`
 
-[Source](../../../packages/core/src/constants.ts#L174)
+[Source](../../../packages/core/src/constants.ts)
 
 Default Trust Mark delegation lifetime, in seconds. Check the calling API for overrides and operation-specific defaults.
 
@@ -70,7 +68,7 @@ const DEFAULT_DELEGATION_TTL_SECONDS = 86400;
 
 ## `DEFAULT_ENTITY_STATEMENT_TTL_SECONDS`
 
-[Source](../../../packages/core/src/constants.ts#L173)
+[Source](../../../packages/core/src/constants.ts)
 
 Default Entity Statement lifetime, in seconds. Check the calling API for overrides and operation-specific defaults.
 
@@ -80,7 +78,7 @@ const DEFAULT_ENTITY_STATEMENT_TTL_SECONDS = 86400;
 
 ## `DEFAULT_HTTP_TIMEOUT_MS`
 
-[Source](../../../packages/core/src/constants.ts#L164)
+[Source](../../../packages/core/src/constants.ts)
 
 Default HTTP operation timeout, in milliseconds. Check the calling API for overrides and operation-specific defaults.
 
@@ -92,7 +90,7 @@ Runtime default: 10000 milliseconds.
 
 ## `DEFAULT_MAX_AUTHORITY_HINTS`
 
-[Source](../../../packages/core/src/constants.ts#L169)
+[Source](../../../packages/core/src/constants.ts)
 
 Default limit on authority hints examined for an entity. Check the calling API for overrides and operation-specific defaults.
 
@@ -102,7 +100,7 @@ const DEFAULT_MAX_AUTHORITY_HINTS = 10;
 
 ## `DEFAULT_MAX_CHAIN_DEPTH`
 
-[Source](../../../packages/core/src/constants.ts#L167)
+[Source](../../../packages/core/src/constants.ts)
 
 Default discovery depth limit. Check the calling API for overrides and operation-specific defaults.
 
@@ -112,7 +110,7 @@ const DEFAULT_MAX_CHAIN_DEPTH = 8;
 
 ## `DEFAULT_MAX_CHAIN_LENGTH`
 
-[Source](../../../packages/core/src/constants.ts#L166)
+[Source](../../../packages/core/src/constants.ts)
 
 Default maximum statement count in a validated chain. Check the calling API for overrides and operation-specific defaults.
 
@@ -122,7 +120,7 @@ const DEFAULT_MAX_CHAIN_LENGTH = 100;
 
 ## `DEFAULT_MAX_REQUEST_BODY_BYTES`
 
-[Source](../../../packages/core/src/constants.ts#L163)
+[Source](../../../packages/core/src/constants.ts)
 
 Default maximum accepted request-body size, in bytes. Check the calling API for overrides and operation-specific defaults.
 
@@ -134,7 +132,7 @@ Runtime default: 65536 bytes.
 
 ## `DEFAULT_MAX_RESOLUTION_STEPS`
 
-[Source](../../../packages/core/src/constants.ts#L168)
+[Source](../../../packages/core/src/constants.ts)
 
 Default upper bound on branch expansion during chain resolution. Check the calling API for overrides and operation-specific defaults.
 
@@ -144,7 +142,7 @@ const DEFAULT_MAX_RESOLUTION_STEPS = 1000;
 
 ## `DEFAULT_MAX_RESPONSE_BYTES`
 
-[Source](../../../packages/core/src/constants.ts#L162)
+[Source](../../../packages/core/src/constants.ts)
 
 Default maximum fetched response size, in bytes. Check the calling API for overrides and operation-specific defaults.
 
@@ -156,7 +154,7 @@ Runtime default: 524288 bytes.
 
 ## `DEFAULT_REQUEST_OBJECT_TTL_SECONDS`
 
-[Source](../../../packages/core/src/constants.ts#L175)
+[Source](../../../packages/core/src/constants.ts)
 
 Default signed Request Object lifetime, in seconds. Check the calling API for overrides and operation-specific defaults.
 
@@ -166,7 +164,7 @@ const DEFAULT_REQUEST_OBJECT_TTL_SECONDS = 300;
 
 ## `EntityType`
 
-[Source](../../../packages/core/src/constants.ts#L45)
+[Source](../../../packages/core/src/constants.ts)
 
 An Entity Type Identifier supported by the library.
 
@@ -187,7 +185,7 @@ type EntityType = (typeof EntityType)[keyof typeof EntityType];
 
 ## `EntityTypeIdentifier`
 
-[Source](../../../packages/core/src/constants.ts#L65)
+[Source](../../../packages/core/src/constants.ts)
 
 Any Entity Type Identifier, including extension identifiers.
 
@@ -206,7 +204,7 @@ type EntityTypeIdentifier = EntityType | (string & Record<never, never>);
 
 ## `FederationEndpoint`
 
-[Source](../../../packages/core/src/constants.ts#L5)
+[Source](../../../packages/core/src/constants.ts)
 
 Conventional endpoint path values, with a type union of those values. These constants do not discover an entity's endpoints; use its validated `federation_entity` metadata for remote calls.
 
@@ -228,7 +226,7 @@ type FederationEndpoint = (typeof FederationEndpoint)[keyof typeof FederationEnd
 
 ## `FederationErrorCode`
 
-[Source](../../../packages/core/src/constants.ts#L88)
+[Source](../../../packages/core/src/constants.ts)
 
 A protocol error code used in federation error responses.
 
@@ -254,7 +252,7 @@ type FederationErrorCode = (typeof FederationErrorCode)[keyof typeof FederationE
 
 ## `InternalErrorCode`
 
-[Source](../../../packages/core/src/constants.ts#L106)
+[Source](../../../packages/core/src/constants.ts)
 
 An error code used within library operations.
 
@@ -280,7 +278,7 @@ type InternalErrorCode = (typeof InternalErrorCode)[keyof typeof InternalErrorCo
 
 ## `JWT_BEARER_CLIENT_ASSERTION_TYPE`
 
-[Source](../../../packages/core/src/constants.ts#L178)
+[Source](../../../packages/core/src/constants.ts)
 
 The JWT bearer assertion-type value placed in client_assertion_type for private-key JWT authentication.
 
@@ -290,7 +288,7 @@ const JWT_BEARER_CLIENT_ASSERTION_TYPE: "urn:ietf:params:oauth:client-assertion-
 
 ## `JwtTyp`
 
-[Source](../../../packages/core/src/constants.ts#L34)
+[Source](../../../packages/core/src/constants.ts)
 
 A JWT `typ` value recognized by the library.
 
@@ -309,7 +307,7 @@ type JwtTyp = (typeof JwtTyp)[keyof typeof JwtTyp];
 
 ## `MediaType`
 
-[Source](../../../packages/core/src/constants.ts#L19)
+[Source](../../../packages/core/src/constants.ts)
 
 An HTTP media type used by federation artifacts and endpoints.
 
@@ -332,7 +330,7 @@ type MediaType = (typeof MediaType)[keyof typeof MediaType];
 
 ## `PolicyOperator`
 
-[Source](../../../packages/core/src/constants.ts#L77)
+[Source](../../../packages/core/src/constants.ts)
 
 A standard metadata-policy operator name.
 
@@ -351,7 +349,7 @@ type PolicyOperator = (typeof PolicyOperator)[keyof typeof PolicyOperator];
 
 ## `INTEROP_RECOMMENDED_ALGORITHMS`
 
-[Source](../../../packages/core/src/constants.ts#L184)
+[Source](../../../packages/core/src/constants.ts)
 
 Interoperability guidance: implementations should support RS256. Deployment acceptance policy is configured separately.
 
@@ -363,7 +361,7 @@ Runtime value: `["RS256"]`.
 
 ## `STANDARD_ENTITY_STATEMENT_CLAIMS`
 
-[Source](../../../packages/core/src/constants.ts#L141)
+[Source](../../../packages/core/src/constants.ts)
 
 Claims that MUST NOT appear in the `crit` array.
 
@@ -373,7 +371,7 @@ const STANDARD_ENTITY_STATEMENT_CLAIMS: Set<string>;
 
 ## `StandardPolicyOperator`
 
-[Source](../../../packages/core/src/constants.ts#L67)
+[Source](../../../packages/core/src/constants.ts)
 
 String enum naming the seven built-in policy operators. It is available as both a runtime enum and its TypeScript enum type; custom definitions cannot replace these names.
 
@@ -391,7 +389,7 @@ enum StandardPolicyOperator {
 
 ## `DEFAULT_ALLOWED_ALGORITHMS`
 
-[Source](../../../packages/core/src/constants.ts#L183)
+[Source](../../../packages/core/src/constants.ts)
 
 Default acceptance list for asymmetric signatures. Deployments can set an explicit list of registered algorithms.
 
@@ -403,7 +401,7 @@ Runtime value: `["ES256", "ES384", "ES512", "PS256", "PS384", "PS512", "RS256"]`
 
 ## `SupportedAlgorithm`
 
-[Source](../../../packages/core/src/constants.ts#L187)
+[Source](../../../packages/core/src/constants.ts)
 
 A signing algorithm defined by the built-in registry.
 
@@ -413,7 +411,7 @@ type SupportedAlgorithm = import("@oidfed/crypto").BuiltinJwsAlgorithm;
 
 ## `TrustMarkStatus`
 
-[Source](../../../packages/core/src/constants.ts#L132)
+[Source](../../../packages/core/src/constants.ts)
 
 A Trust Mark status value.
 
@@ -429,7 +427,7 @@ type TrustMarkStatus = (typeof TrustMarkStatus)[keyof typeof TrustMarkStatus];
 
 ## `WELL_KNOWN_OPENID_FEDERATION`
 
-[Source](../../../packages/core/src/constants.ts#L3)
+[Source](../../../packages/core/src/constants.ts)
 
 Well-known discovery suffix `/.well-known/openid-federation`. Entity Configuration clients append it after applying the Entity Identifier path rules.
 

@@ -1,12 +1,10 @@
 # Metadata policies and constraints
 
-[`@oidfed/core`](README.md)
-
 Apply policy to authenticated statements in superior order. Custom operators and constraints are synchronous host extensions with controlled failure results. Unknown non-critical extensions remain distinct from required extensions.
 
 ## `applyAllowedEntityTypes`
 
-[Source](../../../packages/core/src/constraints/index.ts#L65)
+[Source](../../../packages/core/src/constraints/index.ts)
 
 Return a new outer metadata record retaining allowed Entity Types and always retaining `federation_entity`. The call does not mutate the input, but retained metadata blocks are shared by reference rather than deeply cloned.
 
@@ -16,7 +14,7 @@ applyAllowedEntityTypes(allowedEntityTypes: string[], metadata: Record<string, R
 
 ## `applyMetadataPolicy`
 
-[Source](../../../packages/core/src/metadata-policy/apply.ts#L18)
+[Source](../../../packages/core/src/metadata-policy/apply.ts)
 
 Apply a resolved metadata policy to federation metadata, returning the transformed metadata.
 
@@ -26,7 +24,7 @@ applyMetadataPolicy(metadata: FederationMetadata, policy: ResolvedMetadataPolicy
 
 ## `checkConstraints`
 
-[Source](../../../packages/core/src/constraints/index.ts#L95)
+[Source](../../../packages/core/src/constraints/index.ts)
 
 Validate all constraints from a subordinate statement against the chain.
 position identifies the Subordinate Statement carrying the constraints.
@@ -39,7 +37,7 @@ checkConstraints(constraints: TrustChainConstraints, position: number, chain: Pa
 
 ## `checkMaxPathLength`
 
-[Source](../../../packages/core/src/constraints/index.ts#L13)
+[Source](../../../packages/core/src/constraints/index.ts)
 
 Check whether the chain path length satisfies max_path_length.
 Intermediates between constrainer (position i) and leaf = i - 1.
@@ -50,7 +48,7 @@ checkMaxPathLength(maxPathLength: number, constrainerPosition: number, _chainLen
 
 ## `checkNamingConstraints`
 
-[Source](../../../packages/core/src/constraints/index.ts#L35)
+[Source](../../../packages/core/src/constraints/index.ts)
 
 Check whether an entityId's hostname passes naming constraints.
 Excluded overrides permitted. No regex (ReDoS prevention).
@@ -78,7 +76,7 @@ export function previewCampusConstraint(metadata: Record<string, Record<string, 
 
 ## `MetadataPolicyOptions`
 
-[Source](../../../packages/core/src/metadata-policy/custom-operators.ts#L16)
+[Source](../../../packages/core/src/metadata-policy/custom-operators.ts)
 
 Options accepted by `resolveMetadataPolicy` and `applyMetadataPolicy` for
 federation-defined extension operators.
@@ -103,7 +101,7 @@ Fields (including inherited fields):
 
 ## `operators`
 
-[Source](../../../packages/core/src/metadata-policy/operators.ts#L552)
+[Source](../../../packages/core/src/metadata-policy/operators.ts)
 
 The standard metadata-policy operator definitions used for merge, combination, and application rules. Register additional operators through the options contract.
 
@@ -113,7 +111,7 @@ const operators: Record<string, PolicyOperatorDefinition>;
 
 ## `resolveMetadataPolicy`
 
-[Source](../../../packages/core/src/metadata-policy/merge.ts#L28)
+[Source](../../../packages/core/src/metadata-policy/merge.ts)
 
 Merge metadata policies from subordinate statements in TA-to-leaf order.
 
@@ -126,7 +124,7 @@ resolveMetadataPolicy(subordinateStatements: ParsedEntityStatement[], options?: 
 
 ## `validateCustomOperators`
 
-[Source](../../../packages/core/src/metadata-policy/custom-operators.ts#L66)
+[Source](../../../packages/core/src/metadata-policy/custom-operators.ts)
 
 Validate a set of federation-defined custom policy operators.
 
@@ -145,7 +143,7 @@ validateCustomOperators(operators: readonly PolicyOperatorDefinition[]): Result<
 
 ## `validateMetadataPolicy`
 
-[Source](../../../packages/core/src/metadata-policy/validate.ts#L35)
+[Source](../../../packages/core/src/metadata-policy/validate.ts)
 
 Validate a declaration without applying it or requiring extension operators to be understood.
 

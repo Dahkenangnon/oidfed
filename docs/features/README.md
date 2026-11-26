@@ -113,7 +113,9 @@ Start with the public host and role APIs: `TrustAnchor` and `Intermediate` from 
 
 Core supplies shared contracts, verification profiles and storage adapters. Direct core operations are used where the task needs a remote endpoint client, standalone publication, or another capability without a matching host or role operation. Those cases are explained beside their examples.
 
-Current TypeScript blocks import public package entry points. Parameters such as `keys`, `anchors`, `signer`, and `storage` are dependencies supplied by the host. Memory adapters and generated keys demonstrate one-process behavior; deployments supply durable state and suitable key custody.
+For a standalone task, use role-based identifiers such as `https://anchor.example` and include only the entities needed to explain the operation. When the relationship between named participants matters, keep their names and explain their roles beside the example.
+
+In copyable TypeScript examples, import public APIs and declare host-supplied inputs such as `keys`, `anchors`, `signer`, and `storage` as parameters. Mark examples that compile on their own with `<!-- oidfed-example -->` so the packed-package check can verify them. Memory adapters and generated keys demonstrate one-process behavior. Deployments supply durable state and suitable key custody.
 
 Inspect `result.ok` before reading `result.value`. Chain validation uses `valid`; metadata parsers use `success`.
 

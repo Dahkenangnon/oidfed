@@ -4,26 +4,26 @@ Trust Anchors and Intermediates take `storage: FederationStorage` from [the core
 
 ## `SubordinateRecord`
 
-A subordinate's Entity Identifier, public Federation Entity Keys, optional statement claims, and finite creation and update NumericDates.
+Import [`SubordinateRecord`](../core/storage.md#subordinaterecord) from `@oidfed/core`.
 
 ## `SubordinateRecordUpdate`
 
-Changes to mutable claims. Pass the update NumericDate to the repository.
+Import [`SubordinateRecordUpdate`](../core/storage.md#subordinaterecordupdate) from `@oidfed/core`.
 
 ## `ListFilter`
 
-Filters applied before paging the live subordinate list.
+Import [`ListFilter`](../core/storage.md#listfilter) from `@oidfed/core`.
 
 ## `ListPageOptions`
 
-An inclusive starting cursor, a page limit, and optional update bounds.
+Import [`ListPageOptions`](../core/storage.md#listpageoptions) from `@oidfed/core`.
 
 ## `ListPage`
 
-Records in Entity Identifier order and, when more data is available, the first unreturned position.
+Import [`ListPage`](../core/storage.md#listpage) from `@oidfed/core`.
 
 ## `SubordinateEventAnnotations`
 
-Description and information URI supplied to each event recorded by a managed operation.
+Import [`SubordinateEventAnnotations`](../core/storage.md#subordinateeventannotations) from `@oidfed/core`.
 
 Use `registerSubordinate`, `updateSubordinate`, and `revokeSubordinate` on the host. These methods validate publication claims, supply the host's timestamps, and record events when enabled. Use direct repository writes for controlled imports or tests. See the [adapter guide](../../features/11.6.storage-adapters.md) for requirements by feature.

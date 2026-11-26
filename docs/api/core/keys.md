@@ -1,12 +1,10 @@
 # Keys, rollover, and protocol JWKS
 
-[`@oidfed/core`](README.md)
-
 Hosts receive an explicit `CryptoContext` containing a `CryptoEngine` and `Keyring` from `@oidfed/crypto`. A single `KeyringEntry` carries its signing binding and published public keys. Protocol-key resolution follows the entity type's metadata and is separate from federation key pinning.
 
 ## `EntityKeysSource`
 
-[Source](../../../packages/core/src/jwks/resolve.ts#L28)
+[Source](../../../packages/core/src/jwks/resolve.ts)
 
 The metadata key source selected during protocol-key resolution.
 
@@ -16,7 +14,7 @@ type EntityKeysSource = "jwks" | "jwks_uri" | "signed_jwks_uri";
 
 ## `fetchJwkSet`
 
-[Source](../../../packages/core/src/jwks/jwks-uri.ts#L24)
+[Source](../../../packages/core/src/jwks/jwks-uri.ts)
 
 Fetch and parse a plain JWK Set from `jwks_uri`.
 
@@ -32,7 +30,7 @@ fetchJwkSet(url: string, options: FederationOptions): Promise<Result<JWKSet, Fed
 
 ## `fetchSignedJwkSet`
 
-[Source](../../../packages/core/src/jwks/signed-jwks-uri.ts#L31)
+[Source](../../../packages/core/src/jwks/signed-jwks-uri.ts)
 
 Fetch and verify a Signed JWK Set from `signed_jwks_uri`.
 
@@ -47,7 +45,7 @@ fetchSignedJwkSet(url: string, signerJwks: JWKSet, options: FetchSignedJwkSetOpt
 
 ## `FetchSignedJwkSetOptions`
 
-[Source](../../../packages/core/src/jwks/signed-jwks-uri.ts#L18)
+[Source](../../../packages/core/src/jwks/signed-jwks-uri.ts)
 
 Identity, verification, and transport settings for fetching a signed JWK Set.
 
@@ -98,7 +96,7 @@ Fields (including inherited fields):
 
 ## `isValidAlgorithm`
 
-[Source](../../../packages/core/src/jose/keys.ts#L13)
+[Source](../../../packages/core/src/jose/keys.ts)
 
 Returns true if the algorithm is registered. Pass the host registry to recognize a custom algorithm. The default registry contains the built-ins.
 
@@ -108,7 +106,7 @@ isValidAlgorithm(alg: unknown, registry?: JwsAlgorithmRegistry): alg is string;
 
 ## `JWK_PUBLIC_FIELDS`
 
-[Source](../../../packages/core/src/jose/keys.ts#L75)
+[Source](../../../packages/core/src/jose/keys.ts)
 
 Allowlist of JWK fields that are safe to expose publicly.
 
@@ -120,7 +118,7 @@ The allowlist contains `kty`, `use`, `key_ops`, `alg`, `kid`, `x5u`, `x5c`, `x5t
 
 ## `jwkThumbprint`
 
-[Source](../../../packages/core/src/jose/keys.ts#L18)
+[Source](../../../packages/core/src/jose/keys.ts)
 
 Compute the RFC 7638 SHA-256 thumbprint for the given key. Pass the host registry for a custom JWK format.
 
@@ -130,7 +128,7 @@ jwkThumbprint(key: JWK, engine: CryptoEngine, registry?: JwsAlgorithmRegistry): 
 
 ## `preparePublicJwkSet`
 
-[Source](../../../packages/core/src/jwks/public-material.ts#L39)
+[Source](../../../packages/core/src/jwks/public-material.ts)
 
 Capture the JSON data once so publishers store and sign exactly what was validated.
 
@@ -140,7 +138,7 @@ preparePublicJwkSet(value: unknown, registry?: JwsAlgorithmRegistry): Result<JWK
 
 ## `ResolvedEntityKeys`
 
-[Source](../../../packages/core/src/jwks/resolve.ts#L37)
+[Source](../../../packages/core/src/jwks/resolve.ts)
 
 Protocol keys together with the source from which they were resolved.
 
@@ -160,7 +158,7 @@ Fields (including inherited fields):
 
 ## `resolveEntityKeys`
 
-[Source](../../../packages/core/src/jwks/resolve.ts#L43)
+[Source](../../../packages/core/src/jwks/resolve.ts)
 
 Resolve public protocol keys in this order: `signed_jwks_uri`, inline `jwks`, then `jwks_uri`. Signed sets are checked against the supplied Federation Entity Keys and expected signer/owner. Default behavior stops at the first error. `allowFallback` advances only after recognized availability failures; signature, identity, payload, and response-format failures stop resolution.
 
@@ -170,7 +168,7 @@ resolveEntityKeys(entityMetadata: Record<string, unknown>, federationEntityKeys:
 
 ## `ResolveEntityKeysOptions`
 
-[Source](../../../packages/core/src/jwks/resolve.ts#L30)
+[Source](../../../packages/core/src/jwks/resolve.ts)
 
 Key-source selection, fallback, verification, and transport settings.
 
@@ -224,7 +222,7 @@ Fields (including inherited fields):
 
 ## `selectVerificationKey`
 
-[Source](../../../packages/core/src/jose/keys.ts#L27)
+[Source](../../../packages/core/src/jose/keys.ts)
 
 Select a supported asymmetric verification key whose `key_ops` permits verification and whose `use` is absent or `sig`. A supplied `kid` must match; it never falls back to another key when missing or algorithm-incompatible. With no `kid`, selection can use the supported algorithm and key type. This helper selects a candidate; it does not verify a signature.
 
@@ -234,7 +232,7 @@ selectVerificationKey(header: { kid?: string; alg?: string }, jwks: JWKSet, regi
 
 ## `stripPrivateFields`
 
-[Source](../../../packages/core/src/jose/keys.ts#L99)
+[Source](../../../packages/core/src/jose/keys.ts)
 
 Strip private key material from a JWK, returning only spec-defined public fields.
 
@@ -248,7 +246,7 @@ stripPrivateFields(key: JWK): JWK;
 
 ## `timingSafeEqual`
 
-[Source](../../../packages/core/src/jose/keys.ts#L61)
+[Source](../../../packages/core/src/jose/keys.ts)
 
 Compare the UTF-8 encodings of two strings without an early exit for a differing byte when lengths match. Different lengths return false immediately; use it for the documented public identifiers, not as a general secret-comparison guarantee.
 
@@ -258,7 +256,7 @@ timingSafeEqual(a: string, b: string): boolean;
 
 ## `validateFederationKeySet`
 
-[Source](../../../packages/core/src/federation-keys.ts#L99)
+[Source](../../../packages/core/src/federation-keys.ts)
 
 Check the relationship between the federation key set and its signer before publication or signing.
 
@@ -268,7 +266,7 @@ validateFederationKeySet(entry: KeyringEntry, registry?: JwsAlgorithmRegistry): 
 
 ## `validateJwkSetUseRequirement`
 
-[Source](../../../packages/core/src/jwks/use-requirement.ts#L88)
+[Source](../../../packages/core/src/jwks/use-requirement.ts)
 
 Returns ok if the JWK Set satisfies the `use` conditional REQUIRED rule.
 
@@ -282,7 +280,7 @@ validateJwkSetUseRequirement(jwks: readonly JWK[], registry?: JwsAlgorithmRegist
 
 ## `validatePublicJwkSet`
 
-[Source](../../../packages/core/src/jwks/public-material.ts#L30)
+[Source](../../../packages/core/src/jwks/public-material.ts)
 
 Check the JSON representation before publishing a federation JWK Set. Includes the
 federation schema's unique, nonempty kid requirement. RFC 7518 §6 and RFC 8037
@@ -296,6 +294,14 @@ RFC 7517 §5 recommends ignoring unusable keys when consuming a set.
 validatePublicJwkSet(value: unknown, registry?: JwsAlgorithmRegistry): Result<void, FederationError>;
 ```
 
+## `prepareProtocolJwkSet`
+
+Validate and detach public protocol key material from configuration. This checks structure, public material, and supported EC public points. A key may omit `kid`, keys may share an identifier, and the set may be empty. Use `preparePublicJwkSet()` for Federation signing keys.
+
+```typescript signature
+prepareProtocolJwkSet(value: unknown, registry?: JwsAlgorithmRegistry): Result<JWKSet, FederationError>;
+```
+
 ## `signProtocolJwkSet`
 
 Signs one Entity Type's public protocol keys with the issuer's published Federation signing key. It returns a compact JWT with protected `typ: jwk-set+jwt` and the signer's `kid`. Serve it at the host's HTTPS `signed_jwks_uri` with `MediaType.JwkSet`.
@@ -306,7 +312,7 @@ Provide `issuer`, `jwks`, and a host `crypto` context. Set `owner` to override t
 
 ## `validateSignedJwkSetSpecHygiene`
 
-[Source](../../../packages/core/src/jwks/spec-hygiene.ts#L20)
+[Source](../../../packages/core/src/jwks/spec-hygiene.ts)
 
 Apply an opt-in stricter deployment profile to a verified Signed JWK Set: sub should equal iss, and aud, nbf, and jti should be omitted. These recommendations are separate from required signature and claim validation.
 

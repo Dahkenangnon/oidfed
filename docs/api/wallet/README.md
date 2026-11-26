@@ -1,7 +1,5 @@
 # `@oidfed/wallet` API
 
-[API reference](../README.md)
-
 The index covers the package’s public exports. Class entries include constructors, inherited public methods, static methods, and public properties.
 
 Import [client attestation helpers and types](../core/authentication.md) from `@oidfed/core`.

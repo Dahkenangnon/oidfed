@@ -5,6 +5,7 @@
 | [Installation and imports](#dependencies-and-imports) | oidfed installs its runtime dependencies. Shared APIs belong to Core. |
 | [Crypto](#host-provided-crypto) | The application supplies cryptographic operations, signing keys, and rollover timing. |
 | [Hosts and registration](#authority-and-role-configuration) | Hosts initialize asynchronously. Roles inherit crypto and storage from their host. |
+| [Authenticated requests](#authenticated-federation-posts) | Put endpoint parameters and credentials in the POST form. |
 | [Storage](#federation-storage) | Each host uses one storage handle with repositories for the features it serves. |
 
 For additional breaking changes, see the v3 entries when published in the package changelogs. [Core](../../packages/core/CHANGELOG.md) · [Authority](../../packages/authority/CHANGELOG.md) · [Leaf](../../packages/leaf/CHANGELOG.md) · [OIDC](../../packages/oidc/CHANGELOG.md) · [Wallet](../../packages/wallet/CHANGELOG.md) · [CLI](../../tools/cli/CHANGELOG.md)
@@ -56,6 +57,28 @@ Replace any authenticated cache warming for public Resolve with `primeAnonymousR
 ### Publish and retire keys deliberately
 
 Replace automatic retirement with a host schedule. Publish the next key, allow for propagation, activate it, then call `keyring.retire()` after your overlap window. Supply `crypto.history`, for example with `historicalKeysFromKeyring(keyring)`, when serving Historical Keys. [Key rollover](../features/9.5.key-rollover.md)
+
+## Authenticated Federation POSTs
+
+Move endpoint operation parameters into the URL-encoded form alongside the client credentials. For example, a custom client may previously have sent an authenticated Fetch with `sub` only in the URL.
+
+```http
+POST /fetch?version=1&sub=https%3A%2F%2Fleaf.example HTTP/1.1
+Content-Type: application/x-www-form-urlencoded
+
+client_assertion_type=urn%3Aietf%3Aparams%3Aoauth%3Aclient-assertion-type%3Ajwt-bearer&client_assertion=ASSERTION_JWT
+```
+
+In v3, send `sub` in the form and keep routing values such as `version=1` in the URL.
+
+```http
+POST /fetch?version=1 HTTP/1.1
+Content-Type: application/x-www-form-urlencoded
+
+sub=https%3A%2F%2Fleaf.example&client_assertion_type=urn%3Aietf%3Aparams%3Aoauth%3Aclient-assertion-type%3Ajwt-bearer&client_assertion=ASSERTION_JWT
+```
+
+A query-only operation parameter returns `400 invalid_request` before assertion verification. Custom hosts should match routes and read routing values before invoking `createEndpointAuthenticatedHandler()`. The operation handler receives the validated form, or a query synthesized from it for a GET-native handler. See [endpoint authentication](../features/7.5.endpoint-authentication.md) for fixed selectors and anonymous requests.
 
 ## Authority and role configuration
 

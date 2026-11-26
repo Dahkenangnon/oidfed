@@ -1,14 +1,12 @@
 # Protocol roles and configuration
 
-[`@oidfed/oidc`](README.md)
-
 Compose a role into a Leaf or Authority, or use its static metadata parsers and assessment helpers independently. Metadata contribution is copied after initialization, with later roles replacing matching host parameters. Full protocol processing remains with the host application.
 
 The client classes share registration methods; the provider classes share processing methods. Static aliases shown below expose the existing core helpers through the role class. They use explicit arguments and do not inherit instance options. Their declarations are followed by a call signature for lookup. Core-owned types in signatures are imported from `@oidfed/core`; OIDC-owned metadata and registration types come from `@oidfed/oidc`.
 
 ## `CreateAuthorizationRequestOptions`
 
-[Source](../../../packages/oidc/src/roles.ts#L97)
+[Source](../../../packages/oidc/src/roles.ts)
 
 Per-call settings for client authorization-request creation. These override role and host options where used. requestDelivery defaults to form_post; request_uri requires a caller-hosted Request Object URL, while par mode performs the request. The trustAnchors field overrides the explicit anchor argument of createAuthorizationRequest.
 
@@ -65,7 +63,7 @@ Fields (including inherited fields):
 
 ## `OAuthAuthorizationServerRole`
 
-[Source](../../../packages/oidc/src/roles.ts#L789)
+[Source](../../../packages/oidc/src/roles.ts)
 
 Provider role for `oauth_authorization_server` metadata. Host initialization installs an Explicit Registration endpoint and requires nonempty Trust Anchors. Its composed metadata must declare `client_registration_types_supported` containing `explicit`, including when automatic processing is also used. Automatic registration and PAR processing additionally require a replay store.
 
@@ -79,7 +77,7 @@ new OAuthAuthorizationServerRole(config: OidcProviderRoleConfig): OAuthAuthoriza
 
 Entity Type Identifier `oauth_authorization_server`, used to select this role's metadata block and registration profile.
 
-[Source](../../../packages/oidc/src/roles.ts#L790)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 readonly type: "oauth_authorization_server";
@@ -89,7 +87,7 @@ readonly type: "oauth_authorization_server";
 
 Process a form-encoded POST using effective provider metadata, configured trust, proof negotiation, and replay storage. Returned parameters include repeated resource values. This is registration/proof processing, not issuance or storage of a PAR request_uri; the host protocol engine owns that response. Initialize the role on a host with replay storage. The method runs configured accreditation and registration persistence; persistence exceptions are converted to a server-error Result.
 
-[Source](../../../packages/oidc/src/roles.ts#L476)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 processPushedAuthorizationRequest(request: Request, options?: ProcessPushedAuthorizationRequestOptions): Promise<Result<ProcessedPushedAuthorizationRequest, ClientAttestationError>>;
@@ -99,7 +97,7 @@ processPushedAuthorizationRequest(request: Request, options?: ProcessPushedAutho
 
 Assess the target using the requested protocol block and either local validation or an explicitly authorized resolver. The protocol selector is one of `openid_relying_party`, `openid_provider`, `oauth_authorization_server`, `oauth_client`, or `oauth_resource`; it is not inferred from the calling class. Effective server issuer values are bound to the target Entity Identifier. Invalid target identifiers can reject before a Result is returned. This method also works before initialization when role or per-call trust inputs are supplied. Options use call, role, then host precedence; anchors use the same order, followed by an empty set.
 
-[Source](../../../packages/oidc/src/roles.ts#L519)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 assessEntity(target: string, type: "openid_relying_party" | "openid_provider" | "oauth_authorization_server" | "oauth_client" | "oauth_resource", options?: EntityAssessmentOptions & { trustAnchors?: TrustAnchorSet; }): Promise<{ readonly ok: false; readonly error: FederationError; } | { readonly ok: true; readonly value: EntityAssessment; }>;
@@ -109,7 +107,7 @@ assessEntity(target: string, type: "openid_relying_party" | "openid_provider" | 
 
 Mutable metadata block copied from constructor input. Hosts compose a detached publication snapshot; changing this role object after attachment does not automatically update a Leaf or Authority EC. Validate proposed values with the static publication parser before constructing a new host.
 
-[Source](../../../packages/oidc/src/roles.ts#L531)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 readonly metadata: Record<string, unknown>;
@@ -119,7 +117,7 @@ readonly metadata: Record<string, unknown>;
 
 Map populated with the explicit-registration handler during initialization. The host copies these routes while composing roles; later map changes are not automatically remounted.
 
-[Source](../../../packages/oidc/src/roles.ts#L532)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 readonly routes: Map<string, (request: Request) => Promise<Response>>;
@@ -129,7 +127,7 @@ readonly routes: Map<string, (request: Request) => Promise<Response>>;
 
 Constructor configuration retained by reference. Metadata is copied separately; the configuration object and its service dependencies are not deeply frozen. Treat configuration as immutable after attachment; there is no general configuration-update API.
 
-[Source](../../../packages/oidc/src/roles.ts#L536)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 readonly config: OidcProviderRoleConfig;
@@ -139,7 +137,7 @@ readonly config: OidcProviderRoleConfig;
 
 Require explicit registration support and validate the composed provider publication block. This check does not retain a replacement copy of metadata for every later protocol operation; those operations accept or use their own effective provider metadata.
 
-[Source](../../../packages/oidc/src/roles.ts#L543)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 validateMetadata(metadata: Readonly<Record<string, unknown>>, context: EntityContext): void;
@@ -149,7 +147,7 @@ validateMetadata(metadata: Readonly<Record<string, unknown>>, context: EntityCon
 
 Bind the role to the host's EntityContext. Reusing it with a different context throws, while the same context can be passed again. Hosts invoke this during composition. Provider initialization also advertises and mounts the explicit-registration route, using role anchors before host anchors.
 
-[Source](../../../packages/oidc/src/roles.ts#L566)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 initialize(context: EntityContext): void;
@@ -159,7 +157,7 @@ initialize(context: EntityContext): void;
 
 Validate the signed Request Object, local recipient, client chain, selected client metadata, protocol signature, accreditation, and replay claim. Then run the optional registration adapter and persistence callback. Initialize the role with host replay storage and nonempty role-or-host anchors. Per-call options override role and host options, while configured accreditation requirements and beforeRegistration take precedence when configured. Adapter or persistence exceptions can reject the promise despite its Result return type.
 
-[Source](../../../packages/oidc/src/roles.ts#L616)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 processAutomaticRegistration(requestObjectJwt: string, options?: ProcessAutomaticRegistrationOptions): Promise<Result<ProcessedAutomaticRegistration, ClientAttestationError>>;
@@ -169,7 +167,7 @@ processAutomaticRegistration(requestObjectJwt: string, options?: ProcessAutomati
 
 Invoke the explicit-registration HTTP handler installed during initialization. It accepts POST with an exact Entity Statement or Trust Chain media type, validates the client and optional peer evidence, and returns a signed registration response using Federation keys. Validation failures become HTTP errors; adapter, key-provider, signing, or secret-generation failures can still reject. Persistence/invalidation hook failures return a generic HTTP 500. An uninitialized role rejects because its handler is not mounted.
 
-[Source](../../../packages/oidc/src/roles.ts#L721)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 processExplicitRegistration(request: Request): Promise<Response>;
@@ -177,9 +175,9 @@ processExplicitRegistration(request: Request): Promise<Response>;
 
 ### `OAuthAuthorizationServerRole.parseMetadata`
 
-Parse completed metadata and return Zod's `{ success, data }` or `{ success: false, error }` result, without constructing or initializing a role. Conditional protocol requirements are checked; a successful parse establishes neither Federation trust nor key ownership. Unknown extension fields are preserved. 
+Parse completed metadata and return Zod's `{ success, data }` or `{ success: false, error }` result, without constructing or initializing a role. Conditional protocol requirements are checked; a successful parse establishes neither Federation trust nor key ownership. Unknown extension fields are preserved.
 
-[Source](../../../packages/oidc/src/roles.ts#L793)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 static parseMetadata(metadata: unknown, options?: MetadataValidationOptions): z.ZodSafeParseResult<OAuthAuthorizationServerMetadata>;
@@ -189,7 +187,7 @@ static parseMetadata(metadata: unknown, options?: MetadataValidationOptions): z.
 
 Parse supplied publication fields while allowing a Superior to complete missing requirements. Supplied values and applicable cross-field consistency rules are still checked. This is independent validation, not publication or trust establishment; success/error uses the Zod parse-result format.
 
-[Source](../../../packages/oidc/src/roles.ts#L800)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 static parsePublicationMetadata(metadata: unknown, options?: MetadataValidationOptions): z.ZodSafeParseResult<OAuthAuthorizationServerPublicationMetadata>;
@@ -199,7 +197,7 @@ static parsePublicationMetadata(metadata: unknown, options?: MetadataValidationO
 
 Assess the target using the requested protocol block and either local validation or an explicitly authorized resolver. The protocol selector is one of `openid_relying_party`, `openid_provider`, `oauth_authorization_server`, `oauth_client`, or `oauth_resource`; it is not inferred from the calling class. Effective server issuer values are bound to the target Entity Identifier. Invalid target identifiers can reject before a Result is returned. This static callable takes anchors and options explicitly and uses no role instance.
 
-[Source](../../../packages/oidc/src/roles.ts#L517)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 static assessEntity: (target: string, type: "openid_relying_party" | "openid_provider" | "oauth_authorization_server" | "oauth_client" | "oauth_resource", anchors: TrustAnchorSet, options?: EntityAssessmentOptions) => Promise<{ readonly ok: false; readonly error: FederationError; } | { readonly ok: true; readonly value: EntityAssessment; }>;
@@ -214,7 +212,7 @@ OAuthAuthorizationServerRole.assessEntity(target: string, type: "openid_relying_
 
 ## `OAuthAuthorizationServerRoleConfig`
 
-[Source](../../../packages/oidc/src/roles.ts#L788)
+[Source](../../../packages/oidc/src/roles.ts)
 
 Alias of OidcProviderRoleConfig. The OAuth role uses oauth_client and oauth_authorization_server metadata for its registration processing; both provider classes share the configuration and callback contracts.
 
@@ -242,7 +240,7 @@ Fields (including inherited fields):
 
 ## `OAuthClientRole`
 
-[Source](../../../packages/oidc/src/roles.ts#L750)
+[Source](../../../packages/oidc/src/roles.ts)
 
 Client role for `oauth_client` metadata. It discovers a server, prepares signed authorization requests, performs Explicit Client Registration, and prepares PAR requests through the selected OIDC or OAuth profile. Constructors copy metadata; registration and instance assertion signing require host initialization. Assessments and static parsers can be used independently.
 
@@ -256,7 +254,7 @@ new OAuthClientRole(config: OidcRelyingPartyRoleConfig): OAuthClientRole;
 
 Entity Type Identifier `oauth_client`, used to select this role's metadata block and registration profile.
 
-[Source](../../../packages/oidc/src/roles.ts#L751)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 readonly type: "oauth_client";
@@ -266,7 +264,7 @@ readonly type: "oauth_client";
 
 Discover the server named by `authorizationServerEntityId`, choose compatible chains sharing an anchor, and build an authorization-code request (`response_type: "code"`). Request delivery defaults to form_post; par mode also sends the PAR HTTP request. Per-call options override role options and host options. Nonempty delivery/URI values in the options argument override those in params, which override role configuration. Requires initialization and configured anchors; missing setup rejects, while protocol failures generally return a failing Result.
 
-[Source](../../../packages/oidc/src/roles.ts#L768)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 automaticallyRegister(params: { readonly authorizationServerEntityId: string; readonly redirect_uri: string; readonly scope?: string; readonly state?: string; readonly nonce?: string; readonly requestDelivery?: RequestDelivery; readonly requestUri?: string; }, options?: CreateAuthorizationRequestOptions): Promise<Result<AutomaticRegistrationResult>>;
@@ -276,7 +274,7 @@ automaticallyRegister(params: { readonly authorizationServerEntityId: string; re
 
 Prepare a complete PAR endpoint, form body, headers, and selected provider chain from a supplied DiscoveryResult and proof mode. This method does not send the prepared request; the host supplies transport and any TLS client certificate. It checks the client/server metadata, shared anchor, proof, and published protocol keys. Initialization and a nonempty anchor set are required. Options and anchors use call, role, then host precedence.
 
-[Source](../../../packages/oidc/src/roles.ts#L107)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 createPushedAuthorizationRequest(discovery: DiscoveryResult, parameters: Readonly<Record<string, unknown>>, proof: PushedAuthorizationProof, options?: Omit<FederationOptions & { trustAnchors?: TrustAnchorSet; }, "engine">): Promise<Result<PreparedPushedAuthorizationRequest>>;
@@ -286,7 +284,7 @@ createPushedAuthorizationRequest(discovery: DiscoveryResult, parameters: Readonl
 
 Assess the target using the requested protocol block and either local validation or an explicitly authorized resolver. The protocol selector is one of `openid_relying_party`, `openid_provider`, `oauth_authorization_server`, `oauth_client`, or `oauth_resource`; it is not inferred from the calling class. Effective server issuer values are bound to the target Entity Identifier. Invalid target identifiers can reject before a Result is returned. This method also works before initialization when role or per-call trust inputs are supplied. Options use call, role, then host precedence; anchors use the same order, followed by an empty set.
 
-[Source](../../../packages/oidc/src/roles.ts#L145)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 assessEntity(target: string, type: "openid_relying_party" | "openid_provider" | "oauth_authorization_server" | "oauth_client" | "oauth_resource", options?: EntityAssessmentOptions & { trustAnchors?: TrustAnchorSet; }): Promise<{ readonly ok: false; readonly error: FederationError; } | { readonly ok: true; readonly value: EntityAssessment; }>;
@@ -296,7 +294,7 @@ assessEntity(target: string, type: "openid_relying_party" | "openid_provider" | 
 
 Mutable metadata block copied from constructor input. Hosts compose a detached publication snapshot; changing this role object after attachment does not automatically update a Leaf or Authority EC. Validate proposed values with the static publication parser before constructing a new host.
 
-[Source](../../../packages/oidc/src/roles.ts#L162)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 readonly metadata: Record<string, unknown>;
@@ -306,7 +304,7 @@ readonly metadata: Record<string, unknown>;
 
 Constructor configuration retained by reference. Metadata is copied separately; the configuration object and its service dependencies are not deeply frozen. Treat configuration as immutable after attachment; there is no general configuration-update API.
 
-[Source](../../../packages/oidc/src/roles.ts#L167)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 readonly config: OidcRelyingPartyRoleConfig;
@@ -316,7 +314,7 @@ readonly config: OidcRelyingPartyRoleConfig;
 
 Check the composed client publication block and retain a detached copy for subsequent client registration operations. Omitted requirements may be completed by a Superior; supplied invalid values throw TypeError.
 
-[Source](../../../packages/oidc/src/roles.ts#L171)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 validateMetadata(metadata: Readonly<Record<string, unknown>>, context?: EntityContext): void;
@@ -326,7 +324,7 @@ validateMetadata(metadata: Readonly<Record<string, unknown>>, context?: EntityCo
 
 Bind the role to the host's EntityContext. Reusing it with a different context throws, while the same context can be passed again. Hosts invoke this during composition. Client registration and instance assertion signing use this identity and host services.
 
-[Source](../../../packages/oidc/src/roles.ts#L177)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 initialize(context: EntityContext): void;
@@ -336,7 +334,7 @@ initialize(context: EntityContext): void;
 
 Sign a private_key_jwt assertion using the attached host's Entity Identifier and this role's protocol signing purposes. Configure the clientAssertion signing purpose on the role. To reuse the Request Object key, bind both purposes to the same keyring entry explicitly. Call options inherit the host engine and can narrow the configured verification policy. The default lifetime is 60 seconds. This helper does not prove that the signer is published in the client's metadata; registration workflows perform that binding check. Missing initialization rejects.
 
-[Source](../../../packages/oidc/src/roles.ts#L195)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 createClientAssertion(audience: string, options?: Omit<ClientAssertionOptions, "engine">): Promise<string>;
@@ -346,7 +344,7 @@ createClientAssertion(audience: string, options?: Omit<ClientAssertionOptions, "
 
 Discover the provider, validate compatible shared-anchor evidence, and POST a self-issued client EC signed with the host's Federation Entity Key. Verify the provider's signed response and return its client metadata and separate registration/chain deadlines. The opEntityId argument also names an OAuth AS when this is an OAuthClientRole. Options and anchors use call, role, then host precedence. Initialization and configured anchors are required.
 
-[Source](../../../packages/oidc/src/roles.ts#L311)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 explicitlyRegister(opEntityId: string, options?: Omit<FederationOptions & { readonly trustAnchors?: TrustAnchorSet; }, "engine">): Promise<Result<ExplicitRegistrationResult>>;
@@ -356,7 +354,7 @@ explicitlyRegister(opEntityId: string, options?: Omit<FederationOptions & { read
 
 Build an authorization request from a supplied, locally validated DiscoveryResult and arbitrary supported authorization parameters. The target chain is rechecked for the selected registration profile and shared anchor. options.trustAnchors takes precedence over the explicit trustAnchors argument; other options use call, role, then host precedence. Delivery defaults to form_post; par mode performs HTTP. Initialization is required. Use this entry point when the automaticallyRegister convenience parameters are insufficient.
 
-[Source](../../../packages/oidc/src/roles.ts#L368)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 createAuthorizationRequest(discovery: DiscoveryResult, authzRequestParams: Readonly<Record<string, unknown>>, trustAnchors: TrustAnchorSet, options?: CreateAuthorizationRequestOptions): Promise<Result<AutomaticRegistrationResult>>;
@@ -364,9 +362,9 @@ createAuthorizationRequest(discovery: DiscoveryResult, authzRequestParams: Reado
 
 ### `OAuthClientRole.parseMetadata`
 
-Parse completed metadata and return Zod's `{ success, data }` or `{ success: false, error }` result, without constructing or initializing a role. Conditional protocol requirements are checked; a successful parse establishes neither Federation trust nor key ownership. Unknown extension fields are preserved. 
+Parse completed metadata and return Zod's `{ success, data }` or `{ success: false, error }` result, without constructing or initializing a role. Conditional protocol requirements are checked; a successful parse establishes neither Federation trust nor key ownership. Unknown extension fields are preserved.
 
-[Source](../../../packages/oidc/src/roles.ts#L754)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 static parseMetadata(metadata: unknown, options?: MetadataValidationOptions): z.ZodSafeParseResult<OAuthClientMetadata>;
@@ -376,7 +374,7 @@ static parseMetadata(metadata: unknown, options?: MetadataValidationOptions): z.
 
 Parse supplied publication fields while allowing a Superior to complete missing requirements. Supplied values and applicable cross-field consistency rules are still checked. This is independent validation, not publication or trust establishment; success/error uses the Zod parse-result format.
 
-[Source](../../../packages/oidc/src/roles.ts#L761)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 static parsePublicationMetadata(metadata: unknown, options?: MetadataValidationOptions): z.ZodSafeParseResult<OAuthClientPublicationMetadata>;
@@ -386,7 +384,7 @@ static parsePublicationMetadata(metadata: unknown, options?: MetadataValidationO
 
 Assess the target using the requested protocol block and either local validation or an explicitly authorized resolver. The protocol selector is one of `openid_relying_party`, `openid_provider`, `oauth_authorization_server`, `oauth_client`, or `oauth_resource`; it is not inferred from the calling class. Effective server issuer values are bound to the target Entity Identifier. Invalid target identifiers can reject before a Result is returned. This static callable takes anchors and options explicitly and uses no role instance.
 
-[Source](../../../packages/oidc/src/roles.ts#L143)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 static assessEntity: (target: string, type: "openid_relying_party" | "openid_provider" | "oauth_authorization_server" | "oauth_client" | "oauth_resource", anchors: TrustAnchorSet, options?: EntityAssessmentOptions) => Promise<{ readonly ok: false; readonly error: FederationError; } | { readonly ok: true; readonly value: EntityAssessment; }>;
@@ -401,7 +399,7 @@ OAuthClientRole.assessEntity(target: string, type: "openid_relying_party" | "ope
 
 ## `OAuthClientRoleConfig`
 
-[Source](../../../packages/oidc/src/roles.ts#L749)
+[Source](../../../packages/oidc/src/roles.ts)
 
 Alias of OidcRelyingPartyRoleConfig. OAuthClientRole selects the OAuth client/authorization-server profile while sharing the client configuration contract; the alias does not introduce different defaults.
 
@@ -425,7 +423,7 @@ Fields (including inherited fields):
 
 ## `OAuthResourceRole`
 
-[Source](../../../packages/oidc/src/roles.ts#L813)
+[Source](../../../packages/oidc/src/roles.ts)
 
 Publish `oauth_resource` metadata and assess other protocol entities. This role has no token-validation, authorization-enforcement, or resource HTTP handler. Construction copies metadata and any separately supplied protocol JWKS; the latter overrides `metadata.jwks`.
 
@@ -439,7 +437,7 @@ new OAuthResourceRole(config: OAuthResourceRoleConfig): OAuthResourceRole;
 
 Assess the target using the requested protocol block and either local validation or an explicitly authorized resolver. The protocol selector is one of `openid_relying_party`, `openid_provider`, `oauth_authorization_server`, `oauth_client`, or `oauth_resource`; it is not inferred from the calling class. Effective server issuer values are bound to the target Entity Identifier. Invalid target identifiers can reject before a Result is returned. This method also works before initialization when role or per-call trust inputs are supplied. Options use call, role, then host precedence; anchors use the same order, followed by an empty set.
 
-[Source](../../../packages/oidc/src/roles.ts#L816)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 assessEntity(target: string, type: "openid_relying_party" | "openid_provider" | "oauth_authorization_server" | "oauth_client" | "oauth_resource", options?: EntityAssessmentOptions & { trustAnchors?: TrustAnchorSet; }): Promise<{ readonly ok: false; readonly error: FederationError; } | { readonly ok: true; readonly value: EntityAssessment; }>;
@@ -449,7 +447,7 @@ assessEntity(target: string, type: "openid_relying_party" | "openid_provider" | 
 
 Validate supplied resource publication fields and inline-key requirements. Required fields for a full RFC 9728 document are handled by the explicit rfc9728 parser profile. Invalid fields throw TypeError.
 
-[Source](../../../packages/oidc/src/roles.ts#L850)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 validateMetadata(metadata: Readonly<Record<string, unknown>>, context?: EntityContext): void;
@@ -459,7 +457,7 @@ validateMetadata(metadata: Readonly<Record<string, unknown>>, context?: EntityCo
 
 Entity Type Identifier `oauth_resource`, used to select this role's metadata block and registration profile.
 
-[Source](../../../packages/oidc/src/roles.ts#L855)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 readonly type: "oauth_resource";
@@ -469,7 +467,7 @@ readonly type: "oauth_resource";
 
 Mutable metadata block copied from constructor input. Hosts compose a detached publication snapshot; changing this role object after attachment does not automatically update a Leaf or Authority EC. Validate proposed values with the static publication parser before constructing a new host.
 
-[Source](../../../packages/oidc/src/roles.ts#L856)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 readonly metadata: Record<string, unknown>;
@@ -479,7 +477,7 @@ readonly metadata: Record<string, unknown>;
 
 Empty route map supplied to satisfy the host composition contract. This resource role installs no protocol endpoint by itself.
 
-[Source](../../../packages/oidc/src/roles.ts#L857)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 readonly routes: Map<string, (request: Request) => Promise<Response>>;
@@ -489,7 +487,7 @@ readonly routes: Map<string, (request: Request) => Promise<Response>>;
 
 Constructor configuration retained by reference. Metadata is copied separately; the configuration object and its service dependencies are not deeply frozen. Treat configuration as immutable after attachment; there is no general configuration-update API.
 
-[Source](../../../packages/oidc/src/roles.ts#L862)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 readonly config: OAuthResourceRoleConfig;
@@ -499,7 +497,7 @@ readonly config: OAuthResourceRoleConfig;
 
 Bind the role to the host's EntityContext. Reusing it with a different context throws, while the same context can be passed again. Hosts invoke this during composition. Assessment methods can use this host's default options and anchors.
 
-[Source](../../../packages/oidc/src/roles.ts#L870)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 initialize(context: EntityContext): void;
@@ -509,7 +507,7 @@ initialize(context: EntityContext): void;
 
 Assess the target using the requested protocol block and either local validation or an explicitly authorized resolver. The protocol selector is one of `openid_relying_party`, `openid_provider`, `oauth_authorization_server`, `oauth_client`, or `oauth_resource`; it is not inferred from the calling class. Effective server issuer values are bound to the target Entity Identifier. Invalid target identifiers can reject before a Result is returned. This static callable takes anchors and options explicitly and uses no role instance.
 
-[Source](../../../packages/oidc/src/roles.ts#L814)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 static assessEntity: (target: string, type: "openid_relying_party" | "openid_provider" | "oauth_authorization_server" | "oauth_client" | "oauth_resource", anchors: TrustAnchorSet, options?: EntityAssessmentOptions) => Promise<{ readonly ok: false; readonly error: FederationError; } | { readonly ok: true; readonly value: EntityAssessment; }>;
@@ -526,7 +524,7 @@ OAuthResourceRole.assessEntity(target: string, type: "openid_relying_party" | "o
 
 Parse completed metadata and return Zod's `{ success, data }` or `{ success: false, error }` result, without constructing or initializing a role. Conditional protocol requirements are checked; a successful parse establishes neither Federation trust nor key ownership. Unknown extension fields are preserved. The default federation profile permits resource to be absent. Pass `{ profile: "rfc9728" }` when validating a complete Protected Resource Metadata document; that profile requires resource.
 
-[Source](../../../packages/oidc/src/roles.ts#L829)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 static parseMetadata(metadata: unknown, options?: MetadataValidationOptions & { profile?: "federation" | "rfc9728"; }): z.ZodSafeParseResult<OAuthResourceMetadata>;
@@ -536,7 +534,7 @@ static parseMetadata(metadata: unknown, options?: MetadataValidationOptions & { 
 
 Parse supplied publication fields while allowing a Superior to complete missing requirements. Supplied values and applicable cross-field consistency rules are still checked. This is independent validation, not publication or trust establishment; success/error uses the Zod parse-result format.
 
-[Source](../../../packages/oidc/src/roles.ts#L843)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 static parsePublicationMetadata(metadata: unknown, options?: MetadataValidationOptions): z.ZodSafeParseResult<OAuthResourcePublicationMetadata>;
@@ -544,7 +542,7 @@ static parsePublicationMetadata(metadata: unknown, options?: MetadataValidationO
 
 ## `OAuthResourceRoleConfig`
 
-[Source](../../../packages/oidc/src/roles.ts#L806)
+[Source](../../../packages/oidc/src/roles.ts)
 
 Resource metadata, optional protocol keys, and trust defaults. Supplied jwks replaces metadata.jwks in the copied role block. This role publishes metadata and assesses entities; it does not install a protected-resource API or process access tokens.
 
@@ -568,7 +566,7 @@ Fields (including inherited fields):
 
 ## `OidcProviderRole`
 
-[Source](../../../packages/oidc/src/roles.ts#L732)
+[Source](../../../packages/oidc/src/roles.ts)
 
 Provider role for `openid_provider` metadata. Host initialization installs an Explicit Registration endpoint and requires nonempty Trust Anchors. Its composed metadata must declare `client_registration_types_supported` containing `explicit`, including when automatic processing is also used. Automatic registration and PAR processing additionally require a replay store.
 
@@ -582,7 +580,7 @@ new OidcProviderRole(config: OidcProviderRoleConfig): OidcProviderRole;
 
 Entity Type Identifier `openid_provider`, used to select this role's metadata block and registration profile.
 
-[Source](../../../packages/oidc/src/roles.ts#L733)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 readonly type: "openid_provider";
@@ -592,7 +590,7 @@ readonly type: "openid_provider";
 
 Process a form-encoded POST using effective provider metadata, configured trust, proof negotiation, and replay storage. Returned parameters include repeated resource values. This is registration/proof processing, not issuance or storage of a PAR request_uri; the host protocol engine owns that response. Initialize the role on a host with replay storage. The method runs configured accreditation and registration persistence; persistence exceptions are converted to a server-error Result.
 
-[Source](../../../packages/oidc/src/roles.ts#L476)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 processPushedAuthorizationRequest(request: Request, options?: ProcessPushedAuthorizationRequestOptions): Promise<Result<ProcessedPushedAuthorizationRequest, ClientAttestationError>>;
@@ -602,7 +600,7 @@ processPushedAuthorizationRequest(request: Request, options?: ProcessPushedAutho
 
 Assess the target using the requested protocol block and either local validation or an explicitly authorized resolver. The protocol selector is one of `openid_relying_party`, `openid_provider`, `oauth_authorization_server`, `oauth_client`, or `oauth_resource`; it is not inferred from the calling class. Effective server issuer values are bound to the target Entity Identifier. Invalid target identifiers can reject before a Result is returned. This method also works before initialization when role or per-call trust inputs are supplied. Options use call, role, then host precedence; anchors use the same order, followed by an empty set.
 
-[Source](../../../packages/oidc/src/roles.ts#L519)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 assessEntity(target: string, type: "openid_relying_party" | "openid_provider" | "oauth_authorization_server" | "oauth_client" | "oauth_resource", options?: EntityAssessmentOptions & { trustAnchors?: TrustAnchorSet; }): Promise<{ readonly ok: false; readonly error: FederationError; } | { readonly ok: true; readonly value: EntityAssessment; }>;
@@ -612,7 +610,7 @@ assessEntity(target: string, type: "openid_relying_party" | "openid_provider" | 
 
 Mutable metadata block copied from constructor input. Hosts compose a detached publication snapshot; changing this role object after attachment does not automatically update a Leaf or Authority EC. Validate proposed values with the static publication parser before constructing a new host.
 
-[Source](../../../packages/oidc/src/roles.ts#L531)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 readonly metadata: Record<string, unknown>;
@@ -622,7 +620,7 @@ readonly metadata: Record<string, unknown>;
 
 Map populated with the explicit-registration handler during initialization. The host copies these routes while composing roles; later map changes are not automatically remounted.
 
-[Source](../../../packages/oidc/src/roles.ts#L532)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 readonly routes: Map<string, (request: Request) => Promise<Response>>;
@@ -632,7 +630,7 @@ readonly routes: Map<string, (request: Request) => Promise<Response>>;
 
 Constructor configuration retained by reference. Metadata is copied separately; the configuration object and its service dependencies are not deeply frozen. Treat configuration as immutable after attachment; there is no general configuration-update API.
 
-[Source](../../../packages/oidc/src/roles.ts#L536)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 readonly config: OidcProviderRoleConfig;
@@ -642,7 +640,7 @@ readonly config: OidcProviderRoleConfig;
 
 Require explicit registration support and validate the composed provider publication block. This check does not retain a replacement copy of metadata for every later protocol operation; those operations accept or use their own effective provider metadata.
 
-[Source](../../../packages/oidc/src/roles.ts#L543)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 validateMetadata(metadata: Readonly<Record<string, unknown>>, context: EntityContext): void;
@@ -652,7 +650,7 @@ validateMetadata(metadata: Readonly<Record<string, unknown>>, context: EntityCon
 
 Bind the role to the host's EntityContext. Reusing it with a different context throws, while the same context can be passed again. Hosts invoke this during composition. Provider initialization also advertises and mounts the explicit-registration route, using role anchors before host anchors.
 
-[Source](../../../packages/oidc/src/roles.ts#L566)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 initialize(context: EntityContext): void;
@@ -662,7 +660,7 @@ initialize(context: EntityContext): void;
 
 Validate the signed Request Object, local recipient, client chain, selected client metadata, protocol signature, accreditation, and replay claim. Then run the optional registration adapter and persistence callback. Initialize the role with host replay storage and nonempty role-or-host anchors. Per-call options override role and host options, while configured accreditation requirements and beforeRegistration take precedence when configured. Adapter or persistence exceptions can reject the promise despite its Result return type.
 
-[Source](../../../packages/oidc/src/roles.ts#L616)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 processAutomaticRegistration(requestObjectJwt: string, options?: ProcessAutomaticRegistrationOptions): Promise<Result<ProcessedAutomaticRegistration, ClientAttestationError>>;
@@ -672,7 +670,7 @@ processAutomaticRegistration(requestObjectJwt: string, options?: ProcessAutomati
 
 Invoke the explicit-registration HTTP handler installed during initialization. It accepts POST with an exact Entity Statement or Trust Chain media type, validates the client and optional peer evidence, and returns a signed registration response using Federation keys. Validation failures become HTTP errors; adapter, key-provider, signing, or secret-generation failures can still reject. Persistence/invalidation hook failures return a generic HTTP 500. An uninitialized role rejects because its handler is not mounted.
 
-[Source](../../../packages/oidc/src/roles.ts#L721)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 processExplicitRegistration(request: Request): Promise<Response>;
@@ -680,9 +678,9 @@ processExplicitRegistration(request: Request): Promise<Response>;
 
 ### `OidcProviderRole.parseMetadata`
 
-Parse completed metadata and return Zod's `{ success, data }` or `{ success: false, error }` result, without constructing or initializing a role. Conditional protocol requirements are checked; a successful parse establishes neither Federation trust nor key ownership. Unknown extension fields are preserved. 
+Parse completed metadata and return Zod's `{ success, data }` or `{ success: false, error }` result, without constructing or initializing a role. Conditional protocol requirements are checked; a successful parse establishes neither Federation trust nor key ownership. Unknown extension fields are preserved.
 
-[Source](../../../packages/oidc/src/roles.ts#L736)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 static parseMetadata(metadata: unknown, options?: MetadataValidationOptions): z.ZodSafeParseResult<OpenIDProviderMetadata>;
@@ -692,7 +690,7 @@ static parseMetadata(metadata: unknown, options?: MetadataValidationOptions): z.
 
 Parse supplied publication fields while allowing a Superior to complete missing requirements. Supplied values and applicable cross-field consistency rules are still checked. This is independent validation, not publication or trust establishment; success/error uses the Zod parse-result format.
 
-[Source](../../../packages/oidc/src/roles.ts#L743)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 static parsePublicationMetadata(metadata: unknown, options?: MetadataValidationOptions): z.ZodSafeParseResult<OpenIDProviderPublicationMetadata>;
@@ -702,7 +700,7 @@ static parsePublicationMetadata(metadata: unknown, options?: MetadataValidationO
 
 Assess the target using the requested protocol block and either local validation or an explicitly authorized resolver. The protocol selector is one of `openid_relying_party`, `openid_provider`, `oauth_authorization_server`, `oauth_client`, or `oauth_resource`; it is not inferred from the calling class. Effective server issuer values are bound to the target Entity Identifier. Invalid target identifiers can reject before a Result is returned. This static callable takes anchors and options explicitly and uses no role instance.
 
-[Source](../../../packages/oidc/src/roles.ts#L517)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 static assessEntity: (target: string, type: "openid_relying_party" | "openid_provider" | "oauth_authorization_server" | "oauth_client" | "oauth_resource", anchors: TrustAnchorSet, options?: EntityAssessmentOptions) => Promise<{ readonly ok: false; readonly error: FederationError; } | { readonly ok: true; readonly value: EntityAssessment; }>;
@@ -717,7 +715,7 @@ OidcProviderRole.assessEntity(target: string, type: "openid_relying_party" | "op
 
 ## `OidcProviderRoleConfig`
 
-[Source](../../../packages/oidc/src/roles.ts#L437)
+[Source](../../../packages/oidc/src/roles.ts)
 
 Provider role settings, also used by OAuthAuthorizationServerRole. Initialization mounts an Explicit Registration endpoint, supplies federation_registration_endpoint, and requires nonempty role-or-host anchors. Final composed metadata must declare explicit registration support. A replay store is required for automatic registration and PAR processing, rather than for mounting the explicit endpoint alone. Metadata is copied; callbacks and service dependencies are retained.
 
@@ -765,7 +763,7 @@ Fields (including inherited fields):
 
 ## `OidcRelyingPartyRole`
 
-[Source](../../../packages/oidc/src/roles.ts#L404)
+[Source](../../../packages/oidc/src/roles.ts)
 
 Client role for `openid_relying_party` metadata. It discovers a server, prepares signed authorization requests, performs Explicit Client Registration, and prepares PAR requests through the selected OIDC or OAuth profile. Constructors copy metadata; registration and instance assertion signing require host initialization. Assessments and static parsers can be used independently.
 
@@ -779,7 +777,7 @@ new OidcRelyingPartyRole(config: OidcRelyingPartyRoleConfig): OidcRelyingPartyRo
 
 Entity Type Identifier `openid_relying_party`, used to select this role's metadata block and registration profile.
 
-[Source](../../../packages/oidc/src/roles.ts#L405)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 readonly type: "openid_relying_party";
@@ -789,7 +787,7 @@ readonly type: "openid_relying_party";
 
 Discover the server named by `opEntityId`, choose compatible chains sharing an anchor, and build an authorization-code request (`response_type: "code"`). Request delivery defaults to form_post; par mode also sends the PAR HTTP request. Per-call options override role options and host options. Nonempty delivery/URI values in the options argument override those in params, which override role configuration. Requires initialization and configured anchors; missing setup rejects, while protocol failures generally return a failing Result.
 
-[Source](../../../packages/oidc/src/roles.ts#L419)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 automaticallyRegister(params: { readonly opEntityId: string; readonly redirect_uri: string; readonly scope?: string; readonly state?: string; readonly nonce?: string; readonly requestDelivery?: RequestDelivery; readonly requestUri?: string; }, options?: CreateAuthorizationRequestOptions): Promise<Result<AutomaticRegistrationResult>>;
@@ -799,7 +797,7 @@ automaticallyRegister(params: { readonly opEntityId: string; readonly redirect_u
 
 Prepare a complete PAR endpoint, form body, headers, and selected provider chain from a supplied DiscoveryResult and proof mode. This method does not send the prepared request; the host supplies transport and any TLS client certificate. It checks the client/server metadata, shared anchor, proof, and published protocol keys. Initialization and a nonempty anchor set are required. Options and anchors use call, role, then host precedence.
 
-[Source](../../../packages/oidc/src/roles.ts#L107)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 createPushedAuthorizationRequest(discovery: DiscoveryResult, parameters: Readonly<Record<string, unknown>>, proof: PushedAuthorizationProof, options?: Omit<FederationOptions & { trustAnchors?: TrustAnchorSet; }, "engine">): Promise<Result<PreparedPushedAuthorizationRequest>>;
@@ -809,7 +807,7 @@ createPushedAuthorizationRequest(discovery: DiscoveryResult, parameters: Readonl
 
 Assess the target using the requested protocol block and either local validation or an explicitly authorized resolver. The protocol selector is one of `openid_relying_party`, `openid_provider`, `oauth_authorization_server`, `oauth_client`, or `oauth_resource`; it is not inferred from the calling class. Effective server issuer values are bound to the target Entity Identifier. Invalid target identifiers can reject before a Result is returned. This method also works before initialization when role or per-call trust inputs are supplied. Options use call, role, then host precedence; anchors use the same order, followed by an empty set.
 
-[Source](../../../packages/oidc/src/roles.ts#L145)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 assessEntity(target: string, type: "openid_relying_party" | "openid_provider" | "oauth_authorization_server" | "oauth_client" | "oauth_resource", options?: EntityAssessmentOptions & { trustAnchors?: TrustAnchorSet; }): Promise<{ readonly ok: false; readonly error: FederationError; } | { readonly ok: true; readonly value: EntityAssessment; }>;
@@ -819,7 +817,7 @@ assessEntity(target: string, type: "openid_relying_party" | "openid_provider" | 
 
 Mutable metadata block copied from constructor input. Hosts compose a detached publication snapshot; changing this role object after attachment does not automatically update a Leaf or Authority EC. Validate proposed values with the static publication parser before constructing a new host.
 
-[Source](../../../packages/oidc/src/roles.ts#L162)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 readonly metadata: Record<string, unknown>;
@@ -829,7 +827,7 @@ readonly metadata: Record<string, unknown>;
 
 Constructor configuration retained by reference. Metadata is copied separately; the configuration object and its service dependencies are not deeply frozen. Treat configuration as immutable after attachment; there is no general configuration-update API.
 
-[Source](../../../packages/oidc/src/roles.ts#L167)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 readonly config: OidcRelyingPartyRoleConfig;
@@ -839,7 +837,7 @@ readonly config: OidcRelyingPartyRoleConfig;
 
 Check the composed client publication block and retain a detached copy for subsequent client registration operations. Omitted requirements may be completed by a Superior; supplied invalid values throw TypeError.
 
-[Source](../../../packages/oidc/src/roles.ts#L171)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 validateMetadata(metadata: Readonly<Record<string, unknown>>, context?: EntityContext): void;
@@ -849,7 +847,7 @@ validateMetadata(metadata: Readonly<Record<string, unknown>>, context?: EntityCo
 
 Bind the role to the host's EntityContext. Reusing it with a different context throws, while the same context can be passed again. Hosts invoke this during composition. Client registration and instance assertion signing use this identity and host services.
 
-[Source](../../../packages/oidc/src/roles.ts#L177)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 initialize(context: EntityContext): void;
@@ -859,7 +857,7 @@ initialize(context: EntityContext): void;
 
 Sign a private_key_jwt assertion using the attached host's Entity Identifier and this role's protocol signing purposes. Configure the clientAssertion signing purpose on the role. To reuse the Request Object key, bind both purposes to the same keyring entry explicitly. Call options inherit the host engine and can narrow the configured verification policy. The default lifetime is 60 seconds. This helper does not prove that the signer is published in the client's metadata; registration workflows perform that binding check. Missing initialization rejects.
 
-[Source](../../../packages/oidc/src/roles.ts#L195)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 createClientAssertion(audience: string, options?: Omit<ClientAssertionOptions, "engine">): Promise<string>;
@@ -869,7 +867,7 @@ createClientAssertion(audience: string, options?: Omit<ClientAssertionOptions, "
 
 Discover the provider, validate compatible shared-anchor evidence, and POST a self-issued client EC signed with the host's Federation Entity Key. Verify the provider's signed response and return its client metadata and separate registration/chain deadlines. The opEntityId argument also names an OAuth AS when this is an OAuthClientRole. Options and anchors use call, role, then host precedence. Initialization and configured anchors are required.
 
-[Source](../../../packages/oidc/src/roles.ts#L311)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 explicitlyRegister(opEntityId: string, options?: Omit<FederationOptions & { readonly trustAnchors?: TrustAnchorSet; }, "engine">): Promise<Result<ExplicitRegistrationResult>>;
@@ -879,7 +877,7 @@ explicitlyRegister(opEntityId: string, options?: Omit<FederationOptions & { read
 
 Build an authorization request from a supplied, locally validated DiscoveryResult and arbitrary supported authorization parameters. The target chain is rechecked for the selected registration profile and shared anchor. options.trustAnchors takes precedence over the explicit trustAnchors argument; other options use call, role, then host precedence. Delivery defaults to form_post; par mode performs HTTP. Initialization is required. Use this entry point when the automaticallyRegister convenience parameters are insufficient.
 
-[Source](../../../packages/oidc/src/roles.ts#L368)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 createAuthorizationRequest(discovery: DiscoveryResult, authzRequestParams: Readonly<Record<string, unknown>>, trustAnchors: TrustAnchorSet, options?: CreateAuthorizationRequestOptions): Promise<Result<AutomaticRegistrationResult>>;
@@ -887,9 +885,9 @@ createAuthorizationRequest(discovery: DiscoveryResult, authzRequestParams: Reado
 
 ### `OidcRelyingPartyRole.parseMetadata`
 
-Parse completed metadata and return Zod's `{ success, data }` or `{ success: false, error }` result, without constructing or initializing a role. Conditional protocol requirements are checked; a successful parse establishes neither Federation trust nor key ownership. Unknown extension fields are preserved. 
+Parse completed metadata and return Zod's `{ success, data }` or `{ success: false, error }` result, without constructing or initializing a role. Conditional protocol requirements are checked; a successful parse establishes neither Federation trust nor key ownership. Unknown extension fields are preserved.
 
-[Source](../../../packages/oidc/src/roles.ts#L408)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 static parseMetadata(metadata: unknown, options?: MetadataValidationOptions): z.ZodSafeParseResult<OpenIDRelyingPartyMetadata>;
@@ -899,7 +897,7 @@ static parseMetadata(metadata: unknown, options?: MetadataValidationOptions): z.
 
 Parse supplied publication fields while allowing a Superior to complete missing requirements. Supplied values and applicable cross-field consistency rules are still checked. This is independent validation, not publication or trust establishment; success/error uses the Zod parse-result format.
 
-[Source](../../../packages/oidc/src/roles.ts#L415)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 static parsePublicationMetadata(metadata: unknown, options?: MetadataValidationOptions): z.ZodSafeParseResult<OpenIDRelyingPartyPublicationMetadata>;
@@ -909,7 +907,7 @@ static parsePublicationMetadata(metadata: unknown, options?: MetadataValidationO
 
 Assess the target using the requested protocol block and either local validation or an explicitly authorized resolver. The protocol selector is one of `openid_relying_party`, `openid_provider`, `oauth_authorization_server`, `oauth_client`, or `oauth_resource`; it is not inferred from the calling class. Effective server issuer values are bound to the target Entity Identifier. Invalid target identifiers can reject before a Result is returned. This static callable takes anchors and options explicitly and uses no role instance.
 
-[Source](../../../packages/oidc/src/roles.ts#L143)
+[Source](../../../packages/oidc/src/roles.ts)
 
 ```typescript signature
 static assessEntity: (target: string, type: "openid_relying_party" | "openid_provider" | "oauth_authorization_server" | "oauth_client" | "oauth_resource", anchors: TrustAnchorSet, options?: EntityAssessmentOptions) => Promise<{ readonly ok: false; readonly error: FederationError; } | { readonly ok: true; readonly value: EntityAssessment; }>;
@@ -924,7 +922,7 @@ OidcRelyingPartyRole.assessEntity(target: string, type: "openid_relying_party" |
 
 ## `OidcRelyingPartyRoleConfig`
 
-[Source](../../../packages/oidc/src/roles.ts#L84)
+[Source](../../../packages/oidc/src/roles.ts)
 
 Client role settings shared by OIDC relying parties and OAuth clients. Metadata is copied at construction; the remaining configuration and service dependencies retain their identity. Registration and instance assertion signing require host initialization; assessments can use explicit or role-configured anchors before attachment. Per-call options override role options, which override host options.
 

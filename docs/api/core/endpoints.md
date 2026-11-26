@@ -1,7 +1,5 @@
 # Federation endpoint clients and responses
 
-[`@oidfed/core`](README.md)
-
 Use the endpoint-specific clients to build protocol requests and verify signed responses. Keep transport success separate from trust validation. Standalone clients cannot infer a responder's Entity Identifier from its endpoint URL.
 
 Direct fetch calls use authentication and transport controls such as `signal`, `httpTimeoutMs`, `offline`, URL restrictions, and response-size limits. Clients that verify a signed response also use their documented issuer, key, and time-check options. They do not discover or validate a Trust Chain or evaluate published Trust Marks.
@@ -10,11 +8,11 @@ The option interfaces below inherit the full `FederationOptions` type. Chain acq
 
 ## `assertEndpointAuthenticationCompanions`
 
-Validate a host's `federation_entity` metadata before publication. Each advertised `*_auth_methods` field for a known endpoint must have the corresponding endpoint URL. Supply an optional error class to preserve the host's configuration error type. [Source](../../../packages/core/src/schemas/metadata.ts#L62)
+Validate a host's `federation_entity` metadata before publication. Each advertised `*_auth_methods` field for a known endpoint must have the corresponding endpoint URL. Supply an optional error class to preserve the host's configuration error type. [Source](../../../packages/core/src/schemas/metadata.ts)
 
 ## `buildExtendedListRequestParameters`
 
-[Source](../../../packages/core/src/federation-api/extended-list.ts#L21)
+[Source](../../../packages/core/src/federation-api/extended-list.ts)
 
 Build standard Extended Listing selectors for HTTP clients and local authority calls.
 
@@ -24,7 +22,7 @@ buildExtendedListRequestParameters(endpoint: string, params?: ExtendedListReques
 
 ## `COLLECTION_UNORDERED_PARAMETERS`
 
-[Source](../../../packages/core/src/endpoint-parameters.ts#L26)
+[Source](../../../packages/core/src/endpoint-parameters.ts)
 
 Collection §3.3.1 defines these repeated selectors by membership.
 
@@ -38,7 +36,7 @@ Read-only lists of recognized selectors for Fetch, List, Extended Listing, Resol
 
 ## `EndpointAdditionalParameters`
 
-[Source](../../../packages/core/src/endpoint-parameters.ts#L34)
+[Source](../../../packages/core/src/endpoint-parameters.ts)
 
 Extra endpoint parameters represented as single or repeated string values.
 
@@ -48,7 +46,7 @@ type EndpointAdditionalParameters = Readonly<Record<string, string | readonly st
 
 ## `endpointParameterValuesMatch`
 
-[Source](../../../packages/core/src/endpoint-parameters.ts#L4)
+[Source](../../../packages/core/src/endpoint-parameters.ts)
 
 Compare repeated endpoint parameters; unknown parameters retain exact ordering.
 
@@ -58,7 +56,7 @@ endpointParameterValuesMatch(name: string, fixed: readonly string[], supplied: r
 
 ## `errorResponse`
 
-[Source](../../../packages/core/src/http.ts#L78)
+[Source](../../../packages/core/src/http.ts)
 
 Creates an OAuth-style JSON error response.
 
@@ -68,7 +66,7 @@ errorResponse(status: number, code: string, description: string): Response;
 
 ## `EXTENDED_LIST_UNORDERED_PARAMETERS`
 
-[Source](../../../packages/core/src/endpoint-parameters.ts#L19)
+[Source](../../../packages/core/src/endpoint-parameters.ts)
 
 Extended Listing selectors compared by set membership when reconciling fixed and supplied parameters.
 
@@ -78,7 +76,7 @@ const EXTENDED_LIST_UNORDERED_PARAMETERS: readonly ["entity_type", "trust_mark_t
 
 ## `ExtractedRequestParams`
 
-[Source](../../../packages/core/src/http.ts#L157)
+[Source](../../../packages/core/src/http.ts)
 
 Parameters extracted from an incoming endpoint request.
 
@@ -100,7 +98,7 @@ Fields (including inherited fields):
 
 ## `extractRequestParams`
 
-[Source](../../../packages/core/src/http.ts#L163)
+[Source](../../../packages/core/src/http.ts)
 
 Extracts form/query params and client_assertion fields from a request.
 
@@ -110,7 +108,7 @@ extractRequestParams(request: Request): Promise<ExtractedRequestParams>;
 
 ## `fetchEntityCollection`
 
-[Source](../../../packages/core/src/federation-api/entity-collection.ts#L31)
+[Source](../../../packages/core/src/federation-api/entity-collection.ts)
 
 Fetch informational collection data; no trust validation is implied.
 Configure authentication.audience with the collection provider's Entity Identifier. Neither the endpoint
@@ -124,7 +122,7 @@ fetchEntityCollection(endpoint: string, params: EntityCollectionRequestParams | 
 
 ## `FetchEntityCollectionOptions`
 
-[Source](../../../packages/core/src/federation-api/entity-collection.ts#L18)
+[Source](../../../packages/core/src/federation-api/entity-collection.ts)
 
 Selectors, authentication, and transport settings for an Entity Collection request. Inherited chain-operation fields have the scope described at the top of this reference; they do not start discovery or validation here.
 
@@ -178,7 +176,7 @@ Fields (including inherited fields):
 
 ## `fetchExtendedSubordinatesList`
 
-[Source](../../../packages/core/src/federation-api/extended-list.ts#L99)
+[Source](../../../packages/core/src/federation-api/extended-list.ts)
 
 Fetch an Extended Subordinate Listing and return the parsed response.
 Configure the endpoint and authentication together from trusted configuration or validated metadata.
@@ -191,19 +189,19 @@ fetchExtendedSubordinatesList(endpoint: string, params: ExtendedListRequestParam
 
 ## `signHistoricalKeysResponse`
 
-[Source](../../../packages/core/src/federation-api/historical-keys.ts#L39)
+[Source](../../../packages/core/src/federation-api/historical-keys.ts)
 
 Sign the entity's available historical public-key records with its current Federation Entity signer. Supply the entity ID, a crypto context with `history`, and its federation options.
 
 ## `createHistoricalKeysHandler`
 
-[Source](../../../packages/core/src/federation-api/historical-keys.ts#L68)
+[Source](../../../packages/core/src/federation-api/historical-keys.ts)
 
 Build the shared HTTP handler for signing Historical Keys responses. The handler accepts `GET` after the host's authentication wrapper has verified and translated any authenticated `POST` request.
 
 ## `fetchHistoricalKeys`
 
-[Source](../../../packages/core/src/federation-api/historical-keys.ts#L165)
+[Source](../../../packages/core/src/federation-api/historical-keys.ts)
 
 Fetch and verify a Historical Keys JWT from a federation Historical Keys endpoint.
 
@@ -213,7 +211,7 @@ fetchHistoricalKeys(endpoint: string, signerJwks: JWKSet, options: FetchHistoric
 
 ## `FetchHistoricalKeysOptions`
 
-[Source](../../../packages/core/src/federation-api/historical-keys.ts#L159)
+[Source](../../../packages/core/src/federation-api/historical-keys.ts)
 
 Verification and transport settings for retrieving historical federation keys. Inherited chain-operation fields have the scope described at the top of this reference; they do not start discovery or validation here.
 
@@ -263,7 +261,7 @@ Fields (including inherited fields):
 
 ## `fetchListSubordinates`
 
-[Source](../../../packages/core/src/federation-api/subordinate-listing.ts#L25)
+[Source](../../../packages/core/src/federation-api/subordinate-listing.ts)
 
 Fetch an authority's subordinate listing and return its Entity Identifiers.
 Configure the endpoint and authentication together from trusted configuration or validated metadata.
@@ -277,7 +275,7 @@ fetchListSubordinates(listEndpoint: string, filter: ListSubordinatesFilter | und
 
 ## `fetchResolveResponse`
 
-[Source](../../../packages/core/src/federation-api/resolve.ts#L83)
+[Source](../../../packages/core/src/federation-api/resolve.ts)
 
 Fetch a Resolve Response JWT; use verifyResolveResponse to authenticate the returned statement.
 Configure authentication.audience with the resolver's Entity Identifier. Neither the endpoint origin
@@ -290,7 +288,7 @@ fetchResolveResponse(resolveEndpoint: string, params: ResolveRequestParams, opti
 
 ## `fetchSubordinateEvents`
 
-[Source](../../../packages/core/src/federation-api/subordinate-events.ts#L65)
+[Source](../../../packages/core/src/federation-api/subordinate-events.ts)
 
 Fetch and verify an authority's history about one Immediate Subordinate.
 
@@ -300,7 +298,7 @@ fetchSubordinateEvents(endpoint: string, subject: EntityId, options: FetchSubord
 
 ## `FetchSubordinateEventsOptions`
 
-[Source](../../../packages/core/src/federation-api/subordinate-events.ts#L56)
+[Source](../../../packages/core/src/federation-api/subordinate-events.ts)
 
 Subject, authentication, and verification settings for retrieving subordinate history. Inherited chain-operation fields have the scope described at the top of this reference; they do not start discovery or validation here.
 
@@ -355,7 +353,7 @@ Fields (including inherited fields):
 
 ## `fetchTrustMarkList`
 
-[Source](../../../packages/core/src/federation-api/fetch-trust-mark-list.ts#L16)
+[Source](../../../packages/core/src/federation-api/fetch-trust-mark-list.ts)
 
 Fetch a list of Entity Identifiers with active Trust Marks of the given type.
 
@@ -367,7 +365,7 @@ This is an unsigned JSON endpoint response protected by HTTPS and any configured
 
 ## `FetchTrustMarkListParams`
 
-[Source](../../../packages/core/src/federation-api/fetch-trust-mark-list.ts#L10)
+[Source](../../../packages/core/src/federation-api/fetch-trust-mark-list.ts)
 
 Trust Mark type and optional subject selectors for a Listing request.
 
@@ -387,7 +385,7 @@ Fields (including inherited fields):
 
 ## `isExactContentType`
 
-[Source](../../../packages/core/src/http.ts#L43)
+[Source](../../../packages/core/src/http.ts)
 
 Check the exact media type required by the protocol, including its prohibition on parameters where applicable.
 
@@ -397,7 +395,7 @@ isExactContentType(value: string | null | undefined, expectedMediaType: string):
 
 ## `isReservedEndpointParameter`
 
-[Source](../../../packages/core/src/endpoint-parameters.ts#L60)
+[Source](../../../packages/core/src/endpoint-parameters.ts)
 
 Names owned by federation protocols or their standard authentication fields.
 
@@ -407,7 +405,7 @@ isReservedEndpointParameter(name: string): boolean;
 
 ## `jsonResponse`
 
-[Source](../../../packages/core/src/http.ts#L67)
+[Source](../../../packages/core/src/http.ts)
 
 Creates a JSON response with the given body and status.
 
@@ -417,7 +415,7 @@ jsonResponse(body: unknown, status?: number): Response;
 
 ## `jwtResponse`
 
-[Source](../../../packages/core/src/http.ts#L56)
+[Source](../../../packages/core/src/http.ts)
 
 Creates a 200 response with the given JWT body and media type.
 
@@ -427,7 +425,7 @@ jwtResponse(jwt: string, mediaType: string): Response;
 
 ## `LIST_UNORDERED_PARAMETERS`
 
-[Source](../../../packages/core/src/endpoint-parameters.ts#L18)
+[Source](../../../packages/core/src/endpoint-parameters.ts)
 
 Federation §8.2.1 filters by membership in the requested Entity Types.
 
@@ -437,7 +435,7 @@ const LIST_UNORDERED_PARAMETERS: readonly ["entity_type"];
 
 ## `ListSubordinatesFilter`
 
-[Source](../../../packages/core/src/federation-api/subordinate-listing.ts#L10)
+[Source](../../../packages/core/src/federation-api/subordinate-listing.ts)
 
 Optional filters accepted by the subordinate listing endpoint.
 
@@ -462,7 +460,7 @@ Fields (including inherited fields):
 
 ## `parseContentTypeHeader`
 
-[Source](../../../packages/core/src/http.ts#L25)
+[Source](../../../packages/core/src/http.ts)
 
 Parse a Content-Type header for media-type and parameter-aware checks.
 
@@ -472,7 +470,7 @@ parseContentTypeHeader(value: string | null | undefined): ParsedContentTypeHeade
 
 ## `ParsedContentTypeHeader`
 
-[Source](../../../packages/core/src/http.ts#L19)
+[Source](../../../packages/core/src/http.ts)
 
 A parsed HTTP content type and its parameters.
 
@@ -494,7 +492,7 @@ Fields (including inherited fields):
 
 ## `parseQueryParams`
 
-[Source](../../../packages/core/src/http.ts#L132)
+[Source](../../../packages/core/src/http.ts)
 
 Extracts query parameters from a request URL.
 
@@ -504,7 +502,7 @@ parseQueryParams(request: Request): URLSearchParams;
 
 ## `prepareEndpointParameters`
 
-[Source](../../../packages/core/src/endpoint-parameters.ts#L65)
+[Source](../../../packages/core/src/endpoint-parameters.ts)
 
 Copy selectors and add extension parameters without overriding selectors or fixed URL values.
 
@@ -565,7 +563,7 @@ readBytesWithLimit(
 
 ## `readBodyWithLimit`
 
-[Source](../../../packages/core/src/http.ts#L207)
+[Source](../../../packages/core/src/http.ts)
 
 Stream-read a request body up to maxBytes, aborting if exceeded.
 Checks Content-Length header first to reject oversized bodies early,
@@ -577,7 +575,7 @@ readBodyWithLimit(request: Request, maxBytes: number): Promise<{ ok: true; text:
 
 ## `readStreamWithLimit`
 
-[Source](../../../packages/core/src/http.ts#L180)
+[Source](../../../packages/core/src/http.ts)
 
 Read a ReadableStream up to maxBytes, returning the decoded text or failure.
 Shared streaming core used by both request and response body readers.
@@ -588,7 +586,7 @@ readStreamWithLimit(body: ReadableStream<Uint8Array>, maxBytes: number): Promise
 
 ## `requireMethod`
 
-[Source](../../../packages/core/src/http.ts#L138)
+[Source](../../../packages/core/src/http.ts)
 
 Returns a 405 response if the request method does not match, or null if it does.
 
@@ -598,7 +596,7 @@ requireMethod(request: Request, method: string): Response | null;
 
 ## `requireMethods`
 
-[Source](../../../packages/core/src/http.ts#L143)
+[Source](../../../packages/core/src/http.ts)
 
 Returns a 405 response if the request method is not in the allowed list, or null if it is.
 
@@ -608,7 +606,7 @@ requireMethods(request: Request, methods: string[]): Response | null;
 
 ## `RESOLVE_UNORDERED_PARAMETERS`
 
-[Source](../../../packages/core/src/endpoint-parameters.ts#L23)
+[Source](../../../packages/core/src/endpoint-parameters.ts)
 
 Resolve selectors compared by set membership when reconciling fixed and supplied parameters.
 
@@ -618,7 +616,7 @@ const RESOLVE_UNORDERED_PARAMETERS: readonly ["trust_anchor", "entity_type"];
 
 ## `ResolveRequestParams`
 
-[Source](../../../packages/core/src/federation-api/resolve.ts#L70)
+[Source](../../../packages/core/src/federation-api/resolve.ts)
 
 Resolve-endpoint request parameters. `trustAnchor` and `entityType` may repeat.
 
@@ -641,7 +639,7 @@ Fields (including inherited fields):
 
 ## `SECURITY_HEADERS`
 
-[Source](../../../packages/core/src/http.ts#L10)
+[Source](../../../packages/core/src/http.ts)
 
 Standard security headers applied to all federation responses.
 
@@ -661,7 +659,7 @@ Response helpers apply these defaults:
 
 ## `selectHistoricalVerificationKey`
 
-[Source](../../../packages/core/src/federation-api/historical-keys.ts#L125)
+[Source](../../../packages/core/src/federation-api/historical-keys.ts)
 
 Select a historical key usable for verifying material issued at the supplied NumericDate. Revoked keys are rejected by default. An explicitly allowed non-security reason permits only signatures strictly before revocation and within key validity; security reasons always reject the key.
 
@@ -671,7 +669,7 @@ selectHistoricalVerificationKey(keys: readonly HistoricalKeyEntry[], options: Se
 
 ## `SelectHistoricalVerificationKeyOptions`
 
-[Source](../../../packages/core/src/federation-api/historical-keys.ts#L115)
+[Source](../../../packages/core/src/federation-api/historical-keys.ts)
 
 Time and revocation policy used to select a historical verification key.
 
@@ -697,7 +695,7 @@ Fields (including inherited fields):
 
 ## `toPublicError`
 
-[Source](../../../packages/core/src/http.ts#L92)
+[Source](../../../packages/core/src/http.ts)
 
 Sanitizes internal errors into safe public-facing error details.
 
@@ -711,7 +709,7 @@ toPublicError(error: FederationError): {
 
 ## `verifyHistoricalKeysResponse`
 
-[Source](../../../packages/core/src/federation-api/historical-keys.ts#L90)
+[Source](../../../packages/core/src/federation-api/historical-keys.ts)
 
 Verify and validate a Historical Keys Response JWT.
 
@@ -721,7 +719,7 @@ verifyHistoricalKeysResponse(jwt: string, issuerJwks: JWKSet, options: VerifyOpt
 
 ## `VerifyOptions`
 
-[Source](../../../packages/core/src/federation-api/verify-issuer.ts#L10)
+[Source](../../../packages/core/src/federation-api/verify-issuer.ts)
 
 Expected signer identity, clock, and clock skew for verifying a signed federation response.
 
@@ -744,7 +742,7 @@ Fields (including inherited fields):
 
 ## `verifyResolveResponse`
 
-[Source](../../../packages/core/src/federation-api/resolve.ts#L28)
+[Source](../../../packages/core/src/federation-api/resolve.ts)
 
 Verify a Resolve Response's typ, signature, claims, and recipient binding.
 Federation §8.3.2 permits aud to be absent, including on authenticated responses.
@@ -755,7 +753,7 @@ verifyResolveResponse(jwt: string, issuerJwks: JWKSet, options: VerifyResolveRes
 
 ## `VerifyResolveResponseOptions`
 
-[Source](../../../packages/core/src/federation-api/resolve.ts#L18)
+[Source](../../../packages/core/src/federation-api/resolve.ts)
 
 Expected resolver, subject, audience, and time settings for a Resolve response.
 
@@ -779,7 +777,7 @@ Fields (including inherited fields):
 
 ## `verifySignedJwkSet`
 
-[Source](../../../packages/core/src/jwks/signed-jwk-set.ts#L24)
+[Source](../../../packages/core/src/jwks/signed-jwk-set.ts)
 
 Verify and validate a Signed JWK Set JWT (returned by signed_jwks_uri).
 Checks typ=jwk-set+jwt, signature, and required payload claims (iss, sub, keys).
@@ -792,7 +790,7 @@ The returned payload has required `iss`, `sub`, and public `keys`, optional fini
 
 ## `VerifySignedJwkSetOptions`
 
-[Source](../../../packages/core/src/jwks/signed-jwk-set.ts#L15)
+[Source](../../../packages/core/src/jwks/signed-jwk-set.ts)
 
 Identity and time checks for a signed JWK Set response.
 
@@ -814,7 +812,7 @@ Fields (including inherited fields):
 
 ## `VerifySubordinateEventsOptions`
 
-[Source](../../../packages/core/src/federation-api/subordinate-events.ts#L16)
+[Source](../../../packages/core/src/federation-api/subordinate-events.ts)
 
 Expected authority, subject, and time checks for subordinate history.
 
@@ -838,7 +836,7 @@ Fields (including inherited fields):
 
 ## `verifySubordinateEventsResponse`
 
-[Source](../../../packages/core/src/federation-api/subordinate-events.ts#L24)
+[Source](../../../packages/core/src/federation-api/subordinate-events.ts)
 
 Verify a history statement with independently trusted keys and expected identities.
 
@@ -848,7 +846,7 @@ verifySubordinateEventsResponse(jwt: string, issuerJwks: JWKSet, options: Verify
 
 ## `VerifyTrustMarkStatusOptions`
 
-[Source](../../../packages/core/src/federation-api/trust-mark-status.ts#L18)
+[Source](../../../packages/core/src/federation-api/trust-mark-status.ts)
 
 Expected issuer, exact submitted mark, and freshness checks for a Trust Mark Status response.
 
@@ -876,7 +874,7 @@ Fields (including inherited fields):
 
 ## `verifyTrustMarkStatusResponse`
 
-[Source](../../../packages/core/src/federation-api/trust-mark-status.ts#L30)
+[Source](../../../packages/core/src/federation-api/trust-mark-status.ts)
 
 Verify and validate a Trust Mark Status Response JWT.
 

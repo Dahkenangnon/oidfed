@@ -38,6 +38,32 @@ interface FederationStorage {
 | `withNamespace` | `namespace` | Return a handle for the requested namespace using the same backend. |
 | `[Symbol.asyncDispose]` | Optional method | Dispose resources owned by this adapter. A namespace view borrows supplied clients. |
 
+The following subordinate storage types are exported by `@oidfed/core`.
+
+## `SubordinateRecord`
+
+A subordinate's Entity Identifier, public Federation Entity Keys, optional statement claims, and finite creation and update NumericDates.
+
+## `SubordinateRecordUpdate`
+
+Changes to mutable claims. Pass the update NumericDate to the repository.
+
+## `ListFilter`
+
+Filters applied before paging the live subordinate list.
+
+## `ListPageOptions`
+
+An inclusive starting cursor, a page limit, and optional update bounds.
+
+## `ListPage`
+
+Records in Entity Identifier order and, when more data is available, the first unreturned position.
+
+## `SubordinateEventAnnotations`
+
+Description and information URI supplied to each event recorded by a managed operation.
+
 ## Record validation
 
 `StorageEntityIdSchema` uses the same validator and `EntityId` type as the protocol schema and `entityId()`. A Collection snapshot can use the returned identifier directly in `trustAnchor` and each `entity_id`.
