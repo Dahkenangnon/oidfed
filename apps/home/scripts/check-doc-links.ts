@@ -48,7 +48,7 @@ for (const source of selected.length ? selected.map((path) => resolve(path)) : s
 		for (const child of token.children ?? []) {
 			if (child.type !== "link_open") continue;
 			const href = child.attrGet("href");
-			if (!href) continue;
+			if (typeof href !== "string" || !href) continue;
 			let problem: string | undefined;
 			try {
 				problem = linkProblem(href, source);

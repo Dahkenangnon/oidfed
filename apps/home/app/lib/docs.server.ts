@@ -160,7 +160,7 @@ export function renderMarkdown(source: string, contents: string) {
 		for (const child of token.children ?? []) {
 			const attr = child.type === "link_open" ? "href" : child.type === "image" ? "src" : null;
 			const href = attr && child.attrGet(attr);
-			if (attr && href) child.attrSet(attr, resolveLink(href, source));
+			if (attr && typeof href === "string" && href) child.attrSet(attr, resolveLink(href, source));
 		}
 	}
 
