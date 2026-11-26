@@ -354,6 +354,9 @@ Signatures preserve optional and read-only declarations. An optional property is
 | [`TrustMarkValidationOptions`](marks.md#trustmarkvalidationoptions) | Interface |
 | [`TrustMarkVerificationOptions`](marks.md#trustmarkverificationoptions) | Interface |
 | [`validateTrustMark`](marks.md#validatetrustmark) | Function |
+| [`verifyTrustMarkDelegation`](marks.md#verifytrustmarkdelegation) | Function |
+| [`VerifyTrustMarkDelegationOptions`](marks.md#verifytrustmarkdelegation) | Interface |
+| [`VerifiedTrustMarkDelegation`](marks.md#verifytrustmarkdelegation) | Interface |
 | [`validateTrustMarkLogo`](marks.md#validatetrustmarklogo) | Function |
 | [`ValidateTrustMarkLogoOptions`](marks.md#validatetrustmarklogooptions) | Interface |
 | [`validateTrustMarkWithIssuer`](marks.md#validatetrustmarkwithissuer) | Function |

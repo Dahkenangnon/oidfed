@@ -507,8 +507,11 @@ export {
 	type TrustMarkStatusResult,
 	type TrustMarkValidationOptions,
 	type ValidateTrustMarkLogoOptions,
+	type VerifiedTrustMarkDelegation,
+	type VerifyTrustMarkDelegationOptions,
 	validateTrustMark,
 	validateTrustMarkLogo,
+	verifyTrustMarkDelegation,
 } from "./trust-marks/index.js";
 export {
 	type TrustMarkExactWithdrawalOptions,

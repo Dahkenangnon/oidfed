@@ -17,4 +17,10 @@ export {
 	signTrustMarkDelegation,
 	type TrustMarkLifetime,
 } from "./sign.js";
-export { type TrustMarkValidationOptions, validateTrustMark } from "./validate.js";
+export {
+	type TrustMarkValidationOptions,
+	type VerifiedTrustMarkDelegation,
+	type VerifyTrustMarkDelegationOptions,
+	validateTrustMark,
+	verifyTrustMarkDelegation,
+} from "./validate.js";

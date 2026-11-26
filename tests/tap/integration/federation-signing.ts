@@ -1,5 +1,5 @@
 /** Verify artifact-specific key selection and algorithm policy through the public federation APIs. */
-import type { KeyringEntry } from "@oidfed/crypto";
+import { type KeyringEntry, utf8Encode } from "@oidfed/crypto";
 import { createWebCryptoEngine } from "@oidfed/crypto/web";
 import type QUnit from "qunit";
 import { TrustAnchor } from "../../../packages/authority/src/index.js";
@@ -15,11 +15,13 @@ import {
 	fetchSignedJwkSet,
 	fetchSubordinateEvents,
 	fetchSubordinateStatement,
+	JwtTyp,
 	jwtResponse,
 	MediaType,
 	signEntityStatement,
 	signProtocolJwkSet,
 	signTrustMark,
+	signTrustMarkDelegation,
 	validateSignedJwkSetSpecHygiene,
 	validateTrustChain,
 	validateTrustMark,
@@ -27,6 +29,7 @@ import {
 	verifyHistoricalKeysResponse,
 	verifyResolveResponse,
 	verifySignedJwkSet,
+	verifyTrustMarkDelegation,
 	verifyTrustMarkStatusResponse,
 } from "../../../packages/core/src/index.js";
 import { Leaf } from "../../../packages/leaf/src/index.js";
@@ -59,6 +62,160 @@ export default function artifactSigningTests(qunit: QUnit): void {
 	const { module, test } = qunit;
 	resolvePolicyTests(qunit);
 	module("integration / Federation artifact signing", () => {
+		test("verifies the same owner delegation standalone and inside a Trust Mark", async (assert) => {
+			const owner = new SigningEntryFixture((await generateSigningKey()).privateKey);
+			const markIssuer = new SigningEntryFixture((await generateSigningKey()).privateKey);
+			const trustedOwner = { sub: issuer, jwks: owner.publishedJwks };
+			const options = {
+				engine: testEngine,
+				clock: { now: () => 1010 },
+				clockSkewSeconds: 0,
+				expectedTrustMarkIssuer: subject,
+				expectedTrustMarkType: markType,
+			};
+			const inputs = {
+				issuer,
+				subject,
+				trustMarkType: markType,
+				signer: owner,
+				clock: { now: () => 1000 },
+				ref: "https://artifact-authority.example/delegation-info",
+				additionalClaims: { approval: { reference: "example" } },
+			};
+			for (const lifetime of [{ ttlSeconds: 60 }, { noExpiry: true }] as const) {
+				const jwt = await signTrustMarkDelegation({ ...inputs, ...lifetime });
+				const standalone = await verifyTrustMarkDelegation(jwt, trustedOwner, options);
+				assert.deepEqual(standalone.ok && standalone.value, {
+					kid: owner.kid,
+					delegation: {
+						issuer,
+						subject,
+						trustMarkType: markType,
+						issuedAt: 1000,
+						...("ttlSeconds" in lifetime ? { expiresAt: 1060 } : {}),
+					},
+				});
+				const mark = await signTrustMark({
+					issuer: subject,
+					subject: issuer,
+					trustMarkType: markType,
+					signer: markIssuer,
+					clock: options.clock,
+					ttlSeconds: 120,
+					delegation: jwt,
+				});
+				const embeddedOptions = {
+					...options,
+					expectedSubject: issuer,
+					trustMarkOwners: { [markType]: trustedOwner },
+				};
+				const issuers = { [markType]: [subject] };
+				const embedded = await validateTrustMark(
+					mark,
+					issuers,
+					markIssuer.publishedJwks,
+					embeddedOptions,
+				);
+				assert.deepEqual(
+					embedded.ok && embedded.value.delegation,
+					standalone.ok && standalone.value.delegation,
+				);
+				if ("ttlSeconds" in lifetime) {
+					const expired = { clock: { now: () => 1060 } };
+					assert.false(
+						(await verifyTrustMarkDelegation(jwt, trustedOwner, { ...options, ...expired })).ok,
+					);
+					assert.false(
+						(
+							await validateTrustMark(mark, issuers, markIssuer.publishedJwks, {
+								...embeddedOptions,
+								...expired,
+							})
+						).ok,
+					);
+				}
+			}
+		});
+
+		test("requires independently bound claims and an approved owner signature for standalone delegation", async (assert) => {
+			const owner = new SigningEntryFixture((await generateSigningKey()).privateKey);
+			const other = new SigningEntryFixture((await generateSigningKey()).privateKey);
+			const trustedOwner = { sub: issuer, jwks: owner.publishedJwks };
+			const options = {
+				engine: testEngine,
+				clock: { now: () => 1010 },
+				clockSkewSeconds: 0,
+				expectedTrustMarkIssuer: subject,
+				expectedTrustMarkType: markType,
+			};
+			const payload = {
+				iss: issuer,
+				sub: subject,
+				trust_mark_type: markType,
+				iat: 1000,
+				exp: 1060,
+			};
+			const header = { typ: JwtTyp.TrustMarkDelegation, kid: owner.kid, alg: owner.alg };
+			const jwt = await owner.signJwt(utf8Encode(JSON.stringify(payload)), header);
+			assert.true((await verifyTrustMarkDelegation(jwt, trustedOwner, options)).ok);
+			for (const [claim, value] of [
+				["iss", undefined],
+				["sub", undefined],
+				["trust_mark_type", undefined],
+				["iat", undefined],
+				["iat", "1000"],
+				["iat", 1011],
+				["exp", "1060"],
+				["ref", "invalid"],
+				["iss", subject],
+				["sub", issuer],
+				["trust_mark_type", `${markType}/other`],
+			] as const) {
+				const invalid = await owner.signJwt(
+					utf8Encode(JSON.stringify({ ...payload, [claim]: value })),
+					header,
+				);
+				assert.false(
+					(await verifyTrustMarkDelegation(invalid, trustedOwner, options)).ok,
+					`invalid ${claim}: ${String(value)}`,
+				);
+			}
+			for (const changes of [
+				{ typ: undefined },
+				{ typ: JwtTyp.TrustMark },
+				{ kid: undefined },
+				{ kid: other.kid },
+				{ alg: "none" },
+			]) {
+				const invalid = await owner.signJwt(utf8Encode(JSON.stringify(payload)), {
+					...header,
+					...changes,
+				});
+				assert.false(
+					(await verifyTrustMarkDelegation(invalid, trustedOwner, options)).ok,
+					JSON.stringify(changes),
+				);
+			}
+			const invalidSignature = await other.signJwt(utf8Encode(JSON.stringify(payload)), header);
+			for (const invalid of [
+				invalidSignature,
+				"malformed",
+				`${jwt.split(".").slice(0, 2).join(".")}.`,
+			])
+				assert.false((await verifyTrustMarkDelegation(invalid, trustedOwner, options)).ok);
+			assert.false(
+				(
+					await verifyTrustMarkDelegation(jwt, trustedOwner, {
+						...options,
+						allowedAlgorithmsForArtifact(artifact) {
+							assert.strictEqual(artifact, "trust-mark-delegation");
+							return ["ES384"];
+						},
+					})
+				).ok,
+			);
+		});
+
 		for (const algorithm of ["RS384", "RS512"] as const)
 			test(`${algorithm} requires both engine support and explicit Federation approval`, async (assert) => {
 				const key = await cryptoFixture(algorithm);

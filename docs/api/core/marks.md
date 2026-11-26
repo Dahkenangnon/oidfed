@@ -1182,6 +1182,20 @@ Validate a Trust Mark using the supplied issuer keys and owner/issuer policy. Th
 validateTrustMark(trustMarkJwt: string, trustMarkIssuers: Record<string, string[]>, issuerJwks: JWKSet, options: TrustMarkValidationOptions): Promise<Result<TrustMarkEvidence, FederationError>>;
 ```
 
+## `verifyTrustMarkDelegation`
+
+Verify a signed delegation against a trusted `TrustMarkOwner` and the expected issuer and mark type. The function uses the owner's Federation keys and performs no network requests. A successful result contains the validated delegation and the `kid` used to verify it.
+
+```ts
+verifyTrustMarkDelegation(
+  jwt: string,
+  owner: TrustMarkOwner,
+  options: VerifyTrustMarkDelegationOptions,
+): Promise<Result<VerifiedTrustMarkDelegation, FederationError>>;
+```
+
+`VerifyTrustMarkDelegationOptions` accepts the Federation JWS verification settings and requires `expectedTrustMarkIssuer` and `expectedTrustMarkType`. `VerifiedTrustMarkDelegation` contains `delegation: ValidatedTrustMarkDelegation` and `kid: string`.
+
 ## `validateTrustMarkLogo`
 
 [Source](../../../packages/core/src/trust-marks/logo.ts#L18)
