@@ -6,11 +6,21 @@ import { StorageEntityIdSchema, StorageJsonSchema } from "./record-schemas.js";
 /** A compact cached statement. Callers still authenticate it and enforce its profile. */
 export const StatementCacheValueSchema = z.string().regex(/^[\w-]+\.[\w-]+\.[\w-]+$/);
 
+/** Optional Resolver evidence kept separately from the shared subject assessment. */
+export const ResponderEvidenceSchema = z.strictObject({
+	statements: z.array(StatementCacheValueSchema).min(1),
+	entityConfigurations: z.array(z.tuple([StorageEntityIdSchema, StatementCacheValueSchema])),
+	expiresAt: z.number().finite(),
+});
+
+export type CachedResponderEvidence = z.infer<typeof ResponderEvidenceSchema>;
+
 /** A previously validated Resolve assessment and its local reuse deadline. */
 export const ResolveAssessmentCacheValueSchema = z
 	.strictObject({
 		trustAnchor: StorageEntityIdSchema,
 		payload: ResolveResponsePayloadSchema,
+		// Older workers require this field. Writers leave it empty and readers ignore its contents.
 		headers: z.strictObject({ trust_chain: z.array(StatementCacheValueSchema).min(1).optional() }),
 		reuseUntil: z.number().finite(),
 		localTrustMarkRevision: z.string().min(1).optional(),

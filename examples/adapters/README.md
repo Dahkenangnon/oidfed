@@ -81,7 +81,7 @@ Unpaged listing can return all matching records. Event history reads and appends
 
 ### Prune expired records
 
-The adapter removes at most 1,000 expired replay claims and cursors per maintenance pass. Writes trigger a pass at most once per 60 seconds per handle by default. Replicas serialize each pass under the same namespace guard. Each batch reserves room for both expired replay claims and expired Collection cursors. Either kind can use unused space. A one-row batch removes the earliest expiry. Expired claims can be replaced and expired cursors stop counting toward capacity even before cleanup.
+The adapter removes at most 1,000 expired replay claims and cursors per maintenance pass. Writes trigger a pass at most once per 60 seconds per handle by default. If the pass fails, the adapter warns through the optional `logger` and attempts the requested write. Explicit calls to `pruneExpired()` still report failures to their caller. Replicas serialize each pass under the same namespace guard. Each batch reserves room for both expired replay claims and expired Collection cursors. Either kind can use unused space. A one-row batch removes the earliest expiry. Expired claims can be replaced and expired cursors stop counting toward capacity even before cleanup.
 
 To set your own cadence, set `cleanupIntervalSeconds: 0` and schedule `await storage.pruneExpired()` from an operator job for each active namespace. Use `pruneExpired(batchSize)` to choose a smaller batch. The default handles at most 1,000 expired rows every 60 seconds per active handle. Schedule batches more often if expiry consistently outpaces cleanup. Pruning uses the same clock as the adapter. Hosts should also schedule cleanup for inactive namespaces if physical retention matters.
 

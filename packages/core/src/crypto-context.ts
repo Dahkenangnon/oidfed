@@ -55,6 +55,13 @@ export function validateCryptoContext(crypto: CryptoContext): void {
 		throw new TypeError("CryptoEngine requires distinct supported algorithms");
 }
 
+/** Validate the optional Resolve budget before composing multiple host limits. */
+export function assertResolveResponderEvidenceBudget(value: number | undefined): void {
+	// Larger delays overflow the timer range instead of giving the operation more time.
+	if (value !== undefined && (!Number.isSafeInteger(value) || value < 1 || value > 2_147_483_647))
+		throw new TypeError("resolveResponderEvidenceBudgetMs must be an integer from 1 to 2147483647");
+}
+
 /**
  * Apply host, role and call settings in order, keeping the engine and storage bound to the host.
  * Algorithm lists intersect and resource ceilings take the smallest configured value.
@@ -145,10 +152,16 @@ export function bindFederationOptions(
 			},
 			enumerable: true,
 		});
-	for (const name of ["maxCompactBytes", "maxVerificationCandidates"] as const) {
+	for (const name of [
+		"maxCompactBytes",
+		"maxVerificationCandidates",
+		"resolveResponderEvidenceBudgetMs",
+	] as const) {
 		const values = policies.flatMap((policy) =>
 			policy?.[name] === undefined ? [] : [policy[name]],
 		);
+		if (name === "resolveResponderEvidenceBudgetMs")
+			values.forEach(assertResolveResponderEvidenceBudget);
 		if (values.length)
 			Object.defineProperty(result, name, {
 				value: Math.min(...values),

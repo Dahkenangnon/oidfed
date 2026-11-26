@@ -3,7 +3,13 @@
 import { InternalErrorCode } from "../constants.js";
 import { err, type FederationError, federationError, ok, type Result } from "../errors.js";
 import { safeLogger } from "../logging.js";
-import type { EntityId, FederationOptions, TrustAnchorSet, ValidatedTrustChain } from "../types.js";
+import type {
+	EntityId,
+	FederationOptions,
+	TrustAnchorSet,
+	TrustChain,
+	ValidatedTrustChain,
+} from "../types.js";
 import { createTrustChainOperation } from "./operation.js";
 import { resolveTrustChains } from "./resolve.js";
 import { selectTrustChain } from "./selection.js";
@@ -22,6 +28,22 @@ export async function resolveTrustChainForAnchor(
 	trustAnchors: TrustAnchorSet,
 	options: FederationOptions,
 ): Promise<Result<readonly string[], FederationError>> {
+	const result = await resolveTrustChainEvidenceForAnchor(
+		subject,
+		trustAnchorId,
+		trustAnchors,
+		options,
+	);
+	return result.ok ? ok(result.value.chain.statements) : result;
+}
+
+/** Keep the selected path and the validation result available to the Resolve cache. */
+export async function resolveTrustChainEvidenceForAnchor(
+	subject: EntityId,
+	trustAnchorId: EntityId,
+	trustAnchors: TrustAnchorSet,
+	options: FederationOptions,
+): Promise<Result<{ chain: TrustChain; validated: ValidatedTrustChain }, FederationError>> {
 	safeLogger(options?.logger)?.debug("Starting resolve trust chain for anchor");
 
 	if (!trustAnchors.has(trustAnchorId)) {
@@ -59,7 +81,7 @@ export async function resolveTrustChainForAnchor(
 	}
 
 	const eligible: ValidatedTrustChain[] = [];
-	const raw = new Map<ValidatedTrustChain, readonly string[]>();
+	const raw = new Map<ValidatedTrustChain, TrustChain>();
 	for (const candidate of candidates) {
 		const validation = await validateTrustChain(candidate.statements as string[], trustAnchors, {
 			...options,
@@ -70,9 +92,9 @@ export async function resolveTrustChainForAnchor(
 				federationError(InternalErrorCode.TrustChainInvalid, "Trust chain operation exhausted"),
 			);
 		if (validation.valid) {
-			if (!options?.chainSelection) return ok(candidate.statements as readonly string[]);
+			if (!options?.chainSelection) return ok({ chain: candidate, validated: validation.chain });
 			eligible.push(validation.chain);
-			raw.set(validation.chain, candidate.statements);
+			raw.set(validation.chain, candidate);
 		}
 	}
 
@@ -83,8 +105,8 @@ export async function resolveTrustChainForAnchor(
 	if (eligible.length) {
 		const selected = selectTrustChain(eligible, options);
 		if (!selected.ok) return selected;
-		const statements = raw.get(selected.value);
-		if (statements) return ok(statements);
+		const chain = raw.get(selected.value);
+		if (chain) return ok({ chain, validated: selected.value });
 	}
 	return err(
 		federationError(

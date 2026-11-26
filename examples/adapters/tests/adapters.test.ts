@@ -66,6 +66,40 @@ test("PostgreSQL preserves long exact namespace and record identities", async ()
 	);
 });
 
+test("opportunistic cleanup failure preserves independent writes and explicit errors", async () => {
+	assert.ok(postgresUrl);
+	let clockReads = 0;
+	const warnings: string[] = [];
+	await using db = await openTestStorage(postgresUrl, randomUUID(), {
+		now() {
+			clockReads++;
+			return NaN;
+		},
+		logger: {
+			debug() {},
+			info() {},
+			warn(message) {
+				warnings.push(message);
+				throw new Error("Logger unavailable");
+			},
+			error() {},
+		},
+	});
+	const record = {
+		entityId: entityId("https://member.example"),
+		jwks: { keys: [STORED_PUBLIC_JWK] },
+		createdAt: 10,
+		updatedAt: 10,
+	};
+	await db.storage.subordinate.register(record);
+	assert.deepEqual(await db.storage.subordinate.fetch(record.entityId), record);
+	assert.deepEqual(warnings, ["Could not prune expired PostgreSQL storage records"]);
+	await assert.rejects(db.storage.subordinate.register(record), /Subordinate already exists/);
+	assert.equal(clockReads, 1, "cleanup is attempted only once per interval");
+	await assert.rejects(db.storage.pruneExpired(), /Invalid expired-record cleanup clock/);
+	assert.equal(clockReads, 2);
+});
+
 test("guarded replay and bounded expiry cleanup preserve live records across clients", async () => {
 	assert.ok(postgresUrl);
 	const namespace = randomUUID();

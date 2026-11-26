@@ -10,6 +10,15 @@ import { CryptoError, type JwsAlgorithm, type Signer } from "./types.js";
 
 /** Default maximum UTF-8 byte length of a compact token: 512 KiB. */
 export const DEFAULT_MAX_COMPACT_JWS_BYTES = 512 * 1024;
+
+/** A compact JWS exceeded its configured byte limit. */
+export class CompactJwsSizeError extends CryptoError {
+	/** Preserve the existing category for consumers that handle malformed compact tokens. */
+	constructor() {
+		super("MALFORMED_JWS", "Compact JWS exceeds maxBytes");
+		this.name = "CompactJwsSizeError";
+	}
+}
 /** Size bound shared by signing, decoding and strict parsing. */
 export interface CompactJwsOptions {
 	/** Positive safe integer; defaults to DEFAULT_MAX_COMPACT_JWS_BYTES. */
@@ -53,7 +62,7 @@ function limit(options?: CompactJwsOptions): number {
 	return value;
 }
 function checkSize(size: number, maximum: number): void {
-	if (size > maximum) throw new CryptoError("MALFORMED_JWS", "Compact JWS exceeds maxBytes");
+	if (size > maximum) throw new CompactJwsSizeError();
 }
 function object(value: unknown): value is Record<string, unknown> {
 	return value !== null && typeof value === "object" && !Array.isArray(value);

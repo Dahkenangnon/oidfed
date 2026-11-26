@@ -1,6 +1,6 @@
 /** Exercise request grants, independent Resolve cache partitions, and exact Trust Mark withdrawal. */
 import type QUnit from "qunit";
-import { TrustAnchor } from "../../../packages/authority/src/index.js";
+import { Intermediate, TrustAnchor } from "../../../packages/authority/src/index.js";
 import {
 	type BoundFederationOptions,
 	createClientAssertion,
@@ -20,6 +20,8 @@ import {
 	verifyTrustMarkStatusResponse,
 } from "../../../packages/core/src/index.js";
 import type { TrustMarkRef } from "../../../packages/core/src/schemas/trust-mark.js";
+import { MemoryCache } from "../../../packages/core/src/storage/cache.js";
+import type { CachedResponderEvidence } from "../../../packages/core/src/storage/cache-records.js";
 import { Leaf } from "../../../packages/leaf/src/index.js";
 import { memoryStorage } from "../../storage-fixtures.js";
 import {
@@ -202,6 +204,15 @@ function cachePolicy(policyRevision: string): ResolverCacheOptions {
 	};
 }
 
+/** Hold an optional cache operation until its test has checked the required response. */
+function deferred() {
+	let resolve!: () => void;
+	const promise = new Promise<void>((done) => {
+		resolve = done;
+	});
+	return { promise, resolve };
+}
+
 export default function resolvePolicyTests({ module, test }: QUnit): void {
 	module("integration / Resolve request and Trust Mark policy", () => {
 		test("HTTP Resolve observes reuse once and ignores failed observers", async (assert) => {
@@ -284,6 +295,46 @@ export default function resolvePolicyTests({ module, test }: QUnit): void {
 				assert.deepEqual(decoded.ok && decoded.value.payload.trust_marks, [
 					{ trust_mark_type: markType, trust_mark: replace ? fresh : held },
 				]);
+			}
+		});
+
+		test("unverified held marks are assessed only when selected and only with the optional budget", async (assert) => {
+			for (const [selectHeld, budget, expectedFetches] of [
+				[false, 3, 3],
+				[false, 4, 3],
+				[true, 3, 3],
+				[true, 4, 4],
+			] as const) {
+				const f = await createFixture();
+				const held = await signTrustMark({
+					issuer: callerB,
+					subject,
+					trustMarkType: markType,
+					signer: await f.crypto.keyring.entry(),
+					clock: f.clock,
+					ttlSeconds: 240,
+				});
+				await f.publishHeldMark(held);
+				const host = await f.install({
+					maxTotalFetches: budget,
+					...(selectHeld
+						? {
+								resolveTrustMarkCandidates({ held: candidates, verifiedHeld }) {
+									assert.deepEqual(candidates, [held]);
+									assert.deepEqual(verifiedHeld, []);
+									return candidates;
+								},
+							}
+						: {}),
+				});
+				await host.setTrustMarkIssuers({ [markType]: [issuer, callerB] });
+				const before = f.readOutbound();
+				const result = await host.handleRequest(resolveRequest(issuer, await f.assertion(callerA)));
+				assert.strictEqual(result.status, 200);
+				assert.strictEqual(f.readOutbound() - before, expectedFetches);
+				const decoded = decodeEntityStatement(await result.text());
+				assert.true(decoded.ok && decoded.value.payload.sub === subject);
+				assert.true(decoded.ok && decoded.value.payload.trust_marks === undefined);
 			}
 		});
 
@@ -495,60 +546,366 @@ export default function resolvePolicyTests({ module, test }: QUnit): void {
 			assert.strictEqual(assessments, 0);
 		});
 
-		test("cached replies keep the responder evidence deadline and accept the previous cache record", async (assert) => {
+		test("refreshing optional evidence cannot evict a shared subject assessment", async (assert) => {
 			const f = await createFixture();
-			const host = await f.install();
-			const issuerKeys = (await f.crypto.keyring.entry()).publishedJwks;
-			const responder = entityId("https://cache-header-resolver.example");
-			await host.registerSubordinate({ entityId: responder, jwks: issuerKeys });
+			const anchor = await f.install();
+			const responder = entityId("https://bounded-resolver.example");
+			await anchor.registerSubordinate({
+				entityId: responder,
+				jwks: (await f.crypto.keyring.entry()).publishedJwks,
+			});
+			const bounded = new MemoryCache({ maxEntries: 2, clock: f.clock });
+			const get = f.storage.cache.get.bind(f.storage.cache);
+			const set = f.storage.cache.set.bind(f.storage.cache);
+			const resolveEntry = (key: string) =>
+				key.startsWith("resolve:v2:") || key.startsWith("resolve-responder:");
+			f.storage.cache.get = (key) => (resolveEntry(key) ? bounded.get(key) : get(key));
+			f.storage.cache.set = (key, value, ttl) =>
+				resolveEntry(key) ? bounded.set(key, value, ttl) : set(key, value, ttl);
 			let leaf: Leaf | undefined;
 			leaf = await Leaf.create({
 				entityId: responder,
 				authorityHints: [issuer],
-				entityConfigurationTtlSeconds: 12,
 				crypto: f.crypto,
 				storage: f.storage,
 				trustAnchors: f.trustAnchors,
 				metadata: { federation_entity: { federation_resolve_endpoint: `${responder}/resolve` } },
 				options: {
 					clock: f.clock,
-					httpClient: (input, init) => {
+					resolveResponderEvidenceBudgetMs: 200,
+					httpClient(input, init) {
 						const request = new Request(input, init);
 						if (leaf && new URL(request.url).origin === responder)
 							return leaf.handleRequest(request);
-						return f.httpClient(input, init);
+						return f.httpClient(request);
 					},
 				},
 				resolver: {},
 			});
+			const resolver = leaf.resolver;
+			if (!resolver) throw new Error("Expected the bounded-cache Resolver");
+			for (const generation of [0, 1]) {
+				f.advance(generation);
+				await resolver.primeAnonymousResolve({ subject, trustAnchor: issuer });
+				const outbound = f.readOutbound();
+				let included = false;
+				for (let attempt = 0; attempt < 10 && !included; attempt++) {
+					const response = await leaf.handleRequest(resolveRequest(responder));
+					assert.strictEqual(response.status, 200);
+					const decoded = decodeEntityStatement(await response.text());
+					included = decoded.ok && Object.hasOwn(decoded.value.header, "trust_chain");
+				}
+				assert.true(included, "the refreshed subject and its optional evidence remain available");
+				assert.strictEqual(f.readOutbound(), outbound);
+			}
+		});
+
+		test("primed multi-hop responder evidence is verified offline and expires independently", async (assert) => {
+			const f = await createFixture();
+			const host = await f.install();
+			const issuerKeys = (await f.crypto.keyring.entry()).publishedJwks;
+			const superior = entityId("https://cache-header-superior.example");
+			const responder = entityId("https://cache-header-resolver.example");
+			const intermediate = await Intermediate.create({
+				entityId: superior,
+				authorityHints: [issuer],
+				crypto: f.crypto,
+				storage: memoryStorage({ clock: f.clock }),
+				trustAnchors: f.trustAnchors,
+				options: { clock: f.clock },
+				entityConfigurationTtlSeconds: 8,
+				metadata: {
+					federation_entity: {
+						federation_fetch_endpoint: `${superior}/fetch`,
+						federation_list_endpoint: `${superior}/list`,
+					},
+				},
+			});
+			await host.registerSubordinate({ entityId: superior, jwks: issuerKeys });
+			await intermediate.registerSubordinate({ entityId: responder, jwks: issuerKeys });
+			let leaf: Leaf | undefined;
+			let outbound = 0;
+			const proofCache = new MemoryCache({ clock: f.clock });
+			const makeLeaf = (
+				options: BoundFederationOptions = {},
+				resolverOptions?: BoundFederationOptions,
+			) =>
+				Leaf.create({
+					entityId: responder,
+					authorityHints: [superior],
+					entityConfigurationTtlSeconds: 12,
+					crypto: f.crypto,
+					storage: f.storage,
+					trustAnchors: f.trustAnchors,
+					metadata: { federation_entity: { federation_resolve_endpoint: `${responder}/resolve` } },
+					options: {
+						clock: f.clock,
+						resolverCache: cachePolicy("shared-responder"),
+						resolveResponderEvidenceCache: proofCache,
+						httpClient: (input, init) => {
+							outbound++;
+							const request = new Request(input, init);
+							const origin = new URL(request.url).origin;
+							if (leaf && origin === responder) return leaf.handleRequest(request);
+							if (origin === superior) return intermediate.handleRequest(request);
+							return f.httpClient(input, init);
+						},
+						...options,
+					},
+					resolver: resolverOptions ? { options: resolverOptions } : {},
+				});
+			leaf = await makeLeaf();
 			const set = f.storage.cache.set.bind(f.storage.cache);
+			const get = f.storage.cache.get.bind(f.storage.cache);
+			const setProof = proofCache.set.bind(proofCache);
+			const getProof = proofCache.get.bind(proofCache);
 			let key: string | undefined;
+			let proofKey: string | undefined;
+			const blockedProofWrite = deferred();
+			const proofWriteStarted = deferred();
+			let proofWriteFinished = deferred();
+			let proofWrites = 0;
+			let proofFailure: Error | undefined;
+			let proofReadDelay = 0;
+			let stalledRead: Promise<void> | undefined;
+			const reads: string[] = [];
 			f.storage.cache.set = async (entryKey, value, ttl) => {
-				if (entryKey.startsWith("resolve:")) key = entryKey;
+				if (entryKey.startsWith("resolve:v2:")) key = entryKey;
 				await set(entryKey, value, ttl);
+			};
+			proofCache.set = async (entryKey, value, ttl) => {
+				proofKey = entryKey;
+				const finished = proofWriteFinished;
+				try {
+					if (++proofWrites === 1) {
+						proofWriteStarted.resolve();
+						await blockedProofWrite.promise;
+						throw new Error("Optional evidence storage unavailable");
+					}
+					await setProof(entryKey, value, ttl);
+				} finally {
+					finished.resolve();
+				}
+			};
+			f.storage.cache.get = async (entryKey) => {
+				reads.push(entryKey);
+				return get(entryKey);
+			};
+			proofCache.get = async (entryKey) => {
+				reads.push(entryKey);
+				if (entryKey === proofKey) {
+					if (proofFailure) throw proofFailure;
+					if (proofReadDelay > 0)
+						await new Promise<void>((done) => setTimeout(done, proofReadDelay));
+					await stalledRead;
+				}
+				return getProof(entryKey);
 			};
 			const resolver = leaf.resolver;
 			if (!resolver) throw new Error("Expected the Leaf resolver");
-			const fresh = await resolver.resolve(resolveRequest(responder));
-			assert.strictEqual(fresh.status, 200);
-			const verified = decodeEntityStatement(await fresh.text());
-			const headerChain: unknown = verified.ok && verified.value.header.trust_chain;
-			assert.true(Array.isArray(headerChain));
-			if (!key || !Array.isArray(headerChain))
-				throw new Error("Expected cached responder evidence");
-			const record = await f.storage.cache.get<ResolveAssessmentCacheValue>(key);
-			if (!record) throw new Error("Expected a Resolve assessment");
+			await assert.rejects(
+				makeLeaf({ resolveResponderEvidenceCache: f.storage.cache }),
+				/a cache separate from subject assessments/,
+			);
+			assert.strictEqual((await leaf.handleRequest(resolveRequest(responder))).status, 404);
+			assert.true(reads.length === 1 && reads[0]?.startsWith("resolve:v2:"));
+			await resolver.primeAnonymousResolve({ subject, trustAnchor: issuer });
+			await proofWriteStarted.promise;
+			assert.ok(key && (await get(key)), "subject is stored while the optional write is stalled");
+			await resolver.primeAnonymousResolve({ subject, trustAnchor: issuer });
+			assert.strictEqual(proofWrites, 1, "a stalled write prevents further optional writes");
+			blockedProofWrite.resolve();
+			await proofWriteFinished.promise;
+			proofWriteFinished = deferred();
+			await resolver.primeAnonymousResolve({ subject, trustAnchor: issuer });
+			await proofWriteFinished.promise;
+			let before = outbound;
+			if (!key || !proofKey) throw new Error("Expected subject and responder cache keys");
+			const record = await get<ResolveAssessmentCacheValue>(key);
+			const responderEvidence = await getProof<CachedResponderEvidence>(proofKey);
+			if (!record || !responderEvidence) throw new Error("Expected a cached assessment and proof");
+			assert.deepEqual(Object.keys(record).sort(), [
+				"headers",
+				"payload",
+				"reuseUntil",
+				"trustAnchor",
+			]);
 			assert.deepEqual(record.headers, {});
 			assert.strictEqual(record.reuseUntil, f.clock.now() + 12);
+			assert.strictEqual(responderEvidence.expiresAt, f.clock.now() + 8);
+			assert.deepEqual(
+				responderEvidence.entityConfigurations.map(([id]) => id),
+				[superior],
+			);
 			assert.true(record.payload.exp > record.reuseUntil);
-			await set(key, { ...record, headers: { trust_chain: headerChain } }, 12);
-			const cached = await leaf.handleRequest(resolveRequest(responder));
-			assert.strictEqual(cached.status, 200);
-			const decoded = decodeEntityStatement(await cached.text());
+
+			const expectHeader = async (expected: readonly string[] | undefined, receiving = leaf) => {
+				reads.length = 0;
+				const cached = await receiving.handleRequest(resolveRequest(responder));
+				assert.strictEqual(cached.status, 200);
+				const decoded = decodeEntityStatement(await cached.text());
+				if (!decoded.ok) throw new Error("Expected a signed Resolve Response");
+				assert.deepEqual(decoded.value.header.trust_chain, expected);
+				assert.deepEqual(decoded.value.payload.trust_chain, record.payload.trust_chain);
+				assert.false(Object.hasOwn(decoded.value.payload, "aud"));
+				assert.strictEqual(outbound, before);
+				assert.deepEqual(reads, [key, proofKey]);
+			};
+			await expectHeader(responderEvidence.statements);
+			for (const invalid of [
+				{ ...responderEvidence, statements: ["malformed"] },
+				{ ...responderEvidence, statements: record.payload.trust_chain },
+				{ ...responderEvidence, entityConfigurations: [] },
+			]) {
+				await setProof(proofKey, invalid, 12);
+				await expectHeader(undefined);
+			}
+
+			await proofCache.delete(proofKey);
+			await set(key, { ...record, headers: { trust_chain: responderEvidence.statements } }, 12);
+			await expectHeader(undefined);
+			await set(key, record, 12);
+			await setProof(proofKey, responderEvidence, 8);
+			const proofDiagnostics: string[] = [];
+			const logger = {
+				debug(message: string) {
+					if (
+						message.includes("optional Resolve responder evidence") ||
+						message.includes("Optional Resolve responder evidence")
+					)
+						proofDiagnostics.push(message);
+				},
+				info() {},
+				warn() {},
+				error() {},
+			};
+			const defaultBudget = await makeLeaf({ httpTimeoutMs: 500, logger });
+			const largerBudget = await makeLeaf({
+				httpTimeoutMs: 30,
+				resolveResponderEvidenceBudgetMs: 300,
+				logger,
+			});
+			const smallerBudget = await makeLeaf(
+				{ resolveResponderEvidenceBudgetMs: 25, logger },
+				{ resolveResponderEvidenceBudgetMs: 300 },
+			);
+			for (const invalid of [0, -5, 1.5, Infinity, 2_147_483_648])
+				await assert.rejects(
+					makeLeaf({ resolveResponderEvidenceBudgetMs: invalid }),
+					/resolveResponderEvidenceBudgetMs must be an integer/,
+				);
+			proofFailure = new DOMException("Cache adapter's own timeout", "TimeoutError");
+			await expectHeader(undefined, defaultBudget);
+			assert.deepEqual(proofDiagnostics.splice(0), [
+				"Could not read optional Resolve responder evidence",
+			]);
+			proofFailure = undefined;
+			proofReadDelay = 45;
+			await expectHeader(undefined, defaultBudget);
+			assert.deepEqual(proofDiagnostics.splice(0), [
+				"Optional Resolve responder evidence budget expired",
+			]);
+			await expectHeader(undefined, smallerBudget);
+			assert.deepEqual(proofDiagnostics.splice(0), [
+				"Optional Resolve responder evidence budget expired",
+			]);
+			await expectHeader(responderEvidence.statements, largerBudget);
+			assert.deepEqual(proofDiagnostics, []);
+			proofReadDelay = 0;
+			const blocker = deferred();
+			stalledRead = blocker.promise;
+			await expectHeader(undefined, defaultBudget);
+			assert.deepEqual(proofDiagnostics.splice(0), [
+				"Optional Resolve responder evidence budget expired",
+			]);
+			stalledRead = undefined;
+			blocker.resolve();
+
+			const keySet = await f.crypto.keyring.entry();
+			const subjectOnly = await signEntityStatement(record.payload, keySet, {
+				typ: JwtTyp.ResolveResponse,
+			});
+			const messages: string[] = [];
+			const limited = await makeLeaf({
+				maxCompactBytes: subjectOnly.length,
+				logger: {
+					debug(message) {
+						if (!message.startsWith("Omitted Resolve responder chain")) return;
+						messages.push(message);
+						throw new Error("Logger unavailable");
+					},
+					info() {},
+					warn() {},
+					error() {},
+				},
+			});
+			const reply = await limited.handleRequest(resolveRequest(responder));
+			assert.strictEqual(reply.status, 200);
+			const decoded = decodeEntityStatement(await reply.text());
 			assert.true(decoded.ok && !Object.hasOwn(decoded.value.header, "trust_chain"));
 			assert.deepEqual(decoded.ok && decoded.value.payload.trust_chain, record.payload.trust_chain);
-			f.advance(12);
+			assert.deepEqual(messages, ["Omitted Resolve responder chain to fit the JWS size limit"]);
+			assert.strictEqual(outbound, before);
+
+			const limitedResolver = limited.resolver;
+			if (!limitedResolver) throw new Error("Expected the size-limited Resolver");
+			const writesBefore = proofWrites;
+			const fresh = await limitedResolver.resolve(resolveRequest(responder));
+			assert.strictEqual(fresh.status, 200);
+			const freshJwt = decodeEntityStatement(await fresh.text());
+			assert.true(freshJwt.ok && !Object.hasOwn(freshJwt.value.header, "trust_chain"));
+			assert.deepEqual(
+				freshJwt.ok && freshJwt.value.payload.trust_chain,
+				record.payload.trust_chain,
+			);
+			await limitedResolver.primeAnonymousResolve({ subject, trustAnchor: issuer });
+			const primed = await get<ResolveAssessmentCacheValue>(key);
+			assert.ok(
+				primed && primed.reuseUntil > record.reuseUntil,
+				"omitted chain does not shorten subject reuse",
+			);
+			assert.strictEqual(proofWrites, writesBefore, "oversized optional evidence is not written");
+			assert.strictEqual(
+				messages.length,
+				3,
+				"cached, fresh and primed signing all report the fallback",
+			);
+			await set(key, record, 12);
+			before = outbound;
+
+			let failedSignatures = 0;
+			f.beforeResolveSigning(async () => {
+				failedSignatures++;
+				throw new Error("Signing unavailable");
+			});
+			assert.strictEqual((await leaf.handleRequest(resolveRequest(responder))).status, 500);
+			assert.strictEqual(failedSignatures, 1);
+
+			let signingCalls = 0;
+			f.beforeResolveSigning(async () => {
+				signingCalls++;
+				if (signingCalls === 1) f.advance(8);
+			});
+			await expectHeader(undefined);
+			assert.strictEqual(signingCalls, 2);
+			f.beforeResolveSigning();
+			f.advance(record.reuseUntil - f.clock.now() - 1.02);
+			proofReadDelay = 45;
+			await expectHeader(undefined, largerBudget);
+			assert.deepEqual(proofDiagnostics.splice(0), [
+				"Optional Resolve responder evidence budget expired",
+			]);
+			proofReadDelay = 0;
+			f.advance(record.reuseUntil - f.clock.now() - 1);
+			reads.length = 0;
+			const nearExpiry = await largerBudget.handleRequest(resolveRequest(responder));
+			assert.strictEqual(nearExpiry.status, 200);
+			assert.deepEqual(reads, [key], "the remaining second is reserved for the subject response");
+			f.advance(1);
+			reads.length = 0;
 			assert.strictEqual((await leaf.handleRequest(resolveRequest(responder))).status, 404);
+			assert.deepEqual(reads, [key]);
+			assert.strictEqual(outbound, before);
 		});
 
 		test("fresh Resolve only sends a responder chain that authenticates its actual signer", async (assert) => {
@@ -560,7 +917,15 @@ export default function resolvePolicyTests({ module, test }: QUnit): void {
 			const current = new SigningEntryFixture({ ...newKey.privateKey, kid: previous.kid });
 			await host.registerSubordinate({ entityId: responder, jwks: previous.publishedJwks });
 			let published: Leaf | undefined;
-			const makeLeaf = (key: SigningEntryFixture) =>
+			const cacheResults: string[] = [];
+			const proofCache = new MemoryCache({ clock: f.clock });
+			const written = deferred();
+			const setProof = proofCache.set.bind(proofCache);
+			proofCache.set = async (cacheKey, value, ttl) => {
+				await setProof(cacheKey, value, ttl);
+				written.resolve();
+			};
+			const makeLeaf = (key: SigningEntryFixture, revision = "rollover") =>
 				Leaf.create({
 					entityId: responder,
 					authorityHints: [issuer],
@@ -570,6 +935,11 @@ export default function resolvePolicyTests({ module, test }: QUnit): void {
 					metadata: { federation_entity: { federation_resolve_endpoint: `${responder}/resolve` } },
 					options: {
 						clock: f.clock,
+						resolverCache: cachePolicy(revision),
+						resolveResponderEvidenceCache: proofCache,
+						onResolverCacheResult(result) {
+							cacheResults.push(result);
+						},
 						httpClient(input, init) {
 							const request = new Request(input, init);
 							return new URL(request.url).origin === responder && published
@@ -583,8 +953,16 @@ export default function resolvePolicyTests({ module, test }: QUnit): void {
 			const original = await published.handleRequest(resolveRequest(responder));
 			const decoded = decodeEntityStatement(await original.text());
 			assert.true(decoded.ok && Array.isArray(decoded.value.header.trust_chain));
+			await written.promise;
 
-			const live = await makeLeaf(current);
+			const cached = await makeLeaf(current);
+			const repeat = await cached.handleRequest(resolveRequest(responder));
+			assert.strictEqual(repeat.status, 200);
+			const repeated = decodeEntityStatement(await repeat.text());
+			assert.true(repeated.ok && !Object.hasOwn(repeated.value.header, "trust_chain"));
+			assert.deepEqual(cacheResults, ["miss", "hit"]);
+
+			const live = await makeLeaf(current, "rollover-fresh");
 			const rotated = await live.handleRequest(resolveRequest(responder));
 			assert.strictEqual(rotated.status, 200);
 			const jwt = await rotated.text();

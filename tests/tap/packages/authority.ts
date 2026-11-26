@@ -4850,6 +4850,91 @@ export default (QUnit: QUnit) => {
 		}
 
 		module("authority / createExtendedListHandler", () => {
+			test("shares published keys across a page and refuses a signer withdrawn before delivery", async (t) => {
+				const { ctx, signingKey, subordinate } = await createTestContext();
+				const first = new SigningEntryFixture(signingKey);
+				const second = new SigningEntryFixture((await generateSigningKey()).privateKey);
+				const publishedJwks = { keys: [...first.publishedJwks.keys, ...second.publishedJwks.keys] };
+				for (const id of [XLIST_SUB_A, XLIST_SUB_B, XLIST_SUB_C])
+					await subordinate.register(makeXListRecord(id));
+				let publicationReads = 0;
+				let withdraw = false;
+				let publishBetweenRows = false;
+				const subjects: string[] = [];
+				const handler = createExtendedListHandler({
+					...ctx,
+					crypto: {
+						engine: testEngine,
+						keyring: {
+							async entry(_purpose, context) {
+								if (context?.artifact === "entity-configuration") {
+									publicationReads++;
+									if (publishBetweenRows && publicationReads === 1) return first;
+									return withdraw && publicationReads === 2
+										? second
+										: { signer: first.signer, publishedJwks };
+								}
+								subjects.push(String(context?.subject));
+								const key = context?.subject === XLIST_SUB_B ? second : first;
+								return { signer: key.signer, publishedJwks };
+							},
+						},
+					},
+				});
+				const request = (limit: number) =>
+					new Request(`${XLIST_BASE_URL}?claims=subordinate_statement&limit=${limit}`);
+				const output = await handler(request(3));
+				t.strictEqual(output.status, 200);
+				t.strictEqual(publicationReads, 2);
+				t.deepEqual(subjects, [XLIST_SUB_A, XLIST_SUB_B, XLIST_SUB_C]);
+				const body = (await output.json()) as {
+					immediate_subordinate_entities: Array<{ subordinate_statement: string }>;
+				};
+				t.deepEqual(
+					body.immediate_subordinate_entities.map((row) => {
+						const statement = decodeEntityStatement(row.subordinate_statement);
+						return statement.ok && statement.value.header.kid;
+					}),
+					[first.kid, second.kid, first.kid],
+				);
+
+				publicationReads = 0;
+				subjects.length = 0;
+				t.strictEqual((await handler(request(2))).status, 200);
+				t.strictEqual(publicationReads, 2, "small pages still check the current keys per row");
+				t.deepEqual(subjects, [XLIST_SUB_A, XLIST_SUB_B]);
+
+				publicationReads = 0;
+				subjects.length = 0;
+				publishBetweenRows = true;
+				const overlap = await handler(request(3));
+				t.strictEqual(overlap.status, 200);
+				t.deepEqual(
+					subjects,
+					[XLIST_SUB_A, XLIST_SUB_B, XLIST_SUB_C],
+					"each row selects one binding",
+				);
+				t.strictEqual(
+					publicationReads,
+					3,
+					"a new signer triggers one refresh before the final key check",
+				);
+				t.strictEqual(
+					((await overlap.json()) as typeof body).immediate_subordinate_entities.length,
+					3,
+				);
+
+				publicationReads = 0;
+				subjects.length = 0;
+				publishBetweenRows = false;
+				withdraw = true;
+				const changed = await handler(request(3));
+				t.strictEqual(changed.status, 500);
+				t.deepEqual(subjects, [XLIST_SUB_A, XLIST_SUB_B, XLIST_SUB_C]);
+				t.strictEqual(publicationReads, 2);
+				t.strictEqual(((await changed.json()) as { error: string }).error, "server_error");
+			});
+
 			test("Fetch rejects a custom store record for a different subject", async (t) => {
 				const f = await createTestContext();
 				f.subordinate.fetch = async () => makeXListRecord(XLIST_SUB_B);

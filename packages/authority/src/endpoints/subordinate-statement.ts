@@ -14,6 +14,7 @@ import {
 	federationSigningOptions,
 	freezeSnapshot,
 	InternalErrorCode,
+	isSignerPublished,
 	type JWKSet,
 	JwtTyp,
 	nowSeconds,
@@ -25,6 +26,7 @@ import {
 	signEntityStatement,
 	verifyEntityStatement,
 } from "@oidfed/core";
+import type { KeyringEntry } from "@oidfed/crypto";
 import type { HandlerContext } from "./context.js";
 import { canonicalSubordinateJson, subordinatePublicationClaim } from "./subordinate-claims.js";
 
@@ -115,6 +117,16 @@ export async function buildSubordinateStatement(
 	now?: number,
 	ttlSeconds?: number,
 ): Promise<string> {
+	return (await issueSubordinateStatement(ctx, record, now, ttlSeconds)).jwt;
+}
+
+/** Return the captured signing binding so the listing can recheck it before delivery. */
+async function issueSubordinateStatement(
+	ctx: HandlerContext,
+	record: SubordinateRecord,
+	now?: number,
+	ttlSeconds?: number,
+) {
 	const keySet = await federationEntry(ctx.crypto, {
 		artifact: "subordinate-statement",
 		issuer: ctx.entityId,
@@ -127,10 +139,53 @@ export async function buildSubordinateStatement(
 		ttlSeconds ?? subordinateLifetime(ctx, record),
 	);
 
-	return signEntityStatement(payload, keySet, {
+	const jwt = await signEntityStatement(payload, keySet, {
 		...federationSigningOptions(ctx.options, "subordinate-statement"),
 		typ: JwtTyp.EntityStatement,
 	});
+	return { jwt, keySet };
+}
+
+/** Share the issuer's published keys within one on-demand page while selecting each row's signer. */
+export function createSubordinatePageSigner(ctx: HandlerContext, signal: AbortSignal) {
+	const readLiveKeys = () =>
+		runAsyncOperation(() => federationPublicationJwks(ctx.crypto, ctx.entityId), {
+			...ctx.options,
+			signal,
+		});
+	let published: Promise<JWKSet> | undefined;
+	const signingContext: HandlerContext = {
+		...ctx,
+		crypto: {
+			...ctx.crypto,
+			keyring: {
+				async entry(purpose, context) {
+					const entry = await ctx.crypto.keyring.entry(purpose, context);
+					published ??= readLiveKeys();
+					const keys = await published;
+					// A new row signer may have been published after this page began.
+					if (!isSignerPublished(entry, keys.keys, ctx.crypto.algorithmRegistry))
+						published = readLiveKeys();
+					return entry;
+				},
+			},
+			readPublishedFederationJwks: () => (published ??= readLiveKeys()),
+		},
+	};
+	return {
+		sign: (record: SubordinateRecord, now: number, lifetime?: number) =>
+			issueSubordinateStatement(signingContext, record, now, lifetime),
+		async verifyPublished(signers: readonly KeyringEntry[]) {
+			if (signers.length === 0) return;
+			const currentKeys = await readLiveKeys();
+			if (
+				!signers.every((entry) =>
+					isSignerPublished(entry, currentKeys.keys, ctx.crypto.algorithmRegistry),
+				)
+			)
+				throw new Error("A listing signer is absent from the issuer's current Federation JWKS");
+		},
+	};
 }
 
 export interface RetainedSubordinateStatement {

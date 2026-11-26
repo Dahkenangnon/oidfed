@@ -3,6 +3,7 @@ import {
 	assertSupportedHeader,
 	assertVerificationKey,
 	type BuiltinJwsAlgorithm,
+	CompactJwsSizeError,
 	CryptoError,
 	CryptoUnsupportedError,
 	DEFAULT_MAX_COMPACT_JWS_BYTES,
@@ -294,11 +295,15 @@ export default async (qunit: QUnit) => {
 			);
 			await a.rejects(
 				signCompactJws({}, header(signer), signer, { maxBytes: 1 }),
-				errorCode("MALFORMED_JWS"),
+				(error: unknown) => error instanceof CompactJwsSizeError && error.code === "MALFORMED_JWS",
 			);
 			a.equal(calls, 0);
 			for (const maxBytes of [0, -1, Infinity, 1.5]) {
-				a.throws(() => parseCompactJws("a.b.c", { maxBytes }), errorCode("MALFORMED_JWS"));
+				a.throws(
+					() => parseCompactJws("a.b.c", { maxBytes }),
+					(error: unknown) =>
+						errorCode("MALFORMED_JWS")(error) && !(error instanceof CompactJwsSizeError),
+				);
 			}
 			await a.rejects(
 				signCompactJws({ x: 1n }, header(signer), signer),

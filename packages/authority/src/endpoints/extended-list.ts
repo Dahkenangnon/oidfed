@@ -1,5 +1,5 @@
 import { fetchStoredSubordinate, listStoredSubordinates } from "@oidfed/core";
-import { utf8Encode } from "@oidfed/crypto";
+import { type KeyringEntry, utf8Encode } from "@oidfed/crypto";
 
 /**
  * HTTP handler for the Extended Subordinate Listing endpoint
@@ -35,6 +35,7 @@ import {
 import { parseBooleanQuery, validateEntityTypes } from "./list-parameters.js";
 import {
 	createRetainedSubordinateReader,
+	createSubordinatePageSigner,
 	type RetainedSubordinateStatement,
 	RetainedSubordinateUnavailable,
 	retainedSubordinateUnavailableResponse,
@@ -362,6 +363,14 @@ export function createExtendedListHandler(
 				const readRetained = retainedRequested
 					? createRetainedSubordinateReader(ctx, signal)
 					: undefined;
+				// Two publication reads only save work once the page has at least three candidates.
+				const pageSigner =
+					!readRetained &&
+					accumulated.length >= 3 &&
+					requestedClaims.includes(ExtendedListClaim.SubordinateStatement)
+						? createSubordinatePageSigner(ctx, signal)
+						: undefined;
+				const listingSigners: KeyringEntry[] = [];
 				let retainedExpiry = Infinity;
 
 				let entryBytes = 0;
@@ -399,8 +408,21 @@ export function createExtendedListHandler(
 						retained = await readRetained(record);
 					}
 
+					let rowSigner: KeyringEntry | undefined;
 					if (requestedClaims.length > 0) {
-						const extracted = await extractClaims(record, ctx, requestedClaims, now, retained);
+						const extracted = await extractClaims(
+							record,
+							ctx,
+							requestedClaims,
+							now,
+							retained,
+							pageSigner &&
+								(async (subordinate, issuedAt, lifetime) => {
+									const signed = await pageSigner.sign(subordinate, issuedAt, lifetime);
+									rowSigner = signed.keySet;
+									return signed.jwt;
+								}),
+						);
 						for (const key of Object.keys(extracted)) {
 							setOwn(entry, key, extracted[key]);
 						}
@@ -419,6 +441,7 @@ export function createExtendedListHandler(
 					// Retain the measured JSON so custom store objects cannot change between
 					// measurement and response serialization while later entries are awaited.
 					entries.push(JSON.parse(serialized) as Record<string, unknown>);
+					if (rowSigner) listingSigners.push(rowSigner);
 					entryBytes += bytes;
 					if (retained) retainedExpiry = Math.min(retainedExpiry, retained.expiresAt);
 				}
@@ -428,6 +451,7 @@ export function createExtendedListHandler(
 				const body: Record<string, unknown> = { immediate_subordinate_entities: entries };
 				if (nextEntityId !== undefined) body.next = nextEntityId;
 
+				await pageSigner?.verifyPublished(listingSigners);
 				if (signal.aborted) throw new Error("Extended listing cancelled");
 				if (retainedExpiry !== Infinity && retainedExpiry <= nowSeconds(ctx.options.clock))
 					throw new RetainedSubordinateUnavailable("invalid-validity-window");

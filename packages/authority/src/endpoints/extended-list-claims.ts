@@ -116,6 +116,7 @@ export async function extractClaims(
 	requestedClaims: ReadonlyArray<string>,
 	now: number,
 	retained?: RetainedSubordinateStatement,
+	sign?: (record: SubordinateRecord, now: number, lifetime?: number) => Promise<string>,
 ): Promise<Record<string, unknown>> {
 	const out: Record<string, unknown> = {};
 	const lifetime =
@@ -148,7 +149,10 @@ export async function extractClaims(
 			});
 		const extractor = EXTENDED_LIST_CLAIM_EXTRACTORS[claim];
 		if (!extractor) continue;
-		const value = await extractor(record, ctx, now, lifetime);
+		const value =
+			claim === ExtendedListClaim.SubordinateStatement && sign
+				? await sign(record, now, lifetime)
+				: await extractor(record, ctx, now, lifetime);
 		if (value !== undefined) setOwn(out, claim, value);
 	}
 	return out;

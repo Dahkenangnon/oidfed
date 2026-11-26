@@ -211,6 +211,7 @@ export {
 	federationEntry,
 	federationPublicationJwks,
 	historicalKeysFromKeyring,
+	isSignerPublished,
 	validateFederationKeySet,
 } from "./federation-keys.js";
 // JOSE

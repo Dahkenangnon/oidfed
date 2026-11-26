@@ -194,10 +194,10 @@ export async function resolveActiveTrustMarks(
 	const policy = ctx.options.resolveTrustMarkCandidates;
 
 	async function assessMark(
+		work: ResolveMarkContext,
 		ref: TrustMarkRef,
 		issuer: string,
 		evidence?: ResolveMarkEvidence,
-		work = ctx,
 	): Promise<ActiveResolveTrustMark | undefined> {
 		const jwt = ref.trust_mark;
 		if (assessed.has(jwt)) return assessed.get(jwt);
@@ -249,13 +249,14 @@ export async function resolveActiveTrustMarks(
 	const defaults: ActiveResolveTrustMark[] = [];
 	for (const evaluation of chain.trustMarkEvaluations) {
 		if (ctx.options.signal?.aborted) break;
+		// Unverified held marks are candidates only when the disclosure policy selects them.
+		if (evaluation.status !== "verified") continue;
 		const ref = held[evaluation.referenceIndex];
 		if (!ref || ref.trust_mark_type !== evaluation.trustMarkType) continue;
 		const claims = readCandidateClaims(ref.trust_mark, chain.entityId, ctx.options);
 		if (claims?.trust_mark_type !== ref.trust_mark_type) continue;
-		const evidence = evaluation.status === "verified" ? evaluation.mark : undefined;
-		const active = await assessMark(ref, claims.iss, evidence);
-		if (active && evidence) defaults.push(active);
+		const active = await assessMark(ctx, ref, claims.iss, evaluation.mark);
+		if (active) defaults.push(active);
 	}
 
 	if (!policy) return defaults;
@@ -271,10 +272,9 @@ export async function resolveActiveTrustMarks(
 			const claims = readCandidateClaims(jwt, chain.entityId, ctx.options);
 			if (!claims) continue;
 			active = await assessMark(
+				optional,
 				{ trust_mark_type: claims.trust_mark_type, trust_mark: jwt },
 				claims.iss,
-				undefined,
-				optional,
 			);
 		}
 		if (!active) continue;

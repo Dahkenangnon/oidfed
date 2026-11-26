@@ -15,6 +15,7 @@ import {
 	JtiReplayClaimSchema,
 	type ListFilter,
 	type ListPageOptions,
+	type Logger,
 	parseStoragePayload,
 	parseStorageRecord,
 	parseStoredSubordinateEvents,
@@ -29,6 +30,7 @@ import {
 	type StorageValidationOptions,
 	type SubordinateEventStore,
 	type SubordinateStore,
+	safeLogger,
 	type TransactionView,
 	type TrustMarkRecord,
 	type TrustMarkStore,
@@ -477,7 +479,11 @@ export function postgresStorage({
 		const now = performance.now();
 		if (cleanupIntervalSeconds > 0 && now >= nextCleanup) {
 			nextCleanup = now + cleanupIntervalSeconds * 1000;
-			await pruneExpired();
+			try {
+				await pruneExpired();
+			} catch {
+				safeLogger(options.logger)?.warn("Could not prune expired PostgreSQL storage records");
+			}
 		}
 		return run(mode, operation);
 	}
@@ -959,6 +965,8 @@ interface DatabaseStorageOptions extends StorageValidationOptions {
 	readonly maxReplayEntries?: number;
 	/** Seconds between write-triggered cleanup batches. Set to zero when scheduling pruning externally. */
 	readonly cleanupIntervalSeconds?: number;
+	/** Reports failures of write-triggered maintenance. */
+	readonly logger?: Logger;
 	readonly replay?: boolean;
 	readonly collection?: CollectionStorageOptions;
 }

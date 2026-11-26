@@ -23,7 +23,7 @@ import type {
 	ResolveTrustMarkStatusMaxAge,
 } from "./resolver/mark-disclosure.js";
 import type { DecodedFederationJwtPayload, JWKSet } from "./schemas/index.js";
-import type { FederationStorage } from "./storage/contracts.js";
+import type { CacheStore, FederationStorage } from "./storage/contracts.js";
 import type { TrustResolutionSource } from "./trust-chain/assessment.js";
 import type {
 	TrustMarkIssuerContext,
@@ -166,6 +166,10 @@ export interface FederationOptions {
 	authorizeEndpointRequest?: EndpointAuthorizationPolicy;
 	/** Opt in to authenticated Resolve reuse, with a stable scope for shared storage. */
 	resolverCache?: ResolverCacheOptions;
+	/** Optional cached Resolver proof read and verification budget. Defaults to 25 ms, capped by the HTTP timeout when omitted. */
+	resolveResponderEvidenceBudgetMs?: number;
+	/** Optional shared Resolver proof cache. Its eviction capacity must be independent of the subject cache. */
+	resolveResponderEvidenceCache?: CacheStore;
 	/** Observe one HTTP cache outcome without receiving request or assessment data. */
 	onResolverCacheResult?: (result: "hit" | "miss") => void | Promise<void>;
 	/** Choose eligible Trust Mark JWTs to evaluate and disclose for this Resolve request. */

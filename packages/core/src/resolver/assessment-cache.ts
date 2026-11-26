@@ -5,8 +5,13 @@ import { decodeEntityStatement } from "../jose/verify.js";
 import { safeLogger } from "../logging.js";
 import type { JWKSet } from "../schemas/jwk.js";
 import type { TrustMarkRef } from "../schemas/trust-mark.js";
-import type { ResolveAssessmentCacheValue } from "../storage/cache-records.js";
+import {
+	type CachedResponderEvidence,
+	type ResolveAssessmentCacheValue,
+	ResponderEvidenceSchema,
+} from "../storage/cache-records.js";
 import { assertStorageView, storageSnapshot } from "../storage/capabilities.js";
+import type { CacheStore } from "../storage/contracts.js";
 import { isStoredTrustMarkEligible } from "../storage/trust-mark-eligibility.js";
 import { type EntityId, type FederationOptions, nowSeconds } from "../types.js";
 
@@ -86,6 +91,52 @@ export async function resolveAssessmentKey(
 		scopes,
 	];
 	return `resolve:v2:${await sha256Hex(JSON.stringify(partition), options.engine)}`;
+}
+
+/** Separate optional proof from the record understood by all serving workers. */
+async function resolveResponderEvidenceKey(
+	options: FederationOptions,
+	assessmentKey: string,
+	{ trustAnchor, reuseUntil, payload }: ResolveAssessmentCacheValue,
+): Promise<string> {
+	const assessment = [
+		assessmentKey,
+		trustAnchor,
+		payload.iat,
+		payload.exp,
+		reuseUntil,
+		payload.trust_chain,
+	];
+	return `resolve-responder:v1:${await sha256Hex(JSON.stringify(assessment), options.engine)}`;
+}
+
+/** Read optional proof only after the shared subject assessment has passed its checks. */
+export async function readCachedResponderEvidence(
+	cache: CacheStore,
+	options: FederationOptions,
+	assessmentKey: string,
+	assessment: ResolveAssessmentCacheValue,
+): Promise<CachedResponderEvidence | undefined> {
+	const key = await resolveResponderEvidenceKey(options, assessmentKey, assessment);
+	if (options.signal?.aborted) return undefined;
+	return ResponderEvidenceSchema.safeParse(await cache.get<unknown>(key)).data;
+}
+
+/** Keep optional proof no longer than either the proof or the assessment is useful. */
+export async function storeCachedResponderEvidence(
+	cache: CacheStore,
+	options: FederationOptions,
+	assessmentKey: string,
+	assessment: ResolveAssessmentCacheValue,
+	evidence: CachedResponderEvidence,
+): Promise<void> {
+	try {
+		const key = await resolveResponderEvidenceKey(options, assessmentKey, assessment);
+		const ttl = Math.min(assessment.reuseUntil, evidence.expiresAt) - nowSeconds(options.clock);
+		if (!options.signal?.aborted && ttl > 0) await cache.set(key, evidence, ttl);
+	} catch {
+		safeLogger(options.logger)?.debug("Could not cache optional Resolve responder evidence");
+	}
 }
 
 /** Read the authoritative issuer revision for a locally assessed mark. */

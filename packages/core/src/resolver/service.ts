@@ -1,15 +1,23 @@
 /** Signed Resolve assessments, cache reuse, and authenticated HTTP hosting. */
 
+import { CompactJwsSizeError, type KeyringEntry, utf8Encode } from "@oidfed/crypto";
 import { runAsyncOperation } from "../async-operation.js";
 import { isObject } from "../callbacks.js";
 import {
 	DEFAULT_CACHE_TTL_SECONDS,
+	DEFAULT_MAX_CHAIN_LENGTH,
+	DEFAULT_MAX_RESPONSE_BYTES,
 	FederationErrorCode,
 	InternalErrorCode,
 	JwtTyp,
 	MediaType,
 } from "../constants.js";
-import { bindFederationOptions, federationSigningOptions, registryFor } from "../crypto-context.js";
+import {
+	assertResolveResponderEvidenceBudget,
+	bindFederationOptions,
+	federationSigningOptions,
+	registryFor,
+} from "../crypto-context.js";
 import { randomUuid } from "../crypto-runtime.js";
 import {
 	authenticatedEndpointCaller,
@@ -32,15 +40,20 @@ import { safeLogger } from "../logging.js";
 import type { JWKSet } from "../schemas/jwk.js";
 import { MemoryCache } from "../storage/cache.js";
 import {
+	type CachedResponderEvidence,
 	type ResolveAssessmentCacheValue,
 	ResolveAssessmentCacheValueSchema,
 	readResolveAssessment,
 } from "../storage/cache-records.js";
 import { getCacheStorage } from "../storage/capabilities.js";
-import { resolveTrustChainForAnchor } from "../trust-chain/peer.js";
+import { resolveTrustChainEvidenceForAnchor } from "../trust-chain/peer.js";
 import { resolveTrustChains } from "../trust-chain/resolve.js";
 import { selectTrustChain } from "../trust-chain/selection.js";
-import { calculateChainExpiration, validateTrustChain } from "../trust-chain/validate.js";
+import {
+	calculateChainExpiration,
+	validateTrustChain,
+	validateTrustChainStructure,
+} from "../trust-chain/validate.js";
 import type { TrustMarkStatusAssessment } from "../trust-marks/issuer.js";
 import type { BoundFederationOptions, CryptoContext } from "../types.js";
 import {
@@ -58,8 +71,10 @@ import {
 	hasCurrentLocalTrustMarks,
 	localTrustMarkRevision,
 	localTrustMarkRevisionMatches,
+	readCachedResponderEvidence,
 	resolveAssessmentKey,
 	snapshotResolverCache,
+	storeCachedResponderEvidence,
 } from "./assessment-cache.js";
 import { ResolveFetchBudgetExhausted, resolveActiveTrustMarks } from "./mark-disclosure.js";
 
@@ -97,6 +112,14 @@ export class FederationResolverService {
 	/** Capture resolver dependencies and build the authenticated public endpoint handler. */
 	constructor(config: FederationResolverConfig, fixedQuery?: URLSearchParams) {
 		const id = entityId(config.entityId);
+		assertResolveResponderEvidenceBudget(config.options.resolveResponderEvidenceBudgetMs);
+		if (
+			config.options.resolveResponderEvidenceCache &&
+			config.options.resolveResponderEvidenceCache === config.options.storage?.cache
+		)
+			throw new TypeError(
+				"Resolve responder evidence needs a cache separate from subject assessments",
+			);
 		const resolverCache = snapshotResolverCache(config.options.resolverCache);
 		this.fixedQuery = new URLSearchParams(fixedQuery);
 		this.context = {
@@ -272,41 +295,216 @@ function discoveryFailure(errors: readonly FederationError[], incomplete: boolea
 	return errorResponse(500, FederationErrorCode.ServerError, "Trust chain discovery failed");
 }
 
+/** Retain only the auxiliary configurations needed by the selected responder path. */
+function retainResponderEvidence(
+	chain: TrustChain,
+	validated: ValidatedTrustChain,
+	options: FederationOptions,
+): CachedResponderEvidence | undefined {
+	const entityConfigurations = new Map<EntityId, string>();
+	for (const { payload } of validated.statements) {
+		if (payload.iss === payload.sub || payload.sub === validated.entityId) continue;
+		const jwt = chain.entityConfigurations?.get(payload.sub);
+		if (jwt === undefined) return undefined;
+		entityConfigurations.set(payload.sub, jwt);
+	}
+	const evidence = {
+		statements: [...chain.statements],
+		entityConfigurations: [...entityConfigurations],
+		expiresAt: validated.expiresAt,
+	};
+	return withinResponderEvidenceLimits(evidence, options) ? evidence : undefined;
+}
+
+/** Bound the work added by optional cached evidence before attempting verification. */
+function withinResponderEvidenceLimits(
+	evidence: CachedResponderEvidence,
+	options: FederationOptions,
+): boolean {
+	const { statements, entityConfigurations } = evidence;
+	const maxChainLength = options.maxChainLength ?? DEFAULT_MAX_CHAIN_LENGTH;
+	if (statements.length > maxChainLength || entityConfigurations.length >= statements.length)
+		return false;
+	let bytes = 0;
+	for (const statement of statements) bytes += statement.length;
+	for (const [id, configuration] of entityConfigurations)
+		bytes += utf8Encode(id).byteLength + configuration.length;
+	return bytes <= (options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES);
+}
+
+/** Verify cached evidence against only the selected anchor and the key signing this reply. */
+async function cachedResponderHeader(
+	ctx: ResolverContext,
+	snapshot: ResolveAssessmentCacheValue,
+	requestedAnchors: TrustAnchorSet,
+	keySet: KeyringEntry,
+	evidence: CachedResponderEvidence | undefined,
+): Promise<CachedResponderEvidence | undefined> {
+	const anchor = requestedAnchors.get(snapshot.trustAnchor);
+	if (
+		!evidence ||
+		!anchor ||
+		requestedAnchors.has(ctx.entityId) ||
+		evidence.expiresAt <= nowSeconds(ctx.options.clock) ||
+		!withinResponderEvidenceLimits(evidence, ctx.options)
+	)
+		return undefined;
+	const validation = await validateTrustChainStructure(
+		evidence.statements,
+		new Map([[snapshot.trustAnchor, anchor]]),
+		{
+			...ctx.options,
+			entityConfigurations: new Map(evidence.entityConfigurations),
+			maxTotalFetches: 0,
+			offline: true,
+			storage: undefined,
+		},
+	);
+	if (
+		!validation.valid ||
+		validation.chain.entityId !== ctx.entityId ||
+		validation.chain.trustAnchorId !== snapshot.trustAnchor
+	)
+		return undefined;
+	const keys = validation.chain.statements[0]?.payload.jwks?.keys;
+	if (!keys || !isSignerPublished(keySet, keys, registryFor(ctx.crypto))) return undefined;
+	return { ...evidence, expiresAt: Math.min(evidence.expiresAt, validation.chain.expiresAt) };
+}
+
+/** Sign with an optional chain and retry only when the compact response is too large. */
+async function signResolveResponse(
+	options: FederationOptions,
+	payload: Record<string, unknown>,
+	keySet: KeyringEntry,
+	responderChain?: readonly string[],
+) {
+	const signing = {
+		...federationSigningOptions(options, "resolve-response"),
+		typ: JwtTyp.ResolveResponse,
+	};
+	if (responderChain) {
+		try {
+			const jwt = await signEntityStatement(payload, keySet, {
+				...signing,
+				extraHeaders: { trust_chain: responderChain },
+			});
+			return { jwt, omittedForSize: false };
+		} catch (error) {
+			if (!(error instanceof CompactJwsSizeError)) throw error;
+		}
+	}
+	const jwt = await signEntityStatement(payload, keySet, signing);
+	return { jwt, omittedForSize: responderChain !== undefined };
+}
+
+/** Report a successful subject-only fallback without logging evidence or identifiers. */
+function reportResolveSizeFallback(options: FederationOptions, omittedForSize: boolean): void {
+	if (omittedForSize)
+		safeLogger(options.logger)?.debug("Omitted Resolve responder chain to fit the JWS size limit");
+}
+
+const DEFAULT_RESPONDER_EVIDENCE_BUDGET_MS = 25;
+
+/** Give cached proof the configured time while reserving one second of subject validity. */
+function responderEvidenceBudgetMs(options: FederationOptions, reuseUntil: number): number {
+	const configured =
+		options.resolveResponderEvidenceBudgetMs ??
+		Math.min(
+			DEFAULT_RESPONDER_EVIDENCE_BUDGET_MS,
+			options.httpTimeoutMs ?? DEFAULT_RESPONDER_EVIDENCE_BUDGET_MS,
+		);
+	const availableMs = Math.floor((reuseUntil - nowSeconds(options.clock) - 1) * 1000);
+	return Math.min(configured, availableMs);
+}
+
 /** Re-sign a stored assessment for this request without refreshing evidence over the network. */
 async function signCachedAssessment(
 	ctx: ResolverContext,
 	snapshot: ResolveAssessmentCacheValue,
 	subject: EntityId,
 	caller: string | undefined,
+	requestedAnchors: TrustAnchorSet,
+	readEvidence?: (options: FederationOptions) => Promise<CachedResponderEvidence | undefined>,
 ): Promise<Response | undefined> {
 	const keySet = await federationEntry(ctx.crypto, {
 		artifact: "resolve-response",
 		issuer: ctx.entityId,
 		subject,
 	});
-	const issuedAt = nowSeconds(ctx.options.clock);
-	if (snapshot.reuseUntil <= issuedAt || ctx.options.signal?.aborted) return undefined;
-	// Stored assessments omit aud. The responder chain can describe an earlier signing key.
-	const jwt = await signEntityStatement(
-		{
-			...snapshot.payload,
-			iat: issuedAt,
-			...(caller === undefined ? {} : { aud: caller }),
-		},
-		keySet,
-		{
-			...federationSigningOptions(ctx.options, "resolve-response"),
-			typ: JwtTyp.ResolveResponse,
-		},
-	);
-	if (
-		snapshot.localTrustMarkRevision !== undefined &&
-		!(await localTrustMarkRevisionMatches(snapshot.localTrustMarkRevision, ctx.options))
-	)
-		return undefined;
-	if (snapshot.reuseUntil <= nowSeconds(ctx.options.clock) || ctx.options.signal?.aborted)
-		return undefined;
-	return jwtResponse(jwt, MediaType.ResolveResponse);
+	let responder: CachedResponderEvidence | undefined;
+	const proofBudget = readEvidence
+		? responderEvidenceBudgetMs(ctx.options, snapshot.reuseUntil)
+		: 0;
+	if (readEvidence && proofBudget > 0) {
+		try {
+			const result = await runAsyncOperation(
+				async (signal) => {
+					const options = { ...ctx.options, signal };
+					try {
+						const evidence = await readEvidence(options);
+						if (signal.aborted) return {};
+						return {
+							evidence: await cachedResponderHeader(
+								{ ...ctx, options },
+								snapshot,
+								requestedAnchors,
+								keySet,
+								evidence,
+							),
+						};
+					} catch {
+						// Store timeouts belong to the cache failure path. Only this operation's
+						// timer can escape this callback and be reported as a budget expiry.
+						return { failed: true };
+					}
+				},
+				{ ...ctx.options, httpTimeoutMs: proofBudget },
+			);
+			if (result.failed)
+				safeLogger(ctx.options.logger)?.debug("Could not read optional Resolve responder evidence");
+			responder = result.evidence;
+		} catch (error) {
+			if (!ctx.options.signal?.aborted) {
+				const timedOut = error instanceof DOMException && error.name === "TimeoutError";
+				safeLogger(ctx.options.logger)?.debug(
+					timedOut
+						? "Optional Resolve responder evidence budget expired"
+						: "Could not read optional Resolve responder evidence",
+				);
+			}
+		}
+	}
+	const signReply = async (evidence?: CachedResponderEvidence) => {
+		const issuedAt = nowSeconds(ctx.options.clock);
+		if (snapshot.reuseUntil <= issuedAt || ctx.options.signal?.aborted) return undefined;
+		const included = evidence && evidence.expiresAt > issuedAt ? evidence : undefined;
+		const reply = await signResolveResponse(
+			ctx.options,
+			{
+				...snapshot.payload,
+				iat: issuedAt,
+				...(caller === undefined ? {} : { aud: caller }),
+			},
+			keySet,
+			included?.statements,
+		);
+		if (
+			snapshot.localTrustMarkRevision !== undefined &&
+			!(await localTrustMarkRevisionMatches(snapshot.localTrustMarkRevision, ctx.options))
+		)
+			return undefined;
+		if (snapshot.reuseUntil <= nowSeconds(ctx.options.clock) || ctx.options.signal?.aborted)
+			return undefined;
+		return { ...reply, included: reply.omittedForSize ? undefined : included };
+	};
+
+	let reply = await signReply(responder);
+	// Only the optional evidence expired while the keyring or issuer store was busy.
+	if (reply?.included && reply.included.expiresAt <= nowSeconds(ctx.options.clock))
+		reply = await signReply();
+	if (!reply) return undefined;
+	reportResolveSizeFallback(ctx.options, reply.omittedForSize);
+	return jwtResponse(reply.jwt, MediaType.ResolveResponse);
 }
 
 /** Keep application metrics off the critical path and contain observer failures. */
@@ -326,13 +524,18 @@ function createResolveHandler(
 	ctx: ResolverContext,
 	isolated = false,
 ): (request: Request, mode?: ResolveMode) => Promise<Response> {
-	const cache = isolated
+	const sharedCache = isolated ? undefined : getCacheStorage(ctx.options.storage);
+	const memoryCache = () =>
+		new MemoryCache({
+			maxEntries: 1000,
+			...(ctx.options.clock ? { clock: ctx.options.clock } : {}),
+		});
+	const cache = isolated ? undefined : (sharedCache ?? memoryCache());
+	// Optional writes must never use the required cache's eviction capacity.
+	const responderCache = isolated
 		? undefined
-		: (getCacheStorage(ctx.options.storage) ??
-			new MemoryCache({
-				maxEntries: 1000,
-				...(ctx.options.clock ? { clock: ctx.options.clock } : {}),
-			}));
+		: (ctx.options.resolveResponderEvidenceCache ?? memoryCache());
+	let responderWritePending = false;
 	let namespace: Promise<string> | undefined;
 	return async (request, mode = "http") => {
 		const methodError = requireMethod(request, "GET");
@@ -431,11 +634,18 @@ function createResolveHandler(
 						ctx.assessLocalTrustMarkStatus !== undefined,
 					))
 				) {
+					const readEvidence =
+						responderCache && !requestedAnchors.has(ctx.entityId)
+							? (options: FederationOptions) =>
+									readCachedResponderEvidence(responderCache, options, key, cached)
+							: undefined;
 					const reply = await signCachedAssessment(
 						{ ...ctx, options: requestOptions },
 						cached,
 						sub,
 						rawEntity,
+						requestedAnchors,
+						readEvidence,
 					);
 					if (reply) {
 						reportCacheResult(ctx.options, "hit");
@@ -618,17 +828,19 @@ function createResolveHandler(
 				payload.trust_marks = activeTrustMarks.map(({ ref }) => ref);
 			}
 
-			const extraHeaders: Record<string, unknown> = {};
+			let responderChain: readonly string[] | undefined;
+			let responderEvidence: CachedResponderEvidence | undefined;
 			if (!requestedAnchors.has(ctx.entityId as EntityId)) {
 				try {
-					const issuerResult = await resolveTrustChainForAnchor(
+					const issuerResult = await resolveTrustChainEvidenceForAnchor(
 						ctx.entityId,
 						validated.trustAnchorId,
 						requestedAnchors,
 						options,
 					);
 					if (issuerResult.ok) {
-						const configuration = issuerResult.value[0];
+						const { chain, validated: responder } = issuerResult.value;
+						const configuration = chain.statements[0];
 						const decoded = configuration
 							? decodeEntityStatement(configuration, options)
 							: undefined;
@@ -637,8 +849,10 @@ function createResolveHandler(
 							decoded?.ok &&
 							decoded.value.payload.jwks &&
 							isSignerPublished(keySet, decoded.value.payload.jwks.keys, registryFor(ctx.crypto))
-						)
-							extraHeaders.trust_chain = [...issuerResult.value];
+						) {
+							responderChain = chain.statements;
+							if (cacheKey) responderEvidence = retainResponderEvidence(chain, responder, options);
+						}
 					}
 				} catch {
 					/* Omit the optional trust_chain header when the responder's chain cannot be resolved. */
@@ -654,11 +868,7 @@ function createResolveHandler(
 					FederationErrorCode.TemporarilyUnavailable,
 					"Resolution evidence has expired or the operation was cancelled",
 				);
-			const jwt = await signEntityStatement(payload, keySet, {
-				...federationSigningOptions(ctx.options, "resolve-response"),
-				typ: JwtTyp.ResolveResponse,
-				extraHeaders,
-			});
+			const reply = await signResolveResponse(options, payload, keySet, responderChain);
 
 			if (
 				signal.aborted ||
@@ -677,16 +887,14 @@ function createResolveHandler(
 				evidenceDeadline,
 				now + (ctx.options?.cacheMaxTtlSeconds ?? DEFAULT_CACHE_TTL_SECONDS),
 			);
-			if (Array.isArray(extraHeaders.trust_chain)) {
-				const statements: readonly unknown[] = extraHeaders.trust_chain;
-				for (const statement of statements) {
-					if (typeof statement !== "string") continue;
+			if (responderChain && !reply.omittedForSize) {
+				for (const statement of responderChain) {
 					const decoded = decodeEntityStatement(statement, ctx.options);
 					if (decoded.ok && typeof decoded.value.payload.exp === "number")
 						cacheExpiry = Math.min(cacheExpiry, decoded.value.payload.exp);
 				}
 			}
-			let stored = false;
+			let stored: ResolveAssessmentCacheValue | undefined;
 			if (
 				cache &&
 				cacheKey &&
@@ -706,21 +914,20 @@ function createResolveHandler(
 				const cachedPayload = { ...payload };
 				delete cachedPayload.aud;
 				try {
-					await cache.set(
-						cacheKey,
-						ResolveAssessmentCacheValueSchema.parse({
-							trustAnchor: validated.trustAnchorId,
-							payload: cachedPayload,
-							// Retain the cache record shape. Re-signed replies omit the responder chain.
-							headers: {},
-							reuseUntil: cacheExpiry,
-							...(assessmentRevision !== undefined
-								? { localTrustMarkRevision: assessmentRevision }
-								: {}),
-						}),
-						cacheExpiry - nowSeconds(ctx.options?.clock),
-					);
-					stored = true;
+					const assessment = ResolveAssessmentCacheValueSchema.parse({
+						trustAnchor: validated.trustAnchorId,
+						payload: cachedPayload,
+						headers: {},
+						reuseUntil: cacheExpiry,
+						...(assessmentRevision !== undefined
+							? { localTrustMarkRevision: assessmentRevision }
+							: {}),
+					});
+					const ttl = cacheExpiry - nowSeconds(ctx.options.clock);
+					if (ttl > 0 && !signal.aborted) {
+						await cache.set(cacheKey, assessment, ttl);
+						stored = assessment;
+					}
 				} catch {
 					safeLogger(ctx.options?.logger)?.debug("Could not cache successful resolution");
 				}
@@ -747,7 +954,28 @@ function createResolveHandler(
 					FederationErrorCode.TemporarilyUnavailable,
 					"Could not store public resolution",
 				);
-			return jwtResponse(jwt, MediaType.ResolveResponse);
+			// The subject is already available. A stalled store can hold at most one optional write.
+			if (
+				stored &&
+				cacheKey &&
+				responderCache &&
+				responderEvidence &&
+				!reply.omittedForSize &&
+				!responderWritePending
+			) {
+				responderWritePending = true;
+				void storeCachedResponderEvidence(
+					responderCache,
+					ctx.options,
+					cacheKey,
+					stored,
+					responderEvidence,
+				).finally(() => {
+					responderWritePending = false;
+				});
+			}
+			reportResolveSizeFallback(ctx.options, reply.omittedForSize);
+			return jwtResponse(reply.jwt, MediaType.ResolveResponse);
 		} catch {
 			safeLogger(ctx.options?.logger)?.error("Failed to resolve entity");
 			return errorResponse(500, "server_error", "Failed to resolve entity");
