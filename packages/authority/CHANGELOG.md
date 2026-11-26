@@ -6,6 +6,78 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-11-26
+
+### Breaking Changes
+
+* authorize federation requests and scope resolve reuse ([8a93565](https://github.com/Dahkenangnon/oidfed/commit/8a935655f5ca15c5f4fdc00b5b8c31be297f1978))
+* enforce federation artifact signing policy ([888e2a8](https://github.com/Dahkenangnon/oidfed/commit/888e2a86308baad021346123c109549c3740a704))
+* require federation POST selectors in the form ([7997498](https://github.com/Dahkenangnon/oidfed/commit/7997498008d5e674a8488827bca84e268c9bfb64))
+* unify storage and federation host contracts ([2882619](https://github.com/Dahkenangnon/oidfed/commit/28826192c47f6eb898a0d1f590c87aa12b3a3d5d))
+* require host-provided crypto ([d748f11](https://github.com/Dahkenangnon/oidfed/commit/d748f1168d8819ea5943433400b858e26f7030fb))
+* integrate trust marks and enforce resolve policy ([fa26b16](https://github.com/Dahkenangnon/oidfed/commit/fa26b16d32a17f576a0ba57b99e0de2494ee390b))
+* bind verification to caller context ([c138e09](https://github.com/Dahkenangnon/oidfed/commit/c138e09808827d95c83e0b4ea3cc90c5fce47ee4))
+* separate Trust Mark results from chain validity ([921bd96](https://github.com/Dahkenangnon/oidfed/commit/921bd96a0b0391590b9c54ead9d0473f6065c6df))
+
+### Features
+
+* serve approved retained subordinate statements ([c1d7266](https://github.com/Dahkenangnon/oidfed/commit/c1d7266794b44b1a1e1edeaf9c2294971f429ca1))
+* serve historical keys and validate endpoint metadata ([6497391](https://github.com/Dahkenangnon/oidfed/commit/64973910bc04840efb690972b1cd14846e780808))
+* configure subordinate events response lifetime ([000d973](https://github.com/Dahkenangnon/oidfed/commit/000d973a78fa52fe245e3325e50a2281e0652ab9))
+* support custom extended listing filters ([e1c30be](https://github.com/Dahkenangnon/oidfed/commit/e1c30be3f99b375c952c7be2f997cd13de878c45))
+* project stored extended listing claims ([a888350](https://github.com/Dahkenangnon/oidfed/commit/a88835017bce503b12abb509d07841ff2dde6b8d))
+* add standalone federation resolver hosting ([86ea2bc](https://github.com/Dahkenangnon/oidfed/commit/86ea2bc5c3fe850a1bb1ace9cc2aba9f51e7cedb))
+* support critical extensions in Entity Statement publication ([a558bea](https://github.com/Dahkenangnon/oidfed/commit/a558bea6f091c8e0bdcf31b0d4853dabde5df28e))
+* add trusted issuer evidence and trust mark verification ([caac696](https://github.com/Dahkenangnon/oidfed/commit/caac696d05ddc9f9f35bedfa526b404f7d2e38c5))
+* annotate captured subordinate events ([6b9e779](https://github.com/Dahkenangnon/oidfed/commit/6b9e77959a9aaab8fd6397c10ff15d9a2d7c8be2))
+
+### Bug Fixes
+
+* harden Resolve caching and federation signing ([d2c42f6](https://github.com/Dahkenangnon/oidfed/commit/d2c42f646cab7d6f1ef6083495db32dc6829fccc))
+* verify exact retained publication claims ([560b4e4](https://github.com/Dahkenangnon/oidfed/commit/560b4e4a4d90a18e9b56597dbd183e8033d99563))
+* correct metadata, theming, links and docs scrolling ([c6053e4](https://github.com/Dahkenangnon/oidfed/commit/c6053e47549cfa8bce16d99105de940c7c810dd3))
+* correct ESM and CommonJS declaration exports ([3475f0b](https://github.com/Dahkenangnon/oidfed/commit/3475f0bbc7cc7eea7c8501e02acb83edd0970375))
+* harden metadata writes and HTTP body handling ([a91de89](https://github.com/Dahkenangnon/oidfed/commit/a91de89f9c68b07cd3d7138f463c3e515aea4026))
+* honor nested trust mark lifetime defaults ([b8339eb](https://github.com/Dahkenangnon/oidfed/commit/b8339eb2f1cd8504386c8e4120b2d33f67f58764))
+* validate configured TTLs before publication ([633fad1](https://github.com/Dahkenangnon/oidfed/commit/633fad1efaf507166dc8d44266f3cd60e7745fda))
+* isolate and safely compose host metadata ([9ec838a](https://github.com/Dahkenangnon/oidfed/commit/9ec838a3bbb49dcf0973f0a7051a30feada1b7c6))
+* snapshot storage inputs before queued writes ([5ea042e](https://github.com/Dahkenangnon/oidfed/commit/5ea042e7283c5a1dece50efc02a246fa95e91769))
+* honor cancellation when serving subordinate events ([a23e60e](https://github.com/Dahkenangnon/oidfed/commit/a23e60e2c1abab40afa8908ba4a1746cc85a8101))
+* snapshot subordinate events before queued writes ([dd96169](https://github.com/Dahkenangnon/oidfed/commit/dd96169fa3a9e35c3ef60040bc569f141f653952))
+* contain extended listing storage errors and cancellation ([56ddfb5](https://github.com/Dahkenangnon/oidfed/commit/56ddfb5e8ca34546b4285d9b33238e4771e5de21))
+* support trust anchors with superiors ([db62ca6](https://github.com/Dahkenangnon/oidfed/commit/db62ca6c5b06c100b532ed03856473e830a16847))
+* reject conflicting hosted role routes ([fc1c3af](https://github.com/Dahkenangnon/oidfed/commit/fc1c3af088cbe5ca267c15e48c31fc72b81ad828))
+* normalize published entity identifiers once ([9e825ae](https://github.com/Dahkenangnon/oidfed/commit/9e825ae30716c98d845e0146d6e1041715e1453f))
+* validate Resolve candidates and evidence lifetimes ([790d186](https://github.com/Dahkenangnon/oidfed/commit/790d18644f9f0fd72169398ed80cb258a4ad8646))
+* unify fixed endpoint selector matching ([d23a183](https://github.com/Dahkenangnon/oidfed/commit/d23a183e6f85950d27e2812f6830114fca517b8c))
+* validate subordinate claims before publication ([d0c100c](https://github.com/Dahkenangnon/oidfed/commit/d0c100c25fcff716ae0dfda029603c00c06a2885))
+* report lifecycle failures and publication guidance ([aa7ae6b](https://github.com/Dahkenangnon/oidfed/commit/aa7ae6b6a0eb32a5b05845f7c7525b8379ebefbd))
+* scope metadata null checks and authenticate resolver ECs ([483fba1](https://github.com/Dahkenangnon/oidfed/commit/483fba10914c2d3b634ccd90e18bbfffca3541e3))
+* enforce trust-chain authority hints and offline wallet guards ([b5b3f07](https://github.com/Dahkenangnon/oidfed/commit/b5b3f074873132a460c45cf3e3b777a92cb2bbc0))
+* validate stored subordinate identifiers ([1863166](https://github.com/Dahkenangnon/oidfed/commit/1863166e97a50ce2e65b5a584ab108beee89d0e7))
+* reject orphan endpoint authentication ([c844777](https://github.com/Dahkenangnon/oidfed/commit/c8447770f042a5563edbb1b4fa441ea864a25ca6))
+* route endpoints by fixed query selectors ([d1be242](https://github.com/Dahkenangnon/oidfed/commit/d1be24264024f2ea108eccb56df0d2e083c55e52))
+* allow open Trust Mark issuance ([dfd7ba2](https://github.com/Dahkenangnon/oidfed/commit/dfd7ba24daad47b473639df544dfb618384d1fd4))
+* preserve authenticated endpoint queries ([bd15a3c](https://github.com/Dahkenangnon/oidfed/commit/bd15a3ca66d24907b172138d25d6412cb6db1cfc))
+* align extended listing claims ([f6c5bc4](https://github.com/Dahkenangnon/oidfed/commit/f6c5bc465716b80959ebf65d004f8956b09d3378))
+* tighten publication and trust checks ([66e88e2](https://github.com/Dahkenangnon/oidfed/commit/66e88e2d6e53880da0d757e4a4a8932b0dfcf27f))
+* validate federation boundaries ([5207ec5](https://github.com/Dahkenangnon/oidfed/commit/5207ec5a797d3b58df14b2f147b59bef69f478c2))
+* validate extended listing public keys ([b1627e9](https://github.com/Dahkenangnon/oidfed/commit/b1627e9e1da9158a929424faa9f00c44870565bf))
+* preserve historical key lifetimes ([84c5dc5](https://github.com/Dahkenangnon/oidfed/commit/84c5dc5594112616cd0ed2c04ec4ecf2dc5cdc92))
+* guard Trust Mark registry lookups ([a4f69b4](https://github.com/Dahkenangnon/oidfed/commit/a4f69b4f66353261a2fcf977147d816157ffb504))
+* accept custom entity_type values in list filters ([32664f8](https://github.com/Dahkenangnon/oidfed/commit/32664f8b04cbd7bac4b32f49fbc350dad00fbfd3))
+
+### Performance
+
+* read event histories through snapshots ([d29ac21](https://github.com/Dahkenangnon/oidfed/commit/d29ac21e34036f3c07ba462ae675f7aab3d2a033))
+
+### Refactor
+
+* share protocol helpers and remove dead code ([f299374](https://github.com/Dahkenangnon/oidfed/commit/f299374faab2822cd06c543832e0d959e5210c39))
+* centralize stored trust mark eligibility ([a3309f3](https://github.com/Dahkenangnon/oidfed/commit/a3309f37519109c35ac4bbdc76a97c02661f37d7))
+* share extended listing request handling ([8b99cea](https://github.com/Dahkenangnon/oidfed/commit/8b99cea35a87c9bd59d8b38ff47920c5e7c0a3fd))
+
+
 ## [2.0.0] - 2026-10-26
 
 ### Breaking changes

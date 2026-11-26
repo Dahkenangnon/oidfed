@@ -6,6 +6,51 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-11-26
+
+### Breaking Changes
+
+* enforce federation artifact signing policy ([888e2a8](https://github.com/Dahkenangnon/oidfed/commit/888e2a86308baad021346123c109549c3740a704))
+* unify storage and federation host contracts ([2882619](https://github.com/Dahkenangnon/oidfed/commit/28826192c47f6eb898a0d1f590c87aa12b3a3d5d))
+* require host-provided crypto ([d748f11](https://github.com/Dahkenangnon/oidfed/commit/d748f1168d8819ea5943433400b858e26f7030fb))
+* bind verification to caller context ([c138e09](https://github.com/Dahkenangnon/oidfed/commit/c138e09808827d95c83e0b4ea3cc90c5fce47ee4))
+
+### Features
+
+* configure request object typing policies ([a7e7de2](https://github.com/Dahkenangnon/oidfed/commit/a7e7de2a8f46084db3285d8055c5683049f53ac2))
+* add policy-aware pushed authorization requests ([1ef63bb](https://github.com/Dahkenangnon/oidfed/commit/1ef63bb5b7716c0a0262f7035fe8df8f56bc0b23))
+* support OAuth-only federation registration ([427e6f8](https://github.com/Dahkenangnon/oidfed/commit/427e6f8ce79779528b44cba042c5cdb290be3d75))
+* allow read-only registration management credentials ([fbc079d](https://github.com/Dahkenangnon/oidfed/commit/fbc079dcadd72d55c4076fb212619982a4708720))
+* integrate configurable trust establishment ([e437b4d](https://github.com/Dahkenangnon/oidfed/commit/e437b4d0cd2e03b5bd2108d2fcb49ff76b3dcfb1))
+* enforce trust mark policy before registration ([2a2cdc4](https://github.com/Dahkenangnon/oidfed/commit/2a2cdc4f5c278e677181f21e36c797838a90b0b3))
+* type partial publication metadata ([ad4e430](https://github.com/Dahkenangnon/oidfed/commit/ad4e4303c98d5de0df41a73ce43bbac4137447e7))
+
+### Bug Fixes
+
+* bound explicit registration HTTP transport ([cde0a66](https://github.com/Dahkenangnon/oidfed/commit/cde0a66c3c42f3062873922d5850365f70943115))
+* correct metadata, theming, links and docs scrolling ([c6053e4](https://github.com/Dahkenangnon/oidfed/commit/c6053e47549cfa8bce16d99105de940c7c810dd3))
+* correct ESM and CommonJS declaration exports ([3475f0b](https://github.com/Dahkenangnon/oidfed/commit/3475f0bbc7cc7eea7c8501e02acb83edd0970375))
+* isolate and safely compose host metadata ([9ec838a](https://github.com/Dahkenangnon/oidfed/commit/9ec838a3bbb49dcf0973f0a7051a30feada1b7c6))
+* check registration signers against resolved metadata ([fb9c6cc](https://github.com/Dahkenangnon/oidfed/commit/fb9c6cc814b2c0d05e9910929b8d3d7b2d831024))
+* accept non-expiring client secrets ([ab9a55a](https://github.com/Dahkenangnon/oidfed/commit/ab9a55a9e547036c87d44a82a57c224a4b7d9093))
+* honor chain selection during explicit registration ([de1a9ba](https://github.com/Dahkenangnon/oidfed/commit/de1a9ba248cdf5f2e0eb67b9f3d7b81440eef286))
+* harden policy dictionaries and callbacks ([34ed35d](https://github.com/Dahkenangnon/oidfed/commit/34ed35d07366f30f4ef7894dadca9f48e8e5ab89))
+* enforce metadata conformance in roles and registration ([1e24251](https://github.com/Dahkenangnon/oidfed/commit/1e242518f2a840029edbf508d2207bf0ce141621))
+* identify registration callback and validation failures ([b99a2fd](https://github.com/Dahkenangnon/oidfed/commit/b99a2fd371f593cf8b0607fd5fe4768ffc61c985))
+* validate supplied trust chains and peer anchor matching ([87ad5bc](https://github.com/Dahkenangnon/oidfed/commit/87ad5bc9304249f46359a73494df177f677d20ec))
+* scope metadata null checks and authenticate resolver ECs ([483fba1](https://github.com/Dahkenangnon/oidfed/commit/483fba10914c2d3b634ccd90e18bbfffca3541e3))
+* enforce trust-chain authority hints and offline wallet guards ([b5b3f07](https://github.com/Dahkenangnon/oidfed/commit/b5b3f074873132a460c45cf3e3b777a92cb2bbc0))
+* validate federation boundaries ([5207ec5](https://github.com/Dahkenangnon/oidfed/commit/5207ec5a797d3b58df14b2f147b59bef69f478c2))
+* tighten key and registration handling ([40e8526](https://github.com/Dahkenangnon/oidfed/commit/40e8526d427336f3060ec2a5804230e34772bde8))
+* separate protocol key identifier requirements ([34ba00e](https://github.com/Dahkenangnon/oidfed/commit/34ba00ec50007360ff7c599916909dcfb433e817))
+* bind registration to federation trust ([a3bcbf7](https://github.com/Dahkenangnon/oidfed/commit/a3bcbf76b9088f091f39027e6460d518f42a39a1))
+* reject future-issued registration responses ([b6e1763](https://github.com/Dahkenangnon/oidfed/commit/b6e1763b4729625476a787197f05c7794485f457))
+
+### Refactor
+
+* share protocol helpers and remove dead code ([f299374](https://github.com/Dahkenangnon/oidfed/commit/f299374faab2822cd06c543832e0d959e5210c39))
+
+
 ## [2.0.0] - 2026-10-26
 
 ### Breaking changes
