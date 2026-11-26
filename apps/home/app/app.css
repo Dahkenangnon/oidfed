@@ -241,16 +241,6 @@
 		}
 	}
 
-	.site-announcement {
-		background: #33224f;
-		color: #fbf4fd;
-	}
-
-	.site-announcement:focus-visible {
-		outline-offset: -4px;
-		outline-color: #f7b8a7;
-	}
-
 	.site-footer {
 		--background: #251c38;
 		--foreground: #fcf7ff;

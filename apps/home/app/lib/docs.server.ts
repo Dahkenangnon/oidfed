@@ -112,32 +112,35 @@ export function renderDocumentation(path: string) {
 	return renderMarkdown(source, readFileSync(join(docsRoot, source), "utf8"));
 }
 
-export function renderMarkdown(source: string, contents: string) {
+/** Parse a page and assign the same heading IDs for rendering and link checks. */
+export function parseDocumentationMarkdown(source: string, contents: string) {
 	const slugger = new GithubSlugger();
-	const headings: { label: string; id: string; level: number }[] = [];
 	const snippet = source.endsWith(".ts");
 	const tokens = markdown.parse(
 		snippet ? `# ${posix.basename(source)}\n\n\`\`\`ts\n${contents}\n\`\`\`\n` : contents,
 		{},
 	);
-	let title = "Documentation";
+	const headings = tokens.flatMap((token, index) => {
+		const inline = tokens[index + 1];
+		if (token.type !== "heading_open" || inline?.type !== "inline") return [];
+		const label =
+			inline.children
+				?.map(({ content }) => content)
+				.join("")
+				.trim() || inline.content;
+		const id = slugger.slug(label);
+		token.attrSet("id", id);
+		return [{ label, id, level: Number(token.tag.slice(1)) }];
+	});
+	return { tokens, headings };
+}
+
+export function renderMarkdown(source: string, contents: string) {
+	const { tokens, headings } = parseDocumentationMarkdown(source, contents);
 	let description: string | undefined;
 
 	for (const [i, token] of tokens.entries()) {
 		const inline = tokens[i + 1];
-		if (token.type === "heading_open" && inline?.type === "inline") {
-			const label =
-				inline.children
-					?.map(({ content }) => content)
-					.join("")
-					.trim() || inline.content;
-			const id = slugger.slug(label);
-			token.attrSet("id", id);
-			if (token.tag === "h1") title = label;
-			if (token.tag === "h2" || token.tag === "h3") {
-				headings.push({ label, id, level: Number(token.tag.slice(1)) });
-			}
-		}
 		if (
 			!description &&
 			token.type === "paragraph_open" &&
@@ -162,12 +165,12 @@ export function renderMarkdown(source: string, contents: string) {
 	}
 
 	return {
-		title,
+		title: headings.findLast(({ level }) => level === 1)?.label ?? "Documentation",
 		description:
 			description ??
 			"OpenID Federation guides and public JavaScript and TypeScript API reference for OidFed.",
-		headings,
-		source: `${REPOSITORY}/blob/main/docs/${source}`,
+		headings: headings.filter(({ level }) => level === 2 || level === 3),
+		edit: `${REPOSITORY}/edit/main/docs/${source}`,
 		html: markdown.renderer.render(tokens, markdown.options, {}),
 	};
 }

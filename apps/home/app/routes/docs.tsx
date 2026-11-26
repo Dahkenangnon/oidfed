@@ -1,4 +1,4 @@
-import { ArrowUpRight, ChevronRight } from "lucide-react";
+import { ChevronRight, Pencil } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { isRouteErrorResponse, Link, useLocation } from "react-router";
 import { DocsArticle } from "../components/docs-article";
@@ -78,7 +78,7 @@ export function meta({ loaderData }: Route.MetaArgs) {
 }
 
 export default function Documentation({ loaderData }: Route.ComponentProps) {
-	const { headings, html, path, source, topics, apiPages } = loaderData;
+	const { headings, html, path, edit, topics, apiPages } = loaderData;
 	const sidebar = useRef<HTMLElement>(null);
 
 	useEffect(() => {
@@ -93,7 +93,7 @@ export default function Documentation({ loaderData }: Route.ComponentProps) {
 	}, [path]);
 
 	return (
-		<div className="docs-layout mx-auto max-w-7xl px-5 py-10 sm:px-8 sm:py-14">
+		<div className="docs-layout px-5 py-10 sm:px-6 sm:py-14">
 			<details key={path} className="docs-sidebar" open={path === featureIndex}>
 				<summary>Documentation menu</summary>
 				<DocumentationNav path={path} topics={topics} apiPages={apiPages} />
@@ -101,11 +101,17 @@ export default function Documentation({ loaderData }: Route.ComponentProps) {
 			<aside ref={sidebar} className="docs-sidebar-desktop">
 				<DocumentationNav key={path} path={path} topics={topics} apiPages={apiPages} />
 			</aside>
-			<div className="min-w-0">
-				<DocsArticle html={html} />
-				<a href={source} className="site-link mt-10 inline-flex items-center gap-1.5 text-sm">
-					View source on GitHub <ArrowUpRight aria-hidden className="size-3.5" />
+			<div className="docs-main min-w-0">
+				{/* Precedes the article so it shares the first line of the rendered h1. */}
+				<a
+					href={edit}
+					target="_blank"
+					rel="noopener noreferrer"
+					className="docs-edit site-link"
+				>
+					<Pencil aria-hidden className="size-3.5" /> Edit on GitHub
 				</a>
+				<DocsArticle html={html} />
 			</div>
 			{headings.length > 0 && (
 				<nav aria-label="On this page" className="docs-outline">

@@ -1,6 +1,35 @@
 .docs-layout {
 	display: grid;
 	gap: 2rem;
+	/* Full-bleed shell: the rails sit at the viewport edges, matching the header
+	   gutter. No overall cap is needed because both rails are a fixed width and
+	   the article carries its own measure, so a wider viewport only widens the
+	   space between the article and the outline. */
+	width: 100%;
+}
+
+/* Reading measure. 72ch keeps body text near 65-75 characters per line at the
+   article font size, independent of the rail widths and the gap. The column
+   starts at its track so it stays beside the navigation rail; any slack falls
+   between the article and the outline, as the reference layout does. */
+.docs-main {
+	max-width: 72ch;
+	width: 100%;
+}
+
+/* Shares the first line of the page title. Floated rather than placed in a flex
+   row with the heading, because the h1 belongs to the rendered Markdown and
+   stays there. The article creates no block formatting context, so the heading
+   flows beside this link instead of clearing it. */
+.docs-edit {
+	float: inline-end;
+	display: inline-flex;
+	align-items: center;
+	gap: 0.375rem;
+	margin-block-start: 0.6rem;
+	margin-inline-start: 1.25rem;
+	font-size: 0.875rem;
+	white-space: nowrap;
 }
 
 .docs-sidebar {
@@ -287,7 +316,8 @@
 
 @media (width >= 76rem) {
 	.docs-layout {
-		grid-template-columns: 15rem minmax(0, 1fr) 15rem;
+		grid-template-columns: 16.5rem minmax(0, 1fr) 16rem;
+		gap: 2.5rem;
 	}
 
 	.docs-outline {

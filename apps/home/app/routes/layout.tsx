@@ -75,6 +75,10 @@ export default function SiteLayout() {
 
 function SiteHeader() {
 	const location = useLocation();
+	// The header is a full-width bar on every route. Documentation puts its
+	// navigation rail and outline at the viewport edges, so sharing one gutter
+	// lines the wordmark up with the rail and the actions up with the outline.
+	const shell = "w-full px-5 sm:px-6";
 	const menuId = useId();
 	const [open, setOpen] = useState(false);
 	const toggle = useRef<HTMLButtonElement>(null);
@@ -99,15 +103,10 @@ function SiteHeader() {
 
 	return (
 		<header>
-			<Link
-				to="/trust-journal#standards"
-				className="site-announcement flex items-center justify-center gap-2 px-4 py-2 text-center text-sm font-medium hover:underline"
-			>
-				<span>Wallet and Entity Collection draft updates</span>
-				<ArrowRight aria-hidden className="size-3.5 shrink-0" />
-			</Link>
 			<div className="border-b border-border">
-				<div className="mx-auto flex min-h-16 max-w-6xl items-center justify-between gap-5 px-5 sm:px-8">
+				<div
+					className={`flex min-h-16 items-center justify-between gap-5 ${shell}`}
+				>
 					<Link to="/" aria-label="OidFed home" className="shrink-0">
 						<OidfedLogo label="oidfed" markClassName="size-8" labelClassName="text-lg" />
 					</Link>
@@ -152,7 +151,7 @@ function SiteHeader() {
 				<nav
 					id={menuId}
 					aria-label="Primary mobile navigation"
-					className={`mx-auto max-w-6xl flex-col gap-1 border-t border-border px-5 py-3 sm:px-8 lg:hidden ${open ? "flex" : "hidden"}`}
+					className={`flex-col gap-1 border-t border-border py-3 lg:hidden ${shell} ${open ? "flex" : "hidden"}`}
 				>
 					<PrimaryLinks mobile />
 					<Link to="/#quickstart" className="site-button mt-2 w-full">
