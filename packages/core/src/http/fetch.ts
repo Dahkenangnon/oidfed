@@ -1,5 +1,6 @@
 /** Bounded HTTP transport for federation requests. */
 
+import { waitForOperation } from "../async-operation.js";
 import {
 	DEFAULT_HTTP_TIMEOUT_MS,
 	DEFAULT_MAX_RESPONSE_BYTES,
@@ -32,9 +33,29 @@ export interface PerformFetchOptions extends FederationOptions {
 	redirect?: RequestInit["redirect"];
 	/** Form-encoded body for authenticated federation endpoint requests. */
 	body?: URLSearchParams;
+	/** Raw signed Entity Statement, used by the registration transport. */
+	entityStatementBody?: string;
 	expectedStatus?: number;
 	/** Decode Federation JSON error responses when enabled. */
 	federationErrors?: boolean | readonly number[];
+}
+
+/** Send an Entity Statement JWT once and return the bounded response for protocol verification. */
+export function postFederationEntityStatement(
+	url: string,
+	jwt: string,
+	options: FederationOptions & { readonly expectedContentType: string },
+): Promise<Result<string, FederationError>> {
+	return performFetch(url, {
+		...options,
+		method: "POST",
+		redirect: "manual",
+		entityStatementBody: jwt,
+		accept: options.expectedContentType,
+		contentTypePolicy: "exact",
+		expectedStatus: 200,
+		federationErrors: false,
+	});
 }
 
 /**
@@ -56,9 +77,21 @@ export async function performFetch(
 	}
 	const urlValidation = validateFetchUrl(url, options);
 	if (!urlValidation.ok) return urlValidation;
+	const statement = options.entityStatementBody;
+	if (statement !== undefined && urlValidation.value.href.includes("#"))
+		return err({
+			code: FederationErrorCode.InvalidRequest,
+			description: "Entity Statement POST URL must not contain a fragment",
+		});
 
 	const fetchFn = options?.httpClient ?? fetch;
 	const timeoutMs = options?.httpTimeoutMs ?? DEFAULT_HTTP_TIMEOUT_MS;
+	const maxResponseBytes = options?.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
+	if (statement !== undefined && (!Number.isSafeInteger(maxResponseBytes) || maxResponseBytes < 0))
+		return err({
+			code: FederationErrorCode.InvalidRequest,
+			description: "Response byte limit must be a nonnegative safe integer",
+		});
 	const accept = options?.accept ?? MediaType.EntityStatement;
 	const expectedContentType =
 		options?.expectedContentType !== undefined ? options.expectedContentType : accept;
@@ -82,18 +115,48 @@ export async function performFetch(
 
 	try {
 		if (controller.signal.aborted) throw new DOMException("Request aborted", "AbortError");
-		const response = await fetchFn(url, {
+		const init: RequestInit = {
 			signal: controller.signal,
-			...(options?.redirect !== undefined ? { redirect: options.redirect } : {}),
-			method: options?.method ?? "GET",
-			...(options?.body ? { body: options.body.toString() } : {}),
+			...(options.redirect !== undefined ? { redirect: options.redirect } : {}),
+			method: options.method ?? "GET",
+			...(options.body ? { body: options.body.toString() } : {}),
 			headers: {
-				...Object.fromEntries(new Headers(options?.headers).entries()),
+				...Object.fromEntries(new Headers(options.headers).entries()),
 				Accept: accept,
-				...(options?.body ? { "Content-Type": "application/x-www-form-urlencoded" } : {}),
+				...(options.body ? { "Content-Type": "application/x-www-form-urlencoded" } : {}),
 			},
-		});
+		};
+		let response: Response;
+		if (statement === undefined) {
+			response = await fetchFn(url, init);
+		} else {
+			const headers = new Headers(init.headers);
+			headers.set("Content-Type", MediaType.EntityStatement);
+			const request = new Request(urlValidation.value, { ...init, headers, body: statement });
+			// Release callers at the deadline even when a custom transport ignores the signal.
+			const pending = fetchFn(request);
+			try {
+				response = await waitForOperation(pending, [controller.signal]);
+			} catch (cause) {
+				if (controller.signal.aborted)
+					void pending.then((reply) => reply.body?.cancel()).catch(() => {});
+				throw cause;
+			}
+		}
 		receivedResponse = true;
+
+		if (statement !== undefined && response.redirected) {
+			void response.body?.cancel().catch(() => {});
+			return err(
+				fetchFailure(
+					{
+						code: InternalErrorCode.Network,
+						description: "Entity Statement POST must not redirect",
+					},
+					{ kind: "response" },
+				),
+			);
+		}
 
 		if (
 			!response.ok ||
@@ -106,11 +169,7 @@ export async function performFetch(
 				!response.ok &&
 				matchesContentType(response.headers.get("content-type"), MediaType.Json)
 			) {
-				const body = await readResponseBody(
-					response,
-					options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES,
-					controller.signal,
-				);
+				const body = await readResponseBody(response, maxResponseBytes, controller.signal);
 				try {
 					const parsed = JSON.parse(body) as { error?: unknown; error_description?: unknown };
 					if (
@@ -163,7 +222,10 @@ export async function performFetch(
 			return err(
 				fetchFailure(
 					{
-						code: InternalErrorCode.Network,
+						code:
+							statement === undefined
+								? InternalErrorCode.Network
+								: FederationErrorCode.InvalidRequest,
 						description: `Unexpected Content-Type '${actual}' from ${url}, expected '${expectedContentType}'`,
 					},
 					{ kind: "response" },
@@ -181,11 +243,7 @@ export async function performFetch(
 					{ kind: "response" },
 				),
 			);
-		const body = await readResponseBody(
-			response,
-			options?.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES,
-			controller.signal,
-		);
+		const body = await readResponseBody(response, maxResponseBytes, controller.signal);
 		return ok(body);
 	} catch (cause) {
 		if (

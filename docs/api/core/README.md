@@ -223,6 +223,7 @@ Signatures preserve optional and read-only declarations. An optional property is
 | [`ParsedContentTypeHeader`](endpoints.md#parsedcontenttypeheader) | Interface |
 | [`parseQueryParams`](endpoints.md#parsequeryparams) | Function |
 | [`prepareEndpointParameters`](endpoints.md#prepareendpointparameters) | Function |
+| [`postFederationEntityStatement`](endpoints.md#postfederationentitystatement) | Function |
 | [`readBytesWithLimit`](endpoints.md#readbyteswithlimit) | Function |
 | [`BodyLimitExceeded`](endpoints.md#readbyteswithlimit) | Error |
 | [`readBodyWithLimit`](endpoints.md#readbodywithlimit) | Function |

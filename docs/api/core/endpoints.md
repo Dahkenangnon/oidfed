@@ -535,6 +535,22 @@ export function campusSelectors() {
 }
 ```
 
+## `postFederationEntityStatement`
+
+[Source](../../../packages/core/src/http/fetch.ts)
+
+Send a compact Entity Statement JWT as an HTTPS POST with `Content-Type: application/entity-statement+jwt`. The transport applies the configured URL policy, rejects redirects, and uses one timeout for sending the request and reading the bounded response. It accepts only HTTP 200 with the exact media type supplied in `expectedContentType`. A custom `httpClient` receives a Web `Request`.
+
+The successful result contains the response text. Verify the signature and claims according to the protocol that uses the response.
+
+```typescript signature
+postFederationEntityStatement(
+  url: string,
+  jwt: string,
+  options: FederationOptions & { readonly expectedContentType: string },
+): Promise<Result<string, FederationError>>;
+```
+
 ## `readBytesWithLimit`
 
 Use this reader when you need the original bytes, for example to check a digest before decoding JSON. It returns `null` for an absent body and a zero-length array for an empty stream. A body exactly at the limit is accepted. Overflow cancels the stream and throws `BodyLimitExceeded`. An aborted signal cancels a pending read and propagates its reason. Transport failures propagate to the caller.

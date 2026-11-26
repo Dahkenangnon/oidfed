@@ -24215,6 +24215,47 @@ export default (QUnit: QUnit) => {
 			);
 
 			QUnit.test(
+				"an Entity Statement POST refuses disallowed destinations and invalid limits before transport",
+				async (assert) => {
+					let requests = 0;
+					const controller = new AbortController();
+					controller.abort();
+					const base = {
+						engine: testEngine,
+						expectedContentType: MediaType.EntityStatement,
+						httpClient: async () => {
+							requests++;
+							return new Response();
+						},
+					};
+					for (const { url, options, error } of [
+						{ url: endpoint, options: { offline: true }, error: /offline/i },
+						{ url: endpoint, options: { signal: controller.signal }, error: /aborted/ },
+						{ url: `${endpoint}#`, options: {}, error: /fragment/ },
+						{
+							url: "https://8.8.8.8/register",
+							options: { blockedCIDRs: ["8.8.8.0/24"] },
+							error: /blocked CIDR/,
+						},
+						{
+							url: endpoint,
+							options: { maxResponseBytes: Number.NaN },
+							error: /Response byte limit/,
+						},
+					]) {
+						const result = await CorePublic.postFederationEntityStatement(url, "jwt", {
+							...base,
+							...options,
+						});
+						assert.false(result.ok);
+						if (!result.ok)
+							assert.true(error.test(result.error.description), result.error.description);
+					}
+					assert.strictEqual(requests, 0);
+				},
+			);
+
+			QUnit.test(
 				"shared transport bounds stalled and oversized bodies and cancels discarded responses",
 				async (assert) => {
 					const f = await fixture();

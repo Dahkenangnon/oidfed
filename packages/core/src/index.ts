@@ -216,6 +216,7 @@ export {
 } from "./federation-keys.js";
 // JOSE
 export { BodyLimitExceeded, readBytesWithLimit } from "./http/body-bytes.js";
+export { postFederationEntityStatement } from "./http/fetch.js";
 export { validateFetchUrl } from "./http/fetch-url.js";
 // HTTP helpers
 export {

@@ -13,12 +13,11 @@ import {
 	federationError,
 	federationSigningOptions,
 	InternalErrorCode,
-	isExactContentType,
 	JwtTyp,
-	MediaType,
 	nowSeconds,
 	ok,
 	type ParsedEntityStatement,
+	postFederationEntityStatement,
 	type Result,
 	safeLogger,
 	signEntityStatement,
@@ -226,41 +225,12 @@ export async function explicitRegistration(
 		...(Object.keys(extraHeaders).length > 0 ? { extraHeaders } : {}),
 	});
 
-	const httpClient = options?.httpClient ?? fetch;
-	const request = new Request(registrationEndpoint, {
-		method: "POST",
-		headers: {
-			"Content-Type": MediaType.EntityStatement,
-		},
-		body: ecJwt,
+	const response = await postFederationEntityStatement(registrationEndpoint, ecJwt, {
+		...options,
+		expectedContentType: OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE,
 	});
-
-	const response = await httpClient(request);
-	if (response.status !== 200) {
-		// Intentionally omit response body to avoid leaking OP internals
-		safeLogger(options?.logger)?.warn("Explicit Client Registration response must use HTTP 200");
-		return err(
-			federationError(
-				InternalErrorCode.Network,
-				`Explicit registration failed (HTTP ${response.status})`,
-			),
-		);
-	}
-
-	const responseContentType = response.headers.get("Content-Type");
-	if (!isExactContentType(responseContentType, OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE)) {
-		safeLogger(options?.logger)?.warn(
-			"Explicit Client Registration response Content-Type must be application/explicit-registration-response+jwt",
-		);
-		return err(
-			federationError(
-				FederationErrorCode.InvalidRequest,
-				`Explicit registration response Content-Type must be '${OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE}'`,
-			),
-		);
-	}
-
-	const responseJwt = await response.text();
+	if (!response.ok) return response;
+	const responseJwt = response.value;
 
 	// Verify using the subordinate statement's JWKS (not the self-signed EC)
 	// because the OP's signing key authority comes from its superior in the chain.

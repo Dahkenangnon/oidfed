@@ -4384,8 +4384,18 @@ export default (QUnit: QUnit) => {
 	// registration/explicit
 	// -------------------------------------------------------------------------
 	module("oidc / explicitRegistration (RP-side)", () => {
-		async function createMockOpWithRegistration() {
-			const fed = await createMockFederation();
+		async function createMockOpWithRegistration(
+			registrationEndpoint = `${OP_ID}/federation_registration`,
+		) {
+			const fed = await createMockFederation({
+				opMetadata: {
+					openid_provider: {
+						...validProviderMetadata,
+						federation_registration_endpoint: registrationEndpoint,
+						client_registration_types_supported: ["automatic", "explicit"],
+					},
+				},
+			});
 			const { config } = await createRpConfig({
 				crypto: new FixtureCrypto(createFederationSigningKey(fed.leafSigningKey)),
 			});
@@ -4573,20 +4583,10 @@ export default (QUnit: QUnit) => {
 
 		test("POSTs EC JWT to correct endpoint", async (t) => {
 			const mock = await createMockOpWithRegistration();
-			let capturedUrl = "";
-			let capturedContentType = "";
+			let registrationRequest: Request | undefined;
 			const trackingClient: HttpClient = async (input, init) => {
-				const url =
-					typeof input === "string"
-						? input
-						: input instanceof URL
-							? input.toString()
-							: (input as Request).url;
-				if (new URL(url).pathname === "/federation_registration") {
-					capturedUrl = url;
-					if (input instanceof Request)
-						capturedContentType = input.headers.get("Content-Type") ?? "";
-				}
+				if (input instanceof Request && input.method === "POST")
+					registrationRequest = input.clone();
 				return mock.httpClient(input, init);
 			};
 			const result = await explicitRegistration(mock.discovery, mock.config, mock.trustAnchors, {
@@ -4594,8 +4594,136 @@ export default (QUnit: QUnit) => {
 				httpClient: trackingClient,
 			});
 			t.true(isOk(result), isErr(result) ? result.error.description : undefined);
-			t.ok(capturedUrl.includes("/federation_registration"));
-			t.equal(capturedContentType, MediaType.EntityStatement);
+			t.equal(registrationRequest?.url, `${OP_ID}/federation_registration`);
+			t.equal(registrationRequest?.headers.get("Content-Type"), MediaType.EntityStatement);
+			t.equal(
+				registrationRequest?.headers.get("Accept"),
+				OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE,
+			);
+			t.equal(registrationRequest?.redirect, "manual");
+		});
+
+		test("applies the host allowlist to the signed registration endpoint before sending the JWT", async (t) => {
+			const mock = await createMockOpWithRegistration(
+				"https://registration.example.com/federation_registration",
+			);
+			let posts = 0;
+			const result = await explicitRegistration(mock.discovery, mock.config, mock.trustAnchors, {
+				...mock.options,
+				allowedHosts: [OP_ID, TA_ID, LEAF_ID].map((id) => new URL(id).hostname),
+				httpClient: async (input, init) => {
+					if (input instanceof Request && input.method === "POST") posts++;
+					return mock.httpClient(input, init);
+				},
+			});
+			t.equal(posts, 0);
+			t.true(isErr(result));
+			if (isErr(result))
+				t.ok(/registration\.example\.com.*allowed hosts/.test(result.error.description));
+		});
+
+		test("rejects redirects and caps the registration response before JWT verification", async (t) => {
+			const mock = await createMockOpWithRegistration();
+			const maxResponseBytes = 32 * 1024;
+			for (const scenario of ["redirect", "followed redirect", "declared size", "stream size"]) {
+				let cancelled = false;
+				const result = await explicitRegistration(mock.discovery, mock.config, mock.trustAnchors, {
+					...mock.options,
+					maxResponseBytes,
+					httpClient: async (input, init) => {
+						if (!(input instanceof Request) || input.method !== "POST")
+							return mock.httpClient(input, init);
+						const body = new ReadableStream<Uint8Array>(
+							{
+								pull(stream) {
+									stream.enqueue(new Uint8Array(maxResponseBytes + 1));
+								},
+								cancel() {
+									cancelled = true;
+								},
+							},
+							{ highWaterMark: 0 },
+						);
+						const response = new Response(body, {
+							status: scenario === "redirect" ? 307 : 200,
+							headers: {
+								"Content-Type": OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE,
+								...(scenario === "redirect" ? { Location: "https://other.example.com" } : {}),
+								...(scenario === "declared size"
+									? { "Content-Length": String(maxResponseBytes + 1) }
+									: {}),
+							},
+						});
+						if (scenario === "followed redirect")
+							Object.defineProperty(response, "redirected", { value: true });
+						return response;
+					},
+				});
+				t.true(isErr(result), scenario);
+				if (isErr(result)) {
+					const expected =
+						scenario === "redirect"
+							? /HTTP 307/
+							: scenario === "followed redirect"
+								? /must not redirect/
+								: /Response too large/;
+					t.ok(expected.test(result.error.description), result.error.description);
+				}
+				t.true(cancelled, scenario);
+			}
+		});
+
+		test("cancellation and timeout stop the registration transport and response stream", async (t) => {
+			const mock = await createMockOpWithRegistration();
+			for (const phase of ["request", "response"]) {
+				for (const stop of ["abort", "timeout"]) {
+					const caller = new AbortController();
+					let requestSignal: AbortSignal | undefined;
+					let cancelled = false;
+					const result = await explicitRegistration(
+						mock.discovery,
+						mock.config,
+						mock.trustAnchors,
+						{
+							...mock.options,
+							signal: caller.signal,
+							httpTimeoutMs: stop === "timeout" ? 300 : 10_000,
+							httpClient: async (input, init) => {
+								if (!(input instanceof Request) || input.method !== "POST")
+									return mock.httpClient(input, init);
+								requestSignal = input.signal;
+								if (phase === "request") {
+									if (stop === "abort") caller.abort();
+									// Simulate a custom client that ignores the signal.
+									return new Promise<Response>(() => {});
+								}
+								return new Response(
+									new ReadableStream<Uint8Array>(
+										{
+											pull() {
+												if (stop === "abort") caller.abort();
+												return new Promise<void>(() => {});
+											},
+											cancel() {
+												cancelled = true;
+											},
+										},
+										{ highWaterMark: 0 },
+									),
+									{
+										headers: { "Content-Type": OIDC_MEDIA_TYPE_EXPLICIT_REGISTRATION_RESPONSE },
+									},
+								);
+							},
+						},
+					);
+					const scenario = `${stop} during ${phase}`;
+					t.true(requestSignal?.aborted, scenario);
+					t.true(isErr(result), scenario);
+					if (isErr(result)) t.equal(result.error.code, InternalErrorCode.Timeout, scenario);
+					if (phase === "response") t.true(cancelled, scenario);
+				}
+			}
 		});
 
 		test("RP EC includes all REQUIRED claims", async (t) => {
