@@ -128,3 +128,15 @@ test("Mermaid diagrams provide escaped source before the browser renderer loads"
 	assert.match(page.html, /&(?:amp|#38|#x26);/i);
 	assert.doesNotMatch(page.html, /A < B/);
 });
+
+test("the documentation entry stays short and links to each starting point", () => {
+	const page = renderDocumentation("/docs");
+	assert.ok(page);
+	assert.deepEqual(page.headings, []);
+	assert.ok(page.description.length >= 70 && page.description.length <= 160, page.description);
+	for (const href of ["/docs/features", "/docs/api", "/docs/api/migration-v3"]) {
+		assert.match(page.html, new RegExp(`href="${href}"`));
+	}
+	const words = page.html.replace(/<[^>]+>/g, " ").split(/\s+/).filter(Boolean);
+	assert.ok(words.length <= 60, `entry page has ${words.length} words`);
+});

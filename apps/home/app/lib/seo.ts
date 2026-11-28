@@ -6,7 +6,7 @@
 export const DOMAIN = "https://oidfed.com";
 export const SITE_NAME = "OidFed";
 export const HOME_DESCRIPTION =
-	"Build OpenID Federation Trust Anchors, Intermediates, and Leaves with a simple TypeScript API. Compose OIDC, OAuth, and wallet roles, or verify trust chains.";
+	"Join or run an OpenID Federation in TypeScript. Resolve trust chains, apply metadata policy, and verify Trust Marks for OIDC, OAuth, and wallets.";
 export const DEFAULT_OG_IMAGE = `${DOMAIN}/og-image.png`;
 export const DEFAULT_OG_IMAGE_WIDTH = "1200";
 export const DEFAULT_OG_IMAGE_HEIGHT = "630";

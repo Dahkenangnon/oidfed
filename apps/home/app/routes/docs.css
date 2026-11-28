@@ -17,6 +17,46 @@
 	width: 100%;
 }
 
+/* The /docs entry is a few lines of text, so decorative orbits (the home hero's
+   shapes and colors) sit in a band reserved below it by padding, which keeps
+   them clear of the text at any width. Clipped so the rotated shapes never
+   widen the page. */
+.docs-main[data-entry] {
+	position: relative;
+	isolation: isolate;
+	overflow-x: clip;
+	padding-bottom: clamp(13rem, 30vw, 19rem);
+}
+
+.docs-main[data-entry]::before,
+.docs-main[data-entry]::after {
+	position: absolute;
+	z-index: -1;
+	aspect-ratio: 1;
+	border-radius: 48% 52% 56% 44% / 40% 46% 54% 60%;
+	opacity: 0.8;
+	pointer-events: none;
+	content: "";
+}
+
+.docs-main[data-entry]::before {
+	right: 6%;
+	bottom: 0.5rem;
+	width: clamp(10rem, 24vw, 15rem);
+	border: clamp(0.875rem, 2vw, 1.5rem) solid var(--hero-orbit-plum);
+	box-shadow: inset 0 0 0 clamp(0.5rem, 1vw, 0.75rem) var(--hero-orbit-rose);
+	transform: rotate(-26deg);
+}
+
+.docs-main[data-entry]::after {
+	right: calc(6% + clamp(8rem, 19vw, 12rem));
+	bottom: clamp(1.5rem, 4vw, 3rem);
+	width: clamp(5rem, 11vw, 7rem);
+	border: clamp(0.625rem, 1.25vw, 1rem) solid var(--hero-orbit-teal);
+	box-shadow: inset 0 0 0 clamp(0.3rem, 0.6vw, 0.5rem) var(--hero-orbit-plum);
+	transform: rotate(27deg);
+}
+
 /* Shares the first line of the page title. Floated rather than placed in a flex
    row with the heading, because the h1 belongs to the rendered Markdown and
    stays there. The article creates no block formatting context, so the heading

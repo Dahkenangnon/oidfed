@@ -101,7 +101,7 @@ export default function Documentation({ loaderData }: Route.ComponentProps) {
 			<aside ref={sidebar} className="docs-sidebar-desktop">
 				<DocumentationNav key={path} path={path} topics={topics} apiPages={apiPages} />
 			</aside>
-			<div className="docs-main min-w-0">
+			<div className="docs-main min-w-0" data-entry={path === "/docs" || undefined}>
 				{/* Precedes the article so it shares the first line of the rendered h1. */}
 				<a
 					href={edit}

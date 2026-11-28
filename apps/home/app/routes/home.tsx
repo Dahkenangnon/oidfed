@@ -1,11 +1,9 @@
 import { ArrowRight, ArrowUpRight } from "lucide-react";
 import { Link } from "react-router";
-import { CopyButton } from "../components/copy-button";
-import { HighlightedCode } from "../components/highlighted-code";
 import { Quickstart, quickstartExamples } from "../components/quickstart";
 import { SiteHero } from "../components/site-hero";
 import { highlightCode } from "../lib/highlight.server";
-import { DOCS, EXPLORER, FEDERATIONS, LEARN, REPOSITORY } from "../lib/links";
+import { DOCS, EXPLORER, FEDERATIONS, LEARN } from "../lib/links";
 import {
 	buildMeta,
 	HOME_DESCRIPTION,
@@ -24,18 +22,6 @@ export function meta() {
 	});
 }
 
-const resolveCommand = "oidfed --json resolve https://op.example --trust-anchor https://ta.example";
-const resolveExample = `{
-  "chains_found": 1,
-  "errors": 0,
-  "chains": [{
-    "entity_id": "https://op.example",
-    "trust_anchor_id": "https://ta.example",
-    "statements": 3,
-    "expires_at": "2030-01-01T12:00:00.000Z"
-  }]
-}`;
-
 export function loader() {
 	return {
 		quickstart: Object.fromEntries(
@@ -44,8 +30,6 @@ export function loader() {
 				highlightCode(code, "typescript", filename),
 			]),
 		),
-		command: highlightCode(resolveCommand, "bash", "Example CLI command"),
-		output: highlightCode(resolveExample, "json", "Example CLI output"),
 	};
 }
 
@@ -86,13 +70,13 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 			<SiteHero
 				title={
 					<>
-						Build OpenID Federations{" "}
+						Join or run an OpenID Federation{" "}
 						<span className="block text-site-accent">
-							for <span className="whitespace-nowrap">OIDC, OAuth</span> &amp; wallets
+							in <span className="whitespace-nowrap">TypeScript</span>
 						</span>
 					</>
 				}
-				description="Create Trust Anchors, Intermediates, and Leaves with one TypeScript API. Add OpenID Connect, OAuth, or digital wallet roles and bring your own keys and protocol engines."
+				description="Resolve trust chains, apply metadata policy, and verify Trust Marks with one library. Works for OIDC, OAuth, and wallet ecosystems, and uses your own keys and protocol stack."
 				variant="home"
 			>
 				<div className="mt-8 flex flex-wrap items-center justify-center gap-3">
@@ -224,46 +208,6 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 							</p>
 						</li>
 					</ul>
-				</section>
-
-				<section
-					aria-labelledby="cli-heading"
-					className="mt-18 grid overflow-hidden rounded-2xl border border-border bg-card sm:mt-24 lg:grid-cols-[1fr_1fr]"
-				>
-					<div className="px-6 py-8 sm:p-9">
-						<h2 id="cli-heading" className="site-section-title">
-							Inspect a federation from your terminal
-						</h2>
-						<p className="mt-4 max-w-[48ch] leading-relaxed text-muted-foreground">
-							Use the OidFed CLI to resolve trust chains, verify signatures, and query federation
-							endpoints. It ships with 17 commands.
-						</p>
-						<div className="mt-5 flex flex-wrap items-center gap-2.5">
-							<code className="rounded-md border border-border bg-background px-3 py-2 text-xs sm:text-sm">
-								npm install -g @oidfed/cli
-							</code>
-							<CopyButton text="npm install -g @oidfed/cli" label="CLI install command" />
-						</div>
-						<a
-							className="site-link mt-5 inline-flex items-center gap-1.5 text-sm"
-							href={`${REPOSITORY}/blob/main/tools/cli/docs/readme.md`}
-						>
-							CLI reference
-							<ArrowUpRight aria-hidden className="size-3.5" />
-						</a>
-					</div>
-					<div className="min-w-0 border-t border-border bg-site-code p-5 sm:p-7 lg:border-t-0 lg:border-l">
-						<p className="text-xs font-medium text-muted-foreground">Example command</p>
-						<HighlightedCode
-							html={loaderData.command}
-							className="mt-2 text-xs leading-relaxed sm:text-[13px]"
-						/>
-						<p className="mt-5 text-xs font-medium text-muted-foreground">Example output</p>
-						<HighlightedCode
-							html={loaderData.output}
-							className="mt-2 text-xs leading-relaxed sm:text-[13px]"
-						/>
-					</div>
 				</section>
 			</div>
 		</>
